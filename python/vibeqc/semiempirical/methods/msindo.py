@@ -1971,9 +1971,10 @@ def _scf_rhf(
     Pulay DIIS (Chem. Phys. Lett. 73, 393 (1980)).  The MSINDO basis is the
     symmetrically (Löwdin) orthogonalised one -- the resonance integrals fold
     S^-1/2 in -- so the overlap is the identity and the SCF error vector is the
-    bare commutator e = F P - P F.  DIIS only accelerates the path to the
-    stationary point [F,P]=0; the converged density (hence every parity number)
-    is identical to the plain fixed-point iteration.
+    bare commutator e = F P - P F. DIIS finds a stationary point [F,P]=0;
+    this condition alone does not certify a local minimum or a unique SCF
+    root. The CCM adapter additionally checks restricted orbital stability
+    when an unresolved initial frontier makes its starting projector ambiguous.
     """
 
     def _fock(P):

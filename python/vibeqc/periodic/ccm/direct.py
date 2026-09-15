@@ -776,11 +776,11 @@ def run_ccm_rks_direct(
     so the q=0 convention materially selects the Hamiltonian; ``"inactive"``
     for pure functionals and screened-only hybrids).
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_rks_direct',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rks_direct"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_rks_direct',
     )
     _warn_experimental()
     from vibeqc._vibeqc_core import Functional
@@ -1139,11 +1139,11 @@ def run_ccm_rhf_direct(
         assert it matches in every cross-route comparison
         (``assert_matched_exchange_q0``).
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_rhf_direct',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rhf_direct"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_rhf_direct',
     )
     _warn_experimental()
     from vibeqc.periodic.exchange_convention import exchange_q0_label
@@ -1231,11 +1231,11 @@ def run_ccm_uhf_direct(
     a :class:`~vibeqc.periodic.ccm.uhf.CCMUHFResult` (energies **per
     supercell**, ``.exchange_q0`` recorded).
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_uhf_direct',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_uhf_direct"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_uhf_direct',
     )
     _warn_experimental()
     from vibeqc.periodic.ccm.scf import (
@@ -1421,11 +1421,11 @@ def run_ccm_uks_direct(
     ``P_a + P_b``, per-spin data in the ``*_beta`` / ``density_*`` fields)
     and ``.exchange_q0`` recorded.
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_uks_direct',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_uks_direct"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_uks_direct',
     )
     _warn_experimental()
     from vibeqc._vibeqc_core import Functional
@@ -2461,11 +2461,11 @@ def run_ccm_rhf_direct_rijcosx(
 
     Returns a ``CCMSCFResult`` with ``.exchange_q0`` recorded.
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_rhf_direct_rijcosx',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rhf_direct_rijcosx"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_rhf_direct_rijcosx',
     )
     _warn_experimental()
     from vibeqc._vibeqc_core import LatticeSumOptions

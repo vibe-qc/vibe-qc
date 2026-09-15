@@ -2061,6 +2061,10 @@ struct MsindoResult {
     Eigen::MatrixXd density;
     int n_iter=0;
     bool converged=false;
+    // CCM restricted orbital-stability audit (not a spin-stability claim).
+    bool stability_checked=false, stability_analysis_converged=false;
+    double stability_eigenvalue=0.0;
+    int n_stability_restarts=0;
 };
 
 // --------------------------------------------------------------------------- //

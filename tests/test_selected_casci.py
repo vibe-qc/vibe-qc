@@ -203,27 +203,49 @@ class TestTruncatedRDMs:
 class TestSelectedCICASSCF:
     """casscf(ci_solver='selected_ci'): the large-active-space CASSCF route.
 
-    Exact-limit parity is pinned on unique-minimum systems (LiH, H2O
-    single-state); H2O SA-CASSCF is basin-rich (see _OM_CASSCF notes in
-    test_solvers_mrpt_parity.py) and is deliberately not pinned across CI
-    backends.
+    H2O can reach different orbital basins even in the full-selection limit
+    (#56), so CI parity and truncation errors are measured at fixed optimized
+    orbitals. LiH also checks parity of the independently optimized SA roots.
     """
 
-    def test_exact_limit_matches_determinant_casscf(self):
+    @pytest.mark.parametrize("orbital_tilt", [0.0, 1e-12])
+    def test_exact_limit_matches_determinant_casscf(self, orbital_tilt):
         from vibeqc.solvers import casscf
+        from vibeqc.solvers._casscf import _rotate_integrals
 
         H = _ham(H2O, "sto-3g")
-        ref = casscf(
-            H.h1e, H.h2e, n_active_elec=4, n_active_orb=4, n_core=3,
-            nuclear_repulsion=H.nuclear_repulsion, ms2=0,
-        )
-        sel = casscf(
-            H.h1e, H.h2e, n_active_elec=4, n_active_orb=4, n_core=3,
-            nuclear_repulsion=H.nuclear_repulsion, ms2=0,
-            ci_solver="selected_ci", selected_ci_options=_exact_options(),
-        )
-        assert sel.converged
-        assert abs(sel.e_total - ref.e_total) < 1e-10
+        # Equivalent starting orbitals can select different CASSCF stationary
+        # points in this basin-rich system (#56). Exercise a tiny rotation as
+        # well as the native HF orbitals, without changing the Hamiltonian.
+        rotation = np.eye(H.h1e.shape[0])
+        c, t = np.cos(orbital_tilt), np.sin(orbital_tilt)
+        rotation[np.ix_([0, 3], [0, 3])] = [[c, -t], [t, c]]
+        h1, h2 = _rotate_integrals(H.h1e, H.h2e, rotation)
+        for backend in ("casci", "selected_ci"):
+            result = casscf(
+                h1, h2, n_active_elec=4, n_active_orb=4, n_core=3,
+                nuclear_repulsion=H.nuclear_repulsion, ms2=0,
+                ci_solver=backend,
+                selected_ci_options=_exact_options() if backend == "selected_ci" else None,
+            )
+            assert result.converged
+            assert result.grad_norm < 1e-6
+            # Verify that the reported optimized basis belongs to the input
+            # Hamiltonian, then compare both CI kernels in THAT same basis.
+            rebuilt_h1, rebuilt_h2 = _rotate_integrals(h1, h2, result.mo_rotation)
+            np.testing.assert_allclose(result.h1e_cas, rebuilt_h1, atol=1e-10, rtol=0)
+            np.testing.assert_allclose(result.h2e_cas, rebuilt_h2, atol=1e-10, rtol=0)
+            exact = casci(
+                result.h1e_cas, result.h2e_cas, 4, 4, 3,
+                nuclear_repulsion=H.nuclear_repulsion, ms2=0,
+            )
+            selected = selected_casci(
+                result.h1e_cas, result.h2e_cas, 4, 4, 3,
+                nuclear_repulsion=H.nuclear_repulsion, ms2=0,
+                options=_exact_options(),
+            )
+            assert abs(result.e_total - exact.e_total) < 1e-10
+            assert abs(selected.e_total - exact.e_total) < 1e-10
 
     def test_exact_limit_sa_matches_determinant_casscf(self):
         from vibeqc.solvers import casscf
@@ -246,10 +268,6 @@ class TestSelectedCICASSCF:
         from vibeqc.solvers import casscf
 
         H = _ham(H2O, "sto-3g")
-        ref = casscf(
-            H.h1e, H.h2e, n_active_elec=4, n_active_orb=4, n_core=3,
-            nuclear_repulsion=H.nuclear_repulsion, ms2=0,
-        )
         sel = casscf(
             H.h1e, H.h2e, n_active_elec=4, n_active_orb=4, n_core=3,
             nuclear_repulsion=H.nuclear_repulsion, ms2=0,
@@ -257,8 +275,17 @@ class TestSelectedCICASSCF:
             selected_ci_options=_exact_options(target_size=8),
         )
         assert sel.converged
+        assert sel.grad_norm < 1e-6
+        assert 0 < sel.cas.n_det < 36
+        # The variational inequality compares subspaces of one Hamiltonian.
+        # A separately optimized dense CASSCF can reach another orbital basin
+        # and does not measure the selected-space truncation error (#56).
+        ref = casci(
+            sel.h1e_cas, sel.h2e_cas, 4, 4, 3,
+            nuclear_repulsion=H.nuclear_repulsion, ms2=0,
+        )
         gap = sel.e_total - ref.e_total
-        assert -1e-10 <= gap < 1e-5  # variational, sub-10-µHa at 8/36 dets
+        assert -1e-10 <= gap < 1e-5, f"fixed-orbital truncation error: {gap} Ha"
 
     def test_invalid_backend_options_raise(self):
         from vibeqc.solvers import casscf
@@ -278,10 +305,9 @@ class TestSpinPureSelectedCI:
     full-selection limit the selected filter must reproduce it exactly;
     truncated runs must return spin-pure roots (αβ-swap closure blocks
     singlet–triplet mixing, so truncation contamination is tiny).  H2O
-    CAS(4,4) SA2 is basin-rich across CI backends (standing rule), so
-    truncated-vs-dense ENERGY equality is never asserted, only at the
-    full-selection limit, where the per-iteration solves are identical
-    and the trajectories coincide.
+    CAS(4,4) SA2 is basin-rich across CI backends (#56), so full-selection
+    energy parity uses the same optimized orbital basis. Numerical agreement
+    of CI solves does not guarantee identical optimization trajectories.
     """
 
     def test_helper_full_limit_matches_dense_filter(self):
@@ -307,26 +333,22 @@ class TestSpinPureSelectedCI:
 
     def test_casscf_full_limit_matches_dense_spin_pure(self):
         from vibeqc.solvers import casscf
-        from vibeqc.solvers._ms_caspt2 import _s2_expectation
+        from vibeqc.solvers._ms_caspt2 import _s2_expectation, _spin_pure_roots
 
         H = _ham(H2O, "sto-3g")
-        ref = casscf(
-            H.h1e, H.h2e, n_active_elec=4, n_active_orb=4, n_core=3,
-            nuclear_repulsion=H.nuclear_repulsion, ms2=0, nroots=2,
-            spin_pure=True,
-        )
         sel = casscf(
             H.h1e, H.h2e, n_active_elec=4, n_active_orb=4, n_core=3,
             nuclear_repulsion=H.nuclear_repulsion, ms2=0, nroots=2,
             spin_pure=True, ci_solver="selected_ci",
             selected_ci_options=_exact_options(),
         )
-        assert ref.converged and sel.converged
-        # Identical per-iteration solves => identical trajectory; the
-        # residual is eigensolver rounding accumulated over ~70 macro-
-        # iterations (det-order differences), not a basin difference.
-        assert sel.n_iter == ref.n_iter
-        assert np.abs(np.asarray(sel.e_totals) - ref.e_totals).max() < 5e-9
+        assert sel.converged
+        assert sel.grad_norm < 1e-6
+        _, e_dense, _, _ = _spin_pure_roots(
+            sel.h1e_cas, sel.h2e_cas, 3, 4, 4, 0, 2,
+            nuclear_repulsion=H.nuclear_repulsion,
+        )
+        assert np.abs(np.asarray(sel.e_totals) - e_dense).max() < 5e-9
         s2 = [
             _s2_expectation(sel.cas.ci_coeffs_all[:, k], sel.cas.determinants, 4, 0)
             for k in range(2)
@@ -500,19 +522,13 @@ class TestCppSelectedCIBackend:
         assert abs(forced.e_total - legacy.e_total) < 1e-9
 
     def test_cpp_spin_pure_casscf_full_limit(self, monkeypatch):
-        # spin-pure SA2 through the C++ kernel == dense spin-pure SA2 at
-        # the full-selection limit (identical trajectories; see
-        # TestSpinPureSelectedCI for the Python-backend variants).
+        # Spin-pure SA2 through the C++ kernel equals dense spin-pure CI
+        # at the same optimized orbitals in the full-selection limit.
         from vibeqc.solvers import casscf
-        from vibeqc.solvers._ms_caspt2 import _s2_expectation
+        from vibeqc.solvers._ms_caspt2 import _s2_expectation, _spin_pure_roots
 
         monkeypatch.setenv("VIBEQC_SELECTED_CI_BACKEND", "cpp")
         H = _ham(H2O, "sto-3g")
-        ref = casscf(
-            H.h1e, H.h2e, n_active_elec=4, n_active_orb=4, n_core=3,
-            nuclear_repulsion=H.nuclear_repulsion, ms2=0, nroots=2,
-            spin_pure=True,
-        )
         sel = casscf(
             H.h1e, H.h2e, n_active_elec=4, n_active_orb=4, n_core=3,
             nuclear_repulsion=H.nuclear_repulsion, ms2=0, nroots=2,
@@ -520,7 +536,12 @@ class TestCppSelectedCIBackend:
             selected_ci_options=_exact_options(),
         )
         assert sel.converged
-        assert np.abs(np.asarray(sel.e_totals) - ref.e_totals).max() < 5e-9
+        assert sel.grad_norm < 1e-6
+        _, e_dense, _, _ = _spin_pure_roots(
+            sel.h1e_cas, sel.h2e_cas, 3, 4, 4, 0, 2,
+            nuclear_repulsion=H.nuclear_repulsion,
+        )
+        assert np.abs(np.asarray(sel.e_totals) - e_dense).max() < 5e-9
         s2 = [
             _s2_expectation(sel.cas.ci_coeffs_all[:, k], sel.cas.determinants, 4, 0)
             for k in range(2)

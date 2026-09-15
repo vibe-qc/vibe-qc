@@ -26,10 +26,10 @@ and queue from their own repositories; see [toolset lifecycle](toolset_lifecycle
 Historical tags and commit IDs belong to the archived repository unless
 explicitly present in the new one. `vibe-basis/` stays with the core.
 
-The repository published the `v0.16.0` tag and the `release` branch on
-2026-09-08, so the release-specific examples below work; `--dev` follows
-`main`. They still apply only to refs actually published in the selected
-repository -- historical monorepo tags are not among them.
+All four split projects have separate GitHub repositories. Check `git remote -v`
+before updating: ref selection uses that checkout's origin. This public stream
+has `main` and selected stable tags, with new public commit IDs. Keep original
+upstream checkouts separate. Updating the core does not update companions.
 
 ## The easy button
 
@@ -508,8 +508,8 @@ aliases save typing. Adapt the paths to your install.
 
 ```sh
 # --- vibeqc helpers (~/.zshrc) ---
-alias vibe-up='cd /path/to/vibeqc && source .venv/bin/activate'
-alias vibe-up-experimental='cd /path/to/vibeqc-experimental && source .venv/bin/activate'
+alias vibe-up='cd /path/to/vibe-qc && source .venv/bin/activate'
+alias vibe-up-experimental='cd /path/to/vibe-qc-experimental && source .venv/bin/activate'
 alias vibe-down='deactivate 2>/dev/null; cd ~'
 ```
 
@@ -534,7 +534,7 @@ uses: previewing in-flight bug-fix branches (e.g. the
 `feature/v0.7-pyscf-pbc-parity` periodic-SCF work), evaluating a
 breaking-change branch before it merges to `main`, or running
 side-by-side comparisons against the dev tree on the same data.
-The experimental tree is **opt-in**, if `/path/to/vibeqc-experimental`
+The experimental tree is **opt-in**, if `/path/to/vibe-qc-experimental`
 doesn't exist, `vibe-update` silently skips it.
 
 ```sh
@@ -571,9 +571,9 @@ vibe-update() {
     esac
 
     case "$tree" in
-      dev)          repo=/path/to/vibeqc-dev ;;
-      release)      repo=/path/to/vibeqc-release ;;
-      experimental) repo=/path/to/vibeqc-experimental ;;
+      dev)          repo=/path/to/vibe-qc-dev ;;
+      release)      repo=/path/to/vibe-qc-release ;;
+      experimental) repo=/path/to/vibe-qc-experimental ;;
     esac
 
     # Experimental is opt-in: if the directory doesn't exist and the
@@ -628,8 +628,8 @@ Usage:
 #### Setting up the experimental tree
 
 ```sh
-git clone https://github.com/vibe-qc/vibe-qc.git /path/to/vibeqc-experimental
-cd /path/to/vibeqc-experimental
+git clone https://github.com/vibe-qc/vibe-qc.git /path/to/vibe-qc-experimental
+cd /path/to/vibe-qc-experimental
 git checkout feature/v0.7-pyscf-pbc-parity     # or whichever branch
 ./scripts/setup_native_deps.sh                  # if it differs from your dev tree
 python3 -m venv .venv

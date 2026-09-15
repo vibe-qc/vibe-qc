@@ -19,12 +19,12 @@ Copy the input into a scratch run directory:
 
 ```sh
 mkdir -p ~/vibeqc-runs/h2o-rhf/molecular
-cp ~/path/to/vibeqc/examples/h2o.xyz \
+cp ~/path/to/vibe-qc/examples/h2o.xyz \
    ~/vibeqc-runs/h2o-rhf/
-cp ~/path/to/vibeqc/examples/molecular/input-h2o-rhf.py \
+cp ~/path/to/vibe-qc/examples/molecular/input-h2o-rhf.py \
    ~/vibeqc-runs/h2o-rhf/molecular/
 cd ~/vibeqc-runs/h2o-rhf/molecular
-~/path/to/vibeqc/.venv/bin/python input-h2o-rhf.py
+~/path/to/vibe-qc/.venv/bin/python input-h2o-rhf.py
 ```
 
 The coordinate file remains one directory above the script, matching the

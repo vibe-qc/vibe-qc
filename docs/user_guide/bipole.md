@@ -407,6 +407,14 @@ grad = compute_bipole_gradient_fd(system, "sto-3g", kmesh, opts, method="RHF")
 print(f"max|grad| = {np.max(np.abs(grad)):.4e} Ha/bohr")
 ```
 
+For a programmatic, imported, filtered or optimized basis, pass the actual
+`BasisSet` instead of its name. Each displaced calculation preserves its
+exponents, normalized coefficients and shell representation, moving each
+shell with its owning atom. A name loads the reference basis once before the
+displacements. Analytic orbital-response displacements also retain the
+supplied shells in their overlap and Fock reconstructions, including the
+Gamma hybrid/seminumeric CPHF and multi-k response paths.
+
 The analytic drivers are still a research-preview surface. In the
 **corrected (Ewald-exchange-split) gauge**, the BIPOLE default, maintained
 Gamma cases cover RHF/UHF and integer-occupation RKS/UKS with padded radial
@@ -454,6 +462,17 @@ from vibeqc.periodic_runner import run_periodic_job
 result = run_periodic_job(system, basis, method="RHF", jk_method="bipole",
                           optimize=True, optimize_cell=False)
 ```
+
+`relax_atoms` also accepts a `BasisSet` in place of the basis name. The
+high-level BIPOLE optimizer retains the supplied basis for both the energy
+objective and finite-difference forces, including custom bases whose names
+do not exist in the library. Trajectory output keeps the basis name as its
+display label.
+
+For an in-memory basis name, select `initial_guess="HCORE"` in
+`run_periodic_job`, or set the direct API's `options.initial_guess` to
+`InitialGuess.HCORE`. The default SAD guess still resolves atomic bases by
+name; preserving the optimization basis does not change that guess builder.
 
 Atomic relaxation preserves the input lattice. The historical
 `relax_cell`, `relax_cell_gradient`, and `relax_full` entry points remain

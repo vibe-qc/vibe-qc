@@ -40,8 +40,15 @@ The recommended installer owns the entire bootstrap: it checks the host,
 builds the pinned native libraries, creates `.venv`, installs the Python
 package, and prints a verification banner.
 
+Clone the GitHub source snapshot over HTTPS:
+
 ```sh
 git clone https://github.com/vibe-qc/vibe-qc.git
+```
+
+Then enter the new checkout and install:
+
+```sh
 cd vibe-qc
 ./scripts/install.sh --dev
 ```

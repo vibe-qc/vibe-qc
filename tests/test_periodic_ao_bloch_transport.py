@@ -17,6 +17,8 @@ from vibeqc.periodic.chi.symmetry import (
     build_aiccm2026dev_b_real_torus_ao_action,
     build_aiccm2026dev_b_symmetry_plan,
 )
+from vibeqc.periodic_symmetrize import detect_spacegroup
+from vibeqc.symmetry_ao import atom_permutation_under_op, build_ao_permutation_matrix
 
 
 def _controls():
@@ -76,6 +78,33 @@ def _one_atom(*, hexagonal=False):
     if hexagonal:
         lattice = np.array([[8, 4, 0], [0, 4 * np.sqrt(3), 0], [0, 0, 8]])
     return core.PeriodicSystem(3, lattice, [core.Atom(2, [0, 0, 0])])
+
+
+def _noncubic(kind, *, unwrapped=False):
+    if kind == "trigonal":
+        # Equal primitive lengths and equal, non-special rhombohedral angles.
+        lattice = np.linalg.cholesky(np.full((3, 3), 16.0) + 48 * np.eye(3)).T
+        number, count = 166, 12
+    elif kind == "orthorhombic":
+        lattice = np.diag([8.0, 9.0, 11.0])
+        number, count = 47, 8
+    elif kind == "monoclinic":
+        lattice = np.array([[8.0, 0, 2.7], [0, 9.0, 0], [0, 0, 10.3]])
+        number, count = 10, 4
+    else:
+        raise ValueError(kind)
+    # A fixed proper Cartesian rotation keeps crystallographic axes away
+    # from the laboratory axes, including the Euler north/south poles.
+    orientation = np.array([[-20, 4, 22], [20, -10, 20], [10, 28, 4]]) / 30
+    lattice = orientation @ lattice
+    frac = np.array([0.17, 0.23, 0.31])
+    if unwrapped:
+        frac += [1, -1, 0]
+    system = core.PeriodicSystem(3, lattice, [core.Atom(2, lattice @ frac)])
+    group = detect_spacegroup(system)
+    assert group.number == number
+    assert len(group.operations) == count
+    return system, group
 
 
 def _coefficients(n, columns=3):
@@ -171,6 +200,100 @@ def test_shell_rotation_matches_native_gaussian_values(l, pure, improper):
         assert np.max(np.abs(q.T @ q - np.eye(q.shape[0]))) > 0.1
         overlap = core.compute_overlap(basis)
         assert q.conj().T @ overlap @ q == pytest.approx(overlap, abs=2e-12)
+
+
+@pytest.mark.parametrize("kind", ("trigonal", "orthorhombic", "monoclinic"))
+@pytest.mark.parametrize("pure,unwrapped", list(product((False, True), repeat=2)))
+def test_noncubic_ao_actions_match_gaussian_values_and_physical_metric(kind, pure, unwrapped):
+    system, group = _noncubic(kind, unwrapped=unwrapped)
+    basis = _basis(system, range(5), pure=pure)
+    lattice = np.asarray(system.lattice)
+    center = np.asarray(system.unit_cell[0].xyz)
+    points = np.random.default_rng(831).normal(size=(43, 3))
+    values = core.evaluate_ao(basis, points + center)
+    overlap = core.compute_overlap(basis)
+    panel = np.eye(basis.nbasis, dtype=np.complex128)
+    grid = core._RegularKMesh([1, 1, 1])
+    noninteger_rotations = 0
+    for selected in group.operations:
+        op = _operation(selected.rotation, selected.translation)
+        rotation = lattice @ op.rotation @ np.linalg.inv(lattice)
+        noninteger_rotations += np.max(np.abs(rotation - np.rint(rotation))) > 0.1
+        # Stay within the diagnostic binding's per-call column bound while
+        # exposing every Cartesian s-through-g column (35 in total).
+        results = [
+            _apply(system, basis, op, grid, 0, False, np.ascontiguousarray(columns))
+            for columns in np.array_split(panel, 2, axis=1)
+        ]
+        action = np.column_stack([result.coefficients_copy() for result in results])
+        # Native Gaussian evaluation is independent of both polynomial
+        # transport and the Python Wigner/Euler implementation.
+        expected = core.evaluate_ao(basis, points @ rotation + center)
+        np.testing.assert_allclose(values @ action, expected, atol=2e-11, rtol=0)
+        np.testing.assert_allclose(action.conj().T @ overlap @ action, overlap,
+                                   atol=2e-12, rtol=0)
+        if pure:
+            atom_map = atom_permutation_under_op(system, rotation, lattice @ op.translation)
+            shared = build_ao_permutation_matrix(basis, rotation, atom_map)
+            np.testing.assert_allclose(values @ shared, expected, atol=2e-11, rtol=0)
+            np.testing.assert_allclose(shared, action, atol=2e-12, rtol=0)
+            np.testing.assert_array_equal(atom_map.lattice_shift[0],
+                                          results[0].atom_lattice_shift(0))
+    assert noninteger_rotations > 0
+
+
+@pytest.mark.parametrize("kind", ("trigonal", "orthorhombic", "monoclinic"))
+@pytest.mark.parametrize("pure,unwrapped,tr", list(product((False, True), repeat=3)))
+@pytest.mark.parametrize("shift", ((0, 0, 0), (1, 1, 1)))
+def test_noncubic_bloch_actions_match_pointwise_seitz_covariance(kind, pure, unwrapped, tr, shift):
+    system, group = _noncubic(kind, unwrapped=unwrapped)
+    basis = _basis(system, (0, 1, 2), pure=pure)
+    lattice = np.asarray(system.lattice)
+    reciprocal = 2 * np.pi * np.linalg.inv(lattice).T
+    images = np.array(list(product(range(-4, 5), repeat=3))) @ lattice.T
+    # Evaluate close to the wrapped atom, even when its stored representative
+    # is outside the cell. All finite-image tails are negligible for these Gaussians.
+    points = lattice @ np.array([0.17, 0.23, 0.31]) + np.random.default_rng(932).normal(size=(9, 3))
+    grid = core._RegularKMesh([3, 3, 3], shift)
+    source = 16
+    c = _coefficients(basis.nbasis, 2)
+    wrapped_targets = 0
+    shifted_atoms = 0
+    for selected in group.operations:
+        op = _operation(selected.rotation, selected.translation)
+        result = _apply(system, basis, op, grid, source, tr, c)
+        address, wrap = _fractional_oracle(grid, source, op.rotation, tr)
+        assert list(result.memory.target_doubled_address) == address
+        assert list(result.memory.reciprocal_wrap) == wrap
+        assert result.memory.target_index == grid.index(address)
+        wrapped_targets += any(wrap)
+        shifted_atoms += any(result.atom_lattice_shift(0))
+        rotation = lattice @ op.rotation @ np.linalg.inv(lattice)
+        original_points = (points - lattice @ op.translation) @ rotation
+        lhs = core.evaluate_bloch_ao(
+            basis, points, reciprocal @ grid.fractional_at(result.memory.target_index), images,
+        ) @ result.coefficients_copy()
+        rhs = core.evaluate_bloch_ao(
+            basis, original_points, reciprocal @ grid.fractional_at(source), images,
+        ) @ c
+        np.testing.assert_allclose(lhs, rhs.conj() if tr else rhs, atol=3e-12, rtol=0)
+        assert not result.physical_orbital_sewing_certified
+    assert wrapped_targets > 0
+    if unwrapped:
+        assert shifted_atoms > 0
+
+
+@pytest.mark.parametrize("kind", ("trigonal", "orthorhombic", "monoclinic"))
+def test_noncubic_metric_rejects_cubic_fractional_rotation(kind):
+    system, _ = _noncubic(kind)
+    basis = _basis(system, (0,))
+    # This integer unimodular matrix preserves the k mesh but not these
+    # lattice metrics; accepting it would silently apply a nonrigid AO map.
+    rotation = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    frac = np.array([0.17, 0.23, 0.31])
+    op = _operation(rotation, frac - rotation @ frac)
+    with pytest.raises((ValueError, RuntimeError), match="orthogon|rotation|metric"):
+        _apply(system, basis, op, core._RegularKMesh([3, 3, 3]), 16, False, _coefficients(1))
 
 
 @pytest.mark.parametrize("shift,tr", list(product(((0, 0, 0), (1, 1, 1)), (False, True))))

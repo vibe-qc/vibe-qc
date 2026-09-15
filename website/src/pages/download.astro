@@ -2,6 +2,7 @@
 import Base from '../layouts/Base.astro';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
+import { repositories } from '../data/repositories.mjs';
 import {
   distributionMatrix,
   publicDownloadUrl,
@@ -23,7 +24,7 @@ const hasPublishedDownload =
 const pageStatus = hasPublishedDownload ? 'Official downloads' : 'Distribution preview';
 const pageStatusDetail = hasPublishedDownload
   ? 'Only independently qualified artifacts have active references.'
-  : 'No artifact is published yet.';
+  : 'No suite image or desktop package is published here yet.';
 ---
 
 <Base
@@ -269,6 +270,28 @@ const pageStatusDetail = hasPublishedDownload
           </div>
         </div>
       </div>
+    </section>
+
+    <section class="wrap activation-section" aria-labelledby="source-heading">
+      <span class="eyebrow">source downloads</span>
+      <h2 id="source-heading">Get each project from its own repository.</h2>
+      <p class="activation-lede">Each project has its own GitHub source snapshots and tags.
+        Public commit IDs differ from the original upstream commits; provenance
+        manifests record the source revision. Packages are listed only when published.</p>
+      <div class="activation-grid">
+        {repositories.map(repository => <article>
+          <h3>{repository.name}</h3>
+          <p>{repository.role}</p>
+          <p><a href={repository.github}>GitHub mirror</a></p>
+          <p><a href={`${repository.github}/tags`}>Source tags</a> · <a href={`${repository.github}/releases`}>Release packages</a></p>
+        </article>)}
+      </div>
+      <p class="activation-lede">A source tag does not imply a wheel or desktop
+        installer exists. Managed install and update scripts require a Git clone;
+        source archives use the manual build recipe. See
+        <a href="/docs/installation.html#repositories-and-downloads">installation and download guidance</a>.
+        Legacy viewer wheels and QVF writer archives are not included in this
+        source snapshot; current downloads belong to the companion repositories.</p>
     </section>
 
     <section class="wrap activation-section" aria-labelledby="activation-heading">

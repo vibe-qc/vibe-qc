@@ -40,13 +40,6 @@ FILE_OWNERS = {
 # here therefore widens or narrows the release gate on its own; pin one only as
 # the file's owning chat, and say why in the rationale.
 CURATED: dict[str, dict[str, str]] = {
-    "tests/test_release_ref_selection.py": {
-        "maturity": "verified",
-        "tier": "T2",
-        "owner": "release/test-health",
-        "disposition": "demote T2",
-        "rationale": "Hermetic real-Git installer release branch and stable-tag selection; no native calculation",
-    },
     "tests/test_contributor_workflow_contract.py": {
         "maturity": "verified",
         "tier": "T2",
@@ -59,12 +52,26 @@ CURATED: dict[str, dict[str, str]] = {
             "closes the progress lease. Pure text policy check; no native work."
         ),
     },
+    "tests/test_release_ref_selection.py": {
+        "maturity": "verified",
+        "tier": "T2",
+        "owner": "release/test-health",
+        "disposition": "demote T2",
+        "rationale": "Hermetic real-Git installer release branch and stable-tag selection; no native calculation",
+    },
     "tests/test_aiccm_site_settings.py": {
         "maturity": "verified",
         "tier": "T2",
         "owner": "release/test-health",
         "disposition": "demote T2",
         "rationale": "Hermetic external study profile and interpreter dispatch boundaries; no native calculation",
+    },
+    "tests/test_git_clone_pinned.py": {
+        "maturity": "verified",
+        "tier": "T2",
+        "owner": "release/test-health",
+        "disposition": "demote T2",
+        "rationale": "Sub-minute Bash-level regressions for scripts/_verify_source.sh git_clone_pinned (#241): the commit pin refuses a moved tag, VIBEQC_GIT_REFERENCE_DIR serves the pinned commit from a local repository offline and only from one holding that commit, upstream failures retry a bounded number of times, and the clone deadline escalates to SIGKILL and honours Ctrl-C. Throwaway local repositories only; no network, no native build.",
     },
     "tests/test_basis_fetch.py": {
         "rationale": "Sub-second guard on the on-demand BSE basis renderer: cache-location precedence, the optional-extra error, the .g94 / .ecp split, atomic writes, version-keyed cache invalidation, and the refusal that keeps a record not covering the requested elements out of the cache. Most cases use a stand-in catalogue so no optional distribution is needed; two skip without the [bse] extra. No SCF.",
@@ -1224,6 +1231,21 @@ CURATED: dict[str, dict[str, str]] = {
             "must also retain the NDDO-specific Dewar-Thiel and Voigt citations."
         ),
     },
+    "tests/test_changelog_released_sections.py": {
+        "maturity": "production",
+        "tier": "T1",
+        "owner": "release",
+        "disposition": "blocking T1",
+        "rationale": (
+            "pins the GitLab #229 guard: every released CHANGELOG.md section must "
+            "match its SHA-256 pin in scripts/test_gate/changelog_pins.toml, so an "
+            "entry for unreleased work cannot reach a released section through a "
+            "rebase unnoticed, as it did in #227. Plain text and hashing, plus "
+            "throwaway git repositories for the audit command and the pre-push "
+            "hook; the test imports nothing from vibeqc and runs no SCF. Blocking "
+            "T1 because a candidate's release notes are part of what it proves."
+        ),
+    },
     "tests/test_tddft_davidson.py": {
         "maturity": "production",
         "tier": "T1",
@@ -1265,6 +1287,25 @@ CURATED: dict[str, dict[str, str]] = {
             "manifold reduces to a scalar. Seconds-scale SCF."
         ),
     },
+    "tests/test_trexio_reference_gate.py": {
+        "maturity": "verified",
+        "tier": "T2",
+        "owner": "output/docs",
+        "disposition": "non-blocking T2",
+        "rationale": (
+            "Pins tests/trexio_reference.py, the shared locator for the "
+            "out-of-process TREXIO reference interpreter (#253): without "
+            "VIBEQC_TREXIO_PYTHON the convention checks skip with a reason "
+            "naming the gate that did not run, and fail instead when "
+            "VIBEQC_REQUIRE_TREXIO_REFERENCE is set. Pure Python, needs "
+            "neither trexio nor pyscf; T2 with its two TREXIO siblings."
+        ),
+    },
+    "tests/test_output_trexio_extended.py": {
+        "maturity": "verified", "tier": "T2", "owner": "output/docs",
+        "disposition": "non-blocking T2",
+        "rationale": "TREXIO ECP Hamiltonian reconstruction, molecular and periodic READ guesses, complex k/spin blocks, density/integral contractions and all storage kinds on both optional backends.",
+    },
     "tests/test_output_trexio.py": {
         "maturity": "verified",
         "tier": "T2",
@@ -1277,8 +1318,10 @@ CURATED: dict[str, dict[str, str]] = {
             "on both back ends with C^T S C = 1 in the overlap rebuilt from "
             "the file's basis group, the ECP / basis-free refusals, the "
             "run_job(trexio=...) wiring with its manifest row and citation, "
-            "and an out-of-process PySCF energy rebuild that skips unless "
-            "VIBEQC_TREXIO_PYTHON names an interpreter with trexio + pyscf. "
+            "and an out-of-process PySCF energy rebuild that needs "
+            "VIBEQC_TREXIO_PYTHON to name an interpreter with trexio + pyscf: "
+            "it skips naming the gate that did not run, or fails when "
+            "VIBEQC_REQUIRE_TREXIO_REFERENCE is set (#253). "
             "output-docs lane, owner output/docs, like every sibling output "
             "writer test; T2 because the artefact is opt-in and no default "
             "output changes."

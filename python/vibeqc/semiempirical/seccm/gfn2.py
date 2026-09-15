@@ -286,6 +286,9 @@ class GFN2SECCMResult:
     #: Frontier gap (Ha) of the converged finite torus.  Measured at every
     #: electronic temperature whenever a frontier exists; 0.0 only when no
     #: frontier is defined (``n_occ`` is 0 or equals ``n_basis``).
+    #: NaN on a rejected attempt when overlap screening retains the occupied
+    #: manifold but removes every virtual orbital. Smearing cannot waive an
+    #: unavailable frontier.
     homo_lumo_gap: float
     #: True when ``homo_lumo_gap`` is at or below the applied guard epsilon
     #: (``run_controls.finite_torus_gap_tolerance``) and the positive-gap

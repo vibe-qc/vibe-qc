@@ -160,6 +160,7 @@ pending  ->  running  ->  completed          the happy path
                        ->  failed             non-zero exit
                        ->  time_exceeded      wall-time enforcement
                        ->  oom_killed         the watchdog reclaimed it
+                       ->  starved            the watchdog saw no CPU progress
                        ->  killed             you called vq kill
                        ->  interrupted        the job vanished unexplained
                        ->  aborted_by_queue   the queue ended it

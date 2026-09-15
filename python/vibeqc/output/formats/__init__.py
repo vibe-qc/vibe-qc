@@ -36,7 +36,15 @@ from .qvf import (
     validate_qvf,
     write_qvf,
 )
-from .trexio import read_trexio, write_trexio
+from .trexio import (
+    TrexioData,
+    TrexioMOBlock,
+    TrexioSparse,
+    read_trexio,
+    read_trexio_fields,
+    write_trexio,
+    write_trexio_fields,
+)
 from .xyz import write_xyz
 
 __all__ = [
@@ -44,6 +52,11 @@ __all__ = [
     "write_extended_xyz",
     "write_trexio",
     "read_trexio",
+    "read_trexio_fields",
+    "write_trexio_fields",
+    "TrexioData",
+    "TrexioMOBlock",
+    "TrexioSparse",
     "write_poscar",
     "write_cif",
     # qvf.py

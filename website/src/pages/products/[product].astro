@@ -5,11 +5,13 @@ import ProductWordmark from '../../components/ProductWordmark.astro';
 import Footer from '../../components/Footer.astro';
 import OrbitalField from '../../components/OrbitalField.astro';
 import { products } from '../../data/products.mjs';
+import { repositories } from '../../data/repositories.mjs';
 
 export function getStaticPaths() {
   return products.map(product => ({ params: { product: product.id }, props: { product } }));
 }
 const { product } = Astro.props;
+const repository = repositories.find(item => item.id === product.id);
 const base = import.meta.env.BASE_URL;
 const artwork = {
   'vibe-qc': { social: 'vibe-qc-product-social.png', alt: 'vibe-qc: Quantum chemistry. Molecules to solids.' },
@@ -57,8 +59,8 @@ const artwork = {
           <p>{product.requirements}</p>
           <p>{product.installation}</p>
           {product.command && <pre class="product-code"><code>{product.command}</code></pre>}
-          <p class="access-note">Source access currently requires a GitLab account with repository access.
-            <a href={`${base}contact`}> Contact the maintainer</a> if you need access.</p>
+          <p class="access-note">Choose a tag published in this product's GitHub repository.
+            <a href="/docs/installation.html#repositories-and-downloads">Source details</a>.</p>
         </div>
         <aside class="card resource-card" aria-label={`${product.name} resources`}>
           <h3>Go further</h3>
@@ -67,7 +69,9 @@ const artwork = {
           {product.docsPending && <p>The companion documentation site is being brought online. Its source README has the installation instructions available today.</p>}
           {product.guides.map(([label, href]) => <a href={href}>{label} ↗</a>)}
           <a href={`${product.repository}/releases`}>Independent releases ↗</a>
-          <a href={product.repository}>Source repository ↗</a>
+          <a href={product.repository}>Source snapshot ↗</a>
+          <a href={repository.github}>GitHub mirror ↗</a>
+          <a href={`${product.repository}/tags`}>Tagged source downloads ↗</a>
         </aside>
       </div>
     </section>

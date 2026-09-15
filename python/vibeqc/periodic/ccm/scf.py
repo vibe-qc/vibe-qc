@@ -325,11 +325,11 @@ def run_ccm_rhf(
     cyclically invariant), so small high-symmetry clusters show minor orbital-
     degeneracy splitting. See ``handovers/HANDOVER_AICCM.md`` Sec. "M2b status".
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_rhf',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rhf"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_rhf',
     )
     _warn_experimental()
     # Result-backend identity (IID 344): a caller-injected tensor overrides
@@ -630,11 +630,11 @@ def run_ccm_rhf_scalable(
     As in the dense driver, ``energy`` / ``total_cyclic_energy`` is the total
     cyclic-supercell energy, not an already normalized per-cell value.
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_rhf_scalable',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rhf_scalable"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_rhf_scalable',
     )
     _warn_experimental()
     cxx_method = _ccm_scalable_cxx_method(method, four_center)

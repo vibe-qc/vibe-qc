@@ -968,6 +968,23 @@ contraction, or production symmetry certificate. This closes the private
 physical producer/reducer connection; matching the production HF operator and
 connecting representative-only correlation remain open.
 
+The private `plan_jk_all` and `contract_jk_all` interfaces extend this admission
+to every target in the declared k mesh. All target preflights finish before
+the first density snapshot or integral. Execution uses one immutable common
+density and returns a complete tuple of finalized native results in mesh
+order. A late-target refusal cannot expose a partial grid. The density layout
+is rechecked at the copy boundary, and native validation rejects nonfinite
+values before any integral work.
+
+The whole-mesh budget sums all target envelopes and reserves the common
+density snapshot separately. This conservatively counts shared storage more
+than once and includes each retained native result's own density copy; it is
+a bounded diagnostic interface, not a production scaling claim. Native
+per-target caps and the aggregate shared budget must both admit the work.
+No all-quartet cache or Python numerical contraction is introduced. Each
+result retains its existing source and payload identities and its false
+Hamiltonian and symmetry certification flags.
+
 The Bloch kernel can optionally require exact image-multiset closure under
 all eight real-ERI quartet permutations and first-cell reanchoring. The
 check preserves repeated-image multiplicities, rejects incomplete support

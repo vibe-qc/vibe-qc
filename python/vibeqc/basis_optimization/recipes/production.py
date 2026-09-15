@@ -252,7 +252,7 @@ def optimize_basis(
     if lib is None:
         raise RuntimeError(
             "qc-input-library not found. Set library_root= or clone "
-            "https://vibe-qc.com/docs/"
+            "https://vibe-qc.com/docs/basisset_dev/index.html"
         )
 
     if compounds:

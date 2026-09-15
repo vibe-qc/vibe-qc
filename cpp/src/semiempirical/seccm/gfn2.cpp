@@ -1163,7 +1163,8 @@ GFN2SECCMResult run_supercell_scc(
             // with the waiver recorded rather than rejected.
             bool gap_rejected = false;
             if (ctx.n_occ > 0 && ctx.n_occ < ctx.n_basis) {
-                const double gap = eps(ctx.n_occ) - eps(ctx.n_occ - 1);
+                const double gap = detail::finite_torus_homo_lumo_gap(
+                    eps, ctx.n_occ);
                 result.homo_lumo_gap = gap;
                 const bool gap_below_tolerance =
                     !std::isfinite(gap) || gap <= ctx.gap_tolerance;

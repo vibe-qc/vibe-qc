@@ -46,7 +46,7 @@ backend. From the repository root:
 Or copy one `.py` file to a calculation directory and run it there:
 
 ```sh
-/path/to/vibeqc/.venv/bin/python MgO-rocksalt-RKS-PBE-pobtzvp-mp8-gdf.py
+/path/to/vibe-qc/.venv/bin/python MgO-rocksalt-RKS-PBE-pobtzvp-mp8-gdf.py
 ```
 
 Convergence-control mapping:

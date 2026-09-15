@@ -29,7 +29,7 @@ laptop.
 
 Run:
 
-    ~/path/to/vibeqc/.venv/bin/python examples/vibe_view/showcase_co_on_mgo.py
+    ~/path/to/vibe-qc/.venv/bin/python examples/vibe_view/showcase_co_on_mgo.py
 
 Output:
 

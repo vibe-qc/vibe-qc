@@ -53,7 +53,7 @@ close to experiment (~1750 / 1500 / 2900 cm^-1).
 
 Run:
 
-    ~/path/to/vibeqc/.venv/bin/python examples/vibe_view/showcase_formaldehyde.py
+    ~/path/to/vibe-qc/.venv/bin/python examples/vibe_view/showcase_formaldehyde.py
 
 Output (all under ``examples/vibe_view/runs/h2co_showcase/``):
 

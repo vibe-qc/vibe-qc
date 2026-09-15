@@ -13,7 +13,7 @@ seconds on a laptop.
 
 Run:
 
-    ~/path/to/vibeqc/.venv/bin/python \\
+    ~/path/to/vibe-qc/.venv/bin/python \\
         examples/vibe_view/showcase_basis_functions.py
 
 Output:

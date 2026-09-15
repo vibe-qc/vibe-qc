@@ -115,11 +115,15 @@ def test_bounded_reciprocal_sphere_refuses_dense_core_tail_before_enumeration(mo
     def unexpected_enumeration(*args, **kwargs):
         pytest.fail("reciprocal labels allocated before candidate admission")
     monkeypatch.setattr(np, "arange", unexpected_enumeration)
-    with pytest.raises(MemoryError, match="candidate cap"):
+    with pytest.raises(MemoryError, match="candidate cap") as caught:
         _rsgdf_bounded_reciprocal_sphere(
             system, np.zeros(3), 492507.0, output_byte_cap=2**20,
             workspace_byte_cap=2**20, candidate_cap=100000,
         )
+    message = str(caught.value)
+    assert "candidates=" in message and "cap=100000" in message
+    assert "ke_cutoff=492507 Ha" in message and "box_widths=" in message
+    assert caught.value.retry_with_fewer_kpoints is False
 
 
 def test_bounded_reciprocal_sphere_admits_exact_output_and_workspace():
@@ -134,15 +138,21 @@ def test_bounded_reciprocal_sphere_admits_exact_output_and_workspace():
         system, np.zeros(3), 3.17, output_byte_cap=vectors.nbytes, **kwargs,
     )
     np.testing.assert_array_equal(vectors, same)
-    with pytest.raises(MemoryError, match="output cap"):
+    with pytest.raises(MemoryError, match="output cap") as output_error:
         _rsgdf_bounded_reciprocal_sphere(
             system, np.zeros(3), 3.17, output_byte_cap=vectors.nbytes-1, **kwargs,
         )
-    with pytest.raises(MemoryError, match="workspace cap"):
+    assert f"cap={vectors.nbytes-1} bytes" in str(output_error.value)
+    assert "required_at_least=" in str(output_error.value)
+    assert output_error.value.retry_with_fewer_kpoints is True
+    with pytest.raises(MemoryError, match="workspace cap") as workspace_error:
         _rsgdf_bounded_reciprocal_sphere(
             system, np.zeros(3), 3.17, output_byte_cap=2**20,
             workspace_byte_cap=1, candidate_cap=100000,
         )
+    assert "required=" in str(workspace_error.value)
+    assert "cap=1 bytes" in str(workspace_error.value)
+    assert workspace_error.value.retry_with_fewer_kpoints is False
 
 
 def _range_separated_fit_fixture(displacement=0.):
@@ -1927,3 +1937,27 @@ def test_dense_silicon_fixed_density_jk_matches_independent_reference(omega):
         np.testing.assert_allclose(actual, expected, atol=3e-8, rtol=0)
         energy_error = factor * np.trace(densities[0] @ (actual[0]-expected[0])).real
         assert abs(energy_error) < 3e-7
+
+
+@pytest.mark.parametrize("retryable,expected", [(True, [3, 1]), (False, [3])])
+def test_range_separated_cache_retries_only_batch_dependent_reservations(
+    monkeypatch, retryable, expected,
+):
+    from vibeqc import aux_basis as module
+    from vibeqc.periodic_k_gdf import _build_range_separated_lpq_cache
+
+    system, basis, auxiliary = _range_separated_fit_fixture()
+    failure = module._RangeSeparatedGdfAdmissionError(
+        "test reservation", retry_with_fewer_kpoints=retryable)
+    calls = []
+    def rejected(*args, **kwargs):
+        calls.append(len(args[3]))
+        raise failure
+    monkeypatch.setattr(module, "_build_lpq_range_separated_shared_q", rejected)
+    with pytest.raises(module._RangeSeparatedGdfAdmissionError) as caught:
+        _build_range_separated_lpq_cache(
+            system, basis, auxiliary, np.zeros((3, 3)), False,
+            **_range_separated_fit_options(),
+        )
+    assert caught.value is failure
+    assert calls == expected

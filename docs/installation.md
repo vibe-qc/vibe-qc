@@ -42,10 +42,60 @@ no GitLab account or deploy key. A private staging copy requires GitHub access
 until its publication is approved. Keep an existing upstream checkout separate;
 public snapshot commit IDs differ from the original development commits.
 
+## Clone the source
+
+Clone the GitHub source snapshot over HTTPS:
+
+```sh
+git clone https://github.com/vibe-qc/vibe-qc.git
+```
+
+Then enter the new checkout and install:
+
+```sh
+cd vibe-qc
+./scripts/install.sh --dev
+```
+
+`--dev` selects `main`. Use `--branch v0.17.1` or `--branch v0.17.2`
+to select those snapshots; without a branch flag, the installer chooses the
+newest stable tag advertised by origin. Platform prerequisites are below.
+
+## Repositories and downloads
+
+Clone each product into its own directory. The Python import remains
+`vibeqc`, but the core repository and checkout are named **vibe-qc**.
+The viewer and queue are separate projects; **vibe-basis stays in vibe-qc**.
+
+| Project | Checkout | GitHub source | Source tags |
+|---|---|---|---|
+| vibe-qc | `vibe-qc/` | [vibe-qc/vibe-qc](https://github.com/vibe-qc/vibe-qc) | [Tags](https://github.com/vibe-qc/vibe-qc/tags) |
+| vibe-view | `vibe-view/` | [vibe-qc/vibe-view](https://github.com/vibe-qc/vibe-view) | [Tags](https://github.com/vibe-qc/vibe-view/tags) |
+| vibe-queue (`vq`) | `vibe-queue/` | [vibe-qc/vibe-queue](https://github.com/vibe-qc/vibe-queue) | [Tags](https://github.com/vibe-qc/vibe-queue/tags) |
+| QVF reference | `qvf/` (optional) | [vibe-qc/qvf](https://github.com/vibe-qc/qvf) | [Tags](https://github.com/vibe-qc/qvf/tags) |
+
+Use each repository's own tags. Public snapshot commit IDs differ from their
+original development IDs; the provenance manifests record that relationship.
+
+For source downloads, choose a tag in the owning project's **tags** page.
+Packaged artifacts, when published, belong to that project's release page:
+[vibe-qc](https://github.com/vibe-qc/vibe-qc/releases),
+[vibe-view](https://github.com/vibe-qc/vibe-view/releases),
+[vibe-queue](https://github.com/vibe-qc/vibe-queue/releases), or
+[QVF](https://github.com/vibe-qc/qvf/releases).
+A tag does not imply that a wheel, desktop installer or container is available.
+The managed installers and updaters require a Git checkout; unpacking a source
+archive is not equivalent to cloning. See the [manual build](#manual-setup)
+for archive-based provisioning.
+
+Legacy viewer wheels and QVF writer tarballs are not included in this
+snapshot. Use the owning companion repository for available downloads. QVF is a specification and reference implementation, not a runtime
+or installation dependency of vibe-qc.
+
 ## What a successful install does
 
-The recommended command is intentionally a bootstrap, not merely a Python
-package install:
+After [cloning and entering the checkout](#clone-the-source), the recommended
+command performs the full bootstrap:
 
 ```sh
 ./scripts/install.sh --dev
@@ -261,6 +311,8 @@ load the wrong native libraries.
 
 (manual-bootstrap)=
 ### Advanced manual bootstrap
+
+(manual-setup)=
 
 If you'd rather invoke the steps by hand (e.g. on a stripped-down
 machine, or to integrate with your own provisioning):

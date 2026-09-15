@@ -20,9 +20,9 @@ from . import msindo_pair_deriv as _pd
 from .msindo import (
     ANGSTROM_TO_BOHR,
     _atom_blocks,
-    _scf_rhf,
     eff_core_charge,
 )
+from .msindo_ccm_stability import scf_rhf_ccm
 from .msindo_ccm import (
     WignerSeitzCells,
     _build_core_and_gamma_ccm,
@@ -180,7 +180,7 @@ def ccm_gradient_analytic(
 
         fock_extra = _fock_extra
 
-    P, _F, e_elec, eps, converged, it = _scf_rhf(
+    P, _F, e_elec, eps, converged, it = scf_rhf_ccm(
         H,
         G,
         blocks,

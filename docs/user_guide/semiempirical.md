@@ -146,8 +146,14 @@ scale-1.06 point correctly fails under a 500-iteration cap. The seven-point
 bulk-Si sweep converges within 200 iterations. Periodic GFN2 honors
 `max_iter` as a hard total across its ordinary and automatic-stabilization
 attempts, and the public runner forwards both that budget and `conv_tol` to
-the native SCC loop. These bounded results do not relax the experimental GFN2
-gate.
+the native SCC loop. With automatic stabilization enabled, every 500 primary
+iterations the driver compares the minimum residual in two consecutive
+25-iteration windows. An improving primary solve continues within the full
+budget. A stalled checkpoint or rejected charge state can trigger one neutral
+restart using at most 2000 of the remaining iterations, at the same electronic
+temperature. Restart eligibility does not switch at `max_iter=2500`, and the
+reported count includes only executed iterations. These bounded results do
+not relax the experimental GFN2 gate.
 
 **SCC iteration default (2026-08-14).** The molecular GFN2 driver's default
 charge iteration is a two-phase polyalgorithm: damped simple mixing tracks
@@ -350,7 +356,18 @@ of the built-in in-house screening set rather than a fixed element list, so it
 covers H, C, N, O, F, P, S and Cl and every one of their pairs; a pair without
 an explicit repulsive is refused by name. DFTB0 carries no SCC, so neither the
 even-replica charge-map pathology nor the Klopman-Ohno thermodynamic-limit
-defect reaches this route, and both replica parities are supported:
+defect reaches this route, and both replica parities are supported.
+
+DFTB0-SECCM, SCC-DFTB-SECCM and GFN2-SECCM screen overlap modes at or
+below the adapter threshold before solving in the retained space. That space
+must hold the occupied orbitals. Reporting a HOMO-LUMO gap additionally
+requires a retained virtual orbital: if screening leaves exactly the occupied
+count, the existing gap guard rejects the calculation or SCC attempt instead
+of indexing a missing LUMO. A rejected GFN2 attempt records an unavailable
+gap as NaN; finite temperature cannot waive it as a zero gap. This does not
+change the occupied-space criterion or establish physical-branch selection.
+DFTB0/SCC-DFTB analytic gradients still require a full-spectrum result;
+screened rectangular eigenvectors are not admitted by those gradient paths.
 
 ```python
 import numpy as np

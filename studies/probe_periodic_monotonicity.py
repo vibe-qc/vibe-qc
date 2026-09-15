@@ -1,8 +1,9 @@
-"""Is the periodic GFN2 stabilization-reserve defect reachable, or latent?
+"""Periodic GFN2 #244: fast controls and a measured slow-primary witness.
 
-periodic_gfn2.cpp:429  primary_max_iter = max_iter - (max_iter >= 2500 ? 2000 : 0)
-so max_iter=2499 gives the primary 2499 iterations and 2500 gives it 500.
-A system converging in 501..2499 iterations is cut off by the LARGER budget.
+Before the fix, max_iter=2500 cut the primary to 500 iterations. The polar
+HF cell with explicit Simple/Aitken mixing 0.02 or 0.01 converged in about
+1099/2205 iterations at max_iter=2499, but failed with the larger budget.
+Run from the repository root with a source-matched native extension.
 """
 import sys; sys.path.insert(0, "tests")
 import numpy as np
@@ -23,3 +24,21 @@ for name, (system, cutoff) in cases.items():
         r = _xtb.run_gfn2_xtb_gamma(system, params, o, cutoff)
         print(f"  max_iter={max_iter:>5} conv={str(r.converged):>5} "
               f"n_iter={r.n_iter:>5} E={r.energy:>16.9f}")
+
+from vibeqc._vibeqc_core import semiempirical as _se
+
+for mixing in (0.01, 0.02):
+    print(f"--- slow polar HF, mixing={mixing} ---")
+    for max_iter in (500, 2499, 2500, 2501, 3000):
+        o = _xtb.XTBSccOptions()
+        o.max_iter = max_iter
+        o.conv_tol_charge = 1e-9
+        o.auto_stabilize = True
+        o.electronic_temperature = 0.001
+        o.scc_mixer = _se.SCCMixer.Simple
+        o.mixer_damping = 1.0
+        o.charge_mixing = mixing
+        r = _xtb.run_gfn2_xtb_gamma(_polar_hf_cell(), params, o, 12.0)
+        print(f"  max_iter={max_iter:>5} conv={str(r.converged):>5} "
+              f"n_iter={r.n_iter:>5} trace={len(r.scc_max_change_trace):>5} "
+              f"E={r.energy:.15f} T={r.smearing_temperature}")

@@ -1,0 +1,641 @@
+# Pins for the released sections of CHANGELOG.md (#229).
+#
+# Each entry is the SHA-256 of one released section's body: the lines after its
+# "## [vX.Y.Z]" header up to the next "## [" header, joined with "\n".
+# scripts/test_gate/changelog_guard.py compares them with CHANGELOG.md, from
+# tests/test_changelog_released_sections.py (tier T1) and .githooks/pre-push.
+#
+# Do not edit hashes by hand. After cutting a release, pin its new section:
+#     python scripts/test_gate/changelog_guard.py pin vX.Y.Z
+# A deliberate change to an already released section needs a stated reason:
+#     python scripts/test_gate/changelog_guard.py pin vX.Y.Z --amended "why"
+# An entry for work that has not been released belongs under [Unreleased].
+
+[sections."v0.17.3"]
+sha256 = "bfa5b51ad3f519bf245717c4cc5fd049d684cf6c61536b583f3922c1233140ef"
+amended = "Preparation-only wording completed before the first v0.17.3 tag; Preparation-only incorporation of final main changes before the first v0.17.3 tag"
+
+[sections."v0.17.2"]
+sha256 = "96ee5b27072b1b77e00ef6fee50bb73bfa549d27d7068298a4c65012f0cc457e"
+
+[sections."v0.17.1"]
+sha256 = "92235b77aa15d13def0f91ca86fef98c6f043a8cb9a8bf676acecca597f3f838"
+amended = "#229: v0.17.1 work that the shipped notes filed under [v0.17.0] and [v0.16.1] was moved here: the AICCM real-Gamma, CCSD and DLPNO extension (800c919, d6cd167, c94f1cd), the Gamma-CCM CCSD energy-semantics correction (c94f1cd), BSE basis fetching (3d191ac), the vibe-basis 0.12.0 topology search (c1ff958) and the COSMO FINE Cavity #770 fix (190665d)."
+
+[sections."v0.17.0"]
+sha256 = "286baa366f8fe12bab5ab79be81de04322e67d6539d92616bea7a7ada60e6195"
+amended = "#229: restored to the v0.17.0 tag's text, plus the COSMO FINE Cavity #771 fix (b67ca45), which shipped in v0.17.0 but had been filed under [v0.16.1]."
+
+[sections."v0.16.1"]
+sha256 = "4ed09c2c7a73b8699108eb8170d39f8ab1b1b87dff19c1fb5398343b93badae4"
+
+[sections."v0.16.0"]
+sha256 = "d8d0f97c535e8274e04b5a84a3b6ec4e6d75190007dd73b7eecb3c0989080476"
+amended = "c4034b7 added the Pople's Puffin codename artwork after the v0.16.0 tag."
+
+[sections."v0.15.162"]
+sha256 = "4b3830d19c2e66b678225e5bbca41422006dad55430b229b00782decfb601623"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.161"]
+sha256 = "b3c51c3a46008b2129acb1b077e9385ab347d639e61919d7e3e9a0c5e63fbbfc"
+
+[sections."v0.15.160"]
+sha256 = "6480ff12a2e352790cffaafe458fd078cbccb5604add6a30d5bc9c9ab5ed5334"
+
+[sections."v0.15.159"]
+sha256 = "c71cb3633d32509465eaa0dbb2bd2cc9048a251107ccca5b16babb0a4e25e15c"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.158"]
+sha256 = "433493897269ed4b064cb416b67cfdd53a38e8e1423352b00d55b914f1272a92"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.157"]
+sha256 = "faebfc26a35fb51023e5caba48401ba0f21790573ece7673d08060576754b566"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.156"]
+sha256 = "5c62c62ef625f341721500dcb40ce3269b25d5a03eb07145087016e09eb5d65a"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.155"]
+sha256 = "d126f3938492a56e7b4be0239279185cf8b27947f2097b54462d6c648c91dec2"
+
+[sections."v0.15.154"]
+sha256 = "80ba300a3f80776add5f728510b6888dd27c467c4ec3b8b5d9945aaff4c06e6d"
+
+[sections."v0.15.153"]
+sha256 = "7396413df88f512fb7e45e545d71fb33038f7d2e6eab87d2e0b99d3e037496d2"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.152"]
+sha256 = "669e0a811a651e4e90fdd94c4d6b3ff8f31d85c19e2f7643574a43aad2ef400c"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.15.151"]
+sha256 = "95417bf9a7484d8c52fa1b4813ecc8b13da1bd05c5926e34405dcae12100d719"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.15.150"]
+sha256 = "05f87c2ff22391782941ef7cfe6037481034441ed0073a87aa779c891cab8697"
+
+[sections."v0.15.149"]
+sha256 = "8e05a8b05e8fc4fc07f4abc939540907ad51a9a3b0b8e4ce37a82fe95d82a837"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.15.148"]
+sha256 = "57bf812b044a7b2d4f7fd1934ef0063ecf1cd4611e907c1e2e32fe2e42fee3dd"
+
+[sections."v0.15.147"]
+sha256 = "ab7b406030fcbd03313ac8857a7f194b635a2d23df38329e53b2dcbb30bae01a"
+
+[sections."v0.15.146"]
+sha256 = "eb1cf441f7bd0e4c3834620d68b455632f2cfaf0904d9f6ab2a75a5ea7a89834"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.145"]
+sha256 = "12d36fa68dd34d6c1d051cc86e4c754548d9b3de3a99de7026a88248405b9445"
+
+[sections."v0.15.144"]
+sha256 = "47ce814b159cac44350e52349f3632ba6faecf615e7bc93956b5efced33c1c09"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.143"]
+sha256 = "448a8089789174e4a5fdf4200195532626b0f54d7470ccbda7995df64ed5c07c"
+
+[sections."v0.15.142"]
+sha256 = "ac7430339de1028a9da00796f28ec75e1cf679955c072458a7fffba2fb0d21fa"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.141"]
+sha256 = "687d7ef2e6c87501bef798ad7b1537f5cc2bb558aa306a5a3c5831219c5d4c20"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.140"]
+sha256 = "62e157dfe61fb141a3676a5491f96ea2544de054eaf404583a29052076eb043e"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.139"]
+sha256 = "344f4756beadaea81c4e461f9851f0aecd29e6366f623aad633403d8eaf0a37c"
+
+[sections."v0.15.138"]
+sha256 = "fea93d44c0f34280e5c0f70a188ea1ea10d620e6123183f1e215ef606415c532"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.137"]
+sha256 = "b00ffdaebe5524a1fd94148207afb32e400630b2f08073b70fe7c507e6836443"
+
+[sections."v0.15.136"]
+sha256 = "c84b92c0cc628397dfa874fd34c321b88e632efb0ed0f98134d75908ce076140"
+
+[sections."v0.15.135"]
+sha256 = "88bb4baf2bfbc6a8db4bbca927b6cfe8b242f103897731afda33d646d6300e69"
+
+[sections."v0.15.134"]
+sha256 = "0ad09c1a9d3f0aa3b5e2e68eedb7117e9ed2b3c59a18e71bb1d63241259f2e0d"
+
+[sections."v0.15.133"]
+sha256 = "e8adffd1fa9e4c02f366e8373a901c9e9dee3bd1405551439653d30b49a61510"
+
+[sections."v0.15.132"]
+sha256 = "8cfda67a0e50e45ece5955ac28da04297d6e3d2ad37a6e5c7d2b9f36dd1ea7f1"
+
+[sections."v0.15.131"]
+sha256 = "d3bd8b2da21dd5095f0de6a38fb5addaf4c9df683ef54363482b4e92ccfdd32d"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.130"]
+sha256 = "fde6f861455d3aec90648cb6788ae91901fc66c52d0bbebea568d3493e872c4e"
+
+[sections."v0.15.129"]
+sha256 = "bbfa46d31c812a983516990ed6330acf6d76b25d9720bbace7dc2fb8e6fb9e7d"
+
+[sections."v0.15.128"]
+sha256 = "0950742c3280bed2b060da88ca8828476ddc0d5f3a82e134f7ee48b87dd1479f"
+
+[sections."v0.15.127"]
+sha256 = "aba7131a69868747bbc531f9dd274d5a7d87381f39c34fdb9397aa55f50c4c9d"
+
+[sections."v0.15.126"]
+sha256 = "d69f7ead893d5c5402304f3092868e8e136c323b7f4b8e44c0da7fe783e2ad3e"
+
+[sections."v0.15.125"]
+sha256 = "0e9ec7fc1785100f693496886d360383a31648962e4636cbf3f23ce05fdf9f4d"
+
+[sections."v0.15.124"]
+sha256 = "c701f2c3610ff9979581595c4c4a1133c6beb36d69612bb6294363e441a68bc2"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.123"]
+sha256 = "139439cfe404b9dc80366b305c2ada77387b7934006e84728be3f87b7a33e581"
+
+[sections."v0.15.122"]
+sha256 = "2735d8adcdcf0278cb91d195c41a364f7f726944983880e728303733c0163f34"
+
+[sections."v0.15.121"]
+sha256 = "4fb21e94ba687165b9d23b6c63e61b76d2ef8193af9f3fdf6f9c49971ca4ac38"
+amended = "#229: the section carried its header twice, as the archived monorepo's v0.15.121 tag already did; the second header was removed so both bodies sit under one [v0.15.121]."
+
+[sections."v0.15.120"]
+sha256 = "2a51dd8ffeb0de7bd53f8d1da9db7a0d36a8c364725fb2e2a0f53828bc5eed0d"
+
+[sections."v0.15.119"]
+sha256 = "110262112100fc9e0d8050f0f51bae499bf576f7cc14992633eec5181b5ae344"
+
+[sections."v0.15.118"]
+sha256 = "8514c426a11a69e49f99939617cd11ea5043b21ff7eb0ce2749a27561f45f096"
+
+[sections."v0.15.117"]
+sha256 = "1455911f1b29e4abd651f74abd31d088b7d5e5d78a01d979f684ab15b5aac418"
+
+[sections."v0.15.116"]
+sha256 = "3f1dff9528ee45d1bd61a641e2a730374431cdbb323fdb049d1d6675e2ec852a"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.15.115"]
+sha256 = "b03e815e69deddda4c56ade95bfe7ae93e24cbe024ded3995a6d957e04be345b"
+
+[sections."v0.15.114"]
+sha256 = "ebe3d8fd827f75274d9fc9f5f4c3c0831426908bfbac24544549379528013e31"
+
+[sections."v0.15.113"]
+sha256 = "576259132e6ac6881f9ca73f0f469294f5caaa9c5680e4c5dd5358baba81936f"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.15.112"]
+sha256 = "5488deb201f24a728f009b265eaa5f657673d15a98e491fd21e3a42fa9b91429"
+
+[sections."v0.15.111"]
+sha256 = "3fb7e5c86de7b4d11af0d42e28a7c241ef287401f79527f03dbfb5018b9a27d6"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.15.110"]
+sha256 = "d30fa569e623b33cb1e8950bba1b072b577bd65d6b7563e3f9dab61f9ea212ca"
+
+[sections."v0.15.109"]
+sha256 = "651acb7fe9033bd7abf5ff3788c596aea2be051356da6a19d7ec7c806845c2da"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.108"]
+sha256 = "2c51e371567f4f98c05617a88a0aca19d14405a3cc8b3b99e9093dd732f15cb2"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.107"]
+sha256 = "d6febf0e6b1dc64c380d21799f47ab7f5cff1dbc84b17bd8376790c7e913fc66"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.106"]
+sha256 = "9a93cd903f569440aa972adfcde354e4e4830e723f74252edec8dc5fa6d59cd6"
+
+[sections."v0.15.105"]
+sha256 = "cf5976e64398df4bae1c9b274a05f4dec42fc7ffabdf7c459009a9ca21bbb494"
+
+[sections."v0.15.104"]
+sha256 = "54935e2194bd8a3a261ada57111af742acf0350443b2bcc30e97217594f93b96"
+
+[sections."v0.15.103"]
+sha256 = "884f62b91a2300b12f309c0c930598b27669ef4ba29dad5e2e424df217193b1d"
+
+[sections."v0.15.102"]
+sha256 = "4a0e49968a5c71e8f180fdf8338606a0d08db3b964e3e16292e3469d70a568e2"
+
+[sections."v0.15.101"]
+sha256 = "77e75ed9737f364471c2d4628144fa51a54e58b72db71226f376c99492ba5680"
+
+[sections."v0.15.100"]
+sha256 = "ba7f64273d2ded1f97f4d212bbcd170b4ed08f1eca62ccec0f79ad610ecd4ac4"
+
+[sections."v0.15.99"]
+sha256 = "a372148e211b44c5c1b1b9329a0491a311703ed1eea98e089dc307dc2cfff352"
+
+[sections."v0.15.98"]
+sha256 = "8f501a49d84a840568d67a3ec6d7478ea184895150c849969258159f8fed1f0e"
+
+[sections."v0.15.97"]
+sha256 = "8146559f183db83e8faa0bfcfdc844d96a67cf79f42d8c66511af7ca82559bbb"
+
+[sections."v0.15.96"]
+sha256 = "7f9b222634534e6118a7b1728b9619c70e8cf0b608d49784fa1855988eeb0be9"
+
+[sections."v0.15.95"]
+sha256 = "8dbf9846219865e8da5803c8737dbdf63c22cb3e50b75b145503403a0d575a71"
+
+[sections."v0.15.94"]
+sha256 = "08f21242b97b9120801512ecce7e532642071e2f8f45f6259b582297fb2a444d"
+
+[sections."v0.15.93"]
+sha256 = "1b20665f6e95854a5b581ee1585b2729cdc374080cd2a8f23386b6e194aa452b"
+
+[sections."v0.15.92"]
+sha256 = "9af64f4457cf2d7be8eb729c53750d72d32c2b2f20dc884fcf63eca30ae32b87"
+
+[sections."v0.15.91"]
+sha256 = "27336d3b193c83675ef3429d798d3d60aea139a1f7f2a6e885e1e50720dbd593"
+
+[sections."v0.15.90"]
+sha256 = "bec75c5a716b9292650c92a64e825573fed07190fcf49bb9bdba07a077c913d4"
+
+[sections."v0.15.89"]
+sha256 = "bf6269f6f277c47482c9a07f3e600abe2519ea4db045ec019a7dd64723581158"
+
+[sections."v0.15.88"]
+sha256 = "b90d65559ae8f5db0c4f76cc460281097c22d299d4b0428358946ab329331629"
+
+[sections."v0.15.87"]
+sha256 = "89bc532c877d7c1f609484c620f9988786be1e3665220dc56a31694f0aecfac7"
+
+[sections."v0.15.86"]
+sha256 = "241a2926b532da5e5507ba616f5041e1661da1bb5ed34a658e75d85a98d9d08f"
+
+[sections."v0.15.85"]
+sha256 = "3a459c878ca2301f3aa698b3f579a04c6ae312e1a0da2a1517eea29c6cb0d4fc"
+
+[sections."v0.15.84"]
+sha256 = "acd7514e7be3a3fc90c98e45272a819917967c1c27d394b75a43b46b22b2f650"
+
+[sections."v0.15.83"]
+sha256 = "97500e436820f36a3ba26b3e707d95784f070a5ea48e8189cc5977b4aaf5104d"
+
+[sections."v0.15.82"]
+sha256 = "f46ef5e996655cba684f56037d4d761dcb37071ee0e165b2d65ac3edecd51db0"
+
+[sections."v0.15.81"]
+sha256 = "173765b7f0ae2c285a2d833c777789d4c7c2d7ce8b2058c8420c9eef9e3f276f"
+
+[sections."v0.15.80"]
+sha256 = "64d9dac2359708d7d33f3fcf2119d6cf4933d723a6cd2c90a5ca6d94c1fc79be"
+
+[sections."v0.15.79"]
+sha256 = "0208ec94f3dd4edd21b6a2c00fbe8a60dd44190259d9eeb3cabe53dfd9b04bd7"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.78"]
+sha256 = "1d7ae21ca495a20fb477be4c64d198eb973d84c72e1d4e368f701c28996a90b7"
+
+[sections."v0.15.77"]
+sha256 = "f0b005a1e89b4a9af0dda98e6b402a980c9ae21980bcbc42bc434a0f35960c3b"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.76"]
+sha256 = "b786411e3fd77d611a3cc0ce95b0ea1b1106a46f365ee52973368711dd571328"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.75"]
+sha256 = "6717a3ee33add5d5f3b4332a622ec1b68344e12e28ad2cbd2153d8bb5c87b394"
+
+[sections."v0.15.74"]
+sha256 = "aad8edd81c09b3bdaf89c6f9d74e7c6c6cd31448293dcdc9f0da4b1d077ddd59"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.73"]
+sha256 = "5c6fe63e78a12fc2977070392f431c25f41869d250ed7146cdaa2f1d90d23b52"
+
+[sections."v0.15.72"]
+sha256 = "524c3ce931266de337039d9ca077917b2d48863529bd96aa41909533ee55da6e"
+amended = "Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.15.71"]
+sha256 = "f3e63b7b4be3d46c16fa916a4de4821f68244910093b96163850c8146cc74b8a"
+
+[sections."v0.15.70"]
+sha256 = "6588ec0d035a20dc786dbcd934bd9385eb5adc87b0a49fcee821aefe02256880"
+
+[sections."v0.15.69"]
+sha256 = "8ada520288eae9a2dce1ebbc5cac96ee2eb44102dc70c3706d380144ddd747f1"
+
+[sections."v0.15.68"]
+sha256 = "7b0983cd69f2f0ed76691d6aa634c4e0696135a65aa4c12608156a3a83fa604d"
+
+[sections."v0.15.67"]
+sha256 = "356d22e14654f9ad740f22f96fae717093e509e2188eb462164e4add9637eda4"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.66"]
+sha256 = "b95d56b24c2ad12f912c416976214b2b6073d80b46d4d1262e3fc955f5a15cc1"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.65"]
+sha256 = "1dc72afc1212faf0e2bef8f5426246ee2306681cb24445cad8c3b4ff0905985a"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.64"]
+sha256 = "73cede13f3d514bcf21634483042d3f6f7acbfb2e0ed5ef18fd45206300baee9"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.63"]
+sha256 = "b338fcb9fa0837097c79b68cc88941204979b4e9df7a22faa6190c63540f648c"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.62"]
+sha256 = "cc8db4115f6e66d6e5b1c434cba3a792bc2ade6188d8a9e90c75cd9a10958c75"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.61"]
+sha256 = "d2edd9b723c023a20d82ccffcb31d7e9209132ee0afa7201bdfe60fd11e15105"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.60"]
+sha256 = "ee659458ea00b3184c013dd8d4373445040aafd1f177b3278e8c1434c6d523fa"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.59"]
+sha256 = "27a98a4924118cf693b224300d7d4a1ada7062762b4400a3b111d9d0037ca7bd"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.58"]
+sha256 = "b08bd3f2db361888389b588734fb518ba8172a4233599dd78568300b4a82b480"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.57"]
+sha256 = "22a190d79413241f022a19c4b181df29c07b42290d7c43a74cfbd89e7eef5743"
+
+[sections."v0.15.56"]
+sha256 = "5ad293c81b9d761cc7d4dd5c176ac356afd983bca8f0ab6492437855266768c8"
+
+[sections."v0.15.55"]
+sha256 = "f5ea241b2818cee8fb450a5cb119fc4439b160e4cab1da9276ee68a7c8642383"
+
+[sections."v0.15.54"]
+sha256 = "66e829ad24b78bbcfbfdab5ecf93a9e910892b94ba9606b36ca7d69da5d54dd1"
+
+[sections."v0.15.53"]
+sha256 = "55b6d7792fefd7de54658ca08a9d97a6a2027a0ae2baa726f104415da73ae4b7"
+
+[sections."v0.15.52"]
+sha256 = "784f2696dbbda92112c5137f4b98ceb64ab9e7bb3edefec5e76f143e5a0b9e67"
+
+[sections."v0.15.51"]
+sha256 = "a65992fcf7d232fa5339faed91dc8ee1881f19420f5b024f17efe1d3877059e7"
+
+[sections."v0.15.50"]
+sha256 = "7af896bb54ad4534e43d0c81f0d31f0e6c92b002a1730d4b84ff3e4f696563b8"
+
+[sections."v0.15.49"]
+sha256 = "1a76581329d0e03820a56fd1079d8b05792fedd2038d418647808693a2087eca"
+
+[sections."v0.15.48"]
+sha256 = "5f1ff90e4fbae540d34e1a45ac39a281bc33221e47959bddc2e043f607c9db44"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.47"]
+sha256 = "c5e88b2b60f3871e58e5a6e2652444b8876eb08276c1a314c813c65c0f3622ba"
+
+[sections."v0.15.46"]
+sha256 = "e7a15bef364ffe1e2eb549af94fd51b9bdc8638c30eba8a87b9fb7e920466db6"
+
+[sections."v0.15.45"]
+sha256 = "716032b10b600a5553f506a302aacf5952d0a752287893833e783c26436dc442"
+
+[sections."v0.15.44"]
+sha256 = "181ab70282f7d425a6855e698b38d66b2963a4b215b59c6d8ff1337c105b7f1f"
+
+[sections."v0.15.43"]
+sha256 = "7b7841aface9ee7a8aecbe4bf9c2840a553d3fb272d60c354f811edace240f9d"
+
+[sections."v0.15.42"]
+sha256 = "4c7108d92f7fbd219b95a79a88342e8a9923b56b75d14e8d1b2f6f52e93914a7"
+
+[sections."v0.15.41"]
+sha256 = "ffcae5ae14d63d1698023a145ae968ce16f3edc184f92a162ac9a18d42564753"
+
+[sections."v0.15.40"]
+sha256 = "27391c4eb019b9baddf22112aad6a8f2b88edc1f458de64d358613fc17eea3a3"
+
+[sections."v0.15.39"]
+sha256 = "a395777478b9c5308bcba335f67f13963f77c429beac28a4a03b7000bd219744"
+
+[sections."v0.15.38"]
+sha256 = "399077eefc71dc5f8a816653e29c9aa359c4b8cce31c78905f3345c81ad72013"
+
+[sections."v0.15.37"]
+sha256 = "134d0a3102fa2479ea5ed4d28f30ce3f5863ee784d7fa9350800a75eb90c770e"
+
+[sections."v0.15.36"]
+sha256 = "6de7e081db9314db28cd1dd3628065b238a6fead826f81918ae4593111f5eb4c"
+
+[sections."v0.15.35"]
+sha256 = "44a33e63333d8a1e676acfe4ab4f9ecbe0f7aaddab2627596bf2b59ef1a92035"
+
+[sections."v0.15.34"]
+sha256 = "561f6c78c7a3f2ccb52eca9c99f7073144e91430b3374c825f84d7dee39cbe3a"
+
+[sections."v0.15.33"]
+sha256 = "1768e353a17a838262dd8cab376895531a905b45f73b300b00b2ac5c2ca7e813"
+
+[sections."v0.15.32"]
+sha256 = "6ea0e4bf3b6c2cae8bca854dead3101ce281c2ff22b108585f98978cc55fba54"
+
+[sections."v0.15.31"]
+sha256 = "edc1a8b8427ed94a6fbb7cd00b23f4545c734c18cd725f81f8ded08ffc822b67"
+amended = "Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.15.30"]
+sha256 = "186f2cf6bcd7e5529c4de7ff115acf817c204691fe0f915429a60df10189498f"
+
+[sections."v0.15.29"]
+sha256 = "31f19e93dac71d1b345661fec256aa13e938ae1bb196729b1d629e9fb36a0b72"
+
+[sections."v0.15.28"]
+sha256 = "267e0ec3db5f5914122ac471fd545017f8fff3e73d361f72d3149d67e09bbff0"
+
+[sections."v0.15.27"]
+sha256 = "1326cdd995f455fac2339a5bea30a0892080dbf9e6734997afe78b6c41da0128"
+
+[sections."v0.15.26"]
+sha256 = "07bb8f6ab8ec5454248a2dc4abbc4f95b4a80c3359a5514d190d7ce79977c7fc"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.25"]
+sha256 = "32ad4bd07069889f4ba637dc4127e405492e72c30bc95802262582f08e4ccc4e"
+
+[sections."v0.15.24"]
+sha256 = "2eced673014704206eb969fdbb04a3a99e108663ce3f741ffbc6971fc6067b4e"
+
+[sections."v0.15.23"]
+sha256 = "edb7aedc6faefd2a22160be0b1103abc21fbb53bfd9e9b45e2e438f993d111d0"
+
+[sections."v0.15.22"]
+sha256 = "77106877ce02b89b556cfa64d101675e56b19e004060ec532a8a50fd43163749"
+
+[sections."v0.15.21"]
+sha256 = "c6f62ba524201e2a38cf8d94cea269cdf1355b80fe1a58c8f4db69989740cfc4"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.20"]
+sha256 = "7c3b09690c34ec4b72668c26bd78591130787458c063d2e4408fce1ae8bbbcc0"
+
+[sections."v0.15.19"]
+sha256 = "1cd330166c583ab86521576ede6da381f5e89d2d100cb208387867340c0ca3b4"
+amended = "Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.15.18"]
+sha256 = "98b1d6bd48aacd1334822b3e87c8652db480f74a89e82d1fbfb98a4e63da783b"
+
+[sections."v0.15.17"]
+sha256 = "3fcc8053408cfac49eda57b4bddb2fb6893b061807589ddfb74212be4be115c5"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.16"]
+sha256 = "4798cf66f6c542a8d7e68cca8643fd6e12ca6084e8cdd585d2e5dfa9f736ba36"
+
+[sections."v0.15.15"]
+sha256 = "c80a088627931f6837d62db9c815862d42999b2b9c5fab83a90e97440226bef4"
+
+[sections."v0.15.14"]
+sha256 = "8ee83f18b07b1c2e46cb69d5f5e6cc7320ddd216640a11a59e56192847f78cdc"
+
+[sections."v0.15.13"]
+sha256 = "3b98029fe35aa94bcab23a3a420628f02b1e5a558a85f68ae94713eb0115ed19"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.12"]
+sha256 = "e56038ff37c153de25bd6a811624d1c0dec2f70e20c692bccc15bb1f0e78c844"
+
+[sections."v2.0.0"]
+sha256 = "9c4bd696981380fb1d1554c45bf08ba4f26ec04ddbb5f4a7565f0fb77a05d017"
+
+[sections."v0.15.11"]
+sha256 = "44ad6a18802857e3819245d3fe2529c4fc6e950cddc3b23aef46a853d64ca0f8"
+
+[sections."v0.15.10"]
+sha256 = "85ea678c7f3477be8e3bfdceb5d0947b9f470709856d5e02dee519c5db7a0b13"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.9"]
+sha256 = "bc77fe13e1536aaf9038b40261692be2e23d781648b9349c240925f4afd19454"
+
+[sections."v0.15.8"]
+sha256 = "586bb780e32cb93a40082ee9a01ac6fd3e6136cf3adf89132e69b36f0547103c"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.15.7"]
+sha256 = "785d62ca856c938b4670b4a1766b6b5f1cbebf13e2dcac4b2b54e8208cdac431"
+
+[sections."v0.15.6"]
+sha256 = "726fb279387f009eec7eef9944e1345f5c850bfc56d6045ced1df3cc54fb40d5"
+
+[sections."v0.15.5"]
+sha256 = "fc72f0ae21c17affca07296ee061f9e1583aa566e37c54a2744c6d81e49d5344"
+
+[sections."v0.15.4"]
+sha256 = "664d47476071ec016e3b1e16b0205a4e1c6a5653c2c87445c899901a17689360"
+
+[sections."v0.15.3"]
+sha256 = "498c888171489a6c5cd58fdbbd4c995771ca7d1e85f3f7dffa90c7a9d886865b"
+
+[sections."v0.15.2"]
+sha256 = "b6b10dd360a9036ac1b83b47871ec0e488c15c038326349d61a1085d473dccb0"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.15.1"]
+sha256 = "e38cc77d21e42f8ba304fcc05456c57f4958af2f9b1d845876c24589f37acbb8"
+
+[sections."v0.15.0"]
+sha256 = "76fb533dec2033566d952ae62f822384b04f64e2bb7e7c80cbf39a41c091957b"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.14.1"]
+sha256 = "5b201eed163710217476f23d88539edd0d87676dd8443b1aa2998337459b7c76"
+
+[sections."v0.14.0"]
+sha256 = "d9dd5af23320c4dad095685f3956ba4727ee5b55b7abb4c386762e6ecd5c8ec2"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.13.1"]
+sha256 = "5fa184745a73321cd0128b0203c87d8b9a914e02c17de9e1b47c9ed1cc2989ae"
+
+[sections."v0.13.0"]
+sha256 = "12fc5a24bf32f9f3db6e626b16344443ec0e9f1c52f6f2bdc13224dfb0bfbcf7"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.12.2"]
+sha256 = "8ea6a5c3aa6ae741fa7ffb163d554968b4c261e3980ba4d9ea099102cd1fbef4"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities."
+
+[sections."v0.12.1"]
+sha256 = "1bbecf8d9f908fdc58d043fd2624625e817e1cf8e6aed1f4fc78a273396379dc"
+
+[sections."v0.12.0"]
+sha256 = "49c117e461be336dd1a82cf167a1dfb6f6e5165e1d6ddd30d0937f087f195b6f"
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+
+[sections."v0.11.4"]
+sha256 = "f6975e2942731041aa31de8f4fc9b28b9812aaad4f1abb7fd73134fc2618178a"
+
+[sections."v0.11.3"]
+sha256 = "a4680dbbc9c4af14e959efe8ce9e5c8c04486d19755d131dd9634b13542447fe"
+
+[sections."v0.11.2"]
+sha256 = "df124650178706f1185dd3695230bad6bdf8e3ac7095e78c8e4cd6c4cf5d24d8"
+
+[sections."v0.11.1"]
+sha256 = "1489f2941d1f76e01a1cc68d2133e8f3f35c21284ea2a42c299ef111ba15d000"
+
+[sections."v0.11.0"]
+sha256 = "ad1f55cfe933cbe87ef00ad57e91b41dc8b09caff6e071e04b7d26f33f8d9104"
+
+[sections."v0.10.5"]
+sha256 = "89843399d3b8477460e3d4f23c6d275be570508dd284985bb8755f14d2473448"
+
+[sections."v0.10.4"]
+sha256 = "926169a1af36659e0cd0f0d1509feb8e5c94112fda17a86629b6b2dc1ac4e27b"
+
+[sections."v0.10.3"]
+sha256 = "acfc4db038088e198ce11cd567842f2906d83143776785c2587a3f9cde4431c1"
+
+[sections."v0.10.2"]
+sha256 = "502713ce265a2924244e4a67df30a13d0dcb40b5848b45335822817bb3b6fb95"
+
+[sections."v0.10.1"]
+sha256 = "74a94d406c317e99a7c4c62e3e429e0ead117a4c1f5ae84b725c4cc20f783715"
+
+[sections."v0.10.0"]
+sha256 = "a7e4246eaa636a64004fe529c5d1a3f218ecabe176ea629583bb7469fe32fe39"
+
+[sections."v0.9.1"]
+sha256 = "2d679736db3b758770d8f604727d8cfbd3a332cd72034c4c395c572212cf807b"
+
+[sections."v0.9.0"]
+sha256 = "d669ade38b36a1760f4c908a72335fc18c841e99b72c1889ebf777e68751c1c7"
+amended = "Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."

@@ -312,9 +312,13 @@ def test_tightened_threshold_changes_numerical_stopping_semantics():
 
 def test_uhf_default_and_explicit_positive_tolerance_match(monkeypatch):
     """Validation preserves the historical default and positive numerics."""
+    from vibeqc import Atom, InitialGuess, Molecule
     from vibeqc.periodic.ccm import uhf as uhf_module
 
     ccm = _fake_ccm()
+    # The fixed-point integrals remain synthetic, but guess selection uses
+    # the real molecular metadata required by the native resolver.
+    ccm.supercell = Molecule([Atom(1, [0., 0., 0.]), Atom(1, [0., 0., 1.4])], 0, 1)
     overlap = np.eye(2)
     hcore = np.diag([-1.0, 0.5])
     eri = np.zeros((2, 2, 2, 2))
@@ -338,6 +342,8 @@ def test_uhf_default_and_explicit_positive_tolerance_match(monkeypatch):
     assert implicit.converged and explicit.converged and tightened.converged
     assert implicit.n_iter == explicit.n_iter == tightened.n_iter == 2
     assert implicit.energy == explicit.energy == tightened.energy
+    for result in (implicit, explicit, tightened):
+        assert result.guess_selection.effective == InitialGuess.HCORE
 
 
 @pytest.mark.parametrize("route", _PUBLIC_ROUTES, ids=lambda route: route.__name__)
@@ -346,7 +352,11 @@ def test_uhf_default_and_explicit_positive_tolerance_match(monkeypatch):
     _INVALID_TOLERANCES,
     ids=("negative", "zero", "nan", "positive-infinity"),
 )
-def test_public_routes_reject_invalid_conv_tol_grad(route, conv_tol_grad):
+def test_public_routes_reject_invalid_conv_tol_grad(route, conv_tol_grad, monkeypatch):
+    def forbidden_guess(*args, **kwargs):
+        raise AssertionError("invalid tolerance reached initial-guess selection")
+
+    monkeypatch.setitem(route.__globals__, "_ccm_initial_guess", forbidden_guess)
     with pytest.raises(
         ValueError,
         match=rf"{route.__name__}: conv_tol_grad must be finite and positive\.",

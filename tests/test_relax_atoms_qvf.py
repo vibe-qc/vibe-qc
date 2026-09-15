@@ -66,6 +66,57 @@ def gamma_kmesh(h2_in_box) -> object:
     return monkhorst_pack(h2_in_box, (1, 1, 1))
 
 
+@pytest.mark.parametrize("name", ["bipole-opt-custom", "sto-3g"])
+def test_relax_atoms_preserves_explicit_basis(
+    monkeypatch, h2_in_box, gamma_kmesh, tmp_path, name,
+):
+    import vibeqc.bipole_optimize as opt
+    import vibeqc.pbc_bipole as driver
+
+    original_positions = np.array([a.xyz for a in h2_in_box.unit_cell])
+    basis = vq.BasisSet(h2_in_box.unit_cell_molecule(), [
+        vq.ShellInfo(i, 0, True, [.7+i], [1.], p)
+        for i, p in enumerate(original_positions)
+    ], name, False)
+    original = list(basis.shells())
+    calls = []
+
+    def run(system, moved, *args, **kwargs):
+        positions = np.array([a.xyz for a in system.unit_cell])
+        for old, new in zip(original, moved.shells(), strict=True):
+            np.testing.assert_array_equal(new.exponents, old.exponents)
+            np.testing.assert_array_equal(new.coefficients, old.coefficients)
+            np.testing.assert_allclose(new.origin, np.asarray(old.origin)
+                                       + positions[old.atom_index]
+                                       - original_positions[old.atom_index], atol=1e-14)
+        calls.append(moved)
+        return SimpleNamespace(energy=0., converged=True, n_iter=1)
+
+    def minimize(fun, x0, **kwargs):
+        # Exercise both callbacks away from the initial geometry.
+        x = np.asarray(x0).copy() + .01
+        return SimpleNamespace(x=x, fun=fun(x), jac=kwargs["jac"](x), nit=1, success=True)
+
+    monkeypatch.setattr(opt, "run_pbc_bipole_rhf", run)
+    monkeypatch.setattr(driver, "run_pbc_bipole_rhf", run)
+    monkeypatch.setattr(opt, "minimize", minimize)
+    import vibeqc.output.formats.qvf as qvf
+
+    written = []
+
+    def write_trajectory(*args, **kwargs):
+        assert kwargs["basis"] == name
+        written.append(kwargs)
+
+    monkeypatch.setattr(qvf, "write_reaction_path_qvf", write_trajectory)
+    result = relax_atoms(
+        h2_in_box, basis, gamma_kmesh, output_trajectory=tmp_path / "custom-trajectory",
+    )
+    assert result.converged
+    assert len(calls) == 14  # objective, gradient reference, 12 FD displacements
+    assert len(written) == 1
+
+
 class TestOutputTrajectoryDefault:
     def test_default_off_no_qvf_emitted(self, h2_in_box, gamma_kmesh, tmp_path):
         """Without ``output_trajectory``, relax_atoms emits nothing

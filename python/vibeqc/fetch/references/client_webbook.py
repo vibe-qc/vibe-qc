@@ -52,7 +52,7 @@ WEBBOOK_DOI = "doi:10.18434/T4D303"
 WEBBOOK_LICENSE = "NIST SRD 69"
 WEBBOOK_USER_AGENT = (
     f"vibe-qc-fetcher/{FETCHER_VERSION} "
-    "(+https://vibe-qc.com/docs/ mailto:mpei@vibe-qc.com)"
+    "(+https://vibe-qc.com/; mailto:mpei@vibe-qc.com)"
 )
 WEBBOOK_RATE_LIMIT_S: float = 1.5
 

@@ -205,6 +205,10 @@ tight `conv_tol_energy` alone does not give a converged density. The
 | `conv_tol_energy` (default 1e-7) | `options.conv_tol_energy` | `conv_tol` |
 | gradient criterion | `options.conv_tol_grad`, fixed at 1e-6 | `conv_tol_grad`, fixed at 1e-6 |
 
+Direct Python CCM SCF entry points require a finite, strictly positive
+`conv_tol_grad`. They reject an invalid value before selecting an initial
+guess or accessing the system; the error names the requested route.
+
 A convergence control that is set explicitly but that the selected variant
 cannot execute fails closed before SCF instead of being dropped. The
 `real-gamma` loop implements no damping, Fock mixing, density mixing or

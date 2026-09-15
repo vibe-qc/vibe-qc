@@ -295,6 +295,113 @@ class CCMFoldKPairPlan:
     reduction_factor: float     # n_builds / n_reps
     entries: dict = field(default_factory=dict)
     ops: list = field(default_factory=list)
+    # Indices into ``ops`` that passed BOTH admissibility tests: the
+    # finite-list covariance test (:func:`ccm_symmetry_op_preserves_cell_list`)
+    # and the AO/auxiliary map check (:func:`ccm_symmetry_op_ao_map_is_exact`).
+    # Only these may appear in a ``"recon"`` entry; the rest are kept in
+    # ``ops`` so indices stay stable for consumers that cache them.
+    admissible_ops: tuple = ()
+
+
+def ccm_symmetry_op_preserves_cell_list(s_cart, *, tol: float = 1e-8) -> bool:
+    """Is the builder's finite Bloch cell list closed under this op?
+
+    The fit builder Bloch-sums the KET AO over the origin-centred lattice ball
+    ``|R| <= lat_opts.cutoff_bohr`` (``direct_lattice_cells``), the same list
+    for every shell pair. Substituting a space-group op ``g = {R|t}``, whose
+    atom action is ``x_perm[A] = R x_A + t + S_A``, into that sum reindexes the
+    pair (bra on atom ``a``, ket on atom ``b``) as
+
+        R'  =  R_rot R  +  (S_a - S_b)
+
+    so the image pair's sum runs over ``Ball + (S_a - S_b)``. The ball is
+    invariant under the rotation alone (``|R r| = |r|``, and ``R`` maps the
+    lattice onto itself), so the reindexing maps the finite list exactly onto
+    itself precisely when that offset vanishes for every contributing pair --
+    that is, when the op's per-atom lattice shift is the SAME for all atoms.
+    A constant shift is absorbed into ``t`` and moves no pair across the
+    truncation boundary; a varying one exchanges cells at the boundary with
+    cells that were never summed, which is exactly the vibeqc#337 defect.
+
+    This is a **geometric, threshold-free** admissibility test: nothing is
+    compared against a residual and no cutoff is widened, so it does not
+    reintroduce the empirical threshold CLAUDE.md § 7 forbids (and which is
+    why widening the Bloch cutoff was rejected as the vibeqc#337 fix). ``tol``
+    only guards the floating-point comparison of shifts that are integer
+    combinations of the lattice vectors by construction.
+
+    The condition is **sufficient, not necessary**: a relation whose offset is
+    nonzero is still exact once the pair density has decayed to nothing within
+    ``|S_a - S_b|`` of the ball's edge -- the cells the offset exchanges then
+    contribute zero either way, whether or not the builder's ``screen_tol``
+    drops them explicitly. That is why the vibeqc#337 residuals converge away at
+    25-30 bohr. Turning that into an admissibility rule would need an accuracy
+    threshold, so this test deliberately takes the conservative half. On the
+    cubic fixtures that costs nothing -- diamond / MgO / LiH ``(2,2,1)`` still
+    reduce 16 -> 10, their relations being reachable through shift-constant ops
+    and time reversal regardless. It is NOT free in general: hexagonal h-BN
+    ``(2,2,1)`` (P6_3/mmc) drops from 8/16 to 10/16, trading 2.00x for an exact
+    1.60x.
+
+    The way to the refused relations is to make the cell list covariant rather
+    than to argue its truncation is immaterial: a **pair-centred** ball gives
+    ``|x_a' - x_b' - R'| = |x_a - x_b - R|`` identically, admitting every op at
+    equal cell count. That is the pair-complete cell list the lattice work
+    already uses for two-centre sums (#44); extending it to the GDF pair FT is
+    #238, not this lane's change.
+
+    Parameters
+    ----------
+    s_cart : (n_atoms, 3) float
+        Per-atom cartesian lattice shifts ``lattice_shift @ L_u.T`` -- the
+        ``S_cart`` entry of a :class:`CCMFoldKPairPlan` op tuple.
+    tol : float
+        Cartesian tolerance (bohr) for "the shifts are equal".
+    """
+    s = np.asarray(s_cart, dtype=float)
+    if s.size == 0:
+        return True
+    return float(np.max(np.abs(s - s[0]))) < tol
+
+
+def ccm_symmetry_op_ao_map_is_exact(p_ao, s_ref, *, tol: float = 1e-10) -> bool:
+    """Does this op's AO rotation actually leave the reference overlap invariant?
+
+    ``P`` is only a symmetry action of the basis if ``P^T S P == S`` -- the
+    correctness gate :func:`ccm_symmetry_invariance_residuals` states for the
+    cluster. The star reconstruction applies ``P`` to both AO indices and
+    ``P_aux`` to the auxiliary index, so a ``P`` that fails this makes the
+    reconstruction wrong no matter how covariant the cell list is.
+
+    This is checked rather than assumed because it has been observed to fail.
+    On a hexagonal cell the cartesian op ``R = L_u W L_u^-1`` is not exactly
+    representable, and ``symmetry_core.euler_angles_from_rotation`` mis-extracts
+    the ZYZ angles for an ``R`` that is the identity to 1e-16: ``arccos(R[2,2])``
+    floors ``beta`` at ``sqrt(2 eps) ~ 1.5e-8``, which never trips that
+    function's ``abs(sin(beta)) < 1e-12`` gimbal-lock guard, so the degenerate
+    branch is skipped and it returns ``gamma = pi``. ``wigner_d_real(1, R)``
+    then comes back as ``diag(-1, 1, -1)`` instead of the identity, and the
+    h-BN (2,2,1) symmetry-reduced fold lands 10.9% away from the unreduced
+    build. Cubic and tetragonal lattices are exactly representable, so their
+    ``beta`` is exactly zero and none of the cubic fixtures expose it.
+
+    Refusing the op keeps this lane correct while that stands; when the
+    extractor is fixed the test simply stops rejecting anything.
+
+    Parameters
+    ----------
+    p_ao : (n, n) float
+        The op's AO rotation matrix over the reference basis.
+    s_ref : (n, n) float
+        Overlap of that same basis.
+    tol : float
+        Relative tolerance for a residual that is algebraically zero.
+    """
+    p_ao = np.asarray(p_ao, dtype=float)
+    s_ref = np.asarray(s_ref, dtype=float)
+    scale = max(1.0, float(np.max(np.abs(s_ref))))
+    resid = float(np.max(np.abs(p_ao.T @ s_ref @ p_ao - s_ref)))
+    return resid <= tol * scale
 
 
 def ccm_symmetry_fold_kpair_plan(
@@ -309,11 +416,14 @@ def ccm_symmetry_fold_kpair_plan(
     (and/or time reversal) the infinite- or symmetry-closed-list fit tensors
     of related momentum pairs are linear images of each other, so one
     representative per orbit can replace explicit builds. The finite Bloch
-    cell list is an additional numerical boundary: enabled relations carry
-    the quantitative residuals pinned below, and fully 3-D replica meshes
-    currently fall back to explicit builds (GitLab IID 337). The retained
-    lower-dimensional relations are measured only on the documented parity
-    fixtures; arbitrary enabled systems have no runtime error bound.
+    cell list is an additional boundary, and it is what vibeqc#337 broke
+    on: a relation is admitted only when its op also maps the TRUNCATED cell
+    list onto itself, which
+    :func:`ccm_symmetry_op_preserves_cell_list` decides geometrically from the
+    op's per-atom lattice shifts. That test replaces the earlier
+    ``all(nrep > 1)`` shape guard, which was neither necessary (it disabled
+    exactly-covariant 3-D stars) nor sufficient (it admitted lower-dimensional
+    relations through shift-varying ops on nothing but shape).
 
     The momentum relations used by the planner are (see the reconstruction
     identity inlined in ``neutral.py``):
@@ -327,9 +437,12 @@ def ccm_symmetry_fold_kpair_plan(
       (measured 3.0e-14): real AOs make every FT ingredient conjugate
       under momentum negation, and the G-ball is inversion-symmetric.
     * the space-group covariance at EXACTLY rotated momenta
-      ``(R k_a, R k_b)`` -- convergent to the infinite-list identity but
-      approximate for a finite atom-shifted cell list (measured 8.8e-13 chain
-      / 3.8e-10 diamond at a converged list; see the 3-D guard below).
+      ``(R k_a, R k_b)`` -- exact for the infinite or symmetry-closed list,
+      and exact on the finite list for the ops this planner admits (measured
+      8.8e-13 chain / 3.8e-10 diamond at a converged list). Ops that shift
+      atoms by differing lattice vectors are exact only in the infinite-list
+      limit and are refused; see
+      :func:`ccm_symmetry_op_preserves_cell_list`.
 
     The shared fit builder now truncates the physical ``|G+q|`` support,
     removing the former finite-ball "crescent" difference for a ket-side-only
@@ -341,13 +454,15 @@ def ccm_symmetry_fold_kpair_plan(
     that planner condition can expose more optional reductions, but is a
     performance change rather than part of the operator-correctness fix.
 
-    Fully three-dimensional replica meshes currently fall back to the full
-    build. The finite Bloch cell list is not covariant under every
-    atom-shifting cubic operation on diffuse bases (GitLab IID 337), even
-    though the infinite-list identity above is exact. Lower-dimensional
-    replica meshes retain the reduction relations covered by the parity
-    gates; restoring the 3-D optimization requires a finite-list-covariant
-    builder or an equally strict relation-level admissibility test.
+    Replica-mesh dimensionality is no longer part of the decision. A fully
+    3-D mesh reduces whenever its cluster-invariant group contains
+    cell-list-preserving ops, and a lower-dimensional one does not reduce
+    through an op that fails the test. The remaining, deliberately unclaimed
+    ground is the converse half of that test: a shift-varying relation is
+    still exact once the pair density has decayed to nothing within the shift
+    of the truncation boundary, which is why the vibeqc#337 residuals vanish at
+    25-30 bohr. Admitting those needs the effective support per shell pair and
+    would raise the achievable reduction further.
 
     Parameters
     ----------
@@ -381,33 +496,31 @@ def ccm_symmetry_fold_kpair_plan(
     n_k = len(kpts)
     n_builds = len(kept_q) * n_k
 
-    # Correctness containment for GitLab IID 337. On LiH/STO-3G (2,2,2),
-    # reconstructed tensors differ from independently built targets by up to
-    # the percent level at the production 15-bohr Bloch cell-list cutoff and
-    # move the SCF energy by 1.9e-5 Ha/cell. The residual converges away with
-    # the cell list, localising it to finite-list covariance rather than the
-    # group algebra. Until that boundary is covariant, fully 3-D stars must
-    # use the exact full-build path. Entries remain explicit because both the
-    # fold and production-cache adapters consume this plan contract.
-    if all(int(n) > 1 for n in ccm.nrep):
-        entries = {
-            (qi, ai): ("build",)
-            for qi in kept_q
-            for ai in range(n_k)
-        }
-        return CCMFoldKPairPlan(
-            n_builds=n_builds,
-            n_reps=n_builds,
-            reduction_factor=1.0,
-            entries=entries,
-            ops=[],
-        )
-
     # Unit-cell action of each cluster-invariant op. Every op is a crystal
     # space-group op (spglib on the unit cell), so the unit-cell atom
     # permutation always exists; ops whose rotation does not map the mesh
     # onto itself simply never match below.
+    #
+    # vibeqc#337: an op may relate the momenta exactly and still not
+    # relate the TRUNCATED builds, because the origin-centred Bloch cell list
+    # is only closed under the op when its per-atom lattice shifts agree
+    # (see ccm_symmetry_op_preserves_cell_list for the reindexing). Ops that
+    # fail that test are kept in ``ops`` -- so cached op indices stay stable --
+    # but never enter a reconstruction.
+    #
+    # Two independent preconditions have to hold before a relation is usable,
+    # and BOTH are verified rather than assumed:
+    #   1. the op preserves the finite Bloch cell list (vibeqc#337, above);
+    #   2. its AO/auxiliary rotations really are symmetry actions of the bases
+    #      (ccm_symmetry_op_ao_map_is_exact -- upstream Euler extraction is
+    #      known to fail this on non-cubic lattices).
+    from vibeqc import compute_overlap
+
+    s_ao = np.asarray(compute_overlap(ubasis), dtype=float)
+    s_aux = np.asarray(compute_overlap(aux_basis), dtype=float)
+
     ops: list = []
+    admissible: list[int] = []
     for op in sym.invariant_ops:
         R = np.asarray(op.R_cart, dtype=float)
         t = np.asarray(op.t_cart, dtype=float)
@@ -416,6 +529,10 @@ def ccm_symmetry_fold_kpair_plan(
         p_aux = np.asarray(build_ao_permutation_matrix(aux_basis, R, ap), float)
         s_cart = np.asarray(ap.lattice_shift, dtype=float) @ L_u.T
         ops.append((R, np.asarray(ap.perm, dtype=int), s_cart, p_ao, p_aux))
+        if (ccm_symmetry_op_preserves_cell_list(s_cart)
+                and ccm_symmetry_op_ao_map_is_exact(p_ao, s_ao)
+                and ccm_symmetry_op_ao_map_is_exact(p_aux, s_aux)):
+            admissible.append(len(ops) - 1)
 
     def _exact_channel(qp: np.ndarray):
         """Kept-channel index whose momentum equals qp EXACTLY (cartesian)."""
@@ -443,7 +560,8 @@ def ccm_symmetry_fold_kpair_plan(
             n_reps += 1
             ka = kpts[ai]
             kb = kpts[ai] + kpts[qi]
-            for oi, (R, _perm, _s, _pao, _paux) in enumerate(ops):
+            for oi in admissible:
+                R = ops[oi][0]
                 for trs in (False, True):
                     kap, kbp = R @ ka, R @ kb
                     if trs:
@@ -459,7 +577,7 @@ def ccm_symmetry_fold_kpair_plan(
     return CCMFoldKPairPlan(
         n_builds=n_builds, n_reps=n_reps,
         reduction_factor=n_builds / max(n_reps, 1),
-        entries=entries, ops=ops,
+        entries=entries, ops=ops, admissible_ops=tuple(admissible),
     )
 
 

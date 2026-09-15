@@ -2793,12 +2793,39 @@ def test_public_ecp_sap_minao_construct_valence_guesses(method, guess):
 
 
 def test_periodic_signature_documents_literal_auto_default():
+    """The published default of ``initial_guess`` is the literal ``"AUTO"``.
+
+    #43 shipped an API reference reading ``initial_guess=<object object>``
+    after a sentinel replaced the string. Python's own signature rendering
+    shows the same text Sphinx would derive it from, so this half of the
+    check runs in every environment, including the documented ``.[test]``
+    install, which does not carry Sphinx (#251).
+    """
+    import inspect
+    from vibeqc.periodic_runner import run_periodic_job
+
+    parameter = inspect.signature(run_periodic_job).parameters["initial_guess"]
+    assert parameter.default == "AUTO"
+    # Render the default the way the reference does: without the annotation.
+    plain = parameter.replace(annotation=inspect.Parameter.empty)
+    rendered = str(inspect.Signature([plain]))
+    assert "initial_guess='AUTO'" in rendered
+    assert "<object object" not in rendered
+
+
+def test_periodic_signature_renders_literal_auto_default_in_sphinx():
+    """The rendering the published API reference actually uses (#43).
+
+    Sphinx is a ``docs`` extra, not a ``test`` extra, so this half runs only
+    where it is installed; the property it renders is pinned without Sphinx
+    in the test above (#251).
+    """
+    pytest.importorskip("sphinx")
     import inspect
     from sphinx.util.inspect import stringify_signature
     from vibeqc.periodic_runner import run_periodic_job
 
     signature = inspect.signature(run_periodic_job)
-    assert signature.parameters["initial_guess"].default == "AUTO"
     assert "initial_guess='AUTO'" in stringify_signature(signature, show_annotation=False)
     assert "<object object" not in stringify_signature(
         inspect.Signature([signature.parameters["initial_guess"]])

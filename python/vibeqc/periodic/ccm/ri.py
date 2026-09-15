@@ -273,12 +273,14 @@ def _ccm_gdf_symmetry_cache_builder(ccm, symmetry, stats):
     contractions; this closure supplies only the CCM-specific space-group
     equivalence relation.  Representatives are built in the canonical
     auxiliary frame and other members are reconstructed by AO/auxiliary
-    covariance plus time reversal. The finite cell-list residual has only
-    been measured on the lower-dimensional parity fixtures; arbitrary enabled
-    systems have no runtime bound or exact runtime test.
-    Fully 3-D replica meshes are excluded by :func:`_ccm_gdf`: their finite
-    Bloch cell lists violate that covariance at production cutoffs (GitLab
-    IID 337).
+    covariance plus time reversal. Which relations exist is decided by
+    :func:`~vibeqc.periodic.ccm.symmetry.ccm_symmetry_fold_kpair_plan`, which
+    since the vibeqc#337 fix admits only ops that preserve the finite
+    Bloch cell list, so every member it emits is exact on the truncated build.
+    Fully 3-D replica meshes are still excluded by :func:`_ccm_gdf`, now for
+    cost rather than correctness: this per-pair cache would replace the
+    generic builder's ``n_k`` shared-q batches with ``n_k**2`` individual pair
+    calls.
     """
     def _build_cache(build_pair, kpts, ubasis, aux_modrho, need_k_pairs):
         from .neutral import _ao_atom_indices, _fold_star_reconstruct
@@ -418,10 +420,11 @@ def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=True,
     if aux_basis is not None:
         kw["aux_basis"] = aux_basis
     pair_stats = {"builds": 0, "total": 0, "factor": 1.0}
-    # Fully 3-D replica meshes use the generic shared-q full-build path. In
-    # addition to avoiding the unsafe finite-cell-list covariance relations
-    # from IID 337, this retains the generic builder's n_k shared-q batches
-    # instead of replacing them with n_k**2 individual pair calls.
+    # Fully 3-D replica meshes use the generic shared-q full-build path. This
+    # is now purely a cost decision -- the star plan's relations are exact on
+    # the truncated build since the vibeqc#337 fix -- but the generic builder's
+    # n_k shared-q batches still beat n_k**2 individual pair calls, so routing
+    # 3-D meshes through this cache would cost more than the star saves.
     use_pair_symmetry = (
         symmetry is not None
         and symmetry is not False
@@ -521,11 +524,11 @@ def run_ccm_rhf_gdf(ccm, *, aux_basis=None, symmetry=True, **driver_kwargs):
     needs the compensated-cell multi-k grid); ``k_exchange="gdf"`` (default) is
     exact exchange. ``symmetry=True`` (default) reuses the currently gated
     space-group and time-reversal Lpq star members on lower-dimensional
-    replica meshes. Their finite-cell-list residuals are quantitative rather
-    than algebraically zero. Fully 3-D meshes currently use the unreduced
-    shared-q path because their finite Bloch cell lists are not covariant under
-    every star operation; pass ``symmetry=False`` to request the unreduced path
-    explicitly."""
+    replica meshes; the planner admits only cell-list-preserving ops, so those
+    members are exact on the truncated build. Fully 3-D meshes use the
+    unreduced shared-q path because its ``n_k`` batched builds are cheaper
+    here than ``n_k**2`` per-pair ones, not because the relations are unsafe;
+    pass ``symmetry=False`` to request the unreduced path explicitly."""
     _validate_gdf_driver_conv_tol_grad(
         driver_kwargs, who="run_ccm_rhf_gdf"
     )
@@ -738,11 +741,11 @@ def run_ccm_rhf_ri_neutral(ccm, *, initial_guess: object = "AUTO", cderi=None, k
        Ewald-gauge one-electron/nuclear terms) and reproduces
        :func:`run_ccm_rhf_gdf` to ≤1e-8 Ha/cell in one real eigenproblem.
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_rhf_ri_neutral',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rhf_ri_neutral"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_rhf_ri_neutral',
     )
     _warn_experimental()
     from .direct import (
@@ -1019,11 +1022,11 @@ def run_ccm_rhf_rij(ccm, aux_basis="def2-universal-jkfit", *, initial_guess: obj
     a neutral fitted-torus **control energy** use :func:`run_ccm_rhf_gdf` (the
     GDF neutral gauge; not Γ-CCM construction evidence). Returns a
     ``CCMSCFResult``."""
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_rhf_rij',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rhf_rij"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_rhf_rij',
     )
     _warn_experimental()
     S, h, e_nn = _ccm_common(ccm)
@@ -1046,11 +1049,11 @@ def run_ccm_rhf_rijcosx(ccm, aux_basis="def2-universal-jkfit", *, initial_guess:
     is short-ranged (decays within the WSC), so the seminumerical K is a natural
     fit. Exact in the isolated limit (== molecular RIJCOSX); ~few-% periodically
     (RI-J caveat, as :func:`run_ccm_rhf_rij`). Returns a ``CCMSCFResult``."""
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_rhf_rijcosx',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rhf_rijcosx"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_rhf_rijcosx',
     )
     _warn_experimental()
     from vibeqc import GridOptions, build_cosx_q, build_grid, compute_cosx_k

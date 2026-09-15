@@ -26,7 +26,7 @@ exercises every periodic-specific rendering path:
 
 Run:
 
-    ~/path/to/vibeqc/.venv/bin/python examples/vibe_view/showcase_nacl_rocksalt.py
+    ~/path/to/vibe-qc/.venv/bin/python examples/vibe_view/showcase_nacl_rocksalt.py
 
 Output:
 

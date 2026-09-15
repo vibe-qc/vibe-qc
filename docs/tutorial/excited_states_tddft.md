@@ -1,6 +1,7 @@
 # Excited states with TDDFT
 
-Ground-state SCF gives you one state: the lowest. To predict a UV/Vis
+SCF supplies a reference electronic state; convergence alone does not prove
+it is the ground state. To predict a UV/Vis
 spectrum, a photochemical pathway, or the colour of a dye, you need the
 *excited* states and how brightly each one absorbs. Time-dependent
 density-functional theory (TDDFT) is the workhorse for this: it takes a
@@ -54,13 +55,13 @@ dens = np.asarray(gs.density)
 # Step 2a: Tamm-Dancoff approximation.
 tda = run_tddft_tda(
     mol, basis, mo_e, mo_c, n_occ,
-    n_states=5, functional="B3LYP", density_ao=dens,
+    n_states=5, functional="B3LYP", density_ao=dens, grid_options=opts.grid,
 )
 
 # Step 2b: full Casida linear response on the same reference.
 cas = run_tddft_casida(
     mol, basis, mo_e, mo_c, n_occ,
-    n_states=5, functional="B3LYP", density_ao=dens,
+    n_states=5, functional="B3LYP", density_ao=dens, grid_options=opts.grid,
 )
 
 for res in (tda, cas):
@@ -71,9 +72,10 @@ for res in (tda, cas):
               f"{s.wavelength_nm:10.1f} {s.oscillator_strength:9.5f}")
 ```
 
-Running it prints the lowest five singlet excitations from each method.
-These are the **real numbers** from the run, B3LYP/6-31G\* on the
-geometry above, ground state converged in 34 iterations to
+The following historical output illustrates the lowest five singlet
+excitations on this geometry with the supplied low-level legacy grid.
+It is not a new validation run of the current source. The recorded
+B3LYP/6-31G\* reference converged in 34 iterations to
 `E = -114.43887772` Ha (HOMO-LUMO gap 6.16 eV):
 
 ```
@@ -93,6 +95,21 @@ state     E/eV  lambda/nm     f_osc
     4   9.8107      126.4   0.31225
     5  10.3709      119.6   0.00000
 ```
+
+## CLI and unrestricted references
+
+`vibeqc tddft` applies the molecular mid-level grid policy to its KS reference
+and passes that same grid and physical density to the response calculation.
+`--casida` selects full Casida for both restricted and unrestricted references;
+without it the CLI uses TDA. For open shells it derives alpha/beta occupations
+from the effective electron count and requested multiplicity, including ECP
+core removal.
+
+In the direct Python API, open-shell TDA and Casida take separate spin MOs,
+occupations and `density_alpha_ao` / `density_beta_ao`, plus `grid_options`.
+Use the same functional and grid as the SCF reference. This does not expand
+the supported functional kernel or excited-state gradient envelope; those
+limits remain independent of CLI routing.
 
 ## Reading the spectrum
 
@@ -165,11 +182,15 @@ TDDFT excitation energies inherit every strength and weakness of the
 ground-state functional, plus one extra ingredient: the
 exchange-correlation *kernel* `f_xc`, the response of the XC potential to
 a density perturbation. In vibe-qc you switch the kernel on by passing
-both `functional=` and `density_ao=`; the adiabatic LDA/GGA kernel
-(ALDA/AGGA) is then built on the same DFT grid the ground state used. Omit
-`density_ao` and you get the bare orbital-energy-difference response with
-only the exchange admixture, which is *not* a full TDDFT-functional
-result, and vibe-qc warns you so it cannot pass silently.
+both `functional=` and `density_ao=`. Pass `grid_options=opts.grid` as well
+to build the adiabatic LDA/GGA kernel (ALDA/AGGA) on the reference SCF grid.
+The four low-level molecular response drivers retain their legacy grid when
+`grid_options` is omitted; supplying a density alone does not transfer a grid.
+Omitting `density_ao` omits the XC kernel `f_xc`, but retains the orbital gaps,
+Hartree/Coulomb coupling and any exact-exchange coupling. This is *not* a full
+TDDFT-functional result. The missing-density warning applies to hybrid
+functionals with nonzero exact exchange; pure-functional calls do not receive
+that warning.
 
 The choice of B3LYP here is deliberate. Pure GGAs such as PBE have a
 narrow HOMO-LUMO gap on formaldehyde and the ground-state SCF oscillates
@@ -244,7 +265,7 @@ exact methods to cite:
 ```python
 tda = run_tddft_tda(
     mol, basis, mo_e, mo_c, n_occ,
-    n_states=3, functional="B3LYP", density_ao=dens,
+    n_states=3, functional="B3LYP", density_ao=dens, grid_options=opts.grid,
     output="h2co_tddft",
 )
 # writes h2co_tddft.bibtex + h2co_tddft.references

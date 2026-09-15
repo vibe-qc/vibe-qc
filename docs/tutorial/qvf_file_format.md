@@ -175,7 +175,7 @@ archives covering the historical 27-kind gate and validates each. Run it now
 and refer back to its output as you read:
 
 ```sh
-~/path/to/vibeqc/.venv/bin/python examples/vibe_view/showcase_qvf_all_sections.py
+~/path/to/vibe-qc/.venv/bin/python examples/vibe_view/showcase_qvf_all_sections.py
 ```
 
 ## 3. Anatomy of the manifest

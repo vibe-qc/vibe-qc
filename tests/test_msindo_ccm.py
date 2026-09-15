@@ -66,6 +66,52 @@ def _coords(cluster):
     return [[x, y, z] for _sym, x, y, z in cluster["real_atoms"]]
 
 
+@pytest.mark.parametrize("n,d", [(3, 1.28), (7, 1.28), (9, 1.3), (9, 1.375)])
+@pytest.mark.parametrize("madelung", [False, True])
+def test_carbon_chain_stable_under_coordinate_noise(n, d, madelung):
+    """#249: a gapped final spectrum can still be an unstable SCF saddle."""
+    coords = np.zeros((n, 3))
+    coords[:, 0] = np.arange(n) * d
+    translations = [[n * d, 0, 0]]
+    values = [
+        run_ccm([6] * n, coords * scale, translations, madelung=madelung,
+                max_iter=400, conv_tol=1e-9)
+        for scale in (1.0, 1.0 + 4.4e-10)
+    ]
+    for value in values:
+        assert value.converged and value.n_iter <= 400
+        assert value.stability_checked and value.stability_analysis_converged
+        assert value.stability_eigenvalue >= -4e-6
+    assert values[0].total_energy / n == pytest.approx(
+        values[1].total_energy / n, abs=1e-8
+    )
+
+
+def test_carbon_chain_python_reference_stability(monkeypatch):
+    monkeypatch.setattr(ccm, "_cpp_ccm_energy_kernel", lambda: None)
+    n, d = 3, 1.28
+    coords = [[i * d * (1 + 4.4e-10), 0, 0] for i in range(n)]
+    result = run_ccm([6] * n, coords, [[n * d, 0, 0]], max_iter=400)
+    assert result.converged and result.stability_checked
+    assert result.stability_eigenvalue >= -4e-6
+    assert result.total_energy / n == pytest.approx(-5.8507989864278, abs=1e-8)
+
+
+def test_carbon_chain_run_job_reports_stability(tmp_path):
+    molecule = vq.Molecule([
+        vq.Atom(6, [i * 1.28 * ANGSTROM_TO_BOHR, 0, 0]) for i in range(3)
+    ])
+    result = vq.run_job(
+        molecule, method="seccm", output=str(tmp_path / "stable_chain"),
+        ccm_options=CCMOptions(translations=[[3.84, 0, 0]], madelung=False),
+        citations=True, verbose=0,
+    )
+    assert result.stability_checked and result.stability_analysis_converged
+    assert result.energy / 3 == pytest.approx(-5.8507989864278, abs=1e-8)
+    assert "internal stability: stable" in (tmp_path / "stable_chain.out").read_text()
+    assert "10.3390/molecules25051218" in (tmp_path / "stable_chain.bibtex").read_text()
+
+
 def _oracle_origins(ws_cell):
     """Multiset of (1-based) neighbour origin atom-ids for one oracle WS cell —
     the lossless part of the dump (integers); validates the WS *topology*."""

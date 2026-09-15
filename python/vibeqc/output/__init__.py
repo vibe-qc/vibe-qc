@@ -87,9 +87,13 @@ from .formats.structured_log import (
 )
 from .formats import (
     CubeRequest,
+    TrexioData,
+    TrexioMOBlock,
+    TrexioSparse,
     parse_write_cube_kwarg,
     qvf_bytes,
     read_trexio,
+    read_trexio_fields,
     requested_mo_indices,
     validate_qvf,
     write_cif,
@@ -100,6 +104,7 @@ from .formats import (
     write_poscar,
     write_qvf,
     write_trexio,
+    write_trexio_fields,
     write_xyz,
 )
 from .manifest import (
@@ -183,6 +188,11 @@ __all__ = [
     "write_xyz",
     "write_trexio",
     "read_trexio",
+    "read_trexio_fields",
+    "write_trexio_fields",
+    "TrexioData",
+    "TrexioMOBlock",
+    "TrexioSparse",
     "write_extended_xyz",
     "write_poscar",
     "write_cif",

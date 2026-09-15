@@ -482,11 +482,11 @@ def run_ccm_rks(ccm, functional="pbe", *, initial_guess: object = "AUTO", method
 
     Validated: isolated-cell limit reproduces vibe-qc's molecular ``run_rks``.
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_rks',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rks"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_rks',
     )
     _warn_experimental()
     _reject_double_hybrid(functional, who="run_ccm_rks")
@@ -583,11 +583,11 @@ def run_ccm_uks(ccm, functional="pbe", *, initial_guess: object = "AUTO", method
     Validated: isolated-cell limit reproduces vibe-qc's molecular ``run_uks``;
     reduces to RKS for a closed shell.
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_uks',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_uks"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_uks',
     )
     _warn_experimental()
     _reject_double_hybrid(functional, who="run_ccm_uks")

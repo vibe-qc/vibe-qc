@@ -216,6 +216,8 @@ class PBCBipoleRKSResult:
     restart_mesh: object = None
     restart_kpoints: object = None
     restart_weights: object = None
+    # Ewald accuracy used by the SCF; gradients must retain its finite sums.
+    ewald_precision: float = 1e-8
 
 
 @dataclass
@@ -2306,6 +2308,7 @@ def run_pbc_bipole_rks(
         density=D_real,
         scf_trace=scf_trace,
         ewald_alpha_bohr_inv=omega_used,
+        ewald_precision=float(ewald_precision),
         sr_image_extent_bohr=_sr_image_extent,
         pair_resolved_fock_domain=bool(_fock_sym_map is not None),
         e_dft_plus_u=float(e_dft_plus_u),

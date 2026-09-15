@@ -421,18 +421,27 @@ PeriodicGFN2Result run_gfn2_xtb_gamma(
     result.smearing_temperature = smearing_temperature;
     result.gamma_form = gamma_form;
 
-    // max_iter is the total public budget, not a per-attempt allowance.
-    // Reserve the established 2000-step neutral restart only when the caller
-    // explicitly supplies enough room for both the ordinary 500-step branch
-    // and that restart. Smaller budgets remain entirely available to the
-    // ordinary physical-branch solve.
-    const int stabilization_reserve =
-        A.has_gam3 && sopts.auto_stabilize && sopts.max_iter >= 2500
-        ? 2000
-        : 0;
-    const int primary_max_iter = sopts.max_iter - stabilization_reserve;
+    // The primary solve may use the full public budget. A fixed reserve
+    // used to cut its allowance from 2499 to 500 when max_iter crossed
+    // 2500, abandoning even a contracting SCC (#244). Decide whether to
+    // restart from the residual history at budget-independent checkpoints,
+    // so raising the cap does not change the primary trajectory. As in the
+    // molecular driver's advisory checkpoint, compare successive window
+    // minima; leave a still-improving solve on its current branch.
+    const bool use_stabilization = A.has_gam3 && sopts.auto_stabilize;
+    constexpr int kStabilityCheckpoint = 500;
+    constexpr int kProgressWindow = 25;
+    const auto still_contracting = [&max_change_trace]() {
+        const int n = static_cast<int>(max_change_trace.size());
+        if (n < 2 * kProgressWindow) return false;
+        const auto end = max_change_trace.end();
+        const double recent = *std::min_element(end - kProgressWindow, end);
+        const double prior = *std::min_element(
+            end - 2 * kProgressWindow, end - kProgressWindow);
+        return recent < prior;
+    };
 
-    for (int iter = 1; iter <= primary_max_iter; ++iter) {
+    for (int iter = 1; iter <= sopts.max_iter; ++iter) {
         const Eigen::VectorXd dq_shell = state.dq_shell();
         // Isotropic second-order (shell-resolved) potential with the
         // lattice-summed gamma, plus the shell-resolved third-order on-site
@@ -597,18 +606,26 @@ PeriodicGFN2Result run_gfn2_xtb_gamma(
         } else {
             mixer->mix(state.x, state_new.x, iter);
         }
+
+        if (use_stabilization && iter % kStabilityCheckpoint == 0
+                && !still_contracting()) {
+            break;
+        }
     }
-    result.n_iter = primary_max_iter;
+    // A physical-basin rejection or stalled checkpoint may end the primary
+    // early. Count executed iterations, rather than its unused allowance.
+    result.n_iter = static_cast<int>(max_change_trace.size());
     result.scc_max_change_trace = Eigen::Map<const Eigen::VectorXd>(
         max_change_trace.data(), static_cast<Eigen::Index>(max_change_trace.size()));
-    if (stabilization_reserve > 0) {
+    const int remaining = sopts.max_iter - result.n_iter;
+    if (use_stabilization && remaining > 0) {
         // Match the molecular GFN2 contract: a failed physical-branch solve
         // receives one bounded restart from the neutral state with the
         // damped simple/Aitken path (mixer_damping > 0 selects it).
         XTBSccOptions retry_options = sopts;
         retry_options.charge_mixing = 0.01;
         retry_options.mixer_damping = 1.0;
-        retry_options.max_iter = stabilization_reserve;
+        retry_options.max_iter = std::min(2000, remaining);
         retry_options.scc_mixer = SCCMixer::Simple;
         retry_options.auto_stabilize = false;
         retry_options.gamma_form = gamma_form;

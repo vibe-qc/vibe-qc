@@ -1,3 +1,4 @@
+
 """Multi-k periodic ROKS (EWALD_3D / BIPOLE) tests — run on a build box.
 
 The Roothaan coupling, the occupation rule and the spin-polarised XC kernel
@@ -20,9 +21,11 @@ supercell spin counts (4 alpha / 2 beta over the two k points).
 from __future__ import annotations
 
 import numpy as np
+
 import pytest
 
 import vibeqc as vq
+
 from vibeqc.periodic_roks_multi_k_ewald import (
     _single_open_shell_occupations,
     _spin_occupations,
@@ -209,12 +212,25 @@ def test_multik_roks_iteration_cap_returns_evaluated_orbital_state():
 
 
 def test_multik_roks_degenerate_frontier_shell_converges_without_band_flips():
-    """The symmetry-degenerate Li ``(2,2,1)`` shell must settle promptly.
+    """The Li ``(2,2,1)`` mesh must settle promptly with one open 2s per k.
 
-    The historical integer 2/1/0 choice changed which member of the frontier
+    The historical integer 2/1/0 choice changed which member of a frontier
     shell carried the open electron as the effective Fock moved. Energy was
     flat long before the commutator: current main needs 87 iterations on this
     one-thread fixture, versus six for the nondegenerate ``(1,1,2)`` mesh.
+
+    This test once expected one k-point to carry a half-filled degenerate
+    p pair. That pair was an artifact: the periodic XC density stopped at a
+    fixed 10-bohr image radius, which for the diffuse Li 2sp shell dropped
+    0.4 percent of the density and pushed the virtual p levels about
+    0.24 Ha below where PySCF puts them (#265). With the image sum reaching
+    the lattice cutoff, the frontier at every k is the nondegenerate 2s, as
+    in PySCF's KROKS on the same mesh, and the open electron sits there.
+    PySCF then fills the BvK supercell by global Aufbau (an extra alpha at
+    one k, none at another); this route keeps equal per-k counts by
+    contract, which is what is pinned. The degenerate-shell ensemble rule
+    itself is covered by
+    :func:`test_single_open_shell_occupation_locks_alpha_degeneracy`.
     """
     sysp, basis = _li_box()
     km = vq.monkhorst_pack(sysp, [2, 2, 1])
@@ -226,14 +242,15 @@ def test_multik_roks_degenerate_frontier_shell_converges_without_band_flips():
     )
 
     assert result.converged, (
-        f"degenerate-shell ROKS did not settle in {result.n_iter} cycles; "
+        f"ROKS did not settle in {result.n_iter} cycles; "
         f"last commutator={result.scf_trace[-1].grad_norm:.9e}"
     )
     assert result.s_squared == pytest.approx(0.75, abs=1e-12)
-    fractional_shells = [
-        occ[np.isclose(occ, 0.5)] for occ in result.mo_occupations
-    ]
-    assert sum(shell.size == 2 for shell in fractional_shells) == 1
+    for occ, eps in zip(result.mo_occupations, result.mo_energies, strict=True):
+        assert np.asarray(occ) == pytest.approx([2.0, 1.0, 0.0, 0.0, 0.0])
+        # The open 2s lies below the p shell at every k; no fractional shell.
+        assert eps[1] < eps[2]
+    assert not any(np.isclose(occ, 0.5).any() for occ in result.mo_occupations)
 
 
 def test_single_open_shell_occupation_locks_alpha_degeneracy():
@@ -263,26 +280,54 @@ def test_single_open_shell_occupation_locks_alpha_degeneracy():
     assert occupations == pytest.approx([2.0, 0.0, 0.5, 0.5, 0.0])
 
 
-def test_multik_roks_pyscf_kroks_reference():
-    """Li/PBE/STO-3G (1,1,2) against an out-of-process PySCF KROKS run.
+E_PYSCF_KROKS_LI_112 = -7.435745517126
+"""PySCF 2.14.0 ``KROKS(cell, kpts).density_fit()``, ``xc='pbe'``, 6-bohr cubic
+cell, Li at the centre, Gamma-centred ``(1,1,2)`` mesh, ``cell.spin = 2``
+(4 alpha / 2 beta over the two k points), ``cell.rcut`` 32.7 bohr.
+Re-derived unchanged on 2026-09-14 (KUKS gives the same value to 7e-8)."""
 
-    Published target: PySCF 2.14.0 ``KROKS(cell, kpts).density_fit()`` with
-    ``xc='pbe'``, 6-bohr cubic cell, Li at the centre, Gamma-centred
-    ``(1,1,2)`` mesh and the equivalent BvK supercell spin ``cell.spin = 2``
-    (4 alpha / 2 beta over the two k points) converged to
-    ``-7.435745517126 Ha``. The residual here is DFT-grid and lattice-
-    truncation numerics, not a formulation difference: the two codes use
-    different atomic grids and different Coulomb gauges.
-    """
+
+def _li_kroks_reference_run(cutoff_bohr: float):
     sysp, basis = _li_box()
     km = vq.monkhorst_pack(sysp, [1, 1, 2])
     opts = _options("pbe")
-    opts.lattice_opts.cutoff_bohr = 14.0
-    opts.lattice_opts.nuclear_cutoff_bohr = 14.0
+    opts.lattice_opts.cutoff_bohr = cutoff_bohr
+    opts.lattice_opts.nuclear_cutoff_bohr = cutoff_bohr
     r = run_roks_periodic_multi_k_ewald3d(sysp, basis, km, opts, progress=False)
     assert r.converged
-    E_PYSCF_KROKS = -7.435745517126
-    assert r.energy == pytest.approx(E_PYSCF_KROKS, abs=5.0e-4)
+    return r
+
+
+def test_multik_roks_pyscf_kroks_reference():
+    """Li/PBE/STO-3G (1,1,2) against the PySCF KROKS anchor, fast fixture.
+
+    The Li 2sp shell (exponent 0.048) reaches about 20 bohr, so at the
+    14-bohr lattice cutoff of this fixture the residual against PySCF is
+    lattice truncation of the one-electron and overlap sums (S(Gamma) is
+    still 0.25 short of converged at 12 bohr). Measured on 2026-09-14 after
+    the XC image sum was made to reach the cutoff (#265), in mHa above
+    PySCF: 1.20 at 12 bohr, 1.01 at 14, 0.50 at 20, 0.47 at 24. The 1.5 mHa
+    bound below is that measured truncation residual with margin, not a
+    formulation allowance; before #265 the same fixture missed by 8.1 mHa
+    because the XC density stopped at a fixed 10-bohr image radius. The
+    strict 0.5 mHa comparison lives in the slow sibling at 24 bohr.
+    """
+    r = _li_kroks_reference_run(14.0)
+    assert r.energy == pytest.approx(E_PYSCF_KROKS_LI_112, abs=1.5e-3)
+    # Direction and size of the truncation residual: above PySCF, under 1.5 mHa.
+    assert 0.0 < r.energy - E_PYSCF_KROKS_LI_112 < 1.5e-3
+
+
+@pytest.mark.slow
+def test_multik_roks_pyscf_kroks_reference_converged_cutoff():
+    """The same anchor with the lattice sums converged: 0.5 mHa at 24 bohr.
+
+    About 25 minutes single-threaded on a laptop; the XC image sum now
+    covers 515 lattice cells at this cutoff. The remaining 0.47 mHa does not
+    shrink between 20 and 24 bohr and is tracked separately from #265.
+    """
+    r = _li_kroks_reference_run(24.0)
+    assert r.energy == pytest.approx(E_PYSCF_KROKS_LI_112, abs=5.0e-4)
 
 
 def test_multik_roks_fused_kernels_match_serial_fold(monkeypatch):
@@ -309,6 +354,115 @@ def test_multik_roks_fused_kernels_match_serial_fold(monkeypatch):
     # land either side of the convergence test on the final cycle.
     assert r_fused.energy == pytest.approx(r_serial.energy, abs=1e-10)
     assert abs(r_fused.n_iter - r_serial.n_iter) <= 1
+
+
+def test_periodic_uks_xc_is_bitwise_repeatable_across_threads():
+    """``build_xc_periodic_uks`` returns identical bits on identical inputs.
+
+    The density and gradient accumulation over bra-ket pairs runs in
+    parallel with one private accumulator per thread, summed in thread
+    order afterwards. With ``schedule(dynamic)`` the pairs each thread
+    summed changed from run to run, so the rounding of the total changed
+    too: on the Li/6-bohr fixture the same density gave E_xc and V_xc
+    scattered at 1e-9, right at the SCF energy tolerance, which is why the
+    iteration count in :func:`test_multik_roks_fused_kernels_match_serial_fold`
+    wandered by 2 to 8 (#81). The pair loops now use ``schedule(static)``,
+    so for a fixed thread count the partition, and the bits, are fixed.
+
+    The overlap lattice stands in for a density: it has the right block
+    structure and gives a non-negative rho, and only repeatability is
+    asserted, not a physical value. Three threads are forced so the check
+    is meaningful under the conftest's macOS default of one.
+    """
+    from vibeqc._vibeqc_core import (
+        Functional,
+        build_xc_periodic_uks,
+        compute_overlap_lattice,
+        get_num_threads,
+        set_num_threads,
+    )
+    from vibeqc.periodic_grid import build_periodic_becke_grid
+
+    sysp, basis = _li_box()
+    opts = _options("pbe")
+    lat_opts = opts.lattice_opts
+    grid = build_periodic_becke_grid(
+        sysp, grid_options=opts.grid,
+        image_radius_bohr=float(opts.becke_image_radius_bohr),
+    )
+    func = Functional("pbe", 2)
+    S_lat = compute_overlap_lattice(basis, sysp, lat_opts)
+    original = get_num_threads()
+    try:
+        set_num_threads(3)
+        reference = build_xc_periodic_uks(
+            basis, sysp, grid, func, S_lat, S_lat, lat_opts
+        )
+        ref_e = float(reference.e_xc)
+        ref_a = [np.array(b, copy=True) for b in reference.V_alpha.blocks]
+        ref_b = [np.array(b, copy=True) for b in reference.V_beta.blocks]
+        assert ref_e != 0.0 and any(np.any(b) for b in ref_a)
+        for _ in range(8):
+            again = build_xc_periodic_uks(
+                basis, sysp, grid, func, S_lat, S_lat, lat_opts
+            )
+            assert float(again.e_xc) == ref_e
+            for got, want in zip(again.V_alpha.blocks, ref_a):
+                assert np.array_equal(np.asarray(got), want)
+            for got, want in zip(again.V_beta.blocks, ref_b):
+                assert np.array_equal(np.asarray(got), want)
+    finally:
+        set_num_threads(original)
+
+
+def test_periodic_xc_bra_images_reach_the_lattice_cutoff():
+    """The XC density sums AO-product images out to ``cutoff_bohr`` (#265).
+
+    ``build_xc_periodic_uks`` picks the lattice translations whose shifted
+    AO products still reach the home-cell grid. With
+    ``LatticeSumOptions.becke_image_radius_bohr`` left unset it used to stop
+    at a fixed 10 bohr, although the header documents the unset value as
+    falling back to ``cutoff_bohr`` and no Ewald driver sets the field. The
+    Li/STO-3G 2sp shell (exponent 0.048) reaches about 20 bohr, so the grid
+    density lost 0.4 percent of its electrons and E_xc came out 8 mHa short
+    against PySCF. Pins the documented fallback: unset equals an explicit
+    radius of ``cutoff_bohr`` bitwise, and lies well below the old 10-bohr
+    truncation on the same density (6.0 mHa on this fixture at 12 bohr,
+    6.6 mHa at 20 bohr; 12 keeps the pin fast).
+    """
+    from vibeqc._vibeqc_core import (
+        Functional,
+        build_xc_periodic_uks,
+        compute_overlap_lattice,
+    )
+    from vibeqc.periodic_grid import build_periodic_becke_grid
+
+    sysp, basis = _li_box()
+    opts = _options("pbe")
+    lat_opts = opts.lattice_opts
+    lat_opts.cutoff_bohr = 12.0
+    grid = build_periodic_becke_grid(
+        sysp, grid_options=opts.grid,
+        image_radius_bohr=float(opts.becke_image_radius_bohr),
+    )
+    func = Functional("pbe", 2)
+    # A scaled overlap lattice stands in for a density: right block
+    # structure, non-negative rho; only the image reach is under test.
+    density = compute_overlap_lattice(basis, sysp, lat_opts)
+    for i, block in enumerate(list(density.blocks)):
+        density.set_block(i, 0.1 * np.asarray(block))
+
+    def e_xc(radius):
+        lat_opts.becke_image_radius_bohr = radius
+        try:
+            return float(build_xc_periodic_uks(
+                basis, sysp, grid, func, density, density, lat_opts).e_xc)
+        finally:
+            lat_opts.becke_image_radius_bohr = 0.0
+
+    unset, at_cutoff, ten_bohr = e_xc(0.0), e_xc(12.0), e_xc(10.0)
+    assert unset == at_cutoff
+    assert unset < ten_bohr - 5.0e-3, (unset, ten_bohr)
 
 
 def test_multik_roks_energy_components_sum_to_total():

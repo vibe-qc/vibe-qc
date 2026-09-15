@@ -5,6 +5,7 @@ No test changes a solver switch or certifies finite-support production J/K.
 from __future__ import annotations
 
 from dataclasses import replace
+from math import hypot
 
 import numpy as np
 import pytest
@@ -611,11 +612,32 @@ def test_subspace_keeps_finite_normalization_error_separate_from_leakage():
         replace(result, mixing=np.eye(1, dtype=complex))
 
 
-def test_subspace_relative_leakage_survives_tiny_nonzero_transport():
+@pytest.mark.parametrize("scale", [1e-320,1e-310,1e-300])
+@pytest.mark.parametrize("phase", [1.,.6+.8j])
+@pytest.mark.parametrize("anti", [False,True])
+def test_subspace_relative_leakage_survives_tiny_nonzero_transport(scale,phase,anti):
     c = np.array([[1.], [0.]], dtype=complex)
-    result = subspace_probe(block([[0,0],[1e-300,1]]), c, c)
+    result = subspace_probe(block([[0,0],[scale*phase,1]],anti=anti), c, c)
     assert result.containment.residual == pytest.approx(1.)
     assert not result.passed_probe
+
+
+@pytest.mark.parametrize("scale,relative", [(1e-100,1e-200),(1.,1e-320),
+                                            (1.,1e-200),(1e75,1e-200)])
+@pytest.mark.parametrize("phase", [1.,.6+.8j])
+@pytest.mark.parametrize("anti", [False,True])
+def test_subspace_retains_tiny_relative_leakage(scale,relative,phase,anti):
+    z = scale*relative*phase
+    c = np.array([[1.],[0.]],dtype=complex)
+    expected = hypot(z.real/scale,z.imag/scale)
+    for factor in [.5,1.5]:
+        result = subspace_probe(block([[scale,0],[z,1.]],anti=anti),c,c,
+                                leakage_tolerance=factor*expected)
+        residual = result.containment.residual
+        assert residual > 0.
+        assert residual == pytest.approx(expected,rel=1e-14,abs=np.spacing(expected))
+        assert result.containment.passed_probe is (factor > 1.)
+        assert not result.production_reduction_authorized
 
 
 @pytest.mark.parametrize("failure", ["rank", "empty", "dependent", "metric", "identity", "nonfinite", "byte", "work"])
@@ -1778,6 +1800,46 @@ def test_group_operators_scaled_norm_preserves_absolute_tolerance(anti,scale):
     assert not accepted.production_reduction_authorized
 
 
+@pytest.mark.parametrize("anti", [False,True])
+@pytest.mark.parametrize("scale", [1e-320,1e-310])
+@pytest.mark.parametrize("phase", [1.,.6+.8j])
+def test_group_operators_preserve_subnormal_complex_residuals(anti,scale,phase):
+    g = group([[0,1],[1,0]],anti=np.array([0,anti],dtype=np.uint8))
+    parent = group_transport_probe(g,(SPACE,),np.zeros((2,1),dtype=np.int64),
+        ((mixing_witness(np.eye(2)),),(mixing_witness([[0,1],[1,0]],anti=anti),)))
+    z = scale*phase
+    a = np.diag([0.,z]).astype(complex)
+    # Use the actual rounded real components as the independent norm oracle.
+    # At subnormal scales, one ulp is much larger than a relative 1e-14.
+    expected = hypot(z.real,z.imag,z.real,z.imag)
+    refused = group_operator_probe(parent,(a,),tolerance=.5*scale)
+    accepted = group_operator_probe(parent,(a,),tolerance=1.5*scale)
+    assert 0. < refused.probes[1][0].residual
+    assert abs(refused.probes[1][0].residual-expected) <= np.spacing(expected)
+    assert not refused.passed_probe and accepted.passed_probe
+    assert accepted.parent is parent and not accepted.production_reduction_authorized
+
+
+@pytest.mark.parametrize("scale,relative", [(1e-100,1e-200),(1.,1e-320),
+                                            (1.,1e-200),(1e200,1e-200),(1e308,1e-308)])
+@pytest.mark.parametrize("phase", [1.,.6+.8j])
+@pytest.mark.parametrize("anti", [False,True])
+def test_group_operators_small_residual_beside_large_commuting_part(scale,relative,phase,anti):
+    g = group([[0,1],[1,0]],anti=np.array([0,anti],dtype=np.uint8))
+    parent = group_transport_probe(g,(SPACE,),np.zeros((2,1),dtype=np.int64),
+        ((mixing_witness(np.eye(2)),),(mixing_witness([[0,1],[1,0]],anti=anti),)))
+    z = scale*relative*phase
+    a = np.array([[scale,0.],[z,scale]],dtype=complex)
+    expected = hypot(z.real,z.imag,z.real,z.imag)
+    for factor in [.5,1.5]:
+        result = group_operator_probe(parent,(a,),tolerance=factor*expected)
+        residual = result.probes[1][0].residual
+        assert residual > 0.
+        assert residual == pytest.approx(expected,rel=1e-14,abs=np.spacing(expected))
+        assert result.passed_probe is (factor > 1.)
+        assert not result.production_reduction_authorized
+
+
 def selected_operator_probe(parent, selection, **kwargs):
     options = dict(covariance_tolerance=1e-11,leakage_tolerance=1e-11,
         probe_identity="selected reducing operator subspace",budget=BUDGET)
@@ -1821,15 +1883,58 @@ def test_selected_operators_follow_complex_gauges_and_inherit_contract(anti):
     assert nested.passed_probe and nested.parent is result
 
 
-@pytest.mark.parametrize("scale", [1e-250,1.,1e250])
-def test_selected_operators_expose_leakage_hidden_by_zero_compression(scale):
-    a = np.array([[0,scale],[scale,0]],dtype=complex)
+@pytest.mark.parametrize("scale", [1e-320,1e-310,1e-250,1.,1e250])
+@pytest.mark.parametrize("phase", [1.,.6+.8j])
+def test_selected_operators_expose_leakage_hidden_by_zero_compression(scale,phase):
+    a = np.array([[0,scale*phase],[scale*phase,0]],dtype=complex)
     operators,selection = identity_operator_selection(a,np.array([[1],[0]],dtype=complex))
     assert operators.passed_probe and selection.passed_probe
     result = selected_operator_probe(operators,selection)
     assert result.operator_transport.passed_probe and not result.passed_probe
     assert result.containment[0].residual == pytest.approx(1.)
     assert result.adjoint_containment[0].residual == pytest.approx(1.)
+
+
+@pytest.mark.parametrize("scale,relative", [(1e-100,1e-200),(1.,1e-320),
+                                            (1.,1e-200),(1e200,1e-200),(1e308,1e-308)])
+@pytest.mark.parametrize("phase", [1.,.6+.8j])
+def test_selected_operators_preserve_tiny_relative_and_adjoint_leakage(scale,relative,phase):
+    z = scale*relative*phase
+    a = np.array([[scale,z.conjugate()],[z,0.]],dtype=complex)
+    parent,selection = identity_operator_selection(a,np.array([[1.],[0.]],dtype=complex))
+    expected = hypot(z.real/scale,z.imag/scale)
+    for factor in [.5,1.5]:
+        result = selected_operator_probe(parent,selection,leakage_tolerance=factor*expected)
+        for evidence in result.containment+result.adjoint_containment:
+            assert evidence.residual > 0.
+            assert evidence.residual == pytest.approx(expected,rel=1e-14,abs=np.spacing(expected))
+            assert evidence.passed_probe is (factor > 1.)
+        assert result.passed_probe is (factor > 1.)
+        assert result.parent is parent and not result.production_reduction_authorized
+
+
+def test_selected_operator_norm_ratio_combines_exponents_before_rounding():
+    tiny = np.nextafter(0.,1.)
+    a = np.zeros((10,10),dtype=complex)
+    a[0,0] = 4.
+    a[1:,0] = a[0,1:] = tiny
+    q = np.eye(10,dtype=complex)[:,:1].copy()
+    parent,selection = identity_operator_selection(a,q)
+    # sqrt(9*tiny**2)/4 = 0.75*tiny rounds to tiny. Dividing the
+    # component scales first rounds tiny/4 to zero and loses the answer.
+    for tolerance in [0.,tiny]:
+        result = selected_operator_probe(parent,selection,leakage_tolerance=tolerance)
+        assert result.containment[0].residual == tiny
+        assert result.adjoint_containment[0].residual == tiny
+        assert result.passed_probe is bool(tolerance > 0.)
+
+
+def test_selected_operator_refuses_nonzero_unrepresentable_ratio():
+    tiny = np.nextafter(0.,1.)
+    a = np.array([[4.,tiny],[tiny,0.]],dtype=complex)
+    parent,selection = identity_operator_selection(a,np.array([[1.],[0.]],dtype=complex))
+    with pytest.raises(ValueError,match="nonfinite selected operator leakage"):
+        selected_operator_probe(parent,selection,leakage_tolerance=0.)
 
 
 def test_selected_operators_check_adjoint_coupling_for_nonhermitian_operator():

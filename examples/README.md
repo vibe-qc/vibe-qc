@@ -20,13 +20,15 @@ only the companions needed by your chosen example:
 The QVF repository is not a runtime dependency of vibe-qc. The independent
 implementations exchange files validated against its published format. Each
 repository releases independently; a core tag does not select a viewer or
-queue version. All four repositories currently require private GitLab access.
+queue version. [Repositories and downloads](../docs/installation.md#repositories-and-downloads)
+lists all four GitLab sources and GitHub mirrors, current access requirements,
+and the owning projects' tags and release artifacts.
 
-The companion owners are bringing their product manuals online at
+The companion manuals are published independently at
 [vibe-view docs](https://vibe-qc.com/vibe-view/docs/) and
-[vibe-queue docs](https://vibe-qc.com/vibe-queue/docs/). Until publication is
-complete, use the setup links above and each repository's README. These core
-examples remain here and are released with vibe-qc.
+[vibe-queue docs](https://vibe-qc.com/vibe-queue/docs/). These core calculation
+examples remain here and are released with vibe-qc; viewer-only examples and
+queue examples belong to the corresponding companion checkout.
 
 ## Running an example
 

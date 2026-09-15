@@ -52,15 +52,18 @@ def _run_chi_snapshot(n_kpoints, *, physical_pairs=False):
     options.conv_tol_energy = 1e-11
     options.conv_tol_grad = 1e-10
     options.lattice_opts.pair_complete_1e = physical_pairs
+    mesh = (n_kpoints, 1, 1) if isinstance(n_kpoints, int) else n_kpoints
     with pytest.warns(AICCM2026DevBExperimentalWarning):
         result = run_aiccm2026dev_b_rhf(
-            system, basis, (n_kpoints, 1, 1), options=options, progress=False,
+            system, basis, mesh, options=options, progress=False,
         )
     assert result.converged
     return system, basis, result
 
 
-@pytest.fixture(scope="module", params=[2, 3])
+@pytest.fixture(scope="module", params=[
+    2, 3, pytest.param((2, 3, 1), id="2x3x1"), pytest.param((3, 2, 1), id="3x2x1"),
+])
 def physical_chi_snapshot_fixture(request):
     import vibeqc.pbc_bipole as driver
 
@@ -255,12 +258,12 @@ def test_chi_snapshot_does_not_certify_geometric_half_translation(
             assert not sewing.physical_source_symmetry_certified
 
 
-def _half_translation_actions(n_kpoints):
+def _half_translation_actions(kpoints_frac):
     actions = []
-    for k in range(n_kpoints):
+    for k in kpoints_frac:
         action = np.zeros((4, 4), complex)
         action[2:, :2] = np.eye(2)
-        action[:2, 2:] = np.exp(-2j*np.pi*k/n_kpoints)*np.eye(2)
+        action[:2, 2:] = np.exp(-2j*np.pi*k[0])*np.eye(2)
         actions.append(action)
     return actions
 
@@ -321,8 +324,15 @@ def test_physical_chi_raw_components_and_density_equivariance(
     physical_chi_snapshot_fixture, record_property,
 ):
     case, context = physical_chi_snapshot_fixture
-    _, _, result = case
-    actions = _half_translation_actions(context.n_k)
+    system, _, result = case
+    k_cart = np.asarray(context.k_points)
+    k_frac = k_cart @ np.asarray(system.lattice)/(2*np.pi)
+    mesh = np.asarray(result.aiccm2026dev_b.mesh)
+    addresses = k_frac*mesh
+    assert np.max(np.abs(addresses-np.rint(addresses))) < 1e-12
+    addresses = {tuple(row) for row in np.rint(addresses).astype(int) % mesh}
+    assert len(addresses) == context.n_k == int(np.prod(mesh))
+    actions = _half_translation_actions(k_frac)
     density_k = [2*c[:, :2]@c[:, :2].conj().T for c in result.mo_coeffs]
     components = _physical_chi_jk_components(context, result.density, density_k)
     raw_fock = [h+v for h, v in zip(result.hcore, components["F2e"])]
@@ -337,23 +347,46 @@ def test_physical_chi_raw_components_and_density_equivariance(
         record_property(name+"_half_translation_max_abs", residual)
         assert residual < 1e-8, (name, residual)
 
+    if np.count_nonzero(mesh > 1) > 1:
+        # The multi-axis witness must detect the former one-axis shortcut,
+        # rather than passing because its Fock blocks are phase insensitive.
+        wrong_coordinates = np.zeros((context.n_k, 3))
+        wrong_coordinates[:, 0] = np.arange(context.n_k)/context.n_k
+        wrong_actions = _half_translation_actions(wrong_coordinates)
+        residual = max(float(np.max(np.abs(u.conj().T@f@u-f)))
+                       for u, f in zip(wrong_actions, raw_fock))
+        record_property("flattened_index_phase_negative_max_abs", residual)
+        assert residual > 1e-8
+
     rng = np.random.default_rng(62)
-    trial = []
+    trial = [None]*context.n_k
+    conjugate_pairs = 0
     for k in range(context.n_k):
+        if trial[k] is not None:
+            continue
+        # Locate -k modulo reciprocal lattice vectors in the actual full mesh.
+        # A flattened k index is not a character coordinate on a multi-axis grid.
+        sums = k_frac + k_frac[k]
+        partners = np.flatnonzero(np.max(np.abs(sums-np.rint(sums)), axis=1) < 1e-12)
+        assert len(partners) == 1
+        partner = int(partners[0])
         panel = rng.normal(size=(4, 4))
-        if context.n_k == 3 and k == 1:
+        if partner != k:
             panel = panel + 1j*rng.normal(size=(4, 4))
-        trial.append(panel@panel.conj().T/8.)
-    if context.n_k == 3:
-        trial[-1] = trial[1].conj()
+            conjugate_pairs += 1
+        trial[k] = panel@panel.conj().T/8.
+        trial[partner] = trial[k].conj()
+    record_property("trial_conjugate_pairs", conjugate_pairs)
+    if 3 in mesh:
+        assert conjugate_pairs > 0
     image = [u@d@u.conj().T for u, d in zip(actions, trial)]
     assert max(np.max(np.abs(a-b)) for a, b in zip(trial, image)) > .1
     responses = []
     for matrices in (trial, image):
         # Explicit character inverse, including the conjugate nonzero-k pair.
         # Apply it on the actual retained density support, without pruning.
-        blocks = [sum(np.exp(-2j*np.pi*k*int(cell.index[0])/context.n_k)*d
-                      for k, d in enumerate(matrices))/context.n_k
+        blocks = [sum(np.exp(-1j*np.dot(k, cell.r_cart))*d
+                      for k, d in zip(k_cart, matrices))/context.n_k
                   for cell in result.density.cells]
         assert max(np.max(np.abs(block.imag)) for block in blocks) < 1e-12
         density = vq._vibeqc_core.make_lattice_matrix_set(
@@ -2246,18 +2279,20 @@ def test_chi_snapshot_shared_state_bridge_and_whole_group(chi_snapshot_fixture,s
 
 @pytest.mark.parametrize("subspace", ["correlated_occupied", "virtual"])
 def test_physical_chi_snapshot_half_translation_group(
-    physical_chi_snapshot_fixture, subspace,
+    physical_chi_snapshot_fixture, subspace, record_property,
 ):
     # The opt-in physical finite operator must pass the same sewing, Seitz
     # cocycle, static-Fock and selected-space checks as the odd legacy mesh.
     # Keep the two-point legacy refusal as a separate negative control.
     case, _ = physical_chi_snapshot_fixture
     _audit_chi_snapshot_group(case, subspace, "half_translation",
-                              legacy_half_translation_defect=False)
+                              legacy_half_translation_defect=False,
+                              record_property=record_property)
 
 
 def _audit_chi_snapshot_group(
     chi_snapshot_fixture, subspace, spatial, *, legacy_half_translation_defect,
+    record_property=None,
 ):
     from vibeqc.symmetry_shared import Budget, FiniteGroup, audit_group_transport, audit_periodic_state_subspace
     from vibeqc.symmetry_shared import audit_periodic_state_group, audit_selected_group_transport
@@ -2318,6 +2353,11 @@ def _audit_chi_snapshot_group(
     assert selected.passed_probe and selected.parent is bound and selected.parent.state is state
     assert selected.group_transport.characters == bound.group_transport.characters
     assert not selected.production_reduction_authorized
+    if record_property is not None:
+        record_property("group_composition_residual", result.composition_residual)
+        record_property("selected_group_composition_residual",
+                        selected.group_transport.composition_residual)
+        record_property("fractional_seitz_residual", bound.maximum_fractional_seitz_residual)
     fock_operators = []
     for k,item in enumerate(bridges[0]):
         c = state.coefficients(k)[:,item.source_bands]
@@ -2333,6 +2373,10 @@ def _audit_chi_snapshot_group(
             tolerance=1e-8,probe_identity="chi native snapshot static Fock",budget=budget)
         assert operator_result.passed_probe and operator_result.parent is parent
         assert not operator_result.production_reduction_authorized
+        if record_property is not None:
+            label = "full" if parent is bound else "selected"
+            record_property(label+"_fock_covariance_residual",
+                            max(p.residual for row in operator_result.probes for p in row))
         if parent is bound:
             reducing = audit_selected_operators(operator_result,selected,covariance_tolerance=1e-8,
                 leakage_tolerance=1e-8,probe_identity="chi native selected Fock leakage",budget=budget)

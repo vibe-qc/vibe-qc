@@ -50,6 +50,7 @@ from ._vibeqc_core import (
     monkhorst_pack,
 )
 from .bipole_gradient import (
+    _recenter_basis_on_periodic_system,
     compute_bipole_gradient_fd,
     compute_bipole_gradient_rhf,
     compute_bipole_gradient_rks,
@@ -436,7 +437,7 @@ def _compute_forces(
     if force_mode == "fd":
         return np.asarray(
             compute_bipole_gradient_fd(
-                system, basis_name, kmesh, opts,
+                system, basis, kmesh, opts,
                 method=method, functional=functional,
                 step_bohr=fd_step_bohr, **bipole_kwargs,
             )
@@ -495,7 +496,7 @@ def _emit_opt_line(text: str) -> None:
 
 def relax_atoms(
     system: PeriodicSystem,
-    basis_name: str,
+    basis_name: str | BasisSet,
     kmesh: KMeshInput,
     method: str = "RHF",
     *,
@@ -525,8 +526,9 @@ def relax_atoms(
     ----------
     system : PeriodicSystem
         Initial geometry (lattice fixed).
-    basis_name : str
-        Basis set name (rebuild per geometry step).
+    basis_name : str or BasisSet
+        Name to load once, or the actual initial basis. Every geometry
+        preserves its shells while moving them with their owning atoms.
     kmesh : BlochKMesh or KPoints
         k-point mesh.
     method : str
@@ -678,10 +680,12 @@ def relax_atoms(
     # periodic optimizers cannot disagree on what a refused trial costs.
     _PENALTY_HA = BIPOLE_TRIAL_PENALTY_HA
     _had_good_eval: dict[str, bool] = {"ok": False}
+    template = (BasisSet(system.unit_cell_molecule(), basis_name)
+                if isinstance(basis_name, str) else basis_name)
 
     def objective(x: np.ndarray) -> float:
         sys = _flat_to_system(system, x)
-        basis = BasisSet(sys.unit_cell_molecule(), basis_name)
+        basis = _recenter_basis_on_periodic_system(template, sys)
         try:
             e, res = _run_scf(
                 sys, basis, kmesh, opts, method_upper, functional, **bipole_kwargs
@@ -697,7 +701,7 @@ def relax_atoms(
 
     def gradient(x: np.ndarray) -> np.ndarray:
         sys = _flat_to_system(system, x)
-        basis = BasisSet(sys.unit_cell_molecule(), basis_name)
+        basis = _recenter_basis_on_periodic_system(template, sys)
         try:
             e, res = _run_scf(
                 sys, basis, kmesh, opts, method_upper, functional, **bipole_kwargs
@@ -828,7 +832,7 @@ def relax_atoms(
             waypoints=waypoints,
             reaction_coordinate=rc,
             method=method_upper,
-            basis=basis_name,
+            basis=str(template.name),
             functional=functional,
         )
 

@@ -71,6 +71,38 @@ def _h2o_setup():
     return mol, basis, cosx_grid, cutoffs, q, schwarz
 
 
+def test_compute_cosx_k_is_bitwise_repeatable_across_threads():
+    """``compute_cosx_k`` returns identical bits on identical inputs (#215).
+
+    The exchange build sums grid points into one private accumulator per
+    OpenMP thread and adds the partials in thread order. With a guided
+    schedule the points each thread summed changed from run to run, so K
+    carried 2e-14 of noise at four threads (0 of 20 repeats identical on
+    this fixture), enough to decide which stationary point a degenerate
+    open shell settles into and hence which staged-COSX path the OH
+    witness takes. The point loops now use an interleaved static schedule,
+    so for a fixed thread count the partition, and the bits, are fixed.
+    Three threads are forced so the check is meaningful under the
+    conftest's macOS default of one.
+    """
+    from vibeqc._vibeqc_core import get_num_threads, set_num_threads
+
+    mol, basis, cosx_grid, cutoffs, q, schwarz = _h2o_setup()
+    rng = np.random.default_rng(seed=2718)
+    A = rng.standard_normal((basis.nbasis, basis.nbasis))
+    D = 0.5 * (A + A.T)
+    original = get_num_threads()
+    try:
+        set_num_threads(3)
+        reference = np.array(compute_cosx_k(basis, D, cosx_grid, q, schwarz, cutoffs, None), copy=True)
+        assert np.any(reference)
+        for _ in range(6):
+            again = np.asarray(compute_cosx_k(basis, D, cosx_grid, q, schwarz, cutoffs, None))
+            assert np.array_equal(again, reference)
+    finally:
+        set_num_threads(original)
+
+
 def test_compute_cosx_k_batched_matches_unbatched_at_hcore_guess():
     """K from compute_cosx_k(grid_batches=...) matches the unbatched
     call on the same density to ~1e-9 per element."""

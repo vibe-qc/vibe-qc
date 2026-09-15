@@ -152,3 +152,28 @@ def test_no_verify_bypasses_the_guard(tmp_path):
     assert result.returncode == 0, (
         "--no-verify should bypass the guard:\n" + result.stderr
     )
+
+
+def test_accepted_release_commit_prints_no_broken_pipe(tmp_path):
+    """An accepted release commit must be silent (#232).
+
+    The guard piped the whole CHANGELOG.md into ``grep -qE``; ``-q`` exits
+    at the first match and closes the pipe while ``printf`` is still
+    writing the ~3 MB file, so every accepted release commit printed
+    ``printf: write error: Broken pipe``, at exactly the step where a real
+    hook failure matters. A changelog with the header near the top and a
+    few megabytes after it reproduces the early exit."""
+    repo = _make_repo(tmp_path, "1.2.3", "## [v1.2.3] — 2026-01-01")
+    changelog = repo / "CHANGELOG.md"
+    changelog.write_text(
+        changelog.read_text(encoding="utf-8") + ("x" * 79 + "\n") * 40_000,
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+
+    result = _commit(repo, "release: v1.2.3")
+
+    assert result.returncode == 0, result.stderr
+    assert "Broken pipe" not in result.stderr, result.stderr
+    assert "write error" not in result.stderr, result.stderr
+

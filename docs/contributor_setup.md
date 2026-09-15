@@ -1,27 +1,36 @@
 # Contributor setup, fresh-clone bootstrap and rebuild discipline
 
 End-user installation lives at [`installation.md`](installation.md);
-the two-command path there is also the right path for contributors.
+the clone-and-bootstrap path there also applies to contributors.
 This page covers the contributor-specific bits: per-clone venvs,
 the editable-install rebuild loop, and the silently-stale-`.so`
 failure mode the binding-sanity test now catches.
 
-## Two-command bootstrap
+(two-command-bootstrap)=
+## Clone and bootstrap
 
 After installing the system prerequisites listed in
 [`installation.md` § Requirements](installation.md#requirements) for
 your platform (Homebrew on macOS; `apt` / `dnf` / `pacman` package
-groups on Linux), a fresh clone reaches a working `import vibeqc`
-in two commands:
+groups on Linux), clone the source and bootstrap the native/Python environment:
+
+Clone the GitHub source snapshot over HTTPS:
 
 ```sh
-git clone https://github.com/vibe-qc/vibe-qc.git && cd vibe-qc
+git clone https://github.com/vibe-qc/vibe-qc.git
+```
+
+Then enter the new checkout and install:
+
+```sh
+cd vibe-qc
 ./scripts/install.sh --dev --extras test --venv .venv \
     --python /opt/homebrew/bin/python3.14
 ```
 
-See [installation](installation.md#request-repository-access) for the publication
-access boundary and keep each project in its own checkout.
+The [repository directory](installation.md#repositories-and-downloads) lists
+all four projects. See [CONTRIBUTING.md](https://github.com/vibe-qc/vibe-qc/blob/main/CONTRIBUTING.md)
+for submission and validation requirements. Maintainers integrate changes upstream.
 
 `install.sh` drives, in order: preflight (verify build prerequisites
 on `$PATH`) → vendored native deps (libint, libxc, spglib, FFTW3,
@@ -94,6 +103,37 @@ failing after a `git pull`:
 ```sh
 .venv/bin/python -m pytest tests/test_binding_sanity.py
 ```
+
+## Native sources from a local mirror, and clones that cannot hang
+
+`scripts/build_<dep>.sh` fetches libint, libxc, spglib, OpenBLAS and
+libecpint's sources with `git clone`, pinned to a commit SHA that the
+build verifies. Three environment variables control that step; all of
+them are read by `scripts/_verify_source.sh` and none changes what is
+built.
+
+`VIBEQC_GIT_REFERENCE_DIR` names one or more directories (colon
+separated) that may already hold the pinned source. Point it at another
+checkout's `third_party/` directory, or at a directory of mirrors named
+after the upstream repositories (`libint`, `libint.git`, `libint/src` and
+`libint-src` are all recognised). A local repository is used only when it
+already contains the pinned commit, and the result still passes the same
+HEAD check as a network clone, so a mirror can never substitute a
+different commit. This turns a GitHub outage, or a transfer that keeps
+resetting, into a non-event on a machine that has built vibe-qc before:
+
+```sh
+VIBEQC_GIT_REFERENCE_DIR=/path/to/other-checkout/third_party ./scripts/update.sh
+```
+
+`VIBEQC_GIT_CLONE_ATTEMPTS` (default 3) bounds how often a network clone
+is retried, and `VIBEQC_GIT_CLONE_TIMEOUT` (default 1800, seconds per
+attempt) bounds how long one attempt may run. A clone past its deadline
+receives SIGTERM and, ten seconds later, SIGKILL for its whole process
+tree; a stalled HTTP transfer is cut earlier by git's own low-speed
+limit (1 KiB/s over 60 s unless `GIT_HTTP_LOW_SPEED_LIMIT` and
+`GIT_HTTP_LOW_SPEED_TIME` are set). The failure message names the
+override to reach for. Ctrl-C on the build script still stops the clone.
 
 ## When the editable install fails on `pybind11`
 

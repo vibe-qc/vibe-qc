@@ -79,6 +79,24 @@ def _compact_h2(nrep=(1, 1, 1)):
     return CCMSystem(PeriodicSystem(3, lat, atoms, 0, 1), nrep, "sto-3g")
 
 
+def _hbn(nrep=(1, 1, 1)):
+    """Hexagonal BN, P6_3/mmc (194) -- non-cubic AND non-symmorphic.
+
+    Every other fixture here is cubic or tetragonal (Fm-3m / Fd-3m / P4/mmm),
+    where a rotation maps the Bloch ball onto itself in especially simple ways.
+    This one exists to keep the cell-list criterion honest off that ground: it
+    is the case where the criterion actually costs reduction.
+    """
+    a, c = 4.75, 12.60
+    lat = np.array([[a, -a / 2, 0.0],
+                    [0.0, a * np.sqrt(3.0) / 2.0, 0.0],
+                    [0.0, 0.0, c]], dtype=float)
+    frac = [(5, [1 / 3, 2 / 3, 0.25]), (7, [2 / 3, 1 / 3, 0.25]),
+            (5, [2 / 3, 1 / 3, 0.75]), (7, [1 / 3, 2 / 3, 0.75])]
+    atoms = [Atom(z, (lat @ np.array(f)).tolist()) for z, f in frac]
+    return CCMSystem(PeriodicSystem(3, lat, atoms), nrep, "sto-3g")
+
+
 @pytest.fixture(scope="module")
 def mgo_sym():
     ccm = _mgo()
@@ -567,21 +585,127 @@ def test_fold_star_exact_relations_only_on_small_meshes():
     assert np.array_equal(l_red, l_full)
 
 
-def test_fold_star_fully_3d_falls_back_to_full_build():
-    """IID 337: do not apply finite-cell-list covariance on a 3-D star.
+@pytest.mark.parametrize("make", [
+    lambda: _lih((2, 2, 2)),
+    lambda: _diamond((2, 2, 1)),
+    lambda: _compact_h2((2, 2, 2)),
+], ids=["lih_222", "diamond_221", "h2_222"])
+def test_fold_star_reconstructs_only_through_cell_list_preserving_ops(make):
+    """vibeqc#337 fix: every emitted relation is exact on the TRUNCATED build.
 
-    LiH/STO-3G (2,2,2) previously admitted 11 representatives for 64
-    required tensors. At the production 15-bohr Bloch cutoff some of the 53
-    reconstructions differ from independent builds at the percent level,
-    moving the SCF energy by 1.9e-5 Ha/cell. Keep every pair explicit until
-    the builder makes its finite cell list covariant under those operations.
+    The defect was never in the covariance identity -- it is exact for the
+    infinite list -- but in applying it across a finite origin-centred Bloch
+    cell list that the op does not map onto itself. That happens exactly when
+    the op's per-atom lattice shifts differ, because the ket sum then reindexes
+    onto ``Ball + (S_a - S_b)`` (see
+    ``ccm_symmetry_op_preserves_cell_list``). This pins the planner to that
+    criterion structurally, rather than to the replica-mesh shape the earlier
+    containment keyed on.
+    """
+    from vibeqc.periodic.ccm.symmetry import ccm_symmetry_op_preserves_cell_list
+
+    plan, _ = _fold_plan(make())
+    assert plan.admissible_ops, "no op survived the cell-list test"
+    for oi, op in enumerate(plan.ops):
+        assert ccm_symmetry_op_preserves_cell_list(op[2]) == (
+            oi in plan.admissible_ops)
+    for entry in plan.entries.values():
+        if entry[0] == "recon":
+            assert entry[2] in plan.admissible_ops
+
+
+def test_fold_star_fully_3d_reduces_through_admissible_ops():
+    """vibeqc#337 was contained by a shape guard; it is now decided per op.
+
+    ``all(nrep > 1)`` was neither necessary nor sufficient. Not necessary:
+    LiH (2,2,2) has 6 of 48 cluster ops with constant atom shifts and reduces
+    64 -> 20 builds through them alone, where the guard allowed nothing. Not
+    sufficient: it let lower-dimensional meshes reconstruct through
+    shift-varying ops on nothing but shape. The historical 11/64 (5.82x) is
+    deliberately NOT restored -- those extra relations are the unsafe ones.
     """
     plan, _ = _fold_plan(_lih((2, 2, 2)))
-    assert plan.n_builds == plan.n_reps == 64
-    assert plan.reduction_factor == 1.0
-    assert len(plan.entries) == 64
-    assert all(entry == ("build",) for entry in plan.entries.values())
-    assert plan.ops == []
+    assert plan.n_builds == 64
+    assert plan.n_reps == 20
+    assert plan.reduction_factor == pytest.approx(3.2)
+
+
+def test_fold_star_fully_3d_fold_matches_unreduced_build():
+    """GATE: the re-enabled 3-D reduction is exact end-to-end, not just in plan.
+
+    Compact H2 (2,2,2) is fully three-dimensional -- the class the vibeqc#337
+    shape guard refused outright -- and every one of its 16 cluster ops
+    preserves the cell list, so all 24 reconstructions are admissible and the
+    fold runs at 40/64 builds. The reduced and unreduced folds agree to
+    5.1e-14 relative (measured), and the per-(k_a, k_b) tensors that feed them
+    agree to 6.3e-14 at BOTH the 15-bohr production cutoff and 25 bohr.
+
+    Cutoff-independence is the load-bearing observation, not the size of the
+    residual: a truncation defect converges with the cell list, so a relation
+    that does not move between 15 and 25 bohr is exact on the finite list
+    rather than merely close to exact. This is what the shape guard was
+    suppressing.
+    """
+    ccm = _compact_h2((2, 2, 2))
+    plan, _ = _fold_plan(ccm)
+    assert (plan.n_builds, plan.n_reps) == (64, 40)
+    assert any(e[0] == "recon" for e in plan.entries.values())
+    l_full, l_red = _fold_pair(ccm, ke_cutoff=60.0)
+    scale = float(np.max(np.abs(l_full)))
+    assert float(np.max(np.abs(l_red - l_full))) / scale < 1e-12
+
+
+def test_fold_star_lower_dimensional_reduction_is_not_lost():
+    """The strict criterion costs no reduction on the (2,2,1) class.
+
+    Its relations are reachable through shift-constant ops and time reversal,
+    so the 10/16 the shape-guard era measured survives the tightening intact
+    -- only the op each relation is assigned to changes.
+    """
+    for ccm in (_diamond((2, 2, 1)), _mgo((2, 2, 1)), _lih((2, 2, 1))):
+        plan, _ = _fold_plan(ccm)
+        assert (plan.n_builds, plan.n_reps) == (16, 10)
+
+
+def test_fold_star_hexagonal_cell_admits_only_cell_list_preserving_ops():
+    """Hexagonal h-BN reduces through exactly its cell-list-preserving ops.
+
+    Until #233 was fixed, every h-BN operation failed the AO-map check: the
+    ZYZ extractor returned gamma = pi for rotations equal to the identity
+    within 1e-16, so the cell fell back to the full build. With correct
+    rotations both admissibility tests run on a cell whose cartesian
+    operations are not signed permutations. 4 of the 24 P6_3/mmc operations
+    keep their per-atom lattice shifts constant, all 4 pass the AO-map check,
+    and the plan reduces 16 -> 10. A shift-blind planner would claim 8/16
+    through operations with shift spreads of 4.1 and 12.6 bohr. Measured with
+    the relation probe, those relations converge with the cell list (5.6e-04
+    at 15 bohr, 6.5e-10 at 25 bohr), while the admitted ones do not move at
+    all (6.3e-10 at both).
+    """
+    from vibeqc.periodic.ccm.symmetry import ccm_symmetry_op_preserves_cell_list
+
+    plan, _ = _fold_plan(_hbn((2, 2, 1)))
+    assert len(plan.ops) == 24
+    assert len(plan.admissible_ops) == 4
+    assert (plan.n_builds, plan.n_reps) == (16, 10)
+    for oi in plan.admissible_ops:
+        assert ccm_symmetry_op_preserves_cell_list(plan.ops[oi][2])
+    for entry in plan.entries.values():
+        if entry[0] == "recon":
+            assert entry[2] in plan.admissible_ops
+
+
+def test_ao_map_gate_covers_a_non_cubic_cell():
+    """The AO rotations are symmetry actions on hexagonal h-BN, too.
+
+    Every other fixture here is cubic or tetragonal, whose cartesian
+    operations are signed permutations and never exercise a real Wigner
+    rotation -- which is how #233 went unseen. Before that fix this cell's
+    overlap residual was 1.07e-08 against the < 1e-12 contract.
+    """
+    res = ccm_symmetry_invariance_residuals(_hbn())
+    assert res["overlap"] < 1e-12
+    assert res["kinetic"] < 1e-12
 
 
 def test_fold_star_chain_311_reduces_and_matches():
@@ -659,7 +783,7 @@ def test_production_gdf_pair_cache_uses_ccm_star():
 
 
 def test_production_gdf_fully_3d_bypasses_pair_star_adapter(monkeypatch):
-    """IID 337: the public GDF route bypasses the unsafe pair-star adapter.
+    """vibeqc#337: the public GDF route bypasses the unsafe pair-star adapter.
 
     The generic RSGDF driver selects its shared-q full-build implementation
     when no private cache adapter is present. This seam test pins the adapter
@@ -744,7 +868,7 @@ def test_production_gdf_symmetry_reduced_scf_matches():
 
 @pytest.mark.slow
 def test_production_gdf_fully_3d_fallback_matches_unreduced():
-    """IID 337: default LiH (2,2,2) GDF is the exact unreduced result."""
+    """vibeqc#337: default LiH (2,2,2) GDF is the exact unreduced result."""
     from vibeqc.periodic.ccm.ri import run_ccm_rhf_gdf
 
     ccm = _lih((2, 2, 2))

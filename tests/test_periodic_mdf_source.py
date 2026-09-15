@@ -134,15 +134,19 @@ def test_cache_subdivision_preserves_pairs_and_bra_order(monkeypatch):
     assert split.retained_factor_bytes <= split.reserved_peak_bytes <= options['memory_byte_cap']
 
 
-def test_allocator_failure_does_not_retry_as_a_smaller_batch(monkeypatch):
+@pytest.mark.parametrize("fixed_domain", [False, True])
+def test_allocator_failure_does_not_retry_as_a_smaller_batch(monkeypatch, fixed_domain):
     system, orbital, auxiliary = _fixture()
     calls = []
     def fail(*args, **kwargs):
         calls.append(1)
+        if fixed_domain:
+            raise _RangeSeparatedGdfAdmissionError(
+                'actual fixed-domain refusal', retry_with_fewer_kpoints=False)
         raise MemoryError('actual allocator failure')
     monkeypatch.setattr(mdf, '_build_mdf_shared_q', fail)
-    with pytest.raises(MemoryError, match='actual allocator'):
-        mdf._build_mdf_cache(system, orbital, auxiliary, np.zeros((1, 3)), False, **_options())
+    with pytest.raises(MemoryError, match='actual'):
+        mdf._build_mdf_cache(system, orbital, auxiliary, np.zeros((3, 3)), False, **_options())
     assert calls == [1]
 
 

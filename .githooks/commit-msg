@@ -78,7 +78,11 @@ if [ "$pyproject_version" != "$VERSION" ]; then
     errors="${errors}  - pyproject.toml [project] version is \"${pyproject_version:-<unset>}\", expected \"${VERSION}\".
 "
 fi
-if ! printf '%s\n' "$changelog_content" | grep -qE "^## \[v${ver_re}\]"; then
+# grep reads all of its input: with -q it would exit at the first match and
+# close the pipe while printf is still writing the ~3 MB changelog, and the
+# resulting "printf: write error: Broken pipe" read as the guard failing on
+# every accepted release commit (#232).
+if ! printf '%s\n' "$changelog_content" | grep -E "^## \[v${ver_re}\]" >/dev/null; then
     errors="${errors}  - CHANGELOG.md has no \"## [v${VERSION}]\" dated section header.
 "
 fi

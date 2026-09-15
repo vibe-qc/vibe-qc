@@ -67,6 +67,15 @@ recording the active space and reference), and `.converged`; the PT2
 and state-averaged variants add `.root_energies` for the per-state
 energies. We will read those off as we go.
 
+When comparing dense and selected CI at the exact-selection limit, use
+identical orbitals, the same active-space Hamiltonian and the same target
+state. CASSCF also optimizes the orbitals: independent runs can reach
+different stationary solutions with different energies or iteration histories.
+Exact CI agreement at fixed orbitals does not establish a common
+orbital-optimization minimum or the global CASSCF minimum. The regression
+comparison corrected in [#56](https://github.com/vibe-qc/vibe-qc/issues)
+uses this fixed-orbital boundary.
+
 ## The full ladder on N2
 
 N2 at its equilibrium bond length is the cleanest illustration of the

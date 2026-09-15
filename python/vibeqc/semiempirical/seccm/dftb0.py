@@ -66,9 +66,10 @@ def run_dftb0_seccm(
 ) -> DFTB0SECCMResult:
     """Evaluate the gated DFTB0-SECCM finite-cluster route.
 
-    The route is restricted to neutral, closed-shell, insulating H/C systems
-    with one cyclic dimension. It evaluates the complete frozen WS record set
-    and normalizes energy and, when requested, its fixed-topology analytic
+    The route accepts neutral, closed-shell, insulating systems with one,
+    two, or three cyclic dimensions and explicit repulsive-pair coverage
+    (currently H, C, N, O, F, P, S, and Cl). It evaluates the complete frozen
+    WS record set and normalizes energy and, when requested, its fixed-topology analytic
     nuclear gradient by the finite-group order. No SCC, Madelung, dispersion,
     stress, topology derivative, or orbit reduction is implied.
     """

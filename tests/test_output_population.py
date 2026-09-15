@@ -1095,7 +1095,11 @@ def test_gdf_gamma_population_sidecar_uses_scf_overlap(tmp_path, mesh, method):
     def one(value):
         a = np.asarray(value)
         return a[0] if a.ndim == 3 else a
-    D = (one(result.density_alpha) + one(result.density_beta) if open_shell
+    # Default-Gamma RKS uses the UKS/GDF engine in its singlet limit, so
+    # the returned density layout need not match the requested method name.
+    from vibeqc.spin_channels import spin_densities
+    density_alpha, density_beta = spin_densities(result)
+    D = (one(density_alpha) + one(density_beta) if density_alpha is not None
          else one(result.density))
     S = one(result.overlap)
     expected = 1. - np.diag(D @ S).real  # exactly one s AO on each H

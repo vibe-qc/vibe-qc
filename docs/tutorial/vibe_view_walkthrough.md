@@ -67,7 +67,7 @@ run_job(
 Run it (a few seconds on any modern laptop):
 
 ```sh
-~/path/to/vibeqc/.venv/bin/python input-water-vibe-view.py
+~/path/to/vibe-qc/.venv/bin/python input-water-vibe-view.py
 ```
 
 Output:

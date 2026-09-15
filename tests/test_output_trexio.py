@@ -31,8 +31,12 @@ What is pinned here, and why each pin exists:
    ``VIBEQC_TREXIO_PYTHON`` names an interpreter with ``trexio`` + ``pyscf``,
    ``examples/regression/runner_trexio_pyscf.py`` rebuilds the SCF energy
    from the stored MOs with PySCF's own integrals and must agree with the
-   file's ``state.energy``. Skipped (not failed) when that interpreter is
-   not configured.
+   file's ``state.energy``. This and the permutation check in section 1 are
+   the only tests that can see a *consistent* AO convention error; the
+   round trips in section 4 cancel it. Without that interpreter the check
+   skips with a reason naming the gate that did not run, and fails instead
+   when ``VIBEQC_REQUIRE_TREXIO_REFERENCE`` is set (#253, see
+   ``tests/trexio_reference.py``).
 """
 
 from __future__ import annotations
@@ -48,6 +52,7 @@ import numpy as np
 import pytest
 
 import vibeqc
+from tests.trexio_reference import reference_python
 from vibeqc import Atom, BasisSet, Molecule, compute_kinetic, compute_nuclear, compute_overlap
 from vibeqc._primitive_norm import libint_primitive_norm
 from vibeqc.output.citations.registry import load_default_database
@@ -440,7 +445,7 @@ def test_run_job_default_writes_no_trexio_and_cites_nothing(tmp_path):
     assert "posenitskiy" not in (tmp_path / "h2o.bibtex").read_text(encoding="utf-8").lower()
     manifest = tomllib.loads((tmp_path / "h2o.system").read_text(encoding="utf-8"))
     assert not any(r["format"] == "trexio" for r in manifest["plan"]["files"])
-    assert not any("trexio" in r["path"] for r in manifest["outputs"]["files"])
+    assert not any("trexio" in Path(r["path"]).name for r in manifest["outputs"]["files"])
 
 
 # --------------------------------------------------------------------- #
@@ -448,26 +453,13 @@ def test_run_job_default_writes_no_trexio_and_cites_nothing(tmp_path):
 # --------------------------------------------------------------------- #
 
 
-def _external_python() -> str | None:
-    exe = os.environ.get("VIBEQC_TREXIO_PYTHON")
-    if not exe:
-        return None
-    probe = subprocess.run(
-        [exe, "-c", "import trexio, pyscf"], capture_output=True, text=True
-    )
-    return exe if probe.returncode == 0 else None
-
-
 @pytest.mark.parametrize("case", ["rhf", "uhf"])
 def test_pyscf_rebuilds_the_scf_energy_from_the_stored_mos(
     h2o_rhf, oh_uhf, tmp_path, case
 ):
-    exe = _external_python()
-    if exe is None:
-        pytest.skip(
-            "set VIBEQC_TREXIO_PYTHON to an interpreter with trexio + pyscf "
-            "installed to run the out-of-process TREXIO cross-check"
-        )
+    # Skips with a reason naming the gate, or fails when
+    # VIBEQC_REQUIRE_TREXIO_REFERENCE is set (#253).
+    exe = reference_python()
     mol, basis, result = h2o_rhf if case == "rhf" else oh_uhf
     path = write_trexio(tmp_path / f"{case}.h5", mol, basis, result)
     verdict_path = tmp_path / f"{case}.verdict.json"

@@ -1,0 +1,64 @@
+name: Bug report
+description: Report an incorrect result, crash, installation problem or regression.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Report security problems privately using SECURITY.md.
+        Before attaching files, remove credentials, private machine/account names and personal paths.
+  - type: input
+    id: release
+    attributes:
+      label: Release and commit
+      description: Include the version banner and commit ID, if known.
+    validations:
+      required: true
+  - type: input
+    id: operating_system
+    attributes:
+      label: Operating system and architecture
+      placeholder: "For example: Ubuntu 24.04, x86-64"
+    validations:
+      required: true
+  - type: dropdown
+    id: install_route
+    attributes:
+      label: Installation route
+      options:
+        - Project installer
+        - pip or wheel
+        - Source build
+        - Container
+        - Other (describe below)
+    validations:
+      required: true
+  - type: textarea
+    id: minimal_input
+    attributes:
+      label: Minimal input and reproduction command
+      description: Include the smallest input that reproduces the problem and exact commands.
+    validations:
+      required: true
+  - type: textarea
+    id: output_manifest
+    attributes:
+      label: Output and system manifest
+      description: Attach the .out and .system manifest here after reviewing them for private data. If either was not created, explain why and attach the relevant error log.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: For numerical differences, give the reference, units, settings and tolerance.
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed result
+      description: Include the error or numerical difference and whether an earlier release worked.
+    validations:
+      required: true

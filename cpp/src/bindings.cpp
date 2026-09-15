@@ -14596,7 +14596,11 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         .def_readonly("mo_energies", &vibeqc::semiempirical::indo::MsindoResult::mo_energies)
         .def_readonly("density", &vibeqc::semiempirical::indo::MsindoResult::density)
         .def_readonly("n_iter", &vibeqc::semiempirical::indo::MsindoResult::n_iter)
-        .def_readonly("converged", &vibeqc::semiempirical::indo::MsindoResult::converged);
+        .def_readonly("converged", &vibeqc::semiempirical::indo::MsindoResult::converged)
+        .def_readonly("stability_checked", &vibeqc::semiempirical::indo::MsindoResult::stability_checked)
+        .def_readonly("stability_analysis_converged", &vibeqc::semiempirical::indo::MsindoResult::stability_analysis_converged)
+        .def_readonly("stability_eigenvalue", &vibeqc::semiempirical::indo::MsindoResult::stability_eigenvalue)
+        .def_readonly("n_stability_restarts", &vibeqc::semiempirical::indo::MsindoResult::n_stability_restarts);
 
     // Backward-compatible run_msindo (embedded H-F, no params arg).
     m_indo.def("run_msindo",

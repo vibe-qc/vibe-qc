@@ -356,8 +356,8 @@ occupations, the one-electron integrals and the total energy, in the
 open container that Quantum Package, CHAMP, QMC=Chem, TurboRVB, QMCkl and
 `trexio-tools` read directly. `trexio_backend="text"` writes the
 `output-h2o.trexio` directory of the text back end instead. Requires the
-optional `[trexio]` extra; refused for ECP runs and for routes without a
-Gaussian AO wavefunction. Read it back with `vibeqc.read_trexio`. Details,
+optional `[trexio]` extra. ECPs and periodic Gaussian SCF results are
+supported; routes without a Gaussian AO wavefunction are refused. Read it back with `vibeqc.read_trexio`. Details,
 group coverage and the verified conventions: [TREXIO](trexio.md).
 
 ### `output-h2o.system`, runtime manifest

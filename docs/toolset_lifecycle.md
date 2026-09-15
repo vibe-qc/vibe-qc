@@ -49,8 +49,8 @@ independent implementations through the corpus is the interoperability check.
 ## Before you start
 
 Clone the GitHub repository for each product you need. See
-[installation](installation.md#request-repository-access) for the publication
-access boundary. Keep each checkout and its environment separate.
+[repositories and downloads](installation.md#repositories-and-downloads).
+Keep each checkout and its environment separate.
 A possible layout is:
 
 ```text

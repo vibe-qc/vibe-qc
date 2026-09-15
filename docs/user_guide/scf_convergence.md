@@ -20,9 +20,11 @@ user-facing selection knobs split into four groups:
 * **Initial guess**, where the SCF starts from
   (`opts.initial_guess`). Default is `InitialGuess.AUTO`, which
   routes through the unified [`GuessEngine`](initial_guess.md):
-  closed-shell light-atom molecular → SAP, open-shell /
-  transition-metal / any periodic → SAD, with HCORE / PATOM /
-  HUECKEL / MINAO / READ available as explicit selections. The
+  ordinary restricted closed-shell routes use PATOM; molecular unrestricted/
+  open-shell routes (including singlet UHF/UKS) and transition-metal systems
+  usually use SAD, and ordinary periodic routes
+  use SAD. Capability-limited cyclic routes use HCORE. Explicit selectors
+  must be supported by the chosen route. The
   richer story (theory, math, when to use which, references) lives
   in [Initial guesses](initial_guess.md); the brief summary here is
   enough to pick a knob.
@@ -78,44 +80,47 @@ periodic option structs; the periodic options additionally expose
 
 ## Initial guess
 
-The unified `GuessEngine` (v0.9.x) dispatches every initial-guess
-request to a concrete builder. Periodic driver options
-(`PeriodicRHFOptions`, `PeriodicSCFOptions`, `PeriodicKSOptions`)
-default to `InitialGuess.AUTO`, which inspects the system and picks
-the right guess. Molecular driver options (`RHFOptions`, `UHFOptions`,
-`RKSOptions`, `UKSOptions`) default to `InitialGuess.PATOM` (SAD density
-plus one in-field re-polarisation step, a better molecular default).
+The unified `GuessEngine` uses AUTO as the public default for molecular and
+periodic SCF. It selects a conservative construction from the route's
+capabilities; it does not search for the fastest guess or guarantee the
+lowest electronic state.
 
-| `opts.initial_guess` | Algorithm | Status | When to use |
-|---|---|---|---|
-| `InitialGuess.AUTO` | `GuessEngine::resolve_auto` picks per the table below | ✅ shipped | **Default**, let the engine decide. |
-| `InitialGuess.SAD` | Superposition of atomic densities, fractional-occupation atomic SCF per unique element, summed at AO indices | ✅ shipped | Open-shell, transition / f-block atoms, any periodic system. AUTO routes here. |
-| `InitialGuess.SAP` | Superposition of atomic potentials (Lehtola/Visscher/Engel 2020), sum tabulated atomic effective potentials, diagonalise `T + V_SAP` | ✅ shipped (v0.9.x) | Closed-shell molecules with light atoms. AUTO routes here. Cheaper than SAD (no per-element atomic SCF). |
-| `InitialGuess.HCORE` | Diagonalise H_core; build D from occupied MOs | ✅ shipped | Diagnostic / back-compat. Slow on most systems; known to lock onto false minima for some open-shell cases (OH·/6-31G\*). |
-| `InitialGuess.PATOM` | SAD density plus one in-field re-polarisation step (ORCA PAtom) | ✅ shipped (v0.9.x) | Transition-metal d-shell ordering; molecular only. |
-| `InitialGuess.HUECKEL` | Parameter-free generalised Wolfsberg-Helmholz over computed AO energies | ✅ shipped (v0.9.x) | A shell-correct start with no atomic SCF; molecular only. |
-| `InitialGuess.MINAO` | Free-atom ANO-RCC minimal-basis densities projected onto the target basis | ✅ shipped (v0.9.x) | Light cost; molecular only. |
-| `InitialGuess.READ` | Restart from a prior result / `.qvf` / `.molden`, projected across basis/geometry | ✅ shipped (v0.9.x) | Geometry scans, NEB, continuing a job; molecular only. See [initial_guess](initial_guess.md). |
+| Selector | Construction | Capability boundary |
+|---|---|---|
+| `AUTO` | System- and route-aware policy below | Unsupported whole methods remain unsupported |
+| `SAD` | Superposition of atomic densities | Atomic references must exist for the chosen basis/ECP |
+| `SAP` | Superposition of atomic potentials | Periodic SAP requires a supported 3D route |
+| `HCORE` | Core-Hamiltonian diagonalization | Also the default on HCORE-only cyclic routes |
+| `PATOM` | SAD plus one in-field HF step | Molecular and supported periodic routes; multi-k seeds need full exchange |
+| `HUECKEL` | Generalized Wolfsberg-Helmholz construction | Molecular and supported periodic routes |
+| `MINAO` | Minimal-reference projection | Reference basis and any ECP must be supported |
+| `READ` | Validated prior physical density/orbitals | Complete basis/spin/Bloch payload and compatible target route |
+| `FRAGMO` | Converged fragment densities | Periodic fragments require explicit atom/image ownership |
 
-**AUTO dispatch table** (`GuessEngine::resolve_auto`):
+The [initial-guess route matrix](initial_guess.md#route-coverage) is the
+complete capability reference. Explicit unsupported requests raise an error;
+they do not silently turn into HCORE.
 
-| Hint                                 | AUTO resolves to |
-|--------------------------------------|------------------|
-| periodic, any                        | **SAD**          |
-| molecular, open-shell                | **SAD**          |
-| molecular, transition / f-block atom | **SAD**          |
-| molecular, closed-shell, light atoms | **SAP**          |
+| System and route | Usual AUTO construction |
+|---|---|
+| Ordinary restricted closed-shell molecular route | PATOM |
+| Molecular unrestricted/open-shell route (including singlet UHF/UKS) or transition-metal system | SAD |
+| Isolated spin-polarized atom | PATOM |
+| Ordinary periodic SCF route | SAD |
+| Cyclic route exposing only HCORE | HCORE |
 
 ```python
-opts.initial_guess = vq.InitialGuess.AUTO    # default; engine picks
-opts.initial_guess = vq.InitialGuess.SAD     # explicit SAD
-opts.initial_guess = vq.InitialGuess.SAP     # explicit SAP (closed-shell light atoms)
-opts.initial_guess = vq.InitialGuess.HCORE   # diagnostic / back-compat
+opts.initial_guess = vq.InitialGuess.AUTO    # conservative system/route policy
+opts.initial_guess = vq.InitialGuess.SAD     # explicit construction, if supported
+opts.initial_guess = vq.InitialGuess.SAP     # explicit SAP, not AUTO's default
+opts.initial_guess = vq.InitialGuess.HCORE   # deterministic diagnostic start
 ```
 
-The v0.6.2 periodic-HCORE calibration freeze was lifted in v0.9.x:
-periodic drivers now default to `AUTO → SAD` for any periodic system
-(fixes the NaCl/MgO bombing class of failure).
+A READ source can preserve local antiferromagnetic order even when its total
+spin is zero. Do not equate equal spin counts with a restricted density.
+For a Bloch state, populations use the weighted overlap trace across the
+whole mesh. See [READ](initial_guess.md#read-restart-from-a-prior-calculation)
+for complete payload, normalization and geometry-driver limits.
 
 Where the SCF has a single stationary point, the guess changes only the
 iteration count and the trace shape, not the converged energy. **Do not
@@ -818,10 +823,10 @@ step is its own update.
 
 | System | Recommended stack |
 |---|---|
-| **Routine closed-shell molecule** (organic, main-group) | `accelerator = EDIIS_DIIS` (default), default `damping = 0.5`, `initial_guess = AUTO → SAP`. The defaults work, no tweaking needed. |
+| **Routine restricted closed-shell molecule** (organic, main-group) | `accelerator = EDIIS_DIIS` (default), default `damping = 0.5`, `initial_guess = AUTO → PATOM`. Check the converged state and residuals. |
 | **Hard molecule** (TM complex, broken-symmetry, small-gap) | `accelerator = EDIIS_DIIS` (default), `newton_threshold = 1.0`, `level_shift = 0.2`. |
 | **Open-shell** (UHF/UKS doublet, triplet) | Same as hard molecule + `max_iter = 250`. |
-| **Periodic insulator** (small-medium cell) | `accelerator = DIIS`, `initial_guess = SAD` (opt in until v0.7), `damping = 0.5`. |
+| **Periodic insulator** (small-medium cell) | `accelerator = DIIS`, `initial_guess = AUTO` (normally SAD on a supported periodic route), `damping = 0.5`. |
 | **Periodic ionic crystal** (NaCl, MgO, …) | Add `fock_mixing = 0.5`, `level_shift = 0.3`. CRYSTAL's standard recipe. |
 | **Periodic with charge sloshing** (metallic, small gap) | Add `dynamic_damping = True` and (when smearing is implemented for the path) `smearing_temperature = 0.005`. |
 | **Anywhere DIIS oscillates** | Try `accelerator = KDIIS` first (cheap to swap); often robust where DIIS struggles. |
@@ -1004,18 +1009,13 @@ Two things *not* to reach for on this class of system:
   A tidy-looking convergence trace is not evidence you found the same
   state; compare the energy and the frontier gap against a run that
   reached the same place another way.
-* **`initial_guess='GWH'`** is unavailable to the Roothaan driver. It
-  seeds from densities only, so the overlap-dependent guesses (GWH is
-  spelled `HUECKEL` / `HUCKEL` here, plus `SAP`, `PATOM`, `MINAO`)
-  raise a `ValueError` naming the supported set (`AUTO`, `SAD`,
-  `HCORE`) rather than silently downgrading. `HCORE` is available but
-  is the worse start for an open-shell metal: on FeCl₃ / def2-SVP it
-  did not converge in 120 iterations and was drifting toward a
-  different, ~0.96 Ha higher energy. That leaves SAD as the only
-  practical guess here, which is precisely the limitation behind
-  [Convergence is not correctness](#convergence-is-not-correctness):
-  the model-potential guess that would start you in the right basin
-  is the one the Roothaan driver cannot construct.
+* **`initial_guess='GWH'`** is not a supported alias; use `HUECKEL` or
+  `HUCKEL` for the implemented construction. Molecular ROHF now supports
+  the shared atomic guesses, so the old density-only ROHF restriction does
+  not describe the current capability set. Historical FeCl3 convergence
+  measurements above do not establish which current guess reaches the lowest
+  state; compare supported explicit seeds and inspect their spin densities.
+
 
 A level shift is worth trying when the *opening* iterations are wild,
 but it is not the remedy for a stalled tail. What it *is* good for on

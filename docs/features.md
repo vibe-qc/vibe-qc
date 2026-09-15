@@ -7,6 +7,14 @@ For what's coming next, see [`roadmap.md`](roadmap.md).
 
 ## Molecular SCF
 
+Initial guesses share a [route-aware AUTO policy](user_guide/initial_guess.md):
+ordinary restricted closed-shell routes use PATOM; molecular unrestricted/
+open-shell routes (including singlet UHF/UKS) and transition-metal systems
+usually use SAD. Isolated spin-polarized atoms use PATOM. Explicit guesses are capability-checked. Supported
+READ routes preserve complete spin/Bloch restart state and distinguish the
+physical construction from internal READ transport. Neither convergence nor
+AUTO alone establishes the global ground state.
+
 | Method | Driver | Open-shell | Gradient | Hessian (FD) | Hessian (analytic) | MP2 | Validated vs PySCF |
 |---|---|:-:|:-:|:-:|:-:|:-:|:-:|
 | RHF | `run_rhf` | - | ✓ | ✓ (`compute_hessian_fd`) | ✓ (`compute_hessian_rhf_analytic`) | ✓ (`run_mp2`) | ✓ machine precision |
@@ -465,7 +473,7 @@ See [`user_guide/solvation.md`](user_guide/solvation.md).
 | MPI substrate (v0.12.0) | `pip install -e '.[mpi]'` | optional `mpi4py` extra; low-level collectives plus experimental GPW grid overlay. Production MPI strategy is tracked in [MPI Parallelization](design_mpi_parallelization.md) |
 | Formatted SCF log | `format_scf_trace`, `log_scf_trace` | banner, iteration trace, energy components, orbital table, HOMO-LUMO gap |
 | Molden export | `write_molden` | verified by PySCF round-trip |
-| TREXIO export / import (v0.15.x, #573) | `run_job(trexio=True)`, `write_trexio` / `read_trexio` | optional `[trexio]` extra (BSD-3-Clause, never bundled); HDF5 and text back ends. Written groups: `metadata`, `nucleus`, `electron`, `basis` (Gaussian, spherical), `ao`, `mo`, `ao_1e_int` (overlap, kinetic, potential_n_e, core_hamiltonian), `state`; RHF / UHF / RKS / UKS and restricted open-shell molecular results. Not written: `ecp` (ECP runs are refused), `rdm`, `ao_2e_int`, `mo_1e_int` / `mo_2e_int`, `cell` / `pbc`, determinants. Conventions pinned by an exact in-process round trip and an out-of-process PySCF energy rebuild from the stored MOs; see [TREXIO](user_guide/trexio.md) |
+| TREXIO export / import | `run_job(trexio=True)`, `run_periodic_job(trexio=True)`, `write_trexio` / `read_trexio`, field APIs | Optional `[trexio]` extra; HDF5 and text. Molecular and periodic Gaussian SCF wavefunctions, ECPs, complex k/spin blocks, molecular one-particle RDMs, optional MO operators/AO ERIs, and file-seeded READ. General field APIs transport all installed-library groups, including sparse integrals, determinants, CSFs, higher RDMs and numerical bases. CASCI/CASSCF/FCI determinant exports are available; other correlated payloads use the field API. Native non-Gaussian/Cartesian basis reconstruction is not provided; see [TREXIO](user_guide/trexio.md) |
 | Geometry trajectory | `run_job(..., optimize=True)` | ASE .traj file |
 | XYZ / Extended-XYZ load | `Molecule.from_xyz` / `from_xyz` | molecular XYZ by default; `periodic=True` reads Extended-XYZ `Lattice` / `pbc` into `PeriodicSystem`; `symmetrise=True` returns `SymmetriseResult` |
 | POSCAR load / save | `read_poscar`, `write_poscar` | VASP 5 format |
@@ -582,9 +590,12 @@ the live open-bugs list. Highlights:
   or more different second-row elements still disagrees with
   ORCA. Closed-shell direct gradients now auto-route through
   the DF gradient path; the open-shell auto-route is queued.
-* AUTO initial guess (SAP on closed-shell light-atom systems)
-  oscillates on long n-alkanes and on H2CO + PBE. Pin
-  `InitialGuess.SAD` to work around.
+* Initial guesses can reach different stationary states or fail to converge.
+  AUTO uses PATOM for ordinary restricted closed-shell molecules and SAD for
+  ordinary periodic routes. Singlet UHF/UKS follows the unrestricted SAD
+  policy; equal spin counts do not select the restricted PATOM route. Compare
+  supported explicit seeds when diagnosing a difficult case; see the
+  [conservative AUTO policy](user_guide/initial_guess.md#auto-is-a-conservative-starting-policy).
 * `pob-TZVP` / `pob-TZVP-rev2` missing Ne entry.
 * Heavy-atom basis-load test OOMs a 16 GB laptop in batch mode;
   route via `vq submit` to a larger box.

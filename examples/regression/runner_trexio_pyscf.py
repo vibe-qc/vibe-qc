@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Out-of-process TREXIO cross-check against PySCF (CLAUDE.md § 10).
 
-Run this script with an interpreter that has ``trexio`` and ``pyscf``
-installed -- **not** vibe-qc's own venv, and never import it from
-``python/vibeqc/``. It reads a TREXIO file that vibe-qc wrote, rebuilds a
-PySCF ``Mole`` from the file's ``nucleus`` and ``basis`` groups alone, and
+Run this script in a separate process with ``trexio`` and ``pyscf``
+installed, and never import it from ``python/vibeqc/``. It reads a TREXIO
+file that vibe-qc wrote, rebuilds a PySCF ``Mole`` from the file's nucleus,
+basis and optional ECP groups, and
 then, with PySCF's *own* integrals:
 
 1. checks that the stored MOs are orthonormal in PySCF's overlap,
@@ -15,6 +15,8 @@ then, with PySCF's *own* integrals:
    ``E = E_nn + tr(D h) + 1/2 [tr(D J) - tr(D_a K_a) - tr(D_b K_b)]``,
    and compares it with the file's ``state.energy`` (pins everything at
    once: a wrong permutation, phase or factor moves the energy by mHa).
+   For a CI expansion, contracts its determinant coefficients with PySCF's
+   FCI Hamiltonian instead, including frozen orbitals present in the file.
 
 Conventions taken from the TREXIO specification (trex.org, v2.6.1) and
 from PySCF, independent of vibe-qc's implementation:
@@ -79,11 +81,20 @@ def read_file(path: str):
 
     with trexio.File(path, mode="r", back_end=trexio.TREXIO_AUTO) as f:
         d = {}
+        if trexio.has_pbc_periodic(f) and trexio.read_pbc_periodic(f):
+            raise SystemExit("this reference runner requires a molecular wavefunction")
+        if trexio.has_mo_coefficient_im(f) and np.any(trexio.read_mo_coefficient_im(f)):
+            raise SystemExit("this reference runner requires real molecular orbitals")
         n_atoms = trexio.read_nucleus_num(f)
         d["charges"] = np.asarray(trexio.read_nucleus_charge(f), dtype=float)
         d["coords"] = np.asarray(trexio.read_nucleus_coord(f), dtype=float).reshape(n_atoms, 3)
         d["n_up"] = int(trexio.read_electron_up_num(f))
         d["n_dn"] = int(trexio.read_electron_dn_num(f))
+        d["ecp"] = {}
+        if trexio.has_ecp_num(f):
+            for name in ("z_core", "max_ang_mom_plus_1", "nucleus_index", "ang_mom",
+                         "power", "exponent", "coefficient"):
+                d["ecp"][name] = np.asarray(getattr(trexio, "read_ecp_" + name)(f))
         if trexio.read_basis_type(f) != "Gaussian":
             raise SystemExit("only Gaussian basis groups are handled")
         d["shell_atom"] = [int(i) for i in trexio.read_basis_nucleus_index(f)]
@@ -120,11 +131,18 @@ def read_file(path: str):
             if trexio.has_ao_1e_int_overlap(f)
             else None
         )
+        d["hcore"] = (np.asarray(trexio.read_ao_1e_int_core_hamiltonian(f))
+                      if trexio.has_ao_1e_int_core_hamiltonian(f) else None)
         d["energy"] = float(trexio.read_state_energy(f)) if trexio.has_state_energy(f) else None
         d["nuclear_repulsion"] = (
             float(trexio.read_nucleus_repulsion(f)) if trexio.has_nucleus_repulsion(f) else None
         )
         d["trexio_version"] = trexio.__version__
+        d["determinants"] = None
+        if trexio.has_determinant_list(f):
+            n = trexio.read_determinant_num(f)
+            d["determinants"] = trexio.read_determinant_list(f, 0, n)[0]
+            d["ci_coefficients"] = trexio.read_determinant_coefficient(f, 0, n)[0]
     return d
 
 
@@ -135,7 +153,9 @@ def build_mole(d):
     prim_shell = np.asarray(d["prim_shell"])
     atoms = []
     basis = {}
-    for a, (z, xyz) in enumerate(zip(d["charges"], d["coords"])):
+    potentials = {}
+    core = d["ecp"].get("z_core", np.zeros(len(d["charges"])))
+    for a, (z, xyz) in enumerate(zip(d["charges"] + core, d["coords"])):
         label = f"{_SYMBOLS[int(round(z))]}{a}"  # unique per centre
         atoms.append([label, tuple(float(x) for x in xyz)])
         shells = []
@@ -150,6 +170,23 @@ def build_mole(d):
                 [int(L)] + [[float(d["exponent"][k]), float(d["coefficient"][k])] for k in sel]
             )
         basis[label] = shells
+        if d["ecp"]:
+            ecp = d["ecp"]
+            selected = np.flatnonzero(ecp["nucleus_index"] == a)
+            channels = []
+            # PySCF's public ECP input uses -1 for the local channel and
+            # groups exponents/coefficients by the NWChem radial power n+2.
+            # https://pyscf.org/pyscf_api_docs/pyscf.gto.html#pyscf.gto.mole.format_ecp
+            for angular in sorted(set(ecp["ang_mom"][selected].tolist())):
+                radial = [[] for _ in range(7)]
+                for i in selected[ecp["ang_mom"][selected] == angular]:
+                    power = int(ecp["power"][i]) + 2
+                    if not 0 <= power < len(radial):
+                        raise SystemExit("ECP radial power is outside this PySCF reference runner's range")
+                    radial[power].append([float(ecp["exponent"][i]), float(ecp["coefficient"][i])])
+                channels.append([-1 if angular == ecp["max_ang_mom_plus_1"][a] else int(angular), radial])
+            if channels:
+                potentials[label] = [int(core[a]), channels]
     n_el = d["n_up"] + d["n_dn"]
     charge = int(round(float(d["charges"].sum()))) - n_el
     spin = d["n_up"] - d["n_dn"]
@@ -157,6 +194,7 @@ def build_mole(d):
     mol.atom = atoms
     mol.unit = "Bohr"
     mol.basis = basis
+    mol.ecp = potentials
     mol.charge = charge
     mol.spin = spin
     mol.cart = False
@@ -189,6 +227,13 @@ def main(argv=None) -> int:
 
     S = mol.intor("int1e_ovlp")
     h = mol.intor("int1e_kin") + mol.intor("int1e_nuc")
+    if d["ecp"]:
+        h += mol.intor("ECPscalar")
+    hcore_diff = None
+    if d["hcore"] is not None:
+        h_file = np.empty_like(h)
+        h_file[np.ix_(perm, perm)] = d["hcore"]
+        hcore_diff = float(np.max(np.abs(h_file - h)))
 
     # Precondition for the basis construction: unit-normalized contracted AOs.
     ao_norm_ok = bool(np.allclose(d["ao_norm"], 1.0, atol=1e-12))
@@ -231,6 +276,21 @@ def main(argv=None) -> int:
     e_two = 0.5 * float(np.einsum("ij,ji->", dm_total, J) - np.einsum("ij,ji->", dm_a, Ka) - np.einsum("ij,ji->", dm_b, Kb))
     e_nuc = float(mol.energy_nuc())
     e_pyscf = e_nuc + e_one + e_two
+    if d["determinants"] is not None:
+        from pyscf import ao2mo, fci
+        if set(blocks) != {0}:
+            raise SystemExit("CI reference requires one common spatial MO basis")
+        C = blocks[0][0]
+        norb = C.shape[1]
+        nelec = (d["n_up"], d["n_dn"])
+        vector = np.zeros((fci.cistring.num_strings(norb, nelec[0]),
+                           fci.cistring.num_strings(norb, nelec[1])))
+        for determinant, coefficient in zip(d["determinants"], d["ci_coefficients"]):
+            words = np.asarray(determinant).view(np.uint64).reshape(2, -1)
+            bits = [sum(int(word) << (64 * j) for j, word in enumerate(channel)) for channel in words]
+            addresses = [fci.cistring.str2addr(norb, count, bit) for count, bit in zip(nelec, bits)]
+            vector[tuple(addresses)] = coefficient
+        e_pyscf = float(fci.direct_spin1.energy(C.T @ h @ C, ao2mo.full(mol, C), vector, norb, nelec)) + e_nuc
 
     energy_diff = None if d["energy"] is None else float(abs(e_pyscf - d["energy"]))
     nuc_diff = (
@@ -241,6 +301,7 @@ def main(argv=None) -> int:
         "file_overlap_diagonal_is_one": diag_ok,
         "orthonormal_in_pyscf_overlap": orth_err < args.tol_overlap,
         "overlap_matches_pyscf": overlap_max_diff is None or overlap_max_diff < args.tol_overlap,
+        "hamiltonian_matches_pyscf": hcore_diff is None or hcore_diff < args.tol_energy,
         "energy_matches_state_energy": energy_diff is not None and energy_diff < args.tol_energy,
     }
     verdict = {
@@ -249,8 +310,11 @@ def main(argv=None) -> int:
         "n_ao": int(d["ao_num"]),
         "n_mo": int(d["mo_coeff"].shape[0]),
         "spin_blocks": len(blocks),
+        "wavefunction": "CI" if d["determinants"] is not None else "SCF",
+        "ecp_core_electrons": int(np.sum(d["ecp"].get("z_core", 0))),
         "max_orthonormality_error": orth_err,
         "overlap_max_diff": overlap_max_diff,
+        "hcore_max_diff": hcore_diff,
         "energy_file": d["energy"],
         "energy_pyscf_from_mos": e_pyscf,
         "energy_diff": energy_diff,

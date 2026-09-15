@@ -5935,6 +5935,18 @@ def _b1_100_checkerboard(
     return molecule, topology
 
 
+def _assert_screened_metric_orthonormality(result):
+    """#151: verify the actual retained eigensystem, not only its energy."""
+    overlap = np.asarray(result.overlap)
+    coefficients = np.asarray(result.mo_coeffs)
+    energies = np.asarray(result.mo_energies)
+    assert result.n_occ <= len(energies) < result.n_basis
+    assert coefficients.shape == (result.n_basis, len(energies))
+    assert np.isfinite(energies).all()
+    np.testing.assert_allclose(coefficients.T @ overlap @ coefficients,
+                               np.eye(len(energies)), rtol=0.0, atol=1.0e-10)
+
+
 def test_gfn2_indefinite_overlap_screens_and_converges_b1_100_slab():
     """The WS-weighted cyclic overlap of the corrected B1(100) slab cell
     has non-positive eigenvalues (the Peintinger-Bredow C-point failure
@@ -5953,6 +5965,7 @@ def test_gfn2_indefinite_overlap_screens_and_converges_b1_100_slab():
     assert result.converged
     assert result.physical_basin
     assert result.n_iter < 600
+    _assert_screened_metric_orthonormality(result)
     # Pre-screening this cell hard-failed the overlap gate; the screened
     # solve lands on the physical slab basin (molecular driver: -2.3623
     # Ha/atom, q_rms 0.480; the 2-D cyclic cell is slightly more ionic).
@@ -5970,6 +5983,7 @@ def test_gfn2_indefinite_overlap_screens_and_converges_b1_100_slab():
     for kwargs in ({}, {"madelung": True}):
         other = run_gfn2_seccm(molecule, topology, max_iter=3000, **kwargs)
         assert other.converged and other.physical_basin
+        _assert_screened_metric_orthonormality(other)
         other_charges = np.asarray(other.charges)
         assert float(np.sqrt((other_charges**2).mean())) < 0.8
 
@@ -5992,6 +6006,8 @@ def test_gfn2_seccm_b1_100_o_vacancy_converges():
         vacancy_mol, vacancy_topology, ewald_gamma=True, max_iter=3000
     )
     assert vacancy.converged and vacancy.physical_basin
+    _assert_screened_metric_orthonormality(pristine)
+    _assert_screened_metric_orthonormality(vacancy)
     vacancy_charges = np.asarray(vacancy.charges)
     pristine_charges = np.asarray(pristine.charges)
     assert float(np.sqrt((vacancy_charges**2).mean())) == pytest.approx(
@@ -6002,6 +6018,52 @@ def test_gfn2_seccm_b1_100_o_vacancy_converges():
     assert vacancy.energy - pristine.energy == pytest.approx(
         4.1226724423525525, abs=0.05
     )
+
+
+@pytest.mark.parametrize(
+    "method,temperature",
+    [("dftb0", 0.0), ("scc_dftb", 0.0), ("scc_dftb", 0.005),
+     ("gfn2", 0.0), ("gfn2", 0.005)],
+)
+def test_seccm_screened_occupied_space_without_lumo_is_rejected(method, temperature):
+    """#151: two almost coincident H2 units retain only two occupied modes.
+
+    This synthetic overlap stress fixture has four AOs and two occupied
+    orbitals. Screening must not turn the missing third eigenvalue into an
+    out-of-bounds read, or into a zero gap waived by finite temperature.
+    """
+    from vibeqc.semiempirical import run_gfn2_seccm
+    from vibeqc.semiempirical.seccm.gfn2 import GFN2SECCMConvergenceError
+
+    primitive = np.array([8.0, 0.0, 0.0])
+    distance = 4.0e-6
+    coords = np.array([[0., 0., 0.], [distance, 0., 0.],
+                       [8., 0., 0.], [8. + distance, 0., 0.]])
+    topology = _topology(coords, [2 * primitive], replicas=(2, 1, 1),
+                         primitive_vectors=[primitive])
+    molecule = Molecule([Atom(1, p.tolist()) for p in coords], 0, 1)
+    with pytest.raises(RuntimeError, match="positive finite-torus HOMO-LUMO gap") as exc:
+        if method == "dftb0":
+            run_dftb0_seccm(molecule, topology)
+        elif method == "scc_dftb":
+            run_scc_dftb_seccm(molecule, topology,
+                               electronic_temperature=temperature)
+        else:
+            run_gfn2_seccm(molecule, topology, max_iter=30,
+                           electronic_temperature=temperature, include_aes=False)
+
+    if method == "gfn2":
+        assert isinstance(exc.value, GFN2SECCMConvergenceError)
+        result = exc.value.result
+        assert result.n_basis == 4
+        assert len(result.mo_energies) == result.n_occ == 2
+        assert not result.converged and not result.gap_guard_waived
+        assert np.isnan(result.homo_lumo_gap)
+        assert exc.value.reason == "gap_rejected"
+        coefficients = np.asarray(result.mo_coeffs)
+        overlap = np.asarray(result.overlap)
+        np.testing.assert_allclose(coefficients.T @ overlap @ coefficients,
+                                   np.eye(2), rtol=0.0, atol=1.0e-12)
 
 
 def test_scc_dftb_seccm_indefinite_overlap_screens_and_runs():
@@ -6026,6 +6088,7 @@ def test_scc_dftb_seccm_indefinite_overlap_screens_and_runs():
     result = run_scc_dftb_seccm(molecule, topology, max_iter=20)
     assert result.converged
     assert np.isfinite(result.energy)
+    _assert_screened_metric_orthonormality(result)
 
 
 def test_scc_dftb_seccm_indefinite_overlap_fails_closed_when_occupied_lost():

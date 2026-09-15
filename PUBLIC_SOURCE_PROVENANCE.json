@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "kind": "sanitized-source-snapshot",
-  "source_commit": "48428dbe48cfe8e9c84762eeca3cae7a4fe368dc",
-  "source_tree": "d3614665640d1e6511cd7d2587017ebb1fe89662",
-  "policy_sha256": "db8205b6593e0caeddc3ac9f9c48c8b3714fdb66b5eb663881fa2e41e52d8252",
-  "file_inventory_sha256": "453942c9a75e41641a6750fc56ebe1ddee9bed9cd467ba87c14ff767c69a72f1",
-  "retained_files": 5837,
-  "omitted_files": 23,
-  "changed_files": 178,
+  "source_commit": "8e4e1559318ecff9567e983e7cf44d678f7f7f37",
+  "source_tree": "72c34aadc5438e15405e7aed9f6633e22ae13aaf",
+  "policy_sha256": "ccff79920d69398b48d8e6c73524c4bc46db07b7cd46b7ce680b955796dd1b85",
+  "file_inventory_sha256": "344d712c22e9a13a0565a596479780cf418be35dfba7dbff09975bb2e1c4d738",
+  "retained_files": 5860,
+  "omitted_files": 4,
+  "changed_files": 174,
   "source_history_imported": false,
   "notice": "Snapshot commit IDs differ from source commit IDs. See file inventory for exact source/export hashes."
 }

@@ -3316,7 +3316,15 @@ from .hessian_analytic import compute_hessian_rhf_analytic
 from .hessian_analytic_rks import compute_hessian_rks_analytic
 from .hessian_analytic_uhf import compute_hessian_uhf_analytic
 from .hessian_analytic_uks import compute_hessian_uks_analytic
-from .output.formats.trexio import read_trexio, write_trexio
+from .output.formats.trexio import (
+    TrexioData,
+    TrexioMOBlock,
+    TrexioSparse,
+    read_trexio,
+    read_trexio_fields,
+    write_trexio,
+    write_trexio_fields,
+)
 from .io import (
     normal_mode_trajectory,
     write_molden,
@@ -4876,6 +4884,11 @@ __all__ = [
     "write_molden",
     "write_trexio",
     "read_trexio",
+    "read_trexio_fields",
+    "write_trexio_fields",
+    "TrexioData",
+    "TrexioMOBlock",
+    "TrexioSparse",
     "write_system_manifest",
     "write_orca_hess",
     "write_xyz_trajectory",

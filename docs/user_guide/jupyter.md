@@ -35,7 +35,7 @@ runs with vibe-qc on its `sys.path` automatically.
 
 ```sh
 # From inside your vibe-qc checkout.
-cd ~/path/to/vibeqc
+cd ~/path/to/vibe-qc
 .venv/bin/pip install jupyterlab     # ~80 MB of deps; one-time
 .venv/bin/jupyter lab                # opens http://localhost:8888/lab
 ```
@@ -78,7 +78,7 @@ Jupyter will offer it in the launcher.
 
 ```sh
 # 1. Activate the vibe-qc venv (so ipykernel installs in it).
-source ~/path/to/vibeqc/.venv/bin/activate
+source ~/path/to/vibe-qc/.venv/bin/activate
 
 # 2. Install ipykernel into the vibe-qc venv (one-time):
 pip install ipykernel

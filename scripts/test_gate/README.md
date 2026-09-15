@@ -82,7 +82,10 @@ not a bigger box. (See the memory-tier table below for routing.)
   per-target wall-clock kill
   (the real backstop — pytest-timeout's thread method cannot interrupt a
   GIL-holding C++ call), classifies each target
-  (`PASS`/`FAIL`/`SEGFAULT`/`OOM_KILLED`/`TIMEOUT`/`COLLECT_ERR`/…), and writes
+  (`PASS`/`FAIL`/`SEGFAULT`/`OOM_KILLED`/`SIGKILLED`/`TIMEOUT`/`COLLECT_ERR`/…;
+  a SIGKILL is `OOM_KILLED` only when the sampled peak RSS reached
+  `--oom-fraction` of physical memory, otherwise `SIGKILLED` with the cause
+  unassigned and the memory numbers stored on the row), and writes
   a **resumable** `triage.jsonl` (re-running skips targets already recorded).
   Lanes via `--lane <name>` from `lane_manifest.json`, comma-separated lane
   lists via `--lane lane-a,lane-b`, explicit tiers via `--tier T0,T1`, release profiles via
@@ -313,7 +316,7 @@ $PY run_full_suite.py --wt "$WT" --py "$PY" --lane slow-nightly --out slow.jsonl
 
 The historical fast lane ran many files concurrently (`--jobs 6`). On a shared box under
 heavy load a perfectly healthy file can be starved into a
-`FAIL`/`ABORT`/`TIMEOUT`/`OOM_KILLED` that it does **not** reproduce when run
+`FAIL`/`ABORT`/`TIMEOUT`/`OOM_KILLED`/`SIGKILLED` that it does **not** reproduce when run
 alone — a *contention artifact*, not a code regression. The v0.13.0 cut hit
 exactly this: a fast-lane run at `--jobs 6` on a box at load ~80 red-flagged ~8
 slow/memory-heavy files, every one of which **passed** when re-run in isolation

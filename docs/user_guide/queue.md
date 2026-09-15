@@ -233,7 +233,8 @@ vq submit compute --cpus 8 --mem-mb 16000 --time-limit 04:00:00 water.py
 ```{note}
 `vq wait` returning does **not** mean the calculation succeeded. It means the
 job reached a terminal state, and `failed`, `killed`, `oom_killed`,
-`time_exceeded` and `aborted_by_queue` are all terminal. Check the state.
+`starved`, `time_exceeded`, `interrupted` and `aborted_by_queue` are all
+terminal. Check the state.
 ```
 
 (multi-venv-branch-routing-v0-5-6)=

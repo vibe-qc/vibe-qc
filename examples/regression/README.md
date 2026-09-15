@@ -103,11 +103,11 @@ export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
 
 systemctl --user reset-failed vibeqc-suite.service 2>/dev/null
 systemd-run --user --unit=vibeqc-suite \
-    --working-directory=/path/to/vibeqc \
+    --working-directory=/path/to/vibe-qc \
     --setenv=ORCA_PATH=/path/to/orca_install \
     --property=StandardOutput=file:/tmp/regression-stdout.log \
     --property=StandardError=file:/tmp/regression-stdout.log \
-    -- /path/to/vibeqc/.venv/bin/python -u -m examples.regression.run_suite \
+    -- /path/to/vibe-qc/.venv/bin/python -u -m examples.regression.run_suite \
         --output-root ~/vibeqc-runs \
         --systems all
 ```

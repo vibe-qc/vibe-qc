@@ -69,14 +69,6 @@ int hessian_component(int a, int b) {
     return idx[a][b];
 }
 
-// Fallback periodic Becke partition reach (bohr) used to screen the cross-cell
-// bra image cells when the caller did not set
-// LatticeSumOptions::becke_image_radius_bohr. Matches the default
-// ``image_radius_bohr`` of build_periodic_becke_grid (python/vibeqc/
-// periodic_grid.py); callers that build the grid with a different reach should
-// set the field so the screen tracks their partition.
-constexpr double kDefaultBeckeImageRadiusBohr = 10.0;
-
 // Enforce the von Weizsacker lower bound on the kinetic energy density,
 // tau >= tau_W = |grad rho|^2 / (8 rho) = sigma / (8 rho). tau = 1/2 sum_i
 // |grad psi_i|^2 is positive-definite and bounded below by tau_W (the exact
@@ -307,7 +299,14 @@ ExternalPeriodicFields build_external_periodic_fields_batch(
     std::vector<Eigen::VectorXd> tau_t(
         n_threads, Eigen::VectorXd::Zero(n_points));
 
-    #pragma omp parallel for schedule(dynamic)
+    // schedule(static), not dynamic: each thread sums its pairs into a
+    // private accumulator and the partials are added in thread order
+    // below. A dynamic partition changes which pairs land in which
+    // partial from run to run, and with it the rounding of the total, so
+    // the same density gave XC energies scattered at 1e-9 (#81). Every
+    // pair costs one chi_a * P product, so a static partition loses no
+    // balance and the result is reproducible for a fixed thread count.
+    #pragma omp parallel for schedule(static)
     for (std::size_t k = 0; k < pairs.size(); ++k) {
         const int tid = omp_thread_index();
         const BraKetPair& pr = pairs[k];
@@ -383,10 +382,9 @@ std::array<std::size_t, 2> periodic_xc_domain_counts(
     const PeriodicSystem& system, const std::vector<LatticeCell>& cells,
     const LatticeSumOptions& opts, PeriodicXCDensityDomain density_domain) {
     const auto active = active_density_cells(cells, system, opts.cutoff_bohr);
-    const double bra_radius = std::min(
-        opts.becke_image_radius_bohr > 0.0 ? opts.becke_image_radius_bohr
-                                         : kDefaultBeckeImageRadiusBohr,
-        opts.cutoff_bohr);
+    const double bra_radius = opts.becke_image_radius_bohr > 0.0
+        ? std::min(opts.becke_image_radius_bohr, opts.cutoff_bohr)
+        : opts.cutoff_bohr;
     const auto bras = use_periodic_density_bras(density_domain, true)
         ? active_density_cells(cells, system, bra_radius)
         : home_only_bra(cells, active);
@@ -439,17 +437,22 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
     // Ket / AO-evaluation set: cells within the density cutoff.
     const std::vector<int> active =
         active_density_cells(P_real_space.cells, system, opts.cutoff_bohr);
-    // Bra (image) cells: screened by the periodic Becke partition reach, not
-    // the density cutoff (see LatticeSumOptions::becke_image_radius_bohr). Past
-    // the partition reach the grid is molecular and replicating an image cell's
-    // density over-counts; capped at cutoff_bohr so the bra set stays inside
-    // the AO-evaluated `active` set. Only summed over the image bra cells for a
-    // genuine periodic density (P(g≠0) populated); a molecular-limit density
-    // (home block only) keeps the home-cell bra so ρ = χ_0 P(0) χ_0.
-    const double bra_radius = std::min(
-        opts.becke_image_radius_bohr > 0.0 ? opts.becke_image_radius_bohr
-                                           : kDefaultBeckeImageRadiusBohr,
-        opts.cutoff_bohr);
+    // Bra (image) cells: every lattice translation whose shifted AOs still
+    // reach the home-cell grid, i.e. the same AO-reach radius as the kets
+    // (opts.cutoff_bohr), unless a driver narrowed it explicitly through
+    // LatticeSumOptions::becke_image_radius_bohr (then capped at cutoff_bohr
+    // so the bra set stays inside the AO-evaluated `active` set). The density
+    // at a grid point is a property of the point, not of the Becke partition:
+    // the partition only decides which atom's weight the point carries, so
+    // stopping the bra sum at the partition reach drops real density. With
+    // the old fixed 10-bohr fallback the Li/STO-3G 6-bohr cell lost 0.4 % of
+    // its density to the diffuse 2sp shell (exponent 0.048) and E_xc came out
+    // 8 mHa short against PySCF (#265). Only summed over the image bra cells
+    // for a genuine periodic density (P(g≠0) populated); a molecular-limit
+    // density (home block only) keeps the home-cell bra so ρ = χ_0 P(0) χ_0.
+    const double bra_radius = opts.becke_image_radius_bohr > 0.0
+        ? std::min(opts.becke_image_radius_bohr, opts.cutoff_bohr)
+        : opts.cutoff_bohr;
     const std::vector<int> bra_active =
         active_density_cells(P_real_space.cells, system, bra_radius);
     const bool use_periodic_bras = use_periodic_density_bras(
@@ -607,7 +610,14 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
                 tau_t.assign(n_threads, Eigen::VectorXd::Zero(nb));
             }
 
-            #pragma omp parallel for schedule(dynamic)
+            // schedule(static), not dynamic: each thread sums its pairs into a
+            // private accumulator and the partials are added in thread order
+            // below. A dynamic partition changes which pairs land in which
+            // partial from run to run, and with it the rounding of the total, so
+            // the same density gave XC energies scattered at 1e-9 (#81). Every
+            // pair costs one chi_a * P product, so a static partition loses no
+            // balance and the result is reproducible for a fixed thread count.
+            #pragma omp parallel for schedule(static)
             for (std::size_t k = 0; k < pairs.size(); ++k) {
                 const int tid = omp_thread_index();
                 const BraKetPair& pr = pairs[k];
@@ -846,10 +856,9 @@ static Eigen::MatrixXd xc_lattice_gradient_batch(
     // motion (H₂/STO-3G 6-bohr: 9.25e-3 Ha/bohr vs fixed-grid FD; home-only
     // density was already exact). Now the bra ranges over image cells too.
     const auto cell_pos = build_cell_index_map(P_real_space.cells);
-    const double bra_radius = std::min(
-        opts.becke_image_radius_bohr > 0.0 ? opts.becke_image_radius_bohr
-                                           : kDefaultBeckeImageRadiusBohr,
-        opts.cutoff_bohr);
+    const double bra_radius = opts.becke_image_radius_bohr > 0.0
+        ? std::min(opts.becke_image_radius_bohr, opts.cutoff_bohr)
+        : opts.cutoff_bohr;
     const std::vector<int> bra_active =
         active_density_cells(P_real_space.cells, system, bra_radius);
     const std::vector<int> bra_cells =
@@ -967,7 +976,14 @@ static Eigen::MatrixXd xc_lattice_gradient_batch(
     // (∂ → atom ν), density block P(s−a). A lattice shift R_a is constant under
     // the atom displacement, so ∂χ_a/∂R_atom(μ) = −∇χ_a = −dchi_h[a]; the same
     // bf2atom scatter is correct for any cell.
-    #pragma omp parallel for schedule(dynamic)
+    // schedule(static), not dynamic: each thread sums its pairs into a
+    // private accumulator and the partials are added in thread order
+    // below. A dynamic partition changes which pairs land in which
+    // partial from run to run, and with it the rounding of the total, so
+    // the same density gave XC energies scattered at 1e-9 (#81). Every
+    // pair costs one chi_a * P product, so a static partition loses no
+    // balance and the result is reproducible for a fixed thread count.
+    #pragma omp parallel for schedule(static)
     for (std::size_t pi = 0; pi < pairs.size(); ++pi) {
         const int tid = omp_thread_index();
         const BraKetPair& pr = pairs[pi];
@@ -1121,10 +1137,9 @@ static Eigen::MatrixXd xc_lattice_gradient_batch_uks(
     // summed only the home-bra slice ρ_σ = Σ_s χ_0 P_σ(s) χ_s, missing the
     // bra-image motion on a periodic density (the RKS sibling's bug).
     const auto cell_pos = build_cell_index_map(P_alpha.cells);
-    const double bra_radius = std::min(
-        opts.becke_image_radius_bohr > 0.0 ? opts.becke_image_radius_bohr
-                                           : kDefaultBeckeImageRadiusBohr,
-        opts.cutoff_bohr);
+    const double bra_radius = opts.becke_image_radius_bohr > 0.0
+        ? std::min(opts.becke_image_radius_bohr, opts.cutoff_bohr)
+        : opts.cutoff_bohr;
     const std::vector<int> bra_active =
         active_density_cells(P_alpha.cells, system, bra_radius);
     const bool cross_cell = density_has_cross_cell_blocks(P_alpha, 1e-12) ||
@@ -1305,7 +1320,14 @@ static Eigen::MatrixXd xc_lattice_gradient_batch_uks(
     for (std::size_t A = 0; A < N; ++A)
         for (int bf : atom_bf[A]) bf2atom[bf] = static_cast<int>(A);
 
-    #pragma omp parallel for schedule(dynamic)
+    // schedule(static), not dynamic: each thread sums its pairs into a
+    // private accumulator and the partials are added in thread order
+    // below. A dynamic partition changes which pairs land in which
+    // partial from run to run, and with it the rounding of the total, so
+    // the same density gave XC energies scattered at 1e-9 (#81). Every
+    // pair costs one chi_a * P product, so a static partition loses no
+    // balance and the result is reproducible for a fixed thread count.
+    #pragma omp parallel for schedule(static)
     for (std::size_t pi = 0; pi < pairs.size(); ++pi) {
         const int tid = omp_thread_index();
         const BraKetPair& pr = pairs[pi];
@@ -1444,10 +1466,9 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
         active_density_cells(P_alpha.cells, system, opts.cutoff_bohr);
     // Bra (image) cells screened by the periodic Becke partition reach (see
     // LatticeSumOptions::becke_image_radius_bohr and the closed-shell path).
-    const double bra_radius = std::min(
-        opts.becke_image_radius_bohr > 0.0 ? opts.becke_image_radius_bohr
-                                           : kDefaultBeckeImageRadiusBohr,
-        opts.cutoff_bohr);
+    const double bra_radius = opts.becke_image_radius_bohr > 0.0
+        ? std::min(opts.becke_image_radius_bohr, opts.cutoff_bohr)
+        : opts.cutoff_bohr;
     const std::vector<int> bra_active =
         active_density_cells(P_alpha.cells, system, bra_radius);
     // Cross-cell bra only for a genuine periodic density (either spin carries
@@ -1622,7 +1643,14 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
                 tau_b_t.assign(n_threads, Eigen::VectorXd::Zero(nb));
             }
 
-            #pragma omp parallel for schedule(dynamic)
+            // schedule(static), not dynamic: each thread sums its pairs into a
+            // private accumulator and the partials are added in thread order
+            // below. A dynamic partition changes which pairs land in which
+            // partial from run to run, and with it the rounding of the total, so
+            // the same density gave XC energies scattered at 1e-9 (#81). Every
+            // pair costs one chi_a * P product, so a static partition loses no
+            // balance and the result is reproducible for a fixed thread count.
+            #pragma omp parallel for schedule(static)
             for (std::size_t k = 0; k < pairs.size(); ++k) {
                 const int tid = omp_thread_index();
                 const BraKetPair& pr = pairs[k];

@@ -77,9 +77,8 @@ checklist for installing either one or both.
 ```{admonition} Current source: {{release}} - *{{codename}}*
 :class: tip
 
-This documentation is built from the checked-out source. The `v0.17.1` tag
-was published on 2026-09-10 and the `release` branch fast-forwarded to it;
-the public docs are built from `release`. See [release_process](release_process.md) for the
+This documentation is built from the checked-out source. Public docs are
+published from the `release` branch after an approved core tag. See [release_process](release_process.md) for the
 branch model.
 
 The repository split makes the viewer, queue, and QVF format independently
@@ -157,7 +156,7 @@ contractions are bridged.
 ⚠️ **These are supports and audits, not a production route.** Production HF
 and complete source integration remain open, and the quartet builder does not
 authorize symmetry reduction. v0.17 does **not** ship periodic local
-correlation; that milestone is [v0.18.0](roadmap.md).
+correlation; that is the next minor's milestone on the [roadmap](roadmap.md).
 
 Also in v0.17:
 
@@ -206,8 +205,15 @@ ECP property-output defect [#741](https://github.com/vibe-qc/vibe-qc/issues).
 
 ## Install
 
+Clone the GitHub source snapshot over HTTPS:
+
 ```sh
 git clone https://github.com/vibe-qc/vibe-qc.git
+```
+
+Then enter the new checkout and install:
+
+```sh
 cd vibe-qc
 ./scripts/install.sh --dev                 # native deps + venv + pip install + banner
 ```
@@ -220,8 +226,9 @@ keeps the development line with `--dev`; the flag-free installer selects
 the newest stable tag advertised by origin. Use `--branch vX.Y.Z` to select
 a tag that exists in this repository for reproducibility.
 
-See [installation](installation.md) for GitHub clone instructions and
-the publication access boundary.
+The GitHub repositories are listed in
+[repositories and downloads](installation.md#repositories-and-downloads),
+including each project's tagged source downloads.
 
 ``setup_native_deps.sh`` builds and installs every native dependency
 (libint, libxc, spglib, FFTW3, libecpint) into ``third_party/`` and
@@ -270,10 +277,10 @@ populated above, *not* your system ``python3``). Since you're no
 longer in the repo, give the full path:
 
 ```sh
-~/path/to/vibeqc/.venv/bin/python water.py
+~/path/to/vibe-qc/.venv/bin/python water.py
 ```
 
-Replace ``~/path/to/vibeqc/`` with wherever ``git clone`` landed.
+Replace ``~/path/to/vibe-qc/`` with wherever ``git clone`` landed.
 That ~3-second run writes a set of files into ``~/vibeqc-runs/water/``.
 The four you will reach for first:
 
@@ -299,14 +306,14 @@ citations for the level of theory you used), ``.population.txt`` /
 **Skip the path prefix.** Activate the venv once per shell session
 and the path resolves automatically - works from any directory:
 
-    source ~/path/to/vibeqc/.venv/bin/activate    # bash / zsh
+    source ~/path/to/vibe-qc/.venv/bin/activate    # bash / zsh
     python water.py                                # uses the venv's python
 
 Deactivate with ``deactivate`` when you're done.
 
 **Common mistake:** ``ModuleNotFoundError: No module named 'vibeqc'``
 means you ran the wrong Python. Either give the full
-``~/path/to/vibeqc/.venv/bin/python`` path or activate the venv
+``~/path/to/vibe-qc/.venv/bin/python`` path or activate the venv
 first. The bare ``.venv/bin/python`` shorthand only works when your
 shell is sitting inside the repo.
 ```

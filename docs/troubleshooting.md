@@ -794,12 +794,11 @@ multi-k falls back to the legacy gauge under the auto default.
 four BIPOLE drivers call the shared `pbc_bipole_common.
 enforce_bipole_fold_support` unconditionally, hoisted above the gauge
 branch, so switching to the legacy gauge above (or landing there via
-the ad-hoc-k-list fallback) does **not** skip this safeguard — legacy
+the ad-hoc-k-list fallback) does **not** skip this safeguard; legacy
 results record the measured `overlap_fold_drift` the same as the
 corrected gauge, and the refusal message carries a suffix naming why
-the guard applies regardless of gauge. (This was a real gap on earlier
-`main` — the guard used to sit inside the corrected-gauge branch only
-— fixed in `6299692ae`.)
+the guard applies regardless of gauge. On earlier `main`, the guard sat
+inside the corrected-gauge branch only; `6299692ae` fixed that gap.
 ```
 
 ### If your Γ ionic-crystal energies still look wrong
@@ -893,6 +892,48 @@ sub-mHa. For an independent implementation comparison, use the GDF
 route and a converged reciprocal cutoff. Historical BIPOLE values
 produced with the unpadded SR domain must be regenerated before
 absolute comparison.
+
+## Gamma GDF refuses a legacy fallback for a tight-core cell
+
+An explicit Fock-mixing, level-shift, smearing or symmetry option can exceed
+what the default Gamma GDF driver supports. If that would select the legacy
+molecular-limit driver for a tight-core basis/cell, the runner now raises
+`NotImplementedError` before legacy SCF (#95). This replaces returning an
+absolute energy with `+PARITY_HELD`. The guard uses the existing basis and
+cell classifier, including tight-core bases in sparse molecular boxes.
+
+For bulk calculations, explicitly select `kpoints=(1, 1, 1)` and
+`gdf_method="rsgdf"` in `run_periodic_job` to use the general SR/LR driver
+with its supported convergence controls. Its direct API uses
+`run_krhf_periodic_gdf(..., kmesh=(1, 1, 1), gdf_method="rsgdf")`.
+Unsupported controls must still be removed. A tail cutoff cannot repair the
+legacy driver, which does not implement that correction. Supported default
+Gamma runs and low-Z molecular-limit fallbacks retain their existing routes.
+The automatic fallback guard does not certify absolute-energy parity or
+change the directly invoked low-level legacy driver.
+
+
+## Range-separated GDF reciprocal admission refuses a calculation
+
+A `range-separated GDF reciprocal candidate cap exceeded` error reports the
+integer search-box candidate count, its cap, the three box widths, the
+kinetic-energy cutoff in Hartree, and the canonical momentum transfer.
+The candidate count bounds enumeration work; it is not the retained spherical
+grid size or a memory measurement. Large vacuum cells can exceed this work
+limit even with very few basis functions.
+
+Reducing the k-point batch cannot shrink a single-transfer reciprocal domain,
+so fixed candidate and mesh-workspace refusals now propagate without batch
+retries. Tensor or output-storage reservations that can shrink with a batch
+still permit subdivision. Workspace and output errors report byte counts;
+a partial output census is explicitly labelled `required_at_least`.
+
+Include those diagnostics and the input cell in an issue report. Do not lower
+an accuracy cutoff or bypass a work/memory limit just to make a fixture run.
+The CCM isolated-cell admission case in
+[issue #257](https://github.com/vibe-qc/vibe-qc/issues) still
+requires a validated resource/domain decision; improved diagnostics do not
+establish that its default calculation is now admitted.
 
 ## Still stuck?
 

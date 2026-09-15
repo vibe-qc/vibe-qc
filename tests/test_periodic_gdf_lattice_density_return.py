@@ -158,11 +158,13 @@ def test_both_spin_channels_are_certified_before_attachment():
     assert not hasattr(result, 'density_alpha_lattice')
 
 
-@pytest.mark.parametrize('method,spin', [('rhf', 1), ('uhf', 3), ('rohf', 3)])
+@pytest.mark.parametrize('method,spin', [
+    ('rhf', 1), ('rks', 1), ('uhf', 3), ('uks', 3), ('rohf', 3),
+])
 def test_actual_gdf_driver_returns_its_accepted_density(method, spin):
     system = _system(spin)
     basis = vq.BasisSet(system.unit_cell_molecule(), 'sto-3g')
-    opts = vq.PeriodicRHFOptions()
+    opts = vq.PeriodicKSOptions() if method.endswith('ks') else vq.PeriodicRHFOptions()
     opts.initial_guess = vq.InitialGuess.HCORE
     opts.max_iter = 1
     opts.lattice_opts.cutoff_bohr = 12
@@ -172,6 +174,7 @@ def test_actual_gdf_driver_returns_its_accepted_density(method, spin):
         system, basis, (3, 1, 1), opts,
         rsgdf_ke_cutoff=12, rcut_strategy=None, return_lattice_density=True,
         check_energy_sanity=False, progress=False,
+        **({'functional': 'pbe'} if method.endswith('ks') else {}),
     )
     assert not result.converged
     channels = ('density',) if spin == 1 else ('density_alpha', 'density_beta')

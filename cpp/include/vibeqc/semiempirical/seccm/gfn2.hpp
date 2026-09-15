@@ -83,6 +83,7 @@ struct GFN2SECCMResult : ParameterIdentifiedResult {
     // whenever a frontier exists (0 < n_occ < n_basis), at every
     // electronic temperature -- a smeared run records its real gap, not a
     // placeholder zero.  Left at 0.0 only when no frontier is defined.
+    // NaN on a rejected screened attempt with no retained virtual orbital.
     double homo_lumo_gap = 0.0;
     // True when `homo_lumo_gap` is at or below the applied guard epsilon
     // (`run_controls.finite_torus_gap_tolerance`) and the positive-gap

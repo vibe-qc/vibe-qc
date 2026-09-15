@@ -141,11 +141,11 @@ def run_ccm_uhf(ccm, *, initial_guess: object = "AUTO", method="union12", max_it
     Validated: reduces to ``run_ccm_rhf`` for a closed shell (Pa=Pb), and the
     molecular limit (isolated cluster) reproduces vibe-qc's molecular ``run_uhf``.
     """
-    guess_selection = _ccm_initial_guess(
-        ccm, initial_guess, driver='run_ccm_uhf',
-    )
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_uhf"
+    )
+    guess_selection = _ccm_initial_guess(
+        ccm, initial_guess, driver='run_ccm_uhf',
     )
     _warn_experimental()
     S = ccm_overlap(ccm)

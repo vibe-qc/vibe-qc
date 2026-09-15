@@ -405,8 +405,8 @@ def _build_mdf_cache(system, orbital, auxiliary, kpoints_cart, need_k_pairs, *,
                     reciprocal_candidate_cap=reciprocal_candidate_cap,
                     _metric_state=state, **source_options,
                 )
-            except _RangeSeparatedGdfAdmissionError:
-                if len(selected) == 1:
+            except _RangeSeparatedGdfAdmissionError as exc:
+                if not exc.retry_with_fewer_kpoints or len(selected) == 1:
                     raise
                 width = max(1, len(selected)//2)
                 continue
@@ -924,8 +924,8 @@ def _compute_mdf_cache_gradient(
                         memory_byte_cap=source_cap, _metric_state=metric_state,
                         gradient_response_byte_cap=response_cap, gradient_nkpoints=nk, **options,
                     )
-                except _RangeSeparatedGdfAdmissionError:
-                    if len(selected) == 1:
+                except _RangeSeparatedGdfAdmissionError as exc:
+                    if not exc.retry_with_fewer_kpoints or len(selected) == 1:
                         raise
                     width = max(1, len(selected)//2)
                     continue

@@ -1,12 +1,9 @@
 # Initial guesses
 
-Every SCF needs a starting point. The *initial guess* supplies the
-first density matrix (or, equivalently, the first set of orbital
-coefficients) that the SCF iteration refines. A good guess can cut
-iteration counts in half and steer SCF away from spurious local
-minima; a bad one can stall the iteration entirely or, in periodic
-calculations, drive the energy off to nonsense values
-(O(10⁴) Ha) before it ever recovers.
+An initial guess supplies the first density or orbital state that SCF
+refines. It can affect convergence and which stationary solution is reached.
+Convergence alone does not establish the electronic ground state: compare
+candidate spin states, occupations and stability as appropriate to the method.
 
 vibe-qc uses one **unified initial-guess framework**. The native
 [`vibeqc::GuessEngine`](../api/index.md) owns molecular construction and the
@@ -15,7 +12,7 @@ context needed by periodic density and Fock builders. Public runners use the
 same canonical selector and native AUTO resolver before dispatch, so the
 method that executes, the output provenance, and the citations agree.
 [`InitialGuess`](#initialguess-enum) selects the method; the
-[`AUTO`](#auto-pick-the-right-guess-for-me) selector picks one for you based
+[`AUTO`](#auto-is-a-conservative-starting-policy) selector picks one for you based
 on the system and route.
 
 ## Quick start
@@ -57,10 +54,42 @@ the precise periodic route matrix is listed in the SAP section below.
 `PATOM`, `HUECKEL`, and `MINAO` also have periodic implementations on the
 route envelopes documented in their sections.
 `READ` works for molecular and Gamma periodic routes, and supported closed-
-and open-shell multi-k routes from in-memory results. Closed-shell multi-k
-QVF archives also carry restart payloads (see
+and open-shell multi-k routes from in-memory results. Current closed- and
+open-shell multi-k QVF archives carry complete restart payloads on supported
+routes (see
 the **READ** section). Periodic `FRAGMO` accepts finite fragments with explicit
 atom/image ownership and embeds their densities with Bloch translation phases.
+
+## AUTO is a conservative starting policy
+
+AUTO selects an implemented construction for the requested system and route.
+It does not benchmark guesses, classify a material as a metal or oxide, or
+promise the fewest iterations or the global electronic ground state.
+
+| System and route | Usual AUTO construction |
+|---|---|
+| Ordinary restricted closed-shell molecular route | PATOM |
+| Molecular unrestricted/open-shell route (including singlet UHF/UKS) or transition-metal system | SAD |
+| Isolated spin-polarized atom | PATOM |
+| Ordinary periodic SCF route | SAD |
+| Cyclic route exposing only HCORE | HCORE |
+
+The concrete route's capability set is checked before construction. If its
+usual AUTO construction is unavailable, the resolver can choose an advertised
+SAD or HCORE construction. An explicit unsupported selector instead raises a
+capability error; it is never silently replaced with HCORE. Guess support
+also does not enable an otherwise unsupported SCF method, ECP or periodic
+representation. Use the route table below for those limits.
+
+```{note}
+**Convergence limit (2026-09-14).** A supported seed and a valid READ payload
+do not guarantee SCF convergence. In the open
+[SH UKS report (#55)](https://github.com/vibe-qc/vibe-qc/issues),
+saved PATOM spin densities replayed through READ stall at the original tight
+tolerances, while AUTO/SAD converges at the same settings. That successful
+control does not resolve the saved-seed defect or justify relaxing its
+acceptance tolerances.
+```
 
 ## Route coverage
 
@@ -276,8 +305,8 @@ $$
 
 so $n_\alpha - n_\beta = \text{mult}-1 = 2S$ is the number of net
 unpaired electrons. That is the only spin quantity you set directly.
-vibe-qc's open-shell SCF is *unrestricted* (UHF / UKS) with these two
-counts held fixed; $\langle S^2\rangle$ is not constrained, so the
+In unrestricted UHF / UKS these two
+counts are held fixed; $\langle S^2\rangle$ is not constrained, so the
 converged value is whatever the unrestricted solution yields (hence
 the spin-contamination check in the [worked examples](#worked-examples)).
 
@@ -287,7 +316,7 @@ open-shell guess produces a starting point with the right counts and
 a spin symmetry decided by the *electron counts and the requested
 seed*, not by atomic Hund rules alone:
 
-* $n_\alpha = n_\beta$ (spin-balanced): **spin-averaged atomic
+* Unseeded $n_\alpha = n_\beta$ (spin-balanced): **spin-averaged atomic
   occupations** -- each atom contributes $\tfrac12\,f_i$ to both spins
   from the spherically-averaged atomic SCF, so $\mathbf{D}_\alpha =
   \mathbf{D}_\beta$ exactly. This is the deterministic symmetric start
@@ -303,20 +332,19 @@ seed*, not by atomic Hund rules alone:
 * The UKS packaging diagonalises $\mathbf{F}_{\rm SAD}$ once from the
   total density and keeps the first $n_\alpha$ and $n_\beta$ columns.
 
-The physical spin density develops *during* SCF. For a single radical
-(one unpaired electron) there is only one way to place the spin and
-the SCF finds it. For a system with several competing spin solutions
-the default symmetric start biases toward the most symmetric one; the
-**default-on internal stability analysis** (Seeger-Pople 1977;
-Lehtola 2020 section 10) then detects a saddle and attempts to descend
-toward a broken-symmetry minimum -- verified on H2 past the Coulson-Fischer
-point, ozone, twisted ethylene, p-benzyne, and Cr2.
-The escape searches both signs of the unstable orbital rotation and
-rechecks the final Hessian before accepting the result. The first four
-systems reach identical solutions before and after the spin-averaging fix
-(`handovers/HANDOVER_GUESS_SPIN_SYMMETRY.md`). A *deliberate*
-antiferromagnetic / ferrimagnetic pattern is requested explicitly via
-`atomic_spins` (below), never imposed by the default guess.
+Equal global alpha and beta counts do not imply a restricted state. The
+symmetric-start rule applies to an unseeded atomic construction, not to a
+deliberate antiferromagnetic seed or a valid broken-symmetry READ source.
+Populated READ spin channels retain their separate spatial patterns during
+normalization, including when their total spin is zero.
+
+On molecular routes with internal stability analysis, the orbital Hessian can
+identify an unstable stationary solution and guide a local escape
+(Seeger-Pople 1977; Lehtola 2020, section 10). Stability and state selection
+remain different checks: a locally stable solution need not be the lowest
+of competing electronic states. Use `atomic_spins` for a deliberate starting
+pattern and inspect the converged state; the guess cannot guarantee it will
+retain that pattern throughout SCF.
 
 **Seeding a broken-symmetry spin pattern (the CRYSTAL `ATOMSPIN`
 analogue).** Molecular UHF and UKS accept `atomic_spins`, a per-atom
@@ -661,10 +689,10 @@ distinction between an omitted keyword and an explicit `"SAD"`.
 |--------|------------------|--------|
 | Periodic, atomic-guess-capable routes | **SAD** | Preserves the established atomic-density start; no evidence-backed metal/oxide classification is currently available |
 | AICCM real-Gamma and four-center adapters | **HCORE** | These supercell SCF loops currently expose only their core-Hamiltonian construction; explicit SAD and other unsupported guesses fail |
-| Molecular, isolated open-shell atom | **PATOM** | A lone atom has no molecular field to break the SAD basin, so one in-field re-polarisation step selects the requested atomic term |
-| Molecular, other open-shell system | **SAD** | Spin polarisation develops via per-spin Fock asymmetry |
-| Molecular, containing transition or f-block atoms (except the isolated open-shell case above) | **SAD** | SAP closed-shell averaging can land the wrong d-shell occupation; select `PATOM` (now shipped, molecular) for a re-polarised SAD start |
-| Molecular, closed-shell, light atoms | **PATOM** | Preserves the established molecular default density and energy basins |
+| Molecular, isolated open-shell atom | **PATOM** | One in-field re-polarisation step constructs a spin-resolved seed for the requested electron and spin populations; it does not certify an atomic term or the global minimum |
+| Molecular, other unrestricted/open-shell route (including singlet UHF/UKS) | **SAD** | Spin polarisation develops via per-spin Fock asymmetry |
+| Molecular, containing transition or f-block atoms (except the isolated open-shell case above) | **SAD** | SAP closed-shell averaging can land the wrong d-shell occupation; select `PATOM` where supported for a re-polarised SAD start |
+| Molecular, restricted closed-shell route, light atoms | **PATOM** | Preserves the established molecular default density and energy basins |
 
 The periodic choice is a conservative compatibility policy, not a claim that
 SAD is universally optimal for solids. Van Lenthe et al. (2006) and Lehtola
@@ -676,7 +704,9 @@ resolved kind to be SAD; AUTO resolving to HCORE rejects the seed.
 The hints (`is_open_shell`, `has_transition_metal`, `is_periodic`)
 are filled in automatically by each SCF wrapper:
 
-* `is_open_shell` from `n_alpha != n_beta`
+* `is_open_shell` from the reference route as well as the spin populations:
+  molecular UHF/UKS set it even for a singlet with `n_alpha == n_beta`.
+  Equal spin counts do not turn an unrestricted reference into a restricted one.
 * `has_transition_metal` from a Z-range scan over the molecule
   (Sc-Zn, Y-Cd, La/Hf-Hg, Ce-Lu, Ac/Rf-Cn, Th-Lr)
 * `is_periodic` from which entry point the caller used
@@ -686,7 +716,7 @@ in the SCF log:
 
 ```python
 result = run_rhf(mol, basis, opts)
-# (look in the SCF log; "initial guess: SAP (Lehtola/Visscher/Engel 2020 …)"
+# Inspect result.guess_selection to see the resolved construction.
 ```
 
 ### PATOM, HUECKEL, and MINAO
@@ -858,7 +888,13 @@ NEB and geometry optimizers retain those snapshots across their internal
 warm starts. An internal READ transport retains the requested and physical
 construction in result metadata and citations.
 
-**From a `.qvf` or Molden file**, via `opts.read_path`:
+TREXIO HDF5 (`.h5`, `.hdf5`) and text directories also work through
+`read_from` and `read_path`. Stored ECP basis functions, AO normalization
+and complex periodic k/spin blocks are retained. See
+[TREXIO](trexio.md) for reconstructing ECP options and complete periodic
+restart requirements.
+
+**From a `.qvf`, TREXIO or Molden file**, via `opts.read_path`:
 
 ```python
 opts.read_path = "prev.qvf"      # reads the QVF restart section
@@ -915,6 +951,28 @@ dimension matches.
 **Aliases.** In the periodic guess-string interface, `"moread"` and
 `"coread"` are accepted ORCA-style spellings of `READ`; the molecular
 `run_*` drivers take the enum directly.
+
+**Restart payload checklist.** A periodic restart needs the source basis and
+structure, k coordinates, normalized weights and the complete physical state.
+A home-cell density or a selected visualization orbital block is insufficient
+for a general Bloch restart. Each populated spin channel is normalized using
+
+$$
+N_\sigma = \sum_k w_k\,\mathrm{Tr}[D_\sigma(k)S(k)].
+$$
+
+Do not round each k-point population to an integer. When a target requires population in an
+empty source spin channel, the normalizer can seed it from the other channel;
+otherwise it rescales each channel without averaging away local magnetic
+order. Finite matrices, basis compatibility and exact mesh mapping are checked
+before use. The version 1.1 spin-density route also verifies QVF manifest-member
+SHA-256 hashes for its required metadata and spin-density members. Restricted
+and general context reads do not enable that manifest verification by default;
+ZIP CRC checks are a separate integrity check. Missing declared spin data is an
+error, even if a
+redundant total density or display orbitals are present. The
+`x_vibeqc.bloch_wavefunction` extension is vibe-qc's restart contract; it does
+not by itself prove another QVF consumer can display or restart that state.
 
 **Periodic restart.** `READ` also restarts periodic SCF jobs, including
 explicit geometry-scan and extrapolation sequences on slabs and bulk.
@@ -1175,6 +1233,18 @@ The SAD choice closes the v0.5.6 NaCl-bombing failure mode that
 prompted this whole refactor.
 
 ## Inspecting what AUTO chose
+
+The SCF result's `guess_selection` separates the requested selector, the
+effective physical construction and the transport into the solver:
+
+| Situation | `requested` | `effective` | `transport` |
+|---|---|---|---|
+| Ordinary periodic AUTO start | AUTO | SAD | SAD |
+| The same construction carried through an internal warm start | AUTO | SAD | READ |
+| Explicit restart requested by the caller | READ | READ | READ |
+
+These fields describe different decisions; seeing READ transport does not
+mean AUTO selected a different physical construction.
 
 Every SCF result exposes `guess_selection.requested`, `.effective`, and
 `.transport`. For an ordinary periodic AUTO run they are AUTO, SAD, SAD.

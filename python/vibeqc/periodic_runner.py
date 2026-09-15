@@ -135,7 +135,7 @@ from .structured_log import (
     structured_log as _structured_log_ctx,
 )
 from .pbc_gdf import (
-    _gamma_dense_core_gdf_parity_held,
+    _reject_legacy_gamma_gdf,
     run_pbc_gdf_rhf,
     run_pbc_gdf_uhf,
     run_pbc_gdf_uks,
@@ -5033,31 +5033,6 @@ def _result_with_ecp_ncore(result, total_ncore: int):
     return _ResultECPProxy(result, count)
 
 
-def _mark_legacy_gamma_gdf_parity_hold(
-    result,
-    system: PeriodicSystem,
-    plog: ProgressLogger,
-) -> bool:
-    """Tag dense-core Gamma GDF fallback results as held for PySCF parity."""
-    if not _gamma_dense_core_gdf_parity_held(system, "rsgdf"):
-        return False
-    backend = str(getattr(result, "backend", "") or "")
-    if "+PARITY_HELD" not in backend:
-        result.backend = (
-            f"{backend}+PARITY_HELD" if backend else "PARITY_HELD"
-        )
-    msg = (
-        "run_periodic_job: Gamma-only GDF legacy fallback absolute-energy "
-        "parity is HELD for dense-core ionic cells. The P01 MgO/STO-3G "
-        "audit found matched Ewald nuclear terms but a large electronic "
-        "GDF gauge offset versus PySCF; keep this row held until the "
-        "electronic gauge is resolved."
-    )
-    warnings.warn(msg, RuntimeWarning, stacklevel=3)
-    plog.info("  WARNING: " + msg)
-    return True
-
-
 def _gamma_proxy_for_multi_k(result) -> _GammaProxy:
     """Wrap a multi-k result to expose Γ-point (k=0) MOs for molden/etc."""
     mo_coeffs = result.mo_coeffs
@@ -6504,6 +6479,8 @@ def run_periodic_job(
     conv_tol_energy: float = 1e-7,
     initial_guess: Union[str, InitialGuess] = "AUTO",
     write_molden_file: bool | None = None,
+    trexio: bool | str | os.PathLike = False,
+    trexio_backend: str = "hdf5",
     write_density: bool | None = False,
     density_spacing_bohr: float = 0.2,
     write_xyz_file: bool = True,
@@ -6943,6 +6920,12 @@ def run_periodic_job(
         Gamma-containing BIPOLE/GDF meshes whose result metadata locates that
         block. It is inapplicable for basis-free and shifted meshes. Explicit
         ``True`` on an inapplicable route fails before calculation.
+    trexio, trexio_backend
+        Write the periodic Gaussian SCF wavefunction, including all k-point
+        and spin blocks, lattice and applied scalar ECP parameters. ``True``
+        selects ``{output}.trexio.h5`` (HDF5) or ``{output}.trexio`` (text);
+        a path selects an explicit target. Requires the optional ``trexio``
+        extra. See :doc:`/user_guide/trexio`.
     write_population_file
         Emit the population-summary text/JSON pair. Exact single-Γ routes use
         the molecular analysis; multi-k BIPOLE uses its lattice-density
@@ -6979,6 +6962,15 @@ def run_periodic_job(
         Cost: ~6N SCF evaluations for the unit cell.
     """
     enforce_runtime_pin_from_env()
+    if str(trexio_backend).strip().lower() not in ("hdf5", "text"):
+        raise ValueError("run_periodic_job: trexio_backend must be 'hdf5' or 'text'.")
+    if trexio is not None and not isinstance(trexio, (bool, str, os.PathLike)):
+        raise TypeError("run_periodic_job: trexio must be a boolean or target path.")
+    if isinstance(trexio, (str, os.PathLike)) and not os.fspath(trexio):
+        raise ValueError("run_periodic_job: trexio target path cannot be empty.")
+    if trexio and basis is None:
+        raise NotImplementedError("run_periodic_job: TREXIO export requires a Gaussian AO basis.")
+
 
     # Fail fast on a molecular system. Passing a Molecule here used to die
     # deep in the setup with "'Molecule' object has no attribute 'lattice'";
@@ -7000,6 +6992,8 @@ def run_periodic_job(
         kpoints=kpoints,
     )
     if semiempirical_route is not None:
+        if trexio:
+            raise NotImplementedError("run_periodic_job: TREXIO export requires a Gaussian AO wavefunction.")
         if fragments is not None:
             raise NotImplementedError("periodic FRAGMO fragment sources require an HF/KS SCF route")
         _basis_free_reason = (
@@ -8954,6 +8948,10 @@ def run_periodic_job(
             )
 
     output_stem = Path(os.fspath(output))
+    _trexio_path = None
+    if trexio:
+        _trexio_path = (Path(os.fspath(trexio)) if isinstance(trexio, (str, os.PathLike))
+                        else Path(str(output_stem) + (".trexio.h5" if str(trexio_backend).strip().lower() == "hdf5" else ".trexio")))
     out_path = stem_sibling(output_stem, ".out")
     molden_path = stem_sibling(output_stem, ".molden")
     xsf_path = stem_sibling(output_stem, ".xsf")
@@ -9041,6 +9039,7 @@ def run_periodic_job(
         basis=basis.name,
         functional=functional,
         write_molden_file=write_molden_file,
+        write_trexio_file=_trexio_path,
         write_xyz=write_xyz_file,
         write_poscar=write_poscar_file,
         write_xsf_structure=write_xsf_structure_file,
@@ -12180,6 +12179,7 @@ def run_periodic_job(
                         "the legacy molecular-limit GDF driver, which has no "
                         "high-|G| tail correction."
                     )
+                _reject_legacy_gamma_gdf(system, basis, "run_periodic_job")
                 result = run_rhf_periodic_gamma_gdf(
                     system,
                     basis,
@@ -12191,7 +12191,6 @@ def run_periodic_job(
                     symmetry_reduce_fock=symmetry_reduce_fock,
                     progress=plog,
                 )
-                _mark_legacy_gamma_gdf_parity_hold(result, system, plog)
         elif resolved_jk == PeriodicJKMethod.SLAB_EWALD_2D:
             # dim=2 vacuum-free slab (rigorous Parry / de Leeuw-Perram gauge).
             # Route through lattice_opts.coulomb_method=SLAB_EWALD_2D: the
@@ -13601,6 +13600,35 @@ def run_periodic_job(
                 )
                 result = _DispersionAugmented(result, float(disp.energy), d3_params)
 
+        if _trexio_path is not None:
+            # Use physical SCF sampling where the driver retains it; the
+            # resolved runner mesh supplies older result types' metadata.
+            _tx_points = getattr(result, "restart_kpoints", None)
+            if _tx_points is None:
+                _tx_points = getattr(result, "kpoints_cart", None)
+            _tx_weights = getattr(result, "restart_weights", None)
+            if _tx_weights is None:
+                _tx_weights = getattr(result, "kpoint_weights", None)
+            _tx_mesh = getattr(result, "kmesh", None) or _runner_bloch_kmesh(system, kpoints)
+            if _tx_points is None:
+                _tx_points = _tx_mesh.kpoints
+            if _tx_weights is None:
+                _tx_weights = _tx_mesh.weights
+            _output_writer.dispatch_role(
+                "orbitals", only_format="trexio", result=result, basis=basis,
+                molecule=system.unit_cell_molecule(), system=system,
+                ecp_source=SimpleNamespace(
+                    ecp_primitive_blocks=_ecp_blocks,
+                    ecp_primitive_centers=_ecp_centers,
+                    ecp_effective_charges=_eff_z,
+                    ecp_total_ncore=_total_ncore,
+                ),
+                uses_ecp=bool(_ecp_blocks), trexio_backend=trexio_backend,
+                trexio_kpoints=_tx_points, trexio_weights=_tx_weights,
+                trexio_description=f"{method_upper}/{basis.name} periodic job {output_stem.name}.",
+                raise_on_error=True,
+            )
+
         # --- Molden ---------------------------------------------------
         _qvf_wf = None
         _qvf_bloch_wf = None
@@ -14220,6 +14248,7 @@ def run_periodic_job(
                     ),
                     basis=basis.name,
                     functional=functional,
+                    extra_libraries=["trexio"] if _trexio_path is not None else [],
                     periodic=True,  # => spglib fires
                     uses_ecp=bool(_ecp_blocks),
                     uses_fftw_poisson=_uses_fftw,
@@ -15765,7 +15794,7 @@ def run_periodic_job(
             else:
                 opt_result = relax_atoms(
                     system,
-                    basis_name,
+                    basis,
                     km,
                     method.upper(),
                     functional=functional,

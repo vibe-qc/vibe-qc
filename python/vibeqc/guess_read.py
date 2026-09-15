@@ -3,10 +3,12 @@
 The READ guess (``InitialGuess.READ``, or the input aliases ``"read"`` /
 ``"moread"`` / ``"coread"``) starts the SCF from a density built out of a
 *prior* calculation rather than a from-scratch atomic guess. The prior
-orbitals come from one of three sources:
+orbitals come from one of four sources:
 
 * an **in-memory result** -- a previous ``RHFResult`` / ``UHFResult`` /
   ``RKSResult`` / ``UKSResult`` object, passed as ``run_*(..., read_from=prev)``;
+* a **TREXIO HDF5 or text file**, including ECP bases and complete complex
+  k-point/spin blocks, via ``read_from="prev.trexio.h5"``;
 * a vibe-qc **``.qvf`` file** (its ``wavefunction.gto`` section for
   molecular / Γ-point restarts, or its ``x_vibeqc.bloch_wavefunction``
   section for all-k periodic restarts), via
@@ -621,7 +623,26 @@ def _prior_from_molden(path: str) -> _Prior:
 # ---- source dispatch + projection ----------------------------------------
 
 
+def _trexio_source(source):
+    """Resolve TREXIO paths/data through the output layer, then reuse READ."""
+    if isinstance(source, (str, os.PathLike)):
+        path = os.fspath(source)
+        if not (path.lower().endswith((".h5", ".hdf5", ".trexio")) or os.path.isdir(path)):
+            return source
+        from .output.formats.trexio import read_trexio
+        return read_trexio(path).restart_result()
+    if type(source).__name__ == "TrexioData":
+        from .output.formats.trexio import TrexioData
+        if isinstance(source, TrexioData):
+            return source.restart_result()
+    return source
+
+
 def _prior_state(options, read_from) -> _Prior:
+    original = read_from if read_from is not None else getattr(options, "read_path", "")
+    converted = _trexio_source(original)
+    if converted is not original:
+        return _prior_from_result(converted)
     if read_from is not None and not isinstance(read_from, (str, os.PathLike)):
         return _prior_from_result(read_from)
     path = read_from if isinstance(read_from, (str, os.PathLike)) else getattr(options, "read_path", "") or ""
@@ -1079,6 +1100,10 @@ def _load_periodic_read_density_k_closed(
     ``wavefunction.gto``-only sources remain fail-closed because they do not
     carry every per-k complex coefficient block.
     """
+    original = read_path or read_from
+    converted = _trexio_source(original)
+    if converted is not original:
+        read_from, read_path = converted, ""
     if read_path or isinstance(read_from, (str, os.PathLike)):
         path = os.fspath(read_path or read_from)
         ext = os.path.splitext(path)[1].lower()
@@ -1283,6 +1308,9 @@ def resolve_periodic_read_density_k_closed(
     if basis is None or system is None or kmesh is None:
         raise ValueError("READ: target basis, system and kmesh must be provided together")
     source = read_path or read_from
+    converted = _trexio_source(source)
+    if converted is not source:
+        source, read_from, read_path = converted, converted, ""
     context = _restart_periodic_context(source)
     if isinstance(source, (str, os.PathLike)) and not _qvf_has_bloch_payload(source):
         prior = _periodic_prior(None, read_path, read_from)
@@ -1306,6 +1334,9 @@ def resolve_periodic_read_densities_k_open(
     incomplete explicit spin payloads are errors.
     """
     source = read_path or read_from
+    converted = _trexio_source(source)
+    if converted is not source:
+        source, read_from, read_path = converted, converted, ""
     context = _restart_periodic_context(source)
     is_file = isinstance(source, (str, os.PathLike))
     if is_file and not _qvf_has_bloch_payload(source):

@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "vibe-qc"
-version = "0.17.2"
+version = "0.17.3"
 description = "vibe-qc — a quantum chemistry code targeting the cyclic cluster model for solids"
 readme = "README.md"
 requires-python = ">=3.11"

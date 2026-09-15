@@ -39,13 +39,13 @@ from .msindo import (
     _atom_blocks,
     _gamma_shell,
     _pair_blocks,
-    _scf_rhf,
     ateng,
     eff_core_charge,
     eneg,
     n_basis,
     one_center_gmunu,
 )
+from .msindo_ccm_stability import scf_rhf_ccm
 
 # Local-frame shell label for each of the 9 STO basis functions (s, 3xp, 5xd) --
 # used to look up the monopole two-centre g per orbital pair.
@@ -174,6 +174,10 @@ class CcmResult:
     density: np.ndarray = field(default=None)
     n_iter: int = 0
     converged: bool = False
+    stability_checked: bool = False
+    stability_analysis_converged: bool = False
+    stability_eigenvalue: float = 0.0
+    n_stability_restarts: int = 0
 
 
 def _build_core_and_gamma_ccm(Z, coords, blocks, nsto, ws: WignerSeitzCells):
@@ -704,15 +708,23 @@ def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
                     density=density,
                     n_iter=int(result_obj.n_iter),
                     converged=True,
+                    **{name: getattr(result_obj, name, default) for name, default in (
+                        ("stability_checked", False),
+                        ("stability_analysis_converged", False),
+                        ("stability_eigenvalue", 0.0),
+                        ("n_stability_restarts", 0),
+                    )},
                 )
             raise RuntimeError(
                 "C++ MSINDO CCM did not converge within the iteration budget"
             )
 
     nocc = nelec // 2
+    diagnostics = {}
     total, e_elec, e_core, eps, P, converged, it = _ccm_total_energy(
         Z, C, blocks, nsto, cz, nocc, ws, T,
-        madelung=madelung, max_iter=max_iter, conv_tol=conv_tol)
+        madelung=madelung, max_iter=max_iter, conv_tol=conv_tol,
+        diagnostics=diagnostics)
 
     if madelung:
         net = _net_charges(P, blocks, cz)
@@ -725,11 +737,11 @@ def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
     return CcmResult(
         total_energy=total, electronic_energy=e_elec, binding_energy=binding,
         madelung_nuclear_energy=e_core, mo_energies=eps, density=P,
-        n_iter=it, converged=converged)
+        n_iter=it, converged=converged, **diagnostics)
 
 
 def _ccm_total_energy(Z, C, blocks, nsto, cz, nocc, ws, T, *,
-                      madelung, max_iter=200, conv_tol=1e-9):
+                      madelung, max_iter=200, conv_tol=1e-9, diagnostics=None):
     """Total CCM energy for an already-built Wigner-Seitz set ``ws`` at geometry
     ``C`` (bohr).  Factored out of :func:`run_ccm` so the finite-difference
     gradient can hold the WS topology fixed while displacing atoms (matching
@@ -759,9 +771,9 @@ def _ccm_total_energy(Z, C, blocks, nsto, cz, nocc, ws, T, *,
             e_add = 0.5 * float(np.dot(cz, mad))  # MADELENRG = S 1/2 CZ_I.V_I
             return F_add, e_add
 
-    P, _F, e_elec, eps, converged, it = _scf_rhf(
+    P, _F, e_elec, eps, converged, it = scf_rhf_ccm(
         H, G, blocks, Z, nocc, max_iter=max_iter, conv_tol=conv_tol,
-        fock_extra=fock_extra)
+        fock_extra=fock_extra, diagnostics=diagnostics)
     return e_elec + e_core, e_elec, e_core, eps, P, converged, it
 
 

@@ -16,6 +16,44 @@ differentiable provider interface and do not call libxc.
 > decision and the invocation. That family statement covers libxc-backed
 > functionals; external providers declare their own ROKS capability below.
 
+## Molecular integration grids
+
+The molecular mid-level entry points use `grid_level="orca-defgrid3"` when
+the KS options are absent or every grid field is untouched. This includes
+`run_job`, full-functional dispatchers such as `run_wb97x_d` and
+`run_double_hybrid`, and the molecular optimization, NEB, dimer and IRC
+interfaces. A customized grid takes precedence over a named preset.
+Functional-specific requirements, including SKALA's dedicated profile, still
+apply.
+
+| Call | How its grid is selected |
+|---|---|
+| Mid-level API with no options or an untouched grid | Apply its `grid_level` preset |
+| Mid-level API with any customized grid field | Preserve the supplied grid |
+| `run_rks` / `run_uks` with `options=None` | Apply `grid_level` to newly created options |
+| `run_rks` / `run_uks` with a supplied options object | Use that grid as given, even if untouched |
+
+An options object created only to change `max_iter` does not request a legacy
+grid from a mid-level API. To reproduce the exact old grid there, pass
+`grid_level="legacy"`; its field values otherwise look identical to an
+untouched `GridOptions`. Supplying those same options directly to `run_rks`
+or `run_uks` retains the low-level behavior.
+
+The `orca-defgrid3` preset uses 75 radial shells, Lebedev order 29 with
+NWChem pruning, and Stratmann partitioning. Its name denotes the project's
+energy-comparison preset, not an identical implementation of ORCA's grid.
+`fine` uses 99 radial shells and Lebedev order 35; `coarse` uses 50 and order
+23. `legacy` uses the unpruned 75 x 17 x 36 product grid with Becke partitioning.
+Compare results using the complete grid settings, not the preset name alone.
+
+`run_job(atomization=True)` passes the operative molecular grid to its atomic
+DFT references. Atomic-reference cache keys include every grid field, so
+changing grids in one process cannot reuse an atomic energy from another
+grid. Molecular energy, displaced calculations and response calculations
+must use the same intended grid when comparing energy differences or forces.
+For low-level TDDFT, explicitly pass the reference `grid_options` together
+with its density; see the [TDDFT tutorial](../tutorial/excited_states_tddft.md).
+
 ## ⚠️ B3LYP convention, vibe-qc ships the ORCA definition
 
 **The `b3lyp` keyword resolves to libxc id 475

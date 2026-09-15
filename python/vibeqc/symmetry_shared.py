@@ -12,7 +12,7 @@ from enum import Enum
 from fractions import Fraction
 from hashlib import sha256
 import json
-from math import gcd, lcm
+from math import frexp, gcd, hypot, lcm, ldexp
 from typing import Callable, Hashable, Protocol
 
 import numpy as np
@@ -68,6 +68,53 @@ def _array(a: np.ndarray, dtype: str, ndim: int) -> np.ndarray:
     if not a.flags.c_contiguous or not a.flags.aligned:
         raise ValueError("symmetry arrays must be aligned and C-contiguous")
     return a
+
+
+def _component_scale(a: np.ndarray) -> float:
+    """Largest real component, without overflowing a complex magnitude."""
+    return float(np.maximum(np.max(np.abs(a.real), initial=0.),
+                            np.max(np.abs(a.imag), initial=0.)))
+
+
+def _scaled_frobenius(a: np.ndarray, scale: float) -> float:
+    """Return ||a / scale||_F for scale = _component_scale(a).
+
+    Complex division can form an overflowing reciprocal of a tiny real
+    divisor even when every quotient is bounded. Divide real and imaginary
+    components separately. At least one scaled component is one, so squaring
+    cannot erase the norm; squared sums are bounded by the admitted size.
+    Never supply another array's scale: that can underflow a small norm.
+    """
+    if not scale:
+        return 0.
+    return hypot(float(np.linalg.norm(a.real / scale)),
+                 float(np.linalg.norm(a.imag / scale)))
+
+
+def _relative_frobenius(numerator: np.ndarray, denominator: np.ndarray) -> float:
+    """Norm ratio with independent array scales and bounded scalar arithmetic.
+
+    Both full norms can overflow, or their scale ratio can underflow before
+    the bounded norm factors restore a representable result. Combine binary
+    exponents only at the final rounding step. Nonzero unrepresentable ratios
+    return a nonfinite sentinel for the caller's existing refusal boundary.
+    """
+    ns, ds = _component_scale(numerator), _component_scale(denominator)
+    if not np.isfinite(ns) or not np.isfinite(ds):
+        return float("nan")
+    if not ds:
+        return float("inf") if ns else 0.
+    if not ns:
+        return 0.
+    nm, ne = frexp(ns)
+    dm, de = frexp(ds)
+    coefficient = (nm / dm) * (_scaled_frobenius(numerator, ns)
+                               / _scaled_frobenius(denominator, ds))
+    try:
+        result = ldexp(coefficient, ne-de)
+    except OverflowError:
+        return float("inf")
+    return result if result else float("nan")
 
 
 def _freeze(a: np.ndarray) -> np.ndarray:
@@ -721,18 +768,11 @@ def audit_subspace_panels(
     metric_residual = float(np.linalg.norm(moved_gram-expected_gram))
     mixing = np.ascontiguousarray(np.linalg.solve(target_gram, target.conj().T @ tm @ moved))
     difference = moved-target @ mixing
-    scale = max(float(np.max(np.abs(moved))), float(np.max(np.abs(difference))))
-    if not np.isfinite(scale) or not np.all(np.isfinite(mixing)):
+    if not np.all(np.isfinite(difference)) or not np.all(np.isfinite(mixing)):
         raise ValueError("nonfinite retained-space residual")
-    # A common scale keeps a tiny nonzero leaking map from underflowing to
-    # an apparently exact containment witness, and avoids squared overflow.
-    moved_norm = float(np.linalg.norm(moved/scale)) if scale else 0.
-    difference_norm = float(np.linalg.norm(difference/scale)) if scale else 0.
-    if not np.isfinite(moved_norm) or not np.isfinite(difference_norm):
-        raise ValueError("nonfinite retained-space residual")
-    if not moved_norm and difference_norm:
+    leakage = _relative_frobenius(difference, moved)
+    if not np.isfinite(leakage):
         raise ValueError("unrepresentable relative retained-space residual")
-    leakage = difference_norm/moved_norm if moved_norm else 0.
     metric_evidence = QualificationEvidence(contract, source_subspace, target_subspace,
             "metric isometry on the named retained panel", EvidenceKind.NUMERICAL,
             probe_identity, metric_residual, metric_tolerance)
@@ -1529,8 +1569,8 @@ def audit_group_operators(
                 difference = snapshots[target] @ mixing-mixing @ source
                 # Scale before squaring: finite tiny defects must not become
                 # passing zero, nor finite large residuals become infinity.
-                scale = float(np.max(np.abs(difference),initial=0.))
-                residual = float(np.linalg.norm(difference/scale))*scale if scale else 0.
+                scale = _component_scale(difference)
+                residual = _scaled_frobenius(difference, scale)*scale
             if not np.isfinite(residual):
                 raise ValueError("nonfinite operator covariance residual")
             row.append(QualificationEvidence(contract, ambient.spaces[s], ambient.spaces[target],
@@ -1624,16 +1664,7 @@ def audit_selected_operators(
     def relative_leakage(moved, difference):
         if not np.all(np.isfinite(moved)) or not np.all(np.isfinite(difference)):
             raise ValueError("nonfinite selected operator action or residual")
-        scale = max(float(np.max(np.abs(moved))),float(np.max(np.abs(difference))))
-        if not np.isfinite(scale):
-            raise ValueError("nonfinite selected operator residual scale")
-        if not scale:
-            return 0.
-        numerator = float(np.linalg.norm(difference/scale))
-        denominator = float(np.linalg.norm(moved/scale))
-        if not denominator:
-            raise ValueError("unrepresentable relative selected operator residual")
-        residual = numerator/denominator
+        residual = _relative_frobenius(difference, moved)
         if not np.isfinite(residual):
             raise ValueError("nonfinite selected operator leakage")
         return residual

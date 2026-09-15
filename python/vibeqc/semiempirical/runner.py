@@ -1159,6 +1159,12 @@ def run_seccm(molecule: Molecule, ccm_options=None) -> SemiempiricalResult:
         periodic_dimension=len(translations),
         electrostatics_family="madelung" if madelung else "none",
     )
+    for name, default in (("stability_checked", False),
+                          ("stability_analysis_converged", False),
+                          ("stability_eigenvalue", 0.0),
+                          ("n_stability_restarts", 0)):
+        setattr(result, name, getattr(result_obj, name, default))
+    result.internal_instability = False  # unresolved/unstable audited states raise
     return result
 
 

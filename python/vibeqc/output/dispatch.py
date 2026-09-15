@@ -370,6 +370,10 @@ def _adapter_trexio(
     trexio_backend: str = "hdf5",
     trexio_description: str = "",
     uses_ecp: bool = False,
+    system=None,
+    ecp_source=None,
+    trexio_kpoints=None,
+    trexio_weights=None,
     **_: Any,
 ) -> Path:
     from .formats.trexio import write_trexio
@@ -382,6 +386,10 @@ def _adapter_trexio(
         backend=trexio_backend,
         description=trexio_description or stem.name,
         uses_ecp=uses_ecp,
+        system=system,
+        ecp_source=ecp_source,
+        kpoints=trexio_kpoints,
+        weights=trexio_weights,
     )
 
 

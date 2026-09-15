@@ -768,34 +768,23 @@ def test_run_periodic_job_gamma_rhf_gdf_smearing_stays_on_legacy(tmp_path):
     assert r.smearing_temperature == pytest.approx(0.01)
 
 
-def test_legacy_gamma_gdf_dense_core_result_is_parity_held():
-    """Prompt 11: the P01 MgO fallback path must stay visibly held.
+def test_legacy_gamma_gdf_rejects_held_class_before_scf():
+    from vibeqc.pbc_gdf import _reject_legacy_gamma_gdf
 
-    The expensive high-level P01 run can route to the legacy
-    ``ewald-jk-fallback`` driver when auto convergence knobs are active. That
-    result still belongs to the dense-core Gamma GDF parity-hold class, even
-    though it did not reach the explicit ``pbc-gdf-rsgdf`` backend that tags
-    itself internally.
-    """
-    from vibeqc.periodic_runner import _mark_legacy_gamma_gdf_parity_hold
+    mgo, basis = _mgo_p01_primitive()
+    with pytest.raises(NotImplementedError, match="legacy Gamma GDF fallback"):
+        _reject_legacy_gamma_gdf(mgo, basis, "test")
+    h2, basis = _h2_box()
+    _reject_legacy_gamma_gdf(h2, basis, "test")
 
-    mgo, _basis = _mgo_p01_primitive()
-    result = SimpleNamespace(backend="ewald-jk-fallback")
-    log_messages: list[str] = []
-    plog = SimpleNamespace(info=log_messages.append)
 
-    with pytest.warns(RuntimeWarning, match="legacy fallback absolute-energy"):
-        held = _mark_legacy_gamma_gdf_parity_hold(result, mgo, plog)
+def test_legacy_gamma_gdf_rejects_tight_basis_in_sparse_box():
+    from vibeqc.pbc_gdf import _reject_legacy_gamma_gdf
 
-    assert held
-    assert result.backend == "ewald-jk-fallback+PARITY_HELD"
-    assert log_messages
-    assert "P01 MgO/STO-3G" in log_messages[0]
-
-    h2, _basis = _h2_box()
-    h2_result = SimpleNamespace(backend="ewald-jk-fallback")
-    assert not _mark_legacy_gamma_gdf_parity_hold(h2_result, h2, plog)
-    assert h2_result.backend == "ewald-jk-fallback"
+    system = vq.PeriodicSystem(3, np.eye(3) * 20.0, [vq.Atom(10, [0, 0, 0])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    with pytest.raises(NotImplementedError, match="tight-core basis/cell"):
+        _reject_legacy_gamma_gdf(system, basis, "test")
 
 
 def test_gdf_backend_parity_hold_marker_is_idempotent():

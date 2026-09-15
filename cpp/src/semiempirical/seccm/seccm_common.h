@@ -12,6 +12,7 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -371,6 +372,18 @@ struct CanonicalEigensolution {
     Eigen::VectorXd eigenvalues;
     Eigen::MatrixXd coefficients;  // columns in the original AO basis
 };
+
+// Screening can leave exactly enough orbitals for the occupied manifold,
+// but no LUMO. AO dimension is not the returned spectrum dimension (#151).
+// Keep this separate from canonical_orthogonalizer's occupied-space guard:
+// a missing frontier is unavailable, not a zero gap that smearing can waive.
+inline double finite_torus_homo_lumo_gap(
+    const Eigen::VectorXd& energies, int n_occ) {
+    if (n_occ <= 0 || n_occ >= energies.size()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return energies(n_occ) - energies(n_occ - 1);
+}
 
 inline CanonicalEigensolution solve_canonical_orthogonalized(
     const Eigen::MatrixXd& hamiltonian,

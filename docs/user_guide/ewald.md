@@ -296,6 +296,14 @@ Roetti, Mol. Phys. 77, 629 (1992), Property 11 and Eq. (55)), not an
 accuracy requirement: the bound restores the first condition where the
 BIPOLE real-space sum is not carried to convergence.
 
+The SCF result records `ewald_precision`. BIPOLE analytic gradients carry this
+value through the nuclear image selection, reciprocal terms and orbital
+response, so nondefault precision differentiates the same finite sums as
+the SCF. Older results without the field use the historical `1e-8` default.
+The precision is an image-domain control, not a guaranteed absolute force
+error. The reciprocal envelope still follows the resolved Ewald alpha;
+independent cutoff and force-convergence checks remain necessary.
+
 ```{warning}
 The legacy multi-k RKS `EWALD_3D` path stores periodic AO values for
 every real-space density cell, and GGA functionals store three AO

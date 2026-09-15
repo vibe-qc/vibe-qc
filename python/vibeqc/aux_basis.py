@@ -4513,7 +4513,16 @@ class _RangeSeparatedGdfBatch(NamedTuple):
 
 
 class _RangeSeparatedGdfAdmissionError(MemoryError):
-    """A rejected preallocation reservation, safe to retry with fewer k points."""
+    """A rejected reservation, with explicit k-batch retryability.
+
+    Tensor storage can shrink with a k batch. Reciprocal candidate/workspace
+    caps describe a single q sphere and cannot be repaired by that retry.
+    Actual allocator failures remain ordinary MemoryError exceptions.
+    """
+
+    def __init__(self, message, *, retry_with_fewer_kpoints=True):
+        super().__init__(message)
+        self.retry_with_fewer_kpoints = bool(retry_with_fewer_kpoints)
 
 
 class _RangeSeparatedGdfCutoffs(NamedTuple):
@@ -6505,14 +6514,28 @@ def _rsgdf_bounded_reciprocal_sphere(
     lower = [math.floor(-fractional_q[i] - reach[i]) - 1 for i in range(3)]
     upper = [math.ceil(-fractional_q[i] + reach[i]) + 1 for i in range(3)]
     widths = [hi - lo + 1 for lo, hi in zip(lower, upper)]
-    if math.prod(widths) > int(candidate_cap):
-        raise _RangeSeparatedGdfAdmissionError("range-separated GDF reciprocal candidate cap exceeded")
+    candidate_count = math.prod(widths)
+    context = (f"ke_cutoff={energy:.17g} Ha, q_cart={tuple(float(x) for x in q)}, "
+               f"box_widths={tuple(widths)}")
+    if candidate_count > int(candidate_cap):
+        raise _RangeSeparatedGdfAdmissionError(
+            "range-separated GDF reciprocal candidate cap exceeded: "
+            f"candidates={candidate_count}, cap={int(candidate_cap)}; {context}. "
+            "Reducing the k batch does not reduce this single-q search box.",
+            retry_with_fewer_kpoints=False,
+        )
     # A line holds integer labels, Cartesian coordinates, squared norms,
     # masks and a selected-point copy. Keep generous array headroom while
     # making the line length independent of the complete box dimensions.
     line_length = min(512, widths[2])
-    if 4096 + 128 * line_length > int(workspace_byte_cap):
-        raise _RangeSeparatedGdfAdmissionError("range-separated GDF reciprocal workspace cap exceeded")
+    workspace_required = 4096 + 128 * line_length
+    if workspace_required > int(workspace_byte_cap):
+        raise _RangeSeparatedGdfAdmissionError(
+            "range-separated GDF reciprocal workspace cap exceeded: "
+            f"required={workspace_required} bytes, cap={int(workspace_byte_cap)} bytes; "
+            f"line_length={line_length}, {context}",
+            retry_with_fewer_kpoints=False,
+        )
     limit_squared = (radius + slack) ** 2
 
     def panels():
@@ -6529,7 +6552,11 @@ def _rsgdf_bounded_reciprocal_sphere(
     for _, keep in panels():
         count += int(np.count_nonzero(keep))
         if 24 * count > int(output_byte_cap):
-            raise _RangeSeparatedGdfAdmissionError("range-separated GDF reciprocal output cap exceeded")
+            raise _RangeSeparatedGdfAdmissionError(
+                "range-separated GDF reciprocal output cap exceeded: "
+                f"required_at_least={24 * count} bytes, cap={int(output_byte_cap)} bytes; "
+                f"retained_so_far={count}, {context}"
+            )
     del _, keep
     if count == 0 and not allow_empty:
         raise ValueError("range-separated GDF reciprocal cutoff contains no q+G vectors")

@@ -320,6 +320,11 @@ class SolverResult:
     #: where the departure from {0, 2} is the multireference character.
     natural_occupations: Optional[np.ndarray] = None
 
+    #: Exact orbital/CI provenance for optional TREXIO export. Kept separate
+    #: from natural-orbital visualization because CI coefficients refer to
+    #: the optimization/CI orbital basis, not its natural-orbital rotation.
+    trexio_wavefunction: Optional[dict] = field(default=None, repr=False)
+
     @property
     def energy_total(self) -> float:
         """Alias for ``energy``."""

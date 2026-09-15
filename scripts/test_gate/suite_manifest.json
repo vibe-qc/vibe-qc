@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at_sha": "2adb16455c32754a98bf266571c6aa58248ab6e4",
-  "test_file_count": 910,
+  "generated_at_sha": "ecc2a1145c7577ab688b5920d8d910f9898b5748",
+  "test_file_count": 914,
   "policy": {
     "blocking_tiers": [
       "T0",
@@ -2536,6 +2536,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_changelog_released_sections.py",
+      "maturity": "production",
+      "tier": "T1",
+      "owner": "release",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "blocking T1",
+      "rationale": "pins the GitLab #229 guard: every released CHANGELOG.md section must match its SHA-256 pin in scripts/test_gate/changelog_pins.toml, so an entry for unreleased work cannot reach a released section through a rebase unnoticed, as it did in #227. Plain text and hashing, plus throwaway git repositories for the audit command and the pre-push hook; the test imports nothing from vibeqc and runs no SCF. Blocking T1 because a candidate's release notes are part of what it proves.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_cis_density.py",
       "maturity": "under-review",
       "tier": "T2",
@@ -4072,6 +4084,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_git_clone_pinned.py",
+      "maturity": "verified",
+      "tier": "T2",
+      "owner": "release/test-health",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "demote T2",
+      "rationale": "Sub-minute Bash-level regressions for scripts/_verify_source.sh git_clone_pinned (#241): the commit pin refuses a moved tag, VIBEQC_GIT_REFERENCE_DIR serves the pinned commit from a local repository offline and only from one holding that commit, upstream failures retry a bounded number of times, and the clone deadline escalates to SIGKILL and honours Ctrl-C. Throwaway local repositories only; no network, no native build.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_gradient.py",
       "maturity": "production",
       "tier": "T2",
@@ -5544,7 +5568,19 @@
       "measured_runtime_s": null,
       "measured_peak_rss_mb": null,
       "disposition": "non-blocking T2",
-      "rationale": "TREXIO writer + round-trip reader (GitLab #573, increment 1). Pins the AO conventions against the TREXIO specification's own worked example, exact H2O/def2-SVP RHF and OH UHF round trips on both back ends with C^T S C = 1 in the overlap rebuilt from the file's basis group, the ECP / basis-free refusals, the run_job(trexio=...) wiring with its manifest row and citation, and an out-of-process PySCF energy rebuild that skips unless VIBEQC_TREXIO_PYTHON names an interpreter with trexio + pyscf. output-docs lane, owner output/docs, like every sibling output writer test; T2 because the artefact is opt-in and no default output changes.",
+      "rationale": "TREXIO writer + round-trip reader (GitLab #573, increment 1). Pins the AO conventions against the TREXIO specification's own worked example, exact H2O/def2-SVP RHF and OH UHF round trips on both back ends with C^T S C = 1 in the overlap rebuilt from the file's basis group, the ECP / basis-free refusals, the run_job(trexio=...) wiring with its manifest row and citation, and an out-of-process PySCF energy rebuild that needs VIBEQC_TREXIO_PYTHON to name an interpreter with trexio + pyscf: it skips naming the gate that did not run, or fails when VIBEQC_REQUIRE_TREXIO_REFERENCE is set (#253). output-docs lane, owner output/docs, like every sibling output writer test; T2 because the artefact is opt-in and no default output changes.",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_output_trexio_extended.py",
+      "maturity": "verified",
+      "tier": "T2",
+      "owner": "output/docs",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "non-blocking T2",
+      "rationale": "TREXIO ECP Hamiltonian reconstruction, molecular and periodic READ guesses, complex k/spin blocks, density/integral contractions and all storage kinds on both optional backends.",
       "last_verified_sha": null
     },
     {
@@ -10645,6 +10681,18 @@
       "measured_peak_rss_mb": null,
       "disposition": "demote T2",
       "rationale": "verified inventory or parity coverage retained post-cut",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_trexio_reference_gate.py",
+      "maturity": "verified",
+      "tier": "T2",
+      "owner": "output/docs",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "non-blocking T2",
+      "rationale": "Pins tests/trexio_reference.py, the shared locator for the out-of-process TREXIO reference interpreter (#253): without VIBEQC_TREXIO_PYTHON the convention checks skip with a reason naming the gate that did not run, and fail instead when VIBEQC_REQUIRE_TREXIO_REFERENCE is set. Pure Python, needs neither trexio nor pyscf; T2 with its two TREXIO siblings.",
       "last_verified_sha": null
     },
     {

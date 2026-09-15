@@ -596,7 +596,7 @@ SCCDFTBSECCMResult run_scc_dftb_seccm(
 
         if (!converged) continue;
 
-        const double gap = eps(n_occ) - eps(n_occ - 1);
+        const double gap = detail::finite_torus_homo_lumo_gap(eps, n_occ);
         // Positive-gap guard.  The finite torus must have a frontier gap
         // for its occupation to be well defined; the epsilon is the
         // `gap_tolerance` argument (1e-8 Ha by default -- seven orders

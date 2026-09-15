@@ -55,7 +55,7 @@ Submit each input from a clean local checkout:
 ```bash
 # Once per checkout
 git push origin <branch>
-ssh compute-reference 'cd ~/gitlab/vibeqc-dev && git pull --ff-only'
+ssh compute-reference 'cd ~/gitlab/vibe-qc-dev && git pull --ff-only'
 
 # Submit one input — wrapper handles PATH for CRYSTAL14 binaries
 cd examples/regression/crystal_parity

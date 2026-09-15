@@ -129,7 +129,7 @@ pessimal on workstations with hyperthreaded cores (you usually
 want physical cores, not logical):
 
 ```sh
-OMP_NUM_THREADS=4 ~/path/to/vibeqc/.venv/bin/python water.py
+OMP_NUM_THREADS=4 ~/path/to/vibe-qc/.venv/bin/python water.py
 ```
 
 **Estimate memory before a large run.** Vibe-qc has a pre-flight
@@ -187,21 +187,21 @@ terminal scrollback is finite. ``tee`` keeps a copy on disk
 alongside the run:
 
 ```sh
-~/path/to/vibeqc/.venv/bin/python water.py 2>&1 | tee water.log
+~/path/to/vibe-qc/.venv/bin/python water.py 2>&1 | tee water.log
 ```
 
 **For anything over 10 minutes, detach.** ``nohup`` is the
 minimum:
 
 ```sh
-nohup ~/path/to/vibeqc/.venv/bin/python water.py > water.log 2>&1 &
+nohup ~/path/to/vibe-qc/.venv/bin/python water.py > water.log 2>&1 &
 ```
 
 For multi-day runs use ``screen`` or ``tmux`` so you can
 reattach and see the live output:
 
 ```sh
-screen -dmS mycalc ~/path/to/vibeqc/.venv/bin/python water.py
+screen -dmS mycalc ~/path/to/vibe-qc/.venv/bin/python water.py
 screen -r mycalc          # re-attach later
 # Ctrl-A, D to detach again
 ```
@@ -253,7 +253,7 @@ See [Periodic SCF convergence](tutorial/periodic_scf_convergence.md) and
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| ``ModuleNotFoundError: No module named 'vibeqc'`` | Ran the wrong Python (system, not venv) | Use ``~/path/to/vibeqc/.venv/bin/python`` or activate the venv. See [running](running.md). |
+| ``ModuleNotFoundError: No module named 'vibeqc'`` | Ran the wrong Python (system, not venv) | Use ``~/path/to/vibe-qc/.venv/bin/python`` or activate the venv. See [running](running.md). |
 | ``.venv/bin/python: no such file or directory`` | Ran from outside the repo with the relative-path shorthand | Use the absolute path; the venv lives where you cloned. |
 | Wildly wrong energy (factor-of-2-off, or sign-flipped) | Bohr vs Ångström unit confusion in coordinates | Vibe-qc internals are bohr; pass Ångström via ``Molecule.from_xyz()``. |
 | Wrong number of electrons | Charge / multiplicity mismatch | ``print(mol.n_electrons())``, does it match what you expect? |

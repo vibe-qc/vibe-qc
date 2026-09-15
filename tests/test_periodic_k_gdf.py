@@ -416,6 +416,33 @@ def test_gram_factors_of_a_zero_density_are_empty():
 # =====================================================================
 
 
+@pytest.mark.parametrize("gdf_method", ["compcell", "mdf"])
+@pytest.mark.parametrize("controls", [
+    {"fock_mixing": 0.2}, {"level_shift": 0.2},
+    {"smearing_temperature": 0.01},
+])
+def test_gamma_legacy_fallback_refuses_dense_core_before_driver(
+    monkeypatch, gdf_method, controls,
+):
+    h = 7.958 / 2.0
+    system = vq.PeriodicSystem(
+        3, np.array([[0, h, h], [h, 0, h], [h, h, 0]]),
+        [vq.Atom(12, [0, 0, 0]), vq.Atom(8, [h, h, h])],
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    opts = vq.PeriodicRHFOptions()
+    for name, value in controls.items():
+        setattr(opts, name, value)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("dense-core legacy SCF must not start")
+
+    monkeypatch.setattr(kgdf, "run_rhf_periodic_gamma_gdf", forbidden)
+    with pytest.raises(NotImplementedError, match="legacy Gamma GDF fallback"):
+        run_krhf_periodic_gdf(system, basis, (1, 1, 1), opts,
+                             gdf_method=gdf_method, progress=False)
+
+
 def test_gamma_kmesh_info_recognises_tuple_111():
     system, _ = _h2_cubic_box()
     assert _gamma_kmesh_info(system, (1, 1, 1)) is not None

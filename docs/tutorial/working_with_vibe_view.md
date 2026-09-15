@@ -51,10 +51,9 @@ resolve. Use one of the methods on this page instead.
 ```
 
 ```{note}
-The repository is currently private (public once the JCC release paper is
-out); see [installation.md](../installation.md) for how to request read-only
-clone access. The HTTPS clone command above works with an authorized GitLab
-account now and without authentication once the repository becomes public.
+Clone the independent viewer from its GitHub repository. See
+[repositories and downloads](../installation.md#repositories-and-downloads)
+for source locations and the publication access boundary.
 ```
 
 Developers who intentionally want an editable package in their active

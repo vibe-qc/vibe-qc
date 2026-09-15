@@ -254,3 +254,14 @@ red negative lobe). Tokens live at the top of `src/styles/global.css`; the
 palette is theme-aware (light/dark via `prefers-color-scheme` + a
 `data-theme` override hook). Type pairs a heavy system grotesque with a
 monospace label system.
+
+## Repository and mirror links
+
+`src/data/repositories.mjs` is the four-project source directory used by the
+onboarding, download and product pages. It names GitLab sources and GitHub
+mirrors under `github.com/vibe-qc/`. Both hosts required repository access
+when checked on 2026-09-15. An exact clone check found the core mirror empty
+(no source commits or tags); GitLab supplies the working source checkout and
+installation refs used in the examples. Do not infer a package download from
+a source tag or copy a companion artifact into this site. QVF is a format
+reference, and vibe-basis stays in the core checkout.

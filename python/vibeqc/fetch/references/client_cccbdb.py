@@ -7,7 +7,7 @@ and returns an :class:`ExperimentalReference` with full
 
 Rate limiting (per the handover Sec. 7.2):
   * Sleep >= 1 s between consecutive requests in the same process.
-  * Declared User-Agent identifying vibe-qc + version + repo URL.
+  * Declared User-Agent identifying vibe-qc + version + public contact.
   * Honour ``Retry-After`` on 429 / 503 with exponential backoff
     starting at 5 s, capped at 60 s, max 3 retries.
   * Aggressive 30-day cache via :class:`FetchCache` --
@@ -49,7 +49,7 @@ CCCBDB_DOI = "doi:10.18434/T47C7Z"
 CCCBDB_LICENSE = "NIST SRD"
 CCCBDB_USER_AGENT = (
     f"vibe-qc-fetcher/{FETCHER_VERSION} "
-    "(+https://vibe-qc.com/docs/ mailto:mpei@vibe-qc.com)"
+    "(+https://vibe-qc.com/; mailto:mpei@vibe-qc.com)"
 )
 CCCBDB_RATE_LIMIT_S: float = 1.0
 

@@ -466,9 +466,10 @@ feature-complete v1.0 claim.
 
 Recommended roadmap slot:
 
-- `v0.21.0`, production MPI and large-system scaling.
-- Dependencies: v0.17.0 periodic correlation for k/q post-SCF workloads,
-  v0.18.0 periodic CC for periodic tuple batching, and the v0.15.x
+- The production MPI and large-system scaling milestone. Open milestones
+  are themes, numbered only at the cut; see the [roadmap](roadmap.md).
+- Dependencies: native BvK periodic local correlation for k/q post-SCF
+  workloads, periodic CC for periodic tuple batching, and the v0.15.x
   hardening fixes for GPW/GDF/BIPOLE correctness.
 - ScaLAPACK or another distributed dense eigensolver is not a phase-1
   requirement. It stays a later option if replicated dense matrices

@@ -83,6 +83,81 @@ def _components(result):
     ])
 
 
+@requires_gfn2
+@pytest.mark.parametrize("mixing", [0.01, 0.02])
+def test_slow_primary_scc_survives_larger_iteration_budget(params, mixing):
+    """#244: a real 501--2499-step primary must not be cut to 500 steps.
+
+    The polar HF cell converges in about 2205/1099 steps with these damped
+    simple mixers. Previously max_iter=2500 discarded that contracting run
+    at step 500 and exhausted the 2000-step neutral restart without a result.
+    """
+    def run(cap):
+        opts = _tight(temperature=0.001)
+        opts.max_iter = cap
+        opts.auto_stabilize = True
+        opts.scc_mixer = _se.SCCMixer.Simple
+        opts.mixer_damping = 1.0  # select the explicit simple/Aitken path
+        opts.charge_mixing = mixing
+        return _xtb.run_gfn2_xtb_gamma(_polar_hf_cell(), params, opts, 12.0)
+
+    reference = run(2499)
+    assert reference.converged
+    assert 500 < reference.n_iter < 2499
+    for cap in (2500, 2501, 3000):
+        result = run(cap)
+        assert result.converged
+        assert result.n_iter == reference.n_iter
+        np.testing.assert_allclose(_components(result), _components(reference),
+                                   rtol=0.0, atol=1e-11)
+        np.testing.assert_allclose(result.scc_max_change_trace,
+                                   reference.scc_max_change_trace,
+                                   rtol=0.0, atol=1e-12)
+        assert result.smearing_temperature == reference.smearing_temperature
+
+    # The checkpoint remains advisory even when the caller leaves only one
+    # iteration after it. Short budgets still stop honestly at the hard cap.
+    for cap in (499, 500, 501, 1000):
+        result = run(cap)
+        assert not result.converged
+        assert result.n_iter == cap
+        np.testing.assert_allclose(result.scc_max_change_trace,
+                                   reference.scc_max_change_trace[:cap],
+                                   rtol=0.0, atol=1e-12)
+
+
+@requires_gfn2
+def test_rejected_primary_counts_only_executed_scc_iterations(params):
+    """An early rejected MgO branch must not consume its unused allowance."""
+    def options(cap, *, stabilize, retry=False):
+        opts = _tight(temperature=0.001)
+        opts.max_iter = cap
+        opts.auto_stabilize = stabilize
+        opts.scc_mixer = _se.SCCMixer.Simple if retry else _se.SCCMixer.Broyden
+        opts.mixer_damping = 1.0 if retry else 0.2
+        opts.charge_mixing = 0.01 if retry else 0.2
+        return opts
+
+    def run(opts):
+        return _xtb.run_gfn2_xtb_gamma(_mgo(), params, opts, 12.0)
+
+    primary = run(options(2500, stabilize=False))
+    assert not primary.converged
+    assert 0 < primary.n_iter < 500
+    assert primary.n_iter == len(primary.scc_max_change_trace)
+    for cap in (100, 2000, 2500):
+        result = run(options(cap, stabilize=True))
+        retry = run(options(min(2000, cap - primary.n_iter),
+                            stabilize=False, retry=True))
+        assert result.n_iter == primary.n_iter + retry.n_iter <= cap
+        assert result.converged == retry.converged
+        assert result.smearing_temperature == primary.smearing_temperature
+        expected = np.concatenate([primary.scc_max_change_trace,
+                                   retry.scc_max_change_trace])
+        np.testing.assert_allclose(result.scc_max_change_trace, expected,
+                                   rtol=0.0, atol=1e-12)
+
+
 # ---------------------------------------------------------------------------
 # libint layout pin behind the multipole derivative contraction
 # ---------------------------------------------------------------------------

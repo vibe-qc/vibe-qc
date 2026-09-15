@@ -80,7 +80,7 @@ export const distributionMatrix = Object.freeze({
       }),
       Object.freeze({
         label: 'Queue guide',
-        href: '/docs/user_guide/queue.html',
+        href: '/vibe-queue/docs/',
       }),
       Object.freeze({
         label: 'License inventory',

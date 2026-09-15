@@ -243,8 +243,11 @@ def compute_overlap_fallback(basis):
 
         return compute_overlap(basis)
     except ImportError:
-        # For periodic or non-standard basis
-        n_ao = sum(2 * s.l + 1 for s in basis.shells())
+        # For periodic or non-standard basis. Size the identity from the
+        # canonical AO-to-atom map, which counts (l+1)(l+2)/2 functions
+        # for a Cartesian shell; the 2l+1 sum this replaces was one short
+        # per Cartesian d shell (#223).
+        n_ao = len(_shell_to_atom(basis))
         return np.eye(n_ao)
 
 

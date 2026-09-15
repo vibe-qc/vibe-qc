@@ -85,7 +85,14 @@ def test_zero_ao_element_raises_named_error():
     """A basis that omits an element (cc-pVDZ covers only H-Ar,
     so Cs gets zero AOs) must fail at CCMSystem construction naming the
     bare element -- not crash far downstream in build_padded_cluster with an
-    opaque KeyError(0)."""
+    opaque KeyError(0).
+
+    The refusal that fires is ``BasisSet``'s own coverage check (#234), the
+    same ``RuntimeError`` every other route raises and that
+    ``tests/test_basis_errors.py`` pins; it names the element by ``Z=55``
+    and the remedy. CCMSystem's own named ``ValueError`` behind it is now a
+    backstop for a basis that constructs but assigns an atom no AOs.
+    """
     cscl_like = PeriodicSystem(
         3,
         np.diag([4.2, 4.2, 4.2]),
@@ -93,5 +100,5 @@ def test_zero_ao_element_raises_named_error():
         charge=0,
         multiplicity=1,
     )
-    with pytest.raises(ValueError, match=r"Cs \(Z=55\)"):
+    with pytest.raises(RuntimeError, match=r"no functions for Z=55"):
         CCMSystem(cscl_like, (1, 1, 1), "cc-pvdz")

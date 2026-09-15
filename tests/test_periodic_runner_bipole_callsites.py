@@ -57,6 +57,34 @@ def _h2_3d(box: float = 18.0):
     return sysp, basis
 
 
+@pytest.mark.parametrize("name", ["bipole-runner-custom", "sto-3g"])
+def test_bipole_optimizer_receives_explicit_basis(monkeypatch, tmp_path, name):
+    """The real SCF and the optimizer must retain one basis definition."""
+    import vibeqc.bipole_optimize as optimizer
+
+    system = vq.PeriodicSystem(3, 12*np.eye(3), [vq.Atom(2, [0, 0, 0])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), [
+        vq.ShellInfo(0, 0, True, [1.2], [1.], [0, 0, 0]),
+    ], name, False)
+
+    class ReachedOptimizer(Exception):
+        pass
+
+    def capture(system_arg, basis_arg, *args, **kwargs):
+        assert basis_arg is basis
+        raise ReachedOptimizer
+
+    monkeypatch.setattr(optimizer, "relax_atoms", capture)
+    with pytest.raises(ReachedOptimizer):
+        vq.run_periodic_job(
+            system, basis, method="RHF", jk_method="bipole", kpoints=(1, 1, 1),
+            optimize=True, bipole_cutoff_bohr=5., bipole_nuclear_cutoff_bohr=8.,
+            ewald_omega=.6, sr_image_precision=None, initial_guess="HCORE",
+            output=tmp_path / "custom-opt", output_qvf=False,
+            write_population_file=False, citations=False, progress=False,
+        )
+
+
 def _forbid_gaussian_gamma_downstream(monkeypatch):
     """Make any output or BIPOLE SCF dispatch an immediate test failure."""
 

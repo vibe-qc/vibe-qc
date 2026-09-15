@@ -291,6 +291,22 @@ one hooks directory for all hook types):
   shipped v0.11.2 / v0.11.3 self-reporting `0.11.1`. See
   [docs/release_process.md](https://vibe-qc.com/docs/release_process.html) § "Cutting a
   release".
+- **`pre-push`** — refuses a push to `main` or `release-candidate/*`
+  whose `CHANGELOG.md` changes an already released section without
+  re-pinning it in `scripts/test_gate/changelog_pins.toml` (#229).
+  It runs at push time because misfiled entries arrive through
+  rebases, which never run `pre-commit`. An entry for unreleased work
+  belongs under `[Unreleased]`; a deliberate amendment to a released
+  section is re-pinned with
+  `python scripts/test_gate/changelog_guard.py pin vX.Y.Z --amended "why"`.
+  The committed guard, pins and changelog must all be readable regular files;
+  repairing only the working tree does not repair the pushed commit (#264).
+  Historical commits are exempt only when neither policy file occurs in their
+  complete reachable history. Deleting the guard or pins does not restore that
+  exemption. If shallow history prevents proving it, fetch complete history
+  before retrying. Deletions and pushes to unrelated destination refs remain
+  exempt. The hook uses the committed guard as trusted project code; it is not
+  a substitute for reviewing changes to the guard itself.
 
 Fix hook failures before committing. A maintainer-authorized exception follows
 the [documentation and hook policy](#documentation-prose) above.
@@ -328,6 +344,29 @@ To confirm a hook really runs, without making a commit:
 ```sh
 git -C <worktree> hook run pre-commit
 ```
+
+## AI-assisted contributions
+
+AI-assisted patches follow the same contributor, licensing and verification
+policies established for this project, including the policy work tracked in
+[#195](https://github.com/vibe-qc/vibe-qc/blob/main/CONTRIBUTING.md).
+
+Disclose AI assistance in the pull request or merge request, including which
+parts it helped produce. The contributor remains responsible for understanding
+and reviewing the patch, its tests, citations and dependency choices. Check
+referenced sources directly and remove generated claims that cannot be verified.
+
+Include tests that exercise the reported failure and the corrected behavior.
+For numerical changes, provide the relevant before/after values, reference
+settings, tolerances and validation comparisons. Identify the exact commit and
+build that were tested, and state missing checks or unrelated failures.
+
+GitHub contributions are admitted only through a GitLab merge request when
+public contribution intake is enabled. A maintainer must not merge an imported
+patch without green GitLab CI for its current head. A changed head requires new
+validation; skipped or stale pipelines do not qualify. The independent review
+rules above still apply to numerical and release-blocking changes. The Licensing
+section below governs these contributions without changes to its terms.
 
 ## Code style
 

@@ -12,6 +12,7 @@ a local 3.13 build). Marked ``slow`` because first use downloads weights.
 import math
 import os
 import pathlib
+import sys
 
 import pytest
 
@@ -21,17 +22,19 @@ import pytest
 # worker pools start, so the MACE lane also keeps OpenMP/BLAS pools at one
 # thread unless the caller deliberately overrides them. The MACE forward
 # pass is verified (M5) to give identical energies with the workaround set.
-# See the OpenMP note in vibeqc.mlip.mace.
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-for _name in (
-    "OMP_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "NUMEXPR_NUM_THREADS",
-    "VECLIB_MAXIMUM_THREADS",
-    "BLIS_NUM_THREADS",
-):
-    os.environ.setdefault(_name, "1")
+# Match the platform scope of vibeqc.mlip.mace._maybe_set_openmp_workaround.
+# Linux collection must preserve the caller's qualified runtime settings.
+if sys.platform == "darwin":
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+    for _name in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "BLIS_NUM_THREADS",
+    ):
+        os.environ.setdefault(_name, "1")
 
 pytest.importorskip("mace", reason="requires the [mace] extra (Python <= 3.13)")
 

@@ -884,6 +884,28 @@ def test_ao_to_atom_maps_agree_across_modules():
             )
 
 
+def test_nbo_overlap_fallback_is_sized_by_the_canonical_map(monkeypatch):
+    """The ImportError fallback in ``nbo.compute_overlap_fallback`` returns an
+    identity of ``nbasis`` on a Cartesian basis too (#223).
+
+    It used to size that identity as ``sum(2l+1)``, the pure count, so the
+    fallback overlap was one row short per Cartesian d shell. Making the
+    native import fail is the only way to reach the fallback, so the core
+    module is blanked in ``sys.modules`` for the duration of the call.
+    """
+    import sys
+
+    from vibeqc.nbo import compute_overlap_fallback
+
+    _mol, pure, cartesian = _oh_cc_pvdz_pure_and_cartesian()
+    assert cartesian.nbasis > pure.nbasis  # the d shells are Cartesian
+    monkeypatch.setitem(sys.modules, "vibeqc._vibeqc_core", None)
+    for basis in (pure, cartesian):
+        fallback = np.asarray(compute_overlap_fallback(basis))
+        assert fallback.shape == (basis.nbasis, basis.nbasis)
+        np.testing.assert_array_equal(fallback, np.eye(basis.nbasis))
+
+
 def test_bond_analysis_shell_to_atom_returns_plain_int_list():
     """bond_analysis indexes the map in a scalar loop; keep it a list."""
     from vibeqc.bond_analysis import _shell_to_atom

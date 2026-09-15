@@ -1,9 +1,484 @@
 ## [Unreleased]
 
-- Prepare a sanitized publication snapshot by moving study host assignments
-  into an external JSON profile and removing site-specific interpreter probes.
-  Scientific inputs and numerical/MPI attestation checks are retained.
-  This preparation does not change the original GitLab release tag.
+### Documentation: use port 26 for all GitLab clone examples
+
+Companion setup, lifecycle, QVF reference and update examples now use explicit
+GitLab SSH URLs on port 26. These require the registered deploy key or an
+authorized account key; the core GitHub HTTPS alternative remains separate.
+
+### Documentation: clone before installing, with both source options
+
+The installation tutorial, quickstarts and README now show exact clone commands
+for GitLab SSH with a registered deploy key on port 26, or the GitHub HTTPS
+mirror. Both routes enter `vibe-qc/` before invoking the installer; access and
+main-versus-release selection are explicit. A verified empty core GitHub
+mirror is marked as pending source publication rather than advertised as
+installable.
+
+### Documentation: consistent split checkout paths
+
+Tutorials, notebook setup, update helpers and example launch instructions
+now use the `vibe-qc/` checkout name consistently. The Python import remains
+`vibeqc`; viewer and queue commands use their separate environments.
+
+### Website: independent sources and GitHub mirrors
+
+The get-started and download pages now list each split project's GitLab
+source, GitHub mirror, tags and release packages. Product pages and the footer
+expose mirror links, with current access and ref availability made explicit.
+
+### Documentation: split repository sources, mirrors and downloads
+
+List all four GitLab projects and GitHub mirrors with their current access
+and ref availability. Direct source downloads to each owning project's tags,
+retain companion release ownership, and remove stale no-mirror and unpublished
+companion-manual claims. Core, viewer and queue use separate checkouts;
+vibe-basis remains in core and QVF is not a runtime dependency.
+
+
+- Install and update from origin's newest stable release tag when the selected
+  repository has no `release` branch. Explicit branch and tag requests remain
+  exact, and dry runs still do not fetch.
+
+- Add GitHub bug, feature and question forms, a pull request checklist, and
+  AI-assistance disclosure and validation requirements in the existing
+  contributor policy. Public intake still requires publication and bridge
+  activation checks.
+
+- Read AICCM study host assignments from an external private JSON profile.
+  Remote defaults require explicit enablement; local rendering remains available.
+  Study launchers accept `VIBEQC_PYTHON`, a checkout venv or an active environment
+  instead of probing site-specific deployment paths. Scientific inputs and
+  numerical attestation checks are retained.
+
+- Move the site-specific S22 and LiH submission wrappers to private operations;
+  their scientific inputs and portable runners remain in the product repository.
+
+
+### Maintenance: separate product source and private operations
+
+Site-specific provisioning scripts, deployment configuration and operator
+records move to private operations storage. Portable product installers remain
+in source; private helpers are installed independently. Contributor privacy
+checks support an external private terms file without publishing its contents.
+
+
+### Maintenance: public source metadata and privacy checks
+
+Use the public project contact in fetch requests and the publication repository
+in package/citation metadata. Harden contributor privacy checks and keep their
+diagnostics redacted.
+
+### Added: whole-mesh admission for private physical BIPOLE J/K (#272)
+
+The private physical source can now preflight every target k-point before
+copying density or evaluating integrals. It executes with one immutable
+common density and returns only a complete tuple of native J/K results.
+The aggregate budget includes all retained stream states and density copies;
+this remains a bounded development interface without production Hamiltonian
+or symmetry-reduction certification.
+
+### Fixed: subnormal complex symmetry residuals (#219)
+
+The shared covariance and relative-leakage audits normalize real and imaginary
+components separately. Representable subnormal residuals no longer fail through
+complex reciprocal overflow, and complex magnitudes cannot overflow the shared
+scale. Relative leakage uses independent numerator and denominator scales, with
+binary exponents combined only at the final ratio, so a tiny defect beside a
+large retained component cannot become a passing zero. Absolute covariance and
+dimensionless leakage tolerances are unchanged; unrepresentable arithmetic is
+refused.
+
+### Fixed: SECCM frontier checks use the retained overlap spectrum (#151)
+
+DFTB0, SCC-DFTB and GFN2 SECCM could read beyond the orbital-energy vector
+when overlap screening retained exactly the occupied manifold, leaving no
+LUMO. Their shared frontier evaluator now reports an unavailable gap and
+the existing gap guard rejects the calculation or SCC attempt. Finite
+temperature cannot waive a missing frontier. The occupied-space screening
+criterion, model defaults and ordinary unscreened gap arithmetic are unchanged.
+
+### Added: native dependency clones can come from a local mirror, retry, and cannot hang (#241)
+
+`git_clone_pinned` in `scripts/_verify_source.sh`, which fetches libint,
+libxc, spglib, OpenBLAS and libecpint's sources for every `build_*.sh`,
+ran one bare `git clone` from GitHub with no fallback: when GitHub reset a
+large pack transfer, every rebuild failed even on a machine holding the
+exact pinned source in another checkout, and a clone that stalled ran for
+34 hours because the `timeout` that guarded it sent only SIGTERM. Three
+environment variables now control the step. `VIBEQC_GIT_REFERENCE_DIR`
+names directories (another checkout's `third_party/`, or mirrors named
+after the upstream repository) searched for a repository that already
+holds the pinned commit; a local source is used only when it holds that
+commit and the result passes the same HEAD check, so the pin cannot be
+bypassed. `VIBEQC_GIT_CLONE_ATTEMPTS` (default 3) bounds retries and
+`VIBEQC_GIT_CLONE_TIMEOUT` (default 1800 s per attempt) bounds each
+attempt, ending in SIGKILL for the clone's process tree; git's low-speed
+limit cuts a stalled HTTP transfer after 60 s below 1 KiB/s. No
+`build_*.sh` recipe changed, so no native stamp rotates.
+
+### Fixed: the COSX exchange build is reproducible run to run (#215)
+
+`compute_cosx_k` and the COSX gradient kernel summed grid points into one
+private accumulator per OpenMP thread under a guided or dynamic schedule,
+so which points each thread summed changed from run to run and the rounding
+of K with it (2e-14 on H2O/def2-SVP at four threads, never bitwise
+identical). For a degenerate open shell such as the OH radical that noise
+decided whether the middle COSX grid converged or stalled at its anisotropy
+floor, and with it which staged-COSX route the run took; the multistage
+fallback witness therefore passed or failed by machine. The point loops now
+use an interleaved static schedule: for a fixed thread count the partition,
+and every bit of K, is fixed, at the same cost. Results still differ at the
+reassociation level between different thread counts.
+
+### Test gate: a SIGKILL is called OOM only with memory evidence, and the tail names the killed test (#218)
+
+`scripts/test_gate/run_full_suite.py` stamped every non-timeout SIGKILL as
+`OOM_KILLED`, so the frozen v0.17.2 inventory reported a 387 MB peak on a
+large box as an out-of-memory kill with nothing behind the label. A SIGKILL
+is now `OOM_KILLED` only when the sampled peak RSS of the process tree
+reached `--oom-fraction` of physical memory (default 0.5); otherwise it is
+`SIGKILLED`, cause unassigned, and the row stores the peak, the machine's
+memory and the fraction so a reader sees what the label rests on. The
+runner also asks pytest for one line per test instead of `-q`, so a killed
+file's tail names the test that was running rather than a row of dots.
+`gate_verdict.py` treats `SIGKILLED` like the other reds, including the
+contention re-verify.
+
+### Fixed: periodic XC no longer drops density beyond 10 bohr from the home cell (#265)
+
+The periodic exchange-correlation builders summed the density at each grid
+point over lattice images of the AO products only within a fixed 10 bohr
+radius when `LatticeSumOptions.becke_image_radius_bohr` was left unset,
+although the header documents the unset value as falling back to
+`cutoff_bohr`, and no Ewald KS driver sets the field. Compact bases never
+noticed; a diffuse shell did: Li/STO-3G (2sp exponent 0.048) in a 6-bohr
+cell lost 0.4 percent of its density and every multi-k UKS and ROKS Ewald
+energy came out about 8 mHa too high against PySCF, which the ROKS
+PySCF-anchor test had been flagging. The image sum now reaches the same
+AO-reach radius as the lattice sums (`cutoff_bohr`) unless a driver narrows
+it explicitly; the XC nuclear-gradient kernels follow the same rule so
+forces stay consistent with energies. With the lattice cutoff itself
+converged (about 20 bohr for this shell) the Li energy agrees with PySCF to
+0.5 mHa. Periodic KS energies for bases with functions reaching past 10
+bohr change; compact-basis results move at the microhartree level or not
+at all.
+
+
+### Documentation: seed convergence and fixed-orbital CI limits (#55, #56)
+
+Clarify that the open saved-PATOM READ UKS stall is not resolved by a
+converging AUTO/SAD control. Dense/selected CI parity at fixed orbitals does
+not require identical CASSCF optimization minima or iteration histories.
+This documents existing validation boundaries; no engine behavior changes.
+
+### Periodic GDF: refuse held legacy Gamma fallback (#95)
+
+Automatic Gamma GDF fallback now refuses the existing tight-core parity-held
+class before legacy SCF, including tight bases in sparse molecular boxes.
+Explicit convergence controls can no longer return the known held absolute
+energy through that fallback. Supported default Gamma and explicit bulk
+RSGDF routes are unchanged. This implements a refusal, not a numerical
+correction; independent routing and numerical validation remain pending.
+
+### Fixed
+
+- BIPOLE analytic orbital-response displacements preserve supplied basis
+  shells instead of reloading their name. Programmatic bases and modified
+  library bases now retain their exponents, contractions and representation
+  in Gamma and multi-k response terms (#266).
+
+### Testing: the TREXIO convention gate can no longer pass by omission (#253)
+
+The out-of-process PySCF rebuild in `tests/test_output_trexio.py` and
+`tests/test_output_trexio_extended.py` is the only check that can detect a
+consistent AO ordering or normalization error in TREXIO files; the
+in-process round trips cancel it. Without `VIBEQC_TREXIO_PYTHON` those tests
+skipped with a quiet one-line reason. They now skip with a reason naming the
+gate that did not run, and fail instead when
+`VIBEQC_REQUIRE_TREXIO_REFERENCE` is set, so a CI lane meant to run the
+check cannot go green without it. `tests/trexio_reference.py` holds the
+shared helper and `tests/test_trexio_reference_gate.py` pins both behaviours
+without needing `trexio` or `pyscf`.
+
+### Testing: the lifecycle tests no longer leave lock files behind (#204)
+
+`tests/test_lifecycle_scripts.py` minted 27 empty lock files per run under
+`/tmp/vibe-toolset-lifecycle-locks-<uid>`, one per temporary checkout or
+venv, and nothing removed them (10,655 on one machine). An autouse fixture
+now snapshots that directory and, at teardown, deletes only the names that
+appeared during the test and only while a non-blocking `flock` on them
+succeeds, so a lock a live process holds is never touched. The production
+helper `scripts/_lifecycle_lock.sh` is unchanged.
+
+### Fixed: periodic XC energies and potentials are reproducible run to run (#81)
+
+The periodic exchange-correlation builders (`build_xc_periodic`,
+`build_xc_periodic_uks`, the external-functional field assembly and both
+XC nuclear-gradient kernels) accumulated the density over bra-ket pairs
+with one private accumulator per OpenMP thread under a dynamic schedule,
+so which pairs each thread summed changed from run to run and the rounding
+of the total with it. The same density gave E_xc and V_xc scattered at
+1e-9, right at the SCF energy tolerance, which is why the multi-k ROKS and
+UKS Ewald routes converged in a different number of iterations on
+identical input. The pair loops now use a static schedule: for a fixed
+thread count the partition, and therefore every bit of the result, is
+fixed. No balance is lost, since every pair costs one `chi * P` product.
+Results still differ at the reassociation level between different thread
+counts.
+
+## [v0.17.3] - 2026-09-13 - *Tew's Tern*
+
+This release contains the accumulated changes on `main` since v0.17.2,
+including expanded optional TREXIO support. QVF remains the default output
+format. The CI companion pin is the already published vibe-view v2.17.0;
+the QVF reference pin remains v0.1.0-docs.1. Patches inherit Tew's Tern.
+
+### Known issues and verification limits (#206, #196, #249, #237, #257, #260, #82)
+
+The periodic GDF cost regressions documented in v0.17.2 remain unresolved.
+For **#206**, the range-separated three-centre enumeration change already
+shipped in v0.17.2. Two independent source-qualified native builds exist,
+but no numerical or performance verdict is available at preparation time.
+The historical 21.0 s to 641.6 s T1 lane slowdown remains evidence of the
+regression, not a measurement of this release. For **#196**, the separate
+one-electron AO cutoff widening still selects 12527 rather than 135 lattice
+cells on its two-atom reproduction. No fix is claimed; reducing the cutoff
+would also revisit the recorded accuracy decision behind it.
+
+**#249 remains PARTIAL/HOLD.** The independent explicit 400-iteration native
+matrix converges in 40/40 cases, but the public 200-iteration energy path
+converges in only 30/40. The 30 reachable gradient callbacks return; the
+nonzero-force displaced-energy checks do not finish, so neither force parity
+nor the standalone Hessian witness has independent acceptance. The
+experimental MSINDO CCM stability changes below do not certify all public
+cases, chain properties or a global minimum.
+
+The **#237** symmetry admission, **#260** custom-basis fix and **#82** Ewald
+precision propagation carry author evidence and await independent closure.
+The #82 numerical witnesses cover RHF/UHF; routing tests for all four result
+types do not establish RKS/UKS numerical acceptance. The **#257** change improves refusal
+diagnostics and retry behavior; the original oversized CCM isolated-cell
+admission problem remains open. CCM, AICCM and SECCM remain experimental.
+The maintainer's request to release accumulated fixes and TREXIO supersedes
+the older next-patch trigger, without resolving these limitations.
+
+### Release tooling: preserve released changelog sections (#229, #232, #264)
+
+Released sections are now content-pinned, with explicit amendment reasons
+and a preflight audit against each available tag. Historical misattributions
+are corrected with recorded reasons. The release commit hook reads the
+complete changelog without printing a misleading broken-pipe error on an
+accepted release. Protected pushes also refuse missing or unreadable
+committed guard, pins or changelog files. The policy history check fails
+closed when shallow history cannot establish the historical exemption, and
+checking one pushed ref cannot consume or hide later refs. The new section
+is pinned by the same guard.
+
+### Tests: compare CASSCF backends in the same orbital basis (#56)
+
+The backend parity fixtures now compare dense and selected CI at the same
+orbitals and test truncation error separately. Different converged CASSCF
+basins are no longer mistaken for backend disagreement. Independent checks
+passed all seven changed cases; this is an oracle correction, not a claim
+that CASSCF finds a unique or global minimum.
+
+### Tests and documentation: preserve execution and queue-state contracts
+
+MACE test collection now applies its OpenMP setup only on macOS, preserving
+caller settings on Linux. Both queue guides name the `starved` terminal
+state alongside the existing failure states. These changes do not alter
+model parameters, calculation results or the separately released queue.
+The CCM uncovered-element test now expects the existing `BasisSet` runtime
+refusal; the production change is comment-only (#234).
+
+### Fixed: retain BIPOLE Ewald precision in analytic gradients (#82)
+
+BIPOLE analytic gradients retain the SCF's `ewald_precision` through nuclear,
+reciprocal and orbital-response terms instead of reverting to `1e-8`.
+All four SCF result types record the precision; older results keep the
+historical default. No SCF tolerance or reciprocal envelope is changed.
+
+### Documentation: molecular grid, TDDFT and Davidson contracts (#80, #123)
+
+Document the molecular mid-level grid default, preservation of supplied
+low-level grids, and grid parity for atomic references and response kernels.
+The TDDFT tutorial now passes the reference grid explicitly and explains
+unrestricted CLI Casida routing. The solver guide distinguishes requested
+roots from the initial Davidson subspace and describes complex residual checks.
+Historical spectrum output remains labelled as historical evidence.
+The partial TDDFT kernel description retains Coulomb coupling and scopes the
+missing-density warning to hybrids.
+
+### Fixed: actionable GDF reciprocal admission and retry policy (#257)
+
+Reciprocal admission errors now include candidate or byte counts, limits,
+cutoff and search-box dimensions. GDF/MDF cache and gradient builders stop
+subdividing k batches after fixed-domain candidate/workspace refusals;
+batch-dependent reservations still retry. Physical cutoffs and hard limits
+are unchanged. This does not yet admit the oversized CCM isolated-cell cases.
+
+### Documentation: reconcile AUTO and complete-state READ guidance
+
+The convergence overview now matches the route-aware initial-guess policy.
+The manual separates unseeded atomic spin normalization from intentional
+broken-symmetry READ states, summarizes complete periodic restart payloads,
+and distinguishes physical construction from READ transport provenance.
+The policy tables distinguish restricted closed shells from unrestricted
+singlet UHF/UKS, whose route hint selects SAD even with equal spin counts.
+The isolated-atom PATOM seed does not certify an atomic term or global minimum.
+READ checksum guidance now distinguishes version 1.1 spin-density manifest
+verification from restricted/context reads and ZIP CRC checks.
+
+### Fixed: CCM convergence tolerance validation (#250)
+
+CCM SCF routes reject a nonpositive or nonfinite `conv_tol_grad` before
+initial-guess selection or system setup. Invalid tolerances now report the
+route's validation error consistently. Convergence criteria are unchanged.
+
+### Fixed: periodic GFN2 preserves a contracting SCC across budget changes (#244)
+
+Increasing `max_iter` from 2499 to 2500 no longer truncates the primary SCC
+to 500 iterations. Periodic GFN2 now uses progress-based checkpoints that
+leave an improving solve on its current branch. A stalled or rejected solve
+can use one neutral restart within the remaining total budget. Iteration
+counts include executed work across both attempts, including early exits.
+
+### Fixed: preserve custom bases in BIPOLE atomic optimization (#260)
+
+BIPOLE fixed-cell optimization now retains the supplied basis in its energy
+and force calculations instead of reloading its name. `relax_atoms` and
+`compute_bipole_gradient_fd` accept a `BasisSet` as well as a library name;
+displacements preserve shell exponents, normalized coefficients,
+representations and atom ownership. This prevents custom
+names failing to load and modified library-named bases silently changing
+the optimization objective.
+
+### Changed: experimental MSINDO CCM stability checks (#249, partial)
+
+An unresolved core-Hamiltonian frontier could change the starting density
+under coordinate noise below `1e-8` Angstrom and select an unstable stationary state
+with a large final orbital gap. CCM now checks restricted orbital stability
+for these ambiguous guesses and reconverges lower-energy rotations along a
+negative-curvature mode. Energy and gradient paths share this selection in
+both the native kernel and Python reference. The cumulative SCF iteration
+budget remains bounded; unsuccessful stability checks or saddle escapes
+raise a diagnostic error. Results carry the stability verdict, curvature,
+and restart count. This is a restricted local-minimum check, not a global
+minimum or unrestricted-spin guarantee.
+
+### TREXIO wavefunctions and general data exchange
+
+v0.17.2 already supported molecular TREXIO read/write. This release expands
+that implementation; installing the optional `trexio` extra enables it.
+
+TREXIO I/O now exports applied ECPs, molecular one-particle densities and
+complex periodic wavefunctions with complete k-point/spin metadata, plus
+CASCI/CASSCF/FCI determinant expansions and their one-particle RDMs. Optional
+MO operators and molecular AO ERIs are available from the standalone writer.
+The general field API transports every group exposed by the optional TREXIO
+library on HDF5 and text, including sparse and buffered data. READ guesses
+accept TREXIO files, reconstruct basis normalization and retain periodic
+sampling. Replacement writes preserve the previous artifact on failure.
+
+Independent producer/viewer acceptance covers real molecular RHF/UHF
+orbitals on both HDF5 and text: all four parity cases and 63 viewer import
+cases pass without skips. Viewer v2.17.0 does not extend that acceptance to
+periodic, complex, high-angular-momentum or CI/RDM orbital visualization.
+General field transport does not imply automatic export of every solver's
+state; higher RDMs and CC amplitudes remain caller-supplied data.
+
+### Documentation: agent instructions for the split repository
+
+vibe-qc has root `AGENTS.md`, `CLAUDE.md` and `CODEX.md` again. `AGENTS.md`
+holds the shared rules for AI coding agents: six ground rules whose mistakes
+are hard to undo (no history rewrites, release roles, privacy, licensing, no
+other quantum-chemistry program at runtime, pinned released changelog
+sections), defaults for everything else, and a table of what changed from the
+monorepo's stricter rules. `CLAUDE.md` imports it and adds Claude Code notes;
+`CODEX.md` points to it. The `docs/AGENTS.md` and `docs/CLAUDE.md` pages point
+to the root files and explain that "CLAUDE.md § N" citations in older pages
+refer to the archived monorepo.
+
+### Documentation: roadmap realigned with the releases through v0.17.2
+
+The roadmap now opens with the current release and treats open milestones as
+themes that get a version number only at the cut, so a minor that takes a
+different headline no longer renumbers the plan. v0.17.1 and v0.17.2 are
+summarized, experimental and private work is labelled, v0.17.1 guess-route
+text is moved out of the v0.14.0 section, the codename table gains Pople's
+Puffin and Tew's Tern, and the artwork gallery pairs its candidates with
+milestone themes. Features that had shipped ahead of their slot (3c
+composites, Hirshfeld charges, NBO and EDA helpers, Γ-point phonons,
+finite-difference stress, the EOS fit helper, IRC and BSE basis fetching) are
+marked with their limits after checking their public API, documentation and
+tests. NPA is marked unavailable.
+
+### Fixed: symmetry-reduced periodic fits verify their AO rotations before using them (#237, #233)
+
+The star planner assumed each operation's AO and auxiliary rotation matrices
+were symmetry actions of those bases. It now checks `P^T S P == S` per
+operation and admits only operations that pass, alongside the cell-list test
+below.
+
+The check exists because the assumption failed on the first non-cubic cell the
+planner ran. On hexagonal boron nitride the rotations were wrong outright
+(#233, fixed separately): the unit-cell `P^T S P - S` reached 0.72 and the
+symmetry-reduced neutral fold sat 10.9 percent away from the unreduced build.
+No cubic or tetragonal fixture could have shown it, because their cartesian
+operations are signed permutations and never exercise a real Wigner rotation.
+
+With the rotations corrected, hexagonal boron nitride at nrep (2,2,1) reduces
+from 16 to 10 builds through the 4 of its 24 operations that also preserve the
+finite cell list, with admitted relations at 6.3e-10 relative, unchanged
+between 15 and 25 bohr. A hexagonal fixture now sits in the AO-map gate and in
+the planner tests. Cubic and tetragonal reductions are unchanged.
+
+### Fixed: symmetry-reduced periodic fits admit only cell-list-preserving operations (#237)
+
+The k-pair star reduction of the neutral cderi fold decided which space-group
+relations to use from the replica mesh's shape: fully three-dimensional meshes
+fell back to unreduced builds, lower-dimensional ones reduced. Mesh shape was
+never the mechanism, and the rule was wrong in both directions.
+
+The fit builder Bloch-sums the ket AO over an origin-centred lattice ball. For
+an operation whose atom action is `x_perm[A] = R x_A + t + S_A`, the pair (bra
+on atom a, ket on atom b) reindexes as `R' = R_rot R + (S_a - S_b)`, so the
+image pair sums over a *shifted* ball. The ball is invariant under the rotation
+alone, so the reconstruction is exact on the truncated build exactly when the
+per-atom lattice shifts agree, and otherwise exchanges boundary cells with
+cells that were never summed. `ccm_symmetry_op_preserves_cell_list` now decides
+this geometrically, per operation, and the planner admits nothing else. No
+tolerance is compared and no cutoff is widened.
+
+This corrects a defect on an enabled path: LiH (2,2,1) reconstructed its six
+relations through a shift-varying operation, worth about 1e-2 relative on the
+per-momentum-pair tensor at the production 15-bohr cutoff, converging away only
+with the cell list. The same relations are covered by a shift-preserving
+operation at 4.5e-11, cutoff-independent and at the auxiliary whitening floor,
+with the reduction unchanged at 10/16 builds.
+
+Fully three-dimensional meshes reduce again where their group supplies such
+operations, which the previous shape guard refused categorically. LiH (2,2,2),
+the system the defect was reported on, reduces to 20/64 builds with every
+reconstruction at 2.3e-10 relative and unchanged to three significant figures
+between 15 and 25 bohr, where the historical 11/64 star moved by four orders
+over the same widening. A compact H2 (2,2,2), whose operations all preserve the
+list, reduces to 40/64 with its fold matching the unreduced build to 5.1e-14.
+The historical 11/64 star is deliberately not restored; its extra relations are
+the unsafe ones. Cutoff-independence rather than residual size is what
+distinguishes the two: a truncation defect converges with the cell list, so a
+relation that does not move across a 10-bohr widening is exact on the finite
+list rather than approaching exactness.
+
+The condition is sufficient rather than necessary — a shift-varying relation
+becomes exact once the pair density has decayed to nothing within the shift of
+the truncation boundary — so further reduction remains available without
+reintroducing an empirical threshold.
+
+The multi-k GDF route still excludes three-dimensional meshes from the per-pair
+symmetry cache. That is now a cost decision, not a correctness one: the generic
+builder's shared-q batches are cheaper than per-pair calls at that size.
 
 ## [v0.17.2] - 2026-09-13 - *Tew's Tern*
 
@@ -1043,60 +1518,11 @@ from one macro-iteration to the next. The tests separate that jump from mere
 steep curvature by halving the sampling interval and checking the change does
 not shrink.
 
-## [v0.17.0] - 2026-09-09 - *Tew's Tern*
+### Added: AICCM correlation on the real-Gamma arm, CCSD and DLPNO (#778)
 
-### Added: independent physical BIPOLE product supports
-
-The private native LR Gram kernel now accepts separate left/right AO-product
-cell lists with complete admission and provenance for both. The shared-cell
-API delegates to the same kernel. An exact geometric product builder supplies
-the same pair-distance policy used by the SR quartet builder, with bounded
-immutable labels. Production HF and complete source integration remain open.
-
-### Added: private physical BIPOLE quartet supports
-
-A bounded geometric builder now enumerates SR quartet images from two
-AO-product distance limits and a geometric midpoint limit, using exact
-rational interpretations of the supplied binary64 data. Pair-dependent
-supports pass ERI-permutation and screw-reanchoring tests, including native
-multi-k SR integral comparisons. The rule uses crossed pairs for exchange
-without an extra output-pair mask. Production HF, LR and one-electron source
-integration remain open; the builder does not authorize symmetry reduction.
-
-### Documentation: historical provenance after the split (#189)
-
-Labelled links to the frozen monorepo as archived, retained their original
-URLs, and stopped directing new work into archived handovers. The SKALA
-campaign now links its verified moved issue while retaining the old reference.
-QVF design notes identify producer and consumer tests in their owning repos.
-
-### Documentation: independent setup and example locations (#189)
-
-Corrected the clone default (`main`) versus installer default (`release`),
-removed a stale pending-release claim, and made core calculation archives
-and viewer-only samples distinct. Setup and example guides now present the
-queue as reusable independently of vibe-qc and link companion manual owners.
-
-### Documentation: shared publishing contract (#189)
-
-Documented subtree ownership, a deliberate copy of the shared Furo CSS with
-source provenance, and separate product codename galleries. Core docs deploy
-only from `release`; manual main pipelines can no longer overwrite them.
-
-### Added: three-product marketing site (#189)
-
-vibe-qc, vibe-view and vibe-queue have dedicated product pages with independent
-installation, documentation and release links. Shared navigation and onboarding
-present all three products; marketing routes stay under `/products/`, outside
-the companion publisher subtrees.
-
-### Fixed: independent website publishers (#189)
-
-Root marketing deploys preserve `/vibe-view/` and `/vibe-queue/` alongside
-the existing protected subtrees, so their independent docs deploys survive
-the root rsync cleanup.
-
-### Added: experimental AICCM correlation from the runner
+This extends "Added: experimental AICCM correlation from the runner" in the
+v0.17.0 section, which shipped `correlation="mp2"` on `variant="four-center"`
+only.
 
 `run_periodic_job(method="aiccm", ...)` accepts `correlation="mp2"` on
 `variant="four-center"` and `variant="real-gamma"`. The driver is chosen to
@@ -1145,42 +1571,6 @@ torus. This was the same error `CCMMP2Result`, `CCMKSResult` and
 `CCMUHFResult` carried. The comments are corrected and carry the numbers; no
 computed value changes, and the runner adapters already divided.
 
-### Added: Gamma-CCM correlation citation routes
-
-The Γ-CCM MP2 drivers now stamp the citation route they actually built, and
-`database.toml` carries the four matching rows. The stamp is per call rather
-than a dataclass default because one result class serves two lineages:
-`run_ccm_mp2` is the bare four-centre correlation and `run_ccm_ri_mp2` the
-neutral-RI one, so a class default would cite the union-and-weight papers for
-a neutral fitted-torus number. Guards read the labels out of the source in
-both directions, so a stamp without a route and a route nothing stamps both
-fail, and the bare and RI rows can no longer collapse into one.
-
-### Added
-
-- Prepared artwork for the six upcoming roadmap milestones, v0.17.0 through
-  v1.0.0, with a gallery and generation prompts. Candidate and provisional
-  pairings remain separate from the released codename catalog. Schrödinger's
-  Llama stands inside an open midnight-blue box with brass trim.
-
-### Added: source-bound zero-mode overlap audit
-
-The private finite BIPOLE source can now compare a supplied HF overlap with
-both zero-momentum AO-product factors needed for its exchange subtraction
-to take the `S D S` form. The selected-k audit verifies immutable source
-inputs, enforces explicit memory/work admission, and records separate
-residuals without Hermitization. Its receipt does not certify HF provenance,
-probe-charge physics or the full symmetry-reduced correlation operator.
-
-### Added: private HF/correlation long-range bridge
-
-HF long-range J/K now share their unprojected contractions with the private
-correlation diagnostics. A private exchange-cache entry point accepts native
-integer mesh addresses, preserving third-point transfers without the legacy
-Cartesian cache's decimal rounding. Complete complex-density witnesses match
-the native finite source and independent Gaussian integrals on tiny shifted
-and multiaxis meshes. SCF behavior is unchanged; physical support matching,
-the remaining Ewald terms and production symmetry reduction remain open.
 ### Added: reaching a basis vibe-qc does not bundle
 
 `vibeqc.basis_fetch` renders a basis set from the Basis Set Exchange into a
@@ -1282,6 +1672,151 @@ relaxation per candidate. In particular the part that matters most, that the
 scan rediscovers the shipped pob topology when the objective is total energy,
 is exactly the part that needs an engine. The 49 tests here are synthetic.
 
+### Fixed: the COSMO FINE Cavity's outward projection is C1 (#770)
+
+Step 6 pushes a segment centre onto its atom's sphere when the area-weighted
+mean falls inside, which on a curved surface it always does. The paper states
+that as a hard rule, and a hard maximum is C0 but not C1: the segment position's
+slope jumps where a centre crosses. The energy is untouched -- it is the
+*gradient* that steps, so what this cost was finite-difference second
+derivatives. Measured on an asymmetric solute, an area-weighted functional's
+slope jumped 0.071 percent across one crossing and now jumps 0.000 percent;
+crossings arrive about every 0.025 bohr of displacement per coordinate.
+
+The projection is eased over a band 1e-03 of the sphere radius wide (0.003
+bohr) with a softplus. No parameter-free C1 smooth maximum exists, so the width
+is a choice, and it is bounded from both sides by measurement rather than
+taste: small against the projection depth it eases (0.019 bohr median, so about
+six times narrower, and only 51 of 401 segments move by more than 1e-04 bohr
+against the hard rule), and wide enough for a finite difference to resolve,
+since a band narrower than the step would remove the kink for the derivative
+without helping the consumer that needed it. A softplus rather than a spliced
+polynomial because it is never below the radius, so no segment is ever placed
+inside the sphere it screens. It recovers the paper's rule as the band
+vanishes: the solvated energy moves 6.6e-07 Ha at this width, 2.1e-09 at a
+tenth of it and nothing at a hundredth.
+
+The projection's chain rule becomes one expression instead of a branch --
+`dp'/dg = k (I - u u^T) + sigma u u^T`, with the hard rule as its `sigma -> 0`
+and `sigma -> 1` limits -- and the softplus lives in one function that both
+directions call, since writing it twice is the hazard behind #546.
+`FineCavity.projected` is now a diagnostic rather than a branch selector.
+
+Measuring this turned up a **larger** discontinuity that is not the projection
+and is not fixed here: the same functional's slope jumps 9.4 percent at a
+displacement where nothing in the construction changes size. It was first
+attributed to the sub-threshold basis-point merge, which changes its point
+count across the same displacement; disabling the merge outright leaves the
+jump unchanged, so that attribution was wrong and is corrected in the handover.
+The cause is the marching-tetrahedra tetragon split: a two-versus-two
+tetrahedron cuts four edges and the quad is divided on its shorter diagonal,
+a hard comparison that flips where the diagonals are equal. The quad's total
+area survives the flip, but step 4's per-corner assignment does not, and 40
+percent of the triangulation comes from such quads. It is now the largest known
+discrete decision left in the construction.
+
+## [v0.17.0] - 2026-09-09 - *Tew's Tern*
+
+### Added: independent physical BIPOLE product supports
+
+The private native LR Gram kernel now accepts separate left/right AO-product
+cell lists with complete admission and provenance for both. The shared-cell
+API delegates to the same kernel. An exact geometric product builder supplies
+the same pair-distance policy used by the SR quartet builder, with bounded
+immutable labels. Production HF and complete source integration remain open.
+
+### Added: private physical BIPOLE quartet supports
+
+A bounded geometric builder now enumerates SR quartet images from two
+AO-product distance limits and a geometric midpoint limit, using exact
+rational interpretations of the supplied binary64 data. Pair-dependent
+supports pass ERI-permutation and screw-reanchoring tests, including native
+multi-k SR integral comparisons. The rule uses crossed pairs for exchange
+without an extra output-pair mask. Production HF, LR and one-electron source
+integration remain open; the builder does not authorize symmetry reduction.
+
+### Documentation: historical provenance after the split (#189)
+
+Labelled links to the frozen monorepo as archived, retained their original
+URLs, and stopped directing new work into archived handovers. The SKALA
+campaign now links its verified moved issue while retaining the old reference.
+QVF design notes identify producer and consumer tests in their owning repos.
+
+### Documentation: independent setup and example locations (#189)
+
+Corrected the clone default (`main`) versus installer default (`release`),
+removed a stale pending-release claim, and made core calculation archives
+and viewer-only samples distinct. Setup and example guides now present the
+queue as reusable independently of vibe-qc and link companion manual owners.
+
+### Documentation: shared publishing contract (#189)
+
+Documented subtree ownership, a deliberate copy of the shared Furo CSS with
+source provenance, and separate product codename galleries. Core docs deploy
+only from `release`; manual main pipelines can no longer overwrite them.
+
+### Added: three-product marketing site (#189)
+
+vibe-qc, vibe-view and vibe-queue have dedicated product pages with independent
+installation, documentation and release links. Shared navigation and onboarding
+present all three products; marketing routes stay under `/products/`, outside
+the companion publisher subtrees.
+
+### Fixed: independent website publishers (#189)
+
+Root marketing deploys preserve `/vibe-view/` and `/vibe-queue/` alongside
+the existing protected subtrees, so their independent docs deploys survive
+the root rsync cleanup.
+
+### Added: experimental AICCM correlation from the runner
+
+`run_periodic_job(method="aiccm", ...)` accepts `correlation="mp2"` on
+`variant="four-center"`. The driver is chosen to match the construction the
+SCF ran -- the bare four-centre MP2 on the same cyclic cluster and the same
+converged reference -- so the correlation rides the union-and-weight
+Hamiltonian that was requested rather than a neutral-RI substitute. The
+other three variants refuse instead of quietly returning an SCF-only number,
+and a Kohn-Sham reference refuses because MP2 needs a Hartree-Fock one. The
+run cites the bare-lineage route rather than the SCF's own row. Reported
+correlation energies are per unit cell. The bare drivers form the dense
+`n_ref_ao**4` AO tensor, so this is a small-cluster tool.
+
+### Added: Gamma-CCM correlation citation routes
+
+The Γ-CCM MP2 drivers now stamp the citation route they actually built, and
+`database.toml` carries the four matching rows. The stamp is per call rather
+than a dataclass default because one result class serves two lineages:
+`run_ccm_mp2` is the bare four-centre correlation and `run_ccm_ri_mp2` the
+neutral-RI one, so a class default would cite the union-and-weight papers for
+a neutral fitted-torus number. Guards read the labels out of the source in
+both directions, so a stamp without a route and a route nothing stamps both
+fail, and the bare and RI rows can no longer collapse into one.
+
+### Added
+
+- Prepared artwork for the six upcoming roadmap milestones, v0.17.0 through
+  v1.0.0, with a gallery and generation prompts. Candidate and provisional
+  pairings remain separate from the released codename catalog. Schrödinger's
+  Llama stands inside an open midnight-blue box with brass trim.
+
+### Added: source-bound zero-mode overlap audit
+
+The private finite BIPOLE source can now compare a supplied HF overlap with
+both zero-momentum AO-product factors needed for its exchange subtraction
+to take the `S D S` form. The selected-k audit verifies immutable source
+inputs, enforces explicit memory/work admission, and records separate
+residuals without Hermitization. Its receipt does not certify HF provenance,
+probe-charge physics or the full symmetry-reduced correlation operator.
+
+### Added: private HF/correlation long-range bridge
+
+HF long-range J/K now share their unprojected contractions with the private
+correlation diagnostics. A private exchange-cache entry point accepts native
+integer mesh addresses, preserving third-point transfers without the legacy
+Cartesian cache's decimal rounding. Complete complex-density witnesses match
+the native finite source and independent Gaussian integrals on tiny shifted
+and multiaxis meshes. SCF behavior is unchanged; physical support matching,
+the remaining Ewald terms and production symmetry reduction remain open.
 ### Added: the cohesive objective a basis campaign minimises (vibe-basis 0.11.0)
 
 `vibe_basis.objective` is the L1 layer of the basis-optimisation roadmap's M2:
@@ -1461,6 +1996,62 @@ The solvation user guide's claim that the analytic gradient does not support
 the FINE cavity was stale since #729/#746 and has been corrected in the same
 pass. Resumes archived monorepo issue #769.
 
+### Fixed: the COSMO FINE Cavity assigns basis points to atoms smoothly
+
+Step 5 of the Klamt & Diedenhofen 2018 workflow assigns each basis point to the
+atom of smallest relative distance by `argmin`. That is discrete, so a point on
+a boundary flipped at an infinitesimal displacement and its whole area moved to
+the other atom's segment grid: measured on an asymmetric solute, 0.19 bohr^2 at
+once, a 6.9 percent error in the local slope of the energy, and a 2.9e-08 Ha
+step. Crossings were frequent -- twelve coordinates scanned over +/-6e-03 bohr
+found thirty. The energy's slope across one is now smooth to 1.4e-03, fifty
+times better, and what remains is the scan's own curvature.
+
+The pair coordinate is the whole design, and two natural choices were built and
+rejected on measurements before this one was written. Becke's distance
+coordinate with the atomic size adjustment of his appendix A -- the literature
+answer, already in the tree for DFT grids -- moves 13 to 16 percent of the
+total area between atoms; on water, oxygen loses 29 bohr^2 to the hydrogens. It
+is not a smoothing of step 5 but a different rule, because Becke's scheme
+assumes a point sits near its own atom while a CFC basis point stands off every
+atom by a comparable distance. The tau ratio is faithful but shares every point
+with every atom, so the coarsening would cost a factor of the atom count.
+
+What ships measures the offset from the boundary in units of the **marching
+spacing**, the one length the construction already carries, and switches with
+the compactly supported Stratmann-Scuseria-Frisch function. The area budget
+moves 0.9 percent from the hard rule at 0.40 A and 0.33 percent at 0.20 A -- the
+smoothing shrinks with the grid, which neither rejected candidate does, so the
+fuzzy rule tends to the hard one in the same limit the cavity converges. A
+basis point feeds 1.8 atoms on average, falling to 1.4 at 0.20 A. No fitted
+parameter: the spacing is already an input and 0.64 is the switch's own
+constant.
+
+The analytic gradient carries the new term, verified against finite differences
+to 1.3e-08 relative at fixed topology, and the exact translation and zero-torque
+identities still hold to 1e-14. `FineCavity` grew the bookkeeping an
+overlapping partition needs -- a basis point now supplies a row in more than one
+atom's block -- and its area accounting is per (vertex, atom) rather than per
+vertex.
+
+Costs about a factor of two in cavity construction and moves every
+`cavity="fine"` energy by roughly 7e-06 Ha. The resolution guard on
+`fine_grid_spacing_ang` now first fires at 0.70 A rather than 0.44 A, in both
+frames, because cells are fed from more basis points.
+
+One limit of #769 is measured and pinned in the same pass, having surfaced
+here. A *symmetry-induced* frame tie is invisible in the energy, as #769
+established, but not in the gradient: at such a geometry the frame **jumps**
+rather than varies, so the chain rule through it is not a route to the energy's
+derivative, and the analytic gradient carries a spurious 1.9e-05 Ha/bohr force
+along the tie-breaking direction -- in a component symmetry requires to vanish,
+and which a converged finite difference puts at 1e-11. Break the tie by any
+amount and agreement returns to 4.7e-07 Ha/bohr, better than the lab frame
+manages. Averaging the frame Jacobian over the tied atoms was tried and is
+wrong: a jump has no two one-sided derivatives to average, and the averaged
+Jacobian breaks the exact rotation identity. Resumes archived monorepo issue
+#771.
+
 ## [v0.16.1] - 2026-09-08 - *Pople's Puffin*
 
 ### Added
@@ -1527,105 +2118,6 @@ pass. Resumes archived monorepo issue #769.
   landed in `9c34674b`, the v0.16.0 cut commit itself, but its entry was
   left in `[Unreleased]`, so v0.16.0 shipped the change without claiming
   it; recorded here rather than backdated.
-
-### Fixed: the COSMO FINE Cavity assigns basis points to atoms smoothly
-
-Step 5 of the Klamt & Diedenhofen 2018 workflow assigns each basis point to the
-atom of smallest relative distance by `argmin`. That is discrete, so a point on
-a boundary flipped at an infinitesimal displacement and its whole area moved to
-the other atom's segment grid: measured on an asymmetric solute, 0.19 bohr^2 at
-once, a 6.9 percent error in the local slope of the energy, and a 2.9e-08 Ha
-step. Crossings were frequent -- twelve coordinates scanned over +/-6e-03 bohr
-found thirty. The energy's slope across one is now smooth to 1.4e-03, fifty
-times better, and what remains is the scan's own curvature.
-
-The pair coordinate is the whole design, and two natural choices were built and
-rejected on measurements before this one was written. Becke's distance
-coordinate with the atomic size adjustment of his appendix A -- the literature
-answer, already in the tree for DFT grids -- moves 13 to 16 percent of the
-total area between atoms; on water, oxygen loses 29 bohr^2 to the hydrogens. It
-is not a smoothing of step 5 but a different rule, because Becke's scheme
-assumes a point sits near its own atom while a CFC basis point stands off every
-atom by a comparable distance. The tau ratio is faithful but shares every point
-with every atom, so the coarsening would cost a factor of the atom count.
-
-What ships measures the offset from the boundary in units of the **marching
-spacing**, the one length the construction already carries, and switches with
-the compactly supported Stratmann-Scuseria-Frisch function. The area budget
-moves 0.9 percent from the hard rule at 0.40 A and 0.33 percent at 0.20 A -- the
-smoothing shrinks with the grid, which neither rejected candidate does, so the
-fuzzy rule tends to the hard one in the same limit the cavity converges. A
-basis point feeds 1.8 atoms on average, falling to 1.4 at 0.20 A. No fitted
-parameter: the spacing is already an input and 0.64 is the switch's own
-constant.
-
-The analytic gradient carries the new term, verified against finite differences
-to 1.3e-08 relative at fixed topology, and the exact translation and zero-torque
-identities still hold to 1e-14. `FineCavity` grew the bookkeeping an
-overlapping partition needs -- a basis point now supplies a row in more than one
-atom's block -- and its area accounting is per (vertex, atom) rather than per
-vertex.
-
-Costs about a factor of two in cavity construction and moves every
-`cavity="fine"` energy by roughly 7e-06 Ha. The resolution guard on
-`fine_grid_spacing_ang` now first fires at 0.70 A rather than 0.44 A, in both
-frames, because cells are fed from more basis points.
-
-One limit of #769 is measured and pinned in the same pass, having surfaced
-here. A *symmetry-induced* frame tie is invisible in the energy, as #769
-established, but not in the gradient: at such a geometry the frame **jumps**
-rather than varies, so the chain rule through it is not a route to the energy's
-derivative, and the analytic gradient carries a spurious 1.9e-05 Ha/bohr force
-along the tie-breaking direction -- in a component symmetry requires to vanish,
-and which a converged finite difference puts at 1e-11. Break the tie by any
-amount and agreement returns to 4.7e-07 Ha/bohr, better than the lab frame
-manages. Averaging the frame Jacobian over the tied atoms was tried and is
-wrong: a jump has no two one-sided derivatives to average, and the averaged
-Jacobian breaks the exact rotation identity. Resumes archived monorepo issue
-#771.
-
-### Fixed: the COSMO FINE Cavity's outward projection is C1 (#770)
-
-Step 6 pushes a segment centre onto its atom's sphere when the area-weighted
-mean falls inside, which on a curved surface it always does. The paper states
-that as a hard rule, and a hard maximum is C0 but not C1: the segment position's
-slope jumps where a centre crosses. The energy is untouched -- it is the
-*gradient* that steps, so what this cost was finite-difference second
-derivatives. Measured on an asymmetric solute, an area-weighted functional's
-slope jumped 0.071 percent across one crossing and now jumps 0.000 percent;
-crossings arrive about every 0.025 bohr of displacement per coordinate.
-
-The projection is eased over a band 1e-03 of the sphere radius wide (0.003
-bohr) with a softplus. No parameter-free C1 smooth maximum exists, so the width
-is a choice, and it is bounded from both sides by measurement rather than
-taste: small against the projection depth it eases (0.019 bohr median, so about
-six times narrower, and only 51 of 401 segments move by more than 1e-04 bohr
-against the hard rule), and wide enough for a finite difference to resolve,
-since a band narrower than the step would remove the kink for the derivative
-without helping the consumer that needed it. A softplus rather than a spliced
-polynomial because it is never below the radius, so no segment is ever placed
-inside the sphere it screens. It recovers the paper's rule as the band
-vanishes: the solvated energy moves 6.6e-07 Ha at this width, 2.1e-09 at a
-tenth of it and nothing at a hundredth.
-
-The projection's chain rule becomes one expression instead of a branch --
-`dp'/dg = k (I - u u^T) + sigma u u^T`, with the hard rule as its `sigma -> 0`
-and `sigma -> 1` limits -- and the softplus lives in one function that both
-directions call, since writing it twice is the hazard behind #546.
-`FineCavity.projected` is now a diagnostic rather than a branch selector.
-
-Measuring this turned up a **larger** discontinuity that is not the projection
-and is not fixed here: the same functional's slope jumps 9.4 percent at a
-displacement where nothing in the construction changes size. It was first
-attributed to the sub-threshold basis-point merge, which changes its point
-count across the same displacement; disabling the merge outright leaves the
-jump unchanged, so that attribution was wrong and is corrected in the handover.
-The cause is the marching-tetrahedra tetragon split: a two-versus-two
-tetrahedron cuts four edges and the quad is divided on its shorter diagonal,
-a hard comparison that flips where the diagonals are equal. The quad's total
-area survives the flip, but step 4's per-corner assignment does not, and 40
-percent of the triangulation comes from such quads. It is now the largest known
-discrete decision left in the construction.
 
 ## [v0.16.0] - 2026-09-08 - *Pople's Puffin*
 
@@ -17050,8 +17542,6 @@ cached parameters for reproducibility.
 
 The DSD-PBEP86 D3(BJ) name alias (v0.15.118) is now scoped to D3(BJ)-only
 lookup so the ``_2011`` suffix does not leak into the D4 parameter path.
-
-## [v0.15.121] - 2026-08-08 - *Neese's Cheetah*
 
 ### Added: auto-level-shift-on-oscillation for all four molecular SCF drivers (2026-08-08)
 

@@ -19,6 +19,7 @@ basis = BasisSet(mol, "6-31g*")
 
 opts = RKSOptions()
 opts.functional = "PBE"     # or "LDA", "BLYP", "B3LYP", "PBE0", etc.
+# Supplied low-level options keep their grid, here the legacy product grid.
 result = run_rks(mol, basis, opts)
 
 print(f"E_KS        = {result.energy:.10f}")
@@ -57,27 +58,25 @@ opts.grid.n_theta  = 29   # polar (θ) points per shell
 opts.grid.n_phi    = 58   # azimuthal (φ) points per shell
 ```
 
-The point count is `n_radial × n_theta × n_phi` **per atom**: the
-default *medium* grid is 75 × 17 × 36 ≈ 46 000 points/atom, and the
-*fine* grid above is ≈ 167 000, about 3.6× denser. Those numbers
-match "fine" in ORCA / PySCF and are worth using for small-system
-benchmarks.
+These are controls for a custom product grid. Fresh options supplied to the
+low-level `run_rks(mol, basis, opts)` keep the legacy 75 x 17 x 36 grid,
+about 46,000 points per atom. The custom 99 x 29 x 58 grid above has about
+167,000 points per atom. More points increase the XC integration work; the
+Coulomb and exact-exchange builds have separate costs.
 
-**What it costs.** The XC build scales linearly with the point count,
-so ~3.6× more points makes that step ~3.6× more expensive every
-iteration. But the XC build is only one piece of an SCF cycle: the
-Coulomb build and, for hybrids, the exact-exchange build do not depend
-on the grid, so the *total* slowdown is smaller. It is noticeable for
-pure GGAs, often minor for hybrids where exchange dominates.
+The mid-level `run_job` and molecular optimization interfaces instead apply
+`grid_level="orca-defgrid3"` to absent or untouched options. They preserve
+customized grid fields. The named `fine` preset uses a pruned Lebedev grid,
+so it is different from the custom product grid above. Pass
+`grid_level="legacy"` explicitly to request the old grid through a mid-level
+API. See [Molecular integration grids](../user_guide/functionals.md#molecular-integration-grids)
+for the entry-point rules and complete preset settings.
 
 **What it buys.** A denser grid shrinks the quadrature error, pushing
 the energy toward the value the functional would give with a perfect
 integral. It does **not** make the functional itself more accurate
-against experiment; it only removes integration noise. Going medium
-→ fine typically moves a total energy by a few tens of µHa. The
-default is calibrated for routine geometries and energies; reach for
-the fine grid when you need tight energy *differences*, benchmark
-totals, or smooth forces along a reaction path, and for grid-sensitive
+against experiment; it only removes integration noise. Check grid convergence
+for tight energy *differences*, benchmark totals and smooth forces along a reaction path, especially for grid-sensitive
 meta-GGAs such as SCAN (see the
 [functionals guide](../user_guide/functionals.md)). The quadrature
 scheme behind these knobs (Becke partitioning, the Treutler-Ahlrichs

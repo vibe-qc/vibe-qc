@@ -12,7 +12,12 @@ Classification:
   FAIL        rc==1 (tests failed / errored, pytest exited cleanly)
   SEGFAULT    rc==-11 (SIGSEGV) — a real crash bug
   ABORT       rc==-6  (SIGABRT)
-  OOM_KILLED  rc==-9  (SIGKILL) and NOT our timeout — likely OOM
+  OOM_KILLED  rc==-9  (SIGKILL), NOT our timeout, and the sampled peak RSS of
+              the process tree reached --oom-fraction of physical memory
+              (default 0.5): an OOM kill with evidence behind it
+  SIGKILLED   rc==-9  (SIGKILL), NOT our timeout, and no such memory evidence:
+              cause unassigned (an outside kill, a supervisor, a short spike
+              the 250 ms sampler missed); never call it OOM (#218)
   TIMEOUT     our per-file wall-clock killed it (possible infinite loop)
   NOTESTS     rc==5 (no tests collected)
   COLLECT_ERR rc in (2,3,4) (usage/collection/internal error)
@@ -144,7 +149,46 @@ def _kill_tree(pid: int) -> None:
             pass
 
 
-def classify(rc, timed_out, counts) -> str:
+DEFAULT_OOM_FRACTION = 0.5
+
+
+def physical_memory_mb() -> float | None:
+    """Total physical memory in MB, or None when psutil is unavailable."""
+    if psutil is None:
+        return None
+    try:
+        return round(psutil.virtual_memory().total / 1e6, 1)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def oom_evidence(peak_rss_mb, memory_total_mb, oom_fraction=DEFAULT_OOM_FRACTION) -> dict:
+    """Whether a SIGKILL can honestly be called an OOM kill.
+
+    The only memory evidence the runner has is the 250 ms RSS sample of the
+    process tree. A kill is reported as OOM only when that peak reached
+    ``oom_fraction`` of physical memory; a 387 MB peak on a 128 GB box is not
+    an OOM story (#218). The returned dict is stored on the row so a reader
+    can see the numbers the label rests on.
+    """
+    peak = float(peak_rss_mb or 0.0)
+    total = float(memory_total_mb) if memory_total_mb else None
+    fraction = (peak / total) if total else None
+    return {
+        "peak_rss_mb": peak,
+        "memory_total_mb": total,
+        "peak_fraction_of_memory": None if fraction is None else round(fraction, 4),
+        "oom_fraction_threshold": float(oom_fraction),
+        "oom_established": bool(fraction is not None and fraction >= float(oom_fraction)),
+    }
+
+
+def classify(rc, timed_out, counts, evidence=None) -> str:
+    """Map a target's exit to a status label.
+
+    ``evidence`` is the :func:`oom_evidence` dict; without it a SIGKILL is
+    ``SIGKILLED`` (cause unassigned), never ``OOM_KILLED``.
+    """
     if timed_out:
         return "TIMEOUT"
     if rc == 0:
@@ -157,7 +201,10 @@ def classify(rc, timed_out, counts) -> str:
         return "COLLECT_ERR"
     if rc is not None and rc < 0:
         sig = -rc
-        return {11: "SEGFAULT", 6: "ABORT", 9: "OOM_KILLED"}.get(sig, f"SIGNAL_{sig}")
+        if sig == 9:
+            established = bool(evidence and evidence.get("oom_established"))
+            return "OOM_KILLED" if established else "SIGKILLED"
+        return {11: "SEGFAULT", 6: "ABORT"}.get(sig, f"SIGNAL_{sig}")
     return f"RC_{rc}"
 
 
@@ -774,14 +821,19 @@ def _isolated_test_environment(wt: Path, target: str) -> Iterator[dict[str, str]
 
 
 def run_one(tf: Path | str, wt: Path, py: str, file_timeout: float, test_timeout: int,
-            markexpr: str = "", heavy_env: bool = False) -> dict:
+            markexpr: str = "", heavy_env: bool = False,
+            oom_fraction: float = DEFAULT_OOM_FRACTION) -> dict:
     if isinstance(tf, Path):
         rel = str(tf.relative_to(wt))
     else:
         rel = str(tf)
+    # ``-v`` rather than ``-q``: pytest prints the node id before a test runs
+    # and appends the outcome after it, so when the child is killed mid-test
+    # the last line of the tail names the node that was running. With ``-q``
+    # a killed file left nothing but progress dots (#218).
     cmd = [
         py, "-m", "pytest", rel,
-        "-p", "no:cacheprovider", "-q", "--no-header",
+        "-p", "no:cacheprovider", "-v", "--no-header",
         "-o", "addopts=", "-o", "console_output_style=classic",
         f"--timeout={test_timeout}", "--timeout-method=thread",
     ]
@@ -818,10 +870,11 @@ def run_one(tf: Path | str, wt: Path, py: str, file_timeout: float, test_timeout
         dt = round(time.time() - t0, 1)
         text = "".join(out_chunks)
         counts = parse_counts(text)
-        status = classify(rc, timed_out, counts)
+        evidence = oom_evidence(peak, physical_memory_mb(), oom_fraction)
+        status = classify(rc, timed_out, counts, evidence)
         # capture a useful tail
         tail = "\n".join(text.splitlines()[-25:])[-3000:]
-        return {
+        record = {
             "file": rel,
             "status": status,
             "rc": rc,
@@ -831,6 +884,12 @@ def run_one(tf: Path | str, wt: Path, py: str, file_timeout: float, test_timeout
             "timed_out": timed_out,
             "tail": tail,
         }
+        if rc is not None and rc < 0:
+            record["signal"] = -rc
+            record["child_pid"] = proc.pid
+            if -rc == 9:
+                record["oom_evidence"] = evidence
+        return record
 
 
 def main():
@@ -844,6 +903,12 @@ def main():
     ap.add_argument("--py", default=sys.executable)
     ap.add_argument("--markexpr", default="", help="pytest -m expression, e.g. 'not slow' or 'slow'")
     ap.add_argument("--heavy-env", action="store_true", help="set VIBEQC_RUN_HEAVY_TESTS=1")
+    ap.add_argument(
+        "--oom-fraction", type=float, default=DEFAULT_OOM_FRACTION,
+        help="a SIGKILL is reported as OOM_KILLED only if the sampled peak RSS of the "
+             "process tree reached this fraction of physical memory; otherwise SIGKILLED "
+             f"(cause unassigned). Default {DEFAULT_OOM_FRACTION}.",
+    )
     ap.add_argument("--lane", default="", help="named lane(s), comma-separated, from scripts/test_gate/lane_manifest.json")
     ap.add_argument("--profile", default="", help="named profile from scripts/test_gate/lane_manifest.json")
     ap.add_argument(
@@ -1019,6 +1084,7 @@ def main():
                 args.test_timeout,
                 args.markexpr,
                 args.heavy_env,
+                args.oom_fraction,
             ): target
             for target in todo
         }

@@ -25,6 +25,7 @@
 
 #include "vibeqc/semiempirical/seccm/topology.hpp"
 #include "vibeqc/semiempirical/methods/indo/indo_engine.hpp"
+#include "vibeqc/semiempirical/methods/indo/ccm_stability.hpp"
 #include "vibeqc/semiempirical/methods/indo/msindo_gradient.hpp"
 
 namespace vibeqc {
@@ -755,7 +756,7 @@ inline MsindoResult run_ccm_core(
         };
     }
 
-    MsindoResult res = scf_rhf_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol,
+    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol,
                                        fock_extra);
 
     if (res.converged) {
@@ -807,7 +808,7 @@ inline double ccm_energy_with_ws(
         };
     }
 
-    MsindoResult res = scf_rhf_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol, fock_extra);
+    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol, fock_extra);
     if (!res.converged) return std::numeric_limits<double>::quiet_NaN();
     return res.electronic_energy + e_core;
 }
@@ -1116,7 +1117,7 @@ inline std::vector<std::array<double, 3>> ccm_gradient_analytic(
             return {F_add, 0.5 * czd.dot(mad)};
         };
     }
-    MsindoResult res = scf_rhf_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol, fock_extra);
+    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol, fock_extra);
     if (!res.converged) return {};
     Eigen::MatrixXd P = res.density;
 

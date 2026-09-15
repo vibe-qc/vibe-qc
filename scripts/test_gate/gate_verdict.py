@@ -25,7 +25,7 @@ Contention re-verify (--reverify)
 ---------------------------------
 The fast lane runs many files concurrently (`--jobs N`). On a shared box under
 heavy load, a perfectly healthy file can be starved into a FAIL / ABORT /
-TIMEOUT / OOM_KILLED that it does NOT reproduce when run alone — a *contention
+TIMEOUT / OOM_KILLED / SIGKILLED that it does NOT reproduce when run alone — a *contention
 artifact*, not a code regression. A v0.13.0-cut gate run produced exactly this:
 ~8 slow/memory-heavy files red-flagged under `--jobs 6` at box load ~80, every
 one of which PASSED when re-run in isolation at `--jobs 1`.
@@ -44,7 +44,7 @@ import json
 import os
 import sys
 
-FAILING = {"FAIL", "SEGFAULT", "ABORT", "OOM_KILLED", "TIMEOUT", "COLLECT_ERR"}
+FAILING = {"FAIL", "SEGFAULT", "ABORT", "OOM_KILLED", "SIGKILLED", "TIMEOUT", "COLLECT_ERR"}
 
 # A re-verified single-file run is a contention artifact (does NOT gate) only
 # if it now cleanly passes or collects nothing; anything else is a real red.
@@ -87,7 +87,7 @@ def reverify_new_reds(candidates, runner):
     """Re-run each candidate NEW-red file once in isolation to rule out a
     contention artifact.
 
-    A FAIL / ABORT / TIMEOUT / OOM_KILLED produced under high concurrency on a
+    A FAIL / ABORT / TIMEOUT / OOM_KILLED / SIGKILLED produced under high concurrency on a
     shared box is not evidence of a code regression if the file passes when run
     alone. This re-runs each candidate a single time (the caller supplies an
     isolated `--jobs 1`, generous-timeout runner) and partitions the result.

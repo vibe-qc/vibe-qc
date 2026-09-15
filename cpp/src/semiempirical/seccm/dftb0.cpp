@@ -164,7 +164,7 @@ DFTB0SECCMResult run_dftb0_seccm(
         energies = solver.eigenvalues();
         coefficients = solver.eigenvectors();
     }
-    const double gap = energies(n_occ) - energies(n_occ - 1);
+    const double gap = detail::finite_torus_homo_lumo_gap(energies, n_occ);
     if (!std::isfinite(gap) || gap <= gap_tolerance) {
         throw std::runtime_error(
             "DFTB0-SECCM T3a requires a positive finite-torus HOMO-LUMO gap");

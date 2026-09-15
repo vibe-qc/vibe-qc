@@ -149,7 +149,7 @@ Key decisions:
 ## Running tests
 
 ```bash
-cd /path/to/vibeqc
+cd /path/to/vibe-qc
 .venv/bin/python -m pytest python/vibeqc/basis_toolkit/tests/ -v
 ```
 

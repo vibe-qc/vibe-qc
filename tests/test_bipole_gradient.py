@@ -791,6 +791,104 @@ def test_multicell_jk_domain_density_adjoint_matches_directional_fd():
         assert analytic == pytest.approx(finite_difference, abs=1.0e-8)
 
 
+@pytest.mark.parametrize("method", ["rhf", "uhf", "rks", "uks"])
+@pytest.mark.parametrize("name", ["bipole-fd-custom", "sto-3g"])
+@pytest.mark.parametrize("through_optimizer", [False, True])
+def test_fd_gradient_preserves_explicit_basis(monkeypatch, method, name, through_optimizer):
+    """Every displaced driver sees the supplied atom-centered shells."""
+    import importlib
+
+    system = _build_h2_box(a_bohr=12.0)
+    shells = [
+        vq.ShellInfo(i, i * 2, False, [.7 + i, .25], [.6, -.2],
+                     np.asarray(atom.xyz))
+        for i, atom in enumerate(system.unit_cell)
+    ]
+    basis = vq.BasisSet(system.unit_cell_molecule(), shells, name, False)
+    original = list(basis.shells())
+    reference_positions = np.array([a.xyz for a in system.unit_cell])
+    calls = []
+
+    def driver(displaced, moved, *args, **kwargs):
+        positions = np.array([a.xyz for a in displaced.unit_cell])
+        energy = 0.
+        for old, new in zip(original, moved.shells(), strict=True):
+            assert (new.atom_index, new.l, new.pure) == (old.atom_index, old.l, old.pure)
+            np.testing.assert_array_equal(new.exponents, old.exponents)
+            np.testing.assert_array_equal(new.coefficients, old.coefficients)
+            expected_origin = (np.asarray(old.origin) + positions[old.atom_index]
+                               - reference_positions[old.atom_index])
+            np.testing.assert_allclose(new.origin, expected_origin, atol=1e-14, rtol=0)
+            energy += float(np.dot(new.origin, new.origin))
+        calls.append(moved)
+        return SimpleNamespace(energy=energy, converged=True)
+
+    module = importlib.import_module(
+        "vibeqc.pbc_bipole" if method == "rhf" else f"vibeqc.pbc_bipole_{method}"
+    )
+    monkeypatch.setattr(module, f"run_pbc_bipole_{method}", driver)
+    mesh = monkhorst_pack(system, [1, 1, 1])
+    if through_optimizer:
+        from vibeqc.bipole_optimize import _compute_forces
+
+        actual = _compute_forces(
+            system, basis, None, method.upper(), None, kmesh=mesh,
+            basis_name=name, opts=None, functional=None, bipole_kwargs={},
+            force_mode="fd", fd_step_bohr=1e-3,
+        )
+    else:
+        actual = compute_bipole_gradient_fd(system, basis, mesh, method=method)
+    np.testing.assert_allclose(actual, [2*np.asarray(s.origin) for s in original],
+                               atol=1e-9, rtol=0)
+    assert len(calls) == 12
+    for old, unchanged in zip(original, basis.shells(), strict=True):
+        np.testing.assert_array_equal(unchanged.origin, old.origin)
+
+
+def test_fd_custom_basis_matches_explicit_displaced_scf():
+    """Real converged forces follow the supplied basis, not its library name."""
+    positions = np.array([[0., 0., 0.], [0., 0., 1.4]])
+
+    def geometry(dz=0.):
+        xyz = positions.copy()
+        xyz[1, 2] += dz
+        system = vq.PeriodicSystem(3, 12*np.eye(3), [vq.Atom(1, p) for p in xyz])
+        # Reconstruct these explicit primitives independently of the helper.
+        basis = vq.BasisSet(system.unit_cell_molecule(), [
+            vq.ShellInfo(i, 0, True, [.7+.4*i], [1.], p)
+            for i, p in enumerate(xyz)
+        ], "sto-3g", False)
+        return system, basis
+
+    system, basis = geometry()
+    mesh = monkhorst_pack(system, [1, 1, 1], use_symmetry=False)
+    options = PeriodicRHFOptions()
+    options.lattice_opts.cutoff_bohr = 5.
+    options.lattice_opts.nuclear_cutoff_bohr = 8.
+    options.initial_guess = InitialGuess.HCORE
+    options.conv_tol_energy = 1e-12
+    options.conv_tol_grad = 1e-10
+    options.max_iter = 100
+    kwargs = dict(ewald_omega=.6, ewald_precision=1e-10, sr_image_precision=None,
+                  use_fock_symmetry=False, use_fock_symmetry_reduce=False)
+    step = 1e-4
+    custom = compute_bipole_gradient_fd(
+        system, basis, mesh, options, step_bohr=step, **kwargs,
+    )
+    reloaded = compute_bipole_gradient_fd(
+        system, "sto-3g", mesh, options, step_bohr=step, **kwargs,
+    )
+    energies = []
+    for displacement in [-step, step]:
+        displaced, moved = geometry(displacement)
+        result = run_pbc_bipole_rhf(displaced, moved, mesh, options, progress=False, **kwargs)
+        assert result.converged
+        energies.append(result.energy)
+    manual = (energies[1] - energies[0]) / (2*step)
+    assert custom[1, 2] == pytest.approx(manual, abs=1e-9, rel=0)
+    assert np.max(np.abs(custom - reloaded)) > 1e-3
+
+
 def test_fd_gradient_rejects_nonconverged_displacement(monkeypatch):
     """The production FD path must not differentiate a failed displaced SCF."""
     import vibeqc.pbc_bipole as pbc_bipole
@@ -4169,3 +4267,358 @@ def test_corrected_gauge_rks_mgga_gradient_matches_fd(functional):
         step_bohr=1e-3, use_ewald_j_split=True, ewald_precision=1e-8,
     ))
     np.testing.assert_allclose(g_an, g_fd, atol=1e-5)
+
+
+@pytest.mark.parametrize("method", ["rhf", "uhf", "rks", "uks"])
+@pytest.mark.parametrize("mesh_size", [1, 2])
+@pytest.mark.parametrize("corrected", [False, True])
+@pytest.mark.parametrize("precision", [None, 1e-4, 1e-12])
+def test_scf_ewald_precision_reaches_public_gradient(
+    monkeypatch, method, mesh_size, corrected, precision,
+):
+    """Check SCF provenance and the real gradient's E_nn boundary together.
+
+    A one-basis He cell keeps all method/gauge dispatches inexpensive. This
+    is a domain-selection check, not a force-accuracy claim for every route.
+    """
+    import importlib
+    import vibeqc.bipole_gradient as gradients
+    from vibeqc.pbc_bipole_common import _crystal_ewald_options
+    from vibeqc.bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
+
+    system = vq.PeriodicSystem(3, np.eye(3) * 9., [vq.Atom(2, [0., 0., 0.])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    mesh = monkhorst_pack(system, [mesh_size, 1, 1], use_symmetry=False)
+    opts = PeriodicKSOptions() if method.endswith("ks") else PeriodicRHFOptions()
+    opts.lattice_opts.cutoff_bohr = 5.  # 2R covers the two-cell BvK density torus.
+    opts.lattice_opts.nuclear_cutoff_bohr = 4.
+    opts.initial_guess = InitialGuess.HCORE
+    opts.max_iter = 8
+    kwargs = {} if precision is None else {"ewald_precision": precision}
+    if method.endswith("ks"):
+        opts.grid.n_radial = 8
+        opts.grid.n_theta = 5
+        opts.grid.n_phi = 8
+        opts.becke_image_radius_bohr = 3.
+        kwargs["functional"] = "lda"
+    module = "vibeqc.pbc_bipole" + ("" if method == "rhf" else "_" + method)
+    driver = getattr(importlib.import_module(module), "run_pbc_bipole_" + method)
+    result = driver(
+        system, basis, mesh, opts, ewald_omega=.4,
+        use_exchange_ewald_split=corrected, sr_image_precision=None,
+        use_fock_symmetry=False, use_fock_symmetry_reduce=False,
+        progress=False, **kwargs,
+    )
+    assert result.converged
+    expected = 1e-8 if precision is None else precision
+    captured = []
+    leaf_precisions = {}
+
+    def capture(system_arg, options):
+        assert system_arg is system
+        captured.append(options)
+        return np.zeros((1, 3))
+
+    def leaf(name):
+        def evaluate(*args, precision=1e-8, **kwargs):
+            leaf_precisions.setdefault(name, []).append(precision)
+            return np.zeros((1, 3))
+        return evaluate
+
+    monkeypatch.setattr(gradients, "ewald_nuclear_repulsion_gradient", capture)
+    for name in ("_v_ne_ewald_gradient", "_j_long_range_ewald_gradient",
+                 "_k_long_range_ewald_gradient", "_j_long_range_ewald_gradient_multi_k",
+                 "_k_long_range_ewald_gradient_multi_k"):
+        monkeypatch.setattr(gradients, name, leaf(name))
+    with pytest.warns(UserWarning, match="preview"):
+        getattr(gradients, "compute_bipole_gradient_" + method)(
+            system, basis, result, lattice_opts=opts.lattice_opts, kmesh=mesh,
+            **({"grid_options": opts.grid, "becke_image_radius_bohr": 3.}
+               if method.endswith("ks") else {}),
+        )
+    reference = _crystal_ewald_options(
+        opts.lattice_opts, alpha_bohr_inv=.4, tolerance=expected,
+        recip_cutoff_bohr_inv=bipole_ewald_reciprocal_cutoff(9.**3, .4),
+    )
+    assert captured[0].tolerance == expected
+    assert captured[0].real_cutoff_bohr == reference.real_cutoff_bohr
+    assert leaf_precisions["_v_ne_ewald_gradient"] == [expected]
+    j_name = "_j_long_range_ewald_gradient" + ("_multi_k" if mesh_size > 1 else "")
+    assert leaf_precisions[j_name] == [expected]
+    if corrected and method.endswith("hf"):
+        k_name = "_k_long_range_ewald_gradient" + ("_multi_k" if mesh_size > 1 else "")
+        assert leaf_precisions[k_name] == [expected] * (2 if method == "uhf" else 1)
+    assert result.ewald_precision == expected
+
+
+@pytest.mark.parametrize("method", ["rhf", "uhf", "rks", "uks"])
+def test_gradient_old_result_defaults_ewald_precision(monkeypatch, method):
+    """Older duck-typed results retain the historical 1e-8 contract."""
+    import vibeqc.bipole_gradient as gradients
+
+    system = vq.PeriodicSystem(3, 9. * np.eye(3), [vq.Atom(2, [0., 0., 0.])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    lat = LatticeSumOptions()
+    lat.cutoff_bohr = 4.
+    density = compute_overlap_lattice(basis, system, lat)
+    result = SimpleNamespace(
+        exchange_ewald_split=True, ewald_alpha_bohr_inv=.4, converged=True,
+        n_iter=1, functional="lda", density=density,
+        density_alpha=density, density_beta=density,
+        mo_coeffs=[np.eye(1)], mo_energies=[np.array([-1.])],
+        mo_coeffs_alpha=[np.eye(1)], mo_coeffs_beta=[np.eye(1)],
+        mo_energies_alpha=[np.array([-1.])], mo_energies_beta=[np.array([-1.])],
+    )
+
+    class BoundaryReached(Exception):
+        pass
+
+    def capture(*args, **kwargs):
+        assert kwargs.get("ewald_precision", 1e-8) == 1e-8
+        raise BoundaryReached
+
+    monkeypatch.setattr(gradients, "_compute_bipole_gradient_corrected_gamma", capture)
+    with pytest.warns(UserWarning, match="preview"), pytest.raises(BoundaryReached):
+        getattr(gradients, "compute_bipole_gradient_" + method)(
+            system, basis, result, lattice_opts=lat,
+        )
+
+
+@pytest.mark.parametrize("method", ["rhf", "uhf"])
+@pytest.mark.parametrize("mesh_size", [1, 2])
+@pytest.mark.parametrize("precision", [1e-2, 1e-8])
+def test_nondefault_ewald_precision_force_matches_displaced_scf(
+    method, mesh_size, precision, record_property,
+):
+    """A loose image tolerance exposes a different finite nuclear sum.
+
+    The force must differentiate that requested sum, even before convergence
+    toward the infinite-lattice limit. Two FD steps exclude step cancellation.
+    The default-precision rows are unchanged controls, not retuned references.
+    """
+    import importlib
+    import vibeqc.bipole_gradient as gradients
+
+    opts = PeriodicRHFOptions()
+    opts.lattice_opts.cutoff_bohr = 5.
+    opts.lattice_opts.nuclear_cutoff_bohr = 4.
+    opts.initial_guess = InitialGuess.HCORE
+    opts.conv_tol_energy = 1e-12
+    opts.conv_tol_grad = 1e-10
+    opts.max_iter = 100
+    module = "vibeqc.pbc_bipole" + ("" if method == "rhf" else "_uhf")
+    driver = getattr(importlib.import_module(module), "run_pbc_bipole_" + method)
+
+    def run(displacement):
+        positions = [[.1, .2, .3], [1.5 + displacement, .4, .3]]
+        system = vq.PeriodicSystem(
+            3, 9. * np.eye(3), [vq.Atom(1, p) for p in positions],
+        )
+        shells = [vq.ShellInfo(i, 0, False, [a], [1.], p)
+                  for i, (a, p) in enumerate(zip([.7, 1.1], positions))]
+        basis = vq.BasisSet(system.unit_cell_molecule(), shells, "force-precision", False)
+        mesh = monkhorst_pack(system, [mesh_size, 1, 1], use_symmetry=False)
+        result = driver(
+            system, basis, mesh, opts, ewald_omega=.4, ewald_precision=precision,
+            sr_image_precision=None, use_fock_symmetry=False,
+            use_fock_symmetry_reduce=False, progress=False,
+        )
+        assert result.converged
+        return system, basis, mesh, result
+
+    system, basis, mesh, result = run(0.)
+    with pytest.warns(UserWarning, match="preview"):
+        analytic = getattr(gradients, "compute_bipole_gradient_" + method)(
+            system, basis, result, lattice_opts=opts.lattice_opts, kmesh=mesh,
+        )[1, 0]
+    differences = [(run(h)[3].energy - run(-h)[3].energy) / (2 * h)
+                   for h in (1e-4, 3e-5)]
+    record_property("analytic_gradient", float(analytic))
+    record_property("fd_step_1e-4", float(differences[0]))
+    record_property("fd_step_3e-5", float(differences[1]))
+    record_property("energy", float(result.energy))
+    assert abs(differences[0] - differences[1]) < 1e-7
+    assert abs(analytic - differences[1]) < 1e-7
+
+
+@pytest.mark.parametrize("precision", [1e-4, 1e-8, 1e-12])
+@pytest.mark.parametrize("physical", [False, True])
+@pytest.mark.parametrize("consumer", ["closed_w", "open_w", "closed_b0", "open_b0", "gamma_fock"])
+def test_response_reconstruction_retains_ewald_precision(monkeypatch, precision, physical, consumer):
+    """Response matrices must reconstruct the energy's finite nuclear sum."""
+    import vibeqc.bipole_gradient as gradients
+    import vibeqc.pbc_bipole as driver
+
+    system = vq.PeriodicSystem(3, 9. * np.eye(3), [vq.Atom(2, [0., 0., 0.])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    lat = LatticeSumOptions()
+    lat.cutoff_bohr = lat.nuclear_cutoff_bohr = 4.
+    lat.pair_complete_1e = physical
+    density = compute_overlap_lattice(basis, system, lat)
+    mesh = monkhorst_pack(system, [2, 1, 1], use_symmetry=False)
+    C = np.eye(1)
+    eps = np.array([-1.])
+
+    class BoundaryReached(Exception):
+        pass
+
+    def capture(basis_arg, system_arg, lat_arg, ew, overlap, *, precision, **kwargs):
+        assert basis_arg is basis and system_arg is system
+        assert lat_arg.pair_complete_1e == physical
+        assert precision == expected and ew.tolerance == expected
+        raise BoundaryReached
+
+    expected = precision
+    monkeypatch.setattr(driver, "_compute_nuclear_lattice_ewald_reciprocal_ft", capture)
+    calls = {
+        "closed_w": (gradients._corrected_w_gamma_closed,
+                     (system, basis, density, C, 1, lat, .4, 1.)),
+        "open_w": (gradients._corrected_w_gamma_open,
+                   (system, basis, density, density, density, C, 1, C, 1, lat, .4, 1.)),
+        "closed_b0": (gradients._build_multi_k_bipole_b0_closed,
+                      (system, basis, [C, C], [eps, eps], 1, mesh, lat, .4)),
+        "open_b0": (gradients._build_multi_k_bipole_b0_open,
+                    (system, basis, [C, C], [eps, eps], [C, C], [eps, eps], 1, 1, mesh, lat, .4, 1.)),
+        "gamma_fock": (gradients._reconstruct_bipole_fock_gamma_builder,
+                       (system, basis, lat, .4)),
+    }
+    function, args = calls[consumer]
+    with pytest.raises(BoundaryReached):
+        function(*args, ewald_precision=precision)
+
+
+def _explicit_response_basis(molecule, name):
+    """Independent primitive specification, including a signed contraction."""
+    return vq.BasisSet(molecule, [
+        vq.ShellInfo(i, 0, False, [.7 + .4*i, .23 + .1*i], [.8, -.15], atom.xyz)
+        for i, atom in enumerate(molecule.atoms)
+    ], name, False)
+
+
+def _custom_basis_response_call(consumer, name):
+    """A fixed-orbital response probe, not a converged-SCF force fixture."""
+    import vibeqc.bipole_gradient as gradients
+
+    system = vq.PeriodicSystem(3, 9.*np.eye(3),
+                              [vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [0., 0., 1.4])])
+    basis = _explicit_response_basis(system.unit_cell_molecule(), name)
+    lat = LatticeSumOptions()
+    lat.cutoff_bohr = lat.nuclear_cutoff_bohr = 5.
+    overlap = compute_overlap_lattice(basis, system, lat)
+    S = sum(np.asarray(block) for block in overlap.blocks)
+    values, vectors = np.linalg.eigh(S)
+    rotation = np.array([[np.cos(.3), -np.sin(.3)], [np.sin(.3), np.cos(.3)]])
+    C = (vectors / np.sqrt(values)) @ vectors.T @ rotation
+    # A positive, narrower multi-k gap gives a measurable diagonal response
+    # even for the small KS energy/Fock mismatch of this compact fixture.
+    eps = np.array([-2., -1.75 if consumer.startswith("multi_") else 2.])
+    P = C[:, :1] @ C[:, :1].T
+
+    def density(factor):
+        result = compute_overlap_lattice(basis, system, lat)
+        home = gradients._home_cell_index(list(result.cells))
+        for i in range(len(result.cells)):
+            result.set_block(i, factor * P if i == home else np.zeros_like(P))
+        return result
+
+    total, spin = density(2.), density(1.)
+    mesh = monkhorst_pack(system, [2, 1, 1], use_symmetry=False)
+    common = (system, basis)
+    closed = common + (total, C, eps, 1, lat, .4, 1.)
+    opened = common + (total, spin, spin, C, eps, 1, C, eps, 1, lat, .4, 1.)
+    multi_closed = common + ([C, C], [eps, eps], 1, mesh, lat, .4)
+    multi_open = common + ([C, C], [eps, eps], 1, [C, C], [eps, eps], 1, mesh, lat, .4)
+    grid = vq.GridOptions()
+    grid.n_radial = 12
+    grid.n_theta = 5
+    grid.n_phi = 8
+    if consumer.startswith("gamma_rhf_"):
+        call = lambda: gradients._bloch_cphf_relaxation(
+            *closed, cphf_rhs=consumer.removeprefix("gamma_rhf_"))
+    elif consumer.startswith("gamma_uhf_"):
+        call = lambda: gradients._bloch_cphf_relaxation_open(
+            *opened, cphf_rhs=consumer.removeprefix("gamma_uhf_"))
+    elif consumer == "gamma_rks":
+        call = lambda: gradients._bloch_cphf_relaxation_ks_closed(
+            *closed[:-1], 0., "svwn", grid, False, 5.)
+    elif consumer == "gamma_uks":
+        call = lambda: gradients._bloch_cphf_relaxation_ks_open(
+            *opened[:-1], 0., "svwn", grid, False, 5.)
+    elif consumer == "multi_rhf":
+        call = lambda: gradients._multi_k_orbital_relaxation_closed_diag(*multi_closed)
+    elif consumer == "multi_uhf":
+        call = lambda: gradients._multi_k_orbital_relaxation_open(*multi_open, 1.)
+    elif consumer == "multi_rks":
+        call = lambda: gradients._multi_k_orbital_relaxation_ks_closed_diag(*multi_closed, "svwn")
+    elif consumer == "multi_uks":
+        call = lambda: gradients._multi_k_orbital_relaxation_ks_open_diag(*multi_open, "svwn")
+    else:
+        raise AssertionError(consumer)
+    return system, basis, call
+
+
+@pytest.mark.parametrize("name", ["response-custom-unregistered", "sto-3g"])
+@pytest.mark.parametrize("consumer", [
+    "gamma_rhf_hybrid", "gamma_rhf_seminumeric",
+    "gamma_uhf_hybrid", "gamma_uhf_seminumeric",
+    "gamma_rks", "gamma_uks", "multi_rhf", "multi_uhf", "multi_rks", "multi_uks",
+])
+def test_orbital_response_displacements_preserve_shell_inventory(monkeypatch, name, consumer):
+    """Reach all ten response paths and inspect the native basis boundary."""
+    import vibeqc.bipole_gradient as gradients
+
+    system, basis, call = _custom_basis_response_call(consumer, name)
+    original = list(basis.shells())
+
+    class DisplacedBasisChecked(Exception):
+        pass
+
+    def check(molecule, shells, supplied_name=None, normalized=False):
+        assert not isinstance(shells, str), "response reloaded the library basis"
+        assert supplied_name == name and normalized is True
+        for old, moved in zip(original, shells, strict=True):
+            assert (moved.atom_index, moved.l, moved.pure) == (old.atom_index, old.l, old.pure)
+            np.testing.assert_array_equal(moved.exponents, old.exponents)
+            np.testing.assert_array_equal(moved.coefficients, old.coefficients)
+            np.testing.assert_array_equal(moved.origin, molecule.atoms[moved.atom_index].xyz)
+        old_positions = np.array([atom.xyz for atom in system.unit_cell])
+        new_positions = np.array([atom.xyz for atom in molecule.atoms])
+        assert np.max(np.abs(new_positions - old_positions)) == pytest.approx(1e-4)
+        raise DisplacedBasisChecked
+
+    monkeypatch.setattr(gradients, "BasisSet", check)
+    with pytest.raises(DisplacedBasisChecked):
+        call()
+
+
+@pytest.mark.parametrize("consumer", [
+    "gamma_rhf_hybrid", "gamma_rhf_seminumeric", "gamma_uhf_hybrid", "gamma_uhf_seminumeric",
+    "gamma_rks", "gamma_uks", "multi_rhf", "multi_uhf", "multi_rks", "multi_uks",
+])
+def test_custom_basis_orbital_response_matches_explicit_displacements(monkeypatch, record_property, consumer):
+    """Numerical response term agrees with independently specified primitives.
+
+    The fixed orbitals have occupied/virtual coupling. This tests the response
+    component, without asserting full legacy-gauge SCF/force acceptance.
+    """
+    import vibeqc.bipole_gradient as gradients
+
+    _, _, call = _custom_basis_response_call(consumer, "sto-3g")
+    actual = call()
+
+    def explicit(template, displaced):
+        return _explicit_response_basis(displaced.unit_cell_molecule(), template.name)
+
+    # The reference also intercepts the old name constructor so the exact same
+    # independent primitive oracle runs on the parent implementation.
+    with monkeypatch.context() as patch:
+        patch.setattr(gradients, "_recenter_basis_on_periodic_system", explicit)
+        patch.setattr(gradients, "BasisSet", lambda molecule, name: _explicit_response_basis(molecule, name))
+        expected = call()
+    record_property("response_actual", np.asarray(actual).tolist())
+    record_property("response_explicit", np.asarray(expected).tolist())
+    assert np.max(np.abs(expected)) > 1e-5
+    np.testing.assert_allclose(actual, expected, atol=1e-9, rtol=0.)
+    # Repeating with an unregistered label must leave the same numerical term.
+    _, _, renamed_call = _custom_basis_response_call(consumer, "response-custom-unregistered")
+    np.testing.assert_allclose(renamed_call(), expected, atol=1e-9, rtol=0.)

@@ -183,10 +183,10 @@ def run_ccm_rhf_wire(ccm, *, initial_guess: object = "AUTO", axis=0, cderi=None,
         Energies per supercell; ``.exchange_q0`` records the convention label
         (``strict-zero-mode`` / ``BvK-ewald``).
     """
-    selection = _ccm_initial_guess(ccm, initial_guess, driver="run_ccm_rhf_wire")
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rhf_wire"
     )
+    selection = _ccm_initial_guess(ccm, initial_guess, driver="run_ccm_rhf_wire")
     _warn_experimental()
     from vibeqc._vibeqc_core import compute_kinetic, compute_overlap
     from vibeqc.periodic.exchange_convention import exchange_q0_label

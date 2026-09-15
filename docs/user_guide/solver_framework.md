@@ -7,11 +7,11 @@ and post-HF methods.
 ## Quick Start with SCF
 
 ```python
-from vibeqc.runner import run_job
-from vibeqc.molecule import Molecule, Atom
+from vibeqc import run_job, Molecule, Atom
 
-mol = Molecule(atoms=[Atom(8, (0,0,0)), Atom(1, (0,0.757,-0.469)), Atom(1, (0,-0.757,-0.469))],
-               charge=0, multiplicity=1)
+mol = Molecule([Atom(8, [0, 0, 0]),
+                Atom(1, [0, 1.43, -0.98]),
+                Atom(1, [0, -1.43, -0.98])])  # coordinates in bohr
 
 # Use LOBPCG (fastest iterative solver for large basis sets)
 result = run_job(mol, basis="def2-svp", method="rhf", solver="lobpcg")
@@ -40,6 +40,38 @@ result = solve_eigenproblem(problem, options, solver="lobpcg")
 step = SCFStep(fock=F, X=orthogonalizer, n_occ=n_occ)
 result = solve_scf_step(step, solver="davidson")
 ```
+
+## Partial-spectrum Davidson controls
+
+`SolverOptions.n_roots` requests how many eigenpairs to return. `n_guess`
+controls the starting subspace for both `davidson` and `hermitian_davidson`
+when explicit `guess_vectors` are absent:
+
+| `n_guess` | Meaning |
+|---|---|
+| `0` (default) | Native automatic size: `max(n_roots + 5, 2*n_roots)`, capped at the matrix dimension |
+| Positive integer | Explicit initial size, at least `n_roots` |
+| Negative or positive but smaller than `n_roots` | Rejected before solving |
+
+For example, after constructing `problem` with at least four rows:
+
+```python
+options = SolverOptions(n_roots=4, n_guess=8, tol=1e-8)
+result = solve_eigenproblem(problem, options, solver="hermitian_davidson")
+if not result.converged:
+    raise RuntimeError("Requested eigenpairs did not converge")
+print(result.eigenvalues, result.residuals)
+```
+
+`max_subspace` controls later expansion/collapse and is separate from the
+starting size. `guess_vectors` supplies a warm-start subspace instead of the
+automatic diagonal guess. Partial-spectrum convergence concerns the requested
+roots, not the entire spectrum. When diagnosing a solve, also check
+`A @ X - X * eigenvalues` and `X.conj().T @ X` against the requested tolerance
+and identity. The complex-Hermitian path uses conjugate inner products and
+reorthogonalizes new corrections against both retained and same-block vectors.
+These controls do not guarantee convergence for every matrix or establish
+which SCF electronic state is physically appropriate.
 
 ## Available solver keywords
 
@@ -107,7 +139,8 @@ class MySolver(SolverStrategy):
 
     def solve(self, problem, options):
         # ... your algorithm ...
-        return SolverResult(eigenvalues=..., eigenvectors=..., ...)
+        return SolverResult(eigenvalues=values, eigenvectors=vectors,
+                            n_iter=iterations, converged=converged)
 ```
 
 After class definition, it's immediately available via

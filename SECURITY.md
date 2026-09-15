@@ -14,7 +14,7 @@ appear here once a 1.0 release is tagged.
 ## Reporting a vulnerability
 
 Please email **mpei@vibe-qc.com** directly. Do not open a public
-GitLab issue for security-relevant reports — that includes any bug
+issue for security-relevant reports — that includes any bug
 you believe could be exploited for code execution, data leakage, or
 resource exhaustion beyond what the test suite would surface.
 

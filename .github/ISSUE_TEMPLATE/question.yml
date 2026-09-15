@@ -1,0 +1,25 @@
+name: Question
+description: Ask about installation, methods, results or documented behavior.
+title: "[Question]: "
+labels: [question]
+body:
+  - type: input
+    id: release
+    attributes:
+      label: Release and operating system
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Explain the task and include a minimal example if relevant. Remove private data before attaching files.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Documentation and attempts
+      description: Link the documentation you consulted and describe what you have tried.
+    validations:
+      required: true

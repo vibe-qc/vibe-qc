@@ -276,6 +276,13 @@ verifies every tool / header / library below is present before it
 starts building, and prints the exact per-distro install command for
 anything missing.
 
+After installing Git, clone the source and enter its directory:
+
+```sh
+git clone https://github.com/vibe-qc/vibe-qc.git
+cd vibe-qc
+```
+
 **macOS (Homebrew)**
 ```sh
 brew install cmake ninja pkg-config libomp boost eigen gmp git python@3.14
@@ -305,7 +312,7 @@ sudo apt install build-essential cmake ninja-build pkg-config git curl \
 `--branch NAME` (any branch or tag), `--extras dev` (richer pip extras),
 `--extras basisopt` (the retained basis toolkit),
 `--python python3.13`, `--venv PATH`, `--with-openblas`, `--force`. The bare command
-selects the newest stable tag advertised by origin, while `--dev` installs `main` into `./.venv/` with `[test]`
+targets `release` (or the newest stable tag when origin has no release branch), while `--dev` installs `main` into `./.venv/` with `[test]`
 extras — for the manual `setup_native_deps.sh` + `python3 -m venv`
 recipe see [docs/installation.md](docs/installation.md).
 
@@ -338,6 +345,9 @@ select the newest stable tag advertised by origin. Use `--branch v0.17.1` or
 `--branch v0.17.2` for those snapshots, or `--dev` for `main`. Record the host,
 tag and resolved public commit when reproducing a calculation. See
 [PUBLICATION.md](PUBLICATION.md) for the source provenance boundary.
+
+Each companion has its own [repository and release tags](docs/installation.md#repositories-and-downloads).
+The archived monorepo remains separate; do not rebase its history onto this snapshot stream.
 
 Each tool has install, update, reinstall, and uninstall scripts in its own
 checkout. See the [toolset lifecycle guide](docs/toolset_lifecycle.md) for

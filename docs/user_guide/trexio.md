@@ -1,165 +1,233 @@
 # TREXIO wavefunction files
 
-[TREXIO](https://github.com/TREX-CoE/trexio) is the TREX Centre of
-Excellence's open wavefunction container (Posenitskiy *et al.*, *J. Chem.
-Phys.* **158**, 174801 (2023), [doi:10.1063/5.0148161](https://doi.org/10.1063/5.0148161)).
-One file carries the nuclei, the Gaussian basis with its normalization
-conventions spelled out, the molecular orbitals, and optionally integrals
-and density matrices, in a layout that Quantum Package, CHAMP, QMC=Chem,
-TurboRVB, QMCkl, and (through `trexio-tools`) PySCF and ORCA all read
-without a per-program converter. vibe-qc writes TREXIO files from any
-molecular SCF and reads them back into its own objects.
-
-## Install
-
-The TREXIO Python API is an optional extra (BSD-3-Clause, never bundled;
-see [Licensing](../license.md)):
+[TREXIO](https://trex-coe.github.io/trexio/) is an open wavefunction format
+with HDF5 and portable text backends. vibe-qc uses the official Python API
+as a lazy optional dependency:
 
 ```sh
 pip install 'vibe-qc[trexio]'
 ```
 
-Without it, `run_job(trexio=True)`, `write_trexio` and `read_trexio` raise
-an `ImportError` that names the extra. Nothing else in vibe-qc depends on
-it.
-
-## Write a file from a job
+## Export a calculation
 
 ```python
 from vibeqc import Molecule, run_job
 
-mol = Molecule.from_xyz("h2o.xyz")
-run_job(mol, basis="def2-svp", method="rhf", output="h2o", trexio=True)
-# -> h2o.out, h2o.molden, ..., h2o.trexio.h5
+mol = Molecule.from_xyz("water.xyz")
+run_job(mol, basis="def2-svp", method="rhf", output="water", trexio=True)
+# water.trexio.h5, in addition to the ordinary job outputs
 ```
 
-- `trexio=True` writes `{output}.trexio.h5` with the HDF5 back end.
-- `trexio_backend="text"` writes `{output}.trexio` instead: a *directory*
-  holding one `<group>.txt` per group, TREXIO's portable text back end.
-- `trexio="path/to/file.h5"` writes to that path.
+`trexio=True` adds a planned, manifest-recorded wavefunction file.
+`trexio_backend="text"` writes `water.trexio`, a directory containing
+TREXIO's text files. A string or path passed as `trexio=` selects an explicit
+target. `False`, the default, writes no TREXIO file. Requested exports fail
+if the route cannot supply a Gaussian wavefunction. Successful job exports
+include the TREXIO paper in the citation output.
 
-The artefact is declared in the output plan, recorded in the `.system`
-manifest (bytes and SHA-256 for the HDF5 file), announced in the `.out`,
-and cites the TREXIO paper in `.bibtex` / `.references` only when the file
-was actually written. Like `write_molden_file=True`, a TREXIO request is a
-guarantee: a route that exposes no Gaussian AO wavefunction (the
-semiempirical and MLIP routes) refuses *before* the calculation starts.
-
-## Write and read a file directly
+Periodic Gaussian calculations accept the same options:
 
 ```python
-from vibeqc import BasisSet, Molecule, run_rhf, write_trexio, read_trexio
-
-mol = Molecule.from_xyz("h2o.xyz")
-basis = BasisSet(mol, "def2-svp")
-result = run_rhf(mol, basis)
-
-write_trexio("h2o.h5", mol, basis, result)             # HDF5
-write_trexio("h2o.trexio", mol, basis, result, backend="text")
-
-data = read_trexio("h2o.h5")
-mol2 = data.molecule()          # Molecule (bohr, charge, multiplicity)
-basis2 = data.basis_set(mol2)   # BasisSet rebuilt from the file's basis group
-for block in data.mo_blocks():  # libint AO order, columns are MOs
-    print(block.spin, block.coefficients.shape, block.occupations.sum())
-print(data.energy, data.metadata["code"])
+run_periodic_job(system, basis, method="RHF", output="crystal",
+                 kpoints=[2, 2, 2], trexio=True)
 ```
 
-`read_trexio` returns a `TrexioData` whose AO-indexed arrays are kept in
-the file's own AO order; `mo_blocks()`, `basis_set()` and
-`to_libint_order()` do the mapping back to vibe-qc's order. Restricted
-open-shell and unrestricted files come back as one block per spin.
+All computed k-point and spin blocks are retained, including complex
+coefficients and fractional occupations. The file carries the lattice,
+reciprocal lattice, reduced k points, weights and the MO-to-k-point mapping.
+A real Gamma wavefunction remains a periodic wavefunction in the file.
+For periodic geometry optimizations, this sidecar describes the initial
+SCF calculation, like the other periodic wavefunction sidecars; optimized
+geometries are written separately.
 
-## What is written
+The standalone exporter offers additional controls:
 
-| Group | Content |
-|---|---|
-| `metadata` | `code = ["vibe-qc <version>"]`, `description` (job label, version, git revision), TREXIO's own `package_version`. No author is written unless you pass `author=`. |
-| `nucleus` | `num`, `charge`, `coord` (**bohr**), `label`, `repulsion` |
-| `electron` | `num`, `up_num`, `dn_num` |
-| `basis` | `type = "Gaussian"`, `shell_num`, `prim_num`, `nucleus_index`, `shell_ang_mom`, `shell_factor`, `r_power`, `shell_index`, `exponent`, `coefficient`, `prim_factor` |
-| `ao` | `cartesian = 0`, `num`, `shell`, `normalization` |
-| `mo` | `type` (`RHF`, `UKS`, ...), `num`, `coefficient`, `energy`, `occupation`, `spin`, `class` |
-| `ao_1e_int` | `overlap`, `kinetic`, `potential_n_e`, `core_hamiltonian` (pass `write_integrals=False` to omit) |
-| `state` | `num = 1`, `id = 0`, `current_label`, `energy` (the SCF total energy) |
+```python
+from vibeqc import write_trexio
 
-Supported results: molecular RHF, UHF, RKS, UKS, and restricted open-shell
-(ROHF / ROKS) results of `run_job` or the `run_*` drivers.
+write_trexio("water.h5", mol, basis, result,
+             write_mo_integrals=True, write_eri=False)
+write_trexio("crystal.h5", None, basis, periodic_result, system=system,
+             kpoints=kmesh.kpoints, weights=kmesh.weights)
+```
 
-## What is not written
+`kpoints` on this Python API are Cartesian inverse-bohr coordinates;
+`weights` must sum to one. They may be omitted when the result retains its
+sampling. Molecular ECP parameters come from the applied SCF result. For a
+custom result, pass the options used to compute it as `ecp_source=options`.
+Missing ECP parameters are an error, including when the density reveals a
+valence-only calculation.
 
-- **`ecp`.** A run that used an effective core potential is *refused*
-  (`ValueError`), both when the runner knows it and, as a safety net, when
-  the density integrates to fewer electrons than the molecule has. A file
-  with full nuclear charges next to valence-only orbitals would be an
-  incomplete Hamiltonian that no reader could detect.
-- **`rdm`.** The one-particle density of a single determinant is
-  `diag(occupation)` in the MO basis and follows from `mo.occupation`;
-  correlated density matrices are a later increment.
-- **`ao_2e_int`, `mo_1e_int`, `mo_2e_int`**, **`cell` / `pbc`** (this writer
-  is molecular; Bloch orbitals are refused), **`determinant` / `csf`**.
-- **Cartesian shells.** vibe-qc evaluates spherical-harmonic shells only.
+Replacement files are staged beside the destination and installed after the
+TREXIO handle closes successfully. A failed write preserves the previous
+file. Text directories are checked for TREXIO metadata and recognized files
+before replacement. `overwrite=False` refuses an existing target.
 
-## Conventions
+## Read and seed a calculation
 
-These are the conventions the file relies on, with the section of the
-TREXIO specification (`trex.org`, v2.6.1) each comes from. The TREXIO paper
-itself is on the companion literature library's wishlist, so the
-implementation follows the library's own specification and is pinned by
-the checks in the next section.
+```python
+from vibeqc import read_trexio, run_rhf, InitialGuess
 
-- **Units.** "All data are stored in atomic units": coordinates in bohr
-  (vibe-qc's internal unit), energies in Hartree.
-- **Radial functions** (basis group). TREXIO stores
-  `R_s(r) = N_s r^{n_s} sum_k f_ks a_ks exp(-gamma_ks r^2)` with `r_power`
-  `n_s = 0` for Gaussians. vibe-qc writes `prim_factor` `f_ks = N(alpha, l)
-  = (2 alpha/pi)^(3/4) (4 alpha)^(l/2) / sqrt((2l-1)!!)`, the norm of the
-  axial Cartesian primitive `x^l exp(-alpha r^2)`, which reproduces the
-  specification's worked H2 example digit for digit; `coefficient`
-  `a_ks = c_eff / f_ks` where `c_eff` is libint's stored contraction
-  coefficient; and `shell_factor = 1`. The product `f_ks a_ks` is therefore
-  exactly the coefficient vibe-qc evaluated with, and `a_ks` coincides with
-  PySCF's `bas_ctr_coeff` (measured to 1e-8 on H2O/def2-SVP), so vibe-qc and
-  `trexio-tools`' PySCF converter write the same basis group.
-- **Angular functions and normalization** (ao group). Every AO is a real
-  regular solid harmonic `S_l^m = sqrt(4 pi/(2l+1)) r^l Y_l^m`; all `2l+1`
-  members of a shell share one norm and are unit-normalized, so
-  `ao.normalization = 1` throughout and `ao.cartesian = 0`.
-- **AO order** (ao group). TREXIO orders real solid harmonics
-  `m = 0, +1, -1, +2, -2, ...` (`p` is `pz, px, py`); libint orders them
-  `m = -l, ..., +l` (`p` is `py, pz, px`). The permutation is applied to
-  the MO rows and to both indices of every `ao_1e_int` matrix.
-- **MO layout** (mo group). `mo.coefficient` is `[mo.num, ao.num]`
-  row-major, one MO per row. Unrestricted and restricted open-shell results
-  are written as spin-orbitals: the alpha block (`mo.spin = 0`) followed by
-  the beta block (`mo.spin = 1`), occupations 1/0, so `mo.num` is twice the
-  number of spatial orbitals; a closed-shell restricted result is written
-  once with occupations 2/0. `mo.class` is `Inactive` for an occupied and
-  `Virtual` for an empty orbital.
-- **One-electron integrals.** `potential_n_e` is `<p|V_ne|q>` with
-  `V_ne = -Z_A/|r - R_A|`; `core_hamiltonian = kinetic + potential_n_e`.
+data = read_trexio("water.h5")
+mol = data.molecule()
+basis = data.basis_set()
+options = data.ecp_options()  # RHFOptions; also reconstructs an ECP if present
+options.initial_guess = InitialGuess.READ
+result = run_rhf(mol, basis, options, read_from="water.h5")
+```
 
-## How the conventions are verified
+`run_job(..., initial_guess="read", read_from="water.h5")` and the molecular
+SCF drivers use the existing density projection and population checks.
+An ECP target calculation must have its ECP options populated, as above;
+loading an initial guess does not silently change the target Hamiltonian.
+`data.ecp_options(existing_options)` also accepts UHF, RKS and UKS options.
+For native periodic drivers, pass their options object; the ECP centers are
+then populated through `ecp_home_centers`.
 
-- **In-process round trip** (`tests/test_output_trexio.py`): H2O/def2-SVP
-  RHF and the OH radical UHF are written on both back ends and read back;
-  nuclei, basis parameters, MO coefficients, energies, occupations and the
-  one-electron matrices agree to 1e-12, and `C^T S C = 1` holds with the
-  overlap rebuilt from the *file's* basis group.
-- **Out-of-process PySCF check** (`examples/regression/runner_trexio_pyscf.py`,
-  CLAUDE.md § 10): in a separate interpreter with `trexio` and `pyscf`
-  installed, a PySCF `Mole` is rebuilt from the file's `nucleus` and `basis`
-  groups alone; the stored MOs must be orthonormal in PySCF's overlap, the
-  file's overlap must match PySCF's, and the SCF energy rebuilt from the
-  stored MOs and occupations with PySCF's own integrals must agree with the
-  file's `state.energy` to 1e-8 Ha. A wrong permutation, phase or
-  normalization factor moves that energy by millihartree. Run it with
-  `VIBEQC_TREXIO_PYTHON=/path/to/python pytest tests/test_output_trexio.py`;
-  the test skips when that interpreter is not configured.
+Periodic READ routes accept complete TREXIO k-point/spin wavefunctions.
+They verify the source basis, lattice, k points and quadrature weights through
+the same restart machinery as QVF and in-memory results. A different k-point
+ordering is mapped explicitly; an incompatible mesh is rejected.
+RDM coherence between separate spin or k-point blocks is preserved in the
+general data API and refused by the native block-density restart.
+`data.periodic_system()` reconstructs the cell. Files from vibe-qc retain
+the periodic dimension in their description; for foreign low-dimensional
+files, supply `dim=1` or `dim=2` explicitly.
 
-## Citation
+Convenience views include:
 
-Writing or reading a TREXIO file cites Posenitskiy *et al.* 2023 in the
-job's `.out` references block, `.bibtex` and `.references`
-(`routes.libraries.trexio` in the citation database), alongside the basis
-set and method citations of the run.
+- `data.mo_blocks()`: native-order coefficient columns, energies,
+  occupations, spin and k-point index.
+- `data.density_matrices()`: an AO density per orbital block, using the
+  stored one-particle RDM when present, otherwise the occupations.
+- `data.to_libint_order(matrix)`: native AO ordering and normalization for
+  an AO operator matrix.
+- `data.fields`: every present dataset in the file's original conventions.
+
+Native basis reconstruction requires real, spherical Gaussian primitives
+with zero radial power. Cartesian, Slater, numerical and plane-wave data,
+complex basis primitives and other format features remain accessible through
+`fields` and can be written back without constructing a native basis.
+Missing optional MO energies and occupations appear as NaN in convenience
+views; no artificial values are written into the file.
+
+## Coverage
+
+| Group | Calculation exporter | General data API |
+|---|---|---|
+| `metadata`, `nucleus`, `electron`, `state` | Provenance, geometry, effective charges, electron counts and total energy | Every installed-library field, including state labels and links |
+| `basis`, `ao`, `mo` | Spherical Gaussian basis, explicit normalizations, real/complex orbitals, energies, occupations, spin and k-point indices | All supported basis types and fields |
+| `ecp` | Applied XML-library or inline scalar ECP, including zero-core potentials | All ECP fields |
+| `cell`, `pbc` | Periodic cells, reciprocal vectors, all sampled k points and weights | All cell and PBC fields |
+| `ao_1e_int` | Molecular overlap, kinetic, effective nuclear attraction, ECP and core Hamiltonian; available overlap/core matrices at Gamma | All real/imaginary operator fields |
+| `mo_1e_int` | Molecular operators with `write_mo_integrals=True` | All fields |
+| `ao_2e_int` | Molecular AO ERIs with `write_eri=True`, using quartic memory | Sparse ERIs and Cholesky factors |
+| `mo_2e_int`, `amplitude` | Supplied through `extra_fields` | Sparse integrals and excitation amplitudes |
+| `rdm` | Molecular one-particle density, including separate spin blocks for open-shell results | All RDMs and decompositions |
+| `determinant`, `csf`, `grid`, `jastrow`, `qmc` | CASCI/CASSCF/FCI determinants; other data through `extra_fields` | All installed-library fields, including buffered arrays |
+
+The automatic exporter covers SCF and molecular CASCI/CASSCF/FCI results.
+Other correlated wavefunctions, coupled-cluster amplitudes and higher RDMs
+can be supplied in their MO basis through the general API. An SCF-backed
+post-SCF job does not automatically export its correlation amplitudes.
+Multi-k AO integrals have no k-index dimension in TREXIO and are not
+replaced by molecular or selected-k matrices.
+Periodic density reconstruction uses the stored occupations and MOs.
+
+## CI and CASSCF wavefunctions
+
+`run_job(..., method="casci" | "casscf" | "fci", trexio=True)` writes the
+actual determinant expansion, common spatial MO basis and spin-resolved
+one-particle RDMs. Frozen doubly occupied core orbitals are included in every
+determinant. CASSCF uses the optimized orbitals to which its CI coefficients
+refer. For multiple roots, the job export selects root zero, with that root's
+energy, rather than attaching the state-averaged energy to a single state.
+
+For a low-level CASCI or CASSCF result:
+
+```python
+write_trexio("ci.h5", mol, basis, scf_result,
+             ci_result=cas_result, n_core=0, root=0)
+```
+
+When `ci_result` is a CASSCF result, its cumulative rotation is applied to
+`scf_result.mo_coeffs`. Other determinant solvers can provide a result-like
+object with `determinants`, `ci_coeffs`, `n_active_orb` and `e_total` in the
+same common spatial basis. `root` selects a stored CI root. Orbital energies
+are omitted for these correlated orbital sets.
+
+## General data API and conversion
+
+```python
+import numpy as np
+from vibeqc import read_trexio_fields, write_trexio_fields, TrexioSparse
+
+fields = read_trexio_fields("source.h5")
+write_trexio_fields("portable.trexio", fields, backend="text")
+
+# Fields use TREXIO API names and TREXIO units/index order.
+fields["rdm_2e"] = TrexioSparse(
+    indices=np.array([[0, 1, 0, 1]], dtype=np.int32),
+    values=np.array([0.25]),
+)
+write_trexio_fields("with-rdm.h5", fields)
+```
+
+The API discovers fields from the installed official library rather than
+bundling a separate schema. All its scalar, dense, sparse, buffered and
+determinant-bitfield storage types are supported. It accepts partial files
+and preserves group data across backend conversion. `fields=[...]` on the
+reader selects a subset. `chunk_size=65536` controls sparse and buffered
+I/O; returned arrays still occupy memory proportional to the data read.
+Sparse tensors retain their stored indices without implicit symmetry
+expansion. Omit empty sparse or buffered datasets.
+
+`data.write(path, backend=...)` serializes `data.fields`. Edit that mapping
+to change serialized data; the named convenience attributes are views for
+native conversion. TREXIO's file-owned package version and unsafe flag are
+regenerated, and its automatically generated determinant count is checked.
+Each state remains a separate file; state links are preserved as strings,
+and linked files are not copied or followed automatically.
+UTF-8 metadata is supported, and HDF5 string reads grow their buffers to
+avoid the Python wrapper's fixed-length truncation. TREXIO 2.6's text parser
+limits lines to 1023 bytes and cannot preserve leading whitespace or
+multiline strings. Such text writes fail before replacing the destination;
+use HDF5 for those strings. String arrays cannot contain TREXIO's newline
+delimiter or empty entries. Large MO label arrays use a correctly sized
+buffer around the library's C API, avoiding the Python binding's fixed
+4096-byte array buffer.
+
+## Conventions and verification
+
+The implementation follows the
+[TREXIO specification](https://trex-coe.github.io/trexio/trex.html) and
+Posenitskiy et al., *J. Chem. Phys.* **158**, 174801 (2023),
+[doi:10.1063/5.0148161](https://doi.org/10.1063/5.0148161).
+
+Coordinates use bohr and energies use Hartree. Effective nuclear charges are
+stored for ECP nuclei; adding `ecp.z_core` recovers the atomic number even
+without an element label. TREXIO's ECP radial power is libecpint's input
+power minus two. Spherical AO order is `0,+1,-1,+2,-2,...`, with explicit
+primitive, shell and AO factors. MO coefficients are rows in TREXIO and
+columns in the native API. The reader handles interleaved shell maps and
+folds AO normalization factors into native MO coefficients. ERIs use
+physicists' ordering in TREXIO.
+
+The tests reconstruct overlaps, densities and ECP Hamiltonians from exported
+parameters, contract exported ERIs to recover an HF energy, exercise READ
+restarts and both backend storage types, and verify failed replacements.
+`examples/regression/runner_trexio_pyscf.py` independently rebuilds the
+all-electron and ECP HF energies, and CI energies, from the stored
+wavefunction with PySCF in a separate process. Set `VIBEQC_TREXIO_PYTHON` to
+an interpreter containing TREXIO and PySCF to enable those checks in
+`tests/test_output_trexio.py` and `tests/test_output_trexio_extended.py`.
+They are the only tests that can detect a consistent AO ordering or
+normalization error, because the in-process round trips share the writer's
+convention and cancel it. Without that interpreter they skip, and the skip
+reason names the gate that did not run. Set
+`VIBEQC_REQUIRE_TREXIO_REFERENCE=1` as well to make the missing interpreter a
+failure instead of a skip; a release gate that is meant to run this check
+should set it so the check cannot pass by omission.
+The ECP reference check allows a microhartree for the different native and
+reference ECP quadratures; the native Hamiltonian round trip is checked
+separately to `2e-11` hartree.

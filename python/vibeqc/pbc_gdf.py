@@ -601,6 +601,31 @@ def _gamma_dense_core_gdf_parity_held(
     return bool(tight_basis_requires_tail or compact_dense_core)
 
 
+def _reject_legacy_gamma_gdf(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    entry: str,
+) -> None:
+    """Refuse an automatic untailed legacy fallback in the held class (#95).
+
+    The fallback has no RSGDF tail, regardless of the requested builder or
+    cutoff. Classify its actual untailed domain, including tight bases in
+    sparse molecular boxes, before constructing any legacy SCF integrals.
+    """
+    if _gamma_dense_core_gdf_parity_held(system, "rsgdf", ao_basis=ao_basis):
+        raise NotImplementedError(
+            f"{entry}: legacy Gamma GDF fallback is unavailable for this "
+            "tight-core basis/cell: it has no high-|G| tail correction and "
+            "can return a wrong absolute energy (#95). The requested "
+            "convergence or routing options are not supported by the pure "
+            "Gamma route. Use an explicit kpoints=(1, 1, 1) with "
+            "gdf_method='rsgdf' in run_periodic_job (kmesh=(1, 1, 1) in "
+            "run_krhf_periodic_gdf) for the bulk SR/LR driver, or remove "
+            "the conflicting options. An explicit tail cutoff cannot "
+            "repair the legacy driver."
+        )
+
+
 def _max_ao_primitive_exponent(basis: BasisSet) -> Optional[float]:
     try:
         return max(float(max(shell.exponents)) for shell in basis.shells())

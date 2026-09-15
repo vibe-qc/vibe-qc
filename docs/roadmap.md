@@ -28,7 +28,7 @@ abstract feature list:
    that overlap: production linear-scaling DFT for insulators (ONETEP/
    BigDFT/CONQUEST/SIESTA-style order-N, noted as "far future" under
    locality exploitation below), DBCSR-style sparse-tensor GPU
-   contraction, and battle-tested `mpirun`-scale MPI (v0.22.0 covers the
+   contraction, and battle-tested `mpirun`-scale MPI (the production MPI milestone covers the
    vibe-qc-native version of the same target). Not scheduled as its own
    milestone; tracked as "the second parity target" so individual CP2K-
    originated items don't read as disconnected acceleration tricks.
@@ -37,12 +37,22 @@ No other program is a parity target. Comparisons to PySCF, Psi4, or
 anyone else in this document are validation references (§ 10), not
 goals to catch up to.
 
-**v0.15.0 "Neese's Cheetah" is a comprehensive feature-freeze release**
+**Status, 2026-09-13.** This release is `v0.17.3` "Tew's Tern", with
+accumulated bug fixes and expanded optional TREXIO support. The next minor's headline
+is native BvK periodic local correlation. What each release contains is
+recorded in [the changelog](changelog.md); the shipped milestones below
+summarize and point there.
+
+**Open milestones are themes, not version numbers** (maintainer decision,
+2026-09-13). They are listed in their intended order, and a version number
+is attached only when a release is cut. v0.16.0 and v0.17.0 each took the
+number of a planned milestone they did not deliver, which renumbered the old
+ladder twice.
+
+**v0.15.0 "Neese's Cheetah" was a comprehensive feature-freeze release**
 (frozen at e94221f2): the maintainer's scope decision was "add everything
 we have ready, even if not roadmap-due; rework the roadmap rather than gate
-scope by it." This file reflects that rework -- every feature on `main`
-through the freeze is marked shipped, and the v0.18+ plan is rebuilt around
-what genuinely remains.
+scope by it." The milestones through v0.15.0 reflect that rework.
 
 The milestone list below is the *engineering* roadmap. The
 [Tutorial parity matrix](#tutorial-parity-orca--crystal) at the bottom
@@ -654,8 +664,8 @@ focused minor release below:
 | Item | New milestone |
 |------|---------------|
 | Periodic atomic gradients (G1) | v0.6 |
-| Periodic stress tensor (G2) + slab builder (B1) | v0.7 |
-| Phonons (Phase 21) | v0.8 |
+| Periodic stress tensor (G2) + slab builder (B1) | v0.7 (stress partly shipped; see the v0.8.0 stress section) |
+| Phonons (Phase 21) | v0.8 (Γ-point only; see the v0.8.0 phonons section) |
 | Implicit solvation (S1) | v0.9 |
 | Grimme D4 dispersion (D2) | v0.10 |
 | Geometry-symmetrize pipeline (GS) + DOC1-full | v0.11 |
@@ -812,7 +822,7 @@ correct and route-certified redesign:
   - Be selectable via a runtime parameter
     (`multipole_engine="libint"` or `"polipo"`) for cross-validation.
 
-- **BIPOLE far-field MPI** (v0.22.0, MPI4): after route certification,
+- **BIPOLE far-field MPI** (production MPI milestone, MPI4): after route certification,
   farm far-field quartet batches across MPI ranks for very large supercells
   (200k+ quartets).
   Architecture: master rank distributes dispatch entries across workers;
@@ -1803,6 +1813,15 @@ with respect to lattice strain is well-defined.
 > **Codename TBD** *(candidates: Born's Hare, Neese's Magpie,
 > Vinet's Pangolin)*.
 
+> **Status, 2026-09-13: partly shipped before the repository split.**
+> Finite-difference stress over strain exists for GPW and GAPW
+> (`compute_stress_gpw`, `compute_stress_gapw`), the semiempirical routes and
+> MACE, and the ASE GPW calculator exposes `stress`. There is no analytic
+> (G3a) stress, none on the GDF or BIPOLE routes, and cell optimization is
+> refused on GDF, slab GDF and AICCM. The equation of state is a third-order
+> Birch-Murnaghan fit helper (`vibeqc.eos.fit_birch_murnaghan`), with no
+> Vinet form and no volume-sweep driver.
+
 🎯 **Headline feature**, periodic stress tensor σ_αβ → cell-
 parameter optimization, exact equation-of-state, surface energies.
 Was originally v0.7; promoted out of the way of the periodic-SCF-
@@ -1820,6 +1839,13 @@ correctness flagship.
 ### `v0.8.0`, phonons
 
 > **Codename TBD** *(candidates: Debye's Stork, Born's Hedgehog)*.
+
+> **Status, 2026-09-13: 21a shipped before the repository split; 21b and 21c
+> remain open.** Γ-point finite-difference phonons exist on GAPW
+> (`PhononCalculator`, `compute_dynamical_matrix_fd`) and on the BIPOLE route
+> that basis optimization uses, and `run_periodic_job(hessian=True)` returns
+> finite-difference frequencies. There is no phonon dispersion, no
+> quasi-harmonic thermodynamics, and no ZPE from `run_periodic_job`.
 
 🎯 **Headline feature**, Γ-point + finite-displacement phonon
 dispersion + quasi-harmonic thermodynamics for solids.
@@ -2548,11 +2574,18 @@ to other dev chats. Two are already roadmapped; one is new:
 > below; actually shipped wavefunction-methods scaffolding (MP2->MP3->MP4->
 > CCD->CCSD) + full semiempirical stack (GFN2-xTB, PM6, OM1/OM2/OM3) +
 > native-D4 backend (experimental) + basissetdev integration.
-> See CHANGELOG. Composite 3c methods (below) remain queued.
+> See CHANGELOG. Composite 3c methods (below) shipped later, before the
+> repository split; see their status note.
 
-### Composite "3c" methods (queued)
+### Composite "3c" methods
 
-🎯 **Headline feature** (queued), keyword-shortcut support for the
+> **Status, 2026-09-13: shipped before the repository split, molecular only.**
+> `run_job(method=...)` accepts the composite recipe names that
+> `vibeqc.list_composites()` lists, including `r2scan-3c`, `pbeh-3c` and
+> `hse-3c`; see [composite methods](user_guide/composites.md). HSE-3c has no
+> periodic route yet, and the periodic flavours need recalibration.
+
+🎯 **Headline feature**, keyword-shortcut support for the
 modern Grimme-school **composite "3c" methods**: a single name
 (`r2scan-3c`, `ωb97x-3c`, `b97-3c`, `pbeh-3c`, `hf-3c`,
 `b3lyp-3c`, `hse-3c`) bundles a tuned basis + dispersion + gCP
@@ -2751,9 +2784,8 @@ algorithmic haul that shipped during the cycle:
   `solver=` keyword on `run_job`).
 - ✅ **VV10 nonlocal correlation** (un-gates ωB97X-V); ωB97M-V meta-GGA hybrid.
 - ✅ **r²SCAN01 meta-GGA**, molecular + periodic.
-- ✅ **Periodic SAP + MINAO initial guesses**, including valence ECP references;
-  **FRAGMO** fragment superposition for molecules and explicit periodic atom images.
-  Native periodic READ and full-HF PATOM seeds for multi-k GPW/GAPW are available.
+- ✅ **Periodic SAP + MINAO initial guesses**; **FRAGMO** fragment-superposition
+  guess (molecular).
 - ✅ **Periodic density mixers** (Anderson + Broyden) in multi-k RKS driver.
 - ✅ **Methfessel-Paxton & Marzari-Vanderbilt smearing** (M6/M7).
 - ✅ **Periodic ECP integrals** from CRYSTAL-format inline data.
@@ -2843,7 +2875,8 @@ already tagged in a prior release. Major items:
 **IO + infrastructure:**
 - ✅ **QVF v1.2** -- four new section kinds (localized orbitals, bond orders,
   fat bands, QTAIM), NTO writer dispatch, runner auto-population.
-- ✅ **TD-DFT NTO writer** path ready (compute side blocked on TD-DFT in v0.20).
+- ✅ **TD-DFT NTO writer** path ready (the compute side is planned in the multireference and
+  excited-state milestone).
 - ✅ **vibe-view:** QVF v1.2 consumption, GROMACS .gro + Gaussian .gjf/.com
   import.
 - ✅ **basis_toolkit** (`python/vibeqc/basis_toolkit/`) -- importers (BSE, CRYSTAL,
@@ -2916,7 +2949,7 @@ milestone from the ladder below -- which is why the native BvK milestone that
 previously held this number moved to v0.17.0, and the periodic-CC, MR,
 properties and MPI milestones each moved up one with it. (v0.17.0 then
 consumed a number the same way, so that ladder shifted once more; native BvK
-now sits at v0.18.0. See the v0.17.0 section below.)
+now leads the open milestones. See the v0.17.0 section below.)
 
 **The split.** `mpei/vibeqc` became four fresh-history repositories, each
 adoptable on its own:
@@ -2942,7 +2975,8 @@ three schema copies together, since no dependency edge does.
 
 **Also in v0.16.0:**
 
-- ✅ **Semiempirical periodic electrostatics corrected** -- the GFN2-SECCM
+- ✅ **Semiempirical periodic electrostatics corrected** (GFN2-xTB and
+  GFN2-SECCM are gated experimental) -- the GFN2-SECCM
   shell gamma and the periodic Γ GFN2-xTB electrostatics are real lattice
   sums over the Wigner-Seitz image records on the shared periodic kernel,
   replacing three hand-rolled Ewald implementations; the periodic SCC-DFTB
@@ -2970,7 +3004,7 @@ three schema copies together, since no dependency edge does.
 the milestone that held it. The native BvK route this codename honours is
 *not* in this tag; what is here is the symmetry and periodic groundwork that
 route has to stand on, plus two unrelated deliverables that were ready. The
-BvK milestone moved to v0.18.0 and the ladder below it shifted once more.
+BvK milestone stayed next in line, and the ladder below it shifted once more.
 
 The roadmap anticipated exactly this: "if native BvK DLPNO-MP2 is not ready
 after the paper freeze, choose a different minor headline rather than
@@ -2991,7 +3025,7 @@ re-selling the megacell route that already shipped in v0.15.x."
 
 - ✅ **Finite BIPOLE Seitz supports audited**, and **BIPOLE support audits
   bound to validated AO maps**.
-- ✅ **Exact physical quartet supports for BIPOLE SR** -- a bounded
+- ✅ **Exact physical quartet supports for BIPOLE SR** (private diagnostic) -- a bounded
   geometric builder enumerating SR quartet images from two AO-product
   distance limits and a geometric midpoint limit, on exact rational
   interpretations of the supplied binary64 data. Pair-dependent supports
@@ -3000,7 +3034,7 @@ re-selling the megacell route that already shipped in v0.15.x."
 - ✅ **Independent physical product supports for the native BIPOLE LR
   Gram** kernel: separate left/right AO-product cell lists with complete
   admission and provenance for both.
-- ✅ **Exact-mesh HF long-range contractions bridged**, and **zero-mode
+- ✅ **Exact-mesh HF long-range contractions bridged** (private), and **zero-mode
   overlap checks bound to the finite source.**
 
 > ⚠️ These are *supports and audits*, not a production route. Production HF
@@ -3021,23 +3055,39 @@ re-selling the megacell route that already shipped in v0.15.x."
 - ✅ **The 16 cc-pVnZ-PP orbital sets** shipped.
 - ✅ **vibe-basis 0.11.0**, the cohesive objective (M2 code).
 
-**Also in v0.17.0:** `correlation=` on the AICCM front door (four-centre
+**Also in v0.17.0:** experimental `correlation=` on the AICCM front door (four-centre
 arm) and Gamma-CCM correlation citation stamps and routes; per-product
 marketing pages for vibe-qc, vibe-view and vibe-queue, with the website
 deploy no longer overwriting companion documentation subtrees.
 
-### `v0.18.0`, native BvK periodic local correlation
+**Patch releases.** v0.17.1 (2026-09-10) added on-demand Basis Set Exchange
+basis fetching, vibe-basis 0.12.0 (the topology search), periodic and ECP
+initial-guess coverage (valence ECP references for SAP and MINAO, FRAGMO
+with explicit periodic atom images, native periodic READ and full-HF PATOM
+seeds), open-shell all-k QVF restart, the COSMO FINE Cavity's C1 outward
+projection, and experimental AICCM correlation on the real-Gamma arm with
+CCSD and DLPNO. v0.17.2 (2026-09-13) added Direct COSMO-RS, completed
+pob-TZVP (Rb-I) and pob-DZVP-rev2, and fixed the pob-TZVP-rev2
+effective-core potentials. It ships the periodic GDF cost regressions #206
+and #196 as known issues. v0.17.3 expands optional TREXIO exchange while
+keeping QVF as the default, fixes periodic GFN2 budget handling and CCM
+tolerance validation, and consumes published vibe-view v2.17.0. The GDF
+issues remain open; experimental MSINDO CCM stability has partial evidence,
+without accepted public force or Hessian coverage. All patches are itemized
+in [the changelog](changelog.md).
 
-> **Codename TBD.**
+### Next minor: native BvK periodic local correlation
+
+> **Codename:** not yet named, and no artwork is prepared.
 
 **Roadmap adjustment after v0.15.x.** The old headline, "periodic
 correlation", is now too broad: the Paper II megacell/toroidal route shipped
 across v0.13-v0.15. `vibeqc.periodic_megacell_mp2` and the AICCM/CCM
 experimental lines already cover periodic MP2 -> DLPNO-CCSD(T) routes with
 TDL-style extrapolation and PySCF.pbc KMP2 parity checks. Those routes remain
-important, but they are no longer a clean v0.18.0 headline.
+important, but they are no longer a clean headline for this milestone.
 
-The remaining v0.18.0 deliverable is the **native BvK /
+The remaining deliverable is the **native BvK /
 translational-symmetry route** from the CRYSCOR/Turbomole periodic local
 correlation lineage: unique-pairs-only, k-aware, no explicit molecular
 megacell expansion, consuming the Stage 1-4 periodic-DF foundation.
@@ -3050,7 +3100,7 @@ megacell expansion, consuming the Stage 1-4 periodic-DF foundation.
   Nejad, Zhu, Tew et al. 2025 Paper I lineage. Molecular DLPNO-MP2 is shipped;
   the missing work is the periodic PAO/PNO domain machinery, pair screening,
   and parity surface in the translational representation.
-- **Decision point for the public 0.16 headline:** if native BvK DLPNO-MP2 is
+- **Decision point for the next minor's headline:** if native BvK DLPNO-MP2 is
   not ready after the paper freeze, choose a different minor headline rather
   than re-selling the megacell route that already shipped in v0.15.x.
 - **FCIQMC in a periodic mean field** (Christlmaier et al. 2022) remains a
@@ -3059,20 +3109,20 @@ megacell expansion, consuming the Stage 1-4 periodic-DF foundation.
 **Detailed implementation guide:**
 [`handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md`](https://github.com/vibe-qc/vibe-qc/blob/main/handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md)
 
-### `v0.19.0`, periodic coupled cluster
+### Planned: periodic coupled cluster
 
-> **Codename TBD**.
+> **Codename candidate:** Berkelbach's Badger (provisional artwork proposal).
 
 - **Periodic canonical CCSD(T)** for small unit cells (McClain, Sun, Chan &
   Berkelbach 2017; Gruber et al. 2018 plane-wave TDL parity target).
   Molecular-first gate (v0.14.0): molecular CCSD(T) ✅.
 - **Periodic LNO-/DLPNO-CCSD(T)** as the scalable variant (Ye & Berkelbach 2024).
-  Gated on molecular DLPNO-CCSD (✅) and periodic DLPNO-MP2 (v0.18.0).
+  Gated on molecular DLPNO-CCSD (✅) and periodic DLPNO-MP2 (the native BvK milestone).
   Stages 7-8 of the periodic-local-correlation guide.
 
-### `v0.20.0`, multireference + excited-state extensions
+### Planned: multireference + excited-state extensions
 
-> **Codename TBD** *(candidate: Runge's Raccoon, Runge-Gross TDDFT theorem)*.
+> **Codename candidate:** Runge's Raccoon, for the Runge-Gross TDDFT theorem.
 
 > Molecular MR foundation (25a-f plus IC-CASPT2) already shipped across
 > v0.12-v0.15. What remains here:
@@ -3100,10 +3150,10 @@ megacell expansion, consuming the Stage 1-4 periodic-DF foundation.
 - PNO-CASPT2 / PNO-MS-CASPT2.
 - Local NEVPT2 via LVMOs.
 
-### `v0.21.0`, properties suite
+### Planned: properties suite
 
-> **Codename TBD** *(candidate: Stone's Sloth, A. J. Stone, molecular
-> response properties)*.
+> **Codename candidate:** Stone's Sloth, for A. J. Stone and molecular
+> response properties.
 
 The user-facing observables milestone. Several items already shipped ahead
 of this slot (Mulliken/Löwdin/Mayer in v0.3.0; dipole in v0.3.0; molecular
@@ -3111,9 +3161,13 @@ Hessian/IR in v0.5.0; QTAIM in v0.15.0; COOP/COHP in v0.15.0; Mayer bond
 orders in v0.15.0). This milestone gathers the remainder.
 
 **Charge analysis (extended):**
-- **PR1** Hirshfeld + iterative-Hirshfeld charges.
+- **PR1** Iterative-Hirshfeld and periodic Hirshfeld charges. Classical
+  molecular Hirshfeld charges already ship (`vq.hirshfeld_charges`, also in
+  the `run_job` population output).
 - **PR3** ESP-fit charges (CHELPG, Merz-Kollman, RESP).
-- **PR4** NBO / NPA.
+- **PR4** Production NBO and NPA. Provisional NBO helpers (`vibeqc.nbo`)
+  already ship as experimental; NPA is deliberately unavailable and raises
+  `NotImplementedError`.
 
 **Multipole moments + ESP:**
 - **PR5** quadrupole + octupole moments.
@@ -3137,14 +3191,19 @@ orders in v0.15.0). This milestone gathers the remainder.
 - **PR23-PR25** ELF, NCI/RDG, Laplacian + kinetic-energy density.
 
 **Energy decomposition:**
-- **PR26** LMOEDA / Hayes-Stone EDA (molecular, SCF/DFT variant).
+- **PR26** LMOEDA / Hayes-Stone EDA (molecular, SCF/DFT variant), wired into
+  `run_job` and checked against a reference. Experimental helpers
+  (`vibeqc.eda.eda_lmo`, `eda_morokuma`) already ship and take
+  caller-supplied fragment matrices.
 
 **Excited-state properties:**
 - **PR27** Transition densities + NTOs (QVF writer ready).
 - **PR28** Oscillator strengths + UV/Vis spectrum reconstruction.
 - **PR29** ECD (Electronic Circular Dichroism).
 
-### `v0.22.0`, production MPI and large-system scaling
+### Planned: production MPI and large-system scaling
+
+> **Codename candidate:** Amdahl's Axolotl (provisional artwork proposal).
 
 Production distributed-memory support, after the v0.15.x release-paper
 hardening line and after the periodic correlation/properties work has
@@ -3186,6 +3245,8 @@ show a win.
 
 ### `v1.0.0`, feature complete
 
+> **Codename candidate:** Schrödinger's Llama (provisional artwork proposal).
+
 Final polish before declaring "feature complete across both molecular
 and periodic." Remaining items:
 
@@ -3196,7 +3257,7 @@ and periodic." Remaining items:
   rigid-rotor / quasi-harmonic switches).
 - Miscellaneous bug fixes uncovered in the larger correlation /
   excited-state / periodic / properties stacks.
-- Production MPI parallelism is tracked in v0.22.0; the v0.12.0 work
+- Production MPI parallelism is tracked in the production MPI milestone; the v0.12.0 work
   shipped only the optional `mpi4py` substrate and the experimental GPW
   grid overlay.
 
@@ -3662,7 +3723,10 @@ feature-complete, or after v2.x CCM?) is open.
 ## Release codenames
 
 The [upcoming artwork gallery](codename_artwork.md) contains prepared images
-for v0.18.0 through v1.0.0, with candidate or provisional names clearly marked.
+for four open milestones and v1.0.0. Their names are candidates paired with
+milestone themes; a codename is assigned when its release is cut.
+``RELEASE_CODENAMES`` in ``python/vibeqc/banner.py`` is the source of truth
+for released codenames, and the catalog table below mirrors it.
 
 ```{toctree}
 :hidden:
@@ -3680,9 +3744,8 @@ Naming rules:
   flagship feature, typically the person whose work the milestone
   most directly builds on. For v0.5.0 (vibrations / Hessian /
   thermochemistry) that's E. Bright Wilson (FG-matrix vibrations).
-  For a future v0.15.0 (DLPNO-CCSD(T)) that might be Frank Neese
-  (DLPNO-CCSD(T) in ORCA) or Riplinger / Hansen (the DLPNO method
-  papers).
+  For v0.15.0 (DLPNO-CCSD(T)) that was Frank Neese (DLPNO-CCSD(T)
+  in ORCA).
 * **Animal** is random and intentionally a bit silly. The
   juxtaposition of a famous physical chemist with an unexpected
   animal is the joke ("Schrödinger's Llama", "Ewald's Cheetah",
@@ -3702,8 +3765,8 @@ Where the codename appears:
   is fun even before the tag drops. The lookup logic strips
   ``.devN`` / ``aN`` / ``bN`` / ``rcN`` PEP-440 suffixes; see
   :func:`vibeqc.banner.codename_for_version` for the catalog.
-* The CHANGELOG header for that release: ``## [0.5.0], DATE,
-  "Wilson's Otter"``.
+* The CHANGELOG header for that release: ``## [v0.5.0] - YYYY-MM-DD -
+  *Wilson's Otter*``.
 * The ``git tag -a`` annotation: title line includes the codename.
 * The release-notes blog post / website announcement.
 
@@ -3723,20 +3786,18 @@ pre-staged one. When you need the codename in docs or code:
   codename, i.e. whatever ``codename_for_version`` returns for the
   released version number, not the pre-staged next one.
 
-Pre-policy releases (v0.1.0 through v0.4.0) have been **retroactively
+Pre-policy releases (v0.1.0 through v0.4.0) were **retroactively
 assigned codenames** in the v0.15.1 cycle. Their original tagged
-banners read ``Release v0.4.0`` etc. without a quoted suffix
-- the policy starts at v0.5.0 with no further back-naming;
-  v0.1.0-v0.4.0 were retrospectively assigned in the v0.15.1 cycle.
+banners read ``Release v0.4.0`` etc. without a quoted suffix.
 
 Implementation. The catalog lives in
-``python/vibeqc/banner.py`` as ``_RELEASE_CODENAMES`` (plain Python
+``python/vibeqc/banner.py`` as ``RELEASE_CODENAMES`` (plain Python
 dict). When cutting a new minor release, add the entry there in
 the same commit that bumps ``pyproject.toml``. Patch releases
-inherit their parent minor's codename automatically (the lookup
-uses the major.minor.patch key but the catalog stores only
-canonical minors and the lookup falls through). 5 tests in
-``tests/test_banner_codename.py`` pin the catalog contract.
+inherit their parent minor's codename automatically: the lookup tries
+the full version, then falls back to the minor. Three patch releases
+carry their own entry (v0.7.1 to v0.7.3).
+``tests/test_banner_codename.py`` pins the catalog contract.
 
 Codename catalog (filled in as releases ship):
 
@@ -3749,7 +3810,7 @@ Codename catalog (filled in as releases ship):
 | ``v0.4.0`` | **"Hellmann's Hedgehog"** | Hans Hellmann (1903-1938) | The **Hellmann-Feynman theorem** (1937) proves that analytic nuclear gradients require only the electron density and the derivative of the Hamiltonian -- no response of the wavefunction parameters -- making geometry optimization and molecular dynamics computationally feasible. This release added heavy-element capability via ECPs (libecpint), open-shell periodic SCF, and tight-cell convergence machinery. The Hedgehog: well-protected by spines (ECPs replace core electrons); prickly to handle but gets the job done. |
 | ``v0.5.0`` | **"Wilson's Otter"** | E. Bright Wilson, Jr. (1908-1992) | Co-author of *Molecular Vibrations* (1955); the **FG-matrix method** for normal-mode analysis that every quantum-chemistry code uses to compute vibrational frequencies. Wilson's formalism is the mathematical core of Phase 17 (analytic Hessian, IR intensities, thermochemistry). |
 | ``v0.6.0`` | **"Pulay's Owl"** | Peter Pulay (b. 1941) | Invented **DIIS** (direct inversion in the iterative subspace, 1980), the convergence accelerator that makes SCF practical; formulated the **Pulay correction terms** (1969) that underpin analytic nuclear gradients. The Owl sees what others miss -- sub-meV displacement-derived forces. |
-| ``v0.7.0`` | **"Loewdin's Compass"** | Per-Olov Loewdin (1916-2000) | Gave quantum chemistry **canonical orthogonalisation** (Adv. Quantum Chem. 5, 185, 1970) and the symmetric S^{-1/2} transformation that anchors vibe-qc's linear-dependence diagnostic, screening optimiser, and the Lehtola pivoted-Cholesky fallback. The Compass navigates the basis-set/cutoff space and finds the loosest PSD-keeping configuration without silent truncation. |
+| ``v0.7.0`` | **"Löwdin's Compass"** | Per-Olov Löwdin (1916-2000) | Gave quantum chemistry **canonical orthogonalisation** (Adv. Quantum Chem. 5, 185, 1970) and the symmetric S^{-1/2} transformation that anchors vibe-qc's linear-dependence diagnostic, screening optimiser, and the Lehtola pivoted-Cholesky fallback. The Compass navigates the basis-set/cutoff space and finds the loosest PSD-keeping configuration without silent truncation. |
 | ``v0.8.0`` | **"Grimme's Gecko"** | Stefan Grimme (b. 1963) | His group's dispersion-correction lineage -- **DFT-D3** (2010), **DFT-D4** (2017/2019), the D3-BJ damping, the EEQ charge model -- turned DFT from a qualitative to a quantitative tool for noncovalent interactions. Also co-developed the B2PLYP double-hybrid family (2006) with the Martin group. The Gecko is small, fast, and sticks -- the molecular-methods arc built on a clean dispersion + double-hybrid foundation. |
 | ``v0.9.0`` | **"Knowles's Kingfisher"** | Peter J. Knowles | Co-author of the **MOLPRO** MRCI/direct-CI machinery, the Knowles-Handy 1984 FCI algorithm, and the Werner-Knowles CASSCF. His coupled-cluster and configuration-interaction methods are the computational foundation of the post-HF correlation ladder (MP2 -> MP3 -> MP4 -> CCD -> CCSD). The Kingfisher is precise, patient, strikes once. |
 | ``v0.10.0`` | **"Pisani's Penguin"** | Cesare Pisani | Founded the **CRYSTAL code** at Turin (1976-), the Gaussian-basis periodic-SCF program whose methodology vibe-qc inherits: crystalline orbitals, real-space lattice sums, Ewald-accelerated Coulomb, and the "refuse to silently truncate" philosophy. The Penguin lives at extremes -- structured, solid-state, low-T. |
@@ -3758,6 +3819,8 @@ Codename catalog (filled in as releases ship):
 | ``v0.13.0`` | **"Wisesa's Fox"** | Pandu Wisesa | First author of the **generalised-regular k-grid** algorithm (Comp. Mat. Sci. 110, 1, 2016, with McGill & Mueller), which searches over reciprocal sublattices for ~2x more efficient k-point sampling than axis-aligned Monkhorst-Pack. The Fox is nimble and efficient. |
 | ``v0.14.0`` | **"Bartlett's Goose"** | Rodney J. Bartlett (b. 1944) | Co-author of the **Purvis-Bartlett CCSD** equations (1982), the foundation of gold-standard molecular coupled-cluster theory. His group at the University of Florida has driven CC method development for four decades -- CCSD, CCSD(T), EOM-CC, and the coupled-cluster response framework. The Goose: the accuracy reference every cheaper method is measured against. |
 | ``v0.15.0`` | **"Neese's Cheetah"** | Frank Neese (b. 1967) | Co-inventor of **DLPNO-CCSD(T)** (Riplinger-Neese 2013), the domain-based local pair natural orbital approximation that makes canonical-accuracy coupled cluster feasible on realistic molecules. His group's SparseMaps framework and the ORCA program's DLPNO family (DLPNO-MP2, DLPNO-CCSD, DLPNO-CCSD(T), DLPNO-NEVPT2) are the gold standard in local correlation. The Cheetah: the speed local correlation buys. |
+| ``v0.16.0`` | **"Pople's Puffin"** | John Pople (1925-2004) | Nobel Prize 1998 for **ab initio methods made usable by anyone**, which is what splitting one project into vibe-qc, vibe-view, vibe-queue and qvf, each adoptable on its own, is for. |
+| ``v0.17.0`` | **"Tew's Tern"** | David P. Tew | **Periodic local correlation** (the Nejad-Zhu-Tew 2025 Paper I lineage). v0.17.0 shipped the symmetry and periodic foundations that route will consume. The Tern: navigates by the lattice it crosses. |
 
 ---
 
@@ -3790,21 +3853,21 @@ dependency graph is almost strictly linear:
   molecular correlation + MR methods are independent of the periodic stack.
 * **v0.14.0** extends v0.12.0 with canonical CCSD(T) + DLPNO + eigensolvers.
 * **v0.15.0** extends v0.14.0 with the comprehensive feature freeze.
-* **v0.18.0** (native BvK periodic local correlation) needs molecular
+* **Native BvK periodic local correlation** (next minor) needs molecular
   DLPNO-MP2 (✅) and the periodic-DF foundation from v0.8-v0.13. The
   megacell/toroidal periodic-correlation route already shipped in v0.13-v0.15.
-* **v0.19.0** (periodic CC) needs v0.18.0.
-* **v0.20.0** (MR + excited-state extensions) builds on the MR foundation
+* **Periodic CC** needs native BvK periodic local correlation.
+* **MR + excited-state extensions** build on the MR foundation
   ✅ shipped in v0.12-v0.15; TDDFT engine ✅ shipped in v0.12.0.
-* **v0.21.0** (properties suite) needs v0.5.0 (Phase 17 Hessian for
+* **The properties suite** needs v0.5.0 (Phase 17 Hessian for
   Raman / VCD; Phase G2 stress for elastic / piezo / photoelastic),
-  v0.19.0 (periodic CCSD if PR16-PR22 want correlated dielectric /
-  Born), and v0.20.0 (TDDFT for PR27-PR29). Within the milestone,
+  periodic CC (periodic CCSD if PR16-PR22 want correlated dielectric /
+  Born), and the MR + excited-state milestone (TDDFT for PR27-PR29). Within the milestone,
   PR7 (CPHF/CPKS) gates PR8-PR22; PR1-PR6 and PR23-PR25 are
   CPHF-independent and can ship first.
-* **v0.22.0** (production MPI and large-system scaling) needs the
-  v0.15.x hardening baseline, v0.18-v0.19 periodic-correlation hot
-  paths, and the properties workloads from v0.21.0 for k-resolved
+* **Production MPI and large-system scaling** needs the
+  v0.15.x hardening baseline, the periodic local-correlation and
+  periodic CC hot paths, and the properties-suite workloads for k-resolved
   post-processing.
 * **v1.0.0** sums everything above.
 * **v2.x** (CCM track), pulled forward into v0.15.x as experimental
@@ -3822,7 +3885,10 @@ which ones are blocked by which milestone, and which ones we could
 write up *now* without any new vibe-qc code. The audit was compiled
 from the ORCA tutorial index and the CRYSTAL tutorial index.
 
-**Last audit refresh: 2026-06-26** (post-v0.15.0 *Neese's Cheetah*
+**Last full audit: 2026-06-26.** On 2026-09-13 milestone version numbers
+below were replaced by milestone names, and blockers contradicted by later
+releases were corrected; the remaining rows were not re-audited for
+v0.16.0 to v0.17.2. (That audit was post-v0.15.0 *Neese's Cheetah*
 comprehensive feature freeze: canonical CCSD(T), DLPNO-CCSD(T) + U-DLPNO,
 CASSCF analytic gradients + geom-opt framework, COOP/COHP, QTAIM, fat bands,
 vibe-view QVF v1.2, TD-DFT engine + NTOs, periodic-XC cross-cell fix,
@@ -3851,30 +3917,30 @@ Status legend: ✅ works · 🟡 works with glue (ASE / small wrapper) ·
 | Dipole moment | ✅ | Phase 19 |
 | Vibrational frequencies | ✅ | Phase 17a-e: analytic CPHF/CPKS Hessian for RHF/UHF/RKS/UKS; the `vibrational_frequencies` tutorial |
 | Thermodynamics | ✅ | Phase 17a-3: full ZPE/U/H/S/G(T,p) on top of analytic Hessian; the `thermodynamics` tutorial |
-| Conformer search (GOAT) | ❌ | Needs xTB |
+| Conformer search (GOAT) | ❌ | Needs a GOAT-style conformer driver; GFN2-xTB itself ships gated experimental |
 | Implicit solvation | ✅ | CPCM shipped at v0.12.0 via `SolutePotentialProvider`; the `solvation_water` tutorial covers CPCM water |
 | Explicit solvation (SOLVATOR) | ❌ | Out of scope (use ASE + classical FF) |
 | Dispersion (D3 / D4) | ✅ | D3-BJ shipped at v0.6.x; D4 shipped at v0.8.0 (D5a-D5d), validated against CRYSTAL23 on 87 benchmark crystals |
 | NEB-TS | ✅ | `neb_reaction_path.md` tutorial (ammonia umbrella inversion at HF/STO-3G, barrier 11.14 kcal/mol) |
-| IRC | 🟡 | Manual scan after frequencies land |
+| IRC | ✅ | `vq.run_irc`, molecular only (damped steepest descent; no Gonzalez-Schlegel integrator yet) |
 | KIE | 🟡 | Analytic Hessian + thermo ship (Phase 17); ratio script is user-side |
-| Fukui functions | 🟡 | Scriptable today; native via PR1 (v0.21.0) |
-| LED energy decomposition | 🟡 | DLPNO-CCSD(T) shipped (v0.14.0); EDA variant **PR26** (v0.21.0) |
+| Fukui functions | 🟡 | Scriptable today; native via PR1 (properties milestone) |
+| LED energy decomposition | 🟡 | DLPNO-CCSD(T) shipped (v0.14.0); experimental EDA helpers ship; production EDA **PR26** (properties milestone) |
 | FOD analysis | ❌ | Needs finite-T DFT (post-1.0) |
 | IR intensities | ✅ | Phase 17a-2: dipole-derivative tensor + Wilson-Decius-Cross |
-| Raman intensities | ❌ | Phase **PR13** (v0.21.0), needs polarisability derivatives |
-| UV/Vis (TDDFT) | 🟡 | TDDFT engine (Casida + TDA) shipped (v0.12.0); spectrum reconstruction + NTO post-processing at v0.20.0 |
-| ECD / VCD | ❌ | T1 + Phase **PR29** (ECD) / **PR14** (VCD) (v0.21.0) |
-| NMR (GIAO) | ❌ | Phase **PR10** (v0.21.0) |
-| Spin-spin coupling (J) | ❌ | Phase **PR11** (v0.21.0) |
-| EPR / hyperfine | ❌ | Phase **PR12** (v0.21.0); spin-orbit terms post-1.0 |
-| ESP charges (CHELPG / RESP) | ❌ | Phase **PR3** (v0.21.0) |
-| Hirshfeld / Bader / NBO | 🟡 | QTAIM (PR2) + COOP/COHP shipped (v0.15.0); Hirshfeld (PR1) and NBO (PR4) remain at v0.21.0 |
-| Quadrupole / higher multipoles | ❌ | Phase **PR5** (v0.21.0) |
-| Polarisability / hyperpolarisability | ❌ | Phases **PR8** / **PR9** via CPHF substrate **PR7** (v0.21.0) |
-| ELF / NCI / RDG plots | ❌ | Phases **PR23** / **PR24** (v0.21.0) |
+| Raman intensities | ❌ | Phase **PR13** (properties milestone), needs polarisability derivatives |
+| UV/Vis (TDDFT) | 🟡 | TDDFT engine (Casida + TDA) shipped (v0.12.0); spectrum reconstruction + NTO post-processing in the MR + excited-state milestone |
+| ECD / VCD | ❌ | T1 + Phase **PR29** (ECD) / **PR14** (VCD) (properties milestone) |
+| NMR (GIAO) | ❌ | Phase **PR10** (properties milestone) |
+| Spin-spin coupling (J) | ❌ | Phase **PR11** (properties milestone) |
+| EPR / hyperfine | ❌ | Phase **PR12** (properties milestone); spin-orbit terms post-1.0 |
+| ESP charges (CHELPG / RESP) | ❌ | Phase **PR3** (properties milestone) |
+| Hirshfeld / Bader / NBO | 🟡 | QTAIM (PR2) + COOP/COHP shipped (v0.15.0); classical molecular Hirshfeld ships; NBO helpers are provisional and NPA is unavailable; iterative Hirshfeld (PR1) and production NBO (PR4) are in the properties milestone |
+| Quadrupole / higher multipoles | ❌ | Phase **PR5** (properties milestone) |
+| Polarisability / hyperpolarisability | ❌ | Phases **PR8** / **PR9** via CPHF substrate **PR7** (properties milestone) |
+| ELF / NCI / RDG plots | ❌ | Phases **PR23** / **PR24** (properties milestone) |
 | Relativistic (ZORA / DKH) | ❌ | Post-1.0 stack |
-| ONIOM / QM-XTB | ❌ | Needs xTB |
+| ONIOM / QM-XTB | ❌ | Needs ONIOM coupling; GFN2-xTB itself ships gated experimental |
 
 ### CRYSTAL, solid-state chemistry
 
@@ -3891,7 +3957,7 @@ Status legend: ✅ works · 🟡 works with glue (ASE / small wrapper) ·
 | Quick tour: band structure (CRYSTAL Tutorial port) | ✅ | `examples/periodic/input-si-bands.py` (silicon diamond Hcore bands) |
 | Complete solid-state walkthrough (CRYSTAL Tutorial port) | ✅ | `the `lih_pob_tzvp_solid_state` tutorial` + `examples/periodic/input-lih-pob-tzvp.py`, multi-k periodic HF, IBZ reduction, Hcore bands + DOS + PDOS, HOMO Bloch cube, full v0.5.x logging surface. **v0.8.0 update**: the `lih_multi_k` tutorial (LiH multi-k via `run_krhf_periodic_gdf`) targets Peintinger 2013 SI Table 2 reference (-8.149050 Ha/cell) at sub-µHa parity to PySCF.pbc.KRHF |
 | Debug-friendly periodic DFT input (CRYSTAL Tutorial port) | ✅ | `examples/periodic/input-nacl-sto3g-dft.py`, RKS-LDA / sto-3g / NaCl, `VIBEQC_FAST_DEBUG=1` knob, threads ProgressLogger + perf log + .system manifest |
-| Equation of state | ❌ | Phase **G2** |
+| Equation of state | 🟡 | Birch-Murnaghan fit helper (`vibeqc.eos.fit_birch_murnaghan`) on user-run volume points; no Vinet form, no sweep driver |
 | Surfaces / slabs | ✅ | `slab_adsorbate_dft` and `surface_embedding` tutorials; Phase C1 + G1 BIPOLE all shipped |
 | Defects / supercells | ✅ | Phase 15 (UHF/UKS) shipped; Madelung / per-k charge-correction (12e-c-4c-iv) shipped; **v0.8.0 the `open_shell_mg_cation` tutorial** (open-shell Mg⁺• in vacuum-padded cell + Makov-Payne correction) is the worked example. AFM ground-state initial guess (R3) still queued for v0.x.x |
 | Magnetic systems | ✅ | `open_shell_mg_cation` tutorial (Mg+ in vacuum-padded cell + Makov-Payne correction); Phase 15a (Γ-UHF) / 15b (multi-k UHF) / 15c-3 (Γ + multi-k UKS) all shipped; multi-k UHF/UKS un-gated at v0.8.0 |
@@ -3905,20 +3971,20 @@ Status legend: ✅ works · 🟡 works with glue (ASE / small wrapper) ·
 | Charge-density map (molecular) | ✅ | Phase **V1** (cube) |
 | Periodic Bloch-orbital map | ✅ | Phase **V3** (the `periodic_orbital_cubes` tutorial) |
 | Madelung constants (Ewald) | ✅ | Phase 12e-a + example |
-| Vibrational frequencies (periodic) | ❌ | Phase **G1** + **21** |
-| Phonon dispersion | ❌ | Phase **21** |
-| Thermodynamics (QHA, EOS at T) | ❌ | Phase **21** |
-| Dielectric / polarisability | ❌ | Finite-field response (v1.0.0) |
-| Elastic / piezo / photoelastic | ❌ | CPHF / CPKS, post-1.0 |
+| Vibrational frequencies (periodic) | 🟡 | Γ-point finite-difference frequencies (`run_periodic_job(hessian=True)`, GAPW `PhononCalculator`); no ZPE from `run_periodic_job` |
+| Phonon dispersion | ❌ | Phase **21b**; only Γ-point phonons ship |
+| Thermodynamics (QHA, EOS at T) | ❌ | Phase **21c** |
+| Dielectric / polarisability | ❌ | Phases **PR8** and **PR17** / **PR18** (properties milestone) |
+| Elastic / piezo / photoelastic | ❌ | Phases **PR19**-**PR21** via CPHF / CPKS (properties milestone) |
 | TS search (periodic) | ❌ | Periodic Hessian, post-Phase 21 |
-| Periodic MP2 (CRYSCOR) | 🟡 | Megacell/toroidal route shipped (v0.13-v0.15); native BvK translational route remains the v0.18.0 candidate |
+| Periodic MP2 (CRYSCOR) | 🟡 | Megacell/toroidal route shipped (v0.13-v0.15); native BvK translational route is the next minor's milestone |
 | 4f-in-core ECPs | ✅ | **Phase 14a-d shipped at v0.7.x → v0.8.0**: libecpint 1.0.7 vendored + `ecp60mdf` library covers f-block (post-Yb). Manual `ECPCenter` recipe; `vq.auto_ecp_centers` helper basissetdev-conditional |
-| Born effective charges | ❌ | Phase **PR16** (v0.21.0) |
-| Dielectric tensor (ε∞ / εstatic) | ❌ | Phases **PR17** / **PR18** (v0.21.0) |
-| Elastic constants | ❌ | Phase **PR19** (v0.21.0; needs G2 stress) |
-| Piezoelectric tensor | ❌ | Phase **PR20** (v0.21.0) |
-| Photoelastic tensor | ❌ | Phase **PR21** (v0.21.0) |
-| Periodic IR / Raman intensities | ❌ | Phase **PR22** (v0.21.0; needs Phase 21 phonons) |
+| Born effective charges | ❌ | Phase **PR16** (properties milestone) |
+| Dielectric tensor (ε∞ / εstatic) | ❌ | Phases **PR17** / **PR18** (properties milestone) |
+| Elastic constants | ❌ | Phase **PR19** (properties milestone; needs stress on the target route, where finite-difference stress ships only for GPW/GAPW) |
+| Piezoelectric tensor | ❌ | Phase **PR20** (properties milestone) |
+| Photoelastic tensor | ❌ | Phase **PR21** (properties milestone) |
+| Periodic IR / Raman intensities | ❌ | Phase **PR22** (properties milestone; needs Born charges **PR16** on top of the shipped Γ-point phonons) |
 | Spin-orbit / noncollinear | ❌ | Post-1.0 |
 | Electron transport | ❌ | Out of scope |
 | **CCM track** (defects, embedded clusters) | 🟡 | Experimental Γ-CCM + χ-CCM shipped (v0.15.0); production-grade items individually sequenced |
@@ -3994,7 +4060,7 @@ that needs an SCF energy or geometry optimization is reproducible.
 What still gates the remainder: **G2** (stress tensor) for EOS / elastic
 / piezo / photoelastic workflows, **Phase 21** (periodic phonons) for
 vibrational frequencies and phonon dispersion, and the native-BvK periodic
-local-correlation chain (v0.18.0-v0.19.0) for CRYSCOR parity. The megacell
+local-correlation chain (the native BvK and periodic CC milestones) for CRYSCOR parity. The megacell
 periodic-MP2->DLPNO-CCSD(T) route (Paper II) is already shipped.
 
 On the molecular side, **Phase 17** (analytic Hessian) shipped and
@@ -4005,7 +4071,7 @@ IR intensities. S1 solvation (CPCM) shipped in v0.12.0. D1/D2 dispersion
 (Hirshfeld / NBO / ESP-fit charges). QTAIM + COOP/COHP + Mayer bond orders
 shipped in v0.15.0.
 
-The **v0.21.0 properties suite** closes the spectroscopy gap and
+The **properties suite** milestone closes the spectroscopy gap and
 the CRYSTAL "Response Properties" line in one coherent pass on
 top of a CPHF/CPKS substrate -- the highest-leverage late-stage
 milestone on the road to v1.0.
@@ -4063,8 +4129,8 @@ already ships. Status tracks what has landed in `docs/tutorial/`.
 | 34 | Semiempirical methods (MSINDO / DFTB / PM6 / GFN2) | ✅ `msindo.md` + `semiempirical_dftb.md` + `pm6_and_gfn2.md` |
 | 35 | MACE MLIP integration | ✅ `mace_mlip.md` |
 | 36 | Solvation (CPCM water) | ✅ `solvation_water.md` |
-| 37 | Cyclic cluster model foundations | ✅ `cyclic_cluster_model.md` |
-| 38 | AICCM-2026dev-B (localized-orbital CCM) | ✅ `aiccm2026dev_b.md` |
+| 37 | Cyclic cluster model foundations | ✅ (experimental) `cyclic_cluster_model.md` |
+| 38 | AICCM-2026dev-B (localized-orbital CCM) | ✅ (experimental) `aiccm2026dev_b.md` |
 | 39 | K-points + Brillouin-zone sampling | ✅ `kpoints_brillouin_bloch.md` |
 | 40 | Relaxed PES scan | ✅ `relaxed_pes_scan.md` |
 
@@ -4301,7 +4367,7 @@ Once G2 (stress tensor) ships, EOS is "fit a curve to E(V)":
   `compute_emd_plane`); from the density matrix or per-Wannier-
   function. CRYSTAL `EMDL` / `EMDP`.
 
-#### Multireference + excited-state extras (extends v0.20)
+#### Multireference + excited-state extras (extends the MR + excited-state milestone)
 
 * **MR1** ICE-CI (iterative configuration expansion), approximate
   FCI scaling to ~30 orbitals (ORCA `ICE-CI`).
@@ -4330,7 +4396,7 @@ CCSD) have been generalized to full periodic boundary conditions so
 far. The established route to multireference physics in a solid is
 therefore the **embedded cluster**: carve a finite quantum region out
 of the crystal, treat it with the CASSCF / CASPT2 / NEVPT2 solvers the
-v0.20 molecular CAS family already provides, and represent the
+shipped molecular CAS family already provides, and represent the
 surrounding crystal by an embedding potential. This is the path to
 parity with OpenMolcas, the de-facto standard for embedded-cluster
 CASSCF/CASPT2 on ionic and covalent solids. It is well suited to local
@@ -4347,7 +4413,7 @@ The standard construction is three nested regions:
    AIMPs fail);
 3. a point-charge array reproducing the long-range Madelung potential.
 
-Milestones (extend the v0.20 molecular CAS family; reuse the
+Milestones (extend the shipped molecular CAS family; reuse the
 embedded-cluster infrastructure in EMB1-EMB4 and the `cluster_carve`
 helper in B1.5):
 
@@ -4432,7 +4498,7 @@ the embedded-cluster (MR6-MR10) and v2.x CCM infrastructure.
 No DLPNO-CASSCF or DLPNO-NEVPT2 for periodic systems exists *anywhere*
 yet. The molecular local-MR methods are mature, and they are the
 bridge: they are how the embedded-cluster and DMET routes scale, and,
-joined to periodic DLPNO-MP2 (v0.18.0), they are the visible path to a
+joined to periodic DLPNO-MP2 (the native BvK milestone), they are the visible path to a
 future periodic DLPNO-NEVPT2. These are **molecular** targets extending
 the v0.15.0 DLPNO-CCSD(T) milestone into the multireference regime:
 
@@ -4516,10 +4582,10 @@ The CCM track (v2.x) overlaps with this, items here are the
 * **SPEC2** ROCIS / ROCIS-DFT for X-ray and UV-Vis of
   transition-metal complexes.
 * **SPEC3** STEOM-CCSD and DLPNO-STEOM-CCSD for excited states
-  (similarity-transformed EOM family). Pairs with v0.20 MR
-  plans.
+  (similarity-transformed EOM family). Pairs with the MR +
+  excited-state milestone.
 * **SPEC4** MCD (magnetic CD) on top of TDDFT (extends PR29 ECD
-  in the v0.21 properties suite).
+  in the properties suite).
 * **SPEC5** LO/TO splitting in IR for polar crystals, extends
   Phase 21 phonons.
 * **SPEC6** SOMF (spin-orbit mean-field) operator for property
@@ -4538,7 +4604,7 @@ The CCM track (v2.x) overlaps with this, items here are the
 
 * **CHG1** MBIS (minimal-basis iterative stockholder) charges,
   a Hirshfeld variant with often-better atoms-in-molecules
-  fidelity. Extends PR1 (Hirshfeld) in v0.21.
+  fidelity. Extends the shipped molecular Hirshfeld charges and PR1.
 * **CHG2** Updated CHELPG / RESP infrastructure: extend the
   existing molecular dipole/ESP machinery to fit per-atom
   point charges to the ESP on a vdW grid.
@@ -4568,7 +4634,7 @@ The total here is roughly 70 distinct items spanning ~10 themes.
 Most slot naturally into existing milestones (3c stack into
 v0.5.x or v0.6.x; geometry editing into the B1 surface-builder
 phase; EOS into the v0.7 G2 follow-up; bond-order analyses into
-the v0.21 properties suite). The few that need their own
+the properties suite). The few that need their own
 milestone, embedded cluster QM/MM, multireference extras, fit
 the post-1.0 stack already in the roadmap.
 
@@ -4639,7 +4705,7 @@ this surface is high-leverage; the full surface is post-1.0.
 ORCA's AutoCI module exposes CC-family methods with an unusually
 rich knob surface. v0.5.x ships single-reference CCSD(T); the
 items here flesh out the AutoCI-equivalent control surface for
-the v0.20 multireference + post-1.0 correlation push.
+the multireference + excited-state milestone and the post-1.0 correlation push.
 
 * **AUTOCI1** `citype` selector, `CISD`, `CCSD`, `CCSD(T)`,
   `CC2`, `CC3`, `CCSDT`, `LCCSD`, `LCCD`, `BCCD` available
@@ -4715,7 +4781,7 @@ schema readable by any tooling. This bucket is the v0.7+
 ORCA's MD chapter ships a SANscript-like input language for
 classical-and-mixed dynamics (BOMD, AIMD, MTD, restart, region-
 based thermostats). vibe-qc has `examples/ase_compare/` showing
-ASE-driven MD; native MD is a v0.22+ topic but the API shape
+ASE-driven MD; native MD comes after the production MPI milestone, but the API shape
 matters now so future engineering doesn't reinvent it.
 
 * **MD1** `vq.MDDriver`, top-level Python class with
@@ -4766,8 +4832,8 @@ matters now so future engineering doesn't reinvent it.
 ORCA ships 20+ standalone post-processing executables. Most
 are small, single-purpose, and compose with the main run via
 parsed output. vibe-qc's `vq.tools` namespace is the natural
-home; many of these are already implicit in the v0.21
-properties roadmap, but pinning the API shape now keeps the
+home; many of these are already implicit in the
+properties-suite milestone, but pinning the API shape now keeps the
 naming consistent.
 
 * **TOOL1** ✅ `vq.tools.aim`, atoms-in-molecules / QTAIM
@@ -4846,7 +4912,7 @@ the API surface when each lands.
   spectroscopy.
 * **SPEC9** XAS / XES family, full-COC, RAS-CI core-hole,
   damped-response, and ROCIS variants of X-ray absorption /
-  emission. Pairs with v0.20 multireference.
+  emission. Pairs with the MR + excited-state milestone.
 * **SPEC10** RIXS / RIXSSOC, resonant inelastic X-ray
   scattering, with spin-orbit coupling for heavy atoms.
 * **SPEC11** TRANSABS / TRANSCD, transient-absorption /
@@ -4994,7 +5060,7 @@ vibe-qc's existing basis-loader doesn't carry yet.
   spin-orbit coupling. Pairs with the existing X2C / DKH
   relativistic roadmap.
 
-#### CRYSTAL properties keywords (extends v0.21)
+#### CRYSTAL properties keywords (extends the properties suite)
 
 CRYSTAL's `properties` step is its post-SCF analysis layer
 (separate executable in CRYSTAL; one `vq.properties` module
@@ -5012,20 +5078,20 @@ in the natural vibe-qc analogue).
   functions.
 * **PROP3** `ADFT` / `ACOR` (covered by CORR1 above).
 * **PROP4** `BAND`, band-structure plotter along k-paths.
-  Already in v0.21; this is the CRYSTAL keyword.
+  Band structures already ship (Phase V4); this is the CRYSTAL keyword.
 * **PROP5** `BIDIERD`, directional Compton profile
   (covered by XRD2 above).
 * **PROP6** `CLAS`, classical (Madelung) potential at
   selected points; useful for embedded-cluster QM/MM
   setup (pairs with EMB1).
 * **PROP7** `ECHG` / `ECH3`, charge-density 2D / 3D
-  cube output. Already in v0.21.
+  cube output. Related cube output already ships (Phase V1).
 * **PROP8** `EDFT` (covered by CORR1).
 * **PROP9** `EMDLDM` / `EMDPDM`, electron-momentum
   density on density-matrix (covered by EMD1 above; these
   are the explicit CRYSTAL flags).
-* **PROP10** `HIRSHCHG`, Hirshfeld charges (covered by
-  PR1 in v0.21).
+* **PROP10** `HIRSHCHG`, Hirshfeld charges (molecular Hirshfeld
+  ships; periodic Hirshfeld is PR1 in the properties suite).
 * **PROP11** `KINETEMD`, kinetic-energy density / EMD on
   the same grid. Useful for non-covalent index post-
   processing.
@@ -5098,7 +5164,7 @@ optional MPI; the items below cover the operational knobs.
   for large systems). Pairs with the v0.5.x performance docs.
 * **PAR2** ScaLAPACK distributed Fock diagonalisation,
   for systems where the dense Fock exceeds per-rank memory.
-  v0.22+ territory, and only after replicated-data MPI benchmarks
+  work for after the production MPI milestone, and only after replicated-data MPI benchmarks
   show dense matrices are the measured wall.
 * **PAR3** Dual-level parallelism (MPI x OpenMP) tuning
   guide, when to bias toward MPI vs OMP. Pairs with the
@@ -5160,9 +5226,9 @@ A dedicated re-read of the current ORCA 6.1.1 manual
 CRYSTAL23 User's Manual (October 2023 edition, including its own
 curated §1.2 "Program Features" checklist), looking specifically for
 methods that survived the first two sweeps above. **None of this is
-scheduled before `v0.19.0`.** The 0.15.x line is the release-paper
-hardening gate and 0.16.x is the refactor / unification pass (the
-`FockMatrix` proposal above and its siblings); nothing below starts
+scheduled ahead of the open milestones.** The release-paper hardening
+work and the refactor / unification proposals above (`FockMatrix` and
+its siblings) come first; nothing below starts
 before that work lands, regardless of how small an item looks. Treat
 every entry here as backlog, not as a claim on a specific minor.
 
@@ -5327,11 +5393,11 @@ not a separate research direction.
 
 This is squarely post-1.0 research-direction territory, exactly what
 the existing tutorial-parity table already says; nothing here should
-be read as a `v0.22` or earlier commitment.
+be read as a commitment for any open milestone.
 
 #### Periodic nonlinear-optical response via CPHF/CPKS (extends PR16-PR22)
 
-The `v0.21.0` periodic-response bucket (**PR16**-**PR22**) covers Born
+The properties-suite periodic-response bucket (**PR16**-**PR22**) covers Born
 effective charges, the (linear) dielectric tensor, elastic/piezo/
 photoelastic tensors, and periodic IR/Raman intensities, all first- or
 second-order response quantities. CRYSTAL23 chapter 10 ("Dielectric
@@ -5360,7 +5426,7 @@ which is a per-keyword dump the way sweeping ORCA's raw input-block
 listing would be, not the right altitude for a gap sweep). This is the
 **second** parity target from the intro above: nothing here starts
 before `v1.0` (ORCA + CRYSTAL23), and most of it lands well after,
-alongside or following the `v0.22.0` MPI/scaling work. A large fraction
+alongside or following the production MPI and scaling milestone. A large fraction
 of CP2K's surface is already on this roadmap by lineage, GPW/GAPW
 (shipped), ADMM, OT-SCF, and Kerker/Anderson mixing are all
 CP2K-originated methods vibe-qc already tracks; this sweep is only the
@@ -5524,7 +5590,7 @@ itself with things already decided:
   (nuclear quantum effects via ring-polymer discretization; vapor-
   liquid phase equilibria via particle-swap Monte Carlo,
   respectively), but vibe-qc has no MD at all yet (**MD1**-**MD6**
-  above are still a `v0.22+` topic). Worth remembering as two further
+  above still come after the production MPI milestone). Worth remembering as two further
   sampling modes once a classical MD driver exists, not worth a
   numbered item ahead of the driver itself; CP2K's own PIMD manual
   page is honest about being unwritten, which is a fair indicator of
@@ -5586,7 +5652,7 @@ GW stack produces directly.
   already there; the on-top-density machinery and the CASSCF-energy-
   not-PDFT-energy minimisation detail are the new pieces. Multi-state
   variants (L-PDFT, XMS-PDFT, CMS-PDFT) target conical-intersection
-  and multi-state work already on the v0.20 list, a cheaper alternative
+  and multi-state work already on the MR + excited-state list, a cheaper alternative
   route there, not a new scope item.
 
 #### Electron-phonon coupling (extends shipped phonons + the PR7 CPHF/CPKS substrate)
@@ -5670,7 +5736,7 @@ periodic boundary conditions (vibe-qc's other half from day one, not
 something borrowed from PySCF), implicit solvation (CPCM, v0.12.0),
 QM/MM (already blanket out-of-scope pre-`v1.0`), geometry optimisation
 (shipped), CISD (already one of **AUTOCI1**'s `citype` values), and
-molecular dynamics (already the **MD1**-**MD6** `v0.22+` bucket, GPU
+molecular dynamics (already the **MD1**-**MD6** post-MPI-milestone bucket, GPU
 acceleration already the generic `v1.x` item GPU4PySCF is one more
 concrete instance of, alongside GauXC above).
 
@@ -6025,7 +6091,7 @@ the 3D-periodic SCF benchmarks. Tracked as **post-v1.0** since
 no current user has flagged it as blocking; surface here so the
 intent is visible.
 
-### `v0.x.x`, On-demand BSE basis fetcher (replaces 87-set bundle on basissetdev)
+### Shipped in v0.17.1: on-demand BSE basis fetcher
 
 This pre-split proposal refers to the
 [archived `basissetdev`](https://vibe-qc.com/docs/)
@@ -6059,8 +6125,10 @@ plumbing closely. Gates on the basissetdev merge timing (which
 is itself gated on Mike's standing rule per
 `.release-status/v0.8.0/basissetdev.md`).
 
-**Status, 2026-09-09: landed as `vibeqc.basis_fetch`, wired into
-`run_job(..., fetch_from_bse=True)`.** Two premises above were checked and one of them
+**Status: shipped in v0.17.1 as `vibeqc.basis_fetch`, wired into
+`run_job(..., fetch_from_bse=True)`**, molecular only: `run_periodic_job` has
+no `fetch_from_bse`. See [basis sets](user_guide/basis_sets.md). The proposal
+text above is the pre-split plan. Two premises above were checked and one of them
 is wrong, so read them with this:
 
 * **It is not a network fetch.** The `basis-set-exchange` distribution ships

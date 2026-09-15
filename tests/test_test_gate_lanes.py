@@ -127,6 +127,67 @@ def test_per_target_runner_executes_isolated_node_without_companion_repo(
     assert list(caller_state.iterdir()) == []
 
 
+def test_sigkill_is_oom_only_with_memory_evidence():
+    """A SIGKILL is ``OOM_KILLED`` only when the sampled peak RSS backs it (#218).
+
+    The frozen v0.17.2 inventory stamped a 387 MB peak on a large box as
+    ``OOM_KILLED`` because every non-timeout SIGKILL mapped to that label.
+    Without memory evidence the honest label is ``SIGKILLED``, cause
+    unassigned; the evidence dict carries the numbers either way.
+    """
+    small = runner.oom_evidence(387.1, 131072.0)
+    assert small["oom_established"] is False
+    # The fraction is stored rounded to four decimals.
+    assert small["peak_fraction_of_memory"] == pytest.approx(387.1 / 131072.0, abs=5e-5)
+    assert runner.classify(-9, False, {}, small) == "SIGKILLED"
+    assert runner.classify(-9, False, {}) == "SIGKILLED"
+    big = runner.oom_evidence(70000.0, 131072.0)
+    assert big["oom_established"] is True
+    assert runner.classify(-9, False, {}, big) == "OOM_KILLED"
+    # No psutil, no total memory: nothing can be established.
+    assert runner.oom_evidence(70000.0, None)["oom_established"] is False
+    assert runner.classify(-9, False, {}, runner.oom_evidence(70000.0, None)) == "SIGKILLED"
+    # A tighter threshold flips the same peak.
+    assert runner.classify(-9, False, {}, runner.oom_evidence(387.1, 700.0, oom_fraction=0.5)) == "OOM_KILLED"
+    # Our own timeout still wins, and the other signals are unchanged.
+    assert runner.classify(-9, True, {}, big) == "TIMEOUT"
+    assert runner.classify(-11, False, {}) == "SEGFAULT"
+    assert runner.classify(-6, False, {}) == "ABORT"
+    assert runner.classify(-15, False, {}) == "SIGNAL_15"
+
+
+def test_per_target_runner_names_the_test_a_sigkill_interrupted(tmp_path):
+    """A killed child leaves the running node id in the tail, not dots (#218).
+
+    The child test kills its own process with SIGKILL. The row must read
+    ``SIGKILLED`` (a few tens of MB cannot be an OOM), carry the signal and
+    memory evidence, and its tail must name the interrupted node because the
+    runner asks pytest for one line per test.
+    """
+    repo = tmp_path / "checkout"
+    target = repo / "tests" / "test_probe.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "import os, signal\n"
+        "def test_before():\n"
+        "    pass\n"
+        "def test_killed_midway():\n"
+        "    os.kill(os.getpid(), signal.SIGKILL)\n"
+        "def test_after():\n"
+        "    pass\n"
+    )
+    result = runner.run_one(
+        "tests/test_probe.py", repo, sys.executable, file_timeout=45, test_timeout=20,
+    )
+    assert result["rc"] == -9, result
+    assert result["status"] == "SIGKILLED", result
+    assert result["signal"] == 9
+    assert result["child_pid"] > 0
+    assert result["oom_evidence"]["oom_established"] is False
+    assert "test_probe.py::test_killed_midway" in result["tail"], result["tail"]
+    assert "test_probe.py::test_after" not in result["tail"]
+
+
 def test_per_target_runner_preserves_non_vq_environment(monkeypatch):
     repo = Path(__file__).resolve().parents[1]
     monkeypatch.setenv("HOME", "/caller/core-home")

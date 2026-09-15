@@ -1573,10 +1573,10 @@ def _build_range_separated_lpq_cache(
                     integral_screen_error=integral_screen_error,
                     _metric_state=metric_state,
                 )
-            except _RangeSeparatedGdfAdmissionError:
-                # Only a rejected preallocation reservation is retryable.
-                # Numerical failures or actual allocator errors propagate.
-                if len(selected) == 1:
+            except _RangeSeparatedGdfAdmissionError as exc:
+                # Retry only reservations that shrink with the k batch.
+                # Fixed-q domains and actual allocator errors propagate.
+                if not exc.retry_with_fewer_kpoints or len(selected) == 1:
                     raise
                 batch_size = max(1, len(selected) // 2)
                 continue
@@ -3927,6 +3927,9 @@ def run_krhf_periodic_gdf(
         and not explicit_periodic_gamma_xc
         and density_mixer is None
     ):
+        from .pbc_gdf import _reject_legacy_gamma_gdf
+
+        _reject_legacy_gamma_gdf(system, basis, "run_krhf_periodic_gdf")
         with _gamma_restart_options(opts, initial_density_k, basis.nbasis):
             gamma = run_rhf_periodic_gamma_gdf(
                 system,
@@ -3955,46 +3958,6 @@ def run_krhf_periodic_gdf(
             functional=functional,
             result_cls=result_cls,
         )
-        # Dense-core absolute-energy hold on the LEGACY Γ fallback.
-        # This path (reached e.g. by Γ-only RKS with the ionic-insulator
-        # AUTO fock-mixing, which the pure PBC-GDF Γ fast path refuses)
-        # had no parity warning and no marker at all: the legacy driver
-        # sets a bare backend and _wrap_gamma_gdf_result overwrote it.
-        # A pipeline publishing result.backend therefore saw an un-held
-        # dense-core absolute energy (~-0.5 Ha electronic offset class,
-        # P01 MgO/STO-3G audit).  Mirror the runner's own legacy-branch
-        # marking (periodic_runner._mark_legacy_gamma_gdf_parity_hold).
-        from .pbc_gdf import (
-            _RSGDF_PARITY_TAIL_RATIO,
-            _gamma_dense_core_gdf_parity_held,
-            _reject_dense_core_mdf,
-        )
-
-        _reject_dense_core_mdf(
-            system, gdf_method, basis, "run_krhf_periodic_gdf"
-        )
-        if _gamma_dense_core_gdf_parity_held(
-            system,
-            gdf_method,
-            ao_basis=basis,
-            tail_ke_cutoff=rsgdf_tail_ke_cutoff,
-            rsgdf_ke_cutoff=float(rsgdf_ke_cutoff),
-        ):
-            _hold_msg = (
-                "run_krhf_periodic_gdf: Gamma-legacy GDF fallback -- "
-                "ABSOLUTE energies are parity-held for tight-core "
-                "basis/cell combinations (P01 class; measured ~-0.5 Ha "
-                "vs PySCF on MgO/STO-3G at the untailed default). Use "
-                "run_pbc_gdf_rhf (Gamma fast path) with "
-                f"rsgdf_tail_ke_cutoff >= {_RSGDF_PARITY_TAIL_RATIO:.0f} "
-                "x the steepest AO primitive exponent, or a true multi-k "
-                "mesh, for a publishable absolute energy. Result backend "
-                "is tagged +PARITY_HELD."
-            )
-            warnings.warn(_hold_msg, RuntimeWarning, stacklevel=2)
-            plog.info("  WARNING: " + _hold_msg)
-            if "+PARITY_HELD" not in str(wrapped.backend):
-                wrapped.backend = str(wrapped.backend) + "+PARITY_HELD"
         return _finish_density_return(wrapped)
 
     # ---------------- Multi-k branch ------------------------------

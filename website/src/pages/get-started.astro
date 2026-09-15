@@ -5,6 +5,7 @@ import ProductWordmark from '../components/ProductWordmark.astro';
 import Footer from '../components/Footer.astro';
 
 import { products } from '../data/products.mjs';
+import { repositories } from '../data/repositories.mjs';
 const base = import.meta.env.BASE_URL;
 const DOCS = '/docs';
 
@@ -54,8 +55,9 @@ print(f"gap     = {(eps[homo+1] - eps[homo])*27.211386:.2f} eV")`;
     <ol class="steps">
       <li>
         <h2><span class="n">1</span> Install</h2>
-        <pre class="code"><code>git clone https://github.com/vibe-qc/vibe-qc.git
-cd vibe-qc
+        <p class="note">Clone the GitHub source snapshot, then enter it and install:</p>
+        <pre class="code"><code>git clone https://github.com/vibe-qc/vibe-qc.git</code></pre>
+        <pre class="code"><code>cd vibe-qc
 ./scripts/install.sh --dev</code></pre>
         <p class="note">
           <code>install.sh</code> builds the native core, creates a virtualenv and
@@ -64,11 +66,9 @@ cd vibe-qc
           <a href={`${DOCS}/installation.html`}>installation guide</a> for the full
           surface and the manual native-deps recipe.
         </p>
-        <p class="note">
-          Source access currently requires repository access. Email <a href="mailto:mpei@vibe-qc.com">mpei@vibe-qc.com</a>
-          with a public SSH key to request read-only clone access — see the
-          <a href={`${DOCS}/installation.html`}>installation guide</a> for details.
-        </p>
+        <p class="note">The installer selects main from the GitHub snapshot stream.
+          Choose a published tag explicitly for a pinned installation. See
+          <a href={`${DOCS}/installation.html#repositories-and-downloads`}>repositories and downloads</a>.</p>
       </li>
       <li>
         <h2><span class="n">2</span> Run RHF on water</h2>
@@ -89,22 +89,14 @@ cd vibe-qc
       <p>Install the engine for calculations, then add the companions you need.
         Each repository has its own checkout and release tags.</p>
       <div class="next-grid">
-        <a class="ncard" href="https://github.com/vibe-qc/vibe-qc">
-          <h3>vibe-qc <span class="arrow">→</span></h3>
-          <p>The calculation engine, examples, and documentation. The separately installable vibe-basis toolkit stays here.</p>
-        </a>
-        <a class="ncard" href="https://github.com/vibe-qc/vibe-view">
-          <h3>vibe-view <span class="arrow">→</span></h3>
-          <p>A reusable viewer for QVF results from vibe-qc or other producers. Install it in its own environment.</p>
-        </a>
-        <a class="ncard" href="https://github.com/vibe-qc/vibe-queue">
-          <h3>vibe-queue <span class="arrow">→</span></h3>
-          <p>The reusable scheduler. Its command and Python import package remain vq.</p>
-        </a>
-        <a class="ncard" href="https://github.com/vibe-qc/qvf">
-          <h3>QVF <span class="arrow">→</span></h3>
-          <p>The Apache-2.0 format specification, schema, registry, conformance corpus, and optional reference implementations.</p>
-        </a>
+        {repositories.map(repository => <article class="ncard">
+          <h3>{repository.name}</h3>
+          <p>{repository.role}</p>
+          <p class="repository-links">
+            <a href={repository.github}>GitHub mirror</a> ·
+            <a href={`${repository.github}/tags`}>Source tags</a>
+          </p>
+        </article>)}
       </div>
       <p>vibe-qc implements QVF independently and is validated against the published
         format; the QVF reference toolkit is not a runtime dependency.</p>
@@ -198,5 +190,7 @@ cd vibe-qc
   .ncard h3 { font-size: 17px; font-weight: 700; margin: 0 0 6px; color: var(--phase-pos); display: flex; align-items: center; gap: 8px; }
   .ncard:hover .arrow { transform: translateX(3px); }
   .ncard .arrow { transition: transform .15s; }
+  .ncard .repository-links { margin-top: 14px; }
+  .repository-links a { color: var(--phase-pos); text-decoration: underline; text-underline-offset: 3px; }
   .ncard p { color: var(--slate); font-size: 14.5px; margin: 0; }
 </style>

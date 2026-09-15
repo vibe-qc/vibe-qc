@@ -147,6 +147,20 @@ class PhysicalJKPlan:
     domain_walk_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class PhysicalJKAllPlan:
+    """Whole-mesh envelope, including every retained native target result.
+
+    The target plans are receipts, not reusable execution authorizations.
+    Summing their envelopes deliberately overcounts shared owner/panel storage
+    so that all returned streams, including their density copies, fit together.
+    This bounded diagnostic does not claim scalable production HF storage.
+    """
+    target_plans: tuple[PhysicalJKPlan, ...]
+    inventoried_bytes: int
+    work_units: int
+
+
 @dataclass(frozen=True, slots=True, init=False, eq=False)
 class PhysicalDomain:
     """One complete AO quartet, retaining its common owner and exact labels.
@@ -321,6 +335,65 @@ class PhysicalSource:
         _budget(budget).admit(_FIXED, 1)
         inventory, panel_caps, stream_caps = _action_controls(inventory, panel_caps, stream_caps)
         plan = self._plan_jk(density, target_k_index, inventory, panel_caps, stream_caps, budget)
+        return self._contract_jk(density, plan, inventory, panel_caps, stream_caps)
+
+    def plan_jk_all(self, density, *, inventory, panel_caps, stream_caps, budget):
+        """Preflight the entire declared k mesh before density or integral work.
+
+        Aggregate work and simultaneous storage are admitted cumulatively.
+        Only target receipts are retained, never domains or integral panels.
+        Density values are neither scanned nor copied during this planning.
+        """
+        _budget(budget).admit(_FIXED, 1)
+        controls = _action_controls(inventory, panel_caps, stream_caps)
+        return self._plan_jk_all(density, *controls, budget)
+
+    def _plan_jk_all(self, density, inventory, panel_caps, stream_caps, budget):
+        # Native shape/dtype/alignment/cap validation precedes any geometry.
+        native = core._plan_bipole_product_jk_stream(
+            self.declaration, density, 0, inventory, stream_caps)
+        # Reserve the immutable common density snapshot and its construction
+        # peak in addition to every native stream's full retained envelope.
+        total_bytes = inventory.numerical_replicas*(
+            _FIXED + 2*native.density_bytes + 4096*native.n_kpoints)
+        # Count shape/cap validation here and again at the snapshot boundary.
+        work = 2*native.wrapper_work_units + 65536 + 512*(native.density_bytes//16)
+        budget.admit(total_bytes, work)
+        plans = []
+        for target in range(native.n_kpoints):
+            remaining = Budget(budget.maximum_bytes-total_bytes,
+                               budget.maximum_work-work)
+            plan = self._plan_jk(density, target, inventory, panel_caps, stream_caps, remaining)
+            total_bytes += plan.inventoried_bytes
+            work += plan.work_units
+            budget.admit(total_bytes, work)
+            plans.append(plan)
+        return PhysicalJKAllPlan(tuple(plans), total_bytes, work)
+
+    def contract_jk_all(self, density, *, inventory, panel_caps, stream_caps, budget):
+        """Return finalized native J/K streams for every k in exact mesh order.
+
+        All targets are preflighted before the common immutable density
+        snapshot or any integral. Every target uses that snapshot and the
+        same snapshotted controls. Only a complete tuple escapes; a failed
+        execution cannot return a partial grid. All contractions remain native.
+        The finite operator still has no production or symmetry certificate.
+        """
+        _budget(budget).admit(_FIXED, 1)
+        inventory, panel_caps, stream_caps = _action_controls(inventory, panel_caps, stream_caps)
+        plan = self._plan_jk_all(density, inventory, panel_caps, stream_caps, budget)
+        # Geometry planning can call back into Python. Recheck the caller's
+        # current layout before copying so a changed shape/dtype cannot exceed
+        # the admitted snapshot envelope. Native construction still checks
+        # every value before the first integral.
+        core._plan_bipole_product_jk_stream(
+            self.declaration, density, 0, inventory, stream_caps)
+        snapshot = _freeze(np.asarray(density))
+        return tuple(self._contract_jk(snapshot, target, inventory, panel_caps, stream_caps)
+                     for target in plan.target_plans)
+
+    def _contract_jk(self, density, plan, inventory, panel_caps, stream_caps):
+        """Replay an internal plan; public entry points always preflight anew."""
         stream = core._make_bipole_product_jk_stream(
             self.declaration, density, plan.target_k_index, self.source_identity_sha256,
             inventory, stream_caps)

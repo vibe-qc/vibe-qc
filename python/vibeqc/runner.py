@@ -32,6 +32,7 @@ import math
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -3108,6 +3109,8 @@ def _run_single_point(
                     root_s2=_root_s2_values(sc.cas, molecule.multiplicity - 1),
                     ci_coeffs=sc.cas.ci_coeffs,
                     ci_labels=sc.cas.determinants,
+                    trexio_wavefunction=dict(coefficients=C_conv, ci=sc.cas, n_core=n_core,
+                                            reference=_iterative_cc_reference_result),
                     rdm1=_cas_rdm1,
                     selected_pt2=_sel_pt2,
                     gradient=grad,
@@ -3754,6 +3757,9 @@ def _run_single_point(
                 # active natural occupations in the .out solver block.
                 ci_coeffs=cas.ci_coeffs,
                 ci_labels=cas.determinants,
+                trexio_wavefunction=(dict(coefficients=C, ci=cas, n_core=n_core,
+                                         reference=_iterative_cc_reference_result)
+                                    if method == "casci" else None),
                 rdm1=_active_rdm1(cas),
                 gradient=_casscf_grad,
             )
@@ -3803,6 +3809,11 @@ def _run_single_point(
             energy_trace=[e_fci],
             ci_coeffs=evecs[:, 0],
             ci_labels=all_dets,
+            trexio_wavefunction=dict(
+                coefficients=C, reference=_fci_reference,
+                n_core=(int(molecule.n_electrons()) - int(getattr(_fci_reference, "ecp_total_ncore", 0)) - nelec) // 2,
+                ci=SimpleNamespace(determinants=all_dets, ci_coeffs=evecs[:, 0], n_active_orb=norb, e_total=e_fci),
+            ),
         )
 
     # ── Semiempirical methods ──
@@ -6197,10 +6208,9 @@ def run_job(
         end, or ``{output}.trexio`` (a directory of per-group text files)
         with ``trexio_backend="text"``; a path writes there instead.
         Written groups: metadata, nucleus, electron, basis, ao, mo,
-        ao_1e_int, state. Requires a route that exposes a Gaussian AO
-        wavefunction (fails before the calculation otherwise) and an
-        all-electron run (an ECP run is refused because the ``ecp`` group
-        is not written). See :doc:`/user_guide/trexio`.
+        ao_1e_int, rdm, state and ecp when applied. Requires a route that
+        exposes a Gaussian AO wavefunction (fails before calculation
+        otherwise). See :doc:`/user_guide/trexio`.
     fmax, max_opt_steps
         Optimizer tolerance (eV/Å) and iteration limit. Ignored unless
         ``optimize=True``.
@@ -6969,7 +6979,7 @@ def run_job(
         caller="run_job",
         unavailable_reason=_sidecar_unavailable_reason,
     )
-    if _trexio_requested and not _wavefunction_sidecars_supported:
+    if _trexio_requested and not (_wavefunction_sidecars_supported or resolved_method in {"casci", "casscf", "fci"}):
         # A TREXIO request is a guarantee, like write_molden_file=True:
         # refuse before the calculation rather than discover at the end
         # that the route exposes no Gaussian AO wavefunction to write.
@@ -12099,7 +12109,10 @@ def run_job(
                 f"{molden_path.name}\n"
             )
             flush()
-        if _trexio_requested and has_mos:
+        _has_trexio_wavefunction = has_mos or getattr(result, "trexio_wavefunction", None) is not None
+        if _trexio_requested and not _has_trexio_wavefunction:
+            raise ValueError("run_job: the requested TREXIO export has no orbital/CI payload.")
+        if _trexio_requested and _has_trexio_wavefunction:
             write(
                 f"\n  TREXIO wavefunction queued for final export to "
                 f"{_trexio_path.name} ({_trexio_backend} back end)\n"
@@ -12723,7 +12736,7 @@ def run_job(
                     # TREXIO (Posenitskiy 2023) is cited only when the
                     # artefact is actually written (routes.libraries.trexio).
                     extra_libraries=(
-                        ("trexio",) if (_trexio_requested and has_mos) else ()
+                        ("trexio",) if (_trexio_requested and _has_trexio_wavefunction) else ()
                     ),
                     extra_entries=(
                         *_mlip_extra,
@@ -14172,12 +14185,11 @@ def run_job(
     # Population, citations, geometry, the closed output streams, and the
     # atomic QVF archive have all reached disk and the manifest by this
     # boundary.
-    if _trexio_requested and has_mos:
+    if _trexio_requested and _has_trexio_wavefunction:
         # Compact binary (or small text) container; written before the
         # potentially very large Molden text so a Molden failure cannot
-        # take it down. The adapter refuses ECP runs (the `ecp` group is
-        # not written in this increment) rather than emit an incomplete
-        # Hamiltonian, so the ECP signal is passed explicitly.
+        # take it down. Applied ECP parameters are taken from the result;
+        # the explicit signal refuses results missing that provenance.
         with plog.stage("write_trexio", detail=str(_trexio_path.name)):
             _output_writer.dispatch_role(
                 "orbitals",

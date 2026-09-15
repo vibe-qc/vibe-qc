@@ -545,8 +545,11 @@ def _fold_star_reconstruct(l_rep, op, ka, kb, trs, ao_at, aux_at):
     as M(Rq)^{-1/2} = Omega M(q)^{-1/2} Omega^dagger and the identity
     holds for the final canonical-frame cderi, not just the raw 3c tensor. A
     finite origin-centred Bloch cell list is not generally closed under the
-    atom-dependent shifts used in this reindexing; its residual is the IID 337
-    boundary, rather than an error in the identity above.
+    atom-dependent shifts used in this reindexing; that is the vibeqc#337
+    boundary, rather than an error in the identity above. The planner keeps
+    this function on the closed side of it by admitting only ops whose
+    per-atom shifts agree
+    (:func:`~vibeqc.periodic.ccm.symmetry.ccm_symmetry_op_preserves_cell_list`).
 
     Time reversal composes as ``L(-k1, -k2) = conj(L(k1, k2))`` (exact,
     1e-14 class: real AOs conjugate every FT ingredient under momentum
@@ -712,12 +715,13 @@ def ccm_neutral_cderi_fold(
     space-group + time-reversal star reduction
     (:func:`~vibeqc.periodic.ccm.symmetry.ccm_symmetry_fold_kpair_plan`):
     only orbit-representative momentum pairs are fit, the rest are
-    reconstructed by k-pair covariance. Its finite Bloch cell-list residual
-    has been measured on the lower-dimensional parity fixtures at
-    :func:`_fold_star_reconstruct`; arbitrary enabled systems have no runtime
-    bound, and the relation is not an exact runtime invariant.
-    Fully 3-D replica meshes therefore fall back to the full build (GitLab IID
-    337). Accepts ``None``/``False`` (off, the default), ``True``/"auto"
+    reconstructed by k-pair covariance. The planner admits a space-group
+    relation only when its op also maps the finite Bloch cell list onto itself
+    (:func:`~vibeqc.periodic.ccm.symmetry.ccm_symmetry_op_preserves_cell_list`),
+    which is the vibeqc#337 fix: the reconstruction is then exact on the
+    truncated build, not merely convergent to it, so the reduction no longer
+    depends on the replica mesh's dimensionality.
+    Accepts ``None``/``False`` (off, the default), ``True``/"auto"
     (analyze the cluster), or a pre-computed
     :class:`~vibeqc.periodic.ccm.symmetry.CCMSymmetry`. Only relations admitted
     by the current conservative plan are used: a rotated channel must coincide

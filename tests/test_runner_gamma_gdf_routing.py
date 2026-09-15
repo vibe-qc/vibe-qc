@@ -8,8 +8,8 @@ only capability-filtered for an *explicit* ``gdf_method``, so a plain
 ``run_periodic_job(..., jk_method="gdf")`` on an ionic cell silently fell
 back to the legacy molecular-limit Γ driver, whose dense-core absolute
 energies are PARITY_HELD. The filter now also covers the default route;
-explicit user knobs still fall back (fail-open would silently drop a knob
-the user asked for).
+explicit user knobs now refuse the held tight-core legacy fallback (#95).
+Low-Z molecular-limit fallbacks retain their supported convergence controls.
 
 These tests pin the DISPATCH decision only (sentinel drivers, no SCF).
 """
@@ -40,7 +40,7 @@ def _mgo_primitive_physical() -> vq.PeriodicSystem:
     return vq.PeriodicSystem(3, lat, atoms)
 
 
-def _run(tmp_path, monkeypatch, **kwargs) -> str:
+def _run(tmp_path, monkeypatch, *, system=None, **kwargs) -> str:
     monkeypatch.setattr(
         periodic_runner,
         "run_pbc_gdf_rhf",
@@ -51,13 +51,14 @@ def _run(tmp_path, monkeypatch, **kwargs) -> str:
         "run_rhf_periodic_gamma_gdf",
         lambda *a, **k: (_ for _ in ()).throw(_Routed("legacy")),
     )
-    system = _mgo_primitive_physical()
+    if system is None:
+        system = _mgo_primitive_physical()
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
     with pytest.raises(_Routed) as excinfo:
         periodic_runner.run_periodic_job(
             system,
             basis,
-            method="RHF",
+            method=kwargs.pop("method", "RHF"),
             jk_method="gdf",
             output=str(tmp_path / "route"),
             write_molden_file=False,
@@ -79,15 +80,50 @@ def test_default_gamma_ionic_auto_fmixing_routes_pure_gdf(tmp_path, monkeypatch)
     assert _run(tmp_path, monkeypatch) == "pure"
 
 
-def test_explicit_fock_mixing_still_uses_legacy_fallback(tmp_path, monkeypatch):
-    """An EXPLICIT user Fock-mixing request is not silently dropped: the
-    run falls back to the legacy Γ driver that implements the knob."""
-    assert _run(tmp_path, monkeypatch, fock_mixing=0.2) == "legacy"
+@pytest.mark.parametrize("controls", [
+    {"fock_mixing": 0.2},
+    {"fmixing_percent": 20.0},
+    {"level_shift": 0.2},
+    {"smearing_temperature": 0.01},
+    {"symmetry_stabilize": True},
+    {"symmetry_reduce_fock": True},
+])
+def test_explicit_controls_refuse_dense_core_legacy_fallback(
+    tmp_path, monkeypatch, controls,
+):
+    # Both SCF drivers are sentinels: the refusal must precede either call.
+    with pytest.raises(NotImplementedError, match="legacy Gamma GDF fallback"):
+        _run(tmp_path, monkeypatch, **controls)
 
 
-def test_explicit_fmixing_percent_still_uses_legacy_fallback(tmp_path, monkeypatch):
-    """Same contract through the CRYSTAL-style fmixing_percent spelling."""
-    assert _run(tmp_path, monkeypatch, fmixing_percent=20.0) == "legacy"
+@pytest.mark.parametrize("controls", [
+    {"fock_mixing": 0.2}, {"fmixing_percent": 20.0},
+    {"level_shift": 0.2}, {"smearing_temperature": 0.01},
+])
+def test_explicit_controls_preserve_low_z_legacy_fallback(
+    tmp_path, monkeypatch, controls,
+):
+    system = vq.PeriodicSystem(3, np.eye(3) * 20.0,
+                             [vq.Atom(1, [0, 0, 0]), vq.Atom(1, [0, 0, 1.4])])
+    assert _run(tmp_path, monkeypatch, system=system, **controls) == "legacy"
+
+
+@pytest.mark.parametrize("controls", [
+    {"level_shift": 0.2}, {"smearing_temperature": 0.01},
+])
+def test_rks_controls_refuse_dense_core_legacy_fallback(tmp_path, monkeypatch, controls):
+    with pytest.raises(NotImplementedError, match="legacy Gamma GDF fallback"):
+        _run(tmp_path, monkeypatch, method="RKS", functional="lda", **controls)
+
+
+def test_explicit_bulk_rsgdf_gamma_controls_reach_general_driver(tmp_path, monkeypatch):
+    def general(*args, **kwargs):
+        assert kwargs["gdf_method"] == "rsgdf"
+        raise _Routed("general")
+
+    monkeypatch.setattr(periodic_runner, "run_krhf_periodic_gdf", general)
+    assert _run(tmp_path, monkeypatch, kpoints=(1, 1, 1),
+                gdf_method="rsgdf", fock_mixing=0.2) == "general"
 
 
 def test_parity_hold_summary_states_hold_in_out_text():

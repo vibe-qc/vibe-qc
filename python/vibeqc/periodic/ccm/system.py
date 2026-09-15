@@ -255,12 +255,15 @@ class CCMSystem:
         self.basis = BasisSet(self.supercell, self.basis_name)
         self.ao_atom = _ao_atom_map(self.basis)
 
-        # Guard: every supercell atom must contribute at least one basis
-        # function. A basis that silently omits an element -- e.g. the bundled
-        # cc-pVDZ.g94 covers only H-Ar, so Cs (Z=55) gets *zero* AOs --
+        # Backstop guard: every supercell atom must contribute at least one
+        # basis function. A basis that silently omits an element -- e.g. the
+        # bundled cc-pVDZ.g94 covers only H-Ar, so Cs (Z=55) gets *zero* AOs --
         # otherwise crashes far downstream in build_padded_cluster with an
-        # opaque ``KeyError(0)`` (pad atom 0 has no AO range). Fail here, naming
-        # the bare element(s): the real fix is a basis/ECP that covers them.
+        # opaque ``KeyError(0)`` (pad atom 0 has no AO range). ``BasisSet``
+        # itself refuses that case first with its own RuntimeError naming the
+        # bare Z (#234), so this only fires for a basis that constructs yet
+        # leaves an atom without AOs. Name the element(s): the real fix is a
+        # basis/ECP that covers them.
         _sc_atoms = list(self.supercell.atoms)
         _atoms_with_ao = {int(a) for a in self.ao_atom}
         _missing = [A for A in range(len(_sc_atoms)) if A not in _atoms_with_ao]

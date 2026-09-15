@@ -1,0 +1,108 @@
+#!/bin/sh
+# Refuse a push to main or release-candidate/* whose CHANGELOG.md changes an
+# already released section without re-pinning it (#229). See CONTRIBUTING.md
+# ("Pre-commit hook") for activation.
+#
+# Why pre-push and not pre-commit: entries reach released sections through
+# rebases, which re-apply commits without running pre-commit. The pushed tip is
+# the first point where the rebased CHANGELOG.md exists locally.
+#
+# The check uses the guard and pins from the tree being pushed. Only a tree
+# whose complete reachable history contains neither policy file is exempt.
+# Missing inputs or unreadable/shallow history cannot establish that exemption.
+# It needs Python 3.11 or newer: the repo's
+# .venv/bin/python when present, else python3, or $VIBEQC_PRE_PUSH_PYTHON.
+#
+# To bypass for a reviewed exception: git push --no-verify, and say why in the
+# commit message or on the issue.
+
+z40=0000000000000000000000000000000000000000
+root=$(git rev-parse --show-toplevel) || exit 1
+
+py=${VIBEQC_PRE_PUSH_PYTHON:-}
+if [ -z "$py" ]; then
+    if [ -x "$root/.venv/bin/python" ]; then
+        py="$root/.venv/bin/python"
+    else
+        py=python3
+    fi
+fi
+
+status=0
+guard=scripts/test_gate/changelog_guard.py
+pins=scripts/test_gate/changelog_pins.toml
+tmp=
+trap '[ -z "$tmp" ] || rm -rf "$tmp"' 0
+trap 'exit 1' HUP INT TERM
+
+refuse() {
+    echo "pre-push: refusing to push $local_ref to $remote_ref: $*" >&2
+    status=1
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/heads/main | refs/heads/release-candidate/*) ;;
+        *) continue ;;
+    esac
+    [ "$local_sha" = "$z40" ] && continue
+
+    if ! git cat-file -e "$local_sha^{commit}" 2>/dev/null; then
+        refuse "cannot read commit $local_sha; restore the local object before pushing (#264)."
+        continue
+    fi
+    if ! policy=$(git ls-tree "$local_sha" -- "$guard" "$pins" 2>/dev/null); then
+        refuse "cannot inspect committed policy files; resolve the Git read failure (#264)."
+        continue
+    fi
+    if [ -z "$policy" ]; then
+        # Removing both files must not turn a guarded descendant into an old
+        # tree. --full-history includes introductions on merged side branches.
+        if ! history=$(git log --full-history -1 --format=%H "$local_sha" -- "$guard" "$pins" 2>/dev/null); then
+            refuse "cannot inspect policy history; resolve the Git read failure (#264)."
+            continue
+        fi
+        if [ -z "$history" ]; then
+            if ! shallow=$(git rev-parse --is-shallow-repository); then
+                refuse "cannot establish complete policy history (#264)."
+            elif [ "$shallow" = false ]; then
+                continue
+            else
+                refuse "shallow history cannot prove a pre-policy tree; fetch complete history before pushing (#264)."
+            fi
+            continue
+        fi
+    fi
+
+    tmp=$(mktemp -d) || exit 1
+    complete=true
+    for input in "$guard" "$pins" CHANGELOG.md; do
+        if ! entry=$(git ls-tree "$local_sha" -- "$input" 2>/dev/null); then
+            refuse "cannot inspect $input in commit $local_sha (#264)."
+            complete=false
+            break
+        fi
+        case "$entry" in
+            '100644 blob '* | '100755 blob '*) ;;
+            *)
+                refuse "missing or non-regular $input in commit $local_sha; restore and commit the required file (#264)."
+                complete=false
+                break
+                ;;
+        esac
+        if ! git show "$local_sha:$input" > "$tmp/${input##*/}" 2>/dev/null; then
+            refuse "cannot extract $input from commit $local_sha; resolve the Git read failure (#264)."
+            complete=false
+            break
+        fi
+    done
+    if [ "$complete" = true ]; then
+        if ! "$py" "$tmp/changelog_guard.py" check \
+            --changelog "$tmp/CHANGELOG.md" --pins "$tmp/changelog_pins.toml" </dev/null >/dev/null; then
+            refuse "committed changelog policy check failed; resolve the guard diagnostic above (#229, #264)."
+        fi
+    fi
+    rm -rf "$tmp"
+    tmp=
+done
+exit $status

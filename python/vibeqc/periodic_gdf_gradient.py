@@ -1731,8 +1731,8 @@ def _compute_range_separated_cache_gradient(
                         integral_screen_error=screen, retain_fit_state=True,
                         _metric_state=metric_state,
                     )
-                except _RangeSeparatedGdfAdmissionError:
-                    if len(selected) == 1:
+                except _RangeSeparatedGdfAdmissionError as exc:
+                    if not exc.retry_with_fewer_kpoints or len(selected) == 1:
                         raise
                     size = max(1, len(selected)//2)
                     continue

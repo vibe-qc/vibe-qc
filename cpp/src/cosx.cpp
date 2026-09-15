@@ -837,7 +837,16 @@ Eigen::MatrixXd compute_cosx_k(const BasisSet& basis,
         // Image-cell mode always lands on the unbatched branch —
         // ``batches_use`` was nulled at the top of the function.
         if (batches_use == nullptr) {
-            #pragma omp for schedule(guided)
+            // schedule(static, 32), not guided/dynamic: every thread sums its
+            // points into a private accumulator that is added in thread order
+            // afterwards, so the partition of points over threads must be fixed
+            // for the result to be reproducible at a given thread count. A
+            // guided or dynamic partition changes from run to run and with it the
+            // rounding of K (2e-14 on H2O/def2-SVP at four threads), enough to
+            // flip which stationary point a degenerate open shell settles into
+            // (#215). The interleaved 32-point chunks keep the load balance of a
+            // dynamic schedule against the per-point screening cost.
+            #pragma omp for schedule(static, 32)
             for (int g = 0; g < n_pts; ++g) {
                 const double w_g = cosx_grid.weights(g);
                 const Eigen::VectorXd chi_g =
@@ -861,7 +870,16 @@ Eigen::MatrixXd compute_cosx_k(const BasisSet& basis,
             const int n_batches =
                 static_cast<int>(batches_use->batches.size());
             const int batch_size_hint = batches_use->batch_size_hint;
-            #pragma omp for schedule(guided)
+            // schedule(static, 32), not guided/dynamic: every thread sums its
+            // points into a private accumulator that is added in thread order
+            // afterwards, so the partition of points over threads must be fixed
+            // for the result to be reproducible at a given thread count. A
+            // guided or dynamic partition changes from run to run and with it the
+            // rounding of K (2e-14 on H2O/def2-SVP at four threads), enough to
+            // flip which stationary point a degenerate open shell settles into
+            // (#215). The interleaved 32-point chunks keep the load balance of a
+            // dynamic schedule against the per-point screening cost.
+            #pragma omp for schedule(static, 32)
             for (int g = 0; g < n_pts; ++g) {
                 int bi = g / batch_size_hint;
                 if (bi >= n_batches) bi = n_batches - 1;
@@ -1005,7 +1023,16 @@ Eigen::MatrixXd compute_cosx_k_gradient_contribution(
     std::vector<Eigen::MatrixXd> knaive_thread(
         q_ok ? n_threads : 0, Eigen::MatrixXd::Zero(n_bf, n_bf));
 
-    #pragma omp parallel for schedule(dynamic, 32)
+    // schedule(static, 32), not guided/dynamic: every thread sums its
+    // points into a private accumulator that is added in thread order
+    // afterwards, so the partition of points over threads must be fixed
+    // for the result to be reproducible at a given thread count. A
+    // guided or dynamic partition changes from run to run and with it the
+    // rounding of K (2e-14 on H2O/def2-SVP at four threads), enough to
+    // flip which stationary point a degenerate open shell settles into
+    // (#215). The interleaved 32-point chunks keep the load balance of a
+    // dynamic schedule against the per-point screening cost.
+    #pragma omp parallel for schedule(static, 32)
     for (int g = 0; g < n_pts; ++g) {
         const double w_g = cosx_grid.weights(g);
         if (w_g == 0.0) continue;

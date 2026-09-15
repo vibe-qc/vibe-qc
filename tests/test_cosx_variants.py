@@ -326,13 +326,25 @@ def test_multistage_commutator_floor_falls_back_to_final_grid():
     o.initial_guess = InitialGuess.SAD
     r = run_uhf(mol, basis, o)
     assert r.converged, (
-        "commutator-floor system must converge via the final-grid "
-        "fallback segment"
+        "commutator-floor system must converge, via the final-grid "
+        "fallback segment or a converging middle grid"
     )
     trace = list(r.scf_trace)
-    # The fallback's last row IS the convergence point: its commutator
-    # meets the tolerance on the final grid (no detached recompute row).
-    assert trace[-1].grad_norm < o.conv_tol_grad
+    # Two documented routes end here, and ``converged`` is honest on both
+    # (see run_cosx_staged_scf): on the fallback route the last row IS the
+    # convergence point and meets the tolerance on the final grid; on the
+    # published fast route the middle grid met the tolerance (the row
+    # before the single final-grid recompute) and the last row's commutator
+    # is the inter-grid exchange difference, above tolerance by design.
+    # Which route OH takes depends on whether its degenerate pi pair stays
+    # symmetric, which floating-point noise used to decide (#215); either
+    # way a run reporting ``converged`` with NEITHER row below tolerance is
+    # the defect this witness guards against.
+    met = [row.grad_norm < o.conv_tol_grad for row in trace[-2:]]
+    assert any(met), (
+        "converged reported but neither the final-grid row nor the "
+        f"converging-grid row met conv_tol_grad: {[row.grad_norm for row in trace[-2:]]}"
+    )
 
 
 # --- All-methods reach: post-HF inherits RIJCOSX via the reference SCF ----

@@ -46,7 +46,7 @@ ATCT_DOI = "doi:10.17038/CSE/1885923"
 ATCT_LICENSE = "CC-BY-4.0 (U.S. Government work, ANL)"
 ATCT_USER_AGENT = (
     f"vibe-qc-fetcher/{FETCHER_VERSION} "
-    "(+https://vibe-qc.com/docs/ mailto:mpei@vibe-qc.com)"
+    "(+https://vibe-qc.com/; mailto:mpei@vibe-qc.com)"
 )
 
 _throttle_lock = threading.Lock()

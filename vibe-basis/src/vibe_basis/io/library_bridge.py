@@ -1,6 +1,6 @@
 """Bridge between vibe-basis and the qc-input-library.
 
-The qc-input-library (https://vibe-qc.com/docs/)
+The separately installed qc-input-library
 contains 78+ standalone CRYSTAL14 `.d12` input files with inline
 POB basis sets, reference outputs, and OPTBASIS templates.
 

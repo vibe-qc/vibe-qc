@@ -7,6 +7,7 @@ guards and transaction state directly without compiling the native core.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -33,6 +34,76 @@ pytestmark = pytest.mark.skipif(
     shutil.which("bash") is None,
     reason="bash is required for lifecycle script tests",
 )
+
+
+_LIFECYCLE_LOCK_ROOT = Path(f"/tmp/vibe-toolset-lifecycle-locks-{os.geteuid()}")
+
+
+def _lifecycle_lock_entries() -> set[str]:
+    try:
+        return {entry.name for entry in _LIFECYCLE_LOCK_ROOT.iterdir()}
+    except FileNotFoundError:
+        return set()
+
+
+def _remove_unheld_lifecycle_lock(path: Path) -> bool:
+    """Delete one lock file unless a live process holds it.
+
+    ``flock`` locks the open file, not the name, so a lock file is only safe
+    to delete while nobody holds it. The file is opened without following
+    symlinks, a non-blocking exclusive ``flock`` is attempted, and on success
+    the name is unlinked *while the lock is still held*, so no acquirer can
+    open this inode in between. A held lock (``flock`` refused) is left alone
+    and reported as not removed. Returns True when the file is gone.
+    """
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return True
+    finally:
+        os.close(fd)
+
+
+@pytest.fixture(autouse=True)
+def _prune_lifecycle_locks_minted_by_this_test():
+    """Remove the lock files a test leaves in the uid-global lock directory.
+
+    ``scripts/_lifecycle_lock.sh`` mints one ``checkout-<sha256>.lock`` and
+    one ``target-<sha256>.lock`` per resource under
+    ``/tmp/vibe-toolset-lifecycle-locks-<uid>`` and never deletes them. Real
+    installs make one pair per checkout and venv; the tests here mint a fresh
+    pair per ``tmp_path`` resource on every run, so the directory grew by
+    thousands of empty files a day (#204: 10,655 on one machine). Nine of the
+    27 files one run of this module leaves are for targets the scripts never
+    created, so they cannot be recomputed from what is left on disk; the
+    directory is snapshotted instead and only names that appeared during
+    this test are considered.
+
+    Safety: only files that did not exist before the test are touched, and
+    each is deleted only if a non-blocking ``flock`` succeeds, so a lock a
+    live process holds (this test's own holder that was not stopped, or a
+    concurrent real install on this machine) is never removed. Deleting an
+    unheld file is harmless: the next acquirer creates a fresh one with
+    ``O_EXCL``. The production helper's own check-then-``flock`` window
+    (#204, option 2) is not widened here; closing it needs the helper to
+    re-check the inode after locking, which is a separate change.
+    """
+    before = _lifecycle_lock_entries()
+    yield
+    for name in sorted(_lifecycle_lock_entries() - before):
+        _remove_unheld_lifecycle_lock(_LIFECYCLE_LOCK_ROOT / name)
 
 
 def _bash(snippet: str, *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -747,6 +818,40 @@ def test_reinstall_dry_run_creates_no_lifecycle_lock_artifacts(
         if path.stat().st_ctime >= started
     ]
     assert not new_states, f"dry run created lifecycle state: {new_states}"
+
+
+def test_minted_lifecycle_locks_are_pruned_only_when_unheld(tmp_path: Path) -> None:
+    """The autouse pruner never deletes a held lock and removes it once free.
+
+    A real ``vibe_toolset_acquire_lifecycle_lock`` holder takes this test's
+    checkout and target locks. While it lives, the pruning helper must refuse
+    both files; after it exits they are unheld and must be removed. The
+    autouse fixture would do the same at teardown; this pins the decision it
+    relies on (#204).
+    """
+    checkout = tmp_path / "checkout"
+    target = tmp_path / "venv"
+    holder = _start_toolset_lock_holder(target, checkout)
+    try:
+        locks = [
+            _toolset_lock_path("checkout", checkout),
+            _toolset_lock_path("target", target),
+        ]
+        for lock in locks:
+            assert lock.exists(), lock
+            assert _remove_unheld_lifecycle_lock(lock) is False, (
+                f"pruner deleted a held lock: {lock}")
+            assert lock.exists(), lock
+    finally:
+        assert holder.stdin is not None
+        holder.stdin.write("\n")
+        holder.stdin.close()
+        holder.wait(timeout=30)
+    for lock in locks:
+        assert _remove_unheld_lifecycle_lock(lock) is True, lock
+        assert not lock.exists(), lock
+    # Idempotent on an already-missing name.
+    assert _remove_unheld_lifecycle_lock(locks[0]) is True
 
 
 def test_lifecycle_lock_path_matches_the_shell_helper() -> None:

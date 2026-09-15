@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a capability or an improvement to an existing workflow.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Describe the task you need to accomplish and current limitations.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the expected inputs and outputs. Include relevant scientific references.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and alternatives
+      description: Explain how correctness could be checked and which alternatives you considered.
+    validations:
+      required: true

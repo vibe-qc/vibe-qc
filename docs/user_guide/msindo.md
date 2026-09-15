@@ -374,6 +374,27 @@ is in [`examples/semiempirical/11_msindo_ccm.py`](../../examples/semiempirical/1
 
 ### CCM gradient details
 
+CCM checks restricted orbital stability when the initial core-Hamiltonian
+occupied/virtual gap is at most `1e-6` Ha. In this domain, tiny coordinate
+changes can rotate the initial occupied projector and send DIIS to different
+stationary states even when their final orbital gaps are large. A negative
+orbital-rotation curvature identifies a saddle: the driver searches both
+signs of that mode, reconverges lower-energy seeds, and checks the selected
+state again. The density used for analytic and finite-difference gradients
+follows the same selection. The Hamiltonian and integer occupations are
+unchanged.
+
+`max_iter` bounds the cumulative SCF iterations across these restarts. An
+unresolved stability analysis, an exhausted restart budget, or failure to
+escape a detected saddle raises a diagnostic error. The result records
+`stability_checked`, `stability_analysis_converged`, `stability_eigenvalue`
+(the energy Hessian eigenvalue), and `n_stability_restarts`; `run_job` also
+prints the verdict and cites the stability algorithm. This is a local
+minimum check within restricted HF, not a global-minimum guarantee or a
+test against unrestricted spin solutions. Initial guesses with a resolved
+gap keep their established SCF path. See [Lehtola et al. (2020), section
+10](https://doi.org/10.3390/molecules25051218) and issue #249.
+
 `ccm_gradient_fd` computes the nuclear gradient by central finite differences
 (Ha/bohr), holding the **Wigner-Seitz topology fixed** while displacing atoms.
 This matches MSINDO's fixed-weight analytic gradient.  The WS is built once

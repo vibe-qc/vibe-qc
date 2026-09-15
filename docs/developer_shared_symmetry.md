@@ -352,8 +352,13 @@ A[g.s] M[g,s] = M[g,s] conjugate_if_antiunitary(g)(A[s])
 
 The tolerance therefore has the operator's units. Dense mixing, distinct
 target gauges and antiunitary coordinate conjugation are retained. The
-Frobenius norm is accumulated after scaling the residual entries, preserving
-tiny nonzero defects and finite large residuals without changing the absolute
+Frobenius norm is accumulated after scaling the real and imaginary residual
+components with real division, including subnormal scales. The same component
+scaling is used for relative retained-space and selected-operator leakage.
+Each norm in a ratio uses its own component scale; binary exponents are combined
+only at the final division. This preserves tiny relative defects beside large
+retained components, even when unscaled norms are not representable. Nonzero
+ratios that cannot be represented are refused. This preserves tiny nonzero defects and finite large residuals without changing the absolute
 tolerance. Nonfinite arithmetic or an unrepresentable final norm is refused.
 The
 parent already checks the full rational Bloch characters in the group law;

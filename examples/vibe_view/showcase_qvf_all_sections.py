@@ -58,7 +58,7 @@ vibrations, IR spectrum and bands in archives 1 and 3 *are* computed.
 
 Run:
 
-    ~/path/to/vibeqc/.venv/bin/python examples/vibe_view/showcase_qvf_all_sections.py
+    ~/path/to/vibe-qc/.venv/bin/python examples/vibe_view/showcase_qvf_all_sections.py
 
 Then open any archive with vibe-view, e.g.:
 
