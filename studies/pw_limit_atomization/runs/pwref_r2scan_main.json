@@ -1,0 +1,153 @@
+{
+  "provenance": {
+    "external_program": "gpaw",
+    "code_version": "25.7.0",
+    "boundary": "out-of-process subprocess (CLAUDE.md \u00a710)",
+    "functional": "r2scan",
+    "cutoffs_ev": [
+      800.0,
+      1000.0
+    ],
+    "kmesh": [
+      6,
+      6,
+      6
+    ],
+    "atom_box_ang": 12.0,
+    "reference": "VASP@900eV r2SCAN (references-cohesive/r2scan.dat)"
+  },
+  "results": [
+    {
+      "system_id": "agcl_rocksalt",
+      "pw_limit_kjmol": 523.4346414252026,
+      "vasp900_kjmol": 526.0,
+      "delta_vs_vasp_kjmol": -2.565358574797415,
+      "extrapolation": "E_cut^(-3/2) extrapolation from 800/1000 eV",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.8649769076980616,
+          "e_atoms_ha": -0.6659573975386973,
+          "atomization_kjmol": 522.5256520773677,
+          "solid_converged": true,
+          "atoms_converged": true
+        },
+        {
+          "cutoff_ev": 1000.0,
+          "e_solid_ha": -0.8650947042778355,
+          "e_atoms_ha": -0.665976710190777,
+          "atomization_kjmol": 522.7842215939763,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Ag": -0.49870986127301853,
+        "Cl": -0.16726684891775845
+      },
+      "atom_valence": {
+        "Ag": 17,
+        "Cl": 7
+      }
+    },
+    {
+      "system_id": "bao_rocksalt",
+      "pw_limit_kjmol": 989.2523803617277,
+      "vasp900_kjmol": 1001.5,
+      "delta_vs_vasp_kjmol": -12.24761963827234,
+      "extrapolation": "E_cut^(-3/2) extrapolation from 800/1000 eV",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -1.0565466003323205,
+          "e_atoms_ha": -0.6796918543591626,
+          "atomization_kjmol": 989.4319995079629,
+          "solid_converged": true,
+          "atoms_converged": true
+        },
+        {
+          "cutoff_ev": 1000.0,
+          "e_solid_ha": -1.0566160237063962,
+          "e_atoms_ha": -0.6797807384662518,
+          "atomization_kjmol": 989.3809053604613,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Ba": -0.555419239683574,
+        "O": -0.12436149878267777
+      },
+      "atom_valence": {
+        "Ba": 10,
+        "O": 6
+      }
+    },
+    {
+      "system_id": "bas_rocksalt",
+      "pw_limit_kjmol": 941.0618478246514,
+      "vasp900_kjmol": 950.4,
+      "delta_vs_vasp_kjmol": -9.338152175348569,
+      "extrapolation": "E_cut^(-3/2) extrapolation from 800/1000 eV",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -1.0944682387570475,
+          "e_atoms_ha": -0.7359196769393956,
+          "atomization_kjmol": 941.3691196162141,
+          "solid_converged": true,
+          "atoms_converged": true
+        },
+        {
+          "cutoff_ev": 1000.0,
+          "e_solid_ha": -1.0945377422491969,
+          "e_atoms_ha": -0.7360224716169421,
+          "atomization_kjmol": 941.2817136209721,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Ba": -0.555419239683574,
+        "S": -0.18060323193336814
+      },
+      "atom_valence": {
+        "Ba": 10,
+        "S": 6
+      }
+    },
+    {
+      "system_id": "zns_zincblende",
+      "pw_limit_kjmol": 615.1282437203704,
+      "vasp900_kjmol": 615.1,
+      "delta_vs_vasp_kjmol": 0.028243720370369374,
+      "extrapolation": "E_cut^(-3/2) extrapolation from 800/1000 eV",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.6497214430726902,
+          "e_atoms_ha": -0.415409067210818,
+          "atomization_kjmol": 615.1870582385778,
+          "solid_converged": true,
+          "atoms_converged": true
+        },
+        {
+          "cutoff_ev": 1000.0,
+          "e_solid_ha": -0.6497837189682818,
+          "e_atoms_ha": -0.41547771533153227,
+          "atomization_kjmol": 615.1703279638186,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Zn": -0.23487448339816414,
+        "S": -0.18060323193336814
+      },
+      "atom_valence": {
+        "Zn": 12,
+        "S": 6
+      }
+    }
+  ]
+}

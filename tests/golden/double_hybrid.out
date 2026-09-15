@@ -1,0 +1,31 @@
+<BANNER>
+
+Double-hybrid DFT dispatcher
+  Functional:        b2plyp
+  Basis:             cc-pvdz
+  Charge:            0
+  Multiplicity:      0
+  MP2 frozen core:   0 (explicit all-electron model component)
+
+  Energy components (Ha)
+  ---------------------------------------------------
+  RKS reference                        -00.0000000000
+  MP2 correlation                        0.0000000000
+  Total energy                         -00.0000000000
+  ---------------------------------------------------
+
+SCF status
+  Converged:         True
+  Iterations:        0
+
+Sidecars
+  log          dh.out
+  orbitals     dh.molden
+  geometry     dh.xyz
+  citations    dh.bibtex
+  citations    dh.references
+  population   dh.population.txt
+  population   dh.population.json
+  qvf          dh.qvf
+
+<REFERENCES>

@@ -1,0 +1,1 @@
+{'system': 'o2-triplet', 'variant': 'sosump2', 'e_hf': -149.6751689002665, 'e_correlation': -0.4262228307910709, 'e_total': -150.10139173105756, 'e_aa': -0.06280300953007688, 'e_bb': -0.06870411678444913, 'e_ab': -0.3278637159931314, 's_squared_uhf': 2.042607967329193, 'n_scf_iter': 25, 'scf_converged': True}

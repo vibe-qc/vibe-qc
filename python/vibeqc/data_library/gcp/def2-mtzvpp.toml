@@ -1,0 +1,170 @@
+[metadata]
+name = "def2-mtzvpp"
+kind = "gcp_parameters"
+citation = "Grimme, Hansen, Ehlert, Mewes, J. Chem. Phys. 154, 064103 (2021)"
+doi = "10.1063/5.0040021"
+license = "Open data: numerical results from a published scientific paper; redistribution is standard practice"
+source = "mctc-gcp src/gcp.f90 case 'r2scan3c'/'def2mtzvpp': (sigma,eta,alpha,beta)=(1.0,1.315,0.941,1.4636), etaspec=1.15 (setzet: za(11:36)*=1.15); e_mis from data array HFdef2mtzvpp; n_virt from the r2scan3c-SPECIFIC virtual counts (gcp_call ~line 262: xva=1.0, with C=3.0, N=0.5, O=0.5), NOT the generic nbas array. r2SCAN-3c gCP is additionally DAMPED (gcp.f90 damp=.true., dmp_scal=4.0, dmp_exp=6.0); that damping is applied by the recipe — see vibeqc.composites."
+status = "complete"
+coverage = "H–Kr (Z=1..36)"
+note = """
+r2SCAN-3c parent basis. The (sigma, eta, alpha, beta) fit and the etaspec=1.15 heavy-element Slater scaling are verified against the mctc-gcp Fortran reference. CRITICAL (audit F1.5): n_virt here are the r2scan3c-SPECIFIC effective virtual counts (mctc-gcp 'xva': all = 1.0 except C = 3.0, N = 0.5, O = 0.5), NOT the generic def2-mTZVPP nbas array. The original bundling mistakenly transcribed nbas (H=5, C=19, N=24, O=24, ...), which gave gCP(H2O) = +10.18 kcal/mol. With the correct n_virt AND the damped-gCP form the result is +1.12 kcal/mol (H2O), matching mctc-gcp's gcp_call('r2scan3c'). e_mis (the per-element 'missing' energy from HFdef2mtzvpp) is unchanged.
+"""
+
+[parameters]
+sigma = 1.0
+eta   = 1.315
+alpha = 0.941
+beta  = 1.4636
+# r2SCAN-3c specific: scale heavier-element (Z >= 11) Slater exponents
+# by an additional 1.15 factor (mctc-gcp setzet: za(11:36)*=etaspec,
+# triggered for the special r2SCAN-3c mode sigma=1.0, eta=1.315).
+etaspec = 1.15
+
+# n_virt = the r2scan3c-specific virtual counts ('xva' in gcp_call):
+# 1.0 for every element, overridden to C=3.0, N=0.5, O=0.5. These are
+# NOT generic virtual-orbital counts. e_mis is from HFdef2mtzvpp.
+
+[elements.H]
+e_mis  = 0.027
+n_virt = 1.0
+
+[elements.He]
+e_mis  = 0.0
+n_virt = 1.0
+
+[elements.Li]
+e_mis  = 0.0
+n_virt = 1.0
+
+[elements.Be]
+e_mis  = 0.0
+n_virt = 1.0
+
+[elements.B]
+e_mis  = 0.2
+n_virt = 1.0
+
+[elements.C]
+e_mis  = 0.02
+n_virt = 3.0
+
+[elements.N]
+e_mis  = 0.18
+n_virt = 0.5
+
+[elements.O]
+e_mis  = 0.08
+n_virt = 0.5
+
+[elements.F]
+e_mis  = 0.07
+n_virt = 1.0
+
+[elements.Ne]
+e_mis  = 0.065
+n_virt = 1.0
+
+[elements.Na]
+e_mis  = 0.0
+n_virt = 1.0
+
+[elements.Mg]
+e_mis  = 0.0
+n_virt = 1.0
+
+[elements.Al]
+e_mis  = 0.0
+n_virt = 1.0
+
+[elements.Si]
+e_mis  = 0.2
+n_virt = 1.0
+
+[elements.P]
+e_mis  = 0.6
+n_virt = 1.0
+
+[elements.S]
+e_mis  = 0.6
+n_virt = 1.0
+
+[elements.Cl]
+e_mis  = 0.6
+n_virt = 1.0
+
+[elements.Ar]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.K]
+e_mis  = 0.0
+n_virt = 1.0
+
+[elements.Ca]
+e_mis  = 0.0
+n_virt = 1.0
+
+[elements.Sc]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Ti]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.V]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Cr]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Mn]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Fe]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Co]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Ni]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Cu]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Zn]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Ga]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Ge]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.As]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Se]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Br]
+e_mis  = 0.3
+n_virt = 1.0
+
+[elements.Kr]
+e_mis  = 0.0
+n_virt = 1.0

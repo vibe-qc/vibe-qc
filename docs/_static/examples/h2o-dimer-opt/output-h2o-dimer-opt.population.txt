@@ -1,0 +1,34 @@
+# vibe-qc population / properties dump
+# Sections: mulliken charges, löwdin charges,
+# mayer bond orders (top-N), dipole moment.
+# Tab-separated. Lines starting with '#' are comments.
+
+# === Mulliken atomic charges ===
+# idx	symbol	Z	charge
+0	O	8.0	-0.954537
+1	H	1.0	+0.504430
+2	H	1.0	+0.432751
+3	O	8.0	-0.911355
+4	H	1.0	+0.462071
+5	H	1.0	+0.466640
+
+# === Löwdin atomic charges ===
+# idx	symbol	Z	charge
+0	O	8.0	-0.674347
+1	H	1.0	+0.325302
+2	H	1.0	+0.316488
+3	O	8.0	-0.635289
+4	H	1.0	+0.332243
+5	H	1.0	+0.335604
+
+# === Mayer bond orders (top entries) ===
+# i	j	sym_i	sym_j	order
+0	2	O	H	0.7836
+3	4	O	H	0.7570
+3	5	O	H	0.7536
+0	1	O	H	0.6921
+
+# === Dipole moment ===
+# x_ebohr	y_ebohr	z_ebohr	total_ebohr	total_debye
+-0.000000	0.653007	1.597428	1.725745	4.386405
+# origin_bohr = (0.000000, 0.055276, 2.897747)

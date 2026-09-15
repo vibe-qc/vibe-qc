@@ -1,0 +1,250 @@
+{
+  "_comment": "MSINDO reference energies for vibe-qc parity validation (H–F closed-shell milestone). Generated out-of-process (CLAUDE.md §10) by a local MSINDO 2025 build (Jul. 2024 source, Mulliken Center for Theoretical Chemistry, University of Bonn). Oracle build patches: include/delimiter.h MV=5000->200 (macOS dyld shared-cache headroom; physics unchanged), source/einles.f added 'LOGICAL :: EWALDMESH' (set-only flag undeclared upstream), VDERF/VDERFC erf shim (replaces MKL VML). gfortran -fdefault-real-8 -std=legacy. Closed-shell RHF singlets + open-shell UHF radicals (doublets/triplets, oracle keyword 'UHF MULTIP n'). Geometries in Angstrom, Cartesian. Energies in Hartree (a.u.).",
+  "method": "msindo",
+  "wavefunction": "rhf+uhf",
+  "source_version": "MSINDO 2025 (Jul. 2024)",
+  "units": {"geometry": "angstrom", "energy": "hartree"},
+  "molecules": [
+    {
+      "name": "H2",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["H", 0.0, 0.0, 0.0], ["H", 0.0, 0.0, 0.741]],
+      "reference": {"total_energy": -1.1732166872, "electronic_energy": -1.8873560361, "binding_energy": -0.1732166872, "scf_cycles": 2}
+    },
+    {
+      "name": "HF",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["H", 0.0, 0.0, 0.0], ["F", 0.0, 0.0, 0.917]],
+      "reference": {"total_energy": -24.3089965036, "electronic_energy": -28.3485175533, "binding_energy": -0.2236283325, "scf_cycles": 17}
+    },
+    {
+      "name": "N2",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["N", 0.0, 0.0, 0.0], ["N", 0.0, 0.0, 1.098]],
+      "reference": {"total_energy": -19.2858118276, "electronic_energy": -31.3344743391, "binding_energy": -0.3571406124, "scf_cycles": 14}
+    },
+    {
+      "name": "CO",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["C", 0.0, 0.0, 0.0], ["O", 0.0, 0.0, 1.128]],
+      "reference": {"total_energy": -21.6961833869, "electronic_energy": -32.9552739722, "binding_energy": -0.4122395273, "scf_cycles": 18}
+    },
+    {
+      "name": "CH4",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [
+        ["C",  0.0000,  0.0000,  0.0000],
+        ["H",  0.6276,  0.6276,  0.6276],
+        ["H", -0.6276, -0.6276,  0.6276],
+        ["H", -0.6276,  0.6276, -0.6276],
+        ["H",  0.6276, -0.6276, -0.6276]
+      ],
+      "reference": {"total_energy": -8.2956064178, "electronic_energy": -17.8731790673, "binding_energy": -0.6677039235, "scf_cycles": 19}
+    },
+    {
+      "name": "H2O",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [
+        ["O", 0.0,  0.0000,  0.1173],
+        ["H", 0.0,  0.7572, -0.4692],
+        ["H", 0.0, -0.7572, -0.4692]
+      ],
+      "reference": {"total_energy": -17.0182087674, "electronic_energy": -23.9977172732, "binding_energy": -0.3621674021, "scf_cycles": 17}
+    },
+    {
+      "name": "H2S",
+      "charge": 0, "multiplicity": 1,
+      "_note": "3rd-row d-shell: S = 3s3p3d (3d polarization) with a Ne (1s2s2p) frozen core",
+      "geometry": [
+        ["S",  0.0000, 0.0, 0.0000],
+        ["H",  0.9627, 0.0, 0.9264],
+        ["H", -0.9627, 0.0, 0.9264]
+      ],
+      "reference": {"total_energy": -11.2354666980, "electronic_energy": -16.2632465532, "binding_energy": -0.2836089769, "scf_cycles": 18}
+    },
+    {
+      "name": "SiH4",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [
+        ["Si",  0.0000,  0.0000,  0.0000],
+        ["H",   0.8544,  0.8544,  0.8544],
+        ["H",  -0.8544, -0.8544,  0.8544],
+        ["H",  -0.8544,  0.8544, -0.8544],
+        ["H",   0.8544, -0.8544, -0.8544]
+      ],
+      "reference": {"total_energy": -6.3561206258, "electronic_energy": -13.3913319962, "binding_energy": -0.5187706518, "scf_cycles": 29}
+    },
+    {
+      "name": "PH3",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [
+        ["P",   0.0000,  0.0000,  0.0000],
+        ["H",   1.1932,  0.0000,  0.4974],
+        ["H",  -0.5966,  1.0334,  0.4974],
+        ["H",  -0.5966, -1.0334,  0.4974]
+      ],
+      "reference": {"total_energy": -8.3298767745, "electronic_energy": -15.2381237330, "binding_energy": -0.3380973612, "scf_cycles": 22}
+    },
+    {
+      "name": "AlCl3",
+      "charge": 0, "multiplicity": 1,
+      "_note": "heavy-heavy d-d pairs (Al-Cl, Cl-Cl) — exercises the full d σ/π/δ Löwdin/HORTH/resonance that X-H molecules never reach",
+      "geometry": [
+        ["Al",  0.0000,  0.0000, 0.0],
+        ["Cl",  2.0600,  0.0000, 0.0],
+        ["Cl", -1.0300,  1.7840, 0.0],
+        ["Cl", -1.0300, -1.7840, 0.0]
+      ],
+      "reference": {"total_energy": -44.2269575516, "electronic_energy": -82.2123801656, "binding_energy": -0.4970172776, "scf_cycles": 18}
+    },
+    {
+      "name": "OH",
+      "charge": 0, "multiplicity": 2,
+      "_note": "open-shell UHF (doublet) — oracle keywords 'CARTES UHF MULTIP 2'",
+      "geometry": [["O", 0.0, 0.0, 0.0], ["H", 0.0, 0.0, 0.97]],
+      "reference": {"total_energy": -16.3330865643, "electronic_energy": -19.606347951, "binding_energy": -0.177045199, "scf_cycles": 23}
+    },
+    {
+      "name": "NO",
+      "charge": 0, "multiplicity": 2,
+      "geometry": [["N", 0.0, 0.0, 0.0], ["O", 0.0, 0.0, 1.154]],
+      "reference": {"total_energy": -25.3584589422, "electronic_energy": -39.1152334008, "binding_energy": -0.2380819693, "scf_cycles": 44}
+    },
+    {
+      "name": "O2",
+      "charge": 0, "multiplicity": 3,
+      "_note": "open-shell UHF (triplet ground state) — 'CARTES UHF MULTIP 3'",
+      "geometry": [["O", 0.0, 0.0, 0.0], ["O", 0.0, 0.0, 1.208]],
+      "reference": {"total_energy": -31.512308729, "electronic_energy": -47.2824918997, "binding_energy": -0.2002259983, "scf_cycles": 16}
+    },
+    {
+      "name": "CH3",
+      "charge": 0, "multiplicity": 2,
+      "geometry": [
+        ["C",  0.0000,  0.0000, 0.0],
+        ["H",  1.0790,  0.0000, 0.0],
+        ["H", -0.5395,  0.9345, 0.0],
+        ["H", -0.5395, -0.9345, 0.0]
+      ],
+      "reference": {"total_energy": -7.6239129136, "electronic_energy": -14.3583533076, "binding_energy": -0.4960104193, "scf_cycles": 25}
+    },
+    {
+      "name": "NH2",
+      "charge": 0, "multiplicity": 2,
+      "geometry": [
+        ["N",  0.00, 0.00, 0.0],
+        ["H",  0.79, 0.61, 0.0],
+        ["H", -0.79, 0.61, 0.0]
+      ],
+      "reference": {"total_energy": -10.7659659674, "electronic_energy": -16.4027439712, "binding_energy": -0.3016303598, "scf_cycles": 25}
+    },
+    {
+      "name": "MgH2",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Mg", 0.0, 0.0, 0.0], ["H", 0.0, 0.0, 1.70], ["H", 0.0, 0.0, -1.70]],
+      "reference": {"total_energy": -2.0182303098, "electronic_energy": -3.4189936385, "binding_energy": -0.1713105832, "scf_cycles": 18}
+    },
+    {
+      "name": "MgF2",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Mg", 0.0, 0.0, 0.0], ["F", 0.0, 0.0, 1.75], ["F", 0.0, 0.0, -1.75]],
+      "reference": {"total_energy": -48.3879114542, "electronic_energy": -64.2632291794, "binding_energy": -0.3702553854, "scf_cycles": 18}
+    },
+    {
+      "name": "MgO",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Mg", 0.0, 0.0, 0.0], ["O", 0.0, 0.0, 1.749]],
+      "reference": {"total_energy": -16.5830874187, "electronic_energy": -20.2138061666, "binding_energy": -0.0801263268, "scf_cycles": 30}
+    },
+    {
+      "name": "LiH",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Li", 0.0, 0.0, 0.0], ["H", 0.0, 0.0, 1.595]],
+      "reference": {"total_energy": -0.7995229782, "electronic_energy": -1.1312955535, "binding_energy": -0.1043229782, "scf_cycles": 19}
+    },
+    {
+      "name": "LiF",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Li", 0.0, 0.0, 0.0], ["F", 0.0, 0.0, 1.564]],
+      "reference": {"total_energy": -23.9571690588, "electronic_energy": -26.3256094697, "binding_energy": -0.1766008877, "scf_cycles": 18}
+    },
+    {
+      "name": "BeH2",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Be", 0.0, 0.0, 0.0], ["H", 0.0, 0.0, 1.33], ["H", 0.0, 0.0, -1.33]],
+      "reference": {"total_energy": -2.2966178966, "electronic_energy": -4.0870672641, "binding_energy": -0.2465210216, "scf_cycles": 19}
+    },
+    {
+      "name": "BH3",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["B", 0.0, 0.0, 0.0], ["H", 1.19, 0.0, 0.0], ["H", -0.595, 1.0306, 0.0], ["H", -0.595, -1.0306, 0.0]],
+      "reference": {"total_energy": -4.7374201415, "electronic_energy": -9.5097522339, "binding_energy": -0.4366051416, "scf_cycles": 19}
+    },
+    {
+      "name": "NaH",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Na", 0.0, 0.0, 0.0], ["H", 0.0, 0.0, 1.887]],
+      "reference": {"total_energy": -0.7641237436, "electronic_energy": -1.0445568424, "binding_energy": -0.0788237436, "scf_cycles": 20}
+    },
+    {
+      "name": "NaCl",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Na", 0.0, 0.0, 0.0], ["Cl", 0.0, 0.0, 2.361]],
+      "reference": {"total_energy": -14.2985943241, "electronic_energy": -15.8675230842, "binding_energy": -0.1502185043, "scf_cycles": 17}
+    },
+    {
+      "name": "KF",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["K", 0.0, 0.0, 0.0], ["F", 0.0, 0.0, 2.17]],
+      "reference": {"total_energy": -23.8547263622, "electronic_energy": -25.5617497735, "binding_energy": -0.162858191, "scf_cycles": 18}
+    },
+    {
+      "name": "KCl",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["K", 0.0, 0.0, 0.0], ["Cl", 0.0, 0.0, 2.67]],
+      "reference": {"total_energy": -14.2319344555, "electronic_energy": -15.6192905613, "binding_energy": -0.1623586357, "scf_cycles": 17}
+    },
+    {
+      "name": "CaF2",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Ca", 0.0, 0.0, 0.0], ["F", 0.0, 0.0, 2.1], ["F", 0.0, 0.0, -2.1]],
+      "reference": {"total_energy": -48.1955809528, "electronic_energy": -61.4250123904, "binding_energy": -0.3989093962, "scf_cycles": 20}
+    },
+    {
+      "name": "CaO",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Ca", 0.0, 0.0, 0.0], ["O", 0.0, 0.0, 1.82]],
+      "reference": {"total_energy": -16.3938289263, "electronic_energy": -19.8829097451, "binding_energy": -0.1118523468, "scf_cycles": 28}
+    },
+    {
+      "name": "ScF3",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Sc", 0.0, 0.0, 0.0], ["F", 1.91, 0.0, 0.0], ["F", -0.955, 1.654109, 0.0], ["F", -0.955, -1.654109, 0.0]],
+      "reference": {"total_energy": -73.059891688, "electronic_energy": -114.0283151503, "binding_energy": -0.6951033528, "scf_cycles": 19}
+    },
+    {
+      "name": "TiF4",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Ti", 0.0, 0.0, 0.0], ["F", 1.010363, 1.010363, 1.010363], ["F", 1.010363, -1.010363, -1.010363], ["F", -1.010363, 1.010363, -1.010363], ["F", -1.010363, -1.010363, 1.010363]],
+      "reference": {"total_energy": -98.5117254303, "electronic_energy": -186.8200664871, "binding_energy": -0.8980409253, "scf_cycles": 20}
+    },
+    {
+      "name": "CrF6",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Cr", 0.0, 0.0, 0.0], ["F", 1.72, 0.0, 0.0], ["F", -1.72, 0.0, 0.0], ["F", 0.0, 1.72, 0.0], ["F", 0.0, -1.72, 0.0], ["F", 0.0, 0.0, 1.72], ["F", 0.0, 0.0, -1.72]],
+      "reference": {"total_energy": -151.0686510375, "electronic_energy": -379.131369486, "binding_energy": -0.7966864883, "scf_cycles": 21}
+    },
+    {
+      "name": "CuF",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Cu", 0.0, 0.0, 0.0], ["F", 0.0, 0.0, 1.74]],
+      "reference": {"total_energy": -71.8937160352, "electronic_energy": -95.3113303042, "binding_energy": -0.1515812975, "scf_cycles": 25}
+    },
+    {
+      "name": "ZnO",
+      "charge": 0, "multiplicity": 1,
+      "geometry": [["Zn", 0.0, 0.0, 0.0], ["O", 0.0, 0.0, 1.70]],
+      "reference": {"total_energy": -72.9470221348, "electronic_energy": -95.3592353939, "binding_energy": -0.0190681393, "scf_cycles": 26}
+    }
+  ]
+}

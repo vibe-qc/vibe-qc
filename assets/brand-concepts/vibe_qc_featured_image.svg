@@ -1,0 +1,557 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="100%"
+   viewBox="0 0 690 380"
+   role="img"
+   style=""
+   version="1.1"
+   id="svg57"
+   sodipodi:docname="vibe_qc_featured_image.svg"
+   inkscape:export-filename="vibe_qc_featured_image.png"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   inkscape:version="1.4.3 (0d15f75, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview57"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1"
+     inkscape:cx="320.5"
+     inkscape:cy="212.5"
+     inkscape:window-width="1096"
+     inkscape:window-height="622"
+     inkscape:window-x="280"
+     inkscape:window-y="195"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg57" />
+  <title
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="title1">vibe-qc: a quantum chemistry program in one day</title>
+  <desc
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="desc1">Editorial featured image showing a stylized water molecule with overlapping orbital clouds and concentric SCF convergence rings.</desc>
+  <defs
+     id="defs30">
+    <radialGradient
+       id="cloudO"
+       cx="50%"
+       cy="50%"
+       r="50%">
+      <stop
+         offset="0%"
+         stop-color="#6B8FD9"
+         stop-opacity="0.55"
+         id="stop1" />
+      <stop
+         offset="60%"
+         stop-color="#6B8FD9"
+         stop-opacity="0.18"
+         id="stop2" />
+      <stop
+         offset="100%"
+         stop-color="#6B8FD9"
+         stop-opacity="0"
+         id="stop3" />
+    </radialGradient>
+    <radialGradient
+       id="cloudH1"
+       cx="50%"
+       cy="50%"
+       r="50%">
+      <stop
+         offset="0%"
+         stop-color="#D98B6B"
+         stop-opacity="0.45"
+         id="stop4" />
+      <stop
+         offset="60%"
+         stop-color="#D98B6B"
+         stop-opacity="0.15"
+         id="stop5" />
+      <stop
+         offset="100%"
+         stop-color="#D98B6B"
+         stop-opacity="0"
+         id="stop6" />
+    </radialGradient>
+    <radialGradient
+       id="cloudH2"
+       cx="50%"
+       cy="50%"
+       r="50%">
+      <stop
+         offset="0%"
+         stop-color="#D98B6B"
+         stop-opacity="0.45"
+         id="stop7" />
+      <stop
+         offset="60%"
+         stop-color="#D98B6B"
+         stop-opacity="0.15"
+         id="stop8" />
+      <stop
+         offset="100%"
+         stop-color="#D98B6B"
+         stop-opacity="0"
+         id="stop9" />
+    </radialGradient>
+    <radialGradient
+       id="lobePlus"
+       cx="50%"
+       cy="50%"
+       r="50%">
+      <stop
+         offset="0%"
+         stop-color="#4A7BC8"
+         stop-opacity="0.35"
+         id="stop10" />
+      <stop
+         offset="100%"
+         stop-color="#4A7BC8"
+         stop-opacity="0"
+         id="stop11" />
+    </radialGradient>
+    <radialGradient
+       id="lobeMinus"
+       cx="50%"
+       cy="50%"
+       r="50%">
+      <stop
+         offset="0%"
+         stop-color="#C85A7B"
+         stop-opacity="0.35"
+         id="stop12" />
+      <stop
+         offset="100%"
+         stop-color="#C85A7B"
+         stop-opacity="0"
+         id="stop13" />
+    </radialGradient>
+    <mask
+       id="imagine-text-gaps-jwkbih"
+       maskUnits="userSpaceOnUse">
+      <rect
+         x="0"
+         y="0"
+         width="690"
+         height="380"
+         fill="white"
+         id="rect13" />
+      <rect
+         x="332.27899169921875"
+         y="188.32046508789062"
+         width="15.442005157470703"
+         height="14.84939193725586"
+         fill="black"
+         rx="2"
+         id="rect14" />
+      <rect
+         x="247.7366943359375"
+         y="229.40541076660156"
+         width="14.52658748626709"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect15" />
+      <rect
+         x="417.7366943359375"
+         y="229.40541076660156"
+         width="14.52658748626709"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect16" />
+      <rect
+         x="46"
+         y="45.40542221069336"
+         width="130.75070190429688"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect17" />
+      <rect
+         x="46"
+         y="62.405418395996094"
+         width="130.75070190429688"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect18" />
+      <rect
+         x="46"
+         y="79.40542602539062"
+         width="130.75070190429688"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect19" />
+      <rect
+         x="46"
+         y="96.4054183959961"
+         width="130.75070190429688"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect20" />
+      <rect
+         x="46"
+         y="113.4054183959961"
+         width="130.75070190429688"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect21" />
+      <rect
+         x="46"
+         y="130.40541076660156"
+         width="176.79281616210938"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect22" />
+      <rect
+         x="45.64751052856445"
+         y="268.28192138671875"
+         width="127.62899017333984"
+         height="47.39756774902344"
+         fill="black"
+         rx="2"
+         id="rect23" />
+      <rect
+         x="46"
+         y="317.980712890625"
+         width="270.4197082519531"
+         height="20.27408790588379"
+         fill="black"
+         rx="2"
+         id="rect24" />
+      <rect
+         x="511"
+         y="45.40542221069336"
+         width="56.14414596557617"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect25" />
+      <rect
+         x="511"
+         y="62.405418395996094"
+         width="51.32972717285156"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect26" />
+      <rect
+         x="511"
+         y="79.40542602539062"
+         width="80.21623229980469"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect27" />
+      <rect
+         x="511"
+         y="96.4054183959961"
+         width="80.21623229980469"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect28" />
+      <rect
+         x="511"
+         y="113.4054183959961"
+         width="80.21623229980469"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect29" />
+      <rect
+         x="511"
+         y="130.40541076660156"
+         width="80.21623229980469"
+         height="13.764452934265137"
+         fill="black"
+         rx="2"
+         id="rect30" />
+    </mask>
+  </defs>
+  <rect
+     x="0"
+     y="0"
+     width="680"
+     height="360"
+     fill="#FAF7F2"
+     style="fill:rgb(250, 247, 242);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="rect31" />
+  <g
+     opacity="0.5"
+     style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.5;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g34">
+    <circle
+       cx="340"
+       cy="200"
+       r="170"
+       fill="none"
+       stroke="#6B8FD9"
+       stroke-width="0.5"
+       stroke-dasharray="2 4"
+       opacity="0.35"
+       style="fill:none;stroke:rgb(107, 143, 217);color:rgb(255, 255, 255);stroke-width:0.5px;stroke-dasharray:2px, 4px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.35;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="circle31" />
+    <circle
+       cx="340"
+       cy="200"
+       r="135"
+       fill="none"
+       stroke="#6B8FD9"
+       stroke-width="0.5"
+       stroke-dasharray="2 4"
+       opacity="0.45"
+       style="fill:none;stroke:rgb(107, 143, 217);color:rgb(255, 255, 255);stroke-width:0.5px;stroke-dasharray:2px, 4px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.45;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="circle32" />
+    <circle
+       cx="340"
+       cy="200"
+       r="100"
+       fill="none"
+       stroke="#6B8FD9"
+       stroke-width="0.5"
+       stroke-dasharray="2 4"
+       opacity="0.55"
+       style="fill:none;stroke:rgb(107, 143, 217);color:rgb(255, 255, 255);stroke-width:0.5px;stroke-dasharray:2px, 4px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.55;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="circle33" />
+    <circle
+       cx="340"
+       cy="200"
+       r="65"
+       fill="none"
+       stroke="#6B8FD9"
+       stroke-width="0.5"
+       stroke-dasharray="2 4"
+       opacity="0.7"
+       style="fill:none;stroke:rgb(107, 143, 217);color:rgb(255, 255, 255);stroke-width:0.5px;stroke-dasharray:2px, 4px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.7;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="circle34" />
+  </g>
+  <ellipse
+     cx="255"
+     cy="235"
+     rx="95"
+     ry="95"
+     fill="url(#cloudH1)"
+     style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="ellipse34" />
+  <ellipse
+     cx="425"
+     cy="235"
+     rx="95"
+     ry="95"
+     fill="url(#cloudH2)"
+     style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="ellipse35" />
+  <ellipse
+     cx="340"
+     cy="195"
+     rx="130"
+     ry="130"
+     fill="url(#cloudO)"
+     style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="ellipse36" />
+  <ellipse
+     cx="340"
+     cy="150"
+     rx="38"
+     ry="22"
+     fill="url(#lobePlus)"
+     style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="ellipse37" />
+  <ellipse
+     cx="340"
+     cy="240"
+     rx="38"
+     ry="22"
+     fill="url(#lobeMinus)"
+     style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="ellipse38" />
+  <line
+     x1="340"
+     y1="195"
+     x2="255"
+     y2="235"
+     stroke="#3D4A5C"
+     stroke-width="1.2"
+     opacity="0.7"
+     mask="url(#imagine-text-gaps-jwkbih)"
+     style="fill:rgb(0, 0, 0);stroke:rgb(61, 74, 92);color:rgb(255, 255, 255);stroke-width:1.2px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.7;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line38" />
+  <line
+     x1="340"
+     y1="195"
+     x2="425"
+     y2="235"
+     stroke="#3D4A5C"
+     stroke-width="1.2"
+     opacity="0.7"
+     mask="url(#imagine-text-gaps-jwkbih)"
+     style="fill:rgb(0, 0, 0);stroke:rgb(61, 74, 92);color:rgb(255, 255, 255);stroke-width:1.2px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.7;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="line39" />
+  <circle
+     cx="340"
+     cy="195"
+     r="11"
+     fill="#2D3E5C"
+     style="fill:rgb(45, 62, 92);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="circle39" />
+  <circle
+     cx="255"
+     cy="235"
+     r="7"
+     fill="#8A5840"
+     style="fill:rgb(138, 88, 64);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="circle40" />
+  <circle
+     cx="425"
+     cy="235"
+     r="7"
+     fill="#8A5840"
+     style="fill:rgb(138, 88, 64);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="circle41" />
+  <text
+     x="340"
+     y="199"
+     text-anchor="middle"
+     font-family="Georgia, serif"
+     font-size="10"
+     font-weight="500"
+     fill="#FAF7F2"
+     style="fill:rgb(250, 247, 242);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, serif;font-size:10px;font-weight:500;text-anchor:middle;dominant-baseline:auto"
+     id="text41">O</text>
+  <text
+     x="255"
+     y="239"
+     text-anchor="middle"
+     font-family="Georgia, serif"
+     font-size="8"
+     font-weight="500"
+     fill="#FAF7F2"
+     style="fill:rgb(250, 247, 242);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, serif;font-size:8px;font-weight:500;text-anchor:middle;dominant-baseline:auto"
+     id="text42">H</text>
+  <text
+     x="425"
+     y="239"
+     text-anchor="middle"
+     font-family="Georgia, serif"
+     font-size="8"
+     font-weight="500"
+     fill="#FAF7F2"
+     style="fill:rgb(250, 247, 242);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, serif;font-size:8px;font-weight:500;text-anchor:middle;dominant-baseline:auto"
+     id="text43">H</text>
+  <g
+     font-family="'SF Mono', Consolas, monospace"
+     font-size="8.5"
+     fill="#6B7280"
+     opacity="0.55"
+     style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.55;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8.5px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g49">
+    <text
+       x="50"
+       y="55"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8.5px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text44">iter  1   E = −74.846239...</text>
+    <text
+       x="50"
+       y="72"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8.5px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text45">iter  2   E = −74.958013...</text>
+    <text
+       x="50"
+       y="89"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8.5px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text46">iter  3   E = −74.964187...</text>
+    <text
+       x="50"
+       y="106"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8.5px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text47">iter  4   E = −74.964445...</text>
+    <text
+       x="50"
+       y="123"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8.5px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text48">iter  5   E = −74.964453...</text>
+    <text
+       x="50"
+       y="140"
+       fill="#2D5A3D"
+       opacity="0.85"
+       style="fill:rgb(45, 90, 61);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.85;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8.5px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text49">iter  6   E = −74.964454   ✓ converged</text>
+  </g>
+  <g
+     font-family="Georgia, serif"
+     fill="#1F2937"
+     style="fill:rgb(31, 41, 55);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g51">
+    <text
+       x="50"
+       y="305"
+       font-size="38"
+       font-weight="500"
+       letter-spacing="-0.5"
+       style="fill:rgb(31, 41, 55);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, serif;font-size:38px;font-weight:500;text-anchor:start;dominant-baseline:auto"
+       id="text50">vibe-qc</text>
+    <text
+       x="50"
+       y="333"
+       font-size="14"
+       font-style="italic"
+       fill="#4B5563"
+       style="fill:rgb(75, 85, 99);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Georgia, serif;font-size:14px;font-weight:400;font-style:italic;text-anchor:start;dominant-baseline:auto"
+       id="text51">a quantum-chemical program, in one day</text>
+  </g>
+  <g
+     opacity="0.35"
+     font-family="'SF Mono', Consolas, monospace"
+     font-size="8"
+     fill="#6B7280"
+     style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.35;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+     id="g57">
+    <text
+       x="515"
+       y="55"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text52">17 commits</text>
+    <text
+       x="515"
+       y="72"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text53">131 tests</text>
+    <text
+       x="515"
+       y="89"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text54">~3500 lines C++</text>
+    <text
+       x="515"
+       y="106"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text55">RHF · UHF · RKS</text>
+    <text
+       x="515"
+       y="123"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text56">DFT · gradients</text>
+    <text
+       x="515"
+       y="140"
+       style="fill:rgb(107, 114, 128);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;SF Mono&quot;, Consolas, monospace;font-size:8px;font-weight:400;text-anchor:start;dominant-baseline:auto"
+       id="text57">ASE integration</text>
+  </g>
+</svg>

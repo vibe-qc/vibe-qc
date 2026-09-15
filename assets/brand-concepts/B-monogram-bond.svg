@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-label="vibe-qc">
+  <title>vibe-qc</title>
+  <defs>
+    <style>
+      .wm { font-family: "Sora", "Manrope", "Söhne", "Helvetica Neue", Arial, sans-serif; font-weight: 600; letter-spacing: -0.02em; }
+    </style>
+  </defs>
+
+  <!-- ICON: "v" molecular fragment, obtuse so proportions match wordmark -->
+  <g transform="translate(60,108)">
+    <line x1="10"  y1="10"  x2="92" y2="96" stroke="#0B1220" stroke-width="10" stroke-linecap="round"/>
+    <line x1="174" y1="10"  x2="92" y2="96" stroke="#0B1220" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="10"  cy="10" r="14" fill="#0B1220"/>
+    <circle cx="174" cy="10" r="14" fill="#0B1220"/>
+    <circle cx="92"  cy="96" r="18" fill="#7C3AED"/>
+  </g>
+
+  <!-- WORDMARK -->
+  <g transform="translate(310,0)">
+    <text x="0" y="195" class="wm" font-size="172" fill="#0B1220">vibe</text>
+    <!-- Styled hyphen: a short double-line "bond" in accent -->
+    <g transform="translate(385,150)">
+      <line x1="0" y1="-6" x2="60" y2="-6" stroke="#7C3AED" stroke-width="7" stroke-linecap="round"/>
+      <line x1="0" y1="10" x2="60" y2="10" stroke="#7C3AED" stroke-width="7" stroke-linecap="round"/>
+    </g>
+    <text x="480" y="195" class="wm" font-size="172" fill="#0B1220">qc</text>
+  </g>
+</svg>

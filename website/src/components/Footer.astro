@@ -1,0 +1,50 @@
+---
+import { products } from '../data/products.mjs';
+const base = import.meta.env.BASE_URL;
+const DOCS = '/docs';
+const REPO = 'https://github.com/vibe-qc/vibe-qc';
+---
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <a class="brand-mark" href={base} aria-label="vibe-qc home">
+          <img class="wm-light" src={`${base}logo/vibe-qc-wordmark-light.svg`} alt="vibe-qc" width="217" height="48" />
+          <img class="wm-dark" src={`${base}logo/vibe-qc-wordmark-dark.svg`} alt="vibe-qc" width="217" height="48" />
+        </a>
+        <p>Calculate with vibe-qc, explore with vibe-view, and schedule with vibe-queue. Independent products for a shared scientific workflow.</p>
+        <div class="built">vibe-qc engine built on <b>libint</b> · <b>libxc</b> · <b>spglib</b> · <b>libecpint</b> · <b>Eigen</b></div>
+      </div>
+      <div>
+        <h5>Docs</h5>
+        <ul>
+          {products.map(product => <li><a href={product.docs}>{product.name} docs{product.docsPending ? ' (soon)' : ''}</a></li>)}
+          <li><a href={`${DOCS}/citing.html`}>Citing vibe-qc</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Products</h5>
+        <ul>
+          {products.map(product => <li><a href={`${base}products/${product.id}/`}>{product.name}</a></li>)}
+          <li><a href={`${DOCS}/changelog.html`}>Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Project</h5>
+        <ul>
+          <li><a href={REPO}>GitHub source</a></li>
+          <li><a href={`${base}download`}>Downloads</a></li>
+          <li><a href={`${base}sponsor`}>Sponsor</a></li>
+          <li><a href={`${base}contact`}>Contact</a></li>
+          <li><a href={`${DOCS}/license.html`}>License</a></li>
+          <li><a href={`${DOCS}/roadmap.html`}>Roadmap</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 vibe-qc · Michael F. Peintinger</span>
+      <span class="lic">MPL-2.0 licensed</span>
+    </div>
+  </div>
+</footer>

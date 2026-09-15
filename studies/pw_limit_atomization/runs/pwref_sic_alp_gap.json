@@ -1,0 +1,95 @@
+{
+  "provenance": {
+    "external_program": "gpaw",
+    "code_version": "25.7.0",
+    "boundary": "out-of-process subprocess (CLAUDE.md \u00a710)",
+    "functional": "r2scan",
+    "cutoffs_ev": [
+      800.0
+    ],
+    "kmesh": [
+      6,
+      6,
+      6
+    ],
+    "atom_box_ang": 12.0,
+    "reference": "VASP@900eV r2SCAN (references-cohesive/r2scan.dat)"
+  },
+  "results": [
+    {
+      "system_id": "sic_zincblende",
+      "pw_limit_kjmol": 1234.5996610182162,
+      "vasp900_kjmol": 1242.5,
+      "delta_vs_vasp_kjmol": -7.9003389817837615,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.7032072586888456,
+          "e_atoms_ha": -0.2329730820471568,
+          "atomization_kjmol": 1234.5996610182162,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Si": -0.1470722677718785,
+        "C": -0.08590081427527829
+      },
+      "atom_valence": {
+        "Si": 4,
+        "C": 4
+      }
+    },
+    {
+      "system_id": "alp_zincblende",
+      "pw_limit_kjmol": 815.7963268710469,
+      "vasp900_kjmol": 820.2,
+      "delta_vs_vasp_kjmol": -4.403673128953187,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.6235228275340103,
+          "e_atoms_ha": -0.3128024165490112,
+          "atomization_kjmol": 815.7963268710469,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Al": -0.11228565871297491,
+        "P": -0.2005167578360363
+      },
+      "atom_valence": {
+        "Al": 3,
+        "P": 5
+      }
+    },
+    {
+      "system_id": "gap_zincblende",
+      "pw_limit_kjmol": 698.1177862494875,
+      "vasp900_kjmol": 717.9,
+      "delta_vs_vasp_kjmol": -19.782213750512483,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.7360874529065489,
+          "e_atoms_ha": -0.47018843091491513,
+          "atomization_kjmol": 698.1177862494875,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Ga": -0.26967167307887885,
+        "P": -0.2005167578360363
+      },
+      "atom_valence": {
+        "Ga": 3,
+        "P": 5
+      }
+    }
+  ]
+}

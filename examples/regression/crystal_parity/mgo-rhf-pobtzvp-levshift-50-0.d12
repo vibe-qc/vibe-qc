@@ -1,0 +1,19 @@
+MgO rocksalt RHF/POB-TZVP - persistent strong LEVSHIFT 50 0 (5 Ha never reduced)
+CRYSTAL
+0 0 0
+225
+4.21
+2
+12 0.0 0.0 0.0
+8 0.5 0.5 0.5
+BASISSET
+POB-TZVP
+LEVSHIFT
+50 0
+SHRINK
+8 8
+TOLDEE
+8
+MAXCYCLE
+200
+END

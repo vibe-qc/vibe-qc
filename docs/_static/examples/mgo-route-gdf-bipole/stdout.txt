@@ -1,0 +1,157 @@
+<managed-vq-artifact>/vibeqc-dev-0.15.41-a5ac682.tar.gz: OK
+Ignoring VQ_PROGRAM_GIT_DIR because it is not present on this execution host: <managed-vibeqc-dev>
+
+=== mgo-rhf-sto3g-gdf-k222 ===
+  convergence strategy: manual
+
+  run_periodic_job  PERIODIC RHF  basis=sto-3g
+  --------------------------------------------
+  Output file: output-mgo-rhf-sto3g-gdf-k222.out
+  kmesh = [2, 2, 2]
+
+  run_krhf_periodic_gdf  KRHF  kmesh=8 k-points
+  ---------------------------------------------
+  KRHF multi-k native GDF / aux=def2-svp-jk, cutoff=15.00 bohr
+  basis: sto-3g  (14 BFs / 8 shells)
+  periodicity: dim=3D, active lengths=5.627, 5.627, 5.627 bohr
+  lattice cells: one-electron/GDF cutoff -> 135, nuclear cutoff -> 531
+=== Active settings ===
+[PeriodicRHFOptions]
+  atomic_spins                = []
+  conv_tol_energy             = 1e-08
+  conv_tol_grad               = 1e-06
+  damping                     = 0
+  davidson                    = <DavidsonOptions; print separately>
+  davidson_min_dim            = 100
+  dft_plus_u_ao_groups        = []
+  dft_plus_u_sites            = []
+  diis_adaptive_delta         = 0.0001
+  diis_restart_tau            = 0.0001
+  diis_start_iter             = 2
+  diis_subspace_size          = 8
+  dynamic_damping             = True
+  dynamic_damping_max         = 0.95
+  dynamic_damping_min         = 0
+  ediis_diis_switch_threshold = 0.1
+  fock_mixing                 = 0.3
+  initial_guess               = InitialGuess.SAD
+  lattice_opts                = <LatticeSumOptions; print separately>
+  level_shift                 = 0.6
+  level_shift_schedule        = []
+  level_shift_warmup_cycles   = -1
+  max_iter                    = 80
+  quadratic_fallback_iter     = 0
+  quadratic_fallback_max_step = 0.1
+  quadratic_fallback_shift    = 0.1
+  read_density                = array([], shape=(0, 0), dtype=float64)
+  read_density_alpha          = array([], shape=(0, 0), dtype=float64)
+  read_density_beta           = array([], shape=(0, 0), dtype=float64)
+  read_path                   = ''
+  scf_accelerator             = SCFAccelerator.EDIIS_DIIS
+  smearing_temperature        = 0
+  spinlock_iterations         = 0
+  spinlock_mode               = SpinlockMode.OFF
+  spinlock_value              = 0
+  use_davidson                = False
+  use_diis                    = True
+[LatticeSumOptions]
+  becke_image_radius_bohr      = 0
+  coulomb_method               = CoulombMethod.DIRECT_TRUNCATED
+  cutoff_bohr                  = 15
+  nuclear_cutoff_bohr          = 25
+  schwarz_threshold            = 1e-12
+  schwarz_threshold_forces     = 1e-14
+  screening_exchange_threshold = 0
+  screening_overlap_threshold  = 0
+  slab_ewald_alpha             = 0.4
+  sr_range_screening           = False
+[k-GDF kwargs]
+  functional                = None
+  hf_exchange_fraction      = 1
+  fock_mixing               = 0.3
+  fmixing_percent           = 30
+  level_shift               = 0.6
+  level_shift_warmup_cycles = 5
+  smearing_temperature      = 0
+  aux_basis                 = 'def2-svp-jk'
+  aux_drop_eta              = 0
+  linear_dep_threshold      = 1e-07
+  gdf_linear_dep_threshold  = 1e-09
+  apply_modrho              = True
+  n_kpoints                 = 8
+=======================
+  [integrals_lattice] - S/T at cutoff 15.00 bohr, V at cutoff 15.00 bohr
+  overlap [S(k=0, k_cart=[0.0, 0.0, 0.0])]: nbf=14, min eig=+3.52e-01, cond=7.30e+00, severity=ok
+  overlap [S(k=1, k_cart=[0.3948, 0.3948, -0.3948])]: nbf=14, min eig=+4.24e-01, cond=5.43e+00, severity=ok
+  overlap [S(k=2, k_cart=[0.3948, -0.3948, 0.3948])]: nbf=14, min eig=+4.24e-01, cond=5.43e+00, severity=ok
+  overlap [S(k=3, k_cart=[0.7896, 0.0, 0.0])]: nbf=14, min eig=+3.96e-01, cond=5.24e+00, severity=ok
+  overlap [S(k=4, k_cart=[-0.3948, 0.3948, 0.3948])]: nbf=14, min eig=+4.24e-01, cond=5.43e+00, severity=ok
+  overlap [S(k=5, k_cart=[0.0, 0.7896, 0.0])]: nbf=14, min eig=+3.96e-01, cond=5.24e+00, severity=ok
+  overlap [S(k=6, k_cart=[0.0, 0.0, 0.7896])]: nbf=14, min eig=+3.96e-01, cond=5.24e+00, severity=ok
+  overlap [S(k=7, k_cart=[0.3948, 0.3948, 0.3948])]: nbf=14, min eig=+4.24e-01, cond=5.43e+00, severity=ok
+  multi-k HF/hybrid exchange: routing to the compcell GDF path with exxdiv='ewald' (the use_compcell=False Ewald-3D-K path omits the exxdiv Madelung exchange-divergence correction).
+  [aux_basis] - def2-svp-jk
+  aux basis: def2-svp-jk  (189 BFs / 59 shells)
+  GDF Lpq cache peak estimate ~0.2 GB (8 k-points, k^2 exchange pairs, naux=189, nao=14)
+  [gdf_cderi] - per-pair Lpq for 8 k-points (rsgdf)
+  Building per-pair Lpq cache (64 pairs, rsgdf)...
+  Lpq cache built: 64 pairs, 174 fit vectors, shape=(174, 14, 14)
+  initial guess: HCORE (per-k Hcore diagonalisation)
+  fock mixing: CRYSTAL FMIXING 30.0% (previous Fock/KS matrix weight, applied per k)
+  level-shift warm-up: 5 cycles at 0.600 Ha (per k); restart unshifted afterwards
+
+  SCF (KRHF multi-k, native GDF)
+  --------------------------------
+    iter         energy (Ha)            dE          ||[F,DS]||   DIIS
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  restart: unshifted Fock with fresh DIIS history (per k)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  J backend: native multi-k GDF (cached Lpq, 64 pairs); K backend: multi-k GDF (k-pair Lpq contraction)
+  SCF converged in 14 iterations; E = -271.7175700123 Ha
+{
+  "a_angstrom": 4.211,
+  "artifacts": [
+    "input-mgo-rhf-sto3g-gdf-k222.py",
+    "output-mgo-rhf-sto3g-gdf-k222.bibtex",
+    "output-mgo-rhf-sto3g-gdf-k222.cif",
+    "output-mgo-rhf-sto3g-gdf-k222.molden",
+    "output-mgo-rhf-sto3g-gdf-k222.out",
+    "output-mgo-rhf-sto3g-gdf-k222.population.json",
+    "output-mgo-rhf-sto3g-gdf-k222.population.txt",
+    "output-mgo-rhf-sto3g-gdf-k222.qvf",
+    "output-mgo-rhf-sto3g-gdf-k222.references",
+    "output-mgo-rhf-sto3g-gdf-k222.system",
+    "output-mgo-rhf-sto3g-gdf-k222.xsf",
+    "output-mgo-rhf-sto3g-gdf-k222.xyz"
+  ],
+  "basis": "sto-3g",
+  "converged": true,
+  "elapsed_seconds": 1724.6747821196914,
+  "energy_hartree_per_primitive_cell": -271.7175700123166,
+  "gap_hartree": 0.510904035204234,
+  "homo_hartree": 0.24421860168070295,
+  "jk_method": "gdf",
+  "kpoints": [
+    2,
+    2,
+    2
+  ],
+  "label": "MgO primitive RHF/STO-3G GDF 2x2x2",
+  "lumo_hartree": 0.755122636884937,
+  "n_basis": 14,
+  "n_electrons": 20,
+  "n_iter": 14,
+  "slug": "mgo-rhf-sto3g-gdf-k222"
+}
+validate_qvf output-mgo-rhf-sto3g-gdf-k222.qvf: True []

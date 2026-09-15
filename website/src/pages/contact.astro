@@ -1,0 +1,279 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+
+const base = import.meta.env.BASE_URL;
+const DOCS = '/docs';
+const CONTACT_EMAIL = 'mpei@vibe-qc.com';
+
+// The handler is public/contact.php — plain PHP on the web host, shipped
+// by the ordinary website deploy. See that file's header for the contract
+// and the one-time host verification it needs.
+const ACTION = `${base}contact.php`;
+
+// Kept in lockstep with the TOPICS allowlist in public/contact.php. The
+// handler rejects anything not in its own copy, so a value added here
+// without adding it there fails closed rather than sending mail with an
+// unexpected subject.
+const topics = [
+  { id: 'access', label: 'Repository access request' },
+  { id: 'bug', label: 'Bug report' },
+  { id: 'question', label: 'Question about using vibe-qc' },
+  { id: 'sponsorship', label: 'Sponsorship' },
+  { id: 'other', label: 'Something else' },
+];
+
+// Error codes the handler can redirect back with (?error=…). Rendered
+// client-side from the query string, because these pages are static and
+// cannot be templated per-request.
+const errors = {
+  missing: 'Please fill in your name and a message.',
+  email: 'That email address does not look valid — please check it and try again.',
+  topic: 'Please choose a topic.',
+  toolong: 'That message is longer than the form accepts. Please shorten it, or email directly.',
+  rate: 'Too many messages have been sent from this connection recently. Please try again later, or email directly.',
+  send: 'The message could not be sent because of a server problem. Please email directly instead.',
+};
+---
+
+<Base
+  title="Contact — vibe-qc"
+  description="Get in touch with the vibe-qc maintainer about repository access, bug reports, usage questions, or sponsorship."
+>
+  <Nav />
+
+  <main class="wrap contact">
+    <section class="contact-head">
+      <span class="eyebrow">contact</span>
+      <h1>Get in touch.</h1>
+      <p>
+        vibe-qc is built and maintained by one person. Messages go straight to the
+        maintainer's mailbox — no ticketing system, no third-party form service, and
+        nothing stored on this site.
+      </p>
+    </section>
+
+    <div class="contact-grid">
+      <section class="form-col" aria-labelledby="contact-form">
+        <h2 id="contact-form" class="sr-only">Contact form</h2>
+
+        <div class="banner error" id="form-error" role="alert" hidden>
+          <p id="form-error-text"></p>
+        </div>
+
+        <form method="post" action={ACTION} class="form">
+          <div class="field">
+            <label for="name">Name</label>
+            <input type="text" id="name" name="name" maxlength="120" required autocomplete="name" />
+          </div>
+
+          <div class="field">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" maxlength="254" required autocomplete="email" />
+            <p class="hint">Used only to reply to you.</p>
+          </div>
+
+          <div class="field">
+            <label for="topic">Topic</label>
+            <select id="topic" name="topic" required>
+              {topics.map((t) => <option value={t.id}>{t.label}</option>)}
+            </select>
+            <p class="hint">
+              Requesting repository access? Include your public SSH key in the message —
+              see the <a href={`${DOCS}/installation.html`}>installation guide</a>.
+            </p>
+          </div>
+
+          <div class="field">
+            <label for="message">Message</label>
+            <textarea id="message" name="message" rows="9" maxlength="8000" required></textarea>
+          </div>
+
+          {/*
+            Honeypot. Hidden from people and from assistive technology, so a
+            human never fills it; automated submitters that populate every
+            input do. The handler drops those silently.
+
+            A JSX-style comment, not an HTML one, so the explanation stays in
+            the source and is not shipped to the client — an HTML comment here
+            would tell a scraper exactly which field to leave alone.
+          */}
+          <div class="hp" aria-hidden="true">
+            <label for="website">Leave this field empty</label>
+            <input type="text" id="website" name="website" tabindex="-1" autocomplete="off" />
+          </div>
+
+          {/* Stamped on load by the script below; absent without JS. */}
+          <input type="hidden" id="ts" name="ts" value="" />
+
+          <button type="submit" class="btn primary">Send message <span class="arrow">→</span></button>
+        </form>
+      </section>
+
+      <aside class="aside-col">
+        <div class="side-card">
+          <h3>Prefer plain email?</h3>
+          <p>
+            Write to <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> directly.
+            The form sends to exactly the same mailbox.
+          </p>
+        </div>
+
+        <div class="side-card">
+          <h3>Security reports</h3>
+          <p>
+            Report vulnerabilities by emailing
+            <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> directly, not
+            through a public issue. Reports are acknowledged within 72 hours and the
+            disclosure timeline is coordinated privately.
+          </p>
+        </div>
+
+        <div class="side-card">
+          <h3>Before you write</h3>
+          <ul>
+            <li><a href={`${DOCS}/quickstart.html`}>Quickstart</a> and <a href={`${DOCS}/user_guide/index.html`}>user guide</a></li>
+            <li><a href={`${base}get-started`}>Get started</a> — build and first calculation</li>
+            <li><a href={`${DOCS}/changelog.html`}>Changelog</a> — what landed recently</li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <Footer />
+</Base>
+
+<script is:inline define:vars={{ errors }}>
+  // These pages are static, so the handler communicates failures through
+  // the query string and this script renders the matching banner. The
+  // mailto: route in the sidebar stays visible either way, so a visitor
+  // always has a working path even if this never runs.
+  const code = new URLSearchParams(window.location.search).get('error');
+  if (code && Object.prototype.hasOwnProperty.call(errors, code)) {
+    const banner = document.getElementById('form-error');
+    document.getElementById('form-error-text').textContent = errors[code];
+    banner.hidden = false;
+    banner.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  // Fill-time stamp for the handler's instant-submit heuristic.
+  document.getElementById('ts').value = String(Date.now());
+</script>
+
+<style>
+  .contact { padding: 64px 28px 100px; }
+  .contact-head { max-width: 60ch; }
+  .contact-head h1 {
+    font-size: clamp(34px, 5vw, 58px);
+    letter-spacing: -0.035em;
+    font-weight: 800;
+    margin: 16px 0 0;
+    text-wrap: balance;
+  }
+  .contact-head p { color: var(--slate); font-size: 19px; margin: 18px 0 0; }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  .contact-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    gap: 40px;
+    margin-top: 54px;
+    align-items: start;
+  }
+  @media (max-width: 860px) { .contact-grid { grid-template-columns: 1fr; gap: 34px; } }
+
+  /* ---- banner ---- */
+  .banner {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--phase-neg);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 16px 20px;
+    margin-bottom: 24px;
+  }
+  .banner p { margin: 0; font-size: 15px; color: var(--ink); }
+
+  /* ---- form ---- */
+  .form {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 30px 30px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .field { display: flex; flex-direction: column; gap: 8px; }
+  .field label {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--slate);
+  }
+  .field input,
+  .field select,
+  .field textarea {
+    width: 100%;
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    transition: border-color .16s, box-shadow .16s;
+  }
+  .field textarea { resize: vertical; min-height: 170px; }
+  .field select { appearance: none; cursor: pointer; padding-right: 40px;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: calc(100% - 20px) 55%, calc(100% - 14px) 55%;
+    background-size: 6px 6px, 6px 6px;
+    background-repeat: no-repeat;
+  }
+  .field input:hover,
+  .field select:hover,
+  .field textarea:hover { border-color: color-mix(in srgb, var(--phase-pos) 40%, var(--line)); }
+  .field input:focus,
+  .field select:focus,
+  .field textarea:focus {
+    outline: none;
+    border-color: var(--phase-pos);
+    box-shadow: 0 0 0 3px var(--halo);
+  }
+  .field .hint { color: var(--slate); font-size: 13.5px; margin: 0; }
+  .field .hint a { color: var(--phase-pos); text-decoration: underline; text-underline-offset: 2px; }
+
+  .form .btn { align-self: flex-start; cursor: pointer; border: 0; font-size: 15px; }
+
+  /* Honeypot — removed from the layout, unreachable by keyboard. */
+  .hp {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+
+  /* ---- sidebar ---- */
+  .aside-col { display: flex; flex-direction: column; gap: 18px; }
+  .side-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+  }
+  .side-card h3 { font-size: 15.5px; font-weight: 700; margin: 0 0 8px; color: var(--phase-pos); }
+  .side-card p { color: var(--slate); font-size: 14.5px; margin: 0; line-height: 1.55; }
+  .side-card ul { margin: 0; padding-left: 18px; color: var(--slate); font-size: 14.5px; line-height: 1.7; }
+  .side-card a { color: var(--phase-pos); text-decoration: underline; text-underline-offset: 2px; }
+</style>

@@ -1,0 +1,35 @@
+{
+  "a_angstrom": 4.211,
+  "artifacts": [
+    "input-mgo-rhf-sto3g-gdf-k222.py",
+    "output-mgo-rhf-sto3g-gdf-k222.bibtex",
+    "output-mgo-rhf-sto3g-gdf-k222.cif",
+    "output-mgo-rhf-sto3g-gdf-k222.molden",
+    "output-mgo-rhf-sto3g-gdf-k222.out",
+    "output-mgo-rhf-sto3g-gdf-k222.population.json",
+    "output-mgo-rhf-sto3g-gdf-k222.population.txt",
+    "output-mgo-rhf-sto3g-gdf-k222.qvf",
+    "output-mgo-rhf-sto3g-gdf-k222.references",
+    "output-mgo-rhf-sto3g-gdf-k222.system",
+    "output-mgo-rhf-sto3g-gdf-k222.xsf",
+    "output-mgo-rhf-sto3g-gdf-k222.xyz"
+  ],
+  "basis": "sto-3g",
+  "converged": true,
+  "elapsed_seconds": 1724.6747821196914,
+  "energy_hartree_per_primitive_cell": -271.7175700123166,
+  "gap_hartree": 0.510904035204234,
+  "homo_hartree": 0.24421860168070295,
+  "jk_method": "gdf",
+  "kpoints": [
+    2,
+    2,
+    2
+  ],
+  "label": "MgO primitive RHF/STO-3G GDF 2x2x2",
+  "lumo_hartree": 0.755122636884937,
+  "n_basis": 14,
+  "n_electrons": 20,
+  "n_iter": 14,
+  "slug": "mgo-rhf-sto3g-gdf-k222"
+}

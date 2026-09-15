@@ -1,0 +1,10 @@
+{
+  "system_id": "h2",
+  "basis": "sto-3g",
+  "method_id": "mp2",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-5,
+  "tolerance_rationale": "H2 / STO-3G / MP2 — smallest post-HF case. MP2 is exact at the AO basis given a converged HF reference; cross-code Δ should be sub-µHa."
+}

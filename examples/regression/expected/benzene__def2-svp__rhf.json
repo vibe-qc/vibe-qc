@@ -1,0 +1,10 @@
+{
+  "system_id": "benzene",
+  "basis": "def2-svp",
+  "method_id": "rhf",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-5,
+  "tolerance_rationale": "Benzene / def2-SVP / RHF — direct 4-index ERIs, baseline against which the corresponding rhf-df case measures DF error."
+}

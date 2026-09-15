@@ -1,0 +1,86 @@
+
+  run_job  Job: RHF  basis=6-31g*
+  --------------------------------
+  Threads: 18  (OpenMP shared-memory parallelism)
+  Output file: <vibe-qc-checkout>/examples/molecular/output-h2o-dimer-opt.out
+  [geometry_optimization] - BFGS, fmax=0.2 eV/A, max_steps=25
+  iter    1  E =    -151.9737797921 Ha  ||[F,DS]|| = 9.343e+00  DIIS= 1  attempt=1  [ 202.7ms]
+  iter    2  E =    -151.9207264405 Ha  dE = +5.305e-02  ||[F,DS]|| = 1.222e+00  DIIS= 2  attempt=1  [ 206.5ms]
+  iter    3  E =    -152.0001987789 Ha  dE = -7.947e-02  ||[F,DS]|| = 5.621e-01  DIIS= 3  attempt=1  [ 211.1ms]
+  iter    4  E =    -152.0251980373 Ha  dE = -2.500e-02  ||[F,DS]|| = 8.362e-02  DIIS= 4  attempt=1  [ 214.1ms]
+  iter    5  E =    -152.0257476936 Ha  dE = -5.497e-04  ||[F,DS]|| = 1.237e-02  DIIS= 5  attempt=1  [ 216.8ms]
+  iter    6  E =    -152.0257665076 Ha  dE = -1.881e-05  ||[F,DS]|| = 2.629e-03  DIIS= 6  attempt=1  [ 221.0ms]
+  iter    7  E =    -152.0257676026 Ha  dE = -1.095e-06  ||[F,DS]|| = 9.930e-04  DIIS= 7  attempt=1  [ 223.9ms]
+  iter    8  E =    -152.0257676997 Ha  dE = -9.717e-08  ||[F,DS]|| = 1.731e-04  DIIS= 8  attempt=1  [ 229.4ms]
+  iter    9  E =    -152.0257677040 Ha  dE = -4.293e-09  ||[F,DS]|| = 1.940e-05  DIIS= 8  attempt=1  [ 235.2ms]
+  iter   10  E =    -152.0257677041 Ha  dE = -6.060e-11  ||[F,DS]|| = 5.535e-06  DIIS= 8  attempt=1  [ 238.0ms]
+  iter   11  E =    -152.0257677041 Ha  dE = -7.560e-12  ||[F,DS]|| = 1.592e-06  DIIS= 8  attempt=1  [ 241.6ms]
+  iter   12  E =    -152.0257677041 Ha  dE = -5.684e-13  ||[F,DS]|| = 1.562e-07  DIIS= 8  attempt=1  [ 244.6ms]
+  iter    1  E =    -152.2814483264 Ha  ||[F,DS]|| = 1.145e+01  DIIS= 1  attempt=2  [ 332.0ms]
+  iter    2  E =    -151.8557363816 Ha  dE = +4.257e-01  ||[F,DS]|| = 1.217e+00  DIIS= 2  attempt=2  [ 336.1ms]
+  iter    3  E =    -151.9391989752 Ha  dE = -8.346e-02  ||[F,DS]|| = 5.394e-01  DIIS= 3  attempt=2  [ 340.2ms]
+  iter    4  E =    -151.9617857179 Ha  dE = -2.259e-02  ||[F,DS]|| = 6.789e-02  DIIS= 4  attempt=2  [ 343.1ms]
+  iter    5  E =    -151.9621267517 Ha  dE = -3.410e-04  ||[F,DS]|| = 7.449e-03  DIIS= 5  attempt=2  [ 346.4ms]
+  iter    6  E =    -151.9621309642 Ha  dE = -4.212e-06  ||[F,DS]|| = 1.231e-03  DIIS= 6  attempt=2  [ 349.2ms]
+  iter    7  E =    -151.9621311565 Ha  dE = -1.923e-07  ||[F,DS]|| = 2.260e-04  DIIS= 7  attempt=2  [ 352.8ms]
+  iter    8  E =    -151.9621311633 Ha  dE = -6.855e-09  ||[F,DS]|| = 8.977e-05  DIIS= 8  attempt=2  [ 357.9ms]
+  iter    9  E =    -151.9621311643 Ha  dE = -1.016e-09  ||[F,DS]|| = 1.130e-05  DIIS= 8  attempt=2  [ 364.9ms]
+  iter   10  E =    -151.9621311643 Ha  dE = -2.035e-11  ||[F,DS]|| = 2.101e-06  DIIS= 8  attempt=2  [ 369.5ms]
+  iter   11  E =    -151.9621311643 Ha  dE = -6.821e-13  ||[F,DS]|| = 5.628e-07  DIIS= 8  attempt=2  [ 376.9ms]
+  iter    1  E =    -152.2814483264 Ha  ||[F,DS]|| = 1.145e+01  DIIS= 1  attempt=3  [ 468.3ms]
+  iter    2  E =    -151.8557363816 Ha  dE = +4.257e-01  ||[F,DS]|| = 1.217e+00  DIIS= 2  attempt=3  [ 472.6ms]
+  iter    3  E =    -151.9391989752 Ha  dE = -8.346e-02  ||[F,DS]|| = 5.394e-01  DIIS= 3  attempt=3  [ 479.0ms]
+  iter    4  E =    -151.9617857179 Ha  dE = -2.259e-02  ||[F,DS]|| = 6.789e-02  DIIS= 4  attempt=3  [ 485.2ms]
+  iter    5  E =    -151.9621267517 Ha  dE = -3.410e-04  ||[F,DS]|| = 7.449e-03  DIIS= 5  attempt=3  [ 489.6ms]
+  iter    6  E =    -151.9621309642 Ha  dE = -4.212e-06  ||[F,DS]|| = 1.231e-03  DIIS= 6  attempt=3  [ 494.5ms]
+  iter    7  E =    -151.9621311565 Ha  dE = -1.923e-07  ||[F,DS]|| = 2.260e-04  DIIS= 7  attempt=3  [ 497.6ms]
+  iter    8  E =    -151.9621311633 Ha  dE = -6.855e-09  ||[F,DS]|| = 8.977e-05  DIIS= 8  attempt=3  [ 502.8ms]
+  iter    9  E =    -151.9621311643 Ha  dE = -1.016e-09  ||[F,DS]|| = 1.130e-05  DIIS= 8  attempt=3  [ 506.1ms]
+  iter   10  E =    -151.9621311643 Ha  dE = -2.035e-11  ||[F,DS]|| = 2.101e-06  DIIS= 8  attempt=3  [ 510.6ms]
+  iter   11  E =    -151.9621311643 Ha  dE = -6.821e-13  ||[F,DS]|| = 5.628e-07  DIIS= 8  attempt=3  [ 514.5ms]
+  iter    1  E =    -152.0064039766 Ha  ||[F,DS]|| = 9.525e+00  DIIS= 1  attempt=4  [ 610.7ms]
+  iter    2  E =    -151.9218156991 Ha  dE = +8.459e-02  ||[F,DS]|| = 1.220e+00  DIIS= 2  attempt=4  [ 612.9ms]
+  iter    3  E =    -152.0012759372 Ha  dE = -7.946e-02  ||[F,DS]|| = 5.580e-01  DIIS= 3  attempt=4  [ 620.3ms]
+  iter    4  E =    -152.0258721960 Ha  dE = -2.460e-02  ||[F,DS]|| = 8.211e-02  DIIS= 4  attempt=4  [ 624.7ms]
+  iter    5  E =    -152.0263958215 Ha  dE = -5.236e-04  ||[F,DS]|| = 1.180e-02  DIIS= 5  attempt=4  [ 628.2ms]
+  iter    6  E =    -152.0264123377 Ha  dE = -1.652e-05  ||[F,DS]|| = 2.460e-03  DIIS= 6  attempt=4  [ 633.1ms]
+  iter    7  E =    -152.0264133070 Ha  dE = -9.694e-07  ||[F,DS]|| = 8.542e-04  DIIS= 7  attempt=4  [ 638.8ms]
+  iter    8  E =    -152.0264133790 Ha  dE = -7.193e-08  ||[F,DS]|| = 1.713e-04  DIIS= 8  attempt=4  [ 647.5ms]
+  iter    9  E =    -152.0264133830 Ha  dE = -4.035e-09  ||[F,DS]|| = 1.699e-05  DIIS= 8  attempt=4  [ 652.1ms]
+  iter   10  E =    -152.0264133830 Ha  dE = -4.189e-11  ||[F,DS]|| = 4.271e-06  DIIS= 8  attempt=4  [ 656.6ms]
+  iter   11  E =    -152.0264133831 Ha  dE = -4.150e-12  ||[F,DS]|| = 1.333e-06  DIIS= 8  attempt=4  [ 662.0ms]
+  iter   12  E =    -152.0264133831 Ha  dE = -5.116e-13  ||[F,DS]|| = 1.434e-07  DIIS= 8  attempt=4  [ 665.0ms]
+  iter    1  E =    -152.0064039766 Ha  ||[F,DS]|| = 9.525e+00  DIIS= 1  attempt=5  [ 732.9ms]
+  iter    2  E =    -151.9218156991 Ha  dE = +8.459e-02  ||[F,DS]|| = 1.220e+00  DIIS= 2  attempt=5  [ 735.9ms]
+  iter    3  E =    -152.0012759372 Ha  dE = -7.946e-02  ||[F,DS]|| = 5.580e-01  DIIS= 3  attempt=5  [ 740.1ms]
+  iter    4  E =    -152.0258721960 Ha  dE = -2.460e-02  ||[F,DS]|| = 8.211e-02  DIIS= 4  attempt=5  [ 743.1ms]
+  iter    5  E =    -152.0263958215 Ha  dE = -5.236e-04  ||[F,DS]|| = 1.180e-02  DIIS= 5  attempt=5  [ 747.3ms]
+  iter    6  E =    -152.0264123377 Ha  dE = -1.652e-05  ||[F,DS]|| = 2.460e-03  DIIS= 6  attempt=5  [ 750.7ms]
+  iter    7  E =    -152.0264133070 Ha  dE = -9.694e-07  ||[F,DS]|| = 8.542e-04  DIIS= 7  attempt=5  [ 754.6ms]
+  iter    8  E =    -152.0264133790 Ha  dE = -7.193e-08  ||[F,DS]|| = 1.713e-04  DIIS= 8  attempt=5  [ 760.2ms]
+  iter    9  E =    -152.0264133830 Ha  dE = -4.035e-09  ||[F,DS]|| = 1.699e-05  DIIS= 8  attempt=5  [ 765.0ms]
+  iter   10  E =    -152.0264133830 Ha  dE = -4.189e-11  ||[F,DS]|| = 4.271e-06  DIIS= 8  attempt=5  [ 769.5ms]
+  iter   11  E =    -152.0264133831 Ha  dE = -4.150e-12  ||[F,DS]|| = 1.333e-06  DIIS= 8  attempt=5  [ 772.5ms]
+  iter   12  E =    -152.0264133831 Ha  dE = -5.116e-13  ||[F,DS]|| = 1.434e-07  DIIS= 8  attempt=5  [ 776.1ms]
+  [geometry_optimization] done ( 687.1ms)
+  Starting molecular SCF (RHF).
+  iter    1  E =    -152.0064039766 Ha  ||[F,DS]|| = 9.525e+00  DIIS= 1  attempt=6  [ 905.3ms]
+  iter    2  E =    -151.9218156991 Ha  dE = +8.459e-02  ||[F,DS]|| = 1.220e+00  DIIS= 2  attempt=6  [ 909.9ms]
+  iter    3  E =    -152.0012759372 Ha  dE = -7.946e-02  ||[F,DS]|| = 5.580e-01  DIIS= 3  attempt=6  [ 913.9ms]
+  iter    4  E =    -152.0258721960 Ha  dE = -2.460e-02  ||[F,DS]|| = 8.211e-02  DIIS= 4  attempt=6  [ 919.6ms]
+  iter    5  E =    -152.0263958215 Ha  dE = -5.236e-04  ||[F,DS]|| = 1.180e-02  DIIS= 5  attempt=6  [ 923.3ms]
+  iter    6  E =    -152.0264123377 Ha  dE = -1.652e-05  ||[F,DS]|| = 2.460e-03  DIIS= 6  attempt=6  [ 930.2ms]
+  iter    7  E =    -152.0264133070 Ha  dE = -9.694e-07  ||[F,DS]|| = 8.542e-04  DIIS= 7  attempt=6  [ 935.1ms]
+  iter    8  E =    -152.0264133790 Ha  dE = -7.193e-08  ||[F,DS]|| = 1.713e-04  DIIS= 8  attempt=6  [ 940.4ms]
+  iter    9  E =    -152.0264133830 Ha  dE = -4.035e-09  ||[F,DS]|| = 1.699e-05  DIIS= 8  attempt=6  [ 949.1ms]
+  iter   10  E =    -152.0264133830 Ha  dE = -4.189e-11  ||[F,DS]|| = 4.271e-06  DIIS= 8  attempt=6  [ 955.3ms]
+  iter   11  E =    -152.0264133831 Ha  dE = -4.150e-12  ||[F,DS]|| = 1.333e-06  DIIS= 8  attempt=6  [ 961.7ms]
+  iter   12  E =    -152.0264133831 Ha  dE = -5.116e-13  ||[F,DS]|| = 1.434e-07  DIIS= 8  attempt=6  [ 967.3ms]
+  SCF converged in 12 iterations; E = -152.0264133831 Ha
+  [write_population] - output-h2o-dimer-opt.population.txt
+  [write_population] done ( 233.8ms)
+  [write_xyz] - output-h2o-dimer-opt.xyz
+  [write_xyz] done (   4.3ms)
+  [write_molden] - output-h2o-dimer-opt.molden
+  [write_molden] done (   4.4ms)
+  Job total 1.48s -- output written to <vibe-qc-checkout>/examples/molecular/output-h2o-dimer-opt.out

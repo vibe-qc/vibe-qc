@@ -1,0 +1,22 @@
+LiH rocksalt RHF/STO-3G — matrix dump for vibe-qc parity diagnostic
+CRYSTAL
+0 0 0
+225
+4.084
+2
+3 0.0 0.0 0.0
+1 0.5 0.5 0.5
+BASISSET
+STO-3G
+SHRINK
+8 8
+TOLDEE
+8
+PRINTOUT
+FGRED
+1
+PGRED
+1
+ENECYCLE
+END
+END

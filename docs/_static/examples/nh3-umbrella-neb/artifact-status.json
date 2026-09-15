@@ -1,0 +1,14 @@
+{
+  "outputs": [
+    "output-nh3-umbrella-neb.out",
+    "output-nh3-umbrella-neb.qvf",
+    "output-nh3-umbrella-neb.traj"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-nh3-umbrella-neb.qvf"
+  ],
+  "returncode": 0,
+  "script": "examples/workflows/input-nh3-umbrella-neb.py",
+  "slug": "nh3-umbrella-neb"
+}

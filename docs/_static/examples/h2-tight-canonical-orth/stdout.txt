@@ -1,0 +1,78 @@
+
+--------------------------------------------------------------------
+  H2 @ R=0.5 bohr, aug-cc-pVTZ — n_basis = 46
+--------------------------------------------------------------------
+
+--------------------------------------------------------------------
+  Pre-flight linear-dependence check
+--------------------------------------------------------------------
+Linear-dependence check [molecular AO overlap]: Basis is near-linearly-dependent (warning)
+----------------------------------------------------
+  basis dimension:            46
+  min eigenvalue of S:        1.858e-07
+  max eigenvalue of S:        5.163e+00
+  condition number:           2.779e+07
+  eigenvalues below warn (1e-06):  1
+  eigenvalues below error (1e-08): 0
+  lowest 6 eigenvalues:       1.858e-07, 1.093e-04, 8.162e-04, 8.162e-04, 1.628e-03, 1.932e-03
+
+  Top 10 basis functions contributing to the near-null space:
+    bf  shell  atom   l       a_min    weight
+     2      2     0   0      0.1027    0.4960
+    25     11     1   0      0.1027    0.4960
+    16      7     0   1      0.1020    0.0032
+    39     16     1   1      0.1020    0.0032
+    24     10     1   0      0.3258    0.0008
+     1      1     0   0      0.3258    0.0008
+    37     15     1   0      0.0253    0.0000
+    14      6     0   0      0.0253    0.0000
+    30     13     1   1      0.3880    0.0000
+     7      4     0   1      0.3880    0.0000
+
+  Action: the SCF may still converge if you tighten damping or DIIS.
+  A planned canonical-orthogonalisation path will make this case routine.
+
+--------------------------------------------------------------------
+  Default-path SCF (linear_dep_threshold = 1e-7)
+--------------------------------------------------------------------
+
+  run_job  Job: RHF  basis=aug-cc-pvtz
+  ------------------------------------
+  Threads: 18  (OpenMP shared-memory parallelism)
+  Output file: output-h2-tight-canonical-orth.out
+  Starting molecular SCF (RHF).
+  iter    1  E =      -0.4758381154 Ha  ||[F,DS]|| = 3.213e-01  DIIS= 1  attempt=1  [ 190.3ms]
+  iter    2  E =      -0.4798360777 Ha  dE = -3.998e-03  ||[F,DS]|| = 6.639e-02  DIIS= 2  attempt=1  [ 194.2ms]
+  iter    3  E =      -0.4800441617 Ha  dE = -2.081e-04  ||[F,DS]|| = 2.123e-03  DIIS= 3  attempt=1  [ 197.4ms]
+  iter    4  E =      -0.4800444360 Ha  dE = -2.743e-07  ||[F,DS]|| = 5.744e-05  DIIS= 4  attempt=1  [ 200.9ms]
+  iter    5  E =      -0.4800444363 Ha  dE = -3.610e-10  ||[F,DS]|| = 5.189e-06  DIIS= 5  attempt=1  [ 206.3ms]
+  iter    6  E =      -0.4800444363 Ha  dE = -2.206e-12  ||[F,DS]|| = 4.984e-07  DIIS= 6  attempt=1  [ 210.3ms]
+  SCF converged in 6 iterations; E = -0.4800444363 Ha
+  [write_population] - output-h2-tight-canonical-orth.population.txt
+  [write_population] done (  63.9ms)
+  [write_xyz] - output-h2-tight-canonical-orth.xyz
+  [write_xyz] done (   2.0ms)
+  [write_molden] - output-h2-tight-canonical-orth.molden
+  [write_molden] done (   8.5ms)
+  Job total 0.34s -- output written to output-h2-tight-canonical-orth.out
+  converged    = True
+  iterations   = 6
+  E(RHF)       = -0.4800444363 Ha
+  MO basis     = (46, 46)  [dropped 0 near-null directions]
+
+--------------------------------------------------------------------
+  Threshold sweep
+--------------------------------------------------------------------
+   threshold   kept  iters            E (Ha)    ΔE (µHa)
+       1e-09     46      6     -0.4800444363      +0.000
+       1e-07     46      6     -0.4800444363      +0.000
+       1e-05     45      6     -0.4800444363      +0.000
+       1e-03     42      6     -0.4800444363      +0.000
+
+--------------------------------------------------------------------
+  Takeaway
+--------------------------------------------------------------------
+  Raising the threshold drops progressively more near-null directions;
+  E stays stable to ~1 µHa across three decades of threshold choice.
+  On well-conditioned bases the default 1e-7 never projects — the
+  machinery only activates where it's genuinely needed.

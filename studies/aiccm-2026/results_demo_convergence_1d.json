@@ -1,0 +1,90 @@
+{
+  "h-chain": {
+    "klass": "molecular",
+    "basis": "sto-3g",
+    "method": "aiccm2026dev-a",
+    "series": [
+      {
+        "nrep": 4,
+        "n_atoms": 8,
+        "energy_per_atom": -0.5583566100964524,
+        "converged": true
+      },
+      {
+        "nrep": 6,
+        "n_atoms": 12,
+        "energy_per_atom": -0.5583567330045047,
+        "converged": true
+      },
+      {
+        "nrep": 8,
+        "n_atoms": 16,
+        "energy_per_atom": -0.5583567538169713,
+        "converged": true
+      },
+      {
+        "nrep": 10,
+        "n_atoms": 20,
+        "energy_per_atom": -0.5583567595191601,
+        "converged": true
+      },
+      {
+        "nrep": 12,
+        "n_atoms": 24,
+        "energy_per_atom": -0.5583567615700468,
+        "converged": true
+      },
+      {
+        "nrep": 14,
+        "n_atoms": 28,
+        "energy_per_atom": -0.5583567624498718,
+        "converged": true
+      }
+    ],
+    "converged_to_uHa": 0.0
+  },
+  "lih-chain": {
+    "klass": "ionic-1d",
+    "basis": "sto-3g",
+    "method": "aiccm2026dev-a",
+    "series": [
+      {
+        "nrep": 4,
+        "n_atoms": 8,
+        "energy_per_atom": -3.9735656942098845,
+        "converged": true
+      },
+      {
+        "nrep": 6,
+        "n_atoms": 12,
+        "energy_per_atom": -3.9690171043621487,
+        "converged": true
+      },
+      {
+        "nrep": 8,
+        "n_atoms": 16,
+        "energy_per_atom": -3.967058263308892,
+        "converged": true
+      },
+      {
+        "nrep": 10,
+        "n_atoms": 20,
+        "energy_per_atom": -3.96599650788819,
+        "converged": true
+      },
+      {
+        "nrep": 12,
+        "n_atoms": 24,
+        "energy_per_atom": -3.965331244811544,
+        "converged": true
+      },
+      {
+        "nrep": 14,
+        "n_atoms": 28,
+        "energy_per_atom": -3.9648756393620475,
+        "converged": true
+      }
+    ],
+    "converged_to_uHa": 455.61
+  }
+}

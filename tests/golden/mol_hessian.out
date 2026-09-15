@@ -1,0 +1,109 @@
+<BANNER>
+
+  Job: RHF  basis=sto-0g
+  Atoms (bohr)
+  ------------------------------------------------------------
+     0  Z=  0       0.00000000      0.00000000      0.00000000
+     0  Z=  0       0.00000000      0.00000000      0.00000000
+     0  Z=  0       0.00000000     -0.00000000      0.00000000
+  charge=0  multiplicity=0  n_electrons=00
+  IUPAC name: water
+  Threads: <NT>  (OpenMP shared-memory parallelism)
+
+  vibe-qc estimates this calculation will require ~0.00 GB of memory:
+      ERI tensor                        0.00 MB
+      Fock + density + 0e               0.00 MB
+      DIIS history                      0.00 MB
+      MO workspace                      0.00 MB
+      Python runtime + NumPy overhead  000.0 MB
+  Available on this machine: <MEM> GB. Proceeding.
+
+  iter     energy (Ha)            dE          ||[F,DS]||   DIIS
+  -------------------------------------------------------------
+     0      -00.0000000000        --     0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+  initial_guess = AUTO -> PATOM
+  -------------------------------------------------------------
+  converged in 0 iterations; E = -00.0000000000 Ha
+  internal stability: stable (lowest Hessian eigenvalue 0.000e-00)
+
+  Molecular orbitals (Ha / eV)
+  -----------------------------------------------------------------------------------------------
+     #   occ          eps (Ha)        eps (eV)
+  -----------------------------------------------------------------------------------------------
+     0   0.0      -00.00000000     -000.000000
+     0   0.0       -0.00000000      -00.000000
+     0   0.0        0.00000000      -00.000000
+     0   0.0        0.00000000      -00.000000
+     0   0.0        0.00000000      -00.000000  <-- HOMO
+     0   0.0        0.00000000       00.000000  <-- LUMO
+     0   0.0        0.00000000       00.000000
+  HOMO:  0.000000 Ha (-00.0000 eV); LUMO: 0.000000 Ha (00.0000 eV); gap: 0.000000 Ha (00.0000 eV)
+
+  Atomic charges
+  #  elem   Mulliken     Löwdin  Hirshfeld
+  ----------------------------------------
+  0     O   0.000000   0.000000   0.000000
+  0     H   0.000000   0.000000   0.000000
+  0     H   0.000000   0.000000   0.000000
+  ----------------------------------------
+      sum   0.000000   0.000000   0.000000
+
+  Bond orders (Mayer)
+     atoms  bond order
+  --------------------
+  O1 -- H2      0.0000
+  O1 -- H3      0.0000
+
+  Dipole moment (origin: center of mass)
+  component  a.u. (e.bohr)    Debye
+  ---------------------------------
+          x     0.00000000   0.0000
+          y     0.00000000   0.0000
+          z     0.00000000  -0.0000
+       |mu|     0.00000000   0.0000
+
+  Molecular orbitals queued for final export to mol_hess.molden
+  Population dump written to mol_hess.population.txt + mol_hess.population.json
+  Citations written to mol_hess.bibtex + mol_hess.references
+  Final geometry written to mol_hess.xyz
+
+  ## Vibrational Frequencies
+  --------------------------
+  Finite-difference Hessian  (step = 0.000 bohr,  00 displacements)
+  Imaginary modes: 0
+  Linear molecule: False
+
+  Mode  Freq/cm⁻¹  IR/(km/mol)
+  ----------------------------
+  0        0000.0        00.00
+  0        0000.0        00.00
+  0        0000.0         0.00
+
+  ## Thermochemistry (RRHO ideal gas)
+  -----------------------------------
+  T = 000.00 K   p = 000000 Pa   s_rot = 0   rotor = nonlinear
+  Zero-point energy        =     0.0000000000 Ha  (   00.000 kcal/mol)
+  Thermal corr. to U       =     0.0000000000 Ha
+  Thermal corr. to H       =     0.0000000000 Ha
+  Thermal corr. to G       =     0.0000000000 Ha
+  Total entropy S          =     0.0000000000 Ha/K  (  00.000 cal/mol/K)
+  E(elec) + ZPE            =   -00.0000000000 Ha
+  H = E(elec) + H_corr     =   -00.0000000000 Ha
+  G = E(elec) + G_corr     =   -00.0000000000 Ha
+
+
+  Timings (wall clock, seconds)
+  ---------------------------------------------
+  SCF total <T>
+  SCF stability analysis <T>
+  SCF avg. per iteration <T>
+  Job total <T>
+  Used <NT> OpenMP threads.
+
+<REFERENCES>

@@ -1,0 +1,54 @@
+{
+  "provenance": {
+    "external_program": "gpaw",
+    "code_version": "25.7.0",
+    "boundary": "out-of-process subprocess (CLAUDE.md \u00a710)",
+    "functional": "r2scan",
+    "cutoffs_ev": [
+      800.0,
+      1000.0
+    ],
+    "kmesh": [
+      6,
+      6,
+      6
+    ],
+    "atom_box_ang": 12.0,
+    "reference": "VASP@900eV r2SCAN (references-cohesive/r2scan.dat)"
+  },
+  "results": [
+    {
+      "system_id": "li2o_antifluorite",
+      "pw_limit_kjmol": 1012.9222405077777,
+      "vasp900_kjmol": 1149.7,
+      "delta_vs_vasp_kjmol": -136.77775949222234,
+      "extrapolation": "E_cut^(-3/2) extrapolation from 800/1000 eV",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.5662629576854954,
+          "e_atoms_ha": -0.18058016209720634,
+          "atomization_kjmol": 1012.6100405855638,
+          "solid_converged": true,
+          "atoms_converged": true
+        },
+        {
+          "cutoff_ev": 1000.0,
+          "e_solid_ha": -0.5663212368746894,
+          "e_atoms_ha": -0.18060461616552434,
+          "atomization_kjmol": 1012.6988484282127,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Li": -0.028121558691423285,
+        "O": -0.12436149878267777
+      },
+      "atom_valence": {
+        "Li": 1,
+        "O": 6
+      }
+    }
+  ]
+}

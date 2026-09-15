@@ -1,0 +1,120 @@
+{
+  "provenance": {
+    "external_program": "gpaw",
+    "code_version": "25.7.0",
+    "boundary": "out-of-process subprocess (CLAUDE.md \u00a710)",
+    "functional": "r2scan",
+    "cutoffs_ev": [
+      800.0
+    ],
+    "kmesh": [
+      6,
+      6,
+      6
+    ],
+    "atom_box_ang": 12.0,
+    "reference": "VASP@900eV r2SCAN (references-cohesive/r2scan.dat)"
+  },
+  "results": [
+    {
+      "system_id": "alas_zincblende",
+      "pw_limit_kjmol": 744.8625211955979,
+      "vasp900_kjmol": 742.6,
+      "delta_vs_vasp_kjmol": 2.2625211955978557,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.7740131308952867,
+          "e_atoms_ha": -0.4903099796431688,
+          "atomization_kjmol": 744.8625211955979,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Al": -0.11228565871297491,
+        "As": -0.3780243209301939
+      },
+      "atom_valence": {
+        "Al": 3,
+        "As": 5
+      }
+    },
+    {
+      "system_id": "aln_zincblende",
+      "pw_limit_kjmol": 1114.6907639832693,
+      "vasp900_kjmol": 1119.1,
+      "delta_vs_vasp_kjmol": -4.409236016730574,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.699733434110729,
+          "e_atoms_ha": -0.2751701443561615,
+          "atomization_kjmol": 1114.6907639832693,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Al": -0.11228565871297491,
+        "N": -0.16288448564318658
+      },
+      "atom_valence": {
+        "Al": 3,
+        "N": 5
+      }
+    },
+    {
+      "system_id": "gaas_zincblende",
+      "pw_limit_kjmol": 640.2818729588731,
+      "vasp900_kjmol": 650.0,
+      "delta_vs_vasp_kjmol": -9.718127041126877,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.8915664800102605,
+          "e_atoms_ha": -0.6476959940090727,
+          "atomization_kjmol": 640.2818729588731,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Ga": -0.26967167307887885,
+        "As": -0.3780243209301939
+      },
+      "atom_valence": {
+        "Ga": 3,
+        "As": 5
+      }
+    },
+    {
+      "system_id": "gan_beta_zincblende",
+      "pw_limit_kjmol": 854.6747551540278,
+      "vasp900_kjmol": 873.0,
+      "delta_vs_vasp_kjmol": -18.32524484597218,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.7580845809920286,
+          "e_atoms_ha": -0.43255615872206543,
+          "atomization_kjmol": 854.6747551540278,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Ga": -0.26967167307887885,
+        "N": -0.16288448564318658
+      },
+      "atom_valence": {
+        "Ga": 3,
+        "N": 5
+      }
+    }
+  ]
+}

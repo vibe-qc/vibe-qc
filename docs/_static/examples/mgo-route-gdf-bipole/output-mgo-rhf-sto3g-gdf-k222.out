@@ -1,0 +1,189 @@
+╔═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║ dev 0.15.41 "Neese's Cheetah" (main @ a5ac682)  --  Quantum chemistry for molecules and solids                                  ║
+║ © Michael F. Peintinger . MPL 2.0  .  https://vibe-qc.com                                                                       ║
+║ linked: libint 2.13.1 . libxc 7.0.0 . spglib 2.7.0 . libecpint 1.0.7 (vendored, MAX_L=5) . fftw3 3.3.9 . blas OpenBLAS +LAPACKE ║
+╚═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+  Job: PERIODIC RHF  basis=sto-3g
+  J/K method: GDF -- Gaussian density fitting (native Gamma and multi-k RHF/RKS/UHF/UKS; CCM aliases 'neutral-bloch'/'aiccm-ri' denote the neutral fitted-torus Bloch control, not the Γ-CCM construction; PySCF/CRYSTAL are external references only)
+    (user-requested: 'gdf')
+
+  Periodicity
+  --------------------------------------------------------
+    dimensionality = 3D
+    active axes    = a1, a2, a3
+    cell volume    = 125.9773 bohr^3
+
+  Lattice (bohr)
+  --------------------------------------------------------
+    a1 =     0.00000000     3.97881836     3.97881836
+    a2 =     3.97881836     0.00000000     3.97881836
+    a3 =     3.97881836     3.97881836     0.00000000
+
+  Atoms (bohr) -- 2 in unit cell
+  --------------------------------------------------------
+       1  Z= 12       0.00000000      0.00000000      0.00000000
+       2  Z=  8       3.97881836      3.97881836      3.97881836
+    n_electrons = 20  multiplicity = 1
+  Basis
+  --------------------------------------------------------
+    name    = sto-3g
+    nbasis  = 14
+    nshells = 8
+
+  SCF options
+  --------------------------------------------------------
+    use_diis            = True
+    damping             = 0.0
+    fmixing_percent     = 30.0
+    smearing_method      = fermi-dirac
+    smearing_source      = explicit:hartree
+    smearing_reason      = numeric value in hartree
+    smearing_temperature = 0.0
+    diis_start_iter     = 2
+    diis_subspace_size  = 8
+    max_iter            = 80
+    conv_tol_energy     = 1e-08
+    initial_guess       = SAD
+    aux_basis           = <auto>
+    gdf_method          = rsgdf
+    rsgdf_ke_cutoff     = 200.0
+    mdf_ke_cutoff       = 40.0
+    OpenMP threads      = 4  (max for native parallel regions)
+
+  Convergence strategy
+  --------------------------------------------------------
+    convergence strategy: manual (explicit user options; auto selection off)
+      fock_mixing = 0.3   [explicit] set by the user
+      level_shift = 0.6   [explicit] set by the user
+      damping = 0   [explicit] set by the user
+
+  vibe-qc estimates this calculation will require ~0.16 GB of memory:
+      GDF Lpq factor cache              0.01 GB
+      per-k complex buffers             0.00 GB
+      Python runtime + NumPy overhead   0.10 GB
+  Available on this machine: 899.9 GB. Proceeding.
+
+    kpoints            = [2, 2, 2]
+  iter     energy (Ha)            dE          ||[F,DS]||   DIIS
+  -------------------------------------------------------------
+     1     -268.9203691022        --     3.294e+00    -
+     2     -271.4486438053  -2.528e+00  1.175e+00    1
+     3     -271.7008975308  -2.523e-01  2.988e-01    2
+     4     -271.7164915685  -1.559e-02  7.241e-02    3
+     5     -271.7174590400  -9.675e-04  1.972e-02    4
+     6     -271.7175536606  -9.462e-05  6.754e-03    -
+     7     -271.7175692055  -1.554e-05  1.390e-03    1
+     8     -271.7175699133  -7.078e-07  4.861e-04    2
+     9     -271.7175700033  -8.999e-08  1.465e-04    3
+    10     -271.7175700115  -8.188e-09  4.408e-05    4
+    11     -271.7175700122  -7.392e-10  1.323e-05    5
+    12     -271.7175700123  -6.645e-11  3.969e-06    6
+    13     -271.7175700123  -6.025e-12  1.191e-06    7
+    14     -271.7175700123  -5.684e-13  3.572e-07    8
+  -------------------------------------------------------------
+  converged in 14 iterations; E = -271.7175700123 Ha
+
+  Energy components (Ha)
+  ----------------------------------------------------
+  Nuclear repulsion                    -73.0669211180
+  Electronic                          -198.6506488943
+  Coulomb (J)                           70.2082439580
+  HF exchange (K)                      -24.1408492538
+  Exchange-correlation (XC)              0.0000000000
+  Total energy                        -271.7175700123
+  ----------------------------------------------------
+
+  Band extrema (multi-k)
+  --------------------------------------------------------
+    VBM     =   0.2442186017 Ha  (   6.646 eV)  (k_idx = 2)
+    CBM     =   0.7551226369 Ha  (  20.548 eV)  (k_idx = 0)
+    gap (indirect) =   0.510904 Ha  (  13.902 eV)
+    direct gap (min) =   0.520051 Ha  (  14.151 eV)  (k_idx = 0)
+  Crystal orbital energies (Ha) at k-point 0 (of 8) -- sorted low -> high
+  --------------------------------------------------------
+       1       -48.5221556023   occ= 2.00000
+       2       -19.5408133035   occ= 2.00000
+       3        -3.2176656696   occ= 2.00000
+       4        -1.6272165025   occ= 2.00000
+       5        -1.6272164932   occ= 2.00000
+       6        -1.6272164932   occ= 2.00000
+       7        -0.6644824735   occ= 2.00000
+       8         0.2350685232   occ= 2.00000
+       9         0.2350685232   occ= 2.00000
+      10         0.2350715336   occ= 2.00000 HOCO
+      11         0.7551226369   occ= 0.00000 LUCO
+      12         1.5621438053   occ= 0.00000
+      13         1.5621543374   occ= 0.00000
+      14         1.5621543374   occ= 0.00000
+  Molecular orbitals written to output-mgo-rhf-sto3g-gdf-k222.molden
+  Population dump written to output-mgo-rhf-sto3g-gdf-k222.population.txt + output-mgo-rhf-sto3g-gdf-k222.population.json
+  Final geometry written to output-mgo-rhf-sto3g-gdf-k222.xyz (extended XYZ with lattice)
+  Structure written to output-mgo-rhf-sto3g-gdf-k222.cif (CIF, P 1)
+  Citations written to output-mgo-rhf-sto3g-gdf-k222.bibtex + output-mgo-rhf-sto3g-gdf-k222.references
+  Structure written to output-mgo-rhf-sto3g-gdf-k222.xsf (XSF crystal block)
+
+  Timings (wall clock, seconds)
+  --------------------------------------------------------
+    SCF total                        1491.038
+    SCF avg per iter                  106.503  (14 iters)
+    Job total                        1514.702
+
+## References
+
+Please cite the references below when reporting results
+from this run. The corresponding BibTeX entries are
+written to the .bibtex sibling.
+
+  [1] Peintinger, Michael F. (2026). vibe-qc: a quantum-chemistry code for
+     molecules and solids. [Software v0.15.41, MPL-2.0].
+     <https://vibe-qc.com/>
+
+  [2] Valeev, Edward F. Libint: A library for the evaluation of molecular
+     integrals of many-body operators over Gaussian functions. [Software].
+     <https://github.com/evaleev/libint>
+
+  [3] Hehre, W. J., Stewart, R. F., and Pople, J. A. (1969). Self-Consistent
+     Molecular-Orbital Methods. I. Use of Gaussian Expansions of Slater-Type
+     Atomic Orbitals. Journal of Chemical Physics, 51(6), 2657--2664.
+     doi:10.1063/1.1672392
+
+  [4] Pritchard, Benjamin P., Altarawy, Doaa, et al. (2019). New Basis Set
+     Exchange: An Open, Up-to-Date Resource for the Molecular Sciences
+     Community. Journal of Chemical Information and Modeling, 59(11),
+     4814--4820. doi:10.1021/acs.jcim.9b00725
+
+  [5] Pulay, Péter (1980). Convergence acceleration of iterative sequences.
+     The case of SCF iteration. Chemical Physics Letters, 73(2), 393--398.
+     doi:10.1016/0009-2614(80)80396-4
+
+  [6] Pulay, Péter (1982). Improved SCF convergence acceleration. Journal of
+     Computational Chemistry, 3(4), 556--560. doi:10.1002/jcc.540030413
+
+  [7] Saunders, V. R. and Hillier, I. H. (1973). A "Level-Shifting" method for
+     converging closed shell Hartree-Fock wave functions. International
+     Journal of Quantum Chemistry, 7(4), 699--705. doi:10.1002/qua.560070407
+
+  [8] Sun, Qiming, Berkelbach, Timothy C., et al. (2017). Gaussian and
+     plane-wave mixed density fitting for periodic systems. Journal of
+     Chemical Physics, 147(16), 164119. doi:10.1063/1.4998644
+
+  [9] McMurchie, Larry E. and Davidson, Ernest R. (1978). One- and
+     two-electron integrals over Cartesian Gaussian functions. Journal of
+     Computational Physics, 26(2), 218-231. doi:10.1016/0021-9991(78)90092-X
+
+  [10] Helgaker, Trygve, Jørgensen, Poul, and Olsen, Jeppe (2000). Molecular
+     Electronic-Structure Theory. Wiley. doi:10.1002/9781119019572
+
+  [11] Van Lenthe, J. H., Zwaans, R., et al. (2006). Starting SCF calculations
+     by superposition of atomic densities. Journal of Computational Chemistry,
+     27(8), 926--932. doi:10.1002/jcc.20393
+
+  [12] Togo, Atsushi, Shinohara, Kohei, and Tanaka, Isao (2024). Spglib: a
+     software library for crystal symmetry search. Science and Technology of
+     Advanced Materials: Methods, 4(1), 2384822.
+     doi:10.1080/27660400.2024.2384822
+
+  [13] Pisani, Cesare, Dovesi, Roberto, and Roetti, Carla (1988). Hartree-Fock
+     Ab Initio Treatment of Crystalline Systems. Lecture Notes in Chemistry,
+     Vol. 48, Springer, 48. doi:10.1007/978-3-642-93385-1

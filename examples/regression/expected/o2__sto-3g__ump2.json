@@ -1,0 +1,10 @@
+{
+  "system_id": "o2",
+  "basis": "sto-3g",
+  "method_id": "ump2",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-4,
+  "tolerance_rationale": "O2 ³Σg⁻ / STO-3G / UMP2 — open-shell post-HF; UHF reference dependence on initial guess can shift correlated energy by a few µHa across codes."
+}

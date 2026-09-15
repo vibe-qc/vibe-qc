@@ -1,0 +1,53 @@
+{
+  "system": "h-chain",
+  "nrep": [
+    2,
+    1,
+    1
+  ],
+  "n_atoms": 4,
+  "basis": "sto-3g",
+  "neutral_scf_e_per_atom": -0.6478865430326533,
+  "canonical": {
+    "mp2": -0.028099379530966587,
+    "ccsd_t": -0.041407178117846506,
+    "t": -8.071531772043583e-21
+  },
+  "dlpno_mp2": [
+    {
+      "tcut_pno": 0.0,
+      "e_corr": -0.028099379530966594,
+      "delta_vs_canonical": -6.938893903907228e-18
+    },
+    {
+      "tcut_pno": 1e-06,
+      "e_corr": -0.028099379533899307,
+      "delta_vs_canonical": -2.932720039039438e-12
+    },
+    {
+      "tcut_pno": 0.0001,
+      "e_corr": -0.028099379533899307,
+      "delta_vs_canonical": -2.932720039039438e-12
+    }
+  ],
+  "dlpno_ccsd_t": [
+    {
+      "tcut_pno": 0.0,
+      "e_corr": -0.041407178117846506,
+      "delta_vs_canonical": 0.0,
+      "n_virtual_pno": 2
+    },
+    {
+      "tcut_pno": 1e-06,
+      "e_corr": -0.04140717811784654,
+      "delta_vs_canonical": -3.469446951953614e-17,
+      "n_virtual_pno": 2
+    },
+    {
+      "tcut_pno": 0.0001,
+      "e_corr": -0.04140717811784654,
+      "delta_vs_canonical": -3.469446951953614e-17,
+      "n_virtual_pno": 2
+    }
+  ]
+}

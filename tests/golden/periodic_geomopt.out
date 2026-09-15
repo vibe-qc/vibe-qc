@@ -1,0 +1,1835 @@
+<BANNER>
+
+  Job: PERIODIC RHF  basis=sto-0g
+  J/K method: BIPOLE -- CRYSTAL-gauge Ewald J-split (multi-k; shared Ewald a across V_ne/E_nn/J^LR; RHF/UHF/RKS/UKS, hybrids OK; ROHF via the corrected-Ewald-exchange EWALD_3D engine, maintained preview)
+    (user-requested: 'bipole')
+
+  Periodicity
+  -----------------------------------
+    dimensionality = 0D
+    active axes    = a1, a2, a3
+    cell volume    = 0000.0000 bohr^0
+
+  Lattice (bohr)
+  ---------------------------------------------------
+    a1 =    00.00000000     0.00000000     0.00000000
+    a2 =     0.00000000    00.00000000     0.00000000
+    a3 =     0.00000000     0.00000000    00.00000000
+
+  Cell parameters
+  ----------------------------------------------------------------------------
+    lengths        = |a1| = 00.000000  |a2| = 00.000000  |a3| = 00.000000 bohr
+    angles         = alpha = 00.0000  beta = 00.0000  gamma = 00.0000 deg
+    nearest pair   = 0.000000 bohr (0.0000 Angstrom), atoms 0-0 @ [0, 0, 0]
+
+  Atoms (bohr) -- 0 in unit cell
+  --------------------------------------------------------------
+       0  Z=  0       0.00000000      0.00000000      0.00000000
+       0  Z=  0       0.00000000      0.00000000      0.00000000
+    n_electrons = 0  multiplicity = 0
+  Basis
+  ------------------
+    name    = sto-0g
+    nbasis  = 0
+    nshells = 0
+
+  SCF options
+  --------------------------------------------------------
+    use_diis            = True
+    damping             = 0.0
+    smearing_method      = fermi-dirac
+    smearing_source      = explicit:hartree
+    smearing_reason      = numeric value in hartree
+    smearing_temperature = 0.0
+    diis_start_iter     = 0
+    diis_subspace_size  = 0
+    max_iter            = 00
+    conv_tol_energy     = 0e-00
+    initial_guess       = AUTO -> SAD
+    bipole_cutoff_bohr  = 00.0
+    bipole_nuclear_cutoff_bohr = 00.0
+  Convergence strategy
+  --------------------------------------------------------
+    convergence strategy: AUTO (default: no convergence options given; pass convergence="off" or any explicit knob to override)
+      profile: molecular-limit
+        - vacuum-padded cell (max lattice vector 00.0 bohr, 000 bohr^0/atom) -- molecular-limit box
+      smearing_temperature = 0   [auto] no smearing for this profile
+      fock_mixing = 0   [auto] molecular-limit boxes and covalent crystals converge in a few plain-DIIS iterations; aids would only slow them down
+      level_shift = 0   [auto] not needed
+      damping = 0   [auto] not needed
+
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  iter     energy (Ha)            dE          ||[F,DS]||   DIIS
+  -------------------------------------------------------------
+     0        0.0000000000        --     0.000e-00    -
+     0       -0.0000000000  -0.000e-00  0.000e-00    -
+     0       -0.0000000000  +0.000e-00  0.000e-00    -
+  -------------------------------------------------------------
+  converged in 0 iterations; E = -0.0000000000 Ha
+
+  Energy components (Ha)
+  ---------------------------------------------------
+  Nuclear repulsion                      0.0000000000
+  Electronic                            -0.0000000000
+  Kinetic                                0.0000000000
+  Nuclear attraction                    -0.0000000000
+  J short-range                          0.0000000000
+  J long-range                           0.0000000000
+  HF exchange                            0.0000000000
+    of which q=0 finite-size             0.0000000000
+  Two-electron (J+K)                     0.0000000000
+  Total energy                          -0.0000000000
+  ---------------------------------------------------
+
+  Crystal orbital energies (Ha) at k-point 0 (of 0) -- sorted low -> high
+  -----------------------------------------------------------------------
+       0         0.0000000000   occ= 0.00000 HOCO
+       0         0.0000000000   occ= 0.00000 LUCO
+  Gamma-point orbitals written to per_opt.molden
+    Molden is a molecular format: no lattice, no k-points. Coefficients are
+    evaluated over home-cell basis functions only, so orbitals straddling a
+    cell face appear clipped. For crystalline orbitals use output_qvf=True
+    and open the archive with vibe-view.
+  Population dump written to per_opt.population.txt + per_opt.population.json
+  Final geometry written to per_opt.xyz (extended XYZ with lattice)
+  Structure written to per_opt.cif (CIF, P 0)
+  Structure written to per_opt.xsf (XSF crystal block)
+
+  Timings (wall clock, seconds)
+  -------------------------------------------
+    SCF total <T>
+    SCF avg per iter                    0.000  (0 iters)
+    Job total <T>
+  Geometry optimization
+  --------------------------------------------------------
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                 0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            cold full density
+  Exact density evaluation done (s)
+  ---------------------------------
+  Phase                            exact-operator confirmation of the provisional convergence at iteration 0
+  Wall time <T>
+  Exact density evaluation pending (Ha)
+  -------------------------------------
+  Phase                            final density evaluation
+  Iteration                        0
+  Provisional SCF energy                -0.0000000000
+  Build                            reuse exact confirmation
+  Exact density evaluation reused (s)
+  -----------------------------------
+  Phase                            final density evaluation
+  Wall time <T>
+
+Atomic relaxation: 0 iters, E = -0.00000000 Ha, max|grad| = 0.0000e-00, converged=False
+
+  Optimized geometry
+  ----------------------------
+    E_final = -0.0000000000 Ha
+    n_iter  = 0
+    converged = False
+
+  Periodicity
+  -----------------------------------
+    dimensionality = 0D
+    active axes    = a1, a2, a3
+    cell volume    = 0000.0000 bohr^0
+
+  Lattice (bohr)
+  ---------------------------------------------------
+    a1 =    00.00000000     0.00000000     0.00000000
+    a2 =     0.00000000    00.00000000     0.00000000
+    a3 =     0.00000000     0.00000000    00.00000000
+
+  Cell parameters
+  ----------------------------------------------------------------------------
+    lengths        = |a1| = 00.000000  |a2| = 00.000000  |a3| = 00.000000 bohr
+    angles         = alpha = 00.0000  beta = 00.0000  gamma = 00.0000 deg
+    nearest pair   = 0.000000 bohr (0.0000 Angstrom), atoms 0-0 @ [0, 0, 0]
+
+  Atoms (bohr) -- 0 in unit cell
+  --------------------------------------------------------------
+       0  Z=  0       0.00000000      0.00000000      0.00000000
+       0  Z=  0       0.00000000      0.00000000      0.00000000
+    n_electrons = 0  multiplicity = 0

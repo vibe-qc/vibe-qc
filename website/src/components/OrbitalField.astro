@@ -1,0 +1,189 @@
+---
+// Animated molecular-orbital iso-contour field for the hero.
+//
+// Renders a toy signed wavefunction (a superposition of drifting Gaussian
+// "orbitals") and draws its iso-contours with marching squares — blue for
+// the positive lobe, red for the negative lobe. Colours are read live from
+// the CSS custom properties so the field re-tints when the viewer flips
+// light/dark. Honours prefers-reduced-motion by drawing a single frame.
+---
+
+<canvas id="field" aria-hidden="true"></canvas>
+
+<script>
+  const canvas = document.getElementById('field') as HTMLCanvasElement | null;
+  if (canvas) {
+    const ctx = canvas.getContext('2d')!;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function themeColors() {
+      const cs = getComputedStyle(document.documentElement);
+      return {
+        pos: (cs.getPropertyValue('--phase-pos') || '#2E6BF0').trim(),
+        neg: (cs.getPropertyValue('--phase-neg') || '#E8543C').trim(),
+      };
+    }
+    let colors = themeColors();
+
+    let W = 0, H = 0, dpr = 1;
+    const GRID = 26;              // sampling pitch (px) — coarse for performance
+    let cols = 0, rows = 0;
+    let vals: number[] = [];
+
+    // A handful of Gaussian "orbitals" with signed weight (phase) that drift.
+    // Deterministic seeding — no RNG, so the field is reproducible.
+    interface Src { bx: number; by: number; ax: number; ay: number; px: number; py: number; sp: number; q: number; sig: number; }
+    let sources: Src[] = [];
+    function seedSources() {
+      sources = [];
+      const n = 7;
+      for (let i = 0; i < n; i++) {
+        sources.push({
+          bx: 0.12 + 0.76 * ((i * 0.618) % 1),
+          by: 0.18 + 0.64 * (((i * 0.417) + 0.2) % 1),
+          ax: 0.06 + 0.05 * (i % 3),
+          ay: 0.05 + 0.04 * (i % 2),
+          px: i * 0.9,
+          py: i * 1.7 + 1,
+          sp: 0.18 + 0.05 * (i % 3),
+          q: (i % 2 === 0 ? 1 : -1) * (0.7 + 0.3 * ((i % 4) / 3)),
+          sig: 0.14 + 0.05 * ((i * 0.3) % 1),
+        });
+      }
+    }
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = canvas!.getBoundingClientRect();
+      W = rect.width; H = rect.height;
+      canvas!.width = Math.max(1, Math.floor(W * dpr));
+      canvas!.height = Math.max(1, Math.floor(H * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cols = Math.ceil(W / GRID) + 1;
+      rows = Math.ceil(H / GRID) + 1;
+      vals = new Array(cols * rows);
+    }
+
+    function field(x: number, y: number, t: number) {
+      let s = 0;
+      for (const o of sources) {
+        const cx = o.bx + o.ax * Math.sin(t * o.sp + o.px);
+        const cy = o.by + o.ay * Math.cos(t * o.sp + o.py);
+        const dx = x - cx, dy = (y - cy) * 0.9;
+        const r2 = dx * dx + dy * dy;
+        s += o.q * Math.exp(-r2 / (2 * o.sig * o.sig));
+      }
+      return s;
+    }
+
+    // Fractional crossing point of `level` along an edge between a and b.
+    function frac(a: number, b: number, level: number) { return (level - a) / (b - a); }
+
+    type Pt = { x: number; y: number };
+    function seg(a: Pt, b: Pt) { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
+
+    function drawContours(t: number) {
+      ctx.clearRect(0, 0, W, H);
+      const aspect = W / H;
+      for (let j = 0; j < rows; j++) {
+        for (let i = 0; i < cols; i++) {
+          const nx = (i * GRID) / W;
+          const ny = (j * GRID) / H;
+          vals[j * cols + i] = field(nx * aspect, ny, t);
+        }
+      }
+      const levels = [-0.62, -0.4, -0.22, -0.09, 0.09, 0.22, 0.4, 0.62];
+      ctx.lineWidth = 1.15;
+      ctx.lineJoin = 'round';
+
+      for (const level of levels) {
+        const col = level >= 0 ? colors.pos : colors.neg;
+        const strength = Math.min(1, Math.abs(level) + 0.28);
+        ctx.strokeStyle = col;
+        ctx.globalAlpha = 0.10 + 0.22 * strength;
+        ctx.beginPath();
+        for (let jj = 0; jj < rows - 1; jj++) {
+          for (let ii = 0; ii < cols - 1; ii++) {
+            const x0 = ii * GRID, y0 = jj * GRID, x1 = x0 + GRID, y1 = y0 + GRID;
+            const tl = vals[jj * cols + ii];
+            const tr = vals[jj * cols + ii + 1];
+            const br = vals[(jj + 1) * cols + ii + 1];
+            const bl = vals[(jj + 1) * cols + ii];
+            const idx = (tl > level ? 8 : 0) | (tr > level ? 4 : 0) | (br > level ? 2 : 0) | (bl > level ? 1 : 0);
+            if (idx === 0 || idx === 15) continue;
+
+            const tE = { x: x0 + GRID * frac(tl, tr, level), y: y0 };
+            const rE = { x: x1, y: y0 + GRID * frac(tr, br, level) };
+            const bE = { x: x0 + GRID * frac(bl, br, level), y: y1 };
+            const lE = { x: x0, y: y0 + GRID * frac(tl, bl, level) };
+
+            switch (idx) {
+              case 1: case 14: seg(bE, lE); break;
+              case 2: case 13: seg(rE, bE); break;
+              case 3: case 12: seg(rE, lE); break;
+              case 4: case 11: seg(tE, rE); break;
+              case 6: case 9:  seg(tE, bE); break;
+              case 7: case 8:  seg(tE, lE); break;
+              case 5:  seg(tE, rE); seg(lE, bE); break;
+              case 10: seg(tE, lE); seg(rE, bE); break;
+            }
+          }
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Accumulate animation time so pausing/resuming never jumps the field.
+    let rafId = 0, lastTs = 0, elapsed = 0, active = false;
+    function frame(ts: number) {
+      if (lastTs) elapsed += ((ts - lastTs) / 1000) * 0.5;
+      lastTs = ts;
+      drawContours(elapsed);
+      rafId = requestAnimationFrame(frame);
+    }
+    function start() {
+      if (active || reduce) return;
+      active = true; lastTs = 0;
+      rafId = requestAnimationFrame(frame);
+    }
+    function stop() {
+      active = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    function onScreen() {
+      const r = canvas!.getBoundingClientRect();
+      return r.bottom > 0 && r.top < window.innerHeight;
+    }
+
+    function init() {
+      seedSources();
+      resize();
+      if (reduce) { drawContours(3.2); return; }   // one representative static frame
+      // Animate only while the hero is on-screen and the tab is visible —
+      // no wasted CPU/battery once the user scrolls past it.
+      if ('IntersectionObserver' in window) {
+        new IntersectionObserver((entries) => {
+          if (entries[0].isIntersecting && !document.hidden) start(); else stop();
+        }, { threshold: 0 }).observe(canvas!);
+      } else {
+        start();
+      }
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) stop();
+        else if (onScreen()) start();
+      });
+    }
+
+    let rt: number | undefined;
+    window.addEventListener('resize', () => {
+      clearTimeout(rt);
+      rt = window.setTimeout(() => { colors = themeColors(); resize(); if (reduce) drawContours(3.2); }, 120);
+    });
+    new MutationObserver(() => { colors = themeColors(); })
+      .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+    init();
+  }
+</script>

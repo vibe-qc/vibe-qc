@@ -1,0 +1,47 @@
+#!/bin/sh
+# Check each match in staged additions. An allowed example on a line
+# must not hide a second private value. Diagnostic values stay redacted.
+# Enable with: git config --local core.hooksPath .githooks
+set -e
+
+PATH_PATTERN='/(Users|home)/[A-Za-z][A-Za-z0-9_.-]*'
+# Explicit placeholders and system roles only; exact username matches.
+ALLOWED_USERS='USER|Shared|runner|root|user'
+
+# Capture diff errors before filtering; never invoke external diff drivers.
+DIFF=$(git diff --cached --no-ext-diff --no-textconv --diff-filter=ACMR -U0 \
+    -- ':(exclude).githooks/' ':(exclude).mailmap' \
+       ':(exclude)tests/test_basis_no_maintainer_paths.py' \
+       ':(exclude)CLAUDE.md' ':(exclude)AGENTS.md')
+
+# Hunk parsing also checks source lines that themselves start with '+'.
+STAGED=$(printf '%s\n' "$DIFF" | awk '
+    /^diff --git / { hunk=0 }
+    /^@@ / { hunk=1; next }
+    hunk && /^\+/ { print substr($0, 2) }
+')
+
+# Site-specific terms stay outside this checkout. Python is a product prerequisite.
+POLICY_FILE="${VIBE_PRIVACY_TERMS_FILE-$(git config --local --get privacy.termsFile || true)}"
+if [ -n "$POLICY_FILE" ] || [ "${VIBE_PRIVACY_TERMS_FILE+x}" = x ] || git config --local --get privacy.termsFile >/dev/null 2>&1; then
+    printf '%s\n' "$STAGED" | python3 "$(git rev-parse --show-toplevel)/.githooks/private_terms.py"
+fi
+
+LEAKS=$(printf '%s\n' "$STAGED" \
+    | LC_ALL=C grep -oiE "$PATH_PATTERN" \
+    | grep -vE "^/(Users|home)/($ALLOWED_USERS)$" \
+    || true)
+
+if [ -n "$LEAKS" ]; then
+    cat >&2 <<'EOF'
+ERROR: staged content contains personal-info patterns [values redacted].
+Use ~/, /home/USER/ or a documented placeholder instead.
+Inspect the staged diff locally and fix the content before committing.
+EOF
+    exit 1
+fi
+
+# Preserve the documentation prose guard.
+if command -v python3 >/dev/null 2>&1; then
+    python3 "$(git rev-parse --show-toplevel)/.githooks/check_no_em_dashes.py"
+fi

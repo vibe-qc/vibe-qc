@@ -1,0 +1,307 @@
+# vibe-qc system manifest -- written alongside output-<job>.out by run_job(...).
+# Captures the runtime environment so generated calculation outputs are
+# reproducible and wall-time numbers are interpretable. The [plan]
+# section is the declared output contract (written once, at job start);
+# the [outputs] section is the running status (rewritten as each file
+# lands). External QC programs are validation references only: run
+# them out-of-process and parse their outputs.
+
+[vibeqc]
+version        = "0.15.23.dev0"
+codename       = "Neese's Cheetah"
+git_sha        = "dc22a26"
+git_branch     = "main"
+is_release     = false
+
+[host]
+hostname       = "<redacted>"
+os             = "Darwin"
+os_release     = "25.5.0"
+os_pretty      = "macOS 26.5.2"
+arch           = "arm64"
+
+[cpu]
+model          = "Apple M5 Max"
+physical_cores = 18
+logical_cores  = 18
+omp_threads_used = 18
+
+[memory]
+total_gb       = 128.0
+available_gb   = 88.13
+
+[python]
+version        = "3.14.6"
+implementation = "CPython"
+executable     = "~/gitlab/vibeqc-documentation/.venv/bin/python"
+
+[libraries]
+libint         = "2.13.1"
+libxc          = "7.0.0"
+spglib         = "2.7.0"
+libecpint      = "1.0.7 (vendored, MAX_L=5)"
+fftw3          = "3.3.9"
+
+[validation]
+external_programs_policy = "External QC programs are validation references only."
+execution_boundary = "Run external programs out-of-process and parse their outputs; do not import them as vibe-qc backends."
+native_backend_policy = "vibe-qc runtime methods execute vibe-qc-owned native or Python code."
+
+[run]
+timestamp_iso  = "2026-07-05T17:17:26+02:00"
+wall_seconds   = 0.07279666600516066
+basename       = "output-h2-tight-canonical-orth"
+pid            = 17996
+
+[plan]
+stem             = "output-h2-tight-canonical-orth"
+job_kind         = "molecular_scf"
+method           = "RHF"
+basis            = "aug-cc-pvtz"
+functional       = ""
+options_digest   = "c841c4c725e6"
+
+[[plan.files]]
+role          = "log"
+path          = "output-h2-tight-canonical-orth.out"
+format        = "text"
+always        = true
+description   = "Human-readable SCF log (banner, iter table, orbital block, references)."
+
+[[plan.files]]
+role          = "manifest"
+path          = "output-h2-tight-canonical-orth.system"
+format        = "toml"
+always        = true
+description   = "Runtime manifest -- hardware, libs, plan, outputs status."
+
+[[plan.files]]
+role          = "orbitals"
+path          = "output-h2-tight-canonical-orth.molden"
+format        = "molden"
+always        = true
+description   = "Molecular orbitals -- coefficients, energies, occupations."
+
+[[plan.files]]
+role          = "geometry"
+path          = "output-h2-tight-canonical-orth.xyz"
+format        = "xyz"
+always        = true
+description   = "Final geometry in Angstrom."
+
+[[plan.files]]
+role          = "citations"
+path          = "output-h2-tight-canonical-orth.bibtex"
+format        = "bibtex"
+always        = true
+description   = "BibTeX entries for every method, basis, and library cited."
+
+[[plan.files]]
+role          = "citations"
+path          = "output-h2-tight-canonical-orth.references"
+format        = "text"
+always        = true
+description   = "Plain-text reference list (Chicago-ish formatting)."
+
+[[plan.files]]
+role          = "population"
+path          = "output-h2-tight-canonical-orth.population.txt"
+format        = "text"
+always        = true
+description   = "Mulliken / Löwdin charges + Mayer bond orders + dipole -- tab-separated."
+
+[[plan.files]]
+role          = "population"
+path          = "output-h2-tight-canonical-orth.population.json"
+format        = "json"
+always        = true
+description   = "Population / properties dump -- JSON form for dashboards / regression scripts."
+
+[[plan.files]]
+role          = "crash"
+path          = "output-h2-tight-canonical-orth.dump"
+format        = "toml"
+always        = false
+description   = "Post-mortem snapshot -- only written on SCF failure or max-iter without convergence."
+
+[[plan.files]]
+role          = "qvf"
+path          = "output-h2-tight-canonical-orth.qvf"
+format        = "qvf"
+always        = true
+description   = "QVF visualisation archive -- zip with manifest.json + typed binary/text payloads."
+
+[outputs]
+status           = "complete"
+finished_at_iso  = "2026-07-05T17:17:26+02:00"
+
+[[outputs.files]]
+path          = "output-h2-tight-canonical-orth.out"
+written       = true
+bytes         = 6284
+sha256        = "d5f3bb72a4f819e388653af5f16d843517d8b85f517588292f31576cf4909d16"
+wall_time_s   = 0.10009862500010058
+error         = ""
+
+[[outputs.files]]
+path          = "output-h2-tight-canonical-orth.system"
+written       = true
+bytes         = 8932
+sha256        = "cd7a494211965fd42ad222597f511e5a6181159332c50e616e03d79efb80e692"
+wall_time_s   = 0.10087333398405463
+error         = ""
+
+[[outputs.files]]
+path          = "output-h2-tight-canonical-orth.molden"
+written       = true
+bytes         = 68093
+sha256        = "eed263dfed58bb6821c3c9826225cb17f68567eaf941d2204476ee48d4568b1c"
+wall_time_s   = 0.10163958399789408
+error         = ""
+
+[[outputs.files]]
+path          = "output-h2-tight-canonical-orth.xyz"
+written       = true
+bytes         = 173
+sha256        = "b359013418e2b6bef9800fbc3b2dce6412325a39f90bc6b4507f592eef03e9ea"
+wall_time_s   = 0.10241470899200067
+error         = ""
+
+[[outputs.files]]
+path          = "output-h2-tight-canonical-orth.bibtex"
+written       = true
+bytes         = 3215
+sha256        = "0cf0b5c44d08d02f67f6ff31ca0720abdeec70b37223090753a1b0adf26f9a7b"
+wall_time_s   = 0.10327479202533141
+error         = ""
+
+[[outputs.files]]
+path          = "output-h2-tight-canonical-orth.references"
+written       = true
+bytes         = 1753
+sha256        = "4de25511746b61d2e7f6560ca9d05f5aa82a249545ea219f859edf5e3c3b1ab4"
+wall_time_s   = 0.10416691697901115
+error         = ""
+
+[[outputs.files]]
+path          = "output-h2-tight-canonical-orth.population.txt"
+written       = true
+bytes         = 620
+sha256        = "44782f2e1e5dc2fe91b77f0f246b05a0e9070c2d0d9bd13bf774ce1bac956b9c"
+wall_time_s   = 0.10497216699877754
+error         = ""
+
+[[outputs.files]]
+path          = "output-h2-tight-canonical-orth.population.json"
+written       = true
+bytes         = 887
+sha256        = "f4ef9530e45009584a3a4207d318ee22129b02a5d6644a6d1b7a2afa203a2304"
+wall_time_s   = 0.10577908402774483
+error         = ""
+
+[[outputs.files]]
+path          = "output-h2-tight-canonical-orth.dump"
+written       = false
+bytes         = 0
+sha256        = ""
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-h2-tight-canonical-orth.qvf"
+written       = true
+bytes         = 22126
+sha256        = "28ba3b68f202b9ed6e2915b1f62dbe8462ee3fc186d637d3ef5e24734c5914f3"
+wall_time_s   = 0.10659345897147432
+error         = ""
+
+[citations]
+count            = 8
+
+[[citations.entries]]
+key           = "vibeqc_software"
+kind          = "software"
+authors       = "Peintinger, Michael F."
+title         = "vibe-qc: a quantum-chemistry code for molecules and solids"
+journal       = ""
+year          = "2026"
+doi           = ""
+license       = "MPL-2.0"
+print         = true
+
+[[citations.entries]]
+key           = "libint_valeev"
+kind          = "software"
+authors       = "Valeev, Edward F."
+title         = "Libint: A library for the evaluation of molecular integrals of many-body operators over Gaussian functions"
+journal       = ""
+year          = ""
+doi           = ""
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "pulay_diis_1980"
+kind          = "article"
+authors       = "Pulay, Péter"
+title         = "Convergence acceleration of iterative sequences. The case of SCF iteration"
+journal       = "Chemical Physics Letters"
+year          = 1980
+doi           = "10.1016/0009-2614(80)80396-4"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "pulay_diis_1982"
+kind          = "article"
+authors       = "Pulay, Péter"
+title         = "Improved SCF convergence acceleration"
+journal       = "Journal of Computational Chemistry"
+year          = 1982
+doi           = "10.1002/jcc.540030413"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "mulliken_1955"
+kind          = "article"
+authors       = "Mulliken, R. S."
+title         = "Electronic Population Analysis on LCAO-MO Molecular Wave Functions. I"
+journal       = "Journal of Chemical Physics"
+year          = 1955
+doi           = "10.1063/1.1740588"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "lowdin_1950"
+kind          = "article"
+authors       = "Löwdin, Per-Olov"
+title         = "On the Non-Orthogonality Problem Connected with the Use of Atomic Wave Functions in the Theory of Molecules and Crystals"
+journal       = "Journal of Chemical Physics"
+year          = 1950
+doi           = "10.1063/1.1747632"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "mayer_bond_order_1983"
+kind          = "article"
+authors       = "Mayer, I."
+title         = "Charge, bond order and valence in the ab initio SCF theory"
+journal       = "Chemical Physics Letters"
+year          = 1983
+doi           = "10.1016/0009-2614(83)80005-0"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "hirshfeld_1977"
+kind          = "article"
+authors       = "Hirshfeld, F. L."
+title         = "Bonded-atom fragments for describing molecular charge densities"
+journal       = "Theoretica Chimica Acta"
+year          = 1977
+doi           = "10.1007/BF00549096"
+license       = ""
+print         = true

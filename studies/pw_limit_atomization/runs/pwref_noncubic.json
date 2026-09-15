@@ -1,0 +1,70 @@
+{
+  "provenance": {
+    "external_program": "gpaw",
+    "code_version": "25.7.0",
+    "boundary": "out-of-process subprocess (CLAUDE.md \u00a710)",
+    "functional": "r2scan",
+    "cutoffs_ev": [
+      800.0
+    ],
+    "kmesh": [
+      6,
+      6,
+      6
+    ],
+    "atom_box_ang": 12.0,
+    "reference": "VASP@900eV r2SCAN (references-cohesive/r2scan.dat)"
+  },
+  "results": [
+    {
+      "system_id": "beo_wurtzite",
+      "pw_limit_kjmol": 1200.579866564892,
+      "vasp900_kjmol": 1210.2,
+      "delta_vs_vasp_kjmol": -9.620133435108073,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -1.2000526072711066,
+          "e_atoms_ha": -0.14274958238558638,
+          "atomization_kjmol": 1200.579866564892,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Be": -0.01844010906333765,
+        "O": -0.12430947332224872
+      },
+      "atom_valence": {
+        "Be": 2,
+        "O": 6
+      }
+    },
+    {
+      "system_id": "zno_wurtzite",
+      "pw_limit_kjmol": 729.9843561531274,
+      "vasp900_kjmol": 728.2,
+      "delta_vs_vasp_kjmol": 1.7843561531273053,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -1.2744352041910898,
+          "e_atoms_ha": -0.35918124463058493,
+          "atomization_kjmol": 729.9843561531274,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Zn": -0.2348717713083362,
+        "O": -0.12430947332224872
+      },
+      "atom_valence": {
+        "Zn": 12,
+        "O": 6
+      }
+    }
+  ]
+}

@@ -1,0 +1,972 @@
+{
+  "schema_version": 1,
+  "policy": {
+    "summary": "Run smoke plus the lane for the code area touched. For release and patch candidates, use the release-core profile plus --changed-since --impact-mode release. AICCM/CCM/SECCM are experimental manual research lanes, not release, advisory, or automatic impact tests.",
+    "runner": "scripts/test_gate/run_full_suite.py --lane <name>",
+    "notes": [
+      "Lanes select pytest files by glob or explicit node id and keep per-target process isolation.",
+      "--changed-since REF infers non-aggregate lanes from trigger_paths and changed test files.",
+      "--impact-mode release restricts --changed-since to smoke and explicitly opted-in cheap release-impact lanes; full area lanes remain available with the default dev mode or explicit --lane.",
+      "CLI --jobs, --markexpr, --test-timeout, --file-timeout, and --only override lane defaults.",
+      "Experimental AICCM/CCM/SECCM lanes are explicit manual research checks only; do not include them in release profiles, advisory profiles, or --changed-since impact gates.",
+      "Patch releases (0.15.x) are not blocked by experimental/research-stage features (CCM, MSINDO-CCM, SECCM, aiccm2026dev-a/-b) or by anything documented as planned for a later minor or major release. Track failures in those areas as known-red and ship; escalate only regressions in shipped, non-experimental features."
+    ],
+    "validation_policy_snapshot": "scripts/test_gate/suite_manifest.json",
+    "method_maturity_states": [
+      "production",
+      "verified",
+      "under-review",
+      "experimental"
+    ],
+    "lane_classes": [
+      "pre-cut blocking",
+      "post-cut evaluation",
+      "implementing-chat-only"
+    ],
+    "scientific_acceptance": {
+      "pytest_or_ci_can_accept_method": false,
+      "required_evidence": "full-production-shaped-matched-reference-run",
+      "required_artifacts": [
+        "full input",
+        "verbose vibe-qc output",
+        "raw reference output",
+        "matched-reference analysis"
+      ]
+    },
+    "release_schedule": {
+      "pre_cut": "T0 plus T1 from suite_manifest.json; hard T1 wall budget 15 minutes",
+      "post_cut": "T2 change-safety inventory plus complete production, verified, and under-review matched-reference calculation inventory on the immutable release",
+      "experimental": "T3 implementing-chat-only; artifact is rejected by the blocking verdict"
+    }
+  },
+  "profiles": {
+    "release-core": {
+      "description": "Blocking release profile for cheap, shipped, non-experimental feature coverage. AICCM/CCM/SECCM are experimental and intentionally absent.",
+      "blocking_lanes": [
+        "release-core-cheap"
+      ],
+      "advisory_lanes": [
+        "pbc-gapw-gpw",
+        "embedding-surfaces-neb",
+        "external-reference"
+      ]
+    }
+  },
+  "lanes": {
+    "smoke": {
+      "owner": "all chats",
+      "cadence": "on native-binding or gate-policy touch",
+      "description": "Irreducible native-symbol sanity check.",
+      "method_maturity": "verified",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "release-test-schedule"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "None. This is change-safety/build-health evidence only; scientific acceptance requires the agentic-loop full matched calculation selected by the policy snapshot.",
+      "release_impact_default": false,
+      "markexpr": "not slow",
+      "jobs": 4,
+      "test_timeout_s": 120,
+      "file_timeout_s": 300,
+      "include": [
+        "tests/test_binding_sanity.py"
+      ],
+      "trigger_paths": [
+        "pyproject.toml",
+        "python/vibeqc/__init__.py",
+        "cpp/src/bindings.cpp",
+        "scripts/test_gate/**",
+        "examples/regression/**"
+      ]
+    },
+    "output-docs": {
+      "owner": "output/docs chats",
+      "cadence": "on touch",
+      "description": "Output writer, citations, docs-symbol, formatting, QVF, and manifest contracts.",
+      "method_maturity": "verified",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "BUG-OUT-001-retired",
+        "BUG 42",
+        "BUG 44"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "For paper values or output-contract changes, rerun the affected full input with .out, .system, QVF, structured logs, references, and matched reference artifacts preserved.",
+      "markexpr": "not slow",
+      "jobs": 4,
+      "test_timeout_s": 240,
+      "file_timeout_s": 600,
+      "include": [
+        "tests/test_output*.py",
+        "tests/test_out_*.py",
+        "tests/test_qvf*.py",
+        "tests/test_periodic_molden_gamma_export.py",
+        "tests/test_requested_mo_indices.py",
+        "tests/test_citation*.py",
+        "tests/test_citations*.py",
+        "tests/test_*citation*.py",
+        "tests/test_features_doc_symbols.py",
+        "tests/test_scf_log*.py",
+        "tests/test_progress.py",
+        "tests/test_structured_log.py",
+        "tests/test_system_manifest.py",
+        "tests/test_vibeqc_outputs_cli.py",
+        "tests/test_vibeqc_cite_cli.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/output/**",
+        "python/vibeqc/banner.py",
+        "CHANGELOG.md",
+        "CITATION.cff",
+        "docs/**",
+        "tests/golden/**"
+      ]
+    },
+    "release-core-cheap": {
+      "owner": "release/test-health chat",
+      "cadence": "release blocking",
+      "description": "One consolidated molecular RHF/UHF/RKS/UKS/MP2 fixed-point sentinel. Native-binding and import-isolation guards run in their affected development lanes, not on every release cut.",
+      "method_maturity": "verified",
+      "lane_class": "pre-cut blocking",
+      "global_items": [
+        "release-test-schedule"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Stable production sentinels and any patch-affected production, verified, or under-review full matched calculations selected by the agentic-loop policy.",
+      "impact_default": false,
+      "markexpr": "not slow",
+      "jobs": 4,
+      "test_timeout_s": 240,
+      "file_timeout_s": 600,
+      "include": [
+        "tests/test_release_sentinels.py"
+      ],
+      "trigger_paths": [
+        "scripts/test_gate/**",
+        "python/vibeqc/**",
+        "cpp/src/**",
+        "cpp/include/**",
+        "tests/**"
+      ]
+    },
+    "molecular-scf-dft": {
+      "owner": "molecular/DFT chats",
+      "cadence": "on touch",
+      "description": "Molecular HF/DFT, grids, SCF accelerators, molecular gradients, Hessians, properties, dispersion.",
+      "method_maturity": "production",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "BUG 41",
+        "BUG 42",
+        "BUG 44",
+        "BUG 45"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the affected molecular HF/DFT inventory row(s) from full inputs against ORCA or the named independent reference with complete artifacts and numeric analysis.",
+      "markexpr": "not slow",
+      "jobs": 6,
+      "test_timeout_s": 300,
+      "file_timeout_s": 900,
+      "include": [
+        "tests/test_rhf.py",
+        "tests/test_uhf.py",
+        "tests/test_rks.py",
+        "tests/test_uks.py",
+        "tests/test_rohf.py",
+        "tests/test_rohf_convergence_controls.py",
+        "tests/test_roks.py",
+        "tests/test_skala*.py",
+        "tests/test_xc*.py",
+        "tests/test_grid*.py",
+        "tests/test_gradient*.py",
+        "tests/test_hessian*.py",
+        "tests/test_scf*.py",
+        "tests/test_incremental_fock_open_shell.py",
+        "tests/test_*diis*.py",
+        "tests/test_newton.py",
+        "tests/test_soscf.py",
+        "tests/test_oda.py",
+        "tests/test_mom.py",
+        "tests/test_molecular*.py",
+        "tests/test_dispersion*.py",
+        "tests/test_d4*.py",
+        "tests/test_gcp.py",
+        "tests/test_properties.py",
+        "tests/test_progress.py",
+        "tests/test_runner.py",
+        "tests/test_runner_thermo.py",
+        "tests/test_thermo.py"
+      ],
+      "exclude": [
+        "tests/test_periodic*.py",
+        "tests/test_pbc*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/runner.py",
+        "python/vibeqc/skala.py",
+        "python/vibeqc/scf*.py",
+        "python/vibeqc/xc*.py",
+        "python/vibeqc/grid*.py",
+        "cpp/src/rhf.cpp",
+        "cpp/src/uhf.cpp",
+        "cpp/src/rks.cpp",
+        "cpp/src/uks.cpp",
+        "cpp/src/jk_builder.cpp",
+        "cpp/src/jk_direct.cpp",
+        "cpp/include/vibeqc/jk_builder.hpp",
+        "cpp/include/vibeqc/jk_direct.hpp",
+        "cpp/include/vibeqc/scf_convergence.hpp",
+        "cpp/src/xc*.cpp"
+      ]
+    },
+    "molecular-correlation": {
+      "owner": "correlation/multiref chats",
+      "cadence": "on touch",
+      "description": "MP2, DF-MP2, CC, DLPNO, CAS, CI, TDDFT, excited-state and solver stack.",
+      "method_maturity": "under-review",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "G-CORR-005",
+        "G-CORR-007"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the affected MP2/CC/DLPNO/CAS/CI/TDDFT full input against ORCA, OpenMolcas, or the named oracle; keep the development owner involved for under-review routes.",
+      "markexpr": "not slow",
+      "jobs": 4,
+      "test_timeout_s": 420,
+      "file_timeout_s": 1200,
+      "include": [
+        "tests/test_*mp2*.py",
+        "tests/test_cc*.py",
+        "tests/test_uccsd*.py",
+        "tests/test_rohf_ccsd*.py",
+        "tests/test_cas*.py",
+        "tests/test_ci*.py",
+        "tests/test_selected_casci.py",
+        "tests/test_solvers*.py",
+        "tests/test_dlpno*.py",
+        "tests/test_tddft*.py",
+        "tests/test_excited*.py",
+        "tests/test_pt2*.py",
+        "tests/test_natural_orbitals.py",
+        "tests/test_uno_reference.py",
+        "tests/test_frozen_core_convention.py",
+        "tests/test_runner_dlpno_ccsd.py",
+        "tests/test_release_paper_dlpno_m16.py"
+      ],
+      "exclude": [
+        "tests/test_ccm*.py",
+        "tests/test_periodic*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/*cc*.py",
+        "python/vibeqc/*mp2*.py",
+        "python/vibeqc/correlation_conventions.py",
+        "python/vibeqc/dlpno/**",
+        "python/vibeqc/__init__.py",
+        "python/vibeqc/memory.py",
+        "python/vibeqc/runner.py",
+        "python/vibeqc/solvers/**",
+        "cpp/src/bindings.cpp",
+        "cpp/src/*cc*.cpp",
+        "cpp/src/*mp2*.cpp",
+        "cpp/include/vibeqc/*mp2*.hpp",
+        "cpp/include/vibeqc/correlation_conventions.hpp"
+      ]
+    },
+    "basis-ecp-integrals": {
+      "owner": "basis/integrals chats",
+      "cadence": "on touch",
+      "description": "Basis libraries, ECPs, integral kernels, symmetry integrals, and basissetdev architecture tests.",
+      "method_maturity": "verified",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "release-test-schedule"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the affected basis/ECP/integral production calculation or reference artifact comparison when a paper value, shipped basis, ECP route, or citation route changes.",
+      "markexpr": "not slow",
+      "jobs": 4,
+      "test_timeout_s": 600,
+      "file_timeout_s": 2400,
+      "include": [
+        "tests/test_basis*.py",
+        "tests/test_ecp*.py",
+        "tests/test_integrals.py",
+        "tests/test_aux_basis_coverage.py",
+        "tests/test_df_core.py",
+        "tests/test_df_rhf.py",
+        "tests/test_df_rks.py",
+        "tests/test_df_uhf.py",
+        "tests/test_df_uks.py",
+        "tests/test_df_gradient*.py",
+        "tests/test_solvation_cpcm.py",
+        "tests/test_ao_eval.py",
+        "tests/test_basis_ecp_sidecars.py",
+        "tests/test_symmetry_integrals*.py",
+        "tests/basisset_dev/test_*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/__init__.py",
+        "python/vibeqc/basis*.py",
+        "python/vibeqc/basis_library/**",
+        "python/vibeqc/ecp_metadata.py",
+        "python/vibeqc/ecp_library/**",
+        "python/vibeqc/ase.py",
+        "python/vibeqc/excited_gradient.py",
+        "python/vibeqc/geomopt/**",
+        "python/vibeqc/gradient/**",
+        "python/vibeqc/hessian*.py",
+        "python/vibeqc/molecular_optimize.py",
+        "python/vibeqc/neb.py",
+        "python/vibeqc/properties.py",
+        "python/vibeqc/rohf.py",
+        "python/vibeqc/roks.py",
+        "python/vibeqc/runner.py",
+        "python/vibeqc/solvation/driver.py",
+        "python/vibeqc/solvation/gradient.py",
+        "cpp/src/integrals.cpp",
+        "cpp/src/ecp.cpp",
+        "cpp/include/vibeqc/**"
+      ]
+    },
+    "solvation": {
+      "owner": "solvation chat (COSMO / COSMO-RS / Direct COSMO-RS)",
+      "cadence": "on touch",
+      "description": "Implicit-solvation core: cavity tessellation, CPCM/COSMO apparent-surface-charge solve, screening variants, reaction-field macro-iteration, solvation gradients, and the solute-potential provider seam.",
+      "method_maturity": "under-review",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "solvation-cross-code-validation-open-items"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the affected solvated full input against the named matched reference before promoting a solvation value; analytic gradients additionally require a topology-validated central finite-difference ladder on the exact shipped energy.",
+      "markexpr": "not slow",
+      "jobs": 4,
+      "test_timeout_s": 300,
+      "file_timeout_s": 900,
+      "include": [
+        "tests/test_solvation*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/solvation/**",
+        "python/vibeqc/semiempirical/methods/msindo_cosmo.py",
+        "python/vibeqc/semiempirical/methods/msindo_gepol.py",
+        "tests/test_solvation*.py"
+      ]
+    },
+    "semiempirical-molecular": {
+      "owner": "semiempirical chats",
+      "cadence": "on touch",
+      "description": "Molecular MSINDO, PM6/OMx, GFN2/xTB, DFTB0, semiempirical runner, output, PES, MD, NEB, and route-plan tests.",
+      "method_maturity": "under-review",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "semiempirical-article-validation-open-items"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the affected molecular semiempirical full input against the named matched reference or retained article-validation oracle before promoting a value.",
+      "markexpr": "not slow",
+      "jobs": 4,
+      "test_timeout_s": 300,
+      "file_timeout_s": 900,
+      "include": [
+        "tests/test_gfn2*.py",
+        "tests/test_nddo*.py",
+        "tests/test_md_msindo.py",
+        "tests/test_msindo*.py",
+        "tests/test_neb_msindo.py",
+        "tests/test_*semiempirical*.py",
+        "tests/test_runner_optimize_semiempirical_traj.py",
+        "tests/test_runner_semiempirical_aliases.py",
+        "tests/test_semiempirical*.py"
+      ],
+      "exclude": [
+        "tests/test_msindo_ccm*.py",
+        "tests/test_periodic*.py",
+        "tests/test_seccm*.py",
+        "tests/test_semiempirical_kpoint*.py",
+        "tests/test_semiempirical_periodic*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/semiempirical/**",
+        "cpp/src/semiempirical/**",
+        "cpp/include/vibeqc/semiempirical/**",
+        "examples/regression/msindo/**"
+      ]
+    },
+    "semiempirical-periodic": {
+      "owner": "semiempirical/PBC chats",
+      "cadence": "on touch",
+      "description": "Periodic and k-point semiempirical adapters, DFTB smearing/convergence/FD tests, and periodic native route checks.",
+      "method_maturity": "under-review",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "semiempirical-periodic-article-validation-rerun"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run compact periodic-core semiempirical rows on a current immutable release with full inputs, outputs, raw references, and analysis before promotion.",
+      "markexpr": "not slow",
+      "jobs": 3,
+      "test_timeout_s": 420,
+      "file_timeout_s": 1200,
+      "include": [
+        "tests/test_periodic_runner_semiempirical.py",
+        "tests/test_semiempirical_kpoint*.py",
+        "tests/test_semiempirical_periodic*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/periodic_runner.py",
+        "python/vibeqc/semiempirical/**",
+        "python/vibeqc/periodic_semiempirical*.py",
+        "cpp/src/semiempirical/**",
+        "cpp/include/vibeqc/semiempirical/**"
+      ]
+    },
+    "semiempirical-aiccm": {
+      "owner": "semiempirical/AICCM chats",
+      "cadence": "manual research only",
+      "description": "MSINDO-CCM and SECCM finite-group tests. Experimental bridge lane; never a release, advisory-profile, or automatic impact gate.",
+      "method_maturity": "experimental",
+      "lane_class": "implementing-chat-only",
+      "global_items": [
+        "G-CCM-001",
+        "G-CCM-002",
+        "G-CCM-003"
+      ],
+      "target_release": "v2.0",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Implementing chat owns MSINDO-CCM/SECCM full calculation evidence; excluded from release and agentic-loop campaign lanes until promoted.",
+      "impact_default": false,
+      "markexpr": "not slow",
+      "jobs": 2,
+      "test_timeout_s": 600,
+      "file_timeout_s": 1500,
+      "include": [
+        "tests/test_*seccm*.py",
+        "tests/test_ccm_semiempirical.py",
+        "tests/test_msindo_ccm*.py",
+        "tests/test_seccm*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/semiempirical/**",
+        "cpp/src/semiempirical/**",
+        "cpp/include/vibeqc/semiempirical/**"
+      ]
+    },
+    "semiempirical": {
+      "owner": "semiempirical chats",
+      "cadence": "on touch/aggregate",
+      "description": "Aggregate shipped semiempirical lane. Experimental AICCM/CCM/SECCM bridge checks are manual-only and excluded.",
+      "method_maturity": "under-review",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "semiempirical-article-validation-open-items"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Use the narrower molecular or periodic semiempirical full matched calculation set for scientific acceptance; this aggregate is change-safety only.",
+      "impact_default": false,
+      "markexpr": "not slow",
+      "jobs": 4,
+      "test_timeout_s": 420,
+      "file_timeout_s": 1200,
+      "include": [
+        "tests/test_gfn2*.py",
+        "tests/test_nddo*.py",
+        "tests/test_md_msindo.py",
+        "tests/test_msindo*.py",
+        "tests/test_neb_msindo.py",
+        "tests/test_periodic_runner_semiempirical.py",
+        "tests/test_*semiempirical*.py",
+        "tests/test_runner_optimize_semiempirical_traj.py",
+        "tests/test_runner_semiempirical_aliases.py",
+        "tests/test_semiempirical*.py"
+      ],
+      "exclude": [
+        "tests/test_msindo_ccm*.py",
+        "tests/test_seccm*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/semiempirical/**",
+        "python/vibeqc/periodic_semiempirical*.py",
+        "cpp/src/semiempirical/**",
+        "cpp/include/vibeqc/semiempirical/**",
+        "examples/regression/msindo/**"
+      ]
+    },
+    "pbc-core": {
+      "owner": "periodic-scf chat",
+      "cadence": "on touch",
+      "description": "Periodic non-GDF/non-BIPOLE/non-GAPW core: k-points, Ewald, lattice, dispatch, symmetry, smearing, generic PBC SCF.",
+      "method_maturity": "under-review",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "G-PBC-004",
+        "G-PBC-006",
+        "G-PBC-007"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the affected periodic core full input against PySCF.pbc, CRYSTAL, GPAW, or the named independent reference with complete raw artifacts.",
+      "markexpr": "not slow",
+      "jobs": 4,
+      "test_timeout_s": 420,
+      "file_timeout_s": 1200,
+      "include": [
+        "tests/test_periodic*.py",
+        "tests/test_xc_external_provider.py",
+        "tests/test_ewald*.py",
+        "tests/test_kpoints*.py",
+        "tests/test_madelung*.py",
+        "tests/test_lattice_convention.py",
+        "tests/test_bands.py",
+        "tests/test_pdos.py",
+        "tests/test_slab_2d_routing.py",
+        "tests/test_j_slab_ewald_2d.py",
+        "tests/test_v_ne_slab_ewald_2d.py",
+        "tests/test_kmesh_address.py",
+        "tests/test_symmetry*.py"
+      ],
+      "exclude": [
+        "tests/test_periodic_aiccm*.py",
+        "tests/test_periodic_ccm*.py",
+        "tests/test_periodic_embedding*.py",
+        "tests/test_periodic_gapw*.py",
+        "tests/test_periodic_gdf*.py",
+        "tests/test_periodic_gpw*.py",
+        "tests/test_periodic_k_gdf.py",
+        "tests/test_periodic_kuhf_gdf.py",
+        "tests/test_periodic_megacell*.py",
+        "tests/test_periodic_runner_semiempirical.py",
+        "tests/test_periodic_toroidal_mp2.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/periodic_runner.py",
+        "python/vibeqc/skala.py",
+        "python/vibeqc/periodic_*.py",
+        "python/vibeqc/kpoints.py",
+        "python/vibeqc/madelung.py",
+        "cpp/include/vibeqc/grid.hpp",
+        "cpp/include/vibeqc/xc.hpp",
+        "cpp/src/bindings.cpp",
+        "cpp/src/grid.cpp",
+        "cpp/src/xc.cpp",
+        "cpp/src/periodic_*.cpp",
+        "cpp/src/ewald.cpp",
+        "cpp/include/vibeqc/kmesh_address.hpp",
+        "cpp/src/kmesh_address.cpp",
+        "cpp/src/bloch.cpp",
+        "cpp/include/vibeqc/bloch.hpp",
+        "cpp/src/crystal.cpp",
+        "cpp/include/vibeqc/crystal.hpp",
+        "python/vibeqc/symmetry*.py",
+        "cpp/include/vibeqc/symmetry_shared.hpp",
+        "cpp/src/symmetry_shared.cpp",
+        "cpp/src/symmetry_shared_bindings.cpp"
+      ]
+    },
+    "pbc-gdf": {
+      "owner": "GDF chat",
+      "cadence": "on touch",
+      "description": "Periodic Gaussian density fitting, RSGDF, MDF/compcell, AO-pair FT, and k-point GDF.",
+      "method_maturity": "under-review",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "G-GDF-001",
+        "G-PBC-002"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the affected GDF/RSGDF/MDF/compcell full input against out-of-process PySCF.pbc GDF or the named reference; preserve raw cderi/input/output artifacts where applicable.",
+      "markexpr": "not slow",
+      "jobs": 3,
+      "test_timeout_s": 600,
+      "file_timeout_s": 1500,
+      "include": [
+        "tests/test_*gdf*.py",
+        "tests/test_gdf_fit_screening.py",
+        "tests/test_rsgdf_dense_mesh_tail.py",
+        "tests/test_aopair_ft_parity.py",
+        "tests/test_periodic_aux_eri_blocks.py",
+        "tests/test_periodic_mdf_source.py",
+        "tests/test_periodic_xc_workspace.py",
+        "tests/test_oneel_lattice_cutoff.py",
+        "tests/test_pbc_gdf*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/periodic_runner.py",
+        "python/vibeqc/skala.py",
+        "python/vibeqc/pbc_gdf.py",
+        "python/vibeqc/periodic_k_gdf.py",
+        "python/vibeqc/periodic_mdf.py",
+        "python/vibeqc/periodic_gdf_gradient.py",
+        "python/vibeqc/periodic_gdf_properties.py",
+        "python/vibeqc/periodic_*_gdf.py",
+        "python/vibeqc/aux_basis.py",
+        "cpp/include/vibeqc/grid.hpp",
+        "cpp/include/vibeqc/xc.hpp",
+        "cpp/src/bindings.cpp",
+        "cpp/src/grid.cpp",
+        "cpp/src/xc.cpp",
+        "cpp/src/aopair_ft.cpp",
+        "cpp/include/vibeqc/periodic_gdf_short_range.hpp",
+        "cpp/src/periodic_gdf_short_range.cpp",
+        "cpp/src/periodic_gdf_short_range_bindings.cpp",
+        "cpp/src/df.cpp"
+      ]
+    },
+    "pbc-bipole": {
+      "owner": "BIPOLE chat",
+      "cadence": "on touch",
+      "description": "BIPOLE Ewald split, multipoles, screened exchange, pair-resolved SR domains, and periodic NEB routes that use BIPOLE.",
+      "method_maturity": "under-review",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "G-PBC-001"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the affected BIPOLE full input against the matched periodic reference or finite-difference force oracle with complete artifacts before promoting forces or energies.",
+      "markexpr": "not slow",
+      "jobs": 3,
+      "test_timeout_s": 600,
+      "file_timeout_s": 1800,
+      "include": [
+        "tests/test_*bipole*.py",
+        "tests/test_bipole*.py",
+        "tests/test_bz_integration_gilat_scf.py",
+        "tests/test_pair_resolved_truncation.py",
+        "tests/test_periodic_screened_exchange.py",
+        "tests/test_neb_periodic.py",
+        "tests/test_neb_warm_start.py",
+        "tests/test_relax_atoms_qvf.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/periodic_runner.py",
+        "python/vibeqc/skala.py",
+        "python/vibeqc/pbc_bipole*.py",
+        "python/vibeqc/bipole*.py",
+        "python/vibeqc/periodic_screened_exchange.py",
+        "python/vibeqc/neb.py",
+        "cpp/include/vibeqc/grid.hpp",
+        "cpp/include/vibeqc/xc.hpp",
+        "cpp/src/bindings.cpp",
+        "cpp/src/grid.cpp",
+        "cpp/src/xc.cpp",
+        "python/vibeqc/_bipole_physical_support.py",
+        "python/vibeqc/_bipole_physical_source.py",
+        "cpp/include/vibeqc/bipole_ewald_gram.hpp",
+        "cpp/src/bipole_ewald_gram.cpp",
+        "cpp/src/bipole_ewald_gram_bindings.cpp",
+        "cpp/include/vibeqc/bipole_finite_source.hpp",
+        "cpp/src/bipole_finite_source.cpp",
+        "cpp/src/bipole_finite_source_bindings.cpp"
+      ]
+    },
+    "pbc-gapw-gpw": {
+      "owner": "GAPW/GPW chat",
+      "cadence": "on touch",
+      "description": "GAPW/GPW plane-wave grid, augmentation, stress, phonons, PW reference, and FFT Poisson.",
+      "method_maturity": "under-review",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "G-PBC-003"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the affected GPW/GAPW full input against GPAW/PySCF/plane-wave-limit reference artifacts with complete output before promotion.",
+      "markexpr": "not slow",
+      "jobs": 2,
+      "test_timeout_s": 900,
+      "file_timeout_s": 1800,
+      "include": [
+        "tests/test_*gapw*.py",
+        "tests/test_*gpw*.py",
+        "tests/test_fft_poisson.py",
+        "tests/test_pw1pw.py",
+        "tests/test_compare_pwref.py",
+        "tests/test_pw_limit_atomization.py",
+        "tests/test_mpi_gpw_parity.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/periodic_runner.py",
+        "python/vibeqc/skala.py",
+        "python/vibeqc/periodic_gapw*.py",
+        "python/vibeqc/periodic_gpw*.py",
+        "python/vibeqc/fft*.py",
+        "cpp/include/vibeqc/grid.hpp",
+        "cpp/include/vibeqc/xc.hpp",
+        "cpp/src/bindings.cpp",
+        "cpp/src/grid.cpp",
+        "cpp/src/xc.cpp",
+        "cpp/src/periodic_gapw*.cpp"
+      ]
+    },
+    "aiccm-molecular": {
+      "owner": "AICCM/CCM chats",
+      "cadence": "manual research only",
+      "description": "Molecular/finite-cluster AICCM and CCM tests. Experimental manual research lane; never a release, advisory-profile, or automatic impact gate.",
+      "method_maturity": "experimental",
+      "lane_class": "implementing-chat-only",
+      "global_items": [
+        "G-CCM-001",
+        "G-CCM-003"
+      ],
+      "target_release": "v2.0",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Implementing AICCM/CCM chat owns full input/output and matched-oracle evidence; excluded from release and advisory lanes until promoted.",
+      "impact_default": false,
+      "markexpr": "not slow",
+      "jobs": 3,
+      "test_timeout_s": 600,
+      "file_timeout_s": 1500,
+      "include": [
+        "tests/test_aiccm*.py",
+        "tests/test_ccm*.py",
+        "tests/test_msindo_ccm*.py"
+      ],
+      "exclude": [
+        "tests/test_ccm_periodic*.py",
+        "tests/test_periodic*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/periodic/ccm/**",
+        "studies/aiccm-2026/**",
+        "docs/aiccm*.md",
+        "docs/user_guide/aiccm*.md"
+      ]
+    },
+    "aiccm-periodic": {
+      "owner": "AICCM/PBC chats",
+      "cadence": "manual research only",
+      "description": "Periodic AICCM, periodic CCM, low-D, finite-torus, megacell, toroidal-MP2, and SECCM tests. Experimental manual research lane; never a release, advisory-profile, or automatic impact gate.",
+      "method_maturity": "experimental",
+      "lane_class": "implementing-chat-only",
+      "global_items": [
+        "G-CCM-001",
+        "G-CCM-002",
+        "G-CCM-003"
+      ],
+      "target_release": "v2.0",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Implementing AICCM/PBC chat owns periodic CCM full calculations; excluded from release and advisory lanes until promoted.",
+      "impact_default": false,
+      "markexpr": "not slow",
+      "jobs": 2,
+      "test_timeout_s": 900,
+      "file_timeout_s": 1800,
+      "include": [
+        "tests/test_ccm_periodic*.py",
+        "tests/test_lowd_greens*.py",
+        "tests/test_periodic_aiccm*.py",
+        "tests/test_periodic_ccm*.py",
+        "tests/test_periodic_megacell*.py",
+        "tests/test_periodic_toroidal_mp2.py",
+        "tests/test_seccm*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/periodic/ccm/**",
+        "python/vibeqc/periodic/chi/**",
+        "studies/aiccm-2026/**",
+        "docs/aiccm*.md",
+        "docs/user_guide/aiccm*.md"
+      ]
+    },
+    "aiccm-experimental": {
+      "owner": "AICCM/CCM chats",
+      "cadence": "manual research aggregate",
+      "description": "Aggregate AICCM/CCM research lane. Experimental manual research only; never a release, advisory-profile, or automatic impact gate.",
+      "method_maturity": "experimental",
+      "lane_class": "implementing-chat-only",
+      "global_items": [
+        "G-CCM-001",
+        "G-CCM-002",
+        "G-CCM-003"
+      ],
+      "target_release": "v2.0",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Manual aggregate for experimental AICCM/CCM/SECCM research only; no release, advisory, or automatic impact role.",
+      "impact_default": false,
+      "markexpr": "not slow",
+      "jobs": 2,
+      "test_timeout_s": 900,
+      "file_timeout_s": 1800,
+      "include": [
+        "tests/test_*seccm*.py",
+        "tests/test_aiccm*.py",
+        "tests/test_ccm*.py",
+        "tests/test_lowd_greens*.py",
+        "tests/test_msindo_ccm*.py",
+        "tests/test_periodic_aiccm*.py",
+        "tests/test_periodic_ccm*.py",
+        "tests/test_periodic_megacell*.py",
+        "tests/test_periodic_toroidal_mp2.py",
+        "tests/test_seccm*.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/periodic/ccm/**",
+        "python/vibeqc/periodic/chi/**",
+        "studies/aiccm-2026/**",
+        "docs/aiccm*.md",
+        "docs/user_guide/aiccm*.md"
+      ]
+    },
+    "embedding-surfaces-neb": {
+      "owner": "surface/embedding chats",
+      "cadence": "on touch",
+      "description": "Periodic embedding, slabs, surface reactions, NEB, ASE calculators, and geometry paths.",
+      "method_maturity": "under-review",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "G-PBC-004",
+        "G-PBC-009"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the affected slab/embedding/NEB full input against the matched periodic reference or force/path oracle with all raw artifacts retained.",
+      "markexpr": "not slow",
+      "jobs": 3,
+      "test_timeout_s": 600,
+      "file_timeout_s": 1500,
+      "include": [
+        "tests/test_periodic_embedding*.py",
+        "tests/test_slab*.py",
+        "tests/test_build_slab.py",
+        "tests/test_ewald_2d_slab.py",
+        "tests/test_j_slab_ewald_2d.py",
+        "tests/test_v_ne_slab_ewald_2d.py",
+        "tests/test_neb*.py",
+        "tests/test_ase_periodic*.py",
+        "tests/test_ase.py",
+        "tests/test_ase_optimizers.py"
+      ],
+      "trigger_paths": [
+        "python/vibeqc/periodic_embedding*.py",
+        "python/vibeqc/ase*.py",
+        "python/vibeqc/neb.py",
+        "python/vibeqc/ewald_2d*.py",
+        "studies/**"
+      ]
+    },
+    "external-reference": {
+      "owner": "regression-suite/cross-code chats",
+      "cadence": "release/on touch",
+      "description": "Out-of-process PySCF/ORCA/CRYSTAL/CP2K/GPAW parity boundaries and examples/regression runner tests.",
+      "method_maturity": "verified",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "release-paper-molecular",
+        "BUG 41",
+        "BUG 42",
+        "BUG 43",
+        "BUG 44",
+        "BUG 45"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "Run the relevant examples/regression full matched case; retain raw reference input/output, stdout/stderr, parsed JSON, and comparison summary.",
+      "markexpr": "not slow",
+      "jobs": 2,
+      "test_timeout_s": 900,
+      "file_timeout_s": 1800,
+      "include": [
+        "tests/test_regression*.py",
+        "tests/test_runner_cp2k.py",
+        "tests/test_runner_crystal.py",
+        "tests/test_runner_orca.py",
+        "tests/test_parse_orca.py",
+        "tests/test_example_queue_checkouts.py",
+        "tests/test_parity*.py",
+        "tests/test_external_reference_boundary.py",
+        "tests/test_run_suite_cp2k_dispatch.py"
+      ],
+      "trigger_paths": [
+        "examples/regression/**",
+        "python/vibeqc/runner.py",
+        "docs/user_guide/external_codes.md"
+      ]
+    },
+    "full-fast": {
+      "owner": "release/test-health chat",
+      "cadence": "pre-push shared/pre-tag",
+      "description": "Every non-slow shipped-feature pytest file under per-file isolation. Experimental AICCM/CCM/SECCM are excluded and manual-only.",
+      "method_maturity": "verified",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "release-test-schedule"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "None by itself. This is broad change-safety evidence; scientific acceptance still comes from policy-selected full matched calculations.",
+      "impact_default": false,
+      "markexpr": "not slow",
+      "jobs": 6,
+      "test_timeout_s": 300,
+      "file_timeout_s": 600,
+      "include": [
+        "tests/test_*.py",
+        "tests/basisset_dev/test_*.py"
+      ],
+      "exclude": [
+        "tests/test_*seccm*.py",
+        "tests/test_aiccm*.py",
+        "tests/test_ccm*.py",
+        "tests/test_lowd_greens*.py",
+        "tests/test_msindo_ccm*.py",
+        "tests/test_periodic_aiccm*.py",
+        "tests/test_periodic_ccm*.py",
+        "tests/test_periodic_megacell*.py",
+        "tests/test_periodic_toroidal_mp2.py",
+        "tests/test_polipo*.py",
+        "tests/test_seccm*.py"
+      ]
+    },
+    "slow-nightly": {
+      "owner": "release/test-health chat",
+      "cadence": "nightly/pre-tag",
+      "description": "All @slow pytest files plus env-gated heavy tests on a large box. Not for ordinary dev loops.",
+      "method_maturity": "verified",
+      "lane_class": "post-cut evaluation",
+      "global_items": [
+        "release-test-schedule"
+      ],
+      "target_release": "v0.15.x",
+      "scientific_acceptance": false,
+      "required_full_calculation": "None by itself. This is slow/heavy change-safety evidence and cannot promote paper values without the matching full calculation artifact set.",
+      "impact_default": false,
+      "markexpr": "slow",
+      "jobs": 2,
+      "test_timeout_s": 1800,
+      "file_timeout_s": 2400,
+      "heavy_env": true,
+      "include": [
+        "tests/test_*.py",
+        "tests/basisset_dev/test_*.py"
+      ],
+      "exclude": [
+        "tests/test_*seccm*.py",
+        "tests/test_aiccm*.py",
+        "tests/test_ccm*.py",
+        "tests/test_lowd_greens*.py",
+        "tests/test_msindo_ccm*.py",
+        "tests/test_periodic_aiccm*.py",
+        "tests/test_periodic_ccm*.py",
+        "tests/test_periodic_megacell*.py",
+        "tests/test_periodic_toroidal_mp2.py",
+        "tests/test_polipo*.py",
+        "tests/test_seccm*.py"
+      ]
+    }
+  }
+}

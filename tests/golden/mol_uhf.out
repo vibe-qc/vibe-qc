@@ -1,0 +1,97 @@
+<BANNER>
+
+  Job: UHF  basis=sto-0g
+  Atoms (bohr)
+  ------------------------------------------------------------
+     0  Z=  0       0.00000000      0.00000000      0.00000000
+     0  Z=  0       0.00000000      0.00000000      0.00000000
+  charge=0  multiplicity=0  n_electrons=0
+  IUPAC name: hydrogen oxide
+  Threads: <NT>  (OpenMP shared-memory parallelism)
+
+  vibe-qc estimates this calculation will require ~0.00 GB of memory:
+      ERI tensor                        0.00 MB
+      Fock + density + 0e               0.00 MB
+      Python runtime + NumPy overhead  000.0 MB
+      DIIS history                      0.00 MB
+      MO workspace                      0.00 MB
+      Open-shell UHF buffers            0.00 MB
+  Available on this machine: <MEM> GB. Proceeding.
+
+  iter     energy (Ha)            dE          ||[F,DS]||   DIIS
+  -------------------------------------------------------------
+     0      -00.0000000000        --     0.000e+00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+     0      -00.0000000000  -0.000e-00  0.000e-00    0
+  initial_guess = AUTO -> SAD
+  -------------------------------------------------------------
+  converged in 0 iterations; E = -00.0000000000 Ha
+  <S^0> = 0.000000  (ideal 0.0000, delta = +0.0000)
+  internal stability: stable (lowest Hessian eigenvalue 0.000e-00)
+  state fingerprint: <FPR>
+
+  Molecular orbitals - Alpha
+  -------------------------------------------------------------------------------------------------
+     #   occ          eps (Ha)        eps (eV)
+  -------------------------------------------------------------------------------------------------
+     0   0.0      -00.00000000     -000.000000
+     0   0.0       -0.00000000      -00.000000
+     0   0.0        0.00000000      -00.000000
+     0   0.0        0.00000000      -00.000000
+     0   0.0        0.00000000      -00.000000  <-- HOAMO
+     0   0.0        0.00000000       00.000000  <-- LUAMO
+  HOAMO:  0.000000 Ha (-00.0000 eV); LUAMO: 0.000000 Ha (00.0000 eV); gap: 0.000000 Ha (00.0000 eV)
+
+  Molecular orbitals - Beta
+  ------------------------------------------------------------------------------------------------
+     #   occ          eps (Ha)        eps (eV)
+  ------------------------------------------------------------------------------------------------
+     0   0.0      -00.00000000     -000.000000
+     0   0.0       -0.00000000      -00.000000
+     0   0.0        0.00000000      -00.000000
+     0   0.0        0.00000000      -00.000000  <-- HOBMO
+     0   0.0        0.00000000        0.000000  <-- LUBMO
+     0   0.0        0.00000000       00.000000
+  HOBMO:  0.000000 Ha (-00.0000 eV); LUBMO: 0.000000 Ha (0.0000 eV); gap: 0.000000 Ha (00.0000 eV)
+
+  Atomic charges
+  #  elem   Mulliken     Löwdin  Hirshfeld
+  ----------------------------------------
+  0     O   0.000000   0.000000   0.000000
+  0     H   0.000000   0.000000   0.000000
+  ----------------------------------------
+      sum   0.000000   0.000000   0.000000
+
+  Bond orders (Mayer)
+     atoms  bond order
+  --------------------
+  O1 -- H2      0.0000
+
+  Dipole moment (origin: center of mass)
+  component  a.u. (e.bohr)   Debye
+  --------------------------------
+          x     0.00000000  0.0000
+          y     0.00000000  0.0000
+          z     0.00000000  0.0000
+       |mu|     0.00000000  0.0000
+
+  Molecular orbitals queued for final export to mol_uhf.molden
+  Population dump written to mol_uhf.population.txt + mol_uhf.population.json
+  Citations written to mol_uhf.bibtex + mol_uhf.references
+  Final geometry written to mol_uhf.xyz
+
+  Timings (wall clock, seconds)
+  ---------------------------------------------
+  SCF total <T>
+  SCF stability analysis <T>
+  SCF avg. per iteration <T>
+  Job total <T>
+  Used <NT> OpenMP threads.
+
+<REFERENCES>

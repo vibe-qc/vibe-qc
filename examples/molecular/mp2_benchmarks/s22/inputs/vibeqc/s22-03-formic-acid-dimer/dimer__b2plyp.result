@@ -1,0 +1,1 @@
+{'system': 's22-03-formic-acid-dimer', 'body': 'dimer', 'variant': 'b2plyp', 'e_hf': -379.0338522834608, 'e_correlation': -0.44012073050275186, 'e_total': -379.4739730139636, 'e_os': -1.207711525472006, 'e_ss': -0.4223652541678155, 'n_scf_iter': 15, 'scf_converged': True}

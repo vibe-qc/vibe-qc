@@ -1,0 +1,15 @@
+MgO rocksalt RHF/POB-TZVP - SCF defaults only (no FMIXING, no LEVSHIFT)
+CRYSTAL
+0 0 0
+225
+4.21
+2
+12 0.0 0.0 0.0
+8 0.5 0.5 0.5
+BASISSET
+POB-TZVP
+SHRINK
+8 8
+TOLDEE
+8
+END

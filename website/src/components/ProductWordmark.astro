@@ -1,0 +1,23 @@
+---
+interface Props {
+  product: 'vibe-qc' | 'vibe-view' | 'vibe-queue';
+  label: string;
+  large?: boolean;
+}
+const { product, label, large = false } = Astro.props;
+// Intrinsic widths of the generated wordmarks, which vary with the name's
+// length. Keep in step with scripts/generate-brand.py; the SVGs carry the
+// same numbers in their width attribute.
+const width = { 'vibe-qc': 217, 'vibe-view': 259, 'vibe-queue': 294 }[product];
+const base = import.meta.env.BASE_URL;
+---
+
+<span class:list={['brand-mark', 'product-wordmark', { large }]}>
+  <img class="wm-light" src={`${base}logo/${product}-wordmark-light.svg`} alt={label} width={width} height="48" />
+  <img class="wm-dark" src={`${base}logo/${product}-wordmark-dark.svg`} alt={label} width={width} height="48" />
+</span>
+
+<style>
+  .product-wordmark img { height: 32px; width: auto; }
+  .product-wordmark.large img { height: 40px; }
+</style>

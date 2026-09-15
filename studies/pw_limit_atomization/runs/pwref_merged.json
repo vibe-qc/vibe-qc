@@ -1,0 +1,203 @@
+{
+ "provenance": {
+  "note": "merged sidecars; per-system cutoffs vary (800 or 800+1000 eV), see individual run files. CaO/CaF2/KBr/KCl added 2026-07-18 (GPAW-PWREF-001)."
+ },
+ "results": [
+  {
+   "system_id": "alas_zincblende",
+   "pw_limit_kjmol": 744.8625211955979
+  },
+  {
+   "system_id": "aln_zincblende",
+   "pw_limit_kjmol": 1114.6907639832693
+  },
+  {
+   "system_id": "gaas_zincblende",
+   "pw_limit_kjmol": 640.2818729588731
+  },
+  {
+   "system_id": "gan_beta_zincblende",
+   "pw_limit_kjmol": 854.6747551540278
+  },
+  {
+   "system_id": "li2o_antifluorite",
+   "pw_limit_kjmol": 1136.3775399237845
+  },
+  {
+   "system_id": "lih_rocksalt",
+   "pw_limit_kjmol": 464.3457904894463
+  },
+  {
+   "system_id": "mgo_rocksalt",
+   "pw_limit_kjmol": 1009.5405043368944
+  },
+  {
+   "system_id": "mgs_rocksalt",
+   "pw_limit_kjmol": 772.1174048917453
+  },
+  {
+   "system_id": "lif_rocksalt",
+   "pw_limit_kjmol": 840.160879490466
+  },
+  {
+   "system_id": "nacl_rocksalt",
+   "pw_limit_kjmol": 633.0438197671023
+  },
+  {
+   "system_id": "naf_rocksalt",
+   "pw_limit_kjmol": 754.0478520961483
+  },
+  {
+   "system_id": "licl_rocksalt",
+   "pw_limit_kjmol": 675.4341155879933
+  },
+  {
+   "system_id": "c_diamond",
+   "pw_limit_kjmol": 723.8276165084649
+  },
+  {
+   "system_id": "bn_zincblende",
+   "pw_limit_kjmol": 1314.063669911061
+  },
+  {
+   "system_id": "agcl_rocksalt",
+   "pw_limit_kjmol": 523.4346414252026
+  },
+  {
+   "system_id": "bao_rocksalt",
+   "pw_limit_kjmol": 989.2523803617277
+  },
+  {
+   "system_id": "bas_rocksalt",
+   "pw_limit_kjmol": 941.0618478246514
+  },
+  {
+   "system_id": "zns_zincblende",
+   "pw_limit_kjmol": 615.1282437203704
+  },
+  {
+   "system_id": "cdse_zincblende",
+   "pw_limit_kjmol": 495.456271805862
+  },
+  {
+   "system_id": "inas_zincblende",
+   "pw_limit_kjmol": 586.96335390155
+  },
+  {
+   "system_id": "cscl_cscl",
+   "pw_limit_kjmol": 620.6580288026694
+  },
+  {
+   "system_id": "sic_zincblende",
+   "pw_limit_kjmol": 1234.5996610182162
+  },
+  {
+   "system_id": "alp_zincblende",
+   "pw_limit_kjmol": 815.7963268710469
+  },
+  {
+   "system_id": "gap_zincblende",
+   "pw_limit_kjmol": 698.1177862494875
+  },
+  {
+   "system_id": "cao_rocksalt",
+   "pw_limit_kjmol": 1089.249972803812,
+   "vasp900_kjmol": 1096.4,
+   "delta_vs_vasp_kjmol": -7.150027196188148,
+   "extrapolation": "single-cutoff (no extrapolation)",
+   "points": [
+    {
+     "cutoff_ev": 800.0,
+     "e_solid_ha": -0.7154710961235635,
+     "e_atoms_ha": -0.30059769198221487,
+     "atomization_kjmol": 1089.249972803812,
+     "solid_converged": true,
+     "atoms_converged": true
+    }
+   ],
+   "atom_energies_ha": {
+    "Ca": -0.17628821865996613,
+    "O": -0.12430947332224872
+   },
+   "atom_valence": {
+    "Ca": 10,
+    "O": 6
+   }
+  },
+  {
+   "system_id": "caf2_fluorite",
+   "pw_limit_kjmol": 1589.625286554562,
+   "vasp900_kjmol": 1597.8,
+   "delta_vs_vasp_kjmol": -8.174713445437874,
+   "extrapolation": "single-cutoff (no extrapolation)",
+   "points": [
+    {
+     "cutoff_ev": 800.0,
+     "e_solid_ha": -0.941682234315396,
+     "e_atoms_ha": -0.3362259383244286,
+     "atomization_kjmol": 1589.625286554562,
+     "solid_converged": true,
+     "atoms_converged": true
+    }
+   ],
+   "atom_energies_ha": {
+    "Ca": -0.17628821865996613,
+    "F": -0.07996885983223123
+   },
+   "atom_valence": {
+    "Ca": 10,
+    "F": 7
+   }
+  },
+  {
+   "system_id": "kcl_rocksalt",
+   "pw_limit_kjmol": 637.9202844870217,
+   "vasp900_kjmol": 640.0,
+   "delta_vs_vasp_kjmol": -2.0797155129782823,
+   "extrapolation": "single-cutoff (no extrapolation)",
+   "points": [
+    {
+     "cutoff_ev": 800.0,
+     "e_solid_ha": -0.5986723606435499,
+     "e_atoms_ha": -0.3557013561874256,
+     "atomization_kjmol": 637.9202844870217,
+     "solid_converged": true,
+     "atoms_converged": true
+    }
+   ],
+   "atom_energies_ha": {
+    "K": -0.18844249192599838,
+    "Cl": -0.16725886426142722
+   },
+   "atom_valence": {
+    "K": 9,
+    "Cl": 7
+   }
+  },
+  {
+   "system_id": "kbr_rocksalt",
+   "pw_limit_kjmol": 593.6168110690065,
+   "vasp900_kjmol": 620.8,
+   "delta_vs_vasp_kjmol": -27.183188930993424,
+   "extrapolation": "single-cutoff (no extrapolation)",
+   "points": [
+    {
+     "cutoff_ev": 800.0,
+     "e_solid_ha": -0.7838677131328824,
+     "e_atoms_ha": -0.5577710105276963,
+     "atomization_kjmol": 593.6168110690065,
+     "solid_converged": true,
+     "atoms_converged": true
+    }
+   ],
+   "atom_energies_ha": {
+    "K": -0.18844249192599838,
+    "Br": -0.36932851860169785
+   },
+   "atom_valence": {
+    "K": 9,
+    "Br": 7
+   }
+  }
+ ]
+}

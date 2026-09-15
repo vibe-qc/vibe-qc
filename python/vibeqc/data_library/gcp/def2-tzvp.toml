@@ -1,0 +1,163 @@
+[metadata]
+name = "def2-tzvp"
+kind = "gcp_parameters"
+citation = "Kruse & Grimme, J. Chem. Phys. 136, 154101 (2012)"
+doi = "10.1063/1.3700154"
+license = "Open data: numerical results from a published scientific paper; redistribution is standard practice"
+source = "mctc-gcp src/gcp.f90 case 'hf/tz' / 'hf/def2tzvp' (HFtz + BAStz); cross-verified against mctc-gcp Fortran reference implementation, github.com/grimme-lab/gcp"
+status = "complete"
+coverage = "H–Kr (Z=1..36)"
+note = """
+Canonical def2-TZVP gCP fit. Triple-zeta reference set used to demonstrate small BSSE at near-converged basis.
+"""
+
+[parameters]
+sigma = 0.3127
+eta   = 1.9914
+alpha = 1.0216
+beta  = 1.2833
+
+[elements.H]
+e_mis  = 0.007577
+n_virt = 6.0
+
+[elements.He]
+e_mis  = 0.003312
+n_virt = 6.0
+
+[elements.Li]
+e_mis  = 0.086763
+n_virt = 14.0
+
+[elements.Be]
+e_mis  = 0.009962
+n_virt = 19.0
+
+[elements.B]
+e_mis  = 0.013964
+n_virt = 31.0
+
+[elements.C]
+e_mis  = 0.005997
+n_virt = 31.0
+
+[elements.N]
+e_mis  = 0.004731
+n_virt = 31.0
+
+[elements.O]
+e_mis  = 0.005687
+n_virt = 31.0
+
+[elements.F]
+e_mis  = 0.006367
+n_virt = 31.0
+
+[elements.Ne]
+e_mis  = 0.007511
+n_virt = 31.0
+
+[elements.Na]
+e_mis  = 0.077721
+n_virt = 32.0
+
+[elements.Mg]
+e_mis  = 0.050003
+n_virt = 32.0
+
+[elements.Al]
+e_mis  = 0.068317
+n_virt = 37.0
+
+[elements.Si]
+e_mis  = 0.04183
+n_virt = 37.0
+
+[elements.P]
+e_mis  = 0.025796
+n_virt = 37.0
+
+[elements.S]
+e_mis  = 0.025512
+n_virt = 37.0
+
+[elements.Cl]
+e_mis  = 0.023345
+n_virt = 37.0
+
+[elements.Ar]
+e_mis  = 0.022734
+n_virt = 37.0
+
+[elements.K]
+e_mis  = 0.097241
+n_virt = 33.0
+
+[elements.Ca]
+e_mis  = 0.099167
+n_virt = 36.0
+
+[elements.Sc]
+e_mis  = 0.219194
+n_virt = 45.0
+
+[elements.Ti]
+e_mis  = 0.189098
+n_virt = 45.0
+
+[elements.V]
+e_mis  = 0.164378
+n_virt = 45.0
+
+[elements.Cr]
+e_mis  = 0.147238
+n_virt = 45.0
+
+[elements.Mn]
+e_mis  = 0.137298
+n_virt = 45.0
+
+[elements.Fe]
+e_mis  = 0.12751
+n_virt = 45.0
+
+[elements.Co]
+e_mis  = 0.118589
+n_virt = 45.0
+
+[elements.Ni]
+e_mis  = 0.0318653
+n_virt = 45.0
+
+[elements.Cu]
+e_mis  = 0.120985
+n_virt = 45.0
+
+[elements.Zn]
+e_mis  = 0.0568313
+n_virt = 48.0
+
+[elements.Ga]
+e_mis  = 0.090996
+n_virt = 48.0
+
+[elements.Ge]
+e_mis  = 0.07182
+n_virt = 48.0
+
+[elements.As]
+e_mis  = 0.063562
+n_virt = 48.0
+
+[elements.Se]
+e_mis  = 0.064241
+n_virt = 48.0
+
+[elements.Br]
+e_mis  = 0.061848
+n_virt = 48.0
+
+[elements.Kr]
+e_mis  = 0.061021
+n_virt = 48.0
+

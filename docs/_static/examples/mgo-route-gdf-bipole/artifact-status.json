@@ -1,0 +1,46 @@
+{
+  "input_scripts": [
+    "docs/_static/examples/mgo-route-gdf-bipole/input-mgo-rhf-sto3g-bipole-k222.py",
+    "docs/_static/examples/mgo-route-gdf-bipole/input-mgo-rhf-sto3g-gdf-k222.py"
+  ],
+  "outputs": [
+    "input-mgo-rhf-sto3g-bipole-k222.py",
+    "output-mgo-rhf-sto3g-bipole-k222.bibtex",
+    "output-mgo-rhf-sto3g-bipole-k222.cif",
+    "output-mgo-rhf-sto3g-bipole-k222.molden",
+    "output-mgo-rhf-sto3g-bipole-k222.out",
+    "output-mgo-rhf-sto3g-bipole-k222.population.json",
+    "output-mgo-rhf-sto3g-bipole-k222.population.txt",
+    "output-mgo-rhf-sto3g-bipole-k222.qvf",
+    "output-mgo-rhf-sto3g-bipole-k222.references",
+    "output-mgo-rhf-sto3g-bipole-k222.system",
+    "output-mgo-rhf-sto3g-bipole-k222.xsf",
+    "output-mgo-rhf-sto3g-bipole-k222.xyz",
+    "output-mgo-rhf-sto3g-gdf-k222.bibtex",
+    "output-mgo-rhf-sto3g-gdf-k222.cif",
+    "output-mgo-rhf-sto3g-gdf-k222.molden",
+    "output-mgo-rhf-sto3g-gdf-k222.out",
+    "output-mgo-rhf-sto3g-gdf-k222.population.json",
+    "output-mgo-rhf-sto3g-gdf-k222.population.txt",
+    "output-mgo-rhf-sto3g-gdf-k222.qvf",
+    "output-mgo-rhf-sto3g-gdf-k222.references",
+    "output-mgo-rhf-sto3g-gdf-k222.system",
+    "output-mgo-rhf-sto3g-gdf-k222.xsf",
+    "output-mgo-rhf-sto3g-gdf-k222.xyz",
+    "stderr-bipole.txt",
+    "stderr.txt",
+    "stdout-bipole.txt",
+    "stdout.txt",
+    "summary-mgo-rhf-sto3g-bipole-k222.json",
+    "summary-mgo-rhf-sto3g-gdf-k222.json"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-mgo-rhf-sto3g-bipole-k222.qvf",
+    "output-mgo-rhf-sto3g-gdf-k222.qvf"
+  ],
+  "returncode": 0,
+  "script": "docs/_static/examples/mgo-route-gdf-bipole/README.md",
+  "slug": "mgo-route-gdf-bipole",
+  "status": "complete-with-bipole-density-warning"
+}

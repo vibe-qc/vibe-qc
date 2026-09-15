@@ -1,0 +1,81 @@
+[
+  {
+    "version": "0.17.0",
+    "name": "Tew's Tern",
+    "file": "../17-vibe-qc-v0.17.0-tews-tern.png",
+    "prompt": "Photorealistic 3-D scientific release artwork, exact 1672 x 941 pixel landscape PNG. Light studio house style only: near-white pale-blue seamless background, soft even studio lighting, delicate reflections on a glossy white surface. A real anatomically correct common tern in breeding plumage, pale grey wings, white body, neat black cap, slender red bill with dark tip, short red feet and long forked tail, in elegant low flight across the right two thirds, wings clearly and naturally articulated. Leave the left third mostly empty pale negative space. Below it is a fine periodic silver-white ball-and-stick crystal lattice, thin grey bonds and translucent teal orbital lobes, with a few subtle violet triangular motifs. Nearby equivalent pairs of sites in successive lattice cells are softly highlighted with repeated paired teal orbital envelopes, conveying local correlation and translational periodicity without literal diagrams or text. The trailing tips of a few wing feathers subtly dissolve into teal-violet hexagonal lattice texture. The bird remains unmistakably photoreal, cleanly outlined, with detailed feathers and no extra wings. Calm premium scientific product-shot aesthetic, shallow depth of field, uncluttered. No text, no lettering, no logo, no watermark, no cartoon, no illustration. Provisional Tew's Tern, prospective v0.17.0 native BvK periodic local correlation; do not render these words.",
+    "theme": "Native BvK periodic local correlation",
+    "status": "Assigned and shipped as the v0.17.0 codename (2026-09-09). The artwork depicts the native BvK periodic local-correlation route, whose groundwork v0.17.0 shipped; the route itself moved to v0.18.0.",
+    "generator": "Built-in ImageGen",
+    "canvas": [
+      1672,
+      941
+    ]
+  },
+  {
+    "version": "0.18.0",
+    "name": "Berkelbach's Badger",
+    "file": "18-vibe-qc-v0.18.0-berkelbachs-badger.png",
+    "prompt": "Photorealistic cinematic 3-D scientific release artwork, exact 1672 x 941 pixel landscape PNG. Dark cinematic house style only, deep navy-black seamless background, electric-blue and warm-amber rim lighting and restrained violet scientific accents. A real European badger with correct stocky anatomy, silvery coarse fur, low powerful body, short legs, pointed snout and unmistakable black-and-white longitudinal face stripes, walking steadily on a reflective dark surface in the right two thirds of the canvas. Full animal visible. Leave the left third largely empty dark negative space. Its trailing flank subtly dissolves into glowing particle networks. Beneath it, a fine periodic crystal lattice of glowing atoms and slender bonds contains nested pairs and triples of gently linked wireframe orbital lobes, small illuminated clusters repeating through successive cells. Faint flowing dotted field lines and a few lattice cubes suggest correlated electronic motion across a solid. Strong but elegant depth, photographic fur detail, anatomically real animal, dramatic high contrast, scientifically inspired and uncrowded. No text, no lettering, no watermark, no logos, no cartoon, no illustration, no clothing, no extra limbs. Provisional Berkelbach's Badger, prospective v0.18.0 periodic coupled cluster; do not render those words.",
+    "theme": "Periodic coupled cluster",
+    "status": "Provisional artwork proposal. Version pairing is one behind its milestone after the v0.17.0 ladder shift; re-pairing is a maintainer decision.",
+    "generator": "Built-in ImageGen",
+    "canvas": [
+      1672,
+      941
+    ]
+  },
+  {
+    "version": "0.19.0",
+    "name": "Runge's Raccoon",
+    "file": "19-vibe-qc-v0.19.0-runges-raccoon.png",
+    "prompt": "Photorealistic cinematic 3-D scientific release artwork, exact 1672 x 941 pixel landscape PNG. Subject: a real anatomically correct raccoon, natural grey-brown fur, distinctive black eye mask, rounded ears, ringed tail, standing in an alert gentle walking pose in the right two thirds of frame. Leave the left third mostly empty deep navy-black negative space. Dark cinematic house style only: deep navy-black seamless background, dramatic but realistic rim light, electric blue and warm amber scientific accents, restrained violet. The raccoon's trailing fur subtly dissolves into fine luminous particle networks, preserving the animal's real face and anatomy. Under its paws, a delicate molecular lattice of small illuminated atoms and slender bonds. Nearby, two translucent wireframe orbital surfaces gently cross, and flowing dotted field lines bend into a subtle blue-to-amber spectrum: an abstract visual metaphor for excited-state transitions and multiple electronic configurations. Elegant shallow depth of field, detailed natural fur, restrained high contrast, generous clear space, premium scientific visualization. No text, no lettering, no logos, no watermark, no cartoon, no illustration, no clothing, no human hands, no clutter. This is Runge's Raccoon, prospective v0.19.0 multireference and excited-state extensions; do not render any of these words.",
+    "theme": "Multireference and excited-state extensions",
+    "status": "Roadmap candidate. Version pairing is one behind its milestone after the v0.17.0 ladder shift; re-pairing is a maintainer decision.",
+    "generator": "Built-in ImageGen",
+    "canvas": [
+      1672,
+      941
+    ]
+  },
+  {
+    "version": "0.20.0",
+    "name": "Stone's Sloth",
+    "file": "20-vibe-qc-v0.20.0-stones-sloth.png",
+    "prompt": "Photorealistic 3-D scientific release artwork, exact 1672 x 941 pixel landscape PNG. Light studio house style only: near-white pale-blue seamless background, soft even studio lighting, gentle reflections, calm clinical product-shot aesthetic. An anatomically correct brown-throated three-toed sloth with realistic coarse grey-brown fur, its characteristic dark eye patches and three long curved claws per visible limb, naturally hanging from a pale smooth branch in the right two thirds of the image. Face softly turned toward the viewer, relaxed real animal rather than cartoon smile. Leave the left third relatively empty pale-blue negative space. Below the branch lies a delicate ball-and-stick molecular arrangement of silver-white atoms and thin grey bonds, translucent teal orbital lobes, and restrained violet triangular motifs. A few smooth translucent teal and violet electrostatic-potential contours encircle this molecular arrangement, with faint dotted field lines: a graceful metaphor for charge distribution, multipoles and response properties. One small patch of the sloth's flank subtly dissolves into a fine teal-violet hexagonal lattice without obscuring natural anatomy. Detailed natural fur, shallow depth of field, uncrowded composition. No text, no lettering, no logos, no watermark, no illustration, no cartoon, no clothing, no extra limbs, no human hands, no cluttered background. Prospective Stone's Sloth v0.20.0 properties suite; these words must not appear.",
+    "theme": "Properties suite",
+    "status": "Roadmap candidate. Version pairing is one behind its milestone after the v0.17.0 ladder shift; re-pairing is a maintainer decision.",
+    "generator": "Built-in ImageGen",
+    "canvas": [
+      1672,
+      941
+    ]
+  },
+  {
+    "version": "0.21.0",
+    "name": "Amdahl's Axolotl",
+    "file": "21-vibe-qc-v0.21.0-amdahls-axolotl.png",
+    "prompt": "Photorealistic 3-D scientific release artwork, exact 1672 x 941 pixel landscape PNG. Light studio house style only: near-white pale-blue seamless aquatic studio background, soft diffuse even illumination, calm scientific product-shot aesthetic. A real anatomically correct leucistic axolotl seen in three-quarter side profile, suspended gently in crystal-clear water in the right two thirds of the frame; pale pink skin with subtle real texture, dark eyes, three delicately feathered external gill stalks on each side of the head, four small anatomically correct limbs, natural tapering tail with translucent dorsal fin. Full animal within frame, no exaggerated cartoon smile. Leave the left third mostly empty pale-blue space. Beneath and behind it, orderly parallel rows of silver-white atoms and thin grey molecular bonds repeat into the distance, each row carrying small translucent teal orbital groups; the rows join gently at sparse violet triangular junctions. A visual metaphor for parallel computation and scalable cooperation, never a literal computer diagram. A tiny patch near the tail dissolves subtly into fine teal-violet hexagonal lattice texture while gills and face remain entirely natural. Gentle aquatic caustics and reflections, shallow depth of field, restrained composition, high photographic detail. No text, no lettering, no logo, no watermark, no cartoon, no illustration, no extra limbs, no tank equipment, no clutter. Provisional Amdahl's Axolotl, prospective v0.21.0 production MPI and large-system scaling; do not render those words.",
+    "theme": "Production MPI and large-system scaling",
+    "status": "Provisional artwork proposal. Version pairing is one behind its milestone after the v0.17.0 ladder shift; re-pairing is a maintainer decision.",
+    "generator": "Built-in ImageGen",
+    "canvas": [
+      1672,
+      941
+    ]
+  },
+  {
+    "version": "1.0.0",
+    "name": "Schrödinger's Llama",
+    "file": "22-vibe-qc-v1.0.0-schrodingers-llama.png",
+    "prompt": "Photorealistic cinematic 3-D scientific release artwork, exact 1672 x 941 pixel landscape PNG. Dark cinematic house style only: deep navy-black seamless background, dramatic elegant electric-blue and warm-amber rim illumination, faint violet accents. A real anatomically correct cream-colored llama, full body visible standing calmly in three-quarter profile in the right two thirds of the composition, long neck, characteristic long banana-shaped ears, realistic camelid face, fine woolly coat, four natural legs, no saddle or accessories. Leave the left third mostly empty deep navy negative space. Below and around the llama, delicate glowing ball-and-stick molecular structures gradually join a precise periodic lattice, visually uniting molecules and crystalline solids. A single broad graceful wireframe orbital envelope arches around the scientific structures, with faint flowing dotted field lines and small lattice cubes receding into the background. The trailing edge of the llama's coat subtly dissolves into luminous particle networks. Convey completeness, composure and a unified scientific toolkit with restrained detail, elegant depth and a premium photographic aesthetic; the animal must remain real rather than stylized. No text, no lettering, no logo, no watermark, no cartoon, no illustration, no human elements, no extra limbs, no clutter. Provisional Schrodinger's Llama, prospective v1.0.0 molecular and periodic feature completeness; never render those words.",
+    "theme": "Molecular and periodic feature completeness",
+    "status": "Provisional artwork proposal",
+    "generator": "Built-in ImageGen",
+    "canvas": [
+      1672,
+      941
+    ],
+    "edit_prompt": "Edit this existing release artwork. Add a stylish, clearly recognizable open box around the llama: an elegant oversized rectangular presentation chest of matte midnight-blue metal with slim brushed brass edges, subtly beveled corners, and a beautifully finished dark interior. The llama is standing INSIDE the box, its hooves on the interior base; the front wall rises only to its lower shins so its real body, neck and face stay clearly visible. The hinged lid is open behind it at a tasteful angle and remains below the head, framing rather than hiding the animal. The box must have unmistakable depth, sides, open lid and an interior, not just a platform. Give the interior a very subtle warm amber glow, and retain the scientific molecular lattice and orbital motifs around the box. Keep the original llama's identity, pose, photoreal anatomy, wool detail, cream coat, beautiful face and ears. Preserve the original dark cinematic palette, blue/amber lighting, scientific particles, reflective ground, right-side composition and generous empty left third. Integrate the box naturally with consistent perspective, reflections and contact shadows. Refined luxurious scientific product aesthetic. Preserve exact 1672 x 941 pixel PNG canvas. No text, no lettering, no logo, no watermark, no cat, no cartoon, no extra animals."
+  }
+]

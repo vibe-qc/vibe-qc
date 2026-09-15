@@ -1,0 +1,122 @@
+{
+  "structures": {
+    "id=\"mp-1265\"": {
+      "https://optimade.materialsproject.org": {
+        "data": [
+          {
+            "id": "mp-1265",
+            "type": "structures",
+            "attributes": {
+              "immutable_id": "645d2d05bcd30f748b47ce17",
+              "last_modified": "2023-03-11T05:21:31.417000",
+              "elements": [
+                "Mg",
+                "O"
+              ],
+              "nelements": 2,
+              "elements_ratios": [
+                0.5,
+                0.5
+              ],
+              "chemical_formula_descriptive": "MgO",
+              "chemical_formula_reduced": "MgO",
+              "chemical_formula_hill": "MgO",
+              "chemical_formula_anonymous": "AB",
+              "dimension_types": [
+                1,
+                1,
+                1
+              ],
+              "nperiodic_dimensions": 3,
+              "lattice_vectors": [
+                [
+                  2.56829206,
+                  -0.0,
+                  1.48280459
+                ],
+                [
+                  0.85609768,
+                  2.4214088,
+                  1.48280459
+                ],
+                [
+                  -1e-08,
+                  -0.0,
+                  2.96560719
+                ]
+              ],
+              "cartesian_site_positions": [
+                [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  1.712194865,
+                  1.2107044,
+                  2.965608185
+                ]
+              ],
+              "nsites": 2,
+              "species": [
+                {
+                  "name": "Mg",
+                  "chemical_symbols": [
+                    "Mg"
+                  ],
+                  "concentration": [
+                    1.0
+                  ],
+                  "mass": null,
+                  "original_name": null,
+                  "attached": null,
+                  "nattached": null
+                },
+                {
+                  "name": "O",
+                  "chemical_symbols": [
+                    "O"
+                  ],
+                  "concentration": [
+                    1.0
+                  ],
+                  "mass": null,
+                  "original_name": null,
+                  "attached": null,
+                  "nattached": null
+                }
+              ],
+              "species_at_sites": [
+                "Mg",
+                "O"
+              ],
+              "assemblies": null,
+              "structure_features": [],
+              "_mp_chemical_system": "Mg-O",
+              "_mp_stability": {
+                "r2scan": {
+                  "thermo_id": "mp-1265_R2SCAN",
+                  "energy_above_hull": 0.0,
+                  "formation_energy_per_atom": -2.9992433999999992,
+                  "last_updated_thermo": "2023-04-27T01:21:08.678000"
+                },
+                "gga_gga+u_r2scan": {
+                  "thermo_id": "mp-1265_GGA_GGA+U_R2SCAN",
+                  "energy_above_hull": 0.0,
+                  "formation_energy_per_atom": -2.9992433999999992,
+                  "last_updated_thermo": "2023-04-27T01:21:09.526000"
+                },
+                "gga_gga+u": {
+                  "thermo_id": "mp-1265_GGA_GGA+U",
+                  "energy_above_hull": 0.0,
+                  "formation_energy_per_atom": -3.0540402993749995,
+                  "last_updated_thermo": "2023-04-27T01:21:11.732000"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

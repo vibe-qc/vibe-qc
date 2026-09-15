@@ -1,0 +1,56 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+
+const base = import.meta.env.BASE_URL;
+const DOCS = '/docs';
+---
+
+<Base title="Page not found — vibe-qc">
+  <Nav />
+
+  <main class="wrap notfound">
+    <span class="eyebrow">error 404</span>
+    <h1>This page isn't here.</h1>
+    <p>
+      The page moved or never existed. Use the documentation links in the
+      top bar to reach the vibe-qc, vibe-view or vq manual.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href={base}>Back home <span class="arrow">→</span></a>
+      <a class="btn ghost" href={DOCS}>Documentation</a>
+    </div>
+  </main>
+</Base>
+
+<style>
+  .notfound {
+    min-height: 62vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 72px 28px 96px;
+  }
+  .notfound h1 {
+    font-size: clamp(36px, 6vw, 68px);
+    letter-spacing: -0.035em;
+    font-weight: 800;
+    margin: 16px 0 0;
+    text-wrap: balance;
+  }
+  .notfound p {
+    color: var(--slate);
+    font-size: 18px;
+    max-width: 52ch;
+    margin: 18px 0 0;
+  }
+  .notfound code {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    color: var(--phase-neg);
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 6px;
+  }
+  .notfound .cta-row { margin-top: 30px; }
+</style>

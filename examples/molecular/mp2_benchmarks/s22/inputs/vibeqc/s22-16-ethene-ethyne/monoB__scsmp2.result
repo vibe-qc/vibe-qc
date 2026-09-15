@@ -1,0 +1,1 @@
+{'system': 's22-16-ethene-ethyne', 'body': 'monoB', 'variant': 'scsmp2', 'e_hf': -76.84885147965642, 'e_correlation': -0.34154469893343253, 'e_total': -77.19039617858985, 'e_os': -0.2634274450061518, 'e_ss': -0.07629529477815117, 'n_scf_iter': 11, 'scf_converged': True}

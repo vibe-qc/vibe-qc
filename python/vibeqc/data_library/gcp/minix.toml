@@ -1,0 +1,164 @@
+[metadata]
+name = "minix"
+kind = "gcp_parameters"
+citation = "Sure & Grimme, J. Comput. Chem. 34, 1672 (2013)"
+doi = "10.1002/jcc.23317"
+license = "Open data: numerical results from a published scientific paper; redistribution is standard practice"
+source = "mctc-gcp src/gcp.f90 case 'hf3c'/'minix': (sigma,eta,alpha,beta)=(0.129,1.1526,1.1549,1.1763); e_mis from the composite HFminis/HFminisd/HFsv/HFsvp (+ Li-Be/Na-Mg p-augmentation); n_virt = xva = nbas - 0.5*nel where nbas is the MINIX composite count. HF-3c gCP is UNDAMPED (gcp.f90 hf3c: base=.true. adds the SRB, damp=.false.). Cross-verified against mctc-gcp, github.com/grimme-lab/gcp."
+status = "complete"
+coverage = "H–Kr (Z=1..36)"
+note = """
+MINIX = MINIS for H-Mg + MINIS+d for Al-Ar + SV for K-Zn + SVP for Ga-Kr, with p-augmentation on Li/Be/Na/Mg. CRITICAL (audit F1.5): n_virt are the mctc-gcp virtual counts xva = nbas - 0.5*nel, NOT raw nbas — the original bundling stored raw nbas, giving gCP(H2O,hf-3c) = +12.7 vs the correct +18.33 kcal/mol. With nbas-0.5*Z the hf-3c gCP(H2O) = +18.327 kcal/mol, matching mctc-gcp's gcp_call('hf3c') minus the SRB term. e_mis is unchanged.
+"""
+
+[parameters]
+sigma = 0.129
+eta   = 1.1526
+alpha = 1.1549
+beta  = 1.1763
+
+# n_virt = xva = nbas - 0.5*nel (nel = Z for neutral). e_mis unchanged.
+
+[elements.H]
+e_mis  = 0.0424
+n_virt = 0.5
+
+[elements.He]
+e_mis  = 0.028324
+n_virt = 0.0
+
+[elements.Li]
+e_mis  = 0.177871
+n_virt = 3.5
+
+[elements.Be]
+e_mis  = 0.171596
+n_virt = 3.0
+
+[elements.B]
+e_mis  = 0.224237
+n_virt = 2.5
+
+[elements.C]
+e_mis  = 0.27995
+n_virt = 2.0
+
+[elements.N]
+e_mis  = 0.357906
+n_virt = 1.5
+
+[elements.O]
+e_mis  = 0.479012
+n_virt = 1.0
+
+[elements.F]
+e_mis  = 0.638518
+n_virt = 0.5
+
+[elements.Ne]
+e_mis  = 0.832349
+n_virt = 0.0
+
+[elements.Na]
+e_mis  = 1.11411
+n_virt = 3.5
+
+[elements.Mg]
+e_mis  = 1.27115
+n_virt = 3.0
+
+[elements.Al]
+e_mis  = 1.44695
+n_virt = 7.5
+
+[elements.Si]
+e_mis  = 1.61098
+n_virt = 7.0
+
+[elements.P]
+e_mis  = 1.76661
+n_virt = 6.5
+
+[elements.S]
+e_mis  = 1.98823
+n_virt = 6.0
+
+[elements.Cl]
+e_mis  = 2.22845
+n_virt = 5.5
+
+[elements.Ar]
+e_mis  = 2.48796
+n_virt = 5.0
+
+[elements.K]
+e_mis  = 0.374252
+n_virt = 1.5
+
+[elements.Ca]
+e_mis  = 0.460972
+n_virt = 1.0
+
+[elements.Sc]
+e_mis  = 0.444886
+n_virt = 10.5
+
+[elements.Ti]
+e_mis  = 0.404993
+n_virt = 10.0
+
+[elements.V]
+e_mis  = 0.378406
+n_virt = 9.5
+
+[elements.Cr]
+e_mis  = 0.373439
+n_virt = 9.0
+
+[elements.Mn]
+e_mis  = 0.361245
+n_virt = 8.5
+
+[elements.Fe]
+e_mis  = 0.360014
+n_virt = 8.0
+
+[elements.Co]
+e_mis  = 0.362928
+n_virt = 7.5
+
+[elements.Ni]
+e_mis  = 0.243801
+n_virt = 7.0
+
+[elements.Cu]
+e_mis  = 0.405299
+n_virt = 6.5
+
+[elements.Zn]
+e_mis  = 0.39651
+n_virt = 6.0
+
+[elements.Ga]
+e_mis  = 0.350021
+n_virt = 16.5
+
+[elements.Ge]
+e_mis  = 0.345779
+n_virt = 16.0
+
+[elements.As]
+e_mis  = 0.349532
+n_virt = 15.5
+
+[elements.Se]
+e_mis  = 0.367305
+n_virt = 15.0
+
+[elements.Br]
+e_mis  = 0.382008
+n_virt = 14.5
+
+[elements.Kr]
+e_mis  = 0.399709
+n_virt = 14.0

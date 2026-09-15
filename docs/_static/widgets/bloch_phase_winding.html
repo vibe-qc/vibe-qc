@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bloch phase across unit cells</title>
+<style>
+  :root{
+    --ink:#1b1f24; --sub:#5b626b; --faint:#9aa6b6;
+    --warm:#c0392b; --cool:#2c6fbb; --line:#e2e5ea; --card:#f7f8fa;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:Helvetica,Arial,sans-serif;color:var(--ink);background:#fff;}
+  .card{max-width:760px;margin:0 auto;background:var(--card);border:1px solid var(--line);
+        border-radius:16px;padding:22px 24px 26px;}
+  h1{font-size:19px;margin:0 0 4px;}
+  p.sub{font-size:13px;color:var(--sub);margin:0 0 18px;line-height:1.45;}
+  .controls{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:6px 0 14px;}
+  input[type=range]{flex:1;min-width:200px;accent-color:var(--warm);}
+  .presets button{font:inherit;font-size:12.5px;border:1px solid #c9cfd8;background:#fff;
+    color:var(--ink);border-radius:8px;padding:5px 11px;margin-left:6px;cursor:pointer;}
+  .presets button:hover{background:#eef2f8;}
+  .readout{display:flex;flex-wrap:wrap;gap:20px;font-size:13px;margin:2px 0 10px;}
+  .readout b{font-weight:700;}
+  .readout span{color:var(--sub);}
+  .num{font-variant-numeric:tabular-nums;font-weight:700;}
+  svg{display:block;width:100%;height:auto;}
+  .legend{font-size:12px;color:var(--sub);margin-top:10px;line-height:1.5;}
+  .sw{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:3px;}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Phase of a Bloch state across the unit cells</h1>
+  <p class="sub">Each cell is identical and the orbital amplitude is the same in every cell. Only the
+  <b>phase</b> changes from cell to cell, winding by <b>k&#183;a</b> per step. Drag k from &#915; (zone centre)
+  to the boundary and watch the winding.</p>
+
+  <div class="controls">
+    <input id="k" type="range" min="0" max="1" step="0.001" value="0.34">
+    <div class="presets">
+      <button data-k="0">&#915; (k=0)</button>
+      <button data-k="0.5">k=&#960;/2a</button>
+      <button data-k="1">boundary (k=&#960;/a)</button>
+    </div>
+  </div>
+
+  <div class="readout">
+    <div><span>k =</span> <span class="num" id="kval"></span><span> &#960;/a</span></div>
+    <div><span>phase per cell k&#183;a =</span> <span class="num" id="dphi"></span></div>
+    <div><span>wavelength &#955; =</span> <span class="num" id="lam"></span><span> cells</span></div>
+  </div>
+
+  <svg id="plot" viewBox="0 0 720 320" xmlns="http://www.w3.org/2000/svg"></svg>
+
+  <div class="legend">
+    <span class="sw" style="background:var(--warm)"></span>phase &#8776; +1 (real part positive) &nbsp;&nbsp;
+    <span class="sw" style="background:var(--cool)"></span>phase &#8776; &#8722;1 (real part negative) &nbsp;&nbsp;
+    <span class="sw" style="background:#c4cad3"></span>near &#177;90&#176;<br>
+    Clocks = the phasor e<tspan>ik&#183;R</tspan> for each cell. Solid curve = Re&#8201;&#968;(x); dashed = the
+    fixed amplitude envelope &#177;|u(x)|, identical in every cell.
+  </div>
+</div>
+
+<script>
+(function(){
+  const NS="http://www.w3.org/2000/svg";
+  const svg=document.getElementById("plot");
+  const N=8;                       // number of cells shown
+  const W=720,H=320;
+  const mL=24,mR=24;
+  const cellW=(W-mL-mR)/N;
+  const baseY=232;                 // baseline for the wave
+  const amp=58;                    // wave amplitude in px
+  const clockY=70, clockR=20;      // phasor row
+
+  function el(tag,attrs){const e=document.createElementNS(NS,tag);
+    for(const k in attrs)e.setAttribute(k,attrs[k]);return e;}
+
+  // colour from real part (cos of phase): +1 warm, -1 cool, 0 grey
+  function phaseColor(re){
+    const warm=[192,57,43], cool=[44,111,187], grey=[196,202,211];
+    let a,b,t;
+    if(re>=0){a=grey;b=warm;t=re;} else {a=grey;b=cool;t=-re;}
+    const c=a.map((v,i)=>Math.round(v+(b[i]-v)*t));
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
+
+  function uPeriodic(x){            // amplitude inside a cell (s-like bump), 0 at edges
+    const t=x-Math.floor(x);
+    return Math.sin(Math.PI*t);
+  }
+
+  function render(s){
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+    const k=s*Math.PI;             // a=1
+    const dphi=s*Math.PI;          // phase per cell (rad)
+
+    // cell boundaries + baseline
+    for(let n=0;n<=N;n++){
+      const x=mL+n*cellW;
+      svg.appendChild(el("line",{x1:x,y1:baseY-amp-6,x2:x,y2:baseY+amp+6,
+        stroke:"#e2e5ea","stroke-width":1}));
+    }
+    svg.appendChild(el("line",{x1:mL,y1:baseY,x2:W-mR,y2:baseY,
+      stroke:"#c9cfd8","stroke-width":1}));
+
+    // amplitude envelope (dashed) — same shape every cell, phase-independent
+    let env="M";
+    for(let i=0;i<=N*40;i++){
+      const x=i/40; const px=mL+x*cellW; const py=baseY-uPeriodic(x)*amp;
+      env+=`${px.toFixed(1)},${py.toFixed(1)} `;
+    }
+    svg.appendChild(el("path",{d:env.replace("M","M"),fill:"none",
+      stroke:"#b3bdcb","stroke-width":1.2,"stroke-dasharray":"4 4",opacity:0.8}));
+    let env2="M";
+    for(let i=0;i<=N*40;i++){
+      const x=i/40; const px=mL+x*cellW; const py=baseY+uPeriodic(x)*amp;
+      env2+=`${px.toFixed(1)},${py.toFixed(1)} `;
+    }
+    svg.appendChild(el("path",{d:env2,fill:"none",
+      stroke:"#b3bdcb","stroke-width":1.2,"stroke-dasharray":"4 4",opacity:0.8}));
+
+    // Re psi(x) = u(x) * cos(kx)  — the real part of the Bloch wave
+    let d="M";
+    for(let i=0;i<=N*60;i++){
+      const x=i/60; const re=uPeriodic(x)*Math.cos(k*x);
+      const px=mL+x*cellW; const py=baseY-re*amp;
+      d+=`${px.toFixed(1)},${py.toFixed(1)} `;
+    }
+    svg.appendChild(el("path",{d:d,fill:"none",stroke:"#1b1f24","stroke-width":2.4}));
+
+    // per-cell: tinted orbital marker + phasor clock
+    for(let n=0;n<N;n++){
+      const cx=mL+(n+0.5)*cellW;
+      const phase=k*(n+0.5);
+      const re=Math.cos(phase);
+      const col=phaseColor(re);
+
+      // tinted dot at the orbital peak (shows phase, amplitude is constant)
+      svg.appendChild(el("circle",{cx:cx,cy:baseY-amp,r:6,fill:col,
+        stroke:"#1b1f24","stroke-width":1}));
+
+      // phasor clock
+      svg.appendChild(el("circle",{cx:cx,cy:clockY,r:clockR,fill:"#fff",
+        stroke:"#c9cfd8","stroke-width":1.3}));
+      svg.appendChild(el("circle",{cx:cx,cy:clockY,r:2,fill:"#1b1f24"}));
+      const tx=cx+clockR*Math.cos(phase), ty=clockY-clockR*Math.sin(phase);
+      svg.appendChild(el("line",{x1:cx,y1:clockY,x2:tx,y2:ty,
+        stroke:col,"stroke-width":2.6,"stroke-linecap":"round"}));
+      // cell label
+      const lab=el("text",{x:cx,y:baseY+amp+24,"text-anchor":"middle",
+        "font-size":11,fill:"#7a828c"}); lab.textContent="cell "+n; svg.appendChild(lab);
+    }
+
+    // header labels
+    const h1=el("text",{x:mL,y:30,"font-size":12.5,"font-weight":700,fill:"#3a4049"});
+    h1.textContent="phasor per cell  e^{ik\u00b7R}"; svg.appendChild(h1);
+    const h2=el("text",{x:mL,y:baseY-amp-16,"font-size":12.5,"font-weight":700,fill:"#3a4049"});
+    h2.textContent="Re \u03c8(x)  across the crystal"; svg.appendChild(h2);
+
+    // readouts
+    document.getElementById("kval").textContent=s.toFixed(2);
+    const deg=(dphi*180/Math.PI);
+    document.getElementById("dphi").textContent=
+      deg.toFixed(0)+"\u00b0"+(Math.abs(deg-180)<1?"  (\u2192 \u2212\u2212\u2212 alternating)":
+        (deg<1?"  (\u2192 all in phase)":""));
+    document.getElementById("lam").textContent= s<1e-6 ? "\u221e" : (2/s).toFixed(2);
+  }
+
+  const slider=document.getElementById("k");
+  slider.addEventListener("input",e=>render(parseFloat(e.target.value)));
+  document.querySelectorAll(".presets button").forEach(b=>{
+    b.addEventListener("click",()=>{const v=parseFloat(b.dataset.k);
+      slider.value=v; render(v);});
+  });
+  render(parseFloat(slider.value));
+})();
+</script>
+</body>
+</html>

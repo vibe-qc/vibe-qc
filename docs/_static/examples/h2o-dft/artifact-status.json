@@ -1,0 +1,20 @@
+{
+  "outputs": [
+    "output-h2o-dft.bibtex",
+    "output-h2o-dft.molden",
+    "output-h2o-dft.out",
+    "output-h2o-dft.population.json",
+    "output-h2o-dft.population.txt",
+    "output-h2o-dft.qvf",
+    "output-h2o-dft.references",
+    "output-h2o-dft.system",
+    "output-h2o-dft.xyz"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-h2o-dft.qvf"
+  ],
+  "returncode": 0,
+  "script": "examples/molecular/input-h2o-dft.py",
+  "slug": "h2o-dft"
+}

@@ -1,0 +1,1 @@
+Wrote output-nh3-umbrella-neb.traj,  output-nh3-umbrella-neb.qvf,  and  output-nh3-umbrella-neb.out

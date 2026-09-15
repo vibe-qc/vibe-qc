@@ -1,0 +1,18 @@
+LiH FCC primitive rocksalt RHF/STO-3G — SHRINK 2 2 (matches vibe-qc kmesh=(2,2,2))
+CRYSTAL
+0 0 0
+225
+4.084
+2
+3 0.0 0.0 0.0
+1 0.5 0.5 0.5
+BASISSET
+STO-3G
+SHRINK
+2 2
+TOLDEE
+8
+TOLINTEG
+7 7 7 7 14
+END
+END

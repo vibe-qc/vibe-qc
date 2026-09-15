@@ -1,0 +1,1 @@
+{'system': 'oh-radical', 'variant': 'ump2', 'e_hf': -75.41922422346761, 'e_correlation': -0.2120247982993961, 'e_total': -75.631249021767, 'e_aa': -0.03364591027360431, 'e_bb': -0.01588102399571636, 'e_ab': -0.16249786403007543, 's_squared_uhf': 0.7560614509502708, 'n_scf_iter': 99, 'scf_converged': True}

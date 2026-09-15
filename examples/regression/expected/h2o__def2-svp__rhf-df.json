@@ -1,0 +1,10 @@
+{
+  "system_id": "h2o",
+  "basis": "def2-svp",
+  "method_id": "rhf-df",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 5e-4,
+  "tolerance_rationale": "H2O / def2-SVP / RIJK — small-molecule DF cross-check. Sets a sub-mHa baseline before benzene, where DF-error and SCF-stability concerns can be easier to debug at small scale."
+}

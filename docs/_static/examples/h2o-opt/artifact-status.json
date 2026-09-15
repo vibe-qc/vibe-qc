@@ -1,0 +1,21 @@
+{
+  "outputs": [
+    "output-h2o-opt.bibtex",
+    "output-h2o-opt.molden",
+    "output-h2o-opt.out",
+    "output-h2o-opt.population.json",
+    "output-h2o-opt.population.txt",
+    "output-h2o-opt.qvf",
+    "output-h2o-opt.references",
+    "output-h2o-opt.system",
+    "output-h2o-opt.traj",
+    "output-h2o-opt.xyz"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-h2o-opt.qvf"
+  ],
+  "returncode": 0,
+  "script": "examples/molecular/input-h2o-opt.py",
+  "slug": "h2o-opt"
+}

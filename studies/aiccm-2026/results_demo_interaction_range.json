@@ -1,0 +1,966 @@
+{
+  "radius_bohr": 7.0,
+  "part1_geometry": [
+    {
+      "system": "h-chain",
+      "dim": 1,
+      "klass": "molecular",
+      "d_bohr": [
+        15.0,
+        40.0,
+        40.0
+      ],
+      "nrep_radius": [
+        1,
+        1,
+        1
+      ],
+      "kmesh_equivalent": [
+        1,
+        1,
+        1
+      ],
+      "nrep_4c_tabulated": [
+        8,
+        1,
+        1
+      ],
+      "n_atoms": 2,
+      "r_in_bohr": 7.5,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "lih-chain",
+      "dim": 1,
+      "klass": "ionic-1d",
+      "d_bohr": [
+        6.047,
+        40.0,
+        40.0
+      ],
+      "nrep_radius": [
+        3,
+        1,
+        1
+      ],
+      "kmesh_equivalent": [
+        3,
+        1,
+        1
+      ],
+      "nrep_4c_tabulated": [
+        6,
+        1,
+        1
+      ],
+      "n_atoms": 6,
+      "r_in_bohr": 9.071,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "polyethylene",
+      "dim": 1,
+      "klass": "molecular",
+      "d_bohr": [
+        4.819,
+        40.0,
+        40.0
+      ],
+      "nrep_radius": [
+        3,
+        1,
+        1
+      ],
+      "kmesh_equivalent": [
+        3,
+        1,
+        1
+      ],
+      "nrep_4c_tabulated": [
+        4,
+        1,
+        1
+      ],
+      "n_atoms": 18,
+      "r_in_bohr": 7.228,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "c-diamond",
+      "dim": 3,
+      "klass": "covalent",
+      "d_bohr": [
+        3.892,
+        3.892,
+        3.892
+      ],
+      "nrep_radius": [
+        4,
+        4,
+        4
+      ],
+      "kmesh_equivalent": [
+        4,
+        4,
+        4
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 128,
+      "r_in_bohr": 9.533,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "si-diamond",
+      "dim": 3,
+      "klass": "covalent",
+      "d_bohr": [
+        5.925,
+        5.925,
+        5.925
+      ],
+      "nrep_radius": [
+        3,
+        3,
+        3
+      ],
+      "kmesh_equivalent": [
+        3,
+        3,
+        3
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 54,
+      "r_in_bohr": 10.886,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "sic-zb",
+      "dim": 3,
+      "klass": "covalent",
+      "d_bohr": [
+        4.755,
+        4.755,
+        4.755
+      ],
+      "nrep_radius": [
+        3,
+        3,
+        3
+      ],
+      "kmesh_equivalent": [
+        3,
+        3,
+        3
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 54,
+      "r_in_bohr": 8.735,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "bn-zb",
+      "dim": 3,
+      "klass": "covalent",
+      "d_bohr": [
+        3.944,
+        3.944,
+        3.944
+      ],
+      "nrep_radius": [
+        4,
+        4,
+        4
+      ],
+      "kmesh_equivalent": [
+        4,
+        4,
+        4
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 128,
+      "r_in_bohr": 9.661,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "graphene",
+      "dim": 2,
+      "klass": "covalent",
+      "d_bohr": [
+        4.649,
+        3.601,
+        50.0
+      ],
+      "nrep_radius": [
+        4,
+        4,
+        1
+      ],
+      "kmesh_equivalent": [
+        4,
+        4,
+        1
+      ],
+      "nrep_4c_tabulated": [
+        3,
+        3,
+        1
+      ],
+      "n_atoms": 32,
+      "r_in_bohr": 8.052,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "mgo-slab",
+      "dim": 2,
+      "klass": "ionic",
+      "d_bohr": [
+        5.626,
+        5.626,
+        50.0
+      ],
+      "nrep_radius": [
+        3,
+        3,
+        1
+      ],
+      "kmesh_equivalent": [
+        3,
+        3,
+        1
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        1
+      ],
+      "n_atoms": 18,
+      "r_in_bohr": 8.438,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "ice-ih",
+      "dim": 3,
+      "klass": "molecular",
+      "d_bohr": [
+        8.498,
+        6.583,
+        13.837
+      ],
+      "nrep_radius": [
+        2,
+        3,
+        2
+      ],
+      "kmesh_equivalent": [
+        2,
+        3,
+        2
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        1
+      ],
+      "n_atoms": 72,
+      "r_in_bohr": 9.501,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "co2-dryice",
+      "dim": 3,
+      "klass": "molecular",
+      "d_bohr": [
+        10.628,
+        10.628,
+        10.628
+      ],
+      "nrep_radius": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_equivalent": [
+        2,
+        2,
+        2
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 24,
+      "r_in_bohr": 10.628,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "lih-rocksalt",
+      "dim": 3,
+      "klass": "ionic",
+      "d_bohr": [
+        4.456,
+        4.456,
+        4.456
+      ],
+      "nrep_radius": [
+        4,
+        4,
+        4
+      ],
+      "kmesh_equivalent": [
+        4,
+        4,
+        4
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 128,
+      "r_in_bohr": 10.914,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "lif-rocksalt",
+      "dim": 3,
+      "klass": "ionic",
+      "d_bohr": [
+        4.393,
+        4.393,
+        4.393
+      ],
+      "nrep_radius": [
+        4,
+        4,
+        4
+      ],
+      "kmesh_equivalent": [
+        4,
+        4,
+        4
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 128,
+      "r_in_bohr": 10.759,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "nacl-rocksalt",
+      "dim": 3,
+      "klass": "ionic",
+      "d_bohr": [
+        6.153,
+        6.153,
+        6.153
+      ],
+      "nrep_radius": [
+        3,
+        3,
+        3
+      ],
+      "kmesh_equivalent": [
+        3,
+        3,
+        3
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 54,
+      "r_in_bohr": 11.305,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "mgo",
+      "dim": 3,
+      "klass": "ionic",
+      "d_bohr": [
+        4.608,
+        4.608,
+        4.608
+      ],
+      "nrep_radius": [
+        4,
+        4,
+        4
+      ],
+      "kmesh_equivalent": [
+        4,
+        4,
+        4
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 128,
+      "r_in_bohr": 11.288,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "tio2-rutile",
+      "dim": 3,
+      "klass": "oxide",
+      "d_bohr": [
+        8.681,
+        8.681,
+        5.592
+      ],
+      "nrep_radius": [
+        2,
+        2,
+        3
+      ],
+      "kmesh_equivalent": [
+        2,
+        2,
+        3
+      ],
+      "nrep_4c_tabulated": [
+        1,
+        1,
+        2
+      ],
+      "n_atoms": 72,
+      "r_in_bohr": 8.388,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "sio2-quartz",
+      "dim": 3,
+      "klass": "oxide",
+      "d_bohr": [
+        9.29,
+        7.196,
+        10.214
+      ],
+      "nrep_radius": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_equivalent": [
+        2,
+        2,
+        2
+      ],
+      "nrep_4c_tabulated": [
+        1,
+        1,
+        1
+      ],
+      "n_atoms": 72,
+      "r_in_bohr": 8.045,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "nio-afm",
+      "dim": 3,
+      "klass": "ionic-afm",
+      "d_bohr": [
+        4.541,
+        4.541,
+        4.541
+      ],
+      "nrep_radius": [
+        4,
+        4,
+        4
+      ],
+      "kmesh_equivalent": [
+        4,
+        4,
+        4
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 128,
+      "r_in_bohr": 11.123,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "aln-wurtzite",
+      "dim": 3,
+      "klass": "covalent",
+      "d_bohr": [
+        5.09,
+        5.09,
+        9.409
+      ],
+      "nrep_radius": [
+        3,
+        3,
+        2
+      ],
+      "kmesh_equivalent": [
+        3,
+        3,
+        2
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 72,
+      "r_in_bohr": 8.816,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "black-phosphorus",
+      "dim": 3,
+      "klass": "covalent",
+      "d_bohr": [
+        5.971,
+        5.971,
+        8.269
+      ],
+      "nrep_radius": [
+        3,
+        3,
+        2
+      ],
+      "kmesh_equivalent": [
+        3,
+        3,
+        2
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        1
+      ],
+      "n_atoms": 72,
+      "r_in_bohr": 8.269,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "caf2-fluorite",
+      "dim": 3,
+      "klass": "ionic",
+      "d_bohr": [
+        5.947,
+        5.947,
+        5.947
+      ],
+      "nrep_radius": [
+        3,
+        3,
+        3
+      ],
+      "kmesh_equivalent": [
+        3,
+        3,
+        3
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 81,
+      "r_in_bohr": 10.926,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "tio2-anatase",
+      "dim": 3,
+      "klass": "oxide",
+      "d_bohr": [
+        6.645,
+        6.645,
+        5.057
+      ],
+      "nrep_radius": [
+        3,
+        3,
+        3
+      ],
+      "kmesh_equivalent": [
+        3,
+        3,
+        3
+      ],
+      "nrep_4c_tabulated": [
+        1,
+        1,
+        1
+      ],
+      "n_atoms": 162,
+      "r_in_bohr": 10.727,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "al2o3-corundum",
+      "dim": 3,
+      "klass": "oxide",
+      "d_bohr": [
+        7.426,
+        7.426,
+        7.426
+      ],
+      "nrep_radius": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_equivalent": [
+        2,
+        2,
+        2
+      ],
+      "nrep_4c_tabulated": [
+        1,
+        1,
+        1
+      ],
+      "n_atoms": 80,
+      "r_in_bohr": 8.996,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "alcl3",
+      "dim": 3,
+      "klass": "molecular",
+      "d_bohr": [
+        9.305,
+        9.305,
+        11.034
+      ],
+      "nrep_radius": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_equivalent": [
+        2,
+        2,
+        2
+      ],
+      "nrep_4c_tabulated": [
+        1,
+        1,
+        1
+      ],
+      "n_atoms": 64,
+      "r_in_bohr": 11.168,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "cscl",
+      "dim": 3,
+      "klass": "ionic",
+      "d_bohr": [
+        7.752,
+        7.752,
+        7.752
+      ],
+      "nrep_radius": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_equivalent": [
+        2,
+        2,
+        2
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 16,
+      "r_in_bohr": 7.752,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "boric-acid",
+      "dim": 3,
+      "klass": "molecular",
+      "d_bohr": [
+        11.176,
+        11.38,
+        12.027
+      ],
+      "nrep_radius": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_equivalent": [
+        2,
+        2,
+        2
+      ],
+      "nrep_4c_tabulated": [
+        1,
+        1,
+        1
+      ],
+      "n_atoms": 224,
+      "r_in_bohr": 12.431,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "na-bcc",
+      "dim": 3,
+      "klass": "metal",
+      "d_bohr": [
+        5.722,
+        5.722,
+        5.722
+      ],
+      "nrep_radius": [
+        3,
+        3,
+        3
+      ],
+      "kmesh_equivalent": [
+        3,
+        3,
+        3
+      ],
+      "nrep_4c_tabulated": [
+        2,
+        2,
+        2
+      ],
+      "n_atoms": 27,
+      "r_in_bohr": 10.512,
+      "kspacing_bohr_inv": 0.4488
+    },
+    {
+      "system": "sc2o3-bixbyite",
+      "dim": 3,
+      "klass": "oxide",
+      "d_bohr": [
+        13.142,
+        13.142,
+        13.142
+      ],
+      "nrep_radius": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_equivalent": [
+        2,
+        2,
+        2
+      ],
+      "nrep_4c_tabulated": [
+        1,
+        1,
+        1
+      ],
+      "n_atoms": 320,
+      "r_in_bohr": 16.095,
+      "kspacing_bohr_inv": 0.4488
+    }
+  ],
+  "part2_duality": [
+    {
+      "system": "c-diamond",
+      "nrep_4c": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_tabulated": [
+        4,
+        4,
+        4
+      ],
+      "radius_reproducing_nrep_4c_bohr": 1.946
+    },
+    {
+      "system": "si-diamond",
+      "nrep_4c": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_tabulated": [
+        4,
+        4,
+        4
+      ],
+      "radius_reproducing_nrep_4c_bohr": 2.963
+    },
+    {
+      "system": "mgo",
+      "nrep_4c": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_tabulated": [
+        4,
+        4,
+        4
+      ],
+      "radius_reproducing_nrep_4c_bohr": 2.304
+    },
+    {
+      "system": "nacl-rocksalt",
+      "nrep_4c": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_tabulated": [
+        4,
+        4,
+        4
+      ],
+      "radius_reproducing_nrep_4c_bohr": 3.077
+    },
+    {
+      "system": "sic-zb",
+      "nrep_4c": [
+        2,
+        2,
+        2
+      ],
+      "kmesh_tabulated": [
+        4,
+        4,
+        4
+      ],
+      "radius_reproducing_nrep_4c_bohr": 2.377
+    }
+  ],
+  "part3_scan": {
+    "h-chain": {
+      "basis": "sto-3g",
+      "dim": 1,
+      "series": [
+        {
+          "radius_bohr": 6.0,
+          "nrep": [
+            1,
+            1,
+            1
+          ],
+          "kmesh_equivalent": [
+            1,
+            1,
+            1
+          ],
+          "n_atoms": 2,
+          "r_in_bohr": 7.500000034444984,
+          "kspacing_bohr_inv": 0.4188790185548683,
+          "energy_per_atom": -0.5583571695532947,
+          "value": -0.5583571695532947,
+          "converged": true
+        },
+        {
+          "radius_bohr": 9.0,
+          "nrep": [
+            2,
+            1,
+            1
+          ],
+          "kmesh_equivalent": [
+            2,
+            1,
+            1
+          ],
+          "n_atoms": 4,
+          "r_in_bohr": 15.000000068889968,
+          "kspacing_bohr_inv": 0.20943950927743415,
+          "energy_per_atom": -0.558354364990965,
+          "value": -0.558354364990965,
+          "converged": true
+        },
+        {
+          "radius_bohr": 18.0,
+          "nrep": [
+            3,
+            1,
+            1
+          ],
+          "kmesh_equivalent": [
+            3,
+            1,
+            1
+          ],
+          "n_atoms": 6,
+          "r_in_bohr": 20.0,
+          "kspacing_bohr_inv": 0.15707963267948966,
+          "energy_per_atom": -0.5583567778101183,
+          "value": -0.5583567778101183,
+          "converged": true
+        },
+        {
+          "radius_bohr": 24.0,
+          "nrep": [
+            4,
+            1,
+            1
+          ],
+          "kmesh_equivalent": [
+            4,
+            1,
+            1
+          ],
+          "n_atoms": 8,
+          "r_in_bohr": 20.0,
+          "kspacing_bohr_inv": 0.15707963267948966,
+          "energy_per_atom": -0.5583566100964524,
+          "value": -0.5583566100964524,
+          "converged": true
+        },
+        {
+          "radius_bohr": 36.0,
+          "nrep": [
+            5,
+            1,
+            1
+          ],
+          "kmesh_equivalent": [
+            5,
+            1,
+            1
+          ],
+          "n_atoms": 10,
+          "r_in_bohr": 20.0,
+          "kspacing_bohr_inv": 0.15707963267948966,
+          "energy_per_atom": -0.5583567656819304,
+          "value": -0.5583567656819304,
+          "converged": true
+        }
+      ],
+      "converged_radius_1e4": 6.0,
+      "converged_radius_1e5": 6.0
+    }
+  }
+}

@@ -1,0 +1,49 @@
+# vibe-qc auto-generated reference list
+#
+# This file is regenerated on every run. The matching BibTeX
+# entries are in the .bibtex sibling.
+
+[1] (peintinger_vibeqc)
+  Peintinger, Michael F. (2026). vibe-qc: a quantum-chemistry code for molecules and solids. [Software v0.15.41, MPL-2.0]. <https://vibe-qc.com/>
+
+[2] (valeev_libint)
+  Valeev, Edward F. Libint: A library for the evaluation of molecular integrals of many-body operators over Gaussian functions. [Software]. <https://github.com/evaleev/libint>
+
+[3] (hehre_sto_ng_1969)
+  Hehre, W. J., Stewart, R. F., and Pople, J. A. (1969). Self-Consistent Molecular-Orbital Methods. I. Use of Gaussian Expansions of Slater-Type Atomic Orbitals. Journal of Chemical Physics, 51(6), 2657--2664. doi:10.1063/1.1672392
+
+[4] (pritchard_bse_2019)
+  Pritchard, Benjamin P., Altarawy, Doaa, et al. (2019). New Basis Set Exchange: An Open, Up-to-Date Resource for the Molecular Sciences Community. Journal of Chemical Information and Modeling, 59(11), 4814--4820. doi:10.1021/acs.jcim.9b00725
+
+[5] (pulay_diis_1980)
+  Pulay, Péter (1980). Convergence acceleration of iterative sequences. The case of SCF iteration. Chemical Physics Letters, 73(2), 393--398. doi:10.1016/0009-2614(80)80396-4
+
+[6] (pulay_diis_1982)
+  Pulay, Péter (1982). Improved SCF convergence acceleration. Journal of Computational Chemistry, 3(4), 556--560. doi:10.1002/jcc.540030413
+
+[7] (saunders_hillier_levelshift_1973)
+  Saunders, V. R. and Hillier, I. H. (1973). A "Level-Shifting" method for converging closed shell Hartree-Fock wave functions. International Journal of Quantum Chemistry, 7(4), 699--705. doi:10.1002/qua.560070407
+
+[8] (saunders_bipole_1992)
+  Saunders, V. R., Freyria-Fava, C., et al. (1992). On the electrostatic potential in crystalline systems where the charge density is expanded in Gaussian functions. Molecular Physics, 77, 629--665. doi:10.1080/00268979200102671
+
+[9] (dovesi_crystal14_2014)
+  Dovesi, R., Orlando, R., et al. (2014). CRYSTAL14: A program for the ab initio investigation of crystalline solids. International Journal of Quantum Chemistry, 114, 1287--1317. doi:10.1002/qua.24658
+
+[10] (gygi_baldereschi_exx_1986)
+  Gygi, F. and Baldereschi, A. (1986). Self-consistent Hartree-Fock and screened-exchange calculations in solids: Application to silicon. Physical Review B, 34, 4405--4408. doi:10.1103/PhysRevB.34.4405
+
+[11] (sundararaman_arias_exx_2013)
+  Sundararaman, R. and Arias, T. A. (2013). Regularization of the Coulomb singularity in exact exchange by Wigner-Seitz truncated interactions: Towards chemical accuracy in nontrivial systems. Physical Review B, 87, 165122. doi:10.1103/PhysRevB.87.165122
+
+[12] (maurer_ochsenfeld_qqr_2012)
+  Maurer, Simon A., Lambrecht, Daniel S., et al. (2012). Distance-dependent Schwarz-based integral estimates for two-electron integrals: Reliable tightness vs. rigorous upper bounds. The Journal of Chemical Physics, 136(14), 144107. doi:10.1063/1.3693908
+
+[13] (vanlenthe_sad_2006)
+  Van Lenthe, J. H., Zwaans, R., et al. (2006). Starting SCF calculations by superposition of atomic densities. Journal of Computational Chemistry, 27(8), 926--932. doi:10.1002/jcc.20393
+
+[14] (togo_spglib_2024)
+  Togo, Atsushi, Shinohara, Kohei, and Tanaka, Isao (2024). Spglib: a software library for crystal symmetry search. Science and Technology of Advanced Materials: Methods, 4(1), 2384822. doi:10.1080/27660400.2024.2384822
+
+[15] (pisani_crystal_1988)
+  Pisani, Cesare, Dovesi, Roberto, and Roetti, Carla (1988). Hartree-Fock Ab Initio Treatment of Crystalline Systems. Lecture Notes in Chemistry, Vol. 48, Springer, 48. doi:10.1007/978-3-642-93385-1

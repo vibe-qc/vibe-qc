@@ -1,0 +1,94 @@
+---
+import Base from '../../layouts/Base.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+
+const base = import.meta.env.BASE_URL;
+const DOCS = '/docs';
+
+// The maintainer's address is deliberately NOT repeated here. Someone who
+// has already submitted the form does not need it, and a confirmation page
+// is a cheap, predictable URL for an address harvester to fetch — the form
+// exists so the address does not have to be on every page.
+---
+
+<Base
+  title="Message sent — vibe-qc"
+  description="Your message to the vibe-qc maintainer has been sent."
+>
+  <Nav />
+
+  <main class="wrap sent">
+    <section class="sent-head">
+      <span class="eyebrow">contact</span>
+      <h1>Message sent.</h1>
+      <p>
+        Thanks — it is on its way to the maintainer, and a reply will come to the
+        address you gave. vibe-qc is maintained by one person in evenings and
+        weekends, so a response may take a few days.
+      </p>
+      <p class="fallback">
+        Nothing back after a week or so? Replies occasionally get caught by spam
+        filters, so it is worth checking there before
+        <a href={`${base}contact`}>sending again</a>.
+      </p>
+    </section>
+
+    <section class="next">
+      <h2>While you wait</h2>
+      <div class="next-grid">
+        <a class="ncard" href={`${DOCS}/quickstart.html`}>
+          <h3>Quickstart <span class="arrow">→</span></h3>
+          <p>The full first-run walkthrough, line by line.</p>
+        </a>
+        <a class="ncard" href={`${base}get-started`}>
+          <h3>Get started <span class="arrow">→</span></h3>
+          <p>Build the native core and run your first calculation.</p>
+        </a>
+        <a class="ncard" href={`${DOCS}/user_guide/index.html`}>
+          <h3>User guide <span class="arrow">→</span></h3>
+          <p>Methods, basis sets, functionals, ECPs, periodic systems.</p>
+        </a>
+        <a class="ncard" href={`${DOCS}/changelog.html`}>
+          <h3>Changelog <span class="arrow">→</span></h3>
+          <p>What landed recently, release by release.</p>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <Footer />
+</Base>
+
+<style>
+  .sent { padding: 64px 28px 100px; }
+  .sent-head { max-width: 62ch; }
+  .sent-head h1 {
+    font-size: clamp(34px, 5vw, 58px);
+    letter-spacing: -0.035em;
+    font-weight: 800;
+    margin: 16px 0 0;
+    text-wrap: balance;
+  }
+  .sent-head p { color: var(--slate); font-size: 19px; margin: 18px 0 0; }
+  .sent-head .fallback { font-size: 15.5px; }
+  .sent-head a { color: var(--phase-pos); text-decoration: underline; text-underline-offset: 2px; }
+
+  .next { margin-top: 72px; }
+  .next h2 { font-size: clamp(24px, 3vw, 32px); letter-spacing: -0.02em; font-weight: 800; margin: 0 0 26px; }
+  .next-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 640px) { .next-grid { grid-template-columns: 1fr; } }
+  .ncard {
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    transition: transform .16s, border-color .16s, box-shadow .16s;
+  }
+  .ncard:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--phase-pos) 45%, var(--line)); box-shadow: 0 16px 36px -24px var(--phase-pos); }
+  .ncard h3 { font-size: 17px; font-weight: 700; margin: 0 0 6px; color: var(--phase-pos); display: flex; align-items: center; gap: 8px; }
+  .ncard:hover .arrow { transform: translateX(3px); }
+  .ncard .arrow { transition: transform .15s; }
+  .ncard p { color: var(--slate); font-size: 14.5px; margin: 0; }
+</style>

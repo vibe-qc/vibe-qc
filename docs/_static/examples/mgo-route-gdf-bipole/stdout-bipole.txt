@@ -1,0 +1,86 @@
+<managed-vq-artifact>/vibeqc-dev-0.15.41-a5ac682.tar.gz: OK
+Ignoring VQ_PROGRAM_GIT_DIR because it is not present on this execution host: <managed-vibeqc-dev>
+
+=== mgo-rhf-sto3g-bipole-k222 ===
+  convergence strategy: manual
+
+  run_periodic_job  PERIODIC RHF  basis=sto-3g
+  --------------------------------------------
+  Output file: output-mgo-rhf-sto3g-bipole-k222.out
+    BIPOLE kmesh: [2, 2, 2]
+  PBC BIPOLE (CRYSTAL-gauge) / cutoff 12.00 bohr
+    V_ne + E_nn  : EWALD_3D   (Ewald gauge for point-charge tails)
+    F^2e (J + K) : EWALD_J_SPLIT   (direct J_SR/K cell list + reciprocal J_LR)
+  basis: sto-3g  (14 BFs / 8 shells)
+  k-mesh: 8 k-points, weights sum = 1.0000
+    Ewald state: a = 0.558548 bohr⁻¹, cutoff_real = 12.00 bohr, K_max = 4.75 bohr⁻¹, tol = 1e-08
+    SR ket-image radius: 33.91 bohr (sr_image_precision=1e-06; QQR screening on)
+    Exchange: Ewald split -- K_SR(erfc w) + K_LR(reciprocal, 8^2 (k,k′) q-channels) + G=0 correction (exxdiv=ewald, ξ_M(supercell) = 0.288079 Ha)
+    Density: full Bloch fold (Γ-locality projection OFF); EXT EL-SPHEROPOLE omitted (gauge-consistent)
+  [integrals_lattice] - S/T/V at cutoff 12.00 bohr
+  S/T integrals: symmetry-reduced path (SG Fm-3m, 48 ops, 55 lattice cells)
+    V_ne Ewald long range: analytic AO-pair FT (shared with J^LR cache)
+  n_cells in lattice sum = 55
+    note: S(k) fold truncation (max over mesh) 5.0e-03 at cutoff 12.0 bohr -- expect ~5e-03-scale absolute-energy truncation; increase cutoff_bohr for tighter work
+  SYM3b Fock symmetry enforcement: ENABLED (pair-resolved domains)
+    pair-resolved truncation: 246 (a,b,h) triples on 123 cells (radial list: 55 cells), orbit closure exact
+    SYM3b reduced direct-ERI build: 9/123 orbit-representative cells (13.7x fewer output blocks)
+    SYM3b reduction auto-enabled by attached crystal symmetry
+    density cell list: 665 cells (pair-resolved domain at 2x cutoff, masked to 1850 qualifying pairs)
+  overlap [S(k=0, k_cart=[0.0, 0.0, 0.0])]: nbf=14, min eig=+3.52e-01, cond=7.28e+00, severity=ok
+  overlap [S(k=1, k_cart=[0.3948, 0.3948, -0.3948])]: nbf=14, min eig=+4.25e-01, cond=5.42e+00, severity=ok
+  overlap [S(k=2, k_cart=[0.3948, -0.3948, 0.3948])]: nbf=14, min eig=+4.25e-01, cond=5.42e+00, severity=ok
+  overlap [S(k=3, k_cart=[0.7896, 0.0, 0.0])]: nbf=14, min eig=+3.94e-01, cond=5.26e+00, severity=ok
+  overlap [S(k=4, k_cart=[-0.3948, 0.3948, 0.3948])]: nbf=14, min eig=+4.25e-01, cond=5.42e+00, severity=ok
+  overlap [S(k=5, k_cart=[0.0, 0.7896, 0.0])]: nbf=14, min eig=+3.94e-01, cond=5.26e+00, severity=ok
+  overlap [S(k=6, k_cart=[0.0, 0.0, 0.7896])]: nbf=14, min eig=+3.94e-01, cond=5.26e+00, severity=ok
+  overlap [S(k=7, k_cart=[0.3948, 0.3948, 0.3948])]: nbf=14, min eig=+4.20e-01, cond=5.49e+00, severity=ok
+  E_nuc per cell (EWALD_3D) = -73.0669217429 Ha
+  initial guess: SAD (g=0 density from GuessEngine)
+  fock mixing: CRYSTAL FMIXING 30.0% (previous Fock matrix weight)
+  Ewald J-split F^2e: ON (CRYSTAL-equivalent gauge); w = 0.5585 bohr⁻¹, precision = 1e-08
+    J^LR cache: 258 K-vectors, 123 lattice cells
+    K^LR q-channels: 8 distinct q = k-k′ shifts on the shared K_max = 4.75 bohr⁻¹ envelope
+    incremental Fock (differential J_SR/K_SR via ΔD density-envelope screening): ON
+    BIPOLE multipole far-field: off  (R_bipole=11.3 bohr, cutoff=12.0 bohr)
+
+  SCF (PBC BIPOLE, direct-space)
+  --------------------------------
+    iter         energy (Ha)            dE          ||[F,DS]||   DIIS
+  SCF converged in 23 iterations; E = -271.2145446660 Ha
+{
+  "a_angstrom": 4.211,
+  "artifacts": [
+    "input-mgo-rhf-sto3g-bipole-k222.py",
+    "output-mgo-rhf-sto3g-bipole-k222.bibtex",
+    "output-mgo-rhf-sto3g-bipole-k222.cif",
+    "output-mgo-rhf-sto3g-bipole-k222.molden",
+    "output-mgo-rhf-sto3g-bipole-k222.out",
+    "output-mgo-rhf-sto3g-bipole-k222.population.json",
+    "output-mgo-rhf-sto3g-bipole-k222.population.txt",
+    "output-mgo-rhf-sto3g-bipole-k222.qvf",
+    "output-mgo-rhf-sto3g-bipole-k222.references",
+    "output-mgo-rhf-sto3g-bipole-k222.system",
+    "output-mgo-rhf-sto3g-bipole-k222.xsf",
+    "output-mgo-rhf-sto3g-bipole-k222.xyz"
+  ],
+  "basis": "sto-3g",
+  "converged": true,
+  "elapsed_seconds": 1331.1846956312656,
+  "energy_hartree_per_primitive_cell": -271.21454466172247,
+  "gap_hartree": 0.5081894111790204,
+  "homo_hartree": 0.24438153529512624,
+  "jk_method": "bipole",
+  "kpoints": [
+    2,
+    2,
+    2
+  ],
+  "label": "MgO primitive RHF/STO-3G BIPOLE 2x2x2",
+  "lumo_hartree": 0.7525709464741466,
+  "n_basis": 14,
+  "n_electrons": 20,
+  "n_iter": 23,
+  "slug": "mgo-rhf-sto3g-bipole-k222"
+}
+validate_qvf output-mgo-rhf-sto3g-bipole-k222.qvf: True []

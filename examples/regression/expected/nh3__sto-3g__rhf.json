@@ -1,0 +1,10 @@
+{
+  "system_id": "nh3",
+  "basis": "sto-3g",
+  "method_id": "rhf",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-6,
+  "tolerance_rationale": "NH3 / STO-3G / RHF — pyramidal C3v with a lone pair. Sub-µHa cross-code agreement expected."
+}

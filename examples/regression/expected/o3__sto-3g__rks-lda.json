@@ -1,0 +1,10 @@
+{
+  "system_id": "o3",
+  "basis": "sto-3g",
+  "method_id": "rks-lda",
+  "kmesh": [0, 0, 0],
+  "primary_source": "pyscf_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 2e-3,
+  "tolerance_rationale": "Ozone ¹A1 / STO-3G / RKS-LDA — closed-shell DFT on a biradical ground state. XC-grid noise + small SCF-stability differences stack up here; 2 mHa catches real bugs without flagging the inherent single-reference + minimal-basis errors."
+}

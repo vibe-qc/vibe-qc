@@ -1,0 +1,15 @@
+NaCl rocksalt RHF/STO-3G — heavier ionic, fewer core states
+CRYSTAL
+0 0 0
+225
+5.640
+2
+11 0.0 0.0 0.0
+17 0.5 0.5 0.5
+BASISSET
+STO-3G
+SHRINK
+8 8
+TOLDEE
+8
+END

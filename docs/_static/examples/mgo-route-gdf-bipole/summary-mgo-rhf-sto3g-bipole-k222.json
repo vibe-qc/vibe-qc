@@ -1,0 +1,35 @@
+{
+  "a_angstrom": 4.211,
+  "artifacts": [
+    "input-mgo-rhf-sto3g-bipole-k222.py",
+    "output-mgo-rhf-sto3g-bipole-k222.bibtex",
+    "output-mgo-rhf-sto3g-bipole-k222.cif",
+    "output-mgo-rhf-sto3g-bipole-k222.molden",
+    "output-mgo-rhf-sto3g-bipole-k222.out",
+    "output-mgo-rhf-sto3g-bipole-k222.population.json",
+    "output-mgo-rhf-sto3g-bipole-k222.population.txt",
+    "output-mgo-rhf-sto3g-bipole-k222.qvf",
+    "output-mgo-rhf-sto3g-bipole-k222.references",
+    "output-mgo-rhf-sto3g-bipole-k222.system",
+    "output-mgo-rhf-sto3g-bipole-k222.xsf",
+    "output-mgo-rhf-sto3g-bipole-k222.xyz"
+  ],
+  "basis": "sto-3g",
+  "converged": true,
+  "elapsed_seconds": 1331.1846956312656,
+  "energy_hartree_per_primitive_cell": -271.21454466172247,
+  "gap_hartree": 0.5081894111790204,
+  "homo_hartree": 0.24438153529512624,
+  "jk_method": "bipole",
+  "kpoints": [
+    2,
+    2,
+    2
+  ],
+  "label": "MgO primitive RHF/STO-3G BIPOLE 2x2x2",
+  "lumo_hartree": 0.7525709464741466,
+  "n_basis": 14,
+  "n_electrons": 20,
+  "n_iter": 23,
+  "slug": "mgo-rhf-sto3g-bipole-k222"
+}

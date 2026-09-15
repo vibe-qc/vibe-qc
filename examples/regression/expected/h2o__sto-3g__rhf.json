@@ -1,0 +1,12 @@
+{
+  "system_id": "h2o",
+  "basis": "sto-3g",
+  "method_id": "rhf",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-6,
+  "tolerance_rationale": "H2O / STO-3G / RHF — Szabo & Ostlund reference case; every QC code agrees to better than 1 µHa.",
+  "published_energy_ha": -74.9420,
+  "published_source": "Szabo & Ostlund Table 3.5 (RHF / STO-3G / Szabo geometry)."
+}

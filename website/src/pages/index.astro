@@ -1,0 +1,354 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import ProductWordmark from '../components/ProductWordmark.astro';
+import Footer from '../components/Footer.astro';
+import OrbitalField from '../components/OrbitalField.astro';
+import {
+  distributionMatrix,
+  publicDownloadUrl,
+  publicOciImage,
+} from '../data/distributions.mjs';
+import { sponsorshipProgram } from '../data/sponsors.mjs';
+import { components } from '../data/components.mjs';
+import { products } from '../data/products.mjs';
+
+const base = import.meta.env.BASE_URL;
+const ociImages = distributionMatrix.oci.images.map((image) => ({
+  ...image,
+  available: Boolean(publicOciImage(image)),
+}));
+const desktopArtifacts = distributionMatrix.desktop.map((artifact) => ({
+  ...artifact,
+  available: Boolean(publicDownloadUrl(artifact)),
+}));
+const availableDistributionCount = [
+  ...ociImages.map((image) => image.available),
+  ...desktopArtifacts.map((artifact) => artifact.available),
+].filter(Boolean).length;
+const distributionCta = availableDistributionCount > 0
+  ? 'Downloads'
+  : 'Distribution preview';
+
+// Method chips — mirror the real molecular / periodic stacks.
+const MOLECULAR = ['RHF / UHF', 'DFT', 'MP2', 'DLPNO-CCSD(T)', 'TD-DFT', 'CASSCF', 'IC-CASPT2', 'D3(BJ)', '∇E analytic'];
+const PERIODIC = ['periodic HF', 'KS-DFT', 'k-meshes', 'band structure', 'DOS', 'COOP / COHP', 'Mayer bond order', 'GPW · GDF · BIPOLE'];
+---
+
+<Base>
+  <Nav />
+
+  <main id="top">
+    <!-- ============ HERO ============ -->
+    <section class="hero">
+      <OrbitalField />
+      <div class="wrap hero-inner">
+        <span class="eyebrow">three products, one scientific workflow</span>
+        <h1>Quantum chemistry for molecules&nbsp;and <span class="solids">solids</span>.</h1>
+        <p class="lede">
+          Calculate with vibe-qc's <strong>C++17</strong> engine —
+          Hartree–Fock through DLPNO-CCSD(T), TD-DFT and CASSCF for molecules, and 1D/2D/3D
+          periodic HF and Kohn–Sham DFT for solids. <strong>Every method implemented from the
+          ground up</strong>. Explore with vibe-view and schedule with vibe-queue,
+          two independently installed products that also work with other codes.
+        </p>
+
+        <div class="cta-row">
+          <a class="btn primary" href={`${base}download`}>
+            {distributionCta} <span class="arrow">→</span>
+          </a>
+          <a class="btn ghost" href={`${base}get-started`}>Build from source</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ VALIDATION STRIP ============ -->
+    <div class="strip">
+      <div class="wrap strip-inner">
+        <div>
+          <div class="lead-k">Its <b>own C++17 implementation</b> of every method — no external quantum-chemistry program on the runtime path, from a single molecule to an infinite crystal.</div>
+        </div>
+        <div>
+          <div class="k">500<span class="unit">+</span></div>
+          <div class="v">XC functionals via libxc</div>
+        </div>
+        <div>
+          <div class="k">1D<span class="unit">·</span>2D<span class="unit">·</span>3D</div>
+          <div class="v">periodic HF &amp; KS-DFT</div>
+        </div>
+        <div>
+          <div class="k">MPL<span class="unit">-</span>2.0</div>
+          <div class="v">open source, no CLA</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ TWO STACKS ============ -->
+    <section class="block" id="stacks">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">one engine, molecules to solids</span>
+          <h2>The same engine, from a single molecule to an infinite crystal.</h2>
+          <p>vibe-qc implements every method itself — no wrapped external QC program. Pick the stack; the Python front-end is identical.</p>
+        </div>
+
+        <div class="stacks">
+          <div class="stack mol">
+            <span class="tag">molecular</span>
+            <h3>Molecules</h3>
+            <p class="d">Gaussian-basis electronic structure from Hartree–Fock through coupled cluster and multireference, with analytic gradients and geometry optimization.</p>
+            <div class="chips">
+              {MOLECULAR.map((c) => <span class="chip">{c}</span>)}
+            </div>
+          </div>
+          <div class="stack per">
+            <span class="tag">periodic</span>
+            <h3>Solids</h3>
+            <p class="d">Crystalline-orbital HF and Kohn–Sham DFT in 1D, 2D and 3D with Monkhorst–Pack k-meshes and Ewald-summed Madelung energies.</p>
+            <div class="chips">
+              {PERIODIC.map((c) => <span class="chip">{c}</span>)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ FEATURE GRID ============ -->
+    <section class="block" id="features" style="padding-top: 0;">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">what's inside</span>
+          <h2>Research-grade methods, honestly attributed.</h2>
+          <p>Every basis set, functional and ECP carries its citation through to the run log — and every method is vibe-qc's own implementation, not a wrapper.</p>
+        </div>
+
+        <div class="grid">
+          <div class="card">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><ellipse cx="12" cy="12" rx="10" ry="4.5"/><ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(120 12 12)"/></svg>
+            <h4>DLPNO local correlation</h4>
+            <p>DLPNO-MP2 and the per-pair DLPNO-CCSD(T) solver bring gold-standard correlation to systems far larger than canonical scaling allows.</p>
+          </div>
+          <div class="card">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 17c3 0 3-9 6-9s3 9 6 9 3-6 6-6"/><path d="M3 21h18" opacity="0.4"/></svg>
+            <h4>TD-DFT &amp; spectra</h4>
+            <p>Casida and Tamm–Dancoff for RHF/RKS/UHF/UKS, with natural transition orbitals and reconstructed UV/Vis spectra.</p>
+          </div>
+          <div class="card">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20V6a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" opacity="0.5"/><path d="M8 13l2.5 2.5L16 10"/></svg>
+            <h4>Analytic gradients</h4>
+            <p>Production CASSCF and exact IC-CASPT2 analytic gradients, FD-tight to ~1e-7, driving geometry optimization.</p>
+          </div>
+          <div class="card">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12h4l2-7 3 14 2-9 2 5h5"/></svg>
+            <h4>Band structure &amp; DOS</h4>
+            <p>Full band paths and densities of states for periodic systems, with COOP/COHP bonding analysis in 1D, 2D and 3D.</p>
+          </div>
+          <div class="card">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1" opacity="0.5"/><rect x="3" y="14" width="7" height="7" rx="1" opacity="0.5"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            <h4>Fast eigensolvers</h4>
+            <p>Davidson, LOBPCG (3–12× faster), plus experimental Jacobi–Davidson and GPLHR — selectable with one <code>solver=</code> keyword.</p>
+          </div>
+          <div class="card">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 8h16M4 16h16M8 4v16M16 4v16" opacity="0.5"/><circle cx="8" cy="8" r="1.7" fill="currentColor" stroke="none"/><circle cx="16" cy="8" r="1.7" fill="currentColor" stroke="none"/><circle cx="8" cy="16" r="1.7" fill="currentColor" stroke="none"/><circle cx="16" cy="16" r="1.7" fill="currentColor" stroke="none"/></svg>
+            <h4>Cyclic Cluster Model <span class="soon">experimental</span></h4>
+            <p><strong>AICCM</strong> and <strong>SECCM</strong> — vibe-qc's own methods bring correlated wavefunction theory to periodic solids: a crystal treated as a finite cluster under exact translational symmetry. Unique to vibe-qc.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ THE SUITE ============ -->
+    <section class="block suite-block" id="suite">
+      <div class="wrap">
+        <div class="suite-intro">
+        <div class="sec-head">
+          <span class="eyebrow">more than a code</span>
+          <h2>Independent tools for a complete workflow.</h2>
+          <p>vibe-qc, vibe-view, and vibe-queue are separate repositories with independent releases.
+            The basis toolkit stays in vibe-qc. The separate QVF project defines the shared
+            file format; its reference toolkit is not a runtime dependency.</p>
+          <p><a href={`${base}get-started#repositories-heading`}>Find the repository and setup guide for each tool →</a></p>
+        </div>
+          <img class="suite-artwork" src={`${base}logo/vibe-qc-social.svg`}
+            alt="vibe-qc, vibe-view and vq: Calculate. Explore. Keep work moving. Three independent products."
+            width="1200" height="630" loading="lazy" decoding="async" />
+        </div>
+        <div class="grid product-grid">
+          {products.map(product => <a class="card" href={`${base}products/${product.id}/`}>
+            <span class="suite-tag">{product.action}</span>
+            <h4 class="product-title"><ProductWordmark product={product.id} label={product.name} /><span aria-hidden="true">→</span></h4><p>{product.summary}</p>
+          </a>)}
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ DISTRIBUTION ============ -->
+    <section class="block home-distribution" aria-labelledby="distribution-heading">
+      <div class="wrap">
+        <div class="distribution-shell">
+          <div class="distribution-intro">
+            <div>
+              <span class="eyebrow">official distribution matrix</span>
+              <h2 id="distribution-heading">One suite. The platform stays explicit.</h2>
+            </div>
+            <p>
+              Container and desktop candidates are visible before release, but no
+              download activates until its native, licensing, and platform gates pass.
+            </p>
+          </div>
+
+          <div class="distribution-grid">
+            <article class="distribution-card">
+              <div class="distribution-card-top">
+                <span class="distribution-kind">complete CPU ecosystem</span>
+                <span class:list={['distribution-status', { ready: ociImages.every((image) => image.available) }]}>
+                  {ociImages.every((image) => image.available) ? 'Available' : 'Qualification pending'}
+                </span>
+              </div>
+              <h3>Architecture-qualified Linux images</h3>
+              <p>
+                Planned images combine independently versioned vibe-qc, vibe-view, vq,
+                and the retained vibe-basis toolkit with offline docs, tutorials, and examples.
+              </p>
+              <ul class="platform-list" aria-label="Container image platforms">
+                {ociImages.map((image) => (
+                  <li>
+                    <span>{image.label}</span>
+                    <code>{image.ociPlatform}</code>
+                  </li>
+                ))}
+              </ul>
+              <a class="distribution-link" href={`${base}download`}>
+                Review container gates <span aria-hidden="true">→</span>
+              </a>
+            </article>
+
+            <article class="distribution-card desktop-preview">
+              <div class="distribution-card-top">
+                <span class="distribution-kind">standalone viewer</span>
+                <span class:list={['distribution-status', { ready: desktopArtifacts.every((artifact) => artifact.available) }]}>
+                  {desktopArtifacts.every((artifact) => artifact.available) ? 'Available' : 'Candidates gated'}
+                </span>
+              </div>
+              <h3>vibe-view for desktop</h3>
+              <p>
+                The listed pre-split candidates are historical records.
+                Check the viewer's own release page for validated companion packages.
+              </p>
+              <ul class="platform-list" aria-label="Standalone viewer platforms">
+                {desktopArtifacts.map((artifact) => (
+                  <li>
+                    <span>{artifact.platform}</span>
+                    <code>{artifact.architecture}</code>
+                  </li>
+                ))}
+              </ul>
+              <a class="distribution-link" href={`${base}download`}>
+                Review desktop candidates <span aria-hidden="true">→</span>
+              </a>
+            </article>
+          </div>
+
+          <div class="distribution-footer">
+            <span>{availableDistributionCount} of {ociImages.length + desktopArtifacts.length} qualified</span>
+            <p>Preview metadata is public; unavailable artifacts have no active links.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ RELEASE BAND ============ -->
+    <div class="release" id="release">
+      <div class="wrap release-inner">
+        <div>
+          <span class="badge"><span class="pulse"></span>current source version</span>
+          <h2>v{components[0].version}</h2>
+          <p style="color: var(--slate); font-size: 16px; margin-top: 16px; max-width: 40ch;">
+            Stable core snapshots use the <span style="font-family: var(--mono); color: var(--phase-pos);">release</span> branch — a
+            fast-forward-only snapshot of <span style="font-family: var(--mono); color: var(--phase-pos);">main</span>, advanced only from a core release tag. Each companion publishes its own releases.
+          </p>
+          <div class="components">
+            <span class="components-label">Engine and companion projects</span>
+            <ul aria-label="Engine, bundled toolkit, and separately released companions">
+              {components.map((component) => (
+                <li>
+                  <span class="cmp-name">{component.name}</span>
+                  {component.version ? <span class="cmp-version">{component.version}</span> :
+                    <a class="cmp-version" href={component.releases}>Companion releases</a>}
+                  <span class="cmp-role">{component.role}</span>
+                </li>
+              ))}
+            </ul>
+            <p class="components-note">
+              vibe-view and vibe-queue have their own repositories and release tags.
+              vibe-basis stays in vibe-qc. Each tool has its own version line.
+            </p>
+          </div>
+        </div>
+        <ul>
+          <li><span class="m">correlation</span><span><b>DLPNO-CCSD(T)</b> <span class="dsc">— local density fitting, sparse pair lists, open-shell pilots.</span></span></li>
+          <li><span class="m">excited</span><span><b>TD-DFT engine</b> <span class="dsc">— Casida + TDA with NTOs and UV/Vis reconstruction.</span></span></li>
+          <li><span class="m">multiref</span><span><b>CASSCF &amp; IC-CASPT2 gradients</b> <span class="dsc">— analytic, FD-pinned, driving optimization.</span></span></li>
+          <li><span class="m">periodic</span><span><b>Periodic-DFT accuracy fix</b> <span class="dsc">— cross-cell XC within ~1 mHa of CRYSTAL23 on dense ionic crystals.</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ============ SPONSOR ============ -->
+    <section class="block sponsor" id="sponsor">
+      <div class="wrap">
+        <div class="sponsor-inner">
+          <div class="sponsor-grid">
+            <div>
+              <span class="eyebrow" style="color: var(--phase-neg);">independently built</span>
+              <h2>Built by one person. Kept alive by <span class="heart">♥</span> sponsors.</h2>
+              <p>
+                Sponsorship funds native builders, regression verification, public
+                infrastructure, and authoritative scientific references. Active
+                monthly sponsors can opt into logo recognition; every contributor
+                can opt into the permanent Supporter roll.
+              </p>
+              <p class="who">// maintained by Michael F. Peintinger · mpei@vibe-qc.com</p>
+            </div>
+            <div class="sponsor-cta">
+              <ul class="sponsor-tier-preview" aria-label="Monthly sponsorship tiers">
+                {sponsorshipProgram.tiers.map((tier) => (
+                  <li>
+                    <span>{tier.name}</span>
+                    <strong>${tier.monthlyUsd}<small>/month</small></strong>
+                  </li>
+                ))}
+                <li class="supporter-tier">
+                  <span>Supporter</span>
+                  <strong>Any amount<small>permanent opt-in roll</small></strong>
+                </li>
+              </ul>
+              <a class="ko" href={sponsorshipProgram.oneTimeContributionUrl}>
+                <span>Ko-fi <small>one-time · no account needed</small></span>
+                <span class="arrow">→</span>
+              </a>
+              <a class="gh" href={`${base}sponsor`}>
+                <span>
+                  View sponsor plans
+                  <small>payment routes · recognition · principles</small>
+                </span>
+                <span class="arrow">→</span>
+              </a>
+              <span class="amt">next goal: NIST Crystal Data SRD 3 — $200/yr</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <Footer />
+</Base>
+
+<style>
+  .suite-intro { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; margin-bottom: 40px; }
+  .suite-intro .sec-head { margin-bottom: 0; }
+  .suite-artwork { display: block; width: 100%; height: auto; border-radius: 16px; }
+  .product-title { display: flex; align-items: center; gap: 16px; }
+  @media (max-width: 900px) { .suite-intro { grid-template-columns: 1fr; gap: 28px; } }
+</style>

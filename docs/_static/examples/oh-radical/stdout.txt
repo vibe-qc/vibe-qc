@@ -1,0 +1,26 @@
+
+  run_job  Job: UHF  basis=6-31g*
+  --------------------------------
+  Threads: 18  (OpenMP shared-memory parallelism)
+  Output file: <vibe-qc-checkout>/examples/molecular/output-oh-radical.out
+  Starting molecular SCF (UHF).
+  iter    1  E =     -75.5803071381 Ha  ||[F,DS]|| = 3.649e+00  DIIS= 1  attempt=1  [ 221.1ms]
+  iter    2  E =     -75.3522423944 Ha  dE = +2.281e-01  ||[F,DS]|| = 3.570e-01  DIIS= 2  attempt=1  [ 231.3ms]
+  iter    3  E =     -75.3775939320 Ha  dE = -2.535e-02  ||[F,DS]|| = 8.241e-02  DIIS= 3  attempt=1  [ 237.5ms]
+  iter    4  E =     -75.3802977912 Ha  dE = -2.704e-03  ||[F,DS]|| = 4.110e-02  DIIS= 4  attempt=1  [ 245.6ms]
+  iter    5  E =     -75.3808387924 Ha  dE = -5.410e-04  ||[F,DS]|| = 9.893e-03  DIIS= 5  attempt=1  [ 253.6ms]
+  iter    6  E =     -75.3809121636 Ha  dE = -7.337e-05  ||[F,DS]|| = 3.974e-03  DIIS= 6  attempt=1  [ 263.3ms]
+  iter    7  E =     -75.3809284587 Ha  dE = -1.630e-05  ||[F,DS]|| = 1.604e-03  DIIS= 7  attempt=1  [ 274.0ms]
+  iter    8  E =     -75.3809312152 Ha  dE = -2.756e-06  ||[F,DS]|| = 3.470e-04  DIIS= 8  attempt=1  [ 282.0ms]
+  iter    9  E =     -75.3809313800 Ha  dE = -1.648e-07  ||[F,DS]|| = 1.004e-04  DIIS= 8  attempt=1  [ 290.6ms]
+  iter   10  E =     -75.3809313915 Ha  dE = -1.157e-08  ||[F,DS]|| = 1.361e-05  DIIS= 8  attempt=1  [ 295.9ms]
+  iter   11  E =     -75.3809313917 Ha  dE = -1.814e-10  ||[F,DS]|| = 2.356e-06  DIIS= 8  attempt=1  [ 304.8ms]
+  iter   12  E =     -75.3809313917 Ha  dE = -6.025e-12  ||[F,DS]|| = 4.062e-07  DIIS= 8  attempt=1  [ 315.2ms]
+  SCF converged in 12 iterations; E = -75.3809313917 Ha
+  [write_population] - output-oh-radical.population.txt
+  [write_population] done ( 100.0ms)
+  [write_xyz] - output-oh-radical.xyz
+  [write_xyz] done (   3.0ms)
+  [write_molden] - output-oh-radical.molden
+  [write_molden] done (   3.6ms)
+  Job total 0.55s -- output written to <vibe-qc-checkout>/examples/molecular/output-oh-radical.out

@@ -1,0 +1,4 @@
+# Generated job scripts — do not commit
+*.py
+!.gitkeep
+!.gitignore

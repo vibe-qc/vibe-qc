@@ -1,0 +1,1 @@
+{'system': 's22-02-water-dimer', 'body': 'monoB', 'variant': 'scsmp2', 'e_hf': -76.05704669562994, 'e_correlation': -0.27247109903210104, 'e_total': -76.32951779466204, 'e_os': -0.20855829761204148, 'e_ss': -0.06660342569295377, 'n_scf_iter': 12, 'scf_converged': True}

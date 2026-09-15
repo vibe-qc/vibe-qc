@@ -1,0 +1,227 @@
+[metadata]
+name = "def2-msvp"
+kind = "gcp_parameters"
+citation = "Grimme, Brandenburg, Bannwarth, Hansen, J. Chem. Phys. 143, 054107 (2015)"
+doi = "10.1063/1.4927476"
+license = "Open data: numerical results from a published scientific paper; redistribution is standard practice"
+source = "mctc-gcp src/gcp.f90 case 'pbeh3c': (sigma,eta,alpha,beta)=(1.0,1.32492,0.27649,1.956); e_mis from HFmsvp for Z<=18 and HFdzp for Z>=19 (Kr override to 0); n_virt = xva = BASmsvp - 0.5*nel (BASmsvp = modified Ahlrichs DZ supplemented by def2-SV(P): H/He=2, Li/Be=9, B-Ne=15, Na=15, Mg-Ar=18, K/Ca=24, Sc-Zn=31, Ga-Kr=32). PBEh-3c and HSE-3c apply the DAMPED gCP (dmp_scal=4, dmp_exp=6); B3LYP-3c uses these params undamped. Cross-verified against mctc-gcp, github.com/grimme-lab/gcp."
+status = "complete"
+coverage = "H–Kr (Z=1..36)"
+note = """
+PBEh-3c parent basis (shared with HSE-3c and B3LYP-3c). The [parameters] block is
+the PBEh-3c fit; HSE-3c overrides it via [variants.hse-3c] below. The four fit
+constants are per (method, basis), not per basis: gcp.f90 selects them on the
+method (case 'pbeh3c' / 'hse3c') while e_mis and n_virt are selected on the basis
+(HFmsvp / BASmsvp). B3LYP-3c deliberately reuses the PBEh-3c constants undamped
+(no 3c paper of its own), so it registers no variant.
+
+CRITICAL (audit F1.5): n_virt are the mctc-gcp virtual counts xva = nbas - 0.5*nel
+computed from BASmsvp, NOT raw def2-SVP function counts. The original bundling
+stored def2-SVP counts (H=5, B-Ne=14), giving gCP(H2O,pbeh-3c) = +0.45 vs the
+correct +0.82 kcal/mol. With BASmsvp-0.5*Z and the damped form, pbeh-3c
+gCP(H2O) = +0.8248 kcal/mol, matching mctc-gcp's gcp_call('pbeh3c').
+"""
+
+[parameters]
+sigma = 1.0
+eta   = 1.32492
+alpha = 0.27649
+beta  = 1.956
+
+# ---------------------------------------------------------------------------
+# Per-method overrides of the four fit constants. The [elements.*] tables below
+# are shared verbatim; only (sigma, eta, alpha, beta) are method-specific.
+# ---------------------------------------------------------------------------
+
+[variants.hse-3c]
+# Table S1 ("Empirical parameters of the HSE-3c method"), E_gCP row, of the ESI
+# to Brandenburg, Caldeweyher & Grimme, Phys. Chem. Chem. Phys. 18, 15519 (2016):
+#   sigma = 1.00000 (constrained)   eta = 1.40858
+#   alpha = 0.29083                 beta = 1.95260
+sigma = 1.00000
+eta   = 1.40858
+alpha = 0.29083
+beta  = 1.95260
+citation = "Brandenburg, Caldeweyher, Grimme, Phys. Chem. Chem. Phys. 18, 15519 (2016), ESI Table S1"
+doi = "10.1039/c6cp01697a"
+source = """
+SOURCE CONFLICT, resolved in favour of the paper (maintainer decision 2026-07-10).
+
+Grimme's gcp program disagrees with the paper it implements. gcp.f90
+case ('hse3c','hse3c/msvp') sets (sigma,eta,alpha,beta) =
+(1.00000, 1.32378, 0.28314, 1.94527) -- eta differs from Table S1 in the 2nd
+decimal. This value is identical in classic gcp v2.02 (Nov 2016), in Holger
+Kruse's fork, and in every commit of the grimme-lab/gcp rework since its first
+(6f6ccbe7, 2020-11-09). It is not a documented refit.
+
+Arbitration is possible because the ESI publishes a numerical example. ESI
+section B / Table S2 gives, for gas-phase benzene at the geometry in the
+accompanying CRYSTAL14 input, E_gCP = 0.0148400663 a.u. Evaluating that geometry
+against the [elements.*] tables in this file with the damped form (4, 6):
+
+    Table S1  (eta=1.40858)   0.0148400665 a.u.   (+2e-10 Ha)
+    gcp.f90   (eta=1.32378)   0.0147289535 a.u.   (-1.11e-4 Ha, -0.070 kcal/mol)
+    pbeh-3c   (eta=1.32492)   0.0152811330 a.u.   (+4.41e-4 Ha, +0.277 kcal/mol)
+
+Only Table S1 reproduces the authors' own published number, so those are the
+constants HSE-3c was defined and benchmarked with. This also confirms the
+[elements.*] tables here are the ones the authors used, since the paper's value
+falls out of them exactly.
+
+Consequences: vibe-qc's hse-3c matches the published method and CRYSTAL (which
+has a self-contained internal gCP and produced the ESI's benzene number). It
+differs from any code calling Grimme's gcp binary (ORCA, the conda 'gcp'
+package) by ~0.07 kcal/mol of gCP on benzene. The discrepancy is known upstream
+and unresolved: grimme-lab/gcp issue #17, "HSE-3c parameterization differs from
+reference", where a maintainer states the intent is to move the code to the
+paper's values.
+
+Pinned by tests/test_composite_integration.py::test_hse_3c_gcp_matches_published_benzene.
+"""
+
+# n_virt = xva = BASmsvp - 0.5*nel (nel = Z for neutral all-electron).
+# e_mis from HFmsvp (Z<=18) / HFdzp (Z>=19, Kr=0).
+
+[elements.H]
+e_mis  = 0.0
+n_virt = 1.5
+
+[elements.He]
+e_mis  = 0.0
+n_virt = 1.0
+
+[elements.Li]
+e_mis  = 0.10775
+n_virt = 7.5
+
+[elements.Be]
+e_mis  = 0.02
+n_virt = 7.0
+
+[elements.B]
+e_mis  = 0.02685
+n_virt = 12.5
+
+[elements.C]
+e_mis  = 0.02174
+n_virt = 12.0
+
+[elements.N]
+e_mis  = 0.02725
+n_virt = 11.5
+
+[elements.O]
+e_mis  = 0.03993
+n_virt = 11.0
+
+[elements.F]
+e_mis  = 0.03
+n_virt = 10.5
+
+[elements.Ne]
+e_mis  = 0.0
+n_virt = 10.0
+
+[elements.Na]
+e_mis  = 0.15329
+n_virt = 9.5
+
+[elements.Mg]
+e_mis  = 0.1623
+n_virt = 12.0
+
+[elements.Al]
+e_mis  = 0.1027
+n_virt = 11.5
+
+[elements.Si]
+e_mis  = 0.07314
+n_virt = 11.0
+
+[elements.P]
+e_mis  = 0.05622
+n_virt = 10.5
+
+[elements.S]
+e_mis  = 0.06133
+n_virt = 10.0
+
+[elements.Cl]
+e_mis  = 0.06504
+n_virt = 9.5
+
+[elements.Ar]
+e_mis  = 0.0
+n_virt = 9.0
+
+[elements.K]
+e_mis  = 0.145642
+n_virt = 14.5
+
+[elements.Ca]
+e_mis  = 0.212865
+n_virt = 14.0
+
+[elements.Sc]
+e_mis  = 0.232821
+n_virt = 20.5
+
+[elements.Ti]
+e_mis  = 0.204796
+n_virt = 20.0
+
+[elements.V]
+e_mis  = 0.182933
+n_virt = 19.5
+
+[elements.Cr]
+e_mis  = 0.169554
+n_virt = 19.0
+
+[elements.Mn]
+e_mis  = 0.164701
+n_virt = 18.5
+
+[elements.Fe]
+e_mis  = 0.160112
+n_virt = 18.0
+
+[elements.Co]
+e_mis  = 0.157723
+n_virt = 17.5
+
+[elements.Ni]
+e_mis  = 0.158037
+n_virt = 17.0
+
+[elements.Cu]
+e_mis  = 0.179104
+n_virt = 16.5
+
+[elements.Zn]
+e_mis  = 0.169782
+n_virt = 16.0
+
+[elements.Ga]
+e_mis  = 0.159396
+n_virt = 16.5
+
+[elements.Ge]
+e_mis  = 0.140611
+n_virt = 16.0
+
+[elements.As]
+e_mis  = 0.129645
+n_virt = 15.5
+
+[elements.Se]
+e_mis  = 0.132664
+n_virt = 15.0
+
+[elements.Br]
+e_mis  = 0.132121
+n_virt = 14.5
+
+[elements.Kr]
+e_mis  = 0.0
+n_virt = 14.0

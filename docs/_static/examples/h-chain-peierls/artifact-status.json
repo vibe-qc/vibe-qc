@@ -1,0 +1,10 @@
+{
+  "outputs": [
+    "output-h-chain-peierls.out"
+  ],
+  "qvf_expected": false,
+  "qvf_files": [],
+  "returncode": 0,
+  "script": "examples/periodic/input-h-chain-peierls.py",
+  "slug": "h-chain-peierls"
+}

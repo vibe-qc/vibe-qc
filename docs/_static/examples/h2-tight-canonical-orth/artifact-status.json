@@ -1,0 +1,20 @@
+{
+  "outputs": [
+    "output-h2-tight-canonical-orth.bibtex",
+    "output-h2-tight-canonical-orth.molden",
+    "output-h2-tight-canonical-orth.out",
+    "output-h2-tight-canonical-orth.population.json",
+    "output-h2-tight-canonical-orth.population.txt",
+    "output-h2-tight-canonical-orth.qvf",
+    "output-h2-tight-canonical-orth.references",
+    "output-h2-tight-canonical-orth.system",
+    "output-h2-tight-canonical-orth.xyz"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-h2-tight-canonical-orth.qvf"
+  ],
+  "returncode": 0,
+  "script": "examples/molecular/input-h2-tight-canonical-orth.py",
+  "slug": "h2-tight-canonical-orth"
+}

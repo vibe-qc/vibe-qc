@@ -1,0 +1,21 @@
+{
+  "outputs": [
+    "output-h2o-dimer-opt.bibtex",
+    "output-h2o-dimer-opt.molden",
+    "output-h2o-dimer-opt.out",
+    "output-h2o-dimer-opt.population.json",
+    "output-h2o-dimer-opt.population.txt",
+    "output-h2o-dimer-opt.qvf",
+    "output-h2o-dimer-opt.references",
+    "output-h2o-dimer-opt.system",
+    "output-h2o-dimer-opt.traj",
+    "output-h2o-dimer-opt.xyz"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-h2o-dimer-opt.qvf"
+  ],
+  "returncode": 0,
+  "script": "examples/molecular/input-h2o-dimer-opt.py",
+  "slug": "h2o-dimer-opt"
+}

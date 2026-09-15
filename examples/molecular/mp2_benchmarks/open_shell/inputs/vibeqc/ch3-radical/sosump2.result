@@ -1,0 +1,1 @@
+{'system': 'ch3-radical', 'variant': 'sosump2', 'e_hf': -39.57747410825307, 'e_correlation': -0.18351886942767523, 'e_total': -39.76099297768074, 'e_aa': -0.023674204013758977, 'e_bb': -0.00836118580566122, 'e_ab': -0.1411683610982117, 's_squared_uhf': 0.7617109289296544, 'n_scf_iter': 107, 'scf_converged': True}

@@ -1,0 +1,5 @@
+Γ:  [-2.6660253  -1.83354045]
+X:  [-2.65423566 -1.96377666]
+E_F (HOMO): -2.654236 Ha
+DOS integrated: 2.0000 (should be ≈ 2)
+Wrote <vibe-qc-checkout>/examples/periodic/output-h-chain-bands.png

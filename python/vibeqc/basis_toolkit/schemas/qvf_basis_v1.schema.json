@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vibe-qc.org/spec/qvf-basis/1/schema.json",
+  "title": "QVF-Basis v1.0 — Basis Set Container",
+  "description": "Canonical structured JSON format for Gaussian-type orbital basis sets, effective core potentials, auxiliary bases, and their metadata.",
+  "type": "object",
+  "required": ["schema_version", "name", "role", "elements"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semantic version of the QVF-Basis schema this file conforms to.",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "name": {
+      "type": "string",
+      "description": "Short identifier for the basis set, e.g. 'cc-pVDZ', 'def2-SVP'.",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable one-liner describing the basis set.",
+      "default": ""
+    },
+    "role": {
+      "type": "string",
+      "enum": ["orbital", "auxiliary", "fitting", "ecp"],
+      "description": "Intended use of this basis set."
+    },
+    "basis_family": {
+      "type": "string",
+      "description": "Optional family grouping, e.g. 'dunning', 'ahlrichs', 'pople'."
+    },
+    "elements": {
+      "type": "object",
+      "description": "Per-element basis definitions, keyed by element symbol.",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(H|He|Li|Be|B|C|N|O|F|Ne|Na|Mg|Al|Si|P|S|Cl|Ar|K|Ca|Sc|Ti|V|Cr|Mn|Fe|Co|Ni|Cu|Zn|Ga|Ge|As|Se|Br|Kr|Rb|Sr|Y|Zr|Nb|Mo|Tc|Ru|Rh|Pd|Ag|Cd|In|Sn|Sb|Te|I|Xe|Cs|Ba|La|Ce|Pr|Nd|Pm|Sm|Eu|Gd|Tb|Dy|Ho|Er|Tm|Yb|Lu|Hf|Ta|W|Re|Os|Ir|Pt|Au|Hg|Tl|Pb|Bi|Po|At|Rn|Fr|Ra|Ac|Th|Pa|U|Np|Pu|Am|Cm|Bk|Cf|Es|Fm|Md|No|Lr|Rf|Db|Sg|Bh|Hs|Mt|Ds|Rg|Cn|Nh|Fl|Mc|Lv|Ts|Og)$": {
+          "$ref": "#/$defs/element_basis"
+        }
+      }
+    },
+    "ecps": {
+      "type": "object",
+      "description": "Per-element effective core potential definitions.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(H|He|Li|Be|B|C|N|O|F|Ne|Na|Mg|Al|Si|P|S|Cl|Ar|K|Ca|Sc|Ti|V|Cr|Mn|Fe|Co|Ni|Cu|Zn|Ga|Ge|As|Se|Br|Kr|Rb|Sr|Y|Zr|Nb|Mo|Tc|Ru|Rh|Pd|Ag|Cd|In|Sn|Sb|Te|I|Xe|Cs|Ba|La|Ce|Pr|Nd|Pm|Sm|Eu|Gd|Tb|Dy|Ho|Er|Tm|Yb|Lu|Hf|Ta|W|Re|Os|Ir|Pt|Au|Hg|Tl|Pb|Bi|Po|At|Rn|Fr|Ra|Ac|Th|Pa|U|Np|Pu|Am|Cm|Bk|Cf|Es|Fm|Md|No|Lr|Rf|Db|Sg|Bh|Hs|Mt|Ds|Rg|Cn|Nh|Fl|Mc|Lv|Ts|Og)$": {
+          "$ref": "#/$defs/ecp_entry"
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "description": "Bibliographic references for this basis set.",
+      "items": { "$ref": "#/$defs/reference" }
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance",
+      "description": "Origin and retrieval metadata."
+    }
+  },
+  "$defs": {
+    "element_basis": {
+      "type": "object",
+      "required": ["element", "shells"],
+      "additionalProperties": false,
+      "properties": {
+        "element": { "type": "string", "description": "Element symbol." },
+        "shells": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/shell" }
+        },
+        "ecp_id": {
+          "type": "string",
+          "description": "Optional key into the top-level ecps map."
+        }
+      }
+    },
+    "shell": {
+      "type": "object",
+      "required": ["angular_momentum", "harmonic_type", "primitives"],
+      "additionalProperties": false,
+      "properties": {
+        "angular_momentum": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": { "type": "integer", "minimum": 0, "maximum": 12 },
+          "description": "Angular momentum quantum numbers. [0]=S, [1]=P, [0,1]=SP."
+        },
+        "harmonic_type": {
+          "type": "string",
+          "enum": ["spherical", "cartesian"]
+        },
+        "primitives": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/primitive" },
+          "description": "Primitive Gaussians, exponent descending."
+        }
+      }
+    },
+    "primitive": {
+      "type": "object",
+      "required": ["exponent", "coefficient"],
+      "additionalProperties": false,
+      "properties": {
+        "exponent": { "type": "number", "exclusiveMinimum": 0 },
+        "coefficient": { "type": "number" }
+      }
+    },
+    "ecp_entry": {
+      "type": "object",
+      "required": ["element", "n_core_electrons", "angular_momentum_max", "potentials"],
+      "additionalProperties": false,
+      "properties": {
+        "element": { "type": "string" },
+        "n_core_electrons": { "type": "integer", "minimum": 1 },
+        "angular_momentum_max": { "type": "integer", "minimum": 0 },
+        "potentials": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ecp_potential" }
+        }
+      }
+    },
+    "ecp_potential": {
+      "type": "object",
+      "required": ["angular_momentum", "terms"],
+      "additionalProperties": false,
+      "properties": {
+        "angular_momentum": { "type": "integer", "minimum": 0 },
+        "terms": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ecp_term" }
+        }
+      }
+    },
+    "ecp_term": {
+      "type": "object",
+      "required": ["coefficient", "exponent", "power"],
+      "additionalProperties": false,
+      "properties": {
+        "coefficient": { "type": "number" },
+        "exponent": { "type": "number", "minimum": 0 },
+        "power": { "type": "integer", "enum": [0, 1, 2] }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "required": ["key"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "doi": { "type": "string" },
+        "bibtex": { "type": "string" },
+        "url": { "type": "string", "format": "uri" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["origin"],
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string",
+          "enum": ["bse", "manual", "crystal", "file", "generated"]
+        },
+        "retrieval_date": { "type": "string", "format": "date" },
+        "source_doi": { "type": "string" },
+        "source_version": { "type": "string" },
+        "source_checksum": { "type": "string" }
+      }
+    }
+  }
+}

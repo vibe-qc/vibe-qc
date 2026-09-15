@@ -1,0 +1,58 @@
+{
+  "name": "def2-SVP-RI",
+  "description": "def2-SVP auxiliary RI-J fitting basis",
+  "basis_set_family": "ahlrichs",
+  "basis_set_role": "auxiliary",
+  "version": "1",
+  "elements": {
+    "6": {
+      "element_number": 6,
+      "element_symbol": "C",
+      "electron_shells": [
+        {
+          "angular_momentum": [0],
+          "function_type": "gto",
+          "exponents": ["0.214250", "0.642750", "1.928250", "5.784750", "17.354250", "52.062750", "156.188250"],
+          "coefficients": [["0.655571", "0.630176", "0.398801", "0.123390", "0.023694", "0.003124", "0.000478"]]
+        },
+        {
+          "angular_momentum": [1],
+          "function_type": "gto",
+          "exponents": ["0.105810", "0.321400", "0.979250", "2.990200", "9.146900", "27.991700", "85.637800"],
+          "coefficients": [["0.210724", "0.433317", "0.452392", "0.158665", "0.022260", "0.001745", "0.000229"]]
+        },
+        {
+          "angular_momentum": [2],
+          "function_type": "gto",
+          "exponents": ["0.208310", "0.624220", "1.883400", "5.722720", "17.434100", "53.162500"],
+          "coefficients": [["0.066133", "0.193925", "0.421356", "0.490834", "0.017172", "0.000498"]]
+        }
+      ]
+    },
+    "1": {
+      "element_number": 1,
+      "element_symbol": "H",
+      "electron_shells": [
+        {
+          "angular_momentum": [0],
+          "function_type": "gto",
+          "exponents": ["0.190780", "0.594840", "1.854040", "5.778330", "18.009200", "56.136700"],
+          "coefficients": [["0.504393", "0.643143", "0.307166", "0.035396", "0.002501", "0.000289"]]
+        },
+        {
+          "angular_momentum": [1],
+          "function_type": "gto",
+          "exponents": ["0.095650", "0.262495", "0.731170", "2.056540", "5.812230", "16.451100"],
+          "coefficients": [["0.132080", "0.316373", "0.487300", "0.329728", "0.045418", "0.001703"]]
+        }
+      ]
+    }
+  },
+  "references": [
+    {
+      "reference_key": "weigend2006",
+      "reference_description": "F. Weigend, Phys. Chem. Chem. Phys. 8, 1057 (2006)",
+      "reference_doi": "10.1039/b515623h"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{'system': 's22-04-formamide-dimer', 'body': 'monoA', 'variant': 'scsmp2', 'e_hf': -168.99911866496853, 'e_correlation': -0.6399426565630979, 'e_total': -169.63906132153164, 'e_os': -0.4889442790105007, 'e_ss': -0.1596285652514913, 'n_scf_iter': 18, 'scf_converged': True}

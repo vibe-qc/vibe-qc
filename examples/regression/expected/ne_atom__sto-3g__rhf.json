@@ -1,0 +1,10 @@
+{
+  "system_id": "ne_atom",
+  "basis": "sto-3g",
+  "method_id": "rhf",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-6,
+  "tolerance_rationale": "Ne atom / STO-3G / RHF — atomic, no symmetry-breaking; every QC code agrees to better than 1 µHa. Looser than 1e-6 would mean basis-set library parsing differences between codes."
+}

@@ -1,0 +1,10 @@
+{
+  "system_id": "h2co",
+  "basis": "sto-3g",
+  "method_id": "rhf",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-6,
+  "tolerance_rationale": "H2CO / STO-3G / RHF — mixed σ/π bonding test, sub-µHa cross-code agreement expected."
+}

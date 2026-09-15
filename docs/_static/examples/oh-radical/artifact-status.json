@@ -1,0 +1,20 @@
+{
+  "outputs": [
+    "output-oh-radical.bibtex",
+    "output-oh-radical.molden",
+    "output-oh-radical.out",
+    "output-oh-radical.population.json",
+    "output-oh-radical.population.txt",
+    "output-oh-radical.qvf",
+    "output-oh-radical.references",
+    "output-oh-radical.system",
+    "output-oh-radical.xyz"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-oh-radical.qvf"
+  ],
+  "returncode": 0,
+  "script": "examples/molecular/input-oh-radical.py",
+  "slug": "oh-radical"
+}

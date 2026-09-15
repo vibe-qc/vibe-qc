@@ -1,0 +1,45 @@
+{
+  "provenance": {
+    "external_program": "gpaw",
+    "code_version": "25.7.0",
+    "boundary": "out-of-process subprocess (CLAUDE.md \u00a710)",
+    "functional": "r2scan",
+    "cutoffs_ev": [
+      800.0
+    ],
+    "kmesh": [
+      6,
+      6,
+      6
+    ],
+    "atom_box_ang": 12.0,
+    "reference": "VASP@900eV r2SCAN (references-cohesive/r2scan.dat)"
+  },
+  "results": [
+    {
+      "system_id": "kbr_rocksalt",
+      "pw_limit_kjmol": 593.6168110690065,
+      "vasp900_kjmol": 620.8,
+      "delta_vs_vasp_kjmol": -27.183188930993424,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.7838677131328824,
+          "e_atoms_ha": -0.5577710105276963,
+          "atomization_kjmol": 593.6168110690065,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "K": -0.18844249192599838,
+        "Br": -0.36932851860169785
+      },
+      "atom_valence": {
+        "K": 9,
+        "Br": 7
+      }
+    }
+  ]
+}

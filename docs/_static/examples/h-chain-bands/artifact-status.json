@@ -1,0 +1,10 @@
+{
+  "outputs": [
+    "output-h-chain-bands.png"
+  ],
+  "qvf_expected": false,
+  "qvf_files": [],
+  "returncode": 0,
+  "script": "examples/periodic/input-h-chain-bands.py",
+  "slug": "h-chain-bands"
+}

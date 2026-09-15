@@ -1,0 +1,24 @@
+{
+  "outputs": [
+    "output-h2o-density.cube",
+    "output-h2o-mo-homo.cube",
+    "output-h2o-mo-lumo.cube",
+    "output-h2o-mos.cube",
+    "output-h2o-cube.bibtex",
+    "output-h2o-cube.molden",
+    "output-h2o-cube.out",
+    "output-h2o-cube.population.json",
+    "output-h2o-cube.population.txt",
+    "output-h2o-cube.qvf",
+    "output-h2o-cube.references",
+    "output-h2o-cube.system",
+    "output-h2o-cube.xyz"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-h2o-cube.qvf"
+  ],
+  "returncode": 0,
+  "script": "examples/molecular/input-h2o-cube.py",
+  "slug": "h2o-cube"
+}

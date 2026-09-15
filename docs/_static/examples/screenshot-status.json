@@ -1,0 +1,117 @@
+[
+  {
+    "errors": [],
+    "qvf": "h2-tight-canonical-orth/output-h2-tight-canonical-orth.qvf",
+    "screenshots": [
+      "output-h2-tight-canonical-orth-structure.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "h2o-cube/output-h2o-cube.qvf",
+    "screenshots": [
+      "output-h2o-cube-structure.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "h2o-dft/output-h2o-dft.qvf",
+    "screenshots": [
+      "output-h2o-dft-structure.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "h2o-dimer-opt/output-h2o-dimer-opt.qvf",
+    "screenshots": [
+      "output-h2o-dimer-opt-structure.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "h2o-opt/output-h2o-opt.qvf",
+    "screenshots": [
+      "output-h2o-opt-structure.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "h2o-rhf/output-h2o-rhf.qvf",
+    "screenshots": [
+      "output-h2o-rhf-structure.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "h2o-trimer-opt/output-h2o-trimer-opt.qvf",
+    "screenshots": [
+      "output-h2o-trimer-opt-structure.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "h2o-vibrations/output-h2o-vibrations.qvf",
+    "screenshots": [
+      "output-h2o-vibrations-structure.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "nh3-umbrella-neb/output-nh3-umbrella-neb.qvf",
+    "screenshots": [
+      "output-nh3-umbrella-neb-structure.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "oh-radical/output-oh-radical.qvf",
+    "screenshots": [
+      "output-oh-radical-structure.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "chi-ccm-b-qvf/output-chi-ccm-b-hchain-ri-n4-wannier.qvf",
+    "screenshots": [
+      "hchain-structure.png",
+      "hchain-structure-replicated.png",
+      "hchain-density.png",
+      "hchain-density-replicated.png",
+      "hchain-homo.png",
+      "hchain-lumo.png",
+      "hchain-wannier-overlay.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "chi-ccm-b-qvf/output-chi-ccm-b-h2pair-3d-ri-n2-wannier.qvf",
+    "screenshots": [
+      "h2pair-structure.png",
+      "h2pair-structure-replicated.png",
+      "h2pair-density.png",
+      "h2pair-density-replicated.png",
+      "h2pair-homo.png",
+      "h2pair-lumo.png",
+      "h2pair-wannier-overlay.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "mgo-route-gdf-bipole/output-mgo-rhf-sto3g-gdf-k222.qvf",
+    "screenshots": [
+      "captures/mgo-gdf-structure.png",
+      "captures/mgo-gdf-density.png"
+    ],
+    "status": "complete-with-bipole-density-warning"
+  },
+  {
+    "errors": [
+      "density and DOS sections absent: optional BIPOLE density-grid/DOS artifact generation warned but QVF validation passed"
+    ],
+    "qvf": "mgo-route-gdf-bipole/output-mgo-rhf-sto3g-bipole-k222.qvf",
+    "screenshots": [
+      "captures/mgo-bipole-structure.png"
+    ],
+    "status": "complete-with-bipole-density-warning"
+  }
+]

@@ -1,0 +1,75 @@
+# vibe-qc gCP parameter file template (kind = "gcp_parameters").
+#
+# Copy this file to <basis-name>.toml, fill in the metadata block,
+# transcribe (σ, α, β) from the originating paper's Table 2, then
+# populate one [elements.<symbol>] block per element from the per-
+# publication Table 3 / Supporting Information / mctc-gcp source.
+#
+# The file MUST live under python/vibeqc/data_library/gcp/<name>.toml
+# where <name> matches the metadata.name field below.
+
+[metadata]
+# Lowercase canonical identifier. The Python loader resolves on
+# this; it must match the file stem.
+name = "BASIS-NAME"
+
+# Schema discriminator. Don't change for gCP parameter files.
+kind = "gcp_parameters"
+
+# Single-line bibliographic citation. Multiple sources concatenate
+# with ' + ' (used when a refined parameter set lands in a later
+# composite-method paper).
+citation = "Author et al., Journal Vol, Page (Year)"
+
+# DOI of the originating publication. Empty string if no DOI.
+doi = "10.xxx/xxxxx"
+
+# License / redistribution posture. Published parameter tables are
+# numerical scientific results — the standard wording is below; use
+# the full SPDX license string if the paper itself is open-access
+# under a specific license.
+license = "Open data: numerical results from a publication; redistribution is standard scientific practice"
+
+# Which table / SI page / source-file the numbers below came from.
+# Be specific — this is what makes the data audit-able.
+source = "Table 2 + Table 3 of <citation>; cross-checked against mctc-gcp commit <SHA>"
+
+# Status of the per-element coverage in [elements.*] below.
+#   "complete" — every element in `coverage` is populated.
+#   "partial"  — some elements present, others raise GCPDataMissing.
+#   "pending"  — metadata only; no [elements.*] blocks yet. Loader
+#                raises GCPDataMissing for every Z when this is set.
+status = "pending"
+
+# Human-readable element-coverage statement. Examples:
+#   "H–F" (first-row organic chemistry only)
+#   "H–Ar" (extends to Si, P, S, Cl)
+#   "H–Xe" (up through xenon, the BSE-canonical coverage)
+coverage = "(not yet populated)"
+
+# Free-form context: which composite recipe consumes this, known
+# caveats (e.g. "sigma=alpha=beta=0 by design for r²SCAN-3c"), etc.
+note = ""
+
+# ----------------------------------------------------------------
+# Body (kind-specific). See _schema.toml § "gcp_parameters" for
+# the shape definition.
+# ----------------------------------------------------------------
+
+[parameters]
+sigma = 0.0
+alpha = 0.0
+beta  = 0.0
+
+# Per-element blocks. Atomic symbols, case-insensitive.
+# Example (uncomment and populate):
+#
+# [elements.H]
+# e_mis  = 0.000539
+# n_virt = 4.0
+# zeta   = 1.0000
+#
+# [elements.C]
+# e_mis  = 0.027326
+# n_virt = 9.0
+# zeta   = 5.6727

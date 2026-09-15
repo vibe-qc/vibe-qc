@@ -1,0 +1,794 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import {
+  distributionMatrix,
+  publicDownloadUrl,
+  publicOciImage,
+} from '../data/distributions.mjs';
+
+const oci = distributionMatrix.oci;
+const ociImages = oci.images.map((image) => ({
+  ...image,
+  published: publicOciImage(image),
+}));
+const publishedImageCount = ociImages.filter((image) => image.published).length;
+const desktopArtifacts = distributionMatrix.desktop.map((artifact) => ({
+  ...artifact,
+  publicUrl: publicDownloadUrl(artifact),
+}));
+const hasPublishedDownload =
+  publishedImageCount > 0 || desktopArtifacts.some((artifact) => artifact.publicUrl);
+const pageStatus = hasPublishedDownload ? 'Official downloads' : 'Distribution preview';
+const pageStatusDetail = hasPublishedDownload
+  ? 'Only independently qualified artifacts have active references.'
+  : 'No artifact is published yet.';
+---
+
+<Base
+  title="Downloads — vibe-qc"
+  description="The official vibe-qc distribution matrix: explicit AMD64 and ARM64 CPU ecosystem images with offline learning material, plus standalone vibe-view packages."
+>
+  <Nav />
+
+  <main class="downloads">
+    <header class="download-hero">
+      <div class="wrap">
+        <span class="eyebrow">official distribution matrix</span>
+        <div class="hero-grid">
+          <div>
+            <h1>Choose a platform.<br /><span>See what is ready.</span></h1>
+            <p>
+              Planned Linux images combine independently released tools from the split
+              repositories. Historical viewer candidates remain below for traceability;
+              new desktop packages belong to vibe-view releases.
+            </p>
+          </div>
+          <aside
+            class:list={['release-note', { ready: hasPublishedDownload }]}
+            aria-label="Distribution release status"
+          >
+            <span class="status-dot" aria-hidden="true"></span>
+            <div>
+              <strong>{pageStatus}</strong>
+              <span>{pageStatusDetail}</span>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </header>
+
+    <section class="wrap distribution-section" aria-labelledby="container-heading">
+      <div class="section-heading">
+        <div>
+          <span class="section-kicker">complete CPU suite</span>
+          <h2 id="container-heading">Two images. Explicit architecture.</h2>
+        </div>
+        <span class:list={['availability', { ready: publishedImageCount === ociImages.length }]}>
+          <span aria-hidden="true"></span>
+          {publishedImageCount > 0
+            ? `${publishedImageCount} of ${ociImages.length} available`
+            : oci.statusLabel}
+        </span>
+      </div>
+
+      <div class="container-stack">
+        {ociImages.map((image) => {
+          const imageReference =
+            image.published?.reference ?? image.imageReferencePlaceholder;
+          return (
+            <article class="container-card">
+              <div class="container-main">
+                <div class="platforms">
+                  <span class="platform-chip">
+                    <b>{image.label}</b>
+                    <code>{image.ociPlatform}</code>
+                  </span>
+                  <span class:list={['candidate-badge', { ready: Boolean(image.published) }]}>
+                    {image.published ? 'Available' : image.statusLabel}
+                  </span>
+                </div>
+
+                <h3>vibe-qc CPU ecosystem · {image.architecture}</h3>
+                <p class="container-lede">
+                  An explicit native image containing the complete tool suite and
+                  version-matched offline learning material. Choose the tag matching
+                  the Linux host; there is no combined manifest tag.
+                </p>
+
+                <div class="coordinate">
+                  <span>Architecture-qualified reference</span>
+                  <code>{imageReference}</code>
+                  {!image.published && (
+                    <small>Placeholder only; no qualified registry image exists yet.</small>
+                  )}
+                </div>
+                <div class="coordinate digest">
+                  <span>Final registry digest</span>
+                  <code>{image.published?.registryDigest ?? 'Pending registry publication'}</code>
+                  {!image.published && (
+                    <small>Local Docker image IDs are not release digests.</small>
+                  )}
+                </div>
+              </div>
+
+              <div class="terminal-panel" aria-label={`Future Docker workflow for ${image.label}`}>
+                <div class="terminal-top">
+                  <span>docker · {image.ociPlatform}</span>
+                  <span class="preview-label">
+                    {image.published ? 'qualified' : 'preview syntax'}
+                  </span>
+                </div>
+                <pre><code><span class="prompt">$</span> IMAGE="{imageReference}"
+<span class="prompt">$</span> docker pull "$IMAGE"
+<span class="prompt">$</span> docker run --rm "$IMAGE" info
+<span class="prompt">$</span> docker run --rm \
+    -v "$PWD:/calculations" \
+    "$IMAGE" vibe-qc run /calculations/job.qvf</code></pre>
+                <p>
+                  Use only on <code>{image.ociPlatform}</code>. The tag and registry
+                  digest are published together after this architecture passes its
+                  independent release gates.
+                </p>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      <article class="learning-card">
+        <div>
+          <span class="section-kicker">inside both images</span>
+          <h3>Tools, docs, course, and examples travel together.</h3>
+          <p>
+              Each planned image pins every component's independent source revision and
+              includes a read-only offline learning bundle. Discover material in place, then copy docs or
+            runnable examples into a writable mounted directory.
+          </p>
+          <ul class="suite-list" aria-label="Included tools and learning material">
+            {oci.includes.map((item) => <li>{item}</li>)}
+          </ul>
+          <div class="doc-links" aria-label="Container documentation">
+            {oci.docs.map((doc) => <a href={doc.href}>{doc.label} <span aria-hidden="true">↗</span></a>)}
+          </div>
+        </div>
+        <div class="terminal-panel" aria-label="Offline learning-material workflow">
+          <div class="terminal-top">
+            <span>discover and copy</span>
+            <span class="preview-label">offline</span>
+          </div>
+          <pre><code>{oci.discoveryCommands.map((command) => `$ docker run --rm "$IMAGE" ${command}`).join('\n')}
+
+{oci.copyCommands.map((command) => `$ docker run --rm \\\n    -v "$PWD:/calculations" \\\n    "$IMAGE" ${command}`).join('\n\n')}</code></pre>
+          <p>
+            The bundled trees are read-only. Copy them before running examples that
+            write output beside their input files.
+          </p>
+        </div>
+      </article>
+
+      {publishedImageCount < ociImages.length && (
+        <div class="gate-panel">
+          <div>
+            <span class="gate-label">Why each image is gated</span>
+            <p>
+              Functional local builds are not a public release. AMD64 and ARM64 each
+              require their own native performance report, source/license companion,
+              registry coordinate, and final registry digest.
+            </p>
+          </div>
+          <div class="architecture-gates">
+            {ociImages.filter((image) => !image.published).map((image) => (
+              <section aria-labelledby={`${image.id}-gates`}>
+                <h3 id={`${image.id}-gates`}>{image.label}</h3>
+                <ol>
+                  {image.gates.map((gate) => <li>{gate}</li>)}
+                </ol>
+              </section>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+
+    <section class="desktop-band" aria-labelledby="desktop-heading">
+      <div class="wrap">
+        <div class="section-heading desktop-heading">
+          <div>
+            <span class="section-kicker">standalone viewer</span>
+            <h2 id="desktop-heading">vibe-view for the desktop.</h2>
+          </div>
+          <p>
+            These 2.9.0 entries are historical pre-split candidates, not current
+            companion releases. Check the
+            <a href="https://github.com/vibe-qc/vibe-view/releases">vibe-view release page</a>
+            for validated packages. Desktop releases are owned by the separate viewer repository.
+          </p>
+        </div>
+
+        <div class="desktop-grid">
+          {desktopArtifacts.map((artifact) => {
+            const downloadUrl = artifact.publicUrl;
+            return (
+              <article class="artifact-card">
+                <div class="artifact-top">
+                  <div>
+                    <span class="os-label">{artifact.platform}</span>
+                    <h3>{artifact.product}</h3>
+                  </div>
+                  <span class:list={['candidate-badge', { ready: Boolean(downloadUrl) }]}>
+                    {downloadUrl ? 'Available' : artifact.statusLabel}
+                  </span>
+                </div>
+
+                <dl class="artifact-facts">
+                  <div>
+                    <dt>Architecture</dt>
+                    <dd>{artifact.architecture}</dd>
+                  </div>
+                  <div>
+                    <dt>Package</dt>
+                    <dd><code>{artifact.filename}</code></dd>
+                  </div>
+                  <div class="checksum">
+                    <dt>{downloadUrl ? 'SHA-256' : 'Candidate SHA-256'}</dt>
+                    <dd><code>{artifact.sha256}</code></dd>
+                  </div>
+                </dl>
+
+                <div class="qualification">
+                  <strong>Release status</strong>
+                  <p>{artifact.qualification}</p>
+                </div>
+
+                {downloadUrl ? (
+                  <a class="download-action ready" href={downloadUrl}>
+                    Download {artifact.platform} <span aria-hidden="true">↓</span>
+                  </a>
+                ) : (
+                  <span class="download-action">
+                    Historical candidate
+                  </span>
+                )}
+              </article>
+            );
+          })}
+        </div>
+
+        <div class="desktop-docs">
+          <span>Need another route?</span>
+          <p>
+            Use the source install today, or read the desktop guide for runtime and
+            platform details.
+          </p>
+          <div>
+            {distributionMatrix.desktopDocs.map((doc) => (
+              <a href={doc.href}>{doc.label} <span aria-hidden="true">→</span></a>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap activation-section" aria-labelledby="activation-heading">
+      <span class="eyebrow">release integrity</span>
+      <h2 id="activation-heading">A download button is the last step.</h2>
+      <p class="activation-lede">
+        Candidate checksums are published for traceability, not as a claim that the
+        files are release-ready. The final qualified artifacts may have different
+        checksums.
+      </p>
+      <div class="activation-grid">
+        {distributionMatrix.desktop.map((artifact, index) => (
+          <div>
+            <span>{String(index + 1).padStart(2, '0')}</span>
+            <h3>{artifact.platform}</h3>
+            <p>{artifact.activation}</p>
+          </div>
+        ))}
+        {distributionMatrix.oci.images.map((image, index) => (
+          <div>
+            <span>{String(index + 3).padStart(2, '0')}</span>
+            <h3>OCI · {image.label}</h3>
+            <p>
+              Complete this architecture's native performance gate, publish its
+              source/license companion and explicit tag, then record the final
+              registry digest.
+            </p>
+          </div>
+        ))}
+      </div>
+      <p class="reviewed">Release data last reviewed {distributionMatrix.lastReviewed}.</p>
+    </section>
+  </main>
+
+  <Footer />
+</Base>
+
+<style>
+  .downloads { overflow: hidden; }
+
+  .download-hero {
+    border-bottom: 1px solid var(--line);
+    background:
+      radial-gradient(circle at 83% 18%, var(--halo), transparent 29%),
+      linear-gradient(180deg, color-mix(in srgb, var(--surface) 42%, transparent), transparent);
+  }
+  .download-hero .wrap { padding-top: 82px; padding-bottom: 76px; }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(260px, .65fr);
+    gap: 68px;
+    align-items: end;
+    margin-top: 18px;
+  }
+  .download-hero h1 {
+    font-size: clamp(42px, 6vw, 72px);
+    line-height: 1.02;
+    letter-spacing: -0.045em;
+    font-weight: 800;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .download-hero h1 span { color: var(--phase-pos); }
+  .download-hero p {
+    color: var(--slate);
+    font-size: clamp(17px, 2vw, 20px);
+    max-width: 58ch;
+    margin: 24px 0 0;
+  }
+  .release-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 13px;
+    border: 1px solid color-mix(in srgb, var(--phase-neg) 32%, var(--line));
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .release-note .status-dot {
+    width: 9px;
+    height: 9px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: var(--phase-neg);
+    margin-top: 8px;
+  }
+  .release-note.ready .status-dot { background: var(--phase-pos); }
+  .release-note strong { display: block; font-size: 15px; }
+  .release-note span:last-child {
+    display: block;
+    color: var(--slate);
+    font-size: 13.5px;
+    margin-top: 2px;
+  }
+
+  .distribution-section { padding-top: 86px; padding-bottom: 92px; }
+  .section-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 32px;
+    margin-bottom: 30px;
+  }
+  .section-kicker {
+    display: block;
+    color: var(--phase-pos);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .section-heading h2 {
+    font-size: clamp(29px, 4vw, 42px);
+    line-height: 1.1;
+    letter-spacing: -.035em;
+    margin: 0;
+  }
+  .availability {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    flex: 0 0 auto;
+    color: var(--phase-neg);
+    border: 1px solid color-mix(in srgb, var(--phase-neg) 35%, var(--line));
+    border-radius: 999px;
+    background: var(--surface);
+    padding: 7px 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .availability > span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .availability.ready { color: var(--phase-pos); }
+
+  .container-stack { display: grid; gap: 22px; }
+  .container-card {
+    display: grid;
+    grid-template-columns: 1.08fr .92fr;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .container-main { padding: 36px 38px 38px; }
+  .platforms { display: flex; flex-wrap: wrap; gap: 9px; }
+  .platform-chip {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 1px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--surface-2);
+    padding: 8px 11px;
+  }
+  .platform-chip b { font-size: 12.5px; font-weight: 650; }
+  .platform-chip code { color: var(--slate); font-family: var(--mono); font-size: 10.5px; }
+  .container-main h3 {
+    font-size: 26px;
+    letter-spacing: -.025em;
+    margin: 26px 0 0;
+  }
+  .container-lede { color: var(--slate); font-size: 15.5px; max-width: 57ch; margin: 9px 0 0; }
+  .suite-list {
+    list-style: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
+    padding: 0;
+    margin: 24px 0 0;
+  }
+  .suite-list li {
+    position: relative;
+    padding-left: 17px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .suite-list li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: .65em;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--phase-pos);
+  }
+  .coordinate {
+    border-top: 1px solid var(--line);
+    margin-top: 27px;
+    padding-top: 22px;
+  }
+  .coordinate.digest { margin-top: 18px; padding-top: 18px; }
+  .coordinate > span {
+    display: block;
+    color: var(--slate);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .coordinate code {
+    display: block;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+    margin-top: 6px;
+  }
+  .coordinate small {
+    display: block;
+    color: var(--phase-neg);
+    font-size: 12px;
+    margin-top: 5px;
+  }
+  .doc-links { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 22px; }
+  .doc-links a {
+    color: var(--phase-pos);
+    font-size: 13.5px;
+    font-weight: 650;
+  }
+  .doc-links a:hover { color: var(--phase-pos-deep); }
+
+  .terminal-panel {
+    min-width: 0;
+    background: #071412;
+    color: #DDEBE7;
+    padding: 30px 32px;
+    border-left: 1px solid var(--line);
+  }
+  .terminal-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #8AA9A1;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #1C322D;
+  }
+  .terminal-top .preview-label { color: #FF8B77; }
+  .terminal-panel pre {
+    overflow-x: auto;
+    margin: 23px 0 0;
+    color: #E9F5F2;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.75;
+  }
+  .terminal-panel code { font-family: inherit; }
+  .terminal-panel .prompt { color: #4ED1BE; user-select: none; }
+  .terminal-panel p {
+    color: #8EAAA3;
+    font-size: 12.5px;
+    line-height: 1.55;
+    margin: 23px 0 0;
+  }
+  .terminal-panel p code { color: #CDE1DC; font-size: .95em; }
+
+  .learning-card {
+    display: grid;
+    grid-template-columns: 1.08fr .92fr;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: var(--surface);
+    margin-top: 22px;
+    overflow: hidden;
+  }
+  .learning-card > div:first-child { padding: 36px 38px 38px; }
+  .learning-card h3 {
+    font-size: 26px;
+    letter-spacing: -.025em;
+    margin: 0;
+  }
+  .learning-card p {
+    color: var(--slate);
+    font-size: 15px;
+    max-width: 58ch;
+    margin: 10px 0 0;
+  }
+
+  .gate-panel {
+    display: grid;
+    grid-template-columns: .92fr 1.08fr;
+    gap: 40px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface-2);
+    padding: 26px 30px;
+    margin: 22px 18px 0;
+  }
+  .gate-label {
+    color: var(--phase-neg);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 650;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .gate-panel p { color: var(--slate); font-size: 14px; margin: 7px 0 0; }
+  .architecture-gates { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .architecture-gates h3 {
+    font-size: 14px;
+    margin: 0 0 12px;
+  }
+  .gate-panel ol {
+    list-style: none;
+    counter-reset: gate;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+  }
+  .gate-panel li {
+    counter-increment: gate;
+    position: relative;
+    color: var(--slate);
+    font-size: 13.5px;
+    padding-left: 31px;
+  }
+  .gate-panel li::before {
+    content: counter(gate, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    color: var(--phase-pos);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .desktop-band {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-2);
+    padding: 86px 0 92px;
+  }
+  .desktop-heading { align-items: start; }
+  .desktop-heading > p {
+    max-width: 52ch;
+    color: var(--slate);
+    font-size: 14.5px;
+    margin: 3px 0 0;
+  }
+  .desktop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .artifact-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 28px;
+  }
+  .artifact-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+  .os-label {
+    color: var(--phase-pos);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 650;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+  }
+  .artifact-top h3 { font-size: 21px; letter-spacing: -.02em; margin: 5px 0 0; }
+  .candidate-badge {
+    flex: 0 0 auto;
+    color: var(--phase-neg);
+    border: 1px solid color-mix(in srgb, var(--phase-neg) 35%, var(--line));
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--phase-neg) 6%, var(--surface));
+    padding: 5px 8px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 650;
+  }
+  .candidate-badge.ready { color: var(--phase-pos); }
+  .artifact-facts { margin: 25px 0 0; }
+  .artifact-facts > div {
+    display: grid;
+    grid-template-columns: 112px minmax(0, 1fr);
+    gap: 15px;
+    border-top: 1px solid var(--line);
+    padding: 12px 0;
+  }
+  .artifact-facts dt {
+    color: var(--slate-soft);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  .artifact-facts dd { font-size: 13.5px; margin: 0; }
+  .artifact-facts code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    overflow-wrap: anywhere;
+  }
+  .checksum code { color: var(--slate); }
+  .qualification {
+    border-left: 2px solid var(--phase-neg);
+    background: var(--surface-2);
+    padding: 12px 14px;
+    margin-top: 8px;
+  }
+  .qualification strong { font-size: 12.5px; }
+  .qualification p { color: var(--slate); font-size: 13px; margin: 3px 0 0; }
+  .download-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    color: var(--slate-soft);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-2);
+    padding: 11px 15px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 650;
+    margin-top: auto;
+    transform: translateY(16px);
+  }
+  .download-action.ready {
+    color: var(--on-accent);
+    border-color: var(--phase-pos);
+    background: var(--phase-pos);
+  }
+  .download-action.ready:hover { background: var(--phase-pos-deep); }
+  .desktop-docs {
+    display: grid;
+    grid-template-columns: 160px 1fr auto;
+    gap: 24px;
+    align-items: center;
+    border-top: 1px solid var(--line);
+    margin-top: 34px;
+    padding-top: 26px;
+  }
+  .desktop-docs > span { font-weight: 700; font-size: 14px; }
+  .desktop-docs p { color: var(--slate); font-size: 13.5px; margin: 0; }
+  .desktop-docs > div { display: flex; flex-wrap: wrap; gap: 15px; }
+  .desktop-docs a { color: var(--phase-pos); font-size: 13px; font-weight: 650; }
+
+  .activation-section { padding-top: 86px; padding-bottom: 96px; }
+  .activation-section h2 {
+    font-size: clamp(30px, 4vw, 44px);
+    letter-spacing: -.035em;
+    margin: 13px 0 0;
+  }
+  .activation-lede { color: var(--slate); max-width: 67ch; margin: 15px 0 0; }
+  .activation-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    border-top: 1px solid var(--line);
+    margin-top: 37px;
+  }
+  .activation-grid > div { padding: 25px 28px 25px 0; }
+  .activation-grid > div:nth-child(even) {
+    border-left: 1px solid var(--line);
+    padding-left: 28px;
+  }
+  .activation-grid > div:nth-child(n + 3) { border-top: 1px solid var(--line); }
+  .activation-grid span { color: var(--phase-pos); font-family: var(--mono); font-size: 11px; font-weight: 700; }
+  .activation-grid h3 { font-size: 17px; margin: 6px 0 0; }
+  .activation-grid p { color: var(--slate); font-size: 13.5px; margin: 7px 0 0; }
+  .reviewed { color: var(--slate-soft); font-family: var(--mono); font-size: 11.5px; margin: 35px 0 0; }
+
+  @media (max-width: 900px) {
+    .hero-grid,
+    .container-card,
+    .learning-card,
+    .gate-panel { grid-template-columns: 1fr; }
+    .hero-grid { gap: 34px; }
+    .release-note { max-width: 420px; }
+    .terminal-panel { border-left: 0; border-top: 1px solid var(--line); }
+    .gate-panel { gap: 22px; }
+    .architecture-gates { gap: 22px; }
+    .desktop-heading { display: block; }
+    .desktop-heading > p { margin-top: 15px; }
+    .desktop-docs { grid-template-columns: 1fr; gap: 6px; }
+    .desktop-docs > div { margin-top: 8px; }
+  }
+
+  @media (max-width: 700px) {
+    .download-hero .wrap { padding-top: 58px; padding-bottom: 58px; }
+    .distribution-section { padding-top: 64px; padding-bottom: 70px; }
+    .section-heading { display: block; }
+    .availability { margin-top: 17px; }
+    .container-main { padding: 27px 23px 29px; }
+    .learning-card > div:first-child { padding: 27px 23px 29px; }
+    .terminal-panel { padding: 25px 22px; }
+    .gate-panel { margin: 22px 8px 0; padding: 23px 20px; }
+    .architecture-gates { grid-template-columns: 1fr; }
+    .desktop-band { padding: 64px 0 70px; }
+    .desktop-grid { grid-template-columns: 1fr; }
+    .artifact-card { padding: 23px; }
+    .activation-section { padding-top: 64px; padding-bottom: 72px; }
+    .activation-grid { grid-template-columns: 1fr; }
+    .activation-grid > div,
+    .activation-grid > div:nth-child(even) {
+      border-left: 0;
+      padding: 22px 0;
+    }
+    .activation-grid > div { border-top: 1px solid var(--line); padding: 22px 0; }
+    .activation-grid > div:first-child { border-top: 0; }
+  }
+
+  @media (max-width: 470px) {
+    .download-hero h1 { font-size: 39px; }
+    .suite-list { grid-template-columns: 1fr; }
+    .artifact-top { display: block; }
+    .candidate-badge { display: inline-block; margin-top: 12px; }
+    .artifact-facts > div { grid-template-columns: 1fr; gap: 4px; }
+  }
+</style>

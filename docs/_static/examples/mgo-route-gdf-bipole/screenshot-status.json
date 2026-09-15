@@ -1,0 +1,14 @@
+{
+  "errors": [],
+  "qvf": "mgo-route-gdf-bipole/output-mgo-rhf-sto3g-gdf-k222.qvf",
+  "screenshots": [
+    "captures/mgo-bipole-structure.png",
+    "captures/mgo-gdf-density.png",
+    "captures/mgo-gdf-structure.png"
+  ],
+  "status": "complete-with-bipole-density-warning",
+  "qvf_files": [
+    "mgo-route-gdf-bipole/output-mgo-rhf-sto3g-gdf-k222.qvf",
+    "mgo-route-gdf-bipole/output-mgo-rhf-sto3g-bipole-k222.qvf"
+  ]
+}

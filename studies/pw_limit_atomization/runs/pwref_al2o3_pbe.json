@@ -1,0 +1,45 @@
+{
+  "provenance": {
+    "external_program": "gpaw",
+    "code_version": "25.7.0",
+    "boundary": "out-of-process subprocess (CLAUDE.md \u00a710)",
+    "functional": "pbe",
+    "cutoffs_ev": [
+      800.0
+    ],
+    "kmesh": [
+      6,
+      6,
+      6
+    ],
+    "atom_box_ang": 12.0,
+    "reference": "VASP@900eV r2SCAN (references-cohesive/r2scan.dat)"
+  },
+  "results": [
+    {
+      "system_id": "al2o3_corundum",
+      "pw_limit_kjmol": 2978.3099163426514,
+      "vasp900_kjmol": 3108.9,
+      "delta_vs_vasp_kjmol": -130.5900836573487,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -8.326275709858626,
+          "e_atoms_ha": -0.25333428052526097,
+          "atomization_kjmol": 2978.3099163426514,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Al": -0.011199891572838407,
+        "O": -0.07697816579319472
+      },
+      "atom_valence": {
+        "Al": 3,
+        "O": 6
+      }
+    }
+  ]
+}

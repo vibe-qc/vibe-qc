@@ -1,0 +1,95 @@
+{
+  "provenance": {
+    "external_program": "gpaw",
+    "code_version": "25.7.0",
+    "boundary": "out-of-process subprocess (CLAUDE.md \u00a710)",
+    "functional": "r2scan",
+    "cutoffs_ev": [
+      800.0
+    ],
+    "kmesh": [
+      6,
+      6,
+      6
+    ],
+    "atom_box_ang": 12.0,
+    "reference": "VASP@900eV r2SCAN (references-cohesive/r2scan.dat)"
+  },
+  "results": [
+    {
+      "system_id": "cao_rocksalt",
+      "pw_limit_kjmol": 1089.249972803812,
+      "vasp900_kjmol": 1096.4,
+      "delta_vs_vasp_kjmol": -7.150027196188148,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.7154710961235635,
+          "e_atoms_ha": -0.30059769198221487,
+          "atomization_kjmol": 1089.249972803812,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Ca": -0.17628821865996613,
+        "O": -0.12430947332224872
+      },
+      "atom_valence": {
+        "Ca": 10,
+        "O": 6
+      }
+    },
+    {
+      "system_id": "caf2_fluorite",
+      "pw_limit_kjmol": 1589.625286554562,
+      "vasp900_kjmol": 1597.8,
+      "delta_vs_vasp_kjmol": -8.174713445437874,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.941682234315396,
+          "e_atoms_ha": -0.3362259383244286,
+          "atomization_kjmol": 1589.625286554562,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "Ca": -0.17628821865996613,
+        "F": -0.07996885983223123
+      },
+      "atom_valence": {
+        "Ca": 10,
+        "F": 7
+      }
+    },
+    {
+      "system_id": "kcl_rocksalt",
+      "pw_limit_kjmol": 637.9202844870217,
+      "vasp900_kjmol": 640.0,
+      "delta_vs_vasp_kjmol": -2.0797155129782823,
+      "extrapolation": "single-cutoff (no extrapolation)",
+      "points": [
+        {
+          "cutoff_ev": 800.0,
+          "e_solid_ha": -0.5986723606435499,
+          "e_atoms_ha": -0.3557013561874256,
+          "atomization_kjmol": 637.9202844870217,
+          "solid_converged": true,
+          "atoms_converged": true
+        }
+      ],
+      "atom_energies_ha": {
+        "K": -0.18844249192599838,
+        "Cl": -0.16725886426142722
+      },
+      "atom_valence": {
+        "K": 9,
+        "Cl": 7
+      }
+    }
+  ]
+}

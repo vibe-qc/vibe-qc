@@ -1,0 +1,26 @@
+
+  run_job  Job: RHF  basis=6-31g*
+  --------------------------------
+  Threads: 18  (OpenMP shared-memory parallelism)
+  Output file: <vibe-qc-checkout>/examples/molecular/output-h2o-vibrations.out
+  Starting molecular SCF (RHF).
+  iter    1  E =     -75.9454129326 Ha  ||[F,DS]|| = 9.219e-01  DIIS= 1  attempt=1  [ 215.1ms]
+  iter    2  E =     -75.9864695412 Ha  dE = -4.106e-02  ||[F,DS]|| = 4.601e-01  DIIS= 2  attempt=1  [ 218.9ms]
+  iter    3  E =     -76.0032106053 Ha  dE = -1.674e-02  ||[F,DS]|| = 6.962e-02  DIIS= 3  attempt=1  [ 221.8ms]
+  iter    4  E =     -76.0035842223 Ha  dE = -3.736e-04  ||[F,DS]|| = 1.058e-02  DIIS= 4  attempt=1  [ 224.4ms]
+  iter    5  E =     -76.0035994573 Ha  dE = -1.524e-05  ||[F,DS]|| = 1.852e-03  DIIS= 5  attempt=1  [ 226.0ms]
+  iter    6  E =     -76.0036001829 Ha  dE = -7.256e-07  ||[F,DS]|| = 2.341e-04  DIIS= 6  attempt=1  [ 229.4ms]
+  iter    7  E =     -76.0036001932 Ha  dE = -1.030e-08  ||[F,DS]|| = 2.307e-05  DIIS= 7  attempt=1  [ 232.7ms]
+  iter    8  E =     -76.0036001933 Ha  dE = -1.156e-10  ||[F,DS]|| = 7.469e-06  DIIS= 8  attempt=1  [ 235.6ms]
+  iter    9  E =     -76.0036001933 Ha  dE = -1.569e-11  ||[F,DS]|| = 8.244e-07  DIIS= 8  attempt=1  [ 238.2ms]
+  SCF converged in 9 iterations; E = -76.0036001933 Ha
+  [write_population] - output-h2o-vibrations.population.txt
+  [write_population] done (  90.4ms)
+  [write_xyz] - output-h2o-vibrations.xyz
+  [write_xyz] done (   3.0ms)
+  [write_molden] - output-h2o-vibrations.molden
+  [write_molden] done (   3.8ms)
+  Job total 0.42s -- output written to <vibe-qc-checkout>/examples/molecular/output-h2o-vibrations.out
+Wrote <vibe-qc-checkout>/examples/molecular/output-h2o-vibrations.hess
+Frequencies (cm-1): [   0.            0.            0.            0.            0.
+    0.         1919.90810026 3345.47898536 3440.89282978]

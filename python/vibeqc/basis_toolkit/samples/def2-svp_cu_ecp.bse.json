@@ -1,0 +1,83 @@
+{
+  "name": "def2-SVP",
+  "description": "def2-SVP with def2-ECP for Cu",
+  "basis_set_family": "ahlrichs",
+  "basis_set_role": "orbital",
+  "version": "1",
+  "elements": {
+    "29": {
+      "element_number": 29,
+      "element_symbol": "Cu",
+      "electron_shells": [
+        {
+          "angular_momentum": [0],
+          "function_type": "gto",
+          "exponents": ["19386.4990000", "2909.8570000", "664.5172000", "189.1094000", "62.4966900", "22.8487500", "5.0583170"],
+          "coefficients": [["0.0007940", "0.0060800", "0.0307700", "0.1180750", "0.3309420", "0.4735590", "0.0491800"]]
+        },
+        {
+          "angular_momentum": [0],
+          "function_type": "gto",
+          "exponents": ["62.4966900", "22.8487500", "5.0583170"],
+          "coefficients": [["-0.0311290", "-0.0987220", "0.5989350"]]
+        },
+        {
+          "angular_momentum": [0],
+          "function_type": "gto",
+          "exponents": ["1.0858580"],
+          "coefficients": [["1.0000000"]]
+        },
+        {
+          "angular_momentum": [0],
+          "function_type": "gto",
+          "exponents": ["0.1140000"],
+          "coefficients": [["1.0000000"]]
+        },
+        {
+          "angular_momentum": [1],
+          "function_type": "gto",
+          "exponents": ["160.5775000", "37.1270500", "11.2588100", "3.8452580"],
+          "coefficients": [["0.0085530", "0.0529810", "0.1911160", "0.4746280"]]
+        },
+        {
+          "angular_momentum": [1],
+          "function_type": "gto",
+          "exponents": ["1.1702460"],
+          "coefficients": [["1.0000000"]]
+        },
+        {
+          "angular_momentum": [1],
+          "function_type": "gto",
+          "exponents": ["0.1060000"],
+          "coefficients": [["1.0000000"]]
+        },
+        {
+          "angular_momentum": [2],
+          "function_type": "gto",
+          "exponents": ["47.9472300", "13.2063200", "4.2956080", "1.3918200"],
+          "coefficients": [["0.0223380", "0.1128590", "0.2988280", "0.4594430"]]
+        },
+        {
+          "angular_momentum": [2],
+          "function_type": "gto",
+          "exponents": ["0.4913200"],
+          "coefficients": [["1.0000000"]]
+        },
+        {
+          "angular_momentum": [3],
+          "function_type": "gto",
+          "exponents": ["5.1520000"],
+          "coefficients": [["1.0000000"]]
+        }
+      ],
+      "ecp_electrons": 10
+    }
+  },
+  "references": [
+    {
+      "reference_key": "weigend2005",
+      "reference_description": "F. Weigend, R. Ahlrichs, Phys. Chem. Chem. Phys. 7, 3297 (2005)",
+      "reference_doi": "10.1039/b508541a"
+    }
+  ]
+}

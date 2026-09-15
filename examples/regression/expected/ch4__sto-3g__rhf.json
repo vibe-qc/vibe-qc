@@ -1,0 +1,12 @@
+{
+  "system_id": "ch4",
+  "basis": "sto-3g",
+  "method_id": "rhf",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-6,
+  "tolerance_rationale": "CH4 / STO-3G / RHF — every QC code agrees to better than 1 µHa. Anything looser would mean a real two-electron-integral or SCF bug.",
+  "published_energy_ha": -39.726852,
+  "published_source": "Szabo & Ostlund Table 3.6 (RHF / STO-3G / R = 1.085 Å)."
+}

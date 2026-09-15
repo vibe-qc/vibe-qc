@@ -1,0 +1,116 @@
+# Citation File Format — see https://citation-file-format.github.io/
+# When you use vibe-qc in published work, please cite it via this file.
+# GitHub and recent GitLab versions render a "Cite this repository" sidebar.
+
+cff-version: 1.2.0
+message: "If you use vibe-qc in your work, please cite it as below."
+title: "vibe-qc: a quantum-chemistry code for molecules and solids"
+abstract: >
+  vibe-qc is an open-source electronic-structure code with a Python
+  frontend over a C++17 core. It implements restricted/unrestricted
+  Hartree-Fock and Kohn-Sham DFT for molecules and 1D/2D/3D periodic
+  systems, MP2, D3(BJ) dispersion, and analytic atomic gradients.
+  Backed by libint (Gaussian integrals), libxc (XC functionals), and
+  spglib (crystal symmetry). The long-term target is the Cyclic
+  Cluster Model at correlated levels of theory (MP2 → CCSD(T)) for
+  defect chemistry on solid-state systems.
+type: software
+authors:
+  - family-names: Peintinger
+    given-names: Michael F.
+    website: "https://vibe-qc.com/"
+version: 0.17.1
+date-released: "2026-09-10"
+url: "https://vibe-qc.com/"
+repository-code: "https://github.com/vibe-qc/vibe-qc"
+license: MPL-2.0
+keywords:
+  - quantum chemistry
+  - electronic structure
+  - density functional theory
+  - Hartree-Fock
+  - Møller-Plesset
+  - periodic boundary conditions
+  - cyclic cluster model
+  - solid-state chemistry
+  - Gaussian basis sets
+  - open source
+
+# When users employ specific components of vibe-qc, the references
+# below should be cited alongside the software itself. The
+# documentation page docs/citing.md walks through which to pick.
+references:
+  - type: article
+    title: "Consistent Gaussian basis sets of triple-zeta valence with polarization quality for solid-state calculations"
+    authors:
+      - family-names: Peintinger
+        given-names: Michael F.
+      - family-names: Vilela Oliveira
+        given-names: Daniel
+      - family-names: Bredow
+        given-names: Thomas
+    journal: "Journal of Computational Chemistry"
+    volume: 34
+    issue: 6
+    start: 451
+    end: 459
+    year: 2013
+    doi: 10.1002/jcc.23153
+    notes: "Cite when using the pob-TZVP basis set."
+  - type: article
+    title: "BSSE-correction scheme for consistent Gaussian basis sets of double- and triple-zeta valence with polarization quality for solid-state calculations"
+    authors:
+      - family-names: Vilela Oliveira
+        given-names: Daniel
+      - family-names: Laun
+        given-names: Joachim
+      - family-names: Peintinger
+        given-names: Michael F.
+      - family-names: Bredow
+        given-names: Thomas
+    journal: "Journal of Computational Chemistry"
+    volume: 40
+    issue: 27
+    start: 2364
+    end: 2376
+    year: 2019
+    doi: 10.1002/jcc.26013
+    notes: "Cite when using pob-DZVP-rev2 or pob-TZVP-rev2."
+  - type: article
+    title: "The cyclic cluster model at Hartree-Fock level"
+    authors:
+      - family-names: Peintinger
+        given-names: Michael F.
+      - family-names: Bredow
+        given-names: Thomas
+    journal: "Journal of Computational Chemistry"
+    volume: 35
+    issue: 11
+    start: 839
+    end: 846
+    year: 2014
+    doi: 10.1002/jcc.23550
+    notes: >
+      Author's PhD-era proof-of-concept and the conceptual ancestor
+      of the v2.x Cyclic-Cluster-Model track on the vibe-qc roadmap.
+      Free-access; cover article for J. Comp. Chem. 35(11).
+  - type: software
+    title: "libint: high-performance library for computing Gaussian integrals in quantum mechanics"
+    authors:
+      - family-names: Valeev
+        given-names: Edward F.
+    url: "https://github.com/evaleev/libint"
+    notes: "Underlies all Gaussian integral evaluation in vibe-qc."
+  - type: software
+    title: "libxc: a library of exchange-correlation functionals for density functional theory"
+    authors:
+      - family-names: Lehtola
+        given-names: Susi
+      - family-names: Steigemann
+        given-names: Conrad
+      - family-names: Oliveira
+        given-names: Micael J. T.
+      - family-names: Marques
+        given-names: Miguel A. L.
+    url: "https://libxc.gitlab.io/"
+    notes: "Cite when using DFT in vibe-qc."

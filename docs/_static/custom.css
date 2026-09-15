@@ -1,0 +1,47 @@
+/* Shared Furo overrides, maintained in mpei/vibe-qc.
+ * Deliberate copy export: see docs/site_publishing.md.
+ * Companion repositories keep an unchanged copy and a source SHA receipt.
+ *
+ * Fill in once the designer's brand-spec sheet lands. Until then,
+ * keep the stock Furo palette — which is already perfectly
+ * serviceable.
+ *
+ * Drop-in points:
+ *   --color-brand-primary       — link + accent colour
+ *   --color-brand-content       — in-content accent colour
+ *   --color-brand-visited       — visited links
+ *   --color-sidebar-search-background — search box tint
+ *
+ * Furo exposes its full CSS-custom-property vocabulary at
+ *   https://pradyunsg.me/furo/customisation/colors/
+ */
+
+.codename-art {
+  margin: 1rem 0 1.25rem;
+}
+
+.codename-art img {
+  display: block;
+  max-width: 100%;
+  border-radius: 8px;
+  box-shadow: 0 0.35rem 1.2rem rgba(0, 0, 0, 0.16);
+}
+
+.codename-art-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0.75rem;
+}
+
+.codename-art-gallery img {
+  width: 100%;
+}
+
+/* Product artwork in the core overview and companion integration guides. */
+.product-art img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+}

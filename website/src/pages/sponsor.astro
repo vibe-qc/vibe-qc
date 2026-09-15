@@ -1,0 +1,727 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import {
+  publicMonthlyCheckoutUrl,
+  publicSponsorLogo,
+  publicSponsorWebsite,
+  sponsorshipProgram,
+} from '../data/sponsors.mjs';
+
+const priorities = [
+  {
+    number: '01',
+    title: 'Compute and verification',
+    text: 'Native builders, larger regression runs, and reference benchmarks that keep scientific claims tied to evidence.',
+  },
+  {
+    number: '02',
+    title: 'Public infrastructure',
+    text: 'The self-hosted website, documentation, release storage, and the operational tools behind reliable public access.',
+  },
+  {
+    number: '03',
+    title: 'Reference access',
+    text: 'Authoritative scientific data and publications that strengthen implementation, validation, and documentation.',
+  },
+];
+
+const sponsorLogoSrc = (sponsor) => {
+  const logo = publicSponsorLogo(sponsor);
+  return logo ? `${import.meta.env.BASE_URL}${logo}` : null;
+};
+const monthlyCheckoutUrl = publicMonthlyCheckoutUrl(sponsorshipProgram);
+---
+
+<Base
+  title="Sponsor vibe-qc"
+  description="Support independent, open-source quantum chemistry through monthly sponsorship or a one-time contribution, with optional public recognition."
+>
+  <Nav />
+
+  <main class="support">
+    <header class="support-hero">
+      <div class="wrap support-hero-inner">
+        <div>
+          <span class="eyebrow">independent open-source research</span>
+          <h1>Help keep the science <span>independent.</span></h1>
+          <p>
+            vibe-qc is built and maintained by one person, without institutional
+            backing. Choose a monthly sponsorship tier or contribute once. Every
+            contribution supports the same public work.
+          </p>
+        </div>
+        <aside class="open-card">
+          <span class="open-dot" aria-hidden="true"></span>
+          <div>
+            <strong>Open stays open</strong>
+            <p>MPL-2.0 licensed, no contributor license agreement, and no sponsor-only features.</p>
+          </div>
+        </aside>
+      </div>
+    </header>
+
+    <section class="wrap plans" aria-labelledby="plans-heading">
+      <div class="section-copy">
+        <span class="section-label">monthly sponsorship</span>
+        <h2 id="plans-heading">Choose the level that fits.</h2>
+        <p>
+          Platinum, Gold, and Silver are recurring monthly plans through GitHub
+          Sponsors. Pricing is published now; checkout opens after the matching
+          monthly tiers are configured.
+        </p>
+      </div>
+
+      <div class="tier-grid">
+        {sponsorshipProgram.tiers.map((tier) => (
+          <article class={`tier tier-${tier.id}`}>
+            <div class="tier-heading">
+              <div>
+                <span class="tier-placement">{tier.placement}</span>
+                <h3>{tier.name}</h3>
+              </div>
+              <span class="monthly">monthly</span>
+            </div>
+            <p class="tier-price">
+              <strong>${tier.monthlyUsd}</strong>
+              <span>USD / month</span>
+            </p>
+            <p class="tier-recognition">{tier.recognition}</p>
+            {monthlyCheckoutUrl ? (
+              <a class="tier-action" href={monthlyCheckoutUrl}>
+                Sponsor at {tier.name}
+                <span aria-hidden="true">→</span>
+              </a>
+            ) : (
+              <span class="tier-action pending" role="status">
+                {sponsorshipProgram.monthlyCheckout.statusLabel}
+              </span>
+            )}
+          </article>
+        ))}
+      </div>
+
+      <article class="supporter-plan">
+        <div>
+          <span class="section-label">one time or any monthly amount</span>
+          <h3>{sponsorshipProgram.supporter.name}</h3>
+          <p>{sponsorshipProgram.supporter.recognition}</p>
+        </div>
+        <div class="supporter-price">
+          <strong>{sponsorshipProgram.supporter.priceLabel}</strong>
+          <span>{sponsorshipProgram.supporter.permanence} opt-in listing</span>
+        </div>
+        <div class="supporter-actions">
+          <a class="supporter-action primary" href={sponsorshipProgram.oneTimeContributionUrl}>
+            Contribute once <span aria-hidden="true">→</span>
+          </a>
+          {monthlyCheckoutUrl ? (
+            <a class="supporter-action" href={monthlyCheckoutUrl}>
+              Choose another monthly amount
+            </a>
+          ) : (
+            <span class="supporter-action pending" role="status">
+              Monthly route setup pending
+            </span>
+          )}
+        </div>
+      </article>
+    </section>
+
+    <section class="recognition-band" aria-labelledby="recognition-heading">
+      <div class="wrap recognition">
+        <div>
+          <span class="section-label">public recognition</span>
+          <h2 id="recognition-heading">Your logo, if desired.</h2>
+          <p>
+            Active Platinum, Gold, and Silver sponsors may publish a logo or
+            text name and one website link. Recognition is always optional and
+            can be removed on request.
+          </p>
+        </div>
+        <ol class="recognition-steps">
+          <li>
+            <span>01</span>
+            <p>When checkout opens, start a monthly plan through GitHub Sponsors.</p>
+          </li>
+          <li>
+            <span>02</span>
+            <p>
+              Email <a href={`mailto:${sponsorshipProgram.recognitionContact}`}>
+                {sponsorshipProgram.recognitionContact}
+              </a> with the public name, website URL, and logo you are authorized to use.
+            </p>
+          </li>
+          <li>
+            <span>03</span>
+            <p>
+              The active tier listing remains while the monthly plan is active.
+              The opt-in supporter name remains permanently.
+            </p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="wrap sponsor-wall" aria-labelledby="wall-heading">
+      <div class="wall-heading">
+        <span class="section-label">the public wall</span>
+        <h2 id="wall-heading">Sponsors and supporters</h2>
+        <p>
+          The active wall reflects current monthly plans. The supporter roll
+          recognizes past and present contributors who chose to be listed.
+        </p>
+      </div>
+
+      <div class="active-tiers">
+        {sponsorshipProgram.tiers.map((tier) => {
+          const sponsors = sponsorshipProgram.activeSponsors[tier.id];
+          return (
+            <section class={`wall-tier wall-tier-${tier.id}`} aria-labelledby={`${tier.id}-heading`}>
+              <div class="wall-tier-heading">
+                <h3 id={`${tier.id}-heading`}>{tier.name}</h3>
+                <span>${tier.monthlyUsd} / month</span>
+              </div>
+              {sponsors.length > 0 ? (
+                <ul>
+                  {sponsors.map((sponsor) => {
+                    const logoSrc = sponsorLogoSrc(sponsor);
+                    const websiteUrl = publicSponsorWebsite(sponsor);
+                    const identity = (
+                      <>
+                        {logoSrc ? (
+                          <img src={logoSrc} alt={sponsor.logoAlt ?? sponsor.name} />
+                        ) : (
+                          <span>{sponsor.name}</span>
+                        )}
+                      </>
+                    );
+                    return (
+                      <li>
+                        {websiteUrl ? (
+                          <a href={websiteUrl} aria-label={`Visit ${sponsor.name}`}>
+                            {identity}
+                          </a>
+                        ) : (
+                          <div>{identity}</div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p class="open-position">Open for the first {tier.name} sponsor.</p>
+              )}
+            </section>
+          );
+        })}
+      </div>
+
+      <section class="supporter-roll" aria-labelledby="supporter-heading">
+        <div>
+          <h3 id="supporter-heading">Supporters</h3>
+          <span>Permanent, opt-in roll</span>
+        </div>
+        {sponsorshipProgram.supporters.length > 0 ? (
+          <ul>
+            {sponsorshipProgram.supporters.map((supporter) => {
+              const websiteUrl = publicSponsorWebsite(supporter);
+              return (
+                <li>
+                  {websiteUrl ? (
+                    <a href={websiteUrl}>{supporter.name}</a>
+                  ) : (
+                    supporter.name
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p>
+            The permanent roll is ready. Contributors are added only after
+            choosing a public display name.
+          </p>
+        )}
+      </section>
+    </section>
+
+    <section class="funding-band" aria-labelledby="funding-heading">
+      <div class="wrap">
+        <div class="funding-heading">
+          <span class="section-label">what support funds</span>
+          <h2 id="funding-heading">Concrete capacity, publicly useful.</h2>
+        </div>
+        <div class="priority-grid">
+          {priorities.map((priority) => (
+            <article>
+              <span>{priority.number}</span>
+              <h3>{priority.title}</h3>
+              <p>{priority.text}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap current-priority" aria-labelledby="priority-heading">
+      <div class="priority-card">
+        <div>
+          <span class="section-label">current priority</span>
+          <h2 id="priority-heading">NIST Crystal Data SRD 3</h2>
+          <p>
+            The next funding target is annual access to an authoritative crystal-data
+            reference used to strengthen solid-state validation and documentation.
+          </p>
+        </div>
+        <div class="priority-price">
+          <strong>$200</strong>
+          <span>per year</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap principles" aria-labelledby="principles-heading">
+      <div class="principles-copy">
+        <span class="section-label">the boundary</span>
+        <h2 id="principles-heading">Support enables the work. It does not buy the result.</h2>
+      </div>
+      <ul>
+        <li>Scientific conclusions and validation criteria remain independent.</li>
+        <li>Sponsors do not control the roadmap, release priorities, or public claims.</li>
+        <li>Support does not change the license or unlock private functionality.</li>
+      </ul>
+      <p class="maintainer">// maintained by Michael F. Peintinger · mpei@vibe-qc.com</p>
+    </section>
+  </main>
+
+  <Footer />
+</Base>
+
+<style>
+  .support { overflow: hidden; }
+  .support-hero {
+    border-bottom: 1px solid var(--line);
+    background:
+      radial-gradient(circle at 82% 22%, color-mix(in srgb, var(--phase-neg) 12%, transparent), transparent 28%),
+      linear-gradient(180deg, color-mix(in srgb, var(--surface) 42%, transparent), transparent);
+  }
+  .support-hero-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(270px, .55fr);
+    gap: 68px;
+    align-items: end;
+    padding-top: 88px;
+    padding-bottom: 82px;
+  }
+  .support-hero h1 {
+    max-width: 13ch;
+    font-size: clamp(44px, 6.3vw, 76px);
+    line-height: 1.01;
+    letter-spacing: -.045em;
+    text-wrap: balance;
+    margin: 18px 0 0;
+  }
+  .support-hero h1 span { color: var(--phase-neg); }
+  .support-hero > .wrap > div > p {
+    max-width: 60ch;
+    color: var(--slate);
+    font-size: clamp(17px, 2vw, 20px);
+    margin: 24px 0 0;
+  }
+  .open-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 13px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    padding: 20px;
+  }
+  .open-dot {
+    width: 9px;
+    height: 9px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: var(--phase-pos);
+    margin-top: 8px;
+  }
+  .open-card strong { font-size: 15px; }
+  .open-card p { color: var(--slate); font-size: 13.5px; margin: 3px 0 0; }
+
+  .plans { padding-top: 88px; padding-bottom: 94px; }
+  .section-copy {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 44px;
+    align-items: end;
+    margin-bottom: 32px;
+  }
+  .section-label,
+  .tier-placement,
+  .monthly {
+    display: block;
+    color: var(--phase-pos);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 650;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .section-copy .section-label { grid-column: 1 / -1; margin-bottom: 10px; }
+  .section-copy h2,
+  .recognition h2,
+  .wall-heading h2,
+  .funding-heading h2,
+  .priority-card h2,
+  .principles h2 {
+    font-size: clamp(28px, 4vw, 42px);
+    line-height: 1.1;
+    letter-spacing: -.035em;
+    margin: 0;
+  }
+  .section-copy p { color: var(--slate); font-size: 15px; margin: 0; }
+
+  .tier-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .tier {
+    display: flex;
+    flex-direction: column;
+    min-height: 385px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--surface);
+    padding: 28px;
+  }
+  .tier-platinum {
+    border-color: color-mix(in srgb, var(--phase-neg) 55%, var(--line));
+    box-shadow: inset 0 3px var(--phase-neg);
+  }
+  .tier-gold { box-shadow: inset 0 3px color-mix(in srgb, #b88900 75%, var(--phase-pos)); }
+  .tier-silver { box-shadow: inset 0 3px color-mix(in srgb, var(--slate) 60%, transparent); }
+  .tier-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+  .tier-heading h3 { font-size: 27px; letter-spacing: -.025em; margin: 8px 0 0; }
+  .monthly {
+    color: var(--slate);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 8px 5px;
+  }
+  .tier-price { margin: 28px 0 0; }
+  .tier-price strong {
+    display: block;
+    font-family: var(--mono);
+    font-size: 39px;
+    line-height: 1;
+    letter-spacing: -.045em;
+  }
+  .tier-price span {
+    display: block;
+    color: var(--slate);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    margin-top: 6px;
+  }
+  .tier-recognition { color: var(--slate); font-size: 14px; margin: 24px 0 28px; }
+  .tier-action {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 18px;
+    color: var(--paper);
+    border-radius: 9px;
+    background: var(--ink);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 650;
+    margin-top: auto;
+    padding: 13px 15px;
+    transition: transform .15s, background .15s;
+  }
+  .tier-action:hover { transform: translateY(-2px); background: var(--phase-pos); }
+  .tier-action span { font-size: 18px; }
+  .tier-action.pending {
+    color: var(--slate);
+    border: 1px dashed var(--line);
+    background: var(--surface-2);
+    cursor: not-allowed;
+  }
+  .tier-action.pending:hover { transform: none; background: var(--surface-2); }
+
+  .supporter-plan {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(160px, .55fr) minmax(230px, .65fr);
+    gap: 34px;
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--surface-2);
+    margin-top: 18px;
+    padding: 28px;
+  }
+  .supporter-plan h3 { font-size: 25px; letter-spacing: -.02em; margin: 8px 0 0; }
+  .supporter-plan p { color: var(--slate); font-size: 14px; margin: 8px 0 0; }
+  .supporter-price strong {
+    display: block;
+    font-family: var(--mono);
+    font-size: 18px;
+  }
+  .supporter-price span {
+    display: block;
+    color: var(--slate);
+    font-family: var(--mono);
+    font-size: 11px;
+    margin-top: 5px;
+  }
+  .supporter-actions { display: flex; flex-direction: column; gap: 8px; }
+  .supporter-action {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 11px 13px;
+  }
+  .supporter-action.primary { color: var(--paper); border-color: var(--ink); background: var(--ink); }
+  .supporter-action:hover { border-color: var(--phase-pos); }
+  .supporter-action.pending { color: var(--slate); border-style: dashed; cursor: not-allowed; }
+
+  .recognition-band {
+    color: var(--paper);
+    background: var(--ink);
+    padding: 84px 0 88px;
+  }
+  .recognition {
+    display: grid;
+    grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+    gap: 70px;
+  }
+  .recognition h2 { margin-top: 10px; }
+  .recognition > div > p {
+    color: color-mix(in srgb, var(--paper) 68%, transparent);
+    font-size: 15px;
+    margin: 18px 0 0;
+  }
+  .recognition-steps { list-style: none; margin: 0; padding: 0; }
+  .recognition-steps li {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 16px;
+    border-top: 1px solid color-mix(in srgb, var(--paper) 17%, transparent);
+    padding: 18px 0;
+  }
+  .recognition-steps li:last-child { border-bottom: 1px solid color-mix(in srgb, var(--paper) 17%, transparent); }
+  .recognition-steps span { color: var(--phase-neg); font-family: var(--mono); font-size: 11px; font-weight: 700; }
+  .recognition-steps p { color: color-mix(in srgb, var(--paper) 77%, transparent); font-size: 14px; margin: 0; }
+  .recognition-steps a { color: var(--paper); text-decoration: underline; text-underline-offset: 3px; }
+
+  .sponsor-wall { padding-top: 88px; padding-bottom: 94px; }
+  .wall-heading { max-width: 72ch; }
+  .wall-heading h2 { margin-top: 10px; }
+  .wall-heading p { color: var(--slate); font-size: 15px; margin: 15px 0 0; }
+  .active-tiers {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--line);
+    margin-top: 36px;
+  }
+  .wall-tier { min-width: 0; padding: 25px 27px 27px 0; }
+  .wall-tier + .wall-tier { border-left: 1px solid var(--line); padding-left: 27px; }
+  .wall-tier-heading { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .wall-tier-heading h3 { font-size: 18px; margin: 0; }
+  .wall-tier-heading span { color: var(--slate); font-family: var(--mono); font-size: 10.5px; }
+  .wall-tier ul {
+    list-style: none;
+    display: grid;
+    gap: 10px;
+    margin: 18px 0 0;
+    padding: 0;
+  }
+  .wall-tier li > a,
+  .wall-tier li > div {
+    display: grid;
+    place-items: center;
+    min-height: 86px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    font-size: 15px;
+    font-weight: 700;
+    padding: 14px;
+  }
+  .wall-tier img { display: block; max-width: 100%; max-height: 58px; }
+  .open-position {
+    color: var(--slate);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    margin: 18px 0 0;
+    padding: 24px 15px;
+  }
+  .supporter-roll {
+    display: grid;
+    grid-template-columns: minmax(180px, .35fr) 1fr;
+    gap: 38px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 26px 0;
+  }
+  .supporter-roll h3 { font-size: 19px; margin: 0; }
+  .supporter-roll span {
+    display: block;
+    color: var(--slate);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    margin-top: 5px;
+  }
+  .supporter-roll p { color: var(--slate); font-size: 14px; margin: 0; }
+  .supporter-roll ul {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin: 0;
+    padding: 0;
+  }
+  .supporter-roll li { color: var(--slate); font-size: 14px; }
+  .supporter-roll a { text-decoration: underline; text-underline-offset: 3px; }
+
+  .funding-band {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-2);
+    padding: 86px 0 92px;
+  }
+  .funding-heading { max-width: 62ch; }
+  .funding-heading h2 { margin-top: 10px; }
+  .priority-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--line);
+    margin-top: 36px;
+  }
+  .priority-grid article { padding: 26px 30px 0 0; }
+  .priority-grid article + article { border-left: 1px solid var(--line); padding-left: 30px; }
+  .priority-grid article > span { color: var(--phase-pos); font-family: var(--mono); font-size: 11px; font-weight: 700; }
+  .priority-grid h3 { font-size: 18px; margin: 7px 0 0; }
+  .priority-grid p { color: var(--slate); font-size: 14px; margin: 8px 0 0; }
+
+  .current-priority { padding-top: 82px; }
+  .priority-card {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 42px;
+    align-items: center;
+    border: 1px solid color-mix(in srgb, var(--phase-neg) 30%, var(--line));
+    border-radius: 18px;
+    background: var(--surface);
+    padding: 37px 40px;
+  }
+  .priority-card h2 { margin-top: 9px; }
+  .priority-card p { max-width: 62ch; color: var(--slate); font-size: 15px; margin: 12px 0 0; }
+  .priority-price { min-width: 130px; text-align: right; }
+  .priority-price strong {
+    display: block;
+    color: var(--phase-neg);
+    font-family: var(--mono);
+    font-size: 34px;
+    letter-spacing: -.03em;
+  }
+  .priority-price span { color: var(--slate); font-family: var(--mono); font-size: 11.5px; }
+
+  .principles {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 58px;
+    padding-top: 86px;
+    padding-bottom: 96px;
+  }
+  .principles h2 { margin-top: 10px; }
+  .principles ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin: 3px 0 0;
+    padding: 0;
+  }
+  .principles li {
+    position: relative;
+    color: var(--slate);
+    border-bottom: 1px solid var(--line);
+    padding: 0 0 14px 21px;
+    font-size: 14.5px;
+  }
+  .principles li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: .65em;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--phase-pos);
+  }
+  .maintainer {
+    grid-column: 1 / -1;
+    color: var(--slate-soft);
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    margin: 36px 0 0;
+    padding-top: 20px;
+  }
+
+  @media (max-width: 920px) {
+    .tier-grid { grid-template-columns: 1fr; }
+    .tier { min-height: 0; }
+    .tier-recognition { max-width: 62ch; }
+    .supporter-plan { grid-template-columns: 1fr 1fr; }
+    .supporter-actions { grid-column: 1 / -1; flex-direction: row; }
+    .supporter-action { flex: 1; }
+    .recognition { gap: 42px; }
+  }
+
+  @media (max-width: 820px) {
+    .support-hero-inner,
+    .section-copy,
+    .recognition,
+    .principles { grid-template-columns: 1fr; }
+    .support-hero-inner { gap: 34px; }
+    .open-card { max-width: 430px; }
+    .section-copy { gap: 14px; }
+    .recognition { gap: 36px; }
+    .active-tiers { grid-template-columns: 1fr; }
+    .wall-tier,
+    .wall-tier + .wall-tier { border-left: 0; padding: 22px 0; }
+    .wall-tier + .wall-tier { border-top: 1px solid var(--line); }
+    .priority-grid { grid-template-columns: 1fr; }
+    .priority-grid article,
+    .priority-grid article + article {
+      border-left: 0;
+      padding: 22px 0;
+    }
+    .priority-grid article + article { border-top: 1px solid var(--line); }
+    .principles { gap: 30px; }
+  }
+
+  @media (max-width: 600px) {
+    .support-hero-inner { padding-top: 58px; padding-bottom: 60px; }
+    .support-hero h1 { font-size: 42px; }
+    .plans { padding-top: 64px; padding-bottom: 70px; }
+    .tier { padding: 24px; }
+    .supporter-plan { grid-template-columns: 1fr; gap: 22px; padding: 24px; }
+    .supporter-actions { grid-column: auto; flex-direction: column; }
+    .recognition-band { padding: 64px 0 68px; }
+    .sponsor-wall { padding-top: 64px; padding-bottom: 70px; }
+    .supporter-roll { grid-template-columns: 1fr; gap: 16px; }
+    .funding-band { padding: 64px 0 68px; }
+    .current-priority { padding-top: 62px; }
+    .priority-card { grid-template-columns: 1fr; gap: 24px; padding: 27px 24px; }
+    .priority-price { text-align: left; }
+    .principles { padding-top: 64px; padding-bottom: 72px; }
+  }
+</style>

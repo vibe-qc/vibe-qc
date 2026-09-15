@@ -1,0 +1,416 @@
+# vibe-qc system manifest -- written alongside output-<job>.out by run_job(...).
+# Captures the runtime environment so generated calculation outputs are
+# reproducible and wall-time numbers are interpretable. The [plan]
+# section is the declared output contract (written once, at job start);
+# the [outputs] section is the running status (rewritten as each file
+# lands). External QC programs are validation references only: run
+# them out-of-process and parse their outputs.
+
+[vibeqc]
+version        = "0.15.41"
+codename       = "Neese's Cheetah"
+git_sha        = "a5ac682"
+git_branch     = "main"
+is_release     = false
+
+[host]
+hostname       = "<redacted>"
+os             = "Linux"
+os_release     = "5.14.0-570.35.1.el9_6.x86_64"
+os_pretty      = "AlmaLinux 9.6 (Sage Margay)"
+arch           = "x86_64"
+
+[cpu]
+model          = "Intel(R) Xeon(R) Platinum 8468"
+physical_cores = 96
+logical_cores  = 96
+omp_threads_used = 4
+
+[memory]
+total_gb       = 1007.53
+available_gb   = 937.36
+
+[python]
+version        = "3.12.3"
+implementation = "CPython"
+executable     = "<redacted-python>"
+
+[libraries]
+libint         = "2.13.1"
+libxc          = "7.0.0"
+spglib         = "2.7.0"
+libecpint      = "1.0.7 (vendored, MAX_L=5)"
+fftw3          = "3.3.9"
+
+[validation]
+external_programs_policy = "External QC programs are validation references only."
+execution_boundary = "Run external programs out-of-process and parse their outputs; do not import them as vibe-qc backends."
+native_backend_policy = "vibe-qc runtime methods execute vibe-qc-owned native or Python code."
+
+[run]
+timestamp_iso  = "2026-07-16T10:15:41+02:00"
+wall_seconds   = 1331.0839228932746
+basename       = "output-mgo-rhf-sto3g-bipole-k222"
+pid            = 2132582
+exchange_q0    = "BvK-ewald"
+jk_method_requested = "bipole"
+jk_method_resolved = "bipole"
+jk_method_executed = "bipole"
+dft_plus_u     = false
+dft_plus_u_route = "none"
+
+[plan]
+stem             = "output-mgo-rhf-sto3g-bipole-k222"
+job_kind         = "periodic_scf"
+method           = "RHF"
+basis            = "sto-3g"
+functional       = ""
+options_digest   = "75c9c04eb14d"
+
+[[plan.files]]
+role          = "log"
+path          = "output-mgo-rhf-sto3g-bipole-k222.out"
+format        = "text"
+always        = true
+description   = "Human-readable SCF log (banner, iter table, orbital block, references)."
+
+[[plan.files]]
+role          = "manifest"
+path          = "output-mgo-rhf-sto3g-bipole-k222.system"
+format        = "toml"
+always        = true
+description   = "Runtime manifest -- hardware, libs, plan, outputs status."
+
+[[plan.files]]
+role          = "orbitals"
+path          = "output-mgo-rhf-sto3g-bipole-k222.molden"
+format        = "molden"
+always        = true
+description   = "Molecular orbitals -- coefficients, energies, occupations."
+
+[[plan.files]]
+role          = "geometry"
+path          = "output-mgo-rhf-sto3g-bipole-k222.xyz"
+format        = "extended-xyz"
+always        = true
+description   = "Final geometry -- Extended XYZ with lattice in the comment line (ASE convention)."
+
+[[plan.files]]
+role          = "citations"
+path          = "output-mgo-rhf-sto3g-bipole-k222.bibtex"
+format        = "bibtex"
+always        = true
+description   = "BibTeX entries for every method, basis, and library cited."
+
+[[plan.files]]
+role          = "citations"
+path          = "output-mgo-rhf-sto3g-bipole-k222.references"
+format        = "text"
+always        = true
+description   = "Plain-text reference list (Chicago-ish formatting)."
+
+[[plan.files]]
+role          = "population"
+path          = "output-mgo-rhf-sto3g-bipole-k222.population.txt"
+format        = "text"
+always        = true
+description   = "Mulliken / Löwdin charges + Mayer bond orders + dipole -- tab-separated."
+
+[[plan.files]]
+role          = "population"
+path          = "output-mgo-rhf-sto3g-bipole-k222.population.json"
+format        = "json"
+always        = true
+description   = "Population / properties dump -- JSON form for dashboards / regression scripts."
+
+[[plan.files]]
+role          = "geometry"
+path          = "output-mgo-rhf-sto3g-bipole-k222.xsf"
+format        = "xsf"
+always        = true
+description   = "XSF crystal structure -- lattice + atoms, opens in VESTA / XCrySDen."
+
+[[plan.files]]
+role          = "geometry"
+path          = "output-mgo-rhf-sto3g-bipole-k222.cif"
+format        = "cif"
+always        = true
+description   = "Crystallographic Information File (IUCr standard, P 1 cell) -- opens in pymatgen / ASE / VESTA / Materials Project."
+
+[[plan.files]]
+role          = "qvf"
+path          = "output-mgo-rhf-sto3g-bipole-k222.qvf"
+format        = "qvf"
+always        = true
+description   = "QVF visualisation archive -- zip with manifest.json + typed binary/text payloads."
+
+[outputs]
+status           = "complete"
+finished_at_iso  = "2026-07-16T10:15:41+02:00"
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.out"
+written       = true
+bytes         = 16433
+sha256        = "a55cf6b89de3c11dc25789051826d25ad6e51a962f7dbede516743bec4e5d2f1"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.system"
+written       = true
+bytes         = 15019
+sha256        = "44be767d16448683de7e98d03b599a1de71a52560696a55f4ba3dbd636125fe1"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.molden"
+written       = true
+bytes         = 11897
+sha256        = "f543b1f9bfbc6f3a4f112e885d6669f80eba7dd7a09e7f674bf587ac690ec4b0"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.xyz"
+written       = true
+bytes         = 319
+sha256        = "2192b3bbe8052d9fd2045aa8f6f3b24970cb5ec0412a7cb5088cd6d44da1e6c5"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.bibtex"
+written       = true
+bytes         = 8017
+sha256        = "66cff29294f41797df7825b5b280df66e711ff6f3727ccd1a7ad060f171e99b6"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.references"
+written       = true
+bytes         = 3643
+sha256        = "130b6ecad535770fcc235cf93c4b9cc8f2371d4bb81a44b33570f3ed490d3d3e"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.population.txt"
+written       = true
+bytes         = 973
+sha256        = "e56a675c7fb40d27abe401c9e1d19ea5f9ca20d0d36d92d008f2e9b969a76740"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.population.json"
+written       = true
+bytes         = 965
+sha256        = "4da590fb73e5ad1d1099597315a9094f14720d9dedcdc4ccbb831e1e11b8e008"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.xsf"
+written       = true
+bytes         = 267
+sha256        = "345de72cacd8eb8c7ede4707955c1be93749290850969b141ee18fa811debe6b"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.cif"
+written       = true
+bytes         = 922
+sha256        = "7189874447d67a5dc3b25dfd2356ac0b84818cd62c62818a45cc1693a7163a8f"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "output-mgo-rhf-sto3g-bipole-k222.qvf"
+written       = true
+bytes         = 3948
+sha256        = "51697b7ddd6e8b87356fd92c8b11b032319c4ad95913fc356ea318f3bf0ac55a"
+wall_time_s   = 0.0
+error         = ""
+
+[citations]
+count            = 16
+
+[[citations.entries]]
+key           = "vibeqc_software"
+kind          = "software"
+authors       = "Peintinger, Michael F."
+title         = "vibe-qc: a quantum-chemistry code for molecules and solids"
+journal       = ""
+year          = "2026"
+doi           = ""
+license       = "MPL-2.0"
+print         = true
+
+[[citations.entries]]
+key           = "libint_valeev"
+kind          = "software"
+authors       = "Valeev, Edward F."
+title         = "Libint: A library for the evaluation of molecular integrals of many-body operators over Gaussian functions"
+journal       = ""
+year          = ""
+doi           = ""
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "hehre_sto_ng_1969"
+kind          = "article"
+authors       = "Hehre, W. J.; Stewart, R. F.; Pople, J. A."
+title         = "Self-Consistent Molecular-Orbital Methods. I. Use of Gaussian Expansions of Slater-Type Atomic Orbitals"
+journal       = "Journal of Chemical Physics"
+year          = 1969
+doi           = "10.1063/1.1672392"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "pritchard_bse_2019"
+kind          = "article"
+authors       = "Pritchard, Benjamin P.; Altarawy, Doaa; Didier, Brett; Gibson, Tara D.; Windus, Theresa L."
+title         = "New Basis Set Exchange: An Open, Up-to-Date Resource for the Molecular Sciences Community"
+journal       = "Journal of Chemical Information and Modeling"
+year          = 2019
+doi           = "10.1021/acs.jcim.9b00725"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "pulay_diis_1980"
+kind          = "article"
+authors       = "Pulay, Péter"
+title         = "Convergence acceleration of iterative sequences. The case of SCF iteration"
+journal       = "Chemical Physics Letters"
+year          = 1980
+doi           = "10.1016/0009-2614(80)80396-4"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "pulay_diis_1982"
+kind          = "article"
+authors       = "Pulay, Péter"
+title         = "Improved SCF convergence acceleration"
+journal       = "Journal of Computational Chemistry"
+year          = 1982
+doi           = "10.1002/jcc.540030413"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "saunders_hillier_levelshift_1973"
+kind          = "article"
+authors       = "Saunders, V. R.; Hillier, I. H."
+title         = "A \"Level-Shifting\" method for converging closed shell Hartree-Fock wave functions"
+journal       = "International Journal of Quantum Chemistry"
+year          = 1973
+doi           = "10.1002/qua.560070407"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "saunders_bipole_1992"
+kind          = "article"
+authors       = "Saunders, V. R.; Freyria-Fava, C.; Dovesi, R.; Salasco, L.; Roetti, C."
+title         = "On the electrostatic potential in crystalline systems where the charge density is expanded in Gaussian functions"
+journal       = "Molecular Physics"
+year          = 1992
+doi           = "10.1080/00268979200102671"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "dovesi_crystal14_2014"
+kind          = "article"
+authors       = "Dovesi, R.; Orlando, R.; Erba, A.; Zicovich-Wilson, C. M.; Civalleri, B.; Casassa, S.; Maschio, L.; Ferrabone, M.; De La Pierre, M.; D'Arco, P.; Noël, Y.; Causà, M.; Rérat, M.; Kirtman, B."
+title         = "CRYSTAL14: A program for the ab initio investigation of crystalline solids"
+journal       = "International Journal of Quantum Chemistry"
+year          = 2014
+doi           = "10.1002/qua.24658"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "gygi_baldereschi_exx_1986"
+kind          = "article"
+authors       = "Gygi, F.; Baldereschi, A."
+title         = "Self-consistent Hartree-Fock and screened-exchange calculations in solids: Application to silicon"
+journal       = "Physical Review B"
+year          = 1986
+doi           = "10.1103/PhysRevB.34.4405"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "sundararaman_arias_exx_2013"
+kind          = "article"
+authors       = "Sundararaman, R.; Arias, T. A."
+title         = "Regularization of the Coulomb singularity in exact exchange by Wigner-Seitz truncated interactions: Towards chemical accuracy in nontrivial systems"
+journal       = "Physical Review B"
+year          = 2013
+doi           = "10.1103/PhysRevB.87.165122"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "maurer_ochsenfeld_qqr_2012"
+kind          = "article"
+authors       = "Maurer, Simon A.; Lambrecht, Daniel S.; Flaig, Denis; Ochsenfeld, Christian"
+title         = "Distance-dependent Schwarz-based integral estimates for two-electron integrals: Reliable tightness vs. rigorous upper bounds"
+journal       = "The Journal of Chemical Physics"
+year          = 2012
+doi           = "10.1063/1.3693908"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "vanlenthe_sad_2006"
+kind          = "article"
+authors       = "Van Lenthe, J. H.; Zwaans, R.; Van Dam, H. J. J.; Guest, M. F."
+title         = "Starting SCF calculations by superposition of atomic densities"
+journal       = "Journal of Computational Chemistry"
+year          = 2006
+doi           = "10.1002/jcc.20393"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "eigen"
+kind          = "software"
+authors       = "Guennebaud, Gaël; Jacob, Benoît"
+title         = "Eigen v3"
+journal       = ""
+year          = 2010
+doi           = ""
+license       = "MPL-2.0"
+print         = false
+
+[[citations.entries]]
+key           = "togo_shinohara_tanaka_2024"
+kind          = "article"
+authors       = "Togo, Atsushi; Shinohara, Kohei; Tanaka, Isao"
+title         = "Spglib: a software library for crystal symmetry search"
+journal       = "Science and Technology of Advanced Materials: Methods"
+year          = 2024
+doi           = "10.1080/27660400.2024.2384822"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "pisani_crystal_1988"
+kind          = "book"
+authors       = "Pisani, Cesare; Dovesi, Roberto; Roetti, Carla"
+title         = "Hartree-Fock Ab Initio Treatment of Crystalline Systems"
+journal       = "Lecture Notes in Chemistry, Vol. 48, Springer"
+year          = 1988
+doi           = "10.1007/978-3-642-93385-1"
+license       = ""
+print         = true

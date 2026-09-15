@@ -1,0 +1,9 @@
+# CRYSTAL runtime scratch left behind by a local .d12 run. The sealed
+# reference artifacts are the .d12 input + the .out log (both tracked);
+# everything below is per-run scratch that must NOT be committed.
+fort.*
+diis_*
+*.f9
+*.f98
+GAUSSIAN.DAT
+SCFOUT.LOG

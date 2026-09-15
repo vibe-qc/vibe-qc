@@ -1,0 +1,22 @@
+[metadata]
+name = "minis"
+kind = "gcp_parameters"
+citation = "Kruse & Grimme, J. Chem. Phys. 136, 154101 (2012)"
+doi = "10.1063/1.3700154"
+license = "Open data: numerical results from a publication; redistribution is standard scientific practice"
+source = "Table 2 (σ, α, β) of the cited paper; per-element rows pending verification against mctc-gcp Fortran source"
+status = "pending"
+coverage = "(H–Xe in the original paper; bundled rows pending)"
+note = """
+The minimal MINIS basis used inside HF-3c before the p-augmentation
+upgrade to MINIX. Provided here for completeness — most v0.9.0 users
+wanting an HF-3c calculation should reach for MINIX (better quality
+at near-identical cost).
+"""
+
+[parameters]
+sigma = 0.1290
+alpha = 1.1626
+beta  = 1.1830
+
+# No [elements.*] blocks — see metadata.status = "pending".

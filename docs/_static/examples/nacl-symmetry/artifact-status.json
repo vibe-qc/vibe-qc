@@ -1,0 +1,8 @@
+{
+  "outputs": [],
+  "qvf_expected": false,
+  "qvf_files": [],
+  "returncode": 0,
+  "script": "examples/periodic/input-nacl-symmetry.py",
+  "slug": "nacl-symmetry"
+}

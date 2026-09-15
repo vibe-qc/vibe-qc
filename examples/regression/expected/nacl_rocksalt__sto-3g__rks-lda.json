@@ -1,0 +1,14 @@
+{
+  "system_id": "nacl_rocksalt",
+  "basis": "sto-3g",
+  "method_id": "rks-lda",
+  "kmesh": [1, 1, 1],
+  "primary_source": "pyscf_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 2e-2,
+  "tolerance_rationale": "STO-3G + LDA + Γ-only. FAST_DEBUG profile (spacing 0.8 bohr, cutoff 8 bohr, omega 0.7, conv 1e-5) — the per-iter wall budget forces coarse settings, so the basis-set + grid noise floor is ~5 mHa. 20 mHa catches real bugs without flagging legitimate noise. Tighten when wave-2 grid-convergence work lands.",
+  "published_energy_ha": -622.617190,
+  "published_source": "Peintinger 2013 J. Comput. Chem. 34, 451 SI Table 1 — pob-TZVP / PW1PW / multi-k. Advisory only at this (basis, method, kmesh): the published reference is at pob-TZVP basis with PW1PW and full Brillouin-zone integration; vibe-qc here runs sto-3g / RKS-LDA / Γ-only. Strict numerical match needs PW1PW + multi-k + pob-TZVP (queued for v0.8+ per docs/roadmap.md).",
+  "published_energy_ha_hf": -621.504227,
+  "published_source_hf": "Peintinger 2013 SI Table 2 — pob-TZVP / HF / multi-k. Same level-of-theory caveats as PW1PW above."
+}

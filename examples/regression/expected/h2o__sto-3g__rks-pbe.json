@@ -1,0 +1,10 @@
+{
+  "system_id": "h2o",
+  "basis": "sto-3g",
+  "method_id": "rks-pbe",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-3,
+  "tolerance_rationale": "H2O / STO-3G / RKS-PBE — XC-grid + functional-implementation differences across vibe-qc / PySCF / ORCA give a ~10⁻⁴ Ha noise floor; 1 mHa catches bugs without flagging that."
+}

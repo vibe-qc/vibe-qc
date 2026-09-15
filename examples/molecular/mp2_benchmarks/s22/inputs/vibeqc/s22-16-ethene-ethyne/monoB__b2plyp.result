@@ -1,0 +1,1 @@
+{'system': 's22-16-ethene-ethyne', 'body': 'monoB', 'variant': 'b2plyp', 'e_hf': -77.18665650487745, 'e_correlation': -0.11279382971242571, 'e_total': -77.29945033458988, 'e_os': -0.322097406023997, 'e_ss': -0.09565751883683894, 'n_scf_iter': 10, 'scf_converged': True}

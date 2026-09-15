@@ -1,0 +1,474 @@
+# Portable build and validation jobs. Deployment configuration is maintained privately.
+
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  # The QVF specification this producer is checked against, and the vibe-view
+  # release the producer/consumer contract is checked against. Both are
+  # bumped by hand; neither is a runtime dependency.
+  # Documentation snapshot: FetchContent root corrected; schema/corpus unchanged.
+  QVF_TAG: "v0.1.0-docs.1"
+  VIBE_VIEW_TAG: "v2.16.1"
+
+# Pipeline-creation gate — see the policy header above. Release-gate and
+# release-branch pipelines are never auto-cancelled; the website deploy
+# lane keeps GitLab's conservative auto-cancel so marketing-copy bursts
+# do not pile up an unbounded runner queue.
+workflow:
+  auto_cancel:
+    on_new_commit: conservative
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "release"'
+      auto_cancel:
+        on_new_commit: none
+    - if: '$CI_COMMIT_BRANCH =~ /^release-candidate\//'
+      auto_cancel:
+        on_new_commit: none
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes: &website_paths
+        - "website/**/*"
+    - when: never
+
+# --------------------------------------------------------------------
+# ci-path-policy — cheap, mandatory guard for the rules below.
+# --------------------------------------------------------------------
+#
+# GitLab evaluates `rules:changes` before jobs run. Keep those real
+# execution lists in named anchors and compare them byte-for-byte with
+# the testable classifier. Representative selections are printed into
+# every pipeline so "why did this build?" is answerable from the trace.
+ci-path-policy:
+  stage: test
+  image: python:3.13-slim-bookworm
+  tags:
+    - docker
+  script:
+    - python scripts/ci/path_policy.py
+      --verify-gitlab --verify-build-cache --show-cases
+    - python -m unittest discover -s scripts/ci/tests -p "test_*.py"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "release"'
+    - if: '$CI_COMMIT_BRANCH =~ /^release-candidate\//'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+# --------------------------------------------------------------------
+# build-test — the native producer release gate.
+# --------------------------------------------------------------------
+#
+# Runs only in release-gate pipelines (release-candidate branches) and on
+# the rare MR touching the native surface — never on
+# ordinary `main` pushes, per the policy header at the top of this file.
+#
+# Runs the canonical bootstrap, scripts/install.sh — the same script a
+# developer runs per clone. install.sh drives setup_native_deps.sh
+# (builds libint / libxc / spglib / FFTW3 / libecpint — each build_*.sh
+# is idempotent, a no-op when third_party/<lib>/install already
+# exists), creates the venv, and editable-installs vibe-qc with the
+# [test] extras. The cached third_party/ install trees amortise the
+# one-time dependency build. Release-candidate branches deliberately use a
+# unique empty build directory with ccache
+# disabled: release evidence remains a clean build rather than cache
+# evidence. (MR pipelines keep the stable scikit-build directory +
+# ccache reuse.)
+#
+# Verifies the package imports, then executes the blocking T0+T1
+# release test profile. The OOM-prone monolithic producer suite remains
+# a local/nightly gate.
+#
+# Using install.sh (not a hand-rolled build_*.sh list) keeps CI on the
+# single canonical bootstrap path — if the vendored-dependency set
+# changes, setup_native_deps.sh is the one place it is updated and CI
+# follows automatically.
+build-test:
+  stage: test
+  image: python:3.13-slim-bookworm
+  # One native build at a time prevents two adjacent pipelines from both
+  # missing and rebuilding the same dependency/object cache concurrently.
+  resource_group: native-build-test
+  interruptible: true
+  tags:
+    - docker
+  # The cold build compiles libint from scratch — the 1-hour default CI
+  # timeout killed it mid-libint. example_hub is a modest webserver and
+  # the build runs nice'd, so 12h gives the one-time cold build wide
+  # headroom; cache-warm runs finish in minutes.
+  timeout: 12h
+  variables:
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+    CCACHE_DIR: $CI_PROJECT_DIR/.cache/ccache
+    CCACHE_BASEDIR: $CI_PROJECT_DIR
+    CCACHE_COMPILERCHECK: content
+    CCACHE_NOHASHDIR: "true"
+    CCACHE_MAXSIZE: 2G
+    VIBEQC_BUILD_LOCK: "0"
+  cache:
+    # third_party/<lib>/install — keyed on the two version-pinned build
+    # scripts most likely to change. For spglib/fftw/libecpint pin
+    # changes, clear the cache manually (CI/CD → Pipelines → Clear runner
+    # caches).
+    #
+    # Cache ONLY the built install/ trees, NOT the full third_party/
+    # source+build tree. install/ holds the headers + libs the vibe-qc
+    # extension links against, and every build_<lib>.sh short-circuits to
+    # a no-op the instant its install/ CMake config exists — so the
+    # install/ subset alone preserves the ~30 min libint amortisation.
+    # The source + build dirs are only needed transiently during the one
+    # cold build per cache key and are dead weight afterwards: the full
+    # tree is ~175k files / ~5 GB, and archiving + extracting it on
+    # example_hub's local disk every job saturated I/O under concurrent
+    # pushes, tripping the runner system deadline ("context deadline
+    # exceeded") in the cache phase — before the build script even ran.
+    # The install/ subset is ~260 files / ~200 MB, ~1 s either way.
+    - key:
+        files:
+          - scripts/build_libint.sh
+          - scripts/build_libxc.sh
+        prefix: third-party-debian12-gcc12
+      paths:
+        - third_party/*/install/
+      # when: always — bank whatever install/ trees completed even when a
+      # later step fails. A cold libint build at the 5_4_4 default costs
+      # hours on this runner; under the previous `on_success` a job that
+      # finished libint but died in a later phase threw that work away,
+      # and every retry paid the full cold build again (the three
+      # v0.15.131 RC attempts were three identical full-cold failures for
+      # exactly this reason). The install/-only cache is ~260 files /
+      # ~200 MB, so the failure-path archive costs ~1 s and cannot
+      # recreate the full-tree I/O saturation this entry's history warns
+      # about. Nothing half-built is ever banked: each build_<lib>.sh
+      # creates install/ only after its own artifact check passes, and
+      # setup_native_deps.sh's wiped-lib self-heal rebuilds any restored
+      # tree whose primary shared library is missing.
+      when: always
+    # Scope native objects by base image/toolchain, Python ABI, platform,
+    # build type, and build-option generation. Bump the final generation
+    # when CI changes a compile-affecting option. ccache independently
+    # hashes compiler content, command flags, and included headers.
+    - key: vibeqc-core-debian12-gcc12-python313-cp313-linux-x86_64-release-v1
+      paths:
+        - build/
+        - .cache/ccache/
+      when: on_success
+    - key: pip-build-python313-${CI_COMMIT_REF_SLUG}
+      paths:
+        - .cache/pip/
+  before_script:
+    # Build toolchain for the vendored-library builds. The
+    # setup_native_deps.sh preflight (run inside install.sh) verifies
+    # each prerequisite and reports any gap — adjust this list to match
+    # if a pipeline's preflight flags something.
+    - apt-get -qq update && apt-get -qq install -y --no-install-recommends
+      build-essential ccache cmake ninja-build pkg-config gfortran
+      git curl tar ca-certificates
+      libboost-dev libeigen3-dev libgmp-dev libopenblas-dev
+  # A failed native build must stay diagnosable even though the trace hits
+  # the runner's 4 MB log cap (the 5_4_3-era cold build already truncated
+  # at job minute ~22; the v0.15.131 failures were invisible for exactly
+  # this reason). build_libint.sh now routes its codegen+compile chatter
+  # to third_party/libint/build.log and prints a once-a-minute heartbeat
+  # plus, on failure, the log tail — and a failed job uploads the full
+  # log here. A green job uploads nothing; its evidence is the green gate.
+  artifacts:
+    name: build-test-diagnostics-${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}
+    when: on_failure
+    expire_in: 2 weeks
+    paths:
+      - third_party/*/build.log
+      - blocking.jsonl
+  script:
+    # First line of any post-mortem: the disk and memory this job actually
+    # started with (the v0.15.131 failures left no resource evidence).
+    - df -h "$CI_PROJECT_DIR" | tail -n 2 && head -n 3 /proc/meminfo
+    # RC/tag pipelines prove a clean build. SKBUILD_BUILD_DIR overrides
+    # pyproject's stable build/{wheel_tag} path, and CCACHE_DISABLE keeps
+    # those trees independent even though the ordinary cache was restored.
+    - >-
+      if printf '%s' "${CI_COMMIT_BRANCH:-}" | grep -Eq '^release-candidate/';
+      then
+        export SKBUILD_BUILD_DIR="$CI_PROJECT_DIR/build-clean/$CI_PIPELINE_ID";
+        export CCACHE_DISABLE=1;
+        echo "native build mode: clean ($SKBUILD_BUILD_DIR; ccache disabled)";
+        bash scripts/install.sh --current --extras test --venv .venv;
+      else
+        echo "native build mode: incremental (build/{wheel_tag}; ccache enabled)";
+        ccache --zero-stats;
+        bash scripts/install.sh --extras test --venv .venv;
+      fi;
+      if [ -z "${CCACHE_DISABLE:-}" ]; then ccache --show-stats; fi
+    # Build-break gate: a declared-but-undefined symbol, a stray
+    # conflict marker, a syntax slip — all fail this import.
+    - .venv/bin/python -c "import vibeqc; print('import OK', vibeqc.__version__)"
+    # The native compile plus import above is the T0 build-break gate.
+    # Regression pytest is reserved for release candidates, where
+    # the sole T1 production sentinel runs directly. Never invoke pytest on
+    # tests/: marker deselection still imports every repository test file.
+    # NOTE on the >- fold: lines indented DEEPER than the first line keep
+    # their literal newlines, so an indented multi-line command splits into
+    # separate shell commands (v0.15.62's gate ran run_full_suite.py with
+    # no arguments and failed on usage). Keep every continuation line at
+    # the SAME indentation so the fold joins them with spaces.
+    - >-
+      if printf '%s' "${CI_COMMIT_BRANCH:-}" | grep -Eq '^release-candidate/';
+      then
+      .venv/bin/python scripts/test_gate/run_full_suite.py --wt . --py .venv/bin/python --tier T1 --out blocking.jsonl &&
+      .venv/bin/python scripts/test_gate/gate_verdict.py blocking.jsonl scripts/test_gate/known_reds_baseline.json --wt . --py .venv/bin/python;
+      else
+      echo "regression pytest deferred: ordinary main push uses compile/import T0";
+      fi;
+    # Producer/consumer contract.
+    #
+    # These seven vibe-view files exercise the writer against the reader.
+    # Before the split they ran from the co-located vibe-view/ directory. They
+    # cannot run in vibe-view's own CI, which does not install vibe-qc (that
+    # would pull this native build), so they would skip there via
+    # importorskip -- and they cannot run here without the viewer. Left alone,
+    # the contract would lose its coverage in BOTH repositories.
+    #
+    # So the viewer is fetched from its own repository at a pinned tag. This
+    # is a build-time check, not a dependency: vibe-qc does not import
+    # vibeview, and VIBE_VIEW_TAG is bumped by hand.
+    - >-
+      if printf '%s' "${CI_COMMIT_BRANCH:-}" | grep -Eq '^release-candidate/';
+      then
+      apt-get -qq install -y --no-install-recommends
+      libgl1 libglx-mesa0 libxrender1 libxext6 libsm6 libglib2.0-0
+      util-linux xvfb xauth &&
+      git clone --depth 1 --branch "$VIBE_VIEW_TAG"
+      "https://github.com/vibe-qc/vibe-view.git"
+      /tmp/vibe-view &&
+      .venv/bin/pip install -e '/tmp/vibe-view[test]' &&
+      useradd --no-create-home --uid 10002 --user-group vvtest &&
+      install -d -m 0700 -o vvtest -g vvtest "/tmp/vvtest-$CI_JOB_ID" &&
+      chown -R vvtest:vvtest /tmp/vibe-view &&
+      runuser -u vvtest -- env HOME="/tmp/vvtest-$CI_JOB_ID"
+      git config --global --add safe.directory "$CI_PROJECT_DIR" &&
+      runuser -u vvtest -- env HOME="/tmp/vvtest-$CI_JOB_ID"
+      PYTHONPYCACHEPREFIX="/tmp/vvtest-$CI_JOB_ID/pycache"
+      PIP_CACHE_DIR="/tmp/vvtest-$CI_JOB_ID/pip-cache"
+      PYVISTA_OFF_SCREEN=True sh -c 'test "$(id -u)" -ne 0 &&
+      exec xvfb-run -a .venv/bin/python -m pytest -q -p no:cacheprovider
+      /tmp/vibe-view/tests/test_container_submission.py
+      /tmp/vibe-view/tests/test_details_panel_sandbox.py
+      /tmp/vibe-view/tests/test_in_memory_handover.py
+      /tmp/vibe-view/tests/test_job_container_lifecycle.py
+      /tmp/vibe-view/tests/test_kind_drift.py
+      /tmp/vibe-view/tests/test_live_opt.py
+      /tmp/vibe-view/tests/test_wavefunction_libint_parity.py';
+      else
+      echo "producer/consumer contract deferred: ordinary main push uses compile/import T0";
+      fi;
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^release-candidate\//'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: &native_paths
+        - ".gitlab-ci.yml"
+        - "CMakeLists.txt"
+        - "MANIFEST.in"
+        - "pyproject.toml"
+        - "cpp/**/*"
+        - "python/vibeqc/**/*"
+        - "python/vibeqc_naming/**/*"
+        - "tests/**/*"
+        - "scripts/_build_lock.sh"
+        - "scripts/_lifecycle_lock.sh"
+        - "scripts/_safe_build_env.sh"
+        - "scripts/_setup_helpers.sh"
+        - "scripts/_venv_helpers.sh"
+        - "scripts/build_*.sh"
+        - "scripts/gen_qvf_v2_schema.py"
+        - "scripts/install.sh"
+        - "scripts/setup_basis_library.sh"
+        - "scripts/setup_native_deps.sh"
+        - "scripts/test_gate/**/*"
+        - "scripts/update.sh"
+        - "scripts/update_native_deps.sh"
+
+# --------------------------------------------------------------------
+# vibe-basis is an independently versioned, pure-Python sub-project.
+# Gate both its complete test suite and its public lifecycle without
+# pulling vibe-qc's native build into this inexpensive job.
+# --------------------------------------------------------------------
+vibe-basis-test:
+  stage: test
+  image: python:3.13-slim-bookworm
+  tags:
+    - docker
+  variables:
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+  cache:
+    - key: pip-vibe-basis-python313
+      paths:
+        - .cache/pip/
+  before_script:
+    - apt-get -qq update && apt-get -qq install -y --no-install-recommends
+      git passwd util-linux
+    - useradd --no-create-home --uid 10003 --user-group vbtest
+    - install -d -m 0700 -o vbtest -g vbtest "/tmp/vbtest-$CI_JOB_ID"
+    # The lifecycle lock binds the checkout resource to its owning uid. GitLab
+    # creates the checkout root as root even though this job deliberately runs
+    # the public lifecycle as vbtest, so make only that resource directory
+    # user-owned (the source files remain root-owned and read-only to vbtest).
+    - chown vbtest:vbtest "$CI_PROJECT_DIR"
+    - >-
+      runuser -u vbtest -- env HOME="/tmp/vbtest-$CI_JOB_ID"
+      git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - pip install -e 'vibe-basis[test]'
+  script:
+    - >-
+      runuser -u vbtest -- env HOME="/tmp/vbtest-$CI_JOB_ID"
+      PYTHONPYCACHEPREFIX="/tmp/vbtest-$CI_JOB_ID/pycache"
+      PIP_CACHE_DIR="/tmp/vbtest-$CI_JOB_ID/pip-cache"
+      python -m pytest "$CI_PROJECT_DIR/vibe-basis/tests"
+      -q -p no:cacheprovider
+    - >-
+      runuser -u vbtest -- env HOME="/tmp/vbtest-$CI_JOB_ID"
+      PIP_CACHE_DIR="/tmp/vbtest-$CI_JOB_ID/pip-cache"
+      "$CI_PROJECT_DIR/vibe-basis/scripts/install.sh"
+      --extras core --python "$(command -v python3)"
+      --venv "/tmp/vbtest-$CI_JOB_ID/venv"
+    - >-
+      runuser -u vbtest -- env HOME="/tmp/vbtest-$CI_JOB_ID"
+      PIP_CACHE_DIR="/tmp/vbtest-$CI_JOB_ID/pip-cache"
+      "$CI_PROJECT_DIR/vibe-basis/scripts/update.sh"
+      --skip-git --venv "/tmp/vbtest-$CI_JOB_ID/venv"
+    - >-
+      runuser -u vbtest -- env HOME="/tmp/vbtest-$CI_JOB_ID"
+      PIP_CACHE_DIR="/tmp/vbtest-$CI_JOB_ID/pip-cache"
+      "$CI_PROJECT_DIR/vibe-basis/scripts/reinstall.sh"
+      --venv "/tmp/vbtest-$CI_JOB_ID/venv"
+    - >-
+      runuser -u vbtest -- env HOME="/tmp/vbtest-$CI_JOB_ID"
+      "$CI_PROJECT_DIR/vibe-basis/scripts/uninstall.sh"
+      --venv "/tmp/vbtest-$CI_JOB_ID/venv"
+    - test ! -e "/tmp/vbtest-$CI_JOB_ID/venv"
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^release-candidate\//'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: &vibe_basis_paths
+        - ".gitlab-ci.yml"
+        - "pyproject.toml"
+        - "scripts/_build_lock.sh"
+        - "scripts/_lifecycle_lock.sh"
+        - "vibe-basis/**/*"
+
+docs-build:
+  stage: build
+  image: python:3.13-slim-bookworm
+  tags:
+    - docker
+    - sphinx
+  variables:
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+  cache:
+    key: pip-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .cache/pip/
+  before_script:
+    # python:3.13-slim is genuinely slim — no git in PATH. We need git
+    # for the .build-info commit-stamp written by scripts/build_site.sh.
+    - apt-get -qq update && apt-get -qq install -y --no-install-recommends git
+    # The checkout uid can differ from the job uid (lifecycle-ownership
+    # alignment), which makes every git invocation fail with 'detected
+    # dubious ownership'. The commit-stamp in build_site.sh needs the
+    # exemption just like the build jobs.
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - python -V
+    # Sphinx tooling + the runtime deps vibeqc/__init__.py actually
+    # imports. autosummary imports vibeqc to scan docstrings, so any
+    # import-time dep (numpy, optional ase / dftd3) has to be available
+    # in the build image. The C++ extension stays mocked via -D autodoc_
+    # mock_imports inside scripts/build_site.sh.
+    - pip install --quiet
+      'sphinx>=7.4'
+      'myst-parser>=4.0'
+      'linkify-it-py>=2'
+      'furo>=2024.5'
+      'sphinx-copybutton>=0.5'
+      'sphinx-design>=0.6'
+      'sphinx-reredirects>=0.1'
+      'numpy>=1.26'
+      'ase>=3.22'
+      'dftd3>=1.2'
+  script:
+    - bash scripts/build_site.sh
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "release"'
+    - if: '$CI_COMMIT_BRANCH =~ /^release-candidate\//'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: &docs_paths
+        - ".gitlab-ci.yml"
+        - "CHANGELOG.md"
+        - "CITATION.cff"
+        - "CONTRIBUTING.md"
+        - "README.md"
+        - "docs/**/*"
+        - "scripts/build_site.sh"
+
+# --------------------------------------------------------------------
+# Shared rsync-over-SSH deploy setup — key, pinned known_hosts, strict
+# host-key checking. Referenced by BOTH deploy jobs (docs + website) via
+# `!reference` so this security-sensitive setup lives in exactly one
+# place. Each referencing job supplies its own DEPLOY_HOST / DEPLOY_USER
+# / DEPLOY_PATH in `variables`.
+# --------------------------------------------------------------------
+website-test:
+  stage: test
+  needs: []
+  image: node:22-slim
+  tags:
+    - docker
+    - sphinx
+  script:
+    - npm --prefix website ci
+    - PREVIEW_BASE=/preview/ npm --prefix website run verify
+    - npm --prefix website run verify
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes: *website_paths
+    # Mirrors website-deploy's manual web rule so the gate exists to be
+    # needed there too; the deploy stays manual, this stays automatic.
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main"'
+
+# --------------------------------------------------------------------
+# website-deploy — the Astro marketing site at the domain ROOT.
+# Auto-deploys from `main` whenever website/ changes, decoupled from
+# version releases so marketing copy and fixes ship on demand. It waits on
+# website-test and nothing else (independent of the C++ test suite — the
+# site doesn't depend on the core), so a failing page blocks the publish
+# instead of reaching the root. A manual run is also available on `main`
+# to force a redeploy; website-test runs automatically there to gate it.
+#
+# Its --delete-after prunes the root, so it MUST exclude the docs tree,
+# the desktop update feed, /preview/, and the server-managed cPanel/Apache
+# files, or it would wipe them. The root `.htaccess` (legacy-URL redirects,
+# deploy/htaccess-redirects.conf) is excluded too — managed by hand on the
+# server, not by CI.
+# --------------------------------------------------------------------
+qvf-conformance:
+  stage: test
+  image: python:3.13-slim-bookworm
+  tags:
+    - docker
+  before_script:
+    - apt-get -qq update && apt-get -qq install -y --no-install-recommends git
+    - git clone --depth 1 --branch "$QVF_TAG"
+      "https://github.com/vibe-qc/qvf.git"
+      /tmp/qvf
+  script:
+    - python scripts/ci/check_qvf_schema.py --qvf-root /tmp/qvf
+  # No `main` rule: this repository keeps the monorepo's release-only CI
+  # policy, so a main push creates no pipeline at all (except website
+  # changes) and a job-level main rule could never fire. The conformance
+  # check therefore runs where it decides something -- every release
+  # candidate and every merge request.
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^release-candidate\//'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'

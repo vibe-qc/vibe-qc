@@ -1,0 +1,21 @@
+{
+  "outputs": [
+    "output-h2o-trimer-opt.bibtex",
+    "output-h2o-trimer-opt.molden",
+    "output-h2o-trimer-opt.out",
+    "output-h2o-trimer-opt.population.json",
+    "output-h2o-trimer-opt.population.txt",
+    "output-h2o-trimer-opt.qvf",
+    "output-h2o-trimer-opt.references",
+    "output-h2o-trimer-opt.system",
+    "output-h2o-trimer-opt.traj",
+    "output-h2o-trimer-opt.xyz"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-h2o-trimer-opt.qvf"
+  ],
+  "returncode": 0,
+  "script": "examples/molecular/input-h2o-trimer-opt.py",
+  "slug": "h2o-trimer-opt"
+}

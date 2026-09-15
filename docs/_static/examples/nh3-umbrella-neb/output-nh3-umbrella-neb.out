@@ -1,0 +1,26 @@
+NH3 umbrella inversion via native CI-NEB @ HF/STO-3G
+====================================================
+
+converged: True   outer iterations: 56
+max |F_NEB|: 9.49e-04 Ha/bohr
+
+Minimum energy path:
+   image     ΔE (eV)   ΔE (kcal/mol)
+       0      0.0000           0.000
+       1      0.0001           0.002
+       2      0.0726           1.675
+       3      0.4831          11.141
+       4      0.0726           1.675
+       5      0.0001           0.002
+       6     -0.0000          -0.000
+
+Transition state: image 3  (climbing image 3)
+Barrier: 0.0178 Ha  (11.14 kcal/mol)
+Experimental barrier: ~5.8 kcal/mol
+HF/STO-3G over-estimates by ~2× — expected for this level of theory.
+
+TS geometry (image 3, Å):
+  N   -0.00000  -0.00000  -0.00000
+  H   +1.00548  -0.00000  -0.00000
+  H   -0.50274  +0.87077  -0.00000
+  H   -0.50274  -0.87077  -0.00000

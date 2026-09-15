@@ -1,0 +1,10 @@
+{
+  "system_id": "benzene",
+  "basis": "def2-svp",
+  "method_id": "rks-pbe-df",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-3,
+  "tolerance_rationale": "Benzene / def2-SVP / RKS-PBE / DF — DF + GGA-XC adds an XC-grid noise floor on top of the DF error; 1 mHa accommodates both. ORCA pure-GGA DF uses the accepted RI + def2/J simple-input route rather than RIJK, which requires HF exchange."
+}

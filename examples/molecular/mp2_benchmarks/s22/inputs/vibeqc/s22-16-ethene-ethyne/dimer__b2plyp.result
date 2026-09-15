@@ -1,0 +1,1 @@
+{'system': 's22-16-ethene-ethyne', 'body': 'dimer', 'variant': 'b2plyp', 'e_hf': -155.61646820435215, 'e_correlation': -0.23259546525069064, 'e_total': -155.84906366960283, 'e_os': -0.6718166337282689, 'e_ss': -0.18964805238540003, 'n_scf_iter': 20, 'scf_converged': True}

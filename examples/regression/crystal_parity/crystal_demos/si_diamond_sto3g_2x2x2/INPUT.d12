@@ -1,0 +1,19 @@
+Si diamond — RHF/STO-3G — SG 227, SHRINK 2 2, FMIXING 30
+CRYSTAL
+0 0 0
+227
+5.430
+1
+14  .125  .125   .125
+END
+14 3
+1 0 3  2.  0.
+1 1 3  8.  0.
+1 1 3  4.  0.
+99 0
+END
+SHRINK
+2 2
+FMIXING
+30
+END

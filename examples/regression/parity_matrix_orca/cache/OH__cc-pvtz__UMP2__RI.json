@@ -1,0 +1,25 @@
+{
+  "cell": {
+    "basis": "cc-pvtz",
+    "charge": 0,
+    "df": true,
+    "method": "UMP2",
+    "spin": 1,
+    "system": "OH"
+  },
+  "cell_id": "OH__cc-pvtz__UMP2__RI",
+  "code": "orca",
+  "code_version": "6.1.1",
+  "e_corr": -0.211988395,
+  "e_hf": -75.41925053515632,
+  "e_os": null,
+  "e_ss": null,
+  "e_total": -75.63123893,
+  "e_total_residual": -1.5633361272193724e-10,
+  "generated_utc": "2026-05-20T20:41:08+00:00",
+  "nprocs": 1,
+  "orca_simple_input": "! RI-MP2 cc-pVTZ/C cc-pVTZ NoFrozenCore VeryTightSCF Bohrs",
+  "vq_jobid": "9a6bac493bb0",
+  "vq_state": "completed",
+  "vq_wall_s": 1.004643
+}

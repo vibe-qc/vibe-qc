@@ -1,0 +1,30 @@
+# vibe-qc population / properties dump
+# Sections: mulliken charges, löwdin charges,
+# hirshfeld charges, mayer bond orders (top-N), dipole moment.
+# Tab-separated. Lines starting with '#' are comments.
+
+# === Mulliken atomic charges ===
+# idx	symbol	Z	charge
+0	Mg	12.0	+0.843860
+1	O	8.0	-0.843860
+
+# === Löwdin atomic charges ===
+# idx	symbol	Z	charge
+0	Mg	12.0	+0.703429
+1	O	8.0	-0.703429
+
+# === Hirshfeld atomic charges ===
+# hirshfeld: N/A -- unsupported: periodic BIPOLE Hirshfeld charges require a periodic promolecule/grid partition, which is not implemented
+
+# === Mayer bond orders (top entries) ===
+# i	j	sym_i	sym_j	order
+0	1	Mg	O	1.6447
+
+# === Wiberg bond indices (top entries) ===
+# wiberg: N/A -- no bonds above threshold
+
+# === NPA atomic charges ===
+# npa: N/A -- no data
+
+# === Dipole moment ===
+# dipole: N/A -- unsupported: ordinary electric dipole moments are ill-defined for 3D periodic BIPOLE bulk cells; Berry-phase polarization is not implemented

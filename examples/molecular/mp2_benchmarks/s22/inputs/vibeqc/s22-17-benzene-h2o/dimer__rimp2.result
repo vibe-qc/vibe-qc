@@ -1,0 +1,1 @@
+{'system': 's22-17-benzene-h2o', 'body': 'dimer', 'variant': 'rimp2', 'e_hf': -306.83872711517876, 'e_correlation': -1.3230300829973216, 'e_total': -308.1617571981761, 'e_os': -1.0022685765724328, 'e_ss': -0.3207615064248889, 'n_scf_iter': 23, 'scf_converged': True}

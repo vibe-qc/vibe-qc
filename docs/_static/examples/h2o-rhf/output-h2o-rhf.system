@@ -1,0 +1,329 @@
+# vibe-qc system manifest -- written alongside output-<job>.out by run_job(...).
+# Captures the runtime environment so generated calculation outputs are
+# reproducible and wall-time numbers are interpretable. The [plan]
+# section is the declared output contract (written once, at job start);
+# the [outputs] section is the running status (rewritten as each file
+# lands). External QC programs are validation references only: run
+# them out-of-process and parse their outputs.
+
+[vibeqc]
+version        = "0.15.23.dev0"
+codename       = "Neese's Cheetah"
+git_sha        = "dc22a26"
+git_branch     = "main"
+is_release     = false
+
+[host]
+hostname       = "<redacted>"
+os             = "Darwin"
+os_release     = "25.5.0"
+os_pretty      = "macOS 26.5.2"
+arch           = "arm64"
+
+[cpu]
+model          = "Apple M5 Max"
+physical_cores = 18
+logical_cores  = 18
+omp_threads_used = 18
+
+[memory]
+total_gb       = 128.0
+available_gb   = 88.17
+
+[python]
+version        = "3.14.6"
+implementation = "CPython"
+executable     = "~/gitlab/vibeqc-documentation/.venv/bin/python"
+
+[libraries]
+libint         = "2.13.1"
+libxc          = "7.0.0"
+spglib         = "2.7.0"
+libecpint      = "1.0.7 (vendored, MAX_L=5)"
+fftw3          = "3.3.9"
+
+[validation]
+external_programs_policy = "External QC programs are validation references only."
+execution_boundary = "Run external programs out-of-process and parse their outputs; do not import them as vibe-qc backends."
+native_backend_policy = "vibe-qc runtime methods execute vibe-qc-owned native or Python code."
+
+[run]
+timestamp_iso  = "2026-07-05T17:17:16+02:00"
+wall_seconds   = 0.06312191701726988
+basename       = "output-h2o-rhf"
+pid            = 17394
+
+[plan]
+stem             = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf"
+job_kind         = "molecular_scf"
+method           = "RHF"
+basis            = "6-31g*"
+functional       = ""
+options_digest   = "09f1021ac614"
+
+[[plan.files]]
+role          = "log"
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.out"
+format        = "text"
+always        = true
+description   = "Human-readable SCF log (banner, iter table, orbital block, references)."
+
+[[plan.files]]
+role          = "manifest"
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.system"
+format        = "toml"
+always        = true
+description   = "Runtime manifest -- hardware, libs, plan, outputs status."
+
+[[plan.files]]
+role          = "orbitals"
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.molden"
+format        = "molden"
+always        = true
+description   = "Molecular orbitals -- coefficients, energies, occupations."
+
+[[plan.files]]
+role          = "geometry"
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.xyz"
+format        = "xyz"
+always        = true
+description   = "Final geometry in Angstrom."
+
+[[plan.files]]
+role          = "citations"
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.bibtex"
+format        = "bibtex"
+always        = true
+description   = "BibTeX entries for every method, basis, and library cited."
+
+[[plan.files]]
+role          = "citations"
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.references"
+format        = "text"
+always        = true
+description   = "Plain-text reference list (Chicago-ish formatting)."
+
+[[plan.files]]
+role          = "population"
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.population.txt"
+format        = "text"
+always        = true
+description   = "Mulliken / Löwdin charges + Mayer bond orders + dipole -- tab-separated."
+
+[[plan.files]]
+role          = "population"
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.population.json"
+format        = "json"
+always        = true
+description   = "Population / properties dump -- JSON form for dashboards / regression scripts."
+
+[[plan.files]]
+role          = "crash"
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.dump"
+format        = "toml"
+always        = false
+description   = "Post-mortem snapshot -- only written on SCF failure or max-iter without convergence."
+
+[[plan.files]]
+role          = "qvf"
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.qvf"
+format        = "qvf"
+always        = true
+description   = "QVF visualisation archive -- zip with manifest.json + typed binary/text payloads."
+
+[outputs]
+status           = "complete"
+finished_at_iso  = "2026-07-05T17:17:16+02:00"
+
+[[outputs.files]]
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.out"
+written       = true
+bytes         = 7166
+sha256        = "ae27b0b76764d99352979ab7837e96fbe0f0653924739a114e1850f242685a59"
+wall_time_s   = 0.09642479196190834
+error         = ""
+
+[[outputs.files]]
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.system"
+written       = true
+bytes         = 10635
+sha256        = "6621af49ddc71147dc51f80f0274d84b757a65847a2c3bccfeddb2fdfccdb190"
+wall_time_s   = 0.09762458398472518
+error         = ""
+
+[[outputs.files]]
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.molden"
+written       = true
+bytes         = 12442
+sha256        = "87745d3f892ec9a505bfd0170e2e9984db0c6d7122a1ec280f936bf7f393cea7"
+wall_time_s   = 0.09886704199016094
+error         = ""
+
+[[outputs.files]]
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.xyz"
+written       = true
+bytes         = 222
+sha256        = "2afe3ab7b036693af57fb59c59569b8a1b1a3ecd4370303b1337f7a090bc4929"
+wall_time_s   = 0.09997858398128301
+error         = ""
+
+[[outputs.files]]
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.bibtex"
+written       = true
+bytes         = 3997
+sha256        = "7a1726affd971981bfaef8cb8874d9b4273dbe30edc13004244ce5da8e1b18ee"
+wall_time_s   = 0.1012421670020558
+error         = ""
+
+[[outputs.files]]
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.references"
+written       = true
+bytes         = 2175
+sha256        = "2eaa1c5f014fa21540da36f40819a56876add0d9f7c14d72c76f4bf19eb551d7"
+wall_time_s   = 0.10233087500091642
+error         = ""
+
+[[outputs.files]]
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.population.txt"
+written       = true
+bytes         = 672
+sha256        = "567eee116aa2e6cabe8b82abed22e4aef507946c1b6a05d151d53f5f9aa5a027"
+wall_time_s   = 0.10337412497028708
+error         = ""
+
+[[outputs.files]]
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.population.json"
+written       = true
+bytes         = 1197
+sha256        = "4820762e0e47560c4ff6c10d7dae19290c3b603f2583703c4cdb216650419289"
+wall_time_s   = 0.10437933396315202
+error         = ""
+
+[[outputs.files]]
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.dump"
+written       = false
+bytes         = 0
+sha256        = ""
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "<vibe-qc-checkout>/examples/molecular/output-h2o-rhf.qvf"
+written       = true
+bytes         = 10010
+sha256        = "6ddcddb5241a36cdc67bab449df427735b76e612d42df13111ac41580306b070"
+wall_time_s   = 0.10539962496841326
+error         = ""
+
+[citations]
+count            = 10
+
+[[citations.entries]]
+key           = "vibeqc_software"
+kind          = "software"
+authors       = "Peintinger, Michael F."
+title         = "vibe-qc: a quantum-chemistry code for molecules and solids"
+journal       = ""
+year          = "2026"
+doi           = ""
+license       = "MPL-2.0"
+print         = true
+
+[[citations.entries]]
+key           = "libint_valeev"
+kind          = "software"
+authors       = "Valeev, Edward F."
+title         = "Libint: A library for the evaluation of molecular integrals of many-body operators over Gaussian functions"
+journal       = ""
+year          = ""
+doi           = ""
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "ditchfield_6_31g_1971"
+kind          = "article"
+authors       = "Ditchfield, R.; Hehre, W. J.; Pople, J. A."
+title         = "Self-Consistent Molecular-Orbital Methods. IX. An Extended Gaussian-Type Basis for Molecular-Orbital Studies of Organic Molecules"
+journal       = "Journal of Chemical Physics"
+year          = 1971
+doi           = "10.1063/1.1674902"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "hariharan_pople_1973"
+kind          = "article"
+authors       = "Hariharan, P. C.; Pople, J. A."
+title         = "The influence of polarization functions on molecular orbital hydrogenation energies"
+journal       = "Theoretica Chimica Acta"
+year          = 1973
+doi           = "10.1007/BF00533485"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "pulay_diis_1980"
+kind          = "article"
+authors       = "Pulay, Péter"
+title         = "Convergence acceleration of iterative sequences. The case of SCF iteration"
+journal       = "Chemical Physics Letters"
+year          = 1980
+doi           = "10.1016/0009-2614(80)80396-4"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "pulay_diis_1982"
+kind          = "article"
+authors       = "Pulay, Péter"
+title         = "Improved SCF convergence acceleration"
+journal       = "Journal of Computational Chemistry"
+year          = 1982
+doi           = "10.1002/jcc.540030413"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "mulliken_1955"
+kind          = "article"
+authors       = "Mulliken, R. S."
+title         = "Electronic Population Analysis on LCAO-MO Molecular Wave Functions. I"
+journal       = "Journal of Chemical Physics"
+year          = 1955
+doi           = "10.1063/1.1740588"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "lowdin_1950"
+kind          = "article"
+authors       = "Löwdin, Per-Olov"
+title         = "On the Non-Orthogonality Problem Connected with the Use of Atomic Wave Functions in the Theory of Molecules and Crystals"
+journal       = "Journal of Chemical Physics"
+year          = 1950
+doi           = "10.1063/1.1747632"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "mayer_bond_order_1983"
+kind          = "article"
+authors       = "Mayer, I."
+title         = "Charge, bond order and valence in the ab initio SCF theory"
+journal       = "Chemical Physics Letters"
+year          = 1983
+doi           = "10.1016/0009-2614(83)80005-0"
+license       = ""
+print         = true
+
+[[citations.entries]]
+key           = "hirshfeld_1977"
+kind          = "article"
+authors       = "Hirshfeld, F. L."
+title         = "Bonded-atom fragments for describing molecular charge densities"
+journal       = "Theoretica Chimica Acta"
+year          = 1977
+doi           = "10.1007/BF00549096"
+license       = ""
+print         = true

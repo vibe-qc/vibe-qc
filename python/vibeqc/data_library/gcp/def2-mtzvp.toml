@@ -1,0 +1,163 @@
+[metadata]
+name = "def2-mtzvp"
+kind = "gcp_parameters"
+citation = "Brandenburg, Bannwarth, Hansen, Grimme, J. Chem. Phys. 148, 064104 (2018)"
+doi = "10.1063/1.5012601"
+license = "Open data: numerical results from a published scientific paper; redistribution is standard practice"
+source = "mctc-gcp src/gcp.f90 data block HFdef2mtzvp; cross-verified against mctc-gcp Fortran reference implementation, github.com/grimme-lab/gcp"
+status = "complete"
+coverage = "H–Kr (Z=1..36)"
+note = """
+B97-3c parent basis. Note: B97-3c itself uses SRB instead of gCP, but the gCP data is bundled for use with other functionals evaluated at def2-mTZVP.
+"""
+
+[parameters]
+sigma = 0.27
+eta   = 1.0857
+alpha = 1.3624
+beta  = 1.0
+
+[elements.H]
+e_mis  = 0.00793
+n_virt = 3.0
+
+[elements.He]
+e_mis  = 0.00331
+n_virt = 3.0
+
+[elements.Li]
+e_mis  = 0.08676
+n_virt = 8.0
+
+[elements.Be]
+e_mis  = 0.00996
+n_virt = 11.0
+
+[elements.B]
+e_mis  = 0.01396
+n_virt = 19.0
+
+[elements.C]
+e_mis  = 0.006
+n_virt = 19.0
+
+[elements.N]
+e_mis  = 0.00376
+n_virt = 19.0
+
+[elements.O]
+e_mis  = 0.00443
+n_virt = 24.0
+
+[elements.F]
+e_mis  = 0.00538
+n_virt = 19.0
+
+[elements.Ne]
+e_mis  = 0.00675
+n_virt = 19.0
+
+[elements.Na]
+e_mis  = 0.07772
+n_virt = 14.0
+
+[elements.Mg]
+e_mis  = 0.05
+n_virt = 14.0
+
+[elements.Al]
+e_mis  = 0.06832
+n_virt = 22.0
+
+[elements.Si]
+e_mis  = 0.04183
+n_virt = 22.0
+
+[elements.P]
+e_mis  = 0.0258
+n_virt = 22.0
+
+[elements.S]
+e_mis  = 0.02551
+n_virt = 22.0
+
+[elements.Cl]
+e_mis  = 0.02334
+n_virt = 22.0
+
+[elements.Ar]
+e_mis  = 0.02273
+n_virt = 22.0
+
+[elements.K]
+e_mis  = 0.09724
+n_virt = 18.0
+
+[elements.Ca]
+e_mis  = 0.09917
+n_virt = 28.0
+
+[elements.Sc]
+e_mis  = 0.21919
+n_virt = 31.0
+
+[elements.Ti]
+e_mis  = 0.1891
+n_virt = 31.0
+
+[elements.V]
+e_mis  = 0.16438
+n_virt = 31.0
+
+[elements.Cr]
+e_mis  = 0.14724
+n_virt = 31.0
+
+[elements.Mn]
+e_mis  = 0.1373
+n_virt = 31.0
+
+[elements.Fe]
+e_mis  = 0.12751
+n_virt = 31.0
+
+[elements.Co]
+e_mis  = 0.11859
+n_virt = 31.0
+
+[elements.Ni]
+e_mis  = 0.03187
+n_virt = 31.0
+
+[elements.Cu]
+e_mis  = 0.12099
+n_virt = 31.0
+
+[elements.Zn]
+e_mis  = 0.05683
+n_virt = 31.0
+
+[elements.Ga]
+e_mis  = 0.091
+n_virt = 36.0
+
+[elements.Ge]
+e_mis  = 0.07182
+n_virt = 36.0
+
+[elements.As]
+e_mis  = 0.06356
+n_virt = 36.0
+
+[elements.Se]
+e_mis  = 0.06424
+n_virt = 36.0
+
+[elements.Br]
+e_mis  = 0.06185
+n_virt = 36.0
+
+[elements.Kr]
+e_mis  = 0.06102
+n_virt = 36.0
+

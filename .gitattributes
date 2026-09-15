@@ -1,0 +1,15 @@
+# Reference outputs bundled under docs/_static/examples/ — mark binary
+# formats so `git diff` doesn't try to render them as text. Generated
+# by scripts/regenerate_doc_examples.py at release time.
+docs/_static/examples/**/*.molden binary
+docs/_static/examples/**/*.cube   binary
+docs/_static/examples/**/*.traj   binary
+docs/_static/examples/**/*.png    binary
+docs/_static/examples/**/*.gif    binary
+
+# Plot figures already shipping under docs/_static/plots/.
+docs/_static/plots/*.png binary
+docs/_static/plots/*.gif binary
+
+# Logo and other static assets.
+docs/_static/logo/*.png  binary

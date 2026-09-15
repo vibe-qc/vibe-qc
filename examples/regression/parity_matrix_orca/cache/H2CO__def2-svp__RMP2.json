@@ -1,0 +1,25 @@
+{
+  "cell": {
+    "basis": "def2-svp",
+    "charge": 0,
+    "df": false,
+    "method": "RMP2",
+    "spin": 0,
+    "system": "H2CO"
+  },
+  "cell_id": "H2CO__def2-svp__RMP2",
+  "code": "orca",
+  "code_version": "6.1.1",
+  "e_corr": -0.321650766,
+  "e_hf": -113.77831141796248,
+  "e_os": null,
+  "e_ss": null,
+  "e_total": -114.099962184,
+  "e_total_residual": 3.751665644813329e-11,
+  "generated_utc": "2026-05-20T20:40:51+00:00",
+  "nprocs": 1,
+  "orca_simple_input": "! MP2 def2-SVP NoFrozenCore VeryTightSCF Bohrs",
+  "vq_jobid": "2acbfe8927f3",
+  "vq_state": "completed",
+  "vq_wall_s": 1.004575
+}

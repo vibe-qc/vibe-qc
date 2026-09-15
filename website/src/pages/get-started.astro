@@ -1,0 +1,202 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import ProductWordmark from '../components/ProductWordmark.astro';
+import Footer from '../components/Footer.astro';
+
+import { products } from '../data/products.mjs';
+const base = import.meta.env.BASE_URL;
+const DOCS = '/docs';
+
+// Canonical first calculation — kept in lockstep with docs/quickstart.md.
+const code = `import vibeqc as vq
+import numpy as np
+
+mol = vq.Molecule([
+    vq.Atom(8, [ 0.0,  0.00,  0.00]),
+    vq.Atom(1, [ 0.0,  1.43, -0.98]),
+    vq.Atom(1, [ 0.0, -1.43, -0.98]),
+])
+basis = vq.BasisSet(mol, "6-31g*")
+result = vq.run_rhf(mol, basis)
+
+eps = np.asarray(result.mo_energies)
+homo = mol.n_electrons() // 2 - 1
+print(f"E(SCF)  = {result.energy:.6f} Ha")
+print(f"ε(HOMO) = {eps[homo]*27.211386:.2f} eV")
+print(f"gap     = {(eps[homo+1] - eps[homo])*27.211386:.2f} eV")`;
+---
+
+<Base
+  title="Get started — vibe-qc"
+  description="Choose vibe-qc for calculations, vibe-view for visualization, or vibe-queue for scheduling, then follow the independent installation guide."
+>
+  <Nav />
+
+  <main class="wrap gs">
+    <section class="gs-head">
+      <span class="eyebrow">get started</span>
+      <h1>Choose where your work begins.</h1>
+      <p>
+        Calculate, visualize, or schedule. Install each product independently;
+        you can open results or queue other programs without installing the engine.
+      </p>
+    </section>
+
+    <section class="next" aria-label="Choose a product">
+      <div class="next-grid">
+        {products.map(product => <a class="ncard" href={`${base}products/${product.id}/`}>
+          <h3><ProductWordmark product={product.id} label={product.name} /><span class="arrow" aria-hidden="true">→</span></h3><p>{product.summary}</p>
+        </a>)}
+      </div>
+    </section>
+    <h2 class="next">First calculation with vibe-qc</h2>
+    <ol class="steps">
+      <li>
+        <h2><span class="n">1</span> Install</h2>
+        <pre class="code"><code>git clone https://github.com/vibe-qc/vibe-qc.git
+cd vibe-qc
+./scripts/install.sh --dev</code></pre>
+        <p class="note">
+          <code>install.sh</code> builds the native core, creates a virtualenv and
+          installs vibe-qc. It accepts <code>--dev</code> (track main) and
+          <code>--branch NAME</code>; see the
+          <a href={`${DOCS}/installation.html`}>installation guide</a> for the full
+          surface and the manual native-deps recipe.
+        </p>
+        <p class="note">
+          Source access currently requires repository access. Email <a href="mailto:mpei@vibe-qc.com">mpei@vibe-qc.com</a>
+          with a public SSH key to request read-only clone access — see the
+          <a href={`${DOCS}/installation.html`}>installation guide</a> for details.
+        </p>
+      </li>
+      <li>
+        <h2><span class="n">2</span> Run RHF on water</h2>
+        <pre class="code"><code>{code}</code></pre>
+      </li>
+      <li>
+        <h2><span class="n">3</span> Read the result</h2>
+        <p class="note">
+          You get the SCF energy in hartree and the HOMO energy plus HOMO–LUMO gap in
+          eV. Swap <code>run_rhf</code> for <code>run_rks</code>, <code>run_mp2</code>,
+          or a periodic driver to go further — same front-end, same objects.
+        </p>
+      </li>
+    </ol>
+
+    <section class="next" aria-labelledby="repositories-heading">
+      <h2 id="repositories-heading">Four repositories, shared files.</h2>
+      <p>Install the engine for calculations, then add the companions you need.
+        Each repository has its own checkout and release tags.</p>
+      <div class="next-grid">
+        <a class="ncard" href="https://github.com/vibe-qc/vibe-qc">
+          <h3>vibe-qc <span class="arrow">→</span></h3>
+          <p>The calculation engine, examples, and documentation. The separately installable vibe-basis toolkit stays here.</p>
+        </a>
+        <a class="ncard" href="https://github.com/vibe-qc/vibe-view">
+          <h3>vibe-view <span class="arrow">→</span></h3>
+          <p>A reusable viewer for QVF results from vibe-qc or other producers. Install it in its own environment.</p>
+        </a>
+        <a class="ncard" href="https://github.com/vibe-qc/vibe-queue">
+          <h3>vibe-queue <span class="arrow">→</span></h3>
+          <p>The reusable scheduler. Its command and Python import package remain vq.</p>
+        </a>
+        <a class="ncard" href="https://github.com/vibe-qc/qvf">
+          <h3>QVF <span class="arrow">→</span></h3>
+          <p>The Apache-2.0 format specification, schema, registry, conformance corpus, and optional reference implementations.</p>
+        </a>
+      </div>
+      <p>vibe-qc implements QVF independently and is validated against the published
+        format; the QVF reference toolkit is not a runtime dependency.</p>
+      <p>Generate a QVF archive with the core, open that file with the separate viewer,
+        and use the queue when scheduling is needed. Start with
+        <a href={`${DOCS}/tutorial/qvf_job_containers.html`}>the QVF container example</a>,
+        <a href={`${base}products/vibe-view/#install`}>viewer setup</a>, or
+        <a href={`${base}products/vibe-queue/#install`}>queue setup</a>.</p>
+    </section>
+
+    <section class="next">
+      <h2>Where to next</h2>
+      <div class="next-grid">
+        <a class="ncard" href={`${DOCS}/quickstart.html`}>
+          <h3>Quickstart <span class="arrow">→</span></h3>
+          <p>The full first-run walkthrough, line by line.</p>
+        </a>
+        <a class="ncard" href={`${DOCS}/tutorial/index.html`}>
+          <h3>Tutorials <span class="arrow">→</span></h3>
+          <p>Step-by-step tutorials, molecular through periodic.</p>
+        </a>
+        <a class="ncard" href={`${DOCS}/user_guide/index.html`}>
+          <h3>User guide <span class="arrow">→</span></h3>
+          <p>Methods, basis sets, functionals, ECPs, periodic systems.</p>
+        </a>
+        <a class="ncard" href={`${DOCS}/example_outputs.html`}>
+          <h3>Example outputs <span class="arrow">→</span></h3>
+          <p>Annotated output from real vibe-qc runs.</p>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <Footer />
+</Base>
+
+<style>
+  .gs { padding: 64px 28px 100px; }
+  .gs-head { max-width: 60ch; }
+  .gs-head h1 {
+    font-size: clamp(34px, 5vw, 58px);
+    letter-spacing: -0.035em;
+    font-weight: 800;
+    margin: 16px 0 0;
+    text-wrap: balance;
+  }
+  .gs-head p { color: var(--slate); font-size: 19px; margin: 18px 0 0; }
+
+  .steps { list-style: none; counter-reset: none; margin: 54px 0 0; padding: 0; display: flex; flex-direction: column; gap: 40px; }
+  .steps > li { margin: 0; }
+  .steps h2 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 16px; display: flex; align-items: center; gap: 14px; }
+  .steps h2 .n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 9px;
+    background: var(--phase-pos); color: var(--on-accent);
+    font-family: var(--mono); font-size: 15px; font-weight: 700;
+  }
+  .steps .note { color: var(--slate); font-size: 15.5px; margin: 14px 0 0; max-width: 62ch; }
+  .steps .note code { font-family: var(--mono); font-size: 0.88em; color: var(--phase-neg); background: var(--surface-2); padding: 1px 5px; border-radius: 5px; }
+
+  .code {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--ink);
+    tab-size: 4;
+  }
+  .code code { font-family: inherit; white-space: pre; }
+
+  .next { margin-top: 72px; }
+  #repositories-heading { scroll-margin-top: 96px; }
+  .next > p a { color: var(--phase-pos); text-decoration: underline; text-underline-offset: 3px; }
+  .next h2 { font-size: clamp(24px, 3vw, 32px); letter-spacing: -0.02em; font-weight: 800; margin: 0 0 26px; }
+  .next-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 640px) { .next-grid { grid-template-columns: 1fr; } }
+  .ncard {
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    transition: transform .16s, border-color .16s, box-shadow .16s;
+  }
+  .ncard:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--phase-pos) 45%, var(--line)); box-shadow: 0 16px 36px -24px var(--phase-pos); }
+  .ncard h3 { font-size: 17px; font-weight: 700; margin: 0 0 6px; color: var(--phase-pos); display: flex; align-items: center; gap: 8px; }
+  .ncard:hover .arrow { transform: translateX(3px); }
+  .ncard .arrow { transition: transform .15s; }
+  .ncard p { color: var(--slate); font-size: 14.5px; margin: 0; }
+</style>

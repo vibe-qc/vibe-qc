@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "allow_submission": false,
+  "tier_hosts": {
+    "A": "compute-small",
+    "B": "compute-large",
+    "C": "compute-large"
+  },
+  "crystal_tier_hosts": {
+    "A": "reference-small",
+    "B": "reference-large",
+    "C": "reference-large"
+  },
+  "paper_host": "compute-large",
+  "coverage_hosts": {
+    "h-chain": "compute-small",
+    "graphene": "compute-medium",
+    "lih-rocksalt": "compute-large"
+  },
+  "posthf_host": "compute-large",
+  "molecular_hosts": [
+    "compute-medium",
+    "compute-small"
+  ],
+  "local_host_aliases": [
+    "workstation",
+    "workstation.local"
+  ],
+  "comparison_host": "compute-large",
+  "bundle_attestation_mode": "aiccm-bundle-attestation/v1",
+  "system_hosts": {
+    "h-chain": "local",
+    "mgo": "compute-large"
+  }
+}

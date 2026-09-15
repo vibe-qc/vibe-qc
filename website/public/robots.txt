@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+# The marketing site owns the domain root; the Sphinx docs live under
+# /docs/ and ship their own sitemap. List both here — robots.txt is only
+# honoured at the domain root, so this file (not docs/robots.txt) is the
+# one crawlers read.
+Sitemap: https://vibe-qc.com/sitemap-index.xml
+Sitemap: https://vibe-qc.com/docs/sitemap.xml

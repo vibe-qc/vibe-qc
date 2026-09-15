@@ -1,0 +1,22 @@
+
+  run_job  Job: RKS / PBE  basis=6-31g*
+  -------------------------------------
+  Threads: 4  (OpenMP shared-memory parallelism)
+  Output file: <vibe-qc-checkout>/examples/molecular/output-h2o-dft.out
+  Starting molecular SCF (RKS / PBE).
+  iter    1  E =     -76.2562131302 Ha  ||[F,DS]|| = 9.302e-01  DIIS= 1  attempt=1  [ 245.5ms]
+  iter    2  E =     -76.1554639158 Ha  dE = +1.007e-01  ||[F,DS]|| = 1.518e+00  DIIS= 2  attempt=1  [ 319.8ms]
+  iter    3  E =     -76.3178499760 Ha  dE = -1.624e-01  ||[F,DS]|| = 1.408e-01  DIIS= 3  attempt=1  [ 399.1ms]
+  iter    4  E =     -76.3191932600 Ha  dE = -1.343e-03  ||[F,DS]|| = 1.309e-02  DIIS= 4  attempt=1  [ 490.1ms]
+  iter    5  E =     -76.3192030039 Ha  dE = -9.744e-06  ||[F,DS]|| = 8.142e-04  DIIS= 5  attempt=1  [ 572.3ms]
+  iter    6  E =     -76.3192030580 Ha  dE = -5.416e-08  ||[F,DS]|| = 6.265e-05  DIIS= 6  attempt=1  [ 651.9ms]
+  iter    7  E =     -76.3192030584 Ha  dE = -3.447e-10  ||[F,DS]|| = 1.799e-05  DIIS= 7  attempt=1  [ 732.1ms]
+  iter    8  E =     -76.3192030584 Ha  dE = -2.242e-11  ||[F,DS]|| = 3.382e-07  DIIS= 8  attempt=1  [ 813.2ms]
+  SCF converged in 8 iterations; E = -76.3192030584 Ha
+  [write_population] - output-h2o-dft.population.txt
+  [write_population] done (  59.6ms)
+  [write_xyz] - output-h2o-dft.xyz
+  [write_xyz] done (   2.7ms)
+  [write_molden] - output-h2o-dft.molden
+  [write_molden] done (   3.2ms)
+  Job total 1.03s -- output written to <vibe-qc-checkout>/examples/molecular/output-h2o-dft.out

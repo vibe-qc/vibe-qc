@@ -1,0 +1,1 @@
+{'system': 's22-09-ethene-dimer', 'body': 'dimer', 'variant': 'mp2', 'e_hf': -156.12636590706876, 'e_correlation': -0.7360109666570346, 'e_total': -156.8623768737258, 'e_os': -0.5831833402159545, 'e_ss': -0.15282762644108006, 'n_scf_iter': 12, 'scf_converged': True}

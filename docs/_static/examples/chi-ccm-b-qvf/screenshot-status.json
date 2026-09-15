@@ -1,0 +1,28 @@
+[
+  {
+    "errors": [],
+    "qvf": "output-chi-ccm-b-hchain-ri-n4-wannier.qvf",
+    "screenshots": [
+      "hchain-structure.png",
+      "hchain-structure-replicated.png",
+      "hchain-density.png",
+      "hchain-density-replicated.png",
+      "hchain-homo.png",
+      "hchain-lumo.png",
+      "hchain-wannier-overlay.png"
+    ]
+  },
+  {
+    "errors": [],
+    "qvf": "output-chi-ccm-b-h2pair-3d-ri-n2-wannier.qvf",
+    "screenshots": [
+      "h2pair-structure.png",
+      "h2pair-structure-replicated.png",
+      "h2pair-density.png",
+      "h2pair-density-replicated.png",
+      "h2pair-homo.png",
+      "h2pair-lumo.png",
+      "h2pair-wannier-overlay.png"
+    ]
+  }
+]

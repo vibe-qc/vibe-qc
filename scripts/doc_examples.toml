@@ -1,0 +1,101 @@
+# Canonical tutorial/example calculations whose full artifacts are
+# published under docs/_static/examples/.
+#
+# Each job is run from the directory containing its script. Outputs are
+# copied by glob after the run, so new sidecars such as .qvf, .bibtex,
+# .references, .xyz, and .system are picked up automatically.
+
+[[job]]
+script = "input-h2o-rhf.py"
+slug = "h2o-rhf"
+description = "H2O closed-shell RHF / 6-31G* single-point"
+output_globs = ["output-h2o-rhf.*"]
+
+[[job]]
+script = "input-h2o-dft.py"
+slug = "h2o-dft"
+description = "H2O RKS / PBE / 6-31G* single-point"
+output_globs = ["output-h2o-dft.*"]
+
+[[job]]
+script = "input-h2o-opt.py"
+slug = "h2o-opt"
+description = "H2O RHF geometry optimization with analytic forces and ASE BFGS"
+output_globs = ["output-h2o-opt.*"]
+
+[[job]]
+script = "input-h2o-cube.py"
+slug = "h2o-cube"
+description = "H2O HOMO/LUMO/density cube generation for visualization"
+output_globs = ["output-h2o-*.cube", "output-h2o-cube.*"]
+
+[[job]]
+script = "input-h2o-dimer-opt.py"
+slug = "h2o-dimer-opt"
+description = "Water dimer geometry optimization at HF/6-31G*"
+output_globs = ["output-h2o-dimer-opt.*"]
+
+[[job]]
+script = "input-h2o-trimer-opt.py"
+slug = "h2o-trimer-opt"
+description = "Water trimer geometry optimization at HF/6-31G*"
+output_globs = ["output-h2o-trimer-opt.*"]
+
+[[job]]
+script = "input-oh-radical.py"
+slug = "oh-radical"
+description = "Open-shell UHF on the OH radical doublet"
+output_globs = ["output-oh-radical.*"]
+
+[[job]]
+script = "input-h2o-vibrations.py"
+slug = "h2o-vibrations"
+description = "H2O RHF analytic Hessian and ORCA-format normal-mode export"
+output_globs = ["output-h2o-vibrations.*"]
+
+[[job]]
+script = "input-h2-tight-canonical-orth.py"
+slug = "h2-tight-canonical-orth"
+description = "H2 / aug-cc-pVTZ canonical-orthogonalisation stress test"
+output_globs = ["output-h2-tight-canonical-orth.*"]
+
+[[job]]
+script = "input-h-chain-uniform.py"
+slug = "h-chain-uniform"
+description = "1D hydrogen molecular crystal k-mesh convergence"
+output_globs = ["output-h-chain-uniform.out", "output-h-chain-uniform.qvf"]
+qvf_expected = false
+
+[[job]]
+script = "input-h-chain-peierls.py"
+slug = "h-chain-peierls"
+description = "1D hydrogen chain Peierls dimerisation scan"
+output_globs = ["output-h-chain-peierls.out", "output-h-chain-peierls.qvf"]
+qvf_expected = false
+
+[[job]]
+script = "input-h-chain-bands.py"
+slug = "h-chain-bands"
+description = "H-chain band structure along Gamma to X with DOS"
+output_globs = ["output-h-chain-bands.png", "output-h-chain-bands.qvf"]
+qvf_expected = false
+
+[[job]]
+script = "input-madelung-constants.py"
+slug = "madelung-constants"
+description = "Ewald-summed Madelung constants for ionic crystals"
+output_globs = ["output-madelung-constants.out", "output-madelung-*.qvf"]
+qvf_expected = false
+
+[[job]]
+script = "input-nacl-symmetry.py"
+slug = "nacl-symmetry"
+description = "NaCl Pm-3m symmetry compression demonstration"
+output_globs = ["output-nacl-symmetry.qvf"]
+qvf_expected = false
+
+[[job]]
+script = "input-nh3-umbrella-neb.py"
+slug = "nh3-umbrella-neb"
+description = "NH3 umbrella inversion via climbing-image NEB"
+output_globs = ["output-nh3-umbrella-neb.*"]

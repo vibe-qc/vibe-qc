@@ -1,0 +1,22 @@
+{
+  "outputs": [
+    "output-chi-ccm-b-hchain-ri-n4-wannier.out",
+    "output-chi-ccm-b-hchain-ri-n4-wannier.qvf",
+    "output-chi-ccm-b-hchain-ri-n4-wannier.system",
+    "output-chi-ccm-b-h2pair-3d-ri-n2-wannier.out",
+    "output-chi-ccm-b-h2pair-3d-ri-n2-wannier.qvf",
+    "output-chi-ccm-b-h2pair-3d-ri-n2-wannier.system"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-chi-ccm-b-hchain-ri-n4-wannier.qvf",
+    "output-chi-ccm-b-h2pair-3d-ri-n2-wannier.qvf"
+  ],
+  "returncode": 0,
+  "script": "docs/_static/examples/chi-ccm-b-qvf/README.md",
+  "input_scripts": [
+    "docs/_static/examples/chi-ccm-b-qvf/input-chi-ccm-b-hchain-ri-n4-wannier.py",
+    "docs/_static/examples/chi-ccm-b-qvf/input-chi-ccm-b-h2pair-3d-ri-n2-wannier.py"
+  ],
+  "slug": "chi-ccm-b-qvf"
+}

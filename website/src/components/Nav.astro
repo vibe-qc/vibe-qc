@@ -1,0 +1,72 @@
+---
+import { products } from '../data/products.mjs';
+// Sticky site header with separate product overview and documentation links.
+// Documentation paths stay at the site root, including in preview builds.
+// Below 1080px the link list collapses into a dropdown panel behind the
+// hamburger toggle (see "Nav" section of global.css).
+const base = import.meta.env.BASE_URL;
+---
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand-mark" href={base} aria-label="vibe-qc home">
+      <img class="wm-light" src={`${base}logo/vibe-qc-wordmark-light.svg`} alt="vibe-qc" width="217" height="48" />
+      <img class="wm-dark" src={`${base}logo/vibe-qc-wordmark-dark.svg`} alt="vibe-qc" width="217" height="48" />
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-links" aria-label="Open menu">
+      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+        <g class="icon-bars" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="3" y1="6" x2="19" y2="6" />
+          <line x1="3" y1="11" x2="19" y2="11" />
+          <line x1="3" y1="16" x2="19" y2="16" />
+        </g>
+        <g class="icon-close" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="5" y1="5" x2="17" y2="17" />
+          <line x1="17" y1="5" x2="5" y2="17" />
+        </g>
+      </svg>
+    </button>
+    <nav class="links" id="site-links" aria-label="Main navigation">
+      {products.map(product => (
+        <div class="nav-product">
+          <a href={`${base}products/${product.id}/`}>{product.name}</a>
+          <a class="nav-docs" href={product.docs}>
+            {product.id === 'vibe-queue' ? 'vq' : product.name} docs
+          </a>
+        </div>
+      ))}
+      <a href={`${base}download`}>Downloads</a>
+      <a href={`${base}sponsor`}>Sponsor</a>
+      <a href={`${base}contact`}>Contact</a>
+      <a class="nav-cta" href={`${base}get-started`}>Get started</a>
+    </nav>
+  </div>
+</header>
+
+<script>
+  const header = document.querySelector('header.nav');
+  const toggle = header?.querySelector('.nav-toggle');
+
+  const setOpen = (open: boolean) => {
+    if (!header || !toggle) return;
+    header.classList.toggle('menu-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+  };
+
+  toggle?.addEventListener('click', () => {
+    setOpen(!header?.classList.contains('menu-open'));
+  });
+
+  // In-page anchor links don't reload the page, so close the panel on any
+  // link tap; Escape closes it for keyboard users.
+  header?.querySelectorAll('.links a').forEach((a) => {
+    a.addEventListener('click', () => setOpen(false));
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && header?.classList.contains('menu-open')) {
+      setOpen(false);
+      (toggle as HTMLElement | null)?.focus();
+    }
+  });
+</script>

@@ -1,0 +1,27 @@
+[program]
+name = "PySCF"
+version = "2.6.2"
+
+[validation]
+role = "independent external reference"
+execution_boundary = "separate external process"
+native_parity = "not established by the reference artifact"
+
+[artifacts]
+"nacl_ecp_reference.npz" = "a3f74b553779793fe5cd0cbef64a4cb6897b9713f37a36c3ec2ca0097be8f6ff"
+
+[[runs]]
+geometry = 0
+method = "KRHF"
+converged = true
+energy_hartree = -15.026749870641613
+displacement_bohr = 0.0
+script_sha256 = "c2026177eec28358b16917c9d56961c884b4f3dc873b86073ad0382ed336a592"
+
+[[runs]]
+geometry = 1
+method = "KRHF"
+converged = true
+energy_hartree = -15.026743743520546
+displacement_bohr = 0.17
+script_sha256 = "c2026177eec28358b16917c9d56961c884b4f3dc873b86073ad0382ed336a592"

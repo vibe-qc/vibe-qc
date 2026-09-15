@@ -1,0 +1,10 @@
+{
+  "system_id": "benzene",
+  "basis": "sto-3g",
+  "method_id": "rhf",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-6,
+  "tolerance_rationale": "Benzene / STO-3G / RHF — aromatic π system at minimal basis. Sub-µHa cross-code agreement still expected."
+}

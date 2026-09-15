@@ -1,0 +1,14 @@
+Si diamond RHF/STO-3G — narrower-gap covalent, more demanding
+CRYSTAL
+0 0 0
+227
+5.430
+1
+14 0.125 0.125 0.125
+BASISSET
+STO-3G
+SHRINK
+8 8
+TOLDEE
+8
+END

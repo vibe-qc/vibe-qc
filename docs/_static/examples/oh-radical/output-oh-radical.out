@@ -1,0 +1,161 @@
+╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║ dev 0.15.23.dev0 "Neese's Cheetah" (main @ dc22a26, dirty)  --  Quantum chemistry for molecules and solids               ║
+║ © Michael F. Peintinger . MPL 2.0  .  https://vibe-qc.com                                                                ║
+║ linked: libint 2.13.1 . libxc 7.0.0 . spglib 2.7.0 . libecpint 1.0.7 (vendored, MAX_L=5) . fftw3 3.3.9 . blas Accelerate ║
+║ dispersion: dftd3 1.4.0 . dftd4 4.2.0                                                                                    ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+  Job: UHF  basis=6-31g*
+  Atoms (bohr)
+  ------------------------------------------------------
+     1  Z=  8       0.00000000      0.00000000      0.00000000
+     2  Z=  1       1.83300000      0.00000000      0.00000000
+  charge=0  multiplicity=2  n_electrons=9
+  Threads: 18  (OpenMP shared-memory parallelism)
+
+  vibe-qc estimates this calculation will require ~0.7 MB of memory:
+      ERI tensor               0.00 GB
+      Fock + density + 1e      0.00 GB
+      DIIS history             0.00 GB
+      MO workspace             0.00 GB
+      Open-shell UHF buffers   0.00 GB
+  Available on this machine: 88.1 GB. Proceeding.
+
+  iter     energy (Ha)            dE          ||[F,DS]||   DIIS
+  -------------------------------------------------------------
+     1      -75.1786696147        --     1.957e+00    1
+     2      -75.3636900427  -1.850e-01  2.832e-01    2
+     3      -75.3794854786  -1.580e-02  5.754e-02    3
+     4      -75.3807381235  -1.253e-03  2.498e-02    4
+     5      -75.3809214062  -1.833e-04  3.873e-03    5
+     6      -75.3809306113  -9.205e-06  1.091e-03    6
+     7      -75.3809313464  -7.351e-07  2.010e-04    7
+     8      -75.3809313792  -3.274e-08  1.067e-04    8
+     9      -75.3809313912  -1.197e-08  2.166e-05    8
+    10      -75.3809313917  -5.540e-10  3.546e-06    8
+    11      -75.3809313917  -1.583e-11  1.201e-06    8
+    12      -75.3809313917  -2.274e-12  2.391e-07    8
+  -------------------------------------------------------------
+  converged in 12 iterations; E = -75.3809313917 Ha
+
+  Molecular orbitals - Alpha
+  ------------------------------------------------------
+     #   occ          eps (Ha)        eps (eV)
+  ------------------------------------------------------
+     1   1.0      -20.63434939     -561.489251
+     2   1.0       -1.37856306      -37.512612
+     3   1.0       -0.67183584      -18.281585
+     4   1.0       -0.64463899      -17.541521
+     5   1.0       -0.55053454      -14.980808  <-- HOAMO
+     6   0.0        0.21986888        5.982937  <-- LUAMO
+     7   0.0        1.05053701       28.586568
+     8   0.0        1.07028762       29.124010
+     9   0.0        1.13134925       30.785581
+    10   0.0        1.18040309       32.120404
+  gap (alpha): 0.770403 Ha (20.9637 eV)
+
+  Molecular orbitals - Beta
+  ------------------------------------------------------
+     #   occ          eps (Ha)        eps (eV)
+  ------------------------------------------------------
+     1   1.0      -20.59427166     -560.398681
+     2   1.0       -1.22242114      -33.263774
+     3   1.0       -0.62836755      -17.098752
+     4   1.0       -0.50386153      -13.710771  <-- HOBMO
+     5   0.0        0.13263071        3.609066  <-- LUBMO
+     6   0.0        0.23302502        6.340934
+     7   0.0        1.06339194       28.936369
+     8   0.0        1.15575145       31.449599
+     9   0.0        1.20972334       32.918249
+  gap (beta): 0.636492 Ha (17.3198 eV)
+
+  Atomic charges
+  ------------------------------------------------------------------
+     #  elem    Mulliken      Löwdin   Hirshfeld
+  ------------------------------------------------------------------
+     1     O   -0.461938   -0.320792   -0.190582
+     2     H    0.461938    0.320792    0.190582
+  ------------------------------------------------------------------
+          sum   0.000000   -0.000000    0.000000
+
+  Bond orders (Mayer)
+  ----------------------------------------
+          atoms    bond order
+  ----------------------------------------
+  O1   -- H2          0.7475
+
+  Dipole moment (origin: center of mass)
+  ----------------------------------------------------
+     component     a.u. (e.bohr)       Debye
+  ----------------------------------------------------
+             x        0.74447614      1.8923
+             y        0.00000000      0.0000
+             z       -0.00000000     -0.0000
+          |mu|        0.74447614      1.8923
+
+  Molecular orbitals written to output-oh-radical.molden
+  Population dump written to output-oh-radical.population.txt + output-oh-radical.population.json
+  Citations written to output-oh-radical.bibtex + output-oh-radical.references
+  Final geometry written to output-oh-radical.xyz
+
+  Timings (wall clock, seconds)
+  ----------------------------------------------------
+  SCF total                               0.012
+  SCF avg. per iteration                  0.001  (12 iters)
+  Job total                               0.053
+  Used 18 OpenMP threads.
+
+## References
+
+Please cite the references below when reporting results
+from this run. The corresponding BibTeX entries are
+written to the .bibtex sibling.
+
+  [1] Peintinger, Michael F. (2026). vibe-qc: a quantum-chemistry code for
+     molecules and solids. [Software v0.15.23.dev0, MPL-2.0].
+     <https://vibe-qc.com/>
+
+  [2] Valeev, Edward F. Libint: A library for the evaluation of molecular
+     integrals of many-body operators over Gaussian functions. [Software].
+     <https://github.com/evaleev/libint>
+
+  [3] Ditchfield, R., Hehre, W. J., and Pople, J. A. (1971). Self-Consistent
+     Molecular-Orbital Methods. IX. An Extended Gaussian-Type Basis for
+     Molecular-Orbital Studies of Organic Molecules. Journal of Chemical
+     Physics, 54(2), 724--728. doi:10.1063/1.1674902
+
+  [4] Hariharan, P. C. and Pople, J. A. (1973). The influence of polarization
+     functions on molecular orbital hydrogenation energies. Theoretica Chimica
+     Acta, 28(3), 213--222. doi:10.1007/BF00533485
+
+  [5] Pulay, Péter (1980). Convergence acceleration of iterative sequences.
+     The case of SCF iteration. Chemical Physics Letters, 73(2), 393--398.
+     doi:10.1016/0009-2614(80)80396-4
+
+  [6] Pulay, Péter (1982). Improved SCF convergence acceleration. Journal of
+     Computational Chemistry, 3(4), 556--560. doi:10.1002/jcc.540030413
+
+  [7] Kudin, Konstantin N., Scuseria, Gustavo E., and Cancès, Eric (2002). A
+     black-box self-consistent field convergence algorithm: One step closer.
+     Journal of Chemical Physics, 116(19), 8255--8261. doi:10.1063/1.1470195
+
+  [8] Van Lenthe, J. H., Zwaans, R., et al. (2006). Starting SCF calculations
+     by superposition of atomic densities. Journal of Computational Chemistry,
+     27(8), 926--932. doi:10.1002/jcc.20393
+
+  [9] Mulliken, R. S. (1955). Electronic Population Analysis on LCAO-MO
+     Molecular Wave Functions. I. Journal of Chemical Physics, 23(10),
+     1833--1840. doi:10.1063/1.1740588
+
+  [10] Löwdin, Per-Olov (1950). On the Non-Orthogonality Problem Connected
+     with the Use of Atomic Wave Functions in the Theory of Molecules and
+     Crystals. Journal of Chemical Physics, 18(3), 365--375.
+     doi:10.1063/1.1747632
+
+  [11] Mayer, I. (1983). Charge, bond order and valence in the ab initio SCF
+     theory. Chemical Physics Letters, 97(3), 270--274.
+     doi:10.1016/0009-2614(83)80005-0
+
+  [12] Hirshfeld, F. L. (1977). Bonded-atom fragments for describing molecular
+     charge densities. Theoretica Chimica Acta, 44(2), 129--138.
+     doi:10.1007/BF00549096

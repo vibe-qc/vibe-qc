@@ -1,0 +1,1 @@
+{'system': 's22-01-ammonia-dimer', 'body': 'monoB', 'variant': 'rimp2', 'e_hf': -56.217776255290765, 'e_correlation': -0.24999431232996022, 'e_total': -56.467770567620725, 'e_os': -0.19518317192957957, 'e_ss': -0.05481114040038067, 'n_scf_iter': 12, 'scf_converged': True}

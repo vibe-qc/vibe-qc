@@ -1,0 +1,16 @@
+! RI-MP2 cc-pVTZ/C cc-pVTZ NoSOSCF NoTRAH SCFCONV8 NoFrozenCore NoAutoStart
+%scf
+  MaxIter 200
+  DIISMaxEq 8
+  Guess PModel
+end
+%method
+  FrozenCore FC_NONE
+end
+*xyz 0 1
+  C       0.00000000      0.00000000      3.08261950
+  H       0.58687760      0.83817420      3.44637720
+  H      -1.01931890      0.08916380      3.44637720
+  H       0.00000000      0.00000000      1.99666970
+  H       0.43244130     -0.92733800      3.44637720
+*

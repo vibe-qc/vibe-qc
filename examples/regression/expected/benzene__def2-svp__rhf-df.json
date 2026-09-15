@@ -1,0 +1,10 @@
+{
+  "system_id": "benzene",
+  "basis": "def2-svp",
+  "method_id": "rhf-df",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 5e-4,
+  "tolerance_rationale": "Benzene / def2-SVP / RIJK with def2/JK aux. PySCF vs ORCA DF should agree to ~10⁻⁴ Ha (different aux-basis libraries / fitting conventions). 5×10⁻⁴ Ha catches real DF-implementation bugs without flagging library-quality differences."
+}

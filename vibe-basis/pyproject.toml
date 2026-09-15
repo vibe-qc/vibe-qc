@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vibe-basis"
+# Independent SemVer line, decoupled from vibe-qc's. Bump in the same
+# merge as the change that earns it, and keep in lockstep with
+# src/vibe_basis/__init__.py __version__ (pinned by
+# tests/test_versioning.py). Scheme + 1.0 criterion: VERSIONING.md.
+version = "0.12.0"
+description = "Basis-set optimization driver — runs external SCF programs (CRYSTAL23, ORCA, Gaussian, …) under NLopt / iminuit"
+authors = [{name = "Michael F. Peintinger", email = "mpei@vibe-qc.com"}]
+license = "MPL-2.0"
+readme = "README.md"
+# Matches vibe-qc's own floor, not vq's stricter >=3.12. vibe-basis is
+# reachable through vibe-qc's [basisopt] extra, so a stricter floor here
+# would make `uv pip install -e '.[basisopt]'` unresolvable on the older
+# interpreters vibe-qc still supports. Nothing in vibe_basis uses
+# 3.12-only syntax; tomllib (the newest stdlib module used) is 3.11+.
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.0",
+    "numpy>=1.26",
+]
+
+[project.scripts]
+vb = "vibe_basis.cli:main"
+
+[project.optional-dependencies]
+# Powell-family derivative-free optimizers (BOBYQA, COBYLA, ...) —
+# what PT2013 effectively used via MINUIT2. Best wall-time profile
+# when each evaluation is minutes of external-SCF + queue latency.
+nlopt = ["nlopt>=2.7"]
+# Minuit2 / MIGRAD + HESSE — same minimizer family as the original
+# 2013 pob recipe; used at the converged BOBYQA point for
+# publication-grade parameter uncertainties.
+iminuit = ["iminuit>=2.25"]
+# Gradient-friendly local optimizers (L-BFGS-B, trust-region, ...).
+# Useful for cheap-evaluation cases (e.g. when the backend is in
+# the same process).
+scipy = ["scipy>=1.13"]
+# The transport shells out to the standalone ``vq`` executable and never
+# imports its Python package. Keep this compatibility extra so existing
+# ``vibe-basis[vq]`` commands remain resolvable, but install vq through its
+# own lifecycle or ``scripts/install.sh --with-vq``. vq is not on PyPI and
+# has a Python >=3.12 floor, while vibe-basis deliberately supports 3.11.
+vq = []
+# Recommended optimizer bundle. vq remains a separately managed CLI.
+all = [
+    "nlopt>=2.7",
+    "iminuit>=2.25",
+    "scipy>=1.13",
+]
+test = ["pytest>=8", "scipy>=1.13"]
+dev = ["ruff", "mypy"]
+
+[project.urls]
+Homepage = "https://vibe-qc.com"
+Repository = "https://github.com/vibe-qc/vibe-qc"
+Issues = "https://github.com/vibe-qc/vibe-qc/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vibe_basis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

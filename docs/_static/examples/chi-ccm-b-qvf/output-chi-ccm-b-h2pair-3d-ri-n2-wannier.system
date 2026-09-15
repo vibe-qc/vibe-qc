@@ -1,0 +1,121 @@
+# vibe-qc system manifest -- written alongside output-<job>.out by run_job(...).
+# Captures the runtime environment so generated calculation outputs are
+# reproducible and wall-time numbers are interpretable. The [plan]
+# section is the declared output contract (written once, at job start);
+# the [outputs] section is the running status (rewritten as each file
+# lands). External QC programs are validation references only: run
+# them out-of-process and parse their outputs.
+
+[vibeqc]
+version        = "0.15.39"
+codename       = "Neese's Cheetah"
+git_sha        = "d746d23"
+git_branch     = "main"
+is_release     = false
+
+[host]
+hostname       = "<redacted>"
+os             = "Darwin"
+os_release     = "25.5.0"
+os_pretty      = "macOS 26.5.2"
+arch           = "arm64"
+
+[cpu]
+model          = "Apple M5 Max"
+physical_cores = 18
+logical_cores  = 18
+omp_threads_used = 4
+
+[memory]
+total_gb       = 128.0
+available_gb   = 97.73
+
+[python]
+version        = "3.14.6"
+implementation = "CPython"
+executable     = "~/vq/vibeqc-dev/.venv/bin/python"
+
+[libraries]
+libint         = "2.13.1"
+libxc          = "7.0.0"
+spglib         = "2.7.0"
+libecpint      = "1.0.7 (vendored, MAX_L=5)"
+fftw3          = "3.3.9"
+
+[validation]
+external_programs_policy = "External QC programs are validation references only."
+execution_boundary = "Run external programs out-of-process and parse their outputs; do not import them as vibe-qc backends."
+native_backend_policy = "vibe-qc runtime methods execute vibe-qc-owned native or Python code."
+
+[run]
+timestamp_iso  = "2026-07-15T06:42:23+02:00"
+wall_seconds   = 3.2751842500292696
+basename       = "chi-ccm-b-h2pair-3d-ri-n2-wannier"
+pid            = 66665
+exchange_q0    = "BvK-ewald"
+jk_method_requested = "aiccm2026dev-b"
+jk_method_resolved = "aiccm2026dev-b"
+jk_method_executed = "aiccm2026dev-b"
+dft_plus_u     = false
+dft_plus_u_route = "none"
+exchange_q0_applicability = "active"
+
+[plan]
+stem             = "chi-ccm-b-h2pair-3d-ri-n2-wannier"
+job_kind         = "periodic_scf"
+method           = "RHF"
+basis            = "sto-3g"
+functional       = ""
+options_digest   = "75c9c04eb14d"
+
+[[plan.files]]
+role          = "log"
+path          = "chi-ccm-b-h2pair-3d-ri-n2-wannier.out"
+format        = "text"
+always        = true
+description   = "Human-readable SCF log (banner, iter table, orbital block, references)."
+
+[[plan.files]]
+role          = "manifest"
+path          = "chi-ccm-b-h2pair-3d-ri-n2-wannier.system"
+format        = "toml"
+always        = true
+description   = "Runtime manifest -- hardware, libs, plan, outputs status."
+
+[[plan.files]]
+role          = "qvf"
+path          = "chi-ccm-b-h2pair-3d-ri-n2-wannier.qvf"
+format        = "qvf"
+always        = true
+description   = "QVF visualisation archive -- zip with manifest.json + typed binary/text payloads."
+
+[outputs]
+status           = "complete"
+finished_at_iso  = "2026-07-15T06:42:23+02:00"
+
+[[outputs.files]]
+path          = "chi-ccm-b-h2pair-3d-ri-n2-wannier.out"
+written       = true
+bytes         = 5446
+sha256        = "146504d97ae9de38f6fc020502783adc8f9ebc893da37f24bb5c5774f014c9c0"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "chi-ccm-b-h2pair-3d-ri-n2-wannier.system"
+written       = true
+bytes         = 3553
+sha256        = "5fb0c610f6a462ed335eb508a0977f9c8aac9cb6e7b12313b97ea8e112b08e3f"
+wall_time_s   = 0.0
+error         = ""
+
+[[outputs.files]]
+path          = "chi-ccm-b-h2pair-3d-ri-n2-wannier.qvf"
+written       = true
+bytes         = 69341
+sha256        = "2e73637b9c5bb6c1962b7151f4a5a96c17613056b676aa7551721163cc4e22c5"
+wall_time_s   = 0.0
+error         = ""
+
+[citations]
+count            = 0

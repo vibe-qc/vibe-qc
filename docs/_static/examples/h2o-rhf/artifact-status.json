@@ -1,0 +1,20 @@
+{
+  "outputs": [
+    "output-h2o-rhf.bibtex",
+    "output-h2o-rhf.molden",
+    "output-h2o-rhf.out",
+    "output-h2o-rhf.population.json",
+    "output-h2o-rhf.population.txt",
+    "output-h2o-rhf.qvf",
+    "output-h2o-rhf.references",
+    "output-h2o-rhf.system",
+    "output-h2o-rhf.xyz"
+  ],
+  "qvf_expected": true,
+  "qvf_files": [
+    "output-h2o-rhf.qvf"
+  ],
+  "returncode": 0,
+  "script": "examples/molecular/input-h2o-rhf.py",
+  "slug": "h2o-rhf"
+}

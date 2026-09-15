@@ -1,0 +1,111 @@
+╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║ dev 0.15.39 "Neese's Cheetah" (main @ d746d23)  --  Quantum chemistry for molecules and solids                           ║
+║ © Michael F. Peintinger . MPL 2.0  .  https://vibe-qc.com                                                                ║
+║ linked: libint 2.13.1 . libxc 7.0.0 . spglib 2.7.0 . libecpint 1.0.7 (vendored, MAX_L=5) . fftw3 3.3.9 . blas Accelerate ║
+║ dispersion: dftd3 1.4.0 . dftd4 4.2.0                                                                                    ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+  Job: PERIODIC RHF  basis=sto-3g
+  J/K method: AICCM2026DEV-B / χ-CCM (chi) -- independent finite BvK torus RHF/RKS (4-center, RI, or RIJCOSX; exact Gamma-supercell / Gamma-centred-mesh equivalence; experimental)
+    (user-requested: 'aiccm2026dev-b')
+
+  Periodicity
+  --------------------------------------------------------
+    dimensionality = 3D
+    active axes    = a1, a2, a3
+    cell volume    = 1728.0000 bohr^3
+
+  Lattice (bohr)
+  --------------------------------------------------------
+    a1 =    12.00000000     0.00000000     0.00000000
+    a2 =     0.00000000    12.00000000     0.00000000
+    a3 =     0.00000000     0.00000000    12.00000000
+
+  Atoms (bohr) -- 2 in unit cell
+  --------------------------------------------------------
+       1  Z=  1       6.00000000      6.00000000      5.30000000
+       2  Z=  1       6.00000000      6.00000000      6.70000000
+    n_electrons = 2  multiplicity = 1
+  Basis
+  --------------------------------------------------------
+    name    = sto-3g
+    nbasis  = 2
+    nshells = 2
+
+  SCF options
+  --------------------------------------------------------
+    use_diis            = True
+    damping             = 0.0
+    smearing_method      = fermi-dirac
+    smearing_source      = explicit:hartree
+    smearing_reason      = numeric value in hartree
+    smearing_temperature = 0.0
+    diis_start_iter     = 2
+    diis_subspace_size  = 8
+    max_iter            = 80
+    conv_tol_energy     = 1e-07
+    initial_guess       = SAD
+    aux_basis           = <auto>
+    gdf_method          = rsgdf
+    rsgdf_ke_cutoff     = 200.0
+    mdf_ke_cutoff       = 40.0
+    OpenMP threads      = 4  (max for native parallel regions)
+
+  Convergence strategy
+  --------------------------------------------------------
+    convergence strategy: off (convergence="off": plain defaults)
+
+    lattice_extension   = (2, 1, 1)
+    WS half-extent      = (1.0, 0.5, 0.5) lattice vectors
+    equivalent k net    = (2, 1, 1) (Gamma-centred)
+    aiccm_backend       = ri
+    aiccm_symmetry      = off
+  iter     energy (Ha)            dE          ||[F,DS]||   DIIS
+  -------------------------------------------------------------
+     1       -1.1201398810        --     5.551e-16    -
+     2       -1.1201398810  +8.882e-16  2.220e-16    1
+  -------------------------------------------------------------
+  converged in 2 iterations; E = -1.1201398810 Ha
+
+  Energy components (Ha)
+  ----------------------------------------------------
+  Nuclear repulsion                      0.2438265044
+  Electronic                            -1.3639663854
+  Coulomb (J)                            0.8878706056
+  HF exchange (K)                       -0.6779394636
+  Exchange-correlation (XC)              0.0000000000
+  Total energy                          -1.1201398810
+  ----------------------------------------------------
+
+  Band extrema (multi-k)
+  --------------------------------------------------------
+    VBM     =  -0.5770142282 Ha  ( -15.701 eV)  (k_idx = 1)
+    CBM     =   0.6770265592 Ha  (  18.423 eV)  (k_idx = 0)
+    gap (indirect) =   1.254041 Ha  (  34.124 eV)
+    direct gap (min) =   1.254045 Ha  (  34.124 eV)  (k_idx = 1)
+  Crystal orbital energies (Ha) at k-point 0 (of 2) -- sorted low -> high
+  --------------------------------------------------------
+       1        -0.5770210152   occ= 2.00000 HOCO
+       2         0.6770265592   occ= 0.00000 LUCO
+  AICCM2026DEV-B invariants
+  --------------------------------------------------------
+    cyclic mesh         = (2, 1, 1)
+    cyclic cells        = 2
+    electronic method   = RHF
+    integral backend    = ri
+    coulomb kernel      = 3d-periodic-g0
+    exchange q=0        = bvk-ewald
+    q=0 applicability   = active
+    boundary model      = 3d-periodic
+    BvK Madelung cell   = (2, 1, 1)
+    WS partition error  = 0.000e+00
+    idempotency error   = 3.109e-15
+    electron-count err  = 1.554e-15
+    inverse-Bloch Im    = 3.799e-17
+
+
+  Timings (wall clock, seconds)
+  --------------------------------------------------------
+    SCF total                           3.026
+    SCF avg per iter                    1.513  (2 iters)
+    Job total                           3.275

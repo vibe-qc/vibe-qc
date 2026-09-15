@@ -1,0 +1,41 @@
+
+--------------------------------------------------------------------
+  NaCl Pm-3m (a = 4.0 bohr) — 48 operations
+--------------------------------------------------------------------
+  First three rotations (fractional basis):
+    op 0:  [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    op 1:  [[-1, 0, 0], [0, -1, 0], [0, 0, -1]]
+    op 2:  [[0, -1, 0], [1, 0, 0], [0, 0, 1]]
+
+--------------------------------------------------------------------
+  SYM2c — overlap LatticeMatrixSet (515 cells, 18 AOs)
+--------------------------------------------------------------------
+  n_triples        = 2060    (cells × atom-pairs)
+  n_orbits         = 108
+  compression      = 19.07×
+  orbit sizes      = min 1, max 48, mean 19.1
+  max block error  = 4.441e-16   (S = reconstruct(compress(S)) to machine precision)
+
+--------------------------------------------------------------------
+  SYM2b — single-atom Mg primitive cubic (origin-fixed path)
+--------------------------------------------------------------------
+  n_cells          = 515
+  n_orbits         = 27
+  compression      = 19.07×
+  max block error  = 4.441e-16
+  (SYM2b's compression equals SYM2c on this cell because the single-atom primitive has only the trivial atom-pair.)
+
+--------------------------------------------------------------------
+  SYM1 — real-basis Wigner-D at l=2, 90°-about-z rotation
+--------------------------------------------------------------------
+  Cartesian rotation matrix:
+    [+0.00  -1.00  +0.00]
+    [+1.00  +0.00  +0.00]
+    [+0.00  +0.00  +1.00]
+  D (real d-basis, rows/cols in order d_{-2}, d_{-1}, d_0, d_{+1}, d_{+2}):
+    [-1.0000  +0.0000  +0.0000  +0.0000  +0.0000]
+    [+0.0000  +0.0000  +0.0000  +1.0000  +0.0000]
+    [+0.0000  +0.0000  +1.0000  +0.0000  +0.0000]
+    [+0.0000  -1.0000  +0.0000  +0.0000  +0.0000]
+    [-0.0000  +0.0000  +0.0000  +0.0000  -1.0000]
+  orthogonality ‖D Dᵀ − I‖_∞ = 4.441e-16

@@ -1,0 +1,23 @@
+[metadata]
+name = "vdzp"
+kind = "gcp_parameters"
+citation = "Müller, Hansen, Grimme, J. Chem. Phys. 158, 014103 (2023)"
+doi = "10.1063/5.0133026"
+license = "Open data: numerical results from a publication; redistribution is standard scientific practice"
+source = "Table I (basis-fit constants) of the ωB97X-3c paper; per-element rows pending verification against mctc-gcp Fortran source + paper SI"
+status = "pending"
+coverage = "(H–Rn in the original paper, with Stuttgart small-core ECPs; bundled rows pending)"
+note = """
+Valence double-zeta basis introduced alongside ωB97X-3c. Carries
+Stuttgart small-core effective core potentials for heavier elements
+— the ECP integration with vibe-qc's libecpint backend is the
+secondary lift on this composite (gCP table + RSH machinery are the
+others).
+"""
+
+[parameters]
+sigma = 1.0000
+alpha = 0.6019
+beta  = 1.4523
+
+# No [elements.*] blocks — see metadata.status = "pending".

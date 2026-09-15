@@ -1,0 +1,105 @@
+#!/bin/sh
+# Release-commit consistency guard.
+#
+# Fires only on commits whose subject is the canonical release-commit
+# subject `release: vX.Y.Z` (docs/release_process.md — the minor
+# "Cutting a release" step 2 and the patch "Cutting a patch release"
+# step 4). For such a commit it asserts, against the *staged* tree that
+# is about to be committed:
+#
+#   1. pyproject.toml [project] version == X.Y.Z   (the value the
+#      runtime banner reports — python/vibeqc/banner.py
+#      _compute_version() -> importlib.metadata.version("vibe-qc")), and
+#   2. CHANGELOG.md carries a `## [vX.Y.Z]` dated section header.
+#
+# Why this hook exists: v0.11.2 and v0.11.3 were tagged from trees
+# whose pyproject still said 0.11.1 because the manual version-bump step
+# (docs/release_process.md "Cutting a patch release" step 4) was skipped
+# on both cuts, so those wheels self-report 0.11.1. The tags are frozen
+# — main/tags are never force-pushed (CLAUDE.md § 2) — so .2/.3 can't be
+# corrected retroactively. The bump step otherwise has no automated
+# gate: CI on the example_hub runner is collect-only (no test execution),
+# so a pytest assertion would not block a bad cut. This hook is that
+# gate, and it runs at the one moment that can still stop the mistake —
+# authoring the release commit the tag is placed on.
+#
+# Why commit-msg and not pre-commit: the pre-commit hook runs *before*
+# the commit message exists, so it cannot see the `release: vX.Y.Z`
+# subject. The subjects on the v0.11.2 / v0.11.3 commits were correct —
+# only pyproject was stale — so the subject is the only reliable trigger.
+# commit-msg receives the message file as $1 and runs under the same
+# core.hooksPath, so it activates with the same one-time
+# `git config --local core.hooksPath .githooks` setup (CONTRIBUTING.md
+# § "Pre-commit hook").
+#
+# Bypass (reviewed exception only): commit with `git commit --no-verify`
+# and explain in the message — same convention as the pre-commit
+# personal-info guard (CLAUDE.md § 2 / § 12).
+
+set -e
+
+MSG_FILE="$1"
+[ -n "$MSG_FILE" ] || exit 0          # no message file -> nothing to do
+SUBJECT=$(head -n1 "$MSG_FILE" 2>/dev/null || true)
+
+# Capture X.Y.Z from the canonical release-commit subject. An optional
+# whitespace-separated codename / description may follow (e.g.
+# "release: v0.11.0 — Sun's Stingray"). A PEP 440 pre-release suffix
+# stuck directly on the version (".devN" / "aN" / "bN" / "rcN", no
+# separating space) is deliberately NOT matched: dev-version bumps use a
+# `chore:` subject and must not be forced to carry a dated section.
+VERSION=$(printf '%s\n' "$SUBJECT" \
+    | sed -nE 's/^release:[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+)([[:space:]].*)?$/\1/p')
+[ -n "$VERSION" ] || exit 0           # not a release commit -> skip
+
+# Read the content that is about to be committed: the *index* version
+# (`git show :path`), with a working-tree fallback if the path is not in
+# the index for some reason.
+pyproject_content=$(git show ":pyproject.toml" 2>/dev/null) \
+    || pyproject_content=$(cat pyproject.toml 2>/dev/null) \
+    || pyproject_content=""
+changelog_content=$(git show ":CHANGELOG.md" 2>/dev/null) \
+    || changelog_content=$(cat CHANGELOG.md 2>/dev/null) \
+    || changelog_content=""
+
+# [project] version: the first bare `version = "..."` anchored at
+# column 0. The only other version key (cmake.version, under
+# [tool.scikit-build]) is prefixed, so the start-of-line anchor selects
+# [project]'s line.
+pyproject_version=$(printf '%s\n' "$pyproject_content" \
+    | sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
+    | head -n1)
+
+# Escape dots so the version is matched literally in the grep below.
+ver_re=$(printf '%s' "$VERSION" | sed 's/\./\\./g')
+
+errors=""
+if [ "$pyproject_version" != "$VERSION" ]; then
+    errors="${errors}  - pyproject.toml [project] version is \"${pyproject_version:-<unset>}\", expected \"${VERSION}\".
+"
+fi
+if ! printf '%s\n' "$changelog_content" | grep -qE "^## \[v${ver_re}\]"; then
+    errors="${errors}  - CHANGELOG.md has no \"## [v${VERSION}]\" dated section header.
+"
+fi
+
+if [ -n "$errors" ]; then
+    cat >&2 <<EOF
+ERROR: release commit "release: v${VERSION}" is inconsistent with the tree:
+
+${errors}
+The tag for this release is cut from this commit, and the runtime
+version is read from the installed package metadata
+(python/vibeqc/banner.py _compute_version -> importlib.metadata.version).
+A mismatch ships a wheel that self-reports the wrong version — exactly
+what happened to v0.11.2 / v0.11.3 (tagged with pyproject still at
+0.11.1; tags are frozen and cannot be fixed — CLAUDE.md § 2).
+
+Fix the version bump + CHANGELOG promotion (docs/release_process.md —
+"Cutting a release" step 2, or "Cutting a patch release" step 4), then
+re-commit.
+
+Reviewed exception only: git commit --no-verify (explain in the message).
+EOF
+    exit 1
+fi

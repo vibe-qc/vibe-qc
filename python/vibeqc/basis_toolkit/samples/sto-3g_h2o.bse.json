@@ -1,0 +1,49 @@
+{
+  "name": "STO-3G",
+  "description": "STO-3G Minimal Basis",
+  "basis_set_family": "pople",
+  "basis_set_role": "orbital",
+  "version": "1",
+  "elements": {
+    "1": {
+      "element_number": 1,
+      "element_symbol": "H",
+      "electron_shells": [
+        {
+          "angular_momentum": [0],
+          "function_type": "gto",
+          "exponents": ["3.42525091", "0.62391373", "0.16885540"],
+          "coefficients": [["0.15432897", "0.53532814", "0.44463454"]]
+        }
+      ]
+    },
+    "8": {
+      "element_number": 8,
+      "element_symbol": "O",
+      "electron_shells": [
+        {
+          "angular_momentum": [0],
+          "function_type": "gto",
+          "exponents": ["130.7093200", "23.8088610", "6.44360830"],
+          "coefficients": [["0.15432897", "0.53532814", "0.44463454"]]
+        },
+        {
+          "angular_momentum": [0, 1],
+          "function_type": "gto",
+          "exponents": ["5.03315130", "1.16959610", "0.38038900"],
+          "coefficients": [
+            ["-0.09996723", "0.39951283", "0.70011547"],
+            ["0.15591627", "0.60768372", "0.39195739"]
+          ]
+        }
+      ]
+    }
+  },
+  "references": [
+    {
+      "reference_key": "hehre1969",
+      "reference_description": "W. J. Hehre, R. F. Stewart, J. A. Pople, J. Chem. Phys. 51, 2657 (1969)",
+      "reference_doi": "10.1063/1.1672392"
+    }
+  ]
+}

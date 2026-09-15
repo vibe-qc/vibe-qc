@@ -1,0 +1,131 @@
+# vibe-qc parameter-file schema specification.
+#
+# This file is documentation, not a parameter file — it is not loaded
+# at runtime. It captures the per-`kind` body schema for the TOML
+# files in this directory tree. The metadata-block schema (required
+# fields + their meaning) lives in the README at the top of the
+# directory and is the same for every kind.
+#
+# Each section below corresponds to one value of `metadata.kind`.
+# Adding a new kind: extend this file with a new section, write a
+# matching loader in the appropriate `python/vibeqc/<module>.py`, add
+# regression tests, then drop the first concrete file under the
+# matching sub-directory.
+
+
+# =====================================================================
+# kind = "gcp_parameters"
+#
+# Geometric counterpoise correction parameters per basis set
+# (Kruse & Grimme 2012, plus the per-composite-paper refinements
+# bundled by Sure-Grimme 2013, Grimme et al. 2015, Brandenburg et al.
+# 2018, Grimme et al. 2021, Müller-Hansen-Grimme 2023).
+#
+# Body shape (after the [metadata] block):
+#
+#   [parameters]
+#   sigma = <float>     # σ from eq. 4 of the Kruse-Grimme paper
+#   eta   = <float>     # η, the Slater-exponent scaling (default 1.0)
+#   alpha = <float>     # α from eq. 4
+#   beta  = <float>     # β from eq. 4
+#
+#   [variants.<method>]      # OPTIONAL, zero or more
+#   sigma / eta / alpha / beta / etaspec   # any subset; unset keys
+#                            #   inherit from [parameters]
+#   citation = <str>         # the source for THESE constants
+#   doi = <str>
+#                            # The four fit constants are per
+#                            #   (method, basis) pair -- gcp.f90 keys
+#                            #   them on the method -- while the
+#                            #   [elements.*] tables below are per
+#                            #   basis and are reused verbatim by every
+#                            #   variant. Needed whenever two methods
+#                            #   share a parent basis but not a fit
+#                            #   (pbeh-3c vs hse-3c on def2-mSVP).
+#
+#   [elements.<symbol>]      # one block per element with bundled data
+#   e_mis  = <float>         # missing basis-set incompleteness energy
+#                            #   per atom, in Hartree (always negative
+#                            #   in the natural convention, but stored
+#                            #   here as a positive number — the gCP
+#                            #   sum applies the sign internally)
+#   n_virt = <float>         # virtual orbital count of the isolated
+#                            #   neutral atom in this basis (float so
+#                            #   half-integer "fractional" definitions
+#                            #   stay expressible)
+#   zeta   = <float>         # effective 1s-STO exponent for the
+#                            #   pairwise Slater-overlap attenuator
+#                            #   (inverse bohr)
+#
+# Element keys are atomic symbols (case-insensitive in the loader);
+# the loader translates "H" / "h" → atomic number 1, etc.
+#
+# For composite recipes whose basis contraction is tuned to make
+# gCP vanish by construction (r²SCAN-3c / def2-mTZVPP), set
+# sigma = alpha = beta = 0.0; the per-element table can be empty.
+# The loader treats (σ, α, β) = (0, 0, 0) as a "no gCP" marker and
+# short-circuits the evaluation with E_gCP = 0.
+
+
+# =====================================================================
+# kind = "d3bj_damping"  (FUTURE — Phase 2 migration)
+#
+# D3(BJ) damping parameters per XC functional (Grimme, Ehrlich,
+# Goerigk, J. Comp. Chem. 32, 1456, 2011). Currently lives at
+# cpp/src/dispersion_params.cpp; will migrate here in Phase 2 + a
+# codegen script that emits the matching .cpp table.
+#
+#   [parameters]
+#   s6 = <float>         # canonical s6 = 1.0 unless overridden
+#                        #   (double-hybrids ride a lower s6)
+#   s8 = <float>
+#   a1 = <float>
+#   a2 = <float>
+#
+# This kind has no [elements.*] body — the parameters are
+# functional-wide constants.
+
+
+# =====================================================================
+# kind = "d4_damping"  (FUTURE — Phase 2)
+#
+# D4 damping parameters per XC functional (Caldeweyher, Bannwarth,
+# Grimme, J. Chem. Phys. 150, 154122, 2019). Same shape as d3bj_damping
+# plus an `s9` field for the three-body Axilrod-Teller-Muto term.
+
+
+# =====================================================================
+# kind = "eeq_alpha"  (FUTURE — Phase 2)
+#
+# EEQ atomic-charge model parameters (Caldeweyher 2019). Per-element
+# data; coverage is the full periodic table.
+#
+#   [elements.<symbol>]
+#   chi       = <float>   # element electronegativity
+#   eta       = <float>   # element hardness
+#   alpha     = <float>   # exponent of the Slater-like charge density
+#   k_cn      = <float>   # coordination-number coupling
+
+
+# =====================================================================
+# kind = "xc_alias"  (FUTURE — Phase 2)
+#
+# Custom XC-functional alias definitions, mirroring the resolve_alias
+# dict in cpp/src/xc.cpp. Carried in TOML so adding a new alias is a
+# data-only change (no recompile) once the runtime loader lands.
+#
+#   [parameters]
+#   extra_hf_fraction = <float>   # 0 for non-hybrid components
+#   mp2_c_os = <float>            # 0 for non-double-hybrid
+#   mp2_c_ss = <float>
+#
+#   [[components]]                # array-of-tables
+#   libxc_id = <int>              # e.g. 101 for XC_GGA_X_PBE
+#   weight   = <float>            # mixing fraction
+
+
+# =====================================================================
+# kind = "lebedev_grid"  (FUTURE — Phase 2)
+#
+# Lebedev quadrature grids (Lebedev-Laikov). One file per Lebedev
+# order; the file body is an array of [theta, phi, weight] points.

@@ -1,0 +1,25 @@
+{
+  "cell": {
+    "basis": "cc-pvdz",
+    "charge": 0,
+    "df": false,
+    "method": "RMP2",
+    "spin": 0,
+    "system": "H2O"
+  },
+  "cell_id": "H2O__cc-pvdz__RMP2",
+  "code": "orca",
+  "code_version": "6.1.1",
+  "e_corr": -0.207146661,
+  "e_hf": -76.02082648480443,
+  "e_os": null,
+  "e_ss": null,
+  "e_total": -76.227973146,
+  "e_total_residual": 1.9556978259060998e-10,
+  "generated_utc": "2026-05-20T20:40:30+00:00",
+  "nprocs": 1,
+  "orca_simple_input": "! MP2 cc-pVDZ NoFrozenCore VeryTightSCF Bohrs",
+  "vq_jobid": "c69e3824819a",
+  "vq_state": "completed",
+  "vq_wall_s": 1.001098
+}

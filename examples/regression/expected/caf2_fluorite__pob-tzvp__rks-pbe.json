@@ -1,0 +1,12 @@
+{
+  "system_id": "caf2_fluorite",
+  "basis": "pob-tzvp",
+  "method_id": "rks-pbe",
+  "kmesh": [8, 8, 8],
+  "primary_source": "crystal14_static_reference",
+  "energy_ha": null,
+  "tolerance_ha": 1e-5,
+  "tolerance_rationale": "CRYSTAL14 PBE/POB-TZVP self-reproduces this energy to TOLDEE 1e-8 Ha at SHRINK 8 8 (8x8x8 Pack-Monkhorst + 8x8x8 Gilat). Strict 1e-5 catches any cross-code divergence at this basis level once vibe-qc gains a compatible pob-TZVP + multi-k path. At sto-3g / Gamma-only the basis-set-error noise floor is ~10-20 mHa and this strict tolerance does not apply.",
+  "published_energy_ha": -877.23357269179,
+  "published_source": "Computed via CRYSTAL14 (serial path via Pcrystal parallel-14, identical to 13 digits per the run-crystal.sh announcement) on compute-reference 2026-05-13 (vq jobid f6a5bddff7a5). Input: caf2.d12 at experimental lattice constant a=5.463 A (Wyckoff Crystal Structures Vol. 1, 2nd ed., Wiley 1963, p. 240). BASISSET POB-TZVP, DFT PBE, SHRINK 8 8, TOLDEE 8. Converged in 11 SCF cycles. Reproducible via `vq submit -d <run-dir> --cpus 14 --wall-time-seconds 1800 -- bash launch.sh caf2.d12` where launch.sh prepends the directory containing crystal/Pcrystal (e.g. /home/USER/bin) to PATH before calling run-crystal.sh (the vq daemon's stripped PATH does not include that directory; see reference_crystal14_via_vq.md PATH note)."
+}

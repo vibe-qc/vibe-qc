@@ -1,0 +1,1 @@
+{'system': 's22-08-methane-dimer', 'body': 'monoA', 'variant': 'b2plyp', 'e_hf': -40.42232158484646, 'e_correlation': -0.06879270438642479, 'e_total': -40.49111428923288, 'e_os': -0.2077021491296264, 'e_ss': -0.047085644894169096, 'n_scf_iter': 10, 'scf_converged': True}

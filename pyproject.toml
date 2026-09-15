@@ -1,0 +1,452 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.10",
+    "pybind11>=2.12",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "vibe-qc"
+version = "0.17.1"
+description = "vibe-qc — a quantum chemistry code targeting the cyclic cluster model for solids"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MPL-2.0" }
+authors = [
+    { name = "Michael F. Peintinger" },
+]
+keywords = [
+    "quantum chemistry", "hartree-fock", "dft", "mp2",
+    "periodic systems", "crystal", "cyclic cluster model",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.26",
+    # SciPy is a hard runtime dependency, not optional: the density-
+    # fitting module (vibeqc.density_fitting) imports scipy.linalg
+    # (cho_factor / cho_solve / solve_triangular) at module load, and
+    # vibeqc/__init__.py imports density_fitting unconditionally — so a
+    # no-extras `pip install -e .` followed by `import vibeqc` requires
+    # SciPy to be present. (It was previously masked only because the
+    # [test]/[dev] extras pull pyscf, which depends on scipy.) Floor
+    # pairs with the numpy>=1.26 era; the APIs used are long-stable.
+    "scipy>=1.11",
+    # K-Phase (v0.5) k-point support: spglib drives IBZ reduction +
+    # space-group detection; seekpath drives canonical HPKOT band
+    # paths (Hinuma et al., Comp. Mat. Sci. 128, 140 (2017)). The C++
+    # core already vendors libspglib for `attach_symmetry`; the Python
+    # bindings are a separate ~1MB wheel.
+    "spglib>=2.0",
+    "seekpath>=2.1",
+    # QVF SSOT enforcement (vibeqc.output.formats.qvf): the writer
+    # validates its own output against the canonical JSON Schema
+    # (qvf_manifest.schema.json) before returning, so a writer
+    # regression cannot ship an invalid archive. Tiny pure-Python
+    # package — listed as a runtime dep deliberately so the gate is
+    # always enforced (skipping it via soft-import is what caused the
+    # producer↔consumer drift this dep prevents).
+    "jsonschema>=4.20",
+    # NEB driver: per-image SCFs are embarrassingly parallel. joblib
+    # gives a stable process-pool backend (loky) that pickles SCF
+    # results cleanly across workers, so a 7-image NEB at 50 outer
+    # iterations runs as ~50 batches of N images in parallel rather
+    # than serially. Pulled in only by the NEB driver today; other
+    # drivers do not use it.
+    "joblib>=1.3",
+    # ASE is a hard runtime dependency for public optimization routes:
+    # run_job(optimize=True) drives semiempirical and MLIP methods through
+    # ASE calculators because the native molecular optimizer owns only
+    # Gaussian-basis wavefunction providers. Fleet release installs use the
+    # base metadata (--extras none), so keeping ASE optional made those
+    # basis-free geometry optimizations fail before any chemistry ran.
+    "ase>=3.22",
+]
+
+# `vqfetch` (vibeqc.fetch) — external structure fetcher. Optional:
+# without these the regression suite + everything else still works,
+# but `vqfetch` itself errors with a clear ImportError pointer to
+# `pip install 'vibe-qc[fetch]'`. Pinned to the 1.x line; the API is
+# stable across 1.0–1.4 in our usage.
+
+[project.urls]
+Homepage      = "https://vibe-qc.com"
+Documentation = "https://vibe-qc.com/docs/"
+Repository    = "https://github.com/vibe-qc/vibe-qc"
+Issues        = "https://github.com/vibe-qc/vibe-qc/issues"
+Changelog     = "https://vibe-qc.com/docs/changelog.html"
+
+[project.optional-dependencies]
+ase = [
+    # Compatibility alias for existing scripts/docs that request .[ase].
+    # ASE is also in [project.dependencies] because the public
+    # semiempirical optimization route needs it in base release installs.
+    "ase>=3.22",
+]
+naming = [
+    # `vibeqc_naming` derives an IUPAC name locally through RDKit
+    # (BSD-3-Clause). The import in naming/external.py is deliberately soft,
+    # so the package degrades to the CACTUS REST route without it — but the
+    # dependency was never declared anywhere, which meant the local route was
+    # only available to users who happened to have RDKit already. Declared so
+    # it can be asked for by name (maintainer decision, 2026-07-28).
+    "rdkit>=2023.3",
+]
+fetch = [
+    # `vqfetch` external structure fetcher. ASE for COD CIF parsing;
+    # optimade-python-tools for the federated OPTIMADE client.
+    "ase>=3.22",
+    "optimade>=1.0,<2",
+    # Reference-data scrapers (vibeqc.fetch.references: NIST CCCBDB /
+    # WebBook / ATcT) parse HTML with BeautifulSoup4 + the lxml tree
+    # builder. Both are lazy-imported at the parse callsite (via
+    # references._optional_deps.require_bs4), so the structures-only
+    # path stays usable without them; required for `vqfetch reference`.
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+]
+dispersion = [
+    # Grimme's reference D3 implementation. vibe-qc's native D3(BJ) is
+    # quantitative for H-Ar; this optional backend remains the independent
+    # reference implementation and provides coverage for heavier elements.
+    "dftd3>=1.2",
+    # Caldeweyher-Bannwarth-Grimme 2019 D4 dispersion. Reference
+    # Fortran library shipped as a binary Python wheel; used by
+    # vibeqc.compute_d4 and by the double-hybrid dispatchers
+    # (run_b2plyp / run_dsd_pbep86 with dispersion="d4") to add the
+    # published "X-D4" correction. The native vibe-qc D4 backend
+    # (Phase D4b, backend="native") is feature-complete and available
+    # via an MPL-2.0 reimplementation; dftd4 remains the default
+    # pending the production reference-dataset upgrade (aug-cc-pVDZ +
+    # SEC subtraction).  See handovers/HANDOVER_D4_NATIVE.md.
+    "dftd4>=4.0",
+]
+mace = [
+    # MACE — ACEsuit's pre-trained E(3)-equivariant graph-neural-network
+    # machine-learning interatomic potential (MIT). Exposed as a
+    # first-class method="mace" via vibeqc.mlip.mace for geometry
+    # optimization / MD pre-screening within a registered model's domain.
+    # Model-attributed results require their own validation; vibe-qc drives
+    # MACE's pre-trained forward pass and attributes it as an external
+    # model (maintainer-approved extension of CLAUDE.md §10 — vibe-qc
+    # computes nothing here). Strictly optional: pulls the heavy PyTorch +
+    # e3nn stack (~650 MB), never a core dependency.
+    #
+    # Python <=3.13 ONLY — MACE's matscipy dependency has no cp314 wheel
+    # yet, so the requirement is marked python_version<"3.14" and the
+    # runtime import is gated (vibeqc.mlip.mace raises a clear <=3.13
+    # message on 3.14). The repo dev .venv is 3.14, so this extra is a
+    # no-op there; MACE work runs in a <=3.13 env.
+    #
+    # Foundation-model WEIGHTS are NOT installed here — they are fetched
+    # on demand into the XDG cache at first use (MIT models ungated; ASL
+    # models behind a non-commercial acknowledgment). See docs/roadmap.md
+    # § MACE MLIP interface (M2) and docs/license.md.
+    	"mace-torch>=0.3.16 ; python_version < '3.14'",
+    ]
+skala = [
+    # Microsoft SKALA-1.1 runs the official, MIT-licensed TorchScript
+    # checkpoint through vibe-qc's independent external-XC adapter.  PyTorch
+    # is deliberately optional because its wheels are large; the checkpoint
+    # itself is downloaded on first use from an immutable revision and is not
+    # part of the vibe-qc distribution.  PyTorch 2.12/2.13 is the published
+    # SKALA runtime window validated by this adapter. PyTorch now publishes a
+    # cp314 wheel, but vibe-qc has not yet validated the Python-3.14 native
+    # runtime/OpenMP combination; Python 3.14 therefore keeps the base install
+    # but cannot enable this extra until that canary is green.
+    "torch>=2.12,<2.14 ; python_version < '3.14'",
+]
+trexio = [
+    # TREXIO -- the TREX Centre of Excellence's open wavefunction container
+    # (Posenitskiy et al., J. Chem. Phys. 158, 174801 (2023)). The Python API
+    # is BSD-3-Clause and bundles its own HDF5 library in the PyPI wheels;
+    # vibe-qc imports it lazily inside write_trexio / read_trexio and never
+    # vendors or redistributes it. 2.6.1 is the version the round-trip and
+    # out-of-process PySCF checks were run against.
+    "trexio>=2.6.1",
+]
+bse = [
+    # The Basis Set Exchange catalogue, for vibeqc.basis_fetch. Optional and
+    # large: the distribution carries ~334 MB of package data, which is why
+    # it is not a default dependency. It is also entirely local -- a lookup
+    # reads that bundled data rather than the network -- so it works on an
+    # air-gapped host, and what you get is pinned by this package's version
+    # rather than by what a server happened to serve. BSD-3-Clause for the
+    # software; the basis parameters themselves are numerical data, per
+    # docs/license.md section 3a.
+    "basis-set-exchange>=0.9",
+]
+    ml = [
+    	# scikit-learn -- optional machine-learning k-spacing predictor
+    	# (K8-F).  Powers the bundled Random-Forest KSPACING model used
+    	# by KPoints.recommend(predictor="ml") when VIBEQC_ML_KPOINTS=1
+    	# is set.  Gated behind an env var so the model is never
+    	# auto-loaded silently.  Based on the Choudhary--Tavazza 2020
+    	# convergence predictor (npj Comput. Mater. 6, 39, 2020).
+    	# Install with:  pip install -e '.[ml]'
+    	"scikit-learn>=1.3",
+    ]
+    mpi = [
+    	# mpi4py — optional MPI parallelization for multi-node runs.
+    	# Enables shell-pair distribution, grid domain decomposition,
+    	# and state/k-point farming across MPI ranks. Not required for
+    	# single-node OpenMP parallelism.
+    	"mpi4py>=3.1",
+    ]
+test = [
+    # vq's persistence boundary uses pytest 8.2's session-wide
+    # PYTEST_VERSION marker to protect collection-time child processes.
+    "pytest>=8.2",
+    # The root gate's isolation regression executes a real vq RPC node with
+    # this environment. Keep vq's two runtime requirements available even
+    # when the separately packaged vibe-queue project is not installed.
+    "click>=8.0",
+    "pydantic>=2.0",
+    # The bundled K8-F k-spacing predictor is exercised by
+    # tests/test_ml_kpredictor.py.  A clean .[test] gate must be able to
+    # deserialize and run that scikit-learn model rather than reporting an
+    # environment-only wall of failures.
+    "scikit-learn>=1.3",
+    # Distributed full-suite gate (scripts/test_gate/): per-file process
+    # isolation needs pytest-forked (the --forked fan-out), pytest-timeout
+    # (per-test deadline) and psutil (peak-RSS poller). Required wherever the
+    # gate runs — including the managed fleet dev venvs (`pip install -e
+    # .[test]`), so the v0.13.0 pre-cut gate can fan across compute-small/compute-study/compute-medium.
+    "pytest-forked>=1.6",
+    "pytest-timeout>=2.3",
+    "psutil>=5.9",
+    # PySCF is used as the reference quantum-chemistry implementation for
+    # cross-checking RHF energies and MO energies at machine precision.
+    "pyscf>=2.6",
+    # ASE is needed to exercise the vibeqc.ase Calculator in tests.
+    "ase>=3.22",
+    # dftd3 / dftd4 are used as reference dispersion implementations
+    # in cross-checks and to exercise the run_b2plyp(dispersion="d4")
+    # / run_dsd_pbep86(dispersion="d4") path in tests.
+    "dftd3>=1.2",
+    "dftd4>=4.0",
+]
+diagnostics = [
+    # py-spy: sampling profiler for hung-process diagnosis.
+    # Useful when an SCF appears stuck — `sudo py-spy dump --pid <PID>`
+    # shows the live Python stack without restarting the run, which
+    # is how the v0.5.3 Schwarz-screening regression was diagnosed.
+    # See docs/troubleshooting.md.
+    "py-spy>=0.4",
+]
+dev = [
+    # Bundle of everything a developer / power user wants in one extras
+    # group: tests + dispersion + ASE + py-spy diagnostics + fetcher.
+    # Install with:
+    #   pip install -e '.[dev]'
+    # Keep parity with [test]: the root gate can select vibe-queue targets.
+    "pytest>=8.2",
+    # vq runtime requirements used by the root gate's real RPC-node probe.
+    "click>=8.0",
+    "pydantic>=2.0",
+    # gate tooling (see [test]) — keep [dev] a superset of [test]:
+    "pytest-forked>=1.6",
+    "pytest-timeout>=2.3",
+    "psutil>=5.9",
+    "pyscf>=2.6",
+    "ase>=3.22",
+    "dftd3>=1.2",
+    "dftd4>=4.0",
+    # Keep [dev] a true superset of [test]; required by the bundled K8-F
+    # predictor regression tests.
+    "scikit-learn>=1.3",
+    "py-spy>=0.4",
+    # Fetcher: OPTIMADE client + the reference-data HTML scrapers'
+    # BeautifulSoup4 / lxml stack, so `.[dev]` exercises the full
+    # vibeqc.fetch surface (the CCCBDB/WebBook reference tests run
+    # rather than skip).
+    "optimade>=1.0,<2",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+]
+docs = [
+    # Sphinx 7.4+ has the MyST parser compatibility we rely on.
+    "sphinx>=7.4",
+    "furo>=2024.5",
+    "myst-parser>=4.0",
+    "linkify-it-py>=2.0",
+    "sphinx-design>=0.6",
+    "sphinx-copybutton>=0.5",
+    "sphinx-autobuild>=2024.4",
+    # Redirect stubs for renamed/moved pages (see docs/conf.py ``redirects``).
+    "sphinx-reredirects>=0.1",
+]
+viewer = [
+    # MolTUI — terminal-based molecular viewer that consumes
+    # .molden (which vibe-qc writes by default), .cube, .xyz,
+    # Gaussian .fchk, and Orca .gbw / .hess. Renders geometries +
+    # orbitals + normal modes inline in the terminal using Unicode.
+    # See https://github.com/kszenes/moltui.
+    #
+    # Install with:  pip install -e '.[viewer]'   (from a vibe-qc checkout)
+    # Then:          moltui my-output.molden
+    "moltui>=0.1",
+]
+viewer-gpu = [
+    # vibe-view lives in its own repository. Until it is published on
+    # PyPI, install an authorized source checkout separately. For adjacent
+    # clones and one environment, from the core root:
+    #     pip install -e .
+    #     pip install -e '../vibe-view[viewer]'
+    # No uv source mapping exists for the viewer after the split.
+    # The viewer extra adds the browser/desktop server stack; its absence
+    # leaves the viewer's core/headless package.
+    "vibeview[viewer]>=0.1",
+]
+basisopt = [
+    # vibe-basis — the basis-set optimization driver (console script
+    # ``vb``). It is a *client*: it emits external-SCF decks, submits
+    # them (locally or through the ``vq`` CLI), and parses what comes
+    # back. It never computes an SCF energy itself, and it never
+    # imports an external QC program — CLAUDE.md § 10's out-of-process
+    # boundary is unaffected by installing it here.
+    #
+    # This extra exists because ``vibeqc.basis_optimization`` has six
+    # modules that import ``vibe_basis`` at module top level —
+    # ``calculators`` and ``recipes.{crystal_objective,crystal_stage1,
+    # crystal_stage2,crystal_stage3,production}``. They ship inside the
+    # vibe-qc wheel, so without this they are unimportable wherever
+    # vibe-qc is installed. Pinned by tests/test_packaging_extras.py
+    # (TestBasisoptExtraIsDeclared + TestBasisOptimizationModulesImport).
+    # The decision not to give vibe-basis a fleet rollout lane is
+    # recorded in handovers/HANDOVER_VIBE_BASIS_DEPLOYMENT.md.
+    #
+    # Same shape as ``viewer-gpu`` above: an ordinary version pin, with
+    # the ``[tool.uv.sources]`` table below redirecting it to the local
+    # ``vibe-basis/`` directory (vibe-basis is not on PyPI yet). Do NOT
+    # rewrite this as a ``vibe-basis @ file:./vibe-basis/`` direct URL —
+    # uv reads *every* extra's Requires-Dist, so one unparseable
+    # relative URL breaks even the base install. That regression is
+    # documented in the viewer-gpu comment above.
+    #
+    # Install (uv, recommended), from the checkout root:
+    #     uv pip install -e '.[basisopt]'
+    # Install (pip): pip does not read ``[tool.uv.sources]``, so install
+    # vibe-basis as a second step:
+    #     pip install -e .  &&  pip install -e vibe-basis/
+    # Then: vb --help
+    #
+    # CAVEAT — ``--no-build-isolation``: vibe-basis builds with
+    # hatchling, so the documented fast-rebuild command from
+    # tests/conftest.py fails on this extra with "No module named
+    # 'hatchling'" unless hatchling is in the venv. Either rebuild the
+    # core with the BASE install (the extra is unaffected by a core
+    # rebuild, and vibe-basis stays installed):
+    #     uv pip install -e . --no-build-isolation \
+    #         --config-settings=build-dir=build-local
+    # or install the backend once: ``uv pip install hatchling``.
+    # Plain ``uv pip install -e '.[basisopt]'`` (with isolation) needs
+    # neither.
+    #
+    # vibe-basis's own optimizers stay behind its own extras
+    # (``[nlopt]``, ``[iminuit]``, ``[scipy]``, ``[vq]``, ``[all]``), so
+    # this pin adds only click + numpy — both already vibe-qc deps.
+    "vibe-basis>=0.1",
+]
+
+# Console-script entry points. The on-disk command is spelled "vibe-qc"
+# (the brand name, matching vibe-qc.com); the Python module path stays
+# "vibeqc" because Python identifiers can't carry dashes.
+[project.scripts]
+vibe-qc = "vibeqc.cli:main"
+vibeqc = "vibeqc._cli:main"
+vibe-qc-basis = "vibeqc.basis_toolkit.cli:main"
+vibeqc-cite = "vibeqc.output.citations.cli:main"
+vibeqc-outputs = "vibeqc.output.outputs_cli:main"
+vqfetch = "vibeqc.fetch.cli:main"
+
+# uv-only source redirects for the ``[viewer-gpu]`` and ``[basisopt]``
+# extras. uv resolves the ``vibeview>=0.1`` / ``vibe-basis>=0.1`` pins
+# (under [project.optional-dependencies]) from these local checkout
+# paths instead of PyPI. pip ignores this table — see each extra's
+# comment above for the pip install path. Delete an entry once that
+# package publishes to PyPI; its pin then resolves from PyPI with no
+# other change.
+[tool.uv.sources]
+# vibe-view now lives in its own repository, so there is no co-located
+# directory to redirect to. Install it separately:
+#     pip install -e ../vibe-view          (sibling checkout)
+# The `viewer-gpu` extra documents the dependency; it cannot resolve from
+# PyPI until the vibeview distribution is published.
+vibe-basis = { path = "vibe-basis" }
+
+[tool.scikit-build]
+# Python sources live under python/, compiled module is installed alongside
+wheel.packages = ["python/vibeqc", "python/vibeqc_naming"]
+# vibe-qc's pinned SKALA parity profile adapts Apache-2.0 PySCF 2.14 routines
+# and tables. Ship the upstream license and NOTICE in every wheel alongside
+# the project license; source archives include these tracked files naturally.
+wheel.license-files = [
+    "LICENSE",
+    "LICENSES/MICROSOFT-SKALA-MIT",
+    "LICENSES/PYSCF-2.14.0-LICENSE",
+    "LICENSES/PYSCF-2.14.0-NOTICE",
+]
+# Git-tracked files are normally collected automatically, but keeping the
+# third-party notices explicit also makes local pre-commit source archives
+# complete while those new files are still untracked.
+sdist.include = [
+    "LICENSES/MICROSOFT-SKALA-MIT",
+    "LICENSES/PYSCF-2.14.0-LICENSE",
+    "LICENSES/PYSCF-2.14.0-NOTICE",
+]
+# Repository-local scratch evidence is not release source.  scikit-build-core
+# otherwise considers unignored, untracked files when assembling an sdist, so
+# keep the entire root-level scratch tree out even when it contains PDFs,
+# rendered pages, checkpoints, or other large local artefacts.
+sdist.exclude = ["tmp/**"]
+# Keep the CMake/Ninja tree stable between editable installs. The wheel tag
+# includes the Python/ABI/platform identity, so incompatible interpreters do
+# not share objects. CMake reconfigures on source/build-option changes and
+# ccache additionally hashes the complete compiler command and included files.
+build-dir = "build/{wheel_tag}"
+cmake.version = ">=3.20"
+cmake.build-type = "Release"
+# Match scikit-build-core's minimum; lets CMake find pybind11 from build env
+cmake.args = []
+# Re-run CMake when these change
+cmake.define = {}
+# Verbose build for easier debugging during development
+build.verbose = true
+# Strict so we fail fast on config issues
+logging.level = "INFO"
+
+[tool.pytest.ini_options]
+minversion = "8.2"
+testpaths = ["tests"]
+markers = [
+    "slow: long-running parity or integration tests",
+    "tier0: build-break test; blocks every push",
+    "tier1: pre-cut blocking release test",
+    "tier2: post-cut inventory test; blocks paper promotion, not the cut",
+    "tier3: advisory or research test; never blocks a release",
+    "maturity_production: production method-maturity coverage",
+    "maturity_verified: verified method-maturity coverage",
+    "maturity_under_review: under-review method-maturity coverage",
+    "maturity_experimental: experimental method-maturity coverage",
+    "molecular: molecular SCF, DFT, properties, gradients, or correlation",
+    "periodic: periodic/PBC functionality",
+    "gdf: periodic Gaussian density fitting and RSGDF/MDF/compcell routes",
+    "bipole: BIPOLE periodic Ewald-split functionality",
+    "gapw: GAPW/GPW plane-wave-grid functionality",
+    "aiccm: AICCM/CCM/finite-torus research functionality",
+    "semiempirical: MSINDO, PM6/OMx/GFN2/DFTB, and SECCM functionality",
+    "external_reference: out-of-process reference-code parity tests",
+    "experimental: research or preview feature tests outside the every-change gate",
+    "mem_high: high-memory test for large-box/nightly lanes only",
+]

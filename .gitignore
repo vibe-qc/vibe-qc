@@ -1,0 +1,339 @@
+# Build artifacts
+build/
+build-editable/
+build-local/
+build-worktree/
+_skbuild/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.so
+*.dylib
+*.o
+*.obj
+
+# IDE / editor
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Python
+.venv/
+venv/
+.env
+
+# Per-release coordination drop-box (CLAUDE.md §3 — gitignored,
+# local-only, deleted post-tag by the release chat).
+.release-status/
+
+# bugctl local state (run_id, session, config overrides)
+.git/bugctl/
+
+# bugctl sync — gitignored atomic cache for the coordinator dashboard
+agentic-loop/.bug-cache.json
+
+# Read-only reference copies of external QC codes — pulled in by the
+# maintainer for algorithm reference (PySCF SCF accelerators, CRYSTAL
+# convergers, ORCA notes). Never imported (CLAUDE.md §10); never
+# vendored. Exists in worktrees that need it; gitignored to keep it
+# strictly local.
+reference/
+/references/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+compile_commands.json
+
+# Optional external tools (installed via pip, not vendored)
+moltui/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Sphinx
+docs/_build/
+docs/api/generated/
+
+# Third-party source builds (built on-demand by scripts/setup_native_deps.sh,
+# which orchestrates the per-dep build_*.sh helpers). Each subdir below holds
+# a fetched src/, intermediate build/, and the consumed install/ tree.
+third_party/libint/
+third_party/libxc/
+third_party/spglib/
+third_party/fftw/
+third_party/libecpint/
+third_party/openblas/
+# Build-stamp written by setup_native_deps.sh; read by update.sh /
+# install.sh / doctor.sh to detect drift between the vendored
+# install/ trees and the currently-checked-out build_*.sh recipes.
+# Local-only, regenerated on every successful native-deps run.
+third_party/.build-stamp
+# Advisory build lock (flock) held by install.sh / update.sh /
+# setup_native_deps.sh / build_*.sh to serialize concurrent native-dep
+# builds on one checkout (see scripts/_build_lock.sh). Local-only.
+third_party/.build.lock
+
+# The bundled basis library lives *inside* the Python package
+# (python/vibeqc/basis_library/) and IS committed: the assembled
+# basis/ subdir ships in the wheel so pip-install users get every
+# standard libint basis + vibe-qc's custom additions out of the box.
+# Re-assemble after a libint upgrade or custom-file addition with
+# scripts/setup_basis_library.sh.
+
+# Persistent scikit-build-core build dir for incremental C++ dev iteration
+# (created with `pip install -e . --no-build-isolation -C build-dir=build_dev`).
+/build_dev/
+
+# Pre-rename basis-library location at the repo root. The canonical home
+# moved to python/vibeqc/basis_library/ (bundled into the wheel). Ignore
+# any stray copy at the old path so it can't silently shadow the bundled
+# version on systems that still have it.
+/basis_library/
+
+# Runtime-generated filtered-basis cache. basis_filter.py writes
+# `_vibeqc_filtered_*.g94` into the bundled basis/ dir when it's writable
+# (the editable-dev-install case — see _filtered_basis_cache_dir resolution
+# step 2) so libint can re-load the filtered set by name from inside the
+# C++ SCF driver. They are content-hashed, regenerable artifacts — never
+# source — and clear_filtered_basis_cache() removes them. Ignore everywhere
+# so a dev SCF run doesn't dirty the tree.
+_vibeqc_filtered_*.g94
+
+# Claude Code: worktrees + per-machine settings + session plans + lockfiles.
+# Leave room to commit shared things like .claude/commands/ or .claude/agents/
+# later by not gitignoring the whole directory.
+.claude/worktrees/
+.claude/settings.local.json
+.claude/plans/
+.claude/*.lock
+
+# Codex local agent skills/settings. These are per-clone workflow helpers, not
+# source artifacts. The dashboard test fixture that MODELS a repo with an
+# .agents/ state dir is real committed test data, so re-include it.
+.agents/
+!agentic-loop/dashboard/tests/fixtures/acceptance/repo/.agents/
+
+# aider: ignore its per-session working files (chat history, input
+# history, tags cache) but keep the committed project config tracked.
+.aider*
+!.aider.conf.yml
+
+# Generated output from runnable examples. Users reproduce these by
+# running the input scripts; examples and docs link to source inputs,
+# not committed run artifacts.
+examples/**/output-*
+examples/**/*.out
+# ...except committed cross-code reference snapshots that tests parse
+# (tests/test_runner_crystal.py::test_parse_crystal_enecycle_mgo_snapshot).
+# The 2026-06-29 artifact sweep (e9b8e8c1) deleted this one by mistake.
+!examples/regression/crystal_parity/crystal_demos/mgo_sto3g_enecycle.out
+examples/**/*.system
+# outputs of examples/input-qvf-container-roundtrip.py (the
+# container settles in place next to the script)
+examples/water_job.*
+examples/**/*.molden
+examples/**/*.traj
+examples/**/*.cube
+examples/**/*.hess
+examples/**/*.qvf
+examples/**/*.xsf
+examples/**/*.cderi.h5
+examples/**/*.perf
+examples/**/*.log
+examples/**/*.bibtex
+examples/**/*.references
+examples/**/*.population.txt
+examples/**/*.population.json
+examples/**/stdout.txt
+examples/**/stderr.txt
+
+# Manuscript-support artifact bundles are reproducible from the
+# checked-in generator scripts and should not be committed.
+docs/manuscripts/**/artifacts/
+
+# vibe-view showcase scripts write their artifacts under runs/; the
+# committed deliverable is the *.py, regenerate the .qvf on demand.
+#
+# Written as `runs/*` rather than `runs/`: git cannot re-include a file whose
+# parent *directory* is excluded, so excluding the contents is what lets the
+# negations below reach the one archive we do want tracked.
+examples/vibe_view/runs/*
+!examples/vibe_view/runs/qvf_showcase/
+examples/vibe_view/runs/qvf_showcase/*
+!examples/vibe_view/runs/h2co_showcase/
+examples/vibe_view/runs/h2co_showcase/*
+
+# ...except the three showcase archives the vibe-view suite gates 26 tests on
+# (`skipif(not _WATER.exists())` and friends). While they were ignored, CI
+# never had them, so those tests silently *skipped* through every release
+# gate: a container-submission regression shipped in v0.15.65 and was caught
+# by a developer running locally, not by the gate. They are committed
+# deliberately, sanitized (no real hostname) and with the water showcase's
+# volume grids strided down 2x, which is 97% of its bytes and something no
+# test asserts on. Regenerate with scripts/gen_qvf_showcase.py, then re-run
+# the sanitize step before committing a refresh.
+!examples/vibe_view/runs/qvf_showcase/water.qvf
+!examples/vibe_view/runs/h2co_showcase/h2co.qvf
+!examples/vibe_view/output-nacl-showcase.qvf
+
+# Scratch run outputs from examples/debug.
+examples/debug/output/
+
+# Generated outputs from runnable examples under examples/molecular/
+# (and subdirs like examples/molecular/solvation/). The input-*.py
+# scripts are committed; the .out / .molden / .traj / .system
+# artefacts they produce on a real run are re-generated per user
+# and shouldn't clutter git status. Reference outputs that DO get
+# committed live under examples/periodic* and have their own narrower
+# rules above.
+examples/molecular/**/input-*.out
+examples/molecular/**/input-*.molden
+examples/molecular/**/input-*.traj
+examples/molecular/**/input-*.system
+examples/molecular/**/input-*.dump
+examples/molecular/**/input-*.dump.*
+examples/molecular/**/input-*.scf.jsonl
+
+# Stray vibe-qc output files at the repo root (e.g. from forgotten
+# `output=` arguments during dev/testing). Covers the runner's full
+# sibling set — a forgotten root run drops all of these at once and
+# none belong in git (they also leak the dev's hostname + venv path
+# into the manifest).
+/output*.out
+/output*.molden
+/output*.traj
+/output*.system
+/output*.xyz
+/output*.cif
+/output*.xsf
+/output*.POSCAR
+/output*.bibtex
+/output*.references
+/output*.population.txt
+/output*.population.json
+/output*.qvf
+/output*.dump
+/output*.dump.*
+/output*.scf.jsonl
+/output*.cube
+
+# One-off root artifacts from historical validation runs.
+/h2_fci_anchor.*
+/si_diamond_default.out
+
+# Generated CRYSTAL parity-run decks from the basis-optimisation
+# dual-engine / pob_parity tooling. Regenerable, and the emitter writes
+# the same .d12 set under both the repo root and vibe-basis/ (so they show
+# up duplicated). The committed pob test inputs live under tests/; these
+# run dirs are scratch.
+pob_parity_runs/
+vibe-basis/pob_parity_runs/
+
+# ORCA scratch artefacts — produced when running ORCA locally for
+# reference comparisons (the binary is at
+# ~/orca_6_1_1_macosx_arm64_openmpi411/ and
+# is *not* shipped in the repo per the licensing constraint). All
+# orca.* outputs are reproducible from the input file alone, so we
+# don't track them.
+/orca.inp
+/orca.out
+/orca.err
+/orca.gbw
+/orca.ges
+/orca.densities
+/orca.densitiesinfo
+/orca.engrad
+/orca.bibtex
+/orca.property.txt
+/orca.hess
+/orca.opt
+/orca.xyz
+/orca.trj
+/orca.xtbrestart
+/orca_*.tmp
+
+# ORCA reference-run scratch produced *inside* the example/benchmark trees
+# (e.g. examples/molecular/mp2_benchmarks/*/inputs/orca/<system>/). ORCA names
+# every output after the input basename and drops it next to the .inp, so an
+# in-place reference run leaves thousands of reproducible blobs in git status.
+# The only curated ORCA artefact under these trees is the committed .inp; the
+# parsed decompositions we keep are vibe-qc's own .result/.log under the
+# sibling inputs/vibeqc/ (CLAUDE.md §1 + §10). The binary blobs can never be
+# curated, so they are ignored anywhere under examples/; the text outputs share
+# extensions with curated artefacts elsewhere, so those are scoped to the ORCA
+# subtree (0 tracked .out/.bibtex/.property.txt live under any inputs/orca/).
+examples/**/*.gbw
+examples/**/*.densities
+examples/**/*.densitiesinfo
+examples/**/*.ges
+examples/**/inputs/orca/**/*.out
+examples/**/inputs/orca/**/*.property.txt
+examples/**/inputs/orca/**/*.bibtex
+examples/**/inputs/orca/**/*.engrad
+examples/**/inputs/orca/**/*.hess
+examples/**/inputs/orca/**/*.KAO_*.tmp*
+examples/**/inputs/orca/**/*.tmp.[0-9]*
+examples/**/inputs/orca/**/run_orca_system.sh
+
+# Same for Psi4 reference scratch files.
+/psi.*
+/timer.dat
+/output.dat
+
+# Per-developer scratch directory for one-off debug scripts. Anything
+# under here is fair game to commit if it becomes a real test, but
+# we don't track the directory itself.
+/scratch/
+
+# Local JSON scratch used by the AICCM curator. Producer-cleanliness metadata
+# must not turn false merely because curate.py created its own output directory.
+/studies/aiccm-2026/_curate_tmp/
+/studies/aiccm-2026/_curated_testset/
+
+# Release-coordination drop-box: per-release subdirs (e.g.
+# .release-status/v0.8.0/) hold one status file per dev chat during a
+# release-status poll. Local-only, read once by the release chat,
+# deleted after the tag ships. See CLAUDE.md § 3 (and the v0.8.0
+# coordination doc on its candidate branch) for the protocol.
+/.release-status/
+
+# Sphinx GitLab-Pages build output. Regenerated by scripts/build_site.sh
+# whenever docs are built; the deployed site lives on the production
+# server, not in the repo.
+/public/
+
+# Symlinked third_party/ when a worktree shares the main repo's vendored
+# deps (`ln -s ../../third_party third_party` so each worktree doesn't
+# re-bootstrap libint/libxc/spglib/FFTW/libecpint). The existing
+# `third_party/<libname>/` rules above cover the main-repo case where
+# third_party is a real directory.
+/third_party
+
+# ORCA parity matrix: per-cell vq job staging + fetched-workspace
+# scratch. Local-only — the committed artefacts are the parsed ORCA
+# decompositions under parity_matrix_orca/cache/, not the raw ORCA
+# workspaces.
+examples/regression/parity_matrix_orca/.vq_work/
+examples/regression/parity_matrix_orca/.vq_fetch/
+
+# Per-developer scratch for experimental research spikes (mirror of
+# examples/regression/ used for cross-pollination probes). Local-only —
+# if a spike graduates to a real regression it moves under
+# examples/regression/ with a proper README. See the user-memory
+# entry `project_experimental_spike_landscape.md` for the spike index.
+examples/experimental_regression/
+
+# Profiler outputs at the repo root — speedscope-format dumps from
+# py-spy / austin / scalene / cProfile-converters. Throwaway after
+# analysis; not vibe-qc artefacts.
+/profile.speedscope.json
+/*.speedscope.json
+/profile.svg
+/*.prof

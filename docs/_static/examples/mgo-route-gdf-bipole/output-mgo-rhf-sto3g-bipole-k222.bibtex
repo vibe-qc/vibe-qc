@@ -1,0 +1,168 @@
+% vibe-qc auto-generated BibTeX entries -- one per cited
+% reference, in citation order. The corresponding software
+% citation for vibe-qc itself is the first entry.
+
+@software{peintinger_vibeqc,
+  author      = {Peintinger, Michael F.},
+  title       = {vibe-qc: a quantum-chemistry code for molecules and solids},
+  year        = 2026,
+  url         = {https://vibe-qc.com/},
+  version     = {0.15.41},
+  license     = {MPL-2.0},
+  note        = {Always cite. A peer-reviewed publication is forthcoming; this software citation is the canonical reference until then.}
+}
+
+@software{valeev_libint,
+  author      = {Valeev, Edward F.},
+  title       = {Libint: A library for the evaluation of molecular integrals of many-body operators over Gaussian functions},
+  url         = {https://github.com/evaleev/libint},
+  note        = {Underlies all Gaussian integral evaluation in vibe-qc.}
+}
+
+@article{hehre_sto_ng_1969,
+  author      = {Hehre, W. J. and Stewart, R. F. and Pople, J. A.},
+  title       = {Self-Consistent Molecular-Orbital Methods. I. Use of Gaussian Expansions of Slater-Type Atomic Orbitals},
+  journal     = {Journal of Chemical Physics},
+  volume      = 51,
+  number      = 6,
+  pages       = {2657--2664},
+  year        = 1969,
+  doi         = {10.1063/1.1672392},
+  note        = {The STO-NG Gaussian expansions. Routed from the STO-3G / STO-6G basis keys and from vibe-qc's semiempirical minimal basis (DFTB0 / SCC-DFTB).}
+}
+
+@article{pritchard_bse_2019,
+  author      = {Pritchard, Benjamin P. and Altarawy, Doaa and Didier, Brett and Gibson, Tara D. and Windus, Theresa L.},
+  title       = {New Basis Set Exchange: An Open, Up-to-Date Resource for the Molecular Sciences Community},
+  journal     = {Journal of Chemical Information and Modeling},
+  volume      = 59,
+  number      = 11,
+  pages       = {4814--4820},
+  year        = 2019,
+  doi         = {10.1021/acs.jcim.9b00725},
+  note        = {Basis Set Exchange (BSE) — the catalog vibe-qc's basis library is sourced from. Shipped v0.8.0.}
+}
+
+@article{pulay_diis_1980,
+  author      = {Pulay, Péter},
+  title       = {Convergence acceleration of iterative sequences. The case of SCF iteration},
+  journal     = {Chemical Physics Letters},
+  volume      = 73,
+  number      = 2,
+  pages       = {393--398},
+  year        = 1980,
+  doi         = {10.1016/0009-2614(80)80396-4}
+}
+
+@article{pulay_diis_1982,
+  author      = {Pulay, Péter},
+  title       = {Improved SCF convergence acceleration},
+  journal     = {Journal of Computational Chemistry},
+  volume      = 3,
+  number      = 4,
+  pages       = {556--560},
+  year        = 1982,
+  doi         = {10.1002/jcc.540030413}
+}
+
+@article{saunders_hillier_levelshift_1973,
+  author      = {Saunders, V. R. and Hillier, I. H.},
+  title       = {A "Level-Shifting" method for converging closed shell Hartree-Fock wave functions},
+  journal     = {International Journal of Quantum Chemistry},
+  volume      = 7,
+  number      = 4,
+  pages       = {699--705},
+  year        = 1973,
+  doi         = {10.1002/qua.560070407},
+  note        = {Saunders-Hillier virtual-block level shift. Implemented (RHFOptions.level_shift); roadmap C1a.}
+}
+
+@article{saunders_bipole_1992,
+  author      = {Saunders, V. R. and Freyria-Fava, C. and Dovesi, R. and Salasco, L. and Roetti, C.},
+  title       = {On the electrostatic potential in crystalline systems where the charge density is expanded in Gaussian functions},
+  journal     = {Molecular Physics},
+  volume      = 77,
+  pages       = {629--665},
+  year        = 1992,
+  doi         = {10.1080/00268979200102671},
+  note        = {BIPOLE / EXT EL-POLE and EXT EL-SPHEROPOLE methodology used by vibe-qc's periodic BIPOLE route.}
+}
+
+@article{dovesi_crystal14_2014,
+  author      = {Dovesi, R. and Orlando, R. and Erba, A. and Zicovich-Wilson, C. M. and Civalleri, B. and Casassa, S. and Maschio, L. and Ferrabone, M. and De La Pierre, M. and D'Arco, P. and Noël, Y. and Causà, M. and Rérat, M. and Kirtman, B.},
+  title       = {CRYSTAL14: A program for the ab initio investigation of crystalline solids},
+  journal     = {International Journal of Quantum Chemistry},
+  volume      = 114,
+  pages       = {1287--1317},
+  year        = 2014,
+  doi         = {10.1002/qua.24658},
+  note        = {Documents the periodic-Gaussian conventions mirrored by vibe-qc's BIPOLE route, including Madelung, spheropole, and tight-cell electrostatic gauges.}
+}
+
+@article{gygi_baldereschi_exx_1986,
+  author      = {Gygi, F. and Baldereschi, A.},
+  title       = {Self-consistent Hartree-Fock and screened-exchange calculations in solids: Application to silicon},
+  journal     = {Physical Review B},
+  volume      = 34,
+  pages       = {4405--4408},
+  year        = 1986,
+  doi         = {10.1103/PhysRevB.34.4405},
+  note        = {Treatment of the integrable q→0 Coulomb singularity in periodic exact exchange. Cite for the BIPOLE Ewald exchange split's G=0 handling (python/vibeqc/bipole_fock_ewald.py).}
+}
+
+@article{sundararaman_arias_exx_2013,
+  author      = {Sundararaman, R. and Arias, T. A.},
+  title       = {Regularization of the Coulomb singularity in exact exchange by Wigner-Seitz truncated interactions: Towards chemical accuracy in nontrivial systems},
+  journal     = {Physical Review B},
+  volume      = 87,
+  pages       = {165122},
+  year        = 2013,
+  doi         = {10.1103/PhysRevB.87.165122},
+  note        = {Probe-charge Ewald (Madelung-constant) finite-size correction for periodic exact exchange — the exchange_exxdiv='ewald' convention implemented by probe_charge_madelung() in python/vibeqc/bipole_fock_ewald.py (PySCF exxdiv='ewald' equivalent).}
+}
+
+@article{maurer_ochsenfeld_qqr_2012,
+  author      = {Maurer, Simon A. and Lambrecht, Daniel S. and Flaig, Denis and Ochsenfeld, Christian},
+  title       = {Distance-dependent Schwarz-based integral estimates for two-electron integrals: Reliable tightness vs. rigorous upper bounds},
+  journal     = {The Journal of Chemical Physics},
+  volume      = 136,
+  number      = 14,
+  pages       = {144107},
+  year        = 2012,
+  doi         = {10.1063/1.3693908},
+  note        = {Distance-dependent (QQR-style) Schwarz screening. Cite when the BIPOLE direct-space SR erfc J/K build runs with LatticeSumOptions.sr_range_screening (the M4b separation-aware bound erfc(sqrt(m_w) R) x Q_bra x Q_ket that keeps padded internal ket-image balls affordable — cpp/src/periodic_fock.cpp).}
+}
+
+@article{vanlenthe_sad_2006,
+  author      = {Van Lenthe, J. H. and Zwaans, R. and Van Dam, H. J. J. and Guest, M. F.},
+  title       = {Starting SCF calculations by superposition of atomic densities},
+  journal     = {Journal of Computational Chemistry},
+  volume      = 27,
+  number      = 8,
+  pages       = {926--932},
+  year        = 2006,
+  doi         = {10.1002/jcc.20393},
+  note        = {SAD initial guess (roadmap v0.6.x flagship).}
+}
+
+@article{togo_spglib_2024,
+  author      = {Togo, Atsushi and Shinohara, Kohei and Tanaka, Isao},
+  title       = {Spglib: a software library for crystal symmetry search},
+  journal     = {Science and Technology of Advanced Materials: Methods},
+  volume      = 4,
+  number      = 1,
+  pages       = {2384822},
+  year        = 2024,
+  doi         = {10.1080/27660400.2024.2384822},
+  note        = {Cite whenever crystal symmetry detection or periodic Brillouin-zone work is used. Published version of arXiv:1808.01590 (Togo & Tanaka 2018), which this entry recorded until the 2026-07-10 citation audit; it adds Shinohara as an author and is the reference spglib's own documentation asks for.}
+}
+
+@book{pisani_crystal_1988,
+  author      = {Pisani, Cesare and Dovesi, Roberto and Roetti, Carla},
+  title       = {Hartree-Fock Ab Initio Treatment of Crystalline Systems},
+  journal     = {Lecture Notes in Chemistry, Vol. 48, Springer},
+  volume      = 48,
+  year        = 1988,
+  doi         = {10.1007/978-3-642-93385-1},
+  note        = {Foundational monograph for the LCAO crystalline-orbital periodic HF treatment vibe-qc implements.}
+}

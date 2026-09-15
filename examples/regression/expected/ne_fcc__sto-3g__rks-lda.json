@@ -1,0 +1,12 @@
+{
+  "system_id": "ne_fcc",
+  "basis": "sto-3g",
+  "method_id": "rks-lda",
+  "kmesh": [1, 1, 1],
+  "primary_source": "pyscf_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 5e-3,
+  "tolerance_rationale": "Ne FCC / sto-3g / LDA / Γ-only. Wide-gap, atomic-like Ne — vibe-qc and pyscf should agree to better than 1 mHa per cell. 5 mHa tolerance leaves room for XC-grid and FFT-Poisson method differences without flagging legitimate noise.",
+  "published_energy_ha": null,
+  "published_source": ""
+}

@@ -1,0 +1,49 @@
+# vibe-qc auto-generated reference list
+#
+# This file is regenerated on every run. The matching BibTeX
+# entries are in the .bibtex sibling.
+
+[1] (peintinger_vibeqc)
+  Peintinger, Michael F. (2026). vibe-qc: a quantum-chemistry code for molecules and solids. [Software v0.15.23.dev0, MPL-2.0]. <https://vibe-qc.com/>
+
+[2] (valeev_libint)
+  Valeev, Edward F. Libint: A library for the evaluation of molecular integrals of many-body operators over Gaussian functions. [Software]. <https://github.com/evaleev/libint>
+
+[3] (ditchfield_631g_1971)
+  Ditchfield, R., Hehre, W. J., and Pople, J. A. (1971). Self-Consistent Molecular-Orbital Methods. IX. An Extended Gaussian-Type Basis for Molecular-Orbital Studies of Organic Molecules. Journal of Chemical Physics, 54(2), 724--728. doi:10.1063/1.1674902
+
+[4] (hariharan_pople_1973)
+  Hariharan, P. C. and Pople, J. A. (1973). The influence of polarization functions on molecular orbital hydrogenation energies. Theoretica Chimica Acta, 28(3), 213--222. doi:10.1007/BF00533485
+
+[5] (pulay_diis_1980)
+  Pulay, Péter (1980). Convergence acceleration of iterative sequences. The case of SCF iteration. Chemical Physics Letters, 73(2), 393--398. doi:10.1016/0009-2614(80)80396-4
+
+[6] (pulay_diis_1982)
+  Pulay, Péter (1982). Improved SCF convergence acceleration. Journal of Computational Chemistry, 3(4), 556--560. doi:10.1002/jcc.540030413
+
+[7] (kudin_ediis_2002)
+  Kudin, Konstantin N., Scuseria, Gustavo E., and Cancès, Eric (2002). A black-box self-consistent field convergence algorithm: One step closer. Journal of Chemical Physics, 116(19), 8255--8261. doi:10.1063/1.1470195
+
+[8] (vanlenthe_sad_2006)
+  Van Lenthe, J. H., Zwaans, R., et al. (2006). Starting SCF calculations by superposition of atomic densities. Journal of Computational Chemistry, 27(8), 926--932. doi:10.1002/jcc.20393
+
+[9] (mulliken_1955)
+  Mulliken, R. S. (1955). Electronic Population Analysis on LCAO-MO Molecular Wave Functions. I. Journal of Chemical Physics, 23(10), 1833--1840. doi:10.1063/1.1740588
+
+[10] (lowdin_1950)
+  Löwdin, Per-Olov (1950). On the Non-Orthogonality Problem Connected with the Use of Atomic Wave Functions in the Theory of Molecules and Crystals. Journal of Chemical Physics, 18(3), 365--375. doi:10.1063/1.1747632
+
+[11] (mayer_bond_order_1983)
+  Mayer, I. (1983). Charge, bond order and valence in the ab initio SCF theory. Chemical Physics Letters, 97(3), 270--274. doi:10.1016/0009-2614(83)80005-0
+
+[12] (hirshfeld_1977)
+  Hirshfeld, F. L. (1977). Bonded-atom fragments for describing molecular charge densities. Theoretica Chimica Acta, 44(2), 129--138. doi:10.1007/BF00549096
+
+[13] (pulay_forces_1969)
+  Pulay, P. (1969). Ab initio calculation of force constants and equilibrium geometries in polyatomic molecules. I. Theory. Molecular Physics, 17(2), 197--204. doi:10.1080/00268976900100941
+
+[14] (feynman_forces_1939)
+  Feynman, R. P. (1939). Forces in Molecules. Physical Review, 56(4), 340--343. doi:10.1103/PhysRev.56.340
+
+[15] (larsen_ase_2017)
+  Larsen, Ask Hjorth, Mortensen, Jens Jørgen, et al. (2017). The atomic simulation environment - a Python library for working with atoms. Journal of Physics: Condensed Matter, 29(27), 273002. doi:10.1088/1361-648X/aa680e

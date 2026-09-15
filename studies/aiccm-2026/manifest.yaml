@@ -1,0 +1,213 @@
+# AICCM-2026 test set — machine-readable manifest (generated from testset.py)
+# fields: dim, class, atoms/cell, basis, nrep_4c, kmesh, tier, machine,
+#         four_center_quantitative, open_shell, crystal_ref
+systems:
+  h-chain:
+    dim: 1
+    class: molecular
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [8, 1, 1]
+    kmesh: [16, 1, 1]
+    tier: A
+    four_center_quantitative: True
+    open_shell: False
+    crystal_ref: crystal/h2-chain-1d/pbe_pob-tzvp-rev2/INPUT.d12
+  uniform-h-chain:
+    dim: 1
+    class: metallic-1d
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [8, 1, 1]
+    kmesh: [16, 1, 1]
+    tier: A
+    four_center_quantitative: True
+    open_shell: False
+    crystal_ref: null
+  lih-chain:
+    dim: 1
+    class: ionic-1d
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [6, 1, 1]
+    kmesh: [16, 1, 1]
+    tier: A
+    four_center_quantitative: False
+    open_shell: False
+    crystal_ref: crystal/lih-chain-1d/pbe_pob-tzvp-rev2/INPUT.d12
+  polyethylene:
+    dim: 1
+    class: molecular
+    atoms_per_cell: 6
+    basis: sto-3g
+    nrep_4c: [4, 1, 1]
+    kmesh: [8, 1, 1]
+    tier: A
+    four_center_quantitative: True
+    open_shell: False
+    crystal_ref: crystal/polyethylene-1d/pbe_pob-tzvp-rev2/INPUT.d12
+  c-diamond:
+    dim: 3
+    class: covalent
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [2, 2, 2]
+    kmesh: [4, 4, 4]
+    tier: A
+    four_center_quantitative: True
+    open_shell: False
+    crystal_ref: crystal/c-diamond/pbe_pob-tzvp-rev2/INPUT.d12
+  si-diamond:
+    dim: 3
+    class: covalent
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [2, 2, 2]
+    kmesh: [4, 4, 4]
+    tier: B
+    four_center_quantitative: True
+    open_shell: False
+    crystal_ref: crystal/si-diamond/pbe_pob-tzvp-rev2/INPUT.d12
+  sic-zb:
+    dim: 3
+    class: covalent
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [2, 2, 2]
+    kmesh: [4, 4, 4]
+    tier: B
+    four_center_quantitative: True
+    open_shell: False
+    crystal_ref: crystal/sic-zincblende/pbe_pob-tzvp-rev2/INPUT.d12
+  bn-zb:
+    dim: 3
+    class: covalent
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [2, 2, 2]
+    kmesh: [4, 4, 4]
+    tier: A
+    four_center_quantitative: True
+    open_shell: False
+    crystal_ref: crystal/bn-zincblende/pbe_pob-tzvp-rev2/INPUT.d12
+  graphene:
+    dim: 2
+    class: covalent
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [3, 3, 1]
+    kmesh: [8, 8, 1]
+    tier: A
+    four_center_quantitative: True
+    open_shell: False
+    crystal_ref: crystal/graphene-2d/pbe_pob-tzvp-rev2/INPUT.d12
+  mgo-slab:
+    dim: 2
+    class: ionic
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [2, 2, 1]
+    kmesh: [6, 6, 1]
+    tier: B
+    four_center_quantitative: False
+    open_shell: False
+    crystal_ref: crystal/mgo-001-slab/rks-pbe_tut/INPUT.d12
+  ice-ih:
+    dim: 3
+    class: molecular
+    atoms_per_cell: 6
+    basis: sto-3g
+    nrep_4c: [2, 2, 1]
+    kmesh: [4, 4, 2]
+    tier: B
+    four_center_quantitative: True
+    open_shell: False
+    crystal_ref: crystal/ice-ih/pbe_pob-tzvp-rev2/INPUT.d12
+  co2-dryice:
+    dim: 3
+    class: molecular
+    atoms_per_cell: 3
+    basis: sto-3g
+    nrep_4c: [2, 2, 2]
+    kmesh: [4, 4, 4]
+    tier: B
+    four_center_quantitative: True
+    open_shell: False
+    crystal_ref: crystal/co2-dryice/rks-pbe_sto-3g/INPUT.d12
+  lih-rocksalt:
+    dim: 3
+    class: ionic
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [2, 2, 2]
+    kmesh: [4, 4, 4]
+    tier: A
+    four_center_quantitative: False
+    open_shell: False
+    crystal_ref: crystal/lih-rocksalt/pbe_pob-tzvp-rev2/INPUT.d12
+  lif-rocksalt:
+    dim: 3
+    class: ionic
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [2, 2, 2]
+    kmesh: [4, 4, 4]
+    tier: A
+    four_center_quantitative: False
+    open_shell: False
+    crystal_ref: crystal/lif-rocksalt/pbe_pob-tzvp-rev2/INPUT.d12
+  nacl-rocksalt:
+    dim: 3
+    class: ionic
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [2, 2, 2]
+    kmesh: [4, 4, 4]
+    tier: B
+    four_center_quantitative: False
+    open_shell: False
+    crystal_ref: crystal/nacl-rocksalt/pbe_pob-tzvp-rev2/INPUT.d12
+  mgo:
+    dim: 3
+    class: ionic
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [2, 2, 2]
+    kmesh: [4, 4, 4]
+    tier: B
+    four_center_quantitative: False
+    open_shell: False
+    crystal_ref: crystal/mgo-rocksalt/r2scan_seg/INPUT.d12
+  tio2-rutile:
+    dim: 3
+    class: oxide
+    atoms_per_cell: 6
+    basis: sto-3g
+    nrep_4c: [1, 1, 2]
+    kmesh: [4, 4, 6]
+    tier: C
+    four_center_quantitative: False
+    open_shell: False
+    crystal_ref: crystal/tio2-rutile/pbe_pob-tzvp-rev2/INPUT.d12
+  sio2-quartz:
+    dim: 3
+    class: oxide
+    atoms_per_cell: 9
+    basis: sto-3g
+    nrep_4c: [1, 1, 1]
+    kmesh: [4, 4, 4]
+    tier: C
+    four_center_quantitative: False
+    open_shell: False
+    crystal_ref: crystal/sio2-alpha-quartz/pbe_pob-tzvp-rev2/INPUT.d12
+  nio-afm:
+    dim: 3
+    class: ionic-afm
+    atoms_per_cell: 2
+    basis: sto-3g
+    nrep_4c: [2, 2, 2]
+    kmesh: [4, 4, 4]
+    tier: C
+    four_center_quantitative: False
+    open_shell: True
+    crystal_ref: crystal/nio-rocksalt/uks-r2scan_pob-tzvp-rev2/INPUT.d12

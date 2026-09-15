@@ -1,0 +1,1 @@
+{'system': 'o2-triplet', 'variant': 'riump2', 'e_hf': -149.6751689002665, 'e_correlation': -0.4593708423076574, 'e_total': -150.13453974257416, 'e_aa': -0.06280300953007688, 'e_bb': -0.06870411678444913, 'e_ab': -0.3278637159931314, 's_squared_uhf': 2.042607967329193, 'n_scf_iter': 25, 'scf_converged': True}

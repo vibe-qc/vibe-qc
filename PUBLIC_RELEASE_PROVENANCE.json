@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "kind": "sanitized-historical-release-snapshot",
+  "release": "v0.17.1",
+  "original_source_commit": "b4f6035e40d5f15e239c6c45845aba5e33f316f0",
+  "original_source_tree": "2ec198f64f9d0ce24718f95423220896c74a223f",
+  "preparation_commit": "fb4630ff58f52e84cc3228b15b6f5437d0bff7d0",
+  "source_history_imported": false,
+  "notice": "The original private release tag is immutable. This public snapshot omits operational material and includes portable installation/privacy corrections; its Git commit identity differs from the original source commit."
+}

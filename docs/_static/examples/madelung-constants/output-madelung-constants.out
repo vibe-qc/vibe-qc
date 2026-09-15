@@ -1,0 +1,24 @@
+╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║ dev 0.15.23.dev0 "Neese's Cheetah" (main @ dc22a26, dirty)  --  Quantum chemistry for molecules and solids               ║
+║ © Michael F. Peintinger . MPL 2.0  .  https://vibe-qc.com                                                                ║
+║ linked: libint 2.13.1 . libxc 7.0.0 . spglib 2.7.0 . libecpint 1.0.7 (vendored, MAX_L=5) . fftw3 3.3.9 . blas Accelerate ║
+║ dispersion: dftd3 1.4.0 . dftd4 4.2.0                                                                                    ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+  Ewald-summed Madelung constants for classic ionic crystals
+  real_cutoff = 40.0 bohr; alpha and reciprocal cutoff auto-selected
+
+  ----------------------------------------------------------
+  crystal            vibe-qc M     reference M      |diff|
+  ----------------------------------------------------------
+  NaCl            1.7475645946    1.7475645946    6.34e-12
+  CsCl            1.7626747729    1.7626747700    2.86e-09
+  ZnS             1.6380550534    1.6380000000    5.51e-05
+  2D square       1.6155426267    1.6155426267    1.24e-11
+  ----------------------------------------------------------
+
+  Reference values:
+    NaCl      : 1.7475645946  (Crandall, J. Phys. A 20 (1987) 2123)
+    CsCl      : 1.7626747     (Madelung via Ewald, e.g. Tosi 1964)
+    ZnS       : 1.6380        (Sakamoto, J. Sci. Hiroshima Univ. 1955)
+    2D square : 1.6155426267  (2D Ewald; Parry 1975, de Leeuw-Perram 1979)

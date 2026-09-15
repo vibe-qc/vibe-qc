@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1200" role="img">
+  <defs>
+    <style>
+      .label { font-family: "Sora", "Manrope", "Helvetica Neue", Arial, sans-serif; font-weight: 600; font-size: 22px; fill: #0B1220; letter-spacing: 0.08em; text-transform: uppercase; }
+      .sub { font-family: "Sora", "Manrope", "Helvetica Neue", Arial, sans-serif; font-weight: 400; font-size: 16px; fill: #6B7280; }
+      .divider { stroke: #E5E7EB; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <!-- Page background -->
+  <rect width="1400" height="1200" fill="#FAFAF9"/>
+
+  <!-- Header -->
+  <text x="60" y="70" font-family="Sora, Manrope, sans-serif" font-weight="700" font-size="40" fill="#0B1220">vibe-qc · three directions</text>
+  <text x="60" y="100" class="sub">Pick one and we'll build the full deliverable set around it</text>
+  <line x1="60" y1="130" x2="1340" y2="130" class="divider"/>
+
+  <!-- CONCEPT A -->
+  <g transform="translate(60,170)">
+    <text class="label" x="0" y="0">A · Wave · Orbital</text>
+    <text class="sub" x="0" y="28">Sinusoid threading through a p-orbital dumbbell. Teal accent.</text>
+    <g transform="translate(0,60)">
+      <rect width="1280" height="220" fill="#FFFFFF" stroke="#E5E7EB"/>
+      <svg x="40" y="0" width="1200" height="220" viewBox="0 0 1200 300" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <linearGradient id="A_f" x1="0" y1="0" x2="1" y2="0.6">
+            <stop offset="0" stop-color="#2DD4BF"/><stop offset="1" stop-color="#0D9488"/>
+          </linearGradient>
+          <linearGradient id="A_b" x1="0" y1="0" x2="1" y2="0.6">
+            <stop offset="0" stop-color="#0D9488"/><stop offset="1" stop-color="#0B6A63"/>
+          </linearGradient>
+        </defs>
+        <g transform="translate(40,70)">
+          <ellipse cx="172" cy="80" rx="60" ry="34" fill="url(#A_b)" opacity="0.9"/>
+          <ellipse cx="68" cy="80" rx="60" ry="34" fill="url(#A_f)"/>
+          <path d="M -10 80 C 20 30, 50 130, 80 80 C 110 30, 140 130, 170 80 C 200 30, 230 130, 260 80" fill="none" stroke="#0B1220" stroke-width="6" stroke-linecap="round"/>
+          <circle cx="120" cy="80" r="4.5" fill="#0B1220"/>
+        </g>
+        <g transform="translate(340,0)">
+          <text x="0" y="195" font-family="Sora, Manrope, sans-serif" font-weight="600" font-size="172" letter-spacing="-0.02em" fill="#0B1220">vibe</text>
+          <g transform="translate(380,128)"><path d="M 0 0 q 14 -22 28 0 t 28 0" fill="none" stroke="#14B8A6" stroke-width="12" stroke-linecap="round"/></g>
+          <text x="470" y="195" font-family="Sora, Manrope, sans-serif" font-weight="600" font-size="172" letter-spacing="-0.02em" fill="#0B1220">qc</text>
+        </g>
+      </svg>
+    </g>
+  </g>
+
+  <!-- CONCEPT B -->
+  <g transform="translate(60,500)">
+    <text class="label" x="0" y="0">B · Monogram Bond</text>
+    <text class="sub" x="0" y="28">Obtuse "v" as molecular fragment. Apex atom accent. Blue-violet.</text>
+    <g transform="translate(0,60)">
+      <rect width="1280" height="220" fill="#FFFFFF" stroke="#E5E7EB"/>
+      <svg x="40" y="0" width="1200" height="220" viewBox="0 0 1200 300" preserveAspectRatio="xMidYMid meet">
+        <g transform="translate(60,108)">
+          <line x1="10" y1="10" x2="92" y2="96" stroke="#0B1220" stroke-width="10" stroke-linecap="round"/>
+          <line x1="174" y1="10" x2="92" y2="96" stroke="#0B1220" stroke-width="10" stroke-linecap="round"/>
+          <circle cx="10" cy="10" r="14" fill="#0B1220"/>
+          <circle cx="174" cy="10" r="14" fill="#0B1220"/>
+          <circle cx="92" cy="96" r="18" fill="#7C3AED"/>
+        </g>
+        <g transform="translate(310,0)">
+          <text x="0" y="195" font-family="Sora, Manrope, sans-serif" font-weight="600" font-size="172" letter-spacing="-0.02em" fill="#0B1220">vibe</text>
+          <g transform="translate(385,150)">
+            <line x1="0" y1="-6" x2="60" y2="-6" stroke="#7C3AED" stroke-width="7" stroke-linecap="round"/>
+            <line x1="0" y1="10" x2="60" y2="10" stroke="#7C3AED" stroke-width="7" stroke-linecap="round"/>
+          </g>
+          <text x="480" y="195" font-family="Sora, Manrope, sans-serif" font-weight="600" font-size="172" letter-spacing="-0.02em" fill="#0B1220">qc</text>
+        </g>
+      </svg>
+    </g>
+  </g>
+
+  <!-- CONCEPT C -->
+  <g transform="translate(60,830)">
+    <text class="label" x="0" y="0">C · Lattice Node</text>
+    <text class="sub" x="0" y="28">Hexagonal unit-cell fragment. One vertex highlighted. Purple accent.</text>
+    <g transform="translate(0,60)">
+      <rect width="1280" height="220" fill="#FFFFFF" stroke="#E5E7EB"/>
+      <svg x="40" y="0" width="1200" height="220" viewBox="0 0 1200 300" preserveAspectRatio="xMidYMid meet">
+        <g transform="translate(60,0)">
+          <g stroke="#0B1220" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none">
+            <path d="M 110 68 L 181 109 L 181 191 L 110 232 L 39 191 L 39 109 Z"/>
+            <line x1="39" y1="109" x2="181" y2="191" opacity="0.25"/>
+            <line x1="181" y1="109" x2="39" y2="191" opacity="0.25"/>
+          </g>
+          <g fill="#0B1220">
+            <circle cx="181" cy="109" r="10"/>
+            <circle cx="181" cy="191" r="10"/>
+            <circle cx="110" cy="232" r="10"/>
+            <circle cx="39" cy="191" r="10"/>
+            <circle cx="39" cy="109" r="10"/>
+          </g>
+          <circle cx="110" cy="68" r="14" fill="#A855F7"/>
+        </g>
+        <g transform="translate(340,0)">
+          <text x="0" y="195" font-family="Sora, Manrope, sans-serif" font-weight="600" font-size="172" letter-spacing="-0.02em" fill="#0B1220">vibe</text>
+          <g transform="translate(385,148)">
+            <line x1="0" y1="6" x2="50" y2="-10" stroke="#A855F7" stroke-width="10" stroke-linecap="round"/>
+          </g>
+          <text x="470" y="195" font-family="Sora, Manrope, sans-serif" font-weight="600" font-size="172" letter-spacing="-0.02em" fill="#0B1220">qc</text>
+        </g>
+      </svg>
+    </g>
+  </g>
+</svg>

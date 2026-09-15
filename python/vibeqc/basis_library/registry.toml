@@ -1,0 +1,284 @@
+# vibe-qc basis-set registry: the one place that says what a bundled basis
+# *is* beyond its Gaussian exponents.
+#
+# Runtime data (the exponents libint reads, the ECP primitives libecpint
+# reads) stay in ``basis/<name>.g94`` and ``basis/<name>.ecp``. This file
+# carries the metadata that used to be scattered over the density-fitting
+# module, the periodic auxiliary table, the ECP name heuristic and the
+# BIPOLE guard:
+#
+#   * which auxiliary basis a job should default to, per fitting kind;
+#   * which orbital bases are valence-only beyond a given element and
+#     therefore *require* an effective core potential there;
+#   * which families are all-electron by construction, so that a heavy
+#     element never trips an ECP guard.
+#
+# ``python/vibeqc/basis_registry.py`` is the only reader. Element coverage
+# and the per-element ECP core counts are not listed here: they are read
+# from the ``.g94`` / ``.ecp`` files themselves, which are the source of
+# truth for what ships.
+#
+# Keys are the lowercase file stems users pass to ``BasisSet``.
+
+schema = 1
+
+# ---------------------------------------------------------------------------
+# Spellings that resolve to the same bundled file.
+# ---------------------------------------------------------------------------
+[aliases]
+# Every entry here must have a matching line in the C++ ``basis_data_name``
+# (cpp/src/basis.cpp), which resolves the same spellings for the file libint
+# opens. tests/test_basis_alias_parity.py pins that agreement: before #743 the
+# two disagreed, so ``sto3g`` was a known alias here and still failed in
+# BasisSet. Only spellings whose file ships under another stem belong here.
+"sto6g" = "sto-6g"
+"6-31g(d)" = "6-31g*"
+"6-31g(d,p)" = "6-31g**"
+"6-311g(d,p)" = "6-311g**"
+"6-31+g(d,p)" = "6-31+g**"
+"6-311+g(d,p)" = "6-311+g**"
+"6-311+g(3df,2p)" = "6-311+g3df2p"
+"sto3g" = "sto-3g"
+
+# ---------------------------------------------------------------------------
+# Family rules. Matched in order against the canonical name; the first
+# match supplies defaults a per-basis record below can override.
+#
+#   role                  "orbital" | "fitting"
+#   all_electron          the family carries every core electron
+#                         explicitly (heavy elements need no ECP)
+#   ecp_required_above_z  blocks for Z above this value are valence-only
+#                         and need the family's ECP; the sidecar (when one
+#                         ships) is authoritative per element
+# ---------------------------------------------------------------------------
+[[families]]
+name = "fitting"
+pattern = '-(jk|jkfit|jfit|ri|rifit|cabs|c)$'
+role = "fitting"
+
+[[families]]
+name = "all-electron-relativistic"
+pattern = '^(x2c-|ano-rcc|ano-r[0-3]?$|sarc|sapporo-dkh3|cologne-dkh2|jorge-)'
+role = "orbital"
+all_electron = true
+note = "Contracted for the X2C / DKH all-electron Hamiltonians; no ECP pairs with them."
+
+[[families]]
+name = "def2"
+pattern = '^def2-(sv\(p\)|svp|svpd|tzvp|tzvpd|tzvpp|tzvppd|qzvp|qzvpd|qzvpp|qzvppd)$'
+role = "orbital"
+ecp_required_above_z = 36
+note = "Weigend-Ahlrichs def2 valence bases pair with the def2-ECP beyond Kr."
+
+# Plain def2-SV, the unpolarized split valence, is a separate family because
+# the bundled file is not the same span as its polarized siblings: it carries
+# H-Ar only (18 elements), where def2-SV(P) and the rest now reach Rn. It is
+# therefore all-electron over its whole range and never needs an ECP -- the
+# ECP threshold below argon would be unreachable. A heavier atom is refused by
+# BasisSet's per-element coverage guard, naming the element, rather than
+# running with zero functions (#743). Registered explicitly so it is not an
+# "unknown" family silently missing every default.
+[[families]]
+name = "def2-sv-unpolarized"
+pattern = '^def2-sv$'
+role = "orbital"
+all_electron = true
+note = "Bundled def2-SV covers H-Ar only; heavier atoms are refused by the coverage guard, not given an ECP."
+
+[[families]]
+name = "def2-3c"
+pattern = '^def2-m(svp|tzvp|tzvpp)$'
+role = "orbital"
+ecp_required_above_z = 36
+note = "The 3c composite bases inherit the def2-ECP beyond Kr."
+
+[[families]]
+name = "pob-tzvp-rev2"
+pattern = '^pob-tzvp-rev2$'
+role = "orbital"
+ecp_required_above_z = 36
+note = "pob-TZVP-rev2 carries Stuttgart-Cologne ECPs on Rb-Po and La-Lu (CRYSTAL Z+200 records)."
+
+# The threshold is 28, not 30: the bundled records start at Cu (Z=29), and
+# Cu and Zn both carry a 10-electron ECP ("CU-ECP 4 10"). A threshold of 30
+# would have called those two all-electron. The shipped .ecp sidecars cover
+# all 39 elements and are consulted first, so the threshold only governs an
+# element with no sidecar block -- but it must not contradict the data.
+[[families]]
+name = "cc-pp"
+pattern = '^(aug-)?cc-p(w?c)?v[dtq5]z-pp$'
+role = "orbital"
+ecp_required_above_z = 28
+note = "Peterson/Figgen pseudopotential-adapted correlation-consistent bases (Cu onward)."
+
+[[families]]
+name = "sidecar-ecp"
+pattern = '^(lanl|dhf-|vdzp$)'
+role = "orbital"
+note = "Ships a .ecp sidecar; the sidecar decides per element."
+
+# ---------------------------------------------------------------------------
+# Per-basis records.
+#
+#   default_jk / default_ri   published fitting sets for this orbital basis
+#   standin_jk / standin_ri   a zeta-matched family stand-in used only when
+#                             the caller opts in (periodic GDF has no
+#                             published fit for these); never chosen for a
+#                             molecular fit, which refuses instead
+# ---------------------------------------------------------------------------
+[bases."def2-sv(p)"]
+default_jk = "def2-svp-jk"
+default_ri = "def2-sv(p)-rifit"
+
+[bases."def2-svp"]
+default_jk = "def2-svp-jk"
+default_ri = "def2-svp-rifit"
+
+[bases."def2-svpd"]
+default_jk = "def2-svp-jk"
+default_ri = "def2-svpd-rifit"
+
+[bases."def2-tzvp"]
+default_jk = "def2-tzvp-jk"
+default_ri = "def2-tzvp-rifit"
+
+[bases."def2-tzvpd"]
+default_jk = "def2-tzvp-jk"
+default_ri = "def2-tzvpd-rifit"
+
+[bases."def2-tzvpp"]
+default_jk = "def2-tzvpp-jk"
+default_ri = "def2-tzvpp-rifit"
+
+[bases."def2-tzvppd"]
+default_jk = "def2-tzvpp-jk"
+default_ri = "def2-tzvppd-rifit"
+
+[bases."def2-qzvp"]
+default_jk = "def2-qzvp-jk"
+# BSE's def2-QZVP-RIFIT is a 42-element main-group subset of the QZVPP fit
+# (GitLab #483); the covering QZVPP fit is the default.
+default_ri = "def2-qzvpp-rifit"
+
+[bases."def2-qzvpd"]
+default_jk = "def2-qzvp-jk"
+default_ri = "def2-qzvpp-rifit"
+
+[bases."def2-qzvpp"]
+default_jk = "def2-qzvpp-jk"
+default_ri = "def2-qzvpp-rifit"
+
+[bases."def2-qzvppd"]
+default_jk = "def2-qzvpp-jk"
+default_ri = "def2-qzvppd-rifit"
+
+[bases."cc-pvdz"]
+default_jk = "cc-pvdz-jkfit"
+default_ri = "cc-pvdz-ri"
+
+[bases."cc-pvtz"]
+default_jk = "cc-pvtz-jkfit"
+default_ri = "cc-pvtz-ri"
+
+[bases."cc-pvqz"]
+default_jk = "cc-pvqz-jkfit"
+default_ri = "cc-pvqz-ri"
+
+[bases."cc-pv5z"]
+default_jk = "cc-pv5z-jkfit"
+default_ri = "cc-pv5z-ri"
+
+# The Peterson/Figgen PP orbital sets. Each ships a .ecp sidecar covering all
+# 39 of its elements (Cu-Kr, Y-Xe, Hf-Rn).
+#
+# No JK fit is published for this family, so there is no default_jk: a
+# Coulomb-fitted job on these bases must name its own aux set.
+#
+# The RI fits cover FEWER elements than the orbital sets they belong to:
+# cc-pV*-PP-RIFIT and aug-cc-pV*-PP-RIFIT carry 15 (Y-Pd, Hf-Pt),
+# cc-pwCV*-PP-RIFIT 21 (adds Cu, Zn, Ag, Cd, Au, Hg) and
+# aug-cc-pwCV*-PP-RIFIT only 8 (Y-Pd). An RI job on an element the fit omits
+# (Xe, Rn, the p-block) is refused by the aux coverage guard naming the
+# element (#480), which is the intended failure -- not a silent partial fit.
+
+[bases."cc-pvdz-pp"]
+default_ri = "cc-pvdz-pp-rifit"
+
+[bases."aug-cc-pvdz-pp"]
+default_ri = "aug-cc-pvdz-pp-rifit"
+
+[bases."cc-pwcvdz-pp"]
+default_ri = "cc-pwcvdz-pp-rifit"
+
+[bases."aug-cc-pwcvdz-pp"]
+default_ri = "aug-cc-pwcvdz-pp-rifit"
+
+[bases."cc-pvtz-pp"]
+default_ri = "cc-pvtz-pp-rifit"
+
+[bases."aug-cc-pvtz-pp"]
+default_ri = "aug-cc-pvtz-pp-rifit"
+
+[bases."cc-pwcvtz-pp"]
+default_ri = "cc-pwcvtz-pp-rifit"
+
+[bases."aug-cc-pwcvtz-pp"]
+default_ri = "aug-cc-pwcvtz-pp-rifit"
+
+[bases."cc-pvqz-pp"]
+default_ri = "cc-pvqz-pp-rifit"
+
+[bases."aug-cc-pvqz-pp"]
+default_ri = "aug-cc-pvqz-pp-rifit"
+
+[bases."cc-pwcvqz-pp"]
+default_ri = "cc-pwcvqz-pp-rifit"
+
+[bases."aug-cc-pwcvqz-pp"]
+default_ri = "aug-cc-pwcvqz-pp-rifit"
+
+[bases."cc-pv5z-pp"]
+default_ri = "cc-pv5z-pp-rifit"
+
+[bases."aug-cc-pv5z-pp"]
+default_ri = "aug-cc-pv5z-pp-rifit"
+
+[bases."cc-pwcv5z-pp"]
+default_ri = "cc-pwcv5z-pp-rifit"
+
+[bases."aug-cc-pwcv5z-pp"]
+default_ri = "aug-cc-pwcv5z-pp-rifit"
+
+# Crystal bases: no published fit exists. A zeta-matched def2 stand-in is
+# available to periodic GDF callers that opt in; designing a pob fit is a
+# tracked research direction.
+[bases."pob-tzvp"]
+standin_jk = "def2-tzvp-jk"
+
+[bases."pob-tzvp-rev2"]
+standin_jk = "def2-tzvp-jk"
+
+[bases."pob-dzvp-rev2"]
+standin_jk = "def2-svp-jk"
+
+# Minimal / Pople bases: no standard fitting set; periodic stand-ins only.
+[bases."sto-2g"]
+standin_jk = "def2-svp-jk"
+
+[bases."sto-3g"]
+standin_jk = "def2-svp-jk"
+
+[bases."3-21g"]
+standin_jk = "def2-svp-jk"
+
+[bases."6-31g"]
+standin_jk = "def2-svp-jk"
+
+[bases."6-31g*"]
+standin_jk = "def2-svp-jk"
+
+[bases."6-31g**"]
+standin_jk = "def2-svp-jk"
+
+[bases."6-311g**"]
+standin_jk = "def2-tzvp-jk"

@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Parse MOPAC PM6 parameters (parameters_for_PM6_C.F90) into TOML.
+
+Fetches from openmopac/mopac GitHub or reads a local copy.
+Generates python/vibeqc/semiempirical/methods/pm6_mopac_params.toml
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+import urllib.request
+from pathlib import Path
+
+_F90_URL = (
+    "https://raw.githubusercontent.com/openmopac/mopac/main/"
+    "src/models/parameters_for_PM6_C.F90"
+)
+_OUT = (
+    Path(__file__).resolve().parents[1]
+    / "python/vibeqc/semiempirical/methods/pm6_mopac_params.toml"
+)
+
+
+def dfloat(s: str) -> float:
+    """Convert Fortran D-format to Python float."""
+    return float(s.replace("D", "E").replace("d", "e"))
+
+
+def parse_f90(text: str) -> dict:
+    """Parse MOPAC PM6 Fortran parameter file."""
+    # Element-level arrays: name(Z) = value
+    arrays = {
+        "uss",
+        "upp",
+        "udd",
+        "betas",
+        "betap",
+        "betad",
+        "zs",
+        "zp",
+        "zd",
+        "zsn",
+        "zpn",
+        "zdn",
+        "gss",
+        "gsp",
+        "gpp",
+        "gp2",
+        "hsp",
+        "alp",
+        "polvo",
+        "poc_",
+        "f0sd",
+        "g2sd",
+        "CPE_Zet",
+        "CPE_Z0",
+        "CPE_B",
+        "CPE_Xlo",
+        "CPE_Xhi",
+        "gues61",
+        "gues62",
+        "gues63",
+    }
+
+    elem_data: dict[int, dict] = {}
+    diatomic: dict[tuple[int, int], dict] = {}
+
+    # Parse element arrays
+    for name in arrays:
+        pattern = re.compile(
+            r"data\s+" + name + r"6?\s*\(\s*(\d+)\s*\)\s*/\s*([\d\.\-\+Dd]+)D0/"
+        )
+        for m in pattern.finditer(text):
+            z = int(m.group(1))
+            if not 1 <= z <= 98:
+                continue
+            val = dfloat(m.group(2))
+            if z not in elem_data:
+                elem_data[z] = {}
+            clean = "poc" if name == "poc_" else name.rstrip("6")
+            elem_data[z][clean] = val
+
+    # Parse multi-index: gues61(Z, idx)
+    for name in ("gues61", "gues62", "gues63"):
+        pattern = re.compile(
+            r"data\s+"
+            + name
+            + r"6?\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*/\s*([\d\.\-\+Dd]+)D0/"
+        )
+        for m in pattern.finditer(text):
+            z = int(m.group(1))
+            if not 1 <= z <= 98:
+                continue
+            idx = int(m.group(2))
+            val = dfloat(m.group(3))
+            if z not in elem_data:
+                elem_data[z] = {}
+            key = name.rstrip("6")
+            if key not in elem_data[z]:
+                elem_data[z][key] = {}
+            elem_data[z][key][idx] = val
+
+    # Parse diatomic pairs: alpb(Z1, Z2) = value, xfac(Z1, Z2) = value
+    for name in ("alpb", "xfac"):
+        pattern = re.compile(
+            r"\s+" + name + r"\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*=\s*([\d\.\-\+Dd]+)d0"
+        )
+        for m in pattern.finditer(text):
+            z1, z2 = int(m.group(1)), int(m.group(2))
+            if not (1 <= z1 <= 98 and 1 <= z2 <= 98):
+                continue
+            val = dfloat(m.group(3))
+            key = (min(z1, z2), max(z1, z2))
+            if key not in diatomic:
+                diatomic[key] = {}
+            diatomic[key][name] = val
+
+    return {"elements": elem_data, "diatomic": diatomic}
+
+
+def write_toml(data: dict, path: Path) -> None:
+    """Write parsed data to TOML."""
+    lines = [
+        "# PM6 parameters parsed from MOPAC (parameters_for_PM6_C.F90)",
+        "# License: Apache 2.0 (MOPAC)",
+        f"# Source: {_F90_URL}",
+        "",
+        "[metadata]",
+        'method = "PM6"',
+        'source = "MOPAC parameters_for_PM6_C.F90"',
+        'version = "pm6-mopac-2025"',
+        'license = "Apache-2.0"',
+        # Issue #271: the wrong PM7 DOI was removed from this header rather
+        # than corrected, leaving the PM6 cache with no originating
+        # publication at all while the PM7 generator emits one. CLAUDE.md
+        # sec. 8 requires the per-publication reference in the file header.
+        'reference = "J. J. P. Stewart, J. Mol. Model. 13, 1173-1213 (2007), '
+        'doi:10.1007/s00894-007-0233-4"',
+        "",
+    ]
+
+    # Elements
+    for z in sorted(data["elements"]):
+        d = data["elements"][z]
+        lines.append("[[element]]")
+        lines.append(f"Z = {z}")
+
+        for k in ("uss", "upp", "udd", "betas", "betap", "betad"):
+            if k in d:
+                lines.append(f"{k} = {d[k]:.6f}")
+
+        for k in ("zs", "zp", "zd", "zsn", "zpn", "zdn"):
+            if k in d:
+                lines.append(f"{k} = {d[k]:.6f}")
+
+        for k in ("gss", "gsp", "gpp", "gp2", "hsp"):
+            if k in d:
+                lines.append(f"{k} = {d[k]:.6f}")
+
+        for k in ("alp", "polvo", "poc", "f0sd", "g2sd"):
+            if k in d:
+                lines.append(f"{k} = {d[k]:.6f}")
+
+        # CPE dispersion
+        cpe_keys = {
+            "CPE_Zet": "cpe_zet",
+            "CPE_Z0": "cpe_z0",
+            "CPE_B": "cpe_b",
+            "CPE_Xlo": "cpe_xlo",
+            "CPE_Xhi": "cpe_xhi",
+        }
+        for fk, tk in cpe_keys.items():
+            if fk in d:
+                lines.append(f"{tk} = {d[fk]:.6f}")
+
+        # Gamma expansion
+        for name in ("gues61", "gues62", "gues63"):
+            if name in d:
+                # Convert sparse dict to array
+                max_idx = max(d[name].keys())
+                vals = [d[name].get(i, 0.0) for i in range(1, max_idx + 1)]
+                tag = {"gues61": "coeff", "gues62": "exponent", "gues63": "factor"}[
+                    name
+                ]
+                lines.append(f"{tag} = {vals}")
+
+        lines.append("")
+
+    # Diatomic pairs
+    for z1, z2 in sorted(data["diatomic"]):
+        dp = data["diatomic"][(z1, z2)]
+        lines.append("[[diatomic]]")
+        lines.append(f"Z1 = {z1}")
+        lines.append(f"Z2 = {z2}")
+        for k in ("alpb", "xfac"):
+            if k in dp:
+                lines.append(f"{k} = {dp[k]:.6f}")
+        lines.append("")
+
+    path.write_text("\n".join(lines))
+
+
+def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "--input":
+        text = Path(sys.argv[2]).read_text()
+    else:
+        with urllib.request.urlopen(_F90_URL) as r:
+            text = r.read().decode("utf-8")
+
+    data = parse_f90(text)
+    write_toml(data, _OUT)
+    print(
+        f"Wrote {_OUT} ({_OUT.stat().st_size} bytes, "
+        f"{len(data['elements'])} elements, {len(data['diatomic'])} diatomic pairs)"
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,10 @@
+{
+  "outputs": [
+    "output-madelung-constants.out"
+  ],
+  "qvf_expected": false,
+  "qvf_files": [],
+  "returncode": 0,
+  "script": "examples/periodic/input-madelung-constants.py",
+  "slug": "madelung-constants"
+}

@@ -1,0 +1,108 @@
+---
+import Base from '../../layouts/Base.astro';
+import Nav from '../../components/Nav.astro';
+import ProductWordmark from '../../components/ProductWordmark.astro';
+import Footer from '../../components/Footer.astro';
+import OrbitalField from '../../components/OrbitalField.astro';
+import { products } from '../../data/products.mjs';
+
+export function getStaticPaths() {
+  return products.map(product => ({ params: { product: product.id }, props: { product } }));
+}
+const { product } = Astro.props;
+const base = import.meta.env.BASE_URL;
+const artwork = {
+  'vibe-qc': { social: 'vibe-qc-product-social.png', alt: 'vibe-qc: Quantum chemistry. Molecules to solids.' },
+  'vibe-view': { social: 'vibe-view-social.png', alt: 'vibe-view: See the structure. Understand the result.' },
+  'vibe-queue': { social: 'vibe-queue-social.png', alt: 'vq: Queue the work. Keep the results.' },
+}[product.id];
+---
+
+<Base title={`${product.name} - ${product.action} | vibe-qc`} description={product.summary}
+  socialImage={artwork.social} socialImageAlt={artwork.alt}>
+  <Nav />
+  <main>
+    <section class="hero product-hero">
+      <OrbitalField />
+      <div class="wrap hero-inner">
+        <div class="product-identity">
+          <ProductWordmark product={product.id} label={product.name} large />
+          <span class="eyebrow">{product.action}</span>
+        </div>
+        <h1>{product.headline}</h1>
+        <p class="lede">{product.summary}</p>
+        <div class="cta-row">
+          <a class="btn primary" href="#install">Install {product.name} <span class="arrow">→</span></a>
+          <a class="btn ghost" href={`${product.repository}/releases`}>Releases ↗</a>
+        </div>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">made for your workflow</span>
+          <h2>{product.audience}</h2>
+          <p>{product.independence}</p>
+        </div>
+        <div class="grid">
+          {product.capabilities.map(([title, detail]) => <article class="card"><h3>{title}</h3><p>{detail}</p></article>)}
+        </div>
+      </div>
+    </section>
+    <section class="block product-install" id="install">
+      <div class="wrap install-grid">
+        <div>
+          <span class="eyebrow">get started</span>
+          <h2>Install {product.name}.</h2>
+          <p>{product.requirements}</p>
+          <p>{product.installation}</p>
+          {product.command && <pre class="product-code"><code>{product.command}</code></pre>}
+          <p class="access-note">Source access currently requires a GitLab account with repository access.
+            <a href={`${base}contact`}> Contact the maintainer</a> if you need access.</p>
+        </div>
+        <aside class="card resource-card" aria-label={`${product.name} resources`}>
+          <h3>Go further</h3>
+          <a href={product.installGuide}>Installation guide ↗</a>
+          <a href={product.docs}>Documentation {product.docsPending ? '(publishing soon)' : '↗'}</a>
+          {product.docsPending && <p>The companion documentation site is being brought online. Its source README has the installation instructions available today.</p>}
+          {product.guides.map(([label, href]) => <a href={href}>{label} ↗</a>)}
+          <a href={`${product.repository}/releases`}>Independent releases ↗</a>
+          <a href={product.repository}>Source repository ↗</a>
+        </aside>
+      </div>
+    </section>
+    <section class="block">
+      <div class="wrap">
+        <div class="sec-head"><span class="eyebrow">works together, installs separately</span>
+          <h2>Build the workflow you need.</h2>
+          <p>QVF connects calculation and visualization through a published file format. The QVF specification and reference implementations live in their own Apache-2.0 project; vibe-qc implements the format independently.</p>
+          <p><a href="https://github.com/vibe-qc/qvf">Explore the QVF format ↗</a></p>
+        </div>
+        <div class="stacks">
+          {products.filter(other => other.id !== product.id).map(other => <a class="card related-product" href={`${base}products/${other.id}/`}><span class="eyebrow">{other.action}</span><h3>{other.name} →</h3><p>{other.summary}</p></a>)}
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Base>
+
+<style>
+  .product-identity { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; margin-bottom: 28px; }
+  .product-identity .eyebrow { margin: 0; }
+  .product-hero h1 { max-width: 20ch; }
+  .product-hero .hero-inner { padding: 80px 28px 88px; }
+  .product-install { background: var(--surface-2); border-block: 1px solid var(--line); scroll-margin-top: 70px; }
+  .install-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 48px; align-items: start; }
+  h2 { font-size: clamp(26px, 3vw, 38px); line-height: 1.2; letter-spacing: -.025em; }
+  h3 { margin: 0 0 12px; }
+  p { color: var(--slate); }
+  .card p { margin-bottom: 0; }
+  .resource-card { display: flex; flex-direction: column; gap: 16px; }
+  .resource-card p, .access-note { font-size: 14px; }
+  a:not(.btn) { text-underline-offset: 4px; }
+  .resource-card a, .access-note a, .sec-head a { color: var(--phase-pos); text-decoration: underline; }
+  .related-product h3 { margin-top: 18px; color: var(--phase-pos); }
+  .product-code { padding: 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow-x: auto; font: 14px/1.8 var(--mono); }
+  @media (max-width: 760px) { .install-grid { grid-template-columns: 1fr; gap: 24px; } }
+</style>

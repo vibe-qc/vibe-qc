@@ -1,0 +1,163 @@
+[metadata]
+name = "def2-svp"
+kind = "gcp_parameters"
+citation = "Kruse & Grimme, J. Chem. Phys. 136, 154101 (2012)"
+doi = "10.1063/1.3700154"
+license = "Open data: numerical results from a published scientific paper; redistribution is standard practice"
+source = "mctc-gcp src/gcp.f90 case 'hf/svp' (HFsvp + BASsvp data blocks); cross-verified against mctc-gcp Fortran reference implementation, github.com/grimme-lab/gcp"
+status = "complete"
+coverage = "H–Kr (Z=1..36)"
+note = """
+Canonical def2-SVP gCP fit from the Kruse-Grimme 2012 paper. Use with HF or B3LYP at def2-SVP. For DFT-specific damping use case 'dft/svp' instead (different p constants).
+"""
+
+[parameters]
+sigma = 0.2054
+eta   = 1.3157
+alpha = 0.8136
+beta  = 1.2572
+
+[elements.H]
+e_mis  = 0.008107
+n_virt = 5.0
+
+[elements.He]
+e_mis  = 0.008045
+n_virt = 5.0
+
+[elements.Li]
+e_mis  = 0.113583
+n_virt = 9.0
+
+[elements.Be]
+e_mis  = 0.028371
+n_virt = 9.0
+
+[elements.B]
+e_mis  = 0.049369
+n_virt = 14.0
+
+[elements.C]
+e_mis  = 0.055376
+n_virt = 14.0
+
+[elements.N]
+e_mis  = 0.072785
+n_virt = 14.0
+
+[elements.O]
+e_mis  = 0.10031
+n_virt = 14.0
+
+[elements.F]
+e_mis  = 0.133273
+n_virt = 14.0
+
+[elements.Ne]
+e_mis  = 0.1736
+n_virt = 14.0
+
+[elements.Na]
+e_mis  = 0.18114
+n_virt = 15.0
+
+[elements.Mg]
+e_mis  = 0.125558
+n_virt = 18.0
+
+[elements.Al]
+e_mis  = 0.167188
+n_virt = 18.0
+
+[elements.Si]
+e_mis  = 0.149843
+n_virt = 18.0
+
+[elements.P]
+e_mis  = 0.145396
+n_virt = 18.0
+
+[elements.S]
+e_mis  = 0.164308
+n_virt = 18.0
+
+[elements.Cl]
+e_mis  = 0.18299
+n_virt = 18.0
+
+[elements.Ar]
+e_mis  = 0.205668
+n_virt = 18.0
+
+[elements.K]
+e_mis  = 0.200956
+n_virt = 24.0
+
+[elements.Ca]
+e_mis  = 0.299661
+n_virt = 24.0
+
+[elements.Sc]
+e_mis  = 0.325995
+n_virt = 31.0
+
+[elements.Ti]
+e_mis  = 0.305488
+n_virt = 31.0
+
+[elements.V]
+e_mis  = 0.291723
+n_virt = 31.0
+
+[elements.Cr]
+e_mis  = 0.293801
+n_virt = 31.0
+
+[elements.Mn]
+e_mis  = 0.29179
+n_virt = 31.0
+
+[elements.Fe]
+e_mis  = 0.296729
+n_virt = 31.0
+
+[elements.Co]
+e_mis  = 0.304603
+n_virt = 31.0
+
+[elements.Ni]
+e_mis  = 0.242041
+n_virt = 31.0
+
+[elements.Cu]
+e_mis  = 0.354186
+n_virt = 31.0
+
+[elements.Zn]
+e_mis  = 0.350715
+n_virt = 31.0
+
+[elements.Ga]
+e_mis  = 0.350021
+n_virt = 32.0
+
+[elements.Ge]
+e_mis  = 0.345779
+n_virt = 32.0
+
+[elements.As]
+e_mis  = 0.349532
+n_virt = 32.0
+
+[elements.Se]
+e_mis  = 0.367305
+n_virt = 32.0
+
+[elements.Br]
+e_mis  = 0.382008
+n_virt = 32.0
+
+[elements.Kr]
+e_mis  = 0.399709
+n_virt = 32.0
+

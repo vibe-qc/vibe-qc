@@ -1,0 +1,10 @@
+{
+  "system_id": "h2o",
+  "basis": "sto-3g",
+  "method_id": "rks-b3lyp",
+  "kmesh": [0, 0, 0],
+  "primary_source": "orca_at_runtime",
+  "energy_ha": null,
+  "tolerance_ha": 1e-3,
+  "tolerance_rationale": "H2O / STO-3G / RKS-B3LYP — hybrid (20% HF exchange) + XC-grid noise; 1 mHa catches real bugs without flagging the cross-code grid floor."
+}

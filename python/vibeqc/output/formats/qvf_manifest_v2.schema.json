@@ -1,0 +1,2465 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vibe-qc.org/spec/qvf/2/manifest.schema.json",
+  "title": "QVF Manifest (v2)",
+  "description": "DEPRECATED. Canonical JSON Schema for manifest.json inside a .qvf archive that declares qvf_version=2. GENERATED FILE -- do not hand-edit; regenerate with scripts/gen_qvf_v2_schema.py. qvf_version=2 was WITHDRAWN by the governance ruling of 2026-07-10 (qvf-writer/GOVERNANCE.md, Version history): its only delta over v1 was the optional SectionReactionPath `lattice` member, which is the additive case and must not bump the version. `lattice` is now an optional member of v1, and a periodic reaction path is detected by its presence. This schema is therefore v1 with a different qvf_version const, retained only so that archives written by vibe-qc v0.10.0-v0.15.x (which are v1-compatible) still validate and so anything resolving its $id keeps working. Producers MUST NOT emit qvf_version=2; consumers SHOULD accept it and treat it as 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "qvf_version",
+    "source",
+    "sections"
+  ],
+  "properties": {
+    "qvf_version": {
+      "type": "integer",
+      "const": 2,
+      "description": "QVF format version. DEPRECATED: 2 was withdrawn (see the schema description); it is v1 in every respect but this const. Producers must emit 1."
+    },
+    "schema_uri": {
+      "type": "string",
+      "format": "uri",
+      "description": "Canonical URI of this JSON Schema. Informational; not validated against."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "program",
+        "version",
+        "calculation"
+      ],
+      "properties": {
+        "program": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "calculation": {
+          "type": "string"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Optional calculation provenance carried at manifest root.",
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "functional": {
+          "type": "string"
+        },
+        "basis": {
+          "type": "string"
+        },
+        "charge": {
+          "type": "integer"
+        },
+        "multiplicity": {
+          "type": "integer"
+        },
+        "n_electrons": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scf_converged": {
+          "type": "boolean"
+        },
+        "n_scf_iterations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scf_energy": {
+          "$ref": "#/$defs/ValueWithUnits"
+        },
+        "fermi_energy": {
+          "$ref": "#/$defs/ValueWithUnits"
+        },
+        "wall_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "dimensionality": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "run_status": {
+          "enum": [
+            "pending",
+            "running",
+            "converged",
+            "failed"
+          ],
+          "description": "The archive's place in a calculation's lifecycle (QVF spec § 3.2): 'pending' = a job described (structure + job.spec) but not yet run; 'running' = a live mid-run checkpoint snapshot; 'converged' / 'failed' = a settled terminal archive. Absent means 'not stated' — a consumer MUST NOT infer a status."
+        }
+      }
+    },
+    "viewer_defaults": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/ViewerHint"
+      },
+      "properties": {
+        "auto_open": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bookmarks": {
+          "type": "array",
+          "description": "Ordered camera bookmarks for consistent framing across viewers and movie export. The list order is the playback order.",
+          "items": {
+            "$ref": "#/$defs/Bookmark"
+          }
+        }
+      }
+    },
+    "thermochemistry": {
+      "$ref": "#/$defs/Thermochemistry",
+      "description": "Optional thermochemical corrections at manifest root (QVF spec § 4.7)."
+    },
+    "dipole_moment": {
+      "$ref": "#/$defs/DipoleMoment",
+      "description": "Optional dipole moment at manifest root (QVF spec § 4.7)."
+    },
+    "constraints": {
+      "$ref": "#/$defs/Constraints",
+      "description": "Optional geometry optimisation constraints at manifest root (QVF spec § 4.7)."
+    },
+    "extensions": {
+      "$ref": "#/$defs/Extensions",
+      "description": "Optional extension governance block declaring vendor extensions in use (QVF spec § 5.4)."
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Section"
+      }
+    }
+  },
+  "$defs": {
+    "ValueWithUnits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "units"
+      ],
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "units": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ViewerHint": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "isovalue": {
+          "type": "number"
+        },
+        "colormap": {
+          "type": "string"
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "replication": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    },
+    "Vec3": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "Camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "position",
+        "focal_point",
+        "view_up"
+      ],
+      "description": "VTK-flavoured camera. Position, focal point, and view-up are world-coordinate Cartesian (Å); the focal point is what the camera looks at, view_up is its roll axis. Projection is set by exactly one of view_angle (perspective, degrees) or parallel_scale (orthographic, world units).",
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/Vec3"
+        },
+        "focal_point": {
+          "$ref": "#/$defs/Vec3"
+        },
+        "view_up": {
+          "$ref": "#/$defs/Vec3"
+        },
+        "view_angle": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 180
+        },
+        "parallel_scale": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "view_angle"
+          ],
+          "not": {
+            "required": [
+              "parallel_scale"
+            ]
+          }
+        },
+        {
+          "required": [
+            "parallel_scale"
+          ],
+          "not": {
+            "required": [
+              "view_angle"
+            ]
+          }
+        }
+      ]
+    },
+    "Bookmark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "camera"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "camera": {
+          "$ref": "#/$defs/Camera"
+        }
+      }
+    },
+    "Sha256Hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "ZipPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path of the member inside the zip archive. Forward slashes; no leading slash; no '..' segments.",
+      "pattern": "^[^/][^\\0]*$",
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)"
+      }
+    },
+    "NumpyDtype": {
+      "type": "string",
+      "enum": [
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float32",
+        "float64"
+      ]
+    },
+    "BinaryMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "format",
+        "dtype",
+        "shape",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/ZipPath"
+        },
+        "format": {
+          "const": "binary"
+        },
+        "dtype": {
+          "$ref": "#/$defs/NumpyDtype"
+        },
+        "shape": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Hex"
+        }
+      }
+    },
+    "JsonMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "format",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/ZipPath"
+        },
+        "format": {
+          "const": "json"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Hex"
+        }
+      }
+    },
+    "Section": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "members"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "description": "Unique identifier for this section within the file."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Kind string from the QVF registry or x_<vendor>.* namespace."
+        },
+        "label": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "critical": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, a consumer that does not support this kind MUST refuse to open the archive (QVF spec § 5.5)."
+        },
+        "members": {
+          "type": "object"
+        }
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SectionStructure"
+        },
+        {
+          "$ref": "#/$defs/SectionVolumeDensity"
+        },
+        {
+          "$ref": "#/$defs/SectionVolumeOrbital"
+        },
+        {
+          "$ref": "#/$defs/SectionVolumeSpin"
+        },
+        {
+          "$ref": "#/$defs/SectionVolumeELF"
+        },
+        {
+          "$ref": "#/$defs/SectionVolumeDifference"
+        },
+        {
+          "$ref": "#/$defs/SectionVolumePotential"
+        },
+        {
+          "$ref": "#/$defs/SectionVolumeRDG"
+        },
+        {
+          "$ref": "#/$defs/SectionVolumeGeneric"
+        },
+        {
+          "$ref": "#/$defs/SectionWavefunctionGTO"
+        },
+        {
+          "$ref": "#/$defs/SectionAtomProperties"
+        },
+        {
+          "$ref": "#/$defs/SectionTrajectory"
+        },
+        {
+          "$ref": "#/$defs/SectionReactionPath"
+        },
+        {
+          "$ref": "#/$defs/SectionReactionWaypoints"
+        },
+        {
+          "$ref": "#/$defs/SectionScanSurface"
+        },
+        {
+          "$ref": "#/$defs/SectionVibrations"
+        },
+        {
+          "$ref": "#/$defs/SectionSpectraIR"
+        },
+        {
+          "$ref": "#/$defs/SectionSpectraRaman"
+        },
+        {
+          "$ref": "#/$defs/SectionSpectraUVVis"
+        },
+        {
+          "$ref": "#/$defs/SectionSpectraECD"
+        },
+        {
+          "$ref": "#/$defs/SectionSpectraVCD"
+        },
+        {
+          "$ref": "#/$defs/SectionSpectraNMR"
+        },
+        {
+          "$ref": "#/$defs/SectionSpectraEPR"
+        },
+        {
+          "$ref": "#/$defs/SectionSpectraGeneric"
+        },
+        {
+          "$ref": "#/$defs/SectionBands"
+        },
+        {
+          "$ref": "#/$defs/SectionDOSTotal"
+        },
+        {
+          "$ref": "#/$defs/SectionDOSProjected"
+        },
+        {
+          "$ref": "#/$defs/SectionDOSCOOP"
+        },
+        {
+          "$ref": "#/$defs/SectionDOSCOHP"
+        },
+        {
+          "$ref": "#/$defs/SectionStructureSymmetry"
+        },
+        {
+          "$ref": "#/$defs/SectionBonds"
+        },
+        {
+          "$ref": "#/$defs/SectionBondOrders"
+        },
+        {
+          "$ref": "#/$defs/SectionSCFHistory"
+        },
+        {
+          "$ref": "#/$defs/SectionCitations"
+        },
+        {
+          "$ref": "#/$defs/SectionRunRecord"
+        },
+        {
+          "$ref": "#/$defs/SectionJobSpec"
+        },
+        {
+          "$ref": "#/$defs/SectionBasisAO"
+        },
+        {
+          "$ref": "#/$defs/SectionEquationOfState"
+        },
+        {
+          "$ref": "#/$defs/SectionFermiSurface"
+        },
+        {
+          "$ref": "#/$defs/SectionPhononBands"
+        },
+        {
+          "$ref": "#/$defs/SectionPhononDOS"
+        },
+        {
+          "$ref": "#/$defs/SectionTopologyQTAIM"
+        },
+        {
+          "$ref": "#/$defs/SectionVendor"
+        }
+      ]
+    },
+    "Volume3DBinary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BinaryMember"
+        },
+        {
+          "properties": {
+            "dtype": {
+              "enum": [
+                "float32",
+                "float64"
+              ]
+            },
+            "shape": {
+              "minItems": 3,
+              "maxItems": 3
+            }
+          }
+        }
+      ]
+    },
+    "Volume4DBinary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BinaryMember"
+        },
+        {
+          "properties": {
+            "dtype": {
+              "enum": [
+                "float32",
+                "float64"
+              ]
+            },
+            "shape": {
+              "minItems": 4,
+              "maxItems": 4
+            }
+          }
+        }
+      ]
+    },
+    "StructureAtom": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "symbol",
+        "position",
+        "atomic_number"
+      ],
+      "description": "One atom of a `structure` payload. `position` is Cartesian, in Ångström — real coordinates, never fractional. Producers may add further per-atom fields; consumers ignore what they don't understand. Biomolecular producers conventionally add `atom_name` (PDB cols 13-16, e.g. \"CA\"), `residue_name` (cols 18-20), `residue_seq` (cols 23-26), `chain_id` (col 22) and `b_factor` (cols 61-66); of these only `b_factor` is typed here, because the other four predate this schema and archives in the wild carry `residue_seq` both as an integer and as a string.",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3
+        },
+        "position": {
+          "$ref": "#/$defs/Vec3"
+        },
+        "atomic_number": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "b_factor": {
+          "type": "number",
+          "description": "Per-atom temperature factor / pLDDT-style confidence (PDB cols 61-66). The per-atom carrier is authoritative over the section-level `b_factors` array, because it cannot desynchronize from its own atom (QVF spec § 5.1)."
+        }
+      }
+    },
+    "Lattice3x3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/Vec3"
+      },
+      "description": "Lattice as three ROW vectors in Ångström: row i is the lattice vector of axis i, paired with pbc[i]."
+    },
+    "StructurePayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "atoms"
+      ],
+      "description": "The JSON payload named by a `structure` section's `structure` member (conventionally `structure/structure.json`). It is an archive member, not part of manifest.json, so nothing in the manifest $refs this definition — a validator loads the member's bytes and checks them against it. `pbc` is the normative carrier of per-axis periodicity; `dimensionality` is a derived convenience. See QVF spec § 5.1.",
+      "properties": {
+        "atoms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StructureAtom"
+          }
+        },
+        "pbc": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "boolean"
+          },
+          "description": "Per-axis periodicity: axis i is periodic iff pbc[i]. REQUIRED when `lattice_vectors` is a non-null array; absent means a molecule ([false, false, false]). All eight patterns are legal — the periodic axes need NOT be the leading ones.",
+          "default": [
+            false,
+            false,
+            false
+          ]
+        },
+        "lattice_vectors": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Lattice3x3"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "REQUIRED (non-null) when any pbc[i] is true; null or absent for a molecule. For every axis i with pbc[i] false, row i is non-physical bookkeeping — producers keep the matrix full-rank 3x3 so integrals and symmetry finders always see a 3-D lattice. Such a row is not a cell edge: a consumer MUST NOT draw it, replicate along it, or read it as a vacuum extent."
+        },
+        "dimensionality": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Derived count of periodic axes: equal to the number of true entries in `pbc`. Optional, and MUST agree when present. It carries no axis identity — a consumer MUST NOT infer WHICH axes are periodic from it."
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "A non-null lattice means the producer is describing a cell, so `pbc` must say which of its axes are periodic.",
+          "if": {
+            "required": [
+              "lattice_vectors"
+            ],
+            "properties": {
+              "lattice_vectors": {
+                "type": "array"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "pbc"
+            ]
+          }
+        },
+        {
+          "$comment": "Conversely, a periodic axis needs the lattice vector that spans it.",
+          "if": {
+            "required": [
+              "pbc"
+            ],
+            "properties": {
+              "pbc": {
+                "contains": {
+                  "const": true
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "lattice_vectors"
+            ],
+            "properties": {
+              "lattice_vectors": {
+                "type": "array"
+              }
+            }
+          }
+        },
+        {
+          "$comment": "dimensionality == sum(pbc), enumerated over 0..3 because JSON Schema counts matching items with minContains/maxContains rather than summing them.",
+          "if": {
+            "required": [
+              "dimensionality"
+            ],
+            "properties": {
+              "dimensionality": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "pbc": {
+                "not": {
+                  "contains": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "dimensionality"
+            ],
+            "properties": {
+              "dimensionality": {
+                "const": 1
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "pbc"
+            ],
+            "properties": {
+              "pbc": {
+                "contains": {
+                  "const": true
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "dimensionality"
+            ],
+            "properties": {
+              "dimensionality": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "pbc"
+            ],
+            "properties": {
+              "pbc": {
+                "contains": {
+                  "const": true
+                },
+                "minContains": 2,
+                "maxContains": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "dimensionality"
+            ],
+            "properties": {
+              "dimensionality": {
+                "const": 3
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "pbc"
+            ],
+            "properties": {
+              "pbc": {
+                "contains": {
+                  "const": true
+                },
+                "minContains": 3,
+                "maxContains": 3
+              }
+            }
+          }
+        }
+      ]
+    },
+    "BiomoleculeResidue": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "name",
+        "seq",
+        "chain",
+        "atom_indices"
+      ],
+      "description": "One residue of a biomolecular `structure` section. `atom_indices` are 0-based indices into the `structure` member payload's `atoms` array. Residues are listed in chain order — the order a consumer draws a ribbon in — not sorted by `seq`, because insertion codes and non-monotonic numbering are both legal and sorting would silently reorder them. See QVF spec § 5.1.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Residue name, e.g. \"GLY\"."
+        },
+        "seq": {
+          "type": "integer",
+          "description": "Residue sequence number (PDB cols 23-26). Not unique across a solvated system: PDB numbering is four columns wide and wraps at 9999, so a consumer MUST NOT use it as a global key."
+        },
+        "chain": {
+          "type": "string",
+          "description": "Chain id this residue belongs to; matches an entry of the section's `chains` when that is present."
+        },
+        "atom_indices": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "0-based indices into the structure payload's `atoms` array."
+        }
+      }
+    },
+    "BiomoleculeSecondaryStructure": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "chain",
+        "start_seq",
+        "end_seq"
+      ],
+      "description": "One inclusive secondary-structure range on one chain. A producer knows things a consumer cannot infer from CA geometry alone (alpha vs pi vs 3-10 helix, beta bridge vs sheet), so a consumer that also has its own geometric assignment MUST prefer these ranges where they are supplied (QVF spec § 5.1).",
+      "properties": {
+        "type": {
+          "enum": [
+            "helix",
+            "sheet",
+            "coil"
+          ]
+        },
+        "chain": {
+          "type": "string"
+        },
+        "start_seq": {
+          "type": "integer",
+          "description": "First residue `seq` of the range, inclusive."
+        },
+        "end_seq": {
+          "type": "integer",
+          "description": "Last residue `seq` of the range, inclusive."
+        }
+      }
+    },
+    "SectionStructure": {
+      "description": "Atoms plus an optional cell. The `structure` member's JSON payload is specified by `#/$defs/StructurePayload`; because it is an archive member rather than manifest content, a validator checks it separately from manifest.json (QVF spec § 5.1, § 6). The optional biomolecule fields (`chains`, `residues`, `secondary_structure`, `b_factors`) sit on this section object rather than in the payload, and are independently optional: a structure carrying none of them is a valid plain structure, and a consumer that does not understand them ignores them.",
+      "properties": {
+        "kind": {
+          "const": "structure"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "structure"
+          ],
+          "properties": {
+            "structure": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "bonds": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        },
+        "chains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Chain ids present in this structure, in the order a consumer should present them. OPTIONAL and additive."
+        },
+        "residues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BiomoleculeResidue"
+          },
+          "description": "Residue decomposition of the structure, in chain order. OPTIONAL and additive. A consumer that can also derive residues from per-atom fields MUST prefer these when present."
+        },
+        "secondary_structure": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BiomoleculeSecondaryStructure"
+          },
+          "description": "Per-chain secondary-structure ranges. OPTIONAL and additive; takes precedence over a consumer's own geometric assignment."
+        },
+        "b_factors": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "One temperature factor per atom, parallel to the `structure` payload's `atoms` order. OPTIONAL and additive. A consumer MUST ignore the array entirely when its length differs from the atom count, rather than assigning a partial mapping; and per-atom `StructureAtom.b_factor`, where present, wins over this array."
+        }
+      }
+    },
+    "SectionVolumeDensity": {
+      "properties": {
+        "kind": {
+          "const": "volume.density"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grid",
+            "data"
+          ],
+          "properties": {
+            "grid": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "data": {
+              "$ref": "#/$defs/Volume3DBinary"
+            }
+          }
+        }
+      }
+    },
+    "SectionVolumeOrbital": {
+      "properties": {
+        "kind": {
+          "const": "volume.orbital"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grid",
+            "data"
+          ],
+          "properties": {
+            "grid": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "data": {
+              "$ref": "#/$defs/Volume3DBinary"
+            }
+          }
+        }
+      }
+    },
+    "SectionVolumeSpin": {
+      "properties": {
+        "kind": {
+          "const": "volume.spin"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grid",
+            "data"
+          ],
+          "properties": {
+            "grid": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "data": {
+              "$ref": "#/$defs/Volume3DBinary"
+            }
+          }
+        }
+      }
+    },
+    "SectionVolumeELF": {
+      "properties": {
+        "kind": {
+          "const": "volume.elf"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grid",
+            "data"
+          ],
+          "properties": {
+            "grid": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "data": {
+              "$ref": "#/$defs/Volume3DBinary"
+            }
+          }
+        }
+      }
+    },
+    "SectionVolumeGeneric": {
+      "description": "Generic scalar field — escape hatch for any volumetric kind that doesn't map onto density/orbital/spin/elf/difference. Structurally identical: grid + data. Producers should prefer a more specific kind when one fits.",
+      "properties": {
+        "kind": {
+          "const": "volume.generic"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grid",
+            "data"
+          ],
+          "properties": {
+            "grid": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "data": {
+              "$ref": "#/$defs/Volume3DBinary"
+            }
+          }
+        }
+      }
+    },
+    "SectionVolumeDifference": {
+      "description": "Difference density (or any difference scalar field). Structurally identical to volume.density; carries optional references to the two operand sections used to compute it. Sign convention: data = a - b.",
+      "properties": {
+        "kind": {
+          "const": "volume.difference"
+        },
+        "operand_a": {
+          "type": "string",
+          "description": "Section id of the minuend (the 'a' in a - b). Must reference a section that exists in this archive."
+        },
+        "operand_b": {
+          "type": "string",
+          "description": "Section id of the subtrahend (the 'b' in a - b). Must reference a section that exists in this archive."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional human-readable description, e.g. 'ρ(product) - ρ(reactant)'."
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grid",
+            "data"
+          ],
+          "properties": {
+            "grid": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "data": {
+              "$ref": "#/$defs/Volume3DBinary"
+            }
+          }
+        }
+      },
+      "dependentRequired": {
+        "operand_a": [
+          "operand_b"
+        ],
+        "operand_b": [
+          "operand_a"
+        ]
+      }
+    },
+    "SectionVolumePotential": {
+      "description": "Electrostatic potential grid — identical member structure to volume.density (grid + data). Data is in hartree/e (atomic units of potential). Specified at design_qvf_format.md § 4.10.",
+      "properties": {
+        "kind": {
+          "const": "volume.potential"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grid",
+            "data"
+          ],
+          "properties": {
+            "grid": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "data": {
+              "$ref": "#/$defs/Volume3DBinary"
+            }
+          }
+        }
+      }
+    },
+    "SectionVolumeRDG": {
+      "description": "Reduced density gradient for NCI analysis — identical member structure to volume.density (grid + data). Data is dimensionless. Specified at design_qvf_format.md § 4.11.",
+      "properties": {
+        "kind": {
+          "const": "volume.rdg"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grid",
+            "data"
+          ],
+          "properties": {
+            "grid": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "data": {
+              "$ref": "#/$defs/Volume3DBinary"
+            }
+          }
+        }
+      }
+    },
+    "AtomChargeBinary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BinaryMember"
+        },
+        {
+          "properties": {
+            "dtype": {
+              "const": "float64"
+            },
+            "shape": {
+              "minItems": 1,
+              "maxItems": 1
+            }
+          }
+        }
+      ]
+    },
+    "SectionAtomProperties": {
+      "properties": {
+        "kind": {
+          "const": "atom_properties"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "mulliken_charge": {
+              "$ref": "#/$defs/AtomChargeBinary"
+            },
+            "loewdin_charge": {
+              "$ref": "#/$defs/AtomChargeBinary"
+            },
+            "hirshfeld_charge": {
+              "$ref": "#/$defs/AtomChargeBinary"
+            },
+            "iao_charge": {
+              "$ref": "#/$defs/AtomChargeBinary"
+            },
+            "spin_population": {
+              "$ref": "#/$defs/AtomChargeBinary"
+            }
+          }
+        }
+      }
+    },
+    "TrajectoryCoords": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BinaryMember"
+        },
+        {
+          "properties": {
+            "dtype": {
+              "const": "float64"
+            },
+            "shape": {
+              "minItems": 3,
+              "maxItems": 3
+            }
+          }
+        }
+      ]
+    },
+    "SectionTrajectory": {
+      "properties": {
+        "kind": {
+          "const": "trajectory"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "metadata",
+            "coords"
+          ],
+          "properties": {
+            "metadata": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "coords": {
+              "$ref": "#/$defs/TrajectoryCoords"
+            }
+          }
+        }
+      }
+    },
+    "SectionReactionPath": {
+      "description": "Self-contained reaction path: frames + per-frame energies + waypoint annotations identifying reactant / transition state / intermediate / product frames. Binary layout matches `trajectory` so the same readers can decode coords. Optional per-frame volumetric data (electron density / an orbital morphing along the path) may be attached via the `frame_volumes` (4D: [n_emitted_frames, nx, ny, nz]) + `volume_grid` members; the metadata then carries `volume_frame_index` (which path frame each emitted slab belongs to, for decimation), `volume_label`, and optional `volume_isovalue`. Readers that don't understand these members ignore them.",
+      "properties": {
+        "kind": {
+          "const": "reaction.path"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "metadata",
+            "coords"
+          ],
+          "properties": {
+            "metadata": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "coords": {
+              "$ref": "#/$defs/TrajectoryCoords"
+            },
+            "frame_volumes": {
+              "$ref": "#/$defs/Volume4DBinary"
+            },
+            "volume_grid": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "lattice": {
+              "$ref": "#/$defs/ReactionPathLattice"
+            }
+          }
+        }
+      }
+    },
+    "ReactionPathLattice": {
+      "description": "Per-frame lattice vectors as a binary member. Convention matches `vibeqc.PeriodicSystem.lattice`: 3x3 matrix with columns = a, b, c, in bohr. Shape is either [3, 3] when every frame shares the same lattice (the fixed-cell common case — recommended) or [n_frames, 3, 3] when frames carry per-frame lattices (forward-compat with variable-cell scans). When this member is absent the reaction.path is a molecular trajectory and renderers must draw no cell. Presence of this member — not the manifest version — is how a consumer detects a periodic reaction path.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/BinaryMember"
+        },
+        {
+          "properties": {
+            "dtype": {
+              "const": "float64"
+            },
+            "shape": {
+              "oneOf": [
+                {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "prefixItems": [
+                    {
+                      "const": 3
+                    },
+                    {
+                      "const": 3
+                    }
+                  ]
+                },
+                {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "prefixItems": [
+                    {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    {
+                      "const": 3
+                    },
+                    {
+                      "const": 3
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "SectionScanSurface": {
+      "description": "2D relaxed-scan energy surface: two driven internal coordinates (axis_a x axis_b) with the relaxed energy at each grid node. `energies` is a 2D binary array [nA, nB]; `axis_a` / `axis_b` are the 1D coordinate values (bohr for bonds, radians for angles/dihedrals). The metadata carries per-axis label + unit. Optional `geometries` (4D-flattened [nA*nB, n_atoms, 3] in angstrom, row-major over (a, b)) lets a viewer show the relaxed structure at a clicked node.",
+      "properties": {
+        "kind": {
+          "const": "scan.surface"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "metadata",
+            "axis_a",
+            "axis_b",
+            "energies"
+          ],
+          "properties": {
+            "metadata": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "axis_a": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "axis_b": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "energies": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "geometries": {
+              "$ref": "#/$defs/BinaryMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionReactionWaypoints": {
+      "description": "Lightweight waypoint annotations layered onto an existing `trajectory` section. Use this when the frames are already carried by a trajectory and you only want to label reactant/TS/intermediate/product frames without duplicating coords.",
+      "properties": {
+        "kind": {
+          "const": "reaction.waypoints"
+        },
+        "trajectory_ref": {
+          "type": "string",
+          "description": "Section id of the trajectory section this annotation refers to. Must reference an existing section with kind 'trajectory' in this archive."
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "waypoints"
+          ],
+          "properties": {
+            "waypoints": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "members",
+        "trajectory_ref"
+      ]
+    },
+    "VibrationsDisplacements": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BinaryMember"
+        },
+        {
+          "properties": {
+            "dtype": {
+              "const": "float64"
+            },
+            "shape": {
+              "minItems": 3,
+              "maxItems": 3
+            }
+          }
+        }
+      ]
+    },
+    "SectionVibrations": {
+      "properties": {
+        "kind": {
+          "const": "vibrations"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "metadata",
+            "displacements"
+          ],
+          "properties": {
+            "metadata": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "displacements": {
+              "$ref": "#/$defs/VibrationsDisplacements"
+            }
+          }
+        }
+      }
+    },
+    "SectionSpectraIR": {
+      "properties": {
+        "kind": {
+          "const": "spectra.ir"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spectrum"
+          ],
+          "properties": {
+            "spectrum": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionSpectraRaman": {
+      "properties": {
+        "kind": {
+          "const": "spectra.raman"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spectrum"
+          ],
+          "properties": {
+            "spectrum": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "BandsEigenvalues": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BinaryMember"
+        },
+        {
+          "properties": {
+            "dtype": {
+              "const": "float64"
+            },
+            "shape": {
+              "minItems": 3,
+              "maxItems": 3
+            }
+          }
+        }
+      ]
+    },
+    "SectionSpectraUVVis": {
+      "properties": {
+        "kind": {
+          "const": "spectra.uvvis"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spectrum"
+          ],
+          "properties": {
+            "spectrum": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionSpectraECD": {
+      "properties": {
+        "kind": {
+          "const": "spectra.ecd"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spectrum"
+          ],
+          "properties": {
+            "spectrum": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionSpectraVCD": {
+      "properties": {
+        "kind": {
+          "const": "spectra.vcd"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spectrum"
+          ],
+          "properties": {
+            "spectrum": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionSpectraNMR": {
+      "properties": {
+        "kind": {
+          "const": "spectra.nmr"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spectrum"
+          ],
+          "properties": {
+            "spectrum": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionSpectraEPR": {
+      "description": "Electron paramagnetic resonance (EPR / ESR) parameters. Like spectra.nmr, the payload is a single object-shaped `spectrum` JSON member rather than a frequency/intensity pair; it carries the g-tensor, per-nucleus hyperfine (A) tensors, and the zero-field-splitting (D) tensor. The field vocabulary is intentionally loose in v1 while producer conventions settle.",
+      "properties": {
+        "kind": {
+          "const": "spectra.epr"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spectrum"
+          ],
+          "properties": {
+            "spectrum": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionSpectraGeneric": {
+      "properties": {
+        "kind": {
+          "const": "spectra.generic"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spectrum"
+          ],
+          "properties": {
+            "spectrum": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "MoCoefficientsBinary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BinaryMember"
+        },
+        {
+          "properties": {
+            "dtype": {
+              "const": "float64"
+            },
+            "shape": {
+              "minItems": 2,
+              "maxItems": 3
+            }
+          }
+        }
+      ]
+    },
+    "SectionWavefunctionGTO": {
+      "description": "Atom-centered Gaussian basis + MO coefficients. Renderer-friendly: a re-sampling viewer can evaluate any orbital on its own grid (Molden-style). Complex Bloch coefficients are stored as float64 [n_mo, n_ao, 2] with last axis [real, imag].",
+      "properties": {
+        "kind": {
+          "const": "wavefunction.gto"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "basis",
+            "mo_metadata"
+          ],
+          "properties": {
+            "basis": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "mo_metadata": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "mo_coefficients": {
+              "$ref": "#/$defs/MoCoefficientsBinary"
+            },
+            "mo_coefficients_alpha": {
+              "$ref": "#/$defs/MoCoefficientsBinary"
+            },
+            "mo_coefficients_beta": {
+              "$ref": "#/$defs/MoCoefficientsBinary"
+            }
+          },
+          "oneOf": [
+            {
+              "required": [
+                "mo_coefficients"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "mo_coefficients_alpha"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "mo_coefficients_beta"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "mo_coefficients_alpha",
+                "mo_coefficients_beta"
+              ],
+              "not": {
+                "required": [
+                  "mo_coefficients"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "SectionBands": {
+      "description": "Band structure — eigenvalues along a k-path, with optional Mulliken character projections (fat bands).",
+      "properties": {
+        "kind": {
+          "const": "bands"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kpath",
+            "eigenvalues"
+          ],
+          "properties": {
+            "kpath": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "eigenvalues": {
+              "$ref": "#/$defs/BandsEigenvalues"
+            },
+            "projections": {
+              "$ref": "#/$defs/BinaryMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionDOSTotal": {
+      "properties": {
+        "kind": {
+          "const": "dos.total"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "energies",
+            "dos"
+          ],
+          "properties": {
+            "energies": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "dos": {
+              "$ref": "#/$defs/BinaryMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionDOSProjected": {
+      "properties": {
+        "kind": {
+          "const": "dos.projected"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "energies",
+            "projections"
+          ],
+          "properties": {
+            "energies": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "projections": {
+              "$ref": "#/$defs/BinaryMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionDOSCOOP": {
+      "properties": {
+        "kind": {
+          "const": "dos.coop"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "energies",
+            "projections",
+            "integrated",
+            "meta"
+          ],
+          "properties": {
+            "energies": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "projections": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "integrated": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "meta": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionDOSCOHP": {
+      "properties": {
+        "kind": {
+          "const": "dos.cohp"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "energies",
+            "projections",
+            "integrated",
+            "meta"
+          ],
+          "properties": {
+            "energies": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "projections": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "integrated": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "meta": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionStructureSymmetry": {
+      "properties": {
+        "kind": {
+          "const": "structure.symmetry"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "data"
+          ],
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionBonds": {
+      "properties": {
+        "kind": {
+          "const": "bonds"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bonds"
+          ],
+          "properties": {
+            "bonds": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionBondOrders": {
+      "description": "Bond-order table — Mayer / Wiberg bond orders with atom-pair labels and distances. Specified at design_qvf_format.md § 4.15.",
+      "properties": {
+        "kind": {
+          "const": "bond_orders"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bond_orders"
+          ],
+          "properties": {
+            "bond_orders": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionSCFHistory": {
+      "properties": {
+        "kind": {
+          "const": "scf_history"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "iterations"
+          ],
+          "properties": {
+            "iterations": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "CitationsReferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "format",
+        "sha256"
+      ],
+      "description": "BibTeX bytes are carried as a binary member; consumers decode as UTF-8.",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/ZipPath"
+        },
+        "format": {
+          "const": "binary"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Hex"
+        }
+      }
+    },
+    "SectionCitations": {
+      "properties": {
+        "kind": {
+          "const": "citations"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "references"
+          ],
+          "properties": {
+            "references": {
+              "$ref": "#/$defs/CitationsReferences"
+            }
+          }
+        }
+      }
+    },
+    "OpaqueBinaryMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "format",
+        "sha256"
+      ],
+      "description": "Opaque bytes carried as a binary member with no dtype/shape. The owning section kind defines the payload's encoding (e.g. UTF-8 text for run.record input/log).",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/ZipPath"
+        },
+        "format": {
+          "const": "binary"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256Hex"
+        }
+      }
+    },
+    "SectionRunRecord": {
+      "description": "Self-contained record of one program invocation: the verbatim input handed to a quantum-chemistry code and/or the full log/output it produced, plus auxiliary attachments. `program` names the code the input/log belong to — which may differ from the root `source.program` when the archive was written by a converter. `input` and `log` are opaque binary members that MUST decode as UTF-8 text; `attachment.*` members carry arbitrary bytes described by the optional `files` index.",
+      "properties": {
+        "kind": {
+          "const": "run.record"
+        },
+        "program": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The program that consumed `input` / produced `log` (e.g. 'vibe-qc', 'orca'). Lowercase identifiers recommended."
+        },
+        "program_version": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string",
+          "description": "Command line used to launch the run, as one string."
+        },
+        "exit_status": {
+          "type": "integer"
+        },
+        "started_utc": {
+          "type": "string",
+          "description": "Run start, ISO 8601 UTC (e.g. '2026-07-24T12:00:00Z')."
+        },
+        "finished_utc": {
+          "type": "string",
+          "description": "Run end, ISO 8601 UTC."
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Ordering index when an archive carries multiple run records (multi-step workflows)."
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/OpaqueBinaryMember"
+            },
+            "log": {
+              "$ref": "#/$defs/OpaqueBinaryMember"
+            },
+            "files": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          },
+          "patternProperties": {
+            "^attachment\\.[A-Za-z0-9_.-]+$": {
+              "$ref": "#/$defs/OpaqueBinaryMember"
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "input"
+              ]
+            },
+            {
+              "required": [
+                "log"
+              ]
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "members",
+        "program"
+      ]
+    },
+    "SectionJobSpec": {
+      "description": "Declarative specification of the calculation an archive requests — before, and independent of, any results it carries (QVF spec § 5.9). Together with a `structure` section it makes the archive an executable input: a runner reconstructs the job from the `spec` payload, executes it, and writes results plus a `run.record` back into the same container. The payload is declarative data, never code.",
+      "properties": {
+        "kind": {
+          "const": "job.spec"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spec"
+          ],
+          "properties": {
+            "spec": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "members"
+      ]
+    },
+    "JobSpecPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "job_type"
+      ],
+      "description": "The JSON payload named by a `job.spec` section's `spec` member (conventionally `job_spec/spec.json`). It is an archive member, not part of manifest.json, so nothing in the manifest $refs this definition — a validator loads the member's bytes and checks them against it. The root is open for forward growth, but engine-specific keywords SHOULD live under `options`, keeping the typed top level portable across codes (QVF spec § 5.9).",
+      "properties": {
+        "job_type": {
+          "enum": [
+            "molecular",
+            "periodic"
+          ],
+          "description": "Which class of engine runs the job. Periodicity of the geometry itself is carried by the structure section's pbc/lattice_vectors; job_type selects the runner, it does not restate periodicity."
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Method identifier (e.g. 'rhf', 'rks', 'ccsd(t)', 'gfn2'). Producer-neutral lowercase recommended. Absent means the engine's default."
+        },
+        "basis": {
+          "type": "string",
+          "minLength": 1
+        },
+        "functional": {
+          "type": "string",
+          "minLength": 1
+        },
+        "charge": {
+          "type": "integer",
+          "description": "Net charge. Absent means 0. Authoritative for the job — never inferred from the structure."
+        },
+        "multiplicity": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Spin multiplicity 2S+1. Absent means 1."
+        },
+        "kpoints": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "[n1, n2, n3] Monkhorst-Pack mesh. Periodic jobs only."
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Ordered task identifiers, e.g. ['single_point'], ['optimize', 'hessian']. Absent means a single point."
+        },
+        "options": {
+          "type": "object",
+          "description": "Additional engine-specific keywords (JSON-safe values). A runner that does not recognize an option MUST refuse the job rather than silently drop it."
+        }
+      }
+    },
+    "SectionBasisAO": {
+      "description": "Basis-function visualisation — one atomic orbital (contracted shell or individual primitive) evaluated on a 3-D grid. The `ao_metadata` object carries per-function quantum numbers and provenance; the `grid` + `data` members follow the same contract as all volume.* sections.",
+      "properties": {
+        "kind": {
+          "const": "basis.ao"
+        },
+        "ao_metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "atom_index",
+            "atom_symbol",
+            "shell_index",
+            "primitive_index",
+            "angular_momentum",
+            "shell_type",
+            "exponent",
+            "coefficient",
+            "is_primitive",
+            "is_contracted",
+            "ao_index"
+          ],
+          "properties": {
+            "atom_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "atom_symbol": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 3
+            },
+            "shell_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "primitive_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "angular_momentum": {
+              "description": "[l, m]. Element 0 is always the shell's angular momentum l. Element 1 is the real-spherical-harmonic index m in [-l, +l] and is meaningful ONLY when `cartesian_powers` is absent; when `cartesian_powers` is present the component is a Cartesian monomial with no magnetic quantum number, element 1 is 0 by convention, and a consumer MUST ignore it. See spec Appendix A.3.",
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "cartesian_powers": {
+              "description": "[lx, ly, lz] powers of the Cartesian monomial this AO is, with lx+ly+lz == angular_momentum[0]. Present if and only if the AO is a component of a Cartesian (`pure: false`) shell, which has (l+1)(l+2)/2 components rather than 2l+1 and therefore no m. Absent for spherical AOs.",
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "shell_type": {
+              "type": "string",
+              "enum": [
+                "s",
+                "p",
+                "sp",
+                "d",
+                "f",
+                "g",
+                "h"
+              ]
+            },
+            "exponent": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "coefficient": {
+              "type": "number"
+            },
+            "is_primitive": {
+              "type": "boolean"
+            },
+            "is_contracted": {
+              "type": "boolean"
+            },
+            "ao_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "basis_label": {
+              "type": "string"
+            }
+          }
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grid",
+            "data"
+          ],
+          "properties": {
+            "grid": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "data": {
+              "$ref": "#/$defs/Volume3DBinary"
+            }
+          }
+        }
+      }
+    },
+    "SectionEquationOfState": {
+      "description": "Equation of state — volume-energy data points and fitted EOS parameters. Specified at design_qvf_format.md § 4.14.",
+      "properties": {
+        "kind": {
+          "const": "equation_of_state"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "volumes",
+            "energies",
+            "fit"
+          ],
+          "properties": {
+            "volumes": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "energies": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "fit": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionFermiSurface": {
+      "description": "Fermi surface — 3D k-space energy grid near E_F for metallic periodic systems. Specified at design_qvf_format.md § 4.12.",
+      "properties": {
+        "kind": {
+          "const": "fermi_surface"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mesh",
+            "energies"
+          ],
+          "properties": {
+            "mesh": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "energies": {
+              "$ref": "#/$defs/Volume4DBinary"
+            }
+          }
+        }
+      }
+    },
+    "SectionPhononBands": {
+      "description": "Phonon band structure — q-path and phonon frequencies along a Brillouin-zone path. Specified at design_qvf_format.md § 4.13.",
+      "properties": {
+        "kind": {
+          "const": "phonon_bands"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "qpath",
+            "frequencies"
+          ],
+          "properties": {
+            "qpath": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "frequencies": {
+              "$ref": "#/$defs/BinaryMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionPhononDOS": {
+      "description": "Phonon density of states — frequency grid and total phonon DOS. Specified at design_qvf_format.md § 4.13.",
+      "properties": {
+        "kind": {
+          "const": "phonon_dos"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "meta",
+            "frequencies",
+            "dos"
+          ],
+          "properties": {
+            "meta": {
+              "$ref": "#/$defs/JsonMember"
+            },
+            "frequencies": {
+              "$ref": "#/$defs/BinaryMember"
+            },
+            "dos": {
+              "$ref": "#/$defs/BinaryMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionTopologyQTAIM": {
+      "description": "QTAIM topological analysis — critical points and bond paths from electron-density topology. Specified at design_qvf_format.md § 4.16.",
+      "properties": {
+        "kind": {
+          "const": "topology.qtaim"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "critical_points"
+          ],
+          "properties": {
+            "critical_points": {
+              "$ref": "#/$defs/JsonMember"
+            }
+          }
+        }
+      }
+    },
+    "SectionVendor": {
+      "description": "Vendor-namespace section. The `kind` must start with `x_<vendor>`; member shape is unconstrained except that every member is a valid JsonMember or BinaryMember.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "pattern": "^x_[A-Za-z0-9_]+(\\.[A-Za-z0-9_.-]+)?$"
+        },
+        "members": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/JsonMember"
+              },
+              {
+                "$ref": "#/$defs/BinaryMember"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Thermochemistry": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Thermochemical corrections at manifest root (QVF spec § 4.7). All energy quantities in Hartree.",
+      "properties": {
+        "zpve_eh": {
+          "type": "number",
+          "description": "Zero-point vibrational energy (Hartree)."
+        },
+        "enthalpy_eh": {
+          "type": "number",
+          "description": "Thermal-corrected enthalpy (Hartree)."
+        },
+        "entropy_cal_mol_k": {
+          "type": "number",
+          "description": "Entropy (cal / mol / K)."
+        },
+        "gibbs_free_energy_eh": {
+          "type": "number",
+          "description": "Gibbs free energy (Hartree)."
+        },
+        "temperature_k": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Temperature (K)."
+        },
+        "pressure_atm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Pressure (atm)."
+        }
+      }
+    },
+    "DipoleMoment": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Dipole moment at manifest root (QVF spec § 4.7).",
+      "properties": {
+        "total_debye": {
+          "type": "number",
+          "description": "Total dipole magnitude (Debye)."
+        },
+        "vector_debye": {
+          "$ref": "#/$defs/Vec3",
+          "description": "Dipole vector components (Debye)."
+        },
+        "origin": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/Vec3"
+            }
+          ],
+          "description": "Reference point for the dipole: a conventional name for legacy producers, or an explicit 3-vector in bohr."
+        }
+      }
+    },
+    "Constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Geometry optimisation constraints (QVF spec § 4.7).",
+      "properties": {
+        "frozen_atoms": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Zero-based indices of atoms frozen during optimisation."
+        },
+        "distance_constraints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "atoms",
+              "target_angstrom"
+            ],
+            "properties": {
+              "atoms": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "target_angstrom": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "Extensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x_[A-Za-z0-9_]+$": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version"
+          ],
+          "properties": {
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "schema_uri": {
+              "type": "string",
+              "format": "uri"
+            },
+            "critical": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      },
+      "description": "Extension governance block. Maps vendor namespace prefix (without x_ — the x_ is implied from section kinds) to its version, optional schema URI, and critical flag (QVF spec § 5.4)."
+    }
+  }
+}

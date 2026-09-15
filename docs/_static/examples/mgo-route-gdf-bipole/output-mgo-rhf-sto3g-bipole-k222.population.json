@@ -1,0 +1,47 @@
+{
+  "mulliken": [
+    {
+      "idx": 0,
+      "symbol": "Mg",
+      "Z": 12.0,
+      "charge": 0.8438600464860642
+    },
+    {
+      "idx": 1,
+      "symbol": "O",
+      "Z": 8.0,
+      "charge": -0.8438600464860091
+    }
+  ],
+  "loewdin": [
+    {
+      "idx": 0,
+      "symbol": "Mg",
+      "Z": 12.0,
+      "charge": 0.7034287361265292
+    },
+    {
+      "idx": 1,
+      "symbol": "O",
+      "Z": 8.0,
+      "charge": -0.7034287361265381
+    }
+  ],
+  "hirshfeld": [],
+  "mayer": [
+    {
+      "i": 0,
+      "j": 1,
+      "sym_i": "Mg",
+      "sym_j": "O",
+      "order": 1.6446813150546844
+    }
+  ],
+  "wiberg": [],
+  "npa": [],
+  "dipole": null,
+  "errors": {
+    "hirshfeld": "unsupported: periodic BIPOLE Hirshfeld charges require a periodic promolecule/grid partition, which is not implemented",
+    "dipole": "unsupported: ordinary electric dipole moments are ill-defined for 3D periodic BIPOLE bulk cells; Berry-phase polarization is not implemented"
+  }
+}

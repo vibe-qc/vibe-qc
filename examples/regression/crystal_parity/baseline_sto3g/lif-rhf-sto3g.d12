@@ -1,0 +1,15 @@
+LiF rocksalt RHF/STO-3G — wider-gap ionic, slightly harder than LiH
+CRYSTAL
+0 0 0
+225
+4.020
+2
+3 0.0 0.0 0.0
+9 0.5 0.5 0.5
+BASISSET
+STO-3G
+SHRINK
+8 8
+TOLDEE
+8
+END

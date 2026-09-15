@@ -1,0 +1,2 @@
+# Optional artwork-generation tooling; never a website or chemistry runtime dependency.
+fonttools==4.64.0

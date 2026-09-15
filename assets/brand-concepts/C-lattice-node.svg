@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-label="vibe-qc">
+  <title>vibe-qc</title>
+  <defs>
+    <style>
+      .wm { font-family: "Sora", "Manrope", "Söhne", "Helvetica Neue", Arial, sans-serif; font-weight: 600; letter-spacing: -0.02em; }
+    </style>
+  </defs>
+
+  <!-- ICON: hexagonal lattice fragment. Six vertices, one highlighted. -->
+  <!-- Hexagon centered at (110, 150), radius r. Vertices at 30,90,150,210,270,330 degrees. -->
+  <g transform="translate(60,0)">
+    <!-- lattice edges -->
+    <g stroke="#0B1220" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- r=82, center (110,150): vertices listed clockwise from top -->
+      <!-- top: (110, 68), top-right: (181, 109), bottom-right: (181, 191), bottom: (110, 232), bottom-left: (39, 191), top-left: (39, 109) -->
+      <path d="M 110 68 L 181 109 L 181 191 L 110 232 L 39 191 L 39 109 Z"/>
+      <!-- interior bonds to center to evoke unit cell (optional) -->
+      <line x1="39"  y1="109" x2="181" y2="191" opacity="0.25"/>
+      <line x1="181" y1="109" x2="39"  y2="191" opacity="0.25"/>
+    </g>
+    <!-- vertex atoms -->
+    <g fill="#0B1220">
+      <circle cx="181" cy="109" r="10"/>
+      <circle cx="181" cy="191" r="10"/>
+      <circle cx="110" cy="232" r="10"/>
+      <circle cx="39"  cy="191" r="10"/>
+      <circle cx="39"  cy="109" r="10"/>
+    </g>
+    <!-- highlighted vertex (top) -->
+    <circle cx="110" cy="68" r="14" fill="#A855F7"/>
+  </g>
+
+  <!-- WORDMARK -->
+  <g transform="translate(340,0)">
+    <text x="0" y="195" class="wm" font-size="172" fill="#0B1220">vibe</text>
+    <!-- Styled hyphen: angled dash echoing a lattice edge -->
+    <g transform="translate(385,148)">
+      <line x1="0" y1="6" x2="50" y2="-10" stroke="#A855F7" stroke-width="10" stroke-linecap="round"/>
+    </g>
+    <text x="470" y="195" class="wm" font-size="172" fill="#0B1220">qc</text>
+  </g>
+</svg>
