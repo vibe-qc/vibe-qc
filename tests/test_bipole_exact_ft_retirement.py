@@ -103,8 +103,14 @@ def _run(system, basis, opts, **kwargs):
 # comparable to the AO-pair extent, so the erfc kernel is sampled well
 # inside its steep region rather than at the image distance. The 1/L law
 # is the large-box limit; on compact vacuum cells the leak is worse.
-E_H2_SVWN_SRLR = -1.121196199774
-E_H2_SVWN_EXACT_FT = -1.121196859728
+# The periodic grid partition correction (#772, 2026-09-09 review) moves
+# both routes by +4.05943148e-6 Ha, entirely in XC. Restoring only the old
+# grid builder reproduces the previous pins (-1.121196199774 and
+# -1.121196859728) within the unchanged 5e-9 Ha tolerance; kinetic,
+# nuclear-attraction and Coulomb terms stay unchanged. These remain
+# implementation regression anchors, not independent grid-limit energies.
+E_H2_SVWN_SRLR = -1.1211921387820452
+E_H2_SVWN_EXACT_FT = -1.121192800449332
 
 
 def test_pure_rks_default_routes_srlr_with_padded_extent():

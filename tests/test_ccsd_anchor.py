@@ -105,7 +105,8 @@ def _cpp_ccsd_with_triples_plan(
 
 class TestCppAnchorSTO3G:
     @pytest.fixture(scope="class")
-    def h2o(self):
+    @classmethod
+    def h2o(cls):
         return _system("sto-3g")
 
     def test_ccsd_matches_anchor_and_respects_fci_bound(self, h2o):
@@ -142,7 +143,8 @@ class TestCppAnchorSTO3G:
 @pytest.mark.slow
 class TestCppAnchorDZ:
     @pytest.fixture(scope="class")
-    def h2o_dz(self):
+    @classmethod
+    def h2o_dz(cls):
         return _system("def2-svp")
 
     def test_ccsd_matches_anchor_dz(self, h2o_dz):
@@ -177,11 +179,13 @@ class TestFrozenCore:
 
 class TestTriplesMemoryPlans:
     @pytest.fixture(scope="class")
-    def h2o(self):
+    @classmethod
+    def h2o(cls):
         return _system("sto-3g")
 
     @pytest.fixture(scope="class")
-    def fast(self, h2o):
+    @classmethod
+    def fast(cls, h2o):
         return _cpp_ccsd_with_triples_plan(*h2o, mode="fast")
 
     @pytest.mark.parametrize(

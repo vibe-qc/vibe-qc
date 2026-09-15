@@ -1,12 +1,14 @@
 """Unit tests for scripts/test_gate lane selection.
 
-The full gate is intentionally expensive; these tests pin the pure manifest
-logic without spawning pytest subprocesses.
+The full gate is intentionally expensive; these tests exercise manifest
+logic and a small, self-contained subprocess isolation fixture.
 """
 
 from __future__ import annotations
 
+import copy
 import importlib.util
+import json
 import os
 import sys
 from argparse import Namespace
@@ -91,15 +93,30 @@ def test_per_target_runner_sandboxes_persistent_state_and_scrubs_pytest_opts(
     assert not sandbox_home.exists()
 
 
-@pytest.mark.skipif(
-    not (RUNNER_PATH.parents[2] / "vibe-queue/tests/test_rpc.py").is_file(),
-    reason="queue RPC integration belongs to the separate vibe-queue repository",
-)
-def test_per_target_runner_executes_rpc_socket_node_in_short_sandbox():
-    repo = Path(__file__).resolve().parents[1]
+def test_per_target_runner_executes_isolated_node_without_companion_repo(
+    tmp_path, monkeypatch,
+):
+    # The queue moved to its own repository. Exercise the runner's retained
+    # isolation contract without importing or executing companion tests.
+    repo = tmp_path / "checkout"
+    target = repo / "vibe-queue" / "tests" / "test_probe.py"
+    target.parent.mkdir(parents=True)
+    caller_state = tmp_path / "caller-state"
+    caller_state.mkdir()
+    monkeypatch.setenv("VQ_STATE_DIR", str(caller_state))
+    target.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "def test_isolated_state():\n"
+        "    state = Path(os.environ['VQ_STATE_DIR'])\n"
+        "    assert state.is_dir()\n"
+        "    assert state.is_relative_to(Path(os.environ['VQ_TEST_SANDBOX_ROOT']))\n"
+        "    (state / 'probe').write_text('child state')\n"
+        "def test_unselected():\n"
+        "    raise AssertionError('runner ignored the node selector')\n"
+    )
     result = runner.run_one(
-        "vibe-queue/tests/test_rpc.py::"
-        "TestServerLifecycle::test_start_creates_socket_with_right_mode_single_user",
+        "vibe-queue/tests/test_probe.py::test_isolated_state",
         repo,
         sys.executable,
         file_timeout=45,
@@ -107,6 +124,7 @@ def test_per_target_runner_executes_rpc_socket_node_in_short_sandbox():
     )
 
     assert result["status"] == "PASS", result["tail"]
+    assert list(caller_state.iterdir()) == []
 
 
 def test_per_target_runner_preserves_non_vq_environment(monkeypatch):
@@ -267,6 +285,114 @@ def test_every_lane_has_maturity_lane_class_and_full_calculation_note():
         assert lane["target_release"], name
         assert lane["global_items"], name
         assert lane["required_full_calculation"], name
+
+
+def _manifest_copy() -> dict:
+    return copy.deepcopy(json.loads(MANIFEST_PATH.read_text(encoding="utf-8")))
+
+
+@pytest.mark.parametrize("value", ["0.15.x", "v0.15.3", "latest", "v2.x", "v0.18.x-rc"])
+def test_target_release_must_name_a_release_line(value):
+    manifest = _manifest_copy()
+    manifest["lanes"]["smoke"]["target_release"] = value
+
+    with pytest.raises(ValueError, match="invalid target_release"):
+        runner.validate_lane_manifest(manifest, MANIFEST_PATH)
+
+
+@pytest.mark.parametrize("value", ["v0.18.x", "v0.18", "v2.0", "v1.0.x"])
+def test_target_release_accepts_release_lines_and_forward_tracks(value):
+    manifest = _manifest_copy()
+    manifest["lanes"]["smoke"]["target_release"] = value
+
+    runner.validate_lane_manifest(manifest, MANIFEST_PATH)
+
+
+def test_current_release_line_is_read_from_pyproject(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nversion = "0.18.0.dev0"\n', encoding="utf-8")
+
+    assert runner.current_release_line(pyproject) == (0, 18)
+    assert runner.current_release_line(tmp_path / "missing.toml") is None
+
+
+def test_stale_target_release_report_mirrors_known_reds_semantics():
+    manifest = {
+        "policy": {
+            "known_stale_target_release": {
+                "ref": "#199",
+                "lanes": ["tracked-stale", "tracked-current", "retired-lane"],
+            }
+        },
+        "lanes": {
+            "current": {"target_release": "v0.18.x"},
+            "forward": {"target_release": "v2.0"},
+            "tracked-stale": {"target_release": "v0.15.x"},
+            "untracked-stale": {"target_release": "v0.17.x"},
+            "tracked-current": {"target_release": "v0.18.x"},
+        },
+    }
+
+    report = runner.stale_target_release_report(manifest, (0, 18))
+
+    assert report["stale"] == ["tracked-stale", "untracked-stale"]
+    assert report["tracked"] == ["tracked-stale"]
+    assert report["untracked"] == ["untracked-stale"]
+    assert report["no_longer_stale"] == ["tracked-current"]
+    assert report["unknown"] == ["retired-lane"]
+
+
+def test_committed_lane_manifest_tracks_every_stale_target_release():
+    manifest = runner.load_lane_manifest(MANIFEST_PATH)
+    current_line = runner.current_release_line(MANIFEST_PATH.parents[2] / "pyproject.toml")
+    assert current_line is not None
+
+    report = runner.stale_target_release_report(manifest, current_line)
+    problems = runner._stale_target_release_problems(report)
+
+    assert not problems, (
+        "target_release is stale for an untracked lane, or the tracking list is "
+        "stale itself. The owning chat retargets its lane; otherwise record it in "
+        "policy.known_stale_target_release:\n" + "\n".join(problems)
+    )
+
+
+def _write_check_fixture(root: Path, version: str, target_release: str, tracked: list[str]) -> Path:
+    manifest = _manifest_copy()
+    for lane in manifest["lanes"].values():
+        lane["target_release"] = "v2.0"
+    manifest["lanes"]["smoke"]["target_release"] = target_release
+    manifest["policy"]["known_stale_target_release"] = {"ref": "#199", "lanes": tracked}
+    path = root / "scripts" / "test_gate" / "lane_manifest.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    (root / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n', encoding="utf-8")
+    return path
+
+
+def test_check_lane_manifest_exits_non_zero_only_when_action_is_needed(tmp_path, capsys):
+    clean = _write_check_fixture(tmp_path / "clean", "0.18.0", "v0.15.x", ["smoke"])
+    untracked = _write_check_fixture(tmp_path / "untracked", "0.18.0", "v0.15.x", [])
+    fixed = _write_check_fixture(tmp_path / "fixed", "0.18.0", "v0.18.x", ["smoke"])
+    unreadable = _write_check_fixture(tmp_path / "unreadable", "0.18.0", "v0.18.x", [])
+    (tmp_path / "unreadable" / "pyproject.toml").unlink()
+
+    assert runner.check_lane_manifest(clean) == 0
+    assert runner.check_lane_manifest(untracked) == 1
+    assert runner.check_lane_manifest(fixed) == 1
+    assert runner.check_lane_manifest(unreadable) == 1
+    err = capsys.readouterr().err
+    assert "targets a release line older than v0.18" in err
+    assert "remove it from policy.known_stale_target_release" in err
+    assert "cannot read the current release line" in err
+
+
+def test_loading_warns_but_never_fails_on_untracked_stale_target_release(tmp_path, capsys):
+    path = _write_check_fixture(tmp_path, "0.18.0", "v0.15.x", [])
+
+    runner.load_lane_manifest(path)
+
+    assert "targets a release line older than v0.18" in capsys.readouterr().err
 
 
 def test_release_profile_lanes_match_pre_cut_blocking_metadata():
@@ -573,6 +699,12 @@ def test_private_mdf_source_and_gradient_changes_trigger_gdf_lane(source):
     assert 'pbc-gdf' in runner.affected_lane_names(manifest, [source])
 
 
+def test_gdf_spectral_writer_changes_trigger_output_lane():
+    manifest = runner.load_lane_manifest(MANIFEST_PATH)
+    assert 'output-docs' in runner.affected_lane_names(
+        manifest, ['python/vibeqc/output/formats/qvf.py'])
+
+
 def test_manifest_routes_gdf_and_aiccm_files_to_area_lanes():
     root = RUNNER_PATH.parents[2]
     manifest = runner.load_lane_manifest(MANIFEST_PATH)
@@ -585,6 +717,7 @@ def test_manifest_routes_gdf_and_aiccm_files_to_area_lanes():
         }
 
     pbc_gdf = lane_files("pbc-gdf")
+    pbc_bipole = lane_files("pbc-bipole")
     aiccm_molecular = lane_files("aiccm-molecular")
     aiccm_periodic = lane_files("aiccm-periodic")
     aiccm_aggregate = lane_files("aiccm-experimental")
@@ -593,6 +726,11 @@ def test_manifest_routes_gdf_and_aiccm_files_to_area_lanes():
 
     assert "tests/test_runner_gamma_gdf_routing.py" in pbc_gdf
     assert "tests/test_periodic_mdf_source.py" in pbc_gdf
+    # #708 escaped the bounded-alpha gate because its file has no BIPOLE
+    # substring. The coupled nuclear consumers must also join this lane.
+    assert "tests/test_bz_integration_gilat_scf.py" in pbc_bipole
+    assert "tests/test_pbc_pair_complete_consumers.py" in pbc_bipole
+    assert "tests/test_periodic_sap.py" in pbc_bipole
     assert "tests/test_aiccm2026_testset.py" in aiccm_molecular
     assert "tests/test_aiccm2026_testset.py" in aiccm_aggregate
     assert "tests/test_periodic_aiccm2026dev_b.py" in aiccm_periodic

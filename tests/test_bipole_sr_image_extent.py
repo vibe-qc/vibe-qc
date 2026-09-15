@@ -45,6 +45,27 @@ from vibeqc.pbc_bipole_fock import (
 ANG2BOHR = 1.0 / 0.529177210903
 
 
+def test_active_sr_screening_public_descriptions_name_charge_pair_bound():
+    """Public help must describe the active bound, not its removed predecessor."""
+    import ast
+    from pathlib import Path
+
+    package = Path(__file__).resolve().parents[1] / "python" / "vibeqc"
+    for filename, function in (
+        ("pbc_bipole.py", "run_pbc_bipole_rhf"),
+        ("bipole_multipole.py", "screened_multipole_interaction_tensor"),
+        ("pbc_bipole_common.py", "resolve_bipole_sr_image_extent"),
+    ):
+        module = ast.parse((package / filename).read_text(encoding="utf-8"))
+        node = next(
+            node for node in module.body
+            if isinstance(node, ast.FunctionDef) and node.name == function
+        )
+        description = " ".join(ast.get_docstring(node).split())
+        assert "charge-pair Schwarz" in description, function
+        assert "QQR" not in description, function
+
+
 def _mgo():
     a = 4.21 * ANG2BOHR
     lattice = (a / 2.0) * np.array(
@@ -298,6 +319,30 @@ def test_m5_precision_resolver_enables_padded_screened_domain():
     assert got == pytest.approx(expected, abs=1e-12)
     assert user.sr_range_screening is True
     assert derived.sr_range_screening is True
+
+
+def test_physical_interaction_radius_is_independent_of_atom_image_labels():
+    from scipy.special import erfcinv
+
+    lattice = np.diag([6., 8., 9.])
+    radii = []
+    for label in [0, 1000]:
+        positions = [[.1, .2, .3], [1.4+6*label, .3, .1]]
+        system = vq.PeriodicSystem(3, lattice, [vq.Atom(1, p) for p in positions])
+        basis = vq.BasisSet(system.unit_cell_molecule(), [
+            vq.ShellInfo(i, 0, False, [a], [1.], p)
+            for i, (a, p) in enumerate(zip([.7, 1.1], positions))
+        ], "physical-radius-oracle", False)
+        user, derived = _lat(5.1), _lat(5.1)
+        user.pair_complete_1e = derived.pair_complete_1e = True
+        radii.append(resolve_bipole_sr_image_extent(
+            basis, system, user, derived, .4, use_ewald_j_split=True,
+            sr_image_precision=1e-8, sr_image_extent_bohr=None,
+        ))
+    # Each weighted Gaussian product center is at most R_pair/2 from its
+    # midpoint. The remaining reach is the slowest radial erfc decay.
+    expected = 5.1+erfcinv(1e-8)*np.sqrt(1/.7+1/.4**2)
+    assert radii == pytest.approx([expected, expected], rel=0, abs=2e-14)
 
 
 def test_m5_precision_none_restores_historical_domain():

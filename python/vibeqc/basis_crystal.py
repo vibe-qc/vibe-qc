@@ -628,6 +628,11 @@ class LibecpintInlineArrays:
         -> libecpint ``ams[i] = ℓ``.
         Projected channels; libecpint applies P_ℓ during integration.
 
+    * CRYSTAL ``NKL`` (the literal power of r in eqs. 3.18 + 3.19)
+        -> libecpint ``ns[i] = NKL + 2``.
+        libecpint takes the Gaussian-format power and subtracts two, so
+        a Stuttgart r^0 term is NKL = 0 here and ``ns[i] = 2`` there.
+
     Both conventions yield the same V_ECP matrix elements when summed
     against the basis. Verified against ecp10mdf.xml (K, Z=19) shell
     layout: local at lval=4 with placeholder zero, projectors at lval=
@@ -656,9 +661,10 @@ def crystal_ecp_to_libecpint_arrays(ecp: CrystalECP) -> LibecpintInlineArrays:
 
     The conversion is bookkeeping -- no algebraic rewrite of the ECP.
     Each :class:`CrystalECPTerm` becomes one primitive with its
-    (alpha, coefficient, n_pow) carried over verbatim; only the
-    ``ell`` label is re-keyed onto libecpint's per-primitive ``am``
-    convention (see :class:`LibecpintInlineArrays` for the mapping).
+    (alpha, coefficient) carried over verbatim; the ``ell`` label is
+    re-keyed onto libecpint's per-primitive ``am`` convention and the
+    radial power is converted between the two conventions (see
+    :class:`LibecpintInlineArrays` for both mappings).
 
     Phase 14g pairs this with a C++ ``compute_ecp_matrix_inline``
     that calls libecpint's ``set_ecp_basis(...)`` (the inline-
@@ -714,7 +720,24 @@ def crystal_ecp_to_libecpint_arrays(ecp: CrystalECP) -> LibecpintInlineArrays:
         exponents.append(term.alpha)
         coefficients.append(term.coefficient)
         ams.append(assigned_l)
-        ns.append(term.n_pow)
+        # CRYSTAL's NKL is the literal power of r (CRYSTAL23 eqs. 3.18-3.19:
+        # r^n C exp(-alpha r^2)); libecpint takes the Gaussian-format power
+        # and stores n - 2 (GaussianECP's constructor). Passing NKL through
+        # unconverted turned every Stuttgart r^0 term into a singular r^-2
+        # one -- 40.9 Ha on an AgCl molecule (#207).
+        ns.append(term.n_pow + 2)
+
+    if local_ell not in ams:
+        # libecpint reads its local channel off the highest am present. A
+        # CRYSTAL record with no local terms (M = 0, as on every pob record)
+        # would hand the highest projector -- f -- to all angular momenta
+        # instead of projecting it. libecpint's own XML library carries a
+        # zero placeholder for exactly this (ecp10mdf.xml: local at lval=4),
+        # and :func:`emit_ecp_sidecar` already writes one (#207).
+        exponents.append(1.0)
+        coefficients.append(0.0)
+        ams.append(local_ell)
+        ns.append(2)
 
     return LibecpintInlineArrays(
         exponents=tuple(exponents),
@@ -1015,7 +1038,8 @@ _BREDOW_AE_TO_ECP_KEYS: dict[str, list[str]] = {
 _BREDOW_CITATIONS = {
     "pob-tzvp": (
         "Peintinger, Vilela Oliveira, Bredow. J. Comput. Chem. 34, 451-459 "
-        "(2013). DOI: 10.1002/jcc.23153"
+        "(2013). DOI: 10.1002/jcc.23153; Rb-I: Laun, Vilela Oliveira, Bredow. "
+        "J. Comput. Chem. 39, 1285-1290 (2018). DOI: 10.1002/jcc.25195"
     ),
     "pob-tzvp-rev2": (
         "Vilela Oliveira, Laun, Peintinger, Bredow. J. Comput. Chem. 40, "

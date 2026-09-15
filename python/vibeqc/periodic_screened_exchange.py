@@ -312,11 +312,10 @@ def build_exchange_blocks(
 
     def _on_density_cells(K_set, scale: float):
         # Align the builder's K(g) with ``D_real.cells`` by cell key. The
-        # two lists coincide today; under LatticeSumOptions.pair_complete_1e
-        # (#429) the density rides the longer pair-complete one-electron
-        # list and the builder keeps the plain |g| ball, where K is zero
-        # beyond its own support by its own truncation. A builder cell the
-        # density does not carry is a bookkeeping error and raises.
+        # physical pair mode carries exchange on its extended output list;
+        # caller-supplied density ordering can differ from the native order.
+        # A builder cell the density does not carry is a bookkeeping error
+        # and raises; extra density cells receive zero outside the operator.
         built = {
             tuple(int(v) for v in np.asarray(cell.index).reshape(3)): blk
             for cell, blk in zip(K_set.cells, K_set.blocks)

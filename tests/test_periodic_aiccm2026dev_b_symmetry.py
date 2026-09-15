@@ -38,6 +38,10 @@ from vibeqc.symmetry_lattice import lattice_to_cartesian_rotation
 
 @pytest.fixture(scope="module", params=[2, 3])
 def chi_snapshot_fixture(request):
+    return _run_chi_snapshot(request.param)
+
+
+def _run_chi_snapshot(n_kpoints, *, physical_pairs=False):
     # Two equivalent He atoms: two occupied and two virtual 6-31G bands.
     # The half-cell translation squares to a lattice translation at nonzero k.
     system = vq.PeriodicSystem(3, np.diag([8., 16., 16.]), [
@@ -47,12 +51,40 @@ def chi_snapshot_fixture(request):
     options = vq.PeriodicRHFOptions()
     options.conv_tol_energy = 1e-11
     options.conv_tol_grad = 1e-10
+    options.lattice_opts.pair_complete_1e = physical_pairs
     with pytest.warns(AICCM2026DevBExperimentalWarning):
         result = run_aiccm2026dev_b_rhf(
-            system, basis, (request.param, 1, 1), options=options, progress=False,
+            system, basis, (n_kpoints, 1, 1), options=options, progress=False,
         )
     assert result.converged
     return system, basis, result
+
+
+@pytest.fixture(scope="module", params=[2, 3])
+def physical_chi_snapshot_fixture(request):
+    import vibeqc.pbc_bipole as driver
+
+    build = driver.build_bipole_restricted_fock
+    contexts = []
+
+    def full_direct_build(context, density, **kwargs):
+        # Check the executed builder, including every SCF iteration and the
+        # terminal density rebuild. A reconstructed Fock cannot qualify #62.
+        assert context.lat_opts_2e.pair_complete_1e
+        assert context.fock_sym_map is None
+        assert context.rep_cell_indices is None
+        if contexts:
+            assert context is contexts[0]
+        else:
+            contexts.append(context)
+        return build(context, density, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(driver, "build_bipole_restricted_fock", full_direct_build)
+        case = _run_chi_snapshot(request.param, physical_pairs=True)
+    assert len(contexts) == 1
+    assert case[2].sr_image_domain_policy == "m5-physical-pair-midpoint-erfc/v1"
+    return case, contexts[0]
 
 
 def _chi_snapshot(case, **kwargs):
@@ -186,7 +218,9 @@ def test_chi_snapshot_actual_multik_native_masked_sewing(chi_snapshot_fixture, f
             np.testing.assert_allclose(sewing.sewing_copy(subspace), expected, rtol=0, atol=1e-10)
 
 
-def test_chi_snapshot_does_not_certify_geometric_half_translation(chi_snapshot_fixture):
+def test_chi_snapshot_does_not_certify_geometric_half_translation(
+    chi_snapshot_fixture, record_property,
+):
     # #704/D131: displaced nuclear-image support repairs the odd-mesh case.
     # The even-mesh case retains a separate finite-support residual.
     # Neither a passing geometric D129 group nor a single sewing operation
@@ -202,9 +236,12 @@ def test_chi_snapshot_does_not_certify_geometric_half_translation(chi_snapshot_f
         ao[2:, :2] = np.eye(2)
         ao[:2, 2:] = phase*np.eye(2)
         f, s, c, e = state.fock(k), state.overlap(k), state.coefficients(k), state.orbital_energies(k)
-        assert np.max(np.abs(f@c-s@c@np.diag(e))) < 1e-9
+        stationarity = float(np.max(np.abs(f@c-s@c@np.diag(e))))
+        record_property(f"k{k}_Roothaan_max_abs", stationarity)
+        assert stationarity < 1e-9
         assert np.max(np.abs(ao.conj().T@s@ao-s)) < 1e-8
         residual = np.max(np.abs(ao.conj().T@f@ao-f))
+        record_property(f"k{k}_legacy_F_covariance_max_abs", float(residual))
         if state.n_kpoints == 2:
             assert 1e-8 < residual < 1e-6
             with pytest.raises(ValueError, match="transported target Roothaan"):
@@ -216,6 +253,118 @@ def test_chi_snapshot_does_not_certify_geometric_half_translation(chi_snapshot_f
             )
             assert sewing.full_ao_scope_audited
             assert not sewing.physical_source_symmetry_certified
+
+
+def _half_translation_actions(n_kpoints):
+    actions = []
+    for k in range(n_kpoints):
+        action = np.zeros((4, 4), complex)
+        action[2:, :2] = np.eye(2)
+        action[:2, 2:] = np.exp(-2j*np.pi*k/n_kpoints)*np.eye(2)
+        actions.append(action)
+    return actions
+
+
+def _physical_chi_jk_components(context, density, density_k):
+    import vibeqc.pbc_bipole_fock as fock_module
+    from vibeqc.pbc_bipole_common import _bloch_sum_blocks_multi_k
+
+    assert context.fock_sym_map is None and context.rep_cell_indices is None
+    assert context.lat_opts_2e.pair_complete_1e
+    assert not context.exact_j_for_pure_rks
+    np.testing.assert_allclose(fock_module.split_k_density_list(context, density), density_k,
+                               rtol=0, atol=1e-10)
+
+    def fold(lattice):
+        return _bloch_sum_blocks_multi_k(
+            lattice.blocks, lattice.cells, context.k_points,
+        )
+
+    sr_build = fock_module._sr_image_padded_jk
+    sr = []
+
+    def capture_sr(*args, **kwargs):
+        result = sr_build(*args, **kwargs)
+        # Copy the native outputs before the Fock builder reuses J's storage.
+        # Return the original result unchanged, with its execution metadata.
+        sr.append((fold(result.J), fold(result.K)))
+        return result
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(fock_module, "_sr_image_padded_jk", capture_sr)
+        full = fock_module.build_bipole_restricted_fock(
+            context, density, coeffs_for_rho=None, use_incremental=False,
+        )
+    assert len(sr) == 1
+    j_sr, k_sr = sr[0]
+    direct = fold(full.f2e_real)
+    j = [a+.5*b for a, b in zip(direct, k_sr)]
+    # Inspect the executed finite operator, not an independent energy oracle.
+    # A separate J-only build could choose different screened quartets.
+    # Keep reciprocal exchange and its q=0 transfer separate so cancellation
+    # between them cannot conceal a covariance defect.
+    c_zero = context.xi_madelung - np.pi/(
+        context.ewald_cell_volume*context.n_k*context.omega_used**2
+    )
+    zero = [c_zero*s@d@s for s, d in zip(context.s_k_list, density_k)]
+    correction = full.k_corr_per_k
+    assert correction is not None
+    return dict(
+        J=j, J_SR=j_sr, J_LR_background=[a-b for a, b in zip(j, j_sr)],
+        K_SR=k_sr, K_zero=zero,
+        K_LR=[a-b for a, b in zip(correction, zero)],
+        F2e=[a-.5*b for a, b in zip(direct, correction)],
+    )
+
+
+def test_physical_chi_raw_components_and_density_equivariance(
+    physical_chi_snapshot_fixture, record_property,
+):
+    case, context = physical_chi_snapshot_fixture
+    _, _, result = case
+    actions = _half_translation_actions(context.n_k)
+    density_k = [2*c[:, :2]@c[:, :2].conj().T for c in result.mo_coeffs]
+    components = _physical_chi_jk_components(context, result.density, density_k)
+    raw_fock = [h+v for h, v in zip(result.hcore, components["F2e"])]
+    np.testing.assert_allclose(raw_fock, result.fock, rtol=0, atol=1e-8)
+    for name, blocks in dict(S=result.overlap, H=result.hcore,
+                             F_raw=raw_fock, **components).items():
+        hermiticity = max(float(np.max(np.abs(a-a.conj().T))) for a in blocks)
+        record_property(name+"_hermiticity_max_abs", hermiticity)
+        assert hermiticity < 1e-8, (name, hermiticity)
+        residual = max(float(np.max(np.abs(u.conj().T@a@u-a)))
+                       for u, a in zip(actions, blocks))
+        record_property(name+"_half_translation_max_abs", residual)
+        assert residual < 1e-8, (name, residual)
+
+    rng = np.random.default_rng(62)
+    trial = []
+    for k in range(context.n_k):
+        panel = rng.normal(size=(4, 4))
+        if context.n_k == 3 and k == 1:
+            panel = panel + 1j*rng.normal(size=(4, 4))
+        trial.append(panel@panel.conj().T/8.)
+    if context.n_k == 3:
+        trial[-1] = trial[1].conj()
+    image = [u@d@u.conj().T for u, d in zip(actions, trial)]
+    assert max(np.max(np.abs(a-b)) for a, b in zip(trial, image)) > .1
+    responses = []
+    for matrices in (trial, image):
+        # Explicit character inverse, including the conjugate nonzero-k pair.
+        # Apply it on the actual retained density support, without pruning.
+        blocks = [sum(np.exp(-2j*np.pi*k*int(cell.index[0])/context.n_k)*d
+                      for k, d in enumerate(matrices))/context.n_k
+                  for cell in result.density.cells]
+        assert max(np.max(np.abs(block.imag)) for block in blocks) < 1e-12
+        density = vq._vibeqc_core.make_lattice_matrix_set(
+            4, list(result.density.cells), [block.real for block in blocks],
+        )
+        responses.append(_physical_chi_jk_components(context, density, matrices))
+    for name in responses[0]:
+        residual = max(float(np.max(np.abs(b-u@a@u.conj().T)))
+                       for a, b, u in zip(responses[0][name], responses[1][name], actions))
+        record_property(name+"_density_equivariance_max_abs", residual)
+        assert residual < 1e-8, (name, residual)
 
 
 @pytest.mark.parametrize("cutoff", [15.0, 16.1, 30.0])
@@ -2091,9 +2240,28 @@ def test_occupied_group_memory_work_admission_and_input_mutations(occupied_actio
 @pytest.mark.parametrize("subspace", ["correlated_occupied","virtual"])
 @pytest.mark.parametrize("spatial", ["inversion","half_translation"])
 def test_chi_snapshot_shared_state_bridge_and_whole_group(chi_snapshot_fixture,subspace,spatial):
+    _audit_chi_snapshot_group(chi_snapshot_fixture, subspace, spatial,
+                              legacy_half_translation_defect=True)
+
+
+@pytest.mark.parametrize("subspace", ["correlated_occupied", "virtual"])
+def test_physical_chi_snapshot_half_translation_group(
+    physical_chi_snapshot_fixture, subspace,
+):
+    # The opt-in physical finite operator must pass the same sewing, Seitz
+    # cocycle, static-Fock and selected-space checks as the odd legacy mesh.
+    # Keep the two-point legacy refusal as a separate negative control.
+    case, _ = physical_chi_snapshot_fixture
+    _audit_chi_snapshot_group(case, subspace, "half_translation",
+                              legacy_half_translation_defect=False)
+
+
+def _audit_chi_snapshot_group(
+    chi_snapshot_fixture, subspace, spatial, *, legacy_half_translation_defect,
+):
     from vibeqc.symmetry_shared import Budget, FiniteGroup, audit_group_transport, audit_periodic_state_subspace
     from vibeqc.symmetry_shared import audit_periodic_state_group, audit_selected_group_transport
-    from vibeqc.symmetry_shared import OperatorContract, audit_group_operators
+    from vibeqc.symmetry_shared import OperatorContract, audit_group_operators, audit_selected_operators
     system,basis,_ = chi_snapshot_fixture
     state = _chi_snapshot(chi_snapshot_fixture).state
     core = vq._vibeqc_core
@@ -2114,7 +2282,8 @@ def test_chi_snapshot_shared_state_bridge_and_whole_group(chi_snapshot_fixture,s
         native = core._make_periodic_ao_bloch_operation(
             np.ascontiguousarray(rotations[op],dtype=np.int32),np.array([.5*(op%2),0.,0.]))
         options,inventory,caps = _chi_sewing_controls()
-        if spatial == "half_translation" and state.n_kpoints == 2 and op == 1:
+        if (legacy_half_translation_defect and spatial == "half_translation"
+                and state.n_kpoints == 2 and op == 1):
             # Existing finite-support failure: geometry and group algebra
             # cannot override the actual state's transported stationarity.
             with pytest.raises(ValueError,match="transported target Roothaan"):
@@ -2164,6 +2333,12 @@ def test_chi_snapshot_shared_state_bridge_and_whole_group(chi_snapshot_fixture,s
             tolerance=1e-8,probe_identity="chi native snapshot static Fock",budget=budget)
         assert operator_result.passed_probe and operator_result.parent is parent
         assert not operator_result.production_reduction_authorized
+        if parent is bound:
+            reducing = audit_selected_operators(operator_result,selected,covariance_tolerance=1e-8,
+                leakage_tolerance=1e-8,probe_identity="chi native selected Fock leakage",budget=budget)
+            assert reducing.passed_probe and reducing.parent is operator_result
+            assert reducing.selection.parent.state is state
+            assert not reducing.production_reduction_authorized
     np.testing.assert_array_equal(bound.group_transport.destinations,dest)
     changed_row = (bridges[1][0],bridges[0][1])+bridges[1][2:]
     changed = (bridges[0],changed_row)+tuple(bridges[2:])

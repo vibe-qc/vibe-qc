@@ -924,7 +924,7 @@ Descriptor-range admission covers descriptor work, while constructing and
 evaluating domains requires separate admission. Tiny complete-quartet tests
 compare arbitrary complex-density J/K recontractions against independent
 SR/LR/zero components and the zero-mode overlap identities. These are component
-validation tests, not a new production HF contraction driver. Native whole-walk
+validation tests, not a new production HF contraction driver. Production whole-walk
 admission, HF traversal, S/T/V and nuclear terms, and full group certification
 remain open before representative-only correlation can consume this policy.
 
@@ -949,6 +949,24 @@ component, not a production HF builder. Its policy hash records the physical
 owner's declaration; the reducer does not independently regenerate geometric
 supports, prove pair reversal or validate a space group. S/T/V, nuclear Ewald,
 HF gauge matching and the production correlation connection remain required.
+
+The private physical owner's `plan_jk` and `contract_jk` now connect that
+stream to the physical-domain producer for one target k and a full-grid
+complex density. Before scanning or copying the density or evaluating any
+integrals, the admission pass visits every ordered AO quartet and preflights
+every required native panel. Its shared budget counts both geometry passes,
+the complete numerical work reservation, replicas and the simultaneous
+stream/domain/panel storage. A late-quartet refusal therefore cannot leave a
+partially evaluated J/K action.
+
+Execution replays one domain and one singleton panel at a time and sends each
+panel directly to the native reducer. The controls are snapshotted, the
+producer's panel caps are narrowed to the stream reservation, and a compact
+digest checks the complete domain replay before finalization. Only a finalized
+native result is returned. There is no all-quartet cache, Python integral
+contraction, or production symmetry certificate. This closes the private
+physical producer/reducer connection; matching the production HF operator and
+connecting representative-only correlation remain open.
 
 The Bloch kernel can optionally require exact image-multiset closure under
 all eight real-ERI quartet permutations and first-cell reanchoring. The

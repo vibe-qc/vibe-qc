@@ -90,7 +90,8 @@ class TestCASSCFGradientH2:
     """H2/6-31G CAS(2,2) n_core=0."""
 
     @pytest.fixture(scope="class")
-    def data(self):
+    @classmethod
+    def data(cls):
         mol = Molecule([Atom(1, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.4])])
         basis = BasisSet(mol, "6-31g")
         C_hf = get_hf_orbital_provider(mol, basis)
@@ -215,7 +216,8 @@ class TestCASSCFGradientH2O:
     """H2O/STO-3G CAS(4,4) n_core=1 -- core-active coupling."""
 
     @pytest.fixture(scope="class")
-    def data(self):
+    @classmethod
+    def data(cls):
         mol = Molecule(
             [
                 Atom(8, [0, 0, 0.117]),
@@ -331,7 +333,8 @@ class TestCASSCFGradientSA:
     """H2O/STO-3G SA2-CAS(4,4) n_core=1 — state-averaged gradient."""
 
     @pytest.fixture(scope="class")
-    def data(self):
+    @classmethod
+    def data(cls):
         mol = Molecule(
             [
                 Atom(8, [0, 0, 0.117]),

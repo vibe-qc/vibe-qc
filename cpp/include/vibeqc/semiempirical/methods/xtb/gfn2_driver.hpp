@@ -154,8 +154,11 @@ inline double gfn2_reference_occupation(int Z, int l) {
 // ``electronic_temperature`` unset. Default-on frontier smearing keeps the
 // SCC on one occupation branch when the Gamma frontier of a metallic cell
 // crosses on a lattice sweep; the Bannwarth-Ehlert-Grimme 2019 Fermi term
-// A = E - T*S is then the reported Mermin free energy. The molecular drivers
-// ignore this constant: their default remains exact zero-temperature Aufbau.
+// A = E - T*S is then the reported Mermin free energy. The molecular driver
+// ignores this constant: its primary SCC attempt runs at the requested
+// temperature (exact zero-temperature Aufbau by default). Only its
+// auto-stabilisation ladder may retry at a finite temperature, and only when
+// no temperature was requested explicitly (vibe-qc#3).
 inline constexpr double kPeriodicGFN2DefaultElectronicTemperature = 0.001;
 
 struct XTBSccOptions {
@@ -178,11 +181,15 @@ struct XTBSccOptions {
     double electronic_temperature = 0.0;  // finite-T occupations (Ha), 0 = Aufbau
 
     // True when ``electronic_temperature`` was set explicitly (the pybind
-    // property setter marks it). The periodic GFN2-xTB drivers smear the
-    // frontier by ``kPeriodicGFN2DefaultElectronicTemperature`` when this
-    // flag is false, and honour ``electronic_temperature`` exactly (0 = exact
-    // Aufbau) when it is true. The molecular drivers ignore the flag, so
-    // their default remains exact zero-temperature Aufbau.
+    // property setter marks it on any assignment, including 0.0). The
+    // periodic GFN2-xTB drivers smear the frontier by
+    // ``kPeriodicGFN2DefaultElectronicTemperature`` when this flag is false,
+    // and honour ``electronic_temperature`` exactly (0 = exact Aufbau) when it
+    // is true. The molecular driver's primary attempt always uses the value as
+    // given; its auto-stabilisation ladder may fall back to a finite-
+    // temperature rung only when this flag is false, and honours an explicit
+    // value on every rung (vibe-qc#3). The executed temperature is reported in
+    // GFN2Result::smearing_temperature.
     bool electronic_temperature_explicit = false;
 
     bool auto_stabilize = true;      // retry hard Γ³ SCC failures with safer settings

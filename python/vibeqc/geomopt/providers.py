@@ -234,6 +234,8 @@ class MolecularSCFProvider:
         if self._method == "roks":
             from ..roks import ROKSOptions
             self._roks_options = self._roks_options or ROKSOptions()
+            from ..runner import apply_ks_grid_default
+            apply_ks_grid_default(self._roks_options, self._grid_level)
             return self._roks_options
         if self._method == "rhf":
             self._rhf_options = self._rhf_options or RHFOptions()
@@ -307,6 +309,7 @@ class MolecularSCFProvider:
             cas_reference=self._cas_reference,
             solvent=self._solvent,
             read_from=read_from,
+            grid_level=self._grid_level,
         )
         # The high-level wrapper may have attached an XML or inline basis
         # sidecar during this first call. Record its atom mapping once, then
@@ -530,6 +533,7 @@ class MolecularSCFProvider:
                 cas_reference=self._cas_reference,
                 solvent=self._solvent,
                 dispersion_params=self._dispersion_params,
+                grid_level=self._grid_level,
             )
             grad = _gradient_via_central_difference(
                 molecule,
@@ -555,6 +559,7 @@ class MolecularSCFProvider:
                 solvent=self._solvent,
                 dispersion_params=self._dispersion_params,
                 step_bohr=self._fd_step_bohr,
+                grid_level=self._grid_level,
             )
         return e, np.asarray(grad, dtype=float).ravel()
 

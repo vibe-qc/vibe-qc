@@ -3,6 +3,7 @@
 #include <string>
 
 #include "vibeqc/init.hpp"
+#include "vibeqc/lattice_pair_cells.hpp"
 #include "vibeqc/schwarz.hpp"
 #include "vibeqc/thread_pool.hpp"
 
@@ -129,31 +130,55 @@ class DenseCellTable {
 public:
     DenseCellTable() = default;
     DenseCellTable(const Eigen::Vector3i& lo, const Eigen::Vector3i& hi)
-        : lo_(lo),
-          dims_((hi - lo) + Eigen::Vector3i::Ones()),
-          pos_(static_cast<std::size_t>(dims_[0]) *
-                   static_cast<std::size_t>(dims_[1]) *
-                   static_cast<std::size_t>(dims_[2]),
-               -1) {}
+        : lo_(lo.cast<long long>()),
+          dims_(hi.cast<long long>() - lo_ + WideIndex::Ones()) {
+        // Disconnected physical pair neighborhoods can have a huge empty
+        // bounding box. Keep the dense fast path bounded and store only
+        // present labels when that box would exceed its memory budget.
+        constexpr std::size_t entry_budget = 16 * 1024 * 1024 / sizeof(int);
+        std::size_t entries = 1;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (dims_[axis] <= 0 ||
+                static_cast<unsigned long long>(dims_[axis]) > entry_budget / entries) {
+                sparse_ = true;
+                return;
+            }
+            entries *= static_cast<std::size_t>(dims_[axis]);
+        }
+        pos_.assign(entries, -1);
+    }
 
     // Entries outside the box are silently dropped: the box is built to
     // contain every reachable query, so such entries are unreachable —
     // exactly like a map entry that is never looked up.
     void insert(const Eigen::Vector3i& h, int value) {
+        if (sparse_) {
+            if (in_bounds(h)) sparse_pos_[h] = value;
+            return;
+        }
         const std::ptrdiff_t flat = flatten(h);
         if (flat >= 0) pos_[static_cast<std::size_t>(flat)] = value;
     }
 
     int at(const Eigen::Vector3i& h) const {
+        if (sparse_) {
+            const auto found = sparse_pos_.find(h);
+            return found == sparse_pos_.end() ? -1 : found->second;
+        }
         const std::ptrdiff_t flat = flatten(h);
         return (flat < 0) ? -1 : pos_[static_cast<std::size_t>(flat)];
     }
 
 private:
+    using WideIndex = Eigen::Matrix<long long, 3, 1>;
+    bool in_bounds(const Eigen::Vector3i& h) const {
+        const WideIndex position = h.cast<long long>() - lo_;
+        return (position.array() >= 0).all() && (position.array() < dims_.array()).all();
+    }
     std::ptrdiff_t flatten(const Eigen::Vector3i& h) const {
-        const int a = h[0] - lo_[0];
-        const int b = h[1] - lo_[1];
-        const int c = h[2] - lo_[2];
+        const long long a = static_cast<long long>(h[0]) - lo_[0];
+        const long long b = static_cast<long long>(h[1]) - lo_[1];
+        const long long c = static_cast<long long>(h[2]) - lo_[2];
         if (a < 0 || b < 0 || c < 0 ||
             a >= dims_[0] || b >= dims_[1] || c >= dims_[2]) {
             return -1;
@@ -161,9 +186,11 @@ private:
         return (static_cast<std::ptrdiff_t>(a) * dims_[1] + b) * dims_[2] + c;
     }
 
-    Eigen::Vector3i lo_ = Eigen::Vector3i::Zero();
-    Eigen::Vector3i dims_ = Eigen::Vector3i::Zero();
+    WideIndex lo_ = WideIndex::Zero();
+    WideIndex dims_ = WideIndex::Zero();
     std::vector<int> pos_;
+    bool sparse_ = false;
+    CellIndexMap sparse_pos_;
 };
 
 // Componentwise index bounds of a cell list (empty list -> zero box).
@@ -632,6 +659,21 @@ JKMatrices build_jk_gamma_molecular_limit(const BasisSet& basis,
             "build_jk_gamma_molecular_limit: omega must be non-negative");
     }
 
+    if (opts.pair_complete_1e) {
+        const auto cells = pair_complete_eri_cells(system, opts, shells_ref);
+        LatticeMatrixSet density;
+        density.nbf = nbf;
+        density.cells = cells;
+        density.blocks.assign(cells.size(), P);
+        const auto lattice = build_jk_2e_real_space(basis, system, opts, density, omega);
+        JKMatrices result{Eigen::MatrixXd::Zero(nbf, nbf), Eigen::MatrixXd::Zero(nbf, nbf)};
+        for (const auto& block : lattice.J.blocks) result.J += block;
+        for (const auto& block : lattice.K.blocks) result.K += block;
+        result.J = 0.5 * (result.J + result.J.transpose()).eval();
+        result.K = 0.5 * (result.K + result.K.transpose()).eval();
+        return result;
+    }
+
     // Cell list shared between both lattice-index sums. Consistent with
     // Phase 12a's convention that cutoff_bohr bounds the μν real-space
     // sum; the two indices share the same cell lattice here because in
@@ -1054,13 +1096,25 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
     constexpr double LN_STAGE1_MARGIN = 1e-6;
     std::vector<std::vector<double>> lnQ;
     std::vector<Eigen::MatrixXd> lnDpair_per_block;
-    if (charge_bounds.enabled()) {
+    if (charge_bounds.enabled() || (screen && opts.pair_complete_1e)) {
         lnQ = Q;
         for (auto& row : lnQ)
             for (auto& value : row) value = std::log(value);
         for (const auto& density : Dpair_per_block)
             lnDpair_per_block.push_back(density.array().log().matrix());
     }
+    const double interaction_cutoff = eri_interaction_cutoff(opts);
+    const auto physical_quartet = [&](int g, int lam, int sig, std::size_t s1,
+                                      std::size_t s2, std::size_t s3, std::size_t s4,
+                                      bool exchange) {
+        if (!opts.pair_complete_1e) return true;
+        const auto& a = shells_ref[s1];
+        const auto& b = shells_at[g][s2];
+        const auto& c = shells_at[lam][s3];
+        const auto& d = shells_at[sig][s4];
+        return exchange ? pair_products_in_range(a, c, b, d, opts.cutoff_bohr, interaction_cutoff)
+                        : pair_products_in_range(a, b, c, d, opts.cutoff_bohr, interaction_cutoff);
+    };
     const auto charge_skip = [&](int g, int lam, int sig, std::size_t s1,
                                  std::size_t s2, std::size_t s3, std::size_t s4,
                                  double density, bool exchange) {
@@ -1092,7 +1146,7 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
 
     // Pair-specific lattice selection, PDR (1988), Ch. II.4b(iii),
     // doi:10.1007/978-3-642-93385-1. The finite domain remains caller-owned.
-    bool sparse = screen && omega > 0.0 && opts.sr_sparse_traversal
+    bool sparse = screen && (omega > 0.0 || opts.pair_complete_1e) && opts.sr_sparse_traversal
         && std::isfinite(omega) && std::isfinite(D_max)
         && std::all_of(Q_max.begin(), Q_max.end(), [](double q) {
             return std::isfinite(q) && q >= 0.0;
@@ -1301,10 +1355,12 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
         std::size_t a, b;
         double q, density, log_weight;
     };
-    bool pair_traversal = sparse && charge_bounds.enabled() && n_c > 0 && n_c <= 16384
+    bool pair_traversal = sparse && (charge_bounds.enabled() || opts.pair_complete_1e)
+        && n_c > 0 && n_c <= 16384
         && nshells > 0 && nshells <= 256
         && gamma_density == nullptr && !density_derivative
         && bipolar_skip_mask.empty();
+    const bool pair_traversal_attempted = pair_traversal;
     const double pair_density_max = pair_traversal && !d_block_max.empty()
         ? *std::max_element(d_block_max.begin(), d_block_max.end()) : 0.0;
     std::vector<ShellPairEntry> coulomb_pairs;
@@ -1331,6 +1387,8 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
             const int p = p_cell_index.at(cells[h].index);
             for (std::size_t a = 0; a < nshells && pair_traversal; ++a) {
                 for (std::size_t b = 0; b < nshells; ++b) {
+                    if (opts.pair_complete_1e &&
+                        !pair_in_range(shells_ref[a], shells_at[h][b], opts.cutoff_bohr)) continue;
                     const double q = Q[h][a * nshells + b];
                     if (q <= 0.0) continue;
                     if (compute_exchange && q * max_q * pair_density_max * 0.5 >= schwarz_thr) {
@@ -1373,6 +1431,9 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
         return j || k;
     };
     std::vector<std::uint8_t> pair_outputs_done(n_out, 0);
+    std::vector<std::uint8_t> output_traversal(n_out, 0);
+    std::uint64_t pair_fallback_outputs =
+        pair_traversal_attempted && !pair_traversal ? n_out : 0;
     if (pair_traversal) {
         const auto origin = [](const libint2::Shell& shell) {
             return Eigen::Vector3d(shell.O[0], shell.O[1], shell.O[2]);
@@ -1418,6 +1479,8 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                 const auto s2 = static_cast<std::size_t>(pair) % nshells;
                 if (mask_oi && (*mask_oi)[pair] == 0) continue;
                 const auto& shells_g = shells_at[c_g];
+                if (opts.pair_complete_1e && !compute_exchange &&
+                    !pair_in_range(shells_ref[s1], shells_g[s2], opts.cutoff_bohr)) continue;
                 auto& J_g = J_set.blocks[c_g];
                 auto& K_g = K_set.blocks[c_g];
                 std::uint64_t seen = 0, possible = 0, visited = 0;
@@ -1449,6 +1512,7 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                 bool complete = true;
                 const auto append = [&](int lam, int sig, std::size_t s3,
                                         std::size_t s4, bool exchange) {
+                    if (!physical_quartet(c_g, lam, sig, s1, s2, s3, s4, exchange)) return true;
                     if (work.size() == max_work) return false;
                     // Reserve once per active worker, without initializing
                     // unused entries. Reuse avoids repeated growth copies
@@ -1473,9 +1537,12 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                     const int h = ket.cell;
                     // C13(lambda) C24(sigma-g) bounds the integral. The
                     // second factor never exceeds its zero-distance ceiling.
-                    const double required = schwarz_thr * (1.0 - 1e-12) /
-                        (ket.density * charge_bounds.ceiling(s2, s4));
-                    double radius = charge_bounds.radius(s1, s3, required);
+                    double radius = std::numeric_limits<double>::infinity();
+                    if (charge_bounds.enabled()) {
+                        const double required = schwarz_thr * (1.0 - 1e-12) /
+                            (ket.density * charge_bounds.ceiling(s2, s4));
+                        radius = charge_bounds.radius(s1, s3, required);
+                    }
                     if (radius < 0.0) continue;
                     Eigen::Vector3d center = origin(shells_ref[s1]) - origin(shells_ref[s3]);
                     if (product_bounds.enabled()) {
@@ -1489,6 +1556,11 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                             radius = product_radius;
                             center = bra_product.center - ket_product.center;
                         }
+                    }
+                    if (opts.pair_complete_1e && interaction_cutoff < radius) {
+                        radius = interaction_cutoff;
+                        center = 0.5 * (origin(a) + origin(b) - origin(shells_ref[s3])
+                                        - origin(shells_at[h][s4]));
                     }
                     complete = range_index.visit(center, radius + query_slack, [&](int lam) {
                         const int sig = cell_pos_table.at(cells[lam].index + cells[h].index);
@@ -1509,13 +1581,25 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                         const int lam = bra.cell;
                         const auto s3 = bra.b;
                         const int p_minus_g = cell_pos_table.at(cells[lam].index - cells[c_g].index);
-                        const double c23 = charge_bounds.at(p_minus_g, s2, s3);
+                        const double c23 = charge_bounds.enabled()
+                            ? charge_bounds.at(p_minus_g, s2, s3) : 0.0;
                         for (std::size_t s4 = 0; s4 < nshells; ++s4) {
                             // The cross-pair bound is C14(sigma) C23(lambda-g).
-                            const double radius = charge_bounds.radius(s1, s4,
-                                schwarz_thr * (1.0 - 1e-12) / (0.5 * pair_density_max * c23));
+                            double radius = charge_bounds.enabled()
+                                ? charge_bounds.radius(s1, s4,
+                                    schwarz_thr * (1.0 - 1e-12) / (0.5 * pair_density_max * c23))
+                                : std::numeric_limits<double>::infinity();
                             if (radius < 0.0) continue;
-                            const Eigen::Vector3d center = origin(shells_ref[s1]) - origin(shells_ref[s4]);
+                            Eigen::Vector3d center = origin(a) - origin(shells_ref[s4]);
+                            if (opts.pair_complete_1e && opts.cutoff_bohr < radius) {
+                                radius = opts.cutoff_bohr;
+                                center = origin(b) - origin(shells_ref[s4]);
+                            }
+                            if (opts.pair_complete_1e && 2.0 * interaction_cutoff < radius) {
+                                radius = 2.0 * interaction_cutoff;
+                                center = origin(a) + origin(shells_at[lam][s3])
+                                       - origin(b) - origin(shells_ref[s4]);
+                            }
                             const auto accept_sigma = [&](int sig) {
                                 const int t = cell_pos_table.at(cells[sig].index - cells[c_g].index);
                                 if (t < 0) return true;
@@ -1563,7 +1647,8 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                     const auto bf1 = shell2bf[s1], bf2 = shell2bf[s2];
                     const auto bf3 = shell2bf[s3], bf4 = shell2bf[s4];
                     if (exchange) {
-                        engine.compute2<libint2::Operator::erfc_coulomb, libint2::BraKet::xx_xx, 0>(a, c, b, d,
+                        if (omega == 0.0) engine.compute(a, c, b, d);
+                        else engine.compute2<libint2::Operator::erfc_coulomb, libint2::BraKet::xx_xx, 0>(a, c, b, d,
                             bra_pairs[tid].get(n_c * nshells + s1, lam * nshells + s3, a, c),
                             ket_pairs[tid].get(c_g * nshells + s2, sig * nshells + s4, b, d));
                         if (const double* block = buf[0])
@@ -1574,7 +1659,8 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                                 K_g(bf1 + i, bf2 + j) += density(bf3 + k, bf4 + l)
                                     * block[((i * n3 + k) * n2 + j) * n4 + l];
                     } else {
-                        engine.compute2<libint2::Operator::erfc_coulomb, libint2::BraKet::xx_xx, 0>(a, b, c, d,
+                        if (omega == 0.0) engine.compute(a, b, c, d);
+                        else engine.compute2<libint2::Operator::erfc_coulomb, libint2::BraKet::xx_xx, 0>(a, b, c, d,
                             bra_pairs[tid].get(n_c * nshells + s1, c_g * nshells + s2, a, b),
                             ket_pairs[tid].get(lam * nshells + s3, sig * nshells + s4, c, d));
                         if (const double* block = buf[0])
@@ -1594,11 +1680,13 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                 const int oi = batch_begin + local;
                 if (complete_outputs[local].load(std::memory_order_relaxed)) {
                     pair_outputs_done[oi] = 1;
+                    output_traversal[oi] = 1;
                     triples_considered += seen_counts[local].load(std::memory_order_relaxed);
                     triples_possible += possible_counts[local].load(std::memory_order_relaxed);
                     quartets_considered += visited_counts[local].load(std::memory_order_relaxed);
                 } else {
                     // Workers have joined before incomplete outputs restart.
+                    ++pair_fallback_outputs;
                     const int c_g = use_subset ? output_indices[oi] : oi;
                     J_set.blocks[c_g].setZero();
                     K_set.blocks[c_g].setZero();
@@ -1659,6 +1747,7 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
             });
         }
         const bool use_bitmap = !candidate_bits.empty();
+        output_traversal[oi] = (use_candidates || use_bitmap) ? 2 : 3;
         const std::size_t count = use_candidates ? candidates.size()
             : use_bitmap ? bitmap_count : n_c * n_c;
         triples_considered += count;
@@ -1789,7 +1878,7 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                             }
 
                             // -- J piece -----------------------------
-                            bool do_J = true;
+                            bool do_J = physical_quartet(c_g, c_lam, c_sig, s1, s2, s3, s4, false);
                             if (screen) {
                                 if (c_h_idx < 0) {
                                     do_J = false;
@@ -1861,7 +1950,7 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
 
                             // -- K piece (exchange) -----------------
                             if (compute_exchange) {
-                                bool do_K = true;
+                                bool do_K = physical_quartet(c_g, c_lam, c_sig, s1, s2, s3, s4, true);
                                 if (screen) {
                                     if (c_kh_idx < 0) {
                                         do_K = false;
@@ -1988,22 +2077,75 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
             }
         }
     }
-    return JKLatticeMatrixSets{
+    auto result = JKLatticeMatrixSets{
         std::move(J_set), std::move(K_set),
         std::move(J_gamma), std::move(K_gamma),
         std::move(J_density_derivative),
         std::move(K_density_derivative), triples_considered, triples_possible,
         quartets_considered};
+    result.shell_pair_outputs = std::count(output_traversal.begin(), output_traversal.end(), 1);
+    result.cell_sparse_outputs = std::count(output_traversal.begin(), output_traversal.end(), 2);
+    result.exhaustive_outputs = std::count(output_traversal.begin(), output_traversal.end(), 3);
+    result.shell_pair_fallback_outputs = pair_fallback_outputs;
+    result.cell_sparse_fallback_outputs = sparse ? result.exhaustive_outputs : 0;
+    result.charge_screening_available = charge_bounds.enabled();
+    result.product_screening_available = product_bounds.enabled();
+    return result;
 }
+
+namespace {
+
+JKLatticeMatrixSets build_jk_automatic_domain(
+        const BasisSet& basis, const PeriodicSystem& system,
+        const LatticeSumOptions& opts, const LatticeMatrixSet& density,
+        bool exchange, double omega, const std::vector<int>& subset = {},
+        const std::vector<std::vector<uint8_t>>& masks = {}) {
+    if (!opts.pair_complete_1e) {
+        const auto cells = direct_lattice_cells(system, opts.cutoff_bohr);
+        return build_jk_2e_real_space_impl(
+            basis, system, opts, density, cells, exchange, omega, subset, masks);
+    }
+    const auto internal = pair_complete_eri_cells(system, opts, basis.libint());
+    const auto& outputs = internal;
+    const auto positions = build_cell_index_map(internal);
+    std::vector<int> selected = subset;
+    if (selected.empty()) {
+        selected.resize(outputs.size());
+        std::iota(selected.begin(), selected.end(), 0);
+    }
+    std::vector<int> mapped;
+    mapped.reserve(selected.size());
+    for (int output : selected) {
+        if (output < 0 || static_cast<std::size_t>(output) >= outputs.size())
+            throw std::invalid_argument("build_jk_2e_real_space: output index outside pair domain");
+        mapped.push_back(positions.at(outputs[output].index));
+    }
+    auto result = build_jk_2e_real_space_impl(
+        basis, system, opts, density, internal, exchange, omega, mapped, masks);
+    // Exchange output and contracting density can extend beyond either
+    // integral product. Preserve the full physical quartet enclosure.
+    const auto trim = [&](LatticeMatrixSet& set) {
+        std::vector<Eigen::MatrixXd> blocks;
+        blocks.reserve(outputs.size());
+        for (const auto& cell : outputs)
+            blocks.push_back(std::move(set.blocks[positions.at(cell.index)]));
+        set.cells = outputs;
+        set.blocks = std::move(blocks);
+    };
+    trim(result.J);
+    trim(result.K);
+    return result;
+}
+
+}  // namespace
 
 JKLatticeMatrixSets build_jk_2e_real_space(const BasisSet& basis,
                                            const PeriodicSystem& system,
                                            const LatticeSumOptions& opts,
                                            const LatticeMatrixSet& P_real_space,
                                            double omega) {
-    const auto cells = direct_lattice_cells(system, opts.cutoff_bohr);
-    return build_jk_2e_real_space_impl(
-        basis, system, opts, P_real_space, cells, true, omega);
+    return build_jk_automatic_domain(
+        basis, system, opts, P_real_space, true, omega);
 }
 
 JKLatticeMatrixSets build_jk_2e_real_space_explicit(
@@ -2031,9 +2173,8 @@ JKLatticeMatrixSets build_jk_2e_real_space_output_subset(
         const LatticeMatrixSet& P_real_space,
         const std::vector<int>& output_indices,
         double omega) {
-    const auto cells = direct_lattice_cells(system, opts.cutoff_bohr);
-    return build_jk_2e_real_space_impl(
-        basis, system, opts, P_real_space, cells, true, omega, output_indices);
+    return build_jk_automatic_domain(
+        basis, system, opts, P_real_space, true, omega, output_indices);
 }
 
 // Phase SYM3b shell-pair mask: like build_jk_2e_real_space_output_subset, but
@@ -2053,9 +2194,8 @@ JKLatticeMatrixSets build_jk_2e_real_space_output_subset_masked(
         const std::vector<int>& output_indices,
         const std::vector<std::vector<uint8_t>>& output_shell_masks,
         double omega) {
-    const auto cells = direct_lattice_cells(system, opts.cutoff_bohr);
-    return build_jk_2e_real_space_impl(
-        basis, system, opts, P_real_space, cells, true, omega, output_indices,
+    return build_jk_automatic_domain(
+        basis, system, opts, P_real_space, true, omega, output_indices,
         output_shell_masks);
 }
 
@@ -2094,6 +2234,10 @@ JKLatticeMatrixSets build_jk_2e_real_space_bipolar_dispatch(
     //
     // Pisani-Dovesi-Roetti (1988), Ch. II.4c, is the expansion source.
     // The skip-mask mechanism and classifier are implementation prototypes.
+    if (opts.pair_complete_1e) {
+        throw std::invalid_argument(
+            "The radial bipolar skip mask does not describe the physical pair domain");
+    }
     const auto cells = direct_lattice_cells(system, opts.cutoff_bohr);
     return build_jk_2e_real_space_impl(
         basis, system, opts, P_real_space, cells, compute_exchange, omega,
@@ -2170,13 +2314,12 @@ LatticeMatrixSet build_fock_2e_real_space(const BasisSet& basis,
         throw std::runtime_error(
             "build_fock_2e_real_space: omega must be non-negative");
     }
-    const auto cells = direct_lattice_cells(system, opts.cutoff_bohr);
     if (!need_exchange) {
-        return build_jk_2e_real_space_impl(
-            basis, system, opts, P_real_space, cells, false, omega).J;
+        return build_jk_automatic_domain(
+            basis, system, opts, P_real_space, false, omega).J;
     }
-    JKLatticeMatrixSets jk = build_jk_2e_real_space_impl(
-        basis, system, opts, P_real_space, cells, true, omega);
+    JKLatticeMatrixSets jk = build_jk_automatic_domain(
+        basis, system, opts, P_real_space, true, omega);
     for (std::size_t c = 0; c < jk.J.blocks.size(); ++c) {
         jk.J.blocks[c] -= 0.5 * exchange_scale * jk.K.blocks[c];
     }
@@ -2201,6 +2344,29 @@ JKMatrices build_jk_gamma_molecular_limit_explicit(
         throw std::runtime_error("build_jk_gamma_molecular_limit_explicit: density shape mismatch");
     if (omega < 0.0)
         throw std::runtime_error("build_jk_gamma_molecular_limit_explicit: omega must be non-negative");
+
+    if (opts.pair_complete_1e) {
+        LatticeMatrixSet density;
+        density.nbf = nbf;
+        CellIndexMap positions;
+        const auto add_density_cell = [&](const Eigen::Vector3i& index) {
+            if (positions.emplace(index, static_cast<int>(density.cells.size())).second) {
+                density.cells.push_back(LatticeCell{index, system.lattice * index.cast<double>()});
+                density.blocks.push_back(P);
+            }
+        };
+        for (const auto& cell : cells) add_density_cell(cell.index);
+        for (const auto& a : cells)
+            for (const auto& b : cells) add_density_cell(b.index - a.index);
+        const auto lattice = build_jk_2e_real_space_impl(
+            basis, system, opts, density, cells, true, omega);
+        JKMatrices result{Eigen::MatrixXd::Zero(nbf, nbf), Eigen::MatrixXd::Zero(nbf, nbf)};
+        for (const auto& block : lattice.J.blocks) result.J += block;
+        for (const auto& block : lattice.K.blocks) result.K += block;
+        result.J = 0.5 * (result.J + result.J.transpose()).eval();
+        result.K = 0.5 * (result.K + result.K.transpose()).eval();
+        return result;
+    }
 
     const libint2::Operator op = (omega > 0.0)
         ? libint2::Operator::erfc_coulomb
@@ -2338,6 +2504,11 @@ std::vector<PairJKContribution> build_jk_pair_contributions(
         const LatticeSumOptions& opts,
         const Eigen::MatrixXd& P,
         double omega) {
+    if (opts.pair_complete_1e) {
+        throw std::invalid_argument(
+            "build_jk_pair_contributions: physical quartet support requires "
+            "the three-image domains API; the two-image decomposition is unsupported");
+    }
     ensure_libint_initialized();
 
     const auto& shells_ref = basis.libint();

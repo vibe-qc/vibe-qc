@@ -295,7 +295,8 @@ class TestOracleSTO3G:
     """CC2 / CCD / LCCD / LCCSD vs the live spin-orbital oracle."""
 
     @pytest.fixture(scope="class")
-    def h2o(self):
+    @classmethod
+    def h2o(cls):
         mol, basis, rhf = _system("sto-3g")
         f_so, eri, no, nv = _so_setup(mol, basis, rhf)
         return mol, basis, rhf, f_so, eri, no, nv
@@ -394,7 +395,8 @@ class TestCEPAOrcaParity:
     """CEPA(1)/(2)/(3) pinned to out-of-process ORCA RI-CEPA/n."""
 
     @pytest.fixture(scope="class")
-    def h2o(self):
+    @classmethod
+    def h2o(cls):
         return _system("def2-svp")
 
     @pytest.mark.parametrize(
@@ -440,7 +442,8 @@ class TestQCISDOrcaParity:
     """QCISD/QCISD(T) pinned to out-of-process ORCA RI-QCISD(T)."""
 
     @pytest.fixture(scope="class")
-    def h2o(self):
+    @classmethod
+    def h2o(cls):
         return _system("def2-svp")
 
     def test_qcisd_matches_orca(self, h2o):
@@ -467,7 +470,8 @@ class TestQCISDOrcaParity:
 
 class TestVariantStructure:
     @pytest.fixture(scope="class")
-    def h2o(self):
+    @classmethod
+    def h2o(cls):
         return _system("sto-3g")
 
     def test_lccsd_is_cepa0(self, h2o):
@@ -691,7 +695,8 @@ class TestBracketTriples:
     """
 
     @pytest.fixture(scope="class")
-    def h2o(self):
+    @classmethod
+    def h2o(cls):
         mol, basis, rhf = _system("sto-3g")
         f_so, eri, no, nv = _so_setup(mol, basis, rhf)
         return mol, basis, rhf, f_so, eri, no, nv
@@ -872,7 +877,8 @@ class TestRunJobRouting:
 
 class TestGates:
     @pytest.fixture(scope="class")
-    def h2o(self):
+    @classmethod
+    def h2o(cls):
         return _system("sto-3g")
 
     def test_triples_with_variant_raises(self, h2o):

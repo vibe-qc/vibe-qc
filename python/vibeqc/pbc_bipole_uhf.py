@@ -100,6 +100,7 @@ from .pbc_bipole_common import (
     smearing_basin_warning,
 )
 from .pbc_bipole_fock import (
+    _sr_density_cells,
     BipoleFockContext,
     BipoleUnrestrictedFockBuild,
     build_bipole_unrestricted_fock,
@@ -712,7 +713,7 @@ def run_pbc_bipole_uhf(
         plog=plog,
     )
 
-    if exchange_split_active:
+    if exchange_split_active or lat_opts_2e.pair_complete_1e:
         if _pair_mode:
             # M3: pair-resolved density support (see run_pbc_bipole_rhf).
             cells_density = list(_fock_sym_map.density_domain.cells)
@@ -722,12 +723,12 @@ def run_pbc_bipole_uhf(
             )
         else:
             cells_density = list(
-                direct_lattice_cells(
-                    system, 2.0 * float(lat_opts_2e.cutoff_bohr)
-                )
+                _sr_density_cells(basis, system, lat_opts_2e, _sr_image_extent)
             )
             plog.info(
-                f"  density cell list: {len(cells_density)} cells (2x cutoff)"
+                f"  density cell list: {len(cells_density)} cells "
+                + ("(physical exchange density support)" if lat_opts_2e.pair_complete_1e
+                   else "(2x cutoff)")
             )
     else:
         cells_density = cells
@@ -1041,8 +1042,7 @@ def run_pbc_bipole_uhf(
                 ),
                 omega_used,
                 ewald_precision,
-                K_max=ewald_k_max,
-            )
+                K_max=ewald_k_max, lattice_opts=lat_opts_2e)
         elif j_lr_cache is None:
             cells_r_cart_arr = np.array(
                 [np.asarray(c.r_cart, dtype=float) for c in cells],
@@ -1054,8 +1054,7 @@ def run_pbc_bipole_uhf(
                 cells_r_cart_arr,
                 omega_used,
                 ewald_precision,
-                K_max=ewald_k_max,
-            )
+                K_max=ewald_k_max, lattice_opts=lat_opts_2e)
         elif j_lr_cache.ft_per_cell.shape[0] != len(cells):
             raise RuntimeError(
                 "prebuilt V_ne/J^LR cache has a different cell count "

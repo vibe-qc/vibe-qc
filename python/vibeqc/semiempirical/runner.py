@@ -292,7 +292,8 @@ class SemiempiricalResult:
         self.solvent_variant = solvent_variant
         self.electronic_temperature = float(electronic_temperature)
         self.density = density
-        # Finite-temperature (Mermin) reporting for SCC-DFTB retries.
+        # Finite-temperature (Mermin) reporting for SCC-DFTB retries and GFN2
+        # finite-temperature ladder rungs.
         # ``energy`` is the converged free energy E_free = E_internal - T*S
         # (the C++ assembly already subtracts the -T*S term at T > 0);
         # ``e_internal`` reconstructs the internal energy E_free + T*S and
@@ -548,6 +549,11 @@ def _gfn2_parameter_provenance(model) -> dict[str, Any] | None:
         "gfn2_electronic_temperature_explicit": bool(
             snapshot["electronic_temperature_explicit"]
         ),
+        # The two fields above are the request.  The default-path ladder can
+        # converge on a finite-temperature rung, so record what ran (#247).
+        "gfn2_executed_electronic_temperature": float(
+            native_result.smearing_temperature
+        ),
         "gfn2_charge_mixing": float(snapshot["charge_mixing"]),
         "gfn2_scc_mixer": str(snapshot["scc_mixer"]),
         "gfn2_mixer_memory": int(snapshot["mixer_memory"]),
@@ -698,6 +704,20 @@ def _run_molecular_semiempirical(
         energy = model.energy()
         native_result = getattr(model, "_last_result", None)
         provenance = _gfn2_parameter_provenance(model)
+        # The auto-stabilisation ladder can accept a finite-temperature rung
+        # when no temperature was requested (#3), so the executed ensemble
+        # comes from the native result, never from the requested options
+        # (#247).  At T > 0 report the Mermin free energy A = E - T*S, as the
+        # SCC-DFTB retry does, and keep E and S for the .out.
+        electronic_temperature = float(
+            getattr(native_result, "smearing_temperature", 0.0) or 0.0
+        )
+        e_internal = None
+        entropy = None
+        if electronic_temperature > 0.0:
+            e_internal = float(energy)
+            entropy = float(native_result.entropy)
+            energy = e_internal - electronic_temperature * entropy
         return SemiempiricalResult(
             energy,
             model.gradient,
@@ -705,6 +725,9 @@ def _run_molecular_semiempirical(
             converged=model.converged,
             n_iter=model.n_iter,
             mulliken_charges=getattr(native_result, "charges", None),
+            electronic_temperature=electronic_temperature,
+            e_internal=e_internal,
+            entropy=entropy,
             parameter_provenance=provenance,
             parameter_identity=getattr(
                 native_result, "parameter_identity", None

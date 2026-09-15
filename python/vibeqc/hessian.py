@@ -602,6 +602,7 @@ def compute_hessian_fd(
     *,
     scf_options=None,
     grid_options: Optional[GridOptions] = None,
+    grid_level: str = "orca-defgrid3",
     gradient_options=None,
     hessian_options: Optional[HessianFDOptions] = None,
 ) -> HessianResult:
@@ -631,9 +632,12 @@ def compute_hessian_fd(
         comes from this struct's ``functional`` field.
     grid_options :
         DFT integration grid. Forwarded to
-        :func:`compute_gradient_rks` / ``_uks``. Defaults to a
-        fresh ``GridOptions()`` for DFT methods (same default as
-        the SCF call), unused for HF.
+        :func:`compute_gradient_rks` / ``_uks``. Defaults to
+        the resolved SCF grid for DFT methods, unused for HF. An explicit
+        grid is used by both the displaced SCFs and their gradients.
+    grid_level :
+        Preset for an untouched SCF grid (default ``"orca-defgrid3"``).
+        Pass ``"legacy"`` for construction defaults; custom grid fields win.
     gradient_options :
         ``GradientOptions`` for the analytic gradient that is
         differentiated. ``None`` (the default) derives it from
@@ -671,7 +675,14 @@ def compute_hessian_fd(
                 "RKS": RKSOptions(),
                 "UKS": UKSOptions(),
             }[method_norm]
-    if grid_options is None:
+    if method_norm in {"RKS", "UKS"}:
+        from .runner import apply_ks_grid_default
+        if grid_options is not None:
+            scf_options.grid = grid_options
+        else:
+            apply_ks_grid_default(scf_options, grid_level)
+        grid_options = scf_options.grid
+    elif grid_options is None:
         grid_options = GridOptions()
 
     # A direct caller commonly supplies only an ECP-paired basis name. Attach

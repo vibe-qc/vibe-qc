@@ -31,6 +31,7 @@ import numpy as np
 import pytest
 
 import vibeqc as vq
+from vibeqc.pbc_bipole_common import ewald_erfc_lattice_options
 
 
 _BOHR_PER_A = 1.0 / 0.529177210903
@@ -289,3 +290,131 @@ def test_ewald_nuclear_support_rejects_invalid_controls(alpha, tol):
         ewald_erfc_lattice_options(
             vq.LatticeSumOptions(), alpha, tol, basis=basis, system=system,
         )
+
+
+def _midpoint_case(dim=3, relabel=0, angular=0, exponents=(.7, 1.1)):
+    lattice = np.array([[6., 1.1, .3], [0., 5.7, .4], [0., 0., 6.4]])
+    positions = np.array([[.1, .2, .3], [1.4, .3, .1], [2.2, 1.6, .4]])
+    positions[1] += relabel * lattice[:, 0]
+    system = vq.PeriodicSystem(
+        dim, lattice, [vq.Atom(z, p) for z, p in zip([1, 1, 2], positions)],
+    )
+    shells = [vq.ShellInfo(i, 0 if i == 0 else angular, False,
+                           [exponents[i]], [1.], p)
+              for i, p in enumerate(positions[:2])]
+    basis = vq.BasisSet(system.unit_cell_molecule(), shells,
+                        'midpoint-radius-custom', False)
+    opts = vq.LatticeSumOptions()
+    opts.pair_complete_1e = True
+    opts.cutoff_bohr = 8.1
+    opts.nuclear_cutoff_bohr = 8.3
+    return system, basis, opts
+
+
+@pytest.mark.parametrize('dim', [1, 2, 3])
+def test_physical_radius_ignores_atom_image_labels(dim):
+    radii = []
+    for label in (0, 5, -3):
+        system, basis, opts = _midpoint_case(dim=dim, relabel=label)
+        out = ewald_erfc_lattice_options(
+            opts, .4, 1e-10, system=system, basis=basis,
+        )
+        radii.append(out.nuclear_cutoff_bohr)
+        assert opts.nuclear_cutoff_bohr == 8.3
+        assert out.cutoff_bohr == 8.1 and out.pair_complete_1e
+    np.testing.assert_array_equal(radii, [radii[0]] * 3)
+
+
+@pytest.mark.parametrize('angular,exponents', [
+    (0, (.7, 1.1)), (1, (.14, 3.)), (2, (.12, 8.)),
+])
+def test_physical_midpoint_padding_matches_larger_energy_and_gradient_sum(angular, exponents):
+    core = vq._vibeqc_core
+    system, basis, opts = _midpoint_case(angular=angular, exponents=exponents)
+    alpha = .4
+    padded = ewald_erfc_lattice_options(
+        opts, alpha, 1e-10, system=system, basis=basis,
+    )
+    value = core.compute_nuclear_erfc_lattice(basis, system, alpha, padded)
+    nao = np.asarray(value.blocks[0]).shape[0]
+    # A fixed Gamma-periodic density exercises both diagonal and mixed shells.
+    density_block = .2 * np.eye(nao) + .03 * np.ones((nao, nao))
+    density = core.make_lattice_matrix_set(
+        nao, list(value.cells), [density_block.copy() for _ in value.cells],
+    )
+    gradient = core.nuclear_erfc_lattice_gradient_contribution(
+        basis, system, density, padded, alpha,
+    )
+    padded.nuclear_cutoff_bohr += 12.
+    extended = core.compute_nuclear_erfc_lattice(basis, system, alpha, padded)
+    extended_gradient = core.nuclear_erfc_lattice_gradient_contribution(
+        basis, system, density, padded, alpha,
+    )
+    np.testing.assert_array_equal(
+        [c.index for c in value.cells], [c.index for c in extended.cells],
+    )
+    np.testing.assert_allclose(value.blocks, extended.blocks, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(gradient, extended_gradient, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(np.sum(gradient, axis=0), 0., rtol=0, atol=1e-10)
+
+
+def test_physical_radius_preserves_an_explicit_larger_source_cutoff():
+    system, basis, opts = _midpoint_case()
+    opts.nuclear_cutoff_bohr = 80.
+    out = ewald_erfc_lattice_options(opts, .4, 1e-10, system=system, basis=basis)
+    assert out.nuclear_cutoff_bohr == opts.nuclear_cutoff_bohr == 80.
+
+
+@pytest.mark.parametrize("physical", [False, True])
+@pytest.mark.parametrize("precision", [1e-4, 1e-8, 1e-12])
+def test_ewald_nuclear_energy_gradient_share_requested_image_precision(
+    monkeypatch, physical, precision,
+):
+    """Inspect both real call boundaries before any integral or SCF work.
+
+    A nondefault tolerance must select the same nuclear image domain in
+    the energy and its fixed-density derivative, for both domain policies.
+    """
+    from types import SimpleNamespace
+    import vibeqc.bipole_gradient as gradients
+    import vibeqc.pbc_bipole_common as common
+
+    system, basis, opts = _midpoint_case()
+    opts.pair_complete_1e = physical
+    alpha = 0.4
+    captured = {}
+
+    class BoundaryReached(Exception):
+        pass
+
+    def energy_boundary(basis_arg, system_arg, alpha_arg, options):
+        assert basis_arg is basis and system_arg is system and alpha_arg == alpha
+        captured["energy"] = options
+        raise BoundaryReached
+
+    def gradient_boundary(basis_arg, system_arg, density_arg, options, alpha_arg):
+        assert basis_arg is basis and system_arg is system and alpha_arg == alpha
+        captured["gradient"] = options
+        raise BoundaryReached
+
+    monkeypatch.setattr(common, "compute_nuclear_erfc_lattice", energy_boundary)
+    monkeypatch.setattr(
+        gradients, "nuclear_erfc_lattice_gradient_contribution", gradient_boundary,
+    )
+    with pytest.raises(BoundaryReached):
+        common._compute_nuclear_lattice_ewald_reciprocal_ft(
+            basis, system, opts, SimpleNamespace(alpha=alpha), None,
+            precision=precision,
+        )
+    with pytest.raises(BoundaryReached):
+        gradients._v_ne_ewald_gradient(
+            system, basis, SimpleNamespace(cells=[], blocks=[]), opts, alpha,
+            precision=precision,
+        )
+    assert captured["gradient"].nuclear_cutoff_bohr == pytest.approx(
+        captured["energy"].nuclear_cutoff_bohr, abs=1e-12, rel=0,
+    )
+    for options in captured.values():
+        assert options.cutoff_bohr == opts.cutoff_bohr
+        assert options.pair_complete_1e is physical
+    assert opts.nuclear_cutoff_bohr == 8.3

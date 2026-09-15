@@ -240,6 +240,7 @@ class CorrectedEwaldExchange:
         where: str,
         slab_mode: bool = False,
         precision: float = 1.0e-8,
+        lattice_opts=None,
     ) -> "CorrectedEwaldExchange":
         """Construct the reciprocal cache and the ``q + G = 0`` constant.
 
@@ -318,6 +319,7 @@ class CorrectedEwaldExchange:
             float(alpha),
             float(precision),
             K_max=k_max,
+            lattice_opts=lattice_opts,
         )
         k_cache = build_k_exchange_long_range_cache(
             basis, system, j_cache, K_max=k_max

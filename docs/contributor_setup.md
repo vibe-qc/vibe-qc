@@ -125,14 +125,14 @@ incremental-rebuild loop above.
 
 ## Pre-commit hook
 
-[`CONTRIBUTING.md` § Pre-commit hook](CONTRIBUTING.md) covers
-activation. The hook enforces the privacy / personal-info hygiene
-rules from [`../CLAUDE.md` § 12](CLAUDE.md), author home paths,
-private LAN IPs, and private employer names get blocked at commit
-time so they never reach the public branch. The hook is a single
-short-running script; never bypass it with `--no-verify` unless the
-maintainer explicitly asks (see [`../CLAUDE.md` § 2](CLAUDE.md)
-on hooks).
+[CONTRIBUTING: pre-commit hook](contributing.md#pre-commit-hook-one-time-setup)
+covers activation. The hook enforces the current
+[personal-information policy](contributing.md#personal-information): author
+home paths, private LAN IPs and the employer string are blocked at commit
+time. The [prose policy](contributing.md#documentation-prose) also rejects
+em and en dashes outside its documented exemptions. Never bypass hooks with
+`--no-verify`; follow the
+[branch and checkout policy](contributing.md#branch-and-checkout-policy).
 
 For website and companion documentation work, follow the
 [site publishing and CSS export contract](site_publishing.md).
@@ -142,10 +142,9 @@ For website and companion documentation work, follow the
 * [`installation.md`](installation.md), full per-platform recipe,
   build prerequisites, BLAS-backend selection, verifying the
   install with the banner.
-* [`../CONTRIBUTING.md`](CONTRIBUTING.md), where to report
+* [`../CONTRIBUTING.md`](contributing.md), where to report
   what, MR / patch flow, pre-commit hook activation.
-* [`../CLAUDE.md`](CLAUDE.md), project-level standing rules:
-  branch model, multi-chat coordination, citation discipline,
-  privacy hygiene.
+* [Current contributor policies](contributing.md#branch-and-checkout-policy),
+  branch and checkout rules, privacy hygiene and documentation prose.
 * [`release_process.md`](release_process.md), branch model in
   depth, release procedure, Patch-candidate trailer.

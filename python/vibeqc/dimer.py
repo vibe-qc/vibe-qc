@@ -380,6 +380,7 @@ def _build_force_fn(
     roks_options: Any,
     gradient_options: Any,
     grid_options: Any,
+    grid_level: str = "orca-defgrid3",
     dispersion_params: Any,
     mlip_options: Any,
     kmesh: Any,
@@ -461,12 +462,12 @@ def _build_force_fn(
             from .runner import _apply_grid_level
 
             rks_options = RKSOptions()
-            _apply_grid_level(rks_options.grid, "orca-defgrid3")
+            _apply_grid_level(rks_options.grid, grid_level)
         elif method_lower == "uks" and uks_options is None:
             from .runner import _apply_grid_level
 
             uks_options = UKSOptions()
-            _apply_grid_level(uks_options.grid, "orca-defgrid3")
+            _apply_grid_level(uks_options.grid, grid_level)
 
         _mf_opts = {
             "rhf": rhf_options,
@@ -500,6 +501,7 @@ def _build_force_fn(
                 grid_options=grid_options,
                 dispersion_params=dispersion_params,
                 fd_step_bohr=fd_step_bohr,
+                grid_level=grid_level,
             )
             return e, -np.asarray(grad, dtype=float)
 
@@ -529,6 +531,7 @@ def run_dimer(
     roks_options: Any = None,
     gradient_options: Any = None,
     grid_options: Any = None,
+    grid_level: str = "orca-defgrid3",
     dispersion_params: Any = None,
     mlip_options: Any = None,
     kpoints: Optional[Any] = None,
@@ -700,6 +703,7 @@ def run_dimer(
         kmesh=kmesh,
         fd_step_bohr=fd_step_bohr,
         dft_plus_u=dft_plus_u,
+        grid_level=grid_level,
     )
 
     (R, N, curvature, energy, max_force, converged, n_iter, n_evals) = _dimer_search(

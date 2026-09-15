@@ -103,7 +103,8 @@ class TestLocalDFExactness:
     """Full fit domain reproduces the global RI / canonical RI-MP2."""
 
     @pytest.fixture(scope="class")
-    def h2o(self):
+    @classmethod
+    def h2o(cls):
         return _system(H2O_ATOMS)
 
     def test_full_domain_canonical_occupieds(self, h2o):

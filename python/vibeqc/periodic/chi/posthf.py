@@ -1477,6 +1477,11 @@ def run_aiccm2026dev_b_dlpno_mp2(
             tcut_mkn=1e-3,
             tcut_pairs=0.0,
             tcut_pairs_weak=0.0,
+            # #65 moved the molecular default to pno_norm="mp2". This
+            # B-stream reference pins its pre-sweep convention, and
+            # tcut_pno only means what the density it was cut against
+            # means, so the density is pinned with the thresholds.
+            pno_norm="legacy",
         )
         if dlpno_options is None
         else dlpno_options
@@ -1609,6 +1614,14 @@ def _run_aiccm2026dev_b_dlpno_cc(
             coupling_radius=0.0,
             residual_domain="pair",
             compute_triples=with_triples,
+            # #65 moved the molecular default to pno_norm="mp2". This
+            # B-stream reference pins its pre-sweep convention, and
+            # tcut_pno only means what the density it was cut against
+            # means, so the density is pinned with the thresholds.
+            pno_norm="legacy",
+            # ... and predates the semicanonical MP2 PNO correction the
+            # molecular CCSD route now applies, so that stays off too.
+            pno_correction=False,
         )
         if cc_options is None
         else cc_options

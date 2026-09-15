@@ -175,6 +175,7 @@ def _fake_native_result(params: _xtb.GFN2ParameterSet) -> SimpleNamespace:
         converged=True,
         energy=-1.0,
         n_iter=3,
+        smearing_temperature=0.0,
         parameter_identity=params.parameter_identity(),
         parameter_sha256=params.content_sha256(),
     )

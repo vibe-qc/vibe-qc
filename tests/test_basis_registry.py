@@ -55,6 +55,7 @@ def test_canonical_name_accepts_a_basisset_object():
         ("def2-tzvp", "def2", "orbital", False, 36),
         ("def2-mtzvpp", "def2-3c", "orbital", False, 36),
         ("pob-tzvp-rev2", "pob-tzvp-rev2", "orbital", False, 36),
+        ("pob-tzvp", "pob-tzvp", "orbital", False, 36),
         ("cc-pvtz-pp", "cc-pp", "orbital", False, 28),
         ("lanl2dz", "sidecar-ecp", "orbital", False, None),
         ("def2-svp-rifit", "fitting", "fitting", False, None),
@@ -189,7 +190,9 @@ def test_pp_family_has_no_default_jk():
             default_aux_basis(name, "jk")
 
 
-@pytest.mark.parametrize("name", ["pob-tzvp-rev2", "def2-msvp", "def2-mtzvp", "def2-mtzvpp"])
+@pytest.mark.parametrize(
+    "name", ["pob-tzvp-rev2", "pob-tzvp", "def2-msvp", "def2-mtzvp", "def2-mtzvpp"]
+)
 def test_valence_only_bases_with_shipped_sidecars_have_data(name):
     [req] = ecp_requirements(name, [1, 47])
     assert (req.symbol, req.n_core, req.has_data) == ("Ag", 28, True)
@@ -255,7 +258,7 @@ def test_every_registered_default_fit_ships():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["pob-tzvp-rev2", "def2-msvp", "def2-mtzvp"])
+@pytest.mark.parametrize("name", ["pob-tzvp-rev2", "pob-tzvp", "def2-msvp", "def2-mtzvp"])
 def test_valence_only_bases_attach_their_ecp_on_heavy_atoms(name):
     """Pre-fix these ran 48 electrons into a 19-valence-electron silver
     block without any error (measured 2026-09-05)."""

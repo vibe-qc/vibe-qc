@@ -47,7 +47,10 @@ END = "scf_final_density_end"
 CONV_TOL_ENERGY = 1e-8
 
 
-def _run(progress, max_iter: int = 40, use_diis: bool = True, driver: str = "rhf"):
+def _run(
+    progress, max_iter: int = 40, use_diis: bool = True,
+    driver: str = "rhf", options=None,
+):
     import importlib
     from vibeqc._vibeqc_core import PeriodicKSOptions
 
@@ -55,7 +58,9 @@ def _run(progress, max_iter: int = 40, use_diis: bool = True, driver: str = "rhf
     system = vq.PeriodicSystem(3, lattice, [vq.Atom(2, [0.0, 0.0, 0.0])])
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(system, [2, 1, 1], use_symmetry=False)
-    opts = PeriodicKSOptions() if driver in ("rks", "uks") else PeriodicRHFOptions()
+    opts = options
+    if opts is None:
+        opts = PeriodicKSOptions() if driver in ("rks", "uks") else PeriodicRHFOptions()
     if driver in ("rks", "uks"):
         opts.functional = "pbe0"
     opts.lattice_opts.cutoff_bohr = 5.0
@@ -347,3 +352,86 @@ def test_last_iteration_refusal_reuses_the_exact_operator(monkeypatch, tmp_path,
     final_begin = next(e for e in events if e.get("event") == BEGIN)
     assert final_begin["reused"] is True
     assert final_begin["converged"] is False
+
+
+@pytest.mark.parametrize("driver", ["rks", "uks"])
+@pytest.mark.parametrize("max_iter", [1, 40], ids=["capped", "converged"])
+def test_final_density_reuses_xc_from_exact_fock(monkeypatch, driver, max_iter):
+    """XC quadrature belongs to the exact build, including a capped return."""
+    import importlib
+    from contextlib import contextmanager
+
+    module = importlib.import_module("vibeqc.pbc_bipole_" + driver)
+    name = "build_xc_periodic" + ("_uks" if driver == "uks" else "")
+    original_xc = getattr(module, name)
+    original_phase = module.bipole_final_density_phase
+    final_density_complete = False
+    energies = []
+
+    @contextmanager
+    def observed_phase(*args, **kwargs):
+        nonlocal final_density_complete
+        with original_phase(*args, **kwargs):
+            yield
+        final_density_complete = True
+
+    def observed_xc(*args, **kwargs):
+        assert not final_density_complete, (
+            "XC was recomputed after final-density Fock evaluation"
+        )
+        xc = original_xc(*args, **kwargs)
+        energies.append(float(xc.e_xc))
+        return xc
+
+    monkeypatch.setattr(module, "bipole_final_density_phase", observed_phase)
+    monkeypatch.setattr(module, name, observed_xc)
+    result = _run(False, driver=driver, max_iter=max_iter)
+    assert final_density_complete
+    assert bool(result.converged) is (max_iter > 1)
+    assert energies
+    assert result.e_xc == pytest.approx(energies[-1], rel=0.0, abs=1e-14)
+    rendered = vq.format_scf_trace(result, include_banner=False)
+    xc_line = next(line for line in rendered.splitlines()
+                   if "Exchange-correlation (XC)" in line)
+    assert float(xc_line.split()[-1]) == pytest.approx(result.e_xc, abs=5e-10)
+
+
+@pytest.mark.parametrize("driver", ["rks", "uks"])
+@pytest.mark.parametrize("radius", [3.0, 8.0])
+@pytest.mark.parametrize("periodic_grid", [True, False])
+def test_auto_xc_uses_the_configured_periodic_grid_image_radius(
+    monkeypatch, driver, radius, periodic_grid,
+):
+    """AUTO density selection must not leave the XC bra radius at its default."""
+    import importlib
+    from vibeqc import _vibeqc_core as core
+
+    module = importlib.import_module("vibeqc.pbc_bipole_" + driver)
+    options = core.PeriodicKSOptions()
+    options.use_periodic_becke = periodic_grid
+    options.becke_image_radius_bohr = radius
+    options.lattice_opts.becke_image_radius_bohr = 1.25
+    options.grid.n_radial = 8
+    options.grid.n_theta = 5
+    options.grid.n_phi = 8
+    grid_radii = []
+    xc_radii = []
+    original_grid = module.build_periodic_becke_grid
+    xc_name = "build_xc_periodic" + ("_uks" if driver == "uks" else "")
+    original_xc = getattr(module, xc_name)
+
+    def observed_grid(*args, **kwargs):
+        grid_radii.append(kwargs["image_radius_bohr"])
+        return original_grid(*args, **kwargs)
+
+    def observed_xc(*args, **kwargs):
+        assert args[-1] == core.PeriodicXCDensityDomain.AUTO
+        xc_radii.append(args[-2].becke_image_radius_bohr)
+        return original_xc(*args, **kwargs)
+
+    monkeypatch.setattr(module, "build_periodic_becke_grid", observed_grid)
+    monkeypatch.setattr(module, xc_name, observed_xc)
+    _run(False, driver=driver, max_iter=1, options=options)
+    assert grid_radii == ([radius] if periodic_grid else [])
+    assert xc_radii
+    assert xc_radii == [radius if periodic_grid else 1.25] * len(xc_radii)

@@ -544,6 +544,48 @@ def test_real_if_hermitian_non_hermitian_warns():
     assert any("non-Hermitian" in str(w.message) for w in wl)
 
 
+def _hermitian_k_stack(nk, n=6, seed=7):
+    """``(nk, n, n)`` stack of complex Hermitian blocks with O(1) imaginary
+    off-diagonals -- a per-k periodic density (``List[np.ndarray]``) after
+    ``np.asarray``."""
+    rng = np.random.default_rng(seed)
+    A = rng.normal(size=(nk, n, n)) + 1j * rng.normal(size=(nk, n, n))
+    return A + A.conj().swapaxes(-1, -2)
+
+
+@pytest.mark.parametrize("nk", [1, 2, 6])
+def test_real_if_hermitian_per_k_stack_is_quiet(nk):
+    """Each k-block is Hermitian, so the check must adjoint the AO axes only.
+    ``P.conj().T`` has one branch per case against these n = 6 blocks:
+    nk = 1 broadcast (1, n, n) against (n, n, 1) and warned on an exactly
+    Hermitian density; nk = 2 (nk != n) raised ValueError; nk = 6 (nk == n)
+    broadcast, compared unrelated entries and warned."""
+    import warnings
+
+    from vibeqc.properties import _real_if_hermitian
+
+    P = _hermitian_k_stack(nk)
+    with warnings.catch_warnings(record=True) as wl:
+        warnings.simplefilter("always")
+        out = _real_if_hermitian(list(P))
+    assert not wl
+    assert out.shape == (nk, 6, 6)
+    np.testing.assert_array_equal(out, P.real)
+
+
+def test_real_if_hermitian_per_k_stack_warns_on_one_bad_block():
+    import warnings
+
+    from vibeqc.properties import _real_if_hermitian
+
+    P = _hermitian_k_stack(2)
+    P[1, 0, 1] += 0.5j  # breaks Hermiticity in the second k-block only
+    with warnings.catch_warnings(record=True) as wl:
+        warnings.simplefilter("always")
+        _real_if_hermitian(list(P))
+    assert any("non-Hermitian" in str(w.message) for w in wl)
+
+
 def test_periodic_complex_density_properties_no_warning_and_match_real():
     """dipole / Mulliken / Mayer on a complex-but-Hermitian density emit no
     ComplexWarning and equal the real-density values (regression guard for
@@ -730,3 +772,198 @@ def test_nuclear_charges_keyword_defaults_to_bare_z_and_validates_shape():
         dipole_moment(res, basis, mol, nuclear_charges=[8.0, 1.0])
     with pytest.raises(ValueError, match="one entry per atom"):
         mulliken_charges(res, basis, mol, nuclear_charges=[8.0])
+
+
+# ---------------------------------------------------------------------------
+# Canonical AO-to-atom map (GitLab #205 follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _oh_cc_pvdz_pure_and_cartesian():
+    """cc-pVDZ on OH, as bundled (pure) and rebuilt Cartesian.
+
+    The d shell is the only one whose count differs: 5 pure spherical
+    harmonics vs 6 Cartesian products, so nbasis goes 19 -> 20. Every
+    other shell is s or p, where the two conventions agree.
+    """
+    mol = vq.Molecule([vq.Atom(8, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 0.0, 1.8])], 0, 2)
+    pure = vq.BasisSet(mol, "cc-pVDZ")
+    return mol, pure, _as_cartesian(mol, pure)
+
+
+def _as_cartesian(molecule, pure: "vq.BasisSet") -> "vq.BasisSet":
+    """Rebuild ``pure`` shell for shell with the Cartesian convention."""
+    return vq.BasisSet(
+        molecule,
+        [
+            vq.ShellInfo(
+                shell.atom_index,
+                shell.l,
+                False,
+                shell.exponents,
+                shell.coefficients,
+                shell.origin,
+            )
+            for shell in pure.shells()
+        ],
+        "cc-pVDZ-cartesian",
+        True,
+    )
+
+
+def _ao_to_atom_helpers():
+    """Every basis-only AO-to-atom map in the tree.
+
+    All of them now delegate to ``properties._shell_to_atom``; this list
+    is what keeps a future copy from drifting back out of sync. Anything
+    that maps AOs to atoms from ``basis.shells()`` alone belongs here.
+    ``localization._ao_metadata`` derives the same map but also needs a
+    periodic system and translations, so it is covered separately by
+    :func:`test_ao_metadata_atom_map_is_the_canonical_one`.
+    """
+    from vibeqc.bands import _shell_to_atom as bands_map
+    from vibeqc.bond_analysis import _shell_to_atom as bond_map
+    from vibeqc.nbo import _shell_to_atom as nbo_map
+    from vibeqc.output.formats.population import _basis_ao_to_atom as population_map
+    from vibeqc.periodic.chi.localization import (
+        _reference_atom_indices as chi_reference_map,
+    )
+    from vibeqc.periodic.chi.properties import _ao_atom_indices as chi_properties_map
+    from vibeqc.properties import _shell_to_atom as properties_map
+
+    return {
+        "properties": properties_map,
+        "bands": bands_map,
+        "bond_analysis": bond_map,
+        "nbo": nbo_map,
+        "output.formats.population": population_map,
+        "periodic.chi.localization": chi_reference_map,
+        "periodic.chi.properties": chi_properties_map,
+    }
+
+
+def test_ao_to_atom_map_length_matches_nbasis_pure_and_cartesian():
+    """Every AO-to-atom map spans the full basis in both conventions.
+
+    A map derived as ``2l+1`` per shell is silently one entry short for
+    each d shell of a Cartesian basis, which misaligns (rather than
+    raises on) the per-atom sums built from it. Asserting the length
+    against ``nbasis`` catches exactly that.
+    """
+    _mol, pure, cartesian = _oh_cc_pvdz_pure_and_cartesian()
+
+    # Guard the fixture itself: if these ever coincide the test is vacuous.
+    assert pure.nbasis == 19
+    assert cartesian.nbasis == 20
+    assert any(int(shell.l) == 2 for shell in pure.shells())
+
+    for name, helper in _ao_to_atom_helpers().items():
+        for label, basis in (("pure", pure), ("cartesian", cartesian)):
+            ao_to_atom = helper(basis)
+            assert len(ao_to_atom) == basis.nbasis, (
+                f"{name} AO-to-atom map has {len(ao_to_atom)} entries for the "
+                f"{label} basis, expected nbasis={basis.nbasis}"
+            )
+            # Both atoms must actually own AOs, and no index may dangle.
+            assert set(int(a) for a in ao_to_atom) == {0, 1}
+
+
+def test_ao_to_atom_maps_agree_across_modules():
+    """The four helpers are one derivation, not four that happen to agree."""
+    _mol, pure, cartesian = _oh_cc_pvdz_pure_and_cartesian()
+    helpers = _ao_to_atom_helpers()
+    reference = helpers["properties"]
+
+    for basis in (pure, cartesian):
+        expected = np.asarray(reference(basis), dtype=np.int64)
+        for name, helper in helpers.items():
+            np.testing.assert_array_equal(
+                np.asarray(helper(basis), dtype=np.int64),
+                expected,
+                err_msg=f"{name} disagrees with properties._shell_to_atom",
+            )
+
+
+def test_bond_analysis_shell_to_atom_returns_plain_int_list():
+    """bond_analysis indexes the map in a scalar loop; keep it a list."""
+    from vibeqc.bond_analysis import _shell_to_atom
+
+    _mol, pure, _cartesian = _oh_cc_pvdz_pure_and_cartesian()
+    ao_to_atom = _shell_to_atom(pure)
+    assert isinstance(ao_to_atom, list)
+    assert all(type(a) is int for a in ao_to_atom)
+
+
+def test_wiberg_bond_orders_on_cartesian_basis():
+    """End-to-end: a Cartesian SCF must survive per-atom partitioning.
+
+    This is the failure the consolidation fixes -- bond_analysis used to
+    build a 19-entry map for a 20-function basis and walk off the end of
+    it. A custom-named basis has no SAD data, hence the HCORE guess.
+    """
+    from vibeqc.bond_analysis import wiberg_bond_orders
+    from vibeqc.properties import mulliken_charges
+
+    mol, _pure, cartesian = _oh_cc_pvdz_pure_and_cartesian()
+    options = vq.UHFOptions()
+    options.initial_guess = vq.InitialGuess.HCORE
+    result = vq.run_uhf(mol, cartesian, options)
+
+    bond_orders = wiberg_bond_orders(result, cartesian, mol)
+    assert bond_orders.shape == (2, 2)
+    np.testing.assert_allclose(bond_orders, bond_orders.T, atol=1e-10)
+    # O-H is a single bond; allow a wide band since this is a shape check.
+    assert 0.3 < bond_orders[0, 1] < 1.6
+
+    # Sharper than any tolerance band: the partial charges of a neutral
+    # molecule sum to zero only if every AO was assigned to some atom.
+    # A map one entry short silently drops that AO's population instead.
+    charges = mulliken_charges(result, cartesian, mol)
+    assert charges.shape == (2,)
+    np.testing.assert_allclose(charges.sum(), 0.0, atol=1e-10)
+
+
+def test_ao_metadata_atom_map_is_the_canonical_one():
+    """``localization._ao_metadata`` partitions AOs the same way.
+
+    It is the one AO-to-atom derivation that cannot join
+    :func:`_ao_to_atom_helpers`, since it also takes a lattice and the
+    translation list. It lays shell origins into arrays sized at
+    ``nbasis``, so its own ``2l+1`` count left a tail of rows unwritten
+    on a Cartesian basis: those AOs read back as sitting at the cell
+    origin on atom 0, which is where the first atom happens to be.
+    """
+    from vibeqc.periodic.chi.localization import _ao_metadata
+    from vibeqc.properties import _shell_to_atom
+
+    lattice = np.diag([9.0, 9.5, 10.0])
+    system = vq.PeriodicSystem(
+        3,
+        lattice,
+        [vq.Atom(8, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 0.0, 1.8])],
+    )
+    molecule = system.unit_cell_molecule()
+    pure = vq.BasisSet(molecule, "cc-pVDZ")
+    cartesian = _as_cartesian(molecule, pure)
+    assert pure.nbasis == 19
+    assert cartesian.nbasis == 20
+
+    # Fractional position of each atom, to index with the atom map.
+    atom_fractional = np.asarray([[0.0, 0.0, 0.0], [0.0, 0.0, 1.8 / 10.0]])
+
+    for label, basis in (("pure", pure), ("cartesian", cartesian)):
+        fractional, atoms = _ao_metadata(
+            basis, system, np.asarray([[0, 0, 0]], dtype=int)
+        )
+        expected = _shell_to_atom(basis)
+        np.testing.assert_array_equal(
+            atoms,
+            expected,
+            err_msg=f"{label} _ao_metadata disagrees with properties._shell_to_atom",
+        )
+        # Every origin row must be written through to the last AO, not
+        # left at the zeros the array was allocated with.
+        assert fractional.shape == (basis.nbasis, 3), label
+        np.testing.assert_allclose(
+            fractional, atom_fractional[expected], atol=1.0e-12
+        )

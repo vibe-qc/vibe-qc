@@ -194,6 +194,33 @@ struct ImageBox {
                 for (auto k = lo[2]; k <= hi[2]; ++k)
                     f(lattice * Eigen::Vector3d(double(i), double(j), double(k)));
     }
+
+    template<class F> void each_capsule(
+        const Eigen::Vector3d& begin, const Eigen::Vector3d& end, double radius,
+        const Eigen::Vector3d& screen_center, double screen_radius, F&& f) const {
+        // A capsule projects onto lattice coordinate i as the interval
+        // between its endpoints, expanded by radius*|row_i(A^-1)|.
+        // The enclosing object's worst-case count remains the screening
+        // budget and admission bound. Only enumeration is tightened here.
+        const Eigen::Vector3d first = inverse * begin, last = inverse * end;
+        const Eigen::Vector3d screened = inverse * screen_center;
+        std::array<long long, 3> lo, hi;
+        for (int i = 0; i < 3; ++i) {
+            const double norm = inverse.row(i).norm();
+            double lower = std::min(first[i], last[i]) - radius * norm;
+            double upper = std::max(first[i], last[i]) + radius * norm;
+            if (std::isfinite(screen_radius)) {
+                lower = std::max(lower, screened[i] - screen_radius * norm);
+                upper = std::min(upper, screened[i] + screen_radius * norm);
+            }
+            lo[i] = static_cast<long long>(std::floor(lower)) - 1;
+            hi[i] = static_cast<long long>(std::ceil(upper)) + 1;
+        }
+        for (auto i = lo[0]; i <= hi[0]; ++i)
+            for (auto j = lo[1]; j <= hi[1]; ++j)
+                for (auto k = lo[2]; k <= hi[2]; ++k)
+                    f(lattice * Eigen::Vector3d(double(i), double(j), double(k)));
+    }
 };
 
 // Absolute shell envelope, including contractions and angular momentum.
@@ -350,11 +377,8 @@ struct ThreeCenterImageDomain {
             const double radius = error > 0.0
                 ? std::sqrt(std::max(0.0, (log_pair_bound - log_budget) / bound.decay))
                 : std::numeric_limits<double>::infinity();
-            if (std::isfinite(radius) && radius < auxiliary_cutoff + pair_cutoff / 2.0) {
-                ImageBox(system, radius, image_cap).each(product_center - P, visit);
-            } else {
-                aux_images.each((A + end) / 2.0 - P, visit);
-            }
+            aux_images.each_capsule(A - P, end - P, auxiliary_cutoff,
+                                    product_center - P, radius, visit);
             finish(r);
         };
         if (error > 0.0) {

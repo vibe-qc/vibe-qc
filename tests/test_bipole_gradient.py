@@ -11,8 +11,9 @@ RKS/UKS have maintained LDA KS-CPHF regressions; padded multi-k KS,
 pair-resolved, and fractional certification remain gated. The production
 gradient is the
 finite-difference path
-``compute_bipole_gradient_fd``, which differentiates the real total
-energy and is correct by construction.
+``compute_bipole_gradient_fd``, which differentiates converged driver
+energies. Asymmetric legacy-gauge HF SCF is unsupported; its retired
+nonstationary rows do not certify analytic or finite-difference forces.
 
 These tests therefore:
 
@@ -55,6 +56,153 @@ from vibeqc.pbc_bipole_uhf import run_pbc_bipole_uhf
 from vibeqc.periodic_gradient_multi_k import _bloch_fold_w_per_k
 
 ANG2BOHR = 1.0 / 0.529177210903
+
+
+@pytest.mark.parametrize("method", ["rks", "uks"])
+@pytest.mark.parametrize("functional", ["lda", "pbe"])
+def test_ks_gradient_nondefault_xc_radius_matches_fd(method, functional):
+    """The gradient must use the same finite AO-image sum as the SCF grid.
+
+    H3 is a doublet, so the UKS rows exercise unequal spin densities. The
+    preview's 1e-3-bohr grid-motion difference leaves a few microhartree/bohr
+    of error on this coarse H3 grid; the relaxed SCF derivative is checked
+    independently at two smaller steps. The old radius mismatch produces
+    errors above 1e-3 Ha/bohr in all four rows.
+    """
+    import importlib
+    import vibeqc.bipole_gradient as gradients
+
+    driver = getattr(
+        importlib.import_module(f"vibeqc.pbc_bipole_{method}"),
+        f"run_pbc_bipole_{method}",
+    )
+    opts = PeriodicKSOptions()
+    opts.lattice_opts.cutoff_bohr = 8.0
+    opts.lattice_opts.nuclear_cutoff_bohr = 8.0
+    opts.becke_image_radius_bohr = 3.0
+    opts.grid.n_radial = 16
+    opts.grid.n_theta = 7
+    opts.grid.n_phi = 12
+    opts.functional = functional
+    opts.max_iter = 200
+    opts.conv_tol_energy = 1e-12
+    opts.conv_tol_grad = 1e-10
+
+    def run(displacement):
+        atoms = [
+            vq.Atom(1, [0.2, 0.1, 0.0]),
+            vq.Atom(1, [1.6 + displacement, 0.1, 0.0]),
+        ]
+        if method == "uks":
+            atoms.append(vq.Atom(1, [2.4, 1.1, 0.2]))
+        system = vq.PeriodicSystem(3, 7.0 * np.eye(3), atoms)
+        if method == "uks":
+            system.multiplicity = 2
+        basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+        mesh = monkhorst_pack(system, [1, 1, 1], use_symmetry=False)
+        result = driver(
+            system, basis, mesh, opts, functional=functional,
+            ewald_omega=0.6, ewald_precision=1e-10,
+            sr_image_precision=None, use_fock_symmetry=False,
+            use_fock_symmetry_reduce=False, progress=False,
+        )
+        assert result.converged
+        return system, basis, mesh, result
+
+    system, basis, mesh, result = run(0.0)
+    with pytest.warns(UserWarning, match="preview"):
+        analytic = getattr(gradients, f"compute_bipole_gradient_{method}")(
+            system, basis, result, lattice_opts=opts.lattice_opts,
+            kmesh=mesh, grid_options=opts.grid, becke_image_radius_bohr=3.0,
+        )
+    finite_differences = []
+    for step in (1e-4, 1e-5):
+        minus = run(-step)[3].energy
+        plus = run(step)[3].energy
+        finite_differences.append((plus - minus) / (2.0 * step))
+    assert abs(finite_differences[0] - finite_differences[1]) < 1e-7
+    tolerance = 1e-7 if method == "rks" else 1e-5
+    assert abs(analytic[1, 0] - finite_differences[1]) < tolerance
+    assert opts.lattice_opts.becke_image_radius_bohr == 0.0
+
+
+@pytest.mark.parametrize("method", ["rks", "uks"])
+@pytest.mark.parametrize("periodic", [False, True])
+@pytest.mark.parametrize("supplied_options", [False, True])
+def test_ks_gradient_xc_radius_preserves_lattice_options(
+    monkeypatch, method, periodic, supplied_options,
+):
+    """Public gradient propagation preserves caller cutoffs and screening."""
+    import importlib
+    import vibeqc.bipole_gradient as gradients
+
+    system = vq.PeriodicSystem(3, 7.0 * np.eye(3), [vq.Atom(2, [0, 0, 0])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    mesh = monkhorst_pack(system, [1, 1, 1], use_symmetry=False)
+    opts = PeriodicKSOptions()
+    opts.lattice_opts.cutoff_bohr = 5.0
+    opts.lattice_opts.nuclear_cutoff_bohr = 5.0
+    opts.becke_image_radius_bohr = 3.0
+    opts.grid.n_radial = 8
+    opts.grid.n_theta = 5
+    opts.grid.n_phi = 8
+    driver = getattr(
+        importlib.import_module(f"vibeqc.pbc_bipole_{method}"),
+        f"run_pbc_bipole_{method}",
+    )
+    result = driver(
+        system, basis, mesh, opts, functional="pbe",
+        sr_image_precision=None, use_fock_symmetry=False,
+        use_fock_symmetry_reduce=False, progress=False,
+    )
+    assert result.converged
+    options = opts.lattice_opts if supplied_options else None
+    if options is not None:
+        # These values are only inspected at the gradient boundary. Choosing
+        # nondefaults makes omissions in the options copy observable.
+        from vibeqc._vibeqc_core import CoulombMethod
+
+        options.coulomb_method = CoulombMethod.EWALD_3D
+        options.eri_interaction_cutoff_bohr = 6.5
+        options.pair_complete_1e = True
+        options.screening_exchange_threshold = 4e-9
+        options.screening_overlap_threshold = 1e-7
+        options.schwarz_threshold = 2e-9
+        options.schwarz_threshold_forces = 3e-10
+        options.slab_ewald_alpha = 0.7
+        options.sr_range_screening = True
+        options.sr_sparse_traversal = False
+    source = options if options is not None else LatticeSumOptions()
+    # Derive the contract from the native object, independently of the
+    # production copy helper's field list, so a missing field is observable.
+    fields = [
+        field for field in dir(source)
+        if not field.startswith("_") and not callable(getattr(source, field))
+    ]
+    expected = {field: getattr(source, field) for field in fields}
+
+    class Captured(Exception):
+        pass
+
+    def capture(*args, **kwargs):
+        actual = kwargs["lattice_opts"]
+        for field, value in expected.items():
+            if field == "becke_image_radius_bohr" and periodic:
+                value = 3.0
+            assert getattr(actual, field) == value, field
+        if periodic and supplied_options:
+            assert actual is not options
+        raise Captured
+
+    monkeypatch.setattr(gradients, "_compute_bipole_gradient_corrected_gamma", capture)
+    with pytest.warns(UserWarning, match="preview"), pytest.raises(Captured):
+        getattr(gradients, f"compute_bipole_gradient_{method}")(
+            system, basis, result, lattice_opts=options, kmesh=mesh,
+            grid_options=opts.grid, use_periodic_becke=periodic,
+            becke_image_radius_bohr=3.0,
+        )
+    for field, value in expected.items():
+        assert getattr(source, field) == value, field
 
 
 @pytest.fixture(autouse=True)
@@ -247,9 +395,7 @@ def test_analytic_gradient_emits_research_preview_warning():
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(sysp, [1, 1, 1])
     opts = _rhf_opts()
-    # The analytic-gradient preview implements the legacy Γ gauge and
-    # refuses Ewald-exchange-split results (option (b), 2026-06-10) —
-    # run the SCF in the legacy gauge.
+    # Exercise the maintained symmetric legacy-Gamma control.
     result = run_pbc_bipole_rhf(
         sysp,
         basis,
@@ -263,10 +409,11 @@ def test_analytic_gradient_emits_research_preview_warning():
     assert result.converged
     # The warning text moved from "RESEARCH PREVIEW" to "maintained
     # preview" in ec00dca4; match the current wording.
-    with pytest.warns(UserWarning, match="maintained preview"):
+    with pytest.warns(UserWarning, match="maintained preview") as caught:
         compute_bipole_gradient_rhf(
             sysp, basis, result, lattice_opts=opts.lattice_opts, kmesh=kmesh
         )
+    assert "asymmetric legacy-HF SCF is unsupported" in str(caught[0].message)
 
 
 def test_bipole_gradient_rhf_not_converged_warns(monkeypatch):
@@ -977,31 +1124,7 @@ def test_fd_gradient_multi_k_step_stability():
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize(
-    "padded",
-    [
-        False,
-        pytest.param(
-            True,
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=NotImplementedError,
-                reason=(
-                    "The padded multi-k CPHF response hits a numerically "
-                    "zero negative-curvature direction (p^T A p ~ "
-                    "-1e-21..-1e-24) and the driver fails closed at every "
-                    "fold-reliable cutoff probed (13/14/16 bohr, "
-                    "2026-08-06). The 2026-07-25 padded multi-k response "
-                    "was validated only on the under-converged 6-bohr "
-                    "support the fold gate now refuses. Ask raised to the "
-                    "BIPOLE gradient chat in "
-                    "handovers/HANDOVER_BIPOLE_GRADIENT.md; this xfail is "
-                    "strict so a solver fix surfaces immediately."
-                ),
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("padded", [False, True])
 def test_multik_rhf_corrected_gauge_matches_fd(padded):
     """Multi-k corrected-gauge (Ewald-exchange-split) RHF *analytic* gradient
     matches the production FD gradient on asymmetric BeH₂ [2,1,1]/STO-3G.
@@ -1391,8 +1514,9 @@ def test_ewald_nuclear_repulsion_gradient_matches_fd(build):
 #     V_ne (erfc V_short + reciprocal V_long + background), vs a central FD
 #     of Σ_g D(g)·V_ne(g) at FIXED D (no SCF).
 # ----------------------------------------------------------------------
+@pytest.mark.parametrize("pair_complete", [False, True])
 @pytest.mark.parametrize("fixture", ["h2", "chi-he2"])
-def test_v_ne_ewald_gradient_matches_fd(fixture):
+def test_v_ne_ewald_gradient_matches_fd(fixture, pair_complete):
     """``_v_ne_ewald_gradient`` vs central FD of the V_ne energy
     Σ_g D(g)·V_ne(g) with a fixed random density —
     isolates the explicit (integral) V_ne derivative from the SCF."""
@@ -1429,6 +1553,7 @@ def test_v_ne_ewald_gradient_matches_fd(fixture):
     Kmax = crystal_ewald_reciprocal_cutoff(V)
 
     lat = LatticeSumOptions()
+    lat.pair_complete_1e = pair_complete
     lat.cutoff_bohr = cutoff
     lat.nuclear_cutoff_bohr = cutoff
     lat.coulomb_method = CoulombMethod.EWALD_3D
@@ -2119,12 +2244,13 @@ def test_analytic_gradient_matches_fd_gamma():
     convention), the fixed-density FD spheropole term, the full-Coulomb
     exchange, and the Pulay term
     built from ∂E/∂P(0) consistent with BIPOLE's Γ-only LOCAL energy
-    (_corrected_w_gamma_closed). RHF/UHF Γ-only are certified; KS and
-    multi-k analytic gradients stay gated as a research preview."""
+    (_corrected_w_gamma_closed). This symmetric Γ control is maintained;
+    broader analytic gradients stay gated as a research preview."""
     sysp = _build_h2_box(a_bohr=5.0)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(sysp, [1, 1, 1])
-    opts = _rhf_opts()
+    # 8 bohr: S-fold drift 5.4e-3 (6 bohr is refused at 6.1e-2).
+    opts = _rhf_opts(cutoff=8.0)
     # Legacy gauge on BOTH sides: the analytic gradient implements the
     # Γ-local gauge (projection + full-Coulomb K + spheropole) and
     # refuses Ewald-exchange-split results; the FD reference must
@@ -2156,6 +2282,12 @@ def test_analytic_gradient_matches_fd_gamma():
     )
     max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
     assert max_abs < 1e-3, f"analytic vs FD: max|Δ| = {max_abs:.4f} Ha/bohr"
+    # Retain argument validation from the retired asymmetric capability row.
+    with pytest.raises(ValueError, match="unknown cphf_rhs"):
+        compute_bipole_gradient_rhf(
+            sysp, basis, result, lattice_opts=opts.lattice_opts,
+            kmesh=kmesh, cphf_rhs="not-a-mode",
+        )
 
 
 def test_analytic_rhf_gradient_matches_fd_multi_k(monkeypatch):
@@ -2213,48 +2345,6 @@ def test_analytic_rhf_gradient_matches_fd_multi_k(monkeypatch):
 
 
 @pytest.mark.slow
-def test_analytic_rhf_gradient_matches_fd_multi_k_asymmetric():
-    """RHF multi-k analytic gradient includes the energy-vs-Fock Z response.
-
-    Asymmetric BeH2 has a non-zero occ-virt block of
-    ``-0.5*v_bg*S(k) + dE_sph/dP(k)``. The diagonal multi-k Z-vector recovers
-    that leading orbital relaxation and brings the maintained case below
-    2e-4 Ha/bohr vs production FD.
-    """
-    sysp = _build_beh2_box(a_bohr=8.0)
-    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
-    kmesh = monkhorst_pack(sysp, [2, 1, 1])
-    opts = _rhf_opts(cutoff=7.0)
-    result = run_pbc_bipole_rhf(
-        sysp,
-        basis,
-        kmesh,
-        opts,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-        progress=False,
-    )
-    assert result.converged
-    grad_analytic = compute_bipole_gradient_rhf(
-        sysp, basis, result, lattice_opts=opts.lattice_opts, kmesh=kmesh
-    )
-    grad_fd = compute_bipole_gradient_fd(
-        sysp,
-        "sto-3g",
-        kmesh,
-        opts,
-        method="RHF",
-        step_bohr=1e-3,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-    )
-    max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
-    assert max_abs < 2e-4, f"asym multi-k analytic vs FD: max|Δ| = {max_abs:.2e}"
-
-
-@pytest.mark.slow
 def test_analytic_uhf_gradient_matches_fd_gamma():
     """The analytic BIPOLE *UHF* gradient at Γ matches the exact FD gradient
     for a genuinely spin-polarised system (triplet H₂: n_α=2, n_β=0).
@@ -2276,7 +2366,8 @@ def test_analytic_uhf_gradient_matches_fd_gamma():
     sysp.multiplicity = 3  # triplet: n_α=2, n_β=0
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(sysp, [1, 1, 1])
-    opts = _rhf_opts()
+    # 8 bohr: S-fold drift 5.4e-3 (6 bohr is refused at 6.1e-2).
+    opts = _rhf_opts(cutoff=8.0)
     result = run_pbc_bipole_uhf(
         sysp,
         basis,
@@ -2381,16 +2472,19 @@ def test_analytic_uhf_gradient_padded_saturated_spin_matches_fd(pair_resolved):
         "use_ewald_j_split": True,
         "ewald_precision": 1e-8,
         "sr_image_precision": 1e-6,
-        "use_fock_symmetry_reduce": None if pair_resolved else False,
+        "use_fock_symmetry_reduce": pair_resolved,
     }
+    # Keep this derivative test on its original fixed radial support;
+    # the bounded Ewald alpha may select a shorter automatic extent.
+    if not pair_resolved:
+        m5_kwargs["sr_image_extent_bohr"] = 28.5690327065
     result = run_pbc_bipole_uhf(
         sysp, basis, kmesh, opts, progress=False, **m5_kwargs
     )
     assert result.converged
     assert result.sr_image_extent_bohr > opts.lattice_opts.cutoff_bohr
     if not pair_resolved:
-        # Padded extent = cutoff + 17.0690327065 (basis-tail pad at
-        # sr_image_precision=1e-6, cutoff-independent).
+        # Both analytic and displaced SCFs use this fixed domain.
         assert result.sr_image_extent_bohr == pytest.approx(28.5690327065)
     assert result.pair_resolved_fock_domain is pair_resolved
     g_an = compute_bipole_gradient_uhf(
@@ -2408,6 +2502,7 @@ def test_analytic_uhf_gradient_padded_saturated_spin_matches_fd(pair_resolved):
         )
     )
     np.testing.assert_allclose(g_an, g_fd, atol=1e-5)
+
 
 
 def test_analytic_uhf_gradient_matches_fd_multi_k_high_spin(monkeypatch):
@@ -2462,259 +2557,6 @@ def test_analytic_uhf_gradient_matches_fd_multi_k_high_spin(monkeypatch):
     )
     max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
     assert max_abs < 1e-3, f"UHF multi-k analytic vs FD: max|Δ| = {max_abs:.4f}"
-
-
-@pytest.mark.slow
-def test_analytic_uhf_gradient_matches_fd_multi_k_asymmetric():
-    """UHF multi-k analytic gradient includes coupled spin/k Z response.
-
-    BeH/STO-3G doublet has alpha and beta occ-virt spaces at both k-points.
-    The total-density Coulomb response couples all spin/k rotations while
-    exchange remains same-spin; the dense multi-k Z-vector recovers the
-    asymmetric orbital relaxation left by the W/J^LR convention fix.
-    """
-    lattice = 7.0 * np.eye(3)
-    sysp = vq.PeriodicSystem(
-        3, lattice, [vq.Atom(4, [0, 0, 0]), vq.Atom(1, [0, 0, 2.5])]
-    )
-    sysp.multiplicity = 2
-    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
-    kmesh = monkhorst_pack(sysp, [2, 1, 1])
-    opts = _rhf_opts(cutoff=7.0)
-    opts.max_iter = 300
-    opts.scf_accelerator = SCFAccelerator.KDIIS
-    result = run_pbc_bipole_uhf(
-        sysp,
-        basis,
-        kmesh,
-        opts,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-        progress=False,
-    )
-    assert result.converged
-    grad_analytic = compute_bipole_gradient_uhf(
-        sysp, basis, result, lattice_opts=opts.lattice_opts, kmesh=kmesh
-    )
-    grad_fd = compute_bipole_gradient_fd(
-        sysp,
-        "sto-3g",
-        kmesh,
-        opts,
-        method="UHF",
-        step_bohr=1e-3,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-    )
-    max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
-    assert max_abs < 3e-4, f"UHF asym multi-k analytic vs FD: max|Δ| = {max_abs:.2e}"
-
-
-@pytest.mark.slow
-def test_analytic_rhf_gradient_matches_fd_asymmetric():
-    """The analytic RHF gradient matches FD on an *asymmetric* cell (BeH₂,
-    different Be–H lengths), where the post-SCF EXT EL-SPHEROPOLE
-    orbital-relaxation does NOT vanish by symmetry.
-
-    Without the spheropole Z-vector (Handy–Schaefer orbital relaxation), the
-    naive no-CPHF local-energy Pulay leaves a ~1e-3 Ha/bohr residual here
-    (∂E_sph/∂P has a non-zero occ-virt block at convergence because the
-    spheropole is added post-SCF). ``_bloch_cphf_relaxation`` recovers
-    it, bringing the analytic gradient to ~1e-7 vs FD. This is the
-    asymmetric-cell companion to the symmetric ``..._matches_fd_gamma``
-    tripwire."""
-    sysp = _build_beh2_box(a_bohr=9.0)
-    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
-    kmesh = monkhorst_pack(sysp, [1, 1, 1])
-    opts = _rhf_opts(cutoff=7.0)
-    result = run_pbc_bipole_rhf(
-        sysp,
-        basis,
-        kmesh,
-        opts,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-        progress=False,
-    )
-    assert result.converged
-    grad_analytic = compute_bipole_gradient_rhf(
-        sysp, basis, result, lattice_opts=opts.lattice_opts, kmesh=kmesh
-    )
-    grad_fd = compute_bipole_gradient_fd(
-        sysp,
-        "sto-3g",
-        kmesh,
-        opts,
-        method="RHF",
-        step_bohr=1e-3,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-    )
-    max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
-    # Far below the ~1e-3 pre-Z-vector residual; FD-step limited (~1e-7).
-    assert max_abs < 1e-5, f"RHF asym analytic vs FD: max|Δ| = {max_abs:.2e} Ha/bohr"
-
-
-@pytest.mark.slow
-def test_analytic_rhf_gradient_asymmetric_multicell():
-    """The analytic RHF gradient matches FD on an *asymmetric MULTI-cell*
-    crystal — the general low-symmetry case.
-
-    The BIPOLE Γ SCF diagonalises the Bloch sum F(Γ)=Σ_g F(g) while the energy
-    is the local contraction Tr[D(0)·H(0)], so for an asymmetric multi-cell
-    cell F(0) ≠ F(Γ): the converged density is not stationary for the local
-    energy (‖occ-virt(∂E_local/∂P(0))‖ ≠ 0, both the SCF-Fock mismatch and the
-    post-SCF spheropole) and the no-CPHF local-energy Pulay alone is off by
-    ~8e-2 Ha/bohr. The full Bloch-CPHF Z-vector
-    (``_bloch_cphf_relaxation``) recovers the orbital relaxation, bringing the
-    analytic gradient to ~1e-5 vs FD. BeH₂ in an 8-bohr box with a 9-bohr
-    cutoff is asymmetric and genuinely multi-cell (7 cells)."""
-    sysp = _build_beh2_box(a_bohr=8.0)
-    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
-    kmesh = monkhorst_pack(sysp, [1, 1, 1])
-    opts = _rhf_opts(cutoff=9.0)
-    result = run_pbc_bipole_rhf(
-        sysp,
-        basis,
-        kmesh,
-        opts,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-        progress=False,
-    )
-    assert result.converged
-    grad_analytic = compute_bipole_gradient_rhf(
-        sysp, basis, result, lattice_opts=opts.lattice_opts, kmesh=kmesh
-    )
-    grad_fd = compute_bipole_gradient_fd(
-        sysp,
-        "sto-3g",
-        kmesh,
-        opts,
-        method="RHF",
-        step_bohr=1e-3,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-    )
-    max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
-    assert max_abs < 1e-3, f"RHF asym multi-cell analytic vs FD: max|Δ| = {max_abs:.2e}"
-
-
-@pytest.mark.slow
-def test_analytic_uhf_gradient_asymmetric_multicell():
-    """The analytic UHF gradient matches FD on an *asymmetric, open-shell,
-    MULTI-cell* crystal — the general open-shell low-symmetry case.
-
-    Same diagnose-Bloch/contract-local mismatch as RHF, but the orbital
-    Hessian is a coupled two-spin system. ``_bloch_cphf_relaxation_open``
-    recovers the per-spin orbital relaxation. BeH (Be+H doublet, σ-singly-
-    occupied so no near-degenerate null mode) in a 7-bohr box / 9-bohr cutoff
-    is asymmetric, open-shell, and multi-cell (7 cells); without the
-    relaxation the analytic gradient is off by ~1e-2 Ha/bohr. KDIIS keeps
-    this SCF fixture focused on the gradient; default DIIS reaches the same
-    stationary point but needs ~150 iterations on this edge case."""
-    lattice = 7.0 * np.eye(3)
-    sysp = vq.PeriodicSystem(
-        3, lattice, [vq.Atom(4, [0, 0, 0]), vq.Atom(1, [0, 0, 2.5])]
-    )
-    sysp.multiplicity = 2
-    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
-    kmesh = monkhorst_pack(sysp, [1, 1, 1])
-    opts = _rhf_opts(cutoff=9.0)
-    opts.scf_accelerator = SCFAccelerator.KDIIS
-    result = run_pbc_bipole_uhf(
-        sysp,
-        basis,
-        kmesh,
-        opts,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-        progress=False,
-    )
-    assert result.converged
-    grad_analytic = compute_bipole_gradient_uhf(
-        sysp, basis, result, lattice_opts=opts.lattice_opts, kmesh=kmesh
-    )
-    grad_fd = compute_bipole_gradient_fd(
-        sysp,
-        "sto-3g",
-        kmesh,
-        opts,
-        method="UHF",
-        step_bohr=1e-3,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-    )
-    max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
-    assert max_abs < 1e-3, f"UHF asym multi-cell analytic vs FD: max|Δ| = {max_abs:.2e}"
-
-
-@pytest.mark.slow
-def test_cphf_rhs_modes_consistency():
-    """The three Bloch-CPHF RHS modes (``cphf_rhs=``) agree with their spec on
-    the asymmetric multi-cell BeH₂ where the orbital relaxation matters.
-
-      * ``"hybrid"`` (default) and ``"seminumeric"`` are both exact — they
-        agree with each other (and FD) to ~1e-4.
-      * ``"analytic"`` (fully analytic, no FD) is accurate to ~2e-3: the
-        reconstruction's lattice cutoff breaks the local-renorm 4-index
-        symmetry, so its self-adjoint shortcut carries a small bounded error.
-      * an unknown mode raises ``ValueError``."""
-    sysp = _build_beh2_box(a_bohr=8.0)
-    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
-    kmesh = monkhorst_pack(sysp, [1, 1, 1])
-    opts = _rhf_opts(cutoff=9.0)
-    result = run_pbc_bipole_rhf(
-        sysp,
-        basis,
-        kmesh,
-        opts,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-        progress=False,
-    )
-    assert result.converged
-    grad_fd = compute_bipole_gradient_fd(
-        sysp,
-        "sto-3g",
-        kmesh,
-        opts,
-        method="RHF",
-        step_bohr=1e-3,
-        use_ewald_j_split=True,
-        use_exchange_ewald_split=False,
-        ewald_precision=1e-8,
-    )
-
-    def _grad(mode):
-        return compute_bipole_gradient_rhf(
-            sysp,
-            basis,
-            result,
-            lattice_opts=opts.lattice_opts,
-            kmesh=kmesh,
-            cphf_rhs=mode,
-        )
-
-    g_hybrid = _grad("hybrid")
-    g_seminum = _grad("seminumeric")
-    g_analytic = _grad("analytic")
-    # hybrid is the exact replacement for the semi-numerical reference
-    assert float(np.max(np.abs(g_hybrid - g_seminum))) < 2e-4
-    assert float(np.max(np.abs(g_hybrid - grad_fd))) < 1e-3
-    # fully-analytic is bounded but looser (its self-adjoint local-renorm)
-    assert float(np.max(np.abs(g_analytic - grad_fd))) < 5e-3
-    with pytest.raises(ValueError):
-        _grad("not-a-mode")
 
 
 def test_rks_gamma_fock_reconstruction_matches_scf_exchange_fraction(monkeypatch):
@@ -2807,24 +2649,21 @@ def test_rks_gamma_fock_reconstruction_matches_scf_exchange_fraction(monkeypatch
 
 
 @pytest.mark.slow
-def test_analytic_rks_gradient_gamma_lih_matches_fd():
-    """Gamma-local RKS includes the KS Bloch-CPHF orbital response.
+def test_rks_lih_physical_fock_confirmation_fixed_support(monkeypatch):
+    """The tight LiH SCF confirms a stationary physical Fock within 100 steps.
 
-    LiH/SVWN is asymmetric: after the fixed-density XC grid-motion correction,
-    the remaining no-CPHF residual is ~3.5e-3 Ha/bohr.  The KS Z-vector solves
-    the non-self-adjoint orbital Hessian transpose and recovers the relaxed
-    SCF finite-difference gradient.
-
-    This also pins the integer-occupation physical-Fock confirmation path. The
-    commutator reaches the stationary solution before the lagging energy
-    difference does; reapplying DIIS at that point used to kick the density
-    away and cycle beyond 100 iterations. The physical Fock converges in 94,
-    and the explicit 100-step cap prevents hiding the bug by raising the global
-    cap.
+    This preserves the 2026-07-25 state-machine regression without multiplying
+    the diffuse LiH support across thirteen finite-difference SCFs.  The test
+    deliberately compares one fixed truncated functional, so it bypasses the
+    production fold preflight exactly like the neighbouring Fock-rebuild test;
+    fold reliability is covered independently by the production guards.
     """
-    from vibeqc.bipole_gradient import compute_bipole_gradient_rks
+    import vibeqc.pbc_bipole_common as _common
     from vibeqc.pbc_bipole_rks import run_pbc_bipole_rks
 
+    monkeypatch.setattr(
+        _common, "s_fold_truncation_drift", lambda *a, **k: 1.0e-9
+    )
     lattice = 7.6 * np.eye(3)
     sysp = vq.PeriodicSystem(
         3, lattice, [vq.Atom(3, [0, 0, 0]), vq.Atom(1, [0, 0, 3.8])]
@@ -2832,6 +2671,42 @@ def test_analytic_rks_gradient_gamma_lih_matches_fd():
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(sysp, [1, 1, 1])
     opts = _ks_opts(cutoff=8.0, conv=1e-12)
+    opts.max_iter = 100
+    opts.conv_tol_grad = 1e-10
+    opts.functional = "svwn"
+    opts.fock_mixing = 1e-12
+    result = run_pbc_bipole_rks(
+        sysp,
+        basis,
+        kmesh,
+        opts,
+        use_ewald_j_split=True,
+        use_exchange_ewald_split=False,
+        ewald_precision=1e-8,
+        progress=False,
+    )
+    assert result.converged
+    assert result.n_iter <= 100
+
+
+@pytest.mark.slow
+def test_analytic_rks_gradient_gamma_beh2_matches_fd():
+    """Gamma-local RKS includes the KS Bloch-CPHF orbital response.
+
+    Asymmetric BeH2/SVWN supplies a non-trivial closed-shell orbital response.
+    The KS Z-vector solves the non-self-adjoint orbital Hessian transpose and
+    recovers the relaxed SCF finite-difference gradient.  This row previously
+    used diffuse LiH, whose fold drift does not enter the supported regime
+    until 18 bohr; thirteen finite-difference SCFs there exceed the lane
+    budget.  The compact BeH2 fixture reaches a 5.1e-5 drift at 13 bohr.
+    """
+    from vibeqc.bipole_gradient import compute_bipole_gradient_rks
+    from vibeqc.pbc_bipole_rks import run_pbc_bipole_rks
+
+    sysp = _build_beh2_box(a_bohr=9.0)
+    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
+    kmesh = monkhorst_pack(sysp, [1, 1, 1])
+    opts = _ks_opts(cutoff=13.0, conv=1e-12)
     opts.max_iter = 100
     opts.conv_tol_grad = 1e-10
     opts.functional = "svwn"
@@ -2894,7 +2769,9 @@ def test_analytic_uks_gradient_gamma_beh_matches_fd():
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(sysp, [1, 1, 1])
     opts = PeriodicKSOptions()
-    opts.lattice_opts.cutoff_bohr = 7.0
+    # 11 bohr: S-fold drift 3.9e-3 (7 bohr is refused at 4.9e-2).
+    opts.lattice_opts.cutoff_bohr = 11.0
+    opts.lattice_opts.nuclear_cutoff_bohr = 11.0
     opts.conv_tol_grad = 1e-10
     opts.conv_tol_energy = 1e-12
     opts.initial_guess = InitialGuess.SAD
@@ -2938,20 +2815,18 @@ def test_analytic_uks_gradient_gamma_beh_matches_fd():
 
 
 @pytest.mark.slow
-def test_analytic_rks_gradient_gamma_lih_pbe_matches_fd():
+def test_analytic_rks_gradient_gamma_beh2_pbe_matches_fd():
     """Gamma-local RKS with PBE (GGA) matches FD. Extends the SVWN regression
     to a gradient-corrected functional, exercising the sigma-Pulay Hessian terms
     in the full gradient assembly."""
     from vibeqc.bipole_gradient import compute_bipole_gradient_rks
     from vibeqc.pbc_bipole_rks import run_pbc_bipole_rks
 
-    lattice = 7.6 * np.eye(3)
-    sysp = vq.PeriodicSystem(
-        3, lattice, [vq.Atom(3, [0, 0, 0]), vq.Atom(1, [0, 0, 3.8])]
-    )
+    sysp = _build_beh2_box(a_bohr=9.0)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(sysp, [1, 1, 1])
-    opts = _ks_opts(cutoff=8.0, conv=1e-12)
+    # 13 bohr: S-fold drift 5.1e-5; diffuse LiH needs at least 18 bohr.
+    opts = _ks_opts(cutoff=13.0, conv=1e-12)
     opts.conv_tol_grad = 1e-10
     opts.functional = "pbe"
     opts.fock_mixing = 1e-12
@@ -3005,7 +2880,8 @@ def test_analytic_uks_gradient_gamma_beh_pbe_matches_fd():
     sysp.multiplicity = 2
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(sysp, [1, 1, 1])
-    opts = _ks_opts(cutoff=7.0, conv=1e-12)
+    # 11 bohr: S-fold drift 3.9e-3 (7 bohr is refused at 4.9e-2).
+    opts = _ks_opts(cutoff=11.0, conv=1e-12)
     opts.conv_tol_grad = 1e-10
     opts.functional = "pbe"
     opts.fock_mixing = 1e-12
@@ -3282,13 +3158,14 @@ def test_periodic_xc_grid_motion_correction_matches_moving_fd():
                 )
             g_fd[a, d] = (float(energies[0]) - float(energies[1])) / (2.0 * h)
 
-    # Non-vacuousness floor: the grid-motion correction shrinks as the
-    # lattice sums converge (8.3e-4 at the reliable 24 bohr cutoff vs
-    # >1e-3 at the old under-converged 8 bohr) but must stay genuinely
-    # nonzero for this test to mean anything.
-    assert float(np.max(np.abs(corr))) > 5e-4
+    # Omitting grid motion must fail the accuracy requirement decisively.
+    # The point-centered partition reduces the correction from the old
+    # 8.3e-4 scale to about 1.27e-4 Ha/bohr at this converged support.
+    accuracy_tol = 1e-9
+    uncorrected_error = float(np.max(np.abs(fixed - g_fd)))
+    assert uncorrected_error > 1000 * accuracy_tol
     max_abs = float(np.max(np.abs(g_an - g_fd)))
-    assert max_abs < 1e-9, f"moving-grid XC correction vs FD: {max_abs:.2e}"
+    assert max_abs < accuracy_tol, f"moving-grid XC correction vs FD: {max_abs:.2e}"
 
 
 def test_periodic_xc_lattice_gga_gradient_kernel_matches_fd():
@@ -3572,7 +3449,8 @@ def test_analytic_rks_gradient_multi_k_svwn_matches_fd():
     sysp = _build_h2_box(a_bohr=5.0, bond_bohr=1.45)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(sysp, [2, 1, 1])
-    opts = _ks_opts(cutoff=7.0, conv=1e-12)
+    # 9 bohr: S(k)-fold drift 9.3e-4 (7 bohr is refused at 6.2e-2).
+    opts = _ks_opts(cutoff=9.0, conv=1e-12)
     opts.functional = "svwn"
     opts.fock_mixing = 1e-12
     result = run_pbc_bipole_rks(
@@ -3610,19 +3488,17 @@ def test_analytic_rks_gradient_multi_k_svwn_matches_fd():
 
 
 @pytest.mark.slow
-def test_analytic_rks_gradient_gamma_b3lyp_matches_fd():
+def test_analytic_rks_gradient_gamma_beh2_b3lyp_matches_fd():
     """Gamma-local RKS with B3LYP hybrid (20% HF exchange) matches FD.
     Exercises the alpha_hf > 0 path through the KS CPHF."""
     from vibeqc.bipole_gradient import compute_bipole_gradient_rks
     from vibeqc.pbc_bipole_rks import run_pbc_bipole_rks
 
-    lattice = 7.6 * np.eye(3)
-    sysp = vq.PeriodicSystem(
-        3, lattice, [vq.Atom(3, [0, 0, 0]), vq.Atom(1, [0, 0, 3.8])]
-    )
+    sysp = _build_beh2_box(a_bohr=9.0)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(sysp, [1, 1, 1])
-    opts = _ks_opts(cutoff=8.0, conv=1e-12)
+    # 13 bohr: S-fold drift 5.1e-5; diffuse LiH needs at least 18 bohr.
+    opts = _ks_opts(cutoff=13.0, conv=1e-12)
     opts.conv_tol_grad = 1e-10
     opts.functional = "b3lyp"
     opts.fock_mixing = 1e-12
@@ -3943,7 +3819,7 @@ def test_corrected_gauge_uhf_gamma_pair_domain_matches_fd():
         "use_ewald_j_split": True,
         "ewald_precision": 1e-8,
         "sr_image_precision": 1e-6,
-        "use_fock_symmetry_reduce": None,
+        "use_fock_symmetry_reduce": True,
     }
     result = run_pbc_bipole_uhf(
         sysp,
@@ -3973,6 +3849,7 @@ def test_corrected_gauge_uhf_gamma_pair_domain_matches_fd():
         )
     )
     np.testing.assert_allclose(g_an, g_fd, atol=1e-5)
+
 
 
 @pytest.mark.slow
@@ -4130,16 +4007,19 @@ def test_corrected_gauge_uks_gamma_gradient_matches_fd(
         "use_ewald_j_split": True,
         "ewald_precision": 1e-8,
         "sr_image_precision": 1e-6,
-        "use_fock_symmetry_reduce": None if pair_resolved else False,
+        "use_fock_symmetry_reduce": pair_resolved,
     }
+    # Keep this derivative test on its original fixed radial support;
+    # the bounded Ewald alpha may select a shorter automatic extent.
+    if not pair_resolved:
+        m5_kwargs["sr_image_extent_bohr"] = 28.5690327065
     result = run_pbc_bipole_uks(
         sysp, basis, kmesh, opts, progress=False, **m5_kwargs
     )
     assert result.converged and getattr(result, "exchange_ewald_split", False)
     assert result.sr_image_extent_bohr > opts.lattice_opts.cutoff_bohr
     if not pair_resolved:
-        # Padded extent = cutoff + 17.0690327065 (basis-tail pad at
-        # sr_image_precision=1e-6, cutoff-independent).
+        # Both analytic and displaced SCFs use this fixed domain.
         assert result.sr_image_extent_bohr == pytest.approx(28.5690327065)
     assert result.pair_resolved_fock_domain is pair_resolved
     g_an = compute_bipole_gradient_uks(
@@ -4150,6 +4030,7 @@ def test_corrected_gauge_uks_gamma_gradient_matches_fd(
         step_bohr=1e-3, **m5_kwargs,
     ))
     np.testing.assert_allclose(g_an, g_fd, atol=1e-5)
+
 
 
 # ---------------------------------------------------------------------------

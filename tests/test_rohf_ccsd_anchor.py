@@ -102,7 +102,8 @@ def _cpp(mol, basis, rohf, *, triples, n_frozen=0):
 
 class TestCppAnchorOH:
     @pytest.fixture(scope="class")
-    def oh(self):
+    @classmethod
+    def oh(cls):
         return _rohf(OH_ATOMS, "sto-3g", 2)
 
     def test_uccsd_t_matches_anchor(self, oh):
@@ -125,7 +126,8 @@ class TestCppAnchorOH:
 
 class TestCppAnchorNH2:
     @pytest.fixture(scope="class")
-    def nh2(self):
+    @classmethod
+    def nh2(cls):
         return _rohf(NH2_ATOMS, "sto-3g", 2)
 
     def test_uccsd_t_matches_anchor(self, nh2):
@@ -139,7 +141,8 @@ class TestCppAnchorNH2:
 
 class TestCppAnchorO2:
     @pytest.fixture(scope="class")
-    def o2(self):
+    @classmethod
+    def o2(cls):
         return _rohf(O2_ATOMS, "sto-3g", 3)
 
     def test_uccsd_t_matches_anchor(self, o2):

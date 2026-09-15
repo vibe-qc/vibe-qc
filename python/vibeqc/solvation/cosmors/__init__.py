@@ -53,6 +53,7 @@ from .parameters import (
     Parameterization,
     get_parameterization,
 )
+from .solvent import solvent_sigma_potential
 from .potential import (
     SigmaPotential,
     hydrogen_bond_energy,
@@ -108,6 +109,7 @@ __all__ = [
     "hydrogen_bond_energy",
     "interaction_energy",
     "interaction_energy_dsigma",
+    "solvent_sigma_potential",
     "ln_activity_coefficient",
     "log_partition_coefficient",
     "misfit_energy",

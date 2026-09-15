@@ -619,9 +619,17 @@ def cpcm_gradient(
     optional ``use_fd_electronic=True`` path costs ``6.n_atoms``
     cavity + basis rebuilds instead -- slower, kept only for
     verification.
+
+    Raises
+    ------
+    NotImplementedError
+        For a Direct COSMO-RS result (``variant="dcosmo-rs"``), whose energy is
+        not differentiable in the geometry; see :func:`_refuse_direct_cosmors`.
     """
     from vibeqc.ecp_metadata import refuse_molecular_ecp_derivative_route
 
+    # First, before any work: every term below is the conductor gradient's.
+    _refuse_direct_cosmors(solvent_result)
     refuse_molecular_ecp_derivative_route(
         molecule,
         basis,
@@ -718,6 +726,51 @@ def cpcm_gradient(
         )
 
     return grad
+
+
+def _refuse_direct_cosmors(solvent_result) -> None:
+    """Refuse a Direct COSMO-RS result: there is no gradient to return for it.
+
+    Nothing in :func:`cpcm_gradient` knows the variant. Handed a
+    ``variant="dcosmo-rs"`` result it assembled the conductor-COSMO gradient --
+    no ``sum_t a_t mu_S(sigma_t)`` energy term and no ``q^dRS`` operator -- and
+    returned it. Nothing about that number looks wrong: on asymmetric water
+    (RHF/STO-3G, fine cavity at 0.40 A) its translation residual was 2.1e-15,
+    yet it sat 1.4e-03 Ha/bohr off a central difference of the energy the run
+    reported, with one component of the wrong sign, where the conductor
+    gradient at the same settings agrees with its own to 1.0e-06.
+
+    Adding the two missing terms would not make a gradient. Klamt's
+    hydrogen-bond term makes ``mu_S'`` jump by about 40 against values near 70
+    at ``sigma = +-sigma_hb``; every solvent partner steps at the same sigma, so
+    the Boltzmann average does not damp it, and about a quarter of a real
+    solute's segments sit within a bin of the corner. The energy is not
+    differentiable wherever a segment crosses it, and a smooth one means
+    changing a published functional form -- a maintainer decision.
+
+    Both markers are read, so a result that carries a feedback is refused even
+    if its variant label is lost.
+    """
+    variant = str(getattr(solvent_result, "solvent_variant", "") or "")
+    if (
+        variant.strip().lower() != "dcosmo-rs"
+        and getattr(solvent_result, "direct_feedback", None) is None
+    ):
+        return
+    raise NotImplementedError(
+        "cpcm_gradient: there is no nuclear gradient for a Direct COSMO-RS "
+        "result (variant='dcosmo-rs'). Klamt's hydrogen-bond term makes the "
+        "sigma potential's derivative mu_S' jump at sigma = +-sigma_hb, and "
+        "segments cross that corner as the atoms move, so the Direct COSMO-RS "
+        "energy is not differentiable in the geometry. A gradient needs a "
+        "smoothed hydrogen-bond term, which departs from the published "
+        "functional form and is a maintainer decision. Returning the "
+        "conductor-COSMO gradient instead would silently omit the "
+        "sum_t a_t mu_S(sigma_t) energy term and the q^dRS operator. For an "
+        "analytic gradient use variant='cosmo', which is a different energy; "
+        "cpcm_gradient_fd rebuilds the Direct COSMO-RS energy, but it steps "
+        "wherever a segment crosses the corner."
+    )
 
 
 def _resolve_basis_name(basis) -> str:

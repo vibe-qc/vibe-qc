@@ -31,18 +31,17 @@ import vibeqc.guess as periodic_guess
 import vibeqc.pbc_bipole as pbc_bipole
 import vibeqc.pbc_bipole_rks as pbc_bipole_rks
 import vibeqc.periodic_cosx_k as periodic_cosx_k
-import vibeqc.periodic_grid as periodic_grid
 import vibeqc.periodic_k_gdf as periodic_k_gdf
 import vibeqc.periodic_rhf_multi_k_ewald as periodic_rhf_multi_k_ewald
 import vibeqc.periodic_rks_multi_k_ewald as periodic_rks_multi_k_ewald
 from vibeqc._vibeqc_core import (
     bloch_sum,
+    build_grid,
     compute_kinetic_lattice,
     compute_overlap_lattice,
     compute_sap_potential_molecular,
     compute_vsap_lattice,
 )
-from vibeqc.periodic_grid import build_periodic_becke_grid
 from vibeqc.progress import ProgressLogger
 
 sla = pytest.importorskip("scipy.linalg")
@@ -131,14 +130,44 @@ class _GuessOptionsProxy:
             setattr(self._base, name, value)
 
 
+@pytest.mark.parametrize("a_bohr", [7.6, 12.0])
+def test_sap_fock_grid_integrates_localized_ao_products(monkeypatch, a_bohr):
+    """The SAP matrix needs an all-space AO-pair integral, even in a crystal."""
+    from vibeqc._vibeqc_core import compute_overlap, evaluate_ao
+
+    system, basis = _lih(a_bohr)
+    exact_overlap = np.asarray(compute_overlap(basis))
+    captured = []
+
+    def checked_vsap(got_basis, got_system, grid, table, options):
+        ao = np.asarray(evaluate_ao(got_basis, grid.points))
+        overlap = ao.T @ (np.asarray(grid.weights)[:, None] * ao)
+        # A constant potential must integrate to the analytical localized
+        # overlap. Per-cell partition weights without a bra-image sum lose
+        # 7 to 29 percent of the diffuse Li AO norms on these cells.
+        np.testing.assert_allclose(overlap, exact_overlap, atol=2e-6, rtol=0)
+        potential = compute_vsap_lattice(
+            got_basis, got_system, grid, table, options)
+        captured.append(_gamma(potential))
+        return potential
+
+    monkeypatch.setattr(periodic_guess, "compute_vsap_lattice", checked_vsap)
+    fock = periodic_guess.periodic_sap_fock_k(
+        system, basis, ([0.0, 0.0, 0.0],),
+        lattice_opts=_lat_opts(cutoff=20.0, nuc=25.0),
+    )
+    assert len(captured) == 1
+    assert np.max(np.abs(captured[0] - captured[0].T)) < 1e-3
+    assert np.all(np.isfinite(fock[0]))
+
+
 def test_vsap_gamma_symmetric_and_attractive():
-    # On a normal-sized cell the Γ-folded V^SAP is symmetric to the grid floor.
-    # (For very tight cells the smooth long-range grid quadrature limits the
-    # symmetry, exactly as the production compute_nuclear_lattice_ewald — see
-    # test_vsap_symmetry_no_worse_than_nuclear_ewald — but it vanishes as the
-    # cell opens up; here ~1e-4 at a=12 bohr.)
+    # Each lattice block integrates one localized AO pair over all space.
+    # The potential is periodic, but the AO product is not: the molecular
+    # partition is required, as in the native SAP and grid-Ewald callers.
+    # The remaining Gamma asymmetry is the quadrature floor (~1e-4 here).
     system, basis = _lih(12.0)
-    grid = build_periodic_becke_grid(system)
+    grid = build_grid(system.unit_cell_molecule())
     V = _gamma(compute_vsap_lattice(basis, system, grid,
                                     "sap_helfem_large", _lat_opts(cutoff=20.0,
                                                                   nuc=25.0)))
@@ -153,11 +182,11 @@ def test_vsap_gamma_symmetric_and_attractive():
 
 def test_vsap_symmetry_no_worse_than_nuclear_ewald():
     """V^SAP and the production grid-Ewald nuclear attraction share the same
-    Becke-grid long-range quadrature, so on a tight cell their Γ-fold symmetry
+    all-space Becke-grid quadrature, so on a tight cell their Γ-fold symmetry
     is limited by the same floor; V^SAP must be no worse than that reference."""
     from vibeqc._vibeqc_core import compute_nuclear_lattice_ewald
     system, basis = _lih(7.6)
-    grid = build_periodic_becke_grid(system)
+    grid = build_grid(system.unit_cell_molecule())
     lo = _lat_opts()
     asym_sap = np.max(np.abs(
         (V := _gamma(compute_vsap_lattice(basis, system, grid,
@@ -179,7 +208,7 @@ def test_vsap_matches_molecular_in_large_cell():
         charge=0, multiplicity=1)
     mol = system.unit_cell_molecule()
     basis = vq.BasisSet(mol, "sto-3g")
-    grid = build_periodic_becke_grid(system)
+    grid = build_grid(system.unit_cell_molecule())
     lo = _lat_opts(cutoff=20.0, nuc=25.0)
 
     V_mol = np.asarray(compute_sap_potential_molecular(
@@ -197,7 +226,7 @@ def test_vsap_guess_fock_is_well_formed():
     """F_SAP = T + V_SAP diagonalised against the cell overlap has a real
     spectrum with a bound lowest state and yields a normalised guess density."""
     system, basis = _lih(7.6)
-    grid = build_periodic_becke_grid(system)
+    grid = build_grid(system.unit_cell_molecule())
     lo = _lat_opts()
     S = _gamma(compute_overlap_lattice(basis, system, lo))
     T = _gamma(compute_kinetic_lattice(basis, system, lo))
@@ -685,15 +714,15 @@ def test_periodic_sap_fock_helper_bloch_sums_each_k(monkeypatch):
     calls = []
 
     monkeypatch.setattr(
-        periodic_grid,
-        "build_periodic_becke_grid",
-        lambda system: ("grid", system),
+        periodic_guess,
+        "build_grid",
+        lambda molecule: ("all-space-grid", molecule.n_electrons()),
     )
 
     def fake_vsap(got_basis, got_system, grid, table, options):
         assert got_basis is basis
         assert got_system is system
-        assert grid == ("grid", system)
+        assert grid == ("all-space-grid", system.unit_cell_molecule().n_electrons())
         assert table == "sap_helfem_large"
         assert options is lattice_opts
         return sap_lattice

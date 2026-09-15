@@ -792,3 +792,49 @@ def test_open_shell_ccsd_runs_on_real_gamma_with_the_uccsd_lineage():
         assert loc.correlation.backend == "aiccm2026dev-a-dlpno-uccsd(t)"
         assert canon.e_correlation == pytest.approx(
             loc.e_correlation, rel=0, abs=1e-12)
+
+
+# --- M8 provenance: the manifest records what was CITED, not just asked ----
+
+
+@pytest.mark.parametrize("variant,corr,route", [
+    ("real-gamma", "ccsd", "aiccm2026dev-a-ri-ccsd(t)"),
+    ("four-center", "mp2", "aiccm2026dev-a-mp2"),
+])
+def test_manifest_records_the_correlation_citation_route(variant, corr, route):
+    """``aiccm_correlation`` is the request; this is what was actually cited.
+
+    The two differ in exactly what a consumer cannot re-derive from the
+    request: the lineage (ruling R1) and whether the perturbative triples
+    ran, since compute_triples is a runtime flag. A provenance reader that
+    only had the request could not tell a neutral-RI number from a
+    union-and-weight one.
+    """
+
+    cell, basis = _h2_cell_and_basis()
+    with tempfile.TemporaryDirectory() as d:
+        stem = os.path.join(d, "m")
+        run_periodic_job(cell, basis, method="aiccm", variant=variant,
+                         correlation=corr, aiccm_lattice_extension=(1, 1, 1),
+                         initial_guess="HCORE", output=stem)
+        manifest = open(stem + ".system", encoding="utf-8").read()
+        assert f'aiccm_correlation = "{corr}"' in manifest
+        assert f'aiccm_correlation_route = "{route}"' in manifest
+
+
+def test_scf_only_run_claims_no_correlation_provenance():
+    """An absent key must never read as a claim.
+
+    The negative control for the guard above: a run that asked for no
+    correlation writes neither key, rather than an empty or "none" value a
+    reader might mistake for a recorded route.
+    """
+
+    cell, basis = _h2_cell_and_basis()
+    with tempfile.TemporaryDirectory() as d:
+        stem = os.path.join(d, "s")
+        run_periodic_job(cell, basis, method="aiccm", variant="real-gamma",
+                         aiccm_lattice_extension=(1, 1, 1),
+                         initial_guess="HCORE", output=stem)
+        manifest = open(stem + ".system", encoding="utf-8").read()
+        assert "aiccm_correlation" not in manifest

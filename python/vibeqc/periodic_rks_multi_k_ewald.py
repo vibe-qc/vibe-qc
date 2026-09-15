@@ -714,6 +714,11 @@ def run_rks_periodic_multi_k_ewald3d(
             from .periodic_v_ne import compute_nuclear_lattice_dispatch
 
             V_lat = compute_nuclear_lattice_dispatch(basis, system, lat_opts)
+    from .lattice_screening import on_physical_eri_cells
+
+    S_lat = on_physical_eri_cells(S_lat, basis, system, lat_opts)
+    T_lat = on_physical_eri_cells(T_lat, basis, system, lat_opts)
+    V_lat = on_physical_eri_cells(V_lat, basis, system, lat_opts)
     cells = list(S_lat.cells)
 
     # Per-k S(k), Hcore(k), orthogonaliser X(k).
@@ -1055,6 +1060,7 @@ def run_rks_periodic_multi_k_ewald3d(
             kmesh,
             float(omega),
             where="run_rks_periodic_multi_k_ewald3d",
+            lattice_opts=lat_opts,
             slab_mode=slab_mode,
         )
 
@@ -1127,8 +1133,10 @@ def run_rks_periodic_multi_k_ewald3d(
     # full-mesh numbers stay byte-identical. Mapping build is one-time
     # pure Python on the SAME radial cell list the K builder uses, so
     # positional block indexing is unchanged.
+    # The legacy radial orbit map does not index the physical K enclosure.
+    # Physical mode retains the full build until a complete orbit map is used.
     exchange_symmetry_reduction = None
-    if wedge_unfolding is not None and not slab_mode:
+    if wedge_unfolding is not None and not slab_mode and not lat_opts.pair_complete_1e:
         from ._vibeqc_core import direct_lattice_cells as _radial_cells
         from .bipole_symmetry_fock import (
             cell_orbit_mapping,

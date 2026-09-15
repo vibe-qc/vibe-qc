@@ -39,7 +39,13 @@ std::vector<std::vector<double>> compute_schwarz_factors_per_cell(
     // from the pool (Engine is not thread-safe). Mirrors the molecular
     // compute_schwarz_factors() below; this per-cell variant had been
     // left serial. Runs on every periodic Fock / gradient build.
-    auto engines = make_engine_pool(prototype);
+    // These integrals are squared norms, not the mixed ERIs screened by
+    // the caller. Primitive screening at machine epsilon can erase a norm
+    // whose square root still permits nanohartree-sized contributions.
+    // Preserve the norms; the caller applies its requested ERI threshold.
+    auto bound_prototype = prototype;
+    bound_prototype.set_precision(0.0);
+    auto engines = make_engine_pool(bound_prototype);
     const long n_work = static_cast<long>(n_c * nshells);
     #pragma omp parallel for schedule(dynamic)
     for (long idx = 0; idx < n_work; ++idx) {
@@ -87,7 +93,11 @@ Eigen::MatrixXd compute_schwarz_factors(
     const libint2::Engine& prototype) {
     const auto n_shells = static_cast<int>(shells.size());
     Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(n_shells, n_shells);
-    auto engines = make_engine_pool(prototype);
+    // As in the periodic pre-pass, a rounded-to-zero squared norm is not
+    // a safe bound on the mixed integrals that the caller will contract.
+    auto bound_prototype = prototype;
+    bound_prototype.set_precision(0.0);
+    auto engines = make_engine_pool(bound_prototype);
 
     // Upper triangle (s_b ≤ s_a) only — Q is symmetric. Dynamic
     // scheduling because shells with higher angular momentum have

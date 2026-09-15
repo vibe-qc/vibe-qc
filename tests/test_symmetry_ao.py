@@ -172,6 +172,53 @@ def test_P_preserves_overlap():
         )
 
 
+def test_hexagonal_ao_maps_preserve_unreduced_overlap_and_kinetic():
+    """Exercise rounded, non-signed-permutation rotations from a real cell."""
+    from vibeqc.periodic_symmetrize import detect_spacegroup
+    from vibeqc.symmetry_lattice import lattice_to_cartesian_rotation
+
+    a, c = 4.75, 12.60
+    lattice = np.array([[a, -a / 2, 0], [0, a * np.sqrt(3) / 2, 0], [0, 0, c]])
+    atoms = [
+        vq.Atom(z, (lattice @ frac).tolist())
+        for z, frac in [(5, [1/3, 2/3, 1/4]), (5, [2/3, 1/3, 3/4]),
+                        (7, [2/3, 1/3, 1/4]), (7, [1/3, 2/3, 3/4])]
+    ]
+    system = vq.PeriodicSystem(3, lattice, atoms)
+    basis = vq.BasisSet(vq.Molecule(atoms), "sto-3g")
+    group = detect_spacegroup(system)
+    assert group.number == 194  # h-BN, P6_3/mmc
+    assert len(group.operations) == 24
+    options = vq.LatticeSumOptions()
+    options.cutoff_bohr = 32.0
+    # Independently summed Gamma matrices; no AO reconstruction or orbit
+    # reduction is used to generate the operators being checked.
+    matrices = [
+        sum(np.asarray(block) for block in builder(basis, system, options).blocks)
+        for builder in (vq.compute_overlap_lattice, vq.compute_kinetic_lattice)
+    ]
+    nontrivial_rotations = 0
+    identities = 0
+    for op in group.operations:
+        rotation = lattice_to_cartesian_rotation(op.rotation, lattice)
+        nontrivial_rotations += np.max(np.abs(rotation - np.rint(rotation))) > 0.1
+        translation = lattice @ np.asarray(op.translation)
+        ap = vq.atom_permutation_under_op(system, rotation, translation)
+        action = vq.build_ao_permutation_matrix(basis, rotation, ap)
+        np.testing.assert_allclose(
+            vq.wigner_d_real(1, rotation), rotation[np.ix_([1, 2, 0], [1, 2, 0])],
+            atol=1e-14, rtol=0.0,
+        )
+        if np.array_equal(op.rotation, np.eye(3)) and np.max(np.abs(translation)) < 1e-14:
+            identities += 1
+            np.testing.assert_allclose(action, np.eye(basis.nbasis), atol=1e-14, rtol=0.0)
+        for matrix in matrices:
+            np.testing.assert_allclose(action.T @ matrix @ action, matrix,
+                                       atol=1e-12, rtol=0.0)
+    assert nontrivial_rotations > 0
+    assert identities == 1
+
+
 def test_P_preserves_converged_density():
     """The converged RHF density has the full molecular symmetry."""
     mol = _h2o_c2v()

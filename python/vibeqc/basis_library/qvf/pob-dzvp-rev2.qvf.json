@@ -2490,6 +2490,2715 @@
           ]
         }
       ]
+    },
+    "Si": {
+      "element": "Si",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 6903.7118686,
+              "coefficient": 0.0013373962995
+            },
+            {
+              "exponent": 1038.4346419,
+              "coefficient": 0.0099966546241
+            },
+            {
+              "exponent": 235.8758148,
+              "coefficient": 0.044910165101
+            },
+            {
+              "exponent": 66.069385169,
+              "coefficient": 0.1146363854
+            },
+            {
+              "exponent": 20.247945761,
+              "coefficient": 0.10280063858
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 34.35348173,
+              "coefficient": 0.07083728501
+            },
+            {
+              "exponent": 3.6370788192,
+              "coefficient": -0.43028836252
+            },
+            {
+              "exponent": 1.4002048599,
+              "coefficient": -0.41382774969
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.60713551,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.15609728,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 179.83907373,
+              "coefficient": 0.0061916656462
+            },
+            {
+              "exponent": 41.907258846,
+              "coefficient": 0.043399431982
+            },
+            {
+              "exponent": 12.955294367,
+              "coefficient": 0.15632019351
+            },
+            {
+              "exponent": 4.4383267393,
+              "coefficient": 0.29419996982
+            },
+            {
+              "exponent": 1.5462247904,
+              "coefficient": 0.23536823814
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.37387062,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.14007449,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.35,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Cr": {
+      "element": "Cr",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 51528.086349,
+              "coefficient": 0.0014405823106
+            },
+            {
+              "exponent": 7737.2103487,
+              "coefficient": 0.011036202287
+            },
+            {
+              "exponent": 1760.374847,
+              "coefficient": 0.054676651806
+            },
+            {
+              "exponent": 496.87706544,
+              "coefficient": 0.18965038103
+            },
+            {
+              "exponent": 161.46520598,
+              "coefficient": 0.3829541285
+            },
+            {
+              "exponent": 55.466352268,
+              "coefficient": 0.29090050668
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 107.54732999,
+              "coefficient": -0.109322811
+            },
+            {
+              "exponent": 12.408671897,
+              "coefficient": 0.64472599471
+            },
+            {
+              "exponent": 5.0423628826,
+              "coefficient": 0.4626271256
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 8.5461640165,
+              "coefficient": -0.22711013286
+            },
+            {
+              "exponent": 1.3900441221,
+              "coefficient": 0.73301527591
+            },
+            {
+              "exponent": 0.56066602876,
+              "coefficient": 0.44225565433
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.48497949,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.14539019,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 640.48536096,
+              "coefficient": 0.0096126715203
+            },
+            {
+              "exponent": 150.69711194,
+              "coefficient": 0.070889834655
+            },
+            {
+              "exponent": 47.503755296,
+              "coefficient": 0.2706525899
+            },
+            {
+              "exponent": 16.934120165,
+              "coefficient": 0.52437343414
+            },
+            {
+              "exponent": 6.240968059,
+              "coefficient": 0.34107994714
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 3.0885463206,
+              "coefficient": 0.33973986903
+            },
+            {
+              "exponent": 1.1791047769,
+              "coefficient": 0.57272062927
+            },
+            {
+              "exponent": 0.43369774432,
+              "coefficient": 0.24582728206
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.33254991,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 27.559479426,
+              "coefficient": 0.030612488044
+            },
+            {
+              "exponent": 7.4687020327,
+              "coefficient": 0.15593270944
+            },
+            {
+              "exponent": 2.4345903574,
+              "coefficient": 0.36984421276
+            },
+            {
+              "exponent": 0.78244754808,
+              "coefficient": 0.47071118077
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.21679761,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            3
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1.147,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Mn": {
+      "element": "Mn",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 56137.009037,
+              "coefficient": 0.0014321304702
+            },
+            {
+              "exponent": 8429.2063943,
+              "coefficient": 0.010972509162
+            },
+            {
+              "exponent": 1917.8277233,
+              "coefficient": 0.054382468712
+            },
+            {
+              "exponent": 541.36230198,
+              "coefficient": 0.18884335129
+            },
+            {
+              "exponent": 176.00069142,
+              "coefficient": 0.38198025054
+            },
+            {
+              "exponent": 60.50047701,
+              "coefficient": 0.29156772596
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 117.17282882,
+              "coefficient": -0.10933661328
+            },
+            {
+              "exponent": 13.596973368,
+              "coefficient": 0.64305039431
+            },
+            {
+              "exponent": 5.5483996341,
+              "coefficient": 0.45848970584
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 9.466285353,
+              "coefficient": -0.22538977259
+            },
+            {
+              "exponent": 1.559500607,
+              "coefficient": 0.72307758657
+            },
+            {
+              "exponent": 0.65230205868,
+              "coefficient": 0.45300721536
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.32978445,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.14042718,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 706.00497535,
+              "coefficient": 0.0095055518167
+            },
+            {
+              "exponent": 166.1972882,
+              "coefficient": 0.070356271142
+            },
+            {
+              "exponent": 52.452061906,
+              "coefficient": 0.27005556982
+            },
+            {
+              "exponent": 18.746932862,
+              "coefficient": 0.52574344602
+            },
+            {
+              "exponent": 6.9282991622,
+              "coefficient": 0.34254033223
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 3.4772204938,
+              "coefficient": 0.33994073736
+            },
+            {
+              "exponent": 1.3406906449,
+              "coefficient": 0.57203836254
+            },
+            {
+              "exponent": 0.50498803038,
+              "coefficient": 0.23847605831
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.21289599,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 35.423264935,
+              "coefficient": 0.026985304111
+            },
+            {
+              "exponent": 9.7814221451,
+              "coefficient": 0.14383458648
+            },
+            {
+              "exponent": 3.2673488767,
+              "coefficient": 0.36418958377
+            },
+            {
+              "exponent": 1.1026472189,
+              "coefficient": 0.48152670661
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.32317618,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            3
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1.126,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Fe": {
+      "element": "Fe",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 60923.640643,
+              "coefficient": 0.0014302254466
+            },
+            {
+              "exponent": 9147.8893982,
+              "coefficient": 0.010958790038
+            },
+            {
+              "exponent": 2081.3505927,
+              "coefficient": 0.054332554248
+            },
+            {
+              "exponent": 587.55977067,
+              "coefficient": 0.18884995009
+            },
+            {
+              "exponent": 191.0904399,
+              "coefficient": 0.38253069946
+            },
+            {
+              "exponent": 65.732730112,
+              "coefficient": 0.29308335984
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 127.25891928,
+              "coefficient": -0.10964564925
+            },
+            {
+              "exponent": 14.83091301,
+              "coefficient": 0.64387631332
+            },
+            {
+              "exponent": 6.0653307408,
+              "coefficient": 0.45472347323
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 10.44994371,
+              "coefficient": -0.22539639952
+            },
+            {
+              "exponent": 1.7245228003,
+              "coefficient": 0.72164398156
+            },
+            {
+              "exponent": 0.7177217733,
+              "coefficient": 0.44985492922
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.51851426,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.14118185,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 773.43750995,
+              "coefficient": 0.0094325735144
+            },
+            {
+              "exponent": 182.15149714,
+              "coefficient": 0.070029620575
+            },
+            {
+              "exponent": 57.547272758,
+              "coefficient": 0.26993651996
+            },
+            {
+              "exponent": 20.614988935,
+              "coefficient": 0.52700011047
+            },
+            {
+              "exponent": 7.634855789,
+              "coefficient": 0.34284148028
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 3.871932799,
+              "coefficient": 0.33974402988
+            },
+            {
+              "exponent": 1.4924724132,
+              "coefficient": 0.56842594005
+            },
+            {
+              "exponent": 0.5606128496,
+              "coefficient": 0.23649365839
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.40575991,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 38.968133419,
+              "coefficient": 0.027879664382
+            },
+            {
+              "exponent": 10.800067078,
+              "coefficient": 0.14858319982
+            },
+            {
+              "exponent": 3.6136457999,
+              "coefficient": 0.36905479496
+            },
+            {
+              "exponent": 1.2129967888,
+              "coefficient": 0.47745100883
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.32928046,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            3
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1.598,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Co": {
+      "element": "Co",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 65902.208257,
+              "coefficient": 0.0014284614936
+            },
+            {
+              "exponent": 9895.3896027,
+              "coefficient": 0.010946072783
+            },
+            {
+              "exponent": 2251.4305789,
+              "coefficient": 0.05428595389
+            },
+            {
+              "exponent": 635.61097084,
+              "coefficient": 0.18885179079
+            },
+            {
+              "exponent": 206.78820681,
+              "coefficient": 0.38301634994
+            },
+            {
+              "exponent": 71.179242971,
+              "coefficient": 0.29443551266
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 137.7726804,
+              "coefficient": -0.10990221736
+            },
+            {
+              "exponent": 16.118079243,
+              "coefficient": 0.64455537395
+            },
+            {
+              "exponent": 6.603032771,
+              "coefficient": 0.45116787924
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 11.479915788,
+              "coefficient": -0.2259384691
+            },
+            {
+              "exponent": 1.8956426324,
+              "coefficient": 0.72231409008
+            },
+            {
+              "exponent": 0.7846623207,
+              "coefficient": 0.44903812296
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.43480758,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.21010193,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 843.64358575,
+              "coefficient": 0.0093866097254
+            },
+            {
+              "exponent": 198.76386994,
+              "coefficient": 0.069880208716
+            },
+            {
+              "exponent": 62.854963098,
+              "coefficient": 0.27037070345
+            },
+            {
+              "exponent": 22.56284228,
+              "coefficient": 0.5290478688
+            },
+            {
+              "exponent": 8.3713209127,
+              "coefficient": 0.34357029579
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 4.28587198,
+              "coefficient": 0.34027999036
+            },
+            {
+              "exponent": 1.6508041817,
+              "coefficient": 0.56693392384
+            },
+            {
+              "exponent": 0.618342311,
+              "coefficient": 0.23617979783
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.16309825,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 42.927867612,
+              "coefficient": 0.028487788365
+            },
+            {
+              "exponent": 11.942533053,
+              "coefficient": 0.15206951283
+            },
+            {
+              "exponent": 4.0046495664,
+              "coefficient": 0.37310913999
+            },
+            {
+              "exponent": 1.3413193804,
+              "coefficient": 0.47549837676
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.28868146,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            3
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1.903,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Ni": {
+      "element": "Ni",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 71074.803211,
+              "coefficient": 0.001426038673
+            },
+            {
+              "exponent": 10672.020941,
+              "coefficient": 0.010928236994
+            },
+            {
+              "exponent": 2428.1389007,
+              "coefficient": 0.054212626938
+            },
+            {
+              "exponent": 685.53595148,
+              "coefficient": 0.18874768902
+            },
+            {
+              "exponent": 223.10072863,
+              "coefficient": 0.38324616985
+            },
+            {
+              "exponent": 76.842014042,
+              "coefficient": 0.29550637144
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 148.71122016,
+              "coefficient": -0.11014443059
+            },
+            {
+              "exponent": 17.459154987,
+              "coefficient": 0.64521426988
+            },
+            {
+              "exponent": 7.1625280665,
+              "coefficient": 0.44797838103
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 12.556137125,
+              "coefficient": -0.22645403224
+            },
+            {
+              "exponent": 2.0735740488,
+              "coefficient": 0.72320959286
+            },
+            {
+              "exponent": 0.853826406,
+              "coefficient": 0.44868026476
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.41742457,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.14047262,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 916.73608662,
+              "coefficient": 0.009343963561
+            },
+            {
+              "exponent": 216.06139913,
+              "coefficient": 0.069737374902
+            },
+            {
+              "exponent": 68.383914817,
+              "coefficient": 0.27073495012
+            },
+            {
+              "exponent": 24.593843952,
+              "coefficient": 0.53078301549
+            },
+            {
+              "exponent": 9.1392960204,
+              "coefficient": 0.34410229438
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 4.7193371746,
+              "coefficient": 0.34076082016
+            },
+            {
+              "exponent": 1.8161849234,
+              "coefficient": 0.56580169611
+            },
+            {
+              "exponent": 0.6784075072,
+              "coefficient": 0.23616717361
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.41194641,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 47.093832108,
+              "coefficient": 0.028982316948
+            },
+            {
+              "exponent": 13.146463975,
+              "coefficient": 0.1549499595
+            },
+            {
+              "exponent": 4.4170548925,
+              "coefficient": 0.37633115111
+            },
+            {
+              "exponent": 1.4771565078,
+              "coefficient": 0.47365096014
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.42380007,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            3
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 2.174,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Cu": {
+      "element": "Cu",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 76381.348056,
+              "coefficient": 0.0014336079896
+            },
+            {
+              "exponent": 11468.777499,
+              "coefficient": 0.010986749865
+            },
+            {
+              "exponent": 2609.4246495,
+              "coefficient": 0.054513652465
+            },
+            {
+              "exponent": 736.75033098,
+              "coefficient": 0.18990128258
+            },
+            {
+              "exponent": 239.82419958,
+              "coefficient": 0.38581959211
+            },
+            {
+              "exponent": 82.656829252,
+              "coefficient": 0.29790607498
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 160.13544196,
+              "coefficient": -0.11146778567
+            },
+            {
+              "exponent": 18.834177695,
+              "coefficient": 0.65349301031
+            },
+            {
+              "exponent": 7.7176595741,
+              "coefficient": 0.44770534421
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 13.710846717,
+              "coefficient": -0.22870911122
+            },
+            {
+              "exponent": 2.234989567,
+              "coefficient": 0.73464423031
+            },
+            {
+              "exponent": 0.8781836006,
+              "coefficient": 0.43273070874
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.73890037,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.17200647,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 991.24075782,
+              "coefficient": 0.0093878498798
+            },
+            {
+              "exponent": 233.69376116,
+              "coefficient": 0.070208282458
+            },
+            {
+              "exponent": 74.020930927,
+              "coefficient": 0.2732352222
+            },
+            {
+              "exponent": 26.664967447,
+              "coefficient": 0.53580792728
+            },
+            {
+              "exponent": 9.9192087478,
+              "coefficient": 0.34575794906
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 5.1519553926,
+              "coefficient": 0.34229108083
+            },
+            {
+              "exponent": 1.9638205828,
+              "coefficient": 0.56456592484
+            },
+            {
+              "exponent": 0.7156009704,
+              "coefficient": 0.24078584318
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.35790681,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 47.33504959,
+              "coefficient": 0.032375547758
+            },
+            {
+              "exponent": 13.161666077,
+              "coefficient": 0.16810218684
+            },
+            {
+              "exponent": 4.3693777244,
+              "coefficient": 0.38477707982
+            },
+            {
+              "exponent": 1.4132925109,
+              "coefficient": 0.46147880178
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.323142,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            3
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 2.233,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Zn": {
+      "element": "Zn",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 82000.711629,
+              "coefficient": 0.0014210764
+            },
+            {
+              "exponent": 12312.471777,
+              "coefficient": 0.010891499487
+            },
+            {
+              "exponent": 2801.3944193,
+              "coefficient": 0.054057188059
+            },
+            {
+              "exponent": 790.99424302,
+              "coefficient": 0.18847463904
+            },
+            {
+              "exponent": 257.56551079,
+              "coefficient": 0.38346549346
+            },
+            {
+              "exponent": 88.8149334,
+              "coefficient": 0.29723794197
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 171.86353716,
+              "coefficient": -0.11051849523
+            },
+            {
+              "exponent": 20.302534785,
+              "coefficient": 0.64607716984
+            },
+            {
+              "exponent": 8.3464123068,
+              "coefficient": 0.44220117322
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 14.84753694,
+              "coefficient": -0.22705309278
+            },
+            {
+              "exponent": 2.4495029507,
+              "coefficient": 0.72433217935
+            },
+            {
+              "exponent": 0.9984582182,
+              "coefficient": 0.44836495592
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.48163633,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.19573546,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1071.5185372,
+              "coefficient": 0.009276779724
+            },
+            {
+              "exponent": 252.69712152,
+              "coefficient": 0.06954114943
+            },
+            {
+              "exponent": 80.100829126,
+              "coefficient": 0.27156772564
+            },
+            {
+              "exponent": 28.903393172,
+              "coefficient": 0.53401355573
+            },
+            {
+              "exponent": 10.768899879,
+              "coefficient": 0.34501323446
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 5.644621253,
+              "coefficient": 0.34129600164
+            },
+            {
+              "exponent": 2.1678291347,
+              "coefficient": 0.56390521973
+            },
+            {
+              "exponent": 0.8054089834,
+              "coefficient": 0.23676109735
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.27172295,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 56.088939191,
+              "coefficient": 0.02958886914
+            },
+            {
+              "exponent": 15.751908917,
+              "coefficient": 0.15872571404
+            },
+            {
+              "exponent": 5.3115812367,
+              "coefficient": 0.37976229159
+            },
+            {
+              "exponent": 1.7737904917,
+              "coefficient": 0.46898959172
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.50089422,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            3
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 2.614,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Ga": {
+      "element": "Ga",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 87842.126296,
+              "coefficient": 0.0014271588798
+            },
+            {
+              "exponent": 13189.496402,
+              "coefficient": 0.010938894097
+            },
+            {
+              "exponent": 3000.9482141,
+              "coefficient": 0.054308200127
+            },
+            {
+              "exponent": 847.38425966,
+              "coefficient": 0.18951055983
+            },
+            {
+              "exponent": 276.00980642,
+              "coefficient": 0.38615185918
+            },
+            {
+              "exponent": 95.216672071,
+              "coefficient": 0.30051082719
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 184.00703968,
+              "coefficient": -0.11124461963
+            },
+            {
+              "exponent": 21.827051433,
+              "coefficient": 0.64831322918
+            },
+            {
+              "exponent": 9.0026963761,
+              "coefficient": 0.44358383594
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 16.033176938,
+              "coefficient": -0.23014299555
+            },
+            {
+              "exponent": 2.6707724878,
+              "coefficient": 0.72946861516
+            },
+            {
+              "exponent": 1.125283417,
+              "coefficient": 0.46214976951
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.93385774,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.15744983,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1167.2665844,
+              "coefficient": 0.0090974021307
+            },
+            {
+              "exponent": 275.38062789,
+              "coefficient": 0.068456273343
+            },
+            {
+              "exponent": 87.37507307,
+              "coefficient": 0.26922293888
+            },
+            {
+              "exponent": 31.59725467,
+              "coefficient": 0.53507897882
+            },
+            {
+              "exponent": 11.824122798,
+              "coefficient": 0.3527906276
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 6.2881845133,
+              "coefficient": 0.3393824453
+            },
+            {
+              "exponent": 2.519985324,
+              "coefficient": 0.56871947608
+            },
+            {
+              "exponent": 1.0169726306,
+              "coefficient": 0.27717694939
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.36500378,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.15078418,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 65.354237674,
+              "coefficient": 0.027370146382
+            },
+            {
+              "exponent": 18.504656747,
+              "coefficient": 0.15099463976
+            },
+            {
+              "exponent": 6.3179620632,
+              "coefficient": 0.37485328545
+            },
+            {
+              "exponent": 2.1641389426,
+              "coefficient": 0.47510606851
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.66628634,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.15262608,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Ge": {
+      "element": "Ge",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 93889.836642,
+              "coefficient": 0.001423397606
+            },
+            {
+              "exponent": 14097.497528,
+              "coefficient": 0.010910795654
+            },
+            {
+              "exponent": 3207.5477309,
+              "coefficient": 0.054183705943
+            },
+            {
+              "exponent": 905.76727269,
+              "coefficient": 0.18922820349
+            },
+            {
+              "exponent": 295.11014693,
+              "coefficient": 0.38612847001
+            },
+            {
+              "exponent": 101.84713141,
+              "coefficient": 0.30164050736
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 196.56719662,
+              "coefficient": -0.1111877094
+            },
+            {
+              "exponent": 23.405292522,
+              "coefficient": 0.64616007369
+            },
+            {
+              "exponent": 9.6839116702,
+              "coefficient": 0.44188904568
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 17.269736544,
+              "coefficient": -0.23027421375
+            },
+            {
+              "exponent": 2.896462216,
+              "coefficient": 0.73017169398
+            },
+            {
+              "exponent": 1.2553621412,
+              "coefficient": 0.46197222255
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1.13963544,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.21828331,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1259.2085995,
+              "coefficient": 0.0090115464252
+            },
+            {
+              "exponent": 297.15626382,
+              "coefficient": 0.067986841689
+            },
+            {
+              "exponent": 94.353387522,
+              "coefficient": 0.26853856488
+            },
+            {
+              "exponent": 34.176329677,
+              "coefficient": 0.53659649219
+            },
+            {
+              "exponent": 12.816139615,
+              "coefficient": 0.35633514961
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 6.8471029784,
+              "coefficient": 0.33900693119
+            },
+            {
+              "exponent": 2.7717363939,
+              "coefficient": 0.56809365264
+            },
+            {
+              "exponent": 1.1458418175,
+              "coefficient": 0.27246539884
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.39171143,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.140004,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 74.782168177,
+              "coefficient": 0.025755860205
+            },
+            {
+              "exponent": 21.310849759,
+              "coefficient": 0.14536816132
+            },
+            {
+              "exponent": 7.3464792363,
+              "coefficient": 0.37134209859
+            },
+            {
+              "exponent": 2.5656271395,
+              "coefficient": 0.48002998436
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.94214319,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.26370662,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "As": {
+      "element": "As",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 100146.52554,
+              "coefficient": 0.0014258349617
+            },
+            {
+              "exponent": 15036.861711,
+              "coefficient": 0.010930176963
+            },
+            {
+              "exponent": 3421.2902833,
+              "coefficient": 0.05429417461
+            },
+            {
+              "exponent": 966.16965717,
+              "coefficient": 0.18976078153
+            },
+            {
+              "exponent": 314.87394026,
+              "coefficient": 0.38775195453
+            },
+            {
+              "exponent": 108.7082379,
+              "coefficient": 0.3040281204
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 209.5423895,
+              "coefficient": -0.11162094204
+            },
+            {
+              "exponent": 25.038221139,
+              "coefficient": 0.64697607762
+            },
+            {
+              "exponent": 10.390964343,
+              "coefficient": 0.44223608673
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 18.555090093,
+              "coefficient": -0.22994190569
+            },
+            {
+              "exponent": 3.1281217449,
+              "coefficient": 0.73319107613
+            },
+            {
+              "exponent": 1.3884885073,
+              "coefficient": 0.45533653943
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.41818245,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.1550131,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1355.6443507,
+              "coefficient": 0.0089182507898
+            },
+            {
+              "exponent": 319.9992927,
+              "coefficient": 0.067454750717
+            },
+            {
+              "exponent": 101.67734092,
+              "coefficient": 0.2675977211
+            },
+            {
+              "exponent": 36.886323845,
+              "coefficient": 0.5377684452
+            },
+            {
+              "exponent": 13.861115909,
+              "coefficient": 0.35992570244
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 7.4260666912,
+              "coefficient": 0.34036849637
+            },
+            {
+              "exponent": 3.0316247187,
+              "coefficient": 0.57030149334
+            },
+            {
+              "exponent": 1.278307834,
+              "coefficient": 0.26606170238
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.55412813,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.17820498,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 84.445514539,
+              "coefficient": 0.024518402724
+            },
+            {
+              "exponent": 24.190416102,
+              "coefficient": 0.14107454677
+            },
+            {
+              "exponent": 8.4045015119,
+              "coefficient": 0.36875228915
+            },
+            {
+              "exponent": 2.9808970748,
+              "coefficient": 0.48409561362
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.960904,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.16430104,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Se": {
+      "element": "Se",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 106612.20027,
+              "coefficient": 0.0014274889113
+            },
+            {
+              "exponent": 16007.604701,
+              "coefficient": 0.010943525114
+            },
+            {
+              "exponent": 3642.1699707,
+              "coefficient": 0.054374171596
+            },
+            {
+              "exponent": 1028.5912993,
+              "coefficient": 0.19018092947
+            },
+            {
+              "exponent": 335.30298888,
+              "coefficient": 0.38913021696
+            },
+            {
+              "exponent": 115.80129154,
+              "coefficient": 0.30620207088
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 222.9332502,
+              "coefficient": -0.11198808009
+            },
+            {
+              "exponent": 26.726257934,
+              "coefficient": 0.64752124207
+            },
+            {
+              "exponent": 11.124501923,
+              "coefficient": 0.44241976651
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 19.888520061,
+              "coefficient": -0.22857227762
+            },
+            {
+              "exponent": 3.3668473803,
+              "coefficient": 0.73591359951
+            },
+            {
+              "exponent": 1.5249277839,
+              "coefficient": 0.44330199577
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.53049657,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.20129961,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1455.906812,
+              "coefficient": 0.0088203597043
+            },
+            {
+              "exponent": 343.75101831,
+              "coefficient": 0.066875851967
+            },
+            {
+              "exponent": 109.29554964,
+              "coefficient": 0.2664057808
+            },
+            {
+              "exponent": 39.707711022,
+              "coefficient": 0.53834928422
+            },
+            {
+              "exponent": 14.950185232,
+              "coefficient": 0.36303281993
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 8.0208962094,
+              "coefficient": 0.34153807025
+            },
+            {
+              "exponent": 3.2934649756,
+              "coefficient": 0.57257906583
+            },
+            {
+              "exponent": 1.4058602438,
+              "coefficient": 0.25549813222
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.50150977,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.15096892,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 94.494024044,
+              "coefficient": 0.023490101098
+            },
+            {
+              "exponent": 27.18818526,
+              "coefficient": 0.13747735767
+            },
+            {
+              "exponent": 9.5091567352,
+              "coefficient": 0.36649929124
+            },
+            {
+              "exponent": 3.4170516853,
+              "coefficient": 0.48750989884
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1.01061844,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.15034297,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "Br": {
+      "element": "Br",
+      "shells": [
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 113286.38776,
+              "coefficient": 0.0014283037779
+            },
+            {
+              "exponent": 17009.626303,
+              "coefficient": 0.010950417496
+            },
+            {
+              "exponent": 3870.1842567,
+              "coefficient": 0.054421006604
+            },
+            {
+              "exponent": 1093.0357227,
+              "coefficient": 0.19047907695
+            },
+            {
+              "exponent": 356.39721797,
+              "coefficient": 0.39024642737
+            },
+            {
+              "exponent": 123.12539643,
+              "coefficient": 0.30814432514
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 236.74084007,
+              "coefficient": -0.11228065671
+            },
+            {
+              "exponent": 28.46866107,
+              "coefficient": 0.64775962312
+            },
+            {
+              "exponent": 11.883443722,
+              "coefficient": 0.44235575986
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 21.269633312,
+              "coefficient": -0.22642576323
+            },
+            {
+              "exponent": 3.6129226841,
+              "coefficient": 0.73823712008
+            },
+            {
+              "exponent": 1.6626648969,
+              "coefficient": 0.42683868694
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.50915106,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            0
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.24484828,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1560.2801881,
+              "coefficient": 0.0087166669072
+            },
+            {
+              "exponent": 368.47859205,
+              "coefficient": 0.06624363742
+            },
+            {
+              "exponent": 117.22978849,
+              "coefficient": 0.26495610385
+            },
+            {
+              "exponent": 42.648909248,
+              "coefficient": 0.53839160587
+            },
+            {
+              "exponent": 16.087225096,
+              "coefficient": 0.36579387888
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 8.6352810058,
+              "coefficient": 0.34248787366
+            },
+            {
+              "exponent": 3.5613665502,
+              "coefficient": 0.57500678213
+            },
+            {
+              "exponent": 1.5292626609,
+              "coefficient": 0.24330394172
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.55604474,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            1
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.15640467,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 104.85518642,
+              "coefficient": 0.022650147581
+            },
+            {
+              "exponent": 30.281143688,
+              "coefficient": 0.1345548323
+            },
+            {
+              "exponent": 10.651394267,
+              "coefficient": 0.36474454537
+            },
+            {
+              "exponent": 3.8699456233,
+              "coefficient": 0.49044587056
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 1.2561204,
+              "coefficient": 1.0
+            }
+          ]
+        },
+        {
+          "angular_momentum": [
+            2
+          ],
+          "harmonic_type": "spherical",
+          "primitives": [
+            {
+              "exponent": 0.21251473,
+              "coefficient": 1.0
+            }
+          ]
+        }
+      ]
     }
   },
   "provenance": {

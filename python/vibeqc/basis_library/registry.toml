@@ -99,6 +99,13 @@ role = "orbital"
 ecp_required_above_z = 36
 note = "pob-TZVP-rev2 carries Stuttgart-Cologne ECPs on Rb-Po and La-Lu (CRYSTAL Z+200 records)."
 
+[[families]]
+name = "pob-tzvp"
+pattern = '^pob-tzvp$'
+role = "orbital"
+ecp_required_above_z = 36
+note = "pob-TZVP carries the same Stuttgart-Cologne ECPs on Rb-I (Laun 2018 CRYSTAL Z+200 records)."
+
 # The threshold is 28, not 30: the bundled records start at Cu (Z=29), and
 # Cu and Zn both carry a 10-electron ECP ("CU-ECP 4 10"). A threshold of 30
 # would have called those two all-electron. The shipped .ecp sidecars cover

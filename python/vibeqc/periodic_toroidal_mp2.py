@@ -1285,6 +1285,11 @@ def _pre_sweep_toroidal_dlpno_mp2_options():
         tcut_mkn=1e-3,
         tcut_pairs=1e-6,
         tcut_pairs_weak=1e-4,
+        # #65 moved the molecular default to pno_norm="mp2". This builder
+        # exists to hold the pre-sweep convention, and tcut_pno is an
+        # occupation-number cut that only means what the density it was
+        # applied to means -- so the density is pinned with the thresholds.
+        pno_norm="legacy",
     )
 
 
@@ -1298,6 +1303,14 @@ def _pre_sweep_toroidal_dlpno_cc_options():
         tcut_mkn=0.0,
         tcut_pairs=1e-4,
         residual_domain="pair",
+        # #65 moved the molecular default to pno_norm="mp2". This builder
+        # exists to hold the pre-sweep convention, and tcut_pno is an
+        # occupation-number cut that only means what the density it was
+        # applied to means -- so the density is pinned with the thresholds.
+        pno_norm="legacy",
+        # ... and predates the semicanonical MP2 PNO correction the
+        # molecular CCSD route now applies, so that stays off too.
+        pno_correction=False,
     )
 
 

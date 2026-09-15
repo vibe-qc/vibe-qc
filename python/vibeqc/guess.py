@@ -31,6 +31,7 @@ from ._vibeqc_core import (
     PeriodicSystem,
     _resolve_initial_guess_for_molecule,
     bloch_sum,
+    build_grid,
     compute_huckel_fock_lattice,
     compute_kinetic_lattice,
     compute_minao_density_periodic,
@@ -716,18 +717,20 @@ def periodic_fock_guess_k(
         return None
     opts = lattice_opts if lattice_opts is not None else LatticeSumOptions()
     if kind == InitialGuess.SAP:
-        from .periodic_grid import build_periodic_becke_grid
-
         kinetic = (
             kinetic_lattice
             if kinetic_lattice is not None
             else compute_kinetic_lattice(basis, system, opts)
         )
-        grid = build_periodic_becke_grid(system)
         if ecp_context.active:
             from ._vibeqc_core import compute_vsap_ecp_lattice
             potential = compute_vsap_ecp_lattice(basis, system, opts, ecp_context)
         else:
+            # V_mu,nu(g) integrates a localized AO pair over all space.
+            # A periodic XC partition would require a bra-image sum here;
+            # using it alone drops AO tails assigned to neighboring cells.
+            # Match the molecular partition used by the native SAP drivers.
+            grid = build_grid(system.unit_cell_molecule())
             potential = compute_vsap_lattice(
                 basis, system, grid, "sap_helfem_large", opts)
         fock_lattice = None

@@ -128,6 +128,7 @@ _CCM_CONSTRUCTION = "finite-translation-group-character"
 _EVALUATION_REPRESENTATION = "gamma-centred-character-mesh"
 _DIRECT_RUNTIME_BACKEND = "pbc-bipole"
 _M5_SR_IMAGE_DOMAIN_POLICY = "m5-qqr-padded-erfc/v1"
+_M5_SR_PHYSICAL_DOMAIN_POLICY = "m5-physical-pair-midpoint-erfc/v1"
 _M5_SR_IMAGE_PRECISION = 1.0e-6
 _EXACT_EXCHANGE_ASSEMBLY_SCHEMA = (
     "vibeqc.aiccm2026dev-b.exact-exchange-assembly/v1"
@@ -2148,7 +2149,17 @@ def _attach_diagnostics(
     if backend is AICCM2026DevBBackend.FOUR_CENTER:
         sr_image_extent = getattr(result, "sr_image_extent_bohr", None)
         if sr_image_extent is not None:
-            setattr(result, "sr_image_domain_policy", _M5_SR_IMAGE_DOMAIN_POLICY)
+            # The physical route measures interaction reach between pair
+            # midpoints, not the legacy absolute ket-image radius. Consumers
+            # qualified for that legacy finite operator must not inherit an
+            # attestation for the different physical quartet support (#243).
+            lattice_options = getattr(options, "lattice_opts", None)
+            physical_pairs = bool(getattr(lattice_options, "pair_complete_1e", False))
+            domain_policy = (
+                _M5_SR_PHYSICAL_DOMAIN_POLICY
+                if physical_pairs else _M5_SR_IMAGE_DOMAIN_POLICY
+            )
+            setattr(result, "sr_image_domain_policy", domain_policy)
             setattr(result, "sr_image_precision", _M5_SR_IMAGE_PRECISION)
 
     representatives = wigner_seitz_representatives(system, mesh)

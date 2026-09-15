@@ -241,6 +241,7 @@ def generate_reference_dataset(
     basis_name: str = "aug-cc-pvdz",
     *,
     functional: str = "pbe38",
+    grid_level: str = "orca-defgrid3",
     n_grid: int = N_GRID_POINTS,
     omega_scale: float = 0.5,
     verbose: bool = True,
@@ -323,6 +324,8 @@ def generate_reference_dataset(
     )
 
     rks_opts = RKSOptions()
+    from .runner import apply_ks_grid_default
+    apply_ks_grid_default(rks_opts, grid_level)
     rks_opts.functional = functional
     rks_opts.conv_tol_energy = 1.0e-10
 
@@ -344,7 +347,7 @@ def generate_reference_dataset(
                 f"RKS did not converge for {ref.label} (n_iter={rks.n_iter})."
             )
         alpha = coupled_polarizability_imag_freq_dft(
-            rks, basis, mol, omegas, functional)
+            rks, basis, mol, omegas, functional, grid_options=rks_opts.grid)
 
         # EEQ charge of every atom in the host.
         charges = np.asarray(eeq_charges(mol).charges, dtype=float)

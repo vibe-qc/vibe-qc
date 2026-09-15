@@ -9,12 +9,12 @@ basis functions (small primitive exponents) the flat cutoff either
 (a) wastes time on cells whose contribution is below precision, or
 (b) under-includes cells whose contribution still exceeds precision.
 
-PySCF takes a different approach: ``cell.rcut`` is auto-tuned per
-shell, sized by the smallest primitive exponent and a target precision,
-so the effective cutoff is short for diffuse shells and longer for
-tight ones. The full lattice sum then combines this short bare sum
-with a reciprocal-space AFT correction that supplies the missing
-long-range Coulomb.
+Per-shell Gaussian decay estimates depend on primitive exponents,
+contractions and angular momentum. Diffuse functions generally require
+longer image sums. Range-separated exchange can instead assign selected
+diffuse products to reciprocal space, provided the complementary terms are
+included (Sun 2023, doi:10.1063/5.0155815, Sec. II.C). The radius estimators
+in this module do not themselves implement that partition.
 
 This module exposes both strategies (and the surface for adding more)
 as :class:`RcutStrategy` plus the :func:`make_lattice_opts` factory.
@@ -66,6 +66,56 @@ __all__ = [
 # a convergence target, not a tunable knob: loosening it re-admits the
 # indefinite metric it exists to exclude.
 DEFAULT_BLOCH_OVERLAP_TOL = 1e-12
+
+
+def ao_pair_support_mask(
+    basis: BasisSet, translation: np.ndarray, cutoff_bohr: float,
+) -> np.ndarray:
+    """Physical AO-pair support matching native ``pair_in_range``.
+
+    All AOs in a shell share its origin. The sharp boundary is held fixed
+    when differentiating a finite lattice sum, just as for the native
+    one-electron derivatives; finite differences must avoid boundary crossings.
+    """
+    origins = []
+    for shell in basis.shells():
+        l = int(shell.l)
+        size = 2 * l + 1 if shell.pure else (l + 1) * (l + 2) // 2
+        origins.extend([shell.origin] * size)
+    centers = np.asarray(origins, dtype=float).reshape((-1, 3))
+    displacement = (
+        centers[:, None, :] - centers[None, :, :]
+        - np.asarray(translation, dtype=float)
+    )
+    return np.sum(displacement * displacement, axis=2) <= float(cutoff_bohr) ** 2
+
+
+def physical_eri_cells(basis, system, lattice_opts, interaction_cutoff=None):
+    """Enclose both product pairs and their midpoint interaction domain."""
+    from ._vibeqc_core import physical_eri_lattice_cells
+
+    interaction = float(interaction_cutoff if interaction_cutoff is not None else (
+        lattice_opts.eri_interaction_cutoff_bohr or lattice_opts.cutoff_bohr
+    ))
+    return list(physical_eri_lattice_cells(
+        basis, system, float(lattice_opts.cutoff_bohr), interaction,
+    ))
+
+
+def on_physical_eri_cells(lattice, basis, system, lattice_opts):
+    """Zero-extend a one-electron operator onto the exchange cell list."""
+    if lattice is None or not lattice_opts.pair_complete_1e:
+        return lattice
+    from ._vibeqc_core import make_lattice_matrix_set
+
+    cells = physical_eri_cells(basis, system, lattice_opts)
+    by_cell = {tuple(cell.index): np.asarray(block)
+               for cell, block in zip(lattice.cells, lattice.blocks)}
+    zero = np.zeros((basis.nbasis, basis.nbasis))
+    blocks = [by_cell.pop(tuple(cell.index), zero).copy() for cell in cells]
+    if any(np.any(block) for block in by_cell.values()):
+        raise ValueError("one-electron support exceeds the physical ERI enclosure")
+    return make_lattice_matrix_set(basis.nbasis, cells, blocks)
 
 
 class RcutStrategy(enum.Enum):

@@ -506,6 +506,19 @@ pages       = "451--459"
 year        = 2013
 doi         = "10.1002/jcc.23153"
 
+[entries.laun_pob_fifth_period_2018]
+kind        = "article"
+bibtex_key  = "laun_pob_fifth_period_2018"
+authors     = ["Laun, Joachim", "Vilela Oliveira, Daniel", "Bredow, Thomas"]
+title       = "Consistent gaussian basis sets of double- and triple-zeta valence with polarization quality of the fifth period for solid-state calculations"
+journal     = "Journal of Computational Chemistry"
+volume      = 39
+issue       = 19
+pages       = "1285--1290"
+year        = 2018
+doi         = "10.1002/jcc.25195"
+notes       = "The pob-TZVP (and pob-DZVP) Rb-I records with their Stuttgart-Cologne ECPs; metadata verified against Crossref 2026-09-13 (#228)."
+
 [entries.vilela_oliveira_pob_rev2_2019]
 kind        = "article"
 bibtex_key  = "vilela_oliveira_pob_rev2_2019"
@@ -913,6 +926,50 @@ pages       = "13877--13883"
 year        = 2006
 doi         = "10.1021/jp065887l"
 notes       = "Revised iodine PP and basis; iodine in the cc-pV*Z-PP family cites it alongside Peterson 2003 (II)."
+
+# --- Later single-element additions to bundled correlation-consistent and
+# --- minimal sets (2026-09-10). Each of these elements was added to its set
+# --- by a separate publication, which is why libint's files omit them and
+# --- why they route their own reference rather than the parent set's.
+
+[entries.koput_peterson_ca_2002]
+kind        = "article"
+bibtex_key  = "koput_peterson_ca_2002"
+authors     = ["Koput, Jacek", "Peterson, Kirk A."]
+title       = "Ab initio potential energy surface and vibrational-rotational energy levels of X2Sigma+ CaOH"
+journal     = "Journal of Physical Chemistry A"
+volume      = "106"
+issue       = "41"
+pages       = "9595--9599"
+year        = 2002
+doi         = "10.1021/jp026283u"
+notes       = "Defines the cc-pVnZ calcium sets; the source of the Ca block in the bundled cc-pVQZ."
+
+[entries.prascher_ccpvnz_be_2011]
+kind        = "article"
+bibtex_key  = "prascher_ccpvnz_be_2011"
+authors     = ["Prascher, Brian P.", "Woon, David E.", "Peterson, Kirk A.", "Dunning, Thom H.", "Wilson, Angela K."]
+title       = "Gaussian basis sets for use in correlated molecular calculations. VII. Valence, core-valence, and scalar relativistic basis sets for Li, Be, Na, and Mg"
+journal     = "Theoretical Chemistry Accounts"
+volume      = "128"
+issue       = "1"
+pages       = "69--82"
+year        = 2011
+doi         = "10.1007/s00214-010-0764-0"
+notes       = "Source of the beryllium block in the bundled cc-pV6Z."
+
+[entries.pietro_sto3g_heavy_1981]
+kind        = "article"
+bibtex_key  = "pietro_sto3g_heavy_1981"
+authors     = ["Pietro, William J.", "Blurock, Edward S.", "Hout, Robert F.", "Hehre, Warren J.", "DeFrees, Douglas J.", "Stewart, James J. P."]
+title       = "Molecular orbital theory of the properties of inorganic and organometallic compounds. 2. STO-NG basis sets for fourth-row main-group elements"
+journal     = "Inorganic Chemistry"
+volume      = "20"
+issue       = "11"
+pages       = "3650--3654"
+year        = 1981
+doi         = "10.1021/ic50225a013"
+notes       = "Source of the xenon block in the bundled STO-3G."
 
 [entries.hellweg_haettig_pp_rifit_2007]
 kind        = "article"
@@ -1869,7 +1926,7 @@ issue       = 20
 pages       = "8994-9004"
 year        = 2002
 doi         = "10.1063/1.1473802"
-notes       = "The Ewald-based CCM Madelung field. Bredow, Geudtner and Jug 2001 implement the embedding with finite Evjen-weighted point-charge shells and defer exact Ewald to a later version (p. 93); this is that later work, and it is what the shipped Madelung matrices (indo::_madkonst_2d / _madkonst_3d, MSINDO madelkonst.f) actually compute. Fires via routes.methods.ccm_madelung_embedding whenever a SECCM run resolves a madelung_* electrostatics kernel."
+notes       = "The Ewald-based CCM Madelung field. Bredow, Geudtner and Jug 2001 implement the embedding with finite Evjen-weighted point-charge shells and defer exact Ewald to a later version (p. 93); this is that later work, and it is what the shipped Madelung matrices (indo::_madkonst_2d / _madkonst_3d, MSINDO madelkonst.f) actually compute. Fires via routes.methods.ccm_madelung_embedding whenever a SECCM run resolves an exact-operator madelung_* electrostatics kernel (parry_2d, ewald_3d, wire_1d); not for the frozen truncated 1-D sum, which routes to ccm_madelung_truncated_1d."
 
 [entries.ewald_lattice_sum_1921]
 kind        = "article"
@@ -1882,7 +1939,7 @@ issue       = 3
 pages       = "253-287"
 year        = 1921
 doi         = "10.1002/andp.19213690304"
-notes       = "The real/reciprocal/self/background split behind every 3-D lattice-potential sum in the tree, including indo::_madkonst_3d and the SECCM Madelung embedding. Fires via routes.methods.ccm_madelung_embedding."
+notes       = "The real/reciprocal/self/background split behind every 3-D lattice-potential sum in the tree, including indo::_madkonst_3d and the SECCM Madelung embedding. Fires via routes.methods.ccm_madelung_embedding for the exact-operator madelung_* kernels; the frozen truncated 1-D sum performs no Ewald split and routes to ccm_madelung_truncated_1d without this entry."
 
 [entries.janetzko_ccm_2008]
 kind        = "article"
@@ -1908,7 +1965,7 @@ issue       = 1
 pages       = "89--101"
 year        = 2001
 doi         = "10.1002/1096-987X(20010115)22:1<89::AID-JCC9>3.0.CO;2-7"
-notes       = "CCM implementation in MSINDO with WSZ weighting and finite Evjen-weighted point-charge shells. Exact Ewald embedding is deferred on p. 93; the later treatment is Janetzko, Bredow and Jug (2002), DOI 10.1063/1.1473802. Cite for the CCM construction, not as the exact-Ewald source."
+notes       = "CCM implementation in MSINDO with WSZ weighting and finite Evjen-weighted point-charge shells. Exact Ewald embedding is deferred on p. 93; the later treatment is Janetzko, Bredow and Jug (2002), DOI 10.1063/1.1473802. Cite for the CCM construction, not as the exact-Ewald source. Fires via routes.methods.ccm_madelung_embedding and, alone, via ccm_madelung_truncated_1d for the MSINDO frozen 1-D point-charge sum."
 
 [entries.claff_dftb_ccm_2012]
 kind        = "misc"
@@ -3002,6 +3059,18 @@ pages       = "5074--5085"
 year        = 1998
 doi         = "10.1021/jp980017s"
 notes       = "Supplies the sigma-averaging algorithm (eq. 11), the correlation descriptor (eq. 14), the misfit and hydrogen-bond energies (eq. 22, 26), the self-consistent sigma potential (eq. 17/18) and its segment form (eq. 23–25), the chemical potentials (eq. 19–21) and the combinatorial term (eq. 30). Section 5.1 is the source of the klamt1998 parameterization in vibeqc.solvation.cosmors.parameters, which was fitted against DMol/BPW91/DNP with COSMO at f(ε)=1 and NSPA=92 segments."
+
+[entries.sinnecker_direct_cosmors_2006]
+kind        = "article"
+bibtex_key  = "sinnecker_direct_cosmors_2006"
+authors     = ["Sinnecker, Sebastian", "Rajendran, Arivazhagan", "Klamt, Andreas", "Diedenhofen, Michael", "Neese, Frank"]
+title       = "Calculation of Solvent Shifts on Electronic g-Tensors with the Conductor-Like Screening Model (COSMO) and Its Self-Consistent Generalization to Real Solvents (Direct COSMO-RS)"
+journal     = "The Journal of Physical Chemistry A"
+volume      = 110
+pages       = "2235--2245"
+year        = 2006
+doi         = "10.1021/jp056016z"
+notes       = "The Direct COSMO-RS method: the COSMO-RS sigma potential of a real solvent fed back into the SCF as extra screening charges (eq. 18-19), implemented in vibeqc.solvation.cosmors.direct and selected by SolventModel(variant=\"dcosmo-rs\"). The paper states the operator, not the energy; vibe-qc's G = E_gas[D] + (1/2) q.V_tot + sum_t a_t mu_S(sigma_t) is derived so that its density derivative is that operator."
 
 [entries.cossi_cpcm_2003]
 kind        = "article"
@@ -6062,7 +6131,7 @@ always = ["libint_valeev"]
 # (i.e. bundled) entry, so a job that draws a bundled basis cites the catalog it
 # came from. A custom / external basis is a route miss and does not fire it.
 "_bse_bundled_provenance" = ["pritchard_bse_2019"]
-"sto-3g"                = ["hehre_sto_ng_1969"]
+"sto-3g"                = ["hehre_sto_ng_1969", "pietro_sto3g_heavy_1981"]
 "sto3g"                 = ["hehre_sto_ng_1969"]
 "sto-6g"                = ["hehre_sto_ng_1969", "hehre_pople_stong_2nd_row_1970"]
 "3-21g"                 = ["binkley_pople_321g_1980"]
@@ -6081,9 +6150,9 @@ always = ["libint_valeev"]
 "6-311+g(3df,2p)"       = ["krishnan_pople_6311g_1980", "mclean_chandler_6311g_1980", "hariharan_pople_1973", "frisch_pople_binkley_supplementary_1984"]
 "cc-pvdz"               = ["dunning_ccpvxz_1989"]
 "cc-pvtz"               = ["dunning_ccpvxz_1989"]
-"cc-pvqz"               = ["dunning_ccpvxz_1989"]
+"cc-pvqz"               = ["dunning_ccpvxz_1989", "koput_peterson_ca_2002"]
 "cc-pv5z"               = ["dunning_ccpvxz_1989", "woon_dunning_he_1994", "woon_dunning_al_ar_1993"]
-"cc-pv6z"               = ["dunning_ccpvxz_1989", "wilson_vanmourik_dunning_1996"]
+"cc-pv6z"               = ["dunning_ccpvxz_1989", "wilson_vanmourik_dunning_1996", "prascher_ccpvnz_be_2011"]
 "cc-pv7z"               = ["feller_peterson_1999", "feller_peterson_dejong_dixon_2003"]
 "cc-pvtz-mini"          = ["dunning_ccpvxz_1989"]
 "cc-pvdz-ri"            = ["dunning_ccpvxz_1989", "weigend_ccpvxz_rifit_2002"]
@@ -6228,7 +6297,7 @@ always = ["libint_valeev"]
 "ano-rcc-mb"            = ["widmark_malmqvist_roos_ano_1990", "roos_ano_rcc_main_group_2004", "roos_ano_rcc_tm_2005"]
 "sap_grasp_large"       = ["lehtola_visscher_engel_sap_2020"]
 "sap_helfem_large"      = ["lehtola_visscher_engel_sap_2020"]
-"pob-tzvp"              = ["peintinger_pob_tzvp_2013"]
+"pob-tzvp"              = ["peintinger_pob_tzvp_2013", "laun_pob_fifth_period_2018", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991"]
 "pob-dzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019"]
 "pob-tzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991", "dolg_stoll_savin_preuss_lanthanide_ecp_1989"]
 # --- roadmap / forward-looking additions ---
@@ -6868,10 +6937,18 @@ _libxc_always           = ["libxc_2018"]
 "wire_ewald_1d"         = ["parry_2d_ewald_1975"]
 # CCM Madelung/Ewald embedding (Bredow-Geudtner-Jug 2001 construction with
 # the Janetzko-Bredow-Jug 2002 exact-Ewald matrices, on Ewald 1921). Fires
-# for any SECCM run whose electrostatics kernel resolves to madelung_*, in
-# every dimension and for every adapter; never for the "none" family and
+# for any SECCM run whose electrostatics kernel resolves to a madelung_*
+# kernel that runs an exact operator (madelung_parry_2d, madelung_ewald_3d,
+# madelung_wire_1d), for every adapter; never for the "none" family and
 # never for the self-consistent ewald_gamma family.
 "ccm_madelung_embedding" = ["bredow_geudtner_jug_ccm_2001", "janetzko_ccm_long_range_2002", "ewald_lattice_sum_1921"]
+# The MSINDO engine's frozen 1-D kernel (madelung_truncated_1d): the finite
+# +/-1, +/-2 shell bare point-charge sum of ccm1dmadelsum.f
+# (indo::_madelung_potential_1d). It is the Bredow-Geudtner-Jug 2001
+# finite-shell construction and performs no Ewald split, so it owes neither
+# the Janetzko 2002 exact Madelung matrices (defined for m = 2, 3 only) nor
+# Ewald 1921 (GitLab vibe-qc#64, sibling of #442's Parry over-credit).
+"ccm_madelung_truncated_1d" = ["bredow_geudtner_jug_ccm_2001"]
 
 
 # --- roadmap / forward-looking additions ---
@@ -7032,6 +7109,14 @@ _libxc_always           = ["libxc_2018"]
 # NOT the Scalmani-Frisch CSC diagonal or Lange SWIG switching (those are the
 # Lebedev-cavity treatment used by the "cosmo"/"cpcm" Lebedev path).
 "cosmo_gepol"           = ["klamt_schuurmann_cosmo_1993", "cossi_cpcm_2003", "silla_gepol_1991", "tomasi_continuum_review_2005"]
+# Direct COSMO-RS (SolventModel variant="dcosmo-rs"; Sinnecker et al. 2006).
+# One solvation row fires per variant, so this row is the whole calculation:
+# the method paper, the COSMO-RS sigma potential and its parameterization, the
+# conductor COSMO it corrects, and the COSMO FINE Cavity the variant requires
+# with that cavity's Gaussian-charge diagonal (Lange & Herbert eq. 3.7). NOT
+# Scalmani-Frisch: its point-charge diagonal is the Lebedev cavity's, which
+# Direct COSMO-RS refuses.
+"dcosmo-rs"             = ["sinnecker_direct_cosmors_2006", "klamt_schuurmann_cosmo_1993", "klamt_cosmors_1995", "klamt_cosmors_parametrization_1998", "klamt_fine_cavity_2018", "cossi_cpcm_2003", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
 # COSMO-RS / COSMOSPACE thermodynamics (vibeqc.solvation.cosmors). Fires when
 # a job computes a sigma profile, sigma potential, chemical potential or any
 # property derived from them. The underlying COSMO surface cites its own

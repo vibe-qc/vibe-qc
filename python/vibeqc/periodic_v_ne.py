@@ -235,6 +235,25 @@ def compute_v_ne_ewald_3d_ft_gamma(
     from .aux_basis import _resolve_pair_ft_shared
     from ._vibeqc_core import bloch_sum
 
+    if lat_opts.pair_complete_1e:
+        if stream_pair_ft and pair_ft_shared is not None:
+            raise ValueError(
+                "compute_v_ne_ewald_3d_ft_gamma: stream_pair_ft cannot "
+                "consume a precomputed pair_ft_shared bundle."
+            )
+        if pair_ft_shared is not None:
+            _resolve_pair_ft_shared(
+                pair_ft_shared, basis, system, ke_cutoff, lat_opts,
+            )
+        # A dense bundle built on the historical ball has no pair-support
+        # provenance. Build the coupled per-cell split on its own support.
+        blocks = compute_v_ne_ewald_3d_ft_lattice(
+            basis, system, lat_opts, ewald_options=ewald_options,
+            ke_cutoff=ke_cutoff, screen_rel=0.0,
+        )
+        value = np.real(bloch_sum(blocks, np.zeros(3)))
+        return 0.5 * (value + value.T)
+
     if system.dim != 3:
         raise ValueError(
             "compute_v_ne_ewald_3d_ft_gamma: requires dim == 3; got "
@@ -518,6 +537,12 @@ def compute_v_ne_ewald_3d_ft_lattice(
             "LatticeSumOptions.cutoff_bohr."
         )
     S_blocks = S_set.blocks
+    if any(
+        not np.array_equal(np.asarray(s.index), np.asarray(v.index))
+        or not np.array_equal(np.asarray(s.r_cart), np.asarray(v.r_cart))
+        for s, v in zip(S_set.cells, cells)
+    ):
+        raise RuntimeError("compute_v_ne_ewald_3d_ft_lattice: cell ordering differs")
 
     # ---- v_long(G) on the dense FT mesh (G != 0; PySCF jellium G=0 drop).
     G_all = rsgdf_dense_g_mesh(system, float(ke_cutoff))
@@ -613,6 +638,12 @@ def compute_v_ne_ewald_3d_ft_lattice(
             new_block = V_short_b + corr
         else:
             new_block = V_short_b + V_long_all[active_pos[c]] + corr
+        if lat_opts.pair_complete_1e:
+            from .lattice_screening import ao_pair_support_mask
+
+            new_block[~ao_pair_support_mask(
+                basis, cells[c].r_cart, lat_opts.cutoff_bohr,
+            )] = 0.0
         V_set.set_block(c, np.ascontiguousarray(new_block, dtype=float))
 
     return V_set

@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "vibe-qc"
-version = "0.17.1"
+version = "0.17.2"
 description = "vibe-qc — a quantum chemistry code targeting the cyclic cluster model for solids"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -138,8 +138,8 @@ mace = [
     # optimization / MD pre-screening within a registered model's domain.
     # Model-attributed results require their own validation; vibe-qc drives
     # MACE's pre-trained forward pass and attributes it as an external
-    # model (maintainer-approved extension of CLAUDE.md §10 — vibe-qc
-    # computes nothing here). Strictly optional: pulls the heavy PyTorch +
+    # model (see docs/user_guide/mlip.md); vibe-qc computes nothing here.
+    # Strictly optional: pulls the heavy PyTorch +
     # e3nn stack (~650 MB), never a core dependency.
     #
     # Python <=3.13 ONLY — MACE's matscipy dependency has no cp314 wheel
@@ -221,7 +221,7 @@ test = [
     # isolation needs pytest-forked (the --forked fan-out), pytest-timeout
     # (per-test deadline) and psutil (peak-RSS poller). Required wherever the
     # gate runs — including the managed fleet dev venvs (`pip install -e
-    # .[test]`), so the v0.13.0 pre-cut gate can fan across compute-small/compute-study/compute-medium.
+    # .[test]`), so the v0.13.0 pre-cut gate can fan across site_c/site_a.
     "pytest-forked>=1.6",
     "pytest-timeout>=2.3",
     "psutil>=5.9",
@@ -313,8 +313,8 @@ basisopt = [
     # ``vb``). It is a *client*: it emits external-SCF decks, submits
     # them (locally or through the ``vq`` CLI), and parses what comes
     # back. It never computes an SCF energy itself, and it never
-    # imports an external QC program — CLAUDE.md § 10's out-of-process
-    # boundary is unaffected by installing it here.
+    # imports an external QC program. The out-of-process boundary in
+    # docs/user_guide/external_codes.md is unaffected by installing it here.
     #
     # This extra exists because ``vibeqc.basis_optimization`` has six
     # modules that import ``vibe_basis`` at module top level —

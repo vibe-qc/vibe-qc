@@ -235,13 +235,18 @@ def _build_uks_fock_2e_blocks_ewald3d(
     ``D_a + D_b``; ``None`` builds a fresh container from the overlap
     template (recomputing the overlap lattice integrals just to obtain
     a container -- the one-shot behaviour)."""
+    from ._vibeqc_core import make_lattice_matrix_set
+
     n_cells = len(D_alpha_real.cells)
 
     # D_total = D_a + D_b as a LatticeMatrixSet.
     D_total_real = (
         d_total_buffer
         if d_total_buffer is not None
-        else compute_overlap_lattice(basis, system, lat_opts)
+        else make_lattice_matrix_set(
+            basis.nbasis, D_alpha_real.cells,
+            [np.zeros((basis.nbasis, basis.nbasis)) for _ in range(n_cells)],
+        )
     )
     for g in range(n_cells):
         D_total_real.set_block(
@@ -616,6 +621,11 @@ def run_uks_periodic_multi_k_ewald3d(
             from .periodic_v_ne import compute_nuclear_lattice_dispatch
 
             V_lat = compute_nuclear_lattice_dispatch(basis, system, lat_opts)
+    from .lattice_screening import on_physical_eri_cells
+
+    S_lat = on_physical_eri_cells(S_lat, basis, system, lat_opts)
+    T_lat = on_physical_eri_cells(T_lat, basis, system, lat_opts)
+    V_lat = on_physical_eri_cells(V_lat, basis, system, lat_opts)
     cells = list(S_lat.cells)
     n_cells = len(cells)
 
@@ -862,7 +872,12 @@ def run_uks_periodic_multi_k_ewald3d(
     # the overlap template and overwrite every block per Fock build.
     # Rebuilding it per iteration recomputed the overlap lattice
     # integrals just to obtain a container.
-    d_total_buffer = compute_overlap_lattice(basis, system, lat_opts)
+    from ._vibeqc_core import make_lattice_matrix_set
+
+    d_total_buffer = make_lattice_matrix_set(
+        basis.nbasis, cells,
+        [np.zeros((basis.nbasis, basis.nbasis)) for _ in cells],
+    )
 
     # ---- Corrected-Ewald full-range exchange ------------------------------
     # Only the full-Coulomb (c_full) arm needs it: summed as a bare 1/r
@@ -887,6 +902,7 @@ def run_uks_periodic_multi_k_ewald3d(
                 kmesh,
                 float(omega),
                 where="run_uks_periodic_multi_k_ewald3d",
+                lattice_opts=lat_opts,
             )
         elif is_unsupported_gauge(system, slab_mode=slab_mode):
             # A gauge the split does not exist for (2D slab, dim != 3).
@@ -972,7 +988,7 @@ def run_uks_periodic_multi_k_ewald3d(
     # reduced builds per iteration, same mapping).
     exchange_symmetry_reduction = None
     if exx.c_full != 0.0 or exx.c_sr != 0.0:
-        if wedge_unfolding is not None and not slab_mode:
+        if wedge_unfolding is not None and not slab_mode and not lat_opts.pair_complete_1e:
             from ._vibeqc_core import direct_lattice_cells as _radial_cells
             from .bipole_symmetry_fock import (
                 cell_orbit_mapping,

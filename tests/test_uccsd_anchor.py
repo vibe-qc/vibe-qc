@@ -96,7 +96,8 @@ def _cpp(
 
 class TestCppAnchorCH3:
     @pytest.fixture(scope="class")
-    def ch3(self):
+    @classmethod
+    def ch3(cls):
         return _uhf(CH3_ATOMS, "sto-3g", 2)
 
     def test_uccsd_matches_anchor(self, ch3):
@@ -209,7 +210,8 @@ class TestCppAnchorCH3:
 
 class TestCppAnchorOH:
     @pytest.fixture(scope="class")
-    def oh(self):
+    @classmethod
+    def oh(cls):
         return _uhf(OH_ATOMS, "sto-3g", 2)
 
     def test_uccsd_t_matches_anchor(self, oh):
@@ -224,7 +226,8 @@ class TestCppAnchorOH:
 @pytest.mark.slow
 class TestCppAnchorDZ:
     @pytest.fixture(scope="class")
-    def ch3_dz(self):
+    @classmethod
+    def ch3_dz(cls):
         return _uhf(CH3_ATOMS, "def2-svp", 2)
 
     def test_uccsd_t_matches_anchor_dz(self, ch3_dz):

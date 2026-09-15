@@ -543,6 +543,43 @@ class TestAtomPropertiesSection:
             )
             np.testing.assert_allclose(hirshfeld, [-0.45, 0.225, 0.225])
 
+    def test_spin_population_uses_the_spec_member_name(self, tmp_path):
+        """Spin rows ride ``atom_properties`` as ``spin_population``.
+
+        The spec and both manifest schemas name the member ``spin_population``
+        and reject unknown members. The writer used to emit ``mulliken_spin``,
+        which fails its own canonical validation; through the guaranteed-artefact
+        check that failed every unrestricted job writing a QVF.
+        """
+        mol = _stub_molecule()
+        plan = _plan(tmp_path)
+        pop = _stub_population()
+        pop.mulliken_spin_atoms = [
+            (0, "O", 8.0, 1.07),
+            (1, "H", 1.0, -0.035),
+            (2, "H", 1.0, -0.035),
+        ]
+        path = write_qvf(
+            tmp_path / "spin_qvf",
+            plan,
+            molecule=mol,
+            result=_stub_result(),
+            method="rhf",
+            basis="sto-3g",
+            population_summary=pop,
+        )
+        with zipfile.ZipFile(path, "r") as zf:
+            s = [
+                s
+                for s in _read_manifest(zf)["sections"]
+                if s["kind"] == "atom_properties"
+            ][0]
+            m = s["members"]
+            assert "mulliken_spin" not in m
+            assert m["spin_population"]["shape"] == [3]
+            spin = np.frombuffer(zf.read(m["spin_population"]["path"]), dtype=np.float64)
+            np.testing.assert_allclose(spin, [1.07, -0.035, -0.035])
+
 
 class TestTrajectorySection:
     def test_trajectory(self, tmp_path):
@@ -3165,6 +3202,85 @@ class TestDOSCoexistence:
             if s["kind"] in {"dos.total", "dos.projected"}
         }
         assert paths["dos.total"] != paths["dos.projected"]
+
+
+# ---------------------------------------------------------------------------
+# Spectral operator provenance
+# ---------------------------------------------------------------------------
+
+
+class TestSpectralOperatorProvenance:
+    """Private ROHF diagnostics must retain both operator identities."""
+
+    @staticmethod
+    def _labels(projection):
+        return dict(
+            energy_operator="roothaan-effective-fock",
+            projection_operator=projection,
+            orbital_basis="shared-rohf",
+            population_density="accepted-spin-density",
+            validation_status="private-unvalidated",
+        )
+
+    @pytest.mark.parametrize("with_labels", [False, True])
+    def test_all_spectral_sections_preserve_operator_contract(self, tmp_path, with_labels):
+        energies = np.array([-1., 0., 1.])
+        common = dict(energies=energies, n_spin=2, fermi_energy_ev=-.7)
+        total = dict(common, dos=np.zeros((2, 3)), n_electrons=3.)
+        projected = dict(common, projections=np.zeros((2, 1, 3)), channels=[
+            dict(atom_index=0, symbol="O", l=0, label="O s"),
+        ])
+        pair = dict(common, projections=np.zeros((2, 1, 3)),
+                    integrated=np.array([[.1], [.2]]), pairs=[
+                        dict(i=0, j=1, symbol_i="O", symbol_j="H", distance_ang=1.),
+                    ])
+        coop, cohp = dict(pair), dict(pair)
+        if with_labels:
+            for data in (total, projected, coop):
+                data.update(self._labels("overlap"))
+            cohp.update(self._labels("physical-spin-fock"))
+        path = write_qvf(
+            tmp_path / "operator_provenance", _plan(tmp_path, job_kind="periodic_scf"),
+            molecule=_stub_molecule(), method="rohf", basis="sto-3g",
+            dos_data=total, pdos_data=projected, coop_data=coop, cohp_data=cohp,
+        )
+        assert validate_qvf(path)["valid"]
+        with zipfile.ZipFile(path) as zf:
+            sections = {s["kind"]: s for s in _read_manifest(zf)["sections"]}
+            for kind in ("dos.total", "dos.projected", "dos.coop", "dos.cohp"):
+                section = sections[kind]
+                projection = "physical-spin-fock" if kind == "dos.cohp" else "overlap"
+                labels = self._labels(projection)
+                containers = [section]
+                if kind in ("dos.coop", "dos.cohp"):
+                    member = section["members"]["meta"]
+                    raw = zf.read(member["path"])
+                    assert _sha256_hex(raw) == member["sha256"]
+                    containers.append(json.loads(raw))
+                for metadata in containers:
+                    if with_labels:
+                        assert {key: metadata[key] for key in labels} == labels
+                    else:
+                        assert not set(labels).intersection(metadata)
+
+    @pytest.mark.parametrize("kind", ["total", "projected", "coop", "cohp"])
+    @pytest.mark.parametrize("invalid", ["missing", "empty", "nonstring"])
+    def test_incomplete_contract_fails_before_writing_members(self, tmp_path, kind, invalid):
+        from vibeqc.output.formats import qvf
+
+        data = self._labels("physical-spin-fock" if kind == "cohp" else "overlap")
+        if invalid == "missing":
+            del data["population_density"]
+        elif invalid == "empty":
+            data["orbital_basis"] = "  "
+        else:
+            data["validation_status"] = 17
+        sections = []
+        with zipfile.ZipFile(tmp_path / "invalid.zip", "w") as zf:
+            with pytest.raises(ValueError, match="spectral operator provenance"):
+                getattr(qvf, f"_write_dos_{kind}_section")(zf, data, sections)
+            assert zf.namelist() == []
+        assert sections == []
 
 
 # ---------------------------------------------------------------------------

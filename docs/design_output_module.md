@@ -380,7 +380,10 @@ keeps the fixed-shape rule intact for downstream parsers and lets
 **Atomicity rule**: `[plan]` is declared once at job start and retained
 unchanged. `[outputs]` is rewritten in place after every file lands, the whole
 `.system` file is rewritten atomically (write-to-tmp + rename) to
-avoid a half-written manifest if the job is killed mid-update.
+avoid a half-written manifest if the job is killed mid-update. The rewrite
+target is fixed at construction: a relative stem is anchored to the directory
+the job started in, so a later `chdir` cannot move a rewrite elsewhere
+(vibe-qc#127). The rendered `path` fields keep the declared spelling.
 
 **vq watch pattern** (Phase O4): the daemon polls `{stem}.system`,
 parses `[outputs].status`. `"running"` means alive; `"complete"`

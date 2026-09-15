@@ -17,6 +17,7 @@ from vibeqc.symmetry_shared import (
     orbit_of, scatter_orbit, audit_metric_panels, audit_subspace_panels,
     BlochCharacter, audit_group_transport, audit_selected_group_transport,
     audit_group_operators,
+    audit_selected_operators,
 )
 
 BUDGET = Budget(64 << 20, 10**9)
@@ -427,6 +428,30 @@ def test_molecular_integral_consumer_and_group():
         tolerance=1e-10, probe_identity="water nonsymmetric Hermitian density")
     assert evidence.passed_probe
     assert not evidence.production_reduction_authorized
+
+
+@pytest.mark.parametrize("anti", [False, True])
+def test_molecular_rounded_identity_preserves_dense_and_compact_actions(anti):
+    from vibeqc.symmetry_ao import build_molecular_space_action
+
+    mol = vq.Molecule([vq.Atom(8, [0., 0., 0.]),
+                       vq.Atom(1, [1.5, 0., -1.2]), vq.Atom(1, [-1.5, 0., -1.2])])
+    basis = vq.BasisSet(mol, "6-31g*")
+    rotation = np.eye(3)
+    rotation[0, 1] = 4.5102810375396984e-17
+    rotation[2, 2] = np.nextafter(1.0, 0.0)
+    dense = vq.build_ao_permutation_matrix(
+        basis, rotation, vq.atom_permutation_under_op(mol, rotation))
+    action = build_molecular_space_action(mol, basis, rotation, np.zeros(3),
+        source=SPACE, target=SPACE, budget=BUDGET, antiunitary=anti)
+    coefficients = panel(basis.nbasis, 3)
+    np.testing.assert_allclose(dense, np.eye(basis.nbasis), atol=1e-14, rtol=0.0)
+    np.testing.assert_allclose(action.apply(coefficients),
+        coefficients.conj() if anti else coefficients, atol=1e-14, rtol=0.0)
+    for matrix in (vq.compute_overlap(basis), vq.compute_kinetic(basis),
+                   vq.compute_nuclear(basis, mol)):
+        matrix = np.ascontiguousarray(matrix, dtype=complex)
+        np.testing.assert_allclose(action.pull_operator(matrix), matrix, atol=1e-12, rtol=0.0)
 
 
 def test_molecular_radial_mismatch_fails_closed():
@@ -1031,15 +1056,19 @@ def test_periodic_retained_group_tracks_antiunitary_composition_and_lattice_phas
     assert selected.passed_probe and selected.group_transport.characters == characters
     kinetic = core.compute_kinetic_lattice(basis,system,options)
     kinetic_blocks = [np.asarray(b,dtype=float) for b in kinetic.blocks]
-    operators = []
+    operators, parent_operators = [], []
     for q,c,selection in zip(labels,panels,selected_panels):
         ao = _bloch_sum_blocks(kinetic_blocks,kinetic.cells,
             np.array([2*np.pi*q/(8*mesh_size),0.,0.]))
         coefficients = c @ selection
         operators.append(np.ascontiguousarray(coefficients.conj().T @ ao @ coefficients))
+        parent_operators.append(np.ascontiguousarray(c.conj().T @ ao @ c))
     operator_result = group_operator_probe(selected,tuple(operators),
         contract=replace(contract,operator="direct Bloch kinetic integrals"))
     assert operator_result.passed_probe and operator_result.parent is selected
+    reducing = selected_operator_probe(group_operator_probe(result,tuple(parent_operators),
+        contract=operator_result.probes[0][0].contract),selected)
+    assert reducing.passed_probe
     broken_operators = tuple(a.copy() for a in operators)
     broken_operators[0][0,0] += .4
     assert not group_operator_probe(selected,broken_operators).passed_probe
@@ -1093,6 +1122,25 @@ def test_molecular_retained_group_uses_noncommuting_operations_and_physical_orbi
     selected_h = np.ascontiguousarray(selected_c.conj().T @ h @ selected_c)
     operator_result = group_operator_probe(selected,(selected_h,),contract=contract)
     assert operator_result.passed_probe and operator_result.parent is selected
+    reducing = selected_operator_probe(group_operator_probe(result,
+        (np.ascontiguousarray(c.conj().T @ h @ c),),contract=contract),selected)
+    assert reducing.passed_probe
+    # Exercise an actual physical rank reduction: the three-dimensional
+    # orthonormal AO span onto the two-dimensional core eigenspace.
+    full_c = np.ascontiguousarray(orbitals,dtype=complex)
+    full_space = replace(space,space="full orthonormal AO span",gauge="core eigenvectors")
+    full_rows = tuple((subspace_probe(action,full_c,full_c,metric,metric,
+        source_subspace=full_space,target_subspace=full_space,contract=contract),) for action in actions)
+    full_group = group_transport_probe(g,(full_space,),dest,full_rows,contract=contract)
+    full_operators = group_operator_probe(full_group,
+        (np.ascontiguousarray(full_c.conj().T @ h @ full_c),),contract=contract)
+    eigen_selection = selected_group_probe(full_group,
+        (np.ascontiguousarray(full_c.conj().T @ metric @ c),))
+    rank_reduced = selected_operator_probe(full_operators,eigen_selection)
+    assert rank_reduced.passed_probe
+    assert rank_reduced.operator_transport.operators[0].shape == (2,2)
+    assert rank_reduced.containment[0].residual < 1e-12
+    assert rank_reduced.adjoint_containment[0].residual < 1e-12
     broken_h = selected_h.copy()
     broken_h[0,0] += .4
     assert not group_operator_probe(selected,(broken_h,)).passed_probe
@@ -1709,3 +1757,187 @@ def test_group_operators_refuse_overflow_in_finite_payload_arithmetic():
     parent,_ = selection_parent()
     with pytest.raises(ValueError,match="nonfinite operator covariance residual"):
         group_operator_probe(parent,(np.full((2,2),1e308,dtype=complex),np.eye(2,dtype=complex)))
+
+
+@pytest.mark.parametrize("anti", [False,True])
+@pytest.mark.parametrize("scale", [1e-250,1e-200,1e-170,1.,1e170,1e200,1e308])
+def test_group_operators_scaled_norm_preserves_absolute_tolerance(anti,scale):
+    g = group([[0,1],[1,0]],anti=np.array([0,anti],dtype=np.uint8))
+    parent = group_transport_probe(g,(SPACE,),np.zeros((2,1),dtype=np.int64),
+        ((mixing_witness(np.eye(2)),),(mixing_witness([[0,1],[1,0]],anti=anti),)))
+    a = np.diag([0.,scale]).astype(complex)
+    # The swap commutator has exactly two entries of magnitude scale.
+    # In particular, never use pytest.approx's default absolute tolerance
+    # here: it would accept the underflowed zero for the tiny cases.
+    expected = np.sqrt(2)*scale
+    refused = group_operator_probe(parent,(a,),tolerance=.5*scale)
+    accepted = group_operator_probe(parent,(a,),tolerance=1.5*scale)
+    assert refused.probes[1][0].residual == pytest.approx(expected,rel=1e-14,abs=0.)
+    assert accepted.probes[1][0].residual == pytest.approx(expected,rel=1e-14,abs=0.)
+    assert not refused.passed_probe and accepted.passed_probe
+    assert not accepted.production_reduction_authorized
+
+
+def selected_operator_probe(parent, selection, **kwargs):
+    options = dict(covariance_tolerance=1e-11,leakage_tolerance=1e-11,
+        probe_identity="selected reducing operator subspace",budget=BUDGET)
+    options.update(kwargs)
+    return audit_selected_operators(parent,selection,**options)
+
+
+def identity_operator_selection(a,q,**kwargs):
+    parent = group_transport_probe(group([[0]]),(SPACE,),np.zeros((1,1),dtype=np.int64),
+        ((mixing_witness(np.eye(a.shape[0])),),))
+    operators = group_operator_probe(parent,(a,))
+    selection = selected_group_probe(parent,(q,),**kwargs)
+    return operators,selection
+
+
+@pytest.mark.parametrize("anti", [False,True])
+def test_selected_operators_follow_complex_gauges_and_inherit_contract(anti):
+    parent,panels = selection_parent(anti=anti)
+    q = panels[0]
+    a = np.ascontiguousarray(5*np.eye(2)-3*q @ q.conj().T)
+    m = parent.transports[1][0].mixing
+    b = np.ascontiguousarray(m @ (a.conj() if anti else a) @ m.conj().T)
+    operators = group_operator_probe(parent,(a,b))
+    selection = selected_group_probe(parent,panels)
+    result = selected_operator_probe(operators,selection)
+    assert result.passed_probe and not result.production_reduction_authorized
+    assert result.parent is operators and result.selection is selection
+    assert result.operator_transport.parent is selection
+    for s,(forward,adjoint) in enumerate(zip(result.containment,result.adjoint_containment)):
+        assert forward.contract == operators.probes[0][s].contract == adjoint.contract
+        assert forward.source_space == parent.spaces[s]
+        assert forward.target_space == selection.group_transport.spaces[s]
+        assert forward.residual < 1e-12 and adjoint.residual < 1e-12
+        np.testing.assert_allclose(result.operator_transport.operators[s],[[2]],atol=1e-12)
+        with pytest.raises(ValueError): result.operator_transport.operators[s].setflags(write=True)
+    with pytest.raises(TypeError,match="audit_selected_operators"):
+        replace(result,parent=operators)
+    further = selected_group_probe(selection,tuple(np.ones((1,1),dtype=complex)*np.exp(.2j)
+                                                   for _ in panels))
+    nested = selected_operator_probe(result,further)
+    assert nested.passed_probe and nested.parent is result
+
+
+@pytest.mark.parametrize("scale", [1e-250,1.,1e250])
+def test_selected_operators_expose_leakage_hidden_by_zero_compression(scale):
+    a = np.array([[0,scale],[scale,0]],dtype=complex)
+    operators,selection = identity_operator_selection(a,np.array([[1],[0]],dtype=complex))
+    assert operators.passed_probe and selection.passed_probe
+    result = selected_operator_probe(operators,selection)
+    assert result.operator_transport.passed_probe and not result.passed_probe
+    assert result.containment[0].residual == pytest.approx(1.)
+    assert result.adjoint_containment[0].residual == pytest.approx(1.)
+
+
+def test_selected_operators_check_adjoint_coupling_for_nonhermitian_operator():
+    a = np.array([[1,2],[0,3]],dtype=complex)
+    operators,selection = identity_operator_selection(a,np.array([[1],[0]],dtype=complex))
+    result = selected_operator_probe(operators,selection)
+    assert result.operator_transport.passed_probe and result.containment[0].passed_probe
+    assert result.adjoint_containment[0].residual == pytest.approx(2/np.sqrt(5))
+    assert not result.passed_probe
+
+
+def test_selected_operators_zero_action_and_finite_gram_error():
+    q = np.array([[1.001],[0]],dtype=complex)
+    for a,expected in ((np.zeros((2,2),dtype=complex),0),
+                       (np.diag([2,3]).astype(complex),2)):
+        operators,selection = identity_operator_selection(a,q,metric_tolerance=.01)
+        result = selected_operator_probe(operators,selection)
+        assert result.passed_probe
+        # Q^dagger A Q would leave the admitted Gram error in the result.
+        np.testing.assert_allclose(result.operator_transport.operators[0],[[expected]],atol=1e-14)
+        assert result.containment[0].residual < 1e-14
+
+
+def test_selected_operators_keep_leakage_failure_through_further_selection():
+    a = np.array([[2,0,0],[0,1,1],[0,1,3]],dtype=complex)
+    operators,selection = identity_operator_selection(a,np.eye(3,dtype=complex)[:,:2].copy())
+    first = selected_operator_probe(operators,selection)
+    assert first.operator_transport.passed_probe and not first.passed_probe
+    second_selection = selected_group_probe(selection,(np.array([[1],[0]],dtype=complex),))
+    second = selected_operator_probe(first,second_selection)
+    assert second.parent is first and second.operator_transport.passed_probe
+    assert all(p.passed_probe for p in second.containment+second.adjoint_containment)
+    assert not second.passed_probe
+
+
+@pytest.mark.parametrize("failure", ["operator","selection"])
+def test_selected_operators_preserve_parent_covariance_and_selection_failures(failure):
+    parent,_ = selection_parent()
+    a = np.eye(2,dtype=complex)
+    operators = group_operator_probe(parent,(a,a*(2 if failure=="operator" else 1)))
+    q = np.array([[1],[0]],dtype=complex)
+    other = q if failure=="selection" else np.ascontiguousarray(parent.transports[1][0].mixing @ q)
+    selection = selected_group_probe(parent,(q,other))
+    result = selected_operator_probe(operators,selection)
+    assert all(p.passed_probe for p in result.containment+result.adjoint_containment)
+    assert not result.passed_probe
+
+
+def test_selected_operators_allow_different_orbit_ranks():
+    spaces = (SPACE,replace(SPACE,space="second orbit"))
+    row = tuple(mixing_witness(np.eye(r),s,s) for r,s in zip((2,3),spaces))
+    parent = group_transport_probe(group([[0]]),spaces,np.array([[0,1]],dtype=np.int64),(row,))
+    operators = group_operator_probe(parent,(np.eye(2,dtype=complex),np.eye(3,dtype=complex)))
+    selection = selected_group_probe(parent,(np.array([[1],[0]],dtype=complex),
+                                             np.eye(3,dtype=complex)[:,:2].copy()))
+    result = selected_operator_probe(operators,selection)
+    assert result.passed_probe
+    assert tuple(a.shape for a in result.operator_transport.operators) == ((1,1),(2,2))
+
+
+@pytest.mark.parametrize("fault", ["parent","selection","unrelated_parent","budget_type","probe",
+    "bytes","work","aggregate_bytes","aggregate_work"])
+def test_selected_operators_refuse_invalid_parents_and_admission(fault):
+    a,q = np.eye(2,dtype=complex),np.array([[1],[0]],dtype=complex)
+    operators,selection = identity_operator_selection(a,q)
+    options = {}
+    if fault == "parent": operators = operators.parent
+    if fault == "selection": selection = selection.group_transport
+    if fault == "unrelated_parent": _,selection = identity_operator_selection(a,q)
+    if fault == "budget_type": options['budget'] = None
+    if fault == "probe": options['probe_identity'] = " "
+    if fault == "bytes": options['budget'] = Budget(1,10**9)
+    if fault == "work": options['budget'] = Budget(64 << 20,1)
+    if fault.startswith("aggregate"):
+        result = selected_operator_probe(operators,selection)
+        options['budget'] = (Budget(result.admitted_bytes-1,10**9) if fault=="aggregate_bytes"
+                             else Budget(64 << 20,result.admitted_work-1))
+    with pytest.raises((TypeError,ValueError,MemoryError)):
+        selected_operator_probe(operators,selection,**options)
+
+
+@pytest.mark.parametrize("field", ["covariance_tolerance","leakage_tolerance"])
+@pytest.mark.parametrize("value", [True,-1,float('nan'),float('inf'),"1e-10"])
+def test_selected_operators_refuse_invalid_tolerance(field,value):
+    operators,selection = identity_operator_selection(np.eye(2,dtype=complex),
+        np.array([[1],[0]],dtype=complex))
+    with pytest.raises((TypeError,ValueError)):
+        selected_operator_probe(operators,selection,**{field:value})
+
+
+def test_selected_operators_admit_before_payload_work(monkeypatch):
+    import vibeqc.symmetry_shared as shared
+    operators,selection = identity_operator_selection(np.eye(2,dtype=complex),
+        np.array([[1],[0]],dtype=complex))
+    admitted = selected_operator_probe(operators,selection)
+    def forbidden(*args,**kwargs): raise AssertionError("payload work before admission")
+    original = shared.np.isfinite
+    monkeypatch.setattr(shared.np,"isfinite",lambda x: original(x) if np.ndim(x)==0 else forbidden())
+    monkeypatch.setattr(shared.np.linalg,"solve",forbidden)
+    monkeypatch.setattr(shared,"audit_group_operators",forbidden)
+    for budget,error in ((Budget(admitted.admitted_bytes-1,10**9),MemoryError),
+                         (Budget(64 << 20,admitted.admitted_work-1),ValueError)):
+        with pytest.raises(error,match="budget exceeded"):
+            selected_operator_probe(operators,selection,budget=budget)
+
+
+def test_selected_operators_refuse_overflow_during_projection():
+    operators,selection = identity_operator_selection(np.full((2,2),1e308,dtype=complex),
+        np.array([[1],[1]],dtype=complex)/np.sqrt(2))
+    with pytest.raises(ValueError,match="nonfinite selected operator"):
+        selected_operator_probe(operators,selection)

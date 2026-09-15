@@ -42,6 +42,12 @@ std::vector<LatticeCell> pair_complete_lattice_cells(
     const PeriodicSystem& system,
     double cutoff_bohr);
 
+// Common physical ERI enclosure for native and Python consumers. Pair and
+// interaction supports are distinct; consumers align cells by integer key.
+std::vector<LatticeCell> physical_eri_lattice_cells(
+    const BasisSet& basis, const PeriodicSystem& system,
+    double pair_cutoff_bohr, double interaction_cutoff_bohr);
+
 LatticeMatrixSet compute_overlap_lattice(const BasisSet& basis,
                                          const PeriodicSystem& system,
                                          const LatticeSumOptions& opts);

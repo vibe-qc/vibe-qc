@@ -283,7 +283,8 @@ class TestDistantPairs:
     """Dipole-estimate screening on well-separated H2 units."""
 
     @pytest.fixture(scope="class")
-    def h2_chain(self):
+    @classmethod
+    def h2_chain(cls):
         # Three H2 units along z, 12 bohr apart: inter-unit sigma-sigma
         # pairs at R = 12 and 24 bohr are genuine distant pairs.
         atoms = []

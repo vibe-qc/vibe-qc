@@ -390,39 +390,6 @@ def _merge_periodic_skala_memory(base, system: PeriodicSystem):
     return base
 
 
-def _require_nonzero_gamma_lattice_images(
-    system: PeriodicSystem,
-    *,
-    interaction_cutoff_bohr: float,
-    nuclear_cutoff_bohr: float,
-) -> None:
-    """Reject a BIPOLE Gamma job whose Gaussian image sets are home-only."""
-
-    for role, cutoff in (
-        ("interaction", float(interaction_cutoff_bohr)),
-        ("nuclear", float(nuclear_cutoff_bohr)),
-    ):
-        if not math.isfinite(cutoff) or cutoff <= 0.0:
-            raise ValueError(
-                "run_periodic_job: BIPOLE Gamma "
-                f"{role} cutoff_bohr must be finite and positive; got "
-                f"{cutoff!r}."
-            )
-        cells = direct_lattice_cells(system, cutoff)
-        has_nonzero_image = any(
-            np.any(np.asarray(cell.index, dtype=int) != 0) for cell in cells
-        )
-        if not has_nonzero_image:
-            raise ValueError(
-                "run_periodic_job: BIPOLE Gamma "
-                f"{role} cutoff_bohr={cutoff:g} contains no nonzero "
-                "lattice image; refusing to report a free-boundary cluster "
-                "as periodic. Increase the cutoff, use a primitive cell "
-                "with its matched k mesh, or select an explicitly supported "
-                "molecular-limit backend."
-            )
-
-
 def _periodic_xc_gradient_dry_run_estimate_bytes(
     system: PeriodicSystem,
     basis: BasisSet,
@@ -6564,7 +6531,7 @@ def run_periodic_job(
     # M5 production default for the erfc SR internal ket-image ball.
     # ``None`` restores the historical unpadded traversal.
     sr_image_precision: Optional[float] = 1e-6,
-    # M4b (pair-resolved truncation): QQR-style separation-aware
+    # Separation-aware charge-pair Schwarz
     # screening for the BIPOLE SR erfc J/K build
     # (LatticeSumOptions.sr_range_screening). The M5 precision path
     # enables it automatically; this explicit flag also permits screened
@@ -6893,11 +6860,11 @@ def run_periodic_job(
         established unreliable-support regime and raises before SCF; increase
         this cutoff until the reported drift is below ``1e-4`` for
         quantitative work. Intermediate drift retains a truncation note.
-        High-level BIPOLE Gamma RHF/RKS/UHF/UKS also require both the effective
-        interaction cutoff and the resolved Ewald real-space nuclear cutoff to
-        contain a nonzero lattice image. Otherwise the run fails before SCF or
-        output rather than reporting an origin-only free-boundary cluster as
-        periodic. Other backends have route-specific image semantics.
+        A home-only short-range image list is valid for the 3D Ewald split:
+        its reciprocal term still supplies periodic coupling. Converge both
+        halves of the split; the number of short-range images alone does not
+        determine whether the Hamiltonian is periodic. Other backends have
+        route-specific image semantics.
         These controls are separate from
         ``cutoff_ha``, which is a GPW/GAPW plane-wave grid cutoff.
     convergence
@@ -8064,19 +8031,26 @@ def run_periodic_job(
     # full SCF k-mesh (compute_bipole_population_summary), while χ-CCM uses
     # its dedicated finite-torus density and overlap contractions
     # (compute_aiccm2026dev_b_population_summary). Both are crystal
-    # populations and need no Gamma restriction. Every other route falls
-    # back to the molecular analysis of a single Bloch block, which is only
-    # a population at Gamma.
+    # populations and need no Gamma restriction. GDF uses accepted Gamma
+    # density/SCF-overlap matrices. Other routes use molecular analysis of
+    # a single Bloch block. These adapters remain restricted to Gamma.
     _population_sidecar_supported = _requested_gamma_only or resolved_jk in (
         PeriodicJKMethod.BIPOLE,
         PeriodicJKMethod.AICCM2026DEV_B,
+        # M5: the two supercell-Γ arms analyse their own cyclic cluster
+        # (compute_ccm_population_summary) and fold to per-cell charges, so
+        # like BIPOLE and χ they are crystal populations needing no Γ-only
+        # restriction. Their nrep is a supercell count, not a Bloch mesh.
+        PeriodicJKMethod.AICCM2026DEV_A,
+        PeriodicJKMethod.AICCM2026DEV_A_REAL_GAMMA,
     )
     _population_sidecar_reason = (
         "the selected multi-k route has only a molecular Gamma-block "
         "population proxy. Full-k population output is implemented for "
-        "BIPOLE through its lattice-density analysis and for "
-        "aiccm2026dev-b through its finite-torus analysis; other routes "
-        "require an exact single-Gamma result."
+        "BIPOLE through its lattice-density analysis, for aiccm2026dev-b "
+        "through its finite-torus analysis, and for the four-center and "
+        "real-gamma variants through their cyclic-cluster analysis; other "
+        "routes require an exact single-Gamma result."
     )
     write_population_file = _resolve_sidecar_request(
         write_population_file,
@@ -8868,73 +8842,28 @@ def run_periodic_job(
     system = _system_with_valid_default_multiplicity(system)
     _validate_closed_shell_electron_count(system, method_upper)
 
-    # A Gamma phase is unity for every lattice translation; it does not make
-    # nonzero translations optional. Until BIPOLE adopts pair-complete image
-    # selection throughout, reject its four common direct drivers when either
-    # executed image set contains only the home cell. Other Gaussian backends
-    # resolve molecular-limit, low-dimensional, or finite-torus semantics in
-    # their own drivers and cannot share this flat-cutoff preflight.
+    # These four BIPOLE drivers resolve to the 3D Ewald split. An empty
+    # nonzero-image set in its short-range half is valid: periodic coupling
+    # also comes from the reciprocal half. A home-only SR list is therefore
+    # not evidence of a free-boundary Hamiltonian (#724). Direct-truncated
+    # backends retain their own nonzero-image guards.
     if (
-        _requested_gamma_only
-        and resolved_jk == PeriodicJKMethod.BIPOLE
+        resolved_jk == PeriodicJKMethod.BIPOLE
         and method_upper in ("RHF", "RKS", "UHF", "UKS")
         and int(system.dim) == 3
     ):
-        _default_lattice_opts = PeriodicRHFOptions().lattice_opts
-        _effective_interaction_cutoff_bohr = float(
-            _bipole_cutoff_bohr
-            if _bipole_cutoff_bohr is not None
-            else _default_lattice_opts.cutoff_bohr
-        )
-        _requested_nuclear_cutoff_bohr = float(
-            _bipole_nuclear_cutoff_bohr
-            if _bipole_nuclear_cutoff_bohr is not None
-            else _default_lattice_opts.nuclear_cutoff_bohr
-        )
-        # run_periodic_job dispatches these four drivers with the 3-D Ewald-J
-        # split enabled. It first clamps the unscreened nuclear radius to the
-        # electronic one, then grows a private 1e Ewald radius from alpha and
-        # tolerance. Check that resolved radius, not the raw user keyword.
-        _nuclear_cutoff_after_neutral_clamp = min(
-            _requested_nuclear_cutoff_bohr,
-            _effective_interaction_cutoff_bohr,
-        )
-        _ewald_precision = float(ewald_precision)
-        if not np.isfinite(_ewald_precision) or not 0.0 < _ewald_precision < 1.0:
+        if not np.isfinite(ewald_precision) or not 0.0 < ewald_precision < 1.0:
             raise ValueError(
                 "run_periodic_job: ewald_precision must be finite and in "
                 f"(0, 1); got {ewald_precision!r}."
             )
-        if ewald_omega is None:
-            from .bipole_ext_el_pole import crystal_default_ewald_alpha
-
-            _cell_volume_bohr3 = float(
-                abs(np.linalg.det(np.asarray(system.lattice, dtype=float)))
-            )
-            _resolved_ewald_alpha = crystal_default_ewald_alpha(
-                _cell_volume_bohr3
-            )
-        else:
-            _resolved_ewald_alpha = float(ewald_omega)
-        if not np.isfinite(_resolved_ewald_alpha) or _resolved_ewald_alpha <= 0.0:
+        if ewald_omega is not None and (
+            not np.isfinite(ewald_omega) or ewald_omega <= 0.0
+        ):
             raise ValueError(
                 "run_periodic_job: ewald_omega must be finite and positive; "
                 f"got {ewald_omega!r}."
             )
-        from .pbc_bipole_common import ewald_real_cutoff_for_alpha
-
-        _effective_nuclear_cutoff_bohr = max(
-            _nuclear_cutoff_after_neutral_clamp,
-            ewald_real_cutoff_for_alpha(
-                _resolved_ewald_alpha,
-                _ewald_precision,
-            ),
-        )
-        _require_nonzero_gamma_lattice_images(
-            system,
-            interaction_cutoff_bohr=_effective_interaction_cutoff_bohr,
-            nuclear_cutoff_bohr=_effective_nuclear_cutoff_bohr,
-        )
 
     # External-XC GPW/GAPW and AICCM adapters have only been validated for
     # all-electron Gaussian Hamiltonians. Resolve ECP data before the dry-run
@@ -10187,7 +10116,7 @@ def run_periodic_job(
             opts.grid.atomic_grid_profile = _external_xc_grid_profile
     if resolved_jk == PeriodicJKMethod.BIPOLE:
         if sr_range_screening:
-            # M4b (pair-resolved truncation): QQR-style separation-aware
+            # Separation-aware charge-pair Schwarz
             # screening for the SR erfc J/K build; cited via the
             # bipole_sr_range route below.
             opts.lattice_opts.sr_range_screening = True
@@ -13865,6 +13794,59 @@ def run_periodic_job(
                             "unavailable because lattice-summed Mulliken "
                             "evaluation failed"
                         )
+                elif resolved_jk == PeriodicJKMethod.GDF:
+                    from vibeqc.output.formats.population import (
+                        _compute_gdf_gamma_population_summary,
+                        unsupported_population_summary,
+                    )
+
+                    try:
+                        _qvf_pop = _compute_gdf_gamma_population_summary(
+                            result, basis, mol_p,
+                            nuclear_charges=_eff_z if _ecp_active else None,
+                        )
+                    except Exception as _gdf_pop_exc:
+                        warn_output_failure(
+                            _gdf_pop_exc,
+                            stem_sibling(output_stem, ".population.txt"),
+                            role="gdf_population_summary",
+                            category=OutputFailureKind.compatibility_fallback,
+                        )
+                        _qvf_pop = unsupported_population_summary(
+                            "periodic GDF populations require aligned accepted "
+                            "Gamma density and overlap matrices"
+                        )
+                elif resolved_jk in (
+                    PeriodicJKMethod.AICCM2026DEV_A,
+                    PeriodicJKMethod.AICCM2026DEV_A_REAL_GAMMA,
+                ):
+                    # M5. These results' orbitals span the supercell while the
+                    # sidecar's molecule is the unit cell, and their
+                    # density_alpha/_beta are None-valued FIELDS, so the
+                    # molecular fallback below both compares the wrong objects
+                    # and trips every hasattr open-shell test. Analyse the
+                    # cyclic cluster directly instead.
+                    from vibeqc.output.formats.population import (
+                        compute_ccm_population_summary,
+                        unsupported_population_summary,
+                    )
+
+                    try:
+                        _qvf_pop = compute_ccm_population_summary(
+                            result, mol_p,
+                        )
+                    except Exception as _ccm_pop_exc:
+                        warn_output_failure(
+                            _ccm_pop_exc,
+                            stem_sibling(output_stem, ".population.txt"),
+                            role="ccm_population_summary",
+                            category=OutputFailureKind.compatibility_fallback,
+                        )
+                        _qvf_pop = unsupported_population_summary(
+                            "periodic Gamma-CCM population properties are "
+                            "unavailable because cyclic-cluster evaluation "
+                            "failed"
+                        )
                 elif resolved_jk == PeriodicJKMethod.AICCM2026DEV_B:
                     from vibeqc.output.formats.population import (
                         compute_aiccm2026dev_b_population_summary,
@@ -13891,7 +13873,7 @@ def run_periodic_job(
                             "evaluation failed"
                         )
                 else:
-                    # GDF / GPW / GAPW / RIJCOSX / legacy direct:
+                    # GPW / GAPW / RIJCOSX / legacy direct:
                     # extract a Gamma-point proxy so compute_population_summary
                     # sees a single real coefficient block.  Open-shell
                     # (UHF/UKS) results store ``mo_coeffs_alpha`` / ``_beta``
@@ -14271,7 +14253,7 @@ def run_periodic_job(
                     uses_gdf=_uses_gdf and not _uses_gdf_2d,
                     uses_gdf_2d=_uses_gdf_2d,
                     uses_bipole=_uses_bipole,
-                    # M4b QQR-style separation-aware SR screening. M5
+                    # Charge-pair Schwarz SR screening. M5
                     # enables it with the default padded image domain.
                     uses_bipole_sr_range=(
                         _uses_bipole
@@ -14821,6 +14803,19 @@ def run_periodic_job(
         "dft_plus_u": bool(dft_plus_u),
         "dft_plus_u_route": _dft_plus_u_route,
     }
+    # M8 provenance: ``aiccm_correlation`` records what was ASKED for
+    # ("ccsd"); this records what was actually CITED. The two differ in
+    # exactly the information a consumer cannot re-derive from the request:
+    # the lineage (``-ri-`` neutral fitted torus vs the bare four-centre row,
+    # ruling R1) and whether the perturbative triples ran, since
+    # ``compute_triples`` is a runtime flag. Written only when a correlation
+    # actually produced a stamp, so an SCF-only run carries no key and an
+    # absent one is never a claim.
+    _aiccm_corr_result = getattr(result, "correlation", None)
+    if _aiccm_corr_result is not None:
+        _aiccm_corr_route = str(getattr(_aiccm_corr_result, "backend", "") or "")
+        if _aiccm_corr_route:
+            _manifest_run_fields["aiccm_correlation_route"] = _aiccm_corr_route
     if resolved_jk == PeriodicJKMethod.GAPW:
         _manifest_run_fields["gapw_one_centre_resolved"] = getattr(
             result,

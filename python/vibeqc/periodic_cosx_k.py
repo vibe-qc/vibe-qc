@@ -120,6 +120,11 @@ class KPointCosxK:
         import warnings
 
         opts = lat_opts if lat_opts is not None else LatticeSumOptions()
+        if opts.pair_complete_1e:
+            raise NotImplementedError(
+                "periodic COSX does not implement physical quartet support; "
+                "use the direct periodic exchange builder"
+            )
         self.basis = basis
         self.omega = float(omega)
 

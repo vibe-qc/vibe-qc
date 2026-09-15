@@ -156,6 +156,7 @@ _LATTICE_OPTION_FIELDS = (
     "sr_range_screening",
     "sr_sparse_traversal",
     "pair_complete_1e",
+    "eri_interaction_cutoff_bohr",
 )
 
 

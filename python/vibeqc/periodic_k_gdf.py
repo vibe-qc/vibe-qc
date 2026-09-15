@@ -1931,6 +1931,7 @@ def _clone_lattice_options(source: LatticeSumOptions) -> LatticeSumOptions:
         "sr_range_screening",
         "sr_sparse_traversal",
         "pair_complete_1e",
+        "eri_interaction_cutoff_bohr",
     ):
         setattr(target, name, getattr(source, name))
     target.coulomb_method = source.coulomb_method

@@ -200,6 +200,21 @@ def ks_options_need_grid_default(options: object) -> bool:
     no grid on it (``ROKSOptions.grid`` defaults to ``None``), or an untouched
     grid (:func:`grid_is_untouched`). GitLab #663."""
     return options is None or grid_is_untouched(getattr(options, "grid", None))
+
+
+def apply_ks_grid_default(options, grid_level: str = "orca-defgrid3") -> None:
+    """Apply the mid-level KS grid policy, preserving custom grid fields.
+
+    Low-level SCF wrappers deliberately do not call this for supplied options.
+    Carry ``grid_level`` through nested mid-level calls: exact legacy defaults
+    cannot otherwise be distinguished from an untouched GridOptions object.
+    """
+    if ks_options_need_grid_default(options):
+        if options.grid is None:
+            options.grid = GridOptions()
+        _apply_grid_level(options.grid, grid_level)
+
+
 from .banner import (
     VIBEQC_VERSION,
     banner,
@@ -4010,6 +4025,22 @@ def _format_dlpno_pno_norm(options, *, label_width: int = 24) -> str:
     return f"  {'PNO density norm':<{label_width}s} = {norm}\n"
 
 
+def _format_dlpno_pno_correction(options, *, label_width: int = 24) -> str:
+    """Disclose whether the semicanonical MP2 PNO-truncation correction ran.
+
+    It moves ``e_corr``: the correction for the iterated pairs' PNO
+    truncation is folded into the CCSD correlation energy, so two runs that
+    differ only in this setting print different energies. Recording it with
+    the other recipe rows keeps that visible (the #417 lesson). Empty for
+    routes that do not expose the choice.
+    """
+
+    flag = getattr(options, "pno_correction", None)
+    if flag is None:
+        return ""
+    return f"  {'PNO MP2 correction':<{label_width}s} = {'on' if flag else 'off'}\n"
+
+
 def _dlpno_threshold_settings(options, provenance) -> dict[str, float]:
     """Return every cutoff disclosed for the route in artifact order.
 
@@ -4106,6 +4137,11 @@ def _dlpno_manifest_fields(options, provenance) -> dict[str, object]:
             getattr(options, "residual_domain", "") or ""
         ),
         "dlpno_pno_norm": str(getattr(options, "pno_norm", "") or ""),
+        "dlpno_pno_correction": (
+            ""
+            if getattr(options, "pno_correction", None) is None
+            else ("on" if getattr(options, "pno_correction") else "off")
+        ),
         "dlpno_triples_mode": triples_mode,
         "dlpno_triples_algorithm": triples_algorithm,
     }
@@ -5329,6 +5365,8 @@ def _make_wavefunction_ase_calculator(
     method: str,
     *,
     functional=None,
+    roks_options=None,
+    grid_level="orca-defgrid3",
     cisd_options=None,
     cc3_options=None,
     ccsdt_options=None,
@@ -5401,6 +5439,7 @@ def _make_wavefunction_ase_calculator(
                 mol,
                 basis,
                 functional=functional,
+                roks_options=roks_options, grid_level=grid_level,
                 cisd_options=cisd_options,
                 cc3_options=cc3_options,
                 ccsdt_options=ccsdt_options,
@@ -5441,6 +5480,7 @@ def _make_wavefunction_ase_calculator(
                             mol_plus,
                             basis_plus,
                             functional=functional,
+                            roks_options=roks_options, grid_level=grid_level,
                             cisd_options=cisd_options,
                             cc3_options=cc3_options,
                             ccsdt_options=ccsdt_options,
@@ -5475,6 +5515,7 @@ def _make_wavefunction_ase_calculator(
                             mol_minus,
                             basis_minus,
                             functional=functional,
+                            roks_options=roks_options, grid_level=grid_level,
                             cisd_options=cisd_options,
                             cc3_options=cc3_options,
                             ccsdt_options=ccsdt_options,
@@ -5535,6 +5576,7 @@ def _optimize_geometry(
     molecule: Molecule,
     basis_name: str,
     *,
+    roks_options=None,
     functional: Optional[str],
     trajectory_path: Path,
     fmax: float,
@@ -5668,6 +5710,8 @@ def _optimize_geometry(
             casscf_options=casscf_options,
             active_space=active_space,
             cas_reference=cas_reference,
+            roks_options=roks_options,
+            grid_level=grid_level,
         )
     else:
         atoms.calc = VibeQC(
@@ -8369,6 +8413,7 @@ def run_job(
                             mlip_options=mlip_options,
                             result_holder=_ase_result_holder,
                             grid_level=grid_level,
+                            roks_options=roks_options,
                         )
                         _ecp_follow_optimized_geometry(molecule)
                 except Exception as _opt_exc:
@@ -8570,6 +8615,7 @@ def run_job(
                         solvent=solvent,
                         record_trajectory=bool(output_qvf),
                         progress=False,
+                        grid_level=grid_level,
                     )
                     t_opt = time.perf_counter() - t0
                 molecule = _opt_result.system
@@ -8630,6 +8676,7 @@ def run_job(
                         solvent=solvent,
                         record_trajectory=bool(output_qvf),
                         progress=False,
+                        grid_level=grid_level,
                     )
                     t_opt = time.perf_counter() - t0
                 molecule = _opt_result.system
@@ -9634,8 +9681,9 @@ def run_job(
             # below reconciles the two explicitly.
             if getattr(result, "energy_in_solvent", None) is not None:
                 _scf_energy_label = "In-solvent total"
-            # A finite-temperature SCC-DFTB retry reports the Mermin free
-            # energy E_free = E_internal - T*S, not the internal energy: label
+            # A finite-temperature semiempirical result (SCC-DFTB retry, GFN2
+            # ladder rung) reports the Mermin free energy
+            # E_free = E_internal - T*S, not the internal energy: label
             # it so a smeared result is never mistaken for a zero-T total.
             if float(getattr(result, "electronic_temperature", 0.0) or 0.0) > 0.0:
                 _scf_energy_label = "Mermin free energy"
@@ -9671,8 +9719,8 @@ def run_job(
                     + f"  Identity = {_parameter_identity}\n"
                     + f"  SHA-256  = {_parameter_sha256}\n"
                 )
-            # Finite-temperature SCC-DFTB retry: the total above is the Mermin
-            # free energy at the retry temperature.  Surface the temperature,
+            # Finite-temperature semiempirical result: the total above is the
+            # Mermin free energy at the executed temperature.  Surface the temperature,
             # E_internal vs E_free, and the -T*S term so the convention is
             # explicit in the .out.
             _e_temperature = float(getattr(result, "electronic_temperature", 0.0) or 0.0)
@@ -11118,6 +11166,12 @@ def run_job(
                 # #701: tcut_pno is an occupation-number threshold, so the
                 # density it was applied to is part of the recipe.
                 pno_norm=_dlpno_pno_norm,
+                # The semicanonical MP2 correction for the iterated pairs' PNO
+                # truncation moves e_corr, so it is part of the recipe too.
+                pno_correction=getattr(_cc_opts, "pno_correction", None),
+                e_pno_correction=float(
+                    getattr(cc_result, "e_pno_correction", 0.0)
+                ),
                 # #689: the extended/full contraction runs once per distinct
                 # (coupling set, extended domain) group; the group count and
                 # the mean contraction dimension size a wave honestly.
@@ -11161,6 +11215,7 @@ def run_job(
                 )
                 + _format_dlpno_residual_domain(_cc_opts, label_width=24)
                 + _format_dlpno_pno_norm(_cc_opts, label_width=24)
+                + _format_dlpno_pno_correction(_cc_opts, label_width=24)
                 + _format_frozen_core(
                     cc_result.n_frozen,
                     _dlpno_cc_fc_request,
@@ -11171,7 +11226,13 @@ def run_job(
                 )
                 + f"  {'pairs / avg PNOs':<24s} = {cc_result.n_pairs:d} / {_avg_pno:.1f}"
                 "\n"
-                f"  {'E(CCSD correlation)':<24s} = {render_energy_labeled(cc_result.e_corr, width=16, precision=10)}\n"
+                + (
+                    f"  {'E(PNO truncation corr)':<24s} = "
+                    f"{render_energy_labeled(float(getattr(cc_result, 'e_pno_correction', 0.0)), width=16, precision=10)}\n"
+                    if getattr(_cc_opts, "pno_correction", False)
+                    else ""
+                )
+                + f"  {'E(CCSD correlation)':<24s} = {render_energy_labeled(cc_result.e_corr, width=16, precision=10)}\n"
             )
             if _is_t and _tno_sizes:
                 _screened_note = (
@@ -11810,6 +11871,11 @@ def run_job(
                         method,
                         basis,
                         functional=functional,
+                        grid_level=grid_level,
+                        grid_options=getattr(
+                            {"rks": rks_options, "uks": uks_options,
+                             "roks": roks_options}.get(method), "grid", None
+                        ),
                     )
                 _Hk = 627.509474063
                 _slog.emit(
@@ -12897,6 +12963,7 @@ def run_job(
                             method=resolved_method.upper(),
                             scf_options=_hess_scf_opts,
                             hessian_options=_hess_opts,
+                            grid_level=grid_level,
                         )
                         write(
                             "\n"

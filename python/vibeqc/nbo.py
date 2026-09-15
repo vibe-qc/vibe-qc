@@ -32,6 +32,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 
+from .properties import _shell_to_atom as _canonical_shell_to_atom
 from .spin_channels import spin_densities
 
 __all__ = [
@@ -49,6 +50,23 @@ _NPA_NOT_IMPLEMENTED = (
     "Natural Atomic Orbital construction; the former implementation was "
     "Löwdin population analysis and must not be reported as NPA"
 )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _shell_to_atom(basis) -> list[int]:
+    """Map each AO to its parent atom index, as a plain list.
+
+    Delegates to :func:`vibeqc.properties._shell_to_atom`, the canonical
+    derivation; the inline copy this replaces assumed pure spherical AOs
+    and so came out short on a Cartesian basis, misaligning the per-atom
+    NBO populations below. The list return type matches the scalar
+    ``ao_to_atom[mu]`` indexing at the call site.
+    """
+    return [int(a) for a in _canonical_shell_to_atom(basis)]
 
 
 # ---------------------------------------------------------------------------
@@ -275,10 +293,7 @@ def nbo_search(
     n_ao = P.shape[0]
 
     # AO-to-atom mapping
-    ao_to_atom: list[int] = []
-    for shell in basis.shells():
-        n = 2 * shell.l + 1
-        ao_to_atom.extend([int(shell.atom_index)] * n)
+    ao_to_atom = _shell_to_atom(basis)
 
     atoms = list(molecule.atoms)
     n_atoms = len(atoms)

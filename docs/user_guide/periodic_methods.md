@@ -409,29 +409,27 @@ All four support:
   pair-complete term set for $S$, $T$, the direct $V_{ne}$ and their
   gradient partners (invariant to round-off; the cell list grows, MgO at
   the default from 135 to 369 cells, and the padded cells that no pair
-  reaches stay exactly zero). The default is off: every consumer that
-  pairs a one-electron cell list index-for-index with the two-electron
-  ball is being moved family by family, and the default flips per family
-  once its pins are measured. `vibeqc.pair_complete_lattice_cells` returns
-  the list the switch enumerates, an exact extension of
-  `direct_lattice_cells` at the same cutoff. The consumers are
-  list-agnostic since stage 2's second family: the C++ multi-k
-  RHF/RKS drivers assemble $F(g)$ from $H_{core}$ outward so the outer
-  one-electron cells survive, the PATOM / MINAO / Hückel guesses, the
-  symmetry-reduced $S$/$T$ reconstruction, the BIPOLE padded $J$/$K$
-  re-templating, cell moments and screened-exchange blocks all read the
-  ball as a prefix of the longer list. What the switch still refuses,
-  with the reason in the message, is the **Ewald-split nuclear family**
-  (`compute_nuclear_erfc_lattice`, the grid and FT $V_{ne}$, the SAP
-  guess and their gradient partners): its erfc half and its reciprocal
-  half must move to the pair-complete list together, so every 3D route
-  that takes $V_{ne}$ from the Ewald split (the BIPOLE drivers, the
-  multi-k Ewald and GDF routes) raises under the switch until that
-  lands. Note what the switch does *not* buy on its own: the SCF energy
-  of a direct-truncated route is still not invariant to re-describing
-  the crystal with an atom moved by a lattice vector, because the
-  two-electron ball and the truncated Coulomb sums carry the same defect
-  and the exact one-electron sums stop cancelling part of it.
+  reaches stay exactly zero). The option remains off by default pending
+  cutoff convergence and performance review.
+  `vibeqc.pair_complete_lattice_cells` returns the one-electron enclosure.
+  The two-electron enclosure also includes the interaction reach between
+  physical product midpoints: J restricts the AB/CD products, while K
+  restricts AC/BD. Exchange output and density cells can extend beyond
+  the one-electron support. Consumers align these lists by integer cell
+  key and extend one-electron matrices with zeros where appropriate.
+  `eri_interaction_cutoff_bohr` sets the midpoint reach; zero uses
+  `cutoff_bohr`, and the BIPOLE SR extent overrides that reach when supplied.
+  The **Ewald-split nuclear family** (analytical erfc, grid and FT
+  $V_{ne}$, SAP and their gradient partners) uses the same AO-pair filter
+  in each complementary term. Nuclear source images are centered on
+  each physical AO-product midpoint. The reciprocal cache and derivatives
+  preserve the same pair support.
+  Physical mode uses the full Fock build. The legacy symmetry projector,
+  periodic COSX and diagnostic grid Hartree backend refuse this option
+  because they do not implement its exchange/domain contract. Image
+  relabelling preserves a fixed physical domain; convergence of the
+  periodic operator additionally requires converging the pair cutoff,
+  interaction reach and reciprocal resolution.
 * The shared-gauge Ewald J-split two-electron build by default
   on 3D systems (`use_ewald_j_split=None` -> `True`): short-range
   $J$ from direct erfc-screened ERIs, long-range $J$ from
@@ -450,6 +448,15 @@ All four support:
   supported self-consistent path for gapped systems; metallic calculations
   use smearing for SCF and Gilat post-SCF because the sharp T = 0 occupation
   map is discontinuous at band crossings. RHF/ROHF/ROKS remain gated here.
+* Periodic DFT quadrature uses an atom-image neighborhood centered on each
+  integration point. `becke_image_radius_bohr` sets its minimum physical
+  radius; it expands to twice the nearest-image distance where needed to
+  keep vacuum regions covered. It does not truncate the atomic radial grid.
+  Converge this radius together with radial and angular grid resolution,
+  especially for diffuse densities and large vacuum regions. A radius of
+  zero explicitly requests molecular partitioning. Moving an atom to an
+  equivalent image preserves the physical partition; raw atomic weights
+  and atom ownership retain the same layout.
 * Production finite-difference atomic forces for all four flavours and
   fixed-cell atomic relaxation. Variable-cell and coupled atom/cell
   optimization fail closed; `compute_stress_tensor` is only a force-virial

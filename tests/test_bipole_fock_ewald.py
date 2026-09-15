@@ -212,10 +212,10 @@ _CRYSTAL_CYC0 = {
 
 
 @pytest.mark.slow
-def test_crystal_parity_end_to_end_c0(monkeypatch):
-    """End-to-end BIPOLE RHF CYC 0 parity vs CRYSTAL ENECYCLE.
+def test_crystal_fixed_density_cyc0_driver_components(monkeypatch):
+    """BIPOLE RHF driver components at the sealed CRYSTAL CYC0 density.
 
-    Runs run_pbc_bipole_rhf with max_iter=1 (SAD initial guess →
+    Runs run_pbc_bipole_rhf with max_iter=1 (sealed local SAD input →
     one Fock build → energy).  Compares per-component energies against
     CRYSTAL23 ENECYCLE output for MgO/STO-3G/SHRINK-8-8.
 
@@ -243,6 +243,19 @@ def test_crystal_parity_end_to_end_c0(monkeypatch):
     # returns. Capture both spheropole calls so the CYC0 comparison cannot
     # silently drift onto that distinct terminal density again.
     import vibeqc.pbc_bipole as _bipole_driver
+
+    # Keep the reference input density fixed. Production guesses now
+    # normalize their electron count in the periodic overlap metric;
+    # this sealed CYC0 fixture used the molecular-metric local SAD input.
+    D_sad = initial_density_closed_shell(
+        system.unit_cell_molecule(), basis, system.n_electrons() // 2,
+        InitialGuess.SAD, is_periodic=True,
+    )
+    assert D_sad is not None
+    monkeypatch.setattr(
+        _bipole_driver, "initial_density_closed_shell",
+        lambda *args, **kwargs: D_sad.copy(),
+    )
 
     _compute_spheropole = _bipole_driver.compute_ext_el_spheropole
     spheropole_calls = []
@@ -284,14 +297,6 @@ def test_crystal_parity_end_to_end_c0(monkeypatch):
     # The first driver evaluation is exactly the local SAD convention used
     # by the standalone kernel oracle: SAD at g=0 and zero elsewhere.
     assert len(spheropole_calls) == 2
-    D_sad = initial_density_closed_shell(
-        system.unit_cell_molecule(),
-        basis,
-        system.n_electrons() // 2,
-        InitialGuess.SAD,
-        is_periodic=True,
-    )
-    assert D_sad is not None
     first_density = dict(spheropole_calls[0][0])
     np.testing.assert_array_equal(first_density[(0, 0, 0)], D_sad)
     for cell_index, block in first_density.items():
@@ -392,8 +397,9 @@ def test_crystal_parity_ewald_nuclear_repulsion():
     system, basis = _build_mgo()
     kmesh = vq.monkhorst_pack(system, [2, 2, 2])
     opts = vq.PeriodicRHFOptions()
-    opts.lattice_opts.cutoff_bohr = 10.0
-    opts.lattice_opts.nuclear_cutoff_bohr = 10.0
+    # 12 bohr: S-fold drift 5.0e-3 (10 bohr is refused at 1.5e-2).
+    opts.lattice_opts.cutoff_bohr = 12.0
+    opts.lattice_opts.nuclear_cutoff_bohr = 12.0
     opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
     opts.max_iter = 5
     opts.use_diis = True
@@ -429,12 +435,13 @@ def test_crystal_parity_ewald_nuclear_repulsion():
 # ---------------------------------------------------------------------
 @pytest.mark.slow
 def test_bipole_rhf_scf_converges():
-    """BIPOLE RHF SCF converges on MgO/STO-3G within 10 iterations."""
+    """The first three legacy MgO/STO-3G RHF iterations decrease in energy."""
     system, basis = _build_mgo()
     kmesh = vq.monkhorst_pack(system, [1, 1, 1])
     opts = vq.PeriodicRHFOptions()
-    opts.lattice_opts.cutoff_bohr = 10.0
-    opts.lattice_opts.nuclear_cutoff_bohr = 10.0
+    # 12 bohr: S-fold drift 5.0e-3 (10 bohr is refused at 1.5e-2).
+    opts.lattice_opts.cutoff_bohr = 12.0
+    opts.lattice_opts.nuclear_cutoff_bohr = 12.0
     opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
     opts.max_iter = 3
     opts.initial_guess = vq.InitialGuess.SAD
@@ -474,7 +481,7 @@ def test_bipole_rhf_scf_converges():
 # ---------------------------------------------------------------------
 @pytest.mark.slow
 def test_bipole_rks_smoke():
-    """RKS (PBE) BIPOLE driver converges on MgO/STO-3G with multi-k.
+    """RKS (PBE) BIPOLE produces finite MgO/STO-3G multi-k energies.
 
     Uses [2,2,2] k-mesh — the minimum needed to avoid the Γ-only
     SCF bifurcation documented in the retired PBC-BIPOLE handover
@@ -484,8 +491,9 @@ def test_bipole_rks_smoke():
     system, basis = _build_mgo()
     kmesh = vq.monkhorst_pack(system, [2, 2, 2])
     opts = vq.PeriodicKSOptions()
-    opts.lattice_opts.cutoff_bohr = 10.0
-    opts.lattice_opts.nuclear_cutoff_bohr = 10.0
+    # 12 bohr: S-fold drift 5.0e-3 (10 bohr is refused at 1.5e-2).
+    opts.lattice_opts.cutoff_bohr = 12.0
+    opts.lattice_opts.nuclear_cutoff_bohr = 12.0
     opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
     opts.max_iter = 30
     opts.initial_guess = vq.InitialGuess.SAD
@@ -524,8 +532,9 @@ def test_bipole_multik_smoke():
     system, basis = _build_mgo()
     kmesh = vq.monkhorst_pack(system, [2, 2, 2])
     opts = vq.PeriodicRHFOptions()
-    opts.lattice_opts.cutoff_bohr = 10.0
-    opts.lattice_opts.nuclear_cutoff_bohr = 10.0
+    # 12 bohr: S-fold drift 5.0e-3 (10 bohr is refused at 1.5e-2).
+    opts.lattice_opts.cutoff_bohr = 12.0
+    opts.lattice_opts.nuclear_cutoff_bohr = 12.0
     opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
     opts.max_iter = 1
     opts.initial_guess = vq.InitialGuess.SAD

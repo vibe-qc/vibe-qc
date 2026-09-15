@@ -242,6 +242,34 @@ class TestSolverOptionsDefaults:
         assert opts.max_restarts == 5
         assert opts.verbosity == 0
         assert opts.guess_vectors is None
+        assert opts.n_guess == 0
+
+    @pytest.mark.parametrize("solver", ["davidson", "hermitian_davidson"])
+    @pytest.mark.parametrize("n_guess", [0, 8, 200])
+    def test_davidson_partial_spectrum_guess_size(self, solver, n_guess):
+        """A full initial space solves in one step; smaller spaces must converge."""
+        rng = np.random.default_rng(2)
+        noise = rng.normal(size=(200, 200)) * .02
+        if solver == "hermitian_davidson":
+            noise = noise + 1j * rng.normal(size=noise.shape) * .02
+        matrix = np.diag(np.arange(1., 201.)) + (noise + noise.conj().T) / 2
+        options = SolverOptions(n_roots=4, n_guess=n_guess, tol=1e-8,
+                                max_iter=1 if n_guess == 200 else 50)
+        result = solve_eigenproblem(EigenProblem(matrix=matrix), options, solver=solver)
+        assert result.converged
+        assert result.n_iter < 50
+        np.testing.assert_allclose(result.eigenvalues, np.linalg.eigvalsh(matrix)[:4],
+                                   atol=1e-8, rtol=0)
+        vectors = result.eigenvectors
+        np.testing.assert_allclose(vectors.conj().T @ vectors, np.eye(4), atol=1e-10)
+        assert np.linalg.norm(matrix @ vectors - vectors * result.eigenvalues, axis=0).max() < 1e-8
+
+    @pytest.mark.parametrize("solver", ["davidson", "hermitian_davidson"])
+    @pytest.mark.parametrize("n_guess", [-1, 3])
+    def test_davidson_rejects_guess_space_smaller_than_requested_roots(self, solver, n_guess):
+        with pytest.raises(ValueError, match="n_guess"):
+            solve_eigenproblem(EigenProblem(matrix=np.diag(np.arange(10.))),
+                               SolverOptions(n_roots=4, n_guess=n_guess), solver=solver)
 
     def test_partial_override(self) -> None:
         opts = SolverOptions(n_roots=5, tol=1e-10, which="LA", max_iter=50)
@@ -267,13 +295,15 @@ class TestCrossSolverConsistency:
     TOL = 1e-8
 
     @pytest.fixture(scope="class")
-    def fock_matrix(self) -> np.ndarray:
+    @classmethod
+    def fock_matrix(cls) -> np.ndarray:
         rng = np.random.default_rng(42)
-        return _fock_like(self.N, rng)
+        return _fock_like(cls.N, rng)
 
     @pytest.fixture(scope="class")
-    def ref_eigenvalues(self, fock_matrix: np.ndarray) -> np.ndarray:
-        return np.linalg.eigh(fock_matrix)[0][: self.N_ROOTS]
+    @classmethod
+    def ref_eigenvalues(cls, fock_matrix: np.ndarray) -> np.ndarray:
+        return np.linalg.eigh(fock_matrix)[0][: cls.N_ROOTS]
 
     # -- Dense solver -------------------------------------------------------
 
@@ -1116,12 +1146,14 @@ class TestJDLaplacianMINRES:
     N_ROOTS = 5
 
     @pytest.fixture(scope="class")
-    def laplacian(self) -> np.ndarray:
-        return _laplacian(self.N)
+    @classmethod
+    def laplacian(cls) -> np.ndarray:
+        return _laplacian(cls.N)
 
     @pytest.fixture(scope="class")
-    def laplacian_ref(self, laplacian: np.ndarray) -> np.ndarray:
-        return np.linalg.eigh(laplacian)[0][: self.N_ROOTS]
+    @classmethod
+    def laplacian_ref(cls, laplacian: np.ndarray) -> np.ndarray:
+        return np.linalg.eigh(laplacian)[0][: cls.N_ROOTS]
 
     def test_jd_converges_on_laplacian(self, laplacian, laplacian_ref) -> None:
         """JD converges on a Laplacian where diagonal preconditioner is flat."""
@@ -1174,9 +1206,10 @@ class TestInteriorEigenProblemDispatch:
     SIGMA = 50.0
 
     @pytest.fixture(scope="class")
-    def fock_matrix(self) -> np.ndarray:
+    @classmethod
+    def fock_matrix(cls) -> np.ndarray:
         rng = np.random.default_rng(42)
-        return _fock_like(self.N, rng)
+        return _fock_like(cls.N, rng)
 
     def test_gplhr_via_interior_problem(self, fock_matrix) -> None:
         """GPLHR invoked via InteriorEigenProblem finds eigenvalues near sigma."""

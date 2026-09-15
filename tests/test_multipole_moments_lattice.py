@@ -11,6 +11,7 @@ Validates:
     screening).
   * `cartesian_multipole_n_components` returns 4 / 10 / 20 for
     L_max = 1 / 2 / 3 respectively.
+  * L_max = 4 uses 25 spherical components, including the overlap.
 """
 from __future__ import annotations
 
@@ -92,11 +93,28 @@ def test_multipole_set_L_max_3_has_20_components(lih_primitive, lat_opts):
     assert len(set_.blocks[0]) == 20
 
 
-def test_invalid_L_max_raises(lih_primitive, lat_opts):
+def test_multipole_set_L_max_4_has_25_spherical_components(lih_primitive, lat_opts):
     system, basis = lih_primitive
-    for L in [0, 4, -1, 100]:
-        with pytest.raises(Exception):
-            compute_multipole_moments_lattice(basis, system, lat_opts, L_max=L)
+    set_ = compute_multipole_moments_lattice(basis, system, lat_opts, L_max=4)
+    assert set_.L_max == 4
+    assert set_.spherical
+    assert set_.nbf == basis.nbasis
+    assert len(set_.blocks) == len(set_.cells) > 0
+    for block in set_.blocks:
+        moments = np.asarray(block)
+        assert moments.shape == (25, basis.nbasis, basis.nbasis)
+        assert np.isfinite(moments).all()
+    g0 = next(i for i, cell in enumerate(set_.cells)
+              if np.array_equal(cell.index, [0, 0, 0]))
+    np.testing.assert_allclose(set_.blocks[g0][0], compute_overlap(basis),
+                               atol=1e-12, rtol=0)
+
+
+@pytest.mark.parametrize("L", [0, 5, -1, 100])
+def test_invalid_L_max_raises(lih_primitive, lat_opts, L):
+    system, basis = lih_primitive
+    with pytest.raises(ValueError, match="L_max must be 1, 2, 3, or 4"):
+        compute_multipole_moments_lattice(basis, system, lat_opts, L_max=L)
 
 
 # ---------------------------------------------------------------------

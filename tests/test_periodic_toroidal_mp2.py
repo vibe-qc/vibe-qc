@@ -580,7 +580,8 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         mp2.tcut_mkn,
         mp2.tcut_pairs,
         mp2.tcut_pairs_weak,
-    ) == (0, 1e-8, 1e-7, 1e-3, 1e-6, 1e-4)
+        mp2.pno_norm,
+    ) == (0, 1e-8, 1e-7, 1e-3, 1e-6, 1e-4, "legacy")
 
     cc = _pre_sweep_toroidal_dlpno_cc_options()
     assert (
@@ -589,12 +590,16 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         cc.tcut_mkn,
         cc.tcut_pairs,
         cc.residual_domain,
+        cc.pno_norm,
+        cc.pno_correction,
     ) == (
         0,
         1e-7,
         0.0,
         1e-4,
         "pair",
+        "legacy",
+        False,
     )
 
 

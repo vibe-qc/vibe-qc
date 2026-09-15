@@ -190,9 +190,12 @@ grid on it receives the `grid_level` preset (#663). A separate
 `grid_options=` value remains an explicit analytic-gradient override. The
 `optimize_molecule` and `optimize_molecule_brent` backends use the same
 gradient-grid inheritance (the analytic gradient follows the SCF options'
-grid) when an SCF options object is supplied, including the options created
-by `run_job` from its `grid_level` selection; they do not apply `grid_level`
-to a bare options object themselves (#678).
+grid). Both backends now accept `grid_level="orca-defgrid3"` and apply it
+to absent or untouched KS options. A custom grid wins; pass
+`grid_level="legacy"` for the old defaults. ROKS options and the selected
+level reach every optimizer energy and finite-difference displacement,
+including the ASE backend. Molecular NEB, dimer and IRC entry points accept
+the same `grid_level` selection.
 
 ## Supported methods
 

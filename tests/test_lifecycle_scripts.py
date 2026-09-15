@@ -680,16 +680,43 @@ def test_lifecycle_lock_namespace_is_derived_from_resource_owner() -> None:
     assert "0o600" in source
 
 
+def _lifecycle_lock_path(scope: str, resource: Path) -> Path:
+    """The lock file ``scripts/_lifecycle_lock.sh`` would use for a resource.
+
+    Mirrors the naming in that script: ``sha256("<scope>:<abs path>")`` under
+    ``/tmp/vibe-toolset-lifecycle-locks-<uid>``. Kept in step by
+    ``test_lifecycle_lock_path_matches_the_shell_helper`` below, so a rename in
+    the shell helper fails loudly here rather than quietly making the
+    dry-run assertions vacuous.
+    """
+    digest = hashlib.sha256(
+        f"{scope}:{resource}".encode("utf-8")
+    ).hexdigest()
+    return (Path(f"/tmp/vibe-toolset-lifecycle-locks-{os.geteuid()}")
+            / f"{scope}-{digest}.lock")
+
+
 def test_reinstall_dry_run_creates_no_lifecycle_lock_artifacts(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / "owned-environment"
     _recognisable_venv(target)
     _mark_owned_venv(target)
-    lock_root = Path(f"/tmp/vibe-toolset-lifecycle-locks-{os.geteuid()}")
+    # Assert on the artifacts THIS invocation would create, not on the whole
+    # of /tmp/vibe-toolset-lifecycle-locks-<uid>. That directory is global to
+    # the uid, shared by every checkout and process on the machine, and
+    # nothing ever prunes it -- it had 9926 entries when this test was
+    # rewritten. Seventeen other tests in this file mint locks there from
+    # their own tmp_path checkout/venv pairs, so a whole-directory snapshot
+    # made this test pass or fail on what its neighbours happened to do.
+    checkout_lock = _lifecycle_lock_path("checkout", REPO_ROOT)
+    target_lock = _lifecycle_lock_path("target", target)
+    # The target is a fresh tmp_path, so its lock cannot pre-exist; the
+    # checkout lock may, left by an earlier run, so record it.
+    checkout_lock_existed = checkout_lock.exists()
     state_pattern = f"vibe-toolset-lifecycle-state.{os.geteuid()}.*"
-    before_locks = set(lock_root.iterdir()) if lock_root.is_dir() else set()
     before_states = set(Path("/tmp").glob(state_pattern))
+    started = time.time()
 
     result = subprocess.run(
         [
@@ -708,10 +735,31 @@ def test_reinstall_dry_run_creates_no_lifecycle_lock_artifacts(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    after_locks = set(lock_root.iterdir()) if lock_root.is_dir() else set()
-    after_states = set(Path("/tmp").glob(state_pattern))
-    assert after_locks == before_locks
-    assert after_states == before_states
+    assert not target_lock.exists(), (
+        f"dry run created a target lock: {target_lock}")
+    assert checkout_lock.exists() == checkout_lock_existed, (
+        f"dry run changed the checkout lock: {checkout_lock}")
+    # Only state directories created during the subprocess window are this
+    # run's doing; anything older belongs to a neighbour and is not ours to
+    # assert on.
+    new_states = [
+        path for path in set(Path("/tmp").glob(state_pattern)) - before_states
+        if path.stat().st_ctime >= started
+    ]
+    assert not new_states, f"dry run created lifecycle state: {new_states}"
+
+
+def test_lifecycle_lock_path_matches_the_shell_helper() -> None:
+    """``_lifecycle_lock_path`` reproduces the shell helper's lock naming.
+
+    The dry-run assertions above check for named lock files, so they would
+    silently pass against the wrong names if the shell helper's scheme
+    changed. Pin the scheme against its source of truth.
+    """
+    source = LIFECYCLE_LOCK.read_text(encoding="utf-8")
+    assert 'hashlib.sha256((scope + ":" + resource).encode("utf-8"))' in source
+    assert 'root / (scope + "-" + digest + ".lock")' in source
+    assert '("vibe-toolset-lifecycle-locks-%d" % uid)' in source
 
 
 def test_target_containing_checkout_is_rejected(tmp_path: Path) -> None:

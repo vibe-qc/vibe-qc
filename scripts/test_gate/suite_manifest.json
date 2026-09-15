@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at_sha": "d0b658302120e80746a8248894981b64e9150586",
-  "test_file_count": 907,
+  "generated_at_sha": "2adb16455c32754a98bf266571c6aa58248ab6e4",
+  "test_file_count": 910,
   "policy": {
     "blocking_tiers": [
       "T0",
@@ -901,6 +901,18 @@
       "measured_peak_rss_mb": null,
       "disposition": "demote T2",
       "rationale": "C++ far-field contractor energy and Fock parity (14.9x speedup)",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_bipole_cphf_adjoint.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "BIPOLE",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "demote T2",
+      "rationale": "under-review inventory or parity coverage retained post-cut",
       "last_verified_sha": null
     },
     {
@@ -2357,6 +2369,18 @@
     },
     {
       "file": "tests/test_ccm_shell_and_dh_guards.py",
+      "maturity": "experimental",
+      "tier": "T3",
+      "owner": "implementing chat",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "keep",
+      "rationale": "experimental AICCM/CCM/SECCM research coverage; never release blocking",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_ccm_spin_field_defaults.py",
       "maturity": "experimental",
       "tier": "T3",
       "owner": "implementing chat",
@@ -5760,7 +5784,7 @@
       "measured_runtime_s": null,
       "measured_peak_rss_mb": null,
       "disposition": "demote T2",
-      "rationale": "pins that every consumer of the one-electron cell list reads the two-electron ball as a prefix of the pair-complete list under LatticeSumOptions.pair_complete_1e (C++ multi-k RHF/RKS Fock assembly, PATOM/MINAO/Hueckel guesses, reduced-symmetry S/T, BIPOLE padded J/K, cell moments, screened exchange), that the Ewald-split nuclear family refuses the switch, and the switch-off energies as the bit-identity contract (#429 stage 2, Family 2)",
+      "rationale": "Physical one-electron, nuclear and quartet domains are aligned by integer cell key, including wider exchange output support. Independent Gaussian sums, image relabelling, density and nuclear finite differences, and coupled Ewald split checks cover their consumers. Native regression anchors follow reviewed grid and Schwarz corrections; independent periodic references are retained. Finite-domain checks do not establish infinite-periodic convergence or approve a default change (#429/#724).",
       "last_verified_sha": null
     },
     {
@@ -10493,6 +10517,18 @@
     },
     {
       "file": "tests/test_tddft.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "correlation/multireference",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "demote T2",
+      "rationale": "under-review inventory or parity coverage retained post-cut",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_tddft_cli.py",
       "maturity": "under-review",
       "tier": "T2",
       "owner": "correlation/multireference",

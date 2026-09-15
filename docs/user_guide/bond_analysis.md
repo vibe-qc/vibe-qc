@@ -20,7 +20,7 @@ give *integrated* per-bond scalars.
 
 Wiberg bond indices are computed automatically on every population dump.
 The `.population.{txt,json}` sidecars retain an NPA field, but it is empty
-and carries a structured `npa` error until the full occupancy-weighted
+and reports `unavailable.npa` until the full occupancy-weighted
 Natural Atomic Orbital construction is implemented. This prevents a
 Löwdin population from being reported under the NPA label. The provisional
 NBO search, EDA, and entanglement analyses are Python-API workflows you call
@@ -78,7 +78,9 @@ Atomic Orbital occupations. A global symmetric orthogonalization alone
 produces Löwdin populations, not NPA. `npa_charges` therefore raises
 `NotImplementedError` until vibe-qc implements the complete
 occupancy-weighted NAO construction. Population sidecars preserve the `npa`
-key as an empty list and explain the gate in `errors.npa`.
+key as an empty list and explain the gate in `unavailable.npa`. They skip
+the unimplemented API, so this limitation does not appear as a failed
+calculation in `errors`. The text section says `npa: not implemented`.
 
 The separate, provisional orbital classifier remains available:
 

@@ -370,7 +370,7 @@ class OutputPlan:
                     description=(
                         "Available atomic populations / bond properties / "
                         "dipole -- tab-separated; unavailable analyses carry "
-                        "explicit N/A markers."
+                        "explicit status markers."
                     ),
                 )
             )
@@ -382,7 +382,7 @@ class OutputPlan:
                     always=True,
                     description=(
                         "Available population / properties dump -- JSON form "
-                        "with structured errors for unavailable analyses."
+                        "with structured errors and implementation availability."
                     ),
                 )
             )

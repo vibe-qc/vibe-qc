@@ -546,7 +546,10 @@ opts.max_iter = 2000
 opts.electronic_temperature = 0.001  # Ha (~315 K)
 
 # Automatic stabilization -- when the primary solve fails, retry with
-# a more conservative recipe
+# a more conservative recipe. Molecular: unless a temperature was set
+# explicitly, the last retry runs at 0.005 Ha; result.smearing_temperature
+# records it, and run_job then reports the Mermin free energy and writes
+# gfn2_executed_electronic_temperature to the .system record
 opts.auto_stabilize = True
 
 result = _xtb.run_gfn2_xtb(mol, params, opts)

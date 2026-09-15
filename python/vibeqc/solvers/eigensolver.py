@@ -221,6 +221,10 @@ class SolverOptions:
         0 = silent, 1 = summary, 2 = per-iteration detail.
     guess_vectors : (n, k) ndarray or None
         Optional warm-start subspace columns.
+    n_guess : int
+        Initial Davidson subspace size when no ``guess_vectors`` are supplied.
+        ``0`` uses the native automatic size, ``max(n_roots + 5, 2*n_roots)``,
+        capped at the problem dimension. A positive value must cover all roots.
     """
 
     n_roots: int = 0
@@ -236,6 +240,7 @@ class SolverOptions:
     max_restarts: int = 5
     verbosity: int = 0
     guess_vectors: np.ndarray | None = None
+    n_guess: int = 0
 
 
 # ── Solver result ──────────────────────────────────────────────────────────
@@ -701,6 +706,9 @@ class DavidsonSolver(SolverStrategy):
             solve_options.n_roots if solve_options.n_roots > 0 else solve_problem.n
         )
         c_opts.conv_tol = solve_options.tol
+        c_opts.n_guess = solve_options.n_guess
+        if c_opts.n_guess < 0 or 0 < c_opts.n_guess < c_opts.n_eig:
+            raise ValueError("Davidson n_guess must be 0 (auto) or at least n_roots")
         c_opts.max_iter = solve_options.max_iter
         c_opts.preshift = solve_options.preshift
         c_opts.verbosity = solve_options.verbosity
@@ -793,6 +801,9 @@ class HermitianDavidsonSolver(SolverStrategy):
             solve_options.n_roots if solve_options.n_roots > 0 else solve_problem.n
         )
         c_opts.conv_tol = solve_options.tol
+        c_opts.n_guess = solve_options.n_guess
+        if c_opts.n_guess < 0 or 0 < c_opts.n_guess < c_opts.n_eig:
+            raise ValueError("Davidson n_guess must be 0 (auto) or at least n_roots")
         c_opts.max_iter = solve_options.max_iter
         c_opts.preshift = solve_options.preshift
         c_opts.verbosity = solve_options.verbosity

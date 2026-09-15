@@ -200,6 +200,8 @@ def _build_uhf_fock_blocks_ewald3d(
     template (recomputing the overlap lattice integrals just to obtain
     a container -- the one-shot behaviour).
     """
+    from ._vibeqc_core import make_lattice_matrix_set
+
     n_cells = len(D_alpha_real.cells)
 
     # Total density D_total = D_a + D_b. Build via the overlap template
@@ -207,7 +209,10 @@ def _build_uhf_fock_blocks_ewald3d(
     D_total_real = (
         d_total_buffer
         if d_total_buffer is not None
-        else compute_overlap_lattice(basis, system, lat_opts)
+        else make_lattice_matrix_set(
+            basis.nbasis, D_alpha_real.cells,
+            [np.zeros((basis.nbasis, basis.nbasis)) for _ in range(n_cells)],
+        )
     )
     for g in range(n_cells):
         D_total_real.set_block(
@@ -500,6 +505,11 @@ def run_uhf_periodic_multi_k_ewald3d(
         from .periodic_v_ne import compute_nuclear_lattice_dispatch
 
         V_lat = compute_nuclear_lattice_dispatch(basis, system, lat_opts)
+    from .lattice_screening import on_physical_eri_cells
+
+    S_lat = on_physical_eri_cells(S_lat, basis, system, lat_opts)
+    T_lat = on_physical_eri_cells(T_lat, basis, system, lat_opts)
+    V_lat = on_physical_eri_cells(V_lat, basis, system, lat_opts)
     cells = list(S_lat.cells)
 
     # Fused C++ multi-k Bloch transforms (OpenMP-parallel over k) when
@@ -717,7 +727,12 @@ def run_uhf_periodic_multi_k_ewald3d(
     # the overlap template and overwrite every block per Fock build.
     # Rebuilding it per iteration recomputed the overlap lattice
     # integrals just to obtain a container.
-    d_total_buffer = compute_overlap_lattice(basis, system, lat_opts)
+    from ._vibeqc_core import make_lattice_matrix_set
+
+    d_total_buffer = make_lattice_matrix_set(
+        basis.nbasis, cells,
+        [np.zeros((basis.nbasis, basis.nbasis)) for _ in cells],
+    )
     if guess == InitialGuess.PATOM:
         plog.info("initial guess: PATOM (SAD + one periodic in-field step)")
         F_alpha_blocks, F_beta_blocks = _build_uhf_fock_blocks_ewald3d(

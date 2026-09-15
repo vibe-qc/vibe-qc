@@ -15,17 +15,19 @@ plausible-looking ``N/A -- TypeError`` row in the population sidecar.  That is
 how the same defect shipped three times (GitLab #679, and again when it turned
 the whole population sidecar of a real-Gamma job into ``N/A`` rows).
 
-These tests pin the contract from both ends:
+These tests pin the consumer side of the contract: a result carrying
+``density_alpha = density_beta = None`` is treated by every consumer exactly
+like one that omits the attributes entirely.
 
-  1. the three result classes really do default both spin fields to ``None``,
-     so ``hasattr`` is structurally useless on them; and
-  2. a result carrying ``density_alpha = density_beta = None`` is treated by
-     every consumer exactly like one that omits the attributes entirely.
+The class side, that the three result classes really do default both spin
+fields to ``None`` so ``hasattr`` is structurally useless on them, is pinned in
+``tests/test_ccm_spin_field_defaults.py``.  It lives there because a test file
+that imports ``vibeqc.periodic.ccm`` carries the experimental marker, while
+this file guards shipped property consumers and stays verified.
 """
 
 from __future__ import annotations
 
-import dataclasses as dc
 from types import SimpleNamespace
 
 import numpy as np
@@ -36,29 +38,8 @@ from vibeqc.spin_channels import is_open_shell_result, spin_densities
 
 
 # --------------------------------------------------------------------------
-# 1. The class contract that makes ``hasattr`` useless
+# 1. The helper reads values, not attribute presence
 # --------------------------------------------------------------------------
-
-def _nullable_spin_result_classes():
-    from vibeqc.periodic.ccm.dft import CCMKSResult
-    from vibeqc.periodic.ccm.four_center_runner import CCMFourCentreResult
-    from vibeqc.periodic.ccm.real_gamma_runner import CCMRealGammaResult
-
-    return [CCMRealGammaResult, CCMFourCentreResult, CCMKSResult]
-
-
-@pytest.mark.parametrize(
-    "cls", _nullable_spin_result_classes(), ids=lambda c: c.__name__
-)
-def test_spin_fields_default_to_none_so_hasattr_is_useless(cls) -> None:
-    fields = {f.name: f for f in dc.fields(cls)}
-    for name in ("density_alpha", "density_beta"):
-        assert name in fields, f"{cls.__name__} should declare {name}"
-        assert fields[name].default is None, (
-            f"{cls.__name__}.{name} must default to None -- the closed-shell "
-            "case is what makes a value-based open-shell test necessary"
-        )
-
 
 def test_helper_reads_values_not_attribute_presence() -> None:
     closed = SimpleNamespace(density=np.eye(2), density_alpha=None, density_beta=None)

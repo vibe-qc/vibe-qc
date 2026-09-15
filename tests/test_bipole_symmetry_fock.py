@@ -77,71 +77,38 @@ def test_symmetry_fock_enforcement_is_projection():
         assert max_diff < 1e-12, f"not idempotent at cell {c}: {max_diff:.2e}"
 
 
-@pytest.mark.xfail(
-    reason="MgO/STO-3G needs cutoff >= 16 bohr for S(Γ) fold convergence")
-def test_symmetry_integrals_mgo_energy_invariance_when_fock_reduce_disabled():
-    """Attached symmetry alone leaves the energy invariant when M5 Fock
-    reduction and padding are explicitly disabled.
+@pytest.mark.parametrize("attach", [False, True])
+def test_legacy_mgo_symmetry_fixture_refuses_truncated_overlap(attach):
+    """Attaching symmetry must not bypass the overlap-fold refusal (#66).
 
-    Two regressions in one:
-
-    * The 2026-06-09 Fock enforcement transformed whole-matrix blocks
-      with one uniform cell map g → R·g — only correct for
-      single-atom-at-origin cells; on MgO primitive it scattered Mg–O
-      cross blocks into wrong cells (~0.5 Ha shift) AND was auto-on
-      whenever symmetry was attached.
-    * Even with the correct atom-pair-resolved group action, enforcing
-      orbit symmetry on the historical truncated radial J/K domain moved
-      energies. M5 fixes that domain and makes reduction the attached-
-      symmetry default; this test retains the narrower SYM2c S/T identity
-      contract by explicitly opting out of M5 and selecting the legacy-gauge
-      diagnostic associated with that historical domain.
-
-    NOTE: xfail — MgO/STO-3G requires cutoff >= 16 bohr for S(Γ) fold
-    convergence (< 1e-4 drift), which is too slow for the standard test
-    suite.  The fold gate correctly refuses smaller cutoffs.  Use the
-    dedicated MgO parity scripts in examples/regression/ for full
-    fold-converged validation.
+    The historical cutoff10 fixture cannot establish energy invariance:
+    its S(Gamma) drift is 0.015, and SCF must refuse it before iteration.
+    S/T reconstruction itself is tested above on a complete orbit domain.
     """
-    ANG2BOHR = 1.0 / 0.529177210903
-    a = 4.21 * ANG2BOHR
+    from vibeqc.pbc_bipole_common import BipoleFoldUnreliableError
+
+    a = 4.21 / 0.529177210903
     lattice = (a / 2.0) * np.array(
         [[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]
     )
-
-    def _mgo(attach: bool):
-        system = vq.PeriodicSystem(
-            3,
-            lattice,
-            [
-                vq.Atom(12, [0.0, 0.0, 0.0]),
-                vq.Atom(8, [a / 2.0, a / 2.0, a / 2.0]),
-            ],
-        )
-        if attach:
-            attach_symmetry(system)
-        return system
-
-    def _opts():
-        o = PeriodicRHFOptions()
-        o.lattice_opts.cutoff_bohr = 10.0
-        o.lattice_opts.nuclear_cutoff_bohr = 10.0
-        o.max_iter = 50
-        o.use_diis = True
-        o.conv_tol_energy = 1e-8
-        o.initial_guess = InitialGuess.SAD
-        return o
-
-    energies = {}
-    for attach in (False, True):
-        system = _mgo(attach)
-        basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
-        kmesh = monkhorst_pack(system, [1, 1, 1])
-        result = run_pbc_bipole_rhf(
-            system,
-            basis,
-            kmesh,
-            _opts(),
+    system = vq.PeriodicSystem(
+        3, lattice,
+        [vq.Atom(12, [0.0, 0.0, 0.0]),
+         vq.Atom(8, [a / 2.0, a / 2.0, a / 2.0])],
+    )
+    if attach:
+        attach_symmetry(system)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    opts = PeriodicRHFOptions()
+    opts.lattice_opts.cutoff_bohr = 10.0
+    opts.lattice_opts.nuclear_cutoff_bohr = 10.0
+    opts.max_iter = 50
+    opts.use_diis = True
+    opts.conv_tol_energy = 1e-8
+    opts.initial_guess = InitialGuess.SAD
+    with pytest.raises(BipoleFoldUnreliableError, match="S.*fold"):
+        run_pbc_bipole_rhf(
+            system, basis, monkhorst_pack(system, [1, 1, 1]), opts,
             use_ewald_j_split=True,
             use_exchange_ewald_split=False,
             use_fock_symmetry_reduce=False,
@@ -149,15 +116,6 @@ def test_symmetry_integrals_mgo_energy_invariance_when_fock_reduce_disabled():
             ewald_precision=1e-8,
             progress=False,
         )
-        assert result.converged, f"attach={attach} did not converge"
-        energies[attach] = result.energy
-
-    # The S/T-reduced path reconstructs the explicit integrals to
-    # machine precision, so the SCF trajectory is essentially identical.
-    assert abs(energies[True] - energies[False]) < 1e-9, (
-        f"symmetry changed the converged MgO energy: "
-        f"{energies[False]:.10f} (off) vs {energies[True]:.10f} (on)"
-    )
 
 
 def test_symmetry_fock_reconstruction_runs_with_bipole():

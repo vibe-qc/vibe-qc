@@ -62,6 +62,52 @@ def _index(index, limit, name, *, endpoint=False):
     return index
 
 
+def _copy_control(value, expected):
+    """Snapshot exact native control records, including their nested caps."""
+    if type(value) is not expected:
+        raise TypeError(f'physical J/K requires {expected.__name__}')
+    result = expected()
+    for name, descriptor in expected.__dict__.items():
+        if isinstance(descriptor, property) and descriptor.fset is not None:
+            template = getattr(result, name)
+            item = getattr(value, name)
+            setattr(result, name, item if type(template) is int
+                    else _copy_control(item, type(template)))
+    return result
+
+
+def _action_controls(inventory, panel_caps, stream_caps):
+    inventory = _copy_control(inventory, core._BipoleFinitePanelInventory)
+    panel_caps = _copy_control(panel_caps, core._BipoleFinitePanelCaps)
+    stream_caps = _copy_control(stream_caps, core._BipoleProductJKStreamCaps)
+    # Stay within the native stream binding's incoming-panel hard limits.
+    # Narrow the producer itself so rejection occurs before integral work,
+    # not only when the completed panel reaches stream.consume().
+    if (stream_caps.maximum_panel_inventoried_bytes > 512 << 20
+            or stream_caps.maximum_panel_work_units > 10**9):
+        raise ValueError('physical J/K panel reservation exceeds native diagnostic bounds')
+    panel_caps.maximum_node_bytes = min(panel_caps.maximum_node_bytes,
+                                        stream_caps.maximum_panel_inventoried_bytes)
+    panel_caps.maximum_work_units = min(panel_caps.maximum_work_units,
+                                        stream_caps.maximum_panel_work_units)
+    return inventory, panel_caps, stream_caps
+
+
+def _selection(owner, target, quartet, k, exchange):
+    s = core._BipoleEwaldGramSelection()
+    s.q_index = owner.declaration.mesh.transfer_index(k, target) if exchange else 0
+    s.left_k_index, s.right_k_index = (k if exchange else target), k
+    a, b, c, d = quartet
+    s.left_pair_begin, s.right_pair_begin = a*owner.memory.n_basis+b, c*owner.memory.n_basis+d
+    s.left_pair_count = s.right_pair_count = 1
+    return s
+
+
+def _panel_args(owner, domain, selection, inventory, caps):
+    return (domain.native_source, owner.basis, domain.images, domain.left_cells,
+            domain.right_cells, selection, inventory, caps)
+
+
 @dataclass(frozen=True, slots=True)
 class PhysicalSourcePlan:
     n_basis: int
@@ -80,6 +126,25 @@ class PhysicalDomainPlan:
     resident_bytes: int
     inventoried_bytes: int
     work_units: int
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalJKPlan:
+    """Complete two-pass walk envelope; logical bytes/work, not Python RSS.
+
+    One target k and the complete density grid. Geometry is counted twice
+    for the admission walk and execution replay. The native stream reserves
+    the numerical child envelopes and its density/state storage separately.
+    No per-quartet receipts or numerical values are retained by this plan.
+    """
+    target_k_index: int
+    quartet_count: int
+    panel_calls: int
+    inventoried_bytes: int
+    work_units: int
+    maximum_domain_bytes: int
+    geometry_work_units: int
+    domain_walk_sha256: str
 
 
 @dataclass(frozen=True, slots=True, init=False, eq=False)
@@ -194,6 +259,88 @@ class PhysicalSource:
         return core._make_bipole_product_jk_stream(
             self.declaration, density, target_k_index, self.source_identity_sha256,
             inventory, caps)
+
+    def plan_jk(self, density, target_k_index, *, inventory, panel_caps, stream_caps, budget):
+        """Admit every physical domain and native panel before any integrals.
+
+        The first pass materializes one domain at a time for native preflight.
+        Density shape/storage is checked first, but its values are not scanned
+        or copied here. A late-domain failure cannot leave a partial J/K action.
+        """
+        _budget(budget).admit(_FIXED, 1)
+        controls = _action_controls(inventory, panel_caps, stream_caps)
+        return self._plan_jk(density, target_k_index, *controls, budget)
+
+    def _plan_jk(self, density, target, inventory, panel_caps, stream_caps, budget):
+        target = _index(target, len(self.declaration.mesh), 'target k index')
+        native = core._plan_bipole_product_jk_stream(
+            self.declaration, density, target, inventory, stream_caps)
+        replicas = inventory.numerical_replicas
+        base = native.required_node_inventoried_bytes + replicas*_FIXED
+        work = native.work_units_upper_bound + 4096*native.panel_calls + 1024*native.quartet_count
+        peak, geometry = self.memory.resident_bytes, 0
+        budget.admit(base + replicas*peak, work + 1)
+        digest = hashlib.sha256(bytes.fromhex(self.source_identity_sha256))
+        for ordinal in range(native.quartet_count):
+            # Reserve both construction passes cumulatively. Budget is a
+            # ceiling, not a mutable debit counter; each child gets only the
+            # still-uncommitted allowance before it can allocate/traverse.
+            domain_budget = Budget((budget.maximum_bytes-base)//replicas,
+                                   (budget.maximum_work-work)//2)
+            domain = self.build_domain(self.quartet_at(ordinal), budget=domain_budget)
+            peak = max(peak, domain.memory.inventoried_bytes)
+            geometry += domain.memory.work_units
+            work += 2*domain.memory.work_units
+            budget.admit(base + replicas*peak, work)
+            digest.update(bytes.fromhex(domain.domain_identity_sha256))
+            for k in range(native.n_kpoints):
+                for exchange in (False, True):
+                    selection = _selection(self, target, domain.memory.quartet, k, exchange)
+                    panel = core._plan_bipole_finite_product_panel(
+                        *_panel_args(self, domain, selection, inventory, panel_caps))
+                    if (max(panel.required_node_inventoried_bytes, panel.per_replica_inventoried_bytes)
+                            > stream_caps.maximum_panel_inventoried_bytes
+                            or panel.work_units_upper_bound > stream_caps.maximum_panel_work_units):
+                        raise ValueError('physical J/K panel exceeds the stream reservation')
+                    del panel
+            # Release before constructing the next domain (assignment alone
+            # would keep the old domain alive throughout the next RHS call).
+            del domain
+        return PhysicalJKPlan(target, native.quartet_count, native.panel_calls,
+                              base + replicas*peak, work, peak, geometry, digest.hexdigest())
+
+    def contract_jk(self, density, target_k_index, *, inventory, panel_caps, stream_caps, budget):
+        """Produce and contract one complete finite physical J/K action.
+
+        All domains and numerical panels are preflighted before the native
+        density snapshot or the first integral. Execution uses one domain and
+        one singleton panel, with numerical contractions exclusively in C++.
+        Only a finalized native result escapes. This private finite operator
+        still has no production Hamiltonian or symmetry certificate.
+        """
+        _budget(budget).admit(_FIXED, 1)
+        inventory, panel_caps, stream_caps = _action_controls(inventory, panel_caps, stream_caps)
+        plan = self._plan_jk(density, target_k_index, inventory, panel_caps, stream_caps, budget)
+        stream = core._make_bipole_product_jk_stream(
+            self.declaration, density, plan.target_k_index, self.source_identity_sha256,
+            inventory, stream_caps)
+        digest = hashlib.sha256(bytes.fromhex(self.source_identity_sha256))
+        geometry = 0
+        for ordinal in range(plan.quartet_count):
+            domain = self.build_domain(self.quartet_at(ordinal), budget=Budget(
+                plan.maximum_domain_bytes, plan.geometry_work_units-geometry))
+            geometry += domain.memory.work_units
+            digest.update(bytes.fromhex(domain.domain_identity_sha256))
+            for _ in range(2*stream.memory.n_kpoints):
+                panel = core._make_bipole_finite_product_panel(*_panel_args(
+                    self, domain, stream.next_selection(), inventory, panel_caps))
+                stream.consume(panel)
+                del panel
+            del domain
+        if geometry != plan.geometry_work_units or digest.hexdigest() != plan.domain_walk_sha256:
+            raise RuntimeError('physical J/K domain replay differs from admitted walk')
+        stream.finalize()
+        return stream
 
     def plan_domain(self, quartet, *, budget):
         """Exact geometric census plus native source preflight, with no integrals.

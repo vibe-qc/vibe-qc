@@ -19,7 +19,6 @@ from ._vibeqc_core import (
     PeriodicSystem,
     ao_pair_fourier_transform_gamma_gradient_weighted,
     compute_overlap_lattice,
-    direct_lattice_cells,
     nuclear_erfc_lattice_gradient_contribution,
     overlap_lattice_gradient_contribution,
 )
@@ -127,7 +126,7 @@ def compute_v_ne_ewald_3d_ft_gamma_gradient(
     kernel = damping * (4.0 * np.pi / G2)
     v_long = -np.einsum("a,ag,g->g", nuclei_z, phases, kernel, optimize=True)
 
-    cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
+    cells = density_set.cells
     cell_vectors = np.array(
         [np.asarray(cell.r_cart, dtype=np.float64) for cell in cells],
         dtype=np.float64,
@@ -142,6 +141,20 @@ def compute_v_ne_ewald_3d_ft_gamma_gradient(
 
     from ._aopair_ft import ao_pair_fourier_transform_bloch
 
+    # The AO-pair filter depends on the cell. Contract each supported
+    # cell with its masked density when the physical support is enabled.
+    groups = [(cell_vectors, weighted_density)]
+    if lat_opts.pair_complete_1e:
+        from .lattice_screening import ao_pair_support_mask
+
+        groups = [
+            (cell_vectors[c:c + 1], np.where(
+                ao_pair_support_mask(basis, shift, lat_opts.cutoff_bohr),
+                weighted_density, 0.0,
+            ))
+            for c, shift in enumerate(cell_vectors)
+        ]
+
     k_gamma = np.zeros(3, dtype=np.float64)
     for start in range(0, len(G), g_chunk):
         stop = min(start + g_chunk, len(G))
@@ -150,17 +163,30 @@ def compute_v_ne_ewald_3d_ft_gamma_gradient(
         phases_chunk = phases[:, start:stop]
         v_long_chunk = v_long[start:stop]
 
-        pair_ft = ao_pair_fourier_transform_bloch(
-            basis, G_chunk, cell_vectors, k_cart=k_gamma
-        )
-        density_pair_ft = np.einsum(
-            "mn,mng,mn->g",
-            density,
-            pair_ft.conj(),
-            pair_scales,
-            optimize=True,
-        )
-        del pair_ft
+        density_pair_ft = np.zeros(stop - start, dtype=np.complex128)
+        pair_gradient = np.zeros_like(gradient)
+        for vectors, cell_density in groups:
+            if not np.any(cell_density):
+                continue
+            pair_ft = ao_pair_fourier_transform_bloch(
+                basis, G_chunk, vectors, k_cart=k_gamma
+            )
+            if lat_opts.pair_complete_1e:
+                density_pair_ft += np.einsum(
+                    "mn,mng->g", cell_density, pair_ft.conj(), optimize=True,
+                )
+            else:
+                density_pair_ft = np.einsum(
+                    "mn,mng,mn->g", density, pair_ft.conj(), pair_scales,
+                    optimize=True,
+                )
+            del pair_ft
+            pair_gradient += np.asarray(
+                ao_pair_fourier_transform_gamma_gradient_weighted(
+                    basis, G_chunk, vectors, cell_density,
+                    v_long_chunk / cell_volume, n_atoms,
+                ), dtype=np.float64,
+            )
 
         # d[-Z_A kernel exp(-iG.R_A)]/dR_A.
         d_structure = (
@@ -174,18 +200,7 @@ def compute_v_ne_ewald_3d_ft_gamma_gradient(
                 "agx,g->ax", d_structure, density_pair_ft, optimize=True
             )
         ) / cell_volume
-
-        gradient += np.asarray(
-            ao_pair_fourier_transform_gamma_gradient_weighted(
-                basis,
-                G_chunk,
-                cell_vectors,
-                weighted_density,
-                v_long_chunk / cell_volume,
-                n_atoms,
-            ),
-            dtype=np.float64,
-        )
+        gradient += pair_gradient
 
     # The real-space erfc sum contains the finite short-range G=0 tail,
     # while the GDF/PySCF gauge drops it.  The value route adds

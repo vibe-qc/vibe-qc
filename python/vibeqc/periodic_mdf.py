@@ -1071,6 +1071,94 @@ def _build_mdf_scf_energy_weighted_density(
     return result
 
 
+def _build_mdf_rohf_energy_weighted_density(
+    cache, density_channels, fock_channels, overlaps, coefficients, weights, *,
+    stationarity_tolerance, validation_tolerance=1e-8,
+):
+    """Private complex-k ROHF overlap Lagrangian for an accepted determinant.
+
+    Use W=Da Fa Da+Db Fb Db, as in the molecular ROHF gradient. The shared
+    orbitals need not diagonalize either physical spin Fock. In their
+    retained S-orthonormal space, require nested projectors Pa Pb=Pb and
+    stationarity of the sum [Ga,Pa]+[Gb,Pb], not of each spin separately.
+    Fractional/damped spin densities are outside this determinant contract.
+
+    Return unweighted Hermitian AO blocks. This helper neither validates
+    native integral responses nor enables a driver gradient. Geometry and
+    source ownership must still be checked by the fitted-response handoff.
+    """
+    from .aux_basis import _RangeSeparatedGdfAdmissionError
+
+    if not isinstance(cache, _MdfCache):
+        raise TypeError('MDF ROHF overlap Lagrangian requires its energy cache')
+    if any(not np.isfinite(t) or t <= 0 for t in (stationarity_tolerance, validation_tolerance)):
+        raise ValueError('MDF ROHF state tolerances must be finite and positive')
+    nk = len(cache.kpoints_cart)
+    if (not nk or len(overlaps) != nk or len(coefficients) != nk
+            or any(len(family) != 2 or any(len(channel) != nk for channel in family)
+                   for family in (density_channels, fock_channels))):
+        raise ValueError('MDF ROHF requires two spin channels and one shared orbital space')
+    first = overlaps[0]
+    if (not isinstance(first, np.ndarray) or first.ndim != 2
+            or first.shape[0] <= 0 or first.shape[0] != first.shape[1]):
+        raise ValueError('MDF ROHF requires nonempty square AO overlaps')
+    n = first.shape[0]
+    arrays = list(overlaps)+list(coefficients)
+    for family in (density_channels, fock_channels):
+        arrays.extend(matrix for channel in family for matrix in channel)
+    if any(not isinstance(a, np.ndarray)
+           or a.dtype not in (np.dtype('float64'), np.dtype('complex128')) for a in arrays):
+        raise ValueError('MDF ROHF state arrays must use float64/complex128 storage')
+    for k in range(nk):
+        if (overlaps[k].shape != (n, n) or coefficients[k].ndim != 2
+                or coefficients[k].shape[0] != n or not 0 < coefficients[k].shape[1] <= n
+                or any(family[spin][k].shape != (n, n)
+                       for family in (density_channels, fock_channels) for spin in range(2))
+                or np.shape(cache[(k, k)])[1:] != (n, n)):
+            raise ValueError('MDF ROHF state and cache have incompatible AO/orbital dimensions')
+    w = np.asarray(weights)
+    if (w.shape != (nk,) or np.iscomplexobj(w) or not np.isfinite(w).all()
+            or np.any(w < 0) or not np.isclose(w.sum(), 1., atol=1e-12, rtol=0)):
+        raise ValueError('MDF ROHF requires normalized nonnegative k weights')
+    # Borrowed state, retained W, serial validation/products and Python
+    # containers. No AO or orbital matrix work occurs before admission.
+    reserved = (cache.retained_cache_bytes + sum(a.nbytes for a in arrays)
+                + 16*nk*n*n + 384*n*n + 4096 + 1024*nk)
+    if reserved > cache.memory_byte_cap:
+        raise _RangeSeparatedGdfAdmissionError('MDF ROHF overlap Lagrangian exceeds memory cap')
+    for a in arrays:
+        _finite(a, 'ROHF state')
+    result, residual_squared = [], 0.
+    for k, (s, c) in enumerate(zip(overlaps, coefficients)):
+        da, db = (channel[k] for channel in density_channels)
+        fa, fb = (channel[k] for channel in fock_channels)
+        for a in (s, da, db, fa, fb):
+            if np.max(np.abs(a-a.conj().T)) > validation_tolerance*max(1., float(np.max(np.abs(a)))):
+                raise ValueError('MDF ROHF overlap, density and physical Fock must be Hermitian')
+        sc = s@c
+        if np.max(np.abs(c.conj().T@sc-np.eye(c.shape[1]))) > validation_tolerance:
+            raise ValueError('MDF ROHF shared orbitals are not S-orthonormal')
+        pa, pb = sc.conj().T@da@sc, sc.conj().T@db@sc
+        for d, p in ((da, pa), (db, pb)):
+            if np.max(np.abs(c@p@c.conj().T-d)) > validation_tolerance*max(1., float(np.max(np.abs(d)))):
+                raise ValueError('MDF ROHF accepted density lies outside the retained orbital space')
+            if np.max(np.abs(p@p-p)) > validation_tolerance:
+                raise ValueError('MDF ROHF overlap Lagrangian requires idempotent spin densities')
+        if np.max(np.abs(pa@pb-pb)) > validation_tolerance:
+            raise ValueError('MDF ROHF beta occupied space must be contained in alpha')
+        ga, gb = c.conj().T@fa@c, c.conj().T@fb@c
+        residual = ga@pa-pa@ga+gb@pb-pb@gb
+        residual_squared += float(w[k])*float(np.linalg.norm(residual)**2)
+        wk = da@fa@da+db@fb@db
+        wk = .5*(wk+wk.conj().T)
+        _finite(wk, 'ROHF overlap Lagrangian')
+        wk.setflags(write=False)
+        result.append(wk)
+    if not np.isfinite(residual_squared) or np.sqrt(residual_squared) > stationarity_tolerance:
+        raise ValueError('MDF ROHF accepted shared-orbital state is not stationary')
+    return result
+
+
 def _compute_mdf_mean_field_fit_gradient(
     cache, system, orbital, density_channels, weights, kpoints_cart, *, alpha_hf,
 ):

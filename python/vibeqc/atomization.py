@@ -5,7 +5,7 @@ with the free-atom references computed at the *same* level of theory as the
 molecule.  This is method-agnostic infrastructure: any mean-field reference
 (RHF / UHF / RKS / UKS) gets atomization for free once the free-atom ground
 states are known.  Free-atom energies are cached per ``(Z, method, basis,
-functional)`` so a job pays at most one SCF per distinct element.
+functional, grid)`` so a job pays at most one SCF per distinct element.
 
 Free-atom ground-state spin multiplicities (2S+1, neutral atoms, Hund's rules)
 are tabulated for the main-group elements H-Kr where the ground state is
@@ -57,7 +57,7 @@ class AtomizationResult:
         return self.atomization * _HARTREE_TO_KCAL
 
 
-# Module-level free-atom energy cache, keyed by (Z, method, basis, functional).
+# Module-level free-atom energy cache, keyed by (Z, method, basis, functional, grid).
 _ATOM_ENERGY_CACHE: Dict[tuple, float] = {}
 
 
@@ -67,7 +67,8 @@ def supported_elements() -> frozenset:
 
 
 def atomic_ground_state_energy(
-    Z: int, method: str, basis: str, *, functional: Optional[str] = None
+    Z: int, method: str, basis: str, *, functional: Optional[str] = None,
+    grid_level: str = "orca-defgrid3", grid_options=None,
 ) -> float:
     """Free-atom ground-state energy (Hartree) at the given level of theory.
 
@@ -75,7 +76,7 @@ def atomic_ground_state_energy(
     (singlet) use the restricted solver, open-shell atoms the unrestricted
     one.  ``rohf`` / ``roks`` use the spin-restricted open-shell solver for
     *both* (it reduces to RHF/RKS at a closed shell), giving spin-pure
-    atomic references.  Cached per ``(Z, method, basis, functional)``.
+    atomic references.  Cached per ``(Z, method, basis, functional, grid)``.
     """
     method = method.lower()
     if method not in ("rhf", "uhf", "rks", "uks", "rohf", "roks"):
@@ -86,7 +87,19 @@ def atomic_ground_state_energy(
         raise NotImplementedError(
             f"no tabulated free-atom ground state for Z={Z} "
             f"(supported: {sorted(_GROUND_STATE_MULTIPLICITY)}).")
-    key = (Z, method, basis.lower(), (functional or "").lower())
+    grid_key = None
+    if method in ("rks", "uks", "roks"):
+        from ._vibeqc_core import GridOptions
+        from .runner import _apply_grid_level, _GRID_OPTION_FIELDS
+
+        # An explicit grid is the molecule's operative grid, even when it
+        # happens to equal legacy construction defaults.
+        if grid_options is None:
+            grid_options = GridOptions()
+            _apply_grid_level(grid_options, grid_level)
+        values = (getattr(grid_options, f) for f in _GRID_OPTION_FIELDS)
+        grid_key = tuple(tuple(v) if isinstance(v, list) else v for v in values)
+    key = (Z, method, basis.lower(), (functional or "").lower(), grid_key)
     cached = _ATOM_ENERGY_CACHE.get(key)
     if cached is not None:
         return cached
@@ -110,7 +123,7 @@ def atomic_ground_state_energy(
         from .roks import ROKSOptions, run_roks
 
         res = run_roks(
-            atom, bas, ROKSOptions(), functional=functional or "lda"
+            atom, bas, ROKSOptions(grid=grid_options), functional=functional or "lda"
         )
     elif method in ("rhf", "uhf"):
         if restricted:
@@ -121,10 +134,12 @@ def atomic_ground_state_energy(
         if restricted:
             opts = RKSOptions()
             opts.functional = functional or "lda"
+            opts.grid = grid_options
             res = run_rks(atom, bas, opts)
         else:
             opts = UKSOptions()
             opts.functional = functional or "lda"
+            opts.grid = grid_options
             res = run_uks(atom, bas, opts)
     if not bool(getattr(res, "converged", False)):
         raise RuntimeError(
@@ -138,12 +153,15 @@ def atomic_ground_state_energy(
 def atomization_energy(
     molecule, e_molecule: float, method: str, basis: str, *,
     functional: Optional[str] = None,
+    grid_level: str = "orca-defgrid3", grid_options=None,
 ) -> AtomizationResult:
     """Atomization energy ``S E(atom) - E(molecule)`` at the molecule's level.
 
     Raises :class:`NotImplementedError` if any element lacks a tabulated
     free-atom ground state (so a system is never given a silently-wrong
-    reference).  Free-atom SCFs are cached across calls.
+    reference).  Free-atom SCFs are cached across calls. For DFT, pass the
+    molecule's ``grid_options`` or ``grid_level`` (default ``orca-defgrid3``)
+    so the molecule and its atomic references use the same numerical grid.
     """
     zs = [int(a.Z) for a in molecule.atoms]
     unsupported = sorted({z for z in zs if z not in _GROUND_STATE_MULTIPLICITY})
@@ -155,7 +173,8 @@ def atomization_energy(
     atomic_energies: Dict[int, float] = {}
     for z in set(zs):
         atomic_energies[z] = atomic_ground_state_energy(
-            z, method, basis, functional=functional)
+            z, method, basis, functional=functional,
+            grid_level=grid_level, grid_options=grid_options)
     e_atoms_sum = sum(atomic_energies[z] for z in zs)
     atomization = e_atoms_sum - e_molecule
     n = len(zs)

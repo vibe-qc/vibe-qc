@@ -8,16 +8,34 @@ from .bands import _HARTREE_TO_EV, _shell_to_atom, ao_groups_per_atom_l
 from .coop_cohp import (
     _pair_metadata, _periodic_mayer_from_density, ao_pairs_per_atom_pair,
 )
+from .spin_channels import spin_densities
+
+
+def _shell_type(result):
+    """``(open_shell, rohf)`` for *result*, decided by values, not by names.
+
+    Result adapters (``CCMRealGammaResult``, ``CCMFourCentreResult``,
+    ``CCMKSResult``) declare ``density_alpha`` / ``density_beta`` as
+    dataclass fields that are ``None`` on a closed-shell run, so attribute
+    presence says nothing about the shell type (#198). A result is open
+    shell only when both spin densities are populated, and ROHF when it is
+    open shell but reports no per-spin orbital energies -- absent *or*
+    ``None``, the same test either way.
+    """
+    alpha, _beta = spin_densities(result)
+    open_shell = alpha is not None
+    rohf = open_shell and getattr(result, 'mo_energies_alpha', None) is None
+    return open_shell, rohf
 
 
 def _accepted_channels(result, *, rohf_effective_spectrum=False):
-    rohf = hasattr(result, 'density_alpha') and not hasattr(result, 'mo_energies_alpha')
+    open_shell, rohf = _shell_type(result)
     if rohf and not rohf_effective_spectrum:
         raise NotImplementedError(
             'ROHF GDF spectral properties require an explicit distinction between '
             'the effective orbital operator and the physical spin Hamiltonians'
         )
-    suffixes = ('_alpha', '_beta') if hasattr(result, 'density_alpha') else ('',)
+    suffixes = ('_alpha', '_beta') if open_shell else ('',)
     channels = []
     for suffix in suffixes:
         orbital_suffix = '' if rohf else suffix
@@ -64,7 +82,7 @@ def gdf_properties_from_result(
     if not np.isfinite(sigma) or sigma <= 0:
         raise ValueError('GDF spectral broadening must be positive and finite')
     channels = _accepted_channels(result, rohf_effective_spectrum=_rohf_effective_spectrum)
-    rohf = hasattr(result, 'density_alpha') and not hasattr(result, 'mo_energies_alpha')
+    _open_shell, rohf = _shell_type(result)
     n_spin = len(channels)
     weights = np.asarray(getattr(result, 'kpoint_weights', [1.]), dtype=float)
     kpoints = np.asarray(getattr(result, 'kpoints_cart', np.zeros((1, 3))), dtype=float)

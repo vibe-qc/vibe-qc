@@ -534,6 +534,9 @@ design_mdf
 design_smearing
 design_aiccm2026dev_b
 design_shared_symmetry
+aiccm2026dev_a_scalability
+aiccm2026dev_a_lowd_greens
+aiccm2026dev_a_analytic_gradient
 qvf_basis_developer_readme
 qvf_basis_conversion_matrix
 ```
@@ -607,7 +610,7 @@ Licensed under the [Mozilla Public License 2.0](license.md). Source at
 
 Found a bug, have a feature request, or want to send a patch?
 The decision tree lives in
-[CONTRIBUTING.md](CONTRIBUTING.md). The short version:
+[CONTRIBUTING.md](contributing.md). The short version:
 
 - **Bugs / install problems / feature requests** →
   [GitHub issues](https://github.com/vibe-qc/vibe-qc/issues)

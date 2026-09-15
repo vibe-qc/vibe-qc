@@ -16,9 +16,9 @@
 # whose pyproject still said 0.11.1 because the manual version-bump step
 # (docs/release_process.md "Cutting a patch release" step 4) was skipped
 # on both cuts, so those wheels self-report 0.11.1. The tags are frozen
-# — main/tags are never force-pushed (CLAUDE.md § 2) — so .2/.3 can't be
+# — main/tags are never force-pushed (CONTRIBUTING.md, "Branch and checkout policy") — so .2/.3 can't be
 # corrected retroactively. The bump step otherwise has no automated
-# gate: CI on the example_hub runner is collect-only (no test execution),
+# gate: CI on the build-runner runner is collect-only (no test execution),
 # so a pytest assertion would not block a bad cut. This hook is that
 # gate, and it runs at the one moment that can still stop the mistake —
 # authoring the release commit the tag is placed on.
@@ -34,7 +34,7 @@
 #
 # Bypass (reviewed exception only): commit with `git commit --no-verify`
 # and explain in the message — same convention as the pre-commit
-# personal-info guard (CLAUDE.md § 2 / § 12).
+# personal-info guard (CONTRIBUTING.md, branch and personal-information policies).
 
 set -e
 
@@ -93,7 +93,7 @@ version is read from the installed package metadata
 (python/vibeqc/banner.py _compute_version -> importlib.metadata.version).
 A mismatch ships a wheel that self-reports the wrong version — exactly
 what happened to v0.11.2 / v0.11.3 (tagged with pyproject still at
-0.11.1; tags are frozen and cannot be fixed — CLAUDE.md § 2).
+0.11.1; tags are frozen and cannot be fixed — CONTRIBUTING.md, "Branch and checkout policy").
 
 Fix the version bump + CHANGELOG promotion (docs/release_process.md —
 "Cutting a release" step 2, or "Cutting a patch release" step 4), then

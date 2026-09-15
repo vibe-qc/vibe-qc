@@ -576,7 +576,12 @@ atoms SAP wins by 30-50% per [Lehtola 2020] Tables I-II.
 * **Periodic SAP uses the actual Bloch potential.** The lattice-summed SAP
   potential (`compute_vsap_lattice`, built by a three-dimensional Ewald split
   and validated against the molecular SAP matrix) gives
-  `F_SAP(k) = T(k) + V_SAP(k)`. It is diagonalised independently at every
+  `F_SAP(k) = T(k) + V_SAP(k)`. The smooth long-range matrix blocks
+  integrate a localized AO pair over all space, using a molecular Becke
+  partition on the home atoms. Periodic XC weights alone omit AO tails
+  assigned to neighboring cells; they need a bra-image sum and are not
+  interchangeable with this quadrature. The potential itself remains
+  periodic. The Fock is diagonalised independently at every
   sampled k-point. True multi-k routes then retain their route's normal
   occupation policy (global Aufbau, fixed-per-k filling, or smearing where
   supported); Gamma density-seed routes use their normal integer target

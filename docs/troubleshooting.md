@@ -17,7 +17,7 @@ first month with the code, with the canonical fix for each. The
 your end); this page covers the *recoverable* situations.
 
 For "I think I found a bug" cases see
-[CONTRIBUTING.md](CONTRIBUTING.md) § Filing a bug.
+[CONTRIBUTING.md](contributing.md) § Filing a bug.
 
 ## Triage the failure first
 

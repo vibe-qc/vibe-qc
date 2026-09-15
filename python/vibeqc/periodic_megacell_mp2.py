@@ -269,6 +269,11 @@ def _pre_sweep_megacell_run_kwargs(molecule, method: str) -> dict[str, object]:
                 tcut_mkn=1e-3,
                 tcut_pairs=1e-6,
                 tcut_pairs_weak=1e-4,
+                # #65 moved the molecular default to pno_norm="mp2". This
+                # builder pins the pre-sweep convention, and tcut_pno only
+                # means what the density it was cut against means, so the
+                # density is pinned with the thresholds.
+                pno_norm="legacy",
             )
     elif method_key in {"dlpno-ccsd", "dlpno-ccsd(t)"}:
         if int(molecule.multiplicity) > 1:
@@ -289,6 +294,14 @@ def _pre_sweep_megacell_run_kwargs(molecule, method: str) -> dict[str, object]:
                 tcut_mkn=0.0,
                 tcut_pairs=1e-4,
                 residual_domain="pair",
+                # #65 moved the molecular default to pno_norm="mp2". This
+                # builder pins the pre-sweep convention, and tcut_pno only
+                # means what the density it was cut against means, so the
+                # density is pinned with the thresholds.
+                pno_norm="legacy",
+                # ... and predates the semicanonical MP2 PNO correction the
+                # molecular CCSD route now applies, so that stays off too.
+                pno_correction=False,
             )
     return kwargs
 

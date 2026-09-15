@@ -137,6 +137,9 @@ struct LatticeSumOptions {
     // default flips per consumer family once each family's pins are
     // measured; see handovers/HANDOVER_OPEN_BUGS_V015.md.
     bool pair_complete_1e = false;
+    // Physical ERI product-midpoint radius when pair completion is enabled.
+    // Zero uses cutoff_bohr. Padding changes this radius, not AO-pair support.
+    double eri_interaction_cutoff_bohr = 0.0;
 
     // Generate only potentially contributing cell pairs before the erfc
     // traversal (#21). Preserves the existing screening decisions and sum

@@ -9,6 +9,7 @@
 #include "vibeqc/grid.hpp"
 #include "vibeqc/guess.hpp"
 #include "vibeqc/lattice_integrals.hpp"
+#include "vibeqc/lattice_pair_cells.hpp"
 #include "vibeqc/level_shift.hpp"
 #include "vibeqc/periodic_fock.hpp"
 #include "vibeqc/periodic_jk_builder.hpp"
@@ -66,6 +67,20 @@ double nuclear_repulsion_direct_truncated(const PeriodicSystem& system,
     const auto& atoms = system.unit_cell;
     const int n = static_cast<int>(atoms.size());
     double e_nuc = 0.0;
+    if (opts.pair_complete_1e) {
+        const PairNuclearImageSelector selector(system, opts.nuclear_cutoff_bohr);
+        for (const auto& atom : atoms) {
+            const Eigen::Vector3d center(atom.xyz[0], atom.xyz[1], atom.xyz[2]);
+            const auto images = selector.select(center);
+            for (const auto& image : images.charges) {
+                const Eigen::Vector3d position(image.second[0], image.second[1], image.second[2]);
+                const double distance = (center - position).norm();
+                if (distance < 1e-14) continue;
+                e_nuc += 0.5 * atom.Z * image.first / distance;
+            }
+        }
+        return e_nuc;
+    }
     for (const auto& c : cells) {
         const bool is_zero = c.index.isZero();
         for (int a = 0; a < n; ++a) {

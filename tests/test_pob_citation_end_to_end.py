@@ -46,10 +46,11 @@ import vibeqc as vq
 # python/vibeqc/output/citations/database.toml:
 #   entries.peintinger_pob_tzvp_2013      → 10.1002/jcc.23153
 #   entries.vilela_oliveira_pob_rev2_2019 → 10.1002/jcc.26013
-# The -rev2 bases route to *both* papers; pob-tzvp routes to the
-# 2013 paper only.
+#   entries.laun_pob_fifth_period_2018    → 10.1002/jcc.25195
+# The -rev2 bases route to *both* 2013 and 2019 papers; pob-tzvp routes
+# to the 2013 paper and the 2018 one that published its Rb-I records.
 POB_DOI_FINGERPRINTS: dict[str, tuple[str, ...]] = {
-    "pob-tzvp":      ("10.1002/jcc.23153",),
+    "pob-tzvp":      ("10.1002/jcc.23153", "10.1002/jcc.25195"),
     "pob-tzvp-rev2": ("10.1002/jcc.23153", "10.1002/jcc.26013"),
     "pob-dzvp-rev2": ("10.1002/jcc.23153", "10.1002/jcc.26013"),
 }

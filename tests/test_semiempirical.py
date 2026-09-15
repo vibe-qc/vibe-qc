@@ -1196,7 +1196,8 @@ class TestSCCDFTBRunnerRetry:
 
 class TestUSCCDFTB:
     @pytest.fixture(scope="class")
-    def oh_radical(self):
+    @classmethod
+    def oh_radical(cls):
         return Molecule([Atom(8, [0, 0, 0]), Atom(1, [0, 0, 1.8])], 0, 2)
 
     def test_oh_converges(self, oh_radical, default_params):
@@ -1265,14 +1266,16 @@ class TestDispersion:
 
 class TestPeriodicDFTB0:
     @pytest.fixture(scope="class")
-    def he_chain(self):
+    @classmethod
+    def he_chain(cls):
         """1D chain of He atoms at 3.0 bohr spacing."""
         atoms = [Atom(2, [0.0, 0.0, 0.0])]
         cell = np.eye(3) * 3.0
         return PeriodicSystem(3, cell, atoms, 0, 1)
 
     @pytest.fixture(scope="class")
-    def he_dimer_cell(self):
+    @classmethod
+    def he_dimer_cell(cls):
         """He₂ in a 5.0 bohr box."""
         atoms = [Atom(2, [0.0, 0.0, 0.0]), Atom(2, [1.4, 0.0, 0.0])]
         cell = np.eye(3) * 5.0

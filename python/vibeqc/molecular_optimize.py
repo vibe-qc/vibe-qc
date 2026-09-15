@@ -193,6 +193,7 @@ def _run_molecular_scf(
     method: str,
     *,
     functional: Optional[str] = None,
+    grid_level: str = "orca-defgrid3",
     rhf_options: Optional[RHFOptions] = None,
     uhf_options: Optional[UHFOptions] = None,
     rks_options: Optional[RKSOptions] = None,
@@ -227,6 +228,7 @@ def _run_molecular_scf(
     # parameter); the READ-capable wrappers live in the package __init__.
     # Imported lazily to avoid an import cycle with the package root.
     from vibeqc import run_rhf, run_rks, run_uhf, run_uks
+    from .runner import apply_ks_grid_default
 
     method_lower = method.lower()
     # CPCM (run_cpcm_scf) composes with the mean-field SCFs only; for the
@@ -252,6 +254,7 @@ def _run_molecular_scf(
         r = run_uhf(molecule, basis, opts, read_from=read_from)
     elif method_lower == "rks":
         opts = rks_options or RKSOptions()
+        apply_ks_grid_default(opts, grid_level)
         # Only override the options' functional when the caller passed a
         # ``functional`` AND the options still hold the default/empty XC
         # ("LDA"). The parenthesisation matters: without it, operator
@@ -263,6 +266,7 @@ def _run_molecular_scf(
         r = run_rks(molecule, basis, opts, read_from=read_from)
     elif method_lower == "uks":
         opts = uks_options or UKSOptions()
+        apply_ks_grid_default(opts, grid_level)
         # See the RKS branch above (F4): parenthesise the guard so a
         # None functional never reaches the pybind str setter.
         if functional and (not opts.functional or opts.functional.lower() == "lda"):
@@ -276,6 +280,7 @@ def _run_molecular_scf(
     elif method_lower == "roks":
         from .roks import ROKSOptions, run_roks
         opts = roks_options or ROKSOptions()
+        apply_ks_grid_default(opts, grid_level)
         if functional:
             opts.functional = functional
         r = run_roks(molecule, basis, opts, read_from=read_from)
@@ -291,6 +296,7 @@ def _run_molecular_scf(
             active_space=active_space,
             casci_options=casci_options,
             cas_reference=cas_reference,
+            grid_level=grid_level,
         )
     elif method_lower in ("caspt2", "nevpt2"):
         from .runner import _run_single_point
@@ -306,6 +312,7 @@ def _run_molecular_scf(
             active_space=active_space,
             casci_options=casci_options,
             cas_reference=cas_reference,
+            grid_level=grid_level,
         )
     else:
         raise ValueError(
@@ -701,6 +708,7 @@ def _gradient_via_central_difference(
     method: str,
     *,
     functional: Optional[str] = None,
+    grid_level: str = "orca-defgrid3",
     rhf_options: Any = None,
     uhf_options: Any = None,
     rks_options: Any = None,
@@ -776,6 +784,7 @@ def _gradient_via_central_difference(
                     cas_reference=cas_reference,
                     solvent=solvent,
                     dispersion_params=dispersion_params,
+                    grid_level=grid_level,
                 )
 
             pos_minus = pos.copy()
@@ -810,6 +819,7 @@ def _gradient_via_central_difference(
                     cas_reference=cas_reference,
                     solvent=solvent,
                     dispersion_params=dispersion_params,
+                    grid_level=grid_level,
                 )
 
             grad[i, c] = (e_plus - e_minus) / (2.0 * step_bohr)
@@ -823,6 +833,7 @@ def _evaluate_energy(
     method: str,
     *,
     functional: Optional[str] = None,
+    grid_level: str = "orca-defgrid3",
     rhf_options: Any = None,
     uhf_options: Any = None,
     rks_options: Any = None,
@@ -891,6 +902,7 @@ def _evaluate_energy(
         cas_reference=cas_reference,
         solvent=solvent,
         _mrpt_gradient=False,
+        grid_level=grid_level,
     )
     e = float(getattr(result, "energy", 0.0))
 
@@ -1090,6 +1102,7 @@ def optimize_molecule_brent(
     *,
     method: str = "rhf",
     functional: Optional[str] = None,
+    grid_level: str = "orca-defgrid3",
     rhf_options: Optional[RHFOptions] = None,
     uhf_options: Optional[UHFOptions] = None,
     rks_options: Optional[RKSOptions] = None,
@@ -1152,6 +1165,11 @@ def optimize_molecule_brent(
         rks_options = RKSOptions()
     elif method_lower == "uks" and uks_options is None:
         uks_options = UKSOptions()
+    from .runner import apply_ks_grid_default
+    ks_options = {"rks": rks_options, "uks": uks_options,
+                  "roks": roks_options}.get(method_lower)
+    if ks_options is not None:
+        apply_ks_grid_default(ks_options, grid_level)
     grid_options = _resolve_molecular_ks_gradient_grid(
         method_lower,
         rks_options=rks_options,
@@ -1269,6 +1287,7 @@ def optimize_molecule_brent(
                     nevpt2_options=nevpt2_options,
                     cas_reference=cas_reference,
                     solvent=solvent,
+                    grid_level=grid_level,
                 )
                 grad = _compute_molecular_gradient(
                     mol,
@@ -1316,6 +1335,7 @@ def optimize_molecule_brent(
                     cas_reference=cas_reference,
                     solvent=solvent,
                     dispersion_params=dispersion_params,
+                    grid_level=grid_level,
                 )
                 grad = _gradient_via_central_difference(
                     mol,
@@ -1341,6 +1361,7 @@ def optimize_molecule_brent(
                     solvent=solvent,
                     dispersion_params=dispersion_params,
                     step_bohr=fd_step_bohr,
+                    grid_level=grid_level,
                 )
             grad_flat = np.asarray(grad, dtype=float).ravel()
             grad_flat = _apply_frozen_mask(grad_flat)
@@ -1438,6 +1459,7 @@ def optimize_molecule(
     *,
     method: str = "rhf",
     functional: Optional[str] = None,
+    grid_level: str = "orca-defgrid3",
     rhf_options: Optional[RHFOptions] = None,
     uhf_options: Optional[UHFOptions] = None,
     rks_options: Optional[RKSOptions] = None,
@@ -1481,6 +1503,10 @@ def optimize_molecule(
         ``"transcorrelated_ci"``, ``"casci"``, ``"casscf"``).
         Wavefunction methods fall back to central finite differences
         on the energy.
+    grid_level
+        Preset for absent or untouched KS options (default ``"orca-defgrid3"``).
+        Custom grids win; use ``"legacy"`` to select the old defaults.
+        Forwarded to every SCF and finite-difference energy evaluation.
     functional
         XC functional string for ``"rks"`` / ``"uks"`` (e.g. ``"PBE"``).
     rhf_options / uhf_options / rks_options / uks_options
@@ -1560,6 +1586,11 @@ def optimize_molecule(
         rks_options = RKSOptions()
     elif method_lower == "uks" and uks_options is None:
         uks_options = UKSOptions()
+    from .runner import apply_ks_grid_default
+    ks_options = {"rks": rks_options, "uks": uks_options,
+                  "roks": roks_options}.get(method_lower)
+    if ks_options is not None:
+        apply_ks_grid_default(ks_options, grid_level)
     grid_options = _resolve_molecular_ks_gradient_grid(
         method_lower,
         rks_options=rks_options,
@@ -1692,6 +1723,7 @@ def optimize_molecule(
                 nevpt2_options=nevpt2_options,
                 cas_reference=cas_reference,
                 solvent=solvent,
+                grid_level=grid_level,
             )
             grad = _compute_molecular_gradient(
                 mol,
@@ -1728,6 +1760,7 @@ def optimize_molecule(
                 nevpt2_options=nevpt2_options,
                 cas_reference=cas_reference,
                 solvent=solvent,
+                grid_level=grid_level,
             )
             if dispersion_params is not None:
                 from .dispersion import compute_d3bj
@@ -1770,6 +1803,7 @@ def optimize_molecule(
                 solvent=solvent,
                 dispersion_params=dispersion_params,
                 step_bohr=fd_step_bohr,
+                grid_level=grid_level,
             ).ravel()
             return _apply_frozen_mask(grad_flat)
 
@@ -1803,6 +1837,7 @@ def optimize_molecule(
                 cas_reference=cas_reference,
                 solvent=solvent,
                 dispersion_params=dispersion_params,
+                grid_level=grid_level,
             )
 
     # Combined objective: scipy calls `fun` first, then `jac` at the
@@ -1852,6 +1887,7 @@ def optimize_molecule(
                 nevpt2_options=nevpt2_options,
                 cas_reference=cas_reference,
                 solvent=solvent,
+                grid_level=grid_level,
             )
             _cache["result"] = res
             _cache["mol"] = mol

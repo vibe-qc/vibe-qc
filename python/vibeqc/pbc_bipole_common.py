@@ -1488,11 +1488,18 @@ def ewald_erfc_lattice_options(
     (Saunders et al., Mol. Phys. 77, 629 (1992), Eq. 66). Thus the
     slowest s-product erfc factor uses p >= 2*min(a), not alpha alone.
     Moreover P is in the convex hull of the two translated AO centres.
-    For output |g| <= R_out and reference nuclear position C,
+    In the legacy cell-origin domain, for output |g| <= R_out and reference nuclear position C,
     |P-C| <= R_out + max_{shell,C}|O_shell-C|. Add both this displacement
     and the smeared range to the nuclear *cell-origin* ball. Using
     differences of positions makes the radius invariant to a common
     origin shift, including basis centres not on nuclei.
+
+    In the physical pair domain, nuclear images are selected about the
+    arithmetic AO-pair midpoint M. Positive primitive exponents imply
+    |P-M| <= |A-B|/2 <= cutoff_bohr/2. The source radius therefore needs
+    only this half-pair offset plus the smeared range. Cell-origin padding
+    would needlessly enlarge the physical source ball when an atom is
+    relabelled by a lattice vector.
 
     This bounds the prototype erfc factor, not the summed integral error:
     angular polynomials, contraction amplitudes and lattice multiplicities
@@ -1518,8 +1525,9 @@ def ewald_erfc_lattice_options(
                 or np.any(exponents <= 0.0) or not np.all(np.isfinite(origin))):
             raise ValueError("ewald_erfc_lattice_options: invalid Gaussian shell")
         gamma_min = min(gamma_min, float(exponents.min()))
-        for nucleus in nuclei:
-            displacement = max(displacement, float(np.linalg.norm(origin - nucleus)))
+        if not lat_opts.pair_complete_1e:
+            for nucleus in nuclei:
+                displacement = max(displacement, float(np.linalg.norm(origin - nucleus)))
     cutoff = float(lat_opts.cutoff_bohr)
     nuclear_cutoff = float(lat_opts.nuclear_cutoff_bohr)
     if (not math.isfinite(cutoff) or cutoff < 0.0
@@ -1531,7 +1539,10 @@ def ewald_erfc_lattice_options(
     smeared_range = float(erfcinv(tolerance)) * math.hypot(
         1.0 / math.sqrt(2.0 * gamma_min), 1.0 / float(alpha_bohr_inv),
     )
-    gaussian_radius = cutoff + displacement + smeared_range
+    product_offset = (
+        0.5 * cutoff if lat_opts.pair_complete_1e else cutoff + displacement
+    )
+    gaussian_radius = product_offset + smeared_range
     if not math.isfinite(gaussian_radius):
         raise ValueError("ewald_erfc_lattice_options: nonfinite Gaussian image radius")
     out = _lattice_options_passthrough(lat_opts)
@@ -1680,6 +1691,7 @@ def resolve_auto_fock_mixing(
 _LATTICE_PASSTHROUGH_FIELDS = (
     "cutoff_bohr",
     "nuclear_cutoff_bohr",
+    "eri_interaction_cutoff_bohr",
     "becke_image_radius_bohr",
     "slab_ewald_alpha",
     "screening_overlap_threshold",
@@ -1817,6 +1829,20 @@ def resolve_bipole_fock_symmetry(
     attached_symmetry = bool(
         getattr(getattr(system, "symmetry", None), "operations", None)
     )
+    if lat_opts_2e.pair_complete_1e:
+        if use_fock_symmetry or use_fock_symmetry_reduce:
+            raise NotImplementedError(
+                "Physical quartet exchange has a wider output support than "
+                "the legacy Fock symmetry projector; use the full direct "
+                "build with use_fock_symmetry=False and "
+                "use_fock_symmetry_reduce=False."
+            )
+        if attached_symmetry and use_fock_symmetry_reduce is None:
+            plog.info(
+                "  Physical quartet support: full direct Fock build "
+                "(legacy symmetry projector does not cover exchange outputs)"
+            )
+        return None, None
     reduce_auto = use_fock_symmetry_reduce is None
     reduce_active = (
         attached_symmetry and bool(exchange_split_active) and auto_reduce_safe
@@ -2003,6 +2029,7 @@ def bipole_sr_image_extent(
     omega: float,
     *,
     precision: float = 1e-8,
+    include_atom_offsets: bool = True,
 ) -> float:
     """Internal (c_λ, c_σ) ket-image ball radius for the SR erfc traversal.
 
@@ -2022,6 +2049,13 @@ def bipole_sr_image_extent(
     ``sr_image_extent_bohr = lat_opts.cutoff_bohr +
     bipole_sr_image_extent(...)``.
 
+    Physical product-centered traversal sets ``include_atom_offsets=False``.
+    Its interaction radius is measured between pair midpoints, so absolute
+    atom coordinates are irrelevant. Each Gaussian product center differs
+    from its pair midpoint by at most half the pair separation; adding
+    ``cutoff_bohr`` covers the two displacements. This radial decay estimate
+    alone does not bound the total lattice error or angular amplitudes.
+
     Derivation of the kernel range (the erfc tail inequality, exactly):
 
     * ``γ_bra`` / ``γ_ket`` in the triage formula are *pair* (Gaussian
@@ -2031,9 +2065,10 @@ def bipole_sr_image_extent(
 
           1/m_ω <= 1/(2γ_min) + 1/(2γ_min) + 1/ω² = 1/γ_min + 1/ω².
 
-      (The C++ charge-pair Schwarz screening uses the same Gaussian
-      product-exponent convention in
-      ``build_jk_2e_real_space_impl``. The pre-2026-08-05 revision of
+      (This radial-kernel estimate uses the same Gaussian-product exponent
+      convention as C++ charge-pair Schwarz screening in
+      ``build_jk_2e_real_space_impl``. Angular polynomial factors are
+      bounded separately by the quartet screen. The pre-2026-08-05 revision of
       this helper set γ_bra = γ_ket = γ_min — conflating a primitive
       exponent with a pair exponent — which inflated ``1/m_ω`` to
       ``2/γ_min + 1/ω²`` and over-padded every default SR ball by
@@ -2083,6 +2118,8 @@ def bipole_sr_image_extent(
     from scipy.special import erfcinv
 
     r_kernel = float(erfcinv(float(precision))) * float(np.sqrt(inv_m_w))
+    if not include_atom_offsets:
+        return r_kernel
     max_atom = 0.0
     for atom in system.unit_cell_molecule().atoms:
         max_atom = max(max_atom, float(np.linalg.norm(np.asarray(atom.xyz))))
@@ -2102,13 +2139,16 @@ def resolve_bipole_sr_image_extent(
     erfc_sr_build_active: bool = True,
     plog=None,
 ) -> Optional[float]:
-    """Resolve the BIPOLE SR ket-image traversal's absolute radius.
+    """Resolve the BIPOLE SR image or physical pair-interaction radius.
 
     An explicit ``sr_image_extent_bohr`` keeps the M4a oracle contract and
     wins over the precision policy. Otherwise ``sr_image_precision`` selects
     the production M5 radius
 
     ``cutoff_bohr + bipole_sr_image_extent(..., precision=...)``.
+
+    Physical pair support measures the interaction radius between pair
+    midpoints and omits absolute atom-origin padding from this policy.
 
     The precision path also enables charge-pair Schwarz screening on
     both the user and derived lattice options, so the setting reaches the C++
@@ -2125,6 +2165,8 @@ def resolve_bipole_sr_image_extent(
     cutoff = float(lat_opts_2e.cutoff_bohr)
     if not (use_ewald_j_split and erfc_sr_build_active):
         return None
+    radius_label = ("SR pair-interaction radius" if lat_opts_2e.pair_complete_1e
+                    else "SR ket-image radius")
 
     if sr_image_extent_bohr is not None:
         extent = float(sr_image_extent_bohr)
@@ -2135,7 +2177,7 @@ def resolve_bipole_sr_image_extent(
             )
         if plog is not None:
             plog.info(
-                f"  SR ket-image radius: {extent:.2f} bohr "
+                f"  {radius_label}: {extent:.2f} bohr "
                 "(explicit sr_image_extent_bohr)"
             )
         return extent
@@ -2159,12 +2201,13 @@ def resolve_bipole_sr_image_extent(
         system,
         float(omega),
         precision=precision,
+        include_atom_offsets=not lat_opts_2e.pair_complete_1e,
     )
     lat_opts.sr_range_screening = True
     lat_opts_2e.sr_range_screening = True
     if plog is not None:
         plog.info(
-            f"  SR ket-image radius: {extent:.2f} bohr "
+            f"  {radius_label}: {extent:.2f} bohr "
             f"(sr_image_precision={precision:.0e}; "
             "charge-pair Schwarz screening on)"
         )
@@ -2602,22 +2645,32 @@ def _compute_nuclear_lattice_ewald_reciprocal_ft(
     )
     if len(V_short.cells) != len(S_lat.cells):
         raise RuntimeError("analytic Ewald V_ne: V_short and S cell lists differ")
+    if any(
+        _cell_key(v) != _cell_key(s)
+        or not np.array_equal(np.asarray(v.r_cart), np.asarray(s.r_cart))
+        for v, s in zip(V_short.cells, S_lat.cells)
+    ):
+        raise RuntimeError("analytic Ewald V_ne: V_short and S cell ordering differs")
+
+    cells_r_cart_arr = np.array(
+        [np.asarray(c.r_cart, dtype=float) for c in V_short.cells], dtype=float,
+    )
+    if cache is not None and not np.array_equal(cache.cells_r_cart, cells_r_cart_arr):
+        raise RuntimeError("analytic Ewald V_ne: reciprocal cache cell list differs")
+    pair_cutoff = float(lat_opts.cutoff_bohr) if lat_opts.pair_complete_1e else None
+    if cache is not None and getattr(cache, "pair_cutoff_bohr", None) != pair_cutoff:
+        raise RuntimeError("analytic Ewald V_ne: reciprocal cache pair support differs")
 
     if cache is None:
         from .bipole_fock_ewald import _build_j_long_range_cache
 
-        cells_r_cart_arr = np.array(
-            [np.asarray(c.r_cart, dtype=float) for c in S_lat.cells],
-            dtype=float,
-        )
         cache = _build_j_long_range_cache(
             basis,
             system,
             cells_r_cart_arr,
             alpha,
             precision,
-            K_max=K_max,
-        )
+            K_max=K_max, lattice_opts=lat_opts)
 
     atom_pos = np.array(
         [[float(x) for x in atom.xyz] for atom in system.unit_cell],
@@ -2651,6 +2704,10 @@ def _compute_nuclear_lattice_ewald_reciprocal_ft(
             + np.real(v_lr)
             + background * np.asarray(S_lat.blocks[c], dtype=float)
         )
+        if lat_opts.pair_complete_1e:
+            from .lattice_screening import ao_pair_support_mask
+
+            block[~ao_pair_support_mask(basis, cell.r_cart, lat_opts.cutoff_bohr)] = 0.0
         V_short.set_block(c, block)
     return V_short, cache
 

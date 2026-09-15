@@ -257,6 +257,13 @@ class SigmaPotential:
         # every grid point. With the ensemble the derivative is exact and
         # available at arbitrary sigma; see :meth:`derivative`.
         self._ensemble = ensemble
+        # The protocol the surface behind this potential was computed at, e.g.
+        # "rhf/sto-3g/fine-cfc", or None for a potential with no surface behind
+        # it. Compared by eye against ``params.fitted_protocol``: the two tokens
+        # are free-form, so whether a transfer is acceptable is a judgement, and
+        # this exists so the judgement can be made with both halves in view
+        # rather than silently skipped.
+        self.protocol: str | None = None
 
     @property
     def beta(self) -> float:

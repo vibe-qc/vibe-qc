@@ -4164,6 +4164,7 @@ def test_four_center_producer_does_not_qualify_invalid_m5_extent(
     (
         ("runtime_backend", "native-multi-k-gdf-gdf-rhf"),
         ("domain_policy", "m4a-explicit-radius/v1"),
+        ("domain_policy", "m5-physical-pair-midpoint-erfc/v1"),
         ("sr_image_precision", None),
         ("sr_image_precision", 1.0e-5),
     ),

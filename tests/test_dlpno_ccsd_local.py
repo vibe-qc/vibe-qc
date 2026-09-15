@@ -169,7 +169,8 @@ class TestLocalLadderResidual:
     validating the cross-pair amplitude projection machinery."""
 
     @pytest.fixture(scope="class")
-    def localresid(self):
+    @classmethod
+    def localresid(cls):
         d = _setup_h2o_dz()
         return d
 

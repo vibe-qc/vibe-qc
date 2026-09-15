@@ -542,6 +542,44 @@ executed mixing values; `neutral-bloch` adds the fit accounting
 `lpq_pair_symmetry`, `gdf_pair_builds`, `gdf_pair_total`,
 `gdf_pair_reduction_factor` and `rsgdf_tail_ke_cutoff_executed`.
 
+Those finite-torus fields are listed above but their **values** carry the
+distinctions the AICCM taxonomy exists to make, so read them as a vocabulary
+rather than as free text:
+
+* `exchange_q0` is the exchange gauge at the *q* = 0 singularity, and it is
+  not cosmetic: `"BvK-ewald"` applies the finite-size Ewald constant,
+  `"strict-zero"` deletes the free-space exchange monopole instead. The two
+  differ by a term that is Ha-scale on a small torus (about 21.67 mHa at
+  Γ on the measured MgO case) and tends to zero as the torus grows, so
+  **two runs are comparable only if this key matches**.
+  `exchange_q0_applicability` says whether that gauge was live at all
+  (`"active"`, or inactive for a pure functional with no exact exchange).
+* `ccm_construction` separates the constructions under ruling R1, and it is
+  the key to check before comparing two AICCM numbers. The union-and-weight
+  Wigner-Seitz construction (the 2014 lineage, `variant="four-center"`) and
+  the neutral fitted torus are **different Hamiltonians**, not two
+  representations of one; the neutral producers write
+  `"none (neutral fitted-torus representation control)"` to say exactly that
+  they are not making a union-and-weight claim.
+* `evaluation_representation` separates the two *representations* of the one
+  neutral construction; `real-gamma` writes
+  `"real supercell-Gamma eigenproblem"` and `neutral-bloch` its per-*k* Bloch
+  counterpart. Differing here is fine and expected; differing in
+  `ccm_construction` is not.
+* `bvk_nrep` is the Born-von-Kármán torus, and `bvk_n_cells` its cell count.
+  On these routes it is **a supercell count, not a Bloch sampling mesh**: the
+  Γ-centred mesh *is* the torus. A consumer that reads it as a *k*-mesh will
+  mis-scale every extensive quantity by `bvk_n_cells`.
+
+A job that ran a post-HF treatment also writes `aiccm_correlation` (what was
+requested: `"mp2"`, `"ccsd"`, `"dlpno-mp2"` or `"dlpno-ccsd"`) and
+`aiccm_correlation_route` (the citation route the driver actually stamped,
+e.g. `"aiccm2026dev-a-ri-ccsd(t)"`). Read the second, not the first, when you
+need the provenance: it carries the lineage (`-ri-` for the neutral fitted
+torus, bare for the union-and-weight rows) and whether the perturbative
+triples ran, neither of which the request determines. An SCF-only run writes
+neither key.
+
 **Privacy: hostname opt-out.** For runs you plan to share
 publicly, pass `record_hostname=False` to `run_job`, or set the
 `VIBEQC_NO_HOSTNAME=1` environment variable to opt out globally.
@@ -670,21 +708,23 @@ dipole data in machine-readable form. The matching block in `.out` is for
 human reading; these files are the *parseable* form for
 dashboards, regression scripts, and downstream analysis.
 
-* **`.population.txt`**, tab-separated, six `#`-commented
-  sections: Mulliken charges, Löwdin charges, Mayer bond orders
+* **`.population.txt`**, tab-separated, seven `#`-commented
+  sections: Mulliken charges, Löwdin charges, Hirshfeld charges, Mayer bond orders
   (top-N, default threshold 0.1), Wiberg bond indices (top-N),
-  NPA atomic charges, and the dipole moment. Loadable into
+  an NPA availability notice, and the dipole moment. Loadable into
   pandas / awk / spreadsheet importers with `#` as the comment
   marker.
 * **`.population.json`**, one JSON object with top-level keys
-  `mulliken` / `loewdin` / `mayer` / `wiberg` / `npa` / `dipole`
+  `mulliken` / `loewdin` / `hirshfeld` / `mayer` / `wiberg` / `npa` / `dipole`
   / `errors`, each shaped as a list of records (or a single
   object for `dipole` / `errors`). Drop-in for `json.load(...)`.
 
-The Wiberg and NPA sections are computed by the bond-analysis
-modules -- see the [bond analysis guide](bond_analysis.md) for the
-theory, the direct APIs (NBO search, EDA, orbital entanglement),
-and the citation surface.
+Wiberg indices are computed by the bond-analysis module. NPA is not yet
+implemented: the `npa` array stays empty, an additional `unavailable` object
+explains the missing NAO construction under `unavailable.npa`, and the text
+section says `npa: not implemented`. This known limitation is not a
+calculation error. See the [bond analysis guide](bond_analysis.md) for the
+theory, provisional NBO APIs, EDA, orbital entanglement and citations.
 
 A property-computation failure (e.g. Mayer bond orders on a
 near-singular overlap) on one section does NOT suppress the others

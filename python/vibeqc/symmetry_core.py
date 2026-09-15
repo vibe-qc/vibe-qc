@@ -108,11 +108,13 @@ def euler_angles_from_rotation(
         )
 
     # Extract from the R.e_z = (R_xz, R_yz, R_zz) column.
-    # b = arccos(R_zz), clamped to avoid domain errors from roundoff.
-    r33 = max(-1.0, min(1.0, R[2, 2]))
-    beta = math.acos(r33)
+    # The transverse entries retain sin(b) near both poles, where acos
+    # would amplify one ulp in R_zz into a spurious ~1e-8 tilt (or erase
+    # a real small tilt). Keep the polar angle and lock test consistent.
+    sin_beta = math.hypot(R[0, 2], R[1, 2])
+    beta = math.atan2(sin_beta, R[2, 2])
 
-    if abs(math.sin(beta)) < 1e-12:
+    if sin_beta < 1e-12:
         # b near 0 or pi -- gimbal lock; a and g are not independently
         # determined. Set g = 0 and put the whole z-rotation into a.
         # The two poles use different algebra:

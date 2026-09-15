@@ -219,3 +219,69 @@ def test_property_rejects_unmatched_returned_hamiltonian():
 def test_spectrum_admission_precedes_allocation():
     with pytest.raises(MemoryError, match='spectral properties require'):
         gdf_properties_from_result(*_state(), coop_cohp=True, memory_byte_cap=1)
+
+
+# ---------------------------------------------------------------------------
+# Shell type is decided by values, not attribute presence (#198)
+# ---------------------------------------------------------------------------
+
+
+def test_closed_shell_result_with_none_spin_fields_is_restricted():
+    """The CCM result adapters (``CCMKSResult``, ``CCMRealGammaResult``,
+    ``CCMFourCentreResult``) declare exactly these five spin fields, all
+    ``None`` on a closed-shell run, and no ``mo_energies_alpha`` -- the shape
+    the old attribute-presence test read as ROHF. Such a result is
+    restricted: one channel, the combined density, and exactly the spectra
+    of the same result without those fields -- not an ROHF refusal."""
+    reference = gdf_properties_from_result(*_state(), coop_cohp=True)
+    result, system, basis = _state()
+    for name in ('density_alpha', 'density_beta',
+                 'mo_energies_beta', 'mo_coeffs_beta', 'fock_beta'):
+        setattr(result, name, None)
+    with_fields = gdf_properties_from_result(result, system, basis, coop_cohp=True)
+    assert with_fields[0]['n_spin'] == 1
+    assert 'energy_operator' not in with_fields[0]
+    for index in (0, 1, 2, 3):
+        for field in ('projections', 'integrated', 'dos'):
+            if field in reference[index]:
+                np.testing.assert_array_equal(with_fields[index][field], reference[index][field])
+    np.testing.assert_array_equal(with_fields[4], reference[4])
+
+
+def test_accepted_channels_follow_spin_density_values():
+    """The reproducer from #198: attribute presence with ``None`` values is
+    a closed-shell result and yields the single combined channel."""
+    from vibeqc.periodic_gdf_properties import _accepted_channels
+
+    r = SimpleNamespace(density=np.eye(2), density_alpha=None, density_beta=None,
+                        mo_energies=np.zeros(2), mo_coeffs=np.eye(2),
+                        fock=np.eye(2), overlap=np.eye(2))
+    channels = _accepted_channels(r)
+    assert len(channels) == 1
+    energies, coefficients, focks, densities, orbital_focks = channels[0]
+    assert densities[0] is r.density
+    assert focks[0] is r.fock
+
+    r.density_alpha = 0.5 * np.eye(2)
+    r.density_beta = 0.5 * np.eye(2)
+    r.fock_alpha = r.fock_beta = np.eye(2)
+    r.mo_energies_alpha = r.mo_energies_beta = np.zeros(2)
+    r.mo_coeffs_alpha = r.mo_coeffs_beta = np.eye(2)
+    channels = _accepted_channels(r)
+    assert len(channels) == 2
+    assert channels[0][3][0] is r.density_alpha and channels[1][3][0] is r.density_beta
+    assert channels[0][0][0] is r.mo_energies_alpha and channels[1][0][0] is r.mo_energies_beta
+    assert channels[0][2][0] is r.fock_alpha and channels[1][2][0] is r.fock_beta
+
+
+def test_rohf_detection_tolerates_none_valued_orbital_fields():
+    """An open-shell result whose per-spin orbital energies are present but
+    ``None`` is ROHF-shaped and gets the ROHF refusal, not a shape error
+    from feeding ``None`` into the channel."""
+    result, system, basis = _state(spin=True)
+    result.mo_energies = result.mo_energies_alpha
+    result.mo_coeffs = result.mo_coeffs_alpha
+    result.mo_energies_alpha = None
+    result.mo_energies_beta = None
+    with pytest.raises(NotImplementedError, match='effective orbital operator'):
+        gdf_properties_from_result(result, system, basis, coop_cohp=True)

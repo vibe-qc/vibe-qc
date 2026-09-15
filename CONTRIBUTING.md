@@ -138,6 +138,56 @@ Related but distinct: it is fine for an *extra leg* of a test to skip when a
 companion is absent, as the writer-to-viewer integration above does, provided
 the core assertions still run unconditionally.
 
+## Branch and checkout policy
+
+Work on the new `mpei/vibe-qc` repository. The old `mpei/vibeqc` repository
+is a frozen historical archive. Every change lands on `main` first, with
+local checks for the affected area. Rebase before pushing:
+
+```sh
+git pull --rebase origin main
+git push origin main
+```
+
+Never force-push `main`, `release`, or release tags, and never amend a commit
+that has already been pushed. When a rebase conflicts in a shared changelog
+or handover, preserve both contributors' facts and review the merged result.
+The agentic loop alone cuts tags and fast-forwards `release` from a tagged
+commit on `main`; the vibe-qc release chat prepares and proves each release.
+Website changes publish from `main` after their CI gate; core docs publish
+from `release`. See [release process](https://github.com/vibe-qc/vibe-qc/blob/main/docs/release_process.md)
+and [site publishing](https://github.com/vibe-qc/vibe-qc/blob/main/docs/site_publishing.md).
+
+Use one clone per agent task so its branch, index, environment and generated
+files are isolated. Do not reset or delete another task's changes. If an
+existing worktree must be used, check its hook configuration as described
+[below](#worktrees-need-the-setting-applied-per-worktree).
+
+## Personal information
+
+Do not commit personal home-directory paths or unrelated employer
+information. Use `~/`, `/home/USER/`, or `<vibe-qc-checkout>` placeholders in
+examples. The pre-commit hook checks staged additions for concrete macOS
+and Linux home paths and the project's employer marker. Its narrow
+`runner`, `root`, and `user` allowlist exists for CI accounts and generic
+fixtures; it is not permission to add personal data under another name.
+The hook's pattern and allowlist are mirrored by
+`tests/test_basis_no_maintainer_paths.py`.
+
+## Documentation prose
+
+Use commas, parentheses or ordinary hyphens instead of em or en dashes in
+Markdown prose under `docs/`. The hook checks each touched file's full staged
+content, including older prose. Fenced code blocks, inline code and inline
+math are exempt because they may contain literal output or mathematical
+notation. Provenance-marked QVF snapshots under `docs/qvf/_vendored/` are
+also exempt: change those in the QVF source repository, then deliberately
+re-vendor and update the pin.
+
+These public policies are the source of truth for the hooks. Do not bypass
+hooks unless the maintainer explicitly authorizes the particular exception;
+record that authorization and the reason in the commit message.
+
 ## Before you open a merge request
 
 1. Confirm no existing issue already covers the change — if there is
@@ -154,6 +204,32 @@ the core assertions still run unconditionally.
    ```
 4. For anything that adds a dependency or changes public API, open
    an issue first to check scope fit.
+
+### Build against the vendored dependencies before trusting a lane
+
+A missing `third_party/<dep>/install/` makes the top-level CMake configure
+fall back to system discovery for that one dependency, and it does so
+silently. Set `VIBEQC_REQUIRE_VENDORED=ON` on any build whose test numbers
+you intend to report, so that fallback becomes a configure-time error
+instead:
+
+```sh
+VIBEQC_REQUIRE_VENDORED=ON .venv/bin/pip install -e . \
+    --no-build-isolation --config-settings=build-dir=build/<your-build-dir>
+```
+
+What this catches is not a wrong number. A system libint built without the
+one-body derivative kernels (`overlap1`, `kinetic1`, `elecpot1`) links
+fine and passes every lane that never differentiates, then calls a null
+kernel pointer the moment one does: `compute_gradient` takes `SIGSEGV`
+inside an OpenMP worker, which kills the pytest process and takes the rest
+of that lane's results with it. Homebrew's `libint` 2.13.1 is such a
+build; the vendored one is not.
+
+This bites hardest in a worktree, which starts with no `third_party/` at
+all, so an agent harness that builds in one gets the fallback by default.
+See [installation](https://vibe-qc.com/docs/installation.html) for what
+`scripts/setup_native_deps.sh` fetches and where it installs.
 
 ### Recommended pre-merge verification
 
@@ -204,7 +280,7 @@ one hooks directory for all hook types):
 
 - **`pre-commit`** — refuses commits whose staged additions contain
   absolute paths into the author's home directories or other
-  personal-info patterns (CLAUDE.md § 12). It then runs
+  personal-info patterns ([personal information](#personal-information)). It then runs
   `.githooks/check_no_em_dashes.py`, which refuses staged `docs/*.md`
   carrying em or en dashes in prose (code fences, inline code, and
   inline math are exempt).
@@ -216,13 +292,13 @@ one hooks directory for all hook types):
   [docs/release_process.md](https://vibe-qc.com/docs/release_process.html) § "Cutting a
   release".
 
-To bypass either hook for a reviewed exception, commit with
-`git commit --no-verify` and explain the reason in the commit message.
+Fix hook failures before committing. A maintainer-authorized exception follows
+the [documentation and hook policy](#documentation-prose) above.
 
 ### Worktrees need the setting applied per worktree
 
-Parallel agent chats get **one clone each**, not a worktree — see
-CLAUDE.md § "One clone per chat". Worktrees still turn up in practice
+Parallel agent tasks get **one clone each**, following the
+[branch and checkout policy](#branch-and-checkout-policy). Worktrees still turn up in practice
 (agent harnesses create them under `.claude/worktrees/`), and a worktree
 does not necessarily inherit the setting above, so check before trusting
 it.
@@ -274,11 +350,11 @@ git -C <worktree> hook run pre-commit
   `Patch-candidate:` trailer to the commit body (alongside
   `Signed-off-by:` / `Co-Authored-By:`) — values like `v0.7.x`,
   `v0.8.x`, `v0.8.0`, or comma-separated combinations. The release
-  chat scans these when cutting patches. Do not tag `vX.Y.Z`,
+  chat scans these when preparing patches. Do not tag `vX.Y.Z`,
   push to `release`, or open MRs against `release` directly —
-  those are release-chat-owned operations and (since 2026-05-15)
-  blocked by GitLab branch / tag protection. See
-  [`CLAUDE.md`](CLAUDE.md) § 13 and
+  the agentic loop performs those, and (since 2026-05-15) GitLab
+  branch / tag protection blocks them. See
+  [branch and checkout policy](#branch-and-checkout-policy) and
   [`docs/release_process.md`](https://vibe-qc.com/docs/release_process.html) for the
   full convention.
 

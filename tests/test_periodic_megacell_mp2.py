@@ -216,7 +216,8 @@ def test_megacell_run_job_forwards_pre_sweep_correlation_contract(
         closed_mp2.tcut_mkn,
         closed_mp2.tcut_pairs,
         closed_mp2.tcut_pairs_weak,
-    ) == ("boys", 1e-8, 1e-7, 1e-3, 1e-6, 1e-4)
+        closed_mp2.pno_norm,
+    ) == ("boys", 1e-8, 1e-7, 1e-3, 1e-6, 1e-4, "legacy")
 
     open_mp2 = captured[3][1]["dlpno_options"]
     assert isinstance(open_mp2, DLPNOUMP2Options)
@@ -232,7 +233,9 @@ def test_megacell_run_job_forwards_pre_sweep_correlation_contract(
         closed_cc.tcut_mkn,
         closed_cc.tcut_pairs,
         closed_cc.residual_domain,
-    ) == ("boys", 1e-7, 0.0, 1e-4, "pair")
+        closed_cc.pno_norm,
+        closed_cc.pno_correction,
+    ) == ("boys", 1e-7, 0.0, 1e-4, "pair", "legacy", False)
 
     open_cc = captured[5][1]["dlpno_ccsd_options"]
     assert isinstance(open_cc, LocalUCCSDOptions)

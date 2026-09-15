@@ -24,6 +24,7 @@ from ..._vibeqc_core import (
 )
 from ...bands import BandStructure, KPath, band_structure
 from ...basis_crystal import _ELEMENT_SYMBOLS
+from ...properties import _shell_to_atom
 from .scf import (
     AICCM2026DevBFiniteTorusConvention,
     _density_blocks_per_k,
@@ -122,18 +123,17 @@ def _vector_blocks(value: object) -> list[np.ndarray]:
 
 
 def _ao_atom_indices(basis: BasisSet) -> np.ndarray:
-    indices: list[int] = []
-    for shell in basis.shells():
-        angular = int(shell.l)
-        n_functions = (
-            2 * angular + 1
-            if bool(shell.pure)
-            else (angular + 1) * (angular + 2) // 2
-        )
-        indices.extend([int(shell.atom_index)] * n_functions)
-    if len(indices) != int(basis.nbasis):
+    """AO -> atom map, as a platform-int array, checked against ``nbasis``.
+
+    This derivation was already Cartesian-aware, but it was a second copy
+    of it; it now delegates to :func:`vibeqc.properties._shell_to_atom`
+    so there is one place where the per-shell function count is decided.
+    The length check stays: it is the guard the callers below rely on.
+    """
+    indices = _shell_to_atom(basis)
+    if indices.size != int(basis.nbasis):
         raise RuntimeError("basis shell metadata does not match the AO dimension")
-    return np.asarray(indices, dtype=int)
+    return indices.astype(int, copy=False)
 
 
 def _mesh_from_result(result: object) -> tuple[int, int, int]:

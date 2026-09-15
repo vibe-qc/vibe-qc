@@ -62,9 +62,11 @@ interpolating a finite-mesh Fock. Spectral storage is admitted under a 128 MiB
 budget before allocation.
 
 ROHF has shared orbitals of an effective Roothaan operator and separate
-physical spin Fock matrices. Its GDF spectral payload currently refuses
-until the artifact can distinguish those operators explicitly; it must not
-label a spin-Fock projection on effective-operator energies as standard COHP.
+physical spin Fock matrices. The QVF writer preserves explicit operator and
+validation labels when supplied by private ROHF diagnostics. Public GDF
+ROHF spectral generation remains guarded pending validation of consumer
+interpretation and the numerical projections. A physical spin-Fock
+projection on effective energies needs to retain that stated meaning.
 
 ```{warning}
 Other periodic routes still use the legacy reconstructed post-SCF operator,

@@ -87,7 +87,8 @@ full milestone ladder lives in [docs/roadmap.md](docs/roadmap.md).
   relaxation, and `run_neb` reaction paths. Optional `[mace]` extra
   (Python ≤3.13); foundation-model weights fetched on demand (MIT
   models ungated, ASL academic models gated). An attributed external
-  pre-trained engine, not a vibe-qc total energy (`CLAUDE.md` §10).
+  pre-trained engine, not a vibe-qc total energy; see the
+  [external-model guide](https://vibe-qc.com/docs/user_guide/mlip.html).
 - **Density fitting + RIJCOSX** — `JKBuilder` polymorphic Fock build,
   three concrete kernels (`FourIndexJKBuilder`, `DFJKBuilder`,
   `COSXJKBuilder`); RIJCOSX validated to **0.13 mHa vs ORCA 6.1.1**.

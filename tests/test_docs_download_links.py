@@ -67,3 +67,24 @@ def test_companion_downloads_belong_to_their_own_releases() -> None:
         assert "legacy" in text.lower()
 
     assert (DOCS / "_static/downloads/README.md").is_file()
+
+
+def test_qvf_snapshot_link_resolution_preserves_unrelated_references(monkeypatch) -> None:
+    """A known upstream link resolves; other documents and typos still fail."""
+    import runpy
+    import sys
+
+    # Loading the Sphinx configuration needs no Sphinx installation, and its
+    # import-path setup must not affect the remainder of this pytest process.
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    resolve = runpy.run_path(str(DOCS / "conf.py"))["_pinned_qvf_link"]
+    snapshot = DOCS / "qvf" / "_vendored" / "GOVERNANCE.md"
+    assert resolve(str(snapshot), "conformance/README.md") == "/qvf/conformance"
+
+    unrelated = (
+        (DOCS / "other" / "GOVERNANCE.md", "conformance/README.md"),
+        (snapshot, "conformance/missing.md"),
+        (snapshot.with_name("unlisted.md"), "conformance/README.md"),
+    )
+    for source, target in unrelated:
+        assert resolve(str(source), target) is None, (source, target)

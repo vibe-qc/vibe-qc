@@ -236,9 +236,9 @@ def test_native_mulliken_summary_preserves_charges_and_marks_other_analyses() ->
         "hirshfeld",
         "mayer",
         "wiberg",
-        "npa",
         "dipole",
     }
+    assert "Natural Atomic Orbital" in summary.unavailable["npa"]
     assert all(
         message.startswith("unsupported: scc_dftb native population")
         for message in summary.errors.values()
@@ -681,6 +681,42 @@ def test_write_population_compute_path_handles_all_errors(
     assert summary.dipole is None
 
 
+def test_unimplemented_npa_is_not_attempted_or_reported_as_failure(monkeypatch) -> None:
+    calls = []
+
+    def npa_spy(*args, **kwargs):
+        calls.append(True)
+        raise NotImplementedError("NPA must not be attempted")
+
+    monkeypatch.setattr("vibeqc.nbo.npa_charges", npa_spy)
+    monkeypatch.setattr("vibeqc._vibeqc_core.compute_overlap", lambda *a: np.eye(3))
+    monkeypatch.setattr(
+        "vibeqc.properties.mulliken_charges", lambda *a, **k: [-0.6, 0.3, 0.3]
+    )
+
+    def failed_dipole(*args, **kwargs):
+        raise RuntimeError("dipole failed independently")
+
+    monkeypatch.setattr("vibeqc.properties.dipole_moment", failed_dipole)
+    summary = compute_population_summary(
+        SimpleNamespace(density=np.eye(3)), object(), _h2o()
+    )
+    assert calls == []
+    assert summary.npa_atoms == []
+    assert "npa" not in summary.errors
+    assert "Natural Atomic Orbital" in summary.unavailable["npa"]
+    payload = json.loads(format_population_json(summary))
+    assert payload["npa"] == []
+    assert "npa" not in payload["errors"]
+    assert payload["unavailable"]["npa"] == summary.unavailable["npa"]
+    assert payload["mulliken"][0]["charge"] == -0.6
+    assert payload["errors"]["dipole"] == "RuntimeError: dipole failed independently"
+    text = format_population_txt(summary)
+    assert "# npa: not implemented --" in text
+    assert "# npa: N/A" not in text
+    assert "# dipole: N/A -- RuntimeError: dipole failed independently" in text
+
+
 def test_compute_summary_stores_charge_not_population(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -771,7 +807,7 @@ def test_compute_population_summary_real_scf() -> None:
         f"dipole error: {summary.errors.get('dipole')}"
     )
     assert summary.npa_atoms == []
-    assert "Natural Atomic Orbital" in summary.errors["npa"]
+    assert "Natural Atomic Orbital" in summary.unavailable["npa"]
 
     # Mulliken charges: one entry per atom (3 for H2O).
     assert len(summary.mulliken_atoms) == 3
@@ -800,6 +836,42 @@ def test_compute_population_summary_real_scf() -> None:
     assert summary.dipole is not None
     assert summary.dipole["total_debye"] > 0.1
     assert np.isfinite(summary.dipole["total_debye"])
+
+
+def test_compute_population_summary_open_shell_spin_populations() -> None:
+    """Unrestricted results carry per-atom Mulliken spin populations.
+
+    Regression: the spin block sized its AO-to-atom map with
+    ``shell.nfunctions()``, which ``ShellInfo`` does not have, so every
+    UHF/UKS summary recorded an ``AttributeError`` under ``mulliken_spin``
+    and no spin rows reached the QVF writer.
+    """
+    import vibeqc as vq
+
+    # OH radical (doublet): the unpaired electron sits in an O 2p pi orbital.
+    mol = vq.Molecule(
+        [vq.Atom(8, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 0.0, 1.83])],
+        multiplicity=2,
+    )
+    basis = vq.BasisSet(mol, "sto-3g")
+    result = vq.run_uhf(mol, basis)
+    assert result.converged
+
+    summary = compute_population_summary(result, basis, mol)
+
+    assert "mulliken_spin" not in summary.errors, summary.errors["mulliken_spin"]
+    assert [row[:3] for row in summary.mulliken_spin_atoms] == [
+        (0, "O", 8.0),
+        (1, "H", 1.0),
+    ]
+    spin = np.asarray([row[3] for row in summary.mulliken_spin_atoms], dtype=float)
+    n_electrons = int(mol.n_electrons())
+    n_alpha = (n_electrons + int(mol.multiplicity) - 1) // 2
+    n_beta = n_electrons - n_alpha
+    assert spin.sum() == pytest.approx(n_alpha - n_beta, abs=1e-8)
+    # The sum holds for any AO-to-atom map of the right length; the unpaired
+    # electron landing on O is what pins the per-atom assignment.
+    assert spin[0] > 0.9
 
 
 def test_compute_population_summary_complex_hermitian_density_is_quiet() -> None:
@@ -834,8 +906,8 @@ def test_compute_population_summary_complex_hermitian_density_is_quiet() -> None
         or "imaginary" in str(warning.message)
         for warning in caught
     )
-    assert set(summary.errors) == {"npa"}
-    assert "Natural Atomic Orbital" in summary.errors["npa"]
+    assert summary.errors == {}
+    assert "Natural Atomic Orbital" in summary.unavailable["npa"]
     assert len(summary.mulliken_atoms) == len(mol.atoms)
     assert summary.dipole is not None
 
@@ -878,7 +950,7 @@ def test_population_json_from_real_scf_has_charges(
             f"{section}: {payload['errors'].get(section)}"
         )
     assert payload["npa"] == []
-    assert "Natural Atomic Orbital" in payload["errors"]["npa"]
+    assert "Natural Atomic Orbital" in payload["unavailable"]["npa"]
 
 
 # ----------------------------------------------------------------------
@@ -909,3 +981,138 @@ def test_plan_write_population_false_drops_pair(tmp_path: Path) -> None:
     )
     pop_files = plan.files_by_role("population")
     assert pop_files == ()
+
+@pytest.mark.parametrize("container", ["matrix", "list", "stack"])
+@pytest.mark.parametrize("open_shell", [False, True])
+def test_gdf_gamma_population_uses_accepted_metric_and_spin_density(
+    monkeypatch, container, open_shell,
+):
+    from vibeqc.output.formats import population as pop
+
+    mol = _Mol([_Atom(3, (0., 0., 0.)), _Atom(1, (1., 0., 0.))])
+    basis = SimpleNamespace(nbasis=2)
+    monkeypatch.setattr(pop, "_basis_ao_to_atom", lambda _: np.array([0, 1]))
+    # S = L L^H, C = L^-H: C^H S C = I. Complex/nonorthogonal input
+    # exposes both a home-cell-metric substitution and a transposed contraction.
+    L = np.array([[1.4, 0.], [0.2 + 0.3j, 0.9]])
+    S = L @ L.conj().T
+    C = np.linalg.inv(L.conj().T) @ (np.array([[1., 1.], [-1., 1.]]) / np.sqrt(2.))
+    occ_a, occ_b = np.array([0.8, 0.6]), np.array([0.3, 0.3])
+    Da, Db = (C * occ_a) @ C.conj().T, (C * occ_b) @ C.conj().T
+
+    def pack(a):
+        return a if container == "matrix" else [a] if container == "list" else a[None]
+
+    result = SimpleNamespace(
+        overlap=pack(S), density=pack(Da + Db),
+        density_alpha=pack(Da) if open_shell else None,
+        density_beta=pack(Db) if open_shell else None,
+        kpoints_cart=np.zeros((1, 3)), kpoint_weights=[1.],
+        # Deliberately unrelated occupations: returned density is authoritative.
+        mo_coeffs=pack(C), occupations=pack(np.zeros(2)),
+    )
+    summary = pop._compute_gdf_gamma_population_summary(
+        result, basis, mol, nuclear_charges=[1., 1.], bond_threshold=-np.inf,
+    )
+    expected_pop = np.array([
+        sum((Da + Db)[i, j] * S[j, i] for j in range(2)).real
+        for i in range(2)
+    ])
+    np.testing.assert_allclose([r[3] for r in summary.mulliken_atoms], 1. - expected_pop, atol=1e-12)
+    assert sum(r[3] for r in summary.mulliken_atoms) == pytest.approx(0., abs=1e-12)
+    # Closed-form positive square root of a 2x2 matrix, no eigensolver oracle.
+    determinant_root = np.sqrt(np.linalg.det(S).real)
+    root = (S + determinant_root * np.eye(2)) / np.sqrt(np.trace(S).real + 2 * determinant_root)
+    expected_low = 1. - np.diag(root @ (Da + Db) @ root).real
+    np.testing.assert_allclose([r[3] for r in summary.loewdin_atoms], expected_low, atol=1e-12)
+    assert sum(r[3] for r in summary.loewdin_atoms) == pytest.approx(0., abs=1e-12)
+    assert abs(np.trace(Da + Db).real - 2.) > 0.1  # home-cell I would be wrong
+    channels = [Da, Db] if open_shell else [Da + Db]
+    factor = 2. if open_shell else 1.
+    # Explicit four-index contraction, independent of the production helper.
+    expected_bond = factor * sum(
+        (D[0, u] * S[u, 1] * D[1, v] * S[v, 0]).real
+        for D in channels for u in range(2) for v in range(2)
+    )
+    assert summary.mayer_bonds[0][4] == pytest.approx(expected_bond, abs=1e-12)
+    if open_shell:
+        expected_spin = [sum((Da - Db)[i, j] * S[j, i] for j in range(2)).real
+                         for i in range(2)]
+        np.testing.assert_allclose([r[3] for r in summary.mulliken_spin_atoms], expected_spin, atol=1e-12)
+        assert sum(expected_spin) == pytest.approx(0.8, abs=1e-12)
+    else:
+        assert not summary.mulliken_spin_atoms
+    assert set(summary.errors) == {"hirshfeld", "dipole", "wiberg"}
+    assert all(v.startswith("unsupported:") for v in summary.errors.values())
+    assert "npa" in summary.unavailable
+
+
+@pytest.mark.parametrize("invalid", ["multi-k", "shifted", "weight", "half-spin", "shape", "nonfinite"])
+def test_gdf_gamma_population_rejects_misaligned_state(monkeypatch, invalid):
+    from vibeqc.output.formats import population as pop
+
+    monkeypatch.setattr(pop, "_basis_ao_to_atom", lambda _: np.array([0, 1]))
+    result = SimpleNamespace(overlap=[np.eye(2)], density=[np.eye(2)],
+                             kpoints_cart=np.zeros((1, 3)), kpoint_weights=[1.])
+    if invalid == "multi-k":
+        result.overlap = [np.eye(2), np.eye(2)]
+        result.density = [np.eye(2), np.eye(2)]
+    elif invalid == "shifted":
+        result.kpoints_cart[0, 0] = 0.1
+    elif invalid == "weight":
+        result.kpoint_weights = [0.5]
+    elif invalid == "half-spin":
+        result.density_alpha = [np.eye(2)]
+    elif invalid == "shape":
+        result.density = [np.eye(3)]
+    elif invalid == "nonfinite":
+        result.overlap[0][0, 0] = np.nan
+    with pytest.raises(ValueError, match="GDF"):
+        pop._compute_gdf_gamma_population_summary(
+            result, SimpleNamespace(nbasis=2), _Mol([_Atom(1, (0, 0, 0)), _Atom(1, (1, 0, 0))]))
+
+
+@pytest.mark.parametrize("mesh", [None, (1, 1, 1)], ids=["default-gamma", "explicit-gamma"])
+@pytest.mark.parametrize("method", ["RHF", "RKS", "UHF", "UKS"])
+def test_gdf_gamma_population_sidecar_uses_scf_overlap(tmp_path, mesh, method):
+    import vibeqc as vq
+
+    open_shell = method in ("UHF", "UKS")
+    box = 12. if open_shell else 4.
+    system = vq.PeriodicSystem(3, np.eye(3) * box,
+                              [vq.Atom(1, [0., 0., -.7]), vq.Atom(1, [0., 0., .7])])
+    system.multiplicity = 3 if open_shell else 1
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    stem = tmp_path / "gdf-pop"
+    result = vq.run_periodic_job(
+        system, basis, method=method, functional="LDA" if method.endswith("KS") else None,
+        jk_method="gdf", kpoints=mesh, aux_basis="def2-svp-jk", output=stem,
+        initial_guess="HCORE", max_iter=80, conv_tol_energy=1e-9,
+        write_molden_file=False, write_density=False, write_population_file=True,
+        output_qvf=True, density_spacing_bohr=0.5, progress=False,
+    )
+    assert result.converged
+    def one(value):
+        a = np.asarray(value)
+        return a[0] if a.ndim == 3 else a
+    D = (one(result.density_alpha) + one(result.density_beta) if open_shell
+         else one(result.density))
+    S = one(result.overlap)
+    expected = 1. - np.diag(D @ S).real  # exactly one s AO on each H
+    payload = json.loads(stem.with_suffix(".population.json").read_text())
+    np.testing.assert_allclose([r["charge"] for r in payload["mulliken"]], expected, atol=1e-10, rtol=0)
+    assert sum(expected) == pytest.approx(0., abs=1e-8)
+    assert sum(r["charge"] for r in payload["loewdin"]) == pytest.approx(0., abs=1e-8)
+    assert all(key not in payload["errors"] for key in ("mulliken", "loewdin", "mayer"))
+    if open_shell:
+        assert "mulliken_spin" not in payload["errors"]
+    with zipfile.ZipFile(stem.with_suffix(".qvf")) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        section, = [s for s in manifest["sections"] if s["kind"] == "atom_properties"]
+        charges = np.frombuffer(archive.read(section["members"]["mulliken_charge"]["path"]), dtype=np.float64)
+        if open_shell:
+            spin = np.frombuffer(archive.read(section["members"]["spin_population"]["path"]), dtype=np.float64)
+            expected_spin = np.diag((one(result.density_alpha) - one(result.density_beta)) @ S).real
+            np.testing.assert_allclose(spin, expected_spin, atol=1e-10, rtol=0)
+            assert sum(spin) == pytest.approx(2., abs=1e-8)
+    np.testing.assert_allclose(charges, expected, atol=1e-10, rtol=0)

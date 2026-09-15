@@ -140,7 +140,13 @@ class TestPnoTailDiagnostic:
 
     def test_tail_estimate_not_added_to_energy(self):
         mol, b, rhf, df, _ = _setup(H2O_ATOMS, "sto-3g")
-        dom = dict(localise="boys", tcut_mkn=0.0, tcut_pairs=0.0, coupling_radius=0.0)
+        # pno_correction=False: this pins the discarded-PNO tail DIAGNOSTIC,
+        # which must never reach the energy. The semicanonical MP2 PNO
+        # correction is a different, deliberately applied quantity and would
+        # otherwise shift raw_err below; the numbers in the comment further
+        # down were recorded before it existed.
+        dom = dict(localise="boys", tcut_mkn=0.0, tcut_pairs=0.0,
+                   coupling_radius=0.0, pno_correction=False)
         full = run_local_dlpno_ccsd(
             mol, b, rhf, df, LocalCCSDOptions(tcut_pno=0.0, estimate_pno_tail=True, **dom)
         )
@@ -546,6 +552,12 @@ class TestTruncatedSubspaceOracle:
                 tcut_pairs=0.0,
                 compute_triples=False,
                 residual_domain=residual_domain,
+                # The pilot evaluates the stationarity condition of the
+                # truncated ansatz. The semicanonical MP2 PNO correction is an
+                # a-posteriori addition that is not part of that condition,
+                # so comparing a corrected local energy against the pilot
+                # would measure the correction, not the contraction.
+                pno_correction=False,
             ),
         )
         pilot = run_dlpno_ccsd_pilot(
@@ -792,7 +804,7 @@ def _setup_ccpvdz(atoms):
     return mol, basis, rhf, df
 
 
-def _preset_ladder(mol, basis, rhf, df, pno_norm="mp2"):
+def _preset_ladder(mol, basis, rhf, df, pno_norm="mp2", pno_correction=True):
     """Full-domain reference plus the three published presets (default
     residual domain, default frozen core). Returns (full, {preset: result}).
 
@@ -800,6 +812,12 @@ def _preset_ladder(mol, basis, rhf, df, pno_norm="mp2"):
     measured under ``"legacy"``, which was the default before the #65 ruling.
     A `tcut_pno` preset only means what the density it was calibrated against
     means, so a ladder is only comparable within one convention.
+
+    `pno_correction` is explicit for the same reason: those values also
+    predate the semicanonical MP2 correction for the PNO truncation of the
+    iterated pairs, which this route did not apply when they were recorded.
+    It is identically zero at ``tcut_pno=0``, so the full-domain reference is
+    unaffected either way -- only the preset rungs move.
     """
     full = run_local_dlpno_ccsd(
         mol,
@@ -813,6 +831,7 @@ def _preset_ladder(mol, basis, rhf, df, pno_norm="mp2"):
             coupling_radius=0.0,
             residual_domain="full",
             pno_norm=pno_norm,
+            pno_correction=pno_correction,
             compute_triples=False,
         ),
     )
@@ -826,7 +845,7 @@ def _preset_ladder(mol, basis, rhf, df, pno_norm="mp2"):
             df,
             options_from_dlpno_thresholds(
                 _LocalCCSDOptions, preset, compute_triples=False,
-                pno_norm=pno_norm,
+                pno_norm=pno_norm, pno_correction=pno_correction,
             ),
         )
         assert r.converged
@@ -956,7 +975,8 @@ class TestExtendedDomainGrouping:
         covered by its monotonicity below.
         """
         mol, basis, rhf, df = _setup_ccpvdz(S22_01_A)
-        full, ladder = _preset_ladder(mol, basis, rhf, df, pno_norm="legacy")
+        full, ladder = _preset_ladder(
+            mol, basis, rhf, df, pno_norm="legacy", pno_correction=False)
         errors = [
             abs(ladder[p].e_corr - full.e_corr) for p in _PUBLISHED_PRESETS
         ]
@@ -1015,7 +1035,7 @@ class TestExtendedDomainGrouping:
             )
         }
         runs = {
-            name: _preset_ladder(*sysm, pno_norm="legacy")
+            name: _preset_ladder(*sysm, pno_norm="legacy", pno_correction=False)
             for name, sysm in systems.items()
         }
         full_int = (

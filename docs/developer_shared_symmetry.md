@@ -352,6 +352,10 @@ A[g.s] M[g,s] = M[g,s] conjugate_if_antiunitary(g)(A[s])
 
 The tolerance therefore has the operator's units. Dense mixing, distinct
 target gauges and antiunitary coordinate conjugation are retained. The
+Frobenius norm is accumulated after scaling the residual entries, preserving
+tiny nonzero defects and finite large residuals without changing the absolute
+tolerance. Nonfinite arithmetic or an unrepresentable final norm is refused.
+The
 parent already checks the full rational Bloch characters in the group law;
 there is no additional character multiplier in this one-operation relation.
 
@@ -379,6 +383,64 @@ Byte/work admission precedes scans and copies and includes the retained
 parent inventory, matrix snapshots, numerical records and matrix workspace.
 Wrapper parents are conservatively charged at their recorded peak; identity
 strings, allocator overhead and BLAS workspace are excluded.
+
+### Checking operator leakage through a selection
+
+`audit_selected_operators` links an existing `GroupOperatorEvidence` to a
+`SelectedGroupTransportEvidence` that references the exact same group parent.
+The operator matrices and selected columns are taken from those immutable
+snapshots. A separately constructed, merely identically named parent is
+refused. The operator contract is inherited from the supplied matrix audit.
+
+At each space, the audit computes the selected operator coordinates and
+relative leakage using
+
+```text
+G = Q.conj().T @ Q
+G B = Q.conj().T @ A @ Q
+leakage = ||A Q - Q B||_F / ||A Q||_F
+```
+
+The small Gram solve keeps admitted finite orthonormality error from becoming
+spurious leakage. A separate solve and residual apply the same relation to
+`A.conj().T`. Checking both directions establishes a *reducing subspace* in
+the parent's Euclidean retained coordinates: for a non-Hermitian operator,
+invariance under `A` alone does not exclude coupling into the selection from
+discarded directions. A zero action has zero leakage; scaled norms preserve
+tiny nonzero failures and avoid squared overflow. `leakage_tolerance` is
+dimensionless, whereas `covariance_tolerance` is absolute in operator units.
+
+The compressed matrices undergo `audit_group_operators` with the selected
+group action, retaining dense mixing, antiunitary conjugation and the
+parent's Bloch group-law evidence. For example, once the caller has supplied
+`operator_evidence` and `selection_evidence`:
+
+```python
+result = audit_selected_operators(
+    operator_evidence, selection_evidence,
+    covariance_tolerance=1e-10, leakage_tolerance=1e-10,
+    probe_identity="method-selected operator subspace", budget=budget,
+)
+```
+
+`SelectedOperatorEvidence` retains the complete operator parent, selection,
+compressed `operator_transport`, and separate `containment` and
+`adjoint_containment` records. Every parent, covariance and leakage check must
+pass. Pass this wrapper itself when checking a further selection; extracting
+only its compressed operator audit would discard the earlier leakage record.
+Tests include a symmetric zero compression hiding unit leakage, an invariant
+line that fails the adjoint check, tiny and large operator scales, and a
+second selection that removes the offending block but preserves the earlier
+failure. Molecular core, periodic kinetic and native snapshot Fock cases
+exercise the same interface.
+
+Admission precedes payload work and conservatively reserves the retained
+parent peaks, projection/Gram workspace and nested covariance audit. Identity
+strings, allocator overhead and BLAS workspace remain excluded. These checks
+concern a selection within an already retained coordinate space; they do not
+bound leakage beyond that original space or accumulated metric error relative
+to the AO basis. Operator-source qualification, rank policy, approximation
+acceptance and production reduction remain method-owned.
 
 ## Initial consumers
 

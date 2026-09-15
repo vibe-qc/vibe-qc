@@ -108,7 +108,9 @@ def _real_if_hermitian(P: np.ndarray, *, what: str = "density matrix") -> np.nda
     A *non-negligible* Hermiticity residual means a genuinely non-Hermitian
     density (a bug), surfaced with an actionable warning rather than
     discarded silently. Real-typed input is returned unchanged (molecular
-    RHF/RKS/UHF/UKS path -- zero behaviour change).
+    RHF/RKS/UHF/UKS path -- zero behaviour change). A per-k ``(nk, n, n)``
+    stack (a periodic ``List[np.ndarray]`` density) is checked block by
+    block and returned with its shape unchanged.
     """
     P = np.asarray(P)
     if not np.iscomplexobj(P):
@@ -117,7 +119,8 @@ def _real_if_hermitian(P: np.ndarray, *, what: str = "density matrix") -> np.nda
         max_abs = float(np.abs(P).max())
         max_im = float(np.abs(P.imag).max())
         max_re = float(np.abs(P.real).max())
-        herm_resid = float(np.abs(P - P.conj().T).max())
+        # Adjoint over the AO axes only; ``.T`` would also reverse the k axis.
+        herm_resid = float(np.abs(P - P.conj().swapaxes(-1, -2)).max())
         if herm_resid > 1e-8 * max(max_abs, 1.0):
             warnings.warn(
                 f"{what} is non-Hermitian "
@@ -148,20 +151,38 @@ def _total_density(result) -> np.ndarray:
     return _real_if_hermitian(P)
 
 
+def _shell_nao(shell) -> int:
+    """Number of AOs a single shell contributes.
+
+    ``2l+1`` for a pure (spherical-harmonic) shell, ``(l+1)(l+2)/2`` for a
+    Cartesian one. ``pure`` defaults to True for duck-typed shell objects
+    that predate the attribute."""
+    angular = int(shell.l)
+    if bool(getattr(shell, "pure", True)):
+        return 2 * angular + 1
+    return (angular + 1) * (angular + 2) // 2
+
+
 def _shell_to_atom(basis: BasisSet) -> np.ndarray:
     """1-D int array, length ``nbasis``, mapping each AO to the 0-based
     atom index it lives on. Computed from ``basis.shells()`` (which is
-    public C++ API exposed for basis-set I/O)."""
-    shells = basis.shells()
+    public C++ API exposed for basis-set I/O).
+
+    This is the canonical AO-to-atom map. :mod:`vibeqc.bands`,
+    :mod:`vibeqc.bond_analysis`, :mod:`vibeqc.nbo`,
+    :mod:`vibeqc.output.formats.population`,
+    :mod:`vibeqc.periodic.chi.localization` and
+    :mod:`vibeqc.periodic.chi.properties` delegate here rather than
+    re-deriving it; a Cartesian basis makes an independently derived
+    ``2l+1`` map silently short, which misaligns every per-atom sum
+    built on it. Only ``basis.shells()`` is touched, so a duck-typed
+    basis exposing just that method works.
+
+    ``tests/test_properties.py::_ao_to_atom_helpers`` lists every
+    delegate and asserts they agree; add new ones there."""
     per_ao: list[int] = []
-    for shell in shells:
-        angular = int(shell.l)
-        n = (
-            2 * angular + 1
-            if bool(getattr(shell, "pure", True))
-            else (angular + 1) * (angular + 2) // 2
-        )
-        per_ao.extend([int(shell.atom_index)] * n)
+    for shell in basis.shells():
+        per_ao.extend([int(shell.atom_index)] * _shell_nao(shell))
     return np.asarray(per_ao, dtype=np.int64)
 
 

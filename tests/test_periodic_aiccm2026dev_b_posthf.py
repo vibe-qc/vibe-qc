@@ -899,11 +899,14 @@ def test_restricted_local_defaults_pin_pre_sweep_periodic_convention(
         "tcut_mkn": 1e-3,
         "tcut_pairs": 0.0,
         "tcut_pairs_weak": 0.0,
+        "pno_norm": "legacy",
     }
     assert captured["ccsd_t"] == {
         "localise": "pipek-mezey",
         "n_frozen": 0,
         "tcut_pno": 1e-7,
+        "pno_norm": "legacy",
+        "pno_correction": False,
         "tcut_mkn": 0.0,
         "tcut_pairs": 0.0,
         "coupling_radius": 0.0,

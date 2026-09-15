@@ -98,6 +98,7 @@ from .pbc_bipole_common import (
     validate_bipole_kmesh,
 )
 from .pbc_bipole_fock import (
+    _sr_density_cells,
     BipoleFockContext,
     BipoleOutputCellFarmingExecution,
     BipoleScreenedExchangeExecution,
@@ -671,10 +672,14 @@ def run_pbc_bipole_rks(
     needs_pair_difference_xc = (
         xc_density_domain == PeriodicXCDensityDomain.PERIODIC_LATTICE
     )
-    if needs_pair_difference_xc:
+    if needs_pair_difference_xc or getattr(opts, "use_periodic_becke", False):
         _xc_image_radius = float(
             getattr(opts, "becke_image_radius_bohr", 10.0)
         )
+        # AUTO selects the density representation, not a separate grid reach.
+        # Keep its finite AO bra images on the configured Becke partition.
+        lat_opts_2e.becke_image_radius_bohr = _xc_image_radius
+    if needs_pair_difference_xc:
         if _xc_image_radius <= 0.0:
             raise ValueError(
                 "run_pbc_bipole_rks: explicit periodic-lattice XC needs "
@@ -685,7 +690,6 @@ def run_pbc_bipole_rks(
                 "run_pbc_bipole_rks: XC cutoff_bohr must be at least "
                 "becke_image_radius_bohr"
             )
-        lat_opts_2e.becke_image_radius_bohr = _xc_image_radius
     if exchange_split_active:
         plog.info(
             "  Gauge: corrected (full Bloch density, no spheropole"
@@ -927,15 +931,13 @@ def run_pbc_bipole_rks(
         plog=plog,
     )
 
-    if exchange_split_active or needs_pair_difference_xc:
+    if exchange_split_active or needs_pair_difference_xc or lat_opts_2e.pair_complete_1e:
         if _pair_mode:
             # M3: pair-resolved density support (see run_pbc_bipole_rhf).
             cells_density = list(_fock_sym_map.density_domain.cells)
         else:
             cells_density = list(
-                direct_lattice_cells(
-                    system, 2.0 * float(lat_opts_2e.cutoff_bohr)
-                )
+                _sr_density_cells(basis, system, lat_opts_2e, _sr_image_extent)
             )
 
         if needs_pair_difference_xc:
@@ -1320,8 +1322,7 @@ def run_pbc_bipole_rks(
                     ),
                     omega_used,
                     ewald_precision,
-                    K_max=ewald_k_max,
-                )
+                    K_max=ewald_k_max, lattice_opts=lat_opts_2e)
         cells_r_cart_arr = np.array(
             [np.asarray(c.r_cart, dtype=float) for c in cells],
             dtype=float,
@@ -1341,8 +1342,7 @@ def run_pbc_bipole_rks(
                     cells_r_cart_arr,
                     omega_used,
                     ewald_precision,
-                    K_max=ewald_k_max,
-                )
+                    K_max=ewald_k_max, lattice_opts=lat_opts_2e)
 
     # Multi-k split: per-(k,k′) q-channel tables for the LR exchange
     # (hybrids only -- pure functionals carry no HF exchange). Shares
@@ -2187,24 +2187,16 @@ def run_pbc_bipole_rks(
     occ_per_k, fermi_level, entropy = _occupations_from_eps(eps_per_k)
 
     screened_exchange_execution = _fb.screened_exchange_execution
-    D_xc_set = _density_set_gamma_or_lattice(S_lat, D_real)
-    _xc = build_xc_periodic(
-        basis,
-        system,
-        grid,
-        func,
-        D_xc_set,
-        lat_opts_2e,
-        xc_density_domain,
-    )
+    # The exact final-density Fock already carries this quadrature energy.
+    assert _fb.e_xc is not None
+    final_e_xc = float(_fb.e_xc)
     E_kin_f = _lattice_contract(D_real, T_lat, operator_name="T")
     E_ne_f = _lattice_contract(D_real, V_lat, operator_name="V_ne")
     E_2e_f = (
         0.5 * _lattice_contract(D_real, _fb.f2e_real, operator_name="F2e")
         + _fb.e_2e_k_correction
     )
-    E_elec = E_kin_f + E_ne_f + E_2e_f + float(_xc.e_xc)
-    final_e_xc = float(_xc.e_xc)
+    E_elec = E_kin_f + E_ne_f + E_2e_f + final_e_xc
     final_e_2e = float(E_2e_f)
     final_e_exchange = float(_fb.e_exchange or 0.0)
     E_total = float(E_elec) + e_nuc + e_dft_plus_u

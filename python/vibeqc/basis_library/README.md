@@ -93,7 +93,7 @@ user hasn't.
 
 | File | Purpose | Source | Citation |
 |------|---------|--------|----------|
-| `pob-tzvp.g94` | Triple-ζ valence + polarisation, optimised for periodic crystals | `sources/pob-TZVP/` (Bredow group archive) | M. F. Peintinger, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **34**, 451 (2013), DOI 10.1002/jcc.23153 |
+| `pob-tzvp.g94` (+ `pob-tzvp.ecp` for Rb-I) | Triple-ζ valence + polarisation, optimised for periodic crystals | `sources/pob-TZVP/` (Bredow group archives, H-Br and Rb-I) | M. F. Peintinger, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **34**, 451 (2013), DOI 10.1002/jcc.23153; Rb-I: J. Laun, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **39**, 1285 (2018), DOI 10.1002/jcc.25195 |
 | `pob-tzvp-rev2.g94` | Triple-ζ valence + polarisation, revision 2 (BSSE-aware re-optimisation) | `sources/pob-TZVP-rev2/` (Bredow group archive) | D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, *J. Comput. Chem.* **40**, 2364 (2019), DOI 10.1002/jcc.26013 |
 | `pob-dzvp-rev2.g94` | Double-ζ valence + polarisation, revision 2 (H–V) | `sources/pob-DZVP-rev2/` (Bredow group archive) | D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, *J. Comput. Chem.* **40**, 2364 (2019), DOI 10.1002/jcc.26013 |
 

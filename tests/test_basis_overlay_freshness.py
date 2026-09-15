@@ -11,6 +11,7 @@ negative ECP-contract cases among them look like a refusal regression.
 
 from __future__ import annotations
 
+import os
 import warnings
 
 import pytest
@@ -148,3 +149,117 @@ def test_this_clone_resolves_a_library_that_actually_carries_silver():
         f"{root / 'basis' / 'def2-svp.g94'} has no silver block: this "
         "library predates #88. Run: bash scripts/setup_basis_library.sh"
     )
+
+
+# ---------------------------------------------------------------------------
+# Content, not size (#235): an in-place correction that keeps a file's length
+# was invisible to the size-only canary comparison.
+# ---------------------------------------------------------------------------
+
+
+def _catch(overlay, bundled):
+    """Run the guard on the two trees and return the warnings it raised."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        vibeqc._warn_if_basis_overlay_is_stale(overlay, bundled)
+    return caught
+
+
+def test_same_size_sidecar_edit_is_detected(tmp_path):
+    """#207 changed pob-tzvp-rev2.ecp's radial powers at constant length
+    (27,983 bytes before and after). Same size, different bytes: warn."""
+    files = dict.fromkeys(_CANARIES, 250)
+    files["pob-tzvp-rev2.ecp"] = 120
+    overlay = _make_library(tmp_path / "build" / "basis_library", files)
+    bundled = _make_library(tmp_path / "pkg" / "basis_library", files)
+    stale = overlay / "basis" / "pob-tzvp-rev2.ecp"
+    fixed = bundled / "basis" / "pob-tzvp-rev2.ecp"
+    fixed.write_text("2" * 120)  # the corrected sidecar: same length
+    assert stale.stat().st_size == fixed.stat().st_size
+
+    caught = _catch(overlay, bundled)
+    assert len(caught) == 1
+    text = str(caught[0].message)
+    assert "out of date" in text
+    assert str(stale) in text and str(fixed) in text
+    assert "different content" in text
+    assert "setup_basis_library.sh" in text
+
+
+def test_same_size_canary_edit_is_detected(tmp_path):
+    """The three orbital canaries are compared by bytes as well."""
+    files = dict.fromkeys(_CANARIES, 250)
+    overlay = _make_library(tmp_path / "build" / "basis_library", files)
+    bundled = _make_library(tmp_path / "pkg" / "basis_library", files)
+    (bundled / "basis" / "6-311+g3df2p.g94").write_text("y" * 250)
+
+    caught = _catch(overlay, bundled)
+    assert len(caught) == 1
+    edited = bundled / "basis" / "6-311+g3df2p.g94"
+    assert str(edited) in str(caught[0].message)
+
+
+def test_every_committed_sidecar_is_compared(tmp_path):
+    """Not only the canaries and not only ``pob-tzvp-rev2.ecp``: any
+    ``.ecp`` the committed tree carries is checked against its overlay
+    copy, so a fix hard-coded to one sidecar name would fail here."""
+    files = dict.fromkeys(_CANARIES, 250)
+    files.update({"a.ecp": 40, "b.ecp": 40, "c.ecp": 40})
+    overlay = _make_library(tmp_path / "build" / "basis_library", files)
+    bundled = _make_library(tmp_path / "pkg" / "basis_library", files)
+    (bundled / "basis" / "c.ecp").write_text("z" * 40)
+    caught = _catch(overlay, bundled)
+    assert len(caught) == 1
+    assert str(bundled / "basis" / "c.ecp") in str(caught[0].message)
+
+
+def test_identical_sidecars_stay_silent(tmp_path):
+    """Equal bytes everywhere: the content pass adds no false alarm."""
+    files = dict.fromkeys(_CANARIES, 250)
+    files.update({"a.ecp": 40, "pob-tzvp-rev2.ecp": 120})
+    overlay = _make_library(tmp_path / "build" / "basis_library", files)
+    bundled = _make_library(tmp_path / "pkg" / "basis_library", files)
+    assert not _catch(overlay, bundled)
+
+
+def test_both_staleness_classes_are_reported_in_one_warning(tmp_path):
+    """An overlay behind by a missing basis AND a same-size sidecar edit
+    (the #235 field case: built before #207 and before a later addition)
+    reports both in the one warning, so the inventory line cannot hide the
+    content line."""
+    files = dict.fromkeys(_CANARIES, 250)
+    files["pob-tzvp-rev2.ecp"] = 120
+    overlay = _make_library(tmp_path / "build" / "basis_library", files)
+    bundled = _make_library(tmp_path / "pkg" / "basis_library", files)
+    (bundled / "basis" / "pob-tzvp-rev2.ecp").write_text("2" * 120)
+    (bundled / "basis" / "cc-pvdz-pp.g94").write_text("x" * 50)
+
+    caught = _catch(overlay, bundled)
+    assert len(caught) == 1
+    text = str(caught[0].message)
+    assert "1 file(s) missing from the overlay: cc-pvdz-pp.g94" in text
+    assert "different content: pob-tzvp-rev2.ecp" in text
+    assert "may be older than the committed ones" in text
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="needs a non-root POSIX user so chmod 000 denies reads",
+)
+def test_an_unreadable_pair_does_not_silence_a_later_stale_sidecar(tmp_path):
+    """One file the guard cannot read is skipped on its own; the stale
+    sidecar sorted after it is still reported."""
+    files = dict.fromkeys(_CANARIES, 250)
+    files.update({"a.ecp": 40, "pob-tzvp-rev2.ecp": 120})
+    overlay = _make_library(tmp_path / "build" / "basis_library", files)
+    bundled = _make_library(tmp_path / "pkg" / "basis_library", files)
+    (bundled / "basis" / "pob-tzvp-rev2.ecp").write_text("2" * 120)
+    unreadable = overlay / "basis" / "a.ecp"
+    os.chmod(unreadable, 0)
+    try:
+        caught = _catch(overlay, bundled)
+    finally:
+        os.chmod(unreadable, 0o644)
+    assert len(caught) == 1
+    assert "different content: pob-tzvp-rev2.ecp" in str(caught[0].message)
+

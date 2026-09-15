@@ -143,6 +143,9 @@ from ._vibeqc_core import (
     nuclear_repulsion_gradient_per_cell,
     overlap_lattice_gradient_contribution,
 )
+from .pbc_bipole_fock import (
+    _sr_internal_cells, _sr_padded_lat_opts, _reciprocal_blocks_on_output,
+)
 from .pbc_bipole import PBCBipoleRHFResult
 from .pbc_bipole_rks import PBCBipoleRKSResult
 from .pbc_bipole_uhf import PBCBipoleUHFResult
@@ -325,13 +328,16 @@ def _m5_gamma_jk_adjoint_correction(
     masks restrict the first density occurrence in the energy contraction,
     while density masks restrict the transpose contribution.
     """
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     internal_cells = list(
-        direct_lattice_cells(system, float(sr_image_extent_bohr))
+        _sr_internal_cells(basis, system, lattice_opts, sr_image_extent_bohr)
     )
     output_cells = (
         list(sr_output_cells)
         if sr_output_cells is not None
-        else list(compute_overlap_lattice(basis, system, lattice_opts).cells)
+        else (internal_cells if lattice_opts.pair_complete_1e
+              else list(compute_overlap_lattice(basis, system, lattice_opts).cells))
     )
     output_masks = (
         list(sr_output_shell_masks)
@@ -422,6 +428,8 @@ def _m5_gamma_open_w_adjoint(
     sr_density_domain: Optional[object] = None,
 ) -> np.ndarray:
     """Add the padded radial or pair-domain J/K transpose action to ``W``."""
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     d_j, _ = _m5_gamma_jk_adjoint_correction(
         system,
         basis,
@@ -480,12 +488,14 @@ def _m5_multi_k_jk_adjoint_delta(
     Subtract the forward Fock blocks and Bloch-fold the remainder into the
     usual ``Tr[F(k) dD(k)]`` matrix convention.
     """
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     internal_cells = list(
-        direct_lattice_cells(system, float(sr_image_extent_bohr))
+        _sr_internal_cells(basis, system, lattice_opts, sr_image_extent_bohr)
     )
-    output_cells = list(
+    output_cells = (internal_cells if lattice_opts.pair_complete_1e else list(
         compute_overlap_lattice(basis, system, lattice_opts).cells
-    )
+    ))
     internal_index = {
         tuple(int(x) for x in cell.index): i
         for i, cell in enumerate(internal_cells)
@@ -578,6 +588,8 @@ def _m5_multi_k_closed_w_adjoint(
     sr_image_extent_bohr: float,
 ) -> tuple[List[np.ndarray], List[np.ndarray]]:
     """Add the padded radial J/K transpose action to closed-shell ``W(k)``."""
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     delta_j_k, delta_k_k = _m5_multi_k_jk_adjoint_delta(
         system,
         basis,
@@ -623,6 +635,8 @@ def _m5_multi_k_open_w_adjoint(
     sr_image_extent_bohr: float,
 ) -> tuple[List[np.ndarray], tuple[List[np.ndarray], List[np.ndarray]]]:
     """Add the padded radial J/K transpose action to open-shell ``W(k)``."""
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     delta_j_k, _ = _m5_multi_k_jk_adjoint_delta(
         system,
         basis,
@@ -901,12 +915,11 @@ def _bloch_fold_w_matrices(
 
 _RESEARCH_PREVIEW_MSG = (
     "compute_bipole_gradient_{kind}: the BIPOLE analytic gradient is a "
-    "maintained preview. RHF/UHF Gamma is complete for general crystals "
-    "(~1e-7 Ha/bohr vs FD). Corrected-gauge (Ewald-exchange-split) RHF/UHF "
+    "maintained preview. Corrected-gauge (Ewald-exchange-split) RHF/UHF "
     "multi-k is FD-validated (pass kmesh=); padded radial multi-k RHF/UHF "
     "include the full finite-domain response (~3e-5/~7e-8 vs FD). Legacy-gauge "
-    "RHF/UHF multi-k (use_exchange_ewald_split=False) is FD-pinned on "
-    "maintained [2,1,1] fixtures. For production forces use "
+    "RHF/UHF (use_exchange_ewald_split=False) is maintained on symmetric "
+    "controls; asymmetric legacy-HF SCF is unsupported. For production forces use "
     "compute_bipole_gradient_fd (bipole_optimize and periodic NEB default to it)."
 )
 
@@ -1120,6 +1133,20 @@ def _ao_to_atom_map(system: PeriodicSystem, basis: BasisSet) -> np.ndarray:
     return np.asarray(ao2atom, dtype=int)
 
 
+def _pair_ft_gradient_at_cells(basis, vectors, shifts, *, lattice_opts=None):
+    """Differentiate the same finite AO-pair support as the reciprocal value."""
+    from ._aopair_ft import ao_pair_fourier_transform_grad_at_cells
+    from .lattice_screening import ao_pair_support_mask
+
+    bra, ket = ao_pair_fourier_transform_grad_at_cells(basis, vectors, shifts)
+    if lattice_opts is not None and lattice_opts.pair_complete_1e:
+        for cell, shift in enumerate(shifts):
+            mask = ao_pair_support_mask(basis, shift, lattice_opts.cutoff_bohr)
+            bra[cell] *= mask[:, :, None, None]
+            ket[cell] *= mask[:, :, None, None]
+    return bra, ket
+
+
 def _v_ne_ewald_gradient(
     system: PeriodicSystem,
     basis: BasisSet,
@@ -1194,7 +1221,7 @@ def _v_ne_ewald_gradient(
             system,
             D_real,
             ewald_erfc_lattice_options(
-                lattice_opts, alpha, 1.0e-8, basis=basis, system=system,
+                lattice_opts, alpha, precision, basis=basis, system=system,
             ),
             alpha,
         )
@@ -1211,9 +1238,15 @@ def _v_ne_ewald_gradient(
     )
 
     # --- Piece 2: V_long (reciprocal) ---
+    if lattice_opts.pair_complete_1e:
+        from .lattice_screening import ao_pair_support_mask
+
+        for c, shift in enumerate(cells_r_cart):
+            D_blocks[c][~ao_pair_support_mask(
+                basis, shift, lattice_opts.cutoff_bohr,
+            )] = 0.0
     cache = _build_j_long_range_cache(
-        basis, system, cells_r_cart, alpha, precision, K_max=K_max
-    )
+        basis, system, cells_r_cart, alpha, precision, K_max=K_max, lattice_opts=lattice_opts)
     K_vec = cache.K_vectors  # (n_K, 3)
     kernel = cache.kernel  # (n_K,)
     ft = cache.ft_per_cell  # (n_g, nbf, nbf, n_K), corrected
@@ -1239,9 +1272,8 @@ def _v_ne_ewald_gradient(
         grad[C] += contrib
 
     # (2b) AO-pair-FT centre derivative. grad_bra/grad_ket: (n_g,nbf,nbf,3,n_K).
-    grad_bra, grad_ket = ao_pair_fourier_transform_grad_at_cells(
-        basis, K_vec, cells_r_cart
-    )
+    grad_bra, grad_ket = _pair_ft_gradient_at_cells(
+        basis, K_vec, cells_r_cart, lattice_opts=lattice_opts)
     corr = _libint_ylm_correction_per_ao(basis)  # (nbf,)
     cc = corr[:, None] * corr[None, :]  # (nbf,nbf)
     grad_bra = grad_bra * cc[None, :, :, None, None]
@@ -1270,6 +1302,7 @@ def _j_long_range_ewald_gradient(
     *,
     precision: float = 1e-8,
     gamma_local: bool = False,
+    lattice_opts: Optional[LatticeSumOptions] = None,
 ) -> np.ndarray:
     """Hellmann-Feynman gradient of the BIPOLE long-range Coulomb energy.
 
@@ -1318,17 +1351,15 @@ def _j_long_range_ewald_gradient(
         D_bloch = D_local
 
     cache = _build_j_long_range_cache(
-        basis, system, cells_r_cart, alpha, precision, K_max=K_max
-    )
+        basis, system, cells_r_cart, alpha, precision, K_max=K_max, lattice_opts=lattice_opts)
     K_vec = cache.K_vectors
     kernel = cache.kernel
     ft = cache.ft_per_cell  # (n_g,nbf,nbf,n_K), corrected
     rho_l = np.einsum("gmn,gmnk->k", D_local, ft)  # (n_K,) complex
     rho_b = np.einsum("gmn,gmnk->k", D_bloch, ft)
 
-    grad_bra, grad_ket = ao_pair_fourier_transform_grad_at_cells(
-        basis, K_vec, cells_r_cart
-    )
+    grad_bra, grad_ket = _pair_ft_gradient_at_cells(
+        basis, K_vec, cells_r_cart, lattice_opts=lattice_opts)
     corr = _libint_ylm_correction_per_ao(basis)
     cc = corr[:, None] * corr[None, :]
     grad_bra = grad_bra * cc[None, :, :, None, None]
@@ -1362,6 +1393,7 @@ def _k_long_range_ewald_gradient(
     ewald_alpha: float,
     *,
     precision: float = 1e-8,
+    lattice_opts: Optional[LatticeSumOptions] = None,
 ) -> np.ndarray:
     """Hellmann-Feynman gradient of the Γ reciprocal long-range EXCHANGE.
 
@@ -1408,16 +1440,14 @@ def _k_long_range_ewald_gradient(
     D_home = np.asarray(D_real.blocks[home], dtype=float)
 
     cache = _build_j_long_range_cache(
-        basis, system, cells_r_cart, alpha, precision, K_max=K_max
-    )
+        basis, system, cells_r_cart, alpha, precision, K_max=K_max, lattice_opts=lattice_opts)
     kernel = cache.kernel
     # A(K) = S_g FT(K; R_g) -- the Γ Bloch sum (k=0 phase 1), corr baked in.
     A = cache.ft_per_cell.sum(axis=0)  # (nbf, nbf, n_K)
     G = np.einsum("ma,abk,bn->mnk", D_home, A, D_home, optimize=True)
 
-    grad_bra, grad_ket = ao_pair_fourier_transform_grad_at_cells(
-        basis, cache.K_vectors, cells_r_cart
-    )
+    grad_bra, grad_ket = _pair_ft_gradient_at_cells(
+        basis, cache.K_vectors, cells_r_cart, lattice_opts=lattice_opts)
     corr = _libint_ylm_correction_per_ao(basis)
     cc = corr[:, None] * corr[None, :]
     dA_bra = (grad_bra * cc[None, :, :, None, None]).sum(axis=0)  # (nbf,nbf,3,n_K)
@@ -1675,7 +1705,7 @@ def _bipole_de_dp_home_block(
     # (the 2nd term is 1/2.F_LR_scf(0); both FTs carry the cache's per-AO
     # correction). D_local = D_real (projected, D(g!=0)=0); D_bloch(g)=P(Γ).
     crc = np.array([np.asarray(c.r_cart, dtype=float) for c in cells], dtype=float)
-    cache = _build_j_long_range_cache(basis, system, crc, alpha, 1e-8, K_max=K_max)
+    cache = _build_j_long_range_cache(basis, system, crc, alpha, 1e-8, K_max=K_max, lattice_opts=lattice_opts)
     ft = cache.ft_per_cell
     kern = cache.kernel
     D_local = np.array(
@@ -1907,6 +1937,8 @@ def _build_multi_k_bipole_b0_closed(
     The reference ``C(k)`` is renormalised against each displaced ``S(k)`` so
     the occupied block remains S-orthonormal while differentiating ``B0``.
     """
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     from ._vibeqc_core import (
         build_fock_2e_real_space,
         build_jk_2e_real_space,
@@ -1973,6 +2005,7 @@ def _build_multi_k_bipole_b0_closed(
             cells=sr_density_cells,
         )
     )
+    output_cells = list(S_lat.cells)
     k_corr_per_k = None
     if exchange_ewald_split:
         if sr_image_extent_bohr is None or sr_density_cells is None:
@@ -1981,15 +2014,17 @@ def _build_multi_k_bipole_b0_closed(
                 "route requires its internal and density-support domains"
             )
         internal_cells = list(
-            direct_lattice_cells(system, float(sr_image_extent_bohr))
+            _sr_internal_cells(basis, system, lattice_opts, sr_image_extent_bohr)
         )
         internal_index = {
             tuple(int(x) for x in cell.index): i
             for i, cell in enumerate(internal_cells)
         }
+        if lattice_opts.pair_complete_1e:
+            output_cells = internal_cells
         output_indices = [
             internal_index[tuple(int(x) for x in cell.index)]
-            for cell in S_lat.cells
+            for cell in output_cells
         ]
         jk_sr = build_jk_2e_real_space_domains(
             basis,
@@ -2031,7 +2066,7 @@ def _build_multi_k_bipole_b0_closed(
     cells_r = np.array(
         [np.asarray(c.r_cart, dtype=float) for c in S_lat.cells], dtype=float
     )
-    cache = _build_j_long_range_cache(basis, system, cells_r, alpha, 1e-8, K_max=K_max)
+    cache = _build_j_long_range_cache(basis, system, cells_r, alpha, 1e-8, K_max=K_max, lattice_opts=lattice_opts)
     rho_hat = compute_rho_hat_from_k_density(D_k_list, kpts, kmesh.weights, cache)
     J_lr_blocks = compute_J_long_range_real_space_blocks(
         D_output,
@@ -2041,14 +2076,20 @@ def _build_multi_k_bipole_b0_closed(
         cache=cache,
         rho_hat=rho_hat,
     )
+    if lattice_opts.pair_complete_1e:
+        J_lr_blocks = _reciprocal_blocks_on_output(J_lr_blocks, cache, system, output_cells)
+    overlap_by_cell = {tuple(int(x) for x in cell.index): np.asarray(block, dtype=float)
+                       for cell, block in zip(S_lat.cells, S_lat.blocks)}
+    overlap_blocks = [overlap_by_cell.get(tuple(int(x) for x in cell.index),
+                      np.zeros((basis.nbasis, basis.nbasis))) for cell in output_cells]
     v_bg = -np.pi * float(system.n_electrons()) / (alpha * alpha * V)
     f2e_blocks: list[np.ndarray] = []
-    for c in range(len(S_lat.cells)):
+    for c in range(len(output_cells)):
         f2e_blocks.append(
             j_sr_blocks[c]
             - 0.5 * k_sr_blocks[c]
             + J_lr_blocks[c]
-            + v_bg * np.asarray(S_lat.blocks[c], dtype=float)
+            + v_bg * overlap_blocks[c]
         )
     if exchange_ewald_split:
         x_cache = build_k_exchange_long_range_cache(
@@ -2088,7 +2129,7 @@ def _build_multi_k_bipole_b0_closed(
         H_k = _bloch_sum_blocks(T_lat.blocks, S_lat.cells, k_arr) + _bloch_sum_blocks(
             V_lat.blocks, S_lat.cells, k_arr
         )
-        F_k = H_k + _bloch_sum_blocks(f2e_blocks, S_lat.cells, k_arr)
+        F_k = H_k + _bloch_sum_blocks(f2e_blocks, output_cells, k_arr)
         if k_corr_per_k is not None:
             F_k = F_k - 0.5 * k_corr_per_k[k_idx]
         out.append(
@@ -2117,6 +2158,8 @@ def _build_multi_k_bipole_b0_open(
     sr_density_cells: Optional[Sequence[object]] = None,
 ) -> tuple[List[np.ndarray], List[np.ndarray]]:
     """Fixed-C multi-k SCF orbital gradients ``B0_s(k)`` for UHF."""
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     from ._vibeqc_core import (
         build_fock_2e_real_space,
         build_jk_2e_real_space,
@@ -2221,6 +2264,7 @@ def _build_multi_k_bipole_b0_open(
             cells=sr_density_cells,
         )
 
+    output_cells = list(S_lat.cells)
     k_corr_alpha = None
     k_corr_beta = None
     if exchange_ewald_split:
@@ -2230,15 +2274,17 @@ def _build_multi_k_bipole_b0_open(
                 "requires its internal and density-support domains"
             )
         internal_cells = list(
-            direct_lattice_cells(system, float(sr_image_extent_bohr))
+            _sr_internal_cells(basis, system, lattice_opts, sr_image_extent_bohr)
         )
         internal_index = {
             tuple(int(x) for x in cell.index): i
             for i, cell in enumerate(internal_cells)
         }
+        if lattice_opts.pair_complete_1e:
+            output_cells = internal_cells
         output_indices = [
             internal_index[tuple(int(x) for x in cell.index)]
-            for cell in S_lat.cells
+            for cell in output_cells
         ]
         jk_total = build_jk_2e_real_space_domains(
             basis,
@@ -2312,7 +2358,7 @@ def _build_multi_k_bipole_b0_open(
     cells_r = np.array(
         [np.asarray(c.r_cart, dtype=float) for c in S_lat.cells], dtype=float
     )
-    cache = _build_j_long_range_cache(basis, system, cells_r, alpha, 1e-8, K_max=K_max)
+    cache = _build_j_long_range_cache(basis, system, cells_r, alpha, 1e-8, K_max=K_max, lattice_opts=lattice_opts)
     rho_hat = compute_rho_hat_from_k_density(D_total_k, kpts, kmesh.weights, cache)
     J_lr_blocks = compute_J_long_range_real_space_blocks(
         D_total_output,
@@ -2322,14 +2368,20 @@ def _build_multi_k_bipole_b0_open(
         cache=cache,
         rho_hat=rho_hat,
     )
+    if lattice_opts.pair_complete_1e:
+        J_lr_blocks = _reciprocal_blocks_on_output(J_lr_blocks, cache, system, output_cells)
+    overlap_by_cell = {tuple(int(x) for x in cell.index): np.asarray(block, dtype=float)
+                       for cell, block in zip(S_lat.cells, S_lat.blocks)}
+    overlap_blocks = [overlap_by_cell.get(tuple(int(x) for x in cell.index),
+                      np.zeros((basis.nbasis, basis.nbasis))) for cell in output_cells]
     v_bg = -np.pi * float(system.n_electrons()) / (alpha * alpha * V)
     f_alpha_blocks: list[np.ndarray] = []
     f_beta_blocks: list[np.ndarray] = []
-    for c in range(len(S_lat.cells)):
+    for c in range(len(output_cells)):
         common = (
             j_sr_blocks[c]
             + J_lr_blocks[c]
-            + v_bg * np.asarray(S_lat.blocks[c], dtype=float)
+            + v_bg * overlap_blocks[c]
         )
         f_alpha_blocks.append(common - a_hf * k_alpha_blocks[c])
         f_beta_blocks.append(common - a_hf * k_beta_blocks[c])
@@ -2386,7 +2438,7 @@ def _build_multi_k_bipole_b0_open(
         if Ca.shape[1] > n_alpha:
             Ca_occ = Ca[:, :n_alpha]
             Ca_vir = Ca[:, n_alpha:]
-            F_a = H_k + _bloch_sum_blocks(f_alpha_blocks, S_lat.cells, k_arr)
+            F_a = H_k + _bloch_sum_blocks(f_alpha_blocks, output_cells, k_arr)
             if k_corr_alpha is not None:
                 F_a = F_a - a_hf * k_corr_alpha[k_idx]
             out_alpha.append(
@@ -2399,7 +2451,7 @@ def _build_multi_k_bipole_b0_open(
         if Cb.shape[1] > n_beta:
             Cb_occ = Cb[:, :n_beta]
             Cb_vir = Cb[:, n_beta:]
-            F_b = H_k + _bloch_sum_blocks(f_beta_blocks, S_lat.cells, k_arr)
+            F_b = H_k + _bloch_sum_blocks(f_beta_blocks, output_cells, k_arr)
             if k_corr_beta is not None:
                 F_b = F_b - a_hf * k_corr_beta[k_idx]
             out_beta.append(
@@ -2432,9 +2484,12 @@ def _multi_k_orbital_relaxation_closed_diag(
     The historical-domain route retains its documented diagonal orbital
     Hessian. When ``energy_fock_delta_k`` is supplied for the padded M5 route,
     the finite-domain map couples real and imaginary orbital rotations across
-    k points; solve that full real-linear numerical Hessian with PCG and fail
-    closed if it does not converge.
+    k points. Its unequal domains need not give a self-adjoint SCF response.
+    Solve the transpose of that full real-linear Jacobian, with k weights in
+    the energy RHS, and fail closed if its residual does not converge.
     """
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     from .pbc_bipole_common import _bloch_sum_blocks
 
     n_atoms = len(system.unit_cell)
@@ -2489,8 +2544,6 @@ def _multi_k_orbital_relaxation_closed_diag(
             rhs / ediff for rhs, ediff in zip(rhs_list, ediff_list)
         ]
     else:
-        from .cphf import CPHFConvergenceError, _pcg
-
         sizes = [item.size for item in rhs_list]
         offsets = np.cumsum([0] + sizes)
         n_complex = int(offsets[-1])
@@ -2519,8 +2572,11 @@ def _multi_k_orbital_relaxation_closed_diag(
             for C, v in zip(C0, v_list):
                 C_occ = C[:, :n_occ]
                 C_vir = C[:, n_occ:]
-                occ = C_occ + sign * eta * (C_vir @ v.T)
-                vir = C_vir - sign * eta * (C_occ @ v.conj())
+                # Use the B_ov convention: dE = 4 Re <v, delta_ov>.
+                # Conjugating the occupied rotation also makes the gap term
+                # positive in both real and imaginary coordinates.
+                occ = C_occ + sign * eta * (C_vir @ v.conj().T)
+                vir = C_vir - sign * eta * (C_occ @ v)
                 out.append(np.concatenate((occ, vir), axis=1))
             return out
 
@@ -2553,22 +2609,28 @@ def _multi_k_orbital_relaxation_closed_diag(
                 [(p - m) / (2.0 * rotation_step) for p, m in zip(bp, bm)]
             )
 
-        rhs = _pack_real(rhs_list)
-        diag_once = np.concatenate([item.ravel() for item in ediff_list])
-        diag = np.concatenate((diag_once, diag_once))
+        rhs = _pack_real([
+            float(w) * item for w, item in zip(kmesh.weights, rhs_list)
+        ])
+        rhs_norm = float(np.linalg.norm(rhs))
+        if rhs_norm == 0.0:
+            return np.zeros((n_atoms, 3), dtype=np.float64)
+        jacobian = np.empty((rhs.size, rhs.size), dtype=np.float64)
+        for col in range(rhs.size):
+            direction = np.zeros(rhs.size, dtype=np.float64)
+            direction[col] = 1.0
+            jacobian[:, col] = _aop(direction)
         try:
-            zflat, _, converged = _pcg(
-                _aop,
-                rhs,
-                lambda x: x / diag,
-                1.0e-9,
-                100,
-            )
-            if not converged:
-                raise CPHFConvergenceError(
-                    "padded multi-k CPHF reached its 100-iteration cap"
+            # A forward or symmetrized solve differentiates a different SCF
+            # constraint. Keep k weights in z, including for nonuniform meshes.
+            zflat, *_ = np.linalg.lstsq(jacobian.T, rhs, rcond=1.0e-10)
+            residual = float(np.linalg.norm(jacobian.T @ zflat - rhs))
+            if not np.isfinite(residual) or residual > 1.0e-9 * rhs_norm:
+                raise np.linalg.LinAlgError(
+                    "transpose CPHF residual exceeds tolerance "
+                    f"({residual / rhs_norm:.3e} relative)"
                 )
-        except CPHFConvergenceError as exc:
+        except np.linalg.LinAlgError as exc:
             raise NotImplementedError(
                 "padded multi-k RHF analytic gradient could not solve the "
                 f"finite-domain orbital response ({exc}); use "
@@ -2618,7 +2680,9 @@ def _multi_k_orbital_relaxation_closed_diag(
                     if delta_k_input is None
                     else np.vdot(z_k, dB)
                 )
-                total += w_k * float(np.real(contraction))
+                # Padded z already contains the energy's k-point weights.
+                weight = w_k if delta_k_input is None else 1.0
+                total += weight * float(np.real(contraction))
             relax[a, d] = -4.0 * total
     return relax
 
@@ -2733,7 +2797,7 @@ def _multi_k_orbital_relaxation_ks_closed_diag(
         cells_r = np.array(
             [np.asarray(c.r_cart, dtype=float) for c in S_lat.cells], dtype=float
         )
-        cache = _build_j_long_range_cache(bd, sd, cells_r, alpha, 1e-8, K_max=K_max)
+        cache = _build_j_long_range_cache(bd, sd, cells_r, alpha, 1e-8, K_max=K_max, lattice_opts=lattice_opts)
         rho_hat = compute_rho_hat_from_k_density(D_k_list, kpts, weights, cache)
         J_lr_blocks = compute_J_long_range_real_space_blocks(
             D_real,
@@ -2924,7 +2988,7 @@ def _multi_k_orbital_relaxation_ks_open_diag(
         cells_r = np.array(
             [np.asarray(c.r_cart, dtype=float) for c in S_lat.cells], dtype=float
         )
-        cache = _build_j_long_range_cache(bd, sd, cells_r, alpha, 1e-8, K_max=K_max)
+        cache = _build_j_long_range_cache(bd, sd, cells_r, alpha, 1e-8, K_max=K_max, lattice_opts=lattice_opts)
         rho_hat = compute_rho_hat_from_k_density(Dt_k, kpts, weights, cache)
         J_lr_blocks = compute_J_long_range_real_space_blocks(
             D_real,
@@ -3047,6 +3111,8 @@ def _multi_k_orbital_relaxation_open(
     real-linear k/spin-coupled Hessian is evaluated from the corrected fixed-C
     Fock builder.
     """
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     from ._vibeqc_core import build_fock_2e_real_space, build_jk_2e_real_space
     from .bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
     from .bipole_fock_ewald import (
@@ -3176,7 +3242,7 @@ def _multi_k_orbital_relaxation_open(
     cells_r = np.array(
         [np.asarray(c.r_cart, dtype=float) for c in S_lat.cells], dtype=float
     )
-    cache = _build_j_long_range_cache(basis, system, cells_r, alpha, 1e-8, K_max=K_max)
+    cache = _build_j_long_range_cache(basis, system, cells_r, alpha, 1e-8, K_max=K_max, lattice_opts=lattice_opts)
 
     def _density_response(
         C: np.ndarray,
@@ -3600,7 +3666,7 @@ def _reconstruct_bipole_fock_gamma_builder(
     )
     Vne_g = sum(np.asarray(Vne.blocks[i], dtype=float) for i in range(n_cells))
     Hcore_g = _hermitian(Tg + Vne_g)
-    cache = _build_j_long_range_cache(basis, system, rc, alpha, 1e-8, K_max=K_max)
+    cache = _build_j_long_range_cache(basis, system, rc, alpha, 1e-8, K_max=K_max, lattice_opts=lattice_opts)
 
     def _ls(M):
         s = compute_overlap_lattice(basis, system, lattice_opts)
@@ -3774,12 +3840,12 @@ def _bloch_cphf_rhs_analytic(
         )
 
     # --- Fock-convention J^LR cross (both-Bloch r̂[P], r̂[Pz]) ---
-    cache = _build_j_long_range_cache(basis, system, rc, alpha, 1e-8, K_max=K_max)
+    cache = _build_j_long_range_cache(basis, system, rc, alpha, 1e-8, K_max=K_max, lattice_opts=lattice_opts)
     K_vec = cache.K_vectors
     kernel = cache.kernel
     ft = cache.ft_per_cell  # (n_g,nbf,nbf,n_K)
     ft_sum = ft.sum(axis=0)  # (nbf,nbf,n_K), Bloch FT
-    grad_bra, grad_ket = ao_pair_fourier_transform_grad_at_cells(basis, K_vec, rc)
+    grad_bra, grad_ket = _pair_ft_gradient_at_cells(basis, K_vec, rc, lattice_opts=lattice_opts)
     corr = _libint_ylm_correction_per_ao(basis)
     cc = corr[:, None] * corr[None, :]
     grad_bra = grad_bra * cc[None, :, :, None, None]
@@ -4600,11 +4666,11 @@ def _bloch_cphf_rhs_analytic_open(
         )
 
     # Fock-convention J^LR cross machinery (both-Bloch r̂).
-    cache = _build_j_long_range_cache(basis, system, rc, alpha, 1e-8, K_max=K_max)
+    cache = _build_j_long_range_cache(basis, system, rc, alpha, 1e-8, K_max=K_max, lattice_opts=lattice_opts)
     K_vec = cache.K_vectors
     kernel = cache.kernel
     ft_sum = cache.ft_per_cell.sum(axis=0)
-    grad_bra, grad_ket = ao_pair_fourier_transform_grad_at_cells(basis, K_vec, rc)
+    grad_bra, grad_ket = _pair_ft_gradient_at_cells(basis, K_vec, rc, lattice_opts=lattice_opts)
     corr = _libint_ylm_correction_per_ao(basis)
     cc = corr[:, None] * corr[None, :]
     grad_bra = grad_bra * cc[None, :, :, None, None]
@@ -4981,6 +5047,7 @@ def _j_long_range_ewald_gradient_multi_k(
     *,
     precision: float = 1e-8,
     reciprocal_cutoff_bohr_inv: Optional[float] = None,
+    lattice_opts: Optional[LatticeSumOptions] = None,
 ) -> np.ndarray:
     """J^LR gradient for multi-k: weighted total r̂*.dr̂/dR.
 
@@ -5019,16 +5086,14 @@ def _j_long_range_ewald_gradient_multi_k(
         [np.asarray(c.r_cart, dtype=float) for c in cells], dtype=float
     )
     cache = _build_j_long_range_cache(
-        basis, system, cells_r_cart, alpha, precision, K_max=K_max
-    )
+        basis, system, cells_r_cart, alpha, precision, K_max=K_max, lattice_opts=lattice_opts)
     K_vec = cache.K_vectors
     kernel = cache.kernel
     ft = cache.ft_per_cell  # (n_g, nbf, nbf, n_K)
 
     # FT centre gradients (shared across k-points)
-    grad_bra, grad_ket = ao_pair_fourier_transform_grad_at_cells(
-        basis, K_vec, cells_r_cart
-    )
+    grad_bra, grad_ket = _pair_ft_gradient_at_cells(
+        basis, K_vec, cells_r_cart, lattice_opts=lattice_opts)
     corr = _libint_ylm_correction_per_ao(basis)
     cc = corr[:, None] * corr[None, :]
     grad_bra = grad_bra * cc[None, :, :, None, None]
@@ -5340,16 +5405,14 @@ def _compute_bipole_gradient(
                 D_real,
                 kmesh,
                 float(ewald_alpha),
-                per_k_jlr_densities,
-            )
+                per_k_jlr_densities, lattice_opts=lattice_opts)
         else:
             grad += _j_long_range_ewald_gradient(
                 system,
                 basis,
                 D_real,
                 float(ewald_alpha),
-                gamma_local=(n_k == 1),
-            )
+                gamma_local=(n_k == 1), lattice_opts=lattice_opts)
         # Post-SCF EXT EL-SPHEROPOLE term (K=0 spheropole coupling), part of
         # the BIPOLE total energy and therefore of its gradient.
         grad += _spheropole_ewald_gradient(system, basis, D_real, lattice_opts)
@@ -5476,6 +5539,8 @@ def _compute_bipole_gradient_corrected_gamma(
     historical domain (MgO/STO-3G, 2026-06-15); the M5 padded-domain gate is
     maintained separately.
     """
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     from .bipole_fock_ewald import (
         exchange_q0_gauge_constant,
         probe_charge_madelung,
@@ -5490,7 +5555,7 @@ def _compute_bipole_gradient_corrected_gamma(
     sr_internal_cells = (
         []
         if sr_image_extent_bohr is None
-        else list(direct_lattice_cells(system, float(sr_image_extent_bohr)))
+        else list(_sr_internal_cells(basis, system, lattice_opts, sr_image_extent_bohr))
     )
     if sr_image_extent_bohr is not None and not sr_density_cells:
         raise ValueError(
@@ -5532,7 +5597,7 @@ def _compute_bipole_gradient_corrected_gamma(
                 basis, sr_density_domain, Dg_sr
             )
         sr_output_cells = (
-            list(Dg.cells)
+            (sr_internal_cells if lattice_opts.pair_complete_1e else list(Dg.cells))
             if sr_output_cells is None
             else list(sr_output_cells)
         )
@@ -5616,8 +5681,7 @@ def _compute_bipole_gradient_corrected_gamma(
                 )
             )
             gx = gx + a_hf * _k_long_range_ewald_gradient(
-                system, basis, Dgx_lr, alpha
-            )
+                system, basis, Dgx_lr, alpha, lattice_opts=lattice_opts)
             Mx_set = compute_overlap_lattice(basis, system, lat)
             _gamma_lattice_set(Mx_set, blk @ S_gamma @ blk)
             gx = gx + a_hf * 0.5 * c_g0 * np.asarray(
@@ -5648,8 +5712,7 @@ def _compute_bipole_gradient_corrected_gamma(
         )
     )
     grad += _j_long_range_ewald_gradient(
-        system, basis, Dg_lr, alpha, gamma_local=True
-    )
+        system, basis, Dg_lr, alpha, gamma_local=True, lattice_opts=lattice_opts)
     return grad
 
 
@@ -5713,8 +5776,7 @@ def _k_long_range_ewald_gradient_multi_k(
         dtype=float,
     )
     j_cache = _build_j_long_range_cache(
-        basis, system, cells_r, alpha, precision, K_max=K_max
-    )
+        basis, system, cells_r, alpha, precision, K_max=K_max, lattice_opts=lattice_opts)
     x_cache = build_k_exchange_long_range_cache(basis, system, j_cache, K_max=K_max)
     corr = _libint_ylm_correction_per_ao(basis)
     cc = corr[:, None] * corr[None, :]
@@ -5733,9 +5795,8 @@ def _k_long_range_ewald_gradient_multi_k(
                 K_vec = j_cache.K_vectors
             else:
                 K_vec = x_cache.q_channels[key].K_vectors
-            grad_bra, grad_ket = ao_pair_fourier_transform_grad_at_cells(
-                basis, K_vec, cells_r
-            )
+            grad_bra, grad_ket = _pair_ft_gradient_at_cells(
+                basis, K_vec, cells_r, lattice_opts=lattice_opts)
             phases = np.exp(-1j * (cells_r @ kp))
             dB_bra = np.einsum("g,gmnxk->mnxk", phases, grad_bra) * cc[:, :, None, None]
             dB_ket = np.einsum("g,gmnxk->mnxk", phases, grad_ket) * cc[:, :, None, None]
@@ -5856,6 +5917,8 @@ def _compute_bipole_gradient_corrected_multi_k(
     keeping the density support as the output domain. Ignored when a BIPOLE
     ``sr_image_extent_bohr`` padded traversal is supplied.
     """
+    if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
+        lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     from .periodic_k_symmetry import density_set_from_k_matrices
 
     lat = lattice_opts
@@ -5986,7 +6049,7 @@ def _compute_bipole_gradient_corrected_multi_k(
     sr_internal_cells = (
         []
         if sr_image_extent_bohr is None
-        else list(direct_lattice_cells(system, float(sr_image_extent_bohr)))
+        else list(_sr_internal_cells(basis, system, lattice_opts, sr_image_extent_bohr))
     )
     if sr_image_extent_bohr is None:
         D_sr_total = D_grad
@@ -5998,9 +6061,9 @@ def _compute_bipole_gradient_corrected_multi_k(
                 "traversal requires the SCF real-space density support"
             )
         D_sr_total = sr_density
-        sr_output_cells = list(
+        sr_output_cells = (sr_internal_cells if lat.pair_complete_1e else list(
             compute_overlap_lattice(basis, system, lat).cells
-        )
+        ))
 
     # #575. The Ewald multi-k SCF energies (RHF/RKS/UHF/UKS and the RHF
     # single-Gamma molecular-limit branch) evaluate the Hartree term with the
@@ -6154,8 +6217,7 @@ def _compute_bipole_gradient_corrected_multi_k(
         kmesh,
         alpha,
         per_k_D_total,
-        reciprocal_cutoff_bohr_inv=reciprocal_cutoff_bohr_inv,
-    )
+        reciprocal_cutoff_bohr_inv=reciprocal_cutoff_bohr_inv, lattice_opts=lattice_opts)
     if m5_delta_f_k is not None:
         if open_shell:
             grad += _multi_k_orbital_relaxation_open(
@@ -7063,6 +7125,19 @@ def _periodic_xc_grid_motion_correction_uks(
     return moving - np.asarray(fixed_grid_gradient, dtype=np.float64)
 
 
+def _ks_gradient_lattice_options(lattice_opts, use_periodic_becke, image_radius):
+    """Match the SCF's periodic XC reach without mutating caller options."""
+    if not use_periodic_becke:
+        return lattice_opts
+    from .pbc_bipole_common import _lattice_options_passthrough
+
+    source = lattice_opts if lattice_opts is not None else LatticeSumOptions()
+    out = _lattice_options_passthrough(source)
+    out.coulomb_method = source.coulomb_method
+    out.becke_image_radius_bohr = float(image_radius)
+    return out
+
+
 def compute_bipole_gradient_rks(
     system: PeriodicSystem,
     basis: BasisSet,
@@ -7102,6 +7177,9 @@ def compute_bipole_gradient_rks(
     """
     _reject_m5_domain_analytic_gradient(result, "rks")
     _warn_research_preview("rks")
+    lattice_opts = _ks_gradient_lattice_options(
+        lattice_opts, use_periodic_becke, becke_image_radius_bohr
+    )
     if getattr(result, "exchange_ewald_split", False):
         # Corrected (Ewald-exchange-split) gauge at Γ: the standard
         # variational HF/KS gradient core + the XC Pulay; no Bloch-CPHF.
@@ -7439,6 +7517,9 @@ def compute_bipole_gradient_uks(
     """
     _reject_m5_domain_analytic_gradient(result, "uks")
     _warn_research_preview("uks")
+    lattice_opts = _ks_gradient_lattice_options(
+        lattice_opts, use_periodic_becke, becke_image_radius_bohr
+    )
     if getattr(result, "exchange_ewald_split", False):
         # Corrected (Ewald-exchange-split) gauge at Γ: standard variational
         # UKS gradient (no Bloch-CPHF) -- spin-resolved exchange + per-spin

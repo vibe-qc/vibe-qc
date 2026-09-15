@@ -1,6 +1,6 @@
 # Feature matrix
 
-The capability matrix for the **v0.15.x** release line (codename *Neese's Cheetah*).
+The capability matrix for the source revision used to build these docs.
 For when each feature shipped, see
 [`CHANGELOG.md`](https://github.com/vibe-qc/vibe-qc/blob/main/CHANGELOG.md).
 For what's coming next, see [`roadmap.md`](roadmap.md).
@@ -160,8 +160,19 @@ see [`user_guide/density_fitting.md`](user_guide/density_fitting.md).
 ## Periodic SCF (native GDF / GPW / BIPOLE / Γ-CCM / χ-CCM)
 
 Γ-CCM and χ-CCM[^xccm-convention] are distinct union-and-weight and
-finite-translation-group character approaches. The code selectors remain
-`aiccm2026dev-a` and `aiccm2026dev-b`.
+finite-translation-group character approaches.
+
+The front door is `run_periodic_job(method="aiccm", variant=...)`, where
+`variant` names the formulation and is **mandatory**; the method name does
+not imply one. The four variants are `"real-gamma"`, `"neutral-bloch"`,
+`"four-center"` and `"chi"`. There is deliberately no `variant="gamma"`:
+ruling R1 makes Γ-CCM the *neutral* construction with two admissible
+producers (`real-gamma` and `neutral-bloch`), so the bare word is ambiguous
+and fails closed naming both. The SCF reference is inferred from the
+functional and the cell's multiplicity unless `scf_reference=` selects a
+restricted open-shell one. The legacy `jk_method="aiccm2026dev-a"` /
+`"aiccm2026dev-b"` spellings still resolve, each with a `DeprecationWarning`
+naming the `variant` form. The whole line stays experimental.
 
 [^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM construction approaches:
     union-and-weight/Wigner-Seitz integral weighting and finite-translation-group
@@ -179,8 +190,11 @@ finite-translation-group character approaches. The code selectors remain
 | RIJCOSX periodic SCF | `run_periodic_job(jk_method="rijcosx")` | Gamma RHF; vacuum-padded Gamma RKS/UHF/UKS; true multi-k RHF/RKS/UHF/UKS | RI-J from the native GDF loop plus periodic COSX exchange (`k_exchange="cosx"`) on true multi-k meshes (weighted full-BZ quadratures supported); one-cell tight-cell RKS/UHF/UKS fail closed rather than relabeling a GDF-only route |
 | χ-CCM SCF / post-HF | `run_aiccm2026dev_b_rhf/rks/uhf/uks`, restricted and unrestricted MP2/CCSD(T)/PNO APIs; `run_periodic_job(jk_method="aiccm2026dev-b")` | real-space cyclic lattice extension, 3D absolute energies only | finite-character (Γ-centred character-mesh) CCM with four-centre, RI, and RIJCOSX restricted/unrestricted SCF plus 3D finite-torus correlation; every 1D/2D B backend fails closed pending a shared wire/slab Coulomb convention; local CC remains an O(N^6) correctness pilot, not production reduced scaling |
 | χ-CCM RI-MP2 | `run_aiccm2026dev_b_mp2` | finite cyclic mesh, 3D | momentum-conserving canonical RI-MP2 on the χ-CCM RI-RHF reference; external KMP2 parity; experimental |
-| Γ-CCM / aiccm2026dev-a | `vibeqc.periodic.ccm`, `method="aiccm2026dev-a"`; `run_ccm_rhf`, `run_ccm_rks`, `run_ccm_mp2`, `run_ccm_ump2`, `run_ccm_ccsd` | real-space cyclic cluster extension (nrep) | union-and-weight/Wigner-Seitz integral-weighting CCM: HF/KS with the four-center construction, construction-specific RIJCOSX research, MP2/UMP2, CCSD(T), analytic gradients, properties, localization, and symmetry; experimental (every SCF driver emits `AICCM2026DevAExperimentalWarning`) |
-| A-namespace neutral fitted-torus controls | `run_ccm_rhf_gdf`, `run_ccm_rhf_direct`, `run_ccm_ri_mp2`, `run_ccm_ri_ccsd`, `run_ccm_uccsd`, `ccm_dlpno_*` | separately declared finite-torus control operator | character/Bloch and real-Gamma evaluations plus restricted/unrestricted canonical and DLPNO correlation on the matching neutral control. These APIs are in `vibeqc.periodic.ccm` for historical reasons; they are not Γ-CCM or χ-CCM construction results; experimental (emit `AICCM2026DevAExperimentalWarning`) |
+| `variant="four-center"` (union-and-weight) | `run_periodic_job(method="aiccm", variant="four-center")`; library `vibeqc.periodic.ccm`, `run_ccm_rhf`, `run_ccm_rks`, `run_ccm_mp2`, `run_ccm_ump2`, `run_ccm_ccsd` | real-space cyclic cluster extension (nrep), dim=3 | union-and-weight/Wigner-Seitz integral-weighting CCM; the 2014 lineage, and under ruling R1 a *different construction* from the two neutral producers, not a representation of theirs. HF/KS, construction-specific RIJCOSX research, MP2/UMP2, CCSD(T), analytic gradients, properties, localization, symmetry. Experimental (every SCF driver emits `AICCM2026DevAExperimentalWarning`) |
+| `variant="real-gamma"` (neutral Γ-CCM producer) | `run_periodic_job(method="aiccm", variant="real-gamma")`; library `run_ccm_rhf_direct`, `run_ccm_ri_mp2`, `run_ccm_ri_ccsd`, `ccm_dlpno_*` | one real Γ-supercell (no k-mesh); the Γ-centred mesh IS the BvK torus | The neutral fitted-torus construction evaluated in its real-Γ representation. Carries the exchange-q=0 seam explicitly (`exchange_exxdiv`). Reports per-unit-cell energies; the library drivers underneath return total cyclic-cluster ones. Experimental |
+| `variant="neutral-bloch"` (neutral Γ-CCM producer) | `run_periodic_job(method="aiccm", variant="neutral-bloch")`; library `run_ccm_rhf_gdf` | finite BvK torus in its Bloch representation | The **same** neutral Hamiltonian as `real-gamma` in the other representation (ruling R1: one construction, two admissible producers). Correlation is not available here; the correlation drivers work in real-Γ supercell space; and the refusal names `real-gamma` as the exact substitute. Experimental |
+| AICCM correlation (`correlation=`) | `run_periodic_job(method="aiccm", variant=..., correlation="mp2" \| "ccsd" \| "dlpno-mp2" \| "dlpno-ccsd")` | follows the variant's SCF | Optional post-HF on top of the variant's own reference. The driver is chosen to MATCH the construction the SCF ran, never to substitute another, so each arm cites its own lineage and the two never share a citation row. `mp2` and `ccsd` run on `four-center` and `real-gamma`; the two DLPNO treatments are `real-gamma` only, because the bare four-centre operator has no RI decomposition. At their default zero truncations the DLPNO routes reproduce the canonical ones on the same reference to machine precision. Needs a Hartree-Fock reference. Experimental |
+| A-namespace neutral fitted-torus controls (library) | `run_ccm_rhf_gdf`, `run_ccm_rhf_direct`, `run_ccm_ri_mp2`, `run_ccm_ri_ccsd`, `run_ccm_uccsd`, `ccm_dlpno_*` | separately declared finite-torus control operator | The same drivers the two neutral variants use, reachable directly for control work. These APIs are in `vibeqc.periodic.ccm` for historical reasons; a bare call is not by itself a Γ-CCM or χ-CCM construction result; experimental (emit `AICCM2026DevAExperimentalWarning`) |
 | Cell-resolved DF integral blocks | `compute_2c_eri_lattice_blocks`, `compute_3c_eri_lattice_blocks`, `bloch_sum_*_eri_blocks`, `build_lpq_bloch_native` | dim=1/2/3 | native translation-resolved 2c/3c storage and Bloch/Lpq assembly for k-dependent GDF; Γ tensors are recovered by summing blocks |
 | 2D slab SCF (SLAB_EWALD_2D) | `run_periodic_job(jk_method="auto")` on a `dim=2` system; `vibeqc.slab_2d(a1, a2, atoms)` to build one | Γ + multi-k, dim=2 only | Rigorous vacuum-free 2D Ewald (Parry 1975; de Leeuw and Perram 1979) for RHF / RKS / UKS. No vacuum gap: the third lattice column is synthesized bookkeeping and the total energy is invariant to it; `E_nuclear` is k-mesh independent. AUTO selects it for every `dim=2` system. Explicit `jk_method="gdf"` is a bounded closed-shell RHF/RKS alternative with a signed slab-truncated fit and analytic gradients; BIPOLE / GPW / GAPW / RIJCOSX remain closed. Fermi-Dirac smearing and slab-GDF open shell are not shipped yet. |
 | BIPOLE RHF / UHF / RKS / UKS | `run_pbc_bipole_rhf`, `..._uhf`, `..._rks`, `..._uks` | Γ + multi-k, 3D through `run_periodic_job` | Production exact Ewald-J energy and finite-difference atomic-force route for closed- and open-shell periodic SCF. Fixed-cell atomic relaxation ships; variable-cell work fails closed. Analytic gradients remain a gated preview. The quartet multipole far-field prototypes are driver-unreachable: all four drivers default to `False`, and explicit `True` raises before setup |
@@ -427,7 +441,8 @@ pause/resume, multi-venv `--branch` routing. See
 | **QTAIM** (v0.15.0) | `vibeqc.qtaim.qtaim_analysis` | all | critical-point search + bond-path tracing; analytic C++ Hessian; QVF `topology.qtaim` |
 | **Fat bands** (v0.15.0) | `band_structure_projected` | periodic SCF | Mulliken-projected band weights; QVF `bands` projections |
 | **Wiberg bond indices + delocalization index** | `vibeqc.bond_analysis.wiberg_bond_orders` / `.delocalization_index` / `.bond_order_summary` | all | Löwdin-basis Wiberg 1968 index; AO-approximated DI; auto-emitted in `.population.{txt,json}` |
-| **NPA charges + NBO search** | `vibeqc.nbo.npa_charges` / `.nbo_search` / `.donor_acceptor_analysis` | all | Weinhold NPA (auto-emitted in `.population.*`); BD/LP/CR/BD*/RY* classification; E(2) donor-acceptor |
+| **NPA charges** | `vibeqc.nbo.npa_charges` / `.nbo_charges` | not implemented | Raises `NotImplementedError` until occupancy-weighted Natural Atomic Orbitals are implemented. Population sidecars retain an empty `npa` field and report `unavailable.npa`; no NPA calculation is attempted. |
+| **Provisional NBO search** | `vibeqc.nbo.nbo_search` / `.donor_acceptor_analysis` | exploratory Python API | Simplified orbital classification and E(2) donor-acceptor analysis; not a complete NAO/NBO implementation. See the [bond analysis guide](user_guide/bond_analysis.md). |
 | **Energy decomposition analysis** | `vibeqc.eda.eda_lmo` / `.eda_morokuma` | HF / DFT | LMO-EDA (Su-Li 2009) + Morokuma 1971 two-fragment decomposition |
 | **Orbital entanglement** | `vibeqc.entanglement.entanglement_from_density` / `.single_orbital_entropy` / `.mutual_information` | all | single-orbital entropy, mutual information, entanglement bond orders, correlation clusters |
 

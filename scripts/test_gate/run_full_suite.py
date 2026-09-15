@@ -35,6 +35,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -55,6 +56,8 @@ DEFAULT_SUITE_MANIFEST = Path(__file__).with_name("suite_manifest.json")
 GATE_TIERS = {"T0", "T1", "T2", "T3"}
 METHOD_MATURITY_STATES = {"production", "verified", "under-review", "experimental"}
 LANE_CLASSES = {"pre-cut blocking", "post-cut evaluation", "implementing-chat-only"}
+# A release line ("v0.18.x") or a forward track ("v2.0"). Never a single patch.
+TARGET_RELEASE_RE = re.compile(r"^v(\d+)\.(\d+)(?:\.x)?$")
 REQUIRED_LANE_METADATA = (
     "owner",
     "method_maturity",
@@ -158,14 +161,20 @@ def classify(rc, timed_out, counts) -> str:
     return f"RC_{rc}"
 
 
-def load_lane_manifest(path: Path) -> dict:
-    """Load the optional gate-lane manifest."""
+def _read_lane_manifest(path: Path) -> dict:
     with path.open() as fh:
         data = json.load(fh)
     lanes = data.get("lanes")
     if not isinstance(lanes, dict):
         raise ValueError(f"{path}: missing object field 'lanes'")
     validate_lane_manifest(data, path)
+    return data
+
+
+def load_lane_manifest(path: Path) -> dict:
+    """Load the optional gate-lane manifest."""
+    data = _read_lane_manifest(path)
+    _warn_stale_target_releases(data, path)
     return data
 
 
@@ -237,8 +246,14 @@ def validate_lane_manifest(data: dict, path: Path) -> None:
             raise ValueError(f"{path}: lane {name!r} has invalid lane_class {lane_class!r}")
         if lane["scientific_acceptance"] is not False:
             raise ValueError(f"{path}: lane {name!r} cannot accept scientific values")
-        if not lane.get("target_release"):
+        target_release = lane.get("target_release")
+        if not target_release:
             raise ValueError(f"{path}: lane {name!r} must name a target_release")
+        if not TARGET_RELEASE_RE.match(str(target_release)):
+            raise ValueError(
+                f"{path}: lane {name!r} has invalid target_release {target_release!r}; "
+                "expected a release line such as 'v0.18.x' or a forward track such as 'v2.0'"
+            )
         if not lane.get("required_full_calculation"):
             raise ValueError(
                 f"{path}: lane {name!r} must describe required_full_calculation"
@@ -289,6 +304,126 @@ def validate_lane_manifest(data: dict, path: Path) -> None:
                     f"{path}: profile {profile_name!r} cannot include experimental "
                     f"lane {lane_name!r}"
                 )
+
+
+def current_release_line(pyproject: Path) -> tuple[int, int] | None:
+    """Return the (major, minor) line of ``[project] version`` in *pyproject*.
+
+    ``target_release`` staleness is judged against this. It is read rather than
+    declared, so the check cannot rot the way a hand-maintained "current line"
+    constant would. Returns ``None`` when the file or version is unavailable.
+    """
+    try:
+        with pyproject.open("rb") as fh:
+            version = tomllib.load(fh)["project"]["version"]
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        return None
+    match = re.match(r"(\d+)\.(\d+)", str(version))
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _manifest_pyproject(path: Path) -> Path:
+    """The pyproject.toml of the repository a lane manifest belongs to."""
+    resolved = path.resolve()
+    try:
+        return resolved.parents[2] / "pyproject.toml"
+    except IndexError:
+        return resolved.with_name("pyproject.toml")
+
+
+def stale_target_release_report(manifest: dict, current_line: tuple[int, int]) -> dict:
+    """Classify ``target_release`` staleness against *current_line*.
+
+    A lane is stale when its release line is older than the repository's current
+    line; forward tracks such as ``v2.0`` are never stale. Stale lanes listed in
+    ``policy.known_stale_target_release.lanes`` are tolerated, mirroring
+    ``known_reds_baseline.json``: only an untracked stale lane, a tracked lane
+    that is no longer stale, or a tracked name that is not a lane needs action.
+    """
+    policy = manifest.get("policy") or {}
+    tracked = set((policy.get("known_stale_target_release") or {}).get("lanes") or [])
+    lanes = manifest["lanes"]
+    stale = set()
+    for name, lane in lanes.items():
+        match = TARGET_RELEASE_RE.match(str(lane.get("target_release", "")))
+        if match and (int(match.group(1)), int(match.group(2))) < current_line:
+            stale.add(name)
+    return {
+        "current_line": current_line,
+        "stale": sorted(stale),
+        "tracked": sorted(tracked & stale),
+        "untracked": sorted(stale - tracked),
+        "no_longer_stale": sorted((tracked & set(lanes)) - stale),
+        "unknown": sorted(tracked - set(lanes)),
+    }
+
+
+def _stale_target_release_problems(report: dict) -> list[str]:
+    line = "v{}.{}".format(*report["current_line"])
+    tracking = "policy.known_stale_target_release"
+    problems = [
+        f"lane {name!r} targets a release line older than {line}; "
+        f"its owning chat retargets it, or it is tracked in {tracking}"
+        for name in report["untracked"]
+    ]
+    problems += [
+        f"lane {name!r} is no longer stale; remove it from {tracking}"
+        for name in report["no_longer_stale"]
+    ]
+    problems += [
+        f"{tracking} names unknown lane {name!r}; remove it"
+        for name in report["unknown"]
+    ]
+    return problems
+
+
+def _warn_stale_target_releases(data: dict, path: Path) -> None:
+    """Report ``target_release`` staleness on stderr without failing the run.
+
+    Loading the manifest is the everyday lane workflow, and every version bump
+    makes the previous line stale at once, so failing here would break unrelated
+    lane runs. ``check_lane_manifest`` and the contract test enforce; this only
+    keeps the signal visible.
+    """
+    current_line = current_release_line(_manifest_pyproject(path))
+    if current_line is None:
+        return
+    for problem in _stale_target_release_problems(
+        stale_target_release_report(data, current_line)
+    ):
+        print(f"[triage] warning: {path.name}: {problem}", file=sys.stderr)
+
+
+def check_lane_manifest(path: Path) -> int:
+    """Validate the lane manifest, including ``target_release`` staleness.
+
+    Returns a process exit code: 0 when every stale lane is tracked, 1 when
+    action is needed or the current release line cannot be read. Nothing here
+    imports vibeqc, so this is the form of the check any CI job can enforce.
+    """
+    try:
+        data = _read_lane_manifest(path)
+    except (OSError, ValueError) as exc:
+        print(f"[triage] lane manifest invalid: {exc}", file=sys.stderr)
+        return 1
+    pyproject = _manifest_pyproject(path)
+    current_line = current_release_line(pyproject)
+    if current_line is None:
+        print(f"[triage] cannot read the current release line from {pyproject}", file=sys.stderr)
+        return 1
+    report = stale_target_release_report(data, current_line)
+    ref = ((data.get("policy") or {}).get("known_stale_target_release") or {}).get("ref")
+    tracked_note = f" ({ref})" if ref else ""
+    print(
+        "[triage] target_release checked against v{}.{}: ".format(*current_line)
+        + f"{len(report['stale'])} stale, {len(report['tracked'])} tracked{tracked_note}"
+    )
+    problems = _stale_target_release_problems(report)
+    for problem in problems:
+        print(f"[triage] {problem}", file=sys.stderr)
+    return 1 if problems else 0
 
 
 def profile_lane_names(manifest: dict, profile_name: str, mode: str) -> list[str]:
@@ -737,6 +872,11 @@ def main():
         ),
     )
     ap.add_argument("--list-affected-lanes", action="store_true", help="print lanes inferred by --changed-since and exit")
+    ap.add_argument(
+        "--check-lane-manifest",
+        action="store_true",
+        help="validate lane_manifest.json, including target_release staleness, and exit non-zero on problems",
+    )
     ap.add_argument("--dry-run", action="store_true", help="print selected test targets and exit")
     args = ap.parse_args()
 
@@ -761,10 +901,13 @@ def main():
         or args.list_profiles
         or args.changed_since
         or args.list_affected_lanes
+        or args.check_lane_manifest
     ):
         manifest_path = Path(args.lane_manifest)
         if not manifest_path.is_absolute():
             manifest_path = (wt / manifest_path).resolve()
+        if args.check_lane_manifest:
+            raise SystemExit(check_lane_manifest(manifest_path))
         manifest = load_lane_manifest(manifest_path)
         if args.list_lanes:
             print_lanes(manifest)

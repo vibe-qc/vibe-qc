@@ -200,6 +200,7 @@ def _transition_mode_from_hessian(
     functional: Optional[str], rhf_options, uhf_options, rks_options,
     uks_options, rohf_options, gradient_options, grid_options,
     hessian_step_bohr: float,
+    grid_level: str = "orca-defgrid3",
 ) -> "tuple[np.ndarray, np.ndarray]":
     """Compute the FD Hessian at the TS and return ``(mode_cart, masses_amu)``.
 
@@ -226,6 +227,7 @@ def _transition_mode_from_hessian(
     hres = compute_hessian_fd(
         ts, basis, method=method.upper(), scf_options=scf_opts,
         grid_options=grid_options, gradient_options=gradient_options,
+        grid_level=grid_level,
         hessian_options=HessianFDOptions(step_bohr=hessian_step_bohr))
     if float(hres.frequencies_cm1[0]) > -1.0:
         warnings.warn(
@@ -258,6 +260,7 @@ def run_irc(
     roks_options: Any = None,
     gradient_options: Any = None,
     grid_options: Any = None,
+    grid_level: str = "orca-defgrid3",
     dispersion_params: Any = None,
     mlip_options: Any = None,
     hessian_step_bohr: float = 0.005,
@@ -375,7 +378,8 @@ def run_irc(
         rohf_options=rohf_options, roks_options=roks_options,
         gradient_options=gradient_options, grid_options=grid_options,
         dispersion_params=dispersion_params, mlip_options=mlip_options,
-        kmesh=None, fd_step_bohr=fd_step_bohr, dft_plus_u=None)
+        kmesh=None, fd_step_bohr=fd_step_bohr, dft_plus_u=None,
+        grid_level=grid_level)
 
     def grad_fn(positions: np.ndarray) -> "tuple[float, np.ndarray]":
         e, f = force_fn(positions)
@@ -395,7 +399,8 @@ def run_irc(
             rhf_options=rhf_options, uhf_options=uhf_options,
             rks_options=rks_options, uks_options=uks_options,
             rohf_options=rohf_options, gradient_options=gradient_options,
-            grid_options=grid_options, hessian_step_bohr=hessian_step_bohr)
+            grid_options=grid_options, hessian_step_bohr=hessian_step_bohr,
+            grid_level=grid_level)
 
     def _branch(sign: float):
         pos, en, conv = _irc_branch(

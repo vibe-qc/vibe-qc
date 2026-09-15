@@ -249,6 +249,11 @@ def ewald_3d_j_blocks(
         )
 
     # Legacy diagnostic backend: Ewald split J_SR + FFT-Poisson J_LR.
+    if opts.pair_complete_1e:
+        raise NotImplementedError(
+            "The diagnostic grid Hartree backend does not implement physical "
+            "quartet support; use VIBEQC_J_EWALD3D_BACKEND=analytic_ft."
+        )
     J_SR_lms = build_fock_2e_real_space(
         basis,
         system,
@@ -496,6 +501,7 @@ def build_periodic_j_ewald3d_k_from_k_density(
     cells,
     omega: float,
     *,
+    lattice_opts: Optional[LatticeSumOptions] = None,
     ke_cutoff: Optional[float] = None,
     reciprocal_chunk_size: int = 512,
     cell_chunk_size: Optional[int] = None,
@@ -532,6 +538,7 @@ def build_periodic_j_ewald3d_k_from_k_density(
         weights,
         cell_list,
         float(omega),
+        lattice_opts=lattice_opts,
         ke_cutoff=ke,
         chunk_size=int(reciprocal_chunk_size),
         cell_chunk_size=cell_chunk_size,

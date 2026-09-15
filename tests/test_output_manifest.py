@@ -516,3 +516,176 @@ def test_progress_survives_multiple_updates(tmp_path: Path) -> None:
     updater.update_progress(iteration=6, energy_eh=-73.49)
     body = _read_manifest(updater.path)
     assert body["progress"]["iteration"] == 6
+
+
+# ---------------------------------------------------------------------------
+# Rewrites stay in the job directory after the process changes directory
+# (vibe-qc#127: a ``pilot.system`` escaped into the checkout root while
+# ``pilot.out`` landed in the job's tmp_path)
+# ---------------------------------------------------------------------------
+
+
+def _relative_plan(stem: str) -> OutputPlan:
+    """A plan spelled the way ``run_job(output="pilot")`` spells it."""
+    return OutputPlan.from_run_job_kwargs(
+        output=stem, method="rhf", basis="sto-3g", functional=None,
+    )
+
+
+def _job_and_elsewhere(tmp_path: Path) -> tuple[Path, Path]:
+    job_dir = tmp_path / "job"
+    elsewhere = tmp_path / "elsewhere"
+    job_dir.mkdir()
+    elsewhere.mkdir()
+    return job_dir, elsewhere
+
+
+def test_relative_stem_is_anchored_to_the_job_start_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job_dir, _ = _job_and_elsewhere(tmp_path)
+    monkeypatch.chdir(job_dir)
+    updater = ManifestUpdater(_relative_plan("pilot"))
+    assert updater.path.is_absolute()
+    assert updater.path.resolve() == (job_dir / "pilot.system").resolve()
+    assert (job_dir / "pilot.system").is_file()
+
+
+def test_deferred_rewrites_stay_in_the_job_directory_after_chdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Progress heartbeat, wall-clock stamp and finish all fire after the
+    cwd moved. Each must rewrite the manifest where the job started, and
+    none may drop a copy where the process happens to be now."""
+    job_dir, elsewhere = _job_and_elsewhere(tmp_path)
+    monkeypatch.chdir(job_dir)
+    plan = _relative_plan("pilot")
+    updater = ManifestUpdater(plan)
+    _mark_guaranteed_written(plan, updater.mark_written)
+
+    monkeypatch.chdir(elsewhere)
+    updater.update_progress(phase="scf", iteration=3, energy_eh=-1.0)
+    updater.update_wall_seconds(2.0)
+    updater.update_run_fields({"late_bound": "yes"})
+    updater.finish(wall_seconds=3.0)
+
+    assert sorted(p.name for p in elsewhere.iterdir()) == []
+    body = _read_manifest(job_dir / "pilot.system")
+    assert body["outputs"]["status"] == "complete"
+    assert body["progress"]["iteration"] == 3
+    assert body["run"]["late_bound"] == "yes"
+    assert body["run"]["wall_seconds"] == pytest.approx(3.0)
+
+
+def test_anchoring_does_not_leak_absolute_paths_into_the_manifest_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The anchor is an on-disk concern: rendered rows keep the declared
+    relative spelling and the self row stays a single row.
+
+    This guards the fix's design rather than the original symptom. A fix
+    that made ``_path`` absolute and looked the self row up by it would
+    miss the declared ``pilot.system`` row after a chdir and append an
+    absolute duplicate; a consumer keyed on the declared spelling would
+    then read a stale ``written = false`` row."""
+    job_dir, elsewhere = _job_and_elsewhere(tmp_path)
+    monkeypatch.chdir(job_dir)
+    plan = _relative_plan("pilot")
+    updater = ManifestUpdater(plan)
+    _mark_guaranteed_written(plan, updater.mark_written)
+    monkeypatch.chdir(elsewhere)
+    updater.finish()
+
+    body = _read_manifest(job_dir / "pilot.system")
+    plan_paths = [row["path"] for row in body["plan"]["files"]]
+    out_paths = [row["path"] for row in body["outputs"]["files"]]
+    assert "pilot.system" in plan_paths
+    assert "pilot.out" in plan_paths
+    assert out_paths.count("pilot.system") == 1
+    assert "pilot.out" in out_paths
+    assert not any(Path(p).is_absolute() for p in plan_paths + out_paths)
+    self_row = next(
+        row for row in body["outputs"]["files"] if row["path"] == "pilot.system"
+    )
+    assert self_row["written"] is True
+    assert self_row["checksum_status"] == "self-excluded"
+
+
+def test_mark_written_probes_the_job_directory_after_chdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recording a plan-relative artefact from another cwd must hash the
+    file in the job directory, not report it missing."""
+    job_dir, elsewhere = _job_and_elsewhere(tmp_path)
+    monkeypatch.chdir(job_dir)
+    updater = ManifestUpdater(_relative_plan("pilot"))
+    payload = b"reference energy -1.0\n"
+    (job_dir / "pilot.out").write_bytes(payload)
+
+    monkeypatch.chdir(elsewhere)
+    updater.mark_written(Path("pilot.out"), wall_time_s=0.5)
+
+    assert not (elsewhere / "pilot.system").exists()
+    rows = {
+        row["path"]: row
+        for row in _read_manifest(job_dir / "pilot.system")["outputs"]["files"]
+    }
+    assert rows["pilot.out"]["written"] is True
+    assert rows["pilot.out"]["bytes"] == len(payload)
+    assert rows["pilot.out"]["checksum_status"] == "sha256"
+    assert len(rows["pilot.out"]["sha256"]) == 64
+
+
+@pytest.mark.parametrize("spelling", ["absolute", "relative"])
+def test_self_record_after_chdir_matches_the_declared_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spelling: str
+) -> None:
+    """Recording the manifest itself from another cwd, by either its
+    absolute on-disk spelling or its declared relative one, must hit the
+    declared ``pilot.system`` row, never hash the manifest, and never
+    append a second row."""
+    import vibeqc.output.manifest as manifest_module
+
+    job_dir, elsewhere = _job_and_elsewhere(tmp_path)
+    monkeypatch.chdir(job_dir)
+    updater = ManifestUpdater(_relative_plan("pilot"))
+    monkeypatch.chdir(elsewhere)
+
+    def _must_not_hash(path: Path) -> tuple[int | None, str | None]:
+        raise AssertionError(f"attempted impossible self-hash for {path}")
+
+    monkeypatch.setattr(manifest_module, "_stat_and_hash", _must_not_hash)
+    target = updater.path if spelling == "absolute" else Path("pilot.system")
+    updater.mark_written(target)
+
+    assert not (elsewhere / "pilot.system").exists()
+    body = _read_manifest(job_dir / "pilot.system")
+    paths = [row["path"] for row in body["outputs"]["files"]]
+    assert paths.count("pilot.system") == 1
+    assert not any(Path(p).is_absolute() for p in paths)
+    self_row = next(r for r in body["outputs"]["files"] if r["path"] == "pilot.system")
+    assert self_row["written"] is True
+    assert self_row["checksum_status"] == "self-excluded"
+    assert self_row["bytes"] == 0
+    assert self_row["sha256"] == ""
+
+
+def test_output_writer_manifest_path_survives_chdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The coordinator's view is the same anchored path, and its own
+    late calls (heartbeat, finish) land in the job directory."""
+    job_dir, elsewhere = _job_and_elsewhere(tmp_path)
+    monkeypatch.chdir(job_dir)
+    plan = _relative_plan("pilot")
+    w = OutputWriter(plan)
+    assert w.manifest_path.is_absolute()
+    assert w.manifest_path.resolve() == (job_dir / "pilot.system").resolve()
+    _mark_guaranteed_written(plan, w.record)
+
+    monkeypatch.chdir(elsewhere)
+    w.update_progress(phase="scf", iteration=1, energy_eh=-1.0)
+    w.finish()
+
+    assert sorted(p.name for p in elsewhere.iterdir()) == []
+    assert _read_manifest(job_dir / "pilot.system")["outputs"]["status"] == "complete"

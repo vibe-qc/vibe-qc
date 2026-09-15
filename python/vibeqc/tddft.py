@@ -894,6 +894,7 @@ def run_tddft_tda(
     functional: Optional[str] = None,
     density_ao: Optional[np.ndarray] = None,
     output: Optional[Union[str, os.PathLike]] = None,
+    grid_options: Optional[GridOptions] = None,
 ) -> TDDFTResult:
     """Compute vertical excitation energies via the Tamm-Dancoff
     approximation (CIS for HF, TDA-DFT for DFT).
@@ -918,6 +919,9 @@ def run_tddft_tda(
         Number of occupied MOs (RHF: n_electrons / 2; UHF: n_alpha).
     n_states : int
         Number of excited states to compute.
+    grid_options : GridOptions or None
+        XC response grid. Pass the reference SCF grid for consistency;
+        None preserves the low-level grid default.
     functional : str or None
         XC functional of the ground-state reference; ``None`` for pure
         HF/CIS. Sets the exact-exchange coefficient of the response
@@ -958,6 +962,7 @@ def run_tddft_tda(
             mo_coeff,
             density_ao,
             n_occ,
+            grid_options=grid_options,
         )
     elif functional is not None and c_x != 0.0:
         _warn_hybrid_without_fxc(functional, c_x, "no density_ao provided")
@@ -1079,6 +1084,7 @@ def run_tddft_casida(
     functional: Optional[str] = None,
     density_ao: Optional[np.ndarray] = None,
     output: Optional[Union[str, os.PathLike]] = None,
+    grid_options: Optional[GridOptions] = None,
 ) -> TDDFTResult:
     """Compute vertical excitation energies via the full Casida equation
     (linear-response TDDFT / TD-HF).
@@ -1102,6 +1108,9 @@ def run_tddft_casida(
         Number of occupied MOs.
     n_states : int
         Number of excited states to compute.
+    grid_options : GridOptions or None
+        XC response grid. Pass the reference SCF grid for consistency;
+        None preserves the low-level grid default.
     functional : str or None
         XC functional of the ground-state reference; ``None`` for pure
         HF/TDHF. Sets the exact-exchange coefficient of the response
@@ -1145,6 +1154,7 @@ def run_tddft_casida(
             mo_coeff,
             density_ao,
             n_occ,
+            grid_options=grid_options,
         )
     elif functional is not None and c_x != 0.0:
         _warn_hybrid_without_fxc(functional, c_x, "no density_ao provided")
@@ -1547,6 +1557,7 @@ def run_tddft_tda_uhf(
     density_alpha_ao: Optional[np.ndarray] = None,
     density_beta_ao: Optional[np.ndarray] = None,
     output: Optional[Union[str, os.PathLike]] = None,
+    grid_options: Optional[GridOptions] = None,
 ) -> TDDFTResult:
     """UHF Tamm-Dancoff approximation (UCIS for UHF).
 
@@ -1556,6 +1567,9 @@ def run_tddft_tda_uhf(
     mo_energies_a, mo_energies_b : alpha/beta MO energies
     mo_coeffs_a, mo_coeffs_b : alpha/beta MO coefficients
     n_occ_a, n_occ_b : occupied alpha/beta orbitals
+    grid_options : GridOptions or None
+        XC response grid. Pass the reference SCF grid for consistency;
+        None preserves the low-level grid default.
     n_states : number of excited states
     functional : XC functional of the ground-state reference, or None
         for UHF/UCIS. Sets the exact-exchange coefficient of the
@@ -1591,6 +1605,7 @@ def run_tddft_tda_uhf(
             np.asarray(density_beta_ao, dtype=float),
             n_occ_a,
             n_occ_b,
+            grid_options=grid_options,
         )
     elif functional is not None and c_x != 0.0:
         _warn_hybrid_without_fxc(
@@ -1687,8 +1702,13 @@ def run_tddft_casida_uhf(
     density_alpha_ao: Optional[np.ndarray] = None,
     density_beta_ao: Optional[np.ndarray] = None,
     output: Optional[Union[str, os.PathLike]] = None,
+    grid_options: Optional[GridOptions] = None,
 ) -> TDDFTResult:
-    """Full unrestricted Casida TDDFT/TDHF for UHF/UKS references."""
+    """Full unrestricted Casida TDDFT/TDHF for UHF/UKS references.
+
+    ``grid_options`` selects the XC response grid; pass the reference SCF
+    grid for consistency. None preserves the low-level grid default.
+    """
     n_virt_a = mo_energies_a.shape[0] - n_occ_a
     n_virt_b = mo_energies_b.shape[0] - n_occ_b
     n_total = n_occ_a * n_virt_a + n_occ_b * n_virt_b
@@ -1712,6 +1732,7 @@ def run_tddft_casida_uhf(
             np.asarray(density_beta_ao, dtype=float),
             n_occ_a,
             n_occ_b,
+            grid_options=grid_options,
         )
     elif functional is not None and c_x != 0.0:
         _warn_hybrid_without_fxc(

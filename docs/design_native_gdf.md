@@ -462,9 +462,15 @@ spin Fock. Integrated populations contract the accepted spin density,
 including orbital coherence, rather than a canonical refill. Returned
 payloads label the energy operator, projection operator, shared orbital
 basis and unvalidated status. Such curves are physical-spin-Fock projections
-on effective energies, not physical-spin-Fock eigenspectra. Public ROHF
-property output remains guarded until artifact provenance and numerical
-acceptance are complete. Pending witnesses cover complex operators,
+on effective energies, not physical-spin-Fock eigenspectra. The QVF writer
+preserves all five diagnostic labels in DOS, PDOS, COOP and COHP sections,
+and in the two pair-metadata members. It requires complete nonempty string
+labels whenever a payload supplies any of them, before writing spectral
+members. Ordinary payloads without labels retain their existing representation.
+Pending archive witnesses check section/member agreement, member hashes,
+schema validation and rejection before writes. Public ROHF property output
+remains guarded until consumer interpretation and numerical acceptance are
+complete. Pending numerical witnesses cover complex operators,
 non-idempotent densities, nonuniform k weights, eigenpair rejection and
 memory admission; no new numerical witness has run.
 These tests have not run; the synthetic factors isolate assembly and do
@@ -504,6 +510,27 @@ Pending tests exercise restricted and separate spins, nonorthogonal AOs,
 retained overlap subspaces, degenerate states, tiny fractional occupations,
 the `W -> W + lambda D_total` energy-origin shift, inconsistent-state refusal
 and memory admission. These numerical tests remain unrun.
+
+The separate private ROHF helper uses the molecular determinant expression
+`W = Da Fa Da + Db Fb Db` with complex AO matrices. It preserves occupied
+off-diagonal physical-Fock elements that an effective-eigenvalue refill
+would omit. Shared retained orbitals supply coordinates for state checks;
+they need not diagonalize either spin Fock. The helper requires Hermitian
+inputs, S-orthonormality, retained-density support, idempotent spin projectors
+and `Pa Pb = Pb`. Its stationarity condition is the k-weighted norm of
+`[Ga, Pa] + [Gb, Pb]` in the shared retained space. Individual spin
+commutators can be nonzero and cancel. This norm has its own explicit
+tolerance; it is not silently equated to the driver's effective-Fock norm.
+
+Cache, borrowed state, returned W and serial workspace are admitted before
+matrix work. Returned AO blocks are read-only and contain no k weights or
+extra spin factors. Fractional or damped states outside the determinant
+tolerance are rejected. Pending witnesses cover complex nonorthogonal and
+truncated spaces, shared-coordinate invariance, energy-origin shifts, an
+independent overlap variation and invalid-state/admission checks. They have
+not run. The helper is not yet wired to a complete periodic ROHF gradient;
+source response, one-electron/Pulay composition and full force acceptance
+remain outstanding.
 
 The streamed MDF gradient now admits its response after reciprocal
 enumeration but before raw integral evaluation. A shared reservation covers

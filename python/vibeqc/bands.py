@@ -55,6 +55,8 @@ from ._vibeqc_core import (
     monkhorst_pack,
 )
 from .basis_crystal import _ELEMENT_SYMBOLS
+from .properties import _shell_nao
+from .properties import _shell_to_atom as _canonical_shell_to_atom
 
 # Hartree -> eV conversion (CODATA 2018).  Same constant as in the QVF writer;
 # duplicated here to keep bands.py importable without output/.
@@ -648,20 +650,24 @@ _L_LETTERS = ("s", "p", "d", "f", "g", "h")
 
 def _shell_to_atom(basis: BasisSet) -> np.ndarray:
     """Length-``nbasis`` int array mapping each AO to the 0-based atom
-    it lives on. Mirrors the helper in :mod:`vibeqc.properties`; copied
-    here to keep ``bands`` independent of ``properties``."""
-    per_ao: List[int] = []
-    for shell in basis.shells():
-        n = 2 * int(shell.l) + 1  # vibe-qc forces pure spherical AOs
-        per_ao.extend([int(shell.atom_index)] * n)
-    return np.asarray(per_ao, dtype=np.int64)
+    it lives on. Re-exported from :mod:`vibeqc.properties`, which owns
+    the canonical derivation; ``bands`` used to carry its own copy that
+    assumed pure spherical AOs and so came out short on a Cartesian
+    basis. ``properties`` pulls in nothing from ``bands``, so this is
+    not a cycle."""
+    return _canonical_shell_to_atom(basis)
 
 
 def _shell_to_l(basis: BasisSet) -> np.ndarray:
-    """Length-``nbasis`` int array mapping each AO to its shell's l."""
+    """Length-``nbasis`` int array mapping each AO to its shell's l.
+
+    Shares :func:`vibeqc.properties._shell_nao` with
+    :func:`_shell_to_atom` so the two arrays stay the same length on a
+    Cartesian basis; callers such as :func:`ao_groups_per_atom_l` mask
+    one against the other."""
     per_ao: List[int] = []
     for shell in basis.shells():
-        per_ao.extend([int(shell.l)] * (2 * int(shell.l) + 1))
+        per_ao.extend([int(shell.l)] * _shell_nao(shell))
     return np.asarray(per_ao, dtype=np.int64)
 
 

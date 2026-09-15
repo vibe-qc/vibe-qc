@@ -753,12 +753,21 @@ def run_rhf_periodic_multi_k_ewald3d(
             "over a 12-to-20-bohr lattice cutoff sweep. Use "
             "exchange_exxdiv='ewald' or the default."
         )
+    if exchange_exxdiv == "none" and lat_opts.pair_complete_1e:
+        raise NotImplementedError(
+            "Physical quartet support uses the periodic density at Gamma "
+            "and requires corrected exchange; use exchange_exxdiv='ewald' "
+            "or the default."
+        )
     # This flag is the gauge, not the mesh: everything keyed on it below --
     # the density localisation, the Gamma J closure, the Fock build, the ODA
     # rebuild and the final self-consistency pass -- selects the
     # molecular-limit kernel together, and asking for 'ewald' means the
     # single-Gamma mesh is served by the ordinary multi-k machinery.
-    single_gamma_kmesh = single_gamma_mesh and exchange_exxdiv != "ewald"
+    single_gamma_kmesh = (
+        single_gamma_mesh and exchange_exxdiv != "ewald"
+        and not lat_opts.pair_complete_1e
+    )
     plog.info(
         f"k-mesh: {n_k} k-point{'s' if n_k != 1 else ''}, "
         f"weights sum = {weights.sum():.4f}"
@@ -830,6 +839,11 @@ def run_rhf_periodic_multi_k_ewald3d(
                 from .periodic_v_ne import compute_nuclear_lattice_dispatch
 
                 V_lat = compute_nuclear_lattice_dispatch(basis, system, lat_opts)
+    from .lattice_screening import on_physical_eri_cells
+
+    S_lat = on_physical_eri_cells(S_lat, basis, system, lat_opts)
+    T_lat = on_physical_eri_cells(T_lat, basis, system, lat_opts)
+    V_lat = on_physical_eri_cells(V_lat, basis, system, lat_opts)
     cells = list(S_lat.cells)
 
     # Per-k S(k), Hcore(k), orthogonaliser X(k).
@@ -1286,6 +1300,7 @@ def run_rhf_periodic_multi_k_ewald3d(
                 kmesh,
                 float(omega),
                 where="run_rhf_periodic_multi_k_ewald3d",
+                lattice_opts=lat_opts,
             )
         elif is_unsupported_gauge(system, slab_mode=slab_mode):
             # A gauge the split does not exist for (2D slab, dim != 3): the
@@ -1324,10 +1339,13 @@ def run_rhf_periodic_multi_k_ewald3d(
     # full-mesh numbers stay byte-identical. Mapping build is one-time
     # pure Python on the SAME radial cell list the K builder uses, so
     # positional block indexing is unchanged.
+    # The legacy radial orbit map does not index the physical K enclosure.
+    # Physical mode retains the full build until a complete orbit map is used.
     exchange_symmetry_reduction = None
     if (
         corrected_exchange is not None
         and corrected_exchange.unfolding is not None
+        and not lat_opts.pair_complete_1e
     ):
         from ._vibeqc_core import direct_lattice_cells as _radial_cells
         from .bipole_symmetry_fock import (

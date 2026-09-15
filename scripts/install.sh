@@ -295,10 +295,14 @@ if [ "$DRY_RUN" = "1" ]; then
 
     # Working-tree state (only matters if --branch is in play).
     if [ -n "$BRANCH" ]; then
-        if git diff --quiet && git diff --cached --quiet; then
-            echo "    [git] working tree is clean."
-        else
+        DRY_RUN_WORKTREE_STATE=0
+        vibeqc_worktree_state || DRY_RUN_WORKTREE_STATE=$?
+        if [ "$DRY_RUN_WORKTREE_STATE" -eq 2 ]; then
+            echo "    [git] git could not read this repository — install.sh would refuse."
+        elif [ "$DRY_RUN_WORKTREE_STATE" -eq 1 ]; then
             echo "    [git] working tree is DIRTY — install.sh would refuse the checkout."
+        else
+            echo "    [git] working tree is clean."
         fi
         echo
         echo "    [git] target branch/tag: $BRANCH"
@@ -449,7 +453,16 @@ vibeqc_acquire_build_lock
 # local-branch / tag / remote-only switch — same helper update.sh uses.
 # ---------------------------------------------------------------------------
 if [ -n "$BRANCH" ]; then
-    if ! git diff --quiet || ! git diff --cached --quiet; then
+    WORKTREE_STATE=0
+    vibeqc_worktree_state || WORKTREE_STATE=$?
+    if [ "$WORKTREE_STATE" -eq 2 ]; then
+        echo "Error: git could not read this repository ($PWD)." >&2
+        echo "Run install.sh from inside a vibe-qc checkout, or pass --current to" >&2
+        echo "install the tree as it stands and skip the branch checkout:" >&2
+        echo "    git status -s" >&2
+        exit 1
+    fi
+    if [ "$WORKTREE_STATE" -eq 1 ]; then
         echo "Error: working tree has uncommitted changes." >&2
         echo "Commit, stash, or revert them before checking out a different branch:" >&2
         echo "    git status -s" >&2

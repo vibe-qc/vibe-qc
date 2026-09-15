@@ -846,8 +846,33 @@ GFN2Result run_gfn2_xtb(
     const int total_max_iter = std::max(0, opts.max_iter);
     const bool use_stabilization =
         has_gam3 && opts.auto_stabilize && total_max_iter >= 2500;
-    const int primary_max_iter =
+    // The 700-iteration checkpoint is ADVISORY, not a hard cap (vibe-qc#3).
+    // It exists to hand an oscillating solve to the retry ladder early, but a
+    // primary attempt that is still contracting must not be abandoned merely
+    // for reaching it: the ladder's later rungs change the electronic
+    // temperature, so abandoning a converging run does not accelerate it, it
+    // answers a different question.  Measured on adenine, whose primary
+    // attempt converges at iteration 720 with the residual at 1.56e-8 against
+    // a 1e-8 tolerance when the checkpoint fires -- its best value of the run,
+    // improving monotonically.  Cutting it off there moved the answer by
+    // 6.7 mHa (a T=0.005 rung finished the solve), and at max_iter exactly
+    // 2500 it turned a converged run into an outright failure.
+    int primary_max_iter =
         use_stabilization ? std::min(700, total_max_iter) : total_max_iter;
+    // Contraction test over the two most recent windows of the residual
+    // trace.  A genuinely oscillating or stalled attempt cannot improve its
+    // window minimum and so still reaches the ladder at the checkpoint.
+    constexpr int kProgressWindow = 25;
+    const auto still_contracting = [&max_change_trace]() {
+        const int n = static_cast<int>(max_change_trace.size());
+        if (n < 2 * kProgressWindow) return false;
+        const auto end = max_change_trace.end();
+        const double recent =
+            *std::min_element(end - kProgressWindow, end);
+        const double prior =
+            *std::min_element(end - 2 * kProgressWindow, end - kProgressWindow);
+        return recent < prior;
+    };
 
     for (int iter = 1; iter <= primary_max_iter; ++iter) {
         // Isotropic second-order (shell-resolved) potential: V²_l = Σ_l' γ_ll' Δq_l'.
@@ -1120,6 +1145,14 @@ GFN2Result run_gfn2_xtb(
             compute_atom_moments(D, S, aes_Dg, aes_Qg, mol, ao_atom,
                                 n_atoms, n_basis, atom_mu, atom_th);
         }
+
+        // Advisory checkpoint: extend the primary attempt by another block
+        // while it is still contracting and budget remains (vibe-qc#3).
+        if (use_stabilization && iter == primary_max_iter
+                && primary_max_iter < total_max_iter && still_contracting()) {
+            primary_max_iter =
+                std::min(total_max_iter, primary_max_iter + 700);
+        }
     }
     result.n_iter = primary_max_iter;
     result.smearing_temperature = opts.electronic_temperature;
@@ -1159,7 +1192,23 @@ GFN2Result run_gfn2_xtb(
             XTBSccOptions ropts = opts;
             ropts.charge_mixing = retry.charge_mixing;
             ropts.max_iter = std::min(retry.max_iter, remaining_iters);
-            ropts.electronic_temperature = retry.electronic_temperature;
+            // vibe-qc#3: never override an EXPLICITLY requested electronic
+            // temperature.  gfn2_driver.hpp promised that this driver's
+            // default stays exact zero-temperature Aufbau, and the pybind
+            // setter marks the flag on any assignment, including 0.0 -- so a
+            // caller who asked for exact Aufbau must not be handed a smeared
+            // energy because the primary attempt stalled.  The finite-T rung
+            // in the retry list above runs at 0.005 Ha (~1578 K), five times
+            // the codebase's own periodic smearing default,
+            // kPeriodicGFN2DefaultElectronicTemperature = 0.001.  The rung's
+            // mixing and budget still apply: those are solver settings, and a
+            // second attempt at them is legitimate.  Absent an explicit
+            // request the BUG 45 finite-temperature rescue is unchanged, and
+            // the executed temperature is reported in
+            // GFN2Result::smearing_temperature.
+            if (!opts.electronic_temperature_explicit) {
+                ropts.electronic_temperature = retry.electronic_temperature;
+            }
             ropts.scc_mixer = SCCMixer::Simple;
             ropts.auto_stabilize = false;
             GFN2Result r = run_gfn2_xtb(mol, params, ropts);

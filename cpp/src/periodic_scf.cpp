@@ -8,6 +8,7 @@
 #include "vibeqc/grid.hpp"
 #include "vibeqc/guess.hpp"
 #include "vibeqc/lattice_integrals.hpp"
+#include "vibeqc/lattice_pair_cells.hpp"
 #include "vibeqc/level_shift.hpp"
 #include "vibeqc/periodic_fock.hpp"
 #include "vibeqc/periodic_rhf_state_capture.hpp"
@@ -28,6 +29,32 @@
 namespace vibeqc {
 
 namespace {
+
+// One-electron operators keep their physical pair values. Their zero
+// extension shares the exchange output/density ordering used by the SCF.
+LatticeMatrixSet on_eri_cells(LatticeMatrixSet source,
+                            const BasisSet& basis,
+                            const PeriodicSystem& system,
+                            const LatticeSumOptions& opts) {
+    if (!opts.pair_complete_1e) return source;
+    const auto cells = pair_complete_eri_cells(system, opts, basis.libint());
+    std::map<std::array<int, 3>, std::size_t> positions;
+    for (std::size_t c = 0; c < source.cells.size(); ++c) {
+        const auto& i = source.cells[c].index;
+        positions[{i[0], i[1], i[2]}] = c;
+    }
+    std::vector<Eigen::MatrixXd> blocks;
+    blocks.reserve(cells.size());
+    for (const auto& cell : cells) {
+        const auto& i = cell.index;
+        const auto found = positions.find({i[0], i[1], i[2]});
+        if (found == positions.end()) blocks.push_back(Eigen::MatrixXd::Zero(source.nbf, source.nbf));
+        else blocks.push_back(std::move(source.blocks[found->second]));
+    }
+    source.cells = cells;
+    source.blocks = std::move(blocks);
+    return source;
+}
 
 std::string capture_scientific(double value) {
     std::ostringstream stream;
@@ -348,9 +375,10 @@ LatticeMatrixSet sap_initial_density_multik(
     const BlochKMesh& kmesh, const std::vector<ComplexMatrix>& X_k,
     int nocc, const LatticeSumOptions& lattice_opts, const GuessECPContext& ecp) {
     const Grid grid = build_grid(system.unit_cell_molecule());
-    const auto Vsap = ecp.active()
+    const auto Vsap = on_eri_cells(ecp.active()
         ? compute_vsap_ecp_lattice(basis, system, lattice_opts, ecp)
-        : compute_vsap_lattice(basis, system, grid, "sap_helfem_large", lattice_opts);
+        : compute_vsap_lattice(basis, system, grid, "sap_helfem_large", lattice_opts),
+        basis, system, lattice_opts);
     LatticeMatrixSet Fsap = T_set;
     if (Vsap.blocks.size() > Fsap.blocks.size())
         throw std::invalid_argument("SAP: potential cell domain exceeds the kinetic domain");
@@ -376,12 +404,7 @@ LatticeMatrixSet patom_initial_density_multik(
         local_density_from_home_block(D_sad, cells);
     LatticeMatrixSet F_patom = build_fock_2e_real_space(
         basis, system, lattice_opts, P_sad, /*exchange_scale=*/1.0);
-    // Under LatticeSumOptions::pair_complete_1e (#429) Hcore rides the
-    // pair-complete cell list while the 2e build keeps the plain |g| ball,
-    // which is an exact prefix of it (direct_lattice_cells stable-sorts by
-    // |r|; lattice_pair_cells.hpp). Widen the in-field Fock onto Hcore's
-    // list rather than dropping the outer one-electron cells. Identical
-    // lists with the switch off, so this is bit-identical there.
+    // The zero-extended Hcore shares the in-field exchange ordering.
     if (F_patom.blocks.size() > Hcore_set.blocks.size()) {
         throw std::runtime_error(
             "periodic PATOM: in-field Fock cell list is longer than Hcore's");
@@ -565,7 +588,8 @@ PeriodicRHFResult run_rhf_periodic_impl(
     }
 
     // ---- One-electron lattice-summed integrals ---------------------------
-    const auto S_set = compute_overlap_lattice(basis, system, opts.lattice_opts);
+    const auto S_set = on_eri_cells(compute_overlap_lattice(basis, system, opts.lattice_opts),
+                                    basis, system, opts.lattice_opts);
     const bool use_davidson_here =
         opts.use_davidson && S_set.nbf >= opts.davidson_min_dim;
     DavidsonOptions dav_opts = opts.davidson;
@@ -574,17 +598,18 @@ PeriodicRHFResult run_rhf_periodic_impl(
     }
     const DavidsonOptions* dav_ptr =
         use_davidson_here ? &dav_opts : nullptr;
-    const auto T_set = compute_kinetic_lattice(basis, system, opts.lattice_opts);
+    const auto T_set = on_eri_cells(compute_kinetic_lattice(basis, system, opts.lattice_opts),
+                                    basis, system, opts.lattice_opts);
     LatticeMatrixSet V_set;
     LatticeMatrixSet V_ecp_set;
     if (_has_ecp) {
-        V_set = compute_nuclear_lattice_with_charges(
-            basis, system, opts.lattice_opts, opts.ecp_effective_charges);
-        V_ecp_set = compute_ecp_lattice_from_primitives(
+        V_set = on_eri_cells(compute_nuclear_lattice_with_charges(
+            basis, system, opts.lattice_opts, opts.ecp_effective_charges), basis, system, opts.lattice_opts);
+        V_ecp_set = on_eri_cells(compute_ecp_lattice_from_primitives(
             basis, system, opts.lattice_opts,
-            opts.ecp_home_centers, opts.ecp_primitive_blocks);
+            opts.ecp_home_centers, opts.ecp_primitive_blocks), basis, system, opts.lattice_opts);
     } else {
-        V_set = compute_nuclear_lattice(basis, system, opts.lattice_opts);
+        V_set = on_eri_cells(compute_nuclear_lattice(basis, system, opts.lattice_opts), basis, system, opts.lattice_opts);
     }
 
     // Real-space Hcore(g) = T(g) + V(g) (+ V_ecp(g) when ECP).
@@ -767,13 +792,8 @@ PeriodicRHFResult run_rhf_periodic_impl(
         const auto F2e_set =
             build_fock_2e_real_space(basis, system, opts.lattice_opts, P_used);
 
-        // F(g) = Hcore(g) + F^{2e}(g). Under pair_complete_1e (#429) Hcore
-        // rides the pair-complete cell list, which extends past the plain
-        // |g| ball the 2e build enumerates; the shorter list is an exact
-        // prefix of the longer one and F^{2e} is zero beyond its own
-        // support by its own truncation. Start from Hcore so the outer
-        // one-electron cells survive into F(k) instead of being cut back.
-        // Identical lists with the switch off, so bit-identical there.
+        // Both operators share the declared output ordering. Hcore is
+        // zero beyond its physical one-electron pair support.
         if (F2e_set.blocks.size() > Hcore_set.blocks.size()) {
             throw std::runtime_error(
                 "run_rhf_periodic: 2e Fock cell list is longer than Hcore's");
@@ -1365,7 +1385,8 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
     const double exchange_scale = func.hf_exchange_fraction();
 
     // ---- One-electron lattice integrals ---------------------------------
-    const auto S_set = compute_overlap_lattice(basis, system, opts.lattice_opts);
+    const auto S_set = on_eri_cells(compute_overlap_lattice(basis, system, opts.lattice_opts),
+                                    basis, system, opts.lattice_opts);
     const bool use_davidson_here_rks =
         opts.use_davidson && S_set.nbf >= opts.davidson_min_dim;
     DavidsonOptions dav_opts_rks = opts.davidson;
@@ -1374,17 +1395,18 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
     }
     const DavidsonOptions* dav_ptr_rks =
         use_davidson_here_rks ? &dav_opts_rks : nullptr;
-    const auto T_set = compute_kinetic_lattice(basis, system, opts.lattice_opts);
+    const auto T_set = on_eri_cells(compute_kinetic_lattice(basis, system, opts.lattice_opts),
+                                    basis, system, opts.lattice_opts);
     LatticeMatrixSet V_set;
     LatticeMatrixSet V_ecp_set;
     if (_rks_has_ecp) {
-        V_set = compute_nuclear_lattice_with_charges(
-            basis, system, opts.lattice_opts, opts.ecp_effective_charges);
-        V_ecp_set = compute_ecp_lattice_from_primitives(
+        V_set = on_eri_cells(compute_nuclear_lattice_with_charges(
+            basis, system, opts.lattice_opts, opts.ecp_effective_charges), basis, system, opts.lattice_opts);
+        V_ecp_set = on_eri_cells(compute_ecp_lattice_from_primitives(
             basis, system, opts.lattice_opts,
-            opts.ecp_home_centers, opts.ecp_primitive_blocks);
+            opts.ecp_home_centers, opts.ecp_primitive_blocks), basis, system, opts.lattice_opts);
     } else {
-        V_set = compute_nuclear_lattice(basis, system, opts.lattice_opts);
+        V_set = on_eri_cells(compute_nuclear_lattice(basis, system, opts.lattice_opts), basis, system, opts.lattice_opts);
     }
     LatticeMatrixSet Hcore_set;
     Hcore_set.nbf = S_set.nbf;
@@ -1555,10 +1577,7 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
         F_set.nbf = S_set.nbf;
         F_set.cells = S_set.cells;
         F_set.blocks.resize(S_set.cells.size());
-        // Hcore and V_xc ride the density's cell list (pair-complete under
-        // pair_complete_1e, #429); the 2e build keeps the plain |g| ball,
-        // an exact prefix of it, and F^{HF-part} is zero beyond its own
-        // support by its own truncation.
+        // Hcore is zero-extended onto the exchange/density enclosure.
         if (F_HFpart_set.blocks.size() > S_set.cells.size()) {
             throw std::runtime_error(
                 "run_rks_periodic: 2e Fock cell list is longer than Hcore's");

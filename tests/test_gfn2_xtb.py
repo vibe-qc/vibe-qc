@@ -3029,6 +3029,13 @@ class TestGFN2ParameterProvenance:
         assert result.parameter_provenance["gfn2_d4_s8"] == pytest.approx(
             float(get_d4_params("gfn2xtb").s8)
         )
+        # Water converges at T = 0, and the record says so (#247).
+        assert result.electronic_temperature == 0.0
+        assert result.e_internal is None
+        assert (
+            result.parameter_provenance["gfn2_executed_electronic_temperature"]
+            == 0.0
+        )
 
     @requires_gfn2
     def test_dftb_result_carries_exact_native_parameter_provenance(self):
@@ -3604,7 +3611,7 @@ _XTB_671_LIVE_EH = {
 def test_faithful_aes_closes_the_molecular_xtb_residual(
     name, ad_hoc_mha, faithful_mha
 ):
-    """Issue #43: the residual is the on-site DPOL/QPOL term, and this is it.
+    """Issue vibe-qc#184 (was vibeqc#43): the residual is the on-site DPOL/QPOL term.
 
     The shipped ad-hoc shell-resolved multipole channel omits the on-site
     anisotropic XC term of Bannwarth 2019 Eq. 31.  Switching to the faithful
@@ -3616,8 +3623,11 @@ def test_faithful_aes_closes_the_molecular_xtb_residual(
         H2O       +0.601     +0.138    mHa
         NH3       -5.089     +0.362    mHa
 
-    This is why `aes_faithful` exists.  It is NOT yet the default; see
-    test_adenine_molecular_scc_has_multiple_converged_basins for the reason.
+    This is why `aes_faithful` exists.  It is NOT yet the default, because
+    adenine goes the other way: there the faithful channel is 5.0 mHa further
+    from xtb than the shipped one (+13.53 against -8.53 mHa).  Since #3
+    that is a genuine disagreement between systems rather than a solver
+    artefact; see test_adenine_auto_stabilize_does_not_change_the_answer.
     """
     geometries = {
         "H2": [(1, 0.0, 0.0, 0.0), (1, 0.740848, 0.0, 0.0)],
@@ -3662,32 +3672,175 @@ def test_faithful_aes_closes_the_molecular_xtb_residual(
     assert abs(errors["faithful"]) < abs(errors["ad_hoc"])
 
 
+# A square Li4 cluster at 3.0 A has a near-degenerate frontier and its T = 0
+# SCC genuinely stalls, so it reaches the auto-stabilisation ladder's
+# finite-temperature rung.  Adenine no longer does (see #3), which is why the
+# explicit-temperature contract below needs a different system to exercise it.
+_LI4_SQUARE_ANGSTROM = (
+    (3, 0.0, 0.0, 0.0),
+    (3, 3.0, 0.0, 0.0),
+    (3, 3.0, 3.0, 0.0),
+    (3, 0.0, 3.0, 0.0),
+)
+
+
 @requires_gfn2
-def test_adenine_molecular_scc_has_multiple_converged_basins():
-    """Why the molecular AES default has not moved (issues #43, #475).
+def test_auto_stabilize_honours_an_explicitly_requested_temperature():
+    """vibe-qc#3: the ladder must not silently change the requested ensemble.
 
-    Adenine is the one system where the faithful channel does not help, and
-    the reason is that its molecular GFN2 SCC does not have a single
-    converged state.  Sweeping the AES model, the auto-stabilisation retry
-    and the mixer at conv_tol 1e-8 reaches four distinct fixed points
-    spanning 29.4 mHa:
+    ``gfn2_driver.hpp`` promised that the molecular driver's default stays
+    exact zero-temperature Aufbau, and the pybind setter marks
+    ``electronic_temperature_explicit`` on *any* assignment including
+    ``0.0``.  The ladder copied the options -- carrying that flag -- and then
+    overwrote the value without ever reading it, so a caller who explicitly
+    asked for exact Aufbau could be handed a T = 0.005 Ha (about 1578 K)
+    smeared energy whenever the primary attempt stalled.  That is five times
+    the codebase's own periodic smearing default of 0.001.
 
-        E (Ha)         vs xtb 6.7.1   reached by
-        -27.5081085      -8.533 mHa   ad-hoc,   no auto-stabilise
-        -27.5014338      -1.858 mHa   ad-hoc,   auto-stabilise (shipped)
-        -27.4860432     +13.532 mHa   faithful, no auto-stabilise
-        -27.4787423     +20.833 mHa   faithful, auto-stabilise
+    Li4 is used rather than adenine because adenine no longer stalls: the
+    advisory-checkpoint fix converges it on the primary rung.  This cluster
+    still does, so it reaches the finite-temperature rung and can distinguish
+    the two paths.
 
-    So on adenine the faithful model is *further* from xtb than the shipped
-    one, but the comparison is confounded: which state is reached is decided
-    by solver settings rather than by the Hamiltonian.  #43's 0.1 mHa
-    tolerance cannot be assessed on this system until that is resolved, and
-    the default must not move on evidence this ambiguous.  #475 reports the
-    same system as its iteration-count outlier, which is unlikely to be a
-    coincidence.
+    Both halves matter.  Without an explicit request the BUG 45 rescue is
+    unchanged and the finite-T rung still converges the system.  With one, the
+    ladder stays at the requested temperature and reports honest
+    non-convergence rather than an answer to a different question.
+    """
+    bohr = 1.0 / 0.529177210903
+    molecule = Molecule(
+        [
+            Atom(z, [x * bohr, y * bohr, w * bohr])
+            for z, x, y, w in _LI4_SQUARE_ANGSTROM
+        ],
+        0,
+        1,
+    )
+    params = load_gfn2_params()
 
-    This test pins the multiplicity so it cannot change silently.  It is a
-    defect record, not an endorsement of any of the four numbers.
+    def run(explicit_temperature=None):
+        options = _xtb.XTBSccOptions()
+        options.max_iter = 6000
+        options.conv_tol_charge = 1.0e-8
+        options.auto_stabilize = True
+        if explicit_temperature is not None:
+            options.electronic_temperature = explicit_temperature
+        return options, _xtb.run_gfn2_xtb(molecule, params, options)
+
+    # Default path: the ladder may smear, and that rescue is what converges it.
+    implicit_options, implicit = run()
+    assert not implicit_options.electronic_temperature_explicit
+    assert implicit.converged
+    assert [a.electronic_temperature for a in implicit.attempts] == [
+        pytest.approx(0.0),
+        pytest.approx(0.0),
+        pytest.approx(0.005),
+    ]
+    assert implicit.smearing_temperature == pytest.approx(0.005)
+    assert implicit.entropy > 0.0
+
+    # Explicit exact Aufbau: every rung stays at the requested temperature,
+    # and a stalled solve is reported as such instead of being smeared.
+    explicit_options, explicit = run(0.0)
+    assert explicit_options.electronic_temperature_explicit
+    assert len(explicit.attempts) == len(implicit.attempts)
+    assert all(
+        a.electronic_temperature == 0.0 for a in explicit.attempts
+    ), [a.electronic_temperature for a in explicit.attempts]
+    assert explicit.smearing_temperature == 0.0
+    assert not explicit.converged
+
+
+@requires_gfn2
+def test_run_job_records_the_temperature_a_ladder_rung_executed(tmp_path):
+    """vibe-qc#247: the record states which ensemble the energy belongs to.
+
+    With the temperature left at its default, the auto-stabilisation ladder
+    converges Li4 on its T = 0.005 Ha rung.  The native result recorded that,
+    but the runner reported the internal energy under a plain total-energy
+    label and wrote the requested 0.0 Ha into provenance.  The route now
+    reports the Mermin free energy, labels it, and records both temperatures.
+    """
+    from vibeqc import run_job
+
+    bohr = 1.0 / 0.529177210903
+    molecule = Molecule(
+        [
+            Atom(z, [x * bohr, y * bohr, w * bohr])
+            for z, x, y, w in _LI4_SQUARE_ANGSTROM
+        ],
+        0,
+        1,
+    )
+    stem = tmp_path / "li4"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = run_job(
+            molecule,
+            method="gfn2",
+            output=stem,
+            write_molden_file=False,
+            write_xyz_file=False,
+            write_population_file=False,
+            citations=False,
+            progress=False,
+        )
+
+    assert result.converged
+    assert result.electronic_temperature == pytest.approx(0.005)
+    assert result.route_plan.electronic_temperature == pytest.approx(0.005)
+    assert result.entropy > 0.0
+    assert result.energy == pytest.approx(
+        result.e_internal - 0.005 * result.entropy, abs=1.0e-12
+    )
+    assert result.e_internal == pytest.approx(-0.9594699161, abs=1.0e-8)
+    assert result.energy == pytest.approx(-0.9733618556, abs=1.0e-8)
+
+    text = stem.with_suffix(".out").read_text("utf-8")
+    assert "Mermin free energy (finite electronic temperature)" in text
+    assert "Electronic temperature (Fermi-Dirac): 0.005000 Ha" in text
+    assert "E_free (Mermin) = E_internal - T*S" in text
+
+    run = tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))["run"]
+    assert run["gfn2_electronic_temperature"] == 0.0
+    assert run["gfn2_electronic_temperature_explicit"] is False
+    assert run["gfn2_executed_electronic_temperature"] == pytest.approx(0.005)
+
+
+@requires_gfn2
+def test_adenine_auto_stabilize_does_not_change_the_answer():
+    """vibe-qc#3: adenine's "four basins" were a premature checkpoint (#184, #125).
+
+    The issue recorded four converged states spanning 29.4 mHa "under settings
+    that should not change the answer".  They were never four SCC basins: they
+    were the two AES Hamiltonians evaluated at two electronic temperatures.
+
+    ``auto_stabilize`` capped the primary SCC attempt at 700 iterations, and
+    adenine converges at 720.  A monotonically contracting solve -- residual
+    1.56e-8 against a 1e-8 tolerance at the checkpoint, its best value of the
+    run -- was abandoned twenty iterations short and handed to a retry ladder
+    whose third rung runs at T = 0.005 Ha (about 1578 K) and returns the
+    smeared-occupation energy.  Two consequences, both measured:
+
+    * ``max_iter=2500`` failed outright where ``max_iter=2499`` converged in
+      720 iterations, because crossing the >= 2500 threshold is what engaged
+      the cap.  More budget turned convergence into failure.
+    * The shipped -27.5014338 was a finite-temperature energy (S = 2.053 k_B,
+      T.S = 10.3 mHa) compared against xtb's effectively-Aufbau reference, so
+      M7's "-1.86 mHa" agreement was cancellation, not accuracy.
+
+    The checkpoint is now advisory: a still-contracting attempt is extended
+    rather than abandoned.  This test pins the property the issue asked for,
+    with the default mixer -- a setting that should not change the answer does
+    not -- plus the monotonicity invariant whose violation was the sharpest
+    symptom.  An explicit Broyden or DIIS mixer still stalls into the ladder's
+    finite-temperature rung; see handovers/FINDING_GFN2_ADENINE_CHECKPOINT.md §4.
+
+    What remains is one state per AES model, which is a genuine Hamiltonian
+    difference: ad-hoc -8.533 mHa and faithful +13.532 mHa against
+    xtb 6.7.1's -27.49957548.  See
+    handovers/FINDING_GFN2_ADENINE_CHECKPOINT.md, whose section 5 records the
+    parts that are still open.
     """
     bohr = 1.0 / 0.529177210903
     molecule = Molecule(
@@ -3700,20 +3853,52 @@ def test_adenine_molecular_scc_has_multiple_converged_basins():
     )
     params = load_gfn2_params()
 
-    energies = set()
-    for faithful in (False, True):
-        for stabilize in (True, False):
-            options = _xtb.XTBSccOptions()
-            options.max_iter = 4000
-            options.conv_tol_charge = 1.0e-8
-            options.aes_faithful = faithful
-            options.auto_stabilize = stabilize
-            options.aes_damping = 0.25 if faithful else 0.5
-            result = _xtb.run_gfn2_xtb(molecule, params, options)
-            assert result.converged
-            energies.add(round(result.energy, 7))
+    def run(faithful, stabilize, max_iter=4000):
+        options = _xtb.XTBSccOptions()
+        options.max_iter = max_iter
+        options.conv_tol_charge = 1.0e-8
+        options.aes_faithful = faithful
+        options.auto_stabilize = stabilize
+        options.aes_damping = 0.25 if faithful else 0.5
+        return _xtb.run_gfn2_xtb(molecule, params, options)
 
-    assert len(energies) == 4, sorted(energies)
-    assert max(energies) - min(energies) == pytest.approx(0.0293662, abs=1e-6)
-    # The shipped configuration is the ad-hoc channel with auto-stabilisation.
-    assert min(abs(e - (-27.5014338)) for e in energies) < 1e-6
+    # 1. auto_stabilize is not allowed to change the answer.
+    by_model = {}
+    for faithful in (False, True):
+        results = [run(faithful, stabilize) for stabilize in (True, False)]
+        for result in results:
+            assert result.converged
+            # The primary rung carries it, at the requested exact Aufbau.
+            assert len(result.attempts) == 1
+            assert result.smearing_temperature == 0.0
+            assert result.entropy == 0.0
+        assert results[0].energy == pytest.approx(results[1].energy, abs=1e-11)
+        assert results[0].n_iter == results[1].n_iter
+        by_model[faithful] = results[0].energy
+
+    # 2. What remains is one state per AES model -- a Hamiltonian difference.
+    assert by_model[False] == pytest.approx(-27.5081085, abs=1e-6)
+    assert by_model[True] == pytest.approx(-27.4860432, abs=1e-6)
+    assert abs(by_model[True] - by_model[False]) == pytest.approx(
+        0.0220653, abs=1e-6
+    )
+
+    # 3. On adenine the ad-hoc channel is the closer of the two, which is why
+    #    the molecular aes_faithful default did not move.  The sign of this
+    #    comparison is the point; H2/H2O/NH3 go the other way (see
+    #    test_faithful_aes_closes_the_molecular_xtb_residual).
+    xtb_reference = _XTB_671_LIVE_EH["adenine"]
+    assert abs(by_model[False] - xtb_reference) < abs(
+        by_model[True] - xtb_reference
+    )
+
+    # 4. Monotonicity: a larger budget must never turn convergence into
+    #    failure, and must not change the converged answer.  2499 -> 2500 is
+    #    the exact boundary that engaged the cap.
+    reference = run(False, True, max_iter=2499)
+    assert reference.converged
+    for max_iter in (2500, 2501, 3000, 4000):
+        result = run(False, True, max_iter=max_iter)
+        assert result.converged, f"max_iter={max_iter} did not converge"
+        assert result.n_iter == reference.n_iter
+        assert result.energy == pytest.approx(reference.energy, abs=1e-11)

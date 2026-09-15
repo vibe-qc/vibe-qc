@@ -217,7 +217,32 @@ class ManifestUpdater:
         # did not (see ``vibeqc._warn_if_basis_overlay_is_stale``).
         self._basis_library: dict[str, Any] = {}
         self._declared_at_iso = _now_iso()
-        self._path = stem_sibling(plan.stem, ".system")
+        # Two spellings of the manifest path, deliberately kept apart:
+        #
+        # * ``_declared_path`` is what the plan declares and what every
+        #   ``[[plan.files]]`` / ``[[outputs.files]]`` row renders -- a
+        #   bare ``pilot.system`` for ``run_job(output="pilot")``.
+        # * ``_path`` is where the bytes go. A relative stem is anchored
+        #   to the directory the job *started* in, once, here.
+        #
+        # Without the anchor every rewrite re-resolved the relative path
+        # against the cwd current *at that moment*, so any rewrite that
+        # fired after the process had changed directory (a progress
+        # heartbeat, ``finish()``, a stale handler) dropped a second
+        # copy of the manifest into whatever directory was current --
+        # the checkout root, in vibe-qc#127 -- while the ``.out``
+        # written synchronously stayed put. Every on-disk probe and
+        # write below goes through :meth:`_on_disk` for the same reason.
+        self._declared_path = stem_sibling(plan.stem, ".system")
+        try:
+            self._job_cwd: Path | None = Path.cwd()
+        except OSError:
+            # The process cwd is gone. Nothing relative can be written
+            # from here anyway (the first write fails, as it always did);
+            # an absolute stem never needed the anchor and must keep
+            # working, so record "no anchor" instead of failing here.
+            self._job_cwd = None
+        self._path = self._on_disk(self._declared_path)
         # Snapshot the runtime-env probe ONCE. The coordinator
         # rewrites the manifest after every artefact lands (N times
         # per job), the [vibeqc] / [host] / [cpu] / [memory] /
@@ -252,13 +277,20 @@ class ManifestUpdater:
         "no undeclared outputs" runs against the *plan*, not here.
         """
         p = Path(os.fspath(path))
-        is_self = _same_path(p, self._path)
+        on_disk = self._on_disk(p)
+        is_self = _same_path(on_disk, self._path)
         size: int | None = None
         digest: str | None = None
         if not is_self:
-            size, digest = _stat_and_hash(p)
+            size, digest = _stat_and_hash(on_disk)
         with self._lock:
-            outcome = self._outcome_for_path_unlocked(p)
+            # The self row is always the declared one, however the caller
+            # spelled the manifest path (``updater.path`` is absolute for a
+            # relative stem); a plan without a manifest row must not gain
+            # an absolute one.
+            outcome = self._outcome_for_path_unlocked(
+                self._declared_path if is_self else p
+            )
             outcome.written = True
             outcome.error = None
             if is_self:
@@ -486,7 +518,13 @@ class ManifestUpdater:
 
     @property
     def path(self) -> Path:
-        """The on-disk manifest path."""
+        """The on-disk manifest path.
+
+        Absolute for a relative stem: anchored to the cwd at job start so
+        the location is fixed for the lifetime of the updater, however the
+        process moves afterwards. The manifest *text* keeps the declared
+        (relative) spelling.
+        """
         return self._path
 
     @property
@@ -511,6 +549,17 @@ class ManifestUpdater:
 
     # -- internals ----------------------------------------------------- #
 
+    def _on_disk(self, path: Path) -> Path:
+        """Where ``path`` lives on disk: a relative artefact path is
+        anchored to the job-start cwd, an absolute one is returned as is.
+
+        Every stat, hash and write in this class goes through here so a
+        cwd change after job start cannot redirect them (vibe-qc#127).
+        """
+        if path.is_absolute() or self._job_cwd is None:
+            return path
+        return self._job_cwd / path
+
     def _write(self) -> None:
         """Public-friendly first write; acquires the lock."""
         with self._lock:
@@ -522,7 +571,7 @@ class ManifestUpdater:
         if outcome is not None:
             return outcome
         for existing_path, existing in self._outcomes.items():
-            if _same_path(existing_path, path):
+            if _same_path(self._on_disk(existing_path), self._on_disk(path)):
                 return existing
         outcome = FileOutcome(path=path)
         self._outcomes[path] = outcome
@@ -530,7 +579,7 @@ class ManifestUpdater:
 
     def _mark_manifest_written_unlocked(self) -> None:
         """Record the truthful self-manifest checksum exclusion contract."""
-        outcome = self._outcome_for_path_unlocked(self._path)
+        outcome = self._outcome_for_path_unlocked(self._declared_path)
         outcome.written = True
         outcome.bytes = None
         outcome.sha256 = None

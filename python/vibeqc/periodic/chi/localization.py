@@ -48,6 +48,7 @@ from ..._vibeqc_core import (
     aiccm2026dev_b_localization_projector_audit,
     aiccm2026dev_b_matrix_to_real_supercell,
 )
+from ...properties import _shell_nao, _shell_to_atom
 from .scf import _normalise_mesh, cyclic_gamma_mesh
 
 __all__ = [
@@ -755,14 +756,20 @@ def localize_aiccm2026dev_b_occupied_blocks(
 
 
 def _ao_metadata(basis: BasisSet, system: PeriodicSystem, translations: np.ndarray):
+    # The atom map is the canonical derivation in vibeqc.properties; the
+    # shell origins are laid out here with the same per-shell count, so
+    # the two stay the same length on a Cartesian basis. The local copy
+    # this replaces counted 2l+1 per shell while preallocating nbasis
+    # rows, which left a silently unwritten tail past the first d shell.
+    primitive_atoms = _shell_to_atom(basis)
     nbf = int(basis.nbasis)
+    if primitive_atoms.size != nbf:
+        raise RuntimeError("basis shell metadata does not match the AO dimension")
     primitive_centers = np.zeros((nbf, 3))
-    primitive_atoms = np.zeros(nbf, dtype=int)
     cursor = 0
     for shell in basis.shells():
-        count = 2 * int(shell.l) + 1
+        count = _shell_nao(shell)
         primitive_centers[cursor : cursor + count] = np.asarray(shell.origin)
-        primitive_atoms[cursor : cursor + count] = int(shell.atom_index)
         cursor += count
     lattice = np.asarray(system.lattice, dtype=float)
     primitive_fractional = primitive_centers @ np.linalg.inv(lattice).T
@@ -777,13 +784,17 @@ def _ao_metadata(basis: BasisSet, system: PeriodicSystem, translations: np.ndarr
 
 
 def _reference_atom_indices(reference_basis: BasisSet) -> np.ndarray:
-    indices = np.zeros(int(reference_basis.nbasis), dtype=int)
-    cursor = 0
-    for shell in reference_basis.shells():
-        count = 2 * int(shell.l) + 1
-        indices[cursor : cursor + count] = int(shell.atom_index)
-        cursor += count
-    return indices
+    """AO -> atom map over the IAO reference basis, as a platform-int array.
+
+    Delegates to :func:`vibeqc.properties._shell_to_atom`; the local copy
+    this replaces wrote a 2l+1 cursor into an array preallocated at
+    ``nbasis``, so a Cartesian reference basis left a tail of zeros that
+    read as atom 0.
+    """
+    indices = _shell_to_atom(reference_basis)
+    if indices.size != int(reference_basis.nbasis):
+        raise RuntimeError("basis shell metadata does not match the AO dimension")
+    return indices.astype(int, copy=False)
 
 
 def _as_matrix_blocks(value: object) -> list[np.ndarray]:

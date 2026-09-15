@@ -310,31 +310,63 @@ def test_public_pob_incomplete_ecp_fails_before_output(tmp_path, monkeypatch, ch
     assert not list(tmp_path.glob("invalid*"))
 
 
-@pytest.mark.parametrize("mesh", [(1, 1, 1), (3, 1, 1)])
-def test_public_all_electron_pob_reaches_normalized_sad(tmp_path, monkeypatch, mesh):
+@pytest.mark.parametrize(
+    "mesh, expected_driver",
+    [
+        (None, "pbc_gdf"),
+        ((1, 1, 1), "periodic_k_gdf"),
+        ((3, 1, 1), "periodic_k_gdf"),
+    ],
+    ids=["default-gamma", "explicit-gamma", "multi-k"],
+)
+def test_public_all_electron_pob_reaches_normalized_sad(
+    tmp_path, monkeypatch, mesh, expected_driver
+):
+    """The public GDF route reaches the real SAD builder of the driver it
+    actually selects, and that seed is normalized and Hermitian.
+
+    Default Gamma (``kpoints=None``) runs ``pbc_gdf``; every explicit mesh,
+    the one-point ``(1, 1, 1)`` included, runs the k-point drivers in
+    ``periodic_k_gdf`` (#209: the earlier version patched ``pbc_gdf`` for
+    the explicit Gamma mesh, so it never observed the builder that ran and
+    failed on ``reached == []``). The one-point mesh stays in that general
+    k engine because the shipped SR/LR ``rsgdf`` bulk route sets
+    ``gamma_info = None`` (``periodic_k_gdf.py``, ``bulk_sr``); with another
+    ``gdf_method`` the k driver would delegate a one-point mesh to
+    ``run_pbc_gdf_rhf`` and this expectation would move with it. Both
+    drivers are probed in every case, so a route that skips the selected
+    builder, or selects the other driver, fails here rather than passing
+    vacuously.
+    """
     from vibeqc import pbc_gdf, periodic_k_gdf
 
     system = vq.PeriodicSystem(3, np.eye(3) * 8., [
         vq.Atom(3, [0., 0., 0.]), vq.Atom(1, [2., 0., 0.]),
     ])
     basis = vq.BasisSet(system.unit_cell_molecule(), "pob-tzvp")
-    driver = pbc_gdf if mesh == (1, 1, 1) else periodic_k_gdf
-    builder = driver.initial_density_closed_shell
+    drivers = {"pbc_gdf": pbc_gdf, "periodic_k_gdf": periodic_k_gdf}
     reached = []
 
-    def probe(*args, **kwargs):
-        context = kwargs.get("ecp_context")
-        assert context is None or not context.active
-        density = builder(*args, **kwargs)
-        metric = np.asarray(kwargs["overlap"])
-        if metric.ndim == 3:
-            metric = sum(w * s for w, s in zip(kwargs["weights"], metric))
-        assert np.trace(density @ metric).real == pytest.approx(4., abs=1e-11)
-        np.testing.assert_allclose(density, density.conj().T, atol=1e-13)
-        reached.append(density)
-        return density
+    def _probe_for(name, builder):
+        def probe(*args, **kwargs):
+            context = kwargs.get("ecp_context")
+            assert context is None or not context.active
+            density = builder(*args, **kwargs)
+            assert density is not None, f"{name}: builder returned no density"
+            metric = np.asarray(kwargs["overlap"])
+            if metric.ndim == 3:
+                metric = sum(w * s for w, s in zip(kwargs["weights"], metric))
+            assert np.trace(density @ metric).real == pytest.approx(4., abs=1e-11)
+            np.testing.assert_allclose(density, density.conj().T, atol=1e-13, rtol=0)
+            reached.append(name)
+            return density
+        return probe
 
-    monkeypatch.setattr(driver, "initial_density_closed_shell", probe)
+    for name, module in drivers.items():
+        monkeypatch.setattr(
+            module, "initial_density_closed_shell",
+            _probe_for(name, module.initial_density_closed_shell),
+        )
     # Bound the quadrature cost of this adapter regression. This test checks
     # the selected seed and convergence, not absolute GDF energy accuracy.
     result = vq.run_periodic_job(
@@ -343,7 +375,9 @@ def test_public_all_electron_pob_reaches_normalized_sad(tmp_path, monkeypatch, m
         kpoints=mesh, initial_guess="AUTO", max_iter=80, progress=False,
         output=str(tmp_path / "pob-sad"), output_qvf=False,
     )
-    assert reached and result.converged
+    assert reached, "no GDF driver reached its SAD builder"
+    assert set(reached) == {expected_driver}, reached
+    assert result.converged
     assert result.guess_selection.effective == vq.InitialGuess.SAD
 
 
@@ -618,10 +652,14 @@ def test_run_periodic_job_gdf_applies_the_pob_ecp_for_rhf_and_uhf(tmp_path):
     assert uhf.converged
     assert float(uhf.e_nuclear) == pytest.approx(e_nuc_eff, abs=1e-8)
     # Not pinned: uhf.energy == rhf.energy. On this cell the SCF has several
-    # closed-shell stationary points (measured 2026-09-06: SAD RHF -539.673,
-    # Hcore RHF -539.899, UHF -540.128 from either guess; at [2,1,1] RHF is
-    # 0.124 Ha below UHF), so the two drivers land on different ones. The
-    # NaCl / LANL2DZ test below pins RHF == UHF where the landscape is simple.
+    # closed-shell stationary points, so the two drivers land on different
+    # ones. The NaCl / LANL2DZ test below pins RHF == UHF where the landscape
+    # is simple. The specific energies once quoted here (SAD RHF -539.673,
+    # Hcore RHF -539.899, UHF -540.128, measured 2026-09-06) predate #207 and
+    # came from an ECP applied two radial powers too low, with the f
+    # projector acting as the local potential; they are not a reference for
+    # anything. Whether the guess dependence itself survives the corrected
+    # operator is unmeasured (vibeqc#52).
     assert -700.0 < float(uhf.energy) < -500.0
     d_alpha = np.asarray(uhf.density_alpha[0])
     overlap = np.asarray(uhf.overlap[0])
@@ -851,12 +889,13 @@ def test_pob_sidecar_matches_the_periodic_bridge_arrays():
         arrays = crystal_ecp_to_libecpint_arrays(atom.ecp)
         rec = records[int(atom.Z)]
         assert rec.header.ncore == int(atom.Z) - round(atom.ecp.znuc)
+        # Compare every primitive, the zero local placeholder included. The
+        # exemption that used to stand here hid #207: the bridge emitted no
+        # local channel at all, so libecpint promoted the f projector to the
+        # local potential on the periodic route while the sidecar-fed
+        # molecular route kept it projected -- two operators, one record.
         bridge = sorted(zip(arrays.ams, arrays.ns, arrays.exponents, arrays.coefficients))
-        sidecar = sorted(
-            t for t in zip(rec.ams, rec.ns, rec.exponents, rec.coefficients)
-            if not (t[0] == rec.header.lmax and t[2] == 1.0 and t[3] == 0.0
-                    and rec.header.lmax not in arrays.ams)
-        )
+        sidecar = sorted(zip(rec.ams, rec.ns, rec.exponents, rec.coefficients))
         assert bridge == sidecar, f"Z={atom.Z}"
         checked += 1
     assert checked == 46

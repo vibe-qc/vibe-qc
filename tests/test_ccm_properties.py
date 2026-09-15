@@ -154,3 +154,133 @@ def test_gradient_isolated_limit_matches_molecular():
     opts.conv_tol_energy = 1e-12
     g_mol = np.asarray(compute_gradient(mol, b, run_rhf(mol, b, opts)))
     assert np.max(np.abs(g_ccm - g_mol)) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# M5: the population SIDECAR, not just the library functions above.
+#
+# Before this wiring a real-Gamma job wrote a population file whose every
+# section was a TypeError row. Two distinct defects produced that, and both
+# are worth a named guard: the supercell-Gamma results' orbitals span the
+# SUPERCELL while the sidecar's molecule is the unit cell, and their
+# density_alpha / density_beta are declared FIELDS whose value is None on a
+# closed-shell run -- so every hasattr-based open-shell test downstream took
+# the wrong branch and evaluated None + None. That trap already cost #679.
+# ---------------------------------------------------------------------------
+
+
+def _lih_cell(box: float = 8.0, d: float = 3.0):
+    return PeriodicSystem(
+        3, np.diag([box, box, box]),
+        [Atom(3, [box / 2, box / 2, box / 2 - d / 2]),
+         Atom(1, [box / 2, box / 2, box / 2 + d / 2])], 0, 1)
+
+
+def test_total_density_treats_a_none_valued_spin_field_as_closed_shell():
+    """The #679 trap, at its root rather than at one of its symptoms.
+
+    ``hasattr`` is True on the runner adapter results because the field
+    EXISTS; it is None-valued on a closed-shell run. Anything testing
+    presence rather than value adds None to None.
+    """
+
+    from vibeqc.periodic.ccm.properties import _total_density
+
+    class _ClosedShellAdapterShaped:
+        density = np.eye(3)
+        density_alpha = None      # declared, unset -- the trap
+        density_beta = None
+
+    got = _total_density(_ClosedShellAdapterShaped())
+    assert np.allclose(got, np.eye(3))
+
+
+@pytest.mark.parametrize("variant", ["real-gamma", "four-center"])
+@pytest.mark.parametrize("nrep", [(1, 1, 1), (2, 1, 1)])
+def test_population_sidecar_has_no_error_rows(variant, nrep, tmp_path):
+    """Every section either carries numbers or a deliberate ``unsupported:``.
+
+    A section reading ``N/A -- TypeError`` is the regression this guards:
+    it looks like a considered gate but is a crash.
+    """
+
+    from vibeqc import run_periodic_job
+
+    cell = _lih_cell()
+    basis = BasisSet(cell.unit_cell_molecule(), "sto-3g")
+    stem = str(tmp_path / "pop")
+    run_periodic_job(cell, basis, method="aiccm", variant=variant,
+                     aiccm_lattice_extension=nrep, write_population_file=True,
+                     initial_guess="HCORE", output=stem)
+    text = (tmp_path / "pop.population.txt").read_text(encoding="utf-8")
+    for bad in ("TypeError", "ValueError", "AttributeError", "Traceback"):
+        assert bad not in text, f"{bad} in the population sidecar:\n{text}"
+    # And the charges really are there, not merely un-crashed.
+    rows = [ln for ln in text.splitlines() if ln.strip()
+            and not ln.startswith("#")]
+    assert rows, f"no data rows at all:\n{text}"
+
+
+@pytest.mark.parametrize("variant", ["real-gamma", "four-center"])
+def test_population_sidecar_charges_are_per_cell_and_neutral(variant, tmp_path):
+    """Per-cell charges, one row per unit-cell atom, summing to the cell charge.
+
+    ``charges`` runs over SUPERCELL atoms and would give N_c times too many
+    rows at nrep>1; ``charges_per_cell`` is the image average the sidecar
+    owes. At nrep=(2,1,1) the two differ in length, so this pins the choice.
+    """
+
+    from vibeqc import run_periodic_job
+
+    cell = _lih_cell()
+    basis = BasisSet(cell.unit_cell_molecule(), "sto-3g")
+    stem = str(tmp_path / "pop")
+    run_periodic_job(cell, basis, method="aiccm", variant=variant,
+                     aiccm_lattice_extension=(2, 1, 1),
+                     write_population_file=True, initial_guess="HCORE",
+                     output=stem)
+    text = (tmp_path / "pop.population.txt").read_text(encoding="utf-8")
+    # The section header line itself ends in "===", so split on the whole
+    # marker and stop at the NEXT section marker rather than the first "===".
+    after = text.split("# === Mulliken atomic charges ===", 1)[1]
+    section = after.split("# === ", 1)[0]
+    charges = [float(ln.split("\t")[3]) for ln in section.splitlines()
+               if ln.strip() and not ln.startswith("#")]
+    assert len(charges) == 2, f"expected one row per unit-cell atom: {charges}"
+    assert sum(charges) == pytest.approx(0.0, abs=1e-8)
+
+
+def test_ccm_per_cell_charges_reduce_to_the_molecular_ones_in_vacuum(tmp_path):
+    """The physics check the sidecar rests on.
+
+    At nrep=(1,1,1) in a large box the cyclic cluster IS the isolated
+    molecule, so its per-cell Mulliken charges must reproduce vibe-qc's
+    molecular ones. This also fixes the SIGN convention against an
+    independent implementation: on LiH/STO-3G both put a small NEGATIVE
+    charge on Li, a known minimal-basis artefact rather than a bug, and a
+    sign flip anywhere in the folding would show up here immediately.
+    """
+
+    from vibeqc import run_job
+    from vibeqc.properties import mulliken_charges
+    from vibeqc.periodic.ccm.real_gamma_runner import run_real_gamma_scf
+    from vibeqc.periodic.ccm.properties import ccm_mulliken_charges
+
+    d = 3.0
+    mol = Molecule([Atom(3, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, d])], 0, 1)
+    mbasis = BasisSet(mol, "sto-3g")
+    molecular = np.asarray(mulliken_charges(
+        run_job(mol, basis="sto-3g", method="RHF",
+                output=str(tmp_path / "iso")),
+        mbasis, mol))
+
+    rg = run_real_gamma_scf(_lih_cell(box=24.0, d=d), "sto-3g", "RHF",
+                            (1, 1, 1))
+    per_cell = np.asarray(
+        ccm_mulliken_charges(rg.ccm_result, rg.ccm_system).charges_per_cell)
+
+    assert np.max(np.abs(per_cell - molecular)) < 5.0e-3
+    # Same sign on both atoms, checked explicitly: agreeing in magnitude
+    # while disagreeing in sign would pass a loose tolerance on a near-zero
+    # charge but mean the folding inverted the convention.
+    assert np.all(np.sign(per_cell) == np.sign(molecular))

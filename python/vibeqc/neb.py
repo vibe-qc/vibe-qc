@@ -1318,6 +1318,7 @@ def _evaluate_image(
     dispersion_params: Any,
     rohf_options: Any = None,
     roks_options: Any = None,
+    grid_level: str = "orca-defgrid3",
     fd_step_bohr: float = 1e-3,
     initial_density: Optional[np.ndarray] = None,
     image_index: Optional[int] = None,
@@ -1366,25 +1367,29 @@ def _evaluate_image(
     # on the selected RKS/UKS options is the molecular-SCF contract.  Pass the
     # same object to both the warm-start SCF and analytic gradient so the two
     # evaluate one numerical surface.
+    from .runner import apply_ks_grid_default
+    from ._vibeqc_core import RKSOptions, UKSOptions
+    from .roks import ROKSOptions
+
     effective_grid_options = grid_options
     if method_lower == "rks":
-        if rks_options is None:
-            from ._vibeqc_core import RKSOptions
-            from .runner import _apply_grid_level
-
-            rks_options = RKSOptions()
-            _apply_grid_level(rks_options.grid, "orca-defgrid3")
-        if effective_grid_options is None:
-            effective_grid_options = rks_options.grid
+        rks_options = rks_options or RKSOptions()
+        ks_options = rks_options
     elif method_lower == "uks":
-        if uks_options is None:
-            from ._vibeqc_core import UKSOptions
-            from .runner import _apply_grid_level
-
-            uks_options = UKSOptions()
-            _apply_grid_level(uks_options.grid, "orca-defgrid3")
+        uks_options = uks_options or UKSOptions()
+        ks_options = uks_options
+    elif method_lower == "roks":
+        roks_options = roks_options or ROKSOptions()
+        ks_options = roks_options
+    else:
+        ks_options = None
+    if ks_options is not None:
+        if grid_options is not None:
+            ks_options.grid = grid_options
+        else:
+            apply_ks_grid_default(ks_options, grid_level)
         if effective_grid_options is None:
-            effective_grid_options = uks_options.grid
+            effective_grid_options = ks_options.grid
 
     # The density cache slot is one of:
     #   - None (no warm-start density available)
@@ -1459,6 +1464,7 @@ def _evaluate_image(
                 uhf_options=uhf_options,
                 rks_options=rks_options,
                 uks_options=uks_options,
+                grid_level="legacy" if grid_options is not None else grid_level,
             )
             energy = float(energy)
             if method_lower in ("rhf", "rks"):
@@ -1560,6 +1566,7 @@ def _evaluate_image(
                 uhf_options=uhf_options,
                 rks_options=rks_options,
                 uks_options=uks_options,
+                grid_level="legacy" if grid_options is not None else grid_level,
             )
         # A non-converged image has no valid gradient -- the C++ gradient
         # builders reject a non-converged density with a cryptic RuntimeError.
@@ -2618,6 +2625,7 @@ def run_neb(
     uks_options: Any = None,
     rohf_options: Any = None,
     roks_options: Any = None,
+    grid_level: str = "orca-defgrid3",
     gradient_options: Any = None,
     grid_options: Any = None,
     n_jobs: int = 0,
@@ -3450,7 +3458,7 @@ def run_neb(
                 rks_options = RKSOptions()
                 from .runner import _apply_grid_level
 
-                _apply_grid_level(rks_options.grid, "orca-defgrid3")
+                _apply_grid_level(rks_options.grid, grid_level)
             _apply_dft_plus_u_to_options(
                 rks_options, _reactant_basis, dft_plus_u
             )
@@ -3459,7 +3467,7 @@ def run_neb(
                 uks_options = UKSOptions()
                 from .runner import _apply_grid_level
 
-                _apply_grid_level(uks_options.grid, "orca-defgrid3")
+                _apply_grid_level(uks_options.grid, grid_level)
             _apply_dft_plus_u_to_options(
                 uks_options, _reactant_basis, dft_plus_u
             )
@@ -3556,6 +3564,7 @@ def run_neb(
             "uks_options": uks_options,
             "rohf_options": rohf_options,
             "roks_options": roks_options,
+            "grid_level": grid_level,
             "gradient_options": gradient_options,
             "grid_options": grid_options,
             "dispersion_params": dispersion_params,

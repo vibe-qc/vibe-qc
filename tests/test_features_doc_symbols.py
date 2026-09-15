@@ -76,6 +76,11 @@ def test_features_md_semiempirical_status_is_current():
     assert "source-parity SPDD terms for Al through Cl" in text
     assert "NDDO gradients use a mixed native-energy/Python-analytic route" in text
     assert "Al-Cl energy remains callable but scientifically unsupported" not in text
-    assert "Gated experimental tight-binding semiempirical route" in text
-    assert "scoped post-SCF native D4" in text
-    assert "external `xtb` parity remain production gates" in text
+    # Keep status and limitations attached to the actual GFN2 row. Other
+    # methods' "experimental" labels must not satisfy this guard.
+    gfn2_rows = [line for line in text.splitlines() if line.startswith("| GFN2-xTB |")]
+    assert len(gfn2_rows) == 1
+    gfn2 = gfn2_rows[0]
+    assert "**Gated experimental.**" in gfn2
+    assert "scoped post-SCF native D4" in gfn2
+    assert "external `xtb` parity remain production gates" in gfn2

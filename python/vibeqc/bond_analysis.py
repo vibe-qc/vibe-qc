@@ -56,13 +56,16 @@ __all__ = [
 
 
 def _shell_to_atom(basis) -> list[int]:
-    """Map each AO shell index to its parent atom index."""
-    shells = basis.shells()
-    mapping: list[int] = []
-    for shell in shells:
-        n = 2 * shell.l + 1
-        mapping.extend([int(shell.atom_index)] * n)
-    return mapping
+    """Map each AO to its parent atom index, as a plain list.
+
+    Delegates to :func:`vibeqc.properties._shell_to_atom`, the canonical
+    derivation; the local copy this replaces assumed pure spherical AOs
+    and so came out short on a Cartesian basis. The list return type is
+    kept for the loop-indexing call sites below.
+    """
+    from .properties import _shell_to_atom as _canonical
+
+    return [int(a) for a in _canonical(basis)]
 
 
 def _real_if_hermitian(mat: np.ndarray, what: str = "density matrix") -> np.ndarray:

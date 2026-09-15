@@ -40,7 +40,8 @@ def test_orbital_table_absent_without_molecule():
     assert "Molecular orbitals" not in text
 
 
-def test_bipole_energy_components_print_without_molecule():
+@pytest.mark.parametrize("xc", [None, 0.0, -1.75])
+def test_bipole_energy_components_print_without_molecule(xc):
     result = SimpleNamespace(
         scf_trace=[
             SimpleNamespace(
@@ -67,7 +68,15 @@ def test_bipole_energy_components_print_without_molecule():
         ],
     )
 
+    if xc is not None:
+        result.e_xc = xc
     text = format_scf_trace(result, include_banner=False)
+    xc_rows = [line for line in text.splitlines() if "Exchange-correlation (XC)" in line]
+    if xc is None:
+        assert not xc_rows
+    else:
+        assert len(xc_rows) == 1
+        assert float(xc_rows[0].split()[-1]) == pytest.approx(xc, abs=5e-10)
 
     assert "Energy components" in text
     assert "Kinetic" in text

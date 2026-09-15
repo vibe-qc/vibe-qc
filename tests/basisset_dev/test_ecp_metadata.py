@@ -435,10 +435,10 @@ def test_validate_ecp_required_passes_all_electron_relativistic_basis():
 
 
 def test_validate_ecp_required_refuses_valence_only_pob_and_3c_bases():
-    """pob-TZVP-rev2 and def2-m* are valence-only beyond Kr; the guard must
-    see that although their names carry no ECP marker."""
+    """pob-TZVP{,-rev2} and def2-m* are valence-only beyond Kr; the guard
+    must see that although their names carry no ECP marker."""
     mol = vq.Molecule([vq.Atom(47, [0, 0, 0])], multiplicity=2)
-    for name in ("pob-tzvp-rev2", "def2-msvp", "def2-mtzvp", "def2-mtzvpp"):
+    for name in ("pob-tzvp-rev2", "pob-tzvp", "def2-msvp", "def2-mtzvp", "def2-mtzvpp"):
         with pytest.raises(ValueError, match="no ECP centers were configured"):
             vq.validate_ecp_required(vq.RHFOptions(), mol, name)
 

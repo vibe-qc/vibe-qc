@@ -98,7 +98,8 @@ def test_minimal_ecp_with_s_and_p_projectors():
     assert out.local_ell == 2
     # Source order preserved: local → l=2, then s → l=0, then p → l=1.
     assert out.ams == (2, 0, 1)
-    assert out.ns == (2, 2, 2)
+    # CRYSTAL r^2 terms; libecpint subtracts two from the power it is given.
+    assert out.ns == (4, 4, 4)
     assert out.exponents == (10.0, 20.0, 30.0)
     assert out.coefficients == (4.0, 5.0, 6.0)
 
@@ -125,6 +126,29 @@ def test_ecp_with_full_spdf_projectors():
     assert out.ams == (4, 0, 1, 2, 3)
 
 
+def test_projectors_without_local_terms_get_a_zero_placeholder():
+    """A CRYSTAL record with M = 0 still needs a local channel.
+
+    libecpint reads its local channel off the highest angular momentum
+    present, so without a primitive at ``local_ell`` the highest projector
+    is silently promoted to the local potential -- which is what every pob
+    record hit on the periodic route (#207)."""
+    ecp = _make_ecp(
+        m_local=0,
+        m_per_ell=(1, 1, 0, 0, 0),
+        terms=[
+            CrystalECPTerm(ell=0, alpha=2.0, coefficient=5.0, n_pow=0),
+            CrystalECPTerm(ell=1, alpha=3.0, coefficient=6.0, n_pow=0),
+        ],
+    )
+    out = crystal_ecp_to_libecpint_arrays(ecp)
+    assert out.local_ell == 2
+    assert out.ams == (0, 1, 2)
+    assert out.coefficients == (5.0, 6.0, 0.0)
+    assert out.ns == (2, 2, 2)
+    assert out.n_primitives == 3
+
+
 def test_local_only_ecp_no_projectors():
     """All-local ECP (rare): no projector channels at all. local_ell
     falls back to 0 (the single channel becomes max-l by default)."""
@@ -143,9 +167,13 @@ def test_local_only_ecp_no_projectors():
     assert out.ams == (0, 0)
 
 
-def test_n_powers_carried_through():
-    """The ``n_pow`` field is preserved per primitive — libecpint uses
-    it directly in U_l(r) = Σ c_k r^n_k exp(−α_k r²)."""
+def test_n_powers_converted_to_the_libecpint_convention():
+    """Each ``n_pow`` is raised by two on the way out.
+
+    CRYSTAL states the term as r^n (CRYSTAL23 eqs. 3.18-3.19), while
+    libecpint's ``GaussianECP`` constructor stores ``n - 2`` from the
+    Gaussian-format power it is handed. Carrying NKL across unconverted
+    turned every Stuttgart r^0 term into a singular r^-2 one (#207)."""
     ecp = _make_ecp(
         m_local=1,
         m_per_ell=(2, 0, 0, 0, 0),
@@ -156,7 +184,7 @@ def test_n_powers_carried_through():
         ],
     )
     out = crystal_ecp_to_libecpint_arrays(ecp)
-    assert out.ns == (0, 1, 2)
+    assert out.ns == (2, 3, 4)
 
 
 def test_invalid_ell_raises():

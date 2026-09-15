@@ -30,7 +30,7 @@ is geometry-tied and recomputed once per ``run_cpcm_scf`` call.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping, Optional, Union
 
 import numpy as np
@@ -153,6 +153,10 @@ class SolventModel:
     n_points_per_sphere: int = 302
     switching_sigma_bohr: float = 0.5
     switching_drop_threshold: float = 1e-8
+    # The solvent's converged sigma potential, for variant="dcosmo-rs" only.
+    # Typed loosely to keep the COSMO-RS kernel out of this module's imports;
+    # __post_init__ checks what it actually needs of it.
+    sigma_potential: Any = None
     # Cavity construction. "lebedev" (default) is the switched union of
     # Lebedev-paved atomic spheres; "fine" is the Klamt & Diedenhofen 2018
     # COSMO FINE Cavity, a pseudo-density iso-surface that also paves the
@@ -198,12 +202,56 @@ class SolventModel:
             )
         self.fine_frame = frame
         variant = self.variant.strip().lower()
-        if variant not in {"cpcm", "cosmo"}:
+        if variant not in {"cpcm", "cosmo", "dcosmo-rs"}:
             raise ValueError(
-                "SolventModel.variant must be 'cpcm' or 'cosmo' "
+                "SolventModel.variant must be 'cpcm', 'cosmo' or 'dcosmo-rs' "
                 f"(got {self.variant!r})."
             )
         self.variant = variant
+        if variant == "dcosmo-rs":
+            if self.sigma_potential is None:
+                raise ValueError(
+                    "SolventModel(variant='dcosmo-rs') needs a sigma_potential: "
+                    "Direct COSMO-RS is defined by the solvent's sigma potential "
+                    "fed back into the Hamiltonian, and there is no default one "
+                    "to fall back on. Build it with "
+                    "vibeqc.solvation.cosmors.sigma_potential_profile or "
+                    "sigma_potential_segments."
+                )
+            if not getattr(self.sigma_potential, "has_ensemble", False):
+                raise ValueError(
+                    "SolventModel(variant='dcosmo-rs'): the sigma potential must "
+                    "carry its solvent ensemble, or its derivative -- which is "
+                    "the whole feedback -- would be that of a linear "
+                    "interpolant, piecewise constant and discontinuous at every "
+                    "grid point."
+                )
+            if self.cavity != "fine":
+                raise ValueError(
+                    "SolventModel(variant='dcosmo-rs') requires cavity='fine'. "
+                    "The feedback is evaluated at sigma_t = q_t/a_t, and on a "
+                    "switched Lebedev cavity that is ill-conditioned: the "
+                    "switching function shrinks weights continuously, so the "
+                    "smallest segment is 2.9e+07 times below the median and "
+                    "sigma reaches 640 e/angstrom^2 against a sigma potential "
+                    "parameterized on +-0.025. Nor does dropping the tail help "
+                    "-- there is no clean cut, and a vanishing segment's energy "
+                    "does not vanish with it, since a*mu(sigma) ~ a*sigma^2 ~ "
+                    "1/a. The COSMO FINE Cavity's segments all carry real area "
+                    "(median/min 3.4e+03) and put the 99th percentile of "
+                    "|sigma| at 0.028, inside the parameterization."
+                )
+            if not math.isinf(self.epsilon):
+                raise ValueError(
+                    "SolventModel(variant='dcosmo-rs') requires epsilon=inf. "
+                    "Direct COSMO-RS corrects 'the ideal screening charges "
+                    "appearing in a conductor' (Sinnecker et al. 2006, "
+                    "doi:10.1021/jp056016z), so the sigma potential *is* the "
+                    "real-solvent physics; scaling by f(eps) as well would "
+                    "count the solvent twice. It replaces the dielectric "
+                    "scaling rather than composing with it. The solvent is "
+                    "chosen by which sigma potential you pass, not by epsilon."
+                )
 
     @property
     def is_gas_phase(self) -> bool:
@@ -430,6 +478,13 @@ class SolventResult:
     z_eff: Optional[np.ndarray] = (
         None  # (n_atoms,) -- ECP-effective Z; None = all-electron
     )
+    # The converged Direct COSMO-RS correction, or None for every other
+    # variant. Carried because its ``fraction_near_hb_corner`` is the first
+    # thing to look at when the macro-iteration will not settle: Klamt's
+    # hydrogen-bond term makes the feedback potential discontinuous where a
+    # segment's sigma crosses +-sigma_hb, and a segment parked there sees a
+    # different potential every cycle.
+    direct_feedback: Optional[Any] = None
     all_scf_traces: list[Any] = field(default_factory=list)
     # Aggregated per-iteration records across gas-phase + all inner
     # SCF phases, suitable for replay into PerfTracker (BUG 100).
@@ -1081,7 +1136,17 @@ def run_cpcm_scf(
 
     # One screening model for the whole run: built here, carried on the
     # result, read by every consumer. Nothing downstream re-derives ``f``.
-    screening = ScreeningModel.from_variant(sm.epsilon, sm.variant)
+    # Direct COSMO-RS is a conductor calculation plus a sigma-potential
+    # correction, so it takes COSMO's screening family at eps=inf, where
+    # f == 1 and the family parameter is irrelevant. __post_init__ has already
+    # refused a finite epsilon for it.
+    screening = ScreeningModel.from_variant(
+        sm.epsilon, "cosmo" if sm.variant == "dcosmo-rs" else sm.variant
+    )
+    direct_rs = sm.variant == "dcosmo-rs"
+    if direct_rs:
+        from .cosmors.direct import direct_cosmors_feedback
+    last_feedback = None
 
     def _as_cpcm(field: ReactionField) -> CPCMResult:
         """The legacy per-solve record, projected from the shared field."""
@@ -1165,6 +1230,29 @@ def run_cpcm_scf(
 
         # V_q matrix and corrected Hcore (built by the shared step).
         V_q = field.fock
+
+        # Direct COSMO-RS: correct the conductor charges by the solvent's
+        # sigma potential (Sinnecker et al. 2006 eq. 18-19). Evaluated *after*
+        # any q-DIIS re-expression, so the correction is taken at the charges
+        # the Hamiltonian will actually see rather than at the ones they were
+        # extrapolated from.
+        if direct_rs:
+            last_feedback = direct_cosmors_feedback(
+                field.q, cavity.weights, sm.sigma_potential
+            )
+            # eq. 7 again, on the correction potential. No screening factor:
+            # see vibeqc.solvation.cosmors.direct.
+            q_drs = np.asarray(
+                _cavity_solve(-last_feedback.phi), dtype=np.float64
+            )
+            if not np.all(np.isfinite(q_drs)):
+                raise RuntimeError(
+                    "run_cpcm_scf: the Direct COSMO-RS correction solve "
+                    "produced a non-finite result."
+                )
+            last_feedback = replace(last_feedback, charges=q_drs)
+            V_q = V_q + provider.fock_contribution(q_drs)
+
         Hcore = Hcore_gas + V_q
 
         # Shifted DIIS warm-start (BUG 100): carry one (F, e) pair from
@@ -1301,15 +1389,23 @@ def run_cpcm_scf(
     # This guards against the common subtle bug where the SCF's already-
     # included Tr(D V_q) term is double-counted by adding the full
     # 1/2 q.V on top.
-    q_dot_Velec = float(np.dot(last_cpcm.q, last_cpcm.V - V_nuc_cav))
+    # The operator the inner SCF saw carried q, and for Direct COSMO-RS also
+    # the correction charges, so both traces come back out here. Getting only
+    # one of them out is the double-counting this arithmetic exists to prevent.
+    q_operator = np.asarray(last_cpcm.q, dtype=np.float64)
+    if last_feedback is not None:
+        q_operator = q_operator + last_feedback.charges
+    q_dot_Velec = float(np.dot(q_operator, last_cpcm.V - V_nuc_cav))
     e_gas_at_D_solv = float(last_inner_result.energy) - q_dot_Velec
     total_energy = e_gas_at_D_solv + last_cpcm.e_solv
+    if last_feedback is not None:
+        # G = E_gas[D] + (1/2) q.V_tot + sum_t a_t mu_S(sigma_t); the third
+        # term is what the correction operator is the derivative of.
+        total_energy = total_energy + last_feedback.energy
 
-    # Optional citation siblings -- fire the CPCM solvation papers
-    # (Klamt-Schüürmann 1993 + Cossi-Rega-Scalmani-Barone 2003 +
-    # Scalmani-Frisch 2010) when the standalone driver was invoked
-    # with a non-None ``output=`` stem. ``run_job`` already handles
-    # this for its own pipeline via runner.py.
+    # Optional citation siblings -- fire routes.solvation[<variant>] when the
+    # standalone driver was invoked with a non-None ``output=`` stem.
+    # ``run_job`` handles citations for its own pipeline via runner.py.
     if output is not None:
         try:
             from vibeqc.output.citations import emit_citations
@@ -1324,7 +1420,10 @@ def run_cpcm_scf(
                 functional=_func,
                 uses_cpcm=True,
                 scf_guess=last_inner_result.guess_selection.effective.name,
-                solvent_variant="cpcm",
+                # The run's own variant, never a fixed one: routes.solvation
+                # fires exactly one row per variant, and "dcosmo-rs" is the
+                # only row that cites the method a Direct COSMO-RS run used.
+                solvent_variant=sm.variant,
             )
         except Exception:
             # Best-effort -- never let citation writer failure tank a
@@ -1346,6 +1445,7 @@ def run_cpcm_scf(
     return SolventResult(
         scf=verified_scf_result,
         energy=total_energy,
+        direct_feedback=last_feedback,
         e_solv=last_cpcm.e_solv,
         e_gas=e_gas,
         epsilon=sm.epsilon,

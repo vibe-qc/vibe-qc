@@ -43,6 +43,19 @@ package's version, which is recorded in the provenance file written beside
 every rendered basis. That is also why it is an optional extra rather than a
 dependency.
 
+**A bundled basis that is merely short cannot be completed this way.** Eight
+bundled sets carry fewer elements than the Basis Set Exchange publishes for
+the same name, mostly inherited from libint's own distribution: `6-31g`
+(stops at Zn; BSE has Ga-Kr), `cc-pvqz` (has Mg, not Ca), `cc-pv6z` (no Be),
+`sto-3g` (has I, not Xe), the two `sap_*_large` potentials (superheavy tails),
+and vibe-qc's own `pob-tzvp` and `pob-dzvp-rev2`, which BSE carries in later
+or extended revisions. Asking for `cc-pVQZ` on calcium fails even with the
+`[bse]` extra installed, because the name already resolves and fetching only
+handles names that do not. Closing one of those gaps means bundling the
+blocks as a reviewed import, the way the def2 beyond-Kr merge did, not
+patching at run time. `tests/test_basis_integrity.py` pins the list so it
+cannot grow unnoticed.
+
 **It supplies whole sets, and refuses to patch one.** Pass `elements=` and a
 record that does not cover all of them is refused, with nothing written to
 the cache. Filling a gap in a bundled basis by grafting BSE blocks for the
@@ -565,17 +578,19 @@ those functions to make them usable in solids.
 
 | Name | Elements | Reference |
 |---|---|---|
-| pob-TZVP | H-Br (32) | [Peintinger, Vilela Oliveira, Bredow, *J. Comput. Chem.* **34**, 451 (2013)](https://doi.org/10.1002/jcc.23153) |
-| pob-TZVP-rev2 | H-Br (32) | [Vilela Oliveira, Laun, Peintinger, Bredow, *J. Comput. Chem.* **40**, 2364 (2019)](https://doi.org/10.1002/jcc.26013) |
-| pob-DZVP-rev2 | subset (19) | *(same as above)* |
+| pob-TZVP | H-Br, Rb-I (48) | [Peintinger, Vilela Oliveira, Bredow, *J. Comput. Chem.* **34**, 451 (2013)](https://doi.org/10.1002/jcc.23153); Rb-I: [Laun, Vilela Oliveira, Bredow, *J. Comput. Chem.* **39**, 1285 (2018)](https://doi.org/10.1002/jcc.25195) |
+| pob-TZVP-rev2 | H-Br, Rb-Po, La-Lu (78) | [Vilela Oliveira, Laun, Peintinger, Bredow, *J. Comput. Chem.* **40**, 2364 (2019)](https://doi.org/10.1002/jcc.26013) |
+| pob-DZVP-rev2 | H-Br (32) | *(same as above)* |
 
 ### Heavy elements
 
-The pob-\* archives for Rb-I (up to Z=53), Cs-Po (to Z=84), and
-La-Lu (Z=57-71) require effective core potentials. vibe-qc's
-CRYSTAL parser *recognises* the ECP blocks in those files and
-the libecpint integration ships in v0.4.0+, see the
-[roadmap](../roadmap.md) for the full ECP coverage state.
+The pob-TZVP records for Rb-I and the pob-TZVP-rev2 records for Rb-Po
+and La-Lu are valence-only: each carries a Stuttgart-Cologne
+effective core potential in CRYSTAL's `Z+200` format. vibe-qc bundles
+those records and ships the potentials as `pob-tzvp.ecp` and
+`pob-tzvp-rev2.ecp` sidecars, which are applied automatically on the
+molecular route and on the periodic k-point GDF route. No network
+access is needed.
 
 ### Method scope
 

@@ -11,7 +11,7 @@ variables:
   # bumped by hand; neither is a runtime dependency.
   # Documentation snapshot: FetchContent root corrected; schema/corpus unchanged.
   QVF_TAG: "v0.1.0-docs.1"
-  VIBE_VIEW_TAG: "v2.16.1"
+  VIBE_VIEW_TAG: "v2.16.2"
 
 # Pipeline-creation gate — see the policy header above. Release-gate and
 # release-branch pipelines are never auto-cancelled; the website deploy
@@ -198,7 +198,7 @@ build-test:
       else
         echo "native build mode: incremental (build/{wheel_tag}; ccache enabled)";
         ccache --zero-stats;
-        bash scripts/install.sh --extras test --venv .venv;
+        bash scripts/install.sh --current --extras test --venv .venv;
       fi;
       if [ -z "${CCACHE_DISABLE:-}" ]; then ccache --show-stats; fi
     # Build-break gate: a declared-but-undefined symbol, a stray

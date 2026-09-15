@@ -23,7 +23,12 @@ import pytest
 # Constants
 # ------------------------------------------------------------------
 
-ROOT = Path(__file__).resolve().parents[2]  # repo root
+# parents[1], not parents[2]: this file is <repo>/tests/, so parents[2] is
+# the directory *containing* the repo. With that, BASIS_DIR never existed,
+# _basis_library_present() was always False, and every test in this module
+# skipped -- silently, since a skip is not a failure. Present since the
+# initial public commit.
+ROOT = Path(__file__).resolve().parents[1]  # repo root
 BASIL_PATH = ROOT / "python" / "vibeqc" / "basis_library"
 BASIS_DIR = BASIL_PATH / "basis"
 CUSTOM_DIR = BASIL_PATH / "custom"
@@ -61,6 +66,7 @@ KNOWN_SIDECARS: Set[str] = {
     "def2-mtzvp.ecp",
     "def2-mtzvpp.ecp",
     "pob-tzvp-rev2.ecp",
+    "pob-tzvp.ecp",
     "def2-sv(p).ecp",
     "def2-svp.ecp",
     "def2-svpd.ecp",
@@ -143,6 +149,109 @@ def _g94_base_name(filename: str) -> str:
 # ------------------------------------------------------------------
 
 
+# ------------------------------------------------------------------
+# Element coverage against the Basis Set Exchange
+# ------------------------------------------------------------------
+#
+# The cc-pVnZ-PP gap (2026-09-08) was "sixteen fitting sets shipped, zero
+# orbital sets did". The same class of defect hides as a SHORT import: the
+# right basis name, fewer elements than the published record. A partial
+# basis-data import is the failure mode this workstream's importer bugs came
+# from, so the gap set is pinned rather than assumed empty.
+#
+# Audited 2026-09-10 against BSE 0.12: of the 181 bundled .g94 files whose
+# name BSE also carries, 8 were short. Three single-element gaps were closed
+# the same day (see below), leaving 5. The rest are inherited from libint's
+# own distribution rather than from a vibe-qc import.
+#
+# NOTE the interaction with vibeqc.basis_fetch: a bundled-but-short basis
+# CANNOT be completed by fetching, because `ensure_bases_available` skips any
+# name that already resolves. Asking for cc-pVQZ on calcium therefore fails
+# even with the [bse] extra installed. That is deliberate -- grafting BSE
+# blocks onto a bundled record would join two sources under one basis name
+# with no reviewed provenance -- but it means closing one of these gaps means
+# bundling the blocks, the way merge_def2_heavy_blocks.py did for def2.
+
+_SHORT_VS_BSE = {
+    # name: (elements bundled, elements BSE publishes)
+    "6-31g": (30, 36),              # stops at Zn; BSE has Ga-Kr
+    # cc-pvqz (Ca), cc-pv6z (Be) and sto-3g (Xe) were here until 2026-09-10,
+    # when their missing blocks were merged in from BSE by
+    # scripts/basisset_dev/merge_bse_element_blocks.py. Each element came
+    # from a later, separate publication than its parent set, which is why
+    # libint omits them and why each routes its own citation.
+    # vibe-qc's own pob family: BSE carries later/extended records than the
+    # bundled ones. Which revision should ship is a maintainer call, not an
+    # importer bug, so these are recorded rather than treated as defects.
+    # pob-dzvp-rev2 was here until 2026-09-10; its 13 missing blocks came
+    # from BSE after verifying that BSE's copy agrees with our
+    # Bredow-archive-derived file on all 19 shared elements.
+    # pob-tzvp was here until 2026-09-13; its 16 Rb-I blocks came from the
+    # Bredow group's pob-TZVP-Rb-I archive (Laun 2018), not from BSE, whose
+    # copy of pob-TZVP carries the sulfur d-polarisation column-swap defect
+    # (our sulfur is 5s4p1d, BSE's 5s4p) (#228).
+    # Superheavy tails nothing here computes.
+    "sap_grasp_large": (103, 118),
+    "sap_helfem_large": (103, 118),
+}
+
+
+def _elements_in_g94(path: Path) -> Set[int]:
+    import re
+
+    symbols = (
+        "H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe "
+        "Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In "
+        "Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf "
+        "Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am "
+        "Cm Bk Cf Es Fm Md No Lr"
+    ).split()
+    z_of = {s.lower(): i + 1 for i, s in enumerate(symbols)}
+    text = path.read_text(errors="replace")
+    found = re.findall(r"^\s*([A-Z][a-z]?)\s+0\s*$", text, re.MULTILINE)
+    return {z_of[s.lower()] for s in found if s.lower() in z_of}
+
+
+@pytest.mark.parametrize("stem", sorted(_SHORT_VS_BSE))
+def test_known_short_bases_keep_the_coverage_they_have(stem: str) -> None:
+    """Pin what each short basis does carry, so a regeneration cannot quietly
+    take more away. Needs no optional distribution."""
+    path = BASIS_DIR / f"{stem}.g94"
+    if not path.is_file():
+        pytest.skip(f"{stem}.g94 not present in this checkout")
+    expected, _ = _SHORT_VS_BSE[stem]
+    assert len(_elements_in_g94(path)) == expected
+
+
+def test_no_new_short_import_against_the_bse_catalogue() -> None:
+    """The gap set is exactly the pinned one.
+
+    Catches a *new* short import landing: a basis bundled with fewer elements
+    than its published record. Skips without the optional [bse] extra, so it
+    guards whenever a developer has the catalogue installed.
+    """
+    bse = pytest.importorskip(
+        "basis_set_exchange", reason="the [bse] extra is not installed"
+    )
+    metadata = bse.get_metadata()
+    short = set()
+    for path in sorted(BASIS_DIR.glob("*.g94")):
+        key = path.stem.lower()
+        if key not in metadata:
+            continue
+        record = metadata[key]["versions"][metadata[key]["latest_version"]]
+        published = {int(z) for z in record["elements"]}
+        if published - _elements_in_g94(path):
+            short.add(path.stem)
+
+    new = sorted(short - set(_SHORT_VS_BSE))
+    assert not new, (
+        f"basis sets newly short against BSE {bse.version()}: {new}. Either "
+        "complete the import, or add it to _SHORT_VS_BSE with a note saying "
+        "why the bundled span is the intended one."
+    )
+
+
 def test_basis_g94_count_within_range() -> None:
     """The .g94 count should be large but bounded.  libint releases
     occasionally add / remove variants, but ±10 % of the current
@@ -190,10 +299,10 @@ def test_ecp_bearing_bases_have_sidecar() -> None:
     for g94_file in BASIS_DIR.glob("*.g94"):
         base = g94_file.stem
         # lanl, dhf, vdzp families always carry ECPs; so do the def2-m*
-        # composite bases and pob-TZVP-rev2 (valence-only beyond Kr).
+        # composite bases and pob-TZVP{,-rev2} (valence-only beyond Kr).
         if any(
             base.startswith(fam) for fam in ("lanl", "dhf", "vdzp", "def2-m")
-        ) or base == "pob-tzvp-rev2" or base in _DEF2_HEAVY:
+        ) or base in ("pob-tzvp", "pob-tzvp-rev2") or base in _DEF2_HEAVY:
             assert base in ecp_bases, (
                 f"{base}.g94 appears to be an ECP family but "
                 f"no {base}.ecp sidecar found"
@@ -285,8 +394,11 @@ def test_custom_g94_files_exist_in_basis() -> None:
     """Every .g94 in custom/ must land in basis/ after generation.
     A mismatch means setup_basis_library.sh needs an update or the
     file was added to custom/ but not regenerated."""
+    # Compare stems on both sides. _list_g94 returns file *names*, so the
+    # original stem-vs-name difference was the whole custom set and this
+    # assertion could never pass -- invisible while the module was skipping.
     custom_g94 = {f.stem for f in CUSTOM_DIR.glob("*.g94")}
-    basis_g94 = _list_g94(BASIS_DIR)
+    basis_g94 = {Path(n).stem for n in _list_g94(BASIS_DIR)}
     missing_in_basis = custom_g94 - basis_g94
     assert not missing_in_basis, (
         f"custom/ files not in basis/ (run setup_basis_library.sh):\n"

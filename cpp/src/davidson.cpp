@@ -512,13 +512,24 @@ DavidsonResultComplex davidson_kernel_hermitian(
                 delta(j) = ri(j) / denom;
             }
 
-            // Orthogonalise against current subspace.
-            for (int k = 0; k < m_sub; ++k) {
-                const std::complex<double> proj = delta.dot(V.col(k));
-                delta -= proj * V.col(k);
+            // Match the real kernel: reorthogonalise against both the
+            // basis and this block's accepted corrections.  Eigen::dot
+            // conjugates its first argument, so the basis vector must
+            // come first for the Hermitian projection <v|delta>.
+            for (int pass = 0; pass < 2; ++pass) {
+                for (int k = 0; k < m_sub; ++k) {
+                    const auto proj = V.col(k).dot(delta);
+                    delta -= proj * V.col(k);
+                }
+                for (int k = 0; k < n_corr; ++k) {
+                    const auto proj = corrections.col(k).dot(delta);
+                    delta -= proj * corrections.col(k);
+                }
             }
+            // Linear dependence must not track the convergence tolerance.
+            constexpr double kCorrectionFloor = 1.0e-12;
             const double dnorm = delta.norm();
-            if (dnorm > tol) {
+            if (dnorm > kCorrectionFloor) {
                 delta /= dnorm;
                 corrections.col(n_corr) = delta;
                 ++n_corr;

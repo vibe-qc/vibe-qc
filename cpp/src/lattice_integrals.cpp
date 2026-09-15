@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -59,6 +60,22 @@ std::vector<LatticeCell> pair_cells_for_1e(const libint2::BasisSet& shells,
     return pair_complete_cells(system, cutoff, shells, shells);
 }
 
+// Apply the same physical AO-pair support to a dense reciprocal/grid block
+// as to its analytical real-space partner.
+void filter_pair_block(Eigen::MatrixXd& block,
+                       const libint2::BasisSet& shells,
+                       const Eigen::Vector3d& g, double cutoff) {
+    const auto offsets = shells.shell2bf();
+    for (std::size_t p = 0; p < shells.size(); ++p) {
+        for (std::size_t q = 0; q < shells.size(); ++q) {
+            if (!pair_in_range(shells[p], shells[q], g, cutoff)) {
+                block.block(offsets[p], offsets[q], shells[p].size(),
+                            shells[q].size()).setZero();
+            }
+        }
+    }
+}
+
 // Core driver: for every lattice cell g, compute ⟨ χ_μ(0) | Op | χ_ν(g) ⟩.
 // The Op is a libint 1-body operator (overlap, kinetic, or nuclear). For
 // nuclear attraction, caller supplies the already-lattice-summed point
@@ -74,14 +91,18 @@ LatticeMatrixSet compute_1e_lattice_matrix_explicit(
     const std::vector<LatticeCell>& cells,
     libint2::Operator op,
     const std::vector<std::pair<double, std::array<double, 3>>>* nuclei,
-    double pair_cutoff = 0.0);
+    double pair_cutoff = 0.0,
+    const PairNuclearImageSelector* source_selector = nullptr,
+    const std::vector<double>* source_weights = nullptr);
 LatticeMatrixSet compute_1e_lattice_matrix_explicit(
     const BasisSet& basis,
     const PeriodicSystem& system,
     const std::vector<LatticeCell>& cells,
     libint2::Operator op,
     const std::vector<std::pair<double, std::array<double, 3>>>* nuclei,
-    double pair_cutoff) {
+    double pair_cutoff,
+    const PairNuclearImageSelector* source_selector,
+    const std::vector<double>* source_weights) {
     ensure_libint_initialized();
 
     const auto& shells_ref = basis.libint();
@@ -123,6 +144,8 @@ LatticeMatrixSet compute_1e_lattice_matrix_explicit(
         std::vector<libint2::Shell> shells_g(shells_ref.begin(),
                                              shells_ref.end());
         std::int64_t cached_cell = -1;
+        std::optional<PairNuclearImageCache> sources;
+        if (source_selector) sources.emplace(*source_selector, source_weights);
 
         #pragma omp for collapse(2) schedule(dynamic, 16)
         for (std::int64_t c = 0; c < n_cells; ++c) {
@@ -152,6 +175,11 @@ LatticeMatrixSet compute_1e_lattice_matrix_explicit(
                     const auto bf2 = shell2bf[s2];
                     const auto n2 = shells_g[s2].size();
 
+                    if (sources) {
+                        const auto& selected = sources->get(shells_ref[s1], shells_g[s2]);
+                        if (selected.charges.empty()) continue;
+                        engine.set_params(selected.charges);
+                    }
                     engine.compute(shells_ref[s1], shells_g[s2]);
                     const double* tile = buf[0];
                     if (!tile) continue;
@@ -190,8 +218,12 @@ LatticeMatrixSet compute_1e_lattice_matrix(
     }
     const auto cells =
         pair_cells_for_1e(basis.libint(), system, opts.cutoff_bohr);
+    std::optional<PairNuclearImageSelector> sources;
+    if (op == libint2::Operator::nuclear)
+        sources.emplace(system, opts.nuclear_cutoff_bohr);
     return compute_1e_lattice_matrix_explicit(
-        basis, system, cells, op, nuclei, opts.cutoff_bohr);
+        basis, system, cells, op, nuclei, opts.cutoff_bohr,
+        sources ? &*sources : nullptr);
 }
 
 // Build the lattice-summed point-charge list for nuclear attraction: every
@@ -226,6 +258,15 @@ std::vector<LatticeCell> pair_complete_lattice_cells(
     return pair_cells_for_1e(basis.libint(), system, cutoff_bohr);
 }
 
+std::vector<LatticeCell> physical_eri_lattice_cells(
+    const BasisSet& basis, const PeriodicSystem& system,
+    double pair_cutoff_bohr, double interaction_cutoff_bohr) {
+    LatticeSumOptions opts;
+    opts.cutoff_bohr = pair_cutoff_bohr;
+    opts.eri_interaction_cutoff_bohr = interaction_cutoff_bohr;
+    return pair_complete_eri_cells(system, opts, basis.libint());
+}
+
 LatticeMatrixSet compute_overlap_lattice(const BasisSet& basis,
                                          const PeriodicSystem& system,
                                          const LatticeSumOptions& opts) {
@@ -253,6 +294,13 @@ LatticeMatrixSet compute_nuclear_lattice_with_charges(
     const PeriodicSystem& system,
     const LatticeSumOptions& opts,
     const std::vector<double>& effective_charges) {
+    if (opts.pair_complete_1e) {
+        const PairNuclearImageSelector sources(system, opts.nuclear_cutoff_bohr);
+        const auto cells = pair_cells_for_1e(basis.libint(), system, opts.cutoff_bohr);
+        return compute_1e_lattice_matrix_explicit(
+            basis, system, cells, libint2::Operator::nuclear, nullptr,
+            opts.cutoff_bohr, &sources, &effective_charges);
+    }
     const auto cells =
         direct_lattice_cells(system, opts.nuclear_cutoff_bohr);
     std::vector<std::pair<double, std::array<double, 3>>> q;
@@ -280,11 +328,13 @@ LatticeMatrixSet compute_nuclear_erfc_lattice(const BasisSet& basis,
                                               double omega,
                                               const LatticeSumOptions& opts) {
     ensure_libint_initialized();
-    require_plain_ball_for_ewald_nuclear(opts, "compute_nuclear_erfc_lattice");
 
     const auto& shells_ref = basis.libint();
     const int nbf = static_cast<int>(basis.nbasis());
-    const auto nuclei = build_periodic_nuclear_charges(system, opts);
+    const auto nuclei = opts.pair_complete_1e
+        ? std::vector<std::pair<double, std::array<double, 3>>>{}
+        : build_periodic_nuclear_charges(system, opts);
+    const PairNuclearImageSelector selector(system, opts.nuclear_cutoff_bohr);
 
     // libint's erfc_nuclear takes a tuple (ω, point-charge list). ω is the
     // erfc attenuation parameter: the kernel is erfc(ω · r_C) / r_C, which
@@ -294,23 +344,18 @@ LatticeMatrixSet compute_nuclear_erfc_lattice(const BasisSet& basis,
                               shells_ref.max_l(), 0);
     using erfc_params =
         libint2::operator_traits<libint2::Operator::erfc_nuclear>::oper_params_type;
-    prototype.set_params(erfc_params{omega, nuclei});
+    if (!opts.pair_complete_1e) prototype.set_params(erfc_params{omega, nuclei});
     auto engines = make_engine_pool(prototype);
     const auto shell2bf = shells_ref.shell2bf();
+    std::vector<PairNuclearImageCache> source_caches;
+    for (int tid = 0; tid < omp_max_threads(); ++tid) source_caches.emplace_back(selector);
 
     LatticeMatrixSet set;
     set.nbf = nbf;
-    // Plain |g| ball, NOT the pair-complete enumeration the overlap /
-    // kinetic / direct-nuclear builders use. This is the erfc half of an
-    // Ewald split whose erf half is a reciprocal AO-pair FT or a grid
-    // quadrature built on ``direct_lattice_cells`` at the same cutoff
-    // (compute_nuclear_lattice_ewald, compute_v_ne_ewald_3d_ft_*,
-    // compute_vsap_lattice). Both halves must enumerate the same term set
-    // or the split stops reconstructing V; widening only this one moved
-    // the FT V_ne analytic-vs-FD gradient by 2.2e-05 Ha/bohr. Callers that
-    // pair these blocks with a one-electron matrix index this shorter
-    // list's prefix (direct_lattice_cells stable-sorts by |r|).
-    set.cells = direct_lattice_cells(system, opts.cutoff_bohr);
+    // Both Ewald halves and their gradients use this same AO-pair support.
+    set.cells = opts.pair_complete_1e
+        ? pair_cells_for_1e(shells_ref, system, opts.cutoff_bohr)
+        : direct_lattice_cells(system, opts.cutoff_bohr);
     set.blocks.assign(set.cells.size(), Eigen::MatrixXd::Zero(nbf, nbf));
 
     const int n_cells = static_cast<int>(set.cells.size());
@@ -327,18 +372,19 @@ LatticeMatrixSet compute_nuclear_erfc_lattice(const BasisSet& basis,
         for (std::size_t s1 = 0; s1 < shells_ref.size(); ++s1) {
             const auto bf1 = shell2bf[s1];
             const auto n1 = shells_ref[s1].size();
-            // NO pair filter here, deliberately. This is one half of an
-            // Ewald split: the erf complement is a grid quadrature
-            // (compute_nuclear_lattice_ewald) or a reciprocal AO-pair FT
-            // (compute_v_ne_ewald_3d_ft_*) that contracts every pair of
-            // these cells densely. Filtering only the erfc half would drop
-            // terms the erf half still carries, and the split would no
-            // longer reconstruct V. The cell list IS pair-complete, so both
-            // halves see the same, larger, image set than before.
             for (std::size_t s2 = 0; s2 < shells_g.size(); ++s2) {
+                if (opts.pair_complete_1e &&
+                    !pair_in_range(shells_ref[s1], shells_g[s2], opts.cutoff_bohr))
+                    continue;
                 const auto bf2 = shell2bf[s2];
                 const auto n2 = shells_g[s2].size();
 
+                if (opts.pair_complete_1e) {
+                    const auto& selected = source_caches[omp_thread_index()].get(
+                        shells_ref[s1], shells_g[s2]);
+                    if (selected.charges.empty()) continue;
+                    engine.set_params(erfc_params{omega, selected.charges});
+                }
                 engine.compute(shells_ref[s1], shells_g[s2]);
                 const double* tile = buf[0];
                 if (!tile) continue;
@@ -361,9 +407,8 @@ LatticeMatrixSet compute_nuclear_erfc_lattice(const BasisSet& basis,
 
 namespace {
 
-// Construct a BasisSet whose shells live at translated atomic positions.
-// We reuse BasisSet's own constructor — libint will reassemble the shell
-// list from the shifted Molecule exactly as it did for the original.
+// Translate the actual AO shells, including custom contractions and ECP
+// valence bases. A display name need not identify a reloadable basis file.
 BasisSet shifted_basis_for_cell(const BasisSet& ref,
                                 const PeriodicSystem& system,
                                 const Eigen::Vector3d& dr) {
@@ -376,7 +421,11 @@ BasisSet shifted_basis_for_cell(const BasisSet& ref,
         });
     }
     Molecule mol(std::move(shifted), system.charge, system.multiplicity);
-    return BasisSet(mol, ref.name());
+    auto shells = ref.shells();
+    for (auto& shell : shells) {
+        for (int axis = 0; axis < 3; ++axis) shell.origin[axis] += dr[axis];
+    }
+    return BasisSet(mol, shells, ref.name(), true);
 }
 
 }  // namespace
@@ -391,7 +440,6 @@ LatticeMatrixSet compute_nuclear_lattice_ewald(const BasisSet& basis,
             "compute_nuclear_lattice_ewald: 3D Ewald requires dim == 3. "
             "Use compute_nuclear_lattice (DIRECT_TRUNCATED) for 1D / 2D.");
     }
-    require_plain_ball_for_ewald_nuclear(opts, "compute_nuclear_lattice_ewald");
 
     // Resolve α (same auto-rule the Ewald engine uses).
     const double alpha = (ewald_opts.alpha > 0.0)
@@ -446,6 +494,10 @@ LatticeMatrixSet compute_nuclear_lattice_ewald(const BasisSet& basis,
         //   V_long_μν(g) = Σ_r χ_μ(r) · w(r) · v_long(r) · χ_ν(r − g)
         const Eigen::MatrixXd V_long_block = chi_wv.transpose() * chi_g;
         set.blocks[c] = V_short.blocks[c] + V_long_block;
+        if (opts.pair_complete_1e) {
+            filter_pair_block(set.blocks[c], basis.libint(),
+                              set.cells[c].r_cart, opts.cutoff_bohr);
+        }
     }
 
     return set;
@@ -492,15 +544,22 @@ void accumulate_erfc_lattice(
     const libint2::BasisSet& shells_ref,
     double omega,
     const std::vector<std::pair<double, std::array<double, 3>>>& charges,
-    double pair_cutoff) {
-    if (charges.empty()) return;
+    double pair_cutoff,
+    const PairNuclearImageSelector* source_selector,
+    const std::vector<double>& source_weights) {
+    if (!source_selector && charges.empty()) return;
     libint2::Engine prototype(libint2::Operator::erfc_nuclear,
                               shells_ref.max_nprim(), shells_ref.max_l(), 0);
     using erfc_params =
         libint2::operator_traits<libint2::Operator::erfc_nuclear>::oper_params_type;
-    prototype.set_params(erfc_params{omega, charges});
+    if (!source_selector) prototype.set_params(erfc_params{omega, charges});
     auto engines = make_engine_pool(prototype);
     const auto shell2bf = shells_ref.shell2bf();
+    std::vector<PairNuclearImageCache> source_caches;
+    if (source_selector) {
+        for (int tid = 0; tid < omp_max_threads(); ++tid)
+            source_caches.emplace_back(*source_selector, &source_weights);
+    }
     const int n_cells = static_cast<int>(set.cells.size());
 
     #pragma omp parallel for schedule(dynamic)
@@ -511,13 +570,18 @@ void accumulate_erfc_lattice(
         for (std::size_t s1 = 0; s1 < shells_ref.size(); ++s1) {
             const auto bf1 = shell2bf[s1];
             const auto n1 = shells_ref[s1].size();
-            // No pair filter: same Ewald-split argument as
-            // compute_nuclear_erfc_lattice. ``pair_cutoff`` is accepted so
-            // the signature records which cutoff the cell list came from.
-            (void)pair_cutoff;
             for (std::size_t s2 = 0; s2 < shells_g.size(); ++s2) {
+                if (pair_cutoff > 0.0 &&
+                    !pair_in_range(shells_ref[s1], shells_g[s2], pair_cutoff))
+                    continue;
                 const auto bf2 = shell2bf[s2];
                 const auto n2 = shells_g[s2].size();
+                if (source_selector) {
+                    const auto& selected = source_caches[omp_thread_index()].get(
+                        shells_ref[s1], shells_g[s2]);
+                    if (selected.charges.empty()) continue;
+                    engine.set_params(erfc_params{omega, selected.charges});
+                }
                 engine.compute(shells_ref[s1], shells_g[s2]);
                 const double* tile = buf[0];
                 if (!tile) continue;
@@ -545,7 +609,6 @@ LatticeMatrixSet compute_vsap_lattice(const BasisSet& basis,
             "guesses are a separate follow-up.");
     }
     ensure_libint_initialized();
-    require_plain_ball_for_ewald_nuclear(opts, "compute_vsap_lattice");
     const std::map<int, SAPExpansion>& sap_table =
         sap_expansions(sap_basis_name);
 
@@ -575,10 +638,9 @@ LatticeMatrixSet compute_vsap_lattice(const BasisSet& basis,
 
     LatticeMatrixSet set;
     set.nbf = nbf;
-    // Plain |g| ball, for the same Ewald-split reason as
-    // compute_nuclear_erfc_lattice: the long-range erf piece below is a
-    // grid quadrature over this cell list.
-    set.cells = direct_lattice_cells(system, opts.cutoff_bohr);
+    set.cells = opts.pair_complete_1e
+        ? pair_cells_for_1e(shells_ref, system, opts.cutoff_bohr)
+        : direct_lattice_cells(system, opts.cutoff_bohr);
     set.blocks.assign(set.cells.size(), Eigen::MatrixXd::Zero(nbf, nbf));
 
     // Image cells for the short-range erfc point-charge lists.
@@ -614,8 +676,13 @@ LatticeMatrixSet compute_vsap_lattice(const BasisSet& basis,
                 at.xyz[2] + cell.r_cart[2]});
         }
     }
+    const PairNuclearImageSelector selector(system, opts.nuclear_cutoff_bohr);
+    const auto* source_selector = opts.pair_complete_1e ? &selector : nullptr;
+    std::vector<double> source_weights;
+    for (const auto& atom : system.unit_cell) source_weights.push_back(-net_charge(atom.Z));
     accumulate_erfc_lattice(set, shells_ref, eta, eta_q,
-                            opts.pair_complete_1e ? opts.cutoff_bohr : 0.0);
+                            opts.pair_complete_1e ? opts.cutoff_bohr : 0.0,
+                            source_selector, source_weights);
 
     // (b) per-(element, primitive) erfc with charges +c_i  → −Σ c_i erfc(ω_i)/r.
     //     Atoms grouped by element so one erfc call covers all of them.
@@ -626,9 +693,12 @@ LatticeMatrixSet compute_vsap_lattice(const BasisSet& basis,
     for (const auto& [z, idx] : atoms_by_z) {
         const SAPExpansion& e = sap_table.at(z);
         for (std::size_t i = 0; i < e.alphas.size(); ++i) {
+            source_weights.assign(system.unit_cell.size(), 0.0);
+            for (std::size_t atom : idx) source_weights[atom] = e.coeffs[i];
             accumulate_erfc_lattice(set, shells_ref, std::sqrt(e.alphas[i]),
                                     image_charges(idx, e.coeffs[i]),
-                                    opts.pair_complete_1e ? opts.cutoff_bohr : 0.0);
+                                    opts.pair_complete_1e ? opts.cutoff_bohr : 0.0,
+                                    source_selector, source_weights);
         }
     }
 
@@ -663,6 +733,10 @@ LatticeMatrixSet compute_vsap_lattice(const BasisSet& basis,
             shifted_basis_for_cell(basis, system, set.cells[c].r_cart);
         const Eigen::MatrixXd chi_g = evaluate_ao(basis_g, grid.points);
         set.blocks[c] += chi_wv.transpose() * chi_g;
+        if (opts.pair_complete_1e) {
+            filter_pair_block(set.blocks[c], shells_ref,
+                              set.cells[c].r_cart, opts.cutoff_bohr);
+        }
     }
 
     return set;
@@ -696,9 +770,11 @@ LatticeMatrixSet compute_nuclear_lattice_explicit(
     const LatticeSumOptions& opts,
     const std::vector<LatticeCell>& cells) {
     const auto nuclei = build_periodic_nuclear_charges(system, opts);
+    const PairNuclearImageSelector selector(system, opts.nuclear_cutoff_bohr);
     return compute_1e_lattice_matrix_explicit(
         basis, system, cells, libint2::Operator::nuclear, &nuclei,
-        opts.pair_complete_1e ? opts.cutoff_bohr : 0.0);
+        opts.pair_complete_1e ? opts.cutoff_bohr : 0.0,
+        opts.pair_complete_1e ? &selector : nullptr);
 }
 
 }  // namespace vibeqc

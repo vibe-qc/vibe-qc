@@ -1218,6 +1218,117 @@ def test_mdf_overlap_lagrangian_admits_storage_before_matrix_work(monkeypatch):
         mdf._build_mdf_scf_energy_weighted_density(cache, *args, [.3, .7], stationarity_tolerance=1e-10)
 
 
+def _rohf_lagrangian_fixture(*, truncated=False):
+    n = 4 if truncated else 3
+    s = np.diag([1.4, .8, 1.1]+([1.] if truncated else []))
+    u = np.array([[1., 1j, 0.], [1j, 1., 0.], [0., 0., np.sqrt(2.)]])/np.sqrt(2.)
+    c = np.zeros((n, 3), complex)
+    c[:3] = np.diag(1/np.sqrt(np.diag(s)[:3]))@u
+    pa, pb = np.diag([1., 1., 0.]), np.diag([1., 0., 0.])
+    ga = np.array([[-1.2, .17+.08j, .23-.1j],
+                   [.17-.08j, -.6, 0.], [.23+.1j, 0., .8]])
+    gb = np.array([[-1., 0., -.23+.1j],
+                   [0., -.2, .11+.06j], [-.23-.1j, .11-.06j, 1.1]])
+    ds, fs = [], []
+    for p, g in ((pa, ga), (pb, gb)):
+        ds.append([c@p@c.conj().T for _ in range(2)])
+        fs.append([s@c@g@c.conj().T@s for _ in range(2)])
+    factors = {(k, k): np.zeros((1, n, n), complex) for k in range(2)}
+    cache = mdf._MdfCache(
+        factors, 'rohf-state-witness', (), ((0., 0., 0.), (.13, -.07, .02)), (),
+        sum(f.nbytes for f in factors.values()), 1024**2, memory_byte_cap=16*1024**2)
+    expected = c@(pa@ga@pa+pb@gb@pb)@c.conj().T
+    return cache, ds, fs, [s.copy(), s.copy()], [c.copy(), c.copy()], [expected, expected]
+
+
+@pytest.mark.parametrize('truncated', [False, True])
+def test_rohf_overlap_lagrangian_uses_shared_stationarity_and_physical_spin_focks(truncated):
+    cache, ds, fs, ss, cs, expected = _rohf_lagrangian_fixture(truncated=truncated)
+    for spin in range(2):
+        c, s, d, f = cs[0], ss[0], ds[spin][0], fs[spin][0]
+        p, g = c.conj().T@s@d@s@c, c.conj().T@f@c
+        # Neither spin is separately stationary; the shared rotation is.
+        assert np.linalg.norm(g@p-p@g) > .1
+    got = mdf._build_mdf_rohf_energy_weighted_density(
+        cache, ds, fs, ss, cs, [.3, .7], stationarity_tolerance=1e-10)
+    np.testing.assert_allclose(got, expected, atol=2e-14, rtol=0.)
+    assert all(not a.flags.writeable for a in got)
+    assert np.max(np.abs(np.asarray(got).imag)) > 1e-3
+    # A change of shared retained coordinates must not change the AO W.
+    rotation = np.array([[0., 1., 0.], [1., 0., 0.], [0., 0., 1j]])
+    rotated = mdf._build_mdf_rohf_energy_weighted_density(
+        cache, ds, fs, ss, [c@rotation for c in cs], [.3, .7], stationarity_tolerance=1e-10)
+    np.testing.assert_allclose(rotated, got, atol=2e-14, rtol=0.)
+    shift = .37
+    shifted = mdf._build_mdf_rohf_energy_weighted_density(
+        cache, ds, [[f+shift*s for f, s in zip(channel, ss)] for channel in fs],
+        ss, cs, [.3, .7], stationarity_tolerance=1e-10)
+    np.testing.assert_allclose(shifted, got+shift*np.sum(ds, axis=0), atol=2e-14, rtol=0.)
+
+
+def test_rohf_overlap_lagrangian_matches_shared_overlap_variation():
+    cache, ds, fs, ss, cs, _ = _rohf_lagrangian_fixture(truncated=True)
+    weights = [.3, .7]
+    got = mdf._build_mdf_rohf_energy_weighted_density(
+        cache, ds, fs, ss, cs, weights, stationarity_tolerance=1e-10)
+    h = np.array([[.2, .07j, -.11], [-.07j, -.1, .08], [-.11, .08, .3]])
+    # Parallel transport each shared orbital space to a perturbed metric,
+    # keeping occupied projectors and physical Focks fixed for this partial.
+    def energy(t):
+        total = 0.
+        for k, (s, c) in enumerate(zip(ss, cs)):
+            ev, vec = np.linalg.eigh(np.eye(3)+t*(k+1)*h)
+            moved = c@((vec/np.sqrt(ev))@vec.conj().T)
+            for spin in range(2):
+                p = c.conj().T@s@ds[spin][k]@s@c
+                total += weights[k]*np.trace(moved@p@moved.conj().T@fs[spin][k]).real
+        return total
+    delta = 1e-5
+    finite_difference = (energy(delta)-energy(-delta))/(2*delta)
+    analytic = -sum(w*np.trace(a@(s@c@((k+1)*h)@c.conj().T@s)).real
+                    for k, (w, a, s, c) in enumerate(zip(weights, got, ss, cs)))
+    assert finite_difference == pytest.approx(analytic, abs=2e-9, rel=0.)
+
+
+@pytest.mark.parametrize('invalid,match', [
+    ('fractional', 'idempotent'), ('nested', 'contained in alpha'),
+    ('stationarity', 'not stationary'), ('support', 'outside'),
+    ('orbitals', 'S-orthonormal'), ('nonfinite', 'nonfinite'), ('weights', 'normalized'),
+])
+def test_rohf_overlap_lagrangian_rejects_invalid_determinants(invalid, match):
+    cache, ds, fs, ss, cs, _ = _rohf_lagrangian_fixture(truncated=True)
+    weights = [.3, .7]
+    if invalid == 'fractional':
+        ds[1][0] *= .7
+    elif invalid == 'nested':
+        ds[1][0] = cs[0]@np.diag([0., 0., 1.])@cs[0].conj().T
+    elif invalid == 'stationarity':
+        fs[1][0] *= .5
+    elif invalid == 'support':
+        ds[0][0][-1, -1] = 1.
+    elif invalid == 'orbitals':
+        cs[0] *= .9
+    elif invalid == 'nonfinite':
+        fs[0][0][0, 0] = np.nan
+    else:
+        weights = [.3, .3]
+    with pytest.raises(ValueError, match=match):
+        mdf._build_mdf_rohf_energy_weighted_density(
+            cache, ds, fs, ss, cs, weights, stationarity_tolerance=1e-10)
+
+
+def test_rohf_overlap_lagrangian_admits_storage_before_matrix_work(monkeypatch):
+    from dataclasses import replace
+    cache, ds, fs, ss, cs, _ = _rohf_lagrangian_fixture()
+    cache = replace(cache, memory_byte_cap=cache.retained_cache_bytes)
+    def forbidden(*args, **kwargs):
+        pytest.fail('unadmitted ROHF overlap Lagrangian started matrix work')
+    monkeypatch.setattr(mdf.np, 'eye', forbidden)
+    with pytest.raises(_RangeSeparatedGdfAdmissionError, match='memory cap'):
+        mdf._build_mdf_rohf_energy_weighted_density(
+            cache, ds, fs, ss, cs, [.3, .7], stationarity_tolerance=1e-10)
+
+
 def test_gradient_response_admission_counts_reciprocal_copies_before_integrals(monkeypatch):
     system, orbital, auxiliary = _fixture()
     # Large LR lists can dominate the response binding copy even with one

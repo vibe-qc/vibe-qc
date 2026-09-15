@@ -2099,10 +2099,19 @@ def test_four_center_external_hybrid_rejected_before_dry_run(tmp_path):
     assert not stem.with_suffix(".system").exists()
 
 
-def test_direct_gdf_external_pure_xc_reports_final_hartree_component():
-    from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
+def test_direct_gdf_external_pure_xc_reports_final_hartree_component(monkeypatch):
+    from vibeqc import periodic_k_gdf as driver
 
-    name = _external_name(_QuadraticNonlocalProvider())
+    provider = _QuadraticNonlocalProvider()
+    name = _external_name(provider)
+    evaluated_densities = []
+    build_xc = driver._build_xc_k_from_density
+
+    def capture_xc(**kwargs):
+        evaluated_densities.append(np.asarray(kwargs['density_k']).copy())
+        return build_xc(**kwargs)
+
+    monkeypatch.setattr(driver, '_build_xc_k_from_density', capture_xc)
     system, basis = _h2_periodic_gate_fixture()
     opts = core.PeriodicKSOptions()
     opts.max_iter = 1
@@ -2114,7 +2123,7 @@ def test_direct_gdf_external_pure_xc_reports_final_hartree_component():
     opts.lattice_opts.cutoff_bohr = 2.0
     opts.lattice_opts.nuclear_cutoff_bohr = 2.0
 
-    result = run_krhf_periodic_gdf(
+    result = driver.run_krhf_periodic_gdf(
         system,
         basis,
         (2, 1, 1),
@@ -2141,10 +2150,21 @@ def test_direct_gdf_external_pure_xc_reports_final_hartree_component():
     )
     assert abs(result.e_coulomb) > 1.0e-8
     assert result.e_hf_exchange == pytest.approx(0.0, abs=1.0e-14)
+    # E_electronic includes the functional energy. Reconstruct it from
+    # the provider's quadrature inputs, not from the returned component
+    # itself. The old assertion omitted this nonzero term (#213).
+    features = provider.calls[-1]
+    integrated_density = float(np.asarray(features['grid_weights']) @ (
+        np.asarray(features['rho_alpha']) + np.asarray(features['rho_beta'])))
+    expected_xc = .5 * provider.scale * integrated_density**2
+    assert expected_xc > 1.0e-8
+    assert result.e_xc == pytest.approx(expected_xc, abs=1.0e-11)
+    np.testing.assert_allclose(result.density, evaluated_densities[-1], atol=1e-12, rtol=0.)
     assert result.e_electronic == pytest.approx(
-        e_hcore + result.e_coulomb + result.e_hf_exchange,
+        e_hcore + result.e_coulomb + result.e_hf_exchange + expected_xc,
         abs=1.0e-11,
     )
+    assert result.energy == pytest.approx(result.e_electronic + result.e_nuclear, abs=1.0e-11)
 
 
 def test_direct_gdf_external_uks_multik_returns_physical_spin_focks():

@@ -448,8 +448,8 @@ def screened_multipole_interaction_tensor(
     quartet-level bipolar far field must contract with pair moments:
     for two non-penetrating smeared distributions the effective
     ``mu`` is ``1/mu = 1/gamma_bra + 1/gamma_ket + 1/omega^2`` (the
-    same reduced-exponent identity the SR pad and QQR screening are
-    built on).
+    same reduced-exponent convention used by the SR pad and the
+    charge-pair Schwarz screening envelopes).
     """
     from math import factorial as _factorial
 

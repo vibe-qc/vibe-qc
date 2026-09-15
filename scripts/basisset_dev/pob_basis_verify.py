@@ -53,7 +53,10 @@ CITATIONS = {
     "pob-TZVP": (
         "Peintinger, Vilela Oliveira, Bredow. "
         "J. Comput. Chem. 34, 451–459 (2013). "
-        "DOI: 10.1002/jcc.23153"
+        "DOI: 10.1002/jcc.23153; "
+        "Rb-I: Laun, Vilela Oliveira, Bredow. "
+        "J. Comput. Chem. 39, 1285–1290 (2018). "
+        "DOI: 10.1002/jcc.25195"
     ),
     "pob-TZVP-rev2": (
         "Vilela Oliveira, Laun, Peintinger, Bredow. "
@@ -73,7 +76,10 @@ ELEMENT_BY_Z = {
     9: "F", 10: "Ne", 11: "Na", 12: "Mg", 13: "Al", 14: "Si", 15: "P",
     16: "S", 17: "Cl", 18: "Ar", 19: "K", 20: "Ca", 21: "Sc", 22: "Ti",
     23: "V", 24: "Cr", 25: "Mn", 26: "Fe", 27: "Co", 28: "Ni", 29: "Cu",
-    30: "Zn", 31: "Ga", 32: "Ge", 33: "As", 34: "Se", 35: "Br",
+    30: "Zn", 31: "Ga", 32: "Ge", 33: "As", 34: "Se", 35: "Br", 36: "Kr",
+    37: "Rb", 38: "Sr", 39: "Y", 40: "Zr", 41: "Nb", 42: "Mo", 43: "Tc",
+    44: "Ru", 45: "Rh", 46: "Pd", 47: "Ag", 48: "Cd", 49: "In", 50: "Sn",
+    51: "Sb", 52: "Te", 53: "I",
 }
 
 
@@ -119,6 +125,17 @@ def parse_crystal_file(path: Path) -> ElementBasis:
     li = iter(lines)
     first = re.split(r"\s+", next(li))
     z, nshells = int(first[0]), int(first[1])
+    if z > 200:
+        # CRYSTAL's Z+200 header: an INPUT pseudopotential precedes the
+        # shells (ZNUC M M0 M1 M2 M3 M4, then one "alpha C n" row per term).
+        # Only the orbital shells belong in the .g94; the ECP goes to the
+        # .ecp sidecar through vibeqc.basis_crystal.emit_ecp_sidecar.
+        z -= 200
+        if next(li).upper() != "INPUT":
+            raise ValueError(f"{path}: Z+200 header without an INPUT ECP block")
+        counts = re.split(r"\s+", next(li))
+        for _ in range(sum(int(tok) for tok in counts[1:7])):
+            next(li)
     el = ElementBasis(z=z)
     for _ in range(nshells):
         header = re.split(r"\s+", next(li))

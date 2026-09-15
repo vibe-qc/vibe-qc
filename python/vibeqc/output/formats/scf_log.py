@@ -541,6 +541,10 @@ def _format_energy_components(result, *, energy_label: str = "Total energy") -> 
             value = getattr(comp, attr, None)
             if value is not None:
                 rows.append((label, value))
+        # The terminal history record and scalar XC describe the same density.
+        xc = getattr(result, "e_xc", None)
+        if xc is not None:
+            rows.append(("Exchange-correlation (XC)", float(xc)))
         # Dudarev DFT+U contribution. BIPOLE results carry e_dft_plus_u=0.0
         # even without +U sites, so presence alone cannot gate the row; only
         # shown when non-zero, matching the scalar branch below.

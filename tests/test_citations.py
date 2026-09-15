@@ -1902,6 +1902,71 @@ def test_msindo_seccm_1d_does_not_cite_the_parry_wire_ewald() -> None:
         assert clean.isdisjoint(slab_keys)
 
 
+def test_msindo_seccm_truncated_1d_is_not_credited_as_exact_ewald() -> None:
+    """The frozen truncated 1-D sum owes the CCM construction, not Ewald.
+
+    MSINDO at d = 1 resolves ``madelung_truncated_1d``, the finite +/-1, +/-2
+    shell bare point-charge sum of ``ccm1dmadelsum.f``. It performs no Ewald
+    split and Janetzko, Bredow and Jug (2002, Eq. 12) define their exact
+    Madelung matrices for m = 2, 3 only, so crediting either to it is a wrong
+    attribution (GitLab vibe-qc#64). The genuinely executing 2-D and 3-D
+    embeddings keep the full row, and the "none" family cites nothing of it.
+    """
+    db = load_default_database()
+
+    def keys(dimension: int, electrostatics_family: str) -> set[str]:
+        plan = SemiempiricalRoutePlan.from_request(
+            "ccm",
+            boundary="seccm",
+        ).with_seccm_runtime(
+            periodic_dimension=dimension,
+            electrostatics_family=electrostatics_family,
+        )
+        kwargs = plan.citation_assemble_kwargs
+        if dimension == 1 and electrostatics_family == "madelung":
+            assert kwargs["seccm_electrostatics_kernel"] == "madelung_truncated_1d"
+        return {citation.key for citation in db.assemble(**kwargs).citations}
+
+    construction = "bredow_geudtner_jug_ccm_2001"
+    exact = {"janetzko_ccm_long_range_2002", "ewald_lattice_sum_1921"}
+
+    truncated = keys(1, "madelung")
+    assert construction in truncated
+    assert truncated.isdisjoint(exact)
+    assert truncated.isdisjoint({"parry_2d_ewald_1975", "de_leeuw_perram_2d_ewald_1979"})
+
+    for dimension in (2, 3):
+        executing = keys(dimension, "madelung")
+        assert construction in executing
+        assert exact <= executing
+
+    # The "none" family runs no embedding at all. Bredow 2001 may still
+    # appear there: it is the CCM construction reference on the method's
+    # own lineage row, which is not what this test polices.
+    for dimension in (1, 2, 3):
+        assert keys(dimension, "none").isdisjoint(exact)
+
+    # ``methods.msindo`` carries no CCM lineage, so on a bare assembly the
+    # construction reference can only arrive through the madelung route:
+    # this pins which row fired, not just which keys the lineage supplies.
+    def bare(kernel: str) -> set[str]:
+        assembled = db.assemble(
+            method="msindo", uses_scf=True, periodic=False,
+            seccm_dimension=1 if kernel.endswith("1d") else 3,
+            seccm_electrostatics_kernel=kernel,
+        )
+        return {citation.key for citation in assembled.citations}
+
+    bare_truncated = bare("madelung_truncated_1d")
+    assert construction in bare_truncated
+    assert bare_truncated.isdisjoint(exact)
+    assert exact | {construction} <= bare("madelung_ewald_3d")
+
+    routes = db._routes["methods"]
+    assert tuple(routes["ccm_madelung_truncated_1d"]) == (construction,)
+    assert set(routes["ccm_madelung_embedding"]) == exact | {construction}
+
+
 @pytest.mark.parametrize("method", ["scc_dftb", "gfn2"])
 def test_seccm_mermin_citation_follows_runtime_temperature(method: str) -> None:
     db = load_default_database()

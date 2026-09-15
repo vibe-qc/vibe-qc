@@ -1063,10 +1063,10 @@ def test_lih_p02_222_gdf_postscf_outputs_handle_complex_density(tmp_path):
         or "non-negligible imaginary" in str(warning.message)
         for warning in caught
     )
-    # NPA fails closed by design until the occupancy-weighted NAO
-    # construction exists; every other section must succeed cleanly.
-    assert set(summary.errors) == {"npa"}
-    assert "Natural Atomic Orbital" in summary.errors["npa"]
+    # NPA is unavailable until occupancy-weighted NAOs exist;
+    # every attempted section must succeed cleanly.
+    assert summary.errors == {}
+    assert "Natural Atomic Orbital" in summary.unavailable["npa"]
     assert summary.npa_atoms == []
     report = validate_qvf(qvf_path)
     assert report["valid"], report["errors"]

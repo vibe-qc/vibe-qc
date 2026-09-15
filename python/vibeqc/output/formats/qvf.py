@@ -4214,10 +4214,10 @@ def _write_atom_properties_section(
             spin_pop = np.array([row[3] for row in mulliken_spin_atoms], dtype=np.float64)
             member = _write_binary_to_zip(
                 zf,
-                "atom_properties/mulliken_spin.bin",
+                "atom_properties/spin_population.bin",
                 spin_pop,
             )
-            section["members"]["mulliken_spin"] = member
+            section["members"]["spin_population"] = member
 
         if section["members"]:
             sections.append(section)
@@ -5499,6 +5499,29 @@ def _write_job_spec_section(
 # -- dos.total --------------------------------------------------------------
 
 
+def _spectral_operator_metadata(data: dict[str, Any]) -> dict[str, str]:
+    """Preserve an explicit spectral operator contract, or no contract.
+
+    ROHF diagnostic energies and Hamiltonian-weighted projections can use
+    different operators. Dropping part of their provenance would make the
+    artifact ambiguous. Ordinary payloads without these labels retain their
+    existing representation. Validate before writing any binary members.
+    """
+    fields = (
+        'energy_operator', 'projection_operator', 'orbital_basis',
+        'population_density', 'validation_status',
+    )
+    if not any(field in data for field in fields):
+        return {}
+    if any(not isinstance(data.get(field), str) or not data[field].strip()
+           for field in fields):
+        raise ValueError(
+            'spectral operator provenance requires nonempty string values for '
+            + ', '.join(fields)
+        )
+    return {field: data[field] for field in fields}
+
+
 def _write_dos_total_section(
     zf: zipfile.ZipFile,
     dos_data: dict[str, Any],
@@ -5517,6 +5540,7 @@ def _write_dos_total_section(
     * ``n_electrons`` -- float, integrated electron count
     * ``n_spin`` -- int, 1 (restricted) or 2 (spin-polarized)
     """
+    operator_metadata = _spectral_operator_metadata(dos_data)
     energies = np.asarray(dos_data["energies"], dtype=np.float64)
     dos_arr = np.asarray(dos_data["dos"], dtype=np.float64)
     n_spin = int(dos_data.get("n_spin", 1))
@@ -5567,6 +5591,7 @@ def _write_dos_total_section(
         "fermi_energy_ev": fermi_ev,
         "n_electrons": n_elec,
         "n_spin": n_spin,
+        **operator_metadata,
     }
     sections.append(section)
 
@@ -5592,6 +5617,7 @@ def _write_dos_projected_section(
     * ``channels`` -- list of dicts, each with ``atom_index``, ``symbol``,
       ``l``, ``label``
     """
+    operator_metadata = _spectral_operator_metadata(pdos_data)
     energies = np.asarray(pdos_data["energies"], dtype=np.float64)
     projections = np.asarray(pdos_data["projections"], dtype=np.float64)
     n_spin = int(pdos_data.get("n_spin", 1))
@@ -5643,6 +5669,7 @@ def _write_dos_projected_section(
         "n_spin": n_spin,
         "fermi_energy_ev": fermi_ev,
         "channels": channels,
+        **operator_metadata,
     }
     sections.append(section)
 
@@ -5670,6 +5697,7 @@ def _write_dos_coop_section(
     * ``pairs`` -- list of dicts, each with ``i``, ``j``, ``symbol_i``,
       ``symbol_j``, ``distance_ang``
     """
+    operator_metadata = _spectral_operator_metadata(coop_data)
     energies = np.asarray(coop_data["energies"], dtype=np.float64)
     projections = np.asarray(coop_data["projections"], dtype=np.float64)
     integrated = np.asarray(coop_data["integrated"], dtype=np.float64)
@@ -5706,6 +5734,7 @@ def _write_dos_coop_section(
     pairs: list[dict[str, Any]] = list(coop_data.get("pairs", []))
     meta = {
         "method": "coop",
+        **operator_metadata,
         "fermi_energy_ev": float(coop_data.get("fermi_energy_ev", 0.0)),
         "sigma_ev": float(coop_data.get("sigma_ev", 0.27)),
         "n_spin": n_spin,
@@ -5729,6 +5758,7 @@ def _write_dos_coop_section(
             },
         },
         "energies_units": str(coop_data.get("energies_units", "eV")),
+        **operator_metadata,
         "n_spin": n_spin,
         "fermi_energy_ev": float(coop_data.get("fermi_energy_ev", 0.0)),
         "sigma_ev": float(coop_data.get("sigma_ev", 0.27)),
@@ -5760,6 +5790,7 @@ def _write_dos_cohp_section(
     * ``sigma_ev`` -- float
     * ``pairs`` -- list of dicts
     """
+    operator_metadata = _spectral_operator_metadata(cohp_data)
     energies = np.asarray(cohp_data["energies"], dtype=np.float64)
     projections = np.asarray(cohp_data["projections"], dtype=np.float64)
     integrated = np.asarray(cohp_data["integrated"], dtype=np.float64)
@@ -5795,6 +5826,7 @@ def _write_dos_cohp_section(
     pairs: list[dict[str, Any]] = list(cohp_data.get("pairs", []))
     meta = {
         "method": "cohp",
+        **operator_metadata,
         "fermi_energy_ev": float(cohp_data.get("fermi_energy_ev", 0.0)),
         "sigma_ev": float(cohp_data.get("sigma_ev", 0.27)),
         "n_spin": n_spin,
@@ -5818,6 +5850,7 @@ def _write_dos_cohp_section(
             },
         },
         "energies_units": str(cohp_data.get("energies_units", "eV")),
+        **operator_metadata,
         "n_spin": n_spin,
         "fermi_energy_ev": float(cohp_data.get("fermi_energy_ev", 0.0)),
         "sigma_ev": float(cohp_data.get("sigma_ev", 0.27)),

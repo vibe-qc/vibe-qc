@@ -407,26 +407,30 @@ grad = compute_bipole_gradient_fd(system, "sto-3g", kmesh, opts, method="RHF")
 print(f"max|grad| = {np.max(np.abs(grad)):.4e} Ha/bohr")
 ```
 
-The analytic drivers are still a research-preview surface.  The
-**corrected (Ewald-exchange-split) gauge, the BIPOLE default, is the
-FD-validated analytic route**: RHF/UHF/RKS/UKS at Γ *and* multi-k,
-including finite-temperature/fractional (Mermin free-energy) occupations,
-all pinned against FD.  Meta-GGA τ-Pulay is landed (the term validated to
-1e-9 against an independent reimplementation; SCAN/r2SCAN are
-well-behaved, TPSS/M06-L carry a known SCF-eigenvalue residual).  In the
-legacy
-(``use_exchange_ewald_split=False``) gauge the maintained preview covers
-RHF/UHF Γ (general crystals) and maintained RHF/UHF multi-k regressions,
-Gamma-local zero-smearing RKS/UKS (LDA/GGA XC Pulay, moving-grid, and
-KS-response terms), and RKS/UKS multi-k (diagonal-Z + corrected W + J^LR +
-XC Pulay), which **warns** that the full multi-k KS coupled-perturbed
-response is not included.  Legacy-gauge RKS/UKS calls with
-finite-temperature/fractional occupations raise ``NotImplementedError``.
-The sole remaining gated analytic case is the **legacy multi-k KS-CPHF**:
-that path uses a diagonal-Z approximation and warns rather than solving the
-full coupled-perturbed response, and it is deferred (the corrected gauge
-already covers multi-k KS variationally).  Use the FD force path for
-production forces in all cases.
+The analytic drivers are still a research-preview surface. In the
+**corrected (Ewald-exchange-split) gauge**, the BIPOLE default, maintained
+Gamma cases cover RHF/UHF and integer-occupation RKS/UKS with padded radial
+or pair-resolved domains. Padded radial multi-k RHF/UHF also include the
+finite-domain orbital response. RHF uses a transpose response solve with
+consistent complex rotations and k-point weights; an unsatisfied response
+equation still raises ``NotImplementedError``. Its dense response matrix
+adds a scaling cost for large orbital spaces.
+
+Padded multi-k KS, multi-k pair-resolved domains, and padded fractional
+occupations remain gated. Finite-temperature KS analytic gradients are
+maintained on the historical corrected-gauge domain; finite-temperature UHF
+analytic gradients remain unsupported. Meta-GGA τ-Pulay is landed (the term
+validated to 1e-9 against an independent reimplementation; SCAN/r2SCAN are
+well-behaved, TPSS/M06-L carry a known SCF-eigenvalue residual).
+
+In the legacy (``use_exchange_ewald_split=False``) gauge, symmetric HF
+controls remain maintained; asymmetric HF SCF is unsupported. Gamma-local
+zero-smearing RKS/UKS include XC Pulay, moving-grid and KS-response terms.
+Legacy multi-k KS uses diagonal-Z + corrected W + J^LR + XC Pulay and
+**warns** that the full coupled-perturbed response is not included.
+Legacy-gauge KS calls with finite-temperature/fractional occupations raise
+``NotImplementedError``. See the [BIPOLE status](../bipole_status.md) for
+the maintained validation cases. Use FD for production forces in all cases.
 
 ``compute_bipole_gradient_fd`` costs about 6N SCFs for N atoms. It
 fails fast if any displaced SCF point does not converge, rather than

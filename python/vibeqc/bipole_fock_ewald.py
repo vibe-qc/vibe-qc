@@ -335,6 +335,7 @@ class JLongRangeCache:
     ft_per_cell: np.ndarray
     cells_r_cart: np.ndarray
     omega: float
+    pair_cutoff_bohr: Optional[float] = None
     ft_bloch_cache: dict[bytes, np.ndarray] = field(
         default_factory=dict,
         repr=False,
@@ -386,6 +387,7 @@ def _build_j_long_range_cache(
     pad_factor: float = 1.5,
     *,
     K_max: Optional[float] = None,
+    lattice_opts: Optional[LatticeSumOptions] = None,
 ) -> JLongRangeCache:
     """Construct a :class:`JLongRangeCache` for the given lattice setup.
 
@@ -433,12 +435,23 @@ def _build_j_long_range_cache(
         correction[None, :, None, None] * correction[None, None, :, None]
     )
 
+    pair_cutoff = (
+        float(lattice_opts.cutoff_bohr)
+        if lattice_opts is not None and lattice_opts.pair_complete_1e else None
+    )
+    if pair_cutoff is not None:
+        from .lattice_screening import ao_pair_support_mask
+
+        for cell, shift in enumerate(R_g_arr):
+            ft_per_cell[cell] *= ao_pair_support_mask(basis, shift, pair_cutoff)[:, :, None]
+
     return JLongRangeCache(
         K_vectors=K_vectors,
         kernel=kernel,
         ft_per_cell=ft_per_cell,
         cells_r_cart=R_g_arr,
         omega=float(omega),
+        pair_cutoff_bohr=pair_cutoff,
     )
 
 
@@ -1148,12 +1161,22 @@ class KExchangeLongRangeCache:
 
             # S_g exp(-ik′.R_g) FT_g -- the bloch helper applies +ik
             # phases, so request -k′.
-            B = ao_pair_fourier_transform_bloch(
-                self.basis,
-                chan.K_vectors,
-                self.cells_r_cart,
-                -k_prime,
-            )
+            if self.j_cache.pair_cutoff_bohr is None:
+                B = ao_pair_fourier_transform_bloch(
+                    self.basis, chan.K_vectors, self.cells_r_cart, -k_prime,
+                )
+            else:
+                from .lattice_screening import ao_pair_support_mask
+
+                ft = ao_pair_fourier_transform_at_cells(
+                    self.basis, chan.K_vectors, self.cells_r_cart,
+                )
+                for cell, shift in enumerate(self.cells_r_cart):
+                    ft[cell] *= ao_pair_support_mask(
+                        self.basis, shift, self.j_cache.pair_cutoff_bohr,
+                    )[:, :, None]
+                B = np.einsum("g,gmnk->mnk", np.exp(-1j * (self.cells_r_cart @ k_prime)), ft)
+
             correction = _libint_ylm_correction_per_ao(self.basis)
             B = B * (correction[:, None, None] * correction[None, :, None])
             chan.b_per_k[k_key] = B

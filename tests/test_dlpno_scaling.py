@@ -96,7 +96,8 @@ class TestPairListScaling:
     """Kept pairs grow linearly while the total grows quadratically."""
 
     @pytest.fixture(scope="class")
-    def chains(self):
+    @classmethod
+    def chains(cls):
         out = {}
         for n in (4, 8):
             mol, basis, rhf, df, e_ref = _system(_h2_chain(n))

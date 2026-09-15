@@ -1,6 +1,6 @@
 # BIPOLE Implementation Status
 
-Last updated: 2026-08-13
+Last updated: 2026-09-09
 
 ## Summary
 
@@ -20,6 +20,26 @@ with the quartet path exercised against exact ERIs, LiH/STO-3G
 shows 6.9e-2 Ha (14 bohr), 6.3e-2 Ha (18 bohr), and 5.9e-2 Ha (24 bohr)
 error that barely decays with separation, consistent with a domain
 mismatch rather than a truncation artefact.
+
+The opt-in `LatticeSumOptions.pair_complete_1e=True` contract uses physical
+AO-product separations for the one- and two-electron operators. Its
+`cutoff_bohr` controls pair separation; `eri_interaction_cutoff_bohr` controls
+the distance between product midpoints (zero uses `cutoff_bohr`). An explicit
+or automatically resolved BIPOLE SR extent supplies the latter distance.
+Exchange may therefore need output cells beyond the one-electron support.
+Physical mode uses the full direct Fock build: the legacy symmetry projector
+does not cover that wider exchange support. Explicit projection requests,
+periodic COSX and the diagnostic grid Hartree backend refuse this combination.
+The global default remains off pending cutoff convergence and performance review.
+Finite-domain agreement alone does not certify infinite-lattice convergence;
+pair support, interaction reach and reciprocal resolution must all converge.
+The [standalone continuation record](bipole_erfc_resume.md) distinguishes
+completed local checks from remaining acceptance work.
+
+LiH and Si PBE cold starts at physical 20-bohr support agree with reference-density warm starts within 1e-8 Ha;
+20 fixed-density grid cases and the default-screening comparisons are
+recorded there. This does not certify the global default or a native
+fine-grid SCF limit.
 
 > **⚠ Absolute energies on ionic crystals, FIXED at Γ (all four
 > drivers); multi-k corrected gauge available opt-in (2026-06-11).**
@@ -65,21 +85,24 @@ mismatch rather than a truncation artefact.
 > `handovers/HANDOVER_BIPOLE_PRODUCTION.md` §0a;
 > `examples/regression/bipole_parity/mgo_exchange_split_probe.py`.
 
-> **Production forces are finite-difference (exact), in BOTH gauges.**
+> **Production forces use finite differences of a converged driver energy.**
 > `compute_bipole_gradient_fd` differentiates the actual driver energy,
 > so it follows whichever exchange gauge the SCF used (corrected or
-> legacy) and is correct by construction; `bipole_optimize`,
+> legacy); `bipole_optimize`,
 > `run_periodic_job(optimize=True)`, and periodic NEB default to it.
+> **Asymmetric legacy-gauge HF is not a supported converged-SCF route.**
+> The BeH2 and BeH legacy-gauge regression rows failed the exact terminal
+> stationarity check even after their overlap folds were converged; those
+> capability claims are retired (#66). Increasing the cutoff does not make
+> a nonstationary density valid for a finite-difference gradient.
 > **The analytic BIPOLE gradient began with the LEGACY Gamma-local gauge.**
-> Those historical routes remain maintained alongside the corrected-gauge
-> paths below.
+> Its maintained scope is narrower than the corrected-gauge paths below.
 > **Corrected-gauge analytic-gradient prototypes landed 2026-06-17 for all
 > four methods (RHF/UHF/RKS/UKS) at both Γ and multi-k** (G3 row below).
 > They remain a gated preview; the legacy-gauge analytic preview remains
 > available and covers:
-> * **RHF/UHF Gamma**, complete for general crystals, ~1e-7 Ha/bohr vs FD.
-> * **RHF/UHF multi-k**, maintained [2,1,1] regressions with diagonal-Z
->   (RHF) and coupled-spin-Z (UHF) responses.
+> * **RHF/UHF Gamma and multi-k**, maintained symmetric controls; the
+>   asymmetric legacy-gauge HF rows no longer certify this preview.
 > * **RKS/UKS Gamma-local**, maintained LDA asymmetric cells with
 >   XC Pulay, moving-grid correction, and KS Bloch-CPHF.
 > * **RKS/UKS multi-k**, diagonal-Z + corrected-W (the v_bg/spheropole
@@ -104,8 +127,13 @@ mismatch rather than a truncation artefact.
 >   from 2.31e-3 to 9.85e-8 Ha/bohr. Pair-resolved LDA/PBE0 UKS pass at
 >   1.11e-7 Ha/bohr. Corrected-gauge integer-occupation RHF also supports the
 >   padded radial domain at multi-k: the finite-domain density adjoint and full
->   real-linear k-coupled response agree with the asymmetric BeH2 [2,1,1]
->   production-energy finite difference to 2.58e-5 Ha/bohr. Corrected-gauge
+>   real-linear k-coupled response pass the asymmetric BeH2 [2,1,1]
+>   production-energy finite difference at the fold-reliable 13-bohr cutoff.
+>   The RHF response now solves the weighted transpose equation with consistent
+>   complex rotations; the former negative-curvature expected failure is an
+>   ordinary passing regression at its unchanged 5e-5-Ha/bohr tolerance.
+>   See [the continuation evidence](bipole_erfc_resume.md) for the operator
+>   diagnostic and validation scope. Corrected-gauge
 >   integer-occupation UHF also supports padded radial multi-k: preserving the
 >   full BvK support of `D_alpha + D_beta` plus the spin-coupled response
 >   closes asymmetric BeH [2,1,1] parity to 6.83e-8 Ha/bohr. Padded multi-k

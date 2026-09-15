@@ -727,16 +727,27 @@ class CitationDatabase:
             row = self._routes.get("methods", {}).get("wire_ewald_1d")
             if row is not None:
                 _add(row, "methods.wire_ewald_1d")
-        # CCM Madelung/Ewald embedding: fires whenever the resolved SECCM
-        # electrostatics kernel is a madelung_* one, in any dimension and
-        # for any adapter. Kernel-driven like its siblings above, so a
-        # route that does not run the embedding never cites it.
-        if (seccm_electrostatics_kernel or "").startswith("madelung_"):
-            row = self._routes.get("methods", {}).get(
-                "ccm_madelung_embedding"
+        # CCM Madelung embedding: fires whenever the resolved SECCM
+        # electrostatics kernel is a madelung_* one, for any adapter.
+        # Kernel-driven like its siblings above, so a route that does not
+        # run the embedding never cites it. Two rows, by what the kernel
+        # actually computes (GitLab vibe-qc#64): the MSINDO engine's 1-D
+        # kernel is the frozen truncated +/-2-shell bare point-charge sum
+        # (indo::_madelung_potential_1d), which owes the CCM construction
+        # reference but performs no Ewald split, so it must not be credited
+        # with the Janetzko 2002 exact Madelung matrices or Ewald 1921.
+        # Every other madelung_* kernel (parry_2d, ewald_3d, wire_1d) runs
+        # an exact operator and keeps the full embedding row.
+        _madelung_kernel = seccm_electrostatics_kernel or ""
+        if _madelung_kernel.startswith("madelung_"):
+            _madelung_route = (
+                "ccm_madelung_truncated_1d"
+                if _madelung_kernel.endswith("truncated_1d")
+                else "ccm_madelung_embedding"
             )
+            row = self._routes.get("methods", {}).get(_madelung_route)
             if row is not None:
-                _add(row, "methods.ccm_madelung_embedding")
+                _add(row, f"methods.{_madelung_route}")
 
         # 7e. Second-order SCF convergence (SOSCF / TRAH). Engaged by the
         # RHFOptions.soscf_threshold / trah_threshold paths (cpp/src/

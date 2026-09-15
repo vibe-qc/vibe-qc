@@ -267,6 +267,7 @@ from .pbc_bipole_common import (
     home_cell_block,
 )
 from .pbc_bipole_fock import (
+    _sr_density_cells,
     BipoleFockContext,
     BipoleOutputCellFarmingExecution,
     build_bipole_restricted_fock,
@@ -359,7 +360,7 @@ def run_pbc_bipole_rhf(
 
     ``sr_image_precision`` controls the internal ket-image radius of every
     erfc short-range build. The default ``1e-6`` uses the conservative
-    smeared-pair range and enables separation-aware QQR screening; pass
+    smeared-pair range and enables charge-pair Schwarz screening; pass
     ``None`` for the historical unpadded traversal (which also suppresses
     automatic Fock reduction unless explicitly requested). An explicit
     ``sr_image_extent_bohr`` is the M4a absolute-radius oracle and overrides
@@ -880,13 +881,14 @@ def run_pbc_bipole_rhf(
             f"(pair-resolved support at 2x cutoff; SR tensor has "
             f"{_fock_sym_map.density_domain.n_triples} qualifying pairs)"
         )
-    elif exchange_split_active:
+    elif exchange_split_active or lat_opts_2e.pair_complete_1e:
         cells_density = list(
-            direct_lattice_cells(system, 2.0 * float(lat_opts_2e.cutoff_bohr))
+            _sr_density_cells(basis, system, lat_opts_2e, _sr_image_extent)
         )
         plog.info(
             f"  density cell list: {len(cells_density)} cells "
-            f"(2x cutoff -- resolves every P(b-a) difference)"
+            + ("(physical exchange density support)" if lat_opts_2e.pair_complete_1e
+               else "(2x cutoff -- resolves every P(b-a) difference)")
         )
     else:
         cells_density = cells
@@ -1203,8 +1205,7 @@ def run_pbc_bipole_rhf(
                 ),
                 omega_used,
                 ewald_precision,
-                K_max=ewald_k_max,
-            )
+                K_max=ewald_k_max, lattice_opts=lat_opts_2e)
         elif j_lr_cache is None:
             cells_r_cart_arr = np.array(
                 [np.asarray(c.r_cart, dtype=float) for c in cells],
@@ -1216,8 +1217,7 @@ def run_pbc_bipole_rhf(
                 cells_r_cart_arr,
                 omega_used,
                 ewald_precision,
-                K_max=ewald_k_max,
-            )
+                K_max=ewald_k_max, lattice_opts=lat_opts_2e)
         elif j_lr_cache.ft_per_cell.shape[0] != len(cells):
             raise RuntimeError(
                 "prebuilt V_ne/J^LR cache has a different cell count "

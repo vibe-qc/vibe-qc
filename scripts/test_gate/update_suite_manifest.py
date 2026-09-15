@@ -59,10 +59,6 @@ CURATED: dict[str, dict[str, str]] = {
             "closes the progress lease. Pure text policy check; no native work."
         ),
     },
-    "tests/test_spin_channel_detection.py": {
-        "disposition": "keep",
-        "rationale": 'regression guard for value-based open-shell detection (None-valued spin densities)',
-    },
     "tests/test_aiccm_site_settings.py": {
         "maturity": "verified",
         "tier": "T2",
@@ -189,6 +185,13 @@ CURATED: dict[str, dict[str, str]] = {
             "space-group reduction or DLPNO-CCSD(T) energy."
         ),
     },
+    "tests/test_periodic_sap.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "periodic-SCF",
+        "disposition": "demote T2",
+        "rationale": "under-review inventory or parity coverage retained post-cut",
+    },
     "tests/test_bipole_erfc_panel.py": {
         "maturity": "under-review",
         "tier": "T2",
@@ -305,15 +308,19 @@ CURATED: dict[str, dict[str, str]] = {
         ),
     },
     "tests/test_pbc_pair_complete_consumers.py": {
+        "maturity": "verified",
+        "tier": "T2",
+        "owner": "release/test-health",
+        "disposition": "demote T2",
         "rationale": (
-            "pins that every consumer of the one-electron cell list reads "
-            "the two-electron ball as a prefix of the pair-complete list "
-            "under LatticeSumOptions.pair_complete_1e (C++ multi-k RHF/RKS "
-            "Fock assembly, PATOM/MINAO/Hueckel guesses, reduced-symmetry "
-            "S/T, BIPOLE padded J/K, cell moments, screened exchange), that "
-            "the Ewald-split nuclear family refuses the switch, and the "
-            "switch-off energies as the bit-identity contract (#429 stage 2, "
-            "Family 2)"
+            "Physical one-electron, nuclear and quartet domains are aligned "
+            "by integer cell key, including wider exchange output support. "
+            "Independent Gaussian sums, image relabelling, density and nuclear "
+            "finite differences, and coupled Ewald split checks cover their "
+            "consumers. Native regression anchors follow reviewed grid and "
+            "Schwarz corrections; independent periodic references are retained. "
+            "Finite-domain checks do not establish infinite-periodic "
+            "convergence or approve a default change (#429/#724)."
         ),
     },
     "tests/test_periodic_correlation_metric_factorization.py": {
@@ -2488,6 +2495,13 @@ CURATED: dict[str, dict[str, str]] = {
             "counts only. No SCF, domain construction, amplitudes, or target "
             "chemistry runs. T2 while the periodic DLPNO executor remains "
             "under review."
+        ),
+    },
+    "tests/test_spin_channel_detection.py": {
+        "disposition": "keep",
+        "rationale": (
+            "regression guard for value-based open-shell detection "
+            "(None-valued spin densities)"
         ),
     },
 }

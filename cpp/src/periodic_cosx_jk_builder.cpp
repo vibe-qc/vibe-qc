@@ -239,6 +239,11 @@ std::unique_ptr<JKBuilder> make_periodic_gamma_cosx_jk_builder(
     const PeriodicSystem& system,
     const LatticeSumOptions& opts,
     const GridOptions& cosx_grid_opts) {
+    if (opts.pair_complete_1e) {
+        throw std::invalid_argument(
+            "periodic COSX does not implement physical quartet support; "
+            "use the direct periodic exchange builder");
+    }
     return std::make_unique<PeriodicGammaCOSXJKBuilder>(
         basis, aux_basis, system, opts, cosx_grid_opts);
 }
@@ -249,6 +254,11 @@ std::unique_ptr<JKBuilder> make_periodic_tight_cosx_jk_builder(
     const PeriodicSystem& system,
     const LatticeSumOptions& opts,
     const GridOptions& cosx_grid_opts) {
+    if (opts.pair_complete_1e) {
+        throw std::invalid_argument(
+            "periodic COSX does not implement physical quartet support; "
+            "use the direct periodic exchange builder");
+    }
     return std::make_unique<PeriodicTightCellCOSXJKBuilder>(
         basis, lpq, system, opts, cosx_grid_opts);
 }

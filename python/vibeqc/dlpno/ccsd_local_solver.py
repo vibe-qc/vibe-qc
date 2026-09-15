@@ -303,6 +303,25 @@ class LocalCCSDOptions:
     # It remains available as an explicitly requested CCSD-amplitude-level
     # diagnostic, without implying that it is a production energy correction.
     estimate_pno_tail: bool = False
+    #: Add the semicanonical MP2 correction for the PNO truncation of the
+    #: pairs that ARE iterated, ``sum_ij (e_ij^full-PAO - e_ij^PNO)``.
+    #:
+    #: Riplinger and Neese 2013 apply an MP2 correction for both truncation
+    #: errors: the dropped pairs (this solver already adds those, as
+    #: ``e_pair_screened``) and the PNO truncation of the kept pairs (this).
+    #: Sec. II C, and Sec. III: "the MP2 correction captures the remaining
+    #: pair approximation and PNO errors very well". The DLPNO-MP2 route has
+    #: always applied it (``DLPNOMP2Result.e_pno_correction``); this route
+    #: did not, which is why its truncation errors ran larger.
+    #:
+    #: Measured on NH3 (S22-01 A) / cc-pVDZ with the domain and pair list
+    #: held fixed so that only ``tcut_pno`` varies, it recovers 91.5 % of the
+    #: PNO truncation error at ``tcut_pno=1e-5`` and 34.2 % at NormalPNO.
+    #: Exactly zero at ``tcut_pno=0``, where nothing is truncated, so the
+    #: exactness ratchets are untouched.
+    #:
+    #: Set False to reproduce a number recorded before this was added.
+    pno_correction: bool = True
 
 
 @dataclass
@@ -356,6 +375,10 @@ class LocalCCSDResult:
     trace: list = field(default_factory=list)
     n_screened: int = 0  # pairs treated at MP2 level (below tcut_pairs)
     e_pno_tail_estimate: float = 0.0  # CCSD-level discarded-PNO tail diagnostic
+    #: Semicanonical MP2 correction for the PNO truncation of the iterated
+    #: pairs, already included in ``e_corr``. Companion to
+    #: ``e_pair_screened``'s correction for the dropped pairs.
+    e_pno_correction: float = 0.0
     #: True only when the requested triples contraction was actually entered.
     #: In particular, an all-screened CCSD pair space returns before triples.
     triples_executed: bool = False
@@ -552,6 +575,8 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
 
     # ---- per-pair PNO spaces + static local integral data ----
     estimate_pno_tail = bool(options.estimate_pno_tail)
+    _pno_correction = bool(getattr(options, "pno_correction", True))
+    e_pno_correction = 0.0
     U, eps_pno, pdata = {}, {}, {}
     residual_domain_sizes: list[int] = []
     # Extended/full contraction groups, keyed by (occupied coupling set,
@@ -748,6 +773,20 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
                 residual_domain_sizes.append(int(n_ext))
             pdata[(i, j)] = pd
             T2[(i, j)] = (d.T @ K @ d) / (f_dd[i] + f_dd[j] - ep[:, None] - ep[None, :])
+            if _pno_correction:
+                # e_ij^full-PAO - e_ij^PNO, both semicanonical MP2 in this
+                # pair's own domain, so the difference is purely what the
+                # tcut_pno truncation discarded. Same convention as the pair
+                # screening above and as DLPNOMP2's e_pno_correction:
+                # w = 2 off-diagonal, e = w * sum(T * (2K - K^T)).
+                _w = 2.0 if i != j else 1.0
+                _e_full = _w * float(np.sum(T * (2.0 * K - K.T)))
+                _K_pno = d.T @ K @ d
+                _T_pno = T2[(i, j)]
+                _e_trunc = _w * float(
+                    np.sum(_T_pno * (2.0 * _K_pno - _K_pno.T))
+                )
+                e_pno_correction += _e_full - _e_trunc
 
     # ----- per-group ladder decision (#700) ------------------------------
     # Moving the particle-particle ladder into each pair's own PNO space trades
@@ -819,7 +858,11 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
     )
     if not T2:
         result.converged = True
-        result.e_corr = e_pair_screened
+        # e_pno_correction accumulates in the loop that fills T2, so it is
+        # necessarily 0.0 here; assigned anyway to keep the two exit paths
+        # symmetric and the field always populated.
+        result.e_pno_correction = e_pno_correction
+        result.e_corr = e_pair_screened + e_pno_correction
         result.e_total = result.e_hf + result.e_corr
         return result
 
@@ -1331,7 +1374,8 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
         return float(e_tail)
 
     result.e_pno_tail_estimate = pno_tail_estimate()
-    result.e_corr = energy() + e_pair_screened
+    result.e_pno_correction = e_pno_correction
+    result.e_corr = energy() + e_pair_screened + e_pno_correction
     if options.compute_triples:
         # Collected by the TNO builders so a truncated run can report how far
         # it truncated; "exact" builds no TNO domain and leaves it empty.

@@ -692,3 +692,36 @@ def test_padded_internal_cells_reproduce_wide_build():
         )
     )
     assert d_home > 1e-4
+
+
+@pytest.mark.parametrize("sparse,range_screening,expected", [
+    (False, False, "exhaustive_outputs"),
+    (False, True, "exhaustive_outputs"),
+    (True, False, "cell_sparse_outputs"),
+    (True, True, "shell_pair_outputs"),
+])
+def test_erfc_execution_metadata_reports_selected_traversal(sparse, range_screening, expected):
+    system, basis, omega, density, cells = _mgo_setup(8.0)
+    opts = _lat(8.0)
+    opts.sr_sparse_traversal = sparse
+    opts.sr_range_screening = range_screening
+    result = build_jk_2e_real_space_domains(
+        basis, system, opts, density, cells, output_indices=[0], omega=omega,
+    )
+    assert getattr(result, expected) == 1
+    assert result.shell_pair_outputs + result.cell_sparse_outputs + result.exhaustive_outputs == 1
+    assert result.charge_screening_available is range_screening
+    assert result.product_screening_available is range_screening
+    assert result.shell_pair_fallback_outputs == result.cell_sparse_fallback_outputs == 0
+
+
+def test_erfc_duplicate_domain_reports_exhaustive_execution():
+    system, basis, omega, density, cells = _mgo_setup(8.0)
+    opts = _lat(8.0)
+    opts.sr_sparse_traversal = opts.sr_range_screening = True
+    result = build_jk_2e_real_space_domains(
+        basis, system, opts, density, cells+[cells[0]], output_indices=[0], omega=omega,
+    )
+    assert result.exhaustive_outputs == 1
+    assert result.shell_pair_outputs == result.cell_sparse_outputs == 0
+    assert result.charge_screening_available

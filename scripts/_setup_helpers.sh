@@ -1,6 +1,6 @@
 # scripts/_setup_helpers.sh — shared install.sh / update.sh logic.
 #
-# Sourced (NOT executed) by install.sh and update.sh. Three functions:
+# Sourced (NOT executed) by install.sh, update.sh and doctor.sh. Functions:
 #
 #   vibeqc_set_branch NEW_VALUE SOURCE_FLAG [SUGGESTION_LINE]
 #       Records that an argv flag chose a branch/ref. Errors loud if
@@ -46,6 +46,21 @@
 #       Caller is responsible for the dirty-tree check beforehand
 #       (install.sh only requires it when BRANCH is provided, update.sh
 #       always requires it; the policy difference doesn't belong here).
+#       Use vibeqc_worktree_state for that check.
+#
+#   vibeqc_worktree_state
+#       Classifies the working tree: returns 0 clean, 1 uncommitted
+#       changes, 2 git could not report at all.
+#
+#       The third case is why this exists. `git diff --quiet` exits 0
+#       for clean and 1 for dirty, but >=128 for its own failures --
+#       not a repository, unreadable index, a ref it cannot resolve.
+#       A bare `if ! git diff --quiet` folds that into "dirty" and
+#       tells the reader to stash changes that do not exist. A CI
+#       build-test job hit exactly that: git returned 129 in a
+#       directory it would not read, and the job failed with
+#       "working tree has uncommitted changes" on a tree freshly
+#       cloned seconds earlier.
 #
 # All functions assume `set -euo pipefail` in the caller.
 
@@ -190,6 +205,20 @@ vibeqc_install_colocated_extra() {
     echo "==> Installing co-located $group package from this checkout..."
     "$venv/bin/python" -m pip install --upgrade -e "$install_spec"
     "$venv/bin/python" -c "$verify"
+}
+
+vibeqc_worktree_state() {
+    local rc
+
+    rc=0; git diff --quiet >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ge 128 ]; then return 2; fi
+    if [ "$rc" -ne 0 ]; then return 1; fi
+
+    rc=0; git diff --cached --quiet >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ge 128 ]; then return 2; fi
+    if [ "$rc" -ne 0 ]; then return 1; fi
+
+    return 0
 }
 
 vibeqc_checkout_ref() {

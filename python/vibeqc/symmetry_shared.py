@@ -28,6 +28,7 @@ __all__ = [
     "PeriodicStateGroupEvidence", "audit_periodic_state_group",
     "SelectedGroupTransportEvidence", "audit_selected_group_transport",
     "GroupOperatorEvidence", "audit_group_operators",
+    "SelectedOperatorEvidence", "audit_selected_operators",
 ]
 
 
@@ -1525,7 +1526,11 @@ def audit_group_operators(
             mixing = ambient.transports[g][s].mixing
             source = snapshots[s].conj() if group.antiunitary(g) else snapshots[s]
             with np.errstate(over="ignore", invalid="ignore"):
-                residual = float(np.linalg.norm(snapshots[target] @ mixing-mixing @ source))
+                difference = snapshots[target] @ mixing-mixing @ source
+                # Scale before squaring: finite tiny defects must not become
+                # passing zero, nor finite large residuals become infinity.
+                scale = float(np.max(np.abs(difference),initial=0.))
+                residual = float(np.linalg.norm(difference/scale))*scale if scale else 0.
             if not np.isfinite(residual):
                 raise ValueError("nonfinite operator covariance residual")
             row.append(QualificationEvidence(contract, ambient.spaces[s], ambient.spaces[target],
@@ -1534,6 +1539,126 @@ def audit_group_operators(
         rows.append(tuple(row))
     result = object.__new__(GroupOperatorEvidence)
     for name,value in dict(parent=parent,operators=snapshots,probes=tuple(rows),
+        admitted_bytes=admitted_bytes,admitted_work=admitted_work).items():
+        object.__setattr__(result,name,value)
+    return result
+
+
+@dataclass(frozen=True, slots=True, init=False, eq=False)
+class SelectedOperatorEvidence:
+    """Operator and adjoint leakage through a method-owned column selection."""
+    parent: GroupOperatorEvidence | SelectedOperatorEvidence
+    selection: SelectedGroupTransportEvidence
+    operator_transport: GroupOperatorEvidence
+    containment: tuple[QualificationEvidence, ...]
+    adjoint_containment: tuple[QualificationEvidence, ...]
+    admitted_bytes: int
+    admitted_work: int
+
+    def __init__(self, *args, **kwargs):
+        raise TypeError("use audit_selected_operators")
+
+    @property
+    def passed_probe(self) -> bool:
+        return (self.parent.passed_probe and self.operator_transport.passed_probe
+                and all(p.passed_probe for p in self.containment+self.adjoint_containment))
+
+    @property
+    def production_reduction_authorized(self) -> bool:
+        return False
+
+
+def audit_selected_operators(
+    parent: GroupOperatorEvidence | SelectedOperatorEvidence,
+    selection: SelectedGroupTransportEvidence, *, covariance_tolerance: float,
+    leakage_tolerance: float, probe_identity: str, budget: Budget,
+) -> SelectedOperatorEvidence:
+    """Check a selected reducing subspace of supplied retained operators.
+
+    The selection must reference the exact group-evidence parent of the
+    supplied operator audit. At each space, solve G B = Q^dagger A Q with
+    G = Q^dagger Q, retaining the admitted finite orthonormality error.
+    Measure ||A Q-Q B||_F / ||A Q||_F and the analogous residual for A^dagger
+    independently. The latter checks coupling into the selection and is
+    essential for general non-Hermitian operators. Zero action has zero
+    leakage. Scaled norms preserve tiny nonzero leakage without squaring
+    very large or small entries. Leakage tolerance is dimensionless.
+
+    The compressed B matrices undergo the shared static covariance audit
+    with absolute covariance_tolerance and the original operator contract.
+    The complete operator and selection parents remain attached. Pass this
+    wrapper itself for further selections so earlier leakage cannot vanish
+    from the evidence chain when a later cut discards the offending block.
+
+    This tests leakage within the parent's retained coordinates, not beyond
+    the original AO/retained boundary, and does not qualify a producer or
+    approximation policy. No rank or operator is repaired. Admission before
+    payload access covers parent peaks, compression and nested covariance
+    work; identity strings, allocator overhead and BLAS workspace are excluded.
+    """
+    if not isinstance(parent, (GroupOperatorEvidence, SelectedOperatorEvidence)):
+        raise TypeError("selected operator audit requires parent operator evidence")
+    if not isinstance(selection, SelectedGroupTransportEvidence) or not isinstance(budget, Budget):
+        raise TypeError("selected operator audit requires a group selection and Budget")
+    covariance_tolerance = _tolerance(covariance_tolerance, "covariance_tolerance")
+    leakage_tolerance = _tolerance(leakage_tolerance, "leakage_tolerance")
+    _text(probe_identity, "probe_identity")
+    ambient = parent if isinstance(parent, GroupOperatorEvidence) else parent.operator_transport
+    if selection.parent is not ambient.parent:
+        raise ValueError("selection and operator evidence must share the exact parent")
+    group_transport = selection.group_transport
+    n, count = group_transport.group.order, len(selection.selections)
+    controls = 4096+4096*n*count
+    budget.admit(controls, n*count)
+    ranks = tuple(q.shape for q in selection.selections)
+    child_bytes = (4096+2048*n*count+selection.admitted_bytes
+                   +32*sum(k*k for r,k in ranks)+256*max(k for r,k in ranks)**2)
+    child_work = n*count+128*n*sum(k**3+k*k for r,k in ranks)
+    admitted_bytes = (controls+parent.admitted_bytes+selection.admitted_bytes+child_bytes
+                      +16*sum(k*k for r,k in ranks)
+                      +1024*max(r*r+r*k+k*k for r,k in ranks))
+    admitted_work = n*count+child_work+512*sum(r*r*k+r*k*k+k**3 for r,k in ranks)
+    budget.admit(admitted_bytes, admitted_work)
+    contract = ambient.probes[0][0].contract
+
+    def relative_leakage(moved, difference):
+        if not np.all(np.isfinite(moved)) or not np.all(np.isfinite(difference)):
+            raise ValueError("nonfinite selected operator action or residual")
+        scale = max(float(np.max(np.abs(moved))),float(np.max(np.abs(difference))))
+        if not np.isfinite(scale):
+            raise ValueError("nonfinite selected operator residual scale")
+        if not scale:
+            return 0.
+        numerator = float(np.linalg.norm(difference/scale))
+        denominator = float(np.linalg.norm(moved/scale))
+        if not denominator:
+            raise ValueError("unrepresentable relative selected operator residual")
+        residual = numerator/denominator
+        if not np.isfinite(residual):
+            raise ValueError("nonfinite selected operator leakage")
+        return residual
+
+    compressed, forward, adjoint = [], [], []
+    for s,(a,q) in enumerate(zip(ambient.operators,selection.selections)):
+        gram = q.conj().T @ q
+        for is_adjoint,records in ((False,forward),(True,adjoint)):
+            with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+                moved = (a.conj().T if is_adjoint else a) @ q
+                b = np.ascontiguousarray(np.linalg.solve(gram,q.conj().T @ moved))
+                leakage = relative_leakage(moved,moved-q @ b)
+            if not is_adjoint:
+                compressed.append(b)
+            source = ambient.probes[0][s].source_space
+            target = group_transport.spaces[s]
+            relation = ("relative adjoint leakage" if is_adjoint else "relative operator leakage")
+            records.append(QualificationEvidence(contract,source,target,
+                relation+" outside the selected subspace",EvidenceKind.NUMERICAL,
+                probe_identity,leakage,leakage_tolerance))
+    transport = audit_group_operators(selection,tuple(compressed),contract=contract,
+        tolerance=covariance_tolerance,probe_identity=probe_identity,budget=budget)
+    result = object.__new__(SelectedOperatorEvidence)
+    for name,value in dict(parent=parent,selection=selection,operator_transport=transport,
+        containment=tuple(forward),adjoint_containment=tuple(adjoint),
         admitted_bytes=admitted_bytes,admitted_work=admitted_work).items():
         object.__setattr__(result,name,value)
     return result

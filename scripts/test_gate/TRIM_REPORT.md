@@ -147,6 +147,9 @@ The last four rows above carried a `v0.16.0` target. That target is spent.
 commit has touched any of the four files since `v0.16.0`. The target column
 now records the lapse rather than a date that has already passed.
 
+Tracked as [#200](https://github.com/vibe-qc/vibe-qc/issues), which
+carries the same constraints and routes each row to its owning lane.
+
 **The owning lanes set the new targets, not this report.** A tier, an owner,
 and a written rationale are the file owner's fields to choose, per the
 curation rule in [README.md](README.md), so the periodic-SCF, BIPOLE, and

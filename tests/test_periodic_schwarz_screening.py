@@ -32,6 +32,8 @@ to any system + mesh.
 from __future__ import annotations
 
 import time
+import math
+from itertools import product
 
 import numpy as np
 import pytest
@@ -158,3 +160,115 @@ def test_screening_on_off_match():
     # so 1e-5 is the honest agreement bound — well inside the screening's
     # 1e-12 per-integral cutoff.
     assert r_screened.energy == pytest.approx(r_unscreened.energy, abs=1e-5)
+
+
+@pytest.mark.parametrize("threshold", [1e-12, 1e-14])
+@pytest.mark.parametrize("builder,omega", [
+    (builder, omega) for builder in ("gamma", "lattice") for omega in (0.0, 0.4, 0.7)
+] + [("direct", 0.0)])
+def test_schwarz_small_self_norms_preserve_gaussian_jk(omega, threshold, builder):
+    """Small squared norms must not screen observable mixed integrals."""
+    from vibeqc import _vibeqc_core as core
+
+    positions = np.array([[0.0, 0.0, 0.0], [6.4, 0.0, 0.0]])
+    system = vq.PeriodicSystem(
+        3, 100 * np.eye(3), [vq.Atom(1, p) for p in positions],
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), [
+        vq.ShellInfo(i, 0, False, [1.0], [1.0], p)
+        for i, p in enumerate(positions)
+    ], "small-schwarz-norm", False)
+    density = np.array([[1.0, 0.2], [0.2, 0.8]])
+
+    def boys(t):
+        if t == 0:
+            return 1.0
+        return math.sqrt(math.pi) * math.erf(math.sqrt(t)) / (2 * math.sqrt(t))
+
+    # Closed-form normalized s-Gaussian integrals, independent of Libint.
+    eri = np.empty((2, 2, 2, 2))
+    theta = omega**2 / (1 + omega**2)
+    for a, b, c, d in product(range(2), repeat=4):
+        A, B, C, D = positions[[a, b, c, d]]
+        t = np.sum(((A + B - C - D) / 2)**2)
+        attenuation = math.exp(-0.5 * (np.sum((A - B)**2) + np.sum((C - D)**2)))
+        eri[a, b, c, d] = (2 / math.sqrt(math.pi) * attenuation
+                           * (boys(t) - math.sqrt(theta) * boys(theta * t)))
+    assert 0 < eri[0, 1, 0, 1] < np.finfo(float).eps
+    assert abs(eri[0, 1, 0, 0]) > 3 * threshold
+    expected_j = np.einsum("abcd,cd->ab", eri, density)
+    expected_k = np.einsum("acbd,cd->ab", eri, density)
+    opts = core.LatticeSumOptions()
+    opts.cutoff_bohr = 1.0  # Only the home cell; both atoms remain in its basis.
+    opts.schwarz_threshold = threshold
+    if builder == "direct":
+        jk = core.make_direct_jk_builder(basis, schwarz_threshold=threshold)
+        j, k = np.asarray(jk.build_J(density)), np.asarray(jk.build_K(density))
+    elif builder == "gamma":
+        jk = core.build_jk_gamma_molecular_limit(basis, system, opts, density, omega)
+        j, k = np.asarray(jk.J), np.asarray(jk.K)
+    else:
+        cells = core.direct_lattice_cells(system, 1.0)
+        p = core.make_lattice_matrix_set(2, cells, [density])
+        jk = core.build_jk_2e_real_space_domains(
+            basis, system, opts, p, cells, omega=omega,
+        )
+        j, k = np.asarray(jk.J.blocks[0]), np.asarray(jk.K.blocks[0])
+    np.testing.assert_allclose(j, expected_j, rtol=0, atol=2e-14)
+    np.testing.assert_allclose(k, expected_k, rtol=0, atol=2e-14)
+
+
+@pytest.mark.parametrize("omega", [0.4, 0.7])
+@pytest.mark.parametrize("force_threshold", [1e-14, 1e-20, 0.0])
+@pytest.mark.parametrize("term", ["J", "K"])
+def test_erfc_gradient_ignores_screened_quartet_buffers(omega, force_threshold, term):
+    """A screened quartet must not reuse earlier derivative buffers."""
+    from vibeqc import _vibeqc_core as core
+
+    positions = np.array([[0.0, 0.0, 0.0], [6.4, 0.3, 0.2]])
+    system = vq.PeriodicSystem(
+        3, 100 * np.eye(3), [vq.Atom(1, p) for p in positions],
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), [
+        vq.ShellInfo(i, 0, False, [1.0], [1.0], p)
+        for i, p in enumerate(positions)
+    ], "screened-derivative-buffers", False)
+    density = np.array([[1.0, 0.2], [0.2, 0.8]])
+    opts = core.LatticeSumOptions()
+    opts.cutoff_bohr = 1.0
+    opts.schwarz_threshold_forces = force_threshold
+    cells = core.direct_lattice_cells(system, 1.0)
+    p = core.make_lattice_matrix_set(2, cells, [density])
+    alpha, j_scale = (0.0, 1.0) if term == "J" else (1.0, 0.0)
+    actual = np.asarray(core.eri_lattice_gradient_contribution(
+        basis, system, p, opts, alpha, j_scale, omega,
+    ))
+
+    def energy(xyz):
+        def boys(t):
+            if t == 0:
+                return 1.0
+            return math.sqrt(math.pi) * math.erf(math.sqrt(t)) / (2 * math.sqrt(t))
+
+        eri = np.empty((2, 2, 2, 2))
+        theta = omega**2 / (1 + omega**2)
+        for a, b, c, d in product(range(2), repeat=4):
+            A, B, C, D = xyz[[a, b, c, d]]
+            t = np.sum(((A + B - C - D) / 2)**2)
+            attenuation = math.exp(-0.5 * (np.sum((A - B)**2) + np.sum((C - D)**2)))
+            eri[a, b, c, d] = (2 / math.sqrt(math.pi) * attenuation
+                               * (boys(t) - math.sqrt(theta) * boys(theta * t)))
+        j = np.einsum("abcd,cd->ab", eri, density)
+        k = np.einsum("acbd,cd->ab", eri, density)
+        return float(np.sum(density * (0.5 * j_scale * j - 0.25 * alpha * k)))
+
+    # Differentiate the closed-form Gaussian energy, independently of Libint.
+    expected = np.zeros((2, 3))
+    h = 1e-4
+    for atom, axis in product(range(2), range(3)):
+        plus, minus = positions.copy(), positions.copy()
+        plus[atom, axis] += h
+        minus[atom, axis] -= h
+        expected[atom, axis] = (energy(plus) - energy(minus)) / (2 * h)
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=5e-12)
+    np.testing.assert_allclose(actual.sum(axis=0), 0, rtol=0, atol=1e-14)

@@ -180,6 +180,15 @@ struct JKLatticeMatrixSets {
     std::uint64_t cell_triples_considered = 0;
     std::uint64_t cell_triples_possible = 0;
     std::uint64_t shell_quartets_considered = 0;
+    // Executed output traversal, including per-output budget fallbacks.
+    std::uint64_t shell_pair_outputs = 0;
+    std::uint64_t cell_sparse_outputs = 0;
+    std::uint64_t exhaustive_outputs = 0;
+    std::uint64_t shell_pair_fallback_outputs = 0;
+    std::uint64_t cell_sparse_fallback_outputs = 0;
+    // Availability is distinct from a request or an actual discarded term.
+    bool charge_screening_available = false;
+    bool product_screening_available = false;
 };
 
 // Same cell-triple traversal as build_fock_2e_real_space, but returns

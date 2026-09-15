@@ -295,3 +295,49 @@ def test_euler_extraction_at_identity_is_zero():
     assert alpha == pytest.approx(0.0, abs=1e-14)
     assert beta == pytest.approx(0.0, abs=1e-14)
     assert gamma == pytest.approx(0.0, abs=1e-14)
+
+
+@pytest.mark.parametrize("pole", [0.0, np.pi])
+@pytest.mark.parametrize("alpha", [0.0, 0.73])
+@pytest.mark.parametrize("l", L_RANGE)
+def test_rounded_polar_rotation_preserves_wigner_action(pole, alpha, l):
+    """One ulp in cos(beta) must not invent a tilt or lose the z rotation."""
+    exact = SciRot.from_euler("ZYZ", [alpha, pole, 0.0]).as_matrix()
+    rounded = exact.copy()
+    rounded[2, 2] = np.nextafter(np.cos(pole), 0.0)
+    rounded[0, 1] += 4.5102810375396984e-17
+    a, b, g = vq.euler_angles_from_rotation(rounded)
+    restored = SciRot.from_euler("ZYZ", [a, b, g]).as_matrix()
+    np.testing.assert_allclose(restored, exact, atol=1e-14, rtol=0.0)
+    for parity in [1, -1]:
+        expected = parity ** l * vq.wigner_d_real(l, exact)
+        np.testing.assert_allclose(
+            vq.wigner_d_real(l, parity * rounded), expected,
+            atol=1e-13, rtol=0.0,
+        )
+
+
+@pytest.mark.parametrize("pole", [0.0, np.pi])
+@pytest.mark.parametrize("tilt", [1e-10, 1e-8, 1e-6])
+def test_near_polar_rotation_retains_small_tilt(pole, tilt):
+    """The off-axis entries retain angles whose cosine rounds to +/-1."""
+    beta = tilt if pole == 0.0 else pole - tilt
+    left = SciRot.from_euler("z", 0.73).as_matrix()
+    middle = SciRot.from_euler("y", beta).as_matrix()
+    right = SciRot.from_euler("z", -0.41).as_matrix()
+    rotation = left @ middle @ right
+    a, b, g = vq.euler_angles_from_rotation(rotation)
+    restored = SciRot.from_euler("ZYZ", [a, b, g]).as_matrix()
+    np.testing.assert_allclose(restored, rotation, atol=1e-14, rtol=0.0)
+    # Independent Cartesian-vector oracle for p orbitals, plus composition
+    # through the higher angular momenta used by the AO adapters.
+    np.testing.assert_allclose(
+        vq.wigner_d_real(1, rotation), rotation[np.ix_([1, 2, 0], [1, 2, 0])],
+        atol=1e-14, rtol=0.0,
+    )
+    for l in L_RANGE:
+        expected = (vq.wigner_d_real(l, left) @ vq.wigner_d_real(l, middle)
+                    @ vq.wigner_d_real(l, right))
+        np.testing.assert_allclose(
+            vq.wigner_d_real(l, rotation), expected, atol=1e-13, rtol=0.0,
+        )

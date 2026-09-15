@@ -811,24 +811,30 @@ def _cmd_tddft(args: argparse.Namespace) -> int:
 
     # Ground-state SCF.
     if args.multiplicity > 1:
-        from vibeqc._vibeqc_core import UHFOptions, UKSOptions, run_uhf, run_uks
+        from vibeqc import UHFOptions, UKSOptions, run_uhf, run_uks
 
         if func:
             opts = UKSOptions()
+            from .runner import apply_ks_grid_default
+            apply_ks_grid_default(opts)
             opts.conv_tol_energy = 1e-8
-            result = run_uks(mol, basis, func, opts)
+            opts.functional = func
+            result = run_uks(mol, basis, opts)
         else:
             opts = UHFOptions()
             opts.conv_tol_energy = 1e-8
             result = run_uhf(mol, basis, opts)
     elif func:
-        from vibeqc._vibeqc_core import RKSOptions, run_rks
+        from vibeqc import RKSOptions, run_rks
 
         opts = RKSOptions()
+        from .runner import apply_ks_grid_default
+        apply_ks_grid_default(opts)
         opts.conv_tol_energy = 1e-8
-        result = run_rks(mol, basis, func, opts)
+        opts.functional = func
+        result = run_rks(mol, basis, opts)
     else:
-        from vibeqc._vibeqc_core import RHFOptions, run_rhf
+        from vibeqc import RHFOptions, run_rhf
 
         opts = RHFOptions()
         opts.conv_tol_energy = 1e-8
@@ -844,14 +850,16 @@ def _cmd_tddft(args: argparse.Namespace) -> int:
 
     # TD-DFT.
     if args.multiplicity > 1:
-        from vibeqc.tddft import run_tddft_tda_uhf
+        from vibeqc.tddft import run_tddft_casida_uhf, run_tddft_tda_uhf
 
         from vibeqc.correlation_conventions import effective_electron_count
 
         _n_eff = effective_electron_count(mol, result)
-        n_occ_a = getattr(result, "n_occ_a", _n_eff // 2)
-        n_occ_b = getattr(result, "n_occ_b", _n_eff // 2)
-        td = run_tddft_tda_uhf(
+        spin = args.multiplicity - 1
+        n_occ_a = (_n_eff + spin) // 2
+        n_occ_b = (_n_eff - spin) // 2
+        response = run_tddft_casida_uhf if args.casida else run_tddft_tda_uhf
+        td = response(
             mol,
             basis,
             np.asarray(result.mo_energies_alpha, dtype=float),
@@ -862,6 +870,9 @@ def _cmd_tddft(args: argparse.Namespace) -> int:
             n_occ_b,
             n_states=args.n_states,
             functional=func,
+            density_alpha_ao=np.asarray(result.density_alpha) if func else None,
+            density_beta_ao=np.asarray(result.density_beta) if func else None,
+            grid_options=opts.grid if func else None,
         )
     else:
         from vibeqc.correlation_conventions import effective_electron_count
@@ -872,11 +883,15 @@ def _cmd_tddft(args: argparse.Namespace) -> int:
 
         if args.casida:
             td = run_tddft_casida(
-                mol, basis, mo_e, mo_c, n_occ, n_states=args.n_states, functional=func
+                mol, basis, mo_e, mo_c, n_occ, n_states=args.n_states, functional=func,
+                density_ao=np.asarray(result.density) if func else None,
+                grid_options=opts.grid if func else None,
             )
         else:
             td = run_tddft_tda(
-                mol, basis, mo_e, mo_c, n_occ, n_states=args.n_states, functional=func
+                mol, basis, mo_e, mo_c, n_occ, n_states=args.n_states, functional=func,
+                density_ao=np.asarray(result.density) if func else None,
+                grid_options=opts.grid if func else None,
             )
 
     print(f"Excited states ({td.method}, n_states={td.n_states}):")

@@ -1268,3 +1268,213 @@ def test_product_jk_stream_mixed_sp_full_ao_action_matches_independent_component
     stream.finalize()
     assert stream.accepted_panels == 512
     np.testing.assert_allclose(stream.values_copy().reshape(2,4,4),expected,atol=5e-12,rtol=8e-12)
+
+
+# Complete geometry admission followed by native production/reduction replay.
+def _physical_jk(b, owner, density, target=0, *, plan=False, budget=None, stream_caps=None):
+    return (owner.plan_jk if plan else owner.contract_jk)(
+        density,target,inventory=b.inventory,panel_caps=b.caps,
+        stream_caps=_product_jk_stream_caps() if stream_caps is None else stream_caps,
+        budget=Budget(1<<30,10**11) if budget is None else budget)
+
+
+@pytest.mark.parametrize('mesh,shift',[
+    ((1,1,1),(0,0,0)),((1,1,2),(0,0,0)),
+    ((1,1,3),(0,0,1)),((2,2,2),(1,1,1)),
+])
+def test_physical_jk_complete_producer_matches_native_reference_stream(mesh,shift):
+    b = _finite_product_fixture(mesh=mesh,shift=shift); owner = _physical_owner(b)
+    nk = len(b.mesh)
+    rng = np.random.default_rng(10942)
+    density = rng.normal(size=(nk,2,2))+1j*rng.normal(size=(nk,2,2))
+    for target in sorted({0,nk-1}):
+        expected = _product_jk_finish(b,owner,_product_jk_stream(b,owner,density,target))
+        plan = _physical_jk(b,owner,density,target,plan=True)
+        actual = _physical_jk(b,owner,density,target,
+                              budget=Budget(plan.inventoried_bytes,plan.work_units))
+        np.testing.assert_array_equal(actual.values_copy(),expected.values_copy())
+        assert actual.input_identity_sha256 == expected.input_identity_sha256
+        assert actual.payload_identity_sha256 == expected.payload_identity_sha256
+        assert actual.accepted_panels == plan.panel_calls == 2*16*nk
+        assert actual.finalized and actual.complete
+        assert not actual.physical_hamiltonian_certified and not actual.symmetry_certified
+        assert actual.citation_numerics == ['bipole_finite_jk']
+
+
+@pytest.mark.parametrize('which',['bytes','work'])
+def test_physical_jk_global_minus_one_refuses_before_density_or_integrals(which,monkeypatch):
+    b = _finite_product_fixture(); owner = _physical_owner(b)
+    d = np.ones((3,2,2),complex)
+    p = _physical_jk(b,owner,d,plan=True)
+    budget = Budget(p.inventoried_bytes-(which=='bytes'),p.work_units-(which=='work'))
+    d[:] = np.nan
+    def forbidden(*args,**kw):
+        pytest.fail('density snapshot or integral ran before complete admission')
+    monkeypatch.setattr(core,'_make_bipole_product_jk_stream',forbidden)
+    monkeypatch.setattr(core,'_make_bipole_finite_product_panel',forbidden)
+    with pytest.raises((MemoryError,ValueError),match='budget'):
+        _physical_jk(b,owner,d,budget=budget)
+
+
+def test_physical_jk_late_panel_refusal_precedes_any_numerics(monkeypatch):
+    b = _finite_product_fixture(); owner = _physical_owner(b)
+    original = core._plan_bipole_finite_product_panel
+    calls = []
+    def plan(*args):
+        s = args[5]; calls.append((s.left_pair_begin,s.right_pair_begin))
+        if calls[-1] == (3,3):
+            raise ValueError('late quartet sentinel')
+        return original(*args)
+    def forbidden(*args,**kw):
+        pytest.fail('numerics ran before final-quartet admission')
+    monkeypatch.setattr(core,'_plan_bipole_finite_product_panel',plan)
+    monkeypatch.setattr(core,'_make_bipole_product_jk_stream',forbidden)
+    monkeypatch.setattr(core,'_make_bipole_finite_product_panel',forbidden)
+    with pytest.raises(ValueError,match='late quartet sentinel'):
+        _physical_jk(b,owner,np.ones((3,2,2),complex))
+    assert len(calls) == 15*6+1
+
+
+def test_physical_jk_planning_never_scans_density_or_evaluates_panels(monkeypatch):
+    b = _finite_product_fixture(); owner = _physical_owner(b)
+    def forbidden(*args,**kw):
+        pytest.fail('planning evaluated a panel or copied density')
+    monkeypatch.setattr(core,'_make_bipole_product_jk_stream',forbidden)
+    monkeypatch.setattr(core,'_make_bipole_finite_product_panel',forbidden)
+    p = _physical_jk(b,owner,np.full((3,2,2),np.nan,complex),plan=True)
+    assert p.quartet_count == 16 and p.panel_calls == 96
+
+
+@pytest.mark.parametrize('kind',['real','shape','strided','unaligned','target_bool','target_high'])
+def test_physical_jk_bad_inputs_refuse_before_geometry(kind,monkeypatch):
+    from vibeqc._bipole_physical_source import PhysicalSource
+    b = _finite_product_fixture(); owner = _physical_owner(b)
+    d = np.ones((3,2,2),complex); target = 0
+    if kind == 'real': d = d.real.copy()
+    elif kind == 'shape': d = d[0]
+    elif kind == 'strided': d = d.transpose(0,2,1)
+    elif kind == 'unaligned': d = np.ndarray((3,2,2),complex,buffer=bytearray(193),offset=1)
+    elif kind == 'target_bool': target = True
+    elif kind == 'target_high': target = 3
+    def forbidden(*args,**kw): pytest.fail('invalid density/target reached geometry')
+    monkeypatch.setattr(PhysicalSource,'build_domain',forbidden)
+    with pytest.raises((ValueError,TypeError)):
+        _physical_jk(b,owner,d,target)
+
+
+def test_physical_jk_releases_previous_domain_and_panel_before_next_allocation(monkeypatch):
+    import weakref
+    from vibeqc._bipole_physical_source import PhysicalSource
+    b = _finite_product_fixture(); owner = _physical_owner(b)
+    build = PhysicalSource.build_domain; make = core._make_bipole_finite_product_panel
+    domain_refs, panel_refs = [], []
+    def domain(*args,**kw):
+        assert not domain_refs or domain_refs[-1]() is None
+        assert not panel_refs or panel_refs[-1]() is None
+        result = build(*args,**kw)
+        domain_refs.append(weakref.ref(result.images))
+        return result
+    def panel(*args,**kw):
+        assert not panel_refs or panel_refs[-1]() is None
+        result = make(*args,**kw); panel_refs.append(weakref.ref(result))
+        return result
+    monkeypatch.setattr(PhysicalSource,'build_domain',domain)
+    monkeypatch.setattr(core,'_make_bipole_finite_product_panel',panel)
+    result = _physical_jk(b,owner,np.ones((3,2,2),complex))
+    assert result.finalized and len(domain_refs) == 32 and len(panel_refs) == 96
+    assert all(ref() is None for ref in domain_refs+panel_refs)
+
+
+def test_physical_jk_controls_are_snapshotted_before_walk(monkeypatch):
+    from vibeqc._bipole_physical_source import PhysicalSource
+    b = _finite_product_fixture(); owner = _physical_owner(b)
+    density = np.ones((3,2,2),complex)
+    expected = _physical_jk(b,owner,density)
+    caps = _product_jk_stream_caps(); build = PhysicalSource.build_domain
+    def mutate_caller(*args,**kw):
+        caps.maximum_panel_calls = 0
+        b.inventory.reciprocal_block_size = 0
+        b.caps.short_range.raw.maximum_images = 0
+        b.caps.maximum_node_bytes = 0
+        return build(*args,**kw)
+    monkeypatch.setattr(PhysicalSource,'build_domain',mutate_caller)
+    result = _physical_jk(b,owner,density,stream_caps=caps)
+    assert result.payload_identity_sha256 == expected.payload_identity_sha256
+
+
+def test_physical_jk_replay_digest_failure_cannot_finalize(monkeypatch):
+    from vibeqc._bipole_physical_source import PhysicalSource
+    b = _finite_product_fixture(); owner = _physical_owner(b)
+    build = PhysicalSource.build_domain; calls = 0
+    def changed_receipt(*args,**kw):
+        nonlocal calls
+        d = build(*args,**kw); calls += 1
+        if calls == 32:
+            # Simulate producer replay drift without forging a native value.
+            object.__setattr__(d,'domain_identity_sha256','a'*64)
+        return d
+    monkeypatch.setattr(PhysicalSource,'build_domain',changed_receipt)
+    with pytest.raises(RuntimeError,match='replay differs'):
+        _physical_jk(b,owner,np.ones((3,2,2),complex))
+    assert calls == 32
+
+
+def test_physical_jk_replica_memory_and_cumulative_geometry_work():
+    b = _finite_product_fixture(); owner = _physical_owner(b); density = np.zeros((3,2,2),complex)
+    first = _physical_jk(b,owner,density,plan=True)
+    b.inventory.numerical_replicas = 2; b.inventory.external_node_bytes = 987
+    second = _physical_jk(b,owner,density,plan=True)
+    # Caller external bytes also occur in each incoming-panel envelope, but
+    # its reserved maximum stays fixed. Top-level external storage is once.
+    assert second.inventoried_bytes == 2*first.inventoried_bytes+987
+    assert second.work_units == first.work_units
+    domains = [owner.plan_domain(owner.quartet_at(i),budget=Budget(16<<20,10**11)) for i in range(16)]
+    assert first.geometry_work_units == sum(d.work_units for d in domains)
+    assert first.maximum_domain_bytes == max(d.inventoried_bytes for d in domains)
+    assert second.domain_walk_sha256 == first.domain_walk_sha256
+
+
+@pytest.mark.parametrize('field,value',[
+    ('maximum_panel_inventoried_bytes',(512<<20)+1),('maximum_panel_work_units',10**9+1),
+])
+def test_physical_jk_refuses_reservations_outside_native_limits(field,value):
+    b = _finite_product_fixture(); owner = _physical_owner(b); c = _product_jk_stream_caps()
+    setattr(c,field,value)
+    with pytest.raises(ValueError,match='native diagnostic bounds'):
+        _physical_jk(b,owner,np.zeros((3,2,2),complex),stream_caps=c)
+
+
+@pytest.mark.parametrize('mixed',[False,True])
+def test_physical_jk_empty_support_and_mixed_sp_ao_walk(mixed):
+    from tests.test_periodic_aopair_fourier_panel import _basis
+    b = _finite_product_fixture(mesh=(1,1,1))
+    if mixed:
+        b.basis = _basis([(0,(.2,.4,0.),[.2],[.7],True),(1,(-.2,-.4,1.5),[.3],[.6],True)])
+    owner = _physical_owner(b,**({} if mixed else dict(pair_radius=0.,midpoint_radius=0.)))
+    n = owner.memory.n_basis
+    d = (np.arange(n*n).reshape(1,n,n)+1j).astype(complex)
+    caps = _product_jk_stream_caps(); caps.maximum_panel_work_units = 9*10**7
+    expected = _product_jk_finish(b,owner,_product_jk_stream(b,owner,d,caps=caps))
+    result = _physical_jk(b,owner,d,stream_caps=caps)
+    assert result.accepted_panels == 2*n**4
+    np.testing.assert_array_equal(result.values_copy(),expected.values_copy())
+    assert result.payload_identity_sha256 == expected.payload_identity_sha256
+
+
+@pytest.mark.parametrize('field',['maximum_panel_inventoried_bytes','maximum_panel_work_units'])
+def test_physical_jk_tight_panel_reservation_refuses_before_integrals(field,monkeypatch):
+    b = _finite_product_fixture(); owner = _physical_owner(b); caps = _product_jk_stream_caps()
+    setattr(caps,field,1)
+    def forbidden(*args,**kw): pytest.fail('producer exceeded its admitted panel envelope')
+    monkeypatch.setattr(core,'_make_bipole_finite_product_panel',forbidden)
+    monkeypatch.setattr(core,'_make_bipole_product_jk_stream',forbidden)
+    with pytest.raises((ValueError,MemoryError)):
+        _physical_jk(b,owner,np.zeros((3,2,2),complex),stream_caps=caps)
+
+
+def test_physical_jk_nonfinite_density_refuses_before_integrals(monkeypatch):
+    b = _finite_product_fixture(); owner = _physical_owner(b)
+    def forbidden(*args,**kw): pytest.fail('nonfinite density reached the integral producer')
+    monkeypatch.setattr(core,'_make_bipole_finite_product_panel',forbidden)
+    with pytest.raises((ValueError,OverflowError),match='nonfinite'):
+        _physical_jk(b,owner,np.full((3,2,2),np.nan,complex))

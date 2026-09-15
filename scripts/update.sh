@@ -346,7 +346,11 @@ if [ "$DRY_RUN" = "true" ]; then
     echo
 
     # Working-tree state.
-    if ! git diff --quiet || ! git diff --cached --quiet; then
+    DRY_RUN_WORKTREE_STATE=0
+    vibeqc_worktree_state || DRY_RUN_WORKTREE_STATE=$?
+    if [ "$DRY_RUN_WORKTREE_STATE" -eq 2 ]; then
+        echo "    [git] git could not read this repository — update.sh would refuse."
+    elif [ "$DRY_RUN_WORKTREE_STATE" -eq 1 ]; then
         echo "    [git] working tree is DIRTY — update.sh would refuse to proceed."
     else
         echo "    [git] working tree is clean."
@@ -453,7 +457,16 @@ vibeqc_acquire_build_lock
 # ---------------------------------------------------------------------------
 # Refuse if working tree has uncommitted changes.
 # ---------------------------------------------------------------------------
-if ! git diff --quiet || ! git diff --cached --quiet; then
+WORKTREE_STATE=0
+vibeqc_worktree_state || WORKTREE_STATE=$?
+if [ "$WORKTREE_STATE" -eq 2 ]; then
+    echo
+    echo "Error: git could not read this repository ($PWD)." >&2
+    echo "Run update.sh from inside a vibe-qc checkout." >&2
+    echo "    git status -s" >&2
+    exit 1
+fi
+if [ "$WORKTREE_STATE" -eq 1 ]; then
     echo
     echo "Error: working tree has uncommitted changes." >&2
     echo "Commit, stash, or revert them before running update.sh." >&2

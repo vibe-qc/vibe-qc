@@ -108,7 +108,8 @@ def _warn_if_basis_overlay_is_stale(overlay: _Path, bundled: _Path) -> None:
     construction, and the seven negative ECP-contract cases among them were
     indistinguishable from a real refusal regression.
 
-    Two checks, because they catch different failures.
+    Two checks, because they catch different failures, reported together in
+    one warning so that neither hides the other.
 
     *Inventory*: a basis the overlay simply does not have. A newly added
     basis changes no existing file, so a content comparison cannot see it --
@@ -119,64 +120,89 @@ def _warn_if_basis_overlay_is_stale(overlay: _Path, bundled: _Path) -> None:
     legitimately merges libint's payload with ``custom/``, so extras are not
     evidence of staleness.
 
-    *Canary content*: the same basis present in both but different, by size,
-    over three files. That is the ``def2-svp`` case below.
+    *Content*: the same file present in both but different, over three
+    orbital canaries and every committed ``.ecp`` sidecar. Compared by
+    bytes, not size: #207 (8826f98) corrected the radial powers in
+    ``pob-tzvp-rev2.ecp`` without changing its 27,983-byte length, so a
+    size comparison kept a 40.9 Ha-wrong ECP operator in a stale overlay
+    with no warning (#235). Sizes are still checked first, so bytes are
+    read only for files whose sizes agree, and a pair that cannot be read
+    is skipped on its own rather than ending the pass for the files after
+    it.
 
-    Both are cheap enough for import: two directory listings and three
-    ``stat`` calls. The overlay is still *used* -- the bundled tree alone may
-    not carry every libint base, so silently switching could lose bases
-    rather than gain them. The defect being fixed is the silence, not the
-    preference.
+    Both are cheap enough for import: two directory listings, then about
+    1.5 MB read from each tree when everything matches (about 3 ms cold
+    against 1.3 ms for the size-only check, of a ~460 ms import). The
+    overlay is still *used* -- the bundled tree alone may not carry every
+    libint base, so silently switching could lose bases rather than gain
+    them. The defect being fixed is the silence, not the preference.
     """
     try:
         overlay_basis = overlay / "basis"
         bundled_basis = bundled / "basis"
-        if overlay_basis.is_dir() and bundled_basis.is_dir():
-            have = {q.name for q in overlay_basis.iterdir()}
-            want = {q.name for q in bundled_basis.iterdir()}
-            absent = sorted(want - have)
-            if absent:
-                import warnings as _warnings
-
-                shown = ", ".join(absent[:4])
-                more = f" (+{len(absent) - 4} more)" if len(absent) > 4 else ""
-                _warnings.warn(
-                    "vibe-qc basis library: the build overlay is out of date "
-                    "and is being used in preference to the committed one.\n"
-                    f"  overlay (used):    {overlay_basis}\n"
-                    f"  committed (newer): {bundled_basis}\n"
-                    f"  {len(absent)} file(s) missing from the overlay: "
-                    f"{shown}{more}\n"
-                    "Regenerate with:  bash scripts/setup_basis_library.sh\n"
-                    "Until then those bases do not resolve at all, and the "
-                    "error names the basis rather than the stale overlay.",
-                    RuntimeWarning,
-                    stacklevel=3,
-                )
-                return
-        for name in ("def2-svp.g94", "6-311+g3df2p.g94", "pob-tzvp-rev2.g94"):
-            a = overlay / "basis" / name
-            b = bundled / "basis" / name
-            if not b.is_file() or not a.is_file():
-                continue
-            if a.stat().st_size != b.stat().st_size:
-                import warnings as _warnings
-
-                _warnings.warn(
-                    "vibe-qc basis library: the build overlay is out of date "
-                    f"and is being used in preference to the committed one.\n"
-                    f"  overlay (used):    {a}\n"
-                    f"  committed (newer): {b}\n"
-                    "Regenerate with:  bash scripts/setup_basis_library.sh\n"
-                    "Until then, bases added or changed since the overlay was "
-                    "built resolve to their older form, or fail to resolve at "
-                    "all. Nothing else warns about this.",
-                    RuntimeWarning,
-                    stacklevel=3,
-                )
-                return
+        if not (overlay_basis.is_dir() and bundled_basis.is_dir()):
+            return
+        have = {q.name for q in overlay_basis.iterdir()}
+        want = {q.name for q in bundled_basis.iterdir()}
     except OSError:
         return
+    absent = sorted(want - have)
+
+    names = ["def2-svp.g94", "6-311+g3df2p.g94", "pob-tzvp-rev2.g94"]
+    # Every ECP sidecar: an in-place correction to one of them is the #235
+    # blind spot, and the whole set is about 1.3 MB.
+    names += sorted(n for n in want if n.endswith(".ecp") and n not in names)
+    differing: list[str] = []
+    for name in names:
+        if name not in have or name not in want:
+            continue  # the inventory line covers what is missing
+        a = overlay_basis / name
+        b = bundled_basis / name
+        try:
+            if not a.is_file() or not b.is_file():
+                continue
+            if a.stat().st_size == b.stat().st_size:
+                if a.read_bytes() == b.read_bytes():
+                    continue
+        except OSError:
+            # One unreadable pair says nothing about the others; a stale
+            # sidecar sorted after it must still be found.
+            continue
+        differing.append(name)
+
+    if not absent and not differing:
+        return
+    import warnings as _warnings
+
+    def _shown(items: list[str]) -> str:
+        more = f" (+{len(items) - 4} more)" if len(items) > 4 else ""
+        return ", ".join(items[:4]) + more
+
+    lines = [
+        "vibe-qc basis library: the build overlay is out of date and is "
+        "being used in preference to the committed one.",
+        f"  overlay (used):    {overlay_basis}",
+        f"  committed (newer): {bundled_basis}",
+    ]
+    if absent:
+        lines.append(
+            f"  {len(absent)} file(s) missing from the overlay: {_shown(absent)}"
+        )
+    if differing:
+        lines.append(
+            f"  {len(differing)} file(s) present in both with different "
+            f"content: {_shown(differing)}"
+        )
+        lines.append(f"    overlay (used):    {overlay_basis / differing[0]}")
+        lines.append(f"    committed (newer): {bundled_basis / differing[0]}")
+    lines.append("Regenerate with:  bash scripts/setup_basis_library.sh")
+    lines.append(
+        "Until then, missing bases do not resolve at all (the error names "
+        "the basis rather than the stale overlay), and bases the overlay "
+        "does have may be older than the committed ones. Nothing else warns "
+        "about this."
+    )
+    _warnings.warn("\n".join(lines), RuntimeWarning, stacklevel=3)
 
 
 def _basis_library_has_basis_dir(root: _Path | str | None) -> bool:
@@ -2379,8 +2405,10 @@ def _run_double_hybrid_core(
     dispersion,
     rks_options,
     slog,
+    grid_level="orca-defgrid3",
 ):
     """Run the SCF, perturbative correlation, and dispersion phases."""
+    from .runner import apply_ks_grid_default
     open_shell = mol.multiplicity > 1
     t_scf = _time.perf_counter()
     _double_hybrid_memory_snapshot("start_of_scf", slog)
@@ -2398,6 +2426,7 @@ def _run_double_hybrid_core(
                     if hasattr(rks_options, field.name):
                         setattr(roks_options, field.name,
                                 getattr(rks_options, field.name))
+            apply_ks_grid_default(roks_options, grid_level)
             roks_options.functional = functional_name
             roks_options.density_fit = density_fit
             if density_fit:
@@ -2415,6 +2444,7 @@ def _run_double_hybrid_core(
         else:
             if rks_options is None:
                 rks_options = RKSOptions()
+            apply_ks_grid_default(rks_options, grid_level)
             rks_options.functional = functional_name
             rks_options.density_fit = density_fit
             if density_fit:
@@ -2601,6 +2631,7 @@ def run_double_hybrid(
     aux_basis_mp2="",
     dispersion=None,
     rks_options=None,
+    grid_level="orca-defgrid3",
     output=None,
     citations=True,
     output_qvf=True,
@@ -2611,6 +2642,10 @@ def run_double_hybrid(
     structured_log=False,
 ):
     """Generic double-hybrid dispatcher.
+
+    The ``grid_level`` preset (default ``"orca-defgrid3"``) applies to
+    absent or untouched reference options. Custom grid fields win; pass
+    ``grid_level="legacy"`` to reproduce the old reference grid.
 
     Resolves ``functional_name`` to a :class:`Functional`, runs a
     hybrid-DFT SCF step with that functional's SCF piece, runs an MP2
@@ -2794,6 +2829,7 @@ def run_double_hybrid(
             dispersion=dispersion,
             rks_options=rks_options,
             slog=slog,
+            grid_level=grid_level,
         )
         if stem is not None:
             with PerfScope("double_hybrid.output"):
@@ -3000,7 +3036,7 @@ class WB97XDResult:
         )
 
 
-def run_wb97x_d(mol, basis, options=None, *, output=None):
+def run_wb97x_d(mol, basis, options=None, *, grid_level="orca-defgrid3", output=None):
     """wB97X-D (Chai & Head-Gordon, *Phys. Chem. Chem. Phys.* **10**,
     6615 (2008)) -- the full functional, XC + dispersion.
 
@@ -3034,6 +3070,10 @@ def run_wb97x_d(mol, basis, options=None, *, output=None):
         (``options.level_shift ≈ 0.5``) may be needed -- see the
         wB97X note in ``docs/user_guide/functionals.md``.
 
+    grid_level : str
+        Grid preset for absent or untouched options (``"orca-defgrid3"``).
+        Custom grid fields win; choose ``"legacy"`` for the old defaults.
+
     Returns
     -------
     WB97XDResult
@@ -3041,6 +3081,9 @@ def run_wb97x_d(mol, basis, options=None, *, output=None):
     closed_shell = mol.multiplicity == 1
     if options is None:
         options = RKSOptions() if closed_shell else UKSOptions()
+    from .runner import apply_ks_grid_default
+
+    apply_ks_grid_default(options, grid_level)
     options.functional = "wb97x-d"
 
     if closed_shell:

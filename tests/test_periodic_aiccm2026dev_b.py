@@ -2568,10 +2568,12 @@ def test_inactive_quadratic_fallback_reaches_backend(monkeypatch) -> None:
         ("UKS", "run_pbc_bipole_uks"),
     ],
 )
+@pytest.mark.parametrize("physical_pairs", [False, True])
 def test_four_center_records_executed_m5_domain_provenance(
     monkeypatch,
     method: str,
     backend_symbol: str,
+    physical_pairs: bool,
 ) -> None:
     if method in ("RHF", "RKS"):
         system, basis = _h2_system(dim=3)
@@ -2587,10 +2589,13 @@ def test_four_center_records_executed_m5_domain_provenance(
             if method == "UHF"
             else vq.PeriodicKSOptions()
         )
+    options.lattice_opts.pair_complete_1e = physical_pairs
     kpoints = cyclic_gamma_mesh(system, (2, 1, 1))
     captured = {}
 
     def fake_backend(*_args, **kwargs):
+        assert _args[3] is options
+        assert _args[3].lattice_opts.pair_complete_1e is physical_pairs
         captured["sr_image_precision"] = kwargs["sr_image_precision"]
         captured["use_multipole_far_field"] = kwargs[
             "use_multipole_far_field"
@@ -2641,7 +2646,11 @@ def test_four_center_records_executed_m5_domain_provenance(
         assert captured["output_cell_farming_task_kind"] is None
     assert result.backend == "aiccm2026dev-b-four_center"
     assert result.runtime_backend == "pbc-bipole"
-    assert result.sr_image_domain_policy == "m5-qqr-padded-erfc/v1"
+    expected_policy = (
+        "m5-physical-pair-midpoint-erfc/v1"
+        if physical_pairs else "m5-qqr-padded-erfc/v1"
+    )
+    assert result.sr_image_domain_policy == expected_policy
     assert result.sr_image_precision == pytest.approx(1.0e-6)
     assembly = result.exact_exchange_assembly
     assert result.aiccm2026dev_b.exact_exchange_assembly is assembly

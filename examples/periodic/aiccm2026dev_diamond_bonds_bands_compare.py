@@ -572,6 +572,10 @@ def maybe_run_b_pno(
         tcut_mkn=1.0e-3,
         tcut_pairs=0.0,
         tcut_pairs_weak=1.0e-4,
+        # #65 moved the molecular pair density to "mp2". tcut_pno cuts that
+        # density's eigenvalues, so keeping this protocol exact means pinning
+        # the density along with the thresholds.
+        pno_norm="legacy",
     )
     result = vq.run_aiccm2026dev_b_dlpno_mp2(
         system,

@@ -96,14 +96,14 @@ def _forbid_gaussian_gamma_downstream(monkeypatch):
         "interaction",
         "nuclear",
         "ewald_omega",
-        "failed_role",
+        "home_only_role",
     ),
     [
         (False, None, 15.0, 20.0, None, "interaction"),
         (True, (1, 1, 1), 20.0, 15.0, 1.0, "nuclear"),
     ],
 )
-def test_wide_gaussian_gamma_rejects_before_output_or_scf(
+def test_wide_gaussian_gamma_ewald_reaches_output(
     monkeypatch,
     tmp_path,
     method,
@@ -113,23 +113,26 @@ def test_wide_gaussian_gamma_rejects_before_output_or_scf(
     interaction,
     nuclear,
     ewald_omega,
-    failed_role,
+    home_only_role,
 ):
-    """Either origin-only cutoff must fail before live or dry-run output."""
+    """A home-only short-range list is valid with reciprocal Ewald coupling."""
     system, basis = _h2_3d(box=18.0)
     assert len(vq.direct_lattice_cells(system, 15.0)) == 1
     assert len(vq.direct_lattice_cells(system, 20.0)) > 1
-    _forbid_gaussian_gamma_downstream(monkeypatch)
-    stem = tmp_path / "must-not-exist" / f"wide-{method.lower()}-{failed_role}"
+
+    class ReachedOutput(Exception):
+        pass
+
+    def reached_output(*args, **kwargs):
+        raise ReachedOutput
+
+    runner = importlib.import_module("vibeqc.periodic_runner")
+    monkeypatch.setattr(runner, "ManifestUpdater", reached_output)
+    monkeypatch.setattr(runner, "OutputWriter", reached_output)
+    stem = tmp_path / "must-not-exist" / f"wide-{method.lower()}-{home_only_role}"
     method_kwargs = {"functional": functional} if functional is not None else {}
 
-    with pytest.raises(
-        ValueError,
-        match=(
-            rf"run_periodic_job.*{failed_role}.*"
-            r"no nonzero lattice image.*free-boundary cluster"
-        ),
-    ):
+    with pytest.raises(ReachedOutput):
         vq.run_periodic_job(
             system,
             basis,
@@ -146,8 +149,6 @@ def test_wide_gaussian_gamma_rejects_before_output_or_scf(
             progress=False,
             **method_kwargs,
         )
-
-    assert not stem.parent.exists()
 
 
 @pytest.mark.parametrize(
@@ -200,6 +201,27 @@ def test_nonfinite_bipole_preflight_control_rejects_before_output(
         )
 
     assert not stem.parent.exists()
+
+
+@pytest.mark.parametrize("method", ["RHF", "UHF", "RKS", "UKS"])
+def test_home_only_erfc_public_scf_is_split_consistent(tmp_path, method):
+    system, basis = _h2_3d(box=30.0)
+    assert len(vq.direct_lattice_cells(system, 12.0)) == 1
+    values = []
+    for alpha in (0.4, 0.6):
+        kwargs = {"functional": "lda"} if method.endswith("KS") else {}
+        result = vq.run_periodic_job(
+            system, basis, method=method, jk_method="bipole",
+            kpoints=(1, 1, 1), bipole_cutoff_bohr=12.0,
+            bipole_nuclear_cutoff_bohr=15.0, ewald_omega=alpha,
+            conv_tol_energy=1e-10, max_iter=60,
+            output=tmp_path / f"home-only-{method}-{alpha}",
+            output_qvf=False, citations=False, progress=False,
+            **kwargs,
+        )
+        assert result.converged
+        values.append(result.energy)
+    assert values[0] == pytest.approx(values[1], abs=1e-7)
 
 
 def test_compact_gaussian_gamma_with_both_image_sets_remains_supported(tmp_path):

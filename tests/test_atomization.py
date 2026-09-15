@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from vibeqc import run_job
+from vibeqc import RKSOptions, run_job
 from vibeqc.atomization import (atomic_ground_state_energy, atomization_energy,
                                 supported_elements)
 from vibeqc.molecule import Atom, Molecule
@@ -84,3 +84,59 @@ def test_run_job_atomization_block(tmp_path: Path):
     run_job(_h2o(), basis="6-31g", method="rhf",
             output=str(tmp_path / "h2o_off"), verbose=0)
     assert "## Atomization energy" not in (tmp_path / "h2o_off.out").read_text()
+
+
+_RUN_JOB_QUIET = {
+    "basis": "sto-3g", "method": "rks", "functional": "pbe",
+    "name_molecule": False, "output_qvf": False, "citations": False,
+    "write_molden_file": False, "write_xyz_file": False,
+    "write_population_file": False, "progress": False, "crash_dump": False,
+}
+
+
+@pytest.mark.parametrize("method,Z,mult", [
+    ("rks", 2, 1), ("uks", 1, 2), ("roks", 1, 2), ("uks", 8, 3),
+])
+@pytest.mark.parametrize("level", ["orca-defgrid3", "legacy"])
+def test_atomic_reference_matches_run_job_grid(tmp_path, monkeypatch, method, Z, mult, level):
+    import vibeqc.atomization as module
+    monkeypatch.setattr(module, "_ATOM_ENERGY_CACHE", {})
+    from vibeqc.atomization import atomic_ground_state_energy
+
+    mol = Molecule([Atom(Z, [0., 0., 0.])], 0, mult)
+    common = dict(_RUN_JOB_QUIET, method=method)
+    expected = run_job(mol, output=tmp_path / "atom", grid_level=level, **common)
+    actual = atomic_ground_state_energy(Z, method, "sto-3g", functional="pbe",
+                                        grid_level=level)
+    assert actual == pytest.approx(expected.energy, abs=1e-10, rel=0)
+    # Alternate levels in one process: cache identity must include the grid.
+    other = "legacy" if level == "orca-defgrid3" else "orca-defgrid3"
+    alternate = atomic_ground_state_energy(Z, method, "sto-3g", functional="pbe",
+                                           grid_level=other)
+    # Spherical H/He densities can integrate identically on both angular
+    # grids; they must nevertheless occupy separate cache entries.
+    assert len(module._ATOM_ENERGY_CACHE) == 2
+    if Z == 8:
+        # The anisotropic open p shell resolves the angular-grid difference.
+        assert abs(actual - alternate) > 1e-9
+
+
+@pytest.mark.parametrize("level", ["orca-defgrid3", "legacy"])
+def test_run_job_atomization_forwards_effective_grid(tmp_path, monkeypatch, level):
+    import vibeqc.atomization as module
+    real = module.atomization_energy
+    seen = []
+
+    def record(*args, **kwargs):
+        seen.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, "atomization_energy", record)
+    options = RKSOptions()
+    options.grid.n_radial = 53
+    h2 = Molecule([Atom(1, [0., 0., 0.]), Atom(1, [0., 0., 1.4])])
+    run_job(h2, output=tmp_path / "molecule", rks_options=options,
+            atomization=True, grid_level=level, **_RUN_JOB_QUIET)
+    assert len(seen) == 1
+    assert seen[0]["grid_level"] == level
+    assert seen[0]["grid_options"].n_radial == 53

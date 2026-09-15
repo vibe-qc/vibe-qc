@@ -104,6 +104,11 @@ def main():
                 triples_mode="t1",
                 compute_triples=True,
                 max_nbf=400,
+                # Retained evidence: both defaults that moved after it was
+                # recorded are pinned back -- the pair density (#65) and the
+                # MP2 PNO-truncation correction (#222).
+                pno_norm="legacy",
+                pno_correction=False,
             ),
         )
         e_dlpno = dlpno.e_corr + dlpno.e_t

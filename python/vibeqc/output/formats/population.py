@@ -122,8 +122,10 @@ class PopulationSummary:
     # Single dipole-moment dict.
     dipole: dict[str, Any] | None = None
     # Per-section error message; surfaced in .txt as a "section N/A"
-    # row and as a "_error" JSON field.
+    # row and in the "errors" JSON object.
     errors: dict[str, str] = field(default_factory=dict)
+    # Known missing implementations, separate from attempted computations.
+    unavailable: dict[str, str] = field(default_factory=dict)
 
 
 _POPULATION_SECTIONS = ("mulliken", "loewdin", "hirshfeld", "mayer", "dipole")
@@ -236,20 +238,16 @@ def compute_population_summary(
     if _spin_a is not None:
         try:
             from ..._vibeqc_core import compute_overlap as _co
+            from ...properties import _shell_to_atom
         except ImportError:
             from vibeqc._vibeqc_core import compute_overlap as _co  # type: ignore[no-redef]
+            from vibeqc.properties import _shell_to_atom  # type: ignore[no-redef]
         try:
             S = np.asarray(_co(basis))
             P_spin = np.asarray(_spin_a) - np.asarray(_spin_b)
             PS_diag = np.einsum("ij,ji->i", P_spin, S)
-            ao_to_atom = np.zeros(basis.nbasis, dtype=int)
-            offset = 0
-            for i_shell, shell in enumerate(basis.shells()):
-                n_func = shell.nfunctions()
-                ao_to_atom[offset : offset + n_func] = shell.atom_index
-                offset += n_func
             electron_spin = np.bincount(
-                ao_to_atom, weights=PS_diag.real, minlength=len(atoms)
+                _shell_to_atom(basis), weights=PS_diag.real, minlength=len(atoms)
             )
             spin_rows: list[tuple[int, str, float, float]] = []
             for i, a in enumerate(atoms):
@@ -373,30 +371,11 @@ def compute_population_summary(
     except Exception as exc:
         out.errors["wiberg"] = f"{type(exc).__name__}: {exc}"
 
-    # --- NPA charges (v0.22.0 BOND) ---
-    try:
-        try:
-            from ..._vibeqc_core import compute_overlap as _co
-            from ...nbo import npa_charges as _npa
-        except ImportError:
-            from vibeqc._vibeqc_core import (
-                compute_overlap as _co,  # type: ignore[no-redef]
-            )
-            from vibeqc.nbo import npa_charges as _npa  # type: ignore[no-redef]
-        S = np.asarray(_co(basis))
-        _npa_a, _npa_b = spin_densities(result)
-        if _npa_a is not None:
-            P_npa = np.asarray(_npa_a.real + _npa_b.real)
-        else:
-            P_npa = np.asarray(result.density.real)
-        q_npa = np.asarray(_npa(P_npa, S, basis, molecule), dtype=float)
-        rows_npa = []
-        for i, a in enumerate(atoms):
-            z = int(a.Z)
-            rows_npa.append((i, _symbol(z), float(z), float(q_npa[i])))
-        out.npa_atoms = rows_npa
-    except Exception as exc:
-        out.errors["npa"] = f"{type(exc).__name__}: {exc}"
+    # NPA deliberately fails closed until occupancy-weighted NAOs exist.
+    # Do not compute an overlap matrix or call a known-unimplemented API.
+    from ...nbo import _NPA_NOT_IMPLEMENTED
+
+    out.unavailable["npa"] = _NPA_NOT_IMPLEMENTED
 
     return out
 
@@ -408,22 +387,118 @@ class _LatticeDensityView:
     nbf: int
 
 
+def _compute_gdf_gamma_population_summary(
+    result: Any, basis: Any, molecule: Any, *, nuclear_charges: Any = None,
+    n_top_bonds: int = 20, bond_threshold: float = 0.1,
+) -> PopulationSummary:
+    """Exact-Gamma populations using the accepted density and SCF metric.
+
+    A Bloch density must contract with S(Gamma), not the molecular home-cell
+    overlap. Never refill orbitals or send a per-k spin list to molecular
+    properties. This adapter deliberately rejects true multi-k inputs.
+    """
+    from .xyz import _symbol
+    from ...coop_cohp import _periodic_mayer_from_density
+
+    def matrix(value):
+        value = np.asarray(value)
+        if value.ndim == 3 and value.shape[0] == 1:
+            value = value[0]
+        if (value.shape != (nbf, nbf) or not np.isfinite(value).all()
+                or not np.allclose(value, value.conj().T, atol=1e-10, rtol=0)):
+            raise ValueError("GDF Gamma populations require finite Hermitian AO matrices")
+        return value
+
+    atoms = list(molecule.atoms)
+    nbf = int(basis.nbasis)
+    ao_atoms = _basis_ao_to_atom(basis)
+    if (ao_atoms.shape != (nbf,) or np.any(ao_atoms < 0)
+            or np.any(ao_atoms >= len(atoms))):
+        raise ValueError("GDF population AO-to-atom map does not match the basis")
+    kpoints = getattr(result, "kpoints_cart", None)
+    weights = getattr(result, "kpoint_weights", None)
+    if kpoints is not None:
+        kpoints = np.asarray(kpoints, dtype=float)
+        if (kpoints.shape != (1, 3) or not np.isfinite(kpoints).all()
+                or not np.allclose(kpoints, 0., atol=1e-12, rtol=0)):
+            raise ValueError("GDF population adapter requires an exact single Gamma point")
+    if weights is not None:
+        weights = np.asarray(weights, dtype=float)
+        if weights.shape != (1,) or not np.allclose(weights, 1., atol=1e-12, rtol=0):
+            raise ValueError("GDF Gamma population weight must be one")
+    charges = np.asarray(
+        [a.Z for a in atoms] if nuclear_charges is None else nuclear_charges,
+        dtype=float,
+    )
+    if charges.shape != (len(atoms),) or not np.isfinite(charges).all():
+        raise ValueError("GDF populations require one finite nuclear charge per atom")
+    overlap = matrix(result.overlap)
+    alpha, beta = getattr(result, "density_alpha", None), getattr(result, "density_beta", None)
+    if (alpha is None) != (beta is None):
+        raise ValueError("GDF populations require both spin densities")
+    densities = ([matrix(result.density)] if alpha is None
+                 else [matrix(alpha), matrix(beta)])
+    total = sum(densities)
+    out = PopulationSummary()
+
+    def atom_rows(values):
+        return [(i, _symbol(int(a.Z)), float(a.Z), float(values[i]))
+                for i, a in enumerate(atoms)]
+
+    def populations(diagonal):
+        return np.bincount(ao_atoms, weights=np.asarray(diagonal).real,
+                           minlength=len(atoms))
+
+    out.mulliken_atoms = atom_rows(charges - populations(np.diag(total @ overlap)))
+    if len(densities) == 2:
+        out.mulliken_spin_atoms = atom_rows(
+            populations(np.diag((densities[0] - densities[1]) @ overlap)))
+    # Keep useful Mulliken/Mayer output if the metric cannot be square-rooted.
+    try:
+        eigenvalues, vectors = np.linalg.eigh(overlap)
+        if eigenvalues.min() < -1e-10:
+            raise ValueError("GDF Loewdin populations require a positive semidefinite overlap")
+        root = (vectors * np.sqrt(np.maximum(eigenvalues, 0.))) @ vectors.conj().T
+        out.loewdin_atoms = atom_rows(charges - populations(np.diag(root @ total @ root)))
+    except (ValueError, np.linalg.LinAlgError) as exc:
+        out.errors["loewdin"] = f"{type(exc).__name__}: {exc}"
+    bonds = _periodic_mayer_from_density(
+        [[density] for density in densities], [overlap], [1.], ao_atoms, len(atoms))
+    out.mayer_bonds = [
+        (i, j, _symbol(int(atoms[i].Z)), _symbol(int(atoms[j].Z)), order)
+        for i, j, order in _rank_bonds(bonds, atoms, bond_threshold)[:n_top_bonds]
+    ]
+    out.errors["hirshfeld"] = (
+        "unsupported: periodic GDF Hirshfeld charges require a periodic promolecule/grid partition")
+    out.errors["dipole"] = (
+        "unsupported: a molecular dipole is not a periodic GDF polarization")
+    out.errors["wiberg"] = (
+        "unsupported: periodic GDF Wiberg indices are not implemented")
+    from ...nbo import _NPA_NOT_IMPLEMENTED
+    out.unavailable["npa"] = _NPA_NOT_IMPLEMENTED
+    return out
+
+
 def _cell_key(cell: Any) -> tuple[int, int, int]:
     return tuple(int(x) for x in np.asarray(cell.index, dtype=int).reshape(3))
 
 
 def _basis_ao_to_atom(basis: Any) -> np.ndarray:
-    """Return the AO -> atom map using the public BasisSet shell API."""
-    per_ao: list[int] = []
-    for shell in basis.shells():
-        angular = int(shell.l)
-        n_func = (
-            2 * angular + 1
-            if bool(getattr(shell, "pure", True))
-            else (angular + 1) * (angular + 2) // 2
-        )
-        per_ao.extend([int(shell.atom_index)] * n_func)
-    return np.asarray(per_ao, dtype=np.int64)
+    """Return the AO -> atom map using the public BasisSet shell API.
+
+    Delegates to :func:`vibeqc.properties._shell_to_atom`, the canonical
+    derivation, which the Mulliken spin block above already imports.
+    The import stays inside the function to keep this module importable
+    without the compiled core, matching the rest of the file; the
+    canonical helper itself touches only ``basis.shells()``, so the
+    duck-typed bases the periodic tests pass in still work.
+    """
+    try:
+        from ...properties import _shell_to_atom
+    except ImportError:
+        from vibeqc.properties import _shell_to_atom  # type: ignore[no-redef]
+
+    return _shell_to_atom(basis)
 
 
 def _as_lattice_density_view(result: Any) -> _LatticeDensityView:
@@ -1224,6 +1299,105 @@ def compute_aiccm2026dev_b_population_summary(
     return out
 
 
+_CCM_HIRSHFELD_UNSUPPORTED = (
+    "unsupported: periodic Gamma-CCM Hirshfeld charges require a periodic "
+    "promolecule/grid partition, which is not implemented"
+)
+_CCM_DIPOLE_UNSUPPORTED = (
+    "unsupported: ordinary electric dipole moments are ill-defined on the "
+    "Gamma-CCM torus (the position operator does not survive the periodic "
+    "boundary, Resta 1998); Berry-phase polarization is not implemented. The "
+    "library exposes vibeqc.periodic.ccm.properties.ccm_dipole for the "
+    "finite, surface-terminated cluster dipole, which is a different quantity"
+)
+_CCM_LOEWDIN_UNAVAILABLE = (
+    "unsupported: Gamma-CCM Loewdin populations could not be evaluated for "
+    "this cyclic-cluster density"
+)
+_CCM_MAYER_UNAVAILABLE = (
+    "unsupported: Gamma-CCM Mayer bond orders could not be evaluated for "
+    "this cyclic-cluster density"
+)
+
+
+def compute_ccm_population_summary(
+    result: Any,
+    molecule: Any,
+    *,
+    n_top_bonds: int = 20,
+    bond_threshold: float = 0.1,
+) -> PopulationSummary:
+    """Cyclic-cluster population properties for the Gamma-CCM runner arms.
+
+    ``result`` is a supercell-Gamma adapter result (``CCMRealGammaResult`` or
+    ``CCMFourCentreResult``) carrying ``ccm_result`` and ``ccm_system``.
+
+    This exists because the molecular fallback is not merely imprecise here,
+    it is broken twice over. Those results' ``mo_coeffs`` span the SUPERCELL
+    (``N_c * n_mu`` AO rows) while the sidecar's molecule is the unit cell, so
+    the molecular analysis is comparing different objects; and they declare
+    ``density_alpha`` / ``density_beta`` as fields that are ``None`` on a
+    closed-shell run, so every ``hasattr``-based open-shell test downstream
+    takes the wrong branch and evaluates ``None + None``. Before this function
+    a real-Gamma job wrote a population file whose every section was a
+    ``TypeError`` row.
+
+    The charges reported are the image-averaged PER-CELL ones, so they are
+    comparable with any other periodic route's, and each carries the
+    cluster's residual translational spread as its own diagnostic.
+    """
+    out = PopulationSummary()
+
+    from .xyz import _symbol
+    from ...periodic.ccm.properties import (
+        ccm_lowdin_charges,
+        ccm_mayer_bond_orders,
+        ccm_mulliken_charges,
+    )
+
+    scf = result.ccm_result
+    ccm = result.ccm_system
+    atoms = list(molecule.atoms)
+
+    def _rows(charges) -> list[tuple[int, str, float, float]]:
+        # charges_per_cell is the image average over the cyclic cluster, which
+        # is what a unit-cell sidecar must report -- charges (per supercell
+        # atom) would have N_c times too many entries.
+        per_cell = charges.charges_per_cell
+        return [
+            (i, _symbol(int(atom.Z)), float(atom.Z), float(per_cell[i]))
+            for i, atom in enumerate(atoms)
+        ]
+
+    out.mulliken_atoms = _rows(ccm_mulliken_charges(scf, ccm))
+
+    try:
+        out.loewdin_atoms = _rows(ccm_lowdin_charges(scf, ccm))
+    except Exception:
+        out.errors["loewdin"] = _CCM_LOEWDIN_UNAVAILABLE
+
+    try:
+        analysis = ccm_mayer_bond_orders(
+            scf, ccm, threshold=bond_threshold, max_bonds=n_top_bonds,
+        )
+        out.mayer_bonds = [
+            (
+                int(bond.atom_i),
+                int(bond.atom_j),
+                str(bond.symbol_i),
+                str(bond.symbol_j),
+                float(bond.order),
+            )
+            for bond in analysis.bonds
+        ]
+    except Exception:
+        out.errors["mayer"] = _CCM_MAYER_UNAVAILABLE
+
+    out.errors["hirshfeld"] = _CCM_HIRSHFELD_UNSUPPORTED
+    out.errors["dipole"] = _CCM_DIPOLE_UNSUPPORTED
+    return out
+
+
 def unsupported_population_summary(reason: str) -> PopulationSummary:
     """Return a structured unsupported-route population summary.
 
@@ -1291,10 +1465,12 @@ def compute_native_mulliken_population_summary(
         "hirshfeld",
         "mayer",
         "wiberg",
-        "npa",
         "dipole",
     ):
         out.errors[section] = unavailable
+    from ...nbo import _NPA_NOT_IMPLEMENTED
+
+    out.unavailable["npa"] = _NPA_NOT_IMPLEMENTED
     return out
 
 
@@ -1377,6 +1553,8 @@ def format_population_txt(summary: PopulationSummary) -> str:
         parts.append("# idx\tsymbol\tZ\tcharge")
         for i, sym, z, q in summary.npa_atoms:
             parts.append(f"{i}\t{sym}\t{z:.1f}\t{q:+.6f}")
+    elif "npa" in summary.unavailable:
+        parts.append(f"# npa: not implemented -- {summary.unavailable['npa']}")
     else:
         err = summary.errors.get("npa", "no data")
         parts.append(f"# npa: N/A -- {err}")
@@ -1434,6 +1612,8 @@ def format_population_json(summary: PopulationSummary) -> str:
     ]
     body["dipole"] = summary.dipole
     body["errors"] = dict(summary.errors)
+    if summary.unavailable:
+        body["unavailable"] = dict(summary.unavailable)
     return json.dumps(body, indent=2, sort_keys=False)
 
 

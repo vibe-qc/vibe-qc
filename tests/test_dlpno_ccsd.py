@@ -173,7 +173,8 @@ class TestPilotTruncationDZ:
     """Recovery tiers on H2O/def2-SVP (O(N^6) pilot — slow lane)."""
 
     @pytest.fixture(scope="class")
-    def h2o_dz(self):
+    @classmethod
+    def h2o_dz(cls):
         return _system(H2O_ATOMS, "def2-svp")
 
     def test_exactness_limit_dz(self, h2o_dz):

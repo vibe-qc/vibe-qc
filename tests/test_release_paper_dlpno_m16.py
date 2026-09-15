@@ -89,6 +89,10 @@ def _pre_140_448_local_ccsd_options() -> LocalCCSDOptions:
         residual_domain="pair",
         compute_triples=True,
         pno_norm="legacy",  # retained row predates #65; see the MP2 helper
+        # ... and predates the semicanonical MP2 PNO correction this route
+        # now applies to its iterated pairs. Same reasoning: reproduce the
+        # recorded row exactly rather than rebaseline it.
+        pno_correction=False,
     )
 
 

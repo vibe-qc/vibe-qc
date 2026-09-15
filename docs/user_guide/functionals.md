@@ -406,6 +406,13 @@ print(result.e_total)        # E_SCF + E_dispersion
 print(result.scf.energy, result.dispersion.energy)
 ```
 
+`run_wb97x_d` and `run_double_hybrid` apply `grid_level="orca-defgrid3"`
+to absent or untouched SCF options, for closed and open shells. Custom grid
+fields take precedence. Pass `grid_level="legacy"` to reproduce the old
+integration grid. The low-level `run_rks` and `run_uks` wrappers continue
+to use a supplied options object's grid as given.
+
+
 The CHG dispersion is
 `E_disp = −Σ_{A<B} C6_AB/R^6 · 1/(1 + 6·(R/R0_AB)^-12)` with the
 Grimme-2006 D2 atomic C6 / vdW-radius tables (H-Xe); a heavier

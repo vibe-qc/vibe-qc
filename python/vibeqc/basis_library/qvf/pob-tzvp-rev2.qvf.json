@@ -16219,12 +16219,12 @@
             {
               "coefficient": 89.503949586,
               "exponent": 5.031683377,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.437903605,
               "exponent": 2.015185434,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16234,22 +16234,22 @@
             {
               "coefficient": 19.520470196,
               "exponent": 4.383544458,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 39.038955357,
               "exponent": 4.33265928,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.170609341,
               "exponent": 1.374288087,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.418499875,
               "exponent": 1.225772391,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16259,22 +16259,22 @@
             {
               "coefficient": 10.482661239,
               "exponent": 3.415601371,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 15.724060278,
               "exponent": 3.412863366,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.266082838,
               "exponent": 1.030504898,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.408802184,
               "exponent": 1.019872163,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16284,12 +16284,12 @@
             {
               "coefficient": -4.478284427,
               "exponent": 3.574403408,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -5.956907509,
               "exponent": 3.56571059,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -16316,12 +16316,12 @@
             {
               "coefficient": 135.271042909,
               "exponent": 6.93346099,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 17.944071402,
               "exponent": 4.114003832,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16331,22 +16331,22 @@
             {
               "coefficient": 29.438081345,
               "exponent": 7.216816623,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 58.880674863,
               "exponent": 7.173696172,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 4.936282692,
               "exponent": 3.022798817,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.723352071,
               "exponent": 2.86569903,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16356,22 +16356,22 @@
             {
               "coefficient": 11.907239187,
               "exponent": 6.3215146,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 17.85955144,
               "exponent": 6.391499495,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 2.199180226,
               "exponent": 1.769726597,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 2.893570866,
               "exponent": 1.636771665,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16381,12 +16381,12 @@
             {
               "coefficient": -5.509333254,
               "exponent": 4.244198396,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -7.304641693,
               "exponent": 4.229164471,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -16413,12 +16413,12 @@
             {
               "coefficient": 135.134974,
               "exponent": 7.858275,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 15.411632,
               "exponent": 3.382128,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16428,22 +16428,22 @@
             {
               "coefficient": 29.251437,
               "exponent": 6.849791,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 58.508363,
               "exponent": 6.710092,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 3.780243,
               "exponent": 3.042159,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 7.676547,
               "exponent": 2.93733,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16453,22 +16453,22 @@
             {
               "coefficient": 11.849911,
               "exponent": 5.416315,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 17.778103,
               "exponent": 5.333416,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 2.062383,
               "exponent": 1.976212,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 3.075654,
               "exponent": 1.961111,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16478,12 +16478,12 @@
             {
               "coefficient": -6.928078,
               "exponent": 5.02859,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -9.155099,
               "exponent": 5.005582,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -16510,12 +16510,12 @@
             {
               "coefficient": 150.242994,
               "exponent": 8.636528,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 18.780036,
               "exponent": 3.717639,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16525,22 +16525,22 @@
             {
               "coefficient": 33.192791,
               "exponent": 7.626728,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 66.389039,
               "exponent": 7.453207,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 4.620726,
               "exponent": 3.358389,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.26027,
               "exponent": 3.229738,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16550,22 +16550,22 @@
             {
               "coefficient": 13.993383,
               "exponent": 5.938086,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 20.995882,
               "exponent": 5.825544,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 2.285166,
               "exponent": 2.205019,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 3.44126,
               "exponent": 2.206292,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16575,12 +16575,12 @@
             {
               "coefficient": -5.23932,
               "exponent": 4.800215,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -6.987424,
               "exponent": 4.798992,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -16607,12 +16607,12 @@
             {
               "coefficient": 165.156736,
               "exponent": 9.376578,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 21.823951,
               "exponent": 4.043572,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16622,22 +16622,22 @@
             {
               "coefficient": 37.249284,
               "exponent": 8.363609,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 74.507389,
               "exponent": 8.166898,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 5.439486,
               "exponent": 3.693075,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 10.913252,
               "exponent": 3.551047,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16647,22 +16647,22 @@
             {
               "coefficient": 15.214549,
               "exponent": 6.689108,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 22.833508,
               "exponent": 6.537193,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 3.000052,
               "exponent": 2.551118,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 4.553734,
               "exponent": 2.567896,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16672,12 +16672,12 @@
             {
               "coefficient": -6.281354,
               "exponent": 5.568285,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -8.755644,
               "exponent": 5.671372,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -16704,12 +16704,12 @@
             {
               "coefficient": 180.076853,
               "exponent": 10.097,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 24.71592,
               "exponent": 4.37567,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16719,22 +16719,22 @@
             {
               "coefficient": 41.227678,
               "exponent": 9.126564,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 82.45267,
               "exponent": 8.863223,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 6.345092,
               "exponent": 4.044948,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 12.458423,
               "exponent": 3.866657,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16744,22 +16744,22 @@
             {
               "coefficient": 19.308744,
               "exponent": 7.535754,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 28.977674,
               "exponent": 7.278976,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 3.189516,
               "exponent": 2.763205,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 4.700169,
               "exponent": 2.772085,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16769,12 +16769,12 @@
             {
               "coefficient": -7.178888,
               "exponent": 6.306633,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -9.745978,
               "exponent": 6.356448,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -16801,12 +16801,12 @@
             {
               "coefficient": 209.786493,
               "exponent": 11.50059,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 30.214307,
               "exponent": 5.068575,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16816,22 +16816,22 @@
             {
               "coefficient": 48.751244,
               "exponent": 10.532634,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 97.496529,
               "exponent": 10.19201,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 7.860188,
               "exponent": 4.734892,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 15.329751,
               "exponent": 4.509065,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16841,22 +16841,22 @@
             {
               "coefficient": 26.967506,
               "exponent": 8.877977,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 40.432303,
               "exponent": 8.766122,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 3.340758,
               "exponent": 3.170196,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 5.256352,
               "exponent": 3.228851,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16866,12 +16866,12 @@
             {
               "coefficient": -8.847525,
               "exponent": 7.820249,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -11.835518,
               "exponent": 7.839647,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -16898,12 +16898,12 @@
             {
               "coefficient": 225.312054,
               "exponent": 12.194816,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 32.441582,
               "exponent": 5.405137,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16913,22 +16913,22 @@
             {
               "coefficient": 52.872826,
               "exponent": 11.280755,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 105.745526,
               "exponent": 10.927248,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 8.619344,
               "exponent": 5.090117,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 16.973459,
               "exponent": 4.851832,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16938,22 +16938,22 @@
             {
               "coefficient": 25.108501,
               "exponent": 9.136337,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 37.695731,
               "exponent": 8.964808,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 4.202584,
               "exponent": 3.643612,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 6.29279,
               "exponent": 3.636007,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -16963,12 +16963,12 @@
             {
               "coefficient": -9.673568,
               "exponent": 8.616228,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -12.899847,
               "exponent": 8.629435,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -16995,12 +16995,12 @@
             {
               "coefficient": 240.262789,
               "exponent": 12.798825,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 34.729961,
               "exponent": 5.800528,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17010,22 +17010,22 @@
             {
               "coefficient": 56.746929,
               "exponent": 11.874697,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 113.444417,
               "exponent": 11.474335,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.345639,
               "exponent": 5.515999,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 18.345447,
               "exponent": 5.248043,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17035,22 +17035,22 @@
             {
               "coefficient": 28.595554,
               "exponent": 8.502212,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 43.453921,
               "exponent": 7.983324,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 1.852286,
               "exponent": 3.107628,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 1.406765,
               "exponent": 2.476734,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17060,12 +17060,12 @@
             {
               "coefficient": -10.987255,
               "exponent": 9.679571,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -14.62619,
               "exponent": 9.691349,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -17092,12 +17092,12 @@
             {
               "coefficient": 255.054771,
               "exponent": 12.567714,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 36.983393,
               "exponent": 6.997662,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17107,22 +17107,22 @@
             {
               "coefficient": 60.715705,
               "exponent": 11.316496,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 121.443889,
               "exponent": 10.958063,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 10.171866,
               "exponent": 7.1114,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 20.486564,
               "exponent": 6.773319,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17132,22 +17132,22 @@
             {
               "coefficient": 29.504938,
               "exponent": 8.928437,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 44.018736,
               "exponent": 11.102567,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 5.368333,
               "exponent": 5.543212,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 7.408375,
               "exponent": 3.928835,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17157,12 +17157,12 @@
             {
               "coefficient": -12.623403,
               "exponent": 11.012913,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -16.764327,
               "exponent": 11.019898,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -17189,12 +17189,12 @@
             {
               "coefficient": 270.039448,
               "exponent": 13.355176,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 38.877766,
               "exponent": 7.308378,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17204,22 +17204,22 @@
             {
               "coefficient": 64.60747,
               "exponent": 12.659728,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 129.219445,
               "exponent": 12.289639,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 10.622558,
               "exponent": 6.786176,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 21.265046,
               "exponent": 6.400743,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17229,22 +17229,22 @@
             {
               "coefficient": 31.663965,
               "exponent": 11.161722,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 47.489216,
               "exponent": 11.219615,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 5.1862,
               "exponent": 4.537733,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 7.566063,
               "exponent": 4.335727,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17254,12 +17254,12 @@
             {
               "coefficient": -12.632785,
               "exponent": 11.478986,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -16.760171,
               "exponent": 11.487027,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -17286,12 +17286,12 @@
             {
               "coefficient": 281.12235,
               "exponent": 15.392822,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 61.90147,
               "exponent": 8.055864,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17301,22 +17301,22 @@
             {
               "coefficient": 67.462154,
               "exponent": 13.928672,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 134.94925,
               "exponent": 13.347234,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 14.74614,
               "exponent": 7.614132,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 29.639262,
               "exponent": 7.318365,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17326,22 +17326,22 @@
             {
               "coefficient": 35.493254,
               "exponent": 14.034715,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 53.178773,
               "exponent": 14.511616,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.177281,
               "exponent": 5.55055,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 12.39241,
               "exponent": 5.059415,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17351,12 +17351,12 @@
             {
               "coefficient": -13.728078,
               "exponent": 12.539056,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -18.206866,
               "exponent": 12.552561,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -17383,12 +17383,12 @@
             {
               "coefficient": 279.988682,
               "exponent": 17.420414,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 62.37781,
               "exponent": 7.631155,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17398,22 +17398,22 @@
             {
               "coefficient": 66.162523,
               "exponent": 16.131024,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 132.174396,
               "exponent": 15.628077,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 16.339417,
               "exponent": 7.325608,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 32.488959,
               "exponent": 6.942519,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17423,22 +17423,22 @@
             {
               "coefficient": 36.387441,
               "exponent": 15.514976,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 54.507841,
               "exponent": 15.18816,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 8.696823,
               "exponent": 5.456024,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 12.840208,
               "exponent": 5.363105,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17448,12 +17448,12 @@
             {
               "coefficient": -12.576333,
               "exponent": 12.282348,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -16.595944,
               "exponent": 12.27215,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -17480,12 +17480,12 @@
             {
               "coefficient": 281.071581,
               "exponent": 16.330865,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 61.716604,
               "exponent": 8.556542,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17495,22 +17495,22 @@
             {
               "coefficient": 67.45738,
               "exponent": 14.470337,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 134.933503,
               "exponent": 13.816194,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 14.716344,
               "exponent": 8.424924,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 29.518512,
               "exponent": 8.092728,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17520,22 +17520,22 @@
             {
               "coefficient": 35.447815,
               "exponent": 14.886331,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 53.143466,
               "exponent": 15.146319,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.179223,
               "exponent": 5.908267,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 13.240253,
               "exponent": 5.594322,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17545,12 +17545,12 @@
             {
               "coefficient": -15.366801,
               "exponent": 14.444978,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -20.296138,
               "exponent": 14.449295,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -17577,12 +17577,12 @@
             {
               "coefficient": 281.045843,
               "exponent": 16.814473,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 61.620656,
               "exponent": 8.793526,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17592,22 +17592,22 @@
             {
               "coefficient": 67.449464,
               "exponent": 14.877801,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 134.904304,
               "exponent": 14.269731,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 14.689547,
               "exponent": 8.724435,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 29.415063,
               "exponent": 8.291515,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17617,22 +17617,22 @@
             {
               "coefficient": 35.432057,
               "exponent": 15.205008,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 53.135687,
               "exponent": 15.225848,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.069802,
               "exponent": 6.071769,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 13.122304,
               "exponent": 5.80476,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17642,12 +17642,12 @@
             {
               "coefficient": -15.74545,
               "exponent": 15.206168,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -20.742448,
               "exponent": 15.201702,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -17674,17 +17674,17 @@
             {
               "coefficient": 49.989649,
               "exponent": 40.033376,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 281.006556,
               "exponent": 17.300576,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 61.416739,
               "exponent": 8.85172,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17694,22 +17694,22 @@
             {
               "coefficient": 67.416239,
               "exponent": 15.720141,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 134.807696,
               "exponent": 15.208222,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 14.566548,
               "exponent": 8.294186,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 28.968422,
               "exponent": 7.753949,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17719,22 +17719,22 @@
             {
               "coefficient": 35.538756,
               "exponent": 13.817751,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 53.339759,
               "exponent": 13.587805,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.716466,
               "exponent": 6.94763,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 14.9775,
               "exponent": 6.960099,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17744,22 +17744,22 @@
             {
               "coefficient": -20.176618,
               "exponent": 18.52295,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -26.088077,
               "exponent": 18.251035,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -0.220434,
               "exponent": 7.557901,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -0.221646,
               "exponent": 7.597404,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -17786,12 +17786,12 @@
             {
               "coefficient": 84.54772233,
               "exponent": 4.081119213,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 16.65403497,
               "exponent": 2.421522383,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17801,22 +17801,22 @@
             {
               "coefficient": 52.349630743,
               "exponent": 5.533972644,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 104.699413178,
               "exponent": 5.506794384,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 8.806557725,
               "exponent": 2.28096158,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 17.616611106,
               "exponent": 2.103490505,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17826,22 +17826,22 @@
             {
               "coefficient": 5.268985513,
               "exponent": 1.81314941,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 7.903641922,
               "exponent": 1.807721684,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 1.336431281,
               "exponent": 0.872904031,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 2.005651328,
               "exponent": 0.858720279,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17851,22 +17851,22 @@
             {
               "coefficient": -16.497654298,
               "exponent": 5.21708386,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -23.308131339,
               "exponent": 5.148196479,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -2.236827346,
               "exponent": 1.580599469,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -2.226941952,
               "exponent": 1.347895923,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17876,12 +17876,12 @@
             {
               "coefficient": -2.504198722,
               "exponent": 1.807739822,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -3.138244524,
               "exponent": 1.805061309,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -17908,12 +17908,12 @@
             {
               "coefficient": 84.785457583,
               "exponent": 4.177931587,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 17.372709041,
               "exponent": 2.5226328,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17923,22 +17923,22 @@
             {
               "coefficient": 52.512225743,
               "exponent": 6.294119351,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 105.022668647,
               "exponent": 6.476457746,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 8.707014937,
               "exponent": 2.284326647,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 17.165458832,
               "exponent": 2.091555201,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17948,22 +17948,22 @@
             {
               "coefficient": 5.346535679,
               "exponent": 1.925291745,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 8.025720742,
               "exponent": 1.878534118,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 1.346295081,
               "exponent": 0.907088727,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 2.063710453,
               "exponent": 0.910060953,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17973,22 +17973,22 @@
             {
               "coefficient": -20.003223472,
               "exponent": 6.256321669,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -26.118214748,
               "exponent": 6.134135837,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -2.344457989,
               "exponent": 1.641382784,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -2.98086748,
               "exponent": 1.599343316,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -17998,12 +17998,12 @@
             {
               "coefficient": -3.316602759,
               "exponent": 2.142381001,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -4.275647018,
               "exponent": 2.159981109,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18030,12 +18030,12 @@
             {
               "coefficient": 91.932177,
               "exponent": 3.3099,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -3.788764,
               "exponent": 1.655,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18045,12 +18045,12 @@
             {
               "coefficient": 63.759486,
               "exponent": 2.8368,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -0.647958,
               "exponent": 1.4184,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18060,12 +18060,12 @@
             {
               "coefficient": 36.116173,
               "exponent": 2.0213,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.219114,
               "exponent": 1.0107,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18075,7 +18075,7 @@
             {
               "coefficient": -36.010016,
               "exponent": 4.0286,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18102,7 +18102,7 @@
             {
               "coefficient": 580.083457,
               "exponent": 20.137829,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18112,7 +18112,7 @@
             {
               "coefficient": 310.302833,
               "exponent": 15.998482,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18122,7 +18122,7 @@
             {
               "coefficient": 167.813944,
               "exponent": 14.974187,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18132,7 +18132,7 @@
             {
               "coefficient": -49.390229,
               "exponent": 23.402455,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18142,7 +18142,7 @@
             {
               "coefficient": -21.331879,
               "exponent": 16.570553,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18169,7 +18169,7 @@
             {
               "coefficient": 577.573122,
               "exponent": 20.766278,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18179,7 +18179,7 @@
             {
               "coefficient": 295.785846,
               "exponent": 16.078448,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18189,7 +18189,7 @@
             {
               "coefficient": 150.867055,
               "exponent": 14.705089,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18199,7 +18199,7 @@
             {
               "coefficient": -48.736766,
               "exponent": 23.378969,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18209,7 +18209,7 @@
             {
               "coefficient": -22.329488,
               "exponent": 17.447138,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18236,7 +18236,7 @@
             {
               "coefficient": 574.37098,
               "exponent": 21.352267,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18246,7 +18246,7 @@
             {
               "coefficient": 280.94644,
               "exponent": 16.119265,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18256,7 +18256,7 @@
             {
               "coefficient": 138.670627,
               "exponent": 14.494103,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18266,7 +18266,7 @@
             {
               "coefficient": -47.522668,
               "exponent": 23.18386,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18276,7 +18276,7 @@
             {
               "coefficient": -23.344587,
               "exponent": 18.344174,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18303,7 +18303,7 @@
             {
               "coefficient": 575.395749,
               "exponent": 21.942865,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18313,7 +18313,7 @@
             {
               "coefficient": 281.704514,
               "exponent": 16.555161,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18323,7 +18323,7 @@
             {
               "coefficient": 123.524737,
               "exponent": 13.960308,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18333,7 +18333,7 @@
             {
               "coefficient": -50.741511,
               "exponent": 24.033546,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18343,7 +18343,7 @@
             {
               "coefficient": -24.37251,
               "exponent": 19.260245,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18370,7 +18370,7 @@
             {
               "coefficient": 572.985332,
               "exponent": 22.344471,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18380,7 +18380,7 @@
             {
               "coefficient": 272.359145,
               "exponent": 16.69459,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18390,7 +18390,7 @@
             {
               "coefficient": 115.2939,
               "exponent": 13.727705,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18400,7 +18400,7 @@
             {
               "coefficient": -51.108392,
               "exponent": 24.059092,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18410,7 +18410,7 @@
             {
               "coefficient": -25.421885,
               "exponent": 20.197249,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18437,7 +18437,7 @@
             {
               "coefficient": 607.659331,
               "exponent": 23.471384,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18447,7 +18447,7 @@
             {
               "coefficient": 264.385476,
               "exponent": 16.772479,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18457,7 +18457,7 @@
             {
               "coefficient": 115.381375,
               "exponent": 13.981343,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18467,7 +18467,7 @@
             {
               "coefficient": -49.400794,
               "exponent": 23.962888,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18477,7 +18477,7 @@
             {
               "coefficient": -26.748273,
               "exponent": 21.232458,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18504,7 +18504,7 @@
             {
               "coefficient": 637.200869,
               "exponent": 24.602151,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18514,7 +18514,7 @@
             {
               "coefficient": 261.689601,
               "exponent": 16.88925,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18524,7 +18524,7 @@
             {
               "coefficient": 106.856533,
               "exponent": 13.643358,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18534,7 +18534,7 @@
             {
               "coefficient": -50.68359,
               "exponent": 24.126917,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18544,7 +18544,7 @@
             {
               "coefficient": -27.57963,
               "exponent": 22.131887,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18571,7 +18571,7 @@
             {
               "coefficient": 668.597155,
               "exponent": 24.952956,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18581,7 +18581,7 @@
             {
               "coefficient": 266.980475,
               "exponent": 17.610899,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18591,7 +18591,7 @@
             {
               "coefficient": 97.506596,
               "exponent": 12.976009,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18601,7 +18601,7 @@
             {
               "coefficient": -52.175757,
               "exponent": 24.248869,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18611,7 +18611,7 @@
             {
               "coefficient": -28.694268,
               "exponent": 23.130672,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18638,7 +18638,7 @@
             {
               "coefficient": 705.671221,
               "exponent": 26.429586,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18648,7 +18648,7 @@
             {
               "coefficient": 254.866989,
               "exponent": 17.317034,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18658,7 +18658,7 @@
             {
               "coefficient": 95.045187,
               "exponent": 12.913599,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18668,7 +18668,7 @@
             {
               "coefficient": -54.574093,
               "exponent": 24.907878,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18678,7 +18678,7 @@
             {
               "coefficient": -29.828277,
               "exponent": 24.148753,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18705,7 +18705,7 @@
             {
               "coefficient": 755.703136,
               "exponent": 28.397257,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18715,7 +18715,7 @@
             {
               "coefficient": 253.551998,
               "exponent": 17.438633,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18725,7 +18725,7 @@
             {
               "coefficient": 89.635677,
               "exponent": 12.434212,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18735,7 +18735,7 @@
             {
               "coefficient": -55.482036,
               "exponent": 25.38701,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18745,7 +18745,7 @@
             {
               "coefficient": -30.991125,
               "exponent": 25.188501,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18772,7 +18772,7 @@
             {
               "coefficient": 800.952876,
               "exponent": 29.798592,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18782,7 +18782,7 @@
             {
               "coefficient": 262.019869,
               "exponent": 18.114237,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18792,7 +18792,7 @@
             {
               "coefficient": 80.170552,
               "exponent": 11.369587,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18802,7 +18802,7 @@
             {
               "coefficient": -42.336285,
               "exponent": 21.821233,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18812,7 +18812,7 @@
             {
               "coefficient": -32.185278,
               "exponent": 26.250735,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18839,7 +18839,7 @@
             {
               "coefficient": 845.510743,
               "exponent": 31.144122,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18849,7 +18849,7 @@
             {
               "coefficient": 258.585239,
               "exponent": 18.092353,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18859,7 +18859,7 @@
             {
               "coefficient": 80.729059,
               "exponent": 11.469159,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18869,7 +18869,7 @@
             {
               "coefficient": -48.701266,
               "exponent": 23.605544,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18879,7 +18879,7 @@
             {
               "coefficient": -33.395496,
               "exponent": 27.329781,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18906,7 +18906,7 @@
             {
               "coefficient": 891.013777,
               "exponent": 32.424484,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18916,7 +18916,7 @@
             {
               "coefficient": 264.036953,
               "exponent": 18.656232,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18926,7 +18926,7 @@
             {
               "coefficient": 73.923919,
               "exponent": 10.490222,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18936,7 +18936,7 @@
             {
               "coefficient": -39.592173,
               "exponent": 20.774183,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18946,7 +18946,7 @@
             {
               "coefficient": -34.638638,
               "exponent": 28.431028,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -18973,7 +18973,7 @@
             {
               "coefficient": 989.995584,
               "exponent": 35.162097,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18983,7 +18983,7 @@
             {
               "coefficient": 278.865652,
               "exponent": 19.464402,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -18993,7 +18993,7 @@
             {
               "coefficient": 71.009178,
               "exponent": 10.006865,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19003,7 +19003,7 @@
             {
               "coefficient": -47.40589,
               "exponent": 23.517932,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19013,7 +19013,7 @@
             {
               "coefficient": -35.557146,
               "exponent": 29.412238,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -19040,17 +19040,17 @@
             {
               "coefficient": 478.237404,
               "exponent": 10.248856,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.388024,
               "exponent": 10.729127,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": -1.071232,
               "exponent": 1.964856,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19060,32 +19060,32 @@
             {
               "coefficient": 101.046818,
               "exponent": 8.683462,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 212.197761,
               "exponent": 7.91692,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.132646,
               "exponent": 9.379243,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": 0.453108,
               "exponent": 8.244209,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": -0.407914,
               "exponent": 1.596686,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -0.561817,
               "exponent": 1.710281,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19095,32 +19095,32 @@
             {
               "coefficient": 43.115467,
               "exponent": 5.189557,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 65.934732,
               "exponent": 5.253229,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.025912,
               "exponent": 5.937871,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": 0.033741,
               "exponent": 5.712906,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": -0.280579,
               "exponent": 1.014856,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -0.084849,
               "exponent": 0.473712,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19130,12 +19130,12 @@
             {
               "coefficient": 4.811801,
               "exponent": 1.912608,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 6.418574,
               "exponent": 1.88074,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19145,12 +19145,12 @@
             {
               "coefficient": -4.636585,
               "exponent": 2.72418,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -5.767288,
               "exponent": 2.708953,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -19177,17 +19177,17 @@
             {
               "coefficient": 454.600649,
               "exponent": 10.318069,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 2.837975,
               "exponent": 10.540267,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": -0.814736,
               "exponent": 2.574726,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19197,32 +19197,32 @@
             {
               "coefficient": 96.910783,
               "exponent": 8.743342,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 195.850432,
               "exponent": 7.916223,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 4.812524,
               "exponent": 9.275736,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": 6.338512,
               "exponent": 8.101675,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": -0.459173,
               "exponent": 2.077127,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -0.644586,
               "exponent": 2.750372,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19232,32 +19232,32 @@
             {
               "coefficient": 45.969976,
               "exponent": 5.447314,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 69.638972,
               "exponent": 5.212545,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.802933,
               "exponent": 5.884358,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": 0.429595,
               "exponent": 5.649579,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": -0.307227,
               "exponent": 1.38818,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -0.46156,
               "exponent": 1.294398,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19267,12 +19267,12 @@
             {
               "coefficient": 5.757773,
               "exponent": 2.161275,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 7.678167,
               "exponent": 2.125939,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19282,12 +19282,12 @@
             {
               "coefficient": -5.684066,
               "exponent": 3.14592,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -7.062313,
               "exponent": 3.127942,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -19314,12 +19314,12 @@
             {
               "coefficient": 419.227599,
               "exponent": 11.063795,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 41.191307,
               "exponent": 8.217641,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19329,32 +19329,32 @@
             {
               "coefficient": 107.34811,
               "exponent": 9.338188,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 214.699568,
               "exponent": 8.430448,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.025442,
               "exponent": 9.49002,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": 0.051895,
               "exponent": 9.489947,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": -0.117184,
               "exponent": 1.882997,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.296689,
               "exponent": 1.906972,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19364,32 +19364,32 @@
             {
               "coefficient": 58.881279,
               "exponent": 6.205433,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 98.683556,
               "exponent": 6.122157,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.019537,
               "exponent": 6.274556,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": 0.021956,
               "exponent": 6.226375,
-              "power": 2
+              "power": 4
             },
             {
               "coefficient": -0.088577,
               "exponent": 1.963875,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -0.209726,
               "exponent": 1.888287,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19399,12 +19399,12 @@
             {
               "coefficient": 6.232472,
               "exponent": 2.307953,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 8.311345,
               "exponent": 2.270609,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19414,12 +19414,12 @@
             {
               "coefficient": -6.802944,
               "exponent": 3.583491,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -8.443232,
               "exponent": 3.562515,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -19446,12 +19446,12 @@
             {
               "coefficient": 421.9703,
               "exponent": 12.163814,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 50.134439,
               "exponent": 7.107595,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19461,22 +19461,22 @@
             {
               "coefficient": 88.48191,
               "exponent": 9.684597,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 176.78722,
               "exponent": 9.476214,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 10.434338,
               "exponent": 7.668066,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 20.458743,
               "exponent": 5.055156,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19486,22 +19486,22 @@
             {
               "coefficient": 43.162431,
               "exponent": 6.509888,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 64.767759,
               "exponent": 6.091216,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 5.340301,
               "exponent": 4.164006,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 8.243332,
               "exponent": 4.407379,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19511,12 +19511,12 @@
             {
               "coefficient": 7.244543,
               "exponent": 2.562658,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.659266,
               "exponent": 2.521549,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19526,12 +19526,12 @@
             {
               "coefficient": -7.97494,
               "exponent": 4.034599,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -9.882736,
               "exponent": 4.009628,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -19558,12 +19558,12 @@
             {
               "coefficient": 424.390376,
               "exponent": 13.002001,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 57.122503,
               "exponent": 6.962763,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19573,22 +19573,22 @@
             {
               "coefficient": 88.279003,
               "exponent": 10.498941,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 176.486064,
               "exponent": 9.992523,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 11.715012,
               "exponent": 6.588248,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 22.915006,
               "exponent": 5.037167,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19598,22 +19598,22 @@
             {
               "coefficient": 44.777708,
               "exponent": 7.083441,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 67.153648,
               "exponent": 6.721179,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 5.550387,
               "exponent": 3.794626,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 8.220104,
               "exponent": 3.748125,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19623,12 +19623,12 @@
             {
               "coefficient": 8.328332,
               "exponent": 2.826276,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 11.103102,
               "exponent": 2.781198,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19638,12 +19638,12 @@
             {
               "coefficient": -9.181343,
               "exponent": 4.496981,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -11.361604,
               "exponent": 4.467738,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -19670,12 +19670,12 @@
             {
               "coefficient": 426.958149,
               "exponent": 13.831474,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 65.338813,
               "exponent": 7.047914,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19685,22 +19685,22 @@
             {
               "coefficient": 88.075442,
               "exponent": 11.106433,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 176.12477,
               "exponent": 10.456552,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 12.68226,
               "exponent": 6.379614,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 24.635949,
               "exponent": 5.064726,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19710,22 +19710,22 @@
             {
               "coefficient": 46.433258,
               "exponent": 7.548754,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 69.638074,
               "exponent": 7.265308,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 6.150248,
               "exponent": 3.800969,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.46356,
               "exponent": 3.71828,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19735,12 +19735,12 @@
             {
               "coefficient": 9.48361,
               "exponent": 3.098706,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 12.642742,
               "exponent": 3.049461,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19750,12 +19750,12 @@
             {
               "coefficient": -10.410697,
               "exponent": 4.96979,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -12.863196,
               "exponent": 4.935614,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -19782,12 +19782,12 @@
             {
               "coefficient": 429.646087,
               "exponent": 14.6045,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 73.156884,
               "exponent": 7.218287,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19797,22 +19797,22 @@
             {
               "coefficient": 88.022917,
               "exponent": 11.577162,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 175.998196,
               "exponent": 10.883843,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 13.682274,
               "exponent": 6.424403,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 27.414651,
               "exponent": 5.224198,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19822,22 +19822,22 @@
             {
               "coefficient": 43.557852,
               "exponent": 7.69961,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 65.369108,
               "exponent": 7.550808,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 7.018596,
               "exponent": 3.961164,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 11.391733,
               "exponent": 3.872777,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19847,12 +19847,12 @@
             {
               "coefficient": 10.71022,
               "exponent": 3.379869,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 14.278125,
               "exponent": 3.326255,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19862,12 +19862,12 @@
             {
               "coefficient": -11.651749,
               "exponent": 5.45202,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -14.375525,
               "exponent": 5.412585,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -19894,12 +19894,12 @@
             {
               "coefficient": 426.641867,
               "exponent": 13.523218,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 36.800668,
               "exponent": 6.264384,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19909,22 +19909,22 @@
             {
               "coefficient": 87.002091,
               "exponent": 11.413867,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 174.00437,
               "exponent": 10.329215,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 8.87061,
               "exponent": 5.707424,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 17.902438,
               "exponent": 4.828165,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19934,22 +19934,22 @@
             {
               "coefficient": 49.883655,
               "exponent": 7.430963,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 74.684549,
               "exponent": 8.32199,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 6.486227,
               "exponent": 4.609642,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.546821,
               "exponent": 3.511507,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19959,12 +19959,12 @@
             {
               "coefficient": 8.79164,
               "exponent": 3.084639,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 11.658456,
               "exponent": 3.024743,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -19974,12 +19974,12 @@
             {
               "coefficient": -5.234337,
               "exponent": 3.978442,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -6.738142,
               "exponent": 4.011491,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -20006,12 +20006,12 @@
             {
               "coefficient": 275.774797,
               "exponent": 12.413071,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 49.267898,
               "exponent": 6.897913,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20021,22 +20021,22 @@
             {
               "coefficient": 80.506984,
               "exponent": 11.31032,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 161.034824,
               "exponent": 10.210773,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.083416,
               "exponent": 5.939804,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 18.367773,
               "exponent": 5.019755,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20046,22 +20046,22 @@
             {
               "coefficient": 51.137256,
               "exponent": 8.407895,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 76.707459,
               "exponent": 8.214086,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 6.561821,
               "exponent": 4.012612,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.81807,
               "exponent": 3.795398,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20071,12 +20071,12 @@
             {
               "coefficient": 9.429001,
               "exponent": 3.273106,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 12.494856,
               "exponent": 3.208321,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20086,12 +20086,12 @@
             {
               "coefficient": -6.338414,
               "exponent": 4.485296,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -8.099863,
               "exponent": 4.5132,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -20118,12 +20118,12 @@
             {
               "coefficient": 281.284663,
               "exponent": 12.167805,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 62.434251,
               "exponent": 8.294909,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20133,22 +20133,22 @@
             {
               "coefficient": 4.633408,
               "exponent": 7.151492,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.341756,
               "exponent": 5.172865,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 72.299253,
               "exponent": 9.891072,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 144.558037,
               "exponent": 9.003391,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20158,22 +20158,22 @@
             {
               "coefficient": 35.943039,
               "exponent": 7.130218,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 53.909593,
               "exponent": 6.926906,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 10.381939,
               "exponent": 5.41757,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 15.583822,
               "exponent": 5.138681,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20183,22 +20183,22 @@
             {
               "coefficient": 15.825488,
               "exponent": 5.626399,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 21.104021,
               "exponent": 5.548952,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 2.915127,
               "exponent": 2.874946,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 3.896903,
               "exponent": 2.821451,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20208,22 +20208,22 @@
             {
               "coefficient": -7.494534,
               "exponent": 6.679057,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -9.540575,
               "exponent": 6.706835,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -7.797992,
               "exponent": 7.209284,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -9.259524,
               "exponent": 7.070964,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -20250,12 +20250,12 @@
             {
               "coefficient": 281.285499,
               "exponent": 12.296303,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 62.520217,
               "exponent": 8.632634,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20265,22 +20265,22 @@
             {
               "coefficient": 72.276897,
               "exponent": 10.24179,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 144.591083,
               "exponent": 8.924176,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 4.758693,
               "exponent": 6.581342,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.940621,
               "exponent": 6.255403,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20290,22 +20290,22 @@
             {
               "coefficient": 35.848507,
               "exponent": 7.754336,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 53.724342,
               "exponent": 7.720281,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 10.115256,
               "exponent": 4.970264,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 14.833731,
               "exponent": 4.563789,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20315,12 +20315,12 @@
             {
               "coefficient": 12.209892,
               "exponent": 3.887512,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 16.190291,
               "exponent": 3.811963,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20330,12 +20330,12 @@
             {
               "coefficient": -9.096665,
               "exponent": 5.691577,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -11.531996,
               "exponent": 5.715567,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -20362,12 +20362,12 @@
             {
               "coefficient": 283.264227,
               "exponent": 13.04309,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 62.471959,
               "exponent": 8.221682,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20377,22 +20377,22 @@
             {
               "coefficient": 72.001499,
               "exponent": 10.467777,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 144.002277,
               "exponent": 9.118901,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 5.007945,
               "exponent": 6.754791,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.99155,
               "exponent": 6.252592,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20402,22 +20402,22 @@
             {
               "coefficient": 36.396259,
               "exponent": 8.081474,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 54.597664,
               "exponent": 7.890595,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.984294,
               "exponent": 4.955556,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 14.981485,
               "exponent": 4.704559,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20427,12 +20427,12 @@
             {
               "coefficient": 13.713383,
               "exponent": 4.214546,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 18.194308,
               "exponent": 4.1334,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20442,12 +20442,12 @@
             {
               "coefficient": -10.247443,
               "exponent": 6.205709,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -12.95571,
               "exponent": 6.227782,
-              "power": 0
+              "power": 2
             }
           ]
         }
@@ -20474,12 +20474,12 @@
             {
               "coefficient": 283.244706,
               "exponent": 13.277227,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 62.396461,
               "exponent": 8.399518,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20489,22 +20489,22 @@
             {
               "coefficient": 71.991716,
               "exponent": 10.665682,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 143.971871,
               "exponent": 9.283753,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 4.949615,
               "exponent": 6.872749,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.740499,
               "exponent": 6.32615,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20514,22 +20514,22 @@
             {
               "coefficient": 36.378383,
               "exponent": 8.214866,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 54.562715,
               "exponent": 8.008696,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 9.889499,
               "exponent": 5.055227,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 14.693877,
               "exponent": 4.782553,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20539,22 +20539,22 @@
             {
               "coefficient": 17.428295,
               "exponent": 5.01327,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 23.380353,
               "exponent": 4.98464,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.163392,
               "exponent": 1.32676,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": 0.324566,
               "exponent": 1.528758,
-              "power": 0
+              "power": 2
             }
           ]
         },
@@ -20564,12 +20564,12 @@
             {
               "coefficient": -11.563294,
               "exponent": 6.771526,
-              "power": 0
+              "power": 2
             },
             {
               "coefficient": -14.509788,
               "exponent": 6.777925,
-              "power": 0
+              "power": 2
             }
           ]
         }

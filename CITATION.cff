@@ -19,8 +19,8 @@ authors:
   - family-names: Peintinger
     given-names: Michael F.
     website: "https://vibe-qc.com/"
-version: 0.17.1
-date-released: "2026-09-10"
+version: 0.17.2
+date-released: "2026-09-13"
 url: "https://vibe-qc.com/"
 repository-code: "https://github.com/vibe-qc/vibe-qc"
 license: MPL-2.0

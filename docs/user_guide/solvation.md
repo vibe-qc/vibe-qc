@@ -202,6 +202,11 @@ atoms.calc = VibeQC(basis="def2-svp", functional="b3lyp",
 BFGSLineSearch(atoms).run(fmax=0.05)
 ```
 
+This covers `variant="cpcm"` and `variant="cosmo"`. A Direct COSMO-RS
+(`variant="dcosmo-rs"`) energy is not smooth in the geometry, so it has no
+gradient and `cpcm_gradient` refuses it; see
+[Direct COSMO-RS](#when-it-will-not-converge).
+
 The gradient of the in-solvent total energy
 $E_\text{tot} = E_\text{HF}^\text{gas}[D^\text{solv}] + \tfrac{1}{2}q^\mathsf{T}V$
 decomposes (envelope theorem at SCF + CPCM convergence) into four
@@ -440,6 +445,143 @@ So if you widen the switch, **set `switching_drop_threshold=0.0`**. It costs
 zeros in the $A$ matrix and buys a smooth energy: at $\sigma = 0.8$ the
 analytic gradient goes from 2.1e-02 to 1.2e-07 Ha/bohr against FD.
 
+## Direct COSMO-RS
+
+`variant="dcosmo-rs"` feeds the solvent's sigma potential back into the
+electronic Hamiltonian, so the solute's wavefunction responds to a *real*
+solvent rather than to a scaled conductor. The method is Sinnecker, Rajendran,
+Klamt, Diedenhofen & Neese, *J. Phys. Chem. A* **110**, 2235 (2006),
+[doi:10.1021/jp056016z](https://doi.org/10.1021/jp056016z), and it is three
+equations:
+
+$$q = -A^{-1}\phi, \qquad
+  \phi_t^{\Delta RS} = \mu_S'(\sigma_t), \qquad
+  V^{RS} = -\sum_t \frac{q_t + q_t^{\Delta RS}}{|r - r_t|}$$
+
+with $q^{\Delta RS}$ solved from $\phi^{\Delta RS}$ through the same first
+equation, iterated to self-consistency.
+
+```python
+from vibeqc.solvation import cosmors as rs
+
+potential = rs.sigma_potential_segments(solvent_segments, mole_fractions, params)
+sm = vq.SolventModel(
+    variant="dcosmo-rs",
+    sigma_potential=potential,
+    epsilon=float("inf"),      # required; see below
+    cavity="fine",             # required; see below
+)
+```
+
+The energy is the conductor COSMO energy plus the solute's own COSMO-RS
+chemical potential, $G = E_{\rm gas}[D] + \tfrac12 q\cdot V_{\rm tot} +
+\sum_t a_t\,\mu_S(\sigma_t)$. The paper states the operator but not the
+energy; the two are the same statement, because differentiating that third term
+with respect to the density is exactly what produces the extra charges
+$q^{\Delta RS}$.
+
+### Getting a solvent potential
+
+The sigma potential is the solvent, so it has to come from somewhere. Compute
+it from the solvent's own conductor COSMO run:
+
+```python
+import math
+from vibeqc.solvation import cosmors as rs
+
+K = rs.KLAMT_1998
+solvent = vq.run_cpcm_scf(
+    water, basis, method="rhf",
+    solvent=vq.SolventModel(
+        epsilon=math.inf, variant="cosmo", cavity="fine",
+        radii=dict(K.cavity_radii), radii_scale=1.0,   # the set's own radii
+        solvent_probe_radius_ang=0.0,
+    ),
+)
+potential = rs.solvent_sigma_potential(solvent, K, method="rhf", basis="sto-3g")
+```
+
+`solvent_sigma_potential` refuses two mistakes that produce a perfectly
+ordinary-looking potential and a wrong number.
+
+A **screened run**: `build_conductor_surface` takes the charges as stored, and
+those are the ideal $q^*$ only at $\varepsilon=\infty$; at finite dielectric
+vibe-qc stores $q = f q^*$, so the profile is scaled by $f$ and nothing
+downstream can detect it.
+
+**Foreign cavity radii**: a parameter set is fitted against a radius set --
+`KLAMT_1998` against H 1.30, C 2.00, N 1.83, O 1.72, Cl 2.05 Å -- and since
+$\sigma = q/a$, the default scaled-Bondi cavity changes every $\sigma$ the
+constants were fitted to reproduce.
+
+What it cannot refuse is the **QC protocol**. `KLAMT_1998` was fitted on
+`dmol/bpw91/dnp/cosmo-inf/nspa92`, and whatever you compute carries its own
+method and basis. That is a real accuracy limit, not a bug, and no code can
+repair it -- so it is recorded: `potential.protocol` says what the surface was
+and `params.fitted_protocol` says what the constants expect. Compare them
+before believing a number.
+
+A computed water potential has the shape water should have: **positive** near
+$\sigma = 0$, which is the cost of putting a nonpolar surface in water, and
+**negative at both wings**, where a polarized surface donates or accepts a
+hydrogen bond. One consequence looks like a bug and is not: the COSMO-RS term
+for a small solute in water comes out *unfavourable* by around half a kcal/mol
+on top of the conductor energy, because most of a small solute's surface sits
+at moderate $\sigma$ where water's potential is positive. That is the
+hydrophobic penalty.
+
+### Two requirements, both measured rather than stylistic
+
+**`epsilon=inf`.** The sigma potential *is* the real-solvent physics, so
+scaling by $f(\varepsilon)$ as well would count the solvent twice. The paper is
+explicit that the correction acts on "the ideal screening charges appearing in
+a conductor". Direct COSMO-RS replaces the dielectric scaling rather than
+composing with it, and the solvent is chosen by which sigma potential you pass.
+
+**`cavity="fine"`.** The feedback is evaluated at $\sigma_t = q_t/a_t$, and on
+a switched Lebedev cavity that is ill-conditioned: the switching function
+shrinks weights continuously, so the smallest segment sits 2.9e+07 below the
+median and $|\sigma|$ reaches 640 e/Å² against a potential parameterized on
+±0.025. Dropping the tail does not help -- there is no clean cut, and a
+vanishing segment's energy does not vanish with it, since
+$a\,\mu(\sigma) \sim a\sigma^2 \sim 1/a$. The COSMO FINE Cavity's segments
+all carry real area and put the 99th percentile of $|\sigma|$ at 0.028, inside
+the parameterization.
+
+### When it will not converge
+
+Klamt's hydrogen-bond term is piecewise linear in each density, so
+$\mu_S'$ **jumps** where a segment's $\sigma$ crosses $\pm\sigma_{hb}$, and
+the Boltzmann average over solvent partners does not damp it: every partner
+steps at the same $\sigma$. A segment parked on that corner sees a
+discontinuous potential from one macro-iteration to the next.
+
+`result.direct_feedback` reports both failure modes, and they are the first
+things to read when the outer loop will not settle:
+
+| | meaning |
+|---|---|
+| `fraction_near_hb_corner` | segments sitting on the discontinuity (about a quarter is normal) |
+| `fraction_outside_grid` | area whose sigma is extrapolated beyond the fitted range |
+
+The extrapolation is through the misfit term, which is quadratic and defined
+everywhere, so it is smooth rather than a clamp -- but it is still
+extrapolation, and a large share means the surface and the parameterization
+disagree about what a polar segment looks like.
+
+Because the feedback is discontinuous in $\sigma$, a Direct COSMO-RS energy is
+**not smooth in the geometry**. There is no analytic nuclear gradient for it,
+and a finite-difference one will step wherever a segment crosses a threshold.
+
+`cpcm_gradient` therefore refuses a Direct COSMO-RS result with
+`NotImplementedError`. v0.17.1, where Direct COSMO-RS first shipped, did not
+refuse it: it returned
+the conductor COSMO gradient, without the COSMO-RS energy term or the
+$q^{\Delta RS}$ operator. That gradient passes translational invariance to
+1e-15 and is wrong by up to 1.4e-03 Ha/bohr on water. For an analytic gradient
+use `variant="cosmo"`, which is a different energy. `cpcm_gradient_fd`
+differentiates the Direct COSMO-RS energy itself, subject to the steps above.
+
 ## Choosing CPCM vs COSMO
 
 The two are not separate formulas. Klamt & Schuurmann 1993 p. 800 gives the
@@ -532,6 +674,12 @@ The implementation follows the standard CPCM literature:
   (2005), comprehensive PCM-family review.
 * **Lange, A. W. & Herbert, J. M.** *J. Chem. Phys.* 133, 244111
   (2010), modern Scalmani-style analytic CPCM gradient.
+* **Sinnecker, S., Rajendran, A., Klamt, A., Diedenhofen, M. & Neese, F.**
+  *J. Phys. Chem. A* 110, 2235 (2006), Direct COSMO-RS. A
+  `variant="dcosmo-rs"` run cites it together with the COSMO-RS
+  (Klamt 1995, 1998) and COSMO FINE Cavity (Klamt & Diedenhofen 2018)
+  papers. Scalmani and Frisch are left out, because their diagonal is the
+  Lebedev cavity's.
 
 For citation in published work, see
 [citation discipline](https://github.com/vibe-qc/vibe-qc/blob/main/CONTRIBUTING.md#citation-discipline).

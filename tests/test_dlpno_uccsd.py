@@ -420,7 +420,8 @@ class TestPilotTruncationDZ:
     """Recovery tiers on a DZ basis (O(N^6) pilot -- slow lane)."""
 
     @pytest.fixture(scope="class")
-    def oh_dz(self):
+    @classmethod
+    def oh_dz(cls):
         return _setup(OH, "def2-svp")
 
     @pytest.mark.parametrize("localise", ["none", "boys"])

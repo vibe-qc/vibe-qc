@@ -604,7 +604,7 @@ external license clearance is required.**
 
 | File | Citation |
 |------|----------|
-| `pob-tzvp.g94` | M. F. Peintinger, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **34**, 451 (2013). [DOI:10.1002/jcc.23153](https://doi.org/10.1002/jcc.23153) |
+| `pob-tzvp.g94` | M. F. Peintinger, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **34**, 451 (2013). [DOI:10.1002/jcc.23153](https://doi.org/10.1002/jcc.23153); Rb-I: J. Laun, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **39**, 1285 (2018). [DOI:10.1002/jcc.25195](https://doi.org/10.1002/jcc.25195) |
 | `pob-dzvp-rev2.g94` | D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, *J. Comput. Chem.* **40**, 2364 (2019). [DOI:10.1002/jcc.26013](https://doi.org/10.1002/jcc.26013) |
 | `pob-tzvp-rev2.g94` | J. Laun, T. Bredow, *J. Comput. Chem.* **42**, 1064 (2021). [DOI:10.1002/jcc.26521](https://doi.org/10.1002/jcc.26521) |
 
@@ -624,6 +624,16 @@ paired with their valence sets; they are published numerical parameter
 data, cited per element through the pob-TZVP-rev2 paper and the
 Stuttgart references in `python/vibeqc/output/citations/database.toml`.
 
+The 16 pob-TZVP records for Rb-I (Laun, Vilela Oliveira and Bredow, 2018;
+same `Z+200` format) are bundled under `basis_library/sources/pob-TZVP/`
+from the group's `pob-tzvp-rb-i` archive (`pob-TZVP-Rb-I.tar.gz`, retrieved
+2026-09-13), with `basis/pob-tzvp.ecp` as their sidecar. Their potentials
+are the same Stuttgart-Cologne ECPs the pob-TZVP-rev2 records carry, block
+for block. They are bundled with the Bredow group's agreement, like the
+rest of the pob family. They were deliberately not taken from the Basis
+Set Exchange, whose pob-TZVP copy carries the sulfur d-polarisation
+column-swap defect (#228).
+
 #### The def2 family beyond Kr
 
 libint's def2 files stop at Kr. `custom/def2-{sv(p),svp,svpd,tzvp,tzvpd,
@@ -635,6 +645,38 @@ records (`scripts/basisset_dev/merge_def2_heavy_blocks.py`, retrieved
 2026-09-05). Same CC-BY-4.0 terms and attribution obligations as the other
 BSE-fetched files; the per-element def2-ECP references are in each
 sidecar's header and in the citation database.
+
+#### Single-element completions of libint's files
+
+`custom/cc-pvqz.g94`, `custom/cc-pv6z.g94` and `custom/sto-3g.g94` (added
+2026-09-10) are libint's own files with their element data unchanged, plus one
+element block each taken from the Basis Set Exchange 0.12 catalogue by
+`scripts/basisset_dev/merge_bse_element_blocks.py`. libint omits these
+elements because each was added to its set by a later, separate publication:
+
+| Basis | Element | Originating publication |
+|---|---|---|
+| cc-pVQZ | Ca | Koput, Peterson, *J. Phys. Chem. A* **106**, 9595 (2002) |
+| cc-pV6Z | Be | Prascher, Woon, Peterson, Dunning, Wilson, *Theor. Chem. Acc.* **128**, 69 (2011) |
+| STO-3G | Xe | Pietro, Blurock, Hout, Hehre, DeFrees, Stewart, *Inorg. Chem.* **20**, 3650 (1981) |
+
+Each routes its own citation in `database.toml` rather than inheriting the
+parent set's, since the parent papers do not cover these elements. Same terms
+as the other BSE-derived files.
+
+`custom/pob-dzvp-rev2.g94` gained Si and Cr-Br the same way on 2026-09-10.
+Those elements are part of the same publication that already covers the
+bundled ones (Vilela Oliveira, Laun, Peintinger, Bredow, *J. Comput. Chem.*
+**40**, 2364 (2019)), so the existing citation route is unchanged; our file
+was simply a partial import of one paper. BSE's copy was checked against the
+Bredow-group-archive-derived file first and agrees on all 19 shared elements.
+
+**`pob-tzvp` is deliberately not completed from BSE.** Its 16 missing Rb-I
+blocks (Laun, Vilela Oliveira, Bredow, *J. Comput. Chem.* **39**, 1285 (2018))
+exist in the catalogue, but BSE's copy of pob-TZVP is an upstream
+distribution carrying the sulfur d-polarisation column-swap defect vibe-qc
+fixed by regenerating from the Bredow archive: our sulfur is 5s4p1d, BSE's is
+5s4p with no d function at all. Those blocks should come from the archive.
 
 #### The Peterson/Figgen PP correlation-consistent family
 

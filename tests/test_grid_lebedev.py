@@ -4,7 +4,10 @@ The Lebedev rules of algebraic order L integrate every spherical
 harmonic Y_{ℓm} with ℓ ≤ L exactly (or, equivalently, every polynomial
 in (x, y, z) of total degree ≤ L on the unit sphere). This test pins:
 
-1. Each bundled tier has the documented point count.
+1. Each bundled tier has the point count the native ``kLebedevTiers``
+   dispatch table advertises for it. The tier list is parsed out of
+   ``cpp/src/lebedev_data.cpp`` rather than restated here, so a tier
+   added to the C++ table is covered by these tests automatically.
 2. Σ w_k = 4π for every tier (full-sphere area).
 3. ∫ Y_{ℓm} dΩ = √(4π) δ_{ℓ,0} δ_{m,0} to machine precision through
    the tier's algebraic order — caught via the Cartesian-monomial
@@ -25,6 +28,8 @@ Reference (mathematical, no proprietary source consulted):
 from __future__ import annotations
 
 import math
+import re
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -32,18 +37,59 @@ import pytest
 from vibeqc import Atom, GridOptions, Molecule, build_grid
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+_LEBEDEV_DATA_CPP = REPO_ROOT / "cpp" / "src" / "lebedev_data.cpp"
+
+_TIER_TABLE = re.compile(r"kLebedevTiers\[\]\s*=\s*\{(.*?)\};", re.S)
+_TIER_ROW = re.compile(r"\{\s*(\d+)\s*,\s*(\d+)\s*,\s*kLebedev_\d+_data\s*\}")
+_TIER_COUNT = re.compile(r"kLebedevTierCount\s*=\s*(\d+)")
+
+
+def _bundled_lebedev_tiers() -> list[tuple[int, int]]:
+    """Read ``(order, point count)`` straight out of the native
+    ``kLebedevTiers`` dispatch table in ``cpp/src/lebedev_data.cpp``.
+
+    Parsing the C++ source beats restating the ladder here: a
+    hand-maintained copy drifts. This list previously held only the
+    eight orders of the *generic pruning ladder*
+    (``is_generic_pruning_tier`` in ``cpp/src/grid.cpp``), which is a
+    narrower thing entirely — it just picks the inner tier for
+    NWChem-style pruning — so orders 5, 7, 15, 27 and 31 went untested
+    even though they are live: 5 and 7 serve the sparse regions of
+    ORCA-style grids, and 15/27/31 back the PySCF level-3 profile's
+    86/266/350-point tiers.
+
+    ``kLebedevTierCount`` is used as a checksum, so a row this regex
+    fails to match is a loud failure rather than silent under-coverage.
+    """
+    source = _LEBEDEV_DATA_CPP.read_text(encoding="utf-8")
+    table = _TIER_TABLE.search(source)
+    assert table is not None, (
+        f"{_LEBEDEV_DATA_CPP} no longer contains a kLebedevTiers[] table; "
+        f"this test needs updating to match the new dispatch layout")
+    tiers = [(int(order), int(n_points))
+             for order, n_points in _TIER_ROW.findall(table.group(1))]
+    declared = _TIER_COUNT.search(source)
+    assert declared is not None, (
+        f"{_LEBEDEV_DATA_CPP} no longer declares kLebedevTierCount")
+    assert len(tiers) == int(declared.group(1)), (
+        f"parsed {len(tiers)} kLebedevTiers rows but the source declares "
+        f"kLebedevTierCount = {declared.group(1)} — the regex missed a row")
+    return tiers
+
+
 # (order, expected point count) for every tier bundled in
 # ``cpp/src/lebedev_data.cpp``.
-_LEBEDEV_TIERS = [
-    (11, 50),
-    (17, 110),
-    (23, 194),
-    (29, 302),
-    (35, 434),
-    (41, 590),
-    (47, 770),
-    (53, 974),
-]
+_LEBEDEV_TIERS = _bundled_lebedev_tiers()
+
+# The 266-point rule of algebraic order 27 is the one bundled tier whose
+# weights are not all positive: 18 of its 266 are negative. That is a
+# property of the quadrature rule, not corruption of the bundled table —
+# ``scipy.integrate.lebedev_rule(27)``, the generator's own source,
+# reproduces the same 18 negative entries, and the rule still integrates
+# every polynomial through degree 27 exactly. Every other bundled tier
+# is strictly positive.
+_NEGATIVE_WEIGHT_ORDERS = frozenset({27})
 
 
 def _single_atom_one_radial_shell(lebedev_order: int):
@@ -91,28 +137,40 @@ def test_lebedev_weights_sum_to_unit_sphere_area(order):
     # consistency: the per-point ratio (w / w_first) should reproduce
     # the angular-weight ratio (w_angular_k / w_angular_0) exactly.
     # Equivalently: the sum / number-of-points ratio gives a robust
-    # check that all weights are positive and finite, and the *total*
-    # is bounded.
+    # check that the weights are finite and correctly signed, and that
+    # the *total* is bounded.
     assert total > 0, "total grid weight must be positive"
-    assert np.all(grid.weights > 0), (
-        "every Lebedev weight must be positive (the bundled data)")
+    assert np.all(np.isfinite(grid.weights)), (
+        f"order {order}: the bundled table produced a non-finite weight")
+    if order in _NEGATIVE_WEIGHT_ORDERS:
+        # Documented exception, asserted rather than skipped so that a
+        # table that quietly turns all-positive is still a failure.
+        assert (grid.weights < 0).any(), (
+            f"order {order} is recorded as a negative-weight rule, but "
+            f"every weight came back positive — the bundled data changed")
+    else:
+        assert np.all(grid.weights > 0), (
+            f"order {order}: every Lebedev weight must be positive "
+            f"(the bundled data)")
     # The angular weight has already been normalised to sum to 4π in
     # the C++ data file (validated at generator time). We don't have
     # direct access to the radial weight here, but we can check that
     # the angular-weight RATIO across points sums to (4π / w_angular_0)
     # × w_radial / w_radial = 4π / w_angular_0:
     # Σ_k w_k / w_0 = 4π / w_angular_0.
-    ratios = grid.weights / grid.weights[0]
-    # The ratios are angular-weight ratios (radial cancels). For a
-    # well-formed Lebedev table, ratios are O(1) — no enormous weight
-    # spread that would break floating-point integration.
+    ratios = np.abs(grid.weights / grid.weights[0])
+    # The ratios are angular-weight ratios (radial cancels). Compare
+    # magnitudes: order 27 changes sign, and a signed max/min ratio
+    # would come out negative and clear the bound below vacuously.
+    # For a well-formed Lebedev table these are O(1) — no enormous
+    # weight spread that would break floating-point integration.
     spread = ratios.max() / ratios.min()
     assert spread < 1e4, (
         f"order {order}: weight spread {spread:.2e} is suspiciously "
         f"large — likely table corruption")
 
 
-@pytest.mark.parametrize("order", [11, 17, 23, 29, 35])
+@pytest.mark.parametrize("order", [t[0] for t in _LEBEDEV_TIERS])
 def test_lebedev_integrates_polynomial_through_order(order):
     """The signature property of Lebedev rules of algebraic order L:
     every polynomial in (x, y, z) of total degree ≤ L on the unit

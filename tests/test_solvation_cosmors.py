@@ -422,6 +422,431 @@ def test_segment_form_matches_the_profile_form_without_correlation():
     np.testing.assert_allclose(a(probe), b(probe), atol=2e-3)
 
 
+def _toy_sigma_potential(params=KLAMT_1998):
+    desc = rs.SegmentDescriptors(
+        areas=np.array([12.0, 12.0, 8.0]),
+        sigma=np.array([-0.012, +0.012, 0.0]),
+        sigma_perp=np.array([0.001, -0.001, 0.0]),
+        sigma_raw=np.zeros(3),
+    )
+    return rs.sigma_potential_profile(
+        rs.sigma_profile(desc, rs.default_sigma_grid(), label="toy"), params
+    )
+
+
+def _null_sigma_potential():
+    """A solvent with no interactions at all, so ``mu_S`` vanishes identically.
+
+    ``E_int == 0`` makes the fixed point ``mu~ = -log(sum_j w_j) = 0``, which is
+    what gives Direct COSMO-RS an exact limit to be checked against.
+    """
+    import dataclasses
+
+    return _toy_sigma_potential(
+        dataclasses.replace(KLAMT_1998, alpha_prime=0.0, c_hb=0.0, f_corr=0.0)
+    )
+
+
+def _conductor_water(vq, **overrides):
+    """Water at eps=inf on the fine cavity, at KLAMT_1998's own radii."""
+    mol = vq.Molecule(
+        [vq.Atom(8, (0.0, 0.0, 0.0)),
+         vq.Atom(1, (0.0, 1.498, -1.159)),
+         vq.Atom(1, (0.0, -1.498, -1.159))], 0, 1,
+    )
+    kw = dict(
+        epsilon=math.inf, variant="cosmo", cavity="fine",
+        fine_grid_spacing_ang=0.35, radii=dict(KLAMT_1998.cavity_radii),
+        radii_scale=1.0, solvent_probe_radius_ang=0.0,
+        max_macro_iter=60, tol_e_solv=1e-10,
+    )
+    kw.update(overrides)
+    return mol, vq.run_cpcm_scf(
+        mol, vq.BasisSet(mol, "sto-3g"), method="rhf",
+        solvent=vq.SolventModel(**kw),
+    )
+
+
+def test_a_computed_water_potential_has_the_shape_water_should_have():
+    """A real solvent potential, and a physics check on it (#558).
+
+    Everything before this used hand-built toy ensembles. This one comes from
+    an actual conductor COSMO run on water, through the same chain a user takes:
+    surface -> segment descriptors -> sigma potential.
+
+    The check is the shape, because that is what says the chain produced water
+    rather than an arbitrary curve. Water's sigma potential is **positive** near
+    ``sigma = 0`` -- the cost of putting a nonpolar surface in water, the
+    hydrophobic effect -- and **negative at both extremes**, where a strongly
+    polarized surface can donate or accept a hydrogen bond. A potential that
+    was monotonic, or negative in the middle, would not be water.
+    """
+    vq = pytest.importorskip("vibeqc")
+
+    _, solvent = _conductor_water(vq)
+    assert solvent.converged and solvent.screening.is_conductor
+    pot = rs.solvent_sigma_potential(
+        solvent, KLAMT_1998, method="rhf", basis="sto-3g"
+    )
+
+    mu = pot.beta * pot.evaluate(np.array([-0.020, -0.010, 0.0, 0.010, 0.020]))
+    assert mu[2] > 0.0, mu                       # nonpolar surfaces pay
+    assert mu[0] < 0.0 and mu[4] < 0.0, mu       # both H-bond wings gain
+    assert mu[0] < mu[1] and mu[4] < mu[3], mu   # and deepen outward
+
+    # The protocol transfer is recorded rather than hidden: these constants were
+    # fitted on a different method, basis and cavity, and no code can repair
+    # that -- it can only make it visible.
+    assert pot.protocol == "rhf/sto-3g/fine-cfc"
+    assert pot.protocol != KLAMT_1998.fitted_protocol
+
+
+def test_a_computed_water_potential_drives_direct_cosmors():
+    """The real solvent, in the loop it was built for.
+
+    Positive is the right sign here and is worth stating, because it looks like
+    a bug: the COSMO-RS term for a small solute in water comes out *unfavourable*
+    by about half a kcal/mol on top of the conductor energy. That follows from
+    the shape above -- most of a small solute's surface sits at moderate sigma,
+    where water's potential is positive -- and it is the hydrophobic penalty,
+    not a sign error.
+    """
+    vq = pytest.importorskip("vibeqc")
+
+    mol, solvent = _conductor_water(vq)
+    pot = rs.solvent_sigma_potential(
+        solvent, KLAMT_1998, method="rhf", basis="sto-3g"
+    )
+    direct = vq.run_cpcm_scf(
+        mol, vq.BasisSet(mol, "sto-3g"), method="rhf",
+        solvent=vq.SolventModel(
+            epsilon=math.inf, variant="dcosmo-rs", sigma_potential=pot,
+            cavity="fine", fine_grid_spacing_ang=0.35,
+            radii=dict(KLAMT_1998.cavity_radii), radii_scale=1.0,
+            solvent_probe_radius_ang=0.0, max_macro_iter=80, tol_e_solv=1e-10,
+        ),
+    )
+    assert direct.converged
+    fb = direct.direct_feedback
+    assert fb.energy > 0.0
+    assert abs(fb.energy) < 0.01                       # a few kcal/mol, not wild
+    assert float(direct.energy) > float(solvent.energy)
+    # The feedback stays inside what the parameterization covers.
+    assert fb.fraction_outside_grid < 0.02, fb.fraction_outside_grid
+
+
+def test_the_solvent_potential_refuses_a_screened_run():
+    """The trap this helper exists for.
+
+    ``build_conductor_surface`` takes the stored charges, and those are the
+    ideal ``q*`` only at eps=inf; at finite dielectric vibe-qc stores
+    ``q = f q*``. A profile built from them is scaled by ``f`` and **nothing
+    downstream can tell**: it looks like a perfectly reasonable sigma profile.
+    """
+    vq = pytest.importorskip("vibeqc")
+
+    _, screened = _conductor_water(vq, epsilon=78.39)
+    with pytest.raises(ValueError, match="must be in the conductor limit"):
+        rs.solvent_sigma_potential(
+            screened, KLAMT_1998, method="rhf", basis="sto-3g"
+        )
+
+
+def test_the_solvent_potential_refuses_foreign_cavity_radii():
+    """A parameter set is fitted against a radius set, and sigma = q/a.
+
+    Building the solvent surface with the default scaled-Bondi radii instead of
+    the parameterization's own changes every sigma the constants were fitted to
+    reproduce, and the resulting potential looks entirely ordinary.
+    """
+    vq = pytest.importorskip("vibeqc")
+
+    _, bondi = _conductor_water(vq, radii=None, radii_scale=1.20)
+    with pytest.raises(ValueError, match="radii the parameterization was not"):
+        rs.solvent_sigma_potential(
+            bondi, KLAMT_1998, method="rhf", basis="sto-3g"
+        )
+
+
+def test_direct_feedback_potential_is_the_energys_derivative():
+    """The one check that validates the whole derivation at once (#558).
+
+    Sinnecker et al. 2006 state the operator (eq. 18) but not the energy. Both
+    follow from taking the free energy to be the conductor COSMO energy plus
+    ``sum_t a_t mu_S(sigma_t)``: differentiating that third term with respect to
+    the density gives the potential of a charge distribution ``q^dRS = -A^-1
+    phi^dRS``, which is exactly eq. 18's extra charges. So ``phi^dRS`` must be
+    ``dE_rs/dq`` -- and if it is not, the operator is not the derivative of the
+    energy it is paired with, which no SCF can recover from.
+
+    This also pins every unit conversion in one shot: the ``beta`` that turns
+    the dimensionless ``mu~`` into kcal/(mol angstrom^2), the bohr-to-angstrom
+    area conversion, and the Hartree conversion.
+    """
+    from vibeqc.solvation.cosmors.direct import direct_cosmors_feedback
+
+    pot = _toy_sigma_potential()
+    rng = np.random.default_rng(1)
+    n = 20
+    q = rng.normal(0.0, 0.002, n)
+    areas = rng.uniform(0.5, 3.0, n)
+    feedback = direct_cosmors_feedback(q, areas, pot)
+
+    h = 1e-9
+    for t in range(n):
+        up, dn = q.copy(), q.copy()
+        up[t] += h
+        dn[t] -= h
+        fd = (
+            direct_cosmors_feedback(up, areas, pot).energy
+            - direct_cosmors_feedback(dn, areas, pot).energy
+        ) / (2.0 * h)
+        assert abs(feedback.phi[t] - fd) < 1e-6 * max(abs(fd), 1.0), (t, fd)
+
+
+def test_direct_cosmors_reduces_to_conductor_cosmo_for_a_null_solvent():
+    """The exact limit, and the only end-to-end check that needs no tolerance.
+
+    A solvent whose interaction energy vanishes has ``mu_S == 0`` and
+    ``mu_S' == 0``, so the correction charges are zero, the energy term is zero,
+    and Direct COSMO-RS must return the conductor COSMO number *exactly* -- not
+    approximately. Anything else means the wiring adds or drops something:
+    a stray screening factor, a double-counted operator trace, a unit slip.
+    """
+    vq = pytest.importorskip("vibeqc")
+
+    mol = vq.Molecule(
+        [vq.Atom(8, (0.0, 0.0, 0.0)),
+         vq.Atom(1, (0.0, 1.498, -1.159)),
+         vq.Atom(1, (0.0, -1.498, -1.159))], 0, 1,
+    )
+    basis = vq.BasisSet(mol, "sto-3g")
+    common = dict(
+        epsilon=math.inf, cavity="fine", fine_grid_spacing_ang=0.40,
+        max_macro_iter=60, tol_e_solv=1e-10,
+    )
+    conductor = vq.run_cpcm_scf(
+        mol, basis, method="rhf",
+        solvent=vq.SolventModel(variant="cosmo", **common),
+    )
+    direct = vq.run_cpcm_scf(
+        mol, basis, method="rhf",
+        solvent=vq.SolventModel(
+            variant="dcosmo-rs", sigma_potential=_null_sigma_potential(), **common
+        ),
+    )
+    assert direct.converged
+    assert direct.direct_feedback is not None
+    assert direct.direct_feedback.energy == pytest.approx(0.0, abs=1e-14)
+    assert np.abs(direct.direct_feedback.charges).max() < 1e-14
+    assert float(direct.energy) == pytest.approx(float(conductor.energy), abs=1e-11)
+
+    # A real solvent must move it, or the limit above proves only that zero
+    # times anything is zero.
+    real = vq.run_cpcm_scf(
+        mol, basis, method="rhf",
+        solvent=vq.SolventModel(
+            variant="dcosmo-rs", sigma_potential=_toy_sigma_potential(), **common
+        ),
+    )
+    assert real.converged
+    assert abs(float(real.energy) - float(conductor.energy)) > 1e-4
+    # And the shift must be the COSMO-RS term itself, not something else.
+    assert float(real.energy) - float(conductor.energy) == pytest.approx(
+        real.direct_feedback.energy, rel=0.35
+    )
+
+
+def test_direct_cosmors_refuses_the_things_it_cannot_do():
+    """Four refusals, each for a measured reason rather than a taste."""
+    vq = pytest.importorskip("vibeqc")
+
+    pot = _toy_sigma_potential()
+    ok = dict(epsilon=math.inf, cavity="fine", sigma_potential=pot)
+
+    with pytest.raises(ValueError, match="needs a sigma_potential"):
+        vq.SolventModel(epsilon=math.inf, cavity="fine", variant="dcosmo-rs")
+
+    # A conductor, because the sigma potential *is* the solvent: scaling by
+    # f(eps) as well would count it twice.
+    with pytest.raises(ValueError, match="requires epsilon=inf"):
+        vq.SolventModel(**{**ok, "variant": "dcosmo-rs", "epsilon": 78.39})
+
+    # The fine cavity, because sigma = q/a on a switched Lebedev cavity is
+    # ill-conditioned: its smallest segment is ~1e+07 below the median.
+    with pytest.raises(ValueError, match="requires cavity='fine'"):
+        vq.SolventModel(**{**ok, "variant": "dcosmo-rs", "cavity": "lebedev"})
+
+    # And a potential that can actually be differentiated.
+    bare = rs.SigmaPotential(
+        rs.default_sigma_grid(), np.zeros(rs.default_sigma_grid().size),
+        KLAMT_1998, T_ROOM_K, 0, 0.0,
+    )
+    with pytest.raises(ValueError, match="carry its solvent ensemble"):
+        vq.SolventModel(**{**ok, "variant": "dcosmo-rs", "sigma_potential": bare})
+
+
+def test_cpcm_gradient_refuses_a_direct_cosmors_result():
+    """No Direct COSMO-RS nuclear gradient exists, so asking for one fails closed.
+
+    ``cpcm_gradient`` did not know the variant existed. Handed a Direct
+    COSMO-RS result it returned the conductor-COSMO gradient -- no
+    ``sum_t a_t mu_S(sigma_t)`` term, no ``q^dRS`` operator -- and nothing about
+    that number looked wrong: its translation residual was 2.1e-15. Against a
+    central difference of the energy the run reported it was 1.4e-03 Ha/bohr
+    off on asymmetric water, one component with the wrong sign, where the
+    conductor gradient at the same settings agrees to 1.0e-06.
+
+    It refuses rather than adding the missing terms because the energy is not
+    smooth in the geometry: the hydrogen-bond corner pinned by
+    ``test_the_hydrogen_bond_corner_is_real_and_survives_the_average``.
+    """
+    vq = pytest.importorskip("vibeqc")
+    from vibeqc.solvation.gradient import _refuse_direct_cosmors
+
+    mol = vq.Molecule(
+        [vq.Atom(8, (0.0, 0.0, 0.0)),
+         vq.Atom(1, (0.0, 1.498, -1.159)),
+         vq.Atom(1, (0.0, -1.498, -1.159))], 0, 1,
+    )
+    basis = vq.BasisSet(mol, "sto-3g")
+    common = dict(
+        epsilon=math.inf, cavity="fine", fine_grid_spacing_ang=0.40,
+        max_macro_iter=60, tol_e_solv=1e-10,
+    )
+    direct = vq.run_cpcm_scf(
+        mol, basis, method="rhf",
+        solvent=vq.SolventModel(
+            variant="dcosmo-rs", sigma_potential=_toy_sigma_potential(), **common
+        ),
+    )
+    assert direct.converged
+
+    with pytest.raises(
+        NotImplementedError, match="no nuclear gradient for a Direct COSMO-RS"
+    ) as refused:
+        vq.cpcm_gradient(direct.scf, mol, basis, direct)
+    message = str(refused.value)
+    # It says why no gradient exists, not merely that none is implemented ...
+    assert "sigma_hb" in message and "not differentiable" in message
+    assert "maintainer decision" in message
+    # ... and what is available instead.
+    assert "variant='cosmo'" in message and "cpcm_gradient_fd" in message
+
+    # Keyed on the variant, not on what the variant requires: a conductor run on
+    # the same eps=inf fine cavity passes the gate. Its full gradient costs
+    # ~25 s and is pinned by the fine-cavity gradient tests, so only the gate
+    # is exercised here.
+    conductor = vq.run_cpcm_scf(
+        mol, basis, method="rhf",
+        solvent=vq.SolventModel(variant="cosmo", **common),
+    )
+    assert conductor.direct_feedback is None
+    _refuse_direct_cosmors(conductor)
+
+
+def test_direct_cosmors_route_cites_the_whole_calculation():
+    """One solvation row fires per variant, so the Direct COSMO-RS row is all of it.
+
+    The registry picks ``routes.solvation[variant]`` and nothing else, so this
+    row cannot lean on the conductor rows: it carries Sinnecker, Rajendran,
+    Klamt, Diedenhofen & Neese 2006 (doi:10.1021/jp056016z), the COSMO-RS
+    sigma potential and its parameterization, conductor COSMO, and the COSMO
+    FINE Cavity the variant requires with the Gaussian-charge diagonal that
+    cavity uses. Not Scalmani-Frisch, whose point-charge diagonal belongs to the
+    Lebedev cavity that Direct COSMO-RS refuses.
+    """
+    from vibeqc.output.citations import load_default_database
+
+    db = load_default_database()
+    direct = db.assemble(uses_cpcm=True, solvent_variant="dcosmo-rs")
+    keys = {c.key for c in direct.citations}
+    assert not any("solvent variant" in w for w in direct.warnings), direct.warnings
+    assert {
+        "sinnecker_direct_cosmors_2006",
+        "klamt_cosmors_1995",
+        "klamt_cosmors_parametrization_1998",
+        "klamt_schuurmann_cosmo_1993",
+        "klamt_fine_cavity_2018",
+        "lange_herbert_swig_2010",
+    } <= keys
+    assert "scalmani_frisch_csc_2010" not in keys
+    (paper,) = [c for c in direct.citations if c.key == "sinnecker_direct_cosmors_2006"]
+    assert paper.doi == "10.1021/jp056016z"
+
+    # The conductor variants must not claim a method they did not run.
+    for variant in ("cpcm", "cosmo"):
+        conductor = db.assemble(uses_cpcm=True, solvent_variant=variant)
+        assert "sinnecker_direct_cosmors_2006" not in {c.key for c in conductor.citations}
+
+
+def test_a_direct_cosmors_run_cites_its_own_variant(tmp_path):
+    """``run_cpcm_scf(output=...)`` used to cite ``"cpcm"`` whatever it ran.
+
+    The route above is dead unless the driver passes the variant through, and
+    the emitter is wrapped in a best-effort ``except``, so a regression here is
+    silent: the only witness is the written bibliography.
+    """
+    vq = pytest.importorskip("vibeqc")
+
+    mol = vq.Molecule(
+        [vq.Atom(8, (0.0, 0.0, 0.0)),
+         vq.Atom(1, (0.0, 1.498, -1.159)),
+         vq.Atom(1, (0.0, -1.498, -1.159))], 0, 1,
+    )
+    sol = vq.run_cpcm_scf(
+        mol, vq.BasisSet(mol, "sto-3g"), method="rhf",
+        solvent=vq.SolventModel(
+            variant="dcosmo-rs", sigma_potential=_toy_sigma_potential(),
+            epsilon=math.inf, cavity="fine", fine_grid_spacing_ang=0.40,
+            max_macro_iter=60, tol_e_solv=1e-10,
+        ),
+        output=tmp_path / "dcosmors",
+    )
+    assert sol.converged
+    written = {
+        p.name: p.read_text(errors="replace")
+        for p in tmp_path.iterdir() if p.is_file()
+    }
+    assert written, "run_cpcm_scf(output=...) wrote no citation files"
+    cites = [name for name, text in written.items() if "sinnecker_direct_cosmors_2006" in text]
+    assert cites, sorted(written)
+
+
+def test_direct_cosmors_reports_where_its_feedback_is_fragile():
+    """The two diagnostics, and why a converged run still needs them.
+
+    Klamt's hydrogen-bond term makes ``mu_S'`` discontinuous at
+    ``sigma = +-sigma_hb``, and a quarter of a real solute's segments sit within
+    a bin of it -- so the first question when the macro-iteration will not
+    settle is how many segments are parked on that corner. The second is how
+    much *area* is being extrapolated beyond the sigma potential's fitted range,
+    which on the fine cavity is a fraction of a percent and on a switched
+    Lebedev cavity would be most of it.
+    """
+    vq = pytest.importorskip("vibeqc")
+
+    mol = vq.Molecule(
+        [vq.Atom(8, (0.0, 0.0, 0.0)),
+         vq.Atom(1, (0.0, 1.498, -1.159)),
+         vq.Atom(1, (0.0, -1.498, -1.159))], 0, 1,
+    )
+    sol = vq.run_cpcm_scf(
+        mol, vq.BasisSet(mol, "sto-3g"), method="rhf",
+        solvent=vq.SolventModel(
+            variant="dcosmo-rs", sigma_potential=_toy_sigma_potential(),
+            epsilon=math.inf, cavity="fine", fine_grid_spacing_ang=0.40,
+            max_macro_iter=60, tol_e_solv=1e-10,
+        ),
+    )
+    fb = sol.direct_feedback
+    assert 0.0 <= fb.fraction_near_hb_corner <= 1.0
+    assert 0.0 <= fb.fraction_outside_grid < 0.05, fb.fraction_outside_grid
+    # The fine cavity is what keeps sigma inside the parameterization; if this
+    # ever fails, the cavity changed and the feedback is being extrapolated.
+    assert np.percentile(np.abs(fb.sigma), 99) < 0.05
+
+
 def test_pair_interaction_derivative_is_exact_away_from_its_corner():
     """``dE_int/dsigma`` against finite differences (Direct COSMO-RS, #558).
 

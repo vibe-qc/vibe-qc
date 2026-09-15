@@ -68,10 +68,29 @@ metadata that other chats should consume:
   `implementing-chat-only`.
 - `global_items`: the release policy, bug, or gated-item identifiers connected
   to the lane.
-- `target_release`: the release line the lane currently supports.
+- `target_release`: the release line the lane currently supports, written as
+  `vMAJOR.MINOR.x` for a release line (for example `v0.18.x`) or
+  `vMAJOR.MINOR` for a forward track (for example `v2.0`). Any other form is
+  rejected when the manifest loads.
 - `required_full_calculation`: the full input/output matched-reference
   calculation that is required before a scientific value can be promoted.
 - `scientific_acceptance`: always `false` for pytest lanes.
+
+A `target_release` older than the repository's current line, read from the
+`[project] version` in `pyproject.toml`, is stale. Forward tracks are never
+stale. Stale lanes whose owning chats have not yet retargeted them are listed
+in `policy.known_stale_target_release`, which works like
+`known_reds_baseline.json`: a stale lane missing from the list, a listed lane
+that is no longer stale, or a listed name that is not a lane needs action. When
+a chat retargets its lane, it removes the lane from that list in the same
+change.
+
+Staleness is reported on stderr whenever a lane run loads the manifest, but it
+never fails that run, because every version bump makes the previous line stale
+at once. The enforceable form is
+`scripts/test_gate/run_full_suite.py --wt . --check-lane-manifest`, which exits
+non-zero when action is needed. It imports nothing from `vibeqc`, so any CI job
+can run it.
 
 The runner validates those fields when it loads the manifest, and
 `tests/test_test_gate_lanes.py` pins the contract. Pytest lanes and CI are

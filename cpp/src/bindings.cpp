@@ -8545,6 +8545,10 @@ m.def("compute_cosx_k",
         .def(py::init<>())
         .def_readwrite("cutoff_bohr",
                        &vibeqc::LatticeSumOptions::cutoff_bohr)
+        .def_readwrite("eri_interaction_cutoff_bohr",
+                       &vibeqc::LatticeSumOptions::eri_interaction_cutoff_bohr,
+                       "Physical AO-product midpoint separation cutoff in bohr. "
+                       "Used with pair_complete_1e; zero uses cutoff_bohr.")
         .def_readwrite("nuclear_cutoff_bohr",
                        &vibeqc::LatticeSumOptions::nuclear_cutoff_bohr)
         .def_readwrite("becke_image_radius_bohr",
@@ -8677,6 +8681,13 @@ m.def("compute_cosx_k",
           "translation invariant). A superset of "
           "direct_lattice_cells(system, cutoff_bohr) whose leading entries "
           "are exactly that list, in the same order (#429).");
+
+    m.def("physical_eri_lattice_cells", &vibeqc::physical_eri_lattice_cells,
+          py::arg("basis"), py::arg("system"), py::arg("pair_cutoff_bohr"),
+          py::arg("interaction_cutoff_bohr"),
+          py::call_guard<py::gil_scoped_release>(),
+          "Union of pair-centered lattice neighborhoods enclosing the physical "
+          "ERI product support. Align operators by cell key, not list prefix.");
 
     m.def("compute_overlap_lattice", &vibeqc::compute_overlap_lattice,
           py::arg("basis"), py::arg("system"), py::arg("options"),
@@ -9957,6 +9968,20 @@ m.def("compute_cosx_k",
                       &vibeqc::JKLatticeMatrixSets::cell_triples_possible)
         .def_readonly("shell_quartets_considered",
                       &vibeqc::JKLatticeMatrixSets::shell_quartets_considered)
+        .def_readonly("shell_pair_outputs",
+                      &vibeqc::JKLatticeMatrixSets::shell_pair_outputs)
+        .def_readonly("cell_sparse_outputs",
+                      &vibeqc::JKLatticeMatrixSets::cell_sparse_outputs)
+        .def_readonly("exhaustive_outputs",
+                      &vibeqc::JKLatticeMatrixSets::exhaustive_outputs)
+        .def_readonly("shell_pair_fallback_outputs",
+                      &vibeqc::JKLatticeMatrixSets::shell_pair_fallback_outputs)
+        .def_readonly("cell_sparse_fallback_outputs",
+                      &vibeqc::JKLatticeMatrixSets::cell_sparse_fallback_outputs)
+        .def_readonly("charge_screening_available",
+                      &vibeqc::JKLatticeMatrixSets::charge_screening_available)
+        .def_readonly("product_screening_available",
+                      &vibeqc::JKLatticeMatrixSets::product_screening_available)
         .def_readonly("J", &vibeqc::JKLatticeMatrixSets::J)
         .def_readonly("K", &vibeqc::JKLatticeMatrixSets::K)
         .def_readonly(
@@ -14114,7 +14139,9 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         // explicitly requested. The periodic GFN2-xTB drivers smear the
         // frontier by the default width when it is left unset, and honour an
         // explicit value exactly (0 = zero-temperature Aufbau). The molecular
-        // drivers read only the value, so their default stays Aufbau.
+        // driver runs its primary attempt at the value as given; its
+        // auto-stabilisation ladder reads the flag and falls back to a
+        // finite temperature only when none was requested (vibe-qc#3).
         .def_property(
             "electronic_temperature",
             [](const vibeqc::semiempirical::xtb::XTBSccOptions& self) {

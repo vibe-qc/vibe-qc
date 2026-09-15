@@ -70,7 +70,7 @@ def _small_sr_basis(shift=False):
     return system, basis([0.7, 1.1]), basis([0.6, 0.9])
 
 
-def _sr_three_center_oracle(system, basis, aux, q, k, omega, cutoff):
+def _sr_three_center_oracle(system, basis, aux, q, k, omega, cutoff, auxiliary_cutoff=None):
     """Gaussian product theorem + analytic ssss Boys integrals, no DF code.
 
     With p=a+b, rho=c*p/(c+p), the SR factor is
@@ -80,6 +80,8 @@ def _sr_three_center_oracle(system, basis, aux, q, k, omega, cutoff):
     """
     from itertools import product
     from scipy.special import hyp1f1
+    if auxiliary_cutoff is None:
+        auxiliary_cutoff = cutoff
     lattice = np.asarray(system.lattice)
     translations = np.asarray(list(product(range(-5, 6), repeat=3))) @ lattice.T
     out = np.zeros((aux.nbasis, basis.nbasis, basis.nbasis), complex)
@@ -101,7 +103,7 @@ def _sr_three_center_oracle(system, basis, aux, q, k, omega, cutoff):
                     if d2 > cutoff**2:
                         continue
                     t = np.clip((P - A) @ segment / d2, 0, 1) if d2 else np.zeros(len(P))
-                    keep = np.sum((P - A - t[:, None] * segment)**2, axis=1) <= cutoff**2
+                    keep = np.sum((P - A - t[:, None] * segment)**2, axis=1) <= auxiliary_cutoff**2
                     X = (a * A + b * B) / p
                     u = rho * np.sum((P[keep] - X)**2, axis=1)
                     integral = pref * np.exp(-a*b/p*d2) * (
@@ -113,16 +115,21 @@ def _sr_three_center_oracle(system, basis, aux, q, k, omega, cutoff):
     return out
 
 
-def test_double_image_sr_matches_independent_boys_oracle():
+@pytest.mark.parametrize('pair_cutoff,auxiliary_cutoff,screen', [
+    (5., 5., 0.), (9., 2., 0.), (9., 2., 1e-12),
+])
+def test_double_image_sr_matches_independent_boys_oracle(pair_cutoff, auxiliary_cutoff, screen):
     from vibeqc._vibeqc_core import compute_gdf_sr_three_center
     system, basis, aux = _small_sr_basis()
     q = np.array([0.17, -0.09, 0.11])
     ks = np.array([[0.0, 0.0, 0.0], [0.23, 0.13, -0.07]])
     actual = compute_gdf_sr_three_center(
-        basis, aux, system, q, ks, 0.65, 5.0, 5.0, 4096, 100000
+        basis, aux, system, q, ks, 0.65, pair_cutoff, auxiliary_cutoff,
+        4096, 100000, integral_screen_error=screen,
     )
     for ik, k in enumerate(ks):
-        expected = _sr_three_center_oracle(system, basis, aux, q, k, 0.65, 5.0)
+        expected = _sr_three_center_oracle(
+            system, basis, aux, q, k, 0.65, pair_cutoff, auxiliary_cutoff)
         np.testing.assert_allclose(actual[ik], expected, atol=2e-12, rtol=2e-12)
 
 

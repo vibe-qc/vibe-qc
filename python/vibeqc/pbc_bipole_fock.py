@@ -445,11 +445,14 @@ def _add_screened_exchange_restricted(
 
 
 def _sr_padded_lat_opts(lat_opts_2e, image_extent: float):
-    """Copy of ``lat_opts_2e`` whose cutoff is the padded image ball."""
+    """Preserve physical AO-pair support and set the internal interaction reach."""
     from ._vibeqc_core import LatticeSumOptions
 
     lp = LatticeSumOptions()
-    lp.cutoff_bohr = float(image_extent)
+    physical_pairs = getattr(lat_opts_2e, "pair_complete_1e", False)
+    lp.cutoff_bohr = lat_opts_2e.cutoff_bohr if physical_pairs else float(image_extent)
+    if physical_pairs:
+        lp.eri_interaction_cutoff_bohr = float(image_extent)
     lp.nuclear_cutoff_bohr = lat_opts_2e.nuclear_cutoff_bohr
     lp.coulomb_method = lat_opts_2e.coulomb_method
     lp.schwarz_threshold = lat_opts_2e.schwarz_threshold
@@ -462,6 +465,41 @@ def _sr_padded_lat_opts(lat_opts_2e, image_extent: float):
     lp.sr_sparse_traversal = lat_opts_2e.sr_sparse_traversal
     lp.pair_complete_1e = getattr(lat_opts_2e, "pair_complete_1e", False)
     return lp
+
+
+def _sr_density_cells(basis, system, lattice_opts, image_extent=None):
+    """Density image support for the selected real-space operator."""
+    from ._vibeqc_core import direct_lattice_cells
+
+    if lattice_opts.pair_complete_1e:
+        return _sr_internal_cells(basis, system, lattice_opts, image_extent)
+    return list(direct_lattice_cells(system, 2.0 * float(lattice_opts.cutoff_bohr)))
+
+
+def _sr_internal_cells(basis, system, lattice_opts, image_extent):
+    """Enclose physical product pairs while preserving the historical ball."""
+    from ._vibeqc_core import direct_lattice_cells
+
+    if getattr(lattice_opts, "pair_complete_1e", False):
+        from .lattice_screening import physical_eri_cells
+
+        return physical_eri_cells(basis, system, lattice_opts, image_extent)
+    extent = float(image_extent if image_extent is not None else (
+        lattice_opts.eri_interaction_cutoff_bohr or lattice_opts.cutoff_bohr
+    ))
+    return list(direct_lattice_cells(system, extent))
+
+
+def _reciprocal_blocks_on_output(blocks, cache, system, output_cells):
+    """Align reciprocal pair blocks with an exchange output enclosure."""
+    indices = np.rint(np.linalg.solve(
+        np.asarray(system.lattice, dtype=float),
+        np.asarray(cache.cells_r_cart, dtype=float).T,
+    )).astype(int).T
+    by_cell = {tuple(index): np.asarray(block, dtype=float)
+               for index, block in zip(indices, blocks)}
+    zero = np.zeros(cache.ft_per_cell.shape[1:3], dtype=float)
+    return [by_cell.get(_cell_key(cell), zero).copy() for cell in output_cells]
 
 
 def _build_jk_domains_output_cells_mpi(
@@ -713,13 +751,24 @@ def _sr_image_padded_jk(
                 "the restriction is a no-op -- omit it instead"
             )
     lat_pad = _sr_padded_lat_opts(lat_opts_2e, image_extent)
-    cells_pad = list(direct_lattice_cells(system, float(image_extent)))
-    orig_cells = list(
-        direct_lattice_cells(system, float(lat_opts_2e.cutoff_bohr))
-    )
+    cells_pad = _sr_internal_cells(basis, system, lat_opts_2e, image_extent)
+    if lat_opts_2e.pair_complete_1e:
+        orig_cells = cells_pad
+    else:
+        orig_cells = list(direct_lattice_cells(system, float(lat_opts_2e.cutoff_bohr)))
     pad_index = {_cell_key(c): i for i, c in enumerate(cells_pad)}
+    output_masks = []
     if exact_zone_bohr is None:
         zone_positions = list(range(len(orig_cells)))
+    elif lat_opts_2e.pair_complete_1e:
+        centers = np.asarray([shell.origin for shell in basis.shells()], dtype=float)
+        zone_positions = []
+        for pos, cell in enumerate(orig_cells):
+            delta = centers[:, None] - centers[None, :] - np.asarray(cell.r_cart)
+            mask = (np.sum(delta * delta, axis=2) <= float(exact_zone_bohr)**2).astype(np.uint8)
+            if np.any(mask):
+                zone_positions.append(pos)
+                output_masks.append(mask.ravel())
     else:
         zone_positions = [
             i
@@ -737,7 +786,7 @@ def _sr_image_padded_jk(
         density,
         cells_pad,
         output_indices,
-        [],
+        output_masks,
         omega=float(omega),
         compute_exchange=compute_exchange,
         task_kind=output_cell_farming_task_kind,
@@ -753,6 +802,16 @@ def _sr_image_padded_jk(
         for pos, pad_i in zip(zone_positions, output_indices):
             blocks[pos] = np.asarray(src.blocks[pad_i], dtype=float).copy()
         return blocks
+
+    if lat_opts_2e.pair_complete_1e:
+        from ._vibeqc_core import make_lattice_matrix_set
+
+        return SimpleNamespace(
+            J=make_lattice_matrix_set(nbf, orig_cells, _blocks_on_template(jk.J)),
+            K=(make_lattice_matrix_set(nbf, orig_cells, _blocks_on_template(jk.K))
+               if compute_exchange else None),
+            output_cell_farming_execution=getattr(jk, "output_cell_farming_execution", None),
+        )
 
     # The template is compute_overlap_lattice's cell list, which under
     # pair_complete_1e (#429) extends past the plain |g| ball this
@@ -958,6 +1017,7 @@ def build_bipole_restricted_fock(
             weights,
             exact_cells,
             float(omega_used),
+            lattice_opts=lat_opts_2e,
             ke_cutoff=exact_j_ke_cutoff,
             chunk_size=exact_j_chunk_size,
         )
@@ -1266,6 +1326,10 @@ def build_bipole_restricted_fock(
             cache=j_lr_cache,
             rho_hat=rho_hat_for_LR,
         )
+        if lat_opts_2e.pair_complete_1e:
+            F_LR_blocks = _reciprocal_blocks_on_output(
+                F_LR_blocks, j_lr_cache, system, F_J_SR_lat.cells,
+            )
         assert ewald_cell_volume is not None
         j_background_potential = (
             -np.pi
@@ -1295,7 +1359,7 @@ def build_bipole_restricted_fock(
             }
         for c, cell in enumerate(cells_lr):
             key = _cell_key(cell)
-            F_LR_blocks[c] = F_LR_blocks[c] + j_background_potential * s_blocks[key]
+            F_LR_blocks[c] = F_LR_blocks[c] + j_background_potential * s_blocks.get(key, np.zeros_like(F_LR_blocks[c]))
         e_j_short_range = 0.5 * _lattice_contract(
             density,
             F_J_SR_lat,
@@ -2163,6 +2227,10 @@ def build_bipole_unrestricted_fock(
             cache=j_lr_cache,
             rho_hat=rho_hat_for_LR,
         )
+        if lat_opts_2e.pair_complete_1e:
+            F_LR_blocks = _reciprocal_blocks_on_output(
+                F_LR_blocks, j_lr_cache, system, F_J_SR_lat.cells,
+            )
         assert ewald_cell_volume is not None
         j_background_potential = (
             -np.pi
@@ -2189,7 +2257,7 @@ def build_bipole_unrestricted_fock(
             }
         for c, cell in enumerate(F_J_SR_lat.cells):
             key = _cell_key(cell)
-            F_LR_blocks[c] = F_LR_blocks[c] + j_background_potential * s_blocks[key]
+            F_LR_blocks[c] = F_LR_blocks[c] + j_background_potential * s_blocks.get(key, np.zeros_like(F_LR_blocks[c]))
         j_sr_blocks = [
             np.asarray(block, dtype=float).copy() for block in F_J_SR_lat.blocks
         ]

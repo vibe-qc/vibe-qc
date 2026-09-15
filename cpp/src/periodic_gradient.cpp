@@ -120,6 +120,28 @@ Eigen::MatrixXd nuclear_repulsion_gradient_per_cell(
     Eigen::MatrixXd grad =
         Eigen::MatrixXd::Zero(static_cast<Eigen::Index>(N), 3);
 
+    if (opts.pair_complete_1e) {
+        const PairNuclearImageSelector selector(system, opts.nuclear_cutoff_bohr);
+        for (std::size_t a = 0; a < N; ++a) {
+            const Eigen::Vector3d center(atoms[a].xyz[0], atoms[a].xyz[1], atoms[a].xyz[2]);
+            const auto images = selector.select(center);
+            for (std::size_t image = 0; image < images.charges.size(); ++image) {
+                const auto& charge = images.charges[image];
+                const auto b = images.atoms[image];
+                if (static_cast<long>(a) == b) continue;
+                const Eigen::Vector3d delta = center - Eigen::Vector3d(
+                    charge.second[0], charge.second[1], charge.second[2]);
+                const double r2 = delta.squaredNorm();
+                if (r2 < 1e-28) continue;
+                const Eigen::Vector3d contribution =
+                    (-0.5 * atoms[a].Z * charge.first / (r2 * std::sqrt(r2))) * delta;
+                grad.row(a) += contribution.transpose();
+                grad.row(b) -= contribution.transpose();
+            }
+        }
+        return grad;
+    }
+
     // F_A = +Σ_{B≠A, all c} Z_A Z_B (r_A - r_B - c) / |r_A - r_B - c|^3.
     //
     // = the *negative* of ∂E_nuc^pc/∂r_A (we return the gradient, so
@@ -457,7 +479,9 @@ Eigen::MatrixXd nuclear_lattice_gradient_contribution(
             q_atom.push_back(static_cast<long>(a));
         }
     }
-    const int N_q = static_cast<int>(q.size());
+    const PairNuclearImageSelector selector(system, opts.nuclear_cutoff_bohr);
+    std::vector<PairNuclearImageCache> source_caches;
+    for (int tid = 0; tid < omp_max_threads(); ++tid) source_caches.emplace_back(selector);
 
     libint2::Engine prototype(libint2::Operator::nuclear,
                               shells_ref.max_nprim(), shells_ref.max_l(),
@@ -471,7 +495,7 @@ Eigen::MatrixXd nuclear_lattice_gradient_contribution(
 
     // Number of derivative buffers per shell pair: 3 · (2 basis
     // centers + N_q point charges).
-    const int ncenters = 2 + N_q;
+
 
     const int n_threads = omp_max_threads();
     std::vector<Eigen::MatrixXd> grad_tls(
@@ -510,8 +534,16 @@ Eigen::MatrixXd nuclear_lattice_gradient_contribution(
                 const auto n2 = shells_g[s2].size();
                 const long atom2 = s2a[s2];
 
+                const std::vector<long>* parents = &q_atom;
+                if (opts.pair_complete_1e) {
+                    const auto& selected = source_caches[tid].get(shells_ref[s1], shells_g[s2]);
+                    if (selected.charges.empty()) continue;
+                    engine.set_params(selected.charges);
+                    parents = &selected.atoms;
+                }
+                const std::size_t ncenters = 2 + parents->size();
                 engine.compute(shells_ref[s1], shells_g[s2]);
-                for (int icenter = 0; icenter < ncenters; ++icenter) {
+                for (std::size_t icenter = 0; icenter < ncenters; ++icenter) {
                     long atom;
                     if (icenter == 0) atom = atom1;
                     else if (icenter == 1) atom = atom2;
@@ -521,7 +553,7 @@ Eigen::MatrixXd nuclear_lattice_gradient_contribution(
                         // (image atoms in cell c contribute to the
                         // same unit-cell atom because they translate
                         // together with their reference-cell sibling).
-                        atom = q_atom[icenter - 2];
+                        atom = (*parents)[icenter - 2];
                     }
                     for (int d = 0; d < 3; ++d) {
                         const double* block = buf[icenter * 3 + d];
@@ -559,8 +591,6 @@ Eigen::MatrixXd nuclear_erfc_lattice_gradient_contribution(
     const LatticeSumOptions& opts,
     double omega) {
     ensure_libint_initialized();
-    require_plain_ball_for_ewald_nuclear(
-        opts, "nuclear_erfc_lattice_gradient_contribution");
 
     const auto& shells_ref = basis.libint();
     const auto shell2bf = shells_ref.shell2bf();
@@ -588,7 +618,9 @@ Eigen::MatrixXd nuclear_erfc_lattice_gradient_contribution(
             q_atom.push_back(static_cast<long>(a));
         }
     }
-    const int N_q = static_cast<int>(q.size());
+    const PairNuclearImageSelector selector(system, opts.nuclear_cutoff_bohr);
+    std::vector<PairNuclearImageCache> source_caches;
+    for (int tid = 0; tid < omp_max_threads(); ++tid) source_caches.emplace_back(selector);
 
     libint2::Engine prototype(libint2::Operator::erfc_nuclear,
                               shells_ref.max_nprim(), shells_ref.max_l(),
@@ -603,7 +635,7 @@ Eigen::MatrixXd nuclear_erfc_lattice_gradient_contribution(
     const int n_shells = static_cast<int>(shells_ref.size());
 
     // 3 · (2 basis centers + N_q point charges) derivative buffers.
-    const int ncenters = 2 + N_q;
+
 
     const int n_threads = omp_max_threads();
     std::vector<Eigen::MatrixXd> grad_tls(
@@ -626,21 +658,27 @@ Eigen::MatrixXd nuclear_erfc_lattice_gradient_contribution(
             const auto n1 = shells_ref[s1].size();
             const long atom1 = s2a[s1];
             for (int s2 = 0; s2 < n_shells; ++s2) {
-                // No pair filter, matching compute_nuclear_erfc_lattice:
-                // this is the erfc half of an Ewald split whose erf half is
-                // a dense grid / reciprocal contraction over every pair of
-                // these cells. Same rule as everywhere else -- differentiate
-                // exactly the sum the energy builds.
+                if (opts.pair_complete_1e &&
+                    !pair_in_range(shells_ref[s1], shells_g[s2], opts.cutoff_bohr))
+                    continue;
                 const auto bf2 = shell2bf[s2];
                 const auto n2 = shells_g[s2].size();
                 const long atom2 = s2a[s2];
 
+                const std::vector<long>* parents = &q_atom;
+                if (opts.pair_complete_1e) {
+                    const auto& selected = source_caches[tid].get(shells_ref[s1], shells_g[s2]);
+                    if (selected.charges.empty()) continue;
+                    engine.set_params(erfc_params{omega, selected.charges});
+                    parents = &selected.atoms;
+                }
+                const std::size_t ncenters = 2 + parents->size();
                 engine.compute(shells_ref[s1], shells_g[s2]);
-                for (int icenter = 0; icenter < ncenters; ++icenter) {
+                for (std::size_t icenter = 0; icenter < ncenters; ++icenter) {
                     long atom;
                     if (icenter == 0) atom = atom1;
                     else if (icenter == 1) atom = atom2;
-                    else atom = q_atom[icenter - 2];
+                    else atom = (*parents)[icenter - 2];
                     for (int d = 0; d < 3; ++d) {
                         const double* block = buf[icenter * 3 + d];
                         if (!block) continue;
@@ -708,12 +746,20 @@ Eigen::MatrixXd eri_lattice_gradient_contribution(
     }
 
     const auto& density_cells = D_set.cells;
+    const auto automatic_outputs = opts.pair_complete_1e && requested_output_cells.empty()
+        ? pair_complete_eri_cells(system, opts, shells_ref)
+        : std::vector<LatticeCell>{};
     const auto& output_cells = requested_output_cells.empty()
-        ? density_cells
+        ? (opts.pair_complete_1e ? automatic_outputs : density_cells)
         : requested_output_cells;
-    const auto& cells = internal_cells.empty() ? output_cells : internal_cells;
-    const bool legacy_single_domain = internal_cells.empty() &&
+    const auto automatic_internal = opts.pair_complete_1e && internal_cells.empty()
+        ? pair_complete_eri_cells(system, opts, shells_ref)
+        : std::vector<LatticeCell>{};
+    const auto& cells = internal_cells.empty()
+        ? (opts.pair_complete_1e ? automatic_internal : output_cells) : internal_cells;
+    const bool legacy_single_domain = !opts.pair_complete_1e && internal_cells.empty() &&
         requested_output_cells.empty() && output_shell_masks.empty();
+    const double interaction_cutoff = eri_interaction_cutoff(opts);
     const std::size_t n_g = output_cells.size();
     const std::size_t n_c = cells.size();
 
@@ -787,7 +833,7 @@ Eigen::MatrixXd eri_lattice_gradient_contribution(
 
     const bool j_on = (j_scale != 0.0);
     const bool screened_k = (omega > 0.0);
-    const bool direct_exchange_energy = screened_k || exchange_energy_convention;
+    const bool direct_exchange_energy = opts.pair_complete_1e || screened_k || exchange_energy_convention;
     const double j_coef = 0.5 * j_scale;
     // Direct exchange energy in build_jk_2e_real_space is
     //   E_x = -alpha/4 sum_g D(g) : K_g,
@@ -954,7 +1000,10 @@ Eigen::MatrixXd eri_lattice_gradient_contribution(
                                 // Compute ∂(μ_0 ν_{c_g} | λ_{c_lam} σ_{c_sig})/∂R
                                 // and contract with J Γ = (1/2) D(c_g)_μν · D(c_sig - c_lam)_λσ.
                                 // 12 derivative buffers per quartet (3 × 4 centers).
-                                bool do_J = (j_on && D_J != nullptr);
+                                bool do_J = j_on && D_J != nullptr &&
+                                    (!opts.pair_complete_1e || pair_products_in_range(
+                                        shells_ref[s1], shells_g[s2], shells_lam[s3], shells_sig[s4],
+                                        opts.cutoff_bohr, interaction_cutoff));
                                 if (do_J && screen) {
                                     if (c_J_idx < 0) {
                                         do_J = false;
@@ -972,7 +1021,10 @@ Eigen::MatrixXd eri_lattice_gradient_contribution(
 
                                     const long centers_J[4] = {
                                         atom1, atom2, atom3, atom4};
-                                    for (int icenter = 0; icenter < 4; ++icenter) {
+                                    // Libint clears only the first target when
+                                    // the whole quartet is screened. The other
+                                    // pointers can retain the previous quartet.
+                                    for (int icenter = 0; buf[0] && icenter < 4; ++icenter) {
                                         for (int d = 0; d < 3; ++d) {
                                             const double* block =
                                                 buf[icenter * 3 + d];
@@ -1025,7 +1077,10 @@ Eigen::MatrixXd eri_lattice_gradient_contribution(
                                 // (atom1, atom3, atom2, atom4) in that order.
                                 // The integral block strides are
                                 // [μ][λ][ν][σ] = (n1, n3, n2, n4).
-                                bool do_K = (alpha_hf != 0.0 && k_density_available);
+                                bool do_K = alpha_hf != 0.0 && k_density_available &&
+                                    (!opts.pair_complete_1e || pair_products_in_range(
+                                        shells_ref[s1], shells_lam[s3], shells_g[s2], shells_sig[s4],
+                                        opts.cutoff_bohr, interaction_cutoff));
                                 if (do_K && screen) {
                                     if (c_K_idx < 0) {
                                         do_K = false;
@@ -1046,7 +1101,9 @@ Eigen::MatrixXd eri_lattice_gradient_contribution(
 
                                     const long centers_K[4] = {
                                         atom1, atom3, atom2, atom4};
-                                    for (int icenter = 0; icenter < 4; ++icenter) {
+                                    // Check the whole-quartet sentinel for K
+                                    // independently of the preceding J build.
+                                    for (int icenter = 0; buf[0] && icenter < 4; ++icenter) {
                                         for (int d = 0; d < 3; ++d) {
                                             const double* block =
                                                 buf[icenter * 3 + d];

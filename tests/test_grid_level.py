@@ -745,3 +745,241 @@ def test_copy_grid_options_copies_every_public_field():
     assert copy is not source
     for name in _GRID_OPTION_FIELDS:
         assert getattr(copy, name) == getattr(source, name), name
+
+
+@pytest.mark.parametrize("level", ["orca-defgrid3", "legacy"])
+@pytest.mark.parametrize("bare", [False, True])
+def test_wb97x_d_midlevel_matches_run_job(tmp_path, level, bare):
+    import vibeqc as vq
+
+    h2 = Molecule([Atom(1, [0., 0., 0.]), Atom(1, [0., 0., 1.4])])
+    options = RKSOptions() if bare else None
+    result = vq.run_wb97x_d(h2, BasisSet(h2, "sto-3g"), options, grid_level=level)
+    expected = run_job(h2, output=tmp_path / "wb97xd", grid_level=level,
+                       **dict(_RUN_JOB_QUIET, functional="wb97x-d"))
+    # The bare run_job functional alias returns the XC/SCF reference.
+    assert result.scf.energy == pytest.approx(expected.energy, abs=1e-10, rel=0)
+
+
+@pytest.mark.parametrize("level", ["orca-defgrid3", "legacy"])
+@pytest.mark.parametrize("open_shell", [False, True])
+def test_double_hybrid_reference_grid(monkeypatch, level, open_shell):
+    import vibeqc as vq
+    import vibeqc.roks as roks_module
+
+    class Stop(Exception):
+        pass
+
+    def capture(mol, basis, options, **kwargs):
+        _assert_grid_matches_preset(options.grid, level)
+        raise Stop()
+
+    monkeypatch.setattr(vq, "run_rks", capture)
+    monkeypatch.setattr(roks_module, "run_roks", capture)
+    mol = Molecule([Atom(2, [0., 0., 0.])]) if not open_shell else Molecule(
+        [Atom(1, [0., 0., 0.])], 0, 2)
+    with pytest.raises(Stop):
+        vq.run_double_hybrid(mol, BasisSet(mol, "sto-3g"), "b2plyp",
+                             rks_options=RKSOptions(), grid_level=level, density_fit=False)
+
+
+@pytest.mark.parametrize("optimizer", ["optimize_molecule", "optimize_molecule_brent"])
+@pytest.mark.parametrize("method", ["rks", "uks", "roks"])
+@pytest.mark.parametrize("level", ["orca-defgrid3", "legacy"])
+def test_direct_optimizer_first_energy_matches_run_job(tmp_path, monkeypatch,
+                                                        optimizer, method, level):
+    import vibeqc.molecular_optimize as mo
+    mol = Molecule([Atom(2, [0., 0., 0.])]) if method == "rks" else Molecule(
+        [Atom(1, [0., 0., 0.])], 0, 2)
+    expected = run_job(mol, output=tmp_path / "reference", grid_level=level,
+                       **dict(_RUN_JOB_QUIET, method=method))
+    name = "_evaluate_energy" if method == "roks" else "_run_molecular_scf"
+    real = getattr(mo, name)
+
+    class Stop(Exception):
+        pass
+
+    def capture(*args, **kwargs):
+        result = real(*args, **kwargs)
+        energy = result if method == "roks" else result[0]
+        assert energy == pytest.approx(expected.energy, abs=1e-10, rel=0)
+        raise Stop()
+
+    monkeypatch.setattr(mo, name, capture)
+    with pytest.raises(Stop):
+        getattr(mo, optimizer)(mol, "sto-3g", method=method, functional="pbe",
+                                grid_level=level, max_iter=1)
+
+
+@pytest.mark.parametrize("backend", ["ase", "native", "brent", "geomopt"])
+def test_roks_legacy_grid_survives_optimizer_dispatch(tmp_path, monkeypatch, backend):
+    import vibeqc.runner as runner
+    import vibeqc.molecular_optimize as mo
+    import vibeqc.geomopt as go
+    options = ROKSOptions(max_iter=37)
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def capture(*args, **kwargs):
+        seen.update(kwargs)
+        raise Stop()
+
+    def provider_capture(mol, provider, **kwargs):
+        seen.update(roks_options=provider._roks_options, grid_level=provider._grid_level)
+        raise Stop()
+
+    monkeypatch.setattr(runner, "_make_wavefunction_ase_calculator", capture)
+    monkeypatch.setattr(mo, "optimize_molecule", capture)
+    monkeypatch.setattr(mo, "optimize_molecule_brent", capture)
+    monkeypatch.setattr(go, "run_geomopt", provider_capture)
+    mol = Molecule([Atom(1, [0., 0., 0.])], 0, 2)
+    extra = {"geom_opt": "bfgs"} if backend == "geomopt" else {"optimizer_backend": backend}
+    with pytest.raises(Stop):
+        run_job(mol, output=tmp_path / "roks", optimize=True, grid_level="legacy",
+                roks_options=options, **extra, **dict(_RUN_JOB_QUIET, method="roks"))
+    assert seen["grid_level"] == "legacy"
+    assert seen["roks_options"] is options
+    assert seen["roks_options"].max_iter == 37
+
+
+@pytest.mark.parametrize("factory", ["ase", "provider"])
+def test_roks_fd_evaluations_keep_grid_and_options(monkeypatch, factory):
+    import numpy as np
+    import vibeqc.runner as runner
+    from vibeqc.geomopt.providers import MolecularSCFProvider
+    from ase import Atoms
+
+    options = ROKSOptions(max_iter=37)
+    seen = []
+
+    def fake_scf(method, molecule, basis, **kwargs):
+        seen.append(kwargs)
+        return SimpleNamespace(energy=0., converged=True)
+
+    monkeypatch.setattr(runner, "_run_single_point", fake_scf)
+    mol = Molecule([Atom(1, [0., 0., 0.])], 0, 2)
+    if factory == "ase":
+        calc = runner._make_wavefunction_ase_calculator(mol, "sto-3g", "roks",
+            functional="pbe", roks_options=options, grid_level="legacy")
+        atoms = Atoms("H", positions=[[0., 0., 0.]], calculator=calc)
+        atoms.get_forces()
+    else:
+        provider = MolecularSCFProvider("sto-3g", method="roks", functional="pbe",
+            roks_options=options, grid_level="legacy")
+        provider(mol)
+    assert len(seen) == 7
+    assert all(k["roks_options"] is options and k["grid_level"] == "legacy" for k in seen)
+
+
+@pytest.mark.parametrize("method", ["rks", "uks", "roks"])
+@pytest.mark.parametrize("choice", ["default", "legacy", "custom"])
+def test_neb_image_applies_grid_policy(monkeypatch, method, choice):
+    import numpy as np
+    import vibeqc.neb as neb
+    cls = {"rks": RKSOptions, "uks": UKSOptions, "roks": ROKSOptions}[method]
+    options = cls()
+    if choice == "custom":
+        grid = GridOptions()
+        grid.n_radial = 53
+        options.grid = grid
+    level = "legacy" if choice == "legacy" else "orca-defgrid3"
+
+    class Stop(Exception):
+        pass
+
+    def capture(*args, **kwargs):
+        if choice == "custom":
+            assert options.grid.n_radial == 53
+        else:
+            _assert_grid_matches_preset(options.grid, level)
+        raise Stop()
+
+    monkeypatch.setattr(neb, "_run_rks_warm_start", capture)
+    monkeypatch.setattr(neb, "_run_uks_warm_start", capture)
+    monkeypatch.setattr(neb, "_run_restricted_open_image", capture)
+    mol = Molecule([Atom(2, [0., 0., 0.])]) if method == "rks" else Molecule(
+        [Atom(1, [0., 0., 0.])], 0, 2)
+    opts = dict(rhf_options=None, uhf_options=None, rks_options=None,
+                uks_options=None, roks_options=None)
+    opts[method + "_options"] = options
+    with pytest.raises(Stop):
+        neb._evaluate_image(np.zeros((1, 3)), mol, "sto-3g", method,
+                            functional="pbe", grid_level=level,
+                            grid_options=None, gradient_options=None,
+                            dispersion_params=None, **opts)
+
+
+@pytest.mark.parametrize("method", ["RKS", "UKS"])
+@pytest.mark.parametrize("choice", ["default", "legacy", "custom"])
+def test_hessian_scf_and_gradient_grid_are_identical(monkeypatch, method, choice):
+    import vibeqc.hessian as hessian
+    grid = GridOptions() if choice == "custom" else None
+    if grid is not None:
+        grid.n_radial = 53
+    options = RKSOptions() if method == "RKS" else UKSOptions()
+    level = "legacy" if choice == "legacy" else "orca-defgrid3"
+
+    class Stop(Exception):
+        pass
+
+    def capture(opts, *args):
+        if choice == "custom":
+            assert opts.grid.n_radial == 53
+        else:
+            _assert_grid_matches_preset(opts.grid, level)
+        raise Stop()
+
+    monkeypatch.setattr(hessian, "attach_inline_ecp_options_from_basis_sidecar", capture)
+    with pytest.raises(Stop):
+        hessian.compute_hessian_fd(_H2O, "sto-3g", method,
+            scf_options=options, grid_options=grid, grid_level=level)
+
+
+@pytest.mark.parametrize("level", ["orca-defgrid3", "legacy"])
+def test_d4_reference_scf_and_response_use_selected_grid(monkeypatch, level):
+    from vibeqc import _vibeqc_core as core
+    import vibeqc.dispersion_d4_reference_data as dataset
+    import vibeqc.dispersion_d4_refdata as response
+    grids = []
+
+    class Stop(Exception):
+        pass
+
+    def scf(mol, basis, opts):
+        _assert_grid_matches_preset(opts.grid, level)
+        grids.append(opts.grid)
+        return SimpleNamespace(converged=True)
+
+    def polarizability(*args, grid_options=None, **kwargs):
+        assert len(grids) == 1
+        assert grid_options is grids[0]
+        raise Stop()
+
+    monkeypatch.setattr(core, "run_rks", scf)
+    monkeypatch.setattr(response, "coupled_polarizability_imag_freq_dft", polarizability)
+    with pytest.raises(Stop):
+        dataset.generate_reference_dataset("sto-3g", grid_level=level, verbose=False)
+
+
+@pytest.mark.parametrize("mult", [1, 2])
+def test_tddft_cli_ground_state_uses_default_grid(tmp_path, monkeypatch, mult):
+    import vibeqc
+    from vibeqc._cli import _cmd_tddft
+
+    class Stop(Exception):
+        pass
+
+    def scf(mol, basis, opts):
+        assert opts.functional == "pbe"
+        _assert_grid_matches_preset(opts.grid, "orca-defgrid3")
+        raise Stop()
+
+    path = tmp_path / "atom.xyz"
+    path.write_text("1\natom\n" + ("He" if mult == 1 else "H") + " 0 0 0\n")
+    monkeypatch.setattr(vibeqc, "run_rks", scf)
+    monkeypatch.setattr(vibeqc, "run_uks", scf)
+    with pytest.raises(Stop):
+        _cmd_tddft(SimpleNamespace(path=path, basis="sto-3g", functional="pbe",
+                                   charge=0, multiplicity=mult, n_states=1, casida=False))

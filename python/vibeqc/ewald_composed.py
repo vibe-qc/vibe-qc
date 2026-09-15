@@ -218,6 +218,11 @@ def build_j_ewald_3d(
             "VIBEQC_J_EWALD3D_BACKEND must be 'analytic_ft' or 'grid'; "
             f"got {backend!r}."
         )
+    if opts.pair_complete_1e:
+        raise NotImplementedError(
+            "The diagnostic grid Hartree backend does not implement physical "
+            "quartet support; use VIBEQC_J_EWALD3D_BACKEND=analytic_ft."
+        )
 
     lat = np.asarray(system.lattice, dtype=float)
     if grid_shape is None:
@@ -274,7 +279,7 @@ class EwaldJFTGammaCache:
     the dominant Γ-Ewald SCF cost, ~6 s/iteration on H₂/STO-3G/30-bohr).
     """
 
-    __slots__ = ("pair_ft", "pair_ft_conj", "v_G", "inv_cell_volume", "nbf")
+    __slots__ = ("pair_ft", "pair_ft_conj", "v_G", "inv_cell_volume", "nbf", "pair_cutoff")
 
     def __init__(
         self,
@@ -282,12 +287,36 @@ class EwaldJFTGammaCache:
         v_G: np.ndarray,
         inv_cell_volume: float,
         nbf: int,
+        pair_cutoff=None,
     ) -> None:
         self.pair_ft = pair_ft            # (nbf, nbf, n_G), AO-scaled, complex
         self.pair_ft_conj = pair_ft.conj()
         self.v_G = v_G                    # (n_G,) = 4pi/G^2
         self.inv_cell_volume = inv_cell_volume
         self.nbf = nbf
+        self.pair_cutoff = pair_cutoff
+
+
+def _physical_pair_cutoff(lattice_opts):
+    return (float(lattice_opts.cutoff_bohr)
+            if lattice_opts is not None and lattice_opts.pair_complete_1e else None)
+
+
+def _check_cache_pair_support(cache, lattice_opts):
+    if lattice_opts is not None and cache.pair_cutoff != _physical_pair_cutoff(lattice_opts):
+        raise ValueError("Hartree cache physical pair support differs from lattice options")
+
+
+def _mask_physical_pair_ft(pair_ft, basis, translations, lattice_opts):
+    """Apply the same finite AO-product support to source and output FTs."""
+    if lattice_opts is not None and lattice_opts.pair_complete_1e:
+        from .lattice_screening import ao_pair_support_mask
+
+        for block, shift in zip(pair_ft, translations):
+            block *= ao_pair_support_mask(
+                basis, shift, lattice_opts.cutoff_bohr,
+            )[:, :, None]
+    return pair_ft
 
 
 def build_j_ewald_3d_ft_gamma_cache(
@@ -335,16 +364,31 @@ def build_j_ewald_3d_ft_gamma_cache(
         # uncached ``np.zeros_like(D)`` early return).
         pair_ft = np.zeros((nbf, nbf, 0), dtype=np.complex128)
         v_G = np.zeros(0, dtype=float)
-        return EwaldJFTGammaCache(pair_ft, v_G, 1.0 / cell_volume, nbf)
+        return EwaldJFTGammaCache(pair_ft, v_G, 1.0 / cell_volume, nbf,
+                                 _physical_pair_cutoff(opts))
 
-    cells = direct_lattice_cells(system, float(opts.cutoff_bohr))
+    if opts.pair_complete_1e:
+        from ._vibeqc_core import pair_complete_lattice_cells
+
+        cells = pair_complete_lattice_cells(basis, system, float(opts.cutoff_bohr))
+    else:
+        cells = direct_lattice_cells(system, float(opts.cutoff_bohr))
     R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
     if R_g.size == 0:
         R_g = np.zeros((1, 3), dtype=float)
 
-    pair_ft = ao_pair_fourier_transform_bloch(
-        basis, G, R_g, k_cart=np.zeros(3)
-    )  # (n_orb, n_orb, n_G)
+    if opts.pair_complete_1e:
+        from ._aopair_ft import ao_pair_fourier_transform_at_cells
+
+        pair_ft = np.zeros((nbf, nbf, len(G)), dtype=np.complex128)
+        # Bound the extra image axis while retaining the physical pair mask.
+        for shift in R_g:
+            ft = ao_pair_fourier_transform_at_cells(basis, G, shift[None, :])
+            pair_ft += _mask_physical_pair_ft(ft, basis, [shift], opts)[0]
+    else:
+        pair_ft = ao_pair_fourier_transform_bloch(
+            basis, G, R_g, k_cart=np.zeros(3)
+        )  # (n_orb, n_orb, n_G)
 
     # Per-L AO calibration: same convention used by the dense-FT GDF
     # and analytic V_ne paths.
@@ -352,7 +396,8 @@ def build_j_ewald_3d_ft_gamma_cache(
     pair_ft = pair_ft * np.outer(ao_scales, ao_scales)[:, :, None]
 
     v_G = 4.0 * np.pi / G2_kept
-    return EwaldJFTGammaCache(pair_ft, v_G, 1.0 / cell_volume, nbf)
+    return EwaldJFTGammaCache(pair_ft, v_G, 1.0 / cell_volume, nbf,
+                             _physical_pair_cutoff(opts))
 
 
 def compute_j_ewald_3d_ft_gamma(
@@ -383,6 +428,7 @@ def compute_j_ewald_3d_ft_gamma(
             basis, system, lattice_opts=lattice_opts, ke_cutoff=ke_cutoff
         )
     D_arr = np.asarray(D, dtype=float)
+    _check_cache_pair_support(cache, lattice_opts)
 
     # Density-dependent contraction only -- the cached ``pair_ft`` is the
     # analytic AO-pair Fourier transform r̂_muν(G), Eq. 16 of Sun,
@@ -493,7 +539,7 @@ class EwaldJFTLatticeCache:
     cell-count check in :func:`compute_j_ewald_3d_ft_lattice`).
     """
 
-    __slots__ = ("pair_at_cells", "v_G", "inv_cell_volume", "n_cells", "n_bf")
+    __slots__ = ("pair_at_cells", "v_G", "inv_cell_volume", "n_cells", "n_bf", "cell_keys", "pair_cutoff")
 
     def __init__(
         self,
@@ -502,12 +548,16 @@ class EwaldJFTLatticeCache:
         inv_cell_volume: float,
         n_cells: int,
         n_bf: int,
+        cell_keys=None,
+        pair_cutoff=None,
     ) -> None:
         self.pair_at_cells = pair_at_cells  # (n_cells, nbf, nbf, n_G) complex
         self.v_G = v_G                       # (n_G,) = 4pi/G^2
         self.inv_cell_volume = inv_cell_volume
         self.n_cells = n_cells
         self.n_bf = n_bf
+        self.cell_keys = cell_keys
+        self.pair_cutoff = pair_cutoff
 
 
 def build_j_ewald_3d_ft_lattice_cache(
@@ -536,7 +586,7 @@ def build_j_ewald_3d_ft_lattice_cache(
             "build_j_ewald_3d_ft_lattice_cache: requires dim == 3; got "
             f"dim = {system.dim}."
         )
-    _ = lattice_opts if lattice_opts is not None else LatticeSumOptions()
+    opts = lattice_opts if lattice_opts is not None else LatticeSumOptions()
     cell_list = list(cells)
     n_cells = len(cell_list)
     nbf = int(basis.nbasis)
@@ -556,7 +606,9 @@ def build_j_ewald_3d_ft_lattice_cache(
         pair_at_cells = np.zeros((n_cells, nbf, nbf, 0), dtype=np.complex128)
         v_G = np.zeros(0, dtype=float)
         return EwaldJFTLatticeCache(
-            pair_at_cells, v_G, 1.0 / cell_volume, n_cells, nbf
+            pair_at_cells, v_G, 1.0 / cell_volume, n_cells, nbf,
+            tuple(tuple(c.index) for c in cell_list),
+            _physical_pair_cutoff(opts),
         )
 
     R_g = np.array([list(c.r_cart) for c in cell_list], dtype=float)
@@ -567,6 +619,7 @@ def build_j_ewald_3d_ft_lattice_cache(
     # S_g of it is the Γ (k=0) Bloch AO-pair FT -- the source of the F4
     # Γ<->multi-k bit-match.
     pair_at_cells = ao_pair_fourier_transform_at_cells(basis, G, R_g)
+    _mask_physical_pair_ft(pair_at_cells, basis, R_g, opts)
     ao_scales = _ao_scales_for_rsgdf(basis)
     # In place: the tensor is (n_cells, nbf, nbf, n_G) -- the dominant
     # memory of this cache -- and an out-of-place multiply transiently
@@ -576,7 +629,9 @@ def build_j_ewald_3d_ft_lattice_cache(
 
     v_G = 4.0 * np.pi / G2_kept
     return EwaldJFTLatticeCache(
-        pair_at_cells, v_G, 1.0 / cell_volume, n_cells, nbf
+        pair_at_cells, v_G, 1.0 / cell_volume, n_cells, nbf,
+        tuple(tuple(c.index) for c in cell_list),
+        _physical_pair_cutoff(opts),
     )
 
 
@@ -648,6 +703,7 @@ def compute_j_ewald_3d_ft_lattice(
         )
 
     cells = list(D_real.cells)
+    _check_cache_pair_support(cache, lattice_opts)
     n_cells = len(cells)
     if n_cells != cache.n_cells:
         raise ValueError(
@@ -656,6 +712,9 @@ def compute_j_ewald_3d_ft_lattice(
             f"{cache.n_cells}; rebuild the cache for this density's cell "
             "list."
         )
+
+    if cache.cell_keys is not None and tuple(tuple(c.index) for c in cells) != cache.cell_keys:
+        raise ValueError("compute_j_ewald_3d_ft_lattice: density cell ordering differs from cache")
 
     # Empty G-mesh (or no cells): J(g) == 0 per cell -- matches the uncached
     # early return.
@@ -696,6 +755,7 @@ def compute_j_ewald_3d_ft_k_density_to_cells(
     output_cells,
     omega: float,
     *,
+    lattice_opts: Optional[LatticeSumOptions] = None,
     ke_cutoff: float = 200.0,
     chunk_size: int = 512,
     cell_chunk_size: Optional[int] = None,
@@ -778,6 +838,7 @@ def compute_j_ewald_3d_ft_k_density_to_cells(
         active_cell_chunk = min(n_cells, cell_chunk)
         if active_cell_chunk >= n_cells:
             pair_at_cells = ao_pair_fourier_transform_at_cells(basis, G, R_g)
+            _mask_physical_pair_ft(pair_at_cells, basis, R_g, lattice_opts)
             pair_at_cells *= pair_scales[None, :, :, None]
 
             rho_G = np.zeros(G.shape[0], dtype=np.complex128)
@@ -813,6 +874,7 @@ def compute_j_ewald_3d_ft_k_density_to_cells(
             cell_stop = min(cell_start + active_cell_chunk, n_cells)
             R_batch = R_g[cell_start:cell_stop]
             pair_batch = ao_pair_fourier_transform_at_cells(basis, G, R_batch)
+            _mask_physical_pair_ft(pair_batch, basis, R_batch, lattice_opts)
             pair_batch *= pair_scales[None, :, :, None]
             for D_k, k_cart, weight in zip(D_arrs, k_arrs, weights_arr):
                 phases = np.exp(-1j * (R_batch @ k_cart))
@@ -834,6 +896,7 @@ def compute_j_ewald_3d_ft_k_density_to_cells(
             cell_stop = min(cell_start + active_cell_chunk, n_cells)
             R_batch = R_g[cell_start:cell_stop]
             pair_batch = ao_pair_fourier_transform_at_cells(basis, G, R_batch)
+            _mask_physical_pair_ft(pair_batch, basis, R_batch, lattice_opts)
             pair_batch *= pair_scales[None, :, :, None]
             J_all[cell_start:cell_stop] += inv_cell_volume * np.real(
                 np.einsum(

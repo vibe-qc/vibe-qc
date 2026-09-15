@@ -82,8 +82,7 @@ system = vq.PeriodicSystem(3, np.diag([8, 20, 20]),
                            [vq.Atom(1, [0,0,0]), vq.Atom(1, [1.4,0,0])],
                            multiplicity=1)
 basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
-r = vq.run_periodic_job(system, basis, method="RHF",
-                        jk_method="aiccm2026dev-b",
+r = vq.run_periodic_job(system, basis, method="aiccm", variant="chi",
                         aiccm_lattice_extension=(1,1,1),
                         aiccm_backend="ri",
                         max_iter=40, progress=False,

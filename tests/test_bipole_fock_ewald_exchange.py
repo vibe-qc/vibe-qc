@@ -564,49 +564,49 @@ def test_rks_h2_pbe0_hybrid_split_matches_pyscf():
     assert r.energy == pytest.approx(E_PYSCF_H2_PBE0, abs=5e-4)
 
 
-def test_run_periodic_job_bipole_rks_h2o_defaults_fail_closed(tmp_path):
-    """Public defaults must not report an origin-only cluster as periodic."""
+def test_run_periodic_job_bipole_rks_h2o_defaults_use_periodic_ewald(tmp_path):
+    """A home-only short-range ball remains periodic with the reciprocal split."""
     from vibeqc.periodic_runner import run_periodic_job
 
     sysp = _h2o_box()
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "6-31g")
     out_stem = tmp_path / "h2o-pbe0-bipole"
-    with pytest.raises(
-        ValueError,
-        match=r"BIPOLE Gamma interaction.*no nonzero lattice image",
-    ):
-        run_periodic_job(
-            sysp,
-            basis,
-            method="RKS",
-            functional="pbe0",
-            jk_method="bipole",
-            kpoints=(1, 1, 1),
-            output=out_stem,
-            output_qvf=False,
-            citations=False,
-            max_iter=100,
-            conv_tol_energy=1e-9,
-            initial_guess="SAD",
-            convergence="off",
-            damping=0.0,
-            fock_mixing=0.0,
-            level_shift=0.0,
-            use_exchange_ewald_split=True,
-            exchange_exxdiv="ewald",
-            ewald_precision=1e-8,
-            write_density=False,
-            write_molden_file=False,
-            write_xyz_file=False,
-            write_xsf_structure_file=False,
-            write_cif_file=False,
-            write_population_file=False,
-            record_hostname=False,
-            progress=False,
-        )
+    result = run_periodic_job(
+        sysp,
+        basis,
+        method="RKS",
+        functional="pbe0",
+        jk_method="bipole",
+        kpoints=(1, 1, 1),
+        output=out_stem,
+        output_qvf=False,
+        citations=False,
+        max_iter=100,
+        conv_tol_energy=1e-9,
+        initial_guess="SAD",
+        convergence="off",
+        damping=0.0,
+        fock_mixing=0.0,
+        level_shift=0.0,
+        use_exchange_ewald_split=True,
+        exchange_exxdiv="ewald",
+        ewald_precision=1e-8,
+        write_density=False,
+        write_molden_file=False,
+        write_xyz_file=False,
+        write_xsf_structure_file=False,
+        write_cif_file=False,
+        write_population_file=False,
+        record_hostname=False,
+        progress=False,
+    )
 
-    assert not out_stem.with_suffix(".system").exists()
-    assert not out_stem.with_suffix(".out").exists()
+    assert result.converged
+    assert result.exchange_ewald_split is True
+    assert result.energy == pytest.approx(-76.30241760934, abs=1e-8)
+    assert result.energy == pytest.approx(E_PYSCF_H2O_PBE0_631G_GAMMA, abs=3e-3)
+    assert out_stem.with_suffix(".system").exists()
+    assert out_stem.with_suffix(".out").exists()
 
 
 def test_bipole_rks_h2o_pbe0_exact_operator_tracks_pyscf():
@@ -672,12 +672,13 @@ def test_rks_legacy_gauge_optout_keeps_spheropole():
     assert r.exchange_ewald_split is False
     assert r.sr_image_extent_bohr is not None
     assert r.e_ext_el_spheropole is not None
-    # -1.1153890443093 pre-#478. The legacy-gauge opt-out shifts by exactly
-    # the same -2.484636e-4 Ha as the two corrected-gauge H2/12-bohr routes,
-    # which is the consistency check on the fix: the correction lives in the
-    # shared one-electron/nuclear Ewald gauge, so it is route-independent and
-    # leaves every J/K-route difference untouched.
-    assert r.energy == pytest.approx(-1.1156375078921, abs=1e-9)
+    # Restoring only the historical grid partition recovers the old native
+    # pin (-1.1156375078921 Ha) within 1.6e-10 Ha, with the same spheropole.
+    # The point-centered partition review is in docs/bipole_erfc_resume.md.
+    assert r.e_ext_el_spheropole == pytest.approx(
+        0.005559511758728281, abs=1e-11, rel=0.0
+    )
+    assert r.energy == pytest.approx(-1.1156334486137565, abs=1e-9, rel=0.0)
 
 
 def test_rks_multik_split_rejects_adhoc_kmesh():

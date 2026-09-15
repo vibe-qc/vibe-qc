@@ -650,9 +650,49 @@ def _install_duplicate_desc_filter():
     sphinx_logger.addFilter(_SuppressKnownNoise())
 
 
+def _pinned_qvf_link(source: str, target: str) -> str | None:
+    """Adapt known upstream-relative links without altering the pinned pages."""
+    source_path = Path(source)
+    if source_path.parent != _REPO_ROOT / "docs" / "qvf" / "_vendored":
+        return None
+    targets = {
+        ("GOVERNANCE.md", "conformance/README.md"): "/qvf/conformance",
+        ("GOVERNANCE.md", "docs/integration_guide.md"): "/qvf/integration_guide",
+        ("integration_guide.md", "../conformance/README.md"): "/qvf/conformance",
+        ("library_guide.md", "../cpp/include/qvf/qvf_c.h"): (
+            "https://github.com/vibe-qc/qvf/blob/"
+            "v0.1.0-docs.1/cpp/include/qvf/qvf_c.h"
+        ),
+    }
+    return targets.get((source_path.name, target))
+
+
+def _resolve_pinned_qvf_links(app, doctree):
+    """Keep snapshot links working in both included and standalone pages."""
+    from docutils import nodes
+    from sphinx import addnodes
+
+    for node in doctree.findall(addnodes.pending_xref):
+        target = _pinned_qvf_link(node.source or "", node.get("reftarget", ""))
+        if target is None:
+            continue
+        if target.startswith("https:"):
+            node.replace_self(
+                nodes.reference("", "", *node.children, refuri=target, internal=False)
+            )
+        else:
+            node["refdomain"] = "std"
+            node["reftype"] = "doc"
+            node["reftarget"] = target
+
+
 def setup(app):
     """Register config values + Pygments lexer aliases + warning filter."""
     app.add_config_value("is_dev", is_dev, "env")
+
+    # Adapt only the known upstream paths; every unrelated unresolved link
+    # still reaches the standard Sphinx/MyST warning path.
+    app.connect("doctree-read", _resolve_pinned_qvf_links)
 
     # Suppress unfixable autodoc noise — see ``_on_missing_reference``.
     app.connect("missing-reference", _on_missing_reference)

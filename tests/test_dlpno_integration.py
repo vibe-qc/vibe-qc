@@ -52,7 +52,8 @@ class TestDLPNOEndToEnd:
     """Full DLPNO pipeline on H2O/STO-3G against canonical DF-MP2."""
 
     @pytest.fixture(scope="class")
-    def h2o_system(self):
+    @classmethod
+    def h2o_system(cls):
         """Build H2O/STO-3G, run RHF, DF with a real RI fitting basis."""
         mol = Molecule(
             [

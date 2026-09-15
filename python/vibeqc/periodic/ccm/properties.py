@@ -108,7 +108,17 @@ class CCMBondAnalysis:
 
 
 def _total_density(scf_result) -> np.ndarray:
-    """Total density (closed- or open-shell), real part for periodic results."""
+    """Total density (closed- or open-shell), real part for periodic results.
+
+    Open-shell detection tests the VALUE, not ``hasattr``, via the shared
+    :func:`vibeqc.spin_channels.spin_densities`. The supercell-Γ runner
+    results (``CCMRealGammaResult``, ``CCMFourCentreResult``) declare
+    ``density_alpha`` / ``density_beta`` as fields that are ``None`` on a
+    closed-shell run, so a ``hasattr`` test takes the open-shell branch and
+    evaluates ``None + None``. That trap cost #679 once and was still live
+    here: it turned the whole population sidecar into a file of ``TypeError``
+    rows on a real-Γ job.
+    """
     alpha, beta = spin_densities(scf_result)
     if alpha is not None:
         P = np.asarray(alpha) + np.asarray(beta)

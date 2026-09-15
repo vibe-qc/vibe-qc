@@ -5,6 +5,684 @@
   Scientific inputs and numerical/MPI attestation checks are retained.
   This preparation does not change the original GitLab release tag.
 
+## [v0.17.2] - 2026-09-13 - *Tew's Tern*
+
+### Known issues: periodic GDF cost regressions carried from v0.17.1 (#206, #196)
+
+Both regressions shipped in v0.17.1 and are not resolved in this release.
+Both are cost regressions with distinct causes: 3D periodic GDF calculations
+run far slower than they did in v0.17.0.
+
+* **#206, the range-separated three-centre build.** The blocking lane
+  `tests/test_periodic_molden_gamma_export.py` took 21.0 s in CI at v0.17.0
+  and 641.6 s at v0.17.1 with the test unchanged. A profile puts 98.8% of its
+  slowest case in `compute_gdf_range_separated_integrals`. This release
+  carries the enumeration change described under "Changed: GDF short-range
+  auxiliary image enumeration (#206)" in this section. It leaves physical
+  cutoffs and screening unchanged. Its runtime effect and numerical parity
+  have not been independently verified, and it is not claimed to resolve the
+  regression.
+* **#196, the one-electron AO cutoff widening.** Periodic GDF widens the
+  one-electron AO cutoff to 69.9 bohr on a two-atom cell, 12527 lattice cells
+  against 135 before. On that reproduction the calculation did not reach its
+  first SCF iteration in 20 minutes. It is a separate cause from #206's lane
+  slowdown: the one-electron path took 0.48 s of the 254 s profiled case. No
+  fix exists yet.
+
+A later patch release follows once #206 is verified resolved and #196 is fixed.
+
+### Fixed: molecular GFN2-xTB records the temperature its SCC ran at (#247)
+
+With the electronic temperature left at its default, the molecular GFN2-xTB
+auto-stabilisation ladder can converge a stalling SCC on its
+finite-temperature rung (T = 0.005 Ha). `run_job` then reported the internal
+energy, printed no finite-temperature section and recorded the requested
+`gfn2_electronic_temperature = 0.0` in `.system`. The route now takes the
+executed temperature from the native result. At T > 0 it reports the Mermin
+free energy A = E - T*S as `energy`, the convention the SCC-DFTB retry already
+follows. It also prints the `Mermin free energy (finite electronic
+temperature)` section with the temperature, E_internal and -T*S, cites
+Fermi-Dirac smearing, and adds `gfn2_executed_electronic_temperature` to
+`.system` beside the requested value. On a square Li4 cluster (3.0 A side,
+default settings) the reported energy moves from -0.9594699161 Ha to
+-0.9733618556 Ha. Runs that converge at T = 0 are unchanged.
+
+### Fixed: stale basis-overlay detection compares content
+
+The runtime prefers the `build/basis_library` overlay over the committed
+basis library, and the guard that warns when the overlay is stale compared
+three canary files by size. The #207 correction to `pob-tzvp-rev2.ecp`
+changed radial powers at constant length, and ECP sidecars were not
+canaries, so an overlay assembled before it kept the wrong operator in
+silence. The guard now compares the canaries and every committed `.ecp`
+sidecar by content, at about 2 ms more per import, and names the differing
+file. Regenerating the overlay is unchanged: `scripts/setup_basis_library.sh`.
+
+### Tests: class-scoped fixtures are classmethods (pytest 10)
+
+The 34 class-scoped fixtures written as instance methods (DLPNO, CC anchors,
+CC variants, CASSCF gradients, semiempirical, solver framework) are now
+`@classmethod` fixtures, so pytest no longer emits `PytestRemovedIn10Warning`.
+Fixture values, assertions and reference values are unchanged.
+
+### Changed: local DLPNO-CCSD corrects the PNO truncation of its iterated pairs (#222)
+
+Local DLPNO-CCSD truncates each iterated pair's amplitudes to that pair's PNO
+space and dropped the part of the pair's semicanonical MP2 energy the
+truncation removes. `LocalCCSDOptions.pno_correction` (default `True`) now
+adds `sum_ij (e_ij(full PAO) - e_ij(PNO))` to `e_corr`, the correction
+DLPNO-MP2 already applies. On NH3/cc-pVDZ, with the domains and pair list held
+fixed, it removes 91.5 % of the PNO truncation error at `tcut_pno=1e-5` and
+34.2 % at NormalPNO, and it is zero at `tcut_pno=0`. Default DLPNO-CCSD and
+DLPNO-CCSD(T) correlation energies therefore move. The term is reported as
+`LocalCCSDResult.e_pno_correction`; `run_job` prints `PNO MP2 correction` and
+`E(PNO truncation corr)`, records `dlpno_pno_correction` in `.system`, and adds
+`pno_correction` and `e_pno_correction` to the `dlpno_ccsd_done` event. Pass
+`pno_correction=False` for the previous energies. Retained references and the
+periodic pre-sweep CCSD routes pin it off. Open-shell local CCSD has no
+correction.
+
+### Fixed: periodic pre-sweep DLPNO routes keep their legacy PNO density (#65)
+
+v0.17.1 moved the default PNO pair density of `DLPNOMP2Options` and
+`LocalCCSDOptions` from `pno_norm="legacy"` to `"mp2"` (Riplinger-Neese
+Eq. 23). Six periodic pre-sweep builders construct those options without
+naming `pno_norm`, so they took the new density although each documents
+holding its pre-sweep convention: the toroidal DLPNO-MP2 and DLPNO-CCSD
+defaults, the closed-shell DLPNO-MP2 and DLPNO-CCSD options
+`megacell_run_job` forwards, and the pipek-mezey DLPNO-MP2 and DLPNO-CCSD
+defaults of the aiccm2026dev-b route. They now pin `pno_norm="legacy"`, as do
+the retained recipes `examples/periodic/aiccm2026dev_diamond_bonds_bands_compare.py`
+and `examples/molecular/benchmark-dlpno-ccsd-t.py`. The shift on periodic
+numbers was not measured, so periodic pre-sweep DLPNO results produced on
+v0.17.1 should be re-run. The pin-guard tests of all three routes now assert
+the pin.
+
+### Fixed: Direct COSMO-RS cites its method paper (#558)
+
+A Direct COSMO-RS run cited only the conductor COSMO papers. There was no
+entry for Sinnecker, Rajendran, Klamt, Diedenhofen & Neese 2006
+(doi:10.1021/jp056016z), the method's original paper. And
+`run_cpcm_scf(output=...)` passed `solvent_variant="cpcm"` to the citation
+writer whatever the run's variant was. It now passes the run's own variant.
+A new `dcosmo-rs` route carries the whole calculation, because only one
+solvation row fires per variant: the method paper, COSMO-RS (Klamt 1995, 1998),
+conductor COSMO, and the COSMO FINE Cavity the variant requires, with the
+Gaussian-charge diagonal that cavity uses (Lange & Herbert 2010). Scalmani and
+Frisch are not in it, because their diagonal belongs to the Lebedev cavity that
+Direct COSMO-RS refuses. CPCM and COSMO runs cite the same papers as before,
+since their two rows are identical. `run_job` does not pass the variant yet.
+
+### Fixed: GFN2 auto-stabilisation no longer abandons a converging SCC or overrides a requested temperature (#3)
+
+The molecular GFN2-xTB driver's 700-iteration stabilisation checkpoint is now
+advisory: a primary SCC attempt that is still contracting is extended instead
+of being handed to the retry ladder. Adenine converges at 720 iterations; with
+the checkpoint engaged, the ladder finished the solve at 0.005 Ha electronic
+temperature and moved the reported energy by 6.7 mHa, and `max_iter = 2500`
+failed outright where 2499 converged. At `conv_tol_charge = 1e-8` the
+shipped-path adenine energy moves from -27.5014338 to -27.5081085 Eh, and
+with the default mixer `auto_stabilize` no longer changes the answer. An
+explicit Broyden or DIIS mixer can still stall into the finite-temperature
+rescue. The ladder also honours an
+explicitly requested electronic temperature on every rung, so a caller asking
+for exact Aufbau gets honest non-convergence rather than a smeared energy.
+Without an explicit request the finite-temperature rescue is unchanged.
+
+### Fixed: `cpcm_gradient` refuses a Direct COSMO-RS result (#558)
+
+`cpcm_gradient` did not know `variant="dcosmo-rs"` existed. Handed a Direct
+COSMO-RS result, it returned the conductor-COSMO gradient, without the
+`sum_t a_t mu_S(sigma_t)` energy term or the `q^dRS` operator. Nothing about
+that number looked wrong: it was smooth, and its translation residual was
+2.1e-15. Against a central difference (h = 1e-3 bohr) of the energy the run
+reported, it was off by up to 1.4e-03 Ha/bohr on asymmetric water (RHF/STO-3G,
+fine cavity at 0.40 A, eps = inf), with one component of the wrong sign. The
+conductor COSMO gradient at the same settings agrees with its own central
+difference to 1.0e-06. This shipped in v0.17.1 with Direct COSMO-RS itself.
+
+It now raises `NotImplementedError` and says why no gradient exists. Klamt's
+hydrogen-bond term makes `mu_S'` jump at `sigma = +-sigma_hb`, and segments
+cross that corner as the atoms move, so the energy is not differentiable in
+the geometry. Adding the two missing terms would not change that. Smoothing the
+published functional form would, and that is a maintainer decision. For an
+analytic gradient use `variant="cosmo"`, which is a different energy.
+`cpcm_gradient_fd` rebuilds the Direct COSMO-RS energy, but it steps wherever
+a segment crosses the corner. No energy changes.
+
+### Fixed: BIPOLE nuclear-gradient image precision (#82)
+
+The fixed-density Ewald nuclear-gradient helper now sizes its short-range
+nuclear image domain with the supplied precision, matching the energy helper.
+Previously it always used `1e-8`, selecting a different finite image set for
+nondefault precision values in both the legacy and physical pair domains.
+The default is unchanged; this repair does not certify the full analytic
+gradient or change its research-preview status.
+
+### Fixed: exact-Gamma GDF population metric and spin containers (#203)
+
+GDF population sidecars and QVF atom properties now contract accepted spin
+or total densities with the returned SCF overlap. Explicit-Gamma per-k
+containers are checked and unwrapped together. Mulliken, spin, Loewdin and
+Mayer analyses no longer use the molecular home-cell overlap or refill MO
+occupations. ECP charges use the runner-resolved effective nuclear charges.
+Hirshfeld, dipole and Wiberg analyses report unsupported periodic definitions;
+NPA retains its existing unavailable marker. Multi-k population gating remains.
+
+### Tests: cover both public Gamma SAD routes (#209)
+
+The normalized-SAD POB regression retains the three public routes and dual
+driver probes landed in `f385b1b`. Its Hermiticity assertion now enforces
+1e-13 as an absolute bound with zero relative tolerance. Electron-count,
+selected-driver, selected-guess and convergence assertions remain enforced.
+
+### Tests: physical chi half-translation qualification (#62)
+
+Two- and three-point chi fixtures exercise raw J/K components, density
+equivariance and the occupied/virtual Seitz group under the existing 1e-8
+gates. An independent finite Gaussian-charge reference checks short-range
+J/K and detects exchange-output cropping. The physical domain remains
+opt-in; the legacy even-mesh refusal and production reduction gates remain.
+
+### Fixed: chi physical-domain provenance (#243)
+
+Four-center chi results now distinguish the physical pair-midpoint domain
+from the legacy absolute image domain. Physical-domain runs no longer inherit
+the legacy study support qualification. This metadata correction preserves
+the opt-in default and numerical thresholds; half-translation covariance
+qualification remains a separate requirement under issue #62.
+
+### Fixed: AO rotations near Euler-angle poles (#233)
+
+Shared Wigner rotations now preserve identity operations rounded by non-cubic
+lattice transforms and retain small physical tilts near both Euler-angle poles.
+The previous inverse-cosine extraction could turn roundoff into p-orbital sign
+flips. Regression coverage includes hexagonal h-BN overlap and kinetic
+invariance and molecular dense and compact AO actions.
+
+### Fixed: molecular DFT grid consistency across mid-level APIs
+
+Full wB97X-D and double-hybrid dispatchers, direct molecular optimizers,
+FD Hessians, molecular NEB/dimer/IRC images, atomic references, CLI ground-state
+DFT and D4 reference generation now apply the documented grid default.
+Untouched KS options receive `orca-defgrid3`; custom grid fields win, and
+`grid_level="legacy"` preserves the old choice through nested calls.
+ROKS options and grid selection reach all optimizer energies and displacements.
+Atomic reference caches distinguish complete grids. The low-level `run_rks`
+and `run_uks` supplied-option contract remains as-given (#80).
+The TDDFT CLI uses the current SCF signature and passes reference densities
+and the same grid to the response kernel. Open shells honor `--casida` and
+use spin-correct occupations. All four molecular TDDFT drivers accept an
+explicit `grid_options` for the XC response.
+
+
+### Fixed: Davidson partial spectra and initial subspace control
+
+`SolverOptions.n_guess` now controls the initial subspace for real and complex
+Davidson solvers; zero retains the native automatic choice. The complex
+Hermitian expansion now uses the correct conjugate projection and two-pass
+orthogonalization against both the basis and the current correction block.
+A tolerance-independent dependence threshold prevents premature stagnation.
+These defects could replace positive roots with near-zero spurious values.
+
+### Fixed: retained-operator covariance residual scaling
+
+The shared operator audit now preserves tiny nonzero covariance defects and
+representable large residuals when computing the Frobenius norm. Previously,
+squaring unscaled entries could turn a failing defect into zero or reject a
+finite residual as overflow. Absolute tolerances and nonfinite refusal remain
+unchanged; these diagnostics do not authorize production symmetry reduction.
+
+### Added: operator leakage checks for selected symmetry subspaces
+
+Selected molecular and periodic subspaces can now be checked for coupling
+to discarded directions under both an operator and its adjoint. The shared
+audit checks compressed operator covariance, preserves failures through
+further selections, and uses scaled relative leakage norms. It remains a
+retained-coordinate diagnostic without production reduction authorization.
+
+### Documentation: finish current-policy references (#195)
+
+Contributor setup links to the published branch, privacy and prose rules.
+Release instructions state their requirements directly; README, dependency
+comments and ignore-file guidance link to maintained documentation. Missing
+root policy files are no longer presented as current authorities there.
+Contributor links use the actual lowercase Sphinx page name.
+
+### Fixed: report NPA as unimplemented, not a population failure (#197)
+
+Population exports skip the deliberately unavailable NPA API and report its
+NAO construction requirement in `unavailable.npa`, retaining the empty `npa`
+array. Genuine calculation errors remain in `errors`. The feature matrix
+and output guides distinguish this limitation from provisional NBO helpers.
+
+
+### Tests: keep the GFN2 documentation gate scoped to its row (#58)
+
+The feature test accepts the current gated-experimental wording and checks
+the GFN2 row itself for native-D4 scope and the external-xtb production gate.
+
+### Documentation: publish the contributor policies (#195)
+
+Moved branch, checkout, privacy and prose rules into CONTRIBUTING.md and
+repointed hook guidance there, so contributors can read the policies in the
+current repository. Existing hook checks and exclusions are unchanged.
+
+### Fixed: GDF external-XC component regression (#213)
+
+The external-XC regression now includes the functional energy in the
+electronic-energy identity, reconstructs it independently from provider
+quadrature inputs, and checks that the returned density is the one evaluated.
+Hartree and zero-exchange assertions retain their existing tolerances.
+
+### Changed: GDF short-range auxiliary image enumeration (#206)
+
+Three-centre value and derivative builders enumerate auxiliary images in
+the actual AO-pair capsule's coordinate bounds, intersected with the existing
+screening ball. Physical cutoffs, screening budgets and retained-term order
+are unchanged. Runtime improvement and numerical parity require independent
+validation; this does not claim the reported 30-fold regression is resolved.
+
+### Fixed: BIPOLE hybrid XC energy reporting
+
+The final BIPOLE energy-component block now includes exchange-correlation
+energy for RKS and UKS. It reads the stored exact terminal XC value, so hybrid
+comparisons can inspect that component directly without another quadrature.
+The broader BIPOLE/GDF energy discrepancy in issue #163 remains open.
+
+### Fixed: periodic multipole order-four regression coverage
+
+The invalid-order regression now rejects unsupported orders while checking
+the existing 25-component spherical `L_max=4` output and its overlap
+component. The native multipole implementation is unchanged (issue #57).
+
+### Added: complete physical BIPOLE J/K producer admission
+
+The private physical source now preflights every domain and native panel
+before copying density or evaluating integrals, then streams one domain and
+panel at a time into the native J/K reducer. Shared budgets include both
+geometry passes and the complete numerical reservation. Control snapshots
+and a domain-replay digest protect the admitted walk. This finite-operator
+component does not enable production symmetry-reduced HF or DLPNO-CCSD(T).
+
+### Fixed: remaining BIPOLE screening attribution
+
+The public BIPOLE precision-parameter documentation and the multipole and
+runner descriptions now identify charge-pair Schwarz screening. They retained
+the removed QQR name after the run-log correction. Screening arithmetic,
+thresholds, historical removal notes and serialized policy identifiers are
+unchanged.
+
+### Fixed: 1-D MSINDO cyclic-cluster citations
+
+A 1-D MSINDO cyclic-cluster run with Madelung embedding cited the
+Janetzko-Bredow-Jug 2002 exact Madelung matrices and Ewald 1921 next to the
+Bredow-Geudtner-Jug 2001 construction. Its 1-D kernel is the frozen +/-1, +/-2
+shell bare point-charge sum of `ccm1dmadelsum.f`: it performs no Ewald split,
+and the 2002 matrices are defined for two and three dimensions only. The
+frozen kernel now has its own citation route carrying the construction
+reference alone; 2-D and 3-D embeddings, and the SECCM wire Ewald, cite as
+before. No number changes.
+
+### Fixed: periodic SAP guess quadrature
+
+The shared Python SAP guess now uses the all-space Becke partition required
+by its localized AO-pair integrals, matching the native SAP drivers. Periodic
+XC weights had omitted AO tails in neighboring cells and distorted the
+smooth long-range potential matrix. The periodic Ewald potential and test
+tolerances are unchanged.
+
+### Fixed: links in the pinned QVF documentation (#211)
+
+The included QVF guides now link to the core conformance and integration
+pages and the C header at the pinned upstream commit. The documentation
+build adapts four known upstream-relative links without editing the vendored
+snapshot. Unrelated missing links still produce strict-build warnings.
+
+### Added: pob-TZVP completed with Rb-I from the Bredow archive (#228)
+
+`pob-tzvp` now carries all 48 of its elements. The 16 fifth-period records,
+Rb to I (Laun, Vilela Oliveira and Bredow, *J. Comput. Chem.* **39**, 1285
+(2018)), come from the Bredow group's archive, bundled under
+`basis_library/sources/pob-TZVP/`. They do not come from the Basis Set
+Exchange, whose copy carries the sulfur d-polarisation column-swap defect.
+This supersedes "pob-TZVP deliberately does not" in the pob-DZVP-rev2 entry
+below. H to Br are unchanged apart from the citation line. The new elements
+are valence-only, with Stuttgart effective-core potentials identical block
+for block to pob-TZVP-rev2's. Checked against PySCF reading the raw CRYSTAL
+records: AgCl RHF agrees to 5e-12 Ha.
+
+### Fixed: pob-TZVP-rev2 effective-core potentials
+
+CRYSTAL states each pseudopotential term as r^n, while libecpint reads a
+Gaussian-format power and subtracts two. The CRYSTAL bridge passed the power
+through unconverted, so every Stuttgart r^0 term acted as a singular r^-2 one.
+The same bridge emitted no primitive at the local channel, so libecpint
+promoted the f projector to the local potential on the periodic route while
+the sidecar-fed molecular route kept it projected: one record, two operators.
+Both are corrected and the 46 shipped ECP records regenerated. RHF on an AgCl
+molecule moves from -564.599360 to -605.527379 Ha, matching an independent
+PySCF reference to 1e-10, and the libecpint quadrature diagnostics on that
+cell fall to zero. Results for Rb-Po and La-Lu in pob-TZVP-rev2 from before
+this fix do not stand.
+
+### Fixed: AO-to-atom partitioning on Cartesian bases
+
+Wiberg bond orders, the delocalization index and the band-structure AO
+groupings derived their AO-to-atom map as `2l+1` functions per shell.
+That is the pure spherical-harmonic count, so on a Cartesian basis the
+map came out one entry short per d shell and every per-atom sum built
+on it was misaligned or ran off the end. All four copies of the map now
+delegate to the single derivation in `vibeqc.properties`, which reads
+each shell's `pure` flag. Every bundled basis is pure, so this was
+reachable only from a basis built explicitly with `pure=False` shells;
+results for all bundled bases are byte-identical.
+
+Three further copies of the same map were missed by that sweep and now
+delegate too. `nbo._natural_bond_orbitals` built its map inline at
+`2l+1`, so the per-atom NBO populations were misaligned on a Cartesian
+basis. In `periodic/chi/localization.py`, `_ao_metadata` and
+`_reference_atom_indices` wrote a `2l+1` cursor into arrays preallocated
+at `nbasis`, leaving a tail of rows unwritten: those AOs read back as
+sitting at the cell origin on atom 0. `periodic/chi/properties.py`
+`_ao_atom_indices` was already Cartesian-aware and is unchanged in
+behaviour; it delegates so the count is decided in one place.
+
+### Added: private periodic ROHF overlap Lagrangian
+
+The private MDF force machinery can now construct the ROHF overlap term
+from complex accepted spin densities and physical spin Focks. It requires
+nested occupied projectors and shared-orbital stationarity, with storage
+admission before matrix work. Fractional or inconsistent states are rejected.
+Full ROHF gradient assembly and numerical acceptance remain pending.
+
+### Added: spectral operator provenance in QVF
+
+The QVF writer preserves the energy operator, projection operator, orbital
+basis, population density and validation status supplied by private ROHF
+diagnostics. All four DOS/pair sections retain these labels; COOP/COHP
+metadata members carry the same values. Partial or invalid label sets fail
+before spectral members are written. Public ROHF spectral generation remains
+guarded; serialization and numerical acceptance are still pending.
+
+### Fixed: BIPOLE automatic XC image radius
+
+RKS and UKS now use the requested periodic Becke radius for XC bra-image
+selection when the density domain is `AUTO`. Previously, a nondefault grid
+radius could leave the AO image sum at the default 10-bohr reach. The native
+cutoff cap and explicit periodic-density validation still apply.
+
+The RKS/UKS analytic-gradient preview now propagates that same radius into
+its XC lattice options, including grid-motion terms, without changing the
+caller's cutoffs or screening settings. Nondefault-radius LDA/PBE force
+regressions cover closed-shell and unequal-spin densities.
+
+### Fixed: padded multi-k BIPOLE RHF orbital response
+
+The analytic-gradient preview no longer rejects the maintained BeH2 case
+because of a numerically unresolved CG direction. It assembles the orbital
+response with unit directions and solves the transpose equation, including
+complex rotations and k-point weights. The response residual and existing
+finite-difference gradient tolerances remain enforced. See the
+[gradient preview documentation](https://vibe-qc.com/docs/user_guide/bipole.html#forces-and-analytic-gradient-preview)
+for supported domains and the dense solver's scaling limitation.
+
+### Fixed: `.system` manifest rewrites after a working-directory change (#127)
+
+For a relative output stem such as `run_job(output="pilot")`, the manifest
+updater rewrote `pilot.system` through that relative path on every update, so
+a rewrite after the process changed directory left a full copy of the
+manifest in the new working directory while the `.out` stayed in the job
+directory. Artifact existence checks and hashes depended on the working
+directory in the same way. The job-start directory is now recorded once and
+every manifest probe and write goes through it. Manifest text is unchanged
+and absolute stems behave as before; `ManifestUpdater.path` and
+`OutputWriter.manifest_path` now return the anchored absolute path for a
+relative stem.
+
+### Fixed: closed-shell results refused as ROHF by GDF properties (#198)
+
+`periodic_gdf_properties` classified a result as open-shell by the presence
+of a `density_alpha` attribute. The CCM result adapters declare that field
+and set it to `None` on closed-shell runs, so closed-shell results matched
+the ROHF signature and were refused with the ROHF spectral-properties error.
+Shell type is now decided from the spin-density values, and absent or `None`
+per-spin orbital energies are treated alike: a closed-shell result gets the
+restricted spectra, and an open-shell result with `None` orbital fields gets
+the ROHF refusal instead of a shape error.
+
+### Fixed: unrestricted population summaries and their QVF spin member (#205)
+
+Every UHF/UKS population summary recorded an `AttributeError` under
+`errors["mulliken_spin"]` and left `mulliken_spin_atoms` empty, because the
+Mulliken spin block sized its AO-to-atom map from a `ShellInfo` member that
+does not exist. The map now comes from the shared shell-to-atom helper.
+Fixing the map alone would have made QVF validation fail for every
+unrestricted `run_job` and `run_periodic_job` with default outputs: the
+writer named the atom property `mulliken_spin`, where the QVF specification
+and both manifest schemas require `spin_population`. It now writes
+`spin_population`.
+
+### Fixed: Hermiticity check on per-k density stacks (#201)
+
+`properties._real_if_hermitian` took the adjoint with `.T`, which on an
+`(nk, n, n)` stack of per-k densities also reverses the k axis. Exactly
+Hermitian periodic densities then drew a false "density matrix is
+non-Hermitian" warning when `nk = 1` or `nk == n`, and raised `ValueError`
+otherwise. The adjoint now swaps only the two AO axes. The returned matrix is
+unchanged, so no property value moves. The fix commit `0ef9e5c` names #203 in
+its subject by mistake. The Gamma population defects tracked in #203 are a
+separate change; see "Fixed: exact-Gamma GDF population metric and spin
+containers (#203)".
+
+### Added: AICCM manifests record the correlation's citation route (M8)
+
+When a correlation driver stamps a citation route, the manifest now records
+it as `aiccm_correlation_route`, for example `aiccm2026dev-a-ri-ccsd(t)`,
+beside the requested `aiccm_correlation`. The request alone could not tell a
+neutral-RI number from a union-and-weight one, or say whether the
+perturbative triples ran. SCF-only runs carry no route. The output-files
+guide now gives the values of the finite-torus fields and what a mismatch in
+each means when comparing two runs; `bvk_nrep`, for instance, is a supercell
+count and not a k-point mesh. AICCM remains experimental.
+
+### Added: Direct COSMO-RS (#558)
+
+`SolventModel(variant="dcosmo-rs", sigma_potential=...)` feeds the solvent's
+sigma potential back into the electronic Hamiltonian, so the solute's
+wavefunction responds to a real solvent instead of a scaled conductor. This is
+the second of the two maintainer-approved endpoints, and it had no
+implementation at all. Sinnecker, Rajendran, Klamt, Diedenhofen & Neese 2006
+(doi:10.1021/jp056016z): solve `q = -A^-1 phi`, correct it with
+`phi^dRS_t = mu_S'(sigma_t)`, solve that through the same equation, put
+`q + q^dRS` in the operator, iterate.
+
+The paper states the operator and not the energy, so the energy is derived
+here: `G = E_gas[D] + (1/2) q.V_tot + sum_t a_t mu_S(sigma_t)`. Differentiating
+the third term with respect to the density produces exactly the extra charges
+of eq. 18, so the operator and that energy are the same statement and neither
+is free to be chosen separately. `phi^dRS` is verified to be `dE_rs/dq` to
+4e-08 relative, which pins the derivation and every unit conversion at once.
+
+Two requirements are enforced rather than documented, because both were
+measured and neither is a matter of taste:
+
+* **`epsilon=inf`.** The sigma potential *is* the real-solvent physics, so
+  scaling by `f(eps)` as well counts the solvent twice; the paper is explicit
+  that the correction acts on "the ideal screening charges appearing in a
+  conductor". The solvent is chosen by which sigma potential is passed.
+* **`cavity="fine"`.** The feedback is evaluated at `sigma_t = q_t/a_t`, and on
+  a switched Lebedev cavity that is ill-conditioned: switching shrinks weights
+  continuously, so the smallest segment sits 2.9e+07 below the median and
+  `|sigma|` reaches 640 e/angstrom^2 against a potential parameterized on
+  +-0.025. Dropping the tail does not help, because there is no clean cut and a
+  vanishing segment's energy does not vanish with it: `a mu(sigma) ~ a sigma^2
+  ~ 1/a`. The COSMO FINE Cavity puts the 99th percentile of `|sigma|` at 0.028,
+  inside the parameterization -- which is what this session's CFC work was for.
+
+The end-to-end check that needs no tolerance: a solvent with no interactions
+has `mu_S == 0` and `mu_S' == 0`, so Direct COSMO-RS must return the conductor
+COSMO energy *exactly*. It does, to 1.4e-14 Ha, which is what rules out a stray
+screening factor, a double-counted operator trace or a unit slip. A real
+potential moves the energy by 3.2e-03 Ha and converges in 10 macro-iterations
+against the conductor's 8.
+
+`result.direct_feedback` reports the two ways this can go wrong.
+`fraction_near_hb_corner` counts segments sitting where `mu_S'` is
+discontinuous -- Klamt's hydrogen-bond term is piecewise linear in each
+density, and about a quarter of a real solute's segments sit within a bin of
+`+-sigma_hb`; `fraction_outside_grid` counts area extrapolated beyond the
+potential's fitted range, a fraction of a percent on the fine cavity. Because
+the feedback is discontinuous in sigma, **a Direct COSMO-RS energy is not
+smooth in the geometry**: there is no analytic nuclear gradient for it and a
+finite-difference one will step wherever a segment crosses a threshold.
+
+### Added: a solvent sigma potential from a real COSMO run (#558)
+
+Direct COSMO-RS shipped with no way to get a solvent except by hand-building a
+toy ensemble. `cosmors.solvent_sigma_potential(conductor_result, params, ...)`
+takes a converged conductor COSMO run on the solvent and returns its sigma
+potential, through the chain that already existed -- surface, segment
+descriptors, potential -- with the three things that go wrong along it checked
+rather than documented.
+
+Two are refused outright, because both produce an entirely ordinary-looking
+potential and a wrong number:
+
+* **A screened run.** `build_conductor_surface` takes the charges as stored,
+  and those are the ideal `q*` only at `epsilon=inf`; at finite dielectric
+  vibe-qc stores `q = f q*`, so the profile is scaled by `f` and nothing
+  downstream can tell.
+* **Foreign cavity radii.** A parameter set is fitted against a radius set --
+  `KLAMT_1998` against H 1.30, C 2.00, N 1.83, O 1.72, Cl 2.05 angstrom -- and
+  since `sigma = q/a`, the default scaled-Bondi cavity changes every sigma the
+  constants were fitted to reproduce.
+
+The third cannot be refused. `KLAMT_1998` was fitted on
+`dmol/bpw91/dnp/cosmo-inf/nspa92` and anything computed here carries its own
+method and basis. That is an accuracy limit no code can repair, so it is made
+visible instead: `SigmaPotential.protocol` records what the surface was, beside
+`params.fitted_protocol`. Comparing two free-form tokens is a judgement, and
+the judgement is left to the reader with both halves in view.
+
+A computed water potential has the shape water should have, and that is what
+the regression asserts rather than a stored number: **positive** near
+`sigma = 0`, the cost of putting a nonpolar surface in water, and **negative at
+both wings**, where a polarized surface donates or accepts a hydrogen bond,
+deepening outward. A curve that were monotonic, or negative in the middle,
+would not be water.
+
+One consequence reads like a sign error and is not: the COSMO-RS term for a
+small solute in water comes out *unfavourable*, about +0.6 kcal/mol on top of
+the conductor energy, because most of a small solute's surface sits at moderate
+sigma where water's potential is positive. That is the hydrophobic penalty. It
+is asserted with its sign so nobody "fixes" it later.
+
+### Fixed: population output on the Gamma-CCM runner arms
+
+`write_population_file=True` on `variant="real-gamma"` or `"four-center"`
+wrote a file whose every section read `N/A -- TypeError`, and refused
+outright once the torus was larger than one cell. Two defects produced that.
+Those results' orbitals span the supercell while the sidecar's molecule is
+the unit cell, so the molecular fallback was analysing different objects; and
+they declare their per-spin densities as fields that are `None` on a
+closed-shell run, so every presence-based open-shell test downstream took the
+wrong branch and added `None` to `None`. The two arms now analyse their own
+cyclic cluster and report image-averaged per-cell Mulliken and Löwdin charges
+and folded Mayer bond orders, with Hirshfeld and the dipole carrying explicit
+unsupported reasons rather than crash text. In a large box at a one-cell
+torus the charges reproduce vibe-qc's molecular ones, which is what the new
+guard checks.
+
+### Added: pob-DZVP-rev2 gains silicon and Cr-Br; pob-TZVP deliberately does not
+
+`pob-dzvp-rev2` was a **partial import of a single paper**, not a revision
+question: every element BSE carries for it comes from the same publication
+(Vilela Oliveira, Laun, Peintinger, Bredow 2019) that already covers what we
+shipped. Our file held 19 elements with a hole at silicon, between aluminium
+and phosphorus, and stopped at vanadium. It now carries all 32; the citation
+route is unchanged because the source paper has not changed. Si, Fe and Br
+load and build 18, 31 and 32 functions.
+
+**`pob-tzvp` is left short on purpose, and the reason is worth recording.**
+Its 16 missing Rb-I blocks (Laun, Vilela Oliveira, Bredow 2018) are in the
+catalogue, so completing it looked like the same job. Comparing BSE's copy
+against our Bredow-archive-derived file first showed it is not: our sulfur is
+5s4p1d, BSE's is 5s4p with **no d polarisation function at all**. That is the
+signature of the column-swap defect this project already fixed (roadmap "Pob S
+d-polarisation column-swap fix", `f059b37`), where upstream pob put the
+d-exponent in the coefficient column and zero in the exponent column, so the
+function vanishes. BSE's pob-TZVP is an upstream copy carrying it.
+
+Importing 16 elements we cannot cross-check from a source demonstrably
+affected by a known defect in the same basis is the unverifiable import this
+workstream exists to avoid, so those blocks should come from the Bredow
+archive instead. `basis_library/sources/pob-TZVP/` holds only the 32 elements
+already shipped.
+
+The same comparison is what justified completing pob-DZVP-rev2: BSE's copy of
+*that* set agrees with ours on all 19 shared elements.
+
+### Added: the three single-element gaps in bundled libint files
+
+`cc-pVQZ` gains calcium, `cc-pV6Z` gains beryllium, `STO-3G` gains xenon. Each
+was missing because it was added to its set by a **later, separate
+publication** than the parent set, which is why libint's files omit them and
+why each now routes its own citation rather than inheriting the parent's:
+
+| Basis | Element | Source |
+|---|---|---|
+| cc-pVQZ | Ca | Koput, Peterson, *J. Phys. Chem. A* **106**, 9595 (2002) |
+| cc-pV6Z | Be | Prascher, Woon, Peterson, Dunning, Wilson, *Theor. Chem. Acc.* **128**, 69 (2011) |
+| STO-3G | Xe | Pietro, Blurock, Hout, Hehre, DeFrees, Stewart, *Inorg. Chem.* **20**, 3650 (1981) |
+
+Merged by the new `scripts/basisset_dev/merge_bse_element_blocks.py`,
+following `merge_def2_heavy_blocks.py`: libint's element data is copied
+verbatim under a provenance header and the Basis Set Exchange block is
+appended, so no existing element's numbers move. Verified block by block --
+every pre-existing element identical, exactly one element added per file.
+
+Checked against physics rather than only against the parser: RHF/cc-pVQZ on a
+calcium atom gives -676.75814 Ha against a literature Ca Hartree-Fock limit of
+about -676.758, and STO-3G on xenon builds exactly 27 functions, which is the
+5s 4p 2d minimal-basis count for that element.
+
+This closes three of the eight short imports the coverage audit found; five
+remain pinned in `tests/test_basis_integrity.py`, two of them vibe-qc's own
+pob family where which published revision should ship is a maintainer call.
+
+### Fixed: the basis-library integrity suite was running none of its checks
+
+`tests/test_basis_integrity.py` set `ROOT` to `parents[2]`, but the file lives
+in `<repo>/tests/`, so that is the directory *containing* the repository.
+`BASIS_DIR` therefore never existed, the `_basis_library_present()` guard was
+always false, and **all 17 tests skipped** -- silently, because a skip is not
+a failure. It had been that way since the initial public commit, while
+`features.md` advertised the module as the bundled basis-library gate.
+
+Running it for the first time immediately surfaced a second defect inside it:
+`test_custom_g94_files_exist_in_basis` compared `custom/` **stems** against
+`_list_g94`'s file **names**, so the difference was always the entire custom
+set and the assertion could not have passed. Both are fixed; the module now
+runs 16 checks green.
+
+Also adds an element-coverage guard against the Basis Set Exchange. The
+cc-pVnZ-PP gap was "sixteen fitting sets shipped, zero orbital sets did"; the
+same class of defect hides as a short import, meaning the right name with
+fewer elements. Of the 181 bundled `.g94` files whose name BSE also carries,
+exactly eight are short, and the set is now pinned: `6-31g` (stops at Zn),
+`cc-pvqz` (has Mg, not Ca), `cc-pv6z` (no Be), `sto-3g` (has I, not Xe), both
+`sap_*_large` superheavy tails, and vibe-qc's own `pob-tzvp` and
+`pob-dzvp-rev2`, which BSE carries in later revisions. Two tests: one pins
+the coverage each short basis does have and needs no optional distribution;
+one asserts against the catalogue that no *new* short import has landed, and
+skips without the `[bse]` extra.
+
+Worth knowing, and now in the user guide: a bundled-but-short basis cannot be
+completed by fetching, because `ensure_bases_available` skips any name that
+already resolves. Closing one of those gaps means bundling the blocks as a
+reviewed import, as the def2 beyond-Kr merge did.
+
 ## [v0.17.1] - 2026-09-10 - *Tew's Tern*
 
 ### Added: shared retained-operator symmetry audits

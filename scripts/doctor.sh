@@ -56,6 +56,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 # shellcheck source=_venv_helpers.sh
+. "$SCRIPT_DIR/_setup_helpers.sh"
 . "$SCRIPT_DIR/_venv_helpers.sh"
 # shellcheck source=_native_stamp.sh
 . "$SCRIPT_DIR/_native_stamp.sh"
@@ -98,10 +99,14 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     ok "branch '$head_branch' @ $head_sha"
     note "tip: $head_msg"
 
-    if git diff --quiet && git diff --cached --quiet; then
-        ok "working tree clean"
-    else
+    doctor_worktree_state=0
+    vibeqc_worktree_state || doctor_worktree_state=$?
+    if [ "$doctor_worktree_state" -eq 2 ]; then
+        warn "git could not read this repository (update.sh would refuse to run)"
+    elif [ "$doctor_worktree_state" -eq 1 ]; then
         warn "working tree has uncommitted changes (update.sh would refuse to run)"
+    else
+        ok "working tree clean"
     fi
 
     # How far ahead/behind origin/main is the current HEAD? Cheap signal

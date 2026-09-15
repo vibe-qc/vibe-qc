@@ -153,6 +153,7 @@ def _copy_lattice_options(source) -> object:
         "sr_range_screening",
         "sr_sparse_traversal",
         "pair_complete_1e",
+        "eri_interaction_cutoff_bohr",
     ):
         if hasattr(source, name) and hasattr(target, name):
             setattr(target, name, getattr(source, name))
