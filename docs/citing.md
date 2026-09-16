@@ -41,7 +41,7 @@ vibe-qc versions and for ad-hoc citations outside `run_job`.
 Always cite this. APA-style:
 
 > Peintinger, M. F. (2026). *vibe-qc: a quantum-chemistry code for
-> molecules and solids* (version 0.17.3) [Software]. Mozilla Public
+> molecules and solids* (version 0.17.4) [Software]. Mozilla Public
 > License 2.0. <https://vibe-qc.com/>
 
 BibTeX:
@@ -51,7 +51,7 @@ BibTeX:
   author  = {Peintinger, Michael F.},
   title   = {{vibe-qc}: a quantum-chemistry code for molecules and solids},
   year    = {2026},
-  version = {0.17.3},
+  version = {0.17.4},
   license = {MPL-2.0},
   url     = {https://vibe-qc.com/},
 }

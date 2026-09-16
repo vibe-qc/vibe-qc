@@ -1662,6 +1662,88 @@ def test_pair_offset_changes_the_minimum_image_without_changing_class_weight() -
     assert residue_two[0].weight == pytest.approx(1.0)
 
 
+def _cyclic_count_result(system, control, counts):
+    if control == "gamma_mesh":
+        return cyclic_gamma_mesh(system, counts).mesh
+    keyword = {"mesh": "mesh", "extension": "lattice_extension",
+               "shells": "wigner_seitz_shells"}[control]
+    return cyclic_lattice_extension(system, **{keyword: counts}).repetitions
+
+
+@pytest.mark.parametrize("control", ["gamma_mesh", "mesh", "extension", "shells"])
+@pytest.mark.parametrize("counts", [
+    True, False, np.bool_(True), 2.9, 2.0, np.float64(2.0),
+    "211", b"2", 2+0j, (2.9,), (2.0,), (-0.5,), (True,), (np.bool_(True),),
+    ("2",), ((2,),), np.array([2.0]), np.array([True]),
+    (float("nan"),), (float("inf"),), (2, 1.5, 1),
+])
+def test_cyclic_counts_reject_coercion_before_geometry(control, counts, monkeypatch):
+    from vibeqc.periodic.chi import scf as chi
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid cyclic counts reached reciprocal mesh construction")
+    monkeypatch.setattr(chi.KPoints, "gamma_centred", forbidden)
+    # No lattice: invalid input must be rejected before supercell construction.
+    with pytest.raises(ValueError, match="must contain integers"):
+        _cyclic_count_result(SimpleNamespace(dim=1), control, counts)
+
+
+@pytest.mark.parametrize("control", ["gamma_mesh", "mesh", "extension", "shells"])
+@pytest.mark.parametrize("dim", [1, 2, 3])
+@pytest.mark.parametrize("form", ["scalar", "numpy_scalar", "active", "full", "array"])
+def test_cyclic_counts_preserve_exact_integer_conventions(control, dim, form):
+    system = vq.PeriodicSystem(dim, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+    active = (2, 3, 2)[:dim]
+    inactive = 0 if control == "shells" else 1
+    if form in ("scalar", "numpy_scalar"):
+        counts = 2 if form == "scalar" else np.int64(2)
+        active = (2,)*dim
+    elif form == "active":
+        counts = tuple(np.int64(x) for x in active)
+    elif form == "full":
+        counts = active + (inactive,)*(3-dim)
+    else:
+        counts = np.array(active + (inactive,)*(3-dim), dtype=np.uint32)
+    expected = tuple(2*x+1 if control == "shells" else x for x in active)
+    expected += (1,)*(3-dim)
+    assert _cyclic_count_result(system, control, counts) == expected
+
+
+@pytest.mark.parametrize("control", ["gamma_mesh", "mesh", "extension", "shells"])
+@pytest.mark.parametrize("counts", [(-1,), (), (1, 1, 1, 1), (2, 2, 1)])
+def test_cyclic_counts_keep_range_length_and_inactive_axis_guards(control, counts):
+    with pytest.raises(ValueError):
+        _cyclic_count_result(SimpleNamespace(dim=1), control, counts)
+
+
+def test_cyclic_counts_keep_default_zero_shells_and_exclusivity():
+    system = vq.PeriodicSystem(2, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+    assert cyclic_lattice_extension(system).repetitions == (1, 1, 1)
+    assert cyclic_lattice_extension(system, wigner_seitz_shells=0).repetitions == (1, 1, 1)
+    assert cyclic_lattice_extension(system, wigner_seitz_shells=(0, 1)).repetitions == (1, 3, 1)
+    for left, right in [("mesh", "lattice_extension"), ("mesh", "wigner_seitz_shells"),
+                        ("lattice_extension", "wigner_seitz_shells")]:
+        with pytest.raises(ValueError, match="choose exactly one"):
+            cyclic_lattice_extension(system, **{left: 2, right: 2})
+
+
+@pytest.mark.parametrize("method", ["rhf", "rks", "uhf", "uks"])
+@pytest.mark.parametrize("control", ["mesh", "lattice_extension", "wigner_seitz_shells"])
+@pytest.mark.parametrize("counts", [(2.9, 1, 1), True, "211"])
+def test_cyclic_counts_fail_before_scf_backend(method, control, counts, monkeypatch):
+    from vibeqc.periodic.chi import scf as chi
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid cyclic counts reached SCF backend selection")
+    monkeypatch.setattr(chi, "_resolve_backend", forbidden)
+    monkeypatch.setattr(chi, "_warn_experimental", lambda: None)
+    kwargs = {control: counts}
+    if method.endswith("ks"):
+        kwargs["functional"] = "PBE"
+    with pytest.raises(ValueError, match="must contain integers"):
+        getattr(chi, f"run_aiccm2026dev_b_{method}")(
+            SimpleNamespace(dim=3), None, **kwargs
+        )
+
+
 def test_cyclic_mesh_is_unreduced_and_gamma_centred() -> None:
     system, _ = _h2_system(dim=1)
     kpoints = cyclic_gamma_mesh(system, (4,))

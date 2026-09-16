@@ -37,7 +37,7 @@ from ..._vibeqc_core import (
     PeriodicSystem,
     PeriodicXCDensityDomain,
 )
-from ...kpoints import KPoints
+from ...kpoints import KPoints, _integer_counts
 from ...level_shift_schedule import LevelShiftSchedule
 from ...mpi import LatticeOutputPartition, mpi_world
 from ...pbc_bipole import PBCBipoleRHFResult, run_pbc_bipole_rhf
@@ -689,10 +689,7 @@ def _normalise_mesh(
     dim = int(system.dim)
     if dim not in (1, 2, 3):
         raise ValueError(f"aiccm2026dev-b requires dim=1, 2, or 3; got {dim}")
-    if isinstance(mesh, (int, np.integer)):
-        values = [int(mesh)] * dim
-    else:
-        values = [int(value) for value in mesh]
+    values = _integer_counts(mesh, repeat=dim, name="aiccm2026dev-b mesh")
     if len(values) == dim:
         values += [1] * (3 - dim)
     elif len(values) != 3:
@@ -736,10 +733,9 @@ def _resolve_lattice_extension(
         )
     if wigner_seitz_shells is not None:
         dim = int(system.dim)
-        if isinstance(wigner_seitz_shells, (int, np.integer)):
-            shells = [int(wigner_seitz_shells)] * dim
-        else:
-            shells = [int(value) for value in wigner_seitz_shells]
+        shells = _integer_counts(
+            wigner_seitz_shells, repeat=dim, name="wigner_seitz_shells"
+        )
         if len(shells) == dim:
             shells += [0] * (3 - dim)
         if len(shells) != 3 or any(value < 0 for value in shells):

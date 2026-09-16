@@ -1377,6 +1377,7 @@ def _runner_bloch_kmesh(
 ):
     """Materialize the high-level runner's k-point input as a BlochKMesh."""
     from ._vibeqc_core import monkhorst_pack as _mp
+    from .kpoints import _integer_counts
 
     if kpoints is None:
         return _mp(system, [1, 1, 1])
@@ -1390,7 +1391,7 @@ def _runner_bloch_kmesh(
         mesh = list(kpoints)
     else:
         mesh = [kpoints, kpoints, kpoints]
-    return _mp(system, [int(n) for n in mesh])
+    return _mp(system, _integer_counts(mesh, name="kpoints mesh"))
 
 
 def _remap_kpoints_after_primitive_reduction(

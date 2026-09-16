@@ -459,6 +459,110 @@ def test_gamma_kmesh_info_rejects_222():
     assert _gamma_kmesh_info(system, (2, 2, 2)) is None
 
 
+@pytest.mark.parametrize("consumer", ["counts", "gamma", "points", "rohf"])
+@pytest.mark.parametrize("mesh", [
+    (1.9, 1, 1), (2.0, 1, 1), (True, 1, 1), (np.bool_(True), 1, 1),
+    ("2", 1, 1), "211", b"211", (2+0j, 1, 1), ((2,), 1, 1),
+    np.array([2., 1., 1.]), np.array([True, True, True]),
+])
+def test_integer_mesh_counts_gdf_consumers_reject_before_native(
+    consumer, mesh, monkeypatch,
+):
+    from vibeqc.periodic_rohf_gdf import _mesh_tuple_for_system as rohf_counts
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid GDF mesh reached native grid construction")
+
+    monkeypatch.setattr(kgdf, "_mp_native", forbidden)
+    consumers = {"counts": kgdf._mesh_tuple_for_system,
+                 "gamma": kgdf._gamma_kmesh_info,
+                 "points": kgdf._kmesh_to_kpoints_weights,
+                 "rohf": rohf_counts}
+    with pytest.raises(ValueError, match="must contain integers"):
+        consumers[consumer](SimpleNamespace(dim=3), mesh)
+
+
+@pytest.mark.parametrize("dim", [1, 2, 3])
+@pytest.mark.parametrize("full", [False, True])
+def test_integer_mesh_counts_gdf_preserve_padding_and_pinning(dim, full):
+    system = vq.PeriodicSystem(dim, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+    mesh = np.array([2]*dim + ([7]*(3-dim) if full else []), dtype=np.uint32)
+    expected = (2,)*dim + (1,)*(3-dim)
+    assert kgdf._mesh_tuple_for_system(system, mesh) == expected
+    points, weights = kgdf._kmesh_to_kpoints_weights(system, mesh)
+    assert len(points) == len(weights) == 2**dim
+    assert weights == pytest.approx(np.full(2**dim, 1/2**dim))
+
+
+@pytest.mark.parametrize("kind", ["python", "native", "unstructured", "invalid"])
+def test_integer_mesh_counts_gdf_preserve_typed_metadata(kind):
+    from dataclasses import replace
+    system = vq.PeriodicSystem(3, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+    mesh = vq.KPoints.gamma_centred(system, (2, 1, 1))
+    if kind == "native":
+        mesh = mesh.to_bloch_kmesh()
+    elif kind == "unstructured":
+        mesh = replace(mesh, mesh=None)
+        with pytest.raises(ValueError, match="structured k-mesh"):
+            kgdf._mesh_tuple_for_system(system, mesh)
+        return
+    elif kind == "invalid":
+        mesh = replace(mesh, mesh=(2.9, 1, 1))
+        with pytest.raises(ValueError, match="must contain integers"):
+            kgdf._mesh_tuple_for_system(system, mesh)
+        return
+    assert kgdf._mesh_tuple_for_system(system, mesh) == (2, 1, 1)
+
+
+@pytest.mark.parametrize("consumer", ["slab", "ibz_expand", "ibz_native"])
+@pytest.mark.parametrize("mesh", [
+    (1.9, 1, 1), (2.0, 1, 1), (True, 1, 1), (np.bool_(True), 1, 1),
+    ("2", 1, 1), (2+0j, 1, 1), ((2,), 1, 1),
+    np.array([2., 1., 1.]), np.array([True, True, True]),
+])
+def test_integer_mesh_counts_gdf_slab_and_ibz_refuse_coercion(consumer, mesh, monkeypatch):
+    from vibeqc import _vibeqc_core as core
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid count reached IBZ native grid construction")
+
+    monkeypatch.setattr(kgdf, "_mp_native", forbidden)
+    monkeypatch.setattr(core, "monkhorst_pack", forbidden)
+    system = SimpleNamespace(dim=3, symmetry=SimpleNamespace(operations=[]))
+    metadata = SimpleNamespace(mesh=mesh, ir_mapping=[0], kpoints=[[0., 0., 0.]])
+    with pytest.raises(ValueError, match="must contain integers"):
+        if consumer == "slab":
+            _call_slab_count_preflight(mesh)
+        elif consumer == "ibz_expand":
+            kgdf._expand_ibz_kmesh_to_full_bz(system, metadata)
+        else:
+            kgdf._resolve_ibz_native_state(system, None, metadata, None, None)
+
+
+def _call_slab_count_preflight(mesh):
+    import inspect
+    # Supply every required keyword, but stop at the existing auxiliary
+    # culling guard immediately after count validation. No SCF setup runs.
+    kwargs = {name: None for name, arg in inspect.signature(
+        kgdf._run_closed_shell_slab_gdf).parameters.items()
+        if arg.kind == inspect.Parameter.KEYWORD_ONLY
+        and arg.default is inspect.Parameter.empty}
+    kwargs["aux_drop_eta"] = 1.0
+    return kgdf._run_closed_shell_slab_gdf(None, None, mesh, None, **kwargs)
+
+
+@pytest.mark.parametrize("mesh", [(2, 3), (2, 3, 1), np.array([2, 3], dtype=np.uint32)])
+def test_integer_mesh_counts_gdf_slab_accepts_integer_active_or_full(mesh):
+    with pytest.raises(NotImplementedError, match="auxiliary primitive culling"):
+        _call_slab_count_preflight(mesh)
+
+
+@pytest.mark.parametrize("mesh", [(0, 1), (-1, 1), (1,), (1, 1, 1, 1), (2, 2, 2)])
+def test_integer_mesh_counts_gdf_slab_preserves_range_and_inactive_guards(mesh):
+    with pytest.raises(ValueError, match="slab GDF requires"):
+        _call_slab_count_preflight(mesh)
+
+
 def test_krhf_gdf_gamma_via_tuple_matches_pbc_gdf_rhf():
     """``run_krhf_periodic_gdf(kmesh=(1,1,1))`` HF delegates to the
     PySCF-µHa-validated ``run_pbc_gdf_rhf`` (exxdiv='ewald'), so the Nk=1

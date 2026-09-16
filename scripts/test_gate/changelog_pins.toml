@@ -11,6 +11,9 @@
 #     python scripts/test_gate/changelog_guard.py pin vX.Y.Z --amended "why"
 # An entry for work that has not been released belongs under [Unreleased].
 
+[sections."v0.17.4"]
+sha256 = "696c82798b87e0224489ec87497a4fd7f4bd90ec0881fc3e96390c97cf698541"
+
 [sections."v0.17.3"]
 sha256 = "bfa5b51ad3f519bf245717c4cc5fd049d684cf6c61536b583f3922c1233140ef"
 amended = "Preparation-only wording completed before the first v0.17.3 tag; Preparation-only incorporation of final main changes before the first v0.17.3 tag"

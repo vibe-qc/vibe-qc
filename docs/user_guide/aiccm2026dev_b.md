@@ -267,6 +267,13 @@ five primitive translations in every active direction, from (-2) through
 (+2), and hence an odd cyclic extension of five. The legacy `kpoints=` tuple
 is retained as an exact alias, but it is not a second convergence parameter.
 
+Mesh, lattice-extension and Wigner-Seitz shell counts must be integers.
+Python and NumPy integer inputs are accepted; floats (including `2.0`),
+booleans and strings are rejected before constructing cells or k-points.
+Orders must be positive and shell counts nonnegative. Scalar counts repeat
+over active directions; omitted inactive directions use one cell and zero
+shells. Explicit inactive entries must use those same values.
+
 ## Creating inputs
 
 There are three ways to create a χ-CCM input, from fastest to most

@@ -1325,7 +1325,9 @@ def run_pbc_gdf_rhf(
     PBCGDFResult
     """
     _refuse_ecp_options(options, "run_pbc_gdf_rhf", system=system)
-    kmesh = tuple(int(x) for x in kmesh)
+    from .kpoints import _integer_counts
+
+    kmesh = tuple(_integer_counts(kmesh, name="Gamma GDF kmesh"))
     if kmesh != (1, 1, 1):
         raise NotImplementedError(
             "run_pbc_gdf_rhf: only kmesh=(1,1,1) (Γ-only) is implemented "
