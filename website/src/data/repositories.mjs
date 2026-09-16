@@ -1,5 +1,6 @@
-/** Split product repository directory. Check the selected repository
- * for published source tags and packages; no sibling checkout is needed.
+/** Verified split repositories. GitHub snapshots are public as of 2026-09-15;
+ * refs and release artifacts must be checked on the host used for installation.
+ * No sibling checkout or network request is needed to build this directory.
  */
 export const repositories = Object.freeze([
   { id: 'vibe-qc', name: 'vibe-qc',
@@ -12,6 +13,5 @@ export const repositories = Object.freeze([
     role: 'The format specification, schema, corpus and optional reference toolkit. No runtime dependency for the engine or viewer.' },
 ].map(repository => Object.freeze({
   ...repository,
-  gitlab: `https://github.com/vibe-qc/${repository.id}`,
   github: `https://github.com/vibe-qc/${repository.id}`,
 })));

@@ -1,5 +1,31 @@
 ## [Unreleased]
 
+### Fixed: retain automated verification brief ordering (#217)
+
+The contributor guide again requires automated contributors to post their
+verification brief after a successful push and before the landing step closes
+the editing claim. The policy and its regression check use public terminology;
+human contributors can still comment after landing.
+
+### Periodic GDF: admit one-electron memory before cell enumeration (#99)
+
+Bulk restricted and unrestricted k-point GDF now check the resolved
+one-electron reservation before enumerating lattice/XC cells or building the
+quadrature grid. The progress log reports the reservation, byte categories,
+cutoffs and available budget on both acceptance and refusal. The existing
+post-setup check remains. Physical domains and numerical tolerances are
+unchanged; this does not establish resolution of the historical peak-RSS
+report, which still awaits independent measurement.
+
+### Changed
+
+- Keep public clone recipes and source links in product documentation, with
+  private access and deployment selectors in external operations configuration.
+  Archive legacy companion binaries outside the source tree, re-vendor clean
+  QVF documentation with immutable provenance, and require external private
+  profiles outside Git worktrees and databases. Future GitHub publication uses
+  byte-identical source exports after qualification and privacy review (#262).
+
 ### Documentation: use port 26 for all GitLab clone examples
 
 Companion setup, lifecycle, QVF reference and update examples now use explicit
@@ -11,9 +37,9 @@ authorized account key; the core GitHub HTTPS alternative remains separate.
 The installation tutorial, quickstarts and README now show exact clone commands
 for GitLab SSH with a registered deploy key on port 26, or the GitHub HTTPS
 mirror. Both routes enter `vibe-qc/` before invoking the installer; access and
-main-versus-release selection are explicit. A verified empty core GitHub
-mirror is marked as pending source publication rather than advertised as
-installable.
+main-versus-release selection are explicit. The public GitHub snapshots can
+now be cloned anonymously; GitLab SSH still requires a registered key. Source
+hosts have distinct commit histories and publication timing.
 
 ### Documentation: consistent split checkout paths
 
@@ -77,6 +103,16 @@ common density and returns only a complete tuple of native J/K results.
 The aggregate budget includes all retained stream states and density copies;
 this remains a bounded development interface without production Hamiltonian
 or symmetry-reduction certification.
+
+### Fixed: reject libint builds missing ordinary one-body first derivatives (#271)
+
+CMake now checks the selected `Libint2::cxx` headers and links a witness for
+the first-derivative overlap, kinetic and electrostatic kernels. A libint
+installation without these capabilities is rejected during configuration
+with a build-recipe hint, before analytic gradients can dispatch through
+missing kernels. The check repeats after dependency replacements, including
+at the same path, and applies to system and vendored dependencies. This
+minimum gradient check does not qualify Hessians or property derivatives.
 
 ### Fixed: subnormal complex symmetry residuals (#219)
 
@@ -226,6 +262,55 @@ thread count the partition, and therefore every bit of the result, is
 fixed. No balance is lost, since every pair costs one `chi * P` product.
 Results still differ at the reassociation level between different thread
 counts.
+
+### Fixed: the Davidson subspace collapse no longer indexes past its own subspace (#123)
+
+`keep = min(n_eig + 5, n)` decided how many Ritz vectors a restart carries
+over without bounding it by the subspace actually held. `V`, `AV` and the
+Ritz block all have exactly the current subspace width there, so any budget
+that forced a collapse while the subspace was narrower than `n_eig + 5` read
+and wrote past the end of all three. Three routes reach it from the public
+API: a small `max_subspace`, an explicit `n_guess` below `n_eig + 5`, and a
+warm-start `guess_vectors` of exactly `n_eig` columns, which is the shape the
+SCF drivers recycle. Shipped builds define `NDEBUG`, so the overrun was
+silent: the collapsed basis picked up whatever followed the buffer, and
+because a Ritz vector that has collapsed to zero has residual zero it passed
+the residual-only convergence test. Requesting three roots of a 120-basis
+Hermitian operator with `n_guess=6`, `max_subspace=7` returned, over ten
+identical runs, five killed processes (heap corruption reported from inside
+the BLAS), four results with null eigenvector columns, and one
+`converged=True` carrying eigenvalues of ~1e-14 in place of 0.988, 2.022 and
+2.999. The restart is now bounded by the subspace it holds and given room to
+expand again, so that case converges to the dense answer in eight
+iterations; the Hermitian kernel re-seeds a collapsed column as the real one
+always did; a guess narrower than the requested roots and, in the Hermitian
+kernel, an `n_guess` below `n_eig` are refused instead of read past; and a
+null Ritz pair is no longer counted as converged. Results carry a new
+`n_converged` field so a partial spectrum can be used.
+
+### Fixed: the nearest-neighbour check searches far enough to be exact (#128)
+
+`nearest_neighbour_distance`, the reusable lattice check the periodic `.out`
+prints in its "Cell parameters" block, scanned a fixed `+-1` shell of lattice
+images over the basis exactly as supplied. No fixed shell is sufficient for an
+arbitrary full-rank basis: the shortest translation of a sheared cell needs
+coefficients larger than one. For the 2-D cell with `a1 = (4,0,0)` and
+`a2 = (7,1,0)` bohr the shortest translation is `-2*a1 + a2`, so the check
+reported 3.162278 bohr where the true shortest image distance is 1.414214, and
+every `.out` for such a cell carried that wrong number as its nearest-pair
+line, a factor 2.24 too large. The same lattice written in a reduced basis
+reported a different distance from the same lattice written in a skewed one.
+This is the check the issue offers reviewers for catching a transposed
+lattice, so a wrong value here silently invalidates the prevention mechanism
+itself. The periodic vectors are now Minkowski-reduced before the search
+(Nguyen and Stehle 2009, via the same ASE routine the Wigner-Seitz code
+already uses), which bounds the closest image to one cell from the rounded
+fractional coordinate in dimension <= 3 and makes a small fixed shell
+provably sufficient; a hit on the rim of that shell raises rather than being
+returned. Images are reported in the caller's own basis, and a non-periodic
+axis is never translated. `image_range` is retained and is now advisory: it
+can widen the guard margin but can no longer narrow the search below what
+exactness requires.
 
 ## [v0.17.3] - 2026-09-13 - *Tew's Tern*
 

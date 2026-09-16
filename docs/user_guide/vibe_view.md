@@ -24,7 +24,7 @@ Open the [vibe-view manual](https://vibe-qc.com/vibe-view/docs/) for the indepen
 ```
 
 Source commands on this page run from the **separate vibe-view checkout**.
-Clone [mpei/vibe-view](https://github.com/vibe-qc/vibe-view) and follow
+Clone [vibe-qc/vibe-view](https://github.com/vibe-qc/vibe-view) and follow
 [viewer setup](../tutorial/vibe_view_getting_started.md). Its `.venv`, `scripts/`, and `electron/` belong to that repository;
 vibe-qc does not contain or install the viewer.
 
@@ -110,7 +110,7 @@ reinstall.
 If one Python process needs both packages, follow
 [Install both](../getting_started.md#install-both). That recipe installs two
 independent checkouts explicitly; the core `viewer-gpu` extra cannot fetch
-the private viewer from PyPI.
+the companion source from GitHub or GitLab.
 
 The dependency footprint is pure-pip. The core install (QVF reading plus
 headless screenshot capture) is PyVista, VTK, matplotlib, Plotly, Click,

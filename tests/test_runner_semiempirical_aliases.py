@@ -330,13 +330,19 @@ def test_dftb0_writes_method_native_mulliken_population(tmp_path) -> None:
         "hirshfeld",
         "mayer",
         "wiberg",
-        "npa",
         "dipole",
     }
     assert all(
         message.startswith("unsupported: dftb0 native population")
         for message in payload["errors"].values()
     )
+    # GitLab #197: NPA is unimplemented everywhere, not a failure of this
+    # method's native population path, so it is reported once under
+    # ``unavailable`` rather than sitting in ``errors`` next to sections
+    # this method genuinely cannot do.
+    assert "npa" not in payload["errors"]
+    assert payload["npa"] == []
+    assert "Natural Population Analysis" in payload["unavailable"]["npa"]
     bibtex = stem.with_suffix(".bibtex").read_text("utf-8")
     assert "mulliken_1955" in bibtex
     assert "lowdin_1950" not in bibtex
@@ -365,13 +371,19 @@ def test_scc_dftb_writes_method_native_mulliken_population(tmp_path) -> None:
         "hirshfeld",
         "mayer",
         "wiberg",
-        "npa",
         "dipole",
     }
     assert all(
         message.startswith("unsupported: scc_dftb native population")
         for message in payload["errors"].values()
     )
+    # GitLab #197: NPA is unimplemented everywhere, not a failure of this
+    # method's native population path, so it is reported once under
+    # ``unavailable`` rather than sitting in ``errors`` next to sections
+    # this method genuinely cannot do.
+    assert "npa" not in payload["errors"]
+    assert payload["npa"] == []
+    assert "Natural Population Analysis" in payload["unavailable"]["npa"]
     manifest = tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))
     assert manifest["outputs"]["status"] == "complete"
     population_rows = [

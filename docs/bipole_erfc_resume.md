@@ -16,7 +16,7 @@ remain subject to the acceptance limits below.
 
 ## Recovery, 2026-09-08
 
-The continuation uses the standalone `mpei/vibe-qc` repository, branch
+The continuation uses the standalone `vibe-qc/vibe-qc` repository, branch
 `codex/bipole-erfc-resume`, starting from `bdec7d2`. The initial pull was
 followed by the development install's main synchronization. The preserved
 candidate was based on monorepo commit `5d49d0c28573`.

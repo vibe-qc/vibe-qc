@@ -408,7 +408,7 @@ imported by `python/vibeqc/`.
 Per [`CLAUDE.md`](../CLAUDE.md) § 10, vibe-qc never imports another
 QC program at runtime. CRYSTAL14 is a *program*, not a library, so
 the runner spawns it as a subprocess via the
-[`vibe-queue`](https://github.com/mpei/vibe-queue) dispatcher: input
+[`vibe-queue`](https://github.com/vibe-qc/vibe-queue) dispatcher: input
 deck staged on the local disk, `vq submit` ships it to the configured
 host (selected through your queue configuration; any host with `crystal` / `Pcrystal` on
 PATH and the `run-crystal.sh` wrapper installed works), `vq status`

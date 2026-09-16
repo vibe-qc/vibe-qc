@@ -16,7 +16,7 @@ standalone setup, profiles, and the first demo; continue here for workflows
 that connect viewer output with the vibe-qc documentation.
 
 Source commands on this page run from the **separate vibe-view checkout**.
-Clone [mpei/vibe-view](https://github.com/vibe-qc/vibe-view) and follow
+Clone [vibe-qc/vibe-view](https://github.com/vibe-qc/vibe-view) and follow
 the source installation steps below. Its `.venv`, `scripts/`, and `electron/` belong to that repository;
 vibe-qc does not contain or install the viewer.
 
@@ -52,7 +52,7 @@ The names have different jobs:
 |---|---|
 | Product and shell command | `vibe-view` |
 | Python distribution and import package | `vibeview` |
-| Independent source repository | [mpei/vibe-view](https://github.com/vibe-qc/vibe-view) |
+| Independent source repository | [vibe-qc/vibe-view](https://github.com/vibe-qc/vibe-view) |
 
 **Prerequisite:** **Python 3.11 or newer** (`python3 --version`). The checkout
 route also needs `git`. Debian and Ubuntu users need the matching
@@ -85,23 +85,22 @@ published, use the source route below.
 
 ### Source route: clone the repository
 
-vibe-view lives in its own private GitLab repository:
+vibe-view has its own public source repository:
 
 ```sh
 git clone https://github.com/vibe-qc/vibe-view.git
 cd vibe-view
 ```
 
-The checkout is the recommended route when you have access because it also
+The checkout is the recommended route because it also
 contains the Electron desktop source, install/update scripts, and larger
 example archives. It is also the route that provides the unreleased onboarding
 commands on this page today.
 
 ```{note}
-The viewer repository is private. Request access to `mpei/vibe-view`
-separately from core access. HTTPS needs repository-read credentials; for a
-deploy key use the SSH clone URL supplied by GitLab. A wheel does not contain
-the Electron source tree, so source-backed desktop mode requires this clone.
+The public clone needs no credentials. Canonical maintainer development access
+is configured separately, and public snapshots can lag GitLab. A wheel does not contain the Electron source
+tree, so source-backed desktop mode requires a clone.
 ```
 
 ## 2. Install the modes you need

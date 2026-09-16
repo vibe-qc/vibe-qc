@@ -38,23 +38,16 @@ def test_base_runtime_declares_ase_for_semiempirical_optimization() -> None:
     )
 
 
-def test_vibe_view_project_metadata_matches_gpu_viewer_contract() -> None:
-    pyproject = _load_pyproject(ROOT / "vibe-view" / "pyproject.toml")
-    project = pyproject["project"]
-
-    assert project["name"] == "vibeview"
-    assert project["requires-python"] == ">=3.11"
-    assert project["scripts"]["vibe-view"] == "vibeview.cli:main"
-
-    dependencies = {dep.split(">=", 1)[0].lower() for dep in project["dependencies"]}
-    assert "pyvista" in dependencies
-    assert not {"trame", "trame-vtk", "trame-vuetify"} & dependencies
-
-    viewer = {
-        dep.split(">=", 1)[0].lower()
-        for dep in project["optional-dependencies"]["viewer"]
-    }
-    assert {"trame", "trame-vtk", "trame-vuetify", "uvicorn"}.issubset(viewer)
+# GitLab #212: ``test_vibe_view_project_metadata_matches_gpu_viewer_contract``
+# used to open ``vibe-view/pyproject.toml`` here and assert the viewer's own
+# name, Python floor, console script and dependency split. The 2026-09-08
+# split moved that package to its own repository, so the load raised
+# FileNotFoundError before any assertion ran. Those assertions are not lost:
+# vibe-view#23 ("Own the viewer packaging metadata checks after the repository
+# split") moved them to project 35's own tests/test_packaging_metadata.py,
+# which is the only place a change to the viewer's metadata can actually be
+# caught. What belongs here is what vibe-qc itself controls: the shape of its
+# own ``viewer-gpu`` extra, pinned below.
 
 
 def test_viewer_extra_is_terminal_viewer_not_vibe_view_gpu() -> None:
@@ -89,38 +82,50 @@ def test_sdist_excludes_repository_scratch_tree() -> None:
     ), "sdist.include takes precedence over sdist.exclude"
 
 
-def test_viewer_gpu_extra_declares_co_located_vibe_view_when_restored() -> None:
+def test_viewer_gpu_extra_pins_the_independent_vibeview_distribution() -> None:
+    """The viewer is an independent distribution, not a co-located subproject.
+
+    GitLab #212: this used to require ``[tool.uv.sources].vibeview`` to
+    redirect the pin at a ``vibe-view/`` directory inside this checkout. The
+    2026-09-08 split removed that directory and ``pyproject.toml`` dropped the
+    redirect deliberately ("vibe-view now lives in its own repository, so
+    there is no co-located directory to redirect to"), so the test demanded a
+    layout the repository is no longer supposed to have. It now pins the
+    post-split contract, which also catches the redirect being reintroduced.
+    """
     pyproject = _load_pyproject(ROOT / "pyproject.toml")
     extras = pyproject["project"]["optional-dependencies"]
-    vibe_view_project = _load_pyproject(ROOT / "vibe-view" / "pyproject.toml")
-    vibe_view_name = vibe_view_project["project"]["name"]  # "vibeview"
 
     assert "viewer-gpu" in extras
-
     viewer_gpu = extras["viewer-gpu"]
-    # The extra declares an ordinary version pin for the vibe-view
-    # distribution ("vibeview"); the co-located source path is wired
-    # separately in [tool.uv.sources] so uv resolves it from the
-    # checkout pre-PyPI.
-    assert any(req.lower().startswith(vibe_view_name) for req in viewer_gpu)
 
-    # Regression guard (the bug this structure fixes): the pin must NOT
-    # be a relative ``file:`` direct-URL. uv refuses to parse a relative
-    # path out of the built-wheel metadata ("relative path without a
-    # working directory"), and because uv reads *every* extra's
-    # Requires-Dist that one bad URL broke even the base
-    # ``uv pip install`` / ``uv pip install -e .`` (no extras requested).
+    # An ordinary version pin on the published distribution name.
+    assert any(req.lower().startswith("vibeview") for req in viewer_gpu), (
+        "viewer-gpu must pin the vibeview distribution. Got: "
+        + repr(viewer_gpu)
+    )
+
+    # Regression guard, and the reason this structure exists: the pin must
+    # NOT be a relative ``file:`` direct-URL. uv refuses to parse a relative
+    # path out of the built-wheel metadata ("relative path without a working
+    # directory"), and because uv reads *every* extra's Requires-Dist that
+    # one bad URL broke even the base ``uv pip install`` with no extras
+    # requested.
     assert not any("file:" in req.lower() for req in viewer_gpu), (
-        "viewer-gpu must not use a relative file: direct-URL — it breaks "
-        "`uv pip install`. Use a version pin + [tool.uv.sources] path."
+        "viewer-gpu must not use a relative file: direct-URL -- it breaks "
+        "`uv pip install`. Use a plain version pin. Got: " + repr(viewer_gpu)
     )
 
-    # The co-located checkout path is wired for uv (vibe-qc's stated
-    # installer) via [tool.uv.sources]. Drop this entry once vibeview is
-    # published to PyPI and the pin resolves from PyPI unchanged.
+    # No source redirect may point at a co-located viewer checkout: there is
+    # no vibe-view/ directory in this repository any more, so such an entry
+    # would make uv resolve against a path that does not exist.
     uv_sources = pyproject.get("tool", {}).get("uv", {}).get("sources", {})
-    assert vibe_view_name in uv_sources, (
-        "[tool.uv.sources] must redirect the vibeview pin to the "
-        "co-located vibe-view/ checkout path."
+    assert "vibeview" not in uv_sources, (
+        "vibe-view lives in its own repository since the 2026-09-08 split, "
+        "so [tool.uv.sources] must not redirect the pin to a co-located "
+        "path. Got: " + repr(uv_sources)
     )
-    assert uv_sources[vibe_view_name].get("path") == "vibe-view"
+    assert not (ROOT / "vibe-view").exists(), (
+        "a vibe-view/ directory reappeared in the core checkout; the viewer "
+        "is an independent repository (project 35)"
+    )

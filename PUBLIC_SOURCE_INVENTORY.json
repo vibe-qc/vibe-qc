@@ -46,21 +46,21 @@
   },
   {
     "changed": false,
-    "export_sha256": "5d8608ff2f79fab14e814767fe9ff903aed1efe1d0dee73f1ed82a27467817d1",
+    "export_sha256": "0b4e0d591f811b8caf54462b41ed5298526d15987cf2f28c96f9f2658b5ab4d6",
     "mode": "100644",
     "path": ".githooks/private_terms.py",
     "reasons": [],
-    "source_blob": "d4b565260067abd0ad2165ea5c28ef2f34fe67c4",
-    "source_sha256": "5d8608ff2f79fab14e814767fe9ff903aed1efe1d0dee73f1ed82a27467817d1"
+    "source_blob": "57c961c04680336c813eb15c89295ee27799bec9",
+    "source_sha256": "0b4e0d591f811b8caf54462b41ed5298526d15987cf2f28c96f9f2658b5ab4d6"
   },
   {
     "changed": false,
-    "export_sha256": "5623397bd57e41608e7ed3c991cc4fe94303adc9a543f4e63788924faecacb65",
+    "export_sha256": "6512a2c1329608eb3bcfc3a77409007ac9a67203507c9380e88b9defe63a6147",
     "mode": "100644",
     "path": ".githooks/test_privacy_hook.py",
     "reasons": [],
-    "source_blob": "8abbd4d0917a2fd974f5b9e52bc83fd492ae03f2",
-    "source_sha256": "5623397bd57e41608e7ed3c991cc4fe94303adc9a543f4e63788924faecacb65"
+    "source_blob": "2b845779bc4adaacf5bf2d15c02fca938496e8b0",
+    "source_sha256": "6512a2c1329608eb3bcfc3a77409007ac9a67203507c9380e88b9defe63a6147"
   },
   {
     "changed": false,
@@ -109,61 +109,48 @@
   },
   {
     "changed": false,
-    "export_sha256": "a4dcde0bab4507e5c743bc6de6f95c7b73d313755a97c1bfda6a2b2b7d2a4b4d",
+    "export_sha256": "249aef6f1561a4c6f5973e16b9007361040eec09d9f95bf3d1fcc8c4d6d1346b",
     "mode": "100644",
     "path": ".gitignore",
     "reasons": [],
-    "source_blob": "b0ee644b0ae0051729e89061e7656d0178750295",
-    "source_sha256": "a4dcde0bab4507e5c743bc6de6f95c7b73d313755a97c1bfda6a2b2b7d2a4b4d"
+    "source_blob": "b56c67829794028d6acc55689c8de1d4c4cc6fb4",
+    "source_sha256": "249aef6f1561a4c6f5973e16b9007361040eec09d9f95bf3d1fcc8c4d6d1346b"
   },
   {
-    "changed": true,
-    "export_sha256": "7c680f4219ef7425ad76811e9ece0340952d33b7aaa9e63325e93c3354d5f997",
+    "changed": false,
+    "export_sha256": "22da355195c2634146b5034d5fcad450a8bae3fba2b702a795c25231a2d1b48c",
     "mode": "100644",
     "path": ".gitlab-ci.yml",
-    "reasons": [
-      "private deployment include is maintained outside public product CI",
-      "public anonymous companion clone with existing tag pin"
-    ],
-    "source_blob": "43e971f57d9e0d8e9bbbbed0a35e77d986a251df",
-    "source_sha256": "063bed549c5b85f27c5feca7f66576926431af7577e9d58f80c0d7e042c87193"
+    "reasons": [],
+    "source_blob": "bf179cac9f609bb6a221139707cd2af35fefe643",
+    "source_sha256": "22da355195c2634146b5034d5fcad450a8bae3fba2b702a795c25231a2d1b48c"
   },
   {
-    "changed": true,
-    "export_sha256": "f285c56bd580076065ac5dda00da8b964c0a8c87cb3e04c6b2d7da35386f0ad8",
+    "changed": false,
+    "export_sha256": "2b2f937051e1a9ff132d12eb2d2d4e98a6954ddc12eff29886c4e5a218f98323",
     "mode": "100644",
     "path": "AGENTS.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public tracker landing URL; original issue IDs are private",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "35d0a5bea5172b237598ab51ca3a91ce9f76ec14",
-    "source_sha256": "798aeaa3bc2fa7d355d4677b941b93292be1beb1317f0a369250070d09ea557c"
+    "reasons": [],
+    "source_blob": "9b1b5e58eebc03312222c3286749f59ec820543c",
+    "source_sha256": "2b2f937051e1a9ff132d12eb2d2d4e98a6954ddc12eff29886c4e5a218f98323"
   },
   {
-    "changed": true,
-    "export_sha256": "fcd5f579c38a35091f5c1a91437dea57e96284cc0754cb167e9000943877069c",
+    "changed": false,
+    "export_sha256": "54076adf2d61359fd98e100ce7858ff1daff58b20c550904997311c748d9b785",
     "mode": "100644",
     "path": "CHANGELOG.md",
-    "reasons": [
-      "deployment host example",
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "30b03a9b653b9c483bcdfddcd8c83dd4ea77868a",
-    "source_sha256": "0a1634bd41baf010e45a74c35b4e695acceb37ed9bf5695a6daa3b90e2c0d966"
+    "reasons": [],
+    "source_blob": "6b22709efefac9ab305d4d144fbf0ddee5ea0964",
+    "source_sha256": "54076adf2d61359fd98e100ce7858ff1daff58b20c550904997311c748d9b785"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "f0fb0b59ba2390d81993af5c0d279e03d5f6b1a24fedf9d06df71de755dba747",
     "mode": "100644",
     "path": "CITATION.cff",
-    "reasons": [
-      "public citation repository URL",
-      "public maintainer website"
-    ],
-    "source_blob": "54d94d3b22710c18d131ed0687cd5c369d2b40c9",
-    "source_sha256": "d0f1ea2775e98f97c75dc4f541ab2973add1b27e2cf977a065762fd462c40633"
+    "reasons": [],
+    "source_blob": "3aa4954fb69d0f46a6208d50519233158d6f9c87",
+    "source_sha256": "f0fb0b59ba2390d81993af5c0d279e03d5f6b1a24fedf9d06df71de755dba747"
   },
   {
     "changed": false,
@@ -202,20 +189,13 @@
     "source_sha256": "593987c5c19496ef72cab519459eecedbfd893e49ce439ec03af4f515e3f1b9b"
   },
   {
-    "changed": true,
-    "export_sha256": "52eb619daececf28cb057f17333174c6e607a17e4202ae6ad335e08818f970b4",
+    "changed": false,
+    "export_sha256": "3206329cc8319661a064a8893b52b1afdfd95b48141d554e807ba8e958921489",
     "mode": "100644",
     "path": "CONTRIBUTING.md",
-    "reasons": [
-      "private host replaced with example",
-      "public repository URL",
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private",
-      "retain the published contributor policy rather than redirecting its issue number",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "ddce64bc4fa011df91de34272a5128d4b7d9acd2",
-    "source_sha256": "825f77a010d9d6331dea414f4926752ae7f446ef222bf74fb775f2b6b9e5277a"
+    "reasons": [],
+    "source_blob": "8b61b2ec6d96961070978843916e6273d67689a3",
+    "source_sha256": "3206329cc8319661a064a8893b52b1afdfd95b48141d554e807ba8e958921489"
   },
   {
     "changed": false,
@@ -254,28 +234,31 @@
     "source_sha256": "10b87562de7f230776061516b13c0ad6531fb8bb365fbae20390da0c22b6739e"
   },
   {
-    "changed": true,
-    "export_sha256": "69ab7f63a2e41b80401f2971f66872ce0a632f71bb039646078cea70d383af55",
+    "changed": false,
+    "export_sha256": "8113415dd325f1ec87569e2f591a17fba285b7af7e0e4f63c58ca698819f7704",
     "mode": "100644",
-    "path": "README.md",
-    "reasons": [
-      "public clone URL",
-      "public repository URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "78a59b7320da82bfdb0ccca6b645009aaeb3b0c3",
-    "source_sha256": "c40181afd24d3e21f03bdf4acdadd1e3cc34de2dfbbc494a29dd3ee0dfa4ae61"
+    "path": "PUBLICATION.md",
+    "reasons": [],
+    "source_blob": "b12f46ea30efd1070f137ec7bc58c35e1840c598",
+    "source_sha256": "8113415dd325f1ec87569e2f591a17fba285b7af7e0e4f63c58ca698819f7704"
   },
   {
-    "changed": true,
+    "changed": false,
+    "export_sha256": "13bbfc1be1dee64c87af7ee60a414c151d097b69ec986764d0329a8db6aa2e97",
+    "mode": "100644",
+    "path": "README.md",
+    "reasons": [],
+    "source_blob": "83248a8847dd7f0fa4fc9560b3cc5796402c6ab5",
+    "source_sha256": "13bbfc1be1dee64c87af7ee60a414c151d097b69ec986764d0329a8db6aa2e97"
+  },
+  {
+    "changed": false,
     "export_sha256": "adfa5bdb7a4b12c2a7182d49e31dbcbdfa9845b783cbb79ee1f8221e9b8bf992",
     "mode": "100644",
     "path": "SECURITY.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "5a03b01b25b57c9d8dda4511967e82fe22a44e88",
-    "source_sha256": "24f80c8791d951a674cef0ed3a936628aa7fcb0e1672080115567f679cd9dab9"
+    "reasons": [],
+    "source_blob": "72aa338befb16162d822509767219575ec6f382a",
+    "source_sha256": "adfa5bdb7a4b12c2a7182d49e31dbcbdfa9845b783cbb79ee1f8221e9b8bf992"
   },
   {
     "changed": false,
@@ -405,12 +388,30 @@
   },
   {
     "changed": false,
-    "export_sha256": "64a5ac914178bf7f377a7a33fdb7509d5920611e1ef23dcbc90d2b6bc600fb48",
+    "export_sha256": "991b455055bf905f2b22877eae39d506637c0bbc14fa111ac01eb1ba4e885f4d",
     "mode": "100644",
     "path": "cpp/CMakeLists.txt",
     "reasons": [],
-    "source_blob": "fa05eaa6a7e54992bfc6c400f3e1892d9e107d7a",
-    "source_sha256": "64a5ac914178bf7f377a7a33fdb7509d5920611e1ef23dcbc90d2b6bc600fb48"
+    "source_blob": "e4e0611799d4058c73e22de3eda63248d64792ef",
+    "source_sha256": "991b455055bf905f2b22877eae39d506637c0bbc14fa111ac01eb1ba4e885f4d"
+  },
+  {
+    "changed": false,
+    "export_sha256": "7db4fe57d02ed94fc80c5238c3e9ec73bef024a5b36540e0ff954e0d850a2043",
+    "mode": "100644",
+    "path": "cpp/cmake/RequireLibintOneBodyDerivatives.cmake",
+    "reasons": [],
+    "source_blob": "903d41e105dd4ae577deafc0f55f8ec58e2705d9",
+    "source_sha256": "7db4fe57d02ed94fc80c5238c3e9ec73bef024a5b36540e0ff954e0d850a2043"
+  },
+  {
+    "changed": false,
+    "export_sha256": "e35101e6618778013f5ac24b7a9186da81357fc0474ce87b9eb169b5053943d9",
+    "mode": "100644",
+    "path": "cpp/cmake/libint_onebody_witness.cpp",
+    "reasons": [],
+    "source_blob": "0816ca20ab70946adf2bfa9a631d995582c2f7f6",
+    "source_sha256": "e35101e6618778013f5ac24b7a9186da81357fc0474ce87b9eb169b5053943d9"
   },
   {
     "changed": false,
@@ -882,12 +883,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "23242c379c048a848357b0514052baa1edf2e9f4b13aceb5b3b68cea3f2ffe98",
+    "export_sha256": "9381f4129db66a0187a0ebffc90d372f793c025d3213f12a5e77f4593b4915ba",
     "mode": "100644",
     "path": "cpp/include/vibeqc/davidson.hpp",
     "reasons": [],
-    "source_blob": "c4cb668eff5422b4ef283455e6f07b0de07a35c2",
-    "source_sha256": "23242c379c048a848357b0514052baa1edf2e9f4b13aceb5b3b68cea3f2ffe98"
+    "source_blob": "45cdd7fd7838d1b3aeef8f7b845ccba8a126db0c",
+    "source_sha256": "9381f4129db66a0187a0ebffc90d372f793c025d3213f12a5e77f4593b4915ba"
   },
   {
     "changed": false,
@@ -2727,12 +2728,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "319c4604aec3bce66696ed060b1b46750e3bc2fdc4ed5579076fbfa880f2bd39",
+    "export_sha256": "b61f4def1eae954df79307d61ca8e590a7bf15c32b08e803bf075ecfda4564f0",
     "mode": "100644",
     "path": "cpp/src/bindings.cpp",
     "reasons": [],
-    "source_blob": "952035cd3860de0cb64fc8ef4e5d528b9563d400",
-    "source_sha256": "319c4604aec3bce66696ed060b1b46750e3bc2fdc4ed5579076fbfa880f2bd39"
+    "source_blob": "139b336b3dfc445e325dd84c01bb54ab6fa837cb",
+    "source_sha256": "b61f4def1eae954df79307d61ca8e590a7bf15c32b08e803bf075ecfda4564f0"
   },
   {
     "changed": false,
@@ -3258,12 +3259,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "ebe75eeea10ed44f8feaaa52b7aae2998dba09c2253e893e808d4ab6ed3457cf",
+    "export_sha256": "cfb03dbf4e4aff81f6eeb5dfe1cfc37840a264689018301e049d542a145ec57a",
     "mode": "100644",
     "path": "cpp/src/davidson.cpp",
     "reasons": [],
-    "source_blob": "01633ade5149c489898575e11e4451ac1a2f1caa",
-    "source_sha256": "ebe75eeea10ed44f8feaaa52b7aae2998dba09c2253e893e808d4ab6ed3457cf"
+    "source_blob": "72f2ee61720350b03ba6dfacd909123993474891",
+    "source_sha256": "cfb03dbf4e4aff81f6eeb5dfe1cfc37840a264689018301e049d542a145ec57a"
   },
   {
     "changed": false,
@@ -5597,15 +5598,31 @@
     "source_sha256": "ff965e7ce618c7ff8a12166d00106db3518e0cf6c44ca567dff204f0d4005b4f"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "318ed3660ee823da67c226ebd6125d06cd08407012c8bfea2c28d9fde2246d9c",
     "mode": "100644",
     "path": "deploy/htaccess-redirects.conf",
-    "reasons": [
-      "deployment account example"
-    ],
-    "source_blob": "af7386d9b25a32f14f1008796c23fbf94cb51e72",
-    "source_sha256": "19b8937a74163e85f15f619961c373e828f339dfc6f199778f6841fd84c3957d"
+    "reasons": [],
+    "source_blob": "0bd894f1cf2ca269181740494451dac479b1dc4a",
+    "source_sha256": "318ed3660ee823da67c226ebd6125d06cd08407012c8bfea2c28d9fde2246d9c"
+  },
+  {
+    "changed": false,
+    "export_sha256": "45c0fd9d11b375e942b676926dfa4938d0b5b5d7ed0b8e4dab99ec04274ba869",
+    "mode": "100644",
+    "path": "docs/AGENTS.md",
+    "reasons": [],
+    "source_blob": "3d9227e263516766b99955a6197b99ef1d455d37",
+    "source_sha256": "45c0fd9d11b375e942b676926dfa4938d0b5b5d7ed0b8e4dab99ec04274ba869"
+  },
+  {
+    "changed": false,
+    "export_sha256": "8c76f50b7b0637b9cf21bdc776b30b464d17820d34105f2328f854a673948de1",
+    "mode": "100644",
+    "path": "docs/CLAUDE.md",
+    "reasons": [],
+    "source_blob": "756ae4df8885391ee1592390a71fbaeefca228f8",
+    "source_sha256": "8c76f50b7b0637b9cf21bdc776b30b464d17820d34105f2328f854a673948de1"
   },
   {
     "changed": false,
@@ -5636,24 +5653,21 @@
   },
   {
     "changed": false,
-    "export_sha256": "8b76911080b26ef07f7d7b53588183e45ac103573bc8cfd8b5df8c536411e43d",
+    "export_sha256": "7693532acb80ad06670b8f3ef3e69ed524e2716f9cae05e0ba5e846735fb4c96",
     "mode": "100644",
     "path": "docs/_static/custom.css",
     "reasons": [],
-    "source_blob": "1c483b9f23752d9ee2b0bbcf56b1d67ff5ba7af5",
-    "source_sha256": "8b76911080b26ef07f7d7b53588183e45ac103573bc8cfd8b5df8c536411e43d"
+    "source_blob": "a11bd5e155f492dccf76f731fbf03807bd30d342",
+    "source_sha256": "7693532acb80ad06670b8f3ef3e69ed524e2716f9cae05e0ba5e846735fb4c96"
   },
   {
-    "changed": true,
-    "export_sha256": "cf2b111e6dc43573cf84545984baec8e58147dd2ae7fe0eaa10ecedd1118affa",
+    "changed": false,
+    "export_sha256": "b87f820801547afa7ad945c46d1913b0daf8e9027dc5690c7ad89bd5cb268274",
     "mode": "100644",
     "path": "docs/_static/downloads/README.md",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public repository URL"
-    ],
-    "source_blob": "6e2608abdd2e9c4696c156195c4d6c0163f7a095",
-    "source_sha256": "9a4e06fca24285dc668ddfaad4d712b28372b91310c56b74df1c3f1af5de6c14"
+    "reasons": [],
+    "source_blob": "99434d4fa45aafef719cced409bd89d06829df16",
+    "source_sha256": "b87f820801547afa7ad945c46d1913b0daf8e9027dc5690c7ad89bd5cb268274"
   },
   {
     "changed": false,
@@ -9121,16 +9135,13 @@
     "source_sha256": "5afb2787e705a83bc38f5b0d6fa49fad0069aff69c066644dbedd224ee11a383"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "95df79c3426e5d68782253beb835474d5611777f7b2c8c61c856ebab2955f6af",
     "mode": "100644",
     "path": "docs/aiccm2026dev_a.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "f352a8dcff7e580649513465eebdc240702b805e",
-    "source_sha256": "c4e2a376ea4324c6dbbd377b758c7a13d2af180c29930fc0bc63227904d5e409"
+    "reasons": [],
+    "source_blob": "9a0291c03b9f5a0887ee758b8f04035f6a6c1470",
+    "source_sha256": "95df79c3426e5d68782253beb835474d5611777f7b2c8c61c856ebab2955f6af"
   },
   {
     "changed": false,
@@ -9142,37 +9153,31 @@
     "source_sha256": "f8ca999d511154e9267ac11d92c8574997c7d1e23e00f7d7368242a7cd93f99a"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "d0774b9d8ef1d756e2daa23ac1d17e8f527f10094204f82f360374674d6f940a",
     "mode": "100644",
     "path": "docs/aiccm2026dev_a_followon.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "ced0ee066ff8f0aeb70d9be6e5361684dc6eb2ae",
-    "source_sha256": "94a960b6e5bcbd3c5f78bc42d5d0c53f71f6c11f7c0ba8d53340d941ede4652f"
+    "reasons": [],
+    "source_blob": "41718843c8687e02aad0ac0e0908811d5d1e76ec",
+    "source_sha256": "d0774b9d8ef1d756e2daa23ac1d17e8f527f10094204f82f360374674d6f940a"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "107c2b2a00e53c5e137cf46757420cc40bd82cfe75ae78e1c281268069ca30ed",
     "mode": "100644",
     "path": "docs/aiccm2026dev_a_lowd_greens.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "777dc52d18188fb2da021db3a89371a2e99291fb",
-    "source_sha256": "34f265da1e8843516b03e5aa004d1b755ddc35c395b48ccbd9b7ffebe2ec7f0a"
+    "reasons": [],
+    "source_blob": "ede7e62318db8fd1a17c5166c874a557fef3b86d",
+    "source_sha256": "107c2b2a00e53c5e137cf46757420cc40bd82cfe75ae78e1c281268069ca30ed"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "9ddf33a1865ff303d1163bce3aabe2d7598f51c266ba46ce87d0e89e3394f182",
     "mode": "100644",
     "path": "docs/aiccm2026dev_a_scalability.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "a4dc8d688287b272b623d00314dfed6dedf9e1ca",
-    "source_sha256": "f51e6ec9b591adfaa285586f47f9ca30cebeb0a6d24533fb4fdeed4d959559a8"
+    "reasons": [],
+    "source_blob": "6b822dc73dc25dace7b877ab01adf707c8c660bd",
+    "source_sha256": "9ddf33a1865ff303d1163bce3aabe2d7598f51c266ba46ce87d0e89e3394f182"
   },
   {
     "changed": false,
@@ -9265,15 +9270,13 @@
     "source_sha256": "03d8ced8591c94d49c9254622556a3efcce5c3636e75220cbf342daa9f43250d"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "e69f87a6965c1d7965ea9bfa7621709ea419cbc065f53e7789ce24d1721451a9",
     "mode": "100644",
     "path": "docs/basisset_dev/PLAN.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "3baf2e86edeb42b7efe4551eb1bd8a97e6378746",
-    "source_sha256": "d3c7fb809048ee6cdea34edf4f88b3208dc92a5bafedf3a104ef033a625aac39"
+    "reasons": [],
+    "source_blob": "0e083eca975c606c12def9d87394bdf3ec0522a3",
+    "source_sha256": "e69f87a6965c1d7965ea9bfa7621709ea419cbc065f53e7789ce24d1721451a9"
   },
   {
     "changed": false,
@@ -9294,15 +9297,13 @@
     "source_sha256": "089012846ac02e8f3561beeb41439ced99b5cf257e69bdb0e30250ad791471c5"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "76e9989287493cb00fec510a9e6a4d31b0ccd26c3604678005fb467530ecfd23",
     "mode": "100644",
     "path": "docs/basisset_dev/ROADMAP_BASIS_LIBRARY.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "352a7245fab9e992326ebe6f1297a16269b637fa",
-    "source_sha256": "82d7a2f01dd73644ea70bb82ca01f6909bfe00d61e9ff12160d0fed002031211"
+    "reasons": [],
+    "source_blob": "270f8a5cfbacb29241bf5175329884db24a7a946",
+    "source_sha256": "76e9989287493cb00fec510a9e6a4d31b0ccd26c3604678005fb467530ecfd23"
   },
   {
     "changed": false,
@@ -9323,24 +9324,22 @@
     "source_sha256": "9478517240fc9a33279747933bbb84b0ac82604b195bb2f2c406d5a6aa815432"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "8016dbc9d67667a54a31efd29267a43d2d3e828f235f2d14f2ad170d9fe325be",
     "mode": "100644",
     "path": "docs/basisset_dev/index.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "87d02ef51865e804b1ad2fad0e762cf2277c8235",
-    "source_sha256": "35b0d78828000972e7e148c091a34bc64ce875007767a9e17428cb736c199ebf"
+    "reasons": [],
+    "source_blob": "cf9183bb3e3fb2cfb2e0fc0f26b373751754beba",
+    "source_sha256": "8016dbc9d67667a54a31efd29267a43d2d3e828f235f2d14f2ad170d9fe325be"
   },
   {
     "changed": false,
-    "export_sha256": "3779c0e60e6ef994acb4d8f15e51dbab927268e875ca9daaf37518a83852eed2",
+    "export_sha256": "27eaf902d119b84a75630127d4c3a46c573bf74099ec1c01bdbeb64187920802",
     "mode": "100644",
     "path": "docs/bipole_erfc_resume.md",
     "reasons": [],
-    "source_blob": "79b7f82ab2d49d96a8d6d11ffa4b05bee198fb55",
-    "source_sha256": "3779c0e60e6ef994acb4d8f15e51dbab927268e875ca9daaf37518a83852eed2"
+    "source_blob": "f6baa95bd700e5a3874b7c9bcc790258fd410d04",
+    "source_sha256": "27eaf902d119b84a75630127d4c3a46c573bf74099ec1c01bdbeb64187920802"
   },
   {
     "changed": false,
@@ -9352,15 +9351,13 @@
     "source_sha256": "d8e2badb359438e948e4df2806e732d6d9225339372f4cde775fbf8eb1295e33"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "ce87667eb2af73f3a266fd27f51aebf1149937345bfe3ef29467ecebcf09dccf",
     "mode": "100644",
     "path": "docs/bug_hunt_brief.md",
-    "reasons": [
-      "public clone URL"
-    ],
-    "source_blob": "4b5f9fa2a67ad9adfebaca0b369e5866ea5c1bda",
-    "source_sha256": "af666161ef18310eeae1ca3d536f139f65d46a06aef08fac25d626394892bb9d"
+    "reasons": [],
+    "source_blob": "b3f1227108c391571fe41657e87d18cb0c4d6939",
+    "source_sha256": "ce87667eb2af73f3a266fd27f51aebf1149937345bfe3ef29467ecebcf09dccf"
   },
   {
     "changed": false,
@@ -9372,15 +9369,13 @@
     "source_sha256": "c40acffbaea8599ecb9e9b1210a41b17f99510942a6da40cf40ccee0593ebbba"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "79268a6c28af45ae2f66e45d3d0a531ae1f195d1a7229e66bfafb2fcb0511cbe",
     "mode": "100644",
     "path": "docs/citing.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "ecc51f090a2f853b426016354f4106fbe756d446",
-    "source_sha256": "3ef40a303d4cf729e08a746235d58a33e50d6d0deba7a6302937f7453fc785a3"
+    "reasons": [],
+    "source_blob": "1636cce708eb508020fd7d9e9019963fe56b7c69",
+    "source_sha256": "79268a6c28af45ae2f66e45d3d0a531ae1f195d1a7229e66bfafb2fcb0511cbe"
   },
   {
     "changed": false,
@@ -9401,30 +9396,22 @@
     "source_sha256": "e184b68ec0ef4f917ef114a223ffe332152d27c5723a797274a0124c320bbcc8"
   },
   {
-    "changed": true,
-    "export_sha256": "2b50ab93af54514c2ca1176efb45ab917c78751dd135a8dcc4bd31834505ad8b",
+    "changed": false,
+    "export_sha256": "5c31219e96ac9b83cb7d8080896b30b098f57a18291bf0ad895c0db14d1fcc13",
     "mode": "100644",
     "path": "docs/conf.py",
-    "reasons": [
-      "public repository URL",
-      "public source URL",
-      "reviewed public documentation and matching URL expectations",
-      "same immutable QVF source revision mapped to its sanitized public tag"
-    ],
-    "source_blob": "1a32ff1689402074dd0ffc52f711986165c118b4",
-    "source_sha256": "80d81f54d4aebe9671ff2d9fa3b6ddb95f3753573db91ab7d1e10c3b130bf613"
+    "reasons": [],
+    "source_blob": "97e727237d7ff1c999ffec400f87e39049378f85",
+    "source_sha256": "5c31219e96ac9b83cb7d8080896b30b098f57a18291bf0ad895c0db14d1fcc13"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "55db89a553dee88377b3a5af7a58b5a5442bafc1aa327a1213509e5128bea440",
     "mode": "100644",
     "path": "docs/consumer_qvf_reference.md",
-    "reasons": [
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "67d866cb5832e37572dddc87416f5117c4fe9945",
-    "source_sha256": "1cac19825f7cf50bc3e362c8d566cb56f5f7940c353257d0a155717deab3df56"
+    "reasons": [],
+    "source_blob": "a73a4538127b687aba091e2e1be15f651807a5a1",
+    "source_sha256": "55db89a553dee88377b3a5af7a58b5a5442bafc1aa327a1213509e5128bea440"
   },
   {
     "changed": false,
@@ -9436,17 +9423,13 @@
     "source_sha256": "a65c63cddb203695fb6fa45f7d0d4129565360962e83fc87ce9125f05015b342"
   },
   {
-    "changed": true,
-    "export_sha256": "839db2842550edc959acf6ecec9f67c79d4cede8ffe8b0c93a3ebd3a32e0471b",
+    "changed": false,
+    "export_sha256": "d67cac473d62cb9781b70c6636539983e789eb76eb16ec075670b4030d4ac335",
     "mode": "100644",
     "path": "docs/contributor_setup.md",
-    "reasons": [
-      "public clone URL",
-      "public source URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "339929cba48774096270387a3d9288f0b28831ac",
-    "source_sha256": "3a6ebb21a0deb0fd3f217633ac69a2619d3434498b38981a644838bb1b97e14d"
+    "reasons": [],
+    "source_blob": "df1872acdf1d6f6fb8af1adb4be66927f85492bf",
+    "source_sha256": "d67cac473d62cb9781b70c6636539983e789eb76eb16ec075670b4030d4ac335"
   },
   {
     "changed": false,
@@ -9458,15 +9441,13 @@
     "source_sha256": "503bb4621625cd36d6945b6c273bdc44aec5204cb6ed81c185150ab2940671d9"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "d2d0689412fe1b0efddfb7edca4764f9a3d7fe022e5863b369602e6ef9591449",
     "mode": "100644",
     "path": "docs/design_basis_ao_section.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "c24d3e340a51829e5fc17e19f3102345419bbbb3",
-    "source_sha256": "820c91563f465137ca1a24e1cc14661302df991ed80b9cf42376e93cf6660070"
+    "reasons": [],
+    "source_blob": "fe3d8f5bdfd7f9cadad881887ab33f65f98b1d73",
+    "source_sha256": "d2d0689412fe1b0efddfb7edca4764f9a3d7fe022e5863b369602e6ef9591449"
   },
   {
     "changed": false,
@@ -9505,39 +9486,31 @@
     "source_sha256": "be81027ad1c87ef434e22c6dff82d60e4fe501fa144057945191b986cf475656"
   },
   {
-    "changed": true,
-    "export_sha256": "8ce52d1c08bc3f96c0723c183d5dddcb88afe34d1bc5206abd6e9b5dc9e2f031",
+    "changed": false,
+    "export_sha256": "da655d74484e724542d7aac539463615d919de90bdabd45f096c0372b23db327",
     "mode": "100644",
     "path": "docs/design_native_gdf.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "66a2d43e9cc2e6c1557d503cda77d1ece8aa81f0",
-    "source_sha256": "43e395a10c1576a7f8b5e86e87c2bca9cda3962a33671f6fce8f3cd92ba052da"
+    "reasons": [],
+    "source_blob": "c73f5d83b7d6a2514805d00b9dfa834a475bfc73",
+    "source_sha256": "da655d74484e724542d7aac539463615d919de90bdabd45f096c0372b23db327"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "b15b19aabb7ac3f51208267c99b3e934f287a76838684c5f29aeff73481d4b39",
     "mode": "100644",
     "path": "docs/design_output_module.md",
-    "reasons": [
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "1614d9b6389c16a1d84c2216bfa9ed0fc02a2bed",
-    "source_sha256": "1e0090f7ab5d25dc25833df89e48581d7aa3f12c3588e2e576c7d2cebd71ee67"
+    "reasons": [],
+    "source_blob": "acc050b41867e2fc49d7276466f2d2b4f66c32e2",
+    "source_sha256": "b15b19aabb7ac3f51208267c99b3e934f287a76838684c5f29aeff73481d4b39"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "ad6e6d80cd640142d01849ed57cbd8541a4b707cd1f817f7ee7973923f29f2b4",
     "mode": "100644",
     "path": "docs/design_periodic_gapw.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "a4faf6eff3a70ce929d76e0929fb6fffda1f5654",
-    "source_sha256": "057632fb4571a9044067f333cdf3d8f570d69d61830aa1cc93c2783b1084f0c3"
+    "reasons": [],
+    "source_blob": "9e84a11bec2af8032d717d1c2169f0ad279d149e",
+    "source_sha256": "ad6e6d80cd640142d01849ed57cbd8541a4b707cd1f817f7ee7973923f29f2b4"
   },
   {
     "changed": false,
@@ -9549,18 +9522,13 @@
     "source_sha256": "e69b16053f2d746619572f82209a754ffd15a37fcb8f5385bf20ed05d4ff33c4"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "b6ff0a9c95b4d9730ac8033e2595b6f8363e60b2b49964999213927a7ba7a41e",
     "mode": "100644",
     "path": "docs/design_qvf_format.md",
-    "reasons": [
-      "public clone URL",
-      "public maintainer website",
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "5423ac44702e5664b65ecc30e4502c9fba00f1de",
-    "source_sha256": "7cbcc19d9a58be0a6744ced38f5321af2365f77d7e7955f134ad4a6163b4fc67"
+    "reasons": [],
+    "source_blob": "da406633a018e2df28a8f5137e02cc743b4833de",
+    "source_sha256": "b6ff0a9c95b4d9730ac8033e2595b6f8363e60b2b49964999213927a7ba7a41e"
   },
   {
     "changed": false,
@@ -9590,15 +9558,13 @@
     "source_sha256": "4a642a8d8043fb6b7c60dbdda4f0b5cd94168c489c8ee58d6bbd9e469e0a9f92"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "9ddc7cc67c51b839e7dea0fcbbb14a90b8153845fbf931694766b98d5d781d0d",
     "mode": "100644",
     "path": "docs/design_smearing.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "4d93831915893785ce1c64dce67cdb64a4c9a6c1",
-    "source_sha256": "5e4d3689a998d9eb0870f9a20d2cd1dac10d65afd0303e6a3b1258657009220c"
+    "reasons": [],
+    "source_blob": "7fb2854775c72e00e56224cdf4b5d4a039b9abe0",
+    "source_sha256": "9ddc7cc67c51b839e7dea0fcbbb14a90b8153845fbf931694766b98d5d781d0d"
   },
   {
     "changed": false,
@@ -9611,12 +9577,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "cb2138af19786d1a737940a9faf02489f23c3c9133cd1f360c7dd95d1316e8a9",
+    "export_sha256": "97d9518de61e5642abc1862d6ff636ba22fab1f642d0de2c95cdd534e240bb98",
     "mode": "100644",
     "path": "docs/developer_shared_symmetry.md",
     "reasons": [],
-    "source_blob": "e9bfbe099aa96e569c5a66b521b369033c6d4994",
-    "source_sha256": "cb2138af19786d1a737940a9faf02489f23c3c9133cd1f360c7dd95d1316e8a9"
+    "source_blob": "b3fe1bc73bc1bf266fe46a82a75dbd821a73d207",
+    "source_sha256": "97d9518de61e5642abc1862d6ff636ba22fab1f642d0de2c95cdd534e240bb98"
   },
   {
     "changed": false,
@@ -9628,15 +9594,13 @@
     "source_sha256": "2d579cda30e2623437b341b679305a73d8cc48ab76b09aa07e068b147978859a"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "850fc2fbc46095a0f49115a607aafde0d912d99c91a1aa10662bc444b975927c",
     "mode": "100644",
     "path": "docs/example_outputs.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "ba27ab6683d473b3a8877ee9355520f2410039b5",
-    "source_sha256": "698b9a4083d5e55335e31a20ea361fa9dcf8909120f431b929d6336bf8fb2997"
+    "reasons": [],
+    "source_blob": "c2a8c534315ebc4ef0bc6f33e923ca6f3739a40b",
+    "source_sha256": "850fc2fbc46095a0f49115a607aafde0d912d99c91a1aa10662bc444b975927c"
   },
   {
     "changed": false,
@@ -9666,16 +9630,13 @@
     "source_sha256": "5b84d349b77143b2a17b1de15fb36e412663e63f9896fa1457b2b540ad5bfabf"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "b70f9c97ab26989234bc46e74305d7179f1ec670d6ad863627066d0246959b43",
     "mode": "100644",
     "path": "docs/experimental/aiccm2026dev_compare.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "798403529b9a37bd8afc8c6db383de4dba334e1f",
-    "source_sha256": "8e61d75b7431bc8e9eceedc496ef9b7ee073b2fe745476a427b53fcbf9f50391"
+    "reasons": [],
+    "source_blob": "7040e83d45a77f508be425cf6cfc305e9dc6b636",
+    "source_sha256": "b70f9c97ab26989234bc46e74305d7179f1ec670d6ad863627066d0246959b43"
   },
   {
     "changed": false,
@@ -9714,66 +9675,58 @@
     "source_sha256": "4cbdcf550ec81b046ae30efa8f51f2166c36cfdb8bd4fde1f98a35ccff185344"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "a70a3a8b03194265ddc69cbb0fdc692d90b5983b5ae8e30a9ce78d47b9565aee",
     "mode": "100644",
     "path": "docs/experimental/aiccm2026dev_viz.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "1dd07cdb08e0f5e01209c98a263e8e0c839b76ef",
-    "source_sha256": "d052fa6fc22b03dbdd6e0270d1de1925ab4ca335c1914b0f5318c70fa79f8200"
+    "reasons": [],
+    "source_blob": "72529da84ccc6f149477cc079cbbe0e8f337c525",
+    "source_sha256": "a70a3a8b03194265ddc69cbb0fdc692d90b5983b5ae8e30a9ce78d47b9565aee"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "43eb2714b1d50f5f1086d30e8abcad6ec50d83322c910d8022a305c9482417e9",
     "mode": "100644",
     "path": "docs/experimental/catalog.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "dc1d13f07e30cda4faf51b530d6d4dfb54663b6b",
-    "source_sha256": "ea210bd9d0e7a3d234c9f81f541ac59f6414e16b111a23798a7761b299228359"
+    "reasons": [],
+    "source_blob": "b9c8459e54eb9cc81c4ddb6683ca98fa691e1824",
+    "source_sha256": "43eb2714b1d50f5f1086d30e8abcad6ec50d83322c910d8022a305c9482417e9"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "4309838934927b5d4fd318730f6b1c5c8575b08f3d8bb819bbca550506fb19e6",
     "mode": "100644",
     "path": "docs/experimental/index.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "eac7c04e14a41656ad23b5202dd7289b4aec93aa",
-    "source_sha256": "9ea5dcddbcfad51733c4f45f1b1c211eb57a6b6d9889375797566af4ccc53504"
+    "reasons": [],
+    "source_blob": "2403ef2d140f31d65ad72ae4c1101dc249dac9b5",
+    "source_sha256": "4309838934927b5d4fd318730f6b1c5c8575b08f3d8bb819bbca550506fb19e6"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "6ad5382da104b082ba862d1da2e282ddcbaa0a1d25ea124ea90c2bb5c79e4eab",
     "mode": "100644",
     "path": "docs/features.md",
-    "reasons": [
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "a70b54229e8ad90796386ec230a514d4a0a2783a",
-    "source_sha256": "6d78a8d002b76bf4f18de95ba12cf929e99573ba93e82292314954798b3349a9"
+    "reasons": [],
+    "source_blob": "7801b997901fc395cf098d8d87df260e841c5fb8",
+    "source_sha256": "6ad5382da104b082ba862d1da2e282ddcbaa0a1d25ea124ea90c2bb5c79e4eab"
   },
   {
-    "changed": true,
-    "export_sha256": "49795366d4c59ae7253234741bd122acd494827fc8aa8352ef79bd83b60f9eb0",
+    "changed": false,
+    "export_sha256": "5d5bef1310037a2b5e7f1483a5e6e7141348c4706753699042a9c52cf1e81c4f",
     "mode": "100644",
     "path": "docs/getting_started.md",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public clone URL",
-      "public repository URL",
-      "public source URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "878eb503fff2b429f3768c5b05233816b7dd0659",
-    "source_sha256": "5728ff2f8fea9576e4b717b3acac9b4b0951b8975211ac1efa15ecec9bf509fa"
+    "reasons": [],
+    "source_blob": "d85d7a2bbf914d887a8b7f0520060fcde0dc2d9e",
+    "source_sha256": "5d5bef1310037a2b5e7f1483a5e6e7141348c4706753699042a9c52cf1e81c4f"
+  },
+  {
+    "changed": false,
+    "export_sha256": "4edb6449564436d9d9e2216768deee1da7fd3a8e04ed462537f719536a7a6882",
+    "mode": "100644",
+    "path": "docs/github_publication.md",
+    "reasons": [],
+    "source_blob": "33091d4c5d9a13a75f162560b8c2dad76b4c5a7c",
+    "source_sha256": "4edb6449564436d9d9e2216768deee1da7fd3a8e04ed462537f719536a7a6882"
   },
   {
     "changed": false,
@@ -9785,68 +9738,49 @@
     "source_sha256": "a32adfe63d97452880998bffbb024d4e6bdb8e0db934f9dd758fcccab92d1019"
   },
   {
-    "changed": true,
-    "export_sha256": "b46a5d5a08978245bd7fd7c8b05f334cda51f1de3aa71b4d9f26d0961a035276",
+    "changed": false,
+    "export_sha256": "86cf9ed3cffb85d2630b6f2b0725b23b39885962da4184fbb54441294ca0b9a2",
     "mode": "100644",
     "path": "docs/index.md",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "private host replaced with example",
-      "public clone URL",
-      "public repository URL",
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "ef3fd7130ee5d9fa26abbc4595c6672a3b397522",
-    "source_sha256": "527aca6bfc25899f929e214532b7508933587894c01fe9dc460a3e729dd3b641"
-  },
-  {
-    "changed": true,
-    "export_sha256": "95ec40a93d84b7e8eff10891bc92aedf8343959e6c2a7a8461bf43cfc5fa61cc",
-    "mode": "100644",
-    "path": "docs/installation.md",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public clone URL",
-      "public repository URL",
-      "public source URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "0fde01e5d8882fcc288d619ac85518cd4f212eaf",
-    "source_sha256": "37ba0e1126550011041e07336d1fba8a81a4a64e7bedf7226868326f17164b53"
+    "reasons": [],
+    "source_blob": "5be404817bdf5c79afa074031871078344cc7df8",
+    "source_sha256": "86cf9ed3cffb85d2630b6f2b0725b23b39885962da4184fbb54441294ca0b9a2"
   },
   {
     "changed": false,
-    "export_sha256": "e7fc648311bfcd5933a924e1056c335fbaeda5cbf56e231a126790f3bb887f5d",
+    "export_sha256": "883083b2c08b11fe1662d3b74f9462a14c11b09f13d9adcde840db6d5a7498b7",
+    "mode": "100644",
+    "path": "docs/installation.md",
+    "reasons": [],
+    "source_blob": "f66902ed867e35ff75a1710a66bf3481f89a7622",
+    "source_sha256": "883083b2c08b11fe1662d3b74f9462a14c11b09f13d9adcde840db6d5a7498b7"
+  },
+  {
+    "changed": false,
+    "export_sha256": "38fb4194929e5cfc741113068dcb7cae70f444f657f9fc5ce811699bd66830db",
     "mode": "100644",
     "path": "docs/issue_renumbering_2026_09.md",
     "reasons": [],
-    "source_blob": "ca469abd8ffa6b0f4d9531fbc855167dd603a0d4",
-    "source_sha256": "e7fc648311bfcd5933a924e1056c335fbaeda5cbf56e231a126790f3bb887f5d"
+    "source_blob": "02929e78feb747c8f88357d7cd45bc365eff3998",
+    "source_sha256": "38fb4194929e5cfc741113068dcb7cae70f444f657f9fc5ce811699bd66830db"
   },
   {
-    "changed": true,
-    "export_sha256": "d81c16b9f2e07527f7b79f1ee61b29a17badd7aa433cc7e932634b0a6e1c3225",
+    "changed": false,
+    "export_sha256": "033f8c11fdd52570740e7c6d4aa2a24628a305cef4920be947d049ca30df9502",
     "mode": "100644",
     "path": "docs/license.md",
-    "reasons": [
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "551dbd51846f8f9e8c957b9392a6793230f7fa55",
-    "source_sha256": "a24d114f414c9cc62852915b6bb27abe28cecc03c878ff78440e7faab9fa21a6"
+    "reasons": [],
+    "source_blob": "5f9263939be3772c02517c40a9a9a75da1990f89",
+    "source_sha256": "033f8c11fdd52570740e7c6d4aa2a24628a305cef4920be947d049ca30df9502"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "6607a451e6e901124697db03cf79425fa7f57ab0b05c10c06d83dd6168bcffa2",
     "mode": "100644",
     "path": "docs/literature_review_native_gdf.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "c4669f3a56dff0f4b5198a7493a36b5a382a005c",
-    "source_sha256": "759824b0a63de9f41f713cd0c9867851d91c70d62d6370b38fb5ea1dbcf0a4a9"
+    "reasons": [],
+    "source_blob": "45e31e0f5162f48ad519f4b2589007fa31dffec5",
+    "source_sha256": "6607a451e6e901124697db03cf79425fa7f57ab0b05c10c06d83dd6168bcffa2"
   },
   {
     "changed": false,
@@ -9858,151 +9792,139 @@
     "source_sha256": "8022fa677da4246b0e1fb2bb54d19b75e07b3d7ad5da44f73e7d11cc92174b3a"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "7150392e0e444aabddd03a891d90ce139a5e0d538d51f390f1d51153eb8964ac",
     "mode": "100644",
     "path": "docs/periodic_jk_routes.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "cf0c74ceabd1257e79e6621b97a5b54cd8a5410a",
-    "source_sha256": "5c062010bcfe2df8d8b09453dc15776885f3ad0d498a21314fdeda0348c58ed4"
+    "reasons": [],
+    "source_blob": "6c2cedd5308cca06fa8f9db214ed0d906673fb98",
+    "source_sha256": "7150392e0e444aabddd03a891d90ce139a5e0d538d51f390f1d51153eb8964ac"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "a337843d5b80b222a6730f87779ebf8eed6f84b3d1137140d6c587843f8a6bc5",
     "mode": "100644",
     "path": "docs/quickstart.md",
-    "reasons": [
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "785bbff0b7fd5d72227c30740aa988dadb497f8e",
-    "source_sha256": "5f9dda6ab0ac8f83fcb20e78e3188fa869adc4f872c739e21c301149eb791bf4"
+    "reasons": [],
+    "source_blob": "8ed7f7efc80bf2c3b437776fb5533851fd16426b",
+    "source_sha256": "a337843d5b80b222a6730f87779ebf8eed6f84b3d1137140d6c587843f8a6bc5"
   },
   {
     "changed": false,
-    "export_sha256": "5c1ce7c7b6d5e63be505fc7262b74a91540cc4f2c9ae1bb3d84366fa9a377c7c",
+    "export_sha256": "552b55bc168f34fd4d48ba291410c136d51b82923c59360922ae54eac7b831a4",
     "mode": "100644",
     "path": "docs/qvf/_vendored/GOVERNANCE.md",
     "reasons": [],
-    "source_blob": "a49b0768c2d282aac227d3a587782cbe8993cf41",
-    "source_sha256": "5c1ce7c7b6d5e63be505fc7262b74a91540cc4f2c9ae1bb3d84366fa9a377c7c"
+    "source_blob": "6c324fb42a98548397758fde1932c0b55ecc79dc",
+    "source_sha256": "552b55bc168f34fd4d48ba291410c136d51b82923c59360922ae54eac7b831a4"
   },
   {
     "changed": false,
-    "export_sha256": "46bc9c4d7c6b9ec2338acfbb312715d29cdcfb240748b8a60a78913ad0572536",
+    "export_sha256": "cbd8b5ef8305606debd9e0d75c06a8ecee281f5702755ba85dff00bebcd6bb1b",
     "mode": "100644",
     "path": "docs/qvf/_vendored/README.md",
     "reasons": [],
-    "source_blob": "456a139e4fbd6a7318434295f7880ea23f755b19",
-    "source_sha256": "46bc9c4d7c6b9ec2338acfbb312715d29cdcfb240748b8a60a78913ad0572536"
+    "source_blob": "a64cdded08c700000630e2086b1b9060096fbaa1",
+    "source_sha256": "cbd8b5ef8305606debd9e0d75c06a8ecee281f5702755ba85dff00bebcd6bb1b"
   },
   {
     "changed": false,
-    "export_sha256": "851313f538c57432fc67320c375a1b742b43dba4f5241851202c2480dc77bf2d",
+    "export_sha256": "747193680e7c77d3988e404309aa09306a46ce9fa50c76da6f895e9129102a13",
     "mode": "100644",
     "path": "docs/qvf/_vendored/integration_guide.md",
     "reasons": [],
-    "source_blob": "373f82b064f3e74aed3957b4c0bda01718ab9807",
-    "source_sha256": "851313f538c57432fc67320c375a1b742b43dba4f5241851202c2480dc77bf2d"
-  },
-  {
-    "changed": true,
-    "export_sha256": "bf0e0edb4a326d328a12f333ded4fd252e5bf844daded16783314a142c75b187",
-    "mode": "100644",
-    "path": "docs/qvf/_vendored/library_guide.md",
-    "reasons": [
-      "public repository URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "1aafe01354a64946c046dbdd8ff729c3b9214d67",
-    "source_sha256": "7447efbca2c977bf1ee6fbfba35caf0e4ac7c2abb6f89e54c3bfbec03c2c36fb"
+    "source_blob": "4c5ef32e1e977f604564a27ebd6919730f8e51b1",
+    "source_sha256": "747193680e7c77d3988e404309aa09306a46ce9fa50c76da6f895e9129102a13"
   },
   {
     "changed": false,
-    "export_sha256": "56c32454076d963d519ac5069a0c0e48bd302ea4f2edc0071fe2a7568eced6d7",
+    "export_sha256": "02facd47ca1d3bc79badfc25795ceb29cce74a4a1f4222cc837bb2aefa1a08b1",
+    "mode": "100644",
+    "path": "docs/qvf/_vendored/library_guide.md",
+    "reasons": [],
+    "source_blob": "30218727888178246b99e9819665cfb86680ef16",
+    "source_sha256": "02facd47ca1d3bc79badfc25795ceb29cce74a4a1f4222cc837bb2aefa1a08b1"
+  },
+  {
+    "changed": false,
+    "export_sha256": "3da0f46c2821cc809f27624c244bcec04e40acab53d32cb4c177612676dd815c",
     "mode": "100644",
     "path": "docs/qvf/_vendored/orca_integration.md",
     "reasons": [],
-    "source_blob": "e292d4bb655ea72d88ce32a0df870830228d397d",
-    "source_sha256": "56c32454076d963d519ac5069a0c0e48bd302ea4f2edc0071fe2a7568eced6d7"
+    "source_blob": "edd21fdf5474e1a94509e108ab9b3893e658202c",
+    "source_sha256": "3da0f46c2821cc809f27624c244bcec04e40acab53d32cb4c177612676dd815c"
   },
   {
     "changed": false,
-    "export_sha256": "e6c75d3dcd2b52337c98c20bd1448496d90209356c48c58e89fe43ab2ff92047",
+    "export_sha256": "6afa324cb6fb593fb2ccdd3fead447d27b811b2778357df2a2b468aeed53e536",
     "mode": "100644",
     "path": "docs/qvf/_vendored/qvf-format-spec.md",
     "reasons": [],
-    "source_blob": "d09946fc005fdb2ec266211a6d20da8c23668081",
-    "source_sha256": "e6c75d3dcd2b52337c98c20bd1448496d90209356c48c58e89fe43ab2ff92047"
+    "source_blob": "fe1c21bc60f162c37e4eacda3265d30655b58e26",
+    "source_sha256": "6afa324cb6fb593fb2ccdd3fead447d27b811b2778357df2a2b468aeed53e536"
   },
   {
     "changed": false,
-    "export_sha256": "bbb843978650156182df2ad7d906635ea389f595182d684cc340c680b0c86c3b",
+    "export_sha256": "c9592d0a8a04abcd9a53af00a2cfa45fc45e37fb06469f51785179f22c9b5ef0",
     "mode": "100644",
     "path": "docs/qvf/conformance.md",
     "reasons": [],
-    "source_blob": "6133583d2206b9bcc93abbdd3f351bf19c82b890",
-    "source_sha256": "bbb843978650156182df2ad7d906635ea389f595182d684cc340c680b0c86c3b"
+    "source_blob": "7bd18f652ebd8cef8404f4e97a300d1d734639aa",
+    "source_sha256": "c9592d0a8a04abcd9a53af00a2cfa45fc45e37fb06469f51785179f22c9b5ef0"
   },
   {
     "changed": false,
-    "export_sha256": "34f89cafca5cb42471635a7c7b9be1e6b97d2c211a8ba0ece289469410a23667",
+    "export_sha256": "8dfb192d2d56bee8b8face7756e113823d434632179cd89e457e5e7b001db7d5",
     "mode": "100644",
     "path": "docs/qvf/governance.md",
     "reasons": [],
-    "source_blob": "4d79d8467ded143e4df77bd8bf002674427fa608",
-    "source_sha256": "34f89cafca5cb42471635a7c7b9be1e6b97d2c211a8ba0ece289469410a23667"
-  },
-  {
-    "changed": true,
-    "export_sha256": "dc25091cc78d3346fe9966070e6afbb0f1a85420fd5c029f24b1ab62479f4257",
-    "mode": "100644",
-    "path": "docs/qvf/index.md",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public repository URL"
-    ],
-    "source_blob": "396f72a9ed03590daf08bb5f6efa2f14990576e6",
-    "source_sha256": "6716165ad994302572811396d3e4fa26e3424de8cf24c3aa1bbf0ec76cbf86c7"
+    "source_blob": "f44e5cf4ae97acae0a795212b2138e7db20b59c7",
+    "source_sha256": "8dfb192d2d56bee8b8face7756e113823d434632179cd89e457e5e7b001db7d5"
   },
   {
     "changed": false,
-    "export_sha256": "c7a63ee2457a2fedf5ae38cbb34345a6976bc8caa95e9c5f84a620894fffa912",
+    "export_sha256": "e7ef3bf8bcedb96a7491376d1bf3c5121d36f7d47e130e9fe5dbdd3a9cfe18c9",
+    "mode": "100644",
+    "path": "docs/qvf/index.md",
+    "reasons": [],
+    "source_blob": "018b34d843294c571f9ab4142635e17979305cb9",
+    "source_sha256": "e7ef3bf8bcedb96a7491376d1bf3c5121d36f7d47e130e9fe5dbdd3a9cfe18c9"
+  },
+  {
+    "changed": false,
+    "export_sha256": "9b090fe42d912e3cac715777585536865024e568d9e67cf324604b08b9309a59",
     "mode": "100644",
     "path": "docs/qvf/integration_guide.md",
     "reasons": [],
-    "source_blob": "b0db9badbb8501b4f565a938b1671f7bf5cefd51",
-    "source_sha256": "c7a63ee2457a2fedf5ae38cbb34345a6976bc8caa95e9c5f84a620894fffa912"
+    "source_blob": "71bb201c2e0398369e18829c40e6ad2d2ddb2822",
+    "source_sha256": "9b090fe42d912e3cac715777585536865024e568d9e67cf324604b08b9309a59"
   },
   {
     "changed": false,
-    "export_sha256": "166cbf821650760be75b27f94f7df62d8c3d0e31a9ec07f11f3d129c89f6fef5",
+    "export_sha256": "0db84615c69a5466272511877b32f494bcdc32666deb9f30b81221448a323dce",
     "mode": "100644",
     "path": "docs/qvf/library_guide.md",
     "reasons": [],
-    "source_blob": "2c7d2b0503f43feb9201da74f6d10d9c7753c891",
-    "source_sha256": "166cbf821650760be75b27f94f7df62d8c3d0e31a9ec07f11f3d129c89f6fef5"
+    "source_blob": "b69678563e8cf6a8f1fb104782f212fa4708dadd",
+    "source_sha256": "0db84615c69a5466272511877b32f494bcdc32666deb9f30b81221448a323dce"
   },
   {
     "changed": false,
-    "export_sha256": "6cfce283f4c0b66511dc92f046bd3dcf63a665e4e5614677915d906cf45c7239",
+    "export_sha256": "c932e21fea0a1998d99b10dd15cb89805061e26a49fd0b87c57f5815e9cdbaf0",
     "mode": "100644",
     "path": "docs/qvf/orca_integration.md",
     "reasons": [],
-    "source_blob": "0f3744db5c0472de47dfba42cfa91a31d19b316e",
-    "source_sha256": "6cfce283f4c0b66511dc92f046bd3dcf63a665e4e5614677915d906cf45c7239"
+    "source_blob": "9819e5f8526f2a5a00dfb9c58d29425966770442",
+    "source_sha256": "c932e21fea0a1998d99b10dd15cb89805061e26a49fd0b87c57f5815e9cdbaf0"
   },
   {
     "changed": false,
-    "export_sha256": "c5ab6dbef092337a34f0a9cf9bf598e6efdd713bf3e1ebd3263eb16042328253",
+    "export_sha256": "04a8b5e40127e174dea6caeeb6d8e9723ec57391bc4df25ffa4ce9adcf080d25",
     "mode": "100644",
     "path": "docs/qvf/spec.md",
     "reasons": [],
-    "source_blob": "e497827d162636622d0bb02c054e4679970358a7",
-    "source_sha256": "c5ab6dbef092337a34f0a9cf9bf598e6efdd713bf3e1ebd3263eb16042328253"
+    "source_blob": "67299c52875a8f6797a8823c85dbee60fb1fae4d",
+    "source_sha256": "04a8b5e40127e174dea6caeeb6d8e9723ec57391bc4df25ffa4ce9adcf080d25"
   },
   {
     "changed": false,
@@ -10024,23 +9946,21 @@
   },
   {
     "changed": false,
-    "export_sha256": "f741060a6aa0e3d362054aac90bb803a185139be4b892d8555e10c2fe87b9eeb",
+    "export_sha256": "caf41d5a93448f34f9d036d7755ff409e99a2ffc995205a2becc702aa1cc0c5a",
     "mode": "100644",
     "path": "docs/release_process.md",
     "reasons": [],
-    "source_blob": "3120ad273c37b59a76d0d3fc20fe932cc014723d",
-    "source_sha256": "f741060a6aa0e3d362054aac90bb803a185139be4b892d8555e10c2fe87b9eeb"
+    "source_blob": "9710659967224d3d5fd8866472d6ec1dae785583",
+    "source_sha256": "caf41d5a93448f34f9d036d7755ff409e99a2ffc995205a2becc702aa1cc0c5a"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "0526932eef641c2107b9886d24a4ef1e74b916d3622b074396e628ef31eba1c3",
     "mode": "100644",
     "path": "docs/release_v0_10_0_prep.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "5fbb6b92a832830d3a43dd9d94bbfe6145f54584",
-    "source_sha256": "322d3d87697acd9ee11ee00734717efcd86b43c21088908c0865f2c3b282824c"
+    "reasons": [],
+    "source_blob": "c9d936ab11b707c247fb67019db309776bd8cd08",
+    "source_sha256": "0526932eef641c2107b9886d24a4ef1e74b916d3622b074396e628ef31eba1c3"
   },
   {
     "changed": false,
@@ -10061,39 +9981,31 @@
     "source_sha256": "e876023a6728d5985cf86d8fe56909af426fe8d18fee70f2125d9cd853ea0e81"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "246b31ffe47e21b9fc2aea1da97388bbc1d2cd48567ab1f3028d1972a1b95626",
     "mode": "100644",
     "path": "docs/release_v0_8_0_prep.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "595953c1309c43def3c9ad9b3718a6628baa76e2",
-    "source_sha256": "62b8bc8cceb2eee04f533e0005366e3ca1379b819f646af403dc34de478531a6"
+    "reasons": [],
+    "source_blob": "c01a39500ad42f370941afdedbc5167d3f0f6a94",
+    "source_sha256": "246b31ffe47e21b9fc2aea1da97388bbc1d2cd48567ab1f3028d1972a1b95626"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "29be914612434ace9a97090ca26e368e022ba8bca7d819c64edc32bb323da62c",
     "mode": "100644",
     "path": "docs/release_v0_9_0_prep.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "2d7b0c54633121e5784c389e44f051bb0dfaa8a2",
-    "source_sha256": "8e788dba89692385bb54d0e9587691877b5a0032758edee852c8bfe3be69e6d2"
+    "reasons": [],
+    "source_blob": "3df97d96445146055600bbc4795ef280aa6e0750",
+    "source_sha256": "29be914612434ace9a97090ca26e368e022ba8bca7d819c64edc32bb323da62c"
   },
   {
-    "changed": true,
-    "export_sha256": "edc3130ea451108597634a43e7da39906de71026bc3e1150b0ccae58ad4afa65",
+    "changed": false,
+    "export_sha256": "fe2f6d5ee673f6017daa4f70f7a7112d6d5d009b214a7069f976cd071b7ad704",
     "mode": "100644",
     "path": "docs/roadmap.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "ea047b0dbd10c703c2886cd0431aca3023868287",
-    "source_sha256": "1d9c3be2b34b878864741c5723f1c8823e98e0fa0feae1341c74e63fffe14d56"
+    "reasons": [],
+    "source_blob": "4533b32b157c297b9683166422dbde0ddfe1169c",
+    "source_sha256": "fe2f6d5ee673f6017daa4f70f7a7112d6d5d009b214a7069f976cd071b7ad704"
   },
   {
     "changed": false,
@@ -10105,15 +10017,13 @@
     "source_sha256": "ab628120ae563615e4be4443e9c2b4b7c9755c31bf8b74c00745b09d6cdfa8e3"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "b33dd5aeca7bb198a2b67f71eb4c277a92bdb7a57cd0c6e6079d8305f6142231",
     "mode": "100644",
     "path": "docs/running.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "24d019a9ccb692d62e8c838194afce2cbd3ab80b",
-    "source_sha256": "bbc07152624db72621cf22834f5b4c88272ec2ac785fa583fdde72221dac1700"
+    "reasons": [],
+    "source_blob": "2acbf90acaf2978a66a0cfe844b035e952acebd9",
+    "source_sha256": "b33dd5aeca7bb198a2b67f71eb4c277a92bdb7a57cd0c6e6079d8305f6142231"
   },
   {
     "changed": false,
@@ -10152,29 +10062,22 @@
     "source_sha256": "b515ed805cb886892bc9c8d0e71ccf9126c776d39b0ae31c2f82e129c31e2ec2"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "25499728e7eab61ab3ec55a6c4eff33d4f3af9cc0a938fb5791b385181d57341",
     "mode": "100644",
     "path": "docs/sponsors.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "01bd46f620060c15081f737fc1b855585e809655",
-    "source_sha256": "22edd00f193f887e8b75a90888f7415bf87a842ef965c58a8ffafcd1fc3264da"
+    "reasons": [],
+    "source_blob": "b56f59f1ec3b5f297ff86945f71f9a8b7ea18623",
+    "source_sha256": "25499728e7eab61ab3ec55a6c4eff33d4f3af9cc0a938fb5791b385181d57341"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "f3bd1f8ae792e91835c355ee7559e1e6938c5298ec341dc9b07d74f9f332368a",
     "mode": "100644",
     "path": "docs/support.md",
-    "reasons": [
-      "public maintainer website",
-      "public repository URL",
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "f75bc96631a37404bcc5bc686be92860e09a400a",
-    "source_sha256": "161f4a78c25f0cc1b352aa9b0235369a73ad302909e95c04a9d5fc81acb18421"
+    "reasons": [],
+    "source_blob": "c6eb9c8b5fc2fd96c0a10632b27cd2fe0e70fc1c",
+    "source_sha256": "f3bd1f8ae792e91835c355ee7559e1e6938c5298ec341dc9b07d74f9f332368a"
   },
   {
     "changed": false,
@@ -10186,42 +10089,31 @@
     "source_sha256": "dd69a8b7959d094f778664055c2955ba536cea09507b1970ff37309a63a07197"
   },
   {
-    "changed": true,
-    "export_sha256": "9b26a3c5e7b8a68fe9431a9139b8bf827f296790284fa03f1a74783193fb3621",
+    "changed": false,
+    "export_sha256": "c241a172dcd70cff283e1cc58b10d8b5008f26abd54c5d7f1fdb16f77339922b",
     "mode": "100644",
     "path": "docs/toolset_lifecycle.md",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public clone URL",
-      "public repository URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "3588de8a19d452e2b90ce27c03581b66884040f0",
-    "source_sha256": "e11c964c62486881cd311b5f1d25b7976827f24f9303b48c60e42b6457fc3382"
+    "reasons": [],
+    "source_blob": "3e8dccd68895a0cd6c68f28abd66fc742ba28c1b",
+    "source_sha256": "c241a172dcd70cff283e1cc58b10d8b5008f26abd54c5d7f1fdb16f77339922b"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "c2a8dcccd1dc24cd9a5dc6afc8dbbf3c8293156f186ec307a4055be2f149bb6a",
     "mode": "100644",
     "path": "docs/tour.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "54de09f294094642a1c6565d1a699eeaabc44d1f",
-    "source_sha256": "dfc956e6db729c0edc95b5d92d4f637919fa8ea0ae626bf7392a50e5d7e14877"
+    "reasons": [],
+    "source_blob": "4d256ceba3a963ff90c6ff3fc0b6c493a1d932f6",
+    "source_sha256": "c2a8dcccd1dc24cd9a5dc6afc8dbbf3c8293156f186ec307a4055be2f149bb6a"
   },
   {
-    "changed": true,
-    "export_sha256": "27ccb925d4e62cb045d6b375a988630437f0c85d1500f0ac84f88e3a13496994",
+    "changed": false,
+    "export_sha256": "3fda5630d1b2bc472ef2def9181137c5abd16b798600008b2f5acbe366cee989",
     "mode": "100644",
     "path": "docs/troubleshooting.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "79bd40800ed4c007964d3a36f063369f543a7fba",
-    "source_sha256": "4f799471100ec381847cb1bb4c00a1072f9f225aac7628ece3e74df1e987fb8d"
+    "reasons": [],
+    "source_blob": "b7824920a15d0b1071b478afb4c7373d6781c289",
+    "source_sha256": "3fda5630d1b2bc472ef2def9181137c5abd16b798600008b2f5acbe366cee989"
   },
   {
     "changed": false,
@@ -10233,26 +10125,22 @@
     "source_sha256": "1e3f1503a0afe3f69aeef89d8e71e170d37f531ffad785a1ead568423a5b5d7d"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "62607d45d9967c4c8980a98cbca0fe830b6308f33e5a0aea1afadd7426a70c4d",
     "mode": "100644",
     "path": "docs/tutorial/aiccm2026dev_a.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "1191d842bdcbf6733ce6a894cf6dae8b7f792168",
-    "source_sha256": "aef90f78b8593b6b78a1f8712cdba7457211ec29a63d643154b80f7075e5f4cd"
+    "reasons": [],
+    "source_blob": "a9a677e52585cc93845c175901a2cc96ef87bad3",
+    "source_sha256": "62607d45d9967c4c8980a98cbca0fe830b6308f33e5a0aea1afadd7426a70c4d"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "3d24f4027de42afe86bb8824b0b6d9058162f8cfe58936105aad65ea2b695a85",
     "mode": "100644",
     "path": "docs/tutorial/aiccm2026dev_b.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "9b5b8b3fccf77e3a53e00d9e3c73be379c9932c7",
-    "source_sha256": "7daaabc427bf2b3a2ebf278cf2136455cb0fa3b0cf624f764c5a8273217c3c61"
+    "reasons": [],
+    "source_blob": "07a2928fe244ccfd321231ddc70e13e37e5b666c",
+    "source_sha256": "3d24f4027de42afe86bb8824b0b6d9058162f8cfe58936105aad65ea2b695a85"
   },
   {
     "changed": false,
@@ -10264,61 +10152,49 @@
     "source_sha256": "8c5a1313af1c68e1c2d0864f7a68a141dc8490d269164e2197828f330c323a72"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "f1f3a54e8cc55eabddbb390573a5fcb92b09b0d04606a3bca0d2fccdda827d7d",
     "mode": "100644",
     "path": "docs/tutorial/aiccm_quickstart.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "cc10c09f84337cf2d82f64367956ef7bb0223199",
-    "source_sha256": "a42cf696c2dbc9d4655755e38b0a5da4f735e93178671757d0802c1eb2edad5f"
+    "reasons": [],
+    "source_blob": "dc7997c4410d7cb8794d2a31797b3a6a8294b7d4",
+    "source_sha256": "f1f3a54e8cc55eabddbb390573a5fcb92b09b0d04606a3bca0d2fccdda827d7d"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "fa4bca6caaf37f5a14bd9ee8c63f808d4fc56ae04e0fb377a2b66c5127e3891b",
     "mode": "100644",
     "path": "docs/tutorial/auto_citations.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "20b629dc09f5367dac5fd45bd82556377daebf88",
-    "source_sha256": "cfb1c76f94f87d1f55ad1f305e049a22759fe96104a18a386c971ef7679ee8e7"
+    "reasons": [],
+    "source_blob": "c89fc820f55bfc7b207998513c0cac5eea671114",
+    "source_sha256": "fa4bca6caaf37f5a14bd9ee8c63f808d4fc56ae04e0fb377a2b66c5127e3891b"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "a4ae241054b49aef7dd6b24c0cd0e74c1c7743573f96d7e33f082841c810534b",
     "mode": "100644",
     "path": "docs/tutorial/band_structure.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "8fc010e87318bb204a71ba9328cc017dbc7648e8",
-    "source_sha256": "c80697eba7c93dfe6753961587ab6cad3b2d0d553ab531e58b3e31af32d980d0"
+    "reasons": [],
+    "source_blob": "4feaf301564ad34b222060d085a496bd0788e4d2",
+    "source_sha256": "a4ae241054b49aef7dd6b24c0cd0e74c1c7743573f96d7e33f082841c810534b"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "e5d438b34e911acb81e298d6d5dcf9150a70a271b2686c8d1ecb3e04bf3e74f3",
     "mode": "100644",
     "path": "docs/tutorial/basis_convergence.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "b3dda0e64f913f24cdd7d133ac99f8f3391c85dc",
-    "source_sha256": "79f05d4cf65476d7baa094e60c742c24c1fb1dd70f993138f774598524dc4273"
+    "reasons": [],
+    "source_blob": "b0f7fec7b0ee576971f2842a6d68b2a501a7df38",
+    "source_sha256": "e5d438b34e911acb81e298d6d5dcf9150a70a271b2686c8d1ecb3e04bf3e74f3"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "696a6d8125c99c9beb3ed5a96a5ec6adea9fe279cda1e4c12328af57afdcc432",
     "mode": "100644",
     "path": "docs/tutorial/casscf_multireference.md",
-    "reasons": [
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "a28871ef106061dc6af0c6d5e2a50184908cc216",
-    "source_sha256": "02330faf4999717eb534e60e600fea1acdf020052f34846f787b4fccfec86bb9"
+    "reasons": [],
+    "source_blob": "86a3dc2d4d8a0c6d66ad6f2f4e91b61aef9a8e2b",
+    "source_sha256": "696a6d8125c99c9beb3ed5a96a5ec6adea9fe279cda1e4c12328af57afdcc432"
   },
   {
     "changed": false,
@@ -10330,37 +10206,31 @@
     "source_sha256": "c8f9b683489422925ad71cb4533d6039af8b677bb36e891cc343e3f6dea40d71"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "6941112908ca7bb220f9aaf5201b0151ebb4e32f4d27a0b3bff08a7de29c778b",
     "mode": "100644",
     "path": "docs/tutorial/cross_validation.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "62d0128fa8182cfacebe203056b24e20e851fcb1",
-    "source_sha256": "dbac78c6b1d05a29fe3e4b649ad4c91d1616bf07e2c4a06bc8c3e9e84be641f4"
+    "reasons": [],
+    "source_blob": "94d058dc91a774ac99cee814fe8d7a9e7329aae2",
+    "source_sha256": "6941112908ca7bb220f9aaf5201b0151ebb4e32f4d27a0b3bff08a7de29c778b"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "2e8e397628b6c32045e48d60ba3d8a1e8a55350330c99aa632ef35f753b6a5df",
     "mode": "100644",
     "path": "docs/tutorial/cyclic_cluster_model.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "1452af92c3ce0e6abd9b37424b3aca70b3f51cad",
-    "source_sha256": "59707c7849044a015f61e816c0cbae3227a99501ee9db7372ed7dd42ed2e3035"
+    "reasons": [],
+    "source_blob": "5690b27bfd020c5022bf4daf1d568c2370c2842e",
+    "source_sha256": "2e8e397628b6c32045e48d60ba3d8a1e8a55350330c99aa632ef35f753b6a5df"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "8e5581f952456339f9585a31f3905721ea9896fafc4dbacd82a329df4b5cc397",
     "mode": "100644",
     "path": "docs/tutorial/dft_plus_u.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "6df2bfdbd7b0b9ffa80d9351e477579458c99729",
-    "source_sha256": "a17fe32067763b8aab73a35318d16945ce27bfd0e05cacaed027bef73e4e7b6f"
+    "reasons": [],
+    "source_blob": "32c8c0b014f861b81097bf6fb7e84385ab5e75e3",
+    "source_sha256": "8e5581f952456339f9585a31f3905721ea9896fafc4dbacd82a329df4b5cc397"
   },
   {
     "changed": false,
@@ -10372,39 +10242,31 @@
     "source_sha256": "cccf734b00f0775c6015bdf763c1774df52149987623d67b830413fc72e39cd2"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "38feddc8bf3c496faaac6d55205b4ef8b6a3227ad781abada9cabbaf7a82ce8f",
     "mode": "100644",
     "path": "docs/tutorial/dispersion.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "3f47e8a96ce6213af4d263ab0ce1c633f438e516",
-    "source_sha256": "0d71786ed2b8e3ab37a833dce569f2e54aaa001c4a735b636a14633bac87ecce"
+    "reasons": [],
+    "source_blob": "211efeb254da7a65c0b7f14b10f2f833df103e5d",
+    "source_sha256": "38feddc8bf3c496faaac6d55205b4ef8b6a3227ad781abada9cabbaf7a82ce8f"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "2172c46f22d58ad09433d969ce03606988a1c4c121dd95245c4ced675b4bbc7a",
     "mode": "100644",
     "path": "docs/tutorial/dlpno_local_correlation.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "00ac53bf5240c3515cf34f022d6f96dcbdfb0cc4",
-    "source_sha256": "2f3659c9ccc01a159d74ca123e8a42f7a01c812520b265dd22b1ebd4403c4df5"
+    "reasons": [],
+    "source_blob": "35f278950677cbfdb53465cac597076aedd7be6a",
+    "source_sha256": "2172c46f22d58ad09433d969ce03606988a1c4c121dd95245c4ced675b4bbc7a"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "760b3a32c4ed68e1f7516759e8d2c17adaa1f9aea9593aea534a4dd08ebbda8d",
     "mode": "100644",
     "path": "docs/tutorial/double_hybrid_b2plyp.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "023123b168936e89956d32f3e3c9177e19412125",
-    "source_sha256": "77f0d06b9635ce9fec2ad9571105747ab5fb88ae4ce20d068d5cfa98340683f6"
+    "reasons": [],
+    "source_blob": "5e96a897b37948c0a98268ca85728fbd43e3bc17",
+    "source_sha256": "760b3a32c4ed68e1f7516759e8d2c17adaa1f9aea9593aea534a4dd08ebbda8d"
   },
   {
     "changed": false,
@@ -10452,59 +10314,49 @@
     "source_sha256": "5a56ec78aa87d398692d4bbffdee502cee0e9e46400c8de4b46401c62c95f153"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "556641eac74326b68720ed88692627b4d1dcaa8e85e470aed9677eba7300505e",
     "mode": "100644",
     "path": "docs/tutorial/functional_comparison.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "2f2cac6675cf1d515dee9f518e6d838fb72f9b82",
-    "source_sha256": "0ded03ddd0ac16275a627ded25a0ed91f20a0db8e8d12f9479989fdfc556c1e7"
+    "reasons": [],
+    "source_blob": "3eb56277b5b34472f0961131df44253252c95343",
+    "source_sha256": "556641eac74326b68720ed88692627b4d1dcaa8e85e470aed9677eba7300505e"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "82ddb2261806d97d21d1504b48d128257624114857ea551a10d846ae9ce26fbb",
     "mode": "100644",
     "path": "docs/tutorial/geometry_optimization.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "274b912a575e106cdfa17859c2d8196257a5481a",
-    "source_sha256": "e8f7346c3c5afcdadb4e1cf15f412b83398408b14fac10a2ae4f9cbfde68f5a8"
+    "reasons": [],
+    "source_blob": "53945d2cbda429ebfa8ad6b9917d99e995d7fb47",
+    "source_sha256": "82ddb2261806d97d21d1504b48d128257624114857ea551a10d846ae9ce26fbb"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "0d1179e93cda5361ec458c1696ee42ca8899dd1005023350496e1e92d2fc45ca",
     "mode": "100644",
     "path": "docs/tutorial/gfn2_xtb_workshop.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "4ddf25810888b075fc8b0aa6eccfe5656fe52e6c",
-    "source_sha256": "5dc668d0b445b63c4bf8dad9f0434e7d57eda3eae7188d867ee13da6451531af"
+    "reasons": [],
+    "source_blob": "a3262e52cae4d096c6aea90f7eff9c64c97ae223",
+    "source_sha256": "0d1179e93cda5361ec458c1696ee42ca8899dd1005023350496e1e92d2fc45ca"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "44932dde8a6f266e8d24bb7146452011ab937e5823a925e0100d864ea2008de4",
     "mode": "100644",
     "path": "docs/tutorial/gilat_net_metals.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "44de82ab05321575bb525da3d7dbb8379a045ba2",
-    "source_sha256": "6f0e2f5e54d770492d4bc960ec638f45067079f30f91ddb90504399eac0f66e1"
+    "reasons": [],
+    "source_blob": "1e1fda61c0616d587539173efc04f2dc58fb8691",
+    "source_sha256": "44932dde8a6f266e8d24bb7146452011ab937e5823a925e0100d864ea2008de4"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "e2d54230b8c5c529a8452586684ab57d3221eca5ce3460ce07476933027642a0",
     "mode": "100644",
     "path": "docs/tutorial/h8_chain_ccm_ancestor.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "575dbf16c632ef65985103abad13ad4d1b60bb04",
-    "source_sha256": "2668ea47a24d8160f8604814522f204808b1dd67ee8579d0d8bd6e114678e748"
+    "reasons": [],
+    "source_blob": "2bf9402cf39bd00b2e3eff032223d4ae301f9218",
+    "source_sha256": "e2d54230b8c5c529a8452586684ab57d3221eca5ce3460ce07476933027642a0"
   },
   {
     "changed": false,
@@ -10516,15 +10368,13 @@
     "source_sha256": "e5ea299be9502e13c0350e896110d610da1a5a828b41aa5b147bf4e8a0730b8c"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "dcf9b621a2456bff8642fd506112e190ebb3aca0936f694510c48f6e90d5178b",
     "mode": "100644",
     "path": "docs/tutorial/initial_guess_walkthrough.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "c172d2b77fd67a9e534c90c700e18413582f5794",
-    "source_sha256": "b985953970b1aa18aaa58ccb20c08978a710f0758a858f5193ffe9af995019e4"
+    "reasons": [],
+    "source_blob": "0f9ef3c77e4905ac15c9fd2d766cac04de3ddacd",
+    "source_sha256": "dcf9b621a2456bff8642fd506112e190ebb3aca0936f694510c48f6e90d5178b"
   },
   {
     "changed": false,
@@ -10554,15 +10404,13 @@
     "source_sha256": "c0380e031ad0d165bb847295861d53800fce8cbd4eb34632db97c0c682cb0c99"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "d308e4094e8948e71c4f4120880ff3b9758bfa4a3a97873cf492754f313fbf06",
     "mode": "100644",
     "path": "docs/tutorial/lih_pob_tzvp_solid_state.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "829323969b05da04c52e81f9ed591c16de9dfeeb",
-    "source_sha256": "124f41ea89733436e12e136ca0ce2678719d2d3edc54a1ce1b8e92b3f7493db6"
+    "reasons": [],
+    "source_blob": "b3631b503074ad8284ff91acbc7a4c09b7aca5c8",
+    "source_sha256": "d308e4094e8948e71c4f4120880ff3b9758bfa4a3a97873cf492754f313fbf06"
   },
   {
     "changed": false,
@@ -10574,26 +10422,22 @@
     "source_sha256": "b2f602dce24badaa363d19a9675631a78526f9e6f60cc444ee72b4b137e12e5f"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "e72384ad0e5a61418518265ca72b46cc89251409cc547eebc691c0c8dc8d22ec",
     "mode": "100644",
     "path": "docs/tutorial/mace_mlip.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "e6973a828bafa5c29094dc09e6f7f9008562640e",
-    "source_sha256": "53bc0726b088efc6bf77e02a194aed471021cad270760a7e00e07d64a057b177"
+    "reasons": [],
+    "source_blob": "bec1d9f8e351f2ea0cb4ac33cde19e5bcaa42e24",
+    "source_sha256": "e72384ad0e5a61418518265ca72b46cc89251409cc547eebc691c0c8dc8d22ec"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "3f9139225fa728d20cca8fe5377cce3922db0396214606780a8519dcfc83decc",
     "mode": "100644",
     "path": "docs/tutorial/madelung_with_ewald.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "192e607f267f1da64c99b3e1954d13ff5cb5705f",
-    "source_sha256": "67b58567594fe8b119626d564dbd77c82be7acae40b3373b3fb324a32b600933"
+    "reasons": [],
+    "source_blob": "59d72d3f981ae723a58bad150be3f8c1a663704b",
+    "source_sha256": "3f9139225fa728d20cca8fe5377cce3922db0396214606780a8519dcfc83decc"
   },
   {
     "changed": false,
@@ -10641,48 +10485,40 @@
     "source_sha256": "9d4e30851799bd5770d8191ef17f7ecbc9bd50a733c558c64e58fa5c2b26f02c"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "304adad673e6953a83528ff42625fb59c3eeff66b6d85c88b0155069e9ec664b",
     "mode": "100644",
     "path": "docs/tutorial/msindo.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "5ae016602a752b859b62baa04290a5fe5890a60a",
-    "source_sha256": "c3fd9353f2604df109e12eeefd094f03f15503c931a6cfdf4fac62e39ff0030b"
+    "reasons": [],
+    "source_blob": "dbe8a9b607a516427447b69c1e93734bf340042c",
+    "source_sha256": "304adad673e6953a83528ff42625fb59c3eeff66b6d85c88b0155069e9ec664b"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "dd0422911a9ccb125b28a1aad5d2594b2cdbd9b88bd4413405cde90b732f8ada",
     "mode": "100644",
     "path": "docs/tutorial/natural_orbitals.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "6a0f612c900b5bc38f2479d2fb61d2d8d8438ddd",
-    "source_sha256": "966fd3c5cbf97a5578552a9910d23fca8c5e106ab3c050b1e233c875aee2b011"
+    "reasons": [],
+    "source_blob": "f5bf8ab59519c8160e03dc9f8448179f0ca486b7",
+    "source_sha256": "dd0422911a9ccb125b28a1aad5d2594b2cdbd9b88bd4413405cde90b732f8ada"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "806add30b1bcfc68d13a43121e1edc442d25539c3ed95148c7e448a9c99ca03f",
     "mode": "100644",
     "path": "docs/tutorial/neb_reaction_path.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "ef3c8193dcb5960c188799b35533b7ec875b29f3",
-    "source_sha256": "796dae25e9fac8a882c6678c1549d3293c00e341fc446104ebf86ac5112257f4"
+    "reasons": [],
+    "source_blob": "8866405606de3a2ad34fae8b9bc017870dd55dac",
+    "source_sha256": "806add30b1bcfc68d13a43121e1edc442d25539c3ed95148c7e448a9c99ca03f"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "366d7be3b6e89569832b5449426115a101975e543a6355f19be703e994e5f543",
     "mode": "100644",
     "path": "docs/tutorial/non_hf_solvers.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "756a2bfe555d61b226f71e9202552359ba5ad4b3",
-    "source_sha256": "85419d802a4ef1b9833105f1a76a4963988d77f67b53e5d94a32a3cd35163054"
+    "reasons": [],
+    "source_blob": "c9cce8eaa2d7844ddc5256aea884f039d18068ec",
+    "source_sha256": "366d7be3b6e89569832b5449426115a101975e543a6355f19be703e994e5f543"
   },
   {
     "changed": false,
@@ -10703,16 +10539,13 @@
     "source_sha256": "ca402baca3657ae6f111b6aaee3f61bc4f9aed01c38b1ffba5c4d62702fcd41c"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "2a758575ca8fff5fca487d01c04aeb9d579322035496034bf0874e1cf814cb63",
     "mode": "100644",
     "path": "docs/tutorial/orbital_visualization.md",
-    "reasons": [
-      "public maintainer website",
-      "public source URL"
-    ],
-    "source_blob": "c62a3badc1fadd5c286b060465ff28b950881e87",
-    "source_sha256": "95865d7124667109747a5c9af1c1020367957501423ee809daf4876991fbea55"
+    "reasons": [],
+    "source_blob": "52a32ff67df01f11d4a59266d59e01e223260ef8",
+    "source_sha256": "2a758575ca8fff5fca487d01c04aeb9d579322035496034bf0874e1cf814cb63"
   },
   {
     "changed": false,
@@ -10733,92 +10566,76 @@
     "source_sha256": "ca13d1b80993f9aff8aab822c9d63f9bcf06ae1be60f0a4394c053616c3cd9c0"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "17cc51cc89c476762aec7ad653e45e79760d1edd9416ba7c91dd35d07aeb4e25",
     "mode": "100644",
     "path": "docs/tutorial/peierls.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "087716325bd7c37197cdd7546c42168bd68f1504",
-    "source_sha256": "c36d7b95b0061088f6efa51f5f5d2fb74597ccde2009154594497c7819354eb2"
+    "reasons": [],
+    "source_blob": "62eb59299c1e76b4c4745a292e77ee8d8813211a",
+    "source_sha256": "17cc51cc89c476762aec7ad653e45e79760d1edd9416ba7c91dd35d07aeb4e25"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "59144af3e534f5d25b7c13fdffe198273855e04000cbc0f41ce46f449edb6efe",
     "mode": "100644",
     "path": "docs/tutorial/periodic_crystal_gallery.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "7b91cd19c495bf9302a9acefcc2224615dc08127",
-    "source_sha256": "c5bb34706dc54350e7b4f74f48278d8d58a868220cbc81f1e8d8d7fa10abdef8"
+    "reasons": [],
+    "source_blob": "08efe8af5f9dc6f22d98e6d7951126a69af2bcf2",
+    "source_sha256": "59144af3e534f5d25b7c13fdffe198273855e04000cbc0f41ce46f449edb6efe"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "727da7beb2590167340606dacc46fd7edb0c906f4550de60655b1cd122ce673e",
     "mode": "100644",
     "path": "docs/tutorial/periodic_dft.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "dd5af30c57f905ad0a7882e9216c2b76ccde5cd2",
-    "source_sha256": "09ecdf751c5d98c30e2442b88fd37e801febee7735009f0a6983ec7c523c278c"
+    "reasons": [],
+    "source_blob": "364abe6fa5ad0ee73ec4efce681c3ca07a3b1707",
+    "source_sha256": "727da7beb2590167340606dacc46fd7edb0c906f4550de60655b1cd122ce673e"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "8360858530d5e898e111b8fd65c235452924622175c373a6aaa63cea1a912826",
     "mode": "100644",
     "path": "docs/tutorial/periodic_gapw.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "c66df1924bdc9d9ba7953b96d9f09e617382bfca",
-    "source_sha256": "c1fda3ea68b99c05aec11fbe5daa413cab9eafaa964dbee922727f4e072a2af9"
+    "reasons": [],
+    "source_blob": "27140e2761263491169a5b008f47e0ca2a25c939",
+    "source_sha256": "8360858530d5e898e111b8fd65c235452924622175c373a6aaa63cea1a912826"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "e8eee3a0aa7a1d30d8aac4728f4cebc6e6745b26b7d2de70d430e6f0ebeab136",
     "mode": "100644",
     "path": "docs/tutorial/periodic_geometry_optimization.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "1f012d80588cc86801f80f60fb67f9b5df9b60c6",
-    "source_sha256": "7593a8ebca9ddddd87934f888db36bb5598d613979567b868b9801a808be0f78"
+    "reasons": [],
+    "source_blob": "9d424fa7f38d4fd25ef8660ee4d9b30fe66c32bd",
+    "source_sha256": "e8eee3a0aa7a1d30d8aac4728f4cebc6e6745b26b7d2de70d430e6f0ebeab136"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "7f76908721d6601f57519662ab9c25141b03d7ba0b0a8e9f47d53a3f1563bca0",
     "mode": "100644",
     "path": "docs/tutorial/periodic_gpw.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "9ab105cac54992e0c76631469f36d56b125da2ca",
-    "source_sha256": "51bada0e0fcc8fe856c770d3c5b20d49df5f5ed776a0829f4a84fcb1223edbf2"
+    "reasons": [],
+    "source_blob": "e810c6f7247f0ba71c16ee51c41903dcac2ca235",
+    "source_sha256": "7f76908721d6601f57519662ab9c25141b03d7ba0b0a8e9f47d53a3f1563bca0"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "21cbae1d0ddc1f1e4f42b80f2f0e10757b16c3ec39385dd36e70170edfdd67d6",
     "mode": "100644",
     "path": "docs/tutorial/periodic_hf.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "f7bbdd786d9b617cde902290f5e7e2bd23f408d2",
-    "source_sha256": "4ad7b51f583c50bb6b2a0790dc6fb5b1ba598bbdccb1d9cbc1b46c8d885bebd9"
+    "reasons": [],
+    "source_blob": "89e8642433b76a2ea0832105785d6b60368be36e",
+    "source_sha256": "21cbae1d0ddc1f1e4f42b80f2f0e10757b16c3ec39385dd36e70170edfdd67d6"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "82fd72c55ed93600a08b5624f735e49985fd40393486af84d02bdd36a320dbda",
     "mode": "100644",
     "path": "docs/tutorial/periodic_methods_compared.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "78b46f5c2b2c443052f04bdaf7360bce4157995a",
-    "source_sha256": "286a9576bceed649ef55f3858d457479ca1ddd01c7bc12b903fe37d98e9557df"
+    "reasons": [],
+    "source_blob": "f80ad28902ce580d15a2d538ae38f43a09a55f75",
+    "source_sha256": "82fd72c55ed93600a08b5624f735e49985fd40393486af84d02bdd36a320dbda"
   },
   {
     "changed": false,
@@ -10830,26 +10647,22 @@
     "source_sha256": "67833d328f148543340c33491dd22e99d329f53801fc9bb0dafda5e2b2bb125c"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "b67f29320ba808025cb9139f3e35e564117907cce6c03e7eb01631c0c014ac59",
     "mode": "100644",
     "path": "docs/tutorial/periodic_scf_convergence.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "f7f747cd0501e4d8bca92e5724f527bbde55c051",
-    "source_sha256": "33656396c3c71423688e2e4225f8f24135d94cc4e550c1be72121a57952f303a"
+    "reasons": [],
+    "source_blob": "bef87fe3c7d5ae7ee5e792a3d90c6448f7498056",
+    "source_sha256": "b67f29320ba808025cb9139f3e35e564117907cce6c03e7eb01631c0c014ac59"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "a40b95e31d5ecf27184e240a75df22b809428bd97ff85dcdd258a88d568dc6c5",
     "mode": "100644",
     "path": "docs/tutorial/planning_a_calculation.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "989a73f9c858586a8ccb81fb10692a537aac8327",
-    "source_sha256": "96af6826cc6514f5ca6990ac4ce9feb9502c12cbf4808d9f3ff92e8d1cb54065"
+    "reasons": [],
+    "source_blob": "791020bab287f2fa015fc28852f2fe7a31860430",
+    "source_sha256": "a40b95e31d5ecf27184e240a75df22b809428bd97ff85dcdd258a88d568dc6c5"
   },
   {
     "changed": false,
@@ -10861,26 +10674,22 @@
     "source_sha256": "8fa423839507271f401373cff8eee7b26742c042b481f7b6b17fc61d12163d61"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "2e8a8244ba5a2674654e495a11ada37e2faea61da06c71d4233f2603bad5af8f",
     "mode": "100644",
     "path": "docs/tutorial/pob_tzvp.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "49a94747a3fe3f0f904568ae2e3577986924784d",
-    "source_sha256": "5b10b4d899b0cd8e1a0b917af4903cb9892f30af74f9bd5a309905f65bbd4aeb"
+    "reasons": [],
+    "source_blob": "94f50af66a1061e6c66680d560853bc873eaedc0",
+    "source_sha256": "2e8a8244ba5a2674654e495a11ada37e2faea61da06c71d4233f2603bad5af8f"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "efe25ef3f8d29d939477b1dd1e0fd3279d3e78dcb389260fce7bb6f1ec5dcd8c",
     "mode": "100644",
     "path": "docs/tutorial/post_scf_properties.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "0bd7c79b67c8da1698fc1aed47e11e6720f2ab26",
-    "source_sha256": "16046d1179e2afc5c238d80e2775adb2fe16217511207311b3b68696ec343b18"
+    "reasons": [],
+    "source_blob": "648ee83df3ac0ca5ee2ee34ac0f6cccb230e0b6f",
+    "source_sha256": "efe25ef3f8d29d939477b1dd1e0fd3279d3e78dcb389260fce7bb6f1ec5dcd8c"
   },
   {
     "changed": false,
@@ -10892,30 +10701,22 @@
     "source_sha256": "2bf5ae8e457744d962abf26d89a961a4a0f3e1db6f8fc0dd5b88b9fbc747ea69"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "d74a071bf910ad26ee4e790634fb5f2fbfa735fa89419d590d89a08749eb1995",
     "mode": "100644",
     "path": "docs/tutorial/qvf_adapt_and_writer.md",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public clone URL",
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "20c30959070933c68978b5c16d1343c7c3aa393c",
-    "source_sha256": "cb47b7c9997e718cb374dfb63b54951ae4f29be923b7b4e33673292e412b9e39"
+    "reasons": [],
+    "source_blob": "27f5da0c4c704a38893308e10ad789b6307795ec",
+    "source_sha256": "d74a071bf910ad26ee4e790634fb5f2fbfa735fa89419d590d89a08749eb1995"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "bc758b7e7144ef31bfd07a608ded80e5efc71f944d26a905af48ec6b75791478",
     "mode": "100644",
     "path": "docs/tutorial/qvf_file_format.md",
-    "reasons": [
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "530179d0e16eb36e9201a5096e4f75e17529e662",
-    "source_sha256": "2a098ad9a2a3f34ee4d6baa3cd3f3a4fc691fb4ddfbebb6a7c89bc9919a481f0"
+    "reasons": [],
+    "source_blob": "f773ae2bbe1fab98ac8320c7eee576dc6268dbf9",
+    "source_sha256": "bc758b7e7144ef31bfd07a608ded80e5efc71f944d26a905af48ec6b75791478"
   },
   {
     "changed": false,
@@ -10954,15 +10755,13 @@
     "source_sha256": "2dd6852849c7f0ea013683ecafb3494ad0953341e756125e8a2dc305b81f411e"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "1d02bc7f894215788c2edf2b73fc1c641c899399f55d7c4e0b40d039c0e2aed4",
     "mode": "100644",
     "path": "docs/tutorial/ri_mp2_aux_verification.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "f74465b9214088e377be2378847b4a8b9a264fe5",
-    "source_sha256": "ea47b1d3e090137ee254a1fe48488df5ebd1e9dfe1fe05ffe7d0fa5303fbb7b2"
+    "reasons": [],
+    "source_blob": "6e151100e7159a56e18048db193ca50c4e914396",
+    "source_sha256": "1d02bc7f894215788c2edf2b73fc1c641c899399f55d7c4e0b40d039c0e2aed4"
   },
   {
     "changed": false,
@@ -10992,15 +10791,13 @@
     "source_sha256": "80755f70a38d1735869044fee3232ca0595b832313c9d137a9885c748a3cf5cc"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "a37a66058b495a486a7f53b6a4b6f437fadc85418facf493b1564e0e9f7cd2e8",
     "mode": "100644",
     "path": "docs/tutorial/semiempirical_periodic_and_validation.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "d86ee24ace7c886cd7061219541a079bc07c91f4",
-    "source_sha256": "686be3cf37f1f53e7593b64b93d481c554b259a31c2d58a9dd40597ed18b202d"
+    "reasons": [],
+    "source_blob": "e10c397377373734a9f1327bd78939d771dd5116",
+    "source_sha256": "a37a66058b495a486a7f53b6a4b6f437fadc85418facf493b1564e0e9f7cd2e8"
   },
   {
     "changed": false,
@@ -11021,15 +10818,13 @@
     "source_sha256": "cd968268646a3946573472a5148153855bbae2d3b875ad61ec7a6b0934442fc0"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "3a06044db69a1085fa9d3e1aaf3b6315b5c80be7377fbfdfa731221d4e293df1",
     "mode": "100644",
     "path": "docs/tutorial/solvation_water.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "677c41a71e01451037a161baf98635f4e0dd5c3b",
-    "source_sha256": "6f4249d2e5283404f46feb05d610a620b0a9a589b3b164e9e5808c04de0816b5"
+    "reasons": [],
+    "source_blob": "7100dfa3b4154622acb925121b7cf4272cd60e2b",
+    "source_sha256": "3a06044db69a1085fa9d3e1aaf3b6315b5c80be7377fbfdfa731221d4e293df1"
   },
   {
     "changed": false,
@@ -11041,15 +10836,13 @@
     "source_sha256": "c70856b25491cb86acd442322b86c288600402dd38a3e6d8b850950d760afe4f"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "f697473137d23823cadb6320094b680af9f3ef9c7bb8156578f8ee376fd73503",
     "mode": "100644",
     "path": "docs/tutorial/symmetry_storage.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "2369feb5446dd8893a57e97568da3976526c1827",
-    "source_sha256": "3046abff905498660e9ff731e016754c0ea253bd5fa2097cf760319983f9525f"
+    "reasons": [],
+    "source_blob": "7db678b6ba77d67eef322f5662d4dece57948b2f",
+    "source_sha256": "f697473137d23823cadb6320094b680af9f3ef9c7bb8156578f8ee376fd73503"
   },
   {
     "changed": false,
@@ -11070,51 +10863,40 @@
     "source_sha256": "9168322c68b2d6e1a49d29bef28f9e1f9aa5cd0f784084aa9a23d9daad171ac0"
   },
   {
-    "changed": true,
-    "export_sha256": "215e8ab79f3b2b32cba0c3a01fb4c76bec01f455d0615b3c7d1e4fc5ba3072db",
+    "changed": false,
+    "export_sha256": "4362de96b7757ee94dd09252a76b15418382744c26128fcd80850d6202daf6e4",
     "mode": "100644",
     "path": "docs/tutorial/vibe_view_getting_started.md",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public clone URL",
-      "public repository URL"
-    ],
-    "source_blob": "c8a5e9707234595a8fb41624d8e3eef156396c58",
-    "source_sha256": "c7dcf109b222af6915962815cd5fd2df0c062af3ee1b0b5c3e2ca96a839d1055"
+    "reasons": [],
+    "source_blob": "70ed97d988ecb0f3e2c08ea68633dda7eae2b69b",
+    "source_sha256": "4362de96b7757ee94dd09252a76b15418382744c26128fcd80850d6202daf6e4"
   },
   {
-    "changed": true,
-    "export_sha256": "f31e584ad3ec35ee460a71bd6cfa13885dc26631a32bb7f274d5508dce8fb79d",
+    "changed": false,
+    "export_sha256": "bbb9bff0e615c30c305051e1c439b54819b6230f9b238a59457df602cf7b4c45",
     "mode": "100644",
     "path": "docs/tutorial/vibe_view_terminal.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "a82c931806260d783664cfe67c41e0a2f37cee64",
-    "source_sha256": "cd659d306275929a2b370874660e4fe0fe358937507ff0102fd55d98e1f0adf3"
+    "reasons": [],
+    "source_blob": "51f47bf50c26aed995e23f72c7f4a9f69b8f9a8d",
+    "source_sha256": "bbb9bff0e615c30c305051e1c439b54819b6230f9b238a59457df602cf7b4c45"
   },
   {
-    "changed": true,
-    "export_sha256": "0a2b7643d1b2f31dc4e7e7e3c4d13a6f92373cd3e71198a71966902ce6b741ad",
+    "changed": false,
+    "export_sha256": "f88a6a5078058da419a6ddcc09ba3dea99c2573c94b7a8d8087c8b5b69d3a93d",
     "mode": "100644",
     "path": "docs/tutorial/vibe_view_walkthrough.md",
-    "reasons": [
-      "public maintainer website",
-      "public repository URL"
-    ],
-    "source_blob": "dac944c8b4706f825f3a942e677091a4614230b5",
-    "source_sha256": "3943d88eb21d3972ba9bdedb02c8a5721d9f4cb2735113be1325ec39abaf0ac8"
+    "reasons": [],
+    "source_blob": "81fa74b68b77bf706ef9d0fdc0df97c171e7d0f4",
+    "source_sha256": "f88a6a5078058da419a6ddcc09ba3dea99c2573c94b7a8d8087c8b5b69d3a93d"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "edb817d41ed2555da7c93b7c023c1bd154f41e4631425c9ff73e734408ed8bcb",
     "mode": "100644",
     "path": "docs/tutorial/vibrational_frequencies.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "85a160bc155aefb88a944a4466e05a89810c175d",
-    "source_sha256": "e780aa23e3d925647af7da0e9587081c1dbd7c025e83855d5486d21da33b7e0b"
+    "reasons": [],
+    "source_blob": "9a96242b8bf7cdbaf7ef2113b18a13f536c213e9",
+    "source_sha256": "edb817d41ed2555da7c93b7c023c1bd154f41e4631425c9ff73e734408ed8bcb"
   },
   {
     "changed": false,
@@ -11135,17 +10917,13 @@
     "source_sha256": "e3bcbd27804b66241cac957c2b1735d777e7698ac7980b4306f57d8f3c69f9df"
   },
   {
-    "changed": true,
-    "export_sha256": "91a713b8561510886adf24638eb4a5eb03f3b953f49a781adbedf111f9418877",
+    "changed": false,
+    "export_sha256": "f4908dc1f0cba2dfbb1314039c326b99a4e2845f6ab3d674ed93791e73615f3d",
     "mode": "100644",
     "path": "docs/tutorial/working_with_vibe_view.md",
-    "reasons": [
-      "public clone URL",
-      "public repository URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "0e9b2a419ce1e3b243a16ad08bf302a6fde1212b",
-    "source_sha256": "d3ffaea7edc69e8d51cb7dd15b64aeb3840f3b9bc795466dcd775d93f4584f16"
+    "reasons": [],
+    "source_blob": "3bbe7336310d0cce04a791f97a8189f7091e71bb",
+    "source_sha256": "f4908dc1f0cba2dfbb1314039c326b99a4e2845f6ab3d674ed93791e73615f3d"
   },
   {
     "changed": false,
@@ -11157,17 +10935,13 @@
     "source_sha256": "406143b0793d7e130073dbdb1f7eb5484e12d04340e377adc7bf7f6268a2ccbb"
   },
   {
-    "changed": true,
-    "export_sha256": "fbf1836842d7722cfac09ff2ea4b5447cad95212c34e14321920aa18c516ebab",
+    "changed": false,
+    "export_sha256": "7f6d4b7baa6ce56905d1db5cdd6127b7953b9165e55e7c6eec7ee4fbb775111a",
     "mode": "100644",
     "path": "docs/updating.md",
-    "reasons": [
-      "public clone URL",
-      "public source URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "d1f8a90448048bf4219029c8cd8cc9560d0f9ae1",
-    "source_sha256": "f37641cb582bfd1cff289ecb0c0697c7daff77c2acef97f371fecc5ebfc941da"
+    "reasons": [],
+    "source_blob": "f12ffef86736aed7a72751b35cdcc5d136bf0707",
+    "source_sha256": "7f6d4b7baa6ce56905d1db5cdd6127b7953b9165e55e7c6eec7ee4fbb775111a"
   },
   {
     "changed": false,
@@ -11179,39 +10953,31 @@
     "source_sha256": "3dcd811c0df34bef4535081b0b14645ac138018769c3a0bdba203492b9e0ded7"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "e6d7f942461238b43d70860f583290517ffdcce0356722e109467035a4343e98",
     "mode": "100644",
     "path": "docs/user_guide/aiccm2026dev_b.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "4b66bf695bc24514b17cad0b583840eb98fb7028",
-    "source_sha256": "8111db731bf52119c2b9d62c9143e0d23b3c8c6f91c659130ddafe495d13bc41"
+    "reasons": [],
+    "source_blob": "e907407f8bb164f759062a9d8973b7045de529a7",
+    "source_sha256": "e6d7f942461238b43d70860f583290517ffdcce0356722e109467035a4343e98"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "06505e195df31e51985a865c590c180370d997ecdd6951514d5473e937d7511a",
     "mode": "100644",
     "path": "docs/user_guide/ase_integration.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "ab8ebc2c4dd3e478ba13d76bcd031b149359293f",
-    "source_sha256": "789b6ab7915379f249b9d8b7c94131dd6bd7b35450e1ff045bffc2d61f5b2cea"
+    "reasons": [],
+    "source_blob": "e5d2cf29c490ec417fd0e6a90cea059f162549fc",
+    "source_sha256": "06505e195df31e51985a865c590c180370d997ecdd6951514d5473e937d7511a"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "98f463013ef33aeec6879630b01a2b0090e832de5161544553bf9d42cc770929",
     "mode": "100644",
     "path": "docs/user_guide/band_structure.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "8f14520717d4000634c2a8615da0e4c41b60c6c0",
-    "source_sha256": "8e781f88f6a81b0eefce412211a366925f3bdd3feb91b3b149886330c2afdbd8"
+    "reasons": [],
+    "source_blob": "79ba2ffb4f18baebd2dc481a5ed4c80456bfde16",
+    "source_sha256": "98f463013ef33aeec6879630b01a2b0090e832de5161544553bf9d42cc770929"
   },
   {
     "changed": false,
@@ -11223,37 +10989,31 @@
     "source_sha256": "530aa0aeef6ddab5482c2ea5d8ffb1144e52723ad728c3e58b09c2cb6f092165"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "a5e474054e64de8193502aeb999101198405e06973513cb362c7f596ccfc54a2",
     "mode": "100644",
     "path": "docs/user_guide/basis_sets.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "537003b58ce99efdd613c7b41c97ecbf6beaafa6",
-    "source_sha256": "70f48e6eeed0239c60a781dc2cf38bba127a833e7db28b0090a218988743542c"
+    "reasons": [],
+    "source_blob": "9c8ccae4e263f175f974e6e815a253b4c4c5fa5c",
+    "source_sha256": "a5e474054e64de8193502aeb999101198405e06973513cb362c7f596ccfc54a2"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "508bf579c280665886c8182d319d4151bac72953e8a9b385e46268a1c4878ef6",
     "mode": "100644",
     "path": "docs/user_guide/basis_toolkit.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "01303e4821a544004a1cafbe8c9ff13cbe4615fd",
-    "source_sha256": "f839f8f48e3af44705a3115bb2f62635433d9c63733b8aaf0ce92a21b8c96edb"
+    "reasons": [],
+    "source_blob": "3c3a5630263b0056df84c95e39ec202dffdc459d",
+    "source_sha256": "508bf579c280665886c8182d319d4151bac72953e8a9b385e46268a1c4878ef6"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "4f2c58f26c662a78b62202ba2e250cae0cd88e1f71dc5bdbbf861495c9afd67a",
     "mode": "100644",
     "path": "docs/user_guide/bipole.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "1e82d7fd2305b9a8f681017465c363ac291af7db",
-    "source_sha256": "72f404f8ddfd3bc1d6245cc827f7269a3adeff28c0fd7fa61e7647173e4b573d"
+    "reasons": [],
+    "source_blob": "7d0100139dccf7a32c2833388b581f33da300d73",
+    "source_sha256": "4f2c58f26c662a78b62202ba2e250cae0cd88e1f71dc5bdbbf861495c9afd67a"
   },
   {
     "changed": false,
@@ -11283,16 +11043,13 @@
     "source_sha256": "f04930246cef1ad4bd8577c67ab6c10cbe802bbdfc54ab52689d6680e6203f50"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "f0f7163fea027833bd320c9fb5c449265e8392d556f65adeaae6285db6718e0d",
     "mode": "100644",
     "path": "docs/user_guide/citations.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "94f85951e30a886f0706016fc15d80695bfaa219",
-    "source_sha256": "c9c2f2ab59f781958a3f8ab66bee909ff4ed17968e088afc810270d38887b893"
+    "reasons": [],
+    "source_blob": "4a606ae90d5b7ab150007d3826b0c615d772f39b",
+    "source_sha256": "f0f7163fea027833bd320c9fb5c449265e8392d556f65adeaae6285db6718e0d"
   },
   {
     "changed": false,
@@ -11304,15 +11061,13 @@
     "source_sha256": "9985c777056e223840ee28a0d08b3d9eb680cd6295e0c40f898b1277de31f446"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "1bcb55c627c4c2e160514d08909a0d09a99cf271c9d3863c2d9705ee5f55a7cd",
     "mode": "100644",
     "path": "docs/user_guide/composites.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "8a4228814145c11ebc8564a4388bb28a7a95a926",
-    "source_sha256": "292c0d09a3837e8ca12fdf6e35f465950a328c032c240b4671b63a5fcf58f101"
+    "reasons": [],
+    "source_blob": "98b902216498323f09f0756337cfa44ecb08509e",
+    "source_sha256": "1bcb55c627c4c2e160514d08909a0d09a99cf271c9d3863c2d9705ee5f55a7cd"
   },
   {
     "changed": false,
@@ -11324,15 +11079,13 @@
     "source_sha256": "e38ebb5b013ef57b8b4346cbb4219112f3bd1eb830b407126e87cd72d401b5ac"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "e0398146011ab51e0fbf8f028b6ebd37162835e5541597b2fa45ac74a200e504",
     "mode": "100644",
     "path": "docs/user_guide/crystal_lattices.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "74f1ac3e3f9953d043ef1c885c43e52b584771f9",
-    "source_sha256": "02d93fbae685215078319f457bf82d5a0f3792b11abaaaa9c96ff2ee92c59e98"
+    "reasons": [],
+    "source_blob": "e6f0db214b9c06f261ee5848354537c3486961bb",
+    "source_sha256": "e0398146011ab51e0fbf8f028b6ebd37162835e5541597b2fa45ac74a200e504"
   },
   {
     "changed": false,
@@ -11344,27 +11097,22 @@
     "source_sha256": "39b291c35ffb7b5e9abf467755c74602a7815360ae16eb63d4f8ed38f82bee48"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "bd68844f67c02c4c0cf1c4721526aa2936a2075d497a108d327a48143008c068",
     "mode": "100644",
     "path": "docs/user_guide/data_library.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "0b01d8a8c2d5502ec06dca23ba82230fdc146584",
-    "source_sha256": "72dabdccd65efe2c4c56f438587832a5c79545e9c0dd6b61442d193e3caaf51a"
+    "reasons": [],
+    "source_blob": "bffc41107865f4a926e225d121b864bc4caa45c6",
+    "source_sha256": "bd68844f67c02c4c0cf1c4721526aa2936a2075d497a108d327a48143008c068"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "9dc16278c811fa4803cc1524f3bbc7bf2d6d0bf2cb2d7b469ff034af205c108b",
     "mode": "100644",
     "path": "docs/user_guide/density_fitting.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "4292c855b89c2d3910644d898227af2022bb3316",
-    "source_sha256": "6eca9fe6f1beea2863159972d7e7eeeb6e4a43c89e4875b642295b40f74b4fbb"
+    "reasons": [],
+    "source_blob": "c76be399566bc32024f725618820b0f5355733d0",
+    "source_sha256": "9dc16278c811fa4803cc1524f3bbc7bf2d6d0bf2cb2d7b469ff034af205c108b"
   },
   {
     "changed": false,
@@ -11376,16 +11124,13 @@
     "source_sha256": "8a42bbf112c7328102a261bee97aa12202a8966df2bdb6e7d22ba82fa0c007e4"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "ac5965e29b9713f0df8ed0a9893fb85d91edd9adde5dca8cfbe995a89ac3f144",
     "mode": "100644",
     "path": "docs/user_guide/dlpno_mp2.md",
-    "reasons": [
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "3219fe8583098defafd6bbd431998bbf1239f95f",
-    "source_sha256": "d5b72711878c1f196cc6f1cc304ff01612fe7fd2dd3c34c592bdd678de398bf9"
+    "reasons": [],
+    "source_blob": "ad031d719e073cab5f0f40331c8f8d078823e44e",
+    "source_sha256": "ac5965e29b9713f0df8ed0a9893fb85d91edd9adde5dca8cfbe995a89ac3f144"
   },
   {
     "changed": false,
@@ -11406,38 +11151,31 @@
     "source_sha256": "d6e8dd4775166745fdac6cd42e70fcb1453eb7b0e938e9aae36b22e3a35386fb"
   },
   {
-    "changed": true,
-    "export_sha256": "ccd0c885d94fd5fd25f83395b2d77f8ed8dd034d7ac2e6c913c3ecfdf539f783",
+    "changed": false,
+    "export_sha256": "cedc6dd8fad5326b2cbb42c939344c0f9b235596534543e9be94a4465c50f3b9",
     "mode": "100644",
     "path": "docs/user_guide/external_codes.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "04dcf9018b4a73d8dd76e497ffa719cc569309a1",
-    "source_sha256": "d02ba748f641010e0513524dd70f18270a02305922f7a62d58a4e04213f0e82a"
+    "reasons": [],
+    "source_blob": "ec78d0518867074bd8f83d6286a32cd02495a28b",
+    "source_sha256": "cedc6dd8fad5326b2cbb42c939344c0f9b235596534543e9be94a4465c50f3b9"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "b6d22b8b03cbd1dab29ff95a562d892b167d12737732af2f5e38f8e91eac5f11",
     "mode": "100644",
     "path": "docs/user_guide/external_structures.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "f27fea67a4c8e31361cf57b597c475cccf091ecb",
-    "source_sha256": "cc7df22fa5e518364790e675d5813c7dae924c86e058f2e3351a7a61c0d610f8"
+    "reasons": [],
+    "source_blob": "b29ad1b8a6d57b12471b30c17ee3aec2980635d1",
+    "source_sha256": "b6d22b8b03cbd1dab29ff95a562d892b167d12737732af2f5e38f8e91eac5f11"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "e213a36ac2e9e5eb39687abd1aaa8d1e54a870bb650634cf18130caed5758ac3",
     "mode": "100644",
     "path": "docs/user_guide/from_crystal.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "3e39f8bae05d3b301a5eabc332977e6286ed9fca",
-    "source_sha256": "486b11503c7a3c0078c06a993f4615ba9293d596c4af7a62c7276f3df61dfc05"
+    "reasons": [],
+    "source_blob": "b8c2e2a5c56bc6b949c5aa4ac731488b45883d60",
+    "source_sha256": "e213a36ac2e9e5eb39687abd1aaa8d1e54a870bb650634cf18130caed5758ac3"
   },
   {
     "changed": false,
@@ -11449,38 +11187,31 @@
     "source_sha256": "1e7ea9413b6e8a7c3c572ba5d73eea3c8ba98997e5571cc2bdab02e3ae17728d"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "b6546dfc41d0f47c838b7f757886dfd32cd7dd2c27939cb607969a3ee10fb512",
     "mode": "100644",
     "path": "docs/user_guide/from_orca.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "25741914d436e8eae95cb6e54c4ea11624d8ba59",
-    "source_sha256": "716bc9f6dc3a425ef6ed70893c234d91ff557195dc1dc9723930efc4fa4fdcf3"
+    "reasons": [],
+    "source_blob": "137c8bd2d558476f9df0bfbeaa5512ec7a2c5ee8",
+    "source_sha256": "b6546dfc41d0f47c838b7f757886dfd32cd7dd2c27939cb607969a3ee10fb512"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "b87a78afdaa772a65b6d45d51a34e47ac6fd2fc481343dc8b03a205b998b4fb6",
     "mode": "100644",
     "path": "docs/user_guide/from_pyscf.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "dd83447422d2822cf6fdbad076687ec1788d9224",
-    "source_sha256": "669284ecf34a4fe11cee06049a22b71deac127a029dccfbbea9063fa27df63b4"
+    "reasons": [],
+    "source_blob": "66f72c52eaf8022a26f4350c570af96e1daa9354",
+    "source_sha256": "b87a78afdaa772a65b6d45d51a34e47ac6fd2fc481343dc8b03a205b998b4fb6"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "d754917a99abab9ae9a9299d5893b117d916334571327668989d98c820cd7b67",
     "mode": "100644",
     "path": "docs/user_guide/functionals.md",
-    "reasons": [
-      "private auxiliary reference removed"
-    ],
-    "source_blob": "b6ce6352551c51be375cb1c16785e282ae87cb23",
-    "source_sha256": "1ba6d7e9c13b3705a00182cbc3e4bfed0f27584c5abb93971ee3be51276fc341"
+    "reasons": [],
+    "source_blob": "b0b1b4edc2728509a4f24839803cc6c61f0599b9",
+    "source_sha256": "d754917a99abab9ae9a9299d5893b117d916334571327668989d98c820cd7b67"
   },
   {
     "changed": false,
@@ -11501,27 +11232,22 @@
     "source_sha256": "aacf6b83358a99450909df2b3e6a35e8200dd3c9177de5c5eca4d8f525e4ba38"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "65bc4546717de5cf9cd05dbdc4c975c140bd9fb8763b08a5cd3989e0282d3c43",
     "mode": "100644",
     "path": "docs/user_guide/index.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "7ec00f54fff22d212e2650599001ee89c87823e1",
-    "source_sha256": "6744c44157be31afcc51997788a793ad4ca2386454acc4230a649ceb92d33ecd"
+    "reasons": [],
+    "source_blob": "f56d23a5845cb91a89cd4abf8f2ee1c7460328dd",
+    "source_sha256": "65bc4546717de5cf9cd05dbdc4c975c140bd9fb8763b08a5cd3989e0282d3c43"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "7eec04d9e752cc378bd61fcbfee55e51885f7a6bf40d98c0762b675a56842be2",
     "mode": "100644",
     "path": "docs/user_guide/initial_guess.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "f24af6b11230b841f54e22dc1b97be02973a5d98",
-    "source_sha256": "5dcd5cc14f27676f6a2c4e4a4996fee1eab260ca89b3e396cc4691eb928c1a61"
+    "reasons": [],
+    "source_blob": "7ee04c9049815ac505031db2898659bf5b45d78b",
+    "source_sha256": "7eec04d9e752cc378bd61fcbfee55e51885f7a6bf40d98c0762b675a56842be2"
   },
   {
     "changed": false,
@@ -11533,15 +11259,13 @@
     "source_sha256": "771471607b73423f67568326dfd98256f9244a3ae50c45ed0a1ba11abb3015db"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "891d8db845df536c08c576933a3ea80b1561fa50b8b85f41a90dda711db481f5",
     "mode": "100644",
     "path": "docs/user_guide/k_points.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "1b08fe21b5295f80b3e3394641883ff9c4b08c0e",
-    "source_sha256": "dc062650c4c6ea65d63f5c834481c574972abe4e19734a94418f8ffcac223d13"
+    "reasons": [],
+    "source_blob": "f370c6f7c80e3f47f9e8aefb95c6eea79f755457",
+    "source_sha256": "891d8db845df536c08c576933a3ea80b1561fa50b8b85f41a90dda711db481f5"
   },
   {
     "changed": false,
@@ -11553,28 +11277,22 @@
     "source_sha256": "a1fba07e0e7e628573a06ea2769c4ef9766b4c0d5bc33877c7823b036155f583"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "71fdb1a7af6053c3dd5b0a8308a7b64fd577e34d036627ab94c3ebb2836a7c07",
     "mode": "100644",
     "path": "docs/user_guide/linear_dependence.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "891a5d82fd80b34afb7fecb28ea7437205991248",
-    "source_sha256": "3a2de0dcc83041bd40af3c06958246579531e2063de845a2fea1a3f827e65bed"
+    "reasons": [],
+    "source_blob": "916e077fa63e173230b512db0b65255b70b5b4a5",
+    "source_sha256": "71fdb1a7af6053c3dd5b0a8308a7b64fd577e34d036627ab94c3ebb2836a7c07"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "68ea9725148fb9b5f90e4fe6249231901314d78b9d04e315042f7567fface9c7",
     "mode": "100644",
     "path": "docs/user_guide/logging.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "e78666484f54a9d213405ad3c40aec1075c2fdd5",
-    "source_sha256": "38eb69b19d733f2dafcce5d39b3c4a720208956d8b4b937f357e982d615062af"
+    "reasons": [],
+    "source_blob": "214ef79aa98ec5e7c20b66e0215e82b601bc258f",
+    "source_sha256": "68ea9725148fb9b5f90e4fe6249231901314d78b9d04e315042f7567fface9c7"
   },
   {
     "changed": false,
@@ -11586,26 +11304,22 @@
     "source_sha256": "b2cfc3ac1f0c0aafd268bbd0332bdcc44046fac5084a7fd63a0a33b07564416e"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "1c153cc55260b6f97f91ca183c59d19be75ba465ed8d1efce3c36bf01abf01ac",
     "mode": "100644",
     "path": "docs/user_guide/metallic_bz_integration.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "a8ceaca4595d33628156664e9f118ed82d3c12fd",
-    "source_sha256": "9979d6996513bfffbfe5a1a9e103536f3793c90245bfb029bb41deda1f1d68c2"
+    "reasons": [],
+    "source_blob": "fdaca35f0c920eeb4717b1589cd93e91be869725",
+    "source_sha256": "1c153cc55260b6f97f91ca183c59d19be75ba465ed8d1efce3c36bf01abf01ac"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "c0ab6c09ab8325cc72ef6109e83a44cd7d2bd5fcfc48fc7b43847ccb6657bb05",
     "mode": "100644",
     "path": "docs/user_guide/mlip.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "ca6ecf4f306fd4d033ee972a79d9511d3625901c",
-    "source_sha256": "275721c3576531b5c9af719d9423555aa50ef962d7e4a37db6196f77246e78f3"
+    "reasons": [],
+    "source_blob": "30612a333d6ca363d98a29633e726a4d606613e1",
+    "source_sha256": "c0ab6c09ab8325cc72ef6109e83a44cd7d2bd5fcfc48fc7b43847ccb6657bb05"
   },
   {
     "changed": false,
@@ -11626,15 +11340,13 @@
     "source_sha256": "00569e254c8486bbcba7c3b58a62db0b2c27fe26ac472e0fa097b2daa668cba9"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "73402fe8820fe22c09c37451f48e9ce7b12521a7dca99e437e67f3a6ef0c3d9e",
     "mode": "100644",
     "path": "docs/user_guide/mp2_and_double_hybrids.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "d5ef8dc7f7d366df4dcc8a12de9813c4417e540c",
-    "source_sha256": "a4c7e6586c3acb3682300166745711f704e98579f8d443dfefe2dc04f950ec4c"
+    "reasons": [],
+    "source_blob": "ce0927fe8cd002b8c8b680ac77552d2d03049b51",
+    "source_sha256": "73402fe8820fe22c09c37451f48e9ce7b12521a7dca99e437e67f3a6ef0c3d9e"
   },
   {
     "changed": false,
@@ -11664,15 +11376,13 @@
     "source_sha256": "768ca3dd4ea2658902140751c0c4b46695445f66333a08109092f38ec330a588"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "73b6f64e2535a8cb5330e0112853e756c2537f6a472fa89efd24c5ed1036d305",
     "mode": "100644",
     "path": "docs/user_guide/neb.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "ba19ef665b845b4619e6e517a9f46e3161855e36",
-    "source_sha256": "114bc703c107b2a2cc202ce4ddafaf8498d1bb40f4743ca34bc10b3eeecd8024"
+    "reasons": [],
+    "source_blob": "a009c4ce54aefa3fd9718e1131a525dc4da09fe7",
+    "source_sha256": "73b6f64e2535a8cb5330e0112853e756c2537f6a472fa89efd24c5ed1036d305"
   },
   {
     "changed": false,
@@ -11684,37 +11394,31 @@
     "source_sha256": "130a763c687d34062334811a4e97d67637a12258bab038ce9a45e0db1e5f3a45"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "249c9f62fedb67698dc078c660f127e2ca6f21de7f4168f16922858b450d8038",
     "mode": "100644",
     "path": "docs/user_guide/output_files.md",
-    "reasons": [
-      "public maintainer website",
-      "public source URL"
-    ],
-    "source_blob": "8b51f5cab3026a96bd816da9728eaeeae6aa6ddc",
-    "source_sha256": "a9f8cb194a3c18b238e3ebb3f7ac93267a607cc4e8cd44c8a736d1577b4a1670"
-  },
-  {
-    "changed": true,
-    "export_sha256": "b334e8fc33ef2f8a455faaae9c3cb6d1ef6edec32b21e365e53f24e127d4ac43",
-    "mode": "100644",
-    "path": "docs/user_guide/periodic_methods.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public source URL"
-    ],
-    "source_blob": "5432478a183a5602d1ca1f1138417ffaaacd8a3b",
-    "source_sha256": "a5cea5bcc6b274a872a5ea2decac8c0bb80e4e2991d1b932de394f918234075a"
+    "reasons": [],
+    "source_blob": "54a7e3ef6d76c853467f47d2ddfd38a709938fd8",
+    "source_sha256": "249c9f62fedb67698dc078c660f127e2ca6f21de7f4168f16922858b450d8038"
   },
   {
     "changed": false,
-    "export_sha256": "6078cf9d411877f56adb29febbc88614e768c1cf9f49dfda08a0012493e2c7d2",
+    "export_sha256": "b334e8fc33ef2f8a455faaae9c3cb6d1ef6edec32b21e365e53f24e127d4ac43",
+    "mode": "100644",
+    "path": "docs/user_guide/periodic_methods.md",
+    "reasons": [],
+    "source_blob": "808783b8a324d57bad93e1f6f7c58e1efb37c1e3",
+    "source_sha256": "b334e8fc33ef2f8a455faaae9c3cb6d1ef6edec32b21e365e53f24e127d4ac43"
+  },
+  {
+    "changed": false,
+    "export_sha256": "ee44245d53af537de1f6cda766aa756e10b75f487e0b9b2a4967282dc8f46b96",
     "mode": "100644",
     "path": "docs/user_guide/periodic_systems.md",
     "reasons": [],
-    "source_blob": "41c3066a6467a6092c0bbe96ab000470790ee6e9",
-    "source_sha256": "6078cf9d411877f56adb29febbc88614e768c1cf9f49dfda08a0012493e2c7d2"
+    "source_blob": "413301cf36b8ce59fe2cd7a4e624dc24e2a6ea2f",
+    "source_sha256": "ee44245d53af537de1f6cda766aa756e10b75f487e0b9b2a4967282dc8f46b96"
   },
   {
     "changed": false,
@@ -11735,39 +11439,31 @@
     "source_sha256": "76447fa4b56f552822c59ffbe8cd35c8edc899ae60962fc5de46b04650551f47"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "46499245203f597205e43cd159eb6c14cd160b013668522c2ce6ce4a81356181",
     "mode": "100644",
     "path": "docs/user_guide/queue.md",
-    "reasons": [
-      "public clone URL",
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "0c0a84659e20d5cff18c650f9992d423b04d4ffd",
-    "source_sha256": "e30fd81f32e370db850bf1f3e66a0afe3b2bdf2546c8e2cd73c6d4683a1902f8"
+    "reasons": [],
+    "source_blob": "54442e30ac25390af1c26de998a8878809e5baf2",
+    "source_sha256": "46499245203f597205e43cd159eb6c14cd160b013668522c2ce6ce4a81356181"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "ca4d3bfeaf664f0d8ddcf8562f257dac8c1c1c918c1044f32b063711a235120e",
     "mode": "100644",
     "path": "docs/user_guide/qvf_containers.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "284ee9323d7f52ed347fe1f4f6adbb9a1ad64772",
-    "source_sha256": "5456c0064dddf9710bd7a4d094b3492c1ddbeabb5d5c2e24ffa777e6901b4baf"
+    "reasons": [],
+    "source_blob": "926b1d0c6f2072fd6979821f6d8a566c650dc3a6",
+    "source_sha256": "ca4d3bfeaf664f0d8ddcf8562f257dac8c1c1c918c1044f32b063711a235120e"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "3e7f58832d6744497b038902f9edb7c966179e39dc4054477310151ac53a5c45",
     "mode": "100644",
     "path": "docs/user_guide/reference_data.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "1ff96f5c3993cd4f97590be27c3b1d3eeb7f7778",
-    "source_sha256": "158e2ea8d5ac20ad25f75969c76cb6a94c9fe211189fb45b172a2b3330ad649e"
+    "reasons": [],
+    "source_blob": "e7619253c50a752b108bf9ea0bb90ca05a07f5ae",
+    "source_sha256": "3e7f58832d6744497b038902f9edb7c966179e39dc4054477310151ac53a5c45"
   },
   {
     "changed": false,
@@ -11815,15 +11511,13 @@
     "source_sha256": "0d7ca3f9b0a1844f5c676a81f41954316afa7f87fc58547fd251ed3c3357fcdb"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "d5c71e7784539f51e22ee86448a0bc62c30f3b72b43e1d5bfd400b2a24128a2d",
     "mode": "100644",
     "path": "docs/user_guide/semiempirical_mlip_comparison.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "4114d08433b19cb5983ec2f289c2f30714eec735",
-    "source_sha256": "dbf9318e1f4cdb93536c6605dfbe092a0702d0a7d71b33a46b4be3bfa93193f4"
+    "reasons": [],
+    "source_blob": "8a6eb3c01700aa2a27996e9e674e81d91bbad607",
+    "source_sha256": "d5c71e7784539f51e22ee86448a0bc62c30f3b72b43e1d5bfd400b2a24128a2d"
   },
   {
     "changed": false,
@@ -11835,16 +11529,13 @@
     "source_sha256": "b8cc7bca3fcb61e5be9974bf77aa0d27e870660d2fa94cb3bc1393dcf6fb2f61"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "889147f5b20380788471eb1c0a8f1b38af394c2bd204b35a91174675bab44422",
     "mode": "100644",
     "path": "docs/user_guide/skala.md",
-    "reasons": [
-      "private auxiliary reference removed",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "4be7bb4ac09da8c6c67fb420c7ae4eeefe0ce39a",
-    "source_sha256": "f92ef636efd03b02ea1c7881297ebc392bc2f4a69bc9b8330ab62885b401815c"
+    "reasons": [],
+    "source_blob": "43e1ba6feab9a9f84f8d607a9ef00ae895478569",
+    "source_sha256": "889147f5b20380788471eb1c0a8f1b38af394c2bd204b35a91174675bab44422"
   },
   {
     "changed": false,
@@ -11865,15 +11556,13 @@
     "source_sha256": "e6fb1cab7789794a93e077b2e56130e9ddc5caab4464a65370ce4c88af07ab81"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "aafee558e5fd0c89697ad7b1e36014eae8cea49a8c61e57b172a88a2db65add2",
     "mode": "100644",
     "path": "docs/user_guide/solvation.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "e5c20b7a84e501730a76b0f0363f95a9d9e1e555",
-    "source_sha256": "d6718ed41df7a919c930a3982396f1d47963a23248b1d98d6549e9fe0fc528ba"
+    "reasons": [],
+    "source_blob": "623a2d6b3c51641be932cbc345228f934d99c14e",
+    "source_sha256": "aafee558e5fd0c89697ad7b1e36014eae8cea49a8c61e57b172a88a2db65add2"
   },
   {
     "changed": false,
@@ -11885,15 +11574,13 @@
     "source_sha256": "f62481e481650364c87754b21bf61f09fc76e92212d292a9ee7774d0135c495a"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "aa2fc3a1737ad18e063aa58d41045b640ebb6cccb44bcf793be7111cd419cf42",
     "mode": "100644",
     "path": "docs/user_guide/surface_embedding.md",
-    "reasons": [
-      "public source URL"
-    ],
-    "source_blob": "15b858777ae67e9f15286acc578b10524a85a212",
-    "source_sha256": "66bf34a9d2b3bc97c0fb993c57848ce9c0ec7c23710450645cadbaea3648e025"
+    "reasons": [],
+    "source_blob": "6310e8f6c2a0143910adbba89b5943b09fc8f4b8",
+    "source_sha256": "aa2fc3a1737ad18e063aa58d41045b640ebb6cccb44bcf793be7111cd419cf42"
   },
   {
     "changed": false,
@@ -11905,16 +11592,13 @@
     "source_sha256": "aa813bffe4bbccbf069afc9da305cca70e384dd6a6a6c6dbebe59fb5f7ac874a"
   },
   {
-    "changed": true,
-    "export_sha256": "6ea0b6f6193011219a600b7c96d5d5af8d03c440015ef77b1cfa6e43c56edd60",
+    "changed": false,
+    "export_sha256": "f8b704332bf6ec51b06ea3669e26f22969c735708c78cb788578c258986b8fad",
     "mode": "100644",
     "path": "docs/user_guide/vibe_view.md",
-    "reasons": [
-      "public maintainer website",
-      "public repository URL"
-    ],
-    "source_blob": "c286d58c146a3b1180dec19f7e6a998948c02c4d",
-    "source_sha256": "6e066a3cb0d275e9cf795a4023427c93bf143e504a009be6a6c50f09a62ff166"
+    "reasons": [],
+    "source_blob": "45ab9fe8a6d016fd88c5623e4a46670ed022a653",
+    "source_sha256": "f8b704332bf6ec51b06ea3669e26f22969c735708c78cb788578c258986b8fad"
   },
   {
     "changed": false,
@@ -11926,39 +11610,31 @@
     "source_sha256": "9caca59026b6a8be5452853c3200723942de52409c4a2e63509c4df3968e50fd"
   },
   {
-    "changed": true,
-    "export_sha256": "7d025aac7c033288a6eeaec9ddc820640f5511019a1c407cda0cc25371a471d9",
+    "changed": false,
+    "export_sha256": "9da5fd347e795cb7a16a25affe08e4802e016e5d8aba239e973be395f5d28a77",
     "mode": "100644",
     "path": "docs/user_guide/vibe_view_cli.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "c5fd593b5017c4a5962386137de2afac45812fe8",
-    "source_sha256": "11112b9b49e0e7e17324c942e9d7b0f4fbfaaa50f35a7471f7d35fecdce4f7e4"
+    "reasons": [],
+    "source_blob": "bb061697b36c594965992054b90df10586399090",
+    "source_sha256": "9da5fd347e795cb7a16a25affe08e4802e016e5d8aba239e973be395f5d28a77"
   },
   {
-    "changed": true,
-    "export_sha256": "9e58725a6cf11cb6ec78c292a90553c0a3087ce4fcc123c4f59a8af98c04f08f",
+    "changed": false,
+    "export_sha256": "74fa8173945c8e158d78ae99fa6f2722f1073cb9e90cd5dba025ae5303bc3e4a",
     "mode": "100644",
     "path": "docs/user_guide/vibe_view_desktop.md",
-    "reasons": [
-      "public repository URL",
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "6feae65a2489081d0eabe21a380545afa437ef69",
-    "source_sha256": "1239ab9c4dda3ec7c837a62139b80cc88cfe88965570bfcab0ad714586d774f6"
+    "reasons": [],
+    "source_blob": "2832ade8fed3a1db3103d677a36a1b5334026cb5",
+    "source_sha256": "74fa8173945c8e158d78ae99fa6f2722f1073cb9e90cd5dba025ae5303bc3e4a"
   },
   {
-    "changed": true,
-    "export_sha256": "5bd5b0a90f34ba265dac4095df3ffa8089d4d475e7b2626a58834329d54adbe4",
+    "changed": false,
+    "export_sha256": "efb9b78e60426f4da1bb1dff609f830afa00bf389b2361674f10aafbbc8b3f6c",
     "mode": "100644",
     "path": "docs/user_guide/vibe_view_formats.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "27fc9f56fb07706c003d76a468488e384d25a2c9",
-    "source_sha256": "de00e03f8e61775ca5b8d41d68873353ac7187af4febc6eb441b79ed39cda9e7"
+    "reasons": [],
+    "source_blob": "75c68e20df02237affbcb2116199858b034842bb",
+    "source_sha256": "efb9b78e60426f4da1bb1dff609f830afa00bf389b2361674f10aafbbc8b3f6c"
   },
   {
     "changed": false,
@@ -11970,38 +11646,31 @@
     "source_sha256": "a6fac6f4fd7c650334d07c4e91de7e02007002bf2f5ab48c84e395b4ade7d8cf"
   },
   {
-    "changed": true,
-    "export_sha256": "14b59bf97a0add17cc07742364bfac411a36b5a2d8ffde05bb9b26b082c1f5c1",
+    "changed": false,
+    "export_sha256": "7aaee703f3c8765c181f0005e3a2e2572b81bcb60e0fb21192d37ff103d7ab9a",
     "mode": "100644",
     "path": "docs/user_guide/vibe_view_python_api.md",
-    "reasons": [
-      "public repository URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "2fd2403d6bcf0d523632b420e6bc05d0b1003c58",
-    "source_sha256": "82785f95d78540263ebecbe5ef90558d87c03f6380bbba443801f03b5f4cb603"
+    "reasons": [],
+    "source_blob": "b4dabff3ef47f01c19b99eb871f3eb89a51cdfe9",
+    "source_sha256": "7aaee703f3c8765c181f0005e3a2e2572b81bcb60e0fb21192d37ff103d7ab9a"
   },
   {
-    "changed": true,
-    "export_sha256": "e119e979b86207067355253d0b8017e2ca0fbfca5d96548da26bc08dc7fb9dcb",
+    "changed": false,
+    "export_sha256": "9859fe847c2978bf89894cdb97f8d718e04eb294309fc187cab7040017f617a5",
     "mode": "100644",
     "path": "docs/user_guide/vibe_view_terminal_mode.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "764de2e79b4d2ef4a2204626f4dff65172760a54",
-    "source_sha256": "1ab3cab3e71f571684c463fed3f6fcbceec870ead5c5e56a60c64daab6312eb2"
+    "reasons": [],
+    "source_blob": "a1a98d120098bffecb68b41b810238b7116510a2",
+    "source_sha256": "9859fe847c2978bf89894cdb97f8d718e04eb294309fc187cab7040017f617a5"
   },
   {
-    "changed": true,
-    "export_sha256": "ac2c3e6fc069548db6cc763659b3a2157212823fd80867d74a0f78eebbba9158",
+    "changed": false,
+    "export_sha256": "68df67f2a608c6c3f9491e45514e36d74930ee18f6683f3dcb7c19b2739f6a47",
     "mode": "100644",
     "path": "docs/user_guide/vibe_view_vq_jobs.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "b165f3c9b6dc1f12b0db32113cbd012f899a1d58",
-    "source_sha256": "8bdd83837895e3a681d84247f78109858464698085cfa04801db97a7b2b11bec"
+    "reasons": [],
+    "source_blob": "29877f5079b18ffbfd3a7f6960641deba174d136",
+    "source_sha256": "68df67f2a608c6c3f9491e45514e36d74930ee18f6683f3dcb7c19b2739f6a47"
   },
   {
     "changed": false,
@@ -12013,18 +11682,13 @@
     "source_sha256": "a0a75c3f9ddcf6ab03a63f754ab050d248f284ca5280b12702cd4b28453dc0d6"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "7bf200c77587680339122ab0863cf82297da624f93376084c65352d223903c15",
     "mode": "100644",
     "path": "docs/using_claude.md",
-    "reasons": [
-      "public maintainer website",
-      "public repository URL",
-      "public source URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "a292d32ee0e052e9575d70964148a541e5d3772b",
-    "source_sha256": "32938f4da4ddde306e4497440814ae671dd48bd313baf2b60af6ef6c05c7f5c5"
+    "reasons": [],
+    "source_blob": "858a3e2ac122d132f026274629600a8ebde6f15b",
+    "source_sha256": "7bf200c77587680339122ab0863cf82297da624f93376084c65352d223903c15"
   },
   {
     "changed": false,
@@ -12045,15 +11709,13 @@
     "source_sha256": "569a57f563f6db3a00f1ebad172ba026f6e14f913b359dbefef46c033133c513"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "3a1f749fdc69b58f4e811ae72694af9232c11903c388ec4d34087be74a671138",
     "mode": "100644",
     "path": "examples/README.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "a7e3486d23db209e0fb1025e015e3557cd678992",
-    "source_sha256": "39166294bd5aea35fb3483c9c31601700846b2855262bfe6a6ecb24e532e3a68"
+    "reasons": [],
+    "source_blob": "252441aa09c5e07ca8ab57776ee4429871fbe21c",
+    "source_sha256": "3a1f749fdc69b58f4e811ae72694af9232c11903c388ec4d34087be74a671138"
   },
   {
     "changed": false,
@@ -12218,15 +11880,13 @@
     "source_sha256": "d67b9d4162f45f52cc75fd25b7bf65622e779f1172721503c6ae802713f4b70b"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "9e776442b8d4844a88cc51b7089c998e5f413eaf3d64da90aabf58ed7b65535b",
     "mode": "100644",
     "path": "examples/basisset_dev/README.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "2f4fe0f4fe07f38a4086623bc08333dd5f8bca5a",
-    "source_sha256": "8604553832b7e9554db31786063a3544e467dd0bc70a323f9cb6d98988782f14"
+    "reasons": [],
+    "source_blob": "e1964e48b6aac664611173a019e7f9878f847d8c",
+    "source_sha256": "9e776442b8d4844a88cc51b7089c998e5f413eaf3d64da90aabf58ed7b65535b"
   },
   {
     "changed": false,
@@ -12967,15 +12627,13 @@
     "source_sha256": "37c83644c95ab2e9c6d0af478330ac100f739573b6b961a88d0a2761d673bd74"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "6d57577e822590a8c2f43c1c2322d8d0cb7544aa1b5141b34f837d07c772af0f",
     "mode": "100644",
     "path": "examples/crystal23_demo/README.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "072c09e270881c2e1ecea8fb0cb8716449a3429f",
-    "source_sha256": "ba34ebc6b037b86ab8500973a064b6ce8b0bddad14b66533af185eb4b4d53099"
+    "reasons": [],
+    "source_blob": "dfd9b9f1fa2986278facff819a885ab5fb4483e1",
+    "source_sha256": "6d57577e822590a8c2f43c1c2322d8d0cb7544aa1b5141b34f837d07c772af0f"
   },
   {
     "changed": false,
@@ -14382,15 +14040,13 @@
     "source_sha256": "751ca64d5a2dbaf39a3e1343c6d31005e4479fdea68cf60d504b07b61aec4a52"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "6aff53e4503857f02d23e4948de0a140e5c65ddb3631cd4fff3a790220858744",
     "mode": "100644",
     "path": "examples/molecular/mp2_benchmarks/README.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "8bb7b952c6fd77923b7b8fcb85aa4297766bf75c",
-    "source_sha256": "f0c56459c73008bf95149dac8d3611d44a6c38cc714ef3ba6b06582efd1a0060"
+    "reasons": [],
+    "source_blob": "b9d88250fd3e21e161c4d4a969e00f6d75ced3f2",
+    "source_sha256": "6aff53e4503857f02d23e4948de0a140e5c65ddb3631cd4fff3a790220858744"
   },
   {
     "changed": false,
@@ -23447,15 +23103,13 @@
     "source_sha256": "fed70173be8289cfa7fabc8ea55701b5be22c99f59dd0b81f2ac95e31895d25b"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "01290794d5d28ecff45da98d3a1ac1547b817c00ab161a36da695c623e846445",
     "mode": "100644",
     "path": "examples/qvf_containers/README.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "7e807d0a5cc4913d720bb9ddd1bef8d0c3f20af2",
-    "source_sha256": "45eb0d1739efad780ad8c61312eafba3486bf41196483fce0f5ce81551e60568"
+    "reasons": [],
+    "source_blob": "cb344818b6354348e99effc3682bea9ae5e5f132",
+    "source_sha256": "01290794d5d28ecff45da98d3a1ac1547b817c00ab161a36da695c623e846445"
   },
   {
     "changed": false,
@@ -23800,15 +23454,13 @@
     "source_sha256": "a8ddcec927573b501c0651ddc32bf1104ed0266d20c536bdc86ff025991bef01"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "fa190fba0449e116fd038cee3c87a23f429761fed30a3b1aba4ee087f92f3dc6",
     "mode": "100644",
     "path": "examples/regression/crystal_parity/README.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "616f563c7ff3fa10a547bb9ef8ed4767e56ff400",
-    "source_sha256": "290f14867df995ee0aedd842ba2423bd6ca5f88b1b0ca58aa1b3ff060278ae36"
+    "reasons": [],
+    "source_blob": "266cb6da853e1d9604ba8b87311ea1073cca60a6",
+    "source_sha256": "fa190fba0449e116fd038cee3c87a23f429761fed30a3b1aba4ee087f92f3dc6"
   },
   {
     "changed": false,
@@ -25215,16 +24867,13 @@
     "source_sha256": "1cba182108d6c4981aff1254c0b493634cca3fde138f394c4ae1e986590d8ec6"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "f3d9493c06413c5154c67f9d270fcb5b4fb0e00a33689f0bc2e1638d8e437843",
     "mode": "100644",
     "path": "examples/regression/parity_matrix_orca/README.md",
-    "reasons": [
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "a3c74a010748fe2939090e11b55af18a22cfc5d0",
-    "source_sha256": "2557935af7f46dd6d86c4acc7aab049f731c317faa317dea77ae6659a5dd3597"
+    "reasons": [],
+    "source_blob": "cd6db8884e0a288fa6e60f65b9a4f78678a39c29",
+    "source_sha256": "f3d9493c06413c5154c67f9d270fcb5b4fb0e00a33689f0bc2e1638d8e437843"
   },
   {
     "changed": false,
@@ -26712,16 +26361,13 @@
     "source_sha256": "a54b792acbdd32f824f1681370f6e2b8799e40dbf72af9067de9d0fe5f4456ac"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "1b4268088dd71800bf7b046b4b4c8e6eec6b0f6b29cf67d2fbdefa2aa7793877",
     "mode": "100644",
     "path": "examples/vibe_view/README.md",
-    "reasons": [
-      "public repository URL",
-      "public source URL"
-    ],
-    "source_blob": "ebf646bd2e9ccf5836a672c8919e794e90ca7ecd",
-    "source_sha256": "26bf9ecafcc8f70c8b4703dc02a94ae339a19c7a06b85509d9bca40d6b7bc4bb"
+    "reasons": [],
+    "source_blob": "ad1e3f043ad817d79272847b8706b60466a096b0",
+    "source_sha256": "1b4268088dd71800bf7b046b4b4c8e6eec6b0f6b29cf67d2fbdefa2aa7793877"
   },
   {
     "changed": false,
@@ -27070,10 +26716,7 @@
     "export_sha256": "9dba69edf10ee2fb4f7d9f38261b6f7cef59c884b834c3d16fd04920c31b9a22",
     "mode": "100644",
     "path": "pyproject.toml",
-    "reasons": [
-      "public package issues URL",
-      "public package repository URL"
-    ],
+    "reasons": [],
     "source_blob": "172ac7e11fe23e4b3fa24d638af5c13164c21307",
     "source_sha256": "9dba69edf10ee2fb4f7d9f38261b6f7cef59c884b834c3d16fd04920c31b9a22"
   },
@@ -37519,12 +37162,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "9c57928de9242518c8f7b9b011c3a0600a794b17267e1bef5d15e0c49a5435e9",
+    "export_sha256": "c9f12274e90018a95b6820b53cf1822bca1bda2c0459eefaa29add2961bb77cc",
     "mode": "100644",
     "path": "python/vibeqc/lattice_convention.py",
     "reasons": [],
-    "source_blob": "c27566fc7f0eb7c45d95fbeea03b2646aa67e67b",
-    "source_sha256": "9c57928de9242518c8f7b9b011c3a0600a794b17267e1bef5d15e0c49a5435e9"
+    "source_blob": "fd1a94b55636b071bcbaa1002888692ad83a2099",
+    "source_sha256": "c9f12274e90018a95b6820b53cf1822bca1bda2c0459eefaa29add2961bb77cc"
   },
   {
     "changed": false,
@@ -39220,12 +38863,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "787fe9eb326dd9a4dfefc3390669f54557fab3a28d29f83c101a3ac0ac22c7bc",
+    "export_sha256": "147467733b5c2f0c7b920275bbe46fa6e316dae8f864675f3a9cf34b21b6d5d8",
     "mode": "100644",
     "path": "python/vibeqc/periodic_k_gdf.py",
     "reasons": [],
-    "source_blob": "3fd7fe7e9a297754096bf1062bc84df2d578e68b",
-    "source_sha256": "787fe9eb326dd9a4dfefc3390669f54557fab3a28d29f83c101a3ac0ac22c7bc"
+    "source_blob": "0c79f7db4b2ffe30cd241fcb1206323c0e7526af",
+    "source_sha256": "147467733b5c2f0c7b920275bbe46fa6e316dae8f864675f3a9cf34b21b6d5d8"
   },
   {
     "changed": false,
@@ -41245,12 +40888,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "127e09a755ee559076004da60f573d8d43d9eba0a0fcfc4f3fd03c4f53e5cddd",
+    "export_sha256": "b461e4315bca39619fa354e713b2e6ecc3467d71ce3a232a4a528757e681f37d",
     "mode": "100755",
     "path": "scripts/build_site.sh",
     "reasons": [],
-    "source_blob": "5c10f44822b34c33d1a895850b9b49580f787a45",
-    "source_sha256": "127e09a755ee559076004da60f573d8d43d9eba0a0fcfc4f3fd03c4f53e5cddd"
+    "source_blob": "4b0816fcd37f082f8b7ce8120f60e92a8dd94261",
+    "source_sha256": "b461e4315bca39619fa354e713b2e6ecc3467d71ce3a232a4a528757e681f37d"
   },
   {
     "changed": false,
@@ -41712,17 +41355,6 @@
     "source_sha256": "ad9434743327759afc4961bed59bbd516351aa8cbfe663656639b7179e866153"
   },
   {
-    "changed": true,
-    "export_sha256": "131b01c27e87e9f7416306f72e7a63fbec6ff72a10529a0841a67b6f6499607c",
-    "mode": "100644",
-    "path": "scripts/test_gate/TRIM_REPORT.md",
-    "reasons": [
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "bcb06062bef1131968aa7aca2562ff779eb6ca87",
-    "source_sha256": "736cc187c7d65c73c0feb93622a0e5a70a7be70a676daea0ccaaa947b48755d9"
-  },
-  {
     "changed": false,
     "export_sha256": "35a41ac57e3c5d649b90802b7246d3916dbc3a5d9d62ef0cac84c482432c756e",
     "mode": "100644",
@@ -41732,15 +41364,13 @@
     "source_sha256": "35a41ac57e3c5d649b90802b7246d3916dbc3a5d9d62ef0cac84c482432c756e"
   },
   {
-    "changed": true,
-    "export_sha256": "f91cbe57606f5cfa860fd8f8b5fa59e83d65c2fd8ab232f58f9c43831df76355",
+    "changed": false,
+    "export_sha256": "ddb2dd84c6a06c43517947fa45b2546138dbe1e8f62daf58dc2d0894d110e8e0",
     "mode": "100644",
     "path": "scripts/test_gate/changelog_pins.toml",
-    "reasons": [
-      "public snapshot changelog privacy amendments with guard-generated pins"
-    ],
-    "source_blob": "f5f99f29e153ae86d54c1ef0b8908b9237447ec3",
-    "source_sha256": "85c6b413fb2aada298db762693759799048a433c26ce47f1ad9a99f0df27a1cd"
+    "reasons": [],
+    "source_blob": "f544e6512b10168641c4d7a0f0ac89a69f7dab5b",
+    "source_sha256": "ddb2dd84c6a06c43517947fa45b2546138dbe1e8f62daf58dc2d0894d110e8e0"
   },
   {
     "changed": false,
@@ -41798,21 +41428,21 @@
   },
   {
     "changed": false,
-    "export_sha256": "17a882924138997fa8ec039bf633067eec16e3f0a6de4a45d0c96e0278520196",
+    "export_sha256": "664ef0137cd779d58153a5f2fe7d61584b74a4dfb3f7a7b31e0c4585655b6a08",
     "mode": "100644",
     "path": "scripts/test_gate/suite_manifest.json",
     "reasons": [],
-    "source_blob": "c51e7e741dc0c2d799e8869e60deb71c260e50e7",
-    "source_sha256": "17a882924138997fa8ec039bf633067eec16e3f0a6de4a45d0c96e0278520196"
+    "source_blob": "2ea0e531abcda4aa77b9fa11fd71e4ba070109de",
+    "source_sha256": "664ef0137cd779d58153a5f2fe7d61584b74a4dfb3f7a7b31e0c4585655b6a08"
   },
   {
     "changed": false,
-    "export_sha256": "3091b01588e1e20ecd5342921522f9dc6e883a442a9b4b21fa6e742e9c583e89",
+    "export_sha256": "25b269139c71c9096f5514e58a907f24595d4afbd238f463b9ab53868fb9f21b",
     "mode": "100644",
     "path": "scripts/test_gate/update_suite_manifest.py",
     "reasons": [],
-    "source_blob": "2a93c0906becf75c6da6e1ede92084053c0e361f",
-    "source_sha256": "3091b01588e1e20ecd5342921522f9dc6e883a442a9b4b21fa6e742e9c583e89"
+    "source_blob": "5b843b6497887592daffa80db4cdace1c952cccc",
+    "source_sha256": "25b269139c71c9096f5514e58a907f24595d4afbd238f463b9ab53868fb9f21b"
   },
   {
     "changed": false,
@@ -42203,12 +41833,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "ae48fd22d6afc6fd9798cf2e31a213d11869f00439405198e4a263829f7e182c",
+    "export_sha256": "2bd57559326e8e4441040edfef7eac6bb5ce300dde29a5ae5291a2e8795e5bdf",
     "mode": "100644",
     "path": "studies/aiccm-2026/site_settings.py",
     "reasons": [],
-    "source_blob": "35f7eaafafaa23fcd0bca2abc530afb3affbca5e",
-    "source_sha256": "ae48fd22d6afc6fd9798cf2e31a213d11869f00439405198e4a263829f7e182c"
+    "source_blob": "e9d7b4140b4dc64a93a54d4911474319b51825ad",
+    "source_sha256": "2bd57559326e8e4441040edfef7eac6bb5ce300dde29a5ae5291a2e8795e5bdf"
   },
   {
     "changed": false,
@@ -43913,66 +43543,66 @@
   },
   {
     "changed": false,
-    "export_sha256": "23ced833d30e332ab4338e77608a972994d13439114e07ad651ef16aa430c5ed",
+    "export_sha256": "057adc8ff74506b938119b3b5413470a3c9fe24a2018b0c575dca442fe5ea897",
     "mode": "100644",
     "path": "tests/golden/mol_hessian.out",
     "reasons": [],
-    "source_blob": "8c75073c8bfa20d4d5cab7f37bd90be704ea32b9",
-    "source_sha256": "23ced833d30e332ab4338e77608a972994d13439114e07ad651ef16aa430c5ed"
+    "source_blob": "999aca7dec8525e16316ea24da09729a7d64ff1c",
+    "source_sha256": "057adc8ff74506b938119b3b5413470a3c9fe24a2018b0c575dca442fe5ea897"
   },
   {
     "changed": false,
-    "export_sha256": "83e38ac982264cc8e177d75fc9daee2b301d65474e079688ac4467a81d39b709",
+    "export_sha256": "fd7f3c57636929762a32f20407f3475ab9b1701ff7c6bbed6d803e366f6719db",
     "mode": "100644",
     "path": "tests/golden/mol_rhf.out",
     "reasons": [],
-    "source_blob": "5f4f54c7bdc0c0720f44b3cc5b65f87b8d7640b9",
-    "source_sha256": "83e38ac982264cc8e177d75fc9daee2b301d65474e079688ac4467a81d39b709"
+    "source_blob": "d0dac7eb937cd9c4082402f07844744dee86e983",
+    "source_sha256": "fd7f3c57636929762a32f20407f3475ab9b1701ff7c6bbed6d803e366f6719db"
   },
   {
     "changed": false,
-    "export_sha256": "07b52a4f0fb299a010f86205a1a0bab230db1d81b265e4ff749d43cc1ffb5576",
+    "export_sha256": "958ed322ac404d18de6951a595d0e01d5e5ea8c4a5da246d11061d9421fabfee",
     "mode": "100644",
     "path": "tests/golden/mol_rks.out",
     "reasons": [],
-    "source_blob": "b0f5d041c40f0867b3829879d02fd42575144072",
-    "source_sha256": "07b52a4f0fb299a010f86205a1a0bab230db1d81b265e4ff749d43cc1ffb5576"
+    "source_blob": "854f603fd0c988b49e8e84b6f7d486a68713a26a",
+    "source_sha256": "958ed322ac404d18de6951a595d0e01d5e5ea8c4a5da246d11061d9421fabfee"
   },
   {
     "changed": false,
-    "export_sha256": "d0f0b98b04daed5c0bc6dae955d8c5b31c899d86e8ecaeb09aad75db1d70700f",
+    "export_sha256": "24fb9a23ee2aca4276254f5fd7b88d71c523633f4a5a36d90695030bb0b2e351",
     "mode": "100644",
     "path": "tests/golden/mol_tddft.out",
     "reasons": [],
-    "source_blob": "78a3fc0f11126a6d2d19da30f9c1457081558fa5",
-    "source_sha256": "d0f0b98b04daed5c0bc6dae955d8c5b31c899d86e8ecaeb09aad75db1d70700f"
+    "source_blob": "43f0ef1bdd88a4f3541aedb52fc85a4c3dc8deb6",
+    "source_sha256": "24fb9a23ee2aca4276254f5fd7b88d71c523633f4a5a36d90695030bb0b2e351"
   },
   {
     "changed": false,
-    "export_sha256": "06b4fca6fbcb0beef0eacbace74f4e225a48b62556ec531fc053310c4b81a41d",
+    "export_sha256": "0e0d93116b1437e97000744fca153eabbeafbf91bee25cad8bfdf6c51d07dcfd",
     "mode": "100644",
     "path": "tests/golden/mol_uhf.out",
     "reasons": [],
-    "source_blob": "e7963d0a2be323a4a35cad6830ebb67c6214324a",
-    "source_sha256": "06b4fca6fbcb0beef0eacbace74f4e225a48b62556ec531fc053310c4b81a41d"
+    "source_blob": "d59b65ddbb9ab2679e54c8754bad70d0fe64e190",
+    "source_sha256": "0e0d93116b1437e97000744fca153eabbeafbf91bee25cad8bfdf6c51d07dcfd"
   },
   {
     "changed": false,
-    "export_sha256": "8d74828b2504904097f7f8416d79bfe1a0c070b08c7a3e90e636efa5e9bdc1fd",
+    "export_sha256": "8caacb3ca9c26efb46d42c0e7d6181efd376ed4b02860062500d582be5652ecb",
     "mode": "100644",
     "path": "tests/golden/periodic_geomopt.out",
     "reasons": [],
-    "source_blob": "18eef35cc5a1076b7b2eef6cf99c294417262357",
-    "source_sha256": "8d74828b2504904097f7f8416d79bfe1a0c070b08c7a3e90e636efa5e9bdc1fd"
+    "source_blob": "62d5d14f40079b62fc6e32ba5fa7e1e815781f3c",
+    "source_sha256": "8caacb3ca9c26efb46d42c0e7d6181efd376ed4b02860062500d582be5652ecb"
   },
   {
     "changed": false,
-    "export_sha256": "0a0bd423b61080c4dd3c0895002d6b57a2a5815f0ced4a9d7be4e1fb5d58e2fb",
+    "export_sha256": "de560d6991c7451b0dc24b70623f06dfe7a72115bd5f8fcf0ce93941839283d8",
     "mode": "100644",
     "path": "tests/golden/periodic_rhf.out",
     "reasons": [],
-    "source_blob": "5c6642a35d6809f145303a148a93a9d83c9ad2ef",
-    "source_sha256": "0a0bd423b61080c4dd3c0895002d6b57a2a5815f0ced4a9d7be4e1fb5d58e2fb"
+    "source_blob": "bb995880fae1073a8d0bfb42ee8db0542d626928",
+    "source_sha256": "de560d6991c7451b0dc24b70623f06dfe7a72115bd5f8fcf0ce93941839283d8"
   },
   {
     "changed": false,
@@ -44030,12 +43660,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "cba8720c623998add64df29b2e13c84c40af3044cda24440650152c78aa7a537",
+    "export_sha256": "26a532d3f47535a60ccc54a89e6a8a8c6ff14ce77994e7151d6c4fd5fd0f0eff",
     "mode": "100644",
     "path": "tests/test_aiccm_site_settings.py",
     "reasons": [],
-    "source_blob": "5764f16104ed1bd8e31f3306a57e8bfca07f149e",
-    "source_sha256": "cba8720c623998add64df29b2e13c84c40af3044cda24440650152c78aa7a537"
+    "source_blob": "0b23736adb791ab7988a9fd8d7b7e4103660139e",
+    "source_sha256": "26a532d3f47535a60ccc54a89e6a8a8c6ff14ce77994e7151d6c4fd5fd0f0eff"
   },
   {
     "changed": false,
@@ -44291,15 +43921,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "3a2494b9cad8adeae92d10b226863fb360ffc1f3f90eb13d0291f330cc94373e",
+    "export_sha256": "be3178e1dd057ef2ba2b837c9ede2beae5ace89443f4095f37aafbb90dcfbbc4",
     "mode": "100644",
     "path": "tests/test_basis_no_maintainer_paths.py",
-    "reasons": [
-      "generic home-directory example",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "4528b16b641d2b08c2d48ced16d07ba4ae06c5db",
-    "source_sha256": "3a2494b9cad8adeae92d10b226863fb360ffc1f3f90eb13d0291f330cc94373e"
+    "reasons": [],
+    "source_blob": "bbd3237222d9629246e3abb05b28ffcbaff6cbf9",
+    "source_sha256": "be3178e1dd057ef2ba2b837c9ede2beae5ace89443f4095f37aafbb90dcfbbc4"
   },
   {
     "changed": false,
@@ -45770,12 +45397,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "ebc9d57b8e2a8b7a798da0c7205c89a88241f6c36b29fd9fbee98777370cdad1",
+    "export_sha256": "6d954be892367edc588626ddbdc87fe40191cf24c5834f085089018af50ac2e3",
     "mode": "100644",
     "path": "tests/test_contributor_workflow_contract.py",
     "reasons": [],
-    "source_blob": "6aaa9c29047f5a6a2d0fa3ba9df57c8e439fd7ea",
-    "source_sha256": "ebc9d57b8e2a8b7a798da0c7205c89a88241f6c36b29fd9fbee98777370cdad1"
+    "source_blob": "799424caf28b3244b95894d8d97c2b4c7e676864",
+    "source_sha256": "6d954be892367edc588626ddbdc87fe40191cf24c5834f085089018af50ac2e3"
   },
   {
     "changed": false,
@@ -45932,12 +45559,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "8d6b41d3b9d6f7f53a0fbc072e27732f5855addb13384e5fc06b78efaf6d297c",
+    "export_sha256": "f063b9b22d27ceb793c01e4f044076e9a2dc9d66afcba3805d9a1576ef74b711",
     "mode": "100644",
     "path": "tests/test_davidson.py",
     "reasons": [],
-    "source_blob": "bd6ea7c6c042496843b669ea0df2b5a4fd35184b",
-    "source_sha256": "8d6b41d3b9d6f7f53a0fbc072e27732f5855addb13384e5fc06b78efaf6d297c"
+    "source_blob": "0fc8cbf4b7614e4285a6ec4a9ccf9152658a4ae8",
+    "source_sha256": "f063b9b22d27ceb793c01e4f044076e9a2dc9d66afcba3805d9a1576ef74b711"
   },
   {
     "changed": false,
@@ -46318,16 +45945,13 @@
     "source_sha256": "2b18042fad6eb247523cf91f8b225d04a8dc2ecccee752ef8f4947d433ca665f"
   },
   {
-    "changed": true,
-    "export_sha256": "bf27f1caa18dbfb0ec0124bbd8ae8a6c25135bdcb42d3f1d7b912dfee13f2969",
+    "changed": false,
+    "export_sha256": "a92a32dc4081aaad3722d3d7ff8dfa7dbde532bdedfc1b6e77d97e8a813cdf3d",
     "mode": "100644",
     "path": "tests/test_docs_download_links.py",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public parametrized repository URL"
-    ],
-    "source_blob": "ea61b031e32010a10597ebfc24ed9df88f5bd024",
-    "source_sha256": "4d3cac3a8393c6ffa165302da2cd67330b782b527dd87aedbbde883ee8f65f73"
+    "reasons": [],
+    "source_blob": "3f43554e33dc7253284e7dfceec88b418ffa94dd",
+    "source_sha256": "a92a32dc4081aaad3722d3d7ff8dfa7dbde532bdedfc1b6e77d97e8a813cdf3d"
   },
   {
     "changed": false,
@@ -47159,12 +46783,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "33e9e1b58e68265cfd2b99cda1efe68ca8b75fbcbac477f846b9b1c7ba69129e",
+    "export_sha256": "27f57dc069baaddefd2dfe771b6c3edc1eefb1082f649b13fca77189093b7639",
     "mode": "100644",
     "path": "tests/test_lattice_convention.py",
     "reasons": [],
-    "source_blob": "b5812d91c7afb21a3c6ff6399d72a218d55f4fb0",
-    "source_sha256": "33e9e1b58e68265cfd2b99cda1efe68ca8b75fbcbac477f846b9b1c7ba69129e"
+    "source_blob": "e812a7682afbf971064e1f3504f201810576e395",
+    "source_sha256": "27f57dc069baaddefd2dfe771b6c3edc1eefb1082f649b13fca77189093b7639"
   },
   {
     "changed": false,
@@ -47183,6 +46807,15 @@
     "reasons": [],
     "source_blob": "8feff81b999a0532f0f902b5463371866e1782fc",
     "source_sha256": "1ed092deb39b69f5f92e3b6075af73aed393321e14f7fad8ec2bcacff720e937"
+  },
+  {
+    "changed": false,
+    "export_sha256": "4f73772e676abb1b446a870e80f35e31ec5bc43d4097f79deb434635249524be",
+    "mode": "100644",
+    "path": "tests/test_libint_capability_configure.py",
+    "reasons": [],
+    "source_blob": "f4e1ef0614cca6af4a9278aa27ae45c6494b0fa2",
+    "source_sha256": "4f73772e676abb1b446a870e80f35e31ec5bc43d4097f79deb434635249524be"
   },
   {
     "changed": false,
@@ -47762,12 +47395,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "0890d330e7eae3bcc8f21bb8036f81feedd421b1e8d7ad07cae88c8b70266a68",
+    "export_sha256": "aa3138e261ea67336d6904ced373e128ec9d82e2a403ff72b4b91eadb7eb5ecf",
     "mode": "100644",
     "path": "tests/test_out_format_snapshot.py",
     "reasons": [],
-    "source_blob": "e648ee14fcc2e691e88c27174b228cc045113f19",
-    "source_sha256": "0890d330e7eae3bcc8f21bb8036f81feedd421b1e8d7ad07cae88c8b70266a68"
+    "source_blob": "9850486864596b062ca844410c67fe36ed23c8c5",
+    "source_sha256": "aa3138e261ea67336d6904ced373e128ec9d82e2a403ff72b4b91eadb7eb5ecf"
   },
   {
     "changed": false,
@@ -47933,21 +47566,21 @@
   },
   {
     "changed": false,
-    "export_sha256": "df52f9326cdc7939036ee3bf401a48a4f583ab80848a9ac9f29d6b6b5df2fcc9",
+    "export_sha256": "06365858c9821f579ee50142289ff057321d525d96f748d05f7fc5a463763aca",
     "mode": "100644",
     "path": "tests/test_packaging_extras.py",
     "reasons": [],
-    "source_blob": "bc7fb47fd196bf00342e50991557220b04dbc9bb",
-    "source_sha256": "df52f9326cdc7939036ee3bf401a48a4f583ab80848a9ac9f29d6b6b5df2fcc9"
+    "source_blob": "a1cd9246385ae07314a883fc8a945ffc95d00742",
+    "source_sha256": "06365858c9821f579ee50142289ff057321d525d96f748d05f7fc5a463763aca"
   },
   {
     "changed": false,
-    "export_sha256": "15de98ba237def281ffbec5a2c7500ecd50137afe309397bcc684caad19b8fb1",
+    "export_sha256": "ac9a441518538c826a3d66f0cda5aeffdd8cd0080bcfbfef03a1ff00d5581b1b",
     "mode": "100644",
     "path": "tests/test_packaging_metadata.py",
     "reasons": [],
-    "source_blob": "ff0cff7aa989cb037c6241e13b9db5a237520ead",
-    "source_sha256": "15de98ba237def281ffbec5a2c7500ecd50137afe309397bcc684caad19b8fb1"
+    "source_blob": "4c6acd197685261c8053c9d59c979127e009655a",
+    "source_sha256": "ac9a441518538c826a3d66f0cda5aeffdd8cd0080bcfbfef03a1ff00d5581b1b"
   },
   {
     "changed": false,
@@ -48086,12 +47719,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "cf82dad4b2e278e8b2f39001fde517cf4d524900e8365ebb7a9f6404fbaac3b9",
+    "export_sha256": "b75276c409f6d6d83e1235115ad3fe2e03a153734521c5d9e5ee0e0db88ab077",
     "mode": "100644",
     "path": "tests/test_pbc_gdf_mdf.py",
     "reasons": [],
-    "source_blob": "f5f3a72482a54f495eaa0219dc2268691b2db806",
-    "source_sha256": "cf82dad4b2e278e8b2f39001fde517cf4d524900e8365ebb7a9f6404fbaac3b9"
+    "source_blob": "ab1faafd021b2166d9b2b740e2e1e5d8d530050c",
+    "source_sha256": "b75276c409f6d6d83e1235115ad3fe2e03a153734521c5d9e5ee0e0db88ab077"
   },
   {
     "changed": false,
@@ -49472,12 +49105,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "a58a975f1a741dbcea31cc2d476b9c8d3c9739024745f8af96cf8dc4ed884804",
+    "export_sha256": "4b311ee98d6b089c7b718e042968febc4c80c97ebe4e7ff29926e61362be7088",
     "mode": "100644",
     "path": "tests/test_periodic_gdf_memory_preflight.py",
     "reasons": [],
-    "source_blob": "bee19bbdc4538985de93a317bbb6d7256d4d41ff",
-    "source_sha256": "a58a975f1a741dbcea31cc2d476b9c8d3c9739024745f8af96cf8dc4ed884804"
+    "source_blob": "32ebdb5233edf045402286b449060012abac5d54",
+    "source_sha256": "4b311ee98d6b089c7b718e042968febc4c80c97ebe4e7ff29926e61362be7088"
   },
   {
     "changed": false,
@@ -50750,12 +50383,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "634d9dd65ed52a6fffe3fed608e58c6890bd891ce6c3f77db8dd40b96ee88dbe",
+    "export_sha256": "55af51077aaf07a374e5bc0a0be0036ac49bbbb93167be28aa49289fb5cb747e",
     "mode": "100644",
     "path": "tests/test_runner_semiempirical_aliases.py",
     "reasons": [],
-    "source_blob": "723ca0de634284f1d52bacffdec8cf64fd95e43f",
-    "source_sha256": "634d9dd65ed52a6fffe3fed608e58c6890bd891ce6c3f77db8dd40b96ee88dbe"
+    "source_blob": "106f0a0e4c2757350566696a0a66b7f6206fd486",
+    "source_sha256": "55af51077aaf07a374e5bc0a0be0036ac49bbbb93167be28aa49289fb5cb747e"
   },
   {
     "changed": false,
@@ -52000,15 +51633,13 @@
     "source_sha256": "7ada97b5d0c8211ff02f9f575a5dc96dbfae2807604c262f7da950f0ea6a8359"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "a2a416ddeae0a8787e161b1c4633f8b27ff76aa98f6f255b77916a6b432b8e8d",
     "mode": "100644",
     "path": "vibe-basis/README.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "334bbafa27b7c1e93b140724659d245b13cbb5ee",
-    "source_sha256": "600432231fcdea4a4c93b31e3952cf128ec75a0c40351e510aad6141029ade91"
+    "reasons": [],
+    "source_blob": "af785d60cb1afff706b9dc764d443d140a1716e7",
+    "source_sha256": "a2a416ddeae0a8787e161b1c4633f8b27ff76aa98f6f255b77916a6b432b8e8d"
   },
   {
     "changed": false,
@@ -52029,15 +51660,13 @@
     "source_sha256": "d5f582d799c13614dd5865a4262f4623809323f0b384ffa4c51d3d29d2f1b95d"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "f0eeb600da658017df9993483ea77d611289ced2bd883b29ae05809b577c3c80",
     "mode": "100644",
     "path": "vibe-basis/TUTORIAL.md",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "be2e893f1b642a5f4102dab72ad543509369efd2",
-    "source_sha256": "f2bc8f71c2824fadc7976c5cc369bdcecf23f6d3e0ba21c78ae5c2156c61b91b"
+    "reasons": [],
+    "source_blob": "f9556a909da6e1d221fcf2521a6118ef3fc1539a",
+    "source_sha256": "f0eeb600da658017df9993483ea77d611289ced2bd883b29ae05809b577c3c80"
   },
   {
     "changed": false,
@@ -52058,18 +51687,13 @@
     "source_sha256": "1714362b65d6307831b231ebe765a0112297053516fe4a606ca29e89369a2af5"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "528741e51982ca889193ad548e05989f80e44e9c5172622de6b5bb06195c53ac",
     "mode": "100644",
     "path": "vibe-basis/pyproject.toml",
-    "reasons": [
-      "public package issues URL",
-      "public package repository URL",
-      "public repository URL",
-      "public tracker landing URL; original issue IDs are private"
-    ],
-    "source_blob": "d1708183ada010f63bb35587286f4f7f60d1dcbf",
-    "source_sha256": "aa47b97e6485fda496554fb6d0db9a278ac2ebd44f500f968a69a6b35dce5466"
+    "reasons": [],
+    "source_blob": "704e2a148de67c469ce92704d2ca9d990c20e50f",
+    "source_sha256": "528741e51982ca889193ad548e05989f80e44e9c5172622de6b5bb06195c53ac"
   },
   {
     "changed": false,
@@ -52576,17 +52200,13 @@
     "source_sha256": "e02d98b29b71367b8269efee4176bef0472668bdf6e773fd388a7a9106d8ca45"
   },
   {
-    "changed": true,
-    "export_sha256": "f28eff1d32e5eb7a0c00c1ef36f6eb8bdf491e5565bee1af9ce688d8880b73fe",
+    "changed": false,
+    "export_sha256": "59421be8d5c08e19ef29e58f57151773bf55aa1a53d840f538a968650bc439de",
     "mode": "100644",
     "path": "website/README.md",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "deployment account example",
-      "public repository URL"
-    ],
-    "source_blob": "00c1930e991543bc6b28b97c16d19cf6c8ff351b",
-    "source_sha256": "cf3366e882b6276a7e50695e3a86f26a38919b451d46e38c492c8f6cd16bc0a8"
+    "reasons": [],
+    "source_blob": "fdc0353dea285f9b5a58015f8360445f245b8ded",
+    "source_sha256": "59421be8d5c08e19ef29e58f57151773bf55aa1a53d840f538a968650bc439de"
   },
   {
     "changed": false,
@@ -52895,16 +52515,13 @@
     "source_sha256": "53e841ec6088b3c2c4fc5b12f721da5787ef50b5601cd2352035deea0b41f4c6"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "f1c06c1e07feb21e3f7e016ed1c70eaa56bb4eaa62fdda7ebb59094d115a0e77",
     "mode": "100644",
     "path": "website/src/components/Footer.astro",
-    "reasons": [
-      "public repository URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "ff1ac4b52a0b09f73b4a71791b796c089b4ea433",
-    "source_sha256": "ccea2f205006710b6bc9c1abd968462ba4bb131e66ae5697c6211177ad4625ff"
+    "reasons": [],
+    "source_blob": "b864b9cdd3058947bc6e4c225b4e408e28bb3e1b",
+    "source_sha256": "f1c06c1e07feb21e3f7e016ed1c70eaa56bb4eaa62fdda7ebb59094d115a0e77"
   },
   {
     "changed": false,
@@ -52934,51 +52551,40 @@
     "source_sha256": "1550d851f337636c5d6b3aaa5e1e5e5c0e693c97e9a986a66cfea12762243a43"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "0df255b5b77e802f30618932b3a13d2a24e7b0b8a73fdc44ec13473d15bfa3bd",
     "mode": "100644",
     "path": "website/src/data/components.mjs",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public repository URL"
-    ],
-    "source_blob": "9aa662587d66cc1c75e31b7758c14a41723c1b18",
-    "source_sha256": "cab4e20e91a19b5c82cc96c27cb0c939eafec4774b995a615364c3bbe9427a5d"
+    "reasons": [],
+    "source_blob": "00e40ab0f4818aa1b9411494d7297a438814ab62",
+    "source_sha256": "0df255b5b77e802f30618932b3a13d2a24e7b0b8a73fdc44ec13473d15bfa3bd"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "f0c2aee8be73e341be69b1b8988c9d93a50d046029f2ae3e48520a36a5004abb",
     "mode": "100644",
     "path": "website/src/data/distributions.mjs",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public repository URL"
-    ],
-    "source_blob": "0475d730c4128a101cd48089a18acb827b0a3d09",
-    "source_sha256": "ade3df0e419b5e5da7b77c4cb24afb53e914fbc9772209aa19adf7c51435d178"
+    "reasons": [],
+    "source_blob": "c1653ac1e25ef9de3ac39a81396b0ea359574095",
+    "source_sha256": "f0c2aee8be73e341be69b1b8988c9d93a50d046029f2ae3e48520a36a5004abb"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "72a1e86895638c5769e941b6e236145e475290c3f750cfe557dc775b11a8a941",
     "mode": "100644",
     "path": "website/src/data/products.mjs",
-    "reasons": [
-      "public repository URL"
-    ],
-    "source_blob": "e3f7e986d5d52ababd4f5e9096243906626ba001",
-    "source_sha256": "957cd311b8056af1ab2cac367e9cbdf1e25462638a9ca1b1ac089ed76eb2fed9"
+    "reasons": [],
+    "source_blob": "2d24b99e1eae83351c791c6db993af7c1fae1df0",
+    "source_sha256": "72a1e86895638c5769e941b6e236145e475290c3f750cfe557dc775b11a8a941"
   },
   {
-    "changed": true,
-    "export_sha256": "033bace22d46c4a107b2222d7300209fb1c4579ffc0042e44da14ae00fa77a44",
+    "changed": false,
+    "export_sha256": "eb421ac207ea29480ea2353897afa52b40a5e3f55fb3e0251d2caec1ab9f45bd",
     "mode": "100644",
     "path": "website/src/data/repositories.mjs",
-    "reasons": [
-      "private auxiliary reference removed",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "4943e94baa1e99bc521900804f64f3d49f7bd9db",
-    "source_sha256": "0cfc11cc8381416ea4a75a275c8626bc5ee708c372fca4cfc1caec44f5958857"
+    "reasons": [],
+    "source_blob": "6cb70d794608e92c9563a404ec45b676d5677d23",
+    "source_sha256": "eb421ac207ea29480ea2353897afa52b40a5e3f55fb3e0251d2caec1ab9f45bd"
   },
   {
     "changed": false,
@@ -53026,29 +52632,22 @@
     "source_sha256": "8b7e309c741124caec35ad6e0f2361ddb1d252da99e48a7a157d54ac0597ffa5"
   },
   {
-    "changed": true,
-    "export_sha256": "3eb0bcb09541e16d4f8ab0d001a31d468fe4a4aad68c1241cd5793f20a4769bf",
+    "changed": false,
+    "export_sha256": "fc4699dff371bd4796b7ab1c0a21c91e6e2bab46dd81ffb065bde0047ff4cb61",
     "mode": "100644",
     "path": "website/src/pages/download.astro",
-    "reasons": [
-      "GitHub tag and release URL shape",
-      "public repository URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "c28064837d84e656bbfc2d6090902c9c489ba100",
-    "source_sha256": "d1010e46ab8bfe326a2496d51de65d2079c9451806b9a77e19736efe124828e8"
+    "reasons": [],
+    "source_blob": "1a1a9162cd788a46623614f430060062d9ad2b05",
+    "source_sha256": "fc4699dff371bd4796b7ab1c0a21c91e6e2bab46dd81ffb065bde0047ff4cb61"
   },
   {
-    "changed": true,
-    "export_sha256": "b690a34f14e6946729860d06790ec5f53675576a15edf2839bbf605be35a30c9",
+    "changed": false,
+    "export_sha256": "24aea7f4885af06edcfcfab2c78b9d13df36d7e7f3949d233f8faaf893ba8349",
     "mode": "100644",
     "path": "website/src/pages/get-started.astro",
-    "reasons": [
-      "public clone URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "d288a0c9003f9bc8a0d0705fc519f551b5cb5a1b",
-    "source_sha256": "ba6be67b26aa5bd4d4a57e80fb9aa8f9cfd0c788b06a1a6c7439180158057e97"
+    "reasons": [],
+    "source_blob": "7080179b3407c0cdd427592e8d840a8287bb0707",
+    "source_sha256": "24aea7f4885af06edcfcfab2c78b9d13df36d7e7f3949d233f8faaf893ba8349"
   },
   {
     "changed": false,
@@ -53060,16 +52659,13 @@
     "source_sha256": "b6e6c886e8601ced348f4af79f4bcd1b4303b6a0b60be9277016fc157de69185"
   },
   {
-    "changed": true,
-    "export_sha256": "c19389912671547616e5e712f5dc26860eaf4f1b0991ba877f463a75502faac1",
+    "changed": false,
+    "export_sha256": "6b2087ba650d02abb90c4c4771c5841d7c301406cc0adb6baf0a801d15b9f2f7",
     "mode": "100644",
     "path": "website/src/pages/products/[product].astro",
-    "reasons": [
-      "public repository URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "ce8d2c912b2d89c560bb2a57fd1fbdc5180669c5",
-    "source_sha256": "901930692e751809ba920c70b8dca9e869b098639172d6a80a8b8dee322c087e"
+    "reasons": [],
+    "source_blob": "e2b66fd91d49e1c248709f53793265631bfabbfb",
+    "source_sha256": "6b2087ba650d02abb90c4c4771c5841d7c301406cc0adb6baf0a801d15b9f2f7"
   },
   {
     "changed": false,
@@ -53117,15 +52713,13 @@
     "source_sha256": "c502a7a55cd9a0612e5dc6744d758305e486c2974fd44ccd4f1e0081bc589228"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "b9bbf5f7d8fa15aecec57ee61190392df44e8f510f9655fe9b4cba8353ef03c3",
     "mode": "100644",
     "path": "website/tests/components.test.mjs",
-    "reasons": [
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "1fa7d9d0e655b63a4525b2e84dd4d70c0a13a01e",
-    "source_sha256": "514d52a45f774859db54d90e9fe28dc3e525e276766438b440f309fc9489be67"
+    "reasons": [],
+    "source_blob": "6f3c3565e726f5a260a7eeaea243f8529c38fc4b",
+    "source_sha256": "b9bbf5f7d8fa15aecec57ee61190392df44e8f510f9655fe9b4cba8353ef03c3"
   },
   {
     "changed": false,
@@ -53155,27 +52749,22 @@
     "source_sha256": "933daf5ad5e4cb47867c886f8a7661e22cb70f0f2876854f1c746413e64f31cf"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "1a100242677ad77fbf13233b25c8bd0b78fed38577d484cdfb61b82cfa9d80cd",
     "mode": "100644",
     "path": "website/tests/products.verify.mjs",
-    "reasons": [
-      "public repository URL",
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "cef16400410a251ef3c924486efef3feca270a2e",
-    "source_sha256": "da71b809ded287fd4c8e01f6848efda6a653119f2d662c4ba2055a47b4ead096"
+    "reasons": [],
+    "source_blob": "b195fefeadc082cb8ca862160d425c0ad101d4a6",
+    "source_sha256": "1a100242677ad77fbf13233b25c8bd0b78fed38577d484cdfb61b82cfa9d80cd"
   },
   {
-    "changed": true,
+    "changed": false,
     "export_sha256": "651256de9d3b97da599867638fbe4d1e505505d4f94ffeb8593f151b521a20db",
     "mode": "100644",
     "path": "website/tests/rendered-download.verify.mjs",
-    "reasons": [
-      "reviewed public documentation and matching URL expectations"
-    ],
-    "source_blob": "f1eafec17adcf2c2b009d62898376aca0f281eea",
-    "source_sha256": "48e7b7b9e8019ed4ae19e1ed656cded876e6bfc777212beae0aa82bce9d3b94b"
+    "reasons": [],
+    "source_blob": "dab67b09ae1389e0871dc6c7154d5caa8dbe9a75",
+    "source_sha256": "651256de9d3b97da599867638fbe4d1e505505d4f94ffeb8593f151b521a20db"
   },
   {
     "changed": false,
@@ -53194,16 +52783,5 @@
     "reasons": [],
     "source_blob": "25ba8de9e86a079307dc723d2a08d380a3561bc0",
     "source_sha256": "50a7da8951a5ff3ffda828204e36b525724e4ed1089d0a665a8dba01d2d4accd"
-  },
-  {
-    "changed": true,
-    "export_sha256": "d34592f56daf8f916bc03a218bc4b816eaf420e1eb06f6dd1e860ed55a637ede",
-    "mode": "100644",
-    "path": "PUBLICATION.md",
-    "reasons": [
-      "generated public export guidance"
-    ],
-    "source_blob": null,
-    "source_sha256": null
   }
 ]

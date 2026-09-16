@@ -74,7 +74,7 @@ def load_profile() -> dict:
     selected = os.environ.get("AICCM_SITE_CONFIG")
     if selected is None:
         return {}
-    if not selected:
+    if not selected or not Path(selected).is_absolute():
         raise ValueError("AICCM_SITE_CONFIG must select an external private file")
     root = Path(__file__).resolve().parent
     for ancestor in root.parents:
@@ -85,6 +85,20 @@ def load_profile() -> dict:
         path = Path(selected).expanduser().resolve(strict=True)
         if path.is_relative_to(root):
             raise ValueError("site configuration must be outside the source checkout")
+        # Check both the configured interface and resolved target, rejecting a checkout, worktree
+        # or bare Git database as well as this source tree. Private profiles
+        # must not become source or accidentally enter Git object storage.
+        for interface in (Path(selected).absolute(), path):
+            if interface.is_relative_to(root.resolve()):
+                raise ValueError("private configuration must stay outside the source checkout")
+            for directory in interface.parents:
+                if ((directory / ".git").exists()
+                        or (directory / ".git").is_symlink()
+                        or ((directory / "HEAD").is_file()
+                            and (directory / "objects").is_dir()
+                            and (directory / "refs").is_dir())
+                        or directory.name.casefold() == ".git"):
+                    raise ValueError("private configuration must stay outside Git trees and databases")
         with path.open("rb") as stream:
             data = stream.read(65537)
         if len(data) > 65536:

@@ -9,10 +9,10 @@ no network, no install — and check the metadata is internally
 consistent.  In particular:
 
 * The ``viewer-gpu`` extra is declared in the root ``pyproject.toml``,
-  per ``docs/design_qvf_format.md`` § 2.2 and
-  ``vibe-view/HANDOVER.md``.
-* It points at the co-located ``vibeview`` distribution at
-  ``vibe-view/pyproject.toml`` (or another resolvable source).
+  per ``docs/design_qvf_format.md`` § 2.2.
+* It pins the ``vibeview`` distribution, which since the 2026-09-08
+  split lives in its own repository (project 35) and is installed
+  separately rather than redirected at a co-located directory (#212).
 
 Where the declared metadata is currently out of step with what the
 docs / handover claim, the test is marked ``xfail(strict=True)`` so
@@ -37,17 +37,6 @@ def _load_pyproject(path: Path) -> dict:
 @pytest.fixture(scope="module")
 def root_pyproject() -> dict:
     return _load_pyproject(REPO_ROOT / "pyproject.toml")
-
-
-@pytest.fixture(scope="module")
-def vibe_view_pyproject() -> dict:
-    p = REPO_ROOT / "vibe-view" / "pyproject.toml"
-    if not p.exists():
-        pytest.skip(
-            "vibe-view/pyproject.toml not present — viewer-gpu extra "
-            "coherence cannot be checked in this checkout."
-        )
-    return _load_pyproject(p)
 
 
 class TestRootExtrasMetadata:
@@ -79,19 +68,21 @@ class TestRootExtrasMetadata:
 
 class TestViewerGpuExtraIsDeclared:
     """The ``viewer-gpu`` extra is documented in
-    ``docs/design_qvf_format.md`` § 2.2 and ``vibe-view/HANDOVER.md``.
+    ``docs/design_qvf_format.md`` § 2.2.
 
     History: briefly removed in ``acd681c7`` (a plain ``"vibeview"``
-    string can't resolve the co-located sibling with no source);
-    restored in ``f0593ab6`` as a PEP 508 direct URL (``vibeview @
-    file:./vibe-view/``). That relative URL then broke ``uv pip
-    install`` entirely — uv won't parse a relative path out of the
-    built-wheel metadata, and it reads every extra's Requires-Dist, so
-    even the base no-extras install failed. The current form is a
-    ``vibeview[viewer]>=0.1`` pin redirected to the co-located checkout via
-    ``[tool.uv.sources]`` — uv resolves it locally; pip uses the
-    two-step ``pip install -e . && pip install -e 'vibe-view[viewer]'``. See
-    CHANGELOG ``[Unreleased]`` "uv installability".
+    string could not resolve the then co-located sibling with no
+    source); restored in ``f0593ab6`` as a PEP 508 direct URL
+    (``vibeview @ file:./vibe-view/``). That relative URL then broke
+    ``uv pip install`` entirely — uv won't parse a relative path out of
+    the built-wheel metadata, and it reads every extra's Requires-Dist,
+    so even the base no-extras install failed. It became a
+    ``vibeview[viewer]>=0.1`` pin redirected through
+    ``[tool.uv.sources]``, and since the 2026-09-08 split (#212) the
+    redirect is gone too: the viewer is its own repository, installed
+    separately with ``pip install -e '../vibe-view[viewer]'``. The pin
+    stays, so the dependency is still declared. See CHANGELOG
+    ``[Unreleased]`` "uv installability".
     """
 
     def test_viewer_gpu_extra_present(self, root_pyproject):
@@ -106,23 +97,25 @@ class TestViewerGpuExtraIsDeclared:
         viewer_gpu = extras["viewer-gpu"]
         joined = " ".join(viewer_gpu).lower()
         assert "vibeview" in joined or "vibe-view" in joined, (
-            f"viewer-gpu extra should pull in `vibeview` "
-            f"(co-located at vibe-view/); got {viewer_gpu!r}"
+            f"viewer-gpu extra should pull in the `vibeview` "
+            f"distribution (project 35); got {viewer_gpu!r}"
         )
 
-    def test_viewer_gpu_extra_uses_colocated_subproject(
+    def test_viewer_gpu_extra_is_an_independent_distribution(
         self, root_pyproject
     ):
-        """The extra must resolve to the co-located sibling, not a
-        (non-existent) PyPI release of ``vibeview``.
+        """The extra pins a separately installed distribution.
 
-        Until both vibe-qc and vibe-view publish to PyPI, the co-located
-        path is wired through ``[tool.uv.sources]`` (uv — vibe-qc's
-        stated installer — resolves ``vibeview`` from ``vibe-view/``).
-        The extra string itself must NOT carry a relative ``file:``
-        direct-URL: uv refuses to parse a relative path out of the
-        built-wheel metadata, and because it reads *every* extra's
-        Requires-Dist that one URL broke even the base ``uv pip
+        GitLab #212: this used to require the pin to be redirected at a
+        co-located ``vibe-view/`` sibling through ``[tool.uv.sources]``. The
+        2026-09-08 split moved the viewer to its own repository and
+        ``pyproject.toml`` dropped the redirect on purpose, so the demand
+        described a layout that no longer exists.
+
+        What still matters, and is kept: the extra string must NOT carry a
+        relative ``file:`` direct-URL. uv refuses to parse a relative path
+        out of the built-wheel metadata, and because it reads *every*
+        extra's Requires-Dist that one URL broke even the base ``uv pip
         install``. See CHANGELOG ``[Unreleased]`` "uv installability".
         """
         extras = root_pyproject["project"]["optional-dependencies"]
@@ -131,63 +124,32 @@ class TestViewerGpuExtraIsDeclared:
 
         # No relative file: direct-URL (the bug this structure fixes).
         assert "file:" not in joined, (
-            "viewer-gpu must not use a relative file: direct-URL — it "
-            "breaks `uv pip install`. Use a pin + [tool.uv.sources]. "
+            "viewer-gpu must not use a relative file: direct-URL -- it "
+            "breaks `uv pip install`. Use a plain version pin. "
             "Got: " + repr(viewer_gpu)
         )
 
-        # The co-located checkout path is wired via [tool.uv.sources].
+        # And no source redirect to a directory this repository no longer
+        # contains, which would make uv resolve against a missing path.
         uv_sources = (
             root_pyproject.get("tool", {}).get("uv", {}).get("sources", {})
         )
-        assert "vibeview" in uv_sources, (
-            "viewer-gpu pin must be redirected to the co-located "
-            "vibe-view/ sibling via [tool.uv.sources] until vibeview "
-            "ships to PyPI. Got sources: " + repr(uv_sources)
-        )
-        assert uv_sources["vibeview"].get("path") == "vibe-view", (
-            "[tool.uv.sources].vibeview must point at the co-located "
-            "vibe-view/ checkout path. Got: "
-            + repr(uv_sources.get("vibeview"))
+        assert "vibeview" not in uv_sources, (
+            "vibe-view lives in its own repository since the 2026-09-08 "
+            "split, so [tool.uv.sources] must not redirect the pin to a "
+            "co-located path. Got sources: " + repr(uv_sources)
         )
 
 
-class TestViewerGpuCoherenceWithSubproject:
-    """Cross-check root extra vs co-located vibe-view package metadata.
-
-    Even before the extra is wired in the root, we can assert that the
-    co-located ``vibe-view/pyproject.toml`` is shaped so the extra can
-    plausibly point at it: same project name, same Python floor, MPL
-    licence to match vibe-qc's redistribution model (§ 1 of
-    CLAUDE.md).
-    """
-
-    def test_subproject_name(self, vibe_view_pyproject):
-        assert vibe_view_pyproject["project"]["name"] == "vibeview"
-
-    def test_subproject_python_floor_matches_root(
-        self, root_pyproject, vibe_view_pyproject
-    ):
-        root_floor = root_pyproject["project"].get("requires-python", "")
-        sub_floor = vibe_view_pyproject["project"].get("requires-python", "")
-        # Both must require ≥ 3.11 (vibe-qc's published floor).
-        assert "3.11" in root_floor
-        assert "3.11" in sub_floor, (
-            f"vibe-view requires-python ({sub_floor!r}) drifted from "
-            f"vibe-qc root ({root_floor!r}); viewer-gpu install will "
-            "fail on the older interpreters vibe-qc still supports."
-        )
-
-    def test_subproject_license_is_mpl(self, vibe_view_pyproject):
-        license_field = vibe_view_pyproject["project"].get("license", "")
-        # `license` can be a string or a {text=...} table in PEP 621.
-        if isinstance(license_field, dict):
-            license_field = license_field.get("text", "")
-        assert "MPL" in str(license_field).upper(), (
-            f"vibe-view license drifted from MPL-2.0 "
-            f"(vibe-qc's bundled-data discipline; CLAUDE.md § 1); "
-            f"got {license_field!r}"
-        )
+# GitLab #212: ``TestViewerGpuCoherenceWithSubproject`` cross-checked the
+# co-located ``vibe-view/pyproject.toml`` (its name, the >= 3.11 floor and the
+# MPL licence). After the 2026-09-08 split that file is not in this checkout,
+# so its fixture skipped unconditionally and the class reported three passes
+# worth of coverage it was no longer providing. The assertions moved with the
+# package: vibe-view#23 put them in project 35's own
+# tests/test_packaging_metadata.py, where the metadata they guard actually
+# lives. Removed here rather than left skipping, so the skip count reflects
+# real gating (the remaining skips are the basisopt install-gated ones).
 
 
 @pytest.fixture(scope="module")

@@ -87,8 +87,11 @@ _VOLATILE = [
         r"|SCF avg\. per iteration)\b.*"), r"\1 <T>"),
 ]
 
-# A signed decimal / scientific number. Zero the digits, keep sign, point,
-# exponent sign, and overall length so width/precision changes still show.
+# A signed decimal / scientific number. Zero the digits, keep the mantissa
+# sign, the point and the overall length so width/precision changes still
+# show. The exponent sign is normalised with the digits (see _zero_digits):
+# once the exponent reads "00" its sign describes the original magnitude,
+# not the format.
 _NUMBER = re.compile(r"(?<![A-Za-z0-9_])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
 # A genuinely-zero-magnitude value (all digits zero). Its SIGN is
@@ -112,7 +115,18 @@ _BOX = frozenset("╔╗╚╝║═")
 
 
 def _zero_digits(match: re.Match) -> str:
-    return re.sub(r"\d", "0", match.group(0))
+    zeroed = re.sub(r"\d", "0", match.group(0))
+    # GitLab #112: normalise the EXPONENT sign too, for the same reason
+    # _SIGNED_ZERO normalises the mantissa sign. Once the digits are zeroed
+    # the exponent reads "00" whatever it was, so its sign no longer carries
+    # any format information -- it only records whether the original
+    # magnitude was >= 1, which is a *number* property this module is
+    # documented to ignore. Leaving it in meant a residual that is exactly
+    # 0.0 on one build ("0.000e+00") and subnormal-tiny on the next
+    # ("4.710e-16" -> "0.000e-00") failed a gate that is supposed to catch
+    # format changes only. Width is untouched, since the sign character
+    # stays, so a precision or field-width change still shows.
+    return re.sub(r"([eE])[-+](?=\d)", r"\1+", zeroed)
 
 
 def canonicalize(text: str) -> str:
@@ -391,6 +405,26 @@ def test_canonicalize_normalizes_signed_zero():
     # the same (field width preserved).
     assert canonicalize("  sum  -0.000000\n") == canonicalize("  sum   0.000000\n")
     assert canonicalize("dE -0.0e+00\n") == canonicalize("dE  0.0e+00\n")
+
+
+def test_canonicalize_normalizes_the_exponent_sign_of_a_zeroed_number():
+    # GitLab #112: the final ||[F,DS]|| of the H2/Gamma fixture is exactly
+    # 0.0 on some builds and subnormal-tiny on others. After digit zeroing
+    # those render "0.000e+00" and "0.000e-00", which differ only in a sign
+    # that no longer describes anything -- the exponent digits are "00"
+    # either way. Both spellings must canonicalize the same, or a 1e-16
+    # numerical difference fails a format-only gate.
+    assert canonicalize("  r 0.000e+00\n") == canonicalize("  r 4.710e-16\n")
+    assert canonicalize("  r 1.000e+05\n") == canonicalize("  r 4.710e-16\n")
+
+
+def test_canonicalize_still_catches_a_precision_change_in_the_exponent_form():
+    # The normalisation above must not blunt the gate: mantissa precision
+    # and field width are still format, and still caught.
+    assert canonicalize("  r 1.234e-05\n") != canonicalize("  r 1.23e-05\n")
+    assert canonicalize("  r 1.234e-05\n") != canonicalize("  r  1.234e-05\n")
+    # An exponent with no sign at all is a different format, not noise.
+    assert canonicalize("  r 1.234e05\n") != canonicalize("  r 1.234e-05\n")
 
 
 def test_canonicalize_keeps_a_real_negative_sign():

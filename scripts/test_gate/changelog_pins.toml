@@ -71,18 +71,18 @@ amended = "Privacy amendment: replace reviewed site identifiers with generic rol
 
 [sections."v0.15.152"]
 sha256 = "669e0a811a651e4e90fdd94c4d6b3ff8f31d85c19e2f7643574a43aad2ef400c"
-amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities. Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.15.151"]
 sha256 = "95417bf9a7484d8c52fa1b4813ecc8b13da1bd05c5926e34405dcae12100d719"
-amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities. Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.15.150"]
 sha256 = "05f87c2ff22391782941ef7cfe6037481034441ed0073a87aa779c891cab8697"
 
 [sections."v0.15.149"]
 sha256 = "8e05a8b05e8fc4fc07f4abc939540907ad51a9a3b0b8e4ce37a82fe95d82a837"
-amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities. Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.15.148"]
 sha256 = "57bf812b044a7b2d4f7fd1934ef0063ecf1cd4611e907c1e2e32fe2e42fee3dd"
@@ -191,7 +191,7 @@ sha256 = "1455911f1b29e4abd651f74abd31d088b7d5e5d78a01d979f684ab15b5aac418"
 
 [sections."v0.15.116"]
 sha256 = "3f1dff9528ee45d1bd61a641e2a730374431cdbb323fdb049d1d6675e2ec852a"
-amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities. Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.15.115"]
 sha256 = "b03e815e69deddda4c56ade95bfe7ae93e24cbe024ded3995a6d957e04be345b"
@@ -201,14 +201,14 @@ sha256 = "ebe3d8fd827f75274d9fc9f5f4c3c0831426908bfbac24544549379528013e31"
 
 [sections."v0.15.113"]
 sha256 = "576259132e6ac6881f9ca73f0f469294f5caaa9c5680e4c5dd5358baba81936f"
-amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities. Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.15.112"]
 sha256 = "5488deb201f24a728f009b265eaa5f657673d15a98e491fd21e3a42fa9b91429"
 
 [sections."v0.15.111"]
 sha256 = "3fb7e5c86de7b4d11af0d42e28a7c241ef287401f79527f03dbfb5018b9a27d6"
-amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities. Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.15.110"]
 sha256 = "d30fa569e623b33cb1e8950bba1b072b577bd65d6b7563e3f9dab61f9ea212ca"
@@ -333,7 +333,7 @@ sha256 = "5c6fe63e78a12fc2977070392f431c25f41869d250ed7146cdaa2f1d90d23b52"
 
 [sections."v0.15.72"]
 sha256 = "524c3ce931266de337039d9ca077917b2d48863529bd96aa41909533ee55da6e"
-amended = "Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.15.71"]
 sha256 = "f3e63b7b4be3d46c16fa916a4de4821f68244910093b96163850c8146cc74b8a"
@@ -468,7 +468,7 @@ sha256 = "6ea0e4bf3b6c2cae8bca854dead3101ce281c2ff22b108585f98978cc55fba54"
 
 [sections."v0.15.31"]
 sha256 = "edc1a8b8427ed94a6fbb7cd00b23f4545c734c18cd725f81f8ded08ffc822b67"
-amended = "Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.15.30"]
 sha256 = "186f2cf6bcd7e5529c4de7ff115acf817c204691fe0f915429a60df10189498f"
@@ -507,7 +507,7 @@ sha256 = "7c3b09690c34ec4b72668c26bd78591130787458c063d2e4408fce1ae8bbbcc0"
 
 [sections."v0.15.19"]
 sha256 = "1cd330166c583ab86521576ede6da381f5e89d2d100cb208387867340c0ca3b4"
-amended = "Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.15.18"]
 sha256 = "98b1d6bd48aacd1334822b3e87c8652db480f74a89e82d1fbfb98a4e63da783b"
@@ -566,14 +566,14 @@ sha256 = "498c888171489a6c5cd58fdbbd4c995771ca7d1e85f3f7dffa90c7a9d886865b"
 
 [sections."v0.15.2"]
 sha256 = "b6b10dd360a9036ac1b83b47871ec0e488c15c038326349d61a1085d473dccb0"
-amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities. Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.15.1"]
 sha256 = "e38cc77d21e42f8ba304fcc05456c57f4958af2f9b1d845876c24589f37acbb8"
 
 [sections."v0.15.0"]
 sha256 = "76fb533dec2033566d952ae62f822384b04f64e2bb7e7c80cbf39a41c091957b"
-amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities. Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.14.1"]
 sha256 = "5b201eed163710217476f23d88539edd0d87676dd8443b1aa2998337459b7c76"
@@ -598,7 +598,7 @@ sha256 = "1bbecf8d9f908fdc58d043fd2624625e817e1cf8e6aed1f4fc78a273396379dc"
 
 [sections."v0.12.0"]
 sha256 = "49c117e461be336dd1a82cf167a1dfb6f6e5165e1d6ddd30d0937f087f195b6f"
-amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities.; Privacy amendment: replace reviewed site identifiers with generic roles; preserve scientific values and release identities. Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
 
 [sections."v0.11.4"]
 sha256 = "f6975e2942731041aa31de8f4fc9b28b9812aaad4f1abb7fd73134fc2618178a"
@@ -638,4 +638,4 @@ sha256 = "2d679736db3b758770d8f604727d8cfbd3a332cd72034c4c395c572212cf807b"
 
 [sections."v0.9.0"]
 sha256 = "d669ade38b36a1760f4c908a72335fc18c841e99b72c1889ebf777e68751c1c7"
-amended = "Public source snapshot privacy amendment: replace private source references with public destinations; original private release tags are unchanged."
+amended = "Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."

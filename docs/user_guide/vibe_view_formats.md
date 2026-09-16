@@ -8,7 +8,7 @@ myst:
 # Input formats and interoperability
 
 Source commands on this page run from the **separate vibe-view checkout**.
-Clone [mpei/vibe-view](https://github.com/vibe-qc/vibe-view) and follow
+Clone [vibe-qc/vibe-view](https://github.com/vibe-qc/vibe-view) and follow
 [viewer setup](../tutorial/vibe_view_getting_started.md). Its `.venv`, `scripts/`, and `electron/` belong to that repository;
 vibe-qc does not contain or install the viewer.
 
@@ -26,7 +26,7 @@ The spelling depends on where you use the name:
 | Product and shell command | **vibe-view** | `vibe-view open water.qvf` |
 | Python distribution | **vibeview** | a wheel named `vibeview-2.15.2-...whl` |
 | Python import package | **vibeview** | `from vibeview import QVFReader` |
-| Independent source repository | [mpei/vibe-view](https://github.com/vibe-qc/vibe-view) | `./scripts/install.sh` |
+| Independent source repository | [vibe-qc/vibe-view](https://github.com/vibe-qc/vibe-view) | `./scripts/install.sh` |
 
 The distribution is not on PyPI yet. A bare `pip install vibeview` or
 `pipx install vibeview` therefore does not install it today. Use the checkout

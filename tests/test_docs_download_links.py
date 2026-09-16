@@ -1,7 +1,7 @@
 """Download links resolve, and split companions own their release artifacts.
 
-Legacy files remain available for version-pinned repair, but core docs must
-not infer a current companion version from a removed sibling checkout.
+Legacy files are archived privately. Core docs must not infer a current
+companion version from a removed sibling checkout.
 """
 
 from __future__ import annotations

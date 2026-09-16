@@ -1,3 +1,15 @@
+include:
+  - project: '$VIBEQC_CI_PROJECT'
+    ref: '$VIBEQC_CI_REF'
+    file: '$VIBEQC_CI_FILE'
+    rules:
+      - if: '$VIBEQC_CI_PROJECT && $VIBEQC_CI_REF && $VIBEQC_CI_FILE'
+  # A partial external configuration must fail validation, not omit deployment.
+  # This sentinel file deliberately does not exist in the product repository.
+  - local: '/.incomplete-external-ci-configuration.yml'
+    rules:
+      - if: '($VIBEQC_CI_PROJECT || $VIBEQC_CI_REF || $VIBEQC_CI_FILE) && ($VIBEQC_CI_PROJECT == null || $VIBEQC_CI_PROJECT == "" || $VIBEQC_CI_REF == null || $VIBEQC_CI_REF == "" || $VIBEQC_CI_FILE == null || $VIBEQC_CI_FILE == "")'
+
 # Portable build and validation rules. Site deployment jobs are maintained separately.
 stages:
   - test
@@ -116,7 +128,7 @@ build-test:
       libgl1 libglx-mesa0 libxrender1 libxext6 libsm6 libglib2.0-0
       util-linux xvfb xauth &&
       git clone --depth 1 --branch "$VIBE_VIEW_TAG"
-      "https://github.com/vibe-qc/vibe-view.git"
+      "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}:${CI_SERVER_PORT}/${CI_PROJECT_NAMESPACE}/vibe-view.git"
       /tmp/vibe-view &&
       .venv/bin/pip install -e '/tmp/vibe-view[test]' &&
       useradd --no-create-home --uid 10002 --user-group vvtest &&
@@ -291,7 +303,7 @@ qvf-conformance:
   before_script:
     - apt-get -qq update && apt-get -qq install -y --no-install-recommends git
     - git clone --depth 1 --branch "$QVF_TAG"
-      "https://github.com/vibe-qc/qvf.git"
+      "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}:${CI_SERVER_PORT}/${CI_PROJECT_NAMESPACE}/qvf.git"
       /tmp/qvf
   script:
     - python scripts/ci/check_qvf_schema.py --qvf-root /tmp/qvf

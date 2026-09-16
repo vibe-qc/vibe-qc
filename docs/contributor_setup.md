@@ -14,11 +14,14 @@ After installing the system prerequisites listed in
 your platform (Homebrew on macOS; `apt` / `dnf` / `pacman` package
 groups on Linux), clone the source and bootstrap the native/Python environment:
 
-Clone the GitHub source snapshot over HTTPS:
+Clone the public source over HTTPS; no account or deploy key is required:
 
 ```sh
 git clone https://github.com/vibe-qc/vibe-qc.git
 ```
+
+Authorized maintainers use their separately configured upstream remote.
+Private access recipes belong in the external operations documentation.
 
 Then enter the new checkout and install:
 
@@ -29,8 +32,11 @@ cd vibe-qc
 ```
 
 The [repository directory](installation.md#repositories-and-downloads) lists
-all four projects. See [CONTRIBUTING.md](https://github.com/vibe-qc/vibe-qc/blob/main/CONTRIBUTING.md)
-for submission and validation requirements. Maintainers integrate changes upstream.
+public GitHub source snapshots for all four projects; they can be cloned
+anonymously. Canonical maintainer development access is configured separately. Public snapshots have
+separate commit history, so keep contributions based on the selected host and
+project. See [CONTRIBUTING.md](https://github.com/vibe-qc/vibe-qc/blob/main/CONTRIBUTING.md)
+for the GitLab merge-request path for GitHub contributions.
 
 `install.sh` drives, in order: preflight (verify build prerequisites
 on `$PATH`) → vendored native deps (libint, libxc, spglib, FFTW3,
@@ -43,8 +49,8 @@ deps, ~30 s for the editable install.
 The command above is the tested macOS development bootstrap. On another
 platform, select your installed Python with `--python`.
 
-The flag-free installer selects the newest stable tag advertised by origin;
-`--dev` follows the public `main` snapshot stream. For a pinned
+The `release` branch advances only from a tagged core release;
+`--dev` follows `main`, which is where contributions land. For a pinned
 install, choose a tag actually present in this repository; pre-split branches
 and historical tags were not transferred. Viewer and queue contributors clone their respective
 repositories separately. `vibe-basis/` remains here.
@@ -103,6 +109,33 @@ failing after a `git pull`:
 ```sh
 .venv/bin/python -m pytest tests/test_binding_sanity.py
 ```
+
+## Libint capabilities required during configuration
+
+Libint builds with the same version can contain different generated kernels.
+The selected `Libint2::cxx` target must expose ordinary one-body integrals
+(`LIBINT2_SUPPORT_ONEBODY=1`) and their geometric derivatives through at
+least order 1 (`LIBINT2_DERIV_ONEBODY_ORDER>=1`). CMake compiles and links a
+small witness against that target's headers and library before building
+the core. Missing capability macros or first-derivative overlap, kinetic
+or electrostatic symbols cause a configuration error with compiler/linker
+details and the selected `Libint2_DIR`. The witness is not executed.
+
+If configuration rejects a system installation, run
+`scripts/build_libint.sh` and set `Libint2_DIR` to the CMake package directory
+in its `third_party/libint/install/` tree when reconfiguring. A cached
+`Libint2_DIR` can keep selecting an older system dependency despite a newly
+created local install. The capability check runs on every configure, including
+after replacement at the same path. Setting `VIBEQC_REQUIRE_VENDORED=OFF`
+permits system discovery but does not bypass the capability requirement.
+The probe log is `cpp/CMakeFiles/vibeqc-libint-onebody.log` beneath the build
+directory.
+
+The standard build recipe retains its existing order-2 and property-derivative
+settings. This minimum check for ordinary first derivatives does not certify
+Hessians, property derivatives, every angular momentum or numerical accuracy.
+Continue to verify the built core and the library actually loaded at runtime
+after a rebuild; configuration cannot protect against a later library swap.
 
 ## Native sources from a local mirror, and clones that cannot hang
 

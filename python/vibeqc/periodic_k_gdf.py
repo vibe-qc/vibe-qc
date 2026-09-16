@@ -303,7 +303,7 @@ def _gdf_oneel_memory_estimate(system, basis, lattice_opts, *, n_kpoints=1,
 
 
 def _preflight_gdf_oneel_memory(system, basis, lattice_opts, *, n_kpoints=1,
-                               ecp_active=False, grid=None):
+                               ecp_active=False, grid=None, plog=None):
     from .memory import available_memory_bytes
 
     if int(system.dim) != 3:
@@ -313,6 +313,16 @@ def _preflight_gdf_oneel_memory(system, basis, lattice_opts, *, n_kpoints=1,
         n_grid_points=0 if grid is None else int(grid.n_points),
     )
     available = available_memory_bytes()
+    if plog is not None:
+        budget = str(available) if available > 0 else "unknown"
+        plog.info(
+            f"GDF one-electron setup reservation: {estimate.total_bytes} bytes "
+            f"(including headroom); available budget={budget} bytes; "
+            f"AO cutoff={lattice_opts.cutoff_bohr:.6g} bohr, "
+            f"nuclear cutoff={lattice_opts.nuclear_cutoff_bohr:.6g} bohr"
+        )
+        for category, byte_count in estimate.by_category.items():
+            plog.info(f"  {category}: {byte_count} bytes before headroom")
     if available > 0 and estimate.total_bytes > available:
         raise MemoryError(
             f'GDF one-electron setup requires an estimated {estimate.total_bytes} bytes; '
@@ -4100,6 +4110,20 @@ def run_krhf_periodic_gdf(
     else:
         mesh = _mesh_tuple_for_system(system, kmesh)
         kmesh_bloch = _mp_native(system, list(mesh), [0, 0, 0], False)
+    # Admit the bulk AO domain before any lattice/XC cell enumeration or
+    # quadrature allocation (#99). The later integral-only guard was too
+    # late even for the direct cell lists printed in the setup log.
+    # Preserve the historical low-dimensional cutoff-resolution order.
+    oneel_lat_opts = None
+    if int(system.dim) == 3:
+        oneel_lat_opts = _oneel_lattice_opts(
+            system, basis, lat_opts,
+            rcut_strategy=rcut_strategy, k_points_cart=kpoints_cart, plog=plog,
+        )
+        _preflight_gdf_oneel_memory(
+            system, basis, oneel_lat_opts, n_kpoints=n_k,
+            ecp_active=_ecp_ctx is not None, plog=plog,
+        )
     cells = _direct_cells(system, lat_opts.cutoff_bohr)
     xc_cells = _xc_density_cells_for_domain(
         system,
@@ -4190,13 +4214,16 @@ def run_krhf_periodic_gdf(
     # ---- Real-space one-electron integrals ------------------------
     # Resolve one AO image domain for S/T, nuclear attraction and ECPs.
     # The independent projector/nuclear-image cutoff stays explicit.
-    oneel_lat_opts = _oneel_lattice_opts(
-        system, basis, lat_opts,
-        rcut_strategy=rcut_strategy, k_points_cart=kpoints_cart, plog=plog,
-    )
+    if oneel_lat_opts is None:
+        oneel_lat_opts = _oneel_lattice_opts(
+            system, basis, lat_opts,
+            rcut_strategy=rcut_strategy, k_points_cart=kpoints_cart, plog=plog,
+        )
+    # Recheck after setup allocations, now including retained quadrature
+    # and the current available budget. This does not change the AO domain.
     _preflight_gdf_oneel_memory(
         system, basis, oneel_lat_opts, n_kpoints=len(kpoints_cart),
-        ecp_active=_ecp_ctx is not None, grid=grid,
+        ecp_active=_ecp_ctx is not None, grid=grid, plog=plog,
     )
     with plog.stage(
         "integrals_lattice",
@@ -6375,6 +6402,20 @@ def run_kuhf_periodic_gdf(
     else:
         mesh = _mesh_tuple_for_system(system, kmesh)
         kmesh_bloch = _mp_native(system, list(mesh), [0, 0, 0], False)
+    # Admit the bulk AO domain before any lattice/XC cell enumeration or
+    # quadrature allocation (#99). The later integral-only guard was too
+    # late even for the direct cell lists printed in the setup log.
+    # Preserve the historical low-dimensional cutoff-resolution order.
+    oneel_lat_opts = None
+    if int(system.dim) == 3:
+        oneel_lat_opts = _oneel_lattice_opts(
+            system, basis, lat_opts,
+            rcut_strategy=rcut_strategy, k_points_cart=kpoints_cart, plog=plog,
+        )
+        _preflight_gdf_oneel_memory(
+            system, basis, oneel_lat_opts, n_kpoints=n_k,
+            ecp_active=_ecp_ctx is not None, plog=plog,
+        )
     cells = _direct_cells(system, lat_opts.cutoff_bohr)
     xc_cells = _xc_density_cells_for_domain(
         system,
@@ -6417,13 +6458,16 @@ def run_kuhf_periodic_gdf(
 
     # ---- One-electron integrals (Ewald-3D gauge for V_ne/e_nuc) -------
     # Resolve the same AO image domain as the restricted/Gamma paths.
-    oneel_lat_opts = _oneel_lattice_opts(
-        system, basis, lat_opts,
-        rcut_strategy=rcut_strategy, k_points_cart=kpoints_cart, plog=plog,
-    )
+    if oneel_lat_opts is None:
+        oneel_lat_opts = _oneel_lattice_opts(
+            system, basis, lat_opts,
+            rcut_strategy=rcut_strategy, k_points_cart=kpoints_cart, plog=plog,
+        )
+    # Recheck after setup allocations, now including retained quadrature
+    # and the current available budget. This does not change the AO domain.
     _preflight_gdf_oneel_memory(
         system, basis, oneel_lat_opts, n_kpoints=len(kpoints_cart),
-        ecp_active=_ecp_ctx is not None, grid=grid,
+        ecp_active=_ecp_ctx is not None, grid=grid, plog=plog,
     )
     with plog.stage(
         "integrals_lattice",

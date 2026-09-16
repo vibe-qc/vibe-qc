@@ -13,8 +13,9 @@ libraries, and integration guidance.
 ```{note}
 The source of truth is the independent, Apache-2.0
 [QVF repository](https://github.com/vibe-qc/qvf): specification, JSON
-schema, registry, conformance corpus, and reference implementations. It is
-currently private; request repository access before cloning.
+schema, registry, conformance corpus, and reference implementations. GitLab
+requires authorized access. The [public GitHub snapshot](https://github.com/vibe-qc/qvf)
+can be cloned anonymously with `git clone https://github.com/vibe-qc/qvf.git`.
 
 vibe-qc implements QVF independently and is validated against the published
 specification and corpus. It does not import or link the reference toolkit.
@@ -22,23 +23,18 @@ The viewer and reference toolkit are independent implementations too; their
 agreement through the corpus is the interoperability check.
 ```
 
-The six included reference pages are vendored from `mpei/qvf` with a tag and
-commit in each provenance header. Do not edit `docs/qvf/_vendored/`. Change
-QVF upstream, then deliberately re-vendor and review the `QVF_TAG` pin in
-`.gitlab-ci.yml`. The snapshot builds without a QVF checkout alongside core.
-
-The current pin is `v0.1.0-docs.1` (commit
-`3b4d5548fcd10d75ead8c7ca07cd86ade4cb7586`). This documentation snapshot fixes
-the standalone CMake adoption recipe. The toolkit remains 0.1.0, and the
-format schema, registry, corpus, and implementations are unchanged from
-`v0.1.0`.
+The six included reference pages are vendored from the immutable QVF source
+commit `80432442f318bb679e1afcef55bea166994ea28c`. Each header records the
+original source path and commit. Do not edit `docs/qvf/_vendored/`; change QVF
+upstream, then deliberately re-vendor. This documentation update changes no
+format, reference implementation or interoperability pin: `QVF_TAG` remains
+`v0.1.0-docs.1` in `.gitlab-ci.yml`. The snapshot builds without a sibling
+QVF checkout.
 
 For reference-toolkit distributions, use the
 [QVF release page](https://github.com/vibe-qc/qvf/releases).
-The legacy `docs/_static/downloads/qvf-writer-0.1.0.tar.gz` belongs to the former
-monorepo build. It is retained for historical reproducibility and is not a
-verified current companion artifact. Publishing and validating its replacement
-belongs to the QVF release owner.
+The legacy pre-split writer archive is preserved in the maintainer's external
+private archive and is no longer distributed from this source tree.
 
 ## What's here
 

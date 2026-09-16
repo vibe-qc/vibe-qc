@@ -17,6 +17,30 @@ namespace vibeqc {
 
 namespace {
 
+// A Ritz vector x = V·u is built from an orthonormal basis V and a unitary
+// u, so ‖x‖ = 1 whenever the subspace is healthy.  A column far below that
+// is a degenerate direction, not an eigenvector, and its vanishing residual
+// says nothing about convergence (GitLab #123).  Half is a wide margin: the
+// observed failures returned norms of 1e-14, never anything in between.
+constexpr double kRitzNormFloor = 0.5;
+
+// Smallest subspace budget the restart can actually work in.
+//
+// A collapse rebuilds the basis from at most ``n_eig + 5`` Ritz vectors and
+// the next sweep then needs room for one full block of ``n_eig``
+// corrections.  When the budget cannot hold both, the expansion branch is
+// never reached: every iteration rebuilds the same subspace from its own
+// Ritz vectors, throws the corrections it just built away, and the run
+// spins to max_iter without moving.  Raising an impossible budget to the
+// smallest workable one costs a handful of columns and is what lets a
+// caller-supplied max_subspace converge at all (GitLab #123).  The
+// automatic budget is already well clear of this floor, so only an
+// explicit, too-small max_subspace is affected.
+inline int workable_max_subspace(int requested, int n_eig, int n) {
+    const int restart_dim = n_eig + std::min(5, n - n_eig);
+    return std::min(n, std::max(requested, restart_dim + n_eig + 1));
+}
+
 // ---- Real-symmetric block-Davidson kernel (explicit A) ------------------
 
 // Block-Davidson driver shared by the explicit and matrix-free entry points.
@@ -59,9 +83,11 @@ static DavidsonResult davidson_kernel_impl(int n,
     const int n_guess = (opts.n_guess > 0)
         ? std::min(opts.n_guess, n)
         : std::min(std::max(n_eig + 5, std::min(2 * n_eig, n)), n);
-    const int max_sub = (opts.max_subspace > 0)
-        ? opts.max_subspace
-        : std::min(std::max(8 * n_eig, n_guess + 20), n);
+    const int max_sub = workable_max_subspace(
+        (opts.max_subspace > 0)
+            ? opts.max_subspace
+            : std::min(std::max(8 * n_eig, n_guess + 20), n),
+        n_eig, n);
     const double tol = opts.conv_tol;
     const double preshift = opts.preshift;
 
@@ -89,6 +115,16 @@ static DavidsonResult davidson_kernel_impl(int n,
                 "davidson_kernel: guess_vectors has "
                 + std::to_string(opts.guess_vectors.rows()) + " rows, "
                 "expected " + std::to_string(n));
+        }
+        // GitLab #123: the subspace starts at exactly these columns, and
+        // every Ritz quantity below is indexed up to n_eig.  Fewer guess
+        // vectors than requested roots read past the end of X and AX
+        // instead of failing, so refuse them here.
+        if (ng < n_eig) {
+            throw std::invalid_argument(
+                "davidson_kernel: guess_vectors has " + std::to_string(ng)
+                + " columns, which is fewer than n_eig ("
+                + std::to_string(n_eig) + ")");
         }
         V = opts.guess_vectors;
         // Orthonormalise via Gram-Schmidt (they should already be
@@ -163,12 +199,22 @@ static DavidsonResult davidson_kernel_impl(int n,
         // Check convergence of all n_eig wanted pairs.
         int n_conv_this_iter = 0;
         Eigen::VectorXd norms(n_eig);
+        std::vector<bool> is_conv(n_eig, false);
         for (int i = 0; i < n_eig; ++i) {
             // Residual r_i = AX.col(i) − λ_i · X.col(i)
             const Eigen::VectorXd ri =
                 AX.col(i) - lambda(i) * X.col(i);
             norms(i) = ri.norm();
-            if (norms(i) < tol) {
+            // GitLab #123: the residual alone cannot decide this.  V is
+            // orthonormal and U unitary, so a healthy Ritz vector has
+            // ‖x_i‖ = 1; a vector that has collapsed to zero has residual
+            // ‖A·x − λ·x‖ = 0 and would be counted as converged, which is
+            // precisely how a degenerate subspace was reported as a
+            // converged answer of zeros.  Require the pair to be a real
+            // one before believing its residual.
+            is_conv[i] = (norms(i) < tol)
+                         && (X.col(i).norm() > kRitzNormFloor);
+            if (is_conv[i]) {
                 ++n_conv_this_iter;
             }
         }
@@ -191,6 +237,7 @@ static DavidsonResult davidson_kernel_impl(int n,
             result.eigenvectors = X.leftCols(n_eig);
             result.n_iter       = n_iter;
             result.subspace_dim = m_sub;
+            result.n_converged  = n_conv_this_iter;
             result.converged    = true;
             return result;
         }
@@ -202,7 +249,7 @@ static DavidsonResult davidson_kernel_impl(int n,
         int n_corr = 0;
 
         for (int i = 0; i < n_eig && n_corr < n_add; ++i) {
-            if (norms(i) < tol) continue;  // already converged
+            if (is_conv[i]) continue;  // already converged
 
             const Eigen::VectorXd ri =
                 AX.col(i) - lambda(i) * X.col(i);
@@ -301,7 +348,24 @@ static DavidsonResult davidson_kernel_impl(int n,
             // Collapse: rebuild the subspace from the best current
             // approximations.  Keep the n_eig best Ritz vectors
             // plus a few extras for flexibility.
-            const int keep = std::min(n_eig + std::min(5, n - n_eig), n);
+            //
+            // GitLab #123: the count must also be bounded by the subspace
+            // actually held.  V, AV and X all have exactly m_sub columns at
+            // this point, so keeping n_eig + 5 of them when the subspace is
+            // narrower reads and writes past the end of all three.  A budget
+            // that forces a collapse while m_sub < n_eig + 5 is reachable
+            // from the public API three ways: a small max_subspace, an
+            // explicit n_guess below n_eig + 5, and a warm-start guess of
+            // exactly n_eig columns (what the SCF drivers recycle).  With
+            // assertions off this was silent: the collapsed basis picked up
+            // whatever followed the buffer, H_proj acquired spurious
+            // near-zero eigenvalues that sort below the true roots, and a
+            // null Ritz vector has residual zero and so passed the
+            // convergence test -- the wrong-roots-reported-as-converged
+            // symptom -- or the write corrupted the heap and killed the
+            // process.
+            const int keep =
+                std::min({n_eig + std::min(5, n - n_eig), n, m_sub});
             m_sub = keep;
             // Block copy of best Ritz vectors.
             V.leftCols(m_sub) = X.leftCols(m_sub);
@@ -348,6 +412,7 @@ static DavidsonResult davidson_kernel_impl(int n,
             result.eigenvectors = X.leftCols(n_eig);
             result.n_iter       = n_iter;
             result.subspace_dim = m_sub;
+            result.n_converged  = n_conv_this_iter;
             result.converged    = false;
             return result;
         }
@@ -361,11 +426,19 @@ static DavidsonResult davidson_kernel_impl(int n,
         lambda = solver.eigenvalues();
         U      = solver.eigenvectors();
         Eigen::MatrixXd X = V.leftCols(m_sub) * U;
+        const Eigen::MatrixXd AX = AV.leftCols(m_sub) * U;
+        // Report how much of the spectrum this budget did reach (#123).
+        int n_conv_final = 0;
+        for (int i = 0; i < n_eig; ++i) {
+            const double res = (AX.col(i) - lambda(i) * X.col(i)).norm();
+            if (res < tol && X.col(i).norm() > kRitzNormFloor) ++n_conv_final;
+        }
         DavidsonResult result;
         result.eigenvalues  = lambda.head(n_eig);
         result.eigenvectors = X.leftCols(n_eig);
         result.n_iter       = n_iter;
         result.subspace_dim = m_sub;
+        result.n_converged  = n_conv_final;
         result.converged    = false;
         return result;
     }
@@ -406,11 +479,22 @@ DavidsonResultComplex davidson_kernel_hermitian(
     const int n_guess = (opts.n_guess > 0)
         ? std::min(opts.n_guess, n)
         : std::min(std::max(n_eig + 5, std::min(2 * n_eig, n)), n);
-    const int max_sub = (opts.max_subspace > 0)
-        ? opts.max_subspace
-        : std::min(std::max(8 * n_eig, n_guess + 20), n);
+    const int max_sub = workable_max_subspace(
+        (opts.max_subspace > 0)
+            ? opts.max_subspace
+            : std::min(std::max(8 * n_eig, n_guess + 20), n),
+        n_eig, n);
     const double tol = opts.conv_tol;
     const double preshift = opts.preshift;
+
+    // GitLab #123: the real kernel has always refused this; the Hermitian
+    // one accepted it and then indexed n_eig Ritz pairs out of an n_guess
+    // wide subspace.
+    if (n_guess < n_eig) {
+        throw std::invalid_argument(
+            "davidson_kernel_hermitian: n_guess (" + std::to_string(n_guess)
+            + ") < n_eig (" + std::to_string(n_eig) + ")");
+    }
 
     // Diagonal of A (real, since A is Hermitian).
     const Eigen::VectorXd diag = A.diagonal().real();
@@ -422,6 +506,15 @@ DavidsonResultComplex davidson_kernel_hermitian(
         if (opts.guess_vectors_cplx.rows() != n) {
             throw std::invalid_argument(
                 "davidson_kernel_hermitian: guess_vectors_cplx row mismatch");
+        }
+        // GitLab #123: as in the real kernel, fewer guess vectors than
+        // requested roots would index past the end of the Ritz blocks.
+        if (opts.guess_vectors_cplx.cols() < n_eig) {
+            throw std::invalid_argument(
+                "davidson_kernel_hermitian: guess_vectors_cplx has "
+                + std::to_string(opts.guess_vectors_cplx.cols())
+                + " columns, which is fewer than n_eig ("
+                + std::to_string(n_eig) + ")");
         }
         V = opts.guess_vectors_cplx;
         const int m0 = static_cast<int>(V.cols());
@@ -476,11 +569,16 @@ DavidsonResultComplex davidson_kernel_hermitian(
 
         int n_conv = 0;
         Eigen::VectorXd norms(n_eig);
+        std::vector<bool> is_conv(n_eig, false);
         for (int i = 0; i < n_eig; ++i) {
             const Eigen::VectorXcd ri =
                 AX.col(i) - lambda(i) * X.col(i);
             norms(i) = ri.norm();
-            if (norms(i) < tol) ++n_conv;
+            // GitLab #123: a null Ritz vector has a null residual; see the
+            // real kernel for why that cannot count as convergence.
+            is_conv[i] = (norms(i) < tol)
+                         && (X.col(i).norm() > kRitzNormFloor);
+            if (is_conv[i]) ++n_conv;
         }
 
         if (n_conv == n_eig) {
@@ -489,6 +587,7 @@ DavidsonResultComplex davidson_kernel_hermitian(
             result.eigenvectors = X.leftCols(n_eig);
             result.n_iter       = n_iter;
             result.subspace_dim = m_sub;
+            result.n_converged  = n_conv;
             result.converged    = true;
             return result;
         }
@@ -498,7 +597,7 @@ DavidsonResultComplex davidson_kernel_hermitian(
         int n_corr = 0;
 
         for (int i = 0; i < n_eig && n_corr < n_add; ++i) {
-            if (norms(i) < tol) continue;
+            if (is_conv[i]) continue;
             const Eigen::VectorXcd ri =
                 AX.col(i) - lambda(i) * X.col(i);
 
@@ -537,12 +636,12 @@ DavidsonResultComplex davidson_kernel_hermitian(
         }
 
         if (m_sub + n_corr >= max_sub) {
-            const int keep = std::min(n_eig + 5, n);
+            // GitLab #123: bounded by the held subspace for the same reason
+            // as the real kernel above -- V, AV and X have m_sub columns.
+            const int keep = std::min({n_eig + std::min(5, n - n_eig), n, m_sub});
             m_sub = keep;
             V.leftCols(m_sub) = X.leftCols(m_sub);
-            // Block AV computation.
-            AV.leftCols(m_sub) = A * V.leftCols(m_sub);
-            // Quick re-orthogonalisation (Gram-Schmidt).
+            // Quick re-orthogonalisation (Gram-Schmidt), then form AV once.
             for (int j = 0; j < m_sub; ++j) {
                 for (int k = 0; k < j; ++k) {
                     const std::complex<double> proj =
@@ -551,6 +650,20 @@ DavidsonResultComplex davidson_kernel_hermitian(
                 }
                 const double vn = V.col(j).norm();
                 if (vn > 1e-14) V.col(j) /= vn;
+                else {
+                    // Column collapsed to zero -- re-seed with a random
+                    // direction to keep the subspace non-degenerate.  The
+                    // real kernel has always done this; leaving the complex
+                    // one to carry a zero column is why the Hermitian path
+                    // degenerated more readily (#123).
+                    V.col(j) = Eigen::VectorXcd::Random(n);
+                    for (int k = 0; k < j; ++k) {
+                        const std::complex<double> p = V.col(k).dot(V.col(j));
+                        V.col(j) -= p * V.col(k);
+                    }
+                    const double vn2 = V.col(j).norm();
+                    if (vn2 > 1e-14) V.col(j) /= vn2;
+                }
             }
             AV.leftCols(m_sub) = A * V.leftCols(m_sub);
         } else if (n_corr > 0) {
@@ -569,6 +682,7 @@ DavidsonResultComplex davidson_kernel_hermitian(
             result.eigenvectors = X.leftCols(n_eig);
             result.n_iter       = n_iter;
             result.subspace_dim = m_sub;
+            result.n_converged  = n_conv;
             result.converged    = false;
             return result;
         }
@@ -582,11 +696,19 @@ DavidsonResultComplex davidson_kernel_hermitian(
         lambda = solver.eigenvalues();
         U      = solver.eigenvectors();
         Eigen::MatrixXcd X = V.leftCols(m_sub) * U;
+        const Eigen::MatrixXcd AX = AV.leftCols(m_sub) * U;
+        // Report how much of the spectrum this budget did reach (#123).
+        int n_conv_final = 0;
+        for (int i = 0; i < n_eig; ++i) {
+            const double res = (AX.col(i) - lambda(i) * X.col(i)).norm();
+            if (res < tol && X.col(i).norm() > kRitzNormFloor) ++n_conv_final;
+        }
         DavidsonResultComplex result;
         result.eigenvalues  = lambda.head(n_eig);
         result.eigenvectors = X.leftCols(n_eig);
         result.n_iter       = n_iter;
         result.subspace_dim = m_sub;
+        result.n_converged  = n_conv_final;
         result.converged    = false;
         return result;
     }

@@ -10,6 +10,8 @@ find_package(Eigen3 CONFIG REQUIRED NO_MODULE)
 
 # Libint installs CMake config as "libint2-config.cmake".
 find_package(Libint2 2.7 CONFIG REQUIRED)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/RequireLibintOneBodyDerivatives.cmake")
+vibeqc_require_libint_onebody_derivatives()
 
 find_package(OpenMP REQUIRED)
 

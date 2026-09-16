@@ -1,5 +1,5 @@
-<!-- VENDORED from the qvf repository, docs/library_guide.md at v0.1.0-docs.1 (3b4d5548fcd10d75ead8c7ca07cd86ade4cb7586).
-     DO NOT EDIT HERE. Regenerate from the tagged upstream source.
+<!-- VENDORED from the qvf repository, docs/library_guide.md at source-80432442 (80432442f318bb679e1afcef55bea166994ea28c).
+     DO NOT EDIT HERE. Regenerate from the exact upstream source commit.
      This copy lets vibe-qc build its docs without a QVF checkout. -->
 
 # QVF writer library guide
@@ -99,13 +99,15 @@ target_link_libraries(your_target PRIVATE qvf::qvf)
 
 or pull the independently versioned QVF repository without an install step.
 Its CMake project is at `cpp/` directly under the repository root. The
-GitHub repository provides the source snapshot. Pin a published revision
-explicitly; a private staging copy requires GitHub access:
+source repository URL is a build setting. Set `QVF_SOURCE_REPOSITORY` to
+the repository you can access and configure Git credentials if needed. The
+public publication URL is `https://github.com/vibe-qc/qvf.git`; it becomes
+usable after the source snapshot is approved. Pin a reviewed revision explicitly:
 
 ```cmake
 include(FetchContent)
 FetchContent_Declare(qvf
-  GIT_REPOSITORY https://github.com/vibe-qc/qvf.git
+  GIT_REPOSITORY "${QVF_SOURCE_REPOSITORY}"
   GIT_TAG v0.1.0
   SOURCE_SUBDIR cpp)
 FetchContent_MakeAvailable(qvf)

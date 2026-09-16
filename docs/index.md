@@ -205,11 +205,14 @@ ECP property-output defect [#741](https://github.com/vibe-qc/vibe-qc/issues).
 
 ## Install
 
-Clone the GitHub source snapshot over HTTPS:
+Clone the public source over HTTPS; no account or deploy key is required:
 
 ```sh
 git clone https://github.com/vibe-qc/vibe-qc.git
 ```
+
+Authorized maintainers use their separately configured upstream remote.
+Private access recipes belong in the external operations documentation.
 
 Then enter the new checkout and install:
 
@@ -223,10 +226,10 @@ or tag), and other knobs, see [installation.md](installation.md)
 for the full surface and the manual `setup_native_deps.sh` recipe.
 `git clone` selects the project's default branch, `main`. The command above
 keeps the development line with `--dev`; the flag-free installer selects
-the newest stable tag advertised by origin. Use `--branch vX.Y.Z` to select
+`release`, which follows approved tags. Use `--branch vX.Y.Z` to select
 a tag that exists in this repository for reproducibility.
 
-The GitHub repositories are listed in
+Public source repositories are listed in
 [repositories and downloads](installation.md#repositories-and-downloads),
 including each project's tagged source downloads.
 
@@ -581,6 +584,7 @@ user_guide/queue
 
 changelog
 release_process
+github_publication
 site_publishing
 contributing
 contributor_setup

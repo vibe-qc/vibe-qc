@@ -2951,7 +2951,7 @@ properties and MPI milestones each moved up one with it. (v0.17.0 then
 consumed a number the same way, so that ladder shifted once more; native BvK
 now leads the open milestones. See the v0.17.0 section below.)
 
-**The split.** `mpei/vibeqc` became four fresh-history repositories, each
+**The split.** the archived monorepo became four fresh-history repositories, each
 adoptable on its own:
 
 - ✅ **vibe-qc** -- `python/ cpp/ tests/ docs/ examples/ scripts/`, with

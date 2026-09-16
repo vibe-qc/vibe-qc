@@ -1,9 +1,5 @@
 # AGENTS.md
 
-This is a sanitized GitHub snapshot. The maintainer workflow below describes
-the canonical upstream project. Submit public contributions through
-[CONTRIBUTING.md](CONTRIBUTING.md); do not push GitHub changes over upstream refs.
-
 Orientation for AI coding agents working on vibe-qc: Claude Code, Codex, Cursor,
 aider and others. [`CLAUDE.md`](CLAUDE.md) and [`CODEX.md`](CODEX.md) point here,
 so this is the one place the rules live. Humans get the same ground at more
@@ -11,6 +7,32 @@ length in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Keep this file short and current. If a rule here stops matching the
 repository, fix the rule.
+
+## Keep this repository public-safe
+
+This product repository must remain ready for public mirroring at every commit.
+
+- Never put private email addresses, real machine names or host aliases,
+  internal hostnames or URLs, private IP addresses, account names, personal
+  filesystem paths, credentials, tokens or site-specific deployment details
+  in tracked files, filenames, generated artifacts or commit messages.
+  This includes code, comments, tests, documentation and agent instructions.
+- `project@vibe-qc.com` and `mpei@vibe-qc.com` are explicitly allowed public
+  email addresses. Use generic placeholders and reserved example addresses
+  for tests and documentation; do not copy real private values into fixtures.
+- Keep private configuration separate from product code. Store it outside
+  the product checkout on the local machine, or in the private agentic loop
+  repository. Select it through environment variables, command-line options
+  or an explicit external configuration path. Commit only portable defaults,
+  schemas and examples without private values.
+- Ignored files and custom folders under `.git` are not private configuration
+  stores. Keep private operational logs, inventories and release evidence
+  outside the product checkout too. Never commit secrets to the private loop
+  repository; use the existing credential or secret store.
+- Prevent contamination while making the change. Inspect the diff and use the
+  existing automated privacy checks before committing. Fix a finding in the
+  source; do not rely on a later sanitizer or create sanitation chats for
+  routine releases. Never bypass a privacy failure to publish a release.
 
 ## What vibe-qc is
 
@@ -20,10 +42,13 @@ conditions throughout. The numerical core is C++ (`cpp/`, bound with pybind11);
 the user-facing layer is Python (`python/vibeqc/`), driven mainly through
 `run_job` and `run_periodic_job`.
 
-On 2026-09-08 the monorepo `mpei/vibeqc` was split into four repositories.
-This one is **`mpei/vibe-qc`, GitLab project 34**, and its issues are the
-tracker. Use `glab api "projects/34/..."` with the numeric id. The licence is
-MPL-2.0. `vibe-basis/` stays here as an independently versioned subpackage.
+On 2026-09-08 the former monorepo was split into four repositories.
+This one is **`vibe-qc/vibe-qc`**. Its licence is MPL-2.0; `vibe-basis/`
+stays here as an independently versioned subpackage. GitLab is the canonical
+development source. Public source and issues are available on GitHub; see
+[`docs/github_publication.md`](docs/github_publication.md) for the publication
+gate and the current contribution-routing status. Maintainer access recipes
+and tracker identifiers live in private operations documentation.
 
 ## Where things live
 
@@ -41,7 +66,7 @@ examples/             runnable inputs (no generated outputs committed)
 vibe-basis/           basis-set optimization subpackage with its own versioning
 studies/              research studies and benchmark sets
 website/              Astro marketing site, deployed from `main`
-handovers/            per-workstream handovers
+handovers/            public workstream notes; private operations stay external
 ```
 
 | Looking for | Start at |
@@ -91,7 +116,10 @@ judgment; see [Defaults](#defaults).
    the candidate. Don't create tags, push `release` or `release-candidate/*`,
    or pick codenames unless the maintainer asked you to for that cut.
 3. **Keep private data out of the tree:** credentials, tokens, home-directory
-   paths, private addresses, employer names. Enable the hooks once per clone
+   paths, private addresses, employer names. Keep private profiles and operator
+   records outside every product checkout, worktree and Git database, under
+   `VIBE_PRIVATE_ROOT` or the platform state directory. Ignoring a file does
+   not make the checkout a suitable private store. Enable the hooks once per clone
    with `git config --local core.hooksPath .githooks`. If a hook blocks you,
    fix the content; bypass it only for a reviewed exception and say why in the
    commit message. Security issues go by email per [`SECURITY.md`](SECURITY.md).
@@ -173,15 +201,17 @@ git identity, so authorship cannot tell you who changed what.
 - **Keep both sides of a conflict** in files many sessions append to, such as
   `CHANGELOG.md` and handovers. After a rebase, check that your changelog entry
   is still under `[Unreleased]`.
-- **Handovers are for workstreams that span sessions.** Keep one file under
-  `handovers/`. A defect belongs on the tracker, not in a handover.
+- **Handovers are for workstreams that span sessions.** Public implementation
+  notes may live under `handovers/`. Private coordination, configuration and
+  evidence belong in the external private state directory. A defect belongs
+  on the tracker, not in a handover.
 - **Decisions that belong to the maintainer** go on the tracker as a "Needs a
   decision" issue or a note, not a guess.
 
 ## Other repositories
 
-- **vibe-view** (project 35) is the viewer, **vibe-queue** (project 36) the job
-  queue and fleet tooling, **qvf** (project 37) the file format. Each has its
+- **vibe-view** is the viewer, **vibe-queue** the job queue and fleet tooling,
+  **qvf** the file format. Each has its
   own tracker, releases and rules.
 - **Report problems where they belong,** and don't edit another repository
   from here; file an issue in its tracker.
@@ -193,8 +223,8 @@ git identity, so authorship cannot tell you who changed what.
 ## What changed from the monorepo rules
 
 Older comments, handovers and audits cite "CLAUDE.md § N" or "AGENTS.md rule
-N". Those refer to the monorepo's files, archived with
-[`mpei/vibeqc`](https://vibe-qc.com/docs/).
+N". Those refer to historical monorepo instructions retained in the private
+archive, rather than to numbered sections of this file.
 They were written for dozens of parallel sessions and most were stricter than
 this repository needs:
 

@@ -5,7 +5,7 @@ and space actions from qualification of a numerical operator. It is internal
 infrastructure under issue #717. It does not enable a solver, pair skipping,
 IBZ construction, or analytic derivatives.
 
-Issue numbers on this page refer to the archived `mpei/vibeqc` monorepo.
+Issue numbers on this page refer to the archived monorepo.
 The implementation now lives entirely in the separate `vibe-qc` repository;
 it requires no sibling viewer, queue or QVF checkout.
 

@@ -44,7 +44,7 @@
     diis_start_iter     = 0
     diis_subspace_size  = 0
     max_iter            = 00
-    conv_tol_energy     = 0e-00
+    conv_tol_energy     = 0e+00
     initial_guess       = AUTO -> SAD
     bipole_cutoff_bohr  = 00.0
     bipole_nuclear_cutoff_bohr = 00.0
@@ -80,9 +80,9 @@
   Wall time <T>
   iter     energy (Ha)            dE          ||[F,DS]||   DIIS
   -------------------------------------------------------------
-     0        0.0000000000        --     0.000e-00    -
-     0       -0.0000000000  -0.000e-00  0.000e-00    -
-     0       -0.0000000000  +0.000e-00  0.000e-00    -
+     0        0.0000000000        --     0.000e+00    -
+     0       -0.0000000000  -0.000e+00  0.000e+00    -
+     0       -0.0000000000  +0.000e+00  0.000e+00    -
   -------------------------------------------------------------
   converged in 0 iterations; E = -0.0000000000 Ha
 
@@ -1802,7 +1802,7 @@
   Phase                            final density evaluation
   Wall time <T>
 
-Atomic relaxation: 0 iters, E = -0.00000000 Ha, max|grad| = 0.0000e-00, converged=False
+Atomic relaxation: 0 iters, E = -0.00000000 Ha, max|grad| = 0.0000e+00, converged=False
 
   Optimized geometry
   ----------------------------

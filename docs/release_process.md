@@ -31,6 +31,11 @@ ancestry. A correction is published as a new snapshot or patch release;
 existing source tags remain unchanged. Public availability is established by
 successful anonymous access and the publication verification report.
 
+The [GitHub publication policy](github_publication.md) explains which releases
+and qualified main revisions are exported, the checks before each update,
+and the current automation status. Main publication is separate from cutting
+a release.
+
 The core release lane retains its T1 and candidate validation requirements.
 Ordinary main pushes do not replace release-gate evidence. The manual publishes
 from the qualified release; companion versions are validated at their selected

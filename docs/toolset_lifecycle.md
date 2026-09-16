@@ -48,9 +48,10 @@ independent implementations through the corpus is the interoperability check.
 
 ## Before you start
 
-Clone the GitHub repository for each product you need. See
-[repositories and downloads](installation.md#repositories-and-downloads).
-Keep each checkout and its environment separate.
+Each split repository has public GitHub source snapshots that can be cloned
+anonymously. [Repositories and downloads](installation.md#repositories-and-downloads)
+lists the source locations and published refs. Maintainer upstream access is
+configured separately outside product checkouts.
 A possible layout is:
 
 ```text

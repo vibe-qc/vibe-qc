@@ -53,6 +53,12 @@ boundary-condition model used by CRYSTAL-style Gaussian crystal codes:
     B-N $1.446$ Angstrom; the row-fed cell in #108 printed $63.4^\circ$ and
     $0.857$ Angstrom). Assert these against literature when reviewing a
     lattice-related result; a volume check proves nothing.
+    `nearest_neighbour_distance` is exact for any full-rank cell: it
+    Minkowski-reduces the periodic vectors before searching, so a lattice
+    written in a skewed basis reports the same distance as the same lattice
+    written in a reduced one. It used to scan a fixed shell over the basis
+    as supplied, which is not sufficient in general and reported a distance
+    too large on a sheared cell (#128).
 - `sysp.reciprocal_lattice()` is generated automatically as
   $2\pi A^{-T}$, so $a_i \cdot b_j = 2\pi\delta_{ij}$ for triclinic
   cells just as for cubic cells.

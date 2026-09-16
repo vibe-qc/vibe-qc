@@ -275,14 +275,16 @@ const pageStatusDetail = hasPublishedDownload
     <section class="wrap activation-section" aria-labelledby="source-heading">
       <span class="eyebrow">source downloads</span>
       <h2 id="source-heading">Get each project from its own repository.</h2>
-      <p class="activation-lede">Each project has its own GitHub source snapshots and tags.
-        Public commit IDs differ from the original upstream commits; provenance
-        manifests record the source revision. Packages are listed only when published.</p>
+      <p class="activation-lede">GitHub mirrors provide public source snapshots without an account.
+        GitLab requires authorized access. Use each project's published tags for
+        versioned source archives and its releases for packages when available.
+        Public snapshots have separate commit history and can lag GitLab; check
+        the desired ref and package on the host you use.</p>
       <div class="activation-grid">
         {repositories.map(repository => <article>
           <h3>{repository.name}</h3>
           <p>{repository.role}</p>
-          <p><a href={repository.github}>GitHub mirror</a></p>
+          <p><a href={repository.github}>GitHub source</a></p>
           <p><a href={`${repository.github}/tags`}>Source tags</a> · <a href={`${repository.github}/releases`}>Release packages</a></p>
         </article>)}
       </div>
@@ -290,8 +292,8 @@ const pageStatusDetail = hasPublishedDownload
         installer exists. Managed install and update scripts require a Git clone;
         source archives use the manual build recipe. See
         <a href="/docs/installation.html#repositories-and-downloads">installation and download guidance</a>.
-        Legacy viewer wheels and QVF writer archives are not included in this
-        source snapshot; current downloads belong to the companion repositories.</p>
+        Historical companion build artifacts are archived privately; current packages
+        belong to their owning project releases.</p>
     </section>
 
     <section class="wrap activation-section" aria-labelledby="activation-heading">

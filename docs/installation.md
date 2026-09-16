@@ -37,18 +37,21 @@ provisioning.
 
 ## Request repository access
 
-The commands below use the GitHub source snapshot. The public copy needs
-no GitLab account or deploy key. A private staging copy requires GitHub access
-until its publication is approved. Keep an existing upstream checkout separate;
-public snapshot commit IDs differ from the original development commits.
+All four GitHub repositories are public and can be cloned without an account
+or key. Maintainer access to canonical development and deployment systems is
+configured separately, using private operations documentation and secret stores.
+Do not add those access settings to a product checkout.
 
 ## Clone the source
 
-Clone the GitHub source snapshot over HTTPS:
+Clone the public source over HTTPS; no account or deploy key is required:
 
 ```sh
 git clone https://github.com/vibe-qc/vibe-qc.git
 ```
+
+Authorized maintainers use their separately configured upstream remote.
+Private access recipes belong in the external operations documentation.
 
 Then enter the new checkout and install:
 
@@ -57,9 +60,9 @@ cd vibe-qc
 ./scripts/install.sh --dev
 ```
 
-`--dev` selects `main`. Use `--branch v0.17.1` or `--branch v0.17.2`
-to select those snapshots; without a branch flag, the installer chooses the
-newest stable tag advertised by origin. Platform prerequisites are below.
+`--dev` selects `main` on either host. For a stable version, choose an origin
+that actually carries the desired release ref; the GitLab and mirror refs can
+differ. The platform prerequisites and full installer behavior are below.
 
 ## Repositories and downloads
 
@@ -67,15 +70,20 @@ Clone each product into its own directory. The Python import remains
 `vibeqc`, but the core repository and checkout are named **vibe-qc**.
 The viewer and queue are separate projects; **vibe-basis stays in vibe-qc**.
 
-| Project | Checkout | GitHub source | Source tags |
-|---|---|---|---|
-| vibe-qc | `vibe-qc/` | [vibe-qc/vibe-qc](https://github.com/vibe-qc/vibe-qc) | [Tags](https://github.com/vibe-qc/vibe-qc/tags) |
-| vibe-view | `vibe-view/` | [vibe-qc/vibe-view](https://github.com/vibe-qc/vibe-view) | [Tags](https://github.com/vibe-qc/vibe-view/tags) |
-| vibe-queue (`vq`) | `vibe-queue/` | [vibe-qc/vibe-queue](https://github.com/vibe-qc/vibe-queue) | [Tags](https://github.com/vibe-qc/vibe-queue/tags) |
-| QVF reference | `qvf/` (optional) | [vibe-qc/qvf](https://github.com/vibe-qc/qvf) | [Tags](https://github.com/vibe-qc/qvf/tags) |
+| Project | Checkout | Public source and tags |
+| --- | --- | --- |
+| vibe-qc engine | `vibe-qc/` | [Source](https://github.com/vibe-qc/vibe-qc), [tags](https://github.com/vibe-qc/vibe-qc/tags) |
+| vibe-view | `vibe-view/` | [Source](https://github.com/vibe-qc/vibe-view), [tags](https://github.com/vibe-qc/vibe-view/tags) |
+| vibe-queue (`vq`) | `vibe-queue/` | [Source](https://github.com/vibe-qc/vibe-queue), [tags](https://github.com/vibe-qc/vibe-queue/tags) |
+| QVF reference | `qvf/` | [Source](https://github.com/vibe-qc/qvf), [tags](https://github.com/vibe-qc/qvf/tags) |
 
-Use each repository's own tags. Public snapshot commit IDs differ from their
-original development IDs; the provenance manifests record that relationship.
+All four GitHub mirrors provide public source snapshots and can be cloned
+anonymously. GitLab remains the development source of truth. Public snapshots
+have their own commit history and can lag GitLab; check that the desired ref
+exists on the host you use. Record the host, ref and resolved commit when
+reproducing a calculation; a GitLab SHA does not identify the corresponding
+GitHub snapshot. See [GitHub source publication](github_publication.md) for
+the publication policy.
 
 For source downloads, choose a tag in the owning project's **tags** page.
 Packaged artifacts, when published, belong to that project's release page:
@@ -88,8 +96,8 @@ The managed installers and updaters require a Git checkout; unpacking a source
 archive is not equivalent to cloning. See the [manual build](#manual-setup)
 for archive-based provisioning.
 
-Legacy viewer wheels and QVF writer tarballs are not included in this
-snapshot. Use the owning companion repository for available downloads. QVF is a specification and reference implementation, not a runtime
+Historical companion build artifacts are retained only in the private archive.
+Use the owning companion repository for current release downloads. QVF is a specification and reference implementation, not a runtime
 or installation dependency of vibe-qc.
 
 ## What a successful install does

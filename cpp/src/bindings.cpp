@@ -3951,6 +3951,9 @@ m.def("compute_cosx_k",
         .def_readonly("n_iter", &vibeqc::DavidsonResult::n_iter)
         .def_readonly("subspace_dim",
                       &vibeqc::DavidsonResult::subspace_dim)
+        .def_readonly("n_converged",
+                      &vibeqc::DavidsonResult::n_converged,
+                      "How many of the requested roots met conv_tol.")
         .def_readonly("converged",
                       &vibeqc::DavidsonResult::converged);
 
@@ -3966,6 +3969,9 @@ m.def("compute_cosx_k",
                       &vibeqc::DavidsonResultComplex::n_iter)
         .def_readonly("subspace_dim",
                       &vibeqc::DavidsonResultComplex::subspace_dim)
+        .def_readonly("n_converged",
+                      &vibeqc::DavidsonResultComplex::n_converged,
+                      "How many of the requested roots met conv_tol.")
         .def_readonly("converged",
                       &vibeqc::DavidsonResultComplex::converged);
 

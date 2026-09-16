@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at_sha": "ecc2a1145c7577ab688b5920d8d910f9898b5748",
-  "test_file_count": 914,
+  "generated_at_sha": "ebcd949813b811a7c51b3e5e4e8747774e8de0e0",
+  "test_file_count": 915,
   "policy": {
     "blocking_tiers": [
       "T0",
@@ -4609,6 +4609,18 @@
       "measured_peak_rss_mb": null,
       "disposition": "demote T2",
       "rationale": "verified inventory or parity coverage retained post-cut",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_libint_capability_configure.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "semiempirical/build",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Real CMake configure and executable-link checks of the shared Libint2::cxx ordinary one-body derivative gate (#271). Tiny generated C API archives exercise missing/unknown header capabilities, each missing derivative symbol, same-version supported direct/alias targets, optimized warning-as-error links, vendoring flags, and cache or in-place dependency changes. Supports a CMake 3.20/current-version matrix. Requires a C++ compiler; no integral evaluation or numerical qualification.",
       "last_verified_sha": null
     },
     {

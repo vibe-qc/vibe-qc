@@ -3,7 +3,7 @@
 Viewer lifecycle commands on this page run from the **separate vibe-view
 checkout**. Run calculation inputs with the core environment and give the
 viewer the resulting QVF path; the two checkouts need not be adjacent.
-Clone [mpei/vibe-view](https://github.com/vibe-qc/vibe-view) and follow
+Clone [vibe-qc/vibe-view](https://github.com/vibe-qc/vibe-view) and follow
 [viewer setup](vibe_view_getting_started.md). Its `.venv`, `scripts/`, and `electron/` belong to that repository;
 vibe-qc does not contain or install the viewer.
 
@@ -51,9 +51,12 @@ resolve. Use one of the methods on this page instead.
 ```
 
 ```{note}
-Clone the independent viewer from its GitHub repository. See
+The GitLab command requires a registered deploy key or authorized account key.
+For anonymous access, replace the clone command with
+`git clone https://github.com/vibe-qc/vibe-view.git`. Both routes create the
+separate `vibe-view/` checkout. See
 [repositories and downloads](../installation.md#repositories-and-downloads)
-for source locations and the publication access boundary.
+for source locations and ref availability; public snapshots can lag GitLab.
 ```
 
 Developers who intentionally want an editable package in their active

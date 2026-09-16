@@ -59,8 +59,9 @@ const artwork = {
           <p>{product.requirements}</p>
           <p>{product.installation}</p>
           {product.command && <pre class="product-code"><code>{product.command}</code></pre>}
-          <p class="access-note">Choose a tag published in this product's GitHub repository.
-            <a href="/docs/installation.html#repositories-and-downloads">Source details</a>.</p>
+          <p class="access-note">The GitHub mirror provides public source snapshots; GitLab requires authorized access.
+            Public snapshots can lag GitLab, so check the desired ref on your chosen host.
+            <a href="/docs/installation.html#repositories-and-downloads"> Source and access details</a>.</p>
         </div>
         <aside class="card resource-card" aria-label={`${product.name} resources`}>
           <h3>Go further</h3>
@@ -69,7 +70,7 @@ const artwork = {
           {product.docsPending && <p>The companion documentation site is being brought online. Its source README has the installation instructions available today.</p>}
           {product.guides.map(([label, href]) => <a href={href}>{label} ↗</a>)}
           <a href={`${product.repository}/releases`}>Independent releases ↗</a>
-          <a href={product.repository}>Source snapshot ↗</a>
+          <a href={product.repository}>GitHub source ↗</a>
           <a href={repository.github}>GitHub mirror ↗</a>
           <a href={`${product.repository}/tags`}>Tagged source downloads ↗</a>
         </aside>

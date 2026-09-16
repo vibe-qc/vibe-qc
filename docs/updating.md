@@ -9,7 +9,7 @@ and the basis driver retained in this checkout, see
 
 ## Moving from the archived monorepo
 
-The old `mpei/vibeqc` repository (project 19) is archived. The split projects
+The former monorepo is archived. The split projects
 have fresh histories: do not change an old checkout's remote and rebase it
 onto the new `main`. Keep it for reproducibility and create a fresh clone:
 
@@ -26,10 +26,17 @@ and queue from their own repositories; see [toolset lifecycle](toolset_lifecycle
 Historical tags and commit IDs belong to the archived repository unless
 explicitly present in the new one. `vibe-basis/` stays with the core.
 
-All four split projects have separate GitHub repositories. Check `git remote -v`
-before updating: ref selection uses that checkout's origin. This public stream
-has `main` and selected stable tags, with new public commit IDs. Keep original
-upstream checkouts separate. Updating the core does not update companions.
+All four split projects also have [GitHub mirrors](installation.md#repositories-and-downloads).
+Check `git remote -v` before updating: the installer selects refs from that
+checkout's origin. Public snapshots have separate commit history and can lag
+GitLab. Use a fresh clone when changing hosts instead of merging unrelated
+histories; check that the desired tag exists on that host. The tagged examples
+here use GitLab. A core update does not update companion clones.
+
+The repository published the `v0.16.0` tag and the `release` branch on
+2026-09-08, so the release-specific examples below work; `--dev` follows
+`main`. They still apply only to refs actually published in the selected
+repository -- historical monorepo tags are not among them.
 
 ## The easy button
 

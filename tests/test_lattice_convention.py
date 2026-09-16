@@ -33,6 +33,7 @@ chat memory and ``tests/test_periodic_lattice_families.py``.
 
 from __future__ import annotations
 
+import itertools
 import math
 
 import numpy as np
@@ -263,3 +264,131 @@ def test_periodic_out_reports_orientation_sensitive_cell_parameters(tmp_path):
     assert "gamma = 60.0000 deg" not in text_rows
     vol_line = [ln for ln in text_cols.splitlines() if "periodic area" in ln]
     assert vol_line and vol_line[0] in text_rows.splitlines()
+
+
+# ---------------------------------------------------------------------------
+# GitLab #128 -- the nearest-neighbour check truncated its own image search.
+#
+# The 2026-09-04 VERIFY_FAILED rejected the original fix on this: the helper
+# that the issue offers as the reusable reviewer check, and that the periodic
+# ".out" prints, scanned a fixed +-1 shell over the basis exactly as supplied.
+# No fixed shell is sufficient for an arbitrary full-rank basis -- the shortest
+# translation of a sheared cell needs coefficients larger than one -- so on the
+# verifier's own counterexample it returned a distance 2.24x too large, and
+# every ".out" for such a cell printed that. The verifier asked for a provably
+# sufficient search rather than a wider shell, which is what Minkowski
+# reduction gives: in a reduced basis the closest image is within one cell of
+# the rounded fractional coordinate for dimension <= 3.
+# ---------------------------------------------------------------------------
+
+
+def _sheared_2d_cell():
+    """The verifier's counterexample: a1=(4,0,0), a2=(7,1,0) as COLUMNS.
+
+    Shortest translation is -2*a1 + a2 = (-1, 1, 0), length sqrt(2); a +-1
+    shell can only reach (-1, 1, 0) in coefficients, i.e. (3, 1, 0), sqrt(10).
+    """
+    L = np.array([[4.0, 7.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 20.0]])
+    return L, vq.PeriodicSystem(2, L, [vq.Atom(1, [0.0, 0.0, 0.0])])
+
+
+def test_nearest_neighbour_is_exact_on_a_non_reduced_cell():
+    """The default call must find -2*a1 + a2, not the best +-1 image.
+
+    Pre-fix: 3.1622776602 bohr at image (-1, 1, 0); ``image_range=2`` was
+    needed to get the true sqrt(2), which is what proved the truncation.
+    """
+    L, system = _sheared_2d_cell()
+    nn = vq.nearest_neighbour_distance(system)
+    assert nn.distance_bohr == pytest.approx(math.sqrt(2.0), abs=1e-12)
+    # The image is reported in the caller's own basis and must reproduce the
+    # distance there -- it must not leak the internally reduced basis.
+    shift = L @ np.asarray(nn.image, dtype=float)
+    assert float(np.linalg.norm(shift)) == pytest.approx(math.sqrt(2.0), abs=1e-12)
+    assert nn.image[2] == 0, "a 2-D cell must not translate along the third axis"
+
+
+def test_nearest_neighbour_image_range_cannot_narrow_the_search():
+    """``image_range`` is advisory: honouring a narrowing request is the bug.
+
+    Every value, including the old default of 1, must give the exact answer.
+    """
+    _, system = _sheared_2d_cell()
+    exact = math.sqrt(2.0)
+    for image_range in (0, 1, 2, 3):
+        nn = vq.nearest_neighbour_distance(system, image_range=image_range)
+        assert nn.distance_bohr == pytest.approx(exact, abs=1e-12), (
+            f"image_range={image_range} returned {nn.distance_bohr}"
+        )
+
+
+def test_nearest_neighbour_is_invariant_under_a_change_of_basis():
+    """The same crystal written in two valid bases is the same crystal.
+
+    ``a2 -> a2 + 2*a1`` is unimodular, so it describes an identical lattice.
+    The reduced writing is within a +-1 shell and the skewed one is not, so
+    before the fix the two bases reported different distances for the same
+    crystal -- which is how the defect stayed invisible wherever cells happen
+    to be given in reduced form.
+    """
+    a1 = np.array([4.0, 0.0, 0.0])
+    a2 = np.array([-1.0, 1.0, 0.0])
+    a3 = np.array([0.0, 0.0, 20.0])
+    atoms = [vq.Atom(1, [0.0, 0.0, 0.0]), vq.Atom(1, [1.5, 0.25, 0.0])]
+    reduced = vq.PeriodicSystem(2, vq.lattice_from_vectors(a1, a2, a3), atoms)
+    skewed = vq.PeriodicSystem(
+        2, vq.lattice_from_vectors(a1, a2 + 2.0 * a1, a3), atoms
+    )
+    d_reduced = vq.nearest_neighbour_distance(reduced).distance_bohr
+    d_skewed = vq.nearest_neighbour_distance(skewed).distance_bohr
+    assert d_skewed == pytest.approx(d_reduced, abs=1e-12), (
+        f"the same crystal gave {d_reduced} in a reduced basis and "
+        f"{d_skewed} in a skewed one"
+    )
+
+
+def test_nearest_neighbour_is_exact_on_a_sheared_3d_cell():
+    """Three dimensions, non-reduced basis, two atoms.
+
+    Checked against an exhaustive +-6 search over the same basis.
+    """
+    # a1 = (4,0,0), a2 = (7,1,0), a3 = (0,0,5) as COLUMNS: the shortest
+    # translation is -2*a1 + a2 = (-1,1,0), coefficients outside any +-1
+    # shell.  The second atom sits just off that image of the first, so the
+    # true closest contact is an image pair rather than an intra-cell one.
+    L = np.array([[4.0, 7.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 5.0]])
+    atoms = [vq.Atom(1, [0.0, 0.0, 0.0]), vq.Atom(1, [-0.9, 1.0, 0.1])]
+    system = vq.PeriodicSystem(3, L, atoms)
+    nn = vq.nearest_neighbour_distance(system)
+
+    positions = [np.asarray(a.xyz, dtype=float) for a in atoms]
+    reference = min(
+        float(np.linalg.norm(positions[j] + L @ np.asarray(n, float) - positions[i]))
+        for n in itertools.product(range(-6, 7), repeat=3)
+        for i in range(2)
+        for j in range(i, 2)
+        if not (i == j and n == (0, 0, 0))
+    )
+    assert nn.distance_bohr == pytest.approx(reference, abs=1e-12)
+    shift = L @ np.asarray(nn.image, dtype=float)
+    assert float(
+        np.linalg.norm(positions[nn.atom_j] + shift - positions[nn.atom_i])
+    ) == pytest.approx(nn.distance_bohr, abs=1e-12)
+
+
+def test_periodic_out_reports_the_exact_nearest_pair(tmp_path):
+    """The ".out" prevention mechanism must carry the true distance.
+
+    Pre-fix this line read ``3.162278 bohr (1.6734 Angstrom)`` for this cell,
+    a factor 2.24 too large -- the reusable literature check the issue asks
+    for, printing a number a reviewer could not compare to anything.
+    """
+    from vibeqc.periodic_runner import _system_summary
+
+    _, system = _sheared_2d_cell()
+    line = [
+        ln for ln in _system_summary(system).splitlines() if "nearest pair" in ln
+    ]
+    assert line, "the .out must carry a nearest-pair line"
+    assert "1.414214 bohr" in line[0], line[0]
+    assert "0.7484 Angstrom" in line[0], line[0]

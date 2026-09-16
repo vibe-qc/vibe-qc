@@ -451,3 +451,104 @@ class TestAuxDimensionResolution:
         # Full retained Lpq plus the bounded SR/LR source, x1.5 headroom: a compute-large
         # (504 GB) or compute-managed (1 TB) job, not a laptop one and not a refusal.
         assert 250 * 1e9 < reduced.estimate.total_bytes < 450 * 1e9
+
+
+@pytest.mark.parametrize("driver_name", ["run_krhf_periodic_gdf", "run_kuhf_periodic_gdf"])
+@pytest.mark.parametrize("functional", [None, "lda"])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (2, 1, 1)])
+def test_bulk_drivers_admit_oneel_before_cells_or_grid(
+    monkeypatch, driver_name, functional, mesh,
+):
+    """An impossible budget must stop the public driver before setup arrays."""
+    import vibeqc.memory as memory
+    import vibeqc.periodic_k_gdf as driver
+
+    system = vq.PeriodicSystem(3, np.eye(3) * 8.0,
+                             [vq.Atom(1, [0, 0, 0]), vq.Atom(1, [0, 0, 1.4])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    options = vq.PeriodicRHFOptions()
+    options.initial_guess = vq.InitialGuess.HCORE
+    monkeypatch.setattr(memory, "available_memory_bytes", lambda: 1)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("cell/grid/integral allocation preceded GDF memory admission")
+
+    for name in ("_direct_cells", "direct_lattice_cells", "_xc_density_cells_for_domain",
+                 "build_grid", "build_periodic_becke_grid", "compute_overlap_lattice",
+                 "compute_kinetic_lattice"):
+        monkeypatch.setattr(driver, name, forbidden)
+    with pytest.raises(MemoryError, match="AO images were not allocated"):
+        getattr(driver, driver_name)(system, basis, mesh, options,
+                                    functional=functional, gdf_method="rsgdf",
+                                    progress=False)
+
+
+@pytest.mark.parametrize("available", [1, 2**60])
+def test_oneel_preflight_reports_reservation_before_accept_or_refuse(monkeypatch, available):
+    from types import SimpleNamespace
+    import vibeqc.memory as memory
+    import vibeqc.periodic_k_gdf as driver
+
+    estimate = memory.MemoryEstimate(
+        by_category={"GDF one-electron lattice matrices and metadata": 1000,
+                     "GDF nuclear Fourier workspace": 2000},
+        headroom_factor=1.5,
+    )
+    monkeypatch.setattr(driver, "_gdf_oneel_memory_estimate", lambda *a, **k: estimate)
+    monkeypatch.setattr(memory, "available_memory_bytes", lambda: available)
+    messages = []
+    args = (SimpleNamespace(dim=3), object(),
+            SimpleNamespace(cutoff_bohr=25.0, nuclear_cutoff_bohr=15.0))
+    if available < estimate.total_bytes:
+        with pytest.raises(MemoryError):
+            driver._preflight_gdf_oneel_memory(*args, plog=SimpleNamespace(info=messages.append))
+    else:
+        driver._preflight_gdf_oneel_memory(*args, plog=SimpleNamespace(info=messages.append))
+    assert "4500 bytes (including headroom)" in messages[0]
+    assert f"available budget={available} bytes" in messages[0]
+    assert "AO cutoff=25 bohr" in messages[0]
+    assert "nuclear cutoff=15 bohr" in messages[0]
+    assert messages[1:] == [f"  {k}: {v} bytes before headroom"
+                            for k, v in estimate.by_category.items()]
+
+
+@pytest.mark.parametrize("driver_name", ["run_krhf_periodic_gdf", "run_kuhf_periodic_gdf"])
+def test_bulk_driver_rechecks_same_resolved_domain_after_grid(monkeypatch, driver_name):
+    from types import SimpleNamespace
+    import vibeqc.memory as memory
+    import vibeqc.periodic_k_gdf as driver
+
+    system = vq.PeriodicSystem(3, np.eye(3) * 8.0,
+                             [vq.Atom(1, [0, 0, 0]), vq.Atom(1, [0, 0, 1.4])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    options = vq.PeriodicRHFOptions()
+    options.initial_guess = vq.InitialGuess.HCORE
+    resolved = SimpleNamespace(cutoff_bohr=123.0, nuclear_cutoff_bohr=25.0)
+    estimates = []
+    budgets = iter([2**60, 1])
+    monkeypatch.setattr(driver, "_oneel_lattice_opts", lambda *a, **k: resolved)
+    monkeypatch.setattr(memory, "available_memory_bytes", lambda: next(budgets))
+
+    def estimate(system_arg, basis_arg, opts_arg, **kwargs):
+        assert opts_arg is resolved
+        estimates.append(kwargs)
+        return memory.MemoryEstimate(by_category={"test setup": 1000})
+
+    monkeypatch.setattr(driver, "_gdf_oneel_memory_estimate", estimate)
+    monkeypatch.setattr(driver, "_direct_cells", lambda *a: [])
+    monkeypatch.setattr(driver, "direct_lattice_cells", lambda *a: [])
+    monkeypatch.setattr(driver, "_xc_density_cells_for_domain", lambda *a: [])
+    grid = SimpleNamespace(n_points=7)
+    monkeypatch.setattr(driver, "build_grid", lambda *a, **k: grid)
+    monkeypatch.setattr(driver, "build_periodic_becke_grid", lambda *a, **k: grid)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("integral allocation preceded the post-setup budget check")
+
+    monkeypatch.setattr(driver, "compute_overlap_lattice", forbidden)
+    with pytest.raises(MemoryError, match="AO images were not allocated"):
+        getattr(driver, driver_name)(system, basis, (2, 1, 1), options,
+                                    functional="lda", gdf_method="rsgdf",
+                                    progress=False)
+    assert [e["n_grid_points"] for e in estimates] == [0, 7]
+    assert [e["n_kpoints"] for e in estimates] == [2, 2]

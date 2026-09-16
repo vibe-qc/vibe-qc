@@ -388,3 +388,236 @@ def test_matvec_path_honours_the_supplied_diagonal() -> None:
         f"a constant diagonal cost the same as the true one "
         f"({calls_bad} vs {calls_good} applications): diag is being ignored"
     )
+
+
+# ---------------------------------------------------------------------------
+# GitLab #123 -- the subspace-collapse branch indexed past the subspace.
+#
+# `keep = min(n_eig + 5, n)` chose how many Ritz vectors a restart carries
+# over, without bounding it by the subspace actually held.  V, AV and X all
+# have exactly `m_sub` columns at that point, so any budget that forces a
+# collapse while `m_sub < n_eig + 5` read and wrote past the end of all
+# three.  Three public-API routes reach it: a small `max_subspace`, an
+# explicit `n_guess` below `n_eig + 5`, and a warm-start `guess_vectors` of
+# exactly `n_eig` columns -- which is what the SCF drivers recycle.
+#
+# Release builds define NDEBUG, so Eigen's bounds assertions were off and the
+# overrun was silent.  Measured before the fix on the n=120 Hermitian case
+# below, over ten identical runs: five hard process kills (SIGTRAP from
+# libmalloc, "memory corruption of free block", raised inside ZGEMM when the
+# corrupted heap was next touched), four returns with null eigenvector
+# columns, and one `converged=True` carrying eigenvalues of -2.5e-14,
+# -3.2e-15 and 3.0e-31 in place of 0.988, 2.022 and 2.999.
+#
+# That last outcome is the defect's whole point: a Ritz vector that collapsed
+# to zero has residual ||A.x - lambda.x|| = 0, so it passes a residual-only
+# convergence test.  The fix bounds the restart by the held subspace, gives
+# the restart room to expand again, re-seeds a collapsed column in the
+# Hermitian kernel as the real one always did, and refuses to call a null
+# Ritz pair converged.
+# ---------------------------------------------------------------------------
+
+
+def _hermitian_ladder(n: int, seed: int):
+    """Complex Hermitian operator with a unit-spaced diagonal ladder."""
+    rng = np.random.default_rng(seed)
+    z = rng.normal(size=(n, n)) * 0.02 + 1j * rng.normal(size=(n, n)) * 0.02
+    return np.diag(np.arange(1.0, n + 1.0)) + (z + z.conj().T) / 2
+
+
+def test_collapse_does_not_overrun_a_narrow_subspace() -> None:
+    """Real kernel, the configuration AddressSanitizer caught first.
+
+    n_eig=4 with n_guess=8 and max_subspace=12 collapses on the first sweep
+    while the subspace holds 8 columns, and pre-fix wrote `X.leftCols(9)`
+    into a `V` with 8 allocated columns -- 60 doubles past the end of the
+    buffer.  Eigen's own bounds assertion fires on this input in a debug
+    build; in the shipped build it corrupted the heap instead.
+    """
+    n = 60
+    A = _diagonally_dominant(n, seed=0, spacing=1.0, offset=1.0)
+    reference = np.sort(np.linalg.eigvalsh(A))[:4]
+
+    opts = _core.DavidsonOptions()
+    opts.n_eig = 4
+    opts.n_guess = 8
+    opts.max_subspace = 12
+    opts.conv_tol = 1e-6
+    opts.max_iter = 200
+    res = _core.davidson_solve(A, opts)
+
+    evecs = np.asarray(res.eigenvectors)
+    norms = np.linalg.norm(evecs, axis=0)
+    assert np.all(norms > 0.5), f"null eigenvector columns returned: {norms}"
+    assert res.subspace_dim <= n, (
+        f"reported a subspace of {res.subspace_dim} columns on an {n}-column "
+        "operator: the collapse indexed past what it held"
+    )
+    assert np.abs(np.sort(np.asarray(res.eigenvalues)) - reference).max() < 1e-6
+
+
+def test_hermitian_collapse_returns_the_true_roots_not_zeros() -> None:
+    """The Hermitian case that reported success while returning zeros.
+
+    n=120, three roots, n_guess=6, max_subspace=7.  Pre-fix this returned
+    `converged=True` with all three eigenvalues at ~1e-14 and eigenvector
+    column norms of 1e-14..1e-16, or killed the process outright.  The
+    repeats pin determinism: the pre-fix answer varied run to run because it
+    depended on whatever memory followed the buffer.
+    """
+    A = _hermitian_ladder(120, seed=0)
+    reference = np.linalg.eigvalsh(A)[:3]
+
+    seen = []
+    for _ in range(3):
+        opts = _core.DavidsonOptions()
+        opts.n_eig = 3
+        opts.n_guess = 6
+        opts.max_subspace = 7
+        opts.conv_tol = 1e-6
+        opts.max_iter = 100
+        res = _core.davidson_solve_hermitian(A, opts)
+
+        evals = np.asarray(res.eigenvalues)
+        evecs = np.asarray(res.eigenvectors)
+        norms = np.linalg.norm(evecs, axis=0)
+
+        assert np.all(norms > 0.5), f"null eigenvector columns: {norms}"
+        assert res.converged, "a budget this size is workable and must converge"
+        assert np.abs(evals - reference).max() < 1e-6, (
+            f"returned {evals} for true roots {reference}"
+        )
+        seen.append(evals.copy())
+
+    for repeat in seen[1:]:
+        assert np.array_equal(seen[0], repeat), (
+            "identical input gave different answers across runs"
+        )
+
+
+def test_warm_start_guess_of_exactly_n_eig_columns_is_safe() -> None:
+    """The shape the SCF drivers recycle: guess_vectors with n_eig columns.
+
+    `rhf.cpp`, `uhf.cpp`, `rks.cpp` and `uks.cpp` feed the previous
+    iteration's eigenvectors back in, so the subspace starts at exactly
+    `n_eig` columns -- below the `n_eig + 5` the restart used to keep.
+    """
+    n = 40
+    A = _diagonally_dominant(n, seed=4, spacing=1.0, offset=1.0)
+    reference = np.sort(np.linalg.eigvalsh(A))[:6]
+    guess = np.linalg.eigh(A)[1][:, :6] + 0.01
+
+    opts = _core.DavidsonOptions()
+    opts.n_eig = 6
+    opts.guess_vectors = guess
+    opts.max_subspace = 10
+    opts.conv_tol = 1e-6
+    opts.max_iter = 200
+    res = _core.davidson_solve(A, opts)
+
+    norms = np.linalg.norm(np.asarray(res.eigenvectors), axis=0)
+    assert np.all(norms > 0.5), f"null eigenvector columns: {norms}"
+    assert np.abs(np.sort(np.asarray(res.eigenvalues)) - reference).max() < 1e-6
+
+
+def test_a_guess_narrower_than_the_requested_roots_is_refused() -> None:
+    """Fewer guess vectors than roots indexed past the Ritz block.
+
+    The subspace starts at the guess width, but every Ritz quantity is read
+    up to `n_eig`, so this used to read past the end of X and AX rather than
+    fail.  Both kernels now refuse it.
+    """
+    n = 30
+    A = _diagonally_dominant(n, seed=5, spacing=1.0, offset=1.0)
+
+    opts = _core.DavidsonOptions()
+    opts.n_eig = 6
+    opts.guess_vectors = np.linalg.eigh(A)[1][:, :2]
+    opts.conv_tol = 1e-6
+    with pytest.raises(ValueError, match="fewer than n_eig"):
+        _core.davidson_solve(A, opts)
+
+    H = _hermitian_ladder(n, seed=5)
+    copts = _core.DavidsonOptions()
+    copts.n_eig = 6
+    copts.guess_vectors_cplx = np.linalg.eigh(H)[1][:, :2]
+    copts.conv_tol = 1e-6
+    with pytest.raises(ValueError, match="fewer than n_eig"):
+        _core.davidson_solve_hermitian(H, copts)
+
+
+def test_hermitian_kernel_refuses_n_guess_below_n_eig_like_the_real_one() -> None:
+    """The real kernel has always refused this; the Hermitian one accepted it.
+
+    It then extracted `n_eig` Ritz pairs from an `n_guess`-wide subspace,
+    reading past the end of both Ritz blocks.
+    """
+    H = _hermitian_ladder(30, seed=1)
+    opts = _core.DavidsonOptions()
+    opts.n_eig = 8
+    opts.n_guess = 3
+    opts.conv_tol = 1e-6
+    with pytest.raises(ValueError, match="n_guess"):
+        _core.davidson_solve_hermitian(H, opts)
+
+
+def test_n_converged_reports_how_much_of_the_spectrum_was_reached() -> None:
+    """A partial spectrum has to be usable, which needs a count (#123).
+
+    `converged` is all-or-nothing; without a count a caller cannot tell a run
+    that found most of its roots from one that found none.
+    """
+    A = _diagonally_dominant(120, seed=2, spacing=1.0, offset=1.0)
+
+    opts = _core.DavidsonOptions()
+    opts.n_eig = 4
+    opts.conv_tol = 1e-8
+    opts.max_iter = 300
+    res = _core.davidson_solve(A, opts)
+    assert res.converged
+    assert res.n_converged == 4
+
+    # One iteration cannot converge four roots from a diagonal seed; the
+    # count must be honest about that rather than reporting the full block.
+    starved = _core.DavidsonOptions()
+    starved.n_eig = 4
+    starved.conv_tol = 1e-10
+    starved.max_iter = 1
+    res2 = _core.davidson_solve(A, starved)
+    assert not res2.converged
+    assert 0 <= res2.n_converged < 4
+
+
+@pytest.mark.parametrize("n_eig", [1, 2, 4, 8])
+@pytest.mark.parametrize("max_subspace", [7, 12, 40])
+def test_no_budget_returns_a_null_ritz_pair(n_eig: int, max_subspace: int) -> None:
+    """Sweep the collapse budget: no setting may return a null eigenvector.
+
+    A null Ritz vector has a null residual, so a residual-only convergence
+    test accepts it.  This walks the budgets that force early collapses in
+    both kernels and pins that none of them produces one.
+    """
+    n = 60
+    real = _diagonally_dominant(n, seed=1, spacing=1.0, offset=1.0)
+    cplx = _hermitian_ladder(n, seed=1)
+
+    for A, solve in ((real, _core.davidson_solve),
+                     (cplx, _core.davidson_solve_hermitian)):
+        reference = np.linalg.eigvalsh(A)[:n_eig]
+        opts = _core.DavidsonOptions()
+        opts.n_eig = n_eig
+        opts.max_subspace = max_subspace
+        opts.conv_tol = 1e-6
+        opts.max_iter = 200
+        res = solve(A, opts)
+
+        evecs = np.asarray(res.eigenvectors)
+        norms = np.linalg.norm(evecs, axis=0)
+        assert np.all(norms > 0.5), (
+            f"n_eig={n_eig} max_subspace={max_subspace}: null columns {norms}"
+        )
+        if res.converged:
+            assert np.abs(np.asarray(res.eigenvalues) - reference).max() < 1e-6, (
+                f"n_eig={n_eig} max_subspace={max_subspace}: reported "
+                "convergence on the wrong roots"
+            )

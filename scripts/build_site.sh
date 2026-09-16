@@ -29,10 +29,8 @@ OUT="${OUT:-public}"
 
 SITE_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Companion artifacts retained here predate the split. Do not regenerate or
-# silently advertise them as current releases from this core checkout.
-# Their owners publish validated replacements in their own repositories.
-echo "warning: docs/_static/downloads contains legacy companion artifacts; see its README.md" >&2
+# Companion distributions belong to their independent repositories. Legacy
+# pre-split artifacts are preserved privately, outside this source checkout.
 
 rm -rf "$OUT"
 # --keep-going (no -W): warnings don't fail the build. The CI is for

@@ -1,5 +1,5 @@
-<!-- VENDORED from the qvf repository, docs/integration_guide.md at v0.1.0-docs.1 (3b4d5548fcd10d75ead8c7ca07cd86ade4cb7586).
-     DO NOT EDIT HERE. Regenerate from the tagged upstream source.
+<!-- VENDORED from the qvf repository, docs/integration_guide.md at source-80432442 (80432442f318bb679e1afcef55bea166994ea28c).
+     DO NOT EDIT HERE. Regenerate from the exact upstream source commit.
      This copy lets vibe-qc build its docs without a QVF checkout. -->
 
 # Integrating QVF into your quantum-chemistry code

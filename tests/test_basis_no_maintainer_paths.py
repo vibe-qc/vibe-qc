@@ -207,7 +207,8 @@ def test_repo_scan_ignores_local_build_trees(tmp_path: Path):
     for directory in ("build-local", "_skbuild"):
         metadata = tmp_path / directory / "cmake" / "metadata.json"
         metadata.parent.mkdir(parents=True)
-        metadata.write_text('"path": "/Users/private-maintainer/build"')
+        personal = "/" + "Users/" + "private-maintainer/build"
+        metadata.write_text('"path": "' + personal + '"')
 
     assert _scan_repo_tree(tmp_path) == []
 

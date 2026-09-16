@@ -99,6 +99,37 @@ class PrivacyHookTests(unittest.TestCase):
         self.check_staged("portable example", True, "private-policy-fixture", local=True)
         self.check_staged("portable example", False, "", local=True)
 
+    def test_policy_rejects_other_worktrees_and_bare_git_databases(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("privacy_terms_test", HOOKS / "private_terms.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for kind in ("checkout", "worktree", "bare"):
+                target = root / kind
+                target.mkdir()
+                if kind == "bare":
+                    subprocess.run(["git", "init", "--bare", "-q", str(target)], check=True)
+                elif kind == "checkout":
+                    subprocess.run(["git", "init", "-q", str(target)], check=True)
+                else:
+                    (target / ".git").write_text("gitdir: ../linked-metadata")
+                terms = target / "terms.txt"
+                terms.write_text("synthetic-private-value")
+                alias = root / (kind + "-alias")
+                alias.symlink_to(terms)
+                external = root / (kind + "-external.txt")
+                external.write_text("synthetic-private-value")
+                outward = target / "outward.txt"
+                outward.symlink_to(external)
+                for selected in (terms, alias, outward):
+                    with self.subTest(kind=kind, alias=selected==alias), patch.dict(
+                            os.environ, {"VIBE_PRIVACY_TERMS_FILE": str(selected)}):
+                        with self.assertRaisesRegex(ValueError, "outside Git"):
+                            module.load_terms(root / "product")
+
     def test_missing_or_empty_configured_policy_fails_closed(self):
         for policy in ("missing", "", "in-tree"):
             with self.subTest(policy=policy):

@@ -899,7 +899,7 @@ validation). The slice-1 C++ kernels are reusable as-is.
 
 1. Read this section + check
    [Archived `handovers/HANDOVER_GDF_OUTSTANDING.md`](https://vibe-qc.com/docs/)
-   for historical context; check current work against the new `mpei/vibe-qc` repository.
+   for historical context; check current work against the new `vibe-qc/vibe-qc` repository.
 2. Confirm slice-1 baseline still passes:
    `.venv/bin/python examples/debug/scratch_aux_eri_lattice_smoke.py`.
 3. Confirm slice-3b (modrho) reduces metric ill-conditioning by ~2

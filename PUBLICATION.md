@@ -1,11 +1,16 @@
 # Public source snapshots
 
-This repository contains portable product source with a new public history.
-Private development ancestry and site-specific operational configuration are
-not included. PUBLIC_SOURCE_PROVENANCE.json identifies the original source
-revision; PUBLIC_SOURCE_INVENTORY.json records source and exported file hashes.
+GitLab is the canonical development source. GitHub contains independently
+committed snapshots of accepted source revisions, with public snapshot history
+only. Original development history is not mirrored.
 
-Public snapshot commit IDs differ from their original development commit IDs.
-An upstream correction produces a new snapshot or patch release. Existing
-upstream release tags are not rewritten. See CONTRIBUTING.md for the existing
-contributor policy and SECURITY.md for private security reporting.
+Each future main or release candidate must have qualified source evidence and
+pass the privacy gate. Every committed source file is exported with identical
+bytes and modes; private profiles and operational records must already be
+outside the product repository. Publication adds only source provenance and a
+file inventory. Existing source and public release tags remain immutable.
+
+See [the publication mechanism](docs/github_publication.md) for the main and
+release policy, checks, private configuration boundaries and current automation
+status. A configured GitLab push mirror is transport, not evidence that an
+unattended snapshot publisher is active.

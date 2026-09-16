@@ -28,6 +28,20 @@ def load_terms(root: Path) -> tuple[str, ...]:
         path = Path(selected).resolve(strict=True)
         if path.is_relative_to(root.resolve()):
             raise ValueError("private-policy file must be outside the source checkout")
+        # Check both the configured interface and resolved target, rejecting a checkout, worktree
+        # or bare Git database as well as this source tree. Private profiles
+        # must not become source or accidentally enter Git object storage.
+        for interface in (Path(selected).absolute(), path):
+            if interface.is_relative_to(root.resolve()):
+                raise ValueError("private configuration must stay outside the source checkout")
+            for directory in interface.parents:
+                if ((directory / ".git").exists()
+                        or (directory / ".git").is_symlink()
+                        or ((directory / "HEAD").is_file()
+                            and (directory / "objects").is_dir()
+                            and (directory / "refs").is_dir())
+                        or directory.name.casefold() == ".git"):
+                    raise ValueError("private configuration must stay outside Git trees and databases")
         terms = tuple(line.strip().casefold() for line in path.read_text(encoding="utf-8").splitlines()
                       if line.strip())
     except (OSError, UnicodeError) as error:

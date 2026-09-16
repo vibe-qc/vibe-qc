@@ -330,34 +330,65 @@ def test_run_krhf_mdf_multik_h2_matches_pyscf():
     assert abs(r_mdf.energy - r_rsgdf.energy) < 1e-4
 
 
+@pytest.mark.parametrize("tail", [None, 0.0, 3200.0])
+def test_gamma_rsgdf_obsolete_tail_reaches_setup_as_none(monkeypatch, tail):
+    """No legacy-tail request may change the production RSGDF setup contract."""
+    import warnings
+    import vibeqc.pbc_gdf as gdf
+
+    system, basis = _h2_box()
+    captured = []
+
+    class SetupReached(Exception):
+        pass
+
+    def capture_setup(*args, **kwargs):
+        captured.append(kwargs)
+        raise SetupReached
+
+    # Avoid even the diagnostic cell enumeration; stop before all integrals.
+    monkeypatch.setattr(gdf, "direct_lattice_cells", lambda *args: [])
+    monkeypatch.setattr(gdf, "_pbc_gdf_gamma_setup", capture_setup)
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        with pytest.raises(SetupReached):
+            gdf.run_pbc_gdf_rhf(
+                system, basis, gdf_method="rsgdf", rsgdf_tail_ke_cutoff=tail,
+                rsgdf_g_precision=2e-10, progress=False,
+            )
+    deprecated = [w for w in recorded if issubclass(w.category, DeprecationWarning)
+                  and "obsolete for the SR/LR fit" in str(w.message)]
+    assert len(deprecated) == (0 if tail is None else 1)
+    assert len(captured) == 1
+    assert captured[0]["gdf_method"] == "rsgdf"
+    assert captured[0]["rsgdf_tail_ke_cutoff"] is None
+    assert captured[0]["rsgdf_g_precision"] == 2e-10
+
+
 @pytest.mark.slow
-def test_run_pbc_gdf_rhf_mdf_all_electron_ne_box():
-    """MDF closes the all-electron Gaussian-DF floor at a MODEST mesh.
+def test_run_pbc_gdf_rhf_mdf_all_electron_ne_box(monkeypatch):
+    """MDF mesh convergence and independent MDF/GDF Ne energy references.
 
-    A Ne atom (steep all-electron 1s core) in a vacuum box is the clean
-    test of MDF's purpose: pure-Gaussian rsgdf needs a huge plane-wave
-    mesh to resolve the steep core pair density (un-tailed ke=200 is
-    still ~190 mHa from converged, descending only slowly with ke),
-    whereas MDF — real-space libint cores + a smooth PW residual — is
-    mesh-converged by ke≈60 and reproduces PySCF MDF.
-
-    Since the auto-tail fix (2355f52e), production rsgdf sizes the
-    high-|G| tail completion automatically for this tight-core Γ class
-    and closes the floor itself, so the negative control below pins
-    ``rsgdf_tail_ke_cutoff=0`` (the documented diagnostic-held mode) to
-    measure the raw base-mesh floor that MDF's design removes.
+    The production RSGDF route uses real-space short-range integrals plus
+    the reciprocal long-range fit. Its obsolete ``tail=0`` argument warns
+    and is ignored; it cannot select the old, intentionally deficient
+    all-FT mesh used by the former negative control (#276).
 
     PySCF reference (out-of-process, §10; pyscf.pbc.df.MDF, RHF,
     exxdiv='ewald', cell.unit='B', Ne/sto-3g/10-bohr cube,
     auxbasis='def2-svp-jkfit' == vibe-qc 'def2-svp-jk'):
       PYSCF GDF = -126.61358133   PYSCF MDF = -126.61361316
     (the GDF↔MDF gap is tiny for *this* aux because def2-svp-jkfit already
-    resolves Ne's core; the floor's size is aux-dependent — what this test
-    pins is MDF's modest-mesh convergence + PySCF-MDF parity.)
+    resolves Ne's core.) Both reference comparisons use the existing
+    0.5 mHa absolute parity envelope of this fixture, accommodating its
+    finite-domain/fit differences. This is independent of the measured
+    RSGDF-MDF gap and does not claim microhartree or general-cell parity.
     """
     from vibeqc.pbc_gdf import run_pbc_gdf_rhf
+    import vibeqc.periodic_k_gdf as kgdf
 
     PYSCF_MDF_NE = -126.61361316  # def2-svp-jkfit, out-of-process
+    PYSCF_GDF_NE = -126.61358133  # same independent reference envelope above
     box = 10.0
     system = vq.PeriodicSystem(3, np.diag([box] * 3), [vq.Atom(10, [0, 0, 0])])
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
@@ -372,13 +403,28 @@ def test_run_pbc_gdf_rhf_mdf_all_electron_ne_box():
     e_mdf_hi = run_pbc_gdf_rhf(
         system, basis, opt, gdf_method="mdf", mdf_ke_cutoff=120.0, **common
     ).energy
-    # tail=0 holds the auto-tail off so this stays the un-tailed base-mesh
-    # floor the negative control (3) was written against (emits the
-    # parity-hold RuntimeWarning by design).
-    e_rsgdf = run_pbc_gdf_rhf(
-        system, basis, opt, gdf_method="rsgdf", rsgdf_ke_cutoff=200.0,
-        rsgdf_tail_ke_cutoff=0.0, **common
-    ).energy
+    # Observe the actual builder without replacing its numerical work.
+    # This guards the route as well as the energy, with no extra SCF run.
+    sr_lr_calls = []
+    build_sr_lr = kgdf._build_scf_range_separated_lpq_cache
+
+    def observed_sr_lr(*args, **kwargs):
+        sr_lr_calls.append(kwargs.copy())
+        return build_sr_lr(*args, **kwargs)
+
+    monkeypatch.setattr(kgdf, "_build_scf_range_separated_lpq_cache", observed_sr_lr)
+    with pytest.warns(DeprecationWarning, match="obsolete for the SR/LR fit"):
+        r_rsgdf = run_pbc_gdf_rhf(
+            system, basis, opt, gdf_method="rsgdf", rsgdf_ke_cutoff=200.0,
+            rsgdf_tail_ke_cutoff=0.0, **common
+        )
+    assert r_rsgdf.converged
+    assert r_rsgdf.rsgdf_tail_ke_cutoff is None
+    assert "+PARITY_HELD" not in r_rsgdf.backend
+    assert len(sr_lr_calls) == 1
+    assert sr_lr_calls[0]["ke_cutoff"] == 200.0
+    assert sr_lr_calls[0]["raw_integral_error"] == 1e-10
+    e_rsgdf = r_rsgdf.energy
 
     # (1) MDF reproduces PySCF MDF (same aux) to the higher-multipole floor.
     assert abs(e_mdf_hi - PYSCF_MDF_NE) < 5e-4, (
@@ -389,12 +435,11 @@ def test_run_pbc_gdf_rhf_mdf_all_electron_ne_box():
     assert abs(e_mdf_hi - e_mdf_lo) < 1e-4, (
         f"MDF not mesh-converged: ke=60 {e_mdf_lo} vs ke=120 {e_mdf_hi}"
     )
-    # (3) un-tailed rsgdf at the same modest mesh is FAR from converged
-    # (the floor MDF removes by design): the dense-FFT Gaussian DF is
-    # >100 mHa off here.
-    assert abs(e_rsgdf - e_mdf_hi) > 5e-2, (
-        f"expected a large un-tailed rsgdf mesh-floor vs MDF; "
-        f"rsgdf(ke=200, tail=0)={e_rsgdf} mdf={e_mdf_hi}"
+    # (3) Modern SR/LR RSGDF is checked against its own external oracle,
+    # not against an expected defect or an empirically fitted MDF gap.
+    assert abs(e_rsgdf - PYSCF_GDF_NE) < 5e-4, (
+        f"SR/LR RSGDF {e_rsgdf} vs PySCF GDF {PYSCF_GDF_NE} "
+        f"(delta={(e_rsgdf - PYSCF_GDF_NE)*1e3:.3f} mHa)"
     )
 
 
@@ -450,10 +495,11 @@ def test_classifier_mdf_not_held_on_tight_basis_vacuum_box():
     MDF fits the steep core exactly in real space, so the rsgdf
     tight-basis/unresolved-reciprocal-mesh hold does not apply to it:
     Ne/STO-3G/10-bohr (zeta_max = 207, the validated 0.14 mHa PySCF-MDF
-    parity gate above) must not be classified held for mdf, while the
-    same cell IS held for untailed rsgdf (its documented ~190 mHa
-    base-mesh floor). The compact-dense-core class stays held for both
-    (and fails closed for mdf, previous test).
+    parity gate above) must not be classified held for mdf. The legacy
+    untailed-RSGDF classifier still identifies this basis as requiring
+    reciprocal tail resolution; production SR/LR RSGDF does not use that
+    hold and tail=0 does not select the legacy builder. The compact class
+    stays held for both classifier labels (and MDF refuses it above).
     """
     from vibeqc.pbc_gdf import _gamma_dense_core_gdf_parity_held
 

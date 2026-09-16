@@ -661,7 +661,7 @@ def _pinned_qvf_link(source: str, target: str) -> str | None:
         ("integration_guide.md", "../conformance/README.md"): "/qvf/conformance",
         ("library_guide.md", "../cpp/include/qvf/qvf_c.h"): (
             "https://github.com/vibe-qc/qvf/blob/"
-            "v0.1.0-docs.1/cpp/include/qvf/qvf_c.h"
+            "7660640ce609a1fd3ba03db4dd53df01b798e619/cpp/include/qvf/qvf_c.h"
         ),
     }
     return targets.get((source_path.name, target))

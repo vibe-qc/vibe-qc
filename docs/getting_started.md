@@ -29,10 +29,10 @@ needs:
 | Read results over SSH without graphics | vibe-view core or TUI | [Terminal mode](tutorial/vibe_view_terminal.md) |
 | Submit and monitor remote work | `vq`, plus the code being run | [Remote-job tutorial](tutorial/vq_queue_remote_job.md) |
 
-Each product has its own GitHub repository. See
-[repositories and downloads](installation.md#repositories-and-downloads)
-for clone instructions and source tags. A published viewer wheel can be
-installed without cloning the viewer repository.
+Each product has its own private GitLab repository and public GitHub mirror.
+GitHub clones need no account; see [repositories and downloads](installation.md#repositories-and-downloads)
+for all four source locations, mirror availability, and tagged source downloads.
+A wheel published by vibe-view can be installed without cloning its repository.
 
 ## Install the calculation engine
 
@@ -40,11 +40,14 @@ The recommended installer owns the entire bootstrap: it checks the host,
 builds the pinned native libraries, creates `.venv`, installs the Python
 package, and prints a verification banner.
 
-Clone the GitHub source snapshot over HTTPS:
+Clone the public source over HTTPS; no account or deploy key is required:
 
 ```sh
 git clone https://github.com/vibe-qc/vibe-qc.git
 ```
+
+Authorized maintainers use their separately configured upstream remote.
+Private access recipes belong in the external operations documentation.
 
 Then enter the new checkout and install:
 
@@ -53,9 +56,11 @@ cd vibe-qc
 ./scripts/install.sh --dev
 ```
 
-The example above selects `main`. The flag-free installer selects the newest
-stable tag advertised by origin. Each companion has its own releases; a core
-tag does not update a viewer or queue checkout.
+The example above selects development `main`. The flag-free installer targets
+`release`, the stable core snapshot advanced from a tag on `main`. Use
+`--dev` for ongoing development. Each companion has its own releases; a core
+tag does not update the viewer or queue. Check the selected host for the
+release ref you want; public snapshots can lag GitLab.
 
 The first native build normally takes 15 to 40 minutes. Later runs reuse the
 finished dependency trees. Choose a different source line explicitly when
@@ -146,7 +151,7 @@ python -c "import vibeqc; print('vibe-qc import: ok')"
 This example assumes independent `vibe-qc` and `vibe-view` clones next to
 each other and is run from `vibe-qc`. Use the actual viewer checkout path if
 you chose another layout. There is no viewer source directory in vibe-qc;
-`viewer-gpu` alone cannot obtain the private companion from PyPI.
+`viewer-gpu` alone cannot obtain the companion source from GitHub or GitLab.
 
 ## Run the first calculation
 

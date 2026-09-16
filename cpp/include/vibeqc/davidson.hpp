@@ -96,6 +96,12 @@ struct DavidsonResult {
     // Subspace dimension at convergence.
     int subspace_dim = 0;
 
+    // How many of the ``n_eig`` requested pairs met ``conv_tol`` (GitLab
+    // #123).  ``converged`` is the all-or-nothing summary; this is what a
+    // caller needs to use a partial spectrum, and it is the only way to
+    // tell a run that found most of its roots from one that found none.
+    int n_converged = 0;
+
     // True if all requested eigenpairs converged.
     bool converged = false;
 };
@@ -107,6 +113,8 @@ struct DavidsonResultComplex {
     Eigen::MatrixXcd eigenvectors;  // n_basis × n_eig
     int n_iter = 0;
     int subspace_dim = 0;
+    // Count of converged pairs; see DavidsonResult::n_converged (#123).
+    int n_converged = 0;
     bool converged = false;
 };
 

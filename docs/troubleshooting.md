@@ -913,6 +913,24 @@ The automatic fallback guard does not certify absolute-energy parity or
 change the directly invoked low-level legacy driver.
 
 
+## Bulk GDF refuses the one-electron memory reservation
+
+The restricted and unrestricted k-point GDF drivers check the resolved AO
+image domain before enumerating lattice/XC cells or building the grid. A
+`GDF one-electron setup requires an estimated ... bytes` error means the
+reservation exceeds the available budget. With progress output enabled, the
+log lists the AO and nuclear cutoffs, byte categories before headroom, and
+the total including headroom. This is an estimate for one-electron setup,
+not a measurement of whole-job peak RSS or the separate Lpq cache.
+
+The check runs again after setup, including the retained quadrature grid and
+an updated available-memory probe. Cutoff selection and accuracy tolerances
+are unchanged. Use the reported categories to distinguish the AO image sets,
+Bloch matrices, nuclear images and Fourier workspace before changing job
+resources. The historical LiH/TZVP memory report (#99) still requires
+independent reproduction; passing this check does not certify that report
+as resolved.
+
 ## Range-separated GDF reciprocal admission refuses a calculation
 
 A `range-separated GDF reciprocal candidate cap exceeded` error reports the

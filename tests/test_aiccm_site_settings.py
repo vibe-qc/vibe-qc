@@ -98,6 +98,33 @@ class SiteSettingsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "outside the source checkout"):
                 site.load_profile()
 
+    def test_another_checkout_worktree_and_bare_database_are_rejected(self):
+        for kind in ("checkout", "worktree", "bare"):
+            with self.subTest(kind=kind):
+                target = self.root / kind
+                target.mkdir()
+                if kind == "bare":
+                    subprocess.run(["git", "init", "--bare", "-q", str(target)], check=True)
+                elif kind == "checkout":
+                    subprocess.run(["git", "init", "-q", str(target)], check=True)
+                else:
+                    (target / ".git").write_text("gitdir: ../linked-metadata")
+                profile = target / "profile.json"
+                profile.write_text('{"schema_version":1}')
+                alias = self.root / (kind + "-alias.json")
+                alias.symlink_to(profile)
+                external = self.root / (kind + "-external.json")
+                external.write_text('{"schema_version":1}')
+                outward = target / "outward.json"
+                outward.symlink_to(external)
+                for selected in (profile, alias, outward):
+                    os.environ["AICCM_SITE_CONFIG"] = str(selected)
+                    with self.assertRaisesRegex(ValueError, "outside Git"):
+                        site.load_profile()
+        os.environ["AICCM_SITE_CONFIG"] = "relative-profile.json"
+        with self.assertRaises(ValueError):
+            site.load_profile()
+
     def test_missing_empty_oversized_and_invalid_json_are_rejected(self):
         for value in ("", str(self.root / "missing-private-config")):
             os.environ["AICCM_SITE_CONFIG"] = value

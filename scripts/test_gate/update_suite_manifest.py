@@ -66,6 +66,23 @@ CURATED: dict[str, dict[str, str]] = {
         "disposition": "demote T2",
         "rationale": "Hermetic external study profile and interpreter dispatch boundaries; no native calculation",
     },
+
+    "tests/test_libint_capability_configure.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "semiempirical/build",
+        "disposition": "new",
+        "rationale": (
+            "Real CMake configure and executable-link checks of the shared "
+            "Libint2::cxx ordinary one-body derivative gate (#271). Tiny "
+            "generated C API archives exercise missing/unknown header "
+            "capabilities, each missing derivative symbol, same-version "
+            "supported direct/alias targets, optimized warning-as-error links, "
+            "vendoring flags, and cache or in-place dependency changes. "
+            "Supports a CMake 3.20/current-version matrix. Requires a C++ compiler; no integral "
+            "evaluation or numerical qualification."
+        ),
+    },
     "tests/test_git_clone_pinned.py": {
         "maturity": "verified",
         "tier": "T2",

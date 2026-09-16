@@ -276,7 +276,7 @@ verifies every tool / header / library below is present before it
 starts building, and prints the exact per-distro install command for
 anything missing.
 
-After installing Git, clone the source and enter its directory:
+After installing Git, clone the public source and enter its directory:
 
 ```sh
 git clone https://github.com/vibe-qc/vibe-qc.git
@@ -334,20 +334,23 @@ vibe-basis deliberately stays in this repository.
 | Project | Checkout | Installation |
 | --- | --- | --- |
 | vibe-qc | this repository | `./scripts/install.sh --dev` |
-| vibe-view | [mpei/vibe-view](https://github.com/vibe-qc/vibe-view) | `./scripts/install.sh` from viewer root |
-| vibe-queue (`vq`) | [mpei/vibe-queue](https://github.com/vibe-qc/vibe-queue) | `./scripts/install.sh` from queue root |
+| vibe-view | [vibe-qc/vibe-view](https://github.com/vibe-qc/vibe-view) | `./scripts/install.sh` from viewer root |
+| vibe-queue (`vq`) | [vibe-qc/vibe-queue](https://github.com/vibe-qc/vibe-queue) | `./scripts/install.sh` from queue root |
 | vibe-basis | `vibe-basis/` in this repository | `./vibe-basis/scripts/install.sh` from core root |
-| QVF | [mpei/qvf](https://github.com/vibe-qc/qvf) | format reference; no core runtime install |
+| QVF | [vibe-qc/qvf](https://github.com/vibe-qc/qvf) | format reference; no core runtime install |
 
-This snapshot stream contains `main` and selected stable release tags.
-There is no `release` branch on GitHub: the flag-free installer and updater
-select the newest stable tag advertised by origin. Use `--branch v0.17.1` or
-`--branch v0.17.2` for those snapshots, or `--dev` for `main`. Record the host,
-tag and resolved public commit when reproducing a calculation. See
-[PUBLICATION.md](PUBLICATION.md) for the source provenance boundary.
-
-Each companion has its own [repository and release tags](docs/installation.md#repositories-and-downloads).
-The archived monorepo remains separate; do not rebase its history onto this snapshot stream.
+The split repositories have GitHub mirrors:
+[vibe-qc](https://github.com/vibe-qc/vibe-qc),
+[vibe-view](https://github.com/vibe-qc/vibe-view),
+[vibe-queue](https://github.com/vibe-qc/vibe-queue), and
+[QVF](https://github.com/vibe-qc/qvf). These public source snapshots can be
+cloned anonymously. GitLab requires authorized access and remains the
+development source of truth. Public snapshots have separate commit history
+and can lag GitLab; check the desired ref on the host you use.
+See [repositories and downloads](docs/installation.md#repositories-and-downloads)
+for each project's source tags and release artifacts. The archived
+the archived monorepo repository retains historical work; do not push new changes there
+or rebase its history onto these fresh repositories.
 
 Each tool has install, update, reinstall, and uninstall scripts in its own
 checkout. See the [toolset lifecycle guide](docs/toolset_lifecycle.md) for

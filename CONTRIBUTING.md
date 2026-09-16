@@ -17,19 +17,14 @@ covered in [site publishing](https://github.com/vibe-qc/vibe-qc/blob/main/docs/s
 | --- | --- |
 | **Security vulnerability** — exploitable bug, memory corruption, anything you think shouldn't be public-by-default | Email **`mpei@vibe-qc.com`** directly. PGP fingerprint `CC6D 30BB DF96 F694 C615  FBDE 4CD5 65CF 26B1 E7E5` (key at <https://vibe-qc.com/docs/_static/pgp/mpei.asc>). See [SECURITY.md](https://github.com/vibe-qc/vibe-qc/blob/main/SECURITY.md) for what to include and the disclosure timeline. **Do not open a public issue.** |
 | **Bug, install problem, missing feature, "this didn't work the way the docs said"** | [GitHub issues](https://github.com/vibe-qc/vibe-qc/issues). Search for an existing issue first; comment on it if there is one. Filing requires a GitHub account. |
-| **General feedback, question, "is this a bug or am I doing it wrong?"** | Email **`mpei@vibe-qc.com`**. No tracker account needed; replies go to your address directly. |
+| **General feedback, question, "is this a bug or am I doing it wrong?"** | Email **`mpei@vibe-qc.com`**. No GitLab account needed; replies go to your address directly. |
 | **Code-of-conduct violation** | Email **`mpei@vibe-qc.com`**. See [CODE_OF_CONDUCT.md](https://github.com/vibe-qc/vibe-qc/blob/main/CODE_OF_CONDUCT.md). |
 | **You want to send a patch** | Read the rest of this file. |
-| **You fixed something, or you want to check someone else's fix** | The issue it belongs to. Verification requests and verdicts are **comments on the issue**, never files in the repository — see [How a fix gets verified](#how-a-fix-gets-verified). |
+| **You fixed something, or you want to check someone else's fix** | The issue it belongs to. Verification requests and verdicts are **comments on the corresponding issue**, never files in the repository — see [How a fix gets verified](#how-a-fix-gets-verified). |
 | **You want to fund the project** | [GitHub Sponsors](https://github.com/sponsors/mpeintinger) (recurring monthly) or [Ko-fi](https://ko-fi.com/mpeintinger) (one-time). Full pitch + author bio + funding goals on the [support page](https://vibe-qc.com/docs/support.html). |
 
 All contributors and maintainers are expected to follow the
 [Code of Conduct](https://github.com/vibe-qc/vibe-qc/blob/main/CODE_OF_CONDUCT.md).
-
-GitHub is the public contribution entry point; maintainers track accepted work
-in the canonical GitLab project. Do not assume GitHub comments reach `bugctl`
-until a maintainer posts an upstream issue link. Automated PR import is available
-only after its bridge is enabled; the submission requirements below still apply.
 
 ## How a fix gets verified
 
@@ -59,16 +54,15 @@ the fix is a useful outcome, not a failed one.
 **Do not put any of this in a file in the repository.** Contributors work
 from different machines and not all of them can push, so a request written
 as a file reaches its reader but their answer cannot come back. A comment
-needs only an account. Historical request files are archived privately; all new verification
-requests and verdicts belong on the issue.
+needs only an account. Maintainers retain private verification and coordination
+records outside product repositories. Until automatic issue routing is active,
+maintainers explicitly link a public report to its GitLab issue. Public comments
+do not imply that the private agent queue has already received the report.
 
-Maintainer-side automation (the `bugctl` broker used by the project's own
-agents) reads and writes the canonical GitLab issue comments and labels, so a
-contributor commenting by hand and an agent using the tooling are
-participating in the same queue. Human comments are not fixer-lease actions
-and can be added after landing. An automated fixer instead posts the same
-brief after its push succeeds and before `bugctl land`, because `land` closes
-the lease that authorizes `bugctl progress`.
+Human contributors may add verification comments after landing. An automated
+contributor posts the verification brief after its push succeeds and before
+completing the landing step, because that step closes the editing claim used
+to attach the brief.
 
 ### Tests for optional dependencies must run in every environment
 
@@ -140,9 +134,13 @@ the core assertions still run unconditionally.
 
 ## Branch and checkout policy
 
-Work on the new `mpei/vibe-qc` repository. The old `mpei/vibeqc` repository
-is a frozen historical archive. Every change lands on `main` first, with
-local checks for the affected area. Rebase before pushing:
+Clone the public `vibe-qc/vibe-qc` repository to prepare contributions.
+Submit patches as pull requests, with the evidence described below; maintainers
+route accepted changes into canonical GitLab development. Automatic routing is
+not yet active; see [publication status](https://vibe-qc.com/docs/github_publication.html).
+
+Maintainers working in an authorized upstream clone land changes on `main`
+with local checks for the affected area. Rebase before pushing:
 
 ```sh
 git pull --rebase origin main

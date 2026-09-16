@@ -1075,9 +1075,9 @@ not create a runtime dependency.
 
 The six QVF reference pages in these docs are pinned, vendored documentation
 with upstream tag/commit provenance. Changes belong in QVF and must be
-re-vendored deliberately. The legacy qvf-writer tarball in
-`docs/_static/downloads/` also belongs to the companion project; it must not
-be presented as a current core release artifact.
+re-vendored deliberately. Legacy pre-split QVF writer and viewer packages
+are preserved outside the product repositories in a private historical
+archive; current distributions belong to their respective companion projects.
 
 ## Website artwork typography
 

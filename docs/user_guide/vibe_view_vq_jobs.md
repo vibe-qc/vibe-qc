@@ -1,7 +1,7 @@
 # vq Job Manager
 
 Source commands on this page run from the **separate vibe-view checkout**.
-Clone [mpei/vibe-view](https://github.com/vibe-qc/vibe-view) and follow
+Clone [vibe-qc/vibe-view](https://github.com/vibe-qc/vibe-view) and follow
 [viewer setup](../tutorial/vibe_view_getting_started.md). Its `.venv`, `scripts/`, and `electron/` belong to that repository;
 vibe-qc does not contain or install the viewer.
 

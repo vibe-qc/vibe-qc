@@ -1,7 +1,7 @@
 # Issue renumbering, 2026-09-08
 
 When vibe-qc moved to its own repository, the 188 open issues were moved
-from `mpei/vibeqc` (project 19) to `mpei/vibe-qc` (project 34). GitLab's move
+from the archived monorepo (project 19) to `vibe-qc/vibe-qc` (project 34). GitLab's move
 creates a new issue with a new number and closes the original with a
 "moved to" note, so **every issue number changed**.
 

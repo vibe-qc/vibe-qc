@@ -1,16 +1,14 @@
-# Legacy companion artifacts
+# Companion distributions
 
-The qvf-writer tarball and vibeview wheel in this directory came from the
-pre-split monorepo. They are retained for reproducibility and existing
-version-pinned repair URLs, not advertised as current companion releases.
-Core builds do not regenerate them.
+Legacy pre-split viewer wheels and QVF writer archives are preserved in the
+maintainer's external private archive, with source and checksum provenance.
+They are no longer distributed from the core source tree.
 
-The QVF and vibe-view release owners must validate and publish replacement
-artifacts, checksums, and bootstrap URLs in their respective repositories:
+Use the companion repositories for source and validated release artifacts:
 
-- https://github.com/vibe-qc/qvf/releases
-- https://github.com/vibe-qc/vibe-view/releases
+- [QVF releases](https://github.com/vibe-qc/qvf/releases)
+- [vibe-view releases](https://github.com/vibe-qc/vibe-view/releases)
 
 Do not overwrite an old artifact with different bytes under the same version.
-The documentation's current installation route is a separate source clone
-until an appropriate companion artifact is available.
+Use a separate source clone when a companion does not yet provide a suitable
+release package.

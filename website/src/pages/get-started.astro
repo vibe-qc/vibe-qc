@@ -55,7 +55,7 @@ print(f"gap     = {(eps[homo+1] - eps[homo])*27.211386:.2f} eV")`;
     <ol class="steps">
       <li>
         <h2><span class="n">1</span> Install</h2>
-        <p class="note">Clone the GitHub source snapshot, then enter it and install:</p>
+        <p class="note">Clone the public source, then enter it and install:</p>
         <pre class="code"><code>git clone https://github.com/vibe-qc/vibe-qc.git</code></pre>
         <pre class="code"><code>cd vibe-qc
 ./scripts/install.sh --dev</code></pre>
@@ -66,9 +66,10 @@ print(f"gap     = {(eps[homo+1] - eps[homo])*27.211386:.2f} eV")`;
           <a href={`${DOCS}/installation.html`}>installation guide</a> for the full
           surface and the manual native-deps recipe.
         </p>
-        <p class="note">The installer selects main from the GitHub snapshot stream.
-          Choose a published tag explicitly for a pinned installation. See
-          <a href={`${DOCS}/installation.html#repositories-and-downloads`}>repositories and downloads</a>.</p>
+        <p class="note">GitHub HTTPS clones are anonymous. The installer above selects
+          main from that origin; choose a published tag to pin a version.
+          <a href={`${DOCS}/installation.html#repositories-and-downloads`}>Source details</a>.
+        </p>
       </li>
       <li>
         <h2><span class="n">2</span> Run RHF on water</h2>
@@ -87,13 +88,14 @@ print(f"gap     = {(eps[homo+1] - eps[homo])*27.211386:.2f} eV")`;
     <section class="next" aria-labelledby="repositories-heading">
       <h2 id="repositories-heading">Four repositories, shared files.</h2>
       <p>Install the engine for calculations, then add the companions you need.
-        Each repository has its own checkout and release tags.</p>
+        Each repository has its own checkout and release tags. GitLab requires
+        authorized access; the GitHub mirrors provide public source snapshots.</p>
       <div class="next-grid">
         {repositories.map(repository => <article class="ncard">
           <h3>{repository.name}</h3>
           <p>{repository.role}</p>
           <p class="repository-links">
-            <a href={repository.github}>GitHub mirror</a> ·
+            <a href={repository.github}>GitHub source</a> ·
             <a href={`${repository.github}/tags`}>Source tags</a>
           </p>
         </article>)}
