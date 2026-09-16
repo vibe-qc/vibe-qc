@@ -549,6 +549,17 @@ def _resolve_dispersion(
     )
 
 
+class _IAOAugmented:
+    """Preserve the SCF result interface while exposing requested IAO analysis."""
+
+    def __init__(self, scf_result, analysis):
+        self._scf = scf_result
+        self.iao_analysis = analysis
+
+    def __getattr__(self, name):
+        return getattr(self._scf, name)
+
+
 class _DispersionAugmented:
     """Transparent wrapper exposing a D3(BJ) or D4 correction.
 
@@ -5919,6 +5930,8 @@ def run_job(
     write_molden_file: bool | None = None,
     write_xyz_file: bool = True,
     write_population_file: bool | None = None,
+    iao_analysis: bool = False,
+    iao_bond_threshold: float = 0.05,
     write_cube: Union[bool, str, int, list, tuple, None] = False,
     cube_spacing: float = 0.2,
     cube_padding: float = 4.0,
@@ -6197,6 +6210,15 @@ def run_job(
         default) emits it when the selected route exposes a Gaussian AO
         wavefunction. Explicit ``True`` is a guarantee and fails before the
         calculation on an unsupported route; ``False`` disables it.
+    iao_analysis
+        Opt in to molecular determinant IAO charges, spin populations and
+        spin-resolved IAO-Wiberg bond orders. Independent of localization and
+        QVF. The returned result exposes ``.iao_analysis``; text goes to .out
+        and the population text/JSON sidecars when enabled. Unsupported
+        analyses carry an explicit unavailable reason and no physical zeros.
+    iao_bond_threshold
+        Nonnegative text display threshold (default 0.05); the stored dense
+        IAO bond-order matrix is never thresholded.
     write_population_file
         Emit ``{output}.population.{txt,json}``. It follows the same
         capability-aware ``None`` / guaranteed ``True`` / disabled ``False``
@@ -6524,6 +6546,10 @@ def run_job(
     -------
     The SCF result object (RHFResult / UHFResult / RKSResult / UKSResult).
     """
+    if not isinstance(iao_analysis, bool):
+        raise ValueError("iao_analysis must be True or False")
+    if not np.isfinite(iao_bond_threshold) or iao_bond_threshold < 0:
+        raise ValueError("iao_bond_threshold must be finite and nonnegative")
     enforce_runtime_pin_from_env()
 
     # GitLab #663: whether grid_level applies is decided from the options'
@@ -12125,6 +12151,24 @@ def run_job(
         # screen-scrape the .out for charges + bond orders + dipole.
         # The matching block stays in .out for human reading; the
         # .txt + .json siblings are the machine-readable form.
+        _iao_analysis = None
+        if iao_analysis:
+            from vibeqc.iao_population import analyse_iao
+            from vibeqc.output.formats.population import format_iao_analysis
+
+            _iao_analysis = analyse_iao(
+                result, basis_obj, molecule,
+                method=resolved_method if method == "auto" else method,
+                uses_ecp=_detect_uses_ecp(
+                    rhf_options, uhf_options, rks_options, uks_options,
+                    result=result,
+                ),
+            )
+            write("\n" + format_iao_analysis(
+                _iao_analysis, bond_threshold=iao_bond_threshold,
+            ))
+            flush()
+
         _population_summary = None
         _population_written = False
         if write_population_file and (
@@ -12158,7 +12202,14 @@ def run_job(
                             basis_obj,
                             molecule,
                             nuclear_charges=_nuclear_charges_used,
+                            iao_analysis=_iao_analysis,
+                            iao_bond_threshold=iao_bond_threshold,
                         )
+                    if _iao_analysis is not None:
+                        _population_summary.iao_analysis = _iao_analysis
+                        _population_summary.iao_bond_threshold = iao_bond_threshold
+                        if not _iao_analysis.available:
+                            _population_summary.unavailable["iao"] = _iao_analysis.unavailable_reason
                     _output_writer.dispatch_role(
                         "population",
                         result=result,
@@ -12673,6 +12724,8 @@ def run_job(
                             and not _population_summary.errors.get(_section)
                         ):
                             _props.append(_route)
+                if _iao_analysis is not None and _iao_analysis.available:
+                    _props.append("iao_wiberg")
                 if nto:
                     _props.append("nto")
                 if qtaim:
@@ -12872,6 +12925,8 @@ def run_job(
                     role="structured_log_properties",
                     category=OutputFailureKind.compatibility_fallback,
                 )
+            if _iao_analysis is not None:
+                _props_payload["iao"] = _iao_analysis.to_dict()
             if _props_payload:
                 _slog.emit("properties", **_props_payload)
 
@@ -13498,6 +13553,10 @@ def run_job(
                         category=OutputFailureKind.compatibility_fallback,
                     )
             _pop = _population_summary
+            if _pop is None and _iao_analysis is not None:
+                from vibeqc.output.formats.population import PopulationSummary
+                _pop = PopulationSummary(iao_analysis=_iao_analysis,
+                                         iao_bond_threshold=iao_bond_threshold)
             _qvf_bond_orders = None
             _qvf_dipole = None
             if write_population_file and has_mos:
@@ -13740,7 +13799,10 @@ def run_job(
             # Closed-shell only: the IAO charge formula below assumes a
             # doubly-occupied reference (Knizia eq 3, gamma = 2 sum_i |i><i|).
             _qvf_localized_wf = None
-            _qvf_iao_charges = None
+            _qvf_iao_charges = (
+                _iao_analysis.charges if _iao_analysis is not None and _iao_analysis.available
+                else None
+            )
             _localize_methods = _resolve_localize_methods(localize)
             if (
                 _localize_methods
@@ -13790,6 +13852,21 @@ def run_job(
                         ],
                         axis=-1,
                     )
+                    # Reuse the occupied-space analysis across all criteria.
+                    from vibeqc.iao import build_iaos, iao_reference
+                    # An unavailable population request must not suppress
+                    # separately supported localization of an SCF reference,
+                    # including the reference carried by an MP2 result.
+                    if _iao_analysis is not None and _iao_analysis.available:
+                        _loc_reference = _iao_analysis.reference
+                        _loc_iaos = _iao_analysis.iaos_alpha
+                    else:
+                        _loc_reference = iao_reference(molecule, basis_obj)
+                        from vibeqc import compute_overlap as _iao_overlap
+                        _loc_iaos = build_iaos(
+                            _occ_block, np.asarray(_iao_overlap(basis_obj)),
+                            _loc_reference.overlap, _loc_reference.cross_overlap,
+                        )
                     _qvf_localized_wf = []
                     for _method in _localize_methods:
                         _loc = analyse_localization(
@@ -13798,6 +13875,8 @@ def run_job(
                             _occ_block,
                             method=_method,
                             dipoles=_dipoles,
+                            iaos=_loc_iaos,
+                            reference=_loc_reference,
                         )
                         _qvf_localized_wf.append(
                             (
@@ -14260,7 +14339,7 @@ def run_job(
         f"Job total {_reported_wall_seconds:.2f}s -- output written to {out_path}"
     )
 
-    return result
+    return _IAOAugmented(result, _iao_analysis) if _iao_analysis is not None else result
 
 
 __all__ = ["run_job"]

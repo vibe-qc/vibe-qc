@@ -18,7 +18,7 @@ stages:
 
 variables:
   QVF_TAG: "v0.1.0-docs.1"
-  VIBE_VIEW_TAG: "v2.17.0"
+  VIBE_VIEW_TAG: "v2.17.1"
 
 workflow:
   auto_cancel:

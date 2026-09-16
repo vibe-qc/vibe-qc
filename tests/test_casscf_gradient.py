@@ -1,10 +1,14 @@
 """Tests for CASSCF analytic nuclear gradient.
 
-Validates the z-vector-free gradient (M1) and the W_unrelaxed overlap
-correction against frozen-response finite differences.
+Validates the analytic gradient and the W_unrelaxed overlap correction
+against frozen-response and full-energy finite differences, and guards the
+user-facing surfaces against the retracted "incomplete / W^z" claims.
 """
 
 from __future__ import annotations
+
+import re
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -2044,3 +2048,105 @@ class TestCASSCFGradientFullVectorVsFD:
         assert np.abs(fd[:2]).max() < 1.0e-8
         # Translational invariance.
         assert np.abs(analytic.sum(axis=0)).max() < 1.0e-10
+
+
+# ---------------------------------------------------------------------------
+# Stale-claim guard (#119)
+#
+# The W^z retirement (#516) corrected the physics and the manual, but left
+# five user-facing surfaces still describing the gradient as incomplete, as
+# "~87 % of the full CP-MCSCF gradient", or as carrying a "gated W^z
+# correction". Those statements contradict the shipped contract and were the
+# stated blocker on #119's independent verification, so they are pinned here
+# rather than only corrected once.
+# ---------------------------------------------------------------------------
+
+# Surfaces a user reads before deciding whether to trust the gradient.
+_CASSCF_GRADIENT_SURFACES = (
+    "python/vibeqc/gradient/__init__.py",
+    "python/vibeqc/gradient/_casscf.py",
+    "examples/casscf_gradient.py",
+    "examples/wavefunction/01_casscf_h2o.py",
+    "examples/wavefunction/02_casscf_gradient.py",
+    "examples/regression/parity_casscf_gradient.py",
+    "examples/regression/casscf_gradient_fd_reproducer.py",
+    "docs/user_guide/non_hf_solvers.md",
+    "docs/user_guide/geometry_optimization.md",
+    "docs/tutorial/casscf_multireference.md",
+)
+
+# Each claim is (pattern, why it is wrong now). A line that also names the
+# retirement is history, not a live claim, so it is exempt.
+_RETRACTED_CLAIMS = (
+    (r"8[0-9]\s*%\s*of the full", "the analytic gradient is the complete derivative"),
+    (r"[Mm]issing\s+1[0-9]\s*%", "nothing is missing from the analytic gradient"),
+    (r"gated\s+W\^z", "the W^z branch was retired, not gated"),
+    (r"incomplete\s+z-vector-free", "the gradient is not incomplete"),
+    (r"not\s+(full-energy\s+)?(finite-difference|FD)[- ]tight",
+     "it matches full-energy FD to ~1.6e-7 Ha/bohr"),
+    (r"must not be used as production forces",
+     "the analytic path is the production force"),
+    (r"Incomplete analytic preview", "the analytic value is complete"),
+)
+
+# Prose that documents the retirement is allowed to recite the old claim. The
+# marker usually sits a line or two away from the quoted wording, so the
+# exemption looks at the surrounding lines, not just the matching one.
+_HISTORY_MARKERS = re.compile(
+    r"retired|obsolete|former|earlier revision|used to|was written to|no-op"
+    r"|since-fixed|phantom|#516|#119",
+    re.I,
+)
+_HISTORY_WINDOW = 3
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+@pytest.mark.parametrize("relpath", _CASSCF_GRADIENT_SURFACES)
+def test_casscf_gradient_surfaces_carry_no_retracted_claim(relpath):
+    """No live surface still calls the CASSCF gradient incomplete (#119).
+
+    The physics fix landed under #516; independent verification failed on
+    these surfaces alone, because a user who reads them rejects or
+    mischaracterises the corrected production path.
+    """
+    path = _repo_root() / relpath
+    assert path.is_file(), f"{relpath} moved; update _CASSCF_GRADIENT_SURFACES"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    offenders = []
+    for index, line in enumerate(lines):
+        window = lines[max(0, index - _HISTORY_WINDOW) : index + _HISTORY_WINDOW + 1]
+        if any(_HISTORY_MARKERS.search(neighbour) for neighbour in window):
+            continue  # documents the retirement rather than asserting it
+        for pattern, why in _RETRACTED_CLAIMS:
+            if re.search(pattern, line):
+                offenders.append(f"{relpath}:{index + 1}: {line.strip()}  <- {why}")
+    assert not offenders, "retracted CASSCF-gradient claims:\n" + "\n".join(offenders)
+
+
+def test_stale_claim_guard_would_catch_the_original_wording():
+    """The guard is not vacuous: the exact pre-fix lines must trip it."""
+    pre_fix = [
+        "The gradient captures ~87% of the full CP-MCSCF gradient.",
+        "Missing 13% = W^z (CI+orbital relaxation, Handy-Schaefer z-vector).",
+        "z-vector-free + gated W^z correction + numerical FD fallback",
+        "Characterizes the incomplete z-vector-free gradient against two",
+        "The exposed z-vector-free value is incomplete and not full-energy FD-tight.",
+        "finite-difference tight and must not be used as production forces.",
+        'print(f"\\nIncomplete analytic preview (dE/dR, Hartree/bohr):")',
+    ]
+    for line in pre_fix:
+        assert not _HISTORY_MARKERS.search(line), line
+        assert any(
+            re.search(pattern, line) for pattern, _ in _RETRACTED_CLAIMS
+        ), f"guard misses the pre-fix wording: {line}"
+
+    # And the exemption is not a blanket one: a retracted claim standing on
+    # its own, with no retirement context nearby, is still reported.
+    stray = ["filler"] * 10 + [pre_fix[0]] + ["filler"] * 10
+    assert not any(
+        _HISTORY_MARKERS.search(n)
+        for n in stray[10 - _HISTORY_WINDOW : 11 + _HISTORY_WINDOW]
+    )

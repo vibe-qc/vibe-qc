@@ -491,6 +491,7 @@ toolset_lifecycle
 quickstart
 using_claude
 running
+qcschema
 good_practices
 troubleshooting
 updating
@@ -503,6 +504,7 @@ tour
 :caption: QVF and vibe-view
 
 visualization
+relocalization_worker
 ```
 
 ```{toctree}

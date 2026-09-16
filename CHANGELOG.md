@@ -1,5 +1,257 @@
 ## [Unreleased]
 
+## [v0.17.5] - 2026-09-16 - *Tew's Tern*
+
+This release collects the accumulated changes on `main` since v0.17.4,
+including the #281 correctness fix for the experimental chi finite-torus
+DLPNO-MP2 frozen core. QVF remains the default output format. The CI companion
+pin moves to the published vibe-view v2.17.1; the QVF reference pin remains
+v0.1.0-docs.1. Patches inherit Tew's Tern.
+
+### Known issues carried from earlier releases (#206, #196, #306)
+
+Three problems are carried into this release unfixed. None of them is caused by
+a change in this release, and no measurement in this release supersedes the
+numbers recorded for them.
+
+* **#206, the range-separated three-centre build.** 3D periodic GDF
+  calculations still run far slower than they did in v0.17.0. The blocking lane
+  `tests/test_periodic_molden_gamma_export.py` took 21.0 s in CI at v0.17.0 and
+  641.6 s at v0.17.1 with the test unchanged. The short-range auxiliary image
+  enumeration change shipped in v0.17.2; it still has no independent numerical
+  or performance verdict, so no resolution is claimed.
+* **#196, the one-electron AO cutoff widening.** Periodic GDF still widens the
+  one-electron AO cutoff to 69.9 bohr on a two-atom cell, selecting 12527
+  lattice cells against 135 before. On that reproduction the calculation did not
+  reach its first SCF iteration in 20 minutes. It is a separate cause from
+  #206's lane slowdown. A candidate change that screens the periodic
+  nuclear-attraction lattice domain is proposed but not merged, and is not part
+  of this release.
+* **#306, molecular GFN2-xTB regressed between v0.17.1 and v0.17.4.** This is
+  already present in the shipped v0.17.4 and is inherited here unchanged; its
+  cause is not yet known and no fix is claimed. Two GFN2-xTB single points that
+  converged at v0.17.1 no longer converge: norbornadiene (2754 SCC iterations,
+  -19.1266261726 Ha) and p-benzoquinone (2693 SCC iterations, -22.3978547752
+  Ha) now exhaust the 3600-iteration ceiling and refuse. One energy moved:
+  thymine GFN2-xTB went -23.0084139465 to -23.0221115013 Ha, a shift of
+  -1.370e-02 Ha, while 258 of the 262 molecular rows compared on the same host
+  between the two releases stayed identical to 1e-9 and the other three differ
+  by 1e-7 or less. It was found by independently re-running an article's
+  archived decks on the release runtime; the post-cut v0.17.4 inventory
+  separately shows `tests/test_gfn2_xtb.py` failing 2 of 170, and whether that
+  has the same root cause is not established. A bisect across the v0.17.1 to
+  v0.17.4 window is in progress.
+
+### Fixed
+
+- Experimental chi finite-torus DLPNO-MP2 now preserves the solver's frozen
+  core in its complete-space correction. Restricted and unrestricted local
+  MP2/CCSD(T) reject frozen-core localization until separate core and active
+  projectors are supported; canonical `localise="none"` remains available
+  (#281).
+
+- Unsupported FRAGMO requests on the experimental AICCM real-Gamma and
+  four-center routes now retain the requested guess name in the diagnostic
+  instead of reporting the internal READ transport selector (#270).
+
+- Requesting unavailable IAO population analysis no longer suppresses
+  separately requested QVF localization of a supported SCF reference, such as
+  the reference orbitals in an MP2 calculation. The population result remains
+  explicitly unavailable while existing reference-localization output is
+  preserved.
+
+### Fixed: open-shell transition-metal molecules start from the right basin
+
+`AUTO` now resolves a molecular open-shell system containing a d- or f-block
+atom to `PATOM` instead of bare `SAD`. The `SAD` construction superposes free
+atom Hund densities, so every open-shell ligand arrives carrying its own free
+atom moment even where the molecule binds it closed shell. On FeCl3 (sextet,
+cc-pVDZ) that trapped a symmetry-broken solution 90.05 mHa above the ground
+state, with one chloride left as a radical cation, which converged and then
+certified a negative internal Hessian eigenvalue. `PATOM` applies the same
+Hund seed and then re-polarises it in field, reaching the ORCA 6.1.1 ground
+state (-2641.1344915780 Ha, S^2 = 8.767533) in 23 iterations, internally
+stable and with no stability restart. Supplying `atomic_spins` still holds
+`AUTO` on `SAD`, so a deliberate antiferromagnetic seed is never overridden,
+and routes without `PATOM` fall back to their advertised `SAD` construction.
+
+### Fixed: the CASSCF gradient no longer describes itself as incomplete
+
+The W^z retirement corrected the physics and the manual, but left five
+user-facing surfaces still calling the CASSCF analytic gradient incomplete,
+quoting it as "87 % of the full CP-MCSCF gradient", or advertising a "gated
+W^z correction": the `vibeqc.gradient` module docstring and the
+`casscf_gradient`, `01_casscf_h2o`, `02_casscf_gradient` and
+`parity_casscf_gradient` examples. A reader of those surfaces would reject or
+mischaracterise the corrected production path. They now state the shipped
+contract: the analytic gradient is the complete derivative of a variational
+CASSCF energy, matching the full-energy finite difference to ~1.6e-7 Ha/bohr,
+with `compute_wz=True` a warned no-op alias and `compute_wz="numerical"` the
+finite-difference cross-check. A regression pins every one of those surfaces
+against the retracted wording.
+
+### Added: a declared crystal system refuses a contradicting lattice (#128)
+
+vibe-qc reads lattice vectors as the COLUMNS of `lattice`. A row-oriented
+matrix is still a full-rank lattice, so it is accepted and produces a sheared,
+physically different crystal that converges and reports plausible numbers;
+`det L == det L.T`, so a volume check is blind to it. Nothing geometric can
+refuse the transpose in general, because both readings are valid lattices.
+Only a declaration can, and there was no way to make one.
+
+`check_crystal_system(lattice_or_system, "hexagonal")` now refuses a lattice
+whose metric contradicts the declaration, and `lattice_from_vectors` takes a
+`crystal_system=` keyword so the declaration can be made where the docs already
+tell users to build cells. The refusal names the condition that failed, the
+measured lengths and angles in bohr and Angstrom, and, when the other reading
+of the same matrix would have satisfied the declaration, says so and points at
+the orientation-free constructor. The lattice is never transposed for the
+caller: both readings are valid cells, and silently picking one would rotate
+the lattice relative to the unchanged Cartesian atom positions.
+
+What a declaration catches is stated plainly rather than oversold. A
+transposed hexagonal or rhombohedral cell is caught, which is what every
+instance recorded in the issue was. A cubic, tetragonal or orthorhombic
+declaration is not an orientation check at all, because those matrices are
+symmetric in the usual Cartesian setting and a cubic metric is
+transpose-invariant in any frame; it still catches a mistyped angle. A
+transposed monoclinic or triclinic cell stays inside its own system and is not
+caught. Conditions are equalities only, so a cubic cell declared orthorhombic
+is accepted, and a cubic declaration admits the face- and body-centred
+primitive settings as well as the conventional cell.
+
+### Fixed: basis-optimization marshalling built a sheared crystal from a correct one (#128)
+
+`vibeqc.basis_optimization.calculators` moved a vibe-basis `Structure` into a
+`PeriodicSystem` by handing `lattice_matrix_angstrom()`, documented as "rows =
+a, b, c vectors", straight to the COLUMNS-consuming constructor, while the
+fractional-to-Cartesian product beside it read the same matrix as rows and so
+placed the atoms correctly. A hexagonal structure with a = b = 2.504 Angstrom
+and gamma = 120 became a = 2.7996, b = 2.1685, gamma = 116.565: a different
+crystal. The reverse marshaller unpacked the column matrix as rows in the same
+way, so the two cancelled on a round trip and the cubic fixture covering them
+could not tell the difference, a diagonal matrix being its own transpose. Both
+directions now use the column convention, the marshaller enforces the
+`crystal_system` the `Structure` already declares, and the round trip is
+covered by a hexagonal cell that fails if either direction is corrected alone.
+Cubic compounds were unaffected.
+
+### Added: a declared space group refuses a contradicting structure (#128)
+
+`check_space_group(system, "Fd-3m")` takes a Hermann-Mauguin symbol or an
+International Tables number, hands the lattice and the basis to spglib, and
+refuses a structure whose detected group is not the declared one. This is the
+"or space group" half of the issue's first ask, and it answers a different
+question from `check_crystal_system`: that one is a statement about the
+lattice, tested on the metric alone, while this is a statement about the whole
+structure, so it catches an atom on the wrong site, a mistranscribed
+fractional coordinate, or a basis that broke the symmetry the caller believed
+the structure had. `symprec=` is exposed rather than hidden because it changes
+the answer: a cell 0.1% off cubic reads as P4/mmm at the 1e-4 default and
+Pm-3m at 1e-2. Only 3-D cells are accepted, since for a slab spglib would
+treat the synthesized vacuum axis as periodic and report a group that depends
+on the vacuum thickness.
+
+It is complementary to the crystal-system check, not stronger. Measured on the
+standard cell constructions with the Cartesian atom positions held fixed and
+only the lattice transposed, which is the shape of every instance this issue
+records: hexagonal goes P-6m2 (187) to Pm (6) and is caught, while monoclinic
+P2/m and triclinic P-1 keep their groups and are not. Neither check sees
+those. A detected space group must also never be used to derive a crystal
+system for the metric check, because the basis lowers the group while the
+metric is untouched: an exactly hexagonal lattice with a symmetry-breaking
+basis reports Pm, and a metric check driven off that number would refuse a
+legitimate hexagonal cell.
+
+### Changed: basis-optimization marshalling enforces the symmetry a Structure declares (#128)
+
+`vibeqc.basis_optimization.calculators` already checked the `crystal_system` a
+vibe-basis `Structure` carries when marshalling it into a `PeriodicSystem`; it
+now checks the declared space group too, which is the tighter claim. The check
+keys on `crystal_spacegroup`, the integer, and not on the `spacegroup` string:
+`_structure_from_periodic_system` clears the integer to zero after a
+relaxation, because it describes the input geometry and a relaxation has moved
+the atoms, while the string is carried over and goes stale. A zero therefore
+means the record's symmetry data is no longer trustworthy and the check is
+skipped, which is the intent rather than a loophole; keying on the string
+instead would fail closed on every relaxed structure fed back in.
+
+The first thing this caught was two mislabelled fixtures in the repository's
+own engine tests. A cell with one cation at the origin and one anion at the
+body centre is `Pm-3m`, the CsCl arrangement, not rocksalt's `Fm-3m`, which
+needs four formula units in the conventional cell; and a boron nitride sheet
+is `P-6m2` rather than `P6/mmm`, because the two different elements remove the
+horizontal mirror and the inversion of the elemental lattice. Only the labels
+were wrong, so the geometries are unchanged and no energy moved.
+
+### Added: molecular QCSchema input and result interchange
+
+Read and write QCSchema JSON molecules and atomic inputs/results. The
+`run_qcschema` adapter runs molecular energies and HF gradients or Hessians,
+with explicit errors for unsupported molecule fields and job options.
+The public imports are retained alongside other top-level exports. A worked
+H2 tutorial and runnable JSON examples compare HF, MP2, and FCI/STO-3G with
+a published Born-Oppenheimer energy.
+
+The adapter emits QCSchema atomic input/output **version 1** and molecule
+**version 2** documents, and the manual now states that boundary: QCElemental's
+newer `models.v2` classes use a different schema, so these dictionaries cannot
+be passed to them directly. QCElemental itself stays optional and is not needed
+for file I/O or calculation. As a concrete environment limitation, QCElemental
+0.51.2's legacy `models.AtomicInput` and `models.AtomicResult` cannot be
+instantiated on Python 3.14, because their Pydantic v1 backend is unavailable
+there; the official QCSchema JSON schemas still validate the input and output
+files in that environment.
+
+### Added
+
+- Opt-in molecular RHF/RKS/UHF/UKS IAO charges, spin populations and
+  spin-resolved IAO-Wiberg bond orders through `run_job(iao_analysis=True)`.
+  MINI/symmetric analysis runs independently of localization and QVF, with
+  dense JSON results, text display thresholds, QVF charge compatibility,
+  citations and explicit unavailable reasons. Rank-deficient IAO spaces are
+  refused instead of silently truncating the reference. Periodic analysis is
+  explicitly gated pending k-point and lattice bond conventions.
+
+### TREXIO tutorials, literature checks and periodic READ
+
+Added runnable molecular RHF/UHF/ECP, CASCI/CASSCF/FCI, periodic multi-k
+restart and backend-conversion examples, with two worked tutorials.
+The reference documents comparisons with published TREXIO normalization
+factors and independent PySCF energy reconstructions. QVF remains the
+default; TREXIO is an additional opt-in output.
+
+The periodic runner now admits TREXIO HDF5 files and text directories for
+multi-k READ. Its early QVF-only guard previously rejected these sources
+before the existing TREXIO-aware restart machinery could validate them.
+Both backends are covered through the public runner.
+
+### Standalone relocalization worker
+
+- Add `python -m vibeqc_relocalize` and `vibe-qc-relocalize`, with a versioned
+  JSONL request/event protocol, native computational capability probes,
+  structured refusals and diagnostics confined to stderr. Supplied molecular
+  occupied orbitals support IBO, Boys and Pipek-Mezey using exact archived AO
+  shells. RHF is an explicit option, never a fallback.
+- Enforce UTF-8 transport and reject booleans in numeric arrays, including
+  mixed arrays, before native computation. Verify the worker in a separate
+  wheel installation and document the native-library installation requirement.
+- Expose an opt-in experimental `aiccm-wannier` route for complete finite-BvK
+  Gamma/cyclic meshes with supplied real or complex orbitals and overlap
+  blocks. Check orthonormality and subspace preservation; reject unsupported
+  spin, fractional occupations, periodic molecular-method requests and
+  incomplete metadata. Document the viewer integration and QVF format gaps.
+
+## [v0.17.4] - 2026-09-16 - *Tew's Tern*
+
+### Fixed: exact integer counts for periodic meshes and chi extensions (#274)
+
+Public k-point builders, runner/ASE/dimer mesh adapters, GDF count and IBZ metadata
+readers, BIPOLE supercell/density helpers, four-center CCM and chi extension
+controls reject floats, booleans and strings instead of silently converting
+them to a different finite torus. Valid integer counts retain each route's
+scalar, padding and inactive-axis conventions.
+
 ### Fixed: retain automated verification brief ordering (#217)
 
 The contributor guide again requires automated contributors to post their

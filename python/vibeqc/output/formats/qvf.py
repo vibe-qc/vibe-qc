@@ -2211,6 +2211,14 @@ def _emit_qvf_into_zip(
     # --- atom_properties ----------------------------------------
     pop = context.get("population_summary")
     iao_charges = context.get("iao_charges")
+    iao_analysis = getattr(pop, "iao_analysis", None)
+    if iao_analysis is not None:
+        if iao_analysis.available:
+            iao_charges = iao_analysis.charges
+        _write_vendor_json_sections(zf, [{
+            "id": "iao_analysis", "kind": "x_vibeqc.iao_analysis",
+            "path": "analysis/iao.json", "payload": iao_analysis.to_dict(),
+        }], sections)
     if pop is not None or iao_charges is not None:
         _write_atom_properties_section(
             zf, pop, sections, iao_charges=iao_charges
@@ -4153,12 +4161,9 @@ def _write_atom_properties_section(
     ``dipole``, ``errors``. It may be None when the only per-atom
     property available is ``iao_charges``.
 
-    ``iao_charges`` is a plain per-atom array rather than a
-    ``PopulationSummary`` field because the IAO analysis runs in the QVF
-    preparation block, after the population sidecars have already been
-    written. That is why the ``.population.{txt,json}`` sidecars do not
-    carry an IAO row while the QVF does — see
-    ``handovers/HANDOVER_IBO.md``.
+    ``iao_charges`` preserves the legacy localization-only charge payload.
+    An independently requested analysis additionally supplies a complete
+    JSON payload in the separate ``x_vibeqc.iao_analysis`` vendor section.
     """
     section: dict[str, Any] = {
         "id": "props0",
@@ -4219,8 +4224,8 @@ def _write_atom_properties_section(
             )
             section["members"]["spin_population"] = member
 
-        if section["members"]:
-            sections.append(section)
+    if section["members"]:
+        sections.append(section)
 
 
 # -- trajectory -----------------------------------------------------------

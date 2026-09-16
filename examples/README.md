@@ -69,9 +69,11 @@ screenshots for QVF-backed examples.
 ```
 examples/
 ├── molecular/    — Molecule-only HF / DFT / MP2, opt, vibrations, cubes
+├── qcschema/     — portable molecular JSON inputs and atomic results
 ├── periodic/     — PeriodicSystem (1D chains + 3D crystals)
 ├── mlip/         — optional MACE runtime checks and calculation workflows
 ├── qvf_containers/ — pending-to-settled single-file job lifecycle
+├── trexio/       — optional wavefunction exchange, conversion and READ restarts
 ├── workflows/    — multi-step protocols (NEB, …)
 ├── ase_compare/  — cross-code validation vs PySCF / ORCA / Psi4
 ├── ase_workflows/— pure-ASE workflows with vibe-qc as calculator
@@ -88,12 +90,15 @@ examples/
 | Verify a new installation | [`quickstart.py`](quickstart.py) | [`molecular/input-h2o-rhf.py`](molecular/input-h2o-rhf.py) |
 | Run molecular DFT and optimize | [`molecular/input-h2o-rks-pbe-d3-opt.py`](molecular/input-h2o-rks-pbe-d3-opt.py) | geometry-optimization section below |
 | Treat an open-shell molecule | [`molecular/input-oh-radical.py`](molecular/input-oh-radical.py) | [`molecular/input-oh-ump2.py`](molecular/input-oh-ump2.py) |
+| Exchange a QCSchema molecular job | [`qcschema/compare_h2.py`](qcschema/compare_h2.py) | [QCSchema tutorial](../docs/tutorial/qcschema_interchange.md), [HF derivatives](qcschema/hf_derivatives.py) |
+| Compare IAO populations with literature | [`iao_population_comparison.py`](iao_population_comparison.py) (requires `--output-dir`) | [IAO numerical comparisons](../docs/user_guide/iao_validation.md) |
 | Run Microsoft SKALA neural XC | [`molecular/input-h2-rks-skala.py`](molecular/input-h2-rks-skala.py) | [worked SKALA tutorial](../docs/tutorial/skala_neural_xc.md), [experimental periodic smoke run](periodic/input-h2-cell-rks-skala-gdf.py) |
 | Compare direct and conventional SCF | [`molecular/input-h2o-rhf-direct.py`](molecular/input-h2o-rhf-direct.py) | [direct-SCF tutorial](../docs/tutorial/direct_scf_memory_tradeoff.md) |
 | Start a periodic calculation | [`periodic/input-h-chain-uniform.py`](periodic/input-h-chain-uniform.py) | [`periodic/input-lih-pob-tzvp.py`](periodic/input-lih-pob-tzvp.py) |
 | Optimize or characterize through ASE | [`ase_workflows/optimize-via-ase-bfgs.py`](ase_workflows/optimize-via-ase-bfgs.py) | vibrations, NEB, and MD entries below |
 | Run a multi-step reaction workflow | [`workflows/input-nh3-umbrella-neb.py`](workflows/input-nh3-umbrella-neb.py) | [NEB tutorial](../docs/tutorial/neb_reaction_path.md) |
 | Produce or inspect QVF containers | [`qvf_containers/build_h2_job.py`](qvf_containers/build_h2_job.py) | [container tutorial](../docs/tutorial/qvf_job_containers.md) |
+| Exchange TREXIO wavefunctions | [`trexio/molecular_restart.py`](trexio/molecular_restart.py) | [TREXIO examples](trexio/README.md), [molecular tutorial](../docs/tutorial/trexio_exchange.md), [CI and periodic tutorial](../docs/tutorial/trexio_correlated_periodic.md) |
 | Validate against another program | [`ase_compare/compare-h2o-hf.py`](ase_compare/compare-h2o-hf.py) | cross-code validation section below |
 
 Each example should answer four questions before you modify it: which system
@@ -129,6 +134,23 @@ basis count by 5–10×, which costs roughly $\mathcal{O}(N_{bf}^4)$ in
 the Fock build. Multi-threaded scaling and tight-cell convergence
 guidance live in [tutorial 18 (parallel)](../docs/tutorial/parallel_execution.md)
 and [tutorial 24 (periodic SCF convergence)](../docs/tutorial/periodic_scf_convergence.md).
+
+## QCSchema molecular interchange - `qcschema/`
+
+`h2_input.json` defines a singlet H2 molecule at a 1.4011 bohr bond length
+with an HF/STO-3G energy request. Run the scripts from the repository root:
+
+```sh
+mkdir -p /tmp/vibeqc-qcschema-example
+.venv/bin/python examples/qcschema/compare_h2.py --output-dir /tmp/vibeqc-qcschema-example
+.venv/bin/python examples/qcschema/hf_derivatives.py --output-dir /tmp/vibeqc-qcschema-example
+```
+
+`compare_h2.py` writes HF, MP2, and FCI atomic result JSON files and compares
+their energies with a published Born-Oppenheimer value. `hf_derivatives.py`
+writes gradient and Hessian atomic results. See the
+[worked tutorial](../docs/tutorial/qcschema_interchange.md) for the physical
+interpretation and JSON field layout.
 
 ## Round-trip QVF job containers - `qvf_containers/`
 

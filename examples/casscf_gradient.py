@@ -1,8 +1,10 @@
-"""CASSCF analytic nuclear-gradient preview - diagnostic examples.
+"""CASSCF analytic nuclear gradient - diagnostic examples.
 
-The current z-vector-free and optional W^z variants are not full-energy
-finite-difference tight and must not be used as production forces. This file
-exposes their components for development; the decisive correctness pin is
+The analytic gradient is the production path: it is the complete derivative
+of a variational CASSCF energy and agrees with the full-energy finite
+difference to ~1.6e-7 Ha/bohr on the pinned H2/6-31G case. This file exposes
+its components next to the in-repo FD oracle for development inspection; the
+decisive correctness pin is
 ``examples/regression/casscf_gradient_fd_reproducer.py``.
 
 Requires:
@@ -40,7 +42,7 @@ def example_h2_gradient():
 
     # The analytic gradient: the complete derivative of the variational
     # CASSCF energy (matches full-energy FD to ~2e-7 Ha/bohr; GitLab #516).
-    grad_87 = compute_casscf_gradient(
+    grad_analytic = compute_casscf_gradient(
         mol,
         basis,
         C_conv,
@@ -53,10 +55,10 @@ def example_h2_gradient():
     )
     print(f"  CASSCF energy:        {sc.e_total:.8f} Ha")
     print(
-        f"  analytic gradient (atom 0): [{grad_87[0, 0]:.6f}, {grad_87[0, 1]:.6f}, {grad_87[0, 2]:.6f}]"
+        f"  analytic gradient (atom 0): [{grad_analytic[0, 0]:.6f}, {grad_analytic[0, 1]:.6f}, {grad_analytic[0, 2]:.6f}]"
     )
     print(
-        f"  Net force:            [{np.sum(grad_87[:, 0]):.2e}, {np.sum(grad_87[:, 1]):.2e}, {np.sum(grad_87[:, 2]):.2e}]"
+        f"  Net force:            [{np.sum(grad_analytic[:, 0]):.2e}, {np.sum(grad_analytic[:, 1]):.2e}, {np.sum(grad_analytic[:, 2]):.2e}]"
     )
 
     # compute_wz="numerical": the in-repo finite-difference oracle.  The
@@ -79,7 +81,7 @@ def example_h2_gradient():
         f"  FD oracle (atom 0):         [{grad_fd[0, 0]:.6f}, {grad_fd[0, 1]:.6f}, {grad_fd[0, 2]:.6f}]"
     )
     print(
-        f"  analytic - FD:              [{grad_87[0, 0] - grad_fd[0, 0]:.2e}, {grad_87[0, 1] - grad_fd[0, 1]:.2e}, {grad_87[0, 2] - grad_fd[0, 2]:.2e}]"
+        f"  analytic - FD:              [{grad_analytic[0, 0] - grad_fd[0, 0]:.2e}, {grad_analytic[0, 1] - grad_fd[0, 1]:.2e}, {grad_analytic[0, 2] - grad_fd[0, 2]:.2e}]"
     )
     print()
 

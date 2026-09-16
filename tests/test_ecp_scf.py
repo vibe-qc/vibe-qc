@@ -64,6 +64,42 @@ def _zn_ion():
     return mol, basis
 
 
+def _out_block(text, header):
+    assert header in text, f"the .out carries no {header!r} block"
+    return text.split(header, 1)[1]
+
+
+def _out_atomic_charges(text, element):
+    """Return the (Mulliken, Loewdin, Hirshfeld) row for ``element`` from the
+    .out "Atomic charges" table.
+
+    Parsed rather than substring-matched. The table prints six decimals
+    (``scf_log.py``, ``_fixed_unsigned_zero(..., 6)``), so an ``in text``
+    literal pins the charge to +/-5e-7 -- twenty times tighter than the
+    numeric assertions elsewhere in this file, and tighter than the ~3e-6
+    that a legitimate libecpint radial-quadrature change moves it (#269).
+    """
+    for line in _out_block(text, "Atomic charges").splitlines():
+        fields = line.split()
+        if len(fields) == 5 and fields[1] == element:
+            return tuple(float(x) for x in fields[2:])
+    raise AssertionError(f"no {element} row in the .out atomic-charges table")
+
+
+def _out_dipole_debye(text):
+    """``|mu|`` in Debye from the .out dipole table.
+
+    Same reasoning as :func:`_out_atomic_charges`: the printed 1.9950 is
+    2.2e-6 from rendering as 1.9949, a tighter implicit pin than the charge
+    literal that #269 was filed about.
+    """
+    for line in _out_block(text, "Dipole moment").splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[0] == "|mu|":
+            return float(fields[2])
+    raise AssertionError("no |mu| row in the .out dipole table")
+
+
 def _h2s_lanl2dz():
     """MF076 geometry: neutral singlet H2S with an S/LANL2DZ ECP."""
     mol = vq.Molecule(
@@ -454,8 +490,15 @@ def test_run_job_ecp_properties_reach_out_and_population_file(tmp_path):
     )
     assert r.converged
     text = (tmp_path / "h2s642.out").read_text()
-    assert "1.9950" in text  # dipole, Debye
-    assert "-0.158809" in text  # Mulliken S
+    # These assert that the .out carries the Z_eff numbers rather than the
+    # bare-Z ones -- bare Z gives a Mulliken S charge of +9.84 and a different
+    # dipole -- not that the last printed digit is stable. Both were exact
+    # substring pins and both were tighter than the ~3e-6 a legitimate
+    # libecpint quadrature change moves them (#269).
+    assert _out_dipole_debye(text) == pytest.approx(1.99496, abs=1e-3)
+    q_s_out = _out_atomic_charges(text, "S")[0]
+    assert q_s_out == pytest.approx(-0.158809, abs=1e-5)
+    assert q_s_out < 0.0
     pop = json.loads((tmp_path / "h2s642.population.json").read_text())
     assert pop["dipole"]["total_debye"] == pytest.approx(1.99496, abs=1e-5)
     mul = pop.get("mulliken") or pop.get("mulliken_charges")

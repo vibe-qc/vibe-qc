@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 __all__ = [
     "BondOrderSummary",
     "wiberg_bond_orders",
+    "iao_wiberg_bond_orders",
     "delocalization_index",
     "bond_order_summary",
     "periodic_wiberg_bond_orders",
@@ -83,6 +84,45 @@ def _real_if_hermitian(mat: np.ndarray, what: str = "density matrix") -> np.ndar
 # ---------------------------------------------------------------------------
 # Wiberg bond orders
 # ---------------------------------------------------------------------------
+
+
+def iao_wiberg_bond_orders(
+    density_alpha: np.ndarray,
+    density_beta: np.ndarray,
+    atom_indices: np.ndarray,
+    n_atoms: int,
+) -> np.ndarray:
+    """Spin-resolved Wiberg indices in labeled orthonormal IAO bases.
+
+    ``B[a,b] = 2 sum_sigma sum_mu_in_a,nu_in_b |D_sigma[mu,nu]|^2``.
+    Alpha and beta may use different IAO bases, with the same atom labels.
+    For a determinant, Wick contraction gives number covariance
+    ``Cov(N_a,N_b) = -sum_sigma ||D_sigma[a,b]||_F^2`` for a != b;
+    this index is minus twice that covariance. In a restricted determinant
+    it is the Wiberg square of the total IAO density. General correlated
+    number covariances require the 2-RDM and are not implemented here.
+
+    Wiberg, Tetrahedron 24, 1083 (1968),
+    doi:10.1016/0040-4020(68)88057-3; determinant interpretation discussed
+    by de Giambiagi et al., Theor. Chim. Acta 68, 337 (1985),
+    doi:10.1007/BF00529054. No original-AO Loewdin transform is performed.
+    """
+    from .iao_population import _atom_labels, _hermitian
+
+    if isinstance(n_atoms, bool) or not isinstance(n_atoms, (int, np.integer)) or n_atoms < 1:
+        raise ValueError("n_atoms must be a positive integer")
+    da = _hermitian(density_alpha, "alpha IAO density")
+    db = _hermitian(density_beta, "beta IAO density", da.shape)
+    labels = _atom_labels(atom_indices, len(da), n_atoms)
+    with np.errstate(over="ignore", invalid="ignore"):
+        residuals = [np.linalg.norm(d @ d - d) for d in (da, db)]
+    if not np.isfinite(residuals).all() or max(residuals) > 1e-7:
+        raise ValueError("IAO-Wiberg analysis requires idempotent spin determinant densities")
+    weights = 2. * (np.abs(da) ** 2 + np.abs(db) ** 2)
+    bonds = np.zeros((n_atoms, n_atoms))
+    np.add.at(bonds, (labels[:, None], labels[None, :]), weights)
+    np.fill_diagonal(bonds, 0.)
+    return bonds
 
 
 def wiberg_bond_orders(

@@ -726,6 +726,15 @@ section says `npa: not implemented`. This known limitation is not a
 calculation error. See the [bond analysis guide](bond_analysis.md) for the
 theory, provisional NBO APIs, EDA, orbital entanglement and citations.
 
+With `iao_analysis=True`, molecular RHF/RKS/UHF/UKS jobs add an
+`iao` object and a labeled IAO text section. This contains MINI/symmetric
+IAO charges, optional alpha-minus-beta spin populations, dense spin-resolved
+IAO-Wiberg bond orders, conventions and diagnostics. An unsupported analysis
+has `available=false`, null numerical arrays and an `unavailable_reason`;
+population summaries also record that reason under `unavailable.iao`.
+The existing `wiberg` field keeps its original AO-based meaning.
+See [IAO analysis](iao_population.md) for the API and QVF extension payload.
+
 A property-computation failure (e.g. Mayer bond orders on a
 near-singular overlap) on one section does NOT suppress the others
 - partial success is preserved and the missing section is reported
@@ -1426,6 +1435,8 @@ want to inspect a failed iterate keep working.
 | `write_molden_file=` | `None` (auto) | emit `.molden` when the route exposes a Gaussian AO wavefunction; explicit `True` guarantees it or fails before calculation |
 | `write_xyz_file=` | `True` | emit `{output}.xyz` final geometry (Å, plus `energy=<Ha>` in the comment line) |
 | `write_population_file=` | `None` (auto) | emit `{output}.population.{txt,json}` on compatible routes; explicit `True` guarantees the pair or fails before calculation |
+| `iao_analysis=` | `False` | request molecular determinant IAO charges, spin populations and IAO-Wiberg bonds independently of localization/QVF |
+| `iao_bond_threshold=` | `0.05` | text display threshold for IAO bond pairs; leaves the dense API/JSON result unchanged |
 | `write_cube=` | `False` | volumetric cubes; `True` / `"density"` / `"homo"` / `"lumo"` / int / list (see [cube section](#output-h2odensitycube--output-h2ohomolumocube--volumetric-data-opt-in-v08x)) |
 | `cube_spacing=` / `cube_padding=` | `0.2` / `4.0` (bohr) | grid spacing + padding for cubes; ignored when `write_cube=False` |
 | `output_qvf=` | `True` | bundle structure + density + the `write_cube=` grids + basis/coefficients into one `{output}.qvf` archive for vibe-view (vibe-qc's native visualization format) |

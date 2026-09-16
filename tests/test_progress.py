@@ -590,6 +590,9 @@ def test_molecular_progress_scope_cleans_up_after_native_exception(
     from vibeqc.crash_dump import load_dump
     from vibeqc.output._cpp_diagnostics import _forward_progress
 
+    # Exercise the explicit flag independently of queue/env telemetry defaults.
+    monkeypatch.delenv("VQ_WORKDIR", raising=False)
+    monkeypatch.delenv("VIBEQC_STRUCTURED_LOG", raising=False)
     molecule = _h2_molecule()
     output = tmp_path / f"native-failure-{structured_enabled}"
     structured_path = output.with_suffix(".scf.jsonl")

@@ -1377,6 +1377,7 @@ def _runner_bloch_kmesh(
 ):
     """Materialize the high-level runner's k-point input as a BlochKMesh."""
     from ._vibeqc_core import monkhorst_pack as _mp
+    from .kpoints import _integer_counts
 
     if kpoints is None:
         return _mp(system, [1, 1, 1])
@@ -1390,7 +1391,7 @@ def _runner_bloch_kmesh(
         mesh = list(kpoints)
     else:
         mesh = [kpoints, kpoints, kpoints]
-    return _mp(system, [int(n) for n in mesh])
+    return _mp(system, _integer_counts(mesh, name="kpoints mesh"))
 
 
 def _remap_kpoints_after_primitive_reduction(
@@ -6488,6 +6489,7 @@ def run_periodic_job(
     write_xsf_structure_file: bool = True,
     write_cif_file: bool = True,
     write_population_file: bool | None = None,
+    iao_analysis: bool = False,
     citations: bool = True,
     dry_run: bool = False,
     memory_override: bool = False,
@@ -6926,6 +6928,9 @@ def run_periodic_job(
         selects ``{output}.trexio.h5`` (HDF5) or ``{output}.trexio`` (text);
         a path selects an explicit target. Requires the optional ``trexio``
         extra. See :doc:`/user_guide/trexio`.
+    iao_analysis
+        Reserved for periodic IAO populations. True explicitly raises before
+        calculation until k-point and lattice bond conventions are implemented.
     write_population_file
         Emit the population-summary text/JSON pair. Exact single-Γ routes use
         the molecular analysis; multi-k BIPOLE uses its lattice-density
@@ -6961,6 +6966,11 @@ def run_periodic_job(
         embedded in QVF for vibe-view. Default False.
         Cost: ~6N SCF evaluations for the unit cell.
     """
+    if not isinstance(iao_analysis, bool):
+        raise ValueError("iao_analysis must be True or False")
+    if iao_analysis:
+        from .iao_population import PERIODIC_IAO_UNAVAILABLE
+        raise ValueError(PERIODIC_IAO_UNAVAILABLE)
     enforce_runtime_pin_from_env()
     if str(trexio_backend).strip().lower() not in ("hdf5", "text"):
         raise ValueError("run_periodic_job: trexio_backend must be 'hdf5' or 'text'.")
@@ -7370,14 +7380,18 @@ def run_periodic_job(
         if read_from is None and not _fragmo_request:
             raise ValueError(
                 "multi-k periodic initial_guess='read' needs an in-memory "
-                "multi-k source result or a .qvf archive with all-k Bloch "
+                "multi-k source result or a QVF/TREXIO file with all-k Bloch "
                 "restart data."
             )
         if isinstance(read_from, (str, os.PathLike)):
-            _read_suffix = Path(os.fspath(read_from)).suffix.lower()
-            if _read_suffix != ".qvf":
+            _read_source_path = Path(os.fspath(read_from))
+            # Match guess_read._trexio_source's HDF5/text dispatch. The
+            # reader below validates every k/spin block and the target mesh.
+            _read_suffix = _read_source_path.suffix.lower()
+            if (_read_suffix not in {".qvf", ".h5", ".hdf5", ".trexio"}
+                    and not _read_source_path.is_dir()):
                 raise NotImplementedError(
-                    "multi-k periodic READ restart from non-QVF file sources "
+                    "multi-k periodic READ restart from non-QVF/non-TREXIO file sources "
                     "is not implemented: a multi-k restart needs all per-k "
                     "complex Bloch coefficients and occupations."
                 )
@@ -7534,7 +7548,9 @@ def run_periodic_job(
             )
             and _resolved_initial_guess != InitialGuess.HCORE
         ):
-            _aiccm_guess_label = _resolved_initial_guess.name
+            _aiccm_guess_label = (
+                "FRAGMO" if _fragmo_request else _resolved_initial_guess.name
+            )
             if _requested_initial_guess != _resolved_initial_guess:
                 _aiccm_guess_label = (
                     f"{_requested_initial_guess.name} (resolved to "

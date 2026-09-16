@@ -36,6 +36,7 @@ from .qvf import (
     validate_qvf,
     write_qvf,
 )
+from .qcschema import write_qcschema
 from .trexio import (
     TrexioData,
     TrexioMOBlock,
@@ -48,6 +49,7 @@ from .trexio import (
 from .xyz import write_xyz
 
 __all__ = [
+    "write_qcschema",
     "write_xyz",
     "write_extended_xyz",
     "write_trexio",

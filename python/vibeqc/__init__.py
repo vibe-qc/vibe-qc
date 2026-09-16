@@ -3325,6 +3325,13 @@ from .output.formats.trexio import (
     write_trexio,
     write_trexio_fields,
 )
+from .qcschema import (
+    molecule_from_qcschema,
+    molecule_to_qcschema,
+    read_qcschema,
+    run_qcschema,
+)
+from .output.formats.qcschema import write_qcschema
 from .io import (
     normal_mode_trajectory,
     write_molden,
@@ -3724,9 +3731,14 @@ from .periodic_gradient_open_shell import (
 )
 from .periodic_gradient_rks import compute_gradient_periodic_rks_gamma
 from .lattice_convention import (
+    CRYSTAL_SYSTEMS,
+    PLANE_LATTICE_SYSTEMS,
     CellParameters,
+    LatticeDeclarationError,
     NearestNeighbour,
     cell_parameters,
+    check_crystal_system,
+    check_space_group,
     lattice_from_vectors,
     lattice_vectors,
     nearest_neighbour_distance,
@@ -4222,7 +4234,12 @@ __all__ = [
     "PeriodicXCDensityDomain",
     "CellParameters",
     "NearestNeighbour",
+    "CRYSTAL_SYSTEMS",
+    "LatticeDeclarationError",
+    "PLANE_LATTICE_SYSTEMS",
     "cell_parameters",
+    "check_crystal_system",
+    "check_space_group",
     "lattice_from_vectors",
     "lattice_vectors",
     "nearest_neighbour_distance",
@@ -4886,6 +4903,11 @@ __all__ = [
     "read_trexio",
     "read_trexio_fields",
     "write_trexio_fields",
+    "read_qcschema",
+    "write_qcschema",
+    "molecule_from_qcschema",
+    "molecule_to_qcschema",
+    "run_qcschema",
     "TrexioData",
     "TrexioMOBlock",
     "TrexioSparse",

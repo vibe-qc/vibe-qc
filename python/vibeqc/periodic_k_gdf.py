@@ -98,7 +98,7 @@ from .guess import (
     periodic_fock_guess_k,
     resolve_initial_guess,
 )
-from .kpoints import KPoints
+from .kpoints import KPoints, _integer_counts
 from .lattice_screening import (
     RcutStrategy,
     make_lattice_opts,
@@ -1234,13 +1234,13 @@ def _resolve_ibz_native_state(system, kpoints_cart, kmesh, weights, plog):
 
     mesh = getattr(kmesh, "mesh", None)
     if mesh is None and isinstance(kmesh, (list, tuple)):
-        mesh = tuple(int(x) for x in kmesh)
+        mesh = kmesh
     if mesh is None or len(tuple(mesh)) != 3:
         raise NotImplementedError(
             "ibz_native=True needs a Monkhorst-Pack mesh it can reduce "
             f"(tuple or BlochKMesh carrying `mesh`); got {type(kmesh).__name__}."
         )
-    mesh = [int(x) for x in mesh]
+    mesh = _integer_counts(mesh, name="IBZ native mesh")
     w = np.asarray(weights, dtype=float).reshape(-1)
     if not np.allclose(w, w[0], atol=1e-12):
         raise NotImplementedError(
@@ -1996,19 +1996,14 @@ def _run_closed_shell_slab_gdf(
             "custom, shifted, weighted, and symmetry-reduced meshes remain "
             "fail-closed"
         )
-    mesh_raw = np.asarray(list(kmesh), dtype=float)
-    if mesh_raw.shape == (2,):
-        mesh_raw = np.concatenate((mesh_raw, np.ones(1, dtype=float)))
-    if (
-        mesh_raw.shape != (3,)
-        or not np.all(np.isfinite(mesh_raw))
-        or not np.all(mesh_raw == np.rint(mesh_raw))
-        or np.any(mesh_raw < 1)
-    ):
+    mesh_raw = _integer_counts(kmesh, name="slab GDF mesh")
+    if len(mesh_raw) == 2:
+        mesh_raw.append(1)
+    if len(mesh_raw) != 3 or any(value < 1 for value in mesh_raw):
         raise ValueError(
             "slab GDF requires a positive integer (n1,n2,1) mesh"
         )
-    mesh = tuple(int(value) for value in np.rint(mesh_raw))
+    mesh = tuple(mesh_raw)
     if mesh[2] != 1:
         raise ValueError("slab GDF requires kmesh=(n1,n2,1)")
     if float(aux_drop_eta) != 0.0:
@@ -2295,9 +2290,9 @@ def _mesh_tuple_for_system(
                 "periodic GDF: this operation requires structured k-mesh "
                 "metadata; explicit unstructured k-points are insufficient"
             )
-        arr = list(mesh_metadata)
+        arr = _integer_counts(mesh_metadata, name="periodic GDF kmesh")
     else:
-        arr = list(mesh)
+        arr = _integer_counts(mesh, name="periodic GDF kmesh")
     if len(arr) == dim:
         arr = arr + [1] * (3 - dim)
     elif len(arr) != 3:
@@ -2305,7 +2300,7 @@ def _mesh_tuple_for_system(
             f"periodic GDF: kmesh tuple must have length {dim} for "
             f"dim={dim} systems or length 3; got {arr!r}"
         )
-    out = tuple(int(x) for x in arr)
+    out = tuple(arr)
     if any(x < 1 for x in out):
         raise ValueError(f"periodic GDF: kmesh entries must be >= 1; got {arr!r}")
     return tuple(out[i] if i < dim else 1 for i in range(3))
@@ -2369,9 +2364,10 @@ def _expand_ibz_kmesh_to_full_bz(
     else:
         n_reduced = int(np.asarray(kmesh.kpoints).reshape(-1, 3).shape[0])
     _mesh_raw = getattr(kmesh, "mesh", None)
-    mesh_meta = tuple(
-        int(x) for x in ((1, 1, 1) if _mesh_raw is None else _mesh_raw)
-    )
+    mesh_meta = tuple(_integer_counts(
+        (1, 1, 1) if _mesh_raw is None else _mesh_raw,
+        name="IBZ parent mesh",
+    ))
     # The native BlochKMesh calls the half-step shift flags ``is_shift``;
     # the Python KPoints dataclass calls them ``shift``. Reading only
     # ``is_shift`` silently expanded a shifted KPoints reduction against

@@ -40,6 +40,18 @@ FILE_OWNERS = {
 # here therefore widens or narrows the release gate on its own; pin one only as
 # the file's owning chat, and say why in the rationale.
 CURATED: dict[str, dict[str, str]] = {
+    "tests/test_relocalization_worker.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "analysis/localization",
+        "disposition": "new",
+        "rationale": (
+            "Standalone JSONL relocalization protocol, native readiness, exact "
+            "archived basis reconstruction, molecular and experimental finite-torus "
+            "complex subspace invariants, strict refusals and explicit-only SCF. "
+            "Small local native calculations; no viewer or external QC runtime."
+        ),
+    },
     "tests/test_contributor_workflow_contract.py": {
         "maturity": "verified",
         "tier": "T2",
@@ -1862,6 +1874,16 @@ CURATED: dict[str, dict[str, str]] = {
             "boundary, and a genuine no-aids limit cycle. The two complete "
             "archived molecular cases are slow-marked in the same file; "
             "tier remains derived T2 through molecular-scf-dft"
+        ),
+    },
+    "tests/test_iao_population.py": {
+        "maturity": "production",
+        "tier": "T2",
+        "owner": "analysis/populations",
+        "disposition": "new",
+        "rationale": (
+            "Molecular determinant IAO charges, spin and IAO-Wiberg indices: "
+            "analytical covariance, matched-reference oracle and public output coverage"
         ),
     },
     "tests/test_iao_ibo.py": {

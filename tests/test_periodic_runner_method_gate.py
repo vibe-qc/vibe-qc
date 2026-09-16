@@ -216,6 +216,7 @@ def test_aiccm_supercell_gamma_routes_reject_every_non_hcore_guess(
             variant=variant,
             aiccm_lattice_extension=(1, 1, 1),
             initial_guess=initial_guess,
+            fragments=[[0]] if initial_guess == core.InitialGuess.FRAGMO else None,
             **_quiet_output_options(
                 tmp_path,
                 f"{variant}-{initial_guess.name.lower()}",
@@ -309,13 +310,13 @@ def test_aiccm_option_routes_forward_sap_instead_of_being_globally_blocked(
         )
 
 
-@pytest.mark.parametrize("initial_guess", ["FRAGMO"])
-def test_rohf_gdf_rejects_unsupported_source_before_driver(
+@pytest.mark.parametrize("fragments", [None, []], ids=["missing", "empty"])
+def test_rohf_gdf_fragmo_requires_fragments_before_driver(
     monkeypatch,
     tmp_path,
-    initial_guess,
+    fragments,
 ):
-    """The Hcore-only Roothaan GDF route cannot relabel another seed."""
+    """FRAGMO requires a valid partition before constructing any density."""
     import vibeqc.periodic_runner as runner_module
 
     def unexpected_driver(*_args, **_kwargs):
@@ -332,18 +333,19 @@ def test_rohf_gdf_rejects_unsupported_source_before_driver(
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
 
     with pytest.raises(
-        NotImplementedError,
-        match=r"initial_guess=FRAGMO.*is not implemented by this route",
+        ValueError,
+        match=r"FRAGMO requires fragments",
     ):
         vq.run_periodic_job(
             system,
             basis,
             method="ROHF",
             jk_method="gdf",
-            initial_guess=initial_guess,
+            initial_guess="FRAGMO",
+            fragments=fragments,
             **_quiet_output_options(
                 tmp_path,
-                f"rohf-gdf-{initial_guess.lower()}",
+                "rohf-gdf-fragmo",
             ),
         )
 
@@ -469,4 +471,37 @@ def test_aiccm_auto_hcore_rejects_atomic_spin_seed(tmp_path, variant):
             atomic_spins=[1],
             aiccm_lattice_extension=(1, 1, 1),
             **_quiet_output_options(tmp_path, variant),
+        )
+
+
+def test_rohf_gdf_valid_fragmo_reaches_source_preparation(monkeypatch, tmp_path):
+    """Valid FRAGMO passes route admission; stop before fragment SCF."""
+    import vibeqc.guess_fragmo as fragmo_module
+    import vibeqc.periodic_runner as runner_module
+
+    class SourcePreparationReached(Exception):
+        pass
+
+    def source_boundary(opts, system, basis, kmesh, fragments):
+        assert opts.initial_guess == core.InitialGuess.READ
+        assert len(fragments) == 1
+        assert tuple(fragments[0].atoms) == (0,)
+        assert fragments[0].multiplicity == 2
+        raise SourcePreparationReached
+
+    def unexpected_driver(*args, **kwargs):
+        pytest.fail("Numerical driver must not run in source-admission test")
+
+    monkeypatch.setattr(fragmo_module, "resolve_periodic_fragmo_source", source_boundary)
+    monkeypatch.setattr(runner_module, "run_krohf_periodic_gdf", unexpected_driver)
+    system = _he_system(12.0)
+    system.unit_cell = [core.Atom(1, [6.0, 6.0, 6.0])]
+    system.multiplicity = 2
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    with pytest.raises(SourcePreparationReached):
+        vq.run_periodic_job(
+            system, basis, method="ROHF", jk_method="gdf",
+            initial_guess="FRAGMO",
+            fragments=[fragmo_module.Fragment(atoms=[0], multiplicity=2)],
+            **_quiet_output_options(tmp_path, "rohf-gdf-valid-fragmo"),
         )

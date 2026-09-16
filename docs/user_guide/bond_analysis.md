@@ -236,13 +236,11 @@ is set, the IAO charges are written into the QVF's `atom_properties`
 section alongside the Mulliken, Löwdin and Hirshfeld rows, so vibe-view's
 charge picker offers them directly.
 
-```{admonition} The .population sidecars do not carry IAO charges
-:class: warning
-
-The IAO analysis runs during QVF preparation, after the
-`.population.{txt,json}` sidecars have been written, so those files list
-Mulliken/Löwdin/Hirshfeld only. The QVF is the complete record.
-```
+Use `iao_analysis=True` to request IAO charges, spin populations and
+spin-resolved IAO-Wiberg bonds independently of localization or QVF. The
+requested section is then included in `.out` and the population text/JSON
+sidecars. See [IAO population analysis](iao_population.md) for its definition,
+API, support limits and periodic integration plan.
 
 ```{admonition} Scope and cost
 :class: note

@@ -19,6 +19,7 @@ you're new to vibe-qc.
 | run the ab initio cyclic cluster model (experimental) | [AICCM](aiccm.md) | [chi-CCM](aiccm2026dev_b.md), [Gamma-CCM](../aiccm2026dev_a.md) |
 | converge a crystal calculation | [k-points](k_points.md) | [Smearing](smearing.md), [density fitting](density_fitting.md) |
 | understand files and provenance | [Output files](output_files.md) | [Logging](logging.md), [citations](citations.md) |
+| analyze IAO charges, spins and bonds | [IAO analysis](iao_population.md) | [Numerical comparisons](iao_validation.md) |
 | hand a wavefunction to another program | [TREXIO](trexio.md) | [Output files](output_files.md), [citations](citations.md) |
 | open or automate a QVF result | [QVF and vibe-view](../visualization.md) | [vibe-view CLI](vibe_view_cli.md) |
 | run on another host | [Queue](queue.md) | [Running](../running.md) |
@@ -109,6 +110,8 @@ neb
 molecular_dynamics
 properties
 bond_analysis
+iao_population
+iao_validation
 band_structure
 volumetric_data
 data_library

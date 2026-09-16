@@ -245,6 +245,76 @@ def test_molecule_aware_auto_resolution_exposes_effective_guess():
     assert resolve(h2, InitialGuess.HCORE, False, False) == InitialGuess.HCORE
 
 
+def test_auto_resolves_open_shell_d_block_to_patom():
+    """Issue #273: an open-shell d/f-block complex needs the in-field step.
+
+    The SAD construction superposes free-ATOM Hund densities, so every
+    open-shell ligand arrives carrying its own free-atom moment -- one full
+    unpaired electron per Cl in FeCl3, which in the molecule is a
+    closed-shell chloride. That polarisation traps a symmetry-broken SCF
+    solution 90.05 mHa above the ground state (measured on FeCl3 sextet /
+    cc-pVDZ, internally unstable, S^2 = 8.776737). PATOM is the same Hund
+    seed plus a per-spin in-field re-polarisation, and reaches the ORCA
+    6.1.1 ground state; see tests/test_uhf_stability.py for the SCF pins.
+
+    Closed-shell metal systems and open-shell main-group systems keep their
+    established SAD / PATOM choices.
+    """
+    fecl3 = Molecule(
+        [
+            Atom(26, [0.0, 0.0, 0.0]),
+            Atom(17, [4.0, 0.0, 0.0]),
+            Atom(17, [-2.0, 3.5, 0.0]),
+            Atom(17, [-2.0, -3.5, 0.0]),
+        ],
+        charge=0,
+        multiplicity=6,
+    )
+    oh = Molecule(
+        [Atom(8, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.83])], multiplicity=2
+    )
+    resolve = _core._resolve_initial_guess_for_molecule
+
+    # Open-shell d block -> PATOM (the change).
+    assert resolve(fecl3, InitialGuess.AUTO, False, True) == InitialGuess.PATOM
+    # Closed-shell metal and open-shell main group are unchanged.
+    assert resolve(fecl3, InitialGuess.AUTO, False, False) == InitialGuess.SAD
+    assert resolve(oh, InitialGuess.AUTO, False, True) == InitialGuess.SAD
+    # Periodic still resolves to SAD before the molecular rules run.
+    assert resolve(fecl3, InitialGuess.AUTO, True, True) == InitialGuess.SAD
+    # An explicit selector is never rewritten.
+    assert resolve(fecl3, InitialGuess.SAD, False, True) == InitialGuess.SAD
+
+    # A route without PATOM falls back to the advertised SAD construction.
+    assert resolve(
+        fecl3, InitialGuess.AUTO, False, True,
+        [InitialGuess.HCORE, InitialGuess.SAD],
+    ) == InitialGuess.SAD
+
+
+def test_auto_keeps_atomic_spins_on_sad_for_a_metal_complex():
+    """Issue #273: an ATOMSPIN seed is defined on the SAD density.
+
+    The open-shell d/f rule above must not take an antiferromagnetically
+    seeded metal complex to PATOM, which would then reject its own seed.
+    """
+    from vibeqc.guess import select_initial_guess
+
+    fe2 = Molecule(
+        [Atom(26, [0.0, 0.0, 0.0]), Atom(26, [0.0, 0.0, 4.5])],
+        charge=0,
+        multiplicity=3,
+    )
+    seeded = select_initial_guess(
+        fe2, InitialGuess.AUTO, is_open_shell=True, atomic_spins=[1, -1],
+    )
+    assert seeded.effective == InitialGuess.SAD
+    assert seeded.transport == InitialGuess.SAD
+
+    unseeded = select_initial_guess(fe2, InitialGuess.AUTO, is_open_shell=True)
+    assert unseeded.effective == InitialGuess.PATOM
+
+
 def test_raw_open_shell_auto_matches_patom_for_isolated_atom():
     """The raw builder applies the isolated-atom AUTO policy end to end.
 

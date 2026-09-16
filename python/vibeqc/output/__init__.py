@@ -103,6 +103,7 @@ from .formats import (
     write_population,
     write_poscar,
     write_qvf,
+    write_qcschema,
     write_trexio,
     write_trexio_fields,
     write_xyz,
@@ -124,6 +125,7 @@ from .plan import (
 from .writer import OutputWriter
 
 __all__ = [
+    "write_qcschema",
     # channel.py
     "Level",
     "OutputChannel",

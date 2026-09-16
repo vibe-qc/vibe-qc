@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at_sha": "ebcd949813b811a7c51b3e5e4e8747774e8de0e0",
-  "test_file_count": 915,
+  "generated_at_sha": "45b358fb57c5754219034e3bbc15b274bf525246",
+  "test_file_count": 917,
   "policy": {
     "blocking_tiers": [
       "T0",
@@ -4333,6 +4333,18 @@
       "measured_peak_rss_mb": null,
       "disposition": "demote T2",
       "rationale": "IAO/IBO published-value and Jacobi-increment coverage (handovers/HANDOVER_IBO.md)",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_iao_population.py",
+      "maturity": "production",
+      "tier": "T2",
+      "owner": "analysis/populations",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Molecular determinant IAO charges, spin and IAO-Wiberg indices: analytical covariance, matched-reference oracle and public output coverage",
       "last_verified_sha": null
     },
     {
@@ -8990,6 +9002,18 @@
       "disposition": "demote T2",
       "rationale": "verified inventory or parity coverage retained post-cut",
       "last_verified_sha": "78e627bf425ea8d4ab7aeee35c0f88582cb43327"
+    },
+    {
+      "file": "tests/test_relocalization_worker.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "analysis/localization",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Standalone JSONL relocalization protocol, native readiness, exact archived basis reconstruction, molecular and experimental finite-torus complex subspace invariants, strict refusals and explicit-only SCF. Small local native calculations; no viewer or external QC runtime.",
+      "last_verified_sha": null
     },
     {
       "file": "tests/test_requested_mo_indices.py",

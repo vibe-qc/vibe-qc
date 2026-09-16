@@ -490,17 +490,20 @@ def test_zero_core_ecp_is_kept(tmp_path):
     assert np.max(np.abs(data.fields["ao_1e_int_ecp"])) > 1e-4
 
 
-def test_periodic_runner_trexio_manifest_and_citation(backend, tmp_path):
+def test_periodic_runner_trexio_manifest_citation_and_read(backend, tmp_path):
     import tomllib
     system = vibeqc.PeriodicSystem(3, np.eye(3) * 7., [Atom(2, [0., 0., 0.])])
     basis = BasisSet(system.unit_cell_molecule(), "sto-3g")
-    result = vibeqc.run_periodic_job(
-        system, basis, method="RHF", jk_method="gdf", kpoints=(2, 1, 1),
+    settings = dict(
+        method="RHF", jk_method="gdf", kpoints=(2, 1, 1),
         aux_basis="def2-svp-jk", gdf_method="rsgdf", rsgdf_ke_cutoff=12.,
-        rsgdf_tail_ke_cutoff=0., convergence="off",
-        max_iter=60, conv_tol_energy=1e-8, output=tmp_path / "periodic",
-        trexio=True, trexio_backend=backend, progress=False, verbose=0,
+        convergence="off", max_iter=60, conv_tol_energy=1e-8,
+        progress=False, verbose=0,
         write_molden_file=False, write_population_file=False,
+    )
+    result = vibeqc.run_periodic_job(
+        system, basis, output=tmp_path / "periodic",
+        trexio=True, trexio_backend=backend, **settings,
     )
     path = tmp_path / ("periodic.trexio.h5" if backend == "hdf5" else "periodic.trexio")
     data = read_trexio(path)
@@ -512,3 +515,11 @@ def test_periodic_runner_trexio_manifest_and_citation(backend, tmp_path):
     assert "TREXIO" in (tmp_path / "periodic.references").read_text()
     manifest = tomllib.loads((tmp_path / "periodic.system").read_text())
     assert any(row["format"] == "trexio" for row in manifest["plan"]["files"])
+    restarted = vibeqc.run_periodic_job(
+        data.periodic_system(), data.basis_set(), output=tmp_path / "read",
+        initial_guess="read", read_from=path, **settings,
+    )
+    assert result.converged and restarted.converged
+    assert restarted.energy == pytest.approx(result.energy, abs=1e-8)
+    for actual, expected in zip(restarted.density, result.density):
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-8)

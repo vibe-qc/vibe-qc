@@ -7286,6 +7286,7 @@ _libxc_always           = ["libxc_2018"]
 # construction is only defined relative to a minimal free-atom basis, and
 # vibe-qc uses MINI (Knizia's own Table 1 footnote-c variant) as that B2.
 "ibo"                   = ["knizia_ibo_2013", "huzinaga_gtos_1984"]
+"iao_wiberg"            = ["knizia_ibo_2013", "huzinaga_gtos_1984", "wiberg_bond_index_1968"]
 "vpt2"                  = ["barone_vpt2_2005"]
 "somf"                  = ["hess_somf_1996"]
 "frequency_scaling"     = ["wong_scaling_1996"]
