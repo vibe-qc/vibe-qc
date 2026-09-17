@@ -846,6 +846,32 @@ GFN2Result run_gfn2_xtb(
     const int total_max_iter = std::max(0, opts.max_iter);
     const bool use_stabilization =
         has_gam3 && opts.auto_stabilize && total_max_iter >= 2500;
+    // The auto-stabilisation ladder, hoisted above the SCC loop so the primary
+    // attempt's extension ceiling is computed from the rungs that will actually
+    // run rather than from duplicated literals.  Consumed after the loop.
+    struct Retry {
+        double charge_mixing;
+        int max_iter;
+        double electronic_temperature;
+    };
+    std::vector<Retry> retries;
+    if (use_stabilization) {
+        retries = {
+            {0.01, 1800, 0.0},
+            {0.05, 500, 0.005},
+        };
+        if (has_extended_period_element(mol)) {
+            retries.push_back({0.05, 600, 0.05});
+        }
+    }
+    // vibe-qc#306: the ladder is not optional rescue capacity.  For the
+    // affected systems its finite-temperature rung is the ONLY stage that
+    // converges at all -- measured: neither the primary nor the slow T=0 rung
+    // converges at any budget, while the T=0.005 rung converges them in a few
+    // hundred iterations.  Its budget must therefore never be spendable by the
+    // primary attempt.
+    int ladder_reserve = 0;
+    for (const auto& retry : retries) ladder_reserve += retry.max_iter;
     // The 700-iteration checkpoint is ADVISORY, not a hard cap (vibe-qc#3).
     // It exists to hand an oscillating solve to the retry ladder early, but a
     // primary attempt that is still contracting must not be abandoned merely
@@ -859,6 +885,24 @@ GFN2Result run_gfn2_xtb(
     // 2500 it turned a converged run into an outright failure.
     int primary_max_iter =
         use_stabilization ? std::min(700, total_max_iter) : total_max_iter;
+    // Ceiling for the advisory extension (vibe-qc#306).  ea2d4cb capped it at
+    // total_max_iter, i.e. at the whole budget including the ladder's share.
+    // Measured at the default 3600: norbornadiene's primary took 3500 of 3600
+    // and p-benzoquinone's took 2800, leaving rung 1 a truncated 100 and 800
+    // iterations and rung 2 nothing at all -- "did not converge after 3600
+    // iterations", a count v0.17.1 could not produce (its worst light-element
+    // failure was 700+1800+500 = 3000).
+    //
+    // The floor is the ceiling the DEFAULT budget affords, so a caller who
+    // lowers max_iter does not lose the vibe-qc#3 extension that adenine needs
+    // (its primary converges at 720, measured).  It is derived from constants
+    // already here, not fitted: 3600 - 2300 = 1300 for a light-element
+    // molecule, and 3600 - 2900 = 700 -- i.e. exactly the pre-ea2d4cb
+    // behaviour -- for an extended-period one.
+    constexpr int kDefaultMaxIter = 3600;  // XTBSccOptions::max_iter default
+    const int primary_extension_ceiling = std::max(
+        std::min(kDefaultMaxIter - ladder_reserve, total_max_iter),
+        total_max_iter - ladder_reserve);
     // Contraction test over the two most recent windows of the residual
     // trace.  A genuinely oscillating or stalled attempt cannot improve its
     // window minimum and so still reaches the ladder at the checkpoint.
@@ -1147,11 +1191,13 @@ GFN2Result run_gfn2_xtb(
         }
 
         // Advisory checkpoint: extend the primary attempt by another block
-        // while it is still contracting and budget remains (vibe-qc#3).
+        // while it is still contracting, without ever spending the ladder's
+        // reserve (vibe-qc#3, bounded by vibe-qc#306).
         if (use_stabilization && iter == primary_max_iter
-                && primary_max_iter < total_max_iter && still_contracting()) {
+                && primary_max_iter < primary_extension_ceiling
+                && still_contracting()) {
             primary_max_iter =
-                std::min(total_max_iter, primary_max_iter + 700);
+                std::min(primary_extension_ceiling, primary_max_iter + 700);
         }
     }
     result.n_iter = primary_max_iter;
@@ -1161,11 +1207,6 @@ GFN2Result run_gfn2_xtb(
         result, opts, primary_max_iter, max_change_trace, attempt_solver);
 
     if (use_stabilization) {
-        struct Retry {
-            double charge_mixing;
-            int max_iter;
-            double electronic_temperature;
-        };
         // BUG 45: the former ladder ran three increasingly long T=0 retries
         // (3000 + 5000 + 12000 iterations) before trying the finite-temperature
         // path that actually converges the affected neutral heterocycles in a
@@ -1179,19 +1220,21 @@ GFN2Result run_gfn2_xtb(
         // bounded high-T retry.  Light-element automatic stabilization remains
         // bounded to 3000 SCC iterations; extended-period systems are bounded
         // to 3600 SCC iterations with the default max_iter.
-        std::vector<Retry> retries = {
-            {0.01, 1800, 0.0},
-            {0.05, 500, 0.005},
-        };
-        if (has_extended_period_element(mol)) {
-            retries.push_back({0.05, 600, 0.05});
-        }
+        // The rungs were built above the SCC loop, because the primary
+        // attempt's extension ceiling is derived from their total budget.
         for (const auto& retry : retries) {
             const int remaining_iters = total_max_iter - result.n_iter;
             if (remaining_iters <= 0) break;
+            // vibe-qc#306: skip a rung that cannot have its whole budget
+            // rather than truncating it.  A truncated rung cannot converge --
+            // measured, adenine's rung 1 needs 1984 of its nominal 1800, and
+            // at the default budget ea2d4cb left rung 1 just 100 iterations --
+            // but it still consumes the budget of the rung behind it, which is
+            // how the only rung that converges these systems was starved.
+            if (remaining_iters < retry.max_iter) continue;
             XTBSccOptions ropts = opts;
             ropts.charge_mixing = retry.charge_mixing;
-            ropts.max_iter = std::min(retry.max_iter, remaining_iters);
+            ropts.max_iter = retry.max_iter;
             // vibe-qc#3: never override an EXPLICITLY requested electronic
             // temperature.  gfn2_driver.hpp promised that this driver's
             // default stays exact zero-temperature Aufbau, and the pybind

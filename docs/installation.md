@@ -1102,3 +1102,11 @@ comparing against `release`, validating a topic-branch fix, etc.
 The banner on the next run will then read e.g. `Release v0.9.0` or
 `dev 0.9.0 (feature/some-topic @ abc1234)`, which is what you'll see
 prepended to every persisted SCF log.
+
+## Optional OpenTrustRegion orbital optimizer
+
+The default build does not require Fortran. To enable the pinned numerical
+library, install a Fortran compiler and LP64 BLAS/LAPACK, then rebuild with
+`CMAKE_ARGS="-DVIBEQC_ENABLE_OPENTRUSTREGION=ON"`. See the
+[OpenTrustRegion guide](user_guide/opentrustregion.md) for the full command,
+ABI contract, offline source override and capability check.

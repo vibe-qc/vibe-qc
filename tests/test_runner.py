@@ -635,3 +635,84 @@ def test_run_job_tddft_nto_emits_qvf_sections(tmp_path: Path) -> None:
     nto_ids = [s["id"] for s in manifest["sections"] if "nto" in s.get("id", "")]
     assert "wf_nto_S1_hole" in nto_ids
     assert "wf_nto_S1_electron" in nto_ids
+
+
+def _qcschema_h2(driver: str = "energy") -> dict:
+    return {
+        "schema_name": "qcschema_input",
+        "schema_version": 1,
+        "molecule": {
+            "schema_name": "qcschema_molecule",
+            "schema_version": 2,
+            "symbols": ["H", "H"],
+            "geometry": [0.0, 0.0, 0.0, 0.0, 0.0, 1.4],
+            "molecular_charge": 0.0,
+            "molecular_multiplicity": 1.0,
+        },
+        "driver": driver,
+        "model": {"method": "HF", "basis": "sto-3g"},
+        "keywords": {},
+    }
+
+
+def test_qcschema_molecule_roundtrip_and_rejects_ghosts() -> None:
+    import vibeqc as vq
+
+    molecule_data = _qcschema_h2()["molecule"]
+    molecule = vq.molecule_from_qcschema(molecule_data)
+    restored = vq.molecule_to_qcschema(molecule)
+    assert restored["symbols"] == molecule_data["symbols"]
+    assert restored["geometry"] == molecule_data["geometry"]
+    assert restored["fix_com"] and restored["fix_orientation"]
+
+    with pytest.raises(ValueError, match="ghost atoms"):
+        vq.molecule_from_qcschema({**molecule_data, "real": [True, False]})
+    with pytest.raises(ValueError, match="unsupported QCSchema molecule fields"):
+        vq.molecule_from_qcschema({**molecule_data, "fragments": [[0], [1]]})
+
+
+def test_qcschema_energy_json_roundtrip(tmp_path: Path) -> None:
+    import vibeqc as vq
+
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "result.json"
+    vq.write_qcschema(input_path, _qcschema_h2())
+    result = vq.run_qcschema(input_path, output_path=output_path)
+    assert result["schema_name"] == "qcschema_output"
+    assert result["success"] is True
+    assert result["driver"] == "energy"
+    assert result["return_result"] == pytest.approx(-1.11671432506257, abs=1e-8)
+    assert result["properties"]["return_energy"] == result["return_result"]
+    assert vq.read_qcschema(output_path) == result
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["input.json", "result.json"]
+
+
+def test_qcschema_hf_derivative_shapes() -> None:
+    import vibeqc as vq
+
+    gradient = vq.run_qcschema(_qcschema_h2("gradient"))["return_result"]
+    hessian = vq.run_qcschema(_qcschema_h2("hessian"))["return_result"]
+    assert len(gradient) == 6
+    assert gradient[2] == pytest.approx(-gradient[5], abs=1e-9)
+    assert len(hessian) == 36
+    assert np.isfinite(hessian).all()
+
+
+def test_qcschema_mp2_reports_correlated_total() -> None:
+    import vibeqc as vq
+
+    data = _qcschema_h2()
+    data["model"]["method"] = "MP2"
+    result = vq.run_qcschema(data)
+    assert result["return_result"] == pytest.approx(-1.129872, abs=1e-6)
+    assert result["properties"]["return_energy"] == result["return_result"]
+    assert result["properties"]["scf_total_energy"] > result["return_result"]
+
+
+def test_qcschema_rejects_unhandled_job_options() -> None:
+    import vibeqc as vq
+
+    data = _qcschema_h2()
+    data["keywords"] = {"scf_type": "df"}
+    with pytest.raises(ValueError, match="keywords"):
+        vq.run_qcschema(data)

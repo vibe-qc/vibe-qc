@@ -197,6 +197,12 @@ class ManifestUpdater:
         # dict to make it appear.  Fields: phase, iteration, energy_eh,
         # gradient_norm, diis_subspace.
         self._progress: dict[str, object] | None = None
+        # Optional [hessian] section -- which potential-energy surface a
+        # requested Hessian was built on, and whether that surface is the
+        # method the caller asked for. Set by run_job through
+        # ``set_hessian`` when hessian=True; None omits the section, so a
+        # job that ran no Hessian gains no empty stub.
+        self._hessian: dict[str, object] | None = None
         # One outcome per declared file, keyed by path for fast update.
         self._outcomes: dict[Path, FileOutcome] = {
             f.path: FileOutcome(path=f.path) for f in plan.files
@@ -413,6 +419,22 @@ class ManifestUpdater:
             }
             self._write_unlocked()
 
+    def set_hessian(self, fields: dict[str, Any]) -> None:
+        """Record the Hessian's surface into ``[hessian]`` and rewrite.
+
+        ``fields`` comes from
+        :func:`vibeqc.output.hessian_surface_manifest_fields` -- flat
+        scalars naming the surface the Hessian was (or would have been)
+        built on, the method the caller requested, and whether the two
+        agree. run_job resolves a correlated request down to its
+        mean-field reference before the Hessian is built, so without
+        this section a consumer reading frequencies out of a manifest
+        cannot tell an MP2 job's RHF frequencies from an RHF job's.
+        """
+        with self._lock:
+            self._hessian = dict(fields)
+            self._write_unlocked()
+
     def update_wall_seconds(self, wall_seconds: float) -> None:
         """Stamp the running wall-time figure into the ``[run]``
         section. Called periodically by the writer / on completion."""
@@ -601,6 +623,7 @@ class ManifestUpdater:
             estimate_bytes=self._estimate_bytes,
             extra_run_fields=self._extra_run_fields,
             progress=self._progress,
+            hessian=self._hessian,
         )
         _atomic_write(self._path, body)
 
@@ -647,6 +670,7 @@ _SECTION_ORDER = (
     "validation",
     "run",
     "progress",
+    "hessian",
     "plan",
     "outputs",
     "basis_library",
@@ -668,6 +692,7 @@ def _render_manifest(
     estimate_bytes: int | None = None,
     extra_run_fields: dict[str, Any] | None = None,
     progress: dict[str, object] | None = None,
+    hessian: dict[str, object] | None = None,
 ) -> str:
     """Produce the full manifest TOML body.
 
@@ -711,6 +736,11 @@ def _render_manifest(
         info["run"][str(_k)] = _v
     if progress is not None:
         info["progress"] = dict(progress)
+    # [hessian] -- the potential-energy surface a requested Hessian was
+    # built on. Conditional like [progress]: present only when the job
+    # asked for a Hessian, absent otherwise.
+    if hessian is not None:
+        info["hessian"] = dict(hessian)
     info["plan"] = plan.to_toml_section()
     info["outputs"] = {
         "status": status,

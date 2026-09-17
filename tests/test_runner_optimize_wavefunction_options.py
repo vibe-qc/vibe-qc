@@ -350,3 +350,96 @@ def test_native_sa_casscf_optimization_walks_the_sa_surface():
         ).energy
     )
     assert abs(res.trajectory_energies[0] - e_single) > 0.05
+
+
+# ---- GitLab #357: fci/nevpt2/caspt2/mrci require an explicit backend ------
+#
+# Decided kind::decision, option (b): optimize=True for these four methods
+# must not silently reach _optimize_geometry's mean-field VibeQC calculator
+# via optimizer_backend="ase" (or "auto", which resolves to "ase" whenever
+# ASE is importable). run_job now refuses that combination up front and
+# requires optimizer_backend="native" or "brent" instead — both already walk
+# the correlated FD surface generically (this file's native tests above show
+# the same _evaluate_energy / _run_single_point machinery in action for
+# casscf; #357 measured it working identically for mrci).
+
+
+class TestCorrelatedOptimizeBackendGate:
+    """run_job(method=fci|nevpt2|caspt2|mrci, optimize=True) backend gate."""
+
+    @pytest.mark.parametrize("method", ["fci", "nevpt2", "caspt2", "mrci"])
+    def test_default_auto_backend_refuses(self, method, tmp_path):
+        pytest.importorskip("ase")
+        with pytest.raises(ValueError, match="optimizer_backend='native'"):
+            run_job(
+                H2,
+                basis="sto-3g",
+                method=method,
+                active_space=ACTIVE,
+                casci_options=CASCIOptions(),
+                optimize=True,
+                output=tmp_path / "h2-opt",
+            )
+
+    @pytest.mark.parametrize("method", ["fci", "nevpt2", "caspt2", "mrci"])
+    def test_explicit_ase_backend_refuses(self, method, tmp_path):
+        pytest.importorskip("ase")
+        with pytest.raises(ValueError, match="357"):
+            run_job(
+                H2,
+                basis="sto-3g",
+                method=method,
+                active_space=ACTIVE,
+                casci_options=CASCIOptions(),
+                optimize=True,
+                optimizer_backend="ase",
+                output=tmp_path / "h2-opt",
+            )
+
+    @pytest.mark.parametrize("method", ["fci", "nevpt2", "caspt2", "mrci"])
+    def test_native_backend_is_not_refused(self, method, tmp_path):
+        """native is the documented opt-in: it must reach the optimizer,
+        not the new guard. One step of real chemistry on H2/STO-3G (CAS(2,2)
+        is the full valence space here) is cheap -- #357 measured well
+        under a second per method on this system."""
+        run_job(
+            H2,
+            basis="sto-3g",
+            method=method,
+            active_space=ACTIVE,
+            casci_options=CASCIOptions(),
+            optimize=True,
+            optimizer_backend="native",
+            max_opt_steps=1,
+            output=tmp_path / "h2-opt",
+        )
+
+    @pytest.mark.parametrize("method", ["fci", "nevpt2", "caspt2", "mrci"])
+    def test_brent_backend_is_not_refused(self, method, tmp_path):
+        """brent is the other documented opt-in."""
+        run_job(
+            H2,
+            basis="sto-3g",
+            method=method,
+            active_space=ACTIVE,
+            casci_options=CASCIOptions(),
+            optimize=True,
+            optimizer_backend="brent",
+            max_opt_steps=1,
+            output=tmp_path / "h2-opt",
+        )
+
+    @pytest.mark.parametrize("method", ["rhf", "casscf"])
+    def test_unaffected_methods_keep_using_auto(self, method, tmp_path):
+        """The gate is scoped to the four methods with no analytic-gradient
+        native path of their own — it must not touch rhf, casscf, etc."""
+        pytest.importorskip("ase")
+        run_job(
+            H2,
+            basis="sto-3g",
+            method=method,
+            active_space=ACTIVE if method == "casscf" else None,
+            optimize=True,
+            max_opt_steps=30,
+            output=tmp_path / "h2-opt",
+        )

@@ -40,6 +40,79 @@ FILE_OWNERS = {
 # here therefore widens or narrows the release gate on its own; pin one only as
 # the file's owning chat, and say why in the rationale.
 CURATED: dict[str, dict[str, str]] = {
+    "tests/test_hessian_surface.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular correlation",
+        "disposition": "new",
+        "rationale": (
+            "A reported Hessian must name the surface it was built on. "
+            "run_job resolves a correlated request down to its mean-field "
+            "reference before compute_hessian_fd differentiates it, so "
+            "method='mp2', hessian=True produced a frequency block "
+            "byte-for-byte identical to the RHF one with E(elec)-labelled "
+            "thermochemistry rows carrying the RHF energy -- nothing in the "
+            ".out, the .system manifest or the .qvf said which surface the "
+            "numbers described. Pins the Surface: line and its "
+            "not-the-requested-method note, the surface-named "
+            "thermochemistry labels and their arithmetic, the [hessian] "
+            "manifest section, the QVF vibrations surface key, and the "
+            "clean SKIPPED refusal for a method that resolves to no "
+            "mean-field reference at all. Water / STO-3G; under a second "
+            "per job, no external runtime."
+        ),
+    },
+    "tests/test_pbc_gaussian_image_guard.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "periodic-scf",
+        "disposition": "new",
+        "rationale": (
+            "Issue #133 fail-closed guard for the Gaussian periodic drivers: "
+            "a Gamma cell wider than cutoff_bohr leaves the translation ball "
+            "holding only g=0, and run_rhf_periodic / run_rks_periodic / "
+            "run_rhf_periodic_gamma returned the isolated cluster's energy "
+            "silently. Pins the refusal on all three entry points, the message "
+            "naming the cutoff and the way out, the "
+            "LatticeSumOptions.gamma_only_0 declaration that keeps the "
+            "molecular limit reachable, and two controls that the guard does "
+            "not fire on a genuinely periodic cell. Small STO-3G H2 chains; "
+            "seconds, no external runtime."
+        ),
+    },
+    "tests/test_stale_core_guard.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "release/test-health",
+        "disposition": "new",
+        "rationale": (
+            "Pins the stale-compiled-core refusal (#285): pytest exits the "
+            "reserved status 97 before collecting when _vibeqc_core predates "
+            "cpp/, run_full_suite.classify labels it STALE_CORE rather than "
+            "FAIL, and gate_verdict refuses to compute a verdict from an "
+            "artifact holding one. Pure Python; never touches cpp/ mtimes, "
+            "which would make the core stale for real."
+        ),
+    },
+    "tests/test_relocalization_worker.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "analysis/localization",
+        "disposition": "new",
+        "rationale": (
+            "Standalone JSONL relocalization protocol, native readiness, exact "
+            "archived basis reconstruction, molecular and experimental finite-torus "
+            "complex subspace invariants, strict refusals and explicit-only SCF. "
+            "Small local native calculations; no viewer or external QC runtime."
+        ),
+    },
+    "tests/test_opentrustregion.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular-SCF",
+        "disposition": "new",
+        "rationale": "Optional pinned orbital optimizer: matrix-free energy derivatives, C ABI/state isolation, molecular HF/KS and public output; real-library checks skip when absent",
+    },
     "tests/test_contributor_workflow_contract.py": {
         "maturity": "verified",
         "tier": "T2",
@@ -67,6 +140,25 @@ CURATED: dict[str, dict[str, str]] = {
         "rationale": "Hermetic external study profile and interpreter dispatch boundaries; no native calculation",
     },
 
+    "tests/test_semiempirical_pm6_basin_selection.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "semiempirical",
+        "disposition": "new",
+        "rationale": (
+            "pins GitLab #154's live limb: PM6/norbornadiene has several "
+            "genuine zero-temperature fixed points and the direct Pulay "
+            "iteration selects between them on arithmetic noise (a 1e-9 A "
+            "bridgehead nudge moves the converged total by 0.836 Ha), which "
+            "is why four fleet hosts reported four different converged "
+            "energies for one input and one build. Asserts the route refuses "
+            "such a system naming every solution it found, that the refusal "
+            "is the same outcome under noise-level input changes, that a "
+            "single-basin control (water) still reports, and that the direct "
+            "SCF no longer depends on the iteration budget. Real PM6 SCF "
+            "runs; no fleet access."
+        ),
+    },
     "tests/test_libint_capability_configure.py": {
         "maturity": "under-review",
         "tier": "T2",
@@ -1862,6 +1954,16 @@ CURATED: dict[str, dict[str, str]] = {
             "boundary, and a genuine no-aids limit cycle. The two complete "
             "archived molecular cases are slow-marked in the same file; "
             "tier remains derived T2 through molecular-scf-dft"
+        ),
+    },
+    "tests/test_iao_population.py": {
+        "maturity": "production",
+        "tier": "T2",
+        "owner": "analysis/populations",
+        "disposition": "new",
+        "rationale": (
+            "Molecular determinant IAO charges, spin and IAO-Wiberg indices: "
+            "analytical covariance, matched-reference oracle and public output coverage"
         ),
     },
     "tests/test_iao_ibo.py": {

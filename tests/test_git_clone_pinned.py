@@ -31,8 +31,8 @@ BASH = "/bin/bash" if Path("/bin/bash").is_file() else shutil.which("bash")
 GIT = shutil.which("git")
 
 pytestmark = pytest.mark.skipif(
-    BASH is None or GIT is None or os.name != "posix" or shutil.which("pgrep") is None,
-    reason="git_clone_pinned needs Bash, git and pgrep on a POSIX host",
+    BASH is None or GIT is None or os.name != "posix" or shutil.which("ps") is None,
+    reason="git_clone_pinned needs Bash, git and ps on a POSIX host",
 )
 
 _GIT_IDENTITY = ("-c", "user.email=t@example.invalid", "-c", "user.name=t")
@@ -100,8 +100,15 @@ def _clone(
 
 
 def _pids_matching(pattern: str) -> list[str]:
-    result = subprocess.run(["pgrep", "-f", pattern], text=True, capture_output=True)
-    return [line for line in result.stdout.split() if line]
+    result = subprocess.run(
+        ["ps", "-axo", "pid=,command="], text=True, capture_output=True, check=True
+    )
+    matches = []
+    for line in result.stdout.splitlines():
+        fields = line.strip().split(maxsplit=1)
+        if len(fields) == 2 and pattern in fields[1]:
+            matches.append(fields[0])
+    return matches
 
 
 def _wait_until(predicate, timeout: float = 10.0) -> bool:
@@ -272,6 +279,42 @@ def test_a_directory_inside_a_repository_is_not_a_source(
 # ---------------------------------------------------------------------------
 # Bounded retries and a deadline that terminates.
 # ---------------------------------------------------------------------------
+
+
+def test_kill_tree_selects_exact_parent_ids_without_pgrep(tmp_path: Path) -> None:
+    """A broken pgrep must never turn one clone's timeout into other signals."""
+    result = subprocess.run(
+        [BASH, "-c", '''
+            . "$1"
+            ps() {
+                printf '%s\n' '42000 1234' '42001 42000' '42002 42001' '98000 1234'
+            }
+            pgrep() {
+                # Homebrew proctools can ignore -P and return unrelated PIDs.
+                if [ "$2" = 42000 ]; then printf '%s\n' 98000; fi
+            }
+            kill() { printf '%s %s\n' "$1" "$2"; }
+            _vqc_kill_tree TERM 42000
+        ''', "_", str(HELPER)],
+        cwd=tmp_path, text=True, capture_output=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["-TERM 42002", "-TERM 42001", "-TERM 42000"]
+
+
+@pytest.mark.parametrize("pid", ["", "0", "1", "-1", "not-a-pid"])
+def test_kill_tree_refuses_non_process_targets(tmp_path: Path, pid: str) -> None:
+    result = subprocess.run(
+        [BASH, "-c", '''
+            . "$1"
+            pgrep() { return 1; }
+            ps() { return 0; }
+            kill() { printf 'unexpected signal: %s\n' "$*"; }
+            _vqc_kill_tree KILL "$2"
+        ''', "_", str(HELPER), pid],
+        cwd=tmp_path, text=True, capture_output=True, timeout=10,
+    )
+    assert result.stdout == "", result.stdout
 
 
 def test_unreachable_upstream_is_retried_a_bounded_number_of_times(

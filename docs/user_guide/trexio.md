@@ -8,6 +8,13 @@ as a lazy optional dependency:
 pip install 'vibe-qc[trexio]'
 ```
 
+**QVF stays the default.** TREXIO is opt-in and adds a wavefunction exchange
+artifact alongside the ordinary result archive. Start with the
+[molecular exchange and restart tutorial](../tutorial/trexio_exchange.md),
+then try [CI and periodic restarts](../tutorial/trexio_correlated_periodic.md).
+Downloadable scripts are included in both tutorials and collected under
+`examples/trexio/` in the source checkout.
+
 ## Export a calculation
 
 ```python
@@ -78,6 +85,8 @@ result = run_rhf(mol, basis, options, read_from="water.h5")
 
 `run_job(..., initial_guess="read", read_from="water.h5")` and the molecular
 SCF drivers use the existing density projection and population checks.
+READ dispatch recognizes file paths ending in `.h5`, `.hdf5` or `.trexio`;
+text-backend directories are recognized regardless of their name.
 An ECP target calculation must have its ECP options populated, as above;
 loading an initial guess does not silently change the target Hamiltonian.
 `data.ecp_options(existing_options)` also accepts UHF, RKS and UKS options.
@@ -85,6 +94,8 @@ For native periodic drivers, pass their options object; the ECP centers are
 then populated through `ecp_home_centers`.
 
 Periodic READ routes accept complete TREXIO k-point/spin wavefunctions.
+For example, `run_periodic_job(..., initial_guess="read", read_from=path)`
+accepts an HDF5 file or a text-backend directory, including multi-k jobs.
 They verify the source basis, lattice, k points and quadrature weights through
 the same restart machinery as QVF and in-memory results. A different k-point
 ordering is mapped explicitly; an incompatible mesh is rejected.
@@ -221,9 +232,9 @@ all-electron and ECP HF energies, and CI energies, from the stored
 wavefunction with PySCF in a separate process. Set `VIBEQC_TREXIO_PYTHON` to
 an interpreter containing TREXIO and PySCF to enable those checks in
 `tests/test_output_trexio.py` and `tests/test_output_trexio_extended.py`.
-They are the only tests that can detect a consistent AO ordering or
-normalization error, because the in-process round trips share the writer's
-convention and cancel it. Without that interpreter they skip, and the skip
+These independent checks can detect a consistent AO ordering or
+normalization error that a writer/reader round trip would cancel.
+Without that interpreter they skip, and the skip
 reason names the gate that did not run. Set
 `VIBEQC_REQUIRE_TREXIO_REFERENCE=1` as well to make the missing interpreter a
 failure instead of a skip; a release gate that is meant to run this check
@@ -231,3 +242,79 @@ should set it so the check cannot pass by omission.
 The ECP reference check allows a microhartree for the different native and
 reference ECP quadratures; the native Hamiltonian round trip is checked
 separately to `2e-11` hartree.
+
+## Comparison with the paper and specification
+
+The [TREXIO paper, sections III and IV](https://arxiv.org/html/2302.14793v2)
+defines the interchange model and compares storage backends. It does not
+provide molecular energy targets for the tutorials here. Its benchmark
+writes 100 million determinants: HDF5 reaches 10.4 million determinants/s
+(406 MB/s), and text reaches 1.1 million/s (69 MB/s), on the authors' SSD.
+Those are published TREXIO-library measurements, not vibe-qc performance
+results. The small examples here test correctness and do not reproduce that
+throughput experiment.
+
+### Direct comparison with published normalization values
+
+The [specification's basis-set example](https://trex-coe.github.io/trexio/trex.html)
+lists primitive normalization factors for an H2 basis. The three values below
+exercise its S, P and D shells. Comparing `libint_primitive_norm` with these
+published numbers gives:
+
+| Angular momentum | Exponent | Published primitive factor | Absolute difference in the checked build |
+|---|---:|---:|---:|
+| S, 0 | 33.87 | 10.006253235944540 | 0 |
+| P, 1 | 1.407 | 2.1842769845268308 | 4.44e-16 |
+| D, 2 | 1.057 | 1.8135965626177861 | 2.22e-16 |
+
+The regression test uses a relative tolerance of `1e-13`. Reproduce it in a
+development environment with the test and TREXIO extras installed:
+
+```sh
+python -m pytest tests/test_output_trexio.py \
+    -k 'prim_factor_reproduces or spherical_ao_permutation' -q
+```
+
+These checks pin normalization and ordering. They alone do not validate
+contracted functions, spin blocks, ECPs or a complete exported wavefunction.
+
+### Independent reconstruction of the tutorial wavefunctions
+
+The following results were obtained with the runnable tutorial inputs,
+TREXIO 2.6.1 and PySCF 2.14.0. HDF5 and text gave the same differences at the
+precision shown. Energies include nuclear repulsion. Geometry, basis and
+active-space definitions are in the scripts, and no geometry optimization
+is performed.
+
+| Tutorial case | Stored energy / Ha | Absolute PySCF reconstruction difference / Ha | Acceptance tolerance / Ha |
+|---|---:|---:|---:|
+| Water RHF/def2-SVP | -75.958889023533 | 1.99e-13 | 1e-8 |
+| OH UHF/def2-SVP | -75.325142658826 | 4.26e-14 | 1e-8 |
+| NaH RHF/LANL2DZ ECP | -0.707676592127 | 9.66e-9 | 1e-6 |
+| LiH CASCI(2,2)/STO-3G, one core orbital | -7.862504477514 | 9.77e-15 | 1e-8 |
+| LiH CASSCF(2,2)/STO-3G, one core orbital | -7.881214343110 | 1.24e-14 | 1e-8 |
+| LiH FCI/STO-3G | -7.882504329372 | 1.24e-14 | 1e-8 |
+
+These are measured software-interoperability results, not literature
+reference energies or uncertainty estimates for the chemical models.
+PySCF rebuilds the integrals from the exported parameters and evaluates the
+stored HF or CI state. It does not independently optimize the orbitals.
+The looser ECP tolerance accounts for differences between integral libraries;
+it must not be used to excuse an electron-count or core-occupation mismatch.
+
+For a release check that requires the independent reference, use an
+interpreter containing PySCF and TREXIO and make missing-reference skips fail:
+
+```sh
+export VIBEQC_TREXIO_PYTHON="$(command -v python)"
+export VIBEQC_REQUIRE_TREXIO_REFERENCE=1
+python -m pytest tests/test_output_trexio.py tests/test_output_trexio_extended.py -q
+```
+
+The periodic tutorial checks all sampled blocks, weighted populations and
+a public-runner READ restart. The molecular reference checker cannot
+validate periodic files. Also, the general API exposes the fields available
+in the installed library; the evolving online specification can describe
+newer fields than the version used for these measurements. Format coverage
+does not imply that vibe-qc computes every represented method, or that a
+particular downstream program accepts every file.

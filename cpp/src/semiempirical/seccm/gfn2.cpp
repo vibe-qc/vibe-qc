@@ -901,6 +901,27 @@ Eigen::VectorXd seccm_residual_trace_vector(
     return trace;
 }
 
+// Budget-independent stabilisation checkpoint, the #244 pattern of the
+// periodic Gamma driver (and the #3 advisory checkpoint of the molecular
+// driver): the primary attempt keeps its whole budget while it is still
+// contracting, and is handed to the ladder only when the best residual of
+// the last window no longer beats the best of the window before. The old
+// rule capped the primary at 500 iterations whenever max_iter >= 2500, so
+// raising the budget by one changed the trajectory and every default run
+// (max_iter = 3600) abandoned a converging solve at 500.
+constexpr int kStabilityCheckpoint = 500;
+constexpr int kProgressWindow = 25;
+
+bool seccm_still_contracting(const std::vector<double>& trace) {
+    const int n = static_cast<int>(trace.size());
+    if (n < 2 * kProgressWindow) return false;
+    const auto end = trace.end();
+    const double recent = *std::min_element(end - kProgressWindow, end);
+    const double prior = *std::min_element(
+        end - 2 * kProgressWindow, end - kProgressWindow);
+    return recent < prior;
+}
+
 void stamp_supercell_attempt(
     GFN2SECCMResult& result,
     int allocated_max_iter,
@@ -928,7 +949,11 @@ void stamp_supercell_attempt(
     attempt.scc_mixer = scc_mixer;
     attempt.restart_supplied = restart_supplied;
     attempt.exit_reason = exit_reason;
-    attempt.scc_converged = exit_reason != "iteration_limit";
+    // Both budget exhaustion and a stalled stabilization checkpoint (#294)
+    // end an attempt that never reached the residual tolerance; every other
+    // reason describes a fixed point the gates then judged.
+    attempt.scc_converged = exit_reason != "iteration_limit"
+        && exit_reason != "stalled_checkpoint";
     attempt.physical_basin = result.physical_basin;
     attempt.max_change_trace = result.scc_max_change_trace;
     result.attempts = {std::move(attempt)};
@@ -968,8 +993,10 @@ GFN2SECCMResult run_supercell_scc(
     SCCMixer scc_mixer,
     double charge_mixing,
     int max_iter,
+    bool advisory_checkpoint,
     double electronic_temperature,
     const Eigen::VectorXd& initial_shell_charges) {
+    bool stalled_at_checkpoint = false;
     const Molecule& mol = *ctx.mol;
     const auto& atoms = mol.atoms();
 
@@ -1210,6 +1237,12 @@ GFN2SECCMResult run_supercell_scc(
             return result;
         }
 
+        if (advisory_checkpoint && iter % kStabilityCheckpoint == 0
+                && !seccm_still_contracting(max_change_trace)) {
+            stalled_at_checkpoint = true;
+            break;
+        }
+
         // Not converged: advance the charges and refresh the shell
         // moments for the next iteration's AES potential (skipped when
         // the AES channel is disabled by the validation knob). The
@@ -1253,7 +1286,8 @@ GFN2SECCMResult run_supercell_scc(
     // analyzed from Python. With max_iter = 1 the loop built H_scc from
     // the neutral start, so hamiltonian is the supercell H0 exactly and
     // shell_charges is the raw first response f(0) = pop(H0) - n0.
-    result.n_iter = max_iter;
+    // Count executed iterations: a checkpoint stop ends the attempt early.
+    result.n_iter = static_cast<int>(max_change_trace.size());
     result.smearing_temperature = electronic_temperature;
     result.converged = false;
     result.overlap = ctx.super.overlap;
@@ -1280,7 +1314,7 @@ GFN2SECCMResult run_supercell_scc(
         scc_mixer,
         initial_shell_charges.size() != 0,
         max_change_trace,
-        "iteration_limit");
+        stalled_at_checkpoint ? "stalled_checkpoint" : "iteration_limit");
     return result;
 }
 
@@ -1682,23 +1716,10 @@ GFN2SECCMResult run_gfn2_seccm(
     ctx.positions = detail::seccm_atom_coords(mol);
     ctx.topology_for_records = &topology;
     if (ctx.madelung) {
-        const int dim = static_cast<int>(topology.translations.size());
-        ctx.ews = indo::_ewald_ws_cells(topology);
-        if (dim == 1) {
-            ctx.madkonst = detail::wire_madkonst_1d(
-                ctx.ews, topology.translations[0], n_atoms);
-        } else if (dim == 2) {
-            ctx.madkonst = indo::_madkonst_2d(
-                ctx.ews, topology.translations, n_atoms);
-        } else if (dim == 3) {
-            ctx.madkonst = indo::_madkonst_3d(
-                ctx.ews, topology.translations, n_atoms);
-        }
-        if (!ctx.madkonst.allFinite()) {
-            throw std::runtime_error(
-                "GFN2-SECCM Madelung-constant matrix produced non-finite "
-                "values");
-        }
+        auto madelung_state = detail::build_seccm_madelung_state(
+            topology, n_atoms, "GFN2-SECCM");
+        ctx.ews = std::move(madelung_state.ews);
+        ctx.madkonst = std::move(madelung_state.madkonst);
     }
 
     if (ctx.include_aes) {
@@ -1708,18 +1729,20 @@ GFN2SECCMResult run_gfn2_seccm(
     // max_iter is the total public SCC budget (molecular driver contract).
     // The stabilization ladder mirrors run_gfn2_xtb: one slow T=0 restart
     // and one mild finite-T restart, plus a high-T retry for post-Ar
-    // elements, all bounded by the remaining budget.
+    // elements, all bounded by the remaining budget. The primary attempt
+    // may use the whole budget; it is handed to the ladder from a
+    // budget-independent checkpoint when it stops contracting, so raising
+    // max_iter never changes its trajectory (see seccm_still_contracting).
     const int total_max_iter = std::max(0, opts.max_iter);
     const bool use_stabilization =
         ctx.has_gam3 && total_max_iter >= 2500;
-    const int primary_max_iter =
-        use_stabilization ? std::min(500, total_max_iter) : total_max_iter;
     GFN2SECCMResult result = run_supercell_scc(
         ctx,
         basis,
         opts.scc_mixer,
         opts.charge_mixing,
-        primary_max_iter,
+        total_max_iter,
+        use_stabilization,
         opts.electronic_temperature,
         opts.initial_shell_charges);
     // The ladder also reacts to a converged-but-unphysical fixed point:
@@ -1754,6 +1777,7 @@ GFN2SECCMResult run_gfn2_seccm(
                 SCCMixer::Simple,
                 retry.charge_mixing,
                 std::min(retry.max_iter, remaining_iters),
+                false,
                 retry.electronic_temperature,
                 Eigen::VectorXd());
             prepend_attempt_history(retry_result, result);

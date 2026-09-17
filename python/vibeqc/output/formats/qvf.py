@@ -2211,6 +2211,14 @@ def _emit_qvf_into_zip(
     # --- atom_properties ----------------------------------------
     pop = context.get("population_summary")
     iao_charges = context.get("iao_charges")
+    iao_analysis = getattr(pop, "iao_analysis", None)
+    if iao_analysis is not None:
+        if iao_analysis.available:
+            iao_charges = iao_analysis.charges
+        _write_vendor_json_sections(zf, [{
+            "id": "iao_analysis", "kind": "x_vibeqc.iao_analysis",
+            "path": "analysis/iao.json", "payload": iao_analysis.to_dict(),
+        }], sections)
     if pop is not None or iao_charges is not None:
         _write_atom_properties_section(
             zf, pop, sections, iao_charges=iao_charges
@@ -2310,7 +2318,14 @@ def _emit_qvf_into_zip(
         syms = None
         if mol is not None:
             syms = [_symbol(int(a.Z)) for a in mol.atoms]
-        _write_vibrations_section(zf, hess, sections, atom_symbols=syms, molecule=mol)
+        _write_vibrations_section(
+            zf,
+            hess,
+            sections,
+            atom_symbols=syms,
+            molecule=mol,
+            surface=context.get("hessian_surface"),
+        )
 
     # --- spectra.ir ---------------------------------------------
     if hess is not None:
@@ -4153,12 +4168,9 @@ def _write_atom_properties_section(
     ``dipole``, ``errors``. It may be None when the only per-atom
     property available is ``iao_charges``.
 
-    ``iao_charges`` is a plain per-atom array rather than a
-    ``PopulationSummary`` field because the IAO analysis runs in the QVF
-    preparation block, after the population sidecars have already been
-    written. That is why the ``.population.{txt,json}`` sidecars do not
-    carry an IAO row while the QVF does — see
-    ``handovers/HANDOVER_IBO.md``.
+    ``iao_charges`` preserves the legacy localization-only charge payload.
+    An independently requested analysis additionally supplies a complete
+    JSON payload in the separate ``x_vibeqc.iao_analysis`` vendor section.
     """
     section: dict[str, Any] = {
         "id": "props0",
@@ -4219,8 +4231,8 @@ def _write_atom_properties_section(
             )
             section["members"]["spin_population"] = member
 
-        if section["members"]:
-            sections.append(section)
+    if section["members"]:
+        sections.append(section)
 
 
 # -- trajectory -----------------------------------------------------------
@@ -4978,6 +4990,7 @@ def _write_vibrations_section(
     *,
     atom_symbols: list[str] | None = None,
     molecule: Any | None = None,
+    surface: dict[str, Any] | None = None,
 ) -> None:
     """Write the ``vibrations`` section.
 
@@ -4985,6 +4998,12 @@ def _write_vibrations_section(
     ``normal_modes`` (and optionally ``masses_amu``).
     ``atom_symbols`` provides element symbols; ``molecule`` provides the
     equilibrium geometry + atomic numbers for the metadata atoms array.
+    ``surface`` names the potential-energy surface the Hessian was built
+    on (see :func:`vibeqc.output.hessian_surface_manifest_fields`). It
+    matters because run_job resolves a correlated request down to its
+    mean-field reference before differentiating it, so an MP2 job's
+    frequencies are RHF frequencies -- without this key a consumer
+    reading the section cannot tell the two apart.
 
     Two correctness fixes vs. the original implementation (audit findings
     A5-01/A5-02/A5-05):
@@ -5040,10 +5059,12 @@ def _write_vibrations_section(
             else 0
         )
         atoms_list.append({"symbol": sym, "position": pos, "atomic_number": z})
-    meta = {
+    meta: dict[str, Any] = {
         "frequencies": [float(freqs[p]) for p in range(n_modes)],
         "atoms": atoms_list,
     }
+    if surface:
+        meta["surface"] = dict(surface)
     meta_json = safe_json_bytes(meta)
     meta_path = "vibrations/metadata.json"
     zf.writestr(meta_path, meta_json)

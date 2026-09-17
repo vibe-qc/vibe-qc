@@ -69,6 +69,19 @@ Three geometry-optimizer backends are available through
 | Native L-BFGS-B | `"native"` | scipy's L-BFGS-B, limited-memory BFGS with box constraints | No-ASE workflows; frozen atoms |
 | Brent steepest-descent | `"brent"` | Steepest-descent direction + Brent 1-D line search per step | Flat/dispersion-bound PESs where Hessian extrapolation misbehaves |
 
+**`fci`, `nevpt2`, `caspt2`, and `mrci` require `optimizer_backend="native"`
+or `"brent"` explicitly.** The ASE calculator has no correlated-surface
+route for these four (unlike `casci`/`casscf`, which it does route
+correctly), so `optimizer_backend="ase"`, including the `"auto"` default
+whenever ASE is installed, raises a `ValueError` rather than silently
+optimizing the mean-field surface and reporting it under the requested
+method (GitLab #357). Pass `optimizer_backend="native"` or `"brent"` to
+reach the correlated FD surface described in
+[Supported methods](#supported-methods) below; expect it to be
+substantially slower than a mean-field optimization (minutes rather than
+seconds even on a small molecule), since each FD gradient costs
+`6 * n_atoms` correlated single points.
+
 The Brent backend never takes an uphill step (each line search is a
 rigorous 1-D minimisation) and needs no Hessian approximation.  Its
 cost is higher per geometry step (multiple energy evaluations per line
@@ -208,6 +221,12 @@ the same `grid_level` selection.
 | `casscf` | Analytic / Central FD | Validated analytic gradient for state-specific, closed-shell CASSCF (v0.15.0); SA-CASSCF, open-shell, and `compute_wz="numerical"` fall back to full-energy FD (see the note below) |
 | `caspt2` | Analytic / Central FD | Analytic IC-CASPT2 Lagrangian for state-specific closed-shell, unshifted, explicit-engine CASSCF references with `compute_corr_grad=True`; unsupported variants use the optimizer-owned full-energy FD fallback (see below) |
 | `nevpt2` | Central FD | Relaxed full-energy central FD for CASSCF-referenced, gas-phase runs with `compute_corr_grad=True`; otherwise the optimizer owns the same full-energy FD fallback |
+| `fci` | Central FD | 2-point FD on energy; full-valence unless `active_space=` truncates it |
+| `mrci` | Central FD | 2-point FD on energy; CASCI or (with `casscf_options=`) orbital-optimized CASSCF reference |
+
+`fci` and `mrci` reach `run_job(optimize=True)` only through
+`optimizer_backend="native"` or `"brent"`; see the note above the
+backends table.
 
 **Range-separated and VV10 functionals walk the finite-difference
 surface (GitLab #571).** The analytic RKS / UKS gradient kernel carries
@@ -227,13 +246,35 @@ FD gradient, against a 2.1e-6 PBE noise floor. Frequencies for these
 functionals fail closed (the FD Hessian finite-differences the analytic
 gradient).
 
-Dispersion corrections (D3-BJ) and implicit solvation (CPCM/COSMO)
-are folded into the energy and gradient automatically when passed.
+Dispersion corrections (D3-BJ) and implicit solvation (CPCM) are folded
+into the energy **and the gradient** on every backend, so a solvated
+optimization walks the solvated surface rather than the gas-phase one.
+
+Releases before this fix did not: the ASE backend -- the default whenever
+ASE is installed -- was handed no `solvent=` at all, and the native and
+`geom_opt=` routes solvated the energy while differentiating the
+gas-phase surface. On LiF/STO-3G in water, whose bond the reaction field
+lengthens by 0.025 bohr, the default backend stopped 9e-06 bohr from the
+*gas* minimum and the other two between the surfaces; the solvated
+gradient at those reported geometries was 1.7x to 6.2x the run's own
+convergence threshold. The energy printed was solvated throughout, so
+nothing in the output said the geometry was not.
+
+For a functional whose analytic gradient omits terms (the
+`functional_gradient_terms_missing` list above), a solvated run takes the
+same full-energy finite-difference route, differentiating the *solvated*
+energy; `cpcm_gradient` refuses those functionals rather than adding a
+reaction field to an incomplete gas-phase kernel.
+
 Implicit solvation composes with the mean-field methods only
 (`rhf` / `uhf` / `rks` / `uks`); requesting `solvent=...` with the
 CAS-family methods or `rohf` raises a clear `ValueError` (there is
 no CPCM composition for those methods, and silently optimizing the
-gas-phase surface instead would misreport the result).
+gas-phase surface instead would misreport the result). For the same
+reason `optimize=True` with `solvent=` and `method="msindo"` is refused:
+MSINDO's COSMO route has no nuclear gradient, so its walk would follow
+the gas-phase surface. Optimize it in gas phase, or use a mean-field
+method with CPCM.
 
 On **both** backends every per-step energy evaluation receives the
 same solver options as the final single point, `active_space`,

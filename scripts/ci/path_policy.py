@@ -74,6 +74,7 @@ WEBSITE_PATHS: Final = ("website/**/*",)
 DOCS_PATHS: Final = (
     ".gitlab-ci.yml",
     "CHANGELOG.md",
+    "changelog.d/**/*",
     "CITATION.cff",
     "CONTRIBUTING.md",
     "README.md",

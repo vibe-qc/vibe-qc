@@ -386,6 +386,8 @@ from ._vibeqc_core import (
     Molecule,
     MP2Options,
     MP2Result,
+    OpenTrustRegionOptions,
+    has_opentrustregion,
     NewtonOptions,
     PairJKContribution,
     PeriodicKSOptions,
@@ -956,6 +958,15 @@ def _coerce_molecular_basis(molecule, basis):
     return basis
 
 
+def _refuse_otr_native_multiguess(options):
+    if (getattr(options, "orbital_optimizer", "native") == "opentrustregion"
+            and getattr(options, "multi_guess_seeds", [])):
+        raise ValueError(
+            "OpenTrustRegion does not use native multi_guess_seeds or restart "
+            "schedules; run separately chosen starting densities, or select native"
+        )
+
+
 def _attach_inline_ecp_from_basis_sidecar(options, molecule, basis) -> None:
     """Populate molecular SCF options from the basis ECP sidecar."""
 
@@ -1126,6 +1137,7 @@ def run_uhf(
     """
     if options is None:
         options = UHFOptions()
+    _refuse_otr_native_multiguess(options)
     require_nonnegative_max_iter(options.max_iter, route="run_uhf")
     basis = _coerce_molecular_basis(molecule, basis)
     _attach_inline_ecp_from_basis_sidecar(options, molecule, basis)
@@ -1243,6 +1255,7 @@ def run_uks(
         options = UKSOptions()
         from .runner import _apply_grid_level
         _apply_grid_level(options.grid, grid_level)
+    _refuse_otr_native_multiguess(options)
     require_nonnegative_max_iter(options.max_iter, route="run_uks")
     from .roks import _refuse_plain_double_hybrid
 
@@ -3325,6 +3338,13 @@ from .output.formats.trexio import (
     write_trexio,
     write_trexio_fields,
 )
+from .qcschema import (
+    molecule_from_qcschema,
+    molecule_to_qcschema,
+    read_qcschema,
+    run_qcschema,
+)
+from .output.formats.qcschema import write_qcschema
 from .io import (
     normal_mode_trajectory,
     write_molden,
@@ -3724,9 +3744,14 @@ from .periodic_gradient_open_shell import (
 )
 from .periodic_gradient_rks import compute_gradient_periodic_rks_gamma
 from .lattice_convention import (
+    CRYSTAL_SYSTEMS,
+    PLANE_LATTICE_SYSTEMS,
     CellParameters,
+    LatticeDeclarationError,
     NearestNeighbour,
     cell_parameters,
+    check_crystal_system,
+    check_space_group,
     lattice_from_vectors,
     lattice_vectors,
     nearest_neighbour_distance,
@@ -4222,7 +4247,12 @@ __all__ = [
     "PeriodicXCDensityDomain",
     "CellParameters",
     "NearestNeighbour",
+    "CRYSTAL_SYSTEMS",
+    "LatticeDeclarationError",
+    "PLANE_LATTICE_SYSTEMS",
     "cell_parameters",
+    "check_crystal_system",
+    "check_space_group",
     "lattice_from_vectors",
     "lattice_vectors",
     "nearest_neighbour_distance",
@@ -4246,6 +4276,8 @@ __all__ = [
     "SCFIteration",
     "SCFMode",
     "SCFRestartOptions",
+    "OpenTrustRegionOptions",
+    "has_opentrustregion",
     "NewtonOptions",
     "SOSCFOptions",
     "TRAHOptions",
@@ -4886,6 +4918,11 @@ __all__ = [
     "read_trexio",
     "read_trexio_fields",
     "write_trexio_fields",
+    "read_qcschema",
+    "write_qcschema",
+    "molecule_from_qcschema",
+    "molecule_to_qcschema",
+    "run_qcschema",
     "TrexioData",
     "TrexioMOBlock",
     "TrexioSparse",

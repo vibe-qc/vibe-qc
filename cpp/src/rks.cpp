@@ -1,4 +1,5 @@
 #include "vibeqc/rks.hpp"
+#include "vibeqc/orbital_scf.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <algorithm>
@@ -562,9 +563,27 @@ XcContribution build_xc(const Functional& func,
 
 }  // namespace
 
+OrbitalXCFunction make_orbital_rks_xc(const BasisSet& basis, const Grid& grid, const std::string& name) {
+    auto f = std::make_shared<Functional>(name, 1);
+    validate_orbital_xc(*f);
+    auto ao = std::make_shared<AOValues>(evaluate_ao_with_gradient(basis, grid.points));
+    auto pool = std::make_shared<XcFunctionalPool>(
+        make_xc_functional_pool(name, 1, grid.points.rows()));
+    return [basis, grid, f, ao, pool](const Eigen::MatrixXd& da, const Eigen::MatrixXd& db, bool response) {
+        OrbitalXC out;
+        (void)db;
+        const auto value = build_xc(*f, basis, grid, da, nullptr, *pool);
+        out.energy = value.energy; out.alpha = value.V;
+        if (response) out.restricted_kernel = make_unpolarised_xc_kernel_builder(
+            *f, grid, ao->values, ao->gradients, da);
+        return out;
+    };
+}
+
 RKSResult run_rks(const Molecule& mol,
                   const BasisSet& basis,
                   const RKSOptions& opts) {
+    validate_orbital_optimizer(opts);
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), &mol);
     validate_scf_max_iter(opts.max_iter, "run_rks");
@@ -800,6 +819,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                               const GuessSelection* prepared_guess) {
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), guess_molecule);
+    validate_orbital_optimizer(opts);
     validate_scf_max_iter(opts.max_iter, "run_rks_scf_with_jk");
     if (n_electrons < 0 || n_electrons % 2 != 0) {
         throw std::invalid_argument("closed-shell SCF requires a nonnegative even electron count");
@@ -928,6 +948,24 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
     result.restart_basis = basis;
     result.functional = opts.functional;
     result.e_nuclear = E_nuc;
+
+    if (opts.orbital_optimizer == "opentrustregion") {
+        validate_orbital_xc(functional);
+        OrbitalXCFunction xc = [&](const Eigen::MatrixXd& da, const Eigen::MatrixXd&, bool response) {
+            const auto value = build_xc(functional, basis, grid, da, vv10_grid, xc_functionals);
+            result.xc_batch_workers_used = std::max(result.xc_batch_workers_used, value.batch_workers);
+            OrbitalXC out; out.energy = value.energy; out.alpha = value.V;
+            if (response) out.restricted_kernel = make_xc_kernel(da);
+            return out;
+        };
+        const auto run = run_orbital_scf(opts, X, S, Hcore, E_nuc, jk,
+            D, {}, nocc, nocc, true, alpha, xc);
+        assign_orbital_restricted(result, run, E_nuc);
+        result.e_coulomb = run.state.coulomb;
+        result.e_hf_exchange = run.state.exchange;
+        result.e_xc = run.state.xc.energy;
+        return result;
+    }
 
     // ORCA NOITER compatibility: evaluate the initial density once, but do
     // not take an SCF update or append an iteration trace entry.

@@ -267,6 +267,13 @@ five primitive translations in every active direction, from (-2) through
 (+2), and hence an odd cyclic extension of five. The legacy `kpoints=` tuple
 is retained as an exact alias, but it is not a second convergence parameter.
 
+Mesh, lattice-extension and Wigner-Seitz shell counts must be integers.
+Python and NumPy integer inputs are accepted; floats (including `2.0`),
+booleans and strings are rejected before constructing cells or k-points.
+Orders must be positive and shell counts nonnegative. Scalar counts repeat
+over active directions; omitted inactive directions use one cell and zero
+shells. Explicit inactive entries must use those same values.
+
 ## Creating inputs
 
 There are three ways to create a χ-CCM input, from fastest to most
@@ -1518,6 +1525,22 @@ localized independently. The full-domain UCCSD(T) implementation is the
 explicitly cost-capped O(N^6) correctness oracle from the DLPNO stack, not a
 claim of production reduced scaling. The truncated route uses PNO subspaces,
 but representative-only pair propagation remains disabled.
+
+The finite-torus local correlation wrappers keep their historical all-electron
+`n_frozen=0` defaults. With custom solver options, frozen core is supported
+with `localise="none"`. The complete-space DLPNO-MP2 correction uses the
+solver's resolved active occupied space, while PAO virtuals remain orthogonal
+to all occupied orbitals, including frozen core. Explicit integer counts refer
+to the full torus, and published chemical-core selectors resolve on that
+full-torus molecule in the solver.
+
+Nonzero frozen core with Wannier, IAO, or Pipek-Mezey localization is rejected
+before electronic work. These localizers currently rotate the entire occupied
+space, so removing the first orbitals afterwards would freeze a different
+projector. This guard covers restricted and unrestricted local MP2 and
+CCSD(T). Published selectors with a zero core count remain compatible with
+localization. The restriction does not establish physical multi-k validation
+or production readiness of the experimental chi route.
 
 Every canonical and DLPNO post-HF entry point requires
 `lattice_cutoff_bohr`, `rsgdf_ke_cutoff`, and

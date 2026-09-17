@@ -1,4 +1,5 @@
 #include "vibeqc/rhf.hpp"
+#include "vibeqc/orbital_scf.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <chrono>
@@ -27,6 +28,7 @@
 #include "vibeqc/scf_convergence.hpp"
 #include "vibeqc/scf_restart.hpp"
 #include "vibeqc/scf_mixing.hpp"
+#include "vibeqc/degenerate_frontier.hpp"
 
 namespace vibeqc {
 
@@ -43,6 +45,7 @@ Eigen::MatrixXd build_density(const Eigen::MatrixXd& C, int nocc) {
 RHFResult run_rhf(const Molecule& mol,
                   const BasisSet& basis,
                   const RHFOptions& opts) {
+    validate_orbital_optimizer(opts);
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), &mol);
     validate_scf_max_iter(opts.max_iter, "run_rhf");
@@ -219,6 +222,7 @@ RHFResult run_rhf_scf_with_jk(const BasisSet& basis,
                               const GuessSelection* prepared_guess) {
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), guess_molecule);
+    validate_orbital_optimizer(opts);
     validate_scf_max_iter(opts.max_iter, "run_rhf_scf_with_jk");
     if (n_electrons < 0 || n_electrons % 2 != 0) {
         throw std::invalid_argument("closed-shell SCF requires a nonnegative even electron count");
@@ -245,6 +249,28 @@ RHFResult run_rhf_scf_with_jk(const BasisSet& basis,
     // equivalent to plain symmetric orthogonalization. For near-
     // linearly-dependent S, the near-null subspace is projected out
     // before the SCF starts so the Fock diagonalization stays stable.
+    // Loewdin metric and AO->atom map for the degenerate-frontier tie-break
+    // (#210). Built once per SCF; the tie-break runs only on an iteration
+    // whose frontier gap is below tolerance, which for an ordinary molecule
+    // is never. RHF needs this at least as much as UHF: it has no stability
+    // check, so nothing downstream masks a basin picked at random.
+    const Eigen::MatrixXd s_sqrt_ao = symmetric_sqrt(S);
+    std::vector<int> ao_atom_index;
+    {
+        ao_atom_index.reserve(basis.nbasis());
+        const auto shell_list = basis.shells();
+        for (std::size_t shell = 0; shell < shell_list.size(); ++shell) {
+            const int atom = basis.shell_atom_index(shell);
+            const int l = shell_list[shell].l;
+            const std::size_t n_functions = shell_list[shell].pure
+                ? static_cast<std::size_t>(2 * l + 1)
+                : static_cast<std::size_t>((l + 1) * (l + 2) / 2);
+            for (std::size_t f = 0; f < n_functions; ++f) {
+                ao_atom_index.push_back(atom);
+            }
+        }
+    }
+
     const auto orth = canonical_orthogonalizer(S, opts.linear_dep_threshold);
     if (orth.n_kept == 0) {
         throw std::runtime_error(
@@ -321,6 +347,13 @@ RHFResult run_rhf_scf_with_jk(const BasisSet& basis,
     result.restart_basis = basis;
     result.mo_energies = eps0;
     result.mo_coeffs = C0;
+
+    if (opts.orbital_optimizer == "opentrustregion") {
+        const auto run = run_orbital_scf(opts, X, S, Hcore, E_nuc, jk,
+            D, {}, nocc, nocc, true, 1.0);
+        assign_orbital_restricted(result, run, E_nuc);
+        return result;
+    }
 
     // ORCA NOITER compatibility: evaluate the initial density once, but do
     // not take an SCF update or append an iteration trace entry.
@@ -956,7 +989,16 @@ RHFResult run_rhf_scf_with_jk(const BasisSet& basis,
         C_prev_mo = C_new;
         eps_prev_mo = eps_new;
         D_prev = D_used;
-        D = build_density(C_new, nocc);
+        // #210: an exactly degenerate frontier makes `leftCols` a coin flip on
+        // the eigensolver's basis. Resolve it deterministically; a no-op
+        // whenever the frontier is gapped, which is virtually always.
+        {
+            const Eigen::MatrixXd Cocc = occupied_block_deterministic(
+                C_new, eps_new, nocc, s_sqrt_ao, ao_atom_index);
+            D = nocc > 0
+                ? Eigen::MatrixXd(2.0 * Cocc * Cocc.transpose())
+                : Eigen::MatrixXd(Eigen::MatrixXd::Zero(C_new.rows(), C_new.rows()));
+        }
 
         result.mo_energies = eps_new;
         result.mo_coeffs = C_new;

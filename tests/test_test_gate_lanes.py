@@ -1177,27 +1177,129 @@ def test_lane_defaults_fill_unset_values():
     assert resolved.test_timeout == 1800
 
 
+# Test files that import vibeqc.periodic.ccm without being Γ-CCM research
+# coverage, each with the reason it is not. The guard below refuses an
+# importer that is neither classified experimental nor listed here, so a new
+# file that genuinely exercises the -a line cannot pass by being named
+# something the AICCM lane globs do not match.
+CCM_INCIDENTAL_IMPORTERS = {
+    "test_kpoints.py": (
+        "front-door count validation only: monkhorst_pack and CCMSystem are "
+        "monkeypatched so a malformed periodic count is rejected before any "
+        "CCM construction (#274). Public KPoints contract, T2/periodic-SCF."
+    ),
+}
+
+# Experimental files that reach the -a line without the module-level marker:
+# the -b stream imports -a helpers only inside slow head-to-head tests and is
+# labeled by its own warning contract.
+CCM_UNMARKED_EXPERIMENTAL = {
+    "test_periodic_aiccm2026dev_b.py": "-b stream head-to-head comparison",
+    "test_periodic_aiccm2026dev_b_posthf.py": "-b stream head-to-head comparison",
+}
+
+
+def _experimental_manifest_files():
+    """``tests/<name>.py`` rows the suite manifest calls ``experimental``."""
+    manifest = json.loads(SUITE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    return {
+        row["file"] for row in manifest["tests"]
+        if row.get("maturity") == "experimental"
+    }
+
+
 def test_periodic_ccm_test_files_carry_experimental_pytestmark():
     """Every test file exercising vibeqc.periodic.ccm (the Γ-CCM -a line) must
     carry the module-level ``experimental`` pytest marker, so marker-based
-    selection stays in sync with the manual-research lane policy. The -b
-    stream's files are excluded: they import -a helpers only inside slow
-    head-to-head tests and are labeled by their own warning contract."""
+    selection stays in sync with the manual-research lane policy.
+
+    An import of the -a package is only a proxy for exercising it. A file may
+    reach a Γ-CCM front door incidentally and still belong in a shipped lane,
+    so each importer must be one of three things, never a fourth: classified
+    ``maturity: experimental`` and marked; listed in
+    ``CCM_UNMARKED_EXPERIMENTAL``; or listed with its reason in
+    ``CCM_INCIDENTAL_IMPORTERS``. An importer the manifest does not call
+    experimental and the table does not name is the drift this guard exists to
+    catch, whether it was classified by hand or by
+    update_suite_manifest.py.
+
+    The marker is not free to hand out: ``maturity: experimental`` forces tier
+    T3 (run_full_suite.py), so marking an incidental importer would demote
+    shipped coverage out of the release and advisory tiers rather than
+    describe it. test_kpoints.py is the worked example (#274)."""
     import re
 
     tests_dir = Path(__file__).resolve().parent
-    offenders = []
+    experimental = _experimental_manifest_files()
+    importers, missing_marker, unclassified, mislabeled = set(), [], [], []
     for path in sorted(tests_dir.glob("test_*.py")):
-        if "aiccm2026dev_b" in path.name:
-            continue
         src = path.read_text(encoding="utf-8")
         if not re.search(r"^\s*(from|import)\s+vibeqc\.periodic\.ccm", src, re.M):
             continue
-        if not re.search(r"^pytestmark\s*=.*experimental", src, re.M):
-            offenders.append(path.name)
-    assert not offenders, (
+        importers.add(path.name)
+        is_experimental = f"tests/{path.name}" in experimental
+        if path.name in CCM_INCIDENTAL_IMPORTERS:
+            # An exemption for a file the manifest calls experimental is a
+            # silenced guard, not an exemption: it should carry the marker.
+            if is_experimental:
+                mislabeled.append(path.name)
+        elif not is_experimental:
+            unclassified.append(path.name)
+        elif (
+            path.name not in CCM_UNMARKED_EXPERIMENTAL
+            and not re.search(r"^pytestmark\s*=.*experimental", src, re.M)
+        ):
+            missing_marker.append(path.name)
+
+    assert not missing_marker, (
         "Γ-CCM test files missing 'pytestmark = pytest.mark.experimental': "
-        f"{offenders}"
+        f"{missing_marker}"
+    )
+    assert not unclassified, (
+        "test files importing vibeqc.periodic.ccm that the suite manifest does "
+        "not call experimental. Classify them experimental and mark them, or "
+        "name them in CCM_INCIDENTAL_IMPORTERS with the reason they only touch "
+        f"a front door: {unclassified}"
+    )
+    assert not mislabeled, (
+        "CCM_INCIDENTAL_IMPORTERS entries the suite manifest calls "
+        f"experimental; they need the marker, not an exemption: {mislabeled}"
+    )
+    stale = sorted(
+        (set(CCM_INCIDENTAL_IMPORTERS) | set(CCM_UNMARKED_EXPERIMENTAL))
+        - importers
+    )
+    assert not stale, (
+        "exemption entries for files that no longer import "
+        f"vibeqc.periodic.ccm; drop them: {stale}"
+    )
+
+
+def test_experimental_pytestmark_matches_the_suite_manifest():
+    """A file carrying ``pytestmark = pytest.mark.experimental`` must be
+    ``maturity: experimental`` in the suite manifest: the converse of the guard
+    above, and the reason adding the marker is not a way to silence it.
+
+    The marker and the manifest row encode one fact. run_full_suite.py refuses
+    an experimental row outside tier T3, so a marker on a shipped file either
+    contradicts its own row or, once the row follows the marker, drops real
+    coverage out of the blocking and advisory tiers."""
+    import re
+
+    tests_dir = Path(__file__).resolve().parent
+    experimental = _experimental_manifest_files()
+    offenders = [
+        path.name for path in sorted(tests_dir.glob("test_*.py"))
+        if re.search(
+            r"^pytestmark\s*=.*experimental",
+            path.read_text(encoding="utf-8"),
+            re.M,
+        )
+        and f"tests/{path.name}" not in experimental
+    ]
+    assert not offenders, (
+        "files marked 'pytest.mark.experimental' that the suite manifest does "
+        f"not call experimental: {offenders}"
     )
 
 

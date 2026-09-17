@@ -375,18 +375,23 @@ def ccm_symmetry_op_ao_map_is_exact(p_ao, s_ref, *, tol: float = 1e-10) -> bool:
 
     This is checked rather than assumed because it has been observed to fail.
     On a hexagonal cell the cartesian op ``R = L_u W L_u^-1`` is not exactly
-    representable, and ``symmetry_core.euler_angles_from_rotation`` mis-extracts
-    the ZYZ angles for an ``R`` that is the identity to 1e-16: ``arccos(R[2,2])``
-    floors ``beta`` at ``sqrt(2 eps) ~ 1.5e-8``, which never trips that
-    function's ``abs(sin(beta)) < 1e-12`` gimbal-lock guard, so the degenerate
-    branch is skipped and it returns ``gamma = pi``. ``wigner_d_real(1, R)``
-    then comes back as ``diag(-1, 1, -1)`` instead of the identity, and the
-    h-BN (2,2,1) symmetry-reduced fold lands 10.9% away from the unreduced
-    build. Cubic and tetragonal lattices are exactly representable, so their
-    ``beta`` is exactly zero and none of the cubic fixtures expose it.
+    representable, and ``symmetry_core.euler_angles_from_rotation`` used to
+    mis-extract the ZYZ angles for an ``R`` that is the identity to 1e-16:
+    ``arccos(R[2,2])`` floored ``beta`` at ``sqrt(2 eps) ~ 1.5e-8``, which never
+    tripped the then-current ``abs(sin(beta)) < 1e-12`` gimbal-lock guard, so the
+    degenerate branch was skipped and it returned ``gamma = pi``.
+    ``wigner_d_real(1, R)`` then came back as ``diag(-1, 1, -1)`` instead of the
+    identity, and the h-BN (2,2,1) symmetry-reduced fold landed 10.9% away from
+    the unreduced build. Cubic and tetragonal lattices are exactly
+    representable, so their ``beta`` was exactly zero and no cubic fixture
+    exposed it.
 
-    Refusing the op keeps this lane correct while that stands; when the
-    extractor is fixed the test simply stops rejecting anything.
+    Both halves of that extractor bug have since been fixed: #233 replaced
+    ``arccos(R[2,2])`` with ``atan2(hypot(R02, R12), R22)``, and #282 replaced
+    the ``1e-12`` threshold with an exact ``sin_beta == 0.0`` test and
+    conditioned the near-pole branch. This check stays because it measures the
+    invariance instead of assuming it: it now passes for the ops it used to
+    refuse, and it would catch a regression in the same place.
 
     Parameters
     ----------

@@ -136,21 +136,30 @@ _PLAIN_METRIC_MIN_EIG_FRACTION = 1.0e-9
 # absolute floor calibrated on the first two annihilates the third.
 #
 # The floor is a vibe-qc calibration, NOT a value from either paper (Sun
-# 2017 Sec. II B quotes a 1e-9 default and Sec. III finds 1e-10 best; PySCF
-# ships 1e-10). Those tighter values are supported there because PySCF
-# builds its 2-centre metric at a dedicated, far tighter precision
-# (``precision_j2c``) than the general cell precision, precisely because
-# errors in the 2c metric propagate into the fitted tensor. vibe-qc builds
-# J-tilde at the general lattice-sum precision, so its own construction
-# error sets the floor:
+# 2017 Sec. II B quotes a 1e-9 default and Sec. III finds 1e-10 best;
+# PySCF ships 1e-10).
 #
-#   MgO/STO-3G/def2-svp-jk primitive, production rcut ("pyscf_auto",
-#   rcut_precision 1e-8) against a converged 34-bohr reference: the
-#   J-tilde spectrum carries up to 5.4e-06 absolute error. At the previous
-#   default the smallest RETAINED eigenvalue was 2.9e-08 with its own
-#   error bar at 6.6e-08 -- the mode was smaller than its uncertainty, and
-#   Eq. 19 divides the Eq.-23 numerator by its square root (amplification
-#   ~6e+03). That is the mechanism behind the measured MDF blow-ups.
+# It USED to be set by J-tilde's construction error. At the general
+# lattice-sum precision the MgO/STO-3G/def2-svp-jk spectrum carried up to
+# 5.4e-06 absolute error, and the smallest retained eigenvalue at the old
+# default was 2.9e-08 against its own 6.6e-08 error bar -- a mode smaller
+# than its uncertainty, divided by its own square root. Since 2026-09-17
+# that is no longer the binding constraint: :data:`_MDF_PRECISION_J2C`
+# builds J-tilde to 1.8e-13 on the same cell (see
+# :func:`_mdf_fit_lattice_opts`).
+#
+# THE FLOOR STAYS ANYWAY, and the reason changed. Measured on MgO with
+# the accurate metric, sweeping the absolute threshold with this floor
+# disabled entirely:
+#
+#   3e-2   -271.1420    -92.1 mHa     <- the loosest useful cut
+#   1e-3   -274.2850  -3235.1 mHa
+#   1e-5   -336.4730  -65423   mHa
+#   1e-8   -64954.85          diverged, non-converged
+#
+# i.e. the small-lambda modes are still unusable, and they are unusable
+# for a reason a better-built metric cannot touch (see
+# ``pbc_gdf._reject_dense_core_mdf``). The floor is what keeps them out.
 #
 # Calibration, Gamma RHF against out-of-process PySCF MDF oracles (see
 # tests/test_pbc_gdf_mdf.py::test_mdf_linear_dep_threshold_ne_box_sweep):
@@ -171,6 +180,110 @@ _PLAIN_METRIC_MIN_EIG_FRACTION = 1.0e-9
 # leaves the dilute H2 box untouched (1e-4 x 9.17e-06 = 9.2e-10, below the
 # 1e-9 default, so max() keeps the caller's value).
 _MDF_DRESSED_METRIC_MIN_EIG_FRACTION = 1.0e-4
+
+
+# vibe-qc's analogue of PySCF's ``precision_j2c``: the accuracy the
+# PW-dressed MDF metric ``J-tilde`` (Sun 2017 Eq. 20) is built to, which is
+# NOT the general cell precision. The fit is ``W = T^T J-tilde^{-1} T``, so
+# an error dJ in the metric reaches the fitted tensor as ``|T|^2 dJ /
+# lambda^2`` -- two inverse powers of the very eigenvalues the
+# linear-dependence cut is deciding about. No mode can be retained below
+# the accuracy of the matrix it is an eigenvalue of. PySCF makes the same
+# separation and for the same reason (``pyscf/pbc/df/df.py``,
+# ``precision_j2c``), which is what lets it ship a 1e-10 linear-dependence
+# default where a metric built at the general precision cannot support one.
+#
+# 1e-12 is four orders below the 1e-8 general default and costs little: a
+# Gaussian lattice sum's radius grows only as ``sqrt(log(1/precision))``,
+# so buying the four orders (plus the cell-count budget of
+# :func:`_mdf_fit_lattice_opts`) moved MgO's metric rcut 15.5 -> 28.9 bohr
+# and no measured MDF run got measurably slower. The 2-centre metric is
+# the smallest of the three lattice sums MDF runs (n_aux^2 elements
+# against the 3-centre's n_aux.n_orb^2), so this is the cheap place to buy
+# accuracy.
+#
+# Delivered, against a converged 45-bohr reference (2026-09-17):
+#
+#              max|dJ_PQ|            max|dlambda|
+#              1e-8 rcut   here      1e-8 rcut   here
+#   MgO        4.51e-06  1.14e-13    5.42e-06  1.82e-13
+#   LiH        4.56e-06  1.14e-13    3.79e-06  1.32e-13
+#   H2 box     3.19e-09  4.44e-15    3.46e-09  6.00e-15
+#   Ne box     3.84e-10  3.02e-14    2.26e-10  4.09e-14
+#
+# The H2 box row is the one with a live consequence for a SUPPORTED class:
+# its 3.46e-09 spectrum error exceeded the 1e-9 threshold that was meant
+# to cut on it, so modes inside the noise were being retained in
+# production. Ne, whose floor sat far above its error either way, is
+# unchanged below a nanohartree.
+_MDF_PRECISION_J2C = 1.0e-12
+
+# The three-centre companion, DEFAULT OFF (None = build the 3-centre at
+# the caller's ``rcut_precision``, as before).
+#
+# It exists because ``L = U_keep^T (T - PW proj) / sqrt(lambda)`` divides
+# the 3-centre by the same square root that divides the metric, so on
+# paper a retained mode amplifies the 3-centre's construction error too.
+# MEASURED 2026-09-17, and the paper argument does not bite at any
+# threshold actually reachable: switching it on at 1e-10 leaves
+# Ne/STO-3G/10-bohr identical to below a nanohartree and H2/STO-3G/12-bohr
+# identical to all printed digits, and on MgO/STO-3G it left every energy
+# in a 3e-2 .. 1e-10 threshold sweep unchanged while costing ~20% of the
+# run. The metric's error is amplified by ``1/lambda`` and the 3-centre's
+# only by ``1/sqrt(lambda)``, and that one extra power is the whole
+# difference: at the thresholds the dressed metric admits, the 3-centre at
+# ``rcut_precision`` is already well inside its budget.
+#
+# Kept as a knob rather than deleted because the reasoning is sound and a
+# future tighter-admitting fit would need it; do not switch it on without
+# re-measuring, since the 3-centre is the expensive sum of the three
+# (n_aux.n_orb^2 elements over the joint AO-union-fused basis, whose rcut
+# is already the longest).
+_MDF_PRECISION_J3C = None
+
+
+def _mdf_fit_lattice_opts(
+    basis: BasisSet,
+    system: PeriodicSystem,
+    base_opts: "LatticeSumOptions",
+    precision: float,
+    multiplicity: int,
+) -> "LatticeSumOptions":
+    """Lattice-sum options for one half of the PW-dressed MDF fit.
+
+    Uses :class:`~vibeqc.lattice_screening.RcutStrategy.ACCUMULATED`, so
+    ``precision`` bounds the error of the SUMMED tensor rather than of its
+    largest dropped term -- the distinction that made the shipped
+    ``precision = 1e-8`` deliver 2.4e-07 on MgO and 7.1e-06 on LiH
+    rocksalt. ``multiplicity`` carries the bound from the element error to
+    the error in what is actually used: for the metric that is Weyl's
+    ``|dlambda| <= ||dJ||_2 <= n_aux max|dJ_PQ|`` over its eigenvalues, and
+    for the 3-centre the same row count over its contraction.
+    """
+    from .lattice_screening import RcutStrategy, make_lattice_opts
+
+    return make_lattice_opts(
+        basis,
+        strategy=RcutStrategy.ACCUMULATED,
+        base_opts=base_opts,
+        precision=float(precision),
+        system=system,
+        extra_multiplicity=float(max(1, int(multiplicity))),
+    )
+
+
+def _mdf_joint_basis(
+    ao_basis: BasisSet, fused: BasisSet, molecule: Molecule
+) -> BasisSet:
+    """The AO-union-fused basis whose reach sizes the MDF 3-centre sum."""
+    shells = [
+        ShellInfo(
+            int(s.atom_index), int(s.l), bool(s.pure),
+            list(s.exponents), list(s.coefficients), list(s.origin),
+        )
+        for s in list(ao_basis.shells()) + list(fused.shells())
+    ]
+    return BasisSet(molecule, shells, "<ao∪fused>", True)
 
 
 def _mdf_dressed_metric_threshold(
@@ -3434,6 +3547,8 @@ def build_lpq_mdf(
     mdf_ke_cutoff: float = 40.0,
     rcut_strategy: Optional[object] = "pyscf_auto",
     rcut_precision: float = 1e-8,
+    precision_j2c: Optional[float] = None,
+    precision_j3c: Optional[float] = None,
 ) -> "_MdfCderi":
     """Mixed Density Fitting cderi -- Gaussian fit + plane-wave residual.
 
@@ -3501,8 +3616,19 @@ def build_lpq_mdf(
         needs. ``<= 0`` disables the PW part (the compcell-equivalent
         sanity limit).
     rcut_strategy, rcut_precision
-        Real-space lattice-cutoff auto-tuning for the libint 2c/3c, as in
-        :func:`build_lpq_compcell` (default ``"pyscf_auto"``).
+        Real-space lattice-cutoff auto-tuning for the libint 3c, as in
+        :func:`build_lpq_compcell` (default ``"pyscf_auto"``). Also sizes
+        the 2c metric in the no-PW (compcell-equivalent) limit.
+    precision_j2c
+        Accuracy the PW-dressed metric ``J-tilde`` is built to -- vibe-qc's
+        analogue of PySCF's ``precision_j2c``; default
+        :data:`_MDF_PRECISION_J2C`. Whenever the PW block is active the 2c
+        metric gets its own, much tighter lattice sum (see
+        :func:`_mdf_fit_lattice_opts`), because Eq. 19's
+        ``1/sqrt(lambda)`` makes the metric's own construction error -- not
+        ``rcut_precision`` -- what decides how small a mode may honestly be
+        kept. Ignored with the PW block off, where ``J-tilde`` IS the plain
+        metric and the compcell-equivalent limit must stay bit-identical.
 
     Returns
     -------
@@ -3535,6 +3661,11 @@ def build_lpq_mdf(
         lat_opts = LatticeSumOptions()
     if molecule is None:
         molecule = system.unit_cell_molecule()
+    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
+    if precision_j2c is None:
+        precision_j2c = _MDF_PRECISION_J2C
+    if precision_j3c is None:
+        precision_j3c = _MDF_PRECISION_J3C
 
     # --- Gaussian part: compensated fused basis + real-space libint 2c/3c.
     #     Identical to build_lpq_compcell (sans AFT correction). ---
@@ -3542,6 +3673,8 @@ def build_lpq_mdf(
     chg = make_compensating_basis(modrho_aux, molecule, eta=compcell_eta)
     fused = make_fused_basis(modrho_aux, chg, molecule)
     A = fuse_transform_matrix(modrho_aux, chg)
+
+    joint_basis = _mdf_joint_basis(ao_basis, fused, molecule)
 
     if rcut_strategy is not None:
         from .lattice_screening import RcutStrategy, make_lattice_opts
@@ -3557,20 +3690,6 @@ def build_lpq_mdf(
         lat_opts_2c = make_lattice_opts(
             fused, strategy=rcut_strategy, base_opts=lat_opts, precision=rcut_precision
         )
-        from ._vibeqc_core import ShellInfo as _SI
-
-        joint_shells = [
-            _SI(
-                int(s.atom_index),
-                int(s.l),
-                bool(s.pure),
-                list(s.exponents),
-                list(s.coefficients),
-                list(s.origin),
-            )
-            for s in list(ao_basis.shells()) + list(fused.shells())
-        ]
-        joint_basis = BasisSet(molecule, joint_shells, "<ao∪fused>", True)
         lat_opts_3c = make_lattice_opts(
             joint_basis,
             strategy=rcut_strategy,
@@ -3580,6 +3699,18 @@ def build_lpq_mdf(
     else:
         lat_opts_2c = lat_opts
         lat_opts_3c = lat_opts
+
+    if pw_on:
+        # J-tilde is built to its own accuracy, not the cell's (Eq. 20 is
+        # deliberately singular and Eq. 19 divides by sqrt of its modes).
+        lat_opts_2c = _mdf_fit_lattice_opts(
+            fused, system, lat_opts_2c, precision_j2c, modrho_aux.nbasis
+        )
+        if precision_j3c is not None:
+            lat_opts_3c = _mdf_fit_lattice_opts(
+                joint_basis, system, lat_opts_3c, precision_j3c,
+                modrho_aux.nbasis,
+            )
 
     M_fused = np.asarray(compute_2c_eri_lattice(fused, system, lat_opts_2c))
     M_fused = 0.5 * (M_fused + M_fused.T)
@@ -3598,7 +3729,6 @@ def build_lpq_mdf(
         )
 
     # --- PW residual: modest dense mesh; compensated-aux FT + AO-pair FT. ---
-    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
     if pw_on:
         V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
         _ft = _resolve_pair_ft_shared(
@@ -5240,6 +5370,8 @@ def build_lpq_bloch_mdf(
     mdf_ke_cutoff: float = 40.0,
     rcut_strategy: Optional[object] = "pyscf_auto",
     rcut_precision: float = 1e-8,
+    precision_j2c: Optional[float] = None,
+    precision_j3c: Optional[float] = None,
 ) -> np.ndarray:
     r"""Per-(k_bra, k_ket) Mixed Density Fitting cderi (multi-k MDF).
 
@@ -5274,6 +5406,10 @@ def build_lpq_bloch_mdf(
       G=0 term arises. The overlap is the k-resolved Bloch overlap at
       ``k_ket``.
 
+    ``precision_j2c`` (default :data:`_MDF_PRECISION_J2C`) sets the
+    accuracy the dressed metric ``J̃(q)`` is built to, independently of
+    ``rcut_precision``; see :func:`build_lpq_mdf`.
+
     See :func:`build_lpq_mdf` for the V̄_P closed form and
     ``docs/design_mdf.md`` for the derivation. Γ-diagonal
     (``k_bra=k_ket=0``) reproduces :func:`build_lpq_mdf` to ~1e-12.
@@ -5296,6 +5432,11 @@ def build_lpq_bloch_mdf(
     k_ket = np.asarray(k_ket, dtype=float).reshape(3)
     q = k_ket - k_bra
     is_gamma = float(np.linalg.norm(q)) < 1e-12
+    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
+    if precision_j2c is None:
+        precision_j2c = _MDF_PRECISION_J2C
+    if precision_j3c is None:
+        precision_j3c = _MDF_PRECISION_J3C
 
     # --- Gaussian part: compensated fused basis, real-space cell blocks
     #     Bloch-summed at q (q-only; see docstring). No AFT (MDF uses PW). ---
@@ -5306,6 +5447,8 @@ def build_lpq_bloch_mdf(
     n_aux = modrho_aux.nbasis
     n_orb = ao_basis.nbasis
 
+    joint_basis = _mdf_joint_basis(ao_basis, fused, molecule)
+
     if rcut_strategy is not None:
         from .lattice_screening import RcutStrategy, make_lattice_opts
 
@@ -5314,14 +5457,6 @@ def build_lpq_bloch_mdf(
         lat_opts_2c = make_lattice_opts(
             fused, strategy=rcut_strategy, base_opts=lat_opts, precision=rcut_precision
         )
-        joint_shells = [
-            ShellInfo(
-                int(s.atom_index), int(s.l), bool(s.pure),
-                list(s.exponents), list(s.coefficients), list(s.origin),
-            )
-            for s in list(ao_basis.shells()) + list(fused.shells())
-        ]
-        joint_basis = BasisSet(molecule, joint_shells, "<ao∪fused>", True)
         lat_opts_3c = make_lattice_opts(
             joint_basis, strategy=rcut_strategy, base_opts=lat_opts,
             precision=rcut_precision,
@@ -5329,6 +5464,16 @@ def build_lpq_bloch_mdf(
     else:
         lat_opts_2c = lat_opts
         lat_opts_3c = lat_opts
+
+    if pw_on:
+        # J-tilde(q) is built to its own accuracy, not the cell's.
+        lat_opts_2c = _mdf_fit_lattice_opts(
+            fused, system, lat_opts_2c, precision_j2c, n_aux
+        )
+        if precision_j3c is not None:
+            lat_opts_3c = _mdf_fit_lattice_opts(
+                joint_basis, system, lat_opts_3c, precision_j3c, n_aux
+            )
 
     _, m_vecs, m_blocks = compute_2c_eri_lattice_blocks(fused, system, lat_opts_2c)
     _, t_vecs, t_blocks = compute_3c_eri_lattice_blocks(
@@ -5344,7 +5489,6 @@ def build_lpq_bloch_mdf(
     T = np.einsum("iP,Pmn->imn", A, T_fused, optimize=True)
 
     # --- PW residual: q-shifted modest mesh, ket-Bloch pair FT. ---
-    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
     if pw_on:
         G_all = rsgdf_dense_g_mesh(system, float(mdf_ke_cutoff))
         Gq = G_all + q[None, :]

@@ -2518,10 +2518,16 @@ def test_gfn2_seccm_bad_restart_recovers_from_neutral_fallback():
         "supplied",
         "neutral",
     ]
+    # The primary stops after 500 iterations either way, but the reason is
+    # now the honest one: the budget-independent checkpoint (#294) found the
+    # bad restart's residual no longer contracting and handed the attempt to
+    # the ladder, where before a fixed 500-iteration cap had simply expired.
     assert [attempt.exit_reason for attempt in result.attempts] == [
-        "iteration_limit",
+        "stalled_checkpoint",
         "converged",
     ]
+    assert not result.attempts[0].scc_converged
+    assert result.attempts[0].allocated_max_iter == 2500
     assert result.attempts[0].n_iter == 500
     assert result.attempts[1].solver == "supercell_simple"
     assert result.selected_attempt_index == 1
@@ -6571,3 +6577,150 @@ def test_pm6_seccm_madelung_fails_closed_in_three_dimensions():
     )
     with pytest.raises(ValueError, match="no thermodynamic limit"):
         run_pm6_seccm(molecule, topology, max_iter=400, madelung=True)
+
+
+def _distorted_hli_311_cell():
+    """Three-dimensional (3,1,1) H-Li torus with a deterministic distortion.
+
+    The undistorted cell has a species-antisymmetric Madelung potential
+    (V_H = -V_Li), so an error that enters the gradient's M matrix through
+    V_A + V_B cancels on every H-Li pair and is invisible there; the
+    distortion breaks that symmetry and the forces are large and nonzero.
+    """
+    a = 4.1
+    sites = np.array([[0.17, 0.31, 0.0], [1.39, -0.22, 0.0]])
+    primitives = [
+        np.array([a, 0.0, 0.0]),
+        np.array([0.0, a, 0.0]),
+        np.array([0.0, 0.0, a]),
+    ]
+    coords: list[np.ndarray] = []
+    zs: list[int] = []
+    for i in range(3):
+        for site in range(2):
+            coords.append(i * primitives[0] + sites[site])
+            zs.append(1 if site == 0 else 3)
+    coords = np.array(coords)
+    for index in range(len(coords)):
+        coords[index] += (
+            0.03 * ((-1.0) ** index)
+            * np.array([1.0, -0.7, 0.5]) * (1.0 + 0.1 * (index % 7))
+        )
+    molecule = Molecule(
+        [Atom(z, c.tolist()) for z, c in zip(zs, coords)], 0, 1
+    )
+    topology = _topology(
+        coords,
+        [3.0 * primitives[0], primitives[1], primitives[2]],
+        replicas=(3, 1, 1),
+        primitive_vectors=primitives,
+    )
+    return molecule, topology
+
+
+def test_scc_dftb_seccm_3d_elstner_embedded_gradient_matches_fd():
+    """The embedded 3-D analytic gradient differentiates the 3-D energy (#293).
+
+    The energy builds the 3-D Ewald Madelung matrix, but the gradient's copy
+    of that dispatch had only a 1-D branch and a fall-through to the 2-D slab
+    kernel of the first two lattice vectors, so the potential entering its M
+    matrix was not the one the energy was converged with (the direct Madelung
+    derivative did use the 3-D lattice, so the two halves of one gradient
+    disagreed about the lattice). Measured on this cell with the DIIS oracle
+    before the shared builder replaced the copies: analytic minus central
+    differences up to 4.4e-5 Ha/bohr; after: the 1e-7 level of the 1-D and
+    2-D fixtures.
+    """
+    from vibeqc.semiempirical import run_scc_dftb_seccm
+
+    molecule, topology = _distorted_hli_311_cell()
+    run_kwargs = dict(
+        madelung=True,
+        gamma_form="elstner",
+        electronic_temperature=0.005,
+        use_diis=True,
+        max_iter=3000,
+    )
+    result = run_scc_dftb_seccm(
+        molecule, topology, compute_gradient=True, **run_kwargs
+    )
+    assert result.converged
+    assert abs(result.e_madelung) > 1.0e-3
+    gradient = np.asarray(result.gradient)
+    assert np.abs(gradient).max() > 0.1
+    # Translation invariance of the per-cell force.
+    assert np.abs(gradient.sum(axis=0)).max() == pytest.approx(0.0, abs=1.0e-8)
+
+    coords = np.array([atom.xyz for atom in molecule.atoms])
+    step = 1.0e-4
+
+    def energy(geometry):
+        displaced = topology.rebuild_displacements(
+            geometry,
+            **(
+                {"max_tie_score_excursion": 1.0e-3}
+                if topology.has_reference_ties
+                else {}
+            ),
+        )
+        displaced_molecule = Molecule(
+            [
+                Atom(atom.Z, c.tolist())
+                for atom, c in zip(molecule.atoms, geometry)
+            ],
+            molecule.charge,
+            molecule.multiplicity,
+        )
+        displaced_result = run_scc_dftb_seccm(
+            displaced_molecule, displaced, **run_kwargs
+        )
+        assert displaced_result.converged
+        return float(displaced_result.energy)
+
+    # Three atoms of six keep the oracle at 18 re-converged SCFs.
+    for atom in (0, 1, 2):
+        for axis in range(3):
+            plus = coords.copy()
+            minus = coords.copy()
+            plus[atom, axis] += step
+            minus[atom, axis] -= step
+            finite_difference = (energy(plus) - energy(minus)) / (2.0 * step)
+            assert gradient[atom, axis] == pytest.approx(
+                finite_difference, abs=2.0e-6
+            )
+
+
+def test_gfn2_seccm_primary_attempt_is_not_cut_at_the_stabilisation_threshold():
+    """Raising ``max_iter`` by one must not change the primary SCC trajectory (#294).
+
+    The primary attempt used to be capped at 500 iterations whenever
+    ``max_iter >= 2500`` (so on every default run), the #3/#244 defect class:
+    on this chain at ``charge_mixing = 0.01`` the same input converged in one
+    attempt of 1784 iterations at ``max_iter = 2499`` and was cut at 500 and
+    restarted from neutral at ``max_iter = 2500`` (2284 iterations, two
+    attempts). The budget-independent checkpoint keeps a contracting primary
+    attempt on its trajectory; a stalled one still reaches the ladder.
+    """
+    from vibeqc.semiempirical import run_gfn2_seccm
+
+    results = {}
+    for max_iter in (2499, 2500):
+        molecule, topology = _polar_hf_chain()
+        results[max_iter] = run_gfn2_seccm(
+            molecule,
+            topology,
+            charge_mixing=0.01,
+            conv_tol_charge=1.0e-8,
+            electronic_temperature=0.0,
+            max_iter=max_iter,
+        )
+    for result in results.values():
+        assert result.converged
+        assert len(result.attempts) == 1
+        assert result.attempts[0].exit_reason == "converged"
+        assert result.selected_attempt_index == 0
+    assert results[2499].n_iter == results[2500].n_iter
+    assert results[2499].n_iter > 500
+    assert results[2500].energy == pytest.approx(
+        results[2499].energy, abs=1.0e-10, rel=0.0
+    )

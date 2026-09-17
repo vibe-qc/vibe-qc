@@ -1603,6 +1603,223 @@ def test_bug100_run_job_perf_walls_nonzero(_vibeqc_module, tmp_path):
                 )
 
 
+# ---------------------------------------------------------------------
+# Solvated geometry optimization must walk the solvated surface.
+# ---------------------------------------------------------------------
+
+# LiF / STO-3G / RHF: two atoms, one degree of freedom, a polar bond the
+# reaction field lengthens. Both minima come from a 1-D energy scan with no
+# optimizer in the loop (19 points, parabola through the three lowest).
+_LIF_R_GAS_MIN = 2.661843193713251      # bohr
+_LIF_R_SOLV_MIN = 2.68671050533618      # bohr, water preset
+_FMAX_DEFAULT_HA_BOHR = 0.05 * 0.0194469064593167  # run_job's fmax, in Ha/bohr
+
+
+def _lif(vq, r_bohr):
+    return vq.Molecule(
+        [vq.Atom(3, (0.0, 0.0, 0.0)), vq.Atom(9, (0.0, 0.0, float(r_bohr)))], 0, 1
+    )
+
+
+@pytest.mark.parametrize("route", ["auto", "native", "geomopt"])
+def test_solvated_optimization_converges_on_the_solvated_surface(
+    _vibeqc_module, tmp_path, route
+):
+    """A solvated optimization must not walk the gas-phase surface.
+
+    Every backend used to differentiate a gas-phase energy while reporting a
+    solvated one. The default (ASE) backend was handed no ``solvent`` at all
+    and stopped 9e-06 bohr from the *gas* minimum; the native and geomopt
+    routes solvated the energy but not the gradient and stopped between the two
+    surfaces. Measured at the reported geometries, the solvated gradient was
+    6.07e-03, 1.80e-03 and 1.61e-03 Ha/bohr -- 1.7x to 6.2x the run's own
+    9.7e-04 Ha/bohr convergence threshold, i.e. none of them had converged on
+    the surface whose energy they printed.
+
+    The oracle needs no reference geometry: at a converged minimum of the
+    reported surface the gradient *of that surface* is below the threshold the
+    run converged to. The distance checks are the second half -- the walk has
+    to have left the gas-phase minimum, not merely stopped somewhere.
+    """
+    vq = _vibeqc_module
+    kwargs = dict(
+        basis="sto-3g",
+        method="rhf",
+        optimize=True,
+        solvent="water",
+        output=str(tmp_path / f"opt_{route}"),
+        progress=False,
+        citations=False,
+        write_molden_file=False,
+    )
+    if route == "geomopt":
+        vq.run_job(_lif(vq, 3.0), geom_opt="bfgs", **kwargs)
+    else:
+        vq.run_job(_lif(vq, 3.0), optimizer_backend=route, **kwargs)
+
+    lines = (tmp_path / f"opt_{route}.xyz").read_text().splitlines()
+    xyz = np.array([[float(x) for x in ln.split()[1:4]] for ln in lines[2:4]])
+    r = float(np.linalg.norm(xyz[1] - xyz[0])) / 0.52917721092
+
+    mol = _lif(vq, r)
+    basis = vq.BasisSet(mol, "sto-3g")
+    sol = vq.run_cpcm_scf(mol, basis, method="rhf", solvent="water")
+    gmax = float(np.abs(vq.cpcm_gradient(sol.scf, mol, basis, sol, method="rhf")).max())
+
+    assert gmax < _FMAX_DEFAULT_HA_BOHR, (
+        f"{route}: reported geometry r={r:.6f} bohr is not stationary on the "
+        f"solvated surface (|g|max {gmax:.2e} Ha/bohr)"
+    )
+    # It left the gas-phase minimum: the whole gas/solvated separation is
+    # 0.0249 bohr, and every route sat within 0.015 bohr of gas before the fix.
+    assert abs(r - _LIF_R_GAS_MIN) > 0.015, f"{route}: still at the gas minimum"
+    assert abs(r - _LIF_R_SOLV_MIN) < 0.010, f"{route}: r={r:.6f} bohr"
+
+
+def test_cpcm_gradient_refuses_a_functional_whose_analytic_gradient_is_incomplete():
+    """#571 under a reaction field: the gas-phase piece is the same kernel.
+
+    ``cpcm_gradient`` assembles the ordinary analytic RKS/UKS gradient and adds
+    the reaction-field terms to it. For a range-separated hybrid or a VV10
+    functional that analytic kernel omits terms, so the sum is a reaction field
+    added to a wrong surface -- silent, and smooth enough to look converged.
+    It refuses instead; the optimizers route such functionals to full-energy
+    finite differences, which differentiate the *solvated* energy.
+
+    Stubs rather than an SCF on purpose: the guard runs before any work, and a
+    wB97X-V CPCM SCF costs minutes. The complete-functional path is covered by
+    ``test_solvated_analytic_gradient_is_the_reaction_field_gradient[rks]``,
+    which runs the whole assembly on PBE and compares it term for term.
+    """
+    import types
+
+    vq = pytest.importorskip("vibeqc")
+    incomplete = types.SimpleNamespace(functional="wb97x-v")
+    solvent_result = types.SimpleNamespace(solvent_variant="cosmo", direct_feedback=None)
+
+    with pytest.raises(NotImplementedError) as refused:
+        vq.cpcm_gradient(incomplete, None, None, solvent_result, method="rks")
+    assert "wb97x-v" in str(refused.value).lower()
+
+    # A complete functional gets past the guard (and then fails on the stubs,
+    # which is how we know the guard itself did not fire).
+    complete = types.SimpleNamespace(functional="pbe")
+    with pytest.raises(Exception) as other:
+        vq.cpcm_gradient(complete, None, None, solvent_result, method="rks")
+    assert not isinstance(other.value, NotImplementedError) or "pbe" not in str(
+        other.value
+    ).lower()
+
+
+def test_solvated_optimization_refuses_a_route_with_no_solvated_gradient(
+    _vibeqc_module, tmp_path
+):
+    """MSINDO's COSMO route has no nuclear gradient, so it fails closed.
+
+    The semiempirical, MLIP and wavefunction ASE calculators all differentiate
+    a gas-phase energy. Silently optimizing on it and then reporting a solvated
+    single point is the defect this refusal exists to prevent, so the message
+    names the limitation rather than the symptom.
+    """
+    vq = _vibeqc_module
+    with pytest.raises(ValueError, match="solvated nuclear gradient") as refused:
+        vq.run_job(
+            _lif(vq, 3.0),
+            basis="sto-3g",
+            method="msindo",
+            optimize=True,
+            solvent="water",
+            output=str(tmp_path / "msindo"),
+            progress=False,
+            citations=False,
+        )
+    assert "gas phase" in str(refused.value)
+
+
+@pytest.mark.parametrize("method", ["rhf", "rks"])
+def test_solvated_analytic_gradient_is_the_reaction_field_gradient(
+    _vibeqc_module, method
+):
+    """``_compute_molecular_gradient`` differentiates the energy it was given.
+
+    The unit-level half of the contract: handed a solvated SCF result, it must
+    return ``cpcm_gradient``'s value, not the gas-phase one. Pinned separately
+    from the end-to-end tests because every optimizer route reaches the surface
+    through this one function, and the difference is small enough (a few mHa
+    per bohr) that only a direct comparison catches a silent regression.
+
+    ``rks`` is covered as well as ``rhf`` because the solvated branch carries
+    the XC quadrature through its own ``grid_options`` argument, which the
+    ``rhf`` path never exercises.
+    """
+    vq = _vibeqc_module
+    from vibeqc.molecular_optimize import _compute_molecular_gradient
+    from vibeqc.solvation.driver import _solvent_aware_scf_result
+
+    mol = _water_molecule(vq)
+    basis = vq.BasisSet(mol, "sto-3g")
+    opts = None
+    if method == "rks":
+        opts = vq.RKSOptions()
+        opts.functional = "pbe"
+
+    sol = vq.run_cpcm_scf(mol, basis, method=method, solvent="water", options=opts)
+    got = _compute_molecular_gradient(
+        mol, basis, _solvent_aware_scf_result(sol), method
+    )
+    want = vq.cpcm_gradient(sol.scf, mol, basis, sol, method=method)
+    np.testing.assert_allclose(got, want, rtol=0, atol=1e-12)
+
+    # And it is genuinely a different surface: the same function on the
+    # gas-phase result of the same method differs by more than optimizer noise.
+    gas = vq.run_cpcm_scf(mol, basis, method=method, solvent="vacuum", options=opts)
+    gas_grad = _compute_molecular_gradient(
+        mol, basis, _solvent_aware_scf_result(gas), method
+    )
+    assert np.abs(np.asarray(got) - np.asarray(gas_grad)).max() > 1e-4
+
+
+def test_iid169_orca_matched_cavity_radii_are_reachable():
+    """#169: a cross-code solvent-response comparison needs a matched cavity.
+
+    ORCA 6.1's ``CPCM(water)`` prints its own cavity: epsilon 80.1510 and
+    element radii C 2.0400, O 1.8240, H 1.3200 Angstrom. vibe-qc's Bondi x
+    ``radii_scale`` default already agrees for C and O and differs only for
+    hydrogen (1.44 A), so the recipe the user guide documents is an override of
+    hydrogen alone. Pinned because the guide quotes these numbers: if the Bondi
+    table or the scaling convention moves, the documented recipe stops
+    reproducing ORCA's cavity and a reader's comparison drifts silently.
+
+    This pins the protocol, not a cross-code number. Measured on
+    CH3COOH/def2-TZVP/B3LYP against an archived ORCA 6.1.1 reference, matching
+    these two knobs moves the response component from -1.29 mHa to -3.76 mHa
+    *away* from ORCA: the residual is the surface construction (switched
+    Lebedev against a Gaussian-charge surface at constant charge density), not
+    the radii. The measurement lives in the user guide, since it needs an ORCA
+    artifact this suite cannot build.
+    """
+    from vibeqc.solvation.cavity import atom_radii_bohr
+
+    ang = 1.8897261254578281
+    matched = atom_radii_bohr([6, 8, 1], {1: 1.10, 6: 1.70, 8: 1.52}, 1.2, 0.0) / ang
+    assert matched == pytest.approx([2.0400, 1.8240, 1.3200], abs=5e-5)
+
+    # vibe-qc's own default, for the contrast the guide draws: hydrogen only.
+    default = atom_radii_bohr([6, 8, 1], None, 1.2, 0.0) / ang
+    assert default == pytest.approx([2.0400, 1.8240, 1.4400], abs=5e-5)
+
+    # And the override is accepted by the model a reader would build.
+    vq = pytest.importorskip("vibeqc")
+    sm = vq.SolventModel(
+        epsilon=80.1510,
+        variant="cpcm",
+        radii={1: 1.10, 6: 1.70, 8: 1.52},
+        radii_scale=1.2,
+    )
+    assert sm.epsilon == pytest.approx(80.1510)
+    assert sm.variant == "cpcm"
+
+
 def test_iid148_run_job_energy_is_in_solvent_total(_vibeqc_module, tmp_path):
     """IID 148: the headline energy of a solvated run is the in-solvent
     total, consistently across banner, verdict, result object, and the

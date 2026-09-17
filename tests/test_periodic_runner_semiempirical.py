@@ -299,9 +299,60 @@ def test_periodic_parameter_identity_reaches_text_system_and_qvf(
         )
         spec = json.loads(zf.read(job["members"]["spec"]["path"]))
     assert spec["options"] == {
+        "route_maturity": "mixed_native",
+        "route_status": "periodic-pm6",
         "parameter_identity": identity,
         "parameter_sha256": sha256,
     }
+
+
+def test_periodic_route_maturity_reaches_the_qvf_job_spec(tmp_path, monkeypatch):
+    """An archived run records the maturity its route claimed (#150).
+
+    The route plan is the one maturity vocabulary, and a periodic
+    semiempirical run now carries that value into its own artifacts instead of
+    leaving "experimental" to tribal knowledge. Rendering the matching line in
+    the ``.out`` options block belongs to the output lane (#318).
+    """
+
+    def fake_engine(*_args, **_kwargs):
+        return SimpleNamespace(
+            energy=-0.25, converged=True, n_iter=3, n_basis=4
+        )
+
+    monkeypatch.setattr(pr, "_run_periodic_semiempirical_engine", fake_engine)
+    stem = tmp_path / "gamma_gfn2"
+    pr.run_periodic_job(
+        _he_cell(),
+        None,
+        method="gfn2-xtb",
+        output=stem,
+        citations=False,
+        record_hostname=False,
+        write_xyz_file=False,
+        write_xsf_structure_file=False,
+        write_cif_file=False,
+    )
+
+    system_manifest = tomllib.loads(
+        stem.with_suffix(".system").read_text(encoding="utf-8")
+    )
+    assert system_manifest["run"]["route_maturity"] == "experimental"
+    assert system_manifest["run"]["route_status"] == "gfn2-xtb"
+
+    with zipfile.ZipFile(stem.with_suffix(".qvf")) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        job = next(
+            section
+            for section in manifest["sections"]
+            if section["kind"] == "job.spec"
+        )
+        spec = json.loads(zf.read(job["members"]["spec"]["path"]))
+
+    # No parameter identity on this fake result, so the maturity is recorded
+    # on its own rather than riding along with the identity keys.
+    assert spec["options"]["route_maturity"] == "experimental"
+    assert spec["options"]["route_status"] == "gfn2-xtb"
 
 
 @pytest.mark.parametrize("method", ["pm7", "om1", "om2", "om3"])

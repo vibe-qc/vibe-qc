@@ -40,7 +40,11 @@ def test_run_job_hessian_writes_thermochemistry(tmp_path: Path) -> None:
     assert "rotor = nonlinear" in out
     assert "s_rot = 2" in out
     # Gibbs correction < enthalpy correction (entropy term lowers G).
-    assert "G = E(elec) + G_corr" in out
+    # The row names the surface its electronic energy came from ("E(RHF)",
+    # not the old ambiguous "E(elec)") -- in a correlated job that energy is
+    # the mean-field reference's, not the job's headline energy. See
+    # tests/test_hessian_surface.py.
+    assert "G = E(RHF) + G_corr" in out
 
 
 def test_run_job_thermochemistry_matches_direct_engine(tmp_path: Path) -> None:

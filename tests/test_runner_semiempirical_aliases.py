@@ -1072,10 +1072,13 @@ def test_pm6_route_still_reports_a_real_energy(monkeypatch):
     result = _drive_real_pm6_route(monkeypatch, -33.08480958728282)
     assert result.energy == -33.08480958728282
     assert result.converged is False
-    # 300 from the native stub plus 100 per unusable recovery rung: the
+    # 300 from the native stub plus 300 per unusable recovery rung: the
     # ladder was entered and exhausted, so this control walks exactly the
     # code path the refusing cases take and differs only in the value.
-    assert result.n_iter == 600
+    # The per-rung charge is the warm budget, raised from 100 to 300 with
+    # #154's basin guard -- a rung that fails for want of iterations removes
+    # a candidate, and a missing candidate is what hid the second basin.
+    assert result.n_iter == 1200
 
 
 def test_pm6_route_accepts_a_legitimately_tiny_energy(monkeypatch):

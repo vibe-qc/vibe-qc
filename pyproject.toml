@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "vibe-qc"
-version = "0.17.3"
+version = "0.17.6"
 description = "vibe-qc — a quantum chemistry code targeting the cyclic cluster model for solids"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -364,6 +364,7 @@ basisopt = [
 # "vibeqc" because Python identifiers can't carry dashes.
 [project.scripts]
 vibe-qc = "vibeqc.cli:main"
+vibe-qc-relocalize = "vibeqc_relocalize:main"
 vibeqc = "vibeqc._cli:main"
 vibe-qc-basis = "vibeqc.basis_toolkit.cli:main"
 vibeqc-cite = "vibeqc.output.citations.cli:main"
@@ -387,7 +388,7 @@ vibe-basis = { path = "vibe-basis" }
 
 [tool.scikit-build]
 # Python sources live under python/, compiled module is installed alongside
-wheel.packages = ["python/vibeqc", "python/vibeqc_naming"]
+wheel.packages = ["python/vibeqc", "python/vibeqc_naming", "python/vibeqc_relocalize"]
 # vibe-qc's pinned SKALA parity profile adapts Apache-2.0 PySCF 2.14 routines
 # and tables. Ship the upstream license and NOTICE in every wheel alongside
 # the project license; source archives include these tracked files naturally.

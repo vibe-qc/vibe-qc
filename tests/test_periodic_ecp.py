@@ -751,6 +751,129 @@ def test_legacy_property_rebuild_stays_disabled_for_ecp_cells():
     )
 
 
+def test_an_ecp_cell_can_never_reach_the_bare_z_property_rebuild():
+    """The ``ecp_active`` gate is a fail-closed backstop, not the reason an
+    ECP cell has no DOS -- it is unreachable from ``run_periodic_job``.
+
+    vibe-qc#32 reads as if ECP cells ship a QVF without DOS/PDOS/COOP/COHP
+    because this gate returns ``False``. They do not. ``run_periodic_job``
+    consults the gate only on the ``resolved_jk != GDF`` branch, and
+    ``_periodic_route_applies_ecp`` admits an ECP cell on *no other route
+    than* GDF/3D/RHF-RKS-UHF-UKS -- every other request is refused outright
+    long before the payload block. So ``resolved_jk != GDF and ecp_active``
+    is a state ``run_periodic_job`` cannot be in, and ECP cells are served by
+    the accepted-state GDF adapter instead (the producer case below).
+
+    This test pins the implication that makes the gate dead. If
+    ``_periodic_route_applies_ecp`` is ever widened past GDF, this fails and
+    whoever widened it must decide what the legacy rebuild should do rather
+    than inherit a silent wrong-physics path.
+    """
+    from vibeqc.periodic_runner import (
+        PeriodicJKMethod,
+        _periodic_route_applies_ecp,
+        _qvf_periodic_property_payload_supported,
+    )
+
+    system = _build_nacl_rocksalt()
+    methods = ("RHF", "RKS", "UHF", "UKS", "ROHF", "ROKS")
+    reachable_with_ecp = {
+        (jk, method)
+        for jk in PeriodicJKMethod
+        for method in methods
+        if _periodic_route_applies_ecp(jk, method, system)
+    }
+    assert reachable_with_ecp, "no route applies a periodic ECP at all"
+    for jk, method in reachable_with_ecp:
+        assert jk == PeriodicJKMethod.GDF, (
+            f"{jk.value}/{method} now applies a periodic ECP off the GDF "
+            "route, so run_periodic_job can reach the bare-Z property "
+            "rebuild with ecp_active=True; decide what it must do"
+        )
+        # ...and on that route the gate is never consulted, so its verdict
+        # cannot be what withholds the payload from an ECP cell.
+        assert not _qvf_periodic_property_payload_supported(
+            jk, ecp_active=True
+        )
+
+
+def test_an_omitted_qvf_property_payload_records_why(tmp_path):
+    """A gated-off property payload must say so, not vanish silently.
+
+    ``property_hamiltonian`` reaches the ``.system`` manifest only from the
+    GDF success branch, so a run whose payload was withheld by
+    ``_qvf_periodic_property_payload_supported`` wrote nothing at all: two
+    runs of the same cell, one with DOS in its QVF and one without, and no
+    field anywhere naming the difference. That silence is the part of
+    vibe-qc#32 that is real: a reduced artifact must be stated, not silent.
+
+    BIPOLE is used as the representative gated route; the ECP branch of the
+    same gate is unreachable (see above).
+    """
+    import tomllib
+
+    from vibeqc.periodic_runner import (
+        PeriodicJKMethod,
+        _qvf_periodic_property_payload_skip_reason,
+        _qvf_periodic_property_payload_supported,
+        run_periodic_job,
+    )
+
+    # The reason is available to callers, and agrees with the boolean gate.
+    assert _qvf_periodic_property_payload_skip_reason(PeriodicJKMethod.GDF) is None
+    for jk, needle in (
+        (PeriodicJKMethod.BIPOLE, "BIPOLE"),
+        (PeriodicJKMethod.AICCM2026DEV_B, "AICCM2026DEV-B"),
+    ):
+        reason = _qvf_periodic_property_payload_skip_reason(jk)
+        assert reason and needle in reason, (jk, reason)
+        assert not _qvf_periodic_property_payload_supported(jk)
+    assert "external" in (
+        _qvf_periodic_property_payload_skip_reason(
+            PeriodicJKMethod.GDF, uses_external_xc=True
+        )
+        or ""
+    )
+    assert "ECP" in (
+        _qvf_periodic_property_payload_skip_reason(
+            PeriodicJKMethod.GDF, ecp_active=True
+        )
+        or ""
+    )
+
+    # ...and a real run that hits the gate records the reason it hit.
+    box = 12.0
+    c = box / 2
+    system = vq.PeriodicSystem(
+        3,
+        np.eye(3) * box,
+        [vq.Atom(1, [c, c, c - 0.7]), vq.Atom(1, [c, c, c + 0.7])],
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    stem = tmp_path / "bipole_no_property_payload"
+    result = run_periodic_job(
+        system,
+        basis,
+        method="RHF",
+        jk_method="bipole",
+        bipole_cutoff_bohr=15.0,
+        bipole_nuclear_cutoff_bohr=15.0,
+        output=stem,
+        output_qvf=True,
+        citations=False,
+        progress=False,
+    )
+    assert result.converged
+    run = tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))["run"]
+    assert "property_hamiltonian" in run, (
+        "the omitted DOS/PDOS/COOP/COHP payload left no trace in the manifest"
+    )
+    assert run["property_hamiltonian"].startswith("omitted ("), run[
+        "property_hamiltonian"
+    ]
+    assert "BIPOLE" in run["property_hamiltonian"]
+
+
 def _build_nacl_rocksalt():
     a = 5.64 * 1.8897261246257702
     lattice = np.array([[0.0, a / 2, a / 2], [a / 2, 0.0, a / 2], [a / 2, a / 2, 0.0]])
@@ -840,6 +963,103 @@ def test_sidecar_ecp_basis_runs_on_the_periodic_gdf_route(
         fock = np.asarray(getattr(result, 'fock'+suffix)[0])
         expected.append(-np.sum(density.T[ab] * fock[ab]).real * _HARTREE_TO_EV)
     np.testing.assert_allclose(integrated, expected, atol=1e-10, rtol=0)
+
+
+def test_ecp_payload_one_electron_term_is_not_the_bare_z_build(tmp_path):
+    """vibe-qc#32 closure criterion (b), the half not already pinned above.
+
+    The producer case pins that an ECP cell's QVF carries
+    dos.total/projected/coop/cohp and that ``dos/cohp_integrated.bin`` is the
+    contraction of the *accepted* ECP density and Fock. This pins the other
+    half: that the accepted one-electron frame is nowhere near the bare-Z one
+    the legacy rebuild would have used, so the payload could not have come
+    from a bare-Z build and cannot be confused with one.
+
+    Both frames are built on the same Ewald-3D lattice options, so the
+    difference measured is the physics (Z_eff plus the lattice-summed V_ECP
+    against bare Z), not a cutoff artifact. Reported as the ICOHP error the
+    legacy rebuild would have made: the 2e part of F is common to both
+    frames, so ``F_bare = F_accepted + (V_bare - V_eff)`` and the induced
+    ICOHP shift is the Na-Cl block contraction of that difference.
+    """
+    import json
+    import zipfile
+
+    from vibeqc._vibeqc_core import CoulombMethod, LatticeSumOptions, bloch_sum
+    from vibeqc.bands import _HARTREE_TO_EV, _shell_to_atom
+    from vibeqc.periodic_k_gdf import _ecp_lattice_blocks, _periodic_ecp_context
+    from vibeqc.periodic_rhf_gdf import _gauge_lat_opts_for_v_ne_and_e_nuc
+    from vibeqc.periodic_runner import _resolve_ecp_data, run_periodic_job
+    from vibeqc.periodic_v_ne import compute_nuclear_lattice_dispatch
+
+    system = _build_nacl_rocksalt()
+    system = vq.PeriodicSystem(3, np.asarray(system.lattice), [
+        system.unit_cell[0],
+        vq.Atom(17, list(np.asarray(system.unit_cell[1].xyz)
+                        - np.asarray(system.lattice)[:, 0])),
+    ], 0, 1)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+
+    stem = tmp_path / "nacl_lanl_frames"
+    result = run_periodic_job(
+        system, basis, method="RHF", kpoints=[1, 1, 1], jk_method="gdf",
+        aux_basis="def2-svp-jk", output=stem, max_iter=80, progress=False,
+        output_qvf=True, coop_cohp=True,
+    )
+    assert result.converged
+
+    with zipfile.ZipFile(stem.with_suffix(".qvf")) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        sections = {s["kind"] for s in manifest["sections"]}
+        assert {"dos.total", "dos.projected", "dos.coop", "dos.cohp"} <= sections
+        icohp = np.frombuffer(
+            archive.read("dos/cohp_integrated.bin"), dtype="<f8"
+        )
+    # Provenance says the payload was projected, not rebuilt.
+    import tomllib
+
+    run_fields = tomllib.loads(
+        stem.with_suffix(".system").read_text("utf-8")
+    )["run"]
+    assert run_fields["property_hamiltonian"] == "accepted-scf"
+
+    blocks, centers, eff_z, ncore = _resolve_ecp_data(system, basis)
+    ecp_ctx = _periodic_ecp_context(
+        SimpleNamespace(
+            ecp_primitive_blocks=blocks, ecp_home_centers=centers,
+            ecp_effective_charges=eff_z, ecp_total_ncore=ncore,
+        ),
+        system, "test",
+    )
+    system_v = ecp_ctx[4]
+    lat_opts = LatticeSumOptions()
+    lat_opts.coulomb_method = CoulombMethod.EWALD_3D
+    gauge = _gauge_lat_opts_for_v_ne_and_e_nuc(lat_opts, system)
+    gamma = np.zeros(3)
+    v_eff = np.asarray(bloch_sum(
+        compute_nuclear_lattice_dispatch(basis, system_v, gauge), gamma
+    )) + np.asarray(bloch_sum(
+        _ecp_lattice_blocks(basis, system, lat_opts, ecp_ctx), gamma
+    ))
+    v_bare = np.asarray(bloch_sum(
+        compute_nuclear_lattice_dispatch(basis, system, gauge), gamma
+    ))
+    delta = v_bare - v_eff
+    assert np.abs(delta).max() > 1.0, (
+        "bare-Z and ECP one-electron frames agree; the ECP operator is not "
+        "reaching the Hamiltonian at all"
+    )
+
+    ao_atoms = _shell_to_atom(basis)
+    ab = np.ix_(np.flatnonzero(ao_atoms == 0), np.flatnonzero(ao_atoms == 1))
+    density = np.asarray(result.density[0])
+    icohp_shift = -np.sum(density.T[ab] * delta[ab]).real * _HARTREE_TO_EV
+    assert abs(icohp_shift) > 1.0, (
+        f"a bare-Z property rebuild would shift the reported Na-Cl ICOHP by "
+        f"{icohp_shift:.3f} eV against the accepted {icohp[0]:.3f} eV; that "
+        "is too small to distinguish the two builds, so this test no longer "
+        "pins what it claims"
+    )
 
 
 def test_sidecar_ecp_cell_uhf_singlet_matches_rhf(tmp_path):

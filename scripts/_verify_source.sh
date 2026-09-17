@@ -93,11 +93,16 @@ MSG
 # Send <signal> to <pid> and every descendant, children first.
 _vqc_kill_tree() {
     local sig="$1" pid="$2" child
-    if command -v pgrep >/dev/null 2>&1; then
-        for child in $(pgrep -P "$pid" 2>/dev/null || true); do
-            _vqc_kill_tree "$sig" "$child"
-        done
-    fi
+    # PID 0 and negative PIDs address process groups; PID 1 is never a
+    # build child. Do not let an empty or malformed target reach kill.
+    case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$pid" -gt 1 ] || return 0
+    # Match the actual parent column. Some macOS proctools pgrep versions
+    # ignore -P and enumerate unrelated processes, including PID 0 (#241).
+    # ps/awk also work on hosts without pgrep.
+    for child in $(ps -axo pid=,ppid= | awk -v parent="$pid" '$2 == parent {print $1}'); do
+        _vqc_kill_tree "$sig" "$child"
+    done
     kill "-$sig" "$pid" 2>/dev/null || true
 }
 

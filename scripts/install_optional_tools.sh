@@ -94,6 +94,8 @@ if [ ! -f "$SCRIPT_DIR/_venv_helpers.sh" ]; then
 fi
 # shellcheck source=_venv_helpers.sh
 . "$SCRIPT_DIR/_venv_helpers.sh"
+# shellcheck source=_companion_paths.sh
+. "$SCRIPT_DIR/_companion_paths.sh"
 
 resolve_from_repo() {
     case "$1" in
@@ -465,10 +467,19 @@ fi
 [ "${#CHANGED[@]}" -eq 0 ] || echo "    selected: ${CHANGED[*]}"
 [ "${#SKIPPED[@]}" -eq 0 ] || echo "    unchanged/skipped: ${SKIPPED[*]}"
 echo
+# Print the paths the rest of the toolset actually resolves, not the
+# pre-split in-tree ones: vibe-view and vibe-queue are sibling repositories.
+vibeqc_companion_expected_root vibe-view COMPANION_VIEW_ROOT
+vibeqc_companion_expected_root vibe-queue COMPANION_QUEUE_ROOT
+vibeqc_companion_expected_root vibe-basis COMPANION_BASIS_ROOT
 echo "Standalone suite tools use their own lifecycle scripts:"
-echo "    vibe-view:  ./vibe-view/scripts/install.sh"
-echo "    vq:         ./vibe-queue/scripts/install.sh"
-echo "    vibe-basis: ./vibe-basis/scripts/install.sh"
+echo "    vibe-view:  $COMPANION_VIEW_ROOT/scripts/install.sh"
+echo "    vq:         $COMPANION_QUEUE_ROOT/scripts/install.sh"
+echo "    vibe-basis: $COMPANION_BASIS_ROOT/scripts/install.sh"
+for companion in vibe-view vibe-queue; do
+    vibeqc_companion_root "$companion" COMPANION_ROOT ||
+        echo "    ($companion is not checked out at the path above.)"
+done
 
 if [ "$DRY_RUN" != "1" ]; then
     vibe_toolset_release_lifecycle_lock

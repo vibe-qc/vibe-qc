@@ -46,6 +46,11 @@ import sys
 
 FAILING = {"FAIL", "SEGFAULT", "ABORT", "OOM_KILLED", "SIGKILLED", "TIMEOUT", "COLLECT_ERR"}
 
+# Statuses that carry no information about the code, because no test ran. They
+# are not reds and must never be counted as passes either: an artifact holding
+# one cannot produce a verdict at all (#285).
+VOID = {"STALE_CORE"}
+
 # A re-verified single-file run is a contention artifact (does NOT gate) only
 # if it now cleanly passes or collects nothing; anything else is a real red.
 RECOVERED = {"PASS", "NOTESTS"}
@@ -63,7 +68,7 @@ def load_jsonl(p):
 
 
 def validate_blocking_artifact(runs, path):
-    """Reject advisory or unclassified data before computing a verdict."""
+    """Reject advisory, unclassified or void data before computing a verdict."""
     bad = sorted(
         {
             record.get("tier", "UNCLASSIFIED")
@@ -77,10 +82,34 @@ def validate_blocking_artifact(runs, path):
             f"{path}: blocking verdict accepts only T0/T1 records; found {labels}"
         )
 
+    # A stale compiled core is a condition of the host, not of any one file:
+    # pytest refused before collecting, so every lane on that host ran nothing.
+    # Reporting the run as GREEN would certify the previous commit's C++ under
+    # this commit's name, and reporting it RED would charge the code for a
+    # build problem. Neither is a verdict, so refuse to compute one (#285).
+    voided = sorted({r.get("file", "?") for r in runs if r.get("status") in VOID})
+    if voided:
+        shown = ", ".join(voided[:3]) + (" ..." if len(voided) > 3 else "")
+        raise ValueError(
+            f"{path}: {len(voided)} target(s) exited STALE_CORE, so no test ran "
+            f"on this host ({shown}). Rebuild the core and re-run the lane; "
+            "this artifact cannot produce a verdict either way"
+        )
+
 
 def is_failing(status: str) -> bool:
-    """A status that, on an unlisted file, would gate the build RED."""
-    return status in FAILING or status.startswith(("SIGNAL_", "RC_"))
+    """A status that, on an unlisted file, would gate the build RED.
+
+    ``VOID`` statuses are included so that no path can quietly count them as
+    healthy. A blocking run never reaches here with one — it is rejected in
+    :func:`validate_blocking_artifact` — but an advisory lane still has to show
+    it rather than pass over it (#285).
+    """
+    return (
+        status in FAILING
+        or status in VOID
+        or status.startswith(("SIGNAL_", "RC_"))
+    )
 
 
 def reverify_new_reds(candidates, runner):

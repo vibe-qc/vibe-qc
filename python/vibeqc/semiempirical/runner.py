@@ -769,6 +769,82 @@ def _run_molecular_semiempirical(
     raise ValueError(f"Unhandled semiempirical method: {method!r}")
 
 
+_PM6_RECOVERY_TEMPERATURES = (0.005, 0.01, 0.02)
+# #154: how far two converged zero-temperature PM6 fixed points may disagree
+# before the calculation is refused as basin-ambiguous.  Four orders of
+# magnitude above zero-T SCF noise (a re-cool moves the total by ~1e-8 Ha) and
+# four below the measured basin gaps (0.28 to 0.84 Ha on norbornadiene), so it
+# separates "the same solution twice" from "two different solutions".
+_PM6_BASIN_AGREEMENT_TOL = 1.0e-4
+# Budgets for the homotopy rungs.  Generous on purpose: a rung that fails for
+# want of iterations removes a candidate, and a missing candidate is what
+# hides a second basin (#154).
+_PM6_HOMOTOPY_WARM_MAX_ITER = 300
+_PM6_HOMOTOPY_COOL_MAX_ITER = 300
+_PM6_HOMOTOPY_RECOOL_MAX_ITER = 100
+
+
+def _pm6_homotopy_fixed_points(molecule, params):
+    """Zero-T PM6 fixed points reachable through bounded Mermin homotopies.
+
+    Hard Aufbau occupations can leave a near-degenerate closed-shell density
+    cycling between fragment-localised orbitals.  Smearing selects a smooth
+    density, which is cooled back to an ordinary zero-temperature PM6 fixed
+    point and re-cooled to prove it is one: the first cool can appear
+    converged while sitting on a metastable occupation that collapses to a
+    cycle on the next SCF (BUG-024).
+
+    Every rung of the temperature ladder is run, not just the first that
+    converges.  Different rungs reach different fixed points on the systems
+    this guard exists for -- norbornadiene's rungs land on -33.3644211,
+    -33.8171396 and -33.9206691 Ha -- and stopping at the first success is
+    what let one noise-selected basin be reported as the answer (#154).
+
+    Returns ``(fixed_points, iterations)``: a list of ``(temperature, result)``
+    for each rung that produced a converged, re-cooled zero-temperature
+    solution, and the total SCC iterations spent, including unusable rungs.
+    """
+    from vibeqc._vibeqc_core.semiempirical.nddo import (
+        run_pm6_with_density,
+        run_pm6_with_smearing,
+    )
+
+    fixed_points = []
+    iterations = 0
+    for recovery_T in _PM6_RECOVERY_TEMPERATURES:
+        try:
+            warm = run_pm6_with_smearing(
+                molecule,
+                params,
+                electronic_temperature=recovery_T,
+                max_iter=_PM6_HOMOTOPY_WARM_MAX_ITER,
+            )
+        except RuntimeError:
+            # NaN/Inf guard fired in the C++ layer: this temperature did not
+            # help, so charge the budget and try the next rung.
+            iterations += _PM6_HOMOTOPY_WARM_MAX_ITER
+            continue
+        iterations += int(warm.n_iter)
+        if not warm.converged:
+            continue
+        cooled = run_pm6_with_density(
+            molecule, params, warm.density, max_iter=_PM6_HOMOTOPY_COOL_MAX_ITER
+        )
+        iterations += int(cooled.n_iter)
+        if not cooled.converged:
+            continue
+        recooled = run_pm6_with_density(
+            molecule,
+            params,
+            cooled.density,
+            max_iter=_PM6_HOMOTOPY_RECOOL_MAX_ITER,
+        )
+        iterations += int(recooled.n_iter)
+        if recooled.converged:
+            fixed_points.append((recovery_T, recooled))
+    return fixed_points, iterations
+
+
 def _run_pm6(
     plan: SemiempiricalRoutePlan,
     molecule: Molecule,
@@ -795,56 +871,66 @@ def _run_pm6(
         result_obj = run_pm6(molecule, params, max_iter=200)
         from vibeqc._vibeqc_core.semiempirical.nddo import (
             compute_pm6_gradient_fd_from_result,
-            run_pm6_with_density,
-            run_pm6_with_smearing,
         )
 
         n_iter = int(result_obj.n_iter)
-        if not result_obj.converged:
-            # A symmetric weakly coupled dimer or strained bridged bicycle
-            # can leave hard Aufbau occupations cycling between
-            # near-degenerate fragment orbitals.  Use a bounded Mermin
-            # homotopy to select a smooth density, then cool back to the
-            # ordinary zero-temperature PM6 fixed point.  The finite-T
-            # energy is never exposed as a successful PM6 result.
-            #
-            # Try a temperature ladder: formamide-dimer responds to
-            # T=0.005 Ha (v0.15.57), but more strongly coupled systems
-            # like norbornadiene need T >= 0.01 Ha to escape the
-            # occupation cycle (BUG-024).
-            _PM6_RECOVERY_TEMPERATURES = (0.005, 0.01, 0.02)
-            for _recovery_T in _PM6_RECOVERY_TEMPERATURES:
-                try:
-                    warm = run_pm6_with_smearing(
-                        molecule,
-                        params,
-                        electronic_temperature=_recovery_T,
-                        max_iter=100,
-                    )
-                except RuntimeError:
-                    # NaN/Inf guard fired in the C++ layer — this
-                    # temperature didn't help; try the next rung.
-                    n_iter += 100
-                    continue
-                n_iter += int(warm.n_iter)
-                if warm.converged:
-                    cooled = run_pm6_with_density(
-                        molecule, params, warm.density, max_iter=200
-                    )
-                    n_iter += int(cooled.n_iter)
-                    if cooled.converged:
-                        # Re-cool verification: the cooled solution
-                        # must be a genuine zero-T fixed point (BUG-024
-                        # on compute-study: the first cool can appear converged
-                        # but land on a metastable occupation that
-                        # collapses to a cycle on the next SCF).
-                        recooled = run_pm6_with_density(
-                            molecule, params, cooled.density, max_iter=50
-                        )
-                        n_iter += int(recooled.n_iter)
-                        if recooled.converged:
-                            result_obj = recooled
-                            break
+        # #154: a converged PM6 SCF is not on its own an answer.  A strained
+        # bridged bicycle or a weakly coupled symmetric dimer has several
+        # genuine zero-temperature fixed points, and hard occupations leave
+        # the iteration selecting between them on arithmetic noise rather
+        # than on the input.  Measured on norbornadiene: the direct SCF
+        # converges to -33.0848096 Ha, and to -33.9206690 Ha (0.836 Ha,
+        # 22.7 eV lower) after a 1e-9 A nudge of one bridgehead carbon, while
+        # homotopy rungs reach -33.3644211, -33.8171396 and -33.9206691.
+        # Four fleet hosts reported four of those values for one input and
+        # one build, every one labelled converged.
+        #
+        # Nothing here can pick the right basin: the smeared paths are
+        # noise-sensitive too, "report the lowest" is not stable because the
+        # direct solution is sometimes itself the lowest, and thread count
+        # changes nothing, so this is not an arithmetic-determinism defect.
+        # What the route can do is notice.  It gathers every fixed point a
+        # fixed, deterministic probe set reaches and refuses when they
+        # disagree: an energy selected by rounding is not a result.  Every
+        # host then reaches the same outcome instead of a different number.
+        # Systems with one basin -- nearly all of them -- see agreement and
+        # are reported exactly as before.  This is the same class of guard as
+        # the exactly-zero tripwire above.
+        fixed_points, probe_iterations = _pm6_homotopy_fixed_points(
+            molecule, params
+        )
+        n_iter += probe_iterations
+
+        candidates = []
+        if result_obj.converged:
+            candidates.append(("the direct SCF", float(result_obj.energy)))
+        for probe_T, probe in fixed_points:
+            candidates.append(
+                (f"a T = {probe_T} Ha homotopy", float(probe.energy))
+            )
+
+        if len(candidates) > 1:
+            energies = [energy for _, energy in candidates]
+            spread = max(energies) - min(energies)
+            if spread > _PM6_BASIN_AGREEMENT_TOL:
+                detail = "; ".join(
+                    f"{energy:.10f} Ha from {label}"
+                    for label, energy in candidates
+                )
+                raise SemiempiricalEnergyError(
+                    "PM6 reached more than one converged zero-temperature "
+                    f"fixed point for this input, spanning {spread:.6f} Ha: "
+                    f"{detail}. Hard occupations make the selection between "
+                    "them depend on arithmetic noise rather than on the "
+                    "input, so none of these values is this system's PM6 "
+                    "energy and the calculation is refused instead of "
+                    "reporting one of them. See GitLab #154."
+                )
+
+        if not result_obj.converged and fixed_points:
+            # The direct SCF never reached a fixed point; the homotopy's
+            # agreeing solution is the answer, as before.
+            result_obj = fixed_points[0][1]
 
         def gradient():
             return compute_pm6_gradient_fd_from_result(

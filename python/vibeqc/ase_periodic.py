@@ -139,14 +139,15 @@ def _periodic_scf_energy_and_forces(
     (energy + forces from a single SCF). Parameter docs live on
     :func:`periodic_forces`.
     """
+    from .kpoints import _integer_counts
+
+    kpts = _integer_counts([1, 1, 1] if kpts is None else kpts, name="ASE kpts")
     sys = atoms_to_periodic_system(atoms, charge=charge,
                                       multiplicity=multiplicity)
     is_dft = functional is not None
     is_open_shell = (multiplicity != 1)
 
-    if kpts is None:
-        kpts = [1, 1, 1]
-    is_gamma_only = (tuple(int(k) for k in kpts) == (1, 1, 1))
+    is_gamma_only = (tuple(kpts) == (1, 1, 1))
 
     if str(backend) not in ("ewald", "gdf"):
         raise ValueError(
@@ -193,7 +194,7 @@ def _periodic_scf_energy_and_forces(
             # Monkhorst-Pack mesh for even kpts instead — the two
             # backends disagree on even meshes by construction (~44
             # mHa on MgO (2,2,2); see the production-k-sampling audit).
-            kmesh_t = tuple(int(k) for k in kpts)
+            kmesh_t = tuple(kpts)
             mk_driver = (
                 run_kuhf_periodic_gdf if is_open_shell
                 else run_krhf_periodic_gdf

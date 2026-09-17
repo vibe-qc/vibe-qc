@@ -1,0 +1,66 @@
+{
+  "protocol": "vibeqc.relocalize",
+  "protocol_version": 1,
+  "id": "h2",
+  "operation": "localize",
+  "method": "ibo",
+  "system": {
+    "kind": "molecular",
+    "atomic_numbers": [
+      1,
+      1
+    ],
+    "positions_bohr": [
+      [
+        0.6,
+        0.0,
+        0.0
+      ],
+      [
+        2.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "charge": 0,
+    "multiplicity": 1,
+    "spin": "restricted"
+  },
+  "basis": {
+    "name": "sto-3g",
+    "ao_convention": "qvf-gto-v1",
+    "uses_ecp": false,
+    "shells": [
+      {
+        "center": 0,
+        "l": 0,
+        "exponents": [
+          3.42525091,
+          0.62391373,
+          0.1688554
+        ],
+        "coefficients": [
+          0.1543289707029839,
+          0.5353281424384732,
+          0.4446345420253548
+        ],
+        "pure": true
+      },
+      {
+        "center": 1,
+        "l": 0,
+        "exponents": [
+          3.42525091,
+          0.62391373,
+          0.1688554
+        ],
+        "coefficients": [
+          0.1543289707029839,
+          0.5353281424384732,
+          0.4446345420253548
+        ],
+        "pure": true
+      }
+    ]
+  }
+}

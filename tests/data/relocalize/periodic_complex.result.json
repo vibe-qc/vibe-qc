@@ -1,0 +1,178 @@
+{
+  "coefficients": {
+    "encoding": "complex_split_last_axis",
+    "data": [
+      [
+        [
+          0.6010413713815472,
+          -4.150107106582797e-19
+        ],
+        [
+          0.43584954587930785,
+          0.34380075667925536
+        ],
+        [
+          -0.1472700299079484,
+          0.1482539872115236
+        ],
+        [
+          0.01792179559429081,
+          -0.19554676946773178
+        ]
+      ],
+      [
+        [
+          -0.14727050430559704,
+          0.14825396018411507
+        ],
+        [
+          0.01792150719871811,
+          -0.1955470219750677
+        ],
+        [
+          0.6010414809542736,
+          3.737019288654005e-18
+        ],
+        [
+          0.4358494694499584,
+          0.34380098215918276
+        ]
+      ]
+    ]
+  },
+  "occupations": [
+    2.0,
+    2.0
+  ],
+  "rotation": {
+    "encoding": "complex_split_last_axis",
+    "data": [
+      [
+        [
+          0.965743873924947,
+          0.05810988468799924
+        ],
+        [
+          -0.015190610432507454,
+          0.25245050333218005
+        ]
+      ],
+      [
+        [
+          -0.015189845564792012,
+          0.25245054935511857
+        ],
+        [
+          0.9657438745623822,
+          0.05810987409429025
+        ]
+      ]
+    ]
+  },
+  "representation": "finite_torus_ao",
+  "reference_gap_hartree": 1.5,
+  "translations": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      0
+    ]
+  ],
+  "lattice_bohr": [
+    [
+      4.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      10.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      10.0
+    ]
+  ],
+  "atom_populations": [
+    [
+      0.5050975771619501,
+      0.4594084478108022,
+      0.016219342709850027,
+      0.019274632317398743
+    ],
+    [
+      0.016219358570178175,
+      0.019274616457070626,
+      0.5050975930222787,
+      0.45940843195047365
+    ]
+  ],
+  "population_model": "lowdin_finite_torus",
+  "centroids_bohr": [
+    [
+      1.259075499202906,
+      0.0,
+      0.0
+    ],
+    [
+      5.259075499202906,
+      0.0,
+      0.0
+    ]
+  ],
+  "centroid_model": "projected circular AO-centre approximation",
+  "n_centres": [
+    2,
+    2
+  ],
+  "centre_threshold": 0.1,
+  "charges": [
+    -0.04263387146425668,
+    0.04263387146425435,
+    -0.04263387146425757,
+    0.042633871464255235
+  ],
+  "charge_model": "lowdin_finite_torus",
+  "spreads_bohr2": [
+    0.7539417667654429,
+    0.7539417667654429
+  ],
+  "aliasing_fraction": [
+    0.035493975027248735,
+    0.03549397502724875
+  ],
+  "aliasing_detected": [
+    false,
+    false
+  ],
+  "validation": {
+    "input_orthonormality_error": 2.0014830212433605e-16,
+    "orthonormality_error": 3.989713146375376e-16,
+    "subspace_residual": 2.472914856770228e-16,
+    "unitary_error": 5.861825451196818e-16,
+    "tolerance": 1e-07,
+    "density_invariance_error": 3.0891010468384053e-16,
+    "translation_projector_error": 4.326666044363019e-16
+  },
+  "experimental": true,
+  "warnings": [
+    "Experimental finite-torus localization; centres are a projected circular AO-centre approximation, not exact position expectations."
+  ],
+  "method": "aiccm-wannier",
+  "source": "supplied",
+  "scf_performed": false,
+  "spin": "restricted",
+  "backend_version": "0.17.3",
+  "ao_convention": "qvf-gto-v1",
+  "convergence": "not_certified_by_kernel",
+  "citation_features": [
+    "wannier"
+  ]
+}

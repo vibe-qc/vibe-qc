@@ -728,17 +728,20 @@ def _reject_dense_core_mdf(
 
     **Why those modes were noise, measured.** At the production rcut
     (``pyscf_auto``, ``rcut_precision`` 1e-8) the MgO ``J-tilde``
-    spectrum carries up to **5.4e-06** absolute construction error
-    against a converged 34-bohr reference. The smallest RETAINED
-    eigenvalue at the old default was **2.9e-08, with its own error bar
-    at 6.6e-08** -- the mode was smaller than its uncertainty, and
-    Eq. 19 divides the Eq.-23 numerator by its square root
-    (amplification ~6e+03). PySCF can afford its much tighter 1e-10
-    because it builds the 2c metric at a dedicated far tighter precision
-    (``precision_j2c``), exactly because 2c metric error propagates into
-    the fitted tensor; vibe-qc builds ``J-tilde`` at the general
-    lattice-sum precision, so its threshold must sit correspondingly
-    higher. See ``aux_basis._MDF_DRESSED_METRIC_MIN_THRESHOLD``.
+    spectrum carried up to **5.4e-06** absolute construction error
+    against a converged reference. The smallest RETAINED eigenvalue at
+    the old default was **2.9e-08, with its own error bar at 6.6e-08**
+    -- the mode was smaller than its uncertainty, and Eq. 19 divides the
+    Eq.-23 numerator by its square root (amplification ~6e+03).
+
+    **That construction error is now gone** (2026-09-17). ``J-tilde`` is
+    built at a dedicated ``precision_j2c`` on a lattice sum sized for the
+    accumulated, not the largest-single, dropped term
+    (``aux_basis._MDF_PRECISION_J2C``,
+    ``lattice_screening.estimate_rcut_accumulated``): the MgO spectrum
+    error is **1.8e-13**, and ``J-tilde``'s most negative eigenvalue --
+    impossible above round-off for what is a Gram matrix of PW residuals
+    -- went from **-5.4e-06 to -1.3e-13**.
 
     **What landed.** The convention is harmonised to ABSOLUTE across all
     nine fitting-metric decompositions (PySCF's convention; MDF and
@@ -759,14 +762,29 @@ def _reject_dense_core_mdf(
     incompleteness error". 92 mHa is not production accuracy, so the
     class stays gated (CLAUDE.md §7).
 
-    **The remaining follow-up**, and the route to lifting this gate:
-    build ``J-tilde`` accurately enough to support a PySCF-like
-    threshold, i.e. vibe-qc's analogue of ``precision_j2c``. Related
-    measured finding: ``precision=1e-8`` does not deliver 1e-8 in the
-    compensated metric -- residues at the auto rcut are 2.4e-07 (MgO),
-    7.1e-06 (LiH rocksalt), 1.9e-08 (H2 box), essentially independent of
-    the compensating exponent eta, consistent with accumulation over the
-    ~R^3 lattice terms rather than single-pair amplitude decay.
+    **And it did NOT lift this gate -- measured 2026-09-17, so do not
+    spend the time again.** The 2026-08-14 note named a tighter
+    ``J-tilde`` as the route out. It is not. Sweeping the absolute
+    threshold on MgO with the accurate metric and the floor disabled
+    reproduces the pre-fix sweep above cut for cut:
+
+        1e-3   -274.2850      (pre-fix, relative 1e-4:  -275.300)
+        1e-6   -337.8017      (pre-fix, relative 1e-7:  -337.802)
+        1e-8   -64954.85      diverged, non-converged
+
+    The 1e-6 row is the same effective cut as the recorded relative 1e-7
+    (max_eig = 10.8) and lands on the recorded value to all its digits.
+    Per mode, the amplification ``|u_i . T_corr| / sqrt(lambda_i)`` is
+    likewise unmoved: 938.5 -> 943.6 at lambda = 1.06e-12, 94.90 -> 94.60
+    at 4.14e-09. A residual that survives a seven-order change in the
+    metric is not the metric's.
+
+    The mesh is refuted too: at the loosest useful threshold the residual
+    is flat in ``mdf_ke_cutoff`` (-92.05 / -82.50 / -82.55 / -88.37 mHa
+    at ke = 40 / 60 / 80 / 120). What is left is what this docstring
+    already said it was -- **the incompleteness of the 81%-smaller aux
+    space itself** (Sun Sec. III), and the route out has to widen that
+    space rather than sharpen what is fitted in it.
 
     Callers who want this class anyway can pass a looser
     ``gdf_linear_dep_threshold`` (~3e-2) knowingly.
@@ -1019,7 +1037,8 @@ def _pbc_gdf_gamma_setup(
         _preflight_gdf_oneel_memory(system, basis, oneel_lat_opts)
     with plog.stage(
         "integrals_lattice",
-        detail=f"S/T/V at cutoff {oneel_lat_opts.cutoff_bohr:.2f} bohr",
+        detail=f"S/T at cutoff {oneel_lat_opts.cutoff_bohr:.2f} bohr, "
+        "V on the screened AO-pair domain",
     ):
         S_lat = compute_overlap_lattice(basis, system, oneel_lat_opts)
         T_lat = compute_kinetic_lattice(basis, system, oneel_lat_opts)
@@ -1325,7 +1344,9 @@ def run_pbc_gdf_rhf(
     PBCGDFResult
     """
     _refuse_ecp_options(options, "run_pbc_gdf_rhf", system=system)
-    kmesh = tuple(int(x) for x in kmesh)
+    from .kpoints import _integer_counts
+
+    kmesh = tuple(_integer_counts(kmesh, name="Gamma GDF kmesh"))
     if kmesh != (1, 1, 1):
         raise NotImplementedError(
             "run_pbc_gdf_rhf: only kmesh=(1,1,1) (Γ-only) is implemented "

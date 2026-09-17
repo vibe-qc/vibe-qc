@@ -8,8 +8,11 @@
 // (a -> b image) contribution is computed at d = R_a - (R_b + T) = -disp.
 //
 // The molecular limit (one replica, zero-translation images only) reproduces
-// nddo::run_pm6 on the same molecule. Neutral closed-shell clusters only; no
-// Madelung embedding (neutral cells do not need it).
+// nddo::run_pm6 on the same molecule. Neutral closed-shell clusters only. The
+// opt-in Madelung embedding (madelung=true; 1-D and 2-D, 3-D refused) adds
+// the MSINDO CCM point-charge field to the Fock diagonal; without it a
+// nontrivial cyclic topology needs the truncated-electrostatics
+// acknowledgement, because the WS-truncated monopole sum is not quantitative.
 
 #pragma once
 

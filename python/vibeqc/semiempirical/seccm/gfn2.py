@@ -54,7 +54,19 @@ _ATTEMPT_SOLVERS = frozenset(
     }
 )
 _ATTEMPT_EXIT_REASONS = frozenset(
-    {"converged", "iteration_limit", "unphysical_basin", "gap_rejected"}
+    {
+        "converged",
+        "iteration_limit",
+        "stalled_checkpoint",
+        "unphysical_basin",
+        "gap_rejected",
+    }
+)
+#: Exit reasons of an attempt that never reached the SCC residual tolerance:
+#: it exhausted its budget, or it stopped contracting at a stabilization
+#: checkpoint and was handed to the ladder with the budget it had left (#294).
+_ATTEMPT_UNCONVERGED_EXITS = frozenset(
+    {"iteration_limit", "stalled_checkpoint"}
 )
 _SCC_MIXERS = frozenset(
     {"simple", "diis", "broyden", "broyden_eyert", "newton"}
@@ -189,9 +201,15 @@ class GFN2SECCMAttempt:
             raise ValueError(
                 "GFN2-SECCM attempt convergence flags must be boolean"
             )
-        if exit_reason == "iteration_limit" and self.scc_converged:
-            raise ValueError("iteration-limit attempt cannot be SCC-converged")
-        if exit_reason != "iteration_limit" and not self.scc_converged:
+        if exit_reason in _ATTEMPT_UNCONVERGED_EXITS and self.scc_converged:
+            raise ValueError(
+                "iteration-limit and stalled-checkpoint attempts cannot be "
+                "SCC-converged"
+            )
+        if (
+            exit_reason not in _ATTEMPT_UNCONVERGED_EXITS
+            and not self.scc_converged
+        ):
             raise ValueError(
                 "converged, gap-rejected, and unphysical attempts must reach "
                 "the SCC residual tolerance"

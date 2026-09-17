@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import companion_paths
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENV_HELPERS = REPO_ROOT / "scripts" / "_venv_helpers.sh"
 INSTALL = REPO_ROOT / "scripts" / "install.sh"
@@ -34,6 +36,28 @@ pytestmark = pytest.mark.skipif(
     shutil.which("bash") is None,
     reason="bash is required for lifecycle script tests",
 )
+
+
+@pytest.fixture
+def vibe_view_checkout() -> Path:
+    """The sibling vibe-view checkout the capture updater builds from.
+
+    vibe-view left this tree in the 2026-09 split (#320). A checkout without
+    it is a supported configuration, so the tests that need the real
+    lifecycle helpers skip with a reason naming the coverage that did not
+    run; VIBEQC_REQUIRE_COMPANION_CHECKOUTS turns that skip into a failure.
+    """
+    return companion_paths.require(
+        "vibe-view", "vibe-view capture-environment coverage"
+    )
+
+
+@pytest.fixture
+def vibe_queue_checkout() -> Path:
+    """The sibling vibe-queue checkout, resolved the same way."""
+    return companion_paths.require(
+        "vibe-queue", "cross-component lifecycle-lock coverage"
+    )
 
 
 _LIFECYCLE_LOCK_ROOT = Path(f"/tmp/vibe-toolset-lifecycle-locks-{os.geteuid()}")
@@ -426,11 +450,24 @@ def test_target_lock_contends_across_different_checkouts(tmp_path: Path) -> None
     assert acquired.returncode == 0, acquired.stderr
 
 
-def test_shared_lock_contends_across_components_for_checkout_and_target(
+def test_shared_lock_contends_across_components_for_the_same_target(
     tmp_path: Path,
+    vibe_view_checkout: Path,
+    vibe_queue_checkout: Path,
 ) -> None:
-    view_helper = REPO_ROOT / "vibe-view" / "scripts" / "_venv_helpers.sh"
-    vq_helper = REPO_ROOT / "vibe-queue" / "scripts" / "_venv_helpers.sh"
+    """Across repositories, the target is the shared resource, not the checkout.
+
+    This test used to assert that a held vibe-view target lock also blocked a
+    vq lifecycle lock on an unrelated target, under "active on this checkout".
+    That was true only while both components lived in one tree: the checkout
+    lock is keyed by checkout, and since the 2026-09 split vibe-view and
+    vibe-queue have two. Serialising two separate repositories' lifecycle
+    operations would be wrong, so the checkout half is inverted here and the
+    target half -- two components must never mutate one environment at once --
+    is kept as the cross-component contract that survived the split.
+    """
+    view_helper = vibe_view_checkout / "scripts" / "_venv_helpers.sh"
+    vq_helper = vibe_queue_checkout / "scripts" / "_venv_helpers.sh"
     target_a = tmp_path / "component-a-environment"
     target_b = tmp_path / "component-b-environment"
 
@@ -459,7 +496,7 @@ def test_shared_lock_contends_across_components_for_checkout_and_target(
 
     holder = hold_view_target(target_a)
     try:
-        checkout_blocked = subprocess.run(
+        other_checkout_allowed = subprocess.run(
             [
                 "/bin/bash",
                 "-c",
@@ -472,8 +509,10 @@ def test_shared_lock_contends_across_components_for_checkout_and_target(
             capture_output=True,
             check=False,
         )
-        assert checkout_blocked.returncode != 0
-        assert "active on this checkout" in checkout_blocked.stderr
+        assert other_checkout_allowed.returncode == 0, (
+            other_checkout_allowed.stdout + other_checkout_allowed.stderr
+        )
+        assert "active on this checkout" not in other_checkout_allowed.stderr
     finally:
         holder.communicate("\n", timeout=10)
     assert holder.returncode == 0
@@ -1594,9 +1633,75 @@ def test_auxiliary_lifecycle_help_needs_no_environment(script: Path) -> None:
     assert "USAGE" in result.stdout
 
 
+def test_capture_update_reports_the_sibling_layout_when_vibe_view_is_absent(
+    tmp_path: Path,
+) -> None:
+    """#320: the refusal names a reachable path and how to satisfy it.
+
+    Before the fix the updater looked under ``<checkout>/vibe-view/scripts``
+    and exited 1 for every user, because no checkout of this repository has
+    contained vibe-view since the split.
+    """
+    absent = tmp_path / "no-vibe-view-here"
+    env = dict(os.environ, VIBE_VIEW_ROOT=str(absent))
+    result = subprocess.run(
+        ["/bin/bash", str(CAPTURE_UPDATE), "--dry-run"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert str(absent) in result.stderr
+    assert "separate repository" in result.stderr
+    assert "VIBE_VIEW_ROOT=/path/to/vibe-view" in result.stderr
+    # Spelled by concatenation, not by a path join, so the guard in
+    # tests/test_toolset_lifecycle_contract.py does not read this negative
+    # assertion as a new offender.
+    dead_pre_split_path = f"{REPO_ROOT}/vibe-view"
+    assert dead_pre_split_path not in result.stderr
+
+
+def test_capture_update_rejects_an_empty_vibe_view_root() -> None:
+    result = subprocess.run(
+        ["/bin/bash", str(CAPTURE_UPDATE), "--vibe-view-root"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "--vibe-view-root requires a path" in result.stderr
+
+
+def test_capture_update_builds_from_an_explicitly_named_checkout(
+    tmp_path: Path, vibe_view_checkout: Path
+) -> None:
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            str(CAPTURE_UPDATE),
+            "--vibe-view-root",
+            str(vibe_view_checkout),
+            "--python",
+            str(Path(sys.executable).resolve()),
+            "--venv",
+            str(tmp_path / "explicit-root-capture"),
+            "--dry-run",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"source:   {vibe_view_checkout}" in result.stdout
+
+
 @pytest.mark.parametrize("selector", ("--ref", "--branch"))
 def test_capture_update_accepts_matching_source_assertion(
-    tmp_path: Path, selector: str,
+    tmp_path: Path, selector: str, vibe_view_checkout: Path,
 ) -> None:
     ref = "HEAD"
     if selector == "--ref":
@@ -1708,7 +1813,7 @@ def test_capture_update_rejects_invalid_source_before_target_mutation(
 
 
 def test_capture_update_source_assertion_preserves_ownership_gate(
-    tmp_path: Path,
+    tmp_path: Path, vibe_view_checkout: Path,
 ) -> None:
     target = tmp_path / "unowned-capture-environment"
     _recognisable_venv(target)
@@ -1767,6 +1872,12 @@ def test_optional_tools_dry_run_needs_no_preexisting_venv(tmp_path: Path) -> Non
 
 
 def test_auxiliary_dry_runs_do_not_take_the_mutation_lock(tmp_path: Path) -> None:
+    """The optional-tool dry run ignores a held mutation lock.
+
+    Split from the capture half below: the optional-tool installer is owned by
+    this repository outright, so it must keep being checked on a checkout that
+    has no vibe-view sibling (#320).
+    """
     holder = _start_toolset_lock_holder(tmp_path / "held-target")
     env = dict(os.environ, CI="true", GITLAB_CI="true")
     try:
@@ -1788,6 +1899,18 @@ def test_auxiliary_dry_runs_do_not_take_the_mutation_lock(tmp_path: Path) -> Non
             check=False,
         )
         assert optional.returncode == 0, optional.stdout + optional.stderr
+        assert not optional_target.exists()
+    finally:
+        holder.communicate("\n", timeout=10)
+    assert holder.returncode == 0
+
+
+def test_capture_dry_run_does_not_take_the_mutation_lock(
+    tmp_path: Path, vibe_view_checkout: Path
+) -> None:
+    holder = _start_toolset_lock_holder(tmp_path / "held-target")
+    env = dict(os.environ, CI="true", GITLAB_CI="true")
+    try:
         capture_target = tmp_path / "capture-dry-run"
         capture = subprocess.run(
             [
@@ -1806,7 +1929,6 @@ def test_auxiliary_dry_runs_do_not_take_the_mutation_lock(tmp_path: Path) -> Non
             check=False,
         )
         assert capture.returncode == 0, capture.stdout + capture.stderr
-        assert not optional_target.exists()
         assert not capture_target.exists()
     finally:
         holder.communicate("\n", timeout=10)
@@ -2221,11 +2343,12 @@ def test_setup_helper_resolves_all_documented_component_extras(
     assert result.stdout.strip() == f"{pip_suffix}|{companion}"
 
 
-@pytest.mark.parametrize("profile", ["viewer-gpu", "basisopt"])
+@pytest.mark.parametrize("profile", ["basisopt"])
 def test_setup_helper_preflights_colocated_component(
     tmp_path: Path, profile: str
 ) -> None:
-    project_name = "vibe-view" if profile == "viewer-gpu" else "vibe-basis"
+    """Only vibe-basis is still co-located; see the viewer-gpu test below."""
+    project_name = "vibe-basis"
     project = tmp_path / project_name
     project.mkdir()
     (project / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
@@ -2243,15 +2366,32 @@ def test_setup_helper_preflights_colocated_component(
     assert "co-located project is missing" in missing.stderr
 
 
+def test_setup_helper_refuses_viewer_gpu_as_a_colocated_extra(
+    tmp_path: Path,
+) -> None:
+    """viewer-gpu has no co-located project to preflight since the split.
+
+    An in-tree ``vibe-view/pyproject.toml`` is planted here deliberately: the
+    refusal is a statement about the layout, so it must not be talked out of
+    it by a directory that happens to be there.
+    """
+    project = tmp_path / "vibe-view"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    snippet = (
+        f". {shlex.quote(str(SETUP_HELPERS))}\n"
+        "vibeqc_assert_colocated_extra_available "
+        f"{shlex.quote(str(tmp_path))} viewer-gpu"
+    )
+    refused = _bash(snippet)
+    assert refused.returncode != 0
+    assert "no longer co-located" in refused.stderr
+    assert "../vibe-view" in refused.stderr
+
+
 @pytest.mark.parametrize(
     ("profile", "project_name", "install_suffix", "verification"),
     [
-        (
-            "viewer-gpu",
-            "vibe-view",
-            "vibe-view[viewer]",
-            "import vibeview, trame, trame_vtk, trame_vuetify, uvicorn",
-        ),
         ("basisopt", "vibe-basis", "vibe-basis", "import vibe_basis"),
     ],
 )
@@ -2314,6 +2454,48 @@ def test_colocated_install_runs_pip_then_verification_and_propagates_failure(
     assert len(log.read_text(encoding="utf-8").splitlines()) == 2
 
 
+def test_colocated_install_refuses_viewer_gpu_without_running_pip(
+    tmp_path: Path,
+) -> None:
+    """viewer-gpu cannot be installed from this checkout since the split.
+
+    The refusal must come before pip is reached, so the fake interpreter's
+    call log stays empty.
+    """
+    repo = tmp_path / "checkout"
+    project = repo / "vibe-view"
+    project.mkdir(parents=True)
+    (project / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    fake_python = tmp_path / "venv" / "bin" / "python"
+    fake_python.parent.mkdir(parents=True)
+    fake_python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COMPANION_CALL_LOG\"\nexit 0\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    log = tmp_path / "calls.log"
+    log.write_text("", encoding="utf-8")
+    snippet = (
+        f". {shlex.quote(str(SETUP_HELPERS))}\n"
+        "vibeqc_install_colocated_extra "
+        f"{shlex.quote(str(fake_python.parents[1]))} "
+        f"{shlex.quote(str(repo))} viewer-gpu"
+    )
+    env = os.environ.copy()
+    env["COMPANION_CALL_LOG"] = str(log)
+    refused = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert refused.returncode != 0
+    assert "separate project" in refused.stderr
+    assert "../vibe-view[viewer]" in refused.stderr
+    assert log.read_text(encoding="utf-8") == ""
+
+
 def test_component_preflight_runs_before_expensive_install_steps() -> None:
     install_source = INSTALL.read_text(encoding="utf-8")
     update_source = UPDATE.read_text(encoding="utf-8")
@@ -2342,7 +2524,7 @@ def test_capture_updater_uses_canonical_transaction_and_never_uninstalls() -> No
 
 
 def test_capture_only_ownership_is_reproved_inside_replacement_start(
-    tmp_path: Path,
+    tmp_path: Path, vibe_view_checkout: Path,
 ) -> None:
     target = tmp_path / "capture-only-environment"
     _recognisable_venv(target)
@@ -2350,7 +2532,7 @@ def test_capture_only_ownership_is_reproved_inside_replacement_start(
     marker.write_text("{}\n", encoding="utf-8")
     sentinel = target / "capture-owned-state"
     sentinel.write_text("preserve\n", encoding="utf-8")
-    helper = shlex.quote(str(REPO_ROOT / "vibe-view" / "scripts" / "_venv_helpers.sh"))
+    helper = shlex.quote(str(vibe_view_checkout / "scripts" / "_venv_helpers.sh"))
     script = f"""
 set -euo pipefail
 . {helper}
@@ -2381,7 +2563,7 @@ vibe_view_start_venv_replacement "$1" "$2" 0 capture
 
 
 def test_capture_marker_inspection_ignores_pythonpath_sitecustomize(
-    tmp_path: Path,
+    tmp_path: Path, vibe_view_checkout: Path,
 ) -> None:
     target = tmp_path / "capture-environment"
     _recognisable_venv(target)
@@ -2391,7 +2573,7 @@ def test_capture_marker_inspection_ignores_pythonpath_sitecustomize(
             {
                 "schema": 1,
                 "kind": "vibe-view-capture-environment",
-                "project": str((REPO_ROOT / "vibe-view").resolve()),
+                "project": str(vibe_view_checkout.resolve()),
             }
         )
         + "\n",
@@ -2435,7 +2617,7 @@ def test_capture_marker_inspection_ignores_pythonpath_sitecustomize(
 
 
 def test_capture_update_contends_on_the_canonical_target_before_creation(
-    tmp_path: Path,
+    tmp_path: Path, vibe_view_checkout: Path,
 ) -> None:
     target = tmp_path / "capture-environment"
     holder = _start_toolset_lock_holder(target, tmp_path / "other-checkout")
@@ -2465,7 +2647,7 @@ def test_capture_update_contends_on_the_canonical_target_before_creation(
 
 
 def test_capture_dry_run_accepts_activated_target_with_external_base_python(
-    tmp_path: Path,
+    tmp_path: Path, vibe_view_checkout: Path,
 ) -> None:
     target = tmp_path / "activated-capture-environment"
     subprocess.run([sys.executable, "-m", "venv", "--copies", str(target)], check=True)
@@ -2474,7 +2656,7 @@ def test_capture_dry_run_accepts_activated_target_with_external_base_python(
             {
                 "schema": 1,
                 "kind": "vibe-view-capture-environment",
-                "project": str((REPO_ROOT / "vibe-view").resolve()),
+                "project": str(vibe_view_checkout.resolve()),
             }
         )
         + "\n",
@@ -2507,7 +2689,7 @@ def test_capture_dry_run_accepts_activated_target_with_external_base_python(
 
 
 def test_capture_explicit_target_python_is_rejected_without_execution(
-    tmp_path: Path,
+    tmp_path: Path, vibe_view_checkout: Path,
 ) -> None:
     target = tmp_path / "capture-environment"
     _recognisable_venv(target)
@@ -2516,7 +2698,7 @@ def test_capture_explicit_target_python_is_rejected_without_execution(
             {
                 "schema": 1,
                 "kind": "vibe-view-capture-environment",
-                "project": str((REPO_ROOT / "vibe-view").resolve()),
+                "project": str(vibe_view_checkout.resolve()),
             }
         )
         + "\n",
@@ -2554,11 +2736,11 @@ def test_capture_explicit_target_python_is_rejected_without_execution(
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="capture lifecycle refuses root")
 def test_capture_updater_requires_explicit_custom_legacy_adoption(
-    tmp_path: Path,
+    tmp_path: Path, vibe_view_checkout: Path,
 ) -> None:
     target = tmp_path / "full-viewer-environment"
     subprocess.run([sys.executable, "-m", "venv", str(target)], check=True)
-    project = (REPO_ROOT / "vibe-view").resolve()
+    project = vibe_view_checkout.resolve()
     marker = target / ".vibe-view-standalone.json"
     marker.write_text(
         json.dumps(

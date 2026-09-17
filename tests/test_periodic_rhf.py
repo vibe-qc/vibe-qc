@@ -27,12 +27,18 @@ def _molecular_reference(atoms):
 
 
 def _periodic_gamma(atoms, dim, lattice, basis_name="sto-3g",
-                    box_side=50.0, cutoff_bohr=15.0):
+                    box_side=50.0, cutoff_bohr=15.0, *,
+                    molecular_limit=False):
     sysp = vq.PeriodicSystem(dim, lattice, atoms)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), basis_name)
     opts = vq.PeriodicRHFOptions()
     opts.lattice_opts.cutoff_bohr = cutoff_bohr
     opts.lattice_opts.nuclear_cutoff_bohr = cutoff_bohr
+    # Issue #133: the 50-bohr-box callers below deliberately pick a cutoff that
+    # leaves only g = 0 -- that IS the premise of their molecular-limit
+    # assertions. run_rhf_periodic_gamma now refuses such a cell list unless
+    # the caller declares it, so they declare it. It changes no sum.
+    opts.lattice_opts.gamma_only_0 = molecular_limit
     opts.conv_tol_energy = 1e-12
     opts.conv_tol_grad = 1e-10
     return vq.run_rhf_periodic_gamma(sysp, basis, opts), sysp
@@ -71,7 +77,7 @@ def test_molecular_limit_matches_molecular_rhf(name, atoms, dim):
     else:          lat = np.diag([box, box, box])
 
     mres, mol, _ = _molecular_reference(atoms)
-    res, _ = _periodic_gamma(atoms, dim, lat, cutoff_bohr=15.0)
+    res, _ = _periodic_gamma(atoms, dim, lat, cutoff_bohr=15.0, molecular_limit=True)
 
     assert res.converged
     assert abs(res.energy - mres.energy) < 1e-10, (
@@ -89,7 +95,7 @@ def test_molecular_limit_density_matches():
     """Not just the energy — the converged density matrix at Γ must match
     the molecular RHF density to machine precision."""
     mres, _, _ = _molecular_reference(H2O)
-    res, _ = _periodic_gamma(H2O, 3, np.eye(3) * 50.0, cutoff_bohr=15.0)
+    res, _ = _periodic_gamma(H2O, 3, np.eye(3) * 50.0, cutoff_bohr=15.0, molecular_limit=True)
     D_p = np.asarray(res.density)
     D_m = np.asarray(mres.density)
     # Same 1e-7 tolerance rationale as the MO eigenvalues: different
@@ -147,7 +153,7 @@ def test_rejects_odd_electron_unit_cell():
 
 
 def test_scf_trace_populated():
-    res, _ = _periodic_gamma(H2, 3, np.eye(3) * 50.0, cutoff_bohr=15.0)
+    res, _ = _periodic_gamma(H2, 3, np.eye(3) * 50.0, cutoff_bohr=15.0, molecular_limit=True)
     assert len(res.scf_trace) >= 2
     assert res.scf_trace[0].iter == 1
     # Convergence improves monotonically for this simple case.
@@ -163,6 +169,7 @@ def test_sad_and_hcore_guesses_converge_to_same_energy():
         o = vq.PeriodicRHFOptions()
         o.lattice_opts.cutoff_bohr = 15.0
         o.lattice_opts.nuclear_cutoff_bohr = 15.0
+        o.lattice_opts.gamma_only_0 = True  # 50-bohr box (#133)
         o.conv_tol_energy = 1e-12
         o.initial_guess = guess
         return vq.run_rhf_periodic_gamma(sysp, basis, o)

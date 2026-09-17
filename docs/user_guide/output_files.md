@@ -430,6 +430,23 @@ wall_seconds   = 0.084
 basename       = "input-h2o-rhf"
 pid            = 51284
 
+# Present only when the job requested a Hessian (hessian=True). Names
+# the potential-energy surface the frequencies describe, which is not
+# always the method that was asked for: run_job resolves a correlated
+# request down to the mean-field reference its SCF runs, and the
+# finite-difference Hessian differentiates that reference. For
+# method="mp2" the surface is RHF, so surface_is_requested_method is
+# false. available = false means the requested method resolves to no
+# surface with a finite-difference Hessian at all, and no frequencies
+# were reported.
+
+[hessian]
+requested_method = "mp2"
+surface        = "RHF/6-31g*"
+surface_method = "rhf"
+surface_is_requested_method = false
+available      = true
+
 # v0.8.x+ Phase-O1 additions: declarative pre-flight plan + running
 # outputs status. vq's `--vibeqc-preflight` reads [plan] to know what
 # files to expect; vq's status polling reads [outputs] for liveness.
@@ -725,6 +742,15 @@ explains the missing NAO construction under `unavailable.npa`, and the text
 section says `npa: not implemented`. This known limitation is not a
 calculation error. See the [bond analysis guide](bond_analysis.md) for the
 theory, provisional NBO APIs, EDA, orbital entanglement and citations.
+
+With `iao_analysis=True`, molecular RHF/RKS/UHF/UKS jobs add an
+`iao` object and a labeled IAO text section. This contains MINI/symmetric
+IAO charges, optional alpha-minus-beta spin populations, dense spin-resolved
+IAO-Wiberg bond orders, conventions and diagnostics. An unsupported analysis
+has `available=false`, null numerical arrays and an `unavailable_reason`;
+population summaries also record that reason under `unavailable.iao`.
+The existing `wiberg` field keeps its original AO-based meaning.
+See [IAO analysis](iao_population.md) for the API and QVF extension payload.
 
 A property-computation failure (e.g. Mayer bond orders on a
 near-singular overlap) on one section does NOT suppress the others
@@ -1426,6 +1452,8 @@ want to inspect a failed iterate keep working.
 | `write_molden_file=` | `None` (auto) | emit `.molden` when the route exposes a Gaussian AO wavefunction; explicit `True` guarantees it or fails before calculation |
 | `write_xyz_file=` | `True` | emit `{output}.xyz` final geometry (Å, plus `energy=<Ha>` in the comment line) |
 | `write_population_file=` | `None` (auto) | emit `{output}.population.{txt,json}` on compatible routes; explicit `True` guarantees the pair or fails before calculation |
+| `iao_analysis=` | `False` | request molecular determinant IAO charges, spin populations and IAO-Wiberg bonds independently of localization/QVF |
+| `iao_bond_threshold=` | `0.05` | text display threshold for IAO bond pairs; leaves the dense API/JSON result unchanged |
 | `write_cube=` | `False` | volumetric cubes; `True` / `"density"` / `"homo"` / `"lumo"` / int / list (see [cube section](#output-h2odensitycube--output-h2ohomolumocube--volumetric-data-opt-in-v08x)) |
 | `cube_spacing=` / `cube_padding=` | `0.2` / `4.0` (bohr) | grid spacing + padding for cubes; ignored when `write_cube=False` |
 | `output_qvf=` | `True` | bundle structure + density + the `write_cube=` grids + basis/coefficients into one `{output}.qvf` archive for vibe-view (vibe-qc's native visualization format) |

@@ -582,6 +582,81 @@ $q^{\Delta RS}$ operator. That gradient passes translational invariance to
 use `variant="cosmo"`, which is a different energy. `cpcm_gradient_fd`
 differentiates the Direct COSMO-RS energy itself, subject to the steps above.
 
+## Comparing a solvated run against another code
+
+Two quantities of a solvated run can be compared with another program, and
+they behave differently.
+
+* **The in-solvent total** (`result.energy`, printed as `In-solvent total`)
+  compares only against the other code's in-solvent total, and carries every
+  gas-phase convention difference on top of the solvation ones.
+* **The solvent-response component** (`sol.e_solv`, printed as
+  `Solvation energy (1/2 q.V_tot)`) is the more robust one: it is a
+  difference of two energies on the same functional and grid, so gas-phase
+  conventions largely cancel. ORCA prints the same quantity as
+  `CPCM Dielectric` in its `TOTAL SCF ENERGY` block.
+
+Do not compare a solvated total against a *gas-phase* total, and do not
+compare either against an inner-SCF energy. Before v0.15.138 vibe-qc's banner
+printed the inner SCF's $E_\text{SCF}^{w/V_q}$ rather than the in-solvent
+total (archived tracker `vibeqc#148`) -- 23-42 mHa away from it. A harvester that read the banner
+reported a 54.6 mHa cross-code disagreement on the case below that does not
+exist; the run's own solvation block was right all along.
+
+`Total solvation shift` (in-solvent minus gas-phase) is **not** `e_solv`: the
+solute density also relaxes in the field, and the block prints that
+polarisation cost separately. Compare like with like.
+
+### Measured against ORCA
+
+CH$_3$COOH / def2-TZVP / B3LYP, water, on one geometry, against an archived
+ORCA 6.1.1 `! B3LYP def2-TZVP TightSCF CPCM(water)` reference
+(in-solvent total $-229.0790600869$, `CPCM Dielectric` $-0.0126977537$ Ha):
+
+| vibe-qc setting | in-solvent total | response component | component vs ORCA |
+|---|---|---|---|
+| defaults (`solvent="water"`) | $-229.0799875548$ | $-0.0139868457$ | $-1.29$ mHa |
+| ORCA's $\varepsilon$ and radii | $-229.0821294531$ | $-0.0164592598$ | $-3.76$ mHa |
+
+The in-solvent totals agree to **0.93 mHa**, so raw solvated totals are
+comparable once both sides quote the same quantity.
+
+The second row is the surprise, and it is why this section exists: making the
+*named* parameters agree makes the answer **worse**. ORCA's hydrogen radius is
+1.32 A against vibe-qc's 1.44 A, and the tighter cavity deepens the response
+past ORCA's own value. What remains is the surface itself -- vibe-qc switches a
+Lebedev grid per sphere (1895 points here), ORCA lays down a Gaussian-charge
+surface at constant charge density (830 points). Two cavities that carry the
+same radii are still not the same cavity, and that sets the floor on any
+cross-code component comparison. Matching $\varepsilon$ and radii is
+therefore not a recipe for agreement; it is only a way to remove those two
+variables when attributing a difference.
+
+**The geometry has to be identical, not similar.** Re-running the same case on
+a geometry whose C=O bonds differ by at most 0.07 A moves the component by
+2.5 mHa -- twice the entire cross-code gap. A component comparison across codes
+is meaningless unless both sides ran the same coordinates.
+
+For reference, ORCA 6.1's `CPCM(water)` defaults against vibe-qc's:
+
+| knob | vibe-qc default | ORCA 6.1 `CPCM(water)` |
+|---|---|---|
+| dielectric | 78.39 (`water` preset) | 80.1510 |
+| C / O radius | 2.040 / 1.824 A (Bondi x 1.20) | 2.0400 / 1.8240 A |
+| H radius | 1.44 A | 1.3200 A |
+| probe | `solvent_probe_radius_ang=0.0` | VDW surface |
+| discretisation | switched Lebedev, per sphere | Gaussian VDW, constant charge density |
+| screening | `variant="cpcm"`, $f=(\varepsilon-1)/\varepsilon$ | `Epsilon function type ... CPCM` |
+
+```python
+orca_like = vq.SolventModel(
+    epsilon=80.1510,                      # ORCA's water, not 78.39
+    variant="cpcm",
+    radii={1: 1.10, 6: 1.70, 8: 1.52},    # pre-scaling, Angstrom
+    radii_scale=1.2,                      # -> H 1.32, C 2.04, O 1.824 A
+)
+```
+
 ## Choosing CPCM vs COSMO
 
 The two are not separate formulas. Klamt & Schuurmann 1993 p. 800 gives the

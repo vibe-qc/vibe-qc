@@ -231,18 +231,11 @@ PM6SECCMResult run_pm6_seccm(
     std::vector<std::vector<indo::WSNeighbor>> ews;
     Eigen::MatrixXd madkonst;
     if (opts.madelung) {
-        ews = indo::_ewald_ws_cells(topology);
-        if (dim == 1) {
-            madkonst =
-                detail::wire_madkonst_1d(ews, topology.translations[0], n_atoms);
-        } else {
-            madkonst = indo::_madkonst_2d(ews, topology.translations, n_atoms);
-        }
-        if (!madkonst.allFinite()) {
-            throw std::runtime_error(
-                "PM6-SECCM Madelung-constant matrix produced non-finite "
-                "values");
-        }
+        // 3-D is refused above; the shared builder covers 1-D and 2-D here.
+        auto madelung_state = detail::build_seccm_madelung_state(
+            topology, n_atoms, "PM6-SECCM");
+        ews = std::move(madelung_state.ews);
+        madkonst = std::move(madelung_state.madkonst);
     }
     // Net atomic charges q_I = Z_core(I) - population(I), the MSINDO
     // EWALDCHARGES convention.

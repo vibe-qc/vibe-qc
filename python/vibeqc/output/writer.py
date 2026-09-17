@@ -152,6 +152,13 @@ class OutputWriter:
             resolved_root=resolved_root, fetched=fetched
         )
 
+    def set_hessian(self, fields: dict[str, Any]) -> None:
+        """Record the Hessian's potential-energy surface into
+        ``[hessian]`` of ``{stem}.system``. See
+        :meth:`vibeqc.output.manifest.ManifestUpdater.set_hessian` and
+        :func:`vibeqc.output.hessian_surface_manifest_fields`."""
+        self._manifest.set_hessian(fields)
+
     def update_run_fields(self, fields: dict[str, Any]) -> None:
         """Merge late-bound scalar reproducibility fields into ``[run]``."""
         self._manifest.update_run_fields(fields)

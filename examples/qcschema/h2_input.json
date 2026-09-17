@@ -1,0 +1,18 @@
+{
+  "schema_name": "qcschema_input",
+  "schema_version": 1,
+  "molecule": {
+    "schema_name": "qcschema_molecule",
+    "schema_version": 2,
+    "symbols": ["H", "H"],
+    "geometry": [0.0, 0.0, 0.0, 0.0, 0.0, 1.4011],
+    "molecular_charge": 0,
+    "molecular_multiplicity": 1
+  },
+  "driver": "energy",
+  "model": {
+    "method": "HF",
+    "basis": "sto-3g"
+  },
+  "keywords": {}
+}

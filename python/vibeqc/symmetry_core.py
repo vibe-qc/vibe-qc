@@ -78,6 +78,19 @@ __all__ = [
 # Euler-angle extraction (Z-Y-Z convention)
 # ---------------------------------------------------------------------------
 
+_TWO_PI = 2.0 * math.pi
+
+
+def _wrap_to_pi(angle: float) -> float:
+    """Fold an angle to ``(-pi, pi]``, the range ``atan2`` returns.
+
+    ``math.remainder`` folds to the closed ``[-pi, pi]``, so -pi has to be
+    mapped back up to keep the documented half-open range.
+    """
+    folded = math.remainder(angle, _TWO_PI)
+    return math.pi if folded == -math.pi else folded
+
+
 def euler_angles_from_rotation(
     R: np.ndarray,
 ) -> Tuple[float, float, float]:
@@ -92,9 +105,39 @@ def euler_angles_from_rotation(
     D-matrix: ``D^l(R) = D^l_z(a) D^l_y(b) D^l_z(g)`` with the two
     z-rotations trivially diagonal in the complex basis.
 
-    At the b = 0 / b = pi "gimbal lock" poles a and g are not
-    independently determined -- we set g = 0 and put all the z-rotation
-    into a.
+    At an exactly polar R (``sin b == 0``) a and g are not independently
+    determined -- we set g = 0 and put all the z-rotation into a.
+
+    Just off those poles they are determined, but badly conditioned, and
+    reading each of them on its own is what #282 was: ``atan2(R12, R02)``
+    and ``atan2(R21, -R20)`` divide entries of size sin(b) that carry
+    independent rounding, so each angle is wrong by ~eps/sin(b), and the
+    two errors do not cancel. R depends on a + g with weight (1 + cos b)
+    and on a - g with weight (1 - cos b), so one of those combinations is
+    always both ill-conditioned in the transverse entries and heavily
+    weighted -- on LiH C2/m tilted 1e-12 rad that reached 1.4e-05 in
+    D^1.
+
+    So take each combination from the entries that condition it. The
+    identities
+
+        R00 + R11 = (1 + cos b) cos(a + g)   R10 - R01 = (1 + cos b) sin(a + g)
+        R00 - R11 = (cos b - 1) cos(a - g)   R10 + R01 = (cos b - 1) sin(a - g)
+
+    give a + g without cancellation on the R22 >= 0 hemisphere and a - g
+    without cancellation on the other. The remaining combination comes
+    from the transverse pair: each of those is wrong by ~eps/sin(b), but
+    it reaches R only through entries of size sin(b), so the product
+    lands at ~eps either way.
+
+    The four identities see beta only through cos b, so they are blind to
+    ``(a, g) -> (a + pi, g + pi)``, which is the -beta rotation rather
+    than a symmetry of R. beta is pinned to [0, pi] above, so the branch
+    is settled against the transverse alpha.
+
+    Note that just off a pole the returned g is no longer 0: a + g is the
+    combination R actually pins, and a - g is the one it barely depends
+    on, so the z-rotation is split between the two.
     """
     R = np.asarray(R, dtype=float)
     if R.shape != (3, 3):
@@ -114,27 +157,52 @@ def euler_angles_from_rotation(
     sin_beta = math.hypot(R[0, 2], R[1, 2])
     beta = math.atan2(sin_beta, R[2, 2])
 
-    if sin_beta < 1e-12:
-        # b near 0 or pi -- gimbal lock; a and g are not independently
-        # determined. Set g = 0 and put the whole z-rotation into a.
-        # The two poles use different algebra:
-        #   b ≈ 0 (R[2,2] ≈ +1):  R ≈ R_z(a + g). With g = 0,
+    if sin_beta == 0.0:
+        # Exactly polar: the transverse column carries no direction at
+        # all, so a and g are not independently determined. Set g = 0 and
+        # put the whole z-rotation into a. The two poles use different
+        # algebra:
+        #   b = 0 (R[2,2] = +1):  R = R_z(a + g). With g = 0,
         #     R[0,0] = cos a,   R[1,0] = sin a.
-        #   b ≈ pi (R[2,2] ≈ -1):  R ≈ R_z(a - g) . R_y(pi). With g = 0,
+        #   b = pi (R[2,2] = -1): R = R_z(a - g) . R_y(pi). With g = 0,
         #     R[0,0] = -cos a,  R[1,0] = -sin a.
-        # Disambiguating by the sign of R[2,2] keeps the extractor
-        # correct at both poles.
+        # The test is exact zero, not a tolerance: a near-degenerate
+        # rotation must go through the conditioned branch below, which is
+        # the whole point of #282. (#233 added this case with a 1e-12
+        # threshold because the old generic branch was unusable here;
+        # the branch below no longer is, and a threshold would discard a
+        # genuine tilt of that size.)
         if R[2, 2] > 0.0:
-            alpha = math.atan2(R[1, 0], R[0, 0])
-        else:
-            alpha = math.atan2(-R[1, 0], -R[0, 0])
-        gamma = 0.0
-    else:
-        # Standard ZYZ extraction.
-        alpha = math.atan2(R[1, 2], R[0, 2])
-        gamma = math.atan2(R[2, 1], -R[2, 0])
+            return math.atan2(R[1, 0], R[0, 0]), beta, 0.0
+        return math.atan2(-R[1, 0], -R[0, 0]), beta, 0.0
 
-    return alpha, beta, gamma
+    # Transverse extraction. Each is wrong by ~eps/sin(b), but each
+    # reaches R only through entries of size sin(b), so a combination
+    # taken from here costs ~eps in the reconstruction.
+    alpha_t = math.atan2(R[1, 2], R[0, 2])
+    gamma_t = math.atan2(R[2, 1], -R[2, 0])
+
+    # Take a + g from the (1 + cos b) block on the hemisphere where that
+    # weight is >= 1, a - g from the (cos b - 1) block on the other, and
+    # the remaining combination from the transverse pair.
+    if R[2, 2] >= 0.0:
+        alpha_plus_gamma = math.atan2(R[1, 0] - R[0, 1], R[0, 0] + R[1, 1])
+        alpha_minus_gamma = alpha_t - gamma_t
+    else:
+        alpha_minus_gamma = math.atan2(-(R[1, 0] + R[0, 1]), R[1, 1] - R[0, 0])
+        alpha_plus_gamma = alpha_t + gamma_t
+
+    alpha = 0.5 * (alpha_plus_gamma + alpha_minus_gamma)
+    gamma = 0.5 * (alpha_plus_gamma - alpha_minus_gamma)
+
+    # The blocks see b only through cos b, so (a, g) and (a + pi, g + pi)
+    # satisfy both identities while describing b and -b. beta is pinned to
+    # [0, pi] above; settle the branch against the transverse alpha.
+    if math.cos(alpha - alpha_t) < 0.0:
+        alpha += math.pi
+        gamma += math.pi
+
+    return _wrap_to_pi(alpha), beta, _wrap_to_pi(gamma)
 
 
 # ---------------------------------------------------------------------------

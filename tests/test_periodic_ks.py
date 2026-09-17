@@ -29,11 +29,16 @@ def _big_box_system(atoms, dim, box=50.0, vacuum=30.0):
     return vq.PeriodicSystem(dim, lat, atoms)
 
 
-def _ks_opts(functional="LDA", cutoff=15.0):
+def _ks_opts(functional="LDA", cutoff=15.0, *, molecular_limit=False):
     o = vq.PeriodicKSOptions()
     o.functional = functional
     o.lattice_opts.cutoff_bohr = cutoff
     o.lattice_opts.nuclear_cutoff_bohr = cutoff
+    # Issue #133: the ``_big_box_system`` fixtures are 50-bohr vacuum boxes
+    # whose cutoff isolates g = 0 deliberately. run_rks_periodic now refuses a
+    # cell list that has collapsed to the home cell unless the caller declares
+    # the molecular limit, so those fixtures declare it. It changes no sum.
+    o.lattice_opts.gamma_only_0 = molecular_limit
     o.conv_tol_energy = 1e-12
     o.conv_tol_grad = 1e-10
     o.max_iter = 100
@@ -68,7 +73,7 @@ def test_molecular_limit_matches_molecular_rks(name, atoms, dim, functional):
     sysp = _big_box_system(atoms, dim)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     km = vq.monkhorst_pack(sysp, [2] * dim + [1] * (3 - dim))
-    res = vq.run_rks_periodic(sysp, basis, km, _ks_opts(functional))
+    res = vq.run_rks_periodic(sysp, basis, km, _ks_opts(functional, molecular_limit=True))
     assert res.converged
     mres = _molecular_rks(atoms, functional)
     diff = abs(res.energy - mres.energy)
@@ -88,7 +93,7 @@ def test_kmesh_independence_in_molecular_limit():
     energies = []
     for mesh in [[1,1,1], [2,2,2], [3,3,3]]:
         km = vq.monkhorst_pack(sysp, mesh)
-        res = vq.run_rks_periodic(sysp, basis, km, _ks_opts("PBE"))
+        res = vq.run_rks_periodic(sysp, basis, km, _ks_opts("PBE", molecular_limit=True))
         energies.append(res.energy)
     assert max(energies) - min(energies) < 1e-10
 
@@ -101,7 +106,7 @@ def test_energy_decomposition_sums_to_total():
     sysp = _big_box_system(H2O, 3)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     km = vq.monkhorst_pack(sysp, [1, 1, 1])
-    res = vq.run_rks_periodic(sysp, basis, km, _ks_opts("LDA"))
+    res = vq.run_rks_periodic(sysp, basis, km, _ks_opts("LDA", molecular_limit=True))
     # E_total == E_electronic + E_nuclear
     assert abs(res.energy - (res.e_electronic + res.e_nuclear)) < 1e-10
     # E_hf_exchange should be zero for pure LDA.
@@ -137,7 +142,7 @@ def test_scf_trace_populated_and_monotonic():
     sysp = _big_box_system(H2O, 3)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     km = vq.monkhorst_pack(sysp, [1,1,1])
-    res = vq.run_rks_periodic(sysp, basis, km, _ks_opts("PBE"))
+    res = vq.run_rks_periodic(sysp, basis, km, _ks_opts("PBE", molecular_limit=True))
     assert len(res.scf_trace) >= 2
     # Final gradient must be below the converged threshold.
     assert res.scf_trace[-1].grad_norm < 1e-10

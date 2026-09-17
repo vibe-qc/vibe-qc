@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
+import os
+import warnings
 from pathlib import Path
 
 import pytest
@@ -16,6 +19,26 @@ SUITE_MANIFEST = (
     / "test_gate"
     / "suite_manifest.json"
 )
+
+#: Process exit status for a session refused because the compiled core is older
+#: than ``cpp/``. Deliberately outside pytest's own range (0-5), so neither a
+#: reader nor ``scripts/test_gate/run_full_suite.py::classify`` can mistake the
+#: refusal for a test failure. It extends the vocabulary
+#: ``scripts/head_stable_run.sh`` established for the same hazard: 98 a voided
+#: measurement, 99 a setup error (#285).
+STALE_CORE_EXIT_STATUS = 97
+
+#: Set truthy to downgrade the refusal to a warning. For the case where the
+#: rebuild is impossible and the session wants the Python-only tests anyway; no
+#: number it prints can be trusted.
+STALE_CORE_OVERRIDE_ENV = "VIBEQC_ALLOW_STALE_CORE"
+
+_CPP_SOURCE_GLOBS = ("*.cpp", "*.hpp", "*.h", "*.cc", "*.cu")
+_REBUILD_COMMAND = (
+    "pip install -e . --no-build-isolation "
+    "--config-settings=build-dir=build-local"
+)
+
 
 def _planned_job_artifact_suffixes() -> tuple[str, ...]:
     """Derive the guard inventory from the authoritative output planner.
@@ -120,86 +143,176 @@ def pytest_collection_modifyitems(config, items):  # noqa: ARG001
         raise pytest.UsageError(f"unclassified test files: {paths}")
 
 
+def newest_cpp_source(cpp: Path) -> tuple[float, Path] | None:
+    """Return ``(mtime, path)`` of the most recently modified C++ source.
+
+    ``None`` when ``cpp`` holds no source at all.
+
+    Compares working-tree **file mtimes**, never the newest ``cpp/`` commit
+    timestamp. A commit's committer time is stamped on whatever machine
+    authored it, so a commit dated 13:42 can land in this tree at 13:56, after
+    a 13:50 build; the mtime ``git checkout`` writes when it updates the file
+    is the only local record of when these sources last changed here.
+    """
+    newest, newest_path = 0.0, None
+    for glob in _CPP_SOURCE_GLOBS:
+        for src in cpp.rglob(glob):
+            try:
+                mtime = src.stat().st_mtime
+            except OSError:
+                continue
+            if mtime > newest:
+                newest, newest_path = mtime, src
+    if newest_path is None:
+        return None
+    return newest, newest_path
+
+
+def stale_core_report() -> str | None:
+    """Describe a compiled core older than ``cpp/``, or ``None`` if it is current.
+
+    Silent ``None`` when the core will not import — that is not this function's
+    business — and when ``cpp/`` is absent, which is the normal shape of an
+    sdist, a CI image or an installed wheel.
+    """
+    try:
+        from vibeqc import _vibeqc_core
+    except Exception:  # noqa: BLE001 -- an import failure is not this hook's business
+        return None
+
+    core = Path(getattr(_vibeqc_core, "__file__", "") or "")
+    cpp = Path(__file__).resolve().parent.parent / "cpp"
+    if not core.is_file() or not cpp.is_dir():
+        return None
+
+    found = newest_cpp_source(cpp)
+    if found is None:
+        return None
+    newest, newest_path = found
+
+    built = core.stat().st_mtime
+    if built >= newest:
+        return None
+
+    fmt = "%Y-%m-%d %H:%M"
+    return (
+        f"{core.name} was built {dt.datetime.fromtimestamp(built):{fmt}} but "
+        f"{newest_path.relative_to(cpp.parent)} changed "
+        f"{dt.datetime.fromtimestamp(newest):{fmt}}."
+    )
+
+
+def stale_core_refusal(report: str) -> str:
+    """The message printed in place of running the session."""
+    return (
+        f"STALE COMPILED CORE — refusing to run this session (#285)\n"
+        f"  {report}\n"
+        "  Auto-rebuild is off, so this checkout's Python would run against an\n"
+        "  older checkout's C++. That pairing does not reliably fail to import.\n"
+        "  It computes WRONG NUMBERS, in both directions:\n"
+        "    a red test reads as a physics regression that does not exist, and\n"
+        "    a green test certifies the previous commit under this one's name.\n"
+        "  Rebuild:\n"
+        f"      {_REBUILD_COMMAND}\n"
+        "  To run anyway, accepting that no number this session prints can be\n"
+        "  trusted:\n"
+        f"      {STALE_CORE_OVERRIDE_ENV}=1 pytest ...\n"
+        f"  Exit status {STALE_CORE_EXIT_STATUS} is reserved for this refusal, so it "
+        "is never counted as a test failure."
+    )
+
+
+def stale_core_warning(report: str) -> str:
+    """The message printed when the refusal is overridden."""
+    return (
+        f"STALE COMPILED CORE: {report} Auto-rebuild is off, so this session may "
+        "compute WRONG NUMBERS rather than fail to import, and "
+        f"{STALE_CORE_OVERRIDE_ENV} is set, so it was allowed to start anyway. No "
+        "result below is evidence about this commit — neither a failure nor a "
+        "pass. Rebuild before trusting either:\n"
+        f"    {_REBUILD_COMMAND}"
+    )
+
+
 def pytest_sessionstart(session):
-    """Snapshot the invocation directory, then warn on a stale compiled core.
+    """Snapshot the invocation directory, then refuse a stale compiled core.
 
     The snapshot is half of the #508 guard: it records which job artifacts were
     already lying in the directory pytest was started from, so
     ``pytest_sessionfinish`` can tell which ones *this* session created. See
     that hook for why it matters.
 
-    The rest of this hook warns when the compiled core predates the newest
-    ``cpp/`` commit.
+    The rest of this hook refuses to run when the compiled core predates the
+    newest ``cpp/`` source.
 
-    The editable install has scikit-build auto-rebuild OFF, so a ``git pull`` that
-    carries C++ commits leaves a stale ``_vibeqc_core*.so`` behind. A stale core does
-    not reliably fail with ``ImportError``: it can silently produce **wrong numbers**,
-    so the symptom looks like a physics regression rather than a build problem.
+    The editable install has scikit-build auto-rebuild OFF, so a ``git pull``
+    that carries C++ commits leaves a stale ``_vibeqc_core*.so`` behind. A stale
+    core does not reliably fail with ``ImportError``: it silently produces
+    **wrong numbers**, so the symptom looks like a physics regression rather
+    than a build problem.
 
-    Concretely (2026-07-10): two ``tests/test_ccm_direct.py`` LiH gates failed with a
-    2.04e-2 Ha/cell direct-vs-GDF gap against a ``.so`` built the previous afternoon,
-    predating ``f8c213e8`` (``cpp/src/aopair_ft.cpp``, "disable the Gamma pair-FT
-    mirror on momentum-shifted meshes"). Rebuilding fixed it with no source change,
-    after a bisect of a regression that did not exist. A python-only ``git bisect`` is
-    likewise meaningless whenever ``cpp/`` moved in the range.
+    Concretely (2026-07-10): two ``tests/test_ccm_direct.py`` LiH gates failed
+    with a 2.04e-2 Ha/cell direct-vs-GDF gap against a ``.so`` built the
+    previous afternoon, predating ``f8c213e8`` (``cpp/src/aopair_ft.cpp``,
+    "disable the Gamma pair-FT mirror on momentum-shifted meshes"). Rebuilding
+    fixed it with no source change, after a bisect of a regression that did not
+    exist. Again on 2026-09-13: a 900 s timeout in
+    ``tests/test_basis_filter.py`` was charged to the branch under test, and
+    the cause was a core predating ``312c34b`` (``cpp/src/schwarz.cpp``). A
+    python-only ``git bisect`` is likewise meaningless whenever ``cpp/`` moved
+    in the range.
 
-    Compares against working-tree **file mtimes**, not the newest ``cpp/`` commit
-    timestamp. A commit's committer time is stamped on whatever machine authored it,
-    so a commit dated 13:42 can land in this tree at 13:56, after a 13:50 build; the
-    mtime that ``git checkout`` writes when it updates the file is the only local
-    record of when these sources last changed.
+    **Why this refuses rather than warns (#285).** Both sessions above *were*
+    warned. The warning is printed before the first test and has scrolled past
+    the failure by the time anyone reads it; ``-p no:warnings`` drops it, and
+    under ``pytest-xdist`` each worker emits it into a stream nobody is
+    watching. It also does nothing at all about the worse direction, a pass on
+    code that is not running.
 
-    Warning only, never an error: a stale core is a local-environment condition and
-    must not red anyone's suite. Silent no-op when the sources are absent (sdist, CI
-    image, installed wheel).
+    The refusal is not a red suite, which is what the warning was protecting:
+    it happens before collection and exits ``STALE_CORE_EXIT_STATUS``, a status
+    no test failure produces. ``scripts/update.sh:496`` and
+    ``scripts/head_stable_run.sh`` already answer this hazard with a stop
+    rather than a warning; this hook was the outlier.
+
+    Silent no-op when the sources are absent (sdist, CI image, installed
+    wheel), and overridable through ``STALE_CORE_OVERRIDE_ENV`` — which then
+    keeps the warning *and* repeats it under the results, where it cannot
+    scroll away.
     """
-    import datetime as _dt
-    import pathlib
-    import warnings
-
     invocation_dir = Path(str(session.config.invocation_params.dir))
     session.config._vibeqc_invocation_dir = invocation_dir
     session.config._vibeqc_artifacts_at_start = job_artifacts_in(invocation_dir)
 
-    try:
-        from vibeqc import _vibeqc_core
-    except Exception:  # noqa: BLE001 -- an import failure is not this hook's business
+    report = stale_core_report()
+    if report is None:
         return
 
-    so = pathlib.Path(getattr(_vibeqc_core, "__file__", "") or "")
-    cpp = pathlib.Path(__file__).resolve().parent.parent / "cpp"
-    if not so.is_file() or not cpp.is_dir():
+    override = os.environ.get(STALE_CORE_OVERRIDE_ENV, "")
+    if override.strip().lower() in {"1", "true", "yes", "on"}:
+        session.config._vibeqc_stale_core = report
+        warnings.warn(stale_core_warning(report), UserWarning, stacklevel=1)
         return
 
-    newest, newest_path = 0.0, None
-    for suffix in ("*.cpp", "*.hpp", "*.h", "*.cc", "*.cu"):
-        for src in cpp.rglob(suffix):
-            try:
-                m = src.stat().st_mtime
-            except OSError:
-                continue
-            if m > newest:
-                newest, newest_path = m, src
-    if newest_path is None:
-        return
-
-    built = so.stat().st_mtime
-    if built >= newest:
-        return
-
-    fmt = "%Y-%m-%d %H:%M"
-    warnings.warn(
-        "STALE COMPILED CORE: "
-        f"{so.name} was built {_dt.datetime.fromtimestamp(built):{fmt}} but "
-        f"{newest_path.relative_to(cpp.parent)} changed "
-        f"{_dt.datetime.fromtimestamp(newest):{fmt}}. Auto-rebuild is off, so this "
-        "session may compute WRONG NUMBERS rather than fail to import. Rebuild before "
-        "trusting any numerical failure:\n"
-        "    pip install -e . --no-build-isolation "
-        "--config-settings=build-dir=build-local",
-        UserWarning,
-        stacklevel=1,
+    pytest.exit(
+        stale_core_refusal(report),
+        returncode=STALE_CORE_EXIT_STATUS,
     )
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):  # noqa: ARG001
+    """Repeat the stale-core notice *below* the results, not above them.
+
+    Only reached when the refusal was overridden. The session-start warning is
+    the first thing printed, so by the last screen of a long run it is gone;
+    this is the copy the reader actually sees. It is printed whatever the
+    outcome, because a pass on a stale core is the more misleading of the two.
+    """
+    report = getattr(config, "_vibeqc_stale_core", None)
+    if report is None:
+        return
+    terminalreporter.write_sep("=", "results computed on a STALE COMPILED CORE", red=True)
+    terminalreporter.write_line(stale_core_warning(report))
 
 
 def pytest_sessionfinish(session, exitstatus):

@@ -41,7 +41,7 @@ vibe-qc versions and for ad-hoc citations outside `run_job`.
 Always cite this. APA-style:
 
 > Peintinger, M. F. (2026). *vibe-qc: a quantum-chemistry code for
-> molecules and solids* (version 0.17.3) [Software]. Mozilla Public
+> molecules and solids* (version 0.17.6) [Software]. Mozilla Public
 > License 2.0. <https://vibe-qc.com/>
 
 BibTeX:
@@ -51,7 +51,7 @@ BibTeX:
   author  = {Peintinger, Michael F.},
   title   = {{vibe-qc}: a quantum-chemistry code for molecules and solids},
   year    = {2026},
-  version = {0.17.3},
+  version = {0.17.6},
   license = {MPL-2.0},
   url     = {https://vibe-qc.com/},
 }
@@ -86,6 +86,22 @@ cite for a specific basis-set name:
 
 ```{vibeqc-cite-route} basis_sets pob-tzvp-rev2
 ```
+
+## When you use OpenTrustRegion orbital optimization
+
+For molecular SCF calculations that execute the optional OpenTrustRegion
+backend, cite its defining library paper:
+
+```{vibeqc-cite-entry} greiner_opentrustregion_2026
+```
+
+`run_job(orbital_optimizer="opentrustregion", ...)` adds this entry to the
+normal output bibliography when the backend actually runs. Native SCF does
+not add it, and an OpenTrustRegion solve does not receive default DIIS
+credit. This is electronic orbital optimization at a fixed geometry.
+See the [theory](user_guide/opentrustregion_theory.md),
+[options](user_guide/opentrustregion.md), and
+[worked examples](tutorial/opentrustregion.md).
 
 ## When you use DFT (any functional)
 

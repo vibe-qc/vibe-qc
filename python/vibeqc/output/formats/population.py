@@ -64,11 +64,14 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 
 from ...spin_channels import spin_densities
+
+if TYPE_CHECKING:
+    from ...iao_population import IAOAnalysis
 
 __all__ = [
     "PopulationSummary",
@@ -78,6 +81,7 @@ __all__ = [
     "compute_population_summary",
     "unsupported_population_summary",
     "format_population_txt",
+    "format_iao_analysis",
     "format_population_json",
     "write_population",
 ]
@@ -126,6 +130,9 @@ class PopulationSummary:
     errors: dict[str, str] = field(default_factory=dict)
     # Known missing implementations, separate from attempted computations.
     unavailable: dict[str, str] = field(default_factory=dict)
+    # Opt-in, dense molecular determinant analysis. None means not requested.
+    iao_analysis: IAOAnalysis | None = None
+    iao_bond_threshold: float = 0.05
 
 
 _POPULATION_SECTIONS = ("mulliken", "loewdin", "hirshfeld", "mayer", "dipole")
@@ -195,6 +202,8 @@ def compute_population_summary(
     n_top_bonds: int = 20,
     bond_threshold: float = 0.1,
     nuclear_charges: Any = None,
+    iao_analysis: IAOAnalysis | None = None,
+    iao_bond_threshold: float = 0.05,
 ) -> PopulationSummary:
     """Pull Mulliken / Löwdin / Mayer / dipole via
     :mod:`vibeqc.properties`. Each section is wrapped in its own
@@ -204,7 +213,10 @@ def compute_population_summary(
     (``Z - n_core`` on ECP atoms; :func:`vibeqc.ecp_metadata.
     effective_nuclear_charges` on the options that ran). ``None`` is bare
     ``Z``, correct only for an all-electron SCF (GitLab #642)."""
-    out = PopulationSummary()
+    out = PopulationSummary(iao_analysis=iao_analysis,
+                            iao_bond_threshold=iao_bond_threshold)
+    if iao_analysis is not None and not iao_analysis.available:
+        out.unavailable["iao"] = iao_analysis.unavailable_reason
 
     # Atomic-number -> symbol via the xyz writer's table (same source
     # of truth used elsewhere in vibeqc.output).
@@ -1479,6 +1491,44 @@ def compute_native_mulliken_population_summary(
 # ---------------------------------------------------------------------- #
 
 
+def format_iao_analysis(analysis: IAOAnalysis, *, bond_threshold: float = 0.05) -> str:
+    """Format the requested IAO section for both .out and population text.
+
+    The threshold affects only displayed atom pairs, never the dense result.
+    """
+    from .xyz import _symbol
+
+    if not np.isfinite(bond_threshold) or bond_threshold < 0:
+        raise ValueError("IAO bond display threshold must be finite and nonnegative")
+    lines = ["# === IAO atomic charges and IAO-Wiberg bond orders ===",
+             f"# Reference basis: {analysis.reference_basis}; orthogonalization: {analysis.orthogonalization}",
+             f"# Density: {analysis.density_convention}",
+             f"# Partition: {analysis.partition}",
+             f"# Bond convention: {analysis.spin_convention}; diagonal = 0"]
+    if not analysis.available:
+        lines.append(f"# IAO analysis unavailable: {analysis.unavailable_reason}")
+        return "\n".join(lines) + "\n"
+    spin = analysis.spin_populations
+    lines.append("# idx\tsymbol\tpopulation (electrons)\tcharge (e)" +
+                 ("\tspin (alpha minus beta electrons)" if spin is not None else ""))
+    for i, (n, q) in enumerate(zip(analysis.populations, analysis.charges)):
+        sym = _symbol(int(round(n + q)))
+        lines.append(f"{i}\t{sym}\t{n:.8f}\t{q:+.8f}" +
+                     (f"\t{spin[i]:+.8f}" if spin is not None else ""))
+    lines.extend([f"# IAO-Wiberg bonds (dimensionless; display threshold {bond_threshold:g})",
+                  "# i\tj\torder"])
+    count = 0
+    for i in range(len(analysis.charges)):
+        for j in range(i + 1, len(analysis.charges)):
+            order = analysis.bond_orders[i, j]
+            if order >= bond_threshold:
+                lines.append(f"{i}\t{j}\t{order:.8f}")
+                count += 1
+    if not count:
+        lines.append("# No atom pairs above the display threshold")
+    return "\n".join(lines) + "\n"
+
+
 def format_population_txt(summary: PopulationSummary) -> str:
     """Render the summary as a tab-separated tabular text file.
 
@@ -1579,6 +1629,9 @@ def format_population_txt(summary: PopulationSummary) -> str:
         err = summary.errors.get("dipole", "no data")
         parts.append(f"# dipole: N/A -- {err}")
     parts.append("")
+    if summary.iao_analysis is not None:
+        parts.append(format_iao_analysis(summary.iao_analysis,
+                                        bond_threshold=summary.iao_bond_threshold))
     return "\n".join(parts)
 
 
@@ -1614,6 +1667,8 @@ def format_population_json(summary: PopulationSummary) -> str:
     body["errors"] = dict(summary.errors)
     if summary.unavailable:
         body["unavailable"] = dict(summary.unavailable)
+    if summary.iao_analysis is not None:
+        body["iao"] = summary.iao_analysis.to_dict()
     return json.dumps(body, indent=2, sort_keys=False)
 
 

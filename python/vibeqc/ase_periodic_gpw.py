@@ -67,6 +67,7 @@ from .periodic_gapw_j import (
     run_periodic_rhf_gpw,
     run_periodic_rks_gpw_multi_k,
 )
+from .kpoints import _integer_counts
 
 _log = logging.getLogger("vibeqc.ase_periodic_gpw")
 
@@ -169,6 +170,9 @@ class VibeqcGPW(Calculator):
         the multi-k driver doesn't take an initial_density kwarg).
         Returns the underlying SCF result object.
         """
+        kmesh_param = self.parameters["kmesh"]
+        if kmesh_param is not None:
+            kmesh_param = _integer_counts(kmesh_param, name="GPW kmesh")
         system = self._atoms_to_periodic_system(atoms)
 
         # The libint BasisSet constructor wants a Molecule; build one
@@ -177,12 +181,11 @@ class VibeqcGPW(Calculator):
         basis_obj = BasisSet(mol, self.parameters["basis"])
 
         functional: Optional[str] = self.parameters["functional"]
-        kmesh_param: Optional[Sequence[int]] = self.parameters["kmesh"]
         cutoff_ha: float = float(self.parameters["cutoff_ha"])
 
         # Decide the route. ``None`` or ``[1, 1, 1]`` -> Γ-only;
         # otherwise multi-k (pure-DFT only).
-        is_gamma_only = kmesh_param is None or tuple(int(k) for k in kmesh_param) == (
+        is_gamma_only = kmesh_param is None or tuple(kmesh_param) == (
             1,
             1,
             1,
@@ -381,8 +384,10 @@ class VibeqcGPW(Calculator):
 
         functional: Optional[str] = self.parameters["functional"]
         kmesh_param: Optional[Sequence[int]] = self.parameters["kmesh"]
+        if kmesh_param is not None:
+            kmesh_param = _integer_counts(kmesh_param, name="GPW kmesh")
         cutoff_ha: float = float(self.parameters["cutoff_ha"])
-        is_gamma_only = kmesh_param is None or tuple(int(k) for k in kmesh_param) == (
+        is_gamma_only = kmesh_param is None or tuple(kmesh_param) == (
             1,
             1,
             1,

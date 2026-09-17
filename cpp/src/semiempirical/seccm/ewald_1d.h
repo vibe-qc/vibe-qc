@@ -53,6 +53,8 @@
 
 #include <array>
 #include <cmath>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -197,6 +199,45 @@ inline Eigen::MatrixXd wire_madkonst_1d(
         }
     }
     return mad;
+}
+
+// One place that maps a cyclic topology to its Madelung-embedding state.
+// Every adapter used to repeat this dimension dispatch, and the SCC-DFTB
+// gradient's copy lacked the 3-D branch: it built the slab kernel of the
+// first two lattice vectors for a bulk cell whose energy used the 3-D Ewald
+// kernel, so the potential entering its M matrix was not the potential the
+// energy was converged with. The builder throws on a non-finite matrix with
+// the calling route's name, exactly as the four copies did.
+struct SeccmMadelungState {
+    std::vector<std::vector<indo::WSNeighbor>> ews;
+    Eigen::MatrixXd madkonst;
+};
+
+inline SeccmMadelungState build_seccm_madelung_state(
+    const WSTopology& topology, int n_atoms, const char* route) {
+    SeccmMadelungState state;
+    const int dim = static_cast<int>(topology.translations.size());
+    state.ews = indo::_ewald_ws_cells(topology);
+    if (dim == 1) {
+        state.madkonst = wire_madkonst_1d(
+            state.ews, topology.translations[0], n_atoms);
+    } else if (dim == 2) {
+        state.madkonst = indo::_madkonst_2d(
+            state.ews, topology.translations, n_atoms);
+    } else if (dim == 3) {
+        state.madkonst = indo::_madkonst_3d(
+            state.ews, topology.translations, n_atoms);
+    } else {
+        throw std::invalid_argument(
+            std::string(route)
+            + " Madelung embedding needs one to three cyclic translations");
+    }
+    if (!state.madkonst.allFinite()) {
+        throw std::runtime_error(
+            std::string(route)
+            + " Madelung-constant matrix produced non-finite values");
+    }
+    return state;
 }
 
 // Gradient of the wire kernel Phi(v) with respect to its image argument v,

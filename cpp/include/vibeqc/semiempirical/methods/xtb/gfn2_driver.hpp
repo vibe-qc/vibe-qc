@@ -245,9 +245,12 @@ struct GFN2SCCAttempt {
     SCCMixer scc_mixer = SCCMixer::Simple;
     bool restart_supplied = false;
     bool molecular_delegated = false;
-    // Closed values: "converged", "iteration_limit", "unphysical_basin",
-    // and "gap_rejected".  Strings keep this internal diagnostic record
-    // JSON-ready at the Python boundary without exposing another public enum.
+    // Closed values: "converged", "iteration_limit", "stalled_checkpoint",
+    // "unphysical_basin", and "gap_rejected".  Strings keep this internal
+    // diagnostic record JSON-ready at the Python boundary without exposing
+    // another public enum.  "stalled_checkpoint" is the SECCM primary attempt
+    // handed to the stabilization ladder by the budget-independent checkpoint
+    // (#294); like "iteration_limit" it never reached the residual tolerance.
     std::string exit_reason = "iteration_limit";
     // True when the SCC residual reached tolerance, including a fixed point
     // later rejected by the finite-torus gap or physical-basin gates.

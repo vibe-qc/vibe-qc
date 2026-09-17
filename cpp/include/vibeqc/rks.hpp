@@ -14,6 +14,7 @@
 // supported through a single path.
 
 #pragma once
+#include "vibeqc/opentrustregion.hpp"
 
 #include <Eigen/Dense>
 #include <optional>
@@ -36,6 +37,10 @@
 namespace vibeqc {
 
 struct RKSOptions {
+    // Explicit whole-SCF orbital optimizer; existing native phase defaults stay unchanged.
+    std::string orbital_optimizer = "native";
+    OpenTrustRegionOptions opentrustregion;
+
     std::string functional = "LDA";   // name accepted by Functional(...)
     GridOptions grid;
 
@@ -260,6 +265,7 @@ struct RKSOptions {
 };
 
 struct RKSResult {
+    OpenTrustRegionReport opentrustregion;
     std::optional<BasisSet> restart_basis;
     std::optional<GuessSelection> guess_selection;
     double energy = 0.0;              // total KS energy (Hartree)
@@ -353,6 +359,7 @@ inline RHFResult rhf_result_from_rks(const RKSResult& rks) {
     r.density      = rks.density;
     r.fock         = rks.fock;
     r.scf_trace    = rks.scf_trace;
+    r.opentrustregion = rks.opentrustregion;
     // Carry the restricted-stability verdict across the adapter so
     // double-hybrid / MP2-on-RKS consumers see the same diagnosis the
     // RKS result reported (issue #144).

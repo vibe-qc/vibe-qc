@@ -235,6 +235,7 @@ The gradient per step is printed in ``.out``:
 | Flat PES (H-bonded clusters, vdW complexes) | Brent or ASE BFGS |
 | Near-degenerate states, Hessian misbehaves | Brent |
 | Semi-empirical / MLIP methods | ASE BFGS only (auto-fallback) |
+| `fci`, `nevpt2`, `caspt2`, `mrci` | Native L-BFGS-B or Brent **only**: ASE (including the `"auto"` default) refuses these with a `ValueError` instead of silently optimizing the mean-field surface (GitLab #357); see the [user guide](../user_guide/geometry_optimization.md) |
 
 ## Theory
 

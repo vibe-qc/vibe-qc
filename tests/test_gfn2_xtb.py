@@ -3902,3 +3902,211 @@ def test_adenine_auto_stabilize_does_not_change_the_answer():
         assert result.converged, f"max_iter={max_iter} did not converge"
         assert result.n_iter == reference.n_iter
         assert result.energy == pytest.approx(reference.energy, abs=1e-11)
+
+
+# ---------------------------------------------------------------------------
+# vibe-qc#306 — the auto-stabilisation ladder's budget must be reserved.
+# ---------------------------------------------------------------------------
+#
+# The frames exactly as the archived general-semiempirical article decks carry
+# them, in bohr, read from each deck's ``input_geometry_bohr.tsv`` -- the file
+# the deck's own ``input.py`` loads.
+#
+# READ THIS BEFORE USING THESE COORDINATES FOR ANYTHING ELSE.  Neither frame is
+# the molecule it is named after, and neither is a chemical reference:
+#
+#   * NORBORNADIENE's archived frame is C7H10, not norbornadiene's C7H8, and
+#     two of its hydrogens have no heavy atom within 1.8 A.  qc-input-library
+#     commit 65fa4af17 (2026-09-15) withdrew and replaced this geometry, two
+#     days after the ledger campaign that used it.
+#   * P-BENZOQUINONE has the right formula and no short contact, but there is
+#     no covalent bond cutoff at which it is a valid molecule: below 1.20x the
+#     covalent radius sum it is not connected, and at or above it a carbon has
+#     five bonds.  Its ring distances are 1.270 and 1.796 A.
+#
+# They are pinned here for one reason only: they are the exact inputs #306
+# reports, so they reproduce the ladder starvation.  Nothing below asserts an
+# energy, and nothing below should be read as chemistry.  See the deck
+# integrity note on #306.
+_QC306_P_BENZOQUINONE_BOHR = [
+    (6, 0.00000000, 2.39995201, 0.00000000),
+    (6, 2.39995201, 0.00000000, 0.00000000),
+    (6, 0.00000000, -2.39995201, 0.00000000),
+    (6, -2.39995201, 0.00000000, 0.00000000),
+    (6, 2.39995201, 2.39995201, 0.00000000),
+    (6, -2.39995201, 2.39995201, 0.00000000),
+    (8, 0.00000000, 4.70163826, 0.00000000),
+    (8, 0.00000000, -4.70163826, 0.00000000),
+    (1, 4.16117663, 3.43363212, 0.00000000),
+    (1, -4.16117663, 3.43363212, 0.00000000),
+    (1, 4.17251498, -1.00155477, 0.00000000),
+    (1, -4.17251498, -1.00155477, 0.00000000),
+]
+
+_QC306_NORBORNADIENE_BOHR = [
+    (6, 0.00000000, 0.00000000, 1.42107394),
+    (6, 0.00000000, 2.22231776, -0.21920821),
+    (6, 0.00000000, -2.22231776, -0.21920821),
+    (6, 2.35648831, 0.00000000, -1.07525409),
+    (6, -2.35648831, 0.00000000, -1.07525409),
+    (6, 2.35837803, 0.00000000, 2.77411775),
+    (6, -2.35837803, 0.00000000, 2.77411775),
+    (1, 0.00000000, -4.03078553, 0.66707327),
+    (1, 3.49977253, 1.71209175, -1.03934929),
+    (1, -3.49977253, -1.71209175, -1.03934929),
+    (1, 3.96464512, 0.00000000, 4.02133690),
+    (1, -3.96464512, 0.00000000, 4.02133690),
+    (1, 0.00000000, 1.75933490, 4.58069580),
+    (1, 0.00000000, -1.75933490, 4.58069580),
+    (1, 0.00000000, 4.03078553, 0.66707327),
+    (1, 3.49977253, -1.71209175, -1.03934929),
+    (1, -3.49977253, 1.71209175, -1.03934929),
+]
+
+_QC306_FRAMES = {
+    "p_benzoquinone": _QC306_P_BENZOQUINONE_BOHR,
+    "norbornadiene": _QC306_NORBORNADIENE_BOHR,
+}
+
+# gfn2_driver.cpp: the light-element ladder is {0.01, 1800, T=0} then
+# {0.05, 500, T=0.005}; extended-period molecules add {0.05, 600, T=0.05}.
+# Both frames here are light-element, so exactly two rungs apply.
+_QC306_LADDER_RUNG_BUDGETS = (1800, 500)
+# (charge_mixing, electronic_temperature) -> that rung's own nominal budget.
+# This identifies a rung by what it IS rather than by where it ran, which is
+# what makes the truncation check exact.
+_QC306_RUNG_BUDGET_BY_SIGNATURE = {
+    (0.01, 0.0): 1800,
+    (0.05, 0.005): 500,
+    (0.05, 0.05): 600,   # extended-period only; not reached by these frames
+}
+_QC306_FINITE_T = 0.005
+# Budgets at or above the >= 2500 auto_stabilize threshold.  The point of
+# sweeping them is that the assertions below are about WHICH RUNG RUNS, never
+# about a cumulative iteration count that a future budget change would move.
+_QC306_BUDGETS = (2500, 2501, 3000, 3600, 4000)
+
+
+def _qc306_molecule(frame):
+    return Molecule([Atom(z, [x, y, w]) for z, x, y, w in frame], 0, 1)
+
+
+def _qc306_run(frame, max_iter):
+    options = _xtb.XTBSccOptions()
+    options.max_iter = max_iter
+    return _xtb.run_gfn2_xtb(_qc306_molecule(frame), load_gfn2_params(), options)
+
+
+class TestGFN2LadderBudgetReserve:
+    """vibe-qc#306: the retry ladder's budget is not the primary's to spend.
+
+    ``ea2d4cb`` (#3) made the 700-iteration checkpoint advisory so a still
+    contracting primary attempt would not be abandoned.  The extension was
+    bounded by ``total_max_iter`` -- the same budget the ladder draws from --
+    so on a solve that never converges but keeps satisfying
+    ``still_contracting()`` the primary walked 700 -> 1400 -> ... -> 3500 and
+    left the ladder 100 iterations of its nominal 2300.
+
+    A second, older defect compounded it: the ladder TRUNCATED a rung it could
+    not fully afford (``ropts.max_iter = min(retry.max_iter, remaining)``)
+    instead of skipping it.  A rung given 100 of its 1800 cannot converge, but
+    it still consumes the budget of the rung behind it -- and for these
+    systems the rung behind it, the T = 0.005 Ha one, is the ONLY stage that
+    converges at all.
+
+    These tests pin the RUNG SELECTION, which is the invariant, rather than a
+    cumulative iteration total, which any future budget change would move.
+    """
+
+    @requires_gfn2
+    @pytest.mark.parametrize("frame_name", sorted(_QC306_FRAMES))
+    @pytest.mark.parametrize("max_iter", _QC306_BUDGETS)
+    def test_no_ladder_rung_runs_on_a_truncated_budget(self, frame_name, max_iter):
+        """Every rung either gets its whole nominal budget or does not run.
+
+        This is the property #306 violated and the one that keeps it from
+        coming back, and it is independent of any molecule: a rung that cannot
+        be afforded in full must be skipped, never shortened.  Before the fix
+        norbornadiene's rung 1 was allocated 100 of 1800 and p-benzoquinone's
+        800 of 1800.
+        """
+        result = _qc306_run(_QC306_FRAMES[frame_name], max_iter)
+
+        # attempts[0] is the primary; its allowance legitimately grows with
+        # the advisory extension, so only the ladder rungs are pinned here.
+        #
+        # Each rung is checked against ITS OWN nominal budget, by position among
+        # the rungs that ran, rather than against the set of all rung budgets.
+        # Set membership is too weak: at max_iter=4000 the unfixed driver
+        # truncates rung 1 to exactly 500, which is rung 2's nominal budget, so
+        # a membership test accepts a plainly truncated rung.
+        for attempt in result.attempts[1:]:
+            # Identify WHICH rung this is by its own settings, then require
+            # that rung's own budget.  Position is not usable, because a
+            # skipped rung shifts the ones behind it, and set membership is
+            # not usable either: at max_iter=4000 the unfixed driver truncates
+            # rung 1 to exactly 500, which is rung 2's nominal budget.
+            signature = (
+                round(float(attempt.ladder_charge_mixing), 6),
+                round(float(attempt.electronic_temperature), 6),
+            )
+            nominal = _QC306_RUNG_BUDGET_BY_SIGNATURE.get(signature)
+            assert nominal is not None, (
+                f"{frame_name} at max_iter={max_iter}: ladder rung with "
+                f"unrecognised settings {signature}; the ladder changed and "
+                f"this test needs updating"
+            )
+            allocated = int(attempt.allocated_max_iter)
+            assert allocated == nominal, (
+                f"{frame_name} at max_iter={max_iter}: the rung with settings "
+                f"{signature} ran on {allocated} of its nominal {nominal} "
+                f"iterations; a rung must receive its entire allowance or be "
+                f"skipped, never be truncated (#306)"
+            )
+
+        # Non-vacuity: at max_iter=2500 the unfixed driver let the primary take
+        # the entire budget, so NO rung ran at all and the loop above had
+        # nothing to check.  A primary that failed must have handed over.
+        if not result.attempts[0].scc_converged:
+            assert len(result.attempts) > 1, (
+                f"{frame_name} at max_iter={max_iter}: the primary attempt "
+                f"failed and consumed the whole budget without the ladder "
+                f"running a single rung (#306)"
+            )
+
+    @requires_gfn2
+    @pytest.mark.parametrize("frame_name", sorted(_QC306_FRAMES))
+    @pytest.mark.parametrize("max_iter", _QC306_BUDGETS)
+    def test_finite_temperature_rung_is_reachable(self, frame_name, max_iter):
+        """The only rung that converges these systems must actually run.
+
+        Measured standalone, neither the primary nor the T = 0 rung converges
+        these frames at any budget; the T = 0.005 Ha rung converges them in a
+        few hundred iterations.  So "did the ladder reach rung 2" is the whole
+        question, and it is asserted here through the rung's own identity --
+        its electronic temperature and its full 500-iteration allowance --
+        never through the cumulative ``n_iter``.
+        """
+        result = _qc306_run(_QC306_FRAMES[frame_name], max_iter)
+
+        assert result.converged, (
+            f"{frame_name} did not converge at max_iter={max_iter}; "
+            "the ladder's finite-temperature rung was starved (#306)"
+        )
+        winner = result.attempts[-1]
+        assert bool(winner.scc_converged)
+        assert float(winner.electronic_temperature) == pytest.approx(
+            _QC306_FINITE_T
+        ), f"{frame_name} converged on an unexpected rung"
+        assert int(winner.allocated_max_iter) == 500
+        # It converged inside the rung rather than exhausting it.
+        assert int(winner.n_iter) < 500
+        # The Mermin bookkeeping of the rung that ran (#247): a finite-T
+        # solution reports A = E - T*S, with a strictly positive entropy.
+        assert float(result.smearing_temperature) == pytest.approx(_QC306_FINITE_T)
+        assert float(result.entropy) > 0.0
+        assert float(result.free_energy) == pytest.approx(
+            float(result.energy)
+            - float(result.smearing_temperature) * float(result.entropy),
+            abs=1e-12,
+        )

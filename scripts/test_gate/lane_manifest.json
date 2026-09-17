@@ -213,6 +213,7 @@
         "tests/test_incremental_fock_open_shell.py",
         "tests/test_*diis*.py",
         "tests/test_newton.py",
+        "tests/test_opentrustregion.py",
         "tests/test_soscf.py",
         "tests/test_oda.py",
         "tests/test_mom.py",

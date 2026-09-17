@@ -1292,10 +1292,35 @@ def _local_correlation_space(
     )
 
 
+def _validate_localized_frozen_core(system: PeriodicSystem, options: object) -> None:
+    """Do not freeze indices after a rotation mixing core and active spaces.
+
+    Only positivity is needed here. Published core counts on the primitive
+    cell and on its finite torus are either both zero or both positive.
+    The downstream solver resolves the actual torus count. Periodic ECP
+    post-HF is independently unsupported.
+    """
+    from ...correlation_conventions import resolve_frozen_core_count
+
+    if options.localise == "none":
+        return
+    n_frozen = resolve_frozen_core_count(
+        system.unit_cell_molecule(), options.n_frozen,
+    )
+    if n_frozen:
+        raise NotImplementedError(
+            "aiccm2026dev-b frozen-core occupied localisation is not yet "
+            "supported: localisation must preserve the core and active "
+            "projectors separately; use localise='none' for frozen core "
+            "or n_frozen=0 for all-electron local correlation"
+        )
+
+
 def _complete_space_mp2_audit(
     reference: _BRealReference,
+    n_frozen: int = 0,
 ) -> float:
-    """Evaluate the real canonical gauge of the complete-PAO MP2 limit."""
+    """Evaluate the complete-PAO MP2 limit in the solver's active space."""
 
     from .pno import (
         projected_atomic_orbitals,
@@ -1308,6 +1333,9 @@ def _complete_space_mp2_audit(
         np.asarray(reference.hf.overlap),
         np.asarray(reference.hf.fock),
     )
+    # The PAO projector excludes ALL occupieds, including frozen core.
+    # Only the occupied correlation contractions use the active subset.
+    occupied = occupied[:, n_frozen:]
     fock = np.asarray(reference.hf.fock)
     virtual = np.asarray(paos.coefficients)
     f_occ = occupied.T @ fock @ occupied
@@ -1504,6 +1532,7 @@ def run_aiccm2026dev_b_dlpno_mp2(
             "aiccm2026dev-b DLPNO-MP2 local fitting awaits minimum-image "
             "auxiliary domains"
         )
+    _validate_localized_frozen_core(system, local_options)
     _validate_posthf_numerical_support_cutoffs(
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
@@ -1553,7 +1582,7 @@ def run_aiccm2026dev_b_dlpno_mp2(
         and local_options.tcut_mkn == 0.0
     )
     if complete_space_limit:
-        exact_correlation = _complete_space_mp2_audit(reference)
+        exact_correlation = _complete_space_mp2_audit(reference, result.n_frozen)
         complete_space_correction = exact_correlation - raw_local_correlation
         result.e_pno_correction += complete_space_correction
         result.e_corr = exact_correlation
@@ -1639,6 +1668,7 @@ def _run_aiccm2026dev_b_dlpno_cc(
             "aiccm2026dev-b DLPNO-CC occupied-distance screening awaits "
             "minimum-image periodic Wannier distances"
         )
+    _validate_localized_frozen_core(system, local_options)
     _validate_posthf_numerical_support_cutoffs(
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
@@ -1931,6 +1961,7 @@ def _run_aiccm2026dev_b_ump2(
             "aiccm2026dev-b UMP2 requires PBC-safe localise='wannier' or "
             "'iao', or exact-limit localise='none'"
         )
+    _validate_localized_frozen_core(system, ump2_options)
     _validate_posthf_numerical_support_cutoffs(
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
@@ -2108,6 +2139,7 @@ def _run_aiccm2026dev_b_uccsd(
             "aiccm2026dev-b UCCSD requires PBC-safe localise='wannier' or "
             "'iao', or exact-limit localise='none'"
         )
+    _validate_localized_frozen_core(system, cc_options)
     _validate_posthf_numerical_support_cutoffs(
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,

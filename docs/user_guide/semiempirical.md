@@ -248,12 +248,34 @@ model = PM6Model(mol)
 print(f"Energy: {model.energy():.6f} Ha")
 ```
 
-The high-level closed-shell `run_job(method="pm6")` route first attempts the
-ordinary zero-temperature SCF. If hard occupations cycle across
-near-degenerate fragment orbitals, it uses a bounded finite-temperature
-occupation homotopy and then cools back to an idempotent zero-temperature
-density. Only the cooled PM6 energy is accepted; the finite-temperature
+The high-level closed-shell `run_job(method="pm6")` route runs the ordinary
+zero-temperature SCF and, alongside it, a bounded finite-temperature
+occupation homotopy at each of three temperatures, every rung cooled back to
+an idempotent zero-temperature density and re-cooled to prove it is a genuine
+fixed point. Only cooled PM6 energies are accepted; a finite-temperature
 intermediate is never reported as a successful result.
+
+If those probes agree, the energy is reported as before. If two of them reach
+**different** converged zero-temperature fixed points, the route raises
+`SemiempiricalEnergyError` and names every solution it found, because on such
+a system the reported total would be chosen by rounding rather than by the
+input (issue #154).
+
+That guard exists because convergence alone does not identify the answer
+here. A strained bridged bicycle or a weakly coupled symmetric dimer has
+several genuine zero-temperature PM6 fixed points, and hard occupations leave
+the SCF selecting between them on arithmetic noise. Norbornadiene converges
+cleanly to -33.0848096 Ha, and just as cleanly to -33.9206690 Ha -- 0.836 Ha
+(22.7 eV) lower -- after a 1e-9 A nudge of one bridgehead carbon; homotopy
+rungs reach -33.3644211, -33.8171396 and -33.9206691 on inputs differing by
+at most 1e-7 A. Four fleet hosts once reported four of those values for that
+one input and one build, each labelled converged. Thread count changes
+nothing (identical to 16 digits from 1 to 18 threads), so this is not an
+arithmetic-determinism defect that a deterministic reduction order would
+reach, and no path selects the basin reliably: the smeared paths are
+noise-sensitive too, and reporting the lowest candidate is not stable because
+the direct solution is sometimes itself the lowest. A refusal is therefore
+the honest outcome, and it is the same on every host.
 
 Gamma-periodic PM6 instead uses Pulay extrapolation of the physical
 commutator residual. Convergence requires both the density change and
@@ -611,9 +633,11 @@ heavy-heavy two-electron tensor parity with the defining PM6 implementation
 remains open, so the adapter is not a quantitative PM6 reference. Bundled PM6
 records that require d orbitals fail closed: the complete PM6 spd Hamiltonian
 has not yet landed in the SECCM adapter, and treating those five d functions
-as p channels would return a different model. Madelung embedding is also not
-implemented, so neutral ionic crystals requiring long-range image
-electrostatics are outside the current PM6-SECCM scope. Its gradients
+as p channels would return a different model. The opt-in Madelung embedding
+(`madelung=True`, 1-D and 2-D; three cyclic dimensions fail closed) is
+described in the features table under "PM6-SECCM CCM Madelung embedding";
+without it a nontrivial cyclic topology needs the explicit
+`allow_truncated_electrostatics=True` acknowledgement. Its gradients
 (`compute_gradient=True`) use central
 differences of the converged per-cell energy over the frozen topology
 displacements (`gradient_method="finite_difference"`, `gradient_fd_step`
@@ -654,9 +678,13 @@ block, the shell-resolved gamma, the shell-resolved multipole AES
 potential, the pair repulsion) is accumulated through the WS records with
 their fractional weights, and the per-cell energy is the finite-cluster
 total divided by the group order (`total_cyclic_energy` and the `cyclic_*`
-decomposition are reported). The SCC loop mirrors the molecular driver
-(damped simple mixing plus the stabilization retries); D4 dispersion and
-the experimental faithful AES are not part of the adapter. At T = 0, the
+decomposition are reported). The SCC loop mirrors the molecular driver:
+damped simple mixing plus the stabilization retries, which the primary
+attempt reaches from a budget-independent checkpoint (every 500 iterations,
+when its residual has stopped contracting) rather than from a fixed
+500-iteration cut, so raising `max_iter` never changes the primary
+trajectory (issue 294). D4 dispersion is not part of the adapter; the
+faithful AES is the opt-in `aes_faithful` model described below. At T = 0, the
 molecular limit (1x1x1 cyclic cluster) still reproduces the validated
 molecular `run_gfn2_xtb` driver bit-for-bit. At finite temperature it reports
 the identical molecular state and internal components, but maps the SECCM
@@ -1211,6 +1239,18 @@ displacement loops are C++-backed, but they remain finite-difference stopgaps
 for those methods. The lookup accepts public method
 aliases such as `dftb0`, `scc-dftb`, `gfn2xtb`, `om2`, `om2-gradient-fd`,
 `gfn2`, `msindo`, and `ccm`.
+
+Route *maturity* has exactly one source. A concrete route plan's `maturity`
+field carries it, drawn from
+`vibeqc.semiempirical.routes.SEMIEMPIRICAL_MATURITIES` (`production`,
+`experimental`, `native_fd`, `mixed_native`, `gated_unimplemented`). The
+`backend` label above is a separate axis naming where a kernel lives, and the
+`production` flag is the one field the two tables share: it tracks
+`plan.maturity == "production"` for every reachable route, pinned by a sweep in
+the test suite. A dormant C++ `PeriodicTier` enum used to carry a third,
+disagreeing vocabulary and was removed. Periodic semiempirical runs record
+`route_maturity` and `route_status` in the archived job spec, so a run's own
+artifacts state the maturity its route claimed.
 
 Direct `run_semiempirical(...)` results compute gradients lazily when
 `result.gradient()` is called. DFTB0/SCC-DFTB, GFN2-xTB, PM6/UPM6, and OMx

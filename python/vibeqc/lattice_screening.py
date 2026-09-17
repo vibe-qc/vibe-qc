@@ -44,6 +44,8 @@ __all__ = [
     "estimate_rcut_pyscf",
     "estimate_rcut_overlap_pair",
     "estimate_rcut_amplitude",
+    "lattice_cell_count",
+    "estimate_rcut_accumulated",
     "atom_pair_span_bohr",
     "bloch_overlap_cutoff_bohr",
     "make_lattice_opts",
@@ -145,11 +147,19 @@ class RcutStrategy(enum.Enum):
       whose positive definiteness is destroyed by a dropped tail. Reaches
       further than ``PYSCF_AUTO`` by construction: see
       :func:`estimate_rcut_overlap_pair`.
+    * ``ACCUMULATED`` -- ``PYSCF_AUTO``'s per-shell formula, but sized so
+      that the SUM of the dropped terms is below ``precision``, not just
+      the largest single one. Needs ``system``: the cell volume is what
+      sets how many terms the sum has. The right choice when downstream
+      code depends on the ACCURACY of the assembled matrix rather than on
+      the size of its largest omission -- above all a fitting metric that
+      is about to be inverted. See :func:`estimate_rcut_accumulated`.
     """
 
     FLAT = "flat"
     PYSCF_AUTO = "pyscf_auto"
     OVERLAP_PAIR = "overlap_pair"
+    ACCUMULATED = "accumulated"
 
 
 def estimate_rcut_pyscf_per_shell(
@@ -453,6 +463,132 @@ def estimate_rcut_amplitude(
     return float(rcut)
 
 
+def lattice_cell_count(system, rcut_bohr: float) -> float:
+    """How many direct lattice cells satisfy ``|R| <= rcut_bohr``.
+
+    The continuum estimate -- the volume of the ``d``-dimensional ball of
+    radius ``rcut`` divided by the volume of the periodic cell, in the
+    ``d`` periodic directions only -- plus the ``R = 0`` cell. It is the
+    multiplicity of a truncated lattice sum, i.e. how many terms of the
+    size of the boundary term the truncation can be dropping, and it is
+    used for exactly that in :func:`estimate_rcut_accumulated`.
+
+    Continuum rather than an exact enumeration on purpose: this feeds a
+    logarithm, where a factor-of-two miscount moves the resulting radius
+    by a few per cent, and enumerating would cost more than the lattice
+    sum it is sizing.
+    """
+    rcut = float(rcut_bohr)
+    if rcut <= 0.0:
+        return 1.0
+    lattice = np.asarray(system.lattice, dtype=float).reshape(3, 3)
+    dim = max(0, min(3, int(system.dim)))
+    if dim == 0:
+        return 1.0
+    # Lattice COLUMNS are the lattice vectors; the inactive ones are
+    # bookkeeping directions that carry no images (periodic_grid.py).
+    periodic = lattice[:, :dim]
+    if dim == 1:
+        measure = float(np.linalg.norm(periodic[:, 0]))
+        ball = 2.0 * rcut
+    elif dim == 2:
+        measure = float(
+            np.linalg.norm(np.cross(periodic[:, 0], periodic[:, 1]))
+        )
+        ball = math.pi * rcut * rcut
+    else:
+        measure = float(abs(np.linalg.det(periodic)))
+        ball = (4.0 / 3.0) * math.pi * rcut**3
+    if not (measure > 0.0):
+        return 1.0
+    return 1.0 + ball / measure
+
+
+def estimate_rcut_accumulated(
+    basis: BasisSet,
+    system,
+    *,
+    precision: float = 1e-12,
+    extra_multiplicity: float = 1.0,
+    n_refine: int = 8,
+) -> float:
+    """``rcut`` at which the lattice sum's TOTAL dropped weight is below
+    ``precision`` -- not merely its largest single dropped term.
+
+    :func:`estimate_rcut_pyscf` bounds one shell pair's contribution at
+    ``rcut``. A lattice sum drops many such terms at once, so the error
+    that actually lands in the summed matrix is larger than the requested
+    ``precision`` by roughly the number of cells involved. That is not a
+    hypothetical: measured on the compensated MDF metric at the shipped
+    ``precision = 1e-8`` (2026-08-14, recorded on this issue), the residue
+    against a converged reference was
+
+        MgO rocksalt primitive   2.4e-07   (~24x the request)
+        LiH rocksalt             7.1e-06   (~700x)
+        H2 / 12-bohr box         1.9e-08   (~2x)
+
+    and it was essentially independent of the compensating exponent
+    ``eta`` -- the signature of accumulation over the ~R^3 lattice terms
+    rather than of a single pair's amplitude decay. The dilute H2 box,
+    whose cell holds the fewest neighbours inside ``rcut``, is the one
+    that nearly delivers what it asked for, which is the same signature.
+
+    This estimator makes ``precision`` mean what it says by solving the
+    fixed point
+
+        N(r)  = lattice_cell_count(system, r) * extra_multiplicity
+        r     = estimate_rcut_pyscf(basis, precision = precision / N(r))
+
+    which converges in two or three passes because ``estimate_rcut_pyscf``
+    grows only as ``sqrt(log(1/precision))``: paying for a thousandfold
+    tighter per-term bound costs well under a factor of two in radius, and
+    the extra cells are the cheap far-field ones.
+
+    Parameters
+    ----------
+    basis
+        Basis the lattice sum runs on, as for :func:`estimate_rcut_pyscf`.
+    system
+        Periodic system; its cell volume and dimensionality set ``N(r)``.
+    precision
+        Target accuracy of the SUMMED matrix.
+    extra_multiplicity
+        Additional term count to divide the budget by, beyond the cell
+        count -- e.g. the matrix dimension, when what must be bounded is
+        an eigenvalue of the assembled matrix rather than one of its
+        elements (Weyl: ``|dlambda| <= ||dM||_2 <= n max|dM_ij|``).
+    n_refine
+        Fixed-point iterations. The default is far more than needed.
+
+    Returns
+    -------
+    float
+        The radius, never below the plain :func:`estimate_rcut_pyscf`
+        value at the same ``precision``.
+    """
+    if not (0.0 < float(precision) < 1.0):
+        raise ValueError(
+            f"estimate_rcut_accumulated: precision must be in (0, 1); "
+            f"got {precision}"
+        )
+    precision = float(precision)
+    extra = max(1.0, float(extra_multiplicity))
+
+    rcut = estimate_rcut_pyscf(basis, precision=precision)
+    for _ in range(int(n_refine)):
+        multiplicity = lattice_cell_count(system, rcut) * extra
+        per_term = precision / multiplicity
+        # estimate_rcut_pyscf's logarithm needs a positive argument; a
+        # request below what double precision can express is meaningless.
+        per_term = max(per_term, 1e-300)
+        updated = estimate_rcut_pyscf(basis, precision=per_term)
+        if abs(updated - rcut) <= 1e-6 * max(1.0, rcut):
+            rcut = updated
+            break
+        rcut = updated
+    return float(rcut)
+
+
 def atom_pair_span_bohr(system) -> float:
     """Largest distance between two basis-carrying centres of the cell.
 
@@ -507,6 +643,8 @@ def make_lattice_opts(
     precision: float = 1e-8,
     cutoff_bohr: Optional[float] = None,
     nuclear_cutoff_bohr: Optional[float] = None,
+    system=None,
+    extra_multiplicity: float = 1.0,
 ) -> LatticeSumOptions:
     """Factory: build a :class:`LatticeSumOptions` with the chosen
     cutoff strategy applied to ``cutoff_bohr``.
@@ -533,6 +671,13 @@ def make_lattice_opts(
         Manual override for the (typically larger) nuclear-attraction
         lattice-sum cutoff. Defaults to ``base_opts.nuclear_cutoff_bohr``
         if not set.
+    system
+        Periodic system. Required by :class:`RcutStrategy.ACCUMULATED`,
+        which needs the cell volume to count the terms of the sum;
+        ignored by every other strategy.
+    extra_multiplicity
+        Passed through to :func:`estimate_rcut_accumulated` under
+        :class:`RcutStrategy.ACCUMULATED`; ignored otherwise.
 
     Returns
     -------
@@ -566,6 +711,17 @@ def make_lattice_opts(
         dst.cutoff_bohr = estimate_rcut_pyscf(basis, precision=precision)
     elif strategy is RcutStrategy.OVERLAP_PAIR:
         dst.cutoff_bohr = estimate_rcut_overlap_pair(basis, tol=precision)
+    elif strategy is RcutStrategy.ACCUMULATED:
+        if system is None:
+            raise ValueError(
+                "make_lattice_opts: RcutStrategy.ACCUMULATED needs `system` "
+                "-- the cell volume is what sets how many terms the "
+                "truncated lattice sum drops."
+            )
+        dst.cutoff_bohr = estimate_rcut_accumulated(
+            basis, system, precision=precision,
+            extra_multiplicity=extra_multiplicity,
+        )
     else:
         raise ValueError(f"make_lattice_opts: unknown RcutStrategy {strategy!r}")
 

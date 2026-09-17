@@ -529,6 +529,19 @@ PeriodicRHFResult run_rhf_periodic_impl(
                          opts.fock_mixing);
     const int nocc = n_elec_valence / 2;
 
+    // Image selection is a translation ball, |g| <= cutoff_bohr, so a cell
+    // wider than the cutoff leaves only g = 0: every lattice sum below
+    // collapses to its molecular form, F(k) = F(0) at every k, and the driver
+    // reports a converged free-boundary cluster as a periodic result (#133).
+    // Refuse unless the caller declared the molecular limit. cutoff_bohr, not
+    // nuclear_cutoff_bohr: it is the smaller of the two by default and governs
+    // the AO sums, so it collapses first and this is the stricter test.
+    if (!opts.lattice_opts.gamma_only_0) {
+        require_nonzero_lattice_image(
+            direct_lattice_cells(system, opts.lattice_opts.cutoff_bohr),
+            opts.lattice_opts.cutoff_bohr, "run_rhf_periodic");
+    }
+
     // The correlation-capture entry point has a stricter, allocation-free
     // preflight than ordinary SCF. It cannot be mistaken for full resource
     // admission: the byte cap covers only the exact retained state payload.
@@ -1380,6 +1393,15 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
     validate_fraction_01("run_rks_periodic: fock_mixing",
                          opts.fock_mixing);
     const int nocc = n_elec_valence_rks / 2;
+
+    // See run_rhf_periodic above: a cell wider than cutoff_bohr leaves the
+    // translation ball holding only g = 0, and this driver would return a
+    // converged cluster labelled periodic (#133).
+    if (!opts.lattice_opts.gamma_only_0) {
+        require_nonzero_lattice_image(
+            direct_lattice_cells(system, opts.lattice_opts.cutoff_bohr),
+            opts.lattice_opts.cutoff_bohr, "run_rks_periodic");
+    }
 
     Functional func(opts.functional, /*spin=*/1);
     const double exchange_scale = func.hf_exchange_fraction();

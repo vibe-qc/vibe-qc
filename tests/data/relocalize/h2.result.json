@@ -1,0 +1,66 @@
+{
+  "coefficients": {
+    "encoding": "real",
+    "data": [
+      [
+        0.5489340403996346,
+        0.5489340403996357
+      ]
+    ]
+  },
+  "occupations": [
+    2.0
+  ],
+  "rotation": {
+    "encoding": "real",
+    "data": [
+      [
+        0.9999999999999994
+      ]
+    ]
+  },
+  "representation": "molecular_ao",
+  "atom_populations": [
+    [
+      0.49999999999999944,
+      0.4999999999999999
+    ]
+  ],
+  "population_model": "iao-mini",
+  "centroids_bohr": [
+    [
+      1.2999999999999994,
+      0.0,
+      0.0
+    ]
+  ],
+  "centroid_model": "position_expectation",
+  "n_centres": [
+    2
+  ],
+  "centre_threshold": 0.1,
+  "charges": [
+    1.1102230246251565e-15,
+    2.220446049250313e-16
+  ],
+  "charge_model": "iao-mini",
+  "validation": {
+    "input_orthonormality_error": 2.220446049250313e-16,
+    "orthonormality_error": 9.992007221626409e-16,
+    "subspace_residual": 2.7294536171092997e-16,
+    "unitary_error": 1.1102230246251565e-15,
+    "tolerance": 1e-07
+  },
+  "warnings": [],
+  "experimental": false,
+  "method": "ibo",
+  "source": "supplied",
+  "scf_performed": false,
+  "spin": "restricted",
+  "backend_version": "0.17.3",
+  "ao_convention": "qvf-gto-v1",
+  "convergence": "not_certified_by_kernel",
+  "citation_features": [
+    "ibo"
+  ]
+}

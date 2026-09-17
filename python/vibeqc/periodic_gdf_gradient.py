@@ -2803,10 +2803,13 @@ def _compute_v_ne_gradient_multik(
 
     Deliberate value-vs-derivative seam (documented, sub-gate): the
     value builder zeroes V_long(g) for cells whose overlap norm is
-    below ``screen_rel = 1e-12`` of the largest block; this derivative
-    keeps every cell (like the Gamma gradient). The induced FD
-    discrepancy is bounded by that relative screen and sits orders of
-    magnitude below the 1e-7 gates.
+    below ``screen_rel = 1e-12`` of the largest block, and since #196
+    leaves cells below ``domain_rel = 1e-16`` out of the V_short lattice
+    sum as well; this derivative keeps every cell (like the Gamma
+    gradient). The induced FD discrepancy is bounded by those relative
+    screens and sits orders of magnitude below the 1e-7 gates -- the
+    V_short limb measurably more so, its whole dropped tail summing to
+    3e-17 Ha against a 6 Ha matrix on LiH/STO-3G.
 
     ``ke_cutoff = None`` resolves like the dispatch: env
     ``VIBEQC_VNE_EWALD3D_KE``, else 200.0. ``ewald_options = None``

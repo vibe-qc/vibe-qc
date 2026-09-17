@@ -36,6 +36,15 @@ from .qvf import (
     validate_qvf,
     write_qvf,
 )
+from .qcschema import write_qcschema
+from .vibrational import (
+    FD_HESSIAN_SURFACES,
+    hessian_surface_label,
+    hessian_surface_lines,
+    hessian_surface_manifest_fields,
+    hessian_unsupported_surface_lines,
+    thermochemistry_energy_labels,
+)
 from .trexio import (
     TrexioData,
     TrexioMOBlock,
@@ -48,6 +57,13 @@ from .trexio import (
 from .xyz import write_xyz
 
 __all__ = [
+    "FD_HESSIAN_SURFACES",
+    "hessian_surface_label",
+    "hessian_surface_lines",
+    "hessian_surface_manifest_fields",
+    "hessian_unsupported_surface_lines",
+    "thermochemistry_energy_labels",
+    "write_qcschema",
     "write_xyz",
     "write_extended_xyz",
     "write_trexio",

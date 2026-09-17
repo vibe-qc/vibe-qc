@@ -418,6 +418,16 @@ def _compute_molecular_gradient(
 
     When ``dispersion_params`` is provided, the D3-BJ gradient is
     folded in. Returns the energy gradient gradE (not the force).
+
+    **A solvated result is differentiated on its own surface.** When
+    ``scf_result`` carries a ``solvent_result`` -- which is what
+    :func:`_run_single_point` returns for ``solvent=...`` -- the gradient comes
+    from :func:`vibeqc.solvation.cpcm_gradient`, so the optimizer walks the
+    surface whose energy it reports. Before this, every caller here got the
+    gas-phase gradient while the energy included the reaction field: on
+    LiF/STO-3G in water the optimization stopped 0.011 bohr from the solvated
+    minimum with a solvated gradient of 1.8e-3 Ha/bohr, against its own
+    9.7e-4 Ha/bohr convergence threshold.
     """
     from vibeqc import (
         compute_gradient as _grad_rhf,
@@ -430,7 +440,32 @@ def _compute_molecular_gradient(
     gopt = gradient_options or GradientOptions()
     method_lower = method.lower()
 
-    if method_lower == "rhf":
+    # The reaction field first: a solvated result must not be handed to the
+    # gas-phase gradient routines below.
+    _solvent_result = getattr(scf_result, "solvent_result", None)
+    if _solvent_result is not None and method_lower in ("rhf", "uhf", "rks", "uks"):
+        from .solvation import cpcm_gradient
+
+        if method_lower in ("rks", "uks"):
+            require_complete_analytic_gradient(
+                scf_result,
+                route=f"_compute_molecular_gradient({method_lower}, solvated)",
+                spin=1 if method_lower == "rks" else 2,
+            )
+        grad = cpcm_gradient(
+            scf_result,
+            molecule,
+            basis,
+            _solvent_result,
+            method=method_lower,
+            options=gopt,
+            grid_options=(
+                (grid_options or GridOptions())
+                if method_lower in ("rks", "uks")
+                else None
+            ),
+        )
+    elif method_lower == "rhf":
         grad = _grad_rhf(molecule, basis, scf_result, gopt)
     elif method_lower == "uhf":
         grad = _grad_uhf(molecule, basis, scf_result, gopt)

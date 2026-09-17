@@ -149,8 +149,12 @@ what you did.
   lanes for shared numerical machinery.
 - **Keep `main` working.** Land in small increments, and gate unfinished
   features rather than leaving half-wired code paths.
-- **CHANGELOG.** Add user-visible changes to `[Unreleased]`. Tests-only and
-  internal changes may skip it.
+- **CHANGELOG.** Add user-visible changes as a new file under `changelog.d/`,
+  one per change. Do not edit `CHANGELOG.md` directly: every branch that appends
+  to its `[Unreleased]` section inserts at the same anchor, so two branches
+  conflict as an add/add that no content edit resolves.
+  `scripts/assemble_changelog.py` folds the fragments in when a release is cut.
+  Tests-only and internal changes may skip it.
 - **Issue numbers.** When a commit fixes a tracked issue, put `(#N)` in the
   subject; triage finds fixes that way. Untracked work needs no number.
 - **A second pair of eyes for wrong answers.** A fix to a wrong number, or to
@@ -199,8 +203,8 @@ git identity, so authorship cannot tell you who changed what.
 - **Treat a shared checkout's uncommitted changes as someone else's.** Stage
   files by name; don't stash, reset or check out over changes you didn't make.
 - **Keep both sides of a conflict** in files many sessions append to, such as
-  `CHANGELOG.md` and handovers. After a rebase, check that your changelog entry
-  is still under `[Unreleased]`.
+  handovers. Changelog entries are fragments under `changelog.d/`, one file per
+  change, so two branches no longer collide there.
 - **Handovers are for workstreams that span sessions.** Public implementation
   notes may live under `handovers/`. Private coordination, configuration and
   evidence belong in the external private state directory. A defect belongs

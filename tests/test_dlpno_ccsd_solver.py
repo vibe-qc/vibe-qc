@@ -1543,3 +1543,106 @@ class TestPairSpaceRing:
                                  use_cpp_kernel=False, ring_in_pno_space=True),
             )
 
+
+
+# ---------------------------------------------------------------------------
+# GitLab #222: the semicanonical MP2 correction for the PNO truncation of the
+# ITERATED pairs, the second of the two corrections Riplinger and Neese
+# (J. Chem. Phys. 138, 034106 (2013), Sec. II C) prescribe. The local CCSD
+# route applied only the first, for the pairs dropped by screening.
+#
+# Everything that mentioned `pno_correction` before this class pins it OFF:
+# the retained #98 ladder references and the M16 and periodic pre-sweep
+# builders all predate the correction and hold their old convention on
+# purpose. That is correct for them, but it left the new behaviour locked in
+# by nothing -- every one of those pins would still pass if the correction
+# were silently dropped from `e_corr` again. These are the positive tests.
+# ---------------------------------------------------------------------------
+
+
+class TestPnoTruncationCorrection:
+    """The correction is exact where it must be, and helps where it should."""
+
+    def test_identically_zero_without_pno_truncation(self):
+        """At ``tcut_pno=0`` there is no PNO truncation to correct.
+
+        This is the issue's stated tolerance, and it is what keeps the
+        full-domain exactness ratchets from moving: the correction must not
+        perturb a calculation that has nothing to correct.
+        """
+        mol, b, rhf, df, _ = _setup(H2O_ATOMS, "sto-3g")
+        on = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(localise="boys", pno_correction=True, **FULL),
+        )
+        off = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(localise="boys", pno_correction=False, **FULL),
+        )
+        assert on.converged and off.converged
+        assert on.e_pno_correction == pytest.approx(0.0, abs=1e-12)
+        assert on.e_corr == pytest.approx(off.e_corr, abs=1e-12)
+
+    def test_it_is_actually_added_to_the_correlation_energy(self):
+        """`e_corr` must carry the correction, not merely report it.
+
+        The regression this guards is a silent drop: every pre-existing pin
+        sets ``pno_correction=False``, so none of them would notice
+        ``e_pno_correction`` being computed, disclosed, and then left out of
+        the energy.
+        """
+        mol, b, rhf, df, _ = _setup(H2O_ATOMS, "sto-3g")
+        common = dict(
+            localise="boys", tcut_pno=1e-4, tcut_mkn=0.0,
+            tcut_pairs=0.0, coupling_radius=0.0, residual_domain="full",
+        )
+        on = run_local_dlpno_ccsd(
+            mol, b, rhf, df, LocalCCSDOptions(pno_correction=True, **common)
+        )
+        off = run_local_dlpno_ccsd(
+            mol, b, rhf, df, LocalCCSDOptions(pno_correction=False, **common)
+        )
+        assert on.converged and off.converged
+        assert on.e_pno_correction != 0.0, (
+            "tcut_pno=1e-4 truncates PNOs, so the correction must be nonzero"
+        )
+        assert off.e_pno_correction == pytest.approx(0.0, abs=1e-14)
+        # The whole of the correction, and nothing else, separates the two.
+        assert on.e_corr - off.e_corr == pytest.approx(
+            on.e_pno_correction, abs=1e-12
+        )
+
+    def test_it_reduces_the_isolated_pno_truncation_error(self):
+        """The correction must move the answer toward the untruncated one.
+
+        Domain and pair list are held fixed so the only error left is PNO
+        truncation, which is what the correction addresses. Verified
+        independently on the issue's own NH3/cc-pVDZ witness at 91.5% and
+        34.2% recovery; this is the same measurement made cheap enough to
+        keep in the suite.
+        """
+        mol, b, rhf, df, _ = _setup(H2O_ATOMS, "sto-3g")
+        common = dict(
+            localise="boys", tcut_mkn=0.0, tcut_pairs=0.0,
+            coupling_radius=0.0, residual_domain="full",
+        )
+        oracle = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(tcut_pno=0.0, pno_correction=False, **common),
+        )
+        on = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(tcut_pno=1e-4, pno_correction=True, **common),
+        )
+        off = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(tcut_pno=1e-4, pno_correction=False, **common),
+        )
+        assert oracle.converged and on.converged and off.converged
+        err_off = abs(off.e_corr - oracle.e_corr)
+        err_on = abs(on.e_corr - oracle.e_corr)
+        assert err_off > 0.0, "tcut_pno=1e-4 must truncate something to correct"
+        assert err_on < err_off, (
+            f"the correction made the PNO truncation error worse: "
+            f"{err_off:.4e} -> {err_on:.4e}"
+        )

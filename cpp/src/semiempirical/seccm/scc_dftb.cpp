@@ -399,26 +399,16 @@ SCCDFTBSECCMResult run_scc_dftb_seccm(
     // cycle). All three dimensions contract through
     // indo::_madelung_potential_ewald so the SMADEL short-range
     // subtraction stays consistent across dimensions.
-    const int dim = static_cast<int>(topology.translations.size());
     std::vector<std::vector<indo::WSNeighbor>> ews;
     Eigen::MatrixXd madkonst;
     auto madelung_potential = [&](const Eigen::VectorXd& charges) {
         return indo::_madelung_potential_ewald(charges, madkonst, ews);
     };
     if (opts.madelung) {
-        ews = indo::_ewald_ws_cells(topology);
-        if (dim == 1) {
-            madkonst = detail::wire_madkonst_1d(ews, topology.translations[0], n_atoms);
-        } else if (dim == 2) {
-            madkonst = indo::_madkonst_2d(ews, topology.translations, n_atoms);
-        } else if (dim == 3) {
-            madkonst = indo::_madkonst_3d(ews, topology.translations, n_atoms);
-        }
-        if (!madkonst.allFinite()) {
-            throw std::runtime_error(
-                "SCC-DFTB-SECCM Madelung-constant matrix produced "
-                "non-finite values");
-        }
+        auto madelung_state = detail::build_seccm_madelung_state(
+            topology, n_atoms, "SCC-DFTB-SECCM");
+        ews = std::move(madelung_state.ews);
+        madkonst = std::move(madelung_state.madkonst);
     }
 
     // ---- Charge SCF loop (molecular run_scc_dftb pattern, T = 0) ----
@@ -858,14 +848,12 @@ Eigen::MatrixXd compute_scc_dftb_seccm_gradient(
     std::vector<std::vector<indo::WSNeighbor>> ews;
     Eigen::MatrixXd madkonst;
     if (opts.madelung) {
-        ews = indo::_ewald_ws_cells(topology);
-        if (dim == 1) {
-            madkonst = detail::wire_madkonst_1d(
-                ews, topology.translations[0], n_atoms);
-        } else {
-            madkonst = indo::_madkonst_2d(
-                ews, topology.translations, n_atoms);
-        }
+        // The same state the energy was converged with, in every dimension.
+        // This copy used to hand a 3-D cell to the 2-D slab kernel.
+        auto madelung_state = detail::build_seccm_madelung_state(
+            topology, n_atoms, "SCC-DFTB-SECCM");
+        ews = std::move(madelung_state.ews);
+        madkonst = std::move(madelung_state.madkonst);
         const Eigen::VectorXd V_mad =
             indo::_madelung_potential_ewald(
                 result.charges, madkonst, ews);

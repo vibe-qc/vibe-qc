@@ -1147,3 +1147,10 @@ Good scaling requires enough work per thread, tiny test systems
 start-up overhead dominates. Bigger molecules and periodic calculations
 with many lattice cells benefit much more (up to near-linear in the
 Fock build).
+
+## Optional OpenTrustRegion backend
+
+For real, integer-occupied molecular HF and supported KS calculations,
+`orbital_optimizer="opentrustregion"` explicitly selects the optional upstream
+trust-region orbital optimizer. See [OpenTrustRegion](opentrustregion.md) for
+installation, supported response kernels, stability semantics and diagnostics.

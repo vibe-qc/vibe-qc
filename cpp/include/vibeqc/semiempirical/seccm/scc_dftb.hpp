@@ -124,9 +124,11 @@ struct SCCDFTBSECCMOptions {
     // Opt-in long-range embedding for charged cells: the Madelung/Ewald
     // potential of the supercell Mulliken fluctuations is added to the
     // diagonal of H^SCC and its classical self-energy (1/2 dq . V_mad) to
-    // the total energy. Neutral cells do not need it. Kernels: 1-D
-    // background-corrected wire Ewald (Parry-type, seccm/ewald_1d.h),
-    // and 2-D Parry/Heyes Ewald. The public route rejects 3-D embedding.
+    // the total energy. Kernels: 1-D background-corrected wire Ewald
+    // (Parry-type, seccm/ewald_1d.h), 2-D Parry/Heyes Ewald and 3-D Ewald,
+    // built once by detail::build_seccm_madelung_state for the energy and
+    // the gradient alike. 3-D embedding is open with the Elstner gamma and
+    // refused with Klopman-Ohno, whose remainder has no thermodynamic limit.
     bool madelung = false;
     // Functional form of the SCC-DFTB gamma (maintainer decision D1,
     // 2026-08-28).  Klopman-Ohno is the shipped in-house form and keeps
@@ -173,17 +175,16 @@ SCCDFTBSECCMResult run_scc_dftb_seccm(
 //         + 1/2 dq . dgamma/dR . dq over the live record displacements
 // normalized by the finite-group order. Embedded cells (madelung=True) add
 // the fixed-charge Madelung derivative 1/2 dq . dM_eff/dR . dq (1-D wire
-// Ewald kernel derivative from seccm/ewald_1d.h; 2-D reuses the validated
-// indo::_add_madelung_gradient deposit) plus the
-// coupled-perturbed SCC charge response: the diagonal Madelung shift
-// leaves the energy non-stationary in the Mulliken charges, so the exact
-// force solves J . (ddq*/dR) = (d dq_new/dR)|_fixed dq with J = I - A,
-// A = d(dq_new)/ddq built by central differences of the charge map, and
-// contracts (dE/ddq) = V + V_mad - A^T V + B^T V_mad (B = dt/ddq,
-// t the orthogonal-basis atomic traces). The frozen topology keeps image
-// labels and weights fixed while displacements track the geometry
-// (topology.rebuild_displacements convention; the finite-difference
-// regression in tests/test_ccm_semiempirical.py pins this contract).
+// Ewald kernel derivative from seccm/ewald_1d.h; 2-D and 3-D reuse the
+// validated indo::_add_madelung_gradient deposit). The Madelung potential
+// enters H through the same overlap-weighted Mulliken operator as the
+// second-order term, so the energy is stationary in the charges and no
+// charge response is needed; the potential in M is the one the energy was
+// converged with (detail::build_seccm_madelung_state, #293). The frozen
+// topology keeps image labels and weights fixed while displacements track
+// the geometry (topology.rebuild_displacements convention; the
+// finite-difference regressions in tests/test_ccm_semiempirical.py pin this
+// contract in one, two and three dimensions).
 Eigen::MatrixXd compute_scc_dftb_seccm_gradient(
     const Molecule& mol,
     const SemiempiricalParameters& params,

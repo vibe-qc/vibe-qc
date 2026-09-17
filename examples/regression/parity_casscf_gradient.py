@@ -1,9 +1,10 @@
 """CASSCF analytic-gradient component audit vs ORCA and OpenMolcas.
 
-Out-of-process comparison (CLAUDE.md §10 — never import external QC programs).
-Characterizes the incomplete z-vector-free gradient against two independent
-references. It does not validate the total derivative; use
-``casscf_gradient_fd_reproducer.py`` as the correctness gate.
+Out-of-process comparison (AGENTS.md ground rule 5: vibe-qc never imports
+another QC program at runtime). Compares the analytic CASSCF gradient
+component by component against two independent references. The adjudicator
+of the total derivative is the full-energy finite difference in
+``casscf_gradient_fd_reproducer.py``; this script is the cross-code audit.
 
 Usage:
     python examples/regression/parity_casscf_gradient.py

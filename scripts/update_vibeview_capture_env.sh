@@ -12,6 +12,11 @@
 #     --branch NAME         Assert that checkout HEAD is exactly NAME. This is
 #                           the tag/branch form injected by pinned vq updates;
 #                           it does not fetch or switch refs.
+#     --vibe-view-root PATH vibe-view checkout the capture environment is
+#                           built from. vibe-view is a separate repository
+#                           since the 2026-09 split, so this defaults to the
+#                           sibling ../vibe-view of this checkout;
+#                           VIBE_VIEW_ROOT sets the same thing.
 #     --python BIN          Python used to create the venv (default: python3).
 #     --venv PATH           Capture venv (default: .venv-vibeview). Relative
 #                           paths are resolved from the vibe-qc checkout.
@@ -29,7 +34,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
-VIEW_SCRIPT_DIR="$REPO_ROOT/vibe-view/scripts"
+
+# vibe-view is a sibling repository, not a subdirectory of this checkout.
+# scripts/_companion_paths.sh is the single place that knows that; the
+# resolution happens after argument parsing so --vibe-view-root can steer it.
+. "$SCRIPT_DIR/_companion_paths.sh"
+VIBE_VIEW_CHECKOUT=""
+VIEW_SCRIPT_DIR=""
 
 PYTHON_BIN="${PYTHON:-python3}"
 PYTHON_REQUESTED_EXPLICITLY=0
@@ -87,6 +98,18 @@ while [ $# -gt 0 ]; do
             VENV_INPUT="$2"
             shift 2
             ;;
+        --vibe-view-root)
+            [ $# -ge 2 ] && [ -n "$2" ] || {
+                echo "Error: --vibe-view-root requires a path (non-empty)." >&2
+                exit 1
+            }
+            case "$2" in
+                -*) echo "Error: --vibe-view-root requires a path, not option '$2'." >&2; exit 1 ;;
+            esac
+            VIBE_VIEW_ROOT="$2"
+            export VIBE_VIEW_ROOT
+            shift 2
+            ;;
         --adopt-legacy) ADOPT_LEGACY=1; shift ;;
         --dry-run)      DRY_RUN=1; shift ;;
         -h|--help) print_help; exit 0 ;;
@@ -125,9 +148,12 @@ if [ -n "$SOURCE_ASSERTION_OPTION" ]; then
     fi
 fi
 
+vibeqc_companion_root vibe-view VIBE_VIEW_CHECKOUT || true
+VIEW_SCRIPT_DIR="$VIBE_VIEW_CHECKOUT/scripts"
 if [ ! -f "$VIEW_SCRIPT_DIR/_venv_helpers.sh" ]; then
     echo "Error: canonical vibe-view lifecycle helpers were not found under:" >&2
     echo "       $VIEW_SCRIPT_DIR" >&2
+    vibeqc_companion_report_missing vibe-view
     exit 1
 fi
 

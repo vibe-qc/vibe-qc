@@ -69,6 +69,7 @@ promise the fewest iterations or the global electronic ground state.
 | System and route | Usual AUTO construction |
 |---|---|
 | Ordinary restricted closed-shell molecular route | PATOM |
+| Molecular open-shell route on a system containing a d- or f-block atom | PATOM |
 | Molecular unrestricted/open-shell route (including singlet UHF/UKS) or transition-metal system | SAD |
 | Isolated spin-polarized atom | PATOM |
 | Ordinary periodic SCF route | SAD |
@@ -690,6 +691,7 @@ distinction between an omitted keyword and an explicit `"SAD"`.
 | Periodic, atomic-guess-capable routes | **SAD** | Preserves the established atomic-density start; no evidence-backed metal/oxide classification is currently available |
 | AICCM real-Gamma and four-center adapters | **HCORE** | These supercell SCF loops currently expose only their core-Hamiltonian construction; explicit SAD and other unsupported guesses fail |
 | Molecular, isolated open-shell atom | **PATOM** | One in-field re-polarisation step constructs a spin-resolved seed for the requested electron and spin populations; it does not certify an atomic term or the global minimum |
+| Molecular, open-shell route on a system containing a d- or f-block atom | **PATOM** | SAD superposes free-atom Hund densities, so an open-shell ligand arrives with its full free-atom moment even where the molecule binds it closed-shell; the in-field step quenches that against the molecular field before the SCF starts (see below) |
 | Molecular, other unrestricted/open-shell route (including singlet UHF/UKS) | **SAD** | Spin polarisation develops via per-spin Fock asymmetry |
 | Molecular, containing transition or f-block atoms (except the isolated open-shell case above) | **SAD** | SAP closed-shell averaging can land the wrong d-shell occupation; select `PATOM` where supported for a re-polarised SAD start |
 | Molecular, restricted closed-shell route, light atoms | **PATOM** | Preserves the established molecular default density and energy basins |
@@ -699,7 +701,25 @@ SAD is universally optimal for solids. Van Lenthe et al. (2006) and Lehtola
 (2019, 2020) support the atomic density/potential constructions; their molecular
 comparisons do not establish a metal-versus-oxide selector for our periodic
 backends. No such classifier is encoded. An `atomic_spins` seed requires the
-resolved kind to be SAD; AUTO resolving to HCORE rejects the seed.
+resolved kind to be SAD; AUTO resolving to HCORE rejects the seed. Supplying
+`atomic_spins` therefore also holds AUTO on SAD for an open-shell d/f-block
+system, so a deliberate antiferromagnetic seed is never overridden by the
+in-field choice above.
+
+The open-shell d/f-block choice is a basin decision, measured on FeCl3
+(sextet, cc-pVDZ) against ORCA 6.1.1. From the bare Hund-split SAD seed the
+SCF converges to a symmetry-broken solution 90.05 mHa above the ground
+state, with one chloride left as a radical cation, and the stability
+analysis then certifies a negative internal Hessian eigenvalue. The cause is
+in the seed: each free Cl atom contributes one unpaired electron, while in
+FeCl3 it is a closed-shell chloride. The basin is sharp, so rescaling the
+ligand moments does not recover it: a seed moment above roughly 0.05 e per
+ligand still lands on the same solution. PATOM's per-spin in-field step
+resolves the ligand polarisation against the molecular field first and
+reaches the ground state in 23 iterations, internally stable and without a
+stability restart. Routes that do not implement PATOM fall back to the
+advertised SAD construction, and an explicit `initial_guess` is never
+rewritten.
 
 The hints (`is_open_shell`, `has_transition_metal`, `is_periodic`)
 are filled in automatically by each SCF wrapper:
@@ -853,6 +873,13 @@ The target driver then normalizes the complete density in its weighted
 Bloch overlap. This constructs finite isolated fragment references; it does
 not solve a periodic fragment SCF. Results record physical construction
 `FRAGMO` and density transport `READ`.
+
+The experimental AICCM real-Gamma and four-center adapters do not support
+FRAGMO. They refuse the selector before SCF, in a message that names the
+requested `FRAGMO` guess, whether or not `fragments=` was supplied: a route
+that cannot run FRAGMO at all never asks for a partition first. On a route
+that does implement FRAGMO, a missing or invalid partition still fails
+fragment validation, also before SCF.
 
 ### READ: restart from a prior calculation
 

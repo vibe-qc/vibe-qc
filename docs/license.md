@@ -1111,3 +1111,16 @@ incompatibility we missed, please email
 seriously, vibe-qc is an open-source project run by one
 person, and getting any of this wrong has real consequences for
 the project's ability to be used.
+
+## Optional OpenTrustRegion
+
+OpenTrustRegion is copyright Jonas Greiner and contributors, distributed under
+MPL-2.0. The opt-in source build pins revision
+`8fa7769ae66233a566868a6bf03cdcbdb1ee69d0` (2.0.0) from the
+[upstream source](https://github.com/eriksen-lab/opentrustregion/tree/8fa7769ae66233a566868a6bf03cdcbdb1ee69d0).
+No upstream source is copied into the product tree. Enabled binaries statically
+link the library and install its license under `share/vibeqc/licenses`.
+Redistributors must preserve that notice and provide access to the corresponding
+MPL-covered source, plus notices for their linked Fortran and BLAS runtimes.
+The component is an optional numerical library, not a runtime dependency on
+another quantum-chemistry program.

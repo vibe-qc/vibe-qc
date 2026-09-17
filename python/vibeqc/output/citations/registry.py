@@ -392,8 +392,8 @@ class CitationDatabase:
             lookup miss is silent (most parameter sets come from the
             dispersion method paper itself).
         scf_accelerator
-            ``"diis"`` / ``"ediis"`` -- keyed lookup. None => default
-            (DIIS) cite.
+            ``"diis"`` / ``"ediis"`` / ``"opentrustregion"`` -- keyed
+            lookup of the executed converger. None => default (DIIS) cite.
         uses_integrals
             True (default) => the always-on libint integral-library
             citation fires. Set False for engines that evaluate no

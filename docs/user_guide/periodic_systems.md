@@ -59,6 +59,56 @@ boundary-condition model used by CRYSTAL-style Gaussian crystal codes:
     written in a reduced one. It used to scan a fixed shell over the basis
     as supplied, which is not sufficient in general and reported a distance
     too large on a sheared cell (#128).
+  * **Say what the cell is meant to be.** `vq.check_crystal_system(sysp,
+    "hexagonal")` refuses a lattice whose metric contradicts the declaration,
+    and `vq.lattice_from_vectors(a1, a2, a3, crystal_system="hexagonal",
+    dim=2)` declares at the point of construction. Nothing geometric can
+    reject a transpose on its own, because $L$ and $L^{T}$ are both valid
+    lattices; a declaration can. Read the next paragraph for what it does and
+    does not catch.
+  * **Or say what the structure is.** `vq.check_space_group(sysp, "Fd-3m")`
+    (a Hermann-Mauguin symbol or an International Tables number) hands the
+    lattice *and* the basis to spglib and refuses a structure whose detected
+    group is not the declared one. That is a different question from the
+    crystal system, and it catches what no metric can see: an atom on the
+    wrong site, a mistranscribed fractional coordinate, a basis that broke
+    the symmetry you believed the structure had. It takes `symprec=`, which
+    genuinely changes the answer, and needs a 3-D cell: for a slab spglib
+    would treat the synthesized vacuum axis as periodic and report a group
+    that depends on how much vacuum you chose.
+
+A declaration is not a blanket orientation check, and it is worth knowing
+where it bites:
+
+  * **Hexagonal and rhombohedral: caught.** Every instance recorded in #128
+    was a hexagonal sheet, and the row-fed h-BN cell misses $|a_1| = |a_2|$ by
+    22.5% and the nearer of $60°/120°$ by $3.43°$.
+  * **Cubic, tetragonal, orthorhombic: not an orientation check.** Written in
+    the usual Cartesian setting their matrices are symmetric, so the transpose
+    is a no-op, and a cubic metric is transpose-invariant in any frame at all.
+    Declaring them still catches a mistyped angle or a wrong $c/a$.
+  * **Monoclinic and triclinic: not caught.** The transpose changes the
+    crystal but stays inside the same system, so the declaration passes.
+    Compare the cell parameters against known values for those.
+
+Conditions are equalities only. The familiar $a \neq c$ of a tetragonal cell
+is a convention for *choosing* a cell, not a requirement on one, so a cubic
+cell declared orthorhombic is accepted rather than refused. A cubic
+declaration admits the conventional $90°$ cell and the face- and
+body-centred primitive settings ($60°$ and $109.4712°$), so a primitive cell
+straight from a structure database is not rejected.
+
+A space-group declaration is **complementary, not stronger**. On the same
+transposes, with the Cartesian atom positions held fixed: hexagonal goes
+`P-6m2` (187) to `Pm` (6) and is caught, while monoclinic `P2/m` and
+triclinic `P-1` keep their groups and are not. Neither check sees those.
+
+One trap worth naming: do **not** derive a crystal system from a detected
+space group and check the metric against it. The space group is lowered by
+the basis while the metric is not, so an exactly hexagonal lattice carrying a
+symmetry-breaking basis is reported `Pm`, and a metric check driven off that
+would refuse a perfectly good hexagonal cell. The two declarations answer
+different questions and are kept separate for that reason.
 - `sysp.reciprocal_lattice()` is generated automatically as
   $2\pi A^{-T}$, so $a_i \cdot b_j = 2\pi\delta_{ij}$ for triclinic
   cells just as for cubic cells.

@@ -341,3 +341,100 @@ def test_near_polar_rotation_retains_small_tilt(pole, tilt):
         np.testing.assert_allclose(
             vq.wigner_d_real(l, rotation), expected, atol=1e-13, rtol=0.0,
         )
+
+
+# ---------------------------------------------------------------------------
+# #282: the Euler extraction just off a pole.
+#
+# Every near-pole fixture above builds its rotation as an exact product, which
+# keeps R[0,2] and R[1,2] relatively accurate and hides the defect. A rotation
+# that arrives as L W L^-1 -- which is what a real lattice operator is -- has
+# independent rounding in those entries instead, and the old generic branch
+# divided it by sin(beta): on the cell below, tilted 1e-12 rad, D^1 was wrong
+# by 1.4e-05.
+# ---------------------------------------------------------------------------
+
+_282_G = np.array([[0.36, -0.48, 0.8], [0.8, 0.6, 0.0], [-0.48, 0.64, 0.6]])
+
+
+def _282_tilted_monoclinic_operator(tilt):
+    """A C2/m two-fold, carried to Cartesian through a cell tilted by ``tilt``.
+
+    Primitive C-centred monoclinic (unique axis b, beta = 100 deg), rigidly
+    tilted about x, so the two-fold axis sits ``tilt`` rad off the Euler pole.
+    """
+    from vibeqc.symmetry_lattice import lattice_to_cartesian_rotation
+
+    a, b, c, beta = 7.40, 7.72, 8.10, np.radians(100.0)
+    conv = np.array([[a, 0, c * np.cos(beta)], [0, b, 0], [0, 0, c * np.sin(beta)]])
+    primitive = 0.5 * conv @ np.array(
+        [[1, -1, 0], [1, 1, 0], [0, 0, 2]], dtype=float
+    ).T
+    two_fold = np.array([[0, -1, 0], [-1, 0, 0], [0, 0, -1]], dtype=float)
+    ct, st = np.cos(tilt), np.sin(tilt)
+    tilt_matrix = np.array([[1, 0, 0], [0, ct, -st], [0, st, ct]])
+    return lattice_to_cartesian_rotation(two_fold, tilt_matrix @ primitive)
+
+
+@pytest.mark.parametrize(
+    "tilt", [0.0, 1e-13, 1e-12, 1e-11, 1e-10, 1e-9, 1e-8, 1e-6]
+)
+def test_lattice_operator_near_pole_preserves_the_wigner_homomorphism(tilt):
+    """D(R) = D(G)^T D(G R) for a generic G, which moves G R away from the pole.
+
+    Convention-independent: it never inspects the angles, only whether the
+    D-matrices compose. On main this reached 1.4e-05 at l = 1 for tilt 1e-12.
+    """
+    rotation = _282_tilted_monoclinic_operator(tilt)
+    for l in L_RANGE:
+        direct = vq.wigner_d_real(l, rotation)
+        composed = (vq.wigner_d_real(l, _282_G).T
+                    @ vq.wigner_d_real(l, _282_G @ rotation))
+        np.testing.assert_allclose(direct, composed, atol=1e-13, rtol=0.0)
+
+
+@pytest.mark.parametrize("pole", [0.0, np.pi])
+@pytest.mark.parametrize("tilt", [1e-13, 1e-12, 1e-11, 1e-9, 1e-7])
+def test_euler_extraction_survives_absolute_roundoff_near_both_poles(pole, tilt):
+    """A near-polar rotation carrying independent absolute roundoff.
+
+    The perturbation is the point: it breaks the relative accuracy of the
+    transverse entries that an exact product preserves. 1e-13 and 1e-12 are the
+    band the old ``sin_beta < 1e-12`` lock covered by discarding the tilt.
+    """
+    beta = tilt if pole == 0.0 else pole - tilt
+    rng = np.random.default_rng(282)
+    for alpha, gamma in ((0.73, -0.41), (2.9, 1.7), (-1.2, 2.55)):
+        exact = SciRot.from_euler("ZYZ", [alpha, beta, gamma]).as_matrix()
+        noisy = exact + 3e-16 * rng.standard_normal((3, 3))
+        u, _, vt = np.linalg.svd(noisy)
+        rotation = u @ vt
+        if np.linalg.det(rotation) < 0.0:
+            rotation = u @ np.diag([1.0, 1.0, -1.0]) @ vt
+
+        a, b, g = vq.euler_angles_from_rotation(rotation)
+        assert -np.pi < a <= np.pi and 0.0 <= b <= np.pi and -np.pi < g <= np.pi
+        np.testing.assert_allclose(
+            SciRot.from_euler("ZYZ", [a, b, g]).as_matrix(),
+            rotation, atol=1e-14, rtol=0.0,
+        )
+        np.testing.assert_allclose(
+            vq.wigner_d_real(1, rotation),
+            rotation[np.ix_([1, 2, 0], [1, 2, 0])], atol=1e-14, rtol=0.0,
+        )
+
+
+def test_exactly_polar_rotation_keeps_the_documented_gamma_zero_convention():
+    """``sin b == 0`` exactly still returns g = 0 with the whole z-rotation in a.
+
+    The tolerance that used to select this branch is gone (#282 needs the
+    conditioned branch for any nonzero tilt), but the documented convention at
+    the pole itself is unchanged.
+    """
+    for angle in (0.73, -2.1, 0.0):
+        a, b, g = vq.euler_angles_from_rotation(
+            SciRot.from_euler("z", angle).as_matrix()
+        )
+        assert g == 0.0
+        assert b == pytest.approx(0.0, abs=1e-15)
+        assert a == pytest.approx(angle, abs=1e-15)

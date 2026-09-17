@@ -42,12 +42,6 @@ enum class MethodFamily {
     LEGACY, // AM1, MNDO, PM3 (regression baselines only)
 };
 
-enum class PeriodicTier {
-    Native = 1,      // Production periodic support
-    Generalized = 2, // Validated periodic with caveats
-    Experimental = 3 // Behind feature flag, not validated
-};
-
 enum class GradientQuality {
     Exact,            // Matches FD to machine precision
     Approximate,      // Fixed-charge or other approximation
@@ -63,7 +57,6 @@ struct SemiempiricalMethodConfig {
     // Capabilities
     bool supports_open_shell = false;
     bool supports_periodic = false;
-    PeriodicTier periodic_tier = PeriodicTier::Experimental;
     GradientQuality gradient_quality = GradientQuality::FiniteDifference;
     bool supports_stress = false;
     bool supports_kpoints = false;

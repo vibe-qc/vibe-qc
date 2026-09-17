@@ -12,6 +12,20 @@ For the Bravais-lattice + reciprocal-lattice background, what the
 BZ actually *looks like* for FCC, BCC, hexagonal, etc., and where
 Γ, X, K, L, M sit, see [crystal lattices](crystal_lattices.md).
 
+Mesh sizes passed to `KPoints` constructors or `monkhorst_pack` must be
+positive integers. Python and NumPy integer entries are accepted; floats
+(including `2.0`), booleans and strings are rejected before native grid
+construction. For lower-dimensional systems, active-axis vectors are padded
+and explicit inactive integer entries retain the existing pinning to one
+point at Gamma.
+
+The runner, ASE periodic-force/GPW and dimer raw mesh adapters, GDF tuple
+and IBZ metadata readers, the
+Madelung supercell and BvK density helpers, and four-center CCM use the same
+exact integer rule. The runner retains its three-axis scalar repetition;
+GDF slab meshes retain their explicit inactive-axis requirement of one.
+This count rule does not restrict physical fractional k-point coordinates.
+
 ## Why we sample the BZ
 
 For a periodic crystal the Bloch states $\psi_{n\mathbf{k}}(\mathbf{r})$
