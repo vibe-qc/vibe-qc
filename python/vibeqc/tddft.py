@@ -2090,7 +2090,7 @@ def run_tddft_tda_rohf(
         raise ValueError("No doubly-occ → virtual excitations available for ROHF TDA")
 
     # Compact MO space: skip singly-occupied orbitals.
-    # douc: [0, n_docc), virt: [n_docc+n_socc, n_basis)
+    # docc: [0, n_docc), virt: [n_docc+n_socc, n_basis)
     _idx = list(range(n_docc)) + list(range(n_docc + n_socc, n_basis))
     _mo_e = np.asarray(mo_energies)[_idx]
     _mo_c = np.asarray(mo_coeff)[:, _idx]
@@ -2100,12 +2100,21 @@ def run_tddft_tda_rohf(
     # ROHF CIS: same A-matrix as RHF for doubly-occ → virt.
     c_x = 1.0
 
+    # The C++ kernel sizes the virtual space from the AO dimension
+    # (n_virt = n_basis - n_occ), so it must see the full square
+    # coefficient matrix: handing it the compact (n_basis, n_docc+n_virt)
+    # slice made it read n_socc phantom columns and the reshape below
+    # failed (#361). Transform with every orbital after the doubly
+    # occupied block as "virtual", then drop the SOMO columns.
     eri_ao = compute_eri(basis)
     eri_mo_ovov, eri_mo_oovv = eri_ao_to_mo_blocks(
         np.asarray(eri_ao, dtype=float),
-        _mo_c,
+        np.asarray(mo_coeff, dtype=float),
         _n_occ,
     )
+    del eri_ao
+    eri_mo_ovov = np.ascontiguousarray(eri_mo_ovov[:, n_socc:, :, n_socc:])
+    eri_mo_oovv = np.ascontiguousarray(eri_mo_oovv[:, :, n_socc:, n_socc:])
 
     A = _build_tda_matrix(
         _mo_e,
@@ -2126,18 +2135,9 @@ def run_tddft_tda_rohf(
         if norm > 0:
             eigenvecs[:, k] /= norm
 
-    # Transition dipoles use the compact MO coefficient subset
+    # Transition dipoles: AO dipole integrals contracted with the compact
+    # (docc, virt) transition density.
     dipole_ao = compute_dipole(basis)
-    _dip_c = np.asarray(
-        [
-            np.asarray(dipole_ao.x)[:, _idx][_idx, :],
-            np.asarray(dipole_ao.y)[:, _idx][_idx, :],
-            np.asarray(dipole_ao.z)[:, _idx][_idx, :],
-        ]
-    )
-    _mo_c_occ = _mo_c[:, :_n_occ]
-    _mo_c_virt = _mo_c[:, _n_occ:]
-
     result = TDDFTResult(
         n_states=n_requested,
         n_occ=n_docc,
@@ -2149,15 +2149,13 @@ def run_tddft_tda_rohf(
     for k in range(n_requested):
         omega = float(abs(eigenvals[k]))
         X = eigenvecs[:, k]
-        # Transition density matrix in compact MO basis
-        X_ia = X.reshape(_n_occ, _n_virt)
-        P_ao = _mo_c_occ @ X_ia @ _mo_c_virt.T
-        td = np.array(
-            [
-                float(np.sum(P_ao * np.asarray(dipole_ao.x))),
-                float(np.sum(P_ao * np.asarray(dipole_ao.y))),
-                float(np.sum(P_ao * np.asarray(dipole_ao.z))),
-            ]
+        # Same singlet-coupled transition dipole as the closed-shell TDA
+        # (the A matrix above is the closed-shell singlet form), evaluated
+        # on the compact (docc, virt) coefficient block. The old hand-rolled
+        # contraction dropped the spin factor, so ROHF on a singlet did not
+        # reproduce RHF oscillator strengths (#361).
+        td = _transition_dipole_from_amplitudes(
+            X, _n_occ, _n_virt, _mo_c, dipole_ao
         )
         f_osc = oscillator_strength(omega, td)
         dom = _dominant_amplitudes(X, _n_occ, _n_virt)

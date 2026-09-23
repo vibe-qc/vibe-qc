@@ -1,0 +1,213 @@
+{
+  "protocol": "vibeqc.relocalize",
+  "protocol_version": 1,
+  "id": "periodic_complex",
+  "operation": "localize",
+  "method": "aiccm-wannier",
+  "system": {
+    "kind": "periodic",
+    "atomic_numbers": [
+      1,
+      1
+    ],
+    "positions_bohr": [
+      [
+        0.6,
+        0.0,
+        0.0
+      ],
+      [
+        2.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "charge": 0,
+    "multiplicity": 1,
+    "spin": "restricted"
+  },
+  "basis": {
+    "name": "sto-3g",
+    "ao_convention": "qvf-gto-v1",
+    "uses_ecp": false,
+    "shells": [
+      {
+        "center": 0,
+        "l": 0,
+        "exponents": [
+          3.42525091,
+          0.62391373,
+          0.1688554
+        ],
+        "coefficients": [
+          0.1543289707029839,
+          0.5353281424384732,
+          0.4446345420253548
+        ],
+        "pure": true
+      },
+      {
+        "center": 1,
+        "l": 0,
+        "exponents": [
+          3.42525091,
+          0.62391373,
+          0.1688554
+        ],
+        "coefficients": [
+          0.1543289707029839,
+          0.5353281424384732,
+          0.4446345420253548
+        ],
+        "pure": true
+      }
+    ]
+  },
+  "orbitals": {
+    "coefficients": {
+      "encoding": "complex_split_last_axis",
+      "data": [
+        [
+          [
+            [
+              0.4773756440298515,
+              0.0
+            ],
+            [
+              0.4773756440298515,
+              0.0
+            ]
+          ]
+        ],
+        [
+          [
+            [
+              0.7628562322016532,
+              0.0
+            ],
+            [
+              0.3051424928806613,
+              0.6102849857613226
+            ]
+          ]
+        ]
+      ]
+    },
+    "occupations": [
+      [
+        2.0
+      ],
+      [
+        2.0
+      ]
+    ]
+  },
+  "allow_experimental": true,
+  "periodic": {
+    "lattice_bohr": [
+      [
+        4.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        10.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        10.0
+      ]
+    ],
+    "dimension": 1,
+    "pbc": [
+      true,
+      false,
+      false
+    ],
+    "mesh": [
+      2,
+      1,
+      1
+    ],
+    "kpoints_fractional": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.5,
+        0.0,
+        0.0
+      ]
+    ],
+    "weights": [
+      0.5,
+      0.5
+    ],
+    "overlap": {
+      "encoding": "complex_split_last_axis",
+      "data": [
+        [
+          [
+            [
+              1.1981931994248052,
+              0.0
+            ],
+            [
+              0.9958718015265636,
+              0.0
+            ]
+          ],
+          [
+            [
+              0.9958718015265636,
+              0.0
+            ],
+            [
+              1.1981931994248052,
+              0.0
+            ]
+          ]
+        ],
+        [
+          [
+            [
+              0.8056572392954915,
+              4.622231866529366e-33
+            ],
+            [
+              0.3352234283997258,
+              -3.297337202341536e-17
+            ]
+          ],
+          [
+            [
+              0.3352234283997258,
+              3.2973372023415366e-17
+            ],
+            [
+              0.8056572392954915,
+              0.0
+            ]
+          ]
+        ]
+      ]
+    },
+    "representation": "finite_bvk",
+    "bloch_convention": "exp(+2pi*i*k.R)",
+    "orbital_energies_hartree": [
+      [
+        -1.0,
+        0.5
+      ],
+      [
+        -1.0,
+        0.5
+      ]
+    ]
+  }
+}

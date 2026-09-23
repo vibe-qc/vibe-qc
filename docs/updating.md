@@ -30,13 +30,10 @@ All four split projects also have [GitHub mirrors](installation.md#repositories-
 Check `git remote -v` before updating: the installer selects refs from that
 checkout's origin. Public snapshots have separate commit history and can lag
 GitLab. Use a fresh clone when changing hosts instead of merging unrelated
-histories; check that the desired tag exists on that host. The tagged examples
-here use GitLab. A core update does not update companion clones.
-
-The repository published the `v0.16.0` tag and the `release` branch on
-2026-09-08, so the release-specific examples below work; `--dev` follows
-`main`. They still apply only to refs actually published in the selected
-repository -- historical monorepo tags are not among them.
+histories; check that the desired tag exists on that host. A core update
+does not update companion clones. The examples below use refs from the
+selected origin; historical monorepo tags are not automatically present in
+a split repository or public snapshot.
 
 ## The easy button
 
@@ -91,6 +88,8 @@ below.
 ./scripts/update.sh --dev --recreate-venv      # atomic venv replacement with rollback
 ./scripts/update.sh --dev --recreate-venv --python python3.13  # intentionally change Python
 ./scripts/update.sh --dev --with-openblas      # add or retain vendored OpenBLAS
+./scripts/update.sh --dev --with-opentrustregion # fetch/build the optional orbital optimizer
+./scripts/update.sh --dev --without-opentrustregion # explicitly disable it
 ./scripts/update.sh --dev --clean              # native sources/builds + venv + build cache
 ./scripts/update.sh --dev --dry-run            # preview: branch / drift / venv state, no changes
 ./scripts/update.sh --dev --extras dev         # developer profile; install the separate viewer explicitly
@@ -98,12 +97,18 @@ below.
 ./scripts/update.sh --dev --rebuild-native-deps    # combine flags
 ```
 
+OpenTrustRegion selection is retained across ordinary updates, `--clean`,
+and `reinstall.sh`. Use the explicit flags above to change it. Enabled
+builds fetch the pinned numerical library and verify the loaded native
+capability before reporting success. See the
+[installation prerequisites](installation.md#optional-opentrustregion-orbital-optimizer).
+
 `--release` / `--dev` are named shortcuts; `--branch NAME` accepts
 any branch or tag (`--ref NAME` is kept as the older spelling).
 The branch-selection flags are mutually exclusive, pick one. The
-default targets `release`; use it only after that branch is published in
-the new repository. **`--dev`** switches to `main` for previewing
-in-flight features before they ship.
+default and `--release` select origin's `release` branch if present, or its
+newest stable `vX.Y.Z` tag otherwise. An explicit `--branch release` does not
+use that fallback. **`--dev`** selects development `main`.
 
 `--recreate-venv` is the targeted fix for a broken venv: stale
 `pip` shebang after copying a venv across trees, hybrid
@@ -203,7 +208,11 @@ The managed updater also holds cross-platform checkout and environment locks,
 checks ownership and build provenance, targets only drifted dependencies,
 verifies the installed extension, and rolls back a replaced environment on
 failure. The commands below are only a diagnostic outline for understanding an
-update; they are not a safe drop-in equivalent for normal maintenance:
+update on an origin that publishes a `release` branch; they are not a safe
+drop-in equivalent for normal maintenance. If the origin publishes only
+version tags, use the managed updater to select its newest stable tag, or
+request a specific published tag with `--branch vX.Y.Z`. A selected tag
+leaves a detached HEAD and is not pulled as a branch:
 
 ```sh
 # 1. Refuse if working tree is dirty (silently stashing user work
@@ -211,7 +220,7 @@ update; they are not a safe drop-in equivalent for normal maintenance:
 git diff --quiet && git diff --cached --quiet || \
     { echo "uncommitted changes -- commit or stash"; exit 1; }
 
-# 2. Fetch and check out the target ref (release branch by default)
+# 2. Branch-only example: this origin must publish a release branch
 git fetch origin --tags
 git checkout release
 git pull --ff-only origin release        # only on branches; tags don't pull

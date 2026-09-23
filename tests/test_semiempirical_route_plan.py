@@ -734,3 +734,120 @@ def test_pm6_seccm_fd_gradient_is_invariant_to_topology_length_unit():
 
     assert results[0].energy == results[1].energy
     np.testing.assert_allclose(results[0].gradient, results[1].gradient, atol=1.0e-10)
+
+
+# --------------------------------------------------------------------------- #
+# One canonical maturity vocabulary (#150).
+# --------------------------------------------------------------------------- #
+
+
+def _every_reachable_plan():
+    """Yield every route plan reachable through the public planner.
+
+    The sweep is the enumeration the #150 audit ran by hand: each known
+    method, crossed with every boundary, property set, and the charge/spin
+    combinations that select a distinct route.  Requests the validators
+    refuse are skipped -- they never reach a maturity.
+    """
+    import itertools
+
+    from vibeqc.semiempirical.routes import (
+        BOUNDARY_PERIODIC_K,
+        SEMIEMPIRICAL_METHODS,
+    )
+
+    methods = sorted(
+        SEMIEMPIRICAL_METHODS | {"upm6", "upm7", "msindo", "om1", "om2", "om3"}
+    )
+    boundaries = (
+        BOUNDARY_MOLECULE,
+        BOUNDARY_PERIODIC_GAMMA,
+        BOUNDARY_PERIODIC_K,
+        BOUNDARY_SECCM_DIRECT_TORUS,
+    )
+    propsets = (
+        None,
+        ("energy",),
+        ("gradient",),
+        ("stress",),
+        ("gradient", "stress"),
+    )
+    spins = ((0, 1, False), (0, 3, True), (1, 2, True))
+
+    for method, boundary, properties in itertools.product(
+        methods, boundaries, propsets
+    ):
+        for charge, multiplicity, unrestricted in spins:
+            try:
+                yield SemiempiricalRoutePlan.from_request(
+                    method,
+                    boundary=boundary,
+                    properties=properties,
+                    charge=charge,
+                    multiplicity=multiplicity,
+                    unrestricted=unrestricted,
+                )
+            except (NotImplementedError, ValueError, KeyError, TypeError):
+                continue
+
+
+def test_every_plan_maturity_is_in_the_canonical_vocabulary():
+    """No route invents a maturity word outside the one vocabulary."""
+    from vibeqc.semiempirical.routes import SEMIEMPIRICAL_MATURITIES
+
+    plans = list(_every_reachable_plan())
+    assert plans, "route sweep produced no plans"
+    seen = {plan.maturity for plan in plans}
+    assert seen <= set(SEMIEMPIRICAL_MATURITIES), (
+        f"maturities outside the canonical vocabulary: "
+        f"{sorted(seen - set(SEMIEMPIRICAL_MATURITIES))}"
+    )
+
+
+def test_route_status_production_flag_tracks_plan_maturity():
+    """``status.py`` and ``routes.py`` state one maturity, not two (#150).
+
+    ``production`` is the single field the two tables share.  Before the #150
+    ruling they disagreed on molecular PM6: the plan said ``production`` while
+    the status entry said ``production=False`` and its summary said
+    heavy-heavy two-center parity was still open.
+    """
+    from vibeqc.semiempirical.routes import MATURITY_PRODUCTION
+
+    disagreements = {}
+    for plan in _every_reachable_plan():
+        status = semiempirical_route_status(plan)
+        expected = plan.maturity == MATURITY_PRODUCTION
+        if status.production != expected:
+            disagreements[plan.status_route] = (
+                plan.maturity,
+                status.production,
+            )
+
+    assert not disagreements, (
+        "routes.py maturity and status.py production disagree for "
+        f"{disagreements}"
+    )
+
+
+def test_molecular_pm6_energy_is_not_a_production_claim():
+    """Molecular PM6 is a prescreening route, not a production claim (#150)."""
+    plan = SemiempiricalRoutePlan.from_request(
+        "pm6", boundary=BOUNDARY_MOLECULE, properties=("energy",)
+    )
+    assert plan.maturity == MATURITY_EXPERIMENTAL
+    assert plan.execution == EXECUTION_NATIVE
+    assert not semiempirical_route_status(plan).production
+
+
+def test_native_registry_carries_no_second_maturity_vocabulary():
+    """The dormant C++ ``PeriodicTier`` is gone (#150).
+
+    It was written in one place, read nowhere, and disagreed with the live
+    Python classification for gfn2-xtb, msindo, pm6, and om1-3.
+    """
+    _semi = pytest.importorskip("vibeqc._vibeqc_core.semiempirical")
+
+    assert not hasattr(_semi, "PeriodicTier")
+    config = _semi.SemiempiricalMethodConfig()
+    assert not hasattr(config, "periodic_tier")

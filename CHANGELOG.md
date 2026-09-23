@@ -1,5 +1,1434 @@
 ## [Unreleased]
 
+## [v0.17.8] - 2026-09-23 - *Tew's Tern*
+
+This patch prepares a corrected public source release after the v0.17.7
+publication gate stopped on private attribution text in a historical handover.
+The tagged v0.17.7 source remains unchanged. The successor includes the
+reviewed source cleanup and privacy checks before release builds.
+
+It also clarifies initial-guess routing, molecular PNO defaults and source
+installation instructions, companion navigation and publication ownership.
+Numerical recipes and the scientific limitations carried by v0.17.7 remain
+unchanged. Fitted and post-HF chi routes remain not-qualified in v1 (D93);
+AICCM/CCM, SECCM and POLIPO remain experimental. Companion pins stay at
+vibe-view v2.18.1 and QVF v0.1.0-docs.1.
+
+### Known issues carried forward
+
+The following issues remain open or require candidate verification; this
+patch does not claim their closure:
+
+- **#358:** periodic ECP results for W, Hf and Ta with the n=4 pob-TZVP-rev2
+  ECPs remain untrustworthy because the lattice operator is nondeterministic
+  and can produce corrupt matrices.
+- **#206:** the range-separated periodic GDF slowdown remains unverified.
+- **#307:** the GFN2-xTB convergence regressions and thymine energy shift
+  still lack a completed comparison against the current release line.
+- **#308:** the slab-grid origin correction is included through #45,
+  including XSF origin propagation. The earlier 1.0716-versus-2.0 electron
+  result is the baseline; a new candidate numerical verdict is still required.
+- **#257:** the CCM RI-GDF fixtures still hit the reciprocal candidate cap.
+- **#196:** the widened one-electron AO domain remains a maintainer decision;
+  the nuclear-sum separation shipped in v0.17.6 does not resolve that question.
+
+### Fixed
+
+- Clarified that molecular DLPNO options default to the published `mp2`
+  pair-density convention. The public low-level resolver's `None` value and
+  the pair-density helper's omitted norm retain historical `legacy` behavior
+  for compatibility. Corrected the manual's stale default description;
+  numerical recipes and explicit periodic reference conventions are unchanged
+  (#335).
+
+### Documentation: align initial-guess examples with the current resolver
+
+Correct AUTO defaults and route limits in the walkthrough, keyword index and
+troubleshooting guide. Distinguish open-shell d/f-block PATOM selection from
+closed-shell transition-metal SAD selection, document periodic FRAGMO support,
+and inspect recorded guess provenance instead of inferring it from a density.
+Historical iteration counts are not presented as results for the current AUTO policy.
+
+### Documentation and website: complete independent source onboarding
+
+Product pages show public clone commands for the engine, viewer and queue,
+each followed by its own installation steps. The website first-calculation
+example activates the installed environment and explains how to run its code.
+The quickstart uses the managed installer, and source-selection guidance
+includes the stable-tag fallback when an origin has no release branch.
+
+### Documentation: align contributor release notes with changelog fragments
+
+Explain the per-change fragment workflow in the contributor and release
+guides, including format validation and release-owner assembly. Correct the
+publication-section reference in the hook documentation.
+
+### Documentation: refresh publishing ownership and artwork status
+
+Replace obsolete deployment implementation examples with public path ownership
+and local verification instructions. Correct the remaining candidate artwork
+count and milestone policy, and label the removed periodic-correlation
+handover as historical while linking current supported-route documentation.
+
+### Documentation: distinguish default release selection from exact refs
+
+Align the homepage, installation, update and lifecycle guides: default release
+selection uses the origin release branch when present, otherwise its newest
+stable version tag. Explicit branch or tag requests remain exact. Scope the
+manual update outline to origins that actually publish a release branch.
+
+### Fixed: source privacy checks run before release builds
+
+Removed private operational attribution and obsolete site-specific transport
+names from source documentation. Staged-file checks now cover instructions,
+hooks and handovers; an early CI job scans committed text before expensive
+candidate jobs and also runs on ordinary main pushes. Reviewed public-content
+exceptions are bound to exact source contexts, and configured external private
+terms are required in canonical CI. Publication still independently checks
+complete snapshots, assets and public history.
+
+### Website: link companion downloads to their own documentation
+
+Correct the GitHub release-link label on the download page and route viewer
+desktop and source setup to the viewer manual. Replace the duplicate source
+link in the footer with the public issue tracker.
+
+## [v0.17.7] - 2026-09-22 - *Tew's Tern*
+
+This patch aligns molecular GFN2-xTB energies and gradients at finite
+electronic temperature (#343), fixes slab and chain density-grid origins
+(#45), and adds direct `run_job` support and accurate output labels for double
+hybrids (#365). It also corrects ROHF/ROKS density-fitting and TDDFT routing
+(#361), optimization auxiliary-basis resolution (#362), and XYZ energy-method
+labels (#360). Optional OpenTrustRegion installation is supported by the
+normal lifecycle scripts.
+
+Additional fixes carry semiempirical model qualifications into output files
+and QVF records (#345/#318), clarify dispersion energy labels (#347), and
+correct SCC-DFTB and experimental-method documentation (#180/#372). POLIPO
+checks remain explicitly experimental (#370). Executable QVF containers now
+restore typed option records while preserving explicit calculation controls
+and rejecting unsupported encodings before SCF (#366).
+
+Chi fit-source provenance is more explicit; fitted and post-HF chi routes
+remain not-qualified in v1 (D93). Experimental chi tests stay in manual lanes
+(#369), and diagnostic stale-core sessions cannot supply release acceptance
+(#285). The feature tables, roadmap and release-process documentation are
+updated. The viewer integration gate expands with the pin advancing to
+v2.18.1; QVF stays at v0.1.0-docs.1.
+
+### Fixed: preserve executable QVF option controls (#366)
+
+- Executable QVF containers reconstruct supported JSON option records into
+  their engine option classes, preserving explicit controls and constructor
+  validation. Nested fields, enum names and typed arrays are validated; unknown
+  or unsupported runtime-object encodings fail before SCF with an option path.
+  Failed conversion attempts retain the original input in a failed container
+  instead of passing dictionaries into native option consumers (#366).
+
+### Known issues carried forward
+
+The following issues remain open or require candidate verification; this
+patch does not claim their closure:
+
+- **#358:** periodic ECP results for W, Hf and Ta with the n=4 pob-TZVP-rev2
+  ECPs remain untrustworthy because the lattice operator is nondeterministic
+  and can produce corrupt matrices.
+- **#206:** the range-separated periodic GDF slowdown remains unverified.
+- **#307:** the GFN2-xTB convergence regressions and thymine energy shift
+  still lack a completed comparison against the current release line.
+- **#308:** the slab-grid origin correction is included through #45,
+  including XSF origin propagation. The earlier 1.0716-versus-2.0 electron
+  result is the baseline; a new candidate numerical verdict is still required.
+- **#257:** the CCM RI-GDF fixtures still hit the reciprocal candidate cap.
+- **#196:** the widened one-electron AO domain remains a maintainer decision;
+  the nuclear-sum separation shipped in v0.17.6 does not resolve that question.
+
+### Documentation: the release process names the four stale-build traps again (#356)
+
+`AGENTS.md` sends readers to `docs/release_process.md` for the four traps that
+make a stale build look like a real failure, but `086bdd6` (#261) removed that
+section when it moved site operations out of the product tree, so the pointer
+led nowhere. The checklist is back, with the symptom and the check for each:
+an editable install replaced by a copy, a stale `build/basis_library` overlay,
+a `.pyc` that survived an edit made inside the same second, and a core built
+from another tree. It carries no host, path or deployment detail.
+
+### CI: cover the omitted viewer producer/consumer checks (#363)
+
+The release candidate pins vibe-view v2.18.1 and extends the existing seven
+contract files with relocalization, wavefunction gradients, manifest root
+blocks, plot renderers and the controller's pending-QVF submission case.
+The installed QC interpreter is supplied explicitly to the six external-worker
+relocalization cases, and a native import preflight fails before pytest if the
+producer is unavailable. A JUnit report is retained on success and failure,
+with skip reasons also printed in the job log. This changes gate coverage;
+integration acceptance still requires the candidate's native run. The pinned
+viewer uses a convergent NH triplet for the real-wavefunction gradient
+fixture, with the existing finite-difference tolerance unchanged.
+
+### Fixed: `run_job` honours `density_fit` / `cosx` for ROHF and ROKS, and no longer runs closed-shell TDDFT on a restricted open-shell reference (#361)
+
+`run_job(method="rohf", density_fit=True)` and `cosx=True` used to be accepted
+and ignored: the flags were wired onto the RHF/UHF/RKS/UKS option structs only,
+so the ROHF/ROKS run took the four-index path and cited nothing. They now land
+on `ROHFOptions` / `ROKSOptions`, the JK auxiliary basis is auto-resolved from
+the orbital basis as for the other references, and the run cites RI-J or
+RIJCOSX in the `.references` and `.system` files.
+
+`run_job(tddft=True)` on an ROHF or ROKS reference ran the closed-shell TDA or
+Casida code with `n_occ = n_electrons // 2` under a closed-shell header (the
+ROHF detection tested for an attribute `ROHFResult` always had). ROHF now runs
+ROHF TDA/CIS over the doubly-occupied to virtual space, labelled `TDA-ROHF` in
+the `.out` with the SOMO restriction stated; `tddft_type="casida"` on ROHF and
+any `tddft=True` on ROKS are refused before the SCF with the missing capability
+named. The ROHF TDA kernel itself now hands the C++ MO transform the full
+coefficient matrix and uses the shared transition-dipole helper, so with no
+singly occupied orbital it reproduces closed-shell TDA energies and oscillator
+strengths.
+
+### Fixed: `run_job(density_fit=True, optimize=True)` no longer needs an explicit `aux_basis` (#362)
+
+The single-point path auto-resolved the JK auxiliary basis from the orbital
+basis, but the geometry optimiser handed the option structs to the ASE
+calculator and the finite-difference Hessian to the bare SCF drivers, which
+refused with "density_fit=true requires aux_basis". The default JK fit is now
+resolved once where `run_job` wires `density_fit` / `cosx` onto the structs, and
+again inside `VibeQC` and `compute_hessian_fd` for direct use, so every route
+sees the same auxiliary name. An orbital basis with no registered default
+(`sto-3g`, `pob-*`) still raises the driver's explicit error.
+
+### Added: explicit classic χ fit profile and executed source provenance
+
+χ RHF/RKS/UHF/UKS accept `fit_source="classic"` alongside the retained SR/LR
+source and unchanged `auto` default. The explicit classic library post-HF profile
+consumes canonical factors retained by its SCF, with source/support admission.
+Results and `.system` files identify the executed fit, requested controls, typed
+mesh arrays and loaded native-core hash. Γ admission follows the selected engine.
+All fitted and post-HF χ routes remain permanently not-qualified in v1 (D93).
+
+Historical auto post-HF results also identify their separately executed classic
+correlation source and distinguish full AO factors from streamed occupied-virtual
+factors. Its existing SR reference selection is preserved.
+
+### Fixed: molecular GFN2-xTB gradient and energy share one ensemble at finite electronic temperature (#343)
+
+When a molecular GFN2-xTB SCC ran at a finite electronic temperature, either
+because it was requested or because the auto-stabilisation ladder accepted its
+finite-temperature rung, the analytic gradient was still assembled from hard
+Aufbau occupations and a zero-temperature response map, so it was the derivative
+of neither the internal energy nor the Mermin free energy (1.0e-2 Ha/bohr, half
+the gradient, on a Li4 cluster that reaches that rung by default). The native
+result now records the converged occupations, the gradient builds its
+energy-weighted density and its AES response from them, and `GFN2Model.energy()`
+reports the Mermin free energy `A = E - T*S` (plus D4) beside that gradient, as
+the periodic route already did. `run_job` output is unchanged. At `T = 0` every
+number is bit-identical to before. The molecular driver's Fermi-Dirac occupation
+solver is now the shared `compute_closed_shell_kpoint_occupations` kernel used by
+the periodic GFN2 and DFTB routes instead of a private copy.
+
+### Added: complete optional OpenTrustRegion installation
+
+The install, update and reinstall scripts accept `--with-opentrustregion` to
+fetch and compile the pinned optimizer, check its Fortran/Git prerequisites,
+and verify the loaded native capability before reporting success. Preserve
+the verified selection across updates and environment replacement, including
+clean builds; `--without-opentrustregion` explicitly disables it. Fresh
+default builds still require no Fortran compiler. Installation, update and
+tutorial documentation now show the supported commands and prerequisites.
+
+### Fixed: stale-core gate provenance (#285)
+
+Test gates no longer inherit the diagnostic stale-core override, including
+isolated re-verification. A stale-core refusal during re-verification now
+invalidates the verdict instead of being reported as an ordinary test failure.
+Direct pytest diagnostic sessions retain their explicit override and warning.
+
+Stale-core refusals from pytest-xdist workers now reach the controller and
+both acceptance paths. Missing or malformed worker provenance invalidates
+acceptance separately from staleness; explicit diagnostic overrides remain
+visible in the final summary.
+
+### Fixed: a `.xyz` now names the method its `energy=` tag belongs to
+
+`run_job` writes the `.xyz` comment line from the SCF result's energy, and
+`_select_method` has already collapsed a post-SCF correlated request down to
+its mean-field reference, so `method="mp2"` wrote the RHF energy under a bare
+`energy=` tag that named no method. `energy=` is the conventional single-frame
+energy tag and ASE reads it as *the* energy of the structure, so someone
+post-processing MP2 optimizations through ASE silently got Hartree-Fock
+numbers, with the MP2 job's file byte-identical to an RHF job's.
+
+The comment line now carries `energy_method=`, naming the method that produced
+`energy=`, and `method=`, naming the job:
+
+```text
+vibe-qc final geometry (bohr -> Å, CODATA 2018 a₀) energy=-74.9630231287 energy_method=rhf method=mp2
+```
+
+Both land in ASE's `Atoms.info`, and `energy=` itself is unchanged, so no
+existing number moves. Take the correlated total from the `.out` or from the
+`.system` manifest's `[progress]` section, which already carries it under its
+own method name. Callers of `vibeqc.output.write_xyz` / `format_xyz` that pass
+neither tag get the exact previous comment line.
+
+### Added
+
+- `run_job` now runs double hybrids directly: `method="b2plyp"`,
+  `"dsd-pbep86"`, `"revdsd-pbep86"` and `"pwpb95"` dispatch to
+  `run_double_hybrid` and write the standard file set, so the molecular
+  entry point covers them like every other method (#365). The route
+  refuses any `run_job` feature the dispatcher does not carry
+  (`optimize`, `hessian`, `tddft`, `solvent`, ...) rather than ignoring
+  it. `method="rks"` with a double-hybrid functional still raises: that
+  spelling asks for the SCF half alone, which is not the method it names.
+
+### Fixed
+
+- An open-shell double hybrid now describes the calculation it ran. The
+  `.out` reported `RKS reference` for a ROKS SCF and `MP2 correlation`
+  for a semicanonical RI-ROHF-MP2 doubles-only term, the `.system`
+  manifest could not tell a closed-shell run from an open-shell one, and
+  the `.bibtex` omitted the ROKS and RMP2 papers even though both routes
+  were already in the citation database (#365).
+
+### Fixed: docs/features.md named four APIs wrongly, and the guard could not see it (#367)
+
+`docs/features.md` advertised `write_cube` in the properties table and
+`read_cube` in the input/output table. Neither has ever existed: cube writing
+is per payload (`write_cube_density`, `write_cube_mo`, `write_cube_mos`, plus
+`_periodic` siblings) and vibe-qc has no cube reader at all. `write_cif` was
+named bare although it lives in `vibeqc.output.formats.cif` and is reached
+through the `geometry` output role.
+
+The analytic-Hessian row named only `compute_hessian_rhf_analytic` and scoped
+the capability to RHF. The analytic CPHF/CPKS Hessian covers four references:
+`compute_hessian_uhf_analytic`, `compute_hessian_rks_analytic` and
+`compute_hessian_uks_analytic` ship alongside it.
+
+Hirshfeld charges (`hirshfeld_charges`) ship and had no row.
+
+`tests/test_features_doc_symbols.py` existed to make exactly this class of
+drift mechanical, but its regex matched only `run_*` and `compute_*`, so the
+`write_*` / `read_*` names were invisible to it. It now covers those too.
+
+### Fixed: the documentation no longer contradicts itself on periodic derivatives (#367)
+
+`docs/features.md` carried two opposite statements about periodic GFN2-xTB
+stress: the GFN2-xTB row said the native gradient and all nine stress
+components match gapped finite differences, and the Known-issues section said
+the analytic stress was gated off because the derivatives were not
+derivatives of the periodic energy. The row is right. The bullet described the
+state repaired on 2026-09-05 and shipped in v0.16.0, and it cited an issue
+number that the 2026-09-08 renumbering reassigned to an unrelated bug.
+
+The module docstring of `vibeqc.periodic_gapw_stress` opened "Analytic stress
+tensor" while `compute_stress_gpw` and `compute_stress_gapw` central-difference
+the fixed-density energy over strain. It now says finite difference, says that
+the basis is rebuilt on each strained cell so the Pulay response arrives inside
+the difference rather than as a separate term, and says that the density is not
+relaxed per strain.
+
+`docs/features.md` also gained rows for five capabilities that shipped without
+one: the periodic stress tensor, Gamma-point phonons, the equation-of-state
+fit helper, the intrinsic reaction coordinate and on-demand Basis Set Exchange
+rendering. Each row states the limit that decides whether the capability
+answers a given question: FD-only, Gamma-only, third-order Birch-Murnaghan
+only, molecular-only, and molecular `run_job` only.
+
+### Fixed: slab and chain density artifacts were evaluated on a box that did not contain them (#45)
+
+A 2-D UKS multi-k job refused its QVF density artifact, reporting a
+primitive-cell grid integral of 1.07 electrons against an exact 2.0, and
+advised decreasing `density_spacing_bohr`. Following that advice made the
+number worse (1.143 at 0.4 bohr, 1.072 at 0.2), which is the tell that the
+mesh was never the problem.
+
+Every periodic density evaluator sums AO images along the `dim` periodic axes
+only. That is right: a slab is not periodic along a3, so there is no image to
+sum. The consequence is that along a synthesized axis the grid box has to
+physically contain the atoms, because nothing translates them back into it.
+The box was pinned at the Cartesian origin and spanned the cell from there,
+while slabs and chains are conventionally written straddling `z = 0`, so the
+charge below the box face was not missing from the integral by rounding, it
+had nowhere to be evaluated. Artifact grids are now centred on the atoms
+along each non-periodic axis, and both QVF and XSF volumes carry that origin so the
+viewer places the grid where the density actually is. The XSF grid origin is
+converted to angstrom while the atom coordinates retain their original frame;
+the same rule applies when the emitted density belongs to a supercell. A fully periodic
+`dim=3` cell keeps the origin it always had and is bit-identical.
+
+The same box is used by the Gamma and AICCM-B supercell grids and by the
+chi-CCM Gamma orbital grids, which are corrected with it.
+
+A slab whose vacuum genuinely is too thin is still refused. That refusal now
+names the cell rather than the mesh, because refining the mesh cannot recover
+charge that lies outside the box.
+
+### Documentation: describe the SCC-DFTB retry ladder (#180)
+
+The semiempirical guide now describes the implemented SCC-DFTB convergence
+retry ladder and its role in reporting the executed calculation.
+
+### Fixed: the semiempirical record states the physics it rests on (#345, #318)
+
+A DFTB0 or SCC-DFTB run whose element pairs have no fitted repulsive said so
+only on stderr, a channel most batch harnesses discard, so an equation-of-state
+curve computed over the `A/R^12` placeholder read like a result (0 of 84
+archived scan `.out` files and 0 of 2664 manifests carried the warning). The
+pairs the warning names are now recorded on every surface a consumer reads:
+the `.out` (a `placeholder_repulsive_pairs` line in the periodic options block,
+a "DFTB repulsive qualification" section on the molecular route), the `.system`
+manifest's `[run]` section, and the archived QVF job spec. An empty list means
+every pair was checked; the key is absent for routes without a repulsive table.
+The periodic semiempirical options block now also states the route maturity
+(`maturity = production|experimental`), the value the manifest already carried.
+One module, `vibeqc.output.formats.semiempirical_record`, spells these facts for
+all three surfaces.
+
+### Fixed: the dispersion-corrected `.out` energy block ends with `E_SCF (excl. dispersion)` not `SCF energy` (issue #347)
+
+When D3/D4 or a composite recipe is active, the final row of the SCF energy
+components block was labelled "SCF energy" -- read as the last word on the
+total. It is in fact the SCF component, with the dispersion correction logged
+in the block below. The label now says `E_SCF (excl. dispersion)` to make the
+scope unambiguous; the no-dispersion path keeps its existing "Total energy".
+
+### Testing: classify POLIPO checks as experimental (#370)
+
+- `scripts/test_gate/update_suite_manifest.py` classifies `tests/test_polipo*.py`
+  as experimental, so the generated `suite_manifest.json` row no longer carries
+  the `"demote T2"` string that `derive()` returns as its fallback for an
+  unmatched path. The row is hand-classified experimental, so the fallback read
+  as a pending instruction to demote a file that nothing intended to demote.
+
+### Documentation: state the union12 minimal-basis limit (#372)
+
+`method="union12"` is the default on `run_ccm_rhf`, and its docstring described
+it as "validated in 1-D" with no basis qualifier, while the package docstring,
+the builder comment and the experimental features catalog all record that the
+validation holds in a minimal basis only. On any basis with more than one
+function per atom the eq-18 weighted Coulomb supermatrix is indefinite and the
+SCF is variationally unbounded, so the unqualified wording described a method
+that does not exist. The docstring now carries the same measured limit as its
+peer sites; `docs/experimental/catalog.md` was also missing the qualifier.
+Documentation only; no behaviour change.
+
+## [v0.17.6] - 2026-09-17 - *Tew's Tern*
+
+This release collects the accumulated changes on `main` since v0.17.5. The
+correctness work is #210 (an exactly degenerate SCF frontier now picks its
+basin deterministically, in RHF as well as UHF), #33 (ECP CASSCF natural
+orbitals published at the valence count), #172 (the MDF fitting metric built to
+its own precision rather than the cell's), #133 (the Gaussian periodic drivers
+refuse a collapsed image list instead of silently answering a free-boundary
+problem), #293 and #294 (the embedded 3-D SECCM gradient differentiates its own
+energy, and the GFN2-SECCM primary attempt keeps its budget), #283 and #284
+(two periodic GDF routes stop dropping or silently overriding a requested
+option), #306 (the GFN2-xTB auto-stabilisation ladder no longer starves its own
+rungs), #325 (a route that cannot run FRAGMO says so instead of asking for
+fragments) and #154 (molecular PM6 refuses a basin-ambiguous system instead of
+reporting whichever of several converged answers arithmetic noise selected, and
+its damped-mixing window no longer follows from `max_iter`). #196's
+nuclear-attraction lattice sum is now screened separately from the widened
+one-electron AO domain: on LiH/STO-3G that is 4.9x faster with V_ne unchanged
+to 1e-16 Ha. #285 turns a stale compiled core from a warning into a refusal, so
+a wrong number can no longer read as a physics regression.
+
+Two findings from the release-paper capability audit close here as well: a
+solvated geometry optimization now walks the solvated surface instead of
+reporting a solvated energy at a geometry optimized in the gas phase, and FCI,
+NEVPT2, CASPT2 and MRCI with `optimize=True` no longer substitute the
+mean-field surface without saying so (#357). A third is closed by #344: a
+reported Hessian now names the surface it was built on.
+
+Changelog entries are now fragments under `changelog.d/`, folded into
+`[Unreleased]` when a release is cut. QVF remains the default output format.
+Both CI companion pins are unchanged and both are still the newest published
+tags: vibe-view v2.17.1 and QVF v0.1.0-docs.1. Patches inherit Tew's Tern.
+
+### Known issues carried into this release (#206, #307, #308, #358, #257)
+
+Five problems ship unfixed. None of them is caused by a change in this release,
+and no measurement in this release supersedes the numbers recorded for them.
+
+* **#206, the range-separated three-centre build.** 3-D periodic GDF runs are
+  still far slower than they were at v0.17.0. The blocking T1 lane
+  `tests/test_periodic_molden_gamma_export.py` took 21.0 s in CI at v0.17.0 and
+  641.6 s at v0.17.1 with the test unchanged. The short-range auxiliary image
+  enumeration change shipped in v0.17.2; it still has no independent numerical
+  or performance verdict, so no resolution is claimed.
+* **#307, GFN2-xTB since v0.17.1.** In a 262-row molecular comparison of
+  v0.17.1 against v0.17.4 on one host, norbornadiene and p-benzoquinone stopped
+  converging (both converged at v0.17.1, in 2754 and 2693 iterations) and
+  thymine moved from -23.0084139465 Ha to -23.0221115013 Ha, a shift of
+  -1.370e-02 Ha, while the other 258 rows matched to 1e-9. The #306 ladder
+  budget fix in this release is the identified cause of the non-convergence
+  limb, but that comparison has not been re-run against this release, and the
+  thymine shift has only a hypothesis (a finite-temperature rung reporting
+  `A = E - T*S` where v0.17.1 reported `E`). The issue stays open.
+* **#308, the 2-D slab QVF density artifact.** On the v0.17.4 runtime,
+  `tests/test_slab_2d_routing.py` reports a QVF density-artifact grid integral
+  of 1.0716155351 where 2.0 is expected, a 46 percent electron deficit on a
+  dim-2 slab. It is a wrong answer in a published artifact. A candidate fix is
+  open as !52 (#45, which centres the artifact grid on the atoms of a slab or
+  chain instead of pinning the box at the Cartesian origin); it is unmerged and
+  not in this release.
+
+* **#358, the periodic ECP lattice operator on W, Hf and Ta.** With the
+  pob-TZVP-rev2 ECPs whose radial power is n=4,
+  `compute_ecp_lattice_from_primitives` is nondeterministic and silently
+  corrupt: ten single-threaded calls on the same W bcc input produced nine
+  distinct matrices with |max| between 6.3e+148 and 1.0e+150, where an element
+  should be O(100) Ha. Hf and Ta corrupt too. Ag, Au and Rb ECPs on the same
+  probe each return exactly one value. P1, filed during this cut and unfixed
+  here; no periodic ECP result on those elements should be trusted.
+* **#257, range-separated GDF admission on the CCM RI-GDF fixtures.** The
+  admission check refuses them with "reciprocal candidate cap exceeded"
+  (`test_ccm_ri.py`). P2, in progress, and the affected line is experimental.
+
+**#196 is only partly addressed.** The nuclear sums no longer inherit the
+widened one-electron AO domain, but the widening itself stays: it implements
+the #179 maintainer decision of 2026-09-06 (the estimator floor), and narrowing
+it re-opens #179's accuracy limb. #196 remains open as a decision, not a tuning
+job.
+
+### Fixed: a correlated `hessian=True` now names the surface it was built on
+
+`run_job` resolves a correlated request down to the mean-field reference its SCF
+runs (`method="mp2"` becomes RHF), and `compute_hessian_fd` differentiates that
+reference, because it accepts RHF, UHF, ROHF, RKS and UKS and nothing else. The
+output said so nowhere: `run_job(method="mp2", hessian=True)` printed a frequency
+block byte-for-byte identical to the `method="rhf"` one, and the thermochemistry
+rows were labelled `E(elec)` while carrying the RHF electronic energy in a job
+whose reported energy was MP2. Nothing in the `.out`, the `.system` manifest or
+the `.qvf` told a reader which surface the numbers described.
+
+The frequency block now opens with a `Surface:` line and, when the surface is
+not the requested method's, states that outright. The thermochemistry rows name
+the energy they extend (`E(RHF) + ZPE`). The manifest gains a `[hessian]`
+section and the QVF `vibrations` metadata a `surface` key, both carrying
+`surface_is_requested_method`. Mean-field frequencies with a correlated single
+point remain available, they are just labelled.
+
+A method that resolves to no mean-field reference at all (CASSCF, CISD, CASPT2,
+FCI, ...) reported `FAILED: ValueError: FD Hessian: unknown method 'CASSCF'`
+after the whole job had run; it now says the block was skipped and why, and for
+CASSCF points at `vibeqc.hessian_casscf.compute_hessian_casscf`.
+
+### Fixed: FCI/NEVPT2/CASPT2/MRCI geometry optimization no longer silently substitutes the mean-field surface
+
+`run_job(method="fci"|"nevpt2"|"caspt2"|"mrci", optimize=True)` used to walk
+the mean-field surface under the default `optimizer_backend="auto"` (and
+under an explicit `optimizer_backend="ase"`): the ASE calculator has no
+correlated-surface route for these four methods, so it silently fell back to
+plain RHF/RKS BFGS and reported the resulting geometry under the requested
+correlated method. `run_job` now refuses that combination with a clear
+`ValueError` naming the fix instead. Pass `optimizer_backend="native"` or
+`"brent"` to reach the correlated finite-difference surface these two
+backends already walk correctly -- expect it to be substantially slower than
+a mean-field optimization (GitLab #357).
+
+### Fixed: a solvated geometry optimization walked the gas-phase surface
+
+`run_job(optimize=True, solvent=...)` reported a solvated energy at a geometry
+optimized on the gas-phase surface, on every backend, and said nothing about
+it. `optimizer_backend="auto"` resolves to ASE whenever ASE imports, and that
+call passed no `solvent=` at all, so solvation was absent from the default
+optimization walk entirely. The native and `geom_opt=` routes solvated the
+energy but not the gradient: `_compute_molecular_gradient` took no solvent, so
+the step direction came from the gas-phase surface.
+
+Measured on LiF/STO-3G in water, whose bond the reaction field lengthens by
+0.0249 bohr (gas minimum 2.661843, solvated 2.686711, both from a 1-D scan with
+no optimizer in the loop): the default backend stopped 9e-06 bohr from the
+*gas* minimum, native at +0.0140 and geomopt at +0.0146 bohr from it. At those
+reported geometries the solvated gradient was 6.07e-03, 1.80e-03 and
+1.61e-03 Ha/bohr against the run's own 9.72e-04 Ha/bohr threshold -- 1.7x to
+6.2x -- so none had converged on the surface whose energy it printed.
+
+Now every route differentiates the surface it reports. `_optimize_geometry`
+takes `solvent` and hands it to the ASE calculator, whose `cpcm_gradient`
+wiring already existed; `_compute_molecular_gradient` routes a result carrying
+a `solvent_result` through `cpcm_gradient`, which covers the native and geomopt
+routes at once. After the fix all three converge with solvated gradients of
+1.02e-04, 3.66e-05 and 2.28e-04 Ha/bohr, 0.020-0.023 bohr away from the gas
+minimum they used to report.
+
+Two adjacent paths had to be closed in the same change, or wiring the solvent
+would have created a second silent wrong surface. The ASE calculator tested its
+solvated branch *before* the #571 branch, so a functional whose analytic
+gradient omits terms (range-separated hybrids, VV10) would have had the
+reaction field added to an incomplete gas-phase kernel; those now take the
+finite-difference path, which itself now receives the calculator's solvent
+instead of differentiating a gas-phase energy under a reaction field.
+`cpcm_gradient` refuses such a functional outright, so a direct caller of the
+public API cannot get that number either.
+
+Routes with no solvated gradient now fail closed rather than walking the wrong
+surface: `optimize=True` with `solvent=` refuses any method outside
+`rhf`/`uhf`/`rks`/`uks`, naming the limitation. That covers `method="msindo"`,
+whose COSMO route has no nuclear gradient, and the semiempirical, MLIP and
+wavefunction calculators. CAS-family and `rohf` requests were already refused.
+`docs/user_guide/geometry_optimization.md` claimed dispersion and solvation
+were "folded into the energy and gradient automatically"; it now describes what
+each route does. Pinned by `tests/test_solvation_cpcm.py` on the default,
+native and geomopt routes, by the refusal, and at the unit level on
+`_compute_molecular_gradient`.
+
+### Fixed: PM6 refuses a basin-ambiguous system instead of reporting one of its answers
+
+Molecular PM6 on a strained bridged bicycle or a weakly coupled symmetric
+dimer has several genuine zero-temperature fixed points, and hard occupations
+left the SCF selecting between them on arithmetic noise rather than on the
+input. Norbornadiene converges cleanly to -33.0848096 Ha in 49 iterations,
+and just as cleanly to -33.9206690 Ha, 0.836 Ha (22.7 eV) lower, after a
+1e-9 A nudge of one bridgehead carbon; bounded homotopy rungs reach
+-33.3644211, -33.8171396 and -33.9206691 Ha on inputs differing by at most
+1e-7 A. That is why four fleet hosts returned four different *converged*
+energies for one input and one build (-33.0848/49 iterations, -33.3644/359,
+-33.8172/199, -33.9207/482), and why the issue's verification failed even
+though its exact-zero tripwire was landed and green. Thread count changes
+nothing (identical to 16 digits from 1 to 18 threads), so no
+arithmetic-determinism fix reaches it, and no path selects the basin
+reliably: the smeared paths are noise-sensitive too, and reporting the lowest
+candidate is not stable because the direct solution is sometimes itself the
+lowest.
+
+The closed-shell `run_job(method="pm6")` route therefore now probes with a
+fixed, deterministic set of bounded Mermin homotopies -- every temperature
+rung, each cooled and re-cooled -- instead of only rescuing after a
+zero-temperature failure, and raises `SemiempiricalEnergyError` naming every
+solution it found when two converged fixed points disagree by more than
+1e-4 Ha. Systems with a single basin, which is nearly all of them, see
+agreement and are reported exactly as before. Every host now reaches the same
+outcome on an ambiguous system rather than a different number.
+
+Separately, the PM6 damped-mixing window is now a fixed schedule rather than
+one derived from `max_iter / 3`: budgets of 100 or less began damping before
+this system's iteration 49, derailed the trajectory that would have
+converged, and returned non-converged, while budgets of 150 or more converged
+at iteration 49. An iteration budget now bounds the work without selecting
+the answer.
+
+### Fixed: a periodic QVF that omits DOS/PDOS/COOP/COHP now says why (#32)
+
+`run_periodic_job(..., output_qvf=True)` writes band properties from one of
+two builders: the GDF route projects them from the accepted SCF state, and
+every other route rebuilds a fixed-cutoff Ewald/HF-like operator. That rebuild
+is not the operator those runs converged, so it is withheld on BIPOLE,
+AICCM2026DEV-B and external-XC runs -- correctly, but in complete silence. The
+archive simply came out without `dos.total`, `dos.projected`, `dos.coop`,
+`dos.cohp` or Mayer bond orders, and nothing in the `.system` manifest, the
+`.out` or the console said so. Two runs of the same cell, one with DOS and one
+without, with no way to tell why.
+
+Those runs now record `property_hamiltonian = "omitted (<reason>)"` in the
+`.system` manifest and print the reason, naming the operator mismatch and
+pointing at `jk_method='gdf'` for band properties on the same cell. Runs that
+produced a payload before are unchanged, and no number changes.
+
+The same issue reported periodic ECP cells as silently missing their payload.
+They are not, and have not been since the accepted-state GDF property adapter
+landed: an ECP cell runs on `jk_method='gdf'` and nowhere else, and that
+adapter projects the converged SCF eigenstates, whose `Hcore(k)` already
+carries the Bloch-summed lattice `V_ECP` and the `Z_eff` ionic frame. A
+regression now pins that the exported ICOHP could not have come from a bare-Z
+build, and the stale comment that said otherwise has been corrected.
+
+### Fixed: an exactly degenerate SCF frontier no longer picks its basin at random (#210)
+
+Aufbau does not name a density when `eps(nocc-1) == eps(nocc)`. The occupied
+set is then a point of the Grassmannian of the degenerate block, and taking the
+leading columns resolved it with whatever basis LAPACK returned for that
+subspace. That basis is not a physical quantity, so the converged energy
+followed it: 90-degree twisted ethylene / STO-3G returned either
+-76.8553699161 or -76.7972798964, 58.090 mHa apart and both converged,
+depending on how the molecule was rotated in space, and it split by LAPACK
+build as well.
+
+The frontier block is now Loewdin-orthonormalised and the most delocalized
+occupied subspace chosen. That criterion is a function of the subspace rather
+than of a basis of it, it is invariant under rigid rotation and atom
+reordering, and it keeps the symmetry-preserving member: the two candidates
+here are a delocalized solution at Loewdin populations (0.444, 0.444) on the
+carbons and a charge-localized one at (0.000, 0.887), and the 58 mHa is the
+spurious C+/C- separation. Breaking spatial symmetry stays the stability
+check's job.
+
+Molecular RHF carries the same fix.
+
+Gated on the frontier gap, so it is inert wherever the frontier is gapped. The
+gap distribution is sharply bimodal -- 1e-16..1e-14 Ha when degenerate,
+0.2..0.8 Ha otherwise -- and species that are exactly degenerate but already
+rotation-invariant come back unchanged (NO doublet, CH doublet, C atom
+triplet, all within 8.5e-14).
+
+RHF's shipped default is NOT covered, and for a different reason: `AUTO`
+resolves to PATOM there, and PATOM and HCORE hand the SCF an
+orientation-dependent density before iteration 1, where the frontier is
+already gapped at 0.118 Ha and there is no degeneracy left to resolve. That is
+a guess-construction defect rather than this one. RKS/UKS and the periodic
+drivers still carry the same truncation.
+
+### Fixed: the MDF fitting metric is built to its own precision, not the cell's (#172)
+
+`rcut_precision` sizes a lattice sum so the largest term it DROPS is below
+the requested value. A lattice sum drops many terms at once, so the error
+that reaches the assembled matrix is larger by roughly the number of cells
+in the sum, and `precision=1e-8` was delivering 2.4e-07 on MgO and 7.1e-06
+on LiH rocksalt. The new `RcutStrategy.ACCUMULATED` budgets the whole sum
+instead of its worst single term, and Mixed Density Fitting builds the
+plane-wave-dressed metric of Sun 2017 Eq. 20 through it at a dedicated
+`precision_j2c`, vibe-qc's analogue of the knob PySCF carries for the same
+reason.
+
+That metric is a Gram matrix of plane-wave residuals, so it cannot have a
+negative eigenvalue; MgO/STO-3G/def2-svp-jk had one at -5.4e-06, and its
+whole spectrum carried error of that size. Both now sit at 1.8e-13, which
+also removes the case the old floor was written for: a mode retained at
+2.9e-08 with its own error bar at 6.6e-08. The dilute H2 box gains most in
+practice, because there the old construction error (3.5e-09) exceeded the
+threshold that was meant to cut on it (1e-9). Ne/STO-3G is unchanged below
+a nanohartree and no MDF run measurably slower.
+
+**It does not lift the compact-dense-core MDF gate, and that is now
+measured rather than assumed.** The 2026-08-14 note on #172 named a
+better-built metric as the route out. With the metric seven orders more
+accurate, every MgO energy in a 3e-2 to 1e-10 threshold sweep is unchanged
+to the printed digits, and the residual is flat in `mdf_ke_cutoff`
+(-92.1 / -82.5 / -82.6 / -88.4 mHa at ke = 40 / 60 / 80 / 120), so the mesh
+is refuted too. What is left is the incompleteness of the 81%-smaller
+auxiliary space itself (Sun Sec. III), and lifting the gate has to widen
+that space rather than sharpen what is fitted in it. `gdf_method='mdf'`
+still refuses this class; use the default `gdf_method='rsgdf'`.
+
+### Fixed: semiempirical routes state one maturity, and a run records it
+
+Three maturity vocabularies disagreed about the same routes. A C++
+`PeriodicTier` enum was written in one place, read nowhere, and reached only
+from tests, yet it called GFN2-xTB "validated with caveats" where the live
+Python classification calls it experimental, and marked MSINDO, PM6 and OM1-3
+non-periodic where public Gamma routes exist. It is removed: `routes.py` now
+holds the one vocabulary, published as `SEMIEMPIRICAL_MATURITIES`, and
+`status.py` documents `backend` as the implementation axis rather than a
+second maturity claim.
+
+The two Python tables also disagreed in a user-visible way: molecular PM6
+planned as `production` while its status entry said `production=False`
+because heavy-heavy two-center tensor parity is still open. PM6 energies now
+plan as experimental, matching the status table and the user guide. A sweep
+over every reachable route plan pins both halves, so a maturity word outside
+the vocabulary, or a `production` flag that drifts from the plan, fails the
+suite.
+
+Periodic semiempirical runs now stamp `route_maturity` and `route_status`
+into the `.system` run fields and the archived job spec, so an experimental
+run says so in its own artifacts.
+The matching human-readable line in the `.out` options block belongs to the
+output lane and is raised as #318.
+
+### Fixed: the embedded 3-D SECCM gradient differentiates its own energy (#293)
+
+The SCC-DFTB-SECCM analytic gradient of a three-dimensional Madelung-embedded
+cluster now differentiates the energy it was converged with. The gradient's
+copy of the Madelung-kernel dispatch had no 3-D branch and fed the 2-D slab
+kernel of the first two lattice vectors into its M matrix while the energy
+used the 3-D Ewald kernel, and the direct Madelung derivative used the 3-D
+lattice, so the two halves of one gradient disagreed about the lattice. On a
+distorted six-atom H-Li torus the analytic gradient differed from central
+differences by up to 4.4e-5 Ha/bohr and now agrees to 3.8e-7 Ha/bohr, the
+level of the one- and two-dimensional fixtures. One shared
+`build_seccm_madelung_state` serves the SCC-DFTB energy and gradient,
+GFN2-SECCM and PM6-SECCM; the other three call sites are behaviour-preserving
+replacements.
+
+### Fixed: the GFN2-SECCM primary SCC attempt keeps its budget (#294)
+
+The GFN2-SECCM primary SCC attempt is no longer cut at 500 iterations whenever
+`max_iter` is 2500 or more, which the route default of 3600 always is. As in
+the molecular and periodic GFN2 drivers, the primary attempt keeps its whole
+budget while its residual is still contracting and reaches the stabilisation
+ladder from a budget-independent checkpoint when it stops, recorded as the new
+attempt exit reason `stalled_checkpoint`. On a polar HF chain at
+`charge_mixing = 0.01` the same input converged in one 1784-iteration attempt
+at `max_iter = 2499` but was cut at 500 and restarted from neutral at 2500;
+2499, 2500 and 3600 now all give one 1784-iteration attempt and the same
+energy.
+
+### Fixed: a stale compiled core now refuses the test session instead of warning (#285)
+
+The editable install has scikit-build auto-rebuild off, so a `git pull`
+carrying C++ commits leaves this checkout's Python running against an older
+checkout's `_vibeqc_core`. `tests/conftest.py` detected that and only warned.
+The warning is printed before the first test, so it had scrolled past the
+failures by the time anyone read it, `-p no:warnings` dropped it, and it said
+nothing at all about the opposite direction, a test that passes because the
+C++ change under test is not in the running core. Twice it cost a session a
+wrong verdict: a 2.04e-2 Ha/cell direct-vs-GDF gap bisected as a regression
+that did not exist (2026-07-10), and a 900 s timeout in
+`tests/test_basis_filter.py` charged to the branch under test (2026-09-13).
+
+`pytest` now exits **97** before collecting anything, naming the core, the
+source that moved and the rebuild command. 97 is outside pytest's own range,
+so no reader and no tool can read the refusal as a test failure:
+`scripts/test_gate/run_full_suite.py` labels it `STALE_CORE` rather than
+`FAIL`, and `scripts/test_gate/gate_verdict.py` refuses to compute a blocking
+verdict from a run holding one, because nothing ran. Set
+`VIBEQC_ALLOW_STALE_CORE=1` to run anyway; the session then keeps the old
+warning and repeats it underneath the results, where it cannot scroll away.
+
+### Fixed: an ECP reference no longer loses its CASSCF wavefunction from the archive (#33)
+
+`_cas_natural_orbitals` sanity-checks its own core/active partition by summing
+the natural occupations and comparing them against the electron count. On an
+ECP reference those are two different numbers: the replaced core is not in the
+wavefunction, so the occupations sum to the valence count while
+`molecule.n_electrons()` is the physical one. The CASSCF branch passed the
+physical count, so for H2S/LANL2DZ the check compared 8 against 18, judged the
+partition wrong, and returned nothing.
+
+Nothing then reported it. `natural_orbitals` came back `None`, the QVF gate
+that keys on it was skipped, and because a CASSCF has no mean-field orbitals
+to fall back on, the archive was written with structure, citations and the run
+record and no wavefunction section at all. The `.out` was unaffected, since
+its occupations come from the density matrix directly, so the loss was visible
+only by opening the `.qvf`. The count now matches the one used to build the
+frozen-core block a few lines earlier, which the same correction had already
+been applied to. Energies are unchanged; only the published orbitals were
+affected.
+
+### Fixed: the CASSCF gradient no longer describes itself as incomplete
+
+The W^z retirement corrected the physics and the manual, but left five
+user-facing surfaces still calling the CASSCF analytic gradient incomplete,
+quoting it as "87 % of the full CP-MCSCF gradient", or advertising a "gated
+W^z correction": the `vibeqc.gradient` module docstring and the
+`casscf_gradient`, `01_casscf_h2o`, `02_casscf_gradient` and
+`parity_casscf_gradient` examples. A reader of those surfaces would reject or
+mischaracterise the corrected production path. They now state the shipped
+contract: the analytic gradient is the complete derivative of a variational
+CASSCF energy, matching the full-energy finite difference to ~1.6e-7 Ha/bohr,
+with `compute_wz=True` a warned no-op alias and `compute_wz="numerical"` the
+finite-difference cross-check. A regression pins every one of those surfaces
+against the retracted wording.
+
+### Fixed: open-shell transition-metal molecules start from the right basin
+
+`AUTO` now resolves a molecular open-shell system containing a d- or f-block
+atom to `PATOM` instead of bare `SAD`. The `SAD` construction superposes free
+atom Hund densities, so every open-shell ligand arrives carrying its own free
+atom moment even where the molecule binds it closed shell. On FeCl3 (sextet,
+cc-pVDZ) that trapped a symmetry-broken solution 90.05 mHa above the ground
+state, with one chloride left as a radical cation, which converged and then
+certified a negative internal Hessian eigenvalue. `PATOM` applies the same
+Hund seed and then re-polarises it in field, reaching the ORCA 6.1.1 ground
+state (-2641.1344915780 Ha, S^2 = 8.767533) in 23 iterations, internally
+stable and with no stability restart. Supplying `atomic_spins` still holds
+`AUTO` on `SAD`, so a deliberate antiferromagnetic seed is never overridden,
+and routes without `PATOM` fall back to their advertised `SAD` construction.
+
+### Fixed: basis-optimization marshalling built a sheared crystal from a correct one (#128)
+
+`vibeqc.basis_optimization.calculators` moved a vibe-basis `Structure` into a
+`PeriodicSystem` by handing `lattice_matrix_angstrom()`, documented as "rows =
+a, b, c vectors", straight to the COLUMNS-consuming constructor, while the
+fractional-to-Cartesian product beside it read the same matrix as rows and so
+placed the atoms correctly. A hexagonal structure with a = b = 2.504 Angstrom
+and gamma = 120 became a = 2.7996, b = 2.1685, gamma = 116.565: a different
+crystal. The reverse marshaller unpacked the column matrix as rows in the same
+way, so the two cancelled on a round trip and the cubic fixture covering them
+could not tell the difference, a diagonal matrix being its own transpose. Both
+directions now use the column convention, the marshaller enforces the
+`crystal_system` the `Structure` already declares, and the round trip is
+covered by a hexagonal cell that fails if either direction is corrected alone.
+Cubic compounds were unaffected.
+
+### Fixed: dependency clone deadlines select children by parent PID (#241)
+
+The clone timeout helper now reads parent IDs from `ps` instead of relying
+on `pgrep -P`, which some macOS proctools builds fail to filter. It refuses
+process-group IDs and PID 1 before sending signals, keeping timeout cleanup
+scoped to the clone's process tree.
+
+### Fixed
+
+- `euler_angles_from_rotation` no longer loses accuracy just off an Euler pole,
+  so `wigner_d_real` and every AO symmetry rotation built on it stay exact
+  there. The generic branch read alpha and gamma from transverse entries of
+  size `sin(beta)` carrying independent rounding, so each was wrong by
+  `~eps/sin(beta)` and the errors did not cancel: on a C2/m cell tilted
+  1e-12 rad, D^1 was wrong by 1.4e-05, and a slightly wrong AO permutation
+  could still pass a 1e-10 star-relation check. Each of alpha+gamma and
+  alpha-gamma is now read from the entries that condition it, which holds the
+  reconstruction at ~1e-15 from 1e-13 rad off a pole out to a radian.
+  Rotations that are *exactly* polar keep the documented `gamma = 0`
+  convention; just off a pole the z-rotation is now split between alpha and
+  gamma, since their sum is the combination the rotation actually pins (#282).
+
+- Experimental chi finite-torus DLPNO-MP2 now preserves the solver's frozen
+  core in its complete-space correction. Restricted and unrestricted local
+  MP2/CCSD(T) reject frozen-core localization until separate core and active
+  projectors are supported; canonical `localise="none"` remains available
+  (#281).
+
+- Unsupported FRAGMO requests on the experimental AICCM real-Gamma and
+  four-center routes now retain the requested guess name in the diagnostic
+  instead of reporting the internal READ transport selector (#270).
+
+- Requesting unavailable IAO population analysis no longer suppresses
+  separately requested QVF localization of a supported SCF reference, such as
+  the reference orbitals in an MP2 calculation. The population result remains
+  explicitly unavailable while existing reference-localization output is
+  preserved.
+
+- Periodic Gamma-only RHF/GDF with an explicit `gdf_method` no longer refuses
+  `fock_mixing` on the one route that can serve it. `kpoints=(1, 1, 1)` with
+  `gdf_method="rsgdf"` reaches the general multi-k engine, which applies Fock
+  mixing per k and keeps the requested method; the refusal fired there anyway.
+  It still fires everywhere it must, including default Gamma, where the run
+  would otherwise reach a driver that ignores the knob outright. Its message
+  also said the wrong thing: the fallback driver does implement `fock_mixing`,
+  and the real cost of taking it is a silent change of Coulomb gauge worth the
+  finite-size Madelung term, 5.8 mHa on H2/STO-3G in a 12 bohr cube (#283).
+
+- Document the Gamma routing that `bulk_sr` already shipped: an explicit
+  `kpoints=(1, 1, 1)` GDF run reports `native-multi-k-gdf-gdf-rhf` (or `-rks`)
+  rather than `native-gamma-gdf-via-k-gdf`, because the general multi-k engine
+  owns the Gamma limit of the SR/LR route. The label reaches users through the
+  `.system` manifest, and the change was never announced. `mdf` and `compcell`
+  at Gamma still use the dedicated adapter and its label (#283).
+
+- Periodic GDF no longer runs the nuclear-attraction lattice sum on the widened
+  one-electron AO domain. That cutoff exists to converge the overlap and kinetic
+  image tails, where it is free, but it also drove the erfc nuclear sum: on
+  LiH/STO-3G it took the direct cell list from 135 to 12527 cells and put a
+  single V_ne build on a two-atom, six-function cell at 286 s, so the k-point
+  GDF route could not reach its first SCF iteration. The nuclear sums now derive
+  their own domain from the per-cell overlap blocks, which bound them. V_ne is
+  unchanged to 1e-16 Ha and 4.9x faster on that cell; S and T keep the full
+  domain (#196).
+
+- Periodic multi-k GDF now reports that it overrides `use_compcell=False`. On
+  the shipped dim-3 `gdf_method="rsgdf"` route the Hartree always comes from
+  the cached-Lpq fit, so a caller asking for the analytic Ewald-3D J was given
+  the fitted one without being told. The override stays -- `use_compcell`
+  defaults to `False`, so the driver cannot tell an explicit `False` from
+  silence -- but it now logs, like the three sibling promotions beside it, and
+  two comments that still described the unreachable Ewald-3D default are
+  corrected (#284).
+
+### Fixed: a route that cannot run FRAGMO says so instead of asking for fragments (#325)
+
+`run_periodic_job` validated a FRAGMO partition before any route capability
+gate ran, so asking the experimental AICCM real-Gamma or four-center adapter
+for `initial_guess='FRAGMO'` without `fragments=` answered "FRAGMO requires
+fragments=...". Supplying the list changed nothing, because those routes
+execute only HCORE. The route now refuses the selector first, naming FRAGMO;
+partition validation still runs, before SCF, on the routes that implement it.
+
+### Changed: basis-optimization marshalling enforces the symmetry a Structure declares (#128)
+
+`vibeqc.basis_optimization.calculators` already checked the `crystal_system` a
+vibe-basis `Structure` carries when marshalling it into a `PeriodicSystem`; it
+now checks the declared space group too, which is the tighter claim. The check
+keys on `crystal_spacegroup`, the integer, and not on the `spacegroup` string:
+`_structure_from_periodic_system` clears the integer to zero after a
+relaxation, because it describes the input geometry and a relaxation has moved
+the atoms, while the string is carried over and goes stale. A zero therefore
+means the record's symmetry data is no longer trustworthy and the check is
+skipped, which is the intent rather than a loophole; keying on the string
+instead would fail closed on every relaxed structure fed back in.
+
+The first thing this caught was two mislabelled fixtures in the repository's
+own engine tests. A cell with one cation at the origin and one anion at the
+body centre is `Pm-3m`, the CsCl arrangement, not rocksalt's `Fm-3m`, which
+needs four formula units in the conventional cell; and a boron nitride sheet
+is `P-6m2` rather than `P6/mmm`, because the two different elements remove the
+horizontal mirror and the inversion of the elemental lattice. Only the labels
+were wrong, so the geometries are unchanged and no energy moved.
+
+### Changed: changelog entries are fragments under `changelog.d/`
+
+`CHANGELOG.md` is no longer edited directly. Each change adds one file under
+`changelog.d/`, and `scripts/assemble_changelog.py` folds them into
+`[Unreleased]` when a release is cut.
+
+Every branch that appended to `[Unreleased]` inserted at the same anchor, so two
+branches conflicted as an add/add with an empty base region, which no content
+edit resolves. Combined with the single-slot `native-build-test` resource group,
+that made draining N ready merge requests cost N(N+1)/2 pipeline runs instead of
+N. Released sections and `changelog_pins.toml` are untouched: the guard pins
+released bodies only and never pins `[Unreleased]`.
+
+### Added: optional OpenTrustRegion molecular orbital optimizer
+
+Explicitly select the pinned upstream numerical library for real integer-
+occupied RHF/UHF and supported LDA/GGA/global-hybrid RKS/UKS. The native
+adapter supplies physical matrix-free orbital derivatives, isolated trial
+states, serialized callbacks, accepted-state failure recovery and final
+physical convergence checks. Output includes backend provenance, evaluation
+counts, termination and a manifold-specific internal-stability verdict.
+Unsupported response/state combinations fail explicitly; native converger
+and nuclear geometry optimizer defaults are unchanged.
+
+Two worked tutorials and three runnable input scripts cover all four SCF
+methods, native energy/density comparisons, a public UKS READ restart and
+spin-breaking saddle following in stretched H2. The reference includes
+capability, termination and stability troubleshooting.
+
+### Added
+
+- Opt-in molecular RHF/RKS/UHF/UKS IAO charges, spin populations and
+  spin-resolved IAO-Wiberg bond orders through `run_job(iao_analysis=True)`.
+  MINI/symmetric analysis runs independently of localization and QVF, with
+  dense JSON results, text display thresholds, QVF charge compatibility,
+  citations and explicit unavailable reasons. Rank-deficient IAO spaces are
+  refused instead of silently truncating the reference. Periodic analysis is
+  explicitly gated pending k-point and lattice bond conventions.
+
+### Added: molecular QCSchema input and result interchange
+
+Read and write QCSchema JSON molecules and atomic inputs/results. The
+`run_qcschema` adapter runs molecular energies and HF gradients or Hessians,
+with explicit errors for unsupported molecule fields and job options.
+The public imports are retained alongside other top-level exports. A worked
+H2 tutorial and runnable JSON examples compare HF, MP2, and FCI/STO-3G with
+a published Born-Oppenheimer energy.
+
+### Added: a declared crystal system refuses a contradicting lattice (#128)
+
+vibe-qc reads lattice vectors as the COLUMNS of `lattice`. A row-oriented
+matrix is still a full-rank lattice, so it is accepted and produces a sheared,
+physically different crystal that converges and reports plausible numbers;
+`det L == det L.T`, so a volume check is blind to it. Nothing geometric can
+refuse the transpose in general, because both readings are valid lattices.
+Only a declaration can, and there was no way to make one.
+
+`check_crystal_system(lattice_or_system, "hexagonal")` now refuses a lattice
+whose metric contradicts the declaration, and `lattice_from_vectors` takes a
+`crystal_system=` keyword so the declaration can be made where the docs already
+tell users to build cells. The refusal names the condition that failed, the
+measured lengths and angles in bohr and Angstrom, and, when the other reading
+of the same matrix would have satisfied the declaration, says so and points at
+the orientation-free constructor. The lattice is never transposed for the
+caller: both readings are valid cells, and silently picking one would rotate
+the lattice relative to the unchanged Cartesian atom positions.
+
+What a declaration catches is stated plainly rather than oversold. A
+transposed hexagonal or rhombohedral cell is caught, which is what every
+instance recorded in the issue was. A cubic, tetragonal or orthorhombic
+declaration is not an orientation check at all, because those matrices are
+symmetric in the usual Cartesian setting and a cubic metric is
+transpose-invariant in any frame; it still catches a mistyped angle. A
+transposed monoclinic or triclinic cell stays inside its own system and is not
+caught. Conditions are equalities only, so a cubic cell declared orthorhombic
+is accepted, and a cubic declaration admits the face- and body-centred
+primitive settings as well as the conventional cell.
+
+### Added: a declared space group refuses a contradicting structure (#128)
+
+`check_space_group(system, "Fd-3m")` takes a Hermann-Mauguin symbol or an
+International Tables number, hands the lattice and the basis to spglib, and
+refuses a structure whose detected group is not the declared one. This is the
+"or space group" half of the issue's first ask, and it answers a different
+question from `check_crystal_system`: that one is a statement about the
+lattice, tested on the metric alone, while this is a statement about the whole
+structure, so it catches an atom on the wrong site, a mistranscribed
+fractional coordinate, or a basis that broke the symmetry the caller believed
+the structure had. `symprec=` is exposed rather than hidden because it changes
+the answer: a cell 0.1% off cubic reads as P4/mmm at the 1e-4 default and
+Pm-3m at 1e-2. Only 3-D cells are accepted, since for a slab spglib would
+treat the synthesized vacuum axis as periodic and report a group that depends
+on the vacuum thickness.
+
+It is complementary to the crystal-system check, not stronger. Measured on the
+standard cell constructions with the Cartesian atom positions held fixed and
+only the lattice transposed, which is the shape of every instance this issue
+records: hexagonal goes P-6m2 (187) to Pm (6) and is caught, while monoclinic
+P2/m and triclinic P-1 keep their groups and are not. Neither check sees
+those. A detected space group must also never be used to derive a crystal
+system for the metric check, because the basis lowers the group while the
+metric is untouched: an exactly hexagonal lattice with a symmetry-breaking
+basis reports Pm, and a metric check driven off that number would refuse a
+legitimate hexagonal cell.
+
+### Periodic Gaussian drivers refuse a collapsed image list (#133)
+
+**Behaviour change.** A Gamma cell wider than `cutoff_bohr` left the
+`|g| <= cutoff_bohr` translation ball holding nothing but the home cell, and
+`run_rhf_periodic`, `run_rks_periodic` and `run_rhf_periodic_gamma` proceeded on
+it without a word: they converged, returned the isolated cluster's energy *bit
+for bit*, and were exactly k-independent because no `g != 0` block existed to
+carry a Bloch phase — so refining the k mesh only confirmed a stable wrong
+answer. Measured on a 1D H2 chain at `a = 8.0` bohr, STO-3G,
+`cutoff_bohr = nuclear_cutoff_bohr = 6.0`: the periodic energy and the isolated
+molecule's RHF energy differed by `+0.0e+00`, while the same chain at
+`a = 4.0` bohr disperses by 7.3e-01 Ha between a 1- and a 2-point mesh. Issue
+#183 (toroidal MP2 supercells selecting molecular-limit HF) is this defect seen
+in the wild.
+
+These three drivers now call `require_nonzero_lattice_image` and raise instead,
+naming the cutoff and the ways out — the same fail-closed pattern the
+semiempirical periodic drivers have carried since #316.
+
+**New option: `LatticeSumOptions.gamma_only_0`** (default `False`). Declares
+that the molecular limit is intended: one unit cell, no periodic image coupling,
+`g = 0` only. Same name and contract as the semiempirical
+`PeriodicDFTB0Options.gamma_only_0`, and the same idea as the GAPW route's
+`gapw_molecular_limit`. It declares intent and changes no sum: a vacuum-padded
+box whose cutoff genuinely isolates `g = 0` computes exactly the numbers it
+computed before the guard existed. **If you run a molecule or atom in a large
+vacuum box at Gamma, set this flag.**
+
+Scope: the collapse mode only. The related corner-pair loss — images whose
+*translation* is out of range although some AO *pair* built from them is in
+range, worth 7.2e-01 on a LiH rocksalt overlap element at the shipped 15-bohr
+cutoff — remains behind `LatticeSumOptions.pair_complete_1e`, whose per-family
+default flip is tracked separately. Only the three native drivers are guarded;
+the Python-assembled periodic routes (UHF/UKS/ROHF/ROKS and the Ewald / GDF /
+GAPW / BIPOLE families) still need the same declaration threaded through their
+own entry points.
+
+### Documentation: how to compare a solvated run against another code (#169)
+
+#169 held a CH3COOH/def2-TZVP CPCM comparison against ORCA on "response
+components", because raw solvated totals looked incomparable by 5.46e-2 Ha.
+Re-measured on current main against the archived ORCA 6.1.1 reference, on
+ORCA's own geometry: the in-solvent totals agree to **0.93 mHa**. The 54.6 mHa
+was `vibeqc#148` on the archived tracker: the pre-v0.15.138 banner printed
+the inner SCF's E_SCF^{w/V_q}, and the harvester compared that against ORCA's
+in-solvent total. The run's own solvation block was correct throughout, and
+current main reproduces its numbers (`e_solv` to 6e-10 Ha, in-solvent total
+to 4e-8 Ha).
+
+The solvent-response components differ by -1.29 mHa. Matching ORCA's named
+knobs makes that **worse**, not better: with ORCA's epsilon (80.1510) and its
+hydrogen radius (1.32 A against vibe-qc's 1.44 A) the gap widens to -3.76 mHa,
+because the tighter cavity deepens the response past ORCA's. The residual is
+the surface construction itself -- switched Lebedev per sphere against a
+Gaussian-charge surface at constant charge density -- which no parameter
+matches away. Also measured: a geometry whose C=O bonds differ by at most
+0.07 A moves the component by 2.5 mHa, twice the cross-code gap, so both sides
+must run identical coordinates.
+
+`docs/user_guide/solvation.md` gains a "Comparing a solvated run against
+another code" section carrying the measurements, the quantity-matching rules
+and ORCA's defaults; `tests/test_solvation_cpcm.py` pins the documented
+ORCA-matched radii recipe so the guide cannot rot. No behaviour changes.
+
+### OpenTrustRegion theory and accurate citation output
+
+Add a theory chapter covering orbital rotations, physical response, the
+quadratic trust-region model, step acceptance, subsolver metrics and internal
+stability. Render the defining paper from the runtime citation database and
+include its issue number. Executed OpenTrustRegion SCF now selects its own
+citation route without default DIIS credit. `vibeqc-cite` preserves recorded
+runtime citation selections when printing or regenerating bibliographies,
+with plan-based fallback for older manifests that lack recorded entries.
+
+### Tests: the k-pair star planner is gated on every lattice system (#237)
+
+The symmetry-reduced periodic fit's planner was gated on cubic, tetragonal and
+hexagonal cells only. Trigonal (R-3m), orthorhombic (Fmmm) and monoclinic
+(C2/m) cells now join them, one of them in a general orientation where the
+operations are dense rotations rather than signed permutations, and one gates
+the reduced fold end to end through such a rotation.
+
+Every relation each of those plans emits was reconstructed and compared
+against an independent build at two Bloch cell-list cutoffs before its
+reduction was asserted: the worst is 1.2e-09 relative and none moves between
+15 and 25 bohr. On the same cells a planner without the two admissibility
+tests reaches the same reduction counts through shift-varying operations, at
+2.6e-03 to 1.3e-02 relative, converging away only as the cell list widens --
+the LiH (2,2,1) pattern of #237 on three further lattice systems.
+
+A further gate pins that admissibility follows the lattice image a cell stores
+for an atom: the same Fmmm crystal reduces 16 builds to 10, or not at all,
+depending on which image of H it carries, because the truncated operator
+itself depends on it.
+
+### Standalone relocalization worker
+
+- Add `python -m vibeqc_relocalize` and `vibe-qc-relocalize`, with a versioned
+  JSONL request/event protocol, native computational capability probes,
+  structured refusals and diagnostics confined to stderr. Supplied molecular
+  occupied orbitals support IBO, Boys and Pipek-Mezey using exact archived AO
+  shells. RHF is an explicit option, never a fallback.
+- Enforce UTF-8 transport and reject booleans in numeric arrays, including
+  mixed arrays, before native computation. Verify the worker in a separate
+  wheel installation and document the native-library installation requirement.
+- Expose an opt-in experimental `aiccm-wannier` route for complete finite-BvK
+  Gamma/cyclic meshes with supplied real or complex orbitals and overlap
+  blocks. Check orthonormality and subspace preservation; reject unsupported
+  spin, fractional occupations, periodic molecular-method requests and
+  incomplete metadata. Document the viewer integration and QVF format gaps.
+
+### TREXIO tutorials, literature checks and periodic READ
+
+Added runnable molecular RHF/UHF/ECP, CASCI/CASSCF/FCI, periodic multi-k
+restart and backend-conversion examples, with two worked tutorials.
+The reference documents comparisons with published TREXIO normalization
+factors and independent PySCF energy reconstructions. QVF remains the
+default; TREXIO is an additional opt-in output.
+
+The periodic runner now admits TREXIO HDF5 files and text directories for
+multi-k READ. Its early QVF-only guard previously rejected these sources
+before the existing TREXIO-aware restart machinery could validate them.
+Both backends are covered through the public runner.
+
+## [v0.17.5] - 2026-09-16 - *Tew's Tern*
+
+This release collects the accumulated changes on `main` since v0.17.4,
+including the #281 correctness fix for the experimental chi finite-torus
+DLPNO-MP2 frozen core. QVF remains the default output format. The CI companion
+pin moves to the published vibe-view v2.17.1; the QVF reference pin remains
+v0.1.0-docs.1. Patches inherit Tew's Tern.
+
+### Known issues carried from earlier releases (#206, #196, #306)
+
+Three problems are carried into this release unfixed. None of them is caused by
+a change in this release, and no measurement in this release supersedes the
+numbers recorded for them.
+
+* **#206, the range-separated three-centre build.** 3D periodic GDF
+  calculations still run far slower than they did in v0.17.0. The blocking lane
+  `tests/test_periodic_molden_gamma_export.py` took 21.0 s in CI at v0.17.0 and
+  641.6 s at v0.17.1 with the test unchanged. The short-range auxiliary image
+  enumeration change shipped in v0.17.2; it still has no independent numerical
+  or performance verdict, so no resolution is claimed.
+* **#196, the one-electron AO cutoff widening.** Periodic GDF still widens the
+  one-electron AO cutoff to 69.9 bohr on a two-atom cell, selecting 12527
+  lattice cells against 135 before. On that reproduction the calculation did not
+  reach its first SCF iteration in 20 minutes. It is a separate cause from
+  #206's lane slowdown. A candidate change that screens the periodic
+  nuclear-attraction lattice domain is proposed but not merged, and is not part
+  of this release.
+* **#306, molecular GFN2-xTB regressed between v0.17.1 and v0.17.4.** This is
+  already present in the shipped v0.17.4 and is inherited here unchanged; its
+  cause is not yet known and no fix is claimed. Two GFN2-xTB single points that
+  converged at v0.17.1 no longer converge: norbornadiene (2754 SCC iterations,
+  -19.1266261726 Ha) and p-benzoquinone (2693 SCC iterations, -22.3978547752
+  Ha) now exhaust the 3600-iteration ceiling and refuse. One energy moved:
+  thymine GFN2-xTB went -23.0084139465 to -23.0221115013 Ha, a shift of
+  -1.370e-02 Ha, while 258 of the 262 molecular rows compared on the same host
+  between the two releases stayed identical to 1e-9 and the other three differ
+  by 1e-7 or less. It was found by independently re-running an article's
+  archived decks on the release runtime; the post-cut v0.17.4 inventory
+  separately shows `tests/test_gfn2_xtb.py` failing 2 of 170, and whether that
+  has the same root cause is not established. A bisect across the v0.17.1 to
+  v0.17.4 window is in progress.
+
+### Fixed
+
+- Experimental chi finite-torus DLPNO-MP2 now preserves the solver's frozen
+  core in its complete-space correction. Restricted and unrestricted local
+  MP2/CCSD(T) reject frozen-core localization until separate core and active
+  projectors are supported; canonical `localise="none"` remains available
+  (#281).
+
+- Unsupported FRAGMO requests on the experimental AICCM real-Gamma and
+  four-center routes now retain the requested guess name in the diagnostic
+  instead of reporting the internal READ transport selector (#270).
+
+- Requesting unavailable IAO population analysis no longer suppresses
+  separately requested QVF localization of a supported SCF reference, such as
+  the reference orbitals in an MP2 calculation. The population result remains
+  explicitly unavailable while existing reference-localization output is
+  preserved.
+
+### Fixed: open-shell transition-metal molecules start from the right basin
+
+`AUTO` now resolves a molecular open-shell system containing a d- or f-block
+atom to `PATOM` instead of bare `SAD`. The `SAD` construction superposes free
+atom Hund densities, so every open-shell ligand arrives carrying its own free
+atom moment even where the molecule binds it closed shell. On FeCl3 (sextet,
+cc-pVDZ) that trapped a symmetry-broken solution 90.05 mHa above the ground
+state, with one chloride left as a radical cation, which converged and then
+certified a negative internal Hessian eigenvalue. `PATOM` applies the same
+Hund seed and then re-polarises it in field, reaching the ORCA 6.1.1 ground
+state (-2641.1344915780 Ha, S^2 = 8.767533) in 23 iterations, internally
+stable and with no stability restart. Supplying `atomic_spins` still holds
+`AUTO` on `SAD`, so a deliberate antiferromagnetic seed is never overridden,
+and routes without `PATOM` fall back to their advertised `SAD` construction.
+
+### Fixed: the CASSCF gradient no longer describes itself as incomplete
+
+The W^z retirement corrected the physics and the manual, but left five
+user-facing surfaces still calling the CASSCF analytic gradient incomplete,
+quoting it as "87 % of the full CP-MCSCF gradient", or advertising a "gated
+W^z correction": the `vibeqc.gradient` module docstring and the
+`casscf_gradient`, `01_casscf_h2o`, `02_casscf_gradient` and
+`parity_casscf_gradient` examples. A reader of those surfaces would reject or
+mischaracterise the corrected production path. They now state the shipped
+contract: the analytic gradient is the complete derivative of a variational
+CASSCF energy, matching the full-energy finite difference to ~1.6e-7 Ha/bohr,
+with `compute_wz=True` a warned no-op alias and `compute_wz="numerical"` the
+finite-difference cross-check. A regression pins every one of those surfaces
+against the retracted wording.
+
+### Added: a declared crystal system refuses a contradicting lattice (#128)
+
+vibe-qc reads lattice vectors as the COLUMNS of `lattice`. A row-oriented
+matrix is still a full-rank lattice, so it is accepted and produces a sheared,
+physically different crystal that converges and reports plausible numbers;
+`det L == det L.T`, so a volume check is blind to it. Nothing geometric can
+refuse the transpose in general, because both readings are valid lattices.
+Only a declaration can, and there was no way to make one.
+
+`check_crystal_system(lattice_or_system, "hexagonal")` now refuses a lattice
+whose metric contradicts the declaration, and `lattice_from_vectors` takes a
+`crystal_system=` keyword so the declaration can be made where the docs already
+tell users to build cells. The refusal names the condition that failed, the
+measured lengths and angles in bohr and Angstrom, and, when the other reading
+of the same matrix would have satisfied the declaration, says so and points at
+the orientation-free constructor. The lattice is never transposed for the
+caller: both readings are valid cells, and silently picking one would rotate
+the lattice relative to the unchanged Cartesian atom positions.
+
+What a declaration catches is stated plainly rather than oversold. A
+transposed hexagonal or rhombohedral cell is caught, which is what every
+instance recorded in the issue was. A cubic, tetragonal or orthorhombic
+declaration is not an orientation check at all, because those matrices are
+symmetric in the usual Cartesian setting and a cubic metric is
+transpose-invariant in any frame; it still catches a mistyped angle. A
+transposed monoclinic or triclinic cell stays inside its own system and is not
+caught. Conditions are equalities only, so a cubic cell declared orthorhombic
+is accepted, and a cubic declaration admits the face- and body-centred
+primitive settings as well as the conventional cell.
+
+### Fixed: basis-optimization marshalling built a sheared crystal from a correct one (#128)
+
+`vibeqc.basis_optimization.calculators` moved a vibe-basis `Structure` into a
+`PeriodicSystem` by handing `lattice_matrix_angstrom()`, documented as "rows =
+a, b, c vectors", straight to the COLUMNS-consuming constructor, while the
+fractional-to-Cartesian product beside it read the same matrix as rows and so
+placed the atoms correctly. A hexagonal structure with a = b = 2.504 Angstrom
+and gamma = 120 became a = 2.7996, b = 2.1685, gamma = 116.565: a different
+crystal. The reverse marshaller unpacked the column matrix as rows in the same
+way, so the two cancelled on a round trip and the cubic fixture covering them
+could not tell the difference, a diagonal matrix being its own transpose. Both
+directions now use the column convention, the marshaller enforces the
+`crystal_system` the `Structure` already declares, and the round trip is
+covered by a hexagonal cell that fails if either direction is corrected alone.
+Cubic compounds were unaffected.
+
+### Added: a declared space group refuses a contradicting structure (#128)
+
+`check_space_group(system, "Fd-3m")` takes a Hermann-Mauguin symbol or an
+International Tables number, hands the lattice and the basis to spglib, and
+refuses a structure whose detected group is not the declared one. This is the
+"or space group" half of the issue's first ask, and it answers a different
+question from `check_crystal_system`: that one is a statement about the
+lattice, tested on the metric alone, while this is a statement about the whole
+structure, so it catches an atom on the wrong site, a mistranscribed
+fractional coordinate, or a basis that broke the symmetry the caller believed
+the structure had. `symprec=` is exposed rather than hidden because it changes
+the answer: a cell 0.1% off cubic reads as P4/mmm at the 1e-4 default and
+Pm-3m at 1e-2. Only 3-D cells are accepted, since for a slab spglib would
+treat the synthesized vacuum axis as periodic and report a group that depends
+on the vacuum thickness.
+
+It is complementary to the crystal-system check, not stronger. Measured on the
+standard cell constructions with the Cartesian atom positions held fixed and
+only the lattice transposed, which is the shape of every instance this issue
+records: hexagonal goes P-6m2 (187) to Pm (6) and is caught, while monoclinic
+P2/m and triclinic P-1 keep their groups and are not. Neither check sees
+those. A detected space group must also never be used to derive a crystal
+system for the metric check, because the basis lowers the group while the
+metric is untouched: an exactly hexagonal lattice with a symmetry-breaking
+basis reports Pm, and a metric check driven off that number would refuse a
+legitimate hexagonal cell.
+
+### Changed: basis-optimization marshalling enforces the symmetry a Structure declares (#128)
+
+`vibeqc.basis_optimization.calculators` already checked the `crystal_system` a
+vibe-basis `Structure` carries when marshalling it into a `PeriodicSystem`; it
+now checks the declared space group too, which is the tighter claim. The check
+keys on `crystal_spacegroup`, the integer, and not on the `spacegroup` string:
+`_structure_from_periodic_system` clears the integer to zero after a
+relaxation, because it describes the input geometry and a relaxation has moved
+the atoms, while the string is carried over and goes stale. A zero therefore
+means the record's symmetry data is no longer trustworthy and the check is
+skipped, which is the intent rather than a loophole; keying on the string
+instead would fail closed on every relaxed structure fed back in.
+
+The first thing this caught was two mislabelled fixtures in the repository's
+own engine tests. A cell with one cation at the origin and one anion at the
+body centre is `Pm-3m`, the CsCl arrangement, not rocksalt's `Fm-3m`, which
+needs four formula units in the conventional cell; and a boron nitride sheet
+is `P-6m2` rather than `P6/mmm`, because the two different elements remove the
+horizontal mirror and the inversion of the elemental lattice. Only the labels
+were wrong, so the geometries are unchanged and no energy moved.
+
+### Added: molecular QCSchema input and result interchange
+
+Read and write QCSchema JSON molecules and atomic inputs/results. The
+`run_qcschema` adapter runs molecular energies and HF gradients or Hessians,
+with explicit errors for unsupported molecule fields and job options.
+The public imports are retained alongside other top-level exports. A worked
+H2 tutorial and runnable JSON examples compare HF, MP2, and FCI/STO-3G with
+a published Born-Oppenheimer energy.
+
+The adapter emits QCSchema atomic input/output **version 1** and molecule
+**version 2** documents, and the manual now states that boundary: QCElemental's
+newer `models.v2` classes use a different schema, so these dictionaries cannot
+be passed to them directly. QCElemental itself stays optional and is not needed
+for file I/O or calculation. As a concrete environment limitation, QCElemental
+0.51.2's legacy `models.AtomicInput` and `models.AtomicResult` cannot be
+instantiated on Python 3.14, because their Pydantic v1 backend is unavailable
+there; the official QCSchema JSON schemas still validate the input and output
+files in that environment.
+
+### Added
+
+- Opt-in molecular RHF/RKS/UHF/UKS IAO charges, spin populations and
+  spin-resolved IAO-Wiberg bond orders through `run_job(iao_analysis=True)`.
+  MINI/symmetric analysis runs independently of localization and QVF, with
+  dense JSON results, text display thresholds, QVF charge compatibility,
+  citations and explicit unavailable reasons. Rank-deficient IAO spaces are
+  refused instead of silently truncating the reference. Periodic analysis is
+  explicitly gated pending k-point and lattice bond conventions.
+
+### TREXIO tutorials, literature checks and periodic READ
+
+Added runnable molecular RHF/UHF/ECP, CASCI/CASSCF/FCI, periodic multi-k
+restart and backend-conversion examples, with two worked tutorials.
+The reference documents comparisons with published TREXIO normalization
+factors and independent PySCF energy reconstructions. QVF remains the
+default; TREXIO is an additional opt-in output.
+
+The periodic runner now admits TREXIO HDF5 files and text directories for
+multi-k READ. Its early QVF-only guard previously rejected these sources
+before the existing TREXIO-aware restart machinery could validate them.
+Both backends are covered through the public runner.
+
+### Standalone relocalization worker
+
+- Add `python -m vibeqc_relocalize` and `vibe-qc-relocalize`, with a versioned
+  JSONL request/event protocol, native computational capability probes,
+  structured refusals and diagnostics confined to stderr. Supplied molecular
+  occupied orbitals support IBO, Boys and Pipek-Mezey using exact archived AO
+  shells. RHF is an explicit option, never a fallback.
+- Enforce UTF-8 transport and reject booleans in numeric arrays, including
+  mixed arrays, before native computation. Verify the worker in a separate
+  wheel installation and document the native-library installation requirement.
+- Expose an opt-in experimental `aiccm-wannier` route for complete finite-BvK
+  Gamma/cyclic meshes with supplied real or complex orbitals and overlap
+  blocks. Check orthonormality and subspace preservation; reject unsupported
+  spin, fractional occupations, periodic molecular-method requests and
+  incomplete metadata. Document the viewer integration and QVF format gaps.
+
+## [v0.17.4] - 2026-09-16 - *Tew's Tern*
+
+### Fixed: exact integer counts for periodic meshes and chi extensions (#274)
+
+Public k-point builders, runner/ASE/dimer mesh adapters, GDF count and IBZ metadata
+readers, BIPOLE supercell/density helpers, four-center CCM and chi extension
+controls reject floats, booleans and strings instead of silently converting
+them to a different finite torus. Valid integer counts retain each route's
+scalar, padding and inactive-axis conventions.
+
 ### Fixed: retain automated verification brief ordering (#217)
 
 The contributor guide again requires automated contributors to post their

@@ -12,13 +12,15 @@ include:
 
 # Portable build and validation rules. Site deployment jobs are maintained separately.
 stages:
+  - privacy
   - test
   - build
   - deploy
 
 variables:
   QVF_TAG: "v0.1.0-docs.1"
-  VIBE_VIEW_TAG: "v2.17.0"
+  VIBE_VIEW_TAG: "v2.18.1"
+  VIBEQC_RELEASE_BASE: "v0.17.7"
 
 workflow:
   auto_cancel:
@@ -35,7 +37,26 @@ workflow:
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes: &website_paths
         - "website/**/*"
+    - if: '$CI_COMMIT_BRANCH == "main"'
     - when: never
+
+source-privacy:
+  stage: privacy
+  image: python:3.13-slim-bookworm
+  tags:
+    - docker
+  before_script:
+    - apt-get -qq update && apt-get -qq install -y --no-install-recommends git
+  script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - python .githooks/source_privacy.py --tree "$CI_COMMIT_SHA"
+    - python -m unittest discover -s .githooks -p "test_privacy*.py"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "release"'
+    - if: '$CI_COMMIT_BRANCH =~ /^release-candidate\//'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
 
 ci-path-policy:
   stage: test
@@ -92,12 +113,20 @@ build-test:
       libboost-dev libeigen3-dev libgmp-dev libopenblas-dev
   artifacts:
     name: build-test-diagnostics-${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}
-    when: on_failure
+    when: always
     expire_in: 2 weeks
     paths:
       - third_party/*/build.log
       - blocking.jsonl
+      - test-results/native-runtime.json
+      - test-results/native-core/
+      - test-results/viewer-contract.xml
+    reports:
+      junit: test-results/viewer-contract.xml
   script:
+    - unset VIBEQC_ALLOW_STALE_CORE
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - test "$(git rev-parse HEAD)" = "$CI_COMMIT_SHA"
     - df -h "$CI_PROJECT_DIR" | tail -n 2 && head -n 3 /proc/meminfo
     - >-
       if printf '%s' "${CI_COMMIT_BRANCH:-}" | grep -Eq '^release-candidate/';
@@ -112,12 +141,71 @@ build-test:
         bash scripts/install.sh --current --extras test --venv .venv;
       fi;
       if [ -z "${CCACHE_DISABLE:-}" ]; then ccache --show-stats; fi
-    - .venv/bin/python -c "import vibeqc; print('import OK', vibeqc.__version__)"
+    - |
+      .venv/bin/python - <<'PY'
+      import hashlib, json, os, shutil, subprocess, sys, tomllib
+      from pathlib import Path
+      import vibeqc
+      from vibeqc import _vibeqc_core
+      from vibeqc.banner import library_versions
+      root = Path(os.environ["CI_PROJECT_DIR"]).resolve()
+      package = Path(vibeqc.__file__).resolve()
+      core = Path(_vibeqc_core.__file__).resolve()
+      sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+      version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+      assert not os.environ.get("VIBEQC_ALLOW_STALE_CORE"), "stale-core override enabled"
+      assert sha == os.environ["CI_COMMIT_SHA"], (sha, os.environ["CI_COMMIT_SHA"])
+      assert package.is_relative_to(root / "python"), package
+      assert vibeqc.__version__ == version, (vibeqc.__version__, version)
+      if os.environ.get("CI_COMMIT_BRANCH", "").startswith("release-candidate/"):
+          newest = max(p.stat().st_mtime for p in (root / "cpp").rglob("*") if p.is_file())
+          assert core.stat().st_mtime >= newest, "compiled core predates source"
+          assert os.environ.get("CCACHE_DISABLE") == "1"
+          assert os.environ["SKBUILD_BUILD_DIR"] == str(root / "build-clean" / os.environ["CI_PIPELINE_ID"])
+      with core.open("rb") as stream:
+          core_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+      evidence = dict(source_sha=sha, version=version, python=sys.executable,
+                      package=str(package), core=str(core), core_sha256=core_hash,
+                      build_dir=os.environ.get("SKBUILD_BUILD_DIR"),
+                      ccache_disabled=os.environ.get("CCACHE_DISABLE"),
+                      stale_core_override=False, libraries=library_versions())
+      target = root / "test-results" / "native-runtime.json"
+      target.parent.mkdir(exist_ok=True)
+      if os.environ.get("CI_COMMIT_BRANCH", "").startswith("release-candidate/"):
+          artifact = target.parent / "native-core"
+          artifact.mkdir(exist_ok=True)
+          saved_core = artifact / core.name
+          shutil.copy2(core, saved_core)
+          with saved_core.open("rb") as stream:
+              assert hashlib.file_digest(stream, "sha256").hexdigest() == core_hash
+          shutil.copy2(Path(os.environ["SKBUILD_BUILD_DIR"]) / "CMakeCache.txt", artifact / "CMakeCache.txt")
+          evidence["core_artifact"] = str(saved_core.relative_to(root))
+          evidence["python_version"] = sys.version
+          evidence["native_source_tree"] = subprocess.check_output(["git", "rev-parse", "HEAD:cpp"], text=True).strip()
+          evidence["linked_dependency_paths"] = subprocess.check_output(["ldd", str(core)], text=True)
+          dependency_paths = {word for word in evidence["linked_dependency_paths"].split()
+                              if word.startswith("/") and Path(word).is_file()}
+          dependency_paths.add(sys.executable)
+          evidence["dependency_sha256"] = {}
+          for path in sorted(dependency_paths):
+              with Path(path).open("rb") as stream:
+                  evidence["dependency_sha256"][path] = hashlib.file_digest(stream, "sha256").hexdigest()
+          evidence["basis_data_path"] = os.environ.get("LIBINT_DATA_PATH")
+          evidence["artifact_scope"] = "Core and build receipt only; qualify dependencies and interpreter before reuse."
+      target.write_text(json.dumps(evidence, indent=2) + "\n")
+      print(target.read_text())
+      PY
     - >-
       if printf '%s' "${CI_COMMIT_BRANCH:-}" | grep -Eq '^release-candidate/';
       then
       .venv/bin/python scripts/test_gate/run_full_suite.py --wt . --py .venv/bin/python --tier T1 --out blocking.jsonl &&
-      .venv/bin/python scripts/test_gate/gate_verdict.py blocking.jsonl scripts/test_gate/known_reds_baseline.json --wt . --py .venv/bin/python;
+      .venv/bin/python scripts/test_gate/gate_verdict.py blocking.jsonl scripts/test_gate/known_reds_baseline.json --wt . --py .venv/bin/python &&
+      git fetch --no-tags origin "refs/tags/$VIBEQC_RELEASE_BASE:refs/tags/$VIBEQC_RELEASE_BASE" &&
+      .venv/bin/python scripts/test_gate/run_full_suite.py --wt .
+      --changed-since "${VIBEQC_RELEASE_BASE:?candidate requires VIBEQC_RELEASE_BASE}"
+      --impact-mode release --list-affected-lanes &&
+      .venv/bin/python scripts/test_gate/run_full_suite.py --wt .
+      --changed-since "$VIBEQC_RELEASE_BASE" --impact-mode release --dry-run;
       else
       echo "regression pytest deferred: ordinary main push uses compile/import T0";
       fi;
@@ -133,21 +221,30 @@ build-test:
       .venv/bin/pip install -e '/tmp/vibe-view[test]' &&
       useradd --no-create-home --uid 10002 --user-group vvtest &&
       install -d -m 0700 -o vvtest -g vvtest "/tmp/vvtest-$CI_JOB_ID" &&
+      install -d -m 0755 -o vvtest -g vvtest "$CI_PROJECT_DIR/test-results" &&
       chown -R vvtest:vvtest /tmp/vibe-view &&
       runuser -u vvtest -- env HOME="/tmp/vvtest-$CI_JOB_ID"
       git config --global --add safe.directory "$CI_PROJECT_DIR" &&
       runuser -u vvtest -- env HOME="/tmp/vvtest-$CI_JOB_ID"
       PYTHONPYCACHEPREFIX="/tmp/vvtest-$CI_JOB_ID/pycache"
       PIP_CACHE_DIR="/tmp/vvtest-$CI_JOB_ID/pip-cache"
+      VIBEQC_RELOCALIZE_PYTHON="$CI_PROJECT_DIR/.venv/bin/python"
       PYVISTA_OFF_SCREEN=True sh -c 'test "$(id -u)" -ne 0 &&
-      exec xvfb-run -a .venv/bin/python -m pytest -q -p no:cacheprovider
+      .venv/bin/python -c "import vibeqc; import vibeqc._vibeqc_core; import vibeqc_relocalize" &&
+      exec xvfb-run -a .venv/bin/python -m pytest -q -ra -p no:cacheprovider
+      --junitxml="$CI_PROJECT_DIR/test-results/viewer-contract.xml"
       /tmp/vibe-view/tests/test_container_submission.py
       /tmp/vibe-view/tests/test_details_panel_sandbox.py
       /tmp/vibe-view/tests/test_in_memory_handover.py
       /tmp/vibe-view/tests/test_job_container_lifecycle.py
       /tmp/vibe-view/tests/test_kind_drift.py
       /tmp/vibe-view/tests/test_live_opt.py
-      /tmp/vibe-view/tests/test_wavefunction_libint_parity.py';
+      /tmp/vibe-view/tests/test_wavefunction_libint_parity.py
+      /tmp/vibe-view/tests/test_relocalize.py
+      /tmp/vibe-view/tests/test_wavefunction_gradient.py
+      /tmp/vibe-view/tests/test_manifest_root_blocks.py
+      /tmp/vibe-view/tests/test_plot_renderers.py
+      /tmp/vibe-view/tests/test_controller_state.py::test_vq_submit_job_container_mode_sends_a_pending_qvf';
       else
       echo "producer/consumer contract deferred: ordinary main push uses compile/import T0";
       fi;
@@ -273,6 +370,7 @@ docs-build:
       changes: &docs_paths
         - ".gitlab-ci.yml"
         - "CHANGELOG.md"
+        - "changelog.d/**/*"
         - "CITATION.cff"
         - "CONTRIBUTING.md"
         - "README.md"
@@ -281,7 +379,7 @@ docs-build:
 
 website-test:
   stage: test
-  needs: []
+  needs: ["source-privacy"]
   image: node:22-slim
   tags:
     - docker

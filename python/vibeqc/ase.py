@@ -82,6 +82,7 @@ from .ecp_metadata import (
     options_carry_ecp,
     reposition_ecp_centres,
 )
+from .density_fitting import resolve_default_jk_aux
 from .gradient_options import gradient_options_from_scf
 from .ase_optimizers import (  # noqa: F401  (re-exported for user scripts)
     ase_optimizer_availability,
@@ -439,6 +440,10 @@ class VibeQC(Calculator):
                 method.lower(),
                 rks_options=self._rks_options if method == "RKS" else None,
                 uks_options=self._uks_options if method == "UKS" else None,
+                # The displaced energies must be on the calculator's own
+                # surface: gas-phase FD under a reaction field is the defect
+                # this fallback exists to avoid.
+                solvent=self._solvent,
                 step_bohr=self.fd_step_bohr,
             ),
             dtype=float,
@@ -555,6 +560,11 @@ class VibeQC(Calculator):
             "ROHF": self._rohf_options,
         }[method]
         self._sync_ecp_centres(method, method_opts, mol, system_changes)
+        # A fitted SCF requested without an aux basis gets the default JK
+        # fit for this orbital basis, as run_job's single-point path does
+        # (#362); the drivers below build the aux themselves and would
+        # otherwise refuse.
+        resolve_default_jk_aux(method_opts, self.parameters["basis"])
 
         if method == "ROHF" and self._solvent is not None:
             raise NotImplementedError(
@@ -646,7 +656,18 @@ class VibeQC(Calculator):
 
         if "forces" in properties:
             sol_result = getattr(result, "solvent_result", None)
-            if sol_result is not None:
+            if (
+                sol_result is not None
+                and method in ("RKS", "UKS")
+                and self._missing_gradient_terms(method)
+            ):
+                # GitLab #571, in solvent: cpcm_gradient's gas-phase piece is
+                # that same incomplete analytic kernel, so the reaction field
+                # would be added to a wrong surface. Differentiate the solvated
+                # energy numerically instead -- _fd_gradient carries this
+                # calculator's solvent into every displaced evaluation.
+                gradient = self._fd_gradient(mol, method)
+            elif sol_result is not None:
                 # CPCM-aware analytic gradient -- includes the gas-phase
                 # SCF piece, the closed-form (dA/dR) and (dV^nuc/dR)
                 # contributions, and an integral-FD (dV^elec/dR) piece.

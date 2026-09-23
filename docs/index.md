@@ -226,8 +226,9 @@ or tag), and other knobs, see [installation.md](installation.md)
 for the full surface and the manual `setup_native_deps.sh` recipe.
 `git clone` selects the project's default branch, `main`. The command above
 keeps the development line with `--dev`; the flag-free installer selects
-`release`, which follows approved tags. Use `--branch vX.Y.Z` to select
-a tag that exists in this repository for reproducibility.
+`release` when that branch exists on the selected origin, or its newest
+stable `vX.Y.Z` tag otherwise. Use `--branch vX.Y.Z` to pin an exact
+published tag for reproducibility.
 
 Public source repositories are listed in
 [repositories and downloads](installation.md#repositories-and-downloads),
@@ -491,6 +492,7 @@ toolset_lifecycle
 quickstart
 using_claude
 running
+qcschema
 good_practices
 troubleshooting
 updating
@@ -503,6 +505,7 @@ tour
 :caption: QVF and vibe-view
 
 visualization
+relocalization_worker
 ```
 
 ```{toctree}
@@ -559,6 +562,7 @@ api/index
 features
 validation
 roadmap
+roadmap_history
 ```
 
 ```{toctree}

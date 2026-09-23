@@ -6470,6 +6470,8 @@ _libxc_always           = ["libxc_2018"]
 
 
 [routes.methods]
+# Selected from the executed orbital-optimizer report, replacing DIIS credit.
+"opentrustregion"       = ["greiner_opentrustregion_2026"]
 # Not a method name: the foundational monograph for the LCAO crystalline-orbital
 # periodic HF treatment. registry.assemble() fires this for any periodic job
 # (periodic=True), the periodic analogue of an always-on method reference -- the
@@ -7286,6 +7288,7 @@ _libxc_always           = ["libxc_2018"]
 # construction is only defined relative to a minimal free-atom basis, and
 # vibe-qc uses MINI (Knizia's own Table 1 footnote-c variant) as that B2.
 "ibo"                   = ["knizia_ibo_2013", "huzinaga_gtos_1984"]
+"iao_wiberg"            = ["knizia_ibo_2013", "huzinaga_gtos_1984", "wiberg_bond_index_1968"]
 "vpt2"                  = ["barone_vpt2_2005"]
 "somf"                  = ["hess_somf_1996"]
 "frequency_scaling"     = ["wong_scaling_1996"]
@@ -7421,3 +7424,15 @@ always = [
     "derenzo_2000",
     "barandiaran_seijo_aimp_1988",
 ]
+
+[entries.greiner_opentrustregion_2026]
+kind = "article"
+doi = "10.1021/acs.jctc.5c01576"
+authors = ["Greiner, Jonas", "Høyvik, Ida-Marie", "Lehtola, Susi", "Eriksen, Janus J."]
+title = "A Reusable Library for Second-Order Orbital Optimization Using the Trust Region Method"
+journal = "Journal of Chemical Theory and Computation"
+year = 2026
+volume = 22
+issue = 2
+pages = "881-895"
+bibtex_key = "greiner_opentrustregion_2026"

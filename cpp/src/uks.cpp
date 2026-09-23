@@ -1,4 +1,5 @@
 #include "vibeqc/uks.hpp"
+#include "vibeqc/orbital_scf.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <algorithm>
@@ -716,9 +717,29 @@ UKSXCPotential evaluate_uks_xc_potential(
     return UKSXCPotential{xc.V_alpha, xc.V_beta, xc.energy};
 }
 
+OrbitalXCFunction make_orbital_uks_xc(const BasisSet& basis, const Grid& grid, const std::string& name) {
+    auto f = std::make_shared<Functional>(name, 2);
+    validate_orbital_xc(*f);
+    auto ao = std::make_shared<AOValues>(evaluate_ao_with_gradient(basis, grid.points));
+    auto pool = std::make_shared<UksXcFunctionalPool>(
+        make_uks_xc_functional_pool(name, grid.points.rows()));
+    return [basis, grid, f, ao, pool](const Eigen::MatrixXd& da, const Eigen::MatrixXd& db, bool response) {
+        OrbitalXC out;
+        const auto value = build_uks_xc(*f, basis, grid, da, db, nullptr, *pool);
+        out.energy = value.energy; out.alpha = value.V_alpha; out.beta = value.V_beta;
+        if (response) out.unrestricted_kernel = make_polarised_xc_kernel_builder(
+            *f, grid, ao->values, ao->gradients, da, db);
+        return out;
+    };
+}
+
 UKSResult run_uks(const Molecule& mol,
                   const BasisSet& basis,
                   const UKSOptions& opts) {
+    validate_orbital_optimizer(opts);
+    if (opts.orbital_optimizer == "opentrustregion"
+        && (opts.spinlock_mode != SpinlockMode::OFF || !opts.atomic_spins.empty()))
+        throw std::invalid_argument("OpenTrustRegion does not support spin schedules, MOM holds or targeted atomic spin states; select native");
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), &mol);
     validate_scf_max_iter(opts.max_iter, "run_uks");
@@ -991,6 +1012,7 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
                               const Eigen::MatrixXd* mom_anchor_alpha = nullptr,
                               const Eigen::MatrixXd* mom_anchor_beta = nullptr,
                               int mom_anchor_iters = 0) {
+    validate_orbital_optimizer(opts);
     validate_scf_max_iter(opts.max_iter, "run_uks_scf_with_jk");
     if (n_alpha < 0 || n_beta < 0) {
         throw std::invalid_argument(
@@ -1140,6 +1162,26 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
     {
         const double dS = 0.5 * (n_alpha - n_beta);
         result.s_squared_ideal = dS * (dS + 1.0);
+    }
+
+    if (opts.orbital_optimizer == "opentrustregion") {
+        if (opts.spinlock_mode != SpinlockMode::OFF || !opts.atomic_spins.empty())
+            throw std::invalid_argument("OpenTrustRegion does not support targeted spin states or spinlock; select native");
+        validate_orbital_xc(functional);
+        OrbitalXCFunction xc = [&](const Eigen::MatrixXd& da, const Eigen::MatrixXd& db, bool response) {
+            const auto value = build_uks_xc(functional, basis, grid, da, db, vv10_grid, xc_functionals);
+            result.xc_batch_workers_used = std::max(result.xc_batch_workers_used, value.batch_workers);
+            OrbitalXC out; out.energy = value.energy; out.alpha = value.V_alpha; out.beta = value.V_beta;
+            if (response) out.unrestricted_kernel = make_xc_kernel(da, db);
+            return out;
+        };
+        const auto run = run_orbital_scf(opts, X, S, Hcore, E_nuc, jk,
+            D_alpha, D_beta, n_alpha, n_beta, false, alpha_hf, xc);
+        assign_orbital_unrestricted(result, run, E_nuc, S, n_alpha, n_beta);
+        result.e_coulomb = run.state.coulomb;
+        result.e_hf_exchange = run.state.exchange;
+        result.e_xc = run.state.xc.energy;
+        return result;
     }
 
     // ORCA NOITER compatibility: evaluate the initial spin densities once,
@@ -2257,6 +2299,7 @@ UKSResult run_uks_scf_with_jk(const BasisSet& basis,
         basis, n_alpha, n_beta, S, Hcore, E_nuc, jk, grid, opts,
         constructed.alpha, constructed.beta, vv10_grid);
     result.guess_selection = constructed.selection;
+    if (opts.orbital_optimizer == "opentrustregion") return result;
     const int n_iter_before_stability = result.n_iter;
     result.n_iter_before_stability = n_iter_before_stability;
 

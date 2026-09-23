@@ -1061,7 +1061,9 @@ def bvk_torus_density_matrices(
     BvK diameter, which fold-converged cutoffs always do. Raises
     with the missing cell index otherwise.
     """
-    n = [int(x) for x in mesh]
+    from .kpoints import _integer_counts
+
+    n = _integer_counts(mesh, name="BvK density mesh")
     if len(n) != 3 or any(x < 1 for x in n):
         raise ValueError(
             f"bvk_torus_density_matrices: mesh must be three positive "

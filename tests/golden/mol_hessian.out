@@ -75,6 +75,7 @@
 
   ## Vibrational Frequencies
   --------------------------
+  Surface: RHF/sto-0g
   Finite-difference Hessian  (step = 0.000 bohr,  00 displacements)
   Imaginary modes: 0
   Linear molecule: False
@@ -93,9 +94,9 @@
   Thermal corr. to H       =     0.0000000000 Ha
   Thermal corr. to G       =     0.0000000000 Ha
   Total entropy S          =     0.0000000000 Ha/K  (  00.000 cal/mol/K)
-  E(elec) + ZPE            =   -00.0000000000 Ha
-  H = E(elec) + H_corr     =   -00.0000000000 Ha
-  G = E(elec) + G_corr     =   -00.0000000000 Ha
+  E(RHF) + ZPE             =   -00.0000000000 Ha
+  H = E(RHF) + H_corr      =   -00.0000000000 Ha
+  G = E(RHF) + G_corr      =   -00.0000000000 Ha
 
 
   Timings (wall clock, seconds)

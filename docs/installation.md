@@ -17,6 +17,7 @@ see [BLAS backend](#blas-backend) below.
 |---|---|---:|
 | Current tagged release | clone, then `./scripts/install.sh` (release branch or newest stable tag) | yes |
 | Develop or test current `main` | `./scripts/install.sh --dev` | yes |
+| Include OpenTrustRegion orbital optimization | `./scripts/install.sh --dev --with-opentrustregion` | yes, including Fortran |
 | Reproduce a published calculation | `./scripts/install.sh --branch vX.Y.Z` | yes |
 | Read QVF files only | [install vibe-view alone](tutorial/vibe_view_getting_started.md) | no |
 | Calculate and view on one machine | install vibe-qc, then follow [Install both](getting_started.md#install-both) | vibe-qc only |
@@ -199,8 +200,9 @@ specification and conformance corpus; it does not link the QVF reference
 toolkit. See [Install and maintain the toolset](toolset_lifecycle.md) for
 checkout locations and lifecycle commands.
 
-The flag-free installer targets `release`, the stable core snapshot advanced
-from a tag on `main`; `--dev` selects ongoing development on `main`.
+The flag-free installer targets origin's `release` branch when present, or
+its newest stable `vX.Y.Z` tag otherwise. `--dev` selects development `main`;
+`--branch NAME` requests that exact branch or tag without a fallback.
 Companion installation requirements are maintained in the
 [vibe-view manual](https://vibe-qc.com/vibe-view/docs/installation.html) and
 [vq lifecycle guide](https://vibe-qc.com/vibe-queue/docs/lifecycle.html#source-install-lifecycle).
@@ -1102,3 +1104,41 @@ comparing against `release`, validating a topic-branch fix, etc.
 The banner on the next run will then read e.g. `Release v0.9.0` or
 `dev 0.9.0 (feature/some-topic @ abc1234)`, which is what you'll see
 prepended to every persisted SCF log.
+
+## Optional OpenTrustRegion orbital optimizer
+
+The installer can fetch and compile the pinned OpenTrustRegion numerical
+library into the vibe-qc extension. Select it explicitly:
+
+```sh
+./scripts/install.sh --dev --with-opentrustregion
+# For an existing environment:
+./scripts/update.sh --dev --with-opentrustregion
+.venv/bin/python -c "import vibeqc; print(vibeqc.has_opentrustregion())"
+```
+
+Install a Fortran compiler in addition to the usual build prerequisites:
+`brew install gcc` on macOS, `sudo apt install gfortran` on Debian/Ubuntu,
+`sudo dnf install gcc-gfortran` on Fedora/RHEL, or
+`sudo pacman -S gcc-fortran` on Arch. Git and LP64 BLAS/LAPACK are also
+required. macOS uses Accelerate; Linux can use the OpenBLAS/LAPACK development
+packages listed above. The scripts report missing compiler/Git prerequisites
+before changing the environment, including with `--skip-native-deps`.
+
+The final capability check must print `True`. The library is fetched at build
+time and linked statically into the extension; a separate OpenTrustRegion
+Python package or runtime download is unnecessary. Linked Fortran and BLAS
+runtime libraries must remain available, as for other native dependencies.
+Default fresh builds leave this optional feature disabled.
+
+`install.sh`, `update.sh` and `reinstall.sh` accept both
+`--with-opentrustregion` and `--without-opentrustregion`. Without either,
+they preserve the last verified selection, including during `--clean` or
+environment replacement. Explicit flags take precedence over `CMAKE_ARGS`,
+which takes precedence over the saved selection. Legacy builds without a
+saved selection use their CMake cache; conflicting caches require an explicit
+flag. `--dry-run` shows the choice without fetching or compiling.
+
+For a local modified checkout, use `install.sh --current` or `reinstall.sh`
+to avoid a branch switch. See the [optimizer reference](user_guide/opentrustregion.md)
+for the pinned revision, offline builds, supported calculations and citations.

@@ -94,6 +94,30 @@ class _FiniteTorusConventionMixin:
     finite_torus_convention: AICCM2026DevBFiniteTorusConvention
 
     @property
+    def quantitative_status(self):
+        """D93 is permanent for every chi post-HF result in v1."""
+        return "not-qualified"
+
+    @property
+    def process_provenance(self):
+        return getattr(self.hf_result, "process_provenance", None)
+
+    @property
+    def reference_fit_source(self):
+        return getattr(self.hf_result, "executed_fit_source", None)
+
+    @property
+    def executed_fit_source(self):
+        request = getattr(self.hf_result, "rsgdf_fit_request", None)
+        if getattr(request, "source", None) == "classic":
+            return self.reference_fit_source
+        return getattr(self.hf_result, "_chi_correlation_fit_source", None)
+
+    @property
+    def rsgdf_fit_request(self):
+        return getattr(self.hf_result, "rsgdf_fit_request", None)
+
+    @property
     def ccm_approach(self) -> str:
         return self.finite_torus_convention.ccm_approach
 
@@ -126,10 +150,13 @@ def _validate_posthf_numerical_support_cutoffs(
     *,
     lattice_cutoff_bohr: float,
     rsgdf_ke_cutoff: float,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float,
 ) -> None:
     """Fail closed on invalid numerical support before reference SCF work."""
 
+    _require_posthf_source(fit_source, rsgdf_tail_ke_cutoff)
     for name, value in (
         ("lattice_cutoff_bohr", lattice_cutoff_bohr),
         ("rsgdf_ke_cutoff", rsgdf_ke_cutoff),
@@ -450,6 +477,89 @@ def _build_canonical_lov_cache(
                 np.ascontiguousarray(np.asarray(virtual, dtype=np.complex128)),
             )
             del lpq
+    return lov, auxiliary
+
+
+def _require_posthf_source(fit_source, tail):
+    from ...periodic_fit_source import resolve_fit_source
+    resolve_fit_source(fit_source, gdf_method="rsgdf", dimension=3)
+    if fit_source == "sr":
+        raise NotImplementedError(
+            "explicit SR post-HF requires a canonical SR auxiliary-frame adapter; "
+            "only fit_source='classic' supplies a shared SCF/correlation source")
+    if fit_source == "auto" and tail is not None:
+        raise NotImplementedError("post-HF tail transport requires fit_source='classic'")
+
+
+def _admit_selected_reference(fit_source, tail, options, lattice_cutoff):
+    _require_posthf_source(fit_source, tail)
+    if fit_source == "classic":
+        opts = options if options is not None else PeriodicRHFOptions()
+        if float(opts.lattice_opts.cutoff_bohr) != float(lattice_cutoff):
+            raise ValueError(
+                "classic post-HF lattice_cutoff_bohr must match options.lattice_opts.cutoff_bohr; "
+                "SCF and correlation consume one source")
+
+
+def _selected_lpq_cache(system, basis, kpoints_cart, aux_name, *, reference,
+                        fit_source, rsgdf_tail_ke_cutoff, lattice_cutoff_bohr,
+                        rsgdf_ke_cutoff, gdf_linear_dep_threshold):
+    if fit_source == "auto":
+        cache, auxiliary = _build_canonical_lpq_cache(
+            system, basis, kpoints_cart, aux_name,
+            lattice_cutoff_bohr=lattice_cutoff_bohr, rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold)
+        from ...periodic_fit_source import classic_posthf_fit_source
+        reference._chi_correlation_fit_source = classic_posthf_fit_source(
+            system, basis, auxiliary, aux_name, kpoints_cart, cache,
+            lattice_cutoff_bohr=lattice_cutoff_bohr, rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold, projected=False)
+        return cache, auxiliary
+    _require_posthf_source(fit_source, rsgdf_tail_ke_cutoff)
+    from ...periodic_fit_source import RSGDFFitSource, factor_digest
+    from ...aux_basis import _range_separated_gdf_source_signature
+    source = getattr(reference, "executed_fit_source", None)
+    cache = getattr(reference, "_rsgdf_canonical_factors", None)
+    auxiliary = getattr(reference, "_rsgdf_auxiliary", None)
+    if not isinstance(source, RSGDFFitSource) or cache is None or auxiliary is None:
+        raise ValueError("classic post-HF requires an executed source and retained SCF factors")
+    support = dict(source.numerical_support)
+    compatible = (
+        source.source == "classic" and source.auxiliary_frame == "canonical-modrho"
+        and source.factor_space == "ao-pair"
+        and source.engine == "native-classic-fft-shared-q" and source.engine_version == 1
+        and source.factor_sha256 == factor_digest(cache)
+        and source.source_signature == _range_separated_gdf_source_signature(system, basis, auxiliary)
+        and source.auxiliary_basis == aux_name
+        and source.metric_threshold == float(gdf_linear_dep_threshold)
+        and source.base_reciprocal_cutoff_ha == float(rsgdf_ke_cutoff)
+        and source.executed_tail_reciprocal_cutoff_ha == rsgdf_tail_ke_cutoff
+        and dict(support["fit_lattice"])["cutoff_bohr"] == float(lattice_cutoff_bohr)
+        and np.array_equal(np.asarray(source.kpoints_cart), np.asarray(kpoints_cart))
+        and set(cache) == {(i,j) for i in range(len(kpoints_cart)) for j in range(len(kpoints_cart))}
+    )
+    if not compatible:
+        raise ValueError("classic post-HF source does not match the SCF support/frame/mesh")
+    return dict(cache), auxiliary
+
+
+def _selected_lov_cache(system, basis, kpoints_cart, coefficients, n_occ, aux_name, **kwargs):
+    if kwargs["fit_source"] == "auto":
+        controls = {k: kwargs[k] for k in (
+            "lattice_cutoff_bohr", "rsgdf_ke_cutoff", "gdf_linear_dep_threshold")}
+        lov, auxiliary = _build_canonical_lov_cache(
+            system, basis, kpoints_cart, coefficients, n_occ, aux_name, **controls)
+        from ...periodic_fit_source import classic_posthf_fit_source
+        kwargs["reference"]._chi_correlation_fit_source = classic_posthf_fit_source(
+            system, basis, auxiliary, aux_name, kpoints_cart, lov,
+            projected=True, **controls)
+        return lov, auxiliary
+    cache, auxiliary = _selected_lpq_cache(system, basis, kpoints_cart, aux_name, **kwargs)
+    lov = {(i,a): aiccm2026dev_b_3index_mo_transform_complex(
+        np.ascontiguousarray(L, dtype=complex),
+        np.ascontiguousarray(coefficients[i][:, :n_occ], dtype=complex),
+        np.ascontiguousarray(coefficients[a][:, n_occ:], dtype=complex))
+        for (i,a), L in cache.items()}
     return lov, auxiliary
 
 
@@ -893,6 +1003,8 @@ def _prepare_b_real_reference(
     auxiliary_name: str,
     lattice_cutoff_bohr: float,
     rsgdf_ke_cutoff: float,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float,
     progress: bool | object | None,
     verbose: int | None,
@@ -903,6 +1015,7 @@ def _prepare_b_real_reference(
             "because the 1D/2D fitted and direct long-range gauges are not "
             "yet matched"
         )
+    _admit_selected_reference(fit_source, rsgdf_tail_ke_cutoff, options, lattice_cutoff_bohr)
     hf_result = run_aiccm2026dev_b_rhf(
         system,
         basis,
@@ -912,6 +1025,9 @@ def _prepare_b_real_reference(
         aux_basis=auxiliary_name,
         gdf_method="rsgdf",
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+        gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
     )
@@ -920,13 +1036,15 @@ def _prepare_b_real_reference(
             "aiccm2026dev-b local correlation requires a converged RI-RHF reference"
         )
     kpoints = cyclic_gamma_mesh(system, mesh)
-    lpq_cache, _ = _build_canonical_lpq_cache(
+    lpq_cache, _ = _selected_lpq_cache(
         system,
         basis,
         np.asarray(kpoints.kpoints_cart, dtype=float),
         auxiliary_name,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        reference=hf_result, fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
     )
     return (
@@ -951,6 +1069,8 @@ def _prepare_b_real_ureference(
     auxiliary_name: str,
     lattice_cutoff_bohr: float,
     rsgdf_ke_cutoff: float,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float,
     progress: bool | object | None,
     verbose: int | None,
@@ -961,6 +1081,7 @@ def _prepare_b_real_ureference(
             "restricted to 3D because the 1D/2D fitted and direct long-range "
             "gauges are not yet matched"
         )
+    _admit_selected_reference(fit_source, rsgdf_tail_ke_cutoff, options, lattice_cutoff_bohr)
     hf_result = run_aiccm2026dev_b_uhf(
         system,
         basis,
@@ -970,6 +1091,9 @@ def _prepare_b_real_ureference(
         aux_basis=auxiliary_name,
         gdf_method="rsgdf",
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+        gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
     )
@@ -978,13 +1102,15 @@ def _prepare_b_real_ureference(
             "aiccm2026dev-b unrestricted correlation requires a converged RI-UHF reference"
         )
     kpoints = cyclic_gamma_mesh(system, mesh)
-    lpq_cache, _ = _build_canonical_lpq_cache(
+    lpq_cache, _ = _selected_lpq_cache(
         system,
         basis,
         np.asarray(kpoints.kpoints_cart, dtype=float),
         auxiliary_name,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        reference=hf_result, fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
     )
     return (
@@ -1292,10 +1418,35 @@ def _local_correlation_space(
     )
 
 
+def _validate_localized_frozen_core(system: PeriodicSystem, options: object) -> None:
+    """Do not freeze indices after a rotation mixing core and active spaces.
+
+    Only positivity is needed here. Published core counts on the primitive
+    cell and on its finite torus are either both zero or both positive.
+    The downstream solver resolves the actual torus count. Periodic ECP
+    post-HF is independently unsupported.
+    """
+    from ...correlation_conventions import resolve_frozen_core_count
+
+    if options.localise == "none":
+        return
+    n_frozen = resolve_frozen_core_count(
+        system.unit_cell_molecule(), options.n_frozen,
+    )
+    if n_frozen:
+        raise NotImplementedError(
+            "aiccm2026dev-b frozen-core occupied localisation is not yet "
+            "supported: localisation must preserve the core and active "
+            "projectors separately; use localise='none' for frozen core "
+            "or n_frozen=0 for all-electron local correlation"
+        )
+
+
 def _complete_space_mp2_audit(
     reference: _BRealReference,
+    n_frozen: int = 0,
 ) -> float:
-    """Evaluate the real canonical gauge of the complete-PAO MP2 limit."""
+    """Evaluate the complete-PAO MP2 limit in the solver's active space."""
 
     from .pno import (
         projected_atomic_orbitals,
@@ -1308,6 +1459,9 @@ def _complete_space_mp2_audit(
         np.asarray(reference.hf.overlap),
         np.asarray(reference.hf.fock),
     )
+    # The PAO projector excludes ALL occupieds, including frozen core.
+    # Only the occupied correlation contractions use the active subset.
+    occupied = occupied[:, n_frozen:]
     fock = np.asarray(reference.hf.fock)
     virtual = np.asarray(paos.coefficients)
     f_occ = occupied.T @ fock @ occupied
@@ -1337,6 +1491,8 @@ def run_aiccm2026dev_b_mp2(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -1358,10 +1514,13 @@ def run_aiccm2026dev_b_mp2(
     _validate_posthf_numerical_support_cutoffs(
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
     )
 
     aux_name = aux_basis or default_aux_for(basis.name)
+    _admit_selected_reference(fit_source, rsgdf_tail_ke_cutoff, options, lattice_cutoff_bohr)
     hf_result = run_aiccm2026dev_b_rhf(
         system,
         basis,
@@ -1371,6 +1530,9 @@ def run_aiccm2026dev_b_mp2(
         aux_basis=aux_name,
         gdf_method="rsgdf",
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+        gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
     )
@@ -1389,7 +1551,7 @@ def run_aiccm2026dev_b_mp2(
 
     coefficients = [np.asarray(value) for value in hf_result.mo_coeffs]
     energies = [np.asarray(value, dtype=float) for value in hf_result.mo_energies]
-    lov, auxiliary = _build_canonical_lov_cache(
+    lov, auxiliary = _selected_lov_cache(
         system,
         basis,
         kcart,
@@ -1398,6 +1560,8 @@ def run_aiccm2026dev_b_mp2(
         aux_name,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        reference=hf_result, fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
     )
     n_aux = int(auxiliary.nbasis)
@@ -1450,6 +1614,8 @@ def run_aiccm2026dev_b_dlpno_mp2(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -1504,9 +1670,12 @@ def run_aiccm2026dev_b_dlpno_mp2(
             "aiccm2026dev-b DLPNO-MP2 local fitting awaits minimum-image "
             "auxiliary domains"
         )
+    _validate_localized_frozen_core(system, local_options)
     _validate_posthf_numerical_support_cutoffs(
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
     )
 
@@ -1518,6 +1687,8 @@ def run_aiccm2026dev_b_dlpno_mp2(
         auxiliary_name=aux_name,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -1553,7 +1724,7 @@ def run_aiccm2026dev_b_dlpno_mp2(
         and local_options.tcut_mkn == 0.0
     )
     if complete_space_limit:
-        exact_correlation = _complete_space_mp2_audit(reference)
+        exact_correlation = _complete_space_mp2_audit(reference, result.n_frozen)
         complete_space_correction = exact_correlation - raw_local_correlation
         result.e_pno_correction += complete_space_correction
         result.e_corr = exact_correlation
@@ -1594,6 +1765,8 @@ def _run_aiccm2026dev_b_dlpno_cc(
     aux_basis: str | None,
     lattice_cutoff_bohr: float,
     rsgdf_ke_cutoff: float,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float,
     progress: bool | object | None,
     verbose: int | None,
@@ -1639,9 +1812,12 @@ def _run_aiccm2026dev_b_dlpno_cc(
             "aiccm2026dev-b DLPNO-CC occupied-distance screening awaits "
             "minimum-image periodic Wannier distances"
         )
+    _validate_localized_frozen_core(system, local_options)
     _validate_posthf_numerical_support_cutoffs(
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
     )
 
@@ -1653,6 +1829,8 @@ def _run_aiccm2026dev_b_dlpno_cc(
         auxiliary_name=aux_name,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -1725,6 +1903,8 @@ def run_aiccm2026dev_b_dlpno_ccsd(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -1741,6 +1921,8 @@ def run_aiccm2026dev_b_dlpno_ccsd(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -1757,6 +1939,8 @@ def run_aiccm2026dev_b_dlpno_ccsd_t(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -1773,6 +1957,8 @@ def run_aiccm2026dev_b_dlpno_ccsd_t(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -1790,6 +1976,8 @@ def _run_aiccm2026dev_b_canonical_cc(
     aux_basis: str | None,
     lattice_cutoff_bohr: float,
     rsgdf_ke_cutoff: float,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float,
     progress: bool | object | None,
     verbose: int | None,
@@ -1836,6 +2024,8 @@ def _run_aiccm2026dev_b_canonical_cc(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -1854,6 +2044,8 @@ def run_aiccm2026dev_b_ccsd(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -1870,6 +2062,8 @@ def run_aiccm2026dev_b_ccsd(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -1886,6 +2080,8 @@ def run_aiccm2026dev_b_ccsd_t(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -1902,6 +2098,8 @@ def run_aiccm2026dev_b_ccsd_t(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -1918,6 +2116,8 @@ def _run_aiccm2026dev_b_ump2(
     aux_basis: str | None,
     lattice_cutoff_bohr: float,
     rsgdf_ke_cutoff: float,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float,
     progress: bool | object | None,
     verbose: int | None,
@@ -1931,9 +2131,12 @@ def _run_aiccm2026dev_b_ump2(
             "aiccm2026dev-b UMP2 requires PBC-safe localise='wannier' or "
             "'iao', or exact-limit localise='none'"
         )
+    _validate_localized_frozen_core(system, ump2_options)
     _validate_posthf_numerical_support_cutoffs(
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
     )
     extension = _resolve_lattice_extension(system, lattice_extension)
@@ -1946,6 +2149,8 @@ def _run_aiccm2026dev_b_ump2(
         auxiliary_name=aux_name,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -2010,6 +2215,8 @@ def run_aiccm2026dev_b_ump2(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -2038,6 +2245,8 @@ def run_aiccm2026dev_b_ump2(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -2054,6 +2263,8 @@ def run_aiccm2026dev_b_dlpno_ump2(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -2078,6 +2289,8 @@ def run_aiccm2026dev_b_dlpno_ump2(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -2095,6 +2308,8 @@ def _run_aiccm2026dev_b_uccsd(
     aux_basis: str | None,
     lattice_cutoff_bohr: float,
     rsgdf_ke_cutoff: float,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float,
     progress: bool | object | None,
     verbose: int | None,
@@ -2108,9 +2323,12 @@ def _run_aiccm2026dev_b_uccsd(
             "aiccm2026dev-b UCCSD requires PBC-safe localise='wannier' or "
             "'iao', or exact-limit localise='none'"
         )
+    _validate_localized_frozen_core(system, cc_options)
     _validate_posthf_numerical_support_cutoffs(
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
     )
     extension = _resolve_lattice_extension(system, lattice_extension)
@@ -2123,6 +2341,8 @@ def _run_aiccm2026dev_b_uccsd(
         auxiliary_name=aux_name,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -2212,6 +2432,8 @@ def run_aiccm2026dev_b_uccsd(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -2228,6 +2450,8 @@ def run_aiccm2026dev_b_uccsd(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -2244,6 +2468,8 @@ def run_aiccm2026dev_b_uccsd_t(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -2260,6 +2486,8 @@ def run_aiccm2026dev_b_uccsd_t(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -2277,6 +2505,8 @@ def _run_dlpno_ucc(
     aux_basis: str | None,
     lattice_cutoff_bohr: float,
     rsgdf_ke_cutoff: float,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float,
     progress: bool | object | None,
     verbose: int | None,
@@ -2305,6 +2535,8 @@ def _run_dlpno_ucc(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -2321,6 +2553,8 @@ def run_aiccm2026dev_b_dlpno_uccsd(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -2337,6 +2571,8 @@ def run_aiccm2026dev_b_dlpno_uccsd(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,
@@ -2353,6 +2589,8 @@ def run_aiccm2026dev_b_dlpno_uccsd_t(
     aux_basis: str | None = None,
     lattice_cutoff_bohr: float = 15.0,
     rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_tail_ke_cutoff: float | None = None,
     gdf_linear_dep_threshold: float = 1e-9,
     progress: bool | object | None = None,
     verbose: int | None = None,
@@ -2369,6 +2607,8 @@ def run_aiccm2026dev_b_dlpno_uccsd_t(
         aux_basis=aux_basis,
         lattice_cutoff_bohr=lattice_cutoff_bohr,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        fit_source=fit_source,
+        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         gdf_linear_dep_threshold=gdf_linear_dep_threshold,
         progress=progress,
         verbose=verbose,

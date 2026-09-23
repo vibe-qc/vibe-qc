@@ -245,6 +245,76 @@ def test_molecule_aware_auto_resolution_exposes_effective_guess():
     assert resolve(h2, InitialGuess.HCORE, False, False) == InitialGuess.HCORE
 
 
+def test_auto_resolves_open_shell_d_block_to_patom():
+    """Issue #273: an open-shell d/f-block complex needs the in-field step.
+
+    The SAD construction superposes free-ATOM Hund densities, so every
+    open-shell ligand arrives carrying its own free-atom moment -- one full
+    unpaired electron per Cl in FeCl3, which in the molecule is a
+    closed-shell chloride. That polarisation traps a symmetry-broken SCF
+    solution 90.05 mHa above the ground state (measured on FeCl3 sextet /
+    cc-pVDZ, internally unstable, S^2 = 8.776737). PATOM is the same Hund
+    seed plus a per-spin in-field re-polarisation, and reaches the ORCA
+    6.1.1 ground state; see tests/test_uhf_stability.py for the SCF pins.
+
+    Closed-shell metal systems and open-shell main-group systems keep their
+    established SAD / PATOM choices.
+    """
+    fecl3 = Molecule(
+        [
+            Atom(26, [0.0, 0.0, 0.0]),
+            Atom(17, [4.0, 0.0, 0.0]),
+            Atom(17, [-2.0, 3.5, 0.0]),
+            Atom(17, [-2.0, -3.5, 0.0]),
+        ],
+        charge=0,
+        multiplicity=6,
+    )
+    oh = Molecule(
+        [Atom(8, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.83])], multiplicity=2
+    )
+    resolve = _core._resolve_initial_guess_for_molecule
+
+    # Open-shell d block -> PATOM (the change).
+    assert resolve(fecl3, InitialGuess.AUTO, False, True) == InitialGuess.PATOM
+    # Closed-shell metal and open-shell main group are unchanged.
+    assert resolve(fecl3, InitialGuess.AUTO, False, False) == InitialGuess.SAD
+    assert resolve(oh, InitialGuess.AUTO, False, True) == InitialGuess.SAD
+    # Periodic still resolves to SAD before the molecular rules run.
+    assert resolve(fecl3, InitialGuess.AUTO, True, True) == InitialGuess.SAD
+    # An explicit selector is never rewritten.
+    assert resolve(fecl3, InitialGuess.SAD, False, True) == InitialGuess.SAD
+
+    # A route without PATOM falls back to the advertised SAD construction.
+    assert resolve(
+        fecl3, InitialGuess.AUTO, False, True,
+        [InitialGuess.HCORE, InitialGuess.SAD],
+    ) == InitialGuess.SAD
+
+
+def test_auto_keeps_atomic_spins_on_sad_for_a_metal_complex():
+    """Issue #273: an ATOMSPIN seed is defined on the SAD density.
+
+    The open-shell d/f rule above must not take an antiferromagnetically
+    seeded metal complex to PATOM, which would then reject its own seed.
+    """
+    from vibeqc.guess import select_initial_guess
+
+    fe2 = Molecule(
+        [Atom(26, [0.0, 0.0, 0.0]), Atom(26, [0.0, 0.0, 4.5])],
+        charge=0,
+        multiplicity=3,
+    )
+    seeded = select_initial_guess(
+        fe2, InitialGuess.AUTO, is_open_shell=True, atomic_spins=[1, -1],
+    )
+    assert seeded.effective == InitialGuess.SAD
+    assert seeded.transport == InitialGuess.SAD
+
+    unseeded = select_initial_guess(fe2, InitialGuess.AUTO, is_open_shell=True)
+    assert unseeded.effective == InitialGuess.PATOM
+
+
 def test_raw_open_shell_auto_matches_patom_for_isolated_atom():
     """The raw builder applies the isolated-atom AUTO policy end to end.
 
@@ -2092,6 +2162,67 @@ def test_twisted_ethylene_default_escapes_to_biradical():
     assert r_def.n_stability_restarts >= 1
     assert r_def.energy == pytest.approx(-77.0040512410, abs=1e-6)
     assert r_def.s_squared == pytest.approx(1.043392, abs=1e-2)
+
+
+def _rigidly_rotated(mol, axis, degrees):
+    """The same molecule in a different orientation (Rodrigues)."""
+    axis = np.asarray(axis, dtype=float)
+    axis = axis / np.linalg.norm(axis)
+    t = np.deg2rad(degrees)
+    K = np.array([[0.0, -axis[2], axis[1]],
+                  [axis[2], 0.0, -axis[0]],
+                  [-axis[1], axis[0], 0.0]])
+    R = np.eye(3) + np.sin(t) * K + (1.0 - np.cos(t)) * (K @ K)
+    return Molecule(
+        [Atom(a.Z, list(R @ np.asarray(list(a.xyz), dtype=float))) for a in mol.atoms],
+        mol.charge, mol.multiplicity)
+
+
+def test_twisted_ethylene_symmetric_control_is_rotation_invariant():
+    """A converged energy cannot depend on how the molecule is oriented (#210).
+
+    90-deg twisted ethylene has an exactly degenerate frontier at the guess
+    Fock -- the D2d e-pair, two orthogonal carbon p orbitals, gap ~2e-15 Ha --
+    and one electron per spin to place in it. A bare aufbau truncation
+    resolves that tie with whatever basis the eigensolver returns for the
+    degenerate subspace, which is not a physical quantity: it varies with
+    orientation and with the LAPACK build. The two stationary points it
+    selects between are 58.090 mHa apart, and the lower one is correct: it is
+    the delocalized, spatially symmetric solution, while the higher carries a
+    spurious C+/C- charge separation.
+
+    Swept rather than parametrised on a fixed orientation list on purpose:
+    WHICH orientations land on the wrong basin is itself not reproducible (it
+    moves between builds, and between the active and passive rotation
+    conventions), so a short fixed list can pass vacuously while the defect is
+    present. What reproduces every time is that some orientation differs.
+    """
+    reference = _twisted_ethylene_90()
+    opts = _uhf_opts(InitialGuess.AUTO)
+    opts.stability_check = False
+
+    r_reference = run_uhf(reference, "sto-3g", opts)
+    assert r_reference.converged
+    assert r_reference.energy == pytest.approx(-76.8553699161, abs=1e-6)
+
+    orientations = [((1, 0, 0), d) for d in (5, 10, 20, 25, 37, 45, 73, 90)]
+    orientations += [((0, 0, 1), d) for d in (20, 45, 73)]
+    orientations += [((1, 1, 1), d) for d in (20, 60, 123)]
+
+    energies = {}
+    for axis, degrees in orientations:
+        rotated = run_uhf(_rigidly_rotated(reference, axis, degrees), "sto-3g", opts)
+        assert rotated.converged, (axis, degrees)
+        energies[(axis, degrees)] = rotated.energy
+
+    spread = max(energies.values()) - min(energies.values())
+    assert spread < 1e-9, (
+        "the converged energy is orientation-dependent over "
+        f"{len(orientations)} rigid rotations: spread {1e3 * spread:.3f} mHa; "
+        f"energies {sorted(set(round(e, 9) for e in energies.values()))}"
+    )
+    for (axis, degrees), energy in energies.items():
+        assert energy == pytest.approx(r_reference.energy, abs=1e-9), (axis, degrees)
 
 
 def test_p_benzyne_default_escapes_to_biradical():

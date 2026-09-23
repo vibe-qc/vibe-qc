@@ -34,6 +34,28 @@ This product repository must remain ready for public mirroring at every commit.
   source; do not rely on a later sanitizer or create sanitation chats for
   routine releases. Never bypass a privacy failure to publish a release.
 
+### Required behavior before committing or preparing a release
+
+- Do not paste terminal logs, chat handoffs, commit-author identities, machine
+  inventories or deployment commands into product files. Keep those records
+  outside the checkout in private operations storage. Public handovers contain
+  only portable implementation decisions, reproducible commands with placeholders
+  and public issue references. This rule also applies to this file and hooks.
+- Enable `.githooks` in every development clone. Before committing, run
+  `python3 .githooks/source_privacy.py --staged`; before requesting the native
+  release gate, run `python3 .githooks/source_privacy.py --tree HEAD`.
+  These commands inspect Git index/commit bytes, not unstaged repairs.
+- Store site-specific terms in an external `VIBE_PRIVACY_TERMS_FILE` or configure
+  `privacy.termsFile` locally. Missing or unreadable configured policy is a failure.
+  Never copy the private denylist into this repository.
+- Fix findings in canonical source before cutting a tag. Do not export a patched
+  copy, start a routine sanitation task, rewrite a released tag, bypass a hook,
+  or add an exception for private data. Exact exceptions for public third-party
+  attribution and synthetic syntax need independent review in
+  `.githooks/public_content_review.json`; a changed context requires new review.
+- Server CI runs the cheap privacy preflight before expensive candidate jobs.
+  Publication still checks assets and history automatically as a final safeguard.
+
 ## What vibe-qc is
 
 A quantum-chemistry code for molecules and solids: Hartree-Fock, DFT,
@@ -99,9 +121,9 @@ VIBEQC_REQUIRE_VENDORED=ON .venv/bin/pip install -e . --no-build-isolation   # r
   unclassified file. Run `scripts/test_gate/update_suite_manifest.py`, and put
   a hand classification in its `CURATED` table rather than editing
   `suite_manifest.json` by hand.
-- **Ordinary pushes to `main` run no test pipeline.** CI tests only release
-  candidates, so your local run is the evidence. Name the tests you ran in the
-  commit message.
+- **Ordinary pushes to `main` run the cheap privacy gate.** Native CI tests
+  remain on release candidates and selected merge requests; website changes have
+  their own gate. Keep local functional evidence and name tests in the commit message.
 - **Docs:** `sphinx-build -b html docs/ docs/_build/html`.
 
 ## Ground rules
@@ -121,8 +143,8 @@ judgment; see [Defaults](#defaults).
    `VIBE_PRIVATE_ROOT` or the platform state directory. Ignoring a file does
    not make the checkout a suitable private store. Enable the hooks once per clone
    with `git config --local core.hooksPath .githooks`. If a hook blocks you,
-   fix the content; bypass it only for a reviewed exception and say why in the
-   commit message. Security issues go by email per [`SECURITY.md`](SECURITY.md).
+   fix the content or obtain an exact reviewed public-content exception. Never
+   bypass a privacy failure with `--no-verify`. Security issues go by email per [`SECURITY.md`](SECURITY.md).
 4. **Licensing.** vibe-qc is MPL-2.0. Check the redistribution terms before
    bundling data or adding a dependency; when they are unclear, fetch on demand
    instead of bundling (as `vibeqc.basis_fetch` does). New Python dependencies
@@ -149,8 +171,12 @@ what you did.
   lanes for shared numerical machinery.
 - **Keep `main` working.** Land in small increments, and gate unfinished
   features rather than leaving half-wired code paths.
-- **CHANGELOG.** Add user-visible changes to `[Unreleased]`. Tests-only and
-  internal changes may skip it.
+- **CHANGELOG.** Add user-visible changes as a new file under `changelog.d/`,
+  one per change. Do not edit `CHANGELOG.md` directly: every branch that appends
+  to its `[Unreleased]` section inserts at the same anchor, so two branches
+  conflict as an add/add that no content edit resolves.
+  `scripts/assemble_changelog.py` folds the fragments in when a release is cut.
+  Tests-only and internal changes may skip it.
 - **Issue numbers.** When a commit fixes a tracked issue, put `(#N)` in the
   subject; triage finds fixes that way. Untracked work needs no number.
 - **A second pair of eyes for wrong answers.** A fix to a wrong number, or to
@@ -188,6 +214,21 @@ what you did.
   isolation.
 - **Heavy lanes exist.** Some periodic GDF tests run for minutes; see
   `docs/developer_test_lanes.md` before starting a full inventory.
+- **A redacted privacy failure from the pre-commit hook names no file.** A
+  test-gate lane writes its `--out` artifact into the directory you ran from,
+  and a record's `tail` quotes your checkout's absolute path whenever a test
+  warns or fails, so even an all-green lane leaks. `git add -A` stages it and
+  the commit is refused with "personal-info patterns [values redacted]" naming
+  nothing. Root-level artifacts are gitignored (`/*.jsonl`, `/LANE_HEALTH.md`,
+  `/lane_health.json`); an `--out` pointed into a subdirectory is not. Name the
+  offending file before hunting through the diff:
+
+  ```sh
+  git diff --cached --name-only | while read -r f; do
+    git diff --cached -U0 -- "$f" |
+      grep -qE '^\+[^+].*/(Users|home)/[A-Za-z]' && echo "$f"
+  done
+  ```
 
 ## Working alongside other sessions
 
@@ -199,8 +240,8 @@ git identity, so authorship cannot tell you who changed what.
 - **Treat a shared checkout's uncommitted changes as someone else's.** Stage
   files by name; don't stash, reset or check out over changes you didn't make.
 - **Keep both sides of a conflict** in files many sessions append to, such as
-  `CHANGELOG.md` and handovers. After a rebase, check that your changelog entry
-  is still under `[Unreleased]`.
+  handovers. Changelog entries are fragments under `changelog.d/`, one file per
+  change, so two branches no longer collide there.
 - **Handovers are for workstreams that span sessions.** Public implementation
   notes may live under `handovers/`. Private coordination, configuration and
   evidence belong in the external private state directory. A defect belongs

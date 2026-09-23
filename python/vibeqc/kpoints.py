@@ -45,6 +45,7 @@ entry point continues to accept either a raw ``BlochKMesh`` or a
 For ``PeriodicSystem.dim < 3``, mesh builders accept either active-axis
 specs (``[n]`` for 1D, ``[n1, n2]`` for 2D) or full three-axis specs.
 Inactive axes are pinned to Γ and stored as mesh size 1 / shift 0.
+Mesh entries must be exact integers; no float, bool or string coercion is used.
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ from __future__ import annotations
 from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass, field
 from itertools import product
+from operator import index
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -1653,11 +1655,36 @@ def _system_dim(system: PeriodicSystem) -> int:
     return dim
 
 
+def _integer_counts(counts, *, name: str, repeat: int | None = None) -> list[int]:
+    """Read exact counts; optionally repeat a scalar over active directions."""
+    message = f"{name} must contain integers, not booleans or coerced values"
+    if isinstance(counts, (bool, np.bool_, str, bytes)):
+        raise ValueError(message)
+    if repeat is not None:
+        try:
+            return [index(counts)] * repeat
+        except TypeError:
+            pass
+    try:
+        values = list(counts)
+    except TypeError as exc:
+        raise ValueError(message) from exc
+    checked = []
+    for value in values:
+        if isinstance(value, (bool, np.bool_)):
+            raise ValueError(message)
+        try:
+            checked.append(index(value))
+        except TypeError as exc:
+            raise ValueError(message) from exc
+    return checked
+
+
 def _mesh_tuple(mesh: Sequence[int]) -> Tuple[int, int, int]:
-    arr = list(mesh)
+    arr = _integer_counts(mesh, name="mesh")
     if len(arr) != 3:
         raise ValueError(f"mesh must have length 3, got {arr!r}")
-    out = tuple(int(m) for m in arr)
+    out = tuple(arr)
     if any(m < 1 for m in out):
         raise ValueError(f"mesh entries must be >= 1, got {arr!r}")
     return out  # type: ignore[return-value]
@@ -1668,7 +1695,7 @@ def _mesh_tuple_for_system(
     mesh: Sequence[int],
 ) -> Tuple[int, int, int]:
     dim = _system_dim(system)
-    arr = list(mesh)
+    arr = _integer_counts(mesh, name="mesh")
     if len(arr) == dim:
         arr = arr + [1] * (3 - dim)
     elif len(arr) != 3:
@@ -1676,7 +1703,7 @@ def _mesh_tuple_for_system(
             f"mesh must have length {dim} for dim={dim} systems or "
             f"length 3; got {arr!r}"
         )
-    out = tuple(int(m) for m in arr)
+    out = tuple(arr)
     if any(m < 1 for m in out):
         raise ValueError(f"mesh entries must be >= 1, got {arr!r}")
     return tuple(out[i] if i < dim else 1 for i in range(3))

@@ -372,3 +372,214 @@ def test_every_kpoints_citation_key_resolves_to_a_route():
     }
     routes = set(db._routes.get("numerics", {}))
     assert produced <= routes, f"unrouted KPoints provenance keys: {produced - routes}"
+
+
+# Integer mesh counts are a specification, not a request for numeric coercion.
+def _integer_mesh_builder(system, mesh, builder):
+    if builder == "legacy":
+        return vq.monkhorst_pack(system, mesh)
+    if builder == "shifted":
+        return vq.KPoints.shifted(system, mesh, (1, 0, 0))
+    return getattr(vq.KPoints, builder)(system, mesh)
+
+
+@pytest.mark.parametrize("builder", ["monkhorst_pack", "gamma_centred", "shifted", "legacy"])
+@pytest.mark.parametrize("mesh", [
+    (2.9, 1, 1), (2.0, 1, 1), (True, 1, 1), (np.bool_(True), 1, 1),
+    ("2", 1, 1), "211", b"211", (2+0j, 1, 1), ((2,), 1, 1),
+    np.array([2., 1., 1.]), np.array([True, True, True]),
+])
+def test_integer_mesh_counts_refuse_coercion_before_native(builder, mesh, monkeypatch):
+    import vibeqc.kpoints as module
+    def forbidden(*args, **kwargs):
+        pytest.fail("non-integer mesh reached native grid construction")
+    monkeypatch.setattr(module, "_mp_native", forbidden)
+    monkeypatch.setattr(vq, "_monkhorst_pack_native", forbidden)
+    with pytest.raises(ValueError, match="must contain integers"):
+        _integer_mesh_builder(_cubic_si_3d(), mesh, builder)
+
+
+@pytest.mark.parametrize("builder", ["monkhorst_pack", "gamma_centred", "shifted", "legacy"])
+@pytest.mark.parametrize("dim", [1, 2, 3])
+@pytest.mark.parametrize("full", [False, True])
+def test_integer_mesh_counts_preserve_numpy_and_inactive_pinning(builder, dim, full):
+    system = _low_dim(dim) if dim < 3 else _cubic_si_3d()
+    mesh = [np.int64(2)]*dim
+    if full:
+        # KPoints retains its documented pinning, distinct from chi's refusal
+        # of explicit nontrivial inactive orders.
+        mesh += [np.int64(7)]*(3-dim)
+    result = _integer_mesh_builder(system, np.array(mesh, dtype=np.uint32), builder)
+    assert tuple(result.mesh) == (2,)*dim+(1,)*(3-dim)
+    assert len(result) == 2**dim
+
+
+@pytest.mark.parametrize("consumer", ["runner", "madelung", "density", "ccm", "gamma_gdf"])
+@pytest.mark.parametrize("mesh", [
+    (1.9, 1, 1), (2.0, 1, 1), (True, 1, 1), (np.bool_(True), 1, 1),
+    ("2", 1, 1), "211", b"211", (2+0j, 1, 1), ((2,), 1, 1),
+    np.array([2., 1., 1.]), np.array([True, True, True]),
+])
+def test_periodic_count_frontdoors_reject_before_geometry(consumer, mesh, monkeypatch):
+    from types import SimpleNamespace
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.periodic_runner import _runner_bloch_kmesh
+    from vibeqc.bipole_fock_ewald import probe_charge_madelung_supercell
+    from vibeqc.pbc_bipole_common import bvk_torus_density_matrices
+    from vibeqc.periodic.ccm.four_center_runner import run_four_center_scf
+    from vibeqc.pbc_gdf import run_pbc_gdf_rhf
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid periodic count reached native grid construction")
+
+    monkeypatch.setattr(core, "monkhorst_pack", forbidden)
+    # Missing lattice, density, basis and geometry deliberately prevent a
+    # mistaken path from doing physical work before rejecting the count.
+    system = SimpleNamespace(dim=3)
+    calls = {
+        "runner": lambda: _runner_bloch_kmesh(system, mesh),
+        "madelung": lambda: probe_charge_madelung_supercell(system, mesh),
+        "density": lambda: bvk_torus_density_matrices(None, [], mesh),
+        "ccm": lambda: run_four_center_scf(system, "sto-3g", "RHF", mesh),
+        "gamma_gdf": lambda: run_pbc_gdf_rhf(system, None, kmesh=mesh),
+    }
+    with pytest.raises(ValueError, match="must contain integers"):
+        calls[consumer]()
+
+
+@pytest.mark.parametrize("mesh, expected", [
+    (None, (1, 1, 1)), (2, (2, 2, 2)), (np.int64(2), (2, 2, 2)),
+    ((np.int64(2), 3, 1), (2, 3, 1)), ([2, 3, 1], (2, 3, 1)),
+])
+def test_periodic_count_runner_preserves_scalar_repeat(mesh, expected, monkeypatch):
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.periodic_runner import _runner_bloch_kmesh
+    monkeypatch.setattr(core, "monkhorst_pack", lambda system, counts: tuple(counts))
+    assert _runner_bloch_kmesh(None, mesh) == expected
+
+
+def test_periodic_count_madelung_preserves_integer_lattice_scaling(monkeypatch):
+    import vibeqc.bipole_fock_ewald as ewald
+    lattice = np.array([[8., 2., 1.], [0., 7., 2.], [0., 0., 6.]])
+    system = vq.PeriodicSystem(3, lattice, [vq.Atom(2, [0., 0., 0.])])
+    monkeypatch.setattr(ewald, "probe_charge_madelung", lambda cell, **kw: cell.lattice)
+    result = ewald.probe_charge_madelung_supercell(system, np.array([2, 3, 1], dtype=np.uint32))
+    np.testing.assert_array_equal(result, lattice*np.array([2, 3, 1])[None, :])
+
+
+def test_periodic_count_gamma_gdf_keeps_multik_refusal():
+    from types import SimpleNamespace
+    from vibeqc.pbc_gdf import run_pbc_gdf_rhf
+    with pytest.raises(NotImplementedError, match="only kmesh"):
+        run_pbc_gdf_rhf(SimpleNamespace(dim=3), None, kmesh=(np.int64(2), 1, 1))
+
+
+def test_periodic_count_density_accepts_numpy_integer_torus():
+    from types import SimpleNamespace
+    from vibeqc.pbc_bipole_common import bvk_torus_density_matrices
+    cells = [SimpleNamespace(index=(i, 0, 0), r_cart=np.array([float(i), 0., 0.]))
+             for i in range(2)]
+    density = SimpleNamespace(cells=cells, blocks=[np.array([[2.]]), np.array([[0.5]])])
+    result = bvk_torus_density_matrices(
+        density, [np.zeros(3), np.array([np.pi, 0., 0.])],
+        np.array([2, 1, 1], dtype=np.uint32),
+    )
+    np.testing.assert_allclose(np.asarray(result).reshape(2), [2.5, 1.5])
+
+
+def test_periodic_count_ccm_preserves_numpy_integer_repetitions(monkeypatch):
+    import vibeqc.periodic.ccm.system as ccm_system
+    from vibeqc.periodic.ccm.four_center_runner import run_four_center_scf
+    system = vq.PeriodicSystem(3, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+    class ReachedConstruction(Exception):
+        pass
+    def capture(system, repetitions, basis):
+        assert repetitions == (2, 3, 1)
+        raise ReachedConstruction
+    monkeypatch.setattr(ccm_system, "CCMSystem", capture)
+    with pytest.raises(ReachedConstruction):
+        run_four_center_scf(system, "sto-3g", "RHF", np.array([2, 3, 1], dtype=np.uint32))
+
+
+@pytest.mark.parametrize("consumer", ["ase_forces", "gpw_calculate", "gpw_scf", "dimer"])
+@pytest.mark.parametrize("mesh", [
+    (1.9, 1, 1), (2.0, 1, 1), (True, 1, 1), (np.bool_(True), 1, 1),
+    ("2", 1, 1), "211", b"211", (2+0j, 1, 1), ((2,), 1, 1),
+    np.array([2., 1., 1.]), np.array([True, True, True]),
+])
+def test_periodic_wrapper_counts_reject_before_scf(consumer, mesh, monkeypatch):
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.dimer import run_dimer
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("malformed wrapper mesh reached numerical setup")
+
+    monkeypatch.setattr(core, "monkhorst_pack", forbidden)
+    if consumer == "dimer":
+        system = vq.PeriodicSystem(3, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+        with pytest.raises(ValueError, match="must contain integers"):
+            run_dimer(system, "sto-3g", method="RHF", kpoints=mesh)
+        return
+    ase = pytest.importorskip("ase")
+    import vibeqc.ase_periodic as periodic
+    import vibeqc.ase_periodic_gpw as gpw
+    atoms = ase.Atoms("He", positions=[[0., 0., 0.]], cell=[8., 8., 8.], pbc=True)
+    monkeypatch.setattr(periodic, "atoms_to_periodic_system", forbidden)
+    monkeypatch.setattr(gpw, "BasisSet", forbidden)
+    if consumer != "ase_forces":
+        calc = gpw.VibeqcGPW(functional="pbe")
+        # Bypass ASE's constructor equality/shape inspection to exercise
+        # both consumer guards even for a nested, malformed count vector.
+        calc.parameters["kmesh"] = mesh
+    with pytest.raises(ValueError, match="must contain integers"):
+        if consumer == "ase_forces":
+            periodic.periodic_forces(atoms, None, kpts=mesh)
+        elif consumer == "gpw_calculate":
+            monkeypatch.setattr(calc, "_run_scf", forbidden)
+            calc.calculate(atoms, properties=["energy"])
+        else:
+            calc._run_scf(atoms)
+
+
+@pytest.mark.parametrize("consumer", ["ase_forces", "gpw_calculate", "gpw_scf", "dimer"])
+@pytest.mark.parametrize("mesh", [None, (1, 1, 1), np.array([2, 1, 1], dtype=np.uint32)])
+def test_periodic_wrapper_counts_keep_integer_dispatch(consumer, mesh, monkeypatch):
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.dimer import run_dimer
+    expected = (1, 1, 1) if mesh is None else tuple(mesh)
+    seen = []
+    class ReachedDispatch(Exception):
+        pass
+    def capture_grid(system, counts, *args, **kwargs):
+        seen.append(tuple(counts))
+        raise ReachedDispatch
+    if consumer == "dimer":
+        monkeypatch.setattr(core, "monkhorst_pack", capture_grid)
+        system = vq.PeriodicSystem(3, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+        with pytest.raises(ReachedDispatch):
+            run_dimer(system, "sto-3g", method="RHF", kpoints=mesh)
+    else:
+        ase = pytest.importorskip("ase")
+        import vibeqc.ase_periodic as periodic
+        import vibeqc.ase_periodic_gpw as gpw
+        atoms = ase.Atoms("He", positions=[[0., 0., 0.]], cell=[8., 8., 8.], pbc=True)
+        monkeypatch.setattr(periodic, "monkhorst_pack", capture_grid)
+        monkeypatch.setattr(gpw, "monkhorst_pack", capture_grid)
+        monkeypatch.setattr(gpw, "BasisSet", lambda *args: None)
+        def capture_gamma(*args, **kwargs):
+            seen.append((1, 1, 1))
+            raise ReachedDispatch
+        monkeypatch.setattr(gpw, "run_periodic_rhf_gpw", capture_gamma)
+        calc = gpw.VibeqcGPW(kmesh=mesh, functional="pbe")
+        with pytest.raises(ReachedDispatch):
+            if consumer == "ase_forces":
+                periodic.periodic_forces(atoms, None, kpts=mesh)
+            elif consumer == "gpw_calculate":
+                def capture_scf(*args, **kwargs):
+                    seen.append(expected)
+                    raise ReachedDispatch
+                monkeypatch.setattr(calc, "_run_scf", capture_scf)
+                calc.calculate(atoms, properties=["energy"])
+            else:
+                calc._run_scf(atoms)
+    assert seen == [expected]

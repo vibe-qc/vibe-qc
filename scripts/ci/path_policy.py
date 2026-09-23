@@ -6,17 +6,9 @@ GitLab decides whether to create a job before that job can run, so the
 This module is the testable policy surface: its pattern lists are compared
 byte-for-byte with named YAML anchors by :func:`verify_gitlab_policy`.
 
-CI policy (maintainer decision, 2026-07-26): CI runs once per release, on
-the exact release tree. An ordinary ``main`` push selects **no** jobs — the
-``main`` context below selects nothing, and the ``workflow:`` rules in
-``.gitlab-ci.yml`` refuse to create the pipeline at all — except for the
-decoupled ``website/**`` lane, which does carry one test gate:
-``website-test``, which both website deploys ``needs:``. That lane
-publishes to the public root on every matching push, so it cannot wait for
-release-candidate evidence. Test evidence for day-to-day commits is produced
-locally before landing; release evidence comes from the single
-release-candidate pipeline, which runs every component gate. The immutable
-tag reuses that exact-SHA evidence and creates no duplicate test pipeline.
+CI runs native release tests once on the exact candidate tree. Ordinary main
+pushes run the fast source-privacy gate; website changes additionally run their
+own verification gate. Tags reuse candidate evidence without duplicate builds.
 
 The path-gated selection logic survives for the ``merge_request`` context.
 Any shared build/test surface must still be added to ``NATIVE_PATHS`` in
@@ -74,6 +66,7 @@ WEBSITE_PATHS: Final = ("website/**/*",)
 DOCS_PATHS: Final = (
     ".gitlab-ci.yml",
     "CHANGELOG.md",
+    "changelog.d/**/*",
     "CITATION.cff",
     "CONTRIBUTING.md",
     "README.md",
@@ -90,12 +83,13 @@ ANCHOR_POLICIES: Final = {
     "website_paths": WEBSITE_PATHS,
 }
 
-ALWAYS_JOBS: Final = ("ci-path-policy",)
+ALWAYS_JOBS: Final = ("ci-path-policy", "source-privacy")
 RELEASE_JOBS: Final = (
     "build-test",
     "ci-path-policy",
     "docs-build",
     "qvf-conformance",
+    "source-privacy",
     "vibe-basis-test",
 )
 NATIVE_CACHE_KEY: Final = (
@@ -128,18 +122,13 @@ def select_jobs(paths: Sequence[str], *, context: str = "main") -> tuple[str, ..
     if context == "tag":
         return ()
     if context == "release":
-        return ("ci-path-policy", "docs-build")
+        return ("ci-path-policy", "docs-build", "source-privacy")
     if context == "web":
-        return ("ci-path-policy", "docs-build")
+        return ("ci-path-policy", "docs-build", "source-privacy")
     if context == "main":
-        # Ordinary main commits run no CI test jobs: evidence is local
-        # (scripts/test_gate/ + component suites) and the release-gate
-        # pipeline. The website lane is the single exception, because it
-        # publishes on the push rather than on the release: its deploys
-        # gate on website-test, so that job is the one main selection.
         if matches_any(paths, WEBSITE_PATHS):
-            return ("website-test",)
-        return ()
+            return ("source-privacy", "website-test")
+        return ("source-privacy",)
 
     jobs = set(ALWAYS_JOBS)
     if matches_any(paths, NATIVE_PATHS):

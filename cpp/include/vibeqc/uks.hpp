@@ -12,6 +12,7 @@
 // n_α = (n_e + mult−1)/2,  n_β = (n_e − mult+1)/2.
 
 #pragma once
+#include "vibeqc/opentrustregion.hpp"
 
 #include <Eigen/Dense>
 #include <optional>
@@ -56,6 +57,10 @@ UKSXCPotential evaluate_uks_xc_potential(
     const Eigen::MatrixXd& density_beta);
 
 struct UKSOptions {
+    // Explicit whole-SCF orbital optimizer; existing native phase defaults stay unchanged.
+    std::string orbital_optimizer = "native";
+    OpenTrustRegionOptions opentrustregion;
+
     std::string functional = "LDA";
     GridOptions grid;
 
@@ -278,6 +283,7 @@ struct UKSOptions {
 };
 
 struct UKSResult {
+    OpenTrustRegionReport opentrustregion;
     std::optional<BasisSet> restart_basis;
     std::optional<GuessSelection> guess_selection;
     double energy = 0.0;

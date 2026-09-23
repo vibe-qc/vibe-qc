@@ -236,6 +236,17 @@ def test_out_format_double_hybrid(tmp_path):
     _compare_or_regen("double_hybrid", stem.with_suffix(".out").read_text())
 
 
+def test_out_format_double_hybrid_open_shell(tmp_path):
+    # Its own golden because the open-shell branch is a different pair of
+    # calculations, and the .out said so nowhere until #365: the SCF is a
+    # spin-pure ROKS and the correction a semicanonical RI-ROHF-MP2 doubles
+    # term, both reported under closed-shell labels. Freezing the open-shell
+    # file separately is what stops those labels drifting back.
+    stem = tmp_path / "dh_os"
+    vq.run_double_hybrid(_oh_doublet(), "cc-pvdz", "b2plyp", output=stem)
+    _compare_or_regen("double_hybrid_open_shell", stem.with_suffix(".out").read_text())
+
+
 def test_out_format_molecular_hessian(tmp_path):
     # Freezes the vibrational-frequency + RRHO-thermochemistry .out blocks
     # (hessian=True): the Mode / Freq(cm-1) / IR(km/mol) table and the

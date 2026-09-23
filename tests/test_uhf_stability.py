@@ -206,22 +206,40 @@ def test_uhf_stability_budget_exhaustion_is_no_verdict():
 
 
 # ---------------------------------------------------------------------------
-# BUG 88 — FeCl3 UHF/cc-pVDZ root-selection failure (FIXED 2026-08-08)
+# BUG 88 — FeCl3 UHF/cc-pVDZ root-selection failure (FIXED 2026-08-08;
+# guess policy corrected 2026-09-16, issue #273)
 #
 # The old proportional-spin-split SAD guess landed FeCl3 UHF/cc-pVDZ on an
-# excited SCF saddle 105.87 mHa above the ground state.  The Hund-split
-# SAD guess (per-atom occ_alpha / occ_beta, Hund's rule) places the SCF
-# in the correct basin from iteration 1, matching ORCA to 2.5e-9 Ha.
-# These tests pin (a) the old behaviour is gone and (b) the new behaviour
-# is internally stable without corrective restarts.
+# excited SCF saddle 105.87 mHa above the ground state.  BUG 88 replaced it
+# with the per-atom Hund split (occ_alpha / occ_beta, Hund's first rule).
+#
+# The Hund seed alone is not sufficient here, and #273 measured why: it
+# superposes free-ATOM densities, so each Cl arrives carrying a full
+# free-atom moment of one unpaired electron, although in FeCl3 it is a
+# closed-shell chloride.  That spurious ligand polarisation survives into
+# the SCF and traps a symmetry-broken solution 90.05 mHa above the ground
+# state (one Cl left as a radical cation, S^2 = 8.776737), which converges
+# and then certifies a NEGATIVE internal Hessian eigenvalue.  The basin is
+# sharp: a ligand seed moment above roughly 0.05 e still lands there, so
+# rescaling the ligand moments does not recover it.
+#
+# AUTO therefore resolves a molecular open-shell d/f-block system to PATOM
+# — the same Hund seed followed by a per-spin in-field re-polarisation,
+# which quenches the ligand moments against the molecular field before the
+# SCF starts.  That reaches the ground state in 23 iterations, internally
+# stable, matching ORCA to 2.4e-9 Ha.  These tests pin (a) the old
+# behaviour is gone and (b) the new behaviour is internally stable without
+# corrective restarts.
 # ---------------------------------------------------------------------------
 
 # FeCl3 UHF/cc-pVDZ reference energies:
 #   ORCA 6.1.1:                     -2641.1344915755 Ha  (S^2 = 8.767533)
-#   vibe-qc Hund-split SAD (fixed): -2641.1344915780 Ha  (S^2 = 8.767533)
+#   vibe-qc AUTO -> PATOM (fixed):  -2641.1344915780 Ha  (S^2 = 8.767533)
+#   vibe-qc bare Hund SAD (#273):   -2641.0444381518 Ha  (+90.05 mHa)
 #   vibe-qc old proportional (bug): -2641.0286223698 Ha  (+105.87 mHa)
-FECL3_CCPVDZ_UHF_GROUND = -2641.1344915780   # new Hund-split guess result
+FECL3_CCPVDZ_UHF_GROUND = -2641.1344915780   # AUTO -> PATOM result
 FECL3_CCPVDZ_UHF_EXCITED = -2641.0286223698   # old proportional-split (BUG 88)
+FECL3_CCPVDZ_UHF_BARE_SAD = -2641.0444381518  # bare Hund-split SAD (#273)
 
 
 def _fecl3_sextet():
@@ -241,11 +259,14 @@ def _fecl3_sextet():
 @pytest.mark.slow
 @pytest.mark.timeout(600)
 def test_bug88_fecl3_uhf_ccpvdz_reaches_ground_state():
-    """BUG 88 / issue #398: FeCl3 reaches and certifies its ground state.
+    """BUG 88 / issue #398 / #273: FeCl3 reaches and certifies its ground state.
 
-    The Hund-split SAD guess places the SCF in the correct basin from the
-    start.  The post-SCF Davidson solve must also reach its sign-certifying
-    residual with the bounded default budget, without a stability restart.
+    The default guess places the SCF in the correct basin from the start:
+    AUTO resolves an open-shell d/f-block system to PATOM, whose in-field
+    re-polarisation of the Hund seed removes the spurious ligand moment that
+    bare SAD carries over from the free Cl atoms.  The post-SCF Davidson
+    solve must also reach its sign-certifying residual with the bounded
+    default budget, without a stability restart.
     """
     mol = _fecl3_sextet()
     opts = UHFOptions()
@@ -273,7 +294,7 @@ def test_bug88_fecl3_uhf_ccpvdz_reaches_ground_state():
 def test_bug88_fecl3_uhf_ccpvdz_stability_off_same_result():
     """BUG 88 (FIXED): with stability_check=False, FeCl3 UHF/cc-pVDZ
     reaches the same ground state — the guess quality, not the stability
-    escape, now determines the basin."""
+    escape, determines the basin (#273)."""
     mol = _fecl3_sextet()
     opts = UHFOptions()
     opts.max_iter = 300

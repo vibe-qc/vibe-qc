@@ -71,7 +71,7 @@ the given threshold.
 
 | Keyword | Default | Meaning |
 |---|---|---|
-| `initial_guess` | `PATOM` (molecular); `AUTO` (periodic) | Starting density; one of `AUTO`, `HCORE`, `SAD`, `SAP`, `PATOM`, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`, or molecular-only `FRAGMO`. |
+| `initial_guess` | `AUTO` (molecular and periodic) | Starting density; one of `AUTO`, `HCORE`, `SAD`, `SAP`, `PATOM`, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`, or `FRAGMO` on supported molecular and periodic routes. |
 | `read_path` | `''` | File (`.qvf` / `.molden`) to read orbitals from, for `initial_guess=READ`. |
 
 See [initial_guess](initial_guess.md).
@@ -170,9 +170,9 @@ See [periodic_methods](periodic_methods.md), [smearing](smearing.md),
 
 The values each option enum accepts (the default is marked):
 
-- **`InitialGuess`**: `AUTO` *(periodic default)*, `HCORE`, `SAD`, `SAP`,
-  `PATOM` *(molecular default)*, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`,
-  `FRAGMO` *(molecular only)*.
+- **`InitialGuess`**: `AUTO` *(molecular and periodic default)*, `HCORE`, `SAD`,
+  `SAP`, `PATOM`, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`, `FRAGMO`.
+  Availability depends on the [execution route](initial_guess.md#route-coverage).
 - **`SCFAccelerator`**: `DIIS`, `EDIIS`, `EDIIS_DIIS` *(molecular and periodic default)*,
   `ADIIS`, `ADIIS_DIIS`, `KDIIS`, `R_CDIIS`, `AD_CDIIS` *(adaptive-depth
   CDIIS, Chupin et al. 2021)*.

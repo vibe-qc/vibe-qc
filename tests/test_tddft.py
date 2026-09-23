@@ -531,3 +531,114 @@ def test_nto_weights_sum_to_one():
     nto = compute_nto(tda.states[0], res.mo_coeffs, n_occ)
     # For a normalized excitation vector, sum(s^2) == 1
     assert abs(np.sum(nto.hole_weights**2) - 1.0) < 1e-12
+
+
+# ---------------------------------------------------------------------------
+# run_job on a restricted open-shell reference (#361)
+# ---------------------------------------------------------------------------
+
+
+def _oh_radical() -> vq.Molecule:
+    return vq.Molecule(
+        [vq.Atom(8, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 0.0, 0.97])], 0, 2
+    )
+
+
+def _h2o_singlet() -> vq.Molecule:
+    return vq.Molecule(
+        [
+            vq.Atom(8, [0.0, 0.0, 0.0]),
+            vq.Atom(1, [0.0, 0.757, 0.586]),
+            vq.Atom(1, [0.0, -0.757, 0.586]),
+        ],
+        0,
+        1,
+    )
+
+
+def test_run_job_rohf_casida_is_refused_before_scf(tmp_path):
+    """Casida on an ROHF reference is not implemented: refuse, do not
+    substitute (before #361 the closed-shell Casida code ran on the ROHF
+    orbitals with n_occ = n_electrons // 2 and printed 0 eV states)."""
+    with pytest.raises(NotImplementedError, match="Casida"):
+        vq.run_job(
+            _oh_radical(), basis="sto-3g", method="rohf",
+            tddft=True, tddft_type="casida", output=str(tmp_path / "oh"),
+        )
+    assert not list(tmp_path.iterdir()), "refusal must precede every output file"
+
+
+def test_run_job_roks_tddft_is_refused_before_scf(tmp_path):
+    """No ROKS response kernel exists; the closed-shell RKS kernel must not
+    be run on the ROKS orbitals in its place."""
+    with pytest.raises(NotImplementedError, match="ROKS"):
+        vq.run_job(
+            _oh_radical(), basis="sto-3g", method="roks", functional="pbe",
+            tddft=True, output=str(tmp_path / "oh"),
+        )
+    assert not list(tmp_path.iterdir())
+
+
+def test_run_job_rohf_tda_runs_rohf_tda_and_labels_it(tmp_path):
+    """``run_job(method="rohf", tddft=True)`` reaches ``run_tddft_tda_rohf``
+    and says so in the .out. Before #361 the ROHF branch was unreachable
+    (ROHFResult mirrors mo_coeffs_alpha, which the attribute test read as
+    'not ROHF') and the closed-shell TDA ran under a plain "(TDA)" header.
+    """
+    from vibeqc.rohf import ROHFOptions, run_rohf
+    from vibeqc.tddft import run_tddft_tda_rohf
+
+    mol = _oh_radical()
+    res = vq.run_job(
+        mol, basis="sto-3g", method="rohf", tddft=True, tddft_n_states=3,
+        output=str(tmp_path / "oh"),
+    )
+    assert res.tddft.method == "TDA-ROHF"
+    out = (tmp_path / "oh.out").read_text()
+    assert "TD-DFT excited states (TDA-ROHF)" in out
+    assert "doubly-occupied → virtual excitations only" in out
+
+    basis = vq.BasisSet(mol, "sto-3g")
+    ref = run_rohf(mol, basis, ROHFOptions())
+    direct = run_tddft_tda_rohf(
+        mol, basis, np.asarray(ref.mo_energies), np.asarray(ref.mo_coeffs),
+        4, 1, n_states=3,
+    )
+    assert len(res.tddft.states) == 3
+    for a, b in zip(res.tddft.states, direct.states):
+        assert abs(a.excitation_energy - b.excitation_energy) < 1e-8
+        assert abs(a.oscillator_strength - b.oscillator_strength) < 1e-8
+        assert a.excitation_energy > 0
+
+
+def test_rohf_tda_singlet_limit_matches_rhf_tda():
+    """With no singly occupied orbital ROHF TDA is closed-shell TDA: same
+    excitation energies *and* oscillator strengths. The old ROHF path fed
+    the C++ MO-transform kernel a non-square coefficient block (it sizes
+    the virtual space from the AO dimension) and dropped the spin factor
+    from the transition dipole (#361)."""
+    from vibeqc.rohf import ROHFOptions, run_rohf
+    from vibeqc.tddft import run_tddft_tda, run_tddft_tda_rohf
+
+    mol = _h2o_singlet()
+    basis = vq.BasisSet(mol, "sto-3g")
+    ro_opts = ROHFOptions()
+    ro_opts.conv_tol_energy = 1e-12
+    ro = run_rohf(mol, basis, ro_opts)
+    rh_opts = vq.RHFOptions()
+    rh_opts.conv_tol_energy = 1e-12
+    rh = vq.run_rhf(mol, basis, rh_opts)
+    n_occ = mol.n_electrons() // 2
+
+    t_ro = run_tddft_tda_rohf(
+        mol, basis, np.asarray(ro.mo_energies), np.asarray(ro.mo_coeffs),
+        n_occ, 0, n_states=4,
+    )
+    t_r = run_tddft_tda(
+        mol, basis, np.asarray(rh.mo_energies), np.asarray(rh.mo_coeffs),
+        n_occ, n_states=4,
+    )
+    assert len(t_ro.states) == len(t_r.states) == 4
+    for a, b in zip(t_ro.states, t_r.states):
+        assert abs(a.excitation_energy - b.excitation_energy) < 1e-7
+        assert abs(a.oscillator_strength - b.oscillator_strength) < 1e-6

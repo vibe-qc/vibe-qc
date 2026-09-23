@@ -1886,6 +1886,9 @@ Eigen::VectorXd gfn2_fock_shell_potential(
 // is evaluated by FD with the reduced state frozen: v± = γ±Δq + V³ + K±m9
 // at the displaced geometry.  Without AES (c = 0) the correction vanishes
 // and the assembly is exact — this mirrors compute_scc_dftb_gradient_response.
+// `smearing_temperature` is the temperature the SCC ran at: the reduced-state
+// map must fill its orbitals with the same Fermi-Dirac occupations the SCC
+// used, or J and ∂X/∂R describe a different (T = 0) ensemble (vibe-qc#343).
 Eigen::MatrixXd gfn2_aes_response_correction(
     const Molecule& mol,
     const xtb::GFN2ParameterSet& params,
@@ -1903,7 +1906,8 @@ Eigen::MatrixXd gfn2_aes_response_correction(
     const Eigen::VectorXd& dqs,
     const Eigen::VectorXd& m9,
     const Eigen::VectorXd& V_mp,
-    int n_occ) {
+    int n_occ,
+    double smearing_temperature) {
 
     const auto& atoms = mol.atoms();
     const int n_atoms = static_cast<int>(atoms.size());
@@ -1924,9 +1928,11 @@ Eigen::MatrixXd gfn2_aes_response_correction(
         vp(si) += h_v;
         vm(si) -= h_v;
         Eigen::VectorXd Xp = gfn2_reduced_state(
-            H0, S, vp, basis, mol, mp_int, ao_shell, n0_shell, n_occ);
+            H0, S, vp, basis, mol, mp_int, ao_shell, n0_shell, n_occ,
+            smearing_temperature);
         Eigen::VectorXd Xm = gfn2_reduced_state(
-            H0, S, vm, basis, mol, mp_int, ao_shell, n0_shell, n_occ);
+            H0, S, vm, basis, mol, mp_int, ao_shell, n0_shell, n_occ,
+            smearing_temperature);
         J.col(si) = (Xp - Xm) / (2.0 * h_v);
     }
 
@@ -1979,7 +1985,7 @@ Eigen::MatrixXd gfn2_aes_response_correction(
                     shell_info, gam_d, K_d, gam3_shell, dqs, m9, n_atoms);
                 X_pm[pm] = gfn2_reduced_state(
                     H0_d, S_d, v_d, basis_d, mol_d, mp_d,
-                    ao_shell, n0_shell, n_occ);
+                    ao_shell, n0_shell, n_occ, smearing_temperature);
             }
             grad(a, d) = z.dot((X_pm[0] - X_pm[1]) / (2.0 * h_R));
         }
@@ -2022,11 +2028,16 @@ Eigen::MatrixXd compute_gfn2_gradient(
         ? result.overlap
         : SemiempiricalHamiltonianBuilder::build_overlap(basis);
 
-    // Energy-weighted density
-    Eigen::MatrixXd C_occ = C.leftCols(n_occ);
-    Eigen::MatrixXd W = Eigen::MatrixXd::Zero(n_basis, n_basis);
-    for (int i = 0; i < n_occ; ++i)
-        W += eps(i) * (2.0 * C_occ.col(i) * C_occ.col(i).transpose());
+    // Energy-weighted density from the converged occupations (vibe-qc#343).
+    // Hard Aufbau reproduces the historical leftCols assembly bit-for-bit;
+    // the fractional Fermi-Dirac occupations of a smeared SCC make W, and
+    // with it this gradient, the derivative of the Mermin free energy
+    // A = E - T*S in which that SCC is stationary (Bannwarth, Ehlert &
+    // Grimme, JCTC 2019, Eqs. 8 and 10), exactly as the periodic GFN2 and
+    // the DFTB routes below already do. A result that predates the
+    // occupations field falls back to hard Aufbau.
+    Eigen::MatrixXd W = gamma_energy_weighted_density(
+        C, eps, result.occupations, n_occ, n_basis);
 
     // ---- Shell-resolved SCC machinery (matches run_gfn2_xtb) ----
     auto shell_info = gfn2_enumerate_shells(basis, mol, params);
@@ -2216,7 +2227,7 @@ Eigen::MatrixXd compute_gfn2_gradient(
         mol, params, basis, S,
         build_gfn2_hamiltonian_zero(basis, S, mol, params),
         mp_int, shell_info, gamma_shell, K, ao_shell, n0_shell, gam3_shell,
-        v, dqs, m9, V_mp, n_occ);
+        v, dqs, m9, V_mp, n_occ, result.smearing_temperature);
 
     return grad;
 }

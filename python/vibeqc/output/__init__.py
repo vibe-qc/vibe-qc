@@ -86,15 +86,23 @@ from .formats.structured_log import (
     structured_log,
 )
 from .formats import (
+    DoubleHybridConstruction,
+    double_hybrid_construction,
+    FD_HESSIAN_SURFACES,
     CubeRequest,
     TrexioData,
     TrexioMOBlock,
     TrexioSparse,
+    hessian_surface_label,
+    hessian_surface_lines,
+    hessian_surface_manifest_fields,
+    hessian_unsupported_surface_lines,
     parse_write_cube_kwarg,
     qvf_bytes,
     read_trexio,
     read_trexio_fields,
     requested_mo_indices,
+    thermochemistry_energy_labels,
     validate_qvf,
     write_cif,
     write_cube_density_for_run_job,
@@ -103,6 +111,7 @@ from .formats import (
     write_population,
     write_poscar,
     write_qvf,
+    write_qcschema,
     write_trexio,
     write_trexio_fields,
     write_xyz,
@@ -124,6 +133,16 @@ from .plan import (
 from .writer import OutputWriter
 
 __all__ = [
+    # formats/vibrational.py -- Hessian surface wording
+    "FD_HESSIAN_SURFACES",
+    "DoubleHybridConstruction",
+    "double_hybrid_construction",
+    "hessian_surface_label",
+    "hessian_surface_lines",
+    "hessian_surface_manifest_fields",
+    "hessian_unsupported_surface_lines",
+    "thermochemistry_energy_labels",
+    "write_qcschema",
     # channel.py
     "Level",
     "OutputChannel",

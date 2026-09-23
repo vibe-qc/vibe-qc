@@ -1,4 +1,5 @@
 #include "vibeqc/uhf.hpp"
+#include "vibeqc/orbital_scf.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <algorithm>
@@ -30,6 +31,7 @@
 #include "vibeqc/soscf.hpp"
 #include "vibeqc/trah.hpp"
 #include "vibeqc/davidson.hpp"
+#include "vibeqc/degenerate_frontier.hpp"
 
 namespace vibeqc {
 
@@ -65,6 +67,10 @@ double compute_s_squared(
 UHFResult run_uhf(const Molecule& mol,
                   const BasisSet& basis,
                   const UHFOptions& opts) {
+    validate_orbital_optimizer(opts);
+    if (opts.orbital_optimizer == "opentrustregion"
+        && (opts.spinlock_mode != SpinlockMode::OFF || !opts.atomic_spins.empty()))
+        throw std::invalid_argument("OpenTrustRegion does not support spin schedules, MOM holds or targeted atomic spin states; select native");
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), &mol);
     validate_scf_max_iter(opts.max_iter, "run_uhf");
@@ -297,6 +303,7 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
                            const Eigen::MatrixXd* mom_anchor_alpha = nullptr,
                            const Eigen::MatrixXd* mom_anchor_beta = nullptr,
                            int mom_anchor_iters = 0) {
+    validate_orbital_optimizer(opts);
     validate_scf_max_iter(opts.max_iter, "run_uhf_scf_with_jk");
     if (n_alpha < 0 || n_beta < 0) {
         throw std::invalid_argument(
@@ -316,6 +323,27 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
         throw std::invalid_argument(
             "run_uhf_scf_with_jk: init_alpha and init_beta must both be "
             "supplied or both be empty");
+    }
+
+    // Loewdin metric and AO->atom map for the degenerate-frontier tie-break
+    // (#210). Both are built once per SCF; the tie-break itself runs only on
+    // an iteration whose frontier gap is below tolerance, which for an
+    // ordinary molecule is never.
+    const Eigen::MatrixXd s_sqrt_ao = symmetric_sqrt(S);
+    std::vector<int> ao_atom_index;
+    {
+        ao_atom_index.reserve(basis.nbasis());
+        const auto shell_list = basis.shells();
+        for (std::size_t shell = 0; shell < shell_list.size(); ++shell) {
+            const int atom = basis.shell_atom_index(shell);
+            const int l = shell_list[shell].l;
+            const std::size_t n_functions = shell_list[shell].pure
+                ? static_cast<std::size_t>(2 * l + 1)
+                : static_cast<std::size_t>((l + 1) * (l + 2) / 2);
+            for (std::size_t f = 0; f < n_functions; ++f) {
+                ao_atom_index.push_back(atom);
+            }
+        }
     }
 
     // Canonical orthogonalization; see rhf.cpp for the shared notes.
@@ -403,6 +431,15 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
     result.mo_energies_beta  = eps0;
     result.mo_coeffs_alpha = C_alpha;
     result.mo_coeffs_beta  = C_beta;
+
+    if (opts.orbital_optimizer == "opentrustregion") {
+        if (opts.spinlock_mode != SpinlockMode::OFF || !opts.atomic_spins.empty())
+            throw std::invalid_argument("OpenTrustRegion does not support targeted spin states or spinlock; select native");
+        const auto run = run_orbital_scf(opts, X, S, Hcore, E_nuc, jk,
+            D_alpha, D_beta, n_alpha, n_beta, false, 1.0);
+        assign_orbital_unrestricted(result, run, E_nuc, S, n_alpha, n_beta);
+        return result;
+    }
 
     // ORCA NOITER compatibility: evaluate the initial spin densities once,
     // without taking an SCF update or recording an iteration.
@@ -1143,8 +1180,19 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
         D_beta_prev  = Db_used;
         C_alpha = Ca_new;
         C_beta  = Cb_new;
-        D_alpha = build_density_from_occ(C_alpha, n_alpha);
-        D_beta  = build_density_from_occ(C_beta,  n_beta);
+        // #210: an exactly degenerate frontier makes `leftCols` a coin flip
+        // on the eigensolver's basis. Resolve it deterministically; a no-op
+        // whenever the frontier is gapped, which is virtually always.
+        {
+            const Eigen::MatrixXd Ca_occ = occupied_block_deterministic(
+                C_alpha, eps_a_new, n_alpha, s_sqrt_ao, ao_atom_index);
+            const Eigen::MatrixXd Cb_occ = occupied_block_deterministic(
+                C_beta, eps_b_new, n_beta, s_sqrt_ao, ao_atom_index);
+            D_alpha = n_alpha > 0 ? Eigen::MatrixXd(Ca_occ * Ca_occ.transpose())
+                                  : Eigen::MatrixXd(Eigen::MatrixXd::Zero(C_alpha.rows(), C_alpha.rows()));
+            D_beta = n_beta > 0 ? Eigen::MatrixXd(Cb_occ * Cb_occ.transpose())
+                                : Eigen::MatrixXd(Eigen::MatrixXd::Zero(C_beta.rows(), C_beta.rows()));
+        }
 
         result.mo_energies_alpha = eps_a_new;
         result.mo_energies_beta  = eps_b_new;
@@ -1355,6 +1403,7 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
         basis, n_alpha, n_beta, S, Hcore, E_nuc, jk, opts,
         constructed.alpha, constructed.beta);
     result.guess_selection = constructed.selection;
+    if (opts.orbital_optimizer == "opentrustregion") return result;
 
     // ---- Internal stability analysis + corrective restart ----------------
     //

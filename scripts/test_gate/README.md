@@ -135,6 +135,19 @@ not a bigger box. (See the memory-tier table below for routing.)
   `lane_class`, linked global bug/gate items, target release, and the full
   matched calculation required before a scientific value can be promoted.
 
+### Run artifacts are local-only
+
+Every `--out` artifact in this README lands in the working directory you run
+from, which is normally the repo root. They are gitignored (`/*.jsonl`, plus
+`/LANE_HEALTH.md` and `/lane_health.json`) and must stay that way: a record's
+`tail` field holds the tail of the captured pytest output, warnings summary
+included, and pytest prints each warning with the absolute path of its origin.
+A green run is therefore no safer than a red one: any lane whose tests warn
+quotes your checkout's path. Staging one makes `.githooks/pre-commit` reject the
+commit with "staged content contains personal-info patterns [values redacted]"
+*without naming the file*. Re-run the lane to regenerate an artifact; don't
+commit one. Retain release evidence outside the product checkout.
+
 ## Partition policy
 
 The old split was only `not slow` versus `slow`. That is too blunt for a codebase

@@ -11,15 +11,9 @@ from scripts.ci.path_policy import (
 
 
 class PathPolicyTests(unittest.TestCase):
-    """Release-only CI policy (2026-07-26).
+    """Cheap privacy preflight on main; expensive tests stay path/candidate gated."""
 
-    Ordinary ``main`` commits select NO jobs — test evidence is local, and
-    the single release-candidate pipeline proves every component gate on the
-    exact release tree. The tag reuses that evidence. Path-gated selection survives
-    only for merge-request pipelines.
-    """
-
-    def test_ordinary_main_commits_select_no_jobs(self) -> None:
+    def test_ordinary_main_commits_select_privacy_only(self) -> None:
         for paths in (
             ["vibe-basis/src/vibe_basis/cli.py"],
             ["docs/quickstart.md"],
@@ -29,7 +23,7 @@ class PathPolicyTests(unittest.TestCase):
             [".gitlab-ci.yml"],
         ):
             with self.subTest(paths=paths):
-                self.assertEqual(select_jobs(paths, context="main"), ())
+                self.assertEqual(select_jobs(paths, context="main"), ("source-privacy",))
 
     def test_website_main_pushes_select_their_own_gate(self) -> None:
         """The website lane publishes on the push, so it gates on the push.
@@ -41,31 +35,31 @@ class PathPolicyTests(unittest.TestCase):
         """
         self.assertEqual(
             select_jobs(["website/src/pages/index.astro"], context="main"),
-            ("website-test",),
+            ("source-privacy", "website-test"),
         )
         self.assertEqual(
             select_jobs(["website/tests/products.verify.mjs"], context="main"),
-            ("website-test",),
+            ("source-privacy", "website-test"),
         )
         # The exception is scoped to the lane: a neighbouring path stays empty.
-        self.assertEqual(select_jobs(["websites/other.md"], context="main"), ())
+        self.assertEqual(select_jobs(["websites/other.md"], context="main"), ("source-privacy",))
 
     def test_basis_only_mr_avoids_native_build(self) -> None:
         self.assertEqual(
             select_jobs(["vibe-basis/src/vibe_basis/cli.py"], context="merge_request"),
-            ("ci-path-policy", "vibe-basis-test"),
+            ("ci-path-policy", "source-privacy", "vibe-basis-test"),
         )
 
     def test_docs_only_mr_avoids_native_build(self) -> None:
         self.assertEqual(
             select_jobs(["docs/quickstart.md"], context="merge_request"),
-            ("ci-path-policy", "docs-build"),
+            ("ci-path-policy", "docs-build", "source-privacy"),
         )
 
     def test_handover_only_mr_runs_policy_guard(self) -> None:
         self.assertEqual(
             select_jobs(["handovers/HANDOVER_TEST_HEALTH.md"], context="merge_request"),
-            ("ci-path-policy",),
+            ("ci-path-policy", "source-privacy"),
         )
 
     def test_python_core_mr_requires_native_build(self) -> None:
@@ -113,6 +107,7 @@ class PathPolicyTests(unittest.TestCase):
         expected = (
             "build-test",
             "ci-path-policy",
+            "source-privacy",
             "vibe-basis-test",
         )
         for path in ("scripts/_build_lock.sh", "scripts/_lifecycle_lock.sh"):
@@ -137,6 +132,7 @@ class PathPolicyTests(unittest.TestCase):
             "ci-path-policy",
             "docs-build",
             "qvf-conformance",
+            "source-privacy",
             "vibe-basis-test",
         )
         self.assertEqual(
@@ -148,14 +144,29 @@ class PathPolicyTests(unittest.TestCase):
     def test_release_branch_is_docs_only(self) -> None:
         self.assertEqual(
             select_jobs(["docs/quickstart.md"], context="release"),
-            ("ci-path-policy", "docs-build"),
+            ("ci-path-policy", "docs-build", "source-privacy"),
         )
 
     def test_manual_web_pipeline_builds_docs(self) -> None:
         self.assertEqual(
             select_jobs([], context="web"),
-            ("ci-path-policy", "docs-build"),
+            ("ci-path-policy", "docs-build", "source-privacy"),
         )
+
+    def test_privacy_gate_precedes_builds_and_trusts_only_this_checkout(self) -> None:
+        config = (Path(__file__).resolve().parents[3] / ".gitlab-ci.yml").read_text()
+        gate = config.split("\nsource-privacy:\n", 1)[1].split("\nci-path-policy:", 1)[0]
+        self.assertIn("stage: privacy", gate)
+        self.assertIn("stages:\n  - privacy\n  - test", config)
+        # A main pipeline containing only .pre/.post jobs would not run.
+        self.assertNotIn("stage: .pre", gate)
+        trust = 'git config --global --add safe.directory "$CI_PROJECT_DIR"'
+        scan = 'python .githooks/source_privacy.py --tree "$CI_COMMIT_SHA"'
+        self.assertIn(trust, gate)
+        self.assertLess(gate.index(trust), gate.index(scan))
+        self.assertNotIn('safe.directory "*"', gate)
+        website = config.split("\nwebsite-test:\n", 1)[1]
+        self.assertIn('needs: ["source-privacy"]', website)
 
     def test_gitlab_rules_match_the_tested_policy(self) -> None:
         verify_gitlab_policy()

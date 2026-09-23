@@ -149,11 +149,29 @@ def _seccm_electrostatics_kernel(
         return "none"
     return f"{family_key}_{dimensional_kernel}"
 
+# The canonical semiempirical maturity vocabulary (#150).
+#
+# These five values are the *only* maturity vocabulary in the project. A route
+# plan's ``maturity`` is what the runner records and what the status table in
+# ``status.py`` must agree with; ``SEMIEMPIRICAL_MATURITIES`` and the
+# cross-table invariant in ``tests/test_semiempirical_route_plan.py`` keep a
+# second vocabulary from reappearing. A dormant C++ ``PeriodicTier`` enum used
+# to carry a third, disagreeing set of values and was removed with this
+# ruling; ``status.py``'s ``backend`` names *where the kernel lives*, which is
+# a different axis and deliberately not a maturity claim.
 MATURITY_PRODUCTION = "production"
 MATURITY_EXPERIMENTAL = "experimental"
 MATURITY_NATIVE_FD = "native_fd"
 MATURITY_MIXED_NATIVE = "mixed_native"
 MATURITY_GATED_UNIMPLEMENTED = "gated_unimplemented"
+
+SEMIEMPIRICAL_MATURITIES = (
+    MATURITY_PRODUCTION,
+    MATURITY_EXPERIMENTAL,
+    MATURITY_NATIVE_FD,
+    MATURITY_MIXED_NATIVE,
+    MATURITY_GATED_UNIMPLEMENTED,
+)
 
 EXECUTION_NATIVE = "native"
 EXECUTION_NATIVE_BATCHED_FD = "native_batched_fd"
@@ -695,8 +713,16 @@ def _maturity_and_execution(
             else EXECUTION_NATIVE
         )
         return MATURITY_EXPERIMENTAL, execution
-    if method_key == "pm6" and "gradient" in properties:
-        return MATURITY_NATIVE_FD, EXECUTION_NATIVE_BATCHED_FD
+    if method_key == "pm6":
+        if "gradient" in properties:
+            return MATURITY_NATIVE_FD, EXECUTION_NATIVE_BATCHED_FD
+        # Molecular PM6 energies run on native NDDO kernels, but full
+        # heavy-heavy two-center tensor parity is still open, so the route is
+        # not a production claim: ``status.py`` records ``production=False``
+        # and the user guide calls NDDO a development/prescreening family.
+        # This branch used to fall through to MATURITY_PRODUCTION and was the
+        # one live disagreement between the two tables (#150).
+        return MATURITY_EXPERIMENTAL, EXECUTION_NATIVE
     return MATURITY_PRODUCTION, EXECUTION_NATIVE
 
 
@@ -1691,6 +1717,7 @@ __all__ = [
     "MATURITY_PRODUCTION",
     "MOLECULAR_SEMIEMPIRICAL_METHODS",
     "PERIODIC_GAMMA_SEMIEMPIRICAL_METHODS",
+    "SEMIEMPIRICAL_MATURITIES",
     "SEMIEMPIRICAL_METHOD_ALIASES",
     "SEMIEMPIRICAL_METHODS",
     "GFN2SECCMHamiltonianIdentity",

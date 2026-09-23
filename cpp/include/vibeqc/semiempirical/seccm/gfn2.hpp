@@ -18,10 +18,10 @@
 //     records with their fractional weights (each record carries its weight
 //     through the potential sums; the pair-additive AES has no three-center
 //     terms, so the Peintinger-Bredow eq-13 union construction reduces to
-//     the plain two-center record weight). The experimental atom-resolved
-//     "faithful" AES (aes_potentials / aes_energy, gated behind
-//     XTBSccOptions::aes_faithful in the molecular driver) is not part of
-//     this adapter.
+//     the plain two-center record weight). The atom-resolved "faithful" AES
+//     (Bannwarth 2019 energy and Fock on record-resolved CAMM, joint
+//     [dq; mu; theta] iterate) is the opt-in GFN2SECCMOptions::aes_faithful
+//     model; it is the representative-invariant one (#140).
 //   * GAM3 on-site third order and the WS-weighted pair repulsion complete
 //     the energy functional; the per-primitive-cell energy is the raw
 //     finite-cluster total divided by the finite-group order.

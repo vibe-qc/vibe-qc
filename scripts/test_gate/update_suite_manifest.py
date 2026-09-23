@@ -40,6 +40,159 @@ FILE_OWNERS = {
 # here therefore widens or narrows the release gate on its own; pin one only as
 # the file's owning chat, and say why in the rationale.
 CURATED: dict[str, dict[str, str]] = {
+    "tests/test_qvf_job_options.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "input/output",
+        "disposition": "new",
+        "rationale": (
+            "Executable QVF JSON-to-options boundary (#366): constructors, "
+            "nested records/enums, strict field types and explicit refusals. "
+            "No SCF; native option constructors only. Numerical lifecycle "
+            "acceptance is separate from these adapter contracts."
+        ),
+    },
+    "tests/test_roadmap_release_table.py": {
+        "maturity": "verified",
+        "tier": "T2",
+        "owner": "output/docs",
+        "disposition": "new",
+        "rationale": (
+            "The roadmap's release table against the repository. "
+            "docs/roadmap.md stated the current release in prose and that "
+            "prose went stale six releases running (#259), so the table "
+            "that replaced it is cross-checked rather than trusted: every "
+            "codename against RELEASE_CODENAMES, every minor with a "
+            "CHANGELOG.md section or a git tag against the rows, and no row "
+            "claiming planned while a tag exists. Pure file and catalog "
+            "reads plus one git tag -l; no SCF, well under a second."
+        ),
+    },
+    "tests/test_double_hybrid_run_job.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular correlation",
+        "disposition": "new",
+        "rationale": (
+            "GitLab #365: run_job now dispatches double hybrids "
+            "(method='b2plyp' and the other three) to run_double_hybrid, "
+            "which until then was reachable only through its own wrappers "
+            "while the release paper named run_job as the molecular entry "
+            "point. Pins the two properties that can silently go wrong: "
+            "energy parity between the two entry points -- run_job spells "
+            "several defaults None where the dispatcher spells them True, "
+            "and coercing those with bool() turned density fitting off for "
+            "a ~1e-6 Ha drift -- and the refusal of every run_job feature "
+            "the dispatcher does not carry, so optimize=True cannot be "
+            "dropped and reported as a double-hybrid number. Also pins the "
+            "open-shell construction on all three surfaces: the .out named "
+            "an RKS reference for a ROKS SCF, the .system could not tell "
+            "the branches apart, and the .bibtex omitted the semicanonical "
+            "ROHF-MP2 papers. Water and OH / cc-pVDZ; seconds per job, no "
+            "external runtime."
+        ),
+    },
+    "tests/test_xyz_energy_method.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "output/docs",
+        "disposition": "new",
+        "rationale": (
+            "A .xyz written by run_job must name the method its energy is "
+            "on. run_job writes the comment line from the SCF result's "
+            "energy and _select_method has already collapsed a correlated "
+            "request to its mean-field reference, so method='mp2' produced "
+            "a geometry file carrying the RHF energy under a bare energy= "
+            "tag, byte-identical to an RHF job's file (#360). ASE reads "
+            "energy= as the energy of the structure, so post-processing "
+            "MP2 optimizations silently yielded Hartree-Fock numbers. Pins "
+            "the energy_method= and method= tags end to end, that the "
+            "tagged number really is the reference energy and is "
+            "unchanged, that the two jobs' files now differ only in the "
+            "comment line, the auto-resolution case, the optimize=True "
+            "case, and an ASE round-trip proving the consumer sees both "
+            "the unchanged energy and the new labels. Water / STO-3G; "
+            "under a second per job, ASE behind importorskip."
+        ),
+    },
+    "tests/test_chi_fit_source.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Explicit chi fit source, canonical source admission, typed execution metadata and process provenance; no qualification or cross-construction oracle",
+    },
+    "tests/test_hessian_surface.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular correlation",
+        "disposition": "new",
+        "rationale": (
+            "A reported Hessian must name the surface it was built on. "
+            "run_job resolves a correlated request down to its mean-field "
+            "reference before compute_hessian_fd differentiates it, so "
+            "method='mp2', hessian=True produced a frequency block "
+            "byte-for-byte identical to the RHF one with E(elec)-labelled "
+            "thermochemistry rows carrying the RHF energy -- nothing in the "
+            ".out, the .system manifest or the .qvf said which surface the "
+            "numbers described. Pins the Surface: line and its "
+            "not-the-requested-method note, the surface-named "
+            "thermochemistry labels and their arithmetic, the [hessian] "
+            "manifest section, the QVF vibrations surface key, and the "
+            "clean SKIPPED refusal for a method that resolves to no "
+            "mean-field reference at all. Water / STO-3G; under a second "
+            "per job, no external runtime."
+        ),
+    },
+    "tests/test_pbc_gaussian_image_guard.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "periodic-scf",
+        "disposition": "new",
+        "rationale": (
+            "Issue #133 fail-closed guard for the Gaussian periodic drivers: "
+            "a Gamma cell wider than cutoff_bohr leaves the translation ball "
+            "holding only g=0, and run_rhf_periodic / run_rks_periodic / "
+            "run_rhf_periodic_gamma returned the isolated cluster's energy "
+            "silently. Pins the refusal on all three entry points, the message "
+            "naming the cutoff and the way out, the "
+            "LatticeSumOptions.gamma_only_0 declaration that keeps the "
+            "molecular limit reachable, and two controls that the guard does "
+            "not fire on a genuinely periodic cell. Small STO-3G H2 chains; "
+            "seconds, no external runtime."
+        ),
+    },
+    "tests/test_stale_core_guard.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "release/test-health",
+        "disposition": "new",
+        "rationale": (
+            "Pins the stale-compiled-core refusal (#285): pytest exits the "
+            "reserved status 97 before collecting when _vibeqc_core predates "
+            "cpp/, run_full_suite.classify labels it STALE_CORE rather than "
+            "FAIL, and gate_verdict refuses to compute a verdict from an "
+            "artifact holding one. Pure Python; never touches cpp/ mtimes, "
+            "which would make the core stale for real."
+        ),
+    },
+    "tests/test_relocalization_worker.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "analysis/localization",
+        "disposition": "new",
+        "rationale": (
+            "Standalone JSONL relocalization protocol, native readiness, exact "
+            "archived basis reconstruction, molecular and experimental finite-torus "
+            "complex subspace invariants, strict refusals and explicit-only SCF. "
+            "Small local native calculations; no viewer or external QC runtime."
+        ),
+    },
+    "tests/test_opentrustregion.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular-SCF",
+        "disposition": "new",
+        "rationale": "Optional pinned orbital optimizer: matrix-free energy derivatives, C ABI/state isolation, molecular HF/KS and public output; real-library checks skip when absent",
+    },
     "tests/test_contributor_workflow_contract.py": {
         "maturity": "verified",
         "tier": "T2",
@@ -67,6 +220,25 @@ CURATED: dict[str, dict[str, str]] = {
         "rationale": "Hermetic external study profile and interpreter dispatch boundaries; no native calculation",
     },
 
+    "tests/test_semiempirical_pm6_basin_selection.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "semiempirical",
+        "disposition": "new",
+        "rationale": (
+            "pins GitLab #154's live limb: PM6/norbornadiene has several "
+            "genuine zero-temperature fixed points and the direct Pulay "
+            "iteration selects between them on arithmetic noise (a 1e-9 A "
+            "bridgehead nudge moves the converged total by 0.836 Ha), which "
+            "is why four fleet hosts reported four different converged "
+            "energies for one input and one build. Asserts the route refuses "
+            "such a system naming every solution it found, that the refusal "
+            "is the same outcome under noise-level input changes, that a "
+            "single-basin control (water) still reports, and that the direct "
+            "SCF no longer depends on the iteration budget. Real PM6 SCF "
+            "runs; no fleet access."
+        ),
+    },
     "tests/test_libint_capability_configure.py": {
         "maturity": "under-review",
         "tier": "T2",
@@ -1864,6 +2036,16 @@ CURATED: dict[str, dict[str, str]] = {
             "tier remains derived T2 through molecular-scf-dft"
         ),
     },
+    "tests/test_iao_population.py": {
+        "maturity": "production",
+        "tier": "T2",
+        "owner": "analysis/populations",
+        "disposition": "new",
+        "rationale": (
+            "Molecular determinant IAO charges, spin and IAO-Wiberg indices: "
+            "analytical covariance, matched-reference oracle and public output coverage"
+        ),
+    },
     "tests/test_iao_ibo.py": {
         "owner": "analysis/localization",
         "rationale": (
@@ -1905,6 +2087,18 @@ CURATED: dict[str, dict[str, str]] = {
             "supercell-Gamma results, the up-front refusal for per-k routes "
             "at true multi-k, and that D:S certification still refuses an "
             "uncertifiable density"
+        ),
+    },
+    "tests/test_periodic_slab_density_grid_origin.py": {
+        "maturity": "production",
+        "owner": "periodic-SCF",
+        "rationale": (
+            "slab and chain artifact grids must contain their atoms (#45): "
+            "the AO image sum translates along periodic axes only, so a box "
+            "pinned at the Cartesian origin dropped the charge below z=0 and "
+            "refused a 2-D UKS density artifact at 1.07 of 2.0 electrons. "
+            "Pins the centring, that dim=3 is untouched, and that a truly "
+            "thin slab is still refused with the cell named as the remedy"
         ),
     },
     "tests/test_periodic_runner_method_gate.py": {
@@ -2595,6 +2789,7 @@ EXPERIMENTAL_PATTERNS = (
     "tests/test_aiccm*.py",
     "tests/test_*seccm*.py",
     "tests/test_ccm*.py",
+    "tests/test_chi*.py",
     "tests/test_lowd_greens*.py",
     "tests/test_msindo_ccm*.py",
     "tests/test_periodic_aiccm*.py",
@@ -2606,6 +2801,13 @@ EXPERIMENTAL_PATTERNS = (
     "tests/test_periodic_ccm*.py",
     "tests/test_periodic_megacell*.py",
     "tests/test_periodic_toroidal_mp2.py",
+    # test_polipo_parity.py is hand-classified experimental in CURATED but
+    # matched none of the patterns above, so derive() fell through to its
+    # ("verified", "T2", "release/test-health", "demote T2") fallback and the
+    # disposition string survived classify() into suite_manifest.json, where
+    # it reads as a pending instruction to un-experimental the file. It is
+    # not one. Added 2026-09-18 (#370).
+    "tests/test_polipo*.py",
     "tests/test_seccm*.py",
 )
 

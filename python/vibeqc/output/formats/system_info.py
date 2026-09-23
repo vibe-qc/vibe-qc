@@ -304,6 +304,8 @@ def system_info(*, record_hostname: bool = True) -> dict[str, Any]:
         not exposed.  Both fields are always present so the TOML shape
         stays stable for parsers; we never *omit* either.
     """
+    from ...banner import loaded_process_provenance
+    process = loaded_process_provenance()
     info = build_info()
     if info:
         git_sha = info.get("sha_full") or info.get("sha") or _UNKNOWN
@@ -364,6 +366,8 @@ def system_info(*, record_hostname: bool = True) -> dict[str, Any]:
             "version":    VIBEQC_VERSION,
             "codename":   codename_for_version(VIBEQC_VERSION) or "",
             "git_sha":    git_sha,
+            "native_core_sha256": process["native_core_sha256"],
+            "native_core_bytes": process["native_core_bytes"],
             "git_branch": git_branch,
             "is_release": is_release,
         },
@@ -425,6 +429,11 @@ def _toml_str(s: str) -> str:
 
 
 def _toml_value(v: Any) -> str:
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_value(item) for item in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(_toml_str(str(k)) + " = " + _toml_value(val)
+                                 for k, val in v.items() if val is not None) + " }"
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, int):

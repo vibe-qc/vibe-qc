@@ -1,6 +1,7 @@
 // Restricted Hartree-Fock SCF driver for a single closed-shell molecule.
 
 #pragma once
+#include "vibeqc/opentrustregion.hpp"
 
 #include <Eigen/Dense>
 #include <optional>
@@ -25,6 +26,10 @@
 namespace vibeqc {
 
 struct RHFOptions {
+    // Explicit whole-SCF orbital optimizer; existing native phase defaults stay unchanged.
+    std::string orbital_optimizer = "native";
+    OpenTrustRegionOptions opentrustregion;
+
     int max_iter = 100;
     double conv_tol_energy = 1e-8;  // |E[k] - E[k-1]| < tol  (Hartree)
     double conv_tol_grad = 1e-6;    // ||F D S - S D F||_Frobenius
@@ -493,6 +498,7 @@ struct SCFIteration {
 };
 
 struct RHFResult {
+    OpenTrustRegionReport opentrustregion;
     std::optional<BasisSet> restart_basis;
     std::optional<GuessSelection> guess_selection;
     double energy = 0.0;            // total HF energy (Hartree)

@@ -40,7 +40,8 @@ from vibeqc import Atom, Molecule, run_job, system_info, write_system_manifest
 # ---------------------------------------------------------------------------
 
 EXPECTED_SHAPE: dict[str, set[str]] = {
-    "vibeqc":    {"version", "codename", "git_sha", "git_branch", "is_release"},
+    "vibeqc":    {"version", "codename", "git_sha", "git_branch", "is_release",
+                 "native_core_sha256", "native_core_bytes"},
     "host":      {"hostname", "os", "os_release", "os_pretty", "arch"},
     "cpu":       {"model", "physical_cores", "logical_cores", "omp_threads_used"},
     "memory":    {"total_gb", "available_gb"},

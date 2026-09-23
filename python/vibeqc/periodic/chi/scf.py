@@ -37,7 +37,7 @@ from ..._vibeqc_core import (
     PeriodicSystem,
     PeriodicXCDensityDomain,
 )
-from ...kpoints import KPoints
+from ...kpoints import KPoints, _integer_counts
 from ...level_shift_schedule import LevelShiftSchedule
 from ...mpi import LatticeOutputPartition, mpi_world
 from ...pbc_bipole import PBCBipoleRHFResult, run_pbc_bipole_rhf
@@ -689,10 +689,7 @@ def _normalise_mesh(
     dim = int(system.dim)
     if dim not in (1, 2, 3):
         raise ValueError(f"aiccm2026dev-b requires dim=1, 2, or 3; got {dim}")
-    if isinstance(mesh, (int, np.integer)):
-        values = [int(mesh)] * dim
-    else:
-        values = [int(value) for value in mesh]
+    values = _integer_counts(mesh, repeat=dim, name="aiccm2026dev-b mesh")
     if len(values) == dim:
         values += [1] * (3 - dim)
     elif len(values) != 3:
@@ -736,10 +733,9 @@ def _resolve_lattice_extension(
         )
     if wigner_seitz_shells is not None:
         dim = int(system.dim)
-        if isinstance(wigner_seitz_shells, (int, np.integer)):
-            shells = [int(wigner_seitz_shells)] * dim
-        else:
-            shells = [int(value) for value in wigner_seitz_shells]
+        shells = _integer_counts(
+            wigner_seitz_shells, repeat=dim, name="wigner_seitz_shells"
+        )
         if len(shells) == dim:
             shells += [0] * (3 - dim)
         if len(shells) != 3 or any(value < 0 for value in shells):
@@ -2341,6 +2337,11 @@ def _attach_diagnostics(
         residue_inverse_transform=residue_transform_execution,
     )
     setattr(result, "backend", f"aiccm2026dev-b-{backend.value}")
+    from ...banner import loaded_process_provenance
+    from types import MappingProxyType
+    result.process_provenance = MappingProxyType(loaded_process_provenance())
+    if backend is not AICCM2026DevBBackend.FOUR_CENTER:
+        result.quantitative_status = "not-qualified"
     setattr(result, "aiccm2026dev_b", diagnostics)
     setattr(
         result,
@@ -2527,6 +2528,8 @@ def run_aiccm2026dev_b_rhf(
     backend: str | AICCM2026DevBBackend = AICCM2026DevBBackend.FOUR_CENTER,
     aux_basis: str | None = None,
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
+    gdf_linear_dep_threshold: float = 1e-9,
     rsgdf_ke_cutoff: float = 200.0,
     rsgdf_tail_ke_cutoff: float | None = None,
     mdf_ke_cutoff: float = 40.0,
@@ -2549,6 +2552,11 @@ def run_aiccm2026dev_b_rhf(
         wigner_seitz_shells=wigner_seitz_shells,
     )
     selected = _resolve_backend(backend)
+    from ...periodic_fit_source import resolve_fit_source
+    resolved_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if selected is AICCM2026DevBBackend.FOUR_CENTER and fit_source != "auto":
+        raise NotImplementedError("fit_source applies only to RI and RIJCOSX backends")
     opts = options if options is not None else PeriodicRHFOptions()
     requested_fock_mixing = resolve_fock_mixing(
         opts,
@@ -2624,17 +2632,18 @@ def run_aiccm2026dev_b_rhf(
             opts,
             where="run_aiccm2026dev_b_rhf",
         )
-    _reject_implicit_gamma_rsgdf_tail(
-        system,
-        basis,
-        mesh_tuple,
-        selected,
-        gdf_method=gdf_method,
-        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
-        rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
-        fock_mixing=requested_fock_mixing,
-        where="run_aiccm2026dev_b_rhf",
-    )
+    if resolved_source == "classic" and fit_source == "auto":
+        _reject_implicit_gamma_rsgdf_tail(
+            system,
+            basis,
+            mesh_tuple,
+            selected,
+            gdf_method=gdf_method,
+            rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+            rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
+            fock_mixing=requested_fock_mixing,
+            where="run_aiccm2026dev_b_rhf",
+        )
     _require_inactive_quadratic_fallback(
         opts,
         where="run_aiccm2026dev_b_rhf",
@@ -2680,6 +2689,8 @@ def run_aiccm2026dev_b_rhf(
                 "cosx" if selected is AICCM2026DevBBackend.RIJCOSX else "gdf"
             ),
             gdf_method=gdf_method,
+            fit_source=fit_source,
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
             rsgdf_ke_cutoff=rsgdf_ke_cutoff,
             rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
             mdf_ke_cutoff=mdf_ke_cutoff,
@@ -2726,6 +2737,8 @@ def run_aiccm2026dev_b_rks(
     backend: str | AICCM2026DevBBackend = AICCM2026DevBBackend.FOUR_CENTER,
     aux_basis: str | None = None,
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
+    gdf_linear_dep_threshold: float = 1e-9,
     rsgdf_ke_cutoff: float = 200.0,
     rsgdf_tail_ke_cutoff: float | None = None,
     mdf_ke_cutoff: float = 40.0,
@@ -2750,6 +2763,11 @@ def run_aiccm2026dev_b_rks(
         wigner_seitz_shells=wigner_seitz_shells,
     )
     selected = _resolve_backend(backend)
+    from ...periodic_fit_source import resolve_fit_source
+    resolved_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if selected is AICCM2026DevBBackend.FOUR_CENTER and fit_source != "auto":
+        raise NotImplementedError("fit_source applies only to RI and RIJCOSX backends")
     opts = options if options is not None else PeriodicKSOptions()
     opts.functional = str(functional)
     func = Functional(str(functional), 1)
@@ -2904,6 +2922,8 @@ def run_aiccm2026dev_b_rks(
                 "cosx" if selected is AICCM2026DevBBackend.RIJCOSX else "gdf"
             ),
             gdf_method=gdf_method,
+            fit_source=fit_source,
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
             rsgdf_ke_cutoff=rsgdf_ke_cutoff,
             rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
             mdf_ke_cutoff=mdf_ke_cutoff,
@@ -2954,6 +2974,8 @@ def run_aiccm2026dev_b_uhf(
     backend: str | AICCM2026DevBBackend = AICCM2026DevBBackend.FOUR_CENTER,
     aux_basis: str | None = None,
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
+    gdf_linear_dep_threshold: float = 1e-9,
     rsgdf_ke_cutoff: float = 200.0,
     rsgdf_tail_ke_cutoff: float | None = None,
     mdf_ke_cutoff: float = 40.0,
@@ -2976,6 +2998,11 @@ def run_aiccm2026dev_b_uhf(
         wigner_seitz_shells=wigner_seitz_shells,
     )
     selected = _resolve_backend(backend)
+    from ...periodic_fit_source import resolve_fit_source
+    resolved_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if selected is AICCM2026DevBBackend.FOUR_CENTER and fit_source != "auto":
+        raise NotImplementedError("fit_source applies only to RI and RIJCOSX backends")
     opts = options if options is not None else PeriodicRHFOptions()
     requested_fock_mixing = resolve_fock_mixing(
         opts,
@@ -3061,6 +3088,8 @@ def run_aiccm2026dev_b_uhf(
             functional=None,
             aux_basis=aux_basis,
             gdf_method=gdf_method,
+            fit_source=fit_source,
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
             rsgdf_ke_cutoff=rsgdf_ke_cutoff,
             rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
             mdf_ke_cutoff=mdf_ke_cutoff,
@@ -3109,6 +3138,8 @@ def run_aiccm2026dev_b_uks(
     backend: str | AICCM2026DevBBackend = AICCM2026DevBBackend.FOUR_CENTER,
     aux_basis: str | None = None,
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
+    gdf_linear_dep_threshold: float = 1e-9,
     rsgdf_ke_cutoff: float = 200.0,
     rsgdf_tail_ke_cutoff: float | None = None,
     mdf_ke_cutoff: float = 40.0,
@@ -3133,6 +3164,11 @@ def run_aiccm2026dev_b_uks(
         wigner_seitz_shells=wigner_seitz_shells,
     )
     selected = _resolve_backend(backend)
+    from ...periodic_fit_source import resolve_fit_source
+    resolved_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if selected is AICCM2026DevBBackend.FOUR_CENTER and fit_source != "auto":
+        raise NotImplementedError("fit_source applies only to RI and RIJCOSX backends")
     opts = options if options is not None else PeriodicKSOptions()
     opts.functional = str(functional)
     func = Functional(str(functional), 2)
@@ -3266,6 +3302,8 @@ def run_aiccm2026dev_b_uks(
             functional=str(functional),
             aux_basis=aux_basis,
             gdf_method=gdf_method,
+            fit_source=fit_source,
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
             rsgdf_ke_cutoff=rsgdf_ke_cutoff,
             rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
             mdf_ke_cutoff=mdf_ke_cutoff,

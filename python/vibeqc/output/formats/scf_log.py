@@ -129,9 +129,9 @@ def format_scf_trace(
         recomputing it. Default ``None`` (no status reported).
     energy_label
         Label for the scalar energy in the component breakdown. ``run_job``
-        uses ``"SCF energy"`` when post-SCF add-ons such as dispersion are
-        requested, so parsers do not mistake the SCF trace for the final
-        user-facing total.
+        uses ``"E_SCF (excl. dispersion)"`` when post-SCF add-ons such as
+        dispersion are requested, so readers do not mistake the SCF component
+        for the final user-facing total.
     """
     segments = _scf_trace_segments(
         result,
@@ -229,6 +229,27 @@ def _scf_trace_segments(
     # a table, use the ordinary block separator after an optional banner.
     conv_sep = "\n" if trace else "\n\n"
     segments.append((conv_line, Level.QUIET, conv_sep))
+
+    otr = getattr(result, "opentrustregion", None)
+    if getattr(otr, "backend", "") == "opentrustregion":
+        lines = [f"  Orbital optimizer: OpenTrustRegion {otr.version}",
+                 f"  Subsystem: {otr.subsystem_solver}; manifold: {otr.manifold}; stability policy: {otr.stability_policy}",
+                 f"  Termination: {otr.termination} (code {otr.error_code})",
+                 f"  Energy converged: {otr.energy_converged}; gradient converged: {otr.gradient_converged}",
+                 f"  Orbital gradient RMS: {otr.gradient_rms:.3e}; physical residual: {otr.final_residual:.3e}",
+                 f"  Evaluations: accepted={otr.accepted_evaluations}, trial={otr.trial_evaluations}, Fock={otr.fock_evaluations}, response={otr.response_evaluations}",
+                 "  Macro/micro iteration totals: unavailable in upstream C API"]
+        if otr.callback_error:
+            lines.append(f"  Callback failure: {otr.callback_error}")
+        if otr.stability_checked:
+            verdict = ("stable" if otr.stable else "UNSTABLE") if otr.stability_converged else "INCONCLUSIVE"
+            lines.append(f"  Real fixed-occupation internal stability: {verdict} (threshold {otr.stability_threshold:.3e})")
+            lines.append("  Restricted checks exclude unrestricted and complex rotations.")
+        else:
+            lines.append("  Final internal stability: not checked")
+        segments.append(("\n".join(lines), Level.QUIET))
+        if otr.log:
+            segments.append(("\n".join(otr.log), Level.DEBUG))
 
     # Spin-squared expectation value (UHF / UKS / ROHF).  A spin-contamination
     # diagnostic: <S^2>_ideal = S(S+1) for the requested multiplicity;

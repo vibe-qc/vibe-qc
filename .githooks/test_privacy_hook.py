@@ -16,16 +16,20 @@ def home_path(user):
 
 
 class PrivacyHookTests(unittest.TestCase):
-    def check_staged(self, content, expected, policy=None, local=False):
+    def check_staged(self, content, expected, policy=None, local=False, filename="example.txt", unstaged=None):
         with tempfile.TemporaryDirectory(prefix="privacy-hook-") as temporary:
             repo = Path(temporary)
             subprocess.run(["git", "init", "-q", str(repo)], check=True)
             shutil.copytree(
                 HOOKS, repo / ".githooks", ignore=shutil.ignore_patterns("__pycache__")
             )
-            (repo / "example.txt").write_text(content + "\n")
-            subprocess.run(["git", "-C", str(repo), "add", "example.txt"], check=True)
+            (repo / filename).parent.mkdir(parents=True, exist_ok=True)
+            (repo / filename).write_text(content + "\n")
+            subprocess.run(["git", "-C", str(repo), "add", filename], check=True)
+            if unstaged is not None:
+                (repo / filename).write_text(unstaged)
             env = os.environ.copy()
+            env.pop("VIBE_PRIVACY_REQUIRE_TERMS", None)
             env.pop("VIBE_PRIVACY_TERMS_FILE", None)
             if policy is not None:
                 policy_path = repo / "private-terms" if policy == "in-tree" else repo.parent / (repo.name + ".private-terms")
@@ -78,10 +82,6 @@ class PrivacyHookTests(unittest.TestCase):
         self.assertNotIn(private, result.stderr)
         self.assertIn("redacted", result.stderr)
 
-    @unittest.skipUnless(
-        "PRIVATE_IP_PATTERN=" in (HOOKS / "pre-commit").read_text(),
-        "no address rule in this repository",
-    )
     def test_rfc1918_addresses_are_not_example_exceptions(self):
         for prefix in ((10, 0, 0), (192, 168, 1), (172, 31, 4)):
             with self.subTest(prefix=prefix):
@@ -134,6 +134,32 @@ class PrivacyHookTests(unittest.TestCase):
         for policy in ("missing", "", "in-tree"):
             with self.subTest(policy=policy):
                 self.check_staged("portable example", False, policy)
+
+    def test_private_email_in_agent_and_handover_files_is_blocked(self):
+        address = "private-person" + "@" + "private-fixture.org"
+        for name in ("AGENTS.md", "CLAUDE.md", "handovers/release.md", ".githooks/example.txt"):
+            with self.subTest(name=name):
+                result = self.check_staged(address, False, filename=name)
+                self.assertNotIn(address, result.stderr)
+
+    def test_public_email_does_not_hide_private_email(self):
+        address = "private-person" + "@" + "private-fixture.org"
+        self.check_staged("project@vibe-qc.com mpei@vibe-qc.com " + address, False)
+        self.check_staged("project@vibe-qc.com mpei@vibe-qc.com user@example.invalid user@example.org", True)
+
+    def test_index_bytes_win_over_clean_unstaged_content(self):
+        self.check_staged(home_path("private-fixture"), False, unstaged="portable example")
+        self.check_staged("portable example", True, unstaged=home_path("private-fixture"))
+
+    def test_python_matrix_operator_is_not_an_email(self):
+        self.check_staged("result = c" + "@" + "c.conj().T", True, filename="example.py")
+        address = "private-person" + "@" + "private-fixture.org"
+        self.check_staged("# " + address, False, filename="example.py")
+        self.check_staged("address = " + repr(address), False, filename="example.py")
+
+    def test_internal_host_names_are_blocked(self):
+        self.check_staged("node" + ".internal", False)
+        self.check_staged("https://host.example.org", True)
 
 
 

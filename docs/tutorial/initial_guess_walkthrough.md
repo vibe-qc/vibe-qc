@@ -43,14 +43,21 @@ This tour walks the four you will reach for most: `HCORE`, `SAD`,
 | `HCORE` | a Fock matrix | Drop all electron-electron repulsion and start from $\mathbf{F} = \mathbf{T} + \mathbf{V}_{\rm ne}$ (kinetic plus nuclear attraction only). | Free, but the shell structure is wrong; it can drive ionic solids to nonsense energies before recovering. |
 | `SAD` | a density | Stack pre-converged *atomic* densities, one block per atom, into a molecular density. | One tiny atomic SCF per element (cached); robust on every system class vibe-qc supports. |
 | `SAP` | a Fock matrix | Replace the bare nuclei with *screened atomic potentials* fit to exact atomic SCFs, so the first orbitals already have the right shell structure, with no atomic SCF to run. | A handful of integrals per atom; the cheap shell-correct choice, with its biggest iteration savings on heavy atoms (Lehtola 2020). |
-| `AUTO` | picks one | Inspect the system and choose: `SAP` for closed-shell light molecules, `SAD` for periodic, open-shell, or transition-metal systems. | The default in every SCF options struct. |
+| `AUTO` | picks one | Select the supported system and route policy: usually `PATOM` for closed-shell light molecules, `SAD` for ordinary periodic routes. See the exceptions below. | The default in every SCF options struct. |
 
 In one sentence: `HCORE` is the crude baseline, `SAD` is the robust
 workhorse, `SAP` is the cheap shell-correct option for closed-shell
-molecules, and `AUTO` chooses between them so you usually do not have
-to. The full math for each method, the per-spin UHF / UKS packaging,
+molecules, and `AUTO` selects a supported construction, including `PATOM`,
+for the requested system and route. The full math for each method,
+the per-spin UHF / UKS packaging,
 and the SAP citation requirement live in
 [`initial_guess.md`](../user_guide/initial_guess.md).
+
+Molecular open-shell d/f-block systems and isolated spin-polarized atoms
+usually resolve to PATOM. Other molecular open-shell routes and restricted
+closed-shell transition-metal systems usually resolve to SAD. Explicit
+`atomic_spins` keeps AUTO on SAD where supported. Routes exposing only HCORE
+resolve AUTO to HCORE; consult the [route table](../user_guide/initial_guess.md#route-coverage).
 
 ### Is there a Hückel guess? (and PATOM, MINAO, READ)
 
@@ -103,9 +110,9 @@ A2B = 1.0 / 0.529177210903    # Angstrom → bohr conversion
 
 ## Step 1, Parity on H₂O (the well-behaved case)
 
-When SCF behaves itself, every guess converges to the same energy.
-The point of running this is to see that the choice is about
-*efficiency*, not *correctness*.
+Compare whether the guesses reach the same solution for this small
+closed-shell example. Check both convergence and the final energy before
+comparing iteration counts.
 
 ```python
 mol = Molecule([
@@ -129,24 +136,21 @@ for kind in [vq.InitialGuess.HCORE,
     print(f"{kind.name:<6}  E = {r.energy:.10f}  n_iter = {r.n_iter}")
 ```
 
-You'll see something like:
+A recorded comparison of the explicit guesses gave:
 
 ```
 HCORE   E = -76.0107424867  n_iter = 12
 SAD     E = -76.0107424867  n_iter = 10
 SAP     E = -76.0107424867  n_iter = 11
-AUTO    E = -76.0107424867  n_iter = 11
 ```
 
-All four reach the same energy to better than $10^{-10}$ Ha.
-Iteration counts vary by ±1-2, well within the noise that DIIS
-introduces on a small system. AUTO resolved to SAP for this
-closed-shell light-atom case.
+These recorded explicit-guess runs reached the same energy. Current AUTO
+resolves to PATOM for this closed-shell light-atom case; the loop above prints
+its result too. Compare energies and convergence from your own run rather
+than expecting the historical iteration counts to match.
 
-**Why SAP didn't win here:** STO-3G / 6-31G\* are minimal basis sets
-where SAP's shell-structure-correct initial orbitals are nearly
-identical to what HCore-plus-DIIS produces after one extra
-iteration. SAP's advantage grows with basis size and atomic number.
+The relative cost and convergence depend on the molecule, basis and SCF
+settings. This small example does not rank the guesses for other systems.
 
 ## Step 2, The OH false-minimum trap
 
@@ -213,7 +217,7 @@ sysp = PeriodicSystem(
 )
 basis = BasisSet(sysp.unit_cell_molecule(), "sto-3g")
 
-# AUTO → SAD for any periodic system. This is the default now.
+# AUTO resolves to SAD on this ordinary periodic RHF route.
 opts = PeriodicRHFOptions()
 opts.conv_tol_energy = 1e-8
 opts.max_iter = 50
@@ -230,23 +234,21 @@ try:
     result = run_rhf_periodic_gamma(sysp, basis, opts)
     print(f"HCORE:       E/cell = {result.energy:.6f}  "
           f"n_iter = {result.n_iter}  converged = {result.converged}")
-    print("(HCore *may* recover on this small basis; on larger "
-          "basis sets it bombs.)")
+    print("Compare this result with the AUTO run above.")
 except RuntimeError as e:
     print(f"HCORE bombed: {e}")
 ```
 
-The SAD/AUTO run converges in 5-15 iterations. The HCORE run either
-recovers slowly or bombs, depending on basis size and damping. **On
-real-research basis sets like pob-TZVP, HCore on NaCl never recovers
-without level-shift intervention**, which is precisely why AUTO
-defaults to SAD for periodic systems.
+Compare the convergence flags, energies and iteration counts from both
+runs. HCORE can be a poor start for ionic systems, but neither failure nor
+success is guaranteed by the selector alone. AUTO uses SAD on this route
+as a conservative starting policy; other periodic routes can have different
+capability limits.
 
 ## Step 4, Inspecting AUTO's choice
 
-The resolved kind is logged on every SCF run. To see it, look at
-`result.scf_trace` (or just look at the live SCF log if you have
-`progress=True`):
+Inspect `result.guess_selection` to distinguish the requested selector from
+the effective construction and density transport:
 
 ```python
 mol = Molecule([
@@ -255,32 +257,23 @@ mol = Molecule([
 ])
 basis = BasisSet(mol, "cc-pvdz")
 r = run_rhf(mol, basis)
-# Look at the log output during the run; you'll see:
-#   [scf]  initial guess: SAP (Lehtola/Visscher/Engel 2020, sap_helfem_large)
+# AUTO resolves to PATOM for this molecule.
+print("requested:", r.guess_selection.requested)
+print("effective:", r.guess_selection.effective)
+print("transport:", r.guess_selection.transport)
 ```
 
-For programmatic inspection of what AUTO would pick for a given
-system, you can call the engine directly:
-
-```python
-from vibeqc._vibeqc_core import _guess_closed_shell_density
-
-# AUTO returns a density (for SAD-/PATOM-like resolutions) or None
-# (for HCORE / Fock-mode kinds where the SCF core fills in). When
-# AUTO resolves to SAP, the engine internally diagonalises F_SAP
-# and returns the resulting density - non-None.
-D = _guess_closed_shell_density(
-    mol, basis, mol.n_electrons() // 2,
-    vq.InitialGuess.AUTO, is_periodic=False,
-)
-print("AUTO yielded a starting density:", D is not None)
-```
+A density being present does not by itself identify the chosen method. Use
+the recorded selection rather than a private density-construction helper
+when inspecting what the runner actually executed.
 
 ## Step 5, The transition-metal nuance
 
 Closed-shell SAP can land the wrong d-shell occupation for a TM atom
 because the underlying atomic potential is averaged over an open d
-shell. AUTO detects TM atoms by Z range and resolves to SAD:
+shell. For a restricted closed-shell transition-metal system, AUTO resolves
+to SAD. For an open-shell d/f-block system it usually resolves to PATOM to
+re-polarize the atomic seed in the molecular field:
 
 ```python
 # Iron pentacarbonyl Fe(CO)5 - closed-shell singlet but with iron Z=26.

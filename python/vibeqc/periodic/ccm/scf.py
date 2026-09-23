@@ -292,7 +292,9 @@ def run_ccm_rhf(
     four-center weighting (see :data:`_CCM_ERI_METHODS`):
 
     * ``"union12"`` (default) -- the historical eq-18 product weight
-      (Peintinger & Bredow 2014); validated in 1-D.
+      (Peintinger & Bredow 2014); validated in 1-D **in a minimal basis
+      only**, breaks 8-fold ERI symmetry in >=2-D. The basis qualifier is not
+      a caution, it is a measured limit (issue #242).
     * ``"aiccm2026dev-a"`` -- the symmetric Born-von Kármán-torus four-center
       (:func:`~vibeqc.periodic.ccm.padded.ccm_eri_symmetric`,
       ``AICCM_ALGORITHM.md`` Sec.13), exactly 8-fold permutationally symmetric for
