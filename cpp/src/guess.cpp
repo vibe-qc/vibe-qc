@@ -373,13 +373,16 @@ AtomicSCF atomic_scf(int Z, const std::string& basis_name,
     // check by constructing the libint basis directly and skipping our
     // own Molecule for the atomic SCF.
     std::vector<libint2::Atom> atoms{libint2::Atom{Z, 0.0, 0.0, 0.0}};
-    std::string name_lower = basis_name;
-    std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
     libint2::BasisSet shells;
     try {
-        shells = actual_basis ? actual_basis->libint()
-                              : libint2::BasisSet(name_lower, atoms);
+        // The same resolver and loader as BasisSet (#30). A bare lowercase
+        // name here missed every alias spelling ("6-31G(d)", "sto3g") and
+        // took libint's aug-cc-pv* split, so SAD's atomic basis could differ
+        // from the molecular one it is assembled into.
+        shells = actual_basis
+                     ? actual_basis->libint()
+                     : load_named_libint_basis(basis_data_name(basis_name),
+                                               atoms);
     } catch (const std::exception& e) {
         // libint throws (rather than returning empty) for bogus
         // LIBINT_DATA_PATH and malformed .g94 parses. Translate into a
@@ -2104,6 +2107,9 @@ InitialGuess GuessEngine::resolve_auto(InitialGuess kind,
     //                                        explicit periodic SAP is
     //                                        available through route-local
     //                                        lattice-summed drivers)
+    //   molecular, open-shell d/f  → PATOM  (the bare Hund seed gives every
+    //                                        open-shell ligand its full
+    //                                        free-atom moment; see below)
     //   molecular, open-shell       → SAD   (SCF asymmetry develops
     //                                        from per-spin Fock build)
     //   molecular, transition metal → SAD   (closed-shell SAP can land
@@ -2113,6 +2119,22 @@ InitialGuess GuessEngine::resolve_auto(InitialGuess kind,
     //   molecular, closed-shell    → PATOM  (preserve the established
     //                                        molecular default basin)
     if (hints.is_periodic) return InitialGuess::SAD;
+    // Open-shell d/f-block complex (#273). The SAD seed superposes free-ATOM
+    // Hund densities, so every open-shell main-group ligand arrives carrying
+    // its own free-atom moment -- one full unpaired electron per Cl in
+    // FeCl3, which in the molecule is a closed-shell chloride. That spurious
+    // ligand polarisation survives into the SCF and traps a symmetry-broken
+    // solution: FeCl3 sextet / cc-pVDZ converges, and certifies a negative
+    // internal Hessian eigenvalue, 90.05 mHa above its ground state with one
+    // Cl left as a radical cation. PATOM is the same Hund seed followed by a
+    // per-spin in-field re-polarisation, which quenches the ligand moments
+    // against the molecular field before the SCF starts; it reaches the
+    // ground state (-2641.1344915780 Ha, S^2 = 8.767533, matching ORCA 6.1.1)
+    // in 23 iterations, internally stable with no stability restart. The
+    // basin is sharp: a seed moment above ~0.05 e per ligand still lands on
+    // the saddle, so reducing the ligand moment is not enough on its own.
+    if (hints.has_transition_metal && hints.is_open_shell)
+        return InitialGuess::PATOM;
     if (hints.is_open_shell) return InitialGuess::SAD;
     if (hints.has_transition_metal) return InitialGuess::SAD;
     // Retain the established molecular closed-shell default basin while AUTO
@@ -2492,17 +2514,25 @@ GuessOpenShellResult GuessEngine::build_open_shell(
     // as the production UHF/UKS drivers. In particular, an isolated
     // spin-polarised atom needs PATOM's in-field re-polarisation rather than
     // the generic open-shell SAD choice.
-    InitialGuess resolved = resolve_auto_for_molecule(
-        mol, kind, hints.is_periodic, true,
-        kind == InitialGuess::AUTO && (!S || !Hcore || !jk)
-            ? std::optional<std::vector<InitialGuess>>({
-                InitialGuess::HCORE, InitialGuess::SAD, InitialGuess::SAP,
-                InitialGuess::HUECKEL, InitialGuess::MINAO})
-            : std::nullopt);
     // Spin seeds modify SAD only; AUTO is resolved before validating that
     // contract. An explicit PATOM request cannot lose its in-field step.
     const bool seed_present =
         atomic_spins != nullptr && !atomic_spins->empty();
+    // AUTO must not resolve to a construction the request cannot use. That is
+    // the case when the caller has no S/Hcore/JK for PATOM's in-field step,
+    // and when an ATOMSPIN seed is present: the per-atom pattern is defined on
+    // the SAD density, so AUTO resolves to SAD and the seed is honoured
+    // (#273; the open-shell d/f rule above would otherwise take an AFM-seeded
+    // metal complex to PATOM and reject its own seed).
+    const bool patom_unavailable =
+        kind == InitialGuess::AUTO && ((!S || !Hcore || !jk) || seed_present);
+    InitialGuess resolved = resolve_auto_for_molecule(
+        mol, kind, hints.is_periodic, true,
+        patom_unavailable
+            ? std::optional<std::vector<InitialGuess>>({
+                InitialGuess::HCORE, InitialGuess::SAD, InitialGuess::SAP,
+                InitialGuess::HUECKEL, InitialGuess::MINAO})
+            : std::nullopt);
     validate_guess_ecp(resolved, ecp, &mol);
     result.resolved_kind = resolved;
     if (seed_present) validate_atomic_spin_selection(&mol, resolved, *atomic_spins);

@@ -245,6 +245,38 @@ class CCMGDFResult:
     #: quantity, and the two disagreeing was worth -4.99e-01 Ha/cell on
     #: MgO/STO-3G at ``nrep=(1,1,1)`` (GitLab IID 307).
     rsgdf_tail_ke_cutoff: float | None = None
+    #: IID 291 / ruling R6 (mirrors ``CCMSCFResult``): whether the producer was
+    #: asked to run a cell measured as vacuum-padded, and the 1-based lattice
+    #: directions that measured as vacuum. ``(False, ())`` on a cell measured
+    #: as genuinely 3-D.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
+    #: The inner multi-k driver's per-cycle trace, carried verbatim (O29,
+    #: paper issue #17): the Bloch producer previously exposed only
+    #: ``converged``/``n_iter``. Each row is the native ``SCFIteration``
+    #: (``iter``, ``energy``, ``delta_e``, ``grad_norm``, ...).
+    scf_trace: tuple = ()
+
+    @property
+    def achieved_convergence(self) -> dict:
+        """The convergence actually reached, read from :attr:`scf_trace`.
+
+        Mirrors ``CCMSCFResult.achieved_convergence`` so the two producers
+        of the neutral Hamiltonian expose the same record; the residual
+        metric differs (the multi-k driver records a gradient *norm*, the
+        real-Γ loop a max-abs commutator element) and is named so a reader
+        never compares the two as if they were one quantity.
+        """
+        tr = tuple(self.scf_trace or ())
+        if not tr:
+            return {}
+        last = tr[-1]
+        return {
+            "delta_e": float(getattr(last, "delta_e", float("nan"))),
+            "grad_max": float(getattr(last, "grad_norm", float("nan"))),
+            "grad_metric": "gradient_norm (multi-k driver)",
+            "cycles": int(len(tr)),
+        }
 
     @property
     def parity_held(self) -> bool:
@@ -393,7 +425,8 @@ def _gdf_guess_kwargs(driver_kwargs, *, is_ks):
 
 
 def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=True,
-             who="run_ccm_rhf_gdf", **driver_kwargs):
+             who="run_ccm_rhf_gdf", allow_vacuum_padding=False,
+             **driver_kwargs):
     """Neutral fitted-torus Bloch control on the ``nrep`` k-mesh.
 
     This and the real-Γ control are Fourier-related evaluations of the same
@@ -412,7 +445,8 @@ def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=True,
     # shared helper: run_ccm_rhf_gdf and run_ccm_rks_gdf both land here, and
     # hardcoding one of them made the other's refusal name a function the
     # caller never called (IID 498).
-    _reject_vacuum_padded_direct(ccm, who=who)
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who=who, allow_vacuum_padding=allow_vacuum_padding)
     unit = ccm.unit_system
     basis = make_basis(unit.unit_cell_molecule(), ccm.basis_name)
     kmesh = monkhorst_pack(unit, list(ccm.nrep))
@@ -480,7 +514,10 @@ def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=True,
         gdf_pair_builds=int(pair_stats["builds"]),
         gdf_pair_total=int(pair_stats["total"]),
         gdf_pair_reduction_factor=float(pair_stats["factor"]),
-        rsgdf_tail_ke_cutoff=getattr(res, "rsgdf_tail_ke_cutoff", None))
+        rsgdf_tail_ke_cutoff=getattr(res, "rsgdf_tail_ke_cutoff", None),
+        vacuum_padding_allowed=bool(allow_vacuum_padding),
+        vacuum_padded_axes=tuple(_padded_axes or ()),
+        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()))
 
 
 def _validate_gdf_driver_conv_tol_grad(driver_kwargs, *, who):
@@ -510,7 +547,8 @@ def _reject_external_xc_neutral_bloch(functional, *, spin, who):
         )
 
 
-def run_ccm_rhf_gdf(ccm, *, aux_basis=None, symmetry=True, **driver_kwargs):
+def run_ccm_rhf_gdf(ccm, *, aux_basis=None, symmetry=False,
+                    allow_vacuum_padding=False, **driver_kwargs):
     """HF neutral fitted-torus control in the multi-k Bloch representation.
 
     The unit-cell ``nrep`` mesh and the real-Γ control are related exactly by
@@ -522,24 +560,37 @@ def run_ccm_rhf_gdf(ccm, *, aux_basis=None, symmetry=True, **driver_kwargs):
     **RIJCOSX** exchange on this control (RI-J + seminumerical COSX-K
     instead of exact GDF-K) pass ``k_exchange="cosx", use_compcell=True`` (COSX
     needs the compensated-cell multi-k grid); ``k_exchange="gdf"`` (default) is
-    exact exchange. ``symmetry=True`` (default) reuses the currently gated
-    space-group and time-reversal Lpq star members on lower-dimensional
-    replica meshes; the planner admits only cell-list-preserving ops, so those
-    members are exact on the truncated build. Fully 3-D meshes use the
-    unreduced shared-q path because its ``n_k`` batched builds are cheaper
-    here than ``n_k**2`` per-pair ones, not because the relations are unsafe;
-    pass ``symmetry=False`` to request the unreduced path explicitly."""
+    exact exchange. ``symmetry=False`` (the default since 2026-09-16) runs
+    the production multi-k fit; ``symmetry=True`` opts into the space-group
+    and time-reversal Lpq star reduction on *partially* replicated meshes
+    (some ``N_i > 1``, not all). That reduction reconstructs fits from an
+    orbit representative, and its finite Bloch cell-list residual is
+    quantitative rather than algebraically zero (GitLab IID 337 already
+    excluded fully-3-D meshes for this reason). Measured 2026-09-16 on
+    LiH/STO-3G (2,2,1), a genuinely 3-D cell on a 2-D replica mesh: with the
+    reduction on, this producer differed from the real-Γ producer by
+    6.7e-5 Ha/cell (the Theorem-1 residual of ROUTES 10.5), with it off
+    the pair agrees at the 1e-12 class. The runner arm
+    (``variant="neutral-bloch"``) always passed ``symmetry=False``; the
+    library default now matches it, so both producers evaluate one
+    Hamiltonian by default and a reduced number is reachable only by an
+    explicit request that the result records
+    (``gdf_pair_reduction_factor``). ``allow_vacuum_padding=True`` runs a cell measured as
+    vacuum-padded (IID 291) as a warned, recorded vacuum-parameter study
+    (ruling R6); see :func:`~vibeqc.periodic.ccm.direct._reject_vacuum_padded_direct`."""
     _validate_gdf_driver_conv_tol_grad(
         driver_kwargs, who="run_ccm_rhf_gdf"
     )
     _warn_experimental()
     return _ccm_gdf(
         ccm, aux_basis, None, symmetry=symmetry,
-        who="run_ccm_rhf_gdf", **driver_kwargs
+        who="run_ccm_rhf_gdf", allow_vacuum_padding=allow_vacuum_padding,
+        **driver_kwargs
     )
 
 
-def run_ccm_uhf_gdf(ccm, *, aux_basis=None, **driver_kwargs):
+def run_ccm_uhf_gdf(ccm, *, aux_basis=None, allow_vacuum_padding=False,
+                    **driver_kwargs):
     """Open-shell HF neutral fitted-torus control via multi-k GDF.
 
     The spin-polarized sibling of :func:`run_ccm_rhf_gdf`: multi-k KUHF on the
@@ -566,7 +617,8 @@ def run_ccm_uhf_gdf(ccm, *, aux_basis=None, **driver_kwargs):
     from vibeqc import make_basis, monkhorst_pack, run_kuhf_periodic_gdf
     from .direct import _reject_vacuum_padded_direct
 
-    _reject_vacuum_padded_direct(ccm, who="run_ccm_uhf_gdf")
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who="run_ccm_uhf_gdf", allow_vacuum_padding=allow_vacuum_padding)
     unit = ccm.unit_system
     basis = make_basis(unit.unit_cell_molecule(), ccm.basis_name)
     kmesh = monkhorst_pack(unit, list(ccm.nrep))
@@ -595,18 +647,23 @@ def run_ccm_uhf_gdf(ccm, *, aux_basis=None, **driver_kwargs):
         energy_per_atom=float(res.energy) / n_unit,
         n_iter=int(getattr(res, "n_iter", 0)), raw=res,
         exchange_q0=BVK_EWALD, exchange_q0_applicability="active",
-        backend=str(getattr(res, "backend", "") or ""))
+        backend=str(getattr(res, "backend", "") or ""),
+        vacuum_padding_allowed=bool(allow_vacuum_padding),
+        vacuum_padded_axes=tuple(_padded_axes or ()),
+        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()))
 
 
 def run_ccm_rks_gdf(
-    ccm, functional="pbe", *, aux_basis=None, symmetry=True, **driver_kwargs
+    ccm, functional="pbe", *, aux_basis=None, symmetry=False,
+    allow_vacuum_padding=False, **driver_kwargs
 ):
     """KS neutral fitted-torus control in the multi-k Bloch representation.
 
     As :func:`run_ccm_rhf_gdf` with a libxc ``functional`` (pure or hybrid).
     Hybrids use exact GDF exchange by default; pass ``k_exchange="cosx",
     use_compcell=True`` for **RIJCOSX** hybrid exchange. ``symmetry`` has the
-    same RSGDF pair-star semantics as :func:`run_ccm_rhf_gdf`. Returns a
+    same RSGDF pair-star semantics (and the same ``False`` default since
+    2026-09-16) as :func:`run_ccm_rhf_gdf`. Returns a
     :class:`CCMGDFResult`."""
     _reject_external_xc_neutral_bloch(
         functional, spin=1, who="run_ccm_rks_gdf"
@@ -617,11 +674,13 @@ def run_ccm_rks_gdf(
     _warn_experimental()
     return _ccm_gdf(
         ccm, aux_basis, functional, symmetry=symmetry,
-        who="run_ccm_rks_gdf", **driver_kwargs
+        who="run_ccm_rks_gdf", allow_vacuum_padding=allow_vacuum_padding,
+        **driver_kwargs
     )
 
 
-def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None, **driver_kwargs):
+def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None,
+                    allow_vacuum_padding=False, **driver_kwargs):
     """Open-shell KS neutral fitted-torus control via multi-k GDF.
 
     The spin-polarized sibling of :func:`run_ccm_rks_gdf`: multi-k KUKS on the
@@ -650,7 +709,8 @@ def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None, **driver_kwargs):
     from vibeqc import make_basis, monkhorst_pack, run_kuks_periodic_gdf
     from .direct import _reject_vacuum_padded_direct
 
-    _reject_vacuum_padded_direct(ccm, who="run_ccm_uks_gdf")
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who="run_ccm_uks_gdf", allow_vacuum_padding=allow_vacuum_padding)
     unit = ccm.unit_system
     basis = make_basis(unit.unit_cell_molecule(), ccm.basis_name)
     kmesh = monkhorst_pack(unit, list(ccm.nrep))
@@ -680,13 +740,17 @@ def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None, **driver_kwargs):
         converged=bool(res.converged), energy=float(res.energy),
         energy_per_atom=float(res.energy) / n_unit,
         n_iter=int(getattr(res, "n_iter", 0)), raw=res,
-        backend=str(getattr(res, "backend", "") or ""))
+        backend=str(getattr(res, "backend", "") or ""),
+        vacuum_padding_allowed=bool(allow_vacuum_padding),
+        vacuum_padded_axes=tuple(_padded_axes or ()),
+        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()))
 
 
 def run_ccm_rhf_ri_neutral(ccm, *, initial_guess: object = "AUTO", cderi=None, ke_cutoff=200.0, aux_basis=None,
                            symmetry=None,
                            max_iter=128, conv_tol=1e-9, conv_tol_grad=1e-6,
-                           diis_dim=8, lindep_tol=1e-7):
+                           diis_dim=8, lindep_tol=1e-7,
+                           allow_vacuum_padding=False):
     """Closed-shell HF on the **neutral fitted-torus Hamiltonian**, built
     *lean* from the cderi ``L``.
 
@@ -751,12 +815,15 @@ def run_ccm_rhf_ri_neutral(ccm, *, initial_guess: object = "AUTO", cderi=None, k
     from .direct import (
         _reject_low_dimensional_direct,
         _reject_vacuum_padded_direct,
+        _stamp_vacuum_padding,
     )
 
     dim = int(ccm.unit_system.dim)
     if dim != 3:
         _reject_low_dimensional_direct(dim, who="run_ccm_rhf_ri_neutral")
-    _reject_vacuum_padded_direct(ccm, who="run_ccm_rhf_ri_neutral")
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who="run_ccm_rhf_ri_neutral",
+        allow_vacuum_padding=allow_vacuum_padding)
     if cderi is not None and aux_basis is not None:
         raise ValueError(
             "aux_basis is ignored when a prebuilt cderi is supplied: "
@@ -776,6 +843,7 @@ def run_ccm_rhf_ri_neutral(ccm, *, initial_guess: object = "AUTO", cderi=None, k
         max_iter=max_iter, conv_tol=conv_tol, conv_tol_grad=conv_tol_grad,
         diis_dim=diis_dim, lindep_tol=lindep_tol)
     res.backend = "ccm-neutral-ri-rhf"    # result-backend identity (IID 344)
+    _stamp_vacuum_padding(res, allow_vacuum_padding, _padded_axes)
     return _with_ccm_guess(res, guess_selection)
 
 

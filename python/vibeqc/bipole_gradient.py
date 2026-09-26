@@ -2709,6 +2709,9 @@ def _multi_k_orbital_relaxation_ks_closed_diag(
     ewald_alpha: float,
     func_name: str,
     *,
+    grid_options=None,
+    use_periodic_becke: bool = True,
+    becke_image_radius_bohr: float = 10.0,
     step_bohr: float = 1e-4,
     ewald_precision: float = 1e-8,
 ) -> np.ndarray:
@@ -2737,7 +2740,6 @@ def _multi_k_orbital_relaxation_ks_closed_diag(
         _crystal_ewald_options,
     )
     from .pbc_bipole_common import _bloch_sum_blocks
-    from .periodic_grid import build_periodic_becke_grid
 
     n_atoms = len(system.unit_cell)
     if system.dim != 3 or kmesh is None:
@@ -2771,7 +2773,9 @@ def _multi_k_orbital_relaxation_ks_closed_diag(
 
     # Build KS grid and Fock for B0 differentiation.
     K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
-    grid = build_periodic_becke_grid(system, image_radius_bohr=10.0)
+    grid = _build_ks_grid(
+        system, grid_options, use_periodic_becke, becke_image_radius_bohr
+    )
     func = Functional(func_name, 1)
     T_lat = compute_kinetic_lattice(basis, system, lattice_opts)
     ew = _crystal_ewald_options(
@@ -2890,6 +2894,9 @@ def _multi_k_orbital_relaxation_ks_open_diag(
     ewald_alpha: float,
     func_name: str,
     *,
+    grid_options=None,
+    use_periodic_becke: bool = True,
+    becke_image_radius_bohr: float = 10.0,
     step_bohr: float = 1e-4,
     ewald_precision: float = 1e-8,
 ) -> np.ndarray:
@@ -2912,7 +2919,6 @@ def _multi_k_orbital_relaxation_ks_open_diag(
         _crystal_ewald_options,
     )
     from .pbc_bipole_common import _bloch_sum_blocks
-    from .periodic_grid import build_periodic_becke_grid
 
     n_atoms = len(system.unit_cell)
     if system.dim != 3 or kmesh is None:
@@ -2952,7 +2958,9 @@ def _multi_k_orbital_relaxation_ks_open_diag(
             zstore.append(b / ediff)
 
     K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
-    grid = build_periodic_becke_grid(system, image_radius_bohr=10.0)
+    grid = _build_ks_grid(
+        system, grid_options, use_periodic_becke, becke_image_radius_bohr
+    )
     func = Functional(func_name, 2)
     T_lat = compute_kinetic_lattice(basis, system, lattice_opts)
     ew = _crystal_ewald_options(
@@ -6413,6 +6421,74 @@ def _add_dft_plus_u_pulay(
     return grad + np.asarray(extra, dtype=np.float64)
 
 
+def _gradient_domain_options(result, lattice_opts, *, system=None, basis=None):
+    """Use the SCF snapshot; explicit options may not select another operator."""
+    domain = getattr(result, "resolved_domain", None)
+    if domain is None:
+        return lattice_opts
+    # Pulay, grid-motion and orbital-response helpers currently use the native
+    # AUTO density-domain default. Do not differentiate a different SCF choice
+    # until every one of those consumers forwards it consistently.
+    if domain.xc_density_domain not in (
+        None, ("enum", "PeriodicXCDensityDomain", "AUTO"),
+    ):
+        raise NotImplementedError(
+            "BIPOLE analytic gradient does not support the recorded non-AUTO "
+            "XC density domain; use compute_bipole_gradient_fd with the same "
+            "xc_density_domain and SCF options."
+        )
+    if domain.v_ne_grid is not None or domain.exact_j_ke_cutoff is not None:
+        raise NotImplementedError(
+            "BIPOLE analytic gradient does not differentiate an explicit V_ne grid "
+            "or exact-FT J oracle; use the finite-difference gradient with the "
+            "same SCF options."
+        )
+    for field in ("ewald_alpha_bohr_inv", "ewald_precision", "sr_image_extent_bohr",
+                  "exact_zone_bohr", "exchange_ewald_split"):
+        if getattr(result, field) != getattr(domain, field):
+            raise ValueError(f"BIPOLE gradient: result {field} differs from its domain")
+    if lattice_opts is not None:
+        domain.lattice_2e.require_match(
+            lattice_opts, context="BIPOLE gradient", ignore=("coulomb_method",),
+        )
+    restored = domain.lattice_2e.restore(LatticeSumOptions)
+    if system is not None and domain.ewald_alpha_bohr_inv is not None:
+        from .bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
+        volume = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
+        reciprocal = bipole_ewald_reciprocal_cutoff(volume, domain.ewald_alpha_bohr_inv)
+        if reciprocal != domain.reciprocal_cutoff_bohr_inv:
+            raise ValueError("BIPOLE gradient reciprocal reach differs from the SCF domain")
+        if domain.nuclear_erfc is not None:
+            from .pbc_bipole_common import ewald_erfc_lattice_options
+            erfc = ewald_erfc_lattice_options(
+                restored, domain.ewald_alpha_bohr_inv, domain.ewald_precision,
+                basis=basis, system=system,
+            )
+            domain.nuclear_erfc.require_match(
+                erfc, context="BIPOLE nuclear gradient",
+                ignore=("coulomb_method", "becke_image_radius_bohr", "sr_range_screening"),
+            )
+    return restored
+
+
+def _gradient_domain_grid(result, grid_options, use_periodic_becke, image_radius):
+    """Recover omitted grid controls and refuse explicit energy/force drift."""
+    domain = getattr(result, "resolved_domain", None)
+    if domain is None or domain.xc_grid is None:
+        return (grid_options, True if use_periodic_becke is None else use_periodic_becke,
+                10.0 if image_radius is None else image_radius)
+    if grid_options is not None:
+        domain.xc_grid.require_match(grid_options, context="BIPOLE XC gradient")
+    for name, value in (("use_periodic_becke", use_periodic_becke),
+                        ("becke_image_radius_bohr", image_radius)):
+        if value is not None and value != getattr(domain, name):
+            raise ValueError(f"BIPOLE XC gradient: {name} differs from the SCF domain")
+    from ._vibeqc_core import GridOptions
+
+    return (domain.xc_grid.restore(GridOptions), domain.use_periodic_becke,
+            domain.becke_image_radius_bohr)
+
+
 def compute_bipole_gradient_rhf(
     system: PeriodicSystem,
     basis: BasisSet,
@@ -6450,6 +6526,9 @@ def compute_bipole_gradient_rhf(
        RHF/UHF are included; other padded multi-k combinations remain gated. Use
        :func:`compute_bipole_gradient_fd` for production forces.
     """
+    lattice_opts = _gradient_domain_options(
+        result, lattice_opts, system=system, basis=basis
+    )
     ewald_precision = float(getattr(result, "ewald_precision", 1e-8))
     _reject_m5_domain_analytic_gradient(result, "rhf")
     _warn_research_preview("rhf")
@@ -6682,6 +6761,9 @@ def compute_bipole_gradient_uhf(
        against FD, but RKS/UKS and multi-k are not. Use
        :func:`compute_bipole_gradient_fd` for production forces.
     """
+    lattice_opts = _gradient_domain_options(
+        result, lattice_opts, system=system, basis=basis
+    )
     ewald_precision = float(getattr(result, "ewald_precision", 1e-8))
     _reject_m5_domain_analytic_gradient(result, "uhf")
     _warn_research_preview("uhf")
@@ -7204,8 +7286,8 @@ def compute_bipole_gradient_rks(
     kmesh=None,
     dft_plus_u: Optional[Sequence["object"]] = None,
     grid_options=None,
-    use_periodic_becke: bool = True,
-    becke_image_radius_bohr: float = 10.0,
+    use_periodic_becke: Optional[bool] = None,
+    becke_image_radius_bohr: Optional[float] = None,
 ) -> np.ndarray:
     """BIPOLE RKS (DFT) atomic gradient. Uses alpha_hf from functional.
 
@@ -7216,9 +7298,9 @@ def compute_bipole_gradient_rks(
     relaxation using a finite-difference ``f_xc`` response.
 
     ``grid_options`` / ``use_periodic_becke`` / ``becke_image_radius_bohr``
-    MUST match the SCF's DFT-grid settings (the analytic XC gradient is
-    integrated on the same grid the energy used). The defaults match
-    :class:`PeriodicKSOptions` (``use_periodic_becke=True``).
+    must match the SCF's DFT-grid settings. Omitted settings are restored
+    from ``result.resolved_domain``; explicit mismatches raise. Results from
+    older versions retain the historical defaults (periodic Becke, 10 bohr).
 
     See :func:`compute_bipole_gradient_rhf` for ``dft_plus_u`` /
     ``kmesh`` kwargs.
@@ -7232,11 +7314,18 @@ def compute_bipole_gradient_rks(
        certification remains open. Use
        :func:`compute_bipole_gradient_fd` for production forces.
     """
+    grid_options, use_periodic_becke, becke_image_radius_bohr = _gradient_domain_grid(
+        result, grid_options, use_periodic_becke, becke_image_radius_bohr
+    )
     ewald_precision = float(getattr(result, "ewald_precision", 1e-8))
     _reject_m5_domain_analytic_gradient(result, "rks")
     _warn_research_preview("rks")
-    lattice_opts = _ks_gradient_lattice_options(
-        lattice_opts, use_periodic_becke, becke_image_radius_bohr
+    if lattice_opts is not None or getattr(result, "resolved_domain", None) is None:
+        lattice_opts = _ks_gradient_lattice_options(
+            lattice_opts, use_periodic_becke, becke_image_radius_bohr
+        )
+    lattice_opts = _gradient_domain_options(
+        result, lattice_opts, system=system, basis=basis
     )
     if getattr(result, "exchange_ewald_split", False):
         # Corrected (Ewald-exchange-split) gauge at Γ: the standard
@@ -7519,6 +7608,9 @@ def compute_bipole_gradient_rks(
             lattice_opts,
             float(ewald_alpha),
             func_name,
+            grid_options=grid_options,
+            use_periodic_becke=use_periodic_becke,
+            becke_image_radius_bohr=becke_image_radius_bohr,
             ewald_precision=ewald_precision,
         )
     if dft_plus_u:
@@ -7551,8 +7643,8 @@ def compute_bipole_gradient_uks(
     kmesh=None,
     dft_plus_u: Optional[Sequence["object"]] = None,
     grid_options=None,
-    use_periodic_becke: bool = True,
-    becke_image_radius_bohr: float = 10.0,
+    use_periodic_becke: Optional[bool] = None,
+    becke_image_radius_bohr: Optional[float] = None,
 ) -> np.ndarray:
     """BIPOLE UKS (spin-DFT) atomic gradient.
 
@@ -7564,9 +7656,9 @@ def compute_bipole_gradient_uks(
     response.
 
     ``grid_options`` / ``use_periodic_becke`` / ``becke_image_radius_bohr``
-    MUST match the SCF's DFT-grid settings (the analytic XC gradient is
-    integrated on the same grid the energy used). The defaults match
-    :class:`PeriodicKSOptions` (``use_periodic_becke=True``).
+    must match the SCF's DFT-grid settings. Omitted settings are restored
+    from ``result.resolved_domain``; explicit mismatches raise. Results from
+    older versions retain the historical defaults (periodic Becke, 10 bohr).
 
     See :func:`compute_bipole_gradient_rhf` for ``dft_plus_u`` /
     ``kmesh`` kwargs.
@@ -7579,11 +7671,18 @@ def compute_bipole_gradient_uks(
        certification remains open. Use
        :func:`compute_bipole_gradient_fd` for production forces.
     """
+    grid_options, use_periodic_becke, becke_image_radius_bohr = _gradient_domain_grid(
+        result, grid_options, use_periodic_becke, becke_image_radius_bohr
+    )
     ewald_precision = float(getattr(result, "ewald_precision", 1e-8))
     _reject_m5_domain_analytic_gradient(result, "uks")
     _warn_research_preview("uks")
-    lattice_opts = _ks_gradient_lattice_options(
-        lattice_opts, use_periodic_becke, becke_image_radius_bohr
+    if lattice_opts is not None or getattr(result, "resolved_domain", None) is None:
+        lattice_opts = _ks_gradient_lattice_options(
+            lattice_opts, use_periodic_becke, becke_image_radius_bohr
+        )
+    lattice_opts = _gradient_domain_options(
+        result, lattice_opts, system=system, basis=basis
     )
     if getattr(result, "exchange_ewald_split", False):
         # Corrected (Ewald-exchange-split) gauge at Γ: standard variational
@@ -7982,6 +8081,9 @@ def compute_bipole_gradient_uks(
             lattice_opts,
             float(ewald_alpha),
             func_name,
+            grid_options=grid_options,
+            use_periodic_becke=use_periodic_becke,
+            becke_image_radius_bohr=becke_image_radius_bohr,
             ewald_precision=ewald_precision,
         )
 

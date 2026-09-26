@@ -531,6 +531,45 @@ pages       = "2364--2376"
 year        = 2019
 doi         = "10.1002/jcc.26013"
 
+[entries.laun_pob_rev2_fifth_period_2022]
+kind        = "article"
+bibtex_key  = "laun_pob_rev2_fifth_period_2022"
+authors     = ["Laun, Joachim", "Bredow, Thomas"]
+title       = "BSSE-corrected consistent Gaussian basis sets of triple-zeta valence with polarization quality of the fifth period for solid-state calculations"
+journal     = "Journal of Computational Chemistry"
+volume      = 43
+issue       = 12
+pages       = "839--846"
+year        = 2022
+doi         = "10.1002/jcc.26839"
+notes       = "The 16 pob-TZVP-rev2 Rb-I records (Rb Sr Y Zr Nb Mo Ru Rh Pd Ag Cd In Sn Sb Te I) with their Stuttgart-Cologne ECPs; metadata verified against Crossref 2026-09-24 (#288)."
+
+[entries.laun_pob_rev2_sixth_period_2021]
+kind        = "article"
+bibtex_key  = "laun_pob_rev2_sixth_period_2021"
+authors     = ["Laun, Joachim", "Bredow, Thomas"]
+title       = "BSSE-corrected consistent Gaussian basis sets of triple-zeta valence with polarization quality of the sixth period for solid-state calculations"
+journal     = "Journal of Computational Chemistry"
+volume      = 42
+issue       = 15
+pages       = "1064--1072"
+year        = 2021
+doi         = "10.1002/jcc.26521"
+notes       = "The 15 pob-TZVP-rev2 Cs-Ba and Hf-Po records (Cs Ba Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po) with their Stuttgart-Cologne ECPs; metadata verified against Crossref 2026-09-24 (#288)."
+
+[entries.seidler_pob_rev2_lanthanides_2023]
+kind        = "article"
+bibtex_key  = "seidler_pob_rev2_lanthanides_2023"
+authors     = ["Seidler, Leopold Maximilian", "Laun, Joachim", "Bredow, Thomas"]
+title       = "BSSE-corrected consistent Gaussian basis sets of triple-zeta valence quality of the lanthanides La-Lu for solid-state calculations"
+journal     = "Journal of Computational Chemistry"
+volume      = 44
+issue       = 15
+pages       = "1418--1425"
+year        = 2023
+doi         = "10.1002/jcc.27097"
+notes       = "The 15 pob-TZVP-rev2 La-Lu records with their Stuttgart-Cologne ECPs; metadata verified against Crossref 2026-09-24 (#288)."
+
 # --- Pople-style basis sets (STO-3G, 6-31G(d) family) ----------------
 # The STO-NG paper itself is `hehre_sto_ng_1969` above; the basis routes
 # share that entry rather than carrying a second key for the same DOI.
@@ -6299,7 +6338,7 @@ always = ["libint_valeev"]
 "sap_helfem_large"      = ["lehtola_visscher_engel_sap_2020"]
 "pob-tzvp"              = ["peintinger_pob_tzvp_2013", "laun_pob_fifth_period_2018", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991"]
 "pob-dzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019"]
-"pob-tzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991", "dolg_stoll_savin_preuss_lanthanide_ecp_1989"]
+"pob-tzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019", "laun_pob_rev2_fifth_period_2022", "laun_pob_rev2_sixth_period_2021", "seidler_pob_rev2_lanthanides_2023", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991", "dolg_stoll_savin_preuss_lanthanide_ecp_1989"]
 # --- roadmap / forward-looking additions ---
 "pc-0"                  = ["jensen_pc_2001"]
 "aug-pc-0"              = ["jensen_pc_2001"]
@@ -6470,6 +6509,8 @@ _libxc_always           = ["libxc_2018"]
 
 
 [routes.methods]
+# Selected from the executed orbital-optimizer report, replacing DIIS credit.
+"opentrustregion"       = ["greiner_opentrustregion_2026"]
 # Not a method name: the foundational monograph for the LCAO crystalline-orbital
 # periodic HF treatment. registry.assemble() fires this for any periodic job
 # (periodic=True), the periodic analogue of an always-on method reference -- the
@@ -7286,6 +7327,7 @@ _libxc_always           = ["libxc_2018"]
 # construction is only defined relative to a minimal free-atom basis, and
 # vibe-qc uses MINI (Knizia's own Table 1 footnote-c variant) as that B2.
 "ibo"                   = ["knizia_ibo_2013", "huzinaga_gtos_1984"]
+"iao_wiberg"            = ["knizia_ibo_2013", "huzinaga_gtos_1984", "wiberg_bond_index_1968"]
 "vpt2"                  = ["barone_vpt2_2005"]
 "somf"                  = ["hess_somf_1996"]
 "frequency_scaling"     = ["wong_scaling_1996"]
@@ -7421,3 +7463,15 @@ always = [
     "derenzo_2000",
     "barandiaran_seijo_aimp_1988",
 ]
+
+[entries.greiner_opentrustregion_2026]
+kind = "article"
+doi = "10.1021/acs.jctc.5c01576"
+authors = ["Greiner, Jonas", "Høyvik, Ida-Marie", "Lehtola, Susi", "Eriksen, Janus J."]
+title = "A Reusable Library for Second-Order Orbital Optimization Using the Trust Region Method"
+journal = "Journal of Chemical Theory and Computation"
+year = 2026
+volume = 22
+issue = 2
+pages = "881-895"
+bibtex_key = "greiner_opentrustregion_2026"

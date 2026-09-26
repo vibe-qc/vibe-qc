@@ -200,6 +200,11 @@ class CCMNeutralBlochConvention:
     executed_fock_mixing: float
     executed_level_shift: float
     experimental: bool = True
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded, and the 1-based lattice directions that
+    #: measured as vacuum. Read off the producer's ``CCMGDFResult``.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
 
 
 def run_neutral_bloch_scf(
@@ -212,6 +217,7 @@ def run_neutral_bloch_scf(
     aux_basis: Optional[str] = None,
     symmetry: bool = False,
     return_lattice_density: bool = False,
+    allow_vacuum_padding: bool = False,
     **driver_kwargs,
 ):
     """Run the neutral Γ-CCM Bloch producer on the BvK torus ``mesh``.
@@ -250,6 +256,10 @@ def run_neutral_bloch_scf(
         Also return the exact lattice-cell representation of the converged
         per-k density. The runner requests this for density-grid and QVF
         output; the original per-k matrices remain untouched.
+    allow_vacuum_padding
+        The IID 291 opt-in (ruling R6): run a cell measured as vacuum-padded
+        as a warned, recorded vacuum-parameter study instead of refusing it.
+        Recorded on the convention record either way.
     **driver_kwargs
         Forwarded verbatim to the producer and on into
         ``run_k{rhf,rks,uhf,uks}_periodic_gdf`` (``options``, ``progress``,
@@ -285,22 +295,26 @@ def run_neutral_bloch_scf(
         )
 
     ccm = CCMSystem(system, nrep, basis_name)
+    _vac = bool(allow_vacuum_padding)
     if method_upper == "RHF":
         res = run_ccm_rhf_gdf(
-            ccm, aux_basis=aux_basis, symmetry=symmetry, **driver_kwargs
+            ccm, aux_basis=aux_basis, symmetry=symmetry,
+            allow_vacuum_padding=_vac, **driver_kwargs
         )
     elif method_upper == "RKS":
         res = run_ccm_rks_gdf(
             ccm, functional, aux_basis=aux_basis, symmetry=symmetry,
-            **driver_kwargs,
+            allow_vacuum_padding=_vac, **driver_kwargs,
         )
     elif method_upper == "UHF":
         # The open-shell producers take no ``symmetry`` keyword: it would be
         # forwarded into run_kuhf_periodic_gdf, which has no such parameter.
-        res = run_ccm_uhf_gdf(ccm, aux_basis=aux_basis, **driver_kwargs)
+        res = run_ccm_uhf_gdf(ccm, aux_basis=aux_basis,
+                              allow_vacuum_padding=_vac, **driver_kwargs)
     else:  # UKS
         res = run_ccm_uks_gdf(
-            ccm, functional, aux_basis=aux_basis, **driver_kwargs
+            ccm, functional, aux_basis=aux_basis,
+            allow_vacuum_padding=_vac, **driver_kwargs
         )
 
     raw = res.raw
@@ -328,6 +342,10 @@ def run_neutral_bloch_scf(
         parity_held=bool(res.parity_held),
         executed_fock_mixing=float(getattr(raw, "fock_mixing", 0.0) or 0.0),
         executed_level_shift=float(getattr(raw, "level_shift", 0.0) or 0.0),
+        vacuum_padding_allowed=bool(
+            getattr(res, "vacuum_padding_allowed", False)),
+        vacuum_padded_axes=tuple(
+            int(a) for a in (getattr(res, "vacuum_padded_axes", ()) or ())),
     )
     # The multi-k GDF results are plain (non-frozen) dataclasses, so the
     # record rides on the object the output stage already understands. The

@@ -340,7 +340,7 @@ def test_dftb0_seccm_scope_is_the_repulsive_pair_table():
     assert np.isfinite(accepted.energy)
 
     silicon = Molecule([Atom(14, c.tolist()) for c in coords])
-    with pytest.raises(NotImplementedError, match="H, C, N, O, F, P, S, Cl"):
+    with pytest.raises(ValueError, match="H, C, N, O, F, P, S, Cl"):
         run_dftb0_seccm(silicon, topology)
 
 
@@ -617,3 +617,41 @@ def test_dftb0_seccm_matches_dense_k_in_every_dimension(dimension, replicas):
     ).energy
 
     assert seccm_energy == pytest.approx(reference, abs=1.0e-11)
+
+
+def test_dftb0_seccm_applies_the_shared_record_orbit_validation(monkeypatch):
+    """DFTB0 flattens its records through the shared adapter helper.
+
+    The adapter used to carry its own copy of the flattening that skipped
+    the bound-orbit partition check every other SECCM adapter applies
+    (implementation map, section 4 item 8), so a topology whose bound action
+    was usable but whose record orbits did not partition was admitted here
+    and refused everywhere else. The sentinel pins that the shared check now
+    runs, before any parameter is loaded.
+    """
+    from vibeqc.semiempirical.seccm.topology import SECCMTopology
+
+    molecule, topology, _coords = _cyclic_h2(2, bind_action=True)
+    assert topology.record_orbits_currently_usable
+
+    def fail_orbit_validation(_self):
+        raise SECCMTopologyError("translated-record-orbit-sentinel")
+
+    monkeypatch.setattr(
+        SECCMTopology, "record_translation_orbits", fail_orbit_validation
+    )
+    module = importlib.import_module("vibeqc.semiempirical.seccm.dftb0")
+    monkeypatch.setattr(
+        module,
+        "default_parameters",
+        lambda: pytest.fail("parameter loading must not be reached"),
+    )
+    with pytest.raises(SECCMTopologyError, match="orbit-sentinel"):
+        run_dftb0_seccm(molecule, topology)
+
+    # The unmodified topology still runs, and the shared helper still
+    # produces the record set the native seam consumed before the change.
+    monkeypatch.undo()
+    result = run_dftb0_seccm(molecule, topology)
+    assert np.isfinite(result.energy)
+    assert result.n_records == sum(len(cell) for cell in topology.cells)

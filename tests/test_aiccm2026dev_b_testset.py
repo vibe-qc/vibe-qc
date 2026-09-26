@@ -3882,19 +3882,9 @@ def test_validation_docs_do_not_relabel_pbe0_ri_as_rijcosx() -> None:
         .read_text(encoding="utf-8")
         .split()
     )
-    handover = " ".join(
-        (_ROOT / "handovers" / "HANDOVER_AICCM2026DEV_B.md")
-        .read_text(encoding="utf-8")
-        .split()
-    )
 
     assert "matching STO-3G/PBE0/RIJCOSX runs converged" not in decisions
-    assert (
-        "direct hybrid COSX smoke is the PBE0/RIJCOSX block above"
-        not in handover
-    )
     assert "PBE0/RIJCOSX validation remains open" in decisions
-    assert "PBE0/RIJCOSX remains unrun" in handover
 
 
 def test_four_center_runner_records_resolved_direct_lattice_cutoffs(

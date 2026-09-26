@@ -862,13 +862,15 @@ r = vq.run_periodic_job(
 ```
 
 The `Lpq` cderi cache then holds $n_{\mathrm{IBZ}} \times n_k$ blocks
+plus the $n_k - n_{\mathrm{IBZ}}$ Hartree diagonals outside the wedge,
 instead of $n_k^2$, and the memory preflight is charged at that
-reduced count. Measured 2026-08-14 on NaCl primitive / def2-SVP with
+reduced count. Measured 2026-09-24 on NaCl primitive / def2-SVP with
 `aux_basis="def2-svp-jk"` (33 AOs, 240 aux) at $(4,4,4)$,
-$n_{\mathrm{IBZ}} = 8$ of 64: the `Lpq` term drops from 15.95 GB to
-1.99 GB (8x) and the total preflight from 25.08 GB to 4.14 GB (the
-AO-pair FT bundle and the per-$k$ buffers do not reduce). The `.out`
-states the reduction explicitly
+$n_{\mathrm{IBZ}} = 8$ of 64: 568 stored pairs against 4096, so the
+`Lpq` term drops from 15.95 GB to 2.21 GB (7.2x) and the total
+preflight from 26.32 GB to 5.71 GB (the fit source, the nuclear
+Fourier workspace, the one-electron lattice blocks and the per-$k$
+buffers do not reduce). The `.out` states the reduction explicitly
 (`symmetry_reduce_k = exchange bras 64 -> 8 (irreducible wedge)`)
 directly above the `[memory]` block, so the estimate can be accounted
 for.

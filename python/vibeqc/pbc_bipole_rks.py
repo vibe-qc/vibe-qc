@@ -218,6 +218,7 @@ class PBCBipoleRKSResult:
     restart_weights: object = None
     # Ewald accuracy used by the SCF; gradients must retain its finite sums.
     ewald_precision: float = 1e-8
+    resolved_domain: object = None
 
 
 @dataclass
@@ -761,41 +762,16 @@ def run_pbc_bipole_rks(
     omega_used: Optional[float] = None
     ewald_cell_volume: Optional[float] = None
     ewald_k_max: Optional[float] = None
-    if system.dim == 3:
-        from .bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
+    from .pbc_bipole_common import resolve_bipole_ewald_state
 
-        V_cell = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-        ewald_cell_volume = V_cell
-        # #674: the K_SR erfc arm of the corrected exchange split is cut at
-        # the Fock output cells (|g| <= lat_opts_2e.cutoff_bohr), so on that
-        # route CRYSTAL's volume-only alpha is bounded below by
-        # sqrt(-ln tol) / cutoff_bohr; the reciprocal envelope of J_LR / K_LR
-        # follows the alpha in use (K_max / alpha stays CRYSTAL's 8.51).
-        omega_used = resolve_bipole_ewald_alpha(
-            V_cell,
-            ewald_omega,
-            lat_opts_2e,
-            float(ewald_precision),
-            erfc_exchange_arm_active=(exchange_split_active and (exx.c_full != 0.0 or _patom_seed_pending)),
+    ewald_options_1e, omega_used, ewald_cell_volume, ewald_k_max = (
+        resolve_bipole_ewald_state(
+            system, lat_opts_1e, lat_opts_2e, ewald_omega=ewald_omega,
+            ewald_precision=ewald_precision,
+            erfc_exchange_arm_active=exchange_split_active and (exx.c_full != 0.0 or _patom_seed_pending),
             plog=plog,
         )
-        ewald_k_max = bipole_ewald_reciprocal_cutoff(V_cell, omega_used)
-        # #478: the pinned alpha = 2.8/V^(1/3) makes erfc(alpha.R) at the
-        # nearest image an L-INDEPENDENT 7.5e-5, so the 1e nuclear/Ewald
-        # real-space sum must be sized from alpha, not from the AO cutoff.
-        raise_bipole_ewald_real_cutoff(
-            system,
-            lat_opts_1e,
-            omega_used,
-            float(ewald_precision),
-            plog,
-        )
-        ewald_options_1e = _crystal_ewald_options(
-            lat_opts_1e,
-            alpha_bohr_inv=omega_used,
-            tolerance=float(ewald_precision),
-            recip_cutoff_bohr_inv=ewald_k_max,
-        )
+    )
 
     _erfc_sr_build_active = (
         not use_exact_ewald_j_for_pure_rks or bool(exx.is_screened) or _patom_seed_pending
@@ -807,6 +783,13 @@ def run_pbc_bipole_rks(
         min(float(omega_used), float(exx.omega_screen))
         if exx.is_screened and omega_used is not None
         else omega_used
+    )
+    from .pbc_bipole_common import ewald_erfc_lattice_options
+
+    _v_ne_erfc_options = (
+        ewald_erfc_lattice_options(
+            lat_opts_1e, omega_used, ewald_precision, basis=basis, system=system,
+        ) if ewald_options_1e is not None and v_ne_grid_options is None else None
     )
     _sr_image_extent = resolve_bipole_sr_image_extent(
         basis,
@@ -872,6 +855,7 @@ def run_pbc_bipole_rks(
             v_ne_grid_options,
             plog,
             sym_log_style="plain",
+            resolved_erfc_options=_v_ne_erfc_options,
         )
     cells = list(S_lat.cells)
     plog.info(f"n_cells in lattice sum = {len(cells)}")
@@ -1515,7 +1499,23 @@ def run_pbc_bipole_rks(
     # The RKS wrapper adds V_xc after the shared two-electron builder returns.
     # _build_fock_for_density (above) references this via late binding; it is
     # only called from the SCF loop below, after this point.
+    from .bipole_domain import capture_bipole_domain
+
+    _resolved_domain = capture_bipole_domain(
+        lattice_1e=lat_opts_1e, lattice_2e=lat_opts_2e,
+        ewald_options=ewald_options_1e, alpha=omega_used,
+        reciprocal_cutoff=ewald_k_max, ewald_precision=ewald_precision,
+        sr_image_extent=_sr_image_extent, use_ewald_j_split=use_ewald_j_split,
+        exchange_ewald_split=exchange_split_active,
+        exchange_exxdiv=exchange_exxdiv, exact_zone=_exact_zone,
+        ks_options=opts,
+        v_ne_grid_options=v_ne_grid_options,
+        xc_density_domain=xc_density_domain,
+        exact_j_ke_cutoff=(exact_j_ke_cutoff if use_exact_ewald_j_for_pure_rks else None),
+        nuclear_erfc_options=_v_ne_erfc_options,
+    )
     _fock_ctx = BipoleFockContext(
+        resolved_domain=_resolved_domain,
         basis=basis,
         system=system,
         lat_opts_2e=lat_opts_2e,
@@ -2309,6 +2309,7 @@ def run_pbc_bipole_rks(
         scf_trace=scf_trace,
         ewald_alpha_bohr_inv=omega_used,
         ewald_precision=float(ewald_precision),
+        resolved_domain=_resolved_domain,
         sr_image_extent_bohr=_sr_image_extent,
         pair_resolved_fock_domain=bool(_fock_sym_map is not None),
         e_dft_plus_u=float(e_dft_plus_u),

@@ -580,3 +580,64 @@ def test_pair_complete_overlap_gradient_differentiates_the_pair_complete_sum():
     # The contraction returns -dE/dR; compare the H atom's z component.
     assert g_an[1, 2] == pytest.approx(-g_fd, abs=1e-6)
     assert abs(g_fd) > 1e-3
+
+
+@pytest.mark.parametrize(
+    "z_a,z_b,a_ang,basis_name,cutoff",
+    [(3, 1, 4.084, "def2-svp", 15.0),
+     (12, 8, 4.21, "sto-3g", 15.0),
+     (19, 53, 7.07, "sto-3g", 15.0),
+     (19, 53, 7.07, "sto-3g", 18.0)],
+)
+@pytest.mark.parametrize("fractional_k", [(0., 0., 0.), (.23, -.17, .11)])
+def test_physical_domain_ionic_bloch_relabelling_316(
+    z_a, z_b, a_ang, basis_name, cutoff, fractional_k,
+):
+    """Raw S/T covariance on compact ionic cells, including diffuse LiH.
+
+    With the native +ik.g fold convention, relabelling AO mu by t_mu gives
+    M' = Q M Q^dagger, Q_mu = exp(+ik.t_mu). This is a fixed finite-domain
+    identity (Sharma and Beylkin 2021, Eqs. 17-18), not an infinite-cutoff
+    or converged-total-energy comparison. No Hermitian projection is used.
+    """
+    reference = _rocksalt(z_a, z_b, a_ang)
+    shifted = _rocksalt(z_a, z_b, a_ang, (1, 0, 0))
+    lattice = np.asarray(reference.lattice)
+    k = 2 * np.pi * np.linalg.inv(lattice).T @ np.asarray(fractional_k)
+    basis = vq.BasisSet(reference.unit_cell_molecule(), basis_name)
+    moved_basis = vq.BasisSet(shifted.unit_cell_molecule(), basis_name)
+    opts = vq.LatticeSumOptions()
+    opts.cutoff_bohr = cutoff
+    opts.pair_complete_1e = True
+    phase = []
+    atom_positions = np.asarray([a.xyz for a in reference.unit_cell])
+    for shell in basis.shells():
+        atom = int(np.argmin(np.sum((atom_positions - np.asarray(shell.origin))**2, axis=1)))
+        l = int(shell.l)
+        size = 2*l + 1 if shell.pure else (l+1)*(l+2)//2
+        phase.extend([np.exp(1j * k @ lattice[:, 0]) if atom == 1 else 1.] * size)
+    phase = np.asarray(phase)
+    assert phase.size == basis.nbasis == moved_basis.nbasis
+
+    def raw_fold(operator):
+        return sum(np.exp(1j*k @ np.asarray(cell.r_cart)) * np.asarray(block)
+                   for cell, block in zip(operator.cells, operator.blocks))
+
+    matrices = []
+    for builder, tolerance in ((vq.compute_overlap_lattice, 1e-12),
+                               (vq.compute_kinetic_lattice, 1e-10)):
+        original = raw_fold(builder(basis, reference, opts))
+        moved = raw_fold(builder(moved_basis, shifted, opts))
+        expected = phase[:, None] * original * phase.conj()[None, :]
+        assert np.max(np.abs(moved - expected)) <= tolerance
+        matrices.append((original, moved))
+    # A prescribed Hermitian density, transformed with the same AO phases.
+    # This checks a raw energy term, not the historical occupied-density pin.
+    n = int(basis.nbasis)
+    vector = np.arange(1, n+1, dtype=float) / n
+    density = np.eye(n) + np.outer(vector, vector)
+    density /= np.trace(density @ matrices[0][0]).real
+    moved_density = phase[:, None] * density * phase.conj()[None, :]
+    kinetic = np.trace(density @ matrices[1][0])
+    moved_kinetic = np.trace(moved_density @ matrices[1][1])
+    assert abs(moved_kinetic - kinetic) <= 1e-10

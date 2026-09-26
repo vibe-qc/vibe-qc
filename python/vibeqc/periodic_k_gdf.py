@@ -98,7 +98,7 @@ from .guess import (
     periodic_fock_guess_k,
     resolve_initial_guess,
 )
-from .kpoints import KPoints
+from .kpoints import KPoints, _integer_counts
 from .lattice_screening import (
     RcutStrategy,
     make_lattice_opts,
@@ -1234,13 +1234,13 @@ def _resolve_ibz_native_state(system, kpoints_cart, kmesh, weights, plog):
 
     mesh = getattr(kmesh, "mesh", None)
     if mesh is None and isinstance(kmesh, (list, tuple)):
-        mesh = tuple(int(x) for x in kmesh)
+        mesh = kmesh
     if mesh is None or len(tuple(mesh)) != 3:
         raise NotImplementedError(
             "ibz_native=True needs a Monkhorst-Pack mesh it can reduce "
             f"(tuple or BlochKMesh carrying `mesh`); got {type(kmesh).__name__}."
         )
-    mesh = [int(x) for x in mesh]
+    mesh = _integer_counts(mesh, name="IBZ native mesh")
     w = np.asarray(weights, dtype=float).reshape(-1)
     if not np.allclose(w, w[0], atol=1e-12):
         raise NotImplementedError(
@@ -1356,6 +1356,29 @@ class _RangeSeparatedGdfCache(Mapping):
         return float(self.source_parameters[3])
 
 
+#: Concrete legacy reciprocal mesh (Ha) for the routes that have no
+#: error-bounded planner: the all-FT shared-q builders, the dense-core
+#: parity classifiers, the gradient rebuild and the recorded result field
+#: when no SR/LR source ran. It is NOT a floor for the SR/LR planner.
+RSGDF_KE_CUTOFF_DEFAULT = 200.0
+
+
+def _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff):
+    """Split a caller's ``rsgdf_ke_cutoff`` into (request, concrete mesh).
+
+    ``request`` is the caller's explicit value or ``None`` when nothing was
+    requested; only it reaches the SR/LR planner (GitLab IID 257). There an
+    explicit value is used exactly as given, not as a floor over the
+    error-bounded cutoff, and a value below that cutoff warns (IID 206).
+    ``concrete`` is the request, or :data:`RSGDF_KE_CUTOFF_DEFAULT`, for the
+    routes that need a finite mesh of their own. An explicit value passes
+    through unchanged, so each consumer keeps its own validation.
+    """
+    if rsgdf_ke_cutoff is None:
+        return None, RSGDF_KE_CUTOFF_DEFAULT
+    return rsgdf_ke_cutoff, rsgdf_ke_cutoff
+
+
 def _build_range_separated_lpq_cache(
     system,
     basis,
@@ -1383,8 +1406,11 @@ def _build_range_separated_lpq_cache(
     a conservative allowance for pair/group metadata and one live source
     build with whitening. Each q metric is built and diagonalized once.
     Supplying ``raw_integral_error`` plans finite SR and LR domains for
-    the whole cache. Explicit cutoffs then serve as lower bounds, so a
-    caller cannot silently undercut the requested raw-integral accuracy.
+    the whole cache. Explicit pair and auxiliary cutoffs then serve as
+    lower bounds. An explicit ``ke_cutoff`` is used exactly as given
+    (GitLab IID 206); one below the planned reciprocal cutoff emits a
+    ``RuntimeWarning``, so a caller never undercuts the requested
+    raw-integral accuracy silently.
     Without an error target all three finite cutoffs must be explicit.
     This leaf does not distribute storage across MPI.
 
@@ -1453,13 +1479,38 @@ def _build_range_separated_lpq_cache(
                 system, basis, auxiliary, closest_q, omega=omega,
                 raw_integral_error=raw_integral_error,
             ))
-        def cutoff_floor(explicit, field):
+        def check_explicit(explicit):
             if explicit is not None and (not np.isfinite(explicit) or explicit <= 0):
                 raise ValueError("range-separated GDF cutoff floors must be finite and positive")
+
+        def cutoff_floor(explicit, field):
+            check_explicit(explicit)
             return max(float(explicit or 0), *(getattr(plan, field) for plan in plans))
         pair_cutoff = cutoff_floor(pair_cutoff, 'pair_cutoff')
         auxiliary_cutoff = cutoff_floor(auxiliary_cutoff, 'auxiliary_cutoff')
-        ke_cutoff = cutoff_floor(ke_cutoff, 'ke_cutoff')
+        # GitLab IID 206 (maintainer decision, 2026-09-25): an explicit
+        # reciprocal cutoff is used exactly as given, never raised to the
+        # planner's bound. The LR term is a plane-wave sum whose cost is
+        # linear in the number of G vectors (Ye & Berkelbach 2021, Eqs.
+        # 12-13), so flooring a 200 Ha request over a ~19 Ha plan cost ~34x.
+        # Without a request the planner's error-bounded cutoff applies.
+        planned_ke = max(float(plan.ke_cutoff) for plan in plans)
+        check_explicit(ke_cutoff)
+        if ke_cutoff is None:
+            ke_cutoff = planned_ke
+        else:
+            ke_cutoff = float(ke_cutoff)
+            if ke_cutoff < planned_ke:
+                # Honour the request, but never lower accuracy silently.
+                warnings.warn(
+                    f"range-separated GDF: explicit rsgdf_ke_cutoff={ke_cutoff:g} Ha is "
+                    f"below the {planned_ke:.6g} Ha the SR/LR planner requires for the "
+                    f"raw integral error target {float(raw_integral_error):.3g}; it is "
+                    "used as given, so the reciprocal (LR) tail may exceed that target. "
+                    "Omit rsgdf_ke_cutoff to use the planner's cutoff.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         screen_budget = min(plan.integral_screen_error for plan in plans)
         if not np.isfinite(integral_screen_error) or integral_screen_error < 0:
             raise ValueError("range-separated GDF screening error must be finite and nonnegative")
@@ -1753,6 +1804,7 @@ def _build_rsgdf_lpq_cache_shared_q(
     progress,
     q_metric_cache: Optional[dict],
     bra_rows: Optional[Sequence[int]] = None,
+    canonical_auxiliary_basis: bool = False,
 ) -> Dict[Tuple[int, int], np.ndarray]:
     """RSGDF per-pair Lpq cache with shared-q batched pair-FT passes.
 
@@ -1850,6 +1902,7 @@ def _build_rsgdf_lpq_cache_shared_q(
             fit_screen_threshold=float(fit_screen_threshold),
             progress=progress,
             _q_metric_cache=q_metric_cache,
+            canonical_auxiliary_basis=canonical_auxiliary_basis,
         )
         local_built.append((group_pairs, lpq_list))
 
@@ -1996,19 +2049,14 @@ def _run_closed_shell_slab_gdf(
             "custom, shifted, weighted, and symmetry-reduced meshes remain "
             "fail-closed"
         )
-    mesh_raw = np.asarray(list(kmesh), dtype=float)
-    if mesh_raw.shape == (2,):
-        mesh_raw = np.concatenate((mesh_raw, np.ones(1, dtype=float)))
-    if (
-        mesh_raw.shape != (3,)
-        or not np.all(np.isfinite(mesh_raw))
-        or not np.all(mesh_raw == np.rint(mesh_raw))
-        or np.any(mesh_raw < 1)
-    ):
+    mesh_raw = _integer_counts(kmesh, name="slab GDF mesh")
+    if len(mesh_raw) == 2:
+        mesh_raw.append(1)
+    if len(mesh_raw) != 3 or any(value < 1 for value in mesh_raw):
         raise ValueError(
             "slab GDF requires a positive integer (n1,n2,1) mesh"
         )
-    mesh = tuple(int(value) for value in np.rint(mesh_raw))
+    mesh = tuple(mesh_raw)
     if mesh[2] != 1:
         raise ValueError("slab GDF requires kmesh=(n1,n2,1)")
     if float(aux_drop_eta) != 0.0:
@@ -2295,9 +2343,9 @@ def _mesh_tuple_for_system(
                 "periodic GDF: this operation requires structured k-mesh "
                 "metadata; explicit unstructured k-points are insufficient"
             )
-        arr = list(mesh_metadata)
+        arr = _integer_counts(mesh_metadata, name="periodic GDF kmesh")
     else:
-        arr = list(mesh)
+        arr = _integer_counts(mesh, name="periodic GDF kmesh")
     if len(arr) == dim:
         arr = arr + [1] * (3 - dim)
     elif len(arr) != 3:
@@ -2305,7 +2353,7 @@ def _mesh_tuple_for_system(
             f"periodic GDF: kmesh tuple must have length {dim} for "
             f"dim={dim} systems or length 3; got {arr!r}"
         )
-    out = tuple(int(x) for x in arr)
+    out = tuple(arr)
     if any(x < 1 for x in out):
         raise ValueError(f"periodic GDF: kmesh entries must be >= 1; got {arr!r}")
     return tuple(out[i] if i < dim else 1 for i in range(3))
@@ -2369,9 +2417,10 @@ def _expand_ibz_kmesh_to_full_bz(
     else:
         n_reduced = int(np.asarray(kmesh.kpoints).reshape(-1, 3).shape[0])
     _mesh_raw = getattr(kmesh, "mesh", None)
-    mesh_meta = tuple(
-        int(x) for x in ((1, 1, 1) if _mesh_raw is None else _mesh_raw)
-    )
+    mesh_meta = tuple(_integer_counts(
+        (1, 1, 1) if _mesh_raw is None else _mesh_raw,
+        name="IBZ parent mesh",
+    ))
     # The native BlochKMesh calls the half-step shift flags ``is_shift``;
     # the Python KPoints dataclass calls them ``shift``. Reading only
     # ``is_shift`` silently expanded a shifted KPoints reduction against
@@ -3351,9 +3400,10 @@ def run_krhf_periodic_gdf(
     rcut_precision: float = 1e-8,
     k_exchange: str = "gdf",
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     fit_screen_threshold: float = 0.0,
     mdf_ke_cutoff: float = 40.0,
@@ -3477,22 +3527,27 @@ def run_krhf_periodic_gdf(
         it off the default until the compcell builder is
         pair-resolved). The RSGDF route is also the consistent partner
         for ``k_exchange='cosx'`` (single-gauge pairing, M3b-4c).
+    fit_source
+        ``'auto'`` preserves existing source selection. Explicit ``'classic'``
+        selects the shared-q FFT source in a canonical modrho frame and retains
+        its factors for compatible correlation consumers. Explicit ``'sr'``
+        selects the existing SR/LR source. Explicit selection requires 3D
+        RSGDF and excludes private adapters. These are different finite fits,
+        not alternative exact representations of one fitted operator.
     rsgdf_ke_cutoff
-        Dense-FFT-mesh kinetic-energy cutoff (Ha) for
-        ``gdf_method='rsgdf'`` (default 200).
+        Base reciprocal kinetic-energy cutoff (Ha). ``None`` (default)
+        requests nothing: the 3D SR/LR source uses the cutoff its planner
+        resolves from the raw integral error target, and routes without a
+        planner use the legacy 200 Ha mesh. An explicit value is a lower
+        bound on the SR/LR planner's cutoff and the mesh of the other
+        routes. The executed descriptor records the resolved domain.
     rsgdf_tail_ke_cutoff
-        Optional high-|G| tail completion (Ha) for the rsgdf cderi:
-        extends the fit's 2c-metric and 3c-tensor G-sums over the exact
-        complementary reciprocal shell, needed on dense-core cells
-        (P01/MgO class) whose tight AO products are unresolved at any
-        affordable base mesh; a parity-sized tail
-        (``>= _RSGDF_PARITY_TAIL_RATIO x zeta_max``) lifts the
-        ``+PARITY_HELD`` tag. rsgdf-only (any other ``gdf_method``
-        fails closed). Setting it on a pure-DFT dim=3 multi-k run
-        routes the Hartree through the cached-Lpq GDF J (the same
-        tail-consuming machinery HF/hybrids ride) instead of the
-        default EWALD_3D J, which builds no cderi and cannot consume a
-        tail (IID 146); ``None`` (default) keeps the EWALD_3D routing.
+        Optional complementary reciprocal shell for the classic RSGDF source.
+        The SR/LR source warns and clears this inactive setting. Requested and
+        executed values remain separate in the source metadata. Explicit
+        classic selection uses its cached fitted J for pure DFT as well as
+        HF/hybrids and does not inherit a Gamma auto-tail. A tail is support
+        selection, not numerical qualification.
     fit_screen_threshold
         Cauchy-Schwarz pre-screen of the three-centre GDF fit on the
         ``gdf_method='rsgdf'`` path (default ``0.0`` = off, exact). AO
@@ -3560,6 +3615,16 @@ def run_krhf_periodic_gdf(
     progress, verbose
         Live progress logging passthrough.
     """
+
+    from .periodic_fit_source import resolve_fit_source, RSGDFFitRequest, attach_fit_source
+    selected_fit_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if fit_source != "auto" and _lpq_cache_builder is not None:
+        raise NotImplementedError("explicit fit_source cannot be combined with a private fit adapter")
+    if fit_source == "classic" and compute_gradient:
+        raise NotImplementedError("explicit classic fit gradients are not supported")
+    _rsgdf_ke_request, rsgdf_ke_cutoff = _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff)
+    fit_request = RSGDFFitRequest(fit_source, rsgdf_ke_cutoff, rsgdf_tail_ke_cutoff)
     from .periodic_mdf import _MdfScfSource
 
     private_mdf = isinstance(_lpq_cache_builder, _MdfScfSource)
@@ -3720,7 +3785,7 @@ def run_krhf_periodic_gdf(
             f"run_krhf_periodic_gdf: gdf_method must be 'compcell', "
             f"'rsgdf', or 'mdf'; got {gdf_method!r}"
         )
-    bulk_sr = gdf_method == "rsgdf" and int(system.dim) == 3
+    bulk_sr = selected_fit_source == "sr"
     if bulk_sr and rsgdf_tail_ke_cutoff is not None:
         warnings.warn(
             "rsgdf_tail_ke_cutoff is obsolete for the SR/LR fit; "
@@ -3771,7 +3836,7 @@ def run_krhf_periodic_gdf(
 
     # The general engine also owns the Gamma limit of the SR/LR route.
     # Convergence controls must never select a different Coulomb gauge.
-    gamma_info = None if bulk_sr else _gamma_kmesh_info(system, kmesh)
+    gamma_info = None if bulk_sr or fit_source == "classic" else _gamma_kmesh_info(system, kmesh)
     explicit_periodic_gamma_xc = bool(
         gamma_info is not None
         and xc_density_domain == PeriodicXCDensityDomain.PERIODIC_LATTICE
@@ -3844,7 +3909,7 @@ def run_krhf_periodic_gdf(
                     exxdiv="ewald",
                     gdf_method=gdf_method,
                     mdf_ke_cutoff=mdf_ke_cutoff,
-                    rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                    rsgdf_ke_cutoff=_rsgdf_ke_request,
                     rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                     linear_dep_threshold=linear_dep_threshold,
                     gdf_linear_dep_threshold=gdf_linear_dep_threshold,
@@ -4228,7 +4293,7 @@ def run_krhf_periodic_gdf(
     with plog.stage(
         "integrals_lattice",
         detail=f"S/T at cutoff {oneel_lat_opts.cutoff_bohr:.2f} bohr, "
-        f"V at cutoff {oneel_lat_opts.cutoff_bohr:.2f} bohr",
+        "V on the screened AO-pair domain",
     ):
         S_lat = compute_overlap_lattice(basis, system, oneel_lat_opts)
         T_lat = compute_kinetic_lattice(basis, system, oneel_lat_opts)
@@ -4375,9 +4440,25 @@ def run_krhf_periodic_gdf(
             )
 
 
-    if bulk_sr:
+    if bulk_sr or fit_source == "classic":
         # Pure DFT uses the same fitted Hartree as hybrids; no unfitted
         # Ewald-J fallback is selected when exact exchange is zero.
+        #
+        # This promotion overrides an explicit use_compcell=False, and it
+        # fires on the shipped default (gdf_method='rsgdf', dim == 3), so it
+        # is the usual case rather than a corner. It cannot refuse instead:
+        # ``use_compcell`` defaults to False, so a caller who passed False is
+        # indistinguishable from one who said nothing. Say so in the log, like
+        # the three promotions below -- a silent override here is what let a
+        # regression test be written against a premise the route never had
+        # (#275).
+        if not use_compcell:
+            plog.info(
+                "multi-k bulk short-range GDF (gdf_method='rsgdf', dim=3): "
+                "routing to the cached-Lpq GDF Hartree, so J is the fitted "
+                "one, not the analytic EWALD_3D J. use_compcell=False is not "
+                "available on this route."
+            )
         use_compcell = True
 
     # Route HF/hybrid multi-k to the exxdiv-corrected compcell GDF path.
@@ -4389,8 +4470,10 @@ def run_krhf_periodic_gdf(
     # wrong by the Madelung shift (catastrophically -- +17 Ha -- on sparse
     # meshes). The compcell + exxdiv='ewald' path is PySCF-µHa-correct, so we
     # route HF/hybrid there automatically rather than return wrong energies.
-    # Pure DFT (alpha == 0, no HF exchange) keeps the cheaper, correct
-    # Ewald-3D path. [Maintainer decision 2026-06-04: route to correct path.]
+    # Pure DFT (alpha == 0, no HF exchange) would keep the cheaper Ewald-3D
+    # path, but on the shipped dim=3 rsgdf route ``bulk_sr`` above has already
+    # promoted it, so only non-rsgdf methods reach the Ewald-3D J here.
+    # [Maintainer decision 2026-06-04: route to correct path.]
     if not use_compcell and alpha > 0.0:
         use_compcell = True
         plog.info(
@@ -4431,7 +4514,9 @@ def run_krhf_periodic_gdf(
         )
     # Pure-DFT (alpha == 0) multi-k on dim=3 keeps the EWALD_3D
     # real-space J by default -- a machinery with no fitted cderi and
-    # therefore no high-|G| tail to extend. An explicit
+    # therefore no high-|G| tail to extend. (On gdf_method='rsgdf' that
+    # default no longer survives ``bulk_sr`` above, so this promotion is
+    # reachable only for the other dim=3 methods.) An explicit
     # rsgdf_tail_ke_cutoff there was accepted, echoed in the .out, and
     # silently IGNORED (IID 146: MgO/STO-3G (2,2,2) KRKS-LDA tailed vs
     # untailed byte-identical at -271.531535367637, while the same knob
@@ -4605,7 +4690,7 @@ def run_krhf_periodic_gdf(
                     lpq_cache = _build_scf_range_separated_lpq_cache(
                         system, basis, aux, kpoints_cart, need_k_pairs,
                         omega=rsgdf_omega, raw_integral_error=rsgdf_g_precision,
-                        ke_cutoff=rsgdf_ke_cutoff, linear_dep_thr=gdf_linear_dep_threshold,
+                        ke_cutoff=_rsgdf_ke_request, linear_dep_thr=gdf_linear_dep_threshold,
                         lat_opts=lat_opts, fit_screen_threshold=fit_screen_threshold,
                         options=opts, open_shell=False, progress=plog,
                         oneel_lattices=(S_lat, T_lat, V_lat, V_ecp_lat),
@@ -4637,6 +4722,7 @@ def run_krhf_periodic_gdf(
                         fit_screen_threshold=float(fit_screen_threshold),
                         progress=plog,
                         q_metric_cache=q_metric_cache,
+                        canonical_auxiliary_basis=(fit_source == "classic"),
                         bra_rows=(
                             _ibz_native_state[0]
                             if (_ibz_native_state is not None and need_k_pairs)
@@ -5893,6 +5979,16 @@ def run_krhf_periodic_gdf(
             )
             if check_energy_sanity:
                 _check_energy_sanity(result, system, plog)
+            if gdf_method == "rsgdf":
+                attach_fit_source(
+                    result, system=system, basis=basis, auxiliary=aux,
+                    auxiliary_name=aux_name, cache=lpq_cache, request=fit_request,
+                    selected=selected_fit_source, lat_opts=lat_opts,
+                    oneel_lat_opts=oneel_lat_opts or lat_opts,
+                    metric_threshold=gdf_linear_dep_threshold,
+                    fit_screen_threshold=fit_screen_threshold, kpoints_cart=kpoints_cart,
+                    executed_tail=rsgdf_tail_ke_cutoff, retain_canonical=(fit_source == "classic"),
+                )
             return _finish_density_return(result)
 
     result.converged = False
@@ -5903,6 +5999,16 @@ def run_krhf_periodic_gdf(
     )
     if check_energy_sanity:
         _check_energy_sanity(result, system, plog)
+    if gdf_method == "rsgdf":
+        attach_fit_source(
+            result, system=system, basis=basis, auxiliary=aux,
+            auxiliary_name=aux_name, cache=lpq_cache, request=fit_request,
+            selected=selected_fit_source, lat_opts=lat_opts,
+            oneel_lat_opts=oneel_lat_opts or lat_opts,
+            metric_threshold=gdf_linear_dep_threshold,
+            fit_screen_threshold=fit_screen_threshold, kpoints_cart=kpoints_cart,
+            executed_tail=rsgdf_tail_ke_cutoff, retain_canonical=(fit_source == "classic"),
+        )
     return _finish_density_return(result)
 
 
@@ -6093,9 +6199,10 @@ def run_kuhf_periodic_gdf(
     rcut_strategy: Optional[object] = "pyscf_auto",
     rcut_precision: float = 1e-8,
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     fit_screen_threshold: float = 0.0,
     mdf_ke_cutoff: float = 40.0,
@@ -6135,15 +6242,13 @@ def run_kuhf_periodic_gdf(
     occupations (``occupations_alpha/beta``); ``T = 0`` keeps the exact per-k
     Aufbau, bit-identical to the pre-smearing driver.
 
-    ``rsgdf_tail_ke_cutoff`` extends the rsgdf fit's M / T G-sums over the
-    exact complementary reciprocal shell up to the given cutoff (Hartree),
-    exactly like the closed-shell driver: needed on dense-core cells
-    (P01/MgO class) whose tight AO products are unresolved at any
-    affordable base mesh. ``E(ke_cutoff=a, tail_ke_cutoff=b)`` equals
-    ``E(ke_cutoff=b)`` by construction, and a parity-sized tail
-    (``>= _RSGDF_PARITY_TAIL_RATIO x zeta_max``) lifts the dense-core
-    ``+PARITY_HELD`` tag. The shared-q batched cderi build amortises the
-    tail's pair-FT pass across the k-points of each momentum transfer.
+    ``fit_source`` has the same validated selection as the closed-shell
+    driver. ``rsgdf_tail_ke_cutoff`` extends only the classic source's
+    reciprocal support. The SR/LR source warns and clears this inactive
+    setting while preserving the request separately from executed metadata.
+    Explicit classic selection retains canonical factors for compatible
+    correlation consumers and does not inherit a Gamma auto-tail. Tail
+    support is not numerical qualification.
 
     ``compute_gradient=True`` computes the analytic nuclear gradient of
     the converged total energy on ``result.gradient`` (``(n_atoms, 3)``
@@ -6156,6 +6261,16 @@ def run_kuhf_periodic_gdf(
     about 7e-9 Ha/bohr (LiH triplet PBE). The KUKS(M=1) collapse onto
     KRKS remains pinned at machine precision.
     """
+
+    from .periodic_fit_source import resolve_fit_source, RSGDFFitRequest, attach_fit_source
+    selected_fit_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if fit_source != "auto" and _lpq_cache_builder is not None:
+        raise NotImplementedError("explicit fit_source cannot be combined with a private fit adapter")
+    if fit_source == "classic" and compute_gradient:
+        raise NotImplementedError("explicit classic fit gradients are not supported")
+    _rsgdf_ke_request, rsgdf_ke_cutoff = _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff)
+    fit_request = RSGDFFitRequest(fit_source, rsgdf_ke_cutoff, rsgdf_tail_ke_cutoff)
     from .periodic_mdf import _MdfScfSource
 
     private_mdf = isinstance(_lpq_cache_builder, _MdfScfSource)
@@ -6303,7 +6418,7 @@ def run_kuhf_periodic_gdf(
             f"run_kuhf_periodic_gdf: gdf_method must be 'compcell', "
             f"'rsgdf', or 'mdf'; got {gdf_method!r}"
         )
-    bulk_sr = gdf_method == "rsgdf" and int(system.dim) == 3
+    bulk_sr = selected_fit_source == "sr"
     if bulk_sr and rsgdf_tail_ke_cutoff is not None:
         warnings.warn(
             "rsgdf_tail_ke_cutoff is obsolete for the SR/LR fit; "
@@ -6472,7 +6587,7 @@ def run_kuhf_periodic_gdf(
     with plog.stage(
         "integrals_lattice",
         detail=f"S/T cutoff {oneel_lat_opts.cutoff_bohr:.2f}, "
-        f"V cutoff {oneel_lat_opts.cutoff_bohr:.2f}",
+        "V on the screened AO-pair domain",
     ):
         S_lat = compute_overlap_lattice(basis, system, oneel_lat_opts)
         T_lat = compute_kinetic_lattice(basis, system, oneel_lat_opts)
@@ -6632,7 +6747,7 @@ def run_kuhf_periodic_gdf(
                 lpq_cache = _build_scf_range_separated_lpq_cache(
                     system, basis, aux, kpoints_cart, need_k_pairs,
                     omega=rsgdf_omega, raw_integral_error=rsgdf_g_precision,
-                    ke_cutoff=rsgdf_ke_cutoff, linear_dep_thr=gdf_linear_dep_threshold,
+                    ke_cutoff=_rsgdf_ke_request, linear_dep_thr=gdf_linear_dep_threshold,
                     lat_opts=lat_opts, fit_screen_threshold=fit_screen_threshold,
                     options=opts, open_shell=True, progress=plog,
                     pair_cache_builder=_lpq_cache_builder,
@@ -6664,6 +6779,7 @@ def run_kuhf_periodic_gdf(
                     fit_screen_threshold=float(fit_screen_threshold),
                     progress=plog,
                     q_metric_cache=q_metric_cache,
+                    canonical_auxiliary_basis=(fit_source == "classic"),
                     bra_rows=(
                         _ibz_native_state[0]
                         if (_ibz_native_state is not None and need_k_pairs)
@@ -7435,6 +7551,16 @@ def run_kuhf_periodic_gdf(
                     f"{n_k} k-point(s))"
                 )
             plog.converged(n_iter=it, energy=E_total, converged=True)
+            if gdf_method == "rsgdf":
+                attach_fit_source(
+                    result, system=system, basis=basis, auxiliary=aux,
+                    auxiliary_name=aux_name, cache=lpq_cache, request=fit_request,
+                    selected=selected_fit_source, lat_opts=lat_opts,
+                    oneel_lat_opts=oneel_lat_opts or lat_opts,
+                    metric_threshold=gdf_linear_dep_threshold,
+                    fit_screen_threshold=fit_screen_threshold, kpoints_cart=kpoints_cart,
+                    executed_tail=rsgdf_tail_ke_cutoff, retain_canonical=(fit_source == "classic"),
+                )
             return _finish_density_return(result)
 
         if terminating_state:
@@ -7482,6 +7608,16 @@ def run_kuhf_periodic_gdf(
         occ_alpha_k=occ_alpha_k, occ_beta_k=occ_beta_k,
     )
     plog.converged(n_iter=result.n_iter, energy=result.energy, converged=False)
+    if gdf_method == "rsgdf":
+        attach_fit_source(
+            result, system=system, basis=basis, auxiliary=aux,
+            auxiliary_name=aux_name, cache=lpq_cache, request=fit_request,
+            selected=selected_fit_source, lat_opts=lat_opts,
+            oneel_lat_opts=oneel_lat_opts or lat_opts,
+            metric_threshold=gdf_linear_dep_threshold,
+            fit_screen_threshold=fit_screen_threshold, kpoints_cart=kpoints_cart,
+            executed_tail=rsgdf_tail_ke_cutoff, retain_canonical=(fit_source == "classic"),
+        )
     return _finish_density_return(result)
 
 
@@ -7527,7 +7663,8 @@ def run_krks_periodic_gdf(
     rcut_precision: float = 1e-8,
     k_exchange: str = "gdf",
     gdf_method: str = "rsgdf",
-    rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
@@ -7589,6 +7726,7 @@ def run_krks_periodic_gdf(
         rcut_precision=rcut_precision,
         k_exchange=k_exchange,
         gdf_method=gdf_method,
+        fit_source=fit_source,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
         rsgdf_omega=rsgdf_omega,
         rsgdf_g_precision=rsgdf_g_precision,

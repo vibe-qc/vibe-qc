@@ -118,7 +118,6 @@
   -------------------------------------------
     SCF total <T>
     SCF avg per iter                    0.000  (0 iters)
-    Job total <T>
   Geometry optimization
   --------------------------------------------------------
   Exact density evaluation pending (Ha)
@@ -1833,3 +1832,8 @@ Atomic relaxation: 0 iters, E = -0.00000000 Ha, max|grad| = 0.0000e+00, converge
        0  Z=  0       0.00000000      0.00000000      0.00000000
        0  Z=  0       0.00000000      0.00000000      0.00000000
     n_electrons = 0  multiplicity = 0
+
+  Timings (wall clock, seconds)
+  -------------------------------------------
+    Post-SCF and output <T>
+    Job total <T>

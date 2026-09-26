@@ -680,14 +680,21 @@ def test_run_periodic_job_rsgdf_tail_cutoff_fails_closed_off_gdf(tmp_path):
 
 
 def test_run_periodic_job_kpoints_gamma_rks_tail_cutoff_supported(tmp_path):
-    """Γ RKS at kpoints=(1,1,1) with rsgdf_tail_ke_cutoff now RUNS.
+    """Γ RKS at kpoints=(1,1,1) with rsgdf_tail_ke_cutoff RUNS, and says the
+    knob is obsolete rather than failing closed on it.
 
     Historically this failed closed: the Γ KS fast path fell back to the
     legacy molecular-limit gamma driver, which has no high-|G| tail
-    correction. Since the Finding-§4 Γ-KS routing fix, closed-shell Γ KS
-    delegates to run_pbc_gdf_rks (the run_pbc_gdf_rhf KS branch), which
-    honours the tail cutoff like the RHF path does — so the capability
-    exists and the loud refusal would be a regression in reverse.
+    correction, and a loud refusal would have been a regression in reverse.
+
+    What it does NOT assert any more is that the cutoff is honoured. Since
+    `bulk_sr` gave the general multi-k engine the Γ limit of the SR/LR route
+    (periodic_k_gdf.py:3719, :3770), this lands on that engine, whose SR/LR
+    fit has no separate high-|G| tail to extend: the request is accepted,
+    reported obsolete, and resolved to None. `rsgdf_g_precision` is the knob
+    that controls the raw integral error there. The positive capability is
+    still covered for RHF by
+    test_run_periodic_job_gamma_rhf_gdf_forwards_rsgdf_tail_cutoff (#283).
     """
     system, basis = _h2_box()
 
@@ -706,7 +713,35 @@ def test_run_periodic_job_kpoints_gamma_rks_tail_cutoff_supported(tmp_path):
         progress=False,
     )
     assert r.converged
-    assert r.backend == "native-gamma-gdf-via-k-gdf"
+    assert r.backend == "native-multi-k-gdf-gdf-rks"
+    # Accepted and obsoleted, not honoured: the SR/LR fit resolves it away.
+    assert r.rsgdf_tail_ke_cutoff is None
+
+
+def test_gamma_adapter_is_still_reached_by_the_non_rsgdf_methods():
+    """The Γ adapter did not go away when `bulk_sr` took Γ off the rsgdf route.
+
+    `bulk_sr` is `gdf_method == "rsgdf" and dim == 3`, so mdf and compcell at a
+    Γ mesh still go through `_wrap_gamma_gdf_result` and still carry
+    "native-gamma-gdf-via-k-gdf". Without this, re-pinning the two rsgdf tests
+    to the general-engine label would leave that adapter with no end-to-end
+    coverage at all -- every other use of the string in this suite is a
+    monkeypatched fake (#283).
+    """
+    from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
+
+    system, basis = _h2_box()
+    for gdf_method in ("mdf", "compcell"):
+        opts = vq.PeriodicRHFOptions()
+        opts.max_iter = 30
+        opts.conv_tol_energy = 1e-9
+        opts.initial_guess = vq.InitialGuess.HCORE
+        result = run_krhf_periodic_gdf(
+            system, basis, (1, 1, 1), opts, aux_basis="def2-svp-jk",
+            gdf_method=gdf_method, progress=False,
+        )
+        assert result.converged
+        assert result.backend == "native-gamma-gdf-via-k-gdf", gdf_method
 
 
 def test_run_periodic_job_gamma_rks_gdf_uses_pure_gdf_ks_backend(tmp_path):
@@ -910,12 +945,35 @@ def test_kpoints_gamma_equals_single_k_identity(method, tmp_path):
         progress=False,
     )
 
-    assert r1.converged and r2.converged
-    # Default Γ RHF/GDF now routes through run_pbc_gdf_rhf (exxdiv='ewald');
-    # the explicit (1,1,1) k-mesh delegates to the same driver via run_krhf,
-    # so the two agree on the exxdiv='ewald' energy (no molecular-limit gap).
+    r3 = vq.run_periodic_job(
+        system,
+        basis,
+        method=method,
+        output=tmp_path / "h2-k211",
+        kpoints=(2, 1, 1),
+        aux_basis="def2-svp-jk",
+        max_iter=30,
+        conv_tol_energy=1e-9,
+        initial_guess="HCORE",
+        write_molden_file=False,
+        progress=False,
+    )
+
+    assert r1.converged and r2.converged and r3.converged
+    # Default Γ RHF/GDF routes through run_pbc_gdf_rhf (exxdiv='ewald'). An
+    # explicit (1,1,1) mesh does NOT reach the dedicated Γ adapter: `bulk_sr`
+    # hands the Γ limit of the SR/LR route to the general multi-k engine
+    # (periodic_k_gdf.py:3719, :3770), so Γ is that engine's Nk=1 case and
+    # carries its label, exactly like the ROHF path
+    # (test_krohf_gamma_is_the_one_one_one_mesh). Pinning the label alone
+    # would not say that, so pin the routing it stands for (#283).
     assert r1.backend == "pbc-gdf-rsgdf"
-    assert r2.backend == "native-gamma-gdf-via-k-gdf"
+    assert r2.backend == "native-multi-k-gdf-gdf-rhf"
+    assert r2.backend == r3.backend
+    assert r1.backend != r2.backend
+    # The energy identity is therefore the stronger claim it looks like: two
+    # different drivers agreeing on the exxdiv='ewald' gauge, with no
+    # molecular-limit gap between them.
     assert r1.energy == pytest.approx(r2.energy, abs=1e-10)
 
 

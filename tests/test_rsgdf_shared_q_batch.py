@@ -1840,9 +1840,12 @@ def test_production_gamma_and_general_spin_paths_share_sr_lr_source(monkeypatch)
     options.lattice_opts.nuclear_cutoff_bohr = 18.0
     energies = []
     for omega in (.45, .7):
+        # No rsgdf_ke_cutoff: each omega runs at the planner's cutoff for
+        # rsgdf_g_precision (21.28 / 51.55 Ha), which is what the former 20 Ha
+        # floor executed. An explicit value is now used exactly (GitLab IID 206).
         controls = dict(options=options, gdf_method='rsgdf', aux_basis='test',
                         rsgdf_omega=omega, rsgdf_g_precision=1e-10,
-                        rsgdf_ke_cutoff=20.0, progress=False)
+                        progress=False)
         gamma = gamma_module.run_pbc_gdf_rhf(system, basis, **controls)
         restricted = k_module.run_krhf_periodic_gdf(system, basis, **controls)
         unrestricted = k_module.run_kuhf_periodic_gdf(system, basis, **controls)

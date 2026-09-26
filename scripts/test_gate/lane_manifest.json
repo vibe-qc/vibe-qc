@@ -133,6 +133,7 @@
         "tests/test_citations*.py",
         "tests/test_*citation*.py",
         "tests/test_features_doc_symbols.py",
+        "tests/test_roadmap_release_table.py",
         "tests/test_scf_log*.py",
         "tests/test_progress.py",
         "tests/test_structured_log.py",
@@ -213,6 +214,7 @@
         "tests/test_incremental_fock_open_shell.py",
         "tests/test_*diis*.py",
         "tests/test_newton.py",
+        "tests/test_opentrustregion.py",
         "tests/test_soscf.py",
         "tests/test_oda.py",
         "tests/test_mom.py",
@@ -267,6 +269,7 @@
       "file_timeout_s": 1200,
       "include": [
         "tests/test_*mp2*.py",
+        "tests/test_double_hybrid_run_job.py",
         "tests/test_cc*.py",
         "tests/test_uccsd*.py",
         "tests/test_rohf_ccsd*.py",
@@ -801,6 +804,7 @@
       "file_timeout_s": 1800,
       "include": [
         "tests/test_ccm_periodic*.py",
+        "tests/test_chi*.py",
         "tests/test_lowd_greens*.py",
         "tests/test_periodic_aiccm*.py",
         "tests/test_periodic_ccm*.py",
@@ -819,7 +823,7 @@
     "aiccm-experimental": {
       "owner": "AICCM/CCM chats",
       "cadence": "manual research aggregate",
-      "description": "Aggregate AICCM/CCM research lane. Experimental manual research only; never a release, advisory-profile, or automatic impact gate.",
+      "description": "Aggregate AICCM/CCM/chi/POLIPO research lane. Experimental manual research only; never a release, advisory-profile, or automatic impact gate.",
       "method_maturity": "experimental",
       "lane_class": "implementing-chat-only",
       "global_items": [
@@ -829,7 +833,7 @@
       ],
       "target_release": "v2.0",
       "scientific_acceptance": false,
-      "required_full_calculation": "Manual aggregate for experimental AICCM/CCM/SECCM research only; no release, advisory, or automatic impact role.",
+      "required_full_calculation": "Manual aggregate for experimental AICCM/CCM/chi/POLIPO/SECCM research only; no release, advisory, or automatic impact role.",
       "impact_default": false,
       "markexpr": "not slow",
       "jobs": 2,
@@ -839,12 +843,14 @@
         "tests/test_*seccm*.py",
         "tests/test_aiccm*.py",
         "tests/test_ccm*.py",
+        "tests/test_chi*.py",
         "tests/test_lowd_greens*.py",
         "tests/test_msindo_ccm*.py",
         "tests/test_periodic_aiccm*.py",
         "tests/test_periodic_ccm*.py",
         "tests/test_periodic_megacell*.py",
         "tests/test_periodic_toroidal_mp2.py",
+        "tests/test_polipo*.py",
         "tests/test_seccm*.py"
       ],
       "trigger_paths": [
@@ -933,7 +939,7 @@
     "full-fast": {
       "owner": "release/test-health chat",
       "cadence": "pre-push shared/pre-tag",
-      "description": "Every non-slow shipped-feature pytest file under per-file isolation. Experimental AICCM/CCM/SECCM are excluded and manual-only.",
+      "description": "Every non-slow shipped-feature pytest file under per-file isolation. Experimental AICCM/CCM/chi/POLIPO/SECCM are excluded and manual-only.",
       "method_maturity": "verified",
       "lane_class": "post-cut evaluation",
       "global_items": [
@@ -955,6 +961,7 @@
         "tests/test_*seccm*.py",
         "tests/test_aiccm*.py",
         "tests/test_ccm*.py",
+        "tests/test_chi*.py",
         "tests/test_lowd_greens*.py",
         "tests/test_msindo_ccm*.py",
         "tests/test_periodic_aiccm*.py",
@@ -991,6 +998,7 @@
         "tests/test_*seccm*.py",
         "tests/test_aiccm*.py",
         "tests/test_ccm*.py",
+        "tests/test_chi*.py",
         "tests/test_lowd_greens*.py",
         "tests/test_msindo_ccm*.py",
         "tests/test_periodic_aiccm*.py",

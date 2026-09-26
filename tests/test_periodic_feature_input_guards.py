@@ -1524,7 +1524,13 @@ def test_real_gamma_supercell_orbitals_never_reach_a_unit_cell_artefact(tmp_path
     pairs orbitals with the unit-cell basis must refuse them above a
     one-cell torus: the Molden sidecar already did, through its own
     capability gate, and an explicit request fails closed; the QVF
-    wavefunction section now does too."""
+    wavefunction section now does too.
+
+    The population sidecar is not such an artefact. Since M5 (84af5e3) it is
+    written from ``compute_ccm_population_summary``, which reduces the
+    supercell to per-cell charges and bond orders, so it is a supported
+    output on this route (#304). This test pins only that it describes the
+    unit cell; ``tests/test_ccm_properties.py`` owns its contents."""
     import warnings
 
     system, basis = _aiccm_h2()
@@ -1542,7 +1548,12 @@ def test_real_gamma_supercell_orbitals_never_reach_a_unit_cell_artefact(tmp_path
     assert _sidecar_mo_ao_dimension(result) == 2 * int(basis.nbasis)
     assert _qvf_wavefunction_shapes(stem.with_suffix(".qvf")) is None
     assert not stem.with_suffix(".molden").exists()
-    assert not stem.with_suffix(".population.txt").exists()
+    population = stem.with_suffix(".population.txt").read_text(encoding="utf-8")
+    mulliken = population.split("# === Mulliken atomic charges ===", 1)[1]
+    mulliken = mulliken.split("# ===", 1)[0]
+    rows = [line for line in mulliken.splitlines()
+            if line.strip() and not line.startswith("#")]
+    assert len(rows) == len(system.unit_cell), rows
     # An explicit sidecar request is refused rather than silently dropped.
     with pytest.raises(NotImplementedError, match="write_molden_file"):
         vq.run_periodic_job(

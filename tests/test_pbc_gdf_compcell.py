@@ -2137,13 +2137,25 @@ def test_open_shell_gamma_gdf_records_resolved_tail_cutoff():
 def test_multik_open_shell_gdf_records_base_mesh():
     """IID 490 (multi-k half): the open-shell multi-k GDF result records
     the base rsgdf mesh actually used, mirroring PeriodicKRHFGDFResult,
-    and keeps the tail field None on a route that applies no tail."""
+    and keeps the tail field None on a route that applies no tail.
+
+    With no rsgdf_ke_cutoff requested the SR/LR source executes its planned
+    cutoff, not a 200 Ha floor (IID 257), so the record is the planner's."""
+    from vibeqc.aux_basis import (
+        _plan_range_separated_gdf_cutoffs, default_aux_for, make_aux_basis_set,
+    )
     from vibeqc.periodic_k_gdf import run_kuhf_periodic_gdf
 
     system, basis = _h2_box(box_bohr=12.0)
+    auxiliary = make_aux_basis_set(
+        system.unit_cell_molecule(), aux_name=default_aux_for(basis.name))
+    planned = _plan_range_separated_gdf_cutoffs(
+        system, basis, auxiliary, np.zeros(3), omega=0.4, raw_integral_error=1e-10,
+    ).ke_cutoff
     r = run_kuhf_periodic_gdf(system, basis, (2, 1, 1), progress=False)
     assert r.converged
-    assert r.rsgdf_ke_cutoff == pytest.approx(200.0)
+    assert planned < 200.0
+    assert r.rsgdf_ke_cutoff == pytest.approx(planned, rel=1e-12)
     assert r.rsgdf_tail_ke_cutoff is None
 
 

@@ -658,6 +658,34 @@ def test_pob_tzvp_rev2_pulls_both_basis_papers(tmp_path: Path) -> None:
     assert "vilela_oliveira_pob_rev2_2019" in keys
 
 
+# The five publications pob-TZVP-rev2's 78 shipped records come from (#288):
+# the parent paper, H-Br (2019), and one paper per heavy range. The heavy
+# ranges are counted from basis/pob-tzvp-rev2.ecp's 46 -ECP blocks, and each
+# paper's title names its own range (metadata from Crossref 2026-09-24).
+POB_TZVP_REV2_DOIS: dict[str, str] = {
+    "10.1002/jcc.23153": "peintinger_pob_tzvp_2013",  # parent
+    "10.1002/jcc.26013": "vilela_oliveira_pob_rev2_2019",  # H-Br
+    "10.1002/jcc.26839": "laun_pob_rev2_fifth_period_2022",  # Rb-I
+    "10.1002/jcc.26521": "laun_pob_rev2_sixth_period_2021",  # Cs-Ba, Hf-Po
+    "10.1002/jcc.27097": "seidler_pob_rev2_lanthanides_2023",  # La-Lu
+}
+
+
+def test_pob_tzvp_rev2_route_carries_all_five_publications(
+    tmp_path: Path,
+) -> None:
+    """A pob-TZVP-rev2 run cites every paper its records come from (#288).
+
+    Before #288 the route named only the 2013 and 2019 papers, so a result
+    on Ag or Gd credited neither the paper its exponents came from nor that
+    paper's authors. The 46 heavy records are in neither of those papers.
+    """
+    result = assemble(_plan(tmp_path, basis="pob-tzvp-rev2"))
+    by_doi = {c.doi: c.key for c in result.citations if c.doi}
+    for doi, key in POB_TZVP_REV2_DOIS.items():
+        assert by_doi.get(doi) == key, (doi, key)
+
+
 def test_pm6_pm7_routes_carry_the_mopac_parameter_source() -> None:
     """Every PM6/PM7 route surfaces MOPAC, the source of the values (#440).
 

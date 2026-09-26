@@ -299,3 +299,59 @@ def test_inline_doi_in_header(stem: str):
         "data through the libint / BSE pipeline (CLAUDE.md § 1 + "
         "§ 8). Restore the publication's DOI to the header."
     )
+
+
+# pob-TZVP-rev2's records come from five papers (#288): the 2013 parent,
+# H-Br (2019), Rb-I (2022), Cs-Ba + Hf-Po (2021) and La-Lu (2023). Every
+# human-read surface that names the basis's provenance must name all five;
+# the route table is pinned in tests/test_citations.py.
+_POB_TZVP_REV2_DOIS = (
+    "10.1002/jcc.23153",
+    "10.1002/jcc.26013",
+    "10.1002/jcc.26839",
+    "10.1002/jcc.26521",
+    "10.1002/jcc.27097",
+)
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _pob_tzvp_rev2_surfaces() -> dict[str, str]:
+    from vibeqc import basis_crystal
+
+    surfaces = {
+        "basis_crystal._BREDOW_CITATIONS['pob-tzvp-rev2']": (
+            basis_crystal._BREDOW_CITATIONS["pob-tzvp-rev2"]
+        ),
+    }
+    for sub in ("basis", "custom"):
+        ecp = BUNDLED_BASIS_DIR / sub / "pob-tzvp-rev2.ecp"
+        if ecp.is_file():
+            head = [
+                line for line in ecp.read_text().splitlines()[:60]
+                if line.startswith("!")
+            ]
+            surfaces[f"{sub}/pob-tzvp-rev2.ecp header"] = "\n".join(head)
+    license_md = _REPO_ROOT / "docs" / "license.md"
+    if license_md.is_file():  # absent in an installed wheel
+        rows = [
+            line for line in license_md.read_text().splitlines()
+            if line.startswith("| `pob-tzvp-rev2.g94`")
+        ]
+        assert len(rows) == 1, rows
+        surfaces["docs/license.md pob-tzvp-rev2.g94 row"] = rows[0]
+    return surfaces
+
+
+def test_pob_tzvp_rev2_provenance_surfaces_name_all_five_papers() -> None:
+    """#288: the fetch-time citation, the ECP sidecar header and the
+    license table each credited a subset (the 2019 paper alone, or the
+    2021 paper alone), so each named papers that do not contain most of
+    the basis's 78 records."""
+    surfaces = _pob_tzvp_rev2_surfaces()
+    assert "basis/pob-tzvp-rev2.ecp header" in surfaces
+    missing = {
+        name: [d for d in _POB_TZVP_REV2_DOIS if d not in text]
+        for name, text in surfaces.items()
+    }
+    missing = {k: v for k, v in missing.items() if v}
+    assert not missing, missing

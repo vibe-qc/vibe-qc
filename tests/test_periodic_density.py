@@ -26,6 +26,7 @@ Contracts exercised:
 
 from __future__ import annotations
 
+import itertools
 import subprocess
 import sys
 from typing import List
@@ -1987,4 +1988,146 @@ def test_grid_density_converges_to_the_electron_count(compact):
     assert integrals[1] == pytest.approx(n_exact, abs=5e-3), (
         f"grid density integrates to {integrals[1]:.4f}, but the density "
         f"matrix carries sum_g tr(D(g) S(g)) = {n_exact:.4f}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Partner-shift batching (perf-oriented, must preserve numerics)
+# ---------------------------------------------------------------------------
+#
+# ``evaluate_periodic_density_on_grid`` sums over lattice translations R and
+# density cells g, and both AO factors are the SAME plain table at two lattice
+# shifts, R and R + R_g.  Evaluating them per (R, g) pair asks the native AO
+# evaluator for |R| x |live| tables when only |{R} u {R + g}| distinct ones
+# exist.  On the H2/STO-3G 30^3 artifact grid that is 40095 ``evaluate_ao``
+# calls for 2127 distinct tables over the runner's image radii 1..3, and the
+# density-grid artifact cost 79x the SCF that produced it.
+#
+# The two tests below pin both halves of the fix: the grouping must not move a
+# single density value, and the native call count must stay at the number of
+# distinct shifts rather than the number of (R, g) pairs.
+
+def _compact_h2_multicell_density():
+    """A compact cell whose overlap lattice has many live blocks.
+
+    The absolute density is not physical -- an overlap lattice is used as a
+    cheap finite matrix-set witness, exactly as the skew-grid test above does.
+    What matters here is that many cells are live, so the (R, g) pair count
+    and the distinct-shift count differ by a large factor.
+    """
+    box = 6.0
+    sysp = vq.PeriodicSystem(
+        3, np.eye(3) * box,
+        [vq.Atom(1, [box / 2, box / 2, box / 2 - 0.7]),
+         vq.Atom(1, [box / 2, box / 2, box / 2 + 0.7])],
+    )
+    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
+    d_set = vq.compute_overlap_lattice(basis, sysp, vq.LatticeSumOptions())
+    return sysp, basis, d_set
+
+
+def _naive_image_double_loop(basis, sysp, d_set, grid_shape, radius):
+    """The straightforward (R, g) double loop, written out independently.
+
+    One plain AO table per translation and one per translated cell, contracted
+    term by term.  This is the definition the batched evaluator has to match.
+    """
+    from vibeqc.ewald_j import evaluate_ao_periodic
+    from vibeqc.periodic_density import _shifted_basis, _uniform_grid_points
+
+    lat = np.asarray(sysp.lattice, dtype=float)
+    points, _ = _uniform_grid_points(lat, grid_shape, np.zeros(3))
+    rho = np.zeros(points.shape[0], dtype=float)
+    for ix, iy, iz in itertools.product(range(-radius, radius + 1), repeat=3):
+        R = ix * lat[:, 0] + iy * lat[:, 1] + iz * lat[:, 2]
+        chi_ref = evaluate_ao_periodic(
+            _shifted_basis(basis, sysp, R), sysp, points, image_radius=0,
+        )
+        for cell, block in zip(d_set.cells, d_set.blocks):
+            Dg = np.ascontiguousarray(np.asarray(block), dtype=float)
+            if not np.any(Dg != 0.0):
+                continue
+            shift = R + np.asarray(cell.r_cart, dtype=float)
+            chi_g = evaluate_ao_periodic(
+                _shifted_basis(basis, sysp, shift), sysp, points,
+                image_radius=0,
+            )
+            rho += np.einsum("gi,ij,gj->g", chi_ref, Dg, chi_g, optimize=True)
+    return rho.reshape(grid_shape)
+
+
+def test_partner_shift_batching_matches_the_naive_image_double_loop():
+    """Regrouping the image sum must not move a single density value.
+
+    The batched evaluator sums the inner R contributions for one partner
+    shift inside a single gemm, so the floating-point association differs from
+    the term-by-term loop.  The artifact contract is that the written grid is
+    unchanged to 1e-12.
+    """
+    sysp, basis, d_set = _compact_h2_multicell_density()
+    shape = (4, 4, 4)
+
+    rho = vq.evaluate_periodic_density_on_grid(
+        basis, sysp, d_set, grid_shape=shape, ao_image_radius=1,
+    )[0]
+    reference = _naive_image_double_loop(basis, sysp, d_set, shape, 1)
+
+    assert rho.shape == reference.shape
+    deviation = float(np.max(np.abs(rho - reference)))
+    assert deviation < 1e-12, (
+        f"batched periodic density deviates from the term-by-term image "
+        f"double loop by {deviation:.3e}, above the 1e-12 artifact contract"
+    )
+
+
+def test_density_grid_evaluates_each_lattice_shift_once():
+    """Each distinct AO shift costs one native evaluation, not |R| x |live|.
+
+    Without this the density-grid artifact re-evaluates the same shifted AO
+    table once per (R, g) pair; that is the whole cost of the artifact on
+    every periodic route that writes a density grid or QVF volume data.
+    """
+    from vibeqc import periodic_density as pdmod
+
+    sysp, basis, d_set = _compact_h2_multicell_density()
+    shape = (4, 4, 4)
+    radius = 1
+
+    live = [
+        tuple(int(value) for value in cell.index)
+        for cell, block in zip(d_set.cells, d_set.blocks)
+        if np.any(np.asarray(block) != 0.0)
+    ]
+    cube = list(itertools.product(range(-radius, radius + 1), repeat=3))
+    pairs = len(cube) * len(live)
+    distinct = len(
+        {tuple(np.add(r, g)) for r in cube for g in live}
+        | {tuple(r) for r in cube}
+    )
+    # Guard the guard: a cell where the two counts agree would prove nothing.
+    assert pairs > 4 * distinct, (pairs, distinct)
+
+    calls = 0
+    original = pdmod.evaluate_ao_periodic
+
+    def counting(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    pdmod.evaluate_ao_periodic = counting
+    try:
+        vq.evaluate_periodic_density_on_grid(
+            basis, sysp, d_set, grid_shape=shape, ao_image_radius=radius,
+        )
+    finally:
+        pdmod.evaluate_ao_periodic = original
+
+    # 4^3 points fit in one work block, so every distinct shift is evaluated
+    # exactly once.  A larger grid splits into blocks and multiplies this by
+    # the block count, which is why the assertion is an upper bound on the
+    # per-block ideal rather than an equality on the raw total.
+    assert calls == distinct, (
+        f"periodic density grid made {calls} native AO evaluations for "
+        f"{distinct} distinct lattice shifts ({pairs} (R, g) pairs)"
     )

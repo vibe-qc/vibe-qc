@@ -616,3 +616,43 @@ It must also validate independent Coulomb and exchange penetration criteria,
 screened interactions, nontrivial symmetry operations, and energy-gradient
 consistency. The low-level prototype modules are not a supported numerical
 API and their isolated unit tests do not certify an SCF route.
+
+## Resolved finite-domain settings
+
+The four ab initio BIPOLE drivers return a `resolved_domain` record. It contains
+separate one-electron and two-electron lattice options, the common Ewald alpha,
+real and reciprocal reaches, Ewald precision, short-range interaction reach,
+energy and force screening settings, exact output zone and the selected XC grid.
+An explicit nuclear quadrature and the exact-FT J diagnostic cutoff are recorded
+when requested. `resolved_domain.as_dict()` is serializable;
+`resolved_domain.settings_sha256` identifies these settings. It does not identify
+the geometry, basis, native library or the retained integral tensor, and is not a
+convergence or accuracy certificate. The ordinary SCF output discloses the record.
+
+The same record accompanies exact and incremental Fock builds. Changing their
+lattice options after resolution raises an error before accumulator reuse.
+Analytic gradient previews restore omitted lattice and grid settings from the
+result, and reject explicitly conflicting settings. Both multi-k KS orbital
+response helpers use the selected grid profile, periodic or molecular grid, and
+image radius. Older results without this record retain the previous defaults.
+Explicit nuclear-grid and exact-FT J diagnostic runs need the finite-difference
+force path with matching SCF options; the analytic preview does not certify those
+operators. Existing analytic-force capability restrictions still apply.
+Recorded non-`AUTO` XC density domains (`MOLECULAR_HOME` or
+`PERIODIC_LATTICE`) also raise `NotImplementedError` in the analytic preview:
+its Pulay, grid-motion and orbital-response helpers currently use `AUTO`.
+Use `compute_bipole_gradient_fd` with the same `xc_density_domain` and SCF
+options until all analytic consumers support that selection consistently.
+
+The current shared native default remains `pair_complete_1e=False`, disclosed as
+`historical_index_ball`. This historical support is not invariant under atom-image
+relabelling. `pair_complete_1e=True` selects `physical_pairs` on supported routes:
+AO-product separation determines pair support, while short-range quartet
+interaction reach is a separate midpoint distance. Exchange retains its AC/BD
+integral products rather than imposing an extra AB output projector. Unsupported
+combinations continue to raise. The cross-family default migration and reference
+acceptance are tracked separately; a settings record does not complete them.
+
+SAP uses all-space quadrature for localized initial-guess AO products. The XC
+settings in this record describe the per-cell functional and must not replace
+that SAP quadrature. No semiempirical method uses this BIPOLE record.

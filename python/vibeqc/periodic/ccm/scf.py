@@ -195,6 +195,35 @@ class CCMSCFResult:
     #: observe, so the field stays ``None`` there.
     rsgdf_tail_ke_cutoff: float | None = None
     guess_selection: object = None
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded (``allow_vacuum_padding=True``) and which
+    #: 1-based lattice directions measured as vacuum. ``(False, ())`` on
+    #: every cell measured as genuinely 3-D, and on the four-centre routes,
+    #: which carry no such gate. A padded-regime energy is never reportable
+    #: without the padding it was computed at.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
+
+    @property
+    def achieved_convergence(self) -> dict:
+        """The convergence actually reached, read from the per-cycle trace.
+
+        O29 (paper issue #17): a requested threshold describes the
+        calculation that was asked for, not the one that ran. This returns
+        ``{"delta_e": last energy step, "grad_max": last max-abs
+        orthonormalised commutator residual, "cycles": n}`` from
+        :attr:`scf_trace`, or an empty dict for loops that record no trace.
+        """
+        tr = tuple(self.scf_trace or ())
+        if not tr:
+            return {}
+        last = tr[-1]
+        return {
+            "delta_e": float(last.delta_e),
+            "grad_max": float(last.grad_max),
+            "grad_metric": "max_abs_orthonormalised_commutator",
+            "cycles": int(len(tr)),
+        }
 
     @property
     def parity_held(self) -> bool:
@@ -292,7 +321,9 @@ def run_ccm_rhf(
     four-center weighting (see :data:`_CCM_ERI_METHODS`):
 
     * ``"union12"`` (default) -- the historical eq-18 product weight
-      (Peintinger & Bredow 2014); validated in 1-D.
+      (Peintinger & Bredow 2014); validated in 1-D **in a minimal basis
+      only**, breaks 8-fold ERI symmetry in >=2-D. The basis qualifier is not
+      a caution, it is a measured limit (issue #242).
     * ``"aiccm2026dev-a"`` -- the symmetric Born-von Kármán-torus four-center
       (:func:`~vibeqc.periodic.ccm.padded.ccm_eri_symmetric`,
       ``AICCM_ALGORITHM.md`` Sec.13), exactly 8-fold permutationally symmetric for

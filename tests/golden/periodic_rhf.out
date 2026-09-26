@@ -118,4 +118,8 @@
   -------------------------------------------
     SCF total <T>
     SCF avg per iter                    0.000  (0 iters)
+
+  Timings (wall clock, seconds)
+  -------------------------------------------
+    Post-SCF and output <T>
     Job total <T>

@@ -21,11 +21,30 @@ from __future__ import annotations
 
 import warnings
 
-__all__ = ["AICCM2026DevAExperimentalWarning"]
+__all__ = ["AICCM2026DevAExperimentalWarning", "AICCMVacuumPaddingWarning"]
 
 
 class AICCM2026DevAExperimentalWarning(UserWarning):
     """The Γ-CCM (aiccm2026dev-a) line is experimental research code."""
+
+
+class AICCMVacuumPaddingWarning(UserWarning):
+    """A neutral-torus route is running on a vacuum-padded cell by opt-in.
+
+    The measured-dimensionality guard of IID 291 refuses a cell declared 3-D
+    whose atom positions leave an empty slab above 25 bohr along a lattice
+    direction, because the 3-D neutral construction (Ewald-gauge one-electron
+    terms, the ``G+q=0``-dropped cderi, the BvK exchange-``q=0`` seam) then
+    corrects for periodic images that do not exist. Ruling R6 (2026-09-10)
+    makes the transverse vacuum of a chain a *parameter with a convergence
+    test*, so every neutral entry point accepts ``allow_vacuum_padding=True``
+    to run the padded cell anyway. The run is warned with this class, the
+    padded directions are recorded on the result
+    (``vacuum_padding_allowed`` / ``vacuum_padded_axes``) and, through the
+    runner, in the ``.system`` manifest, so a padded-regime energy can never
+    pass for a measured-3-D one. The positive-converged-energy refusal (the
+    second arm of IID 291) stays in force regardless of the opt-in.
+    """
 
 
 def _warn_experimental() -> None:

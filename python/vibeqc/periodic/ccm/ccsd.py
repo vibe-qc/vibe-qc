@@ -419,7 +419,8 @@ def run_ccm_ccsd(
 
 def run_ccm_ri_ccsd(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 200.0, aux_basis=None,
                     compute_triples: bool = True,
-                    reference: str = "direct", symmetry=None) -> CCMCCSDResult:
+                    reference: str = "direct", symmetry=None,
+                    allow_vacuum_padding: bool = False) -> CCMCCSDResult:
     """One-call neutral canonical RI-CCSD(T) (closed shell) -- build the neutral
     cderi ``L`` once, the matching lean SCF reference, and the RI-CCSD(T), with no
     dense ``n_ref_ao**4`` four-center anywhere (reaches moderate 3-D).
@@ -460,9 +461,11 @@ def run_ccm_ri_ccsd(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 2
     if reference == "direct":
         from .direct import run_ccm_rhf_direct
 
-        scf = run_ccm_rhf_direct(ccm, cderi=L, initial_guess=initial_guess)
+        scf = run_ccm_rhf_direct(ccm, cderi=L, initial_guess=initial_guess,
+                                 allow_vacuum_padding=allow_vacuum_padding)
     else:
-        scf = run_ccm_rhf_ri_neutral(ccm, cderi=L, initial_guess=initial_guess)
+        scf = run_ccm_rhf_ri_neutral(ccm, cderi=L, initial_guess=initial_guess,
+                                     allow_vacuum_padding=allow_vacuum_padding)
     # Stamp the NEUTRAL-RI lineage, overriding the bare four-centre key
     # run_ccm_ccsd set: this call built its own matching neutral reference and
     # ``L``. Plain literal on purpose -- tests/test_citations.py reads these

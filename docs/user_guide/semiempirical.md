@@ -91,12 +91,19 @@ retry ladder after a zero-temperature failure:
 | 1 | 0.001 Ha (~316 K) | off | 0.05 |
 | 2 | 0.0012 Ha (~379 K) | off | 0.05 |
 | 3 | 0.0015 Ha (~474 K) | off | 0.05 |
+| 4 | 0.002 Ha (~632 K) | off | 0.05 |
 
 The ladder is only reached when the zero-T SCC fails, so systems whose
 integer-occupation fixed point converges keep their exact zero-T energies
-(bit-identical to the direct `SCCDFTBModel` result). Each rung restarts from
-zero charges with a 500-iteration budget, and the reported iteration count is
-the cumulative total across all attempts. Because the SCC fixed point does
+(bit-identical to the direct `SCCDFTBModel` result). The zero-temperature
+attempt has a 500-iteration budget. Each rung restarts from zero charges
+with a 1500-iteration budget, wider than the zero-temperature one because a
+smeared, low-mixing SCC converges slowly (the formic-acid dimer needs 573
+iterations on its rung; adenine converges only on the fourth rung, at
+0.002 Ha, in 232 iterations). A rung is entered only after the previous one
+failed, so the wider budget and the fourth rung cannot change any system
+that already converged. The reported iteration count is the cumulative total
+across all attempts. Because the SCC fixed point does
 not depend on the mixing fraction, the retried energies are unchanged from
 the same-temperature model-level run; only the iteration path differs.
 
@@ -206,6 +213,24 @@ apart, against `xtb` 6.7.0's −27.499575435 Eh (whose own `-> dispersion` is
 −21.811 mHa residual into a −8.5 mHa one, 133x the 0.1 mHa parity gate.
 Guard: `tests/test_gfn2_xtb.py::TestGFN2PublicEnergyIsDispersionCorrected`.
 
+**Finite electronic temperature: one ensemble for the energy and the
+gradient.** The molecular driver runs its primary SCC attempt at the
+requested temperature, exact zero-temperature Aufbau by default. Two paths
+lead to a smeared solution: an explicit `electronic_temperature` on the
+native options, or the automatic stabilisation ladder accepting its
+`T = 0.005 Ha` rung for a system that stalls at `T = 0` (see the ladder
+notes below). In both cases the SCC is stationary in the Mermin free energy
+`A = E - T*S`, so that is what `GFN2Model.energy()` and `run_job` report
+(plus D4), what `compute_gfn2_gradient` differentiates through the converged
+fractional occupations (`GFN2Result.occupations`), and what an optimizer
+minimises. The native binding keeps `energy` (the internal `E`),
+`free_energy`, `entropy` and `smearing_temperature` side by side;
+`GFN2Model.electronic_temperature` and `run_job`'s `electronic_temperature`,
+`e_internal` and `entropy` fields state which ensemble a number belongs to,
+and the `.out` carries the "Mermin free energy (finite electronic
+temperature)" block. At `T = 0` every value is the historical one, bit for
+bit.
+
 The `.system` manifest records the parameter provenance a GFN2 number
 depends on, including `gfn2_cache_sha256` (the digest of the fetched
 parameter cache, `gfn2_xtb_params.toml`) and `gfn2_d4_refdata_sha256`, so a
@@ -248,12 +273,34 @@ model = PM6Model(mol)
 print(f"Energy: {model.energy():.6f} Ha")
 ```
 
-The high-level closed-shell `run_job(method="pm6")` route first attempts the
-ordinary zero-temperature SCF. If hard occupations cycle across
-near-degenerate fragment orbitals, it uses a bounded finite-temperature
-occupation homotopy and then cools back to an idempotent zero-temperature
-density. Only the cooled PM6 energy is accepted; the finite-temperature
+The high-level closed-shell `run_job(method="pm6")` route runs the ordinary
+zero-temperature SCF and, alongside it, a bounded finite-temperature
+occupation homotopy at each of three temperatures, every rung cooled back to
+an idempotent zero-temperature density and re-cooled to prove it is a genuine
+fixed point. Only cooled PM6 energies are accepted; a finite-temperature
 intermediate is never reported as a successful result.
+
+If those probes agree, the energy is reported as before. If two of them reach
+**different** converged zero-temperature fixed points, the route raises
+`SemiempiricalEnergyError` and names every solution it found, because on such
+a system the reported total would be chosen by rounding rather than by the
+input (issue #154).
+
+That guard exists because convergence alone does not identify the answer
+here. A strained bridged bicycle or a weakly coupled symmetric dimer has
+several genuine zero-temperature PM6 fixed points, and hard occupations leave
+the SCF selecting between them on arithmetic noise. Norbornadiene converges
+cleanly to -33.0848096 Ha, and just as cleanly to -33.9206690 Ha -- 0.836 Ha
+(22.7 eV) lower -- after a 1e-9 A nudge of one bridgehead carbon; homotopy
+rungs reach -33.3644211, -33.8171396 and -33.9206691 on inputs differing by
+at most 1e-7 A. Four fleet hosts once reported four of those values for that
+one input and one build, each labelled converged. Thread count changes
+nothing (identical to 16 digits from 1 to 18 threads), so this is not an
+arithmetic-determinism defect that a deterministic reduction order would
+reach, and no path selects the basin reliably: the smeared paths are
+noise-sensitive too, and reporting the lowest candidate is not stable because
+the direct solution is sometimes itself the lowest. A refusal is therefore
+the honest outcome, and it is the same on every host.
 
 Gamma-periodic PM6 instead uses Pulay extrapolation of the physical
 commutator residual. Convergence requires both the density change and
@@ -576,6 +623,15 @@ vector, and `use_broyden=True` selects the modified Broyden quasi-Newton
 mixer. The two accelerators are mutually exclusive and both reject
 unphysical extrapolations back onto a conservative damped step.
 
+**Run record.** The result states the electrostatics it executed:
+`gamma_form` (`"klopman_ohno"` or `"elstner"`), `ewald_gamma`, `madelung`
+and `scc_mixer` (`"aitken"`, `"diis"` or `"broyden"`), and
+`route_plan.electrostatics_kernel` resolves to the dimensional kernel that
+ran (`madelung_wire_1d`, `ewald_gamma_parry_2d`, ...; `"none"` for the
+WS-truncated default). An `ewald_gamma` run also carries
+`route_plan.shell_gamma_form`, so its citations include the Ewald lattice
+sum and, for the Elstner form, Elstner 1998.
+
 **Gradients.** `compute_gradient=True` returns the analytic fixed-topology
 nuclear gradient of the converged per-cell energy:
 
@@ -611,9 +667,13 @@ heavy-heavy two-electron tensor parity with the defining PM6 implementation
 remains open, so the adapter is not a quantitative PM6 reference. Bundled PM6
 records that require d orbitals fail closed: the complete PM6 spd Hamiltonian
 has not yet landed in the SECCM adapter, and treating those five d functions
-as p channels would return a different model. Madelung embedding is also not
-implemented, so neutral ionic crystals requiring long-range image
-electrostatics are outside the current PM6-SECCM scope. Its gradients
+as p channels would return a different model. The opt-in Madelung embedding
+(`madelung=True`, 1-D and 2-D; three cyclic dimensions fail closed) is
+described in the features table under "PM6-SECCM CCM Madelung embedding";
+an embedded run resolves `route_plan.electrostatics_kernel` to
+`madelung_wire_1d` or `madelung_parry_2d` and cites the CCM Madelung
+embedding route. Without the embedding a nontrivial cyclic topology needs
+the explicit `allow_truncated_electrostatics=True` acknowledgement. Its gradients
 (`compute_gradient=True`) use central
 differences of the converged per-cell energy over the frozen topology
 displacements (`gradient_method="finite_difference"`, `gradient_fd_step`
@@ -650,15 +710,27 @@ a quantitative solid-state prediction. Both
 GFN2-SECCM assembles the
 WS-weighted supercell GFN2-xTB SCC the same way: one-center S/H0 blocks
 are the molecular ones, every directed two-center coupling (the H0 image
-block, the shell-resolved gamma, the shell-resolved multipole AES
-potential, the pair repulsion) is accumulated through the WS records with
+block, the shell-resolved gamma, the AES multipole integrals, the pair
+repulsion) is accumulated through the WS records with
 their fractional weights, and the per-cell energy is the finite-cluster
 total divided by the group order (`total_cyclic_energy` and the `cyclic_*`
-decomposition are reported). The SCC loop mirrors the molecular driver
-(damped simple mixing plus the stabilization retries); D4 dispersion and
-the experimental faithful AES are not part of the adapter. At T = 0, the
-molecular limit (1x1x1 cyclic cluster) still reproduces the validated
-molecular `run_gfn2_xtb` driver bit-for-bit. At finite temperature it reports
+decomposition are reported). The SCC loop mirrors the molecular driver:
+damped simple mixing plus the stabilization retries. A stalled primary
+attempt is handed to the retries from a budget-independent checkpoint
+(every 500 iterations, when its residual has stopped contracting) rather
+than from a fixed 500-iteration cut (issue 294); a contracting one runs on
+until the ladder's reserve, the budget the rungs need in full (1100
+primary iterations at the default `max_iter` of 3600 for a light-element
+cell, 500 with a post-Ar element), and every rung then gets its whole
+budget, a rung that cannot being skipped rather than truncated (the
+molecular driver's issue 306 contract). Below the stabilisation threshold
+(`max_iter < 2500`) the primary keeps the whole budget, so the iteration
+count can differ across that threshold while the energy does not. D4
+dispersion is not part of the adapter; the default AES is the faithful
+`aes_faithful=True` model described below. At T = 0, the molecular limit
+(1x1x1 cyclic cluster) still reproduces the validated molecular
+`run_gfn2_xtb` driver bit-for-bit when that driver runs the same AES model,
+that is with `aes_faithful=True`. At finite temperature it reports
 the identical molecular state and internal components, but maps the SECCM
 `energy` field to the variational Mermin free energy rather than the molecular
 driver's historical internal-energy field. All three are
@@ -671,24 +743,35 @@ WS records at their physical image distances with their ownership weights, the
 same inventory the cyclic H0 assembly uses, so retyping a torus site by a
 lattice translation cannot move H0 (issue 354, fixed).
 
-**The default multipole AES moment integrals still depend on the coordinate
-representative typed for a torus site (issue 348), and `aes_faithful=True` is
-the fix.** With the default kernel the AES is the only remaining
-representative-dependent term in the route: on a 4-unit polar HF chain three
-representatives of one crystal give -5.230514880891, -5.230364176724 and
--5.230359290006 Ha, a 1.6e-4 Ha spread, while `include_aes=False` makes all
-three agree bit-for-bit. `aes_faithful=True` builds the multipole integrals
-over the same Wigner-Seitz records as the overlap and H0 and evaluates the
-Bannwarth 2019 Eq. 25 energy and Eqs. 39-44 Fock on the resulting
-atom-resolved cumulative moments; all three representatives then give
--5.233747472334 Ha. The two paths cannot be blended, because the ad-hoc
-kernel consumes shell-resolved moments and a pair inventory produces
-atom-resolved ones. The flag defaults off only so that molecular-limit bit
-parity with the molecular driver, whose own `aes_faithful` default is off,
-keeps its meaning; the two defaults move together.
+**The default AES is the representative-invariant Bannwarth model (issue
+140).** `run_gfn2_seccm` defaults to `aes_faithful=True`. It builds the
+multipole integrals over the same Wigner-Seitz records as the overlap and H0,
+and evaluates the Bannwarth 2019 Eq. 25 energy and Eqs. 39-44 Fock on the
+resulting atom-resolved cumulative moments. Eq. 27's shift terms make those
+moments origin-independent, so the energy, `e_aes` and charges do not depend
+on which lattice copy of a site was typed. On the issue's two-replica water
+torus and on a bent HF chain, every single-atom torus retyping and an atom
+permutation agree to about 1e-14 Ha.
+`aes_faithful=False` selects the molecular driver's ad-hoc shell-resolved
+kernel. Its moment integrals come from the home-cell molecule, so it is
+representative-dependent: on a 4-unit polar HF chain, three representatives
+of one crystal give -5.230514880891, -5.230364176724 and -5.230359290006 Ha,
+where the default gives -5.233747472334 Ha for all three. The two paths cannot
+be blended, because the ad-hoc kernel consumes shell-resolved moments and a
+pair inventory produces atom-resolved ones. Use `aes_faithful=False` only to
+reproduce pre-#140 SECCM numbers, or with `scc_mixer="newton"`, which is
+refused on the faithful path's joint `[dq; mu; theta]` iterate.
+
+**The SECCM and molecular AES defaults differ on purpose.** The molecular
+`run_gfn2_xtb` driver keeps `XTBSccOptions.aes_faithful = False` while issue
+777 (adenine basin multiplicity) blocks moving it. A single-replica default
+SECCM run therefore equals `run_gfn2_xtb` with `aes_faithful=True` bit for bit,
+not the molecular default. For the test water, that is -5.033680484741314 Ha
+against -5.031468971990033 Ha.
+
 `include_aes=False` is an explicit channel-isolation control for validation,
-not a promoted quantitative Hamiltonian. Periodic *Gamma* GFN2 no longer
-shares this defect: its pair-complete one-electron support landed under issue
+not a promoted quantitative Hamiltonian. Periodic *Gamma* GFN2 does not
+have the ad-hoc kernel's representative dependence either: its pair-complete one-electron support landed under issue
 316, and issues 296/338 replaced the home-cell shell gamma and the ad-hoc
 damped multipole kernel with a translation-covariant Ewald-split lattice sum
 and the Bannwarth 2019 model on image-resolved moments (see "Periodic
@@ -702,8 +785,11 @@ records the requested electrostatics family and electronic temperature
 separately from the kernel and temperature that actually executed, plus
 `include_aes`, the two Madelung operator modifiers, the Ewald molecular
 on-site selector, and molecular delegation. This distinction matters when a
-one-cell Ewald request delegates to the exact molecular Hamiltonian or a
-T = 0 request converges on the bounded finite-T retry.
+one-cell Ewald request delegates to the exact molecular Hamiltonian or an
+unspecified-temperature request converges on the bounded finite-T retry.
+Passing `electronic_temperature` explicitly (`0.0` included) pins every
+ladder rung and the molecular delegation to that temperature, as the
+molecular driver does; only the default `None` admits the finite-T rescue.
 `result.hamiltonian_identity.to_dict()` is the JSON-safe provenance payload
 for this standalone direct API, and `from_dict()` restores it exactly.
 
@@ -1212,6 +1298,22 @@ for those methods. The lookup accepts public method
 aliases such as `dftb0`, `scc-dftb`, `gfn2xtb`, `om2`, `om2-gradient-fd`,
 `gfn2`, `msindo`, and `ccm`.
 
+Route *maturity* has exactly one source. A concrete route plan's `maturity`
+field carries it, drawn from
+`vibeqc.semiempirical.routes.SEMIEMPIRICAL_MATURITIES` (`production`,
+`experimental`, `native_fd`, `mixed_native`, `gated_unimplemented`). The
+`backend` label above is a separate axis naming where a kernel lives, and the
+`production` flag is the one field the two tables share: it tracks
+`plan.maturity == "production"` for every reachable route, pinned by a sweep in
+the test suite. A dormant C++ `PeriodicTier` enum used to carry a third,
+disagreeing vocabulary and was removed. Periodic semiempirical runs record
+`route_maturity` and `route_status` in the `.system` manifest's `[run]`
+section and in the archived job spec, and the `.out` "Semiempirical options"
+block prints the same value as `maturity = ...` for every route, production
+included, so a run's own artifacts state the maturity its route claimed. The
+same block and manifest carry the `placeholder_repulsive_pairs` record of a
+DFTB route (see the known limitations below).
+
 Direct `run_semiempirical(...)` results compute gradients lazily when
 `result.gradient()` is called. DFTB0/SCC-DFTB, GFN2-xTB, PM6/UPM6, and OMx
 expose their existing gradient surfaces through that adapter, while
@@ -1463,6 +1565,14 @@ These runners require the external program to be installed on `$PATH`
   Absolute energies, equilibrium geometries and EOS fits from those runs are
   placeholder physics; fixed-geometry differences (k-mesh or supercell
   convergence, Madelung on/off, Gamma vs multi-k) remain exactly valid.
+  The same pair list is part of the run's record, not only of stderr: the
+  `.out` states it (a `placeholder_repulsive_pairs` line in the periodic
+  "Semiempirical options" block, a "DFTB repulsive qualification" section
+  on the molecular route), the `.system` manifest carries it as
+  `placeholder_repulsive_pairs` in `[run]`, and the archived QVF job spec
+  repeats it under `options`. An empty list means every pair was checked
+  and none is a placeholder; the key is absent for routes that have no
+  repulsive table (GFN2-xTB, PM6, OMx, MSINDO).
 - GFN2-xTB uses a finite, physical-distance-screened AES image inventory but
   still lacks a production periodic multipole Ewald construction and a closed
   external `xtb` parity matrix ({ref}`semiempirical-status`).

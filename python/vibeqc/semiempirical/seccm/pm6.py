@@ -193,7 +193,12 @@ def run_pm6_seccm(
         else ("energy",),
         charge=int(molecule.charge),
         multiplicity=int(molecule.multiplicity),
-    ).with_seccm_runtime(periodic_dimension=topology.dimensionality)
+    ).with_seccm_runtime(
+        periodic_dimension=topology.dimensionality,
+        # An embedded run cites the Madelung route it executed; the kernel
+        # name carries the dimension (madelung_wire_1d, madelung_parry_2d).
+        electrostatics_family="madelung" if madelung else "none",
+    )
     (
         translations,
         central,

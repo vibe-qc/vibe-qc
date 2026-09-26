@@ -57,6 +57,10 @@ molecular-only work. Molecular semiempirical and periodic semiempirical lanes
 are separate. GAPW, BIPOLE, GDF, embedding, and external reference-code lanes
 are independent unless a change crosses those boundaries.
 
+Tests named `tests/test_chi*.py` belong to the manual `aiccm-periodic` and
+`aiccm-experimental` lanes. They are experimental/T3 and excluded from
+`full-fast` and `slow-nightly`, including newly added chi test files.
+
 ## Policy Metadata
 
 Every lane in `scripts/test_gate/lane_manifest.json` carries the release-policy
@@ -128,6 +132,15 @@ advisory-profile, or automatic impact gates until their owner promotes them.
 | `slow-nightly` | Slow/heavy shipped-feature tests on a large box, excluding experimental AICCM/CCM/SECCM. |
 
 ## Examples
+
+Every `--out` artifact below lands in the directory you run from, normally the
+repo root, and all of them are gitignored. Do not commit one: a record's `tail`
+field holds the tail of the captured pytest output, warnings summary included,
+and pytest prints each warning with the absolute path of its origin. A green run
+is no safer than a red one, so any lane whose tests warn quotes your checkout's
+path, and `.githooks/pre-commit` then blocks the commit with "staged content
+contains personal-info patterns [values redacted]" without naming the file.
+Re-run the lane to regenerate an artifact.
 
 Molecular runner or SCF change:
 
@@ -207,6 +220,27 @@ $PY scripts/test_gate/run_full_suite.py --wt "$WT" --py "$PY" \
 
 Do not include `release-advisory.jsonl` in `blocking.jsonl`. AICCM/CCM/SECCM
 are not part of this profile.
+
+Gate children always enforce the stale-core guard, including isolated
+`gate_verdict.py --reverify` runs. `VIBEQC_ALLOW_STALE_CORE=1` remains available
+for direct diagnostic pytest sessions, but the gate runner removes it from
+each child environment. A stale core exits 97 before collection and is recorded
+as `STALE_CORE`. The verdict exits 2 without a green or red verdict when either
+the input artifact or an isolated re-run reports that status. Rebuild the core
+and generate fresh gate evidence; diagnostic results cannot certify a release.
+
+With xdist, each worker sends a versioned compiled-core provenance report. A
+stale worker refuses before collecting tests, after session initialization so
+xdist can deliver that report. One stale worker makes the controller exit 97,
+even if another worker already ran tests. Missing or malformed provenance on a
+normal worker finish exits 96 (`CORE_PROVENANCE_ERROR`); this is an infrastructure
+condition, not proof of staleness. Both statuses void ordinary gate artifacts
+and isolated re-verification. A crashed worker retains xdist's ordinary error
+and restart behavior. A current empty collection remains `NOTESTS`.
+
+Direct diagnostic overrides remain available. If only a worker is stale, its
+warning is repeated in the controller's final summary even with pytest warnings
+disabled. A worker cannot opt a non-overridden controller into diagnostic mode.
 
 Final pre-tag shipped-feature confidence:
 

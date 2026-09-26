@@ -323,3 +323,81 @@ def test_runner_neutral_bloch_producer_guards_are_not_plain_gdf(tmp_path):
                variant="real-gamma", aiccm_lattice_extension=(2, 1, 1),
                initial_guess="HCORE", output=str(tmp_path / "vac_rg"),
                progress=False)
+
+
+# --- ruling R6: the vacuum-padding opt-in ------------------------------------
+
+
+def _padded_chain_cell():
+    """A 1-D H2 chain along a1, declared 3-D with 30 bohr of transverse
+    vacuum: the IID 291 repro class (gap above 25 bohr and above four
+    shortest lattice vectors on a2 and a3)."""
+    return PeriodicSystem(
+        3, np.diag([6.0, 30.0, 30.0]),
+        [Atom(1, [0.0, 0.0, 0.0]), Atom(1, [1.4, 0.0, 0.0])], 0, 1)
+
+
+def test_runner_vacuum_opt_in_is_refused_off_the_neutral_variants(tmp_path):
+    """The keyword names a guard only the two neutral producers carry, so it
+    fails closed on four-center and chi and with any other method rather
+    than being silently ignored."""
+    with pytest.raises(ValueError, match="neutral producers only"):
+        _job(tmp_path, "fc", variant="four-center",
+             aiccm_lattice_extension=(1, 1, 1),
+             aiccm_allow_vacuum_padding=True)
+    with pytest.raises(ValueError, match="require method='aiccm'"):
+        _job(tmp_path, "plain", method="RHF", variant=None,
+             jk_method="gdf", kpoints=(1, 1, 1),
+             aiccm_allow_vacuum_padding=True)
+
+
+def test_runner_neutral_bloch_records_the_vacuum_opt_in_negatively(tmp_path):
+    """On a measured-3-D cell the manifest records the opt-in as false with
+    an empty axis list: absence of a flag is never a verdict."""
+    _job(tmp_path, "nb", aiccm_lattice_extension=(1, 1, 1))
+    run = tomllib.loads(
+        (tmp_path / "nb.system").read_text(encoding="utf-8"))["run"]
+    assert run["aiccm_allow_vacuum_padding"] is False
+    # list-valued [run] fields are rendered as strings (the bvk_nrep convention)
+    assert run["aiccm_vacuum_padded_axes"] == "[]"
+    # O29: the convergence actually reached, read from the multi-k trace.
+    assert run["scf_cycles_recorded"] >= 2
+    assert run["scf_final_residual_metric"] == "gradient_norm"
+    assert isinstance(run["scf_final_delta_e_ha"], float)
+    assert isinstance(run["scf_final_residual"], float)
+
+
+def test_runner_neutral_bloch_vacuum_opt_in_warns_and_stamps(tmp_path):
+    """With the opt-in the padded chain runs, warns, prints the switch in the
+    .out header and stamps the padded directions (1-based) in the manifest;
+    without it the same cell is still refused."""
+    from vibeqc import run_periodic_job
+    from vibeqc._vibeqc_core import BasisSet
+    from vibeqc.periodic.ccm.experimental import AICCMVacuumPaddingWarning
+
+    cell = _padded_chain_cell()
+    basis = BasisSet(cell.unit_cell_molecule(), "sto-3g")
+    with pytest.raises(NotImplementedError, match="allow_vacuum_padding"):
+        _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "nb_ref"),
+               progress=False, method="aiccm", variant="neutral-bloch",
+               aiccm_lattice_extension=(2, 1, 1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        warnings.simplefilter("error", AICCMVacuumPaddingWarning)
+        with pytest.raises(AICCMVacuumPaddingWarning, match="2, 3"):
+            run_periodic_job(cell, basis, output=str(tmp_path / "nb_w"),
+                             progress=False, method="aiccm",
+                             variant="neutral-bloch",
+                             aiccm_lattice_extension=(2, 1, 1),
+                             aiccm_allow_vacuum_padding=True)
+    r = _job(tmp_path, "nb_pad", cell=cell, aiccm_lattice_extension=(2, 1, 1),
+             aiccm_allow_vacuum_padding=True)
+    assert r.converged
+    assert r.neutral_bloch.vacuum_padding_allowed is True
+    assert r.neutral_bloch.vacuum_padded_axes == (2, 3)
+    run = tomllib.loads(
+        (tmp_path / "nb_pad.system").read_text(encoding="utf-8"))["run"]
+    assert run["aiccm_allow_vacuum_padding"] is True
+    assert run["aiccm_vacuum_padded_axes"] == "[2, 3]"
+    out = (tmp_path / "nb_pad.out").read_text(encoding="utf-8")
+    assert "allow_vacuum_padding = True" in out

@@ -571,3 +571,30 @@ def test_hessian_displacement_projects_preloaded_read_from_reference_basis(displ
     assert np.all(np.isfinite(gradient))
     assert np.linalg.norm(_to_current_basis(prior.density, source_basis, basis) - prior.density) > 1e-3
     np.testing.assert_array_equal(options.read_density, prior.density)
+
+
+def test_hessian_fd_resolves_default_jk_aux():
+    """``compute_hessian_fd(scf_options=RHFOptions(density_fit=True))``
+    without an ``aux_basis`` must pick the default JK fit before the
+    displaced SCFs call the bare driver, and the mirrored gradient options
+    must carry the same name (#362)."""
+    opts = vq.RHFOptions()
+    opts.density_fit = True
+    mol = vq.Molecule(
+        [
+            vq.Atom(8, [0.0, 0.0, 0.0]),
+            vq.Atom(1, [0.0, 1.43, -0.98]),
+            vq.Atom(1, [0.0, -1.43, -0.98]),
+        ]
+    )
+    res = vq.compute_hessian_fd(mol, "def2-svp", method="RHF", scf_options=opts)
+    assert opts.aux_basis == "def2-svp-jk"
+    assert np.asarray(res.hessian).shape == (9, 9)
+
+    explicit = vq.RHFOptions()
+    explicit.density_fit = True
+    explicit.aux_basis = "def2-svp-jk"
+    ref = vq.compute_hessian_fd(mol, "def2-svp", method="RHF", scf_options=explicit)
+    np.testing.assert_allclose(
+        np.asarray(res.hessian), np.asarray(ref.hessian), atol=1e-10
+    )

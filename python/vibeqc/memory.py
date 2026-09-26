@@ -2294,6 +2294,8 @@ def _dft_xc_requires_dense_ao_tables(options) -> bool:
     scf_options = _scf_estimator_options(options)
     if scf_options is None:
         return False
+    if _option_value(scf_options, "orbital_optimizer", "native") == "opentrustregion":
+        return True
     if type(scf_options).__name__ == "ROKSOptions":
         return True
     for threshold in ("newton_threshold", "trah_threshold"):

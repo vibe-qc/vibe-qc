@@ -882,8 +882,11 @@ ValidatedSECCMTopology seccm_validated_topology_from_records(
 
 }  // namespace
 
+void bind_opentrustregion(py::module_& m);
+
 PYBIND11_MODULE(_vibeqc_core, m) {
     m.doc() = "vibeqc native core (C++ backend)";
+    bind_opentrustregion(m);
     bind_aiccm2026dev_b_kernels(m);
     bind_periodic_correlation_resource(m);
     bind_periodic_mean_field_state(m);
@@ -1250,6 +1253,15 @@ PYBIND11_MODULE(_vibeqc_core, m) {
                  + ", n_prim=" + std::to_string(s.exponents.size())
                  + (s.pure ? ", pure" : ", cart") + ")";
         });
+
+    // One basis-name resolver for C++ and Python (#30):
+    // vibeqc.basis_registry.canonical_basis_name delegates here.
+    m.def("basis_lookup_key", &vibeqc::basis_lookup_key, py::arg("name"),
+          "Normalisation key shared by every spelling of a basis name: "
+          "lowercase alphanumerics plus '+'.");
+    m.def("basis_data_name", &vibeqc::basis_data_name, py::arg("name"),
+          "The file stem BasisSet loads for a spelling (alias-resolved on "
+          "basis_lookup_key, else the trimmed lowercase name).");
 
     py::class_<vibeqc::BasisSet>(m, "BasisSet")
         .def(py::init<const vibeqc::Molecule&, const std::string&, bool>(),
@@ -3465,6 +3477,8 @@ m.def("compute_cosx_k",
           "Van Lenthe et al., J. Comput. Chem. 27, 926 (2006).");
 
     py::class_<vibeqc::RHFOptions>(m, "RHFOptions")
+        .def_readwrite("orbital_optimizer", &vibeqc::RHFOptions::orbital_optimizer)
+        .def_readwrite("opentrustregion", &vibeqc::RHFOptions::opentrustregion)
         .def(py::init<>())
         .def(py::init<const vibeqc::RHFOptions&>(), py::arg("other"),
              "Value copy. Used by routes (CPCM solvation, SAD retries) that "
@@ -4218,6 +4232,7 @@ m.def("compute_cosx_k",
         "Private regression hook for the molecular SCF oscillation detector.");
 
     py::class_<vibeqc::RHFResult>(m, "RHFResult")
+        .def_readonly("opentrustregion", &vibeqc::RHFResult::opentrustregion)
         .def_readonly("restart_basis", &vibeqc::RHFResult::restart_basis)
         .def_readwrite("guess_selection", &vibeqc::RHFResult::guess_selection)
         .def_readonly("energy", &vibeqc::RHFResult::energy,
@@ -5783,6 +5798,8 @@ m.def("compute_cosx_k",
 
     // ----- UHF -----------------------------------------------------------
     py::class_<vibeqc::UHFOptions>(m, "UHFOptions")
+        .def_readwrite("orbital_optimizer", &vibeqc::UHFOptions::orbital_optimizer)
+        .def_readwrite("opentrustregion", &vibeqc::UHFOptions::opentrustregion)
         .def(py::init<>())
         .def(py::init<const vibeqc::UHFOptions&>(), py::arg("other"),
              "Value copy. Used by alternate-guess retries so ECP, SCF, and "
@@ -5823,7 +5840,18 @@ m.def("compute_cosx_k",
         .def_readwrite("ediis_diis_switch_threshold",
                        &vibeqc::UHFOptions::ediis_diis_switch_threshold,
                        "See RHFOptions.ediis_diis_switch_threshold. "
-                       "Default 1e-1.")
+                       "Used when n_alpha == n_beta. Default 1e-1.")
+        .def_readwrite("ediis_diis_switch_threshold_open_shell",
+                       &vibeqc::UHFOptions::ediis_diis_switch_threshold_open_shell,
+                       "EDIIS_DIIS / ADIIS_DIIS switch threshold used "
+                       "instead of ediis_diis_switch_threshold when "
+                       "n_alpha != n_beta. Compared with the RMS "
+                       "commutator norm max_s ||F_s D_s S - S D_s F_s||_F "
+                       "/ (sqrt(2) nbf). Default 1e-3 (GitLab #377): at "
+                       "1e-1 the EDIIS branch is unreachable on molecular "
+                       "UHF and the hybrid runs as plain DIIS, which fails "
+                       "on the CN radical. Set 1e-1 for the previous "
+                       "open-shell trajectory.")
         .def_readwrite("diis_restart_tau",
                        &vibeqc::UHFOptions::diis_restart_tau,
                        "R_CDIIS restart parameter τ. See "
@@ -6075,6 +6103,7 @@ m.def("compute_cosx_k",
                        "Empty (default) = single SCF.");
 
     py::class_<vibeqc::UHFResult>(m, "UHFResult")
+        .def_readonly("opentrustregion", &vibeqc::UHFResult::opentrustregion)
         .def_readonly("restart_basis", &vibeqc::UHFResult::restart_basis)
         .def_readwrite("guess_selection", &vibeqc::UHFResult::guess_selection)
         .def_readonly("energy", &vibeqc::UHFResult::energy,
@@ -6177,6 +6206,8 @@ m.def("compute_cosx_k",
 
     // ----- RKS (closed-shell DFT) ----------------------------------------
     py::class_<vibeqc::RKSOptions>(m, "RKSOptions")
+        .def_readwrite("orbital_optimizer", &vibeqc::RKSOptions::orbital_optimizer)
+        .def_readwrite("opentrustregion", &vibeqc::RKSOptions::opentrustregion)
         .def(py::init<>())
         .def(py::init<const vibeqc::RKSOptions&>(), py::arg("other"),
              "Value copy. Used by routes (CPCM solvation, SAD retries) that "
@@ -6455,6 +6486,7 @@ m.def("compute_cosx_k",
                        "Default 60.");
 
     py::class_<vibeqc::RKSResult>(m, "RKSResult")
+        .def_readonly("opentrustregion", &vibeqc::RKSResult::opentrustregion)
         .def_readonly("restart_basis", &vibeqc::RKSResult::restart_basis)
         .def_readwrite("guess_selection", &vibeqc::RKSResult::guess_selection)
         .def_readonly("energy", &vibeqc::RKSResult::energy)
@@ -6603,6 +6635,8 @@ m.def("compute_cosx_k",
 
     // ----- UKS (open-shell DFT) ------------------------------------------
     py::class_<vibeqc::UKSOptions>(m, "UKSOptions")
+        .def_readwrite("orbital_optimizer", &vibeqc::UKSOptions::orbital_optimizer)
+        .def_readwrite("opentrustregion", &vibeqc::UKSOptions::opentrustregion)
         .def(py::init<>())
         .def(py::init<const vibeqc::UKSOptions&>(), py::arg("other"),
              "Value-copy an existing UKSOptions object, including internal "
@@ -6889,6 +6923,7 @@ m.def("compute_cosx_k",
                        "(BUG 88). See UHFOptions.multi_guess_seeds.");
 
     py::class_<vibeqc::UKSResult>(m, "UKSResult")
+        .def_readonly("opentrustregion", &vibeqc::UKSResult::opentrustregion)
         .def_readonly("restart_basis", &vibeqc::UKSResult::restart_basis)
         .def_readwrite("guess_selection", &vibeqc::UKSResult::guess_selection)
         .def_readonly("energy",       &vibeqc::UKSResult::energy)
@@ -8593,6 +8628,18 @@ m.def("compute_cosx_k",
                        "Generate erfc cell-pair candidates before traversal. "
                        "Default True; False retains exhaustive enumeration "
                        "with identical screening for validation.")
+        .def_readwrite("gamma_only_0",
+                       &vibeqc::LatticeSumOptions::gamma_only_0,
+                       "#133: declare that the molecular limit is intended -- "
+                       "one unit cell, no periodic image coupling, g = 0 only. "
+                       "Same contract as the semiempirical "
+                       "PeriodicDFTB0Options.gamma_only_0 (#316). Default "
+                       "False, and a periodic driver whose |g| <= cutoff_bohr "
+                       "ball then holds nothing but the home cell raises "
+                       "instead of reporting a free-boundary cluster as "
+                       "periodic. Declares intent, not an approximation: it "
+                       "changes no sum, so a box whose cutoff genuinely "
+                       "isolates g = 0 computes the same numbers either way.")
         .def_readwrite("pair_complete_1e",
                        &vibeqc::LatticeSumOptions::pair_complete_1e,
                        "#429 stage 2: enumerate the one-electron lattice "
@@ -12520,7 +12567,8 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
            bool aes_faithful,
            double aes_damping,
            vibeqc::semiempirical::SCCMixer scc_mixer,
-           const Eigen::Ref<const Eigen::VectorXd>& initial_shell_charges) {
+           const Eigen::Ref<const Eigen::VectorXd>& initial_shell_charges,
+           bool electronic_temperature_explicit) {
             if (initial_shell_charges.size() != 0) {
                 if (!initial_shell_charges.allFinite()) {
                     throw std::invalid_argument(
@@ -12570,6 +12618,8 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
             options.conv_tol_charge = conv_tol_charge;
             options.charge_mixing = charge_mixing;
             options.electronic_temperature = electronic_temperature;
+            options.electronic_temperature_explicit =
+                electronic_temperature_explicit;
             options.madelung = madelung;
             options.madelung_s_weighted = madelung_s_weighted;
             options.madelung_no_self = madelung_no_self;
@@ -12621,10 +12671,11 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
         py::arg("ewald_gamma_k0_global") = false,
         py::arg("gamma_form") =
             vibeqc::semiempirical::ShellGammaForm::KlopmanOhno,
-        py::arg("aes_faithful") = false,
+        py::arg("aes_faithful") = true,
         py::arg("aes_damping") = 0.5,
         py::arg("scc_mixer") = vibeqc::semiempirical::SCCMixer::Simple,
         py::arg("initial_shell_charges") = Eigen::VectorXd(),
+        py::arg("electronic_temperature_explicit") = false,
         "Internal WS-weighted GFN2-SECCM frozen-record adapter.");
 
 
@@ -13783,11 +13834,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
         .value("ML", vibeqc::semiempirical::MethodFamily::ML)
         .value("LEGACY", vibeqc::semiempirical::MethodFamily::LEGACY);
 
-    py::enum_<vibeqc::semiempirical::PeriodicTier>(m_semi, "PeriodicTier")
-        .value("NATIVE", vibeqc::semiempirical::PeriodicTier::Native)
-        .value("GENERALIZED", vibeqc::semiempirical::PeriodicTier::Generalized)
-        .value("EXPERIMENTAL", vibeqc::semiempirical::PeriodicTier::Experimental);
-
     py::class_<vibeqc::semiempirical::SemiempiricalMethodConfig>(
         m_semi, "SemiempiricalMethodConfig")
         .def(py::init<>())
@@ -13797,7 +13843,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
         .def_readwrite("description", &vibeqc::semiempirical::SemiempiricalMethodConfig::description)
         .def_readwrite("supports_open_shell", &vibeqc::semiempirical::SemiempiricalMethodConfig::supports_open_shell)
         .def_readwrite("supports_periodic", &vibeqc::semiempirical::SemiempiricalMethodConfig::supports_periodic)
-        .def_readwrite("periodic_tier", &vibeqc::semiempirical::SemiempiricalMethodConfig::periodic_tier)
         .def_readwrite("gradient_quality", &vibeqc::semiempirical::SemiempiricalMethodConfig::gradient_quality)
         .def_readwrite("supports_stress", &vibeqc::semiempirical::SemiempiricalMethodConfig::supports_stress)
         .def_readwrite("supports_kpoints", &vibeqc::semiempirical::SemiempiricalMethodConfig::supports_kpoints)
@@ -13854,7 +13899,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 p.config.description = "Non-self-consistent tight-binding";
                 p.config.supports_open_shell = true;
                 p.config.supports_periodic = true;
-                p.config.periodic_tier = vibeqc::semiempirical::PeriodicTier::Native;
                 p.config.gradient_quality = vibeqc::semiempirical::GradientQuality::Exact;
                 p.config.supports_stress = true;
                 p.config.supports_kpoints = true;
@@ -13872,7 +13916,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 p.config.supports_open_shell = true;
                 p.config.supports_periodic = true;
                 p.config.gradient_quality = vibeqc::semiempirical::GradientQuality::FiniteDifference;
-                p.config.periodic_tier = vibeqc::semiempirical::PeriodicTier::Experimental;
                 p.config.supports_stress = true;
                 p.config.parameter_version = "pm6-2007";
                 reg.register_method(p);
@@ -13890,8 +13933,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 p.config.supports_open_shell = true;
                 p.config.gradient_quality =
                     vibeqc::semiempirical::GradientQuality::FiniteDifference;
-                p.config.periodic_tier =
-                    vibeqc::semiempirical::PeriodicTier::Experimental;
                 p.config.supported_elements = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36};
                 p.config.parameter_version = "msindo-2025";
                 reg.register_method(p);
@@ -13941,7 +13982,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 p.config.description = "Extended tight-binding (Grimme 2019)";
                 p.config.supports_open_shell = true;
                 p.config.supports_periodic = true;
-                p.config.periodic_tier = vibeqc::semiempirical::PeriodicTier::Generalized;
                 p.config.gradient_quality = vibeqc::semiempirical::GradientQuality::Exact;
                 p.config.supports_stress = true;
                 p.config.supports_kpoints = true;
@@ -13958,7 +13998,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 p.config.description = "Self-consistent-charge tight-binding";
                 p.config.supports_open_shell = true;
                 p.config.supports_periodic = true;
-                p.config.periodic_tier = vibeqc::semiempirical::PeriodicTier::Native;
                 p.config.gradient_quality = vibeqc::semiempirical::GradientQuality::Exact;
                 p.config.supports_stress = true;
                 p.config.supports_kpoints = true;
@@ -14107,6 +14146,12 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         .def_readonly("shell_dip_rms", &vibeqc::semiempirical::xtb::GFN2Result::shell_dip_rms)
         .def_readonly("charges", &vibeqc::semiempirical::xtb::GFN2Result::charges)
         .def_readonly("mo_energies", &vibeqc::semiempirical::xtb::GFN2Result::mo_energies)
+        .def_readonly(
+            "occupations",
+            &vibeqc::semiempirical::xtb::GFN2Result::occupations,
+            "Converged MO occupations: 2.0/0.0 under zero-temperature Aufbau, "
+            "fractional Fermi-Dirac values when smearing_temperature > 0. The "
+            "analytic gradient differentiates the ensemble they define (#343).")
         .def_readonly("n_basis", &vibeqc::semiempirical::xtb::GFN2Result::n_basis)
         .def_readonly("n_occ", &vibeqc::semiempirical::xtb::GFN2Result::n_occ)
         .def_readonly("converged", &vibeqc::semiempirical::xtb::GFN2Result::converged)
@@ -14209,7 +14254,10 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 });
         },
         py::arg("mol"), py::arg("result"), py::arg("params"),
-        "GFN2-xTB analytic gradient (fixed-charge approximation).");
+        "GFN2-xTB analytic gradient of the converged SCC, D4 excluded: the "
+        "derivative of GFN2Result.energy at T = 0 and of the Mermin free "
+        "energy GFN2Result.free_energy = E - T*S when the result was smeared "
+        "(the occupations it carries fix the ensemble; vibe-qc#343).");
 
         // Multi-k GFN2-xTB
     py::class_<vibeqc::semiempirical::xtb::KPointGFN2Result>(

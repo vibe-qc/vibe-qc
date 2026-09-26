@@ -55,16 +55,23 @@ from vibeqc.output.formats.qvf import (
 )
 from vibeqc.output.plan import OutputPlan
 
+from tests import companion_paths
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The three schema copies that must track the canonical SSOT.  vibe-view's
 # is a symlink to it; the two qvf-writer copies are deliberate copies kept
 # in lock-step by hand (`handovers/HANDOVER_QVF_CXX_WRITER.md`).
+#
+# vibe-view is a sibling repository since the 2026-09 split (#320), so its
+# copy is resolved through the companion resolver. ``None`` marks a path
+# inside this checkout.
 _SCHEMA_COPIES = (
-    _REPO_ROOT / "qvf-writer" / "spec" / "qvf_manifest.schema.json",
-    _REPO_ROOT / "qvf-writer" / "python" / "qvf_manifest.schema.json",
-    _REPO_ROOT / "vibe-view" / "src" / "vibeview" / "schema.json",
+    (None, Path("qvf-writer/spec/qvf_manifest.schema.json")),
+    (None, Path("qvf-writer/python/qvf_manifest.schema.json")),
+    ("vibe-view", Path("src/vibeview/schema.json")),
 )
+_SCHEMA_COPY_IDS = ("spec", "python", "vibeview")
 
 
 # ---------------------------------------------------------------------------
@@ -461,8 +468,17 @@ class TestSchemaContract:
             "is absent; the schema must say so"
         )
 
-    @pytest.mark.parametrize("copy_path", _SCHEMA_COPIES, ids=lambda p: p.parent.name)
-    def test_schema_copies_are_in_lock_step(self, copy_path):
+    @pytest.mark.parametrize(
+        ("companion", "relative"), _SCHEMA_COPIES, ids=_SCHEMA_COPY_IDS
+    )
+    def test_schema_copies_are_in_lock_step(self, companion, relative):
+        if companion is None:
+            root = _REPO_ROOT
+        else:
+            root = companion_paths.require(
+                companion, f"{companion} QVF schema lock-step check"
+            )
+        copy_path = root / relative
         if not copy_path.exists():
             pytest.skip(f"{copy_path} not present (partial checkout)")
         canonical = hashlib.sha256(Path(_SCHEMA_PATH_V1).read_bytes()).hexdigest()

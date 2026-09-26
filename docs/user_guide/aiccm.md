@@ -192,6 +192,36 @@ rule is "the real-space control or the legacy k-mesh alias, not both", and a
 shifted mesh is rejected because the mesh defines the torus, not a Bloch
 sampling.
 
+## The transverse vacuum of a padded cell
+
+The two neutral producers refuse a cell declared 3-D whose atom positions
+leave an empty slab above 25 bohr (and above four times the shortest lattice
+vector) along a lattice direction, because the 3-D neutral construction then
+corrects for periodic images that do not exist and the energy becomes a
+padding artefact (the measured-dimensionality guard, IID 291). Since ruling
+R6 (2026-09-10) the transverse vacuum of a chain is a *parameter whose
+convergence is tested*, so the guard has an explicit opt-in:
+
+```python
+run_periodic_job(system, basis, method="aiccm", variant="neutral-bloch",
+                 aiccm_lattice_extension=(4, 1, 1),
+                 aiccm_allow_vacuum_padding=True, output="chain_L40")
+```
+
+With the opt-in the run proceeds, emits an `AICCMVacuumPaddingWarning`
+naming the padded lattice directions, prints `allow_vacuum_padding = True`
+in the `.out` header, and records `aiccm_allow_vacuum_padding = true` and
+`aiccm_vacuum_padded_axes = "[2, 3]"` (the 1-based lattice directions that
+measured as vacuum) in the `.system` manifest. The library drivers take the
+same switch as `allow_vacuum_padding=True` and stamp the result with
+`vacuum_padding_allowed` and `vacuum_padded_axes`. Three things do not
+change: the default is off, so an unmarked padded run is still refused; the
+keyword is refused on `four-center` and `chi`, which carry no such guard, so
+it can never be silently ignored; and the second arm of IID 291, the refusal
+of a converged *positive* energy on a neutral cell, stays in force. A
+padded-regime energy is reportable only together with the padding it was
+computed at, which is why the record carries it.
+
 ## Convergence keywords
 
 Both lines gate the SCF on an energy change and on a gradient norm (the
@@ -254,7 +284,19 @@ convention record (`exchange_q0`, torus size, representation; see
 [output files](output_files.md)). `neutral-bloch` adds the fit accounting
 that makes the two producers auditable against each other:
 `lpq_pair_symmetry`, `gdf_pair_builds`, `gdf_pair_total`,
-`gdf_pair_reduction_factor` and `rsgdf_tail_ke_cutoff_executed`. The
+`gdf_pair_reduction_factor` and `rsgdf_tail_ke_cutoff_executed`. Both neutral
+variants record the vacuum opt-in (`aiccm_allow_vacuum_padding`,
+`aiccm_vacuum_padded_axes`). Every periodic run whose producer keeps a
+per-cycle trace also records the convergence it actually reached, beside
+the thresholds it was compared against: `scf_cycles_recorded`,
+`scf_final_delta_e_ha`, `scf_final_residual` and
+`scf_final_residual_metric` (`max_abs_orthonormalised_commutator` for the
+real-Gamma and lean neutral loops, `gradient_norm` for the multi-k driver
+behind `neutral-bloch`; `not-recorded` where the loop keeps no trace). The
+`[vibeqc]` section carries `native_core_sha256` and `native_core_bytes`,
+the checksum of the compiled core the process actually loaded, so the
+three-layer build identity (release, source revision, core checksum) is read
+from the run without an out-of-tree wrapper. The
 references block cites the variant's own route (`real-gamma`,
 `neutral-bloch`, `aiccm2026dev-a`, or `aiccm2026dev-b`) rather than a plain
 periodic SCF.
@@ -278,7 +320,9 @@ periodic SCF.
   carry the neutral-torus guards: a cell declared 3-D whose transverse
   directions are measured as pure vacuum (a gap above 25 bohr and above the
   ratio to the shortest lattice vector) and a converged POSITIVE energy on a
-  neutral cell are refused rather than reported.
+  neutral cell are refused rather than reported. The first refusal has the
+  explicit, warned, recorded opt-in `aiccm_allow_vacuum_padding=True`
+  described above; the second has none.
 * None of `real-gamma`, `neutral-bloch` and `four-center` forwards a mixing
   control, so an explicit `damping`, `fock_mixing`, `fmixing_percent`,
   `density_mixer` or `level_shift` fails closed on all three rather than

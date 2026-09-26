@@ -105,6 +105,7 @@ from .ecp_metadata import (
     ecp_centres_follow_atoms,
     effective_nuclear_charges,
 )
+from .density_fitting import resolve_default_jk_aux
 from .gradient_options import gradient_options_from_scf
 from .properties import _ATOMIC_MASSES, _total_density, center_of_mass
 
@@ -370,6 +371,10 @@ def _scf_and_gradient_at(
         scf_options, reference_mol, mol, gradient_options
     ):
         if gradient_options is None:
+            # The displaced SCFs below call the bare drivers, so give a
+            # fitted request its default JK aux first (#362); the gradient
+            # options derived next then mirror the resolved name.
+            resolve_default_jk_aux(scf_options, basis_name)
             gradient_options = gradient_options_from_scf(scf_options)
         # Preloaded READ matrices belong to the reference geometry. Project
         # from that fixed basis at every displacement and restore them after

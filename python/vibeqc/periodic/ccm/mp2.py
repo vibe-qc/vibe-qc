@@ -174,7 +174,8 @@ def run_ccm_mp2(ccm, scf_result: "CCMSCFResult | None" = None, *, initial_guess:
 
 
 def run_ccm_ri_mp2(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 200.0, aux_basis=None,
-                   reference: str = "direct", symmetry=None):
+                   reference: str = "direct", symmetry=None,
+                   allow_vacuum_padding: bool = False):
     """One-call neutral canonical RI-MP2 -- build the neutral cderi ``L`` once, the
     *matching* lean SCF reference, and the RI correlation, with no dense
     ``n_ref_ao**4`` four-center anywhere (reaches moderate 3-D).
@@ -245,9 +246,11 @@ def run_ccm_ri_mp2(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 20
         if reference == "direct":
             from .direct import run_ccm_rhf_direct
 
-            scf = run_ccm_rhf_direct(ccm, cderi=L, initial_guess=initial_guess)
+            scf = run_ccm_rhf_direct(ccm, cderi=L, initial_guess=initial_guess,
+                                     allow_vacuum_padding=allow_vacuum_padding)
         else:
-            scf = run_ccm_rhf_ri_neutral(ccm, cderi=L, initial_guess=initial_guess)
+            scf = run_ccm_rhf_ri_neutral(ccm, cderi=L, initial_guess=initial_guess,
+                                         allow_vacuum_padding=allow_vacuum_padding)
         # Stamp the NEUTRAL-RI lineage, overriding whatever run_ccm_mp2 set
         # for the bare four-centre path: this call built its own matching
         # neutral reference and `L`, so the citation owed is the RI one.
@@ -262,7 +265,8 @@ def run_ccm_ri_mp2(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 20
     if reference == "direct":
         from .direct import run_ccm_uhf_direct
 
-        uhf = run_ccm_uhf_direct(ccm, cderi=L, initial_guess=initial_guess)
+        uhf = run_ccm_uhf_direct(ccm, cderi=L, initial_guess=initial_guess,
+                                 allow_vacuum_padding=allow_vacuum_padding)
     else:
         from .uhf import run_ccm_uhf
 

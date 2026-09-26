@@ -122,6 +122,7 @@ from .periodic_k_gdf import (
     _options_or_default,
     _preflight_gdf_lpq_memory,
     _reject_slab_dim,
+    _resolve_rsgdf_ke_cutoff,
     _warn_multik_dense_core_gdf_parity_hold,
 )
 from .periodic_rhf_multi_k_ewald import (
@@ -281,7 +282,7 @@ def run_krohf_periodic_gdf(
     gdf_method: str = "rsgdf",
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     fit_screen_threshold: float = 0.0,
     mdf_ke_cutoff: float = 40.0,
@@ -453,6 +454,7 @@ def run_krohf_periodic_gdf(
             DeprecationWarning, stacklevel=2,
         )
         rsgdf_tail_ke_cutoff = None
+    _rsgdf_ke_request, rsgdf_ke_cutoff = _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff)
     dense_core_parity_held = not bulk_sr and _warn_multik_dense_core_gdf_parity_hold(
         system,
         gdf_method,
@@ -566,7 +568,7 @@ def run_krohf_periodic_gdf(
                 lpq_cache = _build_scf_range_separated_lpq_cache(
                     system, basis, aux, kpoints_cart, True,
                     omega=rsgdf_omega, raw_integral_error=rsgdf_g_precision,
-                    ke_cutoff=rsgdf_ke_cutoff, linear_dep_thr=gdf_linear_dep_threshold,
+                    ke_cutoff=_rsgdf_ke_request, linear_dep_thr=gdf_linear_dep_threshold,
                     lat_opts=lat_opts, fit_screen_threshold=fit_screen_threshold,
                     options=opts, open_shell=True, progress=plog,
                     pair_cache_builder=_lpq_cache_builder,

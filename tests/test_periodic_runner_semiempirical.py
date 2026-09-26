@@ -299,9 +299,60 @@ def test_periodic_parameter_identity_reaches_text_system_and_qvf(
         )
         spec = json.loads(zf.read(job["members"]["spec"]["path"]))
     assert spec["options"] == {
+        "route_maturity": "mixed_native",
+        "route_status": "periodic-pm6",
         "parameter_identity": identity,
         "parameter_sha256": sha256,
     }
+
+
+def test_periodic_route_maturity_reaches_the_qvf_job_spec(tmp_path, monkeypatch):
+    """An archived run records the maturity its route claimed (#150).
+
+    The route plan is the one maturity vocabulary, and a periodic
+    semiempirical run now carries that value into its own artifacts instead of
+    leaving "experimental" to tribal knowledge. Rendering the matching line in
+    the ``.out`` options block belongs to the output lane (#318).
+    """
+
+    def fake_engine(*_args, **_kwargs):
+        return SimpleNamespace(
+            energy=-0.25, converged=True, n_iter=3, n_basis=4
+        )
+
+    monkeypatch.setattr(pr, "_run_periodic_semiempirical_engine", fake_engine)
+    stem = tmp_path / "gamma_gfn2"
+    pr.run_periodic_job(
+        _he_cell(),
+        None,
+        method="gfn2-xtb",
+        output=stem,
+        citations=False,
+        record_hostname=False,
+        write_xyz_file=False,
+        write_xsf_structure_file=False,
+        write_cif_file=False,
+    )
+
+    system_manifest = tomllib.loads(
+        stem.with_suffix(".system").read_text(encoding="utf-8")
+    )
+    assert system_manifest["run"]["route_maturity"] == "experimental"
+    assert system_manifest["run"]["route_status"] == "gfn2-xtb"
+
+    with zipfile.ZipFile(stem.with_suffix(".qvf")) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        job = next(
+            section
+            for section in manifest["sections"]
+            if section["kind"] == "job.spec"
+        )
+        spec = json.loads(zf.read(job["members"]["spec"]["path"]))
+
+    # No parameter identity on this fake result, so the maturity is recorded
+    # on its own rather than riding along with the identity keys.
+    assert spec["options"]["route_maturity"] == "experimental"
+    assert spec["options"]["route_status"] == "gfn2-xtb"
 
 
 @pytest.mark.parametrize("method", ["pm7", "om1", "om2", "om3"])
@@ -1973,3 +2024,150 @@ def test_band_summary_says_n_a_when_no_k_point_has_both_halves() -> None:
     assert "direct gap (min) = n/a" in text
     assert "no k-point has both an occupied and a virtual state" in text
     assert "1e+300" not in text and "1.000000e+300" not in text
+
+
+# ---------------------------------------------------------------------------
+# #345 / #318: the periodic semiempirical record states the qualifications it
+# rests on -- route maturity and, for DFTB routes, the element pairs whose
+# repulsive is the A/R^12 placeholder -- on every surface a consumer reads
+# (.out options block, .system [run], QVF job spec), not only on stderr.
+# ---------------------------------------------------------------------------
+
+
+def _qvf_job_spec_options(stem):
+    with zipfile.ZipFile(stem.with_suffix(".qvf")) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        job = next(
+            section
+            for section in manifest["sections"]
+            if section["kind"] == "job.spec"
+        )
+        spec = json.loads(zf.read(job["members"]["spec"]["path"]))
+    return spec["options"]
+
+
+def _placeholder_pairs_from_warning(recorded):
+    """The pair labels the stderr warning named, e.g. ``["2-2"]``."""
+    from vibeqc.semiempirical import DFTB0RepulsivePlaceholderWarning
+
+    messages = [
+        str(w.message)
+        for w in recorded
+        if issubclass(w.category, DFTB0RepulsivePlaceholderWarning)
+    ]
+    assert messages, "the placeholder warning did not fire"
+    text = messages[0]
+    head = "no fitted repulsive for the pair(s) "
+    start = text.index(head) + len(head)
+    return [label.strip() for label in text[start : text.index(";", start)].split(",")]
+
+
+@pytest.mark.parametrize("method", ["dftb0", "scc-dftb"])
+def test_periodic_dftb_record_carries_the_placeholder_pairs_that_warned(
+    tmp_path, method
+):
+    """Every pair the stderr warning names is in .out, .system and the QVF.
+
+    On the shipped in-house set every pair is a placeholder, He-He included,
+    so this run warns, and the record must name the same pair on each surface
+    (#345 closure criterion: a surface that drops a pair that warned fails).
+    """
+    import warnings
+
+    from vibeqc.output.formats.semiempirical_record import (
+        PLACEHOLDER_REPULSIVE_RUN_FIELD,
+    )
+
+    stem = tmp_path / f"he_{method}"
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        pr.run_periodic_job(
+            _he_cell(),
+            None,
+            method=method,
+            output=stem,
+            citations=False,
+            record_hostname=False,
+            write_xyz_file=False,
+            write_xsf_structure_file=False,
+            write_cif_file=False,
+        )
+    warned = _placeholder_pairs_from_warning(recorded)
+    assert warned == ["2-2"]
+
+    run = tomllib.loads(stem.with_suffix(".system").read_text(encoding="utf-8"))["run"]
+    assert run[PLACEHOLDER_REPULSIVE_RUN_FIELD] == warned
+    assert run["route_maturity"] == "production"
+
+    text = stem.with_suffix(".out").read_text(encoding="utf-8")
+    options_block = text[text.index("Semiempirical options") : text.index("Results")]
+    assert "    maturity            = production\n" in options_block
+    assert f"    {PLACEHOLDER_REPULSIVE_RUN_FIELD} = 2-2\n" in options_block
+    assert "A/R^12 placeholder repulsive" in options_block
+
+    options = _qvf_job_spec_options(stem)
+    assert options[PLACEHOLDER_REPULSIVE_RUN_FIELD] == warned
+    assert options["route_maturity"] == "production"
+
+
+def test_periodic_out_states_route_maturity_and_omits_placeholders_off_dftb(
+    tmp_path, monkeypatch
+):
+    """#318: the .out options block states the maturity for every periodic
+    semiempirical route; the placeholder key exists only where a repulsive
+    table exists, so an absent key means "not applicable", never "unchecked".
+    """
+    from vibeqc.output.formats.semiempirical_record import (
+        PLACEHOLDER_REPULSIVE_RUN_FIELD,
+    )
+
+    def fake_engine(*_args, **_kwargs):
+        return SimpleNamespace(energy=-0.25, converged=True, n_iter=3, n_basis=4)
+
+    monkeypatch.setattr(pr, "_run_periodic_semiempirical_engine", fake_engine)
+    stem = tmp_path / "gamma_gfn2_maturity"
+    pr.run_periodic_job(
+        _he_cell(),
+        None,
+        method="gfn2-xtb",
+        output=stem,
+        citations=False,
+        record_hostname=False,
+        write_xyz_file=False,
+        write_xsf_structure_file=False,
+        write_cif_file=False,
+    )
+    text = stem.with_suffix(".out").read_text(encoding="utf-8")
+    options_block = text[text.index("Semiempirical options") : text.index("Results")]
+    assert "    method              = gfn2_xtb\n" in options_block
+    assert "    maturity            = experimental\n" in options_block
+    assert PLACEHOLDER_REPULSIVE_RUN_FIELD not in text
+
+    run = tomllib.loads(stem.with_suffix(".system").read_text(encoding="utf-8"))["run"]
+    assert run["route_maturity"] == "experimental"
+    assert PLACEHOLDER_REPULSIVE_RUN_FIELD not in run
+    assert PLACEHOLDER_REPULSIVE_RUN_FIELD not in _qvf_job_spec_options(stem)
+
+
+@pytest.mark.parametrize("request_kind", ["true", "path"])
+def test_periodic_semiempirical_refuses_explicit_structured_log(
+    tmp_path, monkeypatch, request_kind,
+):
+    """#384: the basis-free periodic route writes no structured log, so an
+    explicit requested is refused before calculation instead of dropped."""
+    monkeypatch.delenv("VQ_WORKDIR", raising=False)
+    monkeypatch.delenv("VIBEQC_STRUCTURED_LOG", raising=False)
+    stem = tmp_path / "he_gfn2"
+    requested = True if request_kind == "true" else tmp_path / "log.jsonl"
+    with pytest.raises(NotImplementedError, match="structured_log"):
+        pr.run_periodic_job(
+            _he_cell(),
+            None,
+            method="gfn2_xtb",
+            output=stem,
+            structured_log=requested,
+            citations=False,
+            output_qvf=False,
+            record_hostname=False,
+        )
+    assert not any(tmp_path.iterdir())

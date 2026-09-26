@@ -546,10 +546,27 @@ is rescaled. It prevents the numerical rank decision from changing merely
 because a converging residual makes every Gram element small.
 | `SCFAccelerator.EDIIS` | Energy-DIIS (Kudin/Scuseria/Cancès 2002). Minimises a quadratic energy functional on the convex hull of stored (F, D) pairs. | Diagnostic, pure EDIIS plateaus near convergence; prefer the hybrid below. |
 | `SCFAccelerator.ADIIS` | Augmented-Roothaan-Hall DIIS (Hu & Yang 2010). The energy-functional sibling of EDIIS, minimises the ARH energy model expanded about the most recent iterate, same positive-simplex QP. | Diagnostic / comparison, Garza/Scuseria 2012 found it near-identical to EDIIS at the HF level; like pure EDIIS it plateaus near convergence. |
-| `SCFAccelerator.EDIIS_DIIS` | **Default (molecular, v0.8.0).** Garza/Scuseria 2012 hybrid. Use EDIIS while `‖e‖_F > ediis_diis_switch_threshold` (default 0.1), then switch to plain DIIS for the asymptotic regime. | The recommended setting for transition-metal complexes, broken-symmetry singlets, and any case where plain DIIS plateaus or oscillates. Matches PySCF / ORCA defaults. |
+| `SCFAccelerator.EDIIS_DIIS` | **Default (molecular, v0.8.0).** Garza/Scuseria 2012 hybrid. Use EDIIS while the intensive commutator norm (RMS matrix element, `‖e‖_F / nbf`, and `max_σ ‖e_σ‖_F / (√2 · nbf)` for UHF) is above `ediis_diis_switch_threshold`, then switch to plain DIIS for the asymptotic regime. Default threshold 0.1; open-shell UHF (n_α ≠ n_β) uses `ediis_diis_switch_threshold_open_shell`, default **1e-3** (see below). | The recommended setting for transition-metal complexes, broken-symmetry singlets, and any case where plain DIIS plateaus or oscillates. Matches PySCF / ORCA defaults. |
 | `SCFAccelerator.ADIIS_DIIS` | ADIIS analogue of the EDIIS_DIIS hybrid: use ADIIS while `‖e‖_F > ediis_diis_switch_threshold`, then switch to plain DIIS for the asymptotic regime (same switch threshold field). | The ADIIS sibling of the production hybrid; use when you prefer the ARH energy model far from convergence over EDIIS's convex-hull functional. Garza/Scuseria 2012 found ADIIS≈EDIIS at the HF level. |
 | `SCFAccelerator.R_CDIIS` | Restarted commutator-DIIS (Chupin/Dupuy/Legendre/Séré 2021). Plain DIIS extrapolation, but the history depth grows until the stored error differences become nearly linearly dependent, then restarts. Restart aggressiveness is `diis_restart_tau` (τ ∈ (0,1); default 1e-4, smaller ⇒ deeper history). | When a fixed `diis_subspace_size` window is over- or under-sized for the problem; lets the depth self-tune and avoids the ill-conditioning of a saturated fixed window. |
 | `SCFAccelerator.AD_CDIIS` | Adaptive-depth commutator-DIIS (same paper). Plain DIIS extrapolation, but the window keeps only recent iterates whose residual is within `1/δ` of the current one, so the depth shrinks smoothly near convergence. Controlled by `diis_adaptive_delta` (δ > 0; default 1e-4). | The smoother sibling of R_CDIIS: no post-restart slowdown; the paper's numerics suggest continuously adapting the depth gives the fastest convergence. |
+
+**Open-shell UHF switch threshold (GitLab #377).** On the intensive RMS scale
+a threshold of 0.1 corresponds to `‖e‖_F > 0.1 · √2 · nbf` for UHF, 8.5 already
+at 60 basis functions, so no extrapolated iterate takes the EDIIS branch and
+the hybrid runs as plain DIIS. That left the CN radical (UHF/cc-pVTZ,
+r = 1.17 Å) wandering 40 mHa above its minimum for 1000 iterations. When
+n_α ≠ n_β, `UHFOptions` therefore compares with
+`ediis_diis_switch_threshold_open_shell` (default 1e-3), which keeps EDIIS on
+while `‖e‖_F` is above about 0.1 for a basis of about 70 functions and hands
+over to DIIS long before convergence. On the 15 main-group radicals measured
+for #377 (cc-pVDZ, cc-pVTZ) the converged energies moved by at most 3e-13 Ha,
+and some runs took one to four more iterations. Spin-balanced UHF
+(n_α = n_β) keeps `ediis_diis_switch_threshold` (0.1): there EDIIS's convex
+combination of spin-symmetric iterates stays spin-symmetric and moved the Cr2
+singlet stability witnesses (#138) onto a closed-shell state. Set
+`ediis_diis_switch_threshold_open_shell = 1e-1` to reproduce the previous
+open-shell trajectory. RHF, RKS and UKS are unchanged.
 
 EDIIS and ADIIS minimise a generally nonconvex quadratic exactly by visiting
 every non-empty face of the coefficient simplex, following Kudin et al.
@@ -561,7 +578,7 @@ solve and retain their existing history-depth range.
 
 ```python
 opts.scf_accelerator = vq.SCFAccelerator.EDIIS_DIIS    # production hybrid
-opts.ediis_diis_switch_threshold = 1e-1                # default, PySCF-style
+opts.ediis_diis_switch_threshold = 1e-1                # default (open-shell UHF: see below)
 opts.diis_subspace_size = 8                            # rolling-history cap
 
 # Adaptive-depth commutator-DIIS (Chupin et al. 2021):
@@ -1147,3 +1164,10 @@ Good scaling requires enough work per thread, tiny test systems
 start-up overhead dominates. Bigger molecules and periodic calculations
 with many lattice cells benefit much more (up to near-linear in the
 Fock build).
+
+## Optional OpenTrustRegion backend
+
+For real, integer-occupied molecular HF and supported KS calculations,
+`orbital_optimizer="opentrustregion"` explicitly selects the optional upstream
+trust-region orbital optimizer. See [OpenTrustRegion](opentrustregion.md) for
+installation, supported response kernels, stability semantics and diagnostics.

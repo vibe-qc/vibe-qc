@@ -577,3 +577,54 @@ def test_direct_ccm_adapters_validate_before_basis(selector, variant):
     with pytest.raises((ValueError, NotImplementedError), match="guess"):
         adapter(_h2_cell(), "intentionally-invalid-basis", "RHF", (1, 1, 1),
                 initial_guess=selector)
+
+
+# --- ruling R6: the vacuum-padding opt-in on the real-Γ arm -----------------
+
+
+def test_runner_real_gamma_vacuum_opt_in_warns_and_stamps(tmp_path):
+    """Mirror of the neutral-Bloch gate: the padded chain is refused by
+    default, runs with ``aiccm_allow_vacuum_padding=True``, and the manifest
+    records the switch and the padded directions read off the driver result.
+    Both producers run the SAME padded Hamiltonian, so the identity holds
+    there too (measured, not assumed: pinned at 1e-9 like the 3-D cells)."""
+    import tomllib
+    import warnings as _warnings
+
+    from vibeqc import run_periodic_job
+    from vibeqc._vibeqc_core import BasisSet
+    from vibeqc.periodic.ccm.experimental import AICCMVacuumPaddingWarning
+
+    cell = PeriodicSystem(
+        3, np.diag([6.0, 30.0, 30.0]),
+        [Atom(1, [0.0, 0.0, 0.0]), Atom(1, [1.4, 0.0, 0.0])], 0, 1)
+    basis = BasisSet(cell.unit_cell_molecule(), "sto-3g")
+    common = dict(progress=False, method="aiccm",
+                  aiccm_lattice_extension=(2, 1, 1), initial_guess="HCORE")
+    with pytest.raises(NotImplementedError, match="allow_vacuum_padding"):
+        _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "rg_ref"),
+               variant="real-gamma", **common)
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        _warnings.simplefilter("error", AICCMVacuumPaddingWarning)
+        with pytest.raises(AICCMVacuumPaddingWarning, match="2, 3"):
+            run_periodic_job(cell, basis, output=str(tmp_path / "rg_w"),
+                             variant="real-gamma",
+                             aiccm_allow_vacuum_padding=True, **common)
+    rg = _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "rg_pad"),
+                variant="real-gamma", aiccm_allow_vacuum_padding=True, **common)
+    assert rg.converged
+    assert rg.real_gamma.vacuum_padding_allowed is True
+    assert rg.real_gamma.vacuum_padded_axes == (2, 3)
+    run = tomllib.loads(
+        (tmp_path / "rg_pad.system").read_text(encoding="utf-8"))["run"]
+    assert run["aiccm_allow_vacuum_padding"] is True
+    assert run["aiccm_vacuum_padded_axes"] == "[2, 3]"
+    assert run["scf_final_residual_metric"] == (
+        "max_abs_orthonormalised_commutator")
+    assert isinstance(run["scf_final_delta_e_ha"], float)
+    nb = _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "nb_pad"),
+                variant="neutral-bloch", aiccm_allow_vacuum_padding=True,
+                progress=False, method="aiccm",
+                aiccm_lattice_extension=(2, 1, 1))
+    assert nb.energy == pytest.approx(rg.energy, abs=1e-9)

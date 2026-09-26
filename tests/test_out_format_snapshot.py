@@ -82,9 +82,12 @@ _VOLATILE = [
     # Their elapsed time has no suffix; normalize only this complete row,
     # so concatenated following output cannot be hidden by the scrubber.
     (re.compile(r"^(\s*Wall time)\s+\d+\.\d{3}$"), r"\1 <T>"),
+    # "Post-SCF and output" is a wall time like the others: masking only its
+    # digits keeps their count, so a post-SCF phase crossing 10 s read as a
+    # format change ("00.000" vs " 0.000") and flaked the periodic goldens.
     (re.compile(
         r"(Job total|SCF total|SCF stability analysis"
-        r"|SCF avg\. per iteration)\b.*"), r"\1 <T>"),
+        r"|SCF avg\. per iteration|Post-SCF and output)\b.*"), r"\1 <T>"),
 ]
 
 # A signed decimal / scientific number. Zero the digits, keep the mantissa
@@ -234,6 +237,17 @@ def test_out_format_double_hybrid(tmp_path):
     stem = tmp_path / "dh"
     vq.run_double_hybrid(_h2o(), "cc-pvdz", "b2plyp", output=stem)
     _compare_or_regen("double_hybrid", stem.with_suffix(".out").read_text())
+
+
+def test_out_format_double_hybrid_open_shell(tmp_path):
+    # Its own golden because the open-shell branch is a different pair of
+    # calculations, and the .out said so nowhere until #365: the SCF is a
+    # spin-pure ROKS and the correction a semicanonical RI-ROHF-MP2 doubles
+    # term, both reported under closed-shell labels. Freezing the open-shell
+    # file separately is what stops those labels drifting back.
+    stem = tmp_path / "dh_os"
+    vq.run_double_hybrid(_oh_doublet(), "cc-pvdz", "b2plyp", output=stem)
+    _compare_or_regen("double_hybrid_open_shell", stem.with_suffix(".out").read_text())
 
 
 def test_out_format_molecular_hessian(tmp_path):

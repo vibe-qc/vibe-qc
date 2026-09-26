@@ -20,6 +20,8 @@ reference table rather than a lesson.
 | Correlated molecular energies | [Basis convergence](basis_convergence.md) -> [RI-MP2](ri_mp2_aux_verification.md) -> [CCSD(T)](coupled_cluster_ccsd_t.md) -> [DLPNO](dlpno_local_correlation.md) | choose a correlation hierarchy and track its cost and approximations |
 | Periodic materials | [Periodic HF](periodic_hf.md) -> [Bloch and k-points](kpoints_brillouin_bloch.md) -> [Periodic DFT](periodic_dft.md) -> [Method routes](periodic_methods_compared.md) | construct a crystal calculation and converge its sampling and Coulomb route |
 | Results and visualization | [QVF format](qvf_file_format.md) -> [vibe-view setup](vibe_view_getting_started.md) -> [Viewer walkthrough](vibe_view_walkthrough.md) | inspect, compare, export, and archive results |
+| Portable molecular inputs and results | [Molecular HF](molecular_hf.md) -> [QCSchema interchange](qcschema_interchange.md) | exchange a molecule and calculation result as JSON and check it against a literature energy |
+| Wavefunction exchange | [TREXIO molecular exchange](trexio_exchange.md) -> [CI and periodic TREXIO](trexio_correlated_periodic.md) | export, inspect, convert and restart wavefunctions while retaining default QVF output |
 | Remote operation | [Parallel execution](parallel_execution.md) -> [vq remote jobs](vq_queue_remote_job.md) -> [Reference outputs](reference_outputs.md) | submit, monitor, fetch, and preserve remote calculations |
 
 (molecular-path)=
@@ -69,6 +71,7 @@ planning_a_calculation
 molecular_hf
 direct_scf_memory_tradeoff
 molecular_dft
+qcschema_interchange
 open_shell
 initial_guess_walkthrough
 ```
@@ -104,6 +107,8 @@ rijcosx_glycine
 ediis_diis_hybrid
 adaptive_diis
 second_order_scf
+opentrustregion
+opentrustregion_stability
 excited_states_tddft
 ```
 
@@ -200,6 +205,8 @@ xsf_bxsf_visualization
 :maxdepth: 1
 :caption: Operations
 
+trexio_exchange
+trexio_correlated_periodic
 parallel_execution
 vq_queue_remote_job
 external_data_fetcher

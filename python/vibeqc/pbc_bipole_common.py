@@ -1061,7 +1061,9 @@ def bvk_torus_density_matrices(
     BvK diameter, which fold-converged cutoffs always do. Raises
     with the missing cell index otherwise.
     """
-    n = [int(x) for x in mesh]
+    from .kpoints import _integer_counts
+
+    n = _integer_counts(mesh, name="BvK density mesh")
     if len(n) != 3 or any(x < 1 for x in n):
         raise ValueError(
             f"bvk_torus_density_matrices: mesh must be three positive "
@@ -1688,27 +1690,10 @@ def resolve_auto_fock_mixing(
 # cutoffs, so a user-set ``schwarz_threshold`` silently never reached the
 # BIPOLE 2-e build (2026-07-13 truncation audit,
 # HANDOVER_BIPOLE_PRODUCTION.md Sec. 0a).
-_LATTICE_PASSTHROUGH_FIELDS = (
-    "cutoff_bohr",
-    "nuclear_cutoff_bohr",
-    "eri_interaction_cutoff_bohr",
-    "becke_image_radius_bohr",
-    "slab_ewald_alpha",
-    "screening_overlap_threshold",
-    "screening_exchange_threshold",
-    "schwarz_threshold",
-    "schwarz_threshold_forces",
-    # The separation-aware charge-pair Schwarz SR
-    # screening flag is a user-settable LatticeSumOptions field too --
-    # run_periodic_job(sr_range_screening=True) sets it on
-    # options.lattice_opts, so it must survive into the derived 2-e set
-    # or the build silently runs unscreened while the run still cites
-    # the charge-pair bound.
-    "sr_range_screening",
-    "sr_sparse_traversal",
-    # #429 stage 2: the one-electron pair-complete switch must survive into
-    # every derived option set or the 1e and 2e term sets silently disagree.
-    "pair_complete_1e",
+from .bipole_domain import LATTICE_FIELDS
+
+_LATTICE_PASSTHROUGH_FIELDS = tuple(
+    name for name in LATTICE_FIELDS if name != "coulomb_method"
 )
 
 
@@ -1763,6 +1748,10 @@ def prepare_bipole_lattice_options(
     lat_opts_1e.coulomb_method = (
         CoulombMethod.EWALD_3D if system.dim == 3 else CoulombMethod.DIRECT_TRUNCATED
     )
+    policy = "physical_pairs" if lat_opts_2e.pair_complete_1e else "historical_index_ball"
+    plog.info(f"  BIPOLE lattice domain: {policy}")
+    if not lat_opts_2e.pair_complete_1e:
+        plog.info("  Historical index-ball support is not atom-image invariant.")
     return resolved_j_split, use_ewald_j_split_auto, lat_opts_2e, lat_opts_1e
 
 
@@ -2485,6 +2474,42 @@ def warn_bipole_charged_cell(system, plog) -> None:
         plog.info(f"  WARNING: {output_message}")
 
 
+def resolve_bipole_ewald_state(
+    system, lat_opts_1e, lat_opts_2e, *, ewald_omega, ewald_precision,
+    erfc_exchange_arm_active, plog,
+):
+    """Resolve the common nuclear/electronic finite Ewald envelopes once.
+
+    Reuses the established alpha bound, reciprocal envelope and nuclear
+    real-space floor. The caller supplies the active exchange policy; pure
+    functionals and screened hybrids must not acquire an HF-only bound.
+    """
+    if system.dim != 3:
+        return None, None, None, None
+    from .bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
+
+    volume = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
+    alpha = resolve_bipole_ewald_alpha(
+        volume, ewald_omega, lat_opts_2e, float(ewald_precision),
+        erfc_exchange_arm_active=erfc_exchange_arm_active, plog=plog,
+    )
+    reciprocal = bipole_ewald_reciprocal_cutoff(volume, alpha)
+    raise_bipole_ewald_real_cutoff(
+        system, lat_opts_1e, alpha, float(ewald_precision), plog,
+    )
+    options = _crystal_ewald_options(
+        lat_opts_1e, alpha_bohr_inv=alpha, tolerance=float(ewald_precision),
+        recip_cutoff_bohr_inv=reciprocal,
+    )
+    plog.info(
+        f"  Ewald state: alpha = {alpha:.6f} bohr^-1, "
+        f"real_cutoff = {options.real_cutoff_bohr:.2f} bohr, "
+        f"K_max = {reciprocal:.2f} bohr^-1, "
+        f"tol = {float(ewald_precision):.0e}"
+    )
+    return options, alpha, volume, reciprocal
+
+
 def _crystal_ewald_options(
     lat_opts: LatticeSumOptions,
     *,
@@ -2598,6 +2623,7 @@ def _compute_nuclear_lattice_ewald_reciprocal_ft(
     cache=None,
     precision: float = 1e-8,
     K_max: Optional[float] = None,
+    resolved_erfc_options=None,
 ):
     """Analytic 3D Ewald V_ne blocks via AO-pair Fourier transforms.
 
@@ -2633,9 +2659,11 @@ def _compute_nuclear_lattice_ewald_reciprocal_ft(
     # gradient helpers in ``bipole_gradient.py``, which pass their own
     # unwidened ``lattice_opts`` beside a cell-scaled alpha, stay the exact
     # derivative partner of the energy.
-    lat_opts_erfc = ewald_erfc_lattice_options(
-        lat_opts, alpha, precision, basis=basis, system=system,
-    )
+    lat_opts_erfc = resolved_erfc_options
+    if lat_opts_erfc is None:
+        lat_opts_erfc = ewald_erfc_lattice_options(
+            lat_opts, alpha, precision, basis=basis, system=system,
+        )
 
     V_short = compute_nuclear_erfc_lattice(
         basis,
@@ -2857,6 +2885,7 @@ def build_bipole_one_electron_lattice(
     *,
     sym_log_style: str = "rich",
     log_v_ne_ft: bool = False,
+    resolved_erfc_options=None,
 ):
     """Build the S/T lattice sets and V_ne (+ optional LR cache).
 
@@ -2954,6 +2983,7 @@ def build_bipole_one_electron_lattice(
             S_lat,
             precision=ewald_precision,
             K_max=ewald_k_max,
+            resolved_erfc_options=resolved_erfc_options,
         )
     else:
         v_ne_grid = (

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at_sha": "ebcd949813b811a7c51b3e5e4e8747774e8de0e0",
-  "test_file_count": 915,
+  "generated_at_sha": "260cef4e8294ea62f8703e162e6d7ce6559d0f4a",
+  "test_file_count": 933,
   "policy": {
     "blocking_tiers": [
       "T0",
@@ -664,6 +664,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_basis_aug_own_file.py",
+      "maturity": "verified",
+      "tier": "T2",
+      "owner": "basis/integrals",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "demote T2",
+      "rationale": "Shell-by-shell guard that every aug-cc-pV* name loads its own shipped .g94 instead of libint's base + augmentation- split, which silently dropped the diffuse shells of 17 sets (#30). One BasisSet per set over its elements plus one SAD guess; no SCF.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_basis_citation_coverage.py",
       "maturity": "verified",
       "tier": "T2",
@@ -925,6 +937,18 @@
       "measured_peak_rss_mb": null,
       "disposition": "new",
       "rationale": "Verify C++ far-field gradient contractor is importable and auto-wired in build_bipolar_far_field_gradient_contribution",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_bipole_domain_contract.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "BIPOLE",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Source-only resolved-domain, grid propagation and metadata contracts for #316/#44. Standalone unittest command imports no native core. Not numerical relabelling, energy or force acceptance.",
       "last_verified_sha": null
     },
     {
@@ -2404,6 +2428,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_ccm_theorem1_3d.py",
+      "maturity": "experimental",
+      "tier": "T3",
+      "owner": "implementing chat",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "keep",
+      "rationale": "experimental AICCM/CCM/SECCM research coverage; never release blocking",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_ccm_two_center.py",
       "maturity": "experimental",
       "tier": "T3",
@@ -2536,6 +2572,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_changelog_fragments.py",
+      "maturity": "verified",
+      "tier": "T2",
+      "owner": "release/test-health",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "demote T2",
+      "rationale": "verified inventory or parity coverage retained post-cut",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_changelog_released_sections.py",
       "maturity": "production",
       "tier": "T1",
@@ -2545,6 +2593,18 @@
       "measured_peak_rss_mb": null,
       "disposition": "blocking T1",
       "rationale": "pins the GitLab #229 guard: every released CHANGELOG.md section must match its SHA-256 pin in scripts/test_gate/changelog_pins.toml, so an entry for unreleased work cannot reach a released section through a rebase unnoticed, as it did in #227. Plain text and hashing, plus throwaway git repositories for the audit command and the pre-push hook; the test imports nothing from vibeqc and runs no SCF. Blocking T1 because a candidate's release notes are part of what it proves.",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_chi_fit_source.py",
+      "maturity": "experimental",
+      "tier": "T3",
+      "owner": "periodic-SCF",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Explicit chi fit source, canonical source admission, typed execution metadata and process provenance; no qualification or cross-construction oracle",
       "last_verified_sha": null
     },
     {
@@ -3484,6 +3544,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_double_hybrid_run_job.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "molecular correlation",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "GitLab #365: run_job now dispatches double hybrids (method='b2plyp' and the other three) to run_double_hybrid, which until then was reachable only through its own wrappers while the release paper named run_job as the molecular entry point. Pins the two properties that can silently go wrong: energy parity between the two entry points -- run_job spells several defaults None where the dispatcher spells them True, and coercing those with bool() turned density fitting off for a ~1e-6 Ha drift -- and the refusal of every run_job feature the dispatcher does not carry, so optimize=True cannot be dropped and reported as a double-hybrid number. Also pins the open-shell construction on all three surfaces: the .out named an RKS reference for a ROKS SCF, the .system could not tell the branches apart, and the .bibtex omitted the semicanonical ROHF-MP2 papers. Water and OH / cc-pVDZ; seconds per job, no external runtime.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_dsd_pbep86.py",
       "maturity": "verified",
       "tier": "T2",
@@ -4312,6 +4384,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_hessian_surface.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "molecular correlation",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "A reported Hessian must name the surface it was built on. run_job resolves a correlated request down to its mean-field reference before compute_hessian_fd differentiates it, so method='mp2', hessian=True produced a frequency block byte-for-byte identical to the RHF one with E(elec)-labelled thermochemistry rows carrying the RHF energy -- nothing in the .out, the .system manifest or the .qvf said which surface the numbers described. Pins the Surface: line and its not-the-requested-method note, the surface-named thermochemistry labels and their arithmetic, the [hessian] manifest section, the QVF vibrations surface key, and the clean SKIPPED refusal for a method that resolves to no mean-field reference at all. Water / STO-3G; under a second per job, no external runtime.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_hirshfeld_charges.py",
       "maturity": "verified",
       "tier": "T2",
@@ -4333,6 +4417,18 @@
       "measured_peak_rss_mb": null,
       "disposition": "demote T2",
       "rationale": "IAO/IBO published-value and Jacobi-increment coverage (handovers/HANDOVER_IBO.md)",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_iao_population.py",
+      "maturity": "production",
+      "tier": "T2",
+      "owner": "analysis/populations",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Molecular determinant IAO charges, spin and IAO-Wiberg indices: analytical covariance, matched-reference oracle and public output coverage",
       "last_verified_sha": null
     },
     {
@@ -5332,6 +5428,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_opentrustregion.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "molecular-SCF",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Optional pinned orbital optimizer: matrix-free energy derivatives, C ABI/state isolation, molecular HF/KS and public output; real-library checks skip when absent",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_optimize_neb_robustness.py",
       "maturity": "verified",
       "tier": "T2",
@@ -5800,6 +5908,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_pbc_gaussian_image_guard.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "periodic-scf",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Issue #133 fail-closed guard for the Gaussian periodic drivers: a Gamma cell wider than cutoff_bohr leaves the translation ball holding only g=0, and run_rhf_periodic / run_rks_periodic / run_rhf_periodic_gamma returned the isolated cluster's energy silently. Pins the refusal on all three entry points, the message naming the cutoff and the way out, the LatticeSumOptions.gamma_only_0 declaration that keeps the molecular limit reachable, and two controls that the guard does not fire on a genuinely periodic cell. Small STO-3G H2 chains; seconds, no external runtime.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_pbc_gdf_compcell.py",
       "maturity": "under-review",
       "tier": "T2",
@@ -6077,6 +6197,18 @@
     },
     {
       "file": "tests/test_periodic_ccm_neutral_bloch_adapter.py",
+      "maturity": "experimental",
+      "tier": "T3",
+      "owner": "implementing chat",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "keep",
+      "rationale": "experimental AICCM/CCM/SECCM research coverage; never release blocking",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_periodic_ccm_postscf_cost.py",
       "maturity": "experimental",
       "tier": "T3",
       "owner": "implementing chat",
@@ -8452,6 +8584,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_periodic_slab_density_grid_origin.py",
+      "maturity": "production",
+      "tier": "T2",
+      "owner": "periodic-SCF",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "demote T2",
+      "rationale": "slab and chain artifact grids must contain their atoms (#45): the AO image sum translates along periodic axes only, so a box pinned at the Cartesian origin dropped the charge below z=0 and refused a 2-D UKS density artifact at 1.07 of 2.0 electrons. Pins the centring, that dim=3 is untouched, and that a truly thin slab is still refused with the cell named as the remedy",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_periodic_smearing.py",
       "maturity": "under-review",
       "tier": "T2",
@@ -8651,7 +8795,7 @@
       "memory_tier": "unmeasured",
       "measured_runtime_s": null,
       "measured_peak_rss_mb": null,
-      "disposition": "demote T2",
+      "disposition": "keep",
       "rationale": "POLIPO vs libint Cartesian moment parity + spherical conversion validation",
       "last_verified_sha": null
     },
@@ -8824,6 +8968,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_qvf_job_options.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "input/output",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Executable QVF JSON-to-options boundary (#366): constructors, nested records/enums, strict field types and explicit refusals. No SCF; native option constructors only. Numerical lifecycle acceptance is separate from these adapter contracts.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_qvf_round_trip.py",
       "maturity": "verified",
       "tier": "T2",
@@ -8992,6 +9148,18 @@
       "last_verified_sha": "78e627bf425ea8d4ab7aeee35c0f88582cb43327"
     },
     {
+      "file": "tests/test_relocalization_worker.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "analysis/localization",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Standalone JSONL relocalization protocol, native readiness, exact archived basis reconstruction, molecular and experimental finite-torus complex subspace invariants, strict refusals and explicit-only SCF. Small local native calculations; no viewer or external QC runtime.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_requested_mo_indices.py",
       "maturity": "verified",
       "tier": "T2",
@@ -9076,6 +9244,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_roadmap_release_table.py",
+      "maturity": "verified",
+      "tier": "T2",
+      "owner": "output/docs",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "The roadmap's release table against the repository. docs/roadmap.md stated the current release in prose and that prose went stale six releases running (#259), so the table that replaced it is cross-checked rather than trusted: every codename against RELEASE_CODENAMES, every minor with a CHANGELOG.md section or a git tag against the rows, and no row claiming planned while a tag exists. Pure file and catalog reads plus one git tag -l; no SCF, well under a second.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_rohf.py",
       "maturity": "production",
       "tier": "T2",
@@ -9149,6 +9329,18 @@
     },
     {
       "file": "tests/test_rsgdf_dense_mesh_tail.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "GDF",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "demote T2",
+      "rationale": "under-review inventory or parity coverage retained post-cut",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_rsgdf_ke_cutoff_default.py",
       "maturity": "under-review",
       "tier": "T2",
       "owner": "GDF",
@@ -9880,6 +10072,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_semiempirical_pm6_basin_selection.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "semiempirical",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "pins GitLab #154's live limb: PM6/norbornadiene has several genuine zero-temperature fixed points and the direct Pulay iteration selects between them on arithmetic noise (a 1e-9 A bridgehead nudge moves the converged total by 0.836 Ha), which is why four fleet hosts reported four different converged energies for one input and one build. Asserts the route refuses such a system naming every solution it found, that the refusal is the same outcome under noise-level input changes, that a single-basin control (water) still reports, and that the direct SCF no longer depends on the iteration budget. Real PM6 SCF runs; no fleet access.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_semiempirical_route_plan.py",
       "maturity": "under-review",
       "tier": "T2",
@@ -10432,6 +10636,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_stale_core_guard.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "release/test-health",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Pins the stale-compiled-core refusal (#285): pytest exits the reserved status 97 before collecting when _vibeqc_core predates cpp/, run_full_suite.classify labels it STALE_CORE rather than FAIL, and gate_verdict refuses to compute a verdict from an artifact holding one. Pure Python; never touches cpp/ mtimes, which would make the core stale for real.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_state_fingerprint.py",
       "maturity": "production",
       "tier": "T2",
@@ -10828,18 +11044,6 @@
       "last_verified_sha": null
     },
     {
-      "file": "tests/test_user_daemon_state_preparation.py",
-      "maturity": "verified",
-      "tier": "T2",
-      "owner": "release/test-health",
-      "memory_tier": "unmeasured",
-      "measured_runtime_s": null,
-      "measured_peak_rss_mb": null,
-      "disposition": "demote T2",
-      "rationale": "verified inventory or parity coverage retained post-cut",
-      "last_verified_sha": null
-    },
-    {
       "file": "tests/test_v_ne_slab_ewald_2d.py",
       "maturity": "under-review",
       "tier": "T2",
@@ -10993,6 +11197,18 @@
       "measured_peak_rss_mb": null,
       "disposition": "demote T2",
       "rationale": "verified inventory or parity coverage retained post-cut",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_xyz_energy_method.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "output/docs",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "A .xyz written by run_job must name the method its energy is on. run_job writes the comment line from the SCF result's energy and _select_method has already collapsed a correlated request to its mean-field reference, so method='mp2' produced a geometry file carrying the RHF energy under a bare energy= tag, byte-identical to an RHF job's file (#360). ASE reads energy= as the energy of the structure, so post-processing MP2 optimizations silently yielded Hartree-Fock numbers. Pins the energy_method= and method= tags end to end, that the tagged number really is the reference energy and is unchanged, that the two jobs' files now differ only in the comment line, the auto-resolution case, the optimize=True case, and an ASE round-trip proving the consumer sees both the unchanged energy and the new labels. Water / STO-3G; under a second per job, ASE behind importorskip.",
       "last_verified_sha": null
     }
   ]

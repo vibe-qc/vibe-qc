@@ -94,6 +94,11 @@ class CCMRealGammaConvention:
     #: assembly convention; see tests/test_ccm_rsh_direct.py for the
     #: cross-code finite-size caveat.
     screened_exchange: Optional[tuple[float, float, float]] = None
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded, and the 1-based lattice directions that
+    #: measured as vacuum. Read off the driver result, never re-derived.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
 
 
 @dataclass
@@ -198,6 +203,7 @@ def run_real_gamma_scf(
     lat_opts: Optional[LatticeSumOptions] = None,
     grid_options: Optional[GridOptions] = None,
     becke_image_radius_bohr: float = 10.0,
+    allow_vacuum_padding: bool = False,
 ) -> CCMRealGammaResult:
     """Run the real-Γ direct-route SCF and adapt it to the runner contract.
 
@@ -207,6 +213,12 @@ def run_real_gamma_scf(
     not wired (the composed PT2 total has no per-unit-cell SCF-state
     contract yet); use the API driver
     :func:`vibeqc.periodic.ccm.direct.run_ccm_double_hybrid_direct`.
+
+    ``allow_vacuum_padding=True`` forwards the IID 291 opt-in (ruling R6) to
+    the direct drivers: a cell measured as vacuum-padded runs as a warned,
+    recorded vacuum-parameter study instead of being refused, and the
+    convention record carries ``vacuum_padding_allowed`` and
+    ``vacuum_padded_axes`` read off the driver result.
 
     For KS methods, ``grid_options`` and ``becke_image_radius_bohr`` are
     forwarded unchanged to the periodic AO-grid XC builder.  The direct
@@ -255,7 +267,8 @@ def run_real_gamma_scf(
     kw = dict(cderi_build=cderi_build, cderi_symmetry=cderi_symmetry,
               aux_basis=aux_basis, ke_cutoff=float(ke_cutoff),
               exxdiv=exxdiv, max_iter=int(max_iter),
-              conv_tol=float(conv_tol), lat_opts=lat_opts)
+              conv_tol=float(conv_tol), lat_opts=lat_opts,
+              allow_vacuum_padding=bool(allow_vacuum_padding))
     # M4b (#778): when the caller will correlate on this reference, build L
     # here and hand the SAME array to the SCF, so the correlation cannot ride
     # a different kernel than the reference converged on. Only the HF
@@ -317,6 +330,10 @@ def run_real_gamma_scf(
         executed_level_shift=_EXECUTED_LEVEL_SHIFT,
         screened_exchange=_screened_assembly_for(
             functional if method_upper in ("RKS", "UKS") else None),
+        vacuum_padding_allowed=bool(
+            getattr(res, "vacuum_padding_allowed", False)),
+        vacuum_padded_axes=tuple(
+            int(a) for a in (getattr(res, "vacuum_padded_axes", ()) or ())),
     )
 
     open_shell = getattr(res, "density_alpha", None) is not None and \

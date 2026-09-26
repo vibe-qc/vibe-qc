@@ -71,12 +71,12 @@ The 3D SCF routes remain active experimental diagnostics, but their numerical
 two-electron supports are not all absolute-energy converged. Current
 four-center RHF, PBE, and PBE0 fleet rows preserve the low-level backend and
 record the exact M5 precision/policy plus the resolved padded erfc image
-radius. They qualify only when the backend and policy match, the radius is
-finite and beyond the executed electronic cutoff, and the duplicated physical
-cutoffs agree. Dense-core RSGDF-200 RI/RIJCOSX, MDF, and post-HF rows are
-still convergence or route-plumbing evidence because their high-G, COSX, MDF,
-or correlation-factor support contracts are not established. The fleet marks
-them `not-qualified`, and both audit and comparison commands reject them as
+radius. Their support is eligible only when the backend and policy match, the radius
+is finite and beyond the executed electronic cutoff, and the duplicated
+physical cutoffs agree. Eligibility is not numerical qualification. Every
+fitted RI/RIJCOSX/MDF and post-HF chi result remains permanently
+`not-qualified` in D93 v1. These rows provide convergence, representation or
+route-plumbing evidence; both audit and comparison commands reject them as
 quantitative rows. Missing or malformed support metadata also fails closed.
 
 D103 independently binds corrected-gauge direct overlap-fold support. A drift
@@ -266,6 +266,13 @@ density plus alpha/beta Wannier centres, not spin-resolved orbital grids.
 five primitive translations in every active direction, from (-2) through
 (+2), and hence an odd cyclic extension of five. The legacy `kpoints=` tuple
 is retained as an exact alias, but it is not a second convergence parameter.
+
+Mesh, lattice-extension and Wigner-Seitz shell counts must be integers.
+Python and NumPy integer inputs are accepted; floats (including `2.0`),
+booleans and strings are rejected before constructing cells or k-points.
+Orders must be positive and shell counts nonnegative. Scalar counts repeat
+over active directions; omitted inactive directions use one cell and zero
+shells. Explicit inactive entries must use those same values.
 
 ## Creating inputs
 
@@ -502,9 +509,10 @@ python make_jobs_b.py --profile posthf --system lih-rocksalt --host compute-larg
 The coverage profile emits ten runnable fitted LiH jobs, 18 explicit
 lower-dimensional failures, and three direct LiH/STO-3G support failures at
 the measured 15-bohr drift of `7.0985e-2`. Runnable does not mean quantitative.
-Other direct commands may be run as diagnostics, but no result is reportable
-unless its fresh finalized D77 provenance and independent D93, D103, and D104
-contracts all pass.
+Other direct commands may be run as diagnostics; their support eligibility
+requires fresh finalized D77 provenance and independent D93, D103 and D104
+contracts. Eligibility alone is not qualification. Fitted and post-HF results
+remain permanently not-qualified in v1.
 
 Each emitted job claims 4 CPU slots / 8 GB memory. Select an enabled external
 `AICCM_SITE_CONFIG` profile before using host defaults, or choose an explicit
@@ -518,8 +526,9 @@ supplies a shared wire/slab Coulomb kernel. See the study's
 ### 3. Building a system from scratch - worked examples
 
 Every example is a complete, runnable script. Copy-paste, adjust the geometry
-and basis, and run. Any printed energy is a local diagnostic unless a fresh
-fleet record independently passes D77, D93, D103, and D104.
+and basis, and run. Printed fitted and post-HF energies are local diagnostics
+and remain permanently not-qualified in v1. Direct-route support eligibility
+requires independent D77, D93, D103 and D104 evidence.
 
 ---
 
@@ -1249,9 +1258,10 @@ accepted only with `gdf_method="rsgdf"`; the base must be positive and finite,
 and the tail must be finite and strictly above it. The value is printed in the
 `.out` file and recorded as `aiccm_resolved_rsgdf_tail_ke_cutoff`. This is a
 D106 transport diagnostic, not D93 support qualification. The current fleet
-schema still requires a null tail. On Gamma-only dense-core RHF/RI, a null
-request that the shared driver would extend above the base instead fails
-before SCF, so the field cannot hide an executed complementary tail.
+schema still requires a null tail. The explicit fitted-source API below
+separately records requested and executed support. SR execution clears the
+inactive classic tail; explicit classic execution uses the general engine
+and does not auto-select a Gamma tail.
 
 Full-grid external XC providers have a separate, deliberately narrow χ-CCM
 contract. They are accepted for 3D RKS and UKS only with
@@ -1518,6 +1528,22 @@ localized independently. The full-domain UCCSD(T) implementation is the
 explicitly cost-capped O(N^6) correctness oracle from the DLPNO stack, not a
 claim of production reduced scaling. The truncated route uses PNO subspaces,
 but representative-only pair propagation remains disabled.
+
+The finite-torus local correlation wrappers keep their historical all-electron
+`n_frozen=0` defaults. With custom solver options, frozen core is supported
+with `localise="none"`. The complete-space DLPNO-MP2 correction uses the
+solver's resolved active occupied space, while PAO virtuals remain orthogonal
+to all occupied orbitals, including frozen core. Explicit integer counts refer
+to the full torus, and published chemical-core selectors resolve on that
+full-torus molecule in the solver.
+
+Nonzero frozen core with Wannier, IAO, or Pipek-Mezey localization is rejected
+before electronic work. These localizers currently rotate the entire occupied
+space, so removing the first orbitals afterwards would freeze a different
+projector. This guard covers restricted and unrestricted local MP2 and
+CCSD(T). Published selectors with a zero core count remain compatible with
+localization. The restriction does not establish physical multi-k validation
+or production readiness of the experimental chi route.
 
 Every canonical and DLPNO post-HF entry point requires
 `lattice_cutoff_bohr`, `rsgdf_ke_cutoff`, and
@@ -1889,9 +1915,10 @@ tail, but current D93 fleet records still require null because there is no
 accepted B-owned tail-convergence attestation. They serialize the requested
 RSGDF or MDF base support, runtime backend, and absence of an accepted tail or
 COSX-domain contract. Pre-D106 Gamma RHF/RI records that inherited the shared
-automatic tail are revision-bound; a new run stops before SCF instead of
-serializing a false null. They remain `not-qualified`; post-HF records also
-lack a bound correlation-factor support contract. D107 separately rejects
+automatic tail are revision-bound. Current execution records distinguish
+requested support from the selected engine and its executed tail. Under D93,
+all fitted and all post-HF chi results remain `not-qualified` permanently in
+v1, including results that bind a common SCF/correlation factor source. D107 separately rejects
 either shift form on Gamma-only RHF/RI: a static shift would leave the fitted
 periodic operator, while a scheduled shift would not execute. D108 rejects the
 same ignored request on restricted four-center routes whenever the schedule is
@@ -1960,3 +1987,58 @@ The [Archived comparative manuscript](https://vibe-qc.com/docs/)
 is the detailed theory record. It includes the historical ab-initio weighting,
 the Janetzko--Köster--Salahub deMon2k KS-ADFT construction, both 2026
 development streams, and the reciprocal-space reference formulation.
+
+## Explicit fitted source
+
+`run_periodic_job(method="aiccm", variant="chi", aiccm_backend="ri",
+fit_source="classic")` selects the classic shared-q FFT fit. The same selector
+is accepted by the χ RHF, RKS, UHF and UKS library drivers, with `backend="ri"`
+or `"rijcosx"`. `fit_source="auto"` preserves the existing default, including
+the 3D SR/LR source. `fit_source="sr"` selects that source explicitly.
+This is a choice of fitted operator: classic and SR energies are separate
+baselines. Neither source is numerically qualified. D93 permanently keeps all
+fitted χ and all χ post-HF results **not-qualified** in v1.
+Their result objects expose `quantitative_status="not-qualified"`.
+
+Explicit source selection requires 3D RSGDF. Missing values such as `None`,
+unknown names, four-center/MDF combinations, private fit adapters and explicit
+classic gradients are refused. The generic GDF front-door defaults are unchanged.
+For χ reference campaigns, the front door accepts `conv_tol_energy=1e-11` and
+`conv_tol_grad=1e-9`; omitting the latter preserves its existing orbital tolerance.
+An energy tolerance alone does not establish orbital convergence.
+
+The explicit classic profile retains canonical modrho auxiliary factors from
+SCF. The χ MP2 and local/canonical CC library drivers accept
+`fit_source="classic"` and consume those same factors. Set
+`lattice_cutoff_bohr` equal to `options.lattice_opts.cutoff_bohr`; inconsistent
+support is refused. `gdf_linear_dep_threshold` and an explicit
+`rsgdf_tail_ke_cutoff` reach the SCF source. The independent pair-by-pair canonical
+builder remains available internally as an operator oracle. Canonical storage
+can be larger than the reduced eigenmode frame. The explicit classic result
+retains its full AO-pair cache through correlation and for the result's lifetime;
+this trades memory for reuse compared with independently streamed factors.
+This profile preserves the
+current independently resolved one-electron domain, including its S/T image-tail
+bound, the BvK q=0 exchange seam, hybrid scaling and primitive-cell normalization.
+
+The historical post-HF `auto` behavior still rebuilds its independent classic
+fit after the default SCF. Its `executed_fit_source` identifies that independent
+classic pair engine, while `reference_fit_source` identifies SCF separately.
+The streaming auto MP2 descriptor labels its emitted factors `occupied-virtual`;
+their hash identifies that projection. Full retained factors are labelled
+`ao-pair`. Explicit `sr` post-HF is refused
+until a compatible canonical SR frame is implemented and checked. The χ
+correlation front door remains library-only.
+
+Results expose an immutable `executed_fit_source` descriptor and a separate
+`rsgdf_fit_request`. The descriptor records engine/version, normalized orbital
+and auxiliary fingerprints, resolved numerical support, metric threshold,
+auxiliary frame, momentum-transfer grouping, k points, reciprocal cutoff,
+executed tail and factor digest. `process_provenance` identifies the imported
+release, source revision and SHA-256 of the loaded native extension.
+The `.system` output includes executed source metadata, requested settings,
+typed mesh/lattice arrays and the loaded native hash. An absent executed tail is
+recorded separately from the requested tail. The SR engine does not execute the
+classic reciprocal tail, and Γ admission does not consult that inactive policy.
+An explicit classic Γ call uses the general finite-character engine with current
+one-electron support; it does not inherit a legacy Γ auto-tail.

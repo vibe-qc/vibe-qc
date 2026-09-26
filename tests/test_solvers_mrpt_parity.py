@@ -17,7 +17,7 @@ wrong-sign; CASPT2 ≡ 0) and were rebuilt + validated (audit 2026-05-30):
 
 PySCF and OpenMolcas are out-of-process references (PySCF via
 ``importorskip``; OpenMolcas values recorded as constants); neither is
-imported into ``vibeqc`` itself (CLAUDE.md §10).
+imported into ``vibeqc`` itself (AGENTS.md ground rule 5).
 """
 
 from __future__ import annotations
@@ -945,25 +945,70 @@ class TestCASSCFReferencedCASPT2:
             )
 
     @pytest.mark.parametrize("method", ["caspt2", "nevpt2"])
-    def test_run_job_selected_reference_matches_dense(self, tmp_path, method):
-        # Selected-CI reference -> MR-PT2 through run_job (M23): at the
-        # full-selection limit it reproduces the exact-CI CASSCF reference
-        # path (H2O CAS(4,4); the dense path is OpenMolcas-pinned).
+    def test_run_job_selected_reference_routes_and_lowers_its_own_root(
+        self, tmp_path, method
+    ):
+        """Selected-CI reference -> MR-PT2 through run_job (M23).
+
+        What run_job owns here is the plumbing: that
+        ``casscf_options(ci_solver="selected_ci")`` actually reaches the
+        CASSCF reference and that the MR-PT2 engine then perturbs it.
+
+        It deliberately does NOT compare the two legs' energies. H2O CAS(4,4)
+        is basin-rich (#56), and the two legs optimize orbitals
+        independently, so they land in different CASSCF stationary points --
+        measured here, and bit-identical to the pair #56 recorded:
+
+            dense    -74.95975393685424
+            selected -74.95274477996531   (gap 7.009156888927e-03 Ha)
+
+        The MR-PT2 layer partly compensates that (the higher reference takes
+        the larger correction), leaving totals 1.998886868748e-03 apart for
+        CASPT2 and 4.167662930428e-04 for NEVPT2. An earlier revision
+        asserted those totals equal to 1e-9 and was red on main for exactly
+        the reason #56 documents (#277).
+
+        The full-selection parity claim is real, but it only means anything
+        at FIXED orbitals, which is where ``TestSelectedReferenceMRPT2``
+        tests it: ``test_full_limit_caspt2_matches_dense`` and
+        ``test_full_limit_nevpt2_matches_dense`` compare the dense and
+        selected-CI engines on one Hamiltonian to 1e-10. This mirrors the
+        precedent ``tests/test_selected_casci.py`` set for #56.
+        """
         from vibeqc.solvers import CASSCFOptions
 
         common = dict(active_space=(4, 4))
-        dense = _run(
-            method, tmp_path / "d", casscf_options=CASSCFOptions(), **common
-        )
-        sel = _run(
-            method, tmp_path / "s",
-            casscf_options=CASSCFOptions(
-                ci_solver="selected_ci", selected_ci_options=_exact_sel_opts()
-            ),
-            **common,
-        )
-        assert sel.method.endswith("_casscf")
-        assert abs(sel.energy - dense.energy) < 1e-9
+
+        def both_legs(job):
+            dense = _run(
+                job, tmp_path / f"d_{job}", casscf_options=CASSCFOptions(),
+                **common,
+            )
+            sel = _run(
+                job, tmp_path / f"s_{job}",
+                casscf_options=CASSCFOptions(
+                    ci_solver="selected_ci",
+                    selected_ci_options=_exact_sel_opts(),
+                ),
+                **common,
+            )
+            return dense, sel
+
+        ref_dense, ref_sel = both_legs("casscf")
+        pt_dense, pt_sel = both_legs(method)
+
+        # The selected-CI backend really drove the reference, and the PT2
+        # engine really ran on a CASSCF (not a CASCI-on-HF) reference.
+        assert ref_sel.method.endswith("_selci")
+        assert not ref_dense.method.endswith("_selci")
+        assert pt_dense.method.endswith("_casscf")
+        assert pt_sel.method.endswith("_casscf")
+
+        # Each leg's PT2 lowers the root it actually perturbed. Comparing a
+        # total against its OWN reference is basin-safe; comparing the two
+        # legs against each other is not. Measured margins are 15-22 mHa.
+        assert pt_dense.energy < ref_dense.energy
+        assert pt_sel.energy < ref_sel.energy
 
     def test_run_job_selected_reference_multistate_rejected(self, tmp_path):
         from vibeqc.solvers import CASPT2Options, CASSCFOptions

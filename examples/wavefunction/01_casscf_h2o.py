@@ -116,8 +116,8 @@ caspt2_44 = run_job(
 )
 print(f"   E_CASPT2(4,4) = {caspt2_44.energy:.8f} Ha")
 
-# CASSCF incomplete analytic nuclear-gradient preview.
-print("\n8. CASSCF(4,4) analytic-gradient preview - not FD-tight")
+# CASSCF analytic nuclear gradient.
+print("\n8. CASSCF(4,4) analytic gradient")
 grad = casscf_44.gradient
 if grad is not None:
     print(f"   Gradient shape: {grad.shape}")
@@ -128,8 +128,9 @@ if grad is not None:
     print(f"   Forces (F = -dE/dR, Ha/bohr):")
     for i, row in enumerate(-grad):
         print(f"     atom {i}: {row[0]:10.6f} {row[1]:10.6f} {row[2]:10.6f}")
-    print("\n   The gradient captures ~87% of the full CP-MCSCF gradient.")
-    print("   Missing 13% = W^z (CI+orbital relaxation, Handy-Schaefer z-vector).")
+    print("\n   This is the complete derivative of the variational CASSCF")
+    print("   energy: no z-vector term exists at a stationary CASSCF, and")
+    print("   the finite-basis dependence is carried by the overlap term.")
 else:
     print("   (gradient not computed — SA-CASSCF or non-converged)")
 

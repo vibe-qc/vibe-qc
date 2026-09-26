@@ -111,6 +111,14 @@ class CCMKSResult:
     #: observe, so the field stays ``None`` there.
     rsgdf_tail_ke_cutoff: float | None = None
     guess_selection: object = None
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded (``allow_vacuum_padding=True``) and which
+    #: 1-based lattice directions measured as vacuum. ``(False, ())`` on
+    #: every cell measured as genuinely 3-D, and on the four-centre routes,
+    #: which carry no such gate. A padded-regime energy is never reportable
+    #: without the padding it was computed at.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
 
     @property
     def parity_held(self) -> bool:

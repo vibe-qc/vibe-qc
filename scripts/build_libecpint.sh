@@ -66,7 +66,7 @@ if [ "${REBUILD:-0}" = "1" ]; then
 fi
 
 # The radial patch changes compiled code, so an old install must rebuild.
-RADIAL_PATCH_VERSION="periodic-radial-v8-1"
+RADIAL_PATCH_VERSION="periodic-radial-v10-nbase-l2"
 if [ -f "$INSTALL_DIR/lib/cmake/ecpint/ecpint-config.cmake" ] && \
    [ "$(cat "$INSTALL_DIR/.vibeqc-radial-quadrature" 2>/dev/null || true)" = "$RADIAL_PATCH_VERSION" ]; then
     echo "libecpint already installed at $INSTALL_DIR"
@@ -338,6 +338,110 @@ elif text.count(new) != 1:
     raise SystemExit("libecpint projector patch: unexpected radial table; review source")
 radial.write_text(text)
 PY_PROJECTOR
+
+# libecpint's generated type2(triples, nbase, ...) sizes its scratch buffer
+# `values` as nbase+2, where generate.cpp fixes nbase at code-generation time
+# from the shell pair's angular momenta alone. The switch below it reads up
+# to values[k - 2 + l2] with k = N + u.n + 2 (N and l2 from the radial
+# triple), so the read depends on the ECP primitive's radial power u.n, known
+# only at runtime. libecpint stores u.n = n - 2 of the Gaussian-format power:
+# every record shipped before the pob-TZVP-rev2 Hf, Ta and W ECPs had n <= 2,
+# so u.n <= 0 fitted. Those three records carry n = 4 (u.n = 2) and read past
+# the end of the heap buffer: a silent over-read on the analytic branch, not
+# the "Quadrature failed" fallback, that made the Hf/Ta/W ECP operator
+# nondeterministic and wrong by up to ~1e195 Ha (vibe-qc #358). Size the
+# buffer from the largest N + l2 among the triples and this primitive's u.n.
+# When u.n <= 0 the generated nbase stays in force, so every other record
+# keeps its previous code path. The patch recognises an upstream source, the
+# earlier v9 attempt (which budgeted N + u.n and missed the + l2 term), and
+# its own output, so a kept source tree upgrades in place.
+python3 - "$LIBECPINT_SRC" <<'PY_NBASE'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+radial = root / "src/lib/radial_gen.cpp"
+text = radial.read_text()
+
+
+def patch(label, upstream, earlier, current):
+    global text
+    if text.count(current) == 1:
+        return
+    for old in (upstream, earlier):
+        if text.count(old) == 1:
+            text = text.replace(old, current, 1)
+            return
+    raise SystemExit(f"libecpint nbase patch: unexpected source ({label}); review radial_gen.cpp")
+
+
+patch(
+    "triple scan",
+    (
+        "\t\tint npB = shellB.nprimitive();\n"
+        "\t\t\n"
+        "\t\t// Loop over primitives in ECP, only considering correct ang. momentum\n"
+    ),
+    (
+        "\t\tint npB = shellB.nprimitive();\n"
+        "\n"
+        "\t\t// vibe-qc: track the largest radial triple index so the base-integral\n"
+        "\t\t// buffer below can be grown past nbase for a high-radial-power ECP\n"
+        "\t\t// primitive (see the block comment above this patch in\n"
+        "\t\t// build_libecpint.sh).\n"
+        "\t\tint max_triple_N = 0;\n"
+        "\t\tfor (const Triple& triple : triples) {\n"
+        "\t\t\tint triple_N = std::get<0>(triple);\n"
+        "\t\t\tif (triple_N > max_triple_N) max_triple_N = triple_N;\n"
+        "\t\t}\n"
+        "\t\t\n"
+        "\t\t// Loop over primitives in ECP, only considering correct ang. momentum\n"
+    ),
+    (
+        "\t\tint npB = shellB.nprimitive();\n"
+        "\n"
+        "\t\t// vibe-qc #358: the generated switch reads values[N + u.n + l2];\n"
+        "\t\t// find the largest N + l2 so the buffer below can cover u.n > 0.\n"
+        "\t\tint max_triple_Nl2 = 0;\n"
+        "\t\tfor (const Triple& triple : triples) {\n"
+        "\t\t\tint triple_Nl2 = std::get<0>(triple) + std::get<2>(triple);\n"
+        "\t\t\tif (triple_Nl2 > max_triple_Nl2) max_triple_Nl2 = triple_Nl2;\n"
+        "\t\t}\n"
+        "\t\t\n"
+        "\t\t// Loop over primitives in ECP, only considering correct ang. momentum\n"
+    ),
+)
+
+patch(
+    "values buffer",
+    (
+        "\t\t\t\t\t\t// Compute base integrals\n"
+        "\t\t\t\t\t\tdouble *values = new double[nbase+2]; \n"
+        "\t\t\t\t\t\tcompute_base_integrals(2, 3+nbase, p, o_root_p, P1, P2, P1_2, P2_2, X1, X2, oP1, oP2, values); \n"
+    ),
+    (
+        "\t\t\t\t\t\t// Compute base integrals. nbase alone does not budget for this\n"
+        "\t\t\t\t\t\t// primitive's radial power u.n (see the block comment above this\n"
+        "\t\t\t\t\t\t// patch in build_libecpint.sh); grow the buffer when u.n needs\n"
+        "\t\t\t\t\t\t// more room than nbase already has.\n"
+        "\t\t\t\t\t\tint local_nbase = nbase;\n"
+        "\t\t\t\t\t\tif (max_triple_N + u.n > local_nbase) local_nbase = max_triple_N + u.n;\n"
+        "\t\t\t\t\t\tdouble *values = new double[local_nbase+2]; \n"
+        "\t\t\t\t\t\tcompute_base_integrals(2, 3+local_nbase, p, o_root_p, P1, P2, P1_2, P2_2, X1, X2, oP1, oP2, values); \n"
+    ),
+    (
+        "\t\t\t\t\t\t// Compute base integrals. vibe-qc #358: the largest index read\n"
+        "\t\t\t\t\t\t// is max(N + l2) + u.n, so the buffer needs max(N + l2) + u.n + 1\n"
+        "\t\t\t\t\t\t// entries; nbase + 2 only covers that when u.n <= 0.\n"
+        "\t\t\t\t\t\tint local_nbase = nbase;\n"
+        "\t\t\t\t\t\tif (max_triple_Nl2 + u.n - 1 > local_nbase) local_nbase = max_triple_Nl2 + u.n - 1;\n"
+        "\t\t\t\t\t\tdouble *values = new double[local_nbase+2]; \n"
+        "\t\t\t\t\t\tcompute_base_integrals(2, 3+local_nbase, p, o_root_p, P1, P2, P1_2, P2_2, X1, X2, oP1, oP2, values); \n"
+    ),
+)
+
+radial.write_text(text)
+PY_NBASE
 
 echo "Configuring libecpint..."
 rm -rf "$LIBECPINT_BUILD"

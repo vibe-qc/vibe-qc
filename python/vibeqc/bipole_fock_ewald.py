@@ -1328,7 +1328,9 @@ def probe_charge_madelung_supercell(
             "probe_charge_madelung_supercell requires dim=3; "
             f"got dim={system.dim}"
         )
-    n = [int(x) for x in mesh]
+    from .kpoints import _integer_counts
+
+    n = _integer_counts(mesh, name="Madelung supercell mesh")
     if len(n) != 3 or any(x < 1 for x in n):
         raise ValueError(
             f"mesh must be three positive integers; got {list(mesh)}"

@@ -3,15 +3,17 @@
 The multi-replica adapter evaluates the molecular GFN2-xTB machinery over the
 WS-weighted supercell: one-center S/H0 blocks are the molecular ones, every
 directed two-center coupling (H0 image block, shell-resolved gamma, the
-ad-hoc shell-resolved AES potential, pair repulsion) is accumulated through
-the WS records with their fractional weights, and the SCC loop mirrors the
+AES multipole integrals, pair repulsion) is accumulated through the WS
+records with their fractional weights, and the SCC loop mirrors the
 molecular driver (damped simple mixing, GAM3 third order, the stabilization
-retry ladder). At T=0 the molecular limit (1x1x1 cyclic cluster) reproduces
-the validated molecular driver bit-for-bit; at finite T it reports the same
-state with the variational Mermin free energy instead of the molecular
-driver's historical internal-energy field. The experimental atom-resolved
-"faithful" AES and the D4 dispersion stay out, exactly as in the molecular
-driver's default path.
+retry ladder). The default AES is the atom-resolved Bannwarth 2019 model on
+record-resolved CAMM (``aes_faithful=True``, issue #140); the molecular
+driver's ad-hoc shell-resolved kernel is ``aes_faithful=False``. At T=0 the
+molecular limit (1x1x1 cyclic cluster) reproduces the validated molecular
+driver run with the same AES model bit-for-bit; at finite T it reports the
+same state with the variational Mermin free energy instead of the molecular
+driver's historical internal-energy field. D4 dispersion stays out, exactly
+as in the molecular driver's default path.
 """
 
 from __future__ import annotations
@@ -54,7 +56,19 @@ _ATTEMPT_SOLVERS = frozenset(
     }
 )
 _ATTEMPT_EXIT_REASONS = frozenset(
-    {"converged", "iteration_limit", "unphysical_basin", "gap_rejected"}
+    {
+        "converged",
+        "iteration_limit",
+        "stalled_checkpoint",
+        "unphysical_basin",
+        "gap_rejected",
+    }
+)
+#: Exit reasons of an attempt that never reached the SCC residual tolerance:
+#: it exhausted its budget, or it stopped contracting at a stabilization
+#: checkpoint and was handed to the ladder with the budget it had left (#294).
+_ATTEMPT_UNCONVERGED_EXITS = frozenset(
+    {"iteration_limit", "stalled_checkpoint"}
 )
 _SCC_MIXERS = frozenset(
     {"simple", "diis", "broyden", "broyden_eyert", "newton"}
@@ -189,9 +203,15 @@ class GFN2SECCMAttempt:
             raise ValueError(
                 "GFN2-SECCM attempt convergence flags must be boolean"
             )
-        if exit_reason == "iteration_limit" and self.scc_converged:
-            raise ValueError("iteration-limit attempt cannot be SCC-converged")
-        if exit_reason != "iteration_limit" and not self.scc_converged:
+        if exit_reason in _ATTEMPT_UNCONVERGED_EXITS and self.scc_converged:
+            raise ValueError(
+                "iteration-limit and stalled-checkpoint attempts cannot be "
+                "SCC-converged"
+            )
+        if (
+            exit_reason not in _ATTEMPT_UNCONVERGED_EXITS
+            and not self.scc_converged
+        ):
             raise ValueError(
                 "converged, gap-rejected, and unphysical attempts must reach "
                 "the SCC residual tolerance"
@@ -577,7 +597,7 @@ def run_gfn2_seccm(
     max_iter: int = 3600,
     conv_tol_charge: float = 1.0e-6,
     charge_mixing: float | None = None,
-    electronic_temperature: float = 0.0,
+    electronic_temperature: float | None = None,
     madelung: bool = False,
     madelung_s_weighted: bool = False,
     madelung_no_self: bool = False,
@@ -586,7 +606,7 @@ def run_gfn2_seccm(
     ewald_gamma_molecular_onsite: bool = False,
     ewald_gamma_k0_global: bool = False,
     gamma_form: str = "klopman_ohno",
-    aes_faithful: bool = False,
+    aes_faithful: bool = True,
     aes_damping: float = 0.5,
     scc_mixer: str = "simple",
     initial_shell_charges: np.ndarray | None = None,
@@ -596,13 +616,19 @@ def run_gfn2_seccm(
     The route is restricted to neutral closed-shell clusters with one to
     three cyclic dimensions. It evaluates the complete frozen WS record set
     with the WS-weighted supercell GFN2-xTB SCC (molecular-limit bit parity
-    with the molecular driver; the experimental atom-resolved faithful AES
-    and D4 dispersion are not part of the adapter). Charged cells and
+    with the molecular driver run under the same AES model; D4 dispersion is
+    not part of the adapter). Charged cells and
     open-shell inputs fail closed until the embedding and unrestricted
     layers land.
 
     ``electronic_temperature`` switches on Fermi-Dirac fractional
-    occupations (Ha; 0 = hard Aufbau, the default). Metallic supercells
+    occupations (Ha; 0 = hard Aufbau). Left at ``None`` (the default) the
+    primary attempt runs at T = 0 and the stabilisation ladder may converge
+    a stalled solve on its bounded finite-T rung, which is then reported as
+    the executed ``smearing_temperature``. An explicit value, ``0.0``
+    included, is honoured on every rung and on the zero-image molecular
+    delegation: a caller who asked for exact Aufbau is never handed a smeared
+    free energy (the molecular driver's vibe-qc#3 contract). Metallic supercells
     (bulk Cu/Pd/Ag and other degenerate-frontier clusters) can jump between
     occupation branches under hard Aufbau, making the energy surface
     discontinuous between neighbouring geometries; a small temperature
@@ -669,21 +695,22 @@ def run_gfn2_seccm(
       kernel differs.
 
     ``include_aes=False`` is an experimental validation knob that
-    removes the WS-folded anisotropic second-order (AES) channel (the
-    ad-hoc shell-resolved gamma^3/gamma^5 multipole potential and its
-    energy term) for channel isolation of SCC instabilities. The
+    removes the WS-folded anisotropic second-order (AES) channel (whichever
+    ``aes_faithful`` selects, and its energy term) for channel isolation of SCC instabilities. The
     reported energy then misses a physical term and must not be used
     for production numbers. Even on a zero-image record set this option
     runs the SECCM engine instead of delegating to the molecular driver,
     which does not expose this model change.
 
-    ``aes_faithful=True`` replaces the ad-hoc shell-resolved
-    ``gamma^3``/``gamma^5`` multipole channel with the Bannwarth 2019 model
-    (Eq. 25 energy, Eqs. 39-44 Fock) on cumulative atomic multipole moments
-    built from the **Wigner-Seitz record inventory** rather than from the
-    home-cell molecule. That construction is what fixes issue #348: with the
-    default kernel the AES is the only remaining term in the route that
-    depends on which lattice copy of an atom the caller typed. On a 4-unit
+    ``aes_faithful=True`` (the default since issue #140) evaluates the
+    Bannwarth 2019 model (Eq. 25 energy, Eqs. 39-44 Fock) on cumulative
+    atomic multipole moments built from the **Wigner-Seitz record
+    inventory** rather than from the home-cell molecule.
+    ``aes_faithful=False`` selects the molecular driver's ad-hoc
+    shell-resolved ``gamma^3``/``gamma^5`` multipole channel, whose moment
+    integrals come from the home-cell molecule. It is then the only term in
+    the route that depends on which lattice copy of an atom the caller
+    typed (issue #140, monorepo #348). On a 4-unit
     polar HF chain, three representatives of one crystal give
 
     ==========  ===============  ===============  ===============
@@ -699,12 +726,17 @@ def run_gfn2_seccm(
     shell-resolved moments and a pair inventory produces atom-resolved ones
     -- so this is a model flag, not a repair of the existing kernel.
 
-    It defaults to ``False`` while the molecular driver's own
-    ``aes_faithful`` default is ``False``, so that molecular-limit bit parity
-    between the two routes keeps meaning; the defaults move together. On a
-    zero-image topology the flag is passed through to the delegated
-    molecular solve, so a single-replica torus returns the model that was
-    asked for.
+    It defaults to ``True`` because the default route has to be
+    representative-invariant (issue #140). The molecular driver's own
+    ``XTBSccOptions.aes_faithful`` default deliberately stays ``False``
+    while issue #777 (adenine basin multiplicity) blocks moving it, so
+    **the two defaults differ on purpose**. On a zero-image topology the
+    flag is passed through to the delegated molecular solve, so a
+    single-replica torus returns the model that was asked for. A 1x1x1
+    default SECCM therefore equals ``run_gfn2_xtb`` with
+    ``aes_faithful=True`` bit for bit (H2O: -5.033680484741314 Ha), not the
+    molecular default (-5.031468971990033 Ha). Pass ``aes_faithful=False``
+    to reproduce pre-#140 SECCM numbers, or to use ``scc_mixer="newton"``.
 
     On the faithful path the multipole moments are part of the mixed SCC
     state, not a lagged input to it (issue #409): the reduced iterate is
@@ -877,6 +909,12 @@ def run_gfn2_seccm(
         ewald_gamma_k0_global=ewald_gamma_k0_global,
         initial_shell_charges=restart_shell_charges,
     )
+    # ``None`` is "not requested": the primary attempt runs at T = 0 and the
+    # stabilisation ladder may accept a finite-T rung. An explicit value,
+    # 0.0 included, is honoured on every rung (vibe-qc#3 contract).
+    electronic_temperature_explicit = electronic_temperature is not None
+    if electronic_temperature is None:
+        electronic_temperature = 0.0
     native = _se_cxx._run_gfn2_seccm_from_records(
         molecule,
         params,
@@ -908,6 +946,7 @@ def run_gfn2_seccm(
         aes_damping=float(aes_damping),
         scc_mixer=_SCC_MIXER_BY_NAME[scc_mixer],
         initial_shell_charges=restart_shell_charges,
+        electronic_temperature_explicit=electronic_temperature_explicit,
     )
     native_requested = (
         float(native.requested_electronic_temperature),

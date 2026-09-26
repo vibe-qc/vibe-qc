@@ -16,13 +16,17 @@ Aux bases are auto-resolved from the orbital basis name. See
 and ``docs/tutorial/double_hybrid_b2plyp.md`` for an annotated
 walk-through.
 
+Two equivalent routes are shown: ``run_job(method="b2plyp")`` for the
+standard file set, and ``run_b2plyp`` when you want the result object.
+
 Run:
     .venv/bin/python examples/molecular/input-h2o-b2plyp.py
 
 Outputs (next to this script):
-    input-h2o-b2plyp.out      — banner + per-step trace + B2PLYP block
+    input-h2o-b2plyp.out      — banner, construction line, energy components
     input-h2o-b2plyp.molden   — KS orbitals at the hybrid SCF solution
-    input-h2o-b2plyp.system   — provenance manifest
+    input-h2o-b2plyp.system   — provenance manifest, incl. the SCF reference
+    plus the usual .xyz / .bibtex / .references / population / .qvf siblings
 """
 
 from pathlib import Path
@@ -42,15 +46,17 @@ mol = vq.Molecule(
     ]
 )
 
-# 1. Standard files via run_job. We use the "b2plyp" functional name
-#    for the SCF step's banner / MO table / .molden so the artefacts
-#    reflect the hybrid-DFT step's orbitals (the MP2 correction is
-#    post-SCF and doesn't change the converged orbitals).
+# 1. Standard files via run_job. "b2plyp" is a *method* here, not a
+#    functional: run_job hands the whole double hybrid to the dispatcher,
+#    so the .out carries the complete energy (SCF step + scaled MP2) and
+#    the .molden the converged hybrid-SCF orbitals.
+#
+#    method="rks", functional="b2plyp" is a different request and raises:
+#    it asks for the SCF half on its own, which is not B2PLYP.
 vq.run_job(
     mol,
     basis="cc-pvdz",
-    method="rks",
-    functional="b2plyp",
+    method="b2plyp",
     output=HERE / STEM,
 )
 

@@ -53,6 +53,7 @@ add_library(vibeqc_core STATIC
     src/init.cpp
     src/molecule.cpp
     src/basis.cpp
+    src/degenerate_frontier.cpp
     src/integrals.cpp
     src/df.cpp
     src/aux_eri.cpp
@@ -260,6 +261,8 @@ add_library(vibeqc_core STATIC
     src/lobpcg.cpp
     src/ecp.cpp
     src/quadratic_scf.cpp
+    src/opentrustregion.cpp
+    src/orbital_objective.cpp
     src/newton.cpp
     src/casci.cpp
     src/coop_cohp.cpp
@@ -270,6 +273,12 @@ add_library(vibeqc_core STATIC
     src/ccsd_triples.cpp
     src/dlpno_mp2.cpp
 )
+
+if(VIBEQC_ENABLE_OPENTRUSTREGION)
+    target_link_libraries(vibeqc_core PUBLIC OpenTrustRegion::opentrustregion)
+    set_source_files_properties(src/opentrustregion.cpp PROPERTIES
+        COMPILE_DEFINITIONS VIBEQC_HAS_OPENTRUSTREGION=1)
+endif()
 
 target_include_directories(vibeqc_core PUBLIC include)
 
@@ -557,6 +566,7 @@ set_target_properties(vibeqc_core PROPERTIES
 # pybind11 module: _vibeqc_core
 # -----------------------------------------------------------------------------
 pybind11_add_module(_vibeqc_core MODULE
+    src/opentrustregion_bindings.cpp
     src/bindings.cpp
 )
 

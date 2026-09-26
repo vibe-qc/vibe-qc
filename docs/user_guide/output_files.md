@@ -373,6 +373,18 @@ an `.out` says
 *"SCF total: 0.015 s"* with no indication whether that's a fast
 machine, a slow one, or a single-threaded build.
 
+The `[vibeqc]` section includes `native_core_sha256` and `native_core_bytes`,
+computed from the native extension loaded by the writing process. Keep these
+with `version` and the full `git_sha` when reporting measurements. An editable
+install's package version alone does not identify its native binary.
+
+For fitted chi jobs, `[run]` also records the requested fit source and cutoffs
+separately from the executed source descriptor. The descriptor identifies the
+engine, basis and auxiliary fingerprints, resolved numerical support, metric
+threshold, auxiliary frame, q groups and factor hash. Meshes and lattice data
+remain TOML arrays. An executed source identity is not numerical qualification;
+the fitted chi result remains `not-qualified`.
+
 Sample manifest:
 
 ```toml
@@ -389,6 +401,8 @@ codename      = "Knuth's Beaver"
 git_sha       = "0123456789abcdef0123456789abcdef01234567"
 git_branch    = "main"
 is_release    = true
+native_core_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+native_core_bytes = 12345678
 
 [host]
 hostname      = "workstation.invalid"
@@ -429,6 +443,23 @@ timestamp_iso  = "2026-04-29T21:42:14-04:00"
 wall_seconds   = 0.084
 basename       = "input-h2o-rhf"
 pid            = 51284
+
+# Present only when the job requested a Hessian (hessian=True). Names
+# the potential-energy surface the frequencies describe, which is not
+# always the method that was asked for: run_job resolves a correlated
+# request down to the mean-field reference its SCF runs, and the
+# finite-difference Hessian differentiates that reference. For
+# method="mp2" the surface is RHF, so surface_is_requested_method is
+# false. available = false means the requested method resolves to no
+# surface with a finite-difference Hessian at all, and no frequencies
+# were reported.
+
+[hessian]
+requested_method = "mp2"
+surface        = "RHF/6-31g*"
+surface_method = "rhf"
+surface_is_requested_method = false
+available      = true
 
 # v0.8.x+ Phase-O1 additions: declarative pre-flight plan + running
 # outputs status. vq's `--vibeqc-preflight` reads [plan] to know what
@@ -626,11 +657,29 @@ plain-text geometry over `.molden`):
 
 ```text
 3
-energy=-76.04939147 prop=energy
+vibe-qc final geometry (bohr -> Å, CODATA 2018 a₀) energy=-76.0493914700 energy_method=rhf method=rhf
 O    0.0000000000    0.0000000000    0.0000000000
 H    0.0000000000    0.7569997744   -0.5184799434
 H    0.0000000000   -0.7569997744   -0.5184799434
 ```
+
+`energy=` is the **SCF** energy, which is not always the job's
+headline energy. `run_job` resolves a post-SCF correlated request
+down to the mean-field reference its SCF runs, so `method="mp2"`
+writes the RHF energy here. The two tags beside it say so: the
+`energy_method=` tag names the method that produced `energy=`, and
+`method=` names the job. For an MP2 run the comment line reads
+
+```text
+... energy=-74.9630231287 energy_method=rhf method=mp2
+```
+
+so a reader, and ASE's `Atoms.info`, can tell that number apart
+from an MP2 total energy. Take the correlated total from the `.out`
+or from the `.system` manifest's `[progress]` section, which
+carries it under its own method name. Before v0.17.7 the tags were
+absent and a correlated job's `.xyz` was byte-identical to its
+reference job's.
 
 For periodic runs the comment line carries
 `Lattice="ax ay az bx by bz cx cy cz" pbc="T T T"` so any
@@ -725,6 +774,15 @@ explains the missing NAO construction under `unavailable.npa`, and the text
 section says `npa: not implemented`. This known limitation is not a
 calculation error. See the [bond analysis guide](bond_analysis.md) for the
 theory, provisional NBO APIs, EDA, orbital entanglement and citations.
+
+With `iao_analysis=True`, molecular RHF/RKS/UHF/UKS jobs add an
+`iao` object and a labeled IAO text section. This contains MINI/symmetric
+IAO charges, optional alpha-minus-beta spin populations, dense spin-resolved
+IAO-Wiberg bond orders, conventions and diagnostics. An unsupported analysis
+has `available=false`, null numerical arrays and an `unavailable_reason`;
+population summaries also record that reason under `unavailable.iao`.
+The existing `wiberg` field keeps its original AO-based meaning.
+See [IAO analysis](iao_population.md) for the API and QVF extension payload.
 
 A property-computation failure (e.g. Mayer bond orders on a
 near-singular overlap) on one section does NOT suppress the others
@@ -1266,15 +1324,21 @@ with vq.structured_log("output.scf.jsonl"):
 # emit per-iter rows live via the same context-var funnel that
 # vibeqc.ProgressLogger uses.
 
-# (3) run_job kwarg — one-shot:
+# (3) run_job / run_periodic_job kwarg — one-shot:
 vq.run_job(mol, basis="cc-pVDZ", method="rks", functional="pbe",
            output="x", structured_log=True)        # → x.scf.jsonl
 vq.run_job(mol, basis="cc-pVDZ", method="rks", functional="pbe",
            output="x", structured_log="other.jsonl")  # explicit
+vq.run_periodic_job(system, basis, method="rhf",
+                    output="cell", structured_log=True)  # → cell.scf.jsonl
 ```
 
-Off by default, `run_job` only writes the file when the caller
-opts in. Explicit `structured_log=` always wins over the env var.
+Off by default. `run_job` and `run_periodic_job` resolve the
+destination the same way, highest first: an explicit
+`structured_log=True` or path, then `VIBEQC_STRUCTURED_LOG`, then
+`{output}.scf.jsonl` when `$VQ_WORKDIR` is set (a vq job), else no
+file. The periodic semiempirical routes write no structured log and
+refuse an explicit request.
 
 ### Tail-friendly
 
@@ -1424,8 +1488,10 @@ want to inspect a failed iterate keep working.
 | `fmax=` | `0.05` | optimizer convergence in eV/Å (ASE convention) |
 | `max_opt_steps=` | `200` | optimizer iteration limit |
 | `write_molden_file=` | `None` (auto) | emit `.molden` when the route exposes a Gaussian AO wavefunction; explicit `True` guarantees it or fails before calculation |
-| `write_xyz_file=` | `True` | emit `{output}.xyz` final geometry (Å, plus `energy=<Ha>` in the comment line) |
+| `write_xyz_file=` | `True` | emit `{output}.xyz` final geometry (Å, plus `energy=<Ha>` and the `energy_method=` / `method=` tags naming it, in the comment line) |
 | `write_population_file=` | `None` (auto) | emit `{output}.population.{txt,json}` on compatible routes; explicit `True` guarantees the pair or fails before calculation |
+| `iao_analysis=` | `False` | request molecular determinant IAO charges, spin populations and IAO-Wiberg bonds independently of localization/QVF |
+| `iao_bond_threshold=` | `0.05` | text display threshold for IAO bond pairs; leaves the dense API/JSON result unchanged |
 | `write_cube=` | `False` | volumetric cubes; `True` / `"density"` / `"homo"` / `"lumo"` / int / list (see [cube section](#output-h2odensitycube--output-h2ohomolumocube--volumetric-data-opt-in-v08x)) |
 | `cube_spacing=` / `cube_padding=` | `0.2` / `4.0` (bohr) | grid spacing + padding for cubes; ignored when `write_cube=False` |
 | `output_qvf=` | `True` | bundle structure + density + the `write_cube=` grids + basis/coefficients into one `{output}.qvf` archive for vibe-view (vibe-qc's native visualization format) |
