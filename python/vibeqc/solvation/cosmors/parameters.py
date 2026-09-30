@@ -81,6 +81,14 @@ class Parameterization:
     cavity_radii: dict[int, float] = field(default_factory=dict)
     reference: str = ""
     notes: str = ""
+    # Width, in e/A^2, of the smooth ramps that replace the max/min corners of
+    # Klamt 1998 eq. 22. ``0.0`` is the published form exactly, and the default:
+    # every published number is unchanged. A positive width makes the
+    # hydrogen-bond term, and so the COSMO-RS energy, differentiable in sigma,
+    # which a Direct COSMO-RS nuclear gradient needs (next step 5, decided
+    # 2026-09-29). It departs from the published functional form by an amount
+    # proportional to the width; see ``hydrogen_bond_energy``.
+    hb_smoothing: float = 0.0
 
     def beta(self, temperature_k: float = T_ROOM_K) -> float:
         """``beta = kT / a_eff`` in kcal/(mol angstrom^2).

@@ -3902,3 +3902,429 @@ def test_adenine_auto_stabilize_does_not_change_the_answer():
         assert result.converged, f"max_iter={max_iter} did not converge"
         assert result.n_iter == reference.n_iter
         assert result.energy == pytest.approx(reference.energy, abs=1e-11)
+
+
+# ---------------------------------------------------------------------------
+# vibe-qc#306 — the auto-stabilisation ladder's budget must be reserved.
+# ---------------------------------------------------------------------------
+#
+# The frames exactly as the archived general-semiempirical article decks carry
+# them, in bohr, read from each deck's ``input_geometry_bohr.tsv`` -- the file
+# the deck's own ``input.py`` loads.
+#
+# READ THIS BEFORE USING THESE COORDINATES FOR ANYTHING ELSE.  Neither frame is
+# the molecule it is named after, and neither is a chemical reference:
+#
+#   * NORBORNADIENE's archived frame is C7H10, not norbornadiene's C7H8, and
+#     two of its hydrogens have no heavy atom within 1.8 A.  qc-input-library
+#     commit 65fa4af17 (2026-09-15) withdrew and replaced this geometry, two
+#     days after the ledger campaign that used it.
+#   * P-BENZOQUINONE has the right formula and no short contact, but there is
+#     no covalent bond cutoff at which it is a valid molecule: below 1.20x the
+#     covalent radius sum it is not connected, and at or above it a carbon has
+#     five bonds.  Its ring distances are 1.270 and 1.796 A.
+#
+# They are pinned here for one reason only: they are the exact inputs #306
+# reports, so they reproduce the ladder starvation.  Nothing below asserts an
+# energy, and nothing below should be read as chemistry.  See the deck
+# integrity note on #306.
+_QC306_P_BENZOQUINONE_BOHR = [
+    (6, 0.00000000, 2.39995201, 0.00000000),
+    (6, 2.39995201, 0.00000000, 0.00000000),
+    (6, 0.00000000, -2.39995201, 0.00000000),
+    (6, -2.39995201, 0.00000000, 0.00000000),
+    (6, 2.39995201, 2.39995201, 0.00000000),
+    (6, -2.39995201, 2.39995201, 0.00000000),
+    (8, 0.00000000, 4.70163826, 0.00000000),
+    (8, 0.00000000, -4.70163826, 0.00000000),
+    (1, 4.16117663, 3.43363212, 0.00000000),
+    (1, -4.16117663, 3.43363212, 0.00000000),
+    (1, 4.17251498, -1.00155477, 0.00000000),
+    (1, -4.17251498, -1.00155477, 0.00000000),
+]
+
+_QC306_NORBORNADIENE_BOHR = [
+    (6, 0.00000000, 0.00000000, 1.42107394),
+    (6, 0.00000000, 2.22231776, -0.21920821),
+    (6, 0.00000000, -2.22231776, -0.21920821),
+    (6, 2.35648831, 0.00000000, -1.07525409),
+    (6, -2.35648831, 0.00000000, -1.07525409),
+    (6, 2.35837803, 0.00000000, 2.77411775),
+    (6, -2.35837803, 0.00000000, 2.77411775),
+    (1, 0.00000000, -4.03078553, 0.66707327),
+    (1, 3.49977253, 1.71209175, -1.03934929),
+    (1, -3.49977253, -1.71209175, -1.03934929),
+    (1, 3.96464512, 0.00000000, 4.02133690),
+    (1, -3.96464512, 0.00000000, 4.02133690),
+    (1, 0.00000000, 1.75933490, 4.58069580),
+    (1, 0.00000000, -1.75933490, 4.58069580),
+    (1, 0.00000000, 4.03078553, 0.66707327),
+    (1, 3.49977253, -1.71209175, -1.03934929),
+    (1, -3.49977253, 1.71209175, -1.03934929),
+]
+
+_QC306_FRAMES = {
+    "p_benzoquinone": _QC306_P_BENZOQUINONE_BOHR,
+    "norbornadiene": _QC306_NORBORNADIENE_BOHR,
+}
+
+# gfn2_driver.cpp: the light-element ladder is {0.01, 1800, T=0} then
+# {0.05, 500, T=0.005}; extended-period molecules add {0.05, 600, T=0.05}.
+# Both frames here are light-element, so exactly two rungs apply.
+_QC306_LADDER_RUNG_BUDGETS = (1800, 500)
+# (charge_mixing, electronic_temperature) -> that rung's own nominal budget.
+# This identifies a rung by what it IS rather than by where it ran, which is
+# what makes the truncation check exact.
+_QC306_RUNG_BUDGET_BY_SIGNATURE = {
+    (0.01, 0.0): 1800,
+    (0.05, 0.005): 500,
+    (0.05, 0.05): 600,   # extended-period only; not reached by these frames
+}
+_QC306_FINITE_T = 0.005
+# Budgets at or above the >= 2500 auto_stabilize threshold.  The point of
+# sweeping them is that the assertions below are about WHICH RUNG RUNS, never
+# about a cumulative iteration count that a future budget change would move.
+_QC306_BUDGETS = (2500, 2501, 3000, 3600, 4000)
+
+
+def _qc306_molecule(frame):
+    return Molecule([Atom(z, [x, y, w]) for z, x, y, w in frame], 0, 1)
+
+
+def _qc306_run(frame, max_iter):
+    options = _xtb.XTBSccOptions()
+    options.max_iter = max_iter
+    return _xtb.run_gfn2_xtb(_qc306_molecule(frame), load_gfn2_params(), options)
+
+
+class TestGFN2LadderBudgetReserve:
+    """vibe-qc#306: the retry ladder's budget is not the primary's to spend.
+
+    ``ea2d4cb`` (#3) made the 700-iteration checkpoint advisory so a still
+    contracting primary attempt would not be abandoned.  The extension was
+    bounded by ``total_max_iter`` -- the same budget the ladder draws from --
+    so on a solve that never converges but keeps satisfying
+    ``still_contracting()`` the primary walked 700 -> 1400 -> ... -> 3500 and
+    left the ladder 100 iterations of its nominal 2300.
+
+    A second, older defect compounded it: the ladder TRUNCATED a rung it could
+    not fully afford (``ropts.max_iter = min(retry.max_iter, remaining)``)
+    instead of skipping it.  A rung given 100 of its 1800 cannot converge, but
+    it still consumes the budget of the rung behind it -- and for these
+    systems the rung behind it, the T = 0.005 Ha one, is the ONLY stage that
+    converges at all.
+
+    These tests pin the RUNG SELECTION, which is the invariant, rather than a
+    cumulative iteration total, which any future budget change would move.
+    """
+
+    @requires_gfn2
+    @pytest.mark.parametrize("frame_name", sorted(_QC306_FRAMES))
+    @pytest.mark.parametrize("max_iter", _QC306_BUDGETS)
+    def test_no_ladder_rung_runs_on_a_truncated_budget(self, frame_name, max_iter):
+        """Every rung either gets its whole nominal budget or does not run.
+
+        This is the property #306 violated and the one that keeps it from
+        coming back, and it is independent of any molecule: a rung that cannot
+        be afforded in full must be skipped, never shortened.  Before the fix
+        norbornadiene's rung 1 was allocated 100 of 1800 and p-benzoquinone's
+        800 of 1800.
+        """
+        result = _qc306_run(_QC306_FRAMES[frame_name], max_iter)
+
+        # attempts[0] is the primary; its allowance legitimately grows with
+        # the advisory extension, so only the ladder rungs are pinned here.
+        #
+        # Each rung is checked against ITS OWN nominal budget, by position among
+        # the rungs that ran, rather than against the set of all rung budgets.
+        # Set membership is too weak: at max_iter=4000 the unfixed driver
+        # truncates rung 1 to exactly 500, which is rung 2's nominal budget, so
+        # a membership test accepts a plainly truncated rung.
+        for attempt in result.attempts[1:]:
+            # Identify WHICH rung this is by its own settings, then require
+            # that rung's own budget.  Position is not usable, because a
+            # skipped rung shifts the ones behind it, and set membership is
+            # not usable either: at max_iter=4000 the unfixed driver truncates
+            # rung 1 to exactly 500, which is rung 2's nominal budget.
+            signature = (
+                round(float(attempt.ladder_charge_mixing), 6),
+                round(float(attempt.electronic_temperature), 6),
+            )
+            nominal = _QC306_RUNG_BUDGET_BY_SIGNATURE.get(signature)
+            assert nominal is not None, (
+                f"{frame_name} at max_iter={max_iter}: ladder rung with "
+                f"unrecognised settings {signature}; the ladder changed and "
+                f"this test needs updating"
+            )
+            allocated = int(attempt.allocated_max_iter)
+            assert allocated == nominal, (
+                f"{frame_name} at max_iter={max_iter}: the rung with settings "
+                f"{signature} ran on {allocated} of its nominal {nominal} "
+                f"iterations; a rung must receive its entire allowance or be "
+                f"skipped, never be truncated (#306)"
+            )
+
+        # Non-vacuity: at max_iter=2500 the unfixed driver let the primary take
+        # the entire budget, so NO rung ran at all and the loop above had
+        # nothing to check.  A primary that failed must have handed over.
+        if not result.attempts[0].scc_converged:
+            assert len(result.attempts) > 1, (
+                f"{frame_name} at max_iter={max_iter}: the primary attempt "
+                f"failed and consumed the whole budget without the ladder "
+                f"running a single rung (#306)"
+            )
+
+    @requires_gfn2
+    @pytest.mark.parametrize("frame_name", sorted(_QC306_FRAMES))
+    @pytest.mark.parametrize("max_iter", _QC306_BUDGETS)
+    def test_finite_temperature_rung_is_reachable(self, frame_name, max_iter):
+        """The only rung that converges these systems must actually run.
+
+        Measured standalone, neither the primary nor the T = 0 rung converges
+        these frames at any budget; the T = 0.005 Ha rung converges them in a
+        few hundred iterations.  So "did the ladder reach rung 2" is the whole
+        question, and it is asserted here through the rung's own identity --
+        its electronic temperature and its full 500-iteration allowance --
+        never through the cumulative ``n_iter``.
+        """
+        result = _qc306_run(_QC306_FRAMES[frame_name], max_iter)
+
+        assert result.converged, (
+            f"{frame_name} did not converge at max_iter={max_iter}; "
+            "the ladder's finite-temperature rung was starved (#306)"
+        )
+        winner = result.attempts[-1]
+        assert bool(winner.scc_converged)
+        assert float(winner.electronic_temperature) == pytest.approx(
+            _QC306_FINITE_T
+        ), f"{frame_name} converged on an unexpected rung"
+        assert int(winner.allocated_max_iter) == 500
+        # It converged inside the rung rather than exhausting it.
+        assert int(winner.n_iter) < 500
+        # The Mermin bookkeeping of the rung that ran (#247): a finite-T
+        # solution reports A = E - T*S, with a strictly positive entropy.
+        assert float(result.smearing_temperature) == pytest.approx(_QC306_FINITE_T)
+        assert float(result.entropy) > 0.0
+        assert float(result.free_energy) == pytest.approx(
+            float(result.energy)
+            - float(result.smearing_temperature) * float(result.entropy),
+            abs=1e-12,
+        )
+
+
+# ===================================================================
+# vibe-qc#343: one ensemble for the molecular energy and its gradient
+# ===================================================================
+# A GFN2 SCC that ran at T > 0 -- explicitly, or because the
+# auto-stabilisation ladder accepted its T = 0.005 Ha rung -- is stationary
+# in the Mermin free energy A = E - T*S.  compute_gfn2_gradient used to build
+# its energy-weighted density from hard Aufbau occupations and its AES
+# response map at T = 0, so at T > 0 it differentiated neither E nor A
+# (1.0e-2 Ha/bohr, half the gradient, on Li4 via the default path).  The
+# native result now carries the converged occupations, the gradient uses
+# them, and the model reports A beside that gradient.
+
+
+def _li4_molecule():
+    bohr = 1.0 / 0.529177210903
+    return Molecule(
+        [
+            Atom(z, [x * bohr, y * bohr, w * bohr])
+            for z, x, y, w in _LI4_SQUARE_ANGSTROM
+        ],
+        0,
+        1,
+    )
+
+
+def _displaced(mol, atom_idx, coord_idx, delta):
+    atoms = list(mol.atoms)
+    xyz = list(atoms[atom_idx].xyz)
+    xyz[coord_idx] += delta
+    atoms[atom_idx] = Atom(atoms[atom_idx].Z, xyz)
+    return Molecule(atoms, mol.charge, mol.multiplicity)
+
+
+def _fermi_dirac_entropy_of(occupations):
+    x = np.clip(np.asarray(occupations, dtype=float) / 2.0, 1e-300, 1 - 1e-15)
+    return float(-2.0 * np.sum(x * np.log(x) + (1.0 - x) * np.log(1.0 - x)))
+
+
+class TestGFN2FiniteTemperatureEnsemble:
+    """The molecular gradient differentiates the energy the route reports."""
+
+    @staticmethod
+    def _opts(temperature=None, *, max_iter=20000, conv_tol=1e-11,
+              auto_stabilize=False, charge_mixing=0.05):
+        opts = _xtb.XTBSccOptions()
+        opts.charge_mixing = charge_mixing
+        opts.max_iter = max_iter
+        opts.conv_tol_charge = conv_tol
+        opts.auto_stabilize = auto_stabilize
+        if temperature is not None:
+            opts.electronic_temperature = temperature
+        return opts
+
+    def _fd(self, mol, params, make_opts, attribute, h=1e-4, expect_temperature=None):
+        fd = np.zeros((len(mol.atoms), 3))
+        for a in range(len(mol.atoms)):
+            for d in range(3):
+                values = []
+                for sign in (+1.0, -1.0):
+                    r = _xtb.run_gfn2_xtb(_displaced(mol, a, d, sign * h), params, make_opts())
+                    assert r.converged
+                    if expect_temperature is not None:
+                        # Every displaced point must sit on the same ensemble,
+                        # or the difference quotient mixes two surfaces.
+                        assert r.smearing_temperature == pytest.approx(expect_temperature)
+                    values.append(float(getattr(r, attribute)))
+                fd[a, d] = (values[0] - values[1]) / (2.0 * h)
+        return fd
+
+    @requires_gfn2
+    def test_result_carries_hard_aufbau_occupations_at_zero_temperature(self, params):
+        result = _xtb.run_gfn2_xtb(_mol(_water()), params, self._opts())
+        assert result.converged
+        occ = np.asarray(result.occupations, dtype=float)
+        expected = np.zeros(result.n_basis)
+        expected[: result.n_occ] = 2.0
+        assert occ.shape == (result.n_basis,)
+        assert np.array_equal(occ, expected)
+        assert result.smearing_temperature == 0.0
+        assert result.entropy == 0.0
+        assert result.free_energy == result.energy
+
+    @requires_gfn2
+    def test_result_carries_fractional_occupations_at_finite_temperature(self, params):
+        temperature = 0.03
+        result = _xtb.run_gfn2_xtb(_mol(_water()), params, self._opts(temperature))
+        assert result.converged
+        occ = np.asarray(result.occupations, dtype=float)
+        eps = np.asarray(result.mo_energies, dtype=float)
+        assert occ.shape == (result.n_basis,)
+        # Particle conserving, monotone in the orbital energy, and genuinely
+        # fractional at this temperature.
+        assert occ.sum() == pytest.approx(2.0 * result.n_occ, abs=1e-9)
+        assert np.all(np.diff(occ)[np.diff(eps) > 0] <= 1e-12)
+        assert np.any((occ > 1e-6) & (occ < 2.0 - 1e-6))
+        # The recorded entropy is the Fermi-Dirac entropy of exactly these
+        # occupations, and the free energy is E - T*S of them.
+        assert result.entropy == pytest.approx(_fermi_dirac_entropy_of(occ), rel=1e-12, abs=1e-14)
+        assert result.entropy > 1e-4
+        assert result.free_energy == pytest.approx(
+            result.energy - temperature * result.entropy, abs=1e-13
+        )
+
+    @requires_gfn2
+    def test_zero_temperature_gradient_is_unchanged(self, params):
+        """The T = 0 assembly is the historical one: FD-exact, and the
+        occupations-aware energy-weighted density reproduces it."""
+        mol = _mol(_water())
+        result = _xtb.run_gfn2_xtb(mol, params, self._opts())
+        grad = np.asarray(_semi.compute_gfn2_gradient(mol, result, params))
+        fd = self._fd(mol, params, self._opts, "energy")
+        assert np.abs(grad - fd).max() < 1e-5
+        assert np.abs(grad.sum(axis=0)).max() < 1e-8
+
+    @requires_gfn2
+    @pytest.mark.parametrize(
+        "make_mol, temperature",
+        [(lambda: _mol(_water()), 0.05), (_li4_molecule, 0.005)],
+        ids=["h2o_T0.05", "li4_T0.005"],
+    )
+    def test_gradient_matches_fd_of_the_free_energy(self, params, make_mol, temperature):
+        """At T > 0 the analytic gradient is dA/dR to FD precision.
+
+        Measured on the pre-fix core (2026-09-18): water at T = 0.05 Ha
+        (T*S = 6.8 mHa) missed dA/dR by 5.7e-4 and dE/dR by 2.4e-2 Ha/bohr;
+        Li4 at T = 0.005 Ha missed dA/dR by 9.2e-3, half its own gradient.
+        """
+        mol = make_mol()
+        make_opts = lambda: self._opts(temperature)  # noqa: E731
+        result = _xtb.run_gfn2_xtb(mol, params, make_opts())
+        assert result.converged
+        assert result.smearing_temperature == pytest.approx(temperature)
+        assert result.entropy > 1e-4
+        grad = np.asarray(_semi.compute_gfn2_gradient(mol, result, params))
+        fd_free = self._fd(mol, params, make_opts, "free_energy",
+                           expect_temperature=temperature)
+        assert np.abs(grad - fd_free).max() < 1e-5, (
+            f"max |analytic - d(free_energy)/dR| = {np.abs(grad - fd_free).max():.3e}"
+        )
+        assert np.abs(grad.sum(axis=0)).max() < 1e-8
+
+    @requires_gfn2
+    def test_default_ladder_rung_gradient_matches_fd_of_the_free_energy(self, params):
+        """The path a user hits without asking for smearing (#343, last row).
+
+        Li4 stalls at T = 0 and the ladder accepts its T = 0.005 Ha rung.
+        The gradient handed back beside that result must be dA/dR of the
+        smeared solution; it was 1.0e-2 Ha/bohr off both ensembles.
+        """
+        mol = _li4_molecule()
+        make_opts = lambda: self._opts(  # noqa: E731
+            None, max_iter=6000, conv_tol=1e-10, auto_stabilize=True,
+            charge_mixing=0.1,
+        )
+        result = _xtb.run_gfn2_xtb(mol, params, make_opts())
+        assert result.converged
+        assert result.smearing_temperature == pytest.approx(0.005)
+        assert result.entropy > 1.0
+        occ = np.asarray(result.occupations, dtype=float)
+        assert np.any((occ > 1e-3) & (occ < 2.0 - 1e-3))
+        grad = np.asarray(_semi.compute_gfn2_gradient(mol, result, params))
+        fd_free = self._fd(mol, params, make_opts, "free_energy",
+                           expect_temperature=0.005)
+        assert np.abs(grad - fd_free).max() < 1e-5, (
+            f"max |analytic - d(free_energy)/dR| = {np.abs(grad - fd_free).max():.3e}"
+        )
+
+    @requires_gfn2
+    def test_model_reports_the_free_energy_it_differentiates_on_a_smeared_rung(self, params):
+        """GFN2Model.energy() pairs A = E - T*S (+D4) with the gradient."""
+        mol = _li4_molecule()
+        model = GFN2Model(mol, params, warn=False, max_iter=6000)
+        energy = model.energy()
+        native = model._last_result
+        assert native.converged
+        assert native.smearing_temperature == pytest.approx(0.005)
+        assert model.electronic_temperature == pytest.approx(0.005)
+        assert model.entropy == pytest.approx(native.entropy)
+        e_d4 = _gfn2_method._compute_gfn2_d4(mol, params)
+        assert energy == pytest.approx(native.free_energy + e_d4, abs=1e-12)
+        assert energy < native.energy + e_d4 - 1e-3
+
+        # The reported energy is what run_job reports too (#247 labelled it).
+        from vibeqc.semiempirical.runner import run_semiempirical
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            route = run_semiempirical("gfn2_xtb", mol)
+        assert route.energy == pytest.approx(energy, abs=1e-12)
+        assert route.electronic_temperature == pytest.approx(0.005)
+        assert route.e_internal == pytest.approx(native.energy + e_d4, abs=1e-12)
+        assert route.entropy == pytest.approx(native.entropy)
+
+    @requires_gfn2
+    def test_model_gradient_matches_fd_of_the_model_energy_on_a_smeared_rung(self, params):
+        """The public gradient differentiates the public energy on the
+        default ladder path, D4 included."""
+        mol = _li4_molecule()
+
+        def model_at(candidate):
+            return GFN2Model(candidate, params, warn=False, max_iter=6000)
+
+        model = model_at(mol)
+        grad = np.asarray(model.gradient())
+        assert model.electronic_temperature == pytest.approx(0.005)
+        h = 1e-4
+        fd = np.zeros_like(grad)
+        for a in range(len(mol.atoms)):
+            for d in range(3):
+                values = []
+                for sign in (+1.0, -1.0):
+                    m = model_at(_displaced(mol, a, d, sign * h))
+                    values.append(m.energy())
+                    assert m.electronic_temperature == pytest.approx(0.005)
+                fd[a, d] = (values[0] - values[1]) / (2.0 * h)
+        assert np.abs(grad - fd).max() < 2.0e-4

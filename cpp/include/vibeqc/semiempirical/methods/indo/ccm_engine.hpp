@@ -664,7 +664,7 @@ inline MsindoResult run_ccm_core(
     const MsindoParameterSet& p,
     bool madelung = false,
     int max_iter = 200, double conv_tol = 1e-9,
-    int charge = 0) {
+    int charge = 0, bool lowest_stable = false) {
     validate_ccm_native_inputs(
         Z, coords_angstrom, translations_angstrom, max_iter, conv_tol);
     int natom = static_cast<int>(Z.size());
@@ -757,7 +757,7 @@ inline MsindoResult run_ccm_core(
     }
 
     MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol,
-                                       fock_extra);
+                                       fock_extra, lowest_stable);
 
     if (res.converged) {
         res.total_energy = res.electronic_energy + e_core;
@@ -777,7 +777,7 @@ inline double ccm_energy_with_ws(
     int nsto, const std::vector<int>& cz, int nocc,
     const MsindoParameterSet& p, const WignerSeitzCells& ws,
     bool madelung, int ndim,
-    int max_iter, double conv_tol) {
+    int max_iter, double conv_tol, bool lowest_stable = false) {
     int natom = static_cast<int>(Z.size());
     Eigen::MatrixXd H, G;
     build_core_and_gamma_ccm(Z, C, blocks, nsto, p, ws, H, G);
@@ -808,7 +808,8 @@ inline double ccm_energy_with_ws(
         };
     }
 
-    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol, fock_extra);
+    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol,
+                                       fock_extra, lowest_stable);
     if (!res.converged) return std::numeric_limits<double>::quiet_NaN();
     return res.electronic_energy + e_core;
 }
@@ -823,7 +824,7 @@ inline std::vector<std::array<double, 3>> ccm_gradient_fd(
     bool madelung = false,
     const std::vector<int>& atoms = {},
     int max_iter = 200, double conv_tol = 1e-10, double step = 1e-3,
-    int charge = 0) {
+    int charge = 0, bool lowest_stable = false) {
     validate_ccm_native_inputs(
         Z, coords_angstrom, translations_angstrom, max_iter, conv_tol);
     if (!std::isfinite(step) || step <= 0.0) {
@@ -878,7 +879,7 @@ inline std::vector<std::array<double, 3>> ccm_gradient_fd(
                                                   C[le.origin] + le.t - C[i]});
         }
         return ccm_energy_with_ws(Z, C, T, blocks, nsto, cz, nocc, p, ws,
-                                  madelung, ndim, max_iter, conv_tol);
+                                  madelung, ndim, max_iter, conv_tol, lowest_stable);
     };
 
     std::vector<bool> which(natom, atoms.empty());
@@ -1059,7 +1060,7 @@ inline std::vector<std::array<double, 3>> ccm_gradient_analytic(
     const std::vector<std::array<double, 3>>& translations_angstrom,
     const MsindoParameterSet& p,
     bool madelung = false, int charge = 0,
-    int max_iter = 200, double conv_tol = 1e-10) {
+    int max_iter = 200, double conv_tol = 1e-10, bool lowest_stable = false) {
     validate_ccm_native_inputs(
         Z, coords_angstrom, translations_angstrom, max_iter, conv_tol);
     int natom = static_cast<int>(Z.size());
@@ -1117,7 +1118,8 @@ inline std::vector<std::array<double, 3>> ccm_gradient_analytic(
             return {F_add, 0.5 * czd.dot(mad)};
         };
     }
-    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol, fock_extra);
+    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol,
+                                       fock_extra, lowest_stable);
     if (!res.converged) return {};
     Eigen::MatrixXd P = res.density;
 

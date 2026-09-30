@@ -761,17 +761,25 @@ def gpw_uks_multik_result_to_runner_shape(
         occ[: min(n_occ, n_mo)] = 1.0
         return occ
 
-    occ_a_k = [_occ(n_alpha, C.shape[1]) for C in C_a_k]
-    occ_b_k = [_occ(n_beta, C.shape[1]) for C in C_b_k]
+    def _driver_occupations(name: str, n_occ: int, C_k):
+        # The driver's own per-spin occupations (#176: one chemical
+        # potential per spin over the mesh). A result from before they were
+        # recorded falls back to the positional fill it then implied.
+        stored = getattr(gpw_result, name, ()) or ()
+        if len(stored) == len(C_k) and all(
+            np.asarray(o).shape == (C.shape[1],) for o, C in zip(stored, C_k)
+        ):
+            return [np.asarray(o, dtype=float) for o in stored]
+        return [_occ(n_occ, C.shape[1]) for C in C_k]
 
-    def _dens(C: np.ndarray, n_occ: int) -> np.ndarray:
-        if n_occ <= 0:
-            return np.zeros((C.shape[0], C.shape[0]), dtype=complex)
-        Co = C[:, :n_occ]
-        return Co @ Co.conj().T
+    occ_a_k = _driver_occupations("occupations_alpha_k", n_alpha, C_a_k)
+    occ_b_k = _driver_occupations("occupations_beta_k", n_beta, C_b_k)
 
-    D_a_k = [_dens(C_a_k[ik], n_alpha) for ik in range(n_k)]
-    D_b_k = [_dens(C_b_k[ik], n_beta) for ik in range(n_k)]
+    def _dens(C: np.ndarray, occ: np.ndarray) -> np.ndarray:
+        return (C * occ[None, :]) @ C.conj().T
+
+    D_a_k = [_dens(C_a_k[ik], occ_a_k[ik]) for ik in range(n_k)]
+    D_b_k = [_dens(C_b_k[ik], occ_b_k[ik]) for ik in range(n_k)]
 
     def _fock(Sk: np.ndarray, C: np.ndarray, eps: np.ndarray) -> np.ndarray:
         # F = S C diag(eps) C^H S: satisfies F C = S C eps on the solved

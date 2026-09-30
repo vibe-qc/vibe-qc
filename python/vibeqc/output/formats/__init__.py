@@ -13,7 +13,12 @@ callers do not have to import sub-modules directly.
 
 from __future__ import annotations
 
+from .band_edges import band_edge_manifest_fields, band_extrema_block
 from .cif import write_cif
+from .double_hybrid import (
+    DoubleHybridConstruction,
+    double_hybrid_construction,
+)
 from .cube import (
     CubeRequest,
     parse_write_cube_kwarg,
@@ -36,6 +41,15 @@ from .qvf import (
     validate_qvf,
     write_qvf,
 )
+from .qcschema import write_qcschema
+from .vibrational import (
+    FD_HESSIAN_SURFACES,
+    hessian_surface_label,
+    hessian_surface_lines,
+    hessian_surface_manifest_fields,
+    hessian_unsupported_surface_lines,
+    thermochemistry_energy_labels,
+)
 from .trexio import (
     TrexioData,
     TrexioMOBlock,
@@ -48,6 +62,18 @@ from .trexio import (
 from .xyz import write_xyz
 
 __all__ = [
+    # band_edges.py -- periodic band-edge wording
+    "band_edge_manifest_fields",
+    "band_extrema_block",
+    "DoubleHybridConstruction",
+    "double_hybrid_construction",
+    "FD_HESSIAN_SURFACES",
+    "hessian_surface_label",
+    "hessian_surface_lines",
+    "hessian_surface_manifest_fields",
+    "hessian_unsupported_surface_lines",
+    "thermochemistry_energy_labels",
+    "write_qcschema",
     "write_xyz",
     "write_extended_xyz",
     "write_trexio",

@@ -78,8 +78,10 @@ full milestone ladder lives in [docs/roadmap.md](docs/roadmap.md).
 - **Møller–Plesset 2** — RMP2 and UMP2, with SCS / SOS decomposition,
   RI-MP2 with optional auxiliary-fit residual diagnostic.
 - **Double hybrids** — **B2PLYP**, **DSD-PBEP86** (Grimme 2006,
-  Kozuch-Martin 2011) via `run_b2plyp` / `run_dsd_pbep86` /
-  `run_double_hybrid`.
+  Kozuch-Martin 2011) via `method="b2plyp"` and friends, the
+  `run_b2plyp` / `run_dsd_pbep86` wrappers, or `run_double_hybrid`.
+  Open shell runs a spin-pure ROKS SCF with a semicanonical RI-ROHF-MP2
+  correction.
 - **MACE ML interatomic potential** — `method="mace"` drives
   [ACEsuit MACE](https://github.com/ACEsuit/mace) pre-trained
   *E(3)*-equivariant GNN potentials for fast geometry optimization,

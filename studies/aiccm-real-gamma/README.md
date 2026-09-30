@@ -2,8 +2,7 @@
 
 Validation / cost-probe payloads for the neutral fitted-torus real-Γ route
 (`vibeqc.periodic.ccm.direct`, `jk_method='real-gamma'`). Owner: the real-Γ
-AICCM development chat; workstream tracker
-[`handovers/HANDOVER_AICCM_DIRECT_TORUS.md`](../../handovers/HANDOVER_AICCM_DIRECT_TORUS.md).
+AICCM development chat.
 
 * `aic7.py` — canonical source for the rung-isolated AIC7 wave payload. The
   driver supports convergence, Madelung, parity, pathology, iteration-cost,

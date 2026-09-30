@@ -286,6 +286,25 @@ def _gfn2_nonconvergence_message(mol: "Molecule", result: object) -> str:
     )
 
 
+def _reported_scc_energy(result: object) -> float:
+    """The SCC total the molecular GFN2 route reports and differentiates.
+
+    A GFN2 SCC that ran at a finite electronic temperature, whether because
+    the caller asked for one or because the auto-stabilisation ladder
+    accepted its finite-temperature rung (vibe-qc#3, #247), is stationary in
+    the Mermin free energy ``A = E - T*S`` (Mermin, Phys. Rev. 137, A1441
+    (1965); Bannwarth, Ehlert & Grimme, JCTC 2019, Eqs. 8 and 10), not in the
+    internal energy ``E``.  ``compute_gfn2_gradient`` differentiates ``A``
+    through the converged fractional occupations, so ``A`` is what the model
+    pairs with that gradient (vibe-qc#343).  At ``T = 0`` the two coincide and
+    the historical value is returned unchanged.
+    """
+    temperature = float(getattr(result, "smearing_temperature", 0.0) or 0.0)
+    if temperature > 0.0:
+        return float(result.free_energy)
+    return float(result.energy)
+
+
 def _gfn2_molecule_key(mol: "Molecule"):
     return (
         int(mol.charge),
@@ -776,10 +795,36 @@ class GFN2Model(SemiempiricalModel):
             execution=self._last_d4_execution,
         )
 
-        return float(result.energy + e_d4)
+        # At T > 0 the reported total is the Mermin free energy of the SCC
+        # plus D4: the ensemble the analytic gradient differentiates (#343).
+        return float(_reported_scc_energy(result) + e_d4)
+
+    @property
+    def electronic_temperature(self) -> float:
+        """Electronic temperature (Ha) the most recent SCC actually ran at.
+
+        0.0 for an exact zero-temperature Aufbau solution.  A positive value
+        means the reported energy is the Mermin free energy ``A = E - T*S``
+        and the gradient is its derivative; the auto-stabilisation ladder can
+        select such a rung without the caller asking for smearing (#247).
+        """
+        return float(
+            getattr(self._last_result, "smearing_temperature", 0.0) or 0.0
+        )
+
+    @property
+    def entropy(self) -> float:
+        """Electronic entropy ``S`` (in k_B) of the most recent SCC; 0 at T = 0."""
+        return float(getattr(self._last_result, "entropy", 0.0) or 0.0)
 
     def gradient(self) -> np.ndarray:
-        """Return the D4-corrected GFN2 gradient without finite-differencing SCC."""
+        """Return the D4-corrected GFN2 gradient without finite-differencing SCC.
+
+        The native term is the analytic derivative of the same total
+        :meth:`energy` reports: the internal energy at ``T = 0`` and the
+        Mermin free energy ``A = E - T*S`` when the SCC ran smeared, built
+        from the converged (possibly fractional) occupations (#343).
+        """
         if self._warn:
             warnings.warn(
                 _GFN2_EXPERIMENTAL_MESSAGE,

@@ -26,10 +26,11 @@ Contracts:
    becke_image_radius_bohr).
 
 5. **EWALD_3D routes correctly** through both
-   ``run_rks_periodic_gamma_scf`` (Γ-only driver) and the multi-k
-   entry point: a [1,1,1] mesh delegates to the cheaper Γ-only
-   driver, denser meshes land on
-   ``run_rks_periodic_multi_k_ewald3d`` (Phase 15c-2).
+   ``run_rks_periodic_gamma_scf`` (Γ-only driver, molecular-limit exact
+   exchange) and the multi-k entry point, which lands on
+   ``run_rks_periodic_multi_k_ewald3d`` (Phase 15c-2) at every mesh,
+   [1,1,1] included (#23), so smearing or a restart density no longer
+   switches a hybrid's exchange gauge.
 
 6. **SLAB_EWALD_2D** routes Gamma-only RKS through the rigorous slab
    Ewald driver and dense meshes through the multi-k slab path;
@@ -176,15 +177,33 @@ def test_ewald_3d_gamma_routes_through_dispatcher():
     assert isinstance(r, vq.PeriodicRKSEwaldResult)
 
 
-def test_ewald_3d_multi_k_gamma_mesh_routes_to_gamma_driver():
-    """Multi-k dispatcher entry with a [1,1,1] mesh must delegate to
-    the Γ-only Ewald driver — same result as the gamma_scf path."""
+def test_ewald_3d_multi_k_gamma_mesh_routes_to_multi_k_driver():
+    """Multi-k dispatcher entry with a [1,1,1] mesh lands on the multi-k
+    driver (#23). Until then it delegated to the Γ-only driver unless
+    smearing or a restart density was set, and the two build a hybrid's
+    exact exchange in different gauges. For a pure functional they are the
+    same SCF, so the energy matches the gamma_scf path."""
     sysp, basis = _h2()
     km = vq.monkhorst_pack(sysp, [1, 1, 1])
     opts = _ks_options(vq.CoulombMethod.EWALD_3D)
     r = vq.run_rks_periodic_scf(sysp, basis, km, opts)
     assert r.converged
-    assert isinstance(r, vq.PeriodicRKSEwaldResult)
+    assert isinstance(r, vq.PeriodicRKSMultiKEwaldResult)
+    r_gamma = vq.run_rks_periodic_gamma_scf(sysp, basis, opts)
+    assert isinstance(r_gamma, vq.PeriodicRKSEwaldResult)
+    assert r.energy == pytest.approx(r_gamma.energy, abs=1e-8)
+
+
+def test_gamma_dispatcher_refuses_smearing_with_a_hybrid():
+    """Smearing on the Γ-only dispatcher borrows the multi-k driver, whose
+    hybrid exchange is the corrected split, not the Γ driver's molecular
+    limit. It refuses rather than let smearing change the Hamiltonian."""
+    sysp, basis = _h2()
+    opts = _ks_options(vq.CoulombMethod.EWALD_3D)
+    opts.functional = "PBE0"
+    opts.smearing_temperature = 0.01
+    with pytest.raises(NotImplementedError, match="run_rks_periodic_scf"):
+        vq.run_rks_periodic_gamma_scf(sysp, basis, opts)
 
 
 def test_ewald_3d_multi_k_dense_mesh_routes_to_new_driver():

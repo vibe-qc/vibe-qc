@@ -284,17 +284,21 @@ def test_dispatcher_gamma_routes_ewald_to_new_driver():
     assert abs(r_dispatched.energy - r_direct.energy) < 1e-10
 
 
-def test_dispatcher_multi_k_routes_gamma_mesh_to_ewald():
-    """A 1×1×1 mesh through run_rks_periodic_scf must route EWALD_3D
-    to the Γ-only Ewald driver — multi-k KS Ewald isn't implemented
-    yet, but a Γ-only mesh is the trivial fallback."""
+def test_dispatcher_multi_k_routes_gamma_mesh_to_multi_k_ewald():
+    """A 1×1×1 mesh through run_rks_periodic_scf routes EWALD_3D to the
+    multi-k Ewald driver, as every other mesh does (#23). It used to take
+    the Γ-only driver, whose hybrid exchange is the molecular-limit kernel,
+    unless smearing or a restart density was set. For a pure functional
+    the two drivers are the same SCF."""
     sysp, basis = _h2_in_box()
     opts = _default_options()
     opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
     kmesh = vq.monkhorst_pack(sysp, [1, 1, 1])
     r = vq.run_rks_periodic_scf(sysp, basis, kmesh, opts, omega=0.5)
     assert r.converged
-    assert isinstance(r, vq.PeriodicRKSEwaldResult)
+    assert isinstance(r, vq.PeriodicRKSMultiKEwaldResult)
+    r_gamma = vq.run_rks_periodic_gamma_ewald3d(sysp, basis, opts, omega=0.5)
+    assert r.energy == pytest.approx(r_gamma.energy, abs=1e-8)
 
 
 def test_dispatcher_multi_k_dense_ewald_mesh_routes_to_new_driver():

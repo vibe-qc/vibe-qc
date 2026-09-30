@@ -97,6 +97,74 @@ def _hbn(nrep=(1, 1, 1)):
     return CCMSystem(PeriodicSystem(3, lat, atoms), nrep, "sto-3g")
 
 
+def _rhombohedral_lih(nrep=(1, 1, 1)):
+    """Rhombohedral LiH, R-3m (166) -- trigonal, in a general orientation.
+
+    Rocksalt LiH sheared along a body diagonal: rhombohedral angle 55 degrees,
+    where 60 would be the cubic fcc cell. No symmetry axis lies along a
+    cartesian direction, so 10 of its 12 cartesian operations are dense
+    rotations with general Euler angles rather than signed permutations.
+    """
+    a, alpha = 5.46, np.radians(55.0)
+    ca, sa = np.cos(alpha), np.sin(alpha)
+    lat = a * np.array([[1.0, ca, ca],
+                        [0.0, sa, (ca - ca * ca) / sa],
+                        [0.0, 0.0, np.sqrt(1 - 3 * ca * ca + 2 * ca ** 3) / sa]])
+    atoms = [Atom(3, [0, 0, 0]), Atom(1, (lat @ [0.5, 0.5, 0.5]).tolist())]
+    return CCMSystem(PeriodicSystem(3, lat, atoms), nrep, "sto-3g")
+
+
+def _orthorhombic_lih(nrep=(1, 1, 1), h_image=(0.5, 0.5, -0.5)):
+    """Face-centred orthorhombic LiH, Fmmm (69): rocksalt strained to a != b != c.
+
+    ``h_image`` is the fractional position stored for H. The default and the
+    body centre ``(1/2, 1/2, 1/2)`` are one lattice vector apart -- the same
+    crystal -- but not the same finite-cutoff operator; see
+    ``test_fold_star_admissibility_follows_the_stored_atom_image``.
+    """
+    lat = np.diag([7.40, 7.72, 8.10]) @ _fcc(1.0)
+    atoms = [Atom(3, [0, 0, 0]),
+             Atom(1, (lat @ np.asarray(h_image, dtype=float)).tolist())]
+    return CCMSystem(PeriodicSystem(3, lat, atoms), nrep, "sto-3g")
+
+
+def _monoclinic_lih(nrep=(1, 1, 1)):
+    """Base-centred monoclinic LiH, C2/m (12): unique axis b, beta = 100 degrees.
+
+    The primitive cell of the C-centred conventional cell. With the cell
+    axis-aligned its cartesian operations are signed permutations up to
+    rounding; ``_rigidly_rotated`` turns them into dense rotations.
+    """
+    a, b, c, beta = 7.40, 7.72, 8.10, np.radians(100.0)
+    conv = np.array([[a, 0.0, c * np.cos(beta)],
+                     [0.0, b, 0.0],
+                     [0.0, 0.0, c * np.sin(beta)]])
+    lat = 0.5 * conv @ np.array([[1, -1, 0], [1, 1, 0], [0, 0, 2]], dtype=float).T
+    atoms = [Atom(3, [0, 0, 0]), Atom(1, (lat @ [0.5, 0.5, 0.5]).tolist())]
+    return CCMSystem(PeriodicSystem(3, lat, atoms), nrep, "sto-3g")
+
+
+_X = (1.0, 0.0, 0.0)
+
+
+def _rigidly_rotated(ccm, axis=(1.0, 2.0, 3.0), angle=0.7):
+    """The same cyclic cluster with the whole crystal turned about ``axis``.
+
+    A small ``angle`` about ``_X`` is the near-pole probe: the C2/m mirror's
+    rotation ends up ``angle`` rad off an Euler pole (#282).
+    """
+    k = np.asarray(axis, dtype=float) / np.linalg.norm(axis)
+    K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+    Q = np.eye(3) + np.sin(angle) * K + (1.0 - np.cos(angle)) * K @ K
+    unit = ccm.unit_system
+    atoms = [Atom(at.Z, (Q @ np.asarray(at.xyz, dtype=float)).tolist())
+             for at in unit.unit_cell_molecule().atoms]
+    lat = Q @ np.asarray(unit.lattice, dtype=float)
+    return CCMSystem(
+        PeriodicSystem(3, lat, atoms, unit.charge, unit.multiplicity),
+        tuple(int(n) for n in ccm.nrep), ccm.basis_name)
+
+
 @pytest.fixture(scope="module")
 def mgo_sym():
     ccm = _mgo()
@@ -708,6 +776,215 @@ def test_ao_map_gate_covers_a_non_cubic_cell():
     assert res["kinetic"] < 1e-12
 
 
+@pytest.mark.parametrize("make", [
+    _rhombohedral_lih,
+    _orthorhombic_lih,
+    lambda nrep: _rigidly_rotated(_orthorhombic_lih(nrep)),
+    _monoclinic_lih,
+    lambda nrep: _rigidly_rotated(_monoclinic_lih(nrep)),
+    lambda nrep: _rigidly_rotated(_monoclinic_lih(nrep), axis=_X, angle=1e-12),
+    lambda nrep: _rigidly_rotated(_monoclinic_lih(nrep), axis=_X, angle=1e-9),
+], ids=["trigonal", "orthorhombic", "orthorhombic_turned", "monoclinic",
+        "monoclinic_turned", "monoclinic_tilt_1e-12", "monoclinic_tilt_1e-9"])
+def test_ao_map_gate_covers_every_lattice_system(make):
+    """The AO rotations are symmetry actions on the remaining lattice systems.
+
+    h-BN covers hexagonal; these add trigonal, orthorhombic and monoclinic.
+    Axis-aligned orthorhombic and monoclinic operations are signed
+    permutations up to rounding, so each also runs turned into a general
+    orientation, where the same operations become dense Wigner rotations.
+    The residuals asserted are Frobenius norms, not the elementwise max-abs
+    quoted elsewhere in this lane. The operation count is pinned too: the
+    residuals are a max over the cluster-invariant operations and would pass
+    vacuously if a rotated cell lost its symmetry to ``symprec``.
+
+    The gate runs on the (2,2,1) cluster, not the single cell, because on a
+    two-atom LiH cell the (1,1,1) torus overlap is blind to the rotation:
+    its p block is the identity and its s-p terms average to zero over the
+    equivalent images, so ANY orthogonal Wigner matrix leaves it invariant.
+    Measured with a rotation deliberately wrong by 1e-4 rad: every LiH cell
+    here stays at 1e-15 at (1,1,1) and moves to 1.2e-04 .. 3.3e-04 at (2,2,1)
+    and (2,1,1); h-BN (four atoms) sees it at every size. With the correct
+    rotations the (2,2,1) residuals are overlap 1.7e-15 .. 2.8e-15, kinetic
+    6.1e-16 .. 8.3e-16, and each cell keeps 4 cluster-invariant operations.
+
+    The two near-pole cases tilt the C2/m cell about x by 1e-12 and 1e-9 rad,
+    which puts its mirror's rotation that far off an Euler pole: the band in
+    which ``euler_angles_from_rotation`` was ill-conditioned before #282.
+    Neither the natural orientation (exactly polar) nor the 0.7-rad turn
+    (far from every pole) enters it. With the pre-#282 extractor patched in,
+    the (2,2,1) overlap residual is 3.8e-05 at a 1e-12 rad tilt and 1.4e-09
+    at 1e-9 (kinetic 5.9e-06 and 2.1e-10); after the fix both tilts sit at
+    2.8e-15 and 7.0e-16, the same as the untilted cell.
+    """
+    res = ccm_symmetry_invariance_residuals(make((2, 2, 1)))
+    assert res["n_ops"] == 4
+    assert res["overlap"] < 1e-12
+    assert res["kinetic"] < 1e-12
+
+
+@pytest.mark.parametrize("make, nrep, n_ops, n_admissible, builds", [
+    (_rhombohedral_lih, (2, 2, 1), 4, 2, (16, 10)),
+    (_rhombohedral_lih, (2, 2, 2), 12, 6, (64, 20)),
+    (_orthorhombic_lih, (2, 2, 1), 4, 2, (16, 10)),
+    (_orthorhombic_lih, (2, 2, 2), 8, 4, (64, 28)),
+    (_monoclinic_lih, (2, 2, 1), 4, 2, (16, 10)),
+    (_monoclinic_lih, (2, 2, 2), 4, 2, (64, 40)),
+], ids=["trigonal_221", "trigonal_222", "orthorhombic_221", "orthorhombic_222",
+        "monoclinic_221", "monoclinic_222"])
+def test_fold_star_non_cubic_cells_reduce_through_admissible_ops(
+        make, nrep, n_ops, n_admissible, builds):
+    """Trigonal, orthorhombic and monoclinic cells reduce through exact relations.
+
+    With h-BN this covers every lattice system the cubic fixtures do not.
+    Every relation each plan emits was reconstructed and compared with an
+    independent build (STO-3G, ke = 100 Ha, relative max-abs on the
+    per-(k_a, k_b) tensor, at the 15-bohr production cell list and at 25):
+
+    ================  =========  ============  ============  ===========
+    cell              plan       rel L @ 15    rel L @ 25    Gram @ 15
+    ================  =========  ============  ============  ===========
+    trigonal (2,2,1)  10/16      6.00e-10      6.01e-10      6.9e-13
+    orthorh. (2,2,1)  10/16      1.18e-09      1.18e-09      9.9e-14
+    monocl.  (2,2,1)  10/16      1.92e-10      1.92e-10      2.1e-13
+    trigonal (2,2,2)  20/64      6.72e-10      6.72e-10      8.9e-13
+    orthorh. (2,2,2)  28/64      1.18e-09      1.18e-09      1.4e-13
+    monocl.  (2,2,2)  40/64      2.37e-10      2.37e-10      2.6e-13
+    ================  =========  ============  ============  ===========
+
+    None moves between the two cutoffs, so each is exact on the finite list
+    and sits on the whitening floor (see ``_flat_lat_opts``). A planner
+    without the admissibility tests reaches the same trigonal and monoclinic
+    counts through shift-varying operations (11.7 and 8.0 bohr), and those
+    relations are not exact: 1.33e-02 -> 8.34e-07 and 5.90e-03 -> 1.00e-07
+    between 15 and 25 bohr. Equal counts, wrong assignment -- the LiH (2,2,1)
+    pattern of #237, now on a trigonal and a monoclinic cell. It repeats on
+    every (2,2,2) mesh here: 2.64e-03 -> 7.21e-07 (trigonal), 3.15e-03 ->
+    2.87e-08 (orthorhombic), 5.90e-03 -> 1.41e-07 (monoclinic).
+    """
+    from vibeqc.periodic.ccm.symmetry import ccm_symmetry_op_preserves_cell_list
+
+    plan, _ = _fold_plan(make(nrep))
+    assert len(plan.ops) == n_ops
+    assert len(plan.admissible_ops) == n_admissible
+    assert (plan.n_builds, plan.n_reps) == builds
+    for oi, op in enumerate(plan.ops):
+        assert ccm_symmetry_op_preserves_cell_list(op[2]) == (
+            oi in plan.admissible_ops)
+    for entry in plan.entries.values():
+        if entry[0] == "recon":
+            assert entry[2] in plan.admissible_ops
+
+
+@pytest.mark.parametrize("make, nrep, turn", [
+    (_rhombohedral_lih, (2, 2, 2), {}),
+    (_orthorhombic_lih, (2, 2, 2), {}),
+    (_monoclinic_lih, (2, 2, 2), {}),
+    (_hbn, (2, 2, 1), {}),
+    (_monoclinic_lih, (2, 2, 1), dict(axis=_X, angle=1e-12)),
+    (_monoclinic_lih, (2, 2, 1), dict(axis=_X, angle=1e-10)),
+    (_monoclinic_lih, (2, 2, 1), dict(axis=_X, angle=1e-9)),
+], ids=["trigonal", "orthorhombic", "monoclinic", "hexagonal",
+        "monoclinic_tilt_1e-12", "monoclinic_tilt_1e-10",
+        "monoclinic_tilt_1e-9"])
+def test_fold_star_plan_is_invariant_under_rigid_rotation(make, nrep, turn):
+    """Turning the crystal into a general orientation leaves the plan unchanged.
+
+    The cell-list test works on lattice shifts and the AO-map check on a
+    residual that vanishes identically, so orientation must not matter; this
+    is also the cheapest way to hand the same operations to the Wigner
+    machinery as dense rotations. The turned monoclinic cell's relations were
+    measured at (2,2,1), not just planned: 3.13e-11 at 15 bohr and 3.14e-11 at
+    25. The turned plans compared here are plan-level only.
+
+    The ``turn`` cases tilt the C2/m cell about x by 1e-12 .. 1e-9 rad, so
+    the admitted mirror's rotation sits that far off an Euler pole. That is
+    the band #282 found: before its fix the planner refused the mirror from a
+    1e-10 rad tilt (16/16 instead of 10/16, residual 2.1e-08 against the
+    1e-10 gate), and at 1e-9 rad it admitted a slightly wrong rotation
+    (residual 8e-11) whose relations' Gram contraction moved from 2e-13 to
+    7e-10. After the fix the plan is the untilted one at every tilt, the
+    mirror's residual is 4.4e-16, and the relations were measured, not just
+    planned (relative max-abs on L and on the Gram contraction, 15 / 25
+    bohr): 2.05e-11 / 2.05e-11 and 7.1e-14 / 6.2e-14 at 1e-12 rad, 7.28e-11
+    / 7.28e-11 and 7.1e-14 / 7.1e-14 at 1e-10, 1.44e-10 / 1.45e-10 and
+    2.2e-13 / 2.2e-13 at 1e-9 -- flat, on the untilted cell's floor. The
+    1e-9 case is plan-identical under the old extractor too; its teeth are
+    in ``test_ao_map_gate_covers_every_lattice_system``.
+
+    spglib's operation ORDER can follow the orientation (h-BN's admissible
+    indices move from 18, 19 to 14, 15), so this compares what the plan does
+    -- which builds run and how many operations are admitted -- not op
+    indices.
+    """
+    ccm = make(nrep)
+    plan, _ = _fold_plan(ccm)
+    turned, _ = _fold_plan(_rigidly_rotated(ccm, **turn))
+
+    def _builds(p):
+        return {key for key, entry in p.entries.items() if entry[0] == "build"}
+
+    assert (turned.n_builds, turned.n_reps) == (plan.n_builds, plan.n_reps)
+    assert len(turned.admissible_ops) == len(plan.admissible_ops)
+    assert _builds(turned) == _builds(plan)
+
+
+def test_fold_star_admissibility_follows_the_stored_atom_image():
+    """Which lattice image a cell stores for an atom is part of the finite operator.
+
+    Orthorhombic LiH with H stored at the body centre (1/2, 1/2, 1/2) or at
+    (1/2, 1/2, -1/2) is one crystal: same space group, same operations. The
+    fit builder's cell list is the same too, but it is indexed by cells
+    relative to the stored atoms, so moving H by a lattice vector changes
+    which Li-H separations the truncated sum contains, and the operator
+    itself: the two pair transforms differ by 3.1e-03 relative at 15 bohr,
+    4.5e-11 at 30. The admissibility test tracks that, per operation:
+
+    * body image: no operation but the identity keeps its shifts constant, so
+      nothing is reconstructed (16/16). A planner without the test claims
+      10/16 through an operation with a 7.72-bohr spread, and those relations
+      sit at 1.15e-02 at 15 bohr and 2.68e-07 at 25 -- a truncation defect;
+    * face image: the two-fold rotation about c that fixes (0, 0, c/2) keeps
+      its shifts, and the plan reduces to 10/16 at 1.18e-09, unchanged between
+      15 and 25 bohr. The cell's m_z mirror carries an 8.1-bohr spread and is
+      refused in both images.
+
+    Refusing the body image's relations is therefore correct, not
+    conservative bookkeeping; the pair-centred cell list of #238 would make
+    the operator independent of the stored image.
+    """
+    body = _orthorhombic_lih((2, 2, 1), h_image=(0.5, 0.5, 0.5))
+    face = _orthorhombic_lih((2, 2, 1))
+    assert analyze_ccm_symmetry(body).number == 69
+    assert analyze_ccm_symmetry(face).number == 69
+    p_body, _ = _fold_plan(body)
+    p_face, _ = _fold_plan(face)
+    assert p_body.admissible_ops == (0,)
+    assert (p_body.n_builds, p_body.n_reps) == (16, 16)
+    assert (p_face.n_builds, p_face.n_reps) == (16, 10)
+
+
+def test_fold_star_trigonal_fold_matches_unreduced_build():
+    """GATE: a reduction through a dense operation is exact end-to-end.
+
+    The other end-to-end fold gates run on cells whose operations are signed
+    permutations. Rhombohedral LiH (2,2,1) reconstructs 6 of its 16 builds
+    through a mirror whose normal lies at a general angle in the xy-plane, so
+    its orbital and auxiliary maps are real Wigner rotations. At the 15-bohr
+    production cell list the reduced and unreduced folds agree to 2.8e-11
+    relative (measured, ke = 60 Ha). It is the slowest test in this module's
+    plan-level set -- 46 s on an idle machine, 216 s at load 75 -- because it
+    runs both folds; every other test added with it is under 0.1 s. < 1e-9 is
+    the whitening floor, see ``_flat_lat_opts``.
+    """
+    ccm = _rhombohedral_lih((2, 2, 1))
+    plan, _ = _fold_plan(ccm)
+    assert (plan.n_builds, plan.n_reps) == (16, 10)
+    l_full, l_red = _fold_pair(ccm, ke_cutoff=60.0)
+    scale = float(np.max(np.abs(l_full)))
+    assert float(np.max(np.abs(l_red - l_full))) / scale < 1e-9
+
+
 def test_fold_star_chain_311_reduces_and_matches():
     """(3,1,1) chain: the q=0 channel folds under mirror/TRS (5/6 builds).
 
@@ -787,8 +1064,15 @@ def test_production_gdf_fully_3d_bypasses_pair_star_adapter(monkeypatch):
 
     The generic RSGDF driver selects its shared-q full-build implementation
     when no private cache adapter is present. This seam test pins the adapter
-    absence and public 64/64 accounting; the slow LiH test below pins the
-    resulting energy rather than mocking the cache implementation itself.
+    absence and that the public 64/64 accounting is the driver's own count
+    (``gdf_cderi_pairs``, the 64 pairs a (2,2,2) mesh with fitted exchange
+    builds), forwarded rather than re-derived; the slow LiH test below pins
+    the resulting energy rather than mocking the cache implementation itself.
+
+    Since #378 the classic-fit pin refuses ``symmetry=True`` on a 3-D cell
+    (pinned in ``tests/test_ccm_theorem1_3d.py``), which left this test and
+    the two slow ones below failing at that refusal. They pass
+    ``fit_source="auto"``, the SR/LR source they were written against.
     """
     from types import SimpleNamespace
 
@@ -799,13 +1083,62 @@ def test_production_gdf_fully_3d_bypasses_pair_star_adapter(monkeypatch):
 
     def _fake_driver(_unit, _basis, _kmesh, **kwargs):
         seen.update(kwargs)
-        return SimpleNamespace(converged=True, energy=-1.0, n_iter=1)
+        return SimpleNamespace(
+            converged=True, energy=-1.0, n_iter=1, gdf_cderi_pairs=64
+        )
 
     monkeypatch.setattr(vibeqc, "run_krhf_periodic_gdf", _fake_driver)
-    result = run_ccm_rhf_gdf(_lih((2, 2, 2)), symmetry=True)
+    result = run_ccm_rhf_gdf(
+        _lih((2, 2, 2)), symmetry=True, fit_source="auto"
+    )
 
     assert "_lpq_cache_builder" not in seen
     assert result.gdf_pair_builds == result.gdf_pair_total == 64
+    assert result.gdf_pair_reduction_factor == 1.0
+
+
+@pytest.mark.parametrize(
+    ("functional", "nrep", "n_pairs"),
+    [("pbe", (2, 1, 1), 2), (None, (2, 1, 1), 4), (None, (1, 1, 1), 1)],
+    ids=["pbe-2x1x1", "rhf-2x1x1", "rhf-1x1x1"],
+)
+def test_production_gdf_pair_accounting_is_the_driver_cache(
+    monkeypatch, functional, nrep, n_pairs
+):
+    """The unreduced pair accounting is the fit the driver built.
+
+    The wrapper used to re-derive whether the multi-k driver built its
+    cached-Lpq fit from a copy of the driver's ``use_compcell`` promotion
+    rules. The copy missed the promotions of the 3-D rsgdf route (the SR/LR
+    and classic fit sources, the tail), so pure PBE on this 3-D cell
+    reported 0 of 0 pairs while the driver built its two diagonal pairs,
+    and an ``nrep=(1,1,1)`` run reported 0 for the one pair of its Nk=1
+    loop. Spy on the classic shared-q builder this pinned route runs and
+    require the result to report exactly the pairs it returned.
+    """
+    import vibeqc.periodic_k_gdf as kgdf
+    from vibeqc.periodic.ccm.ri import run_ccm_rhf_gdf, run_ccm_rks_gdf
+
+    built = []
+    real_builder = kgdf._build_rsgdf_lpq_cache_shared_q
+
+    def _spy(*args, **kwargs):
+        cache = real_builder(*args, **kwargs)
+        built.append(len(cache))
+        return cache
+
+    monkeypatch.setattr(kgdf, "_build_rsgdf_lpq_cache_shared_q", _spy)
+    ccm = _compact_h2(nrep)
+    if functional is None:
+        result = run_ccm_rhf_gdf(ccm)
+    else:
+        result = run_ccm_rks_gdf(ccm, functional)
+
+    assert result.converged
+    assert result.fit_source == "classic"
+    assert built == [n_pairs]
+    assert result.raw.gdf_cderi_pairs == n_pairs
+    assert result.gdf_pair_builds == result.gdf_pair_total == n_pairs
     assert result.gdf_pair_reduction_factor == 1.0
 
 
@@ -823,12 +1156,14 @@ def test_production_gdf_symmetry_reduced_scf_matches():
     plain = run_ccm_rhf_gdf(
         ccm,
         symmetry=False,
+        fit_source="auto",
         rsgdf_ke_cutoff=60.0,
         options=options,
     )
     reduced = run_ccm_rhf_gdf(
         ccm,
         symmetry=True,
+        fit_source="auto",
         rsgdf_ke_cutoff=60.0,
         options=options,
     )
@@ -839,6 +1174,8 @@ def test_production_gdf_symmetry_reduced_scf_matches():
     assert reduced.gdf_pair_builds == 8
     assert reduced.gdf_pair_total == 9
     assert reduced.gdf_pair_reduction_factor == pytest.approx(9 / 8)
+    # The star plan's total is the cache the driver contracted.
+    assert plain.raw.gdf_cderi_pairs == reduced.raw.gdf_cderi_pairs == 9
 
     ks_options = PeriodicKSOptions()
     ks_options.max_iter = 64
@@ -848,6 +1185,7 @@ def test_production_gdf_symmetry_reduced_scf_matches():
         ccm,
         "pbe0",
         symmetry=False,
+        fit_source="auto",
         rsgdf_ke_cutoff=60.0,
         options=ks_options,
     )
@@ -855,6 +1193,7 @@ def test_production_gdf_symmetry_reduced_scf_matches():
         ccm,
         "pbe0",
         symmetry=True,
+        fit_source="auto",
         rsgdf_ke_cutoff=60.0,
         options=ks_options,
     )
@@ -872,8 +1211,8 @@ def test_production_gdf_fully_3d_fallback_matches_unreduced():
     from vibeqc.periodic.ccm.ri import run_ccm_rhf_gdf
 
     ccm = _lih((2, 2, 2))
-    guarded = run_ccm_rhf_gdf(ccm, symmetry=True)
-    plain = run_ccm_rhf_gdf(ccm, symmetry=False)
+    guarded = run_ccm_rhf_gdf(ccm, symmetry=True, fit_source="auto")
+    plain = run_ccm_rhf_gdf(ccm, symmetry=False, fit_source="auto")
 
     assert guarded.converged and plain.converged
     assert guarded.gdf_pair_builds == guarded.gdf_pair_total == 64

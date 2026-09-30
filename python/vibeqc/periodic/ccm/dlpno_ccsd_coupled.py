@@ -198,11 +198,20 @@ def ccm_dlpno_ccsd_coupled(
       spin-orbital (T) on the dense neutral MO integrals; exact vs canonical (T) for
       any gauge (machine ε), but O(n**6) -- the small-cluster/validation path.
     """
+    # A Bloch producer result (run_ccm_*_gdf) is transformed to the real
+    # supercell-Gamma reference of the same Hamiltonian first (Theorem 1;
+    # periodic/ccm/bloch_reference.py). Real-Gamma references pass through.
+    from .bloch_reference import as_real_reference
+
+    scf_result = as_real_reference(ccm, scf_result)
     if not scf_result.converged:
         raise ValueError("coupled DLPNO-CCSD requires a converged CCM SCF reference.")
 
-    from .neutral import ccm_neutral_cderi
+    from .neutral import carried_cderi, ccm_neutral_cderi
 
+    # One build per job (2026-09-24): the reference's own cderi comes first.
+    if cderi is None:
+        cderi = carried_cderi(scf_result)
     L = np.asarray(cderi if cderi is not None else
                    ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff), dtype=float)
 

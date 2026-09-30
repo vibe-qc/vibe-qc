@@ -753,8 +753,9 @@ def test_direct_cosmors_route_cites_the_whole_calculation():
     Klamt, Diedenhofen & Neese 2006 (doi:10.1021/jp056016z), the COSMO-RS
     sigma potential and its parameterization, conductor COSMO, and the COSMO
     FINE Cavity the variant requires with the Gaussian-charge diagonal that
-    cavity uses. Not Scalmani-Frisch, whose point-charge diagonal belongs to the
-    Lebedev cavity that Direct COSMO-RS refuses.
+    cavity uses, and Anderson 1965 for the step that accelerates its
+    macro-iteration. Not Scalmani-Frisch, whose point-charge diagonal belongs to
+    the Lebedev cavity that Direct COSMO-RS refuses.
     """
     from vibeqc.output.citations import load_default_database
 
@@ -769,6 +770,7 @@ def test_direct_cosmors_route_cites_the_whole_calculation():
         "klamt_schuurmann_cosmo_1993",
         "klamt_fine_cavity_2018",
         "lange_herbert_swig_2010",
+        "anderson_mixing_1965",
     } <= keys
     assert "scalmani_frisch_csc_2010" not in keys
     (paper,) = [c for c in direct.citations if c.key == "sinnecker_direct_cosmors_2006"]
@@ -845,6 +847,243 @@ def test_direct_cosmors_reports_where_its_feedback_is_fragile():
     # The fine cavity is what keeps sigma inside the parameterization; if this
     # ever fails, the cavity changed and the feedback is being extrapolated.
     assert np.percentile(np.abs(fb.sigma), 99) < 0.05
+
+
+# ---------------------------------------------------------------------
+# Direct COSMO-RS convergence beyond water and methanol (next step 4).
+#
+# Water and methanol were the only solutes ever run through the feedback loop.
+# Measured on RHF/STO-3G in a computed water potential (fine cavity 0.35 A,
+# KLAMT_1998 radii): methanol 11, acetic acid 11, acetate 9, ammonium 5,
+# benzene 7 macro-iterations; water in a computed methanol potential 10. All
+# monotone in the tail, none damped, none oscillating -- including water in
+# methanol with 15 percent of its surface on the H-bond corner.
+# ---------------------------------------------------------------------
+
+_ANG_TO_BOHR = 1.8897261254578281
+_WATER_ANG = [(8, (0.0, 0.0, 0.0)), (1, (0.0, 0.757, 0.587)), (1, (0.0, -0.757, 0.587))]
+_METHANOL_ANG = [
+    (6, (-0.047, 0.664, 0.0)), (8, (-0.047, -0.758, 0.0)), (1, (-1.086, 0.975, 0.0)),
+    (1, (0.444, 1.086, 0.890)), (1, (0.444, 1.086, -0.890)), (1, (0.861, -1.050, 0.0)),
+]
+_ACETATE_ANG = [
+    (6, (-0.943, -0.081, 0.0)), (6, (0.536, 0.162, 0.0)), (8, (1.212, -0.880, 0.0)),
+    (8, (0.980, 1.330, 0.0)), (1, (-1.448, 0.881, 0.0)),
+    (1, (-1.252, -0.652, 0.878)), (1, (-1.252, -0.652, -0.878)),
+]
+_AMMONIUM_ANG = [
+    (7, (0.0, 0.0, 0.0)), (1, (0.595, 0.595, 0.595)), (1, (-0.595, -0.595, 0.595)),
+    (1, (-0.595, 0.595, -0.595)), (1, (0.595, -0.595, -0.595)),
+]
+
+
+def _mol_ang(vq, atoms, charge=0):
+    return vq.Molecule(
+        [vq.Atom(z, [c * _ANG_TO_BOHR for c in xyz]) for z, xyz in atoms], charge, 1
+    )
+
+
+def _klamt_fine(**overrides):
+    kw = dict(
+        epsilon=math.inf, cavity="fine", fine_grid_spacing_ang=0.35,
+        radii=dict(KLAMT_1998.cavity_radii), radii_scale=1.0,
+        solvent_probe_radius_ang=0.0, max_macro_iter=80, tol_e_solv=1e-10,
+    )
+    kw.update(overrides)
+    return kw
+
+
+def _computed_potential(vq, solvent_atoms):
+    mol = _mol_ang(vq, solvent_atoms)
+    conductor = vq.run_cpcm_scf(
+        mol, vq.BasisSet(mol, "sto-3g"), method="rhf",
+        solvent=vq.SolventModel(variant="cosmo", **_klamt_fine()),
+    )
+    return rs.solvent_sigma_potential(conductor, KLAMT_1998, method="rhf", basis="sto-3g")
+
+
+def _direct(vq, mol, pot, **overrides):
+    return vq.run_cpcm_scf(
+        mol, vq.BasisSet(mol, "sto-3g"), method="rhf",
+        solvent=vq.SolventModel(
+            variant="dcosmo-rs", sigma_potential=pot, **_klamt_fine(**overrides)
+        ),
+    )
+
+
+def _monotone_tail(sol, n=4):
+    tail = [h["delta_e_solv"] for h in sol.macro_history][-n:]
+    return len({float(np.sign(d)) for d in tail}) == 1, tail
+
+
+@pytest.mark.parametrize(
+    "atoms, charge", [(_ACETATE_ANG, -1), (_AMMONIUM_ANG, +1)], ids=["acetate", "ammonium"]
+)
+def test_direct_cosmors_converges_for_both_ion_charges(atoms, charge):
+    """Ions converge, and say that their surface is past the fitted range.
+
+    An ion drives sigma far beyond what a sigma potential is fitted over, so
+    this is where a feedback loop built on a piecewise-linear H-bond term was
+    most likely to break. It does not: 9 and 5 macro-iterations, monotone.
+
+    The second assertion pins a caveat rather than a success. Measured, 1.6
+    and 8.2 percent of the ions' area sits beyond the grid (sigma to 0.38
+    e/A^2), where the potential is extrapolated through the quadratic misfit
+    term; with a solvent potential computed at RHF/STO-3G that extrapolation
+    gives acetate +11.7 and ammonium -11.0 kcal/mol of COSMO-RS energy. The
+    diagnostic has to report it, so a user can see the number is not in range.
+    """
+    vq = pytest.importorskip("vibeqc")
+    pot = _computed_potential(vq, _WATER_ANG)
+    sol = _direct(vq, _mol_ang(vq, atoms, charge), pot)
+
+    assert sol.converged
+    assert sol.n_macro_iter <= 20, sol.n_macro_iter
+    monotone, tail = _monotone_tail(sol)
+    assert monotone, tail
+    assert sol.direct_feedback.fraction_outside_grid > 0.005
+
+
+def _water_sigma_percentiles(vq, method, basis, options=None):
+    """Area-weighted 1st and 99th percentiles of water's averaged sigma, e/A^2."""
+    from vibeqc.solvation.surface import build_conductor_surface
+
+    mol = _mol_ang(vq, _WATER_ANG)
+    res = vq.run_cpcm_scf(
+        mol, vq.BasisSet(mol, basis), method=method, options=options,
+        solvent=vq.SolventModel(variant="cosmo", **_klamt_fine()),
+    )
+    surf = build_conductor_surface(
+        res, method=method, basis=basis, cavity_kind="fine-cfc",
+        energy_conductor=float(res.energy),
+    )
+    desc = rs.segment_descriptors(surf, KLAMT_1998.r_av)
+    s, a = np.asarray(desc.sigma), np.asarray(desc.areas)
+    order = np.argsort(s)
+    cw = np.cumsum(a[order]) / a.sum()
+    return float(s[order][np.searchsorted(cw, 0.01)]), float(s[order][np.searchsorted(cw, 0.99)])
+
+
+def test_the_recommended_solvent_protocol_widens_the_water_profile():
+    """BPW91/def2-TZVP water polarizes toward the fitted range; RHF/STO-3G does not.
+
+    ``KLAMT_1998`` was fitted on DMol/BPW91/DNP surfaces, and the user guide
+    recommends BPW91/def2-TZVP as the nearest recipe vibe-qc can run. Measured,
+    it widens water's profile (1st to 99th percentile) from -0.012..+0.014 at
+    RHF/STO-3G to -0.017..+0.018 e/A^2, on both the donor and the acceptor
+    side. That width is what gives the ions of the step 4 panel the sign a
+    hydrogen-bonding solvent should give them (acetate +11.7 -> -15.0,
+    ammonium -11.0 -> -19.5 kcal/mol); the Direct COSMO-RS runs themselves are
+    too slow for this lane and are recorded in the guide.
+    """
+    vq = pytest.importorskip("vibeqc")
+    lo_min, hi_min = _water_sigma_percentiles(vq, "rhf", "sto-3g")
+    opts = vq.RKSOptions()
+    opts.functional = "bpw91"
+    lo, hi = _water_sigma_percentiles(vq, "rks", "def2-tzvp", opts)
+
+    assert -0.013 < lo_min and hi_min < 0.0145, (lo_min, hi_min)
+    assert lo < -0.0155 and hi > 0.0165, (lo, hi)
+    assert -0.025 < lo and hi < 0.025, "the profile must stay on the fitted grid"
+
+
+def test_direct_cosmors_converges_in_a_second_computed_solvent(monkeypatch):
+    """A second solvent, and the corner parking that did not break it.
+
+    Water in a methanol potential computed the same way converges in 10
+    macro-iterations of the plain loop, monotonically, with 14.8 percent of its
+    surface within a bin of +-sigma_hb, the most of any case measured. The
+    corner is a discontinuity in mu_S', not a trap for the loop. Monotone is a
+    property of the plain fixed-point map, so it is checked there (the Anderson
+    step patched to the plain update); the shipped, accelerated loop takes 9
+    and may alternate in sign once the change is below 1e-7, which is how an
+    extrapolation converges rather than an oscillation.
+    """
+    vq = pytest.importorskip("vibeqc")
+    from vibeqc.solvation.cosmors import potential as rs_potential
+
+    pot = _computed_potential(vq, _METHANOL_ANG)
+    mol = _mol_ang(vq, _WATER_ANG)
+    sol = _direct(vq, mol, pot)
+    monkeypatch.setattr(
+        rs_potential, "_anderson_step", lambda xs, rs_, mixing: xs[-1] + mixing * rs_[-1]
+    )
+    plain = _direct(vq, mol, pot)
+
+    assert sol.converged and plain.converged
+    monotone, tail = _monotone_tail(plain)
+    assert monotone, tail
+    assert sol.n_macro_iter <= plain.n_macro_iter
+    assert float(sol.energy) == pytest.approx(float(plain.energy), abs=1e-9)
+    assert sol.direct_feedback.fraction_near_hb_corner > 0.05
+
+
+def test_direct_cosmors_total_is_converged_to_the_tolerance_it_claims():
+    """The loop watches the conductor term only; the total still converges.
+
+    The macro-iteration stops on ``|delta e_solv| < tol_e_solv``, where
+    ``e_solv`` is ``1/2 q.V``. The COSMO-RS energy is part of the reported
+    total but not of the criterion, so it could in principle still be moving.
+    Measured, it is not: at tolerances 1e-4 to 1e-8 the reported total of both
+    ions sits within 6e-6 *of the tolerance* of a tightly converged run. Pinned
+    on ammonium, whose last COSMO-RS step was the largest relative to the
+    conductor step.
+    """
+    vq = pytest.importorskip("vibeqc")
+    pot = _computed_potential(vq, _WATER_ANG)
+    mol = _mol_ang(vq, _AMMONIUM_ANG, +1)
+    tight = _direct(vq, mol, pot, tol_e_solv=1e-12)
+    loose = _direct(vq, mol, pot, tol_e_solv=1e-6)
+
+    assert tight.converged and loose.converged
+    assert abs(float(loose.energy) - float(tight.energy)) < 1e-6
+
+
+def test_direct_cosmors_acceleration_damps_an_oscillation_and_keeps_the_answer(monkeypatch):
+    """Anderson on the feedback potential shortens an oscillation, not the answer.
+
+    The macro-loop extrapolates ``phi`` over its last four iterates (Anderson,
+    J. ACM 12, 547 (1965)). Replacing that step with the plain update recovers
+    the unaccelerated loop. Acetate at RHF/3-21G in the RHF/STO-3G water
+    potential is the cheapest case measured that oscillates: the plain loop
+    flips the sign of ``delta e_solv`` on every one of its last ten
+    macro-iterations and needs 15, the accelerated one 13 with half the flips,
+    and both land on the same energy (to 1e-13 measured). At BPW91 the same
+    solute goes from 26 to 18 at def2-SVP and from 60 to 15 at def2-TZVP. The
+    feedback the run reports is still
+    eq. 19 of Sinnecker et al. 2006 at the final conductor charges, not the
+    extrapolated potential the operator last used.
+    """
+    vq = pytest.importorskip("vibeqc")
+    from vibeqc.solvation.cosmors import potential as rs_potential
+    from vibeqc.solvation.cosmors.direct import direct_cosmors_feedback
+
+    pot = _computed_potential(vq, _WATER_ANG)
+    mol = _mol_ang(vq, _ACETATE_ANG, -1)
+    basis = vq.BasisSet(mol, "3-21g")
+
+    def run():
+        sm = vq.SolventModel(variant="dcosmo-rs", sigma_potential=pot, **_klamt_fine())
+        return vq.run_cpcm_scf(mol, basis, method="rhf", solvent=sm)
+
+    def flips(sol):
+        d = np.sign([h["delta_e_solv"] for h in sol.macro_history][-11:])
+        return int(np.count_nonzero(d[1:] != d[:-1]))
+
+    accelerated = run()
+    monkeypatch.setattr(
+        rs_potential, "_anderson_step", lambda xs, rs_, mixing: xs[-1] + mixing * rs_[-1]
+    )
+    plain = run()
+
+    assert accelerated.converged and plain.converged
+    assert float(accelerated.energy) == pytest.approx(float(plain.energy), abs=1e-9)
+    assert flips(plain) >= 8, "the unaccelerated loop should oscillate here"
+    assert accelerated.n_macro_iter < plain.n_macro_iter
+    assert flips(accelerated) < flips(plain)
+    fb = accelerated.direct_feedback
+    again = direct_cosmors_feedback(accelerated.cpcm.q, accelerated.cavity.weights, pot)
+    np.testing.assert_allclose(fb.phi, again.phi, rtol=0, atol=1e-12)
 
 
 def test_pair_interaction_derivative_is_exact_away_from_its_corner():
@@ -925,6 +1164,127 @@ def test_the_hydrogen_bond_corner_is_real_and_survives_the_average():
         assert narrow < 0.6 * wide, (centre, narrow, wide)   # a slope, not a step
 
 
+# ---------------------------------------------------------------------
+# The smoothed hydrogen-bond term (next step 5, decided 2026-09-29).
+#
+# Klamt 1998 eq. 22 has corners at +-sigma_hb, so mu_S' jumps there and a
+# Direct COSMO-RS energy is not differentiable in the geometry. A positive
+# ``Parameterization.hb_smoothing`` replaces the corners with softplus ramps.
+# The default is 0.0, the published form exactly.
+# ---------------------------------------------------------------------
+
+_HB_GRID = np.linspace(-0.03, 0.03, 241)
+
+
+def _published_hb(a, b, params):
+    """Klamt 1998 eq. 22 written out as published, the fixed reference."""
+    acc, don = np.maximum(a, b), np.minimum(a, b)
+    return params.c_hb * np.maximum(0.0, acc - params.sigma_hb) * np.minimum(
+        0.0, don + params.sigma_hb
+    )
+
+
+def test_the_default_parameterization_is_unsmoothed():
+    assert KLAMT_1998.hb_smoothing == 0.0
+    a, b = np.meshgrid(_HB_GRID, _HB_GRID)
+    np.testing.assert_array_equal(
+        rs.hydrogen_bond_energy(a, b, KLAMT_1998), _published_hb(a, b, KLAMT_1998)
+    )
+
+
+def test_the_symmetric_rewrite_is_the_published_form_exactly():
+    """``c_hb [f(a) g(b) + f(b) g(a)]`` *is* eq. 22, before any smoothing.
+
+    Everything below rests on this identity: it removes the acceptor/donor
+    choice, which is what lets smoothed ramps give a function with no new
+    corner at ``a == b``.
+    """
+    from vibeqc.solvation.cosmors.potential import _hb_ramps
+
+    a, b = np.meshgrid(_HB_GRID, _HB_GRID)
+    fa, _, ga, _ = _hb_ramps(a, KLAMT_1998)
+    fb, _, gb, _ = _hb_ramps(b, KLAMT_1998)
+    np.testing.assert_allclose(
+        KLAMT_1998.c_hb * (fa * gb + fb * ga), _published_hb(a, b, KLAMT_1998),
+        rtol=0, atol=1e-15,
+    )
+
+
+def test_the_smoothed_term_tends_to_the_published_form_linearly():
+    import dataclasses
+
+    a, b = np.meshgrid(_HB_GRID, _HB_GRID)
+    ref = _published_hb(a, b, KLAMT_1998)
+    err = {}
+    for w in (1e-3, 1e-4, 1e-5):
+        p = dataclasses.replace(KLAMT_1998, hb_smoothing=w)
+        err[w] = float(np.max(np.abs(rs.hydrogen_bond_energy(a, b, p) - ref)))
+        # Each ramp moves by at most w ln 2 and its partner is bounded by
+        # 0.03 + sigma_hb on this grid, so the product moves by less than
+        # c_hb * w ln 2 * 2 * 0.04 (plus a w^2 term that is negligible here).
+        assert err[w] <= KLAMT_1998.c_hb * w * np.log(2) * 0.08 * 1.01, (w, err[w])
+    # Linear in the width, so the published form is the w -> 0 limit. Measured
+    # where the error peaks -- exactly on the corner -- not as a maximum over a
+    # grid, which under-samples it once w drops below the grid spacing. There
+    # f_w(sigma_hb) = w ln 2 against f = 0, and against a strong donor g_w is g
+    # to exponential accuracy, so the error is c_hb w ln 2 |g(partner)| exactly.
+    s_hb = KLAMT_1998.sigma_hb
+    donor = -0.02
+    g_donor = donor + s_hb
+    for w in (1e-3, 1e-4, 1e-5):
+        p = dataclasses.replace(KLAMT_1998, hb_smoothing=w)
+        corner = float(rs.hydrogen_bond_energy(np.array([s_hb]), np.array([donor]), p)[0])
+        assert corner == pytest.approx(KLAMT_1998.c_hb * w * np.log(2) * g_donor, rel=1e-6), w
+
+
+def test_the_smoothed_derivative_is_exact_and_continuous_through_the_corner():
+    """Where the published derivative jumps, the smoothed one is continuous.
+
+    Measured against central differences at points on and around
+    ``+-sigma_hb``, then across the corner itself: the published form steps by
+    ``c_hb`` times the partner's factor there, the smoothed one by nothing as
+    the probe closes in.
+    """
+    import dataclasses
+
+    w = 1e-3
+    p = dataclasses.replace(KLAMT_1998, hb_smoothing=w)
+    s_hb = KLAMT_1998.sigma_hb
+    partner = np.array([-0.02])                     # a strong donor
+    xs = np.array([-0.02, -s_hb - w, -s_hb, s_hb - w, s_hb, s_hb + w, 0.02])
+    h = 1e-8
+    def d_int(x, params):
+        return float(rs.interaction_energy_dsigma(np.array([x]), partner, params)[0])
+
+    def e_int(x, params):
+        return float(rs.interaction_energy(np.array([x]), partner, params)[0])
+
+    for x in xs:
+        fd = (e_int(x + h, p) - e_int(x - h, p)) / (2 * h)
+        assert d_int(x, p) == pytest.approx(fd, rel=1e-6, abs=1e-6), x
+
+    # Continuity: across the corner the difference shrinks in proportion to the
+    # probe width, because the second derivative there is finite (about
+    # c_hb |g| / (4 w), 2.2e4 per unit sigma here). A jump would not shrink.
+    step = {eps: abs(d_int(s_hb + eps, p) - d_int(s_hb - eps, p)) for eps in (1e-6, 1e-8)}
+    assert step[1e-8] == pytest.approx(step[1e-6] / 100, rel=0.05), step
+    hard_jump = abs(d_int(s_hb + 1e-8, KLAMT_1998) - d_int(s_hb - 1e-8, KLAMT_1998))
+    assert step[1e-8] < 1e-3 * hard_jump, (step, hard_jump)
+    assert hard_jump > 10.0, hard_jump                # the corner the smoothing removes
+
+
+def test_the_smoothed_term_is_symmetric_and_leaves_a_null_solvent_null():
+    import dataclasses
+
+    a, b = np.meshgrid(_HB_GRID, _HB_GRID)
+    p = dataclasses.replace(KLAMT_1998, hb_smoothing=1e-3)
+    e = rs.hydrogen_bond_energy(a, b, p)
+    np.testing.assert_array_equal(e, e.T)
+    # c_hb = 0 keeps the null-solvent limit of Direct COSMO-RS exact at any width.
+    null = dataclasses.replace(p, c_hb=0.0)
+    assert np.all(rs.hydrogen_bond_energy(a, b, null) == 0.0)
+
+
 def test_sigma_potential_evaluates_and_differentiates_itself_exactly():
     """The potential carries its solvent ensemble, so it is a function.
 
@@ -989,6 +1349,46 @@ def test_a_sigma_potential_without_its_ensemble_refuses_to_evaluate():
         bare.derivative(np.array([0.0]))
     with pytest.raises(ValueError, match="without its solvent ensemble"):
         bare.evaluate(np.array([0.0]))
+
+
+def _polar_ensemble(n=300, centre=0.017, width=0.004, seed=12345):
+    """A water-like solvent surface: two broad lobes at +-``centre`` e/A^2.
+
+    Seeded, so the ensemble -- and every number below -- is the same on every
+    run. Its lobes sit where a solvent computed near the parameterization's own
+    protocol puts them (BP86/def2-TZVP water spans about +-0.017), which is
+    exactly the regime the plain fixed point could not reach.
+    """
+    rng = np.random.default_rng(seed)
+    sigma = np.concatenate(
+        [rng.normal(-centre, width, n // 2), rng.normal(centre, width, n // 2)]
+    )
+    return rs.SegmentDescriptors(
+        areas=np.full(n, 0.35), sigma=sigma,
+        sigma_perp=np.zeros(n), sigma_raw=np.zeros(n),
+    )
+
+
+def test_sigma_potential_converges_on_a_realistic_polar_ensemble():
+    """The solvent solver reaches a realistic surface within its own cap.
+
+    The plain damped iteration contracts linearly, and on polar surfaces too
+    slowly: this ensemble needed 6029 steps to 1e-10 against a cap of 500, and
+    a real BP86/def2-TZVP water surface 504. Both were reported as failures
+    though the iteration was still converging. Anderson acceleration reaches
+    the same fixed point in a few dozen steps.
+
+    The oracle is the fixed-point equation itself, not a reference number:
+    evaluated at the ensemble's own segments, the potential must reproduce the
+    segment potentials it was converged to.
+    """
+    desc = _polar_ensemble()
+    pot = rs.sigma_potential_segments([desc], np.array([1.0]), KLAMT_1998)
+
+    assert pot.n_iter < 100, pot.n_iter
+    assert pot.residual < 1e-10
+    _, sigma, mu_seg, sigma_perp = pot._ensemble
+    np.testing.assert_allclose(pot.evaluate(sigma, sigma_perp), mu_seg, rtol=0, atol=1e-9)
 
 
 def test_sigma_potential_reports_nonconvergence_rather_than_returning_garbage():

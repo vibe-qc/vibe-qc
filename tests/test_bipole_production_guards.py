@@ -6,8 +6,8 @@ route audit; see handovers/HANDOVER_BIPOLE_PRODUCTION.md):
 1. The 3-D legacy (non-exchange-split) gauge at multi-k reports a total
    energy that is NOT stationary — the spheropole enters the energy but
    never the Fock operator (documented Ha-scale wrong-sign k-mesh
-   dependence). It stays reachable on purpose (ad-hoc k-lists / band
-   paths auto-fall back to it), so it must announce itself.
+   dependence). Explicit historical-domain replay keeps this diagnostic
+   reachable, including ad-hoc k-list fallback, so it must announce itself.
 2. Odd-electron cells at (default) multiplicity=1 are silently promoted
    to the minimum open shell (the deliberate 7991ae58 behavior for
    Al/Cu primitive cells); a user who *meant* a singlet must be told.
@@ -128,6 +128,7 @@ def test_legacy_multik_gauge_warns_through_driver(tmp_path):
                 basis,
                 kmesh,
                 opts,
+                historical_domain=True,
                 use_exchange_ewald_split=False,
                 progress=False,
             ),
@@ -419,6 +420,7 @@ def test_legacy_gauge_result_records_overlap_fold_drift(monkeypatch, method):
         basis,
         kmesh,
         opts,
+        historical_domain=True,
         use_exchange_ewald_split=False,
         progress=False,
         **kwargs,
@@ -456,6 +458,7 @@ def test_legacy_gauge_fold_guard_fails_closed(monkeypatch, method):
             basis,
             kmesh,
             opts,
+            historical_domain=True,
             use_exchange_ewald_split=False,
             progress=False,
             **kwargs,

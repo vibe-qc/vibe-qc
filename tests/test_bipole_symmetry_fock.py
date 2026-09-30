@@ -109,6 +109,7 @@ def test_legacy_mgo_symmetry_fixture_refuses_truncated_overlap(attach):
     with pytest.raises(BipoleFoldUnreliableError, match="S.*fold"):
         run_pbc_bipole_rhf(
             system, basis, monkhorst_pack(system, [1, 1, 1]), opts,
+            historical_domain=True,  # Preserve this historical cutoff-10 witness.
             use_ewald_j_split=True,
             use_exchange_ewald_split=False,
             use_fock_symmetry_reduce=False,

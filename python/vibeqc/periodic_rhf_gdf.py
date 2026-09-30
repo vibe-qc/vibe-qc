@@ -45,6 +45,7 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
+from .periodic.exchange_convention import MOLECULAR_LIMIT
 from ._vibeqc_core import (
     apply_level_shift,
     BasisSet,
@@ -173,6 +174,11 @@ class PeriodicRHFGDFResult:
     restart_kpoints: object = None
     restart_weights: object = None
 
+    # Every Gamma-only Ewald/GDF driver builds exchange with the
+    # molecular-limit kernel (home-cell density, image blocks zeroed); the
+    # runner's manifest records this instead of the exxdiv knob (GitLab #23).
+    exchange_q0: str = MOLECULAR_LIMIT
+
 
 @dataclass
 class _PrivateSlabKRHFGDFResult:
@@ -198,6 +204,8 @@ class _PrivateSlabKRHFGDFResult:
     e_hf_exchange: float = 0.0
     aux_basis_name: str = ""
     n_aux: int = 0
+    #: ``(k_i, k_j)`` fit tensors the SCF built (``len(fits)``).
+    gdf_cderi_pairs: int = 0
     backend: str = "private-multik-slab-truncated-gdf"
 
     restart_basis: object = None
@@ -1949,6 +1957,7 @@ def _run_krhf_periodic_slab_gdf(
                 e_hf_exchange=e_hf_exchange,
                 aux_basis_name=aux_name,
                 n_aux=int(raw_aux.nbasis),
+                gdf_cderi_pairs=len(fits),
                 backend=(
                     "private-multik-slab-truncated-gdf-rks"
                     if is_ks
@@ -2035,6 +2044,7 @@ def _run_krhf_periodic_slab_gdf(
         e_hf_exchange=e_hf_exchange,
         aux_basis_name=aux_name,
         n_aux=int(raw_aux.nbasis),
+        gdf_cderi_pairs=len(fits),
         backend=(
             "private-multik-slab-truncated-gdf-rks"
             if is_ks

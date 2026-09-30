@@ -100,6 +100,18 @@ The full reference is [user_guide/k_points.md](../user_guide/k_points.md).
 * `lattice_opts.nuclear_cutoff_bohr`, separate, usually larger,
   cutoff for the nuclear-attraction term (1/r tail decays more slowly
   than AO overlap).
+* `lattice_opts.gamma_only_0`, off by default. Set it only when you
+  mean the molecular limit: one unit cell, no periodic image coupling.
+  Image cells are selected by `|g| <= cutoff_bohr`, so if your shortest
+  lattice vector is *longer* than the cutoff, no image survives and the
+  calculation is a free-boundary cluster wearing a periodic label: it
+  converges, it returns the isolated molecule's energy, and it is
+  exactly k-independent, so refining the mesh only confirms a stable
+  wrong answer. The driver therefore refuses that cell list unless you
+  set this flag. If the refusal surprises you, raise `cutoff_bohr` or
+  use a primitive cell with a matched k mesh; if you really did mean a
+  molecule in a vacuum box (the big-box case below), set the flag. It
+  declares intent and changes no sum.
 
 ## Choosing a k-mesh
 
@@ -113,9 +125,11 @@ starting point.
 
 ## What's validated today
 
-* **Molecular limit**: a big-box (50 bohr) unit cell produces the same
-  energy as molecular RHF, machine precision across dim ∈ {1, 2, 3}
-  and multiple k-mesh sizes.
+* **Molecular limit**: a big-box (50 bohr) unit cell with
+  `lattice_opts.gamma_only_0 = True` produces the same energy as
+  molecular RHF, machine precision across dim ∈ {1, 2, 3} and multiple
+  k-mesh sizes. Without the declaration the driver refuses the box, by
+  design; see the option above.
 * **Bloch-sum machinery**: kinetic-only folding equivalence between
   1-cell × K k-points and K-cell × Γ, machine precision.
 * **Non-trivial 1D SCF convergence** at tight cell spacings.

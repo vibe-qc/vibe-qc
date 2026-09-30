@@ -215,6 +215,16 @@ PeriodicRHFResult run_rhf_periodic_gamma(const PeriodicSystem& system,
 
     const int nocc = n_elec / 2;
 
+    // Image selection is a translation ball, |g| <= cutoff_bohr, so a cell
+    // wider than the cutoff leaves only g = 0 and every lattice sum below
+    // silences itself into its molecular form (#133). Refuse before spending
+    // an SCF on it, unless the caller declared the molecular limit.
+    if (!opts.lattice_opts.gamma_only_0) {
+        require_nonzero_lattice_image(
+            direct_lattice_cells(system, opts.lattice_opts.cutoff_bohr),
+            opts.lattice_opts.cutoff_bohr, "run_rhf_periodic_gamma");
+    }
+
     // ---- One-electron integrals (real-space, folded to Γ) ------------------
     const auto S_set = compute_overlap_lattice(basis, system, opts.lattice_opts);
     const auto T_set = compute_kinetic_lattice(basis, system, opts.lattice_opts);

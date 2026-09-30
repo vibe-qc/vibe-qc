@@ -32,8 +32,10 @@ keeps the Lpq factor cutoff-stable, which keeps J/K stable too.
    The AFT long-range correction (PySCF ``_CCGDFBuilder.get_2c2e``
    j2c_p subtraction) conditions the compcell metric and makes the
    answer largely η-independent. With both the 2c and 3c AFT pieces
-   in the matched ``libint`` convention (the default, η ≈ 1.0) the
-   compcell path reaches sub-mHa PySCF parity on H2/vacuum-box.
+   in the matched ``libint`` convention (the default) and the auxiliary
+   images and G = 0 term of #172, the compcell path matches PySCF GDF to
+   about 1e-7 Ha on H2/STO-3G in a 6-bohr cube and to a few uHa on
+   LiH/STO-3G.
 
    For µHa parity use ``gdf_method='rsgdf'`` (range-separated GDF;
    sub-µHa on H2, -0.5 µHa on LiH primitive FCC) -- the recommended
@@ -115,6 +117,7 @@ from .occupations import aufbau_occupations_per_k as _aufbau_occupations_per_k
 from .periodic_rhf_ewald import _canonical_orthogonalizer
 from .periodic_scf_accelerators import DynamicDamping, PeriodicSCFAccelerator
 from .periodic_v_ne import compute_nuclear_lattice_dispatch
+from .periodic_gdf_route import refuse_unimplemented_gamma_controls
 from .periodic_screened_exchange import (
     reject_periodic_gdf_unsupported_functional,
     reject_unscreened_range_separated,
@@ -675,6 +678,18 @@ def _reject_dense_core_mdf(
 ) -> None:
     """Fail closed on the compact-dense-core MDF class (G-GDF-001).
 
+    **Update 2026-09-29 (#172): the residual below was the auxiliary-image
+    omission, not auxiliary-space incompleteness.** The Gaussian 3c block
+    kept the auxiliary function in the home cell; on MgO the omitted
+    images were 3 % of the kept tensor. With the image sum
+    (``aux_basis.aux_image_3c``) MgO/STO-3G lands, against PySCF MDF
+    -271.04988532: +0.23 mHa at the calibrated floor
+    (``_MDF_DRESSED_METRIC_MIN_EIG_FRACTION``), and with the floor off
+    +15.3 uHa at an absolute cut of 1e-5, -2.4 uHa at 1e-7, -36 uHa at
+    1e-9. The gate stays until the floor is recalibrated on the image-summed
+    fit and the multi-k and LiH members are re-measured; the history below
+    is kept because every measurement in it predates the image sum.
+
     Still wrong on this class, but the cause is now measured rather than
     assumed (2026-08-03). The earlier text here said MDF "inherits the
     Γ-only tight-ionic compcell instability"; that was a hypothesis.
@@ -728,17 +743,20 @@ def _reject_dense_core_mdf(
 
     **Why those modes were noise, measured.** At the production rcut
     (``pyscf_auto``, ``rcut_precision`` 1e-8) the MgO ``J-tilde``
-    spectrum carries up to **5.4e-06** absolute construction error
-    against a converged 34-bohr reference. The smallest RETAINED
-    eigenvalue at the old default was **2.9e-08, with its own error bar
-    at 6.6e-08** -- the mode was smaller than its uncertainty, and
-    Eq. 19 divides the Eq.-23 numerator by its square root
-    (amplification ~6e+03). PySCF can afford its much tighter 1e-10
-    because it builds the 2c metric at a dedicated far tighter precision
-    (``precision_j2c``), exactly because 2c metric error propagates into
-    the fitted tensor; vibe-qc builds ``J-tilde`` at the general
-    lattice-sum precision, so its threshold must sit correspondingly
-    higher. See ``aux_basis._MDF_DRESSED_METRIC_MIN_THRESHOLD``.
+    spectrum carried up to **5.4e-06** absolute construction error
+    against a converged reference. The smallest RETAINED eigenvalue at
+    the old default was **2.9e-08, with its own error bar at 6.6e-08**
+    -- the mode was smaller than its uncertainty, and Eq. 19 divides the
+    Eq.-23 numerator by its square root (amplification ~6e+03).
+
+    **That construction error is now gone** (2026-09-17). ``J-tilde`` is
+    built at a dedicated ``precision_j2c`` on a lattice sum sized for the
+    accumulated, not the largest-single, dropped term
+    (``aux_basis._MDF_PRECISION_J2C``,
+    ``lattice_screening.estimate_rcut_accumulated``): the MgO spectrum
+    error is **1.8e-13**, and ``J-tilde``'s most negative eigenvalue --
+    impossible above round-off for what is a Gram matrix of PW residuals
+    -- went from **-5.4e-06 to -1.3e-13**.
 
     **What landed.** The convention is harmonised to ABSOLUTE across all
     nine fitting-metric decompositions (PySCF's convention; MDF and
@@ -759,14 +777,29 @@ def _reject_dense_core_mdf(
     incompleteness error". 92 mHa is not production accuracy, so the
     class stays gated (CLAUDE.md §7).
 
-    **The remaining follow-up**, and the route to lifting this gate:
-    build ``J-tilde`` accurately enough to support a PySCF-like
-    threshold, i.e. vibe-qc's analogue of ``precision_j2c``. Related
-    measured finding: ``precision=1e-8`` does not deliver 1e-8 in the
-    compensated metric -- residues at the auto rcut are 2.4e-07 (MgO),
-    7.1e-06 (LiH rocksalt), 1.9e-08 (H2 box), essentially independent of
-    the compensating exponent eta, consistent with accumulation over the
-    ~R^3 lattice terms rather than single-pair amplitude decay.
+    **And it did NOT lift this gate -- measured 2026-09-17, so do not
+    spend the time again.** The 2026-08-14 note named a tighter
+    ``J-tilde`` as the route out. It is not. Sweeping the absolute
+    threshold on MgO with the accurate metric and the floor disabled
+    reproduces the pre-fix sweep above cut for cut:
+
+        1e-3   -274.2850      (pre-fix, relative 1e-4:  -275.300)
+        1e-6   -337.8017      (pre-fix, relative 1e-7:  -337.802)
+        1e-8   -64954.85      diverged, non-converged
+
+    The 1e-6 row is the same effective cut as the recorded relative 1e-7
+    (max_eig = 10.8) and lands on the recorded value to all its digits.
+    Per mode, the amplification ``|u_i . T_corr| / sqrt(lambda_i)`` is
+    likewise unmoved: 938.5 -> 943.6 at lambda = 1.06e-12, 94.90 -> 94.60
+    at 4.14e-09. A residual that survives a seven-order change in the
+    metric is not the metric's.
+
+    The mesh is refuted too: at the loosest useful threshold the residual
+    is flat in ``mdf_ke_cutoff`` (-92.05 / -82.50 / -82.55 / -88.37 mHa
+    at ke = 40 / 60 / 80 / 120). What is left is what this docstring
+    already said it was -- **the incompleteness of the 81%-smaller aux
+    space itself** (Sun Sec. III), and the route out has to widen that
+    space rather than sharpen what is fitted in it.
 
     Callers who want this class anyway can pass a looser
     ``gdf_linear_dep_threshold`` (~3e-2) knowingly.
@@ -781,13 +814,11 @@ def _reject_dense_core_mdf(
         return
     raise NotImplementedError(
         f"{entry}: gdf_method='mdf' on a compact dense-core cell "
-        "(Z>=8 in <250 bohr^3/atom) is not supported. The PW-dressed "
-        "metric (Sun 2017 Eq. 20) is too ill-conditioned on this class "
-        "for the auxiliary basis to survive the linear-dependence cut: "
-        "the threshold that removes the divergence also discards ~81% "
-        "of the aux space, leaving ~92 mHa of incompleteness error vs "
-        "PySCF MDF on MgO/STO-3G (G-GDF-001; divergence fixed "
-        "2026-08-14, accuracy still short). Use the default "
+        "(Z>=8 in <250 bohr^3/atom) is not supported yet. Its PW-dressed "
+        "metric (Sun 2017 Eq. 20) threshold floor was calibrated before "
+        "the Gaussian block summed its auxiliary images (#172); at that "
+        "floor MgO/STO-3G still sits 0.23 mHa from PySCF MDF, pending "
+        "recalibration (G-GDF-001). Use the default "
         "gdf_method='rsgdf' (the Gamma driver auto-sizes the high-|G| "
         "tail to reach PySCF parity on this class; multi-k accepts "
         "rsgdf_tail_ke_cutoff), or a vacuum-padded / "
@@ -865,46 +896,6 @@ def _warn_gamma_dense_core_gdf_parity_hold(
     return True
 
 
-def _warn_gamma_compcell_tight_ionic_cell(
-    system: PeriodicSystem,
-    gdf_method: str,
-    driver: str,
-) -> bool:
-    """Warn when the Γ-only compcell Hartree cannot be trusted.
-
-    Γ-only compcell GDF is not sufficient for tight cells with heavy
-    atoms (Z > 1) where AO-pair images overlap: the Γ-only Hartree
-    (G=0 dropped) cannot resolve the overlap between periodic images
-    and the SCF converges to a non-physical fixed point (LiH FCC
-    primitive: +579.8 Ha at HF vs PySCF -8 Ha; the energy-sanity
-    guard rejects it downstream). The multi-k path is the production
-    route for these cells.
-
-    Heuristic: Z > 1 in a cell < 500 bohr³ total is tight enough that
-    AO-pair images overlap. H₂ in a 12-bohr box (1728 bohr³) is safe;
-    LiH FCC primitive (115 bohr³) is not.
-    """
-    if int(system.dim) != 3 or str(gdf_method) != "compcell":
-        return False
-    if not system.unit_cell:
-        return False
-    z_max = max(atom.Z for atom in system.unit_cell)
-    cell_vol = float(abs(np.linalg.det(np.asarray(system.lattice))))
-    if z_max <= 1 or cell_vol >= 500.0:
-        return False
-    warnings.warn(
-        f"{driver}: Γ-only compcell GDF may be unreliable "
-        f"for this tight ionic cell (max Z={z_max}, cell volume "
-        f"{cell_vol:.0f} bohr³). The Γ-only Hartree (G=0 "
-        "dropped) cannot fully resolve AO-pair overlap between "
-        "periodic images. Prefer the multi-k path: "
-        "vibeqc.run_krhf_periodic_gdf(..., use_compcell=True). "
-        "Validated at µHa parity on LiH FCC at kmesh=(2,2,2).",
-        stacklevel=3,
-    )
-    return True
-
-
 def _gdf_backend_with_parity_hold(backend: str, parity_held: bool) -> str:
     if not parity_held or "+PARITY_HELD" in backend:
         return backend
@@ -962,7 +953,7 @@ def _pbc_gdf_gamma_setup(
     apply_aft_correction: bool,
     aft_precision: float,
     aft_ft_convention: str,
-    rsgdf_ke_cutoff: float,
+    rsgdf_ke_cutoff: Optional[float],
     rsgdf_tail_ke_cutoff: Optional[float],
     mdf_ke_cutoff: float,
     rcut_strategy: Optional[object],
@@ -1008,7 +999,10 @@ def _pbc_gdf_gamma_setup(
             f"lat_opts.coulomb_method={lat_opts.coulomb_method!r})"
         )
     oneel_lat_opts = lat_opts
-    if gdf_method == "rsgdf" and int(system.dim) == 3:
+    # Every bulk fit shares the k-mesh engine's one-electron AO domain; the
+    # compcell/MDF Gamma routes used the caller's flat cells, 4.7 mHa off
+    # the (1,1,1) engine on LiH/STO-3G once #172 admitted that cell.
+    if int(system.dim) == 3:
         from .periodic_k_gdf import _oneel_lattice_opts, _preflight_gdf_oneel_memory
 
         oneel_lat_opts = _oneel_lattice_opts(
@@ -1019,7 +1013,8 @@ def _pbc_gdf_gamma_setup(
         _preflight_gdf_oneel_memory(system, basis, oneel_lat_opts)
     with plog.stage(
         "integrals_lattice",
-        detail=f"S/T/V at cutoff {oneel_lat_opts.cutoff_bohr:.2f} bohr",
+        detail=f"S/T at cutoff {oneel_lat_opts.cutoff_bohr:.2f} bohr, "
+        "V on the screened AO-pair domain",
     ):
         S_lat = compute_overlap_lattice(basis, system, oneel_lat_opts)
         T_lat = compute_kinetic_lattice(basis, system, oneel_lat_opts)
@@ -1210,14 +1205,14 @@ def run_pbc_gdf_rhf(
     aux_basis: Optional[str] = None,
     aux_drop_eta: float = 0.0,
     exxdiv: Union[PBCExxDiv, str] = PBCExxDiv.EWALD,
-    gdf_method: str = "compcell",
+    gdf_method: str = "rsgdf",
     compcell_eta: float = 1.0,
     apply_aft_correction: bool = True,
     aft_precision: float = 1e-10,
     aft_ft_convention: str = "libint",
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     mdf_ke_cutoff: float = 40.0,
     rcut_strategy: Optional[object] = "pyscf_auto",
@@ -1229,12 +1224,15 @@ def run_pbc_gdf_rhf(
     progress: Union[bool, ProgressLogger, None] = None,
     verbose: Optional[int] = None,
 ) -> PBCGDFResult:
-    """Closed-shell periodic RHF/RKS via compcell GDF.
+    """Closed-shell Γ-point periodic RHF/RKS via GDF.
 
-    Γ-only in this initial landing. For ``kmesh != (1, 1, 1)``,
-    raises ``NotImplementedError`` -- the multi-k path is the next
-    milestone (see ``run_krhf_periodic_gdf`` which will pull
-    compcell Lpq + exxdiv shift in once this Γ path is validated).
+    The exact-Gamma evaluation of the bulk GDF Hamiltonian: fitted
+    Hartree plus the ``exxdiv='ewald'`` exchange, the same Hamiltonian
+    :func:`vibeqc.run_krhf_periodic_gdf` runs at ``kmesh=(1, 1, 1)`` (the
+    two agree to 1e-12 Ha on MgO/STO-3G). Only ``kmesh=(1, 1, 1)`` is
+    accepted. Smearing, Fock mixing and level shifts are not implemented
+    here and raise ``NotImplementedError``; the k-mesh driver at
+    ``(1, 1, 1)`` implements them.
 
     Parameters
     ----------
@@ -1272,28 +1270,33 @@ def run_pbc_gdf_rhf(
         :class:`PBCExxDiv` or its string value (``'ewald'`` /
         ``'none'``). Default ``EWALD`` (PySCF parity).
     gdf_method
-        Lpq builder selector -- ``'compcell'`` (default) for the Sun-2017
-        compensated-charge path
-        (:func:`vibeqc.aux_basis.build_lpq_compcell`), or ``'rsgdf'`` for
-        the historical all-reciprocal Coulomb source
-        (:func:`vibeqc.aux_basis.build_lpq_native_fft`). Despite its name,
-        the current production source does not evaluate real-space SR
-        integrals. The replacement SR/LR source is under validation; see
-        ``docs/design_native_gdf.md``. ``compcell_eta``,
-        ``apply_aft_correction`` and ``aft_*`` select the compcell route's
-        construction and do not affect the all-reciprocal source.
+        Lpq builder selector. ``'rsgdf'`` (default) is the range-separated
+        fit: real-space short-range integrals summed over independent AO
+        and auxiliary images plus a reciprocal long-range part (Ye and
+        Berkelbach, JCP 154, 131104 (2021); ``docs/design_native_gdf.md``).
+        It is the production source of every GDF route. ``'compcell'``
+        (Sun-2017 compensated charges,
+        :func:`vibeqc.aux_basis.build_lpq_compcell`) and ``'mdf'`` sum the
+        auxiliary images of their Gaussian three-centre integrals
+        (:func:`vibeqc.aux_basis.aux_image_3c`, #172) and describe the same
+        periodic fitting functions as ``'rsgdf'`` (compcell) or add a
+        plane-wave residual to them (MDF). ``compcell_eta``,
+        ``apply_aft_correction`` and ``aft_*`` select the compcell
+        construction and do not affect ``'rsgdf'``.
+        Before 2026-09 this driver defaulted to ``'compcell'``, the only
+        GDF entry point that did.
     compcell_eta
         Smooth-Gaussian exponent for the compensating basis (default
         1.0; with AFT on, the result is largely η-independent). See
         :func:`vibeqc.aux_basis.build_lpq_compcell`.
         Only used when ``gdf_method='compcell'``.
     rsgdf_omega
-        Legacy split parameter (default ``0.4``). Retained in the API;
-        the current all-reciprocal production source does not use it.
+        Range-separation parameter ``omega`` of the ``'rsgdf'`` fit, in
+        inverse bohr (default ``0.4``).
     rsgdf_g_precision
-        Legacy LR precision (default ``1e-10``). Retained in the API;
-        the current production source uses ``rsgdf_ke_cutoff`` and its
-        optional tail instead.
+        Raw integral error target of the ``'rsgdf'`` fit (default
+        ``1e-10``); the planner sizes the real-space image domains and the
+        reciprocal cutoff from it.
     linear_dep_threshold
         Overlap eigenvalue floor for canonical orthogonalisation.
     gdf_linear_dep_threshold
@@ -1313,10 +1316,10 @@ def run_pbc_gdf_rhf(
         in the rsgdf builder). Same option as on the multi-k
         ``run_krhf/krks/kuhf_periodic_gdf`` drivers.
     compute_gradient
-        If ``True``, compute the analytic GDF gradient after SCF convergence.
-        This preview is restricted to 3D Gamma-point RHF with
-        ``gdf_method='compcell'``, ``apply_aft_correction=False``, and the
-        analytical-FT ``V_ne`` backend. Unsupported routes fail before SCF.
+        If ``True``, compute the analytic GDF gradient after SCF convergence
+        (3D cells, ``gdf_method`` ``'rsgdf'`` or ``'compcell'``, the
+        analytical-FT ``V_ne`` backend). The MDF fit derivative is not
+        implemented. Unsupported routes fail before SCF.
     progress, verbose
         Live progress logging passthrough.
 
@@ -1325,16 +1328,15 @@ def run_pbc_gdf_rhf(
     PBCGDFResult
     """
     _refuse_ecp_options(options, "run_pbc_gdf_rhf", system=system)
-    kmesh = tuple(int(x) for x in kmesh)
+    from .kpoints import _integer_counts
+
+    kmesh = tuple(_integer_counts(kmesh, name="Gamma GDF kmesh"))
     if kmesh != (1, 1, 1):
         raise NotImplementedError(
             "run_pbc_gdf_rhf: only kmesh=(1,1,1) (Γ-only) is implemented "
-            f"in this driver; got kmesh={kmesh}. For multi-k periodic "
-            "SCF, see `vibeqc.run_krhf_periodic_gdf` (uses the legacy "
-            "bare-aux Lpq path; works but has the bare-aux divergence on "
-            "diffuse JKfit auxiliaries). Multi-k compcell GDF is a "
-            "v0.9.0 milestone (will patch run_krhf_periodic_gdf to use "
-            "build_lpq_compcell + apply_exxdiv_ewald_to_K)."
+            f"in this driver; got kmesh={kmesh}. Use "
+            "vibeqc.run_krhf_periodic_gdf for a k-point mesh; it runs the "
+            "same Hamiltonian."
         )
     if isinstance(exxdiv, str):
         exxdiv = PBCExxDiv(exxdiv)
@@ -1362,6 +1364,7 @@ def run_pbc_gdf_rhf(
 
         options = PeriodicKSOptions() if functional else PeriodicRHFOptions()
     opts = options
+    refuse_unimplemented_gamma_controls(opts, driver="run_pbc_gdf_rhf")
     lat_opts: LatticeSumOptions = opts.lattice_opts
     plog = resolve_progress(progress, verbose=verbose)
     guess = _coerce_periodic_driver_guess(
@@ -1479,11 +1482,6 @@ def run_pbc_gdf_rhf(
             "v0.9.0's charged-cell support."
         )
 
-    # ---- Ionic-system guard: \u0393-only compcell is not sufficient
-    # for tight cells with heavy atoms (Z > 1) where AO-pair images
-    # overlap.  The multi-k path is the production route for these.
-    _warn_gamma_compcell_tight_ionic_cell(system, gdf_method, "run_pbc_gdf_rhf")
-
     if not apply_aft_correction and gdf_method == "compcell":
         # The AFT long-range correction is now ON by default (v0.12.0).
         # Disabling it reverts to the bare compcell path which requires
@@ -1535,6 +1533,9 @@ def run_pbc_gdf_rhf(
             "RSGDF high-|G| tail cutoff: "
             f"{float(rsgdf_tail_ke_cutoff):g} Ha"
         )
+    from .periodic_k_gdf import _resolve_rsgdf_ke_cutoff
+
+    _rsgdf_ke_request, rsgdf_ke_cutoff = _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff)
     parity_held = gdf_method != "rsgdf" and _warn_gamma_dense_core_gdf_parity_hold(
         system,
         gdf_method,
@@ -1565,7 +1566,7 @@ def run_pbc_gdf_rhf(
         apply_aft_correction=apply_aft_correction,
         aft_precision=aft_precision,
         aft_ft_convention=aft_ft_convention,
-        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        rsgdf_ke_cutoff=_rsgdf_ke_request,
         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         mdf_ke_cutoff=mdf_ke_cutoff,
         rcut_strategy=rcut_strategy,
@@ -1747,7 +1748,10 @@ def run_pbc_gdf_rhf(
         aft_ft_convention=str(aft_ft_convention),
         v_ne_backend=v_ne_backend,
         v_ne_ke_cutoff=v_ne_ke_cutoff,
-        rsgdf_ke_cutoff=float(rsgdf_ke_cutoff),
+        # The mesh the SR/LR source actually executed, else the concrete
+        # legacy mesh (GitLab IIDs 307, 257).
+        rsgdf_ke_cutoff=float(getattr(
+            setup.range_separated_cache, "lr_ke_cutoff", rsgdf_ke_cutoff)),
         rsgdf_tail_ke_cutoff=(
             float(rsgdf_tail_ke_cutoff)
             if (rsgdf_tail_ke_cutoff is not None and gdf_method == "rsgdf")
@@ -2126,7 +2130,7 @@ def run_pbc_gdf_uhf(
     aft_ft_convention: str = "libint",
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     mdf_ke_cutoff: float = 40.0,
     rcut_strategy: Optional[object] = "pyscf_auto",
@@ -2151,15 +2155,12 @@ def run_pbc_gdf_uhf(
     tolerance (the closed-shell-limit gate).
 
     ``gdf_method`` defaults to ``'rsgdf'`` (2026-07-09; the open-shell
-    drivers used to default to ``'compcell'`` like the RHF sibling). The
-    Γ-only compcell Hartree cannot resolve overlapping AO-pair images on
-    tight ionic cells -- its q-only cderi is exact only in the vacuum-box
-    limit -- and the SCF converges to a non-physical fixed point
-    (rocksalt LiH/STO-3G: +579.8 Ha at UHF, +1172.6 Ha at UKS-PBE, both
-    ``converged=True``; the rsgdf lane lands at the sane -8.33 / -8.23 Ha
-    on the same cell). ``gdf_method='compcell'`` stays selectable for its
-    own development; the tight-ionic warning + the energy-sanity guard
-    still fence it.
+    drivers used to default to ``'compcell'`` like the RHF sibling). Until
+    2026-09-29 the Γ-only compcell fit omitted the auxiliary images of its
+    three-centre block and converged to non-physical fixed points on tight
+    ionic cells (rocksalt LiH/STO-3G: +579.8 Ha at UHF, +1172.6 Ha at
+    UKS-PBE); with the images summed it agrees with rsgdf there (#172).
+    The energy-sanity guard stays as a general backstop.
 
     Parameters are identical to :func:`run_pbc_gdf_rhf`; see its docstring.
     ``compute_gradient=True`` computes the analytic Γ compcell gradient
@@ -2185,6 +2186,7 @@ def run_pbc_gdf_uhf(
     if options is None:
         options = PeriodicRHFOptions()
     opts = options
+    refuse_unimplemented_gamma_controls(opts, driver="run_pbc_gdf_uhf")
     # SPINLOCK. SPIN_SCHEDULE (two-phase: lock spin then release) is delegated
     # before any SCF setup; the sub-runs re-enter with spinlock OFF. PATTERN_HOLD
     # (MOM-hold the seeded occupied set, below) runs inside the SCF loop.
@@ -2319,12 +2321,14 @@ def run_pbc_gdf_uhf(
         f"PBC-GDF UHF / aux={aux_name}, exxdiv={exxdiv.value}, "
         f"n_alpha={n_alpha}, n_beta={n_beta} (mult={mult})"
     )
-    _warn_gamma_compcell_tight_ionic_cell(system, gdf_method, "run_pbc_gdf_uhf")
     if rsgdf_tail_ke_cutoff is not None and gdf_method == "rsgdf":
         plog.info(
             "RSGDF high-|G| tail cutoff: "
             f"{float(rsgdf_tail_ke_cutoff):g} Ha"
         )
+    from .periodic_k_gdf import _resolve_rsgdf_ke_cutoff
+
+    _rsgdf_ke_request, rsgdf_ke_cutoff = _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff)
     parity_held = gdf_method != "rsgdf" and _warn_gamma_dense_core_gdf_parity_hold(
         system,
         gdf_method,
@@ -2357,7 +2361,7 @@ def run_pbc_gdf_uhf(
         apply_aft_correction=apply_aft_correction,
         aft_precision=aft_precision,
         aft_ft_convention=aft_ft_convention,
-        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        rsgdf_ke_cutoff=_rsgdf_ke_request,
         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         mdf_ke_cutoff=mdf_ke_cutoff,
         rcut_strategy=rcut_strategy,
@@ -2554,7 +2558,10 @@ def run_pbc_gdf_uhf(
         madelung_constant=float(madelung),
         exxdiv=exxdiv.value,
         compcell_eta=float(compcell_eta),
-        rsgdf_ke_cutoff=float(rsgdf_ke_cutoff),
+        # The mesh the SR/LR source actually executed, else the concrete
+        # legacy mesh (GitLab IIDs 307, 257).
+        rsgdf_ke_cutoff=float(getattr(
+            setup.range_separated_cache, "lr_ke_cutoff", rsgdf_ke_cutoff)),
         rsgdf_tail_ke_cutoff=(
             float(rsgdf_tail_ke_cutoff)
             if (rsgdf_tail_ke_cutoff is not None and gdf_method == "rsgdf")
@@ -2809,7 +2816,7 @@ def run_pbc_gdf_uhf(
                     eps_beta_occ=eps_b_grad,
                     S=S,
                     cache=grad_cache,
-                    lattice_opts=lat_opts,
+                    lattice_opts=setup.oneel_lat_opts or lat_opts,
                     gauge_lat_opts=setup.gauge_lat_opts,
                     madelung=(
                         float(madelung)
@@ -3003,7 +3010,7 @@ def run_pbc_gdf_uks(
     aft_ft_convention: str = "libint",
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     mdf_ke_cutoff: float = 40.0,
     rcut_strategy: Optional[object] = "pyscf_auto",
@@ -3065,6 +3072,7 @@ def run_pbc_gdf_uks(
             PeriodicKSOptions() if functional else PeriodicRHFOptions()
         )
     opts = options
+    refuse_unimplemented_gamma_controls(opts, driver="run_pbc_gdf_uks")
     # SPINLOCK. SPIN_SCHEDULE (two-phase) is delegated before SCF setup;
     # PATTERN_HOLD (MOM-hold the seeded occupied set) runs inside the SCF loop.
     from ._vibeqc_core import SpinlockMode
@@ -3203,12 +3211,14 @@ def run_pbc_gdf_uks(
         f"PBC-GDF UKS / func={func_name or '(none->UHF)'}, alpha={alpha:g}, "
         f"aux={aux_name}, n_alpha={n_alpha}, n_beta={n_beta} (mult={mult})"
     )
-    _warn_gamma_compcell_tight_ionic_cell(system, gdf_method, "run_pbc_gdf_uks")
     if rsgdf_tail_ke_cutoff is not None and gdf_method == "rsgdf":
         plog.info(
             "RSGDF high-|G| tail cutoff: "
             f"{float(rsgdf_tail_ke_cutoff):g} Ha"
         )
+    from .periodic_k_gdf import _resolve_rsgdf_ke_cutoff
+
+    _rsgdf_ke_request, rsgdf_ke_cutoff = _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff)
     parity_held = gdf_method != "rsgdf" and _warn_gamma_dense_core_gdf_parity_hold(
         system,
         gdf_method,
@@ -3231,7 +3241,7 @@ def run_pbc_gdf_uks(
         apply_aft_correction=apply_aft_correction,
         aft_precision=aft_precision,
         aft_ft_convention=aft_ft_convention,
-        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+        rsgdf_ke_cutoff=_rsgdf_ke_request,
         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         mdf_ke_cutoff=mdf_ke_cutoff,
         rcut_strategy=rcut_strategy,
@@ -3456,7 +3466,10 @@ def run_pbc_gdf_uks(
         madelung_constant=float(madelung),
         exxdiv=exxdiv.value,
         compcell_eta=float(compcell_eta),
-        rsgdf_ke_cutoff=float(rsgdf_ke_cutoff),
+        # The mesh the SR/LR source actually executed, else the concrete
+        # legacy mesh (GitLab IIDs 307, 257).
+        rsgdf_ke_cutoff=float(getattr(
+            setup.range_separated_cache, "lr_ke_cutoff", rsgdf_ke_cutoff)),
         rsgdf_tail_ke_cutoff=(
             float(rsgdf_tail_ke_cutoff)
             if (rsgdf_tail_ke_cutoff is not None and gdf_method == "rsgdf")
@@ -3750,7 +3763,7 @@ def run_pbc_gdf_uks(
                     eps_beta_occ=eps_b_grad,
                     S=S,
                     cache=grad_cache,
-                    lattice_opts=lat_opts,
+                    lattice_opts=setup.oneel_lat_opts or lat_opts,
                     gauge_lat_opts=setup.gauge_lat_opts,
                     madelung=(
                         float(madelung)
@@ -3941,13 +3954,9 @@ def _check_energy_sanity(
         f"|E_total| < {sane_bound:.2e} Ha (loose hydrogenic bound on "
         "S_atoms Z^2/2). The SCF has converged to a numerical fixed point "
         "of a broken Fock (CLAUDE.md Sec.7 -- not a convergence-aid "
-        "problem). Known trigger: Gamma-only gdf_method='compcell' on a "
-        "tight ionic cell, where the Gamma-only Hartree (G=0 dropped) "
-        "cannot resolve overlapping AO-pair images -- use the multi-k "
-        "route (run_krhf/run_kuhf/run_kuks_periodic_gdf, validated at uHa "
-        "parity on LiH FCC at kmesh=(2,2,2)) or gdf_method='rsgdf' at "
-        "Gamma. Pass check_energy_sanity=False to bypass this guard "
-        "(diagnostics only)."
+        "problem). Compare against the default gdf_method='rsgdf' and "
+        "report the cell. Pass check_energy_sanity=False to bypass this "
+        "guard (diagnostics only)."
     )
     try:
         result.backend = result.backend + "+SANITY_FAILED"

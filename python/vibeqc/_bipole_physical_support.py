@@ -17,6 +17,7 @@ Budgets count conservative logical storage/work, not allocator/RSS bounds.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
 from fractions import Fraction
 import hashlib
 import itertools
@@ -236,6 +237,104 @@ def build_quartet_support(lattice, centers, *, pair_radius, midpoint_radius,
     object.__setattr__(result, "memory", plan)
     object.__setattr__(result, "images", images)
     return result
+
+
+@dataclass(frozen=True, slots=True)
+class QuartetSupportAudit:
+    """Equality of declared image multisets, not authenticated AO geometry."""
+    matches: bool
+    first_mismatch: tuple[int, ...] | None
+    source_multiplicity: int
+    target_multiplicity: int
+    inventoried_bytes: int
+    work_units: int
+    action_identity_sha256: str
+
+    @property
+    def physical_hamiltonian_certified(self):
+        return False
+
+    @property
+    def symmetry_certified(self):
+        return False
+
+
+def audit_quartet_support(source_images, target_images, *, permutation, site_shifts, budget):
+    """Compare finite SR supports after an ERI permutation and reanchoring.
+
+    Each input is an ordered int64 [image,3,3] multiset of (g,p,s).
+    Destination slot j names source slot permutation[j], whose declared
+    center has moved by A*site_shifts[permutation[j]]. Starting from absolute
+    cell labels (0,g,p,s), subtract those site shifts, permute, then subtract
+    the new first label. All arithmetic uses Python integers, without torus
+    wrapping or int64 overflow. Only the eight ERI permutations are admitted.
+
+    This compares supplied labels only: geometry, shell ownership, radii,
+    integral values and Bloch phases require independent validation. The
+    receipt binds ordered inputs and the mapping, but not resource caps.
+    Budget counts are conservative logical inventories, not RSS guarantees.
+    """
+    if not isinstance(budget, Budget):
+        raise TypeError("support audit requires an explicit shared Budget")
+    budget.admit(_FIXED_BYTES, 65536)
+    for images in (source_images, target_images):
+        if (not isinstance(images, np.ndarray) or images.dtype != np.dtype("int64")
+                or images.ndim != 3 or images.shape[1:] != (3, 3)):
+            raise TypeError("support audit requires int64 [image,3,3] arrays")
+        if not images.flags.c_contiguous or not images.flags.aligned:
+            raise ValueError("support audit arrays must be aligned and C-contiguous")
+    count = len(source_images) + len(target_images)
+    # Includes snapshots, tuple/int keys, both count dictionaries and hashing.
+    # Quadratic work also covers worst-case dictionary collision comparisons.
+    byte_count = _FIXED_BYTES + 4096 * count
+    work = 65536 + 256 * (count + 1)**2
+    budget.admit(byte_count, work)
+    if (not isinstance(permutation, tuple) or len(permutation) != 4
+            or any(isinstance(i, (bool, np.bool_)) or not isinstance(i, (int, np.integer))
+                   for i in permutation)):
+        raise TypeError("support audit permutation must be a tuple of four integers")
+    permutation = tuple(int(i) for i in permutation)
+    if (sorted(permutation) != [0, 1, 2, 3]
+            or set(permutation[:2]) not in ({0, 1}, {2, 3})):
+        raise ValueError("support audit requires an ERI permutation")
+    if (not isinstance(site_shifts, np.ndarray) or site_shifts.dtype != np.dtype("int64")
+            or site_shifts.shape != (4, 3)):
+        raise TypeError("support audit requires int64 [4,3] site shifts")
+    if not site_shifts.flags.c_contiguous or not site_shifts.flags.aligned:
+        raise ValueError("support audit site shifts must be aligned and C-contiguous")
+    shifts = tuple(tuple(int(x) for x in row) for row in site_shifts)
+    # Admit before copying or inspecting any image payload; use snapshots in
+    # both the identity and comparison so the receipt describes the same data.
+    source, target = source_images.copy(), target_images.copy()
+    digest = hashlib.sha256(b"vibeqc.bipole.quartet-support-action/v1")
+    digest.update(struct.pack(">4q", *permutation))
+    for row in shifts:
+        digest.update(struct.pack(">3q", *row))
+    counts = []
+    for images, transform in ((source, True), (target, False)):
+        digest.update(struct.pack(">Q", len(images)))
+        counter = Counter()
+        for image in images:
+            rows = tuple(tuple(int(x) for x in row) for row in image)
+            for row in rows:
+                digest.update(struct.pack(">3q", *row))
+            if transform:
+                absolute = ((0, 0, 0),) + rows
+                placed = tuple(tuple(absolute[i][d] - shifts[i][d] for d in range(3))
+                               for i in permutation)
+                rows = tuple(tuple(row[d] - placed[0][d] for d in range(3))
+                             for row in placed[1:])
+            counter[tuple(x for row in rows for x in row)] += 1
+        counts.append(counter)
+    source_counts, target_counts = counts
+    first = None
+    for counter in counts:
+        for label in counter:
+            if source_counts[label] != target_counts[label] and (first is None or label < first):
+                first = label
+    return QuartetSupportAudit(first is None, first,
+        0 if first is None else source_counts[first],
+        0 if first is None else target_counts[first], byte_count, work, digest.hexdigest())
 
 
 @dataclass(frozen=True, slots=True)

@@ -314,3 +314,59 @@ def test_pob_tzvp_periodic_ks_matches_molecular_rks():
     res_m = vq.run_rks(vq.Molecule(H2O, 0, 1), basis, mopts)
 
     assert abs(res_p.energy - res_m.energy) < 1e-9
+
+
+# --------------------------------------------------------------------------
+# Bredow fetcher: which archives each basis pulls (#289)
+# --------------------------------------------------------------------------
+
+
+def _one_record_tarball() -> bytes:
+    """A tar.gz carrying one parseable per-element record (H)."""
+    import io
+    import tarfile
+
+    body = POB_TZVP_H.encode()
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        info = tarfile.TarInfo("archive/01_H")
+        info.size = len(body)
+        tf.addfile(info, io.BytesIO(body))
+    return buf.getvalue()
+
+
+def test_pob_tzvp_fetch_never_downloads_a_rev2_archive(monkeypatch, tmp_path):
+    """A pob-TZVP fetch pulled the rev2 La-Lu archive and offered its
+    lanthanide records under the pob-TZVP name (#289). pob-TZVP has no
+    lanthanides; its publications stop at I."""
+    from vibeqc import basis_crystal
+
+    urls: list[str] = []
+    payload = _one_record_tarball()
+
+    def fake_download(url, *args, **kwargs):
+        urls.append(url)
+        return payload
+
+    monkeypatch.setattr(basis_crystal, "_download", fake_download)
+    basis_crystal.fetch_bredow_basis_sets(
+        tmp_path, names=["pob-tzvp"], verbose=False,
+    )
+    assert urls, "the fetcher downloaded nothing"
+    assert urls[0] == basis_crystal._BREDOW_ARCHIVES["pob-tzvp"][0]
+    rev2 = [u for u in urls if "rev2" in u.lower()]
+    assert not rev2, rev2
+
+
+def test_no_rev2_ecp_archive_pairs_with_a_non_rev2_basis():
+    """The pairing table must not hand one pob generation's heavy records
+    to another under the wrong name (#289)."""
+    from vibeqc.basis_crystal import _BREDOW_AE_TO_ECP_KEYS
+
+    wrong = [
+        (ae, ek)
+        for ae, eks in _BREDOW_AE_TO_ECP_KEYS.items()
+        for ek in eks
+        if "rev2" in ek and "rev2" not in ae
+    ]
+    assert not wrong, wrong

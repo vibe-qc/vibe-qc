@@ -216,6 +216,166 @@ def test_finish_flips_status_to_complete(tmp_path: Path) -> None:
     assert self_row["checksum_status"] == "self-excluded"
 
 
+@pytest.mark.parametrize("converged", [False, True])
+def test_periodic_result_status_is_separate_from_delivery(tmp_path, converged):
+    from types import SimpleNamespace
+    from vibeqc.periodic_runner import (
+        _PERIODIC_OUTPUT_WRITER, _periodic_output_lifecycle,
+    )
+
+    plan = _build_plan(tmp_path)
+
+    @_periodic_output_lifecycle
+    def calculation():
+        writer = OutputWriter(plan)
+        _PERIODIC_OUTPUT_WRITER.set(writer)
+        _mark_guaranteed_written(plan, writer.record)
+        return SimpleNamespace(converged=converged)
+
+    assert calculation().converged is converged
+    outputs = _read_manifest(tmp_path / "h2o.system")["outputs"]
+    assert outputs["status"] == "complete"
+    assert outputs["result_status"] == ("converged" if converged else "not_converged")
+    assert outputs["result_error"] == ""
+
+
+def test_delivery_failure_preserves_known_calculation_outcome(tmp_path):
+    updater = ManifestUpdater(_build_plan(tmp_path))
+    updater.set_result_status("not_converged")
+    with pytest.raises(IncompleteOutputError):
+        updater.finish()
+    updater.crash()
+    outputs = _read_manifest(updater.path)["outputs"]
+    assert outputs["status"] == "crashed"
+    assert outputs["result_status"] == "not_converged"
+
+
+def test_unreported_result_is_not_inferred_from_delivery(tmp_path):
+    plan = _build_plan(tmp_path)
+    updater = ManifestUpdater(plan)
+    _mark_guaranteed_written(plan, updater.mark_written)
+    updater.finish()
+    assert _read_manifest(updater.path)["outputs"]["result_status"] == "not_reported"
+
+
+def test_periodic_preflight_refusal_writes_manifest(tmp_path):
+    import numpy as np
+    import vibeqc as vq
+
+    system = vq.PeriodicSystem(3, np.eye(3) * 12., [vq.Atom(1, [0., 0., 0.])])
+    stem = tmp_path / "refused.v1"
+    with pytest.raises(NotImplementedError):
+        vq.run_periodic_job(
+            system, None, method="om2", kpoints=(2, 1, 1),
+            output=stem, record_hostname=False,
+        )
+    body = _read_manifest(tmp_path / "refused.v1.system")
+    assert body["outputs"]["status"] == "crashed"
+    assert body["outputs"]["result_status"] == "refused"
+    assert "NotImplementedError" in body["outputs"]["result_error"]
+    assert body["run"]["refusal_stage"] == "preflight"
+    assert body["plan"]["method"] == "om2"
+    assert body["host"]["hostname"] == "<redacted>"
+
+
+def test_refusal_recording_failure_preserves_original_error(tmp_path, monkeypatch):
+    import vibeqc.periodic_runner as runner
+
+    def unwritable(*args, **kwargs):
+        raise OSError("cannot write manifest")
+
+    monkeypatch.setattr(runner, "OutputWriter", unwritable)
+
+    @runner._periodic_output_lifecycle
+    def refused(**kwargs):
+        raise NotImplementedError("unsupported capability")
+
+    with pytest.warns(UserWarning, match="cannot write manifest"):
+        with pytest.raises(NotImplementedError, match="unsupported capability"):
+            refused(output=tmp_path / "unwritable")
+
+
+@pytest.mark.parametrize("existing_writer", [False, True])
+@pytest.mark.parametrize("warnings_as_errors", [False, True])
+def test_refusal_update_failure_preserves_original_error(
+    tmp_path, monkeypatch, existing_writer, warnings_as_errors,
+):
+    import warnings
+    import vibeqc.periodic_runner as runner
+
+    def unwritable(*args, **kwargs):
+        raise OSError("cannot update manifest")
+
+    monkeypatch.setattr(OutputWriter, "set_result_status", unwritable)
+
+    @runner._periodic_output_lifecycle
+    def refused(**kwargs):
+        if existing_writer:
+            runner._PERIODIC_OUTPUT_WRITER.set(OutputWriter(_build_plan(tmp_path)))
+        raise NotImplementedError("unsupported capability")
+
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("error" if warnings_as_errors else "always")
+        with pytest.raises(NotImplementedError, match="unsupported capability"):
+            refused(output=tmp_path / "unwritable")
+    if not warnings_as_errors:
+        assert any("cannot update manifest" in str(w.message) for w in emitted)
+    path = tmp_path / ("h2o.system" if existing_writer else "unwritable.system")
+    assert _read_manifest(path)["outputs"]["status"] == "crashed"
+
+
+@pytest.mark.parametrize("error_type", [OSError, NotImplementedError])
+def test_periodic_delivery_error_keeps_driver_convergence(tmp_path, monkeypatch, error_type):
+    from types import SimpleNamespace
+    import numpy as np
+    import vibeqc as vq
+    import vibeqc.pbc_bipole as bipole
+    import vibeqc.periodic_runner as runner
+
+    system = vq.PeriodicSystem(3, np.eye(3) * 12., [
+        vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [0., 0., 1.4]),
+    ])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    monkeypatch.setattr(
+        bipole, "run_pbc_bipole_rhf",
+        lambda *args, **kwargs: SimpleNamespace(converged=True, scf_trace=[]),
+    )
+
+    def write_failure(*args, **kwargs):
+        raise error_type("SCF output delivery failed")
+
+    monkeypatch.setattr(runner, "write_scf_trace", write_failure)
+    with pytest.raises(error_type, match="SCF output delivery failed"):
+        vq.run_periodic_job(
+            system, basis, jk_method="bipole", output=tmp_path / "delivery",
+            progress=False, record_hostname=False,
+        )
+    outputs = _read_manifest(tmp_path / "delivery.system")["outputs"]
+    assert outputs["status"] == "crashed"
+    assert outputs["result_status"] == "converged"
+    assert "SCF output delivery failed" in outputs["result_error"]
+
+
+def test_bipole_nonconvergence_is_recorded_in_manifest(tmp_path):
+    import numpy as np
+    import vibeqc as vq
+
+    system = vq.PeriodicSystem(3, np.eye(3) * 12., [
+        vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [0., 0., 1.4]),
+    ])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    with pytest.raises(RuntimeError, match="SCF did not converge after 1 iterations"):
+        vq.run_periodic_job(
+            system, basis, jk_method="bipole", max_iter=1, initial_guess="HCORE",
+            bipole_cutoff_bohr=8., output=tmp_path / "capped", output_qvf=False,
+            progress=False, record_hostname=False,
+        )
+    outputs = _read_manifest(tmp_path / "capped.system")["outputs"]
+    assert outputs["status"] == "crashed"
+    assert outputs["result_status"] == "not_converged"
+    assert "SCF did not converge" in outputs["result_error"]
+
+
 def test_manifest_self_record_never_hashes_pre_finalization_bytes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

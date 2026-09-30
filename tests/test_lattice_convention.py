@@ -392,3 +392,319 @@ def test_periodic_out_reports_the_exact_nearest_pair(tmp_path):
     assert line, "the .out must carry a nearest-pair line"
     assert "1.414214 bohr" in line[0], line[0]
     assert "0.7484 Angstrom" in line[0], line[0]
+
+
+# ---------------------------------------------------------------------------
+# GitLab #128 ask 1, second half: a DECLARED crystal system refuses a lattice
+# that contradicts it.
+#
+# Nothing geometric can reject a transpose on its own -- L and L.T are both
+# valid lattices, and det L == det L.T so the volume is blind. Only a
+# declaration can. These pin what the declaration does catch (a transposed
+# hexagonal or rhombohedral cell, which is every instance the issue records)
+# and, just as importantly, what it does not, so nobody mistakes a cubic
+# declaration for an orientation check.
+# ---------------------------------------------------------------------------
+
+
+def _lattice_from_cellpar(a, b, c, alpha, beta, gamma):
+    """Build a COLUMN-convention lattice from cell parameters (degrees).
+
+    The textbook construction yields the three vectors; they are stacked into
+    columns here through the declared-orientation factory, so the helper
+    itself cannot reintroduce the very transpose these tests are about.
+    Round-tripped against cell_parameters by the test below.
+    """
+    ca, cb, cg = (math.cos(math.radians(x)) for x in (alpha, beta, gamma))
+    sg = math.sin(math.radians(gamma))
+    a1 = [a, 0.0, 0.0]
+    a2 = [b * cg, b * sg, 0.0]
+    cx = c * cb
+    cy = c * (ca - cb * cg) / sg
+    a3 = [cx, cy, math.sqrt(max(c * c - cx * cx - cy * cy, 0.0))]
+    return vq.lattice_from_vectors(a1, a2, a3)
+
+
+def test_cellpar_helper_round_trips_through_cell_parameters():
+    """Guard the fixture: if the helper were transposed, every declaration
+    test below would be testing the wrong matrix."""
+    want = (4.0, 5.0, 6.0, 80.0, 103.0, 95.0)
+    got = vq.cell_parameters(_lattice_from_cellpar(*want))
+    assert got.lengths == pytest.approx(want[:3], rel=1e-12)
+    assert got.angles == pytest.approx(want[3:], abs=1e-9)
+
+
+def test_declared_hexagonal_refuses_the_row_fed_cell():
+    """The #128 instance: h-BN vectors fed as ROWS.
+
+    Measured in the issue at 2.7996 / 2.1685 Angstrom and 63.435 deg, against
+    the literature 2.504 / 2.504 and 60. The column reading is accepted and
+    the row reading refused, on the same matrix.
+    """
+    (a1, a2, a3), atoms = _hbn_vectors_bohr()
+    L = vq.lattice_from_vectors(a1, a2, a3)
+    columns = vq.PeriodicSystem(2, L, atoms)
+    rows = vq.PeriodicSystem(2, L.T, atoms)
+
+    params = vq.check_crystal_system(columns, "hexagonal")
+    assert params.a == pytest.approx(params.b, rel=1e-12)
+    assert params.gamma == pytest.approx(60.0, abs=1e-9)
+
+    with pytest.raises(vq.LatticeDeclarationError) as excinfo:
+        vq.check_crystal_system(rows, "hexagonal")
+    message = str(excinfo.value)
+    # The refusal has to be actionable: name the failed condition, the
+    # measured numbers, and that the other reading would have passed.
+    assert "|a1| = |a2|" in message
+    assert "gamma = 120 or 60 deg" in message
+    assert "63.4349" in message
+    assert "TRANSPOSE of this matrix does satisfy the declaration" in message
+    assert "lattice_vectors=" in message
+    assert "NOT transposed for you" in message
+
+
+def test_declared_system_is_checked_on_the_periodic_axes_only():
+    """A 2-D sheet's third axis is synthesized vacuum, not a lattice vector.
+
+    Constraining |a3| would refuse every correct slab in the tree, so a plane
+    declaration constrains |a1|, |a2| and the angle between them and nothing
+    else -- mirroring what the periodic .out reports.
+    """
+    a = 4.0
+    a1 = np.array([a, 0.0, 0.0])
+    a2 = np.array([a / 2.0, a * math.sqrt(3.0) / 2.0, 0.0])
+    atoms = [vq.Atom(6, [0.0, 0.0, 0.0])]
+    for vacuum in (15.0, 30.0, 60.0):
+        sheet = vq.PeriodicSystem(
+            2,
+            vq.lattice_from_vectors(a1, a2, np.array([0.0, 0.0, vacuum])),
+            atoms,
+        )
+        vq.check_crystal_system(sheet, "hexagonal")  # must not raise
+
+
+def test_declared_system_accepts_both_hexagonal_gammas():
+    """gamma = 60 and gamma = 120 with |a1| = |a2| are the same lattice.
+
+    The change of basis is unimodular, and this repository's own h-BN and
+    graphene fixtures use 60, so a 120-only predicate would refuse vibe-qc's
+    own reference cells.
+    """
+    a = 4.0
+    for gamma in (60.0, 120.0):
+        rad = math.radians(gamma)
+        L = vq.lattice_from_vectors(
+            [a, 0.0, 0.0],
+            [a * math.cos(rad), a * math.sin(rad), 0.0],
+            [0.0, 0.0, 30.0],
+        )
+        vq.check_crystal_system(L, "hexagonal", dim=2)  # must not raise
+
+
+def test_declared_cubic_accepts_the_primitive_settings():
+    """An FCC primitive cell is cubic with 60 deg angles; BCC gives 109.47.
+
+    Requiring 90 deg would refuse the most common real input -- the tutorial
+    feeds an FCC primitive cell -- so cubic asks for |a1| = |a2| = |a3| and
+    alpha = beta = gamma, which the conventional, F and I settings all meet.
+    """
+    a = 5.0
+    conventional = np.diag([a, a, a])
+    fcc = vq.lattice_from_vectors(
+        [0.0, a / 2, a / 2], [a / 2, 0.0, a / 2], [a / 2, a / 2, 0.0]
+    )
+    bcc = vq.lattice_from_vectors(
+        [-a / 2, a / 2, a / 2], [a / 2, -a / 2, a / 2], [a / 2, a / 2, -a / 2]
+    )
+    for lattice in (conventional, fcc, bcc):
+        vq.check_crystal_system(lattice, "cubic", dim=3)  # must not raise
+    # ... and a cell that is genuinely not cubic is still refused.
+    with pytest.raises(vq.LatticeDeclarationError):
+        vq.check_crystal_system(np.diag([4.0, 5.0, 6.0]), "cubic", dim=3)
+    # Equal angles alone are not enough: a general rhombohedral cell has
+    # a = b = c and alpha = beta = gamma too, and is not cubic.
+    with pytest.raises(vq.LatticeDeclarationError):
+        vq.check_crystal_system(
+            _lattice_from_cellpar(4.0, 4.0, 4.0, 70.0, 70.0, 70.0),
+            "cubic",
+            dim=3,
+        )
+
+
+def test_declared_system_enforces_equalities_not_conventions():
+    """Higher symmetry must pass a lower declaration.
+
+    ``a != c`` for tetragonal and ``beta != 90`` for monoclinic are
+    conventions for choosing a cell, not requirements on one; enforcing them
+    would refuse a cubic cell declared orthorhombic, which is not an error.
+    """
+    cubic = np.diag([5.0, 5.0, 5.0])
+    for declared in ("orthorhombic", "tetragonal", "monoclinic", "triclinic"):
+        vq.check_crystal_system(cubic, declared, dim=3)  # must not raise
+
+
+def test_declared_monoclinic_admits_any_single_unique_axis():
+    """ITA's standard setting is unique-axis b; unique-axis c is tabulated
+    alongside it and common in older literature, so a bare declaration takes
+    either."""
+    unique_b = _lattice_from_cellpar(4.0, 5.0, 6.0, 90.0, 103.0, 90.0)
+    unique_c = _lattice_from_cellpar(4.0, 5.0, 6.0, 90.0, 90.0, 103.0)
+    for lattice in (unique_b, unique_c):
+        vq.check_crystal_system(lattice, "monoclinic", dim=3)
+    # Two non-90 angles is not a single unique axis.
+    triclinic = _lattice_from_cellpar(4.0, 5.0, 6.0, 80.0, 103.0, 95.0)
+    with pytest.raises(vq.LatticeDeclarationError):
+        vq.check_crystal_system(triclinic, "monoclinic", dim=3)
+
+
+def test_trigonal_admits_either_lattice_it_can_sit_on():
+    """Trigonal has no lattice of its own: a trigonal space group sits on a
+    hexagonal or a rhombohedral lattice, so the alias takes both."""
+    hexagonal = _lattice_from_cellpar(4.0, 4.0, 9.0, 90.0, 90.0, 120.0)
+    rhombohedral = _lattice_from_cellpar(4.0, 4.0, 4.0, 70.0, 70.0, 70.0)
+    for lattice in (hexagonal, rhombohedral):
+        vq.check_crystal_system(lattice, "trigonal", dim=3)
+    with pytest.raises(vq.LatticeDeclarationError):
+        vq.check_crystal_system(np.diag([4.0, 5.0, 6.0]), "trigonal", dim=3)
+
+
+def test_declaration_refuses_a_category_error_rather_than_validating_nothing():
+    """A declaration that cannot be tested must fail loudly, not pass."""
+    sheet = vq.PeriodicSystem(2, np.diag([4.0, 4.0, 30.0]), [vq.Atom(6, [0, 0, 0])])
+    with pytest.raises(ValueError, match="cannot describe a 2-D cell"):
+        vq.check_crystal_system(sheet, "cubic")
+    chain = vq.PeriodicSystem(1, np.diag([4.0, 30.0, 30.0]), [vq.Atom(1, [0, 0, 0])])
+    with pytest.raises(ValueError, match="not meaningful for a 1-D cell"):
+        vq.check_crystal_system(chain, "hexagonal")
+    with pytest.raises(ValueError, match="unknown crystal system"):
+        vq.check_crystal_system(np.diag([4.0, 4.0, 4.0]), "hexagonial", dim=3)
+
+
+def test_lattice_from_vectors_declares_at_the_orientation_free_factory():
+    """The declaration is available where the docs tell users to build cells."""
+    a = 4.0
+    a1 = [a, 0.0, 0.0]
+    a2 = [a / 2.0, a * math.sqrt(3.0) / 2.0, 0.0]
+    a3 = [0.0, 0.0, 30.0]
+    L = vq.lattice_from_vectors(a1, a2, a3, crystal_system="hexagonal", dim=2)
+    assert np.allclose(L[:, 0], a1)
+    # Feeding the same three vectors as rows is the mistake #128 is about.
+    with pytest.raises(vq.LatticeDeclarationError):
+        vq.lattice_from_vectors(
+            *np.asarray([a1, a2, a3]).T, crystal_system="hexagonal", dim=2
+        )
+
+
+# ---------------------------------------------------------------------------
+# GitLab #128 ask 1: "...or space group".
+#
+# A crystal-system declaration is about the LATTICE and is tested on the metric
+# alone. A space-group declaration is about the whole STRUCTURE and is tested
+# by handing lattice and basis to spglib, so it catches what no metric can: an
+# atom on the wrong site, a mistranscribed fractional coordinate, a basis that
+# broke the symmetry the caller believed the structure had.
+#
+# It is complementary, not stronger. Measured with the Cartesian positions held
+# fixed and only the lattice transposed -- the actual shape of every instance
+# in this issue -- hexagonal goes P-6m2 (187) -> Pm (6) and is caught, while
+# monoclinic P2/m and triclinic P-1 keep their groups and are not. Neither
+# check sees those; the tests below pin that honestly rather than implying a
+# guarantee that does not hold.
+# ---------------------------------------------------------------------------
+
+
+def _hbn_system(lattice_is_rows: bool = False):
+    (a1, a2, a3), atoms = _hbn_vectors_bohr()
+    L = vq.lattice_from_vectors(a1, a2, a3)
+    return vq.PeriodicSystem(3, L.T if lattice_is_rows else L, atoms)
+
+
+def test_declared_space_group_accepts_the_structure_that_has_it():
+    pytest.importorskip("spglib")
+    detected = vq.check_space_group(_hbn_system(), "P-6m2")
+    assert detected.number == 187
+    # The same declaration by International Tables number.
+    assert vq.check_space_group(_hbn_system(), 187).number == 187
+
+
+def test_declared_space_group_refuses_the_row_fed_cell():
+    """The #128 instance again, caught through the structure this time."""
+    pytest.importorskip("spglib")
+    with pytest.raises(vq.LatticeDeclarationError) as excinfo:
+        vq.check_space_group(_hbn_system(lattice_is_rows=True), "P-6m2")
+    message = str(excinfo.value)
+    assert "detected : 6 (Pm)" in message
+    assert "TRANSPOSE of this lattice does satisfy the declaration" in message
+    assert "lattice_vectors=" in message
+    assert "NOT transposed for you" in message
+
+
+def test_declared_space_group_reads_a_symbol_loosely_and_a_number_exactly():
+    pytest.importorskip("spglib")
+    system = vq.PeriodicSystem(
+        3, np.diag([5.4, 5.4, 5.4]), [vq.Atom(14, [0.0, 0.0, 0.0])]
+    )
+    for spelling in ("Pm-3m", "p m -3 m", "  PM-3M  "):
+        vq.check_space_group(system, spelling)
+    vq.check_space_group(system, 221)
+    with pytest.raises(vq.LatticeDeclarationError):
+        vq.check_space_group(system, 227)
+    with pytest.raises(ValueError, match="1 to 230"):
+        vq.check_space_group(system, 999)
+
+
+def test_declared_space_group_needs_a_structure_and_three_dimensions():
+    """A space group is a property of the structure, not of a lattice, and a
+    slab's would depend on how much vacuum was synthesized."""
+    pytest.importorskip("spglib")
+    with pytest.raises(TypeError, match="not a bare lattice matrix"):
+        vq.check_space_group(np.diag([5.0, 5.0, 5.0]), 221)
+    sheet = vq.PeriodicSystem(2, np.diag([4.0, 4.0, 30.0]), [vq.Atom(6, [0, 0, 0])])
+    with pytest.raises(ValueError, match="only 3-D cells"):
+        vq.check_space_group(sheet, 191)
+
+
+def test_declared_space_group_honours_symprec():
+    """spglib's tolerance changes the answer, so it is exposed, not hidden.
+
+    A cell 0.1% off cubic reads as P4/mmm at the 1e-4 default and Pm-3m at
+    1e-2; a declaration that is right only within a looser tolerance has to
+    say so rather than silently passing.
+    """
+    pytest.importorskip("spglib")
+    system = vq.PeriodicSystem(
+        3, np.diag([5.4, 5.4 * 1.001, 5.4]), [vq.Atom(14, [0.0, 0.0, 0.0])]
+    )
+    assert vq.check_space_group(system, 123).number == 123
+    with pytest.raises(vq.LatticeDeclarationError):
+        vq.check_space_group(system, 221)
+    assert vq.check_space_group(system, 221, symprec=1.0e-2).number == 221
+
+
+def test_space_group_and_crystal_system_are_complementary_not_redundant():
+    """The honest limit, pinned so nobody upgrades the claim by accident.
+
+    An exactly hexagonal LATTICE carrying a symmetry-breaking basis is a
+    legitimate cell: the metric declaration holds and the detected space group
+    is far lower. That is exactly why a metric check must not be driven off a
+    detected space-group number.
+    """
+    pytest.importorskip("spglib")
+    (a1, a2, a3), _ = _hbn_vectors_bohr()
+    L = vq.lattice_from_vectors(a1, a2, a3)
+    # A basis that breaks the hexagonal symmetry without touching the lattice.
+    atoms = [vq.Atom(5, [0.0, 0.0, 0.0]), vq.Atom(7, list(0.31 * a1 + 0.17 * a2))]
+    system = vq.PeriodicSystem(3, L, atoms)
+
+    # The lattice is still hexagonal, and the metric declaration holds.
+    vq.check_crystal_system(system, "hexagonal")
+    # The structure is not: spglib reports Pm, whose crystal system is
+    # monoclinic, for a cell whose lattice is exactly hexagonal.
+    detected = vq.check_space_group(system, "Pm")
+    assert detected.number == 6
+    # Declaring the lattice's own holohedry is therefore refused, which is
+    # correct -- and is precisely why a metric check must not be driven off a
+    # detected space-group number: doing so would call this lattice
+    # monoclinic and refuse the hexagonal declaration that legitimately holds.
+    with pytest.raises(vq.LatticeDeclarationError):
+        vq.check_space_group(system, 191)

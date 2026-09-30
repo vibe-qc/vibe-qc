@@ -82,6 +82,46 @@ def misfit_energy(
     return 0.5 * params.alpha_prime * s * (s + params.f_corr * sp)
 
 
+def _softplus(z):
+    return np.logaddexp(0.0, z)
+
+
+def _sigmoid(z):
+    # tanh form: finite for any z, no overflow warning at the tails.
+    return 0.5 * (1.0 + np.tanh(0.5 * z))
+
+
+def _hb_ramps(x, params):
+    """``(f, f', g, g')`` of the hydrogen-bond ramps at ``x``, hard or smooth.
+
+    Klamt 1998 eq. 22 is ``c_hb max[0, acc - sigma_hb] min[0, don + sigma_hb]``
+    with ``acc`` and ``don`` the larger and smaller of the pair. With
+    ``f(x) = max(0, x - sigma_hb)`` and ``g(y) = min(0, y + sigma_hb)`` it is
+    exactly ``c_hb [f(a) g(b) + f(b) g(a)]``: only one product can be non-zero,
+    since ``f(x) > 0`` needs ``x > sigma_hb`` and ``g(x) < 0`` needs
+    ``x < -sigma_hb``, and where one is live the acceptor and donor are the
+    ones eq. 22 picks. The rewrite drops the choice of acceptor and donor, so a
+    smoothed ``f`` and ``g`` give a function smooth everywhere, with no new
+    corner where ``a == b``.
+
+    With ``params.hb_smoothing = w > 0`` the ramps are softplus functions of
+    width ``w``: ``f_w(x) = w softplus((x - sigma_hb)/w)`` and
+    ``g_w(y) = -w softplus(-(y + sigma_hb)/w)``. They tend to the corners as
+    ``w -> 0``, from above for ``f`` and below for ``g``, by at most ``w ln 2``.
+    """
+    w = float(params.hb_smoothing)
+    s_hb = params.sigma_hb
+    if w <= 0.0:
+        return (
+            np.maximum(0.0, x - s_hb), np.where(x > s_hb, 1.0, 0.0),
+            np.minimum(0.0, x + s_hb), np.where(x < -s_hb, 1.0, 0.0),
+        )
+    return (
+        w * _softplus((x - s_hb) / w), _sigmoid((x - s_hb) / w),
+        -w * _softplus(-(x + s_hb) / w), _sigmoid(-(x + s_hb) / w),
+    )
+
+
 def hydrogen_bond_energy(
     sigma_a: np.ndarray, sigma_b: np.ndarray, params: Parameterization
 ) -> np.ndarray:
@@ -100,13 +140,19 @@ def hydrogen_bond_energy(
     """
     a = np.asarray(sigma_a, dtype=np.float64)
     b = np.asarray(sigma_b, dtype=np.float64)
-    acc = np.maximum(a, b)
-    don = np.minimum(a, b)
-    return (
-        params.c_hb
-        * np.maximum(0.0, acc - params.sigma_hb)
-        * np.minimum(0.0, don + params.sigma_hb)
-    )
+    if params.hb_smoothing <= 0.0:
+        # The published form, computed as published. Kept literal so the
+        # default reproduces every earlier number bit for bit.
+        acc = np.maximum(a, b)
+        don = np.minimum(a, b)
+        return (
+            params.c_hb
+            * np.maximum(0.0, acc - params.sigma_hb)
+            * np.minimum(0.0, don + params.sigma_hb)
+        )
+    fa, _, ga, _ = _hb_ramps(a, params)
+    fb, _, gb, _ = _hb_ramps(b, params)
+    return params.c_hb * (fa * gb + fb * ga)
 
 
 def interaction_energy(
@@ -178,16 +224,22 @@ def interaction_energy_dsigma(
         )
         d_misfit = params.alpha_prime * s + 0.5 * params.alpha_prime * params.f_corr * sp
 
-    # ``a`` is the acceptor where it is the larger of the pair, the donor where
-    # it is the smaller; only one branch is live at any point.
-    a_is_acc = a >= b
-    as_acc = np.where(a > params.sigma_hb, 1.0, 0.0) * np.minimum(
-        0.0, b + params.sigma_hb
-    )
-    as_don = np.maximum(0.0, b - params.sigma_hb) * np.where(
-        a < -params.sigma_hb, 1.0, 0.0
-    )
-    d_hb = params.c_hb * np.where(a_is_acc, as_acc, as_don)
+    if params.hb_smoothing <= 0.0:
+        # ``a`` is the acceptor where it is the larger of the pair, the donor
+        # where it is the smaller; only one branch is live at any point.
+        a_is_acc = a >= b
+        as_acc = np.where(a > params.sigma_hb, 1.0, 0.0) * np.minimum(
+            0.0, b + params.sigma_hb
+        )
+        as_don = np.maximum(0.0, b - params.sigma_hb) * np.where(
+            a < -params.sigma_hb, 1.0, 0.0
+        )
+        d_hb = params.c_hb * np.where(a_is_acc, as_acc, as_don)
+    else:
+        # d/da c_hb [f(a) g(b) + f(b) g(a)], the same ramps as the energy.
+        _, fpa, _, gpa = _hb_ramps(a, params)
+        fb, _, gb, _ = _hb_ramps(b, params)
+        d_hb = params.c_hb * (fpa * gb + fb * gpa)
     return d_misfit + d_hb
 
 
@@ -207,19 +259,79 @@ def _logsumexp(a: np.ndarray, axis: int = -1) -> np.ndarray:
     )
 
 
-def _fixed_point(update, mu0, *, max_iter, tol, mixing, what):
-    mu = np.array(mu0, dtype=np.float64)
+def _anderson_step(xs, rs, mixing):
+    """The next iterate: the damped update of the residual-minimising blend.
+
+    Minimises ``|sum_i c_i r_i|`` subject to ``sum_i c_i = 1`` (a bordered
+    Gram system) and returns ``sum_i c_i (x_i + mixing r_i)``. Late in the
+    iteration successive residuals are nearly parallel and the Gram matrix is
+    near-singular, so it is regularised relative to its own scale; if the solve
+    still fails, the step falls back to the plain damped update.
+    """
+    n = len(rs)
+    if n == 1:
+        return xs[0] + mixing * rs[0]
+    R = np.asarray(rs)
+    gram = R @ R.T
+    gram = gram + 1e-12 * (np.trace(gram) / n) * np.eye(n)
+    bordered = np.zeros((n + 1, n + 1))
+    bordered[:n, :n] = gram
+    bordered[:n, n] = 1.0
+    bordered[n, :n] = 1.0
+    rhs = np.zeros(n + 1)
+    rhs[n] = 1.0
+    try:
+        c = np.linalg.solve(bordered, rhs)[:n]
+    except np.linalg.LinAlgError:
+        return xs[-1] + mixing * rs[-1]
+    if not np.all(np.isfinite(c)):
+        return xs[-1] + mixing * rs[-1]
+    return sum(ci * (xi + mixing * ri) for ci, xi, ri in zip(c, xs, rs))
+
+
+def _fixed_point(update, mu0, *, max_iter, tol, mixing, what, depth=6):
+    """Solve ``mu = update(mu)`` by Anderson-accelerated, damped iteration.
+
+    Anderson, J. ACM 12, 547 (1965), doi:10.1145/321296.321305: each step
+    takes the combination of the last ``depth`` iterates whose residuals
+    ``update(x) - x`` cancel best, then applies the damped update to it. The
+    fixed point, the stopping test (``max |update(mu) - mu| < tol``) and the
+    returned ``(mu, iterations, last change)`` are exactly those of the plain
+    damped iteration this replaces; only the path to the solution differs.
+
+    The plain iteration converges linearly, and on realistic solvent surfaces
+    too slowly for its own cap. Water surfaces contract by 0.889 per step at
+    RHF/STO-3G but 0.961 at BP86/def2-TZVP, where the wider, more polar profile
+    couples the COSMO-RS equations more tightly: 504 steps to 1e-10 against a
+    cap of 500, reported as a failure although the iteration was still
+    converging cleanly (it reaches 1e-14). BPW91/def2-TZVP scraped in at 497.
+    A sampled water-like ensemble of 300 segments at +-0.017 e/A^2 needed 6029.
+    Computing the solvent closer to the parameterization's protocol -- the
+    recommended recipe -- was therefore the case most likely to fail. With
+    acceleration those water surfaces converge in 17 and 25 steps, onto the
+    plain iteration's own 1e-13 solution to within 7e-12 and 6e-11.
+    """
+    x = np.array(mu0, dtype=np.float64)
+    xs: list[np.ndarray] = []
+    rs: list[np.ndarray] = []
+    delta = float("inf")
     for it in range(1, int(max_iter) + 1):
-        mu_new = update(mu)
-        if not np.all(np.isfinite(mu_new)):
+        gx = update(x)
+        if not np.all(np.isfinite(gx)):
             raise RuntimeError(
                 f"{what}: the self-consistent iteration produced a non-finite "
                 f"value at step {it}. The sigma grid or profile is degenerate."
             )
-        delta = float(np.max(np.abs(mu_new - mu)))
-        mu = (1.0 - mixing) * mu + mixing * mu_new
+        r = gx - x
+        delta = float(np.max(np.abs(r)))
         if delta < tol:
-            return mu, it, delta
+            return (1.0 - mixing) * x + mixing * gx, it, delta
+        xs.append(x)
+        rs.append(r)
+        if len(rs) > depth:
+            xs.pop(0)
+            rs.pop(0)
+        x = _anderson_step(xs, rs, mixing)
     raise RuntimeError(
         f"{what}: no self-consistent sigma potential after {max_iter} "
         f"iterations (last change {delta:.3e} > {tol:.1e}). Reduce `mixing` "

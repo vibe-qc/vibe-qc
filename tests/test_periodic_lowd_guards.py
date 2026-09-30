@@ -30,7 +30,7 @@ def _h_chain_1d(a=7.9376582, vac=40.0):
         charge=0, multiplicity=1)
 
 
-def test_bipole_rejects_low_dim_at_api():
+def test_bipole_rejects_low_dim_at_api(tmp_path):
     """run_periodic_job(jk_method='bipole') on a 1-D cell fails fast and clearly."""
     sysp = _h_chain_1d()
     b = BasisSet(sysp.unit_cell_molecule(), "sto-3g")
@@ -41,7 +41,7 @@ def test_bipole_rejects_low_dim_at_api():
             max_iter=5, write_molden_file=False, write_density=False,
             write_cif_file=False, write_xsf_structure_file=False,
             write_poscar_file=False, write_xyz_file=False,
-            write_population_file=False)
+            write_population_file=False, output=tmp_path / "refused")
     assert time.time() - t0 < 5.0                      # before any SCF setup
     msg = str(exc.value)
     assert "dim=1" in msg and "bipole" in msg

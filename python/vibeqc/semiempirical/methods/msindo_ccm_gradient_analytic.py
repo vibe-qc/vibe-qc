@@ -65,6 +65,7 @@ def ccm_gradient_analytic(
     madelung=False,
     max_iter=200,
     conv_tol=1e-10,
+    stability="reference",
 ):
     """Analytic nuclear gradient (Ha/bohr) for the CCM total energy.
 
@@ -77,12 +78,16 @@ def ccm_gradient_analytic(
     coords_angstrom : (natom, 3) array-like
     translations_angstrom : list of (3,) array-like -- lattice vectors
     madelung : bool -- if True, includes the analytic Madelung/Ewald gradient.
+    stability : str -- SCF state policy, as in ``msindo_ccm.run_ccm``.
 
     Returns
     -------
     (natom, 3) ndarray -- gradient in Ha/bohr
     """
+    from .msindo_ccm import _stability_flag
+
     Z = list(atomic_numbers)
+    lowest_stable = _stability_flag(stability)
     coords_arr = np.asarray(coords_angstrom, float)
     translations_arr = [np.asarray(t, float) for t in translations_angstrom]
     C0 = coords_arr * ANGSTROM_TO_BOHR
@@ -116,6 +121,7 @@ def ccm_gradient_analytic(
                 charge=charge,
                 max_iter=max_iter,
                 conv_tol=conv_tol,
+                lowest_stable=lowest_stable,
             )
             if len(grad_cpp) == 0 and len(Z) != 0:
                 raise RuntimeError(
@@ -189,6 +195,7 @@ def ccm_gradient_analytic(
         max_iter=max_iter,
         conv_tol=conv_tol,
         fock_extra=fock_extra,
+        lowest_stable=lowest_stable,
     )
     if not converged:
         raise RuntimeError("SCF not converged; cannot compute analytic gradient.")

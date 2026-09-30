@@ -770,6 +770,7 @@ def test_public_gradient_route_rejects_grid_v_ne(monkeypatch):
         vq.run_pbc_gdf_rhf(
             system,
             basis,
+            gdf_method="compcell",
             apply_aft_correction=False,
             compute_gradient=True,
         )
@@ -4287,11 +4288,25 @@ def test_multik_gradient_fail_closed_guards():
             system, basis, (2, 1, 1), o, **{**common, "k_exchange": "cosx"}
         )
 
-    # Pure-DFT Ewald-3D J path (no cached-Lpq fit to differentiate).
+    # A run the driver does not resolve to a fit has nothing to
+    # differentiate. No public input reaches this guard: every closed-shell
+    # k-mesh run builds the cached fit (_resolve_multik_use_compcell), and
+    # the use_compcell=False Ewald-3D J/K branch a pure-DFT run once took
+    # was removed with #415, so a pure-LDA run with use_compcell=False gets
+    # its gradient like any other rsgdf one. Pin the backstop guard itself;
+    # tests/test_periodic_k_gdf.py pins that the envelope is handed the
+    # driver's promotion.
     with pytest.raises(NotImplementedError, match=r"use_compcell=True"):
-        run_krks_periodic_gdf(
-            system, basis, (2, 1, 1), None, functional="lda",
-            **{**common, "use_compcell": False},
+        _reject_unsupported_multik_gradient(
+            "run_krks_periodic_gdf",
+            dim=3,
+            gdf_method="rsgdf",
+            smearing_temperature=0.0,
+            k_exchange="gdf",
+            screened_omega=None,
+            functional_is_range_separated=False,
+            weights=np.array([0.5, 0.5]),
+            use_compcell_effective=False,
         )
 
     # DFT+U energy term.
@@ -4304,11 +4319,6 @@ def test_multik_gradient_fail_closed_guards():
             },
         )
 
-    # Γ tuple mesh outside the pure fast path falls back to the legacy
-    # molecular-limit driver, which has no gradient.
-    with pytest.raises(NotImplementedError, match="legacy"):
-        run_krhf_periodic_gdf(system, basis, (1, 1, 1), o, **common)
-
     # dim=1 wire: the remaining dim != 3 case on this entry (dim=2
     # closed-shell slabs route to the dedicated slab gradient since
     # 2026-07-30, § 6 rung 5 — gated in tests/test_slab_2d_routing.py).
@@ -4319,6 +4329,14 @@ def test_multik_gradient_fail_closed_guards():
         ]
     )
     wire_basis = vq.BasisSet(wire.unit_cell_molecule(), "sto-3g")
+
+    # Γ tuple mesh outside the pure fast path falls back to the legacy
+    # molecular-limit driver, which has no gradient. Only dim < 3 reaches
+    # that driver now: a bulk Γ mesh runs the k-mesh loop at Nk=1 (the
+    # SR/LR source's own Γ limit), which carries the gradient.
+    with pytest.raises(NotImplementedError, match="legacy"):
+        run_krhf_periodic_gdf(wire, wire_basis, (1, 1, 1), o, **common)
+
     with pytest.raises(NotImplementedError, match="3D periodic"):
         run_krhf_periodic_gdf(
             wire, wire_basis, (2, 1, 1), o, **common
@@ -4371,11 +4389,10 @@ def test_multik_gradient_fail_closed_guards():
 # trajectory (stored == recomputed filling to ~1e-12; gates ~4e-10).
 
 
-def _stretched_h2_box(bond=3.0, dz=0.0):
+def _stretched_h2_box(bond=3.0, dz=0.0, box=12.0):
     """H2 stretched to ``bond`` bohr in the 12-bohr box: the sigma/
     sigma* gap (~0.48 Ha at 3.0 bohr) is a few k_B T at T = 0.1 Ha, so
     the Fermi-Dirac occupations are meaningfully fractional."""
-    box = 12.0
     c = box / 2.0
     s = vq.PeriodicSystem(3, np.eye(3) * box, [
         vq.Atom(1, [c, c, c - bond / 2.0 + dz]),
@@ -4387,7 +4404,11 @@ def _stretched_h2_box(bond=3.0, dz=0.0):
 
 def _run_gamma_uhf_smeared(gdf_method, dz=0.0, smearing_T=0.10,
                            compute_gradient=False):
-    system, basis = _stretched_h2_box(dz=dz)
+    # compcell keeps the auxiliary function in the home cell, which is
+    # exact only when its images do not reach the AO pairs: the 12-bohr box
+    # omits about 1e-7 per 3c element and the builder refuses it (#172).
+    system, basis = _stretched_h2_box(
+        dz=dz, box=16.0 if gdf_method == "compcell" else 12.0)
     o = vq.PeriodicRHFOptions()
     o.lattice_opts = _lat_opts()
     o.max_iter = 200
@@ -4419,7 +4440,8 @@ def test_gamma_uhf_smeared_free_energy_gradient_vs_fd(
     driver's free_energy (A = E - T.S) on stretched H2 at kBT = 0.1 Ha.
 
     Fractional occupations are genuinely active (per-spin f =
-    [0.918, 0.082] compcell / [0.926, 0.074] rsgdf — asserted), so
+    [0.918, 0.082] compcell, measured in the former 12-bohr box, /
+    [0.926, 0.074] rsgdf — asserted), so
     this pins the sqrt(f)-scaled orbital blocks: fractional W, the
     f_i.f_j-weighted exchange, and the fractional-D exxdiv D S D term.
     Measured |analytic - FD(A)| at h = 2e-4: 3.8e-10 (compcell) /

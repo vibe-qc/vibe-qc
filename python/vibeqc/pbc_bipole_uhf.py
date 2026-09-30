@@ -59,6 +59,9 @@ from .level_shift_schedule import LevelShiftSchedule
 from .mom import select_occupied_by_max_overlap as _mom_select
 from .oda import compute_oda_lambda as _compute_oda_lambda
 from .oda import oda_mix_densities as _oda_mix
+from .smearing import (
+    occupations_are_per_k_integer_aufbau as _occupations_are_per_k_integer_aufbau,
+)
 from .pbc_bipole_common import (
     bipole_confirmation_phase,
     bipole_final_density_phase,
@@ -81,6 +84,8 @@ from .pbc_bipole_common import (
     bvk_torus_density_matrices,
     build_bipole_one_electron_lattice,
     prepare_bipole_lattice_options,
+    resolve_bipole_lattice_options,
+    reject_bipole_physical_legacy_gauge,
     raise_bipole_ewald_real_cutoff,
     resolve_bipole_ewald_alpha,
     reject_bipole_ecp_options,
@@ -208,6 +213,7 @@ class PBCBipoleUHFResult:
     restart_weights: object = None
     # Ewald accuracy used by the SCF; gradients must retain its finite sums.
     ewald_precision: float = 1e-8
+    resolved_domain: object = None
 
 
 def run_pbc_bipole_uhf(
@@ -216,6 +222,7 @@ def run_pbc_bipole_uhf(
     kmesh: BlochKMesh,
     options: Optional[PeriodicRHFOptions] = None,
     *,
+    historical_domain: bool = False,
     linear_dep_threshold: float = 1e-7,
     fock_mixing: Optional[float] = None,
     canonical_orth_normalize_diag_first: bool = True,
@@ -246,6 +253,10 @@ def run_pbc_bipole_uhf(
     dft_plus_u: Optional[List["HubbardSite"]] = None,
 ) -> PBCBipoleUHFResult:
     """Multi-k open-shell UHF via the CRYSTAL-gauge BIPOLE scaffold.
+
+    Physical pair support is the default. ``historical_domain=True`` selects
+    the historical index ball for reproduction. This keyword overrides
+    ``options.lattice_opts.pair_complete_1e`` without mutating caller options.
 
     ``fock_mixing`` overrides ``options.fock_mixing`` when supplied and is
     forwarded through both phases of a spin schedule without rewriting the
@@ -363,6 +374,7 @@ def run_pbc_bipole_uhf(
         return run_spin_schedule(
             lambda sysx, o: run_pbc_bipole_uhf(
                 sysx, basis, kmesh, o,
+                historical_domain=historical_domain,
                 linear_dep_threshold=linear_dep_threshold,
                 fock_mixing=requested_fock_mixing,
                 canonical_orth_normalize_diag_first=canonical_orth_normalize_diag_first,
@@ -404,7 +416,9 @@ def run_pbc_bipole_uhf(
             "integrator; do not combine it with smearing_temperature > 0"
         )
     use_fractional_density = (smearing_T > 0.0) or use_gilat
-    lat_opts: LatticeSumOptions = opts.lattice_opts
+    lat_opts: LatticeSumOptions = resolve_bipole_lattice_options(
+        opts.lattice_opts, historical_domain=historical_domain,
+    )
     plog = resolve_progress(progress, verbose=verbose)
     (
         use_ewald_j_split,
@@ -533,6 +547,11 @@ def run_pbc_bipole_uhf(
 
     _ff_enable: Optional[bool] = False
 
+    reject_bipole_physical_legacy_gauge(
+        physical_pairs=lat_opts_2e.pair_complete_1e, dimension=system.dim,
+        use_ewald_j_split=use_ewald_j_split,
+        exchange_split_active=exchange_split_active, driver="run_pbc_bipole_uhf",
+    )
     warn_bipole_legacy_multik_gauge(system, exchange_split_active, n_k, plog)
     warn_bipole_charged_cell(system, plog)
     _xi_madelung = 0.0
@@ -577,52 +596,24 @@ def run_pbc_bipole_uhf(
     omega_used: Optional[float] = None
     ewald_cell_volume: Optional[float] = None
     ewald_k_max: Optional[float] = None
-    if system.dim == 3:
-        from .bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
+    from .pbc_bipole_common import resolve_bipole_ewald_state
 
-        V_cell = float(
-            abs(
-                np.linalg.det(np.asarray(system.lattice, dtype=float)),
-            )
-        )
-        ewald_cell_volume = V_cell
-        # #674: the K_SR erfc arm of the corrected exchange split is cut at
-        # the Fock output cells (|g| <= lat_opts_2e.cutoff_bohr), so on that
-        # route CRYSTAL's volume-only alpha is bounded below by
-        # sqrt(-ln tol) / cutoff_bohr; the reciprocal envelope of J_LR / K_LR
-        # follows the alpha in use (K_max / alpha stays CRYSTAL's 8.51).
-        omega_used = resolve_bipole_ewald_alpha(
-            V_cell,
-            ewald_omega,
-            lat_opts_2e,
-            float(ewald_precision),
+    ewald_options_1e, omega_used, ewald_cell_volume, ewald_k_max = (
+        resolve_bipole_ewald_state(
+            system, lat_opts_1e, lat_opts_2e, ewald_omega=ewald_omega,
+            ewald_precision=ewald_precision,
             erfc_exchange_arm_active=exchange_split_active,
             plog=plog,
         )
-        ewald_k_max = bipole_ewald_reciprocal_cutoff(V_cell, omega_used)
-        # #478: the pinned alpha = 2.8/V^(1/3) makes erfc(alpha.R) at the
-        # nearest image an L-INDEPENDENT 7.5e-5, so the 1e nuclear/Ewald
-        # real-space sum must be sized from alpha, not from the AO cutoff.
-        raise_bipole_ewald_real_cutoff(
-            system,
-            lat_opts_1e,
-            omega_used,
-            float(ewald_precision),
-            plog,
-        )
-        ewald_options_1e = _crystal_ewald_options(
-            lat_opts_1e,
-            alpha_bohr_inv=omega_used,
-            tolerance=float(ewald_precision),
-            recip_cutoff_bohr_inv=ewald_k_max,
-        )
-        plog.info(
-            f"  Ewald state: alpha = {omega_used:.6f} bohr^-1, "
-            f"real_cutoff = {lat_opts_1e.nuclear_cutoff_bohr:.2f} bohr, "
-            f"K_max = {ewald_k_max:.2f} bohr^-1, "
-            f"tol = {float(ewald_precision):.0e}"
-        )
+    )
 
+    from .pbc_bipole_common import ewald_erfc_lattice_options
+
+    _v_ne_erfc_options = (
+        ewald_erfc_lattice_options(
+            lat_opts_1e, omega_used, ewald_precision, basis=basis, system=system,
+        ) if ewald_options_1e is not None and v_ne_grid_options is None else None
+    )
     _sr_image_extent = resolve_bipole_sr_image_extent(
         basis,
         system,
@@ -650,6 +641,7 @@ def run_pbc_bipole_uhf(
             v_ne_grid_options,
             plog,
             sym_log_style="rich",
+            resolved_erfc_options=_v_ne_erfc_options,
         )
     cells = list(S_lat.cells)
     plog.info(f"n_cells in lattice sum = {len(cells)}")
@@ -810,10 +802,10 @@ def run_pbc_bipole_uhf(
         C_beta_per_k.append(C_b.astype(complex))
         eps_beta_per_k.append(eps_b)
 
-    def _spin_density(C_per_k_local, n_occ_each):
+    def _spin_density(C_per_k_local, occupations):
         return unrestricted_spin_density(
             C_per_k_local,
-            n_occ_each,
+            occupations,
             n_k=n_k,
             kmesh=kmesh,
             cells_density=cells_density,
@@ -823,10 +815,9 @@ def run_pbc_bipole_uhf(
     D_alpha_real = _spin_density(C_alpha_per_k, n_alpha)
     D_beta_real = _spin_density(C_beta_per_k, n_beta)
 
-    # --- Smearing occupation helpers (open-shell: per-spin mu) ---
-    from .smearing.fermi_dirac import fermi_dirac_occupations_per_k as _fd_per_k
-
-    def _occupations_per_spin(eps_spin_per_k, n_spin):
+    # --- Occupation helpers (open-shell: one chemical potential per spin
+    # over the whole mesh, also at T = 0; #176) ---
+    def _occupations_per_spin(eps_spin_per_k, n_spin, *, mom=False):
         return unrestricted_occupations_per_spin(
             eps_spin_per_k,
             n_spin,
@@ -835,7 +826,35 @@ def run_pbc_bipole_uhf(
             system=system,
             kmesh=kmesh,
             bz_integration=bz_integration,
+            fixed_occupied_subspace=mom,
         )
+
+    def _needs_occupation_density(occ_a, occ_b):
+        """Whether these occupations need the occupation-weighted D(k).
+
+        The ``C[:, :n]`` slice is exact only for the per-k integer Aufbau
+        pattern. The zero-temperature fill is one chemical potential per spin
+        over the whole mesh (#176), so a band-overlap mesh occupies a
+        different number of bands at different k; those occupations are built
+        from themselves (#509). The legacy Ewald-J gauge reconstructs its
+        long-range density from a fixed occupied slice and cannot represent
+        them, so it refuses here rather than converge a different state.
+        """
+        if use_fractional_density:
+            return True
+        if _occupations_are_per_k_integer_aufbau(
+            occ_a, n_alpha, occ_value=1.0
+        ) and _occupations_are_per_k_integer_aufbau(
+            occ_b, n_beta, occ_value=1.0
+        ):
+            return False
+        reject_bipole_fractional_legacy_gauge(
+            use_ewald_j_split=bool(use_ewald_j_split),
+            exchange_split_active=exchange_split_active,
+            fractional_occupations=True,  # runtime band-overlap fill (#176)
+            driver="run_pbc_bipole_uhf",
+        )
+        return True
 
     occ_alpha_per_k, mu_alpha, entropy_alpha = _occupations_per_spin(
         eps_alpha_per_k, n_alpha
@@ -845,7 +864,7 @@ def run_pbc_bipole_uhf(
     )
     entropy = entropy_alpha + entropy_beta
 
-    if use_fractional_density:
+    if _needs_occupation_density(occ_alpha_per_k, occ_beta_per_k):
         D_alpha_real = real_space_density_from_kpoints_fractional(
             C_alpha_per_k, occ_alpha_per_k, kmesh, cells_density
         )
@@ -1171,7 +1190,22 @@ def run_pbc_bipole_uhf(
     # Bundle the per-run invariants the inline UHF Fock build captured.
     # The wrapper below is intentionally placed after multipole and symmetry
     # resolution, before the PATOM in-field step and SCF loop first call it.
+    from .bipole_domain import capture_bipole_domain
+
+    _resolved_domain = capture_bipole_domain(
+        lattice_1e=lat_opts_1e, lattice_2e=lat_opts_2e,
+        requested_lattice=opts.lattice_opts,
+        ewald_options=ewald_options_1e, alpha=omega_used,
+        reciprocal_cutoff=ewald_k_max, ewald_precision=ewald_precision,
+        sr_image_extent=_sr_image_extent, use_ewald_j_split=use_ewald_j_split,
+        exchange_ewald_split=exchange_split_active,
+        exchange_exxdiv=exchange_exxdiv, exact_zone=_exact_zone,
+        ks_options=None,
+        v_ne_grid_options=v_ne_grid_options,
+        nuclear_erfc_options=_v_ne_erfc_options,
+    )
     _fock_ctx = BipoleFockContext(
+        resolved_domain=_resolved_domain,
         basis=basis,
         system=system,
         lat_opts_2e=lat_opts_2e,
@@ -1284,8 +1318,8 @@ def run_pbc_bipole_uhf(
                     D_beta_real, D_beta_real.blocks[0].shape[0], n_k
                 )
         else:
-            D_alpha_real = _spin_density(C_alpha_per_k, n_alpha)
-            D_beta_real = _spin_density(C_beta_per_k, n_beta)
+            D_alpha_real = _spin_density(C_alpha_per_k, occ_alpha_per_k)
+            D_beta_real = _spin_density(C_beta_per_k, occ_beta_per_k)
         D_alpha_prev = None
         D_beta_prev = None
         initial_density_is_local = False
@@ -1526,7 +1560,9 @@ def run_pbc_bipole_uhf(
             else:
                 C_a = C_alpha_per_k[idx]
                 C_b = C_beta_per_k[idx]
-                if not use_fractional_density:
+                if not _needs_occupation_density(
+                    occ_alpha_per_k, occ_beta_per_k
+                ):
                     C_a_occ = C_a[:, :n_alpha] if n_alpha > 0 else C_a[:, :0]
                     C_b_occ = C_b[:, :n_beta] if n_beta > 0 else C_b[:, :0]
                     D_a_k = C_a_occ @ C_a_occ.conj().T
@@ -1798,11 +1834,14 @@ def run_pbc_bipole_uhf(
         C_beta_per_k = new_C_beta
         eps_beta_per_k = new_eps_beta
 
+        _mom_held = bool(
+            _mom_this_iter and C_prev_occ_alpha_per_k is not None
+        )
         occ_alpha_per_k, mu_alpha, entropy_alpha = _occupations_per_spin(
-            eps_alpha_per_k, n_alpha
+            eps_alpha_per_k, n_alpha, mom=_mom_held
         )
         occ_beta_per_k, mu_beta, entropy_beta = _occupations_per_spin(
-            eps_beta_per_k, n_beta
+            eps_beta_per_k, n_beta, mom=_mom_held
         )
         entropy = entropy_alpha + entropy_beta
 
@@ -1819,8 +1858,8 @@ def run_pbc_bipole_uhf(
                 )
                 _zero_cross_cell_density(D_beta_new, D_beta_new.blocks[0].shape[0], n_k)
         else:
-            D_alpha_new = _spin_density(C_alpha_per_k, n_alpha)
-            D_beta_new = _spin_density(C_beta_per_k, n_beta)
+            D_alpha_new = _spin_density(C_alpha_per_k, occ_alpha_per_k)
+            D_beta_new = _spin_density(C_beta_per_k, occ_beta_per_k)
 
         # The provisional energy/commutator criteria describe D_used. Keep
         # iterating unless both newly diagonalised spin densities represent
@@ -2170,6 +2209,7 @@ def run_pbc_bipole_uhf(
         scf_trace=scf_trace,
         ewald_alpha_bohr_inv=omega_used,
         ewald_precision=float(ewald_precision),
+        resolved_domain=_resolved_domain,
         sr_image_extent_bohr=_sr_image_extent,
         pair_resolved_fock_domain=bool(_fock_sym_map is not None),
         e_dft_plus_u=float(e_dft_plus_u),

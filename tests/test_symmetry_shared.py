@@ -455,10 +455,157 @@ def test_molecular_rounded_identity_preserves_dense_and_compact_actions(anti):
         np.testing.assert_allclose(action.pull_operator(matrix), matrix, atol=1e-12, rtol=0.0)
 
 
-def test_molecular_radial_mismatch_fails_closed():
+@pytest.mark.parametrize("l", range(7))
+@pytest.mark.parametrize("improper", [False, True])
+@pytest.mark.parametrize("anti", [False, True])
+def test_molecular_cartesian_action_matches_gaussian_values(l, improper, anti):
+    from vibeqc.symmetry_ao import build_molecular_space_action
+    from scipy.spatial.transform import Rotation
+
+    center = np.array([0.3, -0.7, 0.2])
+    mol = vq.Molecule([vq.Atom(2, center)])
+    basis = vq.BasisSet(mol, [core.ShellInfo(0, l, False, [0.8], [1.], center)],
+                        "Cartesian Gaussian witness", False)
+    rotation = Rotation.from_rotvec([0.37, -0.61, 0.29]).as_matrix()
+    if improper:
+        rotation = -rotation
+    translation = center-rotation @ center
+    action = build_molecular_space_action(mol, basis, rotation, translation,
+        source=SPACE, target=SPACE, budget=BUDGET, antiunitary=anti)
+    points = np.random.default_rng(724).normal(size=(43, 3)) + center
+    c = panel(basis.nbasis)
+    values = core.evaluate_ao(basis, points)
+    # Pull points back independently; no shared rotation blocks in this oracle.
+    reference = core.evaluate_ao(basis, (points-translation) @ np.linalg.inv(rotation).T)
+    np.testing.assert_allclose(values @ action.apply(c),
+                               reference @ (c.conj() if anti else c), atol=3e-12, rtol=1e-12)
+    if l == 2:
+        overlap = np.ascontiguousarray(vq.compute_overlap(basis), dtype=complex)
+        np.testing.assert_allclose(action.pull_operator(overlap), overlap, atol=2e-12, rtol=0)
+        q = action.apply(np.eye(basis.nbasis, dtype=complex))
+        assert np.max(np.abs(q.T @ q-np.eye(basis.nbasis))) > 0.1
+        metric = audit_metric_panels(action, c, overlap, overlap, contract=CONTRACT,
+            tolerance=1e-11, probe_identity="Cartesian molecular physical overlap", budget=BUDGET)
+        assert metric.passed_probe and not metric.production_reduction_authorized
+
+
+@pytest.mark.parametrize("anti", [False, True])
+def test_molecular_mixed_cartesian_reordered_channels_and_adjoint(anti):
+    from vibeqc.symmetry_ao import build_molecular_space_action, build_ao_permutation_matrix
+    from scipy.spatial.transform import Rotation
+
+    frame = Rotation.from_rotvec([0.21, 0.64, -0.35]).as_matrix()
+    center = np.array([0.2, -0.3, 0.4])
+    mol = vq.Molecule([vq.Atom(2, center-frame[:, 0]), vq.Atom(2, center+frame[:, 0])])
+    rotation = np.ascontiguousarray(frame @ np.diag([-1., -1., 1.]) @ frame.T)
+    channels = [(0, .8, False), (0, 1.2, True), (0, .8, False),
+                (1, 1.2, True), (1, .8, False), (1, .8, False)]
+    shells = [core.ShellInfo(atom, 2, pure, [exponent], [1.], mol.atoms[atom].xyz)
+              for atom, exponent, pure in channels]
+    basis = vq.BasisSet(mol, shells, "mixed repeated channels", False)
+    translation = center-rotation @ center
+    action = build_molecular_space_action(mol, basis, rotation, translation,
+        source=SPACE, target=SPACE, budget=BUDGET, antiunitary=anti)
+    np.testing.assert_array_equal(action.destinations, [4, 3, 5, 1, 0, 2])
+    np.testing.assert_array_equal(np.diff(action.offsets), [6, 5, 6, 5, 6, 6])
+    x, y = panel(basis.nbasis), panel(basis.nbasis)*(.3+.7j)
+    np.testing.assert_allclose(action.apply(action.apply(x)), x, atol=2e-12, rtol=0)
+    assert np.vdot(action.apply(x), y).real == pytest.approx(np.vdot(x, action.adjoint(y)).real, abs=2e-12)
+    points = np.random.default_rng(15).normal(size=(37, 3))
+    expected = core.evaluate_ao(basis, (points-translation) @ rotation) @ (x.conj() if anti else x)
+    np.testing.assert_allclose(core.evaluate_ao(basis, points) @ action.apply(x), expected,
+                               atol=3e-12, rtol=0)
+    for operator in (vq.compute_overlap(basis), vq.compute_kinetic(basis), vq.compute_nuclear(basis, mol)):
+        operator = np.ascontiguousarray(operator, dtype=complex)
+        np.testing.assert_allclose(action.pull_operator(operator), operator, atol=3e-11, rtol=0)
+    # Existing dense consumers still rely on the pure, Euclidean-unitary API.
+    with pytest.raises(ValueError, match="pure shells"):
+        build_ao_permutation_matrix(basis, rotation, np.array([1, 0]))
+
+
+@pytest.mark.parametrize("l", range(7))
+def test_native_cartesian_rotation_exact_budgets_and_composition(l):
+    from scipy.spatial.transform import Rotation
+
+    r = Rotation.from_rotvec([.17, -.63, .28]).as_matrix()
+    s = -Rotation.from_rotvec([-.43, .09, .81]).as_matrix()
+    plan = core._plan_symmetry_cartesian_rotation(l, BUDGET.native())
+    exact = Budget(plan.bytes, plan.work)
+    def action(matrix, budget=exact):
+        return core._symmetry_cartesian_rotation(l, np.ascontiguousarray(matrix), 1e-12, budget.native())
+    np.testing.assert_allclose(action(r) @ action(s), action(r @ s), atol=4e-13, rtol=0)
+    for budget in (Budget(plan.bytes-1, plan.work), Budget(plan.bytes, plan.work-1)):
+        # Refuse admission before examining a nonfinite payload.
+        with pytest.raises(ValueError, match="budget"):
+            action(np.full((3, 3), np.nan), budget)
+
+
+@pytest.mark.parametrize("anti", [False, True])
+def test_molecular_cartesian_unreduced_fock_covariance(anti):
+    from vibeqc.symmetry_ao import build_molecular_space_action
+    from scipy.spatial.transform import Rotation
+
+    mol = vq.Molecule([vq.Atom(2, [0., 0., 0.])])
+    basis = vq.BasisSet(mol, [core.ShellInfo(0, l, False, [.8], [1.], [0., 0., 0.])
+                            for l in (0, 2)], "Cartesian full-integral witness", False)
+    r = -Rotation.from_rotvec([.37, -.61, .29]).as_matrix()
+    action = build_molecular_space_action(mol, basis, r, np.zeros(3),
+        source=SPACE, target=SPACE, budget=BUDGET, antiunitary=anti)
+    eri = np.asarray(vq.compute_eri(basis)).reshape((basis.nbasis,)*4)
+    h = np.asarray(vq.compute_kinetic(basis))+np.asarray(vq.compute_nuclear(basis, mol))
+    def fock(density):
+        return np.ascontiguousarray(h+np.einsum("ijkl,kl->ij", eri, density)
+                                   -.5*np.einsum("ikjl,kl->ij", eri, density), dtype=complex)
+    trial = panel(basis.nbasis, basis.nbasis)
+    trial = np.ascontiguousarray(trial+trial.conj().T)
+    evidence = audit_equivariance(action, trial, fock,
+        contract=replace(CONTRACT, operator="Cartesian molecular unreduced four-center RHF"),
+        tolerance=1e-10, probe_identity="nonsymmetric Cartesian Hermitian density")
+    assert evidence.passed_probe and not evidence.production_reduction_authorized
+
+
+@pytest.mark.parametrize("fault", ["l_negative", "l_high", "dtype", "strided", "shape",
+                                   "nan", "nonorthogonal", "tolerance_zero", "tolerance_high"])
+def test_native_cartesian_rotation_refuses_invalid_descriptors(fault):
+    l, r, tolerance = 2, np.eye(3), 1e-12
+    if fault == "l_negative": l = -1
+    if fault == "l_high": l = 7
+    if fault == "dtype": r = r.astype(np.float32)
+    if fault == "strided": r = r.T
+    if fault == "shape": r = r.ravel()
+    if fault == "nan": r[0, 0] = np.nan
+    if fault == "nonorthogonal": r[0, 0] = 1.001
+    if fault == "tolerance_zero": tolerance = 0
+    if fault == "tolerance_high": tolerance = 1.1e-6
+    with pytest.raises(ValueError):
+        core._symmetry_cartesian_rotation(l, r, tolerance, BUDGET.native())
+
+
+@pytest.mark.parametrize("fault", ["bytes", "work"])
+def test_molecular_cartesian_aggregate_budget_precedes_rotation(monkeypatch, fault):
+    from vibeqc.symmetry_ao import build_molecular_space_action
+
+    mol = vq.Molecule([vq.Atom(2, [0., 0., 0.])])
+    basis = vq.BasisSet(mol, [core.ShellInfo(0, 2, False, [.8], [1.], [0., 0., 0.])],
+                        "budget witness", False)
+    metadata = core._symmetry_basis_snapshot_bytes(basis, BUDGET.native())
+    required_bytes = metadata+131072+4096*basis.nbasis+1024
+    required_work = 256+512*basis.nbasis+7_000_000+500000
+    budget = (Budget(required_bytes-1, required_work) if fault == "bytes"
+              else Budget(required_bytes, required_work-1))
+    def forbidden(*args):
+        pytest.fail("rotation evaluated before aggregate admission")
+    monkeypatch.setattr(core, "_symmetry_cartesian_rotation", forbidden)
+    with pytest.raises((MemoryError, ValueError), match="budget"):
+        build_molecular_space_action(mol, basis, np.eye(3), np.zeros(3),
+            source=SPACE, target=SPACE, budget=budget)
+
+
+@pytest.mark.parametrize("pure", [False, True])
+def test_molecular_radial_mismatch_fails_closed(pure):
     from vibeqc.symmetry_ao import build_molecular_space_action, build_ao_permutation_matrix
     mol = vq.Molecule([vq.Atom(2, [-1., 0., 0.]), vq.Atom(2, [1., 0., 0.])])
-    shells = [core.ShellInfo(i, 0, True, [0.8+i*0.1], [1.], list(atom.xyz))
+    shells = [core.ShellInfo(i, 0, pure, [0.8+i*0.1], [1.], list(atom.xyz))
               for i, atom in enumerate(mol.atoms)]
     basis = vq.BasisSet(mol, shells, "asymmetric radial", False)
     with pytest.raises(ValueError, match="radial"):

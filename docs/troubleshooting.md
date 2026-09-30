@@ -62,8 +62,9 @@ Common triggers:
   reference becomes a poor description of the multireference state).
 - Transition-metal complex with ligand-field-degenerate d orbitals.
 - Broken-symmetry singlet biradical.
-- Wrong initial guess (e.g. AUTO picked SAP on a system where SAD
-  starts closer to the true minimum).
+- An initial guess that reaches a different stationary solution or stalls.
+  Inspect `result.guess_selection` when a result is available, or the SCF log,
+  before comparing supported alternatives.
 
 ### Fix
 
@@ -76,7 +77,7 @@ The remaining levers, in order of bang-for-buck:
 # doc-audit: skip - option adjustments for an existing SCF setup
 opts.level_shift   = 0.2          # Saunders-Hillier shift
 opts.newton_threshold = 1.0       # Phase D2c Newton finalizer
-opts.initial_guess = vq.InitialGuess.SAD  # if AUTO picked SAP
+opts.initial_guess = vq.InitialGuess.SAD  # compare only if not already selected
 opts.max_iter      = 200          # last resort - buys time
 ```
 

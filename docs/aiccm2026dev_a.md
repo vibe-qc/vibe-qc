@@ -285,7 +285,7 @@ reached via `run_periodic_job` and is intentionally not a `run_ccm_scf` route.
 | level | HF | KS | open-shell | correlation |
 |---|---|---|---|---|
 | **Γ-CCM 4-center** | `run_ccm_rhf` / `run_ccm_rhf_scalable`; high-level `variant="four-center"` | `run_ccm_rks`; libxc plus pure full-grid external providers through both the low-level and high-level APIs | `run_ccm_uhf`, `run_ccm_uks`; high-level `variant="four-center"`; `run_ccm_uks` and the runner accept the same pure full-grid external providers | `run_ccm_mp2`, `run_ccm_ump2`, `run_ccm_ccsd` (+(T)) with `method="aiccm2026dev-a"` |
-| **neutral fitted-torus control (3c)** | `run_ccm_rhf_gdf`, `run_ccm_rhf_direct` (k-free, == GDF at `exxdiv="ewald"`), `run_ccm_rhf_ri_neutral` (strict-zero-mode) | `run_ccm_rks_gdf`, `run_ccm_rks_direct` (k-free; pure + global hybrids, periodic XC folded onto the torus - gated against `run_ccm_rks_gdf`, molecular RKS in the vacuum limit + external PySCF KRKS, see `test_ccm_rks_direct.py`), `run_ccm_uks_gdf` + `run_ccm_uks_direct` (open-shell KS: per-spin seam × `a_x`, spin-polarized periodic XC; collapses to `run_ccm_rks_direct` on closed shells; `test_ccm_uks_direct.py`); **EXPERIMENTAL**: both direct KS drivers additionally run screened HSE-class hybrids (erfc-attenuated fitted kernel + `σ₀·S·D·S` zero mode, exxdiv-independent, no seam; `test_ccm_rsh_direct.py`; full-range-arm RSH fails closed), and `run_ccm_double_hybrid_direct` composes closed-shell double hybrids (hybrid-KS SCF + SCS-MP2 on the KS orbitals, one shared `L`; `test_ccm_double_hybrid_direct.py`) | `run_ccm_uhf(cderi=L)` (strict-zero-mode), `run_ccm_uhf_gdf` (multi-k KUHF; per-unit-cell spin bookkeeping, see its warning), `run_ccm_uhf_direct` (k-free, BvK-ewald seam per spin, == `run_ccm_rhf_direct` on closed shells) | `run_ccm_ri_mp2` (one-call, closed or open shell), `run_ccm_ri_ccsd` (one-call, closed shell), `run_ccm_{mp2,ccsd,ump2}(cderi=L)`, and `run_ccm_uccsd` - density-fit from the neutral cderi `L`, **no dense n⁴ four-center**, reaches moderate 3-D. `reference="direct"` selects a complete folded/Ewald reference route, not a seam-only toggle. None is assigned Γ-CCM or χ-CCM identity. |
+| **neutral fitted-torus control (3c)** | `run_ccm_rhf_gdf`, `run_ccm_rhf_direct` (k-free, == GDF at `exxdiv="ewald"`), `run_ccm_rhf_ri_neutral` (strict-zero-mode) | `run_ccm_rks_gdf`, `run_ccm_rks_direct` (k-free; pure + global hybrids, periodic XC folded onto the torus - gated against `run_ccm_rks_gdf`, molecular RKS in the vacuum limit + external PySCF KRKS, see `test_ccm_rks_direct.py`), `run_ccm_uks_gdf` + `run_ccm_uks_direct` (open-shell KS: per-spin seam × `a_x`, spin-polarized periodic XC; collapses to `run_ccm_rks_direct` on closed shells; `test_ccm_uks_direct.py`); **EXPERIMENTAL**: both direct KS drivers additionally run screened HSE-class hybrids (erfc-attenuated fitted kernel + `σ₀·S·D·S` zero mode, exxdiv-independent, no seam; `test_ccm_rsh_direct.py`; full-range-arm RSH fails closed), and `run_ccm_double_hybrid_direct` composes closed-shell double hybrids (hybrid-KS SCF + SCS-MP2 on the KS orbitals, one shared `L`; `test_ccm_double_hybrid_direct.py`) | `run_ccm_uhf(cderi=L)` (strict-zero-mode), `run_ccm_uhf_gdf` (multi-k KUHF; per-unit-cell spin bookkeeping, see its warning), `run_ccm_uhf_direct` (k-free, BvK-ewald seam per spin, == `run_ccm_rhf_direct` on closed shells) | `run_ccm_ri_mp2` (one-call, closed or open shell), `run_ccm_ri_ccsd` (one-call, closed shell), `run_ccm_{mp2,ccsd,ump2}(cderi=L)`, and `run_ccm_uccsd` - density-fit from the neutral cderi `L`, **no dense n⁴ four-center**, reaches moderate 3-D. `reference="bloch"` (the default since 2026-09-25) runs the Bloch producer and folds it to real supercell-Γ orbitals (`ccm_reference_from_bloch`, Theorem 1; every correlated entry point also takes a `run_ccm_*_gdf` result directly), `reference="direct"` selects the complete folded/Ewald reference route (the independent validation producer), neither a seam-only toggle. None is assigned Γ-CCM or χ-CCM identity. |
 | **neutral-control RIJCOSX approximation (3c)** | `run_ccm_rhf_direct_rijcosx` (dim=3) | - | - | - |
 | **Γ-CCM WSSC RIJCOSX research route (3c)** | `run_ccm_rhf_rijcosx` (bare research operator; excluded from reportable Γ/χ comparisons) | - | - | - |
 | **neutral-control local correlation** | - | - | - | `ccm_dlpno_mp2`, `ccm_dlpno_ccsd` (union), `ccm_dlpno_ccsd_coupled` (per-pair-coupled CCSD(T)), open-shell `ccm_dlpno_ump2`, `ccm_dlpno_uccsd` - all on the neutral fitted-torus reference, with no Γ-CCM or χ-CCM identity assigned |
@@ -938,7 +938,21 @@ positive near-singularity.
   *unit-cell* fits folded onto the torus - MB-scale memory (the one-shot
   supercell FFT fit needs GBs and is kept as `cderi_build="supercell"` for
   validation) and exact GDF parity even on ultra-diffuse bases (LiH (2,1,1):
-  4e-14 vs the supercell fit's 1.35e-4 residual).
+  4e-14 vs the supercell fit's 1.35e-4 residual). Since 2026-09-24 the fold
+  builds each q-channel as ONE shared-q batch over all bra momenta (the
+  multi-k driver's own `build_lpq_bloch_native_fft_shared_q`, one ket-Bloch
+  pair-FT pass per channel instead of `N_c`), conjugates the exact
+  time-reversal partner inside self-paired channels, parallelises over
+  channels (`fold_threads`, workers pinned to one thread) and takes the
+  caller's `lat_opts` for the fit's cell list; the historical per-pair build
+  is `fit_batch="per-pair", time_reversal=False` and the identity is pinned
+  at 1e-10 in `tests/test_ccm_fold_shared_q.py`. Every direct-route result
+  carries the `L` it rode (`result.cderi`, `result.cderi_info`), and
+  `run_ccm_mp2` / `run_ccm_ccsd` / the DLPNO family reuse it when called
+  without `cderi=` -- one build per job. When the Bloch producer ran first
+  in the same process, `run_ccm_rhf_gdf(ccm, retain_fit_cache=True).fit_cache`
+  hands its per-pair fit to `run_ccm_rhf_direct(ccm, fit_cache=...)`, which
+  folds it instead of refitting (classic RSGDF multi-k path only).
   On **tight-core** cells the parity above needs the RSGDF high-`|G|` tail,
   and both routes now resolve it the same way (`tail_ke_cutoff`, defaulting
   through `ccm_neutral_tail_ke_cutoff`). Until 2026-08-27 only the multi-k

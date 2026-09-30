@@ -136,21 +136,30 @@ _PLAIN_METRIC_MIN_EIG_FRACTION = 1.0e-9
 # absolute floor calibrated on the first two annihilates the third.
 #
 # The floor is a vibe-qc calibration, NOT a value from either paper (Sun
-# 2017 Sec. II B quotes a 1e-9 default and Sec. III finds 1e-10 best; PySCF
-# ships 1e-10). Those tighter values are supported there because PySCF
-# builds its 2-centre metric at a dedicated, far tighter precision
-# (``precision_j2c``) than the general cell precision, precisely because
-# errors in the 2c metric propagate into the fitted tensor. vibe-qc builds
-# J-tilde at the general lattice-sum precision, so its own construction
-# error sets the floor:
+# 2017 Sec. II B quotes a 1e-9 default and Sec. III finds 1e-10 best;
+# PySCF ships 1e-10).
 #
-#   MgO/STO-3G/def2-svp-jk primitive, production rcut ("pyscf_auto",
-#   rcut_precision 1e-8) against a converged 34-bohr reference: the
-#   J-tilde spectrum carries up to 5.4e-06 absolute error. At the previous
-#   default the smallest RETAINED eigenvalue was 2.9e-08 with its own
-#   error bar at 6.6e-08 -- the mode was smaller than its uncertainty, and
-#   Eq. 19 divides the Eq.-23 numerator by its square root (amplification
-#   ~6e+03). That is the mechanism behind the measured MDF blow-ups.
+# It USED to be set by J-tilde's construction error. At the general
+# lattice-sum precision the MgO/STO-3G/def2-svp-jk spectrum carried up to
+# 5.4e-06 absolute error, and the smallest retained eigenvalue at the old
+# default was 2.9e-08 against its own 6.6e-08 error bar -- a mode smaller
+# than its uncertainty, divided by its own square root. Since 2026-09-17
+# that is no longer the binding constraint: :data:`_MDF_PRECISION_J2C`
+# builds J-tilde to 1.8e-13 on the same cell (see
+# :func:`_mdf_fit_lattice_opts`).
+#
+# THE FLOOR STAYS ANYWAY, and the reason changed. Measured on MgO with
+# the accurate metric, sweeping the absolute threshold with this floor
+# disabled entirely:
+#
+#   3e-2   -271.1420    -92.1 mHa     <- the loosest useful cut
+#   1e-3   -274.2850  -3235.1 mHa
+#   1e-5   -336.4730  -65423   mHa
+#   1e-8   -64954.85          diverged, non-converged
+#
+# i.e. the small-lambda modes are still unusable, and they are unusable
+# for a reason a better-built metric cannot touch (see
+# ``pbc_gdf._reject_dense_core_mdf``). The floor is what keeps them out.
 #
 # Calibration, Gamma RHF against out-of-process PySCF MDF oracles (see
 # tests/test_pbc_gdf_mdf.py::test_mdf_linear_dep_threshold_ne_box_sweep):
@@ -171,6 +180,110 @@ _PLAIN_METRIC_MIN_EIG_FRACTION = 1.0e-9
 # leaves the dilute H2 box untouched (1e-4 x 9.17e-06 = 9.2e-10, below the
 # 1e-9 default, so max() keeps the caller's value).
 _MDF_DRESSED_METRIC_MIN_EIG_FRACTION = 1.0e-4
+
+
+# vibe-qc's analogue of PySCF's ``precision_j2c``: the accuracy the
+# PW-dressed MDF metric ``J-tilde`` (Sun 2017 Eq. 20) is built to, which is
+# NOT the general cell precision. The fit is ``W = T^T J-tilde^{-1} T``, so
+# an error dJ in the metric reaches the fitted tensor as ``|T|^2 dJ /
+# lambda^2`` -- two inverse powers of the very eigenvalues the
+# linear-dependence cut is deciding about. No mode can be retained below
+# the accuracy of the matrix it is an eigenvalue of. PySCF makes the same
+# separation and for the same reason (``pyscf/pbc/df/df.py``,
+# ``precision_j2c``), which is what lets it ship a 1e-10 linear-dependence
+# default where a metric built at the general precision cannot support one.
+#
+# 1e-12 is four orders below the 1e-8 general default and costs little: a
+# Gaussian lattice sum's radius grows only as ``sqrt(log(1/precision))``,
+# so buying the four orders (plus the cell-count budget of
+# :func:`_mdf_fit_lattice_opts`) moved MgO's metric rcut 15.5 -> 28.9 bohr
+# and no measured MDF run got measurably slower. The 2-centre metric is
+# the smallest of the three lattice sums MDF runs (n_aux^2 elements
+# against the 3-centre's n_aux.n_orb^2), so this is the cheap place to buy
+# accuracy.
+#
+# Delivered, against a converged 45-bohr reference (2026-09-17):
+#
+#              max|dJ_PQ|            max|dlambda|
+#              1e-8 rcut   here      1e-8 rcut   here
+#   MgO        4.51e-06  1.14e-13    5.42e-06  1.82e-13
+#   LiH        4.56e-06  1.14e-13    3.79e-06  1.32e-13
+#   H2 box     3.19e-09  4.44e-15    3.46e-09  6.00e-15
+#   Ne box     3.84e-10  3.02e-14    2.26e-10  4.09e-14
+#
+# The H2 box row is the one with a live consequence for a SUPPORTED class:
+# its 3.46e-09 spectrum error exceeded the 1e-9 threshold that was meant
+# to cut on it, so modes inside the noise were being retained in
+# production. Ne, whose floor sat far above its error either way, is
+# unchanged below a nanohartree.
+_MDF_PRECISION_J2C = 1.0e-12
+
+# The three-centre companion, DEFAULT OFF (None = build the 3-centre at
+# the caller's ``rcut_precision``, as before).
+#
+# It exists because ``L = U_keep^T (T - PW proj) / sqrt(lambda)`` divides
+# the 3-centre by the same square root that divides the metric, so on
+# paper a retained mode amplifies the 3-centre's construction error too.
+# MEASURED 2026-09-17, and the paper argument does not bite at any
+# threshold actually reachable: switching it on at 1e-10 leaves
+# Ne/STO-3G/10-bohr identical to below a nanohartree and H2/STO-3G/12-bohr
+# identical to all printed digits, and on MgO/STO-3G it left every energy
+# in a 3e-2 .. 1e-10 threshold sweep unchanged while costing ~20% of the
+# run. The metric's error is amplified by ``1/lambda`` and the 3-centre's
+# only by ``1/sqrt(lambda)``, and that one extra power is the whole
+# difference: at the thresholds the dressed metric admits, the 3-centre at
+# ``rcut_precision`` is already well inside its budget.
+#
+# Kept as a knob rather than deleted because the reasoning is sound and a
+# future tighter-admitting fit would need it; do not switch it on without
+# re-measuring, since the 3-centre is the expensive sum of the three
+# (n_aux.n_orb^2 elements over the joint AO-union-fused basis, whose rcut
+# is already the longest).
+_MDF_PRECISION_J3C = None
+
+
+def _mdf_fit_lattice_opts(
+    basis: BasisSet,
+    system: PeriodicSystem,
+    base_opts: "LatticeSumOptions",
+    precision: float,
+    multiplicity: int,
+) -> "LatticeSumOptions":
+    """Lattice-sum options for one half of the PW-dressed MDF fit.
+
+    Uses :class:`~vibeqc.lattice_screening.RcutStrategy.ACCUMULATED`, so
+    ``precision`` bounds the error of the SUMMED tensor rather than of its
+    largest dropped term -- the distinction that made the shipped
+    ``precision = 1e-8`` deliver 2.4e-07 on MgO and 7.1e-06 on LiH
+    rocksalt. ``multiplicity`` carries the bound from the element error to
+    the error in what is actually used: for the metric that is Weyl's
+    ``|dlambda| <= ||dJ||_2 <= n_aux max|dJ_PQ|`` over its eigenvalues, and
+    for the 3-centre the same row count over its contraction.
+    """
+    from .lattice_screening import RcutStrategy, make_lattice_opts
+
+    return make_lattice_opts(
+        basis,
+        strategy=RcutStrategy.ACCUMULATED,
+        base_opts=base_opts,
+        precision=float(precision),
+        system=system,
+        extra_multiplicity=float(max(1, int(multiplicity))),
+    )
+
+
+def _mdf_joint_basis(
+    ao_basis: BasisSet, fused: BasisSet, molecule: Molecule
+) -> BasisSet:
+    """The AO-union-fused basis whose reach sizes the MDF 3-centre sum."""
+    shells = [
+        ShellInfo(
+            int(s.atom_index), int(s.l), bool(s.pure),
+            list(s.exponents), list(s.coefficients), list(s.origin),
+        )
+        for s in list(ao_basis.shells()) + list(fused.shells())
+    ]
+    return BasisSet(molecule, shells, "<ao∪fused>", True)
 
 
 def _mdf_dressed_metric_threshold(
@@ -805,6 +918,454 @@ def fuse_transform_matrix(
     return A
 
 
+# ---------------------------------------------------------------------------
+# Auxiliary images of the compensated three-centre tensor (compcell / MDF), #172
+# ---------------------------------------------------------------------------
+#
+# compute_3c_eri_lattice and compute_3c_eri_lattice_blocks translate only the
+# ket AO shell: T_{P,mu nu} = sum_R (P_0 | mu_0 nu_R). The periodic tensor
+# needs a second, independent translation of the auxiliary function,
+# sum_{T,R} (P_T | mu_0 nu_R) (Sun et al., J. Chem. Phys. 147, 164119 (2017),
+# doi:10.1063/1.4998644, Eq. 15; Ye and Berkelbach, J. Chem. Phys. 154,
+# 131104 (2021), doi:10.1063/5.0046617, Eqs. 12-13). For a (k_bra, k_ket)
+# pair with q = k_ket - k_bra the Bloch tensor is
+#
+#     sum_{T,R} exp(i k_ket.R) exp(-i q.T) (P_T | mu_0 nu_R),
+#
+# which at k_bra = 0 reduces to the single-sum form at q for the T = 0 term.
+# Only the compensated functions phi_P = chi_P - xi_P have an absolutely
+# convergent image sum (their exterior multipoles vanish), so the images are
+# summed per (atom, l) group of the fused basis, each group whole, and are
+# meaningful only after the fuse transform. They are evaluated with the same
+# native kernel by translating the fused basis. Before 2026-09-29 the
+# builders kept only T = 0 and refused cells where that mattered; measured
+# largest omitted element: H2/STO-3G in a 6-bohr cube 4.1e-3, 10-bohr cube
+# 1.5e-6; MgO/STO-3G 0.23; LiH/STO-3G 2.4.
+
+
+def _shell_nbf(shell) -> int:
+    l = int(shell.l)
+    return 2 * l + 1 if bool(shell.pure) else (l + 1) * (l + 2) // 2
+
+
+def _shell_envelope(shell) -> tuple:
+    """(a, log C) with |shell(r - A)| <= C exp(-a |r - A|^2), per component.
+
+    The absolute polynomial bound of :func:`_rsgdf_shell_envelopes`, kept
+    per shell so the shell's centre stays attached.
+    """
+    alpha = np.asarray(shell.exponents, dtype=float)
+    coefficients = np.asarray(shell.coefficients, dtype=float)
+    angular = int(shell.l)
+    exponent = float(alpha.min()) / (2 if angular else 1)
+    live = coefficients != 0
+    terms = np.log(np.abs(coefficients[live]))
+    if angular:
+        half_l = angular / 2
+        terms = terms + half_l * (np.log(half_l / (alpha[live] - exponent)) - 1)
+    return exponent, float(np.logaddexp.reduce(terms, initial=-np.inf))
+
+
+def _compensated_potential_envelope(shells, angular: int) -> tuple:
+    """(a', log W) with |V(r)| <= W exp(-a' |r - A|^2) for a compensated group.
+
+    Every fused function is rho^l y_lm(rho-hat) F(rho), with y_lm the
+    harmonic of libint's normalisation (|y_lm| <= 1) and F a sum of Gaussians
+    whose l-th radial moment vanishes (make_compensating_basis). Its
+    potential is (4 pi / (2l+1)) y_lm [rho^-(l+1) Q_<(rho) + rho^l Q_>(rho)]
+    with Q_< = int_0^rho s^(2l+2) F and Q_> = int_rho^inf s F; the vanishing
+    moment turns Q_< into minus the outer tail. With |F| <= K exp(-a s^2),
+    both terms are Gaussian tails, bounded here with the exponent softened
+    to a' = 0.8 a so the polynomial factors fit under one Gaussian.
+    """
+    alphas = np.concatenate([np.asarray(s.exponents, float) for s in shells])
+    coefficients = np.concatenate([np.asarray(s.coefficients, float) for s in shells])
+    a = float(alphas.min())
+    softened = 0.8 * a
+    log_k = float(np.log(np.abs(coefficients).sum()))
+    l = int(angular)
+    gap = a - softened
+    n = 2 * l + 1
+    # s^(2l+2) e^(-a s^2) <= [n/(2e gap)]^(n/2) s e^(-a' s^2)
+    log_c = 0.5 * n * np.log(n / (2 * np.e * gap))
+    inner = max(np.exp(log_c) / (2 * softened), np.exp(softened) / (2 * l + 3))
+    outer = (np.exp(0.5 * l * np.log(l / (2 * np.e * gap))) if l else 1.0) / (2 * a)
+    log_w = np.log(4 * np.pi / (2 * l + 1)) + log_k + np.log(inner + outer)
+    return softened, float(log_w)
+
+
+class _AuxImagePlan(NamedTuple):
+    """Which translated fused shells the image sum evaluates.
+
+    ``images[i]`` is a translation ``T != 0`` (bohr, nearest first) and
+    ``members[i]`` the fused-shell indices whose (atom, l) group reaches an
+    AO pair from ``T``; every group is taken whole. ``remainder`` bounds,
+    per tensor element and at every k pair, what the plan leaves out.
+    """
+
+    images: tuple
+    members: tuple
+    offsets: np.ndarray
+    remainder: float
+    radius: float
+
+
+def _aux_image_plan(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    fused: BasisSet,
+    *,
+    precision: float,
+) -> _AuxImagePlan:
+    """Plan the auxiliary-image sum to a remainder of ``precision / 100``.
+
+    Every image whose Gaussian envelope bound can exceed the remainder
+    target is listed; the bound on what is left out uses the potential
+    envelope of a compensated group (:func:`_compensated_potential_envelope`)
+    and the AO envelopes of :func:`_shell_envelope`, summed over the ket
+    images with :func:`_rsgdf_log_lattice_gaussian_bound`.
+    """
+    from ._vibeqc_core import direct_lattice_cells
+
+    if not np.isfinite(precision) or precision <= 0:
+        raise ValueError("auxiliary-image plan requires a positive finite precision")
+    fused_shells = list(fused.shells())
+    offsets = np.cumsum([0] + [_shell_nbf(s) for s in fused_shells])
+    if int(system.dim) == 0:
+        return _AuxImagePlan((), (), offsets, 0.0, 0.0)
+    lattice = np.asarray(system.lattice, dtype=float)
+    sigma = float(np.linalg.svd(lattice, compute_uv=False)[-1])
+    ao_env = [(*_shell_envelope(s), np.asarray(s.origin, float))
+              for s in ao_basis.shells()]
+    groups: dict = {}
+    for index, shell in enumerate(fused_shells):
+        groups.setdefault((int(shell.atom_index), int(shell.l)), []).append(index)
+    remainder = precision / 100.0
+    log_target = float(np.log(remainder))
+    reach = {}      # group -> (centre, [(mu centre, radius)])
+    for key, group in groups.items():
+        a_g, log_w = _compensated_potential_envelope(
+            [fused_shells[i] for i in group], key[1])
+        centre = np.asarray(fused_shells[group[0]].origin, float)
+        radii = []
+        for a_mu, log_c_mu, centre_mu in ao_env:
+            gamma = a_g * a_mu / (a_g + a_mu)
+            worst = max(
+                log_w + log_c_mu + log_c_nu
+                + _rsgdf_log_lattice_gaussian_bound(a_nu, sigma)
+                + 1.5 * np.log(np.pi / (a_g + a_mu))
+                for a_nu, log_c_nu, _ in ao_env
+            )
+            # sum_{|d| > D} e^(-gamma d^2) <= e^(-gamma D^2/2) sum e^(-gamma d^2/2)
+            log_tail = worst + _rsgdf_log_lattice_gaussian_bound(0.5 * gamma, sigma)
+            radius = np.sqrt(max(0.0, 2.0 * (log_tail - log_target) / gamma))
+            radii.append((centre_mu, float(radius)))
+        reach[key] = (centre, radii)
+    radius = max(
+        r + float(np.linalg.norm(centre - centre_mu))
+        for centre, radii in reach.values() for centre_mu, r in radii
+    )
+    cells = sorted(
+        (np.asarray(c.r_cart, float) for c in direct_lattice_cells(system, radius)),
+        key=lambda t: float(np.linalg.norm(t)),
+    )
+    images, members = [], []
+    for image in cells:
+        if float(np.linalg.norm(image)) == 0.0:
+            continue
+        selected = sorted(
+            i for key, (centre, radii) in reach.items()
+            if any(np.linalg.norm(centre + image - centre_mu) <= r
+                   for centre_mu, r in radii)
+            for i in groups[key]
+        )
+        if selected:
+            images.append(image)
+            members.append(tuple(selected))
+    return _AuxImagePlan(tuple(images), tuple(members), offsets, remainder, float(radius))
+
+
+def _translated_fused_basis(
+    system: PeriodicSystem, fused: BasisSet, members: Sequence[int], image: np.ndarray,
+) -> BasisSet:
+    """The fused shells ``members`` translated by ``image``.
+
+    ``BasisSet`` wants a molecule whose atoms match the shell origins, so
+    the unit cell is translated with it; the shells keep their atom
+    indices, which is what maps a derivative back onto the home atom.
+    """
+    molecule = system.unit_cell_molecule()
+    n_electrons = sum(int(atom.Z) for atom in molecule.atoms)
+    shifted_molecule = Molecule(
+        [type(atom)(int(atom.Z), list(np.asarray(atom.xyz, float) + image))
+         for atom in molecule.atoms],
+        0, 1 + n_electrons % 2,
+    )
+    shells = list(fused.shells())
+    return BasisSet(
+        shifted_molecule,
+        [ShellInfo(int(s.atom_index), int(s.l), bool(s.pure), list(s.exponents),
+                   list(s.coefficients), list(np.asarray(s.origin, float) + image))
+         for s in (shells[i] for i in members)],
+        "<fused image>", True,
+    )
+
+
+def _member_rows(plan: _AuxImagePlan, members: Sequence[int]) -> np.ndarray:
+    """Fused-basis row indices of the shells ``members``, in order."""
+    return np.concatenate([
+        np.arange(plan.offsets[i], plan.offsets[i + 1]) for i in members
+    ])
+
+
+def _aux_image_plan_cached(system, ao_basis, fused, precision) -> _AuxImagePlan:
+    key = _aux_image_key(system, ao_basis, fused, None, precision)
+    if key not in _AUX_IMAGE_PLANS:
+        if len(_AUX_IMAGE_PLANS) > 16:
+            _AUX_IMAGE_PLANS.clear()
+        _AUX_IMAGE_PLANS[key] = _aux_image_plan(
+            system, ao_basis, fused, precision=precision)
+    return _AUX_IMAGE_PLANS[key]
+
+
+_AUX_IMAGE_PLANS: dict = {}
+
+
+def _aux_image_key(system, ao_basis, fused, lat_opts, precision, extra=()) -> str:
+    digest = hashlib.sha256()
+    digest.update(np.ascontiguousarray(system.lattice, dtype=float).tobytes())
+    cutoff = -1.0 if lat_opts is None else float(lat_opts.cutoff_bohr)
+    digest.update(np.asarray([int(system.dim), cutoff, float(precision)]).tobytes())
+    for basis in (ao_basis, fused):
+        for shell in basis.shells():
+            digest.update(np.asarray(
+                [shell.l, shell.pure, *shell.origin, *shell.exponents,
+                 *shell.coefficients], dtype=float).tobytes())
+    digest.update(np.asarray(extra, dtype=float).tobytes())
+    return digest.hexdigest()
+
+
+def aux_image_3c(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    fused: BasisSet,
+    lat_opts: LatticeSumOptions,
+    *,
+    precision: float,
+    k_pairs: Optional[Sequence] = None,
+):
+    """Auxiliary-image part of the periodic fused three-centre tensor.
+
+    Without ``k_pairs`` returns the real Gamma tensor
+    ``X[P, mu, nu] = sum_{T != 0} sum_R (phi_{P,T} | mu_0 nu_R)``; with
+    ``k_pairs = [(k_bra, k_ket), ...]`` a list of complex tensors
+    ``sum_{T != 0} exp(-i q.T) sum_R exp(i k_ket.R) (phi_{P,T} | mu_0 nu_R)``,
+    ``q = k_ket - k_bra``. ``R`` runs over the ket images of ``lat_opts``
+    as in :func:`compute_3c_eri_lattice`. Rows are fused functions and the
+    sum over ``T`` converges only for the compensated combinations, so
+    apply the fuse transform before using it. The plan's remainder is at
+    most ``precision / 100`` per element (:func:`_aux_image_plan`).
+    """
+    plan = _aux_image_plan_cached(system, ao_basis, fused, float(precision))
+    n_fused = int(plan.offsets[-1])
+    n_orb = int(ao_basis.nbasis)
+    if k_pairs is None:
+        total = np.zeros((n_fused, n_orb, n_orb))
+        for image, members in zip(plan.images, plan.members):
+            partial = np.asarray(compute_3c_eri_lattice(
+                ao_basis, _translated_fused_basis(system, fused, members, image),
+                system, lat_opts))
+            total[_member_rows(plan, members)] += partial
+        _logger.info(
+            "auxiliary images of the 3c tensor: %d translations within %.1f bohr, "
+            "remainder <= %.1e per element", len(plan.images), plan.radius,
+            plan.remainder)
+        return total
+    pairs = [(np.asarray(kb, float).reshape(3), np.asarray(kk, float).reshape(3))
+             for kb, kk in k_pairs]
+    kets, ket_index = [], []
+    for _, k_ket in pairs:
+        for j, known in enumerate(kets):
+            if np.allclose(known, k_ket, atol=1e-12):
+                ket_index.append(j)
+                break
+        else:
+            ket_index.append(len(kets))
+            kets.append(k_ket)
+    kets_arr = np.asarray(kets)
+    transfers = np.asarray([kk - kb for kb, kk in pairs])
+    totals = np.zeros((len(pairs), n_fused, n_orb * n_orb), dtype=np.complex128)
+    ket_index = np.asarray(ket_index)
+    for image, members in zip(plan.images, plan.members):
+        _, vectors, blocks = compute_3c_eri_lattice_blocks(
+            ao_basis, _translated_fused_basis(system, fused, members, image),
+            system, lat_opts)
+        blocks = np.asarray(blocks)
+        n_cells = blocks.shape[0]
+        per_ket = np.exp(1j * (kets_arr @ np.asarray(vectors, float).T)) @ blocks.reshape(n_cells, -1)
+        per_ket = per_ket.reshape(len(kets), -1, n_orb * n_orb)
+        phase = np.exp(-1j * (transfers @ image))
+        rows = _member_rows(plan, members)
+        totals[:, rows] += phase[:, None, None] * per_ket[ket_index]
+    _logger.info(
+        "auxiliary images of the 3c tensor: %d translations within %.1f bohr "
+        "for %d k pair(s), remainder <= %.1e per element", len(plan.images),
+        plan.radius, len(pairs), plan.remainder)
+    return [t.reshape(n_fused, n_orb, n_orb) for t in totals]
+
+
+def _aux_image_3c_gradient_weighted(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    fused: BasisSet,
+    lat_opts: LatticeSumOptions,
+    weight: np.ndarray,
+    *,
+    precision: float,
+) -> np.ndarray:
+    """``sum_{P, mu nu} W[P, mu nu] d/dR`` of :func:`aux_image_3c` at Gamma.
+
+    ``weight`` has shape ``(n_fused, n_orb * n_orb)``. The native kernel
+    assigns a shell to the atom at its position (libint ``shell2atom``),
+    and an unmatched shell would index the gradient out of bounds, so each
+    call gets a system whose unit cell also lists the translated atoms;
+    their rows fold back onto the home atoms, as translation invariance
+    requires.
+    """
+    from ._vibeqc_core import compute_3c_eri_lattice_gradient_weighted
+
+    plan = _aux_image_plan_cached(system, ao_basis, fused, float(precision))
+    weight = np.asarray(weight, dtype=np.float64)
+    home = list(system.unit_cell)
+    n_atoms = len(home)
+    lattice = np.asarray(system.lattice, dtype=float)
+    grad = np.zeros((n_atoms, 3))
+    for image, members in zip(plan.images, plan.members):
+        rows = _member_rows(plan, members)
+        shifted = [type(atom)(int(atom.Z), list(np.asarray(atom.xyz, float) + image))
+                   for atom in home]
+        augmented = PeriodicSystem(int(system.dim), lattice, home + shifted, 0, 1)
+        partial = np.asarray(compute_3c_eri_lattice_gradient_weighted(
+            ao_basis, _translated_fused_basis(system, fused, members, image),
+            augmented, lat_opts, np.ascontiguousarray(weight[rows])), dtype=np.float64)
+        grad += partial[:n_atoms] + partial[n_atoms:]
+    return grad
+
+
+def _pair_aux_images(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    fused: BasisSet,
+    lat_opts: LatticeSumOptions,
+    k_bra: np.ndarray,
+    k_ket: np.ndarray,
+    *,
+    precision: float,
+    cache: Optional[dict] = None,
+    pairs: Optional[Sequence] = None,
+) -> np.ndarray:
+    """:func:`aux_image_3c` for one (k_bra, k_ket) pair.
+
+    A multi-k caller passes an empty ``cache`` dict and every pair it will
+    request as ``pairs``: the first call then evaluates the images once
+    for all of them (one kernel call per image instead of one per image
+    and pair), and each later call takes its pair out of the cache. The
+    batch holds one fused-frame tensor per pair, about the size of the Lpq
+    cache it feeds; entries are released as their pairs are built.
+    """
+    def key(kb, kk):
+        return tuple(np.round(np.concatenate([np.asarray(kb, float).reshape(3),
+                                              np.asarray(kk, float).reshape(3)]), 10))
+
+    this = key(k_bra, k_ket)
+    if cache is not None:
+        if this not in cache and pairs is not None:
+            wanted = [(np.asarray(kb, float), np.asarray(kk, float)) for kb, kk in pairs]
+            if this not in {key(kb, kk) for kb, kk in wanted}:
+                wanted.append((np.asarray(k_bra, float), np.asarray(k_ket, float)))
+            tensors = aux_image_3c(system, ao_basis, fused, lat_opts,
+                                   precision=precision, k_pairs=wanted)
+            cache.update({key(kb, kk): t for (kb, kk), t in zip(wanted, tensors)})
+        if this in cache:
+            return cache.pop(this)
+    return aux_image_3c(system, ao_basis, fused, lat_opts, precision=precision,
+                        k_pairs=[(k_bra, k_ket)])[0]
+
+
+def _fused_g0_potential(fused: BasisSet) -> np.ndarray:
+    """Per fused function, ``Vbar`` with ``Vbar r_bar`` the G = 0 term of Eq. 23.
+
+    The real-space three-centre integral of a compensated function carries
+    the finite ``G -> 0`` limit of ``(4 pi / G^2) phi_P(G) rho(G)``, the
+    second-moment term ``Vbar_P S_mu nu / Omega`` (Sun et al. 2017, Eq. 23);
+    every reciprocal-space piece of the fit excludes ``G = 0``, so the
+    tensor must too. ``Vbar_P = -pi^(5/2) sum_k c_k a_k^(-5/2)`` over the
+    s-type fused shells; higher-l functions carry no monopole. Contract
+    with the fuse transform for the compensated functions. This is PySCF's
+    ``auxbar`` correction (``pyscf/pbc/df/df.py``).
+    """
+    vbar = np.zeros(fused.nbasis)
+    offset = 0
+    for shell in fused.shells():
+        width = _shell_nbf(shell)
+        if int(shell.l) == 0:
+            a = np.asarray(shell.exponents, dtype=float)
+            c = np.asarray(shell.coefficients, dtype=float)
+            vbar[offset:offset + width] = -(np.pi ** 2.5) * float(np.sum(c * a ** (-2.5)))
+        offset += width
+    return vbar
+
+
+def _g0_overlap_lattice_opts(
+    lat_opts: LatticeSumOptions, system: PeriodicSystem, ao_basis: BasisSet,
+) -> LatticeSumOptions:
+    """Pair-complete cells for the overlap of the G = 0 term.
+
+    The overlap multiplies ``Vbar``, so its image tail must be converged
+    like the SCF's own: the cutoff is raised to the one-electron bound of
+    ``periodic_k_gdf._gdf_oneel_cutoff_bound`` (1e-12 per element) and every
+    pair within it is taken. The 3c cutoff alone, enumerated by ``|g|``,
+    left ``S`` 4.2e-6 short on H2/STO-3G in a 6-bohr cube.
+    """
+    opts = LatticeSumOptions()
+    for name in ("cutoff_bohr", "nuclear_cutoff_bohr", "schwarz_threshold",
+                 "screening_overlap_threshold"):
+        setattr(opts, name, getattr(lat_opts, name))
+    opts.pair_complete_1e = True
+    if int(system.dim) == 3:
+        from .periodic_k_gdf import _gdf_oneel_cutoff_bound
+
+        opts.cutoff_bohr = max(float(opts.cutoff_bohr), _gdf_oneel_cutoff_bound(
+            system, ao_basis, pair_complete=True))
+    return opts
+
+
+def _compcell_g0_term(
+    fused: BasisSet,
+    ao_basis: BasisSet,
+    system: PeriodicSystem,
+    lat_opts: LatticeSumOptions,
+    k_ket: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """``Vbar_P S_mu nu(k_ket) / Omega`` per fused row (:func:`_fused_g0_potential`).
+
+    Only a zero momentum transfer has a ``G + q = 0`` mode to exclude, so
+    callers apply it to diagonal k pairs; ``S`` is the Bloch overlap at
+    the ket k point, on the pair-complete cells of
+    :func:`_g0_overlap_lattice_opts`.
+    """
+    from ._vibeqc_core import bloch_sum as _bloch_sum
+
+    k = np.zeros(3) if k_ket is None else np.asarray(k_ket, dtype=float).reshape(3)
+    overlap = _bloch_sum(compute_overlap_lattice(
+        ao_basis, system, _g0_overlap_lattice_opts(lat_opts, system, ao_basis)), k)
+    overlap = 0.5 * (overlap + overlap.conj().T)
+    if float(np.linalg.norm(k)) < 1e-14:
+        overlap = np.real(overlap)
+    volume = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
+    return _fused_g0_potential(fused)[:, None, None] * (overlap / volume)[None, :, :]
+
+
 def _aft_g_mesh(
     system: PeriodicSystem,
     eta: float,
@@ -1307,6 +1868,7 @@ def _compcell_aft_correction_3c(
     ft_convention: str = "libcint",
     q: Optional[np.ndarray] = None,
     lat_opts: Optional[LatticeSumOptions] = None,
+    k_ket: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """The PySCF ``_CCGDFBuilder.add_ft_j3c`` 3c AFT subtraction.
 
@@ -1332,6 +1894,10 @@ def _compcell_aft_correction_3c(
     q
         Momentum shift in Cartesian bohr⁻¹, shape ``(3,)`` or
         ``None`` (Γ-only, real). Nonzero ``q`` returns complex.
+    k_ket
+        Ket k point at which the AO-pair FT is Bloch-summed; defaults to
+        ``q`` (the pair ``(0, q)``). A diagonal pair away from Γ has
+        ``q = 0`` and a complex result.
 
     References
     ----------
@@ -1348,7 +1914,9 @@ def _compcell_aft_correction_3c(
         np.zeros(3, dtype=float) if q is None else np.asarray(q, dtype=float).reshape(3)
     )
     is_gamma_q = float(np.linalg.norm(q_arr)) < 1e-14
-    dtype_out = np.float64 if is_gamma_q else np.complex128
+    ket = q_arr if k_ket is None else np.asarray(k_ket, dtype=float).reshape(3)
+    real_pair = is_gamma_q and float(np.linalg.norm(ket)) < 1e-14
+    dtype_out = np.float64 if real_pair else np.complex128
 
     if n_chg <= 0:
         return np.zeros((n_chg, n_orb, n_orb), dtype=dtype_out)
@@ -1450,16 +2018,21 @@ def _compcell_aft_correction_3c(
         ao_basis,
         Gq,
         R_g_list,
-        k_cart=q_arr,
+        k_cart=ket,
     )  # (n_orb, n_orb, n_G), complex even at Γ; .real for is_gamma_q.
     if ft_convention == "libcint":
         scales = _per_ao_pair_libint_to_libcint_scale(ao_basis)
         inv = 1.0 / scales
         rho_pair = rho_pair * inv[:, None, None] * inv[None, :, None]
-    # else (libint): no pair-FT rescale. Internally consistent only for
-    # pure-L=0 ao_basis (e.g. H₂ STO-3G); for L>0 ao_basis the libint
-    # path under-represents j3c_p -- open issue; the libcint path is
-    # the recommended setting until the convention is fully unified.
+    else:
+        # libint: the pair FT needs the same per-L solid-harmonic factor
+        # as the aux FT and the native 3c integrals, exactly as the MDF
+        # projection applies it. Without it the s-p and p-p AO-pair blocks
+        # of the compensated tensor were off from the rsgdf integrals by
+        # 5.6e-2 and 0.33 on MgO/STO-3G while the s-s blocks agreed to
+        # 3e-8 (#172).
+        scales = _ao_scales_for_rsgdf(ao_basis)
+        rho_pair = rho_pair * scales[:, None, None] * scales[None, :, None]
 
     # j3c_p[chg_i, mu, ν] = S_G F̂_chg_i*(G+q) . coul(G+q) . r̂_muν(G+q)
     F_chg_w = np.conj(F_chg) * coul[None, :]  # (n_chg, n_G)
@@ -1470,7 +2043,7 @@ def _compcell_aft_correction_3c(
     # Result is real at Γ (Hermitian product of real basis functions);
     # complex for q != 0 (the AO-pair density's FT no longer satisfies
     # r̂(-G) = conj(r̂(G)) at G + q != 0).
-    if is_gamma_q:
+    if real_pair:
         return np.real(j3c_p)
     return j3c_p
 
@@ -1572,7 +2145,8 @@ def _compcell_aft_correction_3c_gradient_weighted(
         inv = 1.0 / _per_ao_pair_libint_to_libcint_scale(ao_basis)
         pair_conv = np.outer(inv, inv)
     else:
-        pair_conv = np.ones((n_orb, n_orb), dtype=np.float64)
+        scales = _ao_scales_for_rsgdf(ao_basis)
+        pair_conv = np.outer(scales, scales)
     W3_conv = W3 * pair_conv[None, :, :]  # (n_chg, n_orb, n_orb)
 
     # ---- Piece A: chg-function phase derivative ------------------------
@@ -1802,7 +2376,12 @@ def _build_lpq_compcell_state(
 
     M_fused = np.asarray(compute_2c_eri_lattice(fused, system, lat_opts_2c))
     M_fused = 0.5 * (M_fused + M_fused.T)
+    # Periodic in the auxiliary index too (Sun 2017 Eq. 15): the kernel
+    # keeps P in the home cell, so add its images (#172).
     T_fused = np.asarray(compute_3c_eri_lattice(ao_basis, fused, system, lat_opts_3c))
+    T_fused = T_fused + aux_image_3c(
+        system, ao_basis, fused, lat_opts_3c, precision=float(rcut_precision),
+    )
 
     # AFT long-range correction (PySCF gdf_builder.py:139-196). Subtract
     # the reciprocal-space (chg | fused) long-range Coulomb from the
@@ -1837,6 +2416,11 @@ def _build_lpq_compcell_state(
             lat_opts=lat_opts_3c,
         )
         T_fused[n_aux_for_aft:, :, :] -= j3c_p
+        # Every reciprocal-space piece excludes G = 0, so remove the G = 0
+        # term the real-space compensated integrals carry (Sun 2017 Eq. 23;
+        # PySCF's auxbar). Without it the energy depended on compcell_eta
+        # (-0.6 mHa on H2/STO-3G in a 16-bohr cube at eta = 1, #172).
+        T_fused -= _compcell_g0_term(fused, ao_basis, system, lat_opts_3c)
         # Restore symmetry in the AO-pair indices (the subtraction
         # leaves micro-asymmetry from floating-point reduction order).
         T_fused = 0.5 * (T_fused + T_fused.transpose(0, 2, 1))
@@ -2005,6 +2589,9 @@ def build_lpq_bloch_compcell(
     rcut_strategy: Optional[object] = "pyscf_auto",
     rcut_precision: float = 1e-8,
     symmetrize_gamma: bool = True,
+    k_ket: Optional[np.ndarray] = None,
+    _image_cache: Optional[dict] = None,
+    _image_pairs: Optional[Sequence] = None,
 ) -> np.ndarray:
     """Multi-k compcell GDF ``Lpq(k)`` from cell-resolved blocks.
 
@@ -2023,11 +2610,17 @@ def build_lpq_bloch_compcell(
     aft_precision, aft_ft_convention, rcut_strategy, rcut_precision
         Same as :func:`build_lpq_compcell`.
     k_cart
-        Cartesian k-point (bohr⁻¹), shape ``(3,)``.
+        Momentum transfer ``q = k_ket - k_bra`` (Cartesian bohr⁻¹),
+        shape ``(3,)``; the fitting functions are Bloch sums at ``q``.
     symmetrize_gamma
-        If ``True`` and ``k_cart ≈ 0``, symmetrise the 3c tensor in
-        the (mu, ν) AO-pair indices (analytic property at Γ; reduces
-        floating-point noise).
+        If ``True`` and ``k_cart ≈ 0`` and ``k_ket ≈ 0``, symmetrise the
+        3c tensor in the (mu, ν) AO-pair indices (analytic property at
+        Γ; reduces floating-point noise).
+    k_ket
+        Ket k point of the AO pair (Cartesian bohr⁻¹). Defaults to
+        ``k_cart``, the pair ``(0, k_cart)``. The 3c tensor is
+        ``sum_{T,R} exp(i k_ket.R) exp(-i q.T) (phi_{P,T} | mu_0 nu_R)``
+        (see :func:`aux_image_3c`), so pairs with the same ``q`` differ.
 
     Returns
     -------
@@ -2051,6 +2644,8 @@ def build_lpq_bloch_compcell(
         molecule = system.unit_cell_molecule()
     k = np.asarray(k_cart, dtype=float).reshape(3)
     is_gamma = float(np.linalg.norm(k)) < 1e-14
+    ket = k if k_ket is None else np.asarray(k_ket, dtype=float).reshape(3)
+    real_pair = is_gamma and float(np.linalg.norm(ket)) < 1e-14
 
     modrho_aux = make_modrho_aux_basis(aux_basis, molecule)
     chg = make_compensating_basis(modrho_aux, molecule, eta=compcell_eta)
@@ -2115,11 +2710,15 @@ def build_lpq_bloch_compcell(
         lat_opts_3c,
     )
     M_fused = bloch_sum_2c_eri_blocks(m_vecs, m_blocks, k)
-    T_fused = bloch_sum_3c_eri_blocks(t_vecs, t_blocks, k)
+    T_fused = bloch_sum_3c_eri_blocks(t_vecs, t_blocks, ket)
+    T_fused = T_fused + _pair_aux_images(
+        system, ao_basis, fused, lat_opts_3c, ket - k, ket,
+        precision=float(rcut_precision), cache=_image_cache, pairs=_image_pairs,
+    )
 
     # Hermitian symmetrise the 2c metric (M(-g)^* = M(g) up to noise).
     M_fused = 0.5 * (M_fused + M_fused.conj().T)
-    if symmetrize_gamma and is_gamma:
+    if symmetrize_gamma and real_pair:
         T_fused = 0.5 * (T_fused + np.swapaxes(T_fused, 1, 2))
 
     # AFT correction at k (q = k for the chg-anything subtraction). At
@@ -2148,6 +2747,7 @@ def build_lpq_bloch_compcell(
             ft_convention=str(aft_ft_convention),
             q=q_aft,
             lat_opts=lat_opts_3c,
+            k_ket=ket,
         )
         # Promote M_fused / T_fused to complex if the subtraction is
         # complex (q != 0). The Bloch-summed tensors are already complex
@@ -2164,7 +2764,12 @@ def build_lpq_bloch_compcell(
         M_fused[:n_aux, n_aux:] -= j2c_p[:, :n_aux].conj().T
         M_fused = 0.5 * (M_fused + M_fused.conj().T)
         T_fused[n_aux:, :, :] -= j3c_p
-        if symmetrize_gamma and is_gamma:
+        if is_gamma:
+            # The G + q = 0 mode exists only at zero transfer (see
+            # _build_lpq_compcell_state).
+            T_fused = T_fused - _compcell_g0_term(
+                fused, ao_basis, system, lat_opts_3c, k_ket=ket)
+        if symmetrize_gamma and real_pair:
             T_fused = 0.5 * (T_fused + np.swapaxes(T_fused, 1, 2))
 
     # Compensated metric + tensor (A is real; M_fused complex at k != 0).
@@ -3434,6 +4039,8 @@ def build_lpq_mdf(
     mdf_ke_cutoff: float = 40.0,
     rcut_strategy: Optional[object] = "pyscf_auto",
     rcut_precision: float = 1e-8,
+    precision_j2c: Optional[float] = None,
+    precision_j3c: Optional[float] = None,
 ) -> "_MdfCderi":
     """Mixed Density Fitting cderi -- Gaussian fit + plane-wave residual.
 
@@ -3501,8 +4108,19 @@ def build_lpq_mdf(
         needs. ``<= 0`` disables the PW part (the compcell-equivalent
         sanity limit).
     rcut_strategy, rcut_precision
-        Real-space lattice-cutoff auto-tuning for the libint 2c/3c, as in
-        :func:`build_lpq_compcell` (default ``"pyscf_auto"``).
+        Real-space lattice-cutoff auto-tuning for the libint 3c, as in
+        :func:`build_lpq_compcell` (default ``"pyscf_auto"``). Also sizes
+        the 2c metric in the no-PW (compcell-equivalent) limit.
+    precision_j2c
+        Accuracy the PW-dressed metric ``J-tilde`` is built to -- vibe-qc's
+        analogue of PySCF's ``precision_j2c``; default
+        :data:`_MDF_PRECISION_J2C`. Whenever the PW block is active the 2c
+        metric gets its own, much tighter lattice sum (see
+        :func:`_mdf_fit_lattice_opts`), because Eq. 19's
+        ``1/sqrt(lambda)`` makes the metric's own construction error -- not
+        ``rcut_precision`` -- what decides how small a mode may honestly be
+        kept. Ignored with the PW block off, where ``J-tilde`` IS the plain
+        metric and the compcell-equivalent limit must stay bit-identical.
 
     Returns
     -------
@@ -3535,6 +4153,11 @@ def build_lpq_mdf(
         lat_opts = LatticeSumOptions()
     if molecule is None:
         molecule = system.unit_cell_molecule()
+    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
+    if precision_j2c is None:
+        precision_j2c = _MDF_PRECISION_J2C
+    if precision_j3c is None:
+        precision_j3c = _MDF_PRECISION_J3C
 
     # --- Gaussian part: compensated fused basis + real-space libint 2c/3c.
     #     Identical to build_lpq_compcell (sans AFT correction). ---
@@ -3542,6 +4165,8 @@ def build_lpq_mdf(
     chg = make_compensating_basis(modrho_aux, molecule, eta=compcell_eta)
     fused = make_fused_basis(modrho_aux, chg, molecule)
     A = fuse_transform_matrix(modrho_aux, chg)
+
+    joint_basis = _mdf_joint_basis(ao_basis, fused, molecule)
 
     if rcut_strategy is not None:
         from .lattice_screening import RcutStrategy, make_lattice_opts
@@ -3557,20 +4182,6 @@ def build_lpq_mdf(
         lat_opts_2c = make_lattice_opts(
             fused, strategy=rcut_strategy, base_opts=lat_opts, precision=rcut_precision
         )
-        from ._vibeqc_core import ShellInfo as _SI
-
-        joint_shells = [
-            _SI(
-                int(s.atom_index),
-                int(s.l),
-                bool(s.pure),
-                list(s.exponents),
-                list(s.coefficients),
-                list(s.origin),
-            )
-            for s in list(ao_basis.shells()) + list(fused.shells())
-        ]
-        joint_basis = BasisSet(molecule, joint_shells, "<ao∪fused>", True)
         lat_opts_3c = make_lattice_opts(
             joint_basis,
             strategy=rcut_strategy,
@@ -3581,9 +4192,27 @@ def build_lpq_mdf(
         lat_opts_2c = lat_opts
         lat_opts_3c = lat_opts
 
+    if pw_on:
+        # J-tilde is built to its own accuracy, not the cell's (Eq. 20 is
+        # deliberately singular and Eq. 19 divides by sqrt of its modes).
+        lat_opts_2c = _mdf_fit_lattice_opts(
+            fused, system, lat_opts_2c, precision_j2c, modrho_aux.nbasis
+        )
+        if precision_j3c is not None:
+            lat_opts_3c = _mdf_fit_lattice_opts(
+                joint_basis, system, lat_opts_3c, precision_j3c,
+                modrho_aux.nbasis,
+            )
+
     M_fused = np.asarray(compute_2c_eri_lattice(fused, system, lat_opts_2c))
     M_fused = 0.5 * (M_fused + M_fused.T)
+    # The kernel keeps P in the home cell; add its images (Sun 2017
+    # Eq. 15, #172). Without them the dense-core class diverged or sat
+    # ~92 mHa off, which the threshold floor below was calibrated on.
     T_fused = np.asarray(compute_3c_eri_lattice(ao_basis, fused, system, lat_opts_3c))
+    T_fused = T_fused + aux_image_3c(
+        system, ao_basis, fused, lat_opts_3c, precision=float(rcut_precision),
+    )
 
     M = A @ M_fused @ A.T
     M = 0.5 * (M + M.T)
@@ -3598,7 +4227,6 @@ def build_lpq_mdf(
         )
 
     # --- PW residual: modest dense mesh; compensated-aux FT + AO-pair FT. ---
-    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
     if pw_on:
         V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
         _ft = _resolve_pair_ft_shared(
@@ -3637,21 +4265,15 @@ def build_lpq_mdf(
         # giving the per-aux  V̄_P = -pi^{5/2}.(A @ m_fused)  and r̄_muν = S_muν/Ω.
         # Verified: matches the exact T_real-T_recip(dense) gap to 1e-5 and
         # the constant -pi^{5/2} to machine precision across all aux.
-        m_fused = np.zeros(fused.nbasis)
-        _off = 0
-        for sh in fused.shells():
-            nb = (2 * sh.l + 1) if sh.pure else ((sh.l + 1) * (sh.l + 2) // 2)
-            if sh.l == 0:
-                a = np.asarray(sh.exponents, dtype=float)
-                c = np.asarray(sh.coefficients, dtype=float)
-                m_fused[_off : _off + nb] = float(np.sum(c * a ** (-2.5)))
-            _off += nb
-        vbar = -(np.pi**2.5) * (A @ m_fused)  # (n_aux,)
+        vbar = A @ _fused_g0_potential(fused)  # (n_aux,)
         from ._vibeqc_core import bloch_sum as _bloch_sum
 
         S_ao = np.real(
             _bloch_sum(
-                compute_overlap_lattice(ao_basis, system, lat_opts), np.zeros(3)
+                compute_overlap_lattice(
+                    ao_basis, system,
+                    _g0_overlap_lattice_opts(lat_opts, system, ao_basis)),
+                np.zeros(3),
             )
         )
         S_ao = 0.5 * (S_ao + S_ao.T)
@@ -5240,6 +5862,10 @@ def build_lpq_bloch_mdf(
     mdf_ke_cutoff: float = 40.0,
     rcut_strategy: Optional[object] = "pyscf_auto",
     rcut_precision: float = 1e-8,
+    precision_j2c: Optional[float] = None,
+    precision_j3c: Optional[float] = None,
+    _image_cache: Optional[dict] = None,
+    _image_pairs: Optional[Sequence] = None,
 ) -> np.ndarray:
     r"""Per-(k_bra, k_ket) Mixed Density Fitting cderi (multi-k MDF).
 
@@ -5254,14 +5880,14 @@ def build_lpq_bloch_mdf(
     Structure (``q = k_ket - k_bra``):
 
     * **Gaussian part -- real-space libint on the compensated fused basis,
-      Bloch-summed at q** (``compute_2c/3c_eri_lattice_blocks`` +
-      ``bloch_sum_*`` at ``q``, as in :func:`build_lpq_bloch_compcell`).
-      This is q-only, but that is *correct for MDF*: only the steep aux
-      survive the PW-dressed-metric orthogonalisation, and a steep core
-      fit is local, so its q-only and ket-resolved forms coincide. The
-      smooth, inter-cell part the q-only Gaussian misses is carried by the
-      ket-resolved PW residual below (this is the whole point of the MDF
-      split).
+      ket-resolved.** The metric is Bloch-summed at ``q``; the 3c tensor
+      is ``sum_{T,R} exp(i k_ket.R) exp(-i q.T) (phi_{P,T} | mu_0 nu_R)``,
+      the ket images at ``k_ket`` and the auxiliary images at ``-q``
+      (:func:`aux_image_3c`, Sun 2017 Eq. 15). Until 2026-09-29 it was
+      Bloch-summed at ``q`` with the auxiliary function kept in the home
+      cell, which is exact only when neither image family reaches the AO
+      pairs; that omission, not the auxiliary basis, is what made the
+      dense-core class diverge (#172).
     * **PW residual -- ket-resolved on the q-shifted modest mesh**
       ``{G + q}``: the ket-Bloch AO-pair FT ``r̂_muν(G+q; k_ket)`` (C++
       kernel at ``k_cart = k_ket``) and the q-shifted compensated-aux FT,
@@ -5273,6 +5899,10 @@ def build_lpq_bloch_mdf(
       must be restored (Eq 23). For ``q != 0`` every ``G + q != 0``, so no
       G=0 term arises. The overlap is the k-resolved Bloch overlap at
       ``k_ket``.
+
+    ``precision_j2c`` (default :data:`_MDF_PRECISION_J2C`) sets the
+    accuracy the dressed metric ``J̃(q)`` is built to, independently of
+    ``rcut_precision``; see :func:`build_lpq_mdf`.
 
     See :func:`build_lpq_mdf` for the V̄_P closed form and
     ``docs/design_mdf.md`` for the derivation. Γ-diagonal
@@ -5296,15 +5926,23 @@ def build_lpq_bloch_mdf(
     k_ket = np.asarray(k_ket, dtype=float).reshape(3)
     q = k_ket - k_bra
     is_gamma = float(np.linalg.norm(q)) < 1e-12
+    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
+    if precision_j2c is None:
+        precision_j2c = _MDF_PRECISION_J2C
+    if precision_j3c is None:
+        precision_j3c = _MDF_PRECISION_J3C
 
-    # --- Gaussian part: compensated fused basis, real-space cell blocks
-    #     Bloch-summed at q (q-only; see docstring). No AFT (MDF uses PW). ---
+    # --- Gaussian part: compensated fused basis, real-space cell blocks,
+    #     ket-resolved with the auxiliary images (see docstring). No AFT
+    #     (MDF uses PW). ---
     modrho_aux = make_modrho_aux_basis(aux_basis, molecule)
     chg = make_compensating_basis(modrho_aux, molecule, eta=compcell_eta)
     fused = make_fused_basis(modrho_aux, chg, molecule)
     A = fuse_transform_matrix(modrho_aux, chg)
     n_aux = modrho_aux.nbasis
     n_orb = ao_basis.nbasis
+
+    joint_basis = _mdf_joint_basis(ao_basis, fused, molecule)
 
     if rcut_strategy is not None:
         from .lattice_screening import RcutStrategy, make_lattice_opts
@@ -5314,14 +5952,6 @@ def build_lpq_bloch_mdf(
         lat_opts_2c = make_lattice_opts(
             fused, strategy=rcut_strategy, base_opts=lat_opts, precision=rcut_precision
         )
-        joint_shells = [
-            ShellInfo(
-                int(s.atom_index), int(s.l), bool(s.pure),
-                list(s.exponents), list(s.coefficients), list(s.origin),
-            )
-            for s in list(ao_basis.shells()) + list(fused.shells())
-        ]
-        joint_basis = BasisSet(molecule, joint_shells, "<ao∪fused>", True)
         lat_opts_3c = make_lattice_opts(
             joint_basis, strategy=rcut_strategy, base_opts=lat_opts,
             precision=rcut_precision,
@@ -5330,21 +5960,34 @@ def build_lpq_bloch_mdf(
         lat_opts_2c = lat_opts
         lat_opts_3c = lat_opts
 
+    if pw_on:
+        # J-tilde(q) is built to its own accuracy, not the cell's.
+        lat_opts_2c = _mdf_fit_lattice_opts(
+            fused, system, lat_opts_2c, precision_j2c, n_aux
+        )
+        if precision_j3c is not None:
+            lat_opts_3c = _mdf_fit_lattice_opts(
+                joint_basis, system, lat_opts_3c, precision_j3c, n_aux
+            )
+
     _, m_vecs, m_blocks = compute_2c_eri_lattice_blocks(fused, system, lat_opts_2c)
     _, t_vecs, t_blocks = compute_3c_eri_lattice_blocks(
         ao_basis, fused, system, lat_opts_3c
     )
     M_fused = bloch_sum_2c_eri_blocks(m_vecs, m_blocks, q)
-    T_fused = bloch_sum_3c_eri_blocks(t_vecs, t_blocks, q)
+    T_fused = bloch_sum_3c_eri_blocks(t_vecs, t_blocks, k_ket)
+    T_fused = T_fused + _pair_aux_images(
+        system, ao_basis, fused, lat_opts_3c, k_bra, k_ket,
+        precision=float(rcut_precision), cache=_image_cache, pairs=_image_pairs,
+    )
     M_fused = 0.5 * (M_fused + M_fused.conj().T)
-    if is_gamma:
+    if is_gamma and float(np.linalg.norm(k_ket)) < 1e-12:
         T_fused = 0.5 * (T_fused + np.swapaxes(T_fused, 1, 2))
     M = A @ M_fused @ A.T
     M = 0.5 * (M + M.conj().T)
     T = np.einsum("iP,Pmn->imn", A, T_fused, optimize=True)
 
     # --- PW residual: q-shifted modest mesh, ket-Bloch pair FT. ---
-    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
     if pw_on:
         G_all = rsgdf_dense_g_mesh(system, float(mdf_ke_cutoff))
         Gq = G_all + q[None, :]
@@ -5372,18 +6015,12 @@ def build_lpq_bloch_mdf(
         if is_gamma:
             # G=0 self-term (diagonal pair only): V̄_P = -pi^{5/2}.(A@m),
             # r̄_muν = S^{k_ket}_muν / Ω (the k-resolved Bloch overlap).
-            m_fused = np.zeros(fused.nbasis)
-            _off = 0
-            for sh in fused.shells():
-                nb = (2 * sh.l + 1) if sh.pure else ((sh.l + 1) * (sh.l + 2) // 2)
-                if sh.l == 0:
-                    a = np.asarray(sh.exponents, dtype=float)
-                    c = np.asarray(sh.coefficients, dtype=float)
-                    m_fused[_off : _off + nb] = float(np.sum(c * a ** (-2.5)))
-                _off += nb
-            vbar = -(np.pi**2.5) * (A @ m_fused)  # (n_aux,)
+            vbar = A @ _fused_g0_potential(fused)  # (n_aux,)
             S_ao = _bloch_sum(
-                compute_overlap_lattice(ao_basis, system, lat_opts), k_ket
+                compute_overlap_lattice(
+                    ao_basis, system,
+                    _g0_overlap_lattice_opts(lat_opts, system, ao_basis)),
+                k_ket,
             )
             S_ao = 0.5 * (S_ao + S_ao.conj().T)
             T = T - vbar[:, None, None] * (S_ao / V)[None, :, :]

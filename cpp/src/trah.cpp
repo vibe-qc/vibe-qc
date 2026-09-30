@@ -342,6 +342,14 @@ TRAHStepResult trah_step(const Eigen::MatrixXd& F,
 
 namespace {
 
+// The orbital Hessian uses F_vv kappa - kappa F_oo in a general MO
+// gauge (Helmich-Paris, J. Chem. Phys. 154, 164104 (2021)). Rotations
+// between SCF steps do not preserve semicanonical occupied/virtual
+// blocks. Orbital-energy gaps remain a preconditioner, not the action.
+struct UHFFockBlocks {
+    Eigen::MatrixXd oo_alpha, vv_alpha, oo_beta, vv_beta;
+};
+
 struct UHFKappa {
     Eigen::MatrixXd alpha;
     Eigen::MatrixXd beta;
@@ -362,18 +370,21 @@ UHFKappa uhf_orbital_hessian_action(
     const UHFKappa& kappa,
     const Eigen::MatrixXd& C_occ_alpha, const Eigen::MatrixXd& C_vir_alpha,
     const Eigen::MatrixXd& C_occ_beta,  const Eigen::MatrixXd& C_vir_beta,
-    const Eigen::MatrixXd& eps_diff_alpha,
-    const Eigen::MatrixXd& eps_diff_beta,
+    const UHFFockBlocks& fock,
     const JKBuilder& jk,
     const UHFXCKernelBuilder* xc_kernel,
     double alpha_hf,
     double shift)
 {
     UHFKappa out;
-    out.alpha = eps_diff_alpha.cwiseProduct(kappa.alpha);
-    out.beta  = eps_diff_beta .cwiseProduct(kappa.beta);
     const bool have_a = kappa.alpha.size() != 0;
     const bool have_b = kappa.beta.size() != 0;
+    if (have_a) {
+        out.alpha = fock.vv_alpha * kappa.alpha - kappa.alpha * fock.oo_alpha;
+    }
+    if (have_b) {
+        out.beta = fock.vv_beta * kappa.beta - kappa.beta * fock.oo_beta;
+    }
     Eigen::MatrixXd Da_pert, Db_pert;
     if (have_a) {
         Da_pert = build_perturbed_density(kappa.alpha, C_occ_alpha, C_vir_alpha);
@@ -428,6 +439,7 @@ UHFCGResult uhf_preconditioned_cg(
     const Eigen::MatrixXd& C_occ_beta,  const Eigen::MatrixXd& C_vir_beta,
     const Eigen::MatrixXd& eps_diff_alpha,
     const Eigen::MatrixXd& eps_diff_beta,
+    const UHFFockBlocks& fock,
     const JKBuilder& jk,
     int max_iter, double tol,
     const UHFXCKernelBuilder* xc_kernel,
@@ -459,8 +471,7 @@ UHFCGResult uhf_preconditioned_cg(
         const UHFKappa Ap = uhf_orbital_hessian_action(
             p, C_occ_alpha, C_vir_alpha,
             C_occ_beta,  C_vir_beta,
-            eps_diff_alpha, eps_diff_beta, jk,
-            xc_kernel, alpha_hf, shift);
+            fock, jk, xc_kernel, alpha_hf, shift);
         const double pAp = uhf_kappa_dot(p, Ap);
         if (pAp <= 0.0) {
             res.n_iter = k; res.converged = false; res.non_pd = true;
@@ -507,6 +518,7 @@ UHFTRSResult uhf_solve_trust_region_subproblem(
     const Eigen::MatrixXd& C_occ_beta,  const Eigen::MatrixXd& C_vir_beta,
     const Eigen::MatrixXd& eps_diff_alpha,
     const Eigen::MatrixXd& eps_diff_beta,
+    const UHFFockBlocks& fock,
     const JKBuilder& jk,
     const TRAHOptions& opts,
     double trust_radius,
@@ -519,7 +531,7 @@ UHFTRSResult uhf_solve_trust_region_subproblem(
     auto run_cg = [&](const UHFKappa& rhs, double shift) {
         return uhf_preconditioned_cg(
             rhs, C_occ_alpha, C_vir_alpha, C_occ_beta, C_vir_beta,
-            eps_diff_alpha, eps_diff_beta, jk,
+            eps_diff_alpha, eps_diff_beta, fock, jk,
             opts.cg_max_iter, opts.cg_tol, xc_kernel, alpha_hf, shift);
     };
 
@@ -684,9 +696,15 @@ UHFTRAHStepResult uhf_trah_step(const Eigen::MatrixXd& F_alpha,
     const Eigen::MatrixXd C_vir_b =
         (n_vir_b > 0) ? C_beta_prev.rightCols(n_vir_b) : Eigen::MatrixXd();
 
+    const UHFFockBlocks fock{
+        Fmo_a.topLeftCorner(n_alpha, n_alpha),
+        Fmo_a.bottomRightCorner(n_vir_a, n_vir_a),
+        Fmo_b.topLeftCorner(n_beta, n_beta),
+        Fmo_b.bottomRightCorner(n_vir_b, n_vir_b)};
+
     const UHFTRSResult trs = uhf_solve_trust_region_subproblem(
         g, C_occ_a, C_vir_a, C_occ_b, C_vir_b,
-        eps_diff_a, eps_diff_b, jk, opts, trust_radius,
+        eps_diff_a, eps_diff_b, fock, jk, opts, trust_radius,
         xc_kernel, alpha_hf);
 
     const UHFKappa& kappa = trs.kappa;

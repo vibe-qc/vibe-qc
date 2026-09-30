@@ -189,6 +189,7 @@ def test_pbc_gdf_rhf_does_not_compute_gradient_by_default(monkeypatch):
         opts,
         aux_basis="def2-svp-jk",
         progress=False,
+        gdf_method="compcell",
     )
 
     assert r.converged
@@ -228,6 +229,7 @@ def test_pbc_gdf_rhf_compute_gradient_opt_in(monkeypatch):
         apply_aft_correction=False,
         compute_gradient=True,
         progress=False,
+        gdf_method="compcell",
     )
 
     assert r.converged
@@ -258,6 +260,7 @@ def test_pbc_gdf_rhf_h2_converges_at_target_eta():
         compcell_eta=0.25,
         apply_aft_correction=False,
         progress=False,
+        gdf_method="compcell",
     )
     assert r.converged
     # PySCF KRHF.density_fit() / exxdiv='ewald' target on this system
@@ -320,6 +323,7 @@ def test_periodic_rhf_backends_have_explicit_current_parity_contract():
         compcell_eta=0.25,
         apply_aft_correction=False,
         progress=False,
+        gdf_method="compcell",
     )
     legacy = vq.run_rhf_periodic_gamma_gdf(
         system,
@@ -398,6 +402,7 @@ def test_pbc_gdf_rhf_exxdiv_shift_is_additive():
         compcell_eta=0.25,
         apply_aft_correction=False,
         progress=False,
+        gdf_method="compcell",
     )
     r_n = vq.run_pbc_gdf_rhf(
         system,
@@ -408,6 +413,7 @@ def test_pbc_gdf_rhf_exxdiv_shift_is_additive():
         compcell_eta=0.25,
         apply_aft_correction=False,
         progress=False,
+        gdf_method="compcell",
     )
     assert r_e.converged and r_n.converged
     xi = madelung_constant_for_cell(system)
@@ -621,6 +627,7 @@ def test_run_pbc_gdf_rhf_aft_false_warns():
             exxdiv="ewald",
             apply_aft_correction=False,
             progress=False,
+            gdf_method="compcell",
         )
     assert any("apply_aft_correction=False" in str(w.message) for w in wl), (
         "apply_aft_correction=False must warn about missing AFT correction"
@@ -636,6 +643,7 @@ def test_run_pbc_gdf_rhf_aft_false_warns():
             aux_basis="def2-svp-jk",
             exxdiv="ewald",
             progress=False,
+            gdf_method="compcell",
         )
     assert not any("apply_aft_correction=False" in str(w.message) for w in wl2), (
         "default (AFT on) must not warn"
@@ -655,6 +663,7 @@ def test_run_pbc_gdf_rhf_aft_false_warns():
             exxdiv="ewald",
             aft_ft_convention="libcint",
             progress=False,
+            gdf_method="compcell",
         )
     assert any("aft_ft_convention='libcint'" in str(w.message) for w in wl3), (
         "libcint convention must warn about convention mismatch"
@@ -757,6 +766,7 @@ def test_pbc_gdf_rhf_h2_sub_mha_via_2c_plus_3c_aft():
         aft_ft_convention="libint",
         rcut_strategy="pyscf_auto",
         progress=False,
+        gdf_method="compcell",
     )
     assert r.converged
     delta = r.energy - PYSCF_TARGET
@@ -1572,7 +1582,7 @@ def test_run_pbc_gdf_rhf_rejects_dim_lt_3():
     system_2d = vq.PeriodicSystem(2, lattice, atoms)
     basis_2d = vq.BasisSet(system_2d.unit_cell_molecule(), "sto-3g")
     with pytest.raises(NotImplementedError, match="only dim=3"):
-        vq.run_pbc_gdf_rhf(system_2d, basis_2d, aux_basis="def2-svp-jk", progress=False)
+        vq.run_pbc_gdf_rhf(system_2d, basis_2d, aux_basis="def2-svp-jk", progress=False, gdf_method="compcell")
 
 
 def test_run_pbc_gdf_rhf_rejects_charged_cell():
@@ -1593,7 +1603,7 @@ def test_run_pbc_gdf_rhf_rejects_charged_cell():
     )
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
     with pytest.raises(ValueError, match="not charge-neutral"):
-        vq.run_pbc_gdf_rhf(system, basis, aux_basis="def2-svp-jk", progress=False)
+        vq.run_pbc_gdf_rhf(system, basis, aux_basis="def2-svp-jk", progress=False, gdf_method="compcell")
 
 
 def test_run_krhf_periodic_gdf_compcell_multik_sub_mha_h2():
@@ -1704,6 +1714,7 @@ def test_pbc_gdf_rhf_production_defaults_h2():
         aux_basis="def2-svp-jk",
         exxdiv="ewald",
         progress=False,
+        gdf_method="compcell",
     )
     assert r.converged
     assert r.backend == "pbc-gdf-compcell"
@@ -1718,27 +1729,16 @@ def test_pbc_gdf_rhf_production_defaults_h2():
 
 @pytest.mark.slow
 def test_pbc_gdf_rhf_production_defaults_lih_ionic():
-    """Compcell SCF with production defaults on LiH FCC (\u0393-only).
+    """Compcell SCF with production defaults on LiH FCC (Γ-only) is physical.
 
-    With AFT on by default, the SCF now converges (previously diverged)
-    but to a non-physical +576 Ha — the energy sanity guard fires as
-    SANITY_FAILED.  The \u0393-only compcell path is NOT sufficient for
-    tight ionic cells; the production route for these systems is the
-    multi-k path (``run_krhf_periodic_gdf``, validated at \u00b5Ha parity
-    on LiH at kmesh=(2,2,2) — see test_audit_20260530_periodic.py).
-
-    This test pins the current behaviour as a regression guard: once a
-    future fix (MDF or dense-FFT-mesh AFT) closes the ionic gap, this
-    test should be updated to assert a physical energy.
-
-    NB (2026-07-09): whether the broken-Hartree SCF *converges* to its
-    ~+576 Ha fixed point within max_iter is machine-dependent (BLAS /
-    threading reorder the DIIS trajectory); the pin asserts the CLAUDE.md
-    §7 contract that holds either way -- non-physical energy, result
-    tagged ``+SANITY_FAILED`` -- rather than the converged flag."""
-    from vibeqc._vibeqc_core import monkhorst_pack
-
-    # LiH primitive FCC cell (Sun-Berkelbach 2017 benchmark)
+    Until 2026-09-29 this cell was the canonical compcell failure: the
+    SCF oscillated at O(1e5) Ha or converged to about +576 Ha and was
+    tagged ``+SANITY_FAILED``. The causes were the auxiliary images the
+    Gaussian 3c block omitted, a missing G = 0 term, an unscaled p-AO pair
+    transform in the AFT correction, and a flat one-electron domain (#172).
+    compcell and the SR/LR fit now describe the same periodic fitting
+    functions and agree to a few uHa.
+    """
     ANG2BOHR = 1.0 / 0.529177210903
     A = 4.084
     lat = np.array([[0.0, 0.5, 0.5], [0.5, 0.0, 0.5], [0.5, 0.5, 0.0]]) * A * ANG2BOHR
@@ -1748,39 +1748,29 @@ def test_pbc_gdf_rhf_production_defaults_lih_ionic():
         [vq.Atom(3, [0.0, 0.0, 0.0]), vq.Atom(1, [A * ANG2BOHR / 2] * 3)],
     )
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
-    opts = vq.PeriodicRHFOptions()
-    opts.use_diis = True
-    opts.max_iter = 60
-    opts.conv_tol_energy = 1e-8
-    # Production defaults — no manual \u03b7 or AFT params.
-    r = vq.run_pbc_gdf_rhf(
-        system,
-        basis,
-        opts,
-        aux_basis="def2-svp-jk",
-        exxdiv="ewald",
-        progress=False,
-    )
-    # With AFT-on defaults, the Γ-only compcell path is non-convergent
-    # on this ionic cell. The SCF oscillation amplitude is O(1e5) Ha;
-    # where it lands at max_iter is trajectory-dependent, so we don't pin
-    # a specific energy. The sanity guard (SANITY_FAILED) is the invariant.
-    assert not r.converged, (
-        f"Expected non-converged SCF on LiH Γ-only; got converged=True, "
-        f"energy={r.energy:.4f} Ha. If the Γ-only compcell ionic gap has "
-        "been closed, update this test and remove the SANITY_FAILED check."
-    )
-    assert r.backend == "pbc-gdf-compcell+SANITY_FAILED", (
-        f"Expected SANITY_FAILED for LiH \u0393-only; got backend={r.backend}"
-    )
+
+    def run(gdf_method):
+        opts = vq.PeriodicRHFOptions()
+        opts.use_diis = True
+        opts.max_iter = 60
+        opts.conv_tol_energy = 1e-8
+        return vq.run_pbc_gdf_rhf(
+            system, basis, opts, aux_basis="def2-svp-jk", exxdiv="ewald",
+            progress=False, gdf_method=gdf_method,
+        )
+
+    compcell, rsgdf = run("compcell"), run("rsgdf")
+    assert compcell.converged
+    assert compcell.backend == "pbc-gdf-compcell"
+    assert compcell.energy == pytest.approx(rsgdf.energy, abs=1e-5)
 
 
 def _lih_rocksalt_gamma():
     """Rocksalt LiH primitive FCC (a = 7.72 bohr) — the 2026-07-09 fixture.
 
-    The Γ-only compcell Hartree is non-physical on this cell (AO-pair
-    images overlap; +579.8 Ha at HF, +1172.6 Ha at UKS-PBE vs external
-    PySCF 2.13.1 KRKS(GDF) PBE -8.238879724246). Same crystal as
+    The Γ-only compcell Hartree was non-physical on this cell until
+    2026-09-29 (+579.8 Ha at HF, +1172.6 Ha at UKS-PBE vs external
+    PySCF 2.13.1 KRKS(GDF) PBE -8.238879724246; #172). Same crystal as
     ``test_pbc_gdf_rhf_production_defaults_lih_ionic`` (a = 4.084 Å),
     kept in the reporting chat's bohr convention.
     """
@@ -1799,99 +1789,36 @@ def _lih_rocksalt_gamma():
 
 
 @pytest.mark.slow
-def test_pbc_gdf_uks_lih_ionic_sanity_guard_raises():
-    """Γ-only compcell UKS(PBE) on rocksalt LiH must NOT hand back a
-    converged non-physical energy (2026-07-09 finding).
+def test_pbc_gdf_uks_lih_compcell_matches_rsgdf():
+    """Γ-only compcell UKS(PBE) on rocksalt LiH agrees with the SR/LR fit.
 
-    Pre-guard, ``run_pbc_gdf_uks`` returned +1172.63 Ha with
-    ``converged=True`` on this fixture (external PySCF KRKS(GDF) PBE:
-    -8.2389 Ha) -- the CLAUDE.md §7 silent-corruption pattern. The Γ-only
-    compcell Hartree cannot resolve the overlapping AO-pair images (the
-    same class the RHF driver warns about and tags on the a=4.084 Å
-    twin of this cell). The driver must now (a) emit the tight-ionic
-    warning, (b) raise via the energy-sanity guard, and (c) hand the
-    diagnostic value back when the guard is explicitly bypassed.
-
-    ``gdf_method='compcell'`` is explicit since the 2026-07-09 default
-    flip to rsgdf (see test_pbc_gdf_uks_lih_ionic_default_rsgdf_is_sane):
-    this test documents the fenced compcell limitation itself. Whether
-    the broken-Hartree SCF *converges* to its fixed point within
-    max_iter is machine-dependent (see the RHF production-defaults
-    pin), so the guard contract is asserted in both flavours: a
-    converged run raises; a non-converged run returns warn+tagged.
+    Before #172 it returned +1172.63 Ha with ``converged=True`` and was
+    fenced by a tight-ionic warning plus the energy-sanity guard; that
+    warning is retired with the causes it described.
     """
+    import warnings as _warnings
+
     system, basis = _lih_rocksalt_gamma()
-
-    with pytest.warns(UserWarning, match="tight ionic cell"):
-        _assert_guard_rejects_nonphysical(
-            lambda **kw: vq.run_pbc_gdf_uks(
-                system, basis, functional="pbe", gdf_method="compcell",
-                progress=False, **kw,
-            )
+    with _warnings.catch_warnings(record=True) as wl:
+        _warnings.simplefilter("always")
+        compcell = vq.run_pbc_gdf_uks(
+            system, basis, functional="pbe", gdf_method="compcell", progress=False,
         )
-
-    # Bypass path: diagnostics callers get the (nonsense) fixed point back.
-    # ``check_energy_sanity=False`` means the guard does not run at all --
-    # every driver wraps the helper in ``if check_energy_sanity:``, and the
-    # ``+SANITY_FAILED`` tag is applied inside it. So the bypass contract is
-    # the *absence* of the guard's effects: no raise, no tag, the
-    # non-physical energy handed straight back. Whether that fixed point is
-    # reached within max_iter is machine-dependent (see the helper below and
-    # the RHF production-defaults pin), so the converged flag is not pinned.
-    r = vq.run_pbc_gdf_uks(
-        system,
-        basis,
-        functional="pbe",
-        gdf_method="compcell",
-        check_energy_sanity=False,
-        progress=False,
-    )
-    # sane_bound = max(10 * ΣZ², 100) = 100 Ha here (Li+H: ΣZ² = 10), the
-    # runaway threshold _check_energy_sanity would have rejected this on.
-    assert abs(r.energy) > 100.0, (
-        f"Bypass must hand back the non-physical fixed point the guard "
-        f"would have rejected; got energy={r.energy:.4f} Ha. If the Γ-only "
-        "compcell ionic gap has been closed, update this test."
-    )
-    assert r.backend == "pbc-gdf-compcell-uks", (
-        f"Bypassing the guard bypasses its tagging too; expected an "
-        f"untagged backend, got {r.backend}"
-    )
-
-
-def _assert_guard_rejects_nonphysical(run):
-    """§7 guard contract, robust to the machine-dependent converged flag:
-    a converged non-physical energy raises RuntimeError; a non-converged
-    one comes back warn+tagged ``+SANITY_FAILED`` (never a silently
-    plausible result)."""
-    try:
-        r = run()
-    except RuntimeError as e:
-        assert "non-physical" in str(e)
-        return
-    assert not r.converged, (
-        f"guard must raise on a converged non-physical energy; got "
-        f"converged=True E={r.energy:.4f} backend={r.backend}"
-    )
-    assert r.backend.endswith("+SANITY_FAILED"), (
-        f"non-converged non-physical result must be tagged; got {r.backend}"
-    )
+    assert not any("tight ionic cell" in str(w.message) for w in wl)
+    rsgdf = vq.run_pbc_gdf_uks(system, basis, functional="pbe", progress=False)
+    assert compcell.converged
+    assert compcell.backend == "pbc-gdf-compcell-uks"
+    assert compcell.energy == pytest.approx(rsgdf.energy, abs=1e-5)
 
 
 @pytest.mark.slow
-def test_pbc_gdf_uhf_lih_ionic_sanity_guard_raises():
-    """The UHF sibling of the UKS guard test: +579.83 Ha, same class.
-
-    Identical failure with no XC at all — the catastrophe is the Γ-only
-    compcell Hartree, not the XC path (the rsgdf Γ lane lands at a sane
-    -8.33 Ha on this fixture).
-    """
+def test_pbc_gdf_uhf_lih_compcell_matches_rsgdf():
+    """The UHF sibling: +579.83 Ha before #172, now on the SR/LR value."""
     system, basis = _lih_rocksalt_gamma()
-    _assert_guard_rejects_nonphysical(
-        lambda **kw: vq.run_pbc_gdf_uhf(
-            system, basis, gdf_method="compcell", progress=False, **kw
-        )
-    )
+    compcell = vq.run_pbc_gdf_uhf(system, basis, gdf_method="compcell", progress=False)
+    rsgdf = vq.run_pbc_gdf_uhf(system, basis, progress=False)
+    assert compcell.converged
+    assert compcell.energy == pytest.approx(rsgdf.energy, abs=1e-5)
 
 
 @pytest.mark.slow
@@ -1990,7 +1917,8 @@ def test_pbc_gdf_rhf_multi_k_not_implemented():
     system, basis = _h2_box(box_bohr=12.0)
     with pytest.raises(NotImplementedError):
         vq.run_pbc_gdf_rhf(
-            system, basis, kmesh=(2, 2, 2), aux_basis="def2-svp-jk", progress=False
+            system, basis, kmesh=(2, 2, 2), aux_basis="def2-svp-jk", progress=False,
+            gdf_method="compcell",
         )
 
 
@@ -2137,13 +2065,25 @@ def test_open_shell_gamma_gdf_records_resolved_tail_cutoff():
 def test_multik_open_shell_gdf_records_base_mesh():
     """IID 490 (multi-k half): the open-shell multi-k GDF result records
     the base rsgdf mesh actually used, mirroring PeriodicKRHFGDFResult,
-    and keeps the tail field None on a route that applies no tail."""
+    and keeps the tail field None on a route that applies no tail.
+
+    With no rsgdf_ke_cutoff requested the SR/LR source executes its planned
+    cutoff, not a 200 Ha floor (IID 257), so the record is the planner's."""
+    from vibeqc.aux_basis import (
+        _plan_range_separated_gdf_cutoffs, default_aux_for, make_aux_basis_set,
+    )
     from vibeqc.periodic_k_gdf import run_kuhf_periodic_gdf
 
     system, basis = _h2_box(box_bohr=12.0)
+    auxiliary = make_aux_basis_set(
+        system.unit_cell_molecule(), aux_name=default_aux_for(basis.name))
+    planned = _plan_range_separated_gdf_cutoffs(
+        system, basis, auxiliary, np.zeros(3), omega=0.4, raw_integral_error=1e-10,
+    ).ke_cutoff
     r = run_kuhf_periodic_gdf(system, basis, (2, 1, 1), progress=False)
     assert r.converged
-    assert r.rsgdf_ke_cutoff == pytest.approx(200.0)
+    assert planned < 200.0
+    assert r.rsgdf_ke_cutoff == pytest.approx(planned, rel=1e-12)
     assert r.rsgdf_tail_ke_cutoff is None
 
 

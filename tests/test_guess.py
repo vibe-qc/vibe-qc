@@ -245,6 +245,76 @@ def test_molecule_aware_auto_resolution_exposes_effective_guess():
     assert resolve(h2, InitialGuess.HCORE, False, False) == InitialGuess.HCORE
 
 
+def test_auto_resolves_open_shell_d_block_to_patom():
+    """Issue #273: an open-shell d/f-block complex needs the in-field step.
+
+    The SAD construction superposes free-ATOM Hund densities, so every
+    open-shell ligand arrives carrying its own free-atom moment -- one full
+    unpaired electron per Cl in FeCl3, which in the molecule is a
+    closed-shell chloride. That polarisation traps a symmetry-broken SCF
+    solution 90.05 mHa above the ground state (measured on FeCl3 sextet /
+    cc-pVDZ, internally unstable, S^2 = 8.776737). PATOM is the same Hund
+    seed plus a per-spin in-field re-polarisation, and reaches the ORCA
+    6.1.1 ground state; see tests/test_uhf_stability.py for the SCF pins.
+
+    Closed-shell metal systems and open-shell main-group systems keep their
+    established SAD / PATOM choices.
+    """
+    fecl3 = Molecule(
+        [
+            Atom(26, [0.0, 0.0, 0.0]),
+            Atom(17, [4.0, 0.0, 0.0]),
+            Atom(17, [-2.0, 3.5, 0.0]),
+            Atom(17, [-2.0, -3.5, 0.0]),
+        ],
+        charge=0,
+        multiplicity=6,
+    )
+    oh = Molecule(
+        [Atom(8, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.83])], multiplicity=2
+    )
+    resolve = _core._resolve_initial_guess_for_molecule
+
+    # Open-shell d block -> PATOM (the change).
+    assert resolve(fecl3, InitialGuess.AUTO, False, True) == InitialGuess.PATOM
+    # Closed-shell metal and open-shell main group are unchanged.
+    assert resolve(fecl3, InitialGuess.AUTO, False, False) == InitialGuess.SAD
+    assert resolve(oh, InitialGuess.AUTO, False, True) == InitialGuess.SAD
+    # Periodic still resolves to SAD before the molecular rules run.
+    assert resolve(fecl3, InitialGuess.AUTO, True, True) == InitialGuess.SAD
+    # An explicit selector is never rewritten.
+    assert resolve(fecl3, InitialGuess.SAD, False, True) == InitialGuess.SAD
+
+    # A route without PATOM falls back to the advertised SAD construction.
+    assert resolve(
+        fecl3, InitialGuess.AUTO, False, True,
+        [InitialGuess.HCORE, InitialGuess.SAD],
+    ) == InitialGuess.SAD
+
+
+def test_auto_keeps_atomic_spins_on_sad_for_a_metal_complex():
+    """Issue #273: an ATOMSPIN seed is defined on the SAD density.
+
+    The open-shell d/f rule above must not take an antiferromagnetically
+    seeded metal complex to PATOM, which would then reject its own seed.
+    """
+    from vibeqc.guess import select_initial_guess
+
+    fe2 = Molecule(
+        [Atom(26, [0.0, 0.0, 0.0]), Atom(26, [0.0, 0.0, 4.5])],
+        charge=0,
+        multiplicity=3,
+    )
+    seeded = select_initial_guess(
+        fe2, InitialGuess.AUTO, is_open_shell=True, atomic_spins=[1, -1],
+    )
+    assert seeded.effective == InitialGuess.SAD
+    assert seeded.transport == InitialGuess.SAD
+
+    unseeded = select_initial_guess(fe2, InitialGuess.AUTO, is_open_shell=True)
+    assert unseeded.effective == InitialGuess.PATOM
+
+
 def test_raw_open_shell_auto_matches_patom_for_isolated_atom():
     """The raw builder applies the isolated-atom AUTO policy end to end.
 
@@ -2094,6 +2164,67 @@ def test_twisted_ethylene_default_escapes_to_biradical():
     assert r_def.s_squared == pytest.approx(1.043392, abs=1e-2)
 
 
+def _rigidly_rotated(mol, axis, degrees):
+    """The same molecule in a different orientation (Rodrigues)."""
+    axis = np.asarray(axis, dtype=float)
+    axis = axis / np.linalg.norm(axis)
+    t = np.deg2rad(degrees)
+    K = np.array([[0.0, -axis[2], axis[1]],
+                  [axis[2], 0.0, -axis[0]],
+                  [-axis[1], axis[0], 0.0]])
+    R = np.eye(3) + np.sin(t) * K + (1.0 - np.cos(t)) * (K @ K)
+    return Molecule(
+        [Atom(a.Z, list(R @ np.asarray(list(a.xyz), dtype=float))) for a in mol.atoms],
+        mol.charge, mol.multiplicity)
+
+
+def test_twisted_ethylene_symmetric_control_is_rotation_invariant():
+    """A converged energy cannot depend on how the molecule is oriented (#210).
+
+    90-deg twisted ethylene has an exactly degenerate frontier at the guess
+    Fock -- the D2d e-pair, two orthogonal carbon p orbitals, gap ~2e-15 Ha --
+    and one electron per spin to place in it. A bare aufbau truncation
+    resolves that tie with whatever basis the eigensolver returns for the
+    degenerate subspace, which is not a physical quantity: it varies with
+    orientation and with the LAPACK build. The two stationary points it
+    selects between are 58.090 mHa apart, and the lower one is correct: it is
+    the delocalized, spatially symmetric solution, while the higher carries a
+    spurious C+/C- charge separation.
+
+    Swept rather than parametrised on a fixed orientation list on purpose:
+    WHICH orientations land on the wrong basin is itself not reproducible (it
+    moves between builds, and between the active and passive rotation
+    conventions), so a short fixed list can pass vacuously while the defect is
+    present. What reproduces every time is that some orientation differs.
+    """
+    reference = _twisted_ethylene_90()
+    opts = _uhf_opts(InitialGuess.AUTO)
+    opts.stability_check = False
+
+    r_reference = run_uhf(reference, "sto-3g", opts)
+    assert r_reference.converged
+    assert r_reference.energy == pytest.approx(-76.8553699161, abs=1e-6)
+
+    orientations = [((1, 0, 0), d) for d in (5, 10, 20, 25, 37, 45, 73, 90)]
+    orientations += [((0, 0, 1), d) for d in (20, 45, 73)]
+    orientations += [((1, 1, 1), d) for d in (20, 60, 123)]
+
+    energies = {}
+    for axis, degrees in orientations:
+        rotated = run_uhf(_rigidly_rotated(reference, axis, degrees), "sto-3g", opts)
+        assert rotated.converged, (axis, degrees)
+        energies[(axis, degrees)] = rotated.energy
+
+    spread = max(energies.values()) - min(energies.values())
+    assert spread < 1e-9, (
+        "the converged energy is orientation-dependent over "
+        f"{len(orientations)} rigid rotations: spread {1e3 * spread:.3f} mHa; "
+        f"energies {sorted(set(round(e, 9) for e in energies.values()))}"
+    )
+    for (axis, degrees), energy in energies.items():
+        assert energy == pytest.approx(r_reference.energy, abs=1e-9), (axis, degrees)
+
+
 def test_p_benzyne_default_escapes_to_biradical():
     """p-benzyne/6-31G*: default driver reaches the broken-symmetry
     biradical (179.2 mHa below the symmetric saddle)."""
@@ -2924,8 +3055,9 @@ def test_native_periodic_read_source_roundtrip(method):
     mesh = vq.monkhorst_pack(system, [1,1,3])
     options = (vq.PeriodicRHFOptions() if method == 'rhf_gamma' else
                vq.PeriodicSCFOptions() if method == 'rhf_k' else vq.PeriodicKSOptions())
-    options.lattice_opts.cutoff_bohr = 3
-    options.lattice_opts.nuclear_cutoff_bohr = 3
+    # Exercise a periodic domain, including neighboring cells (#133).
+    options.lattice_opts.cutoff_bohr = 20
+    options.lattice_opts.nuclear_cutoff_bohr = 20
     options.max_iter = 30
     if method == 'rks_k':
         options.functional = 'lda'
@@ -2952,8 +3084,9 @@ def test_native_periodic_read_rejects_invalid_blocks(bad):
     options = vq.PeriodicSCFOptions()
     options.initial_guess = InitialGuess.READ
     options.max_iter = 0
-    options.lattice_opts.cutoff_bohr = 3
-    options.lattice_opts.nuclear_cutoff_bohr = 3
+    # Exercise a periodic domain, including neighboring cells (#133).
+    options.lattice_opts.cutoff_bohr = 20
+    options.lattice_opts.nuclear_cutoff_bohr = 20
     blocks = [np.eye(2,dtype=complex) for _ in range(3)]
     if bad == 'missing': blocks.pop()
     elif bad == 'negative': blocks[0][0,0] = -1
@@ -3049,7 +3182,7 @@ def test_native_read_skew_lattice_self_time_reversal_point():
     basis=BasisSet(system.unit_cell_molecule(),'sto-3g')
     mesh=vq.monkhorst_pack(system,[2,1,1])
     opts=vq.PeriodicSCFOptions(); opts.max_iter=1
-    opts.lattice_opts.cutoff_bohr=3; opts.lattice_opts.nuclear_cutoff_bohr=3
+    opts.lattice_opts.cutoff_bohr=20; opts.lattice_opts.nuclear_cutoff_bohr=20
     opts.initial_guess=InitialGuess.READ
     opts.read_density_k=[np.eye(2),np.eye(2)]
     assert np.isfinite(vq.run_rhf_periodic(system,basis,mesh,opts).energy)
@@ -3060,7 +3193,7 @@ def test_native_periodic_fragmo_uses_shared_source_and_restores_options():
     system=vq.PeriodicSystem(3,np.eye(3)*16,[Atom(1,[0,0,0]),Atom(1,[0,0,1.4])])
     basis=BasisSet(system.unit_cell_molecule(),'sto-3g')
     opts=vq.PeriodicRHFOptions(); opts.initial_guess=InitialGuess.FRAGMO
-    opts.lattice_opts.cutoff_bohr=3; opts.lattice_opts.nuclear_cutoff_bohr=3
+    opts.lattice_opts.cutoff_bohr=20; opts.lattice_opts.nuclear_cutoff_bohr=20
     result=vq.run_rhf_periodic_gamma(system,basis,opts,fragments=[[0,1]])
     assert result.converged
     assert result.guess_selection.effective==InitialGuess.FRAGMO
@@ -3075,7 +3208,7 @@ def test_native_dispatch_consumes_prepared_k_density(method):
     basis=BasisSet(system.unit_cell_molecule(),'sto-3g')
     mesh=vq.monkhorst_pack(system,[1,1,3])
     opts=vq.PeriodicSCFOptions() if method=='rhf' else vq.PeriodicKSOptions()
-    opts.max_iter=1; opts.lattice_opts.cutoff_bohr=3; opts.lattice_opts.nuclear_cutoff_bohr=3
+    opts.max_iter=1; opts.lattice_opts.cutoff_bohr=20; opts.lattice_opts.nuclear_cutoff_bohr=20
     opts.initial_guess=InitialGuess.HCORE
     source=[np.diag([2.,0.]) for _ in mesh.kpoints]
     run=getattr(vq,'run_'+method+'_periodic_scf')
@@ -3093,13 +3226,16 @@ def test_native_read_normalizes_weighted_population_without_refilling_each_k():
     basis=BasisSet(system.unit_cell_molecule(),'sto-3g')
     mesh=vq.monkhorst_pack(system,[1,1,3])
     opts=vq.PeriodicSCFOptions(); opts.initial_guess=InitialGuess.READ; opts.max_iter=1
-    opts.lattice_opts.cutoff_bohr=3; opts.lattice_opts.nuclear_cutoff_bohr=3
+    opts.lattice_opts.cutoff_bohr=20; opts.lattice_opts.nuclear_cutoff_bohr=20
     blocks=[np.diag([2.,0.]),np.diag([0.,1.]),np.diag([0.,1.])]
     def energy(d):
         opts.read_density_k=d
         return vq.run_rhf_periodic(system,basis,mesh,opts).energy
     actual=energy(blocks)
-    assert actual==pytest.approx(energy([np.eye(2)]*3),abs=1e-12)
+    # A single global scale preserves the unequal k populations. Replacing
+    # them by their average changes intercell density and is not equivalent
+    # once the cutoff includes genuine neighboring cells.
+    assert actual==pytest.approx(energy([1.5*d for d in blocks]),rel=0,abs=1e-12)
     assert abs(actual-energy([d*2/np.trace(d) for d in blocks]))>1e-5
 
 
@@ -3148,3 +3284,166 @@ def test_periodic_minao_zero_electron_reference_is_empty():
     density=compute_minao_density_periodic(system.unit_cell_molecule(),basis,system,
         vq.compute_overlap(basis),0,lo)
     np.testing.assert_array_equal(density,np.zeros((basis.nbasis,basis.nbasis)))
+
+
+@pytest.mark.parametrize("guess", [InitialGuess.HCORE, InitialGuess.PATOM,
+                                    InitialGuess.AUTO, InitialGuess.SAD])
+def test_rhf_seed_density_is_rotation_covariant(guess):
+    """Seed covariance precedes the iterative frontier rule (#336).
+
+    Establish the AO transformation with S and H before checking the density.
+    Native pure p functions are ordered (py, pz, px). The twisted-ethylene
+    frontier must carry equal occupations, independent of eigensolver axes.
+    """
+    original = _twisted_ethylene_90()
+    opts = _rhf_opts(guess)
+    opts.max_iter = 0
+    basis = BasisSet(original, "sto-3g")
+    S0 = np.asarray(_core.compute_overlap(basis))
+    H0 = np.asarray(_core.compute_kinetic(basis)) + np.asarray(
+        _core.compute_nuclear(basis, original))
+    reference = run_rhf(original, basis, opts)
+    D0, F0 = np.asarray(reference.density), np.asarray(reference.fock)
+    for angle in (0, 5, 10, 20, 25, 37, 45, 73, 90):
+        t = np.deg2rad(angle)
+        R = np.array([[1, 0, 0], [0, np.cos(t), -np.sin(t)],
+                      [0, np.sin(t), np.cos(t)]])
+        U = np.eye(14)
+        for start in (2, 7):
+            U[start:start+3, start:start+3] = R[np.ix_([1, 2, 0], [1, 2, 0])]
+        mol = _rigidly_rotated(original, (1, 0, 0), angle)
+        rotated_basis = BasisSet(mol, "sto-3g")
+        S = np.asarray(_core.compute_overlap(rotated_basis))
+        H = np.asarray(_core.compute_kinetic(rotated_basis)) + np.asarray(
+            _core.compute_nuclear(rotated_basis, mol))
+        np.testing.assert_allclose(S, U @ S0 @ U.T, rtol=0, atol=1e-10)
+        np.testing.assert_allclose(H, U @ H0 @ U.T, rtol=0, atol=1e-10)
+        result = run_rhf(mol, rotated_basis, opts)
+        assert result.n_iter == 0
+        D = np.asarray(result.density)
+        assert np.trace(D @ S) == pytest.approx(16, rel=0, abs=1e-9)
+        np.testing.assert_allclose(D, U @ D0 @ U.T, rtol=0, atol=1e-9,
+                                   err_msg=f"{guess}, rotation {angle}")
+        np.testing.assert_allclose(result.fock, U @ F0 @ U.T,
+                                   rtol=0, atol=1e-9)
+        assert result.energy == pytest.approx(reference.energy, rel=0, abs=1e-9)
+
+
+@pytest.mark.parametrize("guess", [InitialGuess.HCORE, InitialGuess.PATOM,
+                                    InitialGuess.AUTO])
+def test_rhf_twisted_ethylene_guess_reaches_same_rotated_state(guess):
+    """A covariant seed must still reach the pinned RHF solution (#336)."""
+    opts = _rhf_opts(guess)
+    opts.max_iter = 200
+    original = _twisted_ethylene_90()
+    energies = []
+    for angle in (0, 5, 10, 20, 25, 37, 45, 73, 90):
+        result = run_rhf(_rigidly_rotated(original, (1, 0, 0), angle),
+                         "sto-3g", opts)
+        assert result.converged, (guess, angle)
+        assert result.energy == pytest.approx(-76.8553699161, rel=0, abs=1e-6)
+        energies.append(result.energy)
+    assert max(energies) - min(energies) < 1e-9
+
+
+@pytest.mark.parametrize("guess", [InitialGuess.HCORE, InitialGuess.PATOM])
+def test_gapped_rhf_seed_keeps_integer_occupations(guess):
+    """Do not smear a gapped seed while repairing a degenerate one (#336)."""
+    mol, basis = _singlet_h2o_sto3g()
+    S = np.asarray(_core.compute_overlap(basis))
+    H = np.asarray(_core.compute_kinetic(basis)) + np.asarray(
+        _core.compute_nuclear(basis, mol))
+    opts = _rhf_opts(InitialGuess.SAD)
+    opts.max_iter = 0
+    if guess == InitialGuess.PATOM:
+        sad = np.asarray(run_rhf(mol, basis, opts).density)
+        jk = _core.make_direct_jk_builder(basis)
+        H = H + np.asarray(jk.build_J(sad)) - 0.5 * np.asarray(jk.build_K(sad))
+    s, vectors = np.linalg.eigh(S)
+    X = vectors / np.sqrt(s)
+    eps, orbitals = np.linalg.eigh(X.T @ H @ X)
+    assert eps[5] - eps[4] > 1e-8
+    occupied = (X @ orbitals)[:, :5]
+    expected = 2 * occupied @ occupied.T
+    opts.initial_guess = guess
+    actual = np.asarray(run_rhf(mol, basis, opts).density)
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-10)
+    np.testing.assert_allclose(actual @ S @ actual, 2 * actual, rtol=0, atol=1e-10)
+
+
+@pytest.mark.parametrize("n_eig", [0, 8, 9])
+def test_rhf_hcore_seed_davidson_completes_degenerate_frontier(n_eig):
+    """A requested partial eigenspectrum must not truncate the seed ensemble."""
+    mol = _rigidly_rotated(_twisted_ethylene_90(), (1, 0, 0), 37)
+    opts = _rhf_opts(InitialGuess.HCORE)
+    opts.max_iter = 0
+    reference = run_rhf(mol, "sto-3g", opts)
+    opts.use_davidson = True
+    opts.davidson_min_dim = 1
+    davidson = opts.davidson
+    davidson.n_eig = n_eig
+    davidson.conv_tol = 1e-12
+    opts.davidson = davidson
+    actual = run_rhf(mol, "sto-3g", opts)
+    np.testing.assert_allclose(actual.density, reference.density, rtol=0, atol=1e-9)
+
+
+@pytest.mark.parametrize("charge", [0, 2])
+def test_rhf_hcore_seed_full_and_empty_occupied_space(charge):
+    """One-AO helium exercises both endpoint occupations."""
+    mol = Molecule([Atom(2, [0., 0., 0.])], charge=charge, multiplicity=1)
+    basis = BasisSet(mol, "sto-3g")
+    opts = _rhf_opts(InitialGuess.HCORE)
+    opts.max_iter = 0
+    result = run_rhf(mol, basis, opts)
+    D = np.asarray(result.density)
+    S = np.asarray(_core.compute_overlap(basis))
+    assert D.shape == (1, 1)
+    assert np.trace(D @ S) == pytest.approx(2 - charge, rel=0, abs=1e-12)
+
+
+def test_rks_patom_consumes_the_same_covariant_closed_shell_seed():
+    """The shared molecular PATOM correction also reaches its RKS consumer."""
+    import vibeqc as vq
+
+    mol = _twisted_ethylene_90()
+    opts = vq.RKSOptions()
+    opts.initial_guess = InitialGuess.PATOM
+    opts.max_iter = 0
+    opts.grid.n_radial = 20
+    opts.grid.lebedev_order = 11
+    for angle in (0, 37):
+        rotated = _rigidly_rotated(mol, (1, 0, 0), angle)
+        expected_opts = _rhf_opts(InitialGuess.PATOM)
+        expected_opts.max_iter = 0
+        expected = run_rhf(rotated, "sto-3g", expected_opts)
+        actual = vq.run_rks(rotated, "sto-3g", opts)
+        np.testing.assert_allclose(actual.density, expected.density, rtol=0, atol=1e-10)
+
+
+def test_rhf_davidson_seed_requires_the_occupied_space():
+    opts = _rhf_opts(InitialGuess.HCORE)
+    opts.max_iter = 0
+    opts.use_davidson = True
+    opts.davidson_min_dim = 1
+    davidson = opts.davidson
+    davidson.n_eig = 7  # Twisted ethylene has eight occupied spatial orbitals.
+    opts.davidson = davidson
+    with pytest.raises(ValueError, match="occupied space"):
+        run_rhf(_twisted_ethylene_90(), "sto-3g", opts)
+
+
+def test_rhf_hcore_wholly_degenerate_seed_is_neutral():
+    """Separated equivalent H atoms fill the whole two-orbital seed block."""
+    mol = Molecule([Atom(1, [0., 0., -25.]), Atom(1, [0., 0., 25.])])
+    basis = BasisSet(mol, "sto-3g")
+    S = np.asarray(_core.compute_overlap(basis))
+    H = np.asarray(_core.compute_kinetic(basis)) + np.asarray(
+        _core.compute_nuclear(basis, mol))
+    np.testing.assert_allclose(S, np.eye(2), rtol=0, atol=1e-12)
+    assert np.ptp(np.linalg.eigvalsh(H)) < 1e-8
+    opts = _rhf_opts(InitialGuess.HCORE)
+    opts.max_iter = 0
+    result = run_rhf(mol, basis, opts)
+    np.testing.assert_allclose(np.asarray(result.density) @ S, np.eye(2),
+                               rtol=0, atol=1e-12)

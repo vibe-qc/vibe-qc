@@ -73,6 +73,23 @@ reorthogonalizes new corrections against both retained and same-block vectors.
 These controls do not guarantee convergence for every matrix or establish
 which SCF electronic state is physically appropriate.
 
+### Molecular RHF HCORE seed completion
+
+The native molecular RHF driver's `RHFOptions.davidson.n_eig` is a separate
+control from the generic `SolverOptions.n_roots` interface above. When that
+driver uses Davidson, `n_eig=0` requests the full retained space; a positive
+request smaller than the occupied space is rejected.
+
+For an HCORE starting density, a partial spectrum can end inside a degenerate
+frontier. If missing frontier partners cannot be excluded, the driver
+completes the seed diagonalization and retains that complete orbital frame
+for the first Fock solve. The subsequent iterative Davidson settings stay
+unchanged. Equal fractional seed occupations cover only a frontier block
+with total width at most `1e-8` hartree and preserve the electron count;
+gapped seeds keep integer occupations. This does not change final SCF
+occupation rules or establish a global ground state. See the
+[initial-guess reference](initial_guess.md#hcore-core-hamiltonian-guess).
+
 ## Available solver keywords
 
 | Keyword | Algorithm | Backend | Best for |
@@ -85,7 +102,57 @@ which SCF electronic state is physically appropriate.
 | `lanczos` | Lanczos with full reorthogonalization | Python | Matrix-free, moderate accuracy; exploratory |
 | `jd` | Jacobi-Davidson (Sleijpen 1996) | C++ | Robust for interior eigenvalues; MINRES correction; experimental |
 | `jacobi_davidson` | Alias for `jd` | C++ | Same |
+| `gplhr` | GPLHR-derived block harmonic iteration (Zuev 2015) | C++ | Interior roots of real symmetric matrices; experimental |
 | `hermitian_davidson` | Complex-Hermitian block Davidson | C++ | k ≠ Γ periodic Fock matrices |
+
+### Experimental interior solvers
+
+Pass an `InteriorEigenProblem` with the target shift to `jd` or `gplhr`:
+
+```python
+from vibeqc.solvers.eigensolver import InteriorEigenProblem
+
+interior = InteriorEigenProblem(problem=problem, sigma=0.4248)
+result = solve_eigenproblem(
+    interior, SolverOptions(n_roots=1, tol=1e-8, max_iter=500), solver="gplhr"
+)
+```
+
+GPLHR remains experimental. Its implementation uses harmonic extraction and
+signed shifted-diagonal preconditioning inspired by Zuev et al. (2015), but
+retains a growing/restarted harmonic-Davidson search space. It does not
+implement the paper's full locally harmonic recurrence with residual-like
+blocks and a previous-direction block. Candidates and retained vectors are
+selected by distance of the harmonic values to the shift; residual size
+does not change that ordering. Returned eigenvalues are Rayleigh quotients
+of normalized vectors.
+The paper discusses approximating `(A - sigma I)^(-1)` and uses per-root
+Davidson denominators `(D - rho_i I)^(-1)` in its implementation. This
+variant uses the fixed target-shift approximation `(D - sigma I)^(-1)`.
+
+The default working block includes guard roots, `max(2*n_roots, 4)`, capped
+at the matrix dimension. `block_size` controls that block (at least
+`n_roots`); `max_subspace` controls the retained search-space budget and
+defaults to `min(6*block_size + 10, n)` using the effective block size.
+`preshift` bounds the denominator magnitude while preserving its sign.
+
+Earlier versions could discard the target vectors at restart and fail on
+weakly coupled near-diagonal matrices even after 500 iterations. The signed
+preconditioner, target-preserving restarts, and guard-root expansion repair
+that behaviour for regression cases, but do not guarantee convergence or
+selection of the nearest root on every matrix. On iteration exhaustion or
+stagnation, the Python GPLHR interface raises `RuntimeError` with the shift,
+iteration count, residual and a suggestion to try `solver="jd"` or increase
+the search-space/iteration budget. Successful results include residual norms.
+JD continues to report convergence through `result.converged`.
+GPLHR also rejects a singular harmonic pencil (for example, a diagonal
+matrix with an eigenvalue exactly at the shift) with a diagnostic error;
+it must not drop that root and return a neighbouring eigenpair.
+
+Run `examples/experimental/interior_eigensolvers.py` for a deterministic
+comparison against dense reference roots on six matrices of sizes 60, 120
+and 300 with off-diagonal coupling scales 0.01 and 0.05. Both solvers remain
+experimental; this comparison is a diagnostic, not a production guarantee.
 
 ## Solver capability matrix
 
@@ -96,6 +163,7 @@ which SCF electronic state is physically appropriate.
 | `dense` | ✅ | ✅¹ | ❌ | N/A | ❌ | ✅ |
 | `lanczos` | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | `jd` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `gplhr` | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ |
 | `hermitian_davidson` | ✅ | ❌ | ❌ | ✅ | ❌ | ✅ |
 
 ¹ Via scipy `subset_by_index`. Generalized and interior problems auto-reduce
@@ -110,6 +178,7 @@ SolverStrategy (ABC)
 ├── HermitianDavidsonSolver → _vibeqc_core.davidson_solve_hermitian (C++)
 ├── LOBPCGSolver          → _vibeqc_core.lobpcg_solve (C++)
 ├── JDSolver              → _vibeqc_core.jd_solve (C++, experimental)
+├── GPLHRSolver           → _vibeqc_core.gplhr_solve (C++, experimental)
 └── LanczosSolver         → pure Python, tridiagonal reduction
 ```
 
@@ -177,3 +246,7 @@ matrices *between* diagonalizations. They are selected via
 - Helmich-Paris, B. *J. Chem. Phys.* 156, 054104 (2022). TRAH.
 - Sleijpen, G. L. G. & Van der Vorst, H. A. *SIAM J. Matrix Anal.*
   Appl. 17, 401-425 (1996). DOI: 10.1137/S0895479894270427 ;  Jacobi-Davidson.
+- Zuev, D., Vecharynski, E., Yang, C., Orms, N. & Krylov, A. I.
+  *J. Comput. Chem.* 36, 273-284 (2015).
+  DOI: [10.1002/jcc.23800](https://doi.org/10.1002/jcc.23800) ; GPLHR.
+  Output citation key: `zuev_gplhr_2015`.

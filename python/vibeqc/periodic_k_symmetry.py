@@ -117,6 +117,7 @@ def star_operations(
     kmesh_full,
     *,
     atol: float = 1e-8,
+    operations: Optional[Sequence] = None,
 ) -> KStarMap:
     """Match every full-mesh k-point to (IBZ representative, operation).
 
@@ -124,10 +125,15 @@ def star_operations(
     reciprocal-lattice translations. spglib's irreducible meshes use
     time reversal, so ``-R.k_rep`` is tried when no proper match exists.
 
+    ``operations`` restricts matching to an admitted subset of the
+    system's symmorphic operations (default: all of them). A consumer
+    whose finite source is closed under only some operations passes
+    exactly those, so no star member is reached through another one.
+
     Raises ``ValueError`` when a full-mesh point cannot be reached from
     any representative -- that means the meshes don't belong together
-    (different mesh/shift) or the system's symmetry changed since the
-    IBZ reduction.
+    (different mesh/shift), the system's symmetry changed since the
+    IBZ reduction, or the admitted operations do not cover the star.
     """
     ops_all = getattr(getattr(system, "symmetry", None), "operations", None)
     if not ops_all:
@@ -136,6 +142,25 @@ def star_operations(
             "attach_symmetry() first"
         )
     ops = symmorphic_operations(ops_all)
+    if operations is not None:
+        # Every admitted operation must be one of the attached symmorphic
+        # operations, so a caller cannot admit a foreign rotation.
+        def _same(a, b):
+            return np.array_equal(
+                np.asarray(a.rotation), np.asarray(b.rotation)
+            ) and np.array_equal(
+                np.asarray(a.translation), np.asarray(b.translation)
+            )
+
+        chosen = list(operations)
+        if not chosen or any(
+            not any(_same(op, candidate) for candidate in ops) for op in chosen
+        ):
+            raise ValueError(
+                "star_operations: operations must be a nonempty subset of "
+                "the system's symmorphic operations"
+            )
+        ops = chosen
     lattice = np.asarray(system.lattice, dtype=float)
 
     k_ibz_frac = [

@@ -42,6 +42,11 @@
 #                               WITH_OPENBLAS=1 for setup_native_deps.sh).
 #                               Use when system BLAS is reference netlib
 #                               or absent.
+#     --with-opentrustregion    Fetch and compile the pinned optional orbital
+#                               optimizer. Requires a Fortran compiler and
+#                               LP64 BLAS/LAPACK; verified after installation.
+#     --without-opentrustregion Disable it, including in an existing build.
+#                               Otherwise preserve the last build selection.
 #     --libint-max-am SPEC      libint's max angular momentum per
 #                               derivative order, as N_N_N for orders
 #                               0/1/2. Each part 1..6. Default 5_4_4.
@@ -122,6 +127,8 @@ _INSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # update_native_deps.sh / build_libint.sh).
 # shellcheck source=_libint_max_am.sh
 . "$_INSTALL_SCRIPT_DIR/_libint_max_am.sh"
+# shellcheck source=_opentrustregion.sh
+. "$_INSTALL_SCRIPT_DIR/_opentrustregion.sh"
 
 # ---------------------------------------------------------------------------
 # Argv parsing — defer the heavier _safe_build_env sourcing until after,
@@ -185,6 +192,8 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         --with-openblas)      WITH_OPENBLAS=1;        shift ;;
+        --with-opentrustregion) vibeqc_otr_select ON; shift ;;
+        --without-opentrustregion) vibeqc_otr_select OFF; shift ;;
         --libint-max-am)
             require_value "$1" "max_am spec" "${2-}"
             vibeqc_libint_max_am_accept "$2" || exit 1
@@ -273,6 +282,7 @@ echo "    extras:       $EXTRAS_GROUP  (pip suffix: '${EXTRAS_SPEC:-<none>}')"
 [ -z "$VIBEQC_COLOCATED_EXTRA" ] || \
     echo "    companion:    local $VIBEQC_COLOCATED_EXTRA project"
 echo "    python:       $PYTHON_BIN"
+vibeqc_otr_configure "$VENV_PATH" "${INSPECTION_PYTHON:-python3}"
 if [ -n "$BRANCH" ]; then
     echo "    branch:       $BRANCH"
 else
@@ -406,6 +416,7 @@ fi
 # Validate every destructive/input prerequisite before checkout or native
 # build work. A bad interpreter or unsafe/non-venv target must leave Git and
 # third_party untouched.
+vibeqc_otr_preflight "${INSPECTION_PYTHON:-python3}"
 vibeqc_acquire_lifecycle_lock "$VENV_PATH" "$REPO_ROOT" install "$PYTHON_BIN"
 trap 'vibeqc_lifecycle_cleanup' EXIT
 vibeqc_resolve_base_python PYTHON_BIN "$PYTHON_BIN"
@@ -559,6 +570,7 @@ vibeqc_install_colocated_extra \
 echo
 echo "==> Verifying:"
 vibeqc_verify_install "$VENV_PATH/bin/python" "$EXTRAS_GROUP"
+vibeqc_otr_verify "$VENV_PATH/bin/python" "$VENV_PATH"
 vibeqc_mark_owned_venv "$VENV_PATH" "$REPO_ROOT" "$PYTHON_BIN"
 vibeqc_commit_venv_replacement
 vibeqc_release_lifecycle_lock

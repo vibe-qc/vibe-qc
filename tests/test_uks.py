@@ -454,3 +454,168 @@ def test_uks_b3lyp_sh_def2_svp_clears_commutator_gate():
     # -398.5689395806 Ha pin by 10.8 nHa; retain the 1 nHa regression bound.
     assert result.energy == pytest.approx(-398.56893956981907, abs=1e-9)
     assert result.scf_trace[-1].grad_norm < opts.conv_tol_grad
+
+
+@pytest.fixture
+def sh_read_witness():
+    """Exact legal spin densities exposing the SH UKS recovery failure (#55).
+
+    The fixture contains only the normalized PATOM alpha/beta densities for
+    this geometry and basis. Retaining them isolates SCF recovery from future
+    changes to the initial-guess generator.
+    """
+    from pathlib import Path
+
+    mol = Molecule([
+        Atom(16, [0.0, 0.0, 0.0]),
+        Atom(1, [1.341 * ANGSTROM_TO_BOHR, 0.0, 0.0]),
+    ], multiplicity=2)
+    basis = BasisSet(mol, "def2-svp")
+    opts = UKSOptions()
+    opts.functional = "B3LYP"
+    opts.grid = cosx_grid_options_for_level(3)
+    opts.initial_guess = InitialGuess.READ
+    opts.damping = 0.0
+    opts.max_iter = 120
+    opts.conv_tol_energy = 1e-12
+    opts.conv_tol_grad = 1e-9
+    opts.stability_check = False
+    with np.load(Path(__file__).parent / "data" / "uks_sh_read_seed.npz") as seed:
+        opts.read_density_alpha = seed["alpha"]
+        opts.read_density_beta = seed["beta"]
+    return mol, basis, opts
+
+
+@pytest.mark.parametrize("stall_limit", [1, 15])
+def test_uks_restart_requires_consecutive_stalls(sh_read_witness, stall_limit):
+    """Improvement separates stalled runs instead of advancing a later restart.
+
+    The original default-limit trajectory incorrectly restarts at cycle 37:
+    fifteen stalls have accumulated, but only the last ten are consecutive.
+    A limit of one remains an active recovery control.
+    """
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.output import _cpp_diagnostics as cpp_diagnostics
+
+    mol, basis, opts = sh_read_witness
+    opts.max_iter = 38
+    opts.restart_opts.max_stall_iters = stall_limit
+    diagnostics = []
+    saved_level = int(core._get_diagnostics_level())
+    restore_sink = (
+        cpp_diagnostics._diag_callback
+        if cpp_diagnostics._bridge_installed else None
+    )
+    try:
+        core._set_diagnostics_level(3)
+        core._set_diagnostics_sink(
+            lambda tag, level, message: diagnostics.append((tag, message))
+        )
+        result = core.run_uks(mol, basis, opts)
+    finally:
+        core._set_diagnostics_sink(restore_sink)
+        core._set_diagnostics_level(saved_level)
+    restarts = [message for tag, message in diagnostics
+                if tag == "uks" and message.startswith("restart ")]
+    if stall_limit == 15:
+        assert not restarts, restarts
+    else:
+        assert restarts, "The configured one-stall recovery must remain active"
+    assert result.n_iter <= opts.max_iter
+    if not result.converged:
+        assert result.n_iter == opts.max_iter
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#55: the SH READ witness stops at max_iter with |grad| ~ 4e-6 under "
+    "default recovery; this is the open acceptance case, not a regression",
+)
+def test_uks_sh_original_read_seed_clears_tight_gate(sh_read_witness):
+    """The original tight witness must converge with default recovery (#55)."""
+    from vibeqc import _vibeqc_core as core
+
+    mol, basis, opts = sh_read_witness
+    result = core.run_uks(mol, basis, opts)
+    assert result.converged, (
+        result.energy, result.n_iter, result.scf_trace[-1].grad_norm
+    )
+    overlap = np.asarray(compute_overlap(basis))
+    vals, vecs = np.linalg.eigh(overlap)
+    keep = vals > opts.linear_dep_threshold
+    X = vecs[:, keep] / np.sqrt(vals[keep])
+    for spin, count in (("alpha", 9), ("beta", 8)):
+        density = np.asarray(getattr(result, f"density_{spin}"))
+        fock = np.asarray(getattr(result, f"fock_{spin}"))
+        C = np.asarray(getattr(result, f"mo_coeffs_{spin}"))[:, :count]
+        assert np.trace(density @ overlap) == pytest.approx(count, abs=1e-10)
+        np.testing.assert_allclose(density @ overlap @ density, density, atol=1e-10)
+        np.testing.assert_allclose(C @ C.T, density, atol=1e-8)
+        error = fock @ density @ overlap - overlap @ density @ fock
+        assert np.linalg.norm(X.T @ error @ X) < opts.conv_tol_grad
+
+
+@pytest.mark.parametrize("scenario", [
+    "no-restarts", "pattern-hold", "spin-schedule", "disabled-schedule",
+    "atomspin", "short-window",
+])
+def test_uks_recovery_diagnostic_rejects_unsupported_entry(sh_read_witness, scenario):
+    """The real private entry refuses transformed targets before any SCF prefix."""
+    from vibeqc import _vibeqc_core as core, SpinlockMode
+    from vibeqc.output import _cpp_diagnostics as diagnostics
+
+    mol, basis, opts = sh_read_witness
+    if scenario == "no-restarts":
+        opts.restart_opts.max_restarts = 0
+    elif scenario == "atomspin":
+        opts.atomic_spins = [1, -1]
+    elif scenario == "short-window":
+        opts.max_iter = 50
+    else:
+        opts.spinlock_mode = (SpinlockMode.PATTERN_HOLD if scenario == "pattern-hold"
+                              else SpinlockMode.SPIN_SCHEDULE)
+        opts.spinlock_iterations = 0 if scenario == "disabled-schedule" else 60
+        opts.spinlock_value = 1
+    progress = []
+    level = int(core._get_diagnostics_level())
+    sink = diagnostics._diag_callback if diagnostics._bridge_installed else None
+    try:
+        core._set_diagnostics_level(3)
+        core._set_diagnostics_sink(lambda tag, severity, msg: progress.append((tag, msg)))
+        with pytest.raises(ValueError, match="Invalid bounded UKS recovery diagnostic request"):
+            core._diagnose_uks_recovery(mol, basis, opts, 42, 12)
+    finally:
+        core._set_diagnostics_sink(sink)
+        core._set_diagnostics_level(level)
+    assert not progress, "An unsupported request must be rejected before setup/replay"
+
+
+def test_uks_recovery_diagnostic_rejects_residual_below_gate(sh_read_witness):
+    """A stalled energy alone cannot authorize an orbital-recovery checkpoint.
+
+    This is a refusal control with explicitly different options, not the #55
+    scientific acceptance case. Zero energy tolerance keeps its energy gate
+    false while the loose residual tolerance forbids production recovery.
+    Exactly one 42-step prefix is allowed and no factorial tail may run.
+    """
+    import re
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.output import _cpp_diagnostics as diagnostics
+
+    mol, basis, opts = sh_read_witness
+    opts.conv_tol_energy = 0.0
+    opts.conv_tol_grad = 1.0
+    progress = []
+    level = int(core._get_diagnostics_level())
+    sink = diagnostics._diag_callback if diagnostics._bridge_installed else None
+    try:
+        core._set_diagnostics_level(3)
+        core._set_diagnostics_sink(lambda tag, severity, msg: progress.append((tag, msg)))
+        with pytest.raises(RuntimeError, match="Expected first orbital-recovery checkpoint was not reached"):
+            core._diagnose_uks_recovery(mol, basis, opts, 42, 12)
+    finally:
+        core._set_diagnostics_sink(sink)
+        core._set_diagnostics_level(level)
+    iterations = [int(re.search(r"iter=(\d+)", msg).group(1))
+                  for tag, msg in progress if tag == "progress" and "iter=" in msg]
+    assert iterations == list(range(1, 43)), iterations

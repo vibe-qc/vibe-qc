@@ -577,6 +577,53 @@ def test_trah_threshold_cites_helmich_paris(tmp_path: Path) -> None:
     _assert_cited(_surface(stem), ["helmich_paris_trah_2021"], feature="TRAH")
 
 
+@pytest.mark.parametrize("route", ["molecular", "periodic-envelope"])
+@pytest.mark.parametrize("recovery_used", [False, True])
+def test_uhf_stability_recovery_cites_trah_without_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recovery_used: bool, route: str
+) -> None:
+    """The real output route must use result provenance, not just options."""
+    import vibeqc.runner as runner_module
+
+    target = runner_module if route == "molecular" else vq
+    function = "run_uhf" if route == "molecular" else "run_uhf_scf_with_jk"
+    original = getattr(target, function)
+
+    class RecoveryResult:
+        stability_trah_used = recovery_used
+
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+
+        def __getattr__(self, name):
+            return getattr(self.wrapped, name)
+
+    def with_recovery_provenance(*args, **kwargs):
+        return RecoveryResult(original(*args, **kwargs))
+
+    # The FeCl3 numerical regression checks the native flag. This small real
+    # UHF calculation isolates its propagation to written references.
+    monkeypatch.setattr(target, function, with_recovery_provenance)
+    opts = vq.UHFOptions()
+    assert opts.trah_threshold == 0.0
+    stem = tmp_path / "uhf_recovery"
+    if route == "molecular":
+        vq.run_job(
+            _h2(), basis="sto-3g", method="uhf", uhf_options=opts,
+            output=str(stem), verbose=0,
+        )
+    else:
+        import numpy as np
+
+        cell = vq.PeriodicSystem(
+            3, np.eye(3) * 50.0,
+            unit_cell=[vq.Atom(1, [0.0, 0.0, 0.0])], multiplicity=2,
+        )
+        _run_periodic(cell, stem, method="UHF", jk_method="rijcosx")
+    key = _bibtex_keys("helmich_paris_trah_2021")[0]
+    assert (key in _surface(stem)) is recovery_used
+
+
 # --------------------------------------------------------------------------- #
 # SCF initial guess — explicit SAD                                            #
 # --------------------------------------------------------------------------- #

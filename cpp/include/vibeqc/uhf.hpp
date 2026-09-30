@@ -18,6 +18,7 @@
 // diagnostic.
 
 #pragma once
+#include "vibeqc/opentrustregion.hpp"
 
 #include <Eigen/Dense>
 #include <optional>
@@ -40,6 +41,10 @@
 namespace vibeqc {
 
 struct UHFOptions {
+    // Explicit whole-SCF orbital optimizer; existing native phase defaults stay unchanged.
+    std::string orbital_optimizer = "native";
+    OpenTrustRegionOptions opentrustregion;
+
     int max_iter = 100;
     double conv_tol_energy = 1e-8;  // |E[k] - E[k-1]|  (Hartree)
     double conv_tol_grad = 1e-6;    // max over spins of ||F D S - S D F||_F
@@ -61,7 +66,20 @@ struct UHFOptions {
     // functional couples them through the system energy E_i and the
     // per-spin trace cross-term).
     SCFAccelerator scf_accelerator = SCFAccelerator::EDIIS_DIIS;
+    // Both thresholds are compared with the intensive RMS metric
+    // ``ediis_diis_switch_metric(max_σ ‖[F_σ, D_σ S]‖_F, nbf, 2)``
+    // = ‖e‖_F / (√2 · nbf) (ediis.hpp). ``ediis_diis_switch_threshold``
+    // applies when n_α == n_β; ``ediis_diis_switch_threshold_open_shell``
+    // when n_α != n_β (GitLab #377). On the RMS scale 1e-1 needs
+    // ‖e‖_F > 8.5 at nbf = 60, which no extrapolated UHF iterate reaches, so
+    // an open-shell run was plain DIIS and wandered 40 mHa above the CN
+    // radical's UHF/cc-pVTZ minimum for 1000 iterations; 1e-3 lets EDIIS act
+    // while ‖e‖_F ≳ 0.1 for a ~70-function basis. Spin-balanced UHF keeps
+    // 1e-1: there EDIIS's convex combination of spin-symmetric iterates
+    // stays spin-symmetric and moved the Cr2 singlet witnesses (#138) onto
+    // the closed-shell state that the stability escape is not tuned for.
     double ediis_diis_switch_threshold = 1e-1;
+    double ediis_diis_switch_threshold_open_shell = 1e-3;
 
     // Adaptive-depth CDIIS parameters (Chupin et al. 2021). See
     // RHFOptions::diis_restart_tau / diis_adaptive_delta. Consulted only for
@@ -299,6 +317,7 @@ struct UHFOptions {
 };
 
 struct UHFResult {
+    OpenTrustRegionReport opentrustregion;
     std::optional<BasisSet> restart_basis;
     std::optional<GuessSelection> guess_selection;
     double energy = 0.0;
@@ -353,6 +372,9 @@ struct UHFResult {
     bool stability_analysis_converged = false;
     double stability_eigenvalue = 0.0;
     int n_stability_restarts = 0;
+    // A corrective stability attempt invoked the TRAH fallback, including
+    // unsuccessful attempts. Used for truthful convergence-method citations.
+    bool stability_trah_used = false;
     // True when the returned solution is internally UNSTABLE (lowest
     // eigenvalue < -stability_tol) and the driver did not (or, for
     // deliberate state-targeting runs, must not) escape it: the energy

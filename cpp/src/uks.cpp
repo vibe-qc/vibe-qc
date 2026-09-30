@@ -1,4 +1,6 @@
 #include "vibeqc/uks.hpp"
+#include "vibeqc/orbital_scf.hpp"
+#include "vibeqc/uks_recovery_diagnostic.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <algorithm>
@@ -42,6 +44,58 @@
 namespace vibeqc {
 
 namespace {
+
+// Diagnostic continuation state. No normal run creates or copies this object.
+// D/C here are continuation inputs, not a claimed evaluated-state certificate.
+struct UksRecoveryCheckpoint {
+    int iteration = 0;
+    Eigen::MatrixXd D_alpha{};
+    Eigen::MatrixXd D_beta{};
+    Eigen::MatrixXd Da_prev{};
+    Eigen::MatrixXd Db_prev{};
+    Eigen::MatrixXd C_alpha_prev_mo{};
+    Eigen::MatrixXd C_beta_prev_mo{};
+    Eigen::MatrixXd F_alpha_prev_mixed{};
+    Eigen::MatrixXd F_beta_prev_mixed{};
+    Eigen::MatrixXd best_Ca{};
+    Eigen::MatrixXd best_Cb{};
+    Eigen::MatrixXd best_Da{};
+    Eigen::MatrixXd best_Db{};
+    Eigen::MatrixXd dav_guess_ortho{};
+    Eigen::VectorXd eps_alpha_prev_mo{};
+    Eigen::VectorXd eps_beta_prev_mo{};
+    Eigen::VectorXd best_eps_a{};
+    Eigen::VectorXd best_eps_b{};
+    DIIS diis{};
+    EDIIS ediis{};
+    ADIIS adiis{};
+    KDIIS kdiis{};
+    UHFSOSCF usoscf{};
+    double current_damping{};
+    double E_prev{};
+    double effective_level_shift{};
+    double best_grad_norm{};
+    double best_energy{};
+    double trah_trust_radius{};
+    double trah_predicted_decrease{};
+    double trah_kappa_norm{};
+    bool have_prev_E{};
+    bool full_fock_validation_pending{};
+    bool have_prev_fock{};
+    bool oscillation_engaged{};
+    bool trah_active_prev{};
+    bool schwarz_tightened{};
+    int fock_map_epoch_start_iter{};
+    int effective_warmup{};
+    int num_restarts{};
+    int stall_iters{};
+    UKSResult result{};
+};
+struct UksRecoveryDiagnosticContext {
+    detail::UKSRecoveryDiagnostic report;
+    int branch = -1;
+};
+thread_local UksRecoveryDiagnosticContext* recovery_diagnostic = nullptr;
 
 Eigen::MatrixXd build_spin_density(const Eigen::MatrixXd& C, int nocc) {
     if (nocc <= 0) return Eigen::MatrixXd::Zero(C.rows(), C.rows());
@@ -716,9 +770,29 @@ UKSXCPotential evaluate_uks_xc_potential(
     return UKSXCPotential{xc.V_alpha, xc.V_beta, xc.energy};
 }
 
+OrbitalXCFunction make_orbital_uks_xc(const BasisSet& basis, const Grid& grid, const std::string& name) {
+    auto f = std::make_shared<Functional>(name, 2);
+    validate_orbital_xc(*f);
+    auto ao = std::make_shared<AOValues>(evaluate_ao_with_gradient(basis, grid.points));
+    auto pool = std::make_shared<UksXcFunctionalPool>(
+        make_uks_xc_functional_pool(name, grid.points.rows()));
+    return [basis, grid, f, ao, pool](const Eigen::MatrixXd& da, const Eigen::MatrixXd& db, bool response) {
+        OrbitalXC out;
+        const auto value = build_uks_xc(*f, basis, grid, da, db, nullptr, *pool);
+        out.energy = value.energy; out.alpha = value.V_alpha; out.beta = value.V_beta;
+        if (response) out.unrestricted_kernel = make_polarised_xc_kernel_builder(
+            *f, grid, ao->values, ao->gradients, da, db);
+        return out;
+    };
+}
+
 UKSResult run_uks(const Molecule& mol,
                   const BasisSet& basis,
                   const UKSOptions& opts) {
+    validate_orbital_optimizer(opts);
+    if (opts.orbital_optimizer == "opentrustregion"
+        && (opts.spinlock_mode != SpinlockMode::OFF || !opts.atomic_spins.empty()))
+        throw std::invalid_argument("OpenTrustRegion does not support spin schedules, MOM holds or targeted atomic spin states; select native");
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), &mol);
     validate_scf_max_iter(opts.max_iter, "run_uks");
@@ -990,7 +1064,9 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
                               const Grid* vv10_grid = nullptr,
                               const Eigen::MatrixXd* mom_anchor_alpha = nullptr,
                               const Eigen::MatrixXd* mom_anchor_beta = nullptr,
-                              int mom_anchor_iters = 0) {
+                              int mom_anchor_iters = 0,
+                              const UksRecoveryCheckpoint* replay = nullptr) {
+    validate_orbital_optimizer(opts);
     validate_scf_max_iter(opts.max_iter, "run_uks_scf_with_jk");
     if (n_alpha < 0 || n_beta < 0) {
         throw std::invalid_argument(
@@ -1037,6 +1113,29 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
         if (dav_opts.n_eig == 0) dav_opts.n_eig = orth.n_kept;
     }
     Eigen::MatrixXd dav_guess_ortho;  // for eigenvector recycling
+
+    auto* diagnostic = recovery_diagnostic;
+    if (diagnostic && (use_davidson_here || jk.incremental_active()
+        || jk.uses_runtime_schwarz_threshold() || mom_anchor_alpha
+        || mom_anchor_beta || opts.spinlock_mode != SpinlockMode::OFF
+        || !opts.atomic_spins.empty() || opts.newton_threshold != 0.0
+        || opts.trah_threshold != 0.0 || opts.soscf_threshold != 0.0
+        || opts.quadratic_fallback_iter != 0 || vv10_grid
+        || !opts.dft_plus_u_sites.empty())) {
+        throw std::invalid_argument(
+            "UKS recovery diagnostic requires a fixed-population, stateless-JK "
+            "first-order calculation without additional response/target phases");
+    }
+    if (diagnostic && !replay) {
+        diagnostic->report.effective_options = opts;
+        diagnostic->report.overlap = S;
+        diagnostic->report.hcore = Hcore;
+        diagnostic->report.grid_points = grid.points;
+        diagnostic->report.grid_weights = grid.weights;
+        diagnostic->report.n_alpha = n_alpha;
+        diagnostic->report.n_beta = n_beta;
+        diagnostic->report.nuclear_energy = E_nuc;
+    }
 
     // ---- Functional in spin-polarized mode ----
     Functional functional(opts.functional, /*spin=*/2);
@@ -1140,6 +1239,26 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
     {
         const double dS = 0.5 * (n_alpha - n_beta);
         result.s_squared_ideal = dS * (dS + 1.0);
+    }
+
+    if (opts.orbital_optimizer == "opentrustregion") {
+        if (opts.spinlock_mode != SpinlockMode::OFF || !opts.atomic_spins.empty())
+            throw std::invalid_argument("OpenTrustRegion does not support targeted spin states or spinlock; select native");
+        validate_orbital_xc(functional);
+        OrbitalXCFunction xc = [&](const Eigen::MatrixXd& da, const Eigen::MatrixXd& db, bool response) {
+            const auto value = build_uks_xc(functional, basis, grid, da, db, vv10_grid, xc_functionals);
+            result.xc_batch_workers_used = std::max(result.xc_batch_workers_used, value.batch_workers);
+            OrbitalXC out; out.energy = value.energy; out.alpha = value.V_alpha; out.beta = value.V_beta;
+            if (response) out.unrestricted_kernel = make_xc_kernel(da, db);
+            return out;
+        };
+        const auto run = run_orbital_scf(opts, X, S, Hcore, E_nuc, jk,
+            D_alpha, D_beta, n_alpha, n_beta, false, alpha_hf, xc);
+        assign_orbital_unrestricted(result, run, E_nuc, S, n_alpha, n_beta);
+        result.e_coulomb = run.state.coulomb;
+        result.e_hf_exchange = run.state.exchange;
+        result.e_xc = run.state.xc.energy;
+        return result;
     }
 
     // ORCA NOITER compatibility: evaluate the initial spin densities once,
@@ -1266,11 +1385,60 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
     const bool schwarz_two_phase =
         opts.schwarz_threshold_loose > opts.schwarz_threshold;
     bool schwarz_tightened = !schwarz_two_phase;
+    // Resume after the checkpoint event, without replaying the seed prefix.
+    // Reconstructed immutable operators use the identical target arguments.
+    if (replay) {
+        D_alpha = replay->D_alpha;
+        D_beta = replay->D_beta;
+        Da_prev = replay->Da_prev;
+        Db_prev = replay->Db_prev;
+        C_alpha_prev_mo = replay->C_alpha_prev_mo;
+        C_beta_prev_mo = replay->C_beta_prev_mo;
+        F_alpha_prev_mixed = replay->F_alpha_prev_mixed;
+        F_beta_prev_mixed = replay->F_beta_prev_mixed;
+        best_Ca = replay->best_Ca;
+        best_Cb = replay->best_Cb;
+        best_Da = replay->best_Da;
+        best_Db = replay->best_Db;
+        dav_guess_ortho = replay->dav_guess_ortho;
+        eps_alpha_prev_mo = replay->eps_alpha_prev_mo;
+        eps_beta_prev_mo = replay->eps_beta_prev_mo;
+        best_eps_a = replay->best_eps_a;
+        best_eps_b = replay->best_eps_b;
+        diis = replay->diis;
+        ediis = replay->ediis;
+        adiis = replay->adiis;
+        kdiis = replay->kdiis;
+        usoscf = replay->usoscf;
+        current_damping = replay->current_damping;
+        E_prev = replay->E_prev;
+        effective_level_shift = replay->effective_level_shift;
+        best_grad_norm = replay->best_grad_norm;
+        best_energy = replay->best_energy;
+        trah_trust_radius = replay->trah_trust_radius;
+        trah_predicted_decrease = replay->trah_predicted_decrease;
+        trah_kappa_norm = replay->trah_kappa_norm;
+        have_prev_E = replay->have_prev_E;
+        full_fock_validation_pending = replay->full_fock_validation_pending;
+        have_prev_fock = replay->have_prev_fock;
+        oscillation_engaged = replay->oscillation_engaged;
+        trah_active_prev = replay->trah_active_prev;
+        schwarz_tightened = replay->schwarz_tightened;
+        fock_map_epoch_start_iter = replay->fock_map_epoch_start_iter;
+        effective_warmup = replay->effective_warmup;
+        num_restarts = replay->num_restarts;
+        stall_iters = replay->stall_iters;
+        result = replay->result;
+    }
+    const int first_iteration = replay ? replay->iteration + 1 : 1;
+    const int last_iteration = replay
+        ? std::min(opts.max_iter, replay->iteration + diagnostic->report.steps)
+        : opts.max_iter;
     // Per-iteration wall clock for the SCFIteration trace
     // (BUG87-A truthful-timers fix): each trace row is charged
     // with the wall time since the previous row was recorded.
     auto t_iter_prev = std::chrono::steady_clock::now();
-    for (int iter = 1; iter <= opts.max_iter; ++iter) {
+    for (int iter = first_iteration; iter <= last_iteration; ++iter) {
         const bool validating_first_full_build =
             full_fock_validation_pending;
         full_fock_validation_pending = false;
@@ -1414,6 +1582,23 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
         const Eigen::MatrixXd err_b = X.transpose() * err_b_ao * X;
         const double grad_norm = std::max(err_a.norm(), err_b.norm());
         const double dE = E_total - E_prev;
+        detail::UKSRecoveryFrame frame;
+        if (diagnostic) {
+            frame.iteration = iter;
+            frame.values = {{"physical_energy", E_total},
+                {"physical_gradient", grad_norm}, {"delta_energy", dE},
+                {"fock_map_epoch_start", double(fock_map_epoch_start_iter)},
+                {"current_damping", current_damping},
+                {"effective_shift", effective_level_shift},
+                {"shift_engaged", double(oscillation_engaged)}};
+            frame.matrices = {{"evaluated_density_alpha", Da_used},
+                {"evaluated_density_beta", Db_used},
+                {"physical_fock_alpha", F_alpha},
+                {"physical_fock_beta", F_beta},
+                {"incoming_mo_alpha", C_alpha_prev_mo},
+                {"incoming_mo_beta", C_beta_prev_mo}};
+        }
+
 
         VIBEQC_DIAG("uks", vibeqc::DiagLevel::VERBOSE,
             "iter %3d  E=% .10f  dE=%+.3e  |grad|=%.3e",
@@ -1651,16 +1836,16 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
         const bool refresh_restart_baseline =
             iter == 1 || validating_first_full_build
             || E_total < best_energy;
-        const int projected_stall_iters = stall_iters
-            + ((!refresh_restart_baseline
-                && grad_norm > best_grad_norm * 1.01) ? 1 : 0);
+        const int projected_stall_iters =
+            (!refresh_restart_baseline
+             && grad_norm > best_grad_norm * 1.01) ? stall_iters + 1 : 0;
         const bool coarse_stall_transition_imminent =
             opts.restart_opts.enabled
             && !in_newton_phase && !in_trah_phase
             && projected_stall_iters >= opts.restart_opts.max_stall_iters
             && !density_converged
             && coarse_fock_active;
-        if (opts.auto_level_shift_on_oscillation && !oscillation_engaged
+        if (!replay && opts.auto_level_shift_on_oscillation && !oscillation_engaged
             && iter >= opts.oscillation_detect_start_iter
             && !in_quadratic_phase && !in_second_order_phase
             && !coarse_stall_transition_imminent
@@ -1824,6 +2009,9 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
             best_Db = D_beta;
         }
         if (grad_norm <= best_grad_norm * 1.01) {
+            // max_stall_iters counts consecutive stalls. A new improvement
+            // ends the stalled run instead of contributing to a later restart.
+            stall_iters = 0;
             if (grad_norm < best_grad_norm) {
                 best_grad_norm = grad_norm;
             }
@@ -1833,12 +2021,196 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
         // IID 129 follow-up: an energy-only stall must still end the coarse
         // Fock phase; orbital rotation keeps its gradient guard below.
         const bool restart_stall_detected =
-            opts.restart_opts.enabled
+            !replay && opts.restart_opts.enabled
             && !in_newton_phase && !in_trah_phase
             && stall_iters >= opts.restart_opts.max_stall_iters
             && !density_converged;
+        // One predicate for production orbital recovery and diagnostic admission.
+        const bool orbital_restart_selected = restart_stall_detected
+            && grad_norm > opts.conv_tol_grad
+            && num_restarts < opts.restart_opts.max_restarts;
         const bool full_fock_refinement_from_stall =
             restart_stall_detected && coarse_fock_active;
+        if (diagnostic) {
+            frame.values["diis_size"] = double(diis.subspace_size());
+            frame.values["ediis_size"] = double(ediis.subspace_size());
+            frame.values["stall_count"] = double(stall_iters);
+            frame.values["restart_count"] = double(num_restarts);
+            // These legacy best scalars and proposed matrices are deliberately
+            // named separately: the experiment must expose their mixed epochs.
+            frame.values["legacy_best_energy"] = best_energy;
+            frame.values["legacy_best_gradient"] = best_grad_norm;
+            frame.matrices["search_fock_alpha"] = F_alpha;
+            frame.matrices["search_fock_beta"] = F_beta;
+            frame.matrices["proposed_density_alpha"] = D_alpha;
+            frame.matrices["proposed_density_beta"] = D_beta;
+            frame.matrices["proposed_mo_alpha"] = Ca_new;
+            frame.matrices["proposed_mo_beta"] = Cb_new;
+            if (replay) diagnostic->report.branches[diagnostic->branch].push_back(frame);
+            else diagnostic->report.prefix.push_back(frame);
+        }
+        if (diagnostic && !replay && iter == diagnostic->report.event_iteration) {
+            if (!orbital_restart_selected || full_fock_refinement_from_stall
+                || begin_full_fock_refinement || schwarz_tightened_this_iter
+                || num_restarts != 0 || oscillation_engaged || density_converged
+                || ediis.subspace_size() != 0 || adiis.subspace_size() != 0
+                || kdiis.subspace_size() != 0) {
+                throw std::runtime_error(
+                    "Expected first orbital-recovery checkpoint was not reached");
+            }
+            UksRecoveryCheckpoint checkpoint;
+            checkpoint.iteration = iter;
+            checkpoint.D_alpha = D_alpha;
+            checkpoint.D_beta = D_beta;
+            checkpoint.Da_prev = Da_prev;
+            checkpoint.Db_prev = Db_prev;
+            checkpoint.C_alpha_prev_mo = C_alpha_prev_mo;
+            checkpoint.C_beta_prev_mo = C_beta_prev_mo;
+            checkpoint.F_alpha_prev_mixed = F_alpha_prev_mixed;
+            checkpoint.F_beta_prev_mixed = F_beta_prev_mixed;
+            checkpoint.best_Ca = best_Ca;
+            checkpoint.best_Cb = best_Cb;
+            checkpoint.best_Da = best_Da;
+            checkpoint.best_Db = best_Db;
+            checkpoint.dav_guess_ortho = dav_guess_ortho;
+            checkpoint.eps_alpha_prev_mo = eps_alpha_prev_mo;
+            checkpoint.eps_beta_prev_mo = eps_beta_prev_mo;
+            checkpoint.best_eps_a = best_eps_a;
+            checkpoint.best_eps_b = best_eps_b;
+            checkpoint.diis = diis;
+            checkpoint.ediis = ediis;
+            checkpoint.adiis = adiis;
+            checkpoint.kdiis = kdiis;
+            checkpoint.usoscf = usoscf;
+            checkpoint.current_damping = current_damping;
+            checkpoint.E_prev = E_prev;
+            checkpoint.effective_level_shift = effective_level_shift;
+            checkpoint.best_grad_norm = best_grad_norm;
+            checkpoint.best_energy = best_energy;
+            checkpoint.trah_trust_radius = trah_trust_radius;
+            checkpoint.trah_predicted_decrease = trah_predicted_decrease;
+            checkpoint.trah_kappa_norm = trah_kappa_norm;
+            checkpoint.have_prev_E = have_prev_E;
+            checkpoint.full_fock_validation_pending = full_fock_validation_pending;
+            checkpoint.have_prev_fock = have_prev_fock;
+            checkpoint.oscillation_engaged = oscillation_engaged;
+            checkpoint.trah_active_prev = trah_active_prev;
+            checkpoint.schwarz_tightened = schwarz_tightened;
+            checkpoint.fock_map_epoch_start_iter = fock_map_epoch_start_iter;
+            checkpoint.effective_warmup = effective_warmup;
+            checkpoint.num_restarts = num_restarts;
+            checkpoint.stall_iters = stall_iters;
+            checkpoint.result = result;
+
+            auto& saved = diagnostic->report.checkpoint;
+            saved = frame;
+            saved.matrices["legacy_best_mo_alpha"] = best_Ca;
+            saved.matrices["legacy_best_mo_beta"] = best_Cb;
+            saved.matrices["legacy_best_density_alpha"] = best_Da;
+            saved.matrices["legacy_best_density_beta"] = best_Db;
+            saved.matrices["legacy_best_eps_alpha"] = best_eps_a;
+            saved.matrices["legacy_best_eps_beta"] = best_eps_b;
+            saved.matrices["proposed_eps_alpha"] = eps_a_new;
+            saved.matrices["proposed_eps_beta"] = eps_b_new;
+            saved.matrices["previous_density_alpha"] = Da_prev;
+            saved.matrices["previous_density_beta"] = Db_prev;
+            diagnostic->report.diis_focks.assign(
+                diis.fock_history().begin(), diis.fock_history().end());
+            diagnostic->report.diis_errors.assign(
+                diis.error_history().begin(), diis.error_history().end());
+            for (int branch = 0; branch < 4; ++branch) {
+                // Branch order: 00, 01, 10, 11 = replacement/history reset.
+                // Both factors start from a fresh value-copy of ONE checkpoint.
+                auto fork = checkpoint;
+                const bool replace_orbitals = (branch & 2) != 0;
+                const bool reset_history = (branch & 1) != 0;
+                if (replace_orbitals) {
+                    auto [Ca, ea] = rotate_orbitals_in_subspaces(
+                        best_Ca, best_eps_a, n_alpha, &F_alpha,
+                        opts.restart_opts.seed + 4, opts.restart_opts.seed + 5);
+                    auto [Cb, eb] = rotate_orbitals_in_subspaces(
+                        best_Cb, best_eps_b, n_beta, &F_beta,
+                        opts.restart_opts.seed + 6, opts.restart_opts.seed + 7);
+                    fork.D_alpha = build_spin_density(Ca, n_alpha);
+                    fork.D_beta = build_spin_density(Cb, n_beta);
+                    fork.C_alpha_prev_mo = Ca;
+                    fork.C_beta_prev_mo = Cb;
+                    fork.eps_alpha_prev_mo = ea;
+                    fork.eps_beta_prev_mo = eb;
+                }
+                if (reset_history) {
+                    fork.diis.clear(); fork.ediis.clear(); fork.adiis.clear();
+                    fork.kdiis.clear(); fork.usoscf.clear();
+                    fork.have_prev_fock = false;
+                }
+                // Common bookkeeping and damping transition in ALL branches.
+                // Later restarts/auto-shift activation are frozen by replay;
+                // existing shifts and iteration-dependent options are retained.
+                fork.num_restarts = num_restarts + 1;
+                fork.stall_iters = 0;
+                fork.current_damping = opts.damping;
+                fork.best_energy = E_total;
+                fork.best_grad_norm = grad_norm;
+                fork.best_Ca = fork.C_alpha_prev_mo;
+                fork.best_Cb = fork.C_beta_prev_mo;
+                fork.best_eps_a = fork.eps_alpha_prev_mo;
+                fork.best_eps_b = fork.eps_beta_prev_mo;
+                fork.best_Da = fork.D_alpha;
+                fork.best_Db = fork.D_beta;
+                if (opts.dynamic_damping) {
+                    fork.current_damping = update_dynamic_damping(
+                        fork.current_damping, E_total, E_prev, have_prev_E,
+                        opts.dynamic_damping_min, opts.dynamic_damping_max);
+                }
+                fork.have_prev_E = true;
+                fork.E_prev = E_total;
+                fork.trah_active_prev = false;
+                diagnostic->branch = branch;
+                diagnostic->report.initial_branch_density_alpha.push_back(fork.D_alpha);
+                diagnostic->report.initial_branch_density_beta.push_back(fork.D_beta);
+                // Same SCF kernel, same JK object/target, absolute iteration 43.
+                UKSResult tail;
+                try {
+                    tail = run_uks_scf_once(basis, n_alpha, n_beta, S, Hcore,
+                        E_nuc, jk, grid, opts, fork.D_alpha, fork.D_beta,
+                        vv10_grid, nullptr, nullptr, 0, &fork);
+                } catch (const std::exception& error) {
+                    diagnostic->report.branch_errors[branch] = error.what();
+                    diagnostic->report.branch_termination[branch] = "exception";
+                    // Return the completed observations. No retry and no later
+                    // branch work follows a failed continuation.
+                    break;
+                }
+                const auto& certifications = diagnostic->report.certifications[branch];
+                const bool last_was_certified = !certifications.empty()
+                    && certifications.back().iteration == tail.n_iter;
+                auto& returned = diagnostic->report.branch_results[branch];
+                returned.iteration = tail.n_iter;
+                returned.phase = tail.converged ? "certified_return"
+                    : (last_was_certified ? "rejected_certification_return"
+                                         : "mixed_unconverged_return");
+                returned.values = {{"energy", tail.energy},
+                    {"converged", double(tail.converged)},
+                    {"early_termination", double(tail.n_iter < iter + diagnostic->report.steps)},
+                    {"certification_evaluations", double(certifications.size())}};
+                returned.matrices = {{"returned_density_alpha", tail.density_alpha},
+                    {"returned_density_beta", tail.density_beta},
+                    {"returned_fock_alpha", tail.fock_alpha},
+                    {"returned_fock_beta", tail.fock_beta},
+                    {"returned_mo_alpha", tail.mo_coeffs_alpha},
+                    {"returned_mo_beta", tail.mo_coeffs_beta}};
+                diagnostic->report.branch_termination[branch] = tail.converged
+                    ? (tail.n_iter < iter + diagnostic->report.steps
+                        ? "converged_early" : "converged_at_window_end")
+                    : "window_exhausted";
+            }
+            diagnostic->branch = -1;
+            // Diagnostic records are not an accepted UKSResult. The private
+            // entry point returns the report, never this partial result.
+            result.n_iter = iter;
+            result.converged = false;
+            return result;
+        }
         const bool transition_to_full_fock =
             begin_full_fock_refinement || full_fock_refinement_from_stall;
         const bool fock_map_changed_this_iter =
@@ -1883,9 +2255,7 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
                     "full-density builds (grad=%.3e)",
                     iter, grad_norm);
             }
-        } else if (restart_stall_detected
-                   && grad_norm > opts.conv_tol_grad
-                   && num_restarts < opts.restart_opts.max_restarts) {
+        } else if (orbital_restart_selected) {
             ++num_restarts;
             stall_iters = 0;
             VIBEQC_DIAG("uks", vibeqc::DiagLevel::STANDARD,
@@ -2102,6 +2472,20 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
             const bool returned_density_converged = is_scf_converged(
                 iter + 1, dE_f, grad_norm_f,
                 opts.conv_tol_energy, opts.conv_tol_grad);
+            if (diagnostic) {
+                detail::UKSRecoveryFrame certification;
+                certification.iteration = iter;
+                certification.phase = "final_certification";
+                certification.values = {{"physical_energy", E_total_f},
+                    {"physical_gradient", grad_norm_f}, {"delta_energy", dE_f},
+                    {"accepted", double(returned_density_converged)}};
+                certification.matrices = {{"evaluated_density_alpha", Da_final},
+                    {"evaluated_density_beta", Db_final},
+                    {"physical_fock_alpha", Fa_scf_f}, {"physical_fock_beta", Fb_scf_f},
+                    {"certification_mo_alpha", Ca_f}, {"certification_mo_beta", Cb_f}};
+                if (replay) diagnostic->report.certifications[diagnostic->branch].push_back(certification);
+                else diagnostic->report.prefix_certifications.push_back(certification);
+            }
             result.mo_energies_alpha = eps_a_f;
             result.mo_energies_beta  = eps_b_f;
             result.mo_coeffs_alpha = Ca_f;
@@ -2257,6 +2641,7 @@ UKSResult run_uks_scf_with_jk(const BasisSet& basis,
         basis, n_alpha, n_beta, S, Hcore, E_nuc, jk, grid, opts,
         constructed.alpha, constructed.beta, vv10_grid);
     result.guess_selection = constructed.selection;
+    if (opts.orbital_optimizer == "opentrustregion") return result;
     const int n_iter_before_stability = result.n_iter;
     result.n_iter_before_stability = n_iter_before_stability;
 
@@ -2537,5 +2922,40 @@ UKSResult run_uks_scf_with_jk(const BasisSet& basis,
     charge_stability_phase(result);
     return result;
 }
+
+
+namespace detail {
+UKSRecoveryDiagnostic diagnose_uks_recovery(
+    const Molecule& mol, const BasisSet& basis, const UKSOptions& opts,
+    int event_iteration, int steps) {
+    if (recovery_diagnostic || opts.stability_check || opts.density_fit || opts.cosx
+        || opts.spinlock_mode != SpinlockMode::OFF || !opts.atomic_spins.empty()
+        || opts.restart_opts.max_restarts <= 0
+        || opts.initial_guess != InitialGuess::READ || basis.nbasis() > 64
+        || event_iteration < 2 || event_iteration >= opts.max_iter
+        || steps < 1 || steps > 12 || steps > opts.max_iter - event_iteration || !opts.use_diis
+        || opts.diis_start_iter > event_iteration) {
+        throw std::invalid_argument("Invalid bounded UKS recovery diagnostic request");
+    }
+    UksRecoveryDiagnosticContext context;
+    context.report.requested_options = opts;
+    context.report.event_iteration = event_iteration;
+    context.report.steps = steps;
+    context.report.branches.resize(4);
+    context.report.certifications.resize(4);
+    context.report.branch_results.resize(4);
+    context.report.branch_termination.assign(4, "not_run");
+    context.report.branch_errors.resize(4);
+    struct Scope {
+        explicit Scope(UksRecoveryDiagnosticContext* value) { recovery_diagnostic = value; }
+        ~Scope() { recovery_diagnostic = nullptr; }
+    } scope(&context);
+    (void)run_uks(mol, basis, opts);
+    if (context.report.checkpoint.iteration != event_iteration) {
+        throw std::runtime_error("UKS recovery checkpoint experiment was incomplete");
+    }
+    return std::move(context.report);
+}
+} // namespace detail
 
 }  // namespace vibeqc

@@ -42,7 +42,7 @@ from vibeqc.semiempirical.methods.gfn2_params import load_gfn2_params
 
 
 _CHAIN_LENGTH = 4.1
-_CUTOFF = 12.0
+_CUTOFF = 32.0
 _SI_CUTOFF = 40.0
 _SI_REPEATS = 3
 
@@ -216,8 +216,9 @@ def test_dftb0_gapped_chain_reports_positive_indirect_gap(parameters):
     assert float(result.conduction_band_min) == cbm
     assert float(result.indirect_gap) == pytest.approx(cbm - vbm, abs=1.0e-15)
     # The known HLi/DFTB0 3x1x1 gap, measured on this fixture at the #426
-    # fix (~2.08 eV): a robustly positive insulator value.
-    assert float(result.indirect_gap) == pytest.approx(0.076425987187, abs=1.0e-9)
+    # fix (~2.08 eV): a robustly positive insulator value. Re-pinned for the
+    # wider Stewart STO-6G DFTB basis (#373).
+    assert float(result.indirect_gap) == pytest.approx(0.02450552896099012, abs=1.0e-9)
 
 
 def test_dftb0_metallic_si_measures_nonpositive_gap(parameters):
@@ -402,15 +403,39 @@ def test_dftb0_smeared_edges_match_python_rederivation(parameters):
 
 def test_dftb0_zero_weight_kpoints_participate_in_edges(parameters):
     """Zero-weight points are populated from the same global step function
-    and are part of the measured spectrum (band-structure spelling)."""
+    and are part of the measured spectrum (band-structure spelling).
+
+    #176: the step function sits at the mu the WEIGHTED point fixes (midgap
+    of k1 alone), and the zero-weight k0 has its valence band above that mu,
+    so k0 is filled with no electrons although the chain is an insulator.
+    Read state by state, that made the empty k0 valence state a conduction
+    state and measured a 0.109-Ha "gap". The occupied count differs between
+    the points, so the edges are the band pair at the Fermi filling instead,
+    and they are exactly the edges of the full, equally weighted mesh.
+    """
     system = _hli_chain()
     points = monkhorst_pack(system, (3, 1, 1)).kpoints
     kmesh = bloch_kmesh_from_lists(points, [0.0, 1.0, 0.0])
     result = _se.run_dftb0_kpoints(system, parameters, kmesh, _CUTOFF)
+    full = _se.run_dftb0_kpoints(
+        system, parameters, monkhorst_pack(system, (3, 1, 1)), _CUTOFF
+    )
 
-    derived = _assert_edges_match_rederivation(result)
+    counts = [
+        int(np.count_nonzero(np.asarray(o) > _OCC_TOL))
+        for o in result.occupations_per_k
+    ]
+    assert len(set(counts)) > 1  # the zero-weight k0 is filled empty
     assert len(list(result.valence_max_per_k)) == 3
-    assert not math.isnan(derived["valence_max_per_k"][0])
+    assert not math.isnan(float(result.valence_max_per_k[0]))
+    for name in ("valence_band_max", "conduction_band_min", "indirect_gap"):
+        assert float(getattr(result, name)) == pytest.approx(
+            float(getattr(full, name)), abs=1.0e-12
+        ), name
+    assert result.is_metallic is False
+    # The pre-#176 state-class reading of this record, for the record.
+    derived = _derive_edges(result.eps_per_k, result.occupations_per_k)
+    assert derived["indirect_gap"] > float(result.indirect_gap) + 0.05
 
 
 def test_dftb0_filled_argon_has_no_conduction_edge(parameters):

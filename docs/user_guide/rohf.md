@@ -71,6 +71,14 @@ vq.run_job(oh, basis="6-31g*", method="roks", functional="b3lyp",
            output="oh_roks")          # see examples/molecular/input-ch3-roks.py
 ```
 
+`run_job(density_fit=True)` and `cosx=True` reach `ROHFOptions` /
+`ROKSOptions` exactly as they reach the other four references: the JK
+auxiliary basis is resolved from the orbital basis (`def2-svp` gives
+`def2-svp-jk`, or pass `aux_basis=`), the memory estimate lists the
+three-index tensors, and the run cites RI-J or RIJCOSX in the `.references`
+and `.system` files. Before v0.17.7 the two flags were accepted and ignored
+for `method="rohf"` / `"roks"` (#361).
+
 ROKS supports **LDA, GGA, meta-GGA, global-hybrid, and
 range-separated-hybrid** functionals (B3LYP, PBE0, TPSS, r²SCAN,
 ωB97X, ωB97M-V, …). **Double hybrids** (B2PLYP, DSD-PBEP86, PWPB95)
@@ -230,6 +238,12 @@ ROHF/ROKS also drive:
   **molecular optimiser** (`vibeqc.molecular_optimize.optimize_molecule`).
 * **The ASE calculator**: `VibeQC(restricted_open=True)` runs ROHF with
   analytic forces; see [`ase_integration.md`](ase_integration.md).
+* **Excited states**: `run_job(method="rohf", tddft=True)` runs ROHF TDA/CIS
+  over the doubly-occupied to virtual space only (no excitations out of or
+  into the singly occupied orbitals); the `.out` block is labelled
+  `TDA-ROHF` and states that restriction. `tddft_type="casida"` on ROHF
+  and `tddft=True` on ROKS are not implemented and are refused before the
+  SCF rather than replaced by the closed-shell response (#361).
 
 ## Periodic ROHF
 

@@ -313,10 +313,21 @@ def select_initial_guess(
     """
     requested = coerce_initial_guess(initial_guess)
     capabilities = tuple(coerce_initial_guess(k) for k in supported)
+    # An ATOMSPIN pattern is a per-atom seed of the SAD density, so AUTO
+    # resolves to SAD whenever one is supplied (#273). Without this the
+    # open-shell d/f-block rule would take an antiferromagnetically seeded
+    # metal complex to PATOM, which then rejects its own seed below. An
+    # explicit selector is untouched and still validated against SAD.
+    seeded = atomic_spins is not None and len(atomic_spins) > 0
+    resolve_capabilities = (
+        tuple(k for k in capabilities if k is not InitialGuess.PATOM)
+        if seeded and requested is InitialGuess.AUTO
+        else capabilities
+    )
     try:
         effective = resolve_initial_guess(
             mol, requested, is_periodic=is_periodic, is_open_shell=is_open_shell,
-            supported=capabilities,
+            supported=resolve_capabilities,
         )
     except NotImplementedError as exc:
         valid = ", ".join(sorted(k.name for k in capabilities))

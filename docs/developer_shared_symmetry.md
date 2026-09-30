@@ -1,12 +1,15 @@
 # Shared symmetry infrastructure
 
 The experimental `vibeqc.symmetry_shared` module separates mathematical group
-and space actions from qualification of a numerical operator. It is internal
-infrastructure under issue #717. It does not enable a solver, pair skipping,
-IBZ construction, or analytic derivatives.
+and space actions from qualification of a numerical operator. The shared
+contracts and molecular/periodic consumers described below are implemented.
+This module does not enable a solver, pair skipping, IBZ construction, or
+analytic derivatives.
 
-Issue numbers on this page refer to the archived monorepo.
-The implementation now lives entirely in the separate `vibe-qc` repository;
+See the [capability status](symmetry_status.md) for the distinction between
+shared infrastructure and legacy reductions, and the
+[architecture and production gates](design_shared_symmetry.md) for method
+integration requirements. The implementation lives entirely in `vibe-qc`;
 it requires no sibling viewer, queue or QVF checkout.
 
 ## Group and space contracts
@@ -459,14 +462,20 @@ Its borrowed descriptors are checked by the native kernel on every call;
 its declared space identities are not immutable mean-field snapshots.
 
 The molecular consumer in `symmetry_ao.py` admits supplied Cartesian point-group
-operations through the same native group validator and builds compact pure-shell
-actions using the existing Wigner rotations. It validates exact radial
-contractions and basis origins. This initial molecular adapter accepts pure
-shells through `l=6`; Cartesian molecular shells are explicitly refused.
-The existing dense AO matrix builder and the compact adapter share one
-radial-channel matching and Wigner-block implementation. The dense API keeps
-its requested dense output, while compact callers transport panels. Both
-refuse mismatched radial contractions and match reordered/repeated channels.
+operations through the same native group validator and builds compact actions
+for pure and Cartesian shells through `l=6`, including mixed bases. Pure shells
+use the existing Wigner rotations; Cartesian shells share the native polynomial
+substitution kernel with periodic AO/Bloch transport. Explicit budgets admit
+metadata, packed blocks and each distinct Cartesian rotation before evaluation.
+It validates exact radial contractions and basis origins.
+The dense AO matrix builder and compact adapter share radial-channel matching
+and pure-shell rotations. Both refuse mismatched radial contractions and match
+reordered/repeated channels. The legacy dense API still requires pure shells
+beyond s. Cartesian compact actions generally are not Euclidean-unitary:
+physical overlap covariance uses `U.conj().T @ S @ U`, and operator pullback
+and density pushforward retain their distinct covariant/contravariant rules.
+Direct Gaussian values under proper/improper operations and unreduced molecular
+overlap, kinetic and nuclear matrices provide independent numerical witnesses.
 This does not change molecular SCF routing. Its numerical reference is the
 unreduced molecular integral builder, independent of the periodic producer.
 
@@ -495,14 +504,17 @@ inputs, budget refusal, complex mixing, nonorthogonal metrics, scalar time
 reversal and adjoints, odd/even stabilizers, source-probe failures, molecular
 S/T/V and trial-density Fock covariance, and chi half-translation panel
 transport. Existing chi group and native Bloch/sewing tests remain the
-consumer reference gates. Test results and build identity are recorded in
-the shared-symmetry workstream handover; existence of a test is not evidence
+consumer reference gates. Independent acceptance is recorded with the
+corresponding tracker change, with build identity and execution evidence
+retained outside the product checkout. Existence of a test is not evidence
 that a full method or target-sized calculation passed.
 
-The initial interfaces do not supply GDF/RI tensor adapters, PAO/PNO/TNO
+Beyond the bounded SR/LR GDF diagnostic below, these interfaces do not supply
+production GDF/RI tensor execution, PAO/PNO/TNO
 projector transport, reduced MP2/CCSD/triples contractions, production pair
-skipping, source-domain repair for #704, or derivatives. Those capabilities
-require separate source and retained-space validation. No MgO performance or
+skipping, method-specific finite-source covariance qualification, or
+derivatives. Those capabilities require separate source and retained-space
+validation. No MgO performance or
 8x8x8 feasibility claim follows from these primitives.
 
 ## Sources
@@ -513,3 +525,72 @@ how finite Coulomb/exchange truncation can break Fock symmetry. Casassa et al.,
 [DOI 10.1007/s00214-006-0119-z](https://doi.org/10.1007/s00214-006-0119-z),
 Section 2, Eq. (3), describes matrix-valued localized-space actions.
 The `shared_symmetry` numerical citation route resolves both existing entries.
+
+## SR/LR GDF retained auxiliary tensor diagnostic
+
+`vibeqc.symmetry_gdf.audit_range_separated_gdf_transport` connects shared
+retained-space audits to the existing private
+`_build_lpq_range_separated_shared_q` producer. Both independently built
+source and target batches must use `retain_fit_state=True`. This is an
+experimental library diagnostic. Neither periodic SCF nor CCM invokes it
+for pair skipping, and `production_reduction_authorized` remains false.
+
+| Contract | Scope of this adapter |
+| --- | --- |
+| Producer | Explicit SR/LR image cutoffs, reciprocal sphere, screening and absolute metric threshold; retained source controls must agree |
+| Candidate operation | Caller supplies named auxiliary, bra-factor and ket-factor actions; no subgroup or source-support admission is inferred |
+| Retained space | Actual full metric eigensystems and strict `lambda > threshold` masks; equal positive ranks, full orthonormal eigenvectors and shared leakage/isometry probes |
+| Tensor | `L = lambda^(-1/2) E^dagger T`, with destination/source factor-index actions and one scalar conjugation |
+| Reference | Independent full target raw tensor and compact factors, with both original factorizations checked |
+| Execution | Reconstruct one supplied batch for comparison; no representative planner or global pair inventory |
+| Remaining gates | Finite-source/group admission, state symmetry, group/stabilizer closure across a complete inventory, production fallback and measured cost/accuracy |
+
+For retained source and target eigenvectors `Es`, `Et`, the shared subspace
+audit obtains `M = Et^dagger Uaux K^a(Es)`, accounting for admitted finite
+orthonormality error through its Gram solve. The compact factor-row map is
+
+```text
+W = diag(lambda_target^(-1/2)) M diag(lambda_source^(1/2))
+L_target[r,a,b] = sum W[r,s] Ubra[a,m] Uket[b,n] K^a(L_source[s,m,n])
+```
+
+The two AO legs are **factor-index actions**, not density pushforward or
+operator pullback. In the classic pure-shell Bloch convention the three legs
+carry auxiliary `+q`, bra `+k_bra` and ket `-k_ket` atom-image phases. The
+caller must preserve its actual tensor convention, integer images and
+reciprocal wraps. One pair of AO actions applies to every member of a batch;
+separate audits are required when the phases depend on its k pair.
+Nonorthogonal AO legs are allowed; whitened auxiliary isometry is measured
+separately. Arbitrary dense gauges within a degenerate retained eigenspace
+are permitted. Rank disagreement is refused, including at a threshold
+crossing. No eigenvalue, projector or tensor is averaged or repaired.
+
+The result retains separate full-metric covariance, retained metric/leakage,
+whitened-isometry, source/target factorization, raw-tensor and compact-factor
+witnesses. All must pass `passed_probe`. Failure of a parent cannot disappear
+because a tensor is zero or lies outside the leaking direction. The immutable
+`mixing` and `reconstructed_factors` snapshots are finite diagnostic outputs;
+they are not an execution certificate. The caller's `OperatorContract`,
+space names and mutable producer fit state are declarations, not authenticated
+source or geometry receipts. `source_digest` and `target_digest` bind the
+snapshotted numerical batches, including their eigenvector gauges, momentum
+arrays and reciprocal vectors. Mapping those reciprocal supports under the
+operation remains caller-owned; the fit state does not store the reciprocal
+cutoff selector itself. These digests do not authenticate how those arrays
+were produced.
+
+The scalar tolerance bounds relative Frobenius residuals except the shared
+retained-space metric and orthonormality checks, which use absolute Frobenius
+norms. The adapter checks both complete borrowed batches and reserves their
+snapshots, aggregate retained outputs and conservative intermediates before
+array scans or callbacks. Exact `required_bytes`/`required_work` budgets pass;
+one-short limits refuse. Action storage/execution, allocator overhead and
+BLAS workspace are separate. There is no all-AO-pair Gram materialization.
+These logical budgets are not peak-RSS or fleet scalability measurements.
+
+Tests include independently built finite SR/LR raw tensors and compact
+factors for proper/improper operations and scalar time reversal, exact
+auxiliary rank loss, complex nonsymmetric trial contractions, dense retained
+gauges, nonorthogonal AO legs, failed-parent controls and stabilizer negatives.
+This does not accept broader production reduction, a default-Hamiltonian
+migration, correlation energies, gradients or the independent CCM star gate.

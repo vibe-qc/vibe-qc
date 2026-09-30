@@ -101,6 +101,10 @@ class OutputWriter:
     def status(self) -> str:
         return self._manifest.status
 
+    @property
+    def result_status(self) -> str:
+        return self._manifest.result_status
+
     def outcomes(self) -> tuple[FileOutcome, ...]:
         return self._manifest.outcomes()
 
@@ -152,6 +156,13 @@ class OutputWriter:
             resolved_root=resolved_root, fetched=fetched
         )
 
+    def set_hessian(self, fields: dict[str, Any]) -> None:
+        """Record the Hessian's potential-energy surface into
+        ``[hessian]`` of ``{stem}.system``. See
+        :meth:`vibeqc.output.manifest.ManifestUpdater.set_hessian` and
+        :func:`vibeqc.output.hessian_surface_manifest_fields`."""
+        self._manifest.set_hessian(fields)
+
     def update_run_fields(self, fields: dict[str, Any]) -> None:
         """Merge late-bound scalar reproducibility fields into ``[run]``."""
         self._manifest.update_run_fields(fields)
@@ -169,6 +180,10 @@ class OutputWriter:
         if wall_seconds is None:
             wall_seconds = self.wall_seconds()
         self._manifest.finish(wall_seconds=wall_seconds)
+
+    def set_result_status(self, status: str, *, error: str = "") -> None:
+        """Record a calculation verdict separately from artefact delivery."""
+        self._manifest.set_result_status(status, error=error)
 
     def crash(self, *, wall_seconds: float | None = None) -> None:
         """End-of-job failure path. Flips status to ``"crashed"``.

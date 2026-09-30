@@ -45,6 +45,7 @@ entry point continues to accept either a raw ``BlochKMesh`` or a
 For ``PeriodicSystem.dim < 3``, mesh builders accept either active-axis
 specs (``[n]`` for 1D, ``[n1, n2]`` for 2D) or full three-axis specs.
 Inactive axes are pinned to Γ and stored as mesh size 1 / shift 0.
+Mesh entries must be exact integers; no float, bool or string coercion is used.
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ from __future__ import annotations
 from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass, field
 from itertools import product
+from operator import index
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -1653,11 +1655,63 @@ def _system_dim(system: PeriodicSystem) -> int:
     return dim
 
 
+def _count_failure_mode(value) -> str | None:
+    """Why ``value`` is not an exact integer count, in words, or ``None``."""
+    if isinstance(value, (bool, np.bool_)):
+        return "a boolean"
+    if isinstance(value, (str, bytes)):
+        return f"a {type(value).__name__}, not a number"
+    try:
+        index(value)
+    except TypeError:
+        if isinstance(value, (complex, np.complexfloating)):
+            return "a complex number"
+        if isinstance(value, (float, np.floating)):
+            return "a non-integral number"
+        return f"of type {type(value).__name__}, not an integer"
+    return None
+
+
+def _integer_counts(counts, *, name: str, repeat: int | None = None) -> list[int]:
+    """Read exact counts; optionally repeat a scalar over active directions.
+
+    Every refusal names the failure mode the caller hit (a boolean, a
+    non-integral number, a value of another type) and keeps the contract
+    phrase "must contain integers". Positivity is the caller's own check.
+    """
+
+    def _refuse(value, mode: str, position: int | None = None) -> ValueError:
+        where = "" if position is None else f" entry {position}"
+        return ValueError(
+            f"{name}{where} = {value!r} is {mode}; {name} must contain integers"
+        )
+
+    scalar_mode = _count_failure_mode(counts)
+    if isinstance(counts, (bool, np.bool_, str, bytes)):
+        raise _refuse(counts, scalar_mode or "not an integer")
+    if repeat is not None:
+        try:
+            return [index(counts)] * repeat
+        except TypeError:
+            pass
+    try:
+        values = list(counts)
+    except TypeError:
+        raise _refuse(counts, scalar_mode or "not a sequence of integers") from None
+    checked = []
+    for position, value in enumerate(values):
+        mode = _count_failure_mode(value)
+        if mode is not None:
+            raise _refuse(value, mode, position)
+        checked.append(index(value))
+    return checked
+
+
 def _mesh_tuple(mesh: Sequence[int]) -> Tuple[int, int, int]:
-    arr = list(mesh)
+    arr = _integer_counts(mesh, name="mesh")
     if len(arr) != 3:
         raise ValueError(f"mesh must have length 3, got {arr!r}")
-    out = tuple(int(m) for m in arr)
+    out = tuple(arr)
     if any(m < 1 for m in out):
         raise ValueError(f"mesh entries must be >= 1, got {arr!r}")
     return out  # type: ignore[return-value]
@@ -1668,7 +1722,7 @@ def _mesh_tuple_for_system(
     mesh: Sequence[int],
 ) -> Tuple[int, int, int]:
     dim = _system_dim(system)
-    arr = list(mesh)
+    arr = _integer_counts(mesh, name="mesh")
     if len(arr) == dim:
         arr = arr + [1] * (3 - dim)
     elif len(arr) != 3:
@@ -1676,7 +1730,7 @@ def _mesh_tuple_for_system(
             f"mesh must have length {dim} for dim={dim} systems or "
             f"length 3; got {arr!r}"
         )
-    out = tuple(int(m) for m in arr)
+    out = tuple(arr)
     if any(m < 1 for m in out):
         raise ValueError(f"mesh entries must be >= 1, got {arr!r}")
     return tuple(out[i] if i < dim else 1 for i in range(3))

@@ -764,8 +764,9 @@ def test_mdf_linear_dep_threshold_ne_box_sweep():
         f"(d={(e_default - PYSCF_MDF_NE) * 1e3:+.4f} mHa)"
     )
     # The floor makes anything below it identical to the floor itself
-    # (Ne max_eig = 8.09, so the floor is 8.09e-4).
-    assert run(1e-12) == e_default
+    # (Ne max_eig = 8.09, so the floor is 8.09e-4), up to the threaded
+    # reduction order of the native integrals.
+    assert run(1e-12) == pytest.approx(e_default, abs=1e-12)
     assert run(1e-4) == e_default
     # Past the plateau the fit loses real auxiliary support (Sun Sec. III
     # incompleteness error) and parity degrades by two orders of magnitude.
@@ -778,19 +779,19 @@ def test_mdf_linear_dep_threshold_ne_box_sweep():
 
 @pytest.mark.slow
 def test_mdf_dense_core_no_longer_diverges():
-    """The dense-core class is bounded rather than divergent.
+    """The dense-core class is bounded, and sub-mHa once images are summed.
 
     MgO/STO-3G Gamma MDF, the G-GDF-001 wrong-answer case. Pre-fix, the
     retained near-null shelf of J-tilde drove the SCF to grossly unphysical
     energies -- +4.67e+05 Ha measured here at a 28-bohr cutoff, and
     trial-dependent (the triage lane recorded -6.3e+04 for the same setup).
-    With the threshold above J-tilde's construction error the energy is
-    bounded and on the physical scale.
+    With the threshold above J-tilde's construction error the energy was
+    bounded but ~92 mHa off at the loosest useful threshold. That residual
+    was the auxiliary-image omission of the Gaussian 3c block (#172): with
+    the images summed the same run lands 0.67 mHa from PySCF MDF.
 
-    This class REMAINS gated (``_reject_dense_core_mdf``): the residual is
-    ~92 mHa at the loosest useful threshold, which is incompleteness error,
-    not production accuracy. What this pins is that the *divergence* is
-    gone, so a regression back into it is caught.
+    The class stays gated (``_reject_dense_core_mdf``) until the threshold
+    floor is recalibrated on the image-summed fit.
     """
     import vibeqc.pbc_gdf as pg
 
@@ -827,14 +828,146 @@ def test_mdf_dense_core_no_longer_diverges():
         ).energy
     finally:
         pg._reject_dense_core_mdf = orig
-    # Pre-fix this was +4.67e+05 Ha. Bounded now, and still short of
-    # production accuracy by ~92 mHa -- which is why the gate stays.
-    assert abs(e - PYSCF_MDF_MGO) < 0.5, (
+    # Pre-fix this was +4.67e+05 Ha, then -92 mHa without the auxiliary
+    # images; 0.67 mHa with them (2026-09-29).
+    assert abs(e - PYSCF_MDF_MGO) < 1e-3, (
         f"dense-core MDF {e} vs PySCF MDF {PYSCF_MDF_MGO} "
-        f"(d={(e - PYSCF_MDF_MGO) * 1e3:+.1f} mHa) -- divergence regression"
+        f"(d={(e - PYSCF_MDF_MGO) * 1e3:+.2f} mHa) -- image-sum regression"
     )
-    assert abs(e - PYSCF_MDF_MGO) > 1e-3, (
-        "dense-core MDF unexpectedly reached production accuracy; if the "
-        "residual incompleteness error has been fixed, lift the gate in "
-        "pbc_gdf._reject_dense_core_mdf and update this test"
+
+
+def test_accumulated_rcut_budgets_the_whole_lattice_sum():
+    """``precision`` must bound the SUM's error, not the largest term's.
+
+    ``estimate_rcut_pyscf`` bounds one shell pair's contribution at
+    ``rcut``; a lattice sum drops many at once, so the error that lands in
+    the assembled matrix is larger by roughly the number of cells. That is
+    why the shipped ``precision = 1e-8`` delivered 2.4e-07 on MgO and
+    7.1e-06 on LiH rocksalt (recorded on this issue 2026-08-14), and why
+    the dilute H2 box -- fewest neighbours inside ``rcut`` -- was the only
+    one that nearly delivered what it asked.
+
+    :func:`estimate_rcut_accumulated` divides the budget by that count, so
+    it must reach further than the plain estimator at equal ``precision``,
+    and exactly as far as the plain estimator reaches at the divided one.
+    """
+    from vibeqc.lattice_screening import (
+        estimate_rcut_accumulated,
+        estimate_rcut_pyscf,
+        lattice_cell_count,
     )
+
+    system, basis = _mgo_primitive()
+    precision = 1e-12
+
+    plain = estimate_rcut_pyscf(basis, precision=precision)
+    accumulated = estimate_rcut_accumulated(basis, system, precision=precision)
+    assert accumulated > plain
+
+    # Self-consistency: at the returned radius, the per-term budget the
+    # count implies is the one the radius was solved for.
+    n_cells = lattice_cell_count(system, accumulated)
+    assert n_cells > 1.0
+    assert estimate_rcut_pyscf(
+        basis, precision=precision / n_cells
+    ) == pytest.approx(accumulated, rel=1e-6)
+
+    # Buying orders of accuracy is cheap: the radius grows only as
+    # sqrt(log(1/precision)), which is what makes a dedicated metric
+    # precision affordable at all.
+    assert accumulated < 2.5 * estimate_rcut_pyscf(basis, precision=1e-8)
+
+    # extra_multiplicity carries the element bound to the eigenvalue one.
+    assert estimate_rcut_accumulated(
+        basis, system, precision=precision, extra_multiplicity=100.0
+    ) > accumulated
+
+
+def test_dressed_metric_is_psd_and_accurate_at_precision_j2c():
+    """``J-tilde`` is a Gram matrix, so a negative eigenvalue is an error.
+
+    Sun 2017 Eq. 20 subtracts from the Coulomb metric the Coulomb inner
+    product of the aux functions' plane-wave projections. Because the PWs
+    are orthogonal in that metric, what is left is
+    ``J-tilde_PQ = ((1-Pi) phi_P | (1-Pi) phi_Q)`` with ``Pi`` the PW
+    projector -- a Gram matrix of the residuals, hence positive
+    SEMI-definite exactly. Eq. 20 is deliberately singular (Sec. II B), so
+    eigenvalues at zero are expected and fine; eigenvalues meaningfully
+    BELOW zero are construction error and nothing else, which makes
+    ``min(eig)`` a direct, cell-intrinsic readout of how well the metric
+    was built.
+
+    At the general cell precision MgO/STO-3G/def2-svp-jk carried
+    ``min(eig) = -5.4e-06`` and a spectrum error of the same size -- the
+    2026-08-14 diagnosis on this issue. With ``J-tilde`` built at
+    :data:`~vibeqc.aux_basis._MDF_PRECISION_J2C` both sit at round-off.
+    """
+    import vibeqc.aux_basis as ab
+    from vibeqc._vibeqc_core import LatticeSumOptions
+    from vibeqc.lattice_screening import (
+        estimate_rcut_accumulated,
+        estimate_rcut_pyscf,
+    )
+
+    system, _basis = _mgo_primitive()
+    mol = system.unit_cell_molecule()
+    aux = vq.BasisSet(mol, "def2-svp-jk")
+    modrho = ab.make_modrho_aux_basis(aux, mol)
+    compensating = ab.make_compensating_basis(modrho, mol, eta=1.0)
+    fused = ab.make_fused_basis(modrho, compensating, mol)
+    A = ab.fuse_transform_matrix(modrho, compensating)
+
+    def dressed(cutoff_bohr):
+        opts = LatticeSumOptions()
+        opts.cutoff_bohr = float(cutoff_bohr)
+        opts.nuclear_cutoff_bohr = float(cutoff_bohr)
+        M = A @ np.asarray(
+            ab.compute_2c_eri_lattice(fused, system, opts)
+        ) @ A.T
+        M = 0.5 * (M + M.T)
+        volume = float(abs(np.linalg.det(np.asarray(system.lattice, float))))
+        G = ab.rsgdf_dense_g_mesh(system, 40.0)
+        g2 = (G ** 2).sum(axis=1)
+        nonzero = g2 > 1e-12
+        coulomb = (4.0 * np.pi) / g2[nonzero] / volume
+        rho = A @ ab.rsgdf_aux_fourier_transform(fused, G[nonzero])
+        projected = np.real((rho.conj() * coulomb[None, :]) @ rho.T)
+        dressed_metric = M - 0.5 * (projected + projected.T)
+        return np.linalg.eigvalsh(
+            0.5 * (dressed_metric + dressed_metric.T)
+        )
+
+    reference = dressed(45.0)
+    loose = dressed(estimate_rcut_pyscf(fused, precision=1e-8))
+    tight = dressed(
+        estimate_rcut_accumulated(
+            fused, system, precision=ab._MDF_PRECISION_J2C,
+            extra_multiplicity=modrho.nbasis,
+        )
+    )
+
+    # The defect, still reproducible at the general precision.
+    assert loose[0] < -1e-6
+    assert np.abs(loose - reference).max() > 1e-6
+    # ... and gone at the dedicated one. A Gram matrix's eigenvalues may
+    # sit at zero but must not go meaningfully below it.
+    assert tight[0] > -1e-10, f"J-tilde not PSD: min eig = {tight[0]:.3e}"
+    assert np.abs(tight - reference).max() < 1e-10
+
+
+def test_precision_j3c_is_off_by_default_and_measured_unnecessary():
+    """The 3-centre companion is deliberately not switched on.
+
+    ``L = U_keep^T (T - PW proj) / sqrt(lambda)`` divides the 3-centre by
+    the same square root as the metric, so on paper it wants the same
+    treatment. Measured 2026-09-17 it does not: the metric's error is
+    amplified by ``1/lambda`` and the 3-centre's only by
+    ``1/sqrt(lambda)``, and at every threshold the dressed metric admits,
+    the 3-centre at ``rcut_precision`` is already inside its budget --
+    switching it on left Ne, H2 and a full MgO threshold sweep unchanged
+    while costing ~20% of the run.
+    """
+    import vibeqc.aux_basis as ab
+
+    assert ab._MDF_PRECISION_J3C is None
+    assert ab._MDF_PRECISION_J2C == 1.0e-12

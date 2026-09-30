@@ -226,13 +226,17 @@ def test_dispatch_threads_density_mixer_to_multi_k():
 
 
 def test_dispatch_rejects_density_mixer_on_unsupported_route():
-    # density_mixer is wired only on the multi-k EWALD_3D driver; a Γ-only route
-    # must fail closed rather than silently ignore the request (CLAUDE.md §7).
+    # density_mixer is wired only on the multi-k EWALD_3D driver; the
+    # DIRECT_TRUNCATED route must fail closed rather than silently ignore the
+    # request (CLAUDE.md §7). A [1,1,1] EWALD_3D mesh is served by the multi-k
+    # driver since #23 and honours it.
     sysp, basis = _h2_box()
-    gamma = vq.monkhorst_pack(sysp, [1, 1, 1])  # Γ-only, no smearing → Γ driver
+    gamma = vq.monkhorst_pack(sysp, [1, 1, 1])
+    direct = _opts(False)
+    direct.lattice_opts.coulomb_method = vq.CoulombMethod.DIRECT_TRUNCATED
     with pytest.raises(NotImplementedError, match="multi-k"):
         vq.run_rks_periodic_scf(
-            sysp, basis, gamma, _ewald_opts(False), omega=0.5, density_mixer="anderson"
+            sysp, basis, gamma, direct, density_mixer="anderson"
         )
 
 

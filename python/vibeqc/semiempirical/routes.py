@@ -112,6 +112,21 @@ _SECCM_ELECTROSTATICS_KERNELS = frozenset(
 _GFN2_SECCM_PARAMETER_SET = "gfn2-xtb-parameter-registry"
 _GFN2_SECCM_K0_POLICY = "exact-pairwise-parry-de-leeuw"
 _GFN2_SECCM_RESTART_SOURCES = frozenset({"neutral", "supplied"})
+# Executed GFN2-SECCM AES Hamiltonians (issue #380). ``bannwarth_record_camm``
+# is the Bannwarth 2019 atom-resolved CAMM model on Wigner-Seitz record
+# moments (``aes_faithful=True``); ``adhoc_shell`` is the shell-resolved
+# gamma^3/gamma^5 kernel on home-cell moments; ``none`` is the
+# ``include_aes=False`` channel-isolation control, where ``aes_faithful``
+# selects nothing.
+_GFN2_SECCM_AES_MODELS = frozenset(
+    {"none", "adhoc_shell", "bannwarth_record_camm"}
+)
+_GFN2_SECCM_HAMILTONIAN_SCHEMA_VERSION = 2
+_GFN2_SECCM_HAMILTONIAN_SCHEMA_1_REFUSAL = (
+    "GFN2-SECCM Hamiltonian identity schema_version 1 did not record the "
+    "executed AES model (issue #380) and cannot be restored; re-run to "
+    "obtain a schema_version 2 identity"
+)
 _GFN2_SECCM_SCC_MIXERS = frozenset(
     {"simple", "diis", "broyden", "broyden_eyert", "newton"}
 )
@@ -149,11 +164,29 @@ def _seccm_electrostatics_kernel(
         return "none"
     return f"{family_key}_{dimensional_kernel}"
 
+# The canonical semiempirical maturity vocabulary (#150).
+#
+# These five values are the *only* maturity vocabulary in the project. A route
+# plan's ``maturity`` is what the runner records and what the status table in
+# ``status.py`` must agree with; ``SEMIEMPIRICAL_MATURITIES`` and the
+# cross-table invariant in ``tests/test_semiempirical_route_plan.py`` keep a
+# second vocabulary from reappearing. A dormant C++ ``PeriodicTier`` enum used
+# to carry a third, disagreeing set of values and was removed with this
+# ruling; ``status.py``'s ``backend`` names *where the kernel lives*, which is
+# a different axis and deliberately not a maturity claim.
 MATURITY_PRODUCTION = "production"
 MATURITY_EXPERIMENTAL = "experimental"
 MATURITY_NATIVE_FD = "native_fd"
 MATURITY_MIXED_NATIVE = "mixed_native"
 MATURITY_GATED_UNIMPLEMENTED = "gated_unimplemented"
+
+SEMIEMPIRICAL_MATURITIES = (
+    MATURITY_PRODUCTION,
+    MATURITY_EXPERIMENTAL,
+    MATURITY_NATIVE_FD,
+    MATURITY_MIXED_NATIVE,
+    MATURITY_GATED_UNIMPLEMENTED,
+)
 
 EXECUTION_NATIVE = "native"
 EXECUTION_NATIVE_BATCHED_FD = "native_batched_fd"
@@ -695,8 +728,16 @@ def _maturity_and_execution(
             else EXECUTION_NATIVE
         )
         return MATURITY_EXPERIMENTAL, execution
-    if method_key == "pm6" and "gradient" in properties:
-        return MATURITY_NATIVE_FD, EXECUTION_NATIVE_BATCHED_FD
+    if method_key == "pm6":
+        if "gradient" in properties:
+            return MATURITY_NATIVE_FD, EXECUTION_NATIVE_BATCHED_FD
+        # Molecular PM6 energies run on native NDDO kernels, but full
+        # heavy-heavy two-center tensor parity is still open, so the route is
+        # not a production claim: ``status.py`` records ``production=False``
+        # and the user guide calls NDDO a development/prescreening family.
+        # This branch used to fall through to MATURITY_PRODUCTION and was the
+        # one live disagreement between the two tables (#150).
+        return MATURITY_EXPERIMENTAL, EXECUTION_NATIVE
     return MATURITY_PRODUCTION, EXECUTION_NATIVE
 
 
@@ -745,6 +786,12 @@ class GFN2SECCMHamiltonianIdentity:
     retry ladder may legitimately execute a different runtime route. Solver
     controls and restart state are intentionally outside this Hamiltonian
     identity.
+
+    ``aes_model`` names the AES Hamiltonian that ran (schema version 2,
+    issue #380): ``"bannwarth_record_camm"``, ``"adhoc_shell"``, or
+    ``"none"`` when ``include_aes`` is false. The two AES models give
+    different energies for one request, so a schema-1 payload, which did
+    not record the model, is refused rather than guessed.
     """
 
     schema_version: int
@@ -753,15 +800,22 @@ class GFN2SECCMHamiltonianIdentity:
     requested_electronic_temperature: float
     resolved_electronic_temperature: float
     include_aes: bool
+    aes_model: str
     madelung_s_weighted: bool
     madelung_no_self: bool
     ewald_gamma_molecular_onsite: bool
     molecular_delegated: bool
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version != 1:
+        if type(self.schema_version) is int and self.schema_version == 1:
+            raise ValueError(_GFN2_SECCM_HAMILTONIAN_SCHEMA_1_REFUSAL)
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version != _GFN2_SECCM_HAMILTONIAN_SCHEMA_VERSION
+        ):
             raise ValueError(
-                "GFN2-SECCM Hamiltonian identity schema_version must be 1"
+                "GFN2-SECCM Hamiltonian identity schema_version must be "
+                f"{_GFN2_SECCM_HAMILTONIAN_SCHEMA_VERSION}"
             )
         family = str(self.requested_electrostatics_family).strip().lower()
         if family not in _SECCM_ELECTROSTATICS_FAMILIES:
@@ -780,6 +834,21 @@ class GFN2SECCMHamiltonianIdentity:
                 raise ValueError(
                     f"GFN2-SECCM Hamiltonian identity {name} must be boolean"
                 )
+        if not isinstance(self.aes_model, str):
+            raise ValueError(
+                "GFN2-SECCM Hamiltonian identity aes_model must be a string"
+            )
+        aes_model = self.aes_model.strip().lower()
+        if aes_model not in _GFN2_SECCM_AES_MODELS:
+            raise ValueError(
+                "GFN2-SECCM Hamiltonian identity aes_model must be one of "
+                f"{sorted(_GFN2_SECCM_AES_MODELS)!r}"
+            )
+        if (aes_model == "none") == self.include_aes:
+            raise ValueError(
+                "GFN2-SECCM Hamiltonian identity aes_model 'none' is "
+                "required exactly when include_aes is false"
+            )
         if isinstance(self.requested_electronic_temperature, bool) or (
             isinstance(self.resolved_electronic_temperature, bool)
         ):
@@ -838,8 +907,8 @@ class GFN2SECCMHamiltonianIdentity:
                 "GFN2-SECCM resolved electrostatics kernel does not match "
                 "the requested family"
             )
-        object.__setattr__(self, "schema_version", 1)
         object.__setattr__(self, "requested_electrostatics_family", family)
+        object.__setattr__(self, "aes_model", aes_model)
         object.__setattr__(
             self,
             "resolved_electrostatics_kernel",
@@ -873,6 +942,7 @@ class GFN2SECCMHamiltonianIdentity:
                 self.resolved_electronic_temperature
             ),
             "include_aes": self.include_aes,
+            "aes_model": self.aes_model,
             "madelung_s_weighted": self.madelung_s_weighted,
             "madelung_no_self": self.madelung_no_self,
             "ewald_gamma_molecular_onsite": (
@@ -887,7 +957,18 @@ class GFN2SECCMHamiltonianIdentity:
         payload: Mapping[str, object],
     ) -> "GFN2SECCMHamiltonianIdentity":
         """Restore an identity emitted by :meth:`to_dict`."""
-        return cls(**dict(payload))
+        data = dict(payload)
+        version = data.get("schema_version")
+        if type(version) is int and version == 1:
+            raise ValueError(_GFN2_SECCM_HAMILTONIAN_SCHEMA_1_REFUSAL)
+        return cls(**data)
+
+
+def _gfn2_seccm_aes_model(*, include_aes: bool, aes_faithful: bool) -> str:
+    """Name the AES Hamiltonian a GFN2-SECCM request executes."""
+    if not include_aes:
+        return "none"
+    return "bannwarth_record_camm" if aes_faithful else "adhoc_shell"
 
 
 def _gfn2_restart_sha256(values: Iterable[object]) -> tuple[int, str]:
@@ -1319,6 +1400,7 @@ class SemiempiricalRoutePlan:
         electronic_temperature: float = 0.0,
         three_center_weighting: str | None = None,
         truncated_electrostatics_acknowledged: bool = False,
+        shell_gamma_form: str | None = None,
     ) -> "SemiempiricalRoutePlan":
         """Attach the runtime SECCM citation context to a validated plan.
 
@@ -1330,6 +1412,12 @@ class SemiempiricalRoutePlan:
         and the engine-specific 1-D name (see
         :data:`_MSINDO_DIMENSIONAL_KERNELS`) keeps the Parry wire-Ewald
         citation off MSINDO's frozen truncated lattice sum.
+
+        ``shell_gamma_form`` names the short-range gamma of the Ewald-split
+        periodic shell gamma when a SECCM adapter ran that shared kernel
+        (``ewald_gamma=True``); it routes the same kernel citations as
+        :meth:`with_periodic_electrostatics_runtime`.  Leave it ``None`` for
+        the WS-truncated default kernel, which performs no Ewald split.
         """
         if self.boundary != BOUNDARY_SECCM_DIRECT_TORUS:
             raise ValueError(
@@ -1368,6 +1456,23 @@ class SemiempiricalRoutePlan:
             electrostatics_family,
             self.method_key,
         )
+        form = (
+            None
+            if shell_gamma_form is None
+            else str(shell_gamma_form).strip().lower()
+        )
+        if form is not None:
+            if form not in _PERIODIC_SHELL_GAMMA_FORMS:
+                raise ValueError(
+                    "shell_gamma_form must be one of "
+                    f"{sorted(_PERIODIC_SHELL_GAMMA_FORMS)!r}"
+                )
+            if not electrostatics_kernel.startswith("ewald_gamma_"):
+                raise ValueError(
+                    "SECCM shell_gamma_form metadata describes the Ewald-split "
+                    "periodic shell gamma and requires electrostatics family "
+                    "'ewald_gamma'"
+                )
         if truncated_electrostatics_acknowledged:
             if self.method_key not in {"om2", "om3"}:
                 raise ValueError(
@@ -1388,6 +1493,7 @@ class SemiempiricalRoutePlan:
             truncated_electrostatics_acknowledged=(
                 truncated_electrostatics_acknowledged
             ),
+            shell_gamma_form=form,
             gfn2_hamiltonian_identity=None,
             gfn2_run_controls=None,
         )
@@ -1401,13 +1507,20 @@ class SemiempiricalRoutePlan:
         requested_electronic_temperature: float,
         resolved_electronic_temperature: float,
         include_aes: bool,
+        aes_faithful: bool,
         madelung_s_weighted: bool,
         madelung_no_self: bool,
         ewald_gamma_molecular_onsite: bool,
         molecular_delegated: bool,
         run_controls: GFN2SECCMRunControls,
     ) -> "SemiempiricalRoutePlan":
-        """Attach complete GFN2-SECCM Hamiltonian provenance."""
+        """Attach complete GFN2-SECCM Hamiltonian provenance.
+
+        ``include_aes`` and ``aes_faithful`` are the requested selectors;
+        the identity records the AES model they execute, so an
+        ``aes_faithful`` value that ``include_aes=False`` ignores leaves the
+        identity unchanged.
+        """
         if (
             self.method_key != "gfn2_xtb"
             or self.boundary != BOUNDARY_SECCM_DIRECT_TORUS
@@ -1431,12 +1544,16 @@ class SemiempiricalRoutePlan:
             electronic_temperature=resolved_electronic_temperature,
         )
         identity = GFN2SECCMHamiltonianIdentity(
-            schema_version=1,
+            schema_version=_GFN2_SECCM_HAMILTONIAN_SCHEMA_VERSION,
             requested_electrostatics_family=requested_electrostatics_family,
             resolved_electrostatics_kernel=resolved_plan.electrostatics_kernel,
             requested_electronic_temperature=requested_electronic_temperature,
             resolved_electronic_temperature=resolved_electronic_temperature,
             include_aes=bool(include_aes),
+            aes_model=_gfn2_seccm_aes_model(
+                include_aes=bool(include_aes),
+                aes_faithful=bool(aes_faithful),
+            ),
             madelung_s_weighted=bool(madelung_s_weighted),
             madelung_no_self=bool(madelung_no_self),
             ewald_gamma_molecular_onsite=bool(
@@ -1529,6 +1646,14 @@ class SemiempiricalRoutePlan:
             )
         elif self.three_center_weighting == "janetzko_eq10":
             kwargs["extra_entries"] = ("janetzko_ccm_2008",)
+        # A SECCM adapter that ran the Ewald-split periodic shell gamma
+        # (ewald_gamma=True) owes the same kernel citations as the
+        # Bloch-periodic drivers; the WS-truncated default reports no form.
+        extras = self._periodic_electrostatics_entries()
+        if extras:
+            kwargs["extra_entries"] = (
+                tuple(kwargs.get("extra_entries", ())) + extras
+            )
         return kwargs
 
     @classmethod
@@ -1691,6 +1816,7 @@ __all__ = [
     "MATURITY_PRODUCTION",
     "MOLECULAR_SEMIEMPIRICAL_METHODS",
     "PERIODIC_GAMMA_SEMIEMPIRICAL_METHODS",
+    "SEMIEMPIRICAL_MATURITIES",
     "SEMIEMPIRICAL_METHOD_ALIASES",
     "SEMIEMPIRICAL_METHODS",
     "GFN2SECCMHamiltonianIdentity",

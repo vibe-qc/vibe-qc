@@ -39,7 +39,7 @@ headroom factor (rendered by ``MemoryEstimate.format``):
         Fock + density   409.6 MB
         AO evaluation    307.2 MB
         DIIS history     102.4 MB
-    Available on this machine: 119.8 GB. Proceeding.
+    Available to this job: 119.8 GB. Proceeding.
 """
 
 from __future__ import annotations
@@ -613,7 +613,7 @@ class MemoryEstimate:
             lines.append(f"{status}.")
         else:
             avail_gb = available / _GB
-            lines.append(f"Available on this machine: {avail_gb:.1f} GB. {status}.")
+            lines.append(f"Available to this job: {avail_gb:.1f} GB. {status}.")
         return "\n".join(lines)
 
     def __str__(self) -> str:
@@ -2294,6 +2294,8 @@ def _dft_xc_requires_dense_ao_tables(options) -> bool:
     scf_options = _scf_estimator_options(options)
     if scf_options is None:
         return False
+    if _option_value(scf_options, "orbital_optimizer", "native") == "opentrustregion":
+        return True
     if type(scf_options).__name__ == "ROKSOptions":
         return True
     for threshold in ("newton_threshold", "trah_threshold"):
