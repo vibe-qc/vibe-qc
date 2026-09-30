@@ -117,7 +117,11 @@ Eigen::MatrixXd compute_periodic_scc_dftb_stress(
     const PeriodicSCCDFTBResult& result,
     const SemiempiricalParameters& params);
 
-// GFN2-xTB analytic gradient (fixed-charge approximation).
+// Molecular shell-AES GFN2-xTB analytic SCC/free-energy gradient.
+// Shared by native callers and bindings, before parameter or empty-result
+// shortcuts. Faithful AES needs its own complete derivative (vibe-qc#427).
+void require_gfn2_gradient_aes_support(const xtb::GFN2Result& result);
+
 Eigen::MatrixXd compute_gfn2_gradient(
     const Molecule& mol,
     const xtb::GFN2Result& result,

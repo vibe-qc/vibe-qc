@@ -55,6 +55,99 @@ void index(U i, U n) {
     if (i>=n) throw std::out_of_range("symmetry group index");
 }
 }
+
+namespace detail {
+// Native axial-normalized Cartesian monomials, in libint's x/y descending
+// order. M[u,v] expands monomial_u(R^-1 x) into monomial_v(x); coefficient
+// transport is M^T. Shared by molecular and periodic AO adapters.
+void cartesian_shell_polynomials(CartesianShellRotationWorkspace& w, int l,
+                                const std::array<double,9>& inverse_rotation) {
+    if (l < 0 || l > kCartesianRotationMaximumL) bad("Cartesian symmetry requires 0 <= l <= 6");
+    constexpr int Nc = kCartesianRotationMaximumSize;
+    const int nc = (l+1)*(l+2)/2;
+    auto poly_index=[](int x,int y,int z) { return (x*7+y)*7+z; };
+    auto checked=[](double x) {
+        if (!std::isfinite(x)) throw std::overflow_error("nonfinite Cartesian symmetry polynomial");
+        return x;
+    };
+    int at = 0;
+    for (int x = l; x >= 0; --x)
+        for (int y = l-x; y >= 0; --y) w.powers[at++] = {x,y,l-x-y};
+    for (int u = 0; u < nc; ++u) {
+        w.polynomial.fill(0);
+        w.polynomial[0] = 1;
+        int degree = 0;
+        for (int axis = 0; axis < 3; ++axis) {
+            for (int repeat = 0; repeat < w.powers[u][axis]; ++repeat) {
+                w.next.fill(0);
+                for (int x = degree; x >= 0; --x)
+                    for (int y = degree-x; y >= 0; --y) {
+                        const int z = degree-x-y;
+                        const double p = w.polynomial[poly_index(x,y,z)];
+                        for (int d = 0; d < 3; ++d) {
+                            const int index = poly_index(x+(d==0),y+(d==1),z+(d==2));
+                            w.next[index] = checked(w.next[index]+checked(p*inverse_rotation[3*axis+d]));
+                        }
+                    }
+                w.polynomial.swap(w.next);
+                ++degree;
+            }
+        }
+        for (int v = 0; v < nc; ++v)
+            w.cart[u*Nc+v] = w.polynomial[poly_index(w.powers[v][0],w.powers[v][1],w.powers[v][2])];
+    }
+}
+} // namespace detail
+
+SymmetryPlan plan_symmetry_cartesian_rotation(int l, const SymmetryBudget& budget) {
+    if (l < 0 || l > detail::kCartesianRotationMaximumL) bad("Cartesian symmetry requires 0 <= l <= 6");
+    const U n=(l+1)*(l+2)/2;
+    // Fixed polynomial workspace, borrowed rotation, inverse/cofactors,
+    // control reservation and both native/NumPy output roles.
+    SymmetryPlan plan{32768+16*n*n, 500000};
+    admit(plan,budget);
+    return plan;
+}
+std::vector<double> symmetry_cartesian_rotation(int l, const double* r,
+                                               double tolerance, const SymmetryBudget& budget) {
+    plan_symmetry_cartesian_rotation(l,budget);
+#if defined(__FAST_MATH__) || (defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__ != 0) || FLT_EVAL_METHOD != 0
+    bad("Cartesian symmetry requires strict floating point compilation");
+#endif
+    if (!std::numeric_limits<double>::is_iec559 || sizeof(double)!=8 ||
+        std::numeric_limits<double>::digits!=53 || FLT_RADIX!=2 || std::fegetround()!=FE_TONEAREST)
+        bad("Cartesian symmetry requires IEEE binary64 round-to-nearest arithmetic");
+    volatile double tiny=std::numeric_limits<double>::denorm_min(), one=1.0, zero=0.0;
+    if (tiny*one==zero || tiny+zero==zero) bad("Cartesian symmetry requires gradual underflow");
+    if (!r || !aligned(r)) bad("invalid Cartesian symmetry rotation payload");
+    if (!std::isfinite(tolerance) || tolerance<=0 || tolerance>1e-6)
+        bad("Cartesian symmetry tolerance must lie in (0,1e-6]");
+    for (int i=0;i<9;++i) finite(r[i]);
+    for (int i=0;i<3;++i) for (int j=0;j<3;++j) {
+        double dot=0;
+        for (int k=0;k<3;++k) dot+=r[3*k+i]*r[3*k+j];
+        if (!std::isfinite(dot) || std::abs(dot-(i==j?1.0:0.0))>tolerance)
+            bad("Cartesian symmetry rotation is not orthogonal");
+    }
+    // Use the actual inverse of a rounded orthogonal matrix, as periodic
+    // transport does, rather than silently substituting its transpose.
+    std::array<double,9> cof{}, inverse{};
+    for (int i=0;i<3;++i) for (int j=0;j<3;++j) {
+        const int a=(i+1)%3,b=(i+2)%3,c=(j+1)%3,d=(j+2)%3;
+        cof[3*i+j]=r[3*a+c]*r[3*b+d]-r[3*a+d]*r[3*b+c];
+    }
+    const double det=r[0]*cof[0]+r[1]*cof[1]+r[2]*cof[2];
+    if (!std::isfinite(det) || std::abs(det)<0.5) bad("singular Cartesian symmetry rotation");
+    for (int i=0;i<3;++i) for (int j=0;j<3;++j) inverse[3*i+j]=cof[3*j+i]/det;
+    detail::CartesianShellRotationWorkspace workspace;
+    detail::cartesian_shell_polynomials(workspace,l,inverse);
+    const int n=(l+1)*(l+2)/2;
+    std::vector<double> result(n*n);
+    for (int i=0;i<n;++i) for (int j=0;j<n;++j)
+        result[i*n+j]=workspace.cart[j*detail::kCartesianRotationMaximumSize+i];
+    return result;
+}
+
 SymmetryPlan plan_symmetry_group(U n, bool lattice, const SymmetryBudget& b) {
     if (!n || n>static_cast<U>(std::numeric_limits<I>::max())) bad("invalid symmetry group order");
     const U square=mul(n,n), cube=mul(square,n);

@@ -689,5 +689,6 @@ def test_band_overlap_t0_mesh_uses_the_occupation_driven_density():
         run_pbc_bipole_rks(
             system, basis, kmesh, opts, functional="lda",
             use_ewald_j_split=True, use_exchange_ewald_split=False,
+            historical_domain=True,
             ewald_precision=1e-8, progress=False,
         )

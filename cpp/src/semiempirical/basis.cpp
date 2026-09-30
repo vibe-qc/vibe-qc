@@ -11,19 +11,21 @@ namespace vibeqc {
 namespace semiempirical {
 
 // ---------------------------------------------------------------------------
-// SemiempiricalBasis::sto6g_table
+// STO-NG expansions. Every table below is keyed by the shell's principal
+// quantum number n and angular momentum l, and every row is verified by
+// quadrature against the least-squares residual its source publishes (see
+// tests/test_semiempirical_sto_ng_tables.py). The Gaussian exponents alpha_i
+// are unscaled; for a Slater exponent zeta the actual exponent is
+// alpha_i * zeta^2 (Stewart 1970, Eq. 4).
 //
-// The Gaussian exponents α_i are unscaled; for a Slater exponent ζ,
-// the actual exponent is α_i × ζ².
-//
-// PROVENANCE WARNING: these tables were long cited as Hehre, Stewart &
-// Pople, J. Chem. Phys. 51, 2657 (1969) Table I (1s) / Table IV (2p),
-// but they do not reproduce HSP's own published least-squares residuals
-// (off by 5e4x for l=0 and 4e5x for l=1) and several exponents are
-// hand-rounded numbers. The true source is unknown. DFTB0/SCC-DFTB run
-// entirely on these (n_primitives=6). Tracked as
-// DFTB-STO-NG-TABLES-NOT-HSP in agentic-loop/bug-claims.md; see the
-// per-table notes below and the long comment in build().
+// History: until 2026-09-19 the DFTB0 / SCC-DFTB path (n_primitives = 6)
+// drew from two l-keyed "STO-6G" tables of unknown provenance that failed
+// HSP's published residual by 5e4x (l = 0) and 4e5x (l = 1) and, being keyed
+// by l alone, gave every 2s shell the 1s row. Measured on the shipped set:
+// the C 2p-2p pi overlap at the graphene bond length was 0.016 where the
+// Slater value is 0.243, the H 1s-1s overlap at 1.4 bohr 0.50 instead of
+// 0.66, so hopping was almost absent and Si and h-BN came out gapless.
+// Those tables are gone; the n_primitives = 6 path now uses Stewart's rows.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -213,68 +215,114 @@ const StoNgRow& sto4g_row(int n, int l) {
 
 }  // namespace
 
-// (n, l) → 6G rows for the GFN2 auto path (xtb setGFN2NumberOfPrimitives
-// assigns 6 primitives to n > 5 shells; slater.f90 pAlpha6s/pCoeff6s,
-// pAlpha6p/pCoeff6p).  Exponents ascending, coefficients in the matching
-// ascending pairing.
-const StoNgRow& sto6g_gfn2_row(int n, int l) {
+// (n, l) -> 6G row. n = 1..5: Stewart, J. Chem. Phys. 52, 431 (1970),
+// Tables I-V, N = 6 (transcribed 2026-09-19 from the paper and verified
+// row by row against the printed least-squares residual eps, all fifteen to
+// four significant digits). n = 6: the sixth-row s and p expansions xtb
+// slater.f90 carries (pAlpha6s/pCoeff6s, pAlpha6p/pCoeff6p; Stewart does
+// not tabulate n = 6), used by the GFN2 auto path for n > 5 shells and by
+// the DFTB path for period-6 valence s/p. Exponents ascending, coefficients
+// in the matching pairing. No row exists for n = 7, so period-7 elements
+// have no STO-6G expansion and the DFTB basis refuses them (see
+// SemiempiricalParameters::shell_principal_quantum_number).
+const StoNgRow& sto6g_row(int n, int l) {
+    // 1s: Stewart Table I, eps = 1.2372e-06
+    static const StoNgRow s1 = {
+        {0.06510953954, 0.1580884151, 0.4070988982, 1.185056519, 4.235915534, 23.10303149},
+        {0.1303340841, 0.4164915298, 0.3705627997, 0.1685383049, 0.04936149294, 0.00916359628}};
+    // 2s: Stewart Table I, eps = 3.2726e-07
+    static const StoNgRow s2 = {
+        {0.04416183978, 0.09260298399, 0.2040335729, 1.42678605, 5.077140627, 27.68496241},
+        {0.1712994697, 0.5621061301, 0.3346271174, -0.05150303337, -0.02067024148, -0.004151277819}};
+    // 2p: Stewart Table I, eps = 5.4444e-07
+    static const StoNgRow p2 = {
+        {0.04948220127, 0.1046655969, 0.2288932733, 0.5475665231, 1.530329631, 5.868285913},
+        {0.1051855189, 0.4012362861, 0.4049863191, 0.189840006, 0.05144104825, 0.007924233646}};
+    // 3s: Stewart Table II, eps = 4.0662e-08
+    static const StoNgRow s3 = {
+        {0.02724741144, 0.04797373812, 0.08636686991, 0.3593349765, 0.9200611311, 3.273031938},
+        {0.07223633674, 0.501535102, 0.5534527651, -0.1587856086, -0.05639325779, -0.006775596947}};
+    // 3p: Stewart Table II, eps = 7.9285e-08
+    static const StoNgRow p3 = {
+        {0.03315424265, 0.06076408893, 0.1131741848, 0.2248434849, 1.34078694, 5.077973607},
+        {0.07411456232, 0.390881305, 0.4485358256, 0.163939577, -0.0141948834, -0.00332992984}};
+    // 3d: Stewart Table II, eps = 2.8899e-07
+    static const StoNgRow d3 = {
+        {0.04058484363, 0.07877734732, 0.1559114463, 0.331132749, 0.7981487853, 2.488296923},
+        {0.08902827546, 0.3843100204, 0.4266269092, 0.2072139149, 0.05386799363, 0.007283828112}};
+    // 4s: Stewart Table III, eps = 5.9700e-09
+    static const StoNgRow s4 = {
+        {0.01874093091, 0.03163400284, 0.05277666487, 0.1717905487, 0.3605788802, 3.232838646},
+        {0.02487178756, 0.4389247988, 0.7812787397, -0.3130627309, -0.08666390043, 0.001374817488}};
+    // 4p: Stewart Table III, eps = 1.3897e-08
+    static const StoNgRow p4 = {
+        {0.02816929784, 0.04958248334, 0.08847434525, 0.341554138, 0.7960947826, 2.389722618},
+        {0.1204970491, 0.5433958189, 0.4053115554, -0.05958513378, -0.01657464971, -0.001665913575}};
+    // 4d: Stewart Table III, eps = 8.0888e-08
+    static const StoNgRow d4 = {
+        {0.03232628887, 0.0590419037, 0.1101467943, 0.2209593028, 1.341648295, 4.63423942},
+        {0.1081250196, 0.4621672517, 0.415964693, 0.1108670481, -0.003566777891, -0.0004749842876}};
+    // 4f: Stewart Table IV, eps = 1.7590e-07
+    static const StoNgRow f4 = {
+        {0.03474556673, 0.06350097171, 0.1173146814, 0.2296565064, 0.5004907278, 1.357718039},
+        {0.07787514504, 0.3688112625, 0.4411388883, 0.2217065797, 0.05634263745, 0.006930234381}};
+    // 5s: Stewart Table IV, eps = 7.9988e-09
+    static const StoNgRow s5 = {
+        {0.0221355843, 0.03669584901, 0.1061070594, 0.1847926858, 0.5077878915, 1.410128298},
+        {0.3103964343, 1.08761949, -0.520067356, -0.09588628125, 0.01850157487, 0.002695439582}};
+    // 5p: Stewart Table IV, eps = 3.9301e-09
+    static const StoNgRow p5 = {
+        {0.02063815019, 0.03328911801, 0.05404070736, 0.1683175469, 0.3499121109, 3.778623374},
+        {0.06021665516, 0.476880814, 0.5706134877, -0.1381051233, -0.02920771322, 0.0001163246387}};
+    // 5d: Stewart Table V, eps = 1.4086e-08
+    static const StoNgRow d5 = {
+        {0.02108227374, 0.0339120283, 0.05472831774, 0.0920430884, 0.3410838409, 0.8820520428},
+        {0.02623132212, 0.2654483467, 0.5097437054, 0.2648458555, -0.02508271857, -0.004097377019}};
+    // 5f: Stewart Table V, eps = 8.4380e-09
+    static const StoNgRow f5 = {
+        {0.02598071843, 0.04351355997, 0.07290318381, 0.1269485744, 0.2372312347, 1.33409684},
+        {0.05077063693, 0.3205010548, 0.4589112231, 0.2373699784, 0.04624275998, -0.0009486751531}};
+    // 5g: Stewart Table V, eps = 1.1806e-07
+    static const StoNgRow g5 = {
+        {0.03057364464, 0.05340032759, 0.09373643151, 0.172791706, 0.3497184772, 0.8574668996},
+        {0.06974153145, 0.3552053926, 0.4512983737, 0.2339955227, 0.0587414517, 0.006729778096}};
     static const StoNgRow s6 = {
         {0.0188607, 0.0298364, 0.0497509, 0.0793852, 0.271826, 0.580029},
         {0.362252, 1.33249, -0.226980, -0.756102, 0.0528644, 0.00455436}};
     static const StoNgRow p6 = {
         {0.0188222, 0.0296131, 0.0458633, 0.0816389, 0.139509, 0.669654},
         {0.109153, 0.675205, 0.468226, -0.226626, -0.128289, 0.00278272}};
-    if (n == 6 && l == 0) return s6;
-    if (n == 6 && l == 1) return p6;
-    throw std::runtime_error(
-        "STO-6G: no GFN2 (n, l) row for n=" + std::to_string(n)
-        + " l=" + std::to_string(l));
-}
-
-const SemiempiricalBasis::StoNgTable& SemiempiricalBasis::sto6g_table(int l) {
-    if (l == 0) {
-        // STO-6G for 1s. UNVERIFIED PROVENANCE -- cited as HSP (1969)
-        // Table I, but fails HSP's own published residual by 52839x
-        // (eps = 6.55e-2 vs 1.24e-6). See DFTB-STO-NG-TABLES-NOT-HSP.
-        static const StoNgTable s_tbl = {
-            {0.168856, 0.623913, 3.42525, 8.420, 18.0, 35.5232},
-            {0.334041, 0.534205, 0.154815, 0.0203930, 0.00198418, 0.000102952}
-        };
-        return s_tbl;
-    }
-    if (l == 1) {
-        // STO-6G for 2p. UNVERIFIED PROVENANCE -- cited as HSP (1969)
-        // Table IV, but fails HSP's own published residual by 442028x
-        // (eps = 5.39e-1 vs 1.22e-6). See DFTB-STO-NG-TABLES-NOT-HSP.
-        static const StoNgTable p_tbl = {
-            {0.181494, 0.663712, 3.62252, 8.404, 18.0, 35.5232},
-            {0.137008, 0.504421, 0.306884, 0.0607796, 0.00650756, 0.000329759}
-        };
-        return p_tbl;
-    }
-    if (l == 2) {
-        // STO-6G for 3d. UNVERIFIED PROVENANCE -- cited as HSP (1969)
-        // Table V; exponents 12.553/30.0/69.864 are hand-rounded, not
-        // fitted values. See DFTB-STO-NG-TABLES-NOT-HSP.
-        static const StoNgTable d_tbl = {
-            {0.334044, 1.22301, 6.14927, 12.553, 30.0, 69.864},
-            {0.132104, 0.485118, 0.326919, 0.0747647, 0.00733498, 0.000335051}
-        };
-        return d_tbl;
-    }
-    if (l == 3) {
-        // STO-6G for 4f. UNVERIFIED PROVENANCE -- exponents 18.0/40.0/
-        // 90.0 are hand-rounded, not fitted values; HSP (1969) does not
-        // tabulate 4f. See DFTB-STO-NG-TABLES-NOT-HSP.
-        static const StoNgTable f_tbl = {
-            {0.598801, 1.973182, 8.493242, 18.0, 40.0, 90.0},
-            {0.159852, 0.504783, 0.319984, 0.0704716, 0.00664587, 0.000334108}
-        };
-        return f_tbl;
+    switch (l) {
+        case 0:
+            switch (n) {
+                case 1: return s1; case 2: return s2; case 3: return s3;
+                case 4: return s4; case 5: return s5; case 6: return s6;
+            }
+            break;
+        case 1:
+            switch (n) {
+                case 2: return p2; case 3: return p3; case 4: return p4;
+                case 5: return p5; case 6: return p6;
+            }
+            break;
+        case 2:
+            switch (n) {
+                case 3: return d3; case 4: return d4; case 5: return d5;
+            }
+            break;
+        case 3:
+            switch (n) {
+                case 4: return f4; case 5: return f5;
+            }
+            break;
+        case 4:
+            if (n == 5) return g5;
+            break;
     }
     throw std::runtime_error(
-        "SemiempiricalBasis: STO-6G tables only available for l=0,1,2,3. "
-        "Got l=" + std::to_string(l));
+        "STO-6G: no (n, l) row for n=" + std::to_string(n)
+        + " l=" + std::to_string(l)
+        + " (Stewart 1970 tabulates n <= 5; xtb supplies 6s and 6p)");
 }
 
 // ---------------------------------------------------------------------------
@@ -284,27 +332,18 @@ const SemiempiricalBasis::StoNgTable& SemiempiricalBasis::sto6g_table(int l) {
 std::pair<std::vector<double>, std::vector<double>>
 SemiempiricalBasis::sto_ng_expansion(double zeta, int n, int l, int n_primitives) {
     const StoNgRow* row = nullptr;
-    const StoNgTable* tbl6 = nullptr;
     switch (n_primitives) {
         case 3: row = &sto3g_row(n, l); break;
         case 4: row = &sto4g_row(n, l); break;
+        case 6: row = &sto6g_row(n, l); break;
         default:
-            // n == 6: GFN2 auto-path rows (HSP sixth row); n < 6: legacy
-            // l-only DFTB tables (unchanged, see sto6g_table).
-            row = (n == 6) ? &sto6g_gfn2_row(n, l) : nullptr;
-            tbl6 = (n == 6) ? nullptr : &sto6g_table(l);
-            break;
+            throw std::runtime_error(
+                "SemiempiricalBasis: STO-NG expansions exist for 3, 4 or 6 "
+                "primitives; got " + std::to_string(n_primitives));
     }
 
-    std::vector<double> exponents;
-    std::vector<double> coefficients;
-    if (row) {
-        exponents = row->alphas;
-        coefficients = row->coeffs;
-    } else {
-        exponents = tbl6->alphas;
-        coefficients = tbl6->coeffs;
-    }
+    std::vector<double> exponents = row->alphas;
+    std::vector<double> coefficients = row->coeffs;
 
     const double zeta2 = zeta * zeta;
     for (double& a : exponents) a *= zeta2;
@@ -381,8 +420,13 @@ std::vector<ShellInfo> SemiempiricalBasis::build_shell_info(
             else zeta = 1.0;
         }
 
+        // The STO-NG row is keyed by the shell's principal quantum number
+        // (Stewart 1970 keys on n; xtb slaterToGauss does the same). The
+        // former `vs.l + 1` gave every s shell the 1s row and every p shell
+        // the 2p row whatever the period.
         auto [exponents, coeffs] = sto_ng_expansion(
-            zeta, vs.l + 1, vs.l, n_primitives);
+            zeta, params.shell_principal_quantum_number(Z, vs.l), vs.l,
+            n_primitives);
 
         ShellInfo si;
         si.atom_index = vs.atom_index;
@@ -425,32 +469,14 @@ BasisSet SemiempiricalBasis::build(const Molecule& mol,
     //   diag(S) = [0.647, 0.0285, 0.0285, 0.0285, 3.847, 3.847]
     // i.e. a 135x inconsistency between O 2p and H 1s.
     //
-    // The STO-3G and STO-4G tables now match Stewart (1970) as
-    // cross-verified against xtb slater.f90 (bdef7c15c) -- verified here
-    // by quadrature: eps = 3.31e-4 / 2.69e-4 (3G s/p) and 4.38e-5 /
-    // 2.90e-5 (4G s/p), self-overlap 1.000000 throughout.
-    //
-    // The STO-6G tables are NOT from HSP (1969) Table I/IV/V despite the
-    // comment on each of them. HSP publishes the least-squares residual
-    // eps per expansion, which makes that provenance claim mechanically
-    // checkable, and the shipped values fail it by 52839x (l=0, eps =
-    // 6.55e-2 vs HSP's 1.24e-6) and 442028x (l=1, eps = 5.39e-1 vs
-    // 1.22e-6) -- i.e. worse Slater fits than STO-3G despite twice the
-    // primitives. Not a zeta-convention artifact: contraction
-    // self-overlap is invariant under uniform exponent scaling and is
-    // 0.832 (l=0) / 0.650 (l=1) instead of 1. Not an in-house fit to
-    // some other target either: Cauchy-Schwarz floors the error against
-    // EVERY normalized target at >=6215x / >=30869x.
-    //
-    // This matters here because DFTB0/SCC-DFTB build with
-    // n_primitives=6 on every path, so the DFTB stack runs entirely on
-    // those two tables. Correcting them is NOT a drop-in change -- it
-    // shifts every DFTB energy and the repulsive parameters may be
-    // calibrated against the current values, exactly as bdef7c15c's own
-    // GFN2 result showed (9 test_gfn2_xtb.py failures pending
-    // recalibration). Tracked as DFTB-STO-NG-TABLES-NOT-HSP in
-    // agentic-loop/bug-claims.md; needs a maintainer decision, not a
-    // unilateral table swap.
+    // Every STO-NG row (3G, 4G, 6G) matches Stewart (1970): the 3G/4G rows
+    // were cross-verified against xtb slater.f90 (bdef7c15c) and the 6G
+    // rows against Stewart's own printed residuals (2026-09-19). The DFTB
+    // stack builds with n_primitives = 6 on every path, so it now runs on
+    // genuine STO-6G Slater fits of its tabulated exponents. Correcting the
+    // former tables shifted every DFTB number (they were wrong functions,
+    // not a convention); see the changelog entry and issue thread for the
+    // measured before/after.
     return BasisSet(mol, shells, "dftb0-sto-ng", false);
 }
 

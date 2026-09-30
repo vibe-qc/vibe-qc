@@ -140,11 +140,20 @@ def test_adapter_boundary():
 
 def test_runner_neutral_bloch_is_the_multik_gdf_hamiltonian(tmp_path):
     """With the CCM pair-star reduction off, the arm executes the production
-    multi-k GDF Hamiltonian on the torus mesh, so it must agree with
-    jk_method='gdf' on that mesh to machine precision. This is the identity
-    that makes the arm's difference from plain GDF one of GUARDS and RECORDS,
-    not of operator."""
-    nb = _job(tmp_path, "nb", aiccm_lattice_extension=(2, 1, 1))
+    multi-k GDF Hamiltonian on the torus mesh, so at a matched fit source it
+    must agree with jk_method='gdf' on that mesh to machine precision. This
+    is the identity that makes the arm's difference from plain GDF one of
+    GUARDS and RECORDS, not of operator.
+
+    Since #378 the arm pins ``fit_source="classic"`` (the fit the real-Γ fold
+    builds; its identity with the real-Γ arm is the next test), while
+    jk_method='gdf' keeps the driver's own default, the SR/LR source on 3-D
+    cells: the two differ by 4.3e-10 Ha/cell on this H2 cell (-1.1945309121965
+    against -1.1945309126270), which is the source, not the arm. So the arm is
+    run here with an explicit ``fit_source="sr"``, which it honours over its
+    pin."""
+    nb = _job(tmp_path, "nb", aiccm_lattice_extension=(2, 1, 1),
+              fit_source="sr")
     gdf = _job(tmp_path, "gdf", method="RHF", variant=None,
                jk_method="gdf", kpoints=(2, 1, 1))
     assert nb.converged and gdf.converged
@@ -163,6 +172,59 @@ def test_runner_neutral_bloch_and_real_gamma_are_one_hamiltonian(tmp_path, mesh)
               aiccm_lattice_extension=mesh, initial_guess="HCORE")
     assert nb.converged and rg.converged
     assert nb.energy == pytest.approx(rg.energy, abs=1e-9)
+
+
+def test_runner_neutral_bloch_default_path_pins_classic_and_records_it(tmp_path):
+    """#378 through the public front door with DEFAULTS: no ``rsgdf_ke_cutoff``
+    and no tail, so the runner forwards its unresolved request (``None``, #257)
+    and the producer must resolve it before sizing the fold's tail (a
+    ``float(None)`` crash on the default path was found by the post-SCF cost
+    chat on a trial rebase). Both arms record the executed fit source, which
+    must be the classic pin on both, and the executed tail; the two energies
+    agree as the Theorem-1 test above pins them."""
+    import tomllib
+
+    nb = _job(tmp_path, "nb_default", aiccm_lattice_extension=(2, 1, 1))
+    rg = _job(tmp_path, "rg_default", variant="real-gamma",
+              aiccm_lattice_extension=(2, 1, 1), initial_guess="HCORE")
+    assert nb.converged and rg.converged
+    assert nb.energy == pytest.approx(rg.energy, abs=1e-9)
+    for tag in ("nb_default", "rg_default"):
+        run = tomllib.loads(
+            (tmp_path / f"{tag}.system").read_text(encoding="utf-8"))["run"]
+        assert run["rsgdf_fit_source_executed"] == "classic", (tag, run.get("rsgdf_fit_source_executed"))
+        assert run["rsgdf_tail_ke_cutoff_executed"] == "none"
+    out = (tmp_path / "nb_default.out").read_text(encoding="utf-8")
+    assert "fit_source          = classic" in out
+
+
+@pytest.mark.slow
+def test_runner_neutral_bloch_default_path_tail_on_a_dense_core_cell(tmp_path):
+    """#378, the tailed case through the front door with DEFAULTS: on MgO/STO-3G
+    at the Gamma mesh (the tree's tight-core reference cell, fcc a = 7.956 bohr)
+    the fold's tail is auto-sized from the base mesh, so the tail the neutral
+    Bloch producer sizes after resolving ``rsgdf_ke_cutoff=None`` must be the
+    one the classic fit runs on, 3291.6114 Ha, and both arms must record it
+    (a tail sized on another base mesh would read differently here; on LiH,
+    which needs no tail, the mismatch would be invisible)."""
+    import tomllib
+
+    a = 7.956
+    lat = 0.5 * a * np.array([[0.0, 1, 1], [1, 0, 1], [1, 1, 0]]).T
+    cell = PeriodicSystem(3, lat, [Atom(12, [0, 0, 0]), Atom(8, [0.5 * a, 0.5 * a, 0.5 * a])], 0, 1)
+    nb = _job(tmp_path, "nb_mgo", cell=cell, aiccm_lattice_extension=(1, 1, 1))
+    rg = _job(tmp_path, "rg_mgo", cell=cell, variant="real-gamma",
+              aiccm_lattice_extension=(1, 1, 1), initial_guess="HCORE")
+    assert nb.converged and rg.converged
+    assert nb.energy == pytest.approx(rg.energy, abs=1e-9)
+    tails = {}
+    for tag in ("nb_mgo", "rg_mgo"):
+        run = tomllib.loads(
+            (tmp_path / f"{tag}.system").read_text(encoding="utf-8"))["run"]
+        assert run["rsgdf_fit_source_executed"] == "classic"
+        tails[tag] = float(run["rsgdf_tail_ke_cutoff_executed"])
+    assert tails["nb_mgo"] == tails["rg_mgo"]
+    assert tails["nb_mgo"] == pytest.approx(3291.6114, abs=1e-3)
 
 
 def test_runner_neutral_bloch_manifest_and_out(tmp_path):
@@ -323,3 +385,81 @@ def test_runner_neutral_bloch_producer_guards_are_not_plain_gdf(tmp_path):
                variant="real-gamma", aiccm_lattice_extension=(2, 1, 1),
                initial_guess="HCORE", output=str(tmp_path / "vac_rg"),
                progress=False)
+
+
+# --- ruling R6: the vacuum-padding opt-in ------------------------------------
+
+
+def _padded_chain_cell():
+    """A 1-D H2 chain along a1, declared 3-D with 30 bohr of transverse
+    vacuum: the IID 291 repro class (gap above 25 bohr and above four
+    shortest lattice vectors on a2 and a3)."""
+    return PeriodicSystem(
+        3, np.diag([6.0, 30.0, 30.0]),
+        [Atom(1, [0.0, 0.0, 0.0]), Atom(1, [1.4, 0.0, 0.0])], 0, 1)
+
+
+def test_runner_vacuum_opt_in_is_refused_off_the_neutral_variants(tmp_path):
+    """The keyword names a guard only the two neutral producers carry, so it
+    fails closed on four-center and chi and with any other method rather
+    than being silently ignored."""
+    with pytest.raises(ValueError, match="neutral producers only"):
+        _job(tmp_path, "fc", variant="four-center",
+             aiccm_lattice_extension=(1, 1, 1),
+             aiccm_allow_vacuum_padding=True)
+    with pytest.raises(ValueError, match="require method='aiccm'"):
+        _job(tmp_path, "plain", method="RHF", variant=None,
+             jk_method="gdf", kpoints=(1, 1, 1),
+             aiccm_allow_vacuum_padding=True)
+
+
+def test_runner_neutral_bloch_records_the_vacuum_opt_in_negatively(tmp_path):
+    """On a measured-3-D cell the manifest records the opt-in as false with
+    an empty axis list: absence of a flag is never a verdict."""
+    _job(tmp_path, "nb", aiccm_lattice_extension=(1, 1, 1))
+    run = tomllib.loads(
+        (tmp_path / "nb.system").read_text(encoding="utf-8"))["run"]
+    assert run["aiccm_allow_vacuum_padding"] is False
+    # list-valued [run] fields are TOML arrays (system_info._toml_value)
+    assert run["aiccm_vacuum_padded_axes"] == []
+    # O29: the convergence actually reached, read from the multi-k trace.
+    assert run["scf_cycles_recorded"] >= 2
+    assert run["scf_final_residual_metric"] == "gradient_norm"
+    assert isinstance(run["scf_final_delta_e_ha"], float)
+    assert isinstance(run["scf_final_residual"], float)
+
+
+def test_runner_neutral_bloch_vacuum_opt_in_warns_and_stamps(tmp_path):
+    """With the opt-in the padded chain runs, warns, prints the switch in the
+    .out header and stamps the padded directions (1-based) in the manifest;
+    without it the same cell is still refused."""
+    from vibeqc import run_periodic_job
+    from vibeqc._vibeqc_core import BasisSet
+    from vibeqc.periodic.ccm.experimental import AICCMVacuumPaddingWarning
+
+    cell = _padded_chain_cell()
+    basis = BasisSet(cell.unit_cell_molecule(), "sto-3g")
+    with pytest.raises(NotImplementedError, match="allow_vacuum_padding"):
+        _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "nb_ref"),
+               progress=False, method="aiccm", variant="neutral-bloch",
+               aiccm_lattice_extension=(2, 1, 1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        warnings.simplefilter("error", AICCMVacuumPaddingWarning)
+        with pytest.raises(AICCMVacuumPaddingWarning, match="2, 3"):
+            run_periodic_job(cell, basis, output=str(tmp_path / "nb_w"),
+                             progress=False, method="aiccm",
+                             variant="neutral-bloch",
+                             aiccm_lattice_extension=(2, 1, 1),
+                             aiccm_allow_vacuum_padding=True)
+    r = _job(tmp_path, "nb_pad", cell=cell, aiccm_lattice_extension=(2, 1, 1),
+             aiccm_allow_vacuum_padding=True)
+    assert r.converged
+    assert r.neutral_bloch.vacuum_padding_allowed is True
+    assert r.neutral_bloch.vacuum_padded_axes == (2, 3)
+    run = tomllib.loads(
+        (tmp_path / "nb_pad.system").read_text(encoding="utf-8"))["run"]
+    assert run["aiccm_allow_vacuum_padding"] is True
+    assert run["aiccm_vacuum_padded_axes"] == [2, 3]
+    out = (tmp_path / "nb_pad.out").read_text(encoding="utf-8")
+    assert "allow_vacuum_padding = True" in out

@@ -230,11 +230,23 @@ class TestEntanglement:
 
         rho_occ = np.diag([0.0, 0.0, 0.0, 1.0])
         s = single_orbital_entropy(np.array([rho_occ]))
-        assert abs(s[0]) < 1e-12
+        assert s[0] == 0.0
 
         rho_empty = np.diag([1.0, 0.0, 0.0, 0.0])
         s = single_orbital_entropy(np.array([rho_empty]))
-        assert abs(s[0]) < 1e-12
+        assert s[0] == 0.0
+
+        # Pure one-/two-orbital RDMs must not acquire entropy from a
+        # probability floor, especially before bond-order normalisation.
+        from vibeqc.entanglement import entanglement_bond_order, mutual_information
+
+        rho = np.array([rho_empty, rho_occ])
+        rho2 = np.zeros((2, 2, 16, 16))
+        rho2[0, 1] = np.kron(rho_empty, rho_occ)
+        for two_orbital_densities in (None, rho2):
+            mi = mutual_information(rho, two_orbital_densities)
+            np.testing.assert_array_equal(mi, 0.0)
+            np.testing.assert_array_equal(entanglement_bond_order(mi), 0.0)
 
     def test_entanglement_from_density(self):
         """Entanglement from single-determinant density."""
@@ -242,14 +254,124 @@ class TestEntanglement:
 
         n_ao = 4
         P = np.zeros((n_ao, n_ao), dtype=np.float64)
-        P[0, 0] = 1.0
-        P[1, 1] = 1.0
+        P[0, 0] = 2.0
+        P[1, 1] = 2.0
         S = np.eye(n_ao)
 
         result = entanglement_from_density(P, S)
         assert result.n_orbitals == n_ao
-        assert abs(result.single_orbital_entropies[0]) < 1e-12
-        assert abs(result.single_orbital_entropies[1]) < 1e-12
+        np.testing.assert_array_equal(result.single_orbital_entropies, 0.0)
+        np.testing.assert_array_equal(result.mutual_information, 0.0)
+        np.testing.assert_array_equal(result.entanglement_bond_orders, 0.0)
+        assert result.total_information == 0.0
+
+    def test_entanglement_paired_orbital_rdms(self):
+        """An entangled empty/pair superposition has known RDM entropies."""
+        from vibeqc.entanglement import (
+            entanglement_bond_order,
+            mutual_information,
+            single_orbital_entropy,
+        )
+
+        rho = np.array([np.diag([0.5, 0.0, 0.0, 0.5])] * 2)
+        psi = np.zeros(16)
+        psi[[3, 12]] = 1.0 / np.sqrt(2.0)
+        rho2 = np.zeros((2, 2, 16, 16))
+        rho2[0, 1] = np.outer(psi, psi)
+        np.testing.assert_allclose(
+            single_orbital_entropy(rho), np.log(2.0), atol=1e-14
+        )
+        mi = mutual_information(rho, rho2)
+        np.testing.assert_allclose(mi, 2.0 * np.log(2.0), atol=1e-14)
+        np.testing.assert_allclose(entanglement_bond_order(mi), 1.0, atol=1e-14)
+
+    def test_entanglement_rhf_water(self):
+        """A nonorthogonal RHF AO density has only 0/2 occupations."""
+        from vibeqc.entanglement import entanglement_from_density
+
+        mol = _h2o()
+        basis = vq.BasisSet(mol, "sto-3g")
+        rhf = vq.run_rhf(mol, basis)
+        assert rhf.converged
+        S = np.asarray(vq.compute_overlap(basis))
+        P = np.asarray(rhf.density)
+        # Independent occupation oracle: PS is similar to the orthogonal
+        # density, without using the production square-root transform.
+        occ = np.sort(np.linalg.eigvals(P @ S).real)
+        np.testing.assert_allclose(occ, [0, 0, 2, 2, 2, 2, 2], atol=1e-12)
+        result = entanglement_from_density(P, S)
+        np.testing.assert_array_equal(result.single_orbital_entropies, 0.0)
+        np.testing.assert_array_equal(result.mutual_information, 0.0)
+        np.testing.assert_array_equal(result.entanglement_bond_orders, 0.0)
+        assert result.total_information == 0.0
+
+    @pytest.mark.parametrize("n_active", [None, 2])
+    def test_entanglement_fractional_occupations(self, n_active):
+        """All density-based measures use the same per-spin occupations."""
+        from vibeqc.entanglement import (
+            entanglement_bond_order,
+            entanglement_from_density,
+            single_orbital_entropy,
+        )
+
+        # S = A.T A and C = A^-1 give C.T S C = I, so these are known
+        # natural occupations in a nonorthogonal basis without an eigh oracle.
+        A = np.array([[1.2, 0.3, -0.1], [0.0, 0.9, 0.2], [0.0, 0.0, 1.1]])
+        C = np.linalg.inv(A)
+        occ = np.array([0.4, 0.8, 1.6])
+        P = (C * occ) @ C.T
+        result = entanglement_from_density(P, A.T @ A, n_active=n_active)
+        n = occ[:n_active] / 2.0
+        expected_s = -n * np.log(n) - (1.0 - n) * np.log1p(-n)
+        expected_mi = 4.0 * np.outer(n * (1.0 - n), n * (1.0 - n))
+        np.fill_diagonal(expected_mi, 0.0)
+        np.testing.assert_allclose(
+            result.single_orbital_entropies, expected_s, atol=1e-14
+        )
+        np.testing.assert_allclose(result.mutual_information, expected_mi, atol=1e-14)
+        np.testing.assert_allclose(
+            result.entanglement_bond_orders,
+            entanglement_bond_order(expected_mi),
+            atol=1e-14,
+        )
+        assert result.total_information == pytest.approx(expected_s.sum(), abs=1e-14)
+        # A paired empty/doubly-occupied orbital has this same binary entropy.
+        rho = np.array([np.diag([1.0 - p, 0.0, 0.0, p]) for p in n])
+        np.testing.assert_allclose(single_orbital_entropy(rho), expected_s, atol=1e-14)
+
+    def test_entanglement_casci_stretched_h2(self):
+        """A correlated CAS(2,2) density retains positive entropy and MI."""
+        from vibeqc.entanglement import entanglement_from_density
+        from vibeqc.solvers import build_hamiltonian_mo, casci, get_hf_orbital_provider
+        from vibeqc.solvers._rdm import make_rdm1
+
+        mol = vq.Molecule(
+            [
+                vq.Atom(1, [0.0, 0.0, 0.0]),
+                vq.Atom(1, [0.0, 0.0, 4.0]),
+            ]
+        )
+        basis = vq.BasisSet(mol, "sto-3g")
+        C = get_hf_orbital_provider(mol, basis)
+        H = build_hamiltonian_mo(mol, basis, C)
+        cas = casci(
+            H.h1e, H.h2e, n_active_elec=2, n_active_orb=2,
+            n_core=0, nuclear_repulsion=H.nuclear_repulsion,
+        )
+        D = make_rdm1(cas.ci_coeffs, cas.determinants, 2)
+        n = np.linalg.eigvalsh(D) / 2.0
+        assert np.all((n > 0.1) & (n < 0.9))
+        expected_s = -n * np.log(n) - (1.0 - n) * np.log1p(-n)
+        result = entanglement_from_density(C @ D @ C.T, vq.compute_overlap(basis))
+        np.testing.assert_allclose(
+            result.single_orbital_entropies, expected_s, atol=1e-12
+        )
+        assert result.total_information == pytest.approx(expected_s.sum(), abs=1e-12)
+        assert result.total_information > 1.0
+        assert result.mutual_information[0, 1] == pytest.approx(
+            4.0 * n[0] * (1.0 - n[0]) * n[1] * (1.0 - n[1]), abs=1e-12
+        )
+        np.testing.assert_allclose(result.entanglement_bond_orders, [[0, 1], [1, 0]])
 
     def test_correlation_clusters_empty(self):
         """No clusters when MI is zero."""

@@ -145,6 +145,25 @@ struct LatticeSumOptions {
     // traversal (#21). Preserves the existing screening decisions and sum
     // order. False retains exhaustive enumeration for numerical comparisons.
     bool sr_sparse_traversal = true;
+
+    // Declare that the caller MEANS the molecular limit: one unit cell, no
+    // periodic image coupling, g = 0 only. Same name and same contract as the
+    // semiempirical ``PeriodicDFTB0Options::gamma_only_0`` /
+    // ``PeriodicPM6Options::gamma_only_0`` (#316), and the same idea as the
+    // GAPW route's declared ``gapw_molecular_limit``.
+    //
+    // Default false, and a periodic driver whose cell list then degenerates to
+    // the home cell refuses rather than reporting a free-boundary cluster as
+    // periodic (#133; ``require_nonzero_lattice_image`` above). That collapse
+    // is silent otherwise: the driver converges, returns the isolated
+    // molecule's energy bit for bit, and is exactly k-independent because
+    // there is no g != 0 block to carry a Bloch phase, so refining the k mesh
+    // only confirms a stable wrong answer.
+    //
+    // This declares intent, not an approximation: it changes no sum. A
+    // vacuum-padded box whose cutoff genuinely isolates g = 0 computes the
+    // same numbers with it set as it did before the guard existed.
+    bool gamma_only_0 = false;
 };
 
 // Real-space periodic matrix: one nbf × nbf block per lattice cell.

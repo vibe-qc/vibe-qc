@@ -1110,7 +1110,9 @@ def d4_atm_triple_energy(
 ) -> float:
     """ATM triple energy for one atom triplet (A, B, C).
 
-    The angle factor is the Axilrod-Teller-Muto geometrical term
+    With the negative C9 convention of :func:`compute_c9`, the energy is
+    ``-C9 * angle_factor * f_damp``. The angle factor is the
+    Axilrod-Teller-Muto geometrical term
     ``(3.costh_A.costh_B.costh_C + 1) / (R_AB.R_BC.R_AC)^3``, damped
     by the BJ-style rational function with exponent ``alp``.
 
@@ -1153,7 +1155,11 @@ def d4_atm_triple_energy(
         + 1.0 / r3
     )
 
-    return float(c9 * ang * fdmp)
+    # C9 follows the negative-coefficient convention of Caldeweyher et al.,
+    # J. Chem. Phys. 150, 154122 (2019), doi:10.1063/1.5090222.
+    # The energy therefore carries an additional minus sign: equilateral
+    # triplets repel and collinear triplets attract (Axilrod-Teller-Muto).
+    return float(-c9 * ang * fdmp)
 
 
 def _compute_c6_matrix(
@@ -1200,7 +1206,7 @@ def compute_d4_atm_energy(
 
     The ATM term is the leading three-body dispersion contribution::
 
-        E^(3) = S_{A<B<C}  C9_ABC . w(th) / (R_AB.R_BC.R_CA)^3 . f_damp
+        E^(3) = -S_{A<B<C}  C9_ABC . w(th) / (R_AB.R_BC.R_CA)^3 . f_damp
 
     where ``C9_ABC ≈ -s9.sqrt(|C6_AB.C6_BC.C6_CA|)`` and ``w(th)`` is
     the angular factor ``3.cos th_A.cos th_B.cos th_C + 1``.  The

@@ -67,10 +67,18 @@ _ATOMS_ANG = [
 ]
 _ATOMIC_NUMBERS = {'N': 7, 'C': 6, 'O': 8, 'H': 1}
 
-# The direct-path fixed point, measured on this machine for both the
-# incremental and the full-rebuild path (they agree to 1e-9; the
-# incremental path with the fix converges to the same value).
-_E_REF = -451.5445940339
+# The RHF/cc-pVDZ fixed point with no Schwarz screening (#324). The direct
+# path converges to it within the 1e-8 tolerance below: the shipped
+# schwarz_threshold 1e-10 lands 5.5e-10 from it, on the incremental and the
+# full-rebuild path alike, and thresholds 1e-12 and 1e-14 land within
+# 5e-12 of it (arm64, main 734030df, 4 OpenMP workers).
+# Re-pinned 2026-09-30 (#324): the previous value, -451.5445940339, lay
+# 1.403e-7 from this one. It recorded the screening error of Schwarz bounds
+# whose tiny self-norms libint had rounded to zero; 312c34b0 ("Preserve tiny
+# self norms in Schwarz screening bounds", first in v0.17.2) removed it.
+# Retained runtimes bracket the move exactly there (v0.17.1-35 5e501710
+# keeps the old value, v0.17.2 94322fb8 has the new one).
+_E_REF = -451.54459389360676
 
 # S22-19 benzene-HCN dimer, Jurecka et al., PCCP 8, 1985 (2006).
 # This is the geometry used by the IID 418 reproduction (Angstrom).
@@ -91,7 +99,12 @@ _S22_19_ATOMS_ANG = [
     ('C', (0.0751963, 2.3707040, 0.0000000)),
     ('H', (0.1476295, 1.3052847, 0.0000000)),
 ]
-_S22_19_E_REF = -323.60742975889
+# The unscreened RHF/cc-pVDZ fixed point: schwarz_threshold 0 on the direct
+# path and the in-core conventional build agree to the last bit. The shipped
+# direct path lands 2.4e-10 from it, inside the 1e-9 tolerance below.
+# Re-pinned 2026-09-30 (#324) from -323.60742975889, which lay 8.28e-8 away
+# for the same reason as _E_REF above (312c34b0).
+_S22_19_E_REF = -323.60742984166643
 
 
 @pytest.fixture(scope="module")

@@ -778,7 +778,7 @@ def test_compute_c9_geometric_mean():
 def test_atm_triple_energy_equilateral_closed_form():
     """For an equilateral triangle (all sides r, all angles 60°) the
     angle factor 3·cos³60° + 1 = 3/8 + 1 = 1.375, so the undamped
-    triple energy is exactly C9 · 1.375 / r⁹. Verified at a distance
+    triple energy is exactly −C9 · 1.375 / r⁹. Verified at a distance
     large enough that the zero-damping factor is ≈ 1."""
     from vibeqc.dispersion_d4_model import d4_atm_triple_energy
 
@@ -786,8 +786,32 @@ def test_atm_triple_energy_equilateral_closed_form():
     c9 = -50.0
     r0 = 4.0  # small vs r → f_damp ≈ 1
     e = d4_atm_triple_energy(r, r, r, c9, r0, r0, r0)
-    expected = c9 * 1.375 / r**9
+    expected = -c9 * 1.375 / r**9
     assert e == pytest.approx(expected, rel=1e-6)
+    assert e > 0.0  # ATM is repulsive for an equilateral triplet.
+
+
+@pytest.mark.parametrize("r", [4.0, 8.0, 20.0])
+def test_atm_uniform_stretch_derivative(r):
+    """Independent radial derivative includes damping and the physical sign.
+
+    For an equilateral triangle E = K r^-9 / (1 + 6 (r0/r)^16),
+    where K = (11/8) sqrt(C6_ab C6_ac C6_bc) is positive.
+    This checks both the short-range and asymptotic force directions.
+    """
+    c6 = 10.0
+    c9 = compute_c9(c6, c6, c6)
+    r0 = 5.0
+    damp_ratio = 6.0 * (r0 / r)**16
+    energy = 1.375 * c6**1.5 / r**9 / (1.0 + damp_ratio)
+    derivative = energy / r * (-9.0 + 16.0 * damp_ratio / (1.0 + damp_ratio))
+    assert d4_atm_triple_energy(r, r, r, c9, r0, r0, r0) == pytest.approx(
+        energy, rel=1e-13, abs=0.0
+    )
+    for h in (1e-4, 5e-5):
+        ep = d4_atm_triple_energy(r+h, r+h, r+h, c9, r0, r0, r0)
+        em = d4_atm_triple_energy(r-h, r-h, r-h, c9, r0, r0, r0)
+        assert (ep-em)/(2*h) == pytest.approx(derivative, rel=2e-7, abs=1e-16)
 
 
 def test_atm_damping_suppresses_short_range():
@@ -799,7 +823,7 @@ def test_atm_damping_suppresses_short_range():
     c9, r0 = -50.0, 6.0
     r = 2.0  # well inside r0 → strong damping
     e_damped = d4_atm_triple_energy(r, r, r, c9, r0, r0, r0)
-    e_undamped = c9 * 1.375 / r**9
+    e_undamped = -c9 * 1.375 / r**9
     assert abs(e_damped) < 0.05 * abs(e_undamped)
 
 
@@ -828,7 +852,8 @@ def test_atm_angle_factor_collinear():
     e = d4_atm_triple_energy(d, 2.0 * d, d, c9, r0, r0, r0)
     # angle factor → −2 ⇒ sign opposite the equilateral (+1.375) case.
     e_equilateral = d4_atm_triple_energy(d, d, d, c9, r0, r0, r0)
-    assert e * e_equilateral < 0.0
+    assert e < 0.0  # ATM is attractive for a collinear triplet.
+    assert e_equilateral > 0.0
 
 
 def test_compute_d4_atm_energy_exported():

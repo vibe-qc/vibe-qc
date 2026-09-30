@@ -64,6 +64,8 @@ def test_ccm_periodic_plumbing_and_overlap_guard():
     The (1,1,1) cyclic cluster is the unit cell with cyclic BC = a Γ-point
     periodic HF; it must equal vibe-qc's multi-k driver at k=(1,1,1) (a trivial
     band-folding identity that also checks the CCMSystem→periodic-driver wiring).
+    The Γ driver runs the molecular-limit exchange kernel, so the multi-k side
+    names it: the multi-k default at (1,1,1) is the corrected split since #23.
     """
     ccm = CCMSystem(_unit_cell(), (1, 1, 1), "sto-3g")
     emin, _ = ccm.check_overlap_spectrum()      # Fig-6 guard (must be PD)
@@ -75,7 +77,8 @@ def test_ccm_periodic_plumbing_and_overlap_guard():
 
     unit = _unit_cell()
     basis = vq.make_basis(unit.unit_cell_molecule(), "sto-3g")
-    mk = vq.run_rhf_periodic_multi_k_ewald3d(unit, basis, vq.monkhorst_pack(unit, [1, 1, 1]))
+    mk = vq.run_rhf_periodic_multi_k_ewald3d(
+        unit, basis, vq.monkhorst_pack(unit, [1, 1, 1]), exchange_exxdiv="none")
     assert res.energy == pytest.approx(mk.energy, abs=1e-5)
 
 
@@ -88,11 +91,11 @@ def test_ccm_equals_scm_gamma_band_folding():
     band folding for the ordinary periodic Hamiltonian; it is not a comparison
     of the Γ-CCM and χ-CCM construction maps.
 
-    Both sides name ``exchange_exxdiv='ewald'`` (#560). A (1,1,1) mesh *is* the
-    Γ-point calculation of the supercell; the keyword is what stops the driver
-    short-circuiting to the molecular-limit kernel, which is a different gauge
-    and does not band-fold onto a (2,2,2) mesh (2.43 mHa apart, pinned in
-    ``tests/test_periodic_exchange_gauge_band_folding.py``).
+    Both sides name ``exchange_exxdiv='ewald'`` (#560), the default at every
+    mesh since #23. A (1,1,1) mesh *is* the Γ-point calculation of the
+    supercell; the molecular-limit kernel (``exchange_exxdiv='none'``) is a
+    different gauge and does not band-fold onto a (2,2,2) mesh (2.43 mHa
+    apart, pinned in ``tests/test_periodic_exchange_gauge_band_folding.py``).
 
     Externally anchored: PySCF 2.14.0 out of process gives -1.1191323123 Ha per
     cell for both sides of this identity with ``exxdiv='ewald'`` (see

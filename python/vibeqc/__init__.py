@@ -386,6 +386,8 @@ from ._vibeqc_core import (
     Molecule,
     MP2Options,
     MP2Result,
+    OpenTrustRegionOptions,
+    has_opentrustregion,
     NewtonOptions,
     PairJKContribution,
     PeriodicKSOptions,
@@ -956,6 +958,15 @@ def _coerce_molecular_basis(molecule, basis):
     return basis
 
 
+def _refuse_otr_native_multiguess(options):
+    if (getattr(options, "orbital_optimizer", "native") == "opentrustregion"
+            and getattr(options, "multi_guess_seeds", [])):
+        raise ValueError(
+            "OpenTrustRegion does not use native multi_guess_seeds or restart "
+            "schedules; run separately chosen starting densities, or select native"
+        )
+
+
 def _attach_inline_ecp_from_basis_sidecar(options, molecule, basis) -> None:
     """Populate molecular SCF options from the basis ECP sidecar."""
 
@@ -1126,6 +1137,7 @@ def run_uhf(
     """
     if options is None:
         options = UHFOptions()
+    _refuse_otr_native_multiguess(options)
     require_nonnegative_max_iter(options.max_iter, route="run_uhf")
     basis = _coerce_molecular_basis(molecule, basis)
     _attach_inline_ecp_from_basis_sidecar(options, molecule, basis)
@@ -1243,6 +1255,7 @@ def run_uks(
         options = UKSOptions()
         from .runner import _apply_grid_level
         _apply_grid_level(options.grid, grid_level)
+    _refuse_otr_native_multiguess(options)
     require_nonnegative_max_iter(options.max_iter, route="run_uks")
     from .roks import _refuse_plain_double_hybrid
 
@@ -2148,9 +2161,21 @@ def _write_double_hybrid_outputs(
         OutputWriter,
         Quantity,
         active_policy,
+        double_hybrid_construction,
         write,
     )
     from .output._stem_paths import stem_sibling
+
+    # The dispatcher branches on multiplicity (see _run_double_hybrid_core),
+    # so the description of what ran is derived the same way rather than
+    # guessed from the result object. vibeqc.output owns the wording.
+    functional = Functional(functional_name)
+    construction = double_hybrid_construction(
+        open_shell=int(getattr(mol, "multiplicity", 1)) > 1,
+        density_fit_mp2=bool(getattr(result.mp2, "density_fit", True)),
+        c_os=functional.mp2_c_os,
+        c_ss=functional.mp2_c_ss,
+    )
 
     plan = OutputPlan.from_run_job_kwargs(
         output=stem,
@@ -2172,6 +2197,7 @@ def _write_double_hybrid_outputs(
         {
             "frozen_core_orbitals": 0,
             "frozen_core_convention": "all-electron-explicit",
+            **construction.manifest_fields(),
         }
     )
 
@@ -2187,6 +2213,10 @@ def _write_double_hybrid_outputs(
                 basis=basis_name,
                 functional=functional_name,
                 dispersion=_double_hybrid_dispersion_key(dispersion),
+                # Open shell adds a ROKS reference and a semicanonical
+                # RI-ROHF-MP2 correction; both have defining papers the
+                # functional's own route does not carry (#365).
+                extra_methods=construction.citation_methods,
             )
             writer.set_citations(_double_hybrid_citation_rows(refs))
             writer.record(bib_path)
@@ -2211,6 +2241,7 @@ def _write_double_hybrid_outputs(
         write(f"  Charge:            {int(getattr(mol, 'charge', 0))}\n")
         write(f"  Multiplicity:      {int(getattr(mol, 'multiplicity', 1))}\n")
         write("  MP2 frozen core:   0 (explicit all-electron model component)\n")
+        write(f"  Construction:      {construction.summary_line}\n")
         # The same content-sized headerless primitive owns every molecular
         # energy-components block. Values and the unit-bearing title follow
         # the active FormatPolicy; no caller guesses a rule width.
@@ -2224,10 +2255,11 @@ def _write_double_hybrid_outputs(
             unit_for="energy",
         )
         energy_block.add_row(
-            "RKS reference", Quantity(float(result.rks.energy), "energy")
+            construction.scf_row_label,
+            Quantity(float(result.rks.energy), "energy"),
         )
         energy_block.add_row(
-            "MP2 correlation",
+            construction.correlation_row_label,
             Quantity(float(result.mp2.e_correlation), "energy"),
         )
         if result.dispersion is not None:
@@ -2298,6 +2330,7 @@ def _write_double_hybrid_outputs(
             terminal_run_status,
             write_qvf,
         )
+        from .output.verdict import verdict_from_result
 
         wf_data = qvf_wf_data(result.rks, basis, mol) if write_molden_file else None
         run_record = assemble_run_record(plan, wall_seconds=wall_seconds)
@@ -2315,6 +2348,7 @@ def _write_double_hybrid_outputs(
             wall_seconds=wall_seconds,
             run_record=run_record,
             run_status=terminal_run_status(result.rks),
+            run_verdict=verdict_from_result(result.rks).as_dict(),
             bond_orders_data=(
                 _double_hybrid_bond_orders_data(population_summary, mol)
                 if population_summary is not None
@@ -3325,6 +3359,13 @@ from .output.formats.trexio import (
     write_trexio,
     write_trexio_fields,
 )
+from .qcschema import (
+    molecule_from_qcschema,
+    molecule_to_qcschema,
+    read_qcschema,
+    run_qcschema,
+)
+from .output.formats.qcschema import write_qcschema
 from .io import (
     normal_mode_trajectory,
     write_molden,
@@ -3724,9 +3765,14 @@ from .periodic_gradient_open_shell import (
 )
 from .periodic_gradient_rks import compute_gradient_periodic_rks_gamma
 from .lattice_convention import (
+    CRYSTAL_SYSTEMS,
+    PLANE_LATTICE_SYSTEMS,
     CellParameters,
+    LatticeDeclarationError,
     NearestNeighbour,
     cell_parameters,
+    check_crystal_system,
+    check_space_group,
     lattice_from_vectors,
     lattice_vectors,
     nearest_neighbour_distance,
@@ -4222,7 +4268,12 @@ __all__ = [
     "PeriodicXCDensityDomain",
     "CellParameters",
     "NearestNeighbour",
+    "CRYSTAL_SYSTEMS",
+    "LatticeDeclarationError",
+    "PLANE_LATTICE_SYSTEMS",
     "cell_parameters",
+    "check_crystal_system",
+    "check_space_group",
     "lattice_from_vectors",
     "lattice_vectors",
     "nearest_neighbour_distance",
@@ -4246,6 +4297,8 @@ __all__ = [
     "SCFIteration",
     "SCFMode",
     "SCFRestartOptions",
+    "OpenTrustRegionOptions",
+    "has_opentrustregion",
     "NewtonOptions",
     "SOSCFOptions",
     "TRAHOptions",
@@ -4886,6 +4939,11 @@ __all__ = [
     "read_trexio",
     "read_trexio_fields",
     "write_trexio_fields",
+    "read_qcschema",
+    "write_qcschema",
+    "molecule_from_qcschema",
+    "molecule_to_qcschema",
+    "run_qcschema",
     "TrexioData",
     "TrexioMOBlock",
     "TrexioSparse",

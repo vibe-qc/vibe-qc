@@ -51,6 +51,8 @@ from ..._vibeqc_core import (
 from ...properties import _shell_nao, _shell_to_atom
 from .scf import _normalise_mesh, cyclic_gamma_mesh
 
+from ._transform_inputs import translations_array, real_array, checked_mesh_size, integer_array, complete_characters
+
 __all__ = [
     "AICCM2026DevBLocalizationMethod",
     "AICCM2026DevBLocalizationResult",
@@ -168,9 +170,9 @@ def _real_space_matrix_from_k(
     matrix, imaginary = aiccm2026dev_b_matrix_to_real_supercell(
         np.ascontiguousarray(np.asarray(matrices_k, dtype=np.complex128)),
         np.ascontiguousarray(
-            np.asarray(kpoints_fractional, dtype=float).reshape(-1, 3)
+            real_array(kpoints_fractional, name="kpoints_frac")
         ),
-        np.ascontiguousarray(np.asarray(translations, dtype=np.int64).reshape(-1, 3)),
+        translations_array(translations),
     )
     if float(imaginary) > imaginary_tolerance:
         raise RuntimeError(
@@ -208,12 +210,12 @@ def _canonical_wannier_coefficients_from_k(
         aiccm2026dev_b_canonical_wannier_coefficients(
             np.ascontiguousarray(np.asarray(coefficients_k, dtype=np.complex128)),
             np.ascontiguousarray(
-                np.asarray(kpoints_fractional, dtype=float).reshape(-1, 3)
+                real_array(kpoints_fractional, name="kpoints_frac")
             ),
             np.ascontiguousarray(
-                np.asarray(translations, dtype=np.int64).reshape(-1, 3)
+                translations_array(translations)
             ),
-            int(n_occ),
+            int(integer_array(n_occ, name="n_occ", shape=())),
         ),
         dtype=complex,
     )
@@ -495,8 +497,8 @@ def _localization_projector_audit(
         np.ascontiguousarray(canonical, dtype=np.complex128),
         np.ascontiguousarray(localized, dtype=np.complex128),
         native_fock,
-        np.ascontiguousarray(translations, dtype=np.int64),
-        np.ascontiguousarray(mesh, dtype=np.int64),
+        translations_array(translations),
+        integer_array(mesh, name="mesh", shape=(3,)),
         int(nbf),
     )
     return tuple(float(value) for value in values)
@@ -565,14 +567,17 @@ def localize_aiccm2026dev_b_occupied_blocks(
     """Localize occupied blocks with no dependency on an SCF result class."""
 
     selected = AICCM2026DevBLocalizationMethod(method)
-    mesh_tuple = tuple(int(value) for value in mesh)
+    mesh_tuple = tuple(integer_array(mesh, name="mesh", shape=(3,)).tolist())
+    checked_mesh_size(mesh_tuple)
     if len(mesh_tuple) != 3 or any(value < 1 for value in mesh_tuple):
         raise ValueError(
             "AICCM2026DEV-B localization mesh must contain three positives"
         )
     translations = _translations(mesh_tuple)
     n_cells = len(translations)
-    kfrac = np.asarray(kpoints_fractional, dtype=float).reshape(-1, 3)
+    kfrac = real_array(kpoints_fractional, name="kpoints_frac")
+    complete_characters(kfrac, np.full(len(kfrac), 1. / n_cells), np.diag(mesh_tuple))
+    n_occ_per_cell = int(integer_array(n_occ_per_cell, name="n_occ_per_cell", shape=()))
     if len(kfrac) != n_cells:
         raise ValueError("localization needs the complete unreduced cyclic k mesh")
     coefficients = [np.asarray(value, dtype=complex) for value in coefficients_k]
@@ -603,7 +608,6 @@ def localize_aiccm2026dev_b_occupied_blocks(
                 f"gapped occupied manifold; gap={gap:.3e} hartree"
             )
 
-    phases = np.exp(2j * np.pi * (kfrac @ translations.T))
     overlap = _real_space_matrix_from_k(
         overlaps,
         kfrac,

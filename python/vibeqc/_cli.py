@@ -483,16 +483,22 @@ def _cmd_dos(args: argparse.Namespace) -> int:
     n_occ = max(n_elec // 2, 0)
 
     if data["kind"] == "gpw_multi_k_scf":
+        from vibeqc.periodic_gapw_postscf import (
+            _zero_temperature_mesh_occupations,
+        )
+
         eigs_k = np.asarray(data["mo_energies_k"], dtype=float)
         kweights = np.asarray(data["kweights"], dtype=float)
+        # One Fermi level over the mesh (#176): a per-k fill of the lowest
+        # n_occ bands weights the wrong states wherever the bands overlap.
+        occ_k = _zero_temperature_mesh_occupations(
+            [eigs_k[ik] for ik in range(eigs_k.shape[0])], kweights, 2 * n_occ
+        )
         flat_eps = []
         flat_w = []
         for ik in range(eigs_k.shape[0]):
-            eps_k = eigs_k[ik]
-            w = np.zeros_like(eps_k)
-            w[:n_occ] = 2.0 * float(kweights[ik])
-            flat_eps.append(eps_k)
-            flat_w.append(w)
+            flat_eps.append(eigs_k[ik])
+            flat_w.append(np.asarray(occ_k[ik]) * float(kweights[ik]))
         eps_all = np.concatenate(flat_eps)
         w_all = np.concatenate(flat_w)
     else:

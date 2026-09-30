@@ -95,7 +95,7 @@ or other input changes.
 
 | ASE accessor | Property | Method coverage | Notes |
 |---|---|---|---|
-| `atoms.get_potential_energy()` | `energy` (eV) | RHF / UHF / RKS / UKS | + D3(BJ) when `dispersion=` set |
+| `atoms.get_potential_energy()` | `energy` (eV) | RHF / UHF / RKS / UKS | + D3(BJ) when `dispersion=` set. An options struct with `density_fit=True` and no `aux_basis` gets the default JK fit for the orbital basis (#362). |
 | `atoms.get_potential_energy(force_consistent=True)` | `free_energy` | All | Alias for `energy` (vibe-qc has no smearing entropy at the molecular SCF level). |
 | `atoms.get_forces()` | `forces` (eV/Å) | All | Analytic nuclear gradients. The gradient call inherits the SCF options' `density_fit` / `aux_basis` / `cosx` / ECP settings, and the public wrapper verifies the exact XML or inline ECP provenance recorded by the SCF result. On ECP systems the ECP centres are moved onto the current atoms at every call (#643); the `*_options` you passed then describe the last geometry evaluated. ECP+CPCM gradients remain unsupported. |
 | `atoms.get_dipole_moment()` | `dipole` (eÅ) | All | 3-vector. Phase A (v0.5). |

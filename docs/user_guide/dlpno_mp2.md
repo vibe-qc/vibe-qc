@@ -569,12 +569,16 @@ so that pilot omits the domain line rather than printing zeros.
   what a preset intends under the density it was calibrated against. That
   density is Riplinger and Neese's Eq. 23, `D = Tt T^T + Tt^T T` with
   `Tt = (4 T - 2 T^T) / (1 + delta_ij)`, selectable as `pno_norm="mp2"`
-  (the pre-2013 LPNO variant is `pno_norm="iepa"`). The default is
-  `pno_norm="legacy"`, vibe-qc's historical density of the bare amplitudes,
+  (the pre-2013 LPNO variant is `pno_norm="iepa"`). Molecular options default
+  to `pno_norm="mp2"`. The explicit `pno_norm="legacy"` convention uses
+  vibe-qc's historical density of the bare amplitudes,
   which retains 5 % to 19 % fewer PNOs at the same nominal threshold and is
-  therefore effectively looser than the preset name implies. The default is
-  unchanged pending a decision on which convention ships, because moving it
-  moves every DLPNO energy. The convention in force is printed in the `.out`
+  therefore effectively looser than the preset name implies. For low-level
+  API compatibility, `resolve_pno_norm(None)` and `pair_density` with an
+  omitted or `None` norm still select the pre-#65 `legacy` convention. These
+  helpers do not select the molecular options default; pass `"mp2"` explicitly
+  when using them to construct that recipe. Retained periodic reference paths
+  request `"legacy"` explicitly. The convention in force is printed in the `.out`
   block and recorded as `dlpno_pno_norm` in the `.system` manifest.
   The (T) is NumPy (already BLAS-bound). The local solver
   uses the 12-bohr `coupling_radius` default described above, so occupied

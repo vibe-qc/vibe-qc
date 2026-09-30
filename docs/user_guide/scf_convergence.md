@@ -20,10 +20,11 @@ user-facing selection knobs split into four groups:
 * **Initial guess**, where the SCF starts from
   (`opts.initial_guess`). Default is `InitialGuess.AUTO`, which
   routes through the unified [`GuessEngine`](initial_guess.md):
-  ordinary restricted closed-shell routes use PATOM; molecular unrestricted/
-  open-shell routes (including singlet UHF/UKS) and transition-metal systems
-  usually use SAD, and ordinary periodic routes
-  use SAD. Capability-limited cyclic routes use HCORE. Explicit selectors
+  ordinary restricted closed-shell molecules, open-shell d/f-block systems,
+  and isolated spin-polarized atoms usually use PATOM. Other molecular
+  unrestricted/open-shell routes (including singlet UHF/UKS), restricted
+  closed-shell d/f-block systems, and ordinary periodic routes use SAD.
+  Capability-limited cyclic routes use HCORE. Explicit selectors
   must be supported by the chosen route. The
   richer story (theory, math, when to use which, references) lives
   in [Initial guesses](initial_guess.md); the brief summary here is
@@ -104,7 +105,9 @@ they do not silently turn into HCORE.
 | System and route | Usual AUTO construction |
 |---|---|
 | Ordinary restricted closed-shell molecular route | PATOM |
-| Molecular unrestricted/open-shell route (including singlet UHF/UKS) or transition-metal system | SAD |
+| Molecular open-shell route on a system containing a d- or f-block atom | PATOM |
+| Other molecular unrestricted/open-shell route (including singlet UHF/UKS), excluding isolated spin-polarized atoms | SAD |
+| Restricted closed-shell molecular route containing a d- or f-block atom | SAD |
 | Isolated spin-polarized atom | PATOM |
 | Ordinary periodic SCF route | SAD |
 | Cyclic route exposing only HCORE | HCORE |
@@ -115,6 +118,15 @@ opts.initial_guess = vq.InitialGuess.SAD     # explicit construction, if support
 opts.initial_guess = vq.InitialGuess.SAP     # explicit SAP, not AUTO's default
 opts.initial_guess = vq.InitialGuess.HCORE   # deterministic diagnostic start
 ```
+
+Molecular RHF HCORE and closed-shell molecular PATOM average occupations
+within a degenerate starting frontier whose total width is at most `1e-8`
+hartree, preserving electron count. AUTO inherits this rule when it selects
+the affected construction. It changes only the seed: gapped frontiers,
+compatible READ states, periodic/open-shell seed policies, and final SCF
+occupations keep their existing rules. It neither establishes the global
+ground state nor guarantees rotation invariance for every calculation. See
+[HCORE](initial_guess.md#hcore-core-hamiltonian-guess) for details.
 
 A READ source can preserve local antiferromagnetic order even when its total
 spin is zero. Do not equate equal spin counts with a restricted density.
@@ -391,8 +403,26 @@ then re-checks -- up to `stability_max_retries` times. A restart that
 runs out of iterations while still descending is chained into a few
 fresh-DIIS restarts from its final densities before the driver gives
 up: a fresh accelerator history started closer to the minimum converges
-where one saturated history wanders. The `.out` records the verdict next to
-the convergence line:
+where one saturated history wanders.
+
+For molecular UHF, if neither sign's anchored or free SCF restart produces a
+lower converged state, recovery retries the downhill seeds with the existing
+TRAH trust-region solver. This handles saddle
+recapture such as FeCl3/cc-pVDZ (#273). Both signs are searched; only a lower,
+converged result is accepted, then its stability is checked again. The original
+energy/gradient tolerances, iteration budget and TRAH controls still apply.
+This fallback is part of stability recovery even when `trah_threshold` is zero
+for the initial SCF. Disabling `stability_check` or setting
+`stability_max_retries=0` disables corrective recovery; convergence alone does
+not guarantee a minimum. Deliberate ATOMSPIN/SPINLOCK states retain their
+existing analysis-only policy.
+`result.stability_trah_used` records whether recovery invoked TRAH, including
+failed attempts, so the output can cite the method even with an unchanged
+zero `trah_threshold`.
+The vacuum-padded RIJCOSX UHF wrapper uses the same driver and preserves
+this recovery flag in its periodic output citations.
+
+The `.out` records the verdict next to the convergence line:
 
 ```
   converged in 15 iterations; E = -149.1799299198 Ha
@@ -546,10 +576,27 @@ is rescaled. It prevents the numerical rank decision from changing merely
 because a converging residual makes every Gram element small.
 | `SCFAccelerator.EDIIS` | Energy-DIIS (Kudin/Scuseria/Cancès 2002). Minimises a quadratic energy functional on the convex hull of stored (F, D) pairs. | Diagnostic, pure EDIIS plateaus near convergence; prefer the hybrid below. |
 | `SCFAccelerator.ADIIS` | Augmented-Roothaan-Hall DIIS (Hu & Yang 2010). The energy-functional sibling of EDIIS, minimises the ARH energy model expanded about the most recent iterate, same positive-simplex QP. | Diagnostic / comparison, Garza/Scuseria 2012 found it near-identical to EDIIS at the HF level; like pure EDIIS it plateaus near convergence. |
-| `SCFAccelerator.EDIIS_DIIS` | **Default (molecular, v0.8.0).** Garza/Scuseria 2012 hybrid. Use EDIIS while `‖e‖_F > ediis_diis_switch_threshold` (default 0.1), then switch to plain DIIS for the asymptotic regime. | The recommended setting for transition-metal complexes, broken-symmetry singlets, and any case where plain DIIS plateaus or oscillates. Matches PySCF / ORCA defaults. |
+| `SCFAccelerator.EDIIS_DIIS` | **Default (molecular, v0.8.0).** Garza/Scuseria 2012 hybrid. Use EDIIS while the intensive commutator norm (RMS matrix element, `‖e‖_F / nbf`, and `max_σ ‖e_σ‖_F / (√2 · nbf)` for UHF) is above `ediis_diis_switch_threshold`, then switch to plain DIIS for the asymptotic regime. Default threshold 0.1; open-shell UHF (n_α ≠ n_β) uses `ediis_diis_switch_threshold_open_shell`, default **1e-3** (see below). | The recommended setting for transition-metal complexes, broken-symmetry singlets, and any case where plain DIIS plateaus or oscillates. Matches PySCF / ORCA defaults. |
 | `SCFAccelerator.ADIIS_DIIS` | ADIIS analogue of the EDIIS_DIIS hybrid: use ADIIS while `‖e‖_F > ediis_diis_switch_threshold`, then switch to plain DIIS for the asymptotic regime (same switch threshold field). | The ADIIS sibling of the production hybrid; use when you prefer the ARH energy model far from convergence over EDIIS's convex-hull functional. Garza/Scuseria 2012 found ADIIS≈EDIIS at the HF level. |
 | `SCFAccelerator.R_CDIIS` | Restarted commutator-DIIS (Chupin/Dupuy/Legendre/Séré 2021). Plain DIIS extrapolation, but the history depth grows until the stored error differences become nearly linearly dependent, then restarts. Restart aggressiveness is `diis_restart_tau` (τ ∈ (0,1); default 1e-4, smaller ⇒ deeper history). | When a fixed `diis_subspace_size` window is over- or under-sized for the problem; lets the depth self-tune and avoids the ill-conditioning of a saturated fixed window. |
 | `SCFAccelerator.AD_CDIIS` | Adaptive-depth commutator-DIIS (same paper). Plain DIIS extrapolation, but the window keeps only recent iterates whose residual is within `1/δ` of the current one, so the depth shrinks smoothly near convergence. Controlled by `diis_adaptive_delta` (δ > 0; default 1e-4). | The smoother sibling of R_CDIIS: no post-restart slowdown; the paper's numerics suggest continuously adapting the depth gives the fastest convergence. |
+
+**Open-shell UHF switch threshold (GitLab #377).** On the intensive RMS scale
+a threshold of 0.1 corresponds to `‖e‖_F > 0.1 · √2 · nbf` for UHF, 8.5 already
+at 60 basis functions, so no extrapolated iterate takes the EDIIS branch and
+the hybrid runs as plain DIIS. That left the CN radical (UHF/cc-pVTZ,
+r = 1.17 Å) wandering 40 mHa above its minimum for 1000 iterations. When
+n_α ≠ n_β, `UHFOptions` therefore compares with
+`ediis_diis_switch_threshold_open_shell` (default 1e-3), which keeps EDIIS on
+while `‖e‖_F` is above about 0.1 for a basis of about 70 functions and hands
+over to DIIS long before convergence. On the 15 main-group radicals measured
+for #377 (cc-pVDZ, cc-pVTZ) the converged energies moved by at most 3e-13 Ha,
+and some runs took one to four more iterations. Spin-balanced UHF
+(n_α = n_β) keeps `ediis_diis_switch_threshold` (0.1): there EDIIS's convex
+combination of spin-symmetric iterates stays spin-symmetric and moved the Cr2
+singlet stability witnesses (#138) onto a closed-shell state. Set
+`ediis_diis_switch_threshold_open_shell = 1e-1` to reproduce the previous
+open-shell trajectory. RHF, RKS and UKS are unchanged.
 
 EDIIS and ADIIS minimise a generally nonconvex quadratic exactly by visiting
 every non-empty face of the coefficient simplex, following Kudin et al.
@@ -561,7 +608,7 @@ solve and retain their existing history-depth range.
 
 ```python
 opts.scf_accelerator = vq.SCFAccelerator.EDIIS_DIIS    # production hybrid
-opts.ediis_diis_switch_threshold = 1e-1                # default, PySCF-style
+opts.ediis_diis_switch_threshold = 1e-1                # default (open-shell UHF: see below)
 opts.diis_subspace_size = 8                            # rolling-history cap
 
 # Adaptive-depth commutator-DIIS (Chupin et al. 2021):
@@ -741,9 +788,31 @@ quadratic_fallback (C1c)  >  Newton (D2c)  >  TRAH (D2e)  >  SOSCF (D2d)
 | Field | Algorithm | Hessian | Per-step cost | Convergence | When to use |
 |---|---|---|---|---|---|
 | `quadratic_fallback_iter > 0` | Single damped Newton step in MO space | Diagonal preconditioner only | One eigsolve, no Fock build | Linear | Cheap escape from DIIS oscillation; the C1c periodic-SCF fallback. |
-| `newton_threshold > 0` | **Newton (D2c).** Full orbital Hessian via preconditioned CG. | Full Hessian, exact application via CG matvecs through `JKBuilder` (+ `XCKernelBuilder` for KS) | Multiple Fock builds per step (one per CG iter, ~5-15 typical); KS adds one W^XC matvec per CG iter | Quadratic in ~3-5 outer iters | The recommended finalizer for the asymptotic regime. **RHF / UHF / RKS / UKS, across LDA + GGA + hybrid-GGA** (UKS-GGA via the Phase 17e polarised GGA `f_xc` kernel). Meta-GGA second-order SCF still raises, τ-dependent polarised `f_xc` is unplumbed. |
-| `trah_threshold > 0` | **TRAH (D2e Helmich-Paris 2022).** Same Hessian + CG as Newton, plus Powell-ρ adaptive trust radius. | Full Hessian, exact application | Same as Newton plus a ρ-driven trust-radius update each iter | Quadratic in the trust region; more robust than Newton when the initial trust is too large | Hard-convergence cases where Newton's fixed trust radius overshoots. Same coverage matrix as Newton. |
+| `newton_threshold > 0` | **Newton (D2c).** Orbital-Hessian iteration via preconditioned CG. | Diagonal orbital-energy gaps plus response via `JKBuilder` (+ `XCKernelBuilder` for KS); omits off-diagonal occupied/virtual Fock blocks | Multiple Fock builds per step (one per CG iter, ~5-15 typical); KS adds one W^XC matvec per CG iter | Quadratic in ~3-5 outer iters | The recommended finalizer for the asymptotic regime. **RHF / UHF / RKS / UKS, across LDA + GGA + hybrid-GGA** (UKS-GGA via the Phase 17e polarised GGA `f_xc` kernel). Meta-GGA second-order SCF still raises, τ-dependent polarised `f_xc` is unplumbed. |
+| `trah_threshold > 0` | **TRAH (D2e, level-shifted PCG variant).** Shifted Hessian + CG, with Powell-ρ adaptive trust radius. | UHF/UKS: full occupied/virtual Fock blocks plus response. RHF/RKS: diagonal-gap approximation plus response | Same as Newton plus a ρ-driven trust-radius update each iter | Quadratic in the trust region; more robust than Newton when the initial trust is too large | Hard-convergence cases where Newton's fixed trust radius overshoots. Same coverage matrix as Newton. |
 | `soscf_threshold > 0` | **SOSCF (D2d Neese 2000).** Augmented-Hessian eigsolve with diagonal-dominant Hessian. | Diagonal Hessian + AH λ-shift; carries V_xc only through F^MO | Single small eigsolve, no Fock build | Linear (plateaus for pure DFT, see note) | Cheaper than Newton when Newton's matvec is too expensive. **All four flavours; works at tight 1e-9 Ha for HF / hybrid functionals, plateaus at ~1e-4 Ha for pure DFT** (V_xc[ρ+δρ]−V_xc[ρ] is sizable in pure DFT but absent from SOSCF's diagonal-only Hessian, that's literally the motivation for Newton/TRAH). |
+
+The reference TRAH-SCF algorithm is Helmich-Paris, *J. Chem. Phys.* **154**,
+164104 (2021), [doi:10.1063/5.0040798](https://doi.org/10.1063/5.0040798).
+It solves a scaled augmented-Hessian eigenproblem. The implementation here
+uses level-shifted preconditioned CG and a secular search for the shift;
+it does not reproduce the paper's inner eigensolver or all its guarantees.
+
+For UHF and UKS, TRAH retains the full occupied and virtual Fock blocks
+after orbital rotations. Orbital-energy gaps serve only as a preconditioner;
+the Hessian action does not assume that those blocks remain diagonal.
+Changing the orbital representation within either subspace therefore
+preserves this Hessian action. A converged, unique trust-region solution
+should give the same physical step. This does not establish that PCG finds
+that solution in every indefinite case: when the gradient is orthogonal
+to the most negative eigenspace, the current solver can miss that curvature
+and miss the optimal model decrease or misreport a boundary step (#424).
+Hard-case minima need not have identical orbital steps: acceptance compares
+model values and the boundary norm, allowing either sign along the unstable mode.
+Newton and RHF/RKS TRAH still use diagonal orbital-energy gaps in the
+Fock-block term, so that invariance is not guaranteed for those paths.
+This correction does not resolve the default UKS convergence failure in #55;
+the trust-radius controller and the default recovery path need separate validation.
 
 ```python
 # Recommended production stack: EDIIS+DIIS warm-up + Newton finalizer
@@ -758,7 +827,7 @@ opts.newton_opts.trust_radius = 0.3
 # Example (H₂O / cc-pVDZ / PBE on compute-reference): DIIS = 18 iter, Newton = 11 iter,
 # ΔE = 4e-14 Ha. Same iter-count win on B3LYP and LDA.
 
-# Cheaper alternative: TRAH instead of Newton (same matvec; adaptive radius)
+# Alternative: TRAH instead of Newton (adaptive radius)
 opts.trah_threshold = 1.0
 opts.trah_opts.initial_trust_radius = 0.3
 opts.trah_opts.max_trust_radius = 0.7
@@ -1147,3 +1216,10 @@ Good scaling requires enough work per thread, tiny test systems
 start-up overhead dominates. Bigger molecules and periodic calculations
 with many lattice cells benefit much more (up to near-linear in the
 Fock build).
+
+## Optional OpenTrustRegion backend
+
+For real, integer-occupied molecular HF and supported KS calculations,
+`orbital_optimizer="opentrustregion"` explicitly selects the optional upstream
+trust-region orbital optimizer. See [OpenTrustRegion](opentrustregion.md) for
+installation, supported response kernels, stability semantics and diagnostics.

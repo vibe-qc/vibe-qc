@@ -582,6 +582,8 @@ coupled equations and the common-space reference. Distinct retained ranks,
 empty triple spaces, convergence failures and cancellation are tested.
 Explicit frozen-core masks are tested through both complete workflows,
 including the inactive-core contribution to the HF reference energy.
+The HF contribution is copied exactly from the supplied captured HF state,
+including all frozen occupied orbitals.
 This is not yet the production pair-specific
 periodic DLPNO-CCSD(T) implementation and is not selected by
 `run_periodic_job`. Its diagnostic Python bindings enforce tiny bounds.
@@ -863,6 +865,18 @@ witness, all 16 s-shell quartet supports close; selected native multi-k SR
 integrals reproduce the mapped complex phases and independent Gaussian
 quadrature values.
 
+A private `audit_quartet_support` diagnostic compares two declared SR image
+multisets under any of the eight ERI permutations and integer site
+reanchoring. For centers moved by `A*t_i`, it starts from `(0,g,p,s)`,
+subtracts `t_i`, permutes the four slots, and subtracts the new first label.
+It preserves repeated-image counts and reports the lexicographically first
+label with unequal multiplicities. Integer arithmetic does not overflow or
+wrap finite cells onto a k mesh. Explicit storage/work admission precedes
+payload snapshots; the immutable receipt binds both ordered inputs and the
+mapping. A positive result proves label equality only. The caller must
+separately bind AO geometry, radii, kernel and Bloch phases, and both
+Hamiltonian and symmetry certification remain false.
+
 This is a source-development component, not the production HF truncation
 rule. It does not authenticate supplied centers as basis/atom ownership,
 bind a complete Ewald operator, or enable production symmetry reduction.
@@ -880,6 +894,13 @@ and inventories both lists, counting an identical borrowed view once.
 The shared-cell API delegates to this kernel and retains the shared-list
 scientific identity when both ordered contents are identical, even if their
 storage differs.
+
+The weighted LR product distinguishes exact cancellation from unresolved
+roundoff using normalized binary64 products and their FMA remainders.
+Equal products with different factors are admitted, including the five-point
+and shifted multiaxis mesh cases; no cancellation tolerance or zero clipping
+is used. Exponent scaling still preserves small residuals restored by the
+reciprocal weight and rejects nonfinite final results.
 
 For physical product domains, reversal relates two lists by `C_ba = -C_ab`.
 An individual off-diagonal list need not be invariant under inversion.

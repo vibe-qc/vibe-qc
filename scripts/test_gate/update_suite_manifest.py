@@ -40,6 +40,334 @@ FILE_OWNERS = {
 # here therefore widens or narrows the release gate on its own; pin one only as
 # the file's owning chat, and say why in the rationale.
 CURATED: dict[str, dict[str, str]] = {
+    "tests/test_orbital_frame.py": {
+        "maturity": "under-review", "tier": "T2",
+        "owner": "correlation/multireference",
+        "disposition": "new",
+        "rationale": (
+            "The orbital-frame contract inside degenerate clusters (#322): "
+            "canonicaliser determinism, provider literals, window guard; pure "
+            "Python on N2/cc-pVDZ and O2/STO-3G"
+        ),
+    },
+    "tests/test_run_verdict.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "output/docs",
+        "disposition": "new",
+        "rationale": (
+            "The run-level verdict every writer shares (#342 #346 #351): "
+            "vocabulary, the usable gate and the fail-closed manifest reader; "
+            "pure Python, no native core"
+        ),
+    },
+    "tests/test_periodic_k_gdf_ibz_admission.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "IBZ-native multi-k GDF exchange admits only operations closed on "
+            "the executed SR/LR or classic source; transported vs directly "
+            "built K on nonsymmetric trial densities, classic negative "
+            "control, refusal before any cderi build"
+        ),
+    },
+    # Recovered verbatim on 2026-09-30 while rebasing the basis-optimiser driver
+    # branch: the #385 / #268 rows below were written straight into the generated
+    # JSON without a CURATED backing row, so the regeneration this branch needs
+    # (one new test file) refused to run rather than clobber them. Values are the
+    # committed ones, copied without re-judging them; their owning chat may reword.
+    "tests/test_periodic_xc_grid_charge.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "Multi-k GDF KS drivers report a truncated XC grid density (#385): H2 "
+            "8-bohr cube STO-3G (2,1,1) at cutoff 8 / image radius 6 bohr warns "
+            "with PeriodicXCGridChargeWarning and records xc_grid_electrons; "
+            "16/12 is silent for the external provider and LDA; home-cell "
+            "densities are not checked."
+        ),
+    },
+    "tests/test_periodic_xc_screening.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": (
+            "Periodic XC AO-reach screen (#268, #299, #53): screened "
+            "build_xc_periodic/_uks equal the dense kernel (ao_screening_tol=0) "
+            "on MgO and LiH STO-3G for LDA/PBE/r2SCAN, including the potential of "
+            "a home-cell density; the screen prunes on compact images; a loose "
+            "tolerance moves E_xc (non-vacuity); n_electrons_grid reports the "
+            "grid electron count (#385)."
+        ),
+    },
+    "tests/basisset_dev/test_basis_opt_dfo_drivers.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": (
+            "Derivative-free basis-optimisation drivers (Py-BOBYQA, DFO-LS, "
+            "CMA-ES) and the CMA-ES-then-BDIIS recipe on the same mock "
+            "objectives test_bdiis_driver.py uses: minimum recovery in 1-D and "
+            "3-D, bounds, +inf iterates, the OptResult contract, the log-space "
+            "pack/unpack round trip and citation provenance. Pure Python, no "
+            "SCF, well under ten seconds; each backend is an optional "
+            "[basisopt-drivers] package, so a test skips without it and the "
+            "missing-package error path is pinned separately."
+        ),
+    },
+    "tests/test_release_msindo_cyclic_cluster_pins.py": {
+        "maturity": "under-review",
+        "tier": "T1",
+        "owner": "semiempirical/seccm (MSINDO)",
+        "disposition": "blocking T1",
+        "rationale": (
+            "pins the audited MSINDO-SECCM states of the semi-empirical "
+            "article's systems under both SCF state policies (#249): the bent C3 "
+            "chain sweep (bare and embedded) and the reference policy's flagged "
+            "saddle at 3e-3 bohr, and the MgO B1 / diamond 2x2x2 clusters, bare "
+            "and Madelung-embedded, with net charges and stability flags. "
+            "Blocking T1 at the article's request so a release cannot change "
+            "these numbers silently; about six seconds of native SCF. "
+            "under-review, not production: the pins are change-safety "
+            "evidence, and the route's maturity is a separate maintainer decision "
+            "while #249 awaits independent verification. The multi-start "
+            "uniqueness, 3x3x3 and force checks stay in the T3 test_msindo_ccm.py."
+        ),
+    },
+    "tests/test_symmetry_gdf.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Finite SR/LR GDF retained auxiliary gauge and tensor diagnostics, independent full-build comparisons and resource refusals; no production reduction",
+    },
+    "tests/test_ecp_native_output.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": (
+            "ECP integral builds write nothing to the process's stdout or "
+            "stderr (#392): child processes with captured file descriptors "
+            "on the W2/pob-TZVP-rev2 and H2S/LANL2DZ cases libecpint flags; "
+            "the quadrature report counts what it used to print, once per "
+            "build, and the periodic lattice screen is exact (#382)."
+        ),
+    },
+    "tests/test_gdf_cross_route_parity.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "One bulk GDF Hamiltonian across the Gamma routes (#54, #87, "
+            "#400): exact-Gamma vs k-mesh (1,1,1) and RHF vs UHF(M=1) "
+            "identities, knob- and charge-invariant default-Gamma energies, "
+            "driver control refusals, and the compcell/MDF single-image guard "
+            "(#172) checked against the exact omission. PySCF pins are "
+            "out-of-process numbers; the dense-core pins are slow."
+        ),
+    },
+    "tests/test_periodic_gdf_route.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "One decision for the GDF engine (row 3 of the 2026-09-29 cluster "
+            "audit: #54, #297, #301, #395, #400): the resolve_gdf_route table, "
+            "the .system record of engine/driver/reason/gauge, RHF vs UHF(M=1) "
+            "at (1,1,1) on the delegating mdf/compcell fits, RKS Fock mixing "
+            "across engines, and the open-shell k-mesh driver's refusals. "
+            "H2/STO-3G cells only; seconds per case."
+        ),
+    },
+    "tests/test_sr_q_mpi.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-chi",
+        "disposition": "new",
+        "rationale": "Optional SR q ownership, ordered gathering and collective source/domain/memory/failure protocol; numerical acceptance remains separate",
+    },
+    "tests/test_bipole_domain_contract.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "BIPOLE",
+        "disposition": "new",
+        "rationale": (
+            "Source-only resolved-domain, grid propagation and metadata contracts "
+            "for #316/#44. Standalone unittest command imports no native core. "
+            "Not numerical relabelling, energy or force acceptance."
+        ),
+    },
+    "tests/test_chi_reference_transport.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-chi",
+        "disposition": "new",
+        "rationale": "Chi accepted-reference state, source/frame/support admission and library reuse; no cross-construction oracle",
+    },
+    "tests/test_qvf_job_options.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "input/output",
+        "disposition": "new",
+        "rationale": (
+            "Executable QVF JSON-to-options boundary (#366): constructors, "
+            "nested records/enums, strict field types and explicit refusals. "
+            "No SCF; native option constructors only. Numerical lifecycle "
+            "acceptance is separate from these adapter contracts."
+        ),
+    },
+    "tests/test_chi_posthf_batch.py": {
+        "maturity": "experimental",
+        "tier": "T3",
+        "owner": "periodic/chi",
+        "disposition": "new",
+        "rationale": "Classic chi shared-q post-HF batching: complete ordered pairs, bounded AO lifetime, controls and exceptions. D93 remains not-qualified.",
+    },
+    "tests/test_roadmap_release_table.py": {
+        "maturity": "verified",
+        "tier": "T2",
+        "owner": "output/docs",
+        "disposition": "new",
+        "rationale": (
+            "The roadmap's release table against the repository. "
+            "docs/roadmap.md stated the current release in prose and that "
+            "prose went stale six releases running (#259), so the table "
+            "that replaced it is cross-checked rather than trusted: every "
+            "codename against RELEASE_CODENAMES, every minor with a "
+            "CHANGELOG.md section or a git tag against the rows, and no row "
+            "claiming planned while a tag exists. Pure file and catalog "
+            "reads plus one git tag -l; no SCF, well under a second."
+        ),
+    },
+    "tests/test_double_hybrid_run_job.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular correlation",
+        "disposition": "new",
+        "rationale": (
+            "GitLab #365: run_job now dispatches double hybrids "
+            "(method='b2plyp' and the other three) to run_double_hybrid, "
+            "which until then was reachable only through its own wrappers "
+            "while the release paper named run_job as the molecular entry "
+            "point. Pins the two properties that can silently go wrong: "
+            "energy parity between the two entry points -- run_job spells "
+            "several defaults None where the dispatcher spells them True, "
+            "and coercing those with bool() turned density fitting off for "
+            "a ~1e-6 Ha drift -- and the refusal of every run_job feature "
+            "the dispatcher does not carry, so optimize=True cannot be "
+            "dropped and reported as a double-hybrid number. Also pins the "
+            "open-shell construction on all three surfaces: the .out named "
+            "an RKS reference for a ROKS SCF, the .system could not tell "
+            "the branches apart, and the .bibtex omitted the semicanonical "
+            "ROHF-MP2 papers. Water and OH / cc-pVDZ; seconds per job, no "
+            "external runtime."
+        ),
+    },
+    "tests/test_xyz_energy_method.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "output/docs",
+        "disposition": "new",
+        "rationale": (
+            "A .xyz written by run_job must name the method its energy is "
+            "on. run_job writes the comment line from the SCF result's "
+            "energy and _select_method has already collapsed a correlated "
+            "request to its mean-field reference, so method='mp2' produced "
+            "a geometry file carrying the RHF energy under a bare energy= "
+            "tag, byte-identical to an RHF job's file (#360). ASE reads "
+            "energy= as the energy of the structure, so post-processing "
+            "MP2 optimizations silently yielded Hartree-Fock numbers. Pins "
+            "the energy_method= and method= tags end to end, that the "
+            "tagged number really is the reference energy and is "
+            "unchanged, that the two jobs' files now differ only in the "
+            "comment line, the auto-resolution case, the optimize=True "
+            "case, and an ASE round-trip proving the consumer sees both "
+            "the unchanged energy and the new labels. Water / STO-3G; "
+            "under a second per job, ASE behind importorskip."
+        ),
+    },
+    "tests/test_chi_transform_inputs.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Finite-character input admission, overflow, round trips and native parity; no scientific qualification",
+    },
+    "tests/test_chi_fit_source.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Explicit chi fit source, canonical source admission, typed execution metadata and process provenance; no qualification or cross-construction oracle",
+    },
+    "tests/test_hessian_surface.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular correlation",
+        "disposition": "new",
+        "rationale": (
+            "A reported Hessian must name the surface it was built on. "
+            "run_job resolves a correlated request down to its mean-field "
+            "reference before compute_hessian_fd differentiates it, so "
+            "method='mp2', hessian=True produced a frequency block "
+            "byte-for-byte identical to the RHF one with E(elec)-labelled "
+            "thermochemistry rows carrying the RHF energy -- nothing in the "
+            ".out, the .system manifest or the .qvf said which surface the "
+            "numbers described. Pins the Surface: line and its "
+            "not-the-requested-method note, the surface-named "
+            "thermochemistry labels and their arithmetic, the [hessian] "
+            "manifest section, the QVF vibrations surface key, and the "
+            "clean SKIPPED refusal for a method that resolves to no "
+            "mean-field reference at all. Water / STO-3G; under a second "
+            "per job, no external runtime."
+        ),
+    },
+    "tests/test_pbc_gaussian_image_guard.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "periodic-scf",
+        "disposition": "new",
+        "rationale": (
+            "Issue #133 fail-closed guard for the Gaussian periodic drivers: "
+            "a Gamma cell wider than cutoff_bohr leaves the translation ball "
+            "holding only g=0, and run_rhf_periodic / run_rks_periodic / "
+            "run_rhf_periodic_gamma returned the isolated cluster's energy "
+            "silently. Pins the refusal on all three entry points, the message "
+            "naming the cutoff and the way out, the "
+            "LatticeSumOptions.gamma_only_0 declaration that keeps the "
+            "molecular limit reachable, and two controls that the guard does "
+            "not fire on a genuinely periodic cell. Small STO-3G H2 chains; "
+            "seconds, no external runtime."
+        ),
+    },
+    "tests/test_stale_core_guard.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "release/test-health",
+        "disposition": "new",
+        "rationale": (
+            "Pins the stale-compiled-core refusal (#285): pytest exits the "
+            "reserved status 97 before collecting when _vibeqc_core predates "
+            "cpp/, run_full_suite.classify labels it STALE_CORE rather than "
+            "FAIL, and gate_verdict refuses to compute a verdict from an "
+            "artifact holding one. Pure Python; never touches cpp/ mtimes, "
+            "which would make the core stale for real."
+        ),
+    },
+    "tests/test_relocalization_worker.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "analysis/localization",
+        "disposition": "new",
+        "rationale": (
+            "Standalone JSONL relocalization protocol, native readiness, exact "
+            "archived basis reconstruction, molecular and experimental finite-torus "
+            "complex subspace invariants, strict refusals and explicit-only SCF. "
+            "Small local native calculations; no viewer or external QC runtime."
+        ),
+    },
+    "tests/test_opentrustregion.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular-SCF",
+        "disposition": "new",
+        "rationale": "Optional pinned orbital optimizer: matrix-free energy derivatives, C ABI/state isolation, molecular HF/KS and public output; real-library checks skip when absent",
+    },
     "tests/test_contributor_workflow_contract.py": {
         "maturity": "verified",
         "tier": "T2",
@@ -67,6 +395,25 @@ CURATED: dict[str, dict[str, str]] = {
         "rationale": "Hermetic external study profile and interpreter dispatch boundaries; no native calculation",
     },
 
+    "tests/test_semiempirical_pm6_basin_selection.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "semiempirical",
+        "disposition": "new",
+        "rationale": (
+            "pins GitLab #154's live limb: PM6/norbornadiene has several "
+            "genuine zero-temperature fixed points and the direct Pulay "
+            "iteration selects between them on arithmetic noise (a 1e-9 A "
+            "bridgehead nudge moves the converged total by 0.836 Ha), which "
+            "is why four fleet hosts reported four different converged "
+            "energies for one input and one build. Asserts the route refuses "
+            "such a system naming every solution it found, that the refusal "
+            "is the same outcome under noise-level input changes, that a "
+            "single-basin control (water) still reports, and that the direct "
+            "SCF no longer depends on the iteration budget. Real PM6 SCF "
+            "runs; no fleet access."
+        ),
+    },
     "tests/test_libint_capability_configure.py": {
         "maturity": "under-review",
         "tier": "T2",
@@ -175,6 +522,18 @@ CURATED: dict[str, dict[str, str]] = {
             "Sub-second parity guard between registry.toml's alias table and "
             "the C++ basis_data_name, which resolved names independently and "
             "disagreed (#743). Constructs tiny water bases; no SCF."
+        ),
+    },
+    "tests/test_basis_aug_own_file.py": {
+        "maturity": "verified",
+        "tier": "T2",
+        "owner": "basis/integrals",
+        "disposition": "demote T2",
+        "rationale": (
+            "Shell-by-shell guard that every aug-cc-pV* name loads its own "
+            "shipped .g94 instead of libint's base + augmentation- split, "
+            "which silently dropped the diffuse shells of 17 sets (#30). "
+            "One BasisSet per set over its elements plus one SAD guess; no SCF."
         ),
     },
     "tests/test_basis_overlay_freshness.py": {
@@ -1283,6 +1642,18 @@ CURATED: dict[str, dict[str, str]] = {
             "Small synthetic operators plus one sto-3g fixture; seconds."
         ),
     },
+    "tests/test_band_edges.py": {
+        # Rationale only; maturity/tier/owner stay derived from the lane.
+        "rationale": (
+            "pins GitLab #176: one band-edge classifier for every periodic "
+            "surface. The .out block and the native k-route fields read a "
+            "zero-temperature band-overlap metal as a positive-gap insulator "
+            "(the two-k discriminator printed 0.300000 Ha, 8.2 eV) while "
+            "frontier_bands said -0.3, and open-shell T = 0 still filled "
+            "each k independently. Pure-numpy synthetic spectra plus the "
+            "native parity check; seconds."
+        ),
+    },
     "tests/test_bipole_per_k_band_accessor.py": {
         # Rationale only; maturity/tier/owner stay derived from the lane.
         "rationale": (
@@ -1864,6 +2235,16 @@ CURATED: dict[str, dict[str, str]] = {
             "tier remains derived T2 through molecular-scf-dft"
         ),
     },
+    "tests/test_iao_population.py": {
+        "maturity": "production",
+        "tier": "T2",
+        "owner": "analysis/populations",
+        "disposition": "new",
+        "rationale": (
+            "Molecular determinant IAO charges, spin and IAO-Wiberg indices: "
+            "analytical covariance, matched-reference oracle and public output coverage"
+        ),
+    },
     "tests/test_iao_ibo.py": {
         "owner": "analysis/localization",
         "rationale": (
@@ -1905,6 +2286,18 @@ CURATED: dict[str, dict[str, str]] = {
             "supercell-Gamma results, the up-front refusal for per-k routes "
             "at true multi-k, and that D:S certification still refuses an "
             "uncertifiable density"
+        ),
+    },
+    "tests/test_periodic_slab_density_grid_origin.py": {
+        "maturity": "production",
+        "owner": "periodic-SCF",
+        "rationale": (
+            "slab and chain artifact grids must contain their atoms (#45): "
+            "the AO image sum translates along periodic axes only, so a box "
+            "pinned at the Cartesian origin dropped the charge below z=0 and "
+            "refused a 2-D UKS density artifact at 1.07 of 2.0 electrons. "
+            "Pins the centring, that dim=3 is untouched, and that a truly "
+            "thin slab is still refused with the cell named as the remedy"
         ),
     },
     "tests/test_periodic_runner_method_gate.py": {
@@ -2595,6 +2988,7 @@ EXPERIMENTAL_PATTERNS = (
     "tests/test_aiccm*.py",
     "tests/test_*seccm*.py",
     "tests/test_ccm*.py",
+    "tests/test_chi*.py",
     "tests/test_lowd_greens*.py",
     "tests/test_msindo_ccm*.py",
     "tests/test_periodic_aiccm*.py",
@@ -2606,6 +3000,13 @@ EXPERIMENTAL_PATTERNS = (
     "tests/test_periodic_ccm*.py",
     "tests/test_periodic_megacell*.py",
     "tests/test_periodic_toroidal_mp2.py",
+    # test_polipo_parity.py is hand-classified experimental in CURATED but
+    # matched none of the patterns above, so derive() fell through to its
+    # ("verified", "T2", "release/test-health", "demote T2") fallback and the
+    # disposition string survived classify() into suite_manifest.json, where
+    # it reads as a pending instruction to un-experimental the file. It is
+    # not one. Added 2026-09-18 (#370).
+    "tests/test_polipo*.py",
     "tests/test_seccm*.py",
 )
 

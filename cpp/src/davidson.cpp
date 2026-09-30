@@ -41,6 +41,45 @@ inline int workable_max_subspace(int requested, int n_eig, int n) {
     return std::min(n, std::max(requested, restart_dim + n_eig + 1));
 }
 
+// GitLab #287: when ``n`` itself is below the workable floor the clamp
+// above cannot honour it.  A collapse then keeps every column it has and
+// leaves no room for a single correction block, so the expansion branch
+// is unreachable and the sweep spins to max_iter returning
+// ``converged=false`` with nothing to tell the caller why.  Every
+// auto-budget stall in the #123 verification sweep (145 of 5496
+// configurations) satisfies ``n < 2 * n_eig + 6`` and none above it does.
+// Such a partial-spectrum problem is at most ``2 * n_eig + 5``
+// dimensional, so it is solved densely and exactly instead.  A
+// full-spectrum request (``n_eig == n``) keeps the iterative path, which
+// converges in one sweep and is what the SCF drivers use.
+inline bool below_restart_floor(int n_eig, int n) {
+    if (n_eig >= n) return false;
+    const int restart_dim = n_eig + std::min(5, n - n_eig);
+    return n < restart_dim + n_eig + 1;
+}
+
+template <typename Scalar, typename Result>
+static Result dense_partial_spectrum(
+    const Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>& A_raw,
+    int n_eig) {
+    using Mat = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>;
+    const Mat A = 0.5 * (A_raw + A_raw.adjoint().eval());
+    Eigen::SelfAdjointEigenSolver<Mat> es(A);
+    if (es.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "davidson_kernel: dense fallback below the restart floor "
+            "(GitLab #287) failed to diagonalise");
+    }
+    Result result;
+    result.eigenvalues  = es.eigenvalues().head(n_eig);
+    result.eigenvectors = es.eigenvectors().leftCols(n_eig);
+    result.n_iter       = 0;
+    result.subspace_dim = static_cast<int>(A.rows());
+    result.n_converged  = n_eig;
+    result.converged    = true;
+    return result;
+}
+
 // ---- Real-symmetric block-Davidson kernel (explicit A) ------------------
 
 // Block-Davidson driver shared by the explicit and matrix-free entry points.
@@ -95,6 +134,12 @@ static DavidsonResult davidson_kernel_impl(int n,
         throw std::invalid_argument(
             "davidson_kernel: n_guess (" + std::to_string(n_guess)
             + ") < n_eig (" + std::to_string(n_eig) + ")");
+    }
+    if (below_restart_floor(n_eig, n)) {
+        // GitLab #287: too small to iterate; ``n`` operator applications
+        // assemble the tiny matrix (the explicit path pays one product).
+        return dense_partial_spectrum<double, DavidsonResult>(
+            apply(Eigen::MatrixXd::Identity(n, n)), n_eig);
     }
 
     // ``diag`` is supplied by the caller (see DavidsonApply above).
@@ -494,6 +539,11 @@ DavidsonResultComplex davidson_kernel_hermitian(
         throw std::invalid_argument(
             "davidson_kernel_hermitian: n_guess (" + std::to_string(n_guess)
             + ") < n_eig (" + std::to_string(n_eig) + ")");
+    }
+    if (below_restart_floor(n_eig, n)) {
+        // GitLab #287: see the real kernel.
+        return dense_partial_spectrum<std::complex<double>,
+                                      DavidsonResultComplex>(A, n_eig);
     }
 
     // Diagonal of A (real, since A is Hermitian).

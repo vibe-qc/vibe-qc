@@ -71,8 +71,8 @@ FORMIC_ACID_DIMER = [
 
 # Mermin free energies at the converging rung, measured 2026-08-21.
 PINNED_FREE_ENERGY_HA = {
-    "adenine": -19.63356440,          # T = 0.002 Ha rung, 232 iterations
-    "formic_acid_dimer": -16.43989628,  # T = 0.0012 Ha rung, 573 iterations
+    "adenine": -27.089575576045554,   # T = 0.002 Ha rung; re-pinned (#373), was -19.63356440
+    "formic_acid_dimer": -20.49301121435573,  # T = 0.0012 Ha rung; re-pinned (#373), was -16.43989628
 }
 TOL_HA = 1e-5
 

@@ -238,6 +238,10 @@ different compatibility defaults for `madelung`:
 |---|---|---|
 | `translations` | *(required)* | The 1 to 3 supercell lattice vectors, in Angstrom. The count sets the dimensionality: 1 vector is CCM1D (a polymer), 2 is CCM2D (a surface), 3 is CCM3D (bulk). |
 | `madelung` | `True` in `CCMOptions`; `False` in `run_ccm`, `ccm_gradient_fd`, `ccm_gradient_analytic`, and `ccm_optimize` | Add the long-range Madelung electrostatic embedding. Recommended for ionic systems; the dimensionality of the embedding follows the number of translation vectors, and so does the kernel (2-D/3-D Ewald, 1-D truncated direct sum -- see [Madelung embedding](#madelung-embedding)). |
+| `max_iter` | `200` | Cumulative SCF iteration budget of the energy, including every stability restart. A run that exhausts it raises; it is not silently accepted. |
+| `conv_tol` | `1e-9` | Energy-route SCF threshold on both the commutator `[F,P]` and the energy change. |
+| `gradient_conv_tol` | `1e-10` | The tighter threshold the analytic-gradient callback re-converges with. |
+| `stability` | `"reference"` | SCF state policy after the stability audit: `"reference"` keeps the reference program's state and flags a detected saddle, `"lowest"` descends to a stable minimum. See [SECCM stability audit](msindo.md#seccm-stability-audit). |
 
 Nuclear gradients (Ha/bohr) come in two flavours, both holding the
 Wigner-Seitz topology fixed: `ccm_gradient_fd` (central finite differences) and
@@ -257,6 +261,27 @@ Each limit below is a clean error, not a silent wrong answer (CLAUDE.md § 7):
 
 CCM energies are validated out-of-process against reference MSINDO to better
 than 1 µHa (CLAUDE.md § 10).
+
+Every converged closed-shell CCM SCF is followed by a restricted
+orbital-stability audit (see [MSINDO](msindo.md#seccm-stability-audit));
+the `.out` prints its verdict, the cyclic-cluster dimension, the
+electrostatics kernel (naming the 1-D truncated sum as such), the SCF
+controls and state policy that ran, and the largest net atomic charge. The
+`.system` manifest records the same facts under `[run]` as
+`seccm_periodic_dimension`, `seccm_electrostatics_kernel`,
+`seccm_scf_max_iter`, `seccm_scf_conv_tol`, `seccm_gradient_conv_tol`,
+`seccm_stability_policy` and `seccm_max_abs_net_charge`. Every point also
+carries its stability record, `seccm_stability_checked`,
+`seccm_stability_analysis_converged`,
+`seccm_stability_eigenvalue`, `seccm_stability_restarts` and
+`seccm_internal_instability`, so a scan or equation-of-state consumer can
+separate stable minima from flagged saddles. A flagged saddle is a
+reference-state result, not a stable-minimum claim.
+These fields also appear in QVF `provenance.run_fields`. A checked audit
+that did not converge has no stability verdict, even when the SCF converged
+and no instability was reported. An unchecked audit likewise cannot certify
+a minimum. Older records missing the audit-convergence field carry unknown
+audit status; absence must not be interpreted as success.
 
 ## The ab-initio CCM roadmap
 

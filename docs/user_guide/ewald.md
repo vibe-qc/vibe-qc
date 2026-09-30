@@ -224,8 +224,9 @@ The ``EWALD_3D`` path has three convergence knobs:
 - **``VIBEQC_J_EWALD3D_KE``**, kinetic-energy cutoff (Hartree) for
   the analytical AO-pair-FT Hartree J mesh. Default 200 Ha. It applies
   to the opt-in ``use_exact_ft_j=True`` cross-check oracle on
-  ``run_pbc_bipole_rks`` and to the bounded analytic-FT J contraction
-  on 3D true-multi-k pure-RKS GDF jobs with ``use_compcell=False``.
+  ``run_pbc_bipole_rks`` and to the Ewald-3D drivers' analytic-FT J.
+  GDF k-mesh jobs no longer read it: since 2026-09-29 every
+  ``gdf_method`` runs its own fitted J there.
   The production BIPOLE pure-RKS route uses the padded SR+LR erfc
   composition and does not read it. Increase the cutoff for
   benchmark-quality all-electron tight-core cells; the BIPOLE oracle

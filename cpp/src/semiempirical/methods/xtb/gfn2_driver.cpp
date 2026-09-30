@@ -1,4 +1,5 @@
 #include "vibeqc/semiempirical/methods/xtb/gfn2_driver.hpp"
+#include "vibeqc/semiempirical/kpoints_occupations.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <algorithm>
@@ -368,63 +369,27 @@ void add_aes_potential_to_hamiltonian(
     }
 }
 
+// Occupations of one closed-shell spectrum, on the shared kernel the periodic
+// GFN2 and DFTB drivers and the gradient's AES response map already use
+// (kpoints_occupations.cpp): exact hard Aufbau at T = 0, the
+// particle-conserving Fermi-Dirac map n_i = 2 / (1 + exp((eps_i - mu) / T))
+// with its Mermin entropy at T > 0.  One solver for the SCC, the reported
+// entropy and the gradient's response keeps the three on the same ensemble
+// (vibe-qc#343); the driver used to carry a private copy of the same map.
+//
 // The default molecular GFN2 path uses the exact closed-shell Aufbau map.
 // A nonzero temperature is reserved for SCC stabilization retries: long-range
 // ionic diatomics can bounce between neutral and charge-transfer fixed points
 // when the third-order term is active and the frontier levels are nearly
 // discontinuous under hard occupations.
-Eigen::VectorXd closed_shell_occupations(
+KPointOccupationResult closed_shell_occupations(
     const Eigen::VectorXd& eps,
-    int n_electrons,
+    int n_occ,
     double temperature) {
-    const int n = static_cast<int>(eps.size());
-    Eigen::VectorXd occ = Eigen::VectorXd::Zero(n);
-    const double target = std::max(0.0, std::min(static_cast<double>(n_electrons),
-                                                 2.0 * static_cast<double>(n)));
-
-    if (temperature <= 0.0) {
-        const int n_occ = std::min(n, static_cast<int>(target) / 2);
-        for (int i = 0; i < n_occ; ++i) occ(i) = 2.0;
-        return occ;
-    }
-
-    if (target <= 1e-12) return occ;
-    if (target >= 2.0 * static_cast<double>(n) - 1e-12) {
-        occ.setConstant(2.0);
-        return occ;
-    }
-
-    auto particle_count = [&](double mu) {
-        double total = 0.0;
-        for (int i = 0; i < n; ++i) {
-            double x = (eps(i) - mu) / temperature;
-            x = std::max(-50.0, std::min(50.0, x));
-            total += 2.0 / (1.0 + std::exp(x));
-        }
-        return total;
-    };
-
-    const double width = std::max(temperature, 1e-8);
-    double lo = eps.minCoeff() - 80.0 * width - 1.0;
-    double hi = eps.maxCoeff() + 80.0 * width + 1.0;
-    for (int expand = 0; expand < 20; ++expand) {
-        if (particle_count(lo) <= target && particle_count(hi) >= target) break;
-        lo -= 2.0 * width;
-        hi += 2.0 * width;
-    }
-
-    for (int it = 0; it < 200; ++it) {
-        const double mid = 0.5 * (lo + hi);
-        if (particle_count(mid) < target) lo = mid;
-        else hi = mid;
-    }
-    const double mu = 0.5 * (lo + hi);
-    for (int i = 0; i < n; ++i) {
-        double x = (eps(i) - mu) / temperature;
-        x = std::max(-50.0, std::min(50.0, x));
-        occ(i) = 2.0 / (1.0 + std::exp(x));
-    }
-    return occ;
+    KPointOccupationOptions options;
+    options.smearing_temperature = temperature;
+    return compute_closed_shell_kpoint_occupations(
+        {eps}, {1.0}, 2.0 * n_occ, n_occ, options);
 }
 
 const char* eigen_status_name(Eigen::ComputationInfo info) {
@@ -647,6 +612,14 @@ GFN2Result run_gfn2_xtb(
         if (!params.has_element(atom.Z))
             throw std::runtime_error("run_gfn2_xtb: element Z="
                 + std::to_string(atom.Z) + " not in parameter set");
+    // The shared occupation kernel refuses a negative or non-finite
+    // temperature; say so in this driver's name. The private map this
+    // driver used to carry read T <= 0 as exact Aufbau silently.
+    if (!std::isfinite(opts.electronic_temperature)
+            || opts.electronic_temperature < 0.0)
+        throw std::invalid_argument(
+            "run_gfn2_xtb: electronic_temperature must be finite and >= 0 "
+            "(0 = exact zero-temperature Aufbau)");
 
     // n_primitives=0: GFN2-xTB per-element auto (H,He->3; else->4).
     BasisSet basis = SemiempiricalBasis::build(mol, params, 0);
@@ -809,6 +782,9 @@ GFN2Result run_gfn2_xtb(
 
     Eigen::VectorXd dq_shell = Eigen::VectorXd::Zero(n_shells);
     GFN2Result result;
+    // Set on every attempt, including retries and nonconverged results.
+    result.aes_functional = opts.aes_faithful
+        ? GFN2AESFunctional::Faithful : GFN2AESFunctional::Shell;
     result.n_basis = n_basis;
     result.n_occ = n_occ;
     std::vector<double> max_change_trace;
@@ -846,6 +822,32 @@ GFN2Result run_gfn2_xtb(
     const int total_max_iter = std::max(0, opts.max_iter);
     const bool use_stabilization =
         has_gam3 && opts.auto_stabilize && total_max_iter >= 2500;
+    // The auto-stabilisation ladder, hoisted above the SCC loop so the primary
+    // attempt's extension ceiling is computed from the rungs that will actually
+    // run rather than from duplicated literals.  Consumed after the loop.
+    struct Retry {
+        double charge_mixing;
+        int max_iter;
+        double electronic_temperature;
+    };
+    std::vector<Retry> retries;
+    if (use_stabilization) {
+        retries = {
+            {0.01, 1800, 0.0},
+            {0.05, 500, 0.005},
+        };
+        if (has_extended_period_element(mol)) {
+            retries.push_back({0.05, 600, 0.05});
+        }
+    }
+    // vibe-qc#306: the ladder is not optional rescue capacity.  For the
+    // affected systems its finite-temperature rung is the ONLY stage that
+    // converges at all -- measured: neither the primary nor the slow T=0 rung
+    // converges at any budget, while the T=0.005 rung converges them in a few
+    // hundred iterations.  Its budget must therefore never be spendable by the
+    // primary attempt.
+    int ladder_reserve = 0;
+    for (const auto& retry : retries) ladder_reserve += retry.max_iter;
     // The 700-iteration checkpoint is ADVISORY, not a hard cap (vibe-qc#3).
     // It exists to hand an oscillating solve to the retry ladder early, but a
     // primary attempt that is still contracting must not be abandoned merely
@@ -859,6 +861,24 @@ GFN2Result run_gfn2_xtb(
     // 2500 it turned a converged run into an outright failure.
     int primary_max_iter =
         use_stabilization ? std::min(700, total_max_iter) : total_max_iter;
+    // Ceiling for the advisory extension (vibe-qc#306).  ea2d4cb capped it at
+    // total_max_iter, i.e. at the whole budget including the ladder's share.
+    // Measured at the default 3600: norbornadiene's primary took 3500 of 3600
+    // and p-benzoquinone's took 2800, leaving rung 1 a truncated 100 and 800
+    // iterations and rung 2 nothing at all -- "did not converge after 3600
+    // iterations", a count v0.17.1 could not produce (its worst light-element
+    // failure was 700+1800+500 = 3000).
+    //
+    // The floor is the ceiling the DEFAULT budget affords, so a caller who
+    // lowers max_iter does not lose the vibe-qc#3 extension that adenine needs
+    // (its primary converges at 720, measured).  It is derived from constants
+    // already here, not fitted: 3600 - 2300 = 1300 for a light-element
+    // molecule, and 3600 - 2900 = 700 -- i.e. exactly the pre-ea2d4cb
+    // behaviour -- for an extended-period one.
+    constexpr int kDefaultMaxIter = 3600;  // XTBSccOptions::max_iter default
+    const int primary_extension_ceiling = std::max(
+        std::min(kDefaultMaxIter - ladder_reserve, total_max_iter),
+        total_max_iter - ladder_reserve);
     // Contraction test over the two most recent windows of the residual
     // trace.  A genuinely oscillating or stalled attempt cannot improve its
     // window minimum and so still reaches the ladder at the checkpoint.
@@ -973,8 +993,9 @@ GFN2Result run_gfn2_xtb(
         }
         Eigen::VectorXd eps = solver.eigenvalues();
         Eigen::MatrixXd C = solver.eigenvectors();
-        Eigen::VectorXd occ = closed_shell_occupations(
-            eps, 2 * n_occ, opts.electronic_temperature);
+        const KPointOccupationResult occupation = closed_shell_occupations(
+            eps, n_occ, opts.electronic_temperature);
+        const Eigen::VectorXd& occ = occupation.occupations_per_k.front();
         Eigen::MatrixXd D = C * occ.asDiagonal() * C.transpose();
         Eigen::MatrixXd DS = D*S;
 
@@ -1037,20 +1058,15 @@ GFN2Result run_gfn2_xtb(
             }
 
             result.energy = E_band0 + E_es + E_aes + E_3rd + E_rep;
-            double entropy = 0.0;
-            if (opts.electronic_temperature > 0.0) {
-                for (int orbital = 0; orbital < occ.size(); ++orbital) {
-                    const double fraction = std::clamp(
-                        occ(orbital) / 2.0, 1.0e-300, 1.0 - 1.0e-15);
-                    entropy -= 2.0 * (
-                        fraction * std::log(fraction)
-                        + (1.0 - fraction) * std::log(1.0 - fraction));
-                }
-            }
-            result.entropy = entropy;
+            // Mermin entropy of the occupations that built D (zero under
+            // exact Aufbau), from the same kernel: A = E - T*S is the
+            // stationary potential of a smeared SCC (Bannwarth, Ehlert &
+            // Grimme, JCTC 2019, Eqs. 8 and 10; Mermin, Phys. Rev. 137,
+            // A1441 (1965)), and the surface the analytic gradient reports.
+            result.entropy = occupation.entropy;
             result.smearing_temperature = opts.electronic_temperature;
             result.free_energy = result.energy
-                - opts.electronic_temperature * entropy;
+                - opts.electronic_temperature * result.entropy;
             result.e_electronic = E_band0 + E_es + E_aes + E_3rd;
             result.e_repulsive = E_rep; result.e_scc = E_es;
             result.e_band0 = E_band0; result.e_aes = E_aes; result.e_3rd = E_3rd;
@@ -1063,6 +1079,7 @@ GFN2Result run_gfn2_xtb(
                       + moments.oz(si)*moments.oz(si);
             result.shell_dip_rms = std::sqrt(dip2 / std::max(1, n_shells));
             result.mo_energies = std::move(eps); result.mo_coeffs = std::move(C);
+            result.occupations = occ;
             result.density = std::move(D); result.overlap = S;
             result.hamiltonian = std::move(H_scc); result.charges = std::move(dq_atom);
             result.n_basis = n_basis; result.n_occ = n_occ;
@@ -1147,11 +1164,13 @@ GFN2Result run_gfn2_xtb(
         }
 
         // Advisory checkpoint: extend the primary attempt by another block
-        // while it is still contracting and budget remains (vibe-qc#3).
+        // while it is still contracting, without ever spending the ladder's
+        // reserve (vibe-qc#3, bounded by vibe-qc#306).
         if (use_stabilization && iter == primary_max_iter
-                && primary_max_iter < total_max_iter && still_contracting()) {
+                && primary_max_iter < primary_extension_ceiling
+                && still_contracting()) {
             primary_max_iter =
-                std::min(total_max_iter, primary_max_iter + 700);
+                std::min(primary_extension_ceiling, primary_max_iter + 700);
         }
     }
     result.n_iter = primary_max_iter;
@@ -1161,11 +1180,6 @@ GFN2Result run_gfn2_xtb(
         result, opts, primary_max_iter, max_change_trace, attempt_solver);
 
     if (use_stabilization) {
-        struct Retry {
-            double charge_mixing;
-            int max_iter;
-            double electronic_temperature;
-        };
         // BUG 45: the former ladder ran three increasingly long T=0 retries
         // (3000 + 5000 + 12000 iterations) before trying the finite-temperature
         // path that actually converges the affected neutral heterocycles in a
@@ -1179,19 +1193,21 @@ GFN2Result run_gfn2_xtb(
         // bounded high-T retry.  Light-element automatic stabilization remains
         // bounded to 3000 SCC iterations; extended-period systems are bounded
         // to 3600 SCC iterations with the default max_iter.
-        std::vector<Retry> retries = {
-            {0.01, 1800, 0.0},
-            {0.05, 500, 0.005},
-        };
-        if (has_extended_period_element(mol)) {
-            retries.push_back({0.05, 600, 0.05});
-        }
+        // The rungs were built above the SCC loop, because the primary
+        // attempt's extension ceiling is derived from their total budget.
         for (const auto& retry : retries) {
             const int remaining_iters = total_max_iter - result.n_iter;
             if (remaining_iters <= 0) break;
+            // vibe-qc#306: skip a rung that cannot have its whole budget
+            // rather than truncating it.  A truncated rung cannot converge --
+            // measured, adenine's rung 1 needs 1984 of its nominal 1800, and
+            // at the default budget ea2d4cb left rung 1 just 100 iterations --
+            // but it still consumes the budget of the rung behind it, which is
+            // how the only rung that converges these systems was starved.
+            if (remaining_iters < retry.max_iter) continue;
             XTBSccOptions ropts = opts;
             ropts.charge_mixing = retry.charge_mixing;
-            ropts.max_iter = std::min(retry.max_iter, remaining_iters);
+            ropts.max_iter = retry.max_iter;
             // vibe-qc#3: never override an EXPLICITLY requested electronic
             // temperature.  gfn2_driver.hpp promised that this driver's
             // default stays exact zero-temperature Aufbau, and the pybind

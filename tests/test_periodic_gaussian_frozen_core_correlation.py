@@ -180,7 +180,12 @@ def test_actual_mask_changes_partition_receipts_but_not_four_electron_hf(frozen_
     state, original = b.hf.state, b.unfrozen_hf.state
     assert state.electrons_per_cell == original.electrons_per_cell == 4
     assert (state.n_frozen_core, state.n_correlated_occupied, state.n_virtual) == (1, 1, 2)
-    assert state.reference_energy_per_cell == original.reference_energy_per_cell
+    # These are separate HF solves. Numerical mask invariance is distinct
+    # from the exact pass-through contract of each captured input (#305).
+    assert state.reference_energy_per_cell == b.hf.diagnostics.captured_energy_per_cell
+    assert original.reference_energy_per_cell == b.unfrozen_hf.diagnostics.captured_energy_per_cell
+    assert state.reference_energy_per_cell == pytest.approx(
+        original.reference_energy_per_cell, rel=0, abs=2e-13)
     assert state.state_identity_sha256 != original.state_identity_sha256
     assert state.calculation_identity != original.calculation_identity
     assert b.hf.original_input_identity_sha256 != b.unfrozen_hf.original_input_identity_sha256

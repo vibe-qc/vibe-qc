@@ -24,6 +24,8 @@ import numpy as np
 import pytest
 import vibeqc as vq
 
+from tests.refusal_receipt import assert_preflight_refusal
+
 
 @pytest.fixture()
 def h2_mol():
@@ -389,7 +391,7 @@ def test_periodic_skala_dispersion_guard_preserves_disable_spellings(
             match="dispersion is not yet supported with periodic SKALA",
         ):
             vq.run_periodic_job(system, basis, **kwargs)
-        assert not stem.with_suffix(".system").exists()
+        assert_preflight_refusal(stem)
     else:
         assert vq.run_periodic_job(system, basis, **kwargs) is None
         assert stem.with_suffix(".system").exists()
@@ -466,7 +468,7 @@ def test_periodic_skala_rejects_neutral_bloch_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize(
@@ -509,7 +511,7 @@ def test_periodic_skala_rejects_surrogate_hamiltonian_properties_before_scf(
             **property_kwargs,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 def test_periodic_rohf_gdf_dry_run_charges_open_shell_pair_memory(
@@ -1180,7 +1182,7 @@ def test_aiccm_front_door_restricted_open_shell_fails_closed(
             progress=False,
             initial_guess=("HCORE" if variant == "real-gamma" else "SAD"),
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
     # The two explicit references check their functional consistency first.
     with pytest.raises(ValueError, match="scf_reference='rohf'"):
         vq.run_periodic_job(
@@ -1431,7 +1433,7 @@ def test_aiccm_real_gamma_rejects_a_criterion_it_cannot_honour(tmp_path, unsuppo
         )
     (name, value), = unsupported.items()
     assert f"{name}={value!r}" in str(exc.value)
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 def test_aiccm_variant_is_explicit_for_the_dftu_auto_fallback(tmp_path):
@@ -1448,7 +1450,7 @@ def test_aiccm_variant_is_explicit_for_the_dftu_auto_fallback(tmp_path):
             dft_plus_u=[HubbardSite(0, 0, 1.0)], aiccm_lattice_extension=(2, 1, 1),
             output=stem, dry_run=True, progress=False, initial_guess="HCORE",
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 # ---------------------------------------------------------------------------
@@ -1524,7 +1526,13 @@ def test_real_gamma_supercell_orbitals_never_reach_a_unit_cell_artefact(tmp_path
     pairs orbitals with the unit-cell basis must refuse them above a
     one-cell torus: the Molden sidecar already did, through its own
     capability gate, and an explicit request fails closed; the QVF
-    wavefunction section now does too."""
+    wavefunction section now does too.
+
+    The population sidecar is not such an artefact. Since M5 (84af5e3) it is
+    written from ``compute_ccm_population_summary``, which reduces the
+    supercell to per-cell charges and bond orders, so it is a supported
+    output on this route (#304). This test pins only that it describes the
+    unit cell; ``tests/test_ccm_properties.py`` owns its contents."""
     import warnings
 
     system, basis = _aiccm_h2()
@@ -1542,7 +1550,12 @@ def test_real_gamma_supercell_orbitals_never_reach_a_unit_cell_artefact(tmp_path
     assert _sidecar_mo_ao_dimension(result) == 2 * int(basis.nbasis)
     assert _qvf_wavefunction_shapes(stem.with_suffix(".qvf")) is None
     assert not stem.with_suffix(".molden").exists()
-    assert not stem.with_suffix(".population.txt").exists()
+    population = stem.with_suffix(".population.txt").read_text(encoding="utf-8")
+    mulliken = population.split("# === Mulliken atomic charges ===", 1)[1]
+    mulliken = mulliken.split("# ===", 1)[0]
+    rows = [line for line in mulliken.splitlines()
+            if line.strip() and not line.startswith("#")]
+    assert len(rows) == len(system.unit_cell), rows
     # An explicit sidecar request is refused rather than silently dropped.
     with pytest.raises(NotImplementedError, match="write_molden_file"):
         vq.run_periodic_job(

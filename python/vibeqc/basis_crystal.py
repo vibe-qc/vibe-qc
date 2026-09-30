@@ -1025,9 +1025,10 @@ _BREDOW_AE_TO_ECP_KEYS: dict[str, list[str]] = {
         "pob-tzvp-rev2-cs-po",
         "pob-tzv-rev2-la-lu",
     ],
+    # pob-TZVP has no lanthanides; its papers stop at I. The rev2 La-Lu
+    # archive belongs to pob-TZVP-rev2 alone (#289).
     "pob-tzvp": [
         "pob-tzvp-rb-i",
-        "pob-tzv-rev2-la-lu",
     ],
     "pob-dzvp-rev2": [
         "pob-dzvp-rb-i",
@@ -1041,9 +1042,16 @@ _BREDOW_CITATIONS = {
         "(2013). DOI: 10.1002/jcc.23153; Rb-I: Laun, Vilela Oliveira, Bredow. "
         "J. Comput. Chem. 39, 1285-1290 (2018). DOI: 10.1002/jcc.25195"
     ),
+    # Five papers, one per range of the records (#288).
     "pob-tzvp-rev2": (
-        "Vilela Oliveira, Laun, Peintinger, Bredow. J. Comput. Chem. 40, "
-        "2364-2376 (2019). DOI: 10.1002/jcc.26013"
+        "Peintinger, Vilela Oliveira, Bredow. J. Comput. Chem. 34, 451-459 "
+        "(2013). DOI: 10.1002/jcc.23153; H-Br: Vilela Oliveira, Laun, "
+        "Peintinger, Bredow. J. Comput. Chem. 40, 2364-2376 (2019). "
+        "DOI: 10.1002/jcc.26013; Rb-I: Laun, Bredow. J. Comput. Chem. 43, "
+        "839-846 (2022). DOI: 10.1002/jcc.26839; Cs-Ba, Hf-Po: Laun, "
+        "Bredow. J. Comput. Chem. 42, 1064-1072 (2021). "
+        "DOI: 10.1002/jcc.26521; La-Lu: Seidler, Laun, Bredow. "
+        "J. Comput. Chem. 44, 1418-1425 (2023). DOI: 10.1002/jcc.27097"
     ),
     "pob-dzvp-rev2": (
         "Vilela Oliveira, Laun, Peintinger, Bredow. J. Comput. Chem. 40, "

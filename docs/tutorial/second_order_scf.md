@@ -80,6 +80,9 @@ support them, through the matching `UHFOptions` / `RKSOptions` /
 
 ## See also
 
+- [Molecular SCF with OpenTrustRegion](opentrustregion.md) and
+  [READ restarts and orbital stability](opentrustregion_stability.md), for the
+  separately selected optional orbital optimizer and its worked examples.
 - [Stiff molecular SCF: EDIIS+DIIS](ediis_diis_hybrid.md), the first thing to
   reach for before second order.
 - [Initial guesses](initial_guess_walkthrough.md), since a better starting

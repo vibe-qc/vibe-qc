@@ -147,11 +147,19 @@ family and the Pople sets. Forty-four of them are valence-only
 somewhere and ship their ECP as a `.ecp` sidecar that the molecular SCF
 wrappers attach automatically, per element: the def2 family from Rb to Rn
 (the libint H-Kr files extended with the Basis Set Exchange blocks and the
-def2-ECP), the LANL and dhf families, vDZP, the 3c bases def2-mSVP /
+def2-ECP; plain, unpolarized def2-SV is the exception, see below), the LANL and dhf families, vDZP, the 3c bases def2-mSVP /
 def2-mTZVP / def2-mTZVPP, pob-TZVP-rev2, and the 16 Peterson/Figgen
 `{,aug-}cc-p{V,wCV}{D,T,Q,5}Z-PP` sets (Cu-Kr, Y-Xe, Hf-Rn).
 `x2c-TZVPall` is all-electron
 (it needs no ECP, and none is attached). See [user guide § ECPs](ecp.md).
+
+**def2-SV stops at Ar.** The unpolarized `def2-sv` covers H-Ar only (18
+elements) and is all-electron over that range. This is a deliberate
+boundary, not a gap in the fetch: the Basis Set Exchange has no def2-SV
+record past argon, and its "Ahlrichs VDZ" (the 1992 SV) is a different set.
+A K-Rn atom in `def2-sv` is refused with an error that names the element
+(`has no functions for Z=19`). For those elements use `def2-sv(p)` or
+`def2-svp`, which reach Rn with the def2-ECP.
 ```
 
 ## Using a basis set
@@ -161,6 +169,16 @@ from vibeqc import BasisSet
 basis = BasisSet(mol, "pob-tzvp")
 print(basis.nbasis)      # number of basis functions
 ```
+
+Names are matched on their letters, digits and `+` only, ignoring case,
+spaces and other punctuation. `6-31G(d,p)`, `6-31G(d, p)` and `631gdp` all
+load `6-31g**`; `sto3g`, `STO_3G` and `Sto 3G` all load `sto-3g`. The basis
+registry (`vibeqc.basis_registry.lookup`, which supplies the default
+auxiliary sets and the ECP rules) resolves a name with the same function,
+so every spelling gets the same metadata as the file it loads. An
+`aug-cc-pV*` name loads its own bundled file when one ships (the
+cc-pVnZ-PP, `-RIFIT` and `(n+d)` families). Otherwise it loads the parent
+set plus its `augmentation-` file.
 
 For periodic systems with diffuse molecular bases, optionally
 filter the most-diffuse primitives:

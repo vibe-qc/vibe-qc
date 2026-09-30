@@ -521,14 +521,55 @@ repair it -- so it is recorded: `potential.protocol` says what the surface was
 and `params.fitted_protocol` says what the constants expect. Compare them
 before believing a number.
 
+### Computing the solvent near the fitted protocol
+
+vibe-qc cannot run DMol's numerical DNP basis, but it can match the
+functional. **BPW91 with def2-TZVP is the recommended recipe**, for the solvent
+and for the solute alike:
+
+```python
+opts = vq.RKSOptions()
+opts.functional = "bpw91"
+solvent = vq.run_cpcm_scf(
+    water, vq.BasisSet(water, "def2-tzvp"), method="rks", options=opts,
+    solvent=vq.SolventModel(
+        epsilon=math.inf, variant="cosmo", cavity="fine",
+        radii=dict(K.cavity_radii), radii_scale=1.0,
+        solvent_probe_radius_ang=0.0,
+    ),
+)
+potential = rs.solvent_sigma_potential(solvent, K, method="bpw91", basis="def2-tzvp")
+```
+
+Pass the functional as `method` so that `potential.protocol` names it
+(`bpw91/def2-tzvp/fine-cfc`). The level of theory decides how far a surface
+polarizes, and every number built on the surface follows. Measured with the
+fine cavity at 0.35 A and `KLAMT_1998` radii, solute and solvent at the same
+level, energies and macro-iterations from Direct COSMO-RS:
+
+| | RHF/STO-3G | BPW91/def2-TZVP |
+|---|---|---|
+| water sigma, 1st to 99th percentile (e/Å²) | -0.012 to +0.014 | -0.017 to +0.018 |
+| COSMO-RS term, water in water (kcal/mol) | +0.3 | -7.7 |
+| COSMO-RS term, acetate (kcal/mol) | +11.7 | -15.0 |
+| COSMO-RS term, ammonium (kcal/mol) | -11.0 | -19.5 |
+| area beyond the fitted grid, acetate / ammonium | 1.6 / 8.2 % | 6.9 / 8.2 % |
+| macro-iterations, water / acetate / ammonium | 9 / 9 / 5 | 14 / 15 / 8 |
+
+A minimal basis is too stiff to polarize into the hydrogen-bonding wings of the
+potential, so at RHF/STO-3G an anion comes out *disfavoured* by water. At
+BPW91/def2-TZVP both ions gain, as they should, and water gains in its own
+solvent.
+
 A computed water potential has the shape water should have: **positive** near
 $\sigma = 0$, which is the cost of putting a nonpolar surface in water, and
 **negative at both wings**, where a polarized surface donates or accepts a
-hydrogen bond. One consequence looks like a bug and is not: the COSMO-RS term
-for a small solute in water comes out *unfavourable* by around half a kcal/mol
-on top of the conductor energy, because most of a small solute's surface sits
-at moderate $\sigma$ where water's potential is positive. That is the
-hydrophobic penalty.
+hydrogen bond. At RHF/STO-3G one consequence looks like a bug and is not: the
+COSMO-RS term for a small solute in water comes out *unfavourable* by around
+half a kcal/mol on top of the conductor energy, because most of the solute's
+narrow profile sits at moderate $\sigma$ where water's potential is positive.
+That is the hydrophobic penalty, and at a level that polarizes enough to reach
+the wings, a polar solute's hydrogen bonds outweigh it.
 
 ### Two requirements, both measured rather than stylistic
 
@@ -561,13 +602,73 @@ things to read when the outer loop will not settle:
 
 | | meaning |
 |---|---|
-| `fraction_near_hb_corner` | segments sitting on the discontinuity (about a quarter is normal) |
+| `fraction_near_hb_corner` | segments sitting on the discontinuity (2 to 15 percent measured on small solutes; see below) |
 | `fraction_outside_grid` | area whose sigma is extrapolated beyond the fitted range |
 
 The extrapolation is through the misfit term, which is quadratic and defined
 everywhere, so it is smooth rather than a clamp -- but it is still
 extrapolation, and a large share means the surface and the parameterization
 disagree about what a polar segment looks like.
+
+**Measured at RHF/STO-3G, the loop is robust.** Across RHF/STO-3G solutes in a
+water potential computed the same way (fine cavity at 0.35 A, `KLAMT_1998`
+radii), methanol, acetic acid, acetate, ammonium and benzene converge in 5 to
+11 macro-iterations, and water in a computed methanol potential in 10. Every
+run converges monotonically, including water in methanol with 15 percent of its
+surface on the hydrogen-bond corner. Those counts are for the plain loop; the
+accelerated loop described below takes as many or one fewer on every solute
+here, reaches the same energy within 3e-13 Ha, and can alternate in sign once
+the change is below 1e-7. The loop stops on the conductor term
+alone, `|delta e_solv| < tol_e_solv`, yet the reported total, COSMO-RS energy
+included, is converged far inside that tolerance: at 1e-4 to 1e-8 it sits
+within 6e-6 of the tolerance of a tightly converged run.
+
+**At a realistic level of theory a polar solute overshoots.** With solute and
+solvent both at BPW91, acetate's feedback oscillates: at def2-SVP the change
+in `e_solv` flips sign on every one of its last ten macro-iterations and a
+plain fixed-point loop needs 26 of them, and at def2-TZVP it needs 60, twice
+the default `max_macro_iter` of 30. The loop therefore extrapolates the
+feedback potential over its last four iterates (Anderson acceleration;
+Anderson, *J. ACM* **12**, 547 (1965)). That brings acetate to 18
+macro-iterations at def2-SVP and 15 at def2-TZVP, leaves the monotone runs
+above where they were, and converges to the same energy to 1e-13 Ha. Fixed
+damping was measured and rejected: a factor of 0.7 helps acetate (15 at
+def2-SVP) but nearly doubles every run that was already monotone (water 9 to
+16).
+
+**Ions are the caveat, and it is not a convergence one.** An ion's surface
+polarization runs past the range a sigma potential is fitted over, and there
+the potential is extrapolated through the misfit term. At RHF/STO-3G ammonium
+puts 8 percent of its area beyond the grid, with sigma up to 0.38 e/Å², and
+acetate 1.6 percent, and the extrapolation dominates their energies (the table
+above). Computing solvent and solute at BPW91/def2-TZVP gives both ions the
+sign they should have, but it does not remove the extrapolation: acetate, now
+polarizing further, puts 6.9 percent of its area beyond the grid and ammonium
+8.2. That is what an ion's surface is, at both levels measured. Read
+`fraction_outside_grid` before trusting an ion's number.
+
+**Smoothing the hydrogen-bond corner.** The discontinuity is in Klamt's
+hydrogen-bond term itself, `c_hb max[0, acc - sigma_hb] min[0, don + sigma_hb]`.
+A positive `Parameterization.hb_smoothing` replaces its two corners with
+softplus ramps of that width, in e/Å², giving an interaction energy that is
+smooth in $\sigma$ everywhere:
+
+```python
+import dataclasses
+from vibeqc.solvation.cosmors.parameters import KLAMT_1998
+
+smoothed = dataclasses.replace(KLAMT_1998, hb_smoothing=5e-4)
+```
+
+The default is `0.0`, which is the published form exactly: every published
+COSMO-RS number is unchanged unless you ask for smoothing. The smoothed term
+tends to the published one linearly in the width, and it is the prerequisite
+for a Direct COSMO-RS nuclear gradient, which is not implemented yet
+(`cpcm_gradient` still refuses a Direct COSMO-RS result). It departs from the
+published functional form by a measured amount. On RHF/STO-3G solutes in a
+computed water potential, a width of 5e-4 (a sixteenth of `sigma_hb`) moves the
+COSMO-RS energy by less than 0.05 kcal/mol and 1e-3 by up to 0.25, and neither
+changes how many macro-iterations the loop needs.
 
 Because the feedback is discontinuous in $\sigma$, a Direct COSMO-RS energy is
 **not smooth in the geometry**. There is no analytic nuclear gradient for it,
@@ -581,6 +682,87 @@ $q^{\Delta RS}$ operator. That gradient passes translational invariance to
 1e-15 and is wrong by up to 1.4e-03 Ha/bohr on water. For an analytic gradient
 use `variant="cosmo"`, which is a different energy. `cpcm_gradient_fd`
 differentiates the Direct COSMO-RS energy itself, subject to the steps above.
+
+## Comparing a solvated run against another code
+
+Two quantities of a solvated run can be compared with another program, and
+they behave differently.
+
+* **The in-solvent total** (`result.energy`, printed as `In-solvent total`)
+  compares only against the other code's in-solvent total, and carries every
+  gas-phase convention difference on top of the solvation ones.
+* **The solvent-response component** (`sol.e_solv`, printed as
+  `Solvation energy (1/2 q.V_tot)`) is the more robust one: it is a
+  difference of two energies on the same functional and grid, so gas-phase
+  conventions largely cancel. ORCA prints the same quantity as
+  `CPCM Dielectric` in its `TOTAL SCF ENERGY` block.
+
+Do not compare a solvated total against a *gas-phase* total, and do not
+compare either against an inner-SCF energy. Before v0.15.138 vibe-qc's banner
+printed the inner SCF's $E_\text{SCF}^{w/V_q}$ rather than the in-solvent
+total (archived tracker `vibeqc#148`) -- 23-42 mHa away from it. A harvester that read the banner
+reported a 54.6 mHa cross-code disagreement on the case below that does not
+exist; the run's own solvation block was right all along.
+
+`Total solvation shift` (in-solvent minus gas-phase) is **not** `e_solv`: the
+solute density also relaxes in the field, and the block prints that
+polarisation cost separately. Compare like with like.
+
+### Measured against ORCA
+
+CH$_3$COOH / def2-TZVP / B3LYP, water, on one geometry, against an archived
+ORCA 6.1.1 `! B3LYP def2-TZVP TightSCF CPCM(water)` reference
+(in-solvent total $-229.0790600869$, `CPCM Dielectric` $-0.0126977537$ Ha):
+
+| vibe-qc setting | in-solvent total | response component | component vs ORCA |
+|---|---|---|---|
+| defaults (`solvent="water"`) | $-229.0799875548$ | $-0.0139868457$ | $-1.29$ mHa |
+| ORCA's $\varepsilon$ and radii | $-229.0821294531$ | $-0.0164592598$ | $-3.76$ mHa |
+
+The in-solvent totals agree to **0.93 mHa**, so raw solvated totals are
+comparable once both sides quote the same quantity.
+
+The second row is the surprise, and it is why this section exists: making the
+*named* parameters agree makes the answer **worse**. ORCA's hydrogen radius is
+1.32 A against vibe-qc's 1.44 A, and the tighter cavity deepens the response
+past ORCA's own value. What remains is the surface itself -- vibe-qc switches a
+Lebedev grid per sphere (1895 points here), ORCA lays down a Gaussian-charge
+surface at constant charge density (830 points). Two cavities that carry the
+same radii are still not the same cavity, and that sets the floor on any
+cross-code component comparison. Matching $\varepsilon$ and radii is
+therefore not a recipe for agreement; it is only a way to remove those two
+variables when attributing a difference.
+
+**Maintainer decision (2026-09-17): this floor is accepted.** It is expected
+cross-code behaviour, not a defect to tune away, so a component comparison
+should quote it rather than chase it. vibe-qc does not offer a
+Gaussian-charge cavity to match ORCA's construction exactly; that would be a
+new feature, and nothing shipped today needs it.
+
+**The geometry has to be identical, not similar.** Re-running the same case on
+a geometry whose C=O bonds differ by at most 0.07 A moves the component by
+2.5 mHa -- twice the entire cross-code gap. A component comparison across codes
+is meaningless unless both sides ran the same coordinates.
+
+For reference, ORCA 6.1's `CPCM(water)` defaults against vibe-qc's:
+
+| knob | vibe-qc default | ORCA 6.1 `CPCM(water)` |
+|---|---|---|
+| dielectric | 78.39 (`water` preset) | 80.1510 |
+| C / O radius | 2.040 / 1.824 A (Bondi x 1.20) | 2.0400 / 1.8240 A |
+| H radius | 1.44 A | 1.3200 A |
+| probe | `solvent_probe_radius_ang=0.0` | VDW surface |
+| discretisation | switched Lebedev, per sphere | Gaussian VDW, constant charge density |
+| screening | `variant="cpcm"`, $f=(\varepsilon-1)/\varepsilon$ | `Epsilon function type ... CPCM` |
+
+```python
+orca_like = vq.SolventModel(
+    epsilon=80.1510,                      # ORCA's water, not 78.39
+    variant="cpcm",
+    radii={1: 1.10, 6: 1.70, 8: 1.52},    # pre-scaling, Angstrom
+    radii_scale=1.2,                      # -> H 1.32, C 2.04, O 1.824 A
+)
+```
 
 ## Choosing CPCM vs COSMO
 
@@ -680,6 +862,15 @@ The implementation follows the standard CPCM literature:
   (Klamt 1995, 1998) and COSMO FINE Cavity (Klamt & Diedenhofen 2018)
   papers. Scalmani and Frisch are left out, because their diagonal is the
   Lebedev cavity's.
+* **Klamt, A. & Diedenhofen, M.** *J. Comput. Chem.* 39, 1648 (2018), the
+  COSMO FINE Cavity (`cavity="fine"`).
+* **York, D. M. & Karplus, M.** *J. Phys. Chem. A* 103, 11060 (1999), the
+  Gaussian surface-charge kernel the fine cavity uses.
+
+The citations a run writes follow the cavity as well as the variant. A
+fine-cavity run cites Klamt & Diedenhofen and York & Karplus, and not
+Scalmani and Frisch, whose switched point-charge diagonal belongs to the
+Lebedev cavity.
 
 For citation in published work, see
 [citation discipline](https://github.com/vibe-qc/vibe-qc/blob/main/CONTRIBUTING.md#citation-discipline).

@@ -114,6 +114,7 @@ vibe-qc resolves these short names in `xc.cpp::resolve_alias()`
 | `lda` / `svwn` | LDA | 0 % | 1 + 7 | Slater exchange + VWN5 correlation. Fast sanity check. |
 | `pbe` | GGA | 0 % | 101 + 130 | Workhorse for solid state. |
 | `blyp` | GGA | 0 % | 106 + 131 | Classic molecular GGA. |
+| `bpw91` | GGA | 0 % | 106 + 134 | Becke 88 exchange with Perdew-Wang 91 correlation, the functional Klamt's 1998 COSMO-RS parameters were fitted at (see [Implicit solvation](solvation.md)). There is no `bp86` alias: codes differ on which local correlation fills its P86 slot (PZ81 or VWN). |
 | `b3lyp` (= `b3lyp5`) | hybrid | 20 % | 475 | de-facto for organics; VWN5 / ORCA convention, **see the flavor box above**. |
 | `b3lyp/g` (= `b3lypg`) | hybrid | 20 % | 402 | Gaussian-compatible B3LYP (VWN-RPA), what Gaussian / PySCF / Psi4 mean by the bare name. |
 | `pbe0` / `pbeh` | hybrid | 25 % | 406 | PBE + 25% Fock exchange. |

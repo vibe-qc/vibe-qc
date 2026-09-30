@@ -10,6 +10,11 @@ Pins the contract documented in
   2. The default comment line is a vibe-qc provenance string.
   3. Passing ``energy_ha=`` appends ``energy=<value>`` to the comment
      line so ASE / Open Babel can recover the SCF result.
+  3b. ``energy_method=`` and ``method=`` append ``energy_method=<m>``
+     and ``method=<m>`` so the file names what that energy is. Without
+     them a correlated job's .xyz carried its mean-field reference's
+     energy under a bare ``energy=`` and was byte-identical to the
+     reference job's file (#360).
   4. Out-of-range atomic numbers fall through to ``"X"`` (the XYZ-
      convention unknown-element placeholder) rather than raising —
      a finished SCF must never lose its geometry to a stray Z.
@@ -124,6 +129,61 @@ def test_energy_appended_to_custom_comment(tmp_path: Path) -> None:
     comment = text.splitlines()[1]
     assert comment.startswith("My H₂O run")
     assert "energy=-76.1230000000" in comment
+
+
+def test_energy_method_names_what_the_energy_is() -> None:
+    """The tag that closes #360: ``energy=`` alone said nothing about
+    which method produced it."""
+    text = format_xyz(
+        _h2o_bohr(), energy_ha=-76.123, energy_method="rhf", method="mp2"
+    )
+    comment = text.splitlines()[1]
+    assert "energy=-76.1230000000" in comment
+    assert "energy_method=rhf" in comment
+    assert "method=mp2" in comment
+
+
+def test_method_tags_distinguish_a_correlated_job_from_its_reference() -> None:
+    """Same geometry, same energy, different job: the files must differ.
+
+    An MP2 job's .xyz was byte-identical to an RHF job's, because the
+    energy really is the RHF one. Naming the energy's method alone does
+    not fix that -- both would say ``energy_method=rhf`` -- so the job's
+    own method is tagged too.
+    """
+    mp2 = format_xyz(
+        _h2o_bohr(), energy_ha=-76.123, energy_method="rhf", method="mp2"
+    )
+    rhf = format_xyz(
+        _h2o_bohr(), energy_ha=-76.123, energy_method="rhf", method="rhf"
+    )
+    assert mp2 != rhf
+    # ... and they differ only in the method tag, not in the geometry.
+    assert mp2.splitlines()[2:] == rhf.splitlines()[2:]
+
+
+def test_energy_method_is_omitted_without_an_energy() -> None:
+    """No number, nothing to label."""
+    comment = format_xyz(_h2o_bohr(), energy_method="rhf").splitlines()[1]
+    assert "energy" not in comment
+
+
+def test_method_tag_normalises_a_custom_comment_without_an_energy() -> None:
+    """The trailing-period strip used to live inside the energy branch,
+    so a method tag with no energy would have appended to unstripped
+    text."""
+    comment = format_xyz(
+        _h2o_bohr(), comment="My run.", method="mp2"
+    ).splitlines()[1]
+    assert comment == "My run method=mp2"
+
+
+def test_untagged_output_is_unchanged() -> None:
+    """Callers that pass neither tag keep the exact legacy comment, so
+    this adds information without moving anyone's existing files."""
+    comment = format_xyz(_h2o_bohr(), energy_ha=-76.123).splitlines()[1]
+    assert comment.endswith("energy=-76.1230000000")
+    assert "method" not in comment
 
 
 # ---------------------------------------------------------------------- #

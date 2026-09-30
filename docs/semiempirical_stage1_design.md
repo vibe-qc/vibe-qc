@@ -33,8 +33,11 @@ element are:
 
 STO exponents ζ are taken from the DFTB literature (Porezag et al.,
 Phys. Rev. B 51, 12947, 1995). Each STO is expanded in 6 Gaussians
-using the standard STO-NG least-squares fit coefficients from
-Hehre, Stewart & Pople (J. Chem. Phys. 51, 2657, 1969).
+using the standard STO-NG least-squares fit coefficients, keyed by the
+shell's principal quantum number: Stewart (J. Chem. Phys. 52, 431, 1970),
+Tables I to V, for six primitives, verified row by row against the residuals
+he publishes. (Until 2026-09-19 two l-keyed tables of unknown provenance
+stood here; they were not Slater fits, see the changelog.)
 
 ### 2.2 Hamiltonian matrix H⁰
 

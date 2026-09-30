@@ -6,17 +6,14 @@
    still gated and does *not* yet claim reference ``xtb`` parity. The
    molecular path includes shell-resolved SCC, AES dipole/quadrupole,
    GAM3 third-order on-site, pairwise repulsion, and native D4 dispersion
-   (post-SCF).  D4 is applied as a post-SCF correction per the GFN2
-   paper (Bannwarth, Ehlert & Grimme, JCTC 2019); self-consistent D4
-   (SCC-folded) is not a reference-method requirement and is out of
-   scope.  The native-D4 reference dataset is now parity-validated for
-   H, He, B, C, N, O, F, and Ne (per-atom Eq.-6 extraction over a
-   correlated CPKS/PBE38 polarizability + the r4r2 fix, 2026-06-26),
-   so the post-SCF D4 dispersion term is quantitative for that element
-   set and explicitly warns/returns zero outside it (see
-   :mod:`vibeqc.dispersion_d4`); the remaining GFN2 production gates are
-   elsewhere.  The H0 shape terms (CN self-energy + shell polynomial +
-   EN factor, 2026-06) fix the water angle to ~104 deg.  Remaining
+   (post-SCF). This is a native D4-style approximation, not the
+   self-consistent D4 functional of Bannwarth, Ehlert & Grimme (JCTC
+   2019). It uses EEQ charges and independently generated reference
+   data for H, He, B, C, N, O, F, and Ne, and explicitly warns/returns
+   zero outside that set. Upstream GFN2 uses SCC charges and their
+   dispersion potential, distinct reference/CN conventions, and
+   neutral-charge C6 for ATM. Selecting faithful AES does not change
+   this D4 policy or establish total-energy parity. Remaining
    production gates: periodic AES image-cell multipole terms, periodic
    molecular-limit parity, and the full external-parity matrix.  See
    ``tests/test_gfn2_xtb.py`` for validated invariants and strict
@@ -58,9 +55,9 @@ _GFN2_EXPERIMENTAL_MESSAGE = (
     "is not closed yet (all-electron vs valence-only convention, periodic "
     "faithful AES electrostatics, and external parity matrix remain production "
     "gates), and "
-    "the post-SCF D4 term uses the native reference dataset, now "
-    "parity-validated for H, He, B, C, N, O, F, and Ne "
-    "(correlated CPKS/PBE38 C6). "
+    "the post-SCF D4-style term uses EEQ charges and independently "
+    "generated CPKS/PBE38 reference data for H, He, B, C, N, O, F, and Ne; "
+    "it is not upstream GFN2 self-consistent dispersion. "
     "Results are size-consistent but must not be used for production. "
     "Construct the model with warn=False to silence this warning."
 )
@@ -286,6 +283,25 @@ def _gfn2_nonconvergence_message(mol: "Molecule", result: object) -> str:
     )
 
 
+def _reported_scc_energy(result: object) -> float:
+    """The SCC total the molecular GFN2 route reports and differentiates.
+
+    A GFN2 SCC that ran at a finite electronic temperature, whether because
+    the caller asked for one or because the auto-stabilisation ladder
+    accepted its finite-temperature rung (vibe-qc#3, #247), is stationary in
+    the Mermin free energy ``A = E - T*S`` (Mermin, Phys. Rev. 137, A1441
+    (1965); Bannwarth, Ehlert & Grimme, JCTC 2019, Eqs. 8 and 10), not in the
+    internal energy ``E``. The shell-AES analytic gradient differentiates ``A``
+    through the converged fractional occupations, so ``A`` is what the model
+    pairs with that gradient (vibe-qc#343).  At ``T = 0`` the two coincide and
+    the historical value is returned unchanged.
+    """
+    temperature = float(getattr(result, "smearing_temperature", 0.0) or 0.0)
+    if temperature > 0.0:
+        return float(result.free_energy)
+    return float(result.energy)
+
+
 def _gfn2_molecule_key(mol: "Molecule"):
     return (
         int(mol.charge),
@@ -438,12 +454,11 @@ def _compute_gfn2_d4(
     This is the shipped post-SCF correction.  Elements outside the native
     reference dataset are treated explicitly below.
 
-    Accuracy (2026-06-26): the reference dataset is parity-validated for
-    H-Ne (per-atom Eq.-6 extraction over a correlated CPKS/PBE38
-    polarizability + the corrected r4r2 table), so native C6 agree with
-    dftd4 to within a few percent -- see
-    :mod:`vibeqc.dispersion_d4_reference_data`. The GFN2 production-parity
-    gates are now elsewhere (the post-SCF D4 term is no longer one).
+    This differs from upstream GFN2 D4: it does not add a dispersion
+    potential to SCC, and uses native EEQ/reference/CN conventions for
+    both two-body and ATM C6. Agreement of selected native C6 values
+    within a few percent does not establish GFN2 total-energy parity.
+    Faithful AES selects only the AES functional, not a D4 functional.
     """
     from vibeqc.dispersion_d4_model import compute_d4_energy_total
 
@@ -768,18 +783,48 @@ class GFN2Model(SemiempiricalModel):
 
         # GFN2-D4 dispersion: post-SCF correction (Bannwarth, Ehlert &
         # Grimme, JCTC 2019).  D4 is charge-dependent via EEQ charges
-        # computed internally by compute_d4_energy_total.  Per the GFN2
-        # paper, D4 is an a-posteriori correction, not folded into the SCC.
+        # computed internally by compute_d4_energy_total.  By native
+        # implementation policy, this differs from upstream self-consistent
+        # GFN2 dispersion; faithful AES does not change the D4 functional.
         e_d4 = _compute_gfn2_d4(
             mol,
             self._params,
             execution=self._last_d4_execution,
         )
 
-        return float(result.energy + e_d4)
+        # At T > 0 the reported total is the Mermin free energy of the SCC
+        # plus D4: the ensemble the analytic gradient differentiates (#343).
+        return float(_reported_scc_energy(result) + e_d4)
+
+    @property
+    def electronic_temperature(self) -> float:
+        """Electronic temperature (Ha) the most recent SCC actually ran at.
+
+        0.0 for an exact zero-temperature Aufbau solution.  A positive value
+        means the reported energy is the Mermin free energy ``A = E - T*S``
+        and the gradient is its derivative; the auto-stabilisation ladder can
+        select such a rung without the caller asking for smearing (#247).
+        """
+        return float(
+            getattr(self._last_result, "smearing_temperature", 0.0) or 0.0
+        )
+
+    @property
+    def entropy(self) -> float:
+        """Electronic entropy ``S`` (in k_B) of the most recent SCC; 0 at T = 0."""
+        return float(getattr(self._last_result, "entropy", 0.0) or 0.0)
 
     def gradient(self) -> np.ndarray:
-        """Return the D4-corrected GFN2 gradient without finite-differencing SCC."""
+        """Return the D4-corrected GFN2 gradient without finite-differencing SCC.
+
+        The native term is the analytic derivative of the same total
+        :meth:`energy` reports: the internal energy at ``T = 0`` and the
+        Mermin free energy ``A = E - T*S`` when the SCC ran smeared, built
+        from the converged (possibly fractional) occupations (#343).
+        Only the default shell-AES functional is supported. Faithful AES
+        and results without an executed functional identity raise ValueError
+        before any derivative is returned (#427).
+        """
         if self._warn:
             warnings.warn(
                 _GFN2_EXPERIMENTAL_MESSAGE,
@@ -792,6 +837,20 @@ class GFN2Model(SemiempiricalModel):
 
         if not self._converged:
             raise RuntimeError(_gfn2_nonconvergence_message(self._mol, result))
+
+        # Older native results do not identify their executed functional.
+        # Never infer it from current options or silently assume shell AES.
+        functional = getattr(result, "aes_functional", "unknown")
+        if functional == "faithful":
+            raise ValueError(
+                "Molecular GFN2 faithful AES analytic gradients are not implemented; "
+                "refusing to return the shell-AES derivative for a faithful-AES energy."
+            )
+        if functional != "shell":
+            raise ValueError(
+                "Molecular GFN2 gradient requires a known executed AES functional; "
+                "rerun the SCC with a current native build."
+            )
 
         scc_gradient = np.asarray(
             _se.compute_gfn2_gradient(self._mol, result, self._params),

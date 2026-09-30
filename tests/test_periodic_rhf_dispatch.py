@@ -249,6 +249,17 @@ def test_neutralized_1d_raises_not_implemented_gamma():
 # Options-type translation
 # ---------------------------------------------------------------------------
 
+def test_exchange_exxdiv_is_refused_off_ewald_3d():
+    """``exchange_exxdiv`` selects the EWALD_3D exchange gauge (#23); the
+    other Coulomb methods have their own kernel, so naming it there fails
+    closed before any SCF work instead of being ignored."""
+    sysp, basis = _h2()
+    km = vq.monkhorst_pack(sysp, [1, 1, 1])
+    opts = _std_options(vq.CoulombMethod.DIRECT_TRUNCATED)
+    with pytest.raises(NotImplementedError, match="exchange_exxdiv"):
+        vq.run_rhf_periodic_scf(sysp, basis, km, opts, exchange_exxdiv="none")
+
+
 def test_dispatcher_accepts_both_options_types():
     """Both PeriodicSCFOptions and PeriodicRHFOptions should work as
     input — the dispatcher translates fields to the right type for the

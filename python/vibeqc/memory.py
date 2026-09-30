@@ -39,14 +39,16 @@ headroom factor (rendered by ``MemoryEstimate.format``):
         Fock + density   409.6 MB
         AO evaluation    307.2 MB
         DIIS history     102.4 MB
-    Available on this machine: 119.8 GB. Proceeding.
+    Available to this job: 119.8 GB. Proceeding.
 """
 
 from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from math import comb
 from numbers import Integral
@@ -427,6 +429,37 @@ _DLPNO_COMPOSITION_BOUND_DETAIL = (
 _DLPNO_NATIVE_WORKER_BYTES = 16 * 1024**2
 
 
+# An explicit OpenMP worker count for one molecular estimate (#298). ``None``
+# means "the runtime's count", which is what the runner uses so that the .out
+# preflight describes the threads the job actually runs with. A caller that
+# pins an estimate (a test, a planner sizing another host) states the count
+# instead, so the result does not depend on the machine it is computed on.
+_EXPLICIT_WORKERS: ContextVar[Optional[int]] = ContextVar(
+    "vibeqc_memory_explicit_workers", default=None
+)
+
+
+@contextmanager
+def _explicit_workers(n_threads: Optional[int]) -> Iterator[None]:
+    """Make :func:`_omp_max_threads` return ``n_threads`` inside the block."""
+    if n_threads is None:
+        yield
+        return
+    if (
+        isinstance(n_threads, bool)
+        or not isinstance(n_threads, Integral)
+        or int(n_threads) < 1
+    ):
+        raise ValueError(
+            f"n_threads must be a positive integer or None, got {n_threads!r}"
+        )
+    token = _EXPLICIT_WORKERS.set(int(n_threads))
+    try:
+        yield
+    finally:
+        _EXPLICIT_WORKERS.reset(token)
+
+
 def _omp_max_threads() -> int:
     """Return the OpenMP worker count the next native region will use.
 
@@ -435,7 +468,12 @@ def _omp_max_threads() -> int:
     ``run_job(num_threads=...)``.  Do not impose an estimator-only many-core
     cap: the native triples planner has none, so doing so would undercount
     aggregate worker scratch on hosts with more than 128 OpenMP workers.
+    An explicit count set through ``estimate_memory(..., n_threads=N)``
+    takes precedence over the runtime.
     """
+    explicit = _EXPLICIT_WORKERS.get()
+    if explicit is not None:
+        return explicit
     try:
         from ._vibeqc_core import get_num_threads
 
@@ -613,7 +651,7 @@ class MemoryEstimate:
             lines.append(f"{status}.")
         else:
             avail_gb = available / _GB
-            lines.append(f"Available on this machine: {avail_gb:.1f} GB. {status}.")
+            lines.append(f"Available to this job: {avail_gb:.1f} GB. {status}.")
         return "\n".join(lines)
 
     def __str__(self) -> str:
@@ -2294,6 +2332,8 @@ def _dft_xc_requires_dense_ao_tables(options) -> bool:
     scf_options = _scf_estimator_options(options)
     if scf_options is None:
         return False
+    if _option_value(scf_options, "orbital_optimizer", "native") == "opentrustregion":
+        return True
     if type(scf_options).__name__ == "ROKSOptions":
         return True
     for threshold in ("newton_threshold", "trah_threshold"):
@@ -6263,6 +6303,7 @@ def estimate_memory(
     *,
     method: str,
     options=None,
+    n_threads: Optional[int] = None,
 ) -> MemoryEstimate:
     """Peak memory estimate for ``method``.
 
@@ -6280,10 +6321,18 @@ def estimate_memory(
         The matching ``*Options`` struct, or ``None`` for defaults.
         DIIS history size and DFT grid dimensions are read from it
         when available.
+    n_threads
+        OpenMP worker count to size per-worker scratch for (XC batch
+        tables, DF transform and triples workers, native worker stacks).
+        ``None`` (default) uses the current runtime count, as
+        :func:`vibeqc.get_num_threads` reports it. Pass a count to get an
+        estimate that does not depend on the host, for example to size a
+        job for another machine or to pin an expected value.
     """
     key = method.lower()
     if key not in _ESTIMATORS:
         raise ValueError(
             f"estimate_memory: unknown method {method!r}. Known: {sorted(_ESTIMATORS)}"
         )
-    return _ESTIMATORS[key](molecule, basis, options)
+    with _explicit_workers(n_threads):
+        return _ESTIMATORS[key](molecule, basis, options)

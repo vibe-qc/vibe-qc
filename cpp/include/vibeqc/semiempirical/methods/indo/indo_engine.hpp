@@ -2065,6 +2065,9 @@ struct MsindoResult {
     bool stability_checked=false, stability_analysis_converged=false;
     double stability_eigenvalue=0.0;
     int n_stability_restarts=0;
+    // A reference-policy CCM run returned the reference trajectory's state
+    // although the audit found it to be a saddle (resolved Hcore gap, #249).
+    bool internal_instability=false;
 };
 
 // --------------------------------------------------------------------------- //

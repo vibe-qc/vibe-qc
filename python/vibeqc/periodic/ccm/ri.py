@@ -233,7 +233,8 @@ class CCMGDFResult:
     #: space-group/time-reversal star reduction (zero when no Lpq cache is used).
     gdf_pair_builds: int = 0
     #: Number of Lpq cache entries required by the unreduced production route
-    #: (zero when no Lpq cache is used).
+    #: (zero when no Lpq cache is used). Without the star plan this is the
+    #: driver's own count (``raw.gdf_cderi_pairs``), not a re-derivation.
     gdf_pair_total: int = 0
     #: ``gdf_pair_total / gdf_pair_builds`` (one when reduction is inactive).
     gdf_pair_reduction_factor: float = 1.0
@@ -245,6 +246,51 @@ class CCMGDFResult:
     #: quantity, and the two disagreeing was worth -4.99e-01 Ha/cell on
     #: MgO/STO-3G at ``nrep=(1,1,1)`` (GitLab IID 307).
     rsgdf_tail_ke_cutoff: float | None = None
+    #: Which implementation of ``gdf_method="rsgdf"`` fitted this run:
+    #: ``"classic"`` (the all-reciprocal FFT fit, the one the real-Γ fold
+    #: builds), ``"sr"`` (the range-separated source that has been the 3-D
+    #: default of the multi-k driver since v0.17.1) or ``"not-applicable"``.
+    #: Read from the driver's executed fit-source record, never re-derived.
+    #: The two sources do not fit the same Coulomb operator (1.4e-4 Ha/cell
+    #: apart on LiH/STO-3G (1,1,1)), so a Theorem-1 pair must match here as
+    #: well as on the tail (vibe-qc #378).
+    fit_source: str = ""
+    #: The driver's executed fit-source descriptor
+    #: (:class:`~vibeqc.periodic_fit_source.RSGDFFitSource`) when a shared-q
+    #: engine built the fit, else ``None``.
+    executed_fit_source: object = None
+    #: IID 291 / ruling R6 (mirrors ``CCMSCFResult``): whether the producer was
+    #: asked to run a cell measured as vacuum-padded, and the 1-based lattice
+    #: directions that measured as vacuum. ``(False, ())`` on a cell measured
+    #: as genuinely 3-D.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
+    #: The inner multi-k driver's per-cycle trace, carried verbatim (O29,
+    #: paper issue #17): the Bloch producer previously exposed only
+    #: ``converged``/``n_iter``. Each row is the native ``SCFIteration``
+    #: (``iter``, ``energy``, ``delta_e``, ``grad_norm``, ...).
+    scf_trace: tuple = ()
+
+    @property
+    def achieved_convergence(self) -> dict:
+        """The convergence actually reached, read from :attr:`scf_trace`.
+
+        Mirrors ``CCMSCFResult.achieved_convergence`` so the two producers
+        of the neutral Hamiltonian expose the same record; the residual
+        metric differs (the multi-k driver records a gradient *norm*, the
+        real-Γ loop a max-abs commutator element) and is named so a reader
+        never compares the two as if they were one quantity.
+        """
+        tr = tuple(self.scf_trace or ())
+        if not tr:
+            return {}
+        last = tr[-1]
+        return {
+            "delta_e": float(getattr(last, "delta_e", float("nan"))),
+            "grad_max": float(getattr(last, "grad_norm", float("nan"))),
+            "grad_metric": "gradient_norm (multi-k driver)",
+            "cycles": int(len(tr)),
+        }
 
     @property
     def parity_held(self) -> bool:
@@ -264,6 +310,21 @@ class CCMGDFResult:
     def guess_selection(self):
         """The actual SCF reference selection, forwarded without re-resolution."""
         return getattr(self.raw, "guess_selection", None)
+
+    @property
+    def fit_cache(self):
+        """The multi-k driver's retained per-pair fit, or ``None``.
+
+        Populated when the producer ran with ``retain_fit_cache=True`` and the
+        driver took the classic RSGDF multi-k path (an
+        :class:`~vibeqc.periodic_k_gdf.RSGDFFitCache`: every ``(k_i, k_j)``
+        fit in the eigenmode frame plus the ``M(q)`` eigensystems). The
+        real-Γ sibling consumes it instead of refitting when both producers
+        run in one process: ``run_ccm_rhf_direct(ccm, fit_cache=g.fit_cache)``.
+        ``None`` on the Γ fast path, on the SR/LR engine and on the private
+        MDF/compcell sources, which build other objects.
+        """
+        return getattr(self.raw, "fit_cache", None)
 
 
 def _ccm_gdf_symmetry_cache_builder(ccm, symmetry, stats):
@@ -381,19 +442,108 @@ def _gdf_guess_kwargs(driver_kwargs, *, is_ks):
     if source is None:
         options = PeriodicKSOptions() if is_ks else PeriodicRHFOptions()
     else:
-        options = type(source)()
-        for name in dir(source):
-            if not name.startswith("_"):
-                value = getattr(source, name)
-                if not callable(value):
-                    setattr(options, name, value)
+        options = _copy_options(source)
     options.initial_guess = requested
     kw["options"] = options
     return kw
 
 
-def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=True,
-             who="run_ccm_rhf_gdf", **driver_kwargs):
+def _copy_options(source):
+    """A same-typed copy of a native options object (pybind value objects
+    cannot be copied with :mod:`copy`); nested value fields such as
+    ``lattice_opts`` are copied by value."""
+    options = type(source)()
+    for name in dir(source):
+        if not name.startswith("_"):
+            value = getattr(source, name)
+            if not callable(value):
+                setattr(options, name, value)
+    return options
+
+
+def _pin_classic_fit_source(ccm, kw, *, symmetry, who):
+    """Pin a neutral Bloch producer to the classic fit and the fold's tail (#378).
+
+    Ruling R1 / Paper 1 Theorem 1: this producer and the real-Γ one must
+    evaluate the SAME Hamiltonian. The real-Γ fold
+    (:func:`~vibeqc.periodic.ccm.neutral.ccm_neutral_cderi_fold`) builds the
+    classic all-reciprocal fit and mirrors the Γ fast path's auto-sized tail
+    (:func:`~vibeqc.periodic.ccm.neutral.ccm_neutral_tail_ke_cutoff`), so this
+    side is pinned to ``fit_source="classic"`` with that same tail passed
+    explicitly (the multi-k engine, which owns the Γ limit under an explicit
+    source, auto-sizes no tail of its own). Under the driver's shipped default
+    (``"auto"``, the SR/LR source on every 3-D cell since v0.17.1) the two
+    producers fit different Coulomb operators: the identity broke by 1.4e-4
+    Ha/cell on LiH/STO-3G (1,1,1), 1.5e-4 on MgO/STO-3G and 4.4e-5 on the
+    paper's 25-bohr chain, and the Bloch side was 20 to 175 times slower
+    (bisected to the v0.17.0..v0.17.1 periodic GDF refactor).
+    The pin lifts when the SR/LR source is accepted numerically AND the fold is
+    rebuilt on it, both halves. An explicit ``fit_source`` in ``driver_kwargs``
+    still wins, so the comparison can be made deliberately.
+
+    Returns the requested source. Raises when the CCM k-pair star reduction is
+    requested alongside an explicit source: the driver refuses a private fit
+    adapter together with one, and the reduction is approximate on 3-D cells
+    anyway (+6.7e-5 Ha/cell on LiH/STO-3G (2,2,1)).
+    """
+    from .neutral import ccm_neutral_tail_ke_cutoff
+
+    unit = ccm.unit_system
+    gdf_method = str(kw.get("gdf_method", "rsgdf")).lower()
+    # The multi-k driver implements no analytic gradient of the classic fit
+    # (it refuses ``fit_source="classic"`` with ``compute_gradient=True``). A
+    # gradient request therefore keeps the driver's default source, as it did
+    # before this pin: the real-Γ gradient borrows this control's gradient only
+    # behind its energy-parity gate (``run_ccm_direct_gradient``), which holds
+    # where the two fits agree (4e-10 Ha/cell on compact H2, inside the
+    # optimizer's 1e-6 gate) and fails closed where they do not (3.1e-4 on the
+    # LiH triplet). The executed source is recorded on the result.
+    if (int(unit.dim) == 3 and gdf_method == "rsgdf"
+            and not bool(kw.get("compute_gradient", False))):
+        kw.setdefault("fit_source", "classic")
+    fit = str(kw.get("fit_source", "auto"))
+    if fit == "classic" and "rsgdf_tail_ke_cutoff" not in kw:
+        # #257 made the driver's ``rsgdf_ke_cutoff`` default ``None`` ("no
+        # request": the SR/LR planner picks its own mesh, the classic route
+        # resolves it to RSGDF_KE_CUTOFF_DEFAULT). The runner arm forwards that
+        # ``None`` here, so the mirrored tail must be classified at the mesh
+        # the classic source will actually use, exactly as the driver resolves
+        # it, never at ``float(None)``.
+        from ...periodic_k_gdf import RSGDF_KE_CUTOFF_DEFAULT
+
+        ke = kw.get("rsgdf_ke_cutoff")
+        ke = RSGDF_KE_CUTOFF_DEFAULT if ke is None else float(ke)
+        kw["rsgdf_tail_ke_cutoff"] = ccm_neutral_tail_ke_cutoff(ccm, ke_cutoff=ke)
+    if symmetry is not None and symmetry is not False and fit != "auto":
+        raise ValueError(
+            f"{who}: symmetry=True (the CCM k-pair star reduction) cannot be "
+            f"combined with fit_source={fit!r}: the multi-k driver refuses a "
+            "private fit adapter together with an explicit fit source, and the "
+            "reduction is approximate on 3-D cells (+6.7e-5 Ha/cell on "
+            "LiH/STO-3G (2,2,1)). Pass symmetry=False (the default).")
+    return fit
+
+
+def _executed_fit(res):
+    """``(source, executed tail, descriptor)`` read from a multi-k driver result.
+
+    The multi-k result records the executed tail on its fit-source descriptor
+    (``executed_tail_reciprocal_cutoff_ha``), not on ``rsgdf_tail_ke_cutoff``,
+    which only the Γ fast path sets; a matched-tail assertion between the two
+    producers must read it from there.
+    """
+    rec = getattr(res, "executed_fit_source", None)
+    if rec is not None:
+        return (str(getattr(rec, "source", "") or ""),
+                getattr(rec, "executed_tail_reciprocal_cutoff_ha", None), rec)
+    req = getattr(res, "rsgdf_fit_request", None)
+    return (str(getattr(req, "source", "") or ""),
+            getattr(res, "rsgdf_tail_ke_cutoff", None), None)
+
+
+def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=False,
+             who="run_ccm_rhf_gdf", allow_vacuum_padding=False,
+             **driver_kwargs):
     """Neutral fitted-torus Bloch control on the ``nrep`` k-mesh.
 
     This and the real-Γ control are Fourier-related evaluations of the same
@@ -412,13 +562,15 @@ def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=True,
     # shared helper: run_ccm_rhf_gdf and run_ccm_rks_gdf both land here, and
     # hardcoding one of them made the other's refusal name a function the
     # caller never called (IID 498).
-    _reject_vacuum_padded_direct(ccm, who=who)
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who=who, allow_vacuum_padding=allow_vacuum_padding)
     unit = ccm.unit_system
     basis = make_basis(unit.unit_cell_molecule(), ccm.basis_name)
     kmesh = monkhorst_pack(unit, list(ccm.nrep))
     kw = _gdf_guess_kwargs(driver_kwargs, is_ks=functional is not None)
     if aux_basis is not None:
         kw["aux_basis"] = aux_basis
+    _pin_classic_fit_source(ccm, kw, symmetry=symmetry, who=who)
     pair_stats = {"builds": 0, "total": 0, "factor": 1.0}
     # Fully 3-D replica meshes use the generic shared-q full-build path. This
     # is now purely a cost decision -- the star plan's relations are exact on
@@ -458,18 +610,13 @@ def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=True,
     e_hf_ex = float(getattr(res, "e_hf_exchange", 0.0) or 0.0)
     active = functional is None or abs(e_hf_ex) > 1e-12
     if pair_stats["total"] == 0:
-        n_k = int(np.prod(ccm.nrep))
-        uses_lpq_cache = n_k > 1 and (
-            bool(kw.get("use_compcell", False))
-            or active
-            or (functional is not None and int(unit.dim) != 3)
-        )
-        if uses_lpq_cache:
-            need_k_pairs = (
-                active and str(kw.get("k_exchange", "gdf")) == "gdf"
-            )
-            n_pairs = n_k * n_k if need_k_pairs else n_k
-            pair_stats.update(builds=n_pairs, total=n_pairs, factor=1.0)
+        # No CCM star plan ran, so every fit pair was a full build. Read the
+        # count from the driver result, never re-derive it: a local copy of
+        # the driver's use_compcell promotion rules went stale and reported
+        # 0 pairs for a pure-DFT dim=3 run that built n_k of them.
+        n_pairs = int(res.gdf_cderi_pairs)
+        pair_stats.update(builds=n_pairs, total=n_pairs, factor=1.0)
+    fit_source, tail_executed, fit_record = _executed_fit(res)
     return CCMGDFResult(
         converged=bool(res.converged), energy=float(res.energy),
         energy_per_atom=float(res.energy) / n_unit,
@@ -480,7 +627,11 @@ def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=True,
         gdf_pair_builds=int(pair_stats["builds"]),
         gdf_pair_total=int(pair_stats["total"]),
         gdf_pair_reduction_factor=float(pair_stats["factor"]),
-        rsgdf_tail_ke_cutoff=getattr(res, "rsgdf_tail_ke_cutoff", None))
+        rsgdf_tail_ke_cutoff=tail_executed,
+        fit_source=fit_source, executed_fit_source=fit_record,
+        vacuum_padding_allowed=bool(allow_vacuum_padding),
+        vacuum_padded_axes=tuple(_padded_axes or ()),
+        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()))
 
 
 def _validate_gdf_driver_conv_tol_grad(driver_kwargs, *, who):
@@ -510,7 +661,8 @@ def _reject_external_xc_neutral_bloch(functional, *, spin, who):
         )
 
 
-def run_ccm_rhf_gdf(ccm, *, aux_basis=None, symmetry=True, **driver_kwargs):
+def run_ccm_rhf_gdf(ccm, *, aux_basis=None, symmetry=False,
+                    allow_vacuum_padding=False, **driver_kwargs):
     """HF neutral fitted-torus control in the multi-k Bloch representation.
 
     The unit-cell ``nrep`` mesh and the real-Γ control are related exactly by
@@ -522,24 +674,47 @@ def run_ccm_rhf_gdf(ccm, *, aux_basis=None, symmetry=True, **driver_kwargs):
     **RIJCOSX** exchange on this control (RI-J + seminumerical COSX-K
     instead of exact GDF-K) pass ``k_exchange="cosx", use_compcell=True`` (COSX
     needs the compensated-cell multi-k grid); ``k_exchange="gdf"`` (default) is
-    exact exchange. ``symmetry=True`` (default) reuses the currently gated
-    space-group and time-reversal Lpq star members on lower-dimensional
-    replica meshes; the planner admits only cell-list-preserving ops, so those
-    members are exact on the truncated build. Fully 3-D meshes use the
-    unreduced shared-q path because its ``n_k`` batched builds are cheaper
-    here than ``n_k**2`` per-pair ones, not because the relations are unsafe;
-    pass ``symmetry=False`` to request the unreduced path explicitly."""
+    exact exchange.
+
+    **The fit (#378).** On a 3-D cell with ``gdf_method="rsgdf"`` this producer
+    pins ``fit_source="classic"`` and passes the real-Γ fold's tail
+    (:func:`~vibeqc.periodic.ccm.neutral.ccm_neutral_tail_ke_cutoff`), so that
+    it evaluates the same fitted Hamiltonian as :func:`run_ccm_rhf_direct`
+    (Paper 1 Theorem 1; identity at 1e-12 Ha/cell,
+    ``tests/test_ccm_theorem1_3d.py``). The driver's own default, the SR/LR
+    source, is reachable deliberately with ``fit_source="sr"``; it is a
+    different fitted operator (1.4e-4 Ha/cell on LiH/STO-3G) and slower.
+    The executed source and tail are recorded on the result
+    (``fit_source``, ``executed_fit_source``, ``rsgdf_tail_ke_cutoff``).
+
+    ``symmetry`` (default ``False``) opts into the CCM k-pair star reduction
+    on lower-dimensional replica meshes; it is approximate on 3-D cells
+    (+6.7e-5 Ha/cell on LiH/STO-3G (2,2,1), the residual ROUTES 10.5 recorded)
+    and cannot be combined with an explicit fit source, so it is refused
+    together with the classic pin.
+
+    ``retain_fit_cache=True`` (a driver keyword) keeps the multi-k per-pair
+    fit on the result (:attr:`CCMGDFResult.fit_cache`) so the real-Γ sibling
+    can fold it instead of refitting when both producers run in one process
+    (``run_ccm_rhf_direct(ccm, fit_cache=g.fit_cache)``); it is memory the
+    SCF would otherwise free, hence opt-in.
+
+    ``allow_vacuum_padding=True`` runs a cell measured as vacuum-padded
+    (IID 291) as a warned, recorded vacuum-parameter study (ruling R6); see
+    :func:`~vibeqc.periodic.ccm.direct._reject_vacuum_padded_direct`."""
     _validate_gdf_driver_conv_tol_grad(
         driver_kwargs, who="run_ccm_rhf_gdf"
     )
     _warn_experimental()
     return _ccm_gdf(
         ccm, aux_basis, None, symmetry=symmetry,
-        who="run_ccm_rhf_gdf", **driver_kwargs
+        who="run_ccm_rhf_gdf", allow_vacuum_padding=allow_vacuum_padding,
+        **driver_kwargs
     )
 
 
-def run_ccm_uhf_gdf(ccm, *, aux_basis=None, **driver_kwargs):
+def run_ccm_uhf_gdf(ccm, *, aux_basis=None, allow_vacuum_padding=False,
+                    **driver_kwargs):
     """Open-shell HF neutral fitted-torus control via multi-k GDF.
 
     The spin-polarized sibling of :func:`run_ccm_rhf_gdf`: multi-k KUHF on the
@@ -566,13 +741,15 @@ def run_ccm_uhf_gdf(ccm, *, aux_basis=None, **driver_kwargs):
     from vibeqc import make_basis, monkhorst_pack, run_kuhf_periodic_gdf
     from .direct import _reject_vacuum_padded_direct
 
-    _reject_vacuum_padded_direct(ccm, who="run_ccm_uhf_gdf")
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who="run_ccm_uhf_gdf", allow_vacuum_padding=allow_vacuum_padding)
     unit = ccm.unit_system
     basis = make_basis(unit.unit_cell_molecule(), ccm.basis_name)
     kmesh = monkhorst_pack(unit, list(ccm.nrep))
     kw = _gdf_guess_kwargs(driver_kwargs, is_ks=False)
     if aux_basis is not None:
         kw["aux_basis"] = aux_basis
+    _pin_classic_fit_source(ccm, kw, symmetry=False, who="run_ccm_uhf_gdf")
     res = run_kuhf_periodic_gdf(unit, basis, kmesh, **kw)
     if (int(unit.charge) == 0 and bool(res.converged)
             and float(res.energy) > 0.0):
@@ -595,11 +772,17 @@ def run_ccm_uhf_gdf(ccm, *, aux_basis=None, **driver_kwargs):
         energy_per_atom=float(res.energy) / n_unit,
         n_iter=int(getattr(res, "n_iter", 0)), raw=res,
         exchange_q0=BVK_EWALD, exchange_q0_applicability="active",
-        backend=str(getattr(res, "backend", "") or ""))
+        backend=str(getattr(res, "backend", "") or ""),
+        rsgdf_tail_ke_cutoff=_executed_fit(res)[1],
+        fit_source=_executed_fit(res)[0], executed_fit_source=_executed_fit(res)[2],
+        vacuum_padding_allowed=bool(allow_vacuum_padding),
+        vacuum_padded_axes=tuple(_padded_axes or ()),
+        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()))
 
 
 def run_ccm_rks_gdf(
-    ccm, functional="pbe", *, aux_basis=None, symmetry=True, **driver_kwargs
+    ccm, functional="pbe", *, aux_basis=None, symmetry=False,
+    allow_vacuum_padding=False, **driver_kwargs
 ):
     """KS neutral fitted-torus control in the multi-k Bloch representation.
 
@@ -607,7 +790,14 @@ def run_ccm_rks_gdf(
     Hybrids use exact GDF exchange by default; pass ``k_exchange="cosx",
     use_compcell=True`` for **RIJCOSX** hybrid exchange. ``symmetry`` has the
     same RSGDF pair-star semantics as :func:`run_ccm_rhf_gdf`. Returns a
-    :class:`CCMGDFResult`."""
+    :class:`CCMGDFResult`.
+
+    **The fit (#378).** Like :func:`run_ccm_rhf_gdf` this producer pins
+    ``fit_source="classic"`` with the real-Γ fold's tail on 3-D ``rsgdf`` cells. Its XC
+    density-image sum reaches the lattice cutoff (the native kernel's default, #265), and so
+    does :func:`run_ccm_rks_direct`'s, so the two producers evaluate one XC term; the identity
+    holds at 1e-12 for pure and hybrid functionals.
+    """
     _reject_external_xc_neutral_bloch(
         functional, spin=1, who="run_ccm_rks_gdf"
     )
@@ -617,11 +807,13 @@ def run_ccm_rks_gdf(
     _warn_experimental()
     return _ccm_gdf(
         ccm, aux_basis, functional, symmetry=symmetry,
-        who="run_ccm_rks_gdf", **driver_kwargs
+        who="run_ccm_rks_gdf", allow_vacuum_padding=allow_vacuum_padding,
+        **driver_kwargs
     )
 
 
-def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None, **driver_kwargs):
+def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None,
+                    allow_vacuum_padding=False, **driver_kwargs):
     """Open-shell KS neutral fitted-torus control via multi-k GDF.
 
     The spin-polarized sibling of :func:`run_ccm_rks_gdf`: multi-k KUKS on the
@@ -650,13 +842,15 @@ def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None, **driver_kwargs):
     from vibeqc import make_basis, monkhorst_pack, run_kuks_periodic_gdf
     from .direct import _reject_vacuum_padded_direct
 
-    _reject_vacuum_padded_direct(ccm, who="run_ccm_uks_gdf")
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who="run_ccm_uks_gdf", allow_vacuum_padding=allow_vacuum_padding)
     unit = ccm.unit_system
     basis = make_basis(unit.unit_cell_molecule(), ccm.basis_name)
     kmesh = monkhorst_pack(unit, list(ccm.nrep))
     kw = _gdf_guess_kwargs(driver_kwargs, is_ks=True)
     if aux_basis is not None:
         kw["aux_basis"] = aux_basis
+    _pin_classic_fit_source(ccm, kw, symmetry=False, who="run_ccm_uks_gdf")
     res = run_kuks_periodic_gdf(unit, basis, kmesh, functional=functional, **kw)
     if (int(unit.charge) == 0 and bool(res.converged)
             and float(res.energy) > 0.0):
@@ -680,13 +874,19 @@ def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None, **driver_kwargs):
         converged=bool(res.converged), energy=float(res.energy),
         energy_per_atom=float(res.energy) / n_unit,
         n_iter=int(getattr(res, "n_iter", 0)), raw=res,
-        backend=str(getattr(res, "backend", "") or ""))
+        backend=str(getattr(res, "backend", "") or ""),
+        rsgdf_tail_ke_cutoff=_executed_fit(res)[1],
+        fit_source=_executed_fit(res)[0], executed_fit_source=_executed_fit(res)[2],
+        vacuum_padding_allowed=bool(allow_vacuum_padding),
+        vacuum_padded_axes=tuple(_padded_axes or ()),
+        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()))
 
 
 def run_ccm_rhf_ri_neutral(ccm, *, initial_guess: object = "AUTO", cderi=None, ke_cutoff=200.0, aux_basis=None,
                            symmetry=None,
                            max_iter=128, conv_tol=1e-9, conv_tol_grad=1e-6,
-                           diis_dim=8, lindep_tol=1e-7):
+                           diis_dim=8, lindep_tol=1e-7,
+                           allow_vacuum_padding=False):
     """Closed-shell HF on the **neutral fitted-torus Hamiltonian**, built
     *lean* from the cderi ``L``.
 
@@ -751,12 +951,15 @@ def run_ccm_rhf_ri_neutral(ccm, *, initial_guess: object = "AUTO", cderi=None, k
     from .direct import (
         _reject_low_dimensional_direct,
         _reject_vacuum_padded_direct,
+        _stamp_vacuum_padding,
     )
 
     dim = int(ccm.unit_system.dim)
     if dim != 3:
         _reject_low_dimensional_direct(dim, who="run_ccm_rhf_ri_neutral")
-    _reject_vacuum_padded_direct(ccm, who="run_ccm_rhf_ri_neutral")
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who="run_ccm_rhf_ri_neutral",
+        allow_vacuum_padding=allow_vacuum_padding)
     if cderi is not None and aux_basis is not None:
         raise ValueError(
             "aux_basis is ignored when a prebuilt cderi is supplied: "
@@ -776,6 +979,10 @@ def run_ccm_rhf_ri_neutral(ccm, *, initial_guess: object = "AUTO", cderi=None, k
         max_iter=max_iter, conv_tol=conv_tol, conv_tol_grad=conv_tol_grad,
         diis_dim=diis_dim, lindep_tol=lindep_tol)
     res.backend = "ccm-neutral-ri-rhf"    # result-backend identity (IID 344)
+    res.cderi = L                          # one build per job (2026-09-24)
+    res.cderi_info = {"build": "caller" if cderi is not None else "supercell",
+                      "shape": tuple(int(n) for n in np.shape(L))}
+    _stamp_vacuum_padding(res, allow_vacuum_padding, _padded_axes)
     return _with_ccm_guess(res, guess_selection)
 
 

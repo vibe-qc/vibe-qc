@@ -11,6 +11,35 @@
 #     python scripts/test_gate/changelog_guard.py pin vX.Y.Z --amended "why"
 # An entry for work that has not been released belongs under [Unreleased].
 
+[sections."v0.17.12"]
+sha256 = "de329a5566ca37ac7fcf0cbc8266662fc35a5f00ddaf2e2a87b417634b621886"
+
+[sections."v0.17.11"]
+sha256 = "1bbcdd7e2be220f1b593d604bc0760d7931799ff30a2326e99cafba843ac6a00"
+
+[sections."v0.17.10"]
+sha256 = "dc07bb71782ad66c81822271f4e4448ffc2f5028f74424d4dc4fea18aca48bd3"
+
+[sections."v0.17.9"]
+sha256 = "55143bb538058395e0b58a19fda2148cd25bdd3a2b748ea4125dea61b9eece36"
+
+[sections."v0.17.8"]
+sha256 = "cd14acdda72df9a464dbb90b926bc5dfc6b9fb2303e922b872e7a984197dd263"
+
+[sections."v0.17.7"]
+sha256 = "94b231aa1fdf6062afc92b8090e475562c47b4e573b4ac11aaf29c0a9b472b31"
+
+[sections."v0.17.6"]
+sha256 = "01ad6488bbb3a1d2ab4b919a1b68b1be5fcf4c773440b5256d7124904858604d"
+amended = "Preparation-only, before the first v0.17.6 tag: carried the #358 periodic ECP corruption and the #257 RS-GDF admission refusal into the known issues, both filed or still open while this cut was being prepared."
+
+[sections."v0.17.5"]
+sha256 = "3f7006d4cf0a8a9a30f7421523d0e18282819cdf66d4b475ea6b0fe5d2544762"
+amended = "Preparation-only, before the first v0.17.5 tag: added the #306 GFN2-xTB known-issue carryover and corrected the #196 wording now that a candidate change is proposed but unmerged."
+
+[sections."v0.17.4"]
+sha256 = "696c82798b87e0224489ec87497a4fd7f4bd90ec0881fc3e96390c97cf698541"
+
 [sections."v0.17.3"]
 sha256 = "bfa5b51ad3f519bf245717c4cc5fd049d684cf6c61536b583f3922c1233140ef"
 amended = "Preparation-only wording completed before the first v0.17.3 tag; Preparation-only incorporation of final main changes before the first v0.17.3 tag"
@@ -532,9 +561,6 @@ amended = "Privacy amendment: replace reviewed site identifiers with generic rol
 [sections."v0.15.12"]
 sha256 = "e56038ff37c153de25bd6a811624d1c0dec2f70e20c692bccc15bb1f0e78c844"
 
-[sections."v2.0.0"]
-sha256 = "9c4bd696981380fb1d1554c45bf08ba4f26ec04ddbb5f4a7565f0fb77a05d017"
-
 [sections."v0.15.11"]
 sha256 = "44ad6a18802857e3819245d3fe2529c4fc6e950cddc3b23aef46a853d64ca0f8"
 
@@ -637,5 +663,5 @@ sha256 = "a7e4246eaa636a64004fe529c5d1a3f218ecabe176ea629583bb7469fe32fe39"
 sha256 = "2d679736db3b758770d8f604727d8cfbd3a332cd72034c4c395c572212cf807b"
 
 [sections."v0.9.0"]
-sha256 = "d669ade38b36a1760f4c908a72335fc18c841e99b72c1889ebf777e68751c1c7"
-amended = "Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags."
+sha256 = "e052dc6858b8d44bac99041b5fca0cc5ff619e13e1783bae0b06a826face5e63"
+amended = "Canonical-source privacy amendment: use public repository URLs; preserve scientific values and immutable release tags.; #368 removed the foreign vibe-view [v2.0.0] stanza and its trailing link definition, which sit inside the last section's body; no v0.9.0 entry was touched"

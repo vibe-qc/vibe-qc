@@ -129,9 +129,9 @@ def format_scf_trace(
         recomputing it. Default ``None`` (no status reported).
     energy_label
         Label for the scalar energy in the component breakdown. ``run_job``
-        uses ``"SCF energy"`` when post-SCF add-ons such as dispersion are
-        requested, so parsers do not mistake the SCF trace for the final
-        user-facing total.
+        uses ``"E_SCF (excl. dispersion)"`` when post-SCF add-ons such as
+        dispersion are requested, so readers do not mistake the SCF component
+        for the final user-facing total.
     """
     segments = _scf_trace_segments(
         result,
@@ -230,6 +230,27 @@ def _scf_trace_segments(
     conv_sep = "\n" if trace else "\n\n"
     segments.append((conv_line, Level.QUIET, conv_sep))
 
+    otr = getattr(result, "opentrustregion", None)
+    if getattr(otr, "backend", "") == "opentrustregion":
+        lines = [f"  Orbital optimizer: OpenTrustRegion {otr.version}",
+                 f"  Subsystem: {otr.subsystem_solver}; manifold: {otr.manifold}; stability policy: {otr.stability_policy}",
+                 f"  Termination: {otr.termination} (code {otr.error_code})",
+                 f"  Energy converged: {otr.energy_converged}; gradient converged: {otr.gradient_converged}",
+                 f"  Orbital gradient RMS: {otr.gradient_rms:.3e}; physical residual: {otr.final_residual:.3e}",
+                 f"  Evaluations: accepted={otr.accepted_evaluations}, trial={otr.trial_evaluations}, Fock={otr.fock_evaluations}, response={otr.response_evaluations}",
+                 "  Macro/micro iteration totals: unavailable in upstream C API"]
+        if otr.callback_error:
+            lines.append(f"  Callback failure: {otr.callback_error}")
+        if otr.stability_checked:
+            verdict = ("stable" if otr.stable else "UNSTABLE") if otr.stability_converged else "INCONCLUSIVE"
+            lines.append(f"  Real fixed-occupation internal stability: {verdict} (threshold {otr.stability_threshold:.3e})")
+            lines.append("  Restricted checks exclude unrestricted and complex rotations.")
+        else:
+            lines.append("  Final internal stability: not checked")
+        segments.append(("\n".join(lines), Level.QUIET))
+        if otr.log:
+            segments.append(("\n".join(otr.log), Level.DEBUG))
+
     # Spin-squared expectation value (UHF / UKS / ROHF).  A spin-contamination
     # diagnostic: <S^2>_ideal = S(S+1) for the requested multiplicity;
     # deviation signals spin contamination.  Printed at QUIET so it survives
@@ -255,9 +276,14 @@ def _scf_trace_segments(
         _lam = float(getattr(result, "stability_eigenvalue", 0.0))
         _n_restarts = int(getattr(result, "n_stability_restarts", 0))
         if not getattr(result, "stability_analysis_converged", False):
+            # No verdict: say why the solve ended and what it cost (#342).
+            from ..verdict import describe_stability_stop
+
             _stab_seg = (
-                "  internal stability: eigensolver did not converge; "
-                "solution character UNVERIFIED",
+                "  internal stability: NO VERDICT -- the eigensolver "
+                f"{describe_stability_stop(result)}; solution character "
+                f"UNVERIFIED (last eigenvalue estimate {_lam:.3e}, "
+                "not a verdict)",
                 Level.QUIET,
                 "\n",
             )
@@ -288,6 +314,32 @@ def _scf_trace_segments(
             )
         segments.append(_stab_seg)
 
+    # SECCM (#249): bind the number to its executed cyclic-cluster kernel and
+    # SCF controls. The MSINDO 1-D "Madelung" is the historical truncated
+    # +/-2-shell bare lattice sum, not an Ewald sum; say so where the energy
+    # is read, not only in the citation route.
+    _run_fields = getattr(result, "run_fields", None) or {}
+    if "seccm_electrostatics_kernel" in _run_fields:
+        _kernel = str(_run_fields["seccm_electrostatics_kernel"])
+        _kernel_note = (
+            " (truncated +/-2-shell bare lattice sum, not an Ewald sum)"
+            if _kernel.endswith("truncated_1d") else ""
+        )
+        _seccm_lines = [
+            f"  SECCM: {_run_fields.get('seccm_periodic_dimension')}-D cyclic "
+            f"cluster; electrostatics kernel: {_kernel}{_kernel_note}",
+            f"  SECCM SCF controls: max_iter={_run_fields.get('seccm_scf_max_iter')} "
+            f"conv_tol={float(_run_fields.get('seccm_scf_conv_tol')):.1e} "
+            f"gradient_conv_tol={float(_run_fields.get('seccm_gradient_conv_tol')):.1e} "
+            f"stability={_run_fields.get('seccm_stability_policy', 'reference')}",
+        ]
+        if "seccm_max_abs_net_charge" in _run_fields:
+            _seccm_lines.append(
+                "  SECCM net atomic charges: max |q| = "
+                f"{float(_run_fields['seccm_max_abs_net_charge']):.4f} e"
+            )
+        segments.append(("\n".join(_seccm_lines), Level.QUIET, "\n"))
+
     # State fingerprint (BUG 88).  A deterministic hash of the converged
     # electronic state: same-state runs produce identical fingerprints.
     _has_spin = getattr(result, "s_squared", None) is not None
@@ -304,6 +356,12 @@ def _scf_trace_segments(
             molecule_symbols=[a.symbol for a in molecule.atoms],
         )
         segments.append((f"  state fingerprint: {_fp}", Level.QUIET, "\n"))
+    domain_text = _format_bipole_domain(result)
+    if domain_text:
+        segments.append((domain_text, Level.STANDARD))
+    gauge_line = _format_exchange_gauge(result)
+    if gauge_line:
+        segments.append((gauge_line, Level.STANDARD, "\n"))
     if molecule is None:
         components = _format_energy_components(result, energy_label=energy_label)
         if components:
@@ -503,6 +561,70 @@ def _format_orbital_sections(
         )
 
     return "\n\n".join(s for s in sections if s)
+
+
+# What each exchange q=0 convention label means, for the one-line .out
+# statement below (labels: vibeqc.periodic.exchange_convention).
+_EXCHANGE_GAUGE_WORDING = {
+    "BvK-ewald": "corrected Ewald split with the probe-charge q+G=0 term, exxdiv='ewald'",
+    "molecular-limit": "home-cell density, image blocks zeroed, no q+G=0 term",
+    "strict-zero-mode": "G+q=0 term dropped, exxdiv=None",
+    "bare-image-sum": (
+        "bare image sum, no q=0 treatment, not lattice-cutoff converged"
+    ),
+    "wire-free-space-seam": "wire free-space seam",
+}
+
+
+def _format_exchange_gauge(result) -> str:
+    """One line naming the exact-exchange q=0 gauge the SCF ran (#23).
+
+    Printed only for results that declare their gauge; the BIPOLE block
+    above already names its own ``exchange_exxdiv``.
+    """
+    from ...periodic.exchange_convention import executed_exchange_q0_or_none
+
+    label = executed_exchange_q0_or_none(result)
+    if label is None or getattr(result, "resolved_domain", None) is not None:
+        return ""
+    wording = _EXCHANGE_GAUGE_WORDING.get(label)
+    return (
+        f"  exchange q=0 gauge: {label}"
+        + (f" ({wording})" if wording else "")
+    )
+
+
+def _format_bipole_domain(result) -> str:
+    """Disclose the settings actually retained by the BIPOLE driver."""
+    domain = getattr(result, "resolved_domain", None)
+    if domain is None:
+        return ""
+
+    def value_text(value):
+        if isinstance(value, tuple) and value and value[0] == "enum":
+            return value[2]
+        if isinstance(value, tuple) and value and value[0] == "sequence":
+            return str(list(value[1]))
+        return str(value)
+
+    lines = ["\nBIPOLE resolved domain", f"  Policy: {domain.policy}",
+             f"  Settings SHA256: {domain.settings_sha256}"]
+    if domain.policy == "historical_index_ball":
+        lines.append("  Historical index-ball support is not atom-image invariant.")
+    for label, snapshot in (("One-electron", domain.lattice_1e),
+                            ("Two-electron", domain.lattice_2e),
+                            ("Nuclear erfc", domain.nuclear_erfc),
+                            ("XC grid", domain.xc_grid), ("V_ne grid", domain.v_ne_grid)):
+        if snapshot is not None:
+            lines.append(f"  {label}:")
+            lines.extend(f"    {name}: {value_text(value)}" for name, value in snapshot.values)
+    for name in ("ewald_alpha_bohr_inv", "ewald_real_cutoff_bohr",
+                 "reciprocal_cutoff_bohr_inv", "ewald_precision",
+                 "sr_image_extent_bohr", "use_ewald_j_split", "exchange_ewald_split",
+                 "exchange_exxdiv", "exact_zone_bohr", "use_periodic_becke",
+                 "becke_image_radius_bohr", "xc_density_domain", "exact_j_ke_cutoff"):
+        lines.append(f"  {name}: {value_text(getattr(domain, name))}")
+    return "\n".join(lines) + "\n"
 
 
 def _format_energy_components(result, *, energy_label: str = "Total energy") -> str:

@@ -100,9 +100,28 @@ The energy and analytic nuclear-attraction derivative share this image rule.
 
 After this partial repair, three-character F covariance is below `1e-9`
 and the native `1e-8` half-translation sewing gate passes. Two characters
-retain about `1.64e-7` Ha and still fail that same gate. Issue #704 remains
-open; no full-source certificate or representative-only energy is enabled.
-These are implementation checks, not absolute-energy benchmarks.
+retain about `1.64e-7` Ha and still fail that same gate on the default
+historical cell-origin support. This defect is tracked as #62 (formerly
+#704); no full-source certificate or representative-only energy is enabled.
+
+The raw SR J/K regression separates that negative control from the opt-in
+pair output support. A 15-bohr cell-origin ball retains a 12-bohr AO pair
+at cell `(1,0,0)` but drops its half-translation partner at `(2,0,0)`.
+An independent contracted s-Gaussian erfc sum over the same finite internal
+cells gives nonzero entries for both J and K. On its invariant trial density,
+the omitted J entry is `2.30551596e-10`; the unscreened native contraction
+agrees within `2e-14`. Ordinary screening changes that entry by about
+`8.1e-13`. The radial folded J covariance defect is twice the screened
+omitted entry, `4.59488826e-10`, so J is also a negative control at `1e-10`.
+This is a missing output term, not an arithmetic precision floor.
+
+Pair output support retains both partners and must still satisfy the
+unchanged `1e-10` raw J/K covariance gate for invariant and general trial
+densities. Separate actual-SCF fixtures with `pair_complete_1e=True` check
+raw components, density response and native whole-group sewing. These
+finite-support witnesses do not qualify the default historical support or
+enable physical-Hamiltonian certification. They are implementation checks,
+not absolute-energy benchmarks.
 
 This integration uses the shared Dovesi (1986), Eqs. (37)-(43), and
 Casassa et al. (2006), Sec. 2 matrix-valued orbital action contracts already
@@ -334,6 +353,24 @@ It does not repair or symmetrize C or S. Metric residuals are Frobenius norms
 relative to `||S||_F`; closure is relative to `max(||C||_F, 1)`;
 orthonormality, unitarity and monomial residuals are absolute Frobenius norms.
 The default tolerance is `1e-8`, with admitted values in `(0, 1e-6]`.
+
+`overlap_fold_drift` measures cutoff convergence by comparing the overlap
+fold with one at 1.5 times the electronic cutoff. It is not an arithmetic
+precision floor or a bound on occupied-space leakage, so it does not set
+the occupied-action tolerance. Converge electronic support and inspect
+Fock covariance and SCF stationarity when an action is refused. For the
+two-He, 6-31G cell with lattice lengths 8, 16 and 16 bohr, atoms at
+`(0, 0, 0)` and `(4, 0, 0)` bohr, and a `(2, 1, 1)` mesh, tight SCF alone
+leaves a closure residual near `6.6e-8` at 15 bohr with the explicitly
+historical index-ball domain. Increasing that support to 24 bohr admits all
+32 operations at the default tolerance. The current physical-pair default
+also admits all 32 operations at 15 bohr. Regressions retain the historical
+refusal explicitly and check both domains on the 24-bohr even and odd mesh
+controls, without overriding any occupied-action tolerance.
+This is a small convergence example,
+not a universal cutoff recommendation or physical-Hamiltonian certification.
+A small projected group-law residual alone does not establish occupied
+closure: projection can hide leakage into the complementary space.
 
 Casassa et al. (2006), DOI
 [10.1007/s00214-006-0119-z](https://doi.org/10.1007/s00214-006-0119-z),

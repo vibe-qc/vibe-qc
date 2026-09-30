@@ -307,7 +307,12 @@ def test_pm6_formamide_dimer_reaches_hard_occupation_root_without_cooling():
 
     assert cold.converged
     assert result.converged
-    assert result.n_iter == cold.n_iter
+    # #154: the route now always probes for a second zero-temperature basin,
+    # so its iteration count carries that cost even when, as here, the probe
+    # agrees with the direct SCF and nothing is refused.  What must still
+    # match the direct run is the ROOT it reports: the zero temperature, the
+    # energy to 1e-12 Ha and the density trace below.
+    assert result.n_iter >= cold.n_iter
     assert result.electronic_temperature == 0.0
     assert result.energy == pytest.approx(cold.energy, abs=1.0e-12)
     assert np.trace(np.asarray(result.density)) == pytest.approx(36.0)

@@ -138,6 +138,7 @@ def main() -> int:
                     aft_ft_convention=ft_conv,
                     rcut_strategy="pyscf_auto",
                     progress=False,
+                    gdf_method="compcell",
                 )
                 delta = r.energy - target
                 print(f"  {ft_conv:>8s}  {eta:>4.2f}  {r.energy:>16.6f}  "

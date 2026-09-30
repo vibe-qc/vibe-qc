@@ -65,10 +65,18 @@ def _big_box_system(atoms, dim, box=50.0, vacuum=30.0):
     return vq.PeriodicSystem(dim, lat, atoms)
 
 
-def _scf_opts(cutoff=15.0):
+def _scf_opts(cutoff=15.0, *, molecular_limit=False):
     o = vq.PeriodicSCFOptions()
     o.lattice_opts.cutoff_bohr = cutoff
     o.lattice_opts.nuclear_cutoff_bohr = cutoff
+    # Issue #133: every ``_big_box_system`` fixture here is a 50-bohr vacuum
+    # box whose cutoff isolates g = 0 on purpose -- that is the regime this
+    # file's strategy note calls the "molecular-limit regime". The driver now
+    # refuses an image list that has collapsed to the home cell unless the
+    # caller says it meant it, so these fixtures declare it. The declaration
+    # changes no sum; the tight-chain fixtures below leave it off and keep
+    # their real images.
+    o.lattice_opts.gamma_only_0 = molecular_limit
     o.conv_tol_energy = 1e-12
     o.conv_tol_grad = 1e-10
     o.max_iter = 100
@@ -94,7 +102,7 @@ def test_molecular_limit_matches_molecular_rhf(name, atoms, dim, mesh):
     sysp = _big_box_system(atoms, dim)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     km = vq.monkhorst_pack(sysp, mesh)
-    res = vq.run_rhf_periodic(sysp, basis, km, _scf_opts())
+    res = vq.run_rhf_periodic(sysp, basis, km, _scf_opts(molecular_limit=True))
     assert res.converged
     assert res.has_mean_field_state is False
     assert res.mean_field_state is None
@@ -119,7 +127,7 @@ def test_kmesh_independence_in_molecular_limit():
     energies = []
     for mesh in [[1,1,1], [2,2,2], [3,3,3], [4,4,4]]:
         km = vq.monkhorst_pack(sysp, mesh)
-        res = vq.run_rhf_periodic(sysp, basis, km, _scf_opts())
+        res = vq.run_rhf_periodic(sysp, basis, km, _scf_opts(molecular_limit=True))
         energies.append(res.energy)
     spread = max(energies) - min(energies)
     assert spread < 1e-10, f"energy spread across meshes = {spread:.2e}"
@@ -137,11 +145,12 @@ def test_multi_k_gamma_agrees_with_periodic_gamma_driver():
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
 
     km = vq.monkhorst_pack(sysp, [1,1,1])
-    res_multi = vq.run_rhf_periodic(sysp, basis, km, _scf_opts())
+    res_multi = vq.run_rhf_periodic(sysp, basis, km, _scf_opts(molecular_limit=True))
 
     opts_gamma = vq.PeriodicRHFOptions()
     opts_gamma.lattice_opts.cutoff_bohr = 15.0
     opts_gamma.lattice_opts.nuclear_cutoff_bohr = 15.0
+    opts_gamma.lattice_opts.gamma_only_0 = True  # same 50-bohr box (#133)
     opts_gamma.conv_tol_energy = 1e-12
     res_gamma = vq.run_rhf_periodic_gamma(sysp, basis, opts_gamma)
 
@@ -342,27 +351,27 @@ def test_capture_entrypoint_rejects_before_scf_construction():
         ]
         return request
 
-    opts = _scf_opts()
+    opts = _scf_opts(molecular_limit=True)
     with pytest.raises(RuntimeError, match="above the explicit limit"):
         core._run_rhf_periodic_with_state_capture(
             sysp, basis, km, opts, request_for(km, retained_bytes - 1)
         )
 
-    smearing_opts = _scf_opts()
+    smearing_opts = _scf_opts(molecular_limit=True)
     smearing_opts.smearing_temperature = 1.0e-3
     with pytest.raises(ValueError, match="smearing"):
         core._run_rhf_periodic_with_state_capture(
             sysp, basis, km, smearing_opts, request_for(km)
         )
 
-    loose_opts = _scf_opts()
+    loose_opts = _scf_opts(molecular_limit=True)
     loose_opts.conv_tol_grad = 2.0e-6
     with pytest.raises(ValueError, match="no looser"):
         core._run_rhf_periodic_with_state_capture(
             sysp, basis, km, loose_opts, request_for(km)
         )
 
-    damped_opts = _scf_opts()
+    damped_opts = _scf_opts(molecular_limit=True)
     damped_opts.use_diis = False
     with pytest.raises(ValueError, match="density damping requires DIIS"):
         core._run_rhf_periodic_with_state_capture(
@@ -400,7 +409,7 @@ def test_capture_propagates_nonzero_frozen_core_mask():
     ]
 
     result = core._run_rhf_periodic_with_state_capture(
-        sysp, basis, km, _scf_opts(), request
+        sysp, basis, km, _scf_opts(molecular_limit=True), request
     )
     state = result.mean_field_state
     assert result.converged and state is not None
@@ -537,7 +546,7 @@ def test_multi_k_accelerator_molecular_limit_matches_molecular_rhf(accel):
     sysp = _big_box_system(H2O, 3)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     km = vq.monkhorst_pack(sysp, [2, 2, 2])
-    opts = _scf_opts()
+    opts = _scf_opts(molecular_limit=True)
     opts.scf_accelerator = accel
     res = vq.run_rhf_periodic(sysp, basis, km, opts)
     mres = _molecular_rhf(H2O)

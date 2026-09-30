@@ -100,6 +100,19 @@ res = optimize_molecular_basis(par, mol, use_cond_penalty=True, cond_gamma=1e-3)
 The penalty is built from the per-element atomic overlap and has its own
 analytic gradient, so it composes with the energy gradient at no extra SCF cost.
 
+## Other drivers
+
+`optimize_molecular_basis` is BDIIS only. For a script that builds its own
+`(objective, gradient)` pair, `vibeqc.basis_optimization` also ships
+`optimize_scipy`, `optimize_minuit`, `optimize_bobyqa` (model-based
+derivative-free, the choice without an analytic gradient), `optimize_dfols`
+(least-squares residuals) and `optimize_cmaes` (global pre-pass), plus the
+`recipes.global_then_polish` CMA-ES-then-BDIIS chain. The user guide's
+"Choosing the optimiser" section
+([`docs/user_guide/basis_optimization.md`](../user_guide/basis_optimization.md))
+has the table, and `scripts/basisset_dev/driver_benchmark_stage1.py` the
+side-by-side evaluation counts.
+
 ## Finite-difference fallback
 
 `analytic=False` drives BDIIS with the driver's finite-difference gradient

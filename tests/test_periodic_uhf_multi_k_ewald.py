@@ -18,6 +18,13 @@ Contracts:
 5. **Result-shape contract** — every field on
    PeriodicUHFMultiKEwaldResult is populated and shaped correctly
    (per-k lists with right length, one density LMS per spin).
+
+6. **Compact cells (GitLab #399)** — the exact exchange takes the RHF
+   sibling's gauge: the corrected Ewald split at every mesh (since #23 at a
+   single Gamma point too), the molecular-limit kernel on request. Closed-shell UHF equals
+   RHF on a 6-bohr cell, is lattice-cutoff converged, and open-shell states
+   match the independent BIPOLE UHF route, the Gamma UHF driver and PySCF
+   KUHF.
 """
 
 from __future__ import annotations
@@ -79,7 +86,19 @@ def test_uhf_smearing_fractional_occupations_converge():
     assert np.isfinite(r.fermi_level_alpha)
     assert np.isfinite(r.fermi_level_beta)
     assert r.free_energy == pytest.approx(r.energy - 0.05 * r.entropy, abs=1e-12)
-    assert abs(r.s_squared) < 1e-10
+    # <S^2> is the ensemble value of the multi-k formula every open-shell
+    # route shares (#399): Sz(Sz+1) + n_b - sum_k w_k sum_ij n^a_i n^b_j
+    # |<a_i|S|b_j>|^2. For this closed-shell state a == b, so it is
+    # n_b - sum_k w_k sum_i n_i^2, small and positive at kT = 0.05 Ha, not 0.
+    # (The Gamma-block diagnostic it replaced ignored the occupations.)
+    for oa, ob in zip(r.occupations_alpha, r.occupations_beta):
+        assert np.allclose(oa, ob, atol=1e-12)
+    ensemble = 1.0 - sum(
+        float(w) * float(np.sum(np.asarray(o) ** 2))
+        for w, o in zip(km.weights, r.occupations_alpha)
+    )
+    assert r.s_squared == pytest.approx(ensemble, abs=1e-10)
+    assert r.s_squared > 0.0
     assert len(r.occupations_alpha) == len(km.kpoints)
     assert len(r.occupations_beta) == len(km.kpoints)
     assert "fractionally occupied / smeared" in pr._band_summary(r)
@@ -454,3 +473,159 @@ def test_fock_blocks_with_reused_d_total_buffer_match_one_shot():
         for g in range(len(D_a.cells)):
             assert np.allclose(F_a_ref[g], F_a_buf[g], atol=1e-13), f"cell {g}"
             assert np.allclose(F_b_ref[g], F_b_buf[g], atol=1e-13), f"cell {g}"
+
+
+# ---------------------------------------------------------------------------
+# GitLab #399: compact cells
+# ---------------------------------------------------------------------------
+#
+# Until #399 the driver summed its full-range exchange as a bare 1/r kernel
+# over a radial image ball. On a finite k mesh the SCF density is BvK-torus
+# periodic, D(g) does not decay, and that sum does not converge; at a single
+# Gamma point the inverse fold filled every image block with P(Gamma). Only
+# the 30-bohr anchor above hid it. Measured on origin/main b268dce, H2/STO-3G
+# in a 6-bohr cube:
+#
+#   mesh     options            RHF             UHF (M=1)       UHF - RHF
+#   (1,1,1)  default          -1.1629042834   -7.9994791730    -6.837
+#   (2,1,1)  default          -1.1945076098   -4.4318619148    -3.237
+#   (2,1,1)  EWALD_3D, cut 18 -1.1945076136   -6.2234315088    -5.029
+
+
+def _compact_h2(box: float = 6.0):
+    return _h2_closed_shell(box)
+
+
+def _compact_options(explicit_ewald: bool = False, cutoff=None):
+    o = vq.PeriodicRHFOptions()
+    o.max_iter = 200
+    if explicit_ewald:
+        o.lattice_opts.cutoff_bohr = 12.0
+        o.lattice_opts.nuclear_cutoff_bohr = 15.0
+        o.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
+    if cutoff is not None:
+        o.lattice_opts.cutoff_bohr = float(cutoff)
+        o.lattice_opts.nuclear_cutoff_bohr = float(cutoff) + 3.0
+        o.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
+    return o
+
+
+@pytest.mark.parametrize(
+    "mesh, explicit_ewald",
+    [((1, 1, 1), False), ((2, 1, 1), False), ((2, 1, 1), True)],
+    ids=["111-default", "211-default", "211-ewald"],
+)
+def test_closed_shell_uhf_matches_rhf_on_a_compact_cell(mesh, explicit_ewald):
+    """#399: UHF(M=1) of a closed-shell state is RHF, on a compact cell too."""
+    sysp, basis = _compact_h2()
+    km = vq.monkhorst_pack(sysp, list(mesh))
+    r = vq.run_rhf_periodic_multi_k_ewald3d(
+        sysp, basis, km, options=_compact_options(explicit_ewald)
+    )
+    u = vq.run_uhf_periodic_multi_k_ewald3d(
+        sysp, basis, km, options=_compact_options(explicit_ewald)
+    )
+    assert r.converged and u.converged
+    assert u.energy == pytest.approx(r.energy, abs=1e-9)
+    assert abs(u.s_squared) < 1e-10
+
+
+def test_uhf_exchange_is_lattice_cutoff_converged_on_a_compact_cell():
+    """#399: the defect's signature was an energy that kept falling as the
+    lattice cutoff grew (-2.26 Ha at 10 bohr, -6.22 Ha at 18 bohr). The
+    corrected split converges like RHF: 1.4e-7 Ha from 14 to 18 bohr."""
+    sysp, basis = _compact_h2()
+    km = vq.monkhorst_pack(sysp, [2, 1, 1])
+    e = {}
+    for cut in (14.0, 18.0):
+        e[cut] = vq.run_uhf_periodic_multi_k_ewald3d(
+            sysp, basis, km, options=_compact_options(cutoff=cut),
+            auto_optimize_truncation=False,
+        ).energy
+    assert e[18.0] == pytest.approx(e[14.0], abs=1e-6)
+    assert e[18.0] == pytest.approx(-1.1945076136, abs=1e-8)
+
+
+def _open_shell_h(name: str):
+    if name == "h2_triplet":
+        atoms, mult = [vq.Atom(1, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 0.0, 1.4])], 3
+    else:
+        atoms, mult = [vq.Atom(1, [0.0, 0.0, 0.0])], 2
+    sysp = vq.PeriodicSystem(3, np.eye(3) * 8.0, atoms, 0, mult)
+    return sysp, vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
+
+
+@pytest.mark.parametrize("name", ["h2_triplet", "h_doublet"])
+def test_open_shell_uhf_matches_bipole_uhf_on_a_multik_mesh(name):
+    """#399: two independent Coulomb routes on one open-shell state.
+
+    BIPOLE UHF assembles its exchange in direct space with its own Ewald
+    split; this driver uses the corrected split of
+    vibeqc.periodic_corrected_exchange. They agree to ~5e-9 Ha at (2,2,2)
+    (measured 2026-09-27); main was 1.7 mHa (triplet) and 1.0 mHa (doublet)
+    off even in this dilute 8-bohr cell.
+    """
+    sysp, basis = _open_shell_h(name)
+    km = vq.monkhorst_pack(sysp, [2, 2, 2])
+    u = vq.run_uhf_periodic_multi_k_ewald3d(sysp, basis, km)
+    b = vq.run_pbc_bipole_uhf(sysp, basis, km, progress=False)
+    assert u.converged and b.converged
+    assert u.energy == pytest.approx(b.energy, abs=1e-7)
+
+
+# PySCF 2.14.0 KUHF/GDF, exxdiv='ewald', cell.precision = 1e-10,
+# conv_tol = 1e-10, run out of process by
+# examples/regression/parity_uhf_multik_ewald_vs_pyscf.py (vibe-qc never
+# imports it). The triplet is not pinned here: both GDF codes (PySCF and
+# vibe-qc's run_kuhf_periodic_gdf, which agree to 1e-10) sit 1.30e-4 Ha
+# below the two Ewald routes on that state, a density-fitting error; the
+# BIPOLE check above covers it.
+PYSCF_KUHF_H_DOUBLET_222_EWALD = -0.4675702852
+PYSCF_METHOD_GAP_HA = 5.0e-5
+
+
+def test_open_shell_uhf_matches_pyscf_kuhf():
+    sysp, basis = _open_shell_h("h_doublet")
+    u = vq.run_uhf_periodic_multi_k_ewald3d(
+        sysp, basis, vq.monkhorst_pack(sysp, [2, 2, 2])
+    )
+    assert u.converged
+    assert u.energy == pytest.approx(
+        PYSCF_KUHF_H_DOUBLET_222_EWALD, abs=PYSCF_METHOD_GAP_HA
+    )
+
+
+@pytest.mark.parametrize("name", ["h2_triplet", "h_doublet"])
+def test_single_gamma_uhf_gauges(name):
+    """#399 + #23: at a single Gamma point the default is the corrected
+    Ewald split, which BIPOLE UHF also takes there; exchange_exxdiv='none'
+    selects the molecular-limit kernel and reproduces
+    run_uhf_periodic_gamma_ewald3d (main returned -2.91 / -1.66 Ha before
+    #399, in neither gauge)."""
+    sysp, basis = _open_shell_h(name)
+    km = vq.monkhorst_pack(sysp, [1, 1, 1])
+    default = vq.run_uhf_periodic_multi_k_ewald3d(sysp, basis, km)
+    bipole = vq.run_pbc_bipole_uhf(sysp, basis, km, progress=False)
+    assert default.energy == pytest.approx(bipole.energy, abs=1e-6)
+
+    molecular = vq.run_uhf_periodic_multi_k_ewald3d(
+        sysp, basis, km, exchange_exxdiv="none"
+    )
+    gamma = vq.run_uhf_periodic_gamma_ewald3d(sysp, basis)
+    assert molecular.energy == pytest.approx(gamma.energy, abs=1e-10)
+    # The two gauges are genuinely different at a single Gamma point.
+    assert abs(default.energy - molecular.energy) > 5.0e-3
+
+
+def test_exchange_exxdiv_is_validated():
+    sysp, basis = _open_shell_h("h_doublet")
+    with pytest.raises(ValueError, match="exchange_exxdiv must be"):
+        vq.run_uhf_periodic_multi_k_ewald3d(
+            sysp, basis, vq.monkhorst_pack(sysp, [1, 1, 1]),
+            exchange_exxdiv="madelung",
+        )
+    with pytest.raises(NotImplementedError, match="only at a single Gamma"):
+        vq.run_uhf_periodic_multi_k_ewald3d(
+            sysp, basis, vq.monkhorst_pack(sysp, [2, 1, 1]),
+            exchange_exxdiv="none",
+        )

@@ -68,21 +68,53 @@ def _to_periodic_system(structure: Any):
             f"vq.PeriodicSystem); got {type(structure).__name__}"
         )
 
-    lattice = np.asarray(structure.lattice_matrix_angstrom(), dtype=float)
-    lattice_bohr = lattice * ANGSTROM_TO_BOHR
+    # GitLab #128: `lattice_matrix_angstrom` returns ROWS ("rows = a, b, c
+    # vectors", vibe_basis/io/structures.py), and `PeriodicSystem` reads
+    # COLUMNS. Handing the row matrix straight over built a sheared crystal
+    # from a correct one: a hexagonal Structure with a = b = 2.504 Angstrom
+    # and gamma = 120 arrived as 2.7996 / 2.1685 and 116.565, while the
+    # fractional-to-Cartesian product below -- which is right for rows -- kept
+    # the atoms where they belonged. Cubic compounds have a diagonal matrix
+    # and are unaffected, which is why this survived.
+    lattice_rows_bohr = (
+        np.asarray(structure.lattice_matrix_angstrom(), dtype=float)
+        * ANGSTROM_TO_BOHR
+    )
 
     atoms = []
     for site in structure.unit_cell:
         frac = np.asarray(site.fxyz, dtype=float)
-        cart = frac @ lattice_bohr
+        cart = frac @ lattice_rows_bohr
         atoms.append(vq.Atom(int(site.Z), [float(c) for c in cart]))
 
-    return vq.PeriodicSystem(
+    system = vq.PeriodicSystem(
         dim=3,
-        lattice=lattice_bohr,
+        lattice=lattice_rows_bohr.T,
         unit_cell=atoms,
         multiplicity=int(getattr(structure, "multiplicity", 1) or 1),
     )
+    declared = getattr(structure, "crystal_system", None)
+    if declared:
+        from vibeqc.lattice_convention import check_crystal_system
+
+        # The Structure already knows what it is meant to be, so let it say
+        # so: this is the one marshalling step where a declaration is free.
+        check_crystal_system(system, declared)
+
+    # The space group is the tighter claim, and it is checked against
+    # ``crystal_spacegroup`` rather than the ``spacegroup`` string on purpose.
+    # ``_structure_from_periodic_system`` clears the integer to 0 after a
+    # relaxation, for the reason given in its docstring -- the field describes
+    # the *input* geometry and a relaxation has moved the atoms -- while the
+    # string is carried over and goes stale. So a zero here means "this
+    # record's symmetry data is no longer trustworthy", and skipping the check
+    # then is the whole point rather than a loophole.
+    declared_group = int(getattr(structure, "crystal_spacegroup", 0) or 0)
+    if declared_group:
+        from vibeqc.lattice_convention import check_space_group
+
+        check_space_group(system, declared_group)
+    return system
 
 
 def _structure_from_periodic_system(system: Any, template: Any) -> Any:
@@ -112,7 +144,12 @@ def _structure_from_periodic_system(system: Any, template: Any) -> Any:
     lattice_bohr = np.asarray(system.lattice, dtype=float)
     lattice_ang = lattice_bohr / ANGSTROM_TO_BOHR
 
-    a_vec, b_vec, c_vec = lattice_ang
+    # GitLab #128: ``PeriodicSystem.lattice`` holds the vectors as COLUMNS, so
+    # they are read off the transpose. Unpacking the matrix directly took its
+    # rows, which mirrored the transpose on the way in: the two cancelled on a
+    # round trip, and the cubic fixture that covered it could not tell the
+    # difference because a diagonal matrix is its own transpose.
+    a_vec, b_vec, c_vec = lattice_ang.T
     a = float(np.linalg.norm(a_vec))
     b = float(np.linalg.norm(b_vec))
     c = float(np.linalg.norm(c_vec))
@@ -127,10 +164,12 @@ def _structure_from_periodic_system(system: Any, template: Any) -> Any:
 
     from vibe_basis.io.structures import StructureAtom
 
-    inv = np.linalg.inv(lattice_bohr)
     sites = []
     for atom in system.unit_cell:
-        frac = np.asarray(atom.xyz, dtype=float) @ inv
+        # r_cart = lattice @ frac for the column convention, so the fractional
+        # coordinates solve that system rather than multiplying by the inverse
+        # on the right (which would be the row reading).
+        frac = np.linalg.solve(lattice_bohr, np.asarray(atom.xyz, dtype=float))
         sites.append(
             StructureAtom(Z=int(atom.Z), fxyz=tuple(float(f) for f in frac))
         )

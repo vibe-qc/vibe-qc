@@ -396,6 +396,84 @@ def test_final_density_reuses_xc_from_exact_fock(monkeypatch, driver, max_iter):
     assert float(xc_line.split()[-1]) == pytest.approx(result.e_xc, abs=5e-10)
 
 
+@pytest.mark.parametrize("driver,multiplicity", [("rks", 1), ("uks", 1), ("uks", 2)])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (2, 1, 1)])
+@pytest.mark.parametrize("exit_mode", ["capped", "converged", "refused_confirmation"])
+def test_smeared_terminal_energy_uses_committed_density_entropy(
+    monkeypatch, driver, multiplicity, mesh, exit_mode,
+):
+    """Mermin entropy belongs to D, including before exact convergence (#383).
+
+    Recover the occupations independently as eigenvalues of S**(1/2) D S**(1/2).
+    Final Fock canonicalization must not pair E[D] with the next density's
+    entropy. The capped case makes that distinction numerically substantial.
+    """
+    import importlib
+    from vibeqc._vibeqc_core import PeriodicKSOptions
+    from vibeqc.pbc_bipole_common import bvk_torus_density_matrices
+
+    atoms = [
+        vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [0., 0., 2.6]),
+    ]
+    if multiplicity == 2:
+        atoms.append(vq.Atom(1, [2.4, 0., 0.6]))
+    system = vq.PeriodicSystem(3, np.eye(3) * 12.0, atoms)
+    system.multiplicity = multiplicity
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    kmesh = monkhorst_pack(system, mesh, use_symmetry=False)
+    opts = PeriodicKSOptions()
+    opts.functional = "pbe"
+    opts.initial_guess = InitialGuess.HCORE
+    opts.lattice_opts.cutoff_bohr = 8.0
+    opts.max_iter = 1 if exit_mode == "capped" else 80
+    opts.conv_tol_energy = 1e-9
+    opts.conv_tol_grad = 1e-7
+    opts.smearing_temperature = 0.1
+    opts.grid.n_radial = 24
+    opts.grid.n_theta = 8
+    opts.grid.n_phi = 16
+    module = importlib.import_module("vibeqc.pbc_bipole_" + driver)
+    run = getattr(module, "run_pbc_bipole_" + driver)
+    run_kwargs = dict(progress=False, use_incremental_fock=False, ewald_precision=1e-6)
+    if exit_mode == "refused_confirmation":
+        baseline = run(system, basis, kmesh, opts, **run_kwargs)
+        assert baseline.converged
+        opts.max_iter = baseline.n_iter
+    check = module.bipole_terminal_check
+    exact = {}
+
+    def record_check(*args, **kwargs):
+        exact[kwargs["phase"]] = kwargs["exact_objective"]
+        verdict, details = check(*args, **kwargs)
+        if exit_mode == "refused_confirmation" and kwargs["phase"] == "in_loop":
+            verdict = False
+        return verdict, details
+
+    monkeypatch.setattr(module, "bipole_terminal_check", record_check)
+    result = run(system, basis, kmesh, opts, **run_kwargs)
+    assert result.converged == (exit_mode == "converged")
+    densities = ([result.density] if driver == "rks" else
+                 [result.density_alpha, result.density_beta])
+    degeneracy = 2.0 if driver == "rks" else 1.0
+    entropy = 0.0
+    for density in densities:
+        d_k = bvk_torus_density_matrices(density, result.kpoints_cart, mesh)
+        for weight, overlap, block in zip(result.kpoint_weights, result.overlap, d_k):
+            s, u = np.linalg.eigh(overlap)
+            sqrt_s = (u * np.sqrt(s)) @ u.conj().T
+            f = np.linalg.eigvalsh(sqrt_s @ block @ sqrt_s) / degeneracy
+            assert np.min(f) >= -1e-12 and np.max(f) <= 1.0 + 1e-12
+            f = np.clip(f, 1e-15, 1.0 - 1e-15)
+            entropy -= weight * degeneracy * np.sum(f*np.log(f) + (1-f)*np.log1p(-f))
+    assert entropy > 1e-3  # A genuinely fractional state, not an integer control.
+    assert result.entropy == pytest.approx(entropy, rel=0., abs=1e-12)
+    assert result.free_energy == pytest.approx(
+        result.energy - opts.smearing_temperature * entropy, rel=0., abs=1e-13,
+    )
+    if exit_mode != "capped":
+        assert exact["in_loop"] == exact["post_loop"]
+
+
 @pytest.mark.parametrize("driver", ["rks", "uks"])
 @pytest.mark.parametrize("radius", [3.0, 8.0])
 @pytest.mark.parametrize("periodic_grid", [True, False])
@@ -435,3 +513,85 @@ def test_auto_xc_uses_the_configured_periodic_grid_image_radius(
     assert grid_radii == ([radius] if periodic_grid else [])
     assert xc_radii
     assert xc_radii == [radius if periodic_grid else 1.25] * len(xc_radii)
+
+
+@pytest.mark.parametrize("driver", ["rhf", "uhf", "rks", "uks"])
+def test_final_density_domain_and_raw_components_316(monkeypatch, driver):
+    """One physical settings record and raw returned-density sums across builds.
+
+    This is a native/SCF acceptance witness. It is not part of the standalone
+    source-only contract suite and requires calculation admission.
+    """
+    import importlib
+    from vibeqc._vibeqc_core import PeriodicKSOptions
+
+    module = importlib.import_module(
+        "vibeqc.pbc_bipole" + ("" if driver == "rhf" else "_" + driver)
+    )
+    unrestricted = driver in ("uhf", "uks")
+    builder = "build_bipole_" + ("unrestricted" if unrestricted else "restricted") + "_fock"
+    original_fock = getattr(module, builder)
+    original_one = module.build_bipole_one_electron_lattice
+    one_electron = []
+    builds = []
+
+    def blocks(operator):
+        return {tuple(int(x) for x in cell.index): np.asarray(block).copy()
+                for cell, block in zip(operator.cells, operator.blocks)}
+
+    def observe_one(*args, **kwargs):
+        operators = original_one(*args, **kwargs)
+        one_electron.append(operators)
+        return operators
+
+    def observe_fock(ctx, *densities, **kwargs):
+        ctx.resolved_domain.require_fock_context(ctx)
+        saved = [blocks(density) for density in densities]
+        built = original_fock(ctx, *densities, **kwargs)
+        builds.append((ctx.resolved_domain, kwargs.get("use_incremental", True), saved, built))
+        return built
+
+    monkeypatch.setattr(module, "build_bipole_one_electron_lattice", observe_one)
+    monkeypatch.setattr(module, builder, observe_fock)
+    opts = PeriodicKSOptions() if driver in ("rks", "uks") else PeriodicRHFOptions()
+    assert opts.lattice_opts.pair_complete_1e is False  # Shared native default.
+    result = _run(False, driver=driver, options=opts)
+    assert result.converged
+    assert result.resolved_domain.policy == "physical_pairs"
+    assert builds and all(row[0] is result.resolved_domain for row in builds)
+    assert any(row[1] for row in builds)
+    assert any(not row[1] for row in builds)
+    assert not builds[-1][1]
+    returned = ([result.density_alpha, result.density_beta] if unrestricted
+                else [result.density])
+    for observed, density in zip(builds[-1][2], returned):
+        actual = blocks(density)
+        assert actual.keys() == observed.keys()
+        for key in actual:
+            np.testing.assert_array_equal(actual[key], observed[key])
+
+    # Independently accumulate the real-space block products, preserving the
+    # native cell support and raw blocks (no Hermitian projection or clipping).
+    def raw_contract(density, operator):
+        return sum(float(np.sum(density[key] * value))
+                   for key, value in blocks(operator).items())
+
+    densities = [blocks(d) for d in returned]
+    total_density = {key: sum(d[key] for d in densities) for key in densities[0]}
+    _, kinetic, nuclear, _ = one_electron[-1]
+    built = builds[-1][3]
+    f2e = ([built.f2e_alpha_real, built.f2e_beta_real] if unrestricted
+           else [built.f2e_real])
+    e_two = built.e_2e_k_correction + .5 * sum(
+        raw_contract(d, f) for d, f in zip(densities, f2e)
+    )
+    components = result.energy_components[-1]
+    e_kin = raw_contract(total_density, kinetic)
+    e_ne = raw_contract(total_density, nuclear)
+    assert components.e_kinetic == pytest.approx(e_kin, rel=0., abs=1e-12)
+    assert components.e_nuclear_attraction == pytest.approx(e_ne, rel=0., abs=1e-12)
+    assert components.e_two_electron == pytest.approx(e_two, rel=0., abs=1e-12)
+    reconstructed = (e_kin + e_ne + e_two + getattr(result, "e_xc", 0.)
+                     + result.e_nuclear + result.e_dft_plus_u
+                     + float(result.e_ext_el_spheropole or 0.))
+    assert result.energy == pytest.approx(reconstructed, rel=0., abs=1e-12)
