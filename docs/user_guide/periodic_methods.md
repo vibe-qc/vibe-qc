@@ -182,8 +182,13 @@ dimensionality first:
   route. Closed-shell RHF/RKS may explicitly select the bounded slab-GDF
   route; unsupported bulk builders still raise rather than returning an
   `a3`-dependent energy.
-* **`dim=1`**: **GDF** for RHF / RKS / UHF / UKS. There is no maintained
-  public dim=1 ROHF route.
+* **`dim=1`**: **GDF** at Gamma for closed-shell RHF / RKS. A `dim=1` wire
+  with a k mesh is not available: the k-mesh GDF drivers raise
+  `NotImplementedError` (no consistent 1-D Coulomb gauge; see
+  [section 3.4](#34-disadvantages)). For a wire that needs k sampling,
+  model it as a `dim=3` cell with vacuum on the two transverse axes. There
+  is no public dim=1 open-shell route: the Gamma open-shell GDF drivers
+  accept only `dim=3`, and a k mesh raises as above. That includes ROHF.
 * **`dim=3`**: **GDF** for closed-shell RHF / RKS and **BIPOLE** for
   open-shell UHF / UKS.
 
@@ -210,7 +215,7 @@ that convention does not identify the constructions.
 | `jk_method=` (AICCM rows: `method="aiccm", variant=`) | What it dispatches to | Status |
 |---|---|---|
 | `"slab_ewald_2d"` | Rigorous vacuum-free 2D (slab) Coulomb, the Parry / de Leeuw-Perram gauge. RHF / RKS / UKS at Gamma and multi-k. **This is what AUTO selects for `dim=2`**, so you rarely name it. `dim=2` only; raises on bulk or polymer cells. Total energy is invariant to the synthesized `a3`; `E_nuclear` is k-mesh independent. No analytic gradients on this direct route (use explicit `"gdf"` for closed-shell slab forces), no smearing, no `UHF` yet. Pure and screened-exchange envelopes are supported; full-range multi-k RKS fails closed, while the legacy RHF/UKS full-range exchange paths warn and remain provisional. Aliases: `"slab"`, `"ewald_2d"`. | Production for pure/screened envelopes; full-range RHF/UKS provisional |
-| `"gdf"` | Native Gaussian density fitting. Closed-shell RHF / RKS / full-range hybrids and maintained-preview ROHF are public at Gamma and multi-k; ROHF uses `run_krohf_periodic_gdf` and integer 2/1/0 occupations. On `dim=2`, explicit GDF uses the dedicated signed slab-truncated metric and rigorous Parry-gauge one-electron channels on a full Gamma-centered `(n1,n2,1)` tuple mesh. Symmetry-reduced (IBZ) meshes from `KPoints.monkhorst_pack(..., symmetry=True)` are accepted: the driver expands them to the full BZ before the HF exchange sum (correctness, not a speed win: every full-mesh point is still built and diagonalised); a mesh that cannot account for its own full-mesh parent (e.g. an explicit `KPoints` list without that provenance) still fails closed rather than being expanded against fabricated metadata. Slab analytic gradients ship (2026-07-30): `compute_gradient=True` / `optimize=True` on the closed-shell slab route. Slab open shell, ROKS/GDF, smearing, restarts, and DFT+U fail closed. In 1D/3D, open-shell UHF / UKS remains available at Gamma and multi-k. AUTO selects GDF for 1D closed- and open-shell work, `slab_ewald_2d` for every `dim=2` job, and BIPOLE for 3D open shell. Full-grid external XC is experimental and zero-temperature only on the complete periodic AO-density route. | Production in 1D/3D; ROHF maintained preview; verified closed-shell energy + analytic-gradient route in 2D; external XC experimental |
+| `"gdf"` | Native Gaussian density fitting. Closed-shell RHF / RKS / full-range hybrids and maintained-preview ROHF are public at Gamma and multi-k; ROHF uses `run_krohf_periodic_gdf` and integer 2/1/0 occupations. On `dim=2`, explicit GDF uses the dedicated signed slab-truncated metric and rigorous Parry-gauge one-electron channels on a full Gamma-centered `(n1,n2,1)` tuple mesh. Symmetry-reduced (IBZ) meshes from `KPoints.monkhorst_pack(..., symmetry=True)` are accepted: the driver expands them to the full BZ before the HF exchange sum (correctness, not a speed win: every full-mesh point is still built and diagonalised); a mesh that cannot account for its own full-mesh parent (e.g. an explicit `KPoints` list without that provenance) still fails closed rather than being expanded against fabricated metadata. Slab analytic gradients ship (2026-07-30): `compute_gradient=True` / `optimize=True` on the closed-shell slab route. Slab open shell, ROKS/GDF, smearing, restarts, and DFT+U fail closed. In 3D, open-shell UHF / UKS remains available at Gamma and multi-k; a `dim=1` wire has no open-shell route, and a `dim=1` k mesh raises `NotImplementedError` for every method. AUTO selects GDF for 1D closed-shell work at Gamma, `slab_ewald_2d` for every `dim=2` job, and BIPOLE for 3D open shell. Full-grid external XC is experimental and zero-temperature only on the complete periodic AO-density route. | Production in 3D (1D closed-shell at Gamma only); ROHF maintained preview; verified closed-shell energy + analytic-gradient route in 2D; external XC experimental |
 | `method="aiccm", variant="chi"` (legacy `jk_method="aiccm2026dev-b"`, `"chi"`, `"chi-ccm"` resolve with a `DeprecationWarning`) | χ-CCM, the finite-translation-group character construction evaluated on a Γ-centred character mesh. `aiccm_lattice_extension=(N1,N2,N3)` defines the real cyclic dimensions and derives the character net; `aiccm_wigner_seitz_shells=s` requests odd dimensions `2s+1`. `aiccm_backend=` selects `"four_center"`, `"ri"`, or `"rijcosx"`. All backends are 3-D only; every 1-D/2-D request fails closed. Pure full-grid external XC is accepted for zero-temperature RKS/UKS only with `four_center`; fitted backends and external-provider hybrids remain gated. See [the derivation](../design_aiccm2026dev_b.md) and the [AICCM page](aiccm.md). | Experimental, opt-in; 3-D only |
 | `method="aiccm", variant="real-gamma"` (legacy `jk_method="real-gamma"`, `"real_gamma"` warn) | The neutral Γ-CCM construction in its k-free real-Γ supercell representation, through the per-unit-cell adapter `periodic/ccm/real_gamma_runner.py`. RHF / RKS / UHF / UKS including screened hybrids; `aiccm_lattice_extension` (or the legacy Γ-centred `kpoints` alias, not both) is the BvK torus; fixed-cell `optimize=True` works for ordinary functionals. Zero-temperature pure full-grid external XC is accepted for RKS/UKS, but its gradients and optimization remain gated. No DFT+U, smearing, Hessian, or cell relaxation; an explicit `damping`, `fock_mixing`, `fmixing_percent`, `density_mixer` or `level_shift` fails closed because the direct-torus loop would drop it. | Experimental, opt-in; 3-D only |
 | `method="aiccm", variant="neutral-bloch"` | The same neutral construction in the Bloch representation, through the producer `run_ccm_*_gdf` (the unit-cell GDF drivers on the torus mesh) and the adapter `periodic/ccm/neutral_bloch_runner.py`. RHF / RKS / UHF / UKS; the Gamma-centred mesh is the BvK torus; the producer refuses a vacuum-padded cluster and a positive converged neutral energy, and the arm forwards no mixing control. Full-grid external XC fails closed pending proof that its atom-block periodic partition is representation invariant. No gradients, DFT+U or restart. The former `jk_method` aliases `"neutral-bloch"`, `"bloch-control"`, `"gdf-control"`, `"aiccm-ri"` (plain unit-cell GDF) are retired and fail closed. | Experimental, opt-in; 3-D only |
@@ -273,7 +278,7 @@ Ewald split.** On a finite k mesh the SCF density is
 Born-von-Kármán-torus periodic, so `D(g)` does not decay with image
 distance and a bare `1/r` image sum does not converge: it drifts
 without limit as the lattice cutoff grows. The multi-k EWALD_3D drivers
-(RHF, RKS, UKS) therefore build that arm as `erfc(α r)/r` in real space
+(RHF, UHF, RKS, UKS) therefore build that arm as `erfc(α r)/r` in real space
 plus a reciprocal channel per momentum transfer `q = k − k'` plus the
 probe-charge `q + G = 0` term: the `exxdiv='ewald'` convention, shared
 with BIPOLE and implemented once in
@@ -284,20 +289,75 @@ with BIPOLE and implemented once in
   at Γ where the molecular-limit density does decay. Pure functionals
   build no full-range arm and are unaffected, as are screened hybrids
   (`c_full = 0`).
-* Multi-k **RHF at a `(1,1,1)` mesh** keeps its molecular-limit branch
-  by default (it zeroes every image block first, so its sum has one term)
-  and stays in bit-parity with the Γ driver. Pass
-  `exchange_exxdiv='ewald'` to `run_rhf_periodic_multi_k_ewald3d` to put a
-  single-Γ mesh on the corrected split instead; `exchange_exxdiv='none'`
-  names the molecular-limit default and is refused on any real mesh, where
-  that sum does not converge. **The two are different finite-size
-  conventions with the same infinite-k limit** (Carrier, Rohra & Görling,
-  Phys. Rev. B 75, 205126 (2007), Sec. IV), 21.7 mHa apart at Γ on
-  H₂/STO-3G in an 8-bohr cube. A Γ-supercell energy therefore band-folds
-  onto a multi-k energy only when both sides name the same gauge; a
-  k-convergence sequence taken with the defaults spans two of them, so
-  fix `exchange_exxdiv` before comparing meshes. See
+* **One gauge at every mesh, `(1,1,1)` included** (GitLab #23). The
+  multi-k RHF and UHF drivers take the corrected split by default on a
+  single Γ point too, so a k-convergence sequence run with the defaults
+  stays in one gauge and matches PySCF `exxdiv='ewald'` at every step.
+  Until #23 a single Γ point took the molecular-limit kernel instead, and
+  stepping `(1,1,1)` to `(2,2,2)` on H₂/STO-3G in an 8-bohr cube mixed
+  4.4 mHa of real k convergence with a 21.7 mHa gauge switch. That kernel
+  is still available as `exchange_exxdiv='none'`, accepted only at a
+  single Γ point (it zeroes every image block, so the sum has one term) and
+  refused on any real mesh, where that sum does not converge. **The two are
+  different finite-size conventions with the same infinite-k limit**
+  (Carrier, Rohra & Görling, Phys. Rev. B 75, 205126 (2007), Sec. IV): the
+  molecular limit converges exponentially to the isolated molecule as a box
+  grows, the corrected split as `1/L³` (0.37 mHa at L = 30 bohr). A
+  Γ-supercell energy band-folds onto a multi-k energy only when both sides
+  use the same gauge. See
   `tests/test_periodic_exchange_gauge_band_folding.py`.
+* **The Γ-only drivers are the molecule-in-a-box routes and keep the
+  molecular limit**: `run_rhf_periodic_gamma_ewald3d` and its UHF, ROHF,
+  RKS and UKS siblings, `run_rhf_periodic_gamma_scf`,
+  `run_rks_periodic_gamma_scf`, the legacy Γ GDF driver, and the ASE
+  calculator at its default `kpts=(1, 1, 1)`. An option that makes such a
+  route borrow the multi-k driver keeps the gauge: smearing on
+  `run_rhf_periodic_gamma_scf` passes `exchange_exxdiv='none'`, and
+  `run_rks_periodic_gamma_scf` refuses smearing with a hybrid (the multi-k
+  KS driver has no molecular-limit kernel) and names
+  `run_rks_periodic_scf`. The k-mesh dispatchers `run_rhf_periodic_scf`
+  (which forwards `exchange_exxdiv`) and `run_rks_periodic_scf` use the
+  multi-k drivers at every mesh; until
+  #23 `run_rks_periodic_scf` sent a Γ mesh to the Γ-only driver unless
+  smearing or a restart density was set, which moved a PBE0 energy by
+  18.9 mHa on H₂/STO-3G in a 6-bohr cube. Pure functionals give the same
+  energy on both (to 1e-14 Ha there).
+* **Every result records the gauge it ran** as `result.exchange_q0`
+  (`BvK-ewald`, `molecular-limit`, or `bare-image-sum` on the gauges the
+  corrected split does not exist for yet, 2D slab and `dim != 3`). The
+  analytic gradient (`compute_gradient_periodic_rhf_multi_k`) differentiates
+  that gauge rather than inferring one from the mesh, and `run_periodic_job`
+  writes it to `.system` `[run].exchange_q0`, the QVF provenance, and an
+  `exchange q=0 gauge:` line in the `.out`.
+* **A convergence aid no longer changes the Γ GDF Hamiltonian** (GitLab
+  #400). A default-Γ bulk RHF/RKS job that the exact-Γ driver cannot
+  evaluate (a level shift, Fock mixing for RHF, smearing, or a charged
+  cell) runs the k-mesh engine at `kpoints=(1, 1, 1)`, exactly what an
+  explicit one-point mesh selects, and records `BvK-ewald`. Before, it
+  fell back to the legacy Ewald-J driver, whose exchange carries no
+  divergence correction: 75.65 mHa on H₂/STO-3G in a 6-bohr cube for any
+  of those aids, 18.4 mHa on a charged HeH⁺ cell. `symmetry_stabilize`
+  and `symmetry_reduce_fock=True` are refused on bulk GDF, since no GDF
+  engine implements them (a k-mesh job used to drop them silently).
+* **Which engine ran, and why, is in the record.** `run_periodic_job`
+  decides the GDF engine once (`vibeqc.periodic_gdf_route.resolve_gdf_route`)
+  and writes `[run].gdf_engine` (`exact-gamma`, `k-mesh`, `legacy-gamma`,
+  `slab-gdf`), `gdf_driver` and `gdf_route_reason` to the `.system`
+  manifest next to `exchange_q0`; the `.out` carries a `gdf_engine` line and
+  a `GDF engine:` progress line. The rule for convergence aids: an
+  explicitly requested aid the exact-Γ driver lacks moves the job to the
+  k-mesh engine at `(1, 1, 1)`, which implements it; an AUTO-resolved Fock
+  mixing or level shift never moves the engine and is dropped (the strategy
+  block says so) only when the chosen driver lacks it. Smearing always
+  moves the engine, whatever its source. Calling an open-shell k-mesh
+  driver directly with a level shift or Fock mixing raises instead of
+  dropping the option.
+* Until GitLab #399 the multi-k **UHF** driver kept the bare image sum on
+  every mesh, so a closed-shell singlet on a compact cell did not reproduce
+  RHF: H₂/STO-3G in a 6-bohr cube at `(2,1,1)` read -4.43 Ha against RHF's
+  -1.19 Ha, and kept falling as the lattice cutoff grew. It now takes the
+  same gauge selection as RHF, and UHF(M=1) equals RHF on the same mesh and
+  options.
 * A **symmetry-reduced (IBZ) Monkhorst-Pack mesh works, wedge-native**:
   the SCF diagonalises only at the irreducible points and unfolds the
   density to the full Brillouin zone per iteration with the Pisani/Dovesi
@@ -690,24 +750,26 @@ Native GDF in vibe-qc covers:
 * **Gamma-only RHF, RKS, and hybrids in 1D / 3D** (a `dim=2` slab raises) via
   `run_rhf_periodic_gamma_gdf` (and the runner-level
   `run_periodic_job(..., jk_method="gdf")`).
-* **Multi-k RHF / RKS in 1D / 3D** (a `dim=2` slab raises) via
+* **Multi-k RHF / RKS in 3D** via
   `run_krhf_periodic_gdf(..., kmesh, ...)` and
-  `run_krks_periodic_gdf(..., kmesh, ...)`. A `(1, 1, 1)` mesh
-  delegates to the Gamma-GDF path; any other Monkhorst-Pack mesh
+  `run_krks_periodic_gdf(..., kmesh, ...)`. A closed-shell `dim=2`
+  slab runs the dedicated slab route, and a `dim=1` k-mesh fails
+  closed (no consistent Coulomb gauge for `dim < 3`). A bulk `(1, 1, 1)`
+  mesh runs this engine at Nk=1 on the default SR/LR fit. On
+  `gdf_method="compcell"` or `"mdf"` it is handed to the exact-Gamma
+  `run_pbc_gdf_rhf` when that driver implements every requested
+  control, and otherwise also runs at Nk=1 (`vibeqc.periodic_gdf_route`);
+  only `dim < 3` reaches the legacy Gamma driver. Any other
+  Monkhorst-Pack mesh
   runs the full multi-k loop with k-dependent 3c / 2c blocks,
-  Bloch-phase assembly, and multi-k DIIS. The multi-k Ewald-gauge
-  fix brings a multi-k mesh to within 0.000 mHa of the Gamma
-  energy in the molecular limit. On the 3D true-multi-k RKS route
-  with a pure functional and `use_compcell=False`, the analytic-FT
-  Ewald Hartree J cache is retained only when it fits the bounded
-  dense-cache target. Larger cases contract J directly from
-  $D(\mathbf{k})$ in bounded reciprocal-vector and output-cell
-  batches, then Bloch-fold it; they do not retain the former
-  `(n_cells, n_AO, n_AO, n_G)` complex tensor. Small jobs keep their
-  pre-SCF cache reuse. The `G = 0` omission, Ewald gauge,
-  `VIBEQC_J_EWALD3D_KE` cutoff, and SCF defaults are unchanged. Gamma,
-  HF/hybrid cached-Lpq, `use_compcell=True`, lower-dimensional, and
-  diagnostic grid-backend routes do not use this new contraction.
+  Bloch-phase assembly, and multi-k DIIS. Every k-mesh run contracts
+  its Hartree J from the cached fit of its `gdf_method`; an explicit
+  `use_compcell=False` is overridden and logged. Pure-functional runs
+  with `use_compcell=False` used to take an unfitted analytic-FT Ewald
+  Hartree instead. Since 2026-09-29 no k-mesh job reached it (see the
+  explicit `gdf_method` entry below), and it was removed from this
+  driver (GitLab #415). The analytic-FT J remains the Hartree of the
+  Ewald-3D drivers.
 * **Translation-resolved DF block accessors** via
   `compute_2c_eri_lattice_blocks` and
   `compute_3c_eri_lattice_blocks`, plus the Bloch-sum helpers
@@ -729,9 +791,12 @@ the `PeriodicRHFGDFResult.backend` field:
   1D wires and 3D molecular-limit cells whose GDF cutoff includes only
   the home cell.
 * `"ewald-jk-fallback"`: Ewald-3D $J$ + real-space $K$. Used for
-  3D systems with image cells inside the GDF cutoff. See
-  `vibeqc.pbc_gdf` for the compensated-cell GDF path that will
-  eventually subsume this branch.
+  3D systems with image cells inside the GDF cutoff.
+
+`run_periodic_job` and the k-point GDF drivers call this driver only for
+`dim < 3`. A bulk Γ job runs the GDF Hamiltonian of every other mesh
+(fitted $J$, `exxdiv='ewald'` exchange) through `run_pbc_gdf_rhf` or the
+k-mesh engine at `(1, 1, 1)`; see `vibeqc.periodic_gdf_route`.
 
 #### 3.2.1 RSGDF all-FT-Bloch path, chemical-accuracy milestone (v0.9)
 
@@ -821,21 +886,20 @@ and the Ewald-3D $V_{ne}$ Fourier transform streams its own chunked
 AO-pair FT, so the dense $(n_{\mathrm{AO}}, n_{\mathrm{AO}}, n_G)$
 pair-FT tensor (the dominant memory of a Γ-point GDF build on
 production-basis cells) is never materialised (at the cost of running
-the pair FT once per consumer instead of once shared). Γ k-meshes that
-fall back to the legacy molecular-limit GDF driver (open options such
-as `level_shift` / `fock_mixing` / smearing) raise
-`NotImplementedError` rather than silently dropping the threshold.
+the pair FT once per consumer instead of once shared).
 
-Since 2026-07-16 only an **explicit** `fock_mixing` / `fmixing_percent`
-/ `level_shift` request sends a default-Γ closed-shell RHF job to that
-legacy fallback. The `convergence="auto"` profile knobs (e.g. the
-ionic-insulator FMIXING 30% that MgO-class cells resolve) are
-capability-filtered to zero instead: the run stays on the
-PySCF-parity `run_pbc_gdf_rhf` driver, whose DIIS/accelerator stack
-and auto-sized high-|G| tail carry the convergence, because the
-legacy fallback's dense-core absolute energies are parity-held
-(G-GDF-001 in `handovers/HANDOVER_GATED_ITEMS.md`). The strategy
-block in the `.out` states the filtered knob and the reason.
+An **explicit** `fock_mixing` / `fmixing_percent` / `level_shift` or
+smearing request on a default-Γ closed-shell job runs the k-mesh engine
+at `(1, 1, 1)`, which implements it on the same Hamiltonian. The
+`convergence="auto"` profile knobs (e.g. the ionic-insulator FMIXING 30%
+that MgO-class cells resolve) are capability-filtered to zero instead, so
+the run keeps the faster exact-Γ `run_pbc_gdf_rhf` evaluation and its
+DIIS/accelerator stack. The strategy block in the `.out` states the
+filtered knob and the reason. Called directly, the exact-Γ drivers raise
+`NotImplementedError` for a control they do not implement
+(`run_pbc_gdf_rhf`: smearing, Fock mixing, level shift;
+`run_pbc_gdf_uhf` / `run_pbc_gdf_uks`: level shift) instead of dropping
+it.
 
 #### 3.2.3 Space-group reduction of the exchange build
 
@@ -862,25 +926,56 @@ r = vq.run_periodic_job(
 ```
 
 The `Lpq` cderi cache then holds $n_{\mathrm{IBZ}} \times n_k$ blocks
+plus the $n_k - n_{\mathrm{IBZ}}$ Hartree diagonals outside the wedge,
 instead of $n_k^2$, and the memory preflight is charged at that
-reduced count. Measured 2026-08-14 on NaCl primitive / def2-SVP with
+reduced count. Measured 2026-09-24 on NaCl primitive / def2-SVP with
 `aux_basis="def2-svp-jk"` (33 AOs, 240 aux) at $(4,4,4)$,
-$n_{\mathrm{IBZ}} = 8$ of 64: the `Lpq` term drops from 15.95 GB to
-1.99 GB (8x) and the total preflight from 25.08 GB to 4.14 GB (the
-AO-pair FT bundle and the per-$k$ buffers do not reduce). The `.out`
-states the reduction explicitly
+$n_{\mathrm{IBZ}} = 8$ of 64: 568 stored pairs against 4096, so the
+`Lpq` term drops from 15.95 GB to 2.21 GB (7.2x) and the total
+preflight from 26.32 GB to 5.71 GB (the fit source, the nuclear
+Fourier workspace, the one-electron lattice blocks and the per-$k$
+buffers do not reduce). The `.out` states the reduction explicitly
 (`symmetry_reduce_k = exchange bras 64 -> 8 (irreducible wedge)`)
 directly above the `[memory]` block, so the estimate can be accounted
 for.
 
 Everything else is untouched (diagonalisation at every $k$,
-occupations, the energy expression, and the result shape), so the
-reduction is **exact**, not an approximation, and bands / DOS / COOP /
-QVF consumers see no change. Accuracy is limited only by the cell
-list the transport rides on: on LiH FCC $(2,2,2)$ the $K$ transport
-residual is $1.5\times10^{-3}$ at `cutoff_bohr = 15`,
-$8.2\times10^{-6}$ at 20 and $1.1\times10^{-8}$ at 26, and the driver
-warns below 20 bohr rather than degrading quietly.
+occupations, the energy expression, and the result shape), so bands /
+DOS / COOP / QVF consumers see no change. The transported $K$ equals the
+one the same fit would build directly only for operations that map the
+**executed** exchange source onto itself, so the driver admits
+operations against that source before any integral is computed:
+
+| Exchange source | Finite support | Admitted operations |
+|---|---|---|
+| SR/LR fit (`gdf_method="rsgdf"` on a 3-D cell, the default) | Pair-centred: AO-pair images $\lvert A - B - R\rvert \le$ cutoff, auxiliary images by distance from the pair, and the physical $\lvert q + G\rvert$ sphere | Every symmorphic operation |
+| Classic fit (`fit_source="classic"`) | One origin-centred cell ball $\lvert R\rvert \le$ `cutoff_bohr` for every shell pair | Only operations that shift every atom by the same lattice vector |
+| compcell, MDF, a screened classic fit, private cache adapters | Not qualified | None: refused |
+
+The star map then uses admitted operations only. When they do not reach
+every point of the wedge's stars (rock-salt LiH on the classic fit
+admits 8 of 48 operations), the run is refused with the source named.
+Coverage depends on the mesh as well as the cell: a classic-fit cell
+whose admitted operations cover the $(2,2,2)$ stars can still be refused
+at $(3,3,3)$, whose stars need other operations.
+Before this admission the same case iterated and was then refused as a
+"variational symmetry break" of a closed-shell state, because $J$ and
+$K$ from the classic fit are not covariant under the other 40
+operations. Measured on a two-atom $Pm\bar{3}m$ cell with an explicit
+8-bohr finite source and a nonsymmetric complex trial density, $K$
+transported through each of the 48 operations matches the directly
+built $K$ to $3.6\times10^{-15}$ relative on the SR/LR fit; on the
+classic fit the 6 shift-constant operations match to $2.0\times10^{-15}$
+and the 42 others miss by $1.7\times10^{-2}$ to $2.6\times10^{-2}$
+(`tests/test_periodic_k_gdf_ibz_admission.py`). The admitted
+transport is therefore exact for its finite approximation, independent
+of `cutoff_bohr`; the former cell-list warning is gone.
+
+The electronic state is a separate precondition. Every SCF iteration
+compares the density with its transported wedge, against a floor
+calibrated on the overlap, and refuses a density that breaks the
+wedge's symmetry. That gate is a numerical threshold, not a proof of
+state invariance.
 
 Every precondition **fails closed** rather than silently running
 full-BZ, because a performance flag that looks effective and is not
@@ -898,6 +993,8 @@ is worse than a refusal:
   $Fd\bar{3}m$ is rejected up front);
 * exact exchange, because on a pure functional there is no $n_k^2$ term to
   reduce;
+* an exchange source whose admitted operations cover every star, as
+  tabulated above;
 * no geometry optimization: the wedge-native SCF converges the
   k-transported exchange, whose gradient is not the captured
   single-point objective.
@@ -912,7 +1009,7 @@ the drivers directly.
 * **Best closed-shell scaling.** With aux size $M \approx 3N$,
   per-iteration cost is $\mathcal{O}(N^2 M) = \mathcal{O}(N^3)$,
   compared to $\mathcal{O}(N^4)$ for the direct-K piece in BIPOLE.
-* **Production multi-k for closed-shell RHF / RKS** in 1D and 3D, plus a
+* **Production multi-k for closed-shell RHF / RKS** in 3D, plus a
   verified closed-shell energy + analytic-gradient route in 2D. Slab GDF uses a separate signed
   truncated metric and rigorous `V_ne(k)` / nuclear gauge; it is not the old
   bulk builder with a normal-axis vacuum cell. `jk_method="auto"` still picks
@@ -922,16 +1019,24 @@ the drivers directly.
 * **Same kernel as molecular RIJK.** Auxiliary-basis selection,
   Cholesky robustness, and linear-dependence handling are all
   shared with the molecular `DFJKBuilder`.
-* **Dimensionality clean in 1D.** For a wire there is no 3D Madelung
-  problem to invent gauge for; the compensated lattice sum converges
-  in real space and the route is genuinely single-shot.
 
 ### 3.4 Disadvantages
 
+* **No 1-D wire with a k mesh.** The bare 1-D $V_{ne}$ / $E_{nn}$ lattice
+  sums are only conditionally convergent, and the neutral three-centre fit
+  collapses to a transverse-uniform sheet term on a vacuum-padded cell, so
+  the three Coulomb-bearing pieces cannot share one gauge below three
+  dimensions. The k-mesh drivers therefore raise `NotImplementedError` for
+  `dim=1` instead of returning a cutoff-dependent number. Model the wire as
+  a `dim=3` cell with vacuum on the two transverse axes and converge the
+  energy with respect to that vacuum; the cost grows with the box volume.
 * **AUTO routing is dimensional.** In 3D, AUTO keeps BIPOLE as the UHF/UKS
   default and explicit `jk_method="gdf"` opts into native open-shell GDF. In
   1D, where the public BIPOLE route is unavailable, AUTO selects GDF for
-  RHF/RKS/UHF/UKS. Native open-shell GDF ships at Gamma
+  closed-shell RHF / RKS at Gamma, and a 1D k mesh then raises as described
+  above. An open-shell wire has no route: the open-shell GDF drivers accept
+  only `dim=3` at Gamma, and raise on a `dim=1` k mesh. Native open-shell GDF
+  in 3D ships at Gamma
   (`run_pbc_gdf_uhf` / `run_pbc_gdf_uks`, including per-spin Fermi-Dirac
   smearing) and multi-k (`run_kuhf_periodic_gdf` /
   `run_kuks_periodic_gdf`).
@@ -987,7 +1092,7 @@ the drivers directly.
   with the KUKS(M=1) collapse onto KRKS retained at machine precision.
   Supported multi-k envelope: 3D cells,
   `gdf_method="rsgdf"` on the cached-Lpq SCF (`use_compcell=True`;
-  HF/hybrids promote automatically), Γ-centered uniform full-BZ
+  every 3D rsgdf run promotes to it, pure DFT included), Γ-centered uniform full-BZ
   meshes, gapped integer T = 0 Aufbau occupations, pure and global-hybrid
   functionals. A band-overlap T = 0 global-Aufbau ensemble is supported for
   energies but fails closed for analytic gradients until its sharp-Fermi
@@ -1078,66 +1183,77 @@ the drivers directly.
   VV10 potential or the perturbative MP2 correlation term.
   Molecular RIJK has separate analytic-gradient coverage; see
   [`density_fitting.md`](density_fitting.md#df-analytic-gradient-status).
-* **Gamma-only `gdf_method="compcell"` cannot do tight ionic cells.**
-  On compact cells with Z > 1 atoms (e.g. rocksalt LiH primitive FCC,
-  115 bohr³) the Gamma-only compcell Hartree cannot resolve AO-pair
-  overlap between periodic images and the SCF converges to a
-  non-physical fixed point (LiH/STO-3G: +579.8 Ha at HF, +1172.6 Ha at
-  UKS-PBE, vs PySCF's -8.24 Ha). The drivers warn on entry and the
-  energy-sanity guard rejects the converged garbage:
-  `run_pbc_gdf_uhf` / `run_pbc_gdf_uks` raise a `RuntimeError`
-  (bypass with `check_energy_sanity=False` for diagnostics);
-  `run_pbc_gdf_rhf` warns and tags the result backend
-  `+SANITY_FAILED`. Because of this, the **open-shell Gamma drivers
-  default to `gdf_method="rsgdf"` since 2026-07-09** (on the broken
-  LiH fixture the rsgdf defaults land at -8.33 Ha UHF / -8.23 Ha
-  UKS-PBE, at the documented few-mHa diffuse-Li fitting floor from
-  PySCF); `compcell` stays selectable for development and keeps the
-  warning + guard. A KS run through `run_pbc_gdf_uks` with
-  `options=None` also defaults to `PeriodicKSOptions` now, so the
-  periodic-Becke-grid/torus-density XC pairing engages by default
-  (the old `PeriodicRHFOptions` fallback silently evaluated XC in the
-  v0.8.x molecular-grid convention: -7.9638 Ha on the same fixture).
-  `run_pbc_gdf_rhf` keeps its `compcell` default (its warn-and-tag
-  contract is pinned); use the multi-k route (validated at µHa parity
-  on LiH FCC at `kmesh=(2,2,2)`) or `gdf_method="rsgdf"` at Gamma for
-  such cells. Note the production runner already dispatches Gamma GDF
-  jobs with `gdf_method="rsgdf"`; the compcell default only concerns
-  direct API calls to the closed-shell driver.
-* **`gdf_method="mdf"` fails closed on compact dense-core cells.**
-  MDF's real-space Hartree inherits the same Gamma-only tight-ionic
-  compcell instability: measured on MgO primitive FCC/STO-3G
-  (G-GDF-001 MDF sub-gate, 2026-07-29), Gamma MDF is non-convergent
-  and trial-dependent at `mdf_ke_cutoff=40/60` (+1703/+2143/+418 Ha)
-  and falsely reports `converged=True` at `ke=80` at -1651 Ha (PySCF
-  MDF: -271.0499 Ha); the multi-k `(1,1,2)` route lands -11741 Ha
-  non-converged. All five GDF drivers raise `NotImplementedError` on
-  this class (Z >= 8 in < 250 bohr³/atom) instead of returning the
-  value behind a warning. Use the default `gdf_method="rsgdf"` there
-  (the Gamma driver auto-sizes its high-|G| tail to PySCF parity;
-  multi-k accepts `rsgdf_tail_ke_cutoff` on every method -- a pure-DFT
-  dim=3 multi-k run given an explicit tail routes its Hartree through
-  the tail-consuming cached-Lpq GDF J instead of the default EWALD_3D
-  J, which builds no cderi and cannot consume one; pre-fix the knob
-  was accepted, echoed, and silently ignored on that route, IID 146).
-  **Since IID 518 that pure-DFT dim=3 multi-k route also auto-sizes the
-  tail on the dense-core class**, exactly as the Gamma and CCM routes
-  always have, so a plain `run_periodic_job` on such a cell no longer
-  needs the explicit knob and is no longer tagged `+PARITY_HELD`.
-  Sparse cells are unaffected: the classifier is basis- and cell-driven,
-  resolves no tail there, and leaves the EWALD_3D default bit-identical.
-  The other multi-k routes (KRHF, hybrids, and the open-shell KUHF/KUKS
-  drivers) are already on the cached-Lpq J, where a tail is genuine
-  added cderi cost at n_k^2 pair builds; they still require the explicit
-  knob and still tag `+PARITY_HELD` without it. One visible consequence
-  on a dense-core cell: a `KUKS(M=1)` run does not reproduce its `KRKS`
-  twin, and carries the tag where the KRKS run no longer does.
-  MDF's validated envelope is
-  unaffected: the steep-core atom in a vacuum box, where it closes the
-  all-electron floor at a modest mesh (Ne/STO-3G/10-bohr: 0.14 mHa vs
-  PySCF MDF). Since the same closure, that class is no longer
-  mis-tagged `+PARITY_HELD` (the tight-basis reciprocal-mesh hold is an
-  rsgdf concept; MDF resolves the steep core in real space).
+* **`gdf_method="compcell"` on tight ionic cells** (fixed 2026-09-29,
+  GitLab #172). Until then the Gamma-only compcell Hartree converged to
+  non-physical fixed points on compact cells with Z > 1 atoms (rocksalt
+  LiH/STO-3G: +579.8 Ha at HF, +1172.6 Ha at UKS-PBE, against PySCF's
+  -8.24 Ha), and the drivers warned and tagged the result. Four defects
+  combined: the Gaussian three-centre integrals kept the auxiliary
+  function in the home cell, $\sum_R (P_0|\mu_0\nu_R)$, while the periodic
+  tensor needs its images, $\sum_{T,R} (P_T|\mu_0\nu_R)$ (Sun et al. 2017,
+  Eq. 15); the finite $G = 0$ term of the compensated real-space integrals
+  was kept; the reciprocal-space correction scaled p-AO pairs wrongly;
+  and the Gamma driver used a flat one-electron domain for compcell and
+  MDF. With all four fixed, compcell lands 6e-8 Ha from PySCF GDF on
+  H₂/STO-3G in a 6-bohr cube (before: 162 mHa), 4.8 µHa on LiH/STO-3G and
+  27 µHa on MgO/STO-3G, where the remaining spread is the choice of
+  near-null metric modes (the SR/LR fit moves by 3.5 µHa between cuts
+  there). MDF lands 2e-8 Ha from PySCF MDF on the H₂ cube and 0.9 µHa on
+  LiH. The multi-k builders now resolve the ket k point of each AO pair as
+  well as the momentum transfer. The open-shell Gamma drivers have
+  defaulted to `gdf_method="rsgdf"` since 2026-07-09, and `run_pbc_gdf_rhf`
+  since 2026-09, like every other GDF entry point. A KS run through
+  `run_pbc_gdf_uks` with `options=None` defaults to `PeriodicKSOptions`,
+  so the periodic-Becke-grid/torus-density XC pairing engages by default
+  (the old `PeriodicRHFOptions` fallback evaluated XC in the v0.8.x
+  molecular-grid convention: -7.9638 Ha on the LiH fixture).
+* **`gdf_method="mdf"` on compact dense-core cells** (admitted since
+  2026-09-29, GitLab #172). From 2026-07-29 all five GDF drivers refused
+  the class (Z >= 8 in < 250 bohr³/atom): on MgO primitive FCC/STO-3G,
+  Gamma MDF was non-convergent and trial-dependent at `mdf_ke_cutoff`
+  40/60 (+1703/+2143/+418 Ha), falsely converged at 80 to -1651 Ha, and
+  multi-k `(1,1,2)` landed at -11741 Ha; later, with the metric built
+  accurately, it was bounded but 92 mHa off. Both failures were the
+  auxiliary images its Gaussian three-centre block omitted. With them
+  summed, and the plane-wave-dressed metric's floor recalibrated from
+  1e-4 to 1e-5 of its largest eigenvalue, MgO/STO-3G lands 3.4 µHa from
+  PySCF MDF at Gamma and 70 µHa at `(2,2,2)`; LiH/STO-3G 0.9 µHa and
+  2.8 µHa. MDF on all-electron cores depends on the plane-wave mesh by
+  about 1e-4 Ha, in PySCF as in vibe-qc (Ne/STO-3G in a 10-bohr box moves
+  by -65 µHa from `mdf_ke_cutoff=60` to 80, and PySCF's own MDF by
+  -130 µHa from its default mesh to 50³), so compare MDF results at a
+  fixed `mdf_ke_cutoff`. The default `gdf_method="rsgdf"` stays the
+  production route on these cells (+2.9 µHa from PySCF GDF on MgO).
+* **An explicit `gdf_method` on a pure-DFT k-mesh job** (fixed
+  2026-09-29, found on GitLab #172). A closed-shell pure-functional
+  `dim=3` k-mesh run with `gdf_method="mdf"` or `"compcell"` and the
+  default `use_compcell=False` kept the Ewald-3D Hartree, which builds
+  no density fit, so the requested method was accepted and silently
+  ignored. This covered `run_krks_periodic_gdf` and
+  `run_periodic_job(method="rks", gdf_method=...)` with a k-mesh. It now
+  builds the cached fit with the requested method, as the default
+  `"rsgdf"` already did, and logs the promotion. On H₂/STO-3G in a
+  6-bohr cube at `(2,1,1)` with PBE, both methods used to return the
+  Ewald-J energy -1.1995011057 Ha. They now return -1.1995012305 Ha (mdf)
+  and -1.1995485915 Ha (compcell, 0.13 µHa from rsgdf). The open-shell
+  drivers always built the requested fit and are unchanged.
+* **rsgdf high-|G| tail on dense-core cells.** The default
+  `gdf_method="rsgdf"` on a `dim=3` cell uses the SR/LR fit source at
+  Gamma and on every k-mesh, closed- and open-shell. It resolves the
+  tight-core AO products without an exponent-scaled reciprocal tail
+  (MgO/STO-3G: 2.9 µHa from PySCF GDF at Gamma, 3.2 µHa at `(1,1,2)`),
+  is never tagged `+PARITY_HELD`, and ignores `rsgdf_tail_ke_cutoff`
+  with a `DeprecationWarning` (`rsgdf_g_precision` controls its raw
+  integral error). The tail survives on the classic multi-k source,
+  `fit_source="classic"`. Untailed on the dense-core class it sits
+  -0.50 Ha from PySCF on MgO/STO-3G, so the multi-k drivers warn and
+  tag `+PARITY_HELD` until `rsgdf_tail_ke_cutoff` reaches 10x the
+  steepest AO primitive exponent, at n_k^2 extra pair builds. A tail on
+  a multi-k `gdf_method="mdf"` or `"compcell"` run raises, because only
+  the rsgdf builders carry one. Before 2026-09 a pure-DFT multi-k job
+  took an unfitted Ewald-3D Hartree, which accepted the knob and
+  silently ignored it (IID 146) and later auto-sized it (IID 518); that
+  Hartree was removed from the k-mesh driver (GitLab #415).
 * **Auxiliary basis coverage.** Standard `def2-*-jkfit` aux bases
   work cleanly. `pob-tzvp` does not yet have a matching aux:
   designing a `pob-tzvp-jk` is a paper-worthy item on its own; the
@@ -1152,14 +1268,16 @@ the drivers directly.
 
 ### 3.5 When to use GDF
 
-* You are doing closed-shell RHF / RKS on a `dim=1` wire, a `dim=3` bulk
-  crystal, or a closed-shell `dim=2` slab on a full Gamma-centered tuple mesh
-  (energies and analytic forces).
+* You are doing closed-shell RHF / RKS on a `dim=1` wire at Gamma, a `dim=3`
+  bulk crystal, or a closed-shell `dim=2` slab on a full Gamma-centered tuple
+  mesh (energies and analytic forces). A wire that needs k sampling is run as
+  a `dim=3` cell with transverse vacuum, since the 1-D k-mesh route raises.
 * You want the cheapest production route on bulk for hybrid DFT
   and large basis (def2-SVP through def2-TZVP class).
 * You want an open-shell UHF / UKS single-point on the density-fitting
-  metric (Gamma or multi-k). In 3D, pass `jk_method="gdf"` explicitly
-  because AUTO routes open-shell to BIPOLE; in 1D, AUTO already selects GDF.
+  metric (Gamma or multi-k) in 3D. Pass `jk_method="gdf"` explicitly
+  because AUTO routes open-shell to BIPOLE. There is no open-shell route for
+  a `dim=1` wire.
 * You want analytic forces on the periodic path: the GDF gradient
   ladder covers Gamma, multi-k, and closed-shell `dim=2` slabs.
 
@@ -1694,7 +1812,7 @@ Hartree-Fock exchange", *Chem. Phys.* **356**, 98 (2009).
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
 | **SLAB_EWALD_2D** | no | **yes** | no | yes | no | yes | yes | yes | yes | no | no |
 | **BIPOLE** | no (direct-API diagnostic only) | raises | yes | yes | yes | yes | yes | yes | yes | preview | no |
-| **GDF** (native) | yes | closed-shell | yes | yes | yes (Γ + multi-k) | yes | yes | yes (Γ + multi-k) | yes | yes (Γ / multi-k / closed-shell slab) | no |
+| **GDF** (native) | closed-shell, Γ only (a k mesh raises) | closed-shell | yes | yes | yes (Γ + multi-k) | yes | yes | yes (Γ + multi-k) | yes | yes (Γ / multi-k / closed-shell slab) | no |
 | **GPW** | limited | raises | yes | yes (Γ) | yes (Γ) | yes (Γ) | yes (Γ) | yes (Γ) | yes (RKS) | FD | no |
 | **GAPW** | limited | raises | yes | yes (Γ) | yes (Γ) | yes (Γ) | yes (Γ) | yes (Γ) | yes (RKS) | block only | no |
 | **RIJCOSX** | yes (multi-k) | raises | yes | yes | yes (multi-k) | yes (multi-k) | yes (multi-k) | yes (multi-k) | yes | no | no |
@@ -1711,11 +1829,14 @@ freeze-mask relaxation and NEB, which run on the BIPOLE force stack.
 
 The direct `run_pbc_bipole_*` APIs retain a 1D `DIRECT_TRUNCATED`
 molecular-limit diagnostic. `run_periodic_job` does not expose it: explicit
-BIPOLE rejects dim=1, and AUTO selects the maintained GDF wire route.
+BIPOLE rejects dim=1, and AUTO selects GDF for a wire (Gamma only: a 1D k
+mesh raises, so run a wire that needs k sampling as a `dim=3` cell with
+transverse vacuum).
 
-Notes on the matrix: GDF open-shell (UHF / UKS) ships at Gamma and multi-k.
-In 3D, AUTO routes open shell to BIPOLE by design, so you opt into GDF with an
-explicit `jk_method="gdf"`; in 1D, AUTO selects GDF. GPW / GAPW multi-k is
+Notes on the matrix: GDF open-shell (UHF / UKS) ships at Gamma and multi-k in
+3D only; a `dim=1` wire has no open-shell route. In 3D, AUTO routes open shell
+to BIPOLE by design, so you opt into GDF with an explicit `jk_method="gdf"`;
+in 1D, AUTO selects GDF for closed shell at Gamma. GPW / GAPW multi-k is
 pure-DFT RKS only (hybrid / HF multi-k raise on that route). GPW forces and
 fixed-cell gradients use the finite-difference path the runner shares; cell
 optimization fails closed. GAPW direct
@@ -1758,8 +1879,9 @@ Periodic SCF
   |     +-- explicit closed-shell GDF (energies + forces)
   |
   +-- dim=1 wire
-  |     +-- GDF for RHF/RKS/UHF/UKS
-  |     +-- ROHF unavailable through AUTO
+  |     +-- GDF at Gamma for closed-shell RHF/RKS
+  |     +-- k mesh: raises; use a dim=3 cell with transverse vacuum
+  |     +-- UHF/UKS/ROHF: no route
   |
   +-- dim=3
         +-- UHF/UKS: AUTO selects BIPOLE
@@ -2298,7 +2420,7 @@ route (analytic gradients since 2026-07-30).
 | Open-shell 3D (Li bcc, magnetic oxides) | BIPOLE UHF / UKS (AUTO) | GDF UHF / UKS (Gamma + multi-k) and GPW / GAPW (Gamma) also run open-shell; ROHF and ROKS are available on Ewald-3D (Gamma + multi-k), while maintained-preview GPW provides Gamma ROHF and Gamma or multi-k pure-DFT ROKS with integer occupations. |
 | Mixed ionic-covalent (ZnO, TiO2, Al2O3) | BIPOLE on pob-TZVP, GDF on def2-*-jk | pob-TZVP-jk aux is on the roadmap. |
 | Van der Waals 3D (Ne, Ar, molecular crystals) | GDF + dispersion correction | GPW / GAPW carry D3(BJ) too; their meV-cohesion CP2K sign-off is still broadening. |
-| 1D wires (H chain, polyacetylene) | GDF (any zeta) | AUTO uses GDF for closed and open shell; public BIPOLE rejects dim=1. |
+| 1D wires (H chain, polyacetylene) | GDF at Gamma (any zeta); with a k mesh, a `dim=3` cell with transverse vacuum | AUTO uses GDF for closed shell at Gamma; the 1D k-mesh GDF route raises; there is no open-shell wire route; public BIPOLE rejects dim=1. |
 | 2D sheets (graphene, h-BN) | SLAB_EWALD_2D (AUTO); explicit GDF for closed-shell energy scaling | Both are vacuum-free and a3-invariant. Slab GDF is full-tuple and zero-temperature; closed-shell analytic forces ship (`optimize=True`). |
 | 2D surface slabs | SLAB_EWALD_2D (AUTO); explicit GDF for closed-shell energies + relaxation | No vacuum needed. Plain closed-shell relaxation: explicit GDF with `optimize=True`. Freeze-mask/NEB/smearing workflows: `vq.slab(..., periodic_z=True)` and run dim=3. |
 

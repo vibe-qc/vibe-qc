@@ -576,6 +576,10 @@ def maybe_run_b_pno(
         # density's eigenvalues, so keeping this protocol exact means pinning
         # the density along with the thresholds.
         pno_norm="legacy",
+        # The DOI domain default (#190) postdates this convention; its
+        # tcut_mkn=1e-3 domains are Mulliken domains, so the criterion is
+        # pinned with them.
+        domain_criterion="mulliken",
     )
     result = vq.run_aiccm2026dev_b_dlpno_mp2(
         system,

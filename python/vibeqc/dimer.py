@@ -649,7 +649,9 @@ def run_dimer(
 
             kmesh = as_bloch_kmesh(kpoints)
         else:
-            kmesh = _mp(initial, tuple(int(k) for k in kpoints))
+            from .kpoints import _integer_counts
+
+            kmesh = _mp(initial, _integer_counts(kpoints, name="dimer kpoints mesh"))
 
     # DFT+U on the molecular SCF path is applied Options-side (as in
     # run_neb); periodic forwards the list per call.

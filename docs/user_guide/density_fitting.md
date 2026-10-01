@@ -97,6 +97,15 @@ aux = default_aux_basis_for(orbital, kind="jk")
 # → "def2-tzvp-jk"
 ```
 
+`run_job(density_fit=True)` calls this for you when `aux_basis` is empty,
+and since v0.17.7 so do every route that reaches the bare SCF drivers from
+that request: the geometry optimiser (`optimize=True`), the `VibeQC` ASE
+calculator given an options struct with `density_fit=True`, and
+`compute_hessian_fd`. Before that only the single point resolved the aux and
+an optimisation failed with "density_fit=true requires aux_basis" (#362). An
+orbital basis with no registered default (`sto-3g`, Pople bases, `pob-*`)
+still raises that explicit error; pass `aux_basis=` there.
+
 Recommended aux bases per orbital basis (the helper's table):
 
 | Orbital basis | Recommended `aux_basis` (kind="jk") | Recommended `aux_basis` (kind="ri") |
@@ -298,8 +307,10 @@ on which the reported exchange energy is built.
 
 **Reach across methods.** RIJCOSX accelerates the mean-field exchange
 build, so it applies to **RHF, UHF, RKS, UKS** (C++ drivers, with the
-multi-stage progression) and to **ROHF** (`ROHFOptions(cosx=True,
-cosx_grid_level=...)`, single-grid). Every post-HF method that builds on a
+multi-stage progression) and to **ROHF and ROKS** (`ROHFOptions(cosx=True,
+cosx_grid_level=...)` / `ROKSOptions`, single-grid; `run_job(cosx=True)`
+sets them for `method="rohf"` / `"roks"` as it does for the C++ drivers,
+#361). Every post-HF method that builds on a
 mean-field reference (**MP2, RI-MP2, DLPNO-MP2, CCSD, CCSD(T), DLPNO-CC,
 TDDFT**) inherits RIJCOSX automatically through its reference SCF: set
 `cosx=True` on the reference's options (`rhf_options` / `uhf_options` /

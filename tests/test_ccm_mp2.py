@@ -326,17 +326,31 @@ def test_ri_wrappers_default_reference_is_direct():
         "sto-3g",
     )
     defaulted = run_ccm_ri_mp2(cs, ke_cutoff=_KE)
+    bloch = run_ccm_ri_mp2(cs, ke_cutoff=_KE, reference="bloch")
     direct = run_ccm_ri_mp2(cs, ke_cutoff=_KE, reference="direct")
     neutral = run_ccm_ri_mp2(cs, ke_cutoff=_KE, reference="neutral")
-    assert defaulted.e_total == pytest.approx(direct.e_total, abs=1e-12)
+    # Since 2026-09-25 (speed-up prompt 4) the default is the Bloch
+    # producer folded to real supercell-Gamma orbitals (Theorem 1): the
+    # same Hamiltonian as "direct", so the two agree at the identity class
+    # (per supercell here; the pinned rule is 1e-9 Ha/cell), and the
+    # default IS the bloch route, bit for bit.
+    assert defaulted.e_total == pytest.approx(bloch.e_total, abs=1e-12)
+    assert defaulted.scf.bloch_transform is not None
+    assert defaulted.e_correlation == pytest.approx(
+        direct.e_correlation, abs=2e-9)
+    assert defaulted.e_total == pytest.approx(direct.e_total, abs=2e-9)
     # The two routes are genuinely different, so the assertion above has force.
     assert abs(direct.e_total - neutral.e_total) > 0.5
 
     cc_defaulted = run_ccm_ri_ccsd(cs, ke_cutoff=_KE, compute_triples=False)
+    cc_bloch = run_ccm_ri_ccsd(
+        cs, ke_cutoff=_KE, compute_triples=False, reference="bloch"
+    )
     cc_direct = run_ccm_ri_ccsd(
         cs, ke_cutoff=_KE, compute_triples=False, reference="direct"
     )
-    assert cc_defaulted.e_total == pytest.approx(cc_direct.e_total, abs=1e-12)
+    assert cc_defaulted.e_total == pytest.approx(cc_bloch.e_total, abs=1e-12)
+    assert cc_defaulted.e_total == pytest.approx(cc_direct.e_total, abs=2e-9)
 
 
 def test_ccm_open_shell_initial_spin_counts(monkeypatch):

@@ -431,7 +431,9 @@ def _build_j_long_range_cache(
         R_g_arr,
     )
     correction = _libint_ylm_correction_per_ao(basis)
-    ft_per_cell = ft_per_cell * (
+    # Correct the freshly allocated FT stack in place to avoid a second
+    # full-size stack. The retained reciprocal cache is still resident.
+    ft_per_cell *= (
         correction[None, :, None, None] * correction[None, None, :, None]
     )
 
@@ -1042,7 +1044,9 @@ class KExchangeLongRangeCache:
     ``k′`` folds). The per-cell FT stack for a ``q != 0`` channel is
     never materialised when the streaming C++ Bloch kernel is available
     (:func:`vibeqc._aopair_ft.ao_pair_fourier_transform_bloch`
-    dispatch); the pure-Python fallback builds it in cell batches.
+    dispatch). Physical AO-product support streams one supplied cell at a
+    time, including in the Python fallback; historical support retains the
+    dispatcher's original fallback.
     """
 
     basis: BasisSet
@@ -1166,21 +1170,49 @@ class KExchangeLongRangeCache:
                     self.basis, chan.K_vectors, self.cells_r_cart, -k_prime,
                 )
             else:
-                from .lattice_screening import ao_pair_support_mask
-
-                ft = ao_pair_fourier_transform_at_cells(
-                    self.basis, chan.K_vectors, self.cells_r_cart,
+                B = _masked_bloch_pair_fourier_transform(
+                    self.basis, chan.K_vectors, self.cells_r_cart, -k_prime,
+                    self.j_cache.pair_cutoff_bohr,
                 )
-                for cell, shift in enumerate(self.cells_r_cart):
-                    ft[cell] *= ao_pair_support_mask(
-                        self.basis, shift, self.j_cache.pair_cutoff_bohr,
-                    )[:, :, None]
-                B = np.einsum("g,gmnk->mnk", np.exp(-1j * (self.cells_r_cart @ k_prime)), ft)
 
             correction = _libint_ylm_correction_per_ao(self.basis)
             B = B * (correction[:, None, None] * correction[None, :, None])
             chan.b_per_k[k_key] = B
         return chan.kernel, B
+
+
+def _masked_bloch_pair_fourier_transform(
+    basis: BasisSet,
+    vectors: np.ndarray,
+    cells: np.ndarray,
+    k_cart: np.ndarray,
+    pair_cutoff_bohr: float,
+) -> np.ndarray:
+    """Stream the supplied cells with their physical AO-product masks.
+
+    Keep the Python support predicate and cell ordering unchanged. The
+    production Bloch FT supplies the positive-k phase and raw spherical
+    normalization; the exchange cache applies its Libint correction once.
+    A singleton-cell call bounds the temporary to one AO-pair tensor and
+    retains the dispatcher's reference fallback for unsupported shells.
+    """
+    from ._aopair_ft import ao_pair_fourier_transform_bloch
+    from .lattice_screening import ao_pair_support_mask
+
+    n = int(basis.nbasis)
+    result = np.zeros((n, n, len(vectors)), dtype=np.complex128)
+    for shift in cells:
+        keep = ao_pair_support_mask(basis, shift, pair_cutoff_bohr)
+        if not np.any(keep):
+            continue
+        cell_ft = ao_pair_fourier_transform_bloch(
+            basis, vectors, np.asarray(shift).reshape(1, 3), k_cart,
+            screen_tol=0.0,
+        )
+        cell_ft *= keep[:, :, None]
+        result += cell_ft
+        del cell_ft
+    return result
 
 
 def build_k_exchange_long_range_cache(
@@ -1328,7 +1360,9 @@ def probe_charge_madelung_supercell(
             "probe_charge_madelung_supercell requires dim=3; "
             f"got dim={system.dim}"
         )
-    n = [int(x) for x in mesh]
+    from .kpoints import _integer_counts
+
+    n = _integer_counts(mesh, name="Madelung supercell mesh")
     if len(n) != 3 or any(x < 1 for x in n):
         raise ValueError(
             f"mesh must be three positive integers; got {list(mesh)}"

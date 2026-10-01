@@ -885,3 +885,64 @@ def test_vibeqc_calculator_allows_gas_phase_solvent_hessian(
     assert len(calls) == 1
     assert hessian.shape == (3, 3)
     assert np.all(np.isfinite(hessian))
+
+
+# ---------------------------------------------------------------------------
+# Default JK aux for fitted SCF requests that reach the bare drivers (#362)
+# ---------------------------------------------------------------------------
+
+
+def test_vibeqc_calculator_resolves_default_jk_aux():
+    """``VibeQC(rhf_options=RHFOptions(density_fit=True))`` without an
+    ``aux_basis`` must pick the default JK fit for the orbital basis, as
+    ``run_job``'s single-point path does. Before #362 the calculator handed
+    the unresolved struct to ``run_rhf``, which refused."""
+    from vibeqc import RHFOptions
+
+    wanted = RHFOptions()
+    wanted.density_fit = True
+    atoms = _H2O_ANGSTROM.copy()
+    atoms.calc = VibeQC(basis="def2-svp", rhf_options=wanted)
+    e_auto = atoms.get_potential_energy()
+    assert wanted.aux_basis == "def2-svp-jk"
+
+    explicit = RHFOptions()
+    explicit.density_fit = True
+    explicit.aux_basis = "def2-svp-jk"
+    ref = _H2O_ANGSTROM.copy()
+    ref.calc = VibeQC(basis="def2-svp", rhf_options=explicit)
+    assert abs(e_auto - ref.get_potential_energy()) < 1e-9
+
+
+@pytest.mark.parametrize("method", ["rhf", "rohf"])
+def test_run_job_density_fit_optimize_resolves_aux(method, tmp_path):
+    """``run_job(density_fit=True, optimize=True)`` must run without an
+    explicit ``aux_basis``: the optimiser route bypasses the single-point
+    aux resolver, so before #362 every reference failed with
+    "density_fit=true requires aux_basis" (#362)."""
+    from vibeqc import Atom, Molecule, RHFOptions, run_job
+    from vibeqc.rohf import ROHFOptions
+
+    if method == "rhf":
+        mol = Molecule(
+            [
+                Atom(8, [0.0, 0.0, 0.0]),
+                Atom(1, [0.0, 0.757, 0.586]),
+                Atom(1, [0.0, -0.757, 0.586]),
+            ],
+            0,
+            1,
+        )
+        passed = RHFOptions()
+    else:
+        mol = Molecule([Atom(8, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 0.97])], 0, 2)
+        passed = ROHFOptions()
+    res = run_job(
+        mol, basis="def2-svp", method=method, density_fit=True,
+        optimize=True, max_opt_steps=40, output=str(tmp_path / "opt"),
+        **{f"{method}_options": passed},
+    )
+    assert passed.density_fit is True
+    assert passed.aux_basis == "def2-svp-jk"
+    assert res.energy < 0
+    assert "eichkorn_rij_1995" in (tmp_path / "opt.references").read_text()

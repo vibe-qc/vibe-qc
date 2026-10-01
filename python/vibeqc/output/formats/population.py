@@ -64,11 +64,14 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 
 from ...spin_channels import spin_densities
+
+if TYPE_CHECKING:
+    from ...iao_population import IAOAnalysis
 
 __all__ = [
     "PopulationSummary",
@@ -78,6 +81,7 @@ __all__ = [
     "compute_population_summary",
     "unsupported_population_summary",
     "format_population_txt",
+    "format_iao_analysis",
     "format_population_json",
     "write_population",
 ]
@@ -126,6 +130,9 @@ class PopulationSummary:
     errors: dict[str, str] = field(default_factory=dict)
     # Known missing implementations, separate from attempted computations.
     unavailable: dict[str, str] = field(default_factory=dict)
+    # Opt-in, dense molecular determinant analysis. None means not requested.
+    iao_analysis: IAOAnalysis | None = None
+    iao_bond_threshold: float = 0.05
 
 
 _POPULATION_SECTIONS = ("mulliken", "loewdin", "hirshfeld", "mayer", "dipole")
@@ -195,6 +202,8 @@ def compute_population_summary(
     n_top_bonds: int = 20,
     bond_threshold: float = 0.1,
     nuclear_charges: Any = None,
+    iao_analysis: IAOAnalysis | None = None,
+    iao_bond_threshold: float = 0.05,
 ) -> PopulationSummary:
     """Pull Mulliken / Löwdin / Mayer / dipole via
     :mod:`vibeqc.properties`. Each section is wrapped in its own
@@ -204,7 +213,10 @@ def compute_population_summary(
     (``Z - n_core`` on ECP atoms; :func:`vibeqc.ecp_metadata.
     effective_nuclear_charges` on the options that ran). ``None`` is bare
     ``Z``, correct only for an all-electron SCF (GitLab #642)."""
-    out = PopulationSummary()
+    out = PopulationSummary(iao_analysis=iao_analysis,
+                            iao_bond_threshold=iao_bond_threshold)
+    if iao_analysis is not None and not iao_analysis.available:
+        out.unavailable["iao"] = iao_analysis.unavailable_reason
 
     # Atomic-number -> symbol via the xyz writer's table (same source
     # of truth used elsewhere in vibeqc.output).
@@ -483,6 +495,18 @@ def _cell_key(cell: Any) -> tuple[int, int, int]:
     return tuple(int(x) for x in np.asarray(cell.index, dtype=int).reshape(3))
 
 
+def _checked_lattice_blocks(cells, blocks):
+    if len(cells) != len(blocks):
+        raise ValueError("BIPOLE lattice cell/block counts differ")
+    keyed = {}
+    for cell, block in zip(cells, blocks):
+        key = _cell_key(cell)
+        if key in keyed:
+            raise ValueError(f"BIPOLE lattice has duplicate cell {key}")
+        keyed[key] = np.asarray(block)
+    return keyed
+
+
 def _basis_ao_to_atom(basis: Any) -> np.ndarray:
     """Return the AO -> atom map using the public BasisSet shell API.
 
@@ -523,14 +547,8 @@ def _as_lattice_density_view(result: Any) -> _LatticeDensityView:
 
     alpha_cells = list(alpha.cells)
     beta_cells = list(beta.cells)
-    alpha_blocks = {
-        _cell_key(cell): np.asarray(block)
-        for cell, block in zip(alpha_cells, alpha.blocks)
-    }
-    beta_blocks = {
-        _cell_key(cell): np.asarray(block)
-        for cell, block in zip(beta_cells, beta.blocks)
-    }
+    alpha_blocks = _checked_lattice_blocks(alpha_cells, list(alpha.blocks))
+    beta_blocks = _checked_lattice_blocks(beta_cells, list(beta.blocks))
     cell_by_key = {_cell_key(cell): cell for cell in alpha_cells}
     for cell in beta_cells:
         cell_by_key.setdefault(_cell_key(cell), cell)
@@ -580,12 +598,7 @@ def _overlap_lattice_for_density(
     from ..._vibeqc_core import LatticeSumOptions, compute_overlap_lattice
 
     if lattice_options is not None:
-        opts = LatticeSumOptions()
-        opts.cutoff_bohr = float(getattr(lattice_options, "cutoff_bohr"))
-        opts.nuclear_cutoff_bohr = float(
-            getattr(lattice_options, "nuclear_cutoff_bohr", opts.cutoff_bohr)
-        )
-        return compute_overlap_lattice(basis, system, opts)
+        return compute_overlap_lattice(basis, system, lattice_options)
 
     max_norm = max(
         float(np.linalg.norm(np.asarray(cell.r_cart, dtype=float)))
@@ -597,13 +610,13 @@ def _overlap_lattice_for_density(
     return compute_overlap_lattice(basis, system, opts)
 
 
-def _bipole_mulliken_charges(
+def _bipole_mulliken_populations(
     density: _LatticeDensityView,
     overlap_lattice: Any,
     basis: Any,
     molecule: Any,
 ) -> np.ndarray:
-    """Mulliken charges from the BIPOLE lattice contraction convention.
+    """Mulliken populations from the BIPOLE lattice contraction convention.
 
     BIPOLE density blocks follow ``rho(r) = sum_g D_mu,nu(g)
     chi_mu(r) chi_nu(r - R_g)``. The electron count is the same
@@ -620,18 +633,16 @@ def _bipole_mulliken_charges(
             "BIPOLE AO-to-atom map length does not match density dimension"
         )
 
-    density_by_key = {
-        _cell_key(cell): np.asarray(block)
-        for cell, block in zip(density.cells, density.blocks)
-    }
+    density_by_key = _checked_lattice_blocks(density.cells, density.blocks)
     electron_pop = np.zeros(n_atoms, dtype=np.float64)
-    for cell, s_block_raw in zip(overlap_lattice.cells, overlap_lattice.blocks):
-        key = _cell_key(cell)
+    overlap_by_key = _checked_lattice_blocks(
+        list(overlap_lattice.cells), list(overlap_lattice.blocks),
+    )
+    for key, s_block in overlap_by_key.items():
         if key not in density_by_key:
             raise ValueError(f"BIPOLE density lattice missing overlap cell {key}")
         d_block = np.asarray(density_by_key[key])
-        s_block = np.asarray(s_block_raw)
-        if d_block.shape != s_block.shape:
+        if d_block.shape != s_block.shape or d_block.shape != (density.nbf, density.nbf):
             raise ValueError(
                 f"BIPOLE density/overlap shape mismatch at cell {key}: "
                 f"D{d_block.shape} vs S{s_block.shape}"
@@ -653,7 +664,15 @@ def _bipole_mulliken_charges(
                     electron_pop[atom_mu] += half
                     electron_pop[atom_nu] += half
 
-    charges = np.asarray([atom.Z for atom in atoms], dtype=np.float64) - electron_pop
+    if not np.all(np.isfinite(electron_pop)):
+        raise ValueError("BIPOLE Mulliken populations are non-finite")
+    return electron_pop
+
+
+def _bipole_mulliken_charges(density, overlap_lattice, basis, molecule) -> np.ndarray:
+    charges = np.asarray([atom.Z for atom in molecule.atoms], dtype=np.float64) - (
+        _bipole_mulliken_populations(density, overlap_lattice, basis, molecule)
+    )
     if not np.all(np.isfinite(charges)):
         raise ValueError("BIPOLE Mulliken charges are non-finite")
     return charges
@@ -1023,6 +1042,11 @@ def compute_bipole_population_summary(
     from .xyz import _symbol
 
     density = _as_lattice_density_view(result)
+    domain = getattr(result, "resolved_domain", None)
+    if domain is not None:
+        from ..._vibeqc_core import LatticeSumOptions
+
+        lattice_options = domain.lattice_1e.restore(LatticeSumOptions)
     overlap_lattice = _overlap_lattice_for_density(
         basis,
         system,
@@ -1036,6 +1060,27 @@ def compute_bipole_population_summary(
         z = int(atom.Z)
         rows.append((i, _symbol(z), float(z), float(charges[i])))
     out.mulliken_atoms = rows
+
+    alpha = getattr(result, "density_alpha", None)
+    beta = getattr(result, "density_beta", None)
+    if alpha is not None or beta is not None:
+        try:
+            from types import SimpleNamespace
+
+            if alpha is None or beta is None:
+                raise ValueError("BIPOLE populations require both spin densities")
+            spin_pop = []
+            for channel in (alpha, beta):
+                view = _as_lattice_density_view(SimpleNamespace(density=channel))
+                spin_pop.append(_bipole_mulliken_populations(
+                    view, overlap_lattice, basis, molecule,
+                ))
+            out.mulliken_spin_atoms = [
+                (i, _symbol(int(atom.Z)), float(atom.Z), float(value))
+                for i, (atom, value) in enumerate(zip(molecule.atoms, spin_pop[0] - spin_pop[1]))
+            ]
+        except Exception as exc:
+            out.errors["mulliken_spin"] = f"{type(exc).__name__}: {exc}"
 
     try:
         loewdin_charges = _bipole_loewdin_charges(
@@ -1479,6 +1524,44 @@ def compute_native_mulliken_population_summary(
 # ---------------------------------------------------------------------- #
 
 
+def format_iao_analysis(analysis: IAOAnalysis, *, bond_threshold: float = 0.05) -> str:
+    """Format the requested IAO section for both .out and population text.
+
+    The threshold affects only displayed atom pairs, never the dense result.
+    """
+    from .xyz import _symbol
+
+    if not np.isfinite(bond_threshold) or bond_threshold < 0:
+        raise ValueError("IAO bond display threshold must be finite and nonnegative")
+    lines = ["# === IAO atomic charges and IAO-Wiberg bond orders ===",
+             f"# Reference basis: {analysis.reference_basis}; orthogonalization: {analysis.orthogonalization}",
+             f"# Density: {analysis.density_convention}",
+             f"# Partition: {analysis.partition}",
+             f"# Bond convention: {analysis.spin_convention}; diagonal = 0"]
+    if not analysis.available:
+        lines.append(f"# IAO analysis unavailable: {analysis.unavailable_reason}")
+        return "\n".join(lines) + "\n"
+    spin = analysis.spin_populations
+    lines.append("# idx\tsymbol\tpopulation (electrons)\tcharge (e)" +
+                 ("\tspin (alpha minus beta electrons)" if spin is not None else ""))
+    for i, (n, q) in enumerate(zip(analysis.populations, analysis.charges)):
+        sym = _symbol(int(round(n + q)))
+        lines.append(f"{i}\t{sym}\t{n:.8f}\t{q:+.8f}" +
+                     (f"\t{spin[i]:+.8f}" if spin is not None else ""))
+    lines.extend([f"# IAO-Wiberg bonds (dimensionless; display threshold {bond_threshold:g})",
+                  "# i\tj\torder"])
+    count = 0
+    for i in range(len(analysis.charges)):
+        for j in range(i + 1, len(analysis.charges)):
+            order = analysis.bond_orders[i, j]
+            if order >= bond_threshold:
+                lines.append(f"{i}\t{j}\t{order:.8f}")
+                count += 1
+    if not count:
+        lines.append("# No atom pairs above the display threshold")
+    return "\n".join(lines) + "\n"
+
+
 def format_population_txt(summary: PopulationSummary) -> str:
     """Render the summary as a tab-separated tabular text file.
 
@@ -1579,6 +1662,9 @@ def format_population_txt(summary: PopulationSummary) -> str:
         err = summary.errors.get("dipole", "no data")
         parts.append(f"# dipole: N/A -- {err}")
     parts.append("")
+    if summary.iao_analysis is not None:
+        parts.append(format_iao_analysis(summary.iao_analysis,
+                                        bond_threshold=summary.iao_bond_threshold))
     return "\n".join(parts)
 
 
@@ -1614,6 +1700,8 @@ def format_population_json(summary: PopulationSummary) -> str:
     body["errors"] = dict(summary.errors)
     if summary.unavailable:
         body["unavailable"] = dict(summary.unavailable)
+    if summary.iao_analysis is not None:
+        body["iao"] = summary.iao_analysis.to_dict()
     return json.dumps(body, indent=2, sort_keys=False)
 
 

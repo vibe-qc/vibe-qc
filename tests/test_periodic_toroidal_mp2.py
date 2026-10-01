@@ -581,7 +581,8 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         mp2.tcut_pairs,
         mp2.tcut_pairs_weak,
         mp2.pno_norm,
-    ) == (0, 1e-8, 1e-7, 1e-3, 1e-6, 1e-4, "legacy")
+        mp2.domain_criterion,
+    ) == (0, 1e-8, 1e-7, 1e-3, 1e-6, 1e-4, "legacy", "mulliken")
 
     cc = _pre_sweep_toroidal_dlpno_cc_options()
     assert (
@@ -592,6 +593,7 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         cc.residual_domain,
         cc.pno_norm,
         cc.pno_correction,
+        cc.tcut_pno_diag_scale,
     ) == (
         0,
         1e-7,
@@ -600,6 +602,7 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         "pair",
         "legacy",
         False,
+        1.0,
     )
 
 
@@ -871,6 +874,9 @@ def test_toroidal_dlpno_mp2_torus_screening_beats_euclidean():
         tcut_mkn=1e-3,
         tcut_pairs=1e-6,
         tcut_pairs_weak=1e-4,
+        # tcut_mkn=1e-3 here means Mulliken domains (#190 made DOI the
+        # molecular default).
+        domain_criterion="mulliken",
     )
 
     r_exact = toroidal_dlpno_mp2(

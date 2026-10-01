@@ -307,8 +307,8 @@ def test_actual_frozen_core_reference_constant_and_active_only_coupled_triples(n
     assert (result.memory.occupied_count, result.memory.common_virtual_dimension) == (nk, 2*nk)
     p, common = _oracle_problem(b, mp2, ccsd, spaces)
     _check_snapshot(p, result, _full_rank_linear_oracle(p, common))
-    assert b.hf.state.reference_energy_per_cell == b.unfrozen_hf.state.reference_energy_per_cell
-    assert result.total_energy_per_cell == pytest.approx(b.unfrozen_hf.state.reference_energy_per_cell
+    assert result.total_energy_per_cell == b.hf.state.reference_energy_per_cell + result.correlation_energy_per_cell
+    assert result.total_energy_per_cell == pytest.approx(b.hf.state.reference_energy_per_cell
         +(ccsd.solver.final_snapshot.correlation_energy+result.solver.final_snapshot.triples_energy)/nk, abs=2e-15)
     if nk == 1:
         assert abs(result.triples_energy_per_cell) < 1e-15  # Two active electrons; raw iii energy weight zero.

@@ -16,6 +16,10 @@ module defines the protocol and ships two concrete classes:
 Multi-system objectives compose :class:`SinglePointEnergy` with
 weights and a sum reducer; that lives in :mod:`recipes` rather than
 here, so this module stays free of recipe-specific assumptions.
+
+A least-squares objective additionally exposes its residual vector
+(:class:`ResidualObjective`); :class:`MockResiduals` is the mock for
+that shape, used to test the DFO-LS driver.
 """
 
 from __future__ import annotations
@@ -45,6 +49,26 @@ class Objective(Protocol):
 
     n_calls: int
     """Number of evaluations performed so far (for logging / budget tracking)."""
+
+    def __call__(self, x: np.ndarray) -> float:
+        ...
+
+
+class ResidualObjective(Protocol):
+    """A least-squares objective: ``__call__`` returns ``sum_i r_i(x)^2``.
+
+    :func:`vibeqc.basis_optimization.drivers.optimize_dfols` consumes the
+    residual vector directly (a Gauss-Newton model per residual converges
+    far faster than a model of the scalar sum). Any other driver sees only
+    ``__call__``. The same failure rule as :class:`Objective` applies:
+    raise, or return ``+inf`` entries, rather than NaN.
+    """
+
+    n_params: int
+    n_calls: int
+
+    def residuals(self, x: np.ndarray) -> np.ndarray:
+        ...
 
     def __call__(self, x: np.ndarray) -> float:
         ...
@@ -91,6 +115,47 @@ class MockEnergy:
         self.n_calls += 1
         d = np.asarray(x, dtype=float) - self.center
         return float(self.e0 + 0.5 * d @ self.hessian @ d)
+
+
+@dataclass
+class MockResiduals:
+    """Least-squares mock: ``r(x) = A (x - center)``, objective ``|r|^2``.
+
+    The residual-shaped counterpart of :class:`MockEnergy` for testing
+    :func:`~vibeqc.basis_optimization.drivers.optimize_dfols`. With
+    ``A`` of shape ``(m, n_params)`` and full column rank the objective is
+    the quadratic ``(x - c)^T A^T A (x - c)`` with its minimum, zero, at
+    ``center``. ``A`` defaults to the identity.
+    """
+
+    n_params: int
+    center: np.ndarray
+    matrix: Optional[np.ndarray] = None
+    n_calls: int = field(default=0, init=False)
+
+    def __post_init__(self) -> None:
+        self.center = np.asarray(self.center, dtype=float)
+        if self.center.shape != (self.n_params,):
+            raise ValueError(
+                f"center has shape {self.center.shape}, expected ({self.n_params},)"
+            )
+        if self.matrix is None:
+            self.matrix = np.eye(self.n_params)
+        else:
+            self.matrix = np.asarray(self.matrix, dtype=float)
+            if self.matrix.ndim != 2 or self.matrix.shape[1] != self.n_params:
+                raise ValueError(
+                    f"matrix has shape {self.matrix.shape}, "
+                    f"expected (m, {self.n_params})"
+                )
+
+    def residuals(self, x: np.ndarray) -> np.ndarray:
+        self.n_calls += 1
+        return self.matrix @ (np.asarray(x, dtype=float) - self.center)
+
+    def __call__(self, x: np.ndarray) -> float:
+        r = self.residuals(x)
+        return float(r @ r)
 
 
 @dataclass

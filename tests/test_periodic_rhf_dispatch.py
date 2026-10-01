@@ -35,15 +35,32 @@ import pytest
 import vibeqc as vq
 
 
-def _h2(box: float = 30.0):
-    c = box / 2
+def _h2(box=30.0):
+    """H2 / STO-3G at the centre of an orthorhombic cell; ``box`` is one
+    edge length (cube) or three."""
+    edges = np.broadcast_to(np.asarray(box, dtype=float), (3,))
+    cx, cy, cz = edges / 2
     sysp = vq.PeriodicSystem(
-        3, np.eye(3) * box,
-        [vq.Atom(1, [c, c, c - 0.7]),
-         vq.Atom(1, [c, c, c + 0.7])],
+        3, np.diag(edges),
+        [vq.Atom(1, [cx, cy, cz - 0.7]),
+         vq.Atom(1, [cx, cy, cz + 0.7])],
     )
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     return sysp, basis
+
+
+# DIRECT_TRUNCATED cells (#430). The direct drivers refuse a cell whose
+# |g| <= cutoff_bohr ball holds only g = 0 (#133): a 30-bohr box at
+# cutoff 12 would be a free-boundary cluster labelled periodic. An
+# 11-bohr cube puts the six nearest images inside both the 12-bohr AO
+# ball and the 15-bohr nuclear ball of ``_std_options`` (the next shell,
+# 15.6 bohr, lies outside both), so both lattice sums see the same
+# neutral periodic cell.
+_DIRECT_BOX = 11.0
+# The same for the library defaults (cutoff 15, nuclear cutoff 25): the
+# only images are the two along z at 14 bohr; 28 and 30 bohr lie outside
+# both balls.
+_DEFAULT_CUTOFF_CELL = (30.0, 30.0, 14.0)
 
 
 def _h2_slab(box: float = 18.0, vacuum: float = 45.0):
@@ -82,7 +99,7 @@ def _std_options(method):
 # ---------------------------------------------------------------------------
 
 def test_dispatcher_routes_direct_truncated_multi_k():
-    sysp, basis = _h2()
+    sysp, basis = _h2(_DIRECT_BOX)
     km = vq.monkhorst_pack(sysp, [1, 1, 1])
     opts = _std_options(vq.CoulombMethod.DIRECT_TRUNCATED)
 
@@ -90,11 +107,12 @@ def test_dispatcher_routes_direct_truncated_multi_k():
     r_direct = vq.run_rhf_periodic(sysp, basis, km, opts)
 
     assert r_dispatch.converged and r_direct.converged
+    assert isinstance(r_dispatch, vq.PeriodicRHFResult)
     assert r_dispatch.energy == pytest.approx(r_direct.energy, abs=1e-10)
 
 
 def test_dispatcher_routes_direct_truncated_gamma():
-    sysp, basis = _h2()
+    sysp, basis = _h2(_DIRECT_BOX)
     opts = vq.PeriodicRHFOptions()
     opts.lattice_opts.cutoff_bohr = 12
     opts.lattice_opts.nuclear_cutoff_bohr = 15
@@ -106,6 +124,7 @@ def test_dispatcher_routes_direct_truncated_gamma():
     r_direct = vq.run_rhf_periodic_gamma(sysp, basis, opts)
 
     assert r_dispatch.converged and r_direct.converged
+    assert isinstance(r_dispatch, vq.PeriodicRHFResult)
     assert r_dispatch.energy == pytest.approx(r_direct.energy, abs=1e-10)
 
 
@@ -161,11 +180,12 @@ def test_dispatcher_routes_ewald_gamma():
 # ---------------------------------------------------------------------------
 
 def test_dispatcher_accepts_none_options():
-    sysp, basis = _h2()
+    sysp, basis = _h2(_DEFAULT_CUTOFF_CELL)
     km = vq.monkhorst_pack(sysp, [1, 1, 1])
     # No options — picks default PeriodicSCFOptions with DIRECT_TRUNCATED.
     r = vq.run_rhf_periodic_scf(sysp, basis, km)
     assert r.converged
+    assert isinstance(r, vq.PeriodicRHFResult)
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +269,17 @@ def test_neutralized_1d_raises_not_implemented_gamma():
 # Options-type translation
 # ---------------------------------------------------------------------------
 
+def test_exchange_exxdiv_is_refused_off_ewald_3d():
+    """``exchange_exxdiv`` selects the EWALD_3D exchange gauge (#23); the
+    other Coulomb methods have their own kernel, so naming it there fails
+    closed before any SCF work instead of being ignored."""
+    sysp, basis = _h2()
+    km = vq.monkhorst_pack(sysp, [1, 1, 1])
+    opts = _std_options(vq.CoulombMethod.DIRECT_TRUNCATED)
+    with pytest.raises(NotImplementedError, match="exchange_exxdiv"):
+        vq.run_rhf_periodic_scf(sysp, basis, km, opts, exchange_exxdiv="none")
+
+
 def test_dispatcher_accepts_both_options_types():
     """Both PeriodicSCFOptions and PeriodicRHFOptions should work as
     input — the dispatcher translates fields to the right type for the
@@ -293,11 +324,12 @@ def test_ewald_and_direct_differ_on_periodic_cell():
     direct-sum drops. Both converge; the difference is finite and
     non-trivial.
 
-    H2-chain analogue at a = 15 bohr gives both drivers a clean
-    convergence in a few iterations while the Ewald-nuclear image
-    sum still contributes non-trivially vs the direct truncation.
+    H2-chain analogue at a = 11 bohr: the six nearest images lie inside
+    both the 12-bohr AO ball and the 15-bohr nuclear ball, so the direct
+    route sums a periodic cell. (At the former a = 15 the AO ball held
+    only g = 0, which the #133 guard now refuses: #430.)
     """
-    a = 15.0
+    a = 11.0
     sysp = vq.PeriodicSystem(
         3, np.eye(3) * a,
         [vq.Atom(1, [0, 0, 0]), vq.Atom(1, [0, 0, 1.4])],

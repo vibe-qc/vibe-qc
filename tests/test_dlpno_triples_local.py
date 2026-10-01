@@ -52,6 +52,8 @@ LocalCCSDOptions = partial(
     tcut_mkn=0.0,
     tcut_pairs=1e-4,
     residual_domain="pair",
+    # Predates the ORCA singles-PNO scale on the diagonal pairs (#190).
+    tcut_pno_diag_scale=1.0,
 )
 H2O = [
     (8, [0.0, 0.0, 0.0]),

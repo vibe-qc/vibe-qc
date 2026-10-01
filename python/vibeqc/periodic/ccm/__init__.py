@@ -159,6 +159,7 @@ from .symmetry import (
     ccm_symmetry_unique_atom_pairs,
 )
 from .neutral import (
+    carried_cderi,
     ccm_eri_neutral,
     ccm_neutral_background_constant,
     ccm_neutral_cderi,
@@ -173,6 +174,7 @@ from .direct import (
     run_ccm_uhf_direct,
     run_ccm_uks_direct,
 )
+from .bloch_reference import BlochFoldReport, ccm_reference_from_bloch
 from .experimental import AICCM2026DevAExperimentalWarning
 from .route import CCM_ROUTES, resolve_ccm_route, run_ccm_scf
 from .lowd_four_center import (
@@ -231,6 +233,8 @@ __all__ = [
     "ccm_neutral_cderi",
     "ccm_neutral_background_constant",
     "run_ccm_rhf_direct",
+    "ccm_reference_from_bloch",
+    "BlochFoldReport",
     "run_ccm_uhf_direct",
     "run_ccm_rhf_direct_rijcosx",
     "run_ccm_rks_direct",

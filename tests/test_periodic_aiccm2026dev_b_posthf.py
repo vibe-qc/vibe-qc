@@ -405,20 +405,76 @@ def test_home_auxiliary_inverse_transform_rejects_nondual_group() -> None:
         )
 
 
-@pytest.mark.parametrize("invalid_character", [np.nan, np.inf, -np.inf, 1.0e300])
+@pytest.mark.parametrize("invalid_character", [np.nan, np.inf, -np.inf])
 def test_home_auxiliary_inverse_rejects_invalid_character(
     invalid_character: float,
 ) -> None:
     from vibeqc._vibeqc_core import aiccm2026dev_b_lpq_to_real_home_auxiliary
 
     cache = {(0, 0): np.ones((1, 1, 1), dtype=np.complex128)}
-    with pytest.raises(RuntimeError, match="finite dual cyclic characters"):
+    with pytest.raises(ValueError, match="kfrac must contain finite real values"):
         aiccm2026dev_b_lpq_to_real_home_auxiliary(
             cache,
             np.asarray([[invalid_character, 0.0, 0.0]]),
             np.zeros((1, 3), dtype=np.int64),
             np.ones(3, dtype=np.int64),
         )
+
+
+@pytest.mark.parametrize("representative", [1.0e300, -1.0e300])
+def test_home_auxiliary_inverse_accepts_large_trivial_character(
+    representative: float,
+) -> None:
+    from vibeqc._vibeqc_core import aiccm2026dev_b_lpq_to_real_home_auxiliary
+
+    # These finite binary floats are exact integers, hence the trivial
+    # character modulo the primitive reciprocal lattice, regardless of size.
+    factor = np.asarray([[[2.0, -0.5], [-0.5, 3.0]]])
+    kfrac = np.asarray([[representative, -representative, 0.0]])
+    direct = aiccm2026dev_b_lpq_to_real_home_auxiliary(
+        {(0, 0): factor}, kfrac, np.zeros((1, 3), dtype=np.int64), (1, 1, 1)
+    )
+    wrapped = _lpq_cache_to_real_home_auxiliary({(0, 0): factor}, kfrac, (1, 1, 1))
+    for actual, imaginary, symmetry in (direct, wrapped):
+        np.testing.assert_array_equal(actual, factor)
+        assert imaginary == 0.0
+        assert symmetry == 0.0
+
+
+@pytest.mark.parametrize("offset", [2.0**40, -(2.0**40)])
+def test_home_auxiliary_inverse_preserves_shifted_nontrivial_characters(
+    offset: float,
+) -> None:
+    from vibeqc._vibeqc_core import aiccm2026dev_b_lpq_to_real_home_auxiliary
+
+    # Independent Z/2 forward transform: H F H. The large shift still
+    # represents the half-integer exactly; the second axis is trivial.
+    expected = np.asarray([[[2.0, -0.5], [-0.5, 3.0]]])
+    characters = np.asarray([[1.0, 1.0], [1.0, -1.0]])
+    transformed = characters @ expected[0] @ characters.T
+    cache = {(i, j): transformed[i, j].reshape(1, 1, 1)
+             for i in range(2) for j in range(2)}
+    kfrac = np.asarray([[offset, 1.0e300, 0.0], [offset + 0.5, -1.0e300, 0.0]])
+    direct = aiccm2026dev_b_lpq_to_real_home_auxiliary(
+        cache, kfrac, np.asarray([[0, 0, 0], [1, 0, 0]]), (2, 1, 1)
+    )
+    wrapped = _lpq_cache_to_real_home_auxiliary(cache, kfrac, (2, 1, 1))
+    for actual, imaginary, symmetry in (direct, wrapped):
+        np.testing.assert_allclose(actual, expected, atol=2e-14, rtol=0.0)
+        assert imaginary < 2e-14
+        assert symmetry < 2e-14
+
+    # Canonicalisation must not turn a distinct off-mesh value or duplicate
+    # character into a complete group. The fractions remain representable.
+    for bad in (0.25, 1.0):
+        invalid = kfrac.copy()
+        invalid[1, 0] = offset + bad
+        with pytest.raises(RuntimeError, match="dual cyclic character"):
+            aiccm2026dev_b_lpq_to_real_home_auxiliary(
+                cache, invalid, np.asarray([[0, 0, 0], [1, 0, 0]]), (2, 1, 1)
+            )
+        with pytest.raises(ValueError, match="character"):
+            _lpq_cache_to_real_home_auxiliary(cache, invalid, (2, 1, 1))
 
 
 def test_home_auxiliary_kernels_reject_mesh_product_overflow() -> None:
@@ -510,7 +566,7 @@ def test_canonical_mp2_lov_cache_streams_lpq(monkeypatch) -> None:
         return np.array(lpq_by_key[(bra_key, ket_key)], copy=True)
 
     monkeypatch.setattr(posthf, "build_lpq_bloch_native_fft", fake_build_lpq)
-    lov, got_auxiliary = _build_canonical_lov_cache(
+    lov, got_auxiliary = posthf._build_canonical_lov_cache_pairwise(
         system,  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
         kcart,
@@ -541,7 +597,7 @@ def test_canonical_mp2_lov_cache_streams_lpq(monkeypatch) -> None:
             np.testing.assert_allclose(lov[(ki, ka)], expected, atol=1e-13)
 
     with pytest.raises(ValueError, match="one coefficient block per character"):
-        _build_canonical_lov_cache(
+        posthf._build_canonical_lov_cache_pairwise(
             system,  # type: ignore[arg-type]
             object(),  # type: ignore[arg-type]
             kcart,
@@ -900,6 +956,7 @@ def test_restricted_local_defaults_pin_pre_sweep_periodic_convention(
         "tcut_pairs": 0.0,
         "tcut_pairs_weak": 0.0,
         "pno_norm": "legacy",
+        "domain_criterion": "mulliken",
     }
     assert captured["ccsd_t"] == {
         "localise": "pipek-mezey",
@@ -907,6 +964,7 @@ def test_restricted_local_defaults_pin_pre_sweep_periodic_convention(
         "tcut_pno": 1e-7,
         "pno_norm": "legacy",
         "pno_correction": False,
+        "tcut_pno_diag_scale": 1.0,
         "tcut_mkn": 0.0,
         "tcut_pairs": 0.0,
         "coupling_radius": 0.0,
@@ -1335,3 +1393,129 @@ def test_no_truncation_dlpno_ccsd_t_has_nonzero_triples_oracle() -> None:
     assert result.e_corr_per_cell == pytest.approx(-0.0151237664685, abs=5e-10)
     assert result.e_t_per_cell == pytest.approx(-4.6701557478e-5, abs=2e-11)
     assert result.cderi_symmetry_residual < 1e-7
+
+
+@pytest.mark.parametrize("requested,n_frozen", [(0, 0), (1, 1), (None, 1)])
+def test_complete_space_mp2_preserves_solver_frozen_core(
+    monkeypatch, requested, n_frozen,
+):
+    """Public-driver wiring over a synthetic tensor, not a physical-cell oracle."""
+    import vibeqc.dlpno.mp2 as mp2
+    import vibeqc.periodic.chi.posthf as posthf
+
+    system, basis = _h2_chain()
+    # One auxiliary, two occupieds, one virtual. For one virtual the direct
+    # and exchange integrals coincide, so E = sum_ij (L_i L_j)^2 / D_ij.
+    eps = np.array([-2.0, -1.0, 1.0])
+    factors = np.array([0.4, 0.2])
+    expected = sum(
+        (factors[i] * factors[j]) ** 2 / (eps[i] + eps[j] - 2 * eps[2])
+        for i in range(n_frozen, 2) for j in range(n_frozen, 2)
+    )
+    ao_factor = np.zeros((1, 3, 3))
+    ao_factor[0, :2, 2] = factors
+    ao_factor[0, 2, :2] = factors
+
+    def transform(occupied, virtual):
+        # Frozen occupieds must never reappear as PAO virtuals.
+        assert virtual.shape == (3, 1)
+        np.testing.assert_allclose(virtual[:2], 0, atol=1e-14)
+        return np.einsum("pi,Ppq,qa->Pia", occupied, ao_factor, virtual)
+
+    reference = SimpleNamespace(
+        molecule=SimpleNamespace(n_electrons=lambda: 4),
+        basis=basis,
+        hf=SimpleNamespace(mo_coeffs=np.eye(3), overlap=np.eye(3),
+                           fock=np.diag(eps), energy=-5.0),
+        df=SimpleNamespace(mo_transform=transform),
+        n_cells=2, cderi_imaginary_residual=0.0,
+        cderi_symmetry_residual=0.0, matrix_imaginary_residual=0.0,
+    )
+    solver_result = SimpleNamespace(
+        n_frozen=n_frozen, e_corr=expected, e_hf=-5.0,
+        e_total=-5.0 + expected, e_pno_correction=0.0,
+        n_pairs=(2-n_frozen)*(3-n_frozen)//2,
+        n_pairs_screened=0, n_iter=1, converged=True,
+    )
+    monkeypatch.setattr(posthf, "_prepare_b_real_reference",
+                        lambda *a, **k: (reference, object()))
+    monkeypatch.setattr(posthf, "_reference_finite_torus_convention",
+                        lambda hf: None)
+    monkeypatch.setattr(mp2, "run_dlpno_mp2", lambda *a, **k: solver_result)
+    options = mp2.DLPNOMP2Options(
+        localise="none", n_frozen=requested, tcut_pno=0, tcut_pno_weak=0,
+        tcut_mkn=0, tcut_pairs=0, tcut_pairs_weak=0,
+    )
+    result = posthf.run_aiccm2026dev_b_dlpno_mp2(
+        system, basis, (1, 1, 2), dlpno_options=options, progress=False,
+    )
+    assert result.e_corr_per_cell == pytest.approx(expected / 2, abs=1e-12)
+    assert result.complete_space_correction_per_cell == pytest.approx(0, abs=1e-12)
+    assert result.solver_result.e_pno_correction == pytest.approx(0, abs=1e-12)
+    assert result.e_total_per_cell == pytest.approx((-5 + expected) / 2, abs=1e-12)
+    assert result.solver_result.n_frozen == n_frozen
+
+
+@pytest.mark.parametrize("method,localise", [
+    (method, localise)
+    for method in ("mp2", "ccsd", "ccsd_t", "ump2", "uccsd", "uccsd_t")
+    for localise in ("none", "wannier", "iao", "pipek-mezey")
+    if not (method.startswith("u") and localise == "pipek-mezey")
+])
+@pytest.mark.parametrize("selector", [0, 1, None, "published", "all-electron"])
+def test_local_frozen_core_guard_precedes_electronic_work(
+    monkeypatch, method, localise, selector,
+):
+    import vibeqc.periodic.chi.posthf as posthf
+    from vibeqc.dlpno.mp2 import DLPNOMP2Options
+    from vibeqc.dlpno.ccsd_local_solver import LocalCCSDOptions
+    from vibeqc.dlpno.ump2 import DLPNOUMP2Options
+    from vibeqc.dlpno.uccsd import DLPNOUCCSDPilotOptions
+
+    # Ne has one published core orbital; the two-cell torus has two.
+    system = vq.PeriodicSystem(3, np.eye(3) * 8, [vq.Atom(10, [0, 0, 0])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    option_type, key = {
+        "mp2": (DLPNOMP2Options, "dlpno_options"),
+        "ccsd": (LocalCCSDOptions, "cc_options"),
+        "ccsd_t": (LocalCCSDOptions, "cc_options"),
+        "ump2": (DLPNOUMP2Options, "ump2_options"),
+        "uccsd": (DLPNOUCCSDPilotOptions, "cc_options"),
+        "uccsd_t": (DLPNOUCCSDPilotOptions, "cc_options"),
+    }[method]
+    options = option_type(localise=localise, n_frozen=selector)
+    if not method.startswith("ucc"):
+        options.tcut_pairs = 0
+    if method == "mp2":
+        options.tcut_pairs_weak = 0
+    if method in {"ccsd", "ccsd_t"}:
+        options.coupling_radius = 0
+
+    class ReachedReference(Exception):
+        pass
+
+    def stop(*args, **kwargs):
+        raise ReachedReference
+
+    monkeypatch.setattr(posthf, "_prepare_b_real_reference", stop)
+    monkeypatch.setattr(posthf, "_prepare_b_real_ureference", stop)
+    driver = getattr(posthf, "run_aiccm2026dev_b_dlpno_" + method)
+    frozen = selector not in (0, "all-electron")
+    if frozen and localise != "none":
+        with pytest.raises(NotImplementedError, match="frozen.*localis"):
+            driver(system, basis, (1, 1, 2), **{key: options}, progress=False)
+    else:
+        with pytest.raises(ReachedReference):
+            driver(system, basis, (1, 1, 2), **{key: options}, progress=False)
+    assert options.localise == localise
+    assert options.n_frozen == selector
+
+
+@pytest.mark.parametrize("selector", [None, True, False, "published", "all-electron", 0])
+def test_local_frozen_core_guard_allows_zero_chemical_core(selector):
+    from vibeqc.periodic.chi.posthf import _validate_localized_frozen_core
+
+    system, _ = _h2_chain()
+    _validate_localized_frozen_core(
+        system, SimpleNamespace(localise="wannier", n_frozen=selector),
+    )

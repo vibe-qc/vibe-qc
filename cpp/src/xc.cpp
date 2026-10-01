@@ -327,6 +327,17 @@ AliasSpec resolve_alias(const std::string& name_in) {
         {"pbesol",  {{{XC_GGA_X_PBE_SOL, 1.0}, {XC_GGA_C_PBE_SOL, 1.0}}, 0.0}},
         {"pbe_sol", {{{XC_GGA_X_PBE_SOL, 1.0}, {XC_GGA_C_PBE_SOL, 1.0}}, 0.0}},
         {"blyp",  {{{XC_GGA_X_B88, 1.0}, {XC_GGA_C_LYP, 1.0}}, 0.0}},
+        // BPW91: Becke 1988 exchange (Phys. Rev. A 38, 3098) with the
+        // Perdew-Wang 1991 GGA correlation (Perdew et al., Phys. Rev. B 46,
+        // 6671 (1992)), whose local part is PW92. Named because it is the
+        // functional Klamt's 1998 COSMO-RS parameters were fitted against
+        // (KLAMT_1998.fitted_protocol "dmol/bpw91/dnp/cosmo-inf/nspa92"), so a
+        // solvent sigma potential computed near that protocol needs it. It
+        // was reachable before only as the libxc ids "106,134", which cite
+        // nothing. BP86 is deliberately not added: codes disagree on which
+        // local correlation fills its P86 slot (PZ81 or VWN), the same trap
+        // as B3LYP's, and a silent choice would misreport the method.
+        {"bpw91", {{{XC_GGA_X_B88, 1.0}, {XC_GGA_C_PW91, 1.0}}, 0.0}},
         // B3LYP — the "B3LYP" recipe (HF + Slater + B88 exchange,
         // VWN + LYP correlation, Becke's 3 weights; Stephens, Devlin,
         // Chabalowski & Frisch, J. Phys. Chem. 98, 11623 (1994)) is

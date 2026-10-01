@@ -158,7 +158,8 @@ public:
     }
 
     PairNuclearImageSet select(const Eigen::Vector3d& center,
-                              const std::vector<double>* weights = nullptr) const {
+                              const std::vector<double>* weights = nullptr,
+                              std::vector<std::array<int, 4>>* labels = nullptr) const {
         if (!center.allFinite()) throw std::invalid_argument("Nonfinite AO-product center");
         PairNuclearImageSet result;
         for (std::size_t atom = 0; atom < system_.unit_cell.size(); ++atom) {
@@ -188,6 +189,7 @@ public:
                 if ((position - center).squaredNorm() > radius * radius) continue;
                 result.charges.emplace_back(charge, std::array<double, 3>{position[0], position[1], position[2]});
                 result.atoms.push_back(static_cast<long>(atom));
+                if (labels) labels->push_back({static_cast<int>(atom), i, j, k});
             }
         }
         return result;

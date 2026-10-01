@@ -161,6 +161,38 @@ def test_warn_output_failure_appends_undeclared_path(tmp_path: Path) -> None:
     assert "FileNotFoundError" in matched[0].error  # type: ignore[attr-defined]
 
 
+@pytest.mark.parametrize("container_written_first", [False, True])
+def test_component_error_survives_successful_archive_write(
+    tmp_path: Path, container_written_first: bool,
+) -> None:
+    """An omitted QVF volume must remain visible after its container succeeds."""
+    import tomllib
+
+    writer = _build_plan(tmp_path)
+    archive = tmp_path / "h2o.qvf"
+    archive.write_bytes(b"container payload")
+    manifest = writer._manifest
+    if container_written_first:
+        manifest.mark_written(archive)
+    with pytest.warns(UserWarning, match="qvf_density_grid"):
+        warn_output_failure(
+            ValueError("primitive-cell grid integral=11.9795, expected 10"),
+            archive, role="qvf_density_grid",
+            category=OutputFailureKind.optional_artifact,
+            manifest=manifest, component="volume.density",
+        )
+    manifest.mark_written(archive)
+    body = tomllib.loads(manifest.path.read_text())
+    row = next(row for row in body["outputs"]["files"] if row["path"] == str(archive))
+    assert row["written"] is True
+    assert row["checksum_status"] == "sha256"
+    assert row["error"] == ""
+    assert row["component_errors"] == {
+        "volume.density": "ValueError: primitive-cell grid integral=11.9795, expected 10",
+    }
+    assert len([row for row in body["outputs"]["files"] if row["path"] == str(archive)]) == 1
+
+
 # ---------------------------------------------------------------------------
 # Unit: warn_writer_failure delegates correctly
 # ---------------------------------------------------------------------------

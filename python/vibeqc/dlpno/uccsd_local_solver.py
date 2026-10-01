@@ -29,7 +29,7 @@ import numpy as np
 from .pao import (
     build_atom_basis_map,
     build_projection_matrix,
-    select_domain_atoms_mulliken,
+    orbital_domain_atom_mask,
     semicanonical_pao_basis,
 )
 from .uccsd import _boys_localise
@@ -81,6 +81,37 @@ class LocalUCCSDOptions:
     tcut_pno: float = 3.33e-7
     tcut_pairs: float = 1e-4
     tcut_mkn: float = 1e-3
+    #: PAO atom-domain criterion, as for the closed-shell routes: ``"doi"``
+    #: (default; differential overlap above ``tcut_do``, Pinski et al. 2015)
+    #: or ``"mulliken"`` (population above ``tcut_mkn``). Domains are chosen
+    #: per spin orbital against that spin's projected atomic orbitals; a
+    #: pair's domain is the union of its two orbitals' domains. ``tcut_mkn=0``
+    #: keeps every atom under either criterion.
+    domain_criterion: str = "doi"
+    tcut_do: float = 1e-2
+    #: Add the semicanonical MP2 correction for the PNO truncation of the
+    #: iterated pairs, ``sum_pq (e_pq^PAO - e_pq^PNO)``, as the closed-shell
+    #: DLPNO-MP2 and local CCSD routes do (#222). Zero at ``tcut_pno=0``.
+    pno_correction: bool = True
+    #: Density whose eigenvalues tcut_pno cuts, per spin-orbital pair.
+    #:
+    #: * "two-sided" (default): every pair's PNO space spans the virtual
+    #:   directions either occupied index needs, as the closed-shell
+    #:   Riplinger-Neese density does. An opposite-spin pair adds each spin
+    #:   side's density mapped into the other spin's virtual space through the
+    #:   alpha-beta virtual overlap; a same-spin pair adds the two-sided
+    #:   density of its direct (Coulomb-only) amplitude, because the
+    #:   antisymmetrised MP2 amplitude vanishes wherever it is locally
+    #:   symmetric while the CCSD amplitude does not.
+    #: * "one-sided": the antisymmetrised amplitude's T T^T + T^T T
+    #:   alone, the convention of every result recorded before this option.
+    #:
+    #: A singlet run through this solver at NormalPNO then matches the
+    #: closed-shell route: H2O/cc-pVDZ CCSD 0.022 kcal/mol above canonical
+    #: (closed-shell solver 0.016; one-sided 0.274). Radicals: OH 0.279 ->
+    #: 0.0025, NH2 0.350 -> 0.0125, CH2 (triplet) 0.197 -> 0.0099, HCO
+    #: 0.712 -> 0.071 kcal/mol, for about 25 % more PNOs per pair.
+    pno_density: str = "two-sided"
     tcut_pno_singles: float = 0.0
     compute_triples: bool = False
     tcut_tno: float = 0.0
@@ -125,6 +156,12 @@ class LocalUCCSDResult:
     #: point where the correction exists at all, not that it is small.
     n_degenerate_tno_triples: int = 0
     e_screened_mp2: float = 0.0
+    #: Semicanonical MP2 correction for the PNO truncation of the iterated
+    #: pairs, included in ``e_corr`` when ``pno_correction`` is on.
+    e_pno_correction: float = 0.0
+    #: Distinct residual contractions per iteration (pair groups plus
+    #: singles groups); each serves every member of its group.
+    n_residual_groups: int = 0
     pno_per_pair: dict[tuple[int, int], int] = field(default_factory=dict)
     pao_per_pair: dict[tuple[int, int], int] = field(default_factory=dict)
     singles_per_occ: dict[int, int] = field(default_factory=dict)
@@ -255,6 +292,25 @@ def run_local_dlpno_uccsd(
     atom_first, _ = build_atom_basis_map(molecule, basis)
     q_alpha = build_projection_matrix(ca[:, :nalpha], overlap)
     q_beta = build_projection_matrix(cb[:, :nbeta], overlap)
+    _criterion = str(getattr(options, "domain_criterion", "doi")).strip().lower()
+    if options.tcut_mkn <= 0.0:
+        _criterion = "mulliken"
+    _mask_kw = dict(
+        criterion=_criterion,
+        tcut_mkn=float(options.tcut_mkn),
+        tcut_do=float(getattr(options, "tcut_do", 1e-2)),
+    )
+    # Each spin orbital's domain is judged against its own spin's PAOs.
+    orb_atom_mask = np.vstack(
+        [
+            orbital_domain_atom_mask(
+                molecule, basis, cao_use, overlap, q_alpha, atom_first, **_mask_kw
+            ),
+            orbital_domain_atom_mask(
+                molecule, basis, cbo_use, overlap, q_beta, atom_first, **_mask_kw
+            ),
+        ]
+    )
 
     # Occupied-first spin-orbital blocks.  Cross-spin charge-density and
     # Fock blocks are exactly zero; alpha and beta orbitals retain their
@@ -332,14 +388,7 @@ def run_local_dlpno_uccsd(
         """Return combined-spin PAOs in canonical virtual coordinates."""
         if options.tcut_mkn <= 0.0:
             return None
-        atoms = select_domain_atoms_mulliken(
-            c_occ,
-            overlap,
-            atom_first,
-            p,
-            q,
-            options.tcut_mkn,
-        )
+        atoms = np.where(orb_atom_mask[p] | orb_atom_mask[q])[0]
         if atoms.size == 0:
             raise ValueError(
                 f"empty PAO atom domain for occupied pair {(p, q)} at "
@@ -379,14 +428,7 @@ def run_local_dlpno_uccsd(
         """Return one occupied's same-spin PAOs in spin-virtual coordinates."""
         if options.tcut_mkn <= 0.0:
             return None
-        atoms = select_domain_atoms_mulliken(
-            c_occ,
-            overlap,
-            atom_first,
-            p,
-            p,
-            options.tcut_mkn,
-        )
+        atoms = np.where(orb_atom_mask[p])[0]
         if atoms.size == 0:
             raise ValueError(
                 f"empty singles PAO atom domain for occupied {p} at "
@@ -425,6 +467,20 @@ def run_local_dlpno_uccsd(
             )
         return np.ascontiguousarray(domain)
 
+    pno_correction = bool(getattr(options, "pno_correction", True))
+    e_pno_correction = 0.0
+    _pno_density = str(getattr(options, "pno_density", "two-sided")).strip().lower()
+    if _pno_density not in ("two-sided", "one-sided"):
+        raise ValueError(
+            f"unknown pno_density {options.pno_density!r} "
+            '(expected "two-sided" or "one-sided")'
+        )
+    two_sided = _pno_density == "two-sided"
+    # Canonical-virtual coordinates: alpha virtuals first, then beta; their
+    # AO overlap maps one spin side of a pair density into the other's.
+    alpha_cols_full = np.arange(nva)
+    beta_cols_full = np.arange(nva, nv)
+    m_ab_full = cav.T @ overlap @ cbv
     for p, q in all_pair_keys:
         coulomb = b_ov[:, p, :].T @ b_ov[:, q, :]
         anti = coulomb - coulomb.T
@@ -466,6 +522,25 @@ def run_local_dlpno_uccsd(
         t_mp2_pao = anti_pao / denominator_pao
         density = t_mp2_pao @ t_mp2_pao.T + t_mp2_pao.T @ t_mp2_pao
         density = 0.5 * (density + density.T)
+        if two_sided:
+            if (p < noa) == (q < noa):
+                coulomb_pao = coulomb if pao is None else pao.T @ coulomb @ pao
+                c_amp = coulomb_pao / denominator_pao
+                direct = c_amp @ c_amp.T + c_amp.T @ c_amp
+                density = density + 0.5 * (direct + direct.T)
+            else:
+                if pao is None:
+                    a_cols, b_cols, m_ab = alpha_cols_full, beta_cols_full, m_ab_full
+                else:
+                    a_cols = np.flatnonzero(np.any(pao[:nva] != 0.0, axis=0))
+                    b_cols = np.flatnonzero(np.any(pao[nva:] != 0.0, axis=0))
+                    m_ab = (cav @ pao[:nva][:, a_cols]).T @ overlap @ (
+                        cbv @ pao[nva:][:, b_cols]
+                    )
+                d_aa = density[np.ix_(a_cols, a_cols)].copy()
+                d_bb = density[np.ix_(b_cols, b_cols)].copy()
+                density[np.ix_(a_cols, a_cols)] += m_ab @ d_bb @ m_ab.T
+                density[np.ix_(b_cols, b_cols)] += m_ab.T @ d_aa @ m_ab
         d, ep = _domain_from_density(density, f_pao, options.tcut_pno)
         u = d if pao is None else np.ascontiguousarray(pao @ d)
         kp = u.T @ anti @ u
@@ -475,6 +550,13 @@ def run_local_dlpno_uccsd(
         t2[(p, q)] = kp / (
             eps_o[p] + eps_o[q] - ep[:, None] - ep[None, :]
         )
+        if pno_correction:
+            # e_pq^PAO - e_pq^PNO, both semicanonical MP2 in this pair's own
+            # domain, so the difference is what tcut_pno discarded; same
+            # 1/2-per-unique-pair convention as the screening estimate above.
+            e_pno_correction += 0.5 * float(np.sum(anti_pao * t_mp2_pao)) - (
+                0.5 * float(np.sum(kp * t2[(p, q)]))
+            )
 
     pair_keys = [key for key in all_pair_keys if key not in screened_pairs]
 
@@ -559,6 +641,13 @@ def run_local_dlpno_uccsd(
         singles_eps[p] = ep
         t1[p] = np.zeros(u.shape[1])
 
+    # Singles spaces coincide exactly when they are the untruncated full
+    # spin-virtual space (tcut_pno_singles=0); otherwise each occupied keeps
+    # its own space and its own group.
+    singles_key = {
+        p: ("full" if singles_density is None else p) for p in range(no)
+    }
+    result.e_pno_correction = float(e_pno_correction)
     result.n_pairs = len(pair_keys)
     result.n_screened = len(screened_pairs)
     result.screened_pair_energies = {
@@ -708,27 +797,50 @@ def run_local_dlpno_uccsd(
         new_t1: dict[int, np.ndarray] = {}
         new_t2: dict[tuple[int, int], np.ndarray] = {}
 
+        # A residual depends on its target only through the contraction
+        # domain and the coupled occupied set. Every pair of one coupling set
+        # has the same domain (the union of that set's pair spaces, which
+        # contains the target's own), and singles share theirs whenever their
+        # natural-orbital spaces coincide, so each group is contracted once
+        # per iteration and every member reads its own block (the open-shell
+        # counterpart of #689).
+        singles_groups: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+        pair_groups: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
         for p in range(no):
             occupieds = coupled_occupieds(p)
             coupled_sizes.append(len(occupieds))
-            domain = residual_domain(singles_u[p], occupieds)
-            local = local_problem(domain, occupieds)
-            r1, _ = dlpno_uccsd_pair_residual(*local)
+            gkey = (tuple(int(m) for m in occupieds), singles_key[p])
+            cached = singles_groups.get(gkey)
+            if cached is None:
+                domain = residual_domain(singles_u[p], occupieds)
+                local = local_problem(domain, occupieds)
+                r1, _ = dlpno_uccsd_pair_residual(*local)
+                cached = (domain, np.asarray(r1))
+                singles_groups[gkey] = cached
+            domain, r1 = cached
             lp = int(np.searchsorted(occupieds, p))
-            projected_r1 = (singles_u[p].T @ domain) @ np.asarray(r1)[lp]
+            projected_r1 = (singles_u[p].T @ domain) @ r1[lp]
             step = projected_r1 / (eps_o[p] - singles_eps[p])
             new_t1[p] = t1[p] + step
 
         for p, q in pair_keys:
             occupieds = coupled_occupieds(p, q)
             coupled_sizes.append(len(occupieds))
-            domain = residual_domain(pair_u[(p, q)], occupieds)
-            local = local_problem(domain, occupieds)
-            _, r2_flat = dlpno_uccsd_pair_residual(*local)
-            nd = domain.shape[1]
-            r2 = np.asarray(r2_flat).reshape(
-                len(occupieds), len(occupieds), nd, nd
-            )
+            gkey = tuple(int(m) for m in occupieds)
+            cached = pair_groups.get(gkey)
+            if cached is None:
+                domain = residual_domain(pair_u[(p, q)], occupieds)
+                local = local_problem(domain, occupieds)
+                _, r2_flat = dlpno_uccsd_pair_residual(*local)
+                nd = domain.shape[1]
+                cached = (
+                    domain,
+                    np.asarray(r2_flat).reshape(
+                        len(occupieds), len(occupieds), nd, nd
+                    ),
+                )
+                pair_groups[gkey] = cached
+            domain, r2 = cached
             lp = int(np.searchsorted(occupieds, p))
             lq = int(np.searchsorted(occupieds, q))
             denominator = (
@@ -742,6 +854,7 @@ def run_local_dlpno_uccsd(
             updated = t2[(p, q)] + projected_r2 / denominator
             new_t2[(p, q)] = 0.5 * (updated - updated.T)
 
+        result.n_residual_groups = len(singles_groups) + len(pair_groups)
         for p in range(no):
             t1[p] = new_t1[p]
         for key in pair_keys:
@@ -796,7 +909,7 @@ def run_local_dlpno_uccsd(
     else:
         result.n_iter = options.max_iter
 
-    result.e_corr = energy()
+    result.e_corr = energy() + result.e_pno_correction
     result.t1_norm = float(
         np.sqrt(sum(float(np.dot(amplitude, amplitude)) for amplitude in t1.values()))
     )

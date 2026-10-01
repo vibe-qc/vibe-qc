@@ -39,14 +39,16 @@ headroom factor (rendered by ``MemoryEstimate.format``):
         Fock + density   409.6 MB
         AO evaluation    307.2 MB
         DIIS history     102.4 MB
-    Available on this machine: 119.8 GB. Proceeding.
+    Available to this job: 119.8 GB. Proceeding.
 """
 
 from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from math import comb
 from numbers import Integral
@@ -427,6 +429,37 @@ _DLPNO_COMPOSITION_BOUND_DETAIL = (
 _DLPNO_NATIVE_WORKER_BYTES = 16 * 1024**2
 
 
+# An explicit OpenMP worker count for one molecular estimate (#298). ``None``
+# means "the runtime's count", which is what the runner uses so that the .out
+# preflight describes the threads the job actually runs with. A caller that
+# pins an estimate (a test, a planner sizing another host) states the count
+# instead, so the result does not depend on the machine it is computed on.
+_EXPLICIT_WORKERS: ContextVar[Optional[int]] = ContextVar(
+    "vibeqc_memory_explicit_workers", default=None
+)
+
+
+@contextmanager
+def _explicit_workers(n_threads: Optional[int]) -> Iterator[None]:
+    """Make :func:`_omp_max_threads` return ``n_threads`` inside the block."""
+    if n_threads is None:
+        yield
+        return
+    if (
+        isinstance(n_threads, bool)
+        or not isinstance(n_threads, Integral)
+        or int(n_threads) < 1
+    ):
+        raise ValueError(
+            f"n_threads must be a positive integer or None, got {n_threads!r}"
+        )
+    token = _EXPLICIT_WORKERS.set(int(n_threads))
+    try:
+        yield
+    finally:
+        _EXPLICIT_WORKERS.reset(token)
+
+
 def _omp_max_threads() -> int:
     """Return the OpenMP worker count the next native region will use.
 
@@ -435,7 +468,12 @@ def _omp_max_threads() -> int:
     ``run_job(num_threads=...)``.  Do not impose an estimator-only many-core
     cap: the native triples planner has none, so doing so would undercount
     aggregate worker scratch on hosts with more than 128 OpenMP workers.
+    An explicit count set through ``estimate_memory(..., n_threads=N)``
+    takes precedence over the runtime.
     """
+    explicit = _EXPLICIT_WORKERS.get()
+    if explicit is not None:
+        return explicit
     try:
         from ._vibeqc_core import get_num_threads
 
@@ -613,7 +651,7 @@ class MemoryEstimate:
             lines.append(f"{status}.")
         else:
             avail_gb = available / _GB
-            lines.append(f"Available on this machine: {avail_gb:.1f} GB. {status}.")
+            lines.append(f"Available to this job: {avail_gb:.1f} GB. {status}.")
         return "\n".join(lines)
 
     def __str__(self) -> str:
@@ -2294,6 +2332,8 @@ def _dft_xc_requires_dense_ao_tables(options) -> bool:
     scf_options = _scf_estimator_options(options)
     if scf_options is None:
         return False
+    if _option_value(scf_options, "orbital_optimizer", "native") == "opentrustregion":
+        return True
     if type(scf_options).__name__ == "ROKSOptions":
         return True
     for threshold in ("newton_threshold", "trah_threshold"):
@@ -4645,10 +4685,15 @@ def _dlpno_active_counts(
     residual_domain = str(
         getattr(method_options, "residual_domain", "extended") or "extended"
     ).strip().lower()
-    if tcut_pno < _DLPNO_PROFILED_PNO_CUTOFF or residual_domain != "pair":
+    if tcut_pno < _DLPNO_PROFILED_PNO_CUTOFF or residual_domain not in (
+        "pair",
+        "pno",
+    ):
         # Below the tightest profiled cutoff, or when residuals expand beyond
         # the pair PNO basis, no measured truncation bound exists.  Charge the
         # full virtual dimension rather than extrapolating the S22 heuristic.
+        # The compiled PNO-space route ("pno") never leaves the pair PNO
+        # spaces, so it keeps the pair-basis bound like "pair".
         avg_pno = n_vir
     avg_pao = min(n_basis, max(avg_pno * 2, (2 * n_vir + 2) // 3))
     return n_occ, n_vir, avg_pao, avg_pno, frozen
@@ -4688,8 +4733,8 @@ def _dlpno_strong_pair_count(
     use_cpp_kernel = bool(getattr(method_options, "use_cpp_kernel", True))
     if (
         tcut_pairs < _DLPNO_PROFILED_PAIR_CUTOFF
-        or residual_domain != "pair"
-        or not use_cpp_kernel
+        or residual_domain not in ("pair", "pno")
+        or (residual_domain == "pair" and not use_cpp_kernel)
     ):
         return full_pairs
     return min(full_pairs, _DLPNO_STRONG_PAIRS_PER_OCC * n_occ)
@@ -5380,12 +5425,24 @@ def _dlpno_ccsd_estimate(
     est.by_category["DLPNO global MO DF factors"] = global_factors
     est.by_category["DLPNO MO DF transformation peak"] = df_transform_peak
 
-    # pdata retains B_ov_L, B_oo_L, and B_vv_L for every strong pair.  The
-    # lower-order term covers U_ij, the pair amplitudes, K/Fock blocks, and
-    # conservative peer copies made while each dictionary entry is built.
-    pair_df_state = n_strong_pairs * n_aux * (
-        n_occ * avg_pno + n_occ * n_occ + avg_pno * avg_pno
-    ) * 8
+    residual_domain_early = str(
+        getattr(method_options, "residual_domain", "extended") or "extended"
+    ).strip().lower()
+    if not open_shell and residual_domain_early == "pno":
+        # The compiled PNO-space solver holds, per strong pair, its (ab|P)
+        # factor in the pair PNO basis and one (ma|P) factor row per coupled
+        # occupied; every occupied is charged as coupled (the compact-molecule
+        # bound, exact when the coupling radius spans the molecule).
+        pair_df_state = n_strong_pairs * n_aux * (
+            avg_pno * avg_pno + n_occ * avg_pno
+        ) * 8
+    else:
+        # pdata retains B_ov_L, B_oo_L, and B_vv_L for every strong pair.  The
+        # lower-order term covers U_ij, the pair amplitudes, K/Fock blocks, and
+        # conservative peer copies made while each dictionary entry is built.
+        pair_df_state = n_strong_pairs * n_aux * (
+            n_occ * avg_pno + n_occ * n_occ + avg_pno * avg_pno
+        ) * 8
     pair_amplitudes = n_strong_pairs * 4 * avg_pno * avg_pno * 8
     pair_maps = n_strong_pairs * (
         n_vir * avg_pno
@@ -5434,6 +5491,36 @@ def _dlpno_ccsd_estimate(
         pair_residual *= n_strong_pairs
         residual_detail = (
             "persistent per-pair integral blocks on non-targeted route"
+        )
+    elif residual_domain == "pno":
+        # Compiled PNO-space route (dlpno_ccsd_pno_solve): per iteration it
+        # rebuilds the singles-folded factors u_i (n_aux, n_vir) and
+        # w_i (n_aux, n_occ) for every active occupied, four half-contracted
+        # amplitude objects (n_aux, n_pno) per strong pair, the mixed Coulomb
+        # projections (n_pno, n_pno) per (pair, coupled occupied), one
+        # (n_vir^2, 128) chunk of the Jw build, and per-thread target
+        # workspaces of order n_occ^2 n_pno^2. The static per-pair factors are
+        # charged under the auxiliary pair workspace above.
+        per_iteration_factors = n_occ * n_aux * (n_vir + n_occ) * 8
+        half_contracted = 4 * n_strong_pairs * n_aux * avg_pno * 8
+        mixed_blocks = 8 * n_strong_pairs * n_occ * avg_pno * avg_pno * 8
+        jw_chunk = (128 * n_vir * n_vir + 128 * n_aux) * 8
+        thread_workspace = runtime_threads * (
+            n_occ * n_occ * avg_pno * avg_pno
+            + 6 * n_aux * avg_pno
+            + 4 * n_aux * n_occ
+        ) * 8
+        pair_residual = (
+            per_iteration_factors
+            + half_contracted
+            + mixed_blocks
+            + jw_chunk
+            + thread_workspace
+        )
+        residual_detail = (
+            "compiled PNO-space contraction: per-iteration singles-folded "
+            "factors, half-contracted amplitudes and mixed projections, plus "
+            "one target workspace per OpenMP thread"
         )
     elif residual_domain == "pair":
         residual_is_streamed = use_cpp_kernel
@@ -6263,6 +6350,7 @@ def estimate_memory(
     *,
     method: str,
     options=None,
+    n_threads: Optional[int] = None,
 ) -> MemoryEstimate:
     """Peak memory estimate for ``method``.
 
@@ -6280,10 +6368,18 @@ def estimate_memory(
         The matching ``*Options`` struct, or ``None`` for defaults.
         DIIS history size and DFT grid dimensions are read from it
         when available.
+    n_threads
+        OpenMP worker count to size per-worker scratch for (XC batch
+        tables, DF transform and triples workers, native worker stacks).
+        ``None`` (default) uses the current runtime count, as
+        :func:`vibeqc.get_num_threads` reports it. Pass a count to get an
+        estimate that does not depend on the host, for example to size a
+        job for another machine or to pin an expected value.
     """
     key = method.lower()
     if key not in _ESTIMATORS:
         raise ValueError(
             f"estimate_memory: unknown method {method!r}. Known: {sorted(_ESTIMATORS)}"
         )
-    return _ESTIMATORS[key](molecule, basis, options)
+    with _explicit_workers(n_threads):
+        return _ESTIMATORS[key](molecule, basis, options)

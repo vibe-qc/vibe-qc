@@ -223,7 +223,7 @@ def _build_ccm_pno_pairs(
         select_domain_atoms_mulliken,
         semicanonical_pao_basis,
     )
-    from .neutral import ccm_neutral_cderi
+    from .neutral import carried_cderi, ccm_neutral_cderi
 
     if localize not in _LOCALIZE_ALIASES:
         raise ValueError(
@@ -247,6 +247,10 @@ def _build_ccm_pno_pairs(
     C_loc = np.array(C_loc_all[:, nf:n_occ], dtype=float)   # active occupieds
 
     # Neutral cderi -> occupied half-transform B_half[P,i,ν] = S_mu C_loc[mu,i] L[P,mu,ν].
+    # One build per job (2026-09-24): a reference carrying its cderi wins
+    # over the supercell refit, which is a different fit on diffuse bases.
+    if cderi is None:
+        cderi = carried_cderi(scf_result)
     L = np.asarray(cderi if cderi is not None else
                    ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff), dtype=float)
     B_half = np.einsum("mi,Pmn->Pin", C_loc, L, optimize=True)   # (naux, n_act, nbf)
@@ -370,6 +374,12 @@ def ccm_dlpno_mp2(
     neutral-control MP2 on the same neutral four-center to ~µHa -- the correctness gate
     (``tests/test_ccm_dlpno_mp2.py``).
     """
+    # A Bloch producer result (run_ccm_*_gdf) is transformed to the real
+    # supercell-Gamma reference of the same Hamiltonian first (Theorem 1;
+    # periodic/ccm/bloch_reference.py). Real-Gamma references pass through.
+    from .bloch_reference import as_real_reference
+
+    scf_result = as_real_reference(ccm, scf_result)
     b = _build_ccm_pno_pairs(
         ccm, scf_result, cderi=cderi, localize=localize, tcut_pno=tcut_pno,
         tcut_mkn=tcut_mkn, n_frozen=n_frozen, lindep=lindep, ke_cutoff=ke_cutoff)

@@ -28,6 +28,80 @@ from vibeqc._aopair_ft import ao_pair_fourier_transform_bloch
 _REL_TOL = 1e-12
 
 
+@pytest.mark.parametrize("basis_fixture", ["h2_sto3g", "lih_sto3g", "n2_631gs"])
+@pytest.mark.parametrize("backend", ["python", "cxx"])
+@pytest.mark.parametrize("finite_k", [False, True])
+@pytest.mark.parametrize("single_cell", [False, True])
+def test_physical_exchange_stream_matches_masked_dense(
+    request, monkeypatch, basis_fixture, backend, finite_k, single_cell,
+):
+    """Preserve raw complex FT, unequal-spin contractions and exchange energy."""
+    from vibeqc._aopair_ft import ao_pair_fourier_transform_at_cells
+    from vibeqc.bipole_fock_ewald import (
+        _contract_K_long_range_channel_linear,
+        _masked_bloch_pair_fourier_transform,
+    )
+    from vibeqc.lattice_screening import ao_pair_support_mask
+
+    basis = request.getfixturevalue(basis_fixture)
+    # An asymmetric, incomplete skew-cell inventory, including a repeated cell.
+    cells = np.array([[2.2, 0.4, -0.1], [0., 0., 0.], [2.2, 0.4, -0.1]])
+    if single_cell:
+        cells = cells[:1].copy()  # Non-home cell: no Gamma mirror shortcut.
+    vectors = np.array([[.13, .21, -.09], [.41, -.12, .33], [-.31, .18, .22]])
+    k_prime = np.array([.17, -.08, .11]) if finite_k else np.zeros(3)
+    cutoff = 2.3
+    inputs = [a.copy() for a in (cells, vectors, k_prime)]
+    dense = ao_pair_fourier_transform_at_cells(basis, vectors, cells)
+    for g, shift in enumerate(cells):
+        dense[g] *= ao_pair_support_mask(basis, shift, cutoff)[:, :, None]
+    expected = np.einsum("g,gmnk->mnk", np.exp(-1j * (cells @ k_prime)), dense)
+    monkeypatch.setenv("VIBEQC_AOPAIR_FT_BACKEND", backend)
+    actual = _masked_bloch_pair_fourier_transform(basis, vectors, cells, -k_prime, cutoff)
+    np.testing.assert_allclose(actual, expected, rtol=_REL_TOL, atol=_REL_TOL)
+    for original, current in zip(inputs, (cells, vectors, k_prime)):
+        np.testing.assert_array_equal(current, original)
+
+    rng = np.random.default_rng(186)
+    kernel = np.array([.7, .3, .2])
+    for occupancy in (1.0, .3):
+        orbital = rng.normal(size=basis.nbasis) + 1j * rng.normal(size=basis.nbasis)
+        orbital /= np.linalg.norm(orbital)
+        density = occupancy * np.outer(orbital, orbital.conj())
+        k_actual = _contract_K_long_range_channel_linear(kernel, actual, density)
+        k_expected = _contract_K_long_range_channel_linear(kernel, expected, density)
+        np.testing.assert_allclose(k_actual, k_expected, rtol=_REL_TOL, atol=_REL_TOL)
+        assert np.trace(density @ k_actual) == pytest.approx(
+            np.trace(density @ k_expected), rel=_REL_TOL, abs=_REL_TOL,
+        )
+
+
+@pytest.mark.parametrize("cutoff", [np.nextafter(1.4, 0.), 1.4, np.nextafter(1.4, 2.)])
+def test_physical_exchange_stream_preserves_cutoff_boundary(h2_sto3g, cutoff, monkeypatch):
+    from vibeqc import _aopair_ft
+    from vibeqc.bipole_fock_ewald import _masked_bloch_pair_fourier_transform
+    from vibeqc.lattice_screening import ao_pair_support_mask
+
+    vectors = np.array([[.2, .3, .4]])
+    cells = np.array([[0., 0., 0.], [100., 0., 0.]])
+    keep = ao_pair_support_mask(h2_sto3g, cells[0], cutoff)
+    reference = _aopair_ft.ao_pair_fourier_transform_at_cells(h2_sto3g, vectors, cells[:1])[0]
+    reference *= keep[:, :, None]
+    calls = []
+    original = _aopair_ft.ao_pair_fourier_transform_bloch
+
+    def record(*args, **kwargs):
+        calls.append(args[2].copy())
+        assert kwargs["screen_tol"] == 0.0
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(_aopair_ft, "ao_pair_fourier_transform_bloch", record)
+    actual = _masked_bloch_pair_fourier_transform(h2_sto3g, vectors, cells, np.zeros(3), cutoff)
+    np.testing.assert_allclose(actual, reference, rtol=_REL_TOL, atol=_REL_TOL)
+    assert len(calls) == 1  # Empty physical support needs no Fourier work.
+    np.testing.assert_array_equal(calls[0], cells[:1])
+
+
 def _run_both_backends(*args, **kwargs) -> tuple[np.ndarray, np.ndarray]:
     """Compute the FT under both backends. Restores env on the way out."""
     saved = os.environ.get("VIBEQC_AOPAIR_FT_BACKEND")

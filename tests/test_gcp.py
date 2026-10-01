@@ -171,6 +171,42 @@ def test_gcp_gradient_matches_finite_difference():
     np.testing.assert_allclose(g, fd_grad, atol=5e-5)
 
 
+def test_damped_gcp_gradient_matches_finite_difference():
+    """The damped-gCP analytic gradient (needed for geometry optimisation
+    of the damped composites pbeh-3c / hse-3c / r2scan-3c) must match a
+    central finite difference of the *damped* gCP energy. Before this
+    change the damping + gradient pair raised NotImplementedError -- the
+    short-range factor and its radial derivative now fold into the
+    gradient so it is the derivative of the reported energy."""
+    mol = _h2o_molecule()
+    damping = (4.0, 6.0)
+    res = vq.compute_gcp(mol, "def2-svp", with_gradient=True, damping=damping)
+    g = res.gradient
+    assert g.shape == (3, 3)
+
+    h = 1e-4
+    fd_grad = np.zeros_like(g)
+    for atom_idx in range(3):
+        for cart in range(3):
+            atoms_plus = [vq.Atom(int(a.Z), list(a.xyz)) for a in mol.atoms]
+            pos_plus = list(atoms_plus[atom_idx].xyz)
+            pos_plus[cart] += h
+            atoms_plus[atom_idx] = vq.Atom(int(mol.atoms[atom_idx].Z), pos_plus)
+            mol_plus = vq.Molecule(atoms_plus, mol.charge, mol.multiplicity)
+            atoms_minus = [vq.Atom(int(a.Z), list(a.xyz)) for a in mol.atoms]
+            pos_minus = list(atoms_minus[atom_idx].xyz)
+            pos_minus[cart] -= h
+            atoms_minus[atom_idx] = vq.Atom(int(mol.atoms[atom_idx].Z), pos_minus)
+            mol_minus = vq.Molecule(atoms_minus, mol.charge, mol.multiplicity)
+            e_plus = vq.compute_gcp(mol_plus, "def2-svp", damping=damping).energy
+            e_minus = vq.compute_gcp(mol_minus, "def2-svp", damping=damping).energy
+            fd_grad[atom_idx, cart] = (e_plus - e_minus) / (2.0 * h)
+
+    np.testing.assert_allclose(g, fd_grad, atol=5e-5)
+    # Translational invariance: the damped gradient sums to ~0.
+    assert abs(float(np.sum(g))) < 1e-10
+
+
 # ---------------------------------------------------------------------------
 # Registry + error surfaces
 # ---------------------------------------------------------------------------

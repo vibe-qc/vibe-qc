@@ -162,11 +162,11 @@ decorative, unused metadata:
 
 | Solver options | Applied preset fields |
 |---|---|
-| `DLPNOMP2Options` | `tcut_pairs`, `tcut_pno`, `tcut_mkn`; derived `tcut_pairs_weak` and `tcut_pno_weak` are stored but inactive for named presets |
+| `DLPNOMP2Options` | `tcut_pairs`, `tcut_pno`, `tcut_mkn`; derived `tcut_pairs_weak` and `tcut_pno_weak` are stored but inactive for named presets; `tcut_do` under DOI domains |
 | `DLPNOUMP2Options` | `tcut_pairs`, `tcut_pno` |
 | `DLPNOCCSDPilotOptions` | `tcut_pno`, `tcut_mkn` |
 | `DLPNOUCCSDPilotOptions` | `tcut_pno` |
-| `LocalCCSDOptions` | `tcut_pairs`, `tcut_pno`, `tcut_mkn` |
+| `LocalCCSDOptions` | `tcut_pairs`, `tcut_pno`, `tcut_mkn`; `tcut_do` under DOI domains |
 | `LocalUCCSDOptions` | `tcut_pairs`, `tcut_pno`, `tcut_mkn` |
 
 The `.out` method block reports the supported thresholds actually consumed.
@@ -217,6 +217,31 @@ This is the same pre-#140/#448 all-electron/old-MP2-threshold artifact shown
 above; it is retained as compatibility evidence, not as current-default
 output.
 
+### PAO domains
+
+Each localised occupied orbital gets an atom domain, and a pair's projected
+atomic orbital (PAO) domain is the union of its two orbitals' domains. The
+closed-shell DLPNO-MP2 and local DLPNO-CCSD routes and the open-shell local
+DLPNO-UCCSD route choose those domains by
+differential overlap (`domain_criterion="doi"`, the default): an atom joins an
+orbital's domain when one of its PAOs has a differential overlap integral
+with the orbital above `tcut_do` (Pinski, Riplinger, Valeev and Neese 2015,
+Eq. 4). This is the criterion ORCA uses, and the presets carry ORCA 6.1.1's
+`TCutDO` of 2e-2 / 1e-2 / 5e-3 for Loose / Normal / Tight, the same values
+Pinski & Neese 2019 tabulate for DLPNO-MP2. `domain_criterion="mulliken"`
+selects the older Mulliken-population domains at `tcut_mkn`, which every
+result recorded before the DOI default used. `tcut_mkn=0` keeps every atom
+under either criterion; it remains the full-domain exactness setting.
+
+The two criteria differ where a Mulliken population is tiny next to real
+density. NH3's Foster-Boys lone pair carries 1.7e-4 Mulliken population on
+each hydrogen, so at `tcut_mkn=1e-3` its domain is the nitrogen alone. At
+NormalPNO/cc-pVDZ that costs 0.34 kcal/mol in the DLPNO-CCSD correlation
+energy against canonical DF-CCSD; the DOI domain keeps the hydrogens and the
+error is 0.022 kcal/mol, as for ORCA 6.1.1 (0.021). The open-shell local
+CCSD route judges each spin orbital against its own spin's PAOs; DLPNO-UMP2
+builds no PAO domains.
+
 Before v0.15.x these three constants carried in-house values that matched
 no publication: `DLPNO_TIGHT` was `tcut_pairs` 5e-5 / `tcut_pno` 1e-8 /
 `tcut_mkn` 1e-3, agreeing with published TightPNO on none of the three
@@ -248,14 +273,29 @@ screening statistics, and the iteration trace.
 ## DLPNO-CCSD and DLPNO-CCSD(T)
 
 **`method="dlpno-ccsd"`** runs the **reduced-scaling local solver**
-(`dlpno.ccsd_local_solver`): amplitudes remain in pair PNO bases, while the
-default residual is contracted in Riplinger and Neese's atom-based extended
-PAO domain and projected back into the target pair. It is FCI-anchored; in the
-full-domain limit it reproduces canonical closed-shell CCSD bit-for-bit
-(≤ 1 µHa; on H₂ that equals FCI). The project default applies the supported
-subset of NormalPNO with `residual_domain="extended"`. Historical recovery
-percentages later on this page are labelled with the explicit all-electron
-recipes that produced them.
+(`dlpno.ccsd_local_solver`): amplitudes remain in pair PNO bases, and the
+default `residual_domain="pno"` solves the amplitude equations in the
+compiled `dlpno_ccsd_pno_solve` kernel, which contracts every term of the
+closed-shell residual in the PNO space of the amplitude that carries the
+contracted index (Riplinger and Neese 2013, Sec. II C) and projects the free
+indices into the target pair through the PNO overlaps. Singles products are
+folded into the density-fitting factors over the full virtual space, so
+nothing is truncated before it is contracted; the cost per iteration is
+O(n_pairs nL² n_aux n_pno²) and does not grow with the extended-domain
+dimension. It is FCI-anchored: in the full-domain limit it reproduces
+canonical closed-shell CCSD (≤ 1 µHa; on H₂ that equals FCI), and at any
+truncation it reproduces the extended-domain oracle
+(`residual_domain="extended"`, Riplinger and Neese's atom-based extended PAO
+domain contracted once per group and projected back) to the convergence
+tolerance. The project default applies the supported subset of NormalPNO.
+The singles of each occupied orbital live in its diagonal pair's PNO space,
+and those diagonal pairs are cut at `tcut_pno_diag_scale * tcut_pno`
+(default 0.03, ORCA's `TCutPNOSingles` / `TCutPNO` ratio): the semicanonical
+PNO correction cannot recover singles truncation, and at scale 1.0
+n-butane/cc-pVDZ NormalPNO CCSD sits 1.62 kcal/mol above canonical against
+1.08 at 0.03 (ORCA 6.1.1: 1.16).
+Historical recovery percentages later on this page are labelled with the
+explicit all-electron recipes that produced them.
 
 ```python
 from vibeqc import run_job
@@ -314,6 +354,16 @@ footprint on larger systems:
   o = RHFOptions(density_fit=True, aux_basis="cc-pvtz-jkfit")
   run_job(mol, basis="cc-pvtz", method="dlpno-mp2", rhf_options=o)  # ~13 GB
   ```
+
+* **The compiled PNO-space CCSD route holds static factors per kept pair.**
+  Each strong pair keeps its ``(ab|P)`` factor in its PNO basis and one
+  ``(ma|P)`` factor row per coupled occupied, so the resident size is about
+  ``n_pairs * n_aux * (n_pno^2 + n_coupled * n_pno) * 8`` bytes, plus the
+  global ``(vw|P)`` factor (``n_aux * n_vir^2 * 8``) and the density-fitting
+  object's own AO tensors. Measured on all-trans alkanes/cc-pVDZ at the
+  default thresholds: 1.2 GB at C8H18 (202 functions), 3.3 GB at C12H26
+  (298) and 6.8 GB at C16H34 (394). ``LocalCCSDResult.static_factor_bytes``
+  reports the actual number.
 
 The **O(N^6) pilot** (``DLPNOCCSDPilotOptions``, opt-in) is a different
 animal: it is the small-system *correctness oracle* the local solver is
@@ -462,7 +512,28 @@ so that pilot omits the domain line rather than printing zeros.
   `LocalUCCSDOptions` for route-specific controls). It evaluates native UCCSD
   residuals in per-pair PNO/local-occupied domains and is exact against the
   dense pilot at full domains. Passing `DLPNOUCCSDPilotOptions` explicitly
-  selects the O(N⁶), `max_nbf`-capped correctness pilot. The local engine's
+  selects the O(N⁶), `max_nbf`-capped correctness pilot.
+
+  Each spin-orbital pair's PNOs come from a two-sided MP2 pair density
+  (`pno_density="two-sided"`, the default): an opposite-spin pair adds each
+  spin side's density mapped into the other spin's virtual space through the
+  alpha-beta virtual overlap, and a same-spin pair adds the two-sided density
+  of its direct amplitude, because the antisymmetrised MP2 amplitude vanishes
+  wherever it is locally symmetric while the CCSD amplitude does not. The
+  older one-sided density (`pno_density="one-sided"`) truncated far harder
+  than the closed-shell route at the same `tcut_pno`: singlet H2O/cc-pVDZ
+  through this solver sat 0.274 kcal/mol above canonical at NormalPNO against
+  0.016 for the closed-shell solver; the two-sided density gives 0.022. At
+  NormalPNO/cc-pVDZ against canonical DF-UCCSD the CCSD correlation energy
+  is 0.0025 (OH), 0.0125 (NH2), 0.029 (CH3), 0.0099 (triplet CH2) and 0.071
+  (HCO) kcal/mol too high. The route also adds the semicanonical MP2 PNO
+  correction (`pno_correction`) and chooses DOI domains per spin orbital,
+  as the closed-shell routes do, and it contracts each residual once per
+  group of targets that share a coupling set and domain
+  (`n_residual_groups`): at the default full coupling that is two
+  contractions per iteration.
+
+  The local engine's
   ``tcut_pairs`` option screens weak
   spin-orbital pairs using their full-virtual MP2 energies and retains those
   MP2 contributions. The same `tcut_pairs` applies to every spin-orbital
@@ -556,25 +627,33 @@ so that pilot omits the domain line rather than printing zeros.
   converged amplitudes (exact == canonical CCSD(T) at full domains); the
   (T) uses a spatial closed-shell kernel (no spin-orbital redundancy),
   validated to machine precision against the spin-orbital reference. The
-  default atom-based extended residual domain is contracted once per
-  distinct (occupied coupling set, extended atom domain) group in the
-  compiled `vibeqc::dlpno_pair_residual` kernel, and every pair in the group
-  reads its own block; on a compact molecule that is one canonical-shaped
-  residual per iteration rather than one per pair (S22-01 ammonia dimer at
-  NormalPNO: 406 s to 5.5 s, energy unchanged). `LocalCCSDResult`
-  reports the group count as `n_residual_domains`. The legacy
+  default `residual_domain="pno"` contracts the residual in PNO spaces in the
+  compiled `dlpno_ccsd_pno_solve` kernel, with the target pairs distributed
+  over OpenMP threads; `LocalCCSDResult` reports its factor bookkeeping as
+  `n_offlist_rows` (factor rows a pair stores for occupieds outside its own
+  coupling set because another target needs them), `static_factor_bytes`,
+  `setup_seconds` and `iteration_seconds`. The oracle
+  `residual_domain="extended"` contracts once per distinct (occupied coupling
+  set, extended atom domain) group in the compiled
+  `vibeqc::dlpno_pair_residual` kernel, and every pair in the group reads
+  its own block; `n_residual_domains` reports its group count. The legacy
   `residual_domain="pair"` mode uses the same kernel in its pair-PNO basis;
-  `use_cpp_kernel=False` selects the NumPy transcription for either mode.
+  `use_cpp_kernel=False` selects the NumPy transcription for those two modes
+  (the PNO-space route is compiled only).
 * `tcut_pno` is a cut on **pair-density occupation numbers**, so it only means
   what a preset intends under the density it was calibrated against. That
   density is Riplinger and Neese's Eq. 23, `D = Tt T^T + Tt^T T` with
   `Tt = (4 T - 2 T^T) / (1 + delta_ij)`, selectable as `pno_norm="mp2"`
-  (the pre-2013 LPNO variant is `pno_norm="iepa"`). The default is
-  `pno_norm="legacy"`, vibe-qc's historical density of the bare amplitudes,
+  (the pre-2013 LPNO variant is `pno_norm="iepa"`). Molecular options default
+  to `pno_norm="mp2"`. The explicit `pno_norm="legacy"` convention uses
+  vibe-qc's historical density of the bare amplitudes,
   which retains 5 % to 19 % fewer PNOs at the same nominal threshold and is
-  therefore effectively looser than the preset name implies. The default is
-  unchanged pending a decision on which convention ships, because moving it
-  moves every DLPNO energy. The convention in force is printed in the `.out`
+  therefore effectively looser than the preset name implies. For low-level
+  API compatibility, `resolve_pno_norm(None)` and `pair_density` with an
+  omitted or `None` norm still select the pre-#65 `legacy` convention. These
+  helpers do not select the molecular options default; pass `"mp2"` explicitly
+  when using them to construct that recipe. Retained periodic reference paths
+  request `"legacy"` explicitly. The convention in force is printed in the `.out`
   block and recorded as `dlpno_pno_norm` in the `.system` manifest.
   The (T) is NumPy (already BLAS-bound). The local solver
   uses the 12-bohr `coupling_radius` default described above, so occupied

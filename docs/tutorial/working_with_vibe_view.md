@@ -1373,7 +1373,7 @@ landscape; hover any grid point to see the energy.
 Non-Covalent Interaction (NCI) analysis and the Electron Localisation
 Function (ELF) are advanced volumetric fields. vibe-view renders them with
 specialised colour scales: ELF with a hot colormap (0 to 1), and NCI/RDG
-with the sign(\u03bb2)\u03c1 blue-green-red scale.
+with the sign(λ2)ρ blue-green-red scale.
 
 These sections are produced through the QVF builder's context dict. For
 developers embedding these fields into a QVF:
@@ -1397,7 +1397,7 @@ Path("analysis.qvf").write_bytes(qvf_data)
 In vibe-view, these appear as `volume.elf` and `volume.rdg` sections in
 the sidebar. Select ELF to see localisation basins (values near 1.0 in
 warm colours, near 0.5 in cool colours). Select RDG to see the NCI
-isosurface coloured by sign(\u03bb2)\u03c1 with the density providing
+isosurface coloured by sign(λ2)ρ with the density providing
 context.
 
 ```{note}

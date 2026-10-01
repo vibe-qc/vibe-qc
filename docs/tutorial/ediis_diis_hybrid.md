@@ -62,7 +62,7 @@ instance starts with:
 
 ```python
 opts.scf_accelerator             = vq.SCFAccelerator.EDIIS_DIIS
-opts.ediis_diis_switch_threshold = 1e-1     # ‖e‖_F below this → DIIS
+opts.ediis_diis_switch_threshold = 1e-1     # intensive ‖e‖ below this → DIIS (open-shell UHF: ediis_diis_switch_threshold_open_shell = 1e-3, #377)
 opts.diis_subspace_size          = 8         # rolling history cap
 ```
 

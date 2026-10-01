@@ -372,15 +372,20 @@ def _source_basis_comments(original_name: str) -> List[str]:
     roots first, then the package's bundled library.  External bases without a
     readable source file simply keep the generated header above.
     """
+    from .basis_registry import canonical_basis_name
+
+    # The stem BasisSet opens, not the caller's spelling: "def2-SVP.g94" does
+    # not exist on a case-sensitive file system (#321).
+    stem = canonical_basis_name(original_name)
     candidates: List[Path] = []
     for root in os.environ.get("LIBINT_DATA_PATH", "").split(os.pathsep):
         if root:
-            candidates.append(Path(root) / "basis" / f"{original_name}.g94")
+            candidates.append(Path(root) / "basis" / f"{stem}.g94")
     candidates.append(
         Path(__file__).resolve().parent
         / "basis_library"
         / "basis"
-        / f"{original_name}.g94"
+        / f"{stem}.g94"
     )
 
     seen: set[Path] = set()
@@ -529,8 +534,11 @@ def filter_basis_by_exponent(
     # _filtered_basis_cache_dir for the resolution order. Cleanup is
     # the user's responsibility via :func:`clear_filtered_basis_cache`.
     cache_dir = _filtered_basis_cache_dir()
-    target = cache_dir / f"{new_name}.g94"
-    target.write_text(g94_text)
+    # Stored under the name BasisSet looks up: new_name carries the caller's
+    # spelling of the source basis ("def2-SVP"), the lookup lower-cases (#321).
+    from .basis_registry import write_basis_file
+
+    write_basis_file(cache_dir, new_name, g94_text)
 
     # If the cache dir isn't already in LIBINT_DATA_PATH, the bundled
     # path resolution stays untouched but our filtered file is unreachable.

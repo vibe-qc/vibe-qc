@@ -219,16 +219,39 @@ Each entry appears only once, in first-fire order, even when multiple
 routes pull it in (e.g. Lee-Yang-Parr fires for both B3LYP and B2PLYP
 but appears once if both somehow ran in the same job).
 
+## OpenTrustRegion: cite the optimizer that ran
+
+An executed OpenTrustRegion molecular SCF selects
+`greiner_opentrustregion_2026`, including issue 2, in the `.out` References
+block, `.references` and `.bibtex` files:
+
+```{vibeqc-cite-entry} greiner_opentrustregion_2026
+```
+
+The plain-text style may shorten the author list with "et al."; BibTeX
+retains all four authors, including the Unicode spelling of Høyvik. The
+reference appears once per bibliography. Native SCF does not cite it;
+OpenTrustRegion does not implicitly receive DIIS references. The selection
+uses the executed backend report, rather than merely testing whether the
+optional library was compiled in. For the mathematical explanation, see
+[OpenTrustRegion theory](opentrustregion_theory.md).
+
 ## `vibeqc-cite`: reprint citations from an already-run job
 
 `pip install -e .` registers a `vibeqc-cite` console script that
 reads `{stem}.system`, walks the citation database, and either prints
 the references to stdout or rewrites the `.bibtex` / `.references`
-siblings. Three workflows it covers:
+siblings. When `[[citations.entries]]` are recorded, their keys, order and
+visibility select the bibliography; the current database supplies the full
+bibliographic metadata. This preserves runtime choices such as OpenTrustRegion
+and avoids inventing a default DIIS citation during regeneration. A malformed
+entry or unknown recorded key produces an error before files are rewritten.
+Three workflows it covers:
 
-* **Pre-v0.8.x runs** whose manifests predate the citation surface,
-  point `vibeqc-cite` at their stem and the references are assembled
-  from what the manifest *does* record (method / basis / functional).
+* **Older manifests with a `[plan]` but no recorded citation entries**,
+  assemble from the available method / basis / functional fields. Those
+  fields alone cannot recover runtime-only choices. Manifests without a
+  `[plan]` are rejected with a diagnostic rather than guessed.
 * **Generated outputs** being copied between machines without the
   `.bibtex` / `.references` siblings, regenerate them locally without
   re-running the SCF.

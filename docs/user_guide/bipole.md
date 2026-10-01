@@ -105,6 +105,11 @@ Dense candidate lists switch to a bitmap when the full pair domain fits
 within the same 2 MiB scratch budget. Larger domains fall back to exhaustive
 enumeration if their candidate list fills.
 
+Reciprocal J-cache normalization updates its owned Fourier array in place,
+avoiding a second array of the same size. The retained reciprocal cache can
+still dominate memory for large cells or reciprocal cutoffs; this reduces
+temporary storage without changing its support or numerical values.
+
 The loop's Fock is built incrementally (`use_incremental_fock`, the
 J$_{SR}$/K$_{SR}$ increments from $\Delta D$ under density-envelope
 screening), and the accumulated screening error of that chain makes its
@@ -219,7 +224,7 @@ Two reasons:
 | 5b | retired | Cell-level multipole far-field research artifact; not driver-reachable |
 | 6a | **fail-closed (2026-08-13)** | Quartet-level prototype retained for redesign; explicit driver requests raise before SCF |
 | 6b | landed | `compute_ext_el_spheropole` higher-l terms |
-| POLIPO | **landed (2026-08-11)** | Native C++ multipole moment engine (McMurchie-Davidson Hermite kernel, OpenMP); 6/6 libint parity tests pass; ~200\u00d7 slower than libint (optimization pending) |
+| POLIPO | **landed (2026-08-11)** | Native C++ multipole moment engine (McMurchie-Davidson Hermite kernel, OpenMP); 6/6 libint parity tests pass; ~200× slower than libint (optimization pending) |
 | 7 | roadmap | CRYSTAL14 numerical-parity sign-off on the 15 demo set; BIPOLE parity tests cover LiH/NaCl/MgO/diamond/Si to < 1 mHa |
 
 Phase 1-5 plus the exact Ewald-J split give the production BIPOLE
@@ -386,12 +391,30 @@ examples/periodic/input-bipole-*.py
     run_periodic_job with jk_method="bipole".
 ```
 
+## Finite-temperature results
+
+For finite-temperature RKS/UKS, `energy`, `entropy` and `free_energy` describe
+the committed density, with `free_energy = energy - smearing_temperature * entropy`.
+Final canonical band eigenpairs and their refilled occupations describe the
+Fock operator evaluated at that density. On an iteration-limited return they
+can predict a different next density; their refilled entropy must not replace
+the committed density's entropy. Exact convergence checks use the same
+committed-density free energy before and after final canonicalization.
+
 ## Forces and analytic-gradient preview
 
 Production BIPOLE atomic forces use
 ``compute_bipole_gradient_fd``.  It finite-differences the same total
 energy reported by the SCF driver, so it is the default path used by
 geometry optimization and NEB for all four BIPOLE methods.
+
+Physical pair and product-midpoint cutoffs are sharp. A displacement that
+adds or removes a retained integral can produce a small energy jump, so
+neither a finite-difference quotient nor the analytic preview is a smooth
+force at that boundary. Check force stability against both displacement size
+and domain cutoff; reducing the displacement alone can amplify a boundary
+jump. Analytic comparisons require unchanged support across the displaced
+geometries, in addition to the capability restrictions below.
 
 ```python
 from vibeqc.bipole_gradient import (
@@ -508,8 +531,12 @@ and the difference matters:
 
 | Sidecar | Option | What BIPOLE writes |
 |---|---|---|
-| `{out}.population.{txt,json}` | `write_population_file` | A **crystal** population. Mulliken contracts the real-space lattice density and overlap blocks in the same convention as the BIPOLE SCF energy; Löwdin and Mayer contract over the full SCF k-mesh. No Γ restriction. Dipole stays unsupported: the bulk position operator needs a Berry-phase polarization. |
+| `{out}.population.{txt,json}` | `write_population_file` | A **crystal** population. Mulliken contracts the real-space lattice density with overlap on the recorded SCF one-electron domain; Löwdin and Mayer contract over the full SCF k-mesh. No Γ restriction. Dipole stays unsupported: the bulk position operator needs a Berry-phase polarization. |
 | `{out}.molden` | `write_molden_file` | The **Γ-block orbitals only**, truncated to the home cell. Requires the k-mesh to contain Γ. |
+
+For UHF and UKS, QVF atom properties also store Mulliken spin populations
+from the accepted alpha-minus-beta lattice density on that same overlap
+domain. Restricted closed-shell archives omit the spin member.
 
 ```{admonition} Prefer QVF and vibe-view over Molden for crystals
 :class: important
@@ -534,13 +561,23 @@ including every translated lattice block. For a full uniform
 Monkhorst-Pack mesh, vibe-qc performs an exact Born-von-Karman transform of
 that returned density and verifies the inverse transform against every
 source block before evaluating Bloch AOs. Alpha and beta densities are
-verified separately. The archive receives `volume.density` only when the
-same-cell lattice trace, periodic AO-image convergence, and the numerical
+verified separately. A refold-certified BvK density uses the returned SCF
+Bloch overlap to validate its electron count. Its padded density-cell list
+does not define a replacement overlap domain. Malformed overlaps or
+contradictory mesh metadata are refused. The archive receives `volume.density`
+only when this analytic count, periodic AO-image convergence, and the numerical
 primitive-cell electron count all agree. If k-point provenance is incomplete,
 the returned blocks cannot be refolded exactly, or the requested real-space
 grid is too coarse, the calculation remains successful and QVF is written
 without a density volume, together with a nonfatal output diagnostic. This
 boundary never regenerates density from orbitals or a surrogate Hamiltonian.
+The QVF file's `.system` outcome retains an omitted volume's error in
+`component_errors["volume.density"]`, independently of whether the archive
+itself was written successfully. Tight core functions can require much finer
+sampling than the default `density_spacing_bohr=0.2`: Ne/STO-3G in a 7-bohr
+cell gives 10.000022 electrons at 0.05 bohr, within the 0.005-electron charge
+check. Refinement changes only the artifact sampling, not the SCF density or
+its normalization.
 
 All three options are tri-state. `None` (the default) emits the
 sidecar when the route can produce it truthfully; `True` is a
@@ -616,3 +653,96 @@ It must also validate independent Coulomb and exchange penetration criteria,
 screened interactions, nontrivial symmetry operations, and energy-gradient
 consistency. The low-level prototype modules are not a supported numerical
 API and their isolated unit tests do not certify an SCF route.
+
+## Resolved finite-domain settings
+
+The four ab initio BIPOLE drivers return a `resolved_domain` record. It contains
+separate one-electron and two-electron lattice options, the common Ewald alpha,
+real and reciprocal reaches, Ewald precision, short-range interaction reach,
+energy and force screening settings, exact output zone and the selected XC grid.
+An explicit nuclear quadrature and the exact-FT J diagnostic cutoff are recorded
+when requested. `resolved_domain.as_dict()` is serializable;
+`resolved_domain.settings_sha256` identifies these settings. It does not identify
+the geometry, basis, native library or the retained integral tensor, and is not a
+convergence or accuracy certificate. The ordinary SCF output discloses the record.
+
+The same record accompanies exact and incremental Fock builds. Changing their
+lattice options after resolution raises an error before accumulator reuse.
+The check also covers the exact-FT J diagnostic selection and its cutoff.
+Each driver copies caller lattice options before preparing its finite operator,
+so a nuclear-cutoff clamp does not change a later run that reuses those options.
+Analytic gradient previews restore omitted lattice and grid settings from the
+result, and reject explicitly conflicting settings. Explicit original SCF lattice
+options undergo the same neutral-cell cutoff preparation on a private copy
+before comparison. The reconstructed nuclear Ewald alpha, real and reciprocal
+reaches and precision must all agree with the recorded state. Both multi-k KS orbital
+response helpers use the selected grid profile, periodic or molecular grid, and
+image radius. Older results without this record retain the previous defaults.
+Explicit nuclear-grid and exact-FT J diagnostic runs need the finite-difference
+force path with matching SCF options; the analytic preview does not certify those
+operators. Existing analytic-force capability restrictions still apply.
+Recorded non-`AUTO` XC density domains (`MOLECULAR_HOME` or
+`PERIODIC_LATTICE`) also raise `NotImplementedError` in the analytic preview:
+its Pulay, grid-motion and orbital-response helpers currently use `AUTO`.
+Use `compute_bipole_gradient_fd` with the same `xc_density_domain` and SCF
+options until all analytic consumers support that selection consistently.
+
+### Default policy and historical reproduction
+
+`run_pbc_bipole_rhf`, `run_pbc_bipole_uhf`, `run_pbc_bipole_rks` and
+`run_pbc_bipole_uks` now default to `historical_domain=False`, selecting
+`physical_pairs`. AO-product separation determines pair support, while
+short-range quartet interaction reach is a separate midpoint distance. Exchange
+retains its AC/BD integral products. This reuses the physical nuclear, J/K and
+derivative kernels; it does not enlarge a historical index ball by an arbitrary
+amount.
+
+For reproduction, pass `historical_domain=True` to a direct driver or
+`bipole_historical_domain=True` to `run_periodic_job`. This selects
+`historical_index_ball`, which is not invariant under atom-image relabelling.
+The named keyword **overrides** `options.lattice_opts.pair_complete_1e`, including
+an explicitly assigned False. Migrate an old historical input to the named
+keyword. The shared native default remains False for other consumers;
+ROHF/ROKS, GDF, semiempirical methods and SECCM are outside this migration.
+The runner rejects an explicit historical request on an inactive route.
+
+The runner forwards this choice through its RHF/UHF/RKS/UKS dispatches and
+geometry optimization. Direct optimization and `compute_bipole_gradient_fd`
+accept `historical_domain` through their driver keywords. Pass the same policy,
+Ewald, screening and grid controls at every displaced geometry. The analytic
+preview restores the SCF record when controls are omitted; an original requested
+lattice-options snapshot or the resolved snapshot is accepted, but unrelated
+changes are rejected. Caller options are never changed by policy resolution.
+KS preview calls validate that snapshot before preparing the separate XC image
+radius, so supplying the original options agrees with omitting them. Disabling
+automatic SR padding with `sr_image_precision=None` still retains the physical
+exchange density and output support in Gamma and multi-k HF derivatives. The
+one-electron and reciprocal contractions retain their own pair support.
+The shared analytic-FT Hartree derivative used by other periodic Ewald drivers
+does not yet support physical pair domains; it refuses that combination. Use
+finite differences of the same periodic SCF energy for that separate route.
+
+Physical AUTO uses the full direct Fock build. Explicit historical symmetry
+projection or symmetry reduction is refused for physical support; ECP, COSX
+and other unsupported combinations retain their capability refusals. No new
+support for those combinations follows from this default change.
+In 3D with Ewald J, physical BIPOLE also requires corrected exchange. Explicit
+`use_exchange_ewald_split=False` and an automatic fallback caused by incomplete
+Monkhorst-Pack metadata are refused before SCF. Use a complete mesh for the
+physical operator, or request the historical domain explicitly for legacy-gauge
+replay. Supported low-dimensional direct calculations are unaffected.
+
+At equal nominal radii, the two policies can retain different terms and yield
+different energies, forces and runtimes. Old energy references must be explained
+component by component and independently verified before replacement. Tolerances,
+SCF damping and cutoff defaults have not been loosened or inflated. Production
+relabelling, twelve-crystal and performance acceptance remain pending; the
+settings record is not a numerical correctness certificate.
+
+SAP uses all-space quadrature for localized initial-guess AO products. The XC
+settings in this record describe the per-cell functional and must not replace
+that SAP quadrature. No semiempirical method uses this BIPOLE record.
+
+The [physical-domain design and acceptance matrix](../bipole_domain_contract.md)
+separates the supported kernels, the approved default migration and the
+remaining numerical acceptance.

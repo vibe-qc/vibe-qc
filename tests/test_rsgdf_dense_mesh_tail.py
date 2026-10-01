@@ -610,12 +610,15 @@ def test_parity_hold_lifts_with_sufficient_tail():
         )
         is False
     )
-    # mdf has no tail plumbing: tail does not lift its hold.
+    # mdf is never held, with or without a tail: MDF fits the steep core in
+    # real space, and its compact dense-core refusal was lifted with the
+    # auxiliary-image sum (#172).
+    assert _gamma_dense_core_gdf_parity_held(sysp, "mdf", ao_basis=basis) is False
     assert (
         _gamma_dense_core_gdf_parity_held(
             sysp, "mdf", ao_basis=basis, tail_ke_cutoff=3200.0
         )
-        is True
+        is False
     )
 
 

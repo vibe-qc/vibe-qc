@@ -668,6 +668,9 @@ def test_runner_dispatch_rhf_accepts_bz_integration():
     kmesh = vq.KPoints.monkhorst_pack(sys, (1, 1, 1))
     opts = PeriodicSCFOptions()
     opts.lattice_opts.coulomb_method = CoulombMethod.DIRECT_TRUNCATED
+    # _h2_gdf_smoke_system is a dilute molecular-limit cell (18 bohr, default
+    # cutoff 15: only g = 0); declare it for the #133 guard (#430).
+    opts.lattice_opts.gamma_only_0 = True
     opts.max_iter = 1
     result = run_rhf_periodic_scf(sys, basis, kmesh, opts, bz_integration=None)
     assert result is not None

@@ -347,6 +347,17 @@ def run_ccm_ccsd(
     guess_selection = _ccm_initial_guess(
         ccm, initial_guess, driver='run_ccm_ccsd', reference=scf_result,
     )
+    # A Bloch producer result (run_ccm_*_gdf) is transformed to the real
+    # supercell-Gamma reference of the same Hamiltonian (Theorem 1;
+    # periodic/ccm/bloch_reference.py). Real-Gamma references pass through.
+    from .bloch_reference import as_real_reference
+
+    scf_result = as_real_reference(ccm, scf_result)
+    if cderi is None and eri is None:
+        # One build per job (2026-09-24): see run_ccm_mp2.
+        from .neutral import carried_cderi
+
+        cderi = carried_cderi(scf_result)
     if cderi is not None:
         if scf_result is None:
             raise ValueError(
@@ -419,7 +430,8 @@ def run_ccm_ccsd(
 
 def run_ccm_ri_ccsd(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 200.0, aux_basis=None,
                     compute_triples: bool = True,
-                    reference: str = "direct", symmetry=None) -> CCMCCSDResult:
+                    reference: str = "bloch", symmetry=None,
+                    allow_vacuum_padding: bool = False, fold_threads=None) -> CCMCCSDResult:
     """One-call neutral canonical RI-CCSD(T) (closed shell) -- build the neutral
     cderi ``L`` once, the matching lean SCF reference, and the RI-CCSD(T), with no
     dense ``n_ref_ao**4`` four-center anywhere (reaches moderate 3-D).
@@ -434,8 +446,11 @@ def run_ccm_ri_ccsd(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 2
     (``run_ccm_uhf(ccm, cderi=L)``).
 
     ``reference`` selects the complete SCF reference route, exactly as on
-    :func:`~vibeqc.periodic.ccm.mp2.run_ccm_ri_mp2`: ``"direct"`` (default since
-    D-5, maintainer 2026-09-05; the folded/Ewald route via
+    :func:`~vibeqc.periodic.ccm.mp2.run_ccm_ri_mp2`: ``"bloch"`` (default
+    since 2026-09-25; the Bloch producer transformed to real supercell-Γ
+    orbitals, Theorem 1, with ``L`` folded from its own fit; closed-shell
+    unit cells), ``"direct"`` (the
+    default from D-5, maintainer 2026-09-05, to 2026-09-25; the folded/Ewald route via
     :func:`~vibeqc.periodic.ccm.direct.run_ccm_rhf_direct`, on the same ``L``)
     or ``"neutral"`` (strict-zero mode, whose reference error grows with the
     cluster instead of converging -- see the measurement in that function's
@@ -451,18 +466,34 @@ def run_ccm_ri_ccsd(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 2
     from .neutral import ccm_neutral_cderi
     from .ri import run_ccm_rhf_ri_neutral
 
-    if reference not in ("neutral", "direct"):
+    if reference not in ("bloch", "neutral", "direct"):
         raise ValueError(
-            f"run_ccm_ri_ccsd: reference must be 'neutral' or 'direct', "
+            f"run_ccm_ri_ccsd: reference must be 'bloch', 'neutral' or 'direct', "
             f"got {reference!r}")
-    L = ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff, aux_basis=aux_basis,
-                          symmetry=symmetry)
-    if reference == "direct":
+    if reference == "bloch":
+        if symmetry not in (None, False):
+            raise ValueError(
+                "run_ccm_ri_ccsd: symmetry= (the CCM k-pair star reduction) is "
+                "refused with reference='bloch'; the reduction is approximate on "
+                "3-D cells and the Bloch producer pins the unreduced classic fit.")
+        from .bloch_reference import bloch_reference_and_cderi
+
+        scf, L = bloch_reference_and_cderi(
+            ccm, initial_guess=initial_guess, ke_cutoff=ke_cutoff,
+            aux_basis=aux_basis, open_shell=False, who="run_ccm_ri_ccsd",
+            allow_vacuum_padding=allow_vacuum_padding, fold_threads=fold_threads)
+    elif reference == "direct":
         from .direct import run_ccm_rhf_direct
 
-        scf = run_ccm_rhf_direct(ccm, cderi=L, initial_guess=initial_guess)
+        L = ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff, aux_basis=aux_basis,
+                              symmetry=symmetry)
+        scf = run_ccm_rhf_direct(ccm, cderi=L, initial_guess=initial_guess,
+                                 allow_vacuum_padding=allow_vacuum_padding)
     else:
-        scf = run_ccm_rhf_ri_neutral(ccm, cderi=L, initial_guess=initial_guess)
+        L = ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff, aux_basis=aux_basis,
+                              symmetry=symmetry)
+        scf = run_ccm_rhf_ri_neutral(ccm, cderi=L, initial_guess=initial_guess,
+                                     allow_vacuum_padding=allow_vacuum_padding)
     # Stamp the NEUTRAL-RI lineage, overriding the bare four-centre key
     # run_ccm_ccsd set: this call built its own matching neutral reference and
     # ``L``. Plain literal on purpose -- tests/test_citations.py reads these

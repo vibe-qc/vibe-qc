@@ -87,6 +87,7 @@ from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from .periodic.exchange_convention import MOLECULAR_LIMIT
 from ._vibeqc_core import (
     apply_level_shift,
     BasisSet,
@@ -171,6 +172,11 @@ class PeriodicRKSEwaldResult:
 
     restart_kpoints: object = None
     restart_weights: object = None
+
+    # Every Gamma-only Ewald/GDF driver builds exchange with the
+    # molecular-limit kernel (home-cell density, image blocks zeroed); the
+    # runner's manifest records this instead of the exxdiv knob (GitLab #23).
+    exchange_q0: str = MOLECULAR_LIMIT
 
 
 def _density_set_gamma(template: LatticeMatrixSet, D: np.ndarray) -> LatticeMatrixSet:

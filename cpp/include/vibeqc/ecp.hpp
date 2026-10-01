@@ -20,6 +20,7 @@
 
 #include <Eigen/Dense>
 #include <array>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <utility>
@@ -246,5 +247,37 @@ Eigen::MatrixXd ecp_lattice_gradient_contribution_from_primitives(
     const LatticeSumOptions& opts,
     const std::vector<std::array<double, 3>>& home_ecp_centers,
     const std::vector<ECPPrimitiveBlock>& home_primitives);
+
+// ---- Radial-quadrature report of the most recent ECP operator build -------
+//
+// The vendored libecpint records, per thread, every radial integral whose
+// quadrature did not meet its convergence test (it used to print "Quadrature
+// failed" / "Failed to converge" and carry on, vibe-qc #392). Every ECP
+// builder in this file collects those records, publishes one report per
+// build here and, when anything failed, writes one summary line through
+// ``vibeqc::diagnostic("ecp", ...)`` -- never to a stream. The values are used
+// as computed (no retry or refusal policy yet). A Bessel table request beyond
+// its tabulated angular momentum leaves channels unset, so that one refuses.
+//
+// Sites: 0 = integrate_small (analytic-path fallback, 128-point table),
+// 1 = type 1 quadrature, 2 = type 2 after libecpint's big-grid retry.
+// ``failures[site][l]`` is indexed by the ECP angular channel (type 1: the
+// local channel). Lattice builders also report their screening: of
+// ``candidates`` (shell pair, projector image, ECP centre) evaluations,
+// ``skipped`` were ones libecpint's own screen returns as exact zeros (#382).
+struct EcpQuadratureReport {
+    std::string builder;
+    std::vector<std::vector<std::uint64_t>> failures;
+    std::vector<double> max_change;    // largest final refinement change per site
+    std::vector<double> value_at_max;  // |integral| where that change occurred
+    std::vector<std::uint64_t> failures_by_center;  // per ECP centre, when known
+    std::uint64_t bessel_lmax_exceeded = 0;
+    std::uint64_t candidates = 0;
+    std::uint64_t skipped = 0;
+    std::uint64_t total_failures() const;
+};
+
+// Report of the most recent ECP operator build in this process.
+EcpQuadratureReport last_ecp_quadrature_report();
 
 }  // namespace vibeqc

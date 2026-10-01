@@ -129,8 +129,9 @@ from .periodic_screened_exchange import (
 )
 from .progress import ProgressLogger, resolve_progress
 from .scf_divergence import check_scf_divergence
-from .smearing.fermi_dirac import (
-    fermi_dirac_occupations_per_k as _fermi_dirac_occupations_per_k,
+from .smearing import (
+    occupations_are_per_k_integer_aufbau as _occupations_are_per_k_integer_aufbau,
+    spin_channel_occupations as _spin_channel_occupations,
 )
 
 __all__ = [
@@ -735,25 +736,19 @@ def run_uks_periodic_multi_k_ewald3d(
         C_beta_per_k.append(C_b.astype(complex))
         eps_beta_per_k.append(eps_b)
 
-    def _integer_occupations(nbf: int, n_occ_each: int) -> List[np.ndarray]:
-        occ_per_k = []
-        for _ in range(n_k):
-            occ = np.zeros(nbf, dtype=float)
-            occ[:n_occ_each] = 1.0
-            occ_per_k.append(occ)
-        return occ_per_k
-
     def _occupations_per_spin(
         eps_spin_per_k: Sequence[np.ndarray],
         n_spin: int,
+        *,
+        mom: bool = False,
     ) -> Tuple[List[np.ndarray], float, float]:
-        """Per-spin fractional occupations via Fermi-Dirac (mirrors the
-        BIPOLE UKS driver): the closed-shell FD helper targets 2.n_spin
-        electrons and returns occupations in [0, 2]; halving gives the
-        single-spin occupations in [0, 1] at the same per-spin chemical
-        potential, and the entropy halves with them. Returns
-        (occ_per_k, mu_spin, entropy_spin)."""
-        nbf = eps_spin_per_k[0].shape[0] if eps_spin_per_k else 0
+        """Per-spin occupations from the shared open-shell fill.
+
+        One chemical potential per spin over the whole mesh, also at T = 0
+        (#176); positional while the SPINLOCK PATTERN_HOLD keeps its
+        MOM-selected columns first (``mom``, #725). The per-k integer Aufbau
+        this replaced filled the lowest ``n_spin`` bands at every k and
+        reported mu = 0. Returns (occ_per_k, mu_spin, entropy_spin)."""
         if use_gilat and n_spin > 0:
             # Gilat-Raubenheimer net for this spin channel (g=1.0, n_spin
             # electrons; sharp Fermi surface -> entropy 0). Handles full or
@@ -764,16 +759,18 @@ def run_uks_periodic_multi_k_ewald3d(
                 system, kmesh, eps_spin_per_k, float(n_spin), spin_degeneracy=1.0
             )
             return occ_gr, float(ef_gr), 0.0
-        if smearing_T <= 0.0 or n_spin == 0:
-            return _integer_occupations(nbf, n_spin), 0.0, 0.0
-        occ_double, mu, entropy_double = _fermi_dirac_occupations_per_k(
+        result = _spin_channel_occupations(
             eps_spin_per_k,
-            weights,
-            float(2 * n_spin),
-            smearing_T,
+            weights=weights,
+            n_electrons=float(n_spin),
+            smearing=smearing_T,
+            fixed_occupied_subspace=bool(mom) and smearing_T <= 0.0,
         )
-        occ = [np.asarray(o, dtype=float) * 0.5 for o in occ_double]
-        return occ, float(mu), float(entropy_double) * 0.5
+        return (
+            [np.asarray(o, dtype=float) for o in result.occupations_per_k],
+            float(result.mu),
+            float(result.entropy),
+        )
 
     def _spin_density(C_per_k_local, occ_per_k_local):
         """One-particle (no factor 2) real-space spin density via the
@@ -1504,11 +1501,12 @@ def run_uks_periodic_multi_k_ewald3d(
         C_beta_per_k = new_C_beta
         eps_beta_per_k = new_eps_beta
 
+        _held = bool(_pattern_hold and 1 < iter_idx <= spinlock_iterations)
         occ_alpha_per_k, mu_alpha, entropy_alpha = _occupations_per_spin(
-            eps_alpha_per_k, n_alpha
+            eps_alpha_per_k, n_alpha, mom=_held
         )
         occ_beta_per_k, mu_beta, entropy_beta = _occupations_per_spin(
-            eps_beta_per_k, n_beta
+            eps_beta_per_k, n_beta, mom=_held
         )
         entropy = entropy_alpha + entropy_beta
         D_alpha_new = _spin_density(C_alpha_per_k, occ_alpha_per_k)
@@ -1680,11 +1678,18 @@ def run_uks_periodic_multi_k_ewald3d(
                 eps_alpha_terminal.append(eps_a)
                 C_beta_terminal.append(C_b)
                 eps_beta_terminal.append(eps_b)
+            _terminal_held = bool(
+                _pattern_hold and iter_idx <= spinlock_iterations
+            )
             occ_alpha_terminal, _, entropy_alpha_terminal = (
-                _occupations_per_spin(eps_alpha_terminal, n_alpha)
+                _occupations_per_spin(
+                    eps_alpha_terminal, n_alpha, mom=_terminal_held
+                )
             )
             occ_beta_terminal, _, entropy_beta_terminal = (
-                _occupations_per_spin(eps_beta_terminal, n_beta)
+                _occupations_per_spin(
+                    eps_beta_terminal, n_beta, mom=_terminal_held
+                )
             )
             D_a_terminal_next = _density_matrices_per_k(
                 C_alpha_terminal, occ_alpha_terminal
@@ -1951,28 +1956,38 @@ def run_uks_periodic_multi_k_ewald3d(
             final_eps_beta.append(eps_b)
 
         # The terminal Fock generally has a different spectrum from the
-        # preceding SCF update. Fractional and Gilat occupations therefore
-        # have to be solved again on these reported eigenvalues; carrying the
-        # previous occupation arrays would mix two distinct states in the
-        # energy, free energy, density, and output metadata.
-        if use_fractional_density:
-            occ_alpha_final, mu_alpha, entropy_alpha = _occupations_per_spin(
-                final_eps_alpha, n_alpha
+        # preceding SCF update, so the occupations are solved again on these
+        # reported eigenvalues at every temperature: the zero-temperature
+        # fill is one chemical potential per spin over the mesh (#176), and
+        # which bands it occupies can move with the spectrum just as a
+        # fractional or Gilat fill does. Carrying the previous arrays would
+        # mix two distinct states in the energy, free energy, density, and
+        # output metadata.
+        _final_held = bool(_pattern_hold and iter_idx <= spinlock_iterations)
+        occ_alpha_final, mu_alpha, entropy_alpha = _occupations_per_spin(
+            final_eps_alpha, n_alpha, mom=_final_held
+        )
+        occ_beta_final, mu_beta, entropy_beta = _occupations_per_spin(
+            final_eps_beta, n_beta, mom=_final_held
+        )
+        entropy = entropy_alpha + entropy_beta
+        # The C[:, :n] slice is exact only for the per-k integer Aufbau
+        # pattern; a band-overlap fill is weighted by its own occupations.
+        _final_occupation_density = use_fractional_density or not (
+            _occupations_are_per_k_integer_aufbau(
+                occ_alpha_final, n_alpha, occ_value=1.0
             )
-            occ_beta_final, mu_beta, entropy_beta = _occupations_per_spin(
-                final_eps_beta, n_beta
+            and _occupations_are_per_k_integer_aufbau(
+                occ_beta_final, n_beta, occ_value=1.0
             )
-            entropy = entropy_alpha + entropy_beta
-        else:
-            occ_alpha_final = occ_alpha_per_k
-            occ_beta_final = occ_beta_per_k
+        )
 
         D_a_reported_per_k: List[np.ndarray] = []
         D_b_reported_per_k: List[np.ndarray] = []
         for idx in range(n_k):
             C_a = final_C_alpha[idx]
             C_b = final_C_beta[idx]
-            if use_fractional_density:
+            if _final_occupation_density:
                 D_a_k = (C_a * occ_alpha_final[idx]) @ C_a.conj().T
                 D_b_k = (C_b * occ_beta_final[idx]) @ C_b.conj().T
             else:

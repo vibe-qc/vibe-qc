@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from .scf import _ccm_initial_guess, _with_ccm_guess
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -95,7 +95,32 @@ class CCMUHFResult:
     #: caller-supplied ``cderi`` carries its own tail, which this route cannot
     #: observe, so the field stays ``None`` there.
     rsgdf_tail_ke_cutoff: float | None = None
+    #: Which implementation of ``gdf_method="rsgdf"`` built the fitted
+    #: operator this result was evaluated on: ``"classic"`` for the neutral
+    #: direct producers (their fold and supercell builders are the classic
+    #: all-reciprocal FFT fit), ``"injected"`` for a caller-supplied cderi,
+    #: empty where no density fit is involved (#378).
+    fit_source: str = ""
     guess_selection: object = None
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded (``allow_vacuum_padding=True``) and which
+    #: 1-based lattice directions measured as vacuum. ``(False, ())`` on
+    #: every cell measured as genuinely 3-D, and on the four-centre routes,
+    #: which carry no such gate. A padded-regime energy is never reportable
+    #: without the padding it was computed at.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
+    #: The neutral cderi ``L`` this SCF actually rode (mirrors
+    #: :attr:`~vibeqc.periodic.ccm.scf.CCMSCFResult.cderi`): stamped by
+    #: ``run_ccm_uhf_direct`` and by the lean neutral ``run_ccm_uhf(cderi=L)``
+    #: so ``run_ccm_ump2`` / ``ccm_dlpno_ump2`` / ``ccm_dlpno_uccsd`` reuse it
+    #: when called without ``cderi=``. ``None`` on the four-centre path.
+    cderi: object = field(default=None, repr=False)
+    cderi_info: dict | None = None
+    #: The :class:`~vibeqc.periodic.ccm.bloch_reference.BlochFoldReport`
+    #: when this reference was transformed from the Bloch producer's
+    #: SCF (Theorem 1), else ``None``.
+    bloch_transform: object = field(default=None, repr=False)
 
     @property
     def parity_held(self) -> bool:
@@ -268,4 +293,10 @@ def run_ccm_uhf(ccm, *, initial_guess: object = "AUTO", method="union12", max_it
         density_alpha=Da, density_beta=Db, overlap=S,
         idempotency_error=float(idem),
         backend=_backend,
+        # one build per job (2026-09-24): the lean neutral UHF carries the
+        # L it rode so run_ccm_ump2 / the DLPNO family reuse it.
+        cderi=(None if cderi is None else np.asarray(cderi, dtype=float)),
+        cderi_info=(None if cderi is None else
+                    {"build": "caller",
+                     "shape": tuple(int(n) for n in np.shape(cderi))}),
     ), guess_selection)

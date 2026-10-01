@@ -439,6 +439,49 @@ def _aft_3c_gradient_term(
     )
 
 
+def _periodic_3c_gradient_terms(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    cache: _CompcellGradientCache,
+    W: np.ndarray,
+) -> np.ndarray:
+    """Weighted derivative of what the fit adds to the home-cell 3c tensor.
+
+    ``cache.T_fused`` carries the auxiliary images
+    (:func:`vibeqc.aux_basis.aux_image_3c`) and, with the AFT correction,
+    minus the G = 0 term ``Vbar_P S / Omega``
+    (:func:`vibeqc.aux_basis._compcell_g0_term`), #172. ``W`` has shape
+    ``(n_fused, n_orb * n_orb)``, as for the home-cell kernel.
+    """
+    from .aux_basis import (
+        _aux_image_3c_gradient_weighted,
+        _fused_g0_potential,
+        _g0_overlap_lattice_opts,
+    )
+
+    grad = _aux_image_3c_gradient_weighted(
+        system, ao_basis, cache.fused_basis, cache.lat_opts_3c, W,
+        precision=float(cache.rcut_precision),
+    )
+    if cache.apply_aft_correction:
+        volume = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
+        n_orb = cache.n_orb
+        weight = -(_fused_g0_potential(cache.fused_basis) @ np.asarray(W)) / volume
+        weight = weight.reshape(n_orb, n_orb)
+        weight = 0.5 * (weight + weight.T)
+        opts = _g0_overlap_lattice_opts(cache.lat_opts_3c, system, ao_basis)
+        w_set = _fold_hermitian_k_matrices_to_lattice(
+            [weight], [1.0], np.zeros((1, 3)),
+            compute_overlap_lattice(ao_basis, system, opts),
+        )
+        # The kernel returns -sum_g W(g) . dS(g)/dR.
+        grad = grad - np.asarray(
+            overlap_lattice_gradient_contribution(ao_basis, system, w_set, opts),
+            dtype=np.float64,
+        )
+    return grad
+
+
 def _compute_j_gradient_compcell(
     system: PeriodicSystem,
     ao_basis: BasisSet,
@@ -511,7 +554,8 @@ def _compute_j_gradient_compcell(
         dtype=np.float64,
     )
 
-    grad = grad_2c + grad_3c
+    grad = grad_2c + grad_3c + _periodic_3c_gradient_terms(
+        system, ao_basis, cache, W)
     if cache.apply_aft_correction:
         grad = grad + _aft_2c_gradient_term(system, cache, omega_fused)
         grad = grad + _aft_3c_gradient_term(system, ao_basis, cache, W)
@@ -594,7 +638,8 @@ def _compute_k_gradient_compcell(
         dtype=np.float64,
     )
 
-    grad = grad_2c - 2.0 * alpha_hf * grad_3c
+    grad = grad_2c - 2.0 * alpha_hf * (
+        grad_3c + _periodic_3c_gradient_terms(system, ao_basis, cache, Y_flat))
     if cache.apply_aft_correction:
         grad = grad + _aft_2c_gradient_term(system, cache, omega_fused)
         grad = grad - 2.0 * alpha_hf * _aft_3c_gradient_term(
@@ -2803,10 +2848,13 @@ def _compute_v_ne_gradient_multik(
 
     Deliberate value-vs-derivative seam (documented, sub-gate): the
     value builder zeroes V_long(g) for cells whose overlap norm is
-    below ``screen_rel = 1e-12`` of the largest block; this derivative
-    keeps every cell (like the Gamma gradient). The induced FD
-    discrepancy is bounded by that relative screen and sits orders of
-    magnitude below the 1e-7 gates.
+    below ``screen_rel = 1e-12`` of the largest block, and since #196
+    leaves cells below ``domain_rel = 1e-16`` out of the V_short lattice
+    sum as well; this derivative keeps every cell (like the Gamma
+    gradient). The induced FD discrepancy is bounded by those relative
+    screens and sits orders of magnitude below the 1e-7 gates -- the
+    V_short limb measurably more so, its whole dropped tail summing to
+    3e-17 Ha against a 6 Ha matrix on LiH/STO-3G.
 
     ``ke_cutoff = None`` resolves like the dispatch: env
     ``VIBEQC_VNE_EWALD3D_KE``, else 200.0. ``ewald_options = None``
@@ -4443,10 +4491,22 @@ def compute_gdf_gradient_rhf_gamma(
             "compute_gdf_gradient_rhf_gamma: lattice_opts cutoffs must "
             "match the converged SCF result"
         )
+    # The SCF evaluated S, T and V_ne on the resolved one-electron AO
+    # domain (pbc_gdf resolves it for every bulk fit since #172), not on
+    # the base cells the fit and the result record.
+    from .periodic_k_gdf import _oneel_lattice_opts
+
+    oneel_lat_opts = (
+        _oneel_lattice_opts(
+            system, basis, lattice_opts, rcut_strategy=result_rcut_strategy,
+            k_points_cart=np.zeros((1, 3)),
+        )
+        if int(system.dim) == 3 else lattice_opts
+    )
     if gauge_lat_opts is None:
         from .pbc_gdf import _gauge_lat_opts_ewald_3d
 
-        gauge_lat_opts = _gauge_lat_opts_ewald_3d(lattice_opts, system)
+        gauge_lat_opts = _gauge_lat_opts_ewald_3d(oneel_lat_opts, system)
     else:
         if gauge_lat_opts.coulomb_method != CoulombMethod.EWALD_3D:
             raise ValueError(
@@ -4456,7 +4516,7 @@ def compute_gdf_gradient_rhf_gamma(
         if not (
             np.isclose(
                 float(gauge_lat_opts.cutoff_bohr),
-                result_lattice_cutoff,
+                float(oneel_lat_opts.cutoff_bohr),
                 rtol=0.0,
                 atol=1e-14,
             )
@@ -4584,11 +4644,11 @@ def compute_gdf_gradient_rhf_gamma(
     # Γ the GDF Fock doesn't have the G=0 gauge issue of EWALD_3D).
 
     # Build the overlap lattice for the cell list.
-    S_lat = compute_overlap_lattice(basis, system, lattice_opts)
+    S_lat = compute_overlap_lattice(basis, system, oneel_lat_opts)
 
     # Lattice-resolved density: at Γ, D(g) = D_Γ for all images.
     D_gamma = np.asarray(D, dtype=np.float64)
-    D_set = compute_overlap_lattice(basis, system, lattice_opts)
+    D_set = compute_overlap_lattice(basis, system, oneel_lat_opts)
     # Homogeneous Γ density: D(g) = D_Γ for all image cells.
     # At Γ, k=0 Bloch phase is 1 in every cell, so the real-space
     # density is identical in all images. The SCF energy is built from
@@ -4610,7 +4670,7 @@ def compute_gdf_gradient_rhf_gamma(
     eps = np.asarray(result.mo_energies, dtype=np.float64)
     C = np.asarray(result.mo_coeffs, dtype=np.float64)
     W_gamma = 2.0 * (C[:, :n_occ] * eps[:n_occ][None, :]) @ C[:, :n_occ].T
-    W_set = compute_overlap_lattice(basis, system, lattice_opts)
+    W_set = compute_overlap_lattice(basis, system, oneel_lat_opts)
     for c_idx in range(len(W_set.cells)):
         idx = tuple(int(v) for v in np.asarray(W_set.cells[c_idx].index).reshape(3))
         W_set.set_block(
@@ -4637,12 +4697,12 @@ def compute_gdf_gradient_rhf_gamma(
 
     # Overlap Lagrangian: -tr(W dS/dR).
     grad += np.asarray(
-        overlap_lattice_gradient_contribution(basis, system, W_set, lattice_opts)
+        overlap_lattice_gradient_contribution(basis, system, W_set, oneel_lat_opts)
     )
 
     # Kinetic + nuclear-attraction Pulay: tr(D d(T+V)/dR).
     grad += np.asarray(
-        kinetic_lattice_gradient_contribution(basis, system, D_set, lattice_opts)
+        kinetic_lattice_gradient_contribution(basis, system, D_set, oneel_lat_opts)
     )
     # V_ne Hellmann-Feynman and AO-centre response in the exact
     # FT-based Ewald gauge used by the SCF.
@@ -4692,7 +4752,7 @@ def compute_gdf_gradient_rhf_gamma(
             S = np.asarray(result.overlap, dtype=np.float64)
             DSD = D @ S @ D
             W_exx_gamma = 0.5 * float(alpha_hf) * madelung * DSD
-            W_exx_set = compute_overlap_lattice(basis, system, lattice_opts)
+            W_exx_set = compute_overlap_lattice(basis, system, oneel_lat_opts)
             for c_idx in range(len(W_exx_set.cells)):
                 idx = tuple(
                     int(v) for v in np.asarray(W_exx_set.cells[c_idx].index).reshape(3)
@@ -4705,7 +4765,7 @@ def compute_gdf_gradient_rhf_gamma(
                 )
             grad += np.asarray(
                 overlap_lattice_gradient_contribution(
-                    basis, system, W_exx_set, lattice_opts
+                    basis, system, W_exx_set, oneel_lat_opts
                 )
             )
     else:
@@ -5213,10 +5273,11 @@ def compute_gdf_gradient(
         caller="compute_gdf_gradient",
     )
 
-    from .pbc_gdf import _gauge_lat_opts_ewald_3d
     from .aux_basis import make_aux_basis_set
 
-    gauge_opts = _gauge_lat_opts_ewald_3d(lattice_opts, system)
+    # rhf/rks_gamma derive the V_ne gauge from the resolved one-electron
+    # domain the SCF used.
+    gauge_opts = None
     mol = system.unit_cell_molecule()
 
     if aux_basis is None:

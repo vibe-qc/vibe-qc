@@ -544,6 +544,9 @@ def test_run_rks_periodic_periodic_becke_loose_box_equals_molecular():
         o.grid.n_phi = 12
         o.use_periodic_becke = periodic_becke
         o.becke_image_radius_bohr = 8.0
+        # 30-bohr loose cell at cutoff 12: only g = 0, the molecular
+        # limit this test compares against; declared for #133 (#430).
+        o.lattice_opts.gamma_only_0 = True
         return o
 
     r_mol = vq.run_rks_periodic(sysp, basis, km, _opts(False))

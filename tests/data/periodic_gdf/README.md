@@ -74,3 +74,65 @@ matrix-element discrepancies; the local potential agreed, while nonlocal
 projectors did not. Full-precision generated coefficients and complete
 primitive terms reduced all eight diagnostic matrix errors below 2.4e-13.
 This component evidence does not establish periodic SCF or force parity.
+
+`w_bcc_ecp_reference.json` and `w_bcc_ecp_reference.system` hold independent
+PySCF 2.14.0 KRKS/PBE total energies for W bcc, the 2-atom conventional cell
+at a = 3.191 Angstrom, in the repository's own pob-TZVP-rev2 records with
+its own `.ecp` sidecar and its own def2-tzvp-jk auxiliary set. Two samplings
+are recorded: Gamma and the Gamma-centred 2x2x2 mesh, both with Fermi-Dirac
+smearing at kT = 0.005 Ha. This is the cross-code parity pin for a periodic
+**ECP** energy on the GDF route that vibe-qc#31 asks for; the NaCl artefact
+above pins one-electron lattice sums only.
+
+Every convention is chosen to match what `run_krks_periodic_gdf` actually
+runs rather than to a PySCF default, because several defaults differ:
+
+* RSGDF at `omega = 0.4` over the unpruned (`exp_to_discard = 0`)
+  def2-tzvp-jk records, matching `gdf_method='rsgdf'`, `rsgdf_omega=0.4` and
+  `aux_drop_eta=0.0`. The `rsgdf_tail_ke_cutoff` approximation is off on
+  both sides. Cross-check: the identical Gamma cell run on plain `GDF`
+  instead gives -135.214917189773 Ha against RSGDF's -135.214912464954 Ha,
+  4.7e-6 Ha apart, so the Coulomb fit is not a meaningful error source at
+  the 1 mHa/atom scale this pin is read at.
+* Gamma-centred k-points, written out as explicit fractional coordinates.
+  The multi-k GDF drivers resolve a tuple `kmesh` with a zero shift, which
+  is PySCF's `make_kpts` convention; `KPoints.monkhorst_pack`'s classical
+  default half-shifts every even axis and samples different points --
+  kpoints.py records the two being ~44 mHa apart at (2,2,2). The consumer
+  asserts its own k-points against the recorded list.
+* Canonical orthogonalisation of the diagonal-normalised overlap at `1e-7`
+  (`linear_dep_threshold`) and `1e-9` on the two-centre fit metric
+  (`gdf_linear_dep_threshold`).
+* A Becke grid rather than PySCF's uniform FFT grid, because vibe-qc
+  integrates the periodic XC on an atom-partitioned Becke grid.
+* The recorded `energy_hartree` is PySCF's plain `e_tot`, the same quantity
+  vibe-qc reports as `result.energy`; the Mermin free energy is recorded
+  separately as `free_energy_hartree`, matching `result.free_energy`.
+
+Unlike the NaCl generator, this one cannot assert that the converted sidecar
+equals an independent PySCF library record: the pob-TZVP-rev2 ECPs are a
+different published Stuttgart/Cologne parameter set from the ECPs PySCF
+ships under `def2-*` for the same elements (measured: for Ag they share no
+exponent, and the pob record carries a zero local channel where def2's is
+non-zero). It asserts the structural invariants it can check instead -- core
+size, Z_eff, per-channel term counts -- against the bundled CRYSTAL `Z+200`
+source in `python/vibeqc/basis_library/sources/pob-TZVP-rev2/74_W`, which is
+produced by a different code path from the same upstream data. Published
+core size 60 for W: Figgen et al., JCP 130, 164108 (2009),
+DOI 10.1063/1.3119665.
+
+Regenerate in a separate PySCF process with:
+
+```sh
+"$VIBEQC_PYSCF_PYTHON" examples/regression/periodic_ecp_metal_reference.py \
+    --system w-bcc --mesh 1 1 1 --output /tmp/w-bcc-gamma
+"$VIBEQC_PYSCF_PYTHON" examples/regression/periodic_ecp_metal_reference.py \
+    --system w-bcc --mesh 2 2 2 --output /tmp/w-bcc-222
+```
+
+The RSGDF fit dominates the cost (8 min at Gamma, 14 min and 1.08 GB of
+`fit.h5` at 2x2x2 on the development machine, against ~2 min for the SCF);
+`--cderi` reuses a saved fit across reruns. The Ag-fcc and Au-fcc cells the
+same generator supports are 4-atom cells with 140 AOs and roughly four times
+the auxiliary functions, so their fits are orders of magnitude more
+expensive and are not pinned here.

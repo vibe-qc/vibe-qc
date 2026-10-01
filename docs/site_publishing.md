@@ -39,7 +39,7 @@ When adopting or updating the export:
    navigation, and a codename image. Commit the copy and receipt together,
    then publish through that product's release process.
 
-Core CSS changes must be noted in the CHANGELOG and contributor notes,
+Core CSS changes must be noted in a `changelog.d/` fragment and contributor notes,
 with the source revision and a short description of what companions should
 review. Companion owners compare that revision with their receipt; updates
 are deliberate release work, not automatic drift. A core release does not
@@ -64,8 +64,10 @@ AI-generated artwork. Keep generation provenance with the owning assets.
 Release owners approve a codename before promoting its artwork to the
 released gallery. Update that product's contact sheet at the same time.
 
-The six [upcoming vibe-qc images](codename_artwork.md), v0.17.0 through v1.0.0,
-remain candidate or provisional planning assets. They do not announce shipped
-releases. A future marketing family gallery may link the three product
+The five [upcoming vibe-qc images](codename_artwork.md) remain candidate or
+provisional planning assets, paired with roadmap milestones. Version numbers
+in their filenames record the original artwork brief; they do not assign
+release versions. Tew's Tern is already in the released v0.17 gallery. The
+remaining candidates do not announce shipped releases. A future marketing family gallery may link the three product
 galleries, with explicit product labels; it should not merge their version
 sequences or duplicate their image collections.

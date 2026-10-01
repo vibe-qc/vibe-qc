@@ -543,8 +543,15 @@ def test_uhf_gamma_ewald_level_shift_perturbs_iteration_dynamics():
 #   * INERT   - it never moves the converged fixed point.
 # ---------------------------------------------------------------------------
 
-def _h2_631g_cell(a: float = 12.0):
-    """H2 in a wide cubic cell, 6-31G.
+def _h2_631g_cell(a: float = 20.0):
+    """H2 chain along x (period ``a``) with 30 bohr of vacuum across, 6-31G.
+
+    The native direct drivers need a lattice image inside the cutoff ball
+    (#133, #430). A 20-bohr period keeps that image while the SCF converges
+    in ~10 iterations; at a 12-bohr period (the former cubic cell with its
+    first shell brought inside the ball) the multi-k SCF oscillates
+    (gradient floor ~1e-5 to 1e-3 at 60 iterations) and the converged-
+    energy tests below cannot run.
 
     The basis matters. In STO-3G an H2 unit cell carries one basis function
     per atom, so both MOs (σ_g, σ_u) are fixed by symmetry alone: a level
@@ -556,14 +563,17 @@ def _h2_631g_cell(a: float = 12.0):
     Saunders-Hillier shift acts on.
     """
     sysp = vq.PeriodicSystem(
-        3, np.eye(3) * a, [vq.Atom(1, [0.0, 0.0, 0.0]),
-                           vq.Atom(1, [0.0, 0.0, 1.4])])
+        3, np.diag([a, 30.0, 30.0]), [vq.Atom(1, [0.0, 0.0, 0.0]),
+                                      vq.Atom(1, [0.0, 0.0, 1.4])])
     return sysp, vq.BasisSet(sysp.unit_cell_molecule(), "6-31g")
 
 
 def _cxx_lattice(o):
-    o.lattice_opts.cutoff_bohr = 10.0
-    o.lattice_opts.nuclear_cutoff_bohr = 14.0
+    # The two chain images at +-20 bohr inside both balls, nothing else
+    # (30 and 40 bohr lie outside). The former cutoff 10 in a 12-bohr cube
+    # held only g = 0, which the #133 guard refuses on these drivers (#430).
+    o.lattice_opts.cutoff_bohr = 20.5
+    o.lattice_opts.nuclear_cutoff_bohr = 21.0
     return o
 
 

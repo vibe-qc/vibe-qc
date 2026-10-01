@@ -949,6 +949,13 @@ class TestPeriodicUHFInitialDensity:
     outer iter; this test pins the low-level API contract that the
     NEB dispatch relies on."""
 
+    # BIPOLE cutoff for the H3 chain. Since the physical pair-support
+    # default (3a7d097, #316) its S(Gamma) fold drift is 3.0e-2 at 4 and
+    # 5 bohr, above the 1e-2 refusal threshold (BipoleFoldUnreliableError);
+    # 12 bohr gives 2.5e-6, inside the converged (< 1e-4) regime. The H2+
+    # NEB test below keeps the four-bohr cutoff of the other classes.
+    _H3_CUTOFF_BOHR = 12.0
+
     def _h3_doublet_in_box(self) -> "PeriodicSystem":  # noqa: F821
         from vibeqc import PeriodicSystem
 
@@ -978,7 +985,7 @@ class TestPeriodicUHFInitialDensity:
         km = monkhorst_pack(sys0, (1, 1, 1))
         basis = BasisSet(sys0.unit_cell_molecule(), "sto-3g")
         lat = LatticeSumOptions()
-        lat.cutoff_bohr = 4.0
+        lat.cutoff_bohr = self._H3_CUTOFF_BOHR
         opts = PeriodicRHFOptions()
         opts.lattice_opts = lat
         opts.max_iter = 100
@@ -1089,7 +1096,7 @@ class TestPeriodicUHFInitialDensity:
         km = monkhorst_pack(sys0, (1, 1, 1))
         basis = BasisSet(sys0.unit_cell_molecule(), "sto-3g")
         lat = LatticeSumOptions()
-        lat.cutoff_bohr = 4.0
+        lat.cutoff_bohr = self._H3_CUTOFF_BOHR
         opts = PeriodicRHFOptions()
         opts.lattice_opts = lat
         opts.max_iter = 30
