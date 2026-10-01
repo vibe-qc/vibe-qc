@@ -218,6 +218,7 @@ def item4_mgo_remeasure():
                     apply_aft_correction=apply_aft,
                     aft_ft_convention=ft_conv,
                     progress=False,
+                    gdf_method="compcell",
                 )
                 dt = time.perf_counter() - t0
                 print(f"    E_total = {r.energy:+.6f} Ha")

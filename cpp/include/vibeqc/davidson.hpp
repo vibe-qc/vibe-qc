@@ -43,7 +43,17 @@ struct DavidsonOptions {
     // Subspace size budget: when the subspace exceeds this many
     // vectors, a "collapse" resets to the current n_conv converged
     // Ritz vectors + n_eig unconverged + a few extra.
-    int max_subspace = 0;  // 0 = auto (min(6 * n_eig, n_basis))
+    //
+    // 0 = auto: min(max(8 * n_eig, n_guess + 20), n_basis).  Any value,
+    // explicit or automatic, is raised to the smallest workable budget
+    // n_eig + min(5, n_basis - n_eig) + n_eig + 1 (the restart block plus
+    // one sweep of corrections; GitLab #123) and capped at n_basis, so
+    // ``DavidsonResult::subspace_dim`` can exceed a smaller request.  A
+    // partial-spectrum problem too small to hold that floor
+    // (n_basis < 2 * n_eig + 6, n_eig < n_basis) is solved densely
+    // instead (GitLab #287): n_iter = 0, subspace_dim = n_basis,
+    // n_converged = n_eig, converged = true.
+    int max_subspace = 0;
 
     // Convergence threshold on the residual norm ‖r_i‖₂ for each
     // eigenpair.  Residual r_i = A·x_i − λ_i·x_i.

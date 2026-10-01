@@ -33,6 +33,7 @@ from __future__ import annotations
 import os
 import re
 import tomllib
+import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -128,7 +129,6 @@ class _Family:
 
 @dataclass(frozen=True)
 class _Registry:
-    aliases: dict[str, str]
     bases: dict[str, dict]
     families: tuple[_Family, ...]
 
@@ -137,10 +137,6 @@ class _Registry:
 def _registry() -> _Registry:
     with open(_REGISTRY_PATH, "rb") as fh:
         raw = tomllib.load(fh)
-    aliases = {
-        str(k).strip().lower(): str(v).strip().lower()
-        for k, v in (raw.get("aliases") or {}).items()
-    }
     bases = {
         str(k).strip().lower(): dict(v) for k, v in (raw.get("bases") or {}).items()
     }
@@ -159,19 +155,56 @@ def _registry() -> _Registry:
         )
         for f in (raw.get("families") or [])
     )
-    return _Registry(aliases=aliases, bases=bases, families=families)
+    return _Registry(bases=bases, families=families)
 
 
 def canonical_basis_name(name: object) -> str:
-    """Lowercase, stripped, alias-resolved basis name.
+    """The resolved basis name: the stem of the file ``BasisSet`` loads.
 
-    This is the key every metadata lookup uses.  It does not change the
-    file libint opens: the bundled files are already stored under this
-    spelling, and the aliases table lists only spellings that resolve to a
-    file that ships under another stem.
+    Delegates to the C++ resolver (``_vibeqc_core.basis_data_name``) that
+    ``BasisSet`` itself uses, so every spelling it accepts (``631gd``,
+    ``6-31G(d, p)``, ``Sto 3G``, ...) keys the same registry record, and a
+    spelling it refuses resolves to nothing registered. Before #30 this was a
+    second implementation (lowercase, strip and an alias table) that
+    normalised differently.
     """
-    key = str(getattr(name, "name", name) or "").strip().lower()
-    return _registry().aliases.get(key, key)
+    from . import _vibeqc_core
+
+    return _vibeqc_core.basis_data_name(str(getattr(name, "name", name) or ""))
+
+
+def write_basis_file(directory: str | os.PathLike, name: object, text: str) -> str:
+    """Write ``text`` as the ``.g94`` file ``BasisSet(mol, name)`` opens in ``directory``.
+
+    The file stem is :func:`canonical_basis_name` -- the resolver
+    ``BasisSet`` applies itself, which lower-cases and maps alias spellings
+    -- so a writer cannot store ``dS-an.g94`` while the lookup opens
+    ``ds-an.g94``. A case-insensitive file system hides that mismatch; a
+    case-sensitive one turns it into "no shells loaded" (#321). Every
+    vibe-qc writer of a named basis file goes through here.
+
+    The file is replaced atomically: a reader of a shared data directory
+    sees the old or the new file, never a partial one, and a hard link
+    to a library file is swapped out instead of written through.
+
+    Returns the stem; ``BasisSet`` accepts it or ``name``.
+    """
+    stem = canonical_basis_name(name)
+    if not stem or stem in (".", "..") or any(c in stem for c in ("/", "\\", "\0")):
+        raise ValueError(
+            f"basis name {name!r} cannot be stored as a basis file "
+            f"(it resolves to {stem!r})"
+        )
+    directory = Path(directory)
+    target = directory / f"{stem}.g94"
+    staging = directory / f".{stem}.{uuid.uuid4().hex}.tmp"
+    try:
+        staging.write_text(text)
+        os.replace(staging, target)
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
+    return stem
 
 
 def lookup(name: object) -> BasisRecord:

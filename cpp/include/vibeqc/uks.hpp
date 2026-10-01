@@ -12,6 +12,7 @@
 // n_α = (n_e + mult−1)/2,  n_β = (n_e − mult+1)/2.
 
 #pragma once
+#include "vibeqc/opentrustregion.hpp"
 
 #include <Eigen/Dense>
 #include <optional>
@@ -56,6 +57,10 @@ UKSXCPotential evaluate_uks_xc_potential(
     const Eigen::MatrixXd& density_beta);
 
 struct UKSOptions {
+    // Explicit whole-SCF orbital optimizer; existing native phase defaults stay unchanged.
+    std::string orbital_optimizer = "native";
+    OpenTrustRegionOptions opentrustregion;
+
     std::string functional = "LDA";
     GridOptions grid;
 
@@ -272,12 +277,24 @@ struct UKSOptions {
     double stability_tol = 1e-4;
     int stability_max_retries = 3;
     int stability_davidson_max_iter = 60;
+    // Wall-clock budget for each post-convergence stability solve (#342).
+    // stability_wall_budget_s > 0 is used as given; 0 (default) means
+    // automatic: max(stability_wall_floor_s, stability_wall_fraction x the
+    // SCF loop's own wall, the sum of the per-iteration trace). A spent
+    // budget ends the solve with an UNVERIFIED verdict instead of running
+    // to the matvec cap; a solve that finishes inside it is unchanged.
+    // Defaults: fraction 3.0, floor 600 s (maintainer decision D1,
+    // 2026-09-29).
+    double stability_wall_budget_s = 0.0;
+    double stability_wall_fraction = 3.0;
+    double stability_wall_floor_s = 600.0;
 
     // Multi-guess convergence (BUG 88). See UHFOptions::multi_guess_seeds.
     std::vector<std::uint64_t> multi_guess_seeds;
 };
 
 struct UKSResult {
+    OpenTrustRegionReport opentrustregion;
     std::optional<BasisSet> restart_basis;
     std::optional<GuessSelection> guess_selection;
     double energy = 0.0;
@@ -329,6 +346,14 @@ struct UKSResult {
     // Internal-stability report (see UKSOptions::stability_check).
     bool stability_checked = false;
     bool stability_analysis_converged = false;
+    // Why the stability solve ended (vibeqc::StabilityStop as int: 0
+    // converged, 1 matvec budget, 2 wall budget, 3 not run, 4 trivial,
+    // 5 stagnated), the Hessian-vector products it spent and the wall
+    // budget that applied (seconds; 0 = unbounded). Carried into every
+    // output writer by the Python verdict object (#342).
+    int stability_stop_reason = 3;
+    int stability_n_matvec = 0;
+    double stability_wall_budget_s = 0.0;
     double stability_eigenvalue = 0.0;
     int n_stability_restarts = 0;
     bool internal_instability = false;

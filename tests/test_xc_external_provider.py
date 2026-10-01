@@ -10,6 +10,7 @@ import pytest
 
 import vibeqc as vq
 from vibeqc import _vibeqc_core as core
+from tests.refusal_receipt import assert_preflight_refusal
 
 
 _NAMES = itertools.count()
@@ -849,7 +850,7 @@ def test_external_periodic_roks_single_point_fails_closed(tmp_path):
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("method", ("RKS", "UKS"))
@@ -927,7 +928,7 @@ def test_external_periodic_gamma_rijcosx_fails_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("method", ("RKS", "UKS"))
@@ -1041,7 +1042,7 @@ def test_external_periodic_chi_fitted_backend_stays_gated(
             **selector,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize(
@@ -1338,7 +1339,7 @@ def test_external_high_level_fitted_routes_reject_non_torus_mesh_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("jk_method", ("gdf", "bipole", "gpw", "gapw"))
@@ -1365,7 +1366,7 @@ def test_external_high_level_positive_smearing_fails_before_dry_run(
         )
 
     assert provider.calls == []
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("source", ("options", "kpoints"))
@@ -1399,7 +1400,7 @@ def test_external_high_level_effective_smearing_fails_before_dry_run(
         )
 
     assert provider.calls == []
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("jk_method", ("gpw", "gapw"))
@@ -1528,7 +1529,7 @@ def test_external_selected_route_ecp_rejected_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize(
@@ -1568,7 +1569,7 @@ def test_external_ecp_paired_basis_name_rejected_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("spin", (1, 2))
@@ -1623,7 +1624,7 @@ def test_external_periodic_two_dimensional_route_rejected_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("spin", (1, 2))
@@ -2096,7 +2097,7 @@ def test_four_center_external_hybrid_rejected_before_dry_run(tmp_path):
         )
 
     assert provider.calls == []
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 def test_direct_gdf_external_pure_xc_reports_final_hartree_component(monkeypatch):
@@ -2364,4 +2365,4 @@ def test_external_periodic_gpw_rejects_explicit_weighted_list_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)

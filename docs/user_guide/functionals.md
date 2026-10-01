@@ -114,6 +114,7 @@ vibe-qc resolves these short names in `xc.cpp::resolve_alias()`
 | `lda` / `svwn` | LDA | 0 % | 1 + 7 | Slater exchange + VWN5 correlation. Fast sanity check. |
 | `pbe` | GGA | 0 % | 101 + 130 | Workhorse for solid state. |
 | `blyp` | GGA | 0 % | 106 + 131 | Classic molecular GGA. |
+| `bpw91` | GGA | 0 % | 106 + 134 | Becke 88 exchange with Perdew-Wang 91 correlation, the functional Klamt's 1998 COSMO-RS parameters were fitted at (see [Implicit solvation](solvation.md)). There is no `bp86` alias: codes differ on which local correlation fills its P86 slot (PZ81 or VWN). |
 | `b3lyp` (= `b3lyp5`) | hybrid | 20 % | 475 | de-facto for organics; VWN5 / ORCA convention, **see the flavor box above**. |
 | `b3lyp/g` (= `b3lypg`) | hybrid | 20 % | 402 | Gaussian-compatible B3LYP (VWN-RPA), what Gaussian / PySCF / Psi4 mean by the bare name. |
 | `pbe0` / `pbeh` | hybrid | 25 % | 406 | PBE + 25% Fock exchange. |
@@ -343,6 +344,17 @@ is parity-validated for **H-Ne** (correlated CPKS/PBE38 reference
 C6 within a few percent of dftd4); use the `dftd4` backend for
 elements outside that set. Both are documented in
 [`molecules.md`](molecules.md) § Dispersion.
+
+For standalone native D4, `compute_d4(mol, func, backend="native",
+charge=Q, with_gradient=True)` returns the same energy as the scalar call
+and its complete analytic nuclear gradient. It includes BJ pair and ATM
+three-body geometry derivatives, coordination-dependent C6, and EEQ charge
+response at fixed `Q`. The adjoint EEQ solve differentiates the native
+coordination-number soft cap and charge constraint. The `charge` argument
+is honored by both native paths and defaults to zero; it is not inferred
+from the molecule's electron-count metadata. The reference dataset and
+native interpolation model are unchanged, so consistent derivatives do
+not imply bit-exact agreement with the external D4 functional.
 
 ## Meta-GGA functionals (TPSS / TPSSh, M06-L / M06-2X, SCAN / r²SCAN)
 

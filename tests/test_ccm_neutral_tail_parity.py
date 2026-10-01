@@ -25,8 +25,11 @@ to ``+4.09e-11`` Ha/cell.
 Pinned here:
 
 * the resolver mirrors the sibling route's decision exactly -- same classifier,
-  same inputs, at ``N_c = 1``; ``None`` at ``N_c > 1`` where the multi-k loop
-  deliberately does not auto-tail (so this fix moves nothing there);
+  same inputs, at ``N_c = 1`` -- and, since the maintainer's decision of
+  2026-09-30, returns the same unit-cell answer at every ``N_c > 1`` too: the
+  neutral-Bloch producer takes its tail from this resolver, so both routes
+  tail together along the whole ladder (before, every ``N_c > 1`` rung was
+  untailed and parity-held on dense-core cells);
 * an explicit ``tail_ke_cutoff`` overrides the classifier, and a request the
   builder would ignore (``0``, or anything at or below the base mesh)
   normalises to ``None`` so an opt-out is the historical call exactly;
@@ -136,22 +139,26 @@ def test_lih_sto3g_needs_no_tail_and_diamond_does():
 
 
 @pytest.mark.parametrize("nrep", [(2, 1, 1), (2, 2, 1), (2, 2, 2)])
-def test_multik_meshes_are_not_auto_tailed(nrep):
-    """N_c > 1 must resolve to ``None`` -- this fix moves nothing there.
+def test_multik_meshes_take_the_unit_cell_tail(nrep):
+    """N_c > 1 resolves to the unit cell's tail: one fit resolution per ladder.
 
-    The multi-k GDF loop deliberately does not auto-tail
-    (``_warn_multik_dense_core_gdf_parity_hold`` records the hold and calls
-    multi-k auto-tailing an open maintainer call). Auto-tailing only the fold
-    would relocate the 0.5 Ha disagreement from N=1 to N>=2 instead of closing
-    it, so the two routes stay on the held-but-agreeing side together.
+    Maintainer decision of 2026-09-30 (it settled the "open maintainer call"
+    of ``_warn_multik_dense_core_gdf_parity_hold``). The tail is sized on the
+    unit cell's AO basis, so it is the ``N_c = 1`` value on every mesh. Both
+    routes read it here -- the neutral-Bloch producer passes this resolver's
+    value to the multi-k driver explicitly -- so they move together and the
+    Theorem-1 identity is kept (``test_be_fcc_n2_direct_matches_gdf``).
     """
-    assert ccm_neutral_tail_ke_cutoff(_mgo(nrep)) is None
+    assert ccm_neutral_tail_ke_cutoff(_mgo(nrep)) == pytest.approx(3291.6114)
+    assert ccm_neutral_tail_ke_cutoff(_diamond(nrep)) == pytest.approx(787.785207)
+    # The classifier's negative branch is unchanged at N_c > 1 as well.
+    assert ccm_neutral_tail_ke_cutoff(_lih(nrep)) is None
 
 
 def test_explicit_tail_is_honoured_and_wins_over_the_classifier():
     """An explicit request overrides the classifier, in both directions."""
     assert ccm_neutral_tail_ke_cutoff(_mgo(), tail_ke_cutoff=1234.5) == 1234.5
-    # ...including at a multi-k mesh, where the classifier itself says None.
+    # ...including at a multi-k mesh, where the classifier would size 3291.6 Ha.
     assert ccm_neutral_tail_ke_cutoff(
         _mgo((2, 1, 1)), tail_ke_cutoff=900.0) == 900.0
 
@@ -205,11 +212,13 @@ def _assert_route_parity(ccm, *, min_prefix_gap):
         gdf.rsgdf_tail_ke_cutoff)
     assert direct.rsgdf_tail_ke_cutoff is not None
 
-    gap = float(direct.energy) - float(gdf.energy)
+    # The direct energy is the torus total, the GDF one per cell (N_c = 1 above,
+    # N_c > 1 in test_be_fcc_n2_direct_matches_gdf).
+    gap = float(direct.energy) / ccm.n_cells - float(gdf.energy)
     assert abs(gap) < TOL_HA_PER_CELL, (
         f"direct - gdf = {gap:+.6e} Ha/cell exceeds {TOL_HA_PER_CELL:g}")
 
-    prefix_gap = float(untailed.energy) - float(gdf.energy)
+    prefix_gap = float(untailed.energy) / ccm.n_cells - float(gdf.energy)
     assert abs(prefix_gap) > min_prefix_gap, (
         "the untailed control no longer moves the energy, so this gate can no "
         f"longer discriminate (got {prefix_gap:+.6e} Ha/cell)")
@@ -228,6 +237,47 @@ def test_be_fcc_n1_direct_matches_gdf():
 def test_diamond_n1_direct_matches_gdf():
     """Pre-fix -1.589e-02 Ha/cell, post-fix -6.8e-11."""
     _assert_route_parity(_diamond(), min_prefix_gap=1e-3)
+
+
+# PySCF 2.14.0 KRHF with range-separated GDF (``rs_density_fit``) and the vibe-qc
+# auxiliary basis (def2-svp-jk) transported shell by shell, on the Gamma-centred
+# (2,1,1) mesh of the cells below, exxdiv="ewald", conv_tol 1e-11 (AICCM campaign
+# diagnostic of 2026-09-30). With the unit-cell tail vibe-qc sits +4.1e-5 (Be) and
+# +1.56e-4 Ha/cell (diamond, the shared dense-core truncation floor documented in
+# ``pbc_gdf``) from these; untailed it sat -1.08e-4 and -1.58e-2.
+PYSCF_KRHF_211 = {"Be": -14.855999005825, "diamond": -74.396156431305}
+
+
+@pytest.mark.parametrize("cell, tol", [
+    ("Be", 7e-5),
+    pytest.param("diamond", 5e-4, marks=pytest.mark.slow),
+])
+def test_n2_default_route_matches_pyscf(cell, tol):
+    """PySCF parity at N_c > 1, with the untailed control asserted to fail it."""
+    ccm = {"Be": _be, "diamond": _diamond}[cell]((2, 1, 1))
+    tailed = run_ccm_rhf_direct(ccm)
+    untailed = run_ccm_rhf_direct(ccm, tail_ke_cutoff=0.0)
+    assert tailed.converged and untailed.converged
+    ref = PYSCF_KRHF_211[cell]
+    e_tailed = float(tailed.energy) / ccm.n_cells
+    e_untailed = float(untailed.energy) / ccm.n_cells
+    assert abs(e_tailed - ref) < tol, (
+        f"{cell}: vibe-qc - PySCF = {e_tailed - ref:+.3e} Ha/cell exceeds {tol:g}")
+    assert abs(e_untailed - ref) > tol, (
+        f"{cell}: the untailed control no longer fails the gate "
+        f"({e_untailed - ref:+.3e} Ha/cell)")
+
+
+def test_be_fcc_n2_direct_matches_gdf():
+    """The same gate on a multi-k mesh: both routes tail at N_c > 1 and agree.
+
+    Before the 2026-09-30 decision both routes were untailed here and the
+    Bloch result carried ``+PARITY_HELD``; now both carry the unit-cell tail,
+    the hold is lifted, and the untailed control must still fail the gate.
+    """
+    ccm = _be((2, 1, 1))
+    _assert_route_parity(ccm, min_prefix_gap=1e-5)
+    assert run_ccm_rhf_gdf(ccm).parity_held is False
 
 
 # --------------------------------------------------------------------------

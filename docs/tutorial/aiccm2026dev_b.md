@@ -54,8 +54,10 @@ records remain permanently revision-bound; a fresh exact-v2 record may clear
 only this shared-Ewald gate. Gamma-only here is the one-character χ evaluation
 path, not Γ-CCM construction identity.
 
-Compact dense-core MDF calculations in the MgO/STO-3G class fail closed since
-`6ce142339`; the validated vacuum-padded MDF envelope is unchanged. Every
+Compact dense-core MDF calculations in the MgO/STO-3G class failed closed from
+`6ce142339` until 2026-09-29; the shared GDF layer admits them since its
+auxiliary-image sum (GitLab #172), and B inherits that. The validated
+vacuum-padded MDF envelope is unchanged. Every
 fitted B row nevertheless remains D93 `not-qualified`. The bounded shared-q
 auxiliary Fourier-transform cache inherited from `ad96a2f63` is bit-identical
 and changes memory/performance only. Every fitted B dispatch also pins

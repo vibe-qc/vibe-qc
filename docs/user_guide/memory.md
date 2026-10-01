@@ -216,14 +216,16 @@ RIJCOSX, and coupled solvent) skip the implicit check and allocate no stability
 phase. Only the explicitly enabled Newton/TRAH second-order kernels retain the
 dense whole-grid tables described above.
 
-The 3D true-multi-k pure-DFT GDF route retains its analytic-FT Ewald J cache
-only when the full tensor plus one similarly sized construction temporary
-fits `VIBEQC_J_EWALD3D_CACHE_MIB` (4096 MiB by default). Larger cases contract
-reciprocal vectors and output cells in batches, so they never retain an
-`(n_cells, n_AO, n_AO, n_G)` complex tensor. Those batches use the separate
-`VIBEQC_J_EWALD3D_FT_CELL_CHUNK_MIB` target (512 MiB by default). Lowering
-either positive value trades reuse/batch size for memory; neither changes the
-`VIBEQC_J_EWALD3D_KE` reciprocal cutoff or the energy convention.
+The multi-k GDF drivers hold no analytic-FT Ewald J cache. Every k-mesh run
+contracts its Hartree from the cached fit of its `gdf_method`, and the
+unfitted pure-DFT Ewald J with its cache planning was removed (GitLab #415),
+so `VIBEQC_J_EWALD3D_CACHE_MIB` is no longer read. The direct contraction of
+the Ewald J from D(k) (`build_periodic_j_ewald3d_k_from_k_density`, still used
+by the periodic guess) batches reciprocal vectors and output cells under the
+`VIBEQC_J_EWALD3D_FT_CELL_CHUNK_MIB` target (512 MiB by default), so it never
+retains an `(n_cells, n_AO, n_AO, n_G)` complex tensor. Lowering that value
+trades batch size for memory; it does not change the `VIBEQC_J_EWALD3D_KE`
+reciprocal cutoff or the energy convention.
 
 ## Reading the probe yourself
 
@@ -275,6 +277,13 @@ def preflight_rhf(mol, basis, rhf_options):
 The estimator returns a
 [`MemoryEstimate`](../api/index.md) dataclass with a
 `by_category` dict, so you can inspect exactly where the memory goes.
+
+Some categories grow with the OpenMP worker count, because every concurrent
+worker owns its own scratch (molecular DFT batch tables, DF transform and
+triples workers). By default the estimate uses the current runtime count
+(`vibeqc.get_num_threads()`). Pass `n_threads=N` to size it for another
+count, for example a job you will run with a different allocation:
+`estimate_memory(mol, basis, method="rks", n_threads=32)`.
 
 For conventional molecular SCF, the dense AO contribution is
 $N_\mathrm{bf}^4\times8$ bytes. For direct SCF, the estimator replaces

@@ -2003,6 +2003,13 @@ class GpwUksMultiKScfResult:
     kmesh: object = None
     scf_trace: tuple = ()
     method: str = "uks"
+    #: Per-spin, per-k occupations of the returned orbitals (#176): the
+    #: zero-temperature fill with one chemical potential per spin over the
+    #: mesh (UKS), or the restricted Roothaan pattern (ROKS).
+    occupations_alpha_k: tuple = ()
+    occupations_beta_k: tuple = ()
+    fermi_level_alpha: float = 0.0
+    fermi_level_beta: float = 0.0
 
     restart_basis: object = None
     restart_lattice: object = None
@@ -2129,8 +2136,10 @@ def run_periodic_uks_gpw_multi_k(
       jointly over both spins (one B matrix, alpha + beta error blocks) on
       both regimes -- the driver is new, so there is no historical linear-
       mixing behaviour to preserve.
-    * **T = 0 hard aufbau per spin** -- ``n_alpha`` / ``n_beta`` electrons
-      at every k (resolved from ``system.multiplicity`` when not given).
+    * **T = 0 global fill per spin** -- ``n_alpha`` / ``n_beta`` electrons
+      (resolved from ``system.multiplicity`` when not given) with one
+      chemical potential per spin over the whole mesh (#176); a gapped mesh
+      is the per-k hard Aufbau.
       Smearing / DFT+U / dispersion are not wired at this milestone.
     """
     from .guess import select_initial_guess
@@ -2348,15 +2357,33 @@ def run_periodic_uks_gpw_multi_k(
             )
         return V_a, V_b
 
-    def _build_D_k(C_list, n_occ):
+    def _build_D_k(C_list, occ_list):
+        """Per-k spin density from per-k occupations (single-spin, [0, 1])."""
         return [
-            (
-                C_list[ik][:, :n_occ] @ C_list[ik][:, :n_occ].conj().T
-                if n_occ > 0
-                else np.zeros((n_basis, n_basis), dtype=complex)
-            )
+            (C_list[ik] * np.asarray(occ_list[ik], dtype=float)[None, :])
+            @ C_list[ik].conj().T
             for ik in range(n_k)
         ]
+
+    def _spin_fill(eps_list, n_spin):
+        """Occupations of one spin channel for the returned orbitals.
+
+        UKS: one chemical potential per spin over the whole mesh, also at
+        T = 0 (#176); the per-k ``C[:, :n]`` slice this replaced occupies a
+        state above the Fermi level at one k and leaves one below it empty
+        at another wherever the bands overlap. ROKS keeps its restricted
+        Roothaan selection, which the loop has already permuted to the front
+        of every ``C(k)``, so its fill is positional.
+        """
+        from .smearing import spin_channel_occupations
+
+        res = spin_channel_occupations(
+            [np.asarray(np.real(e), dtype=float) for e in eps_list],
+            weights=weights,
+            n_electrons=float(n_spin),
+            fixed_occupied_subspace=bool(_restricted_open),
+        )
+        return [np.asarray(o, dtype=float) for o in res.occupations_per_k], float(res.mu)
 
     def _gamma_sum(D_k_list):
         D = np.zeros((n_basis, n_basis), dtype=float)
@@ -2438,6 +2465,7 @@ def run_periodic_uks_gpw_multi_k(
     # counts when n_alpha != n_beta, matching the Gamma open-shell driver.
     C_a_k: list = []
     C_b_k: list = []
+    _guess_eps_k: list = []
     for ik in range(n_k):
         guess_fock = (
             guess_fock_k[ik]
@@ -2450,8 +2478,11 @@ def run_periodic_uks_gpw_multi_k(
         C = X_k[ik] @ C_orth
         C_a_k.append(C)
         C_b_k.append(C)
-    D_a_k = _build_D_k(C_a_k, n_alpha_res)
-    D_b_k = _build_D_k(C_b_k, n_beta_res)
+        _guess_eps_k.append(_eps)
+    occ_a_k, mu_a = _spin_fill(_guess_eps_k, n_alpha_res)
+    occ_b_k, mu_b = _spin_fill(_guess_eps_k, n_beta_res)
+    D_a_k = _build_D_k(C_a_k, occ_a_k)
+    D_b_k = _build_D_k(C_b_k, occ_b_k)
     if initial_density_k is not None:
         if len(initial_density_k) != 2:
             raise ValueError(
@@ -2657,8 +2688,10 @@ def run_periodic_uks_gpw_multi_k(
             new_e_a.append(eps_a)
             new_e_b.append(eps_b)
 
-        D_a_k_new = _build_D_k(new_C_a, n_alpha_res)
-        D_b_k_new = _build_D_k(new_C_b, n_beta_res)
+        new_occ_a, new_mu_a = _spin_fill(new_e_a, n_alpha_res)
+        new_occ_b, new_mu_b = _spin_fill(new_e_b, n_beta_res)
+        D_a_k_new = _build_D_k(new_C_a, new_occ_a)
+        D_b_k_new = _build_D_k(new_C_b, new_occ_b)
         D_a_new = _gamma_sum(D_a_k_new)
         D_b_new = _gamma_sum(D_b_k_new)
 
@@ -2698,11 +2731,15 @@ def run_periodic_uks_gpw_multi_k(
             D_a, D_b = D_a_new, D_b_new
             C_a_k, C_b_k = new_C_a, new_C_b
             e_a_k, e_b_k = new_e_a, new_e_b
+            occ_a_k, occ_b_k = new_occ_a, new_occ_b
+            mu_a, mu_b = new_mu_a, new_mu_b
             break
         D_a_k, D_b_k = D_a_k_new, D_b_k_new
         D_a, D_b = D_a_new, D_b_new
         C_a_k, C_b_k = new_C_a, new_C_b
         e_a_k, e_b_k = new_e_a, new_e_b
+        occ_a_k, occ_b_k = new_occ_a, new_occ_b
+        mu_a, mu_b = new_mu_a, new_mu_b
         E_prev = E
 
     # ROKS rebuilds the nonlinear Hartree and XC energies once at the returned
@@ -2796,6 +2833,10 @@ def run_periodic_uks_gpw_multi_k(
         mo_coeffs_beta_k=tuple(C_b_k),
         mo_energies_alpha_k=tuple(e_a_k),
         mo_energies_beta_k=tuple(e_b_k),
+        occupations_alpha_k=tuple(np.asarray(o).copy() for o in occ_a_k),
+        occupations_beta_k=tuple(np.asarray(o).copy() for o in occ_b_k),
+        fermi_level_alpha=float(mu_a),
+        fermi_level_beta=float(mu_b),
         n_alpha=n_alpha_res,
         n_beta=n_beta_res,
         converged=converged,

@@ -14,6 +14,7 @@ import pytest
 from vibeqc import BasisSet, UHFOptions, run_uhf
 from vibeqc._vibeqc_core import Atom, Molecule
 from vibeqc.density_fitting import DensityFitting
+from vibeqc.dlpno.thresholds import options_from_dlpno_thresholds
 from vibeqc.dlpno.uccsd import (
     DLPNOUCCSDPilotOptions as _DLPNOUCCSDPilotOptions,
     run_dlpno_uccsd_pilot,
@@ -40,6 +41,10 @@ LocalUCCSDOptions = partial(
     tcut_pno=1e-7,
     tcut_pairs=0.0,
     tcut_mkn=0.0,
+    # The ratchets compare against the dense pilot's one-sided PNOs and
+    # predate the open-shell PNO correction (#190).
+    pno_density="one-sided",
+    pno_correction=False,
 )
 OH = [
     (8, [0.0, 0.0, 0.0]),
@@ -997,7 +1002,16 @@ def test_singles_pnos_preserve_separated_radical(separated_oh_h2_sto3g):
     )
 
 
-def test_empty_pao_atom_domain_fails_closed(separated_h_h2_sto3g):
+@pytest.mark.parametrize(
+    "criterion,cuts",
+    [
+        # No Mulliken population exceeds 2.
+        ("mulliken", dict(tcut_mkn=2.0)),
+        # Nor does any differential overlap reach 1e6.
+        ("doi", dict(tcut_mkn=1e-3, tcut_do=1e6)),
+    ],
+)
+def test_empty_pao_atom_domain_fails_closed(separated_h_h2_sto3g, criterion, cuts):
     molecule, basis, uhf, df = separated_h_h2_sto3g
     with pytest.raises(ValueError, match="empty PAO atom domain"):
         run_local_dlpno_uccsd(
@@ -1005,7 +1019,7 @@ def test_empty_pao_atom_domain_fails_closed(separated_h_h2_sto3g):
             basis,
             uhf,
             df,
-            LocalUCCSDOptions(tcut_mkn=2.0),
+            LocalUCCSDOptions(domain_criterion=criterion, **cuts),
         )
 
 
@@ -1203,3 +1217,112 @@ def test_unknown_triples_mode_still_rejected(oh_sto3g):
             molecule, basis, uhf, df,
             LocalUCCSDOptions(triples_mode="t2-iterative"),
         )
+
+
+# --- appended by the #190 open-shell change -------------------------------
+
+
+def test_compact_residuals_are_contracted_once_per_group(oh_sto3g):
+    """With every occupied coupled (``coupling_radius=0``) and untruncated
+    singles spaces, every pair shares one contraction domain and every
+    singles residual shares the full spin-virtual space: two contractions per
+    iteration instead of one per pair and per occupied (the open-shell
+    counterpart of #689). The energy is the per-target one, which the
+    full-domain pilot ratchets above pin."""
+    molecule, basis, uhf, df = oh_sto3g
+    result = run_local_dlpno_uccsd(
+        molecule, basis, uhf, df, LocalUCCSDOptions(localise="boys")
+    )
+    assert result.converged
+    assert result.n_pairs > 2
+    assert result.n_residual_groups == 2
+
+
+def test_pno_correction_is_zero_without_truncation_and_reduces_it():
+    """The semicanonical MP2 correction for the PNO truncation of the
+    iterated pairs (the open-shell counterpart of #222): identically zero at
+    ``tcut_pno=0``, and it reduces the isolated PNO truncation error with
+    the domains and pair list held fixed."""
+    molecule = Molecule(
+        [Atom(z, position) for z, position in OH], charge=0, multiplicity=2
+    )
+    basis = BasisSet(molecule, "def2-svp")
+    scf_options = UHFOptions()
+    scf_options.max_iter = 300
+    uhf = run_uhf(molecule, basis, scf_options)
+    assert uhf.converged
+    df = DensityFitting(basis, BasisSet(molecule, AUX), aux_basis_name=AUX)
+    common = dict(localise="boys", tcut_pairs=0.0, tcut_mkn=0.0)
+    oracle = run_local_dlpno_uccsd(
+        molecule, basis, uhf, df,
+        LocalUCCSDOptions(tcut_pno=0.0, pno_correction=True, **common),
+    )
+    assert oracle.e_pno_correction == pytest.approx(0.0, abs=1e-14)
+    on = run_local_dlpno_uccsd(
+        molecule, basis, uhf, df,
+        LocalUCCSDOptions(tcut_pno=1e-5, pno_correction=True, **common),
+    )
+    off = run_local_dlpno_uccsd(
+        molecule, basis, uhf, df,
+        LocalUCCSDOptions(tcut_pno=1e-5, pno_correction=False, **common),
+    )
+    assert oracle.converged and on.converged and off.converged
+    assert on.e_pno_correction < 0.0
+    assert on.e_corr - off.e_corr == pytest.approx(on.e_pno_correction, abs=1e-12)
+    assert abs(on.e_corr - oracle.e_corr) < abs(off.e_corr - oracle.e_corr)
+
+
+def test_two_sided_pno_density_makes_a_singlet_agree_with_the_closed_shell_route():
+    """A closed-shell molecule run through this spin-orbital solver must mean
+    by NormalPNO what the closed-shell route means by it.
+
+    The one-sided spin-orbital density (the antisymmetrised amplitude's
+    T T^T + T^T T) keeps each opposite-spin pair's virtual directions for
+    one occupied index only, and a same-spin pair's T - T^T vanishes wherever
+    the MP2 amplitude is locally symmetric; at NormalPNO that left singlet
+    H2O/cc-pVDZ 0.27 kcal/mol from the closed-shell solver. The two-sided
+    density brings it within 0.01 kcal/mol."""
+    import numpy as np
+    from vibeqc import RHFOptions, run_rhf
+    from vibeqc.dlpno.ccsd_local_solver import (
+        LocalCCSDOptions as ClosedOptions,
+        run_local_dlpno_ccsd,
+    )
+
+    atoms = [
+        (8, [0.0, 0.0, 0.0]),
+        (1, [0.0, 0.757 * ANGSTROM_TO_BOHR, 0.587 * ANGSTROM_TO_BOHR]),
+        (1, [0.0, -0.757 * ANGSTROM_TO_BOHR, 0.587 * ANGSTROM_TO_BOHR]),
+    ]
+    molecule = Molecule([Atom(z, p) for z, p in atoms], charge=0, multiplicity=1)
+    basis = BasisSet(molecule, "cc-pvdz")
+    df = DensityFitting(basis, BasisSet(molecule, "cc-pvdz-ri"), aux_basis_name="cc-pvdz-ri")
+    rhf = run_rhf(molecule, basis, RHFOptions())
+    scf_options = UHFOptions()
+    scf_options.max_iter = 300
+    uhf = run_uhf(molecule, basis, scf_options)
+    assert abs(uhf.energy - rhf.energy) < 1e-8
+
+    closed = run_local_dlpno_ccsd(
+        molecule, basis, rhf, df,
+        options_from_dlpno_thresholds(ClosedOptions, "normal", compute_triples=False),
+    )
+
+    def open_shell(density):
+        r = run_local_dlpno_uccsd(
+            molecule, basis, uhf, df,
+            options_from_dlpno_thresholds(
+                _LocalUCCSDOptions, "normal", compute_triples=False,
+                pno_density=density,
+            ),
+        )
+        assert r.converged
+        return r
+
+    two = open_shell("two-sided")
+    one = open_shell("one-sided")
+    assert closed.converged
+    assert abs(two.e_corr - closed.e_corr) < 2.0e-5
+    assert abs(one.e_corr - closed.e_corr) > 3.0e-4
+    assert two.avg_pno > one.avg_pno
+    assert np.isfinite(two.e_corr)

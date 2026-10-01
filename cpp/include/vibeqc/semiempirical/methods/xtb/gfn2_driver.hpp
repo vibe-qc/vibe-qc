@@ -245,9 +245,12 @@ struct GFN2SCCAttempt {
     SCCMixer scc_mixer = SCCMixer::Simple;
     bool restart_supplied = false;
     bool molecular_delegated = false;
-    // Closed values: "converged", "iteration_limit", "unphysical_basin",
-    // and "gap_rejected".  Strings keep this internal diagnostic record
-    // JSON-ready at the Python boundary without exposing another public enum.
+    // Closed values: "converged", "iteration_limit", "stalled_checkpoint",
+    // "unphysical_basin", and "gap_rejected".  Strings keep this internal
+    // diagnostic record JSON-ready at the Python boundary without exposing
+    // another public enum.  "stalled_checkpoint" is the SECCM primary attempt
+    // handed to the stabilization ladder by the budget-independent checkpoint
+    // (#294); like "iteration_limit" it never reached the residual tolerance.
     std::string exit_reason = "iteration_limit";
     // True when the SCC residual reached tolerance, including a fixed point
     // later rejected by the finite-torus gap or physical-basin gates.
@@ -256,10 +259,18 @@ struct GFN2SCCAttempt {
     Eigen::VectorXd max_change_trace;
 };
 
+// Executed molecular AES functional, independent of mutable caller options.
+// Unknown is deliberate: legacy/default-constructed results cannot attest
+// which energy their density belongs to (vibe-qc#427).
+enum class GFN2AESFunctional { Unknown, Shell, Faithful };
+
 struct GFN2Result : ParameterIdentifiedResult {
+    GFN2AESFunctional aes_functional = GFN2AESFunctional::Unknown;
     // Internal total E. Molecular GFN2 historically exposes this value as
-    // energy; finite-temperature callers that need the variational potential
-    // use free_energy = E - T*S below.
+    // energy. A smeared SCC (smearing_temperature > 0) is stationary in the
+    // Mermin free energy free_energy = E - T*S below: that is the surface
+    // the SCC gradient differentiates and the Python model reports
+    // (vibe-qc#343). At T = 0 the two coincide.
     double energy = 0.0;
     double free_energy = 0.0;
     double entropy = 0.0;
@@ -274,6 +285,14 @@ struct GFN2Result : ParameterIdentifiedResult {
     double shell_dip_rms = 0.0; // RMS of shell dipole moments, debug
     Eigen::VectorXd mo_energies;
     Eigen::MatrixXd mo_coeffs;
+    // Converged MO occupations n_i on the shared
+    // compute_closed_shell_kpoint_occupations convention: exactly 2.0 / 0.0
+    // under zero-temperature Aufbau, the particle-conserving Fermi-Dirac
+    // fractions at smearing_temperature > 0. The analytic gradient builds
+    // its energy-weighted density and its AES response map from these, so
+    // it differentiates the ensemble the SCC actually converged
+    // (vibe-qc#343). Empty on a result that never converged.
+    Eigen::VectorXd occupations;
     Eigen::MatrixXd density;
     Eigen::MatrixXd overlap;
     Eigen::MatrixXd hamiltonian;

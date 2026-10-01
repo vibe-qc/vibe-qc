@@ -22,12 +22,14 @@ Convention notes
 * HF / hybrid exchange carries the ``exxdiv='ewald'`` Madelung
   correction: the multi-k branch applies the finite-k-mesh G=0
   divergence shift via the BvK-supercell constant
-  (:func:`_madelung_for_kmesh`), and the Γ HF fast-path delegates to
-  :func:`vibeqc.run_pbc_gdf_rhf` (primitive-cell shift). PySCF parity
-  therefore uses ``exxdiv='ewald'`` (PySCF's default). The legacy
-  molecular-limit driver :func:`vibeqc.run_rhf_periodic_gamma_gdf`
-  (exxdiv=None semantics) remains the Γ fallback for RKS / dim<3 /
-  charged / smeared / use_compcell runs.
+  (:func:`_madelung_for_kmesh`). PySCF parity therefore uses
+  ``exxdiv='ewald'`` (PySCF's default). For a bulk (dim = 3) cell a Γ
+  mesh is the one-point mesh of the same engine: a request the
+  exact-Gamma :func:`vibeqc.run_pbc_gdf_rhf` implements completely is
+  handed to it, and every other request runs the k-mesh loop at Nk=1
+  (:mod:`vibeqc.periodic_gdf_route`). The legacy molecular-limit driver
+  :func:`vibeqc.run_rhf_periodic_gamma_gdf` (exxdiv=None semantics) is
+  the Γ route only for dim < 3.
 * Generic Bravais: the driver uses arbitrary lattice vectors via
   the existing ``bloch_sum`` and Bloch-block helpers, with no
   cubic-only assumption. 1D / 2D / 3D periodicity all supported.
@@ -36,6 +38,8 @@ Convention notes
 """
 
 from __future__ import annotations
+
+from .periodic_sr_mpi import collective_sr_q_cache, collective_sr_q_preflight
 
 from .guess import periodic_guess_capabilities
 
@@ -98,7 +102,8 @@ from .guess import (
     periodic_fock_guess_k,
     resolve_initial_guess,
 )
-from .kpoints import KPoints
+from .kpoints import KPoints, _integer_counts
+from .periodic.exchange_convention import BVK_EWALD, executed_exchange_q0_or_none
 from .lattice_screening import (
     RcutStrategy,
     make_lattice_opts,
@@ -127,13 +132,8 @@ from .smearing import (
 )
 from .smearing.apply import _global_aufbau_with_mu
 from .options_dump import dump_active_settings
-from .periodic_fock_multi_k import (
-    _ewald_3d_lattice_j_cache_fits_memory_target,
-    build_periodic_fock_ewald3d_k,
-    build_periodic_j_ewald3d_k_from_k_density,
-    make_ewald_3d_lattice_j_cache,
-)
 from .periodic_grid import build_periodic_becke_grid
+from .periodic_xc_diagnostics import record_xc_grid_charge, report_xc_grid_charge
 from .periodic_rhf_gdf import (
     PeriodicRHFGDFResult,
     _resolve_fock_mixing,
@@ -472,6 +472,11 @@ class PeriodicKRHFGDFResult:
 
     All per-k arrays are length-``nkpts`` Python lists holding
     complex Hermitian (or real, for Γ-only) matrices in AO basis.
+
+    Converged COSX results additionally retain ``iterated_fock``,
+    ``iterated_mo_coeffs`` and ``iterated_mo_energies``. ``energy_operator``
+    identifies the iterated energy/density surface; ``returned_operator``
+    identifies the post-convergence one-center-corrected Fock/orbitals.
     """
 
     energy: float
@@ -512,7 +517,22 @@ class PeriodicKRHFGDFResult:
     # periodic_runner. None on routes that do not build it.
     linear_dependence: Optional["PeriodicLinearDependenceSummary"] = None
     n_aux: int = 0
+    #: Number of ``(k_i, k_j)`` fit tensors in the density fit the SCF
+    #: contracted, counted on the cache the driver built rather than
+    #: re-derived from its routing: ``n_k`` for a Coulomb-only fit, up to
+    #: ``n_k**2`` with fitted exchange, ``1`` for the single Γ fit of the
+    #: Γ delegates, and ``0`` when no fit was built (no closed-shell k-mesh
+    #: route since #415 removed its EWALD_3D J/K branch). A consumer that
+    #: needs to know whether a fit was built, or
+    #: how large it was, reads this field instead of copying the promotion
+    #: rules (the CCM neutral-Bloch control's copy went stale).
+    gdf_cderi_pairs: int = 0
     backend: str = "native-multi-k-gdf"
+    #: The exchange q=0 convention this result ran (``BvK-ewald`` when the
+    #: BvK-supercell Madelung shift was applied to K); ``None`` when the
+    #: route declares none, and the runner's manifest then falls back to
+    #: the requested ``exchange_exxdiv`` label.
+    exchange_q0: Optional[str] = None
     #: RSGDF high-``|G|`` tail cutoff (Ha) actually APPLIED, or ``None``
     #: for base-mesh-only (GitLab IID 307). The Γ fast path auto-sizes one
     #: on the tight-core class and reports it here; the multi-k loop does
@@ -543,6 +563,10 @@ class PeriodicKRHFGDFResult:
 
     restart_kpoints: object = None
     restart_weights: object = None
+    #: :class:`RSGDFFitCache` when the driver ran with
+    #: ``retain_fit_cache=True`` and took the classic RSGDF multi-k path;
+    #: ``None`` otherwise (the reason is in the progress log).
+    fit_cache: object = field(default=None, repr=False)
 
 
 @dataclass
@@ -1155,7 +1179,107 @@ def _ibz_residual_diagnosis(S_k, *, lindep_thr: float = 1e-9) -> str:
     except Exception:
         return ""
 
-def _resolve_ibz_native_state(system, kpoints_cart, kmesh, weights, plog):
+#: Exchange producers whose finite source ``ibz_native`` can qualify, and
+#: the support each one sums. ``pair-centred``: every AO-pair, auxiliary
+#: and reciprocal domain is a Euclidean condition on actual atom images
+#: (``|A - B - R| <= pair_cutoff``, the auxiliary capsule distance, and the
+#: physical ``|q + G|`` sphere; ``cpp/src/periodic_gdf_short_range.cpp``,
+#: ``cpp/src/aopair_ft_internal.hpp``, ``_rsgdf_bounded_reciprocal_sphere``).
+#: ``origin-centred``: one lattice ball ``|R| <= cutoff_bohr`` shared by every
+#: shell pair (``direct_lattice_cells`` in
+#: ``build_lpq_bloch_native_fft_shared_q``).
+_IBZ_EXCHANGE_SUPPORT = {"sr": "pair-centred", "classic": "origin-centred"}
+
+
+@dataclass(frozen=True)
+class _IbzExchangeAdmission:
+    """Which symmorphic operations the executed exchange source admits.
+
+    ``admitted``/``refused`` index the symmorphic subset of the attached
+    operations; ``refused`` also records each operation's largest
+    per-atom lattice-shift difference (bohr). The admission is an analytic
+    statement about the finite supports, not a numerical residual.
+    """
+
+    producer: str
+    support: str
+    operations: tuple
+    admitted: Tuple[int, ...]
+    refused: Tuple[Tuple[int, float], ...]
+
+
+def _ibz_exchange_producer(*, gdf_method, bulk_sr, private_builder,
+                           fit_screen_threshold):
+    """Name the source that will build the exchange cderi cache.
+
+    Mirrors the driver's cache dispatch: a private cache adapter wins,
+    then the SR/LR source, then the classic all-reciprocal fit. The classic
+    fit's optional shell-pair screen is decided from bounds summed over its
+    origin-centred list, so a screened classic source is named separately
+    and remains unqualified.
+    """
+    if private_builder is not None:
+        return "private"
+    if gdf_method != "rsgdf":
+        return str(gdf_method)
+    if bulk_sr:
+        return "sr"
+    return "classic" if float(fit_screen_threshold) == 0.0 else "classic-screened"
+
+
+def _admit_ibz_exchange_operations(system, producer):
+    """Admit the operations under which ``producer``'s finite source is closed.
+
+    ``K(k)`` of a wedge representative may be transported to another star
+    member only when the operation maps the *truncated* exchange source
+    onto itself; otherwise the transported and directly built matrices
+    belong to different finite Hamiltonians. With atom action
+    ``x_perm[a] = R x_a + t + S_a``, a pair (a, b) at image ``R'`` maps to
+    ``R R' + S_a - S_b``:
+
+    * a pair-centred domain (SR/LR source) depends only on
+      ``|x_a - x_b - R'|``, which every crystal isometry preserves, so each
+      operation with an atom permutation is admitted;
+    * an origin-centred ball (classic source) is preserved exactly iff all
+      ``S_a`` agree (vibe-qc #237); other operations exchange boundary
+      cells with cells the build never summed and are refused.
+
+    Any other producer (compcell, MDF, a private cache adapter) has no
+    qualified support here and is refused outright. Shift equality uses a
+    ``1e-8`` bohr guard on shifts that are integer lattice vectors by
+    construction; no integral residual or cell-list cutoff is consulted.
+    The argument is exact for the mathematical domains; a pair lying on a
+    cutoff surface to within floating-point rounding could still be
+    classified differently from its image. That membership is not audited.
+    """
+    from .periodic_k_symmetry import _op_atom_shifts_cart
+    from .symmetry_integrals import symmorphic_operations
+
+    support = _IBZ_EXCHANGE_SUPPORT.get(producer)
+    if support is None:
+        raise NotImplementedError(
+            f"ibz_native=True: the {producer!r} exchange source has no "
+            "qualified symmetry action on its finite support, so a "
+            "transported K(k) is not known to equal the one it would "
+            "build. Use gdf_method='rsgdf' (the SR/LR source on a 3-D "
+            "cell) or run without ibz_native."
+        )
+    operations = tuple(symmorphic_operations(system.symmetry.operations))
+    admitted, refused = [], []
+    for index, shifts in enumerate(_op_atom_shifts_cart(system, operations)):
+        spread = float(np.max(np.abs(shifts - shifts[0]))) if len(shifts) else 0.0
+        if support == "pair-centred" or spread < 1.0e-8:
+            admitted.append(index)
+        else:
+            refused.append((index, spread))
+    return _IbzExchangeAdmission(
+        producer, support, operations, tuple(admitted), tuple(refused)
+    )
+
+
+def _resolve_ibz_native_state(
+    system, kpoints_cart, kmesh, weights, plog, *, exchange_producer
+):
     """Resolve the wedge, star map and full mesh for IBZ-native exchange.
 
     Returns ``(rows, star_map, kmesh_full)`` or ``None`` when the request
@@ -1170,15 +1294,17 @@ def _resolve_ibz_native_state(system, kpoints_cart, kmesh, weights, plog):
     * a tuple/BlochKMesh whose full mesh the driver is actually running,
       so bra indices line up with `kpoints_cart`;
     * uniform weights -- a custom quadrature is not a Monkhorst-Pack mesh
-      and its stars are not the spglib ones.
+      and its stars are not the spglib ones;
+    * an ``exchange_producer`` whose finite source is closed under every
+      operation the star map uses (:func:`_admit_ibz_exchange_operations`).
+      The SR/LR source admits all symmorphic operations; the classic
+      source admits only operations shifting every atom by one lattice
+      vector, and the wedge is refused when those do not cover its stars.
 
-    **Accuracy precondition, deliberately a warning and not a hard gate:**
-    the symmetry transport is only as good as the cell list. Measured on
-    LiH FCC (2,2,2), the transport residual on K is 1.5e-3 at
-    ``cutoff_bohr = 15`` (comparable to the energy's own drift to the
-    next cutoff), 8.2e-6 at 20, and 1.1e-8 at 26. Below ~20 bohr the
-    transport is no longer negligible against the truncation error, so
-    the flag says so rather than pretending otherwise.
+    Transport through an admitted operation reproduces the directly built
+    exchange of the same finite source, independent of ``cutoff_bohr``.
+    The electronic-state gate (:func:`_require_ibz_symmetric_state`) is a
+    separate precondition and remains empirical.
     """
     from ._vibeqc_core import monkhorst_pack as _mp_sym
     from .periodic_k_symmetry import star_operations
@@ -1234,13 +1360,13 @@ def _resolve_ibz_native_state(system, kpoints_cart, kmesh, weights, plog):
 
     mesh = getattr(kmesh, "mesh", None)
     if mesh is None and isinstance(kmesh, (list, tuple)):
-        mesh = tuple(int(x) for x in kmesh)
+        mesh = kmesh
     if mesh is None or len(tuple(mesh)) != 3:
         raise NotImplementedError(
             "ibz_native=True needs a Monkhorst-Pack mesh it can reduce "
             f"(tuple or BlochKMesh carrying `mesh`); got {type(kmesh).__name__}."
         )
-    mesh = [int(x) for x in mesh]
+    mesh = _integer_counts(mesh, name="IBZ native mesh")
     w = np.asarray(weights, dtype=float).reshape(-1)
     if not np.allclose(w, w[0], atol=1e-12):
         raise NotImplementedError(
@@ -1249,6 +1375,12 @@ def _resolve_ibz_native_state(system, kpoints_cart, kmesh, weights, plog):
             "whose stars are not the spglib ones."
         )
 
+    # Source admission precedes every mesh, integral or density operation.
+    # Like the non-symmorphic refusal it names the actual cause: an
+    # operation that does not map the executed exchange source onto itself
+    # makes the SCF density drift from the wedge's symmetry, which the
+    # state gate would otherwise report as a variational symmetry break.
+    admission = _admit_ibz_exchange_operations(system, exchange_producer)
     kfull = _mp_sym(system, mesh, [0, 0, 0], False)
     kibz = _mp_sym(system, mesh, [0, 0, 0], True)
     kf = [np.asarray(k, dtype=float).reshape(3) for k in kfull.kpoints]
@@ -1290,7 +1422,34 @@ def _resolve_ibz_native_state(system, kpoints_cart, kmesh, weights, plog):
                 "guessing a correspondence."
             )
         rows.append(i)
-    star_map = star_operations(system, kibz, kfull)
+    try:
+        star_map = star_operations(
+            system, kibz, kfull,
+            operations=[admission.operations[i] for i in admission.admitted],
+        )
+    except ValueError:
+        if not admission.refused:
+            raise
+        worst = max(spread for _, spread in admission.refused)
+        raise NotImplementedError(
+            f"ibz_native=True: the {exchange_producer!r} exchange source sums "
+            "every shell pair over one origin-centred Bloch cell list, which "
+            f"only {len(admission.admitted)} of the "
+            f"{len(admission.operations)} symmorphic operations map onto "
+            "itself (those shifting every atom by the same lattice vector; "
+            f"the others differ by up to {worst:.3g} bohr). Those operations "
+            "do not reach every point of the wedge's stars, so K cannot be "
+            "transported without changing the finite Hamiltonian. Use the "
+            "SR/LR source (fit_source='auto' or 'sr'), whose pair-centred "
+            "domains admit every operation, or run without ibz_native."
+        ) from None
+    if plog is not None:
+        plog.info(
+            f"IBZ-native exchange source: {exchange_producer} "
+            f"({admission.support} support), "
+            f"{len(admission.admitted)}/{len(admission.operations)} "
+            "symmorphic operations admitted"
+        )
     # ORDER IS LOAD-BEARING: `star_map.entries` carries ``i_rep`` as an
     # index into ``kmesh_ibz.kpoints``, and `expand_k_matrices_to_full`
     # looks up ``M_k_ibz[i_rep]``. So the returned rows must stay in
@@ -1324,6 +1483,7 @@ class _RangeSeparatedGdfCache(Mapping):
     memory_byte_cap: int = 0
     native_workspace_byte_cap: int = 0
     factor_frame: str = "eigenmode"
+    execution: dict = field(default_factory=dict)
 
     # The SCF consumes the pair mapping; derivatives also need its source.
     # Keeping one object prevents dropping that provenance at the builder
@@ -1356,6 +1516,30 @@ class _RangeSeparatedGdfCache(Mapping):
         return float(self.source_parameters[3])
 
 
+#: Concrete legacy reciprocal mesh (Ha) for the routes that have no
+#: error-bounded planner: the all-FT shared-q builders, the dense-core
+#: parity classifiers, the gradient rebuild and the recorded result field
+#: when no SR/LR source ran. It is NOT a floor for the SR/LR planner.
+RSGDF_KE_CUTOFF_DEFAULT = 200.0
+
+
+def _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff):
+    """Split a caller's ``rsgdf_ke_cutoff`` into (request, concrete mesh).
+
+    ``request`` is the caller's explicit value or ``None`` when nothing was
+    requested; only it reaches the SR/LR planner (GitLab IID 257). There an
+    explicit value is used exactly as given, not as a floor over the
+    error-bounded cutoff, and a value below that cutoff warns (IID 206).
+    ``concrete`` is the request, or :data:`RSGDF_KE_CUTOFF_DEFAULT`, for the
+    routes that need a finite mesh of their own. An explicit value passes
+    through unchanged, so each consumer keeps its own validation.
+    """
+    if rsgdf_ke_cutoff is None:
+        return None, RSGDF_KE_CUTOFF_DEFAULT
+    return rsgdf_ke_cutoff, rsgdf_ke_cutoff
+
+
+@collective_sr_q_cache
 def _build_range_separated_lpq_cache(
     system,
     basis,
@@ -1375,7 +1559,7 @@ def _build_range_separated_lpq_cache(
     bra_rows: Optional[Sequence[int]] = None,
     integral_screen_error: float = 0.0,
     raw_integral_error: Optional[float] = None,
-    pair_cache_builder=None,
+    pair_cache_builder=None, _q_executor=None,
 ) -> Mapping:
     """Build shared-q fits while reserving the complete retained cache.
 
@@ -1383,8 +1567,11 @@ def _build_range_separated_lpq_cache(
     a conservative allowance for pair/group metadata and one live source
     build with whitening. Each q metric is built and diagonalized once.
     Supplying ``raw_integral_error`` plans finite SR and LR domains for
-    the whole cache. Explicit cutoffs then serve as lower bounds, so a
-    caller cannot silently undercut the requested raw-integral accuracy.
+    the whole cache. Explicit pair and auxiliary cutoffs then serve as
+    lower bounds. An explicit ``ke_cutoff`` is used exactly as given
+    (GitLab IID 206); one below the planned reciprocal cutoff emits a
+    ``RuntimeWarning``, so a caller never undercuts the requested
+    raw-integral accuracy silently.
     Without an error target all three finite cutoffs must be explicit.
     This leaf does not distribute storage across MPI.
 
@@ -1402,6 +1589,11 @@ def _build_range_separated_lpq_cache(
         _plan_range_separated_gdf_cutoffs,
     )
 
+    requested_controls = dict(omega=omega, pair_cutoff=pair_cutoff,
+                              auxiliary_cutoff=auxiliary_cutoff, ke_cutoff=ke_cutoff,
+                              raw_integral_error=raw_integral_error,
+                              integral_screen_error=integral_screen_error,
+                              linear_dep_thr=linear_dep_thr, need_k_pairs=bool(need_k_pairs))
     kpoints = np.asarray(kpoints_cart)
     if (kpoints.ndim != 2 or kpoints.shape[1] != 3 or len(kpoints) == 0
             or np.iscomplexobj(kpoints) or not np.isfinite(kpoints).all()):
@@ -1453,19 +1645,57 @@ def _build_range_separated_lpq_cache(
                 system, basis, auxiliary, closest_q, omega=omega,
                 raw_integral_error=raw_integral_error,
             ))
-        def cutoff_floor(explicit, field):
+        def check_explicit(explicit):
             if explicit is not None and (not np.isfinite(explicit) or explicit <= 0):
                 raise ValueError("range-separated GDF cutoff floors must be finite and positive")
+
+        def cutoff_floor(explicit, field):
+            check_explicit(explicit)
             return max(float(explicit or 0), *(getattr(plan, field) for plan in plans))
         pair_cutoff = cutoff_floor(pair_cutoff, 'pair_cutoff')
         auxiliary_cutoff = cutoff_floor(auxiliary_cutoff, 'auxiliary_cutoff')
-        ke_cutoff = cutoff_floor(ke_cutoff, 'ke_cutoff')
+        # GitLab IID 206 (maintainer decision, 2026-09-25): an explicit
+        # reciprocal cutoff is used exactly as given, never raised to the
+        # planner's bound. The LR term is a plane-wave sum whose cost is
+        # linear in the number of G vectors (Ye & Berkelbach 2021, Eqs.
+        # 12-13), so flooring a 200 Ha request over a ~19 Ha plan cost ~34x.
+        # Without a request the planner's error-bounded cutoff applies.
+        planned_ke = max(float(plan.ke_cutoff) for plan in plans)
+        check_explicit(ke_cutoff)
+        if ke_cutoff is None:
+            ke_cutoff = planned_ke
+        else:
+            ke_cutoff = float(ke_cutoff)
+            if ke_cutoff < planned_ke:
+                # Honour the request, but never lower accuracy silently.
+                warnings.warn(
+                    f"range-separated GDF: explicit rsgdf_ke_cutoff={ke_cutoff:g} Ha is "
+                    f"below the {planned_ke:.6g} Ha the SR/LR planner requires for the "
+                    f"raw integral error target {float(raw_integral_error):.3g}; it is "
+                    "used as given, so the reciprocal (LR) tail may exceed that target. "
+                    "Omit rsgdf_ke_cutoff to use the planner's cutoff.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         screen_budget = min(plan.integral_screen_error for plan in plans)
         if not np.isfinite(integral_screen_error) or integral_screen_error < 0:
             raise ValueError("range-separated GDF screening error must be finite and nonnegative")
         integral_screen_error = min(integral_screen_error, screen_budget) if integral_screen_error else screen_budget
     elif any(cutoff is None for cutoff in (pair_cutoff, auxiliary_cutoff, ke_cutoff)):
         raise ValueError("range-separated GDF requires a raw error target or all three explicit cutoffs")
+    if _q_executor is not None:
+        if pair_cache_builder is not None:
+            raise NotImplementedError('SR q MPI only admits the unadapted SR q-batch source')
+        return _q_executor(
+            system=system, basis=basis, auxiliary=auxiliary, kpoints=kpoints, groups=groups,
+            source_signature=_range_separated_gdf_source_signature(system, basis, auxiliary),
+            source_parameters=(float(omega), float(pair_cutoff), float(auxiliary_cutoff),
+                               float(ke_cutoff), float(linear_dep_thr), int(image_candidate_cap),
+                               int(reciprocal_candidate_cap), float(integral_screen_error)),
+            requested_controls=requested_controls, cache_reservation=cache_reservation,
+            memory_byte_cap=memory_byte_cap, native_workspace_byte_cap=native_workspace_byte_cap,
+            image_candidate_cap=image_candidate_cap, reciprocal_candidate_cap=reciprocal_candidate_cap)
+
     from .periodic_mdf import _MdfScfSource, _build_mdf_cache
 
     if isinstance(pair_cache_builder, _MdfScfSource):
@@ -1616,6 +1846,7 @@ def _build_range_separated_lpq_cache(
     )
 
 
+@collective_sr_q_cache
 def _build_scf_range_separated_lpq_cache(
     system, basis, auxiliary, kpoints_cart, need_k_pairs, *,
     omega, raw_integral_error, ke_cutoff, linear_dep_thr, lat_opts,
@@ -1623,7 +1854,7 @@ def _build_scf_range_separated_lpq_cache(
     oneel_lattices=(), xc_grid=None, xc_cells=(), functional=None,
     xc_density_domain=PeriodicXCDensityDomain.AUTO,
     compute_gradient=False, density_return_bytes=0,
-    pair_cache_builder=None,
+    pair_cache_builder=None, _q_executor=None,
 ):
     """Shared bulk SCF fit policy for Gamma and general k-point drivers.
 
@@ -1692,7 +1923,12 @@ def _build_scf_range_separated_lpq_cache(
                                  if k != 'Python runtime + NumPy overhead')
             xc_bytes = max(xc_bytes, gradient_bytes)
     scf_bytes += retained_oneel + xc_bytes + int(density_return_bytes)
-    cap = int(available_memory_bytes() / estimate.headroom_factor) - scf_bytes
+    if _q_executor is None:
+        cap = int(available_memory_bytes() / estimate.headroom_factor) - scf_bytes
+    else:
+        available_host = available_memory_bytes()
+        rank_count = _q_executor.world_size
+        cap = int(available_host / estimate.headroom_factor / rank_count) - scf_bytes
     if cap <= 0:
         raise MemoryError('periodic GDF SCF state exceeds the available memory budget')
     from ._vibeqc_core import get_num_threads, gdf_short_range_workspace_bytes
@@ -1718,8 +1954,16 @@ def _build_scf_range_separated_lpq_cache(
         image_candidate_cap=10_000_000, reciprocal_candidate_cap=10_000_000,
         integral_screen_error=float(fit_screen_threshold), bra_rows=bra_rows,
         pair_cache_builder=pair_cache_builder,
+        **({"_q_executor": _q_executor} if _q_executor is not None else {}),
     )
-    if progress is not None:
+    if _q_executor is not None:
+        result['scf_memory_admission'] = dict(
+            available_host_bytes=int(available_host), world_size=rank_count,
+            headroom_factor=float(estimate.headroom_factor),
+            retained_scf_and_oneel_bytes=int(scf_bytes),
+            retained_oneel_bytes=int(retained_oneel), xc_bytes=int(xc_bytes),
+            source_cap_bytes=int(cap))
+    if progress is not None and _q_executor is None:
         from .periodic_mdf import _MdfCache
 
         if isinstance(result, _MdfCache):
@@ -1738,6 +1982,119 @@ def _build_scf_range_separated_lpq_cache(
     return result
 
 
+@dataclass
+class RSGDFFitCache:
+    """The classic RSGDF multi-k per-pair fit, retained for reuse.
+
+    Built by :func:`run_krhf_periodic_gdf` (``retain_fit_cache=True``) after
+    its ``lpq_cache`` is complete: every ``(k_i, k_j)`` cderi the SCF
+    contracted, in the compact **eigenmode frame** the driver uses
+    (``L_eig = diag(λ^-1/2) U_keep^H T``), plus the per-``q`` metric
+    eigensystems the frame comes from. :meth:`canonical_pair` rotates a pair
+    back to the canonical auxiliary frame (``L_can = U_keep · L_eig``, the
+    ``canonical_auxiliary_basis=True`` object of
+    :func:`~vibeqc.aux_basis.build_lpq_bloch_native_fft`), which is what the
+    real-Γ fold contracts across bra momenta
+    (:func:`~vibeqc.periodic.ccm.neutral.ccm_neutral_cderi_fold`,
+    ``fit_cache``). The fit parameters are recorded so a consumer can refuse
+    a cache fit at a different operator.
+    """
+
+    system: object
+    kpoints_cart: np.ndarray
+    pairs: dict
+    q_metric: dict
+    ke_cutoff: float
+    tail_ke_cutoff: Optional[float]
+    lat_cutoff_bohr: float
+    linear_dep_thr: float
+    fit_screen_threshold: float
+    aux_basis_name: str
+    n_aux: int
+    n_ao: int
+    need_k_pairs: bool
+    frame: str = "eigenmode"
+
+    def q_key(self, i: int, j: int) -> tuple:
+        from .aux_basis import _canonical_reciprocal_transfer
+
+        q = _canonical_reciprocal_transfer(
+            self.system,
+            np.asarray(self.kpoints_cart[j]) - np.asarray(self.kpoints_cart[i]),
+        )
+        return tuple(float(v) for v in np.round(q, 14))
+
+    def canonical_pair(self, i: int, j: int) -> np.ndarray:
+        """``L_{k_i, k_j}`` in the canonical auxiliary frame, ``(n_aux, n, n)``."""
+        L = np.asarray(self.pairs[(int(i), int(j))])
+        if self.frame == "canonical":
+            return L
+        entry = self.q_metric[self.q_key(i, j)]
+        U = np.asarray(entry.eigvecs)[:, np.asarray(entry.keep)]
+        if U.shape[1] != L.shape[0]:
+            raise ValueError(
+                "RSGDFFitCache: eigenmode rank of pair "
+                f"{(i, j)} ({L.shape[0]}) does not match its q-metric "
+                f"({U.shape[1]} kept modes)")
+        return (U @ L.reshape(L.shape[0], -1)).reshape(U.shape[0], L.shape[1], L.shape[2])
+
+
+def _retain_rsgdf_fit_cache(
+    system, basis, aux_name, aux_modrho, kpoints_cart, lpq_cache, q_metric_cache,
+    *, ke_cutoff, tail_ke_cutoff, lat_opts, linear_dep_thr,
+    fit_screen_threshold, need_k_pairs, plog, frame="eigenmode",
+):
+    """An :class:`RSGDFFitCache` for the classic per-pair cache, else ``None``.
+
+    Only the classic RSGDF path (a plain ``dict`` of pairs whose q-state
+    entries are :class:`~vibeqc.aux_basis._RsgdfQMetricCacheEntry`) is
+    retained; the SR/LR engine's admitted cache, the private MDF source and
+    the compcell builder produce other objects, and the Γ fast path never
+    reaches this point. The reason is logged, never silent.
+
+    ``frame`` names the frame the driver built its pairs in: ``"eigenmode"``
+    (the compact driver frame, rotated by :meth:`RSGDFFitCache.canonical_pair`)
+    or ``"canonical"`` (the classic source under an explicit
+    ``fit_source="classic"`` builds with ``canonical_auxiliary_basis=True``,
+    vibe-qc #378, and its pairs are handed out as they are; rotating them
+    would fail the rank check whenever the canonical and eigenmode ranks
+    differ, as they do on LiH/STO-3G (2,2,2): 69 against 62).
+    """
+    from .aux_basis import _RsgdfQMetricCacheEntry
+
+    if type(lpq_cache) is not dict or not lpq_cache:
+        plog.info(
+            "fit cache not retained: the cderi source is "
+            f"{type(lpq_cache).__name__}, not the classic RSGDF per-pair cache")
+        return None
+    if not q_metric_cache or not all(
+            isinstance(v, _RsgdfQMetricCacheEntry) for v in q_metric_cache.values()):
+        plog.info("fit cache not retained: no RSGDF q-metric eigensystems to "
+                  "rotate the eigenmode frame with")
+        return None
+    cache = RSGDFFitCache(
+        system=system,
+        kpoints_cart=np.asarray(kpoints_cart, dtype=float).copy(),
+        pairs=dict(lpq_cache),
+        q_metric=dict(q_metric_cache),
+        ke_cutoff=float(ke_cutoff),
+        tail_ke_cutoff=(None if tail_ke_cutoff is None else float(tail_ke_cutoff)),
+        lat_cutoff_bohr=float(lat_opts.cutoff_bohr),
+        linear_dep_thr=float(linear_dep_thr),
+        fit_screen_threshold=float(fit_screen_threshold),
+        aux_basis_name=str(aux_name),
+        n_aux=int(aux_modrho.nbasis),
+        n_ao=int(basis.nbasis),
+        need_k_pairs=bool(need_k_pairs),
+        frame=str(frame),
+    )
+    plog.info(
+        f"fit cache retained on the result: {len(cache.pairs)} pairs, "
+        f"{len(cache.q_metric)} q-metrics ({cache.frame} frame; "
+        "RSGDFFitCache.canonical_pair serves the canonical frame)")
+    return cache
+
+
 def _build_rsgdf_lpq_cache_shared_q(
     system,
     basis,
@@ -1753,6 +2110,7 @@ def _build_rsgdf_lpq_cache_shared_q(
     progress,
     q_metric_cache: Optional[dict],
     bra_rows: Optional[Sequence[int]] = None,
+    canonical_auxiliary_basis: bool = False,
 ) -> Dict[Tuple[int, int], np.ndarray]:
     """RSGDF per-pair Lpq cache with shared-q batched pair-FT passes.
 
@@ -1850,6 +2208,7 @@ def _build_rsgdf_lpq_cache_shared_q(
             fit_screen_threshold=float(fit_screen_threshold),
             progress=progress,
             _q_metric_cache=q_metric_cache,
+            canonical_auxiliary_basis=canonical_auxiliary_basis,
         )
         local_built.append((group_pairs, lpq_list))
 
@@ -1916,7 +2275,14 @@ def _wrap_gamma_gdf_result(
         occupations=[np.asarray(getattr(gamma, "occupations", np.empty(0)))],
         aux_basis_name=str(getattr(gamma, "aux_basis_name", "") or ""),
         n_aux=int(getattr(gamma, "n_aux", 0)),
+        # Both Γ delegates that reach this adapter contract J/K from the one
+        # Γ fit whose row count they record as ``n_fit`` (the legacy driver's
+        # EWALD_3D J/K branch is dim=3 only and never wrapped here).
+        gdf_cderi_pairs=1 if int(getattr(gamma, "n_fit", 0) or 0) > 0 else 0,
         backend=_backend,
+        # The inner driver's own declaration: exxdiv='ewald' from the exact
+        # Gamma driver, molecular-limit from the legacy dim < 3 driver.
+        exchange_q0=executed_exchange_q0_or_none(gamma),
         rsgdf_tail_ke_cutoff=getattr(gamma, "rsgdf_tail_ke_cutoff", None),
         rsgdf_ke_cutoff=float(getattr(gamma, "rsgdf_ke_cutoff", 200.0)),
         # The pure PBC-GDF Γ fast path computes the analytic gradient
@@ -1996,19 +2362,14 @@ def _run_closed_shell_slab_gdf(
             "custom, shifted, weighted, and symmetry-reduced meshes remain "
             "fail-closed"
         )
-    mesh_raw = np.asarray(list(kmesh), dtype=float)
-    if mesh_raw.shape == (2,):
-        mesh_raw = np.concatenate((mesh_raw, np.ones(1, dtype=float)))
-    if (
-        mesh_raw.shape != (3,)
-        or not np.all(np.isfinite(mesh_raw))
-        or not np.all(mesh_raw == np.rint(mesh_raw))
-        or np.any(mesh_raw < 1)
-    ):
+    mesh_raw = _integer_counts(kmesh, name="slab GDF mesh")
+    if len(mesh_raw) == 2:
+        mesh_raw.append(1)
+    if len(mesh_raw) != 3 or any(value < 1 for value in mesh_raw):
         raise ValueError(
             "slab GDF requires a positive integer (n1,n2,1) mesh"
         )
-    mesh = tuple(int(value) for value in np.rint(mesh_raw))
+    mesh = tuple(mesh_raw)
     if mesh[2] != 1:
         raise ValueError("slab GDF requires kmesh=(n1,n2,1)")
     if float(aux_drop_eta) != 0.0:
@@ -2157,6 +2518,7 @@ def _run_closed_shell_slab_gdf(
         occupations=occupations,
         aux_basis_name=str(slab.aux_basis_name),
         n_aux=int(slab.n_aux),
+        gdf_cderi_pairs=int(slab.gdf_cderi_pairs),
         backend=(
             "native-multik-slab-truncated-gdf-rks"
             if functional
@@ -2295,9 +2657,9 @@ def _mesh_tuple_for_system(
                 "periodic GDF: this operation requires structured k-mesh "
                 "metadata; explicit unstructured k-points are insufficient"
             )
-        arr = list(mesh_metadata)
+        arr = _integer_counts(mesh_metadata, name="periodic GDF kmesh")
     else:
-        arr = list(mesh)
+        arr = _integer_counts(mesh, name="periodic GDF kmesh")
     if len(arr) == dim:
         arr = arr + [1] * (3 - dim)
     elif len(arr) != 3:
@@ -2305,7 +2667,7 @@ def _mesh_tuple_for_system(
             f"periodic GDF: kmesh tuple must have length {dim} for "
             f"dim={dim} systems or length 3; got {arr!r}"
         )
-    out = tuple(int(x) for x in arr)
+    out = tuple(arr)
     if any(x < 1 for x in out):
         raise ValueError(f"periodic GDF: kmesh entries must be >= 1; got {arr!r}")
     return tuple(out[i] if i < dim else 1 for i in range(3))
@@ -2369,9 +2731,10 @@ def _expand_ibz_kmesh_to_full_bz(
     else:
         n_reduced = int(np.asarray(kmesh.kpoints).reshape(-1, 3).shape[0])
     _mesh_raw = getattr(kmesh, "mesh", None)
-    mesh_meta = tuple(
-        int(x) for x in ((1, 1, 1) if _mesh_raw is None else _mesh_raw)
-    )
+    mesh_meta = tuple(_integer_counts(
+        (1, 1, 1) if _mesh_raw is None else _mesh_raw,
+        name="IBZ parent mesh",
+    ))
     # The native BlochKMesh calls the half-step shift flags ``is_shift``;
     # the Python KPoints dataclass calls them ``shift``. Reading only
     # ``is_shift`` silently expanded a shifted KPoints reduction against
@@ -2598,6 +2961,21 @@ def _normalise_initial_density_k(
     return out
 
 
+def _gaussian_fit_image_pairs(kpoints_cart, need_k_pairs: bool):
+    """Shared auxiliary-image batch for the compcell/MDF pair builders.
+
+    Returns ``(cache, pairs)`` in the pair order the Lpq loops request, so
+    :func:`vibeqc.aux_basis.aux_image_3c` runs once per SCF rather than once
+    per k pair (#172).
+    """
+    kpoints = [np.asarray(k, dtype=float) for k in kpoints_cart]
+    if need_k_pairs:
+        pairs = [(ki, kj) for ki in kpoints for kj in kpoints]
+    else:
+        pairs = [(ki, ki) for ki in kpoints]
+    return {}, pairs
+
+
 def _madelung_for_kmesh(system: PeriodicSystem, mesh: Sequence[int]) -> float:
     """k-mesh-aware Ewald-Madelung constant ``ξ`` for the exxdiv shift.
 
@@ -2734,6 +3112,7 @@ def _build_xc_k_from_density(
     kpoints_cart: Sequence[np.ndarray],
     lat_opts: LatticeSumOptions,
     density_domain: PeriodicXCDensityDomain = PeriodicXCDensityDomain.AUTO,
+    diagnostics: Optional[dict] = None,
 ) -> tuple[float, List[np.ndarray]]:
     """Build periodic XC from the full finite-torus density.
 
@@ -2760,6 +3139,7 @@ def _build_xc_k_from_density(
         lat_opts,
         density_domain,
     )
+    record_xc_grid_charge(diagnostics, xc_contrib)
     vxc_k: List[np.ndarray] = []
     for k_cart in kpoints_cart:
         vk = np.asarray(
@@ -2807,6 +3187,7 @@ def _build_xc_k_from_density_uks(
     kpoints_cart: Sequence[np.ndarray],
     lat_opts: LatticeSumOptions,
     density_domain: PeriodicXCDensityDomain = PeriodicXCDensityDomain.AUTO,
+    diagnostics: Optional[dict] = None,
 ) -> tuple[float, List[np.ndarray], List[np.ndarray]]:
     """Open-shell sibling of :func:`_build_xc_k_from_density`.
 
@@ -2843,6 +3224,7 @@ def _build_xc_k_from_density_uks(
         lat_opts,
         density_domain,
     )
+    record_xc_grid_charge(diagnostics, xc_contrib)
     va_k: List[np.ndarray] = []
     vb_k: List[np.ndarray] = []
     for k_cart in kpoints_cart:
@@ -2854,6 +3236,7 @@ def _build_xc_k_from_density_uks(
     return float(xc_contrib.e_xc), va_k, vb_k
 
 
+@collective_sr_q_preflight
 def _preflight_gdf_lpq_memory(
     plog,
     *,
@@ -2937,13 +3320,12 @@ def _reject_slab_dim(system: PeriodicSystem, entry: str) -> None:
     this guard to the dedicated signed slab-truncated metric; open-shell GDF
     continues to stop here.
 
-    ``dim == 1`` is deliberately NOT rejected. There is no rigorous 1-D Coulomb
-    gauge yet (``CoulombMethod.NEUTRALIZED_1D`` still raises), so the
-    cached-Lpq GDF Hartree is the *supported* polymer/wire route -- see
-    ``5fe4d021`` ("Lpq Hartree for multi-k dim<3 KS"), which fixed the dim=1
-    H2-chain from -3.0897 to the variational -3.89 Ha/cell. Guarding ``dim != 3``
-    here would silently revert that fix. Only the slab has a rigorous vacuum-free
-    alternative to redirect users to, so only the slab fails closed.
+    ``dim == 1`` is not rejected here. The k-mesh drivers refuse it later, in
+    :func:`vibeqc.periodic_rhf_gdf._gauge_lat_opts_for_v_ne_and_e_nuc` (no
+    consistent Coulomb gauge for ``dim < 3``, since 2026-07-10), which names
+    the wire route instead. The cached-Lpq dim=1 Hartree of ``5fe4d021`` was
+    not a Coulomb kernel on vacuum-padded cells, so it is no longer a
+    supported polymer/wire route.
     """
     dim = int(system.dim)
     if dim == 2:
@@ -2979,38 +3361,32 @@ def _warn_multik_dense_core_gdf_parity_hold(
     (the same shared-thresholds floor as the Γ ladder) at ~40x the untailed
     build cost per (k_i,k_j) pair.
 
-    **Which multi-k routes auto-size the tail (IID 518).** Pure DFT
-    (``alpha == 0``) on ``dim=3`` DOES, from ``run_krhf_periodic_gdf``,
-    which resolves ``pbc_gdf._auto_rsgdf_tail_ke_cutoff`` before calling
-    this helper -- so a dense-core KRKS run arrives here already tailed
-    and is NOT tagged. That branch is the one case where the 40x cost
-    argument is inverted by measurement: it does not add a tail to an
-    existing GDF J, it replaces the real-space EWALD_3D J outright, and
-    the tailed run is 8x FASTER (593 s vs 4848 s on MgO/STO-3G (2,2,2),
-    IID 146) while closing -1032.5 mHa of error vs PySCF and CRYSTAL 23.
+    **Which multi-k routes reach this helper.** None auto-sizes the tail.
+    The SR/LR source (``bulk_sr``, the dim=3 ``gdf_method='rsgdf'`` default
+    of the closed- and open-shell k-mesh drivers) has no exponent-scaled
+    reciprocal tail and does not call this helper, so it is never tagged.
+    The explicit classic source and the compcell/MDF fits do call it, but
+    only the classic rsgdf fit can be held: the classifier never holds
+    compcell or MDF (MDF's compact dense-core refusal was lifted with the
+    auxiliary-image sum of #172). On the classic fit a tail is genuine
+    added cderi cost at n_k^2 pair builds, a production-scale cost the
+    caller must opt into, so it warns and tags instead of silently
+    returning the un-tailed value. (IID 518 once
+    auto-sized the tail for pure DFT on dim=3, where the tailed fit replaced
+    the unfitted EWALD_3D J and was 8x faster than it on MgO/STO-3G (2,2,2)
+    while closing -1032.5 mHa vs PySCF and CRYSTAL 23. The SR/LR source
+    retired that route, and the EWALD_3D J was removed from the k-mesh
+    driver with #415.)
 
-    Every OTHER multi-k route -- KRHF, hybrids, and both open-shell
-    drivers (KUHF / KUKS, which have no ``use_compcell`` and always ride
-    the cached-Lpq GDF J) -- still does NOT auto-size: for them the tail
-    is genuine added cderi cost at n_k^2 pair builds, a production-scale
-    cost the caller must opt into. Those warn + tag instead of silently
-    returning the un-tailed value, and whether THEY should auto-tail by
-    default remains an open maintainer call (see HANDOVER_OPEN_BUGS_V015
-    production-k-sampling section). One visible consequence: on a
-    dense-core cell a KUKS(M=1) run does not reproduce its KRKS twin,
-    and is tagged ``+PARITY_HELD`` where the KRKS run is not.
+    The neutral Gamma-CCM producers pin the classic fit and, since
+    2026-09-30, pass their unit-cell tail explicitly at every mesh
+    (``ccm_neutral_tail_ke_cutoff``), so this hold no longer fires on them.
     """
     from .pbc_gdf import (
         _RSGDF_PARITY_TAIL_RATIO,
         _gamma_dense_core_gdf_parity_held,
-        _reject_dense_core_mdf,
     )
 
-    # mdf on the compact-dense-core class fails closed (measured
-    # non-convergent at -11741 Ha on MgO/STO-3G (1,1,2); the rsgdf tail
-    # remediation in the warning below does not exist for mdf). Both
-    # multi-k drivers pass through this helper before the cderi build.
-    _reject_dense_core_mdf(system, gdf_method, basis, entry)
     held = _gamma_dense_core_gdf_parity_held(
         system,
         gdf_method,
@@ -3031,6 +3407,79 @@ def _warn_multik_dense_core_gdf_parity_hold(
             stacklevel=3,
         )
     return held
+
+
+def _resolve_multik_use_compcell(
+    use_compcell: bool,
+    *,
+    bulk_sr: bool,
+    fit_source: str,
+    alpha: float,
+    gdf_method: str,
+) -> Tuple[bool, Optional[str]]:
+    """Whether the closed-shell multi-k SCF builds the cached-Lpq fit.
+
+    The one statement of :func:`run_krhf_periodic_gdf`'s ``use_compcell``
+    promotion. The driver evaluates it once, before the gradient envelope,
+    and the envelope and the fit build both read that answer. The envelope
+    used to re-derive it as ``bulk_sr or use_compcell or alpha > 0``, a
+    partial copy of the rules (the CCM pair accounting had the same kind of
+    copy and now reads ``PeriodicKRHFGDFResult.gdf_cderi_pairs``). Change
+    the promotion here, never at a call site.
+
+    Every closed-shell k-mesh run contracts its Coulomb J (and exchange K)
+    from the cached fit of its ``gdf_method``: the driver has no unfitted
+    Hartree since #415 removed the ``use_compcell=False`` EWALD_3D J/K
+    branch, so the answer is always ``True``. An explicit ``False`` cannot
+    be refused either: ``use_compcell`` defaults to False, so a caller who
+    passed False is indistinguishable from one who said nothing. The driver
+    says why in the log instead (a silent override is what let a regression
+    test be written against a premise the route never had, #275; the logged
+    promotion is #284).
+
+    Returns ``(use_compcell, note)``: the effective flag, and the log line
+    naming the rule that overrode ``use_compcell=False`` (``None`` when the
+    caller asked for the fit). The first rule that applies names it:
+
+    * dim=3 ``'rsgdf'``: the SR/LR source (``bulk_sr``), or the explicit
+      classic source. This is the shipped default, so the usual case.
+    * HF/hybrid on ``'mdf'``/``'compcell'``: the exxdiv Madelung K-shift
+      lives only on the fitted-K path; the old Ewald-3D-K builder omitted
+      it (+17 Ha on sparse meshes). [Maintainer decision 2026-06-04.]
+    * pure DFT on an explicit ``'mdf'``/``'compcell'``: build the requested
+      fit. It used to be silently ignored: MgO/def2-SVP RKS-PBE (4,4,4) on
+      mdf never reached ``build_lpq_bloch_mdf`` (found on #172).
+      [Maintainer decision 2026-09-29: promote, not refuse.]
+
+    Pure DFT on ``'rsgdf'`` below dim=3 gets no note. No such run reaches
+    the log site: dim=2 leaves through the slab route and dim=1 fails
+    closed in ``_gauge_lat_opts_for_v_ne_and_e_nuc``. The old dim < 3 and
+    ``rsgdf_tail_ke_cutoff`` rules, which named the EWALD_3D J they avoided,
+    could not fire there either and were dropped with #415.
+    """
+    if use_compcell:
+        return True, None
+    if bulk_sr or fit_source == "classic":
+        return True, (
+            "multi-k bulk short-range GDF (gdf_method='rsgdf', dim=3): "
+            "routing to the cached-Lpq GDF Hartree, so J is the fitted "
+            "one, not the analytic EWALD_3D J. use_compcell=False is not "
+            "available on this route."
+        )
+    if alpha > 0.0:
+        return True, (
+            "multi-k HF/hybrid exchange: routing to the compcell GDF path "
+            "with exxdiv='ewald' (the use_compcell=False Ewald-3D-K path "
+            "omits the exxdiv Madelung exchange-divergence correction)."
+        )
+    if gdf_method != "rsgdf":
+        return True, (
+            f"multi-k pure-DFT with gdf_method={gdf_method!r}: routing to "
+            "the cached-Lpq GDF Hartree built by that fit (the default "
+            "EWALD_3D J builds no cderi; the requested fit would "
+            "otherwise be silently ignored)."
+        )
+    return True, None
 
 
 def _reject_unsupported_multik_gradient(
@@ -3152,10 +3601,15 @@ def _reject_unsupported_multik_gradient(
             "not the differentiated Lpq contraction."
         )
     if not use_compcell_effective:
+        # The driver's resolved flag (_resolve_multik_use_compcell), never a
+        # re-derivation of the promotion rules at the call site. Since #415
+        # every closed-shell k-mesh run resolves to the fit, so no public
+        # input reaches this; it stays as the fail-closed backstop for any
+        # future route that builds no fit.
         raise NotImplementedError(
             f"{entry}: compute_gradient requires the cached-Lpq GDF SCF "
-            "(use_compcell=True): the use_compcell=False Ewald-3D J/K "
-            "path has no rsgdf fit to differentiate."
+            "(use_compcell=True): the driver did not resolve this run to "
+            "a fit, so there is no rsgdf fit to differentiate."
         )
     if dft_plus_u_sites:
         raise NotImplementedError(
@@ -3351,9 +3805,10 @@ def run_krhf_periodic_gdf(
     rcut_precision: float = 1e-8,
     k_exchange: str = "gdf",
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     fit_screen_threshold: float = 0.0,
     mdf_ke_cutoff: float = 40.0,
@@ -3375,16 +3830,19 @@ def run_krhf_periodic_gdf(
     progress: Union[bool, ProgressLogger, None] = None,
     verbose: Optional[int] = None,
     _lpq_cache_builder=None,
+    retain_fit_cache: bool = False,
     xc_density_domain: PeriodicXCDensityDomain = (
         PeriodicXCDensityDomain.AUTO
     ),
 ) -> PeriodicKRHFGDFResult:
     """Run closed-shell periodic HF / KS multi-k SCF via native GDF.
 
-    For a single Γ point this delegates to
-    :func:`vibeqc.run_rhf_periodic_gamma_gdf` (kept in lock-step with
-    the multi-k path); for any other ``kmesh`` it runs the full
-    multi-k loop here.
+    A bulk Γ mesh is the one-point mesh of this engine. With the default
+    SR/LR fit it always runs the k-mesh loop here; with ``gdf_method``
+    ``'compcell'`` or ``'mdf'`` a request that
+    :func:`vibeqc.run_pbc_gdf_rhf` implements completely is handed to that
+    exact-Gamma driver, and any other runs the loop here at Nk=1. Only a
+    dim < 3 Γ mesh uses :func:`vibeqc.run_rhf_periodic_gamma_gdf`.
 
     For ``system.dim == 2``, this entry selects the dedicated signed
     slab-truncated fit on a full Gamma-centered ``(n1,n2,1)`` tuple mesh.
@@ -3446,8 +3904,14 @@ def run_krhf_periodic_gdf(
         Override the resolver-resolved CRYSTAL FMIXING fraction.
     level_shift_warmup_cycles
         Override the resolver-resolved level-shift warm-up length.
+    use_compcell
+        Has no effect on a k-mesh: every closed-shell multi-k run builds
+        the cached fit of its ``gdf_method``, and an explicit ``False`` is
+        overridden with a log line (#284, #415). At a bulk Γ mesh ``True``
+        skips the delegation to :func:`vibeqc.run_pbc_gdf_rhf` and runs the
+        k-mesh engine at Nk=1. ``k_exchange='cosx'`` requires ``True``.
     k_exchange
-        Exchange backend on the ``use_compcell=True`` path:
+        Exchange backend of the cached-fit multi-k path:
         ``'gdf'`` (default) contracts the cached per-(k_i, k_j) Lpq
         tensors -- O(N_k^2) pair contractions per iteration; ``'cosx'``
         (**EXPERIMENTAL**) builds K via the real-space multi-k COSX
@@ -3466,33 +3930,43 @@ def run_krhf_periodic_gdf(
         Fock (see below); a runtime warning documents the remaining
         experimental status (dense-mesh SCF convergence -- M3b-4c).
     gdf_method
-        Lpq builder for the ``use_compcell=True`` cache: ``'rsgdf'``
+        Lpq builder for the multi-k fit cache: ``'rsgdf'``
         (default -- the (k_i,k_j)-ket-resolved all-FT Bloch-pair route,
         :func:`vibeqc.aux_basis.build_lpq_bloch_native_fft`; validated
         at µHa parity vs PySCF on LiH FCC (2,2,2),
         handovers/HANDOVER_GDF_OUTSTANDING.md Sec. 1) or ``'compcell'`` (Sun-2017
-        compensated charges + AFT correction -- q-only cderi, exact
-        only in the vacuum-box limit; catastrophically wrong on tight
-        ionic cells, the M3b-5 finding #1 / the -2495 Ha class -- keep
-        it off the default until the compcell builder is
-        pair-resolved). The RSGDF route is also the consistent partner
+        compensated charges + AFT correction; pair-resolved and summed
+        over the auxiliary images since 2026-09-29, #172 -- before that
+        it was q-only and catastrophically wrong on tight ionic cells,
+        the M3b-5 finding #1 / the -2495 Ha class) or ``'mdf'`` (mixed
+        density fitting, :func:`vibeqc.aux_basis.build_lpq_bloch_mdf`).
+        A multi-k run always builds this cache with the requested method:
+        a pure-DFT dim=3 run with an explicit ``'compcell'`` or ``'mdf'``
+        promotes ``use_compcell=False`` like the default ``'rsgdf'`` does
+        (it used to stay on the EWALD_3D J, which builds no fit, so the
+        method was silently ignored). The RSGDF route is also the consistent partner
         for ``k_exchange='cosx'`` (single-gauge pairing, M3b-4c).
+    fit_source
+        ``'auto'`` preserves existing source selection. Explicit ``'classic'``
+        selects the shared-q FFT source in a canonical modrho frame and retains
+        its factors for compatible correlation consumers. Explicit ``'sr'``
+        selects the existing SR/LR source. Explicit selection requires 3D
+        RSGDF and excludes private adapters. These are different finite fits,
+        not alternative exact representations of one fitted operator.
     rsgdf_ke_cutoff
-        Dense-FFT-mesh kinetic-energy cutoff (Ha) for
-        ``gdf_method='rsgdf'`` (default 200).
+        Base reciprocal kinetic-energy cutoff (Ha). ``None`` (default)
+        requests nothing: the 3D SR/LR source uses the cutoff its planner
+        resolves from the raw integral error target, and routes without a
+        planner use the legacy 200 Ha mesh. An explicit value is a lower
+        bound on the SR/LR planner's cutoff and the mesh of the other
+        routes. The executed descriptor records the resolved domain.
     rsgdf_tail_ke_cutoff
-        Optional high-|G| tail completion (Ha) for the rsgdf cderi:
-        extends the fit's 2c-metric and 3c-tensor G-sums over the exact
-        complementary reciprocal shell, needed on dense-core cells
-        (P01/MgO class) whose tight AO products are unresolved at any
-        affordable base mesh; a parity-sized tail
-        (``>= _RSGDF_PARITY_TAIL_RATIO x zeta_max``) lifts the
-        ``+PARITY_HELD`` tag. rsgdf-only (any other ``gdf_method``
-        fails closed). Setting it on a pure-DFT dim=3 multi-k run
-        routes the Hartree through the cached-Lpq GDF J (the same
-        tail-consuming machinery HF/hybrids ride) instead of the
-        default EWALD_3D J, which builds no cderi and cannot consume a
-        tail (IID 146); ``None`` (default) keeps the EWALD_3D routing.
+        Optional complementary reciprocal shell for the classic RSGDF source.
+        The SR/LR source warns and clears this inactive setting. Requested and
+        executed values remain separate in the source metadata. Explicit
+        classic selection uses its cached fitted J for pure DFT as well as
+        HF/hybrids and does not inherit a Gamma auto-tail. A tail is support
+        selection, not numerical qualification.
     fit_screen_threshold
         Cauchy-Schwarz pre-screen of the three-centre GDF fit on the
         ``gdf_method='rsgdf'`` path (default ``0.0`` = off, exact). AO
@@ -3525,8 +3999,8 @@ def run_krhf_periodic_gdf(
         DF-K over all q groups, exxdiv W-shift, XC Pulay for KS) --
         full-SCF FD gates on H2 (2,1,1) sit at 1.1e-8 (KRHF) /
         4.1e-10 (KRKS lda) / 1.5e-8 (KRKS pbe0) Ha/bohr. Supported
-        envelope: 3D cells, ``gdf_method='rsgdf'`` with the cached-Lpq
-        SCF (``use_compcell=True``; HF/hybrids promote automatically),
+        envelope: 3D cells, ``gdf_method='rsgdf'`` (every multi-k run
+        uses the cached-Lpq SCF, pure DFT included),
         uniform full-BZ meshes, T = 0 Aufbau occupations OR
         finite-temperature Fermi-Dirac smearing (the gradient is then
         dA/dR of the reported Mermin ``free_energy = E - T.S`` at the
@@ -3539,10 +4013,12 @@ def run_krhf_periodic_gdf(
         IBZ/custom-weight k-points, range-separated functionals,
         ``k_exchange='cosx'``, and DFT+U raise
         ``NotImplementedError`` naming the reason
-        (:func:`_reject_unsupported_multik_gradient`). Γ-only tuple
-        meshes delegate the gradient to
-        :func:`vibeqc.run_pbc_gdf_rhf` on the pure Γ fast path and
-        fail closed on the legacy molecular-limit fallback. On a
+        (:func:`_reject_unsupported_multik_gradient`). The engine that
+        runs the SCF computes the gradient: at a bulk Γ mesh that is
+        this loop at Nk=1 on the default SR/LR fit, or
+        :func:`vibeqc.run_pbc_gdf_rhf` when a compcell/mdf request is
+        handed to that exact-Gamma driver. The legacy molecular-limit
+        fallback fails closed. On a
         ``dim=2`` slab the dedicated route assembles the slab analytic
         gradient instead (G-PBC-002 § 6: bare 2D-Ewald nn + slab V_ne
         + S/T/W folds + signed-fit DF-J/K + BvK probe-charge W-shift,
@@ -3559,7 +4035,26 @@ def run_krhf_periodic_gdf(
         see :func:`_check_energy_sanity`.
     progress, verbose
         Live progress logging passthrough.
+    retain_fit_cache
+        ``True`` keeps the classic RSGDF per-pair fit on the result
+        (``result.fit_cache``, an :class:`RSGDFFitCache`: every ``(k_i, k_j)``
+        cderi in the eigenmode frame plus the ``M(q)`` eigensystems) instead
+        of freeing it after the SCF, so a second consumer in the same process
+        -- the real-Γ Γ-CCM producer's fold -- can reuse the fit rather than
+        rebuild it (2026-09-24). ``None`` is recorded, with the reason
+        logged, on the Γ fast path, the SR/LR engine and the MDF/compcell
+        sources. Off by default: it is memory the SCF would otherwise free.
     """
+
+    from .periodic_fit_source import resolve_fit_source, RSGDFFitRequest, attach_fit_source
+    selected_fit_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if fit_source != "auto" and _lpq_cache_builder is not None:
+        raise NotImplementedError("explicit fit_source cannot be combined with a private fit adapter")
+    if fit_source == "classic" and compute_gradient:
+        raise NotImplementedError("explicit classic fit gradients are not supported")
+    _rsgdf_ke_request, rsgdf_ke_cutoff = _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff)
+    fit_request = RSGDFFitRequest(fit_source, rsgdf_ke_cutoff, rsgdf_tail_ke_cutoff)
     from .periodic_mdf import _MdfScfSource
 
     private_mdf = isinstance(_lpq_cache_builder, _MdfScfSource)
@@ -3693,17 +4188,11 @@ def run_krhf_periodic_gdf(
     plog = resolve_progress(progress, verbose=verbose)
 
     # ---------------- Γ fast path ----------------------------------
-    # The Γ-fast-path delegates to run_rhf_periodic_gamma_gdf which
-    # short-circuits J/K to Ewald-3D + molecular-limit-K on dim=3
-    # (it doesn't have a compcell option). For Γ-only compcell SCF,
-    # users should call ``vibeqc.run_pbc_gdf_rhf`` directly -- the
-    # Γ-only driver that uses Lpq for both J and K. We attempted to
-    # skip this fast path when use_compcell=True and fall through to
-    # the multi-k branch with n_k=1, but the multi-k SCF loop's
-    # per-k weighting doesn't degenerate cleanly to Γ-only
-    # (gives ~5x incorrect energy on H2). Keeping the fast path means
-    # ``use_compcell=True`` at ``kmesh=(1,1,1)`` is silently ignored
-    # -- surfaced via a warning so users know to switch drivers.
+    # On the default dim=3 SR/LR fit a Γ mesh is the Nk=1 mesh of the loop
+    # below (gamma_info stays None). A bulk Γ mesh on gdf_method compcell or
+    # mdf hands a request run_pbc_gdf_rhf implements completely to that
+    # exact-Gamma driver and runs any other at Nk=1 here. Only dim < 3
+    # reaches the legacy molecular-limit run_rhf_periodic_gamma_gdf.
     if k_exchange not in ("gdf", "cosx"):
         raise ValueError(
             f"run_krhf_periodic_gdf: k_exchange must be 'gdf' or "
@@ -3713,14 +4202,14 @@ def run_krhf_periodic_gdf(
         raise ValueError(
             "run_krhf_periodic_gdf: k_exchange='cosx' requires "
             "use_compcell=True (the COSX K rides the cached-Lpq GDF-J "
-            "path; the legacy Ewald-3D path has its own exchange)"
+            "path; request it explicitly)"
         )
     if gdf_method not in ("compcell", "rsgdf", "mdf"):
         raise ValueError(
             f"run_krhf_periodic_gdf: gdf_method must be 'compcell', "
             f"'rsgdf', or 'mdf'; got {gdf_method!r}"
         )
-    bulk_sr = gdf_method == "rsgdf" and int(system.dim) == 3
+    bulk_sr = selected_fit_source == "sr"
     if bulk_sr and rsgdf_tail_ke_cutoff is not None:
         warnings.warn(
             "rsgdf_tail_ke_cutoff is obsolete for the SR/LR fit; "
@@ -3771,7 +4260,7 @@ def run_krhf_periodic_gdf(
 
     # The general engine also owns the Gamma limit of the SR/LR route.
     # Convergence controls must never select a different Coulomb gauge.
-    gamma_info = None if bulk_sr else _gamma_kmesh_info(system, kmesh)
+    gamma_info = None if bulk_sr or fit_source == "classic" else _gamma_kmesh_info(system, kmesh)
     explicit_periodic_gamma_xc = bool(
         gamma_info is not None
         and xc_density_domain == PeriodicXCDensityDomain.PERIODIC_LATTICE
@@ -3790,23 +4279,14 @@ def run_krhf_periodic_gdf(
             "multi-k GDF loop only. Use a non-Gamma k-mesh such as "
             "(1,1,2), or omit dft_plus_u_sites for the Gamma GDF fast path."
         )
-    # Closed-shell Γ HF *and* KS in run_pbc_gdf_rhf's supported domain
-    # delegate to that PySCF-µHa-validated driver (exxdiv='ewald'), so
-    # kmesh=(1,1,1) is the Nk=1 limit of the multi-k exxdiv='ewald' path --
-    # no convention discontinuity vs (2,1,1)+, and consistent with
-    # run_periodic_job's default-Γ routing. KS delegation landed 2026-07-09
-    # (the Finding-§4 residual): the legacy molecular-limit gamma driver's
-    # exchange channel carries NO exxdiv convention at all -- its full-range
-    # real-space K left Γ-path HYBRID KS +8.32e-2 Ha off the exxdiv-matched
-    # real-Γ direct route / external PySCF KRKS on rocksalt LiH/STO-3G PBE0
-    # (not the strict-zero-mode offset a_x·ξ·N_e/2 = 0.297 Ha, a distinct
-    # truncated-lattice-sum gauge; see tests/test_ccm_rks_direct.py).
-    # The legacy gamma driver (below) stays the fallback for charged /
-    # open-shell / dim<3 cells, finite-T smearing, fock-mixing / level-shift
-    # convergence aids, and explicit use_compcell (kept on the historical
-    # warning path). The gate mirrors run_pbc_gdf_rhf's preconditions + the
-    # knobs it honours (DIIS + damping, not fock_mixing / level_shift /
-    # smearing).
+    # Closed-shell Γ HF *and* KS that run_pbc_gdf_rhf implements completely
+    # delegate to that exact-Gamma driver (exxdiv='ewald'), the Nk=1 limit of
+    # this engine. Every other bulk (dim = 3) Γ mesh runs the k-mesh loop
+    # below at Nk=1, which implements every convergence aid and keeps the
+    # requested gdf_method, so no option can change the Hamiltonian
+    # (periodic_gdf_route.py). The legacy molecular-limit Γ driver, whose
+    # exchange carries no divergence correction (+8.32e-2 Ha on rocksalt
+    # LiH/STO-3G PBE0, 2026-07-09), is reached only for dim < 3.
     if (
         gamma_info is not None
         and not explicit_periodic_gamma_xc
@@ -3818,19 +4298,22 @@ def run_krhf_periodic_gdf(
         _gamma_func = (
             functional or str(getattr(opts, "functional", "") or "") or None
         )
-        _gamma_q_nuc = float(sum(atom.Z for atom in system.unit_cell))
-        _gamma_n_elec = int(system.n_electrons())
-        _pure_gdf_gamma_ok = (
-            int(system.dim) == 3
-            and _ecp_ctx is None
-            and _gamma_n_elec % 2 == 0
-            and int(system.multiplicity) == 1
-            and abs(_gamma_q_nuc - _gamma_n_elec) <= 0.5
-            and float(getattr(opts, "smearing_temperature", 0.0) or 0.0) <= 0.0
-            and fock_mixing_value == 0.0
-            and float(getattr(opts, "level_shift", 0.0) or 0.0) == 0.0
+        from .periodic_gdf_route import exact_gamma_gdf_blockers
+
+        _gamma_blockers = exact_gamma_gdf_blockers(
+            driver="run_pbc_gdf_rhf",
+            dim=int(system.dim),
+            n_electrons=int(system.n_electrons()),
+            multiplicity=int(system.multiplicity),
+            nuclear_charge=float(sum(atom.Z for atom in system.unit_cell)),
+            ecp_active=_ecp_ctx is not None,
+            smearing_temperature=float(
+                getattr(opts, "smearing_temperature", 0.0) or 0.0
+            ),
+            fock_mixing=fock_mixing_value,
+            level_shift=float(getattr(opts, "level_shift", 0.0) or 0.0),
         )
-        if _pure_gdf_gamma_ok:
+        if not _gamma_blockers:
             from .pbc_gdf import run_pbc_gdf_rhf
 
             with _gamma_restart_options(opts, initial_density_k, basis.nbasis):
@@ -3844,7 +4327,7 @@ def run_krhf_periodic_gdf(
                     exxdiv="ewald",
                     gdf_method=gdf_method,
                     mdf_ke_cutoff=mdf_ke_cutoff,
-                    rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                    rsgdf_ke_cutoff=_rsgdf_ke_request,
                     rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                     linear_dep_threshold=linear_dep_threshold,
                     gdf_linear_dep_threshold=gdf_linear_dep_threshold,
@@ -3867,6 +4350,14 @@ def run_krhf_periodic_gdf(
                 ),
             )
             return _finish_density_return(wrapped)
+    if gamma_info is not None and int(system.dim) == 3:
+        # A bulk Γ mesh the exact-Gamma driver cannot evaluate is the Nk=1
+        # mesh of the loop below.
+        plog.info(
+            "Gamma GDF engine: k-mesh engine at Nk=1 (the exact-Gamma "
+            "driver does not serve this request)"
+        )
+        gamma_info = None
     if (
         gamma_info is not None
         and not explicit_periodic_gamma_xc
@@ -4054,6 +4545,7 @@ def run_krhf_periodic_gdf(
             f"multiplicity=1; got {system.multiplicity}"
         )
     n_occ = n_elec // 2
+    xc_grid_diag: dict = {}  # last XC grid electron count (#385)
 
     if requested_external_xc and isinstance(kmesh, (KPoints, BlochKMesh)):
         from .periodic_external_xc import _reject_reduced_kmesh
@@ -4077,10 +4569,23 @@ def run_krhf_periodic_gdf(
     kpoints_cart, weights = _kmesh_to_kpoints_weights(system, kmesh)
     n_k = kpoints_cart.shape[0]
 
+    # Whether this SCF builds the cached-Lpq fit, decided once: the
+    # gradient envelope below and the fit build further down both read
+    # this value, so neither can drift from the other. The promotion is
+    # logged where the fit is built.
+    use_compcell, _use_compcell_note = _resolve_multik_use_compcell(
+        use_compcell,
+        bulk_sr=bulk_sr,
+        fit_source=fit_source,
+        alpha=alpha,
+        gdf_method=gdf_method,
+    )
+
     # Multi-k analytic-gradient envelope (G-PBC-002 Item-4 rung 6):
     # fail closed BEFORE the SCF on anything the gradient assembly
-    # does not differentiate. use_compcell is effective-after-promotion
-    # (HF/hybrids flip it on below); pure-DFT Ewald-3D J stays rejected.
+    # does not differentiate. Every multi-k run builds the cached fit
+    # (#415), so the fit's envelope is what is checked here; the resolved
+    # use_compcell is still handed over as the fail-closed backstop.
     if compute_gradient:
         _reject_unsupported_multik_gradient(
             "run_krhf_periodic_gdf",
@@ -4093,13 +4598,52 @@ def run_krhf_periodic_gdf(
                 getattr(func, "is_range_separated", False)
             ),
             weights=weights,
-            use_compcell_effective=bool(bulk_sr or use_compcell or alpha > 0.0),
+            use_compcell_effective=use_compcell,
             bz_integration=bz_integration,
             dft_plus_u_sites=dft_plus_u_sites,
             ibz_native=bool(ibz_native),
             # The KRHF surface has no flavor control: smearing_T routes
             # through SmearingOptions.from_legacy_kwarg -> Fermi-Dirac.
             smearing_flavor="fermi-dirac",
+        )
+    # IBZ-native preconditions and source admission run before the
+    # one-electron lattice sums: every refusal costs no integral work.
+    if ibz_native and k_exchange != "gdf":
+        raise NotImplementedError(
+            "ibz_native=True applies to the fitted GDF exchange "
+            f"(k_exchange='gdf'); got k_exchange={k_exchange!r}. The COSX "
+            "backend builds K in real space from its own bridge and never "
+            "touches the per-(k_i,k_j) cderi cache this flag reduces."
+        )
+    # ---- IBZ-native exchange (opt-in) --------------------------------
+    # Exchange is the only n_k^2 term. Under this flag it is built at the
+    # irreducible wedge and symmetry-transported to the rest of the mesh,
+    # which reduces BOTH the cderi build (n_k^2 -> n_IBZ x n_k pairs) and
+    # the per-iteration contraction. Everything else -- diagonalisation
+    # at every k, occupations, the energy expression, the result shape --
+    # is untouched, so bands/DOS/COOP/QVF consumers see no change.
+    _ibz_native_state = None
+    _ibz_symmetry_checked: List[bool] = []
+    if ibz_native:
+        if alpha == 0.0:
+            raise NotImplementedError(
+                "ibz_native=True has no effect without exact exchange "
+                "(alpha == 0): the n_k^2 term it reduces is the HF "
+                "exchange. Drop the flag for a pure functional."
+            )
+        _ibz_native_state = _resolve_ibz_native_state(
+            system, kpoints_cart, kmesh, weights, plog,
+            exchange_producer=_ibz_exchange_producer(
+                gdf_method=gdf_method, bulk_sr=bulk_sr,
+                private_builder=_lpq_cache_builder,
+                fit_screen_threshold=fit_screen_threshold,
+            ),
+        )
+        _rows_n = len(_ibz_native_state[0])
+        plog.info(
+            f"IBZ-native exchange: {_rows_n} of {n_k} k-points carry the "
+            f"exchange build ({n_k / max(_rows_n, 1):.1f}x fewer cderi "
+            f"pairs); the rest are symmetry-transported."
         )
 
     # Resolve kmesh to BlochKMesh + lattice cells for Ewald Fock builder.
@@ -4228,15 +4772,15 @@ def run_krhf_periodic_gdf(
     with plog.stage(
         "integrals_lattice",
         detail=f"S/T at cutoff {oneel_lat_opts.cutoff_bohr:.2f} bohr, "
-        f"V at cutoff {oneel_lat_opts.cutoff_bohr:.2f} bohr",
+        "V on the screened AO-pair domain",
     ):
         S_lat = compute_overlap_lattice(basis, system, oneel_lat_opts)
         T_lat = compute_kinetic_lattice(basis, system, oneel_lat_opts)
         from .periodic_rhf_gdf import _gauge_lat_opts_for_v_ne_and_e_nuc
         from .periodic_v_ne import compute_nuclear_lattice_dispatch
 
-        # Always use Ewald-3D gauge for V_ne and e_nuc -- J/K are
-        # built via build_periodic_fock_ewald3d_k (Ewald gauge). With an ECP
+        # Always use Ewald-3D gauge for V_ne and e_nuc: the cached-Lpq J/K
+        # share that gauge (see _gauge_lat_opts_for_v_ne_and_e_nuc). With an ECP
         # the nuclear frame carries Z_eff and the lattice-summed V_ECP joins
         # the one-electron set.
         gauge_lat_opts = _gauge_lat_opts_for_v_ne_and_e_nuc(oneel_lat_opts, system)
@@ -4329,96 +4873,6 @@ def run_krhf_periodic_gdf(
     else:
         e_nuc = float(nuclear_repulsion_per_cell(_system_v, gauge_lat_opts))
 
-    if ibz_native and k_exchange != "gdf":
-        raise NotImplementedError(
-            "ibz_native=True applies to the fitted GDF exchange "
-            f"(k_exchange='gdf'); got k_exchange={k_exchange!r}. The COSX "
-            "backend builds K in real space from its own bridge and never "
-            "touches the per-(k_i,k_j) cderi cache this flag reduces."
-        )
-    # ---- IBZ-native exchange (opt-in) --------------------------------
-    # Exchange is the only n_k^2 term. Under this flag it is built at the
-    # irreducible wedge and symmetry-transported to the rest of the mesh,
-    # which reduces BOTH the cderi build (n_k^2 -> n_IBZ x n_k pairs) and
-    # the per-iteration contraction. Everything else -- diagonalisation
-    # at every k, occupations, the energy expression, the result shape --
-    # is untouched, so bands/DOS/COOP/QVF consumers see no change.
-    _ibz_native_state = None
-    _ibz_symmetry_checked: List[bool] = []
-    if ibz_native:
-        if alpha == 0.0:
-            raise NotImplementedError(
-                "ibz_native=True has no effect without exact exchange "
-                "(alpha == 0): the n_k^2 term it reduces is the HF "
-                "exchange. Drop the flag for a pure functional."
-            )
-        _ibz_native_state = _resolve_ibz_native_state(
-            system, kpoints_cart, kmesh, weights, plog
-        )
-        _rows_n = len(_ibz_native_state[0])
-        plog.info(
-            f"IBZ-native exchange: {_rows_n} of {n_k} k-points carry the "
-            f"exchange build ({n_k / max(_rows_n, 1):.1f}x fewer cderi "
-            f"pairs); the rest are symmetry-transported."
-        )
-        if float(getattr(lat_opts, "cutoff_bohr", 0.0)) < 20.0:
-            warnings.warn(
-                "ibz_native=True at lattice cutoff "
-                f"{float(getattr(lat_opts, 'cutoff_bohr', 0.0)):.1f} bohr: "
-                "the symmetry transport is only as accurate as the cell "
-                "list. Measured on LiH FCC (2,2,2) the K transport "
-                "residual is 1.5e-3 at 15 bohr (comparable to the "
-                "energy's own drift to the next cutoff), 8.2e-6 at 20 "
-                "and 1.1e-8 at 26. Use cutoff_bohr >= 20 for the "
-                "transport to stay below the truncation floor.",
-                stacklevel=2,
-            )
-
-
-    if bulk_sr:
-        # Pure DFT uses the same fitted Hartree as hybrids; no unfitted
-        # Ewald-J fallback is selected when exact exchange is zero.
-        use_compcell = True
-
-    # Route HF/hybrid multi-k to the exxdiv-corrected compcell GDF path.
-    #
-    # The exxdiv Madelung exchange-divergence K-shift lives ENTIRELY inside
-    # the use_compcell=True branch below; the use_compcell=False Ewald-3D-K
-    # Fock builder does not apply it. For HF/hybrid (alpha > 0) that leaves
-    # the finite-k-mesh exchange divergence uncorrected, so the energy is
-    # wrong by the Madelung shift (catastrophically -- +17 Ha -- on sparse
-    # meshes). The compcell + exxdiv='ewald' path is PySCF-µHa-correct, so we
-    # route HF/hybrid there automatically rather than return wrong energies.
-    # Pure DFT (alpha == 0, no HF exchange) keeps the cheaper, correct
-    # Ewald-3D path. [Maintainer decision 2026-06-04: route to correct path.]
-    if not use_compcell and alpha > 0.0:
-        use_compcell = True
-        plog.info(
-            "multi-k HF/hybrid exchange: routing to the compcell GDF path "
-            "with exxdiv='ewald' (the use_compcell=False Ewald-3D-K path "
-            "omits the exxdiv Madelung exchange-divergence correction)."
-        )
-    # Route pure-DFT multi-k on dim<3 (vacuum-padded wire/slab) to the
-    # cached-Lpq GDF Hartree as well. The EWALD_3D J is 3D-only: its
-    # analytic-FT kernel raises on dim<3, so ewald_3d_j_blocks silently
-    # degrades to the diagnostic FFT-Poisson grid backend there -- wrong
-    # on vacuum-padded low-D cells (the 2026-07-09 Finding-§4 residual:
-    # dim=1 H2-chain (3,1,1) PBE reported -3.0897 Ha/cell where its own
-    # stored density evaluates to -3.7814 under the same functional and
-    # the variational minimum sits at -3.8947; the Lpq J lands at the
-    # real-Γ direct route's minimum to ~1e-10). HF/hybrids already ride
-    # the cached-Lpq path via the exxdiv routing above; this closes the
-    # same gap for the alpha == 0 KS branch. Pure DFT on dim=3 keeps the
-    # cheaper EWALD_3D path (validated: 29 uHa vs external PySCF at a
-    # non-TRIM mesh, tests/test_krks_gdf_xc_density.py).
-    if not use_compcell and is_ks and int(system.dim) != 3:
-        use_compcell = True
-        plog.info(
-            "multi-k pure-KS on dim<3: routing to the cached-Lpq GDF "
-            "Hartree (the EWALD_3D J falls back to the diagnostic "
-            "FFT-Poisson grid backend on dim<3, which mis-sums the "
-            "vacuum-padded Coulomb)."
-        )
 
     # Multi-k rsgdf tail consumption (IID 146). The high-|G| tail
     # completion exists only on the rsgdf cderi builders, so a tail on
@@ -4429,36 +4883,17 @@ def run_krhf_periodic_gdf(
             "run_krhf_periodic_gdf: rsgdf_tail_ke_cutoff is implemented "
             f"for gdf_method='rsgdf' only (got {gdf_method!r})."
         )
-    # Pure-DFT (alpha == 0) multi-k on dim=3 keeps the EWALD_3D
-    # real-space J by default -- a machinery with no fitted cderi and
-    # therefore no high-|G| tail to extend. An explicit
-    # rsgdf_tail_ke_cutoff there was accepted, echoed in the .out, and
-    # silently IGNORED (IID 146: MgO/STO-3G (2,2,2) KRKS-LDA tailed vs
-    # untailed byte-identical at -271.531535367637, while the same knob
-    # moves multi-k KRHF on the same cell by +0.505030889141 Ha). Route
-    # the run to the cached-Lpq GDF Hartree -- the same
-    # method-independent, tail-consuming J machinery HF/hybrids
-    # (alpha > 0 promotion above) and dim<3 pure-KS already ride -- so
-    # the knob is consumed. tail=None keeps the default EWALD_3D
-    # routing bit-identical.
-    # (The IID 518 dense-core auto-tail is resolved earlier, before the
-    # parity-hold classifier, so the resolved tail feeds the tag; by the
-    # time control reaches here rsgdf_tail_ke_cutoff already carries it
-    # and the promotion below fires on it exactly like an explicit knob.)
-    if not use_compcell and rsgdf_tail_ke_cutoff is not None:
-        use_compcell = True
-        plog.info(
-            "multi-k pure-DFT with rsgdf_tail_ke_cutoff: routing to the "
-            "cached-Lpq GDF Hartree (the default EWALD_3D J builds no "
-            "cderi and has no high-|G| tail; the knob would otherwise "
-            "be silently ignored)."
-        )
+    # use_compcell was resolved before the gradient envelope
+    # (_resolve_multik_use_compcell); say which rule overrode an explicit
+    # use_compcell=False. Only dim=3 reaches this point: dim=2 left through
+    # the slab route above and dim=1 fails closed in
+    # _gauge_lat_opts_for_v_ne_and_e_nuc.
+    if _use_compcell_note is not None:
+        plog.info(_use_compcell_note)
 
     # ---- Aux basis + Lpq(q) cache (GDF density-fitting path) -------
-    # When use_compcell=True, build per-(k_i,k_j) Lpq once and contract
-    # J/K from the cached cderi each iteration (like PySCF's GDF).
-    # When use_compcell=False, the aux is built but not used -- the
-    # per-iteration Fock goes through EWALD_3D real-space J/K instead.
+    # Build per-(k_i,k_j) Lpq once and contract J/K from the cached cderi
+    # each iteration (like PySCF's GDF).
     mol = system.unit_cell_molecule()
     with plog.stage("aux_basis", detail=aux_name):
         aux = make_aux_basis_set(
@@ -4470,38 +4905,168 @@ def run_krhf_periodic_gdf(
 
     # Per-pair Lpq cache: lpq_cache[(ki, kj)] = Lpq(k_i,k_j) tensor.
     lpq_cache: Dict[Tuple[int, int], np.ndarray] = {}
-    # Retained fit dimension; stays 0 on the routes that build no cderi
-    # (EWALD_3D real-space J/K), which is the honest value to report.
-    n_fit = 0
-    if use_compcell:
-        # The off-diagonal (k_i != k_j) Lpq tensors exist solely for
-        # the GDF exchange contraction; the COSX exchange backend
-        # works in real space and never touches them -- only the
-        # diagonal J pairs are built then (the structural setup +
-        # memory saving of the COSX route).
-        need_k_pairs = (alpha != 0.0 and k_exchange == "gdf") or guess == InitialGuess.PATOM
+    fit_cache_retained = None
+    # The off-diagonal (k_i != k_j) Lpq tensors exist solely for
+    # the GDF exchange contraction; the COSX exchange backend
+    # works in real space and never touches them -- only the
+    # diagonal J pairs are built then (the structural setup +
+    # memory saving of the COSX route).
+    need_k_pairs = (alpha != 0.0 and k_exchange == "gdf") or guess == InitialGuess.PATOM
 
-        # Bulk RSGDF uses the admitted real-space SR/reciprocal LR cache
-        # below, including private symmetry adapters. The legacy pair
-        # builder remains the lower-dimensional source. MDF and compensated
-        # cell fits retain their separate source dispatch here.
-        q_metric_cache = None
-        if gdf_method == "rsgdf":
-            aux_modrho = aux if bulk_sr else make_modrho_aux_basis(aux, mol)
-            q_metric_cache = {}
+    # Bulk RSGDF uses the admitted real-space SR/reciprocal LR cache
+    # below, including private symmetry adapters. The legacy pair
+    # builder remains the lower-dimensional source. MDF and compensated
+    # cell fits retain their separate source dispatch here.
+    q_metric_cache = None
+    if gdf_method == "rsgdf":
+        aux_modrho = aux if bulk_sr else make_modrho_aux_basis(aux, mol)
+        q_metric_cache = {}
 
-            def _build_pair_lpq(
-                ki: np.ndarray,
-                kj: np.ndarray,
-                *,
-                canonical_auxiliary_basis: bool = False,
-            ):
-                return build_lpq_bloch_native_fft(
+        def _build_pair_lpq(
+            ki: np.ndarray,
+            kj: np.ndarray,
+            *,
+            canonical_auxiliary_basis: bool = False,
+        ):
+            return build_lpq_bloch_native_fft(
+                system,
+                basis,
+                aux_modrho,
+                ki,
+                kj,
+                ke_cutoff=float(rsgdf_ke_cutoff),
+                tail_ke_cutoff=(
+                    float(rsgdf_tail_ke_cutoff)
+                    if rsgdf_tail_ke_cutoff is not None
+                    else None
+                ),
+                lat_opts=lat_opts,
+                linear_dep_thr=float(gdf_linear_dep_threshold),
+                fit_screen_threshold=float(fit_screen_threshold),
+                progress=plog,
+                _q_metric_cache=q_metric_cache,
+                canonical_auxiliary_basis=canonical_auxiliary_basis,
+            )
+    elif gdf_method == "mdf":
+        image_cache, image_pairs = _gaussian_fit_image_pairs(
+            kpoints_cart, need_k_pairs)
+
+        def _build_pair_lpq(ki: np.ndarray, kj: np.ndarray):
+            # Mixed Density Fitting: ket-resolved combined cderi
+            # [L_gauss; cderi_pw]; the multi-k J/K take the conjugate.
+            return build_lpq_bloch_mdf(
+                system,
+                basis,
+                aux,
+                ki,
+                kj,
+                molecule=mol,
+                lat_opts=lat_opts,
+                linear_dep_thr=float(gdf_linear_dep_threshold),
+                compcell_eta=float(compcell_eta),
+                mdf_ke_cutoff=float(mdf_ke_cutoff),
+                rcut_strategy=rcut_strategy,
+                rcut_precision=float(rcut_precision),
+                _image_cache=image_cache,
+                _image_pairs=image_pairs,
+            )
+    else:
+        image_cache, image_pairs = _gaussian_fit_image_pairs(
+            kpoints_cart, need_k_pairs)
+
+        def _build_pair_lpq(ki: np.ndarray, kj: np.ndarray):
+            return build_lpq_bloch_compcell(
+                system,
+                basis,
+                aux,
+                kj - ki,  # momentum transfer q = k_j - k_i
+                molecule=mol,
+                lat_opts=lat_opts,
+                linear_dep_thr=float(gdf_linear_dep_threshold),
+                compcell_eta=float(compcell_eta),
+                apply_aft_correction=bool(apply_aft_correction),
+                aft_ft_convention=str(aft_ft_convention),
+                aft_precision=float(aft_precision),
+                rcut_strategy=rcut_strategy,
+                rcut_precision=float(rcut_precision),
+                k_ket=kj,
+                _image_cache=image_cache,
+                _image_pairs=image_pairs,
+            )
+
+    # Fail early rather than OOM-killing a doomed run: gate the dense
+    # per-pair Lpq cache peak against available RAM (prompt-75 pattern).
+    _preflight_gdf_lpq_memory(
+        plog, _sr_q=bulk_sr,
+        n_basis=basis.nbasis,
+        n_aux=aux.nbasis,
+        n_kpoints=n_k,
+        need_k_pairs=need_k_pairs,
+        open_shell=False,
+        route_label=label,
+        options=opts,
+        n_ibz_kpoints=(
+            len(_ibz_native_state[0])
+            if (_ibz_native_state is not None and need_k_pairs)
+            else None
+        ),
+    )
+    with plog.stage(
+        "gdf_cderi",
+        detail=f"per-pair Lpq for {n_k} k-points ({gdf_method})",
+    ):
+        if not need_k_pairs:
+            n_pairs = n_k
+        elif _ibz_native_state is not None:
+            n_pairs = len(_ibz_native_state[0]) * n_k + n_k - len(_ibz_native_state[0])
+        else:
+            n_pairs = n_k * n_k
+        plog.info(
+            f"Building per-pair Lpq cache ({n_pairs} pairs, "
+            f"{gdf_method})..."
+        )
+        if _lpq_cache_builder is not None and not bulk_sr:
+            if gdf_method != "rsgdf":
+                raise ValueError(
+                    "_lpq_cache_builder requires gdf_method='rsgdf'"
+                )
+            lpq_cache = _lpq_cache_builder(
+                _build_pair_lpq,
+                kpoints_cart,
+                basis,
+                aux_modrho,
+                need_k_pairs,
+            )
+        elif gdf_method == "rsgdf":
+            # Shared-q batch: one ket-Bloch pair-FT pass per unique
+            # momentum transfer, folded across the k-points that
+            # share it (n_k passes for hybrid exchange instead of
+            # n_k^2; one pass for diagonal-only builds).
+            if bulk_sr:
+                lpq_cache = _build_scf_range_separated_lpq_cache(
+                    system, basis, aux, kpoints_cart, need_k_pairs,
+                    omega=rsgdf_omega, raw_integral_error=rsgdf_g_precision,
+                    ke_cutoff=_rsgdf_ke_request, linear_dep_thr=gdf_linear_dep_threshold,
+                    lat_opts=lat_opts, fit_screen_threshold=fit_screen_threshold,
+                    options=opts, open_shell=False, progress=plog,
+                    oneel_lattices=(S_lat, T_lat, V_lat, V_ecp_lat),
+                    xc_grid=grid, xc_cells=xc_cells, functional=func,
+                    xc_density_domain=xc_density_domain,
+                    compute_gradient=compute_gradient,
+                    density_return_bytes=getattr(
+                        getattr(_finish_density_return, '__self__', None),
+                        'reserved_peak_bytes', 0,
+                    ),
+                    bra_rows=(_ibz_native_state[0] if (_ibz_native_state is not None and need_k_pairs) else None),
+                    pair_cache_builder=_lpq_cache_builder,
+                )
+            else:
+                lpq_cache = _build_rsgdf_lpq_cache_shared_q(
                     system,
                     basis,
                     aux_modrho,
-                    ki,
-                    kj,
+                    kpoints_cart,
+                    need_k_pairs,
                     ke_cutoff=float(rsgdf_ke_cutoff),
                     tail_ke_cutoff=(
                         float(rsgdf_tail_ke_cutoff)
@@ -4512,163 +5077,56 @@ def run_krhf_periodic_gdf(
                     linear_dep_thr=float(gdf_linear_dep_threshold),
                     fit_screen_threshold=float(fit_screen_threshold),
                     progress=plog,
-                    _q_metric_cache=q_metric_cache,
-                    canonical_auxiliary_basis=canonical_auxiliary_basis,
-                )
-        elif gdf_method == "mdf":
-
-            def _build_pair_lpq(ki: np.ndarray, kj: np.ndarray):
-                # Mixed Density Fitting: ket-resolved combined cderi
-                # [L_gauss; cderi_pw]; the multi-k J/K take the conjugate.
-                return build_lpq_bloch_mdf(
-                    system,
-                    basis,
-                    aux,
-                    ki,
-                    kj,
-                    molecule=mol,
-                    lat_opts=lat_opts,
-                    linear_dep_thr=float(gdf_linear_dep_threshold),
-                    compcell_eta=float(compcell_eta),
-                    mdf_ke_cutoff=float(mdf_ke_cutoff),
-                    rcut_strategy=rcut_strategy,
-                    rcut_precision=float(rcut_precision),
+                    q_metric_cache=q_metric_cache,
+                    canonical_auxiliary_basis=(fit_source == "classic"),
+                    bra_rows=(
+                        _ibz_native_state[0]
+                        if (_ibz_native_state is not None and need_k_pairs)
+                        else None
+                    ),
                 )
         else:
-
-            def _build_pair_lpq(ki: np.ndarray, kj: np.ndarray):
-                return build_lpq_bloch_compcell(
-                    system,
-                    basis,
-                    aux,
-                    kj - ki,  # momentum transfer q = k_j - k_i
-                    molecule=mol,
-                    lat_opts=lat_opts,
-                    linear_dep_thr=float(gdf_linear_dep_threshold),
-                    compcell_eta=float(compcell_eta),
-                    apply_aft_correction=bool(apply_aft_correction),
-                    aft_ft_convention=str(aft_ft_convention),
-                    aft_precision=float(aft_precision),
-                    rcut_strategy=rcut_strategy,
-                    rcut_precision=float(rcut_precision),
-                )
-
-        # Fail early rather than OOM-killing a doomed run: gate the dense
-        # per-pair Lpq cache peak against available RAM (prompt-75 pattern).
-        _preflight_gdf_lpq_memory(
-            plog,
-            n_basis=basis.nbasis,
-            n_aux=aux.nbasis,
-            n_kpoints=n_k,
-            need_k_pairs=need_k_pairs,
-            open_shell=False,
-            route_label=label,
-            options=opts,
-            n_ibz_kpoints=(
-                len(_ibz_native_state[0])
-                if (_ibz_native_state is not None and need_k_pairs)
-                else None
-            ),
-        )
-        with plog.stage(
-            "gdf_cderi",
-            detail=f"per-pair Lpq for {n_k} k-points ({gdf_method})",
-        ):
-            if not need_k_pairs:
-                n_pairs = n_k
-            elif _ibz_native_state is not None:
-                n_pairs = len(_ibz_native_state[0]) * n_k + n_k - len(_ibz_native_state[0])
-            else:
-                n_pairs = n_k * n_k
-            plog.info(
-                f"Building per-pair Lpq cache ({n_pairs} pairs, "
-                f"{gdf_method})..."
-            )
-            if _lpq_cache_builder is not None and not bulk_sr:
-                if gdf_method != "rsgdf":
-                    raise ValueError(
-                        "_lpq_cache_builder requires gdf_method='rsgdf'"
-                    )
-                lpq_cache = _lpq_cache_builder(
-                    _build_pair_lpq,
-                    kpoints_cart,
-                    basis,
-                    aux_modrho,
-                    need_k_pairs,
-                )
-            elif gdf_method == "rsgdf":
-                # Shared-q batch: one ket-Bloch pair-FT pass per unique
-                # momentum transfer, folded across the k-points that
-                # share it (n_k passes for hybrid exchange instead of
-                # n_k^2; one pass for diagonal-only builds).
-                if bulk_sr:
-                    lpq_cache = _build_scf_range_separated_lpq_cache(
-                        system, basis, aux, kpoints_cart, need_k_pairs,
-                        omega=rsgdf_omega, raw_integral_error=rsgdf_g_precision,
-                        ke_cutoff=rsgdf_ke_cutoff, linear_dep_thr=gdf_linear_dep_threshold,
-                        lat_opts=lat_opts, fit_screen_threshold=fit_screen_threshold,
-                        options=opts, open_shell=False, progress=plog,
-                        oneel_lattices=(S_lat, T_lat, V_lat, V_ecp_lat),
-                        xc_grid=grid, xc_cells=xc_cells, functional=func,
-                        xc_density_domain=xc_density_domain,
-                        compute_gradient=compute_gradient,
-                        density_return_bytes=getattr(
-                            getattr(_finish_density_return, '__self__', None),
-                            'reserved_peak_bytes', 0,
-                        ),
-                        bra_rows=(_ibz_native_state[0] if (_ibz_native_state is not None and need_k_pairs) else None),
-                        pair_cache_builder=_lpq_cache_builder,
-                    )
+            for i in range(n_k):
+                ki = kpoints_cart[i]
+                if need_k_pairs:
+                    # Hybrid: build all (k_i, k_j) pairs for exchange.
+                    for j in range(n_k):
+                        lpq_cache[(i, j)] = _build_pair_lpq(
+                            ki, kpoints_cart[j]
+                        )
                 else:
-                    lpq_cache = _build_rsgdf_lpq_cache_shared_q(
-                        system,
-                        basis,
-                        aux_modrho,
-                        kpoints_cart,
-                        need_k_pairs,
-                        ke_cutoff=float(rsgdf_ke_cutoff),
-                        tail_ke_cutoff=(
-                            float(rsgdf_tail_ke_cutoff)
-                            if rsgdf_tail_ke_cutoff is not None
-                            else None
-                        ),
-                        lat_opts=lat_opts,
-                        linear_dep_thr=float(gdf_linear_dep_threshold),
-                        fit_screen_threshold=float(fit_screen_threshold),
-                        progress=plog,
-                        q_metric_cache=q_metric_cache,
-                        bra_rows=(
-                            _ibz_native_state[0]
-                            if (_ibz_native_state is not None and need_k_pairs)
-                            else None
-                        ),
-                    )
-            else:
-                for i in range(n_k):
-                    ki = kpoints_cart[i]
-                    if need_k_pairs:
-                        # Hybrid: build all (k_i, k_j) pairs for exchange.
-                        for j in range(n_k):
-                            lpq_cache[(i, j)] = _build_pair_lpq(
-                                ki, kpoints_cart[j]
-                            )
-                    else:
-                        # Pure DFT / J-only, or COSX exchange backend:
-                        # only diagonal pairs needed.
-                        lpq_cache[(i, i)] = _build_pair_lpq(ki, ki)
-            n_fit = lpq_cache[(0, 0)].shape[0] if lpq_cache else 0
+                    # Pure DFT / J-only, or COSX exchange backend:
+                    # only diagonal pairs needed.
+                    lpq_cache[(i, i)] = _build_pair_lpq(ki, ki)
+        n_fit = lpq_cache[(0, 0)].shape[0] if lpq_cache else 0
+        plog.info(
+            f"Lpq cache built: {len(lpq_cache)} pairs, "
+            f"{n_fit} fit vectors, "
+            f"shape=({n_fit}, {basis.nbasis}, {basis.nbasis})"
+        )
+        if retain_fit_cache:
+            fit_cache_retained = _retain_rsgdf_fit_cache(
+                system, basis, aux_name,
+                aux_modrho if gdf_method == "rsgdf" else None,
+                kpoints_cart, lpq_cache, q_metric_cache,
+                ke_cutoff=float(rsgdf_ke_cutoff),
+                tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+                lat_opts=lat_opts,
+                linear_dep_thr=float(gdf_linear_dep_threshold),
+                fit_screen_threshold=float(fit_screen_threshold),
+                need_k_pairs=bool(need_k_pairs), plog=plog,
+                frame=("canonical" if fit_source == "classic" else "eigenmode"),
+            ) if gdf_method == "rsgdf" else None
+            if gdf_method != "rsgdf":
+                plog.info("fit cache not retained: gdf_method "
+                          f"{gdf_method!r} is not the RSGDF source")
+        if q_metric_cache is not None:
+            q_states = (lpq_cache.q_batch_sizes if private_mdf else
+                        getattr(lpq_cache, 'reciprocal_vector_counts', q_metric_cache))
             plog.info(
-                f"Lpq cache built: {len(lpq_cache)} pairs, "
-                f"{n_fit} fit vectors, "
-                f"shape=({n_fit}, {basis.nbasis}, {basis.nbasis})"
+                f"{'Private MDF' if private_mdf else 'RSGDF'} q-state shared across pairs: "
+                f"{len(q_states)} unique momentum transfers"
             )
-            if q_metric_cache is not None:
-                q_states = (lpq_cache.q_batch_sizes if private_mdf else
-                            getattr(lpq_cache, 'reciprocal_vector_counts', q_metric_cache))
-                plog.info(
-                    f"{'Private MDF' if private_mdf else 'RSGDF'} q-state shared across pairs: "
-                    f"{len(q_states)} unique momentum transfers"
-                )
 
     # ---- Multi-k COSX exchange bridge (k_exchange='cosx') ----------
     # SCF-invariant setup: truncated cell list, per-relative-shift
@@ -4676,7 +5134,7 @@ def run_krhf_periodic_gdf(
     # iteration the bridge folds D(k) -> D(g), runs one real-space
     # K(g) build (mesh-size independent), and Bloch-folds to K(k).
     cosx_bridge = None
-    if k_exchange == "cosx" and use_compcell and alpha != 0.0:
+    if k_exchange == "cosx" and alpha != 0.0:
         from .periodic_cosx_k import KPointCosxK
 
         # Range-separation parameter for the SR/LR exchange split
@@ -4971,7 +5429,11 @@ def run_krhf_periodic_gdf(
         n_fit_kept=int(n_fit),
         aux_threshold=float(gdf_linear_dep_threshold),
     )
-    result = PeriodicKRHFGDFResult(
+    # KS runs return the class run_krks_periodic_gdf promises, as the slab
+    # and exact-Gamma adapters already do; a bulk Gamma mesh on the SR/LR
+    # fit reaches this loop too, so the class cannot depend on the mesh.
+    result_cls = PeriodicKRKSGDFResult if is_ks else PeriodicKRHFGDFResult
+    result = result_cls(
                  restart_kpoints=np.asarray(kmesh_bloch.kpoints).copy(), restart_weights=np.asarray(kmesh_bloch.weights).copy(),
                  guess_selection=periodic_result_selection(system, opts.initial_guess, restarted=initial_density_k is not None),
                  restart_basis=basis, restart_lattice=np.asarray(system.lattice).copy(),
@@ -5000,12 +5462,17 @@ def run_krhf_periodic_gdf(
         aux_basis_name=aux_name,
         linear_dependence=_lindep,
         n_aux=int(aux.nbasis),
+        gdf_cderi_pairs=len(lpq_cache),
         rsgdf_ke_cutoff=float(getattr(lpq_cache, 'lr_ke_cutoff', rsgdf_ke_cutoff)),
         backend=(
             f"native-multi-k-gdf-{k_exchange}-"
             f"{'rks' if is_ks else 'rhf'}"
         ),
+        # The loop applies the BvK-supercell Madelung shift to K unless the
+        # exchange is screened (erfc kernel, no G -> 0 divergence).
+        exchange_q0=(BVK_EWALD if screened_omega is None else None),
     )
+    result.fit_cache = fit_cache_retained
     if private_mdf:
         result.backend += '+private-mdf-unvalidated'
     if dense_core_parity_held:
@@ -5070,100 +5537,13 @@ def run_krhf_periodic_gdf(
             K_rows, star_map, system, basis, kmesh_full_native
         )
 
-    # Iteration-invariant EWALD_3D Hartree-J cache: the per-cell AO-pair
-    # FT dominates every build_periodic_fock_ewald3d_k call (~93 % of a
-    # multi-k GDF SCF iteration profiled on LiH (1,1,2): 557 s of 601 s
-    # total were pair-FT recomputation), and it depends only on
-    # (basis, cells, mesh) -- never on the density. Same mechanism the
-    # multi-k EWALD_3D RHF/RKS drivers already hoist
-    # (make_ewald_3d_lattice_j_cache; bit-identical contraction).
-    #
-    # Built ONLY when the EWALD_3D J/K branch below will actually run:
-    # the cached-Lpq GDF branch (use_compcell=True, every HF/hybrid run
-    # after the auto-routing above) never touches it, and the cache is
-    # the dominant memory of a small-cell multi-k GDF run -- the per-cell
-    # AO-pair FT is (n_cells, nbf, nbf, n_G) on its own VIBEQC_J_EWALD3D_KE
-    # mesh (c-diamond primitive sto-3g, 177 cells x 10^2 AO-pairs x 10417
-    # G-points = 2.95 GB, ~5.9 GB transient with the scale copy; measured
-    # 6.13 GB peak RSS -> 2026-07-09, HANDOVER_GDF_FIT_SCREENING.md). It
-    # is also ke-independent of rsgdf_ke_cutoff, which is why it was
-    # misattributed to the GDF fit tensors in the original finding.
-    #
-    # Pure DFT is the remaining live 3D branch here. Small AO-pair FT caches
-    # retain their fast reuse path, but only when the full tensor plus one
-    # construction temporary fits the dense-cache target. Larger cases
-    # contract J from D(k) under the smaller reciprocal/cell batch target:
-    # retaining the old cache would require 38.9 GiB for Si/def2-SVP (P15,
-    # 2x2x2 / 4x4x4) and 296.8 GiB for conventional NaCl/def2-SVP (P10,
-    # 4x4x4). The diagnostic grid backend keeps the legacy density route.
-    _ewald_j_backend = os.environ.get(
-        "VIBEQC_J_EWALD3D_BACKEND", "analytic_ft"
-    ).lower()
-    _pure_dft_analytic_ewald_j = (
-        is_ks
-        and alpha == 0.0
-        and int(system.dim) == 3
-        and _ewald_j_backend == "analytic_ft"
-        and not (use_compcell and lpq_cache)
-    )
-    _ewald_j_cache_fits_target = (
-        _ewald_3d_lattice_j_cache_fits_memory_target(
-            basis,
-            system,
-            cells,
-        )
-        if _pure_dft_analytic_ewald_j
-        else False
-    )
-    _stream_ewald_j_from_k = (
-        _pure_dft_analytic_ewald_j and not _ewald_j_cache_fits_target
-    )
-    _ewald_j_cache = (
-        make_ewald_3d_lattice_j_cache(
-            basis, system, cells, lattice_opts=lat_opts
-        )
-        if not _stream_ewald_j_from_k and not (use_compcell and lpq_cache)
-        else None
-    )
-
     if guess == InitialGuess.PATOM:
-        if use_compcell:
-            J_seed = _build_j_from_lpq(D_k)
-            madelung = _madelung_for_kmesh(system, _mesh_tuple_for_system(system, kmesh))
-            K_seed = list(apply_exxdiv_ewald_to_K(
-                _build_k_from_lpq(D_k), S_k, D_k, madelung,
-            ))
-            F_seed = [h + j - 0.5 * k for h, j, k in zip(Hcore_k, J_seed, K_seed)]
-        else:
-            from .periodic_corrected_exchange import CorrectedEwaldExchange
-            from . import _vibeqc_core as patom_core
-            from types import SimpleNamespace as SeedMesh
-            seed_mesh = SeedMesh(
-                kpoints=list(kmesh_bloch.kpoints), weights=list(kmesh_bloch.weights),
-                mesh=_mesh_tuple_for_system(system, kmesh), ir_mapping=[],
-            )
-            seed_exchange = CorrectedEwaldExchange.build(
-                basis, system, np.asarray([c.r_cart for c in cells]),
-                seed_mesh, 0.5, where="run_krhf_periodic_gdf PATOM",
-            )
-            seed_real = _real_space_density_from_per_k_density(D_k, kmesh_bloch, cells)
-            corrections = seed_exchange.k_space_terms_all_k(S_k, D_k)
-            if _stream_ewald_j_from_k:
-                J_seed = build_periodic_j_ewald3d_k_from_k_density(
-                    basis, system, D_k, list(kpoints_cart), weights, cells, omega=0.5,
-                )
-                K_sr = patom_core.build_jk_2e_real_space(basis, system, lat_opts, seed_real, 0.5).K
-                F_seed = [h + j - 0.5 * (np.asarray(patom_core.bloch_sum(K_sr, k)) + correction)
-                          for h, j, k, correction in
-                          zip(Hcore_k, J_seed, kpoints_cart, corrections)]
-            else:
-                F_seed = build_periodic_fock_ewald3d_k(
-                    basis, system, seed_real, omega=0.5,
-                    k_points_cart=list(kpoints_cart), Hcore_k=Hcore_k,
-                    lattice_opts=lat_opts, exchange_scale=1.0,
-                    full_range_alpha=0.5, j_cache=_ewald_j_cache,
-                )
-                F_seed = [f - 0.5 * c for f, c in zip(F_seed, corrections)]
+        J_seed = _build_j_from_lpq(D_k)
+        madelung = _madelung_for_kmesh(system, _mesh_tuple_for_system(system, kmesh))
+        K_seed = list(apply_exxdiv_ewald_to_K(
+            _build_k_from_lpq(D_k), S_k, D_k, madelung,
+        ))
+        F_seed = [h + j - 0.5 * k for h, j, k in zip(Hcore_k, J_seed, K_seed)]
         C_k, eps_k = [], []
         for fock, x in zip(F_seed, X_k):
             c, e = _diag_in_orth_basis(fock, x)
@@ -5219,211 +5599,103 @@ def run_krhf_periodic_gdf(
             ]
 
         # ---- J + K build -------------------------------------------
-        if use_compcell and lpq_cache:
-            # True GDF: contract cached Lpq per iteration (J always;
-            # K per the selected exchange backend).
-            J_k = _build_j_from_lpq(D_used)
-            if alpha != 0.0:
-                if cosx_bridge is not None:
-                    K_k = cosx_bridge.k_matrices(
-                        D_used, list(kpoints_cart),
-                        lr_complement=True,
-                        weights=list(weights),
-                        screened_omega=screened_omega,
-                    )
-                else:
-                    K_k = _build_k_from_lpq(D_used)
+        # True GDF: contract cached Lpq per iteration (J always;
+        # K per the selected exchange backend).
+        J_k = _build_j_from_lpq(D_used)
+        if alpha != 0.0:
+            if cosx_bridge is not None:
+                K_k = cosx_bridge.k_matrices(
+                    D_used, list(kpoints_cart),
+                    lr_complement=True,
+                    weights=list(weights),
+                    screened_omega=screened_omega,
+                )
             else:
-                K_k = [np.zeros_like(J_k[0]) for _ in range(n_k)]
-            # Apply exxdiv='ewald' Madelung correction to K.
-            # k-mesh-aware (Born-von-Kármán supercell) Madelung -- NOT the
-            # primitive-cell ξ, which over-counts the exxdiv K-shift by
-            # Nk^(1/3) and over-binds the multi-k energy (LiH (2,2,2):
-            # -592 mHa). See _madelung_for_kmesh.
-            #
-            # The shift's energy contribution enters ONCE, through the
-            # shifted K inside ``E_elec = Tr[D.Hcore] + 1/2.Tr[D.F_2e]``
-            # below -- do NOT also add ``exxdiv_ewald_energy_shift`` to
-            # E_total (that double-counts the Madelung correction; on
-            # H₂/12-bohr (2,1,1) the double-count over-binds by
-            # ~150 mHa vs the published -1.12013988 Ha).
-            if alpha != 0.0 and screened_omega is None:
-                # BvK mesh from the CALLER's kmesh argument, not
-                # ``kmesh_bloch.mesh``: the explicit-KPoints conversion
-                # (``to_bloch_kmesh``) reports the C++ default (1,1,1),
-                # which silently swapped the BvK-supercell Madelung for
-                # the primitive-cell one (measured 78 mHa on the H2
-                # dimerized chain, uniform explicit [Gamma, X] vs the
-                # identical tuple (1,1,2) mesh). Explicit KPoints must
-                # declare ``mesh`` metadata; without it this raises
-                # (fail-closed) rather than converging a wrong exxdiv.
-                # Screened (HSE-type) exchange skips the shift entirely:
-                # the erfc kernel has no G -> 0 divergence.
-                madelung = _madelung_for_kmesh(
-                    system, _mesh_tuple_for_system(system, kmesh)
-                )
-                K_k = list(apply_exxdiv_ewald_to_K(K_k, S_k, D_used, madelung))
-            F_k = [Jk - 0.5 * alpha * Kk for Jk, Kk in zip(J_k, K_k)]
-            F_2e_k = [np.asarray(f).copy() for f in F_k]
+                K_k = _build_k_from_lpq(D_used)
+        else:
+            K_k = [np.zeros_like(J_k[0]) for _ in range(n_k)]
+        # Apply exxdiv='ewald' Madelung correction to K.
+        # k-mesh-aware (Born-von-Kármán supercell) Madelung -- NOT the
+        # primitive-cell ξ, which over-counts the exxdiv K-shift by
+        # Nk^(1/3) and over-binds the multi-k energy (LiH (2,2,2):
+        # -592 mHa). See _madelung_for_kmesh.
+        #
+        # The shift's energy contribution enters ONCE, through the
+        # shifted K inside ``E_elec = Tr[D.Hcore] + 1/2.Tr[D.F_2e]``
+        # below -- do NOT also add ``exxdiv_ewald_energy_shift`` to
+        # E_total (that double-counts the Madelung correction; on
+        # H₂/12-bohr (2,1,1) the double-count over-binds by
+        # ~150 mHa vs the published -1.12013988 Ha).
+        if alpha != 0.0 and screened_omega is None:
+            # BvK mesh from the CALLER's kmesh argument, not
+            # ``kmesh_bloch.mesh``: the explicit-KPoints conversion
+            # (``to_bloch_kmesh``) reports the C++ default (1,1,1),
+            # which silently swapped the BvK-supercell Madelung for
+            # the primitive-cell one (measured 78 mHa on the H2
+            # dimerized chain, uniform explicit [Gamma, X] vs the
+            # identical tuple (1,1,2) mesh). Explicit KPoints must
+            # declare ``mesh`` metadata; without it this raises
+            # (fail-closed) rather than converging a wrong exxdiv.
+            # Screened (HSE-type) exchange skips the shift entirely:
+            # the erfc kernel has no G -> 0 divergence.
+            madelung = _madelung_for_kmesh(
+                system, _mesh_tuple_for_system(system, kmesh)
+            )
+            K_k = list(apply_exxdiv_ewald_to_K(K_k, S_k, D_used, madelung))
+        F_k = [Jk - 0.5 * alpha * Kk for Jk, Kk in zip(J_k, K_k)]
+        F_2e_k = [np.asarray(f).copy() for f in F_k]
 
-            # XC on the full real-space finite-torus density, Bloch-folded
-            # to each k. A single Γ AO matrix is only a vacuum-limit shortcut.
-            V_xc_k = None
-            E_xc = 0.0
-            if is_ks:
-                E_xc, V_xc_k = _build_xc_k_from_density(
-                    basis=basis,
-                    system=system,
-                    grid=grid,
-                    func=func,
-                    density_k=D_used,
-                    kmesh_bloch=kmesh_bloch,
-                    cells=xc_cells,
-                    kpoints_cart=kpoints_cart,
-                    lat_opts=lat_opts,
-                    density_domain=xc_density_domain,
-                )
-            E_coulomb = 0.5 * sum(
-                float(weights[i]) * float(np.real(np.trace(D_used[i] @ J_k[i])))
+        # XC on the full real-space finite-torus density, Bloch-folded
+        # to each k. A single Γ AO matrix is only a vacuum-limit shortcut.
+        V_xc_k = None
+        E_xc = 0.0
+        if is_ks:
+            E_xc, V_xc_k = _build_xc_k_from_density(
+                basis=basis,
+                system=system,
+                grid=grid,
+                func=func,
+                density_k=D_used,
+                kmesh_bloch=kmesh_bloch,
+                cells=xc_cells,
+                kpoints_cart=kpoints_cart,
+                lat_opts=lat_opts,
+                density_domain=xc_density_domain,
+                diagnostics=xc_grid_diag,
+            )
+        E_coulomb = 0.5 * sum(
+            float(weights[i]) * float(np.real(np.trace(D_used[i] @ J_k[i])))
+            for i in range(n_k)
+        )
+        E_hf_K = (
+            -0.25
+            * alpha
+            * sum(
+                float(weights[i]) * float(np.real(np.trace(D_used[i] @ K_k[i])))
                 for i in range(n_k)
             )
-            E_hf_K = (
-                -0.25
-                * alpha
-                * sum(
-                    float(weights[i]) * float(np.real(np.trace(D_used[i] @ K_k[i])))
-                    for i in range(n_k)
-                )
-                if alpha != 0.0
-                else 0.0
-            )
-            plog.info(
-                f"J backend: native multi-k GDF (cached Lpq, "
-                f"{len(lpq_cache)} pairs); K backend: "
-                + ("multi-k COSX (real-space K(g) + Bloch fold)"
-                   if cosx_bridge is not None
-                   else "multi-k GDF (k-pair Lpq contraction)")
-            )
-            # Fold Hcore (+ V_xc for RKS) into the Fock that gets
-            # extrapolated + diagonalised. The M3b-4b/4c refactor moved
-            # XC into the branches and left this fold in the EWALD_3D
-            # branch only -- every compcell SCF then diagonalised the
-            # bare 2e Fock (J - 1/2aK), walking to a spurious fixed point
-            # (LiH (2,2,2): -2.96 Ha instead of -7.92, converged=True).
-            for i in range(n_k):
-                Fi = F_k[i] + Hcore_k[i]
-                if V_xc_k is not None:
-                    Fi = Fi + V_xc_k[i]
-                Fi = 0.5 * (Fi + Fi.conj().T)
-                F_k[i] = Fi
-        else:
-            # ---- J + K via EWALD_3D gauge -----------------------------
-            if _stream_ewald_j_from_k:
-                # Pure DFT: contract the exact density used this iteration
-                # directly from D(k). This preserves fractional occupations
-                # under smearing/damping without materialising D(g) or the
-                # persistent all-cell/all-G AO-pair FT cache.
-                F_k = build_periodic_j_ewald3d_k_from_k_density(
-                    basis,
-                    system,
-                    D_used,
-                    [np.asarray(k) for k in kpoints_cart],
-                    weights,
-                    cells,
-                    omega=0.5,
-                )
-            else:
-                # Exchange or the diagnostic grid backend still needs the
-                # real-space density. Rebuilding it from C(k) and hard n_occ
-                # would silently replace a smeared/damped density with an
-                # integer-Aufbau one.
-                D_real = _real_space_density_from_per_k_density(
-                    D_used,
-                    kmesh_bloch,
-                    cells,
-                )
-                F_k = build_periodic_fock_ewald3d_k(
-                    basis,
-                    system,
-                    D_real,
-                    omega=0.5,
-                    k_points_cart=[np.asarray(k) for k in kpoints_cart],
-                    Hcore_k=None,
-                    lattice_opts=lat_opts,
-                    exchange_scale=alpha,
-                    j_cache=_ewald_j_cache,
-                )
-
-            # XC on the full real-space finite-torus density, Bloch-folded
-            # to each k.
-            V_xc_k = None
-            E_xc = 0.0
-            if is_ks:
-                E_xc, V_xc_k = _build_xc_k_from_density(
-                    basis=basis,
-                    system=system,
-                    grid=grid,
-                    func=func,
-                    density_k=D_used,
-                    kmesh_bloch=kmesh_bloch,
-                    cells=xc_cells,
-                    kpoints_cart=kpoints_cart,
-                    lat_opts=lat_opts,
-                    density_domain=xc_density_domain,
-                )
-
-            # Save F_2e before adding V_xc (for energy decomposition).
-            F_2e_k = [np.asarray(f).copy() for f in F_k]
-            for i in range(n_k):
-                Fi = F_k[i] + Hcore_k[i]
-                if V_xc_k is not None:
-                    Fi = Fi + V_xc_k[i]
-                Fi = 0.5 * (Fi + Fi.conj().T)
-                F_k[i] = Fi
-
-            # ---- Energy decomposition (J-only Fock for E_J, E_K). ------
-            E_coulomb = 0.0
-            E_hf_K = 0.0
-            if alpha != 0.0:
-                F_J_k = build_periodic_fock_ewald3d_k(
-                    basis,
-                    system,
-                    D_real,
-                    omega=0.5,
-                    k_points_cart=[np.asarray(k) for k in kpoints_cart],
-                    Hcore_k=None,
-                    lattice_opts=lat_opts,
-                    exchange_scale=0.0,
-                    j_cache=_ewald_j_cache,
-                )
-                E_J_val = 0.0
-                E_K_val = 0.0
-                for i in range(n_k):
-                    w = float(weights[i])
-                    J_k_i = np.asarray(F_J_k[i])
-                    K_k_i = 2.0 * (J_k_i - F_2e_k[i]) / alpha
-                    K_k_i = 0.5 * (K_k_i + K_k_i.conj().T)
-                    E_J_val += w * float(np.real(np.trace(D_used[i] @ J_k_i)))
-                    E_K_val += w * float(np.real(np.trace(D_used[i] @ K_k_i)))
-                E_coulomb = 0.5 * E_J_val
-                E_hf_K = -0.25 * alpha * E_K_val
-            else:
-                # For a pure functional F_2e is the Hartree J itself.  Keep
-                # the public component breakdown complete instead of leaving
-                # e_coulomb at its initialization value while total energy
-                # correctly includes 1/2 Tr[D J].
-                E_coulomb = 0.5 * sum(
-                    float(weights[i])
-                    * float(
-                        np.real(
-                            np.trace(
-                                np.asarray(D_used[i])
-                                @ np.asarray(F_2e_k[i])
-                            )
-                        )
-                    )
-                    for i in range(n_k)
-                )
+            if alpha != 0.0
+            else 0.0
+        )
+        plog.info(
+            f"J backend: native multi-k GDF (cached Lpq, "
+            f"{len(lpq_cache)} pairs); K backend: "
+            + ("multi-k COSX (real-space K(g) + Bloch fold)"
+               if cosx_bridge is not None
+               else "multi-k GDF (k-pair Lpq contraction)")
+        )
+        # Fold Hcore (+ V_xc for RKS) into the Fock that gets
+        # extrapolated + diagonalised. The M3b-4b/4c refactor moved
+        # XC into the branches and left this fold in the (since removed)
+        # EWALD_3D branch only -- every compcell SCF then diagonalised the
+        # bare 2e Fock (J - 1/2aK), walking to a spurious fixed point
+        # (LiH (2,2,2): -2.96 Ha instead of -7.92, converged=True).
+        for i in range(n_k):
+            Fi = F_k[i] + Hcore_k[i]
+            if V_xc_k is not None:
+                Fi = Fi + V_xc_k[i]
+            Fi = 0.5 * (Fi + Fi.conj().T)
+            F_k[i] = Fi
 
         # ---- DFT+U closed-shell Fock contribution ------------------
         # D_used is the total closed-shell density that built this
@@ -5706,6 +5978,9 @@ def run_krhf_periodic_gdf(
 
         if converged:
             result.converged = True
+            report_xc_grid_charge(result, xc_grid_diag, n_elec,
+                                  context="multi-k GDF KRKS",
+                                  lattice_options=lat_opts)
             if cosx_bridge is not None:
                 # Post-convergence COSX one-center replacement -- the
                 # molecular-RIJCOSX / dedicated-Gamma-builder lifecycle
@@ -5715,6 +5990,11 @@ def run_krhf_periodic_gdf(
                 # Fock and orbitals are upgraded. The correction is a
                 # K(g=0) block, so it enters every K(k) identically;
                 # K carries -0.5*alpha into the closed-shell Fock.
+                result.energy_operator = "iterated"
+                result.returned_operator = "post-convergence-one-center-corrected"
+                result.iterated_fock = [F.copy() for F in result.fock]
+                result.iterated_mo_coeffs = [C.copy() for C in result.mo_coeffs]
+                result.iterated_mo_energies = [e.copy() for e in result.mo_energies]
                 C1 = cosx_bridge.one_center_correction(
                     D_used, weights=list(weights)
                 )
@@ -5893,9 +6173,21 @@ def run_krhf_periodic_gdf(
             )
             if check_energy_sanity:
                 _check_energy_sanity(result, system, plog)
+            if gdf_method == "rsgdf":
+                attach_fit_source(
+                    result, system=system, basis=basis, auxiliary=aux,
+                    auxiliary_name=aux_name, cache=lpq_cache, request=fit_request,
+                    selected=selected_fit_source, lat_opts=lat_opts,
+                    oneel_lat_opts=oneel_lat_opts or lat_opts,
+                    metric_threshold=gdf_linear_dep_threshold,
+                    fit_screen_threshold=fit_screen_threshold, kpoints_cart=kpoints_cart,
+                    executed_tail=rsgdf_tail_ke_cutoff, retain_canonical=(fit_source == "classic"),
+                )
             return _finish_density_return(result)
 
     result.converged = False
+    report_xc_grid_charge(result, xc_grid_diag, n_elec,
+                          context="multi-k GDF KRKS", lattice_options=lat_opts)
     plog.converged(
         n_iter=result.n_iter,
         energy=result.energy,
@@ -5903,6 +6195,16 @@ def run_krhf_periodic_gdf(
     )
     if check_energy_sanity:
         _check_energy_sanity(result, system, plog)
+    if gdf_method == "rsgdf":
+        attach_fit_source(
+            result, system=system, basis=basis, auxiliary=aux,
+            auxiliary_name=aux_name, cache=lpq_cache, request=fit_request,
+            selected=selected_fit_source, lat_opts=lat_opts,
+            oneel_lat_opts=oneel_lat_opts or lat_opts,
+            metric_threshold=gdf_linear_dep_threshold,
+            fit_screen_threshold=fit_screen_threshold, kpoints_cart=kpoints_cart,
+            executed_tail=rsgdf_tail_ke_cutoff, retain_canonical=(fit_source == "classic"),
+        )
     return _finish_density_return(result)
 
 
@@ -5958,6 +6260,8 @@ class PeriodicKUHFGDFResult:
     #: The BASE rsgdf reciprocal mesh (Ha) actually used (IID 307/490).
     rsgdf_ke_cutoff: float = 200.0
     backend: str = "native-multi-k-gdf-uhf"
+    #: The exchange q=0 convention this result ran (see the KRHF result).
+    exchange_q0: Optional[str] = None
 
     # Smearing (open-shell: independent per-spin chemical potentials).
     # All default to the no-smearing values so T = 0 runs are unchanged.
@@ -5990,6 +6294,10 @@ class PeriodicKUHFGDFResult:
 
     restart_kpoints: object = None
     restart_weights: object = None
+    #: :class:`RSGDFFitCache` when the driver ran with ``retain_fit_cache=True``
+    #: and took the classic RSGDF multi-k path (the fit is spin-independent),
+    #: else ``None``. See :func:`run_krhf_periodic_gdf`.
+    fit_cache: object = field(default=None, repr=False)
 
 
 def _gdf_open_shell_occupations(
@@ -6000,8 +6308,16 @@ def _gdf_open_shell_occupations(
     Use the same weighted, symmetry-preserving Aufbau as restricted GDF.
     Per-k integer slices select a different state at band crossings or a
     partially occupied degenerate frontier (#714).
+
+    A k-mesh and every finite temperature go through the shared
+    :func:`vibeqc.smearing.apply_smearing_open_shell`, which takes this fill
+    for every open-shell periodic route (#176). Only the single-spectrum
+    ``T = 0`` case stays here: the GDF Gamma routes deliberately equalise a
+    roundoff-degenerate frontier into a shared fractional group (#714),
+    where the shared helper keeps the historical hard Aufbau for its
+    molecular and Gamma-only callers.
     """
-    if smearing.enabled:
+    if smearing.enabled or len(eps_alpha) > 1:
         return _apply_smearing_open_shell(
             eps_alpha, eps_beta, weights=weights, n_alpha=n_alpha,
             n_beta=n_beta, smearing=smearing,
@@ -6093,9 +6409,10 @@ def run_kuhf_periodic_gdf(
     rcut_strategy: Optional[object] = "pyscf_auto",
     rcut_precision: float = 1e-8,
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     fit_screen_threshold: float = 0.0,
     mdf_ke_cutoff: float = 40.0,
@@ -6108,19 +6425,26 @@ def run_kuhf_periodic_gdf(
     progress: Union[bool, ProgressLogger, None] = None,
     verbose: Optional[int] = None,
     _lpq_cache_builder=None,
+    retain_fit_cache: bool = False,
     xc_density_domain: PeriodicXCDensityDomain = (
         PeriodicXCDensityDomain.AUTO
     ),
 ) -> PeriodicKUHFGDFResult:
     """Open-shell (UHF / UKS) periodic multi-k SCF via native GDF.
 
+    ``retain_fit_cache`` keeps the classic RSGDF per-pair fit on the result
+    (``result.fit_cache``) exactly as on :func:`run_krhf_periodic_gdf`, so the
+    Γ-CCM fold can consume it (the fit is spin-independent).
+
     The open-shell sibling of :func:`run_krhf_periodic_gdf`: spin-independent
     per-``(kᵢ,kⱼ)`` ``Lpq`` cderi cache, Hartree ``J`` from the BZ-summed
     **total** density ``S_j w_j (Da+Db)(k_j)``, per-spin exchange ``Ks``
     from the same cache, and the ``exxdiv='ewald'`` supercell-Madelung
-    K-shift applied per spin. a/b occupations follow ``multiplicity`` via
-    per-k Aufbau (``na=(n_e+mult-1)//2``); at M=1 on a gapped cell this
-    reproduces :func:`run_krhf_periodic_gdf`. ``functional`` selects UKS
+    K-shift applied per spin. a/b populations follow ``multiplicity``
+    (``na=(n_e+mult-1)//2``) and each spin is filled with one chemical
+    potential over the whole Brillouin-zone sample, also at T = 0 (#714,
+    #176); at M=1 on a gapped cell this reproduces
+    :func:`run_krhf_periodic_gdf`. ``functional`` selects UKS
     (native spin-polarised XC on the per-spin real-space finite-torus
     density fold, Bloch-folded to every k -- the closed-shell multi-k
     convention, :func:`_build_xc_k_from_density_uks` -- plus the
@@ -6135,15 +6459,13 @@ def run_kuhf_periodic_gdf(
     occupations (``occupations_alpha/beta``); ``T = 0`` keeps the exact per-k
     Aufbau, bit-identical to the pre-smearing driver.
 
-    ``rsgdf_tail_ke_cutoff`` extends the rsgdf fit's M / T G-sums over the
-    exact complementary reciprocal shell up to the given cutoff (Hartree),
-    exactly like the closed-shell driver: needed on dense-core cells
-    (P01/MgO class) whose tight AO products are unresolved at any
-    affordable base mesh. ``E(ke_cutoff=a, tail_ke_cutoff=b)`` equals
-    ``E(ke_cutoff=b)`` by construction, and a parity-sized tail
-    (``>= _RSGDF_PARITY_TAIL_RATIO x zeta_max``) lifts the dense-core
-    ``+PARITY_HELD`` tag. The shared-q batched cderi build amortises the
-    tail's pair-FT pass across the k-points of each momentum transfer.
+    ``fit_source`` has the same validated selection as the closed-shell
+    driver. ``rsgdf_tail_ke_cutoff`` extends only the classic source's
+    reciprocal support. The SR/LR source warns and clears this inactive
+    setting while preserving the request separately from executed metadata.
+    Explicit classic selection retains canonical factors for compatible
+    correlation consumers and does not inherit a Gamma auto-tail. Tail
+    support is not numerical qualification.
 
     ``compute_gradient=True`` computes the analytic nuclear gradient of
     the converged total energy on ``result.gradient`` (``(n_atoms, 3)``
@@ -6156,6 +6478,16 @@ def run_kuhf_periodic_gdf(
     about 7e-9 Ha/bohr (LiH triplet PBE). The KUKS(M=1) collapse onto
     KRKS remains pinned at machine precision.
     """
+
+    from .periodic_fit_source import resolve_fit_source, RSGDFFitRequest, attach_fit_source
+    selected_fit_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if fit_source != "auto" and _lpq_cache_builder is not None:
+        raise NotImplementedError("explicit fit_source cannot be combined with a private fit adapter")
+    if fit_source == "classic" and compute_gradient:
+        raise NotImplementedError("explicit classic fit gradients are not supported")
+    _rsgdf_ke_request, rsgdf_ke_cutoff = _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff)
+    fit_request = RSGDFFitRequest(fit_source, rsgdf_ke_cutoff, rsgdf_tail_ke_cutoff)
     from .periodic_mdf import _MdfScfSource
 
     private_mdf = isinstance(_lpq_cache_builder, _MdfScfSource)
@@ -6303,7 +6635,7 @@ def run_kuhf_periodic_gdf(
             f"run_kuhf_periodic_gdf: gdf_method must be 'compcell', "
             f"'rsgdf', or 'mdf'; got {gdf_method!r}"
         )
-    bulk_sr = gdf_method == "rsgdf" and int(system.dim) == 3
+    bulk_sr = selected_fit_source == "sr"
     if bulk_sr and rsgdf_tail_ke_cutoff is not None:
         warnings.warn(
             "rsgdf_tail_ke_cutoff is obsolete for the SR/LR fit; "
@@ -6331,20 +6663,27 @@ def run_kuhf_periodic_gdf(
             "run_kuhf_periodic_gdf: k_exchange must be 'gdf' or "
             f"'cosx'; got {k_exchange!r}"
         )
+    # Honour or refuse: this loop reads smearing only, so a level shift or
+    # Fock mixing on the options would be dropped without a word.
+    from .periodic_gdf_route import refuse_unimplemented_k_controls
+
+    refuse_unimplemented_k_controls(opts, driver="run_kuhf_periodic_gdf")
     smearing_T = float(getattr(opts, "smearing_temperature", 0.0) or 0.0)
     if smearing_T < 0.0:
         raise ValueError(
             "run_kuhf_periodic_gdf: smearing_temperature must be >= 0"
         )
-    # Open-shell Fermi-Dirac smearing (M3): independent per-spin chemical
-    # potentials mu_a, mu_b via apply_smearing_open_shell. T = 0 keeps the
-    # exact per-k Aufbau path (bit-identical to the pre-smearing driver).
+    # Open-shell smearing (M3): independent per-spin chemical potentials
+    # mu_a, mu_b via apply_smearing_open_shell. T = 0 is the same global
+    # per-spin fill (_gdf_open_shell_occupations); on a gapped mesh it
+    # returns the per-k integer Aufbau arrays bit for bit.
     smear_opts = _SmearingOptions.from_legacy_kwarg(smearing_T)
 
     _ecp_ctx = _periodic_ecp_context(opts, system, "run_kuhf_periodic_gdf")
     _ecp_ncore = _ecp_ctx[3] if _ecp_ctx is not None else 0
     _system_v = _ecp_ctx[4] if _ecp_ctx is not None else system
     n_elec = system.n_electrons() - _ecp_ncore
+    xc_grid_diag: dict = {}  # last XC grid electron count (#385)
     mult = int(system.multiplicity)
     if mult < 1:
         raise ValueError(f"run_kuhf_periodic_gdf: multiplicity must be >= 1, got {mult}")
@@ -6377,7 +6716,7 @@ def run_kuhf_periodic_gdf(
     # Multi-k analytic-gradient envelope (G-PBC-002 Item-4 rung 6):
     # fail closed BEFORE the SCF on anything the per-spin gradient
     # assembly does not differentiate. The open-shell driver always
-    # builds the cached Lpq fit, so use_compcell holds by construction.
+    # builds the cached Lpq fit.
     if compute_gradient:
         _reject_unsupported_multik_gradient(
             "run_kuhf_periodic_gdf",
@@ -6395,6 +6734,47 @@ def run_kuhf_periodic_gdf(
             smearing_flavor="fermi-dirac",
             ibz_native=bool(ibz_native),
         )
+    # IBZ-native preconditions and source admission run before the
+    # one-electron lattice sums: every refusal costs no integral work.
+    if ibz_native and k_exchange != "gdf":
+        raise NotImplementedError(
+            "ibz_native=True applies to the fitted GDF exchange "
+            f"(k_exchange='gdf'); got k_exchange={k_exchange!r}. The COSX "
+            "backend builds K in real space from its own bridge and never "
+            "touches the per-(k_i,k_j) cderi cache this flag reduces."
+        )
+    # ---- IBZ-native exchange (opt-in, open shell) --------------------
+    # Same design as the closed-shell driver: exchange is built at the
+    # irreducible wedge and symmetry-transported to the rest of the mesh.
+    # Both spin channels transport independently -- K_alpha and K_beta
+    # are each operators in the AO Bloch basis with the same
+    # transformation law -- so the per-spin closure needs no
+    # special casing. Diagonalisation stays full-mesh, so the result
+    # shape and every downstream consumer are unchanged.
+    _ibz_native_state = None
+    _ibz_symmetry_checked: List[bool] = []
+    if ibz_native:
+        if alpha == 0.0:
+            raise NotImplementedError(
+                "ibz_native=True has no effect without exact exchange "
+                "(alpha == 0): the n_k^2 term it reduces is the HF "
+                "exchange. Drop the flag for a pure functional."
+            )
+        _ibz_native_state = _resolve_ibz_native_state(
+            system, kpoints_cart, kmesh, weights, plog,
+            exchange_producer=_ibz_exchange_producer(
+                gdf_method=gdf_method, bulk_sr=bulk_sr,
+                private_builder=_lpq_cache_builder,
+                fit_screen_threshold=fit_screen_threshold,
+            ),
+        )
+        _rows_n = len(_ibz_native_state[0])
+        plog.info(
+            f"IBZ-native exchange: {_rows_n} of {n_k} k-points carry the "
+            f"exchange build ({n_k / max(_rows_n, 1):.1f}x fewer cderi "
+            f"pairs); the rest are symmetry-transported (per spin)."
+        )
+
     if isinstance(kmesh, BlochKMesh):
         kmesh_bloch = kmesh
     elif isinstance(kmesh, KPoints):
@@ -6472,7 +6852,7 @@ def run_kuhf_periodic_gdf(
     with plog.stage(
         "integrals_lattice",
         detail=f"S/T cutoff {oneel_lat_opts.cutoff_bohr:.2f}, "
-        f"V cutoff {oneel_lat_opts.cutoff_bohr:.2f}",
+        "V on the screened AO-pair domain",
     ):
         S_lat = compute_overlap_lattice(basis, system, oneel_lat_opts)
         T_lat = compute_kinetic_lattice(basis, system, oneel_lat_opts)
@@ -6527,49 +6907,6 @@ def run_kuhf_periodic_gdf(
     else:
         e_nuc = float(nuclear_repulsion_per_cell(_system_v, gauge_lat_opts))
 
-    # ---- IBZ-native exchange (opt-in, open shell) --------------------
-    # Same design as the closed-shell driver: exchange is built at the
-    # irreducible wedge and symmetry-transported to the rest of the mesh.
-    # Both spin channels transport independently -- K_alpha and K_beta
-    # are each operators in the AO Bloch basis with the same
-    # transformation law -- so the per-spin closure below needs no
-    # special casing. Diagonalisation stays full-mesh, so the result
-    # shape and every downstream consumer are unchanged.
-    if ibz_native and k_exchange != "gdf":
-        raise NotImplementedError(
-            "ibz_native=True applies to the fitted GDF exchange "
-            f"(k_exchange='gdf'); got k_exchange={k_exchange!r}. The COSX "
-            "backend builds K in real space from its own bridge and never "
-            "touches the per-(k_i,k_j) cderi cache this flag reduces."
-        )
-    _ibz_native_state = None
-    _ibz_symmetry_checked: List[bool] = []
-    if ibz_native:
-        if alpha == 0.0:
-            raise NotImplementedError(
-                "ibz_native=True has no effect without exact exchange "
-                "(alpha == 0): the n_k^2 term it reduces is the HF "
-                "exchange. Drop the flag for a pure functional."
-            )
-        _ibz_native_state = _resolve_ibz_native_state(
-            system, kpoints_cart, kmesh, weights, plog
-        )
-        _rows_n = len(_ibz_native_state[0])
-        plog.info(
-            f"IBZ-native exchange: {_rows_n} of {n_k} k-points carry the "
-            f"exchange build ({n_k / max(_rows_n, 1):.1f}x fewer cderi "
-            f"pairs); the rest are symmetry-transported (per spin)."
-        )
-        if float(getattr(lat_opts, "cutoff_bohr", 0.0)) < 20.0:
-            warnings.warn(
-                "ibz_native=True at lattice cutoff "
-                f"{float(getattr(lat_opts, 'cutoff_bohr', 0.0)):.1f} bohr: "
-                "the symmetry transport is only as accurate as the cell "
-                "list. Use cutoff_bohr >= 20 for the transport to stay "
-                "below the truncation floor.",
-                stacklevel=2,
-            )
-
 
     # ---- Per-(kᵢ,kⱼ) Lpq cderi cache (spin-independent) ---------------
     mol = system.unit_cell_molecule()
@@ -6580,7 +6917,9 @@ def run_kuhf_periodic_gdf(
         # (_build_rsgdf_lpq_cache_shared_q); no per-pair closure needed.
         aux_modrho = aux if bulk_sr else make_modrho_aux_basis(aux, mol)
         q_metric_cache = {}
-    elif gdf_method == "mdf":
+    need_k_pairs = (alpha != 0.0 and k_exchange == "gdf") or guess == InitialGuess.PATOM
+    if gdf_method == "mdf":
+        image_cache, image_pairs = _gaussian_fit_image_pairs(kpoints_cart, need_k_pairs)
 
         def _build_pair_lpq(ki: np.ndarray, kj: np.ndarray) -> np.ndarray:
             # MDF: ket-resolved combined cderi [L_gauss; cderi_pw].
@@ -6590,8 +6929,10 @@ def run_kuhf_periodic_gdf(
                 compcell_eta=float(compcell_eta),
                 mdf_ke_cutoff=float(mdf_ke_cutoff),
                 rcut_strategy=rcut_strategy, rcut_precision=float(rcut_precision),
+                _image_cache=image_cache, _image_pairs=image_pairs,
             )
-    else:
+    elif gdf_method != "rsgdf":
+        image_cache, image_pairs = _gaussian_fit_image_pairs(kpoints_cart, need_k_pairs)
 
         def _build_pair_lpq(ki: np.ndarray, kj: np.ndarray) -> np.ndarray:
             return build_lpq_bloch_compcell(
@@ -6602,15 +6943,15 @@ def run_kuhf_periodic_gdf(
                 aft_ft_convention=str(aft_ft_convention),
                 aft_precision=float(aft_precision),
                 rcut_strategy=rcut_strategy, rcut_precision=float(rcut_precision),
+                k_ket=kj, _image_cache=image_cache, _image_pairs=image_pairs,
             )
 
     lpq_cache: Dict[Tuple[int, int], np.ndarray] = {}
-    need_k_pairs = (alpha != 0.0 and k_exchange == "gdf") or guess == InitialGuess.PATOM
     # Fail early rather than OOM-killing a doomed run: the dense per-pair Lpq
     # cache built below is the multi-k open-shell GDF memory bottleneck. Abort
     # with a route-specific diagnostic if it cannot fit (prompt-75 NiO KUKS).
     _preflight_gdf_lpq_memory(
-        plog,
+        plog, _sr_q=bulk_sr,
         n_basis=basis.nbasis,
         n_aux=aux.nbasis,
         n_kpoints=n_k,
@@ -6632,7 +6973,7 @@ def run_kuhf_periodic_gdf(
                 lpq_cache = _build_scf_range_separated_lpq_cache(
                     system, basis, aux, kpoints_cart, need_k_pairs,
                     omega=rsgdf_omega, raw_integral_error=rsgdf_g_precision,
-                    ke_cutoff=rsgdf_ke_cutoff, linear_dep_thr=gdf_linear_dep_threshold,
+                    ke_cutoff=_rsgdf_ke_request, linear_dep_thr=gdf_linear_dep_threshold,
                     lat_opts=lat_opts, fit_screen_threshold=fit_screen_threshold,
                     options=opts, open_shell=True, progress=plog,
                     pair_cache_builder=_lpq_cache_builder,
@@ -6664,6 +7005,7 @@ def run_kuhf_periodic_gdf(
                     fit_screen_threshold=float(fit_screen_threshold),
                     progress=plog,
                     q_metric_cache=q_metric_cache,
+                    canonical_auxiliary_basis=(fit_source == "classic"),
                     bra_rows=(
                         _ibz_native_state[0]
                         if (_ibz_native_state is not None and need_k_pairs)
@@ -6682,6 +7024,23 @@ def run_kuhf_periodic_gdf(
                     lpq_cache[(i, i)] = _build_pair_lpq(ki, ki)
     n_fit = lpq_cache[(0, 0)].shape[0]
     plog.info(f"Lpq cache: {len(lpq_cache)} pairs, {n_fit} fit vectors")
+    fit_cache_retained = None
+    if retain_fit_cache:
+        fit_cache_retained = _retain_rsgdf_fit_cache(
+            system, basis, aux_name,
+            aux_modrho if gdf_method == "rsgdf" else None,
+            kpoints_cart, lpq_cache, q_metric_cache,
+            ke_cutoff=float(rsgdf_ke_cutoff),
+            tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+            lat_opts=lat_opts,
+            linear_dep_thr=float(gdf_linear_dep_threshold),
+            fit_screen_threshold=float(fit_screen_threshold),
+            need_k_pairs=bool(need_k_pairs), plog=plog,
+            frame=("canonical" if fit_source == "classic" else "eigenmode"),
+        ) if gdf_method == "rsgdf" else None
+        if gdf_method != "rsgdf":
+            plog.info("retain_fit_cache: no classic RSGDF fit to retain "
+                      f"(gdf_method={gdf_method!r})")
     if q_metric_cache is not None:
         q_states = (lpq_cache.q_batch_sizes if private_mdf else
                     getattr(lpq_cache, 'reciprocal_vector_counts', q_metric_cache))
@@ -6945,6 +7304,9 @@ def run_kuhf_periodic_gdf(
             f"native-multi-k-gdf-{k_exchange}-"
             f"{'uks' if is_ks else 'uhf'}"
         ),
+        # Same rule as the closed-shell loop: the BvK-supercell Madelung
+        # shift is applied to K unless the exchange is screened.
+        exchange_q0=(BVK_EWALD if screened_omega is None else None),
         smearing_temperature=smearing_T,
         fermi_level_alpha=float(fermi_alpha),
         fermi_level_beta=float(fermi_beta),
@@ -6952,6 +7314,7 @@ def run_kuhf_periodic_gdf(
         occupations_alpha=[np.asarray(o, dtype=float) for o in occ_alpha_k],
         occupations_beta=[np.asarray(o, dtype=float) for o in occ_beta_k],
     )
+    result.fit_cache = fit_cache_retained
     if private_mdf:
         result.backend += '+private-mdf-unvalidated'
     if dense_core_parity_held:
@@ -7037,6 +7400,7 @@ def run_kuhf_periodic_gdf(
                 kpoints_cart=kpoints_cart,
                 lat_opts=lat_opts,
                 density_domain=xc_density_domain,
+                diagnostics=xc_grid_diag,
             )
 
         Fa_k: List[np.ndarray] = []
@@ -7228,6 +7592,9 @@ def run_kuhf_periodic_gdf(
 
         if converged:
             result.converged = True
+            report_xc_grid_charge(result, xc_grid_diag, n_elec,
+                                  context="multi-k GDF KUKS",
+                                  lattice_options=lat_opts)
             if cosx_bridge is not None:
                 # Post-convergence COSX one-center replacement (same
                 # lifecycle as the closed-shell driver): energy stays
@@ -7435,6 +7802,16 @@ def run_kuhf_periodic_gdf(
                     f"{n_k} k-point(s))"
                 )
             plog.converged(n_iter=it, energy=E_total, converged=True)
+            if gdf_method == "rsgdf":
+                attach_fit_source(
+                    result, system=system, basis=basis, auxiliary=aux,
+                    auxiliary_name=aux_name, cache=lpq_cache, request=fit_request,
+                    selected=selected_fit_source, lat_opts=lat_opts,
+                    oneel_lat_opts=oneel_lat_opts or lat_opts,
+                    metric_threshold=gdf_linear_dep_threshold,
+                    fit_screen_threshold=fit_screen_threshold, kpoints_cart=kpoints_cart,
+                    executed_tail=rsgdf_tail_ke_cutoff, retain_canonical=(fit_source == "classic"),
+                )
             return _finish_density_return(result)
 
         if terminating_state:
@@ -7477,11 +7854,23 @@ def run_kuhf_periodic_gdf(
         E_prev = free_energy
 
     result.converged = False
+    report_xc_grid_charge(result, xc_grid_diag, n_elec,
+                          context="multi-k GDF KUKS", lattice_options=lat_opts)
     result.s_squared = _multi_k_s_squared(
         n_alpha, n_beta, C_alpha_k, C_beta_k, S_k, weights,
         occ_alpha_k=occ_alpha_k, occ_beta_k=occ_beta_k,
     )
     plog.converged(n_iter=result.n_iter, energy=result.energy, converged=False)
+    if gdf_method == "rsgdf":
+        attach_fit_source(
+            result, system=system, basis=basis, auxiliary=aux,
+            auxiliary_name=aux_name, cache=lpq_cache, request=fit_request,
+            selected=selected_fit_source, lat_opts=lat_opts,
+            oneel_lat_opts=oneel_lat_opts or lat_opts,
+            metric_threshold=gdf_linear_dep_threshold,
+            fit_screen_threshold=fit_screen_threshold, kpoints_cart=kpoints_cart,
+            executed_tail=rsgdf_tail_ke_cutoff, retain_canonical=(fit_source == "classic"),
+        )
     return _finish_density_return(result)
 
 
@@ -7527,7 +7916,8 @@ def run_krks_periodic_gdf(
     rcut_precision: float = 1e-8,
     k_exchange: str = "gdf",
     gdf_method: str = "rsgdf",
-    rsgdf_ke_cutoff: float = 200.0,
+    fit_source: str = "auto",
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
@@ -7551,6 +7941,7 @@ def run_krks_periodic_gdf(
     progress: Union[bool, ProgressLogger, None] = None,
     verbose: Optional[int] = None,
     _lpq_cache_builder=None,
+    retain_fit_cache: bool = False,
     xc_density_domain: PeriodicXCDensityDomain = (
         PeriodicXCDensityDomain.AUTO
     ),
@@ -7589,6 +7980,7 @@ def run_krks_periodic_gdf(
         rcut_precision=rcut_precision,
         k_exchange=k_exchange,
         gdf_method=gdf_method,
+        fit_source=fit_source,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
         rsgdf_omega=rsgdf_omega,
         rsgdf_g_precision=rsgdf_g_precision,
@@ -7613,5 +8005,6 @@ def run_krks_periodic_gdf(
         progress=progress,
         verbose=verbose,
         _lpq_cache_builder=_lpq_cache_builder,
+        retain_fit_cache=retain_fit_cache,
         xc_density_domain=xc_density_domain,
     )

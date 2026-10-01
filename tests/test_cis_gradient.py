@@ -121,3 +121,21 @@ def test_cis_gradient_singlet_triplet_differ():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# Issue #443: one C-H bond exactly along +z and no mirror plane through it.
+# On that pole the d_trans.f azimuth convention dropped the tilt towards y.
+CH4_POLE = (
+    [6, 1, 1, 1, 1],
+    [[0.0, 0.0, 0.0], [0.0, 0.0, 1.09], [1.03, 0.10, -0.36],
+     [-0.43, 0.93, -0.33], [-0.55, -0.87, -0.40]],
+)
+
+
+def test_cis_gradient_pole_pair_matches_fd():
+    Z, coords = CH4_POLE
+    cis = run_cis(Z, coords, n_states=4, spin="singlet")
+    g_an = cis_gradient(Z, coords, cis, state=0, spin="singlet")
+    g_fd = cis_gradient_fd(Z, coords, state=0, spin="singlet", step=1e-3)
+    assert np.max(np.abs(g_an - g_fd)) < 1e-5, np.abs(g_an - g_fd)
+

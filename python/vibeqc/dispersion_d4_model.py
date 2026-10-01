@@ -995,6 +995,7 @@ def compute_d4_energy(
     ref_data: "D4ReferenceDataset",
     functional: str = "pbe",
     *,
+    total_charge: float = 0.0,
     _damping_parameters: object | None = None,
     **kwargs: object,
 ) -> float:
@@ -1038,7 +1039,7 @@ def compute_d4_energy(
 
     # Per-atom properties.
     cn_arr = eeq_coordination_numbers(mol)
-    q_arr = eeq_charges(mol).charges
+    q_arr = eeq_charges(mol, total_charge=total_charge).charges
     params = (
         get_d4_params(functional)
         if _damping_parameters is None
@@ -1110,7 +1111,9 @@ def d4_atm_triple_energy(
 ) -> float:
     """ATM triple energy for one atom triplet (A, B, C).
 
-    The angle factor is the Axilrod-Teller-Muto geometrical term
+    With the negative C9 convention of :func:`compute_c9`, the energy is
+    ``-C9 * angle_factor * f_damp``. The angle factor is the
+    Axilrod-Teller-Muto geometrical term
     ``(3.costh_A.costh_B.costh_C + 1) / (R_AB.R_BC.R_AC)^3``, damped
     by the BJ-style rational function with exponent ``alp``.
 
@@ -1153,19 +1156,25 @@ def d4_atm_triple_energy(
         + 1.0 / r3
     )
 
-    return float(c9 * ang * fdmp)
+    # C9 follows the negative-coefficient convention of Caldeweyher et al.,
+    # J. Chem. Phys. 150, 154122 (2019), doi:10.1063/1.5090222.
+    # The energy therefore carries an additional minus sign: equilateral
+    # triplets repel and collinear triplets attract (Axilrod-Teller-Muto).
+    return float(-c9 * ang * fdmp)
 
 
 def _compute_c6_matrix(
     mol: "Molecule",
     ref_data: "D4ReferenceDataset",
+    *,
+    total_charge: float = 0.0,
     **kwargs: object,
 ) -> np.ndarray:
     """Compute the full atom-pair C6 matrix for the molecule."""
     from ._vibeqc_core import eeq_charges, eeq_coordination_numbers
 
     cn_arr = eeq_coordination_numbers(mol)
-    q_arr = eeq_charges(mol).charges
+    q_arr = eeq_charges(mol, total_charge=total_charge).charges
     natom = len(mol.atoms)
     z_arr = [atom.Z for atom in mol.atoms]
 
@@ -1192,6 +1201,7 @@ def compute_d4_atm_energy(
     ref_data: "D4ReferenceDataset",
     functional: str = "pbe",
     *,
+    total_charge: float = 0.0,
     alp: float = D4_ALP_DEFAULT,
     _damping_parameters: object | None = None,
     **kwargs: object,
@@ -1200,7 +1210,7 @@ def compute_d4_atm_energy(
 
     The ATM term is the leading three-body dispersion contribution::
 
-        E^(3) = S_{A<B<C}  C9_ABC . w(th) / (R_AB.R_BC.R_CA)^3 . f_damp
+        E^(3) = -S_{A<B<C}  C9_ABC . w(th) / (R_AB.R_BC.R_CA)^3 . f_damp
 
     where ``C9_ABC ≈ -s9.sqrt(|C6_AB.C6_BC.C6_CA|)`` and ``w(th)`` is
     the angular factor ``3.cos th_A.cos th_B.cos th_C + 1``.  The
@@ -1238,7 +1248,7 @@ def compute_d4_atm_energy(
     if abs(params.s9) < 1e-15:
         return 0.0
 
-    c6 = _compute_c6_matrix(mol, ref_data, **kwargs)
+    c6 = _compute_c6_matrix(mol, ref_data, total_charge=total_charge, **kwargs)
     natom = len(mol.atoms)
     z_arr = [atom.Z for atom in mol.atoms]
     xyz = np.array([atom.xyz for atom in mol.atoms])
@@ -1309,6 +1319,7 @@ def compute_d4_energy_total(
     ref_data: "D4ReferenceDataset",
     functional: str = "pbe",
     *,
+    total_charge: float = 0.0,
     atm: bool = True,
     alp: float = D4_ALP_DEFAULT,
     _damping_parameters: object | None = None,
@@ -1316,9 +1327,9 @@ def compute_d4_energy_total(
 ) -> float:
     """Full D4 dispersion energy (two-body + optional three-body ATM).
 
-    Convenience wrapper that calls :func:`compute_d4_energy` and
-    (if ``atm=True``) :func:`compute_d4_atm_energy`, sharing a single
-    C6 matrix computation where possible.
+    Calls :func:`compute_d4_energy` and (if ``atm=True``)
+    :func:`compute_d4_atm_energy` with the same native charge model,
+    reference data and interpolation parameters.
 
     Parameters
     ----------
@@ -1328,6 +1339,9 @@ def compute_d4_energy_total(
         The D4 reference dataset.
     functional
         Functional keyword.
+    total_charge
+        Total charge constrained by the EEQ solve (default 0.0).
+        This is independent of the molecule's electron-count metadata.
     atm
         Include the three-body ATM term (default ``True``).
     alp
@@ -1344,6 +1358,7 @@ def compute_d4_energy_total(
         mol,
         ref_data,
         functional,
+        total_charge=total_charge,
         _damping_parameters=_damping_parameters,
         **kwargs,
     )
@@ -1353,6 +1368,7 @@ def compute_d4_energy_total(
             ref_data,
             functional,
             alp=alp,
+            total_charge=total_charge,
             _damping_parameters=_damping_parameters,
             **kwargs,
         )
@@ -1417,12 +1433,12 @@ def d4_reference_weights_derivs(
         idx = int(np.argmin(delta2))
         w_cn = np.zeros(n_ref)
         w_cn[idx] = 1.0
-        return w_cn.copy(), np.zeros(n_ref), np.zeros(n_ref)
-
-    inv_total = 1.0 / total
-    w_cn = gw * inv_total
-    # dw_cn/dCN = inv_total * dgw - w_cn * inv_total * sum(dgw)
-    dw_cn = inv_total * (dgw - w_cn * dgw.sum())
+        dw_cn = np.zeros(n_ref)
+    else:
+        inv_total = 1.0 / total
+        w_cn = gw * inv_total
+        # dw_cn/dCN = inv_total * dgw - w_cn * inv_total * sum(dgw)
+        dw_cn = inv_total * (dgw - w_cn * dgw.sum())
 
     # ---- Step 2: ζ charge-scaling factor and its q-derivative ----
     qmod = float(q) + z_eff
@@ -1522,101 +1538,140 @@ def d4_bj_damping_gradient(
     edisp0 = s6 * t6 + s8 * (float(c8) / float(c6)) * t8
     e_pair = -float(c6) * edisp0
 
-    # Gradient w.r.t. R: d/dr2(edisp0) = s6*d6 + s8*rrij*d8
-    d6 = -6.0 * r2 * r2 * t6 * t6
-    d8 = -8.0 * r2 * r2 * r2 * t8 * t8
-    rrij = float(c8) / float(c6)
-    gdisp = s6 * d6 + s8 * rrij * d8
-    # dE/dR_a = -c6 * gdisp * 2r * vec/r = -2*c6*gdisp*vec
-    grad_a = -2.0 * float(c6) * gdisp * vec_ab
-
-    # Derivative w.r.t. C6 (for CN/q chain rule).
-    # d/dC6 of: -c6 * (s6*t6 + s8*c8/c6*t8)
-    # = -(s6*t6 + s8*c8/c6*t8) - c6 * s8 * (-c8/c6^2*t8)
-    # = -edisp0 + s8 * c8/c6 * t8
-    # Actually the full dE/dC6 is needed for the CN/q chain.
-    # From dftd4: dE/dC6 = -edisp where edisp = s6*t6 + s8*rrij*t8
+    # dE/dr divided by r converts the radial derivative to dE/dR_a.
+    # C8/C6 = 3*r4r2(A)*r4r2(B) is constant in the C6 response.
+    grad_a = float(c6) * (
+        6.0 * s6 * r2**2 * t6**2
+        + 8.0 * s8 * (float(c8) / float(c6)) * r2**3 * t8**2
+    ) * vec_ab
     dE_dc6 = -edisp0
 
     return float(e_pair), grad_a, float(dE_dc6)
+
+
+def _d4_atm_distance_derivatives(
+    distances_squared: np.ndarray,
+    radii_product: float,
+    c9: float,
+    alp: float,
+) -> tuple[float, np.ndarray]:
+    """ATM energy and derivatives with respect to squared edge lengths.
+
+    Caldeweyher et al., JCP 150, 154122 (2019), doi:10.1063/1.5090222.
+    The negative C9 convention requires E = -C9 * angular * damping.
+    Differentiate the scalar kernel's polynomial rather than angles, so
+    collinear triplets remain well defined.
+    """
+    x, y, z = distances_squared
+    product = x * y * z
+    factors = np.array([x+y-z, x-y+z, -x+y+z])
+    a, b, c = factors
+    numerator = a * b * c
+    dnumerator = np.array([b*c + a*c - a*b,
+                          b*c - a*c + a*b,
+                          -b*c + a*c + a*b])
+    angular = 0.375 * numerator / product**2.5 + product**-1.5
+    dangular = (0.375 * dnumerator / product**2.5
+                - (2.5 * 0.375 * numerator / product**2.5
+                   + 1.5 * product**-1.5) / distances_squared)
+    damp = 1.0 / (1.0 + 6.0 * (radii_product / np.sqrt(product))**(alp / 3.0))
+    ddamp = damp * (1.0-damp) * alp / (6.0 * distances_squared)
+    return float(-c9 * angular * damp), -c9 * (dangular*damp + angular*ddamp)
 
 
 def compute_d4_gradient(
     mol: "Molecule",
     ref_data: "D4ReferenceDataset",
     functional: str = "pbe",
+    *,
+    total_charge: float = 0.0,
+    atm: bool = True,
+    alp: float = D4_ALP_DEFAULT,
+    _damping_parameters: object | None = None,
     **kwargs: object,
-) -> tuple[float, np.ndarray]:
-    """Full-molecule D4 two-body dispersion energy and gradient.
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
+    """Native D4 energy and complete analytic nuclear gradient.
 
-    Returns ``(energy, gradient)`` where ``gradient`` has shape
-    ``(n_atoms, 3)`` in Hartree/bohr.
+    The scalar functional is :func:`compute_d4_energy_total`: pairwise BJ
+    dispersion plus optional ATM, with the same native EEQ charges, CN,
+    reference data and interpolation parameters. The gradient includes
+    explicit geometry, both terms' C6 response, and an adjoint contraction
+    through the native EEQ solve and CN soft cap at fixed total charge.
 
-    The gradient includes the geometric derivative (dE/dR) and the
-    chain-rule terms through C6 w.r.t. CN and q (dE/dCN and dE/dq).
-    The further chain through dCN/dR and dq/dR (EEQ charge gradient)
-    is deferred -- those are small corrections for most geometries.
+    Returns ``(energy, gradient, dE_dcn, dE_dq)``. The latter two arrays
+    are partial sensitivities for diagnostics; their nuclear response is
+    already included in ``gradient`` and must not be added a second time.
+    Coordinates and gradients use bohr and Hartree/bohr, respectively.
     """
-    from ._vibeqc_core import eeq_charges, eeq_coordination_numbers
+    from ._vibeqc_core import eeq_charges, eeq_coordination_numbers, eeq_response_gradient
     from .dispersion_d4_parameters import get_d4_params
 
     cn_arr = eeq_coordination_numbers(mol)
-    q_arr = eeq_charges(mol).charges
-    params = get_d4_params(functional)
-
+    q_arr = eeq_charges(mol, total_charge=total_charge).charges
+    params = get_d4_params(functional) if _damping_parameters is None else _damping_parameters
     natom = len(mol.atoms)
     z_arr = [atom.Z for atom in mol.atoms]
     xyz = np.array([atom.xyz for atom in mol.atoms])
-
     energy = 0.0
     gradient = np.zeros((natom, 3))
-    dEdcn = np.zeros(natom)
-    dEdq = np.zeros(natom)
+    c6 = np.zeros((natom, natom))
+    dc6_cn = np.zeros_like(c6)
+    dc6_q = np.zeros_like(c6)
+    sensitivity = np.zeros_like(c6)
+    radii = np.zeros_like(c6)
 
     for a in range(natom):
-        ra = xyz[a]
         for b in range(a):
-            vec_ab = ra - xyz[b]
-            r_ab = float(np.linalg.norm(vec_ab))
-            if r_ab < 1e-12:
-                continue
-
-            c6, dc6_dcn_a, dc6_dcn_b, dc6_dq_a, dc6_dq_b = compute_d4_c6_pair_derivs(
-                float(cn_arr[a]),
-                float(q_arr[a]),
-                z_arr[a],
-                float(cn_arr[b]),
-                float(q_arr[b]),
-                z_arr[b],
-                ref_data,
-                **kwargs,  # type: ignore[arg-type]
+            val, cn_a, cn_b, q_a, q_b = compute_d4_c6_pair_derivs(
+                float(cn_arr[a]), float(q_arr[a]), z_arr[a],
+                float(cn_arr[b]), float(q_arr[b]), z_arr[b], ref_data, **kwargs,
             )
-            if c6 <= 0.0:
+            if val <= 0.0:
                 continue
-
-            c8 = compute_c8(c6, z_arr[a], z_arr[b])
-            e_pair, grad_a, dE_dc6 = d4_bj_damping_gradient(
-                r_ab,
-                vec_ab,
-                c6,
-                c8,
-                params.s6,
-                params.s8,
-                params.a1,
-                params.a2,
+            c6[a, b] = c6[b, a] = val
+            dc6_cn[a, b], dc6_cn[b, a] = cn_a, cn_b
+            dc6_q[a, b], dc6_q[b, a] = q_a, q_b
+            c8 = compute_c8(val, z_arr[a], z_arr[b])
+            radii[a, b] = radii[b, a] = params.a1 * np.sqrt(c8/val) + params.a2
+            vec = xyz[a] - xyz[b]
+            pair_energy, pair_gradient, pair_sensitivity = d4_bj_damping_gradient(
+                float(np.linalg.norm(vec)), vec, val, c8,
+                params.s6, params.s8, params.a1, params.a2,
             )
+            energy += pair_energy
+            gradient[a] += pair_gradient
+            gradient[b] -= pair_gradient
+            sensitivity[a, b] = pair_sensitivity
 
-            energy += e_pair
-            gradient[a] += grad_a
-            gradient[b] -= grad_a
+    if atm and abs(params.s9) >= 1e-15:
+        for a in range(natom):
+            for b in range(a):
+                for c in range(b):
+                    if min(c6[a,b], c6[a,c], c6[b,c]) <= 0.0:
+                        continue
+                    ab, bc, ac = xyz[a]-xyz[b], xyz[b]-xyz[c], xyz[a]-xyz[c]
+                    distances2 = np.array([ab@ab, bc@bc, ac@ac])
+                    c9 = params.s9 * compute_c9(c6[a,b], c6[a,c], c6[b,c])
+                    triple_energy, derivatives = _d4_atm_distance_derivatives(
+                        distances2, radii[a,b]*radii[b,c]*radii[a,c], c9, alp,
+                    )
+                    energy += triple_energy
+                    gab, gbc, gac = (2.0 * derivative * vector for derivative, vector
+                                     in zip(derivatives, (ab, bc, ac)))
+                    gradient[a] += gab + gac
+                    gradient[b] += gbc - gab
+                    gradient[c] -= gbc + gac
+                    # Damping radii depend only on element-specific C8/C6.
+                    # C9's geometric mean gives dE/dC6 = E/(2*C6).
+                    for i, j in ((a,b), (a,c), (b,c)):
+                        sensitivity[i,j] += triple_energy / (2.0 * c6[i,j])
 
-            # Chain rule: dE/dCN = dE/dC6 * dC6/dCN
-            dEdcn[a] += dE_dc6 * dc6_dcn_a
-            dEdcn[b] += dE_dc6 * dc6_dcn_b
-            dEdq[a] += dE_dc6 * dc6_dq_a
-            dEdq[b] += dE_dc6 * dc6_dq_b
-
-    # dCN/dR and dq/dR contributions are deferred (requires EEQ gradient).
-    # Return energy, gradient, and auxiliary derivatives for downstream
-    # consumers to chain through.
+    dEdcn = np.zeros(natom)
+    dEdq = np.zeros(natom)
+    for a in range(natom):
+        for b in range(a):
+            for i, j in ((a,b), (b,a)):
+                dEdcn[i] += sensitivity[a,b] * dc6_cn[i,j]
+                dEdq[i] += sensitivity[a,b] * dc6_q[i,j]
+    gradient += eeq_response_gradient(mol, dEdcn, dEdq, total_charge=total_charge)
     return float(energy), gradient, dEdcn, dEdq

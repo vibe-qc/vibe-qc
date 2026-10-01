@@ -105,6 +105,7 @@ class BipoleFockContext:
     symmetry_reconstruction_map: Any = None  # SymmetryFockReconstructionMap for far-field
     output_cell_farming_task_kind: Optional[str] = None
     output_cell_farming_strategy: str = "cyclic"
+    resolved_domain: Any = None
 
 
 @dataclass(frozen=True)
@@ -446,24 +447,14 @@ def _add_screened_exchange_restricted(
 
 def _sr_padded_lat_opts(lat_opts_2e, image_extent: float):
     """Preserve physical AO-pair support and set the internal interaction reach."""
-    from ._vibeqc_core import LatticeSumOptions
+    from .pbc_bipole_common import _lattice_options_passthrough
 
-    lp = LatticeSumOptions()
+    lp = _lattice_options_passthrough(lat_opts_2e)
     physical_pairs = getattr(lat_opts_2e, "pair_complete_1e", False)
     lp.cutoff_bohr = lat_opts_2e.cutoff_bohr if physical_pairs else float(image_extent)
     if physical_pairs:
         lp.eri_interaction_cutoff_bohr = float(image_extent)
-    lp.nuclear_cutoff_bohr = lat_opts_2e.nuclear_cutoff_bohr
     lp.coulomb_method = lat_opts_2e.coulomb_method
-    lp.schwarz_threshold = lat_opts_2e.schwarz_threshold
-    lp.schwarz_threshold_forces = lat_opts_2e.schwarz_threshold_forces
-    lp.screening_exchange_threshold = lat_opts_2e.screening_exchange_threshold
-    lp.screening_overlap_threshold = lat_opts_2e.screening_overlap_threshold
-    lp.becke_image_radius_bohr = lat_opts_2e.becke_image_radius_bohr
-    lp.slab_ewald_alpha = lat_opts_2e.slab_ewald_alpha
-    lp.sr_range_screening = lat_opts_2e.sr_range_screening
-    lp.sr_sparse_traversal = lat_opts_2e.sr_sparse_traversal
-    lp.pair_complete_1e = getattr(lat_opts_2e, "pair_complete_1e", False)
     return lp
 
 
@@ -882,6 +873,8 @@ def build_bipole_restricted_fock(
     The per-k Fock assembly (Bloch sum + Hcore + V_xc + K_corr) stays in
     the caller; this returns the real-space ``f2e_real`` and ``k_corr_per_k``.
     """
+    if ctx.resolved_domain is not None:
+        ctx.resolved_domain.require_fock_context(ctx)
     if exchange_assembly is not None and exchange_assembly.is_screened:
         if float(exchange_assembly.c_full) != 0.0 or float(alpha_hf) != 0.0:
             # resolve_periodic_exchange fails closed on mixed
@@ -1877,6 +1870,8 @@ def build_bipole_unrestricted_fock(
       folded on top. Requires ``hcore_k_list=None`` (the UKS calling
       convention; UHF carries no functional and never screens).
     """
+    if ctx.resolved_domain is not None:
+        ctx.resolved_domain.require_fock_context(ctx)
     # The PATOM in-field seed is one full-HF-like build independent of
     # the target functional (patom_hf_like forces exchange_scale=1.0),
     # so it bypasses the screened branch by design.

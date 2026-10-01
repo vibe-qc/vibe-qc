@@ -26,8 +26,15 @@ from __future__ import annotations
 
 import pytest
 
+import numpy as np
 import vibeqc as vq
-from vibeqc.composites import Availability, ShortRangeCorrection
+from vibeqc.composites import (
+    Availability,
+    ShortRangeCorrection,
+    _SRB_B973C,
+    _SRB_HF3C,
+    composite_correction_terms,
+)
 from vibeqc.gcp import compute_gcp
 
 
@@ -314,3 +321,97 @@ def test_damped_gcp_suppresses_bonded_pairs():
         damping=(r.gcp_damping.dmp_scal, r.gcp_damping.dmp_exp)).energy
     assert undamped > 0.02            # ~+28.8 kcal/mol undamped
     assert damped < 0.1 * undamped    # damping suppresses ~25x on H2O
+
+
+# ---------------------------------------------------------------------------
+# Gradient + geometry-optimisation surface (composite corrections)
+# ---------------------------------------------------------------------------
+
+def test_srb_gradient_matches_finite_difference():
+    """The SRB analytic gradient (added for composite geometry optimisation
+    of hf-3c / b97-3c) must match a central finite difference of the SRB
+    energy for BOTH functional forms (hf3c_base and b973c_mod), and be
+    translationally invariant. Before this change :meth: only the energy
+    was available, so the optimiser could not walk the SRB surface."""
+    mol = _h2o_mol()
+    atomic_numbers = [int(a.Z) for a in mol.atoms]
+    positions = [list(a.xyz) for a in mol.atoms]
+    h = 1e-5
+
+    for srb in (_SRB_HF3C, _SRB_B973C):
+        energy, grad = srb.evaluate_gradient(atomic_numbers, positions)
+        assert energy == pytest.approx(
+            srb.evaluate(atomic_numbers, positions), rel=1e-12
+        )
+        gfd = np.zeros((len(atomic_numbers), 3))
+        for i in range(len(atomic_numbers)):
+            for c in range(3):
+                pp = [list(p) for p in positions]
+                pm = [list(p) for p in positions]
+                pp[i][c] += h
+                pm[i][c] -= h
+                ep = srb.evaluate(atomic_numbers, pp)
+                em = srb.evaluate(atomic_numbers, pm)
+                gfd[i, c] = (ep - em) / (2.0 * h)
+        np.testing.assert_allclose(grad, gfd, atol=1e-8)
+        # Translational invariance: net force on the molecule is zero.
+        assert abs(float(np.sum(grad))) < 1e-12
+
+
+def test_composite_correction_terms_translationally_invariant():
+    """Every runnable composite's correction set (D3-BJ/D4 + gCP + SRB) has
+    a gradient that sums to ~0 -- a prerequisite for a well-defined
+    molecular surface the optimiser can walk."""
+    mol = _h2o_mol()
+    from vibeqc.gcp import GCPDataMissing
+
+    for recipe in vq.list_composites():
+        try:
+            terms = composite_correction_terms(mol, recipe)
+        except GCPDataMissing:
+            continue  # e.g. wb97x-3c / vdZP -- gCP table not bundled
+        for _name, _e, g in terms:
+            assert abs(float(np.sum(g))) < 1e-10
+
+
+def test_vibeqc_composite_surface_forces_are_consistent():
+    """With a composite recipe active, VibeQC's forces must equal the
+    negative gradient of its energy (SCF + D3-BJ/D4 + gCP + SRB). This is
+    the acceptance criterion for the optimiser walking the full composite
+    surface: checked on a D4 recipe (r2scan-3c: D4 + damped gCP) and an
+    SRB recipe (hf-3c: D3-BJ + gCP + SRB). Before this change the forces
+    were on the bare-SCF (or SCF+D3-BJ) surface while the run reported the
+    composite total."""
+    from ase import Atoms
+    from vibeqc.ase import VibeQC
+
+    def water():
+        return Atoms(
+            "OH2",
+            positions=[[0, 0, 0], [0, 0.757, 0.586], [0, -0.757, 0.586]],
+        )
+
+    for name in ("r2scan-3c", "hf-3c"):
+        recipe = vq.resolve_composite(name)
+        a = water()
+        a.calc = VibeQC(
+            basis=recipe.basis, charge=0, multiplicity=1, composite=recipe
+        )
+        forces = a.get_forces().copy()
+        pos0 = np.array(a.positions)
+        h = 1e-4
+        grad = np.zeros((3, 3))
+        for i in range(3):
+            for c in range(3):
+                a.positions = pos0
+                a.positions[i, c] += h
+                e_plus = a.get_potential_energy()
+                a.positions = pos0
+                a.positions[i, c] -= h
+                e_minus = a.get_potential_energy()
+                grad[i, c] = (e_plus - e_minus) / (2.0 * h)
+        a.positions = pos0
+        # forces (eV/A) == -dE/dR (eV/A), at FD precision.
+        np.testing.assert_allclose(forces, -grad, atol=1e-5)
+        # The composite correction is actually present (not silently zero).
+        assert abs(a.calc.results["e_corrections"]) > 0.0

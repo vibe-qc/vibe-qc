@@ -82,6 +82,7 @@ def _run(bz: float, use_diis: bool):
     return run_pbc_bipole_rhf(
         sysp, basis, kmesh, _opts(use_diis),
         use_ewald_j_split=True, use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8, progress=False,
     )
 

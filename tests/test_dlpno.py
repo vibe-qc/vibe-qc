@@ -679,8 +679,8 @@ class TestPNODensityConventions:
     `"legacy"` density of the bare amplitudes, Riplinger and Neese's `"mp2"`
     norm (their Eq. 23; ORCA's `PNONorm MP2Norm` default) and the pre-2013
     LPNO `"iepa"` norm (Neese, Wennmohs and Hansen 2009, Eqs. 18-19; ORCA's
-    `PNONorm IEPANorm`). The default is `"legacy"` so no shipped number moves;
-    which one *should* ship is GitLab #701.
+    `PNONorm IEPANorm`). Molecular options default to `"mp2"` following
+    #65; the low-level helpers retain their historical `"legacy"` default.
     """
 
     @staticmethod
@@ -693,6 +693,8 @@ class TestPNODensityConventions:
         from vibeqc.dlpno import PNO_NORMS, resolve_pno_norm
 
         assert PNO_NORMS == ("legacy", "mp2", "iepa")
+        # Public low-level compatibility since before #65, not the molecular
+        # options default. Periodic reference recipes select legacy explicitly.
         assert resolve_pno_norm(None) == "legacy"
         for spelling in ("mp2", "MP2", "MP2Norm", "mp2_norm", "MP2 Norm"):
             assert resolve_pno_norm(spelling) == "mp2"
@@ -704,7 +706,7 @@ class TestPNODensityConventions:
             resolve_pno_norm(3.33e-7)
 
     def test_legacy_reproduces_the_historical_density(self):
-        """The default must be byte-identical to what the builders did before."""
+        """The low-level compatibility default retains the historical density."""
         from vibeqc.dlpno import pair_density
 
         for symmetric, delta in ((False, 0.0), (True, 1.0)):
@@ -714,6 +716,17 @@ class TestPNODensityConventions:
             assert np.allclose(
                 pair_density(T, delta, "legacy"), historical, rtol=0, atol=0
             )
+            np.testing.assert_array_equal(pair_density(T, delta), historical)
+            np.testing.assert_array_equal(pair_density(T, delta, None), historical)
+
+    @pytest.mark.parametrize(
+        "options_type", [DLPNOMP2Options, DLPNOCCSDPilotOptions, LocalCCSDOptions]
+    )
+    def test_molecular_options_explicitly_select_mp2(self, options_type):
+        from vibeqc.dlpno import resolve_pno_norm
+
+        assert options_type().pno_norm == "mp2"
+        assert resolve_pno_norm(options_type().pno_norm) == "mp2"
 
     def test_mp2_norm_is_the_paper_equation(self):
         """Riplinger and Neese 2013, Eq. 23 and the line under it."""

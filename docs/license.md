@@ -586,7 +586,7 @@ own header for the authoritative reference):
 
 | Family | Per-family citation |
 |--------|---------------------|
-| sto-Ng | Hehre, Stewart, Pople, *J. Chem. Phys.* **51**, 2657 (1969) |
+| sto-Ng | Hehre, Stewart, Pople, *J. Chem. Phys.* **51**, 2657 (1969); the STO-6G rows of the semiempirical basis are Stewart, *J. Chem. Phys.* **52**, 431 (1970), Tables I to V |
 | 6-31g family | Hehre, Ditchfield, Pople, *J. Chem. Phys.* **56**, 2257 (1972); Hariharan, Pople, *Theor. Chim. Acta* **28**, 213 (1973) |
 | 6-311g family | Krishnan, Binkley, Seeger, Pople, *J. Chem. Phys.* **72**, 650 (1980) |
 | cc-pVxZ family | Dunning, *J. Chem. Phys.* **90**, 1007 (1989); Kendall, Dunning, Harrison, *J. Chem. Phys.* **96**, 6796 (1992) |
@@ -606,7 +606,7 @@ external license clearance is required.**
 |------|----------|
 | `pob-tzvp.g94` | M. F. Peintinger, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **34**, 451 (2013). [DOI:10.1002/jcc.23153](https://doi.org/10.1002/jcc.23153); Rb-I: J. Laun, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **39**, 1285 (2018). [DOI:10.1002/jcc.25195](https://doi.org/10.1002/jcc.25195) |
 | `pob-dzvp-rev2.g94` | D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, *J. Comput. Chem.* **40**, 2364 (2019). [DOI:10.1002/jcc.26013](https://doi.org/10.1002/jcc.26013) |
-| `pob-tzvp-rev2.g94` | J. Laun, T. Bredow, *J. Comput. Chem.* **42**, 1064 (2021). [DOI:10.1002/jcc.26521](https://doi.org/10.1002/jcc.26521) |
+| `pob-tzvp-rev2.g94` | M. F. Peintinger, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **34**, 451 (2013). [DOI:10.1002/jcc.23153](https://doi.org/10.1002/jcc.23153); H-Br: D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, *J. Comput. Chem.* **40**, 2364 (2019). [DOI:10.1002/jcc.26013](https://doi.org/10.1002/jcc.26013); Rb-I: J. Laun, T. Bredow, *J. Comput. Chem.* **43**, 839 (2022). [DOI:10.1002/jcc.26839](https://doi.org/10.1002/jcc.26839); Cs-Ba, Hf-Po: J. Laun, T. Bredow, *J. Comput. Chem.* **42**, 1064 (2021). [DOI:10.1002/jcc.26521](https://doi.org/10.1002/jcc.26521); La-Lu: L. M. Seidler, J. Laun, T. Bredow, *J. Comput. Chem.* **44**, 1418 (2023). [DOI:10.1002/jcc.27097](https://doi.org/10.1002/jcc.27097) |
 
 Source URL (Bredow group archive):
 <https://www.chemie.uni-bonn.de/bredow/de/software/pob-tzvp-tar.gz>.
@@ -621,8 +621,9 @@ archives (retrieved 2026-09-05), and `basis/pob-tzvp-rev2.ecp` is the
 same ECP data emitted as a Gaussian-style sidecar. The potentials are
 the Stuttgart-Cologne energy-consistent pseudopotentials the pob authors
 paired with their valence sets; they are published numerical parameter
-data, cited per element through the pob-TZVP-rev2 paper and the
-Stuttgart references in `python/vibeqc/output/citations/database.toml`.
+data. The valence sets are cited through the paper for each record's
+range (the table above; #288) and the potentials through the Stuttgart
+references in `python/vibeqc/output/citations/database.toml`.
 
 The 16 pob-TZVP records for Rb-I (Laun, Vilela Oliveira and Bredow, 2018;
 same `Z+200` format) are bundled under `basis_library/sources/pob-TZVP/`
@@ -671,12 +672,15 @@ bundled ones (Vilela Oliveira, Laun, Peintinger, Bredow, *J. Comput. Chem.*
 was simply a partial import of one paper. BSE's copy was checked against the
 Bredow-group-archive-derived file first and agrees on all 19 shared elements.
 
-**`pob-tzvp` is deliberately not completed from BSE.** Its 16 missing Rb-I
-blocks (Laun, Vilela Oliveira, Bredow, *J. Comput. Chem.* **39**, 1285 (2018))
+**`pob-tzvp` is deliberately not completed from BSE.** Its 16 Rb-I blocks
+(Laun, Vilela Oliveira, Bredow, *J. Comput. Chem.* **39**, 1285 (2018)) also
 exist in the catalogue, but BSE's copy of pob-TZVP is an upstream
 distribution carrying the sulfur d-polarisation column-swap defect vibe-qc
 fixed by regenerating from the Bredow archive: our sulfur is 5s4p1d, BSE's is
-5s4p with no d function at all. Those blocks should come from the archive.
+5s4p with no d function at all. The Rb-I blocks were therefore taken from the
+archive instead, and have been bundled since 2026-09-13 (#228; see the
+pob-TZVP paragraph above). Any future pob-TZVP addition should also come from
+the archive, not from BSE.
 
 #### The Peterson/Figgen PP correlation-consistent family
 
@@ -1111,3 +1115,16 @@ incompatibility we missed, please email
 seriously, vibe-qc is an open-source project run by one
 person, and getting any of this wrong has real consequences for
 the project's ability to be used.
+
+## Optional OpenTrustRegion
+
+OpenTrustRegion is copyright Jonas Greiner and contributors, distributed under
+MPL-2.0. The opt-in source build pins revision
+`8fa7769ae66233a566868a6bf03cdcbdb1ee69d0` (2.0.0) from the
+[upstream source](https://github.com/eriksen-lab/opentrustregion/tree/8fa7769ae66233a566868a6bf03cdcbdb1ee69d0).
+No upstream source is copied into the product tree. Enabled binaries statically
+link the library and install its license under `share/vibeqc/licenses`.
+Redistributors must preserve that notice and provide access to the corresponding
+MPL-covered source, plus notices for their linked Fortran and BLAS runtimes.
+The component is an optional numerical library, not a runtime dependency on
+another quantum-chemistry program.

@@ -667,3 +667,79 @@ def test_direct_matches_gdf_tight_core_diamond_3d():
     # Absolute anchor, so a future change that moves BOTH routes together
     # still fails here rather than passing on self-consistency alone.
     assert r.energy / ccm.n_cells == pytest.approx(-74.0020515731, abs=1e-8)
+
+
+# ---------------------------------------------------------------------------
+# Ruling R6 (2026-09-10): the IID 291 gate gains an explicit, warned,
+# recorded opt-in so the transverse vacuum of a chain becomes a parameter
+# with a convergence test instead of a silent regime.
+# ---------------------------------------------------------------------------
+
+
+def _padded_h2_chain_30_ccm(nrep=(1, 1, 1)):
+    """1-D H2 chain along a1, declared 3-D, 30 bohr transverse vacuum: the
+    gap on a2/a3 (30 bohr) exceeds both the 25-bohr floor and four shortest
+    lattice vectors (24 bohr), so the classifier flags directions 2 and 3.
+    Converges to a NEGATIVE energy on the neutral routes (measured
+    2026-09-16: -1.15531 Ha/cell at (1,1,1) on both producers), so the
+    second IID 291 arm does not fire and the opt-in itself is what is
+    exercised."""
+    cell = PeriodicSystem(
+        3, np.diag([6.0, 30.0, 30.0]),
+        [Atom(1, [0.0, 0.0, 0.0]), Atom(1, [1.4, 0.0, 0.0])], 0, 1)
+    return CCMSystem(cell, nrep, "sto-3g")
+
+
+def test_vacuum_padding_opt_in_runs_warns_and_records():
+    """Default: refused, and the refusal names the opt-in. With
+    ``allow_vacuum_padding=True``: an ``AICCMVacuumPaddingWarning`` naming
+    the padded directions (1-based), a converged result carrying
+    ``vacuum_padding_allowed=True`` and ``vacuum_padded_axes=(2, 3)``, on
+    BOTH producers of the neutral Hamiltonian and on the lean neutral SCF."""
+    from vibeqc.periodic.ccm.experimental import AICCMVacuumPaddingWarning
+    from vibeqc.periodic.ccm.ri import run_ccm_rhf_gdf, run_ccm_rhf_ri_neutral
+
+    ccm = _padded_h2_chain_30_ccm()
+    for fn in (run_ccm_rhf_direct, run_ccm_rhf_gdf, run_ccm_rhf_ri_neutral):
+        with pytest.raises(NotImplementedError, match="allow_vacuum_padding"):
+            fn(ccm)
+    results = {}
+    for name, fn in (("direct", run_ccm_rhf_direct),
+                     ("gdf", run_ccm_rhf_gdf),
+                     ("ri_neutral", run_ccm_rhf_ri_neutral)):
+        with pytest.warns(AICCMVacuumPaddingWarning, match="direction\\(s\\) 2, 3"):
+            r = fn(ccm, allow_vacuum_padding=True)
+        assert r.converged
+        assert r.vacuum_padding_allowed is True
+        assert r.vacuum_padded_axes == (2, 3)
+        results[name] = r
+    # The two producers of the neutral Hamiltonian agree on the padded cell
+    # too (they run the same padded Hamiltonian); the lean neutral SCF is the
+    # strict-zero-mode Hamiltonian and is NOT expected to agree.
+    e_direct = results["direct"].energy / ccm.n_cells
+    assert abs(e_direct - results["gdf"].energy) < 1e-8
+    assert e_direct < 0.0
+
+
+def test_vacuum_padding_default_stamps_negative_on_measured_3d_cells():
+    """A cell measured as genuinely 3-D records the opt-in as False with an
+    empty axis tuple, on the direct route and on the RIJCOSX sibling (which
+    carried no IID 291 gate at all until 2026-09-16)."""
+    ccm = _h2_cubic_ccm((1, 1, 1))
+    r = run_ccm_rhf_direct(ccm)
+    assert r.vacuum_padding_allowed is False and r.vacuum_padded_axes == ()
+    c = run_ccm_rhf_direct_rijcosx(ccm)
+    assert c.vacuum_padding_allowed is False and c.vacuum_padded_axes == ()
+    with pytest.raises(NotImplementedError, match="vacuum"):
+        run_ccm_rhf_direct_rijcosx(_padded_h2_chain_30_ccm())
+
+
+def test_vacuum_padding_opt_in_does_not_relax_the_positive_energy_refusal():
+    """The second arm of IID 291 is independent of the geometric gate: a
+    closed-shell neutral SCF converging to a positive energy is refused
+    with or without the opt-in. The compressed padded chain (2.8-bohr
+    period, 40-bohr padding) is the documented +0.03 Ha garbage case."""
+    from vibeqc.periodic.ccm.scf import run_ccm_rhf
+
+    with pytest.raises(ValueError, match="positive total energy"):
+        run_ccm_rhf(_padded_h_chain_ccm(), method="aiccm2026dev-a")

@@ -506,7 +506,10 @@ class KPointPartition:
     rank, size : int
         This rank and the world size the partition was built for.
     strategy : str
-        ``"block"`` (contiguous) or ``"cyclic"`` (round-robin).
+        ``"block"`` (contiguous), ``"cyclic"`` (round-robin), or ``"weighted"``.
+    owners : tuple of int
+        For weighted scheduling, the owner of every global index. The caller
+        supplies common measured costs; task counts alone are not a cost model.
     """
 
     n_kpoints: int
@@ -514,6 +517,7 @@ class KPointPartition:
     rank: int
     size: int
     strategy: str
+    owners: Tuple[int, ...] = ()
 
     @classmethod
     def create(
@@ -521,6 +525,7 @@ class KPointPartition:
         n_kpoints: int,
         *,
         strategy: str = "block",
+        costs: Optional[Sequence[float]] = None,
     ) -> "KPointPartition":
         """Partition ``n_kpoints`` across the current MPI world.
 
@@ -529,6 +534,11 @@ class KPointPartition:
         round-robin, which balances better when per-k cost varies
         systematically with the index (for example when a q = 0 group is
         cheaper than the rest), at the cost of contiguity.
+
+        ``strategy="weighted"`` requires one finite nonnegative cost per
+        point. Largest costs are assigned first to the least loaded rank;
+        ties prefer fewer tasks, then lower rank. Local indices stay sorted,
+        and ordered gather verifies the complete ownership contract.
 
         Ranks beyond ``n_kpoints`` get an empty assignment rather than an
         error -- oversubscription is a scheduling choice, not a bug, and
@@ -543,7 +553,28 @@ class KPointPartition:
         rank = int(w.rank)
         size = max(int(w.size), 1)
 
-        if strategy == "block":
+        owners = ()
+        if strategy == "weighted":
+            # Largest-processing-time list scheduling: R. L. Graham,
+            # "Bounds on Multiprocessing Timing Anomalies", SIAM J. Appl.
+            # Math. 17 (1969), 416-429, doi:10.1137/0117039. Costs here are
+            # measured estimates; the task count is not a scaling claim.
+            weights = np.asarray(costs, dtype=float)
+            if (weights.shape != (n_kpoints,) or not np.isfinite(weights).all()
+                    or np.any(weights < 0)):
+                raise ValueError('KPointPartition: weighted costs must be finite nonnegative values for every task')
+            loads, counts = [0.] * size, [0] * size
+            ownership = [0] * n_kpoints
+            for index in sorted(range(n_kpoints), key=lambda i: (-weights[i], i)):
+                owner = min(range(size), key=lambda r: (loads[r], counts[r], r))
+                ownership[index] = owner
+                loads[owner] += float(weights[index])
+                counts[owner] += 1
+            owners = tuple(ownership)
+            local = tuple(i for i, owner in enumerate(owners) if owner == rank)
+        elif costs is not None:
+            raise ValueError('KPointPartition: costs require strategy=weighted')
+        elif strategy == "block":
             base, rem = divmod(n_kpoints, size)
             start = rank * base + min(rank, rem)
             stop = start + base + (1 if rank < rem else 0)
@@ -552,7 +583,7 @@ class KPointPartition:
             local = tuple(range(rank, n_kpoints, size))
         else:
             raise ValueError(
-                "KPointPartition: strategy must be 'block' or 'cyclic'; "
+                "KPointPartition: strategy must be 'block', 'cyclic', or 'weighted'; "
                 f"got {strategy!r}"
             )
         return cls(
@@ -561,6 +592,7 @@ class KPointPartition:
             rank=rank,
             size=size,
             strategy=str(strategy),
+            owners=owners,
         )
 
     @property
@@ -584,6 +616,8 @@ class KPointPartition:
                 f"KPointPartition: k={k} out of range for "
                 f"n_kpoints={self.n_kpoints}"
             )
+        if self.strategy == "weighted":
+            return self.owners[k]
         if self.strategy == "cyclic":
             return k % self.size
         base, rem = divmod(self.n_kpoints, self.size)
@@ -615,6 +649,13 @@ class KPointPartition:
             return values
 
         parcels = w.comm.allgather((self.local_indices, values))
+        if self.strategy == "weighted":
+            if len(parcels) != self.size:
+                raise RuntimeError('KPointPartition: incomplete weighted rank parcels')
+            for source, (indices, chunk) in enumerate(parcels):
+                expected = tuple(i for i, owner in enumerate(self.owners) if owner == source)
+                if tuple(indices) != expected or len(chunk) != len(expected):
+                    raise RuntimeError('KPointPartition: ranks disagree on weighted ownership')
         ordered: List = [None] * self.n_kpoints
         seen = 0
         for indices, chunk in parcels:

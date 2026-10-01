@@ -91,6 +91,14 @@ deprecation path, the C++ contract, and how GAPW composes with it.
 >   as well as a k-mesh. Tests: boron 2p¹ fractional degenerate shell in
 >   `tests/test_pbc_gdf_compcell.py::test_pbc_gdf_u{hf,ks}_gamma_smearing_fractional`.
 >
+> **Open-shell T = 0 (GitLab #176, 2026-09-27).** The entries above record
+> that the open-shell T = 0 fill stayed "the exact per-k Aufbau". That is
+> superseded: every multi-k open-shell route (GDF, Ewald-3D, BIPOLE) now fills
+> each spin with one chemical potential over the whole mesh through
+> `smearing.spin_channel_occupations`, positional under MOM, and builds its
+> density from those occupations. Gapped meshes keep the per-k `{0, 1}`
+> arrays bit for bit, which is what the UHF(M=1) = KRHF anchors test.
+>
 > **Still pending for M3 / open-shell smearing completeness:**
 > * Ewald-3D multi-k UHF/UKS (the table row above), `periodic_uhf/uks_multi_k_ewald.py`
 >   still call `reject_unsupported_smearing_temperature`. (PBC-chat-owned.)

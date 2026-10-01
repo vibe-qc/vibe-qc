@@ -72,21 +72,26 @@ Native, usable today:
   fitting RHF, RKS, and hybrids across `PeriodicSystem.dim = 1, 2, 3`.
 * `run_krhf_periodic_gdf(..., kmesh, ...)` and
   `run_krks_periodic_gdf(..., kmesh, ...)` as the public k-point API
-  for native GDF in 1D, 2D, and 3D. A Γ-only mesh `(1, 1, 1)`
+  for native GDF in 2D (closed-shell slabs) and 3D. A Γ-only mesh `(1, 1, 1)`
   delegates to the Γ-GDF implementation; **any other Monkhorst-Pack
   mesh runs the full native multi-k GDF loop**, k-dependent 3c/2c
-  blocks, Bloch-phase assembly, multi-k DIIS. The `use_compcell=False`
-  default uses the Ewald-gauge Fock path (within **0.000 mHa of the
-  \u0393-point energy in the molecular limit**). **For tight ionic cells use
-  `use_compcell=True`**: the multi-k GDF `Lpq` is then
+  blocks, Bloch-phase assembly, multi-k DIIS. A `dim=1` wire with any other
+  mesh raises `NotImplementedError`, because the route has no consistent
+  1-D Coulomb gauge; run a wire that needs k sampling as a `dim=3` cell with
+  vacuum on the two transverse axes. Every multi-k run builds
+  the cached fit of its `gdf_method`: the `use_compcell=False` default
+  is promoted to `use_compcell=True` on every method (for `"mdf"` and
+  `"compcell"` with a pure functional only since 2026-09-29; before
+  that those two kept the unfitted Ewald-gauge J and ignored the
+  requested method). With `use_compcell=True` the multi-k GDF `Lpq` is
   built by the symmetry-preserving all-FT path resolved per
   `(k_i, k_j)` pair (`build_lpq_bloch_native_fft`) with a per-k Hartree
-  J, per-pair exchange K, and a k-mesh-aware Madelung exchange shift \u2014
-  reaching **PySCF \u00b5Ha parity** (LiH primitive FCC / sto-3g, kmesh
-  (2,2,2): \u22121.4 \u00b5Ha vs `pyscf.pbc.scf.KRHF.density_fit()` at a converged
-  lattice cutoff; +1.6 mHa at the cheaper default \u2014 re-measured
+  J, per-pair exchange K, and a k-mesh-aware Madelung exchange shift,
+  reaching **PySCF µHa parity** (LiH primitive FCC / sto-3g, kmesh
+  (2,2,2): −1.4 µHa vs `pyscf.pbc.scf.KRHF.density_fit()` at a converged
+  lattice cutoff; +1.6 mHa at the cheaper default; re-measured
   2026-08-05 against PySCF 2.13.1, run out of process). The AFT long-range
-  correction is ON by default since v0.12.0 (\u03b7=1.0, libint convention,
+  correction is ON by default since v0.12.0 (η=1.0, libint convention,
   pyscf_auto rcut). HF/hybrid functionals are auto-routed to the
   exxdiv-corrected compcell path. Also reachable
   through `run_periodic_job(..., gdf_kmesh=(n, n, n))`.
@@ -190,6 +195,13 @@ print(f"E = {result.energy:.8f} Ha, converged = {result.converged}")
 #          -7.92200467 Ha at cutoff 30 (-1.4 uHa). Measured 2026-08-05.
 ```
 
+`result.gdf_cderi_pairs` records the size of the density fit the SCF
+contracted, counted on the fit the driver built: `n_k` `(k_i, k_j)` pairs
+for a Coulomb-only fit (a pure functional), up to `n_k**2` with fitted
+exact exchange (64 on the `(2, 2, 2)` mesh above), and `0` when no fit was
+built. Read it, rather than the routing options, to
+learn whether a run used a fit.
+
 ## Minimal RKS Example
 
 ```python
@@ -280,8 +292,8 @@ result = vq.run_periodic_job(
 
 ## k-point mesh convergence for solids
 
-\u0393-only calculations are **not appropriate for real solids**. A single
-k-point sees only the \u0393-periodic component of the density; the full
+Γ-only calculations are **not appropriate for real solids**. A single
+k-point sees only the Γ-periodic component of the density; the full
 Brillouin-zone integral must be sampled with a Monkhorst-Pack mesh.
 
 The required mesh density depends on the crystal system:
@@ -290,16 +302,16 @@ The required mesh density depends on the crystal system:
 
 | Crystal type | Typical primitive cell | Minimum mesh | Converged mesh |
 |---|---:|---:|---:|
-| Simple cubic (sc) | 1 atom, \u223c3-5 \u00c5 | 4\u00d74\u00d74 | 8\u00d78\u00d78 |
-| FCC (Cu, Al, Ag) | 1 atom, \u223c3-4 \u00c5 | 6\u00d76\u00d76 | 12\u00d712\u00d712 |
-| BCC (Fe, W, Na) | 1 atom, \u223c3-4 \u00c5 | 6\u00d76\u00d76 | 12\u00d712\u00d712 |
-| Rocksalt (MgO, NaCl) | 2 atoms, \u223c4-6 \u00c5 | 4\u00d74\u00d74 | 8\u00d78\u00d78 |
-| Diamond/Zincblende (Si, GaAs) | 2 atoms, \u223c5-6 \u00c5 | 4\u00d74\u00d74 | 8\u00d78\u00d78 |
-| Perovskite (BaTiO\u2083) | 5 atoms, \u223c4 \u00c5 | 4\u00d74\u00d74 | 6\u00d76\u00d76 |
-| Layered / 2D slab | variable | 6\u00d76\u00d71 | 12\u00d712\u00d71 |
+| Simple cubic (sc) | 1 atom, ∼3-5 Å | 4×4×4 | 8×8×8 |
+| FCC (Cu, Al, Ag) | 1 atom, ∼3-4 Å | 6×6×6 | 12×12×12 |
+| BCC (Fe, W, Na) | 1 atom, ∼3-4 Å | 6×6×6 | 12×12×12 |
+| Rocksalt (MgO, NaCl) | 2 atoms, ∼4-6 Å | 4×4×4 | 8×8×8 |
+| Diamond/Zincblende (Si, GaAs) | 2 atoms, ∼5-6 Å | 4×4×4 | 8×8×8 |
+| Perovskite (BaTiO₃) | 5 atoms, ∼4 Å | 4×4×4 | 6×6×6 |
+| Layered / 2D slab | variable | 6×6×1 | 12×12×1 |
 
-**Rule of thumb**: the linear k-point density \u00d7 lattice constant should be
-\u2265 20-30 \u00c5 for insulating systems. For metals, double it.
+**Rule of thumb**: the linear k-point density × lattice constant should be
+≥ 20-30 Å for insulating systems. For metals, double it.
 
 ### Symmetry reduction
 
@@ -313,17 +325,17 @@ kpts = vq.KPoints.monkhorst_pack(system, [8, 8, 8], symmetry=True)     # IBZ
 ```
 
 Symmetry reduction can reduce the number of irreducible k-points by
-factors of 2\u201348 depending on the space group, cutting SCF cost
-proportionally. Examples on an 8\u00d78\u00d78 mesh:
+factors of 2 to 48 depending on the space group, cutting SCF cost
+proportionally. Examples on an 8×8×8 mesh:
 
 | System | Space group | Full kpts | IBZ kpts | Factor |
 |---|---:|---:|---:|
-| MgO rocksalt | Fm\u20103m (#225) | 512 | 20 | 25.6\u00d7 |
-| H\u2082 in cubic box | (trivial) | 512 | 40 | 12.8\u00d7 |
-| Si diamond | Fd\u20103m (#227) | 512 | 29 | 17.7\u00d7 |
+| MgO rocksalt | Fm-3m (#225) | 512 | 20 | 25.6× |
+| H₂ in cubic box | (trivial) | 512 | 40 | 12.8× |
+| Si diamond | Fd-3m (#227) | 512 | 29 | 17.7× |
 
 The IBZ weights are automatically normalized to sum to 1. The `KPoints`
-object can be passed directly to `run_krhf_periodic_gdf` \u2014 the driver
+object can be passed directly to `run_krhf_periodic_gdf`; the driver
 handles the normalization internally.
 
 ### Lattice cutoff convergence
@@ -334,10 +346,10 @@ lattice sums. For multi-k GDF this affects the Bloch-pair cell list
 used in the FT-based cderi construction.
 
 Default cutoff (15 bohr) reaches chemical accuracy (+1.6 mHa vs PySCF)
-on LiH FCC at kmesh=(2,2,2). Raising to 30 bohr reaches \u00b5Ha parity
-(\u22121.4 \u00b5Ha). The internal FT kinetic-energy cutoff (`ke_cutoff`,
+on LiH FCC at kmesh=(2,2,2). Raising to 30 bohr reaches µHa parity
+(−1.4 µHa). The internal FT kinetic-energy cutoff (`ke_cutoff`,
 default 200 Ha) is sufficient for light-atom systems and does not need
-tuning for LiH \u2014 the lattice cutoff is the primary accuracy knob.
+tuning for LiH: the lattice cutoff is the primary accuracy knob.
 
 **`rcut_strategy` and `rcut_precision` do not size the fit sums on this
 route**, which is worth stating because their names suggest otherwise.

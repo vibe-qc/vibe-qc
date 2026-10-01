@@ -66,7 +66,7 @@ if [ "${REBUILD:-0}" = "1" ]; then
 fi
 
 # The radial patch changes compiled code, so an old install must rebuild.
-RADIAL_PATCH_VERSION="periodic-radial-v8-1"
+RADIAL_PATCH_VERSION="periodic-radial-v11-diagnostics"
 if [ -f "$INSTALL_DIR/lib/cmake/ecpint/ecpint-config.cmake" ] && \
    [ "$(cat "$INSTALL_DIR/.vibeqc-radial-quadrature" 2>/dev/null || true)" = "$RADIAL_PATCH_VERSION" ]; then
     echo "libecpint already installed at $INSTALL_DIR"
@@ -338,6 +338,326 @@ elif text.count(new) != 1:
     raise SystemExit("libecpint projector patch: unexpected radial table; review source")
 radial.write_text(text)
 PY_PROJECTOR
+
+# libecpint's generated type2(triples, nbase, ...) sizes its scratch buffer
+# `values` as nbase+2, where generate.cpp fixes nbase at code-generation time
+# from the shell pair's angular momenta alone. The switch below it reads up
+# to values[k - 2 + l2] with k = N + u.n + 2 (N and l2 from the radial
+# triple), so the read depends on the ECP primitive's radial power u.n, known
+# only at runtime. libecpint stores u.n = n - 2 of the Gaussian-format power:
+# every record shipped before the pob-TZVP-rev2 Hf, Ta and W ECPs had n <= 2,
+# so u.n <= 0 fitted. Those three records carry n = 4 (u.n = 2) and read past
+# the end of the heap buffer: a silent over-read on the analytic branch, not
+# the "Quadrature failed" fallback, that made the Hf/Ta/W ECP operator
+# nondeterministic and wrong by up to ~1e195 Ha (vibe-qc #358). Size the
+# buffer from the largest N + l2 among the triples and this primitive's u.n.
+# When u.n <= 0 the generated nbase stays in force, so every other record
+# keeps its previous code path. The patch recognises an upstream source, the
+# earlier v9 attempt (which budgeted N + u.n and missed the + l2 term), and
+# its own output, so a kept source tree upgrades in place.
+python3 - "$LIBECPINT_SRC" <<'PY_NBASE'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+radial = root / "src/lib/radial_gen.cpp"
+text = radial.read_text()
+
+
+def patch(label, upstream, earlier, current):
+    global text
+    if text.count(current) == 1:
+        return
+    for old in (upstream, earlier):
+        if text.count(old) == 1:
+            text = text.replace(old, current, 1)
+            return
+    raise SystemExit(f"libecpint nbase patch: unexpected source ({label}); review radial_gen.cpp")
+
+
+patch(
+    "triple scan",
+    (
+        "\t\tint npB = shellB.nprimitive();\n"
+        "\t\t\n"
+        "\t\t// Loop over primitives in ECP, only considering correct ang. momentum\n"
+    ),
+    (
+        "\t\tint npB = shellB.nprimitive();\n"
+        "\n"
+        "\t\t// vibe-qc: track the largest radial triple index so the base-integral\n"
+        "\t\t// buffer below can be grown past nbase for a high-radial-power ECP\n"
+        "\t\t// primitive (see the block comment above this patch in\n"
+        "\t\t// build_libecpint.sh).\n"
+        "\t\tint max_triple_N = 0;\n"
+        "\t\tfor (const Triple& triple : triples) {\n"
+        "\t\t\tint triple_N = std::get<0>(triple);\n"
+        "\t\t\tif (triple_N > max_triple_N) max_triple_N = triple_N;\n"
+        "\t\t}\n"
+        "\t\t\n"
+        "\t\t// Loop over primitives in ECP, only considering correct ang. momentum\n"
+    ),
+    (
+        "\t\tint npB = shellB.nprimitive();\n"
+        "\n"
+        "\t\t// vibe-qc #358: the generated switch reads values[N + u.n + l2];\n"
+        "\t\t// find the largest N + l2 so the buffer below can cover u.n > 0.\n"
+        "\t\tint max_triple_Nl2 = 0;\n"
+        "\t\tfor (const Triple& triple : triples) {\n"
+        "\t\t\tint triple_Nl2 = std::get<0>(triple) + std::get<2>(triple);\n"
+        "\t\t\tif (triple_Nl2 > max_triple_Nl2) max_triple_Nl2 = triple_Nl2;\n"
+        "\t\t}\n"
+        "\t\t\n"
+        "\t\t// Loop over primitives in ECP, only considering correct ang. momentum\n"
+    ),
+)
+
+patch(
+    "values buffer",
+    (
+        "\t\t\t\t\t\t// Compute base integrals\n"
+        "\t\t\t\t\t\tdouble *values = new double[nbase+2]; \n"
+        "\t\t\t\t\t\tcompute_base_integrals(2, 3+nbase, p, o_root_p, P1, P2, P1_2, P2_2, X1, X2, oP1, oP2, values); \n"
+    ),
+    (
+        "\t\t\t\t\t\t// Compute base integrals. nbase alone does not budget for this\n"
+        "\t\t\t\t\t\t// primitive's radial power u.n (see the block comment above this\n"
+        "\t\t\t\t\t\t// patch in build_libecpint.sh); grow the buffer when u.n needs\n"
+        "\t\t\t\t\t\t// more room than nbase already has.\n"
+        "\t\t\t\t\t\tint local_nbase = nbase;\n"
+        "\t\t\t\t\t\tif (max_triple_N + u.n > local_nbase) local_nbase = max_triple_N + u.n;\n"
+        "\t\t\t\t\t\tdouble *values = new double[local_nbase+2]; \n"
+        "\t\t\t\t\t\tcompute_base_integrals(2, 3+local_nbase, p, o_root_p, P1, P2, P1_2, P2_2, X1, X2, oP1, oP2, values); \n"
+    ),
+    (
+        "\t\t\t\t\t\t// Compute base integrals. vibe-qc #358: the largest index read\n"
+        "\t\t\t\t\t\t// is max(N + l2) + u.n, so the buffer needs max(N + l2) + u.n + 1\n"
+        "\t\t\t\t\t\t// entries; nbase + 2 only covers that when u.n <= 0.\n"
+        "\t\t\t\t\t\tint local_nbase = nbase;\n"
+        "\t\t\t\t\t\tif (max_triple_Nl2 + u.n - 1 > local_nbase) local_nbase = max_triple_Nl2 + u.n - 1;\n"
+        "\t\t\t\t\t\tdouble *values = new double[local_nbase+2]; \n"
+        "\t\t\t\t\t\tcompute_base_integrals(2, 3+local_nbase, p, o_root_p, P1, P2, P1_2, P2_2, X1, X2, oP1, oP2, values); \n"
+    ),
+)
+
+radial.write_text(text)
+PY_NBASE
+
+# libecpint reported radial-quadrature trouble by printing to the process's
+# stdout/stderr and then used the unconverged value (vibe-qc #392). vibe-qc's
+# native code never writes to a stream (cpp/include/vibeqc/diagnostics.hpp);
+# a vendored library must not either. Record each event in a per-thread
+# QuadratureDiagnostics instead: the site, the ECP angular channel, and the
+# final refinement change and magnitude of the worst failure. The values are
+# used exactly as before, so this patch changes no integral. vibe-qc reads the
+# record around every operator build and reports it once through its
+# diagnostics channel. The same patch adds ECPIntegral::shell_pair_negligible,
+# the exact screen compute_shell_pair applies (#382): true iff that call would
+# return an all-zero block, so a caller may skip it without changing a sum.
+python3 - "$LIBECPINT_SRC" <<'PY_DIAGNOSTICS'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+
+
+def edit(relative, old, new, count=1):
+    path = root / relative
+    text = path.read_text()
+    if text.count(new) == count:
+        return
+    if text.count(old) != count:
+        raise SystemExit(f"libecpint diagnostics patch: unexpected {relative}; review source")
+    path.write_text(text.replace(old, new))
+
+
+def create(relative, content):
+    path = root / relative
+    if path.exists() and path.read_text() != content:
+        raise SystemExit(f"libecpint diagnostics patch: foreign {relative}; review source")
+    path.write_text(content)
+
+
+create("include/libecpint/diagnostics.hpp", """\
+// vibe-qc patch (vibe-qc #392): radial quadrature outcomes are recorded per
+// thread instead of being printed. Values are unchanged by this record.
+#ifndef LIBECPINT_VIBEQC_DIAGNOSTICS_HEAD
+#define LIBECPINT_VIBEQC_DIAGNOSTICS_HEAD
+
+#include <array>
+#include <cstdint>
+
+#include "config.hpp"
+
+namespace libecpint {
+
+\t/// Sites that can leave a radial integral unconverged.
+\tenum QuadratureSite {
+\t\tQUADRATURE_SMALL = 0,     ///< radial_gen.cpp integrate_small (128-point table)
+\t\tQUADRATURE_TYPE1 = 1,     ///< radial_quad.cpp type 1 (big grid)
+\t\tQUADRATURE_TYPE2_BIG = 2, ///< radial_quad.cpp type 2 after the big-grid retry
+\t\tN_QUADRATURE_SITES = 3
+\t};
+
+\tstruct QuadratureDiagnostics {
+\t\t/// failures[site][l]: l is the ECP angular channel (type 1: the local channel).
+\t\tstd::array<std::array<std::uint64_t, LIBECPINT_MAX_L + 2>, N_QUADRATURE_SITES> failures{};
+\t\t/// Largest final refinement change among failures, and |integral| there.
+\t\tstd::array<double, N_QUADRATURE_SITES> max_change{};
+\t\tstd::array<double, N_QUADRATURE_SITES> value_at_max{};
+\t\t/// Sum of failures over sites and channels (cheap "anything new?" test).
+\t\tstd::uint64_t total = 0;
+\t\t/// BesselFunction asked for more angular channels than it tabulated.
+\t\tstd::uint64_t bessel_lmax_exceeded = 0;
+\t\t/// Set by every quadrature: final refinement change and integral.
+\t\tdouble last_change = 0.0;
+\t\tdouble last_value = 0.0;
+\t};
+
+\t/// This thread's record. Reset it before, and read it after, a batch.
+\tQuadratureDiagnostics& quadrature_diagnostics();
+
+\t/// Count one unconverged integral at ``site`` for ECP channel ``l``.
+\tvoid record_quadrature_failure(QuadratureSite site, int l);
+}
+
+#endif
+""")
+
+create("src/lib/diagnostics.cpp", """\
+// vibe-qc patch (vibe-qc #392); see include/libecpint/diagnostics.hpp.
+#include "diagnostics.hpp"
+
+#include <algorithm>
+#include <cmath>
+
+namespace libecpint {
+
+\tQuadratureDiagnostics& quadrature_diagnostics() {
+\t\tthread_local QuadratureDiagnostics record;
+\t\treturn record;
+\t}
+
+\tvoid record_quadrature_failure(const QuadratureSite site, const int l) {
+\t\tQuadratureDiagnostics& record = quadrature_diagnostics();
+\t\tconst int channel = std::max(0, std::min(l, LIBECPINT_MAX_L + 1));
+\t\trecord.failures[site][channel] += 1;
+\t\trecord.total += 1;
+\t\tconst double change = std::fabs(record.last_change);
+\t\tif (!(change <= record.max_change[site])) {  // also keeps a NaN visible
+\t\t\trecord.max_change[site] = change;
+\t\t\trecord.value_at_max[site] = std::fabs(record.last_value);
+\t\t}
+\t}
+}
+""")
+
+# Every quadrature leaves its final refinement change in the record.
+edit("src/lib/gaussquad.cpp", '#include "gaussquad.hpp"\n',
+     '#include "gaussquad.hpp"\n#include "diagnostics.hpp"\n')
+edit("src/lib/gaussquad.cpp",
+     "\t\tbool converged = false; // 0 for converged, -1 for not converged\n",
+     "\t\tbool converged = false; // 0 for converged, -1 for not converged\n"
+     "\t\tdouble last_change = 0.0; // vibe-qc #392: final refinement change\n")
+edit("src/lib/gaussquad.cpp",
+     "                    std::fabs(older_change) <= tolerance;\n",
+     "                    std::fabs(older_change) <= tolerance;\n"
+     "                last_change = std::fmax(std::fabs(recent_change), std::fabs(older_change));\n")
+edit("src/lib/gaussquad.cpp",
+     "\t\treturn {I, converged};\n",
+     "\t\tQuadratureDiagnostics& record = quadrature_diagnostics();\n"
+     "\t\trecord.last_change = last_change;\n"
+     "\t\trecord.last_value = I;\n"
+     "\t\treturn {I, converged};\n")
+
+# integrate_small: two print-and-continue sites.
+edit("src/lib/radial_gen.cpp", '#include "mathutil.hpp"\n',
+     '#include "mathutil.hpp"\n#include "diagnostics.hpp"\n')
+edit("src/lib/radial_gen.cpp",
+     'if (!quadval.second) std::cout << "Quadrature failed" << std::endl;',
+     "if (!quadval.second) record_quadrature_failure(QUADRATURE_SMALL, lam);",
+     count=2)
+
+# Type 1 and the type 2 big-grid retry. The multi-channel integrate keeps the
+# worst failing channel so type 1 records it, not merely the last channel.
+edit("src/lib/radial_quad.cpp", '#include "mathutil.hpp"\n',
+     '#include "mathutil.hpp"\n#include "diagnostics.hpp"\n')
+edit("src/lib/radial_quad.cpp", "\t\tint test = 1;\n",
+     "\t\tint test = 1;\n"
+     "\t\tdouble worst_change = 0.0, worst_value = 0.0; // vibe-qc #392\n")
+edit("src/lib/radial_quad.cpp",
+     "\t\t\ttest = test && integral_and_test.second;\n",
+     "\t\t\ttest = test && integral_and_test.second;\n"
+     "\t\t\tif (!integral_and_test.second\n"
+     "\t\t\t    && !(std::fabs(quadrature_diagnostics().last_change) <= worst_change)) {\n"
+     "\t\t\t\tworst_change = std::fabs(quadrature_diagnostics().last_change);\n"
+     "\t\t\t\tworst_value = integral_and_test.first;\n"
+     "\t\t\t}\n")
+edit("src/lib/radial_quad.cpp", "\t\treturn test;\n",
+     "\t\tif (!test) {\n"
+     "\t\t\tquadrature_diagnostics().last_change = worst_change;\n"
+     "\t\t\tquadrature_diagnostics().last_value = worst_value;\n"
+     "\t\t}\n"
+     "\t\treturn test;\n")
+edit("src/lib/radial_quad.cpp",
+     'if (test == 0) std::cerr << "Failed to converge" << std::endl;',
+     "if (test == 0) record_quadrature_failure(QUADRATURE_TYPE1, U.getL());")
+edit("src/lib/radial_quad.cpp",
+     'if (!integral_and_test.second) std::cerr << "Failed at second attempt" << std::endl;',
+     "if (!integral_and_test.second) record_quadrature_failure(QUADRATURE_TYPE2_BIG, l);")
+
+# A Bessel request beyond the table leaves channels unset: count it; vibe-qc refuses.
+edit("src/lib/bessel.cpp", '#include "mathutil.hpp"\n',
+     '#include "mathutil.hpp"\n#include "diagnostics.hpp"\n')
+edit("src/lib/bessel.cpp",
+     '\t\t\tstd::cout << "Asked for " << maxL << " but only initialised to maximum L = " << lMax << "\\n";\n',
+     "\t\t\tquadrature_diagnostics().bessel_lmax_exceeded += 1;\n")
+
+# The exact screen of compute_shell_pair, callable on its own.
+edit("include/libecpint/ecpint.hpp",
+     "        TwoIndex<double> &values, int shiftA = 0, int shiftB = 0) const;\n",
+     "        TwoIndex<double> &values, int shiftA = 0, int shiftB = 0) const;\n"
+     "\n"
+     "\t\t/// vibe-qc #382: true iff compute_shell_pair(U, shellA, shellB, values)\n"
+     "\t\t/// (no derivative shift) would skip type 1 and every type 2 channel,\n"
+     "\t\t/// i.e. return an all-zero block. Same data, bound and tolerance.\n"
+     "\t\tbool shell_pair_negligible(\n"
+     "\t\t    const ECP &U, const GaussianShell &shellA, const GaussianShell &shellB) const;\n")
+edit("src/lib/ecpint.cpp",
+     "\tvoid ECPIntegral::compute_shell_pair(\n",
+     "\tbool ECPIntegral::shell_pair_negligible(\n"
+     "\t    const ECP &U, const GaussianShell &shellA, const GaussianShell &shellB) const {\n"
+     "\t\t// Mirrors the data compute_shell_pair builds for its screen (shift 0).\n"
+     "\t\tShellPairData data;\n"
+     "\t\tconst double* C = U.center();\n"
+     "\t\tfor (int d = 0; d < 3; d++) {\n"
+     "\t\t\tdata.A[d] = shellA.center()[d] - C[d];\n"
+     "\t\t\tdata.B[d] = shellB.center()[d] - C[d];\n"
+     "\t\t}\n"
+     "\t\tdata.LA = shellA.am();\n"
+     "\t\tdata.LB = shellB.am();\n"
+     "\t\tdata.maxLBasis = data.LA > data.LB ? data.LA : data.LB;\n"
+     "\t\tdata.ncartA = (data.LA+1)*(data.LA+2)/2;\n"
+     "\t\tdata.ncartB = (data.LB+1)*(data.LB+2)/2;\n"
+     "\t\tdata.A2 = data.A[0]*data.A[0] + data.A[1]*data.A[1] + data.A[2]*data.A[2];\n"
+     "\t\tdata.Am = sqrt(data.A2);\n"
+     "\t\tdata.A_on_ecp = (data.Am < 1e-6);\n"
+     "\t\tdata.B2 = data.B[0]*data.B[0] + data.B[1]*data.B[1] + data.B[2]*data.B[2];\n"
+     "\t\tdata.Bm = sqrt(data.B2);\n"
+     "\t\tdata.B_on_ecp = (data.Bm < 1e-6);\n"
+     "\t\tdouble RAB[3] = {data.A[0] - data.B[0], data.A[1] - data.B[1], data.A[2] - data.B[2]};\n"
+     "\t\tdata.RAB2 = RAB[0]*RAB[0] + RAB[1]*RAB[1] + RAB[2]*RAB[2];\n"
+     "\t\tdata.RABm = sqrt(data.RAB2);\n"
+     "\t\tdouble screens[U.getL() + 1];\n"
+     "\t\testimate_type2(U, shellA, shellB, data, screens);\n"
+     "\t\tif (!U.noType1() && screens[U.getL()] > tolerance) return false;\n"
+     "\t\tfor (int l = 0; l < U.getL(); l++)\n"
+     "\t\t\tif (screens[l] > tolerance) return false;\n"
+     "\t\treturn true;\n"
+     "\t}\n"
+     "\n"
+     "\tvoid ECPIntegral::compute_shell_pair(\n")
+PY_DIAGNOSTICS
 
 echo "Configuring libecpint..."
 rm -rf "$LIBECPINT_BUILD"

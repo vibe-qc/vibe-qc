@@ -52,6 +52,11 @@ High-level "run a job" driver plus external-format writers.
    :nosignatures:
 
    vibeqc.run_job
+   vibeqc.run_qcschema
+   vibeqc.read_qcschema
+   vibeqc.write_qcschema
+   vibeqc.molecule_from_qcschema
+   vibeqc.molecule_to_qcschema
    vibeqc.write_molden
    vibeqc.write_orca_hess
    vibeqc.write_xyz_trajectory
@@ -73,6 +78,22 @@ that moltui, ASE, OVITO, Avogadro, and PyMOL all read directly:
     vibrational mode into ``n_frames`` displaced geometries for an
     animated normal-mode movie. Pair with
     :func:`~vibeqc.write_xyz_trajectory`.
+
+## IAO population analysis
+
+See [IAO charges and IAO-Wiberg bonds](../user_guide/iao_population.md) for
+conventions, validation and supported determinants.
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   vibeqc.iao_population.IAOAnalysis
+   vibeqc.iao_population.analyse_iao
+   vibeqc.iao_population.analyse_iao_occupied
+   vibeqc.bond_analysis.iao_wiberg_bond_orders
+```
 
 ## Integrals, basis, XC
 

@@ -342,7 +342,8 @@ KPointSCCDFTBResult run_scc_dftb_kpoints(
             store_kpoint_band_edges(
                 result,
                 compute_kpoint_band_edges(
-                    result.eps_per_k, result.occupations_per_k));
+                    result.eps_per_k, result.occupations_per_k, 1.0e-8,
+                    kmesh.weights));
             for (const auto& energies : result.eps_per_k) {
                 for (int i = 0; i < energies.size(); ++i) {
                     result.band_energies.push_back(energies(i));

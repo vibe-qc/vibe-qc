@@ -58,6 +58,37 @@ moltui/
 .coverage
 htmlcov/
 
+# Test-gate run artifacts dropped at the repo root. run_full_suite.py writes
+# its per-file results to `--out`, which defaults to `$VQ_WORKDIR/triage.jsonl`
+# — i.e. ./triage.jsonl when VQ_WORKDIR is unset. The recipes in
+# scripts/test_gate/README.md and docs/developer_test_lanes.md name one
+# artifact per lane (smoke.jsonl, t1.jsonl, blocking.jsonl, fast.jsonl,
+# slow.jsonl, all.jsonl, health.jsonl, ...), and `--out` takes any name a
+# developer picks, so the set is open-ended: a glob, not a list.
+#
+# These must stay out of git because each record carries a `tail` field holding
+# the tail of the captured pytest output. That includes the warnings summary,
+# whose entries pytest prints with the absolute path of the warning's origin, so
+# a fully green run leaks just as readily as a red one: the artifact that
+# prompted this rule was 87/87 PASS and still carried five /Users/<user>/...
+# paths, from UserWarning and FutureWarning lines in five passing tests. A
+# routine `git add -A` after a lane run stages the artifact, and
+# .githooks/pre-commit then rejects the commit with "staged content contains
+# personal-info patterns [values redacted]" *without naming the file*, which is
+# thoroughly confusing to debug.
+#
+# Root-anchored on purpose: no .jsonl file is tracked anywhere in this repo
+# today, and anchoring keeps any future .jsonl fixture under tests/ visible.
+# gate_verdict.py needs no rule of its own — it only reads these artifacts and
+# runs its --reverify re-runs in-process, writing nothing.
+/*.jsonl
+
+# lane_health.py's report pair, written at the repo root by the recipe in
+# scripts/test_gate/README.md ("Lane health"). Regenerable from the .jsonl
+# artifacts above; the report is a periodic snapshot, not a gate.
+/LANE_HEALTH.md
+/lane_health.json
+
 # Sphinx
 docs/_build/
 docs/api/generated/
@@ -335,3 +366,6 @@ examples/experimental_regression/
 /*.speedscope.json
 /profile.svg
 /*.prof
+
+# Workstream handovers live outside this repository.
+/handovers/

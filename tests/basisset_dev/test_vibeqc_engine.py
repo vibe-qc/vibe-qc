@@ -92,11 +92,20 @@ def basis_text() -> str:
 
 
 def rocksalt(name: str = "MgO", a: float = 4.21, **kw) -> Structure:
-    """A one-formula-unit rocksalt cell. Not a reference geometry."""
+    """A one-formula-unit cubic MgO stand-in. Not a reference geometry.
+
+    GitLab #128: the space group here is ``Pm-3m`` (221), not rocksalt's
+    ``Fm-3m`` (225). One cation at the origin and one anion at the body centre
+    of a cubic cell is the CsCl arrangement; rocksalt needs four formula units
+    in the conventional cell, and its primitive cell is rhombohedral. The
+    label was wrong and the marshalling check now catches it. The geometry is
+    deliberately unchanged, so no energy in this file moves -- this fixture
+    exercises wiring, not physics.
+    """
     return Structure(
         name=name,
         formula=name,
-        spacegroup="Fm-3m",
+        spacegroup="Pm-3m",
         crystal_system="cubic",
         a=a,
         b=a,
@@ -105,7 +114,7 @@ def rocksalt(name: str = "MgO", a: float = 4.21, **kw) -> Structure:
             StructureAtom(Z=12, fxyz=(0.0, 0.0, 0.0)),
             StructureAtom(Z=8, fxyz=(0.5, 0.5, 0.5)),
         ),
-        crystal_spacegroup=225,
+        crystal_spacegroup=221,
         crystal_asymm_unit=(
             StructureAtom(Z=12, fxyz=(0.0, 0.0, 0.0)),
             StructureAtom(Z=8, fxyz=(0.5, 0.5, 0.5)),
@@ -221,7 +230,7 @@ def test_relaxed_structure_clears_the_stale_symmetry_fields():
     emitter returns ``None`` and the caller sees an honest failure.
     """
     struct = rocksalt()
-    assert struct.crystal_spacegroup == 225  # the input has them
+    assert struct.crystal_spacegroup == 221  # the input has them
 
     back = _structure_from_periodic_system(_to_periodic_system(struct), struct)
     assert back.crystal_spacegroup == 0
@@ -834,3 +843,146 @@ def test_free_atom_energies_are_shared_across_systems(basis_text):
     assert stages["atom_Z8"] == "cached"
     assert stages["atom_Z12"] == "cached"
     assert second.atomic_energies == first.atomic_energies
+
+
+# ---------------------------------------------------------------------------
+# GitLab #128: the marshalling transposed the lattice, and the cubic fixture
+# above could not see it.
+#
+# `Structure.lattice_matrix_angstrom` documents "rows = a, b, c vectors";
+# `PeriodicSystem.lattice` holds them as COLUMNS. The forward step handed the
+# row matrix over unchanged and the reverse step unpacked the column matrix as
+# rows, so the two cancelled on a round trip -- and rocksalt is cubic, whose
+# matrix is diagonal and therefore its own transpose, so every assertion above
+# passes either way. On a hexagonal cell the error is a different crystal:
+# a = b = 2.504 Angstrom, gamma = 120 arrived as 2.7996 / 2.1685 and 116.565.
+# ---------------------------------------------------------------------------
+
+
+def hexagonal_sheet(a: float = 2.504, c: float = 15.0) -> Structure:
+    """A hexagonal cell, whose lattice matrix is NOT its own transpose."""
+    return Structure(
+        name="BN",
+        formula="BN",
+        # P-6m2, not P6/mmm: B and N are different elements, so the
+        # horizontal mirror and the inversion of the elemental lattice are
+        # gone. The declaration check caught this label too (#128).
+        spacegroup="P-6m2",
+        crystal_system="hexagonal",
+        a=a,
+        b=a,
+        c=c,
+        alpha=90.0,
+        beta=90.0,
+        gamma=120.0,
+        unit_cell=(
+            StructureAtom(Z=5, fxyz=(0.0, 0.0, 0.0)),
+            StructureAtom(Z=7, fxyz=(1.0 / 3.0, 2.0 / 3.0, 0.0)),
+        ),
+        crystal_spacegroup=187,
+        crystal_asymm_unit=(StructureAtom(Z=5, fxyz=(0.0, 0.0, 0.0)),),
+    )
+
+
+def test_hexagonal_structure_keeps_its_cell_through_periodic_system():
+    """The marshalled cell must be the cell the Structure declared."""
+    import vibeqc as vq
+
+    struct = hexagonal_sheet()
+    system = _to_periodic_system(struct)
+    params = vq.cell_parameters(system)
+    bohr_to_ang = 0.529177210903
+
+    assert params.a * bohr_to_ang == pytest.approx(struct.a, rel=1e-12)
+    assert params.b * bohr_to_ang == pytest.approx(struct.b, rel=1e-12)
+    assert params.c * bohr_to_ang == pytest.approx(struct.c, rel=1e-12)
+    assert params.gamma == pytest.approx(120.0, abs=1e-9)
+    # The declaration the Structure already carries must hold on the result.
+    vq.check_crystal_system(system, struct.crystal_system)
+
+
+def test_hexagonal_structure_survives_a_round_trip():
+    """Round-tripping a non-orthogonal cell must return the same cell.
+
+    This pins the two directions as a PAIR. A round trip cannot see the
+    original defect on its own -- the forward and reverse transposes cancelled,
+    which is how it survived -- but it does fail the moment only one side is
+    corrected, which is the easy mistake when fixing it. Verified: with the
+    forward transpose alone, this test fails and the other two pass.
+    """
+    struct = hexagonal_sheet()
+    back = _structure_from_periodic_system(_to_periodic_system(struct), struct)
+
+    assert back.a == pytest.approx(struct.a, rel=1e-10)
+    assert back.b == pytest.approx(struct.b, rel=1e-10)
+    assert back.c == pytest.approx(struct.c, rel=1e-10)
+    assert back.alpha == pytest.approx(90.0, abs=1e-9)
+    assert back.beta == pytest.approx(90.0, abs=1e-9)
+    assert back.gamma == pytest.approx(120.0, abs=1e-9)
+    assert [s.Z for s in back.unit_cell] == [5, 7]
+    for want, got in zip(struct.unit_cell, back.unit_cell):
+        assert got.fxyz == pytest.approx(want.fxyz, abs=1e-10)
+
+
+def test_a_structure_whose_declaration_is_contradicted_is_refused():
+    """A Structure declaring one system and carrying another fails closed."""
+    import dataclasses
+
+    import vibeqc as vq
+
+    struct = dataclasses.replace(hexagonal_sheet(), crystal_system="cubic")
+    with pytest.raises(vq.LatticeDeclarationError):
+        _to_periodic_system(struct)
+
+
+def test_a_structure_whose_space_group_is_contradicted_is_refused():
+    """GitLab #128: the marshaller enforces the group the record declares.
+
+    This is the tighter of the two declarations, and it is what caught the
+    mislabelled fixtures in this file: a 1 Mg + 1 O cubic cell is Pm-3m, not
+    rocksalt's Fm-3m, and a B/N sheet is P-6m2, not P6/mmm.
+    """
+    import dataclasses
+
+    import vibeqc as vq
+
+    wrong = dataclasses.replace(rocksalt(), crystal_spacegroup=225)  # Fm-3m
+    with pytest.raises(vq.LatticeDeclarationError) as excinfo:
+        _to_periodic_system(wrong)
+    assert "detected : 221" in str(excinfo.value)
+
+
+def test_a_relaxed_structure_is_not_held_to_its_stale_symmetry():
+    """The check keys on the field a relaxation clears, not the one it keeps.
+
+    ``_structure_from_periodic_system`` zeroes ``crystal_spacegroup`` because
+    it describes the *input* geometry and a relaxation has moved the atoms,
+    but the ``spacegroup`` string is carried over and goes stale. Enforcing
+    the string would fail closed on every relaxed structure fed back in;
+    enforcing the integer skips exactly those records, which is the point.
+    """
+    import vibeqc as vq
+
+    struct = rocksalt()
+    system = _to_periodic_system(struct)
+    # A relaxation moves atoms; displace one so the stale label genuinely no
+    # longer describes the structure. Without this the test cannot tell the
+    # two implementations apart.
+    moved = vq.PeriodicSystem(
+        3,
+        system.lattice,
+        [
+            vq.Atom(12, [0.0, 0.0, 0.0]),
+            vq.Atom(8, [x + 0.30 for x in system.unit_cell[1].xyz]),
+        ],
+    )
+    relaxed = _structure_from_periodic_system(moved, struct)
+
+    assert relaxed.crystal_spacegroup == 0        # cleared by the relaxation
+    assert relaxed.spacegroup == "Pm-3m"          # carried over, now stale
+    from vibeqc.periodic_symmetrize import detect_spacegroup
+    assert detect_spacegroup(moved).international_symbol != "Pm-3m"
+
+    # Feeding it back in must not raise on that stale string. Keying the
+    # check on it instead of on the cleared integer fails here.
+    _to_periodic_system(relaxed)

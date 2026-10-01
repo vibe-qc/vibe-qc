@@ -217,6 +217,7 @@ def test_exchange_split_legacy_optout_keeps_old_gauge():
         _rhf_opts(4.0, max_iter=30),
         ewald_precision=1e-6,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         progress=False,
     )
     assert r.converged
@@ -665,6 +666,7 @@ def test_rks_legacy_gauge_optout_keeps_spheropole():
         _rks_opts("svwn"),
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -900,6 +902,7 @@ def test_exchange_split_historical_domain_omega_drift_pinned():
         basis,
         kmesh,
         _rhf_opts(14.0),
+        historical_domain=True,  # This test explicitly pins the legacy operator.
         use_ewald_j_split=True,
         ewald_precision=1e-8,
         sr_image_precision=None,
@@ -920,6 +923,7 @@ def test_exchange_split_historical_domain_omega_drift_pinned():
             basis,
             kmesh,
             opts,
+            historical_domain=True,  # This test explicitly pins the legacy operator.
             use_ewald_j_split=True,
             ewald_omega=w,
             ewald_precision=1e-8,
@@ -1103,6 +1107,54 @@ def test_probe_charge_madelung_supercell_pyscf_pins():
     # mesh (1,1,1) is the unit-cell constant.
     assert probe_charge_madelung_supercell(mgo, (1, 1, 1)) == pytest.approx(
         probe_charge_madelung(mgo), abs=1e-12
+    )
+
+
+@pytest.mark.parametrize("relabel", [False, True])
+@pytest.mark.parametrize("finite_k", [False, True])
+def test_physical_exchange_channel_stream_and_cache(relabel, finite_k, monkeypatch):
+    """Cache keeps the dense masked operator, phase and normalization once."""
+    from vibeqc import bipole_fock_ewald as ewald
+    from vibeqc._aopair_ft import ao_pair_fourier_transform_at_cells
+    from vibeqc.lattice_screening import ao_pair_support_mask
+
+    lattice = np.array([[5., .4, .2], [.3, 5.2, .5], [.1, .6, 5.4]])
+    pos = np.array([2.1, .3, .2]) + (lattice[:, 0] if relabel else 0.)
+    atoms = [vq.Atom(3, [0., 0., 0.]), vq.Atom(1, pos)]
+    system = vq.PeriodicSystem(3, lattice, atoms)
+    basis = vq.BasisSet(vq.Molecule(atoms), "sto-3g")
+    cells = np.array([lattice[:, 0], np.zeros(3), -lattice[:, 1]])
+    vectors = np.array([[.3, .2, .1], [-.2, .4, .1]])
+    kernel = np.array([.4, .2])
+    correction = ewald._libint_ylm_correction_per_ao(basis)
+
+    def dense_on(vectors):
+        ft = ao_pair_fourier_transform_at_cells(basis, vectors, cells)
+        for g, shift in enumerate(cells):
+            ft[g] *= ao_pair_support_mask(basis, shift, 5.3)[:, :, None]
+        return ft * correction[None, :, None, None] * correction[None, None, :, None]
+
+    j_cache = ewald.JLongRangeCache(vectors, kernel, dense_on(vectors), cells, .3, 5.3)
+    cache = ewald.KExchangeLongRangeCache(basis, system, cells, .3, .9, j_cache)
+    reciprocal = 2 * np.pi * np.linalg.inv(lattice).T
+    q = reciprocal @ np.array([.25, -.125, 0.])
+    kp = reciprocal @ np.array([.125, 0., .125]) if finite_k else np.zeros(3)
+    actual_kernel, actual = cache.channel_tables(q, kp)
+    chan = next(iter(cache.q_channels.values()))
+    expected = np.einsum("g,gmnk->mnk", np.exp(-1j * (cells @ kp)), dense_on(chan.K_vectors))
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+    assert actual_kernel is chan.kernel
+    assert cache.channel_tables(q, kp)[1] is actual
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("The diagonal channel must reuse the J cache")
+
+    monkeypatch.setattr(ewald, "_masked_bloch_pair_fourier_transform", unexpected)
+    diagonal_kernel, diagonal = cache.channel_tables(np.zeros(3), kp)
+    assert diagonal_kernel is j_cache.kernel
+    np.testing.assert_allclose(
+        diagonal, np.einsum("g,gmnk->mnk", np.exp(-1j * (cells @ kp)), j_cache.ft_per_cell),
+        rtol=1e-12, atol=1e-12,
     )
 
 
@@ -1819,3 +1871,51 @@ def test_terminal_check_stays_silent_when_nothing_drifted(tmp_path):
     assert [e["passed"] for e in checks] == [True, True]
     assert [e["phase"] for e in checks] == ["in_loop", "post_loop"]
     assert checks[0]["energy_exact"] == pytest.approx(checks[1]["energy_exact"], abs=1e-12)
+
+
+@pytest.mark.parametrize("physical", [False, True])
+def test_j_cache_normalization_does_not_duplicate_the_stack(monkeypatch, physical):
+    """Normalization must not double the large resident reciprocal cache."""
+    import tracemalloc
+    from vibeqc import bipole_fock_ewald as ewald
+    from vibeqc.lattice_screening import ao_pair_support_mask
+
+    atoms = [vq.Atom(3, [0., 0., 0.]), vq.Atom(1, [1.4, 0., 0.])]
+    system = vq.PeriodicSystem(3, np.eye(3) * 6., atoms)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    vectors = np.zeros((512, 3))
+    vectors[:, 0] = np.linspace(.1, 2., len(vectors))
+    cells = np.zeros((64, 3))
+    cells[:, 0] = np.arange(len(cells)) * .25
+    shape = (len(cells), basis.nbasis, basis.nbasis, len(vectors))
+
+    def fresh_ft(*args):
+        result = np.empty(shape, dtype=np.complex128)
+        result.fill(.7 + .3j)
+        return result
+
+    monkeypatch.setattr(ewald, "ao_pair_fourier_transform_at_cells", fresh_ft)
+    monkeypatch.setattr(
+        ewald, "compute_reciprocal_lattice_vectors", lambda *args: vectors.copy()
+    )
+    opts = vq.LatticeSumOptions()
+    opts.cutoff_bohr = 5.
+    opts.pair_complete_1e = physical
+    tracemalloc.start()
+    try:
+        cache = ewald._build_j_long_range_cache(
+            basis, system, cells, .3, 1e-8, K_max=2., lattice_opts=opts
+        )
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    # Leave room for small kernels/masks while excluding a second full stack.
+    assert peak < 1.5 * cache.ft_per_cell.nbytes
+
+    correction = ewald._libint_ylm_correction_per_ao(basis)
+    normalized = (.7 + .3j) * (correction[:, None] * correction[None, :])
+    expected = np.broadcast_to(normalized[None, :, :, None], shape).copy()
+    if physical:
+        for cell, shift in enumerate(cells):
+            expected[cell] *= ao_pair_support_mask(basis, shift, 5.)[:, :, None]
+    np.testing.assert_array_equal(cache.ft_per_cell, expected)

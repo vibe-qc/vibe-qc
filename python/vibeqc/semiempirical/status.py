@@ -4,6 +4,15 @@ This module is a compact, queryable companion to the user-guide status table
 and the semiempirical handover.  It deliberately labels Python-heavy
 performance routes as reference-only until they have native kernels or a
 maintainer decision that Python orchestration is the intended final shape.
+
+``backend`` names **where a route's kernel lives**; it is not a maturity
+claim, and it is not a second maturity vocabulary.  Route maturity has exactly
+one source, :data:`vibeqc.semiempirical.routes.SEMIEMPIRICAL_MATURITIES`,
+reached through a plan's ``maturity`` (#150).  The one place the two tables
+overlap is :attr:`SemiempiricalRouteStatus.production`, which must equal
+``plan.maturity == MATURITY_PRODUCTION`` for every reachable plan;
+``tests/test_semiempirical_route_plan.py`` pins that invariant so the tables
+cannot drift apart again.
 """
 
 from __future__ import annotations
@@ -22,7 +31,13 @@ BACKEND_GATED_EXPERIMENTAL = "gated-experimental"
 
 @dataclass(frozen=True)
 class SemiempiricalRouteStatus:
-    """Implementation status for one public semiempirical route."""
+    """Implementation status for one public semiempirical route.
+
+    ``backend`` is the implementation axis (where the kernel lives), not a
+    maturity label.  ``production`` is the single field shared with the
+    canonical maturity vocabulary and tracks
+    ``plan.maturity == MATURITY_PRODUCTION``; see the module docstring.
+    """
 
     route: str
     backend: str
@@ -320,7 +335,7 @@ _ROUTES = (
     SemiempiricalRouteStatus(
         "msindo-nddo-gradient-analytic",
         BACKEND_MIXED_NATIVE,
-        True,
+        False,
         True,
         "Closed-shell MSINDO-NDDO results for H, Li-F, and Na-Cl use the native "
         "energy kernel and a Python analytic multipole-derivative contraction, "
@@ -357,7 +372,7 @@ _ROUTES = (
     SemiempiricalRouteStatus(
         "msindo-cosmo",
         BACKEND_MIXED_NATIVE,
-        True,
+        False,
         True,
         "COSMO/GEPOL matrix construction, ASC solves, and reaction-field steps "
         "use native helpers; the outer COSMO SCF loop remains Python "

@@ -577,7 +577,7 @@ def test_bipole_h2_12bohr_gamma_energy_regression():
 def test_bipole_h2_12bohr_gamma_legacy_gauge_energy_and_spheropole():
     """The legacy Γ gauge (locality projection + full-Coulomb direct K +
     EXT EL-SPHEROPOLE in the total) stays reachable via
-    ``use_exchange_ewald_split=False``. M5's padded SR domain
+    ``use_exchange_ewald_split=False, historical_domain=True``. M5's padded SR domain
     applies to this erfc J build too; the analytic-gradient preview requests
     the historical domain explicitly when it exercises this gauge.
 
@@ -592,6 +592,7 @@ def test_bipole_h2_12bohr_gamma_legacy_gauge_energy_and_spheropole():
         opts,
         ewald_precision=1e-6,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         progress=False,
     )
 
@@ -785,6 +786,7 @@ def test_bipole_legacy_gauge_keeps_crystal_alpha_on_a_large_box():
         _box_options_674(),
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         progress=False,
     )
     assert r.converged

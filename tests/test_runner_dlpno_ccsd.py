@@ -115,18 +115,18 @@ class TestRunJobDLPNOCCSD:
         out = (tmp_path / "h2c.out").read_text()
         assert "DLPNO-CCSD local reduced-scaling (M3c)" in out
         assert "canonical CCSD" in out  # full-domain == canonical CCSD note
-        assert "Residual domain" in out and "= extended" in out
+        assert "Residual domain" in out and "= pno" in out
         assert "E((T) correction)" not in out
 
         manifest = tomllib.loads((tmp_path / "h2c.system").read_text())
-        assert manifest["run"]["dlpno_residual_domain"] == "extended"
+        assert manifest["run"]["dlpno_residual_domain"] == "pno"
         records = [
             json.loads(line)
             for line in (tmp_path / "h2c.scf.jsonl").read_text().splitlines()
             if line.strip()
         ]
         done = next(r for r in records if r["event"] == "dlpno_ccsd_done")
-        assert done["residual_domain"] == "extended"
+        assert done["residual_domain"] == "pno"
 
     def test_aux_basis_kwarg_reaches_route(self, tmp_path, monkeypatch):
         """run_job(aux_basis=...) selects the DLPNO-CCSD RI basis (BUG 113)."""

@@ -26,7 +26,9 @@ After cutting a release, pin its new section::
 
 ``audit`` compares each pinned section with the same section at its git tag
 and reports differences that have no recorded reason. It needs the tags, so it
-belongs in the release pre-flight rather than in the test suite.
+belongs in the release pre-flight rather than in the test suite. A clone with
+no tags audits nothing and would otherwise pass, so callers that rely on it
+should pass ``--require-tagged N`` to make that case fail loudly (#371).
 
 It runs from ``tests/test_changelog_released_sections.py`` (tier T1) and from
 ``.githooks/pre-push``.
@@ -284,6 +286,17 @@ def main(argv: list[str] | None = None) -> int:
     audit_parser = sub.add_parser("audit", help="compare pinned sections with their git tags")
     common(audit_parser)
     audit_parser.add_argument("--repo", type=Path, default=ROOT)
+    audit_parser.add_argument(
+        "--require-tagged",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "fail unless at least N sections had a local tag to compare against. "
+            "A clone without tags audits nothing and otherwise passes, which is "
+            "the silent stop this guard exists to prevent (#371)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -314,7 +327,18 @@ def main(argv: list[str] | None = None) -> int:
             f"changelog guard: audited {len(checked)} tagged section(s), "
             f"{len(skipped)} without a local tag, {len(problems)} problem(s)"
         )
-        return 1 if problems else 0
+        if problems:
+            return 1
+        if len(checked) < args.require_tagged:
+            print(
+                f"changelog guard: audited {len(checked)} tagged section(s) but "
+                f"--require-tagged {args.require_tagged} was asked for; fetch the tags "
+                "before auditing, because a clone without them audits nothing and "
+                "proves nothing",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
     except (GuardError, OSError) as exc:
         print(f"changelog guard: {exc}", file=sys.stderr)
         return 2

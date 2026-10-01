@@ -314,7 +314,9 @@ KPointDFTB0Result run_dftb0_kpoints_impl(
     // (issue #426; convention documented on KPointBandEdges).
     store_kpoint_band_edges(
         result,
-        compute_kpoint_band_edges(result.eps_per_k, result.occupations_per_k));
+        compute_kpoint_band_edges(
+            result.eps_per_k, result.occupations_per_k, 1.0e-8,
+            kmesh.weights));
     return result;
 }
 

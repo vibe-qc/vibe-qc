@@ -31,6 +31,12 @@
 #
 # Opt-in environment flags:
 #
+#   WITH_OPENTRUSTREGION=1
+#                       Check the optional optimizer's Fortran/Git toolchain.
+#                       install.sh --with-opentrustregion sets this and enables
+#                       the pinned fetch/build during the Python package build.
+#                       This script alone does not enable that CMake option.
+#
 #   VIBEQC_PRUNE_BUILD_TREES=1
 #                       Drop each third_party/<dep>/build tree once its
 #                       install/ is verified to contain a library. The
@@ -486,6 +492,9 @@ EOF
 
 if [ "${VIBEQC_SKIP_PREFLIGHT:-0}" != "1" ] && [ "${VIBEQC_FETCH_ONLY:-0}" != "1" ]; then
     echo "==> Preflight: checking build prerequisites..."
+    # shellcheck source=_opentrustregion.sh
+    . "$SCRIPT_DIR/_opentrustregion.sh"
+    vibeqc_otr_preflight
     # Robustness backstop (the 2026-06-05 Eigen silent-abort). The _check_*
     # helpers report missing deps by appending to MISSING[] and must each
     # return 0 so the loop reaches the consolidated report below. If one ever

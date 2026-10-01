@@ -12,6 +12,10 @@
 #                 of CMD).
 #
 # Exit codes:
+#   97   passed through from CMD, not produced here: pytest refused the
+#        session because the compiled core predates cpp/
+#        (tests/conftest.py::STALE_CORE_EXIT_STATUS, #285). The same
+#        mismatch this wrapper guards against, caught one layer in.
 #   98   HEAD moved while CMD ran. The measurement is VOID and CMD's own
 #        exit status is deliberately discarded, so a green-looking run
 #        cannot be mistaken for a valid one.
@@ -34,10 +38,11 @@
 # two commits. The quiet failure is worse, and
 # `tests/conftest.py::pytest_sessionstart` spells it out: a stale core
 # "can silently produce WRONG NUMBERS, so the symptom looks like a
-# physics regression rather than a build problem". That hook runs only
-# under pytest. Bisect legs, convergence probes and benchmark drivers
-# are bare `python` invocations and get no warning at all -- this
-# wrapper is that warning, for anything with a command line.
+# physics regression rather than a build problem". That hook now refuses
+# the session outright (exit 97, #285), but it still runs only under
+# pytest. Bisect legs, convergence probes and benchmark drivers are bare
+# `python` invocations and get no warning at all -- this wrapper is that
+# warning, for anything with a command line.
 #
 # The consumers of these numbers are exactly the tasks that cannot
 # tolerate a wrong one: `git bisect` verdicts and cross-code parity

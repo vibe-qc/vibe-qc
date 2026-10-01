@@ -40,6 +40,7 @@ DLPNOMP2Options = partial(
     tcut_mkn=1e-3,
     tcut_pairs=1e-6,
     tcut_pairs_weak=1e-4,
+    domain_criterion="mulliken",  # retained with Mulliken domains; DOI became the default in #190
 )
 
 H2O_ATOMS = [

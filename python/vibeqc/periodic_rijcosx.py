@@ -13,10 +13,11 @@ Sec. "M3a measured outcome".
 Architecture (tight-cell path, default for dim=3 with compact cells):
   1. One-electron integrals: Ewald-3D gauge for 3D, bare lattice sum
      for dim < 3, Γ-folded.
-  2. Lpq tensor: built once via ``build_lpq_compcell`` (Sun 2017
-     compensated charges + AFT correction). Alternative:
-     ``build_lpq_native_fft`` (all-FT Bloch pair-FT) via
-     ``gdf_method='rsgdf'``.
+  2. Lpq tensor: built once via ``build_lpq_native_fft`` (all-FT Bloch
+     pair-FT, ``gdf_method='rsgdf'``, the default). Alternative:
+     ``build_lpq_compcell`` (Sun 2017 compensated charges + AFT
+     correction), which refuses a cell whose auxiliary images matter
+     (#172).
   3. JKBuilder: C++ ``PeriodicTightCellCOSXJKBuilder``
      - build_J(D): GDF contraction from Lpq (periodic-correct)
      - build_K(D): periodic COSX on Becke grid, exchange summed over
@@ -295,7 +296,7 @@ def run_periodic_rijcosx_rhf(
     options: Optional[PeriodicRHFOptions] = None,
     *,
     aux_basis: Optional[str] = None,
-    gdf_method: str = "compcell",
+    gdf_method: str = "rsgdf",
     compcell_eta: float = 1.0,
     apply_aft_correction: bool = True,
     aft_precision: float = 1e-10,
@@ -326,8 +327,12 @@ def run_periodic_rijcosx_rhf(
         Auxiliary basis name for DF-J. Defaults to
         ``default_aux_for(basis.name)``.
     gdf_method
-        Lpq builder for the tight-cell path: ``'compcell'`` (default)
-        or ``'rsgdf'`` (all-FT Bloch pair-FT).  Ignored when
+        Lpq builder for the tight-cell path: ``'rsgdf'`` (default, the
+        all-FT Bloch pair-FT, periodic by construction) or ``'compcell'``.
+        The compcell three-centre integrals keep the auxiliary function in
+        the home cell, which the tight cells this path serves violate, so
+        its builder refuses such a cell (#172); ``'rsgdf'`` is the default
+        since 2026-09, matching the k-mesh RIJCOSX route. Ignored when
         ``tight_cell=False``.
     compcell_eta
         Smooth-Gaussian exponent for the compcell compensating basis.
@@ -831,9 +836,17 @@ def run_periodic_rijcosx_uhf(
     Spin counts follow ``system.multiplicity``. Tight or short-axis
     cells fail closed.
     """
-    from . import UHFOptions, run_uhf_scf_with_jk
+    from . import SpinlockMode, UHFOptions, run_uhf_scf_with_jk
 
     opts = options if options is not None else PeriodicRHFOptions()
+    atomic_spins = list(getattr(opts, "atomic_spins", None) or [])
+    spinlock_mode = getattr(opts, "spinlock_mode", SpinlockMode.OFF)
+    spinlock_iterations = int(getattr(opts, "spinlock_iterations", 0))
+    if spinlock_mode == SpinlockMode.SPIN_SCHEDULE and spinlock_iterations > 0:
+        raise NotImplementedError(
+            "run_periodic_rijcosx_uhf does not implement the two population "
+            "phases of SPIN_SCHEDULE; PATTERN_HOLD is supported."
+        )
     selection = _rijcosx_selection(
         system, opts, driver="run_periodic_rijcosx_uhf", open_shell=True,
     )
@@ -859,6 +872,11 @@ def run_periodic_rijcosx_uhf(
     with plog.stage("scf"):
         uhf_opts = UHFOptions()
         uhf_opts.initial_guess = selection.requested
+        # The seed and native stability/MOM guards must share state intent.
+        uhf_opts.atomic_spins = atomic_spins
+        uhf_opts.spinlock_mode = spinlock_mode
+        uhf_opts.spinlock_iterations = spinlock_iterations
+        uhf_opts.spinlock_value = int(getattr(opts, "spinlock_value", 0))
         uhf_opts.max_iter = int(opts.max_iter)
         uhf_opts.conv_tol_energy = float(opts.conv_tol_energy)
         uhf_opts.conv_tol_grad = float(getattr(opts, "conv_tol_grad", 1e-6))
@@ -873,7 +891,7 @@ def run_periodic_rijcosx_uhf(
             n_beta,
             guess,
             lat_opts,
-            atomic_spins=getattr(opts, "atomic_spins", None) or None,
+            atomic_spins=atomic_spins or None,
             overlap=S, options=opts,
         )
         res = run_uhf_scf_with_jk(
@@ -893,6 +911,7 @@ def run_periodic_rijcosx_uhf(
         e_nuclear=E_nuc,
         n_iter=res.n_iter,
         converged=res.converged,
+        stability_trah_used=bool(getattr(res, "stability_trah_used", False)),
         s_squared=float(getattr(res, "s_squared", 0.0)),
         mo_energies_alpha=res.mo_energies_alpha,
         mo_energies_beta=res.mo_energies_beta,
@@ -929,9 +948,17 @@ def run_periodic_rijcosx_uks(
     exchange fraction through the per-spin COSX K; pure functionals
     never build K. Tight or short-axis cells fail closed.
     """
-    from . import GridOptions, UKSOptions, build_grid, run_uks_scf_with_jk
+    from . import GridOptions, SpinlockMode, UKSOptions, build_grid, run_uks_scf_with_jk
 
     opts = options if options is not None else PeriodicRHFOptions()
+    atomic_spins = list(getattr(opts, "atomic_spins", None) or [])
+    spinlock_mode = getattr(opts, "spinlock_mode", SpinlockMode.OFF)
+    spinlock_iterations = int(getattr(opts, "spinlock_iterations", 0))
+    if spinlock_mode == SpinlockMode.SPIN_SCHEDULE and spinlock_iterations > 0:
+        raise NotImplementedError(
+            "run_periodic_rijcosx_uks does not implement the two population "
+            "phases of SPIN_SCHEDULE; PATTERN_HOLD is supported."
+        )
     selection = _rijcosx_selection(
         system, opts, driver="run_periodic_rijcosx_uks", open_shell=True,
     )
@@ -959,6 +986,11 @@ def run_periodic_rijcosx_uks(
     with plog.stage("scf"):
         uks_opts = UKSOptions()
         uks_opts.initial_guess = selection.requested
+        # Keep the seed and native stability/MOM guards on the same target.
+        uks_opts.atomic_spins = atomic_spins
+        uks_opts.spinlock_mode = spinlock_mode
+        uks_opts.spinlock_iterations = spinlock_iterations
+        uks_opts.spinlock_value = int(getattr(opts, "spinlock_value", 0))
         uks_opts.functional = str(functional)
         uks_opts.max_iter = int(opts.max_iter)
         uks_opts.conv_tol_energy = float(opts.conv_tol_energy)
@@ -974,7 +1006,7 @@ def run_periodic_rijcosx_uks(
             n_beta,
             guess,
             lat_opts,
-            atomic_spins=getattr(opts, "atomic_spins", None) or None,
+            atomic_spins=atomic_spins or None,
             overlap=S, options=opts,
         )
         res = run_uks_scf_with_jk(

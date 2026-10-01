@@ -247,11 +247,19 @@ def _adapter_xyz(
     plan_file: PlannedFile,
     molecule: Any,
     energy_ha: Optional[float] = None,
+    energy_method: Optional[str] = None,
+    method: Optional[str] = None,
     **_: Any,
 ) -> Path:
     from .formats.xyz import write_xyz
 
-    return write_xyz(plan_file.path, molecule, energy_ha=energy_ha)
+    return write_xyz(
+        plan_file.path,
+        molecule,
+        energy_ha=energy_ha,
+        energy_method=energy_method,
+        method=method,
+    )
 
 
 def _adapter_extended_xyz(

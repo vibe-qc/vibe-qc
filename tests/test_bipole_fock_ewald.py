@@ -290,6 +290,7 @@ def test_crystal_fixed_density_cyc0_driver_components(monkeypatch):
         # option (b) 2026-06-10) the spheropole is omitted and CYC0
         # components are not CRYSTAL-comparable.
         use_exchange_ewald_split=False,
+        historical_domain=True,
         use_multipole_far_field=False,
         progress=False,
     )
@@ -465,6 +466,7 @@ def test_bipole_rhf_scf_converges():
         # SCF then RISES to the stationary point; new-gauge convergence
         # is covered by tests/test_bipole_fock_ewald_exchange.py.
         use_exchange_ewald_split=False,
+        historical_domain=True,
         progress=False,
     )
     assert result.n_iter <= 3

@@ -122,16 +122,16 @@ export const distributionMatrix = Object.freeze({
   ]),
   desktopDocs: Object.freeze([
     Object.freeze({
-      label: 'Companion releases (private GitLab)',
+      label: 'vibe-view releases (GitHub)',
       href: 'https://github.com/vibe-qc/vibe-view/releases',
     }),
     Object.freeze({
       label: 'vibe-view desktop guide',
-      href: '/docs/user_guide/vibe_view_desktop.html',
+      href: '/vibe-view/docs/desktop.html',
     }),
     Object.freeze({
       label: 'Source installation',
-      href: '/docs/tutorial/vibe_view_getting_started.html',
+      href: '/vibe-view/docs/installation.html',
     }),
   ]),
 });

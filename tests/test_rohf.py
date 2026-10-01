@@ -1562,3 +1562,71 @@ def test_ro_open_shell_guess_basin(method, guess):
     assert result.energy == pytest.approx(baseline.energy, abs=1e-7)
     if method == "roks":
         assert np.allclose(result.mo_occupations, baseline.mo_occupations)
+
+
+# ---------------------------------------------------------------------------
+# run_job wiring of density_fit / cosx onto the restricted open-shell
+# structs (#361)
+# ---------------------------------------------------------------------------
+
+
+def _oh_radical() -> Molecule:
+    return Molecule([Atom(8, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 0.97])], 0, 2)
+
+
+@pytest.mark.parametrize("method", ["rohf", "roks"])
+@pytest.mark.parametrize(
+    "flags, cited, not_cited",
+    [
+        ({"density_fit": True}, "eichkorn_rij_1995", "neese_rijcosx_2009"),
+        ({"cosx": True}, "neese_rijcosx_2009", None),
+    ],
+    ids=["rij", "rijcosx"],
+)
+def test_run_job_density_fit_reaches_restricted_open_shell(
+    method, flags, cited, not_cited, tmp_path
+):
+    """``run_job(density_fit=True)`` / ``cosx=True`` must land on the
+    ROHFOptions / ROKSOptions struct and be reported.
+
+    Before #361 the flags were wired onto the rhf/uhf/rks/uks structs only,
+    so an ROHF/ROKS job accepted them, ran the four-index path and cited
+    nothing. Pin all three: the caller's struct carries the flags and the
+    auto-resolved JK aux, the direct driver on that struct reproduces the
+    run_job energy, and the .references name the RI-J / RIJCOSX papers.
+    """
+    from vibeqc import run_job
+    from vibeqc.roks import ROKSOptions, run_roks
+
+    mol = _oh_radical()
+    basis = BasisSet(mol, "def2-svp")
+    functional = None if method == "rohf" else "b3lyp"
+    passed = ROHFOptions() if method == "rohf" else ROKSOptions()
+    opts_kw = {f"{method}_options": passed}
+
+    e_conv = run_job(
+        mol, basis="def2-svp", method=method, functional=functional,
+        output=str(tmp_path / "conv"),
+    ).energy
+    e_job = run_job(
+        mol, basis="def2-svp", method=method, functional=functional,
+        output=str(tmp_path / "fitted"), **flags, **opts_kw,
+    ).energy
+
+    assert passed.density_fit is True
+    assert passed.cosx is bool(flags.get("cosx", False))
+    assert passed.aux_basis == "def2-svp-jk"
+
+    if method == "rohf":
+        e_direct = run_rohf(mol, basis, passed).energy
+    else:
+        e_direct = run_roks(mol, basis, passed, functional=functional).energy
+    assert abs(e_job - e_direct) < 1e-9, (e_job, e_direct)
+    # The fitted number is not the four-index one (RI-J error ~1e-5 Ha here).
+    assert abs(e_job - e_conv) > 1e-7, (e_job, e_conv)
+
+    refs = (tmp_path / "fitted.references").read_text()
+    assert cited in refs
+    if not_cited is not None:
+        assert not_cited not in refs
+    assert cited not in (tmp_path / "conv.references").read_text()

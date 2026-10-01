@@ -69,7 +69,9 @@ promise the fewest iterations or the global electronic ground state.
 | System and route | Usual AUTO construction |
 |---|---|
 | Ordinary restricted closed-shell molecular route | PATOM |
-| Molecular unrestricted/open-shell route (including singlet UHF/UKS) or transition-metal system | SAD |
+| Molecular open-shell route on a system containing a d- or f-block atom | PATOM |
+| Other molecular unrestricted/open-shell route (including singlet UHF/UKS), excluding isolated spin-polarized atoms | SAD |
+| Restricted closed-shell molecular route containing a d- or f-block atom | SAD |
 | Isolated spin-polarized atom | PATOM |
 | Ordinary periodic SCF route | SAD |
 | Cyclic route exposing only HCORE | HCORE |
@@ -326,9 +328,10 @@ seed*, not by atomic Hund rules alone:
 * $n_\alpha \ne n_\beta$: **Hund-split atomic densities** -- each atom
   contributes its natural majority-alpha configuration
   ($f_i^\alpha$, $f_i^\beta$ from `spin_resolve_occupations`), so the
-  starting spin density is per-atom polarised. This is what lands
-  FeCl$_3$-class open shells in the right basin (BUG 88): a spherical
-  spin density there converges to an excited solution.
+  starting spin density is per-atom polarised. This improves open-shell
+  starts but does not guarantee the lowest SCF state. In particular, the
+  normalized FeCl$_3$/cc-pVDZ seed can reach an excited saddle whose
+  ordinary SCF restarts need the UHF stability recovery (#273).
 * The UKS packaging diagonalises $\mathbf{F}_{\rm SAD}$ once from the
   total density and keeps the first $n_\alpha$ and $n_\beta$ columns.
 
@@ -397,6 +400,15 @@ Direct native `run_uhf_scf_with_jk` and `run_uks_scf_with_jk` do not implement
 the two population phases and reject active SPIN_SCHEDULE. Use the molecular
 `run_uhf` / `run_uks` wrappers for that schedule.
 
+The vacuum-padded RIJCOSX UHF and UKS wrappers forward `atomic_spins` to both
+an SAD seed and the native driver, preserving analysis-only stability behavior
+for deliberately targeted states. They also forward `PATTERN_HOLD`, its
+iteration count, and its spin value. Active `SPIN_SCHEDULE` is rejected before
+integral or grid setup because these wrappers do not implement the two
+population phases; zero iterations leave the schedule disabled. Empty spin
+tags and `OFF` retain ordinary behavior. UKS retains the explicitly selected
+functional and integration grid at this boundary.
+
 ```python
 opts = UHFOptions()
 opts.atomic_spins = [+1, -1]                      # seed the broken-symmetry start
@@ -460,6 +472,21 @@ where $\mathbf{T}$ is the kinetic-energy matrix and
 $\mathbf{V}_{\rm ne}$ is the nuclear-attraction matrix. Diagonalise
 once, build $\mathbf{D}$ from the occupied orbitals, hand off to
 the SCF loop.
+
+The molecular seed builders use equal fractional occupations when a
+degenerate eigenvalue block crosses the occupied frontier (total block width
+at most `1e-8` hartree): HCORE in RHF, RKS and UHF, closed- and open-shell
+PATOM, and SAP and HUECKEL, each spin channel on its own. The seed then
+depends on the whole degenerate subspace, rather than the arbitrary
+eigenvectors returned inside it, and carries the requested electron count. A
+gapped frontier keeps integer occupations. For the HCORE seed, a partial
+Davidson spectrum is completed if it could omit frontier partners; a request
+for fewer eigenvectors than the occupied space is rejected. Periodic seeds,
+the UKS HCORE seed and the UKS SAD in-field refinement are unchanged.
+
+This averaging applies only to the starting density. SCF retains its normal
+occupation and convergence rules, and compatible READ densities are preserved.
+It does not select a global ground state or replace a stability analysis.
 
 **Cost:** trivial, no extra integrals beyond those the driver
 needs anyway.
@@ -690,8 +717,9 @@ distinction between an omitted keyword and an explicit `"SAD"`.
 | Periodic, atomic-guess-capable routes | **SAD** | Preserves the established atomic-density start; no evidence-backed metal/oxide classification is currently available |
 | AICCM real-Gamma and four-center adapters | **HCORE** | These supercell SCF loops currently expose only their core-Hamiltonian construction; explicit SAD and other unsupported guesses fail |
 | Molecular, isolated open-shell atom | **PATOM** | One in-field re-polarisation step constructs a spin-resolved seed for the requested electron and spin populations; it does not certify an atomic term or the global minimum |
+| Molecular, open-shell route on a system containing a d- or f-block atom | **PATOM** | SAD superposes free-atom Hund densities, so an open-shell ligand arrives with its full free-atom moment even where the molecule binds it closed-shell; the in-field step quenches that against the molecular field before the SCF starts (see below) |
 | Molecular, other unrestricted/open-shell route (including singlet UHF/UKS) | **SAD** | Spin polarisation develops via per-spin Fock asymmetry |
-| Molecular, containing transition or f-block atoms (except the isolated open-shell case above) | **SAD** | SAP closed-shell averaging can land the wrong d-shell occupation; select `PATOM` where supported for a re-polarised SAD start |
+| Molecular, restricted closed-shell route containing transition or f-block atoms | **SAD** | SAP closed-shell averaging can land the wrong d-shell occupation; select `PATOM` where supported for a re-polarised SAD start |
 | Molecular, restricted closed-shell route, light atoms | **PATOM** | Preserves the established molecular default density and energy basins |
 
 The periodic choice is a conservative compatibility policy, not a claim that
@@ -699,7 +727,25 @@ SAD is universally optimal for solids. Van Lenthe et al. (2006) and Lehtola
 (2019, 2020) support the atomic density/potential constructions; their molecular
 comparisons do not establish a metal-versus-oxide selector for our periodic
 backends. No such classifier is encoded. An `atomic_spins` seed requires the
-resolved kind to be SAD; AUTO resolving to HCORE rejects the seed.
+resolved kind to be SAD; AUTO resolving to HCORE rejects the seed. Supplying
+`atomic_spins` therefore also holds AUTO on SAD for an open-shell d/f-block
+system, so a deliberate antiferromagnetic seed is never overridden by the
+in-field choice above.
+
+The open-shell d/f-block choice is a basin decision, measured on FeCl3
+(sextet, cc-pVDZ) against ORCA 6.1.1. From the bare Hund-split SAD seed the
+SCF converges to a symmetry-broken solution 90.05 mHa above the ground
+state, with one chloride left as a radical cation, and the stability
+analysis then certifies a negative internal Hessian eigenvalue. The cause is
+in the seed: each free Cl atom contributes one unpaired electron, while in
+FeCl3 it is a closed-shell chloride. The basin is sharp, so rescaling the
+ligand moments does not recover it: a seed moment above roughly 0.05 e per
+ligand still lands on the same solution. PATOM's per-spin in-field step
+resolves the ligand polarisation against the molecular field first and
+reaches the ground state in 23 iterations, internally stable and without a
+stability restart. Routes that do not implement PATOM fall back to the
+advertised SAD construction, and an explicit `initial_guess` is never
+rewritten.
 
 The hints (`is_open_shell`, `has_transition_metal`, `is_periodic`)
 are filled in automatically by each SCF wrapper:
@@ -736,7 +782,9 @@ spin.
 
 * **PATOM** takes the SAD density and applies one in-field mean-field
   re-polarisation step, letting the superposed free-atom densities
-  relax in the molecular field before the SCF proper. It is the
+  relax in the molecular field before the SCF proper. Its molecular step
+  averages a degenerate seed frontier, per spin for open shells, as described
+  under HCORE above. It is the
   density-mode upgrade of SAD for cases where SAD's spherical atoms are
   too rigid, notably transition-metal d-shell ordering. `run_uhf`
   forwards its `JKBuilder` to the engine only for PATOM, so no other
@@ -853,6 +901,13 @@ The target driver then normalizes the complete density in its weighted
 Bloch overlap. This constructs finite isolated fragment references; it does
 not solve a periodic fragment SCF. Results record physical construction
 `FRAGMO` and density transport `READ`.
+
+The experimental AICCM real-Gamma and four-center adapters do not support
+FRAGMO. They refuse the selector before SCF, in a message that names the
+requested `FRAGMO` guess, whether or not `fragments=` was supplied: a route
+that cannot run FRAGMO at all never asks for a partition first. On a route
+that does implement FRAGMO, a missing or invalid partition still fails
+fragment validation, also before SCF.
 
 ### READ: restart from a prior calculation
 

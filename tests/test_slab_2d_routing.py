@@ -765,6 +765,8 @@ def test_public_multik_slab_gdf_rhf_is_compact_a3_invariant():
         )
         assert result.converged
         assert result.backend == "native-multik-slab-truncated-gdf-rhf"
+        # The slab route fits every (k_i, k_j) pair of the 4-point mesh.
+        assert result.gdf_cderi_pairs == 16
         assert result.n_iter <= opts.max_iter
         assert result.guess_selection.effective == vq.InitialGuess.SAD
         assert opts.lattice_opts.coulomb_method == original_coulomb_method
@@ -776,7 +778,8 @@ def test_public_multik_slab_gdf_rhf_is_compact_a3_invariant():
     assert abs(energies[0] - (-0.9175852704211138)) < 1e-5
     assert abs(energies[0] - energies[1]) < 1e-7
 
-    with pytest.raises(ValueError, match="positive integer"):
+    # #301: the validator names the failure mode the caller hit.
+    with pytest.raises(ValueError, match="non-integral"):
         run_krhf_periodic_gdf(
             sysp, basis, (2.5, 2, 1), opts, rsgdf_ke_cutoff=30.0
         )
@@ -2148,9 +2151,13 @@ def test_run_periodic_job_auto_dim2_uks_multik_qvf_artifacts(tmp_path):
     """An incomplete lattice density is refused before grid certification.
 
     The archive omits that uncertified density while retaining valid,
-    independent total and projected DOS sections.
+    independent total and projected DOS sections. Since #386 (a20ce7d) the
+    omitted density is an ``optional_artifact`` failure recorded as a
+    ``volume.density`` component error on the written archive's manifest
+    row, not a ``compatibility_fallback``.
     """
     import json
+    import tomllib
     import warnings
     import zipfile
 
@@ -2190,20 +2197,36 @@ def test_run_periodic_job_auto_dim2_uks_multik_qvf_artifacts(tmp_path):
         for item in caught
         if "vibe-qc output [optional_artifact]" in str(item.message)
     ]
-    assert optional_failures == []
-    density_failures = [
+    # The density grid is the only optional artifact that fails.
+    assert len(optional_failures) == 1
+    density_failure = optional_failures[0]
+    assert "qvf_density_grid" in density_failure
+    assert "density cell list does not cover the BvK torus" in density_failure
+    assert "no cell in residue class" in density_failure
+    assert not [
         str(item.message)
         for item in caught
         if "vibe-qc output [compatibility_fallback]" in str(item.message)
         and "density_grid" in str(item.message)
     ]
-    assert len(density_failures) == 1
-    assert "density cell list does not cover the BvK torus" in density_failures[0]
-    assert "no cell in residue class" in density_failures[0]
 
     qvf_path = stem.with_suffix(".qvf")
     report = validate_qvf(qvf_path)
     assert report["valid"], report["errors"]
+
+    # The container is written; the omitted component is still on record.
+    system = tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))
+    (row,) = [
+        row for row in system["outputs"]["files"]
+        if row["path"] == str(qvf_path)
+    ]
+    assert row["written"] is True
+    assert row["error"] == ""
+    assert set(row["component_errors"]) == {"volume.density"}
+    assert (
+        "density cell list does not cover the BvK torus"
+        in row["component_errors"]["volume.density"]
+    )
 
     with zipfile.ZipFile(qvf_path) as archive:
         manifest = json.loads(archive.read("manifest.json"))

@@ -95,7 +95,8 @@ The active example is the **ab-initio CCM (AICCM)**. Three constructions are
 kept visible while two development streams remain independent:
 
 - **`method="union12"`** (default), the historical product weight from
-  Peintinger and Bredow 2014 (eq. 18). Validated in 1-D, but it breaks the
+  Peintinger and Bredow 2014 (eq. 18). Validated in 1-D **in a minimal basis
+  only**, but it breaks the
   8-fold permutational symmetry of the electron-repulsion integrals in two and
   three dimensions.
 - **`method="aiccm2026dev-a"`**, Γ-CCM, the union-and-weight/Wigner-Seitz

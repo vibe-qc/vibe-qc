@@ -401,6 +401,11 @@ def test_gdf_explicit_positive_tolerance_remains_unsupported(
 
     monkeypatch.setattr(vibeqc, "make_basis", lambda *_: object())
     monkeypatch.setattr(vibeqc, "monkhorst_pack", lambda *_: (1, 1, 1))
+    # #378: the neutral Bloch producers size the real-Γ fold's tail before the
+    # driver call; stubbed like the basis and mesh builders above.
+    from vibeqc.periodic.ccm import neutral as neutral_module
+    monkeypatch.setattr(neutral_module, "ccm_neutral_tail_ke_cutoff",
+                        lambda *_, **__: None)
     monkeypatch.setattr(vibeqc, driver_name, downstream_driver)
     monkeypatch.setattr(ri_module, "_warn_experimental", lambda: None)
     ccm = _fake_gdf_ccm()

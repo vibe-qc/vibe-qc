@@ -140,8 +140,8 @@ Quantum-information analysis reads bonding from the entanglement
 structure of the wavefunction: the single-orbital entropy measures
 how strongly an orbital participates in correlation, and the mutual
 information between two orbitals quantifies their bonding
-entanglement. For single-determinant (HF/DFT) results vibe-qc offers
-an occupation-number approximation directly from the density matrix:
+entanglement. vibe-qc offers an occupation-number approximation directly
+from a spin-restricted, spin-summed AO density matrix:
 
 ```python
 from vibeqc.entanglement import entanglement_from_density
@@ -149,6 +149,25 @@ from vibeqc.entanglement import entanglement_from_density
 ent = entanglement_from_density(P, S)
 print("total quantum information:", ent.total_information)
 print("correlation clusters:", ent.correlation_clusters)
+```
+
+The density is transformed as $S^{1/2} P S^{1/2}$, using the same
+Loewdin convention as Wiberg bond orders. Its eigenvalues are the
+spin-summed natural occupations in $[0, 2]$. The binary entropy uses
+per-spin occupations $n_i$, obtained by dividing those eigenvalues by two:
+$s_i = -n_i\ln n_i - (1-n_i)\ln(1-n_i)$.
+Closed-shell RHF densities give zero entropy, mutual information and
+entanglement bond orders; fractional occupations, such as those of
+stretched H2 CASCI, give positive occupation entropy. Endpoint deviations
+within $10^{-14}$ per spin are treated as eigensolver roundoff.
+
+```{warning}
+`entanglement_from_density` reports an occupation-based approximation.
+Its mutual information and bond orders are heuristic estimates; a
+one-particle density alone does not determine full orbital entanglement.
+Zero entropy for a closed-shell determinant refers to its natural orbitals,
+not to an arbitrary choice of localized orbitals. Supply the spin-summed
+density with `Tr(P @ S)` equal to the electron count.
 ```
 
 For multi-determinantal wavefunctions (CAS, CC densities), feed the
@@ -236,13 +255,11 @@ is set, the IAO charges are written into the QVF's `atom_properties`
 section alongside the Mulliken, Löwdin and Hirshfeld rows, so vibe-view's
 charge picker offers them directly.
 
-```{admonition} The .population sidecars do not carry IAO charges
-:class: warning
-
-The IAO analysis runs during QVF preparation, after the
-`.population.{txt,json}` sidecars have been written, so those files list
-Mulliken/Löwdin/Hirshfeld only. The QVF is the complete record.
-```
+Use `iao_analysis=True` to request IAO charges, spin populations and
+spin-resolved IAO-Wiberg bonds independently of localization or QVF. The
+requested section is then included in `.out` and the population text/JSON
+sidecars. See [IAO population analysis](iao_population.md) for its definition,
+API, support limits and periodic integration plan.
 
 ```{admonition} Scope and cost
 :class: note

@@ -3636,16 +3636,26 @@ def run_periodic_rks_gpw_multi_k(
         D_total += weights[ik] * np.real(Dk)
     D_total = 0.5 * (D_total + D_total.T)
 
-    # v0.12 R1: initial smearing pass -- only matters when smearing_T > 0
-    # so the very first r already carries fractional occupations.
-    if smearing_T > 0.0:
-        sm_init = _apply_smearing(
-            eps_per_k_init,
-            weights=list(weights),
-            n_electrons_per_cell=float(n_elec),
-            n_occ_each=n_occ,
-            smearing=smearing_opts,
+    # v0.12 R1: initial occupation pass through the shared fill, so the very
+    # first r already carries the occupations the SCF iterations use:
+    # fractional at T > 0, and at T = 0 one Fermi level over the mesh
+    # (#176). A gapped seed is the per-k hard Aufbau and keeps the slice
+    # density above bit for bit.
+    sm_init = _apply_smearing(
+        eps_per_k_init,
+        weights=list(weights),
+        n_electrons_per_cell=float(n_elec),
+        n_occ_each=n_occ,
+        smearing=smearing_opts,
+    )
+    _seed_is_slice = smearing_T <= 0.0 and all(
+        np.array_equal(
+            np.asarray(o, dtype=float)[:n_occ], np.full(n_occ, 2.0)
         )
+        and not np.any(np.asarray(o, dtype=float)[n_occ:])
+        for o in sm_init.occupations_per_k
+    )
+    if not _seed_is_slice:
         occ_per_k_curr = [np.asarray(o, dtype=float) for o in sm_init.occupations_per_k]
         D_total = np.zeros((n_basis, n_basis), dtype=float)
         for ik in range(n_k):

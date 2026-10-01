@@ -126,30 +126,231 @@ __all__ = [
     "ccm_neutral_tail_ke_cutoff",
     "ccm_sr_exchange_zero_mode_constant",
     "ccm_eri_neutral",
+    "carried_cderi",
 ]
 
 
-def _fold_thread_count(fold_threads, n_c):
-    """Resolve the fold's WSC/q-axis thread count.
+def carried_cderi(scf_result):
+    """The neutral cderi a CCM SCF result carries, or ``None``.
 
-    ``None`` reads ``VIBEQC_CCM_FOLD_THREADS`` and otherwise stays serial
-    (1). Opt-in on purpose: the per-(ka, kb) fits are BLAS-heavy, so with a
-    multi-threaded BLAS an outer thread pool oversubscribes the node and can
-    be SLOWER than serial. The measured win needs the two levels separated
-    -- pin BLAS to one thread (``OMP_NUM_THREADS=1``) and give the pool the
-    cores. Flipping the default is a measurement-gated decision, not a code
-    default (CLAUDE.md § 15 makes full-node scaling a deliverable, so the
-    recipe belongs in the docs, and the fleet ladder is what settles it).
+    One build per job (2026-09-24): the direct-route drivers and the lean
+    neutral SCFs stamp the ``L`` they contracted J/K from on
+    ``result.cderi``; the correlated entry points call this when invoked
+    without ``cderi=`` so the correlation rides the kernel the reference
+    converged on instead of refitting (or, on the DLPNO family, silently
+    fitting the *supercell* FFT sibling, a different object on diffuse
+    bases). Results that build no cderi (four-centre routes) carry ``None``.
+    """
+    if scf_result is None:
+        return None
+    L = getattr(scf_result, "cderi", None)
+    return None if L is None else np.asarray(L, dtype=float)
+
+
+#: Default for ``ccm_neutral_cderi_fold(fold_threads=None)`` when
+#: ``VIBEQC_CCM_FOLD_THREADS`` is unset. ``1`` is serial; ``"auto"`` is
+#: ``min(cores, units)`` with one OpenMP/BLAS thread per pool worker. A
+#: measurement-gated decision: on an 18-core machine with numpy on Apple
+#: Accelerate (which no runtime control can limit) the pool tied the serial
+#: fold at an equal thread budget (LiH/STO-3G (2,2,2), 8 workers × 1 thread
+#: against 1 × 8: 49.2 vs 51.6 s, 225.9 vs 252.6 s) and lost at 4 × 1 on
+#: (2,2,1) (34.6 vs 18.6 s), so the default stays serial (2026-09-24).
+FOLD_THREADS_DEFAULT = 1
+
+
+def _fold_thread_count(fold_threads, n_units):
+    """Resolve the fold's WSC/q-axis thread count against ``n_units`` units.
+
+    ``None`` reads ``VIBEQC_CCM_FOLD_THREADS`` and otherwise takes
+    :data:`FOLD_THREADS_DEFAULT`. ``"auto"`` means ``min(cores, n_units)``;
+    ``0`` / negative means all cores. The pool that consumes this count pins
+    each worker to one OpenMP thread and limits BLAS for the pool's lifetime
+    (:func:`_fold_pool`), so the outer count is the whole thread budget of
+    the fold and never multiplies an inner one.
     """
     import os
 
     if fold_threads is None:
         env = os.environ.get("VIBEQC_CCM_FOLD_THREADS", "").strip()
-        fold_threads = int(env) if env else 1
+        fold_threads = env if env else FOLD_THREADS_DEFAULT
+    if isinstance(fold_threads, str):
+        if fold_threads.strip().lower() == "auto":
+            fold_threads = os.cpu_count() or 1
+        else:
+            fold_threads = int(fold_threads)
     fold_threads = int(fold_threads)
     if fold_threads <= 0:                       # 0 / negative = "all cores"
         fold_threads = os.cpu_count() or 1
-    return max(1, min(fold_threads, int(n_c)))
+    return max(1, min(fold_threads, int(n_units)))
+
+
+#: The single-pair builder's default G-chunk (``build_lpq_bloch_native_fft``,
+#: ``tail_chunk_g``): the chunk width the fold's batches reproduce so that the
+#: batched and the per-pair builds sum the same G-chunks in the same order.
+_SINGLE_PAIR_CHUNK_G = 65536
+
+
+def _fold_batch_chunk_g(n_batch, n_orb, n_workers=1):
+    """``(tail_chunk_g, chunk_eff)`` for one shared-q batch of the fold.
+
+    The batched builder divides its ``tail_chunk_g`` by the batch width, so
+    at the default a 4-ket batch sums the base mesh in 16384-point chunks
+    where the single-pair builder uses one 65536-point chunk. Those are
+    different summation orders, and the canonical whitening
+    ``M(q)^{-1/2}`` amplifies their rounding by ``λ_min^{-1/2}`` -- measured
+    on MgO/STO-3G (2,2,1) (17153 base G-points, metric condition 2e10):
+    7.6e-10 max element between the batched and the single builds at the
+    default chunking, 9.7e-13 with the batch forced to one chunk. So the
+    fold asks for the single-pair chunk width whenever the batched pair-FT
+    transient ``n_batch · n_orb² · chunk · 16 B`` fits the budget
+    ``VIBEQC_CCM_FOLD_BATCH_TRANSIENT_MIB`` (default 2048 MiB, divided by
+    the number of concurrent pool workers), else the largest chunk that
+    does -- then the identity to the per-pair fold degrades to the
+    rounding-amplified class above, which the fold's log line reports.
+    """
+    import os
+
+    try:
+        budget_mib = float(
+            os.environ.get("VIBEQC_CCM_FOLD_BATCH_TRANSIENT_MIB", "2048"))
+    except ValueError:
+        budget_mib = 2048.0
+    budget = max(budget_mib, 1.0) * 2.0 ** 20 / max(1, int(n_workers))
+    per_g = max(1, int(n_batch)) * int(n_orb) * int(n_orb) * 16
+    chunk_eff = int(max(1, min(_SINGLE_PAIR_CHUNK_G, budget // per_g)))
+    return chunk_eff * max(1, int(n_batch)), chunk_eff
+
+
+def _pin_worker_threads():
+    """Pool-worker initializer: one OpenMP thread for this worker.
+
+    ``omp_set_num_threads`` writes the calling thread's own ICV (per-thread
+    in libomp and libgomp alike), so it must run inside each worker; a call
+    from the main thread would not reach threads the runtime has not seen.
+    """
+    try:
+        from vibeqc._vibeqc_core import set_num_threads
+    except ImportError:  # pragma: no cover -- core without the binding
+        return
+    try:
+        set_num_threads(1)
+    except Exception:  # noqa: BLE001 -- pinning is best effort
+        pass
+
+
+class _fold_pool:
+    """``ThreadPoolExecutor`` whose workers run single-threaded kernels.
+
+    Workers pin OpenMP to one thread (:func:`_pin_worker_threads`); BLAS is
+    limited to one thread for the pool's lifetime through ``threadpoolctl``
+    when it is importable (process-global for OpenBLAS/MKL; Apple's
+    Accelerate exposes no runtime control and is left as it is). Records what
+    it could pin on ``.pinned`` for the caller's log line.
+    """
+
+    def __init__(self, n_threads):
+        self.n_threads = int(n_threads)
+        self.pinned = {"openmp": "per-worker", "blas": "not limited"}
+        self._limiter = None
+        self._pool = None
+
+    def __enter__(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        try:
+            from threadpoolctl import threadpool_limits
+
+            self._limiter = threadpool_limits(limits=1, user_api="blas")
+            self._limiter.__enter__()
+            self.pinned["blas"] = "threadpoolctl limits=1"
+        except ImportError:
+            self._limiter = None
+        self._pool = ThreadPoolExecutor(
+            max_workers=self.n_threads, initializer=_pin_worker_threads)
+        return self._pool.__enter__()
+
+    def __exit__(self, *exc):
+        try:
+            return self._pool.__exit__(*exc)
+        finally:
+            if self._limiter is not None:
+                self._limiter.__exit__(*exc)
+
+
+class _FitCacheSource:
+    """Serve the fold's ``(channel, bra)`` fits from a driver fit cache.
+
+    Validates once that the cache was fit at the fold's operator (basis
+    sizes, ``ke_cutoff``, tail, cell-list cutoff, metric threshold, fit
+    screen, no screening) and that its k-points cover the BvK mesh; then
+    ``source(qi, ai)`` returns the canonical-frame ``L_{ka, ka+q}`` for the
+    pair whose integer labels match, rotated by the cache from the driver's
+    eigenmode frame. Pair matching is by label, so the driver's k-point
+    ordering is irrelevant; the driver canonicalises ``q`` from
+    ``k_j − k_i`` exactly as the fold's builder does from ``kpts[qi]``
+    (same class, same label), so the frames coincide by construction.
+    """
+
+    def __init__(self, cache, *, unit, ubasis, aux_modrho, b_lat, nrep, frac,
+                 ke_cutoff, tail, lat_opts, omega_screen):
+        need = ("pairs", "kpoints_cart", "ke_cutoff", "tail_ke_cutoff",
+                "lat_cutoff_bohr", "n_ao", "n_aux", "canonical_pair")
+        missing = [a for a in need if not hasattr(cache, a)]
+        if missing:
+            raise TypeError(
+                "ccm_neutral_cderi_fold: fit_cache must be an RSGDFFitCache "
+                f"(missing {missing}); got {type(cache).__name__}")
+        problems = []
+        if float(omega_screen) != 0.0:
+            problems.append("a screened (omega_screen > 0) fold cannot consume "
+                            "the driver's Coulomb fit")
+        if int(cache.n_ao) != int(ubasis.nbasis):
+            problems.append(f"n_ao {cache.n_ao} != {ubasis.nbasis}")
+        if int(cache.n_aux) != int(aux_modrho.nbasis):
+            problems.append(f"n_aux {cache.n_aux} != {aux_modrho.nbasis}")
+        if float(cache.ke_cutoff) != float(ke_cutoff):
+            problems.append(f"ke_cutoff {cache.ke_cutoff} != {ke_cutoff}")
+        c_tail = cache.tail_ke_cutoff
+        if (c_tail is None) != (tail is None) or (
+                tail is not None and float(c_tail) != float(tail)):
+            problems.append(f"tail_ke_cutoff {c_tail} != {tail}")
+        if float(cache.lat_cutoff_bohr) != float(lat_opts.cutoff_bohr):
+            problems.append(f"lat_opts.cutoff_bohr {cache.lat_cutoff_bohr} != "
+                            f"{lat_opts.cutoff_bohr}")
+        ldt = getattr(cache, "linear_dep_thr", 1e-9)
+        if float(ldt) != 1e-9:
+            problems.append(f"linear_dep_thr {ldt} != the fold's 1e-9")
+        fst = getattr(cache, "fit_screen_threshold", 0.0)
+        if float(fst) != 0.0:
+            problems.append(f"fit_screen_threshold {fst} != the fold's 0.0")
+        if problems:
+            raise ValueError(
+                "ccm_neutral_cderi_fold: the driver fit cache was fit at a "
+                "different operator than this fold: " + "; ".join(problems))
+        ckpts = np.asarray(cache.kpoints_cart, dtype=float).reshape(-1, 3)
+        cfrac = np.round(np.linalg.solve(b_lat, ckpts.T).T * nrep[None, :]).astype(int)
+        cfrac %= nrep
+        self.index = {tuple(int(x) for x in cfrac[i]): i for i in range(len(ckpts))}
+        n_c = int(np.prod(nrep))
+        want = {tuple(int(x) for x in frac[i]) for i in range(n_c)}
+        if not want <= set(self.index):
+            raise ValueError(
+                "ccm_neutral_cderi_fold: the driver fit cache's k-points do "
+                f"not cover the BvK mesh {tuple(int(n) for n in nrep)}")
+        self.cache = cache
+        self.frac = frac
+        self.nrep = nrep
+
+    def __call__(self, qi, ai):
+        i = self.index[tuple(int(x) for x in self.frac[ai])]
+        j = self.index[tuple(int(x) for x in (self.frac[ai] + self.frac[qi]) % self.nrep)]
+        try:
+            return np.asarray(self.cache.canonical_pair(i, j))
+        except KeyError as exc:
+            raise ValueError(
+                "ccm_neutral_cderi_fold: the driver fit cache lacks pair "
+                f"{(i, j)}; it was built without exchange pairs "
+                "(need_k_pairs=False)") from exc
 
 
 def _supercell_wrap_lat_opts(ccm, base=None):
@@ -605,11 +806,17 @@ def ccm_neutral_tail_ke_cutoff(
       ``ke_cutoff``) inputs. ``ke_cutoff`` *is* the sibling's
       ``rsgdf_ke_cutoff`` (both default ``200.0``, and both reach the builder
       as its ``ke_cutoff``), so the mirror is like-for-like;
-    * at ``N_c > 1`` the sibling takes the multi-k loop, which deliberately
-      does **not** auto-tail (``_warn_multik_dense_core_gdf_parity_hold``
-      records the hold and calls multi-k auto-tailing an open maintainer call),
-      so neither does this. Both routes stay on the held-but-agreeing side
-      rather than one of them moving unilaterally.
+    * at ``N_c > 1`` the same classifier answer, sized on the unit cell exactly
+      as at ``N_c = 1`` (maintainer decision of 2026-09-30, which settled the
+      "open maintainer call" of ``_warn_multik_dense_core_gdf_parity_hold``).
+      The sibling's multi-k loop does not auto-size a tail itself, but the
+      neutral-Bloch producer passes it this resolver's value explicitly
+      (``ri._pin_classic_fit_source``), so both routes move together: one fit
+      resolution along the whole ladder, no ``+PARITY_HELD`` on dense-core
+      cells, and the Theorem-1 identity kept. Before, every ``N_c > 1`` rung
+      was untailed: -54 uHa (LiH), -18 mHa (diamond) and -0.48 Ha/cell (MgO,
+      N = 5) against PySCF at pob-DZVP-rev2, while the tailed ``N_c = 1`` rung
+      agreed to uHa.
 
     Returns ``None`` when no tail applies -- the builders' "base mesh only"
     value, and the truthful provenance to record on a result.
@@ -627,8 +834,6 @@ def ccm_neutral_tail_ke_cutoff(
     """
     if tail_ke_cutoff is not None:
         return _tail_above_base_mesh(float(tail_ke_cutoff), float(ke_cutoff))
-    if int(np.prod(np.asarray(ccm.nrep, dtype=int))) != 1:
-        return None
     from vibeqc._vibeqc_core import BasisSet
     from vibeqc.pbc_gdf import _auto_rsgdf_tail_ke_cutoff
 
@@ -650,7 +855,8 @@ def _tail_above_base_mesh(tail: float, ke_cutoff: float):
 def ccm_neutral_cderi_fold(
     ccm, *, ke_cutoff: float = 200.0, tail_ke_cutoff=None, aux_basis=None,
     lat_opts=None, symmetry=None, omega_screen: float = 0.0,
-    fold_threads=None,
+    fold_threads=None, fit_batch: str = "shared-q", time_reversal: bool = True,
+    fit_cache=None,
 ) -> np.ndarray:
     """Real Γ-supercell neutral cderi from **per-q unit-cell fits** (the fold).
 
@@ -705,11 +911,63 @@ def ccm_neutral_cderi_fold(
       GDF's own objects, so agreement is by construction.
     * The unit-cell fits need **no cross-torus wrap widening** (pairs live in
       the unit cell; Bloch phases carry the torus) -- ``lat_opts`` defaults to
-      the plain builder options, exactly as the multi-k GDF driver uses.
-    * Cost: ``N_c·(n_q_kept)`` unit-cell ``build_lpq_bloch_native_fft`` calls
-      (≈ the multi-k GDF's exchange-cache setup); memory ``O(N_c·n_aux·nbf_sc²)``
-      -- MBs where the supercell fit needs GBs (measured: 49 GB → tens of MB
-      on the (3,3,3) torus).
+      the plain builder options, exactly as the multi-k GDF driver uses. The
+      direct-route drivers forward their caller's ``lat_opts`` here (2026-09-24),
+      so a non-default cell-list cutoff reaches the fit on both producers.
+    * Cost: one shared-q batch (:func:`~vibeqc.aux_basis.
+      build_lpq_bloch_native_fft_shared_q`) per kept q-channel, i.e. one
+      ket-Bloch AO-pair FT pass per channel over all ``N_c`` bra momenta
+      -- the multi-k GDF driver's own batching -- instead of ``N_c``
+      single-pair builds per channel (``fit_batch="per-pair"``, the historical
+      build, kept reachable as the reference path); memory
+      ``O(N_c·n_aux·nbf_sc²)`` -- MBs where the supercell fit needs GBs
+      (measured: 49 GB → tens of MB on the (3,3,3) torus).
+
+    ``fit_batch`` selects how the ``N_c`` fits of one q-channel are built:
+    ``"shared-q"`` (default since 2026-09-24) issues ONE batched call per
+    channel, sharing the shifted reciprocal mesh, the auxiliary FT, the 2c
+    metric eigensystem and, above all, the dominant ket-Bloch AO-pair FT pass
+    across the bra momenta (the batched C++ kernel folds the Bloch phase after
+    the cart→sph transform, so the two paths agree to floating-point rounding
+    only; the identity is pinned at 1e-10 max element on LiH and MgO (2,2,1)
+    in ``tests/test_ccm_fold_shared_q.py``); ``"per-pair"`` is the historical
+    loop of ``N_c`` :func:`~vibeqc.aux_basis.build_lpq_bloch_native_fft`
+    calls per channel, unchanged, for reference and diagnosis. The batch is
+    asked for the single-pair builder's G-chunk width whenever its pair-FT
+    transient fits ``VIBEQC_CCM_FOLD_BATCH_TRANSIENT_MIB`` (default 2048
+    MiB), because a different chunking is a different summation order and
+    the whitening of a tight-core metric amplifies that rounding to the
+    1e-9 class (:func:`_fold_batch_chunk_g`).
+
+    ``time_reversal`` (default ``True``) exploits the one exact relation the
+    ±q stacking does not already use: inside a **self-paired** channel
+    (``q ≡ −q`` mod G: the Γ channel and the Nyquist channels of even meshes)
+    the fit at ``(−ka, −ka+q)`` is the complex conjugate of the fit at
+    ``(ka, ka+q)`` -- real AOs and real auxiliary functions give
+    ``ρ̂(−p; −k) = conj ρ̂(p; k)`` and ``F̂_P(−p) = conj F̂_P(p)``, the shifted
+    sphere ``{G+q}`` is inversion symmetric exactly when ``2q ∈ G``, and the
+    canonical-frame whitening ``M(q)^{-1/2}`` is then real, so the relation is
+    exact (not a finite-cell-list covariance like the star reduction). Only
+    one of each ``(ka, −ka)`` pair is built; the partner is conjugated.
+    Genuine ±q pairs are already halved by the stacking, so on N = 2 meshes,
+    where every ``ka`` is its own partner, nothing changes; the saving starts
+    at N ≥ 3. Off inside a ``symmetry`` star plan (which carries its own TRS
+    entries) and when a ``fit_cache`` supplies the fits.
+
+    ``fit_cache`` (default ``None``) lets the fold **consume the multi-k GDF
+    driver's own fit** instead of refitting, when both Γ-CCM producers run in
+    one process: pass the :class:`~vibeqc.periodic_k_gdf.RSGDFFitCache` a
+    :func:`~vibeqc.run_krhf_periodic_gdf` call retained with
+    ``retain_fit_cache=True`` (exposed as ``CCMGDFResult.fit_cache`` by
+    :func:`~vibeqc.periodic.ccm.ri.run_ccm_rhf_gdf`). The driver's pairs are
+    stored in the compact eigenmode frame; the cache rotates each one back to
+    the canonical auxiliary frame with the retained ``M(q)`` eigenvectors
+    (``L_can = U_keep · L_eig``, exact), and the fold matches pairs by
+    integer mesh label, so k-point ordering need not agree. The cache must
+    have been fit at this fold's ``ke_cutoff``, tail, cell-list cutoff,
+    auxiliary basis and screening (checked; a mismatch raises rather than
+    silently folding a different operator). Not combinable with ``symmetry``
+    or ``omega_screen > 0``.
 
     ``symmetry`` routes the per-``(k_a, k_b)`` builder calls through the
     space-group + time-reversal star reduction
@@ -752,27 +1010,44 @@ def ccm_neutral_cderi_fold(
     supercell build (:func:`ccm_sr_exchange_zero_mode_constant`). Screened
     folds are exchange-only objects (never ``J``).
 
-    ``fold_threads`` parallelizes the per-``(k_a, k_b)`` fits of each
-    q-channel -- the CCM analogue of k-point parallelism (CLAUDE.md § 15).
-    The fits are independent and every C++ primitive they call releases the
-    GIL, so a thread pool scales; star MEMBERS are still reconstructed after
-    their channel's builds complete, preserving the serial sweep's
-    representative-before-member ordering exactly. ``None`` (default) reads
-    ``VIBEQC_CCM_FOLD_THREADS`` and otherwise stays serial; ``0`` means all
-    cores. **Pin BLAS first** (``OMP_NUM_THREADS=1``): the fits are
-    BLAS-heavy, so threading on top of a multi-threaded BLAS oversubscribes
-    and can be slower than serial. Output is unchanged elementwise either
-    way (same operations, same order of accumulation per channel).
+    ``fold_threads`` is the fold's own parallel axis -- the CCM analogue of
+    k-point parallelism (CLAUDE.md § 15). With ``fit_batch="shared-q"`` the
+    units are the kept q-channels (one batch each, independent, GIL
+    released inside every C++ primitive); with ``"per-pair"`` they are the
+    per-``(k_a, k_b)`` fits of each channel, as before. Every pool worker
+    pins its OpenMP thread count to one
+    (:func:`vibeqc._vibeqc_core.set_num_threads`, a per-thread control) and
+    BLAS is limited to one thread for the pool's lifetime when
+    ``threadpoolctl`` is importable, so the two levels never multiply.
+    ``None`` (default) reads ``VIBEQC_CCM_FOLD_THREADS`` and otherwise takes
+    :data:`FOLD_THREADS_DEFAULT`; ``"auto"`` means ``min(cores, units)``;
+    ``0`` means all cores. The pool changes scheduling, not arithmetic, as
+    long as every batch keeps the single-pair chunk width: the batch
+    transient budget (:func:`_fold_batch_chunk_g`) is divided by the number
+    of workers, so on a large torus the pooled fold may fall to a
+    memory-bounded chunk where the serial fold does not, and then differs
+    from it at the rounding-amplified class (measured 8e-10 on MgO/STO-3G
+    (2,2,2) with 8 workers, 0.0 on every smaller cell); the log line says
+    when that happened. Star MEMBERS are reconstructed after their
+    channel's builds, preserving the serial sweep's
+    representative-before-member ordering; a star plan therefore runs its
+    channels serially.
     """
     from vibeqc import LatticeSumOptions
     from vibeqc.aux_basis import (
         build_lpq_bloch_native_fft,
+        build_lpq_bloch_native_fft_shared_q,
         default_aux_for,
         make_aux_basis_set,
         make_modrho_aux_basis,
     )
     from vibeqc.periodic_k_gdf import _kmesh_to_kpoints_weights
 
+    if fit_batch not in ("shared-q", "per-pair"):
+        raise ValueError(
+            "ccm_neutral_cderi_fold: fit_batch must be 'shared-q' or "
+            f"'per-pair', got {fit_batch!r}"
+        )
     unit = ccm.unit_system
     mol = unit.unit_cell_molecule()
     from vibeqc._vibeqc_core import BasisSet
@@ -806,9 +1081,13 @@ def ccm_neutral_cderi_fold(
     b_lat = 2.0 * np.pi * np.linalg.inv(a_lat).T   # columns = reciprocal vectors
 
     # Mesh bookkeeping: integer (fractional·nrep) labels, mod-folded -- used
-    # only to pair q with −q; the builder always gets unfolded cartesian k's.
+    # only to pair q with −q and ka with −ka; the builder always gets
+    # unfolded cartesian k's.
     frac = np.round(np.linalg.solve(b_lat, kpts.T).T * nrep[None, :]).astype(int)
     frac %= nrep
+    label_index = {tuple(int(x) for x in frac[i]): i for i in range(n_c)}
+    if len(label_index) != n_c:
+        raise ValueError("ccm_neutral_cderi_fold: BvK mesh labels are not unique")
 
     # Supercell cell list in CCMSystem ordering ((i·n2+j)·n3+k), cartesian.
     cells = np.array(
@@ -830,6 +1109,11 @@ def ccm_neutral_cderi_fold(
     # Optional space-group + TRS star reduction of the builder calls.
     plan = None
     if symmetry is not None and symmetry is not False:
+        if fit_cache is not None:
+            raise ValueError(
+                "ccm_neutral_cderi_fold: a driver fit_cache holds every pair "
+                "already; it cannot be combined with a symmetry star plan"
+            )
         from .symmetry import analyze_ccm_symmetry, ccm_symmetry_fold_kpair_plan
 
         sym = (symmetry if not isinstance(symmetry, (bool, str))
@@ -855,52 +1139,113 @@ def ccm_neutral_cderi_fold(
         referenced = {e[1] for e in plan.entries.values() if e[0] == "recon"}
         rep_cache: dict = {}
 
+    # Driver fit cache (both producers in one process): validated once, then
+    # served per (channel, bra) by integer mesh label in the canonical frame.
+    source = None
+    if fit_cache is not None:
+        source = _FitCacheSource(
+            fit_cache, unit=unit, ubasis=ubasis, aux_modrho=aux_modrho,
+            b_lat=b_lat, nrep=nrep, frac=frac, ke_cutoff=float(ke_cutoff),
+            tail=tail, lat_opts=opts, omega_screen=float(omega_screen))
+        write(
+            f"  ccm_neutral_cderi_fold: consuming the multi-k GDF driver's "
+            f"fit cache ({len(fit_cache.pairs)} pairs, eigenmode frame "
+            f"rotated to the canonical auxiliary frame); no refit\n",
+            Level.VERBOSE)
+
     alpha = n_c ** -1.5
     n_sc = n_c * n_mu
-    n_threads = _fold_thread_count(fold_threads, n_c)
-    blocks: list[np.ndarray] = []
-    for qi in kept:
-        qf = tuple(frac[qi])
-        mqf = tuple((-frac[qi]) % nrep)
-        acc = None
+    n_units = len(kept) if fit_batch == "shared-q" else n_c
+    n_threads = _fold_thread_count(fold_threads, n_units)
+    import threading
 
-        # ---- WSC/q-axis parallelism -------------------------------------
-        # The per-(ka, kb) fits of one q-channel are independent, and every
-        # C++ primitive they call releases the GIL, so a thread pool over
-        # this axis is the CCM analogue of k-point parallelism (CLAUDE.md
-        # § 15). Builds go first and as a batch: a star MEMBER may
-        # reconstruct from a representative in this same channel, and the
-        # serial sweep's "representatives always precede members" ordering
-        # is only guaranteed once every build of the channel is done.
-        # Representatives in EARLIER channels are already in rep_cache.
+    stats = {"builds": 0, "trs": 0, "batches": 0, "bounded_chunks": 0}
+    stats_lock = threading.Lock()
+
+    def _count(**inc):
+        with stats_lock:
+            for key, value in inc.items():
+                stats[key] += int(value)
+
+    def _self_paired(qi):
+        return tuple(frac[qi]) == tuple((-frac[qi]) % nrep)
+
+    def _channel_fits(qi, inner_pool=None):
+        """Canonical-frame fits ``L_{ka, ka+q}`` for every BUILD entry of
+        channel ``qi`` (star members are reconstructed by the caller)."""
         build_ais = [
             ai for ai in range(n_c)
             if plan is None or plan.entries[(qi, ai)][0] == "build"
         ]
-
-        def _build_one(ai, _qi=qi):
-            return ai, np.asarray(build_lpq_bloch_native_fft(
-                unit, ubasis, aux_modrho, kpts[ai], kpts[ai] + kpts[_qi],
-                ke_cutoff=float(ke_cutoff), tail_ke_cutoff=tail,
-                lat_opts=opts,
-                canonical_auxiliary_basis=True,
-                omega_screen=float(omega_screen)))
-
-        built: dict = {}
-        if n_threads > 1 and len(build_ais) > 1:
-            from concurrent.futures import ThreadPoolExecutor
-
-            with ThreadPoolExecutor(max_workers=n_threads) as pool:
-                for ai, l_ab in pool.map(_build_one, build_ais):
-                    built[ai] = l_ab
-        else:
+        fits: dict = {}
+        if source is not None:
             for ai in build_ais:
-                built[ai] = _build_one(ai)[1]
+                fits[ai] = source(qi, ai)
+            return fits
+        # Exact time reversal inside a self-paired channel (docstring):
+        # build one of each (ka, -ka) pair, conjugate the other.
+        partner: dict = {}
+        reps = list(build_ais)
+        if plan is None and time_reversal and _self_paired(qi):
+            build_set = set(build_ais)
+            reps = []
+            for ai in build_ais:
+                bi = label_index[tuple(int(x) for x in (-frac[ai]) % nrep)]
+                if bi < ai and bi in build_set:
+                    partner[ai] = bi
+                else:
+                    reps.append(ai)
+        if fit_batch == "shared-q":
+            if reps:
+                chunk_g, chunk_eff = _fold_batch_chunk_g(
+                    len(reps), n_mu, n_workers=n_threads)
+                if chunk_eff < _SINGLE_PAIR_CHUNK_G:
+                    _count(bounded_chunks=1)
+                lpq_list = build_lpq_bloch_native_fft_shared_q(
+                    unit, ubasis, aux_modrho, kpts[reps], kpts[qi],
+                    ke_cutoff=float(ke_cutoff), tail_ke_cutoff=tail,
+                    tail_chunk_g=chunk_g,
+                    lat_opts=opts,
+                    canonical_auxiliary_basis=True,
+                    omega_screen=float(omega_screen))
+                for ai, l_ab in zip(reps, lpq_list):
+                    fits[ai] = np.asarray(l_ab)
+                _count(batches=1)
+        else:
+            # Historical path: one single-pair build per (ka, ka+q).
+            def _build_one(ai, _qi=qi):
+                return ai, np.asarray(build_lpq_bloch_native_fft(
+                    unit, ubasis, aux_modrho, kpts[ai], kpts[ai] + kpts[_qi],
+                    ke_cutoff=float(ke_cutoff), tail_ke_cutoff=tail,
+                    lat_opts=opts,
+                    canonical_auxiliary_basis=True,
+                    omega_screen=float(omega_screen)))
+
+            if inner_pool is not None and len(reps) > 1:
+                for ai, l_ab in inner_pool.map(_build_one, reps):
+                    fits[ai] = l_ab
+            else:
+                for ai in reps:
+                    fits[ai] = _build_one(ai)[1]
+        for ai, bi in partner.items():
+            fits[ai] = np.conj(fits[bi])
+        _count(builds=len(reps), trs=len(partner))
+        return fits
+
+    def _fold_channel(qi, inner_pool=None):
+        qf = tuple(frac[qi])
+        mqf = tuple((-frac[qi]) % nrep)
+        fits = _channel_fits(qi, inner_pool)
         if plan is not None:
-            for ai, l_ab in built.items():
+            # Builds go first and as a batch: a star MEMBER may reconstruct
+            # from a representative in this same channel, and the serial
+            # sweep's "representatives always precede members" ordering is
+            # only guaranteed once every build of the channel is done.
+            # Representatives in EARLIER channels are already in rep_cache.
+            for ai, l_ab in fits.items():
                 if (qi, ai) in referenced:
                     rep_cache[(qi, ai)] = l_ab
-
+        acc = None
         for ai in range(n_c):
             # UNFOLDED cartesian ket momentum -- one whitening frame per
             # q-channel (see the docstring warning; folding kb into the BZ
@@ -917,7 +1262,7 @@ def ccm_neutral_cderi_fold(
                 # fold (measured without it: 8.5e-4 channel error on a vacuum
                 # cell from FP q-jitter across ka). It is also what makes the
                 # star reconstruction below frame-stable.
-                l_ab = built[ai]
+                l_ab = fits[ai]
             else:
                 # Star member: covariance reconstruction from the cached orbit
                 # representative (identity + measured finite-list floors at
@@ -948,8 +1293,42 @@ def ccm_neutral_cderi_fold(
         # (the channel enters the q-sum once; no realness assumption needed),
         # √2 for one representative of a genuine ±q pair.
         w = 1.0 if qf == mqf else np.sqrt(2.0)
-        blocks.append(w * np.ascontiguousarray(acc.real))
-        blocks.append(w * np.ascontiguousarray(acc.imag))
+        return (w * np.ascontiguousarray(acc.real),
+                w * np.ascontiguousarray(acc.imag))
+
+    # ---- WSC/q-axis parallelism -----------------------------------------
+    # shared-q: the kept channels are independent units (a star plan is the
+    # exception -- its cross-channel representative ordering keeps the
+    # channel sweep serial). per-pair: the historical inner pool over the
+    # fits of each channel. Pool workers pin OpenMP to one thread and BLAS
+    # is limited for the pool's lifetime (_fold_pool), so the outer pool
+    # never multiplies an inner thread count.
+    channel_out: list = []
+    if fit_batch == "shared-q" and n_threads > 1 and plan is None and len(kept) > 1:
+        with _fold_pool(n_threads) as pool:
+            channel_out = list(pool.map(_fold_channel, kept))
+    elif fit_batch == "per-pair" and n_threads > 1:
+        with _fold_pool(n_threads) as pool:
+            channel_out = [_fold_channel(qi, pool) for qi in kept]
+    else:
+        channel_out = [_fold_channel(qi) for qi in kept]
+    write(
+        f"  ccm_neutral_cderi_fold: {fit_batch} fits, {len(kept)} q-channels, "
+        f"{stats['builds']} pair fits built"
+        + (f" in {stats['batches']} batches" if fit_batch == "shared-q" else "")
+        + (f", {stats['trs']} by time reversal" if stats["trs"] else "")
+        + (f", {len(fit_cache.pairs)} from the driver fit cache"
+           if fit_cache is not None else "")
+        + f", fold_threads={n_threads}"
+        + (f"; {stats['bounded_chunks']} batch(es) at a memory-bounded G-chunk "
+           "(identity to the per-pair fold in the rounding-amplified class, "
+           "see _fold_batch_chunk_g)" if stats["bounded_chunks"] else "")
+        + "\n",
+        Level.VERBOSE)
+    blocks: list[np.ndarray] = []
+    for re_block, im_block in channel_out:
+        blocks.append(re_block)
+        blocks.append(im_block)
     out = np.concatenate(blocks, axis=0)
     # Prune numerically-null aux rows (exact-zero Im blocks of real channels).
     keep = np.einsum("Amn,Amn->A", out, out) > 1e-14

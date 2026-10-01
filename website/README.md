@@ -46,41 +46,47 @@ npm run verify       # release-data tests + production build
 `dist/` is what gets rsynced to the web root in CI (alongside the Sphinx
 `/docs/` deploy). Both are plain static file trees.
 
-## Deploy
+## Publish
 
-The marketing site is **decoupled from version releases** — copy and fixes ship
-from `main` on their own. The CI jobs (see `../.gitlab-ci.yml`):
+The marketing site is decoupled from engine releases. Website changes on
+`main` trigger the configured marketing publication workflow; the core manual
+waits for a qualified release. Each publisher owns a separate URL subtree:
 
-- **`website-deploy`** → the production root (`example-web-account@vibe-qc.com:/web/`). Runs
-  **automatically on every `main` push that changes `website/`**, and is also
-  available as a manual job on `main` to force a redeploy. `needs: []` runs it
-  immediately, gated only by its own `npm run build` — independent of the C++
-  test suite. `--delete-after` excludes `/docs/`, `/updates/`, `/preview/`,
-  `/vibe-view/`, `/vibe-queue/`, and
-  the server-managed cPanel/Apache files (incl. `.htaccess`).
-- **`website-staging`** → `/web/preview/` (**https://vibe-qc.com/preview/**,
-  `noindex`). Same `main` + `website/`-changed trigger, built with
-  `PREVIEW_BASE=/preview/`. A parallel preview of the same main push for reviewing the built site.
+| Public path | Content owner | Source |
+| --- | --- | --- |
+| `/` | vibe-qc | `website/` on `main` |
+| `/preview/` | vibe-qc | `website/` on `main`, built with `PREVIEW_BASE=/preview/` |
+| `/docs/` | vibe-qc | `docs/` on `release` |
+| `/vibe-view/docs/` | vibe-view | its own documentation and release process |
+| `/vibe-queue/docs/` | vibe-queue | its own documentation and release process |
 
-The **docs** are versioned, so they deploy differently:
+The product `.gitlab-ci.yml` contains portable validation jobs and imports the
+configured external deployment definition. Credentials, accounts, SSH setup,
+job dependencies and destination commands are maintained in private operations
+documentation. Do not copy those settings into this checkout or infer the
+current deployment job implementation from an old example here.
 
-- **`docs-deploy`** → `/web/docs/`. Runs **only on `release`**, which the
-  release owner fast-forwards from a tag on `main`. A docs edit on `main`
-  waits for the next release; manual main pipelines may build docs but cannot
-  publish them over the released site.
+The root publisher must preserve the independent `/docs/`, `/updates/`,
+`/preview/`, `/vibe-view/` and `/vibe-queue/` trees, along with server-managed
+configuration and verification files. Companion publishers must restrict
+deletion to their own subtree. Source clones or tags do not grant deployment
+access.
+
+Before proposing a site change, verify both URL layouts from `website/`:
+
+```sh
+npm run verify
+PREVIEW_BASE=/preview/ npm run verify
+```
+
+The preview is `noindex`; companion and core manual links remain rooted at
+their published documentation paths, outside `/preview/`. A manual change on
+`main` does not update `/docs/` until the next qualified release.
 
 See [site publishing and shared appearance](../docs/site_publishing.md) for
-companion ownership, protected refs, CSS synchronization, and gallery policy.
-
-All jobs `--delete-after` within their own subtree only, and share the SSH setup
-via the `.deploy_ssh` `!reference` template. To reproduce a staging build
-locally: `PREVIEW_BASE=/preview/ npm run build`.
-
-**One-time server-side step (already applied 2026-07-17):** legacy root doc URLs
-(`/quickstart.html`, `/_static/…`) are 301-redirected to `/docs/` by Apache
-rewrite rules in `../deploy/htaccess-redirects.conf`. CI deploys deliberately
-exclude `.htaccess`, so those rules live in `/web/.htaccess` on the server and
-persist across deploys. **Re-apply only if the URL structure changes again.**
+CSS synchronization and per-product gallery policy. The portable legacy URL
+rules are in `deploy/htaccess-redirects.conf` at the repository root; applying
+or changing server configuration is an operator task.
 
 ## Structure
 

@@ -8,9 +8,10 @@
 > def2-svp-jk: −1.4 µHa vs `pyscf.pbc.scf.KRHF.density_fit()` at a
 > converged lattice cutoff; +1.6 mHa at the cheaper default cutoff;
 > re-measured 2026-08-05 against PySCF 2.13.1, run out of process).
-> Use `use_compcell=True` for multi-k GDF parity, the
-> `use_compcell=False` default routes multi-k through the Ewald-3D Fock
-> path, which is not yet at parity on tight cells. The pob-TZVP rocksalt
+> Multi-k GDF now always builds this fit: the `use_compcell=False`
+> default is promoted to `use_compcell=True` on every `gdf_method`
+> (since 2026-09-29 also for `"mdf"` and `"compcell"` with a pure
+> functional), so it no longer reaches the Ewald-3D Fock path. The pob-TZVP rocksalt
 > sweep numbers below are **illustrative convergence targets** (not yet
 > measured at this basis); the API and the LiH-FCC/sto-3g parity are
 > shipped.
