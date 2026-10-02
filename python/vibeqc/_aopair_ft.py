@@ -959,6 +959,35 @@ def ao_pair_fourier_transform_at_cells(
     return out
 
 
+def _physical_pair_cutoff(value):
+    if value is None:
+        return None
+    cutoff = float(value)
+    if not np.isfinite(cutoff) or cutoff < 0:
+        raise ValueError("pair_cutoff_bohr must be finite and nonnegative")
+    return cutoff
+
+
+def _physical_pair_ft_python(ao_basis, vectors, cells, momenta, cutoff):
+    """Reference physical sum, streaming one cell without a full cell tensor."""
+    n_orb = int(ao_basis.nbasis)
+    out = [np.zeros((n_orb, n_orb, len(vectors)), dtype=complex) for _ in momenta]
+    shells = ao_basis.shells()
+    origins = np.asarray([shell.origin for shell in shells], dtype=float)
+    offsets = np.cumsum([0] + [2 * int(s.l) + 1 if s.pure else
+                             (int(s.l) + 1) * (int(s.l) + 2) // 2 for s in shells])
+    for cell in cells:
+        ft = ao_pair_fourier_transform_shifted_ket(ao_basis, vectors, cell)
+        for i in range(len(shells)):
+            for j in range(len(shells)):
+                delta = origins[i] - origins[j] - cell
+                if float(delta @ delta) > cutoff * cutoff:
+                    ft[offsets[i]:offsets[i+1], offsets[j]:offsets[j+1]] = 0.0
+        for tensor, k in zip(out, momenta):
+            tensor += np.exp(1j * (cell @ k)) * ft
+    return out
+
+
 def ao_pair_fourier_transform_bloch(
     ao_basis: BasisSet,
     G_vectors: np.ndarray,
@@ -967,6 +996,7 @@ def ao_pair_fourier_transform_bloch(
     *,
     ft_per_cell: Optional[np.ndarray] = None,
     screen_tol: float = 0.0,
+    pair_cutoff_bohr: Optional[float] = None,
 ) -> np.ndarray:
     """Bloch-summed AO-pair FT::
 
@@ -1025,12 +1055,15 @@ def ao_pair_fourier_transform_bloch(
     #     McMurchie-Davidson chain + cart->sph; the static table at
     #     ``cpp/include/vibeqc/cart_to_sph_data.hpp`` covers L <= 6.
     G_vectors_arr = np.ascontiguousarray(G_vectors, dtype=float)
+    cutoff = _physical_pair_cutoff(pair_cutoff_bohr)
+    if cutoff is not None and ft_per_cell is not None:
+        raise ValueError("physical support does not accept unbound ft_per_cell reuse")
     backend = _aopair_ft_backend()
     screen = float(screen_tol)
     if backend != "python" and ft_per_cell is None:
         shells = ao_basis.shells()
         all_s = all(int(sh.l) == 0 for sh in shells)
-        if all_s and screen <= 0.0:
+        if all_s and screen <= 0.0 and cutoff is None:
             from ._vibeqc_core import ao_pair_fourier_transform_bloch_ss
             return ao_pair_fourier_transform_bloch_ss(
                 ao_basis, G_vectors_arr, R_g_arr, k)
@@ -1038,9 +1071,14 @@ def ao_pair_fourier_transform_bloch(
         all_pure = all(bool(sh.pure) or int(sh.l) == 0 for sh in shells)
         if all_pure and max_l <= 6:
             from ._vibeqc_core import ao_pair_fourier_transform_bloch_cxx
+            if cutoff is not None:
+                if "pair_cutoff_bohr" not in (ao_pair_fourier_transform_bloch_cxx.__doc__ or ""):
+                    raise RuntimeError("physical AO-pair support requires an updated installed native core")
+                return ao_pair_fourier_transform_bloch_cxx(
+                    ao_basis, G_vectors_arr, R_g_arr, k, screen, cutoff)
             return ao_pair_fourier_transform_bloch_cxx(
                 ao_basis, G_vectors_arr, R_g_arr, k, screen)
-        if backend == "cxx":
+        if backend == "cxx" or cutoff is not None:
             reason = []
             if not all_pure:
                 reason.append("a Cartesian (non-pure) shell with L > 0")
@@ -1058,6 +1096,10 @@ def ao_pair_fourier_transform_bloch(
             )
         # Fall through to the Python path for unsupported cases.
 
+    if cutoff is not None:
+        if screen != 0.0:
+            raise ValueError("Python physical reference requires zero FT screening")
+        return _physical_pair_ft_python(ao_basis, G_vectors_arr, R_g_arr, [k], cutoff)[0]
     if ft_per_cell is None:
         ft_per_cell = ao_pair_fourier_transform_at_cells(
             ao_basis, G_vectors_arr, R_g_arr)
@@ -1074,6 +1116,7 @@ def ao_pair_fourier_transform_bloch_multi(
     *,
     screen_tol: float = 0.0,
     pair_weights: Optional[np.ndarray] = None,
+    pair_cutoff_bohr: Optional[float] = None,
 ) -> list[np.ndarray]:
     """Batched Bloch-summed AO-pair FT for several crystal momenta.
 
@@ -1137,6 +1180,7 @@ def ao_pair_fourier_transform_bloch_multi(
             raise ValueError(
                 f"pair_weights must be ({n_orb}, {n_orb}); got shape "
                 f"{weights_arr.shape}")
+    cutoff = _physical_pair_cutoff(pair_cutoff_bohr)
     backend = _aopair_ft_backend()
     screen = float(screen_tol)
     if backend != "python":
@@ -1149,10 +1193,15 @@ def ao_pair_fourier_transform_bloch_multi(
             # per-cell pass across k beats the per-k closed-form path
             # for any n_k > 1.
             from ._vibeqc_core import ao_pair_fourier_transform_bloch_multi_cxx
+            if cutoff is not None:
+                if "pair_cutoff_bohr" not in (ao_pair_fourier_transform_bloch_multi_cxx.__doc__ or ""):
+                    raise RuntimeError("physical AO-pair support requires an updated installed native core")
+                return list(ao_pair_fourier_transform_bloch_multi_cxx(
+                    ao_basis, G_vectors_arr, R_g_arr, k_arr, screen, weights_arr, cutoff))
             return list(ao_pair_fourier_transform_bloch_multi_cxx(
                 ao_basis, G_vectors_arr, R_g_arr, k_arr, screen,
                 weights_arr))
-        if backend == "cxx":
+        if backend == "cxx" or cutoff is not None:
             reason = []
             if not all_pure:
                 reason.append("a Cartesian (non-pure) shell with L > 0")
@@ -1168,6 +1217,16 @@ def ao_pair_fourier_transform_bloch_multi(
                 f"docs/design_rsgdf_3c_lr.md and "
                 f"cpp/include/vibeqc/cart_to_sph_data.hpp)."
             )
+
+    if cutoff is not None:
+        if screen != 0.0:
+            raise ValueError("Python physical reference requires zero FT screening")
+        result = _physical_pair_ft_python(ao_basis, G_vectors_arr, R_g_arr, k_arr, cutoff)
+        if weights_arr is not None:
+            for tensor in result:
+                tensor *= weights_arr[:, :, None]
+                tensor[weights_arr == 0.0] = 0.0
+        return result
 
     # Pure-Python fallback: materialise the per-cell FT once and fold
     # every k against it — the same work-sharing, at the memory cost of

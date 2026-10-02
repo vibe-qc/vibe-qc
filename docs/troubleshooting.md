@@ -62,8 +62,9 @@ Common triggers:
   reference becomes a poor description of the multireference state).
 - Transition-metal complex with ligand-field-degenerate d orbitals.
 - Broken-symmetry singlet biradical.
-- Wrong initial guess (e.g. AUTO picked SAP on a system where SAD
-  starts closer to the true minimum).
+- An initial guess that reaches a different stationary solution or stalls.
+  Inspect `result.guess_selection` when a result is available, or the SCF log,
+  before comparing supported alternatives.
 
 ### Fix
 
@@ -76,7 +77,7 @@ The remaining levers, in order of bang-for-buck:
 # doc-audit: skip - option adjustments for an existing SCF setup
 opts.level_shift   = 0.2          # Saunders-Hillier shift
 opts.newton_threshold = 1.0       # Phase D2c Newton finalizer
-opts.initial_guess = vq.InitialGuess.SAD  # if AUTO picked SAP
+opts.initial_guess = vq.InitialGuess.SAD  # compare only if not already selected
 opts.max_iter      = 200          # last resort - buys time
 ```
 
@@ -808,9 +809,10 @@ inside the corrected-gauge branch only; `6299692ae` fixed that gap.
   `dim=2` before SCF. The low-level drivers expose `DIRECT_TRUNCATED` for
   diagnostics, but it is not a wire/slab Coulomb model and its compact-cell
   energy is cutoff-dependent. Raising the direct-space cutoff cannot make it
-  a valid optimisation objective. For a 1-D wire use `jk_method='auto'` or
-  `'gdf'`; for a 2-D surface use `'auto'`/`'slab_ewald_2d'`, or explicit GDF
-  for its supported closed-shell slab envelope.
+  a valid optimisation objective. A 1-D wire has no public route: model it
+  as a `dim=3` cell with transverse vacuum. For a 2-D surface use
+  `'auto'`/`'slab_ewald_2d'`, or explicit GDF for its supported closed-shell
+  slab envelope.
 * **A refusal during a geometry optimisation is not always yours to fix.**
   The optimisers take trial steps, and a BFGS unit step in fractional
   coordinates can move an atom by a whole lattice vector, into a geometry

@@ -705,7 +705,7 @@ class TestGapwScf:
         assert run["gapw_one_centre_resolved"] == "analytic"
         assert run["gapw_molecular_limit_declared"] is True
 
-    def test_gapw_rhf_runner_requires_molecular_limit_declaration(self):
+    def test_gapw_rhf_runner_requires_molecular_limit_declaration(self, tmp_path):
         """The public runner must not infer a molecular box from geometry."""
         L = 12.0
         system = _he_periodic(L)
@@ -722,6 +722,7 @@ class TestGapwScf:
                 dry_run=True,
                 write_density=False,
                 citations=False,
+                output=tmp_path / "refused",
             )
 
     def test_gapw_rks_runner_rejects_irrelevant_molecular_limit(self):
@@ -752,6 +753,7 @@ class TestGapwScf:
     )
     def test_gapw_hf_runner_derivatives_fail_closed(
         self,
+        tmp_path,
         derivative_kwargs,
     ):
         """High-level derivatives must not switch away from the GAPW energy."""
@@ -772,6 +774,7 @@ class TestGapwScf:
                 write_density=False,
                 citations=False,
                 **derivative_kwargs,
+                output=tmp_path / "refused",
             )
 
     def test_gapw_energy_finite_for_different_cutoffs(self):

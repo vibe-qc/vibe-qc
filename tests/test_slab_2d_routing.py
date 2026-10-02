@@ -111,14 +111,13 @@ def test_slab_ewald_2d_on_bulk_cell_fails_closed():
 
 
 def test_multi_k_gdf_guard_allows_dim1_polymer():
-    """`dim=1` must NOT be rejected -- guarding `dim != 3` would revert a fix.
+    """The slab guard must not claim `dim=1`: each guard names its own remedy.
 
-    There is no rigorous 1-D Coulomb gauge yet (`NEUTRALIZED_1D` still raises),
-    so the cached-Lpq GDF Hartree is the *supported* polymer/wire route: main
-    `5fe4d021` ("Lpq Hartree for multi-k dim<3 KS") moved the dim=1 H2-chain
-    from -3.0897 to the variational -3.89 Ha/cell through exactly these entries.
-    Only the slab has a rigorous vacuum-free alternative, so only the slab fails
-    closed.
+    A `dim=1` wire fails closed elsewhere, in the one-electron gauge helper
+    (`_gauge_lat_opts_for_v_ne_and_e_nuc`) and, under AUTO, in
+    `pick_jk_method`, both pointing at the `dim=3` vacuum-box model. The slab
+    guard names the slab's rigorous vacuum-free alternative, which a wire does
+    not have.
     """
     from vibeqc.periodic_k_gdf import _reject_slab_dim
 
@@ -133,18 +132,28 @@ def test_multi_k_gdf_guard_allows_dim1_polymer():
     with pytest.raises(NotImplementedError):
         _reject_slab_dim(sysp, "run_krhf_periodic_gdf")
 
-    # AUTO on a polymer keeps the established GDF route (unchanged by this work).
-    assert _pick(1, "RKS") == PeriodicJKMethod.GDF
+
+@pytest.mark.parametrize("scf_method", ["RHF", "RKS", "UHF", "UKS", "ROHF", "ROKS"])
+def test_auto_dim1_refuses_and_names_the_vacuum_box(scf_method):
+    """AUTO has no wire route: it refuses before setup and names the remedy.
+
+    No public J/K builder has a consistent 1-D Coulomb gauge, so AUTO must not
+    pick GDF and leave the refusal to the one-electron setup. It never rewrites
+    the system to dim=3 either; the vacuum is the user's modelling choice.
+    """
+    with pytest.raises(NotImplementedError) as exc:
+        _pick(1, scf_method)
+    msg = str(exc.value)
+    assert "jk_method='auto' has no route for a dim=1 (wire) system" in msg
+    assert f"scf_method={scf_method!r}" in msg
+    assert "PeriodicSystem(dim=3, lattice=np.diag([a, 15.0, 15.0])" in msg
+    assert "kpoints=(nk, 1, 1)" in msg
 
 
-@pytest.mark.parametrize("scf_method", ["UHF", "UKS"])
-def test_auto_dim1_open_shell_uses_supported_gdf_route(scf_method):
-    assert _pick(1, scf_method) == PeriodicJKMethod.GDF
-
-
-def test_auto_dim1_rohf_fails_with_accurate_route_diagnostic():
-    with pytest.raises(NotImplementedError, match="no maintained dim=1 ROHF"):
-        _pick(1, "ROHF")
+@pytest.mark.parametrize("scf_method", ["RHF", "UHF"])
+def test_explicit_jk_method_on_dim1_is_not_rerouted(scf_method):
+    """Only AUTO refuses early; an explicit choice is the driver's to judge."""
+    assert _pick(1, scf_method, "gdf") == PeriodicJKMethod.GDF
 
 
 def test_open_shell_multi_k_gdf_entries_fail_closed_on_slab():
@@ -765,6 +774,8 @@ def test_public_multik_slab_gdf_rhf_is_compact_a3_invariant():
         )
         assert result.converged
         assert result.backend == "native-multik-slab-truncated-gdf-rhf"
+        # The slab route fits every (k_i, k_j) pair of the 4-point mesh.
+        assert result.gdf_cderi_pairs == 16
         assert result.n_iter <= opts.max_iter
         assert result.guess_selection.effective == vq.InitialGuess.SAD
         assert opts.lattice_opts.coulomb_method == original_coulomb_method
@@ -776,7 +787,8 @@ def test_public_multik_slab_gdf_rhf_is_compact_a3_invariant():
     assert abs(energies[0] - (-0.9175852704211138)) < 1e-5
     assert abs(energies[0] - energies[1]) < 1e-7
 
-    with pytest.raises(ValueError, match="positive integer"):
+    # #301: the validator names the failure mode the caller hit.
+    with pytest.raises(ValueError, match="non-integral"):
         run_krhf_periodic_gdf(
             sysp, basis, (2.5, 2, 1), opts, rsgdf_ke_cutoff=30.0
         )
@@ -2148,9 +2160,13 @@ def test_run_periodic_job_auto_dim2_uks_multik_qvf_artifacts(tmp_path):
     """An incomplete lattice density is refused before grid certification.
 
     The archive omits that uncertified density while retaining valid,
-    independent total and projected DOS sections.
+    independent total and projected DOS sections. Since #386 (a20ce7d) the
+    omitted density is an ``optional_artifact`` failure recorded as a
+    ``volume.density`` component error on the written archive's manifest
+    row, not a ``compatibility_fallback``.
     """
     import json
+    import tomllib
     import warnings
     import zipfile
 
@@ -2190,20 +2206,36 @@ def test_run_periodic_job_auto_dim2_uks_multik_qvf_artifacts(tmp_path):
         for item in caught
         if "vibe-qc output [optional_artifact]" in str(item.message)
     ]
-    assert optional_failures == []
-    density_failures = [
+    # The density grid is the only optional artifact that fails.
+    assert len(optional_failures) == 1
+    density_failure = optional_failures[0]
+    assert "qvf_density_grid" in density_failure
+    assert "density cell list does not cover the BvK torus" in density_failure
+    assert "no cell in residue class" in density_failure
+    assert not [
         str(item.message)
         for item in caught
         if "vibe-qc output [compatibility_fallback]" in str(item.message)
         and "density_grid" in str(item.message)
     ]
-    assert len(density_failures) == 1
-    assert "density cell list does not cover the BvK torus" in density_failures[0]
-    assert "no cell in residue class" in density_failures[0]
 
     qvf_path = stem.with_suffix(".qvf")
     report = validate_qvf(qvf_path)
     assert report["valid"], report["errors"]
+
+    # The container is written; the omitted component is still on record.
+    system = tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))
+    (row,) = [
+        row for row in system["outputs"]["files"]
+        if row["path"] == str(qvf_path)
+    ]
+    assert row["written"] is True
+    assert row["error"] == ""
+    assert set(row["component_errors"]) == {"volume.density"}
+    assert (
+        "density cell list does not cover the BvK torus"
+        in row["component_errors"]["volume.density"]
+    )
 
     with zipfile.ZipFile(qvf_path) as archive:
         manifest = json.loads(archive.read("manifest.json"))

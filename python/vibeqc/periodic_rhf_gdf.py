@@ -45,6 +45,7 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
+from .periodic.exchange_convention import MOLECULAR_LIMIT
 from ._vibeqc_core import (
     apply_level_shift,
     BasisSet,
@@ -98,6 +99,7 @@ from .occupations import (
 from .smearing.apply import _global_aufbau_with_mu
 from .options_dump import dump_active_settings
 from .periodic_grid import build_periodic_becke_grid
+from .periodic_jk_method import _WIRE_VACUUM_BOX_HINT
 from .periodic_k_density import real_space_density_from_per_k_density
 from .periodic_rhf_ewald import (
     _canonical_orthogonalizer,
@@ -173,6 +175,11 @@ class PeriodicRHFGDFResult:
     restart_kpoints: object = None
     restart_weights: object = None
 
+    # Every Gamma-only Ewald/GDF driver builds exchange with the
+    # molecular-limit kernel (home-cell density, image blocks zeroed); the
+    # runner's manifest records this instead of the exxdiv knob (GitLab #23).
+    exchange_q0: str = MOLECULAR_LIMIT
+
 
 @dataclass
 class _PrivateSlabKRHFGDFResult:
@@ -198,6 +205,8 @@ class _PrivateSlabKRHFGDFResult:
     e_hf_exchange: float = 0.0
     aux_basis_name: str = ""
     n_aux: int = 0
+    #: ``(k_i, k_j)`` fit tensors the SCF built (``len(fits)``).
+    gdf_cderi_pairs: int = 0
     backend: str = "private-multik-slab-truncated-gdf"
 
     restart_basis: object = None
@@ -532,6 +541,11 @@ def run_rhf_periodic_gamma_gdf(
     cell is known to represent a fully periodic torus.  Such callers must
     retain the Ewald-J/real-space-K Hamiltonian even when the numerical
     lattice cutoff happens to include only the home cell.
+
+    A ``dim == 1`` cell raises ``NotImplementedError``: the route has no
+    consistent 1-D Coulomb gauge, so its total energy depends on the
+    lattice-sum cutoff. Model a wire as a ``dim=3`` cell with transverse
+    vacuum instead.
     """
     from .pbc_gdf import _refuse_ecp_options
 
@@ -570,6 +584,22 @@ def run_rhf_periodic_gamma_gdf(
                 "private slab-truncated GDF requires "
                 "coulomb_method=SLAB_EWALD_2D for V_ne and E_nuclear"
             )
+    if int(system.dim) == 1:
+        # The dim=1 Gamma route paired bare 1-D V_ne / E_nn lattice sums with
+        # Lpq J/K over the same cell set. The bare nuclear sum diverges like
+        # (Z_cell^2 / a) ln R and nothing cancels it. H2 / sto-3g, a = 4
+        # bohr, R = cutoff_bohr = nuclear_cutoff_bohr = 10, 20, 40, 80, 160:
+        # E_nuclear = 2.29, 3.08, 3.73, 4.39, 5.08 Ha (ln 2 per doubling),
+        # and the total went from -2.74 to -5.63 Ha; the defaults gave
+        # -3.106 Ha against -1.117 Ha for molecular H2. It fails closed like
+        # the k-mesh route (_gauge_lat_opts_for_v_ne_and_e_nuc).
+        raise NotImplementedError(
+            "run_rhf_periodic_gamma_gdf: no consistent Coulomb gauge for a "
+            "dim = 1 cell. The bare 1-D V_ne / E_nn lattice sums diverge "
+            "logarithmically with the lattice-sum cutoff and the Gamma J/K "
+            "does not cancel them, so the total energy depends on "
+            "cutoff_bohr. " + _WIRE_VACUUM_BOX_HINT
+        )
     func = Functional(func_name, 1) if is_ks else None
     # This legacy Γ fallback builds the molecular-limit K full-range
     # only; screened hybrids must not silently run as full-range twins.
@@ -723,7 +753,8 @@ def run_rhf_periodic_gamma_gdf(
         gauge_lat_opts = lat_opts
     else:
         # Lpq J/K path: 3D molecular-limit cell (GDF cutoff contains the
-        # home cell only) or any dim<3 vacuum-padded wire/slab. J and K
+        # home cell only) or a dim=2 cell outside the private slab route
+        # (dim=1 was refused above). J and K
         # come from the native Lpq tensor, which is summed over the GDF
         # integral cutoff `cutoff_bohr`. V_ne and e_nuc MUST sum nuclei
         # over the SAME cell set, or the long-range electron-nuclear
@@ -1949,6 +1980,7 @@ def _run_krhf_periodic_slab_gdf(
                 e_hf_exchange=e_hf_exchange,
                 aux_basis_name=aux_name,
                 n_aux=int(raw_aux.nbasis),
+                gdf_cderi_pairs=len(fits),
                 backend=(
                     "private-multik-slab-truncated-gdf-rks"
                     if is_ks
@@ -2035,6 +2067,7 @@ def _run_krhf_periodic_slab_gdf(
         e_hf_exchange=e_hf_exchange,
         aux_basis_name=aux_name,
         n_aux=int(raw_aux.nbasis),
+        gdf_cderi_pairs=len(fits),
         backend=(
             "private-multik-slab-truncated-gdf-rks"
             if is_ks

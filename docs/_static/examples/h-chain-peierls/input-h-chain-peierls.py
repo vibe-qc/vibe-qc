@@ -9,10 +9,10 @@ Produces:
 
 Scans the dimerisation coordinate ``delta`` on a two-H-per-cell chain
 with fixed lattice parameter ``a = 5 bohr``. At ``delta = 0`` the two
-atoms are evenly spaced (a/2 = 2.5 bohr apart, metallic — HF won't
-converge). As ``delta`` grows, one H-H distance shrinks toward the
-H2 equilibrium (1.4 bohr) and the other stretches; the energy drops
-and the chain becomes an insulator.
+atoms are evenly spaced (a/2 = 2.5 bohr apart, a half-filled band:
+metallic in principle). As ``delta`` grows, one H-H distance shrinks
+toward the H2 equilibrium (1.4 bohr) and the other stretches; the
+energy drops and the chain becomes an insulator.
 
 This is the classic Peierls instability: a half-filled 1D band is
 unstable to a periodic distortion that opens a gap, lowering the
@@ -20,10 +20,15 @@ occupied-state energies. The output table makes the effect visible
 as a monotonic drop in E(delta) with increasing delta up to the
 H2-molecular-crystal endpoint.
 
-Note: vibe-qc doesn't have periodic-system gradients yet, so this is
-a *manual* scan rather than a true geometry optimization. The
-molecular path (``input-h2o-opt.py``, ``input-h2o-dimer-opt.py``) runs
-a real BFGS relaxation via ASE for non-periodic systems.
+The chain is modelled as a ``dim=3`` cell with vacuum on the two
+transverse axes. vibe-qc has no route with a consistent 1-D Coulomb
+gauge, so a ``PeriodicSystem(dim=1, ...)`` cannot be run with GDF; the
+vacuum box is the supported way to sample k along a wire. The vacuum
+``PAD`` is part of the model. Rerun with a larger ``PAD`` to check how
+much the energies move.
+
+This is a manual scan at fixed lattice parameter, not a geometry
+optimisation.
 """
 
 from pathlib import Path
@@ -33,20 +38,19 @@ import numpy as np
 from vibeqc import (
     Atom,
     BasisSet,
-    PeriodicSCFOptions,
+    PeriodicRHFOptions,
     PeriodicSystem,
     banner,
     format_scf_trace,
-    monkhorst_pack,
-    run_rhf_periodic_scf,
+    run_krhf_periodic_gdf,
 )
 
 HERE = Path(__file__).parent
 OUT = HERE / "output-h-chain-peierls.out"
 
 A = 5.0                                    # lattice parameter, bohr
-VACUUM = 30.0                              # yz vacuum, bohr
-KMESH = [8, 1, 1]                          # dense enough for 1D convergence
+PAD = 15.0                                 # transverse vacuum (y, z), bohr
+KMESH = (8, 1, 1)                          # k sampling along the chain only
 
 
 def build_system(delta: float) -> PeriodicSystem:
@@ -55,20 +59,18 @@ def build_system(delta: float) -> PeriodicSystem:
     Uniform: delta = 0 (H-H = a/2 both intra- and inter-cell).
     Dimerised: delta > 0 (short bond = a/2 - delta, long bond = a/2 + delta).
     """
-    lattice = np.diag([A, VACUUM, VACUUM])
+    lattice = np.diag([A, PAD, PAD])
     unit_cell = [
         Atom(1, [0.0,               0.0, 0.0]),
         Atom(1, [A / 2.0 - delta,   0.0, 0.0]),
     ]
-    return PeriodicSystem(dim=1, lattice=lattice, unit_cell=unit_cell)
+    return PeriodicSystem(dim=3, lattice=lattice, unit_cell=unit_cell)
 
 
-def scf_opts() -> PeriodicSCFOptions:
-    opts = PeriodicSCFOptions()
-    opts.lattice_opts.cutoff_bohr = 15.0
-    opts.lattice_opts.nuclear_cutoff_bohr = 15.0
-    # Relax conv_tol_grad beyond the usual 1e-6 — 1D HF in the near-metallic
-    # regime stalls on gradient, but the energy stabilises to 1e-8 long
+def scf_opts() -> PeriodicRHFOptions:
+    opts = PeriodicRHFOptions()
+    # Relax conv_tol_grad beyond the default: near the metallic end the HF
+    # gradient settles slowly, but the energy stabilises to 1e-8 long
     # before that matters for the dimerisation physics we want to show.
     opts.conv_tol_energy = 1e-8
     opts.conv_tol_grad = 1e-3
@@ -78,23 +80,20 @@ def scf_opts() -> PeriodicSCFOptions:
 
 with open(OUT, "w", encoding="utf-8") as f:
     f.write(banner() + "\n\n")
-    f.write("  1D H-chain Peierls-dimerisation scan (HF / pob-tzvp)\n")
-    f.write(f"  lattice a = {A} bohr    k-mesh = {KMESH}\n")
+    f.write("  1D H-chain Peierls-dimerisation scan (HF / pob-tzvp, k-point GDF)\n")
+    f.write(f"  lattice a = {A} bohr    k-mesh = {list(KMESH)}    "
+            f"transverse vacuum = {PAD} bohr\n")
     f.write("  For each delta: short = a/2 - delta, long = a/2 + delta (bohr)\n\n")
 
     results = []
     for delta in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.1):
         sysp = build_system(delta)
         basis = BasisSet(sysp.unit_cell_molecule(), "pob-tzvp")
-        km = monkhorst_pack(sysp, KMESH)
-        # CoulombMethod.DIRECT_TRUNCATED (default) routes through the
-        # legacy run_rhf_periodic backend; flip to CoulombMethod.EWALD_3D
-        # in scf_opts() for any quantitative 3D-bulk run.
         # Pass ``progress=True`` to get a flushed per-iteration trace
-        # (useful for slow runs); skipped here because the inner loop
-        # runs 7 times and would be noisy. See input-lih-pob-tzvp.py
-        # for an example with progress logging enabled.
-        result = run_rhf_periodic_scf(sysp, basis, km, scf_opts())
+        # (useful for slow runs); skipped here because the loop runs seven
+        # SCFs and would be noisy.
+        result = run_krhf_periodic_gdf(sysp, basis, KMESH, scf_opts(),
+                                       progress=False)
 
         r_short = A / 2.0 - delta
         r_long = A / 2.0 + delta

@@ -191,12 +191,11 @@ def test_gamma_rhf_gdf_private_ewald_force_requires_3d(dim):
 @pytest.mark.parametrize(
     "dim, expected_energy",
     [
-        # 1D / 2D vacuum-padded H₂: Steps 1 + 2 of the 2026-05-13
-        # gauge fix are no-ops (Ewald-3D is 3D-only on the C++ side,
-        # so dim<3 falls through to the bare lattice sum that 1D / 2D
-        # wires + slabs always used).  Pinned values unchanged from
-        # pre-fix.
-        (1, -1.116738328690913),
+        # 2D vacuum-padded H₂: Steps 1 + 2 of the 2026-05-13 gauge fix
+        # are no-ops (Ewald-3D is 3D-only on the C++ side, so dim<3 falls
+        # through to the bare lattice sum).  Pinned value unchanged from
+        # pre-fix.  A dim=1 wire is refused instead (no consistent 1-D
+        # Coulomb gauge); tests/test_periodic_lowd_guards.py pins that.
         (2, -1.116738328690913),
         # 3D-periodic H2 with a molecular-limit GDF cutoff uses the
         # internally consistent native direct-truncated gauge, matching
@@ -377,7 +376,8 @@ def test_gamma_rks_gdf_converges_without_external_backend(functional):
         assert result.e_hf_exchange != pytest.approx(0.0)
 
 
-@pytest.mark.parametrize("dim", [1, 2, 3])
+# dim=1 is refused; tests/test_periodic_lowd_guards.py pins that.
+@pytest.mark.parametrize("dim", [2, 3])
 @pytest.mark.parametrize("functional", ["pbe", "b3lyp"])
 def test_gamma_rks_gdf_supports_periodic_dimensionalities(dim, functional):
     system, basis = _h2_dimensional_box(dim)
@@ -438,9 +438,11 @@ def test_run_periodic_job_rks_gdf_smoke(tmp_path):
     assert "fmixing_percent     = 30.0" in out.with_suffix(".out").read_text()
 
 
+# A dim=1 wire has no public ab initio route, so its "periodic length"
+# wording is no longer reachable through this driver.
 @pytest.mark.parametrize(
     "dim,measure_label",
-    [(1, "periodic length"), (2, "periodic area"), (3, "cell volume")],
+    [(2, "periodic area"), (3, "cell volume")],
 )
 def test_run_periodic_job_logs_periodic_dimensionality(
     tmp_path,
@@ -680,14 +682,21 @@ def test_run_periodic_job_rsgdf_tail_cutoff_fails_closed_off_gdf(tmp_path):
 
 
 def test_run_periodic_job_kpoints_gamma_rks_tail_cutoff_supported(tmp_path):
-    """Γ RKS at kpoints=(1,1,1) with rsgdf_tail_ke_cutoff now RUNS.
+    """Γ RKS at kpoints=(1,1,1) with rsgdf_tail_ke_cutoff RUNS, and says the
+    knob is obsolete rather than failing closed on it.
 
     Historically this failed closed: the Γ KS fast path fell back to the
     legacy molecular-limit gamma driver, which has no high-|G| tail
-    correction. Since the Finding-§4 Γ-KS routing fix, closed-shell Γ KS
-    delegates to run_pbc_gdf_rks (the run_pbc_gdf_rhf KS branch), which
-    honours the tail cutoff like the RHF path does — so the capability
-    exists and the loud refusal would be a regression in reverse.
+    correction, and a loud refusal would have been a regression in reverse.
+
+    What it does NOT assert any more is that the cutoff is honoured. Since
+    `bulk_sr` gave the general multi-k engine the Γ limit of the SR/LR route
+    (periodic_k_gdf.py:3719, :3770), this lands on that engine, whose SR/LR
+    fit has no separate high-|G| tail to extend: the request is accepted,
+    reported obsolete, and resolved to None. `rsgdf_g_precision` is the knob
+    that controls the raw integral error there. The positive capability is
+    still covered for RHF by
+    test_run_periodic_job_gamma_rhf_gdf_forwards_rsgdf_tail_cutoff (#283).
     """
     system, basis = _h2_box()
 
@@ -706,7 +715,35 @@ def test_run_periodic_job_kpoints_gamma_rks_tail_cutoff_supported(tmp_path):
         progress=False,
     )
     assert r.converged
-    assert r.backend == "native-gamma-gdf-via-k-gdf"
+    assert r.backend == "native-multi-k-gdf-gdf-rks"
+    # Accepted and obsoleted, not honoured: the SR/LR fit resolves it away.
+    assert r.rsgdf_tail_ke_cutoff is None
+
+
+def test_gamma_adapter_is_still_reached_by_the_non_rsgdf_methods():
+    """The Γ adapter did not go away when `bulk_sr` took Γ off the rsgdf route.
+
+    `bulk_sr` is `gdf_method == "rsgdf" and dim == 3`, so mdf and compcell at a
+    Γ mesh still go through `_wrap_gamma_gdf_result` and still carry
+    "native-gamma-gdf-via-k-gdf". Without this, re-pinning the two rsgdf tests
+    to the general-engine label would leave that adapter with no end-to-end
+    coverage at all -- every other use of the string in this suite is a
+    monkeypatched fake (#283).
+    """
+    from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
+
+    system, basis = _h2_box()
+    for gdf_method in ("mdf", "compcell"):
+        opts = vq.PeriodicRHFOptions()
+        opts.max_iter = 30
+        opts.conv_tol_energy = 1e-9
+        opts.initial_guess = vq.InitialGuess.HCORE
+        result = run_krhf_periodic_gdf(
+            system, basis, (1, 1, 1), opts, aux_basis="def2-svp-jk",
+            gdf_method=gdf_method, progress=False,
+        )
+        assert result.converged
+        assert result.backend == "native-gamma-gdf-via-k-gdf", gdf_method
 
 
 def test_run_periodic_job_gamma_rks_gdf_uses_pure_gdf_ks_backend(tmp_path):
@@ -743,19 +780,18 @@ def test_run_periodic_job_gamma_rks_gdf_uses_pure_gdf_ks_backend(tmp_path):
     assert r.s_squared == pytest.approx(0.0, abs=1e-12)
 
 
-def test_run_periodic_job_gamma_rhf_gdf_smearing_stays_on_legacy(tmp_path):
-    """Finite-T smearing at Γ keeps the legacy molecular-limit GDF driver:
-    run_pbc_gdf_rhf has no smearing, so the domain gate must fall back rather
-    than silently route a smeared job to a driver that ignores smearing.
+def test_run_periodic_job_gamma_rhf_gdf_smearing_runs_the_k_mesh_engine(tmp_path):
+    """Finite-T smearing at Γ runs the k-mesh engine at (1, 1, 1).
+
+    run_pbc_gdf_rhf has no smearing, so the smeared job must not reach it.
+    It used to fall back to the legacy Ewald-J driver instead, a different
+    Hamiltonian (no exchange divergence correction, #400); it now runs the
+    engine an explicit kpoints=(1, 1, 1) selects, with the same energy.
     """
     system, basis = _h2_box()
-    out = tmp_path / "h2-rhf-gdf-smear"
-    r = vq.run_periodic_job(
-        system,
-        basis,
+    common = dict(
         method="RHF",
         jk_method="gdf",
-        output=out,
         aux_basis="def2-svp-jk",
         max_iter=40,
         conv_tol_energy=1e-9,
@@ -763,9 +799,15 @@ def test_run_periodic_job_gamma_rhf_gdf_smearing_stays_on_legacy(tmp_path):
         write_molden_file=False,
         progress=False,
     )
+    r = vq.run_periodic_job(
+        system, basis, output=tmp_path / "h2-rhf-gdf-smear", **common)
+    explicit = vq.run_periodic_job(
+        system, basis, output=tmp_path / "h2-rhf-gdf-smear-111",
+        kpoints=(1, 1, 1), **common)
     assert r.converged
-    assert r.backend == "ewald-jk-fallback"
+    assert r.backend == "native-multi-k-gdf-gdf-rhf"
     assert r.smearing_temperature == pytest.approx(0.01)
+    assert r.energy == pytest.approx(explicit.energy, abs=1e-10)
 
 
 def test_legacy_gamma_gdf_rejects_held_class_before_scf():
@@ -910,12 +952,35 @@ def test_kpoints_gamma_equals_single_k_identity(method, tmp_path):
         progress=False,
     )
 
-    assert r1.converged and r2.converged
-    # Default Γ RHF/GDF now routes through run_pbc_gdf_rhf (exxdiv='ewald');
-    # the explicit (1,1,1) k-mesh delegates to the same driver via run_krhf,
-    # so the two agree on the exxdiv='ewald' energy (no molecular-limit gap).
+    r3 = vq.run_periodic_job(
+        system,
+        basis,
+        method=method,
+        output=tmp_path / "h2-k211",
+        kpoints=(2, 1, 1),
+        aux_basis="def2-svp-jk",
+        max_iter=30,
+        conv_tol_energy=1e-9,
+        initial_guess="HCORE",
+        write_molden_file=False,
+        progress=False,
+    )
+
+    assert r1.converged and r2.converged and r3.converged
+    # Default Γ RHF/GDF routes through run_pbc_gdf_rhf (exxdiv='ewald'). An
+    # explicit (1,1,1) mesh does NOT reach the dedicated Γ adapter: `bulk_sr`
+    # hands the Γ limit of the SR/LR route to the general multi-k engine
+    # (periodic_k_gdf.py:3719, :3770), so Γ is that engine's Nk=1 case and
+    # carries its label, exactly like the ROHF path
+    # (test_krohf_gamma_is_the_one_one_one_mesh). Pinning the label alone
+    # would not say that, so pin the routing it stands for (#283).
     assert r1.backend == "pbc-gdf-rsgdf"
-    assert r2.backend == "native-gamma-gdf-via-k-gdf"
+    assert r2.backend == "native-multi-k-gdf-gdf-rhf"
+    assert r2.backend == r3.backend
+    assert r1.backend != r2.backend
+    # The energy identity is therefore the stronger claim it looks like: two
+    # different drivers agreeing on the exxdiv='ewald' gauge, with no
+    # molecular-limit gap between them.
     assert r1.energy == pytest.approx(r2.energy, abs=1e-10)
 
 
@@ -1291,10 +1356,28 @@ def test_rsgdf_fails_closed_below_3d(dim):
     Hamiltonian is the mixed-boundary wire kernel
     (``vibeqc.periodic.ccm.lowd_scf.run_ccm_rhf_wire``, ``dim == 1``).
 
-    The ``bare`` algorithm does not build that mesh and still runs at ``dim < 3``.
+    The ``bare`` algorithm does not build that mesh and still runs at ``dim = 2``.
+    A ``dim = 1`` cell is refused before either algorithm is reached, because
+    its bare ``V_ne``/``E_nn`` sums diverge with the lattice-sum cutoff.
     """
     system, basis = _h2_dimensional_box(dim)
     opts = _opts()
+
+    if dim == 1:
+        for algorithm in ("rsgdf", "bare"):
+            with pytest.raises(
+                NotImplementedError,
+                match="no consistent Coulomb gauge for a dim = 1 cell",
+            ):
+                vq.run_rhf_periodic_gamma_gdf(
+                    system,
+                    basis,
+                    opts,
+                    aux_basis="def2-svp-jk",
+                    gdf_algorithm=algorithm,
+                    progress=False,
+                )
+        return
 
     with pytest.raises(NotImplementedError, match="transverse-collapsed"):
         vq.run_rhf_periodic_gamma_gdf(

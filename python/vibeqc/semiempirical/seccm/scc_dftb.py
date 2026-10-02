@@ -99,6 +99,17 @@ class SCCDFTBSECCMResult:
     topology_fingerprint: str
     reference_geometry_fingerprint: str
     route_plan: SemiempiricalRoutePlan
+    #: Second-order kernel actually run: ``"klopman_ohno"`` or ``"elstner"``.
+    gamma_form: str = "klopman_ohno"
+    #: True when the Coulomb tail was summed into the gamma kernel
+    #: (``ewald_gamma=True``); ``route_plan.electrostatics_kernel`` then names
+    #: the dimensional Ewald channel (``ewald_gamma_wire_1d``, ...).
+    ewald_gamma: bool = False
+    #: True when the separate Madelung/Ewald embedding potential was applied.
+    madelung: bool = False
+    #: Charge mixer that produced the accepted state: ``"aitken"`` (the
+    #: default vector-Aitken relaxation), ``"diis"`` or ``"broyden"``.
+    scc_mixer: str = "aitken"
 
 
 def _frozen_array(value) -> np.ndarray:
@@ -263,9 +274,16 @@ def run_scc_dftb_seccm(
         multiplicity=int(molecule.multiplicity),
     ).with_seccm_runtime(
         periodic_dimension=topology.dimensionality,
-        electrostatics_family="madelung" if madelung else "none",
+        # ``ewald_gamma`` is the same long-range physics as ``madelung`` by
+        # the other route (the Coulomb tail summed into the kernel); the run
+        # record and the citation surface name the kernel that executed.
+        electrostatics_family=(
+            "ewald_gamma" if ewald_gamma else "madelung" if madelung else "none"
+        ),
         electronic_temperature=electronic_temperature,
+        shell_gamma_form=gamma_form if ewald_gamma else None,
     )
+    scc_mixer = "diis" if use_diis else "broyden" if use_broyden else "aitken"
     (
         translations,
         central,
@@ -376,6 +394,10 @@ def run_scc_dftb_seccm(
         topology_fingerprint=topology.topology_fingerprint,
         reference_geometry_fingerprint=topology.reference_geometry_fingerprint,
         route_plan=route_plan,
+        gamma_form=gamma_form,
+        ewald_gamma=bool(ewald_gamma),
+        madelung=bool(madelung),
+        scc_mixer=scc_mixer,
     )
 
 

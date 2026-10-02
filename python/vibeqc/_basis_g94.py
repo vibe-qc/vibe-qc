@@ -164,7 +164,11 @@ def load_g94_for_pyscf(
     structure without importing PySCF.
     """
 
-    g94_path = _VIBEQC_BASIS_DIR / f"{basis_name}.g94"
+    from .basis_registry import canonical_basis_name
+
+    # The stem BasisSet opens: "pob-TZVP" reads pob-tzvp.g94 on a
+    # case-sensitive file system too (#321).
+    g94_path = _VIBEQC_BASIS_DIR / f"{canonical_basis_name(basis_name)}.g94"
     if not g94_path.is_file():
         raise FileNotFoundError(
             f"vibe-qc bundled basis file not found: {g94_path}"

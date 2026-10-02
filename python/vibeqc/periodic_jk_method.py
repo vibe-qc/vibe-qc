@@ -330,6 +330,17 @@ _RETIRED_GDF_CONTROL_STRINGS: frozenset[str] = frozenset(
 )
 
 
+# The remedy every dim=1 refusal names. A wire is modelled as a 3-D crystal
+# of wires separated by transverse vacuum; the vacuum is part of that model,
+# so nothing converts a dim=1 system to dim=3 on the user's behalf.
+_WIRE_VACUUM_BOX_HINT = (
+    "Model the wire as a dim=3 cell with vacuum on the two transverse axes, "
+    "for example PeriodicSystem(dim=3, lattice=np.diag([a, 15.0, 15.0]), "
+    "unit_cell=...) with kpoints=(nk, 1, 1), and converge the energy per "
+    "cell with respect to that vacuum."
+)
+
+
 def _r1_bare_gamma_message(name: object, *, surface: str = "jk_method") -> str:
     return (
         f"{surface}={name!r} is retired (ruling R1, 2026-08-21): Paper-1 "
@@ -636,10 +647,12 @@ def pick_jk_method(
     would treat the slab as a 3-D crystal of sheets ``a3`` apart, giving
     ``a3``-/k-mesh-dependent energies (CLAUDE.md Sec. 7). The bounded explicit
     ``jk_method='gdf'`` route is available for closed-shell RHF/RKS on a full
-    Gamma-centered slab mesh. For ``dim == 1``, AUTO selects GDF for
-    RHF/RKS/UHF/UKS and fails closed for ROHF. For ``dim == 3``, AUTO selects
-    GDF for closed-shell RHF/RKS and BIPOLE for UHF/UKS/ROHF; explicit
-    open-shell GDF remains available for UHF/UKS.
+    Gamma-centered slab mesh. For ``dim == 1``, AUTO raises
+    ``NotImplementedError`` for every method, naming the ``dim=3``
+    vacuum-box model instead: no public J/K builder has a consistent 1-D
+    Coulomb gauge. For ``dim == 3``, AUTO selects GDF for closed-shell
+    RHF/RKS and BIPOLE for UHF/UKS/ROHF; explicit open-shell GDF remains
+    available for UHF/UKS.
     """
     if isinstance(method, str):
         # The deprecation is attributed to the first frame outside the
@@ -696,16 +709,19 @@ def pick_jk_method(
     if method != PeriodicJKMethod.AUTO:
         return method
 
-    # The public BIPOLE route is 3D-only. Open-shell GDF is maintained for
-    # dim=1, so AUTO must not select a backend that the runner immediately
-    # rejects. There is no maintained dim=1 ROHF backend yet.
+    # No public route has a consistent 1-D Coulomb gauge: the k-point GDF
+    # drivers fail closed for dim=1 (_gauge_lat_opts_for_v_ne_and_e_nuc),
+    # the open-shell GDF drivers accept only dim=3, and BIPOLE is 3-D only.
+    # AUTO refuses here, before any setup, rather than selecting GDF and
+    # failing deep inside it. It never rewrites the system to dim=3: the
+    # transverse vacuum is part of the model, so the user chooses it.
     if dim == 1:
-        if spin == "ROHF":
-            raise NotImplementedError(
-                "AUTO has no maintained dim=1 ROHF route. Use UHF with "
-                "jk_method='gdf', or provide a validated 3D periodic model."
-            )
-        return PeriodicJKMethod.GDF
+        raise NotImplementedError(
+            "jk_method='auto' has no route for a dim=1 (wire) system "
+            f"(scf_method={scf_method!r}): no public J/K builder has a "
+            "consistent 1-D Coulomb gauge, and BIPOLE is 3-D only. "
+            + _WIRE_VACUUM_BOX_HINT
+        )
 
     # In 3D, ROHF rides the open-shell arm: its public multi-k-capable
     # backend is the BIPOLE-route corrected-Ewald-exchange engine (ROKS stays

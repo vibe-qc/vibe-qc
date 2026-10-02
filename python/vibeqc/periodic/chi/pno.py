@@ -38,6 +38,8 @@ from itertools import product
 from math import prod
 from typing import Iterable, Sequence
 
+from ._transform_inputs import integer_array, checked_mesh_size
+
 import numpy as np
 
 __all__ = [
@@ -1324,6 +1326,22 @@ def full_space_noncanonical_mp2_energy(
     )
 
 
+def _translation_input_contract(n_bands, mesh):
+    bands = int(integer_array(n_bands, name="n_bands", shape=()))
+    shape = tuple(integer_array(mesh, name="mesh", shape=(3,)).tolist())
+    cells = checked_mesh_size(shape)
+    if bands <= 0 or cells * cells * bands > np.iinfo(np.intp).max // 8:
+        raise ValueError("translation permutations exceed addressable array bounds")
+    return bands, shape, cells
+
+
+def _pair_input_contract(permutations, n_cells):
+    cells = int(integer_array(n_cells, name="n_cells", shape=()))
+    if cells <= 0:
+        raise ValueError("pair orbit n_cells must be positive")
+    return _validate_permutations(permutations), cells
+
+
 def translation_permutations(
     n_bands: int,
     mesh: Sequence[int],
@@ -1335,11 +1353,7 @@ def translation_permutations(
     both indices of an occupied pair.
     """
 
-    mesh_tuple = tuple(int(value) for value in mesh)
-    if len(mesh_tuple) != 3 or any(value < 1 for value in mesh_tuple):
-        raise ValueError("AICCM2026DEV-B pair mesh must contain three positive values")
-    if n_bands < 1:
-        raise ValueError("AICCM2026DEV-B pair orbit needs at least one band")
+    n_bands, mesh_tuple, _ = _translation_input_contract(n_bands, mesh)
     native = _translation_permutations_native(n_bands, mesh_tuple)
     if native is not None:
         return native
@@ -1352,6 +1366,7 @@ def _translation_permutations_native(
 ) -> tuple[np.ndarray, ...] | None:
     """Return native translation permutations, or ``None`` when unavailable."""
 
+    n_bands, mesh, expected = _translation_input_contract(n_bands, mesh)
     try:
         from ... import _vibeqc_core
     except ImportError:
@@ -1366,7 +1381,6 @@ def _translation_permutations_native(
         ),
         dtype=int,
     )
-    expected = int(np.prod(mesh))
     if matrix.shape != (expected, expected * int(n_bands)):
         raise RuntimeError(
             "AICCM2026DEV-B native translation-permutation kernel broke shape"
@@ -1380,6 +1394,7 @@ def _translation_permutations_python(
 ) -> tuple[np.ndarray, ...]:
     """Python oracle for finite-translation occupied-index permutations."""
 
+    n_bands, mesh_tuple, _ = _translation_input_contract(n_bands, mesh_tuple)
     cells = tuple(product(*(range(value) for value in mesh_tuple)))
     cell_index = {cell: index for index, cell in enumerate(cells)}
     permutations: list[np.ndarray] = []
@@ -1406,10 +1421,12 @@ def _canonical_pair(i: int, j: int) -> tuple[int, int]:
 def _validate_permutations(
     permutations: Iterable[Sequence[int] | np.ndarray],
 ) -> tuple[np.ndarray, ...]:
-    output = tuple(np.asarray(value, dtype=int) for value in permutations)
+    output = tuple(integer_array(value, name="permutations") for value in permutations)
     if not output:
         raise ValueError("AICCM2026DEV-B pair orbits require at least one permutation")
     n_orbitals = int(output[0].size)
+    if n_orbitals <= 0 or n_orbitals * (n_orbitals + 1) > np.iinfo(np.intp).max // 8:
+        raise ValueError("pair orbit space must be nonempty and addressable")
     expected = np.arange(n_orbitals)
     for permutation in output:
         if permutation.shape != (n_orbitals,):
@@ -1426,6 +1443,7 @@ def _pair_orbits_from_native(
 ) -> tuple[AICCM2026DevBPairOrbit, ...] | None:
     """Return native pair orbits, or ``None`` when the extension is older."""
 
+    permutations, n_cells = _pair_input_contract(permutations, n_cells)
     try:
         from ... import _vibeqc_core
     except ImportError:
@@ -1473,8 +1491,7 @@ def _enumerate_pair_orbits_python(
     *,
     n_cells: int,
 ) -> tuple[AICCM2026DevBPairOrbit, ...]:
-    if n_cells < 1:
-        raise ValueError("AICCM2026DEV-B pair orbit n_cells must be positive")
+    permutations, n_cells = _pair_input_contract(permutations, n_cells)
     n_orbitals = int(permutations[0].size)
     all_pairs = {
         (i, j)
@@ -1528,7 +1545,7 @@ def enumerate_pair_orbits(
     remains as the reference path for source checkouts with an older extension.
     """
 
-    group_generators = _validate_permutations(permutations)
+    group_generators, n_cells = _pair_input_contract(permutations, n_cells)
     native = _pair_orbits_from_native(group_generators, n_cells=n_cells)
     if native is not None:
         return native

@@ -53,6 +53,7 @@ add_library(vibeqc_core STATIC
     src/init.cpp
     src/molecule.cpp
     src/basis.cpp
+    src/degenerate_frontier.cpp
     src/integrals.cpp
     src/df.cpp
     src/aux_eri.cpp
@@ -260,6 +261,8 @@ add_library(vibeqc_core STATIC
     src/lobpcg.cpp
     src/ecp.cpp
     src/quadratic_scf.cpp
+    src/opentrustregion.cpp
+    src/orbital_objective.cpp
     src/newton.cpp
     src/casci.cpp
     src/coop_cohp.cpp
@@ -269,7 +272,15 @@ add_library(vibeqc_core STATIC
     src/pt2_transform.cpp
     src/ccsd_triples.cpp
     src/dlpno_mp2.cpp
+    src/dlpno_ccsd.cpp
+    src/dlpno_uccsd.cpp
 )
+
+if(VIBEQC_ENABLE_OPENTRUSTREGION)
+    target_link_libraries(vibeqc_core PUBLIC OpenTrustRegion::opentrustregion)
+    set_source_files_properties(src/opentrustregion.cpp PROPERTIES
+        COMPILE_DEFINITIONS VIBEQC_HAS_OPENTRUSTREGION=1)
+endif()
 
 target_include_directories(vibeqc_core PUBLIC include)
 
@@ -505,6 +516,46 @@ foreach(_tgt IN LISTS _VIBEQC_THIRDPARTY_TARGETS)
 endforeach()
 unset(_VIBEQC_THIRDPARTY_TARGETS)
 
+# Search the vendored include directories before every other third-party
+# one. Imported targets contribute include directories in link order, and a
+# broad prefix that arrives early can hold another copy of a vendored
+# header. On macOS, libint's installed package links Boost::headers, whose
+# include directory is the whole Homebrew prefix (/opt/homebrew/include).
+# It came ahead of libxc, spglib, fftw and libecpint, so <xc.h> and
+# <libecpint/ecpint.hpp> resolved to Homebrew's copies while the vendored
+# libraries were linked (vibe-qc #461). The compiler searches -isystem
+# directories in command-line order, and an -I cannot take precedence
+# instead because it is dropped when it repeats an -isystem directory, so
+# the vendored directories are prepended as -isystem, here and on the
+# Python module below. A CPATH entry or an -I in CXXFLAGS that names some
+# other directory still precedes them all, so the checks described next
+# fail the build if a header resolves elsewhere.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/VendoredIncludeDirectories.cmake")
+vibeqc_vendored_include_directories(_VIBEQC_VENDORED_INCLUDE_DIRS
+    Libint2::cxx Libxc::xc Spglib::symspg FFTW3::fftw3 ECPINT::ecpint)
+if(_VIBEQC_VENDORED_INCLUDE_DIRS)
+    target_include_directories(vibeqc_core SYSTEM BEFORE PUBLIC
+        ${_VIBEQC_VENDORED_INCLUDE_DIRS})
+endif()
+
+# The headers must be those of the libraries linked. libxc and libint carry
+# version macros, which src/xc.cpp and src/basis.cpp compare with the
+# versions of the packages CMake selected. src/ecp.cpp checks libecpint's
+# patched API, since the vendored copy keeps upstream's version number.
+# spglib and FFTW have no version macro and rely on the order above.
+if(Libxc_VERSION_COUNT GREATER_EQUAL 3)
+    target_compile_definitions(vibeqc_core PRIVATE
+        VIBEQC_LINKED_LIBXC_VERSION_MAJOR=${Libxc_VERSION_MAJOR}
+        VIBEQC_LINKED_LIBXC_VERSION_MINOR=${Libxc_VERSION_MINOR}
+        VIBEQC_LINKED_LIBXC_VERSION_PATCH=${Libxc_VERSION_PATCH})
+endif()
+if(Libint2_VERSION_COUNT GREATER_EQUAL 3)
+    target_compile_definitions(vibeqc_core PRIVATE
+        VIBEQC_LINKED_LIBINT_VERSION_MAJOR=${Libint2_VERSION_MAJOR}
+        VIBEQC_LINKED_LIBINT_VERSION_MINOR=${Libint2_VERSION_MINOR}
+        VIBEQC_LINKED_LIBINT_VERSION_PATCH=${Libint2_VERSION_PATCH})
+endif()
+
 # Bake the path to libecpint's XML basis library (Stuttgart-Köln
 # ecpNNmdf, LANL2DZ) so ``compute_ecp_matrix`` can find it without
 # the user passing share_dir explicitly. Resolution order:
@@ -557,6 +608,7 @@ set_target_properties(vibeqc_core PROPERTIES
 # pybind11 module: _vibeqc_core
 # -----------------------------------------------------------------------------
 pybind11_add_module(_vibeqc_core MODULE
+    src/opentrustregion_bindings.cpp
     src/bindings.cpp
 )
 
@@ -564,6 +616,14 @@ target_link_libraries(_vibeqc_core PRIVATE
     vibeqc_core
     Libint2::cxx          # brings header path for libint2/util/configuration.h
 )
+
+# pybind11 and Python precede vibeqc_core in this module's link order. Keep
+# the vendored headers ahead of their include directories too (see the
+# matching block for ``vibeqc_core`` above).
+if(_VIBEQC_VENDORED_INCLUDE_DIRS)
+    target_include_directories(_vibeqc_core SYSTEM BEFORE PRIVATE
+        ${_VIBEQC_VENDORED_INCLUDE_DIRS})
+endif()
 
 target_compile_options(_vibeqc_core PRIVATE
     -Wall -Wextra -Wpedantic

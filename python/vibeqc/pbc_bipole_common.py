@@ -52,6 +52,7 @@ from ._vibeqc_core import (
 from ._vibeqc_core import (
     monkhorst_pack as _native_monkhorst_pack,
 )
+from .level_shift_schedule import LevelShiftSchedule
 from .progress import ProgressLogger
 
 
@@ -464,6 +465,93 @@ def restricted_bipole_commutator_norm(
                 fock_k, density_k, overlap_k, weights
             )
         )
+    )
+
+
+def bipole_level_shift_inputs(options, schedule):
+    """Resolve immutable shift inputs before constructing any operators."""
+    if schedule is not None and not isinstance(schedule, LevelShiftSchedule):
+        raise TypeError("level_shift_schedule must be a LevelShiftSchedule or None")
+    try:
+        static = float(getattr(options, "level_shift", 0.0))
+        values = tuple(float(x) for x in (
+            schedule.as_list() if schedule is not None
+            else (getattr(options, "level_shift_schedule", ()) or ())))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("BIPOLE HF: level shifts must be finite non-negative scalars") from exc
+    if any(not np.isfinite(x) or x < 0.0 for x in (static, *values)):
+        raise ValueError("BIPOLE HF: level shifts must be finite non-negative scalars")
+    return static, values
+
+
+def bipole_unshifted_orbitals(fock_k, coeffs_k, occupations_k):
+    """Canonicalize equal-occupation blocks without changing the density.
+
+    Final orbital energies must belong to the rebuilt physical Fock even when
+    the last iteration exhausted its budget on a shifted or mixed operator.
+    Rotating between different occupations would change the state whose energy
+    was rebuilt. Off-block stationarity is judged separately by the density
+    commutator; this transformation does not claim convergence or stability.
+    """
+    if not (len(fock_k) == len(coeffs_k) == len(occupations_k)):
+        raise ValueError("BIPOLE orbital blocks must span the same k-points")
+    coeffs_out, energies_out = [], []
+    for fock, coeffs, occupations in zip(fock_k, coeffs_k, occupations_k):
+        coeffs = np.asarray(coeffs, dtype=complex)
+        occupations = np.asarray(occupations, dtype=float)
+        if occupations.shape != (coeffs.shape[1],) or not np.isfinite(occupations).all():
+            raise ValueError("BIPOLE occupations must be finite and match the orbital columns")
+        rotated = coeffs.copy()
+        energies = np.empty(coeffs.shape[1], dtype=float)
+        for occupation in np.unique(occupations):
+            indices = np.flatnonzero(occupations == occupation)
+            block = coeffs[:, indices]
+            projected = block.conj().T @ np.asarray(fock) @ block
+            values, rotation = np.linalg.eigh(0.5 * (projected + projected.conj().T))
+            rotated[:, indices] = block @ rotation
+            energies[indices] = values
+        coeffs_out.append(rotated)
+        energies_out.append(energies)
+    return coeffs_out, energies_out
+
+
+def bipole_electron_count(density_k, overlap_k, weights):
+    """Count one spin from the same physical density used by the final Fock."""
+    return float(sum(float(w) * np.trace(np.asarray(d) @ np.asarray(s)).real
+                     for d, s, w in zip(density_k, overlap_k, weights)))
+
+
+def bipole_hf_acceptance(*, converged, iterations, max_iter, energy_residual,
+                         density_residual, orbital_residual, electron_count_errors,
+                         conv_tol_energy, conv_tol_grad):
+    """Describe the exact final HF state, without asserting electronic stability."""
+    energy_residual = float(energy_residual)
+    density_residual = float(density_residual)
+    orbital_residual = float(orbital_residual)
+    errors = [float(error) for error in electron_count_errors]
+    count_tol = 1e-7
+    finite = all(np.isfinite(x) for x in
+                 (energy_residual, density_residual, orbital_residual, *errors))
+    counts_ok = finite and all(abs(x) <= count_tol for x in errors)
+    energy_ok = finite and energy_residual < conv_tol_energy
+    density_ok = finite and density_residual < conv_tol_grad
+    orbital_ok = finite and orbital_residual < conv_tol_grad
+    stationary = bool(converged and counts_ok and energy_ok and density_ok and orbital_ok)
+    reason = (
+        "stationary" if stationary else
+        "nonfinite_final_state" if not finite else
+        "electron_count_mismatch" if not counts_ok else
+        "stagnation" if energy_ok and density_ok and not orbital_ok else
+        "iteration_limit" if iterations >= max_iter else
+        "terminal_state_not_stationary"
+    )
+    return dict(
+        final_rebuild=True, stationary=stationary,
+        energy_residual=energy_residual, density_residual=density_residual,
+        orbital_residual=orbital_residual, electron_count_errors=errors,
+        energy_tolerance=float(conv_tol_energy), density_tolerance=float(conv_tol_grad),
+        orbital_tolerance=float(conv_tol_grad), electron_count_tolerance=count_tol,
+        stability="not-assessed", termination_reason=reason,
     )
 
 
@@ -1061,7 +1149,9 @@ def bvk_torus_density_matrices(
     BvK diameter, which fold-converged cutoffs always do. Raises
     with the missing cell index otherwise.
     """
-    n = [int(x) for x in mesh]
+    from .kpoints import _integer_counts
+
+    n = _integer_counts(mesh, name="BvK density mesh")
     if len(n) != 3 or any(x < 1 for x in n):
         raise ValueError(
             f"bvk_torus_density_matrices: mesh must be three positive "
@@ -1688,28 +1778,49 @@ def resolve_auto_fock_mixing(
 # cutoffs, so a user-set ``schwarz_threshold`` silently never reached the
 # BIPOLE 2-e build (2026-07-13 truncation audit,
 # HANDOVER_BIPOLE_PRODUCTION.md Sec. 0a).
-_LATTICE_PASSTHROUGH_FIELDS = (
-    "cutoff_bohr",
-    "nuclear_cutoff_bohr",
-    "eri_interaction_cutoff_bohr",
-    "becke_image_radius_bohr",
-    "slab_ewald_alpha",
-    "screening_overlap_threshold",
-    "screening_exchange_threshold",
-    "schwarz_threshold",
-    "schwarz_threshold_forces",
-    # The separation-aware charge-pair Schwarz SR
-    # screening flag is a user-settable LatticeSumOptions field too --
-    # run_periodic_job(sr_range_screening=True) sets it on
-    # options.lattice_opts, so it must survive into the derived 2-e set
-    # or the build silently runs unscreened while the run still cites
-    # the charge-pair bound.
-    "sr_range_screening",
-    "sr_sparse_traversal",
-    # #429 stage 2: the one-electron pair-complete switch must survive into
-    # every derived option set or the 1e and 2e term sets silently disagree.
-    "pair_complete_1e",
+from .bipole_domain import LATTICE_FIELDS, OptionSnapshot, resolve_bipole_pair_policy
+
+_LATTICE_PASSTHROUGH_FIELDS = tuple(
+    name for name in LATTICE_FIELDS if name != "coulomb_method"
 )
+
+
+def copy_bipole_lattice_options(lat_opts: LatticeSumOptions) -> LatticeSumOptions:
+    """Detach the requested operator before any run-specific cutoff resolution.
+
+    Drivers may clamp nuclear reach or change the channel's Coulomb method.
+    Reusing an options object for another SCF or an FD displacement must not
+    inherit those mutations from a previous run.
+    """
+    return OptionSnapshot.capture(lat_opts, LATTICE_FIELDS).restore(LatticeSumOptions)
+
+
+def resolve_bipole_lattice_options(lat_opts: LatticeSumOptions, *,
+                                   historical_domain: bool = False) -> LatticeSumOptions:
+    """Resolve the named BIPOLE policy on a detached copy of caller options.
+
+    The named policy takes precedence over the shared native pair flag. Other
+    families keep their own defaults; historical BIPOLE requires an explicit
+    request so an old default-valued options object cannot disable the migration.
+    """
+    physical = resolve_bipole_pair_policy(historical_domain)
+    out = copy_bipole_lattice_options(lat_opts)
+    out.pair_complete_1e = physical
+    return out
+
+
+def reject_bipole_physical_legacy_gauge(*, physical_pairs, dimension,
+                                      use_ewald_j_split, exchange_split_active,
+                                      driver):
+    """Keep the unimplemented physical/legacy Ewald consumer combination closed."""
+    if physical_pairs and dimension == 3 and use_ewald_j_split and not exchange_split_active:
+        raise NotImplementedError(
+            f"{driver}: physical BIPOLE support requires the corrected Ewald "
+            "exchange split in 3D. Use a complete Monkhorst-Pack mesh and "
+            "leave use_exchange_ewald_split enabled, or explicitly request "
+            "historical_domain=True to replay the historical operator "
+            "(bipole_historical_domain=True in run_periodic_job)."
+        )
 
 
 def _lattice_options_passthrough(lat_opts: LatticeSumOptions) -> LatticeSumOptions:
@@ -1763,6 +1874,10 @@ def prepare_bipole_lattice_options(
     lat_opts_1e.coulomb_method = (
         CoulombMethod.EWALD_3D if system.dim == 3 else CoulombMethod.DIRECT_TRUNCATED
     )
+    policy = "physical_pairs" if lat_opts_2e.pair_complete_1e else "historical_index_ball"
+    plog.info(f"  BIPOLE lattice domain: {policy}")
+    if not lat_opts_2e.pair_complete_1e:
+        plog.info("  Historical index-ball support is not atom-image invariant.")
     return resolved_j_split, use_ewald_j_split_auto, lat_opts_2e, lat_opts_1e
 
 
@@ -1779,6 +1894,10 @@ def resolve_bipole_fock_symmetry(
     auto_reduce_safe: bool = True,
 ):
     """Resolve the SYM3b Fock-symmetry map + reduced cell set.
+
+    Physical support defaults to the full direct build and refuses explicit
+    projection/reduction because exchange retains wider output support. The
+    automatic reduction described below applies to historical support only.
 
     ``use_fock_symmetry_reduce=None`` auto-enables the pair-resolved,
     orbit-representative build when the crystal carries attached symmetry
@@ -2151,7 +2270,7 @@ def resolve_bipole_sr_image_extent(
     midpoints and omits absolute atom-origin padding from this policy.
 
     The precision path also enables charge-pair Schwarz screening on
-    both the user and derived lattice options, so the setting reaches the C++
+    both the private working and derived lattice options, so the setting reaches the C++
     two-electron build and the citation manifest. ``None`` restores the
     historical unpadded internal ball. Routes that do not build an erfc SR
     term (lower-dimensional direct-only runs and pure-RKS exact-FT J) leave
@@ -2485,6 +2604,42 @@ def warn_bipole_charged_cell(system, plog) -> None:
         plog.info(f"  WARNING: {output_message}")
 
 
+def resolve_bipole_ewald_state(
+    system, lat_opts_1e, lat_opts_2e, *, ewald_omega, ewald_precision,
+    erfc_exchange_arm_active, plog,
+):
+    """Resolve the common nuclear/electronic finite Ewald envelopes once.
+
+    Reuses the established alpha bound, reciprocal envelope and nuclear
+    real-space floor. The caller supplies the active exchange policy; pure
+    functionals and screened hybrids must not acquire an HF-only bound.
+    """
+    if system.dim != 3:
+        return None, None, None, None
+    from .bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
+
+    volume = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
+    alpha = resolve_bipole_ewald_alpha(
+        volume, ewald_omega, lat_opts_2e, float(ewald_precision),
+        erfc_exchange_arm_active=erfc_exchange_arm_active, plog=plog,
+    )
+    reciprocal = bipole_ewald_reciprocal_cutoff(volume, alpha)
+    raise_bipole_ewald_real_cutoff(
+        system, lat_opts_1e, alpha, float(ewald_precision), plog,
+    )
+    options = _crystal_ewald_options(
+        lat_opts_1e, alpha_bohr_inv=alpha, tolerance=float(ewald_precision),
+        recip_cutoff_bohr_inv=reciprocal,
+    )
+    plog.info(
+        f"  Ewald state: alpha = {alpha:.6f} bohr^-1, "
+        f"real_cutoff = {options.real_cutoff_bohr:.2f} bohr, "
+        f"K_max = {reciprocal:.2f} bohr^-1, "
+        f"tol = {float(ewald_precision):.0e}"
+    )
+    return options, alpha, volume, reciprocal
+
+
 def _crystal_ewald_options(
     lat_opts: LatticeSumOptions,
     *,
@@ -2598,6 +2753,7 @@ def _compute_nuclear_lattice_ewald_reciprocal_ft(
     cache=None,
     precision: float = 1e-8,
     K_max: Optional[float] = None,
+    resolved_erfc_options=None,
 ):
     """Analytic 3D Ewald V_ne blocks via AO-pair Fourier transforms.
 
@@ -2633,9 +2789,11 @@ def _compute_nuclear_lattice_ewald_reciprocal_ft(
     # gradient helpers in ``bipole_gradient.py``, which pass their own
     # unwidened ``lattice_opts`` beside a cell-scaled alpha, stay the exact
     # derivative partner of the energy.
-    lat_opts_erfc = ewald_erfc_lattice_options(
-        lat_opts, alpha, precision, basis=basis, system=system,
-    )
+    lat_opts_erfc = resolved_erfc_options
+    if lat_opts_erfc is None:
+        lat_opts_erfc = ewald_erfc_lattice_options(
+            lat_opts, alpha, precision, basis=basis, system=system,
+        )
 
     V_short = compute_nuclear_erfc_lattice(
         basis,
@@ -2857,6 +3015,7 @@ def build_bipole_one_electron_lattice(
     *,
     sym_log_style: str = "rich",
     log_v_ne_ft: bool = False,
+    resolved_erfc_options=None,
 ):
     """Build the S/T lattice sets and V_ne (+ optional LR cache).
 
@@ -2954,6 +3113,7 @@ def build_bipole_one_electron_lattice(
             S_lat,
             precision=ewald_precision,
             K_max=ewald_k_max,
+            resolved_erfc_options=resolved_erfc_options,
         )
     else:
         v_ne_grid = (
@@ -3064,7 +3224,7 @@ def unrestricted_split_k_density_list(
 
 def unrestricted_spin_density(
     C_per_k_local: Sequence[np.ndarray],
-    n_occ_each: int,
+    occupations,
     *,
     n_k: int,
     kmesh,
@@ -3073,16 +3233,25 @@ def unrestricted_spin_density(
 ) -> LatticeMatrixSet:
     """Real-space single-spin density from per-k MO coefficients.
 
-    Integer occupations (1.0 per occupied band, single-spin convention);
-    the cross-cell blocks are zeroed unless an exchange split is active,
-    matching the Γ-locality invariant the drivers rely on.
+    ``occupations`` is either the per-k occupation list the driver's fill
+    returned (single-spin convention, entries in ``[0, 1]``) or, for the
+    seeding calls that precede any fill, an integer ``n`` meaning
+    ``occ[:n] = 1`` at every k. The density is always built from the
+    occupations it is given: a zero-temperature Brillouin-zone fill with one
+    chemical potential per spin (#176) can occupy a different number of bands
+    at different k, which no fixed ``C[:, :n]`` slice reproduces. The
+    cross-cell blocks are zeroed unless an exchange split is active, matching
+    the Gamma-locality invariant the drivers rely on.
     """
     nbf = C_per_k_local[0].shape[1]
-    occ_per_k = []
-    for _ in range(n_k):
-        occ = np.zeros(nbf, dtype=float)
-        occ[:n_occ_each] = 1.0
-        occ_per_k.append(occ)
+    if isinstance(occupations, (int, np.integer)):
+        occ_per_k = []
+        for _ in range(n_k):
+            occ = np.zeros(nbf, dtype=float)
+            occ[: int(occupations)] = 1.0
+            occ_per_k.append(occ)
+    else:
+        occ_per_k = [np.asarray(o, dtype=float) for o in occupations]
     result = real_space_density_from_kpoints_fractional(
         C_per_k_local,
         occ_per_k,
@@ -3103,18 +3272,23 @@ def unrestricted_occupations_per_spin(
     system: Optional[PeriodicSystem] = None,
     kmesh: Optional[BlochKMesh] = None,
     bz_integration: Optional[str] = None,
+    fixed_occupied_subspace: bool = False,
 ):
-    """Per-spin Aufbau, Fermi-Dirac, or Gilat occupations.
+    """Per-spin global-Aufbau, smeared, or Gilat occupations.
 
     Returns ``(occ_per_k, mu, entropy_spin)`` where occupations are in
     ``[0, 1]`` per band (single-spin), ``mu`` is the spin chemical
     potential in Hartree, and ``entropy_spin`` is ``S/k_B`` for that spin.
     ``bz_integration='gilat'`` applies the T=0 microcell integral separately
-    to this fixed spin population and returns zero entropy. Otherwise
-    ``smearing_T <= 0`` (or an empty spin channel) returns exact integer
-    Aufbau occupations.
+    to this fixed spin population and returns zero entropy. Otherwise the
+    fill is :func:`vibeqc.smearing.spin_channel_occupations`, the one
+    open-shell convention every periodic driver shares: at ``T = 0`` one
+    chemical potential per spin over the whole k-mesh (#176), positional
+    under the maximum overlap method (``fixed_occupied_subspace``, #725).
+    Until #176 this branch filled the lowest ``n_spin`` bands at every k
+    independently and reported ``mu = 0``.
     """
-    from .smearing.fermi_dirac import fermi_dirac_occupations_per_k as _fd_per_k
+    from .smearing import spin_channel_occupations
 
     if bz_integration not in (None, "smearing", "gilat"):
         raise ValueError(
@@ -3152,20 +3326,16 @@ def unrestricted_occupations_per_spin(
             spin_degeneracy=1.0,
         )
         return occ, float(e_fermi), 0.0
-    if smearing_T <= 0.0:
-        occ = []
-        for eps in eps_spin_per_k:
-            o = np.zeros(eps.shape[0], dtype=float)
-            o[:n_spin] = 1.0
-            occ.append(o)
-        return occ, 0.0, 0.0
-    # The shared closed-shell helper returns occupations in [0, 2];
-    # divide by 2 for the single-spin convention.
-    occ_double, mu, entropy_double = _fd_per_k(
+    # A smeared Fermi function occupies by energy whatever the column order,
+    # so a MOM permutation is harmless there; only the T = 0 fill must hold
+    # the selected block positionally.
+    result = spin_channel_occupations(
         eps_spin_per_k,
-        weights,
-        float(2 * n_spin),
-        smearing_T,
+        weights=weights,
+        n_electrons=float(n_spin),
+        smearing=float(smearing_T),
+        fixed_occupied_subspace=bool(fixed_occupied_subspace)
+        and float(smearing_T) <= 0.0,
     )
-    occ = [np.asarray(o, dtype=float) * 0.5 for o in occ_double]
-    return occ, mu, entropy_double * 0.5
+    occ = [np.asarray(o, dtype=float) for o in result.occupations_per_k]
+    return occ, float(result.mu), float(result.entropy)

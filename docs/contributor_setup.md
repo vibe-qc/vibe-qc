@@ -137,6 +137,37 @@ Hessians, property derivatives, every angular momentum or numerical accuracy.
 Continue to verify the built core and the library actually loaded at runtime
 after a rebuild; configuration cannot protect against a later library swap.
 
+## Vendored headers come first, and a stale libecpint is refused
+
+The compiler searches the vendored `third_party/<dep>/install` include
+directories before every other dependency's. Imported packages otherwise
+contribute include directories in link order, and on macOS libint's installed
+package links Boost, whose include directory is the whole Homebrew prefix. A
+Homebrew libecpint, libxc, spglib or FFTW there used to shadow the vendored
+header of the same name (#461): with Homebrew's libecpint installed, the
+build stopped in `cpp/src/ecp.cpp` with "no member named
+'shell_pair_negligible'". Nothing needs to be uninstalled.
+
+A header can still resolve to another copy through a `CPATH` entry or an
+`-I` in `CXXFLAGS` or `CMAKE_CXX_FLAGS`, which the compiler searches before
+every system directory unless it repeats one. The build then fails with a
+message that names the header: `cpp/src/xc.cpp` and `cpp/src/basis.cpp`
+compare libxc's and libint's version macros with the packages CMake selected,
+and `cpp/src/ecp.cpp` checks for the vendored libecpint's patched API, since
+that copy keeps upstream's version number. Remove the directory from those
+variables and rebuild. spglib and FFTW have no version macro and rely on the
+search order alone.
+
+`scripts/build_libecpint.sh` records the version of its libecpint patch in
+`third_party/libecpint/install/.vibeqc-radial-quadrature`. The editable
+rebuild above does not rerun that script, and a patch that changes only
+libecpint's sources would otherwise be linked from an older install without
+notice (#460). Configuration therefore compares the record with the script's
+`RADIAL_PATCH_VERSION`. A mismatch is an error under
+`VIBEQC_REQUIRE_VENDORED` and a warning otherwise. Run
+`scripts/build_libecpint.sh`, which rebuilds only libecpint in a few minutes,
+then the editable rebuild again.
+
 ## Native sources from a local mirror, and clones that cannot hang
 
 `scripts/build_<dep>.sh` fetches libint, libxc, spglib, OpenBLAS and

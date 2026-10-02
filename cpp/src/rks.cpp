@@ -1,4 +1,5 @@
 #include "vibeqc/rks.hpp"
+#include "vibeqc/orbital_scf.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "vibeqc/ao_eval.hpp"
+#include "vibeqc/degenerate_frontier.hpp"
 #include "vibeqc/diis.hpp"
 #include "vibeqc/diagnostics.hpp"
 #include "vibeqc/dynamic_damping.hpp"
@@ -562,9 +564,27 @@ XcContribution build_xc(const Functional& func,
 
 }  // namespace
 
+OrbitalXCFunction make_orbital_rks_xc(const BasisSet& basis, const Grid& grid, const std::string& name) {
+    auto f = std::make_shared<Functional>(name, 1);
+    validate_orbital_xc(*f);
+    auto ao = std::make_shared<AOValues>(evaluate_ao_with_gradient(basis, grid.points));
+    auto pool = std::make_shared<XcFunctionalPool>(
+        make_xc_functional_pool(name, 1, grid.points.rows()));
+    return [basis, grid, f, ao, pool](const Eigen::MatrixXd& da, const Eigen::MatrixXd& db, bool response) {
+        OrbitalXC out;
+        (void)db;
+        const auto value = build_xc(*f, basis, grid, da, nullptr, *pool);
+        out.energy = value.energy; out.alpha = value.V;
+        if (response) out.restricted_kernel = make_unpolarised_xc_kernel_builder(
+            *f, grid, ao->values, ao->gradients, da);
+        return out;
+    };
+}
+
 RKSResult run_rks(const Molecule& mol,
                   const BasisSet& basis,
                   const RKSOptions& opts) {
+    validate_orbital_optimizer(opts);
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), &mol);
     validate_scf_max_iter(opts.max_iter, "run_rks");
@@ -800,6 +820,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                               const GuessSelection* prepared_guess) {
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), guess_molecule);
+    validate_orbital_optimizer(opts);
     validate_scf_max_iter(opts.max_iter, "run_rks_scf_with_jk");
     if (n_electrons < 0 || n_electrons % 2 != 0) {
         throw std::invalid_argument("closed-shell SCF requires a nonnegative even electron count");
@@ -844,6 +865,10 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
     DavidsonOptions dav_opts = opts.davidson;
     if (use_davidson_here) {
         if (dav_opts.n_eig == 0) dav_opts.n_eig = orth.n_kept;
+        if (dav_opts.n_eig < nocc) {
+            throw std::invalid_argument(
+                "RKS: Davidson n_eig must include the occupied space");
+        }
     }
     Eigen::MatrixXd dav_guess_ortho;  // for eigenvector recycling
 
@@ -913,7 +938,25 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
         }
         D = constructed.density;
     } else {
-        D = build_density(C0, nocc);
+        // Hcore seed with a degenerate frontier averaged (#336), as in
+        // rhf.cpp: a user-requested partial Davidson spectrum can end inside
+        // the frontier, so complete only this seed diagonalization when the
+        // missing partners cannot be excluded.
+        if (nocc > 0 && C0.cols() < orth.n_kept
+            && (C0.cols() <= nocc
+                || eps0[eps0.size() - 1] - eps0[nocc - 1]
+                    <= kDegenerateFrontierTol)) {
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> seed_solver(
+                X.transpose() * Hcore * X);
+            if (seed_solver.info() != Eigen::Success) {
+                throw std::runtime_error("RKS: Hcore seed diagonalization failed");
+            }
+            dav_guess_ortho = seed_solver.eigenvectors();
+            D = ensemble_seed_density(X * seed_solver.eigenvectors(),
+                                      seed_solver.eigenvalues(), nocc);
+        } else {
+            D = ensemble_seed_density(C0, eps0, nocc);
+        }
     }
     Eigen::MatrixXd D_prev = D;
 
@@ -928,6 +971,24 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
     result.restart_basis = basis;
     result.functional = opts.functional;
     result.e_nuclear = E_nuc;
+
+    if (opts.orbital_optimizer == "opentrustregion") {
+        validate_orbital_xc(functional);
+        OrbitalXCFunction xc = [&](const Eigen::MatrixXd& da, const Eigen::MatrixXd&, bool response) {
+            const auto value = build_xc(functional, basis, grid, da, vv10_grid, xc_functionals);
+            result.xc_batch_workers_used = std::max(result.xc_batch_workers_used, value.batch_workers);
+            OrbitalXC out; out.energy = value.energy; out.alpha = value.V;
+            if (response) out.restricted_kernel = make_xc_kernel(da);
+            return out;
+        };
+        const auto run = run_orbital_scf(opts, X, S, Hcore, E_nuc, jk,
+            D, {}, nocc, nocc, true, alpha, xc);
+        assign_orbital_restricted(result, run, E_nuc);
+        result.e_coulomb = run.state.coulomb;
+        result.e_hf_exchange = run.state.exchange;
+        result.e_xc = run.state.xc.energy;
+        return result;
+    }
 
     // ORCA NOITER compatibility: evaluate the initial density once, but do
     // not take an SCF update or append an iteration trace entry.
@@ -1691,6 +1752,16 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                 if (!unsupported_route) {
                     UHFStabilityOptions sopts;
                     sopts.max_iter = opts.stability_davidson_max_iter;
+                    {
+                        // #342: bound the solve by wall time as well as by matvecs.
+                        double scf_loop_wall_s = 0.0;
+                        for (const auto& it : result.scf_trace) {
+                            scf_loop_wall_s += it.wall_s;
+                        }
+                        sopts.wall_budget_s = stability_wall_budget_for(
+                            opts.stability_wall_budget_s, opts.stability_wall_fraction,
+                            opts.stability_wall_floor_s, scf_loop_wall_s);
+                    }
                     // A residual looser than the instability threshold
                     // cannot certify the sign of the reported eigenvalue.
                     sopts.residual_tol =
@@ -1726,6 +1797,9 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                     xc_k.reset();
                     result.stability_checked = true;
                     result.stability_analysis_converged = stab.converged;
+                    result.stability_stop_reason = static_cast<int>(stab.stop_reason);
+                    result.stability_n_matvec = stab.n_matvec;
+                    result.stability_wall_budget_s = sopts.wall_budget_s;
                     result.stability_eigenvalue = stab.lowest_eigenvalue;
                     result.internal_instability =
                         stab.converged

@@ -59,6 +59,7 @@ from typing import List, Optional, Sequence, Tuple, Union
 import numpy as np
 
 from ._vibeqc_core import (
+    level_shift_at_iter,
     BasisSet,
     BlochKMesh,
     EwaldOptions,
@@ -75,6 +76,7 @@ from ._vibeqc_core import (
     ewald_nuclear_repulsion,
     nuclear_repulsion_per_cell,
     real_space_density_from_kpoints,
+    real_space_density_from_kpoints_fractional,
 )
 from ._vibeqc_core import (
     monkhorst_pack as _native_monkhorst_pack,
@@ -99,6 +101,10 @@ from .periodic_scf_accelerators import (
 )
 from .progress import ProgressLogger, resolve_progress
 from .scf_divergence import check_scf_divergence
+from .smearing import (
+    closed_shell_periodic_occupations as _closed_shell_periodic_occupations,
+    occupations_are_per_k_integer_aufbau as _occupations_are_per_k_integer_aufbau,
+)
 from .smearing._support import reject_unsupported_smearing_temperature
 
 __all__ = [
@@ -187,6 +193,9 @@ class PBCBipoleRHFResult:
     ] = None
     n_electrons: int = 0
     occupations: List[np.ndarray] = field(default_factory=list)
+    #: Chemical potential of the zero-temperature Brillouin-zone fill that
+    #: produced ``occupations`` (midgap on a gapped mesh; #176).
+    fermi_level: float = 0.0
     # Component breakdown evaluated on the density entering the first SCF
     # cycle.  This preserves CRYSTAL CYC0 / initial-guess evidence even
     # though ``energy_components[-1]`` is deliberately refreshed after the
@@ -204,6 +213,9 @@ class PBCBipoleRHFResult:
     restart_weights: object = None
     # Ewald accuracy used by the SCF; gradients must retain its finite sums.
     ewald_precision: float = 1e-8
+    resolved_domain: object = None
+    executed_support: object = None
+    chi_scf_acceptance: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -232,6 +244,10 @@ class _PBCBipoleFockBuild:
 
 
 from .pbc_bipole_common import (
+    bipole_unshifted_orbitals,
+    bipole_electron_count,
+    bipole_hf_acceptance,
+    bipole_level_shift_inputs,
     bipole_confirmation_phase,
     bipole_final_density_phase,
     PBCBipoleEnergyComponents,
@@ -251,9 +267,12 @@ from .pbc_bipole_common import (
     build_bipole_one_electron_lattice,
     bvk_torus_density_matrices,
     prepare_bipole_lattice_options,
+    resolve_bipole_lattice_options,
+    reject_bipole_physical_legacy_gauge,
     raise_bipole_ewald_real_cutoff,
     resolve_bipole_ewald_alpha,
     reject_bipole_ecp_options,
+    reject_bipole_fractional_legacy_gauge,
     reject_bipole_quartet_far_field,
     reject_bipole_lone_non_gamma_kpoint,
     reject_bipole_solver_options,
@@ -282,6 +301,8 @@ def run_pbc_bipole_rhf(
     kmesh: BlochKMesh,
     options=None,
     *,
+    historical_domain: bool = False,
+    _support_recorder=None,
     linear_dep_threshold: float = 1e-7,
     fock_mixing: Optional[float] = None,
     canonical_orth_normalize_diag_first: bool = True,
@@ -315,6 +336,10 @@ def run_pbc_bipole_rhf(
     dft_plus_u: Optional[List["HubbardSite"]] = None,
 ) -> PBCBipoleRHFResult:
     """Multi-k closed-shell RHF via the CRYSTAL-gauge BIPOLE scaffold.
+
+    Physical pair support is the default. ``historical_domain=True`` selects
+    the historical index ball for reproduction. This keyword overrides
+    ``options.lattice_opts.pair_complete_1e`` without mutating caller options.
 
     ``fock_mixing`` overrides ``options.fock_mixing`` when supplied and is
     the previous-Fock matrix weight in ``[0, 1)``.  The caller's options field
@@ -444,6 +469,7 @@ def run_pbc_bipole_rhf(
     from ._vibeqc_core import PeriodicRHFOptions
 
     opts = options if options is not None else PeriodicRHFOptions()
+    level_shift_static, _level_shifts = bipole_level_shift_inputs(opts, level_shift_schedule)
     guess = _coerce_periodic_driver_guess(
         getattr(opts, "initial_guess", None),
         driver="run_pbc_bipole_rhf",
@@ -503,7 +529,9 @@ def run_pbc_bipole_rhf(
             "RKS/UHF/UKS for finite-temperature smearing."
         ),
     )
-    lat_opts: LatticeSumOptions = opts.lattice_opts
+    lat_opts: LatticeSumOptions = resolve_bipole_lattice_options(
+        opts.lattice_opts, historical_domain=historical_domain,
+    )
     plog = resolve_progress(progress, verbose=verbose)
     # CRYSTAL-style gauge separation (per the EWALD_3D / BIPOLE audit):
     # V_ne and E_nn use Ewald with one shared alpha. F^{2e} uses the
@@ -633,9 +661,9 @@ def run_pbc_bipole_rhf(
     # and the supercell Madelung correction all need the true
     # Monkhorst-Pack dimensions. Ad-hoc k-lists carry mesh = (1,1,1)
     # placeholders (see the to_bloch_kmesh binding). Under the auto
-    # default an ad-hoc multi-k mesh falls back to the legacy gauge
-    # (no surprise breakage for explicit-k-list / band-path runs);
-    # an explicit use_exchange_ewald_split=True still raises.
+    # default an ad-hoc multi-k mesh resolves to the legacy gauge.
+    # The physical-domain guard below refuses that combination; explicit
+    # historical replay retains it. An explicit split=True still raises.
     _bvk_mesh: Optional[Tuple[int, int, int]] = None
     if exchange_split_active and n_k > 1:
         _mesh_attr = tuple(
@@ -662,6 +690,11 @@ def run_pbc_bipole_rhf(
         else:
             _bvk_mesh = _mesh_attr
 
+    reject_bipole_physical_legacy_gauge(
+        physical_pairs=lat_opts_2e.pair_complete_1e, dimension=system.dim,
+        use_ewald_j_split=use_ewald_j_split,
+        exchange_split_active=exchange_split_active, driver="run_pbc_bipole_rhf",
+    )
     warn_bipole_legacy_multik_gauge(system, exchange_split_active, n_k, plog)
     warn_bipole_charged_cell(system, plog)
 
@@ -673,52 +706,24 @@ def run_pbc_bipole_rhf(
     omega_used: Optional[float] = None
     ewald_cell_volume: Optional[float] = None
     ewald_k_max: Optional[float] = None
-    if system.dim == 3:
-        from .bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
+    from .pbc_bipole_common import resolve_bipole_ewald_state
 
-        V_cell = float(
-            abs(
-                np.linalg.det(np.asarray(system.lattice, dtype=float)),
-            )
-        )
-        ewald_cell_volume = V_cell
-        # #674: the K_SR erfc arm of the corrected exchange split is cut at
-        # the Fock output cells (|g| <= lat_opts_2e.cutoff_bohr), so on that
-        # route CRYSTAL's volume-only alpha is bounded below by
-        # sqrt(-ln tol) / cutoff_bohr; the reciprocal envelope of J_LR / K_LR
-        # follows the alpha in use (K_max / alpha stays CRYSTAL's 8.51).
-        omega_used = resolve_bipole_ewald_alpha(
-            V_cell,
-            ewald_omega,
-            lat_opts_2e,
-            float(ewald_precision),
+    ewald_options_1e, omega_used, ewald_cell_volume, ewald_k_max = (
+        resolve_bipole_ewald_state(
+            system, lat_opts_1e, lat_opts_2e, ewald_omega=ewald_omega,
+            ewald_precision=ewald_precision,
             erfc_exchange_arm_active=exchange_split_active,
             plog=plog,
         )
-        ewald_k_max = bipole_ewald_reciprocal_cutoff(V_cell, omega_used)
-        # #478: the pinned alpha = 2.8/V^(1/3) makes erfc(alpha.R) at the
-        # nearest image an L-INDEPENDENT 7.5e-5, so the 1e nuclear/Ewald
-        # real-space sum must be sized from alpha, not from the AO cutoff.
-        raise_bipole_ewald_real_cutoff(
-            system,
-            lat_opts_1e,
-            omega_used,
-            float(ewald_precision),
-            plog,
-        )
-        ewald_options_1e = _crystal_ewald_options(
-            lat_opts_1e,
-            alpha_bohr_inv=omega_used,
-            tolerance=float(ewald_precision),
-            recip_cutoff_bohr_inv=ewald_k_max,
-        )
-        plog.info(
-            f"  Ewald state: a = {omega_used:.6f} bohr⁻¹, "
-            f"cutoff_real = {lat_opts_1e.nuclear_cutoff_bohr:.2f} bohr, "
-            f"K_max = {ewald_k_max:.2f} bohr⁻¹, "
-            f"tol = {float(ewald_precision):.0e}"
-        )
+    )
 
+    from .pbc_bipole_common import ewald_erfc_lattice_options
+
+    _v_ne_erfc_options = (
+        ewald_erfc_lattice_options(
+            lat_opts_1e, omega_used, ewald_precision, basis=basis, system=system,
+        ) if ewald_options_1e is not None and v_ne_grid_options is None else None
+    )
     _sr_image_extent = resolve_bipole_sr_image_extent(
         basis,
         system,
@@ -775,6 +780,16 @@ def run_pbc_bipole_rhf(
             "EXT EL-SPHEROPOLE omitted (gauge-consistent)"
         )
 
+    if _support_recorder is not None and (
+        int(system.dim) != 3 or v_ne_grid_options is not None
+        or not use_ewald_j_split or not exchange_split_active
+    ):
+        raise NotImplementedError("support recording requires analytic 3D Ewald J/K")
+    _nuclear_support = None
+    if _support_recorder is not None:
+        _support_recorder.preflight(system=system, basis=basis,
+            lattice=lat_opts_1e, nuclear=_v_ne_erfc_options)
+
     # ---- Real-space one-electron integrals -------------------------------
     # S, T use cell-list-only cutoff (lat_opts_2e -- they're independent
     # of coulomb_method). V_ne uses lat_opts_1e so the EWALD_3D path is
@@ -795,6 +810,7 @@ def run_pbc_bipole_rhf(
             plog,
             sym_log_style="rich",
             log_v_ne_ft=True,
+            resolved_erfc_options=_v_ne_erfc_options,
         )
     cells = list(S_lat.cells)
     plog.info(f"n_cells in lattice sum = {len(cells)}")
@@ -980,7 +996,12 @@ def run_pbc_bipole_rhf(
 
     # ---- Nuclear repulsion per cell --------------------------------------
     if ewald_options_1e is not None:
-        e_nuc = float(ewald_nuclear_repulsion(system, ewald_options_1e))
+        if _support_recorder is None:
+            e_nuc = float(ewald_nuclear_repulsion(system, ewald_options_1e))
+        else:
+            from ._vibeqc_core import ewald_nuclear_repulsion_with_support
+            _nuclear_support = ewald_nuclear_repulsion_with_support(system, ewald_options_1e)
+            e_nuc = float(_nuclear_support.energy)
     else:
         e_nuc = float(nuclear_repulsion_per_cell(system, lat_opts_1e))
     plog.info(f"E_nuc per cell ({lat_opts_1e.coulomb_method.name}) = {e_nuc:+.10f} Ha")
@@ -1009,7 +1030,59 @@ def run_pbc_bipole_rhf(
         C_k, eps_k = _diag_in_orth_basis(F_guess_k, X_k)
         C_per_k.append(C_k.astype(complex))
         eps_per_k.append(eps_k)
-    def _rebuild_real_space_density(C_per_k_local):
+    # Zero-temperature occupations: one Fermi level over the whole mesh
+    # (#176), the shared closed-shell fill every other multi-k RHF/RKS route
+    # takes. Until #176 this driver sliced C[:, :n_occ] at every k, a per-k
+    # Aufbau that occupies a state above the Fermi level at one k while
+    # leaving one below it empty at another wherever the bands overlap.
+    # MOM holds its selected block positionally (#725).
+    def _fill(eps_per_k_local, *, mom=False):
+        occ, mu, _ = _closed_shell_periodic_occupations(
+            eps_per_k_local,
+            weights,
+            float(n_elec),
+            n_occ,
+            0.0,
+            fixed_occupied_subspace=bool(mom),
+        )
+        return [np.asarray(o, dtype=float) for o in occ], float(mu)
+
+    def _occupation_density_needed(occ_per_k_local) -> bool:
+        """Whether these occupations need the occupation-weighted builder.
+
+        The fixed ``C[:, :n_occ]`` slice is exact only for the per-k integer
+        Aufbau pattern; a band-overlap fill occupies a different number of
+        bands at different k and is built from its own occupations, as the
+        multi-k Ewald and GDF routes do (#509). The legacy Ewald-J gauge
+        reconstructs its long-range density from the occupied slice and ODA
+        needs a sharp occupied subspace; both refuse instead of converging a
+        different state.
+        """
+        if _occupations_are_per_k_integer_aufbau(occ_per_k_local, n_occ):
+            return False
+        reject_bipole_fractional_legacy_gauge(
+            use_ewald_j_split=bool(use_ewald_j_split),
+            exchange_split_active=exchange_split_active,
+            fractional_occupations=True,  # runtime band-overlap fill (#176)
+            driver="run_pbc_bipole_rhf",
+        )
+        if use_oda:
+            raise NotImplementedError(
+                "run_pbc_bipole_rhf: the zero-temperature Brillouin-zone fill "
+                "is not per-k-integer-aufbau on this mesh (the bands overlap "
+                "the Fermi level), so there is no sharp occupied subspace for "
+                "use_oda. Disable use_oda."
+            )
+        return True
+
+    def _rebuild_real_space_density(C_per_k_local, occ_per_k_local):
+        if _occupation_density_needed(occ_per_k_local):
+            return real_space_density_from_kpoints_fractional(
+                C_per_k_local,
+                occ_per_k_local,
+                kmesh,
+                cells_density,
+            )
         return real_space_density_from_kpoints(
             C_per_k_local,
             [n_occ] * n_k,
@@ -1017,7 +1090,8 @@ def run_pbc_bipole_rhf(
             cells_density,
         )
 
-    D_real = _rebuild_real_space_density(C_per_k)
+    occ_per_k, fermi_level = _fill(eps_per_k)
+    D_real = _rebuild_real_space_density(C_per_k, occ_per_k)
     if not exchange_split_active:
         _zero_cross_cell_density(D_real, basis.nbasis, n_k)
 
@@ -1108,17 +1182,8 @@ def run_pbc_bipole_rhf(
         MultiKPeriodicSCFAccelerator(opts) if use_diis else None
     )
 
-    level_shift_static = float(getattr(opts, "level_shift", 0.0))
-    if level_shift_schedule is not None and not isinstance(
-        level_shift_schedule,
-        LevelShiftSchedule,
-    ):
-        raise TypeError(
-            f"level_shift_schedule must be a LevelShiftSchedule or None; "
-            f"got {type(level_shift_schedule).__name__}"
-        )
-    if level_shift_schedule is not None:
-        plog.info(f"level_shift_schedule: {level_shift_schedule.as_list()}")
+    if _level_shifts:
+        plog.info(f"level_shift_schedule: {list(_level_shifts)}")
 
     # CRYSTAL-style FMIXING: blend previous Fock into current before
     # diagonalisation.  Applied after DIIS, before level-shift.  Same
@@ -1399,7 +1464,22 @@ def run_pbc_bipole_rhf(
     # so the heavy J^SR/J^LR/K assembly lives once in pbc_bipole_fock.
     # _build_fock_for_density (above) references this via late binding --
     # it is only ever called from the SCF loop below, after this point.
+    from .bipole_domain import capture_bipole_domain
+
+    _resolved_domain = capture_bipole_domain(
+        lattice_1e=lat_opts_1e, lattice_2e=lat_opts_2e,
+        requested_lattice=opts.lattice_opts,
+        ewald_options=ewald_options_1e, alpha=omega_used,
+        reciprocal_cutoff=ewald_k_max, ewald_precision=ewald_precision,
+        sr_image_extent=_sr_image_extent, use_ewald_j_split=use_ewald_j_split,
+        exchange_ewald_split=exchange_split_active,
+        exchange_exxdiv=exchange_exxdiv, exact_zone=_exact_zone,
+        ks_options=None,
+        v_ne_grid_options=v_ne_grid_options,
+        nuclear_erfc_options=_v_ne_erfc_options,
+    )
     _fock_ctx = BipoleFockContext(
+        resolved_domain=_resolved_domain,
         basis=basis,
         system=system,
         lat_opts_2e=lat_opts_2e,
@@ -1450,7 +1530,8 @@ def run_pbc_bipole_rhf(
             C_k, eps_k = _diag_in_orth_basis(F_k, X_k)
             C_per_k.append(C_k.astype(complex))
             eps_per_k.append(eps_k)
-        D_real = _rebuild_real_space_density(C_per_k)
+        occ_per_k, fermi_level = _fill(eps_per_k)
+        D_real = _rebuild_real_space_density(C_per_k, occ_per_k)
         if not exchange_split_active:
             _zero_cross_cell_density(D_real, basis.nbasis, n_k)
         D_real_prev = None
@@ -1651,8 +1732,12 @@ def run_pbc_bipole_rhf(
             else:
                 # Multi-k (or legacy): D_k from previous iter's C.
                 C_k = C_per_k[idx]
-                C_occ = C_k[:, :n_occ]
-                D_k = 2.0 * (C_occ @ C_occ.conj().T)
+                if _occupation_density_needed(occ_per_k):
+                    occ_k = np.asarray(occ_per_k[idx], dtype=float)
+                    D_k = (C_k * occ_k[None, :]) @ C_k.conj().T
+                else:
+                    C_occ = C_k[:, :n_occ]
+                    D_k = 2.0 * (C_occ @ C_occ.conj().T)
             D_k_list.append(D_k)
             H_k = Hcore_k_list[idx]
             F_k = F_k_list[idx]
@@ -1835,10 +1920,11 @@ def run_pbc_bipole_rhf(
 
         # --- LEVSHIFT (per-iter schedule or static)
         # Skipped on the converged iteration (see DIIS note above).
-        if level_shift_schedule is not None:
-            level_shift_b = level_shift_schedule.at(iter_idx)
-        else:
-            level_shift_b = level_shift_static
+        level_shift_b = level_shift_at_iter(
+            level_shift_static,
+            int(getattr(opts, "level_shift_warmup_cycles", -1)),
+            list(_level_shifts), int(opts.max_iter), iter_idx,
+        )
         if level_shift_b != 0.0 and not converged:
             F_for_diag: List[np.ndarray] = []
             for idx in range(n_k):
@@ -1884,8 +1970,10 @@ def run_pbc_bipole_rhf(
                 new_C_per_k[idx] = C_k[:, order]
                 new_eps_per_k[idx] = eps_k[order]
 
+        _mom_held = bool(use_mom and C_prev_occ_per_k is not None)
         C_per_k = new_C_per_k
         eps_per_k = new_eps_per_k
+        occ_per_k, fermi_level = _fill(eps_per_k, mom=_mom_held)
 
         # --- Rebuild D_real.  At Γ-only, real_space_density_from_kpoints
         # produces P(g)=P(Γ) at every cell -- the correct Bloch fold. With
@@ -1894,7 +1982,7 @@ def run_pbc_bipole_rhf(
         # convergent with non-decaying P). On the legacy path the
         # Γ-locality projection P(g!=0)=0 is kept: its full-Coulomb K
         # series would diverge with the unprojected fold.
-        D_real_new = _rebuild_real_space_density(C_per_k)
+        D_real_new = _rebuild_real_space_density(C_per_k, occ_per_k)
         if not exchange_split_active:
             _zero_cross_cell_density(D_real_new, basis.nbasis, n_k)
 
@@ -2092,18 +2180,15 @@ def run_pbc_bipole_rhf(
         e_j_multipole=_fb.e_j_multipole,
         e_dft_plus_u=float(e_dft_plus_u),
     )
-    final_grad_norm = restricted_bipole_commutator_norm(
-        F_k_list,
-        (
-            _split_k_density_list(D_real)
-            if exchange_split_active
-            else _bloch_sum_blocks_multi_k(
-                D_real.blocks, D_real.cells, k_points
-            )
-        ),
-        S_k_list,
-        weights,
+    final_density_k = (
+        _split_k_density_list(D_real) if exchange_split_active
+        else _bloch_sum_blocks_multi_k(D_real.blocks, D_real.cells, k_points)
     )
+    final_grad_norm = restricted_bipole_commutator_norm(
+        F_k_list, final_density_k, S_k_list, weights,
+    )
+    final_electron_count = bipole_electron_count(final_density_k, S_k_list, weights)
+    C_per_k, eps_per_k = bipole_unshifted_orbitals(F_k_list, C_per_k, occ_per_k)
     _loop_objective = float(scf_trace[-1].energy) if scf_trace else float(E_total)
     _loop_grad = float(scf_trace[-1].grad_norm) if scf_trace else float(final_grad_norm)
     refresh_bipole_terminal_trace(
@@ -2122,12 +2207,35 @@ def run_pbc_bipole_rhf(
         conv_tol_energy=float(opts.conv_tol_energy),
         conv_tol_grad=float(opts.conv_tol_grad),
     )
-    if converged:
-        converged = _terminal_ok
+    density_residual = max(
+        (float(np.max(np.abs(np.asarray(new) - np.asarray(old))))
+         for new, old in zip(D_real.blocks, D_used.blocks)), default=0.0,
+    )
+    acceptance = bipole_hf_acceptance(
+        converged=converged and _terminal_ok,
+        iterations=iter_idx, max_iter=int(opts.max_iter),
+        energy_residual=max(abs(float(dE)), abs(E_total - _loop_objective)),
+        density_residual=density_residual, orbital_residual=final_grad_norm,
+        electron_count_errors=[0.5 * (final_electron_count - n_elec)] * 2,
+        conv_tol_energy=float(opts.conv_tol_energy), conv_tol_grad=float(opts.conv_tol_grad),
+    )
+    converged = acceptance["stationary"]
 
     plog.converged(n_iter=iter_idx, energy=E_total, converged=converged)
 
+    _executed_support = None
+    if _support_recorder is not None:
+        _executed_support = _support_recorder(
+            system=system, basis=basis, domain=_resolved_domain,
+            one_electron={"S": S_lat, "T": T_lat, "V_ne": V_lat},
+            density=D_real, fock=_fb.f2e_real, j_cache=j_lr_cache,
+            x_cache=x_lr_cache, nuclear_support=_nuclear_support,
+            kpoints=k_points, weights=weights, v_ne_cache=v_ne_lr_cache,
+        )
+
     return PBCBipoleRHFResult(
+        chi_scf_acceptance=acceptance,
+        executed_support=_executed_support,
                restart_mesh=tuple(kmesh.mesh),
                restart_kpoints=np.asarray(kmesh.kpoints).copy(), restart_weights=np.asarray(kmesh.weights).copy(),
                guess_selection=periodic_result_selection(system, opts.initial_guess, restarted=initial_density is not None or initial_density_k is not None),
@@ -2147,6 +2255,7 @@ def run_pbc_bipole_rhf(
         scf_trace=scf_trace,
         ewald_alpha_bohr_inv=omega_used,
         ewald_precision=float(ewald_precision),
+        resolved_domain=_resolved_domain,
         sr_image_extent_bohr=_sr_image_extent,
         pair_resolved_fock_domain=bool(_fock_sym_map is not None),
         e_dft_plus_u=float(e_dft_plus_u),
@@ -2162,12 +2271,8 @@ def run_pbc_bipole_rhf(
         kpoints_cart=np.asarray(k_points, dtype=float).reshape(-1, 3),
         kpoint_weights=np.asarray(weights, dtype=float).reshape(-1),
         n_electrons=int(n_elec),
-        occupations=[
-            np.concatenate(
-                [np.full(n_occ, 2.0), np.zeros(len(eps) - n_occ)]
-            )
-            for eps in eps_per_k
-        ],
+        occupations=[np.asarray(o, dtype=float).copy() for o in occ_per_k],
+        fermi_level=float(fermi_level),
         initial_density_energy_components=(
             initial_density_energy_components
         ),

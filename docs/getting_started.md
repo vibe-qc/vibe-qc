@@ -57,9 +57,9 @@ cd vibe-qc
 ```
 
 The example above selects development `main`. The flag-free installer targets
-`release`, the stable core snapshot advanced from a tag on `main`. Use
-`--dev` for ongoing development. Each companion has its own releases; a core
-tag does not update the viewer or queue. Check the selected host for the
+`release` when that branch exists on the selected origin, or its newest stable
+`vX.Y.Z` tag otherwise. Use `--dev` for ongoing development. Each companion
+has its own releases; a core tag does not update the viewer or queue. Check the selected host for the
 release ref you want; public snapshots can lag GitLab.
 
 The first native build normally takes 15 to 40 minutes. Later runs reuse the

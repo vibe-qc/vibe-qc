@@ -35,8 +35,9 @@ closed-shell jobs and BIPOLE for open-shell jobs.
 from __future__ import annotations
 
 from dataclasses import replace
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 import math
+import math as _math_stdlib
 import os
 import time
 import warnings
@@ -85,6 +86,8 @@ from .occupations import (
 )
 from .output import (
     Column,
+    band_edge_manifest_fields,
+    band_extrema_block,
     HeaderlessBlock,
     HeaderlessColumn,
     Level,
@@ -107,6 +110,10 @@ from .output import (
     print_dry_run_summary,
     warn,
     write,
+)
+from .output.formats.semiempirical_record import (
+    format_semiempirical_record_lines,
+    semiempirical_record_fields,
 )
 from .output._cpp_diagnostics import (
     _progress_handler as _CPP_PROGRESS_HANDLER_SLOT,
@@ -132,6 +139,7 @@ from .structured_log import (
     run_fingerprint,
 )
 from .structured_log import (
+    _resolve_structured_log_target,
     structured_log as _structured_log_ctx,
 )
 from .pbc_gdf import (
@@ -139,6 +147,10 @@ from .pbc_gdf import (
     run_pbc_gdf_rhf,
     run_pbc_gdf_uhf,
     run_pbc_gdf_uks,
+)
+from .periodic_gdf_route import (
+    exact_gamma_gdf_blockers,
+    reject_gdf_fock_symmetry,
 )
 from .periodic.chi.scf import (
     _density_blocks_per_k,
@@ -162,6 +174,7 @@ from .periodic_convergence_auto import (
 )
 from .periodic_jk_method import (
     _AICCM_JK_METHODS,
+    _WIRE_VACUUM_BOX_HINT,
     _warn_legacy_aiccm_spelling,
     AICCM_VARIANT_OF,
     AICCM_VARIANT_ROUTES,
@@ -204,13 +217,65 @@ def _periodic_output_lifecycle(func):
         progress_token = _CPP_PROGRESS_HANDLER_SLOT.set(None)
         try:
             result = func(*args, **kwargs)
-        except Exception:
+        except Exception as exc:
             writer = _PERIODIC_OUTPUT_WRITER.get()
-            if writer is not None and writer.status == "running":
-                writer.crash()
+            failure_path = getattr(writer, "manifest_path", Path("output.system"))
+            try:
+                if isinstance(exc, NotImplementedError):
+                    if writer is None:
+                        # Capability checks can precede the full output plan.
+                        # Retain a minimal record through the output layer.
+                        from .output import PlannedFile
+
+                        stem = Path(os.fspath(kwargs.get("output", "output")))
+                        failure_path = stem_sibling(stem, ".system")
+                        basis = args[1] if len(args) > 1 else kwargs.get("basis")
+                        plan = OutputPlan(
+                            stem=stem, job_kind="periodic_scf",
+                            method=str(kwargs.get("method", "RHF")),
+                            basis=str(getattr(basis, "name", "<basis-free>")),
+                            functional=kwargs.get("functional"),
+                            files=(PlannedFile(
+                                role="manifest", path=failure_path,
+                                format="toml", always=True,
+                                description="Pre-compute capability refusal record.",
+                            ),),
+                        )
+                        writer = OutputWriter(
+                            plan, record_hostname=kwargs.get("record_hostname", True),
+                            extra_run_fields={
+                                "jk_method_requested": str(kwargs.get("jk_method", "auto")),
+                                "refusal_stage": "preflight",
+                            },
+                        )
+                if writer is not None:
+                    status = writer.result_status
+                    if status not in ("converged", "not_converged"):
+                        status = "refused" if isinstance(exc, NotImplementedError) else "crashed"
+                    writer.set_result_status(status, error=f"{type(exc).__name__}: {exc}")
+            except Exception as output_exc:
+                # Even warnings-as-errors must preserve the active exception.
+                with suppress(Exception):
+                    warn_output_failure(
+                        output_exc, failure_path, role="manifest",
+                        category=OutputFailureKind.manifest_recording,
+                    )
+            try:
+                if writer is not None and writer.status == "running":
+                    writer.crash()
+            except Exception as output_exc:
+                with suppress(Exception):
+                    warn_output_failure(
+                        output_exc, failure_path, role="manifest",
+                        category=OutputFailureKind.manifest_recording,
+                    )
             raise
         else:
             writer = _PERIODIC_OUTPUT_WRITER.get()
+            if writer is not None and result is not None:
+                converged = getattr(result, "converged", None)
+                if converged is not None:
+                    writer.set_result_status("converged" if converged else "not_converged")
             if writer is not None and writer.status == "running":
                 writer.finish()
             return result
@@ -609,7 +674,7 @@ def _periodic_gdf_estimate(
     functional: str | None,
     kpoints: object,
     aux_basis: str | None,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: float | None = None,
     n_ibz_kpoints: int | None = None,
     diis_subspace_size: int = 8,
     scf_options=None,
@@ -639,11 +704,12 @@ def _periodic_gdf_estimate(
         label_parts.append(str(functional))
     label_parts.append(resolved_jk.value)
     route_label = " ".join(label_parts)
-    # The space-group-reduced exchange build stores n_IBZ x n_k Lpq blocks,
-    # so charging it n_k^2 would abort a run that fits (measured on NaCl
-    # primitive / def2-SVP / def2-svp-jk at (4,4,4): the Lpq term is
-    # 15.95 GB unreduced vs 1.99 GB at n_IBZ = 8) and would print an
-    # estimate contradicting the cache actually allocated.
+    # The space-group-reduced exchange build stores n_IBZ x n_k Lpq blocks
+    # plus the n_k - n_IBZ Hartree diagonals outside the wedge, so charging
+    # it n_k^2 would abort a run that fits (measured on NaCl primitive /
+    # def2-SVP / def2-svp-jk at (4,4,4): the Lpq term is 15.95 GB unreduced
+    # vs 2.21 GB at n_IBZ = 8, 568 stored pairs against 4096) and would
+    # print an estimate contradicting the cache actually allocated.
     # The wedge never reduces the diagonal-only cache.
     n_ibz = (
         int(n_ibz_kpoints)
@@ -668,17 +734,24 @@ def _periodic_gdf_estimate(
         _plan_range_separated_gdf_cutoffs, _reciprocal_index_box_per_axis,
         default_aux_for, make_aux_basis_set,
     )
-    ke = float(rsgdf_ke_cutoff)
-    if not np.isfinite(ke) or ke <= 0:
+    # ``None`` requests no cutoff (GitLab IID 257): the 3D planner's own
+    # bound, else the legacy mesh. An explicit value is used exactly as
+    # given, as the SR/LR source does (GitLab IID 206).
+    ke = None if rsgdf_ke_cutoff is None else float(rsgdf_ke_cutoff)
+    if ke is not None and (not np.isfinite(ke) or ke <= 0):
         raise ValueError('periodic GDF reciprocal cutoff must be finite and positive')
     if int(system.dim) == 3:
         auxiliary = make_aux_basis_set(
             system.unit_cell_molecule(), aux_name=aux_basis or default_aux_for(basis.name),
         )
-        plan = _plan_range_separated_gdf_cutoffs(
-            system, basis, auxiliary, np.zeros(3), omega=.4, raw_integral_error=1e-10,
-        )
-        ke = max(ke, plan.ke_cutoff)
+        if ke is None:
+            ke = _plan_range_separated_gdf_cutoffs(
+                system, basis, auxiliary, np.zeros(3), omega=.4, raw_integral_error=1e-10,
+            ).ke_cutoff
+    elif ke is None:
+        from .periodic_k_gdf import RSGDF_KE_CUTOFF_DEFAULT
+
+        ke = RSGDF_KE_CUTOFF_DEFAULT
     reach = np.sqrt(2.0) * np.sqrt(ke)
     limits = _reciprocal_index_box_per_axis(system.lattice, reach, int(system.dim))
     # One additional reciprocal index covers canonical half-cell q shifts
@@ -983,11 +1056,17 @@ def _format_atomic_numbers(zs: Sequence[int]) -> str:
 def _bundled_pob_source_atoms(name: str) -> list:
     """Return bundled per-element POB source records, if available.
 
-    The checked-in source files cover all-electron POB elements (for example
-    Ni/O in P16) and let runtime ECP resolution avoid any network access. The
-    heavier POB ECP records are not bundled as source files in this tree; those
-    still require the legacy Bredow fetcher and therefore fail closed below if
-    they cannot be resolved.
+    The checked-in records under ``basis_library/sources/`` let runtime ECP
+    resolution avoid any network access. They cover the all-electron POB
+    elements (for example Ni/O in P16) and the heavy ECP-bearing records of
+    two families: pob-TZVP-rev2 (78 records, including Rb-I, Cs-Ba, Hf-Po and
+    La-Lu, bundled 2026-09-05) and pob-TZVP (48 records, including Rb-I,
+    bundled 2026-09-13; #228). When every element of a cell has a bundled
+    record, :func:`_resolve_ecp_data` returns from these records before it
+    reaches the legacy Bredow fetcher. The fetcher is reached only when the
+    cell contains an element with no bundled record, such as a pob-DZVP-rev2
+    heavy element or a lanthanide requested under ``pob-tzvp``. A resolution
+    failure there fails closed (#290).
     """
     source_dir_name = _POB_SOURCE_DIR_BY_BASIS.get(name.lower())
     if source_dir_name is None:
@@ -1198,6 +1277,137 @@ def _validate_smearing_dispatch(
         )
 
 
+#: The two producers of the neutral finite-BvK-torus (Gamma-CCM) Hamiltonian
+#: of ruling R1: ``variant="real-gamma"`` and ``variant="neutral-bloch"``.
+#: They are Fourier-related evaluations of one operator, seam included, and
+#: neither is the generic QVF band-property rebuild's operator.
+_NEUTRAL_TORUS_ROUTES = (
+    PeriodicJKMethod.AICCM2026DEV_A_REAL_GAMMA,
+    PeriodicJKMethod.NEUTRAL_BLOCH,
+)
+
+#: Routes whose QVF band-property payload is *projected from the accepted SCF
+#: state* by :func:`vibeqc.periodic_gdf_properties.gdf_properties_from_result`
+#: rather than rebuilt from a fresh operator.
+#:
+#: ``NEUTRAL_BLOCH`` belongs here because the Bloch producer of the neutral
+#: Gamma-CCM torus *is* the production multi-k GDF driver
+#: (``periodic.ccm.ri.run_ccm_rhf_gdf`` into ``run_krhf_periodic_gdf``), and
+#: its runner adapter returns that driver's own result object: the per-k
+#: eigenpairs, Fock, density and overlap the adapter projects are the ones the
+#: SCF converged, with the exchange q=0 seam already in them. Before this was
+#: wired up the route fell through to the generic rebuild instead, which cost
+#: 1322 s of four-centre real-space Fock build on LiH/STO-3G (1,1,1) and
+#: answered for an operator the run never solved.
+_QVF_ACCEPTED_STATE_PROPERTY_ROUTES = (
+    PeriodicJKMethod.GDF,
+    PeriodicJKMethod.NEUTRAL_BLOCH,
+)
+
+
+def _qvf_periodic_property_payload_skip_reason(
+    jk_method: PeriodicJKMethod,
+    *,
+    uses_external_xc: bool = False,
+    ecp_active: bool = False,
+) -> Optional[str]:
+    """Say why the generic QVF band-property rebuild must be skipped.
+
+    Returns ``None`` when the rebuild is valid, otherwise one sentence naming
+    the operator mismatch, for the ``.system`` manifest and the user-facing
+    omission notice. The caller must never drop DOS/PDOS/COOP/COHP without
+    reporting one of these: a reduced artifact is stated, never silent.
+
+    The generic rebuild assembles its *own* fixed-cutoff Ewald/HF-like
+    operator. Dronskowski & Bloechl (1993), Eqs. (4)-(12), derive COHP as an
+    exact rewriting of the band-structure energy ``E_band = sum_j f_j eps_j``
+    into ``COHP = H * N(eps)``; that identity holds only when ``H`` is the
+    operator that produced the reported ``eps_j`` and eigenvectors. A rebuilt
+    operator does not give an approximate COHP, it gives a quantity that is
+    not a COHP. So every mismatch below is fatal, not a tolerance.
+    """
+    if ecp_active:
+        # Unreachable from run_periodic_job, and kept fail-closed anyway.
+        #
+        # This branch reads as the cause of vibe-qc#32 ("ECP cells ship a QVF
+        # with no DOS"), but it is not, and has not been since the
+        # accepted-state adapter landed. ECP cells DO get the payload: an ECP
+        # cell only ever runs on jk_method='gdf'
+        # (`_periodic_route_applies_ecp`; every other route raises), and the
+        # GDF branch of run_periodic_job serves it from
+        # `periodic_gdf_properties.gdf_properties_from_result`, which projects
+        # the converged SCF eigenstates and never rebuilds F. Its Hcore(k)
+        # already carries the Bloch-summed lattice V_ECP and the Z_eff ionic
+        # frame (`periodic_k_gdf._ecp_lattice_blocks` / `_periodic_ecp_context`),
+        # and it does no 4-index real-space build at all -- which also disposes
+        # of the >40 min AgCl/pob-TZVP-rev2 payload cost recorded in #88.
+        #
+        # What must NOT be done here is the fix shape #32 proposes: feeding
+        # V_ECP and Z_eff into this rebuild. A V_ECP-carrying rebuild at a
+        # different cutoff and gauge than the SCF used breaks the same
+        # Eq. (10)-(12) sum rule as the bare-Z one. Rebuilding is the defect;
+        # bare Z is only its loudest symptom. If `_periodic_route_applies_ecp`
+        # is ever widened past GDF, route those cells to the accepted-state
+        # adapter -- do not teach this rebuild about ECPs.
+        return (
+            "the rebuilt property Hamiltonian uses bare nuclear charges with "
+            "no V_ECP, which on an ECP cell is an all-electron operator in a "
+            "valence basis; ECP cells are served by the accepted-state GDF "
+            "property adapter instead"
+        )
+    if uses_external_xc:
+        return (
+            "the rebuilt property Hamiltonian cannot reconstruct a full-grid "
+            "external XC potential, so it is not the operator this run "
+            "converged"
+        )
+    if jk_method == PeriodicJKMethod.BIPOLE:
+        return (
+            "the rebuilt property Hamiltonian is a fixed-cutoff Ewald/HF-like "
+            "operator, not the converged BIPOLE operator"
+        )
+    if jk_method == PeriodicJKMethod.AICCM2026DEV_B:
+        return (
+            "the rebuilt property Hamiltonian is a fixed-cutoff Ewald/HF-like "
+            "operator, not the executed finite-character AICCM2026DEV-B "
+            "operator"
+        )
+    if jk_method == PeriodicJKMethod.AICCM2026DEV_A:
+        return (
+            "the rebuilt property Hamiltonian is a fixed-cutoff Ewald/HF-like "
+            "operator, not the union-and-weight four-centre operator of the "
+            "2014 cyclic-cluster lineage this route evaluates"
+        )
+    if jk_method in _NEUTRAL_TORUS_ROUTES:
+        # Ruling R1 (2026-08-21, `vibeqc.periodic.ccm.route`): both Gamma-CCM
+        # producers evaluate the neutral finite-BvK-torus Hamiltonian, whose
+        # exchange channel carries the q=0 Madelung seam `K -> K + xi_N S D S`
+        # (`periodic.ccm.direct.ccm_exchange_q0_madelung` on the real-Gamma
+        # side, `madelung.apply_exxdiv_ewald_to_K` per k on the Bloch side).
+        # The rebuild below has no seam at all, and fits its Coulomb operator
+        # at its own 18-bohr cutoff rather than from the torus's fitted cderi,
+        # so the Eq. (10)-(12) sum rule fails for the same reason it fails on
+        # BIPOLE.
+        #
+        # It is also what made the Bloch runner arm spend 1322 s after its
+        # `.out` had already printed a finished `Job total`: LiH/STO-3G
+        # (1,1,1), variant="neutral-bloch", cProfile over run_periodic_job,
+        # of which a single `build_fock_2e_real_space` call was 1306.995 s
+        # (98.9 %). The cost never grew with the BvK mesh, because neither
+        # the 18-bohr cutoff nor the 8x8x8 DOS mesh is a function of it.
+        #
+        # `NEUTRAL_BLOCH` does not reach this branch from run_periodic_job --
+        # it returns the multi-k GDF driver's own accepted state, so it is
+        # served by `_QVF_ACCEPTED_STATE_PROPERTY_ROUTES` and keeps its DOS --
+        # but, like the ECP branch above, it stays fail-closed here.
+        return (
+            "the rebuilt property Hamiltonian is a fixed-cutoff Ewald/HF-like "
+            "operator with no exchange q=0 Madelung seam, not the neutral "
+            "finite-BvK-torus Hamiltonian this route evaluates (ruling R1)"
+        )
+    return None
+
+
 def _qvf_periodic_property_payload_supported(
     jk_method: PeriodicJKMethod,
     *,
@@ -1206,25 +1416,16 @@ def _qvf_periodic_property_payload_supported(
 ) -> bool:
     """Return whether the generic QVF band-property rebuild is valid.
 
-    The generic rebuild assembles its own fixed-cutoff Ewald/HF-like
-    operator. That is neither the converged BIPOLE operator nor the executed
-    finite-character AICCM2026DEV-B operator. It also has no way to rebuild a
-    full-grid external XC potential, so those finite but unrelated
-    DOS/PDOS/COOP/COHP and Mayer arrays must be omitted.
+    Thin boolean view of :func:`_qvf_periodic_property_payload_skip_reason`;
+    callers that report the omission to the user want the reason instead.
     """
-    if ecp_active:
-        # The property Hamiltonian is rebuilt from bare nuclear charges
-        # with no V_ECP, so DOS / PDOS / COOP / COHP for an ECP cell would
-        # be an all-electron-in-valence-basis artefact (#88). It is also a
-        # 4-index real-space build that dwarfs the SCF on dense-core ECP
-        # bases (AgCl / pob-TZVP-rev2: 1 min SCF, >40 min payload). Skip
-        # it until the payload consumes the ECP operator.
-        return False
-    if uses_external_xc:
-        return False
-    return jk_method not in (
-        PeriodicJKMethod.BIPOLE,
-        PeriodicJKMethod.AICCM2026DEV_B,
+    return (
+        _qvf_periodic_property_payload_skip_reason(
+            jk_method,
+            uses_external_xc=uses_external_xc,
+            ecp_active=ecp_active,
+        )
+        is None
     )
 
 
@@ -1377,6 +1578,7 @@ def _runner_bloch_kmesh(
 ):
     """Materialize the high-level runner's k-point input as a BlochKMesh."""
     from ._vibeqc_core import monkhorst_pack as _mp
+    from .kpoints import _integer_counts
 
     if kpoints is None:
         return _mp(system, [1, 1, 1])
@@ -1390,7 +1592,7 @@ def _runner_bloch_kmesh(
         mesh = list(kpoints)
     else:
         mesh = [kpoints, kpoints, kpoints]
-    return _mp(system, [int(n) for n in mesh])
+    return _mp(system, _integer_counts(mesh, name="kpoints mesh"))
 
 
 def _remap_kpoints_after_primitive_reduction(
@@ -1690,6 +1892,10 @@ def _infer_aiccm_scf_reference(
             return "UKS" if is_ks else "UHF"
         return "RKS" if is_ks else "RHF"
     key = str(scf_reference).strip().lower()
+    if key in ("rhf", "uhf"):
+        if is_ks:
+            raise ValueError("explicit RHF/UHF chi reference does not accept a functional")
+        return key.upper()
     if key == "rohf":
         if is_ks:
             raise ValueError(
@@ -1708,7 +1914,7 @@ def _infer_aiccm_scf_reference(
     raise ValueError(
         f"run_periodic_job: unknown scf_reference={scf_reference!r} for "
         "method='aiccm'. Valid: None (inferred from functional and the "
-        "system's multiplicity/electron parity), 'rohf', 'roks'."
+        "system's multiplicity/electron parity), 'rhf', 'uhf', 'rohf', 'roks'."
     )
 
 
@@ -2218,215 +2424,22 @@ def _periodic_eigenvalue_channels(result):
 def _band_summary(result) -> str:
     """Print band extrema and gap for multi-k periodic jobs.
 
-    Scans all k-point eigenstates and reports the valence-band
-    maximum (VBM), conduction-band minimum (CBM), and the
-    associated direct/indirect band gaps across the mesh.
+    The edges come from :func:`vibeqc.band_edges.result_band_edges`, the
+    classifier the ``.system`` manifest, :func:`vibeqc.frontier_bands` and
+    the semiempirical k-route fields share (#176); the wording lives in
+    :mod:`vibeqc.output.formats.band_edges`.
     """
-    channels = _periodic_eigenvalue_channels(result)
-    if not channels:
-        return ""
-    first_energies = channels[0][1]
-    if not isinstance(first_energies, (list, tuple)) or len(first_energies) <= 1:
-        return ""
-    n_k = len(first_energies)
-    if any(
-        not isinstance(energies, (list, tuple)) or len(energies) != n_k
-        for _, energies, _, _ in channels
-    ):
-        return ""
-    restricted_open = str(
-        getattr(result, "method", "") or ""
-    ).strip().lower() in ("rohf", "roks")
+    from .band_edges import result_band_edges
+
+    edges = result_band_edges(result)
+    k_ref = getattr(result, "kpoints", None)
     # Absent on the lightweight result shims used by unit fixtures; a result
     # that does not carry convergence state is treated as converged.
-    converged = bool(getattr(result, "converged", True))
-    for _, _, occupations, max_occ in channels:
-        if not isinstance(occupations, (list, tuple)) or len(occupations) != n_k:
-            return ""
-        for occupation_block in occupations:
-            occ = np.asarray(occupation_block, dtype=float)
-            if restricted_open:
-                distance_to_integer_class = np.min(
-                    np.abs(occ[..., None] - np.array([0.0, 1.0, 2.0])),
-                    axis=-1,
-                )
-                fractional = np.any(distance_to_integer_class > 1e-8)
-            else:
-                fractional = np.any(
-                    (occ > 1e-8) & (occ < max_occ - 1e-8)
-                )
-            if fractional:
-                block = HeaderlessBlock(
-                    "Band extrema (multi-k)",
-                    [HeaderlessColumn("<")],
-                    body_indent=2,
-                    annotation_gutter=2,
-                )
-                # "fractionally occupied / smeared" is a statement about the
-                # material. A non-converged SCF returns last-iteration
-                # eigenvalues, and the fill attached to them is an artefact of
-                # an unconverged Fock, not an occupation class -- reporting it
-                # as one is how the 2D slab V_ne(k) defect was read as "h-BN
-                # is band-overlapping" (GitLab #106, #85). Say what actually
-                # happened instead.
-                if converged:
-                    block.add_row(
-                        "occupation class = fractionally occupied / smeared",
-                        annotation=(
-                            "zero-temperature band edges and metallicity "
-                            "not classified"
-                        ),
-                    )
-                else:
-                    block.add_row(
-                        "SCF not converged - band edges not classified",
-                        annotation=(
-                            "fractional frontier occupations here are an "
-                            "artefact of the unconverged Fock"
-                        ),
-                    )
-                return block.render(active_policy()) + "\n"
-    # Gather occupied/virtual indices per k-point from occupation thresholds.
-    vbm = -1e300  # highest occupied energy across all k
-    cbm = +1e300  # lowest unoccupied energy across all k
-    vbm_k = -1
-    cbm_k = -1
-    direct_gap_min = +1e300
-    direct_gap_min_k = -1
-
-    for k_idx in range(n_k):
-        occupied_energies = []
-        virtual_energies = []
-        for _, energies, occupations, max_occ in channels:
-            if not isinstance(occupations, (list, tuple)) or len(occupations) != n_k:
-                return ""
-            eps = np.asarray(energies[k_idx], dtype=float)
-            occ = np.asarray(occupations[k_idx], dtype=float)
-            if eps.shape != occ.shape:
-                return ""
-            occ_mask = occ > 1e-8
-            # A singly occupied ROHF/ROKS spatial orbital is an integer
-            # occupation class, not a thermally fractional virtual state.
-            virt_mask = (
-                occ < 1e-8
-                if restricted_open
-                else occ < max_occ - 1e-8
-            )
-            occupied_energies.extend(eps[occ_mask].tolist())
-            virtual_energies.extend(eps[virt_mask].tolist())
-        # The VBM and CBM are independent maxima over the whole mesh, so a k
-        # point contributes whichever half it has. Under one global Fermi
-        # level (#85) a band-overlap mesh can leave a k point with NO occupied
-        # states -- every band there sits above mu -- and skipping the whole k
-        # would then hide its virtual states from the CBM search. On the
-        # two-k reproducer that reported the CBM as +0.80 Ha at the occupied k
-        # instead of -0.20 Ha at the empty one: a 1.300000-Ha "direct" gap in
-        # place of the true 0.300000-Ha indirect one.
-        ho = float(np.max(occupied_energies)) if occupied_energies else None
-        lu = float(np.min(virtual_energies)) if virtual_energies else None
-        if ho is not None and ho > vbm:
-            vbm = ho
-            vbm_k = k_idx
-        if lu is not None and lu < cbm:
-            cbm = lu
-            cbm_k = k_idx
-        # The DIRECT gap is a per-k quantity and is undefined at a k point
-        # that has no occupied or no virtual state; only that half is skipped.
-        # Never clamped at zero. A negative per-k direct gap means the
-        # occupation classification placed a higher state below a lower
-        # one at this k; that is a defect to surface, not to hide
-        # (CLAUDE.md section 7).
-        if ho is None or lu is None:
-            continue
-        direct_gap = lu - ho
-        if direct_gap < direct_gap_min:
-            direct_gap_min = direct_gap
-            direct_gap_min_k = k_idx
-
-    if vbm_k < 0 or cbm_k < 0:
-        return ""
-
-    # Reported unclamped. When the CBM lies *below* the VBM, the band
-    # ordering across the mesh is inverted and the truthful report is the
-    # negative number: clamping it to 0.000000 papers over exactly the
-    # defect the reader needs to see (CLAUDE.md section 7) and silently
-    # defeats any regression test written against this line. The hBN
-    # sto-3g slab-GDF reproducer printed 0.000000 Ha while its true
-    # CBM - VBM was -0.1201748057 Ha (-3.270 eV).
-    indirect_gap = cbm - vbm
-    block = HeaderlessBlock(
-        "Band extrema (multi-k)",
-        [HeaderlessColumn("<")],
-        body_indent=2,
-        annotation_gutter=2,
+    return band_extrema_block(
+        edges,
+        converged=bool(getattr(result, "converged", True)),
+        kpoints=k_ref if isinstance(k_ref, (list, tuple)) else None,
     )
-
-    def _energy_pair(value: float, *, width: int, precision: int) -> str:
-        return (
-            f"{render_energy(value, width=width, precision=precision, unit='Ha')}"
-            " Ha  ("
-            f"{render_energy(value, width=8, precision=3, unit='eV')} eV)"
-        )
-
-    k_ref = getattr(result, "kpoints", None)
-    if k_ref is not None and isinstance(k_ref, (list, tuple)):
-        _fmt_k = lambda k: ", ".join(f"{x:+.4f}" for x in k)
-        if 0 <= vbm_k < len(k_ref):
-            block.add_row(
-                f"VBM     = {_energy_pair(vbm, width=14, precision=10)}",
-                annotation=f"at k = [{_fmt_k(k_ref[vbm_k])}]",
-            )
-        else:
-            block.add_row(
-                f"VBM     = {_energy_pair(vbm, width=14, precision=10)}",
-                annotation=f"at k_idx = {vbm_k}",
-            )
-        if 0 <= cbm_k < len(k_ref):
-            block.add_row(
-                f"CBM     = {_energy_pair(cbm, width=14, precision=10)}",
-                annotation=f"at k = [{_fmt_k(k_ref[cbm_k])}]",
-            )
-        else:
-            block.add_row(
-                f"CBM     = {_energy_pair(cbm, width=14, precision=10)}",
-                annotation=f"at k_idx = {cbm_k}",
-            )
-    else:
-        block.add_row(
-            f"VBM     = {_energy_pair(vbm, width=14, precision=10)}",
-            annotation=f"(k_idx = {vbm_k})",
-        )
-        block.add_row(
-            f"CBM     = {_energy_pair(cbm, width=14, precision=10)}",
-            annotation=f"(k_idx = {cbm_k})",
-        )
-    gap_type = "direct" if vbm_k == cbm_k else "indirect"
-    block.add_row(
-        f"gap ({gap_type}) = "
-        f"{_energy_pair(indirect_gap, width=10, precision=6)}",
-        annotation=(
-            "negative: band ordering inverted across the mesh"
-            if indirect_gap < 0.0
-            else None
-        ),
-    )
-    if direct_gap_min_k >= 0:
-        block.add_row(
-            "direct gap (min) = "
-            f"{_energy_pair(direct_gap_min, width=10, precision=6)}",
-            annotation=f"(k_idx = {direct_gap_min_k})",
-        )
-    else:
-        # No k point carries both an occupied and a virtual state, so the
-        # direct gap is undefined everywhere on the mesh. Say that rather than
-        # rendering the +1e300 sentinel as a number (#85).
-        block.add_row(
-            "direct gap (min) = n/a",
-            annotation=(
-                "no k-point has both an occupied and a virtual state"
-            ),
-        )
-    return block.render(active_policy()) + "\n"
 
 
 def _mo_summary(result, n_show: int = 20) -> str:
@@ -3590,6 +3603,55 @@ def _require_artifact_electron_count(
         )
 
 
+def _qvf_grid_origin_bohr(
+    system: PeriodicSystem,
+    lattice_bohr: np.ndarray | None = None,
+) -> np.ndarray:
+    """Corner of a periodic artifact grid box, in bohr.
+
+    Every density evaluator here sums AO images along the ``dim`` periodic
+    axes only, which is right: a slab is not periodic along a3. The
+    consequence is that along a synthesized axis the box itself has to
+    contain the atoms, because nothing images them back into it. Slabs and
+    chains are conventionally written straddling the origin -- vibe-qc's own
+    H2 slab fixture sits at z = -0.7 and +0.7 bohr -- so a box pinned at
+    ``(0, 0, 0)`` held only the upper half and the rest of the density was
+    silently absent: 1.07 of 2.0 electrons, refused as an uncertifiable grid
+    (GitLab #45).
+
+    Centre the box on the atoms along each non-periodic axis and leave it
+    alone otherwise, so a fully periodic ``dim=3`` cell keeps the origin it
+    has always had.
+    """
+    L = np.asarray(
+        system.lattice if lattice_bohr is None else lattice_bohr,
+        dtype=float,
+    )
+    dim = max(0, min(3, int(getattr(system, "dim", 3))))
+    if dim >= 3 or L.shape != (3, 3) or not np.isfinite(L).all():
+        return np.zeros(3, dtype=float)
+    try:
+        coords = np.asarray(
+            [list(atom.xyz) for atom in system.unit_cell],
+            dtype=float,
+        ).reshape(-1, 3)
+    except Exception:
+        return np.zeros(3, dtype=float)
+    if coords.shape[0] == 0 or not np.isfinite(coords).all():
+        return np.zeros(3, dtype=float)
+    try:
+        frac = np.linalg.solve(L, coords.T)
+    except np.linalg.LinAlgError:
+        return np.zeros(3, dtype=float)
+    shift = np.zeros(3, dtype=float)
+    for axis in range(dim, 3):
+        lo = float(frac[axis].min())
+        hi = float(frac[axis].max())
+        shift[axis] = 0.5 - 0.5 * (lo + hi)
+    origin = -(L @ shift)
+    return np.where(np.abs(origin) < 1.0e-14, 0.0, origin)
+
+
 def _converged_periodic_density_grid_for_artifact(
     evaluate_at_radius,
     *,
@@ -3601,8 +3663,15 @@ def _converged_periodic_density_grid_for_artifact(
     charge_tolerance: float = 5.0e-3,
     image_l1_tolerance: float = 1.0e-5,
     image_max_tolerance: float = 1.0e-6,
+    periodic_dim: int | None = None,
 ) -> tuple[np.ndarray, object]:
-    """Certify an artifact grid against AO-image and charge convergence."""
+    """Certify an artifact grid against AO-image and charge convergence.
+
+    ``periodic_dim`` is used only to explain a failure. A grid that is short
+    of charge on a slab or a chain is usually short because the box does not
+    reach the density, not because the mesh is coarse, and the two call for
+    opposite remedies (#45).
+    """
     lattice = np.asarray(lattice_bohr, dtype=float)
     if lattice.shape != (3, 3) or not np.isfinite(lattice).all():
         raise ValueError("periodic density certification requires a finite 3x3 lattice")
@@ -3651,12 +3720,32 @@ def _converged_periodic_density_grid_for_artifact(
                     or abs(grid_electrons - float(analytic_electrons))
                     > float(charge_tolerance)
                 ):
+                    missing = float(analytic_electrons) - grid_electrons
+                    if (
+                        periodic_dim is not None
+                        and int(periodic_dim) < 3
+                        and missing > float(charge_tolerance)
+                    ):
+                        remedy = (
+                            f"the grid is missing {missing:.10f} electrons "
+                            f"and the system is periodic in "
+                            f"{int(periodic_dim)} of 3 directions, so charge "
+                            "that lies outside the box along a non-periodic "
+                            "axis is not imaged back into it; widen that "
+                            "lattice vector until the cell contains the whole "
+                            "slab and its AO tails. Refining "
+                            "density_spacing_bohr cannot recover it"
+                        )
+                    else:
+                        remedy = (
+                            "decrease density_spacing_bohr to refine the "
+                            "artifact grid"
+                        )
                     raise ValueError(
                         f"{label} primitive-cell grid integral="
                         f"{grid_electrons:.10f}, expected "
                         f"{float(analytic_electrons):.10f} within "
-                        f"{float(charge_tolerance):.1e}; decrease "
-                        "density_spacing_bohr to refine the artifact grid"
+                        f"{float(charge_tolerance):.1e}; {remedy}"
                     )
                 return rho, metadata
         previous = rho
@@ -3705,6 +3794,7 @@ def _converged_lattice_density_grid_for_artifact(
             system,
             density_set,
             grid_shape=grid_shape,
+            origin=_qvf_grid_origin_bohr(system),
             spacing_bohr=spacing_bohr,
             ao_image_radius=radius,
         )
@@ -3722,6 +3812,7 @@ def _converged_lattice_density_grid_for_artifact(
         analytic_electrons=analytic_electrons,
         label="periodic density artifact",
         max_image_radius=max_image_radius,
+        periodic_dim=int(getattr(system, "dim", 3)),
         charge_tolerance=charge_tolerance,
         image_l1_tolerance=image_l1_tolerance,
         image_max_tolerance=image_max_tolerance,
@@ -3783,6 +3874,19 @@ def _converged_bvk_density_grid_for_artifact(
         expected_shape = (len(weighted_density), int(basis.nbasis), int(basis.nbasis))
         if overlaps.shape != expected_shape or not np.isfinite(overlaps).all():
             raise ValueError("returned BvK density requires aligned finite Bloch overlaps")
+        fractional = np.asarray(kpoints_cart) @ np.asarray(system.lattice) / (2. * np.pi)
+        for index, overlap in enumerate(overlaps):
+            scale = max(1., float(np.max(np.abs(overlap))))
+            if np.max(np.abs(overlap - overlap.conj().T)) > 5e-11 * scale:
+                raise ValueError("returned BvK overlap is not Hermitian")
+            distances = np.max(
+                np.abs((fractional + fractional[index] + .5) % 1. - .5), axis=1,
+            )
+            partner = int(np.argmin(distances))
+            if distances[partner] > 1e-9 or np.max(
+                np.abs(overlaps[partner] - overlap.conj())
+            ) > 5e-10 * scale:
+                raise ValueError("returned BvK overlaps violate time reversal")
         charge = sum(
             np.einsum("mn,nm->", density, overlap)
             for density, overlap in zip(weighted_density, overlaps)
@@ -3802,6 +3906,7 @@ def _converged_bvk_density_grid_for_artifact(
             weighted_density,
             kpoints_cart,
             grid_shape=grid_shape,
+            origin=_qvf_grid_origin_bohr(system),
             spacing_bohr=spacing_bohr,
             ao_image_radius=radius,
         )
@@ -3819,6 +3924,7 @@ def _converged_bvk_density_grid_for_artifact(
         analytic_electrons=analytic_electrons,
         label="periodic BvK density artifact",
         max_image_radius=max_image_radius,
+        periodic_dim=int(getattr(system, "dim", 3)),
         charge_tolerance=charge_tolerance,
         image_l1_tolerance=image_l1_tolerance,
         image_max_tolerance=image_max_tolerance,
@@ -3877,6 +3983,7 @@ def _converged_gamma_density_grid_for_artifact(
             grid_shape,
             system=system,
             ao_image_radius=radius,
+            origin_bohr=_qvf_grid_origin_bohr(system, lattice_bohr),
         )
 
     rho, voxel_vectors = _converged_periodic_density_grid_for_artifact(
@@ -3886,6 +3993,7 @@ def _converged_gamma_density_grid_for_artifact(
         analytic_electrons=analytic_electrons,
         label="Gamma density artifact",
         max_image_radius=max_image_radius,
+        periodic_dim=int(getattr(system, "dim", 3)),
         charge_tolerance=charge_tolerance,
         image_l1_tolerance=image_l1_tolerance,
         image_max_tolerance=image_max_tolerance,
@@ -4017,6 +4125,9 @@ def _exact_periodic_density_grid_artifact(
             )
         if metadata_count == 3:
             assert kpoints_cart is not None and weights is not None
+            declared_mesh = getattr(result, "density_lattice_mesh", None)
+            if declared_mesh is not None and tuple(declared_mesh) != tuple(bvk_mesh):
+                raise ValueError("returned density mesh contradicts the requested BvK mesh")
             # Legacy Gamma-local BIPOLE densities are a finite-support real-
             # space representation, not a BvK-periodic inverse fold.  Their
             # exact grid remains the direct returned-block contraction.
@@ -4045,11 +4156,12 @@ def _exact_periodic_density_grid_artifact(
                         spacing_bohr=spacing_bohr,
                         expected_electrons=expected_electrons,
                         component_density_sets=exact,
-                        overlap_per_k=(
-                            getattr(result, "overlap", None)
-                            if getattr(result, "density_lattice_mesh", None)
-                            == tuple(bvk_mesh) else None
-                        ),
+                        # Refolding certifies the returned BvK representation
+                        # inside the helper. Its padded density cells are not
+                        # the producer's finite overlap support, including for
+                        # physical-domain BIPOLE. Validate charge with the
+                        # overlap that normalized the actual SCF density.
+                        overlap_per_k=getattr(result, "overlap", None),
                     ),
                     voxel_vectors,
                 )
@@ -4174,6 +4286,7 @@ def _evaluate_density_matrix_on_lattice_grid(
     *,
     system: PeriodicSystem | None = None,
     ao_image_radius: int = 1,
+    origin_bohr: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate a one-cell AO density matrix on a lattice-spanning grid.
 
@@ -4181,6 +4294,15 @@ def _evaluate_density_matrix_on_lattice_grid(
     store per-voxel vectors as rows, so the returned ``voxel_vectors`` are
     ``lattice.T / shape`` and ``shape[i] * voxel_vectors[i]`` exactly spans
     lattice vector ``i``.
+
+    ``origin_bohr`` places the corner of that box. It only matters on a
+    non-periodic axis: the AO image sum translates along the ``dim`` periodic
+    axes only, so along a synthesized axis the box has to physically contain
+    the atoms and nothing else puts them there. A slab written in the natural
+    convention straddles ``z = 0``, so with the corner pinned at the Cartesian
+    origin half the layer fell outside the box and its density was silently
+    absent (GitLab #45). Defaults to the origin, leaving a ``dim=3`` bulk grid
+    bit-identical.
     """
     L_bohr = np.asarray(lattice_bohr, dtype=float)
     if L_bohr.shape != (3, 3):
@@ -4189,6 +4311,11 @@ def _evaluate_density_matrix_on_lattice_grid(
     if min(nx, ny, nz) < 1:
         raise ValueError("periodic QVF lattice grid shape must be positive")
     voxel_vectors = L_bohr.T / np.array([nx, ny, nz], dtype=float)[:, None]
+    grid_origin = (
+        np.zeros(3, dtype=float)
+        if origin_bohr is None
+        else np.asarray(origin_bohr, dtype=float).reshape(3)
+    )
     D = _real_block_for_periodic_output(density, label="periodic QVF density")
     if D.ndim != 2:
         raise ValueError(
@@ -4212,7 +4339,7 @@ def _evaluate_density_matrix_on_lattice_grid(
                 iz.astype(float) / float(nz),
             ]
         )
-        points = frac @ L_bohr.T
+        points = frac @ L_bohr.T + grid_origin
         chi = _evaluate_ao_for_periodic_qvf(
             basis,
             system,
@@ -4262,8 +4389,19 @@ def _evaluate_orbital_on_lattice_grid(
     *,
     system: PeriodicSystem | None = None,
     ao_image_radius: int = 1,
+    origin_bohr: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Evaluate one AO coefficient vector on a lattice-spanning grid."""
+    """Evaluate one AO coefficient vector on a lattice-spanning grid.
+
+    ``origin_bohr`` places the corner of that box. It only matters on a
+    non-periodic axis: the AO image sum translates along the ``dim`` periodic
+    axes only, so along a synthesized axis the box has to physically contain
+    the atoms and nothing else puts them there. A slab written in the natural
+    convention straddles ``z = 0``, so with the corner pinned at the Cartesian
+    origin half the layer fell outside the box and its density was silently
+    absent (GitLab #45). Defaults to the origin, leaving a ``dim=3`` bulk grid
+    bit-identical.
+    """
     L_bohr = np.asarray(lattice_bohr, dtype=float)
     if L_bohr.shape != (3, 3):
         raise ValueError("periodic QVF lattice grid requires a 3x3 lattice")
@@ -4271,6 +4409,11 @@ def _evaluate_orbital_on_lattice_grid(
     if min(nx, ny, nz) < 1:
         raise ValueError("periodic QVF lattice grid shape must be positive")
     voxel_vectors = L_bohr.T / np.array([nx, ny, nz], dtype=float)[:, None]
+    grid_origin = (
+        np.zeros(3, dtype=float)
+        if origin_bohr is None
+        else np.asarray(origin_bohr, dtype=float).reshape(3)
+    )
     coeff = np.asarray(coefficients, dtype=np.complex128).reshape(-1)
     if coeff.shape[0] != int(basis.nbasis):
         raise ValueError(
@@ -4294,7 +4437,7 @@ def _evaluate_orbital_on_lattice_grid(
                 iz.astype(float) / float(nz),
             ]
         )
-        points = frac @ L_bohr.T
+        points = frac @ L_bohr.T + grid_origin
         chi = _evaluate_ao_for_periodic_qvf(
             basis,
             system,
@@ -4627,6 +4770,7 @@ def _aiccm_b_qvf_gamma_orbital_grids(
             lattice_bohr,
             shape,
             system=super_system,
+            origin_bohr=_qvf_grid_origin_bohr(super_system, lattice_bohr),
         )
         if band_index == n_occ - 1:
             role = "HOMO"
@@ -4638,7 +4782,7 @@ def _aiccm_b_qvf_gamma_orbital_grids(
             {
                 "label": f"chi-CCM Gamma {role}",
                 "data": psi,
-                "origin": np.zeros(3, dtype=float),
+                "origin": _qvf_grid_origin_bohr(super_system, lattice_bohr),
                 "span": voxel_vectors,
                 "band_index": int(band_index),
                 "energy_eh": (
@@ -5402,6 +5546,26 @@ def _periodic_shell_gamma_form_name(form) -> str | None:
     raise ValueError(f"unrecognised periodic shell gamma form: {form!r}")
 
 
+def _periodic_placeholder_repulsive_pairs(method_key, system):
+    """Element pairs of ``system`` whose DFTB repulsive is the ``A/R^12``
+    placeholder, or ``None`` for a route with no repulsive table.
+
+    Computed from the same parameter set and probe the engine warns from
+    (:func:`vibeqc.semiempirical.dftb0.warn_placeholder_repulsives`), before
+    compute, so the ``.system`` manifest, the ``.out`` options block and the
+    QVF job spec carry the pairs a reader of stderr would have seen (#345),
+    and a run that crashes still carries them.
+    """
+    if method_key not in ("dftb0", "scc_dftb"):
+        return None
+    from vibeqc.semiempirical.dftb0 import placeholder_repulsive_record
+    from vibeqc.semiempirical.parameters import default_parameters
+
+    return placeholder_repulsive_record(
+        default_parameters(), [atom.Z for atom in system.unit_cell]
+    )
+
+
 def _run_periodic_semiempirical_engine(
     system: PeriodicSystem,
     route_plan,
@@ -5806,6 +5970,21 @@ def _run_periodic_semiempirical_job(
     install_progress_handler(
         lambda fields: _output_writer.update_progress(**fields)
     )
+    # The qualifications this run rests on, stamped before compute through
+    # the same .system extension point AICCM uses for its ``method_status``,
+    # so a crashed run carries them too: the route maturity from the one
+    # canonical vocabulary (#150) and, for a DFTB route, the element pairs
+    # whose repulsive is the A/R^12 placeholder (#345). The same fields are
+    # rendered in the .out options block below (#318) and archived in the
+    # QVF job spec, so no consumer has to keep a stderr sidecar to learn
+    # that an EOS curve is placeholder physics.
+    _placeholder_pairs = _periodic_placeholder_repulsive_pairs(method_key, system)
+    _record_fields = semiempirical_record_fields(
+        route_maturity=route_plan.maturity,
+        route_status=route_plan.status_route,
+        placeholder_pairs=_placeholder_pairs,
+    )
+    _output_writer.update_run_fields(_record_fields)
     try:
         result = _run_periodic_semiempirical_engine(
             system,
@@ -5815,6 +5994,11 @@ def _run_periodic_semiempirical_job(
             kpoints=kpoints,
             smearing_temperature_hartree=smearing_temperature_hartree,
         )
+        _converged = _periodic_semiempirical_attr(result, "converged")
+        if _converged is not None:
+            _output_writer.set_result_status(
+                "converged" if _converged else "not_converged"
+            )
         parameter_identity = getattr(result, "parameter_identity", None)
         parameter_sha256 = getattr(result, "parameter_sha256", None)
         if (parameter_identity is None) != (parameter_sha256 is None):
@@ -5941,6 +6125,15 @@ def _run_periodic_semiempirical_job(
             write(_system_summary(system))
             write(section_header("Semiempirical options", width=56))
             write(f"    method              = {method_key}\n")
+            # Route maturity (#318) and placeholder repulsive pairs (#345):
+            # the same values the .system [run] section and the QVF job
+            # spec carry, spelled by vibeqc.output.formats.semiempirical_record.
+            write(
+                format_semiempirical_record_lines(
+                    route_maturity=route_plan.maturity,
+                    placeholder_pairs=_placeholder_pairs,
+                )
+            )
             if full_k_route:
                 write(f"    boundary            = {route_plan.boundary}\n")
                 n_kpoints = _periodic_semiempirical_attr(result, "n_kpoints")
@@ -6087,6 +6280,7 @@ def _run_periodic_semiempirical_job(
                 optimize_cell,
                 optimize_periodic_positions,
             )
+            _output_writer.set_result_status("not_reported")
             from vibeqc.semiempirical.routes import (
                 plan_periodic_semiempirical_route,
             )
@@ -6200,6 +6394,9 @@ def _run_periodic_semiempirical_job(
                     max_steps=int(optimize_max_iter),
                     route_plan=opt_route_plan,
                 )
+            _output_writer.set_result_status(
+                "converged" if opt_result.converged else "not_converged"
+            )
             if parameter_identity is not None and (
                 opt_result.parameter_identity != parameter_identity
                 or opt_result.parameter_sha256 != parameter_sha256
@@ -6309,16 +6506,22 @@ def _run_periodic_semiempirical_job(
                     "job_type": "periodic",
                     "method": method_key,
                     "basis": basis_label or "",
-                    **(
-                        {
-                            "options": {
+                    "options": {
+                        # The canonical route maturity (#150) and the
+                        # placeholder repulsive pairs of a DFTB route (#345):
+                        # the archived run states the qualifications it
+                        # rests on, the same values the .system [run]
+                        # section and the .out options block carry.
+                        **_record_fields,
+                        **(
+                            {
                                 "parameter_identity": parameter_identity,
                                 "parameter_sha256": parameter_sha256,
                             }
-                        }
-                        if parameter_identity is not None
-                        else {}
-                    ),
+                            if parameter_identity is not None
+                            else {}
+                        ),
+                    },
                 },
                 symmetry_data=_qvf_symmetry_se,
                 run_record=assemble_run_record(
@@ -6367,6 +6570,74 @@ def _finalize_periodic_checkpoint(
     )
 
 
+def _validate_fragmo_request(
+    fragments,
+    system: PeriodicSystem,
+    *,
+    reduce_to_primitive: bool,
+    symmetry,
+):
+    """Validate a FRAGMO partition and return it in normalized form.
+
+    Split out of the pre-dispatch guess block so that a route which cannot
+    implement FRAGMO refuses the selector first (#325). Asking a caller for a
+    ``fragments=`` list that the selected route would reject anyway names the
+    wrong remedy, so this runs only once route admission has passed.
+    """
+    from .guess_fragmo import _normalize_fragments, _validate_partition
+
+    fragments = _normalize_fragments(fragments)
+    _validate_partition(fragments, system.unit_cell_molecule())
+    if reduce_to_primitive or symmetry is True or str(symmetry).lower() in ("auto", "reduce"):
+        raise ValueError("FRAGMO atom/image ownership requires the input cell; disable primitive reduction")
+    return fragments
+
+
+def _run_aiccm_neutral_ri_correlation(treatment, ccm, reference, cderi, *,
+                                      open_shell):
+    """The neutral-RI ``treatment`` on ``reference`` and the ``cderi`` it rode.
+
+    Returns ``(result, E_corr, E_total)`` in TOTAL cyclic-cluster Hartree (the
+    caller divides by ``N_c``). Shared by the ``variant="real-gamma"`` arm
+    (its own direct-torus SCF and the array it converged on) and the
+    ``variant="neutral-bloch"`` arm (the Bloch SCF folded to real
+    supercell-Gamma orbitals, with the cderi folded from the driver's own
+    fit; Theorem 1, ``periodic/ccm/bloch_reference.py``). Both are the
+    neutral construction, so both owe the neutral-RI citation lineage rather
+    than the bare four-centre one (ruling R1), which the drivers stamp.
+    """
+    if treatment == "dlpno-mp2":
+        # The DLPNO drivers already take (ccm, reference, cderi), so they
+        # need no on-reference wrapper: the retained L is handed straight
+        # in. At the default zero truncations these reproduce the canonical
+        # RI correlation.
+        if open_shell:
+            from .periodic.ccm.dlpno_ump2 import ccm_dlpno_ump2 as corr_on_ref
+        else:
+            from .periodic.ccm.dlpno import ccm_dlpno_mp2 as corr_on_ref
+    elif treatment == "dlpno-ccsd":
+        if open_shell:
+            from .periodic.ccm.dlpno_uccsd import ccm_dlpno_uccsd as corr_on_ref
+        else:
+            from .periodic.ccm.dlpno_ccsd import ccm_dlpno_ccsd as corr_on_ref
+    elif treatment == "ccsd":
+        from .periodic.ccm.ccsd import run_ccm_ri_ccsd_on_reference as corr_on_ref
+    else:
+        from .periodic.ccm.mp2 import run_ccm_ri_mp2_on_reference as corr_on_ref
+    if treatment.startswith("dlpno-"):
+        corr = corr_on_ref(ccm, reference, cderi=cderi)
+    else:
+        corr = corr_on_ref(ccm, reference, cderi)
+    # The DLPNO MP2 results spell it e_corr, the canonical and CCSD ones
+    # e_correlation. Read whichever this driver carries rather than
+    # assuming, so a rename surfaces as an AttributeError here instead of a
+    # silently wrong energy.
+    e_corr = getattr(corr, "e_correlation", None)
+    if e_corr is None:
+        e_corr = corr.e_corr
+    return corr, float(e_corr), float(corr.e_total)
+
+
 @_periodic_output_lifecycle
 def run_periodic_job(
     system: PeriodicSystem,
@@ -6374,6 +6645,7 @@ def run_periodic_job(
     *,
     method: str = "RHF",
     functional: Optional[str] = None,
+    orbital_optimizer: str = "native",
     # AICCM front door (handovers/HANDOVER_AICCM_STANDARD_METHOD.md M1):
     # with method="aiccm", ``variant`` is mandatory and names the formulation
     # ("real-gamma" | "neutral-bloch" | "four-center" | "chi"); the SCF
@@ -6411,12 +6683,16 @@ def run_periodic_job(
     # mdf_ke_cutoff is the modest residual-mesh cutoff used only by
     # gdf_method="mdf".
     gdf_method: Optional[str] = None,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     mdf_ke_cutoff: float = 40.0,
     # Electron-repulsion representation for jk_method="aiccm2026dev-b":
     # corrected-gauge direct four-centre, pair-resolved RI, or RIJCOSX.
     aiccm_backend: str = "four_center",
+    fit_source: str = "auto",
+    chi_support_policy: str | None = None,
+    chi_coulomb_controls=None,
+    chi_hf_reference=None,
     # Primary B-stream finite-size control: number of primitive lattice
     # vectors in each cyclic supercell direction.  The equivalent k net is
     # derived, never chosen independently.  ``aiccm_wigner_seitz_shells=s``
@@ -6428,6 +6704,12 @@ def run_periodic_job(
     # ``integrals`` fails closed until petite-list parity is established.
     aiccm_symmetry: str = "off",
     aiccm_symmetry_require_full_group: bool = False,
+    # IID 291 / ruling R6 (2026-09-10): the neutral producers refuse a cell
+    # declared 3-D whose transverse directions measure as vacuum padding.
+    # ``aiccm_allow_vacuum_padding=True`` runs it anyway as a warned,
+    # recorded vacuum-parameter study; only the two neutral variants carry
+    # the gate, so the keyword fails closed on ``four-center`` and ``chi``.
+    aiccm_allow_vacuum_padding: bool = False,
     output: Union[str, os.PathLike] = "output",
     use_diis: bool = True,
     # Diagonalisation solver for the SCF procedure.
@@ -6477,6 +6759,7 @@ def run_periodic_job(
     diis_subspace_size: int = 8,
     max_iter: int = 80,
     conv_tol_energy: float = 1e-7,
+    conv_tol_grad: float | None = None,
     initial_guess: Union[str, InitialGuess] = "AUTO",
     write_molden_file: bool | None = None,
     trexio: bool | str | os.PathLike = False,
@@ -6488,11 +6771,13 @@ def run_periodic_job(
     write_xsf_structure_file: bool = True,
     write_cif_file: bool = True,
     write_population_file: bool | None = None,
+    iao_analysis: bool = False,
     citations: bool = True,
     dry_run: bool = False,
     memory_override: bool = False,
     gapw_molecular_limit: bool = False,
     record_hostname: bool = True,
+    structured_log: Union[bool, str, os.PathLike, None] = False,
     progress: Union[bool, ProgressLogger, None] = None,
     verbose: Optional[int] = None,
     # --- Dispersion ---------------------------------------------------
@@ -6502,6 +6787,7 @@ def run_periodic_job(
     # --- BIPOLE-specific ---------------------------------------------
     # Direct-lattice cutoff (bohr) for BIPOLE Fock and nuclear sums.
     # ``cutoff_ha`` is a plane-wave grid cutoff and remains GPW/GAPW-only.
+    bipole_historical_domain: bool = False,
     bipole_cutoff_bohr: Optional[float] = None,
     bipole_nuclear_cutoff_bohr: Optional[float] = None,
     bipole_exact_zone_bohr: Optional[float] = None,
@@ -6537,11 +6823,13 @@ def run_periodic_job(
     # built only at the irreducible-wedge bras and symmetry-transported to
     # the rest of each star, so the dense Lpq cache holds n_IBZ x n_k blocks
     # instead of n_k^2. Everything else -- diagonalisation at every k, the
-    # occupations, the energy expression, the result shape -- is unchanged,
-    # so the reduction is exact rather than an approximation. Requires an
-    # attached symmetry model (pass symmetry='attach'), a true multi-k
-    # Monkhorst-Pack mesh, exact exchange, and a symmorphic space group;
-    # every one of those fails closed rather than silently running full-BZ.
+    # occupations, the energy expression, the result shape -- is unchanged.
+    # The transport is exact for the finite fit because each operation is
+    # admitted against the executed exchange source (every symmorphic one on
+    # the default SR/LR fit). Requires an attached symmetry model (pass
+    # symmetry='attach'), a true multi-k Monkhorst-Pack mesh, exact exchange,
+    # a symmorphic space group and an admitting source; every one of those
+    # fails closed rather than silently running full-BZ.
     symmetry_reduce_k: bool = False,
     # --- BIPOLE multipole far-field ----------------------------------
     # Fail-closed: the dormant Saunders 1992 quartet-level bipolar
@@ -6739,6 +7027,20 @@ def run_periodic_job(
         the restricted open-shell references explicitly (``"rohf"`` rejects
         a ``functional``; ``"roks"`` requires one); whether the variant runs
         them is decided by that variant's own guard (none does today).
+    aiccm_allow_vacuum_padding
+        With ``method="aiccm"`` and ``variant="real-gamma"`` or
+        ``"neutral-bloch"`` only. The neutral producers refuse a cell
+        declared 3-D whose atom positions leave an empty slab above 25 bohr
+        along a lattice direction (the measured-dimensionality guard, IID
+        291). ``True`` runs it anyway as a warned, recorded vacuum-parameter
+        study (ruling R6, 2026-09-10): an ``AICCMVacuumPaddingWarning`` names
+        the padded directions, the ``.out`` header prints
+        ``allow_vacuum_padding = True``, and the ``.system`` manifest
+        records ``aiccm_allow_vacuum_padding`` and
+        ``aiccm_vacuum_padded_axes`` (1-based lattice directions). Refused
+        on ``four-center`` and ``chi``, which carry no such guard, and with
+        any other ``method``. The positive-converged-energy refusal is not
+        relaxed by it.
     correlation
         With ``method="aiccm"`` only, and optional: ``None`` (default) is an
         SCF-only run. ``"mp2"``, ``"ccsd"``, ``"dlpno-mp2"`` and
@@ -6773,6 +7075,22 @@ def run_periodic_job(
     output
         Path stem; produces ``{output}.out``, ``{output}.system``,
         ``{output}.molden``, ``{output}.xsf`` (when ``write_density``).
+    structured_log
+        Optional NDJSON (one-JSON-record-per-line) log capturing
+        every SCF transition -- banner, job_start, memory_estimate,
+        per-iter rows, scf_converged, properties, job_end. Off by
+        default. Pass ``True`` to emit ``{output}.scf.jsonl``,
+        a path-like to write there explicitly, or set the
+        ``VIBEQC_STRUCTURED_LOG=path`` env var (which wins when
+        ``structured_log`` is left at ``False``). When neither is
+        given and ``$VQ_WORKDIR`` is set (a vq job), the log is
+        auto-enabled at ``{output}.scf.jsonl``. The format is
+        stable: events are append-only, fields are never renamed
+        or removed. See :mod:`vibeqc.structured_log` for the full
+        event catalog. Resolved exactly as in :func:`vibeqc.run_job`
+        (one shared resolver, #384). The basis-free periodic
+        semiempirical routes write no structured log, so an explicit
+        ``True`` or path is refused there before calculation.
     band_structure
         Optional :class:`BandStructure` pre-computed by
         :func:`vibeqc.band_structure` (or ``_hcore``).
@@ -6826,6 +7144,11 @@ def run_periodic_job(
         method-aware default remains the block DFT functional. High-level
         GAPW HF geometry/cell optimization and Hessians fail closed until
         derivatives of the same fit-free energy are implemented.
+    bipole_historical_domain
+        False (default) selects physical pair support for BIPOLE RHF/UHF/RKS/UKS.
+        True reproduces historical index-ball support, which is not invariant
+        under atom-image relabelling. Rejected when that BIPOLE route is inactive.
+        Generic native lattice defaults and other methods are unchanged.
     bipole_cutoff_bohr, bipole_nuclear_cutoff_bohr
         Direct-lattice cutoff radii in bohr for ``jk_method="bipole"``.
         ``bipole_cutoff_bohr`` controls the electronic BIPOLE Fock sums; when
@@ -6926,6 +7249,9 @@ def run_periodic_job(
         selects ``{output}.trexio.h5`` (HDF5) or ``{output}.trexio`` (text);
         a path selects an explicit target. Requires the optional ``trexio``
         extra. See :doc:`/user_guide/trexio`.
+    iao_analysis
+        Reserved for periodic IAO populations. True explicitly raises before
+        calculation until k-point and lattice bond conventions are implemented.
     write_population_file
         Emit the population-summary text/JSON pair. Exact single-Γ routes use
         the molecular analysis; multi-k BIPOLE uses its lattice-density
@@ -6961,6 +7287,25 @@ def run_periodic_job(
         embedded in QVF for vibe-view. Default False.
         Cost: ~6N SCF evaluations for the unit cell.
     """
+    from .bipole_domain import resolve_bipole_pair_policy
+
+    resolve_bipole_pair_policy(bipole_historical_domain)  # Validate before routing.
+    if not isinstance(iao_analysis, bool):
+        raise ValueError("iao_analysis must be True or False")
+    if iao_analysis:
+        from .iao_population import PERIODIC_IAO_UNAVAILABLE
+        raise ValueError(PERIODIC_IAO_UNAVAILABLE)
+    if orbital_optimizer != "native":
+        raise ValueError("OpenTrustRegion orbital optimization is molecular-only; periodic complex/gauge/k-weight derivatives are not implemented. Use orbital_optimizer='native'.")
+    # GitLab IID 257: ``rsgdf_ke_cutoff=None`` requests no reciprocal cutoff.
+    # The periodic GDF drivers receive the request, so their SR/LR planner
+    # uses its own error-bounded cutoff instead of a 200 Ha floor. Every
+    # other consumer (fitted AICCM-B, Gamma RIJCOSX, the manifest) keeps the
+    # concrete legacy mesh, byte-identical to the former default.
+    from .periodic_k_gdf import _resolve_rsgdf_ke_cutoff
+
+    _rsgdf_ke_request, rsgdf_ke_cutoff = _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff)
+
     enforce_runtime_pin_from_env()
     if str(trexio_backend).strip().lower() not in ("hdf5", "text"):
         raise ValueError("run_periodic_job: trexio_backend must be 'hdf5' or 'text'.")
@@ -6992,6 +7337,14 @@ def run_periodic_job(
         kpoints=kpoints,
     )
     if semiempirical_route is not None:
+        resolve_bipole_pair_policy(bipole_historical_domain, active=False)
+        if structured_log is not False and structured_log is not None:
+            raise NotImplementedError(
+                "run_periodic_job: structured_log is not supported for "
+                f"method={semiempirical_route.method_key!r}: the periodic "
+                "semiempirical route writes no structured SCF log. Pass "
+                "False (the default)."
+            )
         if trexio:
             raise NotImplementedError("run_periodic_job: TREXIO export requires a Gaussian AO wavefunction.")
         if fragments is not None:
@@ -7085,33 +7438,33 @@ def run_periodic_job(
             system, functional=functional, scf_reference=scf_reference
         )
         _aiccm_correlation = resolve_aiccm_correlation(correlation)
+        if aiccm_allow_vacuum_padding and _aiccm_variant not in (
+            "real-gamma", "neutral-bloch",
+        ):
+            # The measured-dimensionality guard (IID 291) belongs to the two
+            # neutral producers only: the four-centre and chi lines are not
+            # gated, so an opt-in there would be silently ignored, which is
+            # exactly the class of request this codebase refuses.
+            raise ValueError(
+                "run_periodic_job: aiccm_allow_vacuum_padding=True applies "
+                "to the neutral producers only (variant='real-gamma' | "
+                f"'neutral-bloch'); got variant={_aiccm_variant!r}, which "
+                "carries no vacuum-padding guard. Drop the keyword there."
+            )
         if _aiccm_correlation is not None:
-            # Only the four-centre arm is wired (M4b, #778). The other three
-            # variants refuse rather than silently running SCF-only: a job
-            # that asked for correlation and got an SCF number back would be
+            # Three arms are wired: four-center (M4b, #778), real-gamma, and
+            # neutral-bloch (2026-09-25: the Bloch SCF folded to real-Gamma
+            # orbitals, Theorem 1, periodic/ccm/bloch_reference.py). chi
+            # refuses rather than silently running SCF-only: a job that
+            # asked for correlation and got an SCF number back would be
             # indistinguishable from one that did not ask.
-            if _aiccm_variant == "neutral-bloch":
-                # Not merely unwired: the correlation drivers work in the
-                # real-Γ supercell space, and this variant's reference is
-                # per-k Bloch. Ruling R1 makes the workaround exact rather
-                # than approximate -- real-gamma is the SAME Hamiltonian in
-                # the representation the drivers already speak -- so name it
-                # instead of leaving the caller to find it.
-                raise NotImplementedError(
-                    "run_periodic_job: correlation="
-                    f"{_aiccm_correlation!r} is not available on "
-                    "variant='neutral-bloch': its reference is the Bloch "
-                    "representation, while the correlation drivers work in "
-                    "the real-Gamma supercell space. Use "
-                    "variant='real-gamma', which is the same neutral "
-                    "Hamiltonian in that representation (ruling R1), and "
-                    "carries the same citation lineage."
-                )
-            if _aiccm_variant not in ("four-center", "real-gamma"):
+            if _aiccm_variant not in ("four-center", "real-gamma",
+                                      "neutral-bloch"):
                 raise NotImplementedError(
                     "run_periodic_job: correlation="
                     f"{_aiccm_correlation!r} is wired for "
-                    "variant='four-center' and variant='real-gamma'; got "
+                    "variant='four-center', variant='real-gamma' and "
+                    "variant='neutral-bloch'; got "
                     f"variant={_aiccm_variant!r}. The chi correlation "
                     "drivers are library-only for now "
                     "(vibeqc.periodic.chi.posthf)."
@@ -7128,7 +7481,7 @@ def run_periodic_job(
                 )
             if (
                 _aiccm_correlation.startswith("dlpno-")
-                and _aiccm_variant != "real-gamma"
+                and _aiccm_variant not in ("real-gamma", "neutral-bloch")
             ):
                 # DLPNO screens pair energies on a fitted (RI) reference and
                 # every driver takes the neutral cderi. The bare four-centre
@@ -7139,11 +7492,12 @@ def run_periodic_job(
                 raise NotImplementedError(
                     "run_periodic_job: correlation="
                     f"{_aiccm_correlation!r} needs a fitted (RI) reference "
-                    "and is available on variant='real-gamma' only; got "
+                    "and is available on variant='real-gamma' and "
+                    "variant='neutral-bloch' only; got "
                     f"variant={_aiccm_variant!r}. The bare four-centre "
                     "operator has no RI decomposition, so there is no "
                     "four-centre DLPNO. Use correlation='mp2' or 'ccsd' "
-                    "there, or variant='real-gamma'."
+                    "there, or variant='real-gamma' / 'neutral-bloch'."
                 )
             if (
                 _aiccm_correlation == "ccsd"
@@ -7166,13 +7520,18 @@ def run_periodic_job(
                 )
     else:
         _aiccm_correlation = None
-        if variant is not None or scf_reference is not None or correlation is not None:
+        if (
+            variant is not None or scf_reference is not None
+            or correlation is not None or aiccm_allow_vacuum_padding
+        ):
             raise ValueError(
-                "run_periodic_job: variant=, scf_reference= and correlation= "
-                "select an AICCM formulation and require method='aiccm'; got "
+                "run_periodic_job: variant=, scf_reference=, correlation= "
+                "and aiccm_allow_vacuum_padding= select an AICCM formulation "
+                "and require method='aiccm'; got "
                 f"method={method!r}, variant={variant!r}, "
                 f"scf_reference={scf_reference!r}, "
-                f"correlation={correlation!r}."
+                f"correlation={correlation!r}, "
+                f"aiccm_allow_vacuum_padding={aiccm_allow_vacuum_padding!r}."
             )
         method_upper = method.upper()
     if method_upper not in ("RHF", "ROHF", "ROKS", "RKS", "UHF", "UKS"):
@@ -7223,15 +7582,17 @@ def run_periodic_job(
     _requested_initial_guess = coerce_initial_guess(initial_guess)
     _fragmo_request = _requested_initial_guess == InitialGuess.FRAGMO
     if _fragmo_request:
+        # A READ/restart source and FRAGMO are two seeds for one SCF: that
+        # contradiction is settled here, ahead of the READ-source gates below
+        # which would otherwise read the source and report the wrong defect.
         if read_from is not None or restart_from is not None:
             raise ValueError("FRAGMO cannot be combined with a READ/restart source")
-        from .guess_fragmo import _normalize_fragments, _validate_partition
-        fragments = _normalize_fragments(fragments)
-        _validate_partition(fragments, system.unit_cell_molecule())
-        if reduce_to_primitive or symmetry is True or str(symmetry).lower() in ("auto", "reduce"):
-            raise ValueError("FRAGMO atom/image ownership requires the input cell; disable primitive reduction")
         # Physical construction is recorded as FRAGMO; the existing validated
         # all-k density transport is READ throughout the concrete SCF routes.
+        # The partition itself is validated after JK dispatch, by
+        # ``_validate_fragmo_request`` below (#325): a route that cannot run
+        # FRAGMO at all must refuse the selector, not demand a ``fragments=``
+        # list it would reject anyway.
         _requested_initial_guess = InitialGuess.READ
     elif fragments is not None:
         raise ValueError("fragments requires initial_guess='FRAGMO'")
@@ -7370,14 +7731,18 @@ def run_periodic_job(
         if read_from is None and not _fragmo_request:
             raise ValueError(
                 "multi-k periodic initial_guess='read' needs an in-memory "
-                "multi-k source result or a .qvf archive with all-k Bloch "
+                "multi-k source result or a QVF/TREXIO file with all-k Bloch "
                 "restart data."
             )
         if isinstance(read_from, (str, os.PathLike)):
-            _read_suffix = Path(os.fspath(read_from)).suffix.lower()
-            if _read_suffix != ".qvf":
+            _read_source_path = Path(os.fspath(read_from))
+            # Match guess_read._trexio_source's HDF5/text dispatch. The
+            # reader below validates every k/spin block and the target mesh.
+            _read_suffix = _read_source_path.suffix.lower()
+            if (_read_suffix not in {".qvf", ".h5", ".hdf5", ".trexio"}
+                    and not _read_source_path.is_dir()):
                 raise NotImplementedError(
-                    "multi-k periodic READ restart from non-QVF file sources "
+                    "multi-k periodic READ restart from non-QVF/non-TREXIO file sources "
                     "is not implemented: a multi-k restart needs all per-k "
                     "complex Bloch coefficients and occupations."
                 )
@@ -7534,7 +7899,9 @@ def run_periodic_job(
             )
             and _resolved_initial_guess != InitialGuess.HCORE
         ):
-            _aiccm_guess_label = _resolved_initial_guess.name
+            _aiccm_guess_label = (
+                "FRAGMO" if _fragmo_request else _resolved_initial_guess.name
+            )
             if _requested_initial_guess != _resolved_initial_guess:
                 _aiccm_guess_label = (
                     f"{_requested_initial_guess.name} (resolved to "
@@ -7574,6 +7941,17 @@ def run_periodic_job(
                         wigner_seitz_shells=aiccm_wigner_seitz_shells,
                     ).repetitions
                 )
+    if _fragmo_request:
+        # Deferred past the route capability gates above (#325). Everything
+        # between the relabel and here is route admission, and nothing has
+        # read ``fragments`` yet: ``resolve_periodic_fragmo_source`` is its
+        # only consumer and runs much later.
+        fragments = _validate_fragmo_request(
+            fragments,
+            system,
+            reduce_to_primitive=reduce_to_primitive,
+            symmetry=symmetry,
+        )
     _requested_bloch_kmesh = _runner_bloch_kmesh(system, kpoints)
     _requested_kmesh_size = _bloch_kmesh_full_size(_requested_bloch_kmesh)
     _requested_true_multik = kpoints is not None and _requested_kmesh_size > 1
@@ -7633,6 +8011,21 @@ def run_periodic_job(
                 "3D-only, so this request fails before dry-run/SCF."
             )
         resolved_jk = PeriodicJKMethod.BIPOLE
+
+    _bipole_domain_active = (
+        resolved_jk == PeriodicJKMethod.BIPOLE
+        and method_upper in ("RHF", "UHF", "RKS", "UKS")
+    )
+    _bipole_physical_pairs = resolve_bipole_pair_policy(
+        bipole_historical_domain, active=_bipole_domain_active,
+    )
+    if _bipole_domain_active and _bipole_physical_pairs and (
+        symmetry_stabilize or symmetry_reduce_fock
+    ):
+        raise NotImplementedError(
+            "BIPOLE physical support requires the full direct Fock build; "
+            "explicit symmetry_stabilize/symmetry_reduce_fock is unsupported."
+        )
 
     _external_gpw_supported = bool(
         _uses_external_xc
@@ -7732,6 +8125,48 @@ def run_periodic_job(
     # These checks must follow AUTO +U route planning. Otherwise a request
     # that resolves to BIPOLE only through the fallback can bypass the
     # finalized route's k-mesh and restart capabilities during dry-run.
+    if chi_support_policy is not None or chi_coulomb_controls is not None or chi_hf_reference is not None:
+        if (resolved_jk != PeriodicJKMethod.AICCM2026DEV_B or method_upper not in ("RHF", "UHF")
+                or correlation or optimize or optimize_cell or restart_from is not None):
+            raise NotImplementedError("chi support requires a fresh uncorrelated chi RHF/UHF single point")
+        if chi_coulomb_controls is not None:
+            from .periodic.chi.fitted import ChiCoulombControls
+            if not isinstance(chi_coulomb_controls, ChiCoulombControls):
+                raise TypeError("chi_coulomb_controls must be ChiCoulombControls")
+            chi_coulomb_controls.require_source(fit_source)
+            if _rsgdf_ke_request is not None and _rsgdf_ke_request != chi_coulomb_controls.reciprocal_cutoff_ha:
+                raise ValueError("rsgdf_ke_cutoff conflicts with chi_coulomb_controls")
+            if rsgdf_tail_ke_cutoff is not None and rsgdf_tail_ke_cutoff != chi_coulomb_controls.tail_reciprocal_cutoff_ha:
+                raise ValueError("rsgdf_tail_ke_cutoff conflicts with chi_coulomb_controls")
+            rsgdf_ke_cutoff = chi_coulomb_controls.reciprocal_cutoff_ha
+            rsgdf_tail_ke_cutoff = chi_coulomb_controls.tail_reciprocal_cutoff_ha
+            if (_resolve_aiccm2026dev_b_backend(aiccm_backend).value != "ri"
+                    or int(system.dim) != 3 or (gdf_method or "rsgdf") != "rsgdf"):
+                raise NotImplementedError("chi_coulomb_controls requires 3D RI RHF/UHF")
+            if chi_support_policy is not None and chi_support_policy != chi_coulomb_controls.support_policy:
+                raise ValueError("chi support policy conflicts with Coulomb controls")
+        else:
+            from .periodic.chi.support import resolve_support_policy
+            resolve_support_policy(chi_support_policy, backend=_resolve_aiccm2026dev_b_backend(aiccm_backend).value, dimension=int(system.dim))
+    from .periodic_fit_source import resolve_fit_source
+    if resolved_jk == PeriodicJKMethod.AICCM2026DEV_B:
+        resolve_fit_source(fit_source, gdf_method=gdf_method or "rsgdf", dimension=int(system.dim))
+        if str(aiccm_backend) == "four_center" and fit_source != "auto":
+            raise NotImplementedError("fit_source requires a fitted chi backend")
+    elif fit_source != "auto" and resolved_jk == PeriodicJKMethod.NEUTRAL_BLOCH:
+        # The neutral Bloch producer pins fit_source="classic" itself (#378);
+        # an explicit value here is forwarded so the driver's SR/LR source can
+        # be run through the front door deliberately ("sr"), or the pin named.
+        resolve_fit_source(fit_source, gdf_method=gdf_method or "rsgdf", dimension=int(system.dim))
+    elif fit_source != "auto":
+        raise NotImplementedError(
+            "run_periodic_job fit_source is supported only for method='aiccm' with "
+            "variant='chi' or variant='neutral-bloch'")
+    if conv_tol_grad is not None:
+        if resolved_jk != PeriodicJKMethod.AICCM2026DEV_B:
+            raise NotImplementedError("explicit conv_tol_grad currently requires the chi front door")
+        if isinstance(conv_tol_grad, bool) or not np.isfinite(float(conv_tol_grad)) or float(conv_tol_grad) <= 0:
+            raise ValueError("conv_tol_grad must be positive and finite")
     if _uses_external_xc and resolved_jk == PeriodicJKMethod.BIPOLE:
         from .pbc_bipole_common import validate_bipole_kmesh
 
@@ -8391,9 +8826,9 @@ def run_periodic_job(
             f"jk_method='bipole' requires a 3-D periodic system (dim=3); got "
             f"dim={int(system.dim)}. The exact Ewald-J route uses a 3-D "
             "Ewald/Madelung lattice sum that is not a low-dimensional Coulomb "
-            "model. For a 1-D wire use jk_method='auto' or 'gdf'; for a 2-D "
-            "surface use jk_method='auto'/'slab_ewald_2d', or explicit GDF "
-            "for its supported closed-shell slab envelope."
+            "model. For a 2-D surface use jk_method='auto'/'slab_ewald_2d', "
+            "or explicit GDF for its supported closed-shell slab envelope. "
+            "A 1-D wire has no public route. " + _WIRE_VACUUM_BOX_HINT
         )
     if resolved_jk == PeriodicJKMethod.BIPOLE:
         if optimize_cell:
@@ -8483,6 +8918,13 @@ def run_periodic_job(
             "attached symmetry model. Pass symmetry='attach' (or attach "
             "validated operations to the PeriodicSystem) before requesting "
             "symmetry_stabilize/symmetry_reduce_fock."
+        )
+    if resolved_jk == PeriodicJKMethod.GDF:
+        reject_gdf_fock_symmetry(
+            dim=int(system.dim),
+            symmetry_stabilize=symmetry_stabilize,
+            symmetry_reduce_fock=symmetry_reduce_fock,
+            where="run_periodic_job",
         )
     # --- Space-group-reduced multi-k GDF exchange (symmetry_reduce_k) ---
     # Every precondition fails closed. A silently-ignored performance flag
@@ -8639,6 +9081,7 @@ def run_periodic_job(
     if (
         rsgdf_tail_ke_cutoff is not None
         and resolved_jk == PeriodicJKMethod.AICCM2026DEV_B
+        and chi_coulomb_controls is None
     ):
         _resolve_fitted_rsgdf_tail(
             _resolve_aiccm2026dev_b_backend(aiccm_backend),
@@ -8651,11 +9094,16 @@ def run_periodic_job(
         rsgdf_tail_ke_cutoff is not None
         and resolved_jk != PeriodicJKMethod.GDF
         and resolved_jk != PeriodicJKMethod.AICCM2026DEV_B
+        # The neutral Gamma-CCM producers consume the tail on both
+        # representations (real-Gamma fold, neutral-Bloch classic fit).
+        and resolved_jk != PeriodicJKMethod.AICCM2026DEV_A_REAL_GAMMA
+        and resolved_jk != PeriodicJKMethod.NEUTRAL_BLOCH
         and not _rijcosx_closed_shell_multik
     ):
         raise NotImplementedError(
             "run_periodic_job: rsgdf_tail_ke_cutoff is currently supported only "
-            "with jk_method='gdf', fitted jk_method='aiccm2026dev-b', or "
+            "with jk_method='gdf', fitted jk_method='aiccm2026dev-b', "
+            "method='aiccm' with variant='real-gamma' or 'neutral-bloch', or "
             "closed-shell true multi-k jk_method='rijcosx'. Other J/K routes "
             "would ignore the high-|G| RSGDF tail correction, so this "
             "combination fails closed."
@@ -9048,6 +9496,7 @@ def run_periodic_job(
         write_population=write_population_file,
         population_variant=_population_variant,
         citations=citations,
+        structured_log=structured_log,
         crash_dump=False,
         output_qvf=output_qvf,
         job_kind="periodic_scf",
@@ -9445,6 +9894,20 @@ def run_periodic_job(
                     "fixed-geometry smeared SCF or optimize at T=0."
                 )
 
+    if _bipole_domain_active and _bipole_physical_pairs and system.dim == 3:
+        from .pbc_bipole_common import reject_bipole_physical_legacy_gauge
+
+        reject_bipole_physical_legacy_gauge(
+            physical_pairs=True, dimension=system.dim, use_ewald_j_split=True,
+            exchange_split_active=use_exchange_ewald_split is not False,
+            driver="run_periodic_job",
+        )
+        # AUTO must not silently fall back to the unsupported legacy gauge.
+        validate_bipole_kmesh(
+            _requested_bloch_kmesh, driver="run_periodic_job physical BIPOLE",
+            require_complete=True,
+        )
+
     if resolved_jk == PeriodicJKMethod.GDF and optimize:
         # Resolve the same final temperature that live GDF dispatch installs
         # after AUTO convergence classification.  The analytic gradient is
@@ -9675,36 +10138,18 @@ def run_periodic_job(
                     "density mixing remain fail-closed."
                 )
 
-        if _gdf_opt_gamma and _gdf_opt_dim == 3:
-            _gdf_opt_legacy_reasons: list[str] = []
-            if not _gdf_opt_neutral:
-                _gdf_opt_legacy_reasons.append("charged cell")
-            if symmetry_stabilize or symmetry_reduce_fock:
-                _gdf_opt_legacy_reasons.append("SCF symmetry reduction")
-            if _gdf_opt_shift != 0.0:
-                _gdf_opt_legacy_reasons.append("level shift")
-            # Default-Gamma RHF and an explicit Gamma mesh without a density
-            # mixer require the exact-Gamma fast path, which does not carry
-            # Fock mixing.  RKS with kpoints=None uses the native UKS-singlet
-            # GDF engine and legitimately supports this aid.
-            if _gdf_opt_fmix != 0.0 and (
-                (method_upper == "RHF" and kpoints is None)
-                or (
-                    method_upper in ("RHF", "RKS")
-                    and kpoints is not None
-                    and _gdf_opt_density_mixer is None
-                )
-            ):
-                _gdf_opt_legacy_reasons.append("Fock mixing")
-            if _gdf_opt_legacy_reasons:
-                raise NotImplementedError(
-                    "run_periodic_job: GDF optimization would use the "
-                    "legacy Gamma molecular-limit GDF driver, which has no "
-                    "analytic gradient (unsupported: "
-                    + ", ".join(_gdf_opt_legacy_reasons)
-                    + "). Remove those options or run a fixed-geometry "
-                    "single point."
-                )
+        # A bulk Gamma job with a level shift or Fock mixing runs the k-mesh
+        # engine at (1, 1, 1), whose analytic gradient differentiates the
+        # converged objective those aids do not change. Fock symmetrisation
+        # is refused for bulk GDF before this point. A charged cell stays
+        # refused: no GDF gradient has been validated with the neutralising
+        # background.
+        if _gdf_opt_gamma and _gdf_opt_dim == 3 and not _gdf_opt_neutral:
+            raise NotImplementedError(
+                "run_periodic_job: GDF optimization of a charged cell is not "
+                "implemented; the analytic GDF gradients are validated for "
+                "neutral cells only. Run a fixed-geometry single point."
+            )
 
         if _gdf_opt_true_multik:
             _gdf_opt_expanded = _expand_ibz_kmesh_to_full_bz(
@@ -9736,44 +10181,14 @@ def run_periodic_job(
                     "orbit-unfolded analytic exchange derivative."
                 )
 
-        # Pure RKS in 3D normally uses the cheaper Ewald-3D J/K loop, whose
-        # use_compcell=False state has no fitted Lpq cache to differentiate.
-        # Any explicit non-Gamma mesh enters that loop, even when Nk == 1.
-        # An explicit Gamma mesh with an active Anderson/Broyden density mixer
-        # does too (rather than using the pure-GDF Gamma fast path). Default
-        # DIIS aliases are canonicalized above and retain the fast path. Cover
-        # every dispatch shape here.
-        _gdf_opt_rks_ewald3d_loop = _gdf_opt_true_multik or (
-            kpoints is not None
-            and (
-                not _gdf_opt_gamma
-                or _gdf_opt_density_mixer is not None
-            )
-        )
-        if (
-            method_upper == "RKS"
-            and _gdf_opt_dim == 3
-            and _gdf_opt_rks_ewald3d_loop
-        ):
-            _gdf_opt_alpha = float(
-                Functional(str(functional or "lda"), 1).hf_exchange_fraction
-            )
-            if _gdf_opt_alpha == 0.0:
-                if _gdf_opt_true_multik:
-                    _gdf_opt_sampling = "multi-k"
-                elif _gdf_opt_gamma:
-                    _gdf_opt_sampling = "explicit-Gamma density-mixed"
-                else:
-                    _gdf_opt_sampling = "explicit non-Gamma"
-                raise NotImplementedError(
-                    "run_periodic_job: pure-functional "
-                    f"{_gdf_opt_sampling} RKS/GDF optimization is unavailable "
-                    "because live dispatch uses use_compcell=False, while "
-                    "the analytic gradient requires the cached-Lpq GDF J/K "
-                    "objective. Use a global hybrid, remove density_mixer "
-                    "from an explicit Gamma calculation, or run a "
-                    "fixed-geometry pure-DFT single point."
-                )
+        # Pure-functional RKS needs no refusal here: optimization is
+        # admitted only on the SR/LR fit (gdf_method None/'rsgdf', checked
+        # above), and run_krhf_periodic_gdf always builds the fitted J that
+        # its gradient differentiates on that fit. The former refusal of
+        # pure-functional multi-k, density-mixed Gamma and single non-Gamma
+        # RKS assumed the analytic-Ewald J loop, which the SR/LR fit never
+        # takes. Measured on H2/STO-3G in an 8-bohr cube at (2,1,1), PBE:
+        # analytic dE/dz -2.28649e-4 Ha/bohr, central difference -2.28878e-4.
 
     # Validate the caller's density-mixer request before dry-run can publish
     # a manifest.  The later call remains necessary because AUTO convergence
@@ -9902,6 +10317,10 @@ def run_periodic_job(
             "dft_plus_u": bool(dft_plus_u),
             "dft_plus_u_route": _dft_plus_u_route,
         }
+        if _bipole_domain_active:
+            _dry_run_fields["bipole_domain_policy"] = (
+                "physical_pairs" if _bipole_physical_pairs else "historical_index_ball"
+            )
         if _uses_skala:
             from .skala import _run_provenance_fields
 
@@ -9932,7 +10351,10 @@ def run_periodic_job(
         print_dry_run_summary(real_plan)
         return None
 
-    from .periodic.exchange_convention import exchange_q0_label
+    from .periodic.exchange_convention import (
+        executed_exchange_q0,
+        exchange_q0_label,
+    )
 
     _initial_run_fields = {
         "exchange_q0": exchange_q0_label(exchange_exxdiv),
@@ -9942,6 +10364,10 @@ def run_periodic_job(
         "dft_plus_u": bool(dft_plus_u),
         "dft_plus_u_route": _dft_plus_u_route,
     }
+    if _bipole_domain_active:
+        _initial_run_fields["bipole_domain_policy"] = (
+            "physical_pairs" if _bipole_physical_pairs else "historical_index_ball"
+        )
     if _uses_skala:
         from .skala import _run_provenance_fields
 
@@ -10114,6 +10540,8 @@ def run_periodic_job(
         if _external_xc_grid_profile is not None:
             opts.grid.atomic_grid_profile = _external_xc_grid_profile
     if resolved_jk == PeriodicJKMethod.BIPOLE:
+        if _bipole_domain_active:
+            opts.lattice_opts.pair_complete_1e = _bipole_physical_pairs
         if sr_range_screening:
             # Separation-aware charge-pair Schwarz
             # screening for the SR erfc J/K build; cited via the
@@ -10150,6 +10578,8 @@ def run_periodic_job(
         or len(_ecp_centers) > 0
         or int(_total_ncore or 0) != 0
     )
+    if _ecp_active and (chi_support_policy is not None or chi_coulomb_controls is not None):
+        raise NotImplementedError("chi_support_policy currently requires all-electron RHF/UHF")
     if _ecp_active and not _periodic_route_applies_ecp(
         resolved_jk, method_upper, system
     ):
@@ -10343,104 +10773,52 @@ def run_periodic_job(
             )
     _gdf_capability_knobs = dict(convergence_strategy.knobs)
     _gdf_capability_changed = False
+    # One decision for the GDF engine (periodic_gdf_route.py). The dispatch
+    # below and the manifest read the same object, and _gdf_scf checks the
+    # finished result against it. AUTO-resolved Fock mixing / level shift
+    # (e.g. the ionic-insulator profile's FMIXING 30% on MgO-class cells)
+    # never move the engine: they are dropped, and the strategy block says
+    # so, only when the chosen driver lacks them. An explicit knob the
+    # exact-Gamma driver lacks sends a bulk Gamma job to the k-mesh engine
+    # at (1, 1, 1), which implements it on the same Hamiltonian.
+    _gdf_route = None
     if resolved_jk == PeriodicJKMethod.GDF:
-        # Mirror of the _gamma_default_pure_gdf_ok domain gate in the Γ GDF
-        # dispatch below, minus the knob values this filter itself resolves.
-        # When the default-Γ closed-shell RHF run qualifies for the
-        # PySCF-µHa-validated run_pbc_gdf_rhf in every non-knob respect, an
-        # AUTO-resolved fock-mixing / level-shift (e.g. the ionic-insulator
-        # profile's FMIXING 30% on MgO-class cells) must not force the run
-        # onto the legacy molecular-limit fallback, whose dense-core absolute
-        # energies are PARITY_HELD (G-GDF-001 in HANDOVER_GATED_ITEMS.md).
-        # Zero the auto knobs instead -- the parity route carries its own
-        # convergence handling (DIIS + accelerators + the auto-sized
-        # high-|G| tail). Explicit user knobs keep the legacy fallback.
-        _gamma_pure_gdf_capable = (
-            method_upper == "RHF"
-            and kpoints is None
-            and gdf_method is None
-            and int(system.dim) == 3
-            and int(system.n_electrons()) % 2 == 0
-            and int(system.multiplicity) == 1
-            and abs(
-                float(sum(atom.Z for atom in system.unit_cell))
-                - int(system.n_electrons())
-            )
-            <= 0.5
-            and float(convergence_strategy.knobs["smearing_temperature"].value)
-            <= 0.0
-            and not symmetry_stabilize
-            and not symmetry_reduce_fock
-        )
-        _level_shift_resolution = convergence_strategy.knobs["level_shift"]
-        _gdf_level_shift_filter_reason = None
-        if (
-            _level_shift_resolution.source == "auto"
-            and _level_shift_resolution.value != 0.0
-        ):
-            if method_upper in ("ROHF", "UHF", "UKS"):
-                _gdf_level_shift_filter_reason = (
-                    "capability-filtered to zero: open-shell GDF drivers do "
-                    "not implement the level-shift operator"
-                )
-            elif _requested_gamma_only and gdf_method is not None:
-                _gdf_level_shift_filter_reason = (
-                    "capability-filtered to zero: the exact-Gamma GDF driver "
-                    "selected by an explicit gdf_method does not implement "
-                    "the level-shift operator"
-                )
-            elif _gamma_pure_gdf_capable:
-                _gdf_level_shift_filter_reason = (
-                    "capability-filtered to zero: the default-Gamma "
-                    "closed-shell RHF run stays on the PySCF-parity "
-                    "run_pbc_gdf_rhf driver, which does not implement the "
-                    "level-shift operator (the legacy fallback's dense-core "
-                    "absolute energies are parity-held)"
-                )
-        if _gdf_level_shift_filter_reason is not None:
-            _gdf_capability_knobs["level_shift"] = KnobResolution(
-                0.0,
-                "auto",
-                _gdf_level_shift_filter_reason,
-            )
-            _gdf_capability_changed = True
+        from .periodic_gdf_route import resolve_gdf_route
 
-        _fock_mixing_resolution = convergence_strategy.knobs["fock_mixing"]
-        _gdf_fock_mixing_filter_reason = None
-        if (
-            _fock_mixing_resolution.source == "auto"
-            and _fock_mixing_resolution.value != 0.0
-        ):
-            if method_upper == "ROHF" or (
-                method_upper in ("UHF", "UKS") and kpoints is not None
-            ):
-                _gdf_fock_mixing_filter_reason = (
-                    "capability-filtered to zero: the selected open-shell "
-                    "GDF driver does not implement Fock mixing"
+        if kpoints is None:
+            _gdf_route_kpoints = None
+        elif isinstance(kpoints, int):
+            _gdf_route_kpoints = (int(kpoints),) * 3
+        else:
+            try:
+                _gdf_route_kpoints = tuple(int(n) for n in kpoints)
+                if len(_gdf_route_kpoints) == 2:
+                    _gdf_route_kpoints += (1,)
+            except TypeError:
+                # A KPoints / BlochKMesh object: an explicit mesh whose
+                # counts the object itself carries.
+                _gdf_route_kpoints = tuple(
+                    int(n) for n in getattr(_requested_bloch_kmesh, "mesh", (0, 0, 0))
                 )
-            elif (
-                method_upper == "RHF"
-                and _requested_gamma_only
-                and gdf_method is not None
-            ):
-                _gdf_fock_mixing_filter_reason = (
-                    "capability-filtered to zero: the closed-shell "
-                    "exact-Gamma GDF driver selected by an explicit "
-                    "gdf_method does not implement Fock mixing"
-                )
-            elif _gamma_pure_gdf_capable:
-                _gdf_fock_mixing_filter_reason = (
-                    "capability-filtered to zero: the default-Gamma "
-                    "closed-shell RHF run stays on the PySCF-parity "
-                    "run_pbc_gdf_rhf driver, which does not implement Fock "
-                    "mixing (the legacy fallback's dense-core absolute "
-                    "energies are parity-held)"
-                )
-        if _gdf_fock_mixing_filter_reason is not None:
-            _gdf_capability_knobs["fock_mixing"] = KnobResolution(
+        _gdf_route = resolve_gdf_route(
+            method=method_upper,
+            dim=int(system.dim),
+            n_electrons=int(system.n_electrons()),
+            multiplicity=int(system.multiplicity),
+            nuclear_charge=float(sum(atom.Z for atom in system.unit_cell)),
+            ecp_active=bool(_ecp_active),
+            kpoints=_gdf_route_kpoints,
+            gdf_method=gdf_method,
+            uses_external_xc=bool(_uses_external_xc),
+            knobs=convergence_strategy.knobs,
+            symmetry_stabilize=bool(symmetry_stabilize),
+            symmetry_reduce_fock=symmetry_reduce_fock,
+        )
+        for _gdf_knob, _gdf_reason in _gdf_route.auto_zeroed:
+            _gdf_capability_knobs[_gdf_knob] = KnobResolution(
                 0.0,
                 "auto",
-                _gdf_fock_mixing_filter_reason,
+                _gdf_reason,
             )
             _gdf_capability_changed = True
     if _gdf_capability_changed:
@@ -10569,6 +10947,8 @@ def run_periodic_job(
     opts.diis_subspace_size = int(diis_subspace_size)
     opts.max_iter = int(max_iter)
     opts.conv_tol_energy = float(conv_tol_energy)
+    if conv_tol_grad is not None:
+        opts.conv_tol_grad = float(conv_tol_grad)
     opts.initial_guess = _resolved_initial_guess
 
     if atomic_spins is not None and opts.initial_guess not in (
@@ -10699,7 +11079,9 @@ def run_periodic_job(
                 functional=functional,
                 kpoints=kpoints,
                 aux_basis=aux_basis,
-                rsgdf_ke_cutoff=float(rsgdf_ke_cutoff),
+                rsgdf_ke_cutoff=(_rsgdf_ke_request
+                                 if resolved_jk == PeriodicJKMethod.GDF
+                                 else rsgdf_ke_cutoff),
                 n_ibz_kpoints=_symmetry_reduce_k_ibz,
                 diis_subspace_size=int(opts.diis_subspace_size) if opts.use_diis else 0,
                 scf_options=opts, compute_gradient=bool(optimize),
@@ -10722,6 +11104,10 @@ def run_periodic_job(
             )
 
     t_job_start = time.perf_counter()
+    # Bound here rather than only where the SCF sets it, so the end-of-job
+    # timing block below can name the SCF share on every path through this
+    # function, including the ones that never reach the SCF dispatch.
+    t_scf: Optional[float] = None
 
     hessian_result = None  # populated by hessian=True; consumed by QVF writer
 
@@ -10734,10 +11120,12 @@ def run_periodic_job(
         lambda fields: _output_writer.update_progress(**fields)
     )
 
-    # Auto-enable structured log when running under vq.
-    _structured_target: Path | None = None
-    if os.environ.get("VQ_WORKDIR"):
-        _structured_target = stem_sibling(output_stem, ".scf.jsonl")
+    # Resolve the structured-log target through the resolver shared
+    # with run_job (#384): an explicit True / path, then
+    # VIBEQC_STRUCTURED_LOG, then the $VQ_WORKDIR auto-enable, then off.
+    _structured_target: Path | None = _resolve_structured_log_target(
+        structured_log, output_stem,
+    )
 
     with (
         _structured_log_ctx(_structured_target) as _slog,
@@ -10875,7 +11263,12 @@ def run_periodic_job(
         ):
             write(f"    aux_basis           = {aux_basis or '<auto>'}\n")
             write(f"    gdf_method          = {gdf_method or 'rsgdf'}\n")
-            write(f"    rsgdf_ke_cutoff     = {float(rsgdf_ke_cutoff)}\n")
+            if (_rsgdf_ke_request is None
+                    and resolved_jk != PeriodicJKMethod.AICCM2026DEV_B):
+                write("    rsgdf_ke_cutoff     = auto (SR/LR planner; "
+                      "200.0 Ha where no planner applies)\n")
+            else:
+                write(f"    rsgdf_ke_cutoff     = {float(rsgdf_ke_cutoff)}\n")
             if rsgdf_tail_ke_cutoff is not None:
                 write(
                     "    rsgdf_tail_ke_cutoff = "
@@ -11071,7 +11464,17 @@ def run_periodic_job(
             _gdf_opt_capture["driver"] = _driver
             _gdf_opt_capture["args"] = _args
             _gdf_opt_capture["kwargs"] = _kwargs
-            return _driver(system, basis, *_args, progress=plog, **_kwargs)
+            _gdf_result = _driver(system, basis, *_args, progress=plog, **_kwargs)
+            if _gdf_route is not None:
+                # The engine that ran must be the one the decision chose.
+                from .periodic_gdf_route import check_executed_engine
+
+                check_executed_engine(
+                    _gdf_route,
+                    getattr(_gdf_result, "backend", ""),
+                    where="run_periodic_job",
+                )
+            return _gdf_result
 
         # --- DFT+U interception (Increment 4d) ----------------------
         # When dft_plus_u is set, route to the appropriate +U-capable
@@ -11116,6 +11519,7 @@ def run_periodic_job(
                     basis,
                     kmesh,
                     opts,
+                    historical_domain=bipole_historical_domain,
                     functional=functional,
                     linear_dep_threshold=1e-7,
                     use_ewald_j_split=True,
@@ -11154,6 +11558,7 @@ def run_periodic_job(
                     basis,
                     kmesh,
                     opts,
+                    historical_domain=bipole_historical_domain,
                     linear_dep_threshold=1e-7,
                     use_ewald_j_split=True,
                     ewald_omega=ewald_omega,
@@ -11300,6 +11705,10 @@ def run_periodic_job(
                     aiccm_mesh,
                     opts,
                     backend=aiccm_backend,
+                    fit_source=fit_source,
+                    support_policy=chi_support_policy,
+                    coulomb_controls=chi_coulomb_controls,
+                    hf_reference=chi_hf_reference,
                     aux_basis=aux_basis,
                     gdf_method=(gdf_method or "rsgdf"),
                     rsgdf_ke_cutoff=rsgdf_ke_cutoff,
@@ -11319,6 +11728,7 @@ def run_periodic_job(
                     aiccm_mesh,
                     opts,
                     backend=aiccm_backend,
+                    fit_source=fit_source,
                     aux_basis=aux_basis,
                     gdf_method=(gdf_method or "rsgdf"),
                     rsgdf_ke_cutoff=rsgdf_ke_cutoff,
@@ -11337,6 +11747,10 @@ def run_periodic_job(
                     aiccm_mesh,
                     opts,
                     backend=aiccm_backend,
+                    fit_source=fit_source,
+                    support_policy=chi_support_policy,
+                    coulomb_controls=chi_coulomb_controls,
+                    hf_reference=chi_hf_reference,
                     aux_basis=aux_basis,
                     gdf_method=(gdf_method or "rsgdf"),
                     rsgdf_ke_cutoff=rsgdf_ke_cutoff,
@@ -11356,6 +11770,7 @@ def run_periodic_job(
                     aiccm_mesh,
                     opts,
                     backend=aiccm_backend,
+                    fit_source=fit_source,
                     aux_basis=aux_basis,
                     gdf_method=(gdf_method or "rsgdf"),
                     rsgdf_ke_cutoff=rsgdf_ke_cutoff,
@@ -11419,6 +11834,8 @@ def run_periodic_job(
             write("    route               = real-gamma (neutral "
                   "fitted-torus control; EXPERIMENTAL)\n")
             write(f"    exchange_exxdiv     = {_rg_exxdiv}\n")
+            write("    allow_vacuum_padding = "
+                  f"{bool(aiccm_allow_vacuum_padding)} (IID 291 / R6)\n")
             if _aiccm_correlation is not None:
                 write(f"    correlation         = {_aiccm_correlation} "
                       "(neutral-RI, EXPERIMENTAL)\n")
@@ -11434,10 +11851,13 @@ def run_periodic_job(
                 aux_basis=aux_basis,
                 ke_cutoff=(float(rsgdf_ke_cutoff)
                            if rsgdf_ke_cutoff is not None else 200.0),
+                tail_ke_cutoff=(float(rsgdf_tail_ke_cutoff)
+                                if rsgdf_tail_ke_cutoff is not None else None),
                 max_iter=int(opts.max_iter),
                 conv_tol=float(opts.conv_tol_energy),
                 lat_opts=opts.lattice_opts,
                 retain_cderi=_aiccm_correlation is not None,
+                allow_vacuum_padding=bool(aiccm_allow_vacuum_padding),
                 **(
                     {
                         "grid_options": opts.grid,
@@ -11460,60 +11880,16 @@ def run_periodic_job(
                 from dataclasses import replace as _dc_replace
 
                 _ccm = result.ccm_system
-                _open_shell = method_upper == "UHF"
-                if _aiccm_correlation == "dlpno-mp2":
-                    # The DLPNO drivers already take (ccm, reference, cderi),
-                    # so they need no on-reference wrapper: the retained L is
-                    # handed straight in. At the default zero truncations
-                    # these reproduce the canonical RI correlation.
-                    if _open_shell:
-                        from .periodic.ccm.dlpno_ump2 import (
-                            ccm_dlpno_ump2 as _corr_on_ref,
-                        )
-                    else:
-                        from .periodic.ccm.dlpno import (
-                            ccm_dlpno_mp2 as _corr_on_ref,
-                        )
-                elif _aiccm_correlation == "dlpno-ccsd":
-                    if _open_shell:
-                        from .periodic.ccm.dlpno_uccsd import (
-                            ccm_dlpno_uccsd as _corr_on_ref,
-                        )
-                    else:
-                        from .periodic.ccm.dlpno_ccsd import (
-                            ccm_dlpno_ccsd as _corr_on_ref,
-                        )
-                elif _aiccm_correlation == "ccsd":
-                    from .periodic.ccm.ccsd import (
-                        run_ccm_ri_ccsd_on_reference as _corr_on_ref,
-                    )
-                else:
-                    from .periodic.ccm.mp2 import (
-                        run_ccm_ri_mp2_on_reference as _corr_on_ref,
-                    )
-                if _aiccm_correlation.startswith("dlpno-"):
-                    _corr = _corr_on_ref(
-                        _ccm, result.ccm_result, cderi=result.cderi,
-                    )
-                else:
-                    _corr = _corr_on_ref(
-                        _ccm, result.ccm_result, result.cderi,
-                    )
+                _corr, _e_corr_total, _e_total_total = (
+                    _run_aiccm_neutral_ri_correlation(
+                        _aiccm_correlation, _ccm, result.ccm_result,
+                        result.cderi, open_shell=(method_upper == "UHF")))
                 _n_c = int(_ccm.n_cells)
-                # The DLPNO MP2 results spell it e_corr, the canonical and
-                # CCSD ones e_correlation. Read whichever this driver carries
-                # rather than assuming, so a rename surfaces as an
-                # AttributeError here instead of a silently wrong energy.
-                _e_corr_total = getattr(
-                    _corr, "e_correlation", None
-                )
-                if _e_corr_total is None:
-                    _e_corr_total = _corr.e_corr
                 result = _dc_replace(
                     result,
                     correlation=_corr,
                     e_correlation=float(_e_corr_total) / _n_c,
-                    e_total_correlated=float(_corr.e_total) / _n_c,
+                    e_total_correlated=float(_e_total_total) / _n_c,
                 )
         elif resolved_jk == PeriodicJKMethod.AICCM2026DEV_A:
             # EXPERIMENTAL: the union-and-weight four-centre Γ-CCM
@@ -11663,6 +12039,18 @@ def run_periodic_job(
             write("    route               = neutral-bloch (neutral Γ-CCM, "
                   "Bloch producer; EXPERIMENTAL)\n")
             write("    pair_symmetry       = off (production multi-k fits)\n")
+            write("    fit_source          = "
+                  f"{'classic (pinned: the fit the real-gamma fold builds; #378)' if fit_source == 'auto' else fit_source}\n")
+            _nb_fit_kw = {} if fit_source == "auto" else {"fit_source": fit_source}
+            write("    allow_vacuum_padding = "
+                  f"{bool(aiccm_allow_vacuum_padding)} (IID 291 / R6)\n")
+            if _aiccm_correlation is not None:
+                write(f"    correlation         = {_aiccm_correlation} "
+                      "(neutral-RI on the Bloch SCF folded to real-Gamma "
+                      "orbitals, Theorem 1; EXPERIMENTAL)\n")
+                # The driver keeps its classic per-pair fit so the fold
+                # rotates it to the supercell cderi instead of refitting.
+                _nb_fit_kw["retain_fit_cache"] = True
             result = run_neutral_bloch_scf(
                 system,
                 str(basis.name),
@@ -11676,18 +12064,50 @@ def run_periodic_job(
                 # Fourier identity with variant='real-gamma' is a statement
                 # about the construction, not about a fit approximation.
                 symmetry=False,
+                allow_vacuum_padding=bool(aiccm_allow_vacuum_padding),
                 return_lattice_density=bool(write_density or output_qvf),
                 options=opts,
                 progress=plog,
                 gdf_method=(gdf_method or "rsgdf"),
-                rsgdf_ke_cutoff=rsgdf_ke_cutoff,
-                rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+                rsgdf_ke_cutoff=_rsgdf_ke_request,
+                # #378: the key is omitted when no tail was requested so the
+                # neutral-Bloch pin can supply the fold's mirrored tail.
+                **({"rsgdf_tail_ke_cutoff": rsgdf_tail_ke_cutoff}
+                   if rsgdf_tail_ke_cutoff is not None else {}),
                 mdf_ke_cutoff=mdf_ke_cutoff,
+                **_nb_fit_kw,
             )
+            if _aiccm_correlation is not None and result.converged:
+                # Theorem 1 made executable (speed-up prompt 4, 2026-09-25):
+                # the Bloch SCF is folded to real S-orthonormal canonical
+                # supercell-Gamma orbitals and the cderi is folded from the
+                # driver's retained fit, so the correlation rides the same
+                # Hamiltonian the real-gamma arm correlates on, from the
+                # cheaper SCF. The transform checks itself (orthonormality,
+                # Fock diagonality, density, electron count) and refuses a
+                # reference that fails; its report lands in the manifest.
+                from .periodic.ccm.bloch_reference import (
+                    ccm_reference_from_bloch,
+                )
+
+                _ccm = result.ccm_system
+                _ref = ccm_reference_from_bloch(_ccm, result.ccm_result)
+                _corr, _e_corr_total, _e_total_total = (
+                    _run_aiccm_neutral_ri_correlation(
+                        _aiccm_correlation, _ccm, _ref, _ref.cderi,
+                        open_shell=(method_upper == "UHF")))
+                _n_c = int(_ccm.n_cells)
+                # The multi-k results are plain dataclasses; the arm's
+                # convention record already rides on them the same way.
+                setattr(result, "correlation", _corr)
+                setattr(result, "e_correlation", float(_e_corr_total) / _n_c)
+                setattr(result, "e_total_correlated",
+                        float(_e_total_total) / _n_c)
+                setattr(result, "bloch_transform", _ref.bloch_transform)
         elif resolved_jk == PeriodicJKMethod.GDF:
-            # Closed-shell multi-k GDF and the legacy closed-shell Gamma
-            # driver apply the shared Saunders-Hillier operator.  The pure
-            # PBC-GDF Gamma driver and all open-shell GDF drivers do not yet
+            # Closed-shell k-mesh GDF (Gamma included, as its one-point mesh)
+            # and the legacy dim < 3 Gamma driver apply the shared
+            # Saunders-Hillier operator. The open-shell GDF drivers do not
             # implement it, so reject those combinations instead of silently
             # accepting and dropping an explicit or auto-resolved shift.
             if float(opts.level_shift) != 0.0 and method_upper == "ROHF":
@@ -11708,6 +12128,9 @@ def run_periodic_job(
                 float(opts.level_shift) != 0.0
                 and _requested_gamma_only
                 and gdf_method is not None
+                # A bulk Gamma job with a level shift runs the k-mesh engine
+                # at (1, 1, 1), which implements it for every gdf_method.
+                and int(system.dim) != 3
             ):
                 raise NotImplementedError(
                     "run_periodic_job: Gamma-only GDF with an explicit gdf_method "
@@ -11782,66 +12205,63 @@ def run_periodic_job(
                 and method_upper == "RHF"
                 and _requested_gamma_only
                 and gdf_method is not None
+                # A bulk Gamma job with Fock mixing runs the k-mesh engine at
+                # (1, 1, 1), which applies it per k and keeps the requested
+                # gdf_method (periodic_gdf_route.py). Only a lower-dimensional
+                # cell still reaches a driver that would drop the knob, which
+                # is what this guard exists to stop (#283).
+                and int(system.dim) != 3
             ):
                 raise NotImplementedError(
                     "run_periodic_job: closed-shell Gamma-only RHF/GDF with "
-                    f"an explicit gdf_method ({gdf_method!r}) does not "
-                    "implement fock_mixing. Omit gdf_method to use the "
-                    "Fock-mixing-capable Gamma fallback, provide a non-Gamma "
-                    "k-point mesh, or pass fock_mixing=0.0."
+                    f"an explicit gdf_method ({gdf_method!r}) cannot honour "
+                    "fock_mixing on this route. Requesting it here does not "
+                    "slow the SCF down, it changes the answer: the run falls "
+                    "back to the legacy molecular-limit Gamma driver, which "
+                    "drops the requested gdf_method and shifts the energy by "
+                    "the finite-size Madelung term (measured 5.8 mHa on "
+                    "H2/STO-3G in a 12 bohr cube). Pass kpoints=(1, 1, 1) "
+                    "with gdf_method='rsgdf' to get Fock mixing on the "
+                    "general multi-k engine, use a non-Gamma mesh, or pass "
+                    "fock_mixing=0.0."
                 )
-            # Default-Γ closed-shell RHF (no explicit gdf_method) now routes
-            # through the PySCF-µHa-validated run_pbc_gdf_rhf (exxdiv='ewald'),
-            # the same driver as the explicit-gdf_method and open-shell Γ
-            # UHF/UKS paths -- but ONLY when the cell is in its supported
-            # domain. The legacy run_rhf_periodic_gamma_gdf (molecular limit /
-            # exxdiv=None) stays the fallback for everything it cannot do:
-            # RKS, dim<3, charged cells, finite-T smearing, and the symmetry /
-            # Fock-mixing convergence aids it threads. The gate mirrors
-            # run_pbc_gdf_rhf's own preconditions (pbc_gdf.py ~l.563-601) and
-            # the knobs that driver honours (DIIS + damping, NOT fock_mixing /
-            # level_shift / smearing) so we never route a cell it would reject
-            # or silently drop a convergence aid. It also matches the
-            # kpoints=(1,1,1) routing in run_krhf so default-Γ and an explicit
-            # Γ k-mesh never disagree. Pre-2026-06-15 the default fell to the
-            # legacy driver, which computes the molecular limit and disagreed
-            # with PySCF / the explicit path by the finite-size Madelung shift
-            # (~5.8 mHa on H2/sto-3g/12-bohr).
-            _gamma_q_nuc = float(sum(atom.Z for atom in system.unit_cell))
-            _gamma_n_elec = int(system.n_electrons())
+            # A default-Gamma closed-shell job runs an exact-Gamma driver
+            # (run_pbc_gdf_rhf for RHF, run_pbc_gdf_uks in its singlet limit
+            # for RKS) only when that driver implements every requested
+            # option. Every other bulk Gamma RHF/RKS job runs the k-mesh
+            # engine at kmesh=(1, 1, 1), which is what an explicit
+            # kpoints=(1, 1, 1) selects and which carries the same fitted
+            # Hartree and exxdiv='ewald' exchange (periodic_gdf_route.py).
+            # The legacy run_rhf_periodic_gamma_gdf, a different Hamiltonian
+            # for bulk cells, is reached only for dim < 3.
+            # The decision was taken once, before the convergence filter
+            # (_gdf_route); the branches below only read it.
+            from .periodic_gdf_route import EXACT_GAMMA as _EXACT_GAMMA
+            from .periodic_gdf_route import K_MESH as _K_MESH
+
             _gamma_default_pure_gdf_ok = (
                 method_upper == "RHF"
-                and not _ecp_active
+                and _gdf_route.engine == _EXACT_GAMMA
+                and _gdf_route.driver == "run_pbc_gdf_rhf"
                 and int(system.dim) == 3
-                and _gamma_n_elec % 2 == 0
-                and int(system.multiplicity) == 1
-                and abs(_gamma_q_nuc - _gamma_n_elec) <= 0.5
-                and float(opts.smearing_temperature) <= 0.0
-                and float(opts.fock_mixing) == 0.0
-                and float(getattr(opts, "level_shift", 0.0)) == 0.0
-                and not symmetry_stabilize
-                and not symmetry_reduce_fock
             )
-            # Closed-shell Γ RKS can use the native pure-GDF KS engine via the
-            # spin-unrestricted implementation in its singlet limit. This is
-            # the only Γ KS path here whose Hartree J is the Lpq/GDF build; the
-            # legacy run_rhf_periodic_gamma_gdf fallback uses the molecular-
-            # limit Ewald-J bridge and is not a PySCF-GDF parity route for
-            # condensed cells. Keep the gate narrow so we never drop knobs that
-            # run_pbc_gdf_uks does not honour. The Γ UKS/GDF driver applies
-            # Fock mixing itself, so ionic auto profiles can remain on the
-            # pure-GDF path instead of falling back to the legacy bridge.
             _gamma_default_rks_gdf_ok = (
                 method_upper == "RKS"
-                and not _ecp_active
+                and _gdf_route.engine == _EXACT_GAMMA
+                and _gdf_route.driver == "run_pbc_gdf_uks"
                 and int(system.dim) == 3
-                and _gamma_n_elec % 2 == 0
-                and int(system.multiplicity) == 1
-                and abs(_gamma_q_nuc - _gamma_n_elec) <= 0.5
-                and float(opts.smearing_temperature) <= 0.0
-                and float(getattr(opts, "level_shift", 0.0)) == 0.0
-                and not symmetry_stabilize
-                and not symmetry_reduce_fock
+            )
+            _gamma_on_k_engine = (
+                kpoints is None
+                and int(system.dim) == 3
+                and not _ecp_active
+                and method_upper in ("RHF", "RKS")
+                and _gdf_route.engine == _K_MESH
+            )
+            plog.info("GDF engine: " + _gdf_route.describe())
+            write(
+                f"    gdf_engine          = {_gdf_route.engine} "
+                f"({_gdf_route.driver})\n"
             )
             # The explicit slab-GDF route is deliberately bounded to
             # closed-shell RHF/RKS on a full Gamma-centered tuple mesh. AUTO
@@ -11868,7 +12288,7 @@ def run_periodic_job(
                         functional=functional,
                         aux_basis=aux_basis,
                         gdf_method=(gdf_method or "rsgdf"),
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         xc_density_domain=(
@@ -11893,7 +12313,7 @@ def run_periodic_job(
                         functional=functional,
                         aux_basis=aux_basis,
                         gdf_method=(gdf_method or "rsgdf"),
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         ibz_native=False,
@@ -11944,7 +12364,7 @@ def run_periodic_job(
                         functional=functional,
                         aux_basis=aux_basis,
                         gdf_method=(gdf_method or "rsgdf"),
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         fock_mixing=opts.fock_mixing,
                         density_mixer=density_mixer,
@@ -11959,16 +12379,20 @@ def run_periodic_job(
                         functional=None,
                         aux_basis=aux_basis,
                         gdf_method=(gdf_method or "rsgdf"),
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         fock_mixing=opts.fock_mixing,
                         density_mixer=density_mixer,
                         dft_plus_u_sites=dft_plus_u,
                         initial_density_k=_read_density_k_closed,
                     )
-            # Multi-k bulk GDF dispatch when a k-mesh is requested.
-            elif kpoints is not None or (
-                _ecp_active and method_upper in ("RHF", "RKS", "UHF", "UKS")
+            # Multi-k bulk GDF dispatch when a k-mesh is requested, and the
+            # one-point mesh for a bulk Gamma job no exact-Gamma driver can
+            # evaluate (see _gamma_on_k_engine above).
+            elif (
+                kpoints is not None
+                or _gamma_on_k_engine
+                or (_ecp_active and method_upper in ("RHF", "RKS", "UHF", "UKS"))
             ):
                 # An ECP-bearing cell at the default Gamma mesh takes this
                 # branch too (#88): the run_pbc_gdf_* fast paths and the
@@ -12001,7 +12425,7 @@ def run_periodic_job(
                         functional=functional,
                         aux_basis=aux_basis,
                         gdf_method=(gdf_method or "rsgdf"),
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         ibz_native=symmetry_reduce_k,
@@ -12022,7 +12446,7 @@ def run_periodic_job(
                         functional=None,
                         aux_basis=aux_basis,
                         gdf_method=(gdf_method or "rsgdf"),
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         ibz_native=symmetry_reduce_k,
@@ -12034,7 +12458,7 @@ def run_periodic_job(
                         opts,
                         aux_basis=aux_basis,
                         gdf_method=(gdf_method or "rsgdf"),
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         initial_density_k=_read_density_k_open,
@@ -12049,7 +12473,7 @@ def run_periodic_job(
                         functional=functional,
                         aux_basis=aux_basis,
                         gdf_method=(gdf_method or "rsgdf"),
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         ibz_native=symmetry_reduce_k,
@@ -12075,7 +12499,7 @@ def run_periodic_job(
                         functional=None,
                         aux_basis=aux_basis,
                         gdf_method=(gdf_method or "rsgdf"),
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         ibz_native=symmetry_reduce_k,
@@ -12101,7 +12525,7 @@ def run_periodic_job(
                     opts,
                     aux_basis=aux_basis,
                     gdf_method=(gdf_method or "rsgdf"),
-                    rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                    rsgdf_ke_cutoff=_rsgdf_ke_request,
                     rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                     mdf_ke_cutoff=mdf_ke_cutoff,
                         initial_density_k=_read_density_k_open,
@@ -12115,7 +12539,7 @@ def run_periodic_job(
                     functional=functional,
                     aux_basis=aux_basis,
                     gdf_method=(gdf_method or "rsgdf"),
-                    rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                    rsgdf_ke_cutoff=_rsgdf_ke_request,
                     rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                     mdf_ke_cutoff=mdf_ke_cutoff,
                 )
@@ -12125,7 +12549,7 @@ def run_periodic_job(
                     opts,
                     aux_basis=aux_basis,
                     gdf_method=(gdf_method or "rsgdf"),
-                    rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                    rsgdf_ke_cutoff=_rsgdf_ke_request,
                     rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                     mdf_ke_cutoff=mdf_ke_cutoff,
                 )
@@ -12136,7 +12560,7 @@ def run_periodic_job(
                     functional=functional,
                     aux_basis=aux_basis,
                     gdf_method=(gdf_method or "rsgdf"),
-                    rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                    rsgdf_ke_cutoff=_rsgdf_ke_request,
                     rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                     mdf_ke_cutoff=mdf_ke_cutoff,
                 )
@@ -12161,16 +12585,16 @@ def run_periodic_job(
                     opts,
                     aux_basis=aux_basis,
                     gdf_method=(gdf_method or "rsgdf"),
-                    rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                    rsgdf_ke_cutoff=_rsgdf_ke_request,
                     rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                     mdf_ke_cutoff=mdf_ke_cutoff,
                     exxdiv="ewald",
                 )
             else:
-                # Legacy Γ GDF driver (molecular limit / exxdiv=None): the
-                # fallback for the cases run_pbc_gdf_rhf does not support -- RKS,
-                # dim<3, charged cells, finite-T smearing, and symmetry /
-                # Fock-mixing convergence aids. (Open-shell Γ already routed to
+                # Legacy Γ GDF driver (molecular limit / exxdiv=None), reached
+                # only for dim < 3 now: every bulk Gamma job that the
+                # exact-Gamma drivers cannot evaluate runs the k-mesh engine
+                # at (1, 1, 1) above. (Open-shell Γ already routed to
                 # run_pbc_gdf_u{hf,ks} above.)
                 if rsgdf_tail_ke_cutoff is not None:
                     raise NotImplementedError(
@@ -12327,7 +12751,10 @@ def run_periodic_job(
                         basis,
                         opts,
                         aux_basis=aux_basis,
-                        gdf_method=(gdf_method or "compcell"),
+                        # Same default builder as the k-mesh RIJCOSX route;
+                        # compcell refuses the tight cells this path serves
+                        # (#172).
+                        gdf_method=(gdf_method or "rsgdf"),
                         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
                         progress=plog,
                     )
@@ -12340,7 +12767,11 @@ def run_periodic_job(
                 rijcosx_gdf_method = gdf_method or "rsgdf"
                 write(f"    aux_basis           = {aux_basis or '<auto>'}\n")
                 write(f"    gdf_method          = {rijcosx_gdf_method}\n")
-                write(f"    rsgdf_ke_cutoff     = {float(rsgdf_ke_cutoff)}\n")
+                if _rsgdf_ke_request is None:
+                    write("    rsgdf_ke_cutoff     = auto (SR/LR planner; "
+                          "200.0 Ha where no planner applies)\n")
+                else:
+                    write(f"    rsgdf_ke_cutoff     = {float(rsgdf_ke_cutoff)}\n")
                 if rsgdf_tail_ke_cutoff is not None:
                     write(
                         "    rsgdf_tail_ke_cutoff = "
@@ -12370,7 +12801,7 @@ def run_periodic_job(
                         functional=functional,
                         aux_basis=aux_basis,
                         gdf_method=rijcosx_gdf_method,
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         k_exchange="cosx",
                         xc_density_domain=(
@@ -12403,7 +12834,7 @@ def run_periodic_job(
                         functional=None,
                         aux_basis=aux_basis,
                         gdf_method=rijcosx_gdf_method,
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         k_exchange="cosx",
                         progress=plog,
@@ -12421,7 +12852,7 @@ def run_periodic_job(
                         use_compcell=True,
                         k_exchange="cosx",
                         gdf_method=rijcosx_gdf_method,
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         bz_integration=bz_integration,
@@ -12455,7 +12886,7 @@ def run_periodic_job(
                         use_compcell=True,
                         k_exchange="cosx",
                         gdf_method=rijcosx_gdf_method,
-                        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                        rsgdf_ke_cutoff=_rsgdf_ke_request,
                         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
                         mdf_ke_cutoff=mdf_ke_cutoff,
                         bz_integration=bz_integration,
@@ -13102,6 +13533,7 @@ def run_periodic_job(
                     basis,
                     kmesh,
                     opts,
+                    historical_domain=bipole_historical_domain,
                     linear_dep_threshold=1e-7,
                     use_ewald_j_split=True,
                     ewald_omega=ewald_omega,
@@ -13130,6 +13562,7 @@ def run_periodic_job(
                     basis,
                     kmesh,
                     opts,
+                    historical_domain=bipole_historical_domain,
                     linear_dep_threshold=1e-7,
                     use_ewald_j_split=True,
                     ewald_omega=ewald_omega,
@@ -13158,6 +13591,7 @@ def run_periodic_job(
                     basis,
                     kmesh,
                     opts,
+                    historical_domain=bipole_historical_domain,
                     functional=functional,
                     linear_dep_threshold=1e-7,
                     use_ewald_j_split=True,
@@ -13194,6 +13628,7 @@ def run_periodic_job(
                     basis,
                     kmesh,
                     opts,
+                    historical_domain=bipole_historical_domain,
                     functional=functional,
                     linear_dep_threshold=1e-7,
                     use_ewald_j_split=True,
@@ -13238,6 +13673,9 @@ def run_periodic_job(
                 f"is not yet implemented in v0.7.1-spike."
             )
         t_scf = time.perf_counter() - t0
+        _output_writer.set_result_status(
+            "converged" if result.converged else "not_converged"
+        )
         from dataclasses import is_dataclass, replace
         from .guess import GuessSelection
         executed_guess = getattr(result, "guess_selection", None)
@@ -13328,6 +13766,9 @@ def run_periodic_job(
                   + "\n")
             write("    reference           = the SCF above "
                   "(construction-matched)\n")
+            if getattr(result, "bloch_transform", None) is not None:
+                write("    representation      = real-Gamma orbitals folded "
+                      "from the Bloch SCF (Theorem 1)\n")
             write("    driver              = "
                   f"{type(result.correlation).__name__}\n")
             write("    citation route      = "
@@ -14205,7 +14646,14 @@ def run_periodic_job(
                 _props: list[str] = []
                 if coop_cohp and output_qvf and result.converged:
                     _props = ["coop", "cohp"]
-                if output_qvf and result.converged and resolved_jk == PeriodicJKMethod.GDF:
+                if (
+                    output_qvf
+                    and result.converged
+                    and resolved_jk in _QVF_ACCEPTED_STATE_PROPERTY_ROUTES
+                ):
+                    # Same set as the payload itself: the accepted-state
+                    # adapter returns the Mayer matrix beside DOS/PDOS, so a
+                    # route that gets the payload must also cite it.
                     _props.append("mayer_bond_order")
                 # Analytic forces on a real-Γ relaxation: the optimizer block
                 # below steps run_ccm_direct_optimize on run_ccm_direct_gradient
@@ -14251,6 +14699,7 @@ def run_periodic_job(
                     extra_libraries=["trexio"] if _trexio_path is not None else [],
                     periodic=True,  # => spglib fires
                     uses_ecp=bool(_ecp_blocks),
+                    uses_trah=bool(getattr(result, "stability_trah_used", False)),
                     uses_fftw_poisson=_uses_fftw,
                     uses_smearing=opts.smearing_temperature > 0.0,
                     # Saunders-Hillier level shift (constant, warm-up, or an
@@ -14514,6 +14963,9 @@ def run_periodic_job(
                         L_bohr,
                         shape,
                         system=super_system,
+                        origin_bohr=_qvf_grid_origin_bohr(
+                            super_system, L_bohr
+                        ),
                     )
                     _qvf_system = super_system
                     density_write_system = super_system
@@ -14569,20 +15021,24 @@ def run_periodic_job(
                         only_format="xsf",
                         system=density_write_system,
                         data=rho,
+                        origin=_qvf_grid_origin_bohr(density_write_system, L_bohr),
                         name=f"{output_stem.name}_density",
                         raise_on_error=True,
                     )
                     write(f"  Density written to {xsf_path.name}\n")
 
                 # --- Package for QVF ----------------------------------
-                # QVF writes grid in bohr.  Origin is (0,0,0) for a
-                # primitive-cell grid.  voxel_vectors are per-voxel
-                # step vectors: lattice column / shape_i.
+                # QVF writes grid in bohr.  voxel_vectors are per-voxel step
+                # vectors: lattice column / shape_i.  The origin is (0,0,0)
+                # for a fully periodic primitive-cell grid, but a slab or a
+                # chain grid is centred on its atoms along the non-periodic
+                # axes (#45), so the viewer has to be told where the box
+                # actually starts.
                 if output_qvf:
                     _qvf_volume_data = {
                         "Electron density": (
                             rho,
-                            np.zeros(3, dtype=float),
+                            _qvf_grid_origin_bohr(density_write_system),
                             per_voxel,
                         ),
                     }
@@ -14604,10 +15060,17 @@ def run_periodic_job(
                         exc,
                         stem_sibling(output_stem, ".qvf"),
                         role="qvf_density_grid",
-                        category=OutputFailureKind.compatibility_fallback,
+                        category=OutputFailureKind.optional_artifact,
+                        manifest=_output_writer._manifest,
+                        component="volume.density",
                     )
-        # --- Timing ---------------------------------------------------
-        t_total = time.perf_counter() - t_job_start
+        # --- SCF timing -----------------------------------------------
+        # The SCF's own cost, reported where the SCF ends. "Job total" is
+        # NOT here: a great deal of the job still lies below this line (the
+        # property payload, the QVF archive, an optimization epilogue), and
+        # printing a total here once let a 1322 s post-SCF phase sit entirely
+        # outside the number the .out called the total. It is written at the
+        # end of the job instead, by the "Job timing" block.
         n_iter = int(getattr(result, "n_iter", 0))
         iter_avg = (t_scf / n_iter) if n_iter > 0 else float("nan")
         write(
@@ -14616,7 +15079,6 @@ def run_periodic_job(
                 [
                     ("SCF total", t_scf, None),
                     ("SCF avg per iter", iter_avg, f"({n_iter} iters)"),
-                    ("Job total", t_total, None),
                 ],
                 label_width=28,
                 body_indent=2,
@@ -14799,7 +15261,27 @@ def run_periodic_job(
                     flush()
                     hessian_result = None
 
-    _output_writer.record(out_path, wall_time_s=t_total)
+    # Elapsed now, rather than a value captured back at the SCF: this is an
+    # intermediate manifest record, and the phases between the SCF and here
+    # (population dump, density grid, TD-DFT, frequencies) belong in it.
+    _output_writer.record(out_path, wall_time_s=time.perf_counter() - t_job_start)
+
+    # Commit the structured-log stream, which closed with the context above.
+    # An explicit ``structured_log`` request declares it in the plan (as in
+    # run_job), so it must reach the manifest before finish() (#384).
+    for _pf in real_plan.files:
+        if _pf.role != "structured" or not _pf.path.is_file():
+            continue
+        try:
+            _output_writer.record(_pf.path)
+        except Exception as _rec_exc:
+            warn_writer_failure(
+                _rec_exc,
+                _pf.path,
+                role="manifest_record_structured",
+                category=OutputFailureKind.manifest_recording,
+                writer=_output_writer,
+            )
 
     # Fill late-bound execution and finite-torus fields while preserving the
     # upfront ``status = running`` manifest and all dispatch outcomes.
@@ -14813,11 +15295,17 @@ def run_periodic_job(
         or getattr(result, "backend", "")
         or ""
     )
+    from .periodic_gdf_route import manifest_fields as _gdf_route_manifest_fields
+
     _manifest_run_fields = {
+        # Which GDF engine was chosen, which ran, and why (periodic_gdf_route).
+        **_gdf_route_manifest_fields(_gdf_route, _executed_backend),
         "initial_guess_requested": (InitialGuess.FRAGMO if _fragmo_request else _requested_initial_guess).name,
         "initial_guess": getattr(result, "guess_selection", selection).effective.name,
         "initial_guess_transport": getattr(result, "guess_selection", selection).transport.name,
-        "exchange_q0": exchange_q0_label(exchange_exxdiv),
+        # The gauge the SCF ran, as the result declares it; a route can run
+        # another convention than the exchange_exxdiv knob (GitLab #23).
+        "exchange_q0": executed_exchange_q0(result, exchange_exxdiv),
         "jk_method_requested": _jk_requested_label,
         "jk_method_resolved": resolved_jk.value,
         "jk_method_executed": _executed_jk_method,
@@ -14832,6 +15320,14 @@ def run_periodic_job(
         "dft_plus_u": bool(dft_plus_u),
         "dft_plus_u_route": _dft_plus_u_route,
     }
+    if _bipole_domain_active:
+        _manifest_run_fields["bipole_domain_policy"] = (
+            "physical_pairs" if _bipole_physical_pairs else "historical_index_ball"
+        )
+        _domain = getattr(result, "resolved_domain", None)
+        if _domain is not None:
+            _manifest_run_fields["bipole_resolved_domain"] = _domain.as_dict()
+            _manifest_run_fields["bipole_domain_settings_sha256"] = _domain.settings_sha256
     # M8 provenance: ``aiccm_correlation`` records what was ASKED for
     # ("ccsd"); this records what was actually CITED. The two differ in
     # exactly the information a consumer cannot re-derive from the request:
@@ -14859,6 +15355,39 @@ def run_periodic_job(
             )
         )
     if resolved_jk == PeriodicJKMethod.AICCM2026DEV_B:
+        from dataclasses import asdict
+        _acceptance = getattr(result, "chi_scf_acceptance", None)
+        if _acceptance is not None:
+            _manifest_run_fields["chi_scf_acceptance"] = dict(_acceptance)
+        _controls = getattr(result, "chi_scf_controls", None)
+        if _controls is not None:
+            _manifest_run_fields["chi_scf_controls"] = dict(_controls)
+        _manifest_run_fields["method_maturity"] = "experimental"
+        _manifest_run_fields["stability_status"] = "not-assessed"
+        _support = getattr(result, "executed_support", None)
+        if _support is not None:
+            _manifest_run_fields["executed_chi_support"] = _support.as_dict()
+            _manifest_run_fields["executed_chi_support_identity"] = _support.identity
+        _fit = getattr(result, "executed_fit_source", None)
+        _manifest_run_fields["requested_fit_source"] = fit_source
+        _manifest_run_fields["requested_rsgdf_ke_cutoff"] = rsgdf_ke_cutoff
+        _manifest_run_fields["requested_rsgdf_tail_ke_cutoff"] = (
+            "none" if rsgdf_tail_ke_cutoff is None else rsgdf_tail_ke_cutoff)
+        if _fit is not None:
+            _manifest_run_fields["executed_fit_source"] = _fit.as_dict()
+            _manifest_run_fields["executed_fit_source_identity"] = _fit.identity
+            _q_execution = getattr(result, "rsgdf_q_execution", None)
+            if _q_execution:
+                _manifest_run_fields["rsgdf_q_execution"] = _q_execution
+            _manifest_run_fields["executed_rsgdf_tail_ke_cutoff"] = (
+                "none" if _fit.executed_tail_reciprocal_cutoff_ha is None
+                else _fit.executed_tail_reciprocal_cutoff_ha)
+            _manifest_run_fields["qualification"] = "not-qualified"
+        _conv = getattr(result, "finite_torus_convention", None)
+        for _key in ("character_mesh_shape", "bvk_madelung_supercell_repetitions",
+                     "bvk_madelung_supercell_lattice_bohr"):
+            if _conv is not None:
+                _manifest_run_fields[_key] = getattr(_conv, _key)
         _b_convention = getattr(result, "finite_torus_convention", None)
         _b_exchange_q0 = getattr(_b_convention, "exchange_q0", None)
         _manifest_run_fields["exchange_q0"] = (
@@ -14991,6 +15520,34 @@ def run_periodic_job(
         _nb_tail = _nb("rsgdf_tail_ke_cutoff")
         _manifest_run_fields["rsgdf_tail_ke_cutoff_executed"] = (
             "none" if _nb_tail is None else _nb_tail)
+        # Which implementation of gdf_method="rsgdf" fitted the run (#378):
+        # the two producers must agree here and on the tail.
+        _manifest_run_fields["rsgdf_fit_source_executed"] = (
+            _nb("fit_source") or "not-recorded")
+        # IID 291 / R6: the opt-in and the directions that measured as
+        # vacuum, read off the producer's record. A padded-regime energy
+        # must never pass for a measured-3-D one.
+        _manifest_run_fields["aiccm_allow_vacuum_padding"] = bool(
+            _nb("vacuum_padding_allowed") is True)
+        _nb_axes = _nb("vacuum_padded_axes")
+        _manifest_run_fields["aiccm_vacuum_padded_axes"] = (
+            list(int(a) for a in _nb_axes)
+            if isinstance(_nb_axes, (tuple, list)) else "not-recorded")
+        _nb_fold = getattr(result, "bloch_transform", None)
+        if _nb_fold is not None:
+            # correlation= ran on the Bloch SCF folded to real-Gamma
+            # orbitals (Theorem 1): the transform's checks, as they passed.
+            _manifest_run_fields["aiccm_correlation_reference"] = (
+                "bloch-fold (real-Gamma orbitals from the Bloch SCF, "
+                "Theorem 1)")
+            _manifest_run_fields["aiccm_bloch_fold_fock_offdiag_max"] = (
+                float(_nb_fold.fock_offdiag_max))
+            _manifest_run_fields["aiccm_bloch_fold_orthonormality_max_dev"] = (
+                float(_nb_fold.orthonormality_max_dev))
+            _manifest_run_fields["aiccm_bloch_fold_density_max_dev"] = (
+                float(_nb_fold.density_max_dev))
+            _manifest_run_fields["aiccm_bloch_fold_cderi_build"] = str(
+                _nb_fold.cderi_build)
         _manifest_run_fields["experimental_route"] = True
     if resolved_jk == PeriodicJKMethod.AICCM2026DEV_A_REAL_GAMMA:
         # EXPERIMENTAL real-Γ control: record the RESULT-derived convention
@@ -15019,6 +15576,18 @@ def run_periodic_job(
             _rg("nrep")) if _rg_convention is not None else "not-recorded"
         _manifest_run_fields["bvk_n_cells"] = _rg("n_cells")
         _manifest_run_fields["cderi_build"] = _rg("cderi_build")
+        _rg_tail = _rg("rsgdf_tail_ke_cutoff")
+        _manifest_run_fields["rsgdf_tail_ke_cutoff_executed"] = (
+            "none" if _rg_tail in (None, "not-recorded") else _rg_tail)
+        _manifest_run_fields["rsgdf_fit_source_executed"] = (
+            _rg("fit_source") or "not-recorded")
+        # IID 291 / R6: see the neutral-bloch block above.
+        _manifest_run_fields["aiccm_allow_vacuum_padding"] = bool(
+            _rg("vacuum_padding_allowed") is True)
+        _rg_axes = _rg("vacuum_padded_axes")
+        _manifest_run_fields["aiccm_vacuum_padded_axes"] = (
+            list(int(a) for a in _rg_axes)
+            if isinstance(_rg_axes, (tuple, list)) else "not-recorded")
         _manifest_run_fields["experimental_route"] = True
         _rg_screened = getattr(_rg_convention, "screened_exchange", None)
         if _rg_screened is not None:
@@ -15030,6 +15599,58 @@ def run_periodic_job(
             _manifest_run_fields["screened_exchange_assembly"] = (
                 "sr-direct (erfc-attenuated fitted kernel + sigma0 zero "
                 "mode; no exchange-q0 seam)")
+    # O29 (paper issue #17): the convergence actually REACHED, read from the
+    # producer's per-cycle trace, beside the thresholds it was compared
+    # against. A requested threshold describes the calculation that was
+    # asked for; these describe the one that ran. The real-Γ loops record a
+    # max-abs orthonormalised commutator element, the multi-k driver a
+    # gradient norm -- the metric is named so the two are never read as one.
+    _scf_trace = getattr(result, "scf_trace", None)
+    if not _scf_trace:
+        _scf_trace = getattr(getattr(result, "ccm_result", None),
+                             "scf_trace", None)
+    _scf_trace = tuple(_scf_trace or ())
+    _manifest_run_fields["scf_cycles_recorded"] = int(len(_scf_trace))
+    if _scf_trace:
+        _last = _scf_trace[-1]
+        _dE = getattr(_last, "delta_e", None)
+        if hasattr(_last, "grad_max"):
+            _resid = getattr(_last, "grad_max", None)
+            _metric = "max_abs_orthonormalised_commutator"
+        else:
+            _resid = getattr(_last, "grad_norm", None)
+            _metric = "gradient_norm"
+
+        def _finite_or_not_recorded(x):
+            # ``math`` is rebound locally on some branches of this function,
+            # so the closure must not refer to it; use the module alias.
+            try:
+                x = float(x)
+            except (TypeError, ValueError):
+                return "not-recorded"
+            return x if _math_stdlib.isfinite(x) else "not-recorded"
+
+        _manifest_run_fields["scf_final_delta_e_ha"] = (
+            _finite_or_not_recorded(_dE))
+        _manifest_run_fields["scf_final_residual"] = (
+            _finite_or_not_recorded(_resid))
+        _manifest_run_fields["scf_final_residual_metric"] = _metric
+    else:
+        _manifest_run_fields["scf_final_delta_e_ha"] = "not-recorded"
+        _manifest_run_fields["scf_final_residual"] = "not-recorded"
+        _manifest_run_fields["scf_final_residual_metric"] = "not-recorded"
+    # #176: the measured band edges the .out block prints, from the same
+    # classifier, under the field names the semiempirical k-route writes
+    # (#426). A non-converged SCF measured no material, so it records none.
+    if bool(getattr(result, "converged", False)):
+        from .band_edges import result_band_edges as _result_band_edges
+
+        try:
+            _edges = _result_band_edges(result)
+        except (TypeError, ValueError):
+            _edges = None
+        if _edges is not None and int(_edges.n_kpoints) > 1:
+            _manifest_run_fields.update(band_edge_manifest_fields(_edges))
     _output_writer.update_run_fields(_manifest_run_fields)
     if cite_manifest_rows:
         # Feed the full assembled provenance into the .system manifest's
@@ -15047,7 +15668,11 @@ def run_periodic_job(
     _qvf_pdos_data: Optional[dict[str, Any]] = None
     _qvf_coop_data: Optional[dict[str, Any]] = None
     _qvf_cohp_data: Optional[dict[str, Any]] = None
-    if output_qvf and result.converged and resolved_jk == PeriodicJKMethod.GDF:
+    if (
+        output_qvf
+        and result.converged
+        and resolved_jk in _QVF_ACCEPTED_STATE_PROPERTY_ROUTES
+    ):
         try:
             from .periodic_gdf_properties import gdf_properties_from_result
 
@@ -15088,15 +15713,23 @@ def run_periodic_job(
                 _property_exc, stem_sibling(output_stem, ".qvf"),
                 role="dos_computation", category=OutputFailureKind.optional_artifact,
             )
-    if (
-        output_qvf
-        and result.converged
-        and resolved_jk != PeriodicJKMethod.GDF
-        and _qvf_periodic_property_payload_supported(
+    # Why the generic rebuild is unusable on this route, or None. Computed
+    # once so the omission can be reported instead of leaving the QVF quietly
+    # short of DOS/PDOS/COOP/COHP with nothing to explain it (#32).
+    _property_payload_skip_reason = (
+        _qvf_periodic_property_payload_skip_reason(
             resolved_jk,
             uses_external_xc=_uses_external_xc,
             ecp_active=_ecp_active,
         )
+        if resolved_jk not in _QVF_ACCEPTED_STATE_PROPERTY_ROUTES
+        else None
+    )
+    if (
+        output_qvf
+        and result.converged
+        and resolved_jk not in _QVF_ACCEPTED_STATE_PROPERTY_ROUTES
+        and _property_payload_skip_reason is None
     ):
         try:
             system = _system_with_valid_unit_cell_multiplicity(system)
@@ -15577,6 +16210,30 @@ def run_periodic_job(
                 category=OutputFailureKind.optional_artifact,
             )
 
+    if output_qvf and result.converged and _property_payload_skip_reason:
+        # State the reduced artifact rather than shipping a QVF that is
+        # quietly short of DOS/PDOS/COOP/COHP (#32).
+        # `property_hamiltonian` is otherwise written only by the GDF success
+        # branch, so without this a user comparing two runs of the same cell
+        # saw DOS in one archive, none in the other, and no field anywhere
+        # naming the difference.
+        _output_writer.update_run_fields({
+            "property_hamiltonian": f"omitted ({_property_payload_skip_reason})",
+        })
+        warn_output_failure(
+            NotImplementedError(
+                "QVF DOS/PDOS/COOP/COHP and Mayer bond orders were not "
+                f"written for jk_method={resolved_jk.value!r}: "
+                f"{_property_payload_skip_reason}. The rest of the QVF is "
+                "unaffected; for band properties on this cell use "
+                "jk_method='gdf', whose payload is projected from the "
+                "accepted SCF state."
+            ),
+            stem_sibling(output_stem, ".qvf"),
+            role="property_payload",
+            category=OutputFailureKind.optional_artifact,
+        )
+
     # Keep the converged electronic result used to assemble the archive.
     # Geometry optimization replaces ``result`` with its own return object,
     # but the QVF wavefunction/property payloads above describe this SCF
@@ -15586,6 +16243,7 @@ def run_periodic_job(
     # ---- Geometry optimization ---------------------------------------
     opt_result = None
     if optimize and result.converged:
+        _output_writer.set_result_status("not_reported")
         if _executed_jk_method not in (
             PeriodicJKMethod.BIPOLE.value,
             PeriodicJKMethod.GDF.value,
@@ -15608,6 +16266,7 @@ def run_periodic_job(
         # Reconstruct kmesh from the options used during SCF.
         km = _runner_bloch_kmesh(system, kpoints)
         _bipole_opt_driver_kwargs = {
+            "historical_domain": bipole_historical_domain,
             "use_ewald_j_split": True,
             "ewald_omega": ewald_omega,
             "ewald_precision": ewald_precision,
@@ -15806,6 +16465,9 @@ def run_periodic_job(
                     **_bipole_opt_driver_kwargs,
                 )
             if opt_result is not None:
+                _output_writer.set_result_status(
+                    "converged" if opt_result.converged else "not_converged"
+                )
                 opt_sys = opt_result.system
                 write("\n" + _optimized_geometry_summary(opt_result))
                 write(_system_summary(opt_sys))
@@ -15862,6 +16524,56 @@ def run_periodic_job(
                         )
                 result = opt_result  # Return optimization result
 
+    # --- Job timing -------------------------------------------------------
+    # "Job total" is written HERE, not after the SCF, and it is the last line
+    # this function writes to the .out. Everything a periodic job does after
+    # the SCF -- the population dump, the density grid, TD-DFT, frequencies,
+    # the QVF band-property payload, a geometry optimization -- now lies above
+    # it and is inside it.
+    #
+    # It used to be printed straight after the SCF, which made it a total of
+    # nothing in particular: on LiH/STO-3G (1,1,1) with
+    # method="aiccm", variant="neutral-bloch" the .out said "Job total
+    # 20234.79" while the .system manifest recorded wall_seconds 21556.90, so
+    # 1322 s of post-SCF work -- a four-centre real-space Fock build for a DOS
+    # payload -- had nowhere to show up. The payload is gone from that route
+    # now, but the reporting hole was what let it hide for a release.
+    #
+    # This cannot move further down: the QVF archive below embeds this log as
+    # run.record.log and must contain its last byte. What stays outside is the
+    # archive write and the manifest record, measured together at 0.47 s on
+    # LiH/STO-3G (1,1,1).
+    #
+    # The main output channel's context closed further up (the payload and the
+    # optimization run outside it), and `vibeqc.output.write` is a deliberate
+    # no-op with no active channel, so this reopens the .out in append mode the
+    # way the optimization epilogue does. Without that the block writes
+    # nothing, silently.
+    t_total = time.perf_counter() - t_job_start
+    # "SCF total" is not repeated here; the block after the SCF already
+    # carries it, and this one exists to add what that block cannot know.
+    _timing_rows: list[tuple[str, float, Optional[str]]] = []
+    if t_scf is not None:
+        _timing_rows.append(("Post-SCF and output", t_total - t_scf, None))
+    _timing_rows.append(("Job total", t_total, None))
+    try:
+        with OutputChannel.to_file(out_path, mode="a"):
+            write(
+                "\n"
+                + _format_timing_summary(
+                    _timing_rows, label_width=28, body_indent=2
+                )
+                + "\n"
+            )
+            flush()
+    except Exception as _timing_exc:
+        # A finished job must not fail on its own timing line.
+        warn(
+            f"job timing summary not written: "
+            f"{type(_timing_exc).__name__}: {_timing_exc}",
+            role="job_timing",
+        )
+
     # --- QVF visualisation archive (v1) ----------------------------------
     # This is deliberately the final artefact write. In particular, periodic
     # optimization appends its geometry epilogue above, so run.record.log can
@@ -15874,7 +16586,6 @@ def run_periodic_job(
                 scf_history_from_result as _scf_history_from_result,
             )
 
-            t_total = time.perf_counter() - t_job_start
             _qvf_scf_history = _scf_history_from_result(_qvf_archive_result)
             _qvf_run_record = _assemble_run_record(
                 real_plan,
@@ -15908,6 +16619,7 @@ def run_periodic_job(
                 jk_method=_jk_requested_label,
                 jk_method_resolved=resolved_jk.value,
                 jk_method_executed=_executed_jk_method,
+                exchange_q0=_manifest_run_fields.get("exchange_q0"),
                 dft_plus_u=bool(dft_plus_u),
                 dft_plus_u_route=_dft_plus_u_route,
                 wall_seconds=t_total,

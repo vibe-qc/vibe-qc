@@ -192,43 +192,51 @@ Fermi occupations. This seed step precedes the counted SCF iterations;
 `max_iter=0` still returns the selected initial guess without this step.
 
 When `smearing_temperature == 0`, the smearing fields collapse:
-`free_energy == energy` and `entropy == 0`. On **every closed-shell multi-k
-route**, which dispatches through `vibeqc.smearing.apply_smearing`, Aufbau
-uses one Fermi level across the full Brillouin zone. A gapped insulator
-therefore retains the usual per-k hard-Aufbau
-`{0, 2}` arrays and conventional midgap value. If bands overlap between k
-points, the number of occupied bands may differ by k point; states that are
-equal at the Fermi boundary to roundoff receive the same fractional occupation
-so mesh ordering cannot break their symmetry. This is a sharp, zero-temperature
+`free_energy == energy` and `entropy == 0`. On **every multi-k route**,
+closed-shell (`vibeqc.smearing.apply_smearing`) and open-shell
+(`vibeqc.smearing.apply_smearing_open_shell`, one chemical potential per
+spin), Aufbau uses one Fermi level across the full Brillouin zone
+(Weinert and Davenport, Phys. Rev. B 45, 13709 (1992)). A gapped insulator
+therefore retains the usual per-k hard-Aufbau `{0, 2}` (or per-spin `{0, 1}`)
+arrays and the conventional midgap value. If bands overlap between k points,
+the number of occupied bands may differ by k point; states that are equal at
+the Fermi boundary to roundoff receive the same fractional occupation so mesh
+ordering cannot break their symmetry. This is a sharp, zero-temperature
 ensemble, not positive-temperature smearing. Analytic GDF gradients currently
 require either the gapped integer pattern or supported positive-temperature
 Fermi-Dirac occupations; a band-overlap T=0 ensemble fails closed for
 `compute_gradient=True`.
 
+The maximum overlap method (`use_mom`, and the SPINLOCK pattern hold) is the
+one exception: it chooses its occupied states itself, and the fill holds that
+selection positionally rather than re-picking the lowest states (GitLab #725).
+
 A Γ-only calculation is a single spectrum, so there is nothing for a shared
 chemical potential to reorder; it keeps the historical hard-Aufbau path
-unchanged. Open-shell (UHF/UKS) `T = 0` is still a per-spin, per-k Aufbau and
-has **not** moved to the global fill; that remains an open ask recorded on
-GitLab #85.
+unchanged. Until GitLab #176 the open-shell `T = 0` fill was still a per-spin,
+per-k Aufbau on the Ewald-3D and BIPOLE UHF/UKS routes, and those routes
+reported a chemical potential of zero; they now share the global fill and
+report the real per-spin Fermi levels.
 
-Not every route can yet *represent* a band-overlap `T = 0` state. The Ewald-3D
-multi-k (`run_rhf_periodic_multi_k_ewald3d`,
-`run_rks_periodic_multi_k_ewald3d`) and BIPOLE RKS multi-k
-(`run_pbc_bipole_rks`) drivers build their zero-temperature density from a
-single fixed occupied subspace `C[:, :n_occ]` at every k, which cannot express
-a differing per-k occupied count. Rather than converge one density and report
-the band edges of another, those routes now **fail closed** with a
-`NotImplementedError` naming the per-k occupied counts and pointing at
-`smearing_temperature > 0`, `bz_integration="gilat"`, or the multi-k GDF route,
-which builds its density from the occupations directly. Giving them the same
-density build is tracked as GitLab #509. Gapped meshes never reach this guard.
+Every multi-k route builds its zero-temperature density from the occupations
+the fill returns, so a band-overlap state is represented rather than refused:
+the fixed occupied-subspace slice `C[:, :n_occ]` is used only when the
+occupations are exactly the per-k integer Aufbau pattern, where the two are
+the same density. The legacy BIPOLE Ewald-J gauge (the non-default
+`use_exchange_ewald_split=False`) reconstructs its long-range density from
+that slice, so a band-overlap state fails closed there. ODA on the
+closed-shell Ewald-3D and BIPOLE routes also refuses a band-overlap state,
+because it needs a sharp occupied subspace.
 
-Why it matters: filling the lowest `n_occ` bands at each k point separately
-occupies a state above the Fermi level at one k while leaving a state below it
-empty at another. The band-extrema block then reports a **negative** indirect
-gap, because the valence-band maximum it finds genuinely does sit above the
-state it has been told is the conduction-band minimum. That is a wrong answer,
-not a convergence complaint (GitLab #85).
+Why it matters, twice over. Filling the lowest `n_occ` bands at each k point
+separately occupies a state above the Fermi level at one k while leaving a
+state below it empty at another (GitLab #85). And once the fill is global, a
+band-overlap metal has every occupied sampled level below every empty one,
+so reading "the highest occupied and the lowest empty state" reports a
+positive number: the spacing of the sampled levels around the Fermi level,
+which shrinks to zero with the mesh, printed as a band gap (GitLab #176). The
+band edges are therefore measured by one shared classifier; see
+[Band structure](band_structure.md#fermi-reference-and-band-gaps).
 
 ## Per-backend availability
 
@@ -247,7 +255,7 @@ the current `main`:
 | GDF | RHF / RKS | Γ-only | ✅ | `run_rhf_periodic_gamma_gdf` |
 | GDF | UHF / UKS | any | ✅ | `run_pbc_gdf_uhf`, `run_pbc_gdf_uks` (Γ), `run_kuhf_periodic_gdf`, `run_kuks_periodic_gdf` (multi-k); per-spin $\mu_\alpha$/$\mu_\beta$; analytic $dA/dR$ gradients since 2026-07-30 |
 | BIPOLE | RKS / UHF / UKS | Γ-only + multi-k | ✅ | `run_pbc_bipole_rks`, `run_pbc_bipole_uhf`, `run_pbc_bipole_uks`; analytic KS gradients reject smeared results, so production forces use FD for forces |
-| BIPOLE | RHF | any | ❌ | Closed-shell HF BIPOLE keeps integer occupations today |
+| BIPOLE | RHF | any | ❌ | Closed-shell HF BIPOLE has no finite-temperature occupations; `T = 0` uses the global Brillouin-zone fill (GitLab #176) |
 | GAPW | - | - | n/a (driver not yet a thing, queued M8) | |
 
 ### Choosing a smearing flavor

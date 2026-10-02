@@ -34,10 +34,10 @@ export const products = Object.freeze([
     "docsPending": false,
     "repository": "https://github.com/vibe-qc/vibe-qc",
     "requirements": "Python 3.11 or newer, a C++17 toolchain, and the native libraries described in the installation guide.",
-    "installation": "Clone the core repository using the access instructions in GitLab, then follow the installation guide for your platform. The installer builds native dependencies and creates a dedicated Python environment. The default installer selects the release branch; --dev selects main.",
+    "installation": "Clone the public core repository, then follow the installation guide for your platform prerequisites. The installer builds native dependencies and creates a dedicated Python environment. The commands below select main; without --dev, the installer selects the release branch or the newest stable tag when that branch is absent.",
     "installGuide": "/docs/installation.html",
     "guides": [],
-    "command": null,
+    "command": "git clone https://github.com/vibe-qc/vibe-qc.git\ncd vibe-qc\n./scripts/install.sh --dev",
     "capabilities": [
       [
         "Molecular methods",
@@ -65,13 +65,13 @@ export const products = Object.freeze([
     "docsPending": false,
     "repository": "https://github.com/vibe-qc/vibe-view",
     "requirements": "Python 3.11 or newer and Git. The source installer supports macOS and Linux; no vibe-qc native build is required.",
-    "installation": "Clone the separate vibe-view repository using GitLab, then run these commands from that checkout. The installer creates its own .venv and installs the browser and terminal interfaces. Desktop packaging and platform availability are documented by the viewer project.",
+    "installation": "Clone the separate public vibe-view repository and run its installer from that checkout. The installer creates its own .venv and installs the browser and terminal interfaces. Desktop packaging and platform availability are documented by the viewer project.",
     "installGuide": "/vibe-view/docs/installation.html",
     "guides": [
       ["Quickstart", "/vibe-view/docs/quickstart.html"],
       ["CLI reference", "/vibe-view/docs/cli.html"]
     ],
-    "command": "./scripts/install.sh\n.venv/bin/vibe-view --help",
+    "command": "git clone https://github.com/vibe-qc/vibe-view.git\ncd vibe-view\n./scripts/install.sh\n.venv/bin/vibe-view --help",
     "capabilities": [
       [
         "Choose your interface",
@@ -99,14 +99,14 @@ export const products = Object.freeze([
     "docsPending": false,
     "repository": "https://github.com/vibe-qc/vibe-queue",
     "requirements": "Python 3.12 or newer and Git. SSH access and any external scheduler setup are needed only for the hosts you use.",
-    "installation": "Clone the separate vibe-queue repository using GitLab, then run these commands from that checkout. The default installer makes a dedicated .venv with the CLI and daemon. Configure hosts and services using the queue guide after installation.",
+    "installation": "Clone the separate public vibe-queue repository and run its installer from that checkout. The default installer makes a dedicated .venv with the CLI and daemon. Configure hosts and services using the queue guide after installation.",
     "installGuide": "/vibe-queue/docs/lifecycle.html#source-install-lifecycle",
     "guides": [
       ["Running jobs", "/vibe-queue/docs/user/index.html"],
       ["Running a host", "/vibe-queue/docs/operator/index.html"],
       ["The agent contract", "/vibe-queue/docs/agent/index.html"]
     ],
-    "command": "./scripts/install.sh\n.venv/bin/vq --help",
+    "command": "git clone https://github.com/vibe-qc/vibe-queue.git\ncd vibe-queue\n./scripts/install.sh\n.venv/bin/vq --help",
     "capabilities": [
       [
         "Schedule commands",

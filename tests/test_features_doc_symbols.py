@@ -3,10 +3,17 @@
 The 2026-06 docs audit found docs/features.md advertising helper names that did
 not exist in the public API (run_gf2, run_ovgf, compute_atomisation_energy,
 compute_gf_ip, compute_gf_ea). This test makes that class of drift mechanical:
-every backticked top-level ``run_*`` / ``compute_*`` helper named in
-docs/features.md must resolve as a ``vibeqc.*`` attribute. A new phantom name
-fails the build instead of shipping in the capability surface the release paper
-cites.
+every backticked top-level ``run_*`` / ``compute_*`` / ``write_*`` / ``read_*``
+helper named in docs/features.md must resolve as a ``vibeqc.*`` attribute. A new
+phantom name fails the build instead of shipping in the capability surface the
+release paper cites.
+
+The ``write_*`` / ``read_*`` half was added on 2026-09-18 (#367) after the same
+class of defect reappeared in names the ``run_``/``compute_`` regex could not
+see: features.md advertised ``write_cube`` and ``read_cube`` in two tables, and
+neither has ever existed. The writers are per payload
+(``write_cube_density`` / ``write_cube_mo`` / ``write_cube_mos``) and there is
+no cube reader at all.
 """
 
 import re
@@ -20,7 +27,7 @@ _FEATURES = Path(__file__).resolve().parent.parent / "docs" / "features.md"
 # Wildcards (e.g. `compute_gradient_periodic_*`) and dotted/sub-module paths are
 # intentionally not matched -- this guard targets the flat public-helper surface
 # where the phantom names appeared.
-_HELPER_RE = re.compile(r"`((?:run|compute)_[a-z0-9_]+)`")
+_HELPER_RE = re.compile(r"`((?:run|compute|write|read)_[a-z0-9_]+)`")
 
 # Names that are documented in features.md but live somewhere other than the
 # top-level vibeqc namespace (sub-modules / result-object methods). Each entry
@@ -51,6 +58,11 @@ _ALLOW: set[str] = {
     # sibling run_periodic_rks_gpw_multi_k). Allowlisted here so the doc may
     # name it in bare backticks without tripping the phantom guard.
     "run_periodic_uks_gpw_multi_k",
+    # CIF writing goes through vibeqc.output, not a top-level helper:
+    # vibeqc.output.formats.cif.write_cif, reached by the "geometry" output
+    # role. features.md names it fully qualified; the bare name is matched
+    # out of that qualified path by the regex, so allowlist the location.
+    "write_cif",
 }
 
 

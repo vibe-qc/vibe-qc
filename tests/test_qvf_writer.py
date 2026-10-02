@@ -1515,6 +1515,17 @@ class TestJobSpecSection:
 
 
 class TestProvenance:
+    def test_legacy_result_does_not_invent_audit_run_fields(self, tmp_path):
+        path = write_qvf(
+            tmp_path / "legacy", _plan(tmp_path),
+            molecule=_stub_molecule(), result=_stub_result(),
+            record_hostname=False,
+        )
+        with zipfile.ZipFile(path) as archive:
+            provenance = _read_manifest(archive)["provenance"]
+        assert "run_fields" not in provenance
+        assert "seccm_stability_analysis_converged" not in provenance
+
     def test_provenance_in_manifest(self, tmp_path):
         mol = _stub_molecule()
         plan = _plan(tmp_path)

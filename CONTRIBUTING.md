@@ -148,8 +148,9 @@ git push origin main
 ```
 
 Never force-push `main`, `release`, or release tags, and never amend a commit
-that has already been pushed. When a rebase conflicts in a shared changelog
-or handover, preserve both contributors' facts and review the merged result.
+that has already been pushed. When a rebase conflicts in a shared handover
+or release record, preserve both contributors' facts and review the merged result.
+Keep ordinary release notes in separate fragments as described below.
 The agentic loop alone cuts tags and fast-forwards `release` from a tagged
 commit on `main`; the vibe-qc release chat prepares and proves each release.
 Website changes publish from `main` after their CI gate; core docs publish
@@ -161,16 +162,34 @@ files are isolated. Do not reset or delete another task's changes. If an
 existing worktree must be used, check its hook configuration as described
 [below](#worktrees-need-the-setting-applied-per-worktree).
 
+## Release notes
+
+For each user-visible change, add one Markdown file under `changelog.d/`,
+named after the issue or a short descriptive slug. Start it with a `### `
+heading or a `- ` bullet. Tests-only and internal changes may omit a fragment.
+Do not edit `CHANGELOG.md` directly for ordinary contributions. Separate
+fragments let concurrent changes land without conflicting at `[Unreleased]`.
+
+Validate the fragments before committing:
+
+```sh
+python scripts/assemble_changelog.py --check
+```
+
+The release owner assembles them into `[Unreleased]` with
+`scripts/assemble_changelog.py` when preparing a release; the command and
+cleanup workflow are in `changelog.d/README.md`. Released sections remain
+pinned. Deliberate amendments follow the pre-push guard procedure below.
+
 ## Personal information
 
 Do not commit personal home-directory paths or unrelated employer
 information. Use `~/`, `/home/USER/`, or `<vibe-qc-checkout>` placeholders in
-examples. The pre-commit hook checks staged additions for concrete macOS
-and Linux home paths and the project's employer marker. Its narrow
+examples. The pre-commit hook checks full staged files for private emails,
+internal host suffixes, private IPs, personal paths and external private terms. Its narrow
 `runner`, `root`, and `user` allowlist exists for CI accounts and generic
 fixtures; it is not permission to add personal data under another name.
-The hook's pattern and allowlist are mirrored by
-`tests/test_basis_no_maintainer_paths.py`.
+The hook and CI use the shared `.githooks/source_privacy.py` implementation.
 
 ## Documentation prose
 
@@ -184,13 +203,16 @@ re-vendor and update the pin.
 
 These public policies are the source of truth for the hooks. Do not bypass
 hooks unless the maintainer explicitly authorizes the particular exception;
-record that authorization and the reason in the commit message.
+record that authorization and the reason in the commit message. Privacy failures
+must be fixed in source or resolved with an exact public-content review; never
+bypass them with `--no-verify`.
 
 ## Before you open a merge request
 
 1. Confirm no existing issue already covers the change — if there is
    one, comment on it so we can coordinate.
-2. Run every test lane affected by the change and confirm it passes:
+2. Run a bounded reproduction or focused tests for the change. A whole area lane
+   is optional broad validation, not a default pre-push requirement:
    ```sh
    .venv/bin/python scripts/test_gate/run_full_suite.py \
        --wt "$PWD" --py .venv/bin/python --lane <affected-lane>
@@ -231,7 +253,9 @@ See [installation](https://vibe-qc.com/docs/installation.html) for what
 
 ### Recommended pre-merge verification
 
-Affected lanes are the merge-request gate. Use
+Small focused checks are the local merge-readiness gate. See
+[testing policy and inventory](docs/testing.md); substantial numerical acceptance
+is separate from the initial implementation merge. Use
 `scripts/test_gate/run_full_suite.py --list-lanes` and
 `docs/developer_test_lanes.md` to select them. The recommended layering is:
 
@@ -276,7 +300,7 @@ git config --local core.hooksPath .githooks
 This single setting activates every hook in `.githooks/` (git resolves
 one hooks directory for all hook types):
 
-- **`pre-commit`** — refuses commits whose staged additions contain
+- **`pre-commit`** — refuses commits whose staged file content contains
   absolute paths into the author's home directories or other
   personal-info patterns ([personal information](#personal-information)). It then runs
   `.githooks/check_no_em_dashes.py`, which refuses staged `docs/*.md`
@@ -287,14 +311,13 @@ one hooks directory for all hook types):
   CHANGELOG header exists. This is the backstop against tagging a
   release from a tree whose version bump was skipped — the defect that
   shipped v0.11.2 / v0.11.3 self-reporting `0.11.1`. See
-  [docs/release_process.md](https://vibe-qc.com/docs/release_process.html) § "Cutting a
-  release".
+  [maintainer publication](https://vibe-qc.com/docs/release_process.html#maintainer-publication).
 - **`pre-push`** — refuses a push to `main` or `release-candidate/*`
   whose `CHANGELOG.md` changes an already released section without
   re-pinning it in `scripts/test_gate/changelog_pins.toml` (#229).
   It runs at push time because misfiled entries arrive through
-  rebases, which never run `pre-commit`. An entry for unreleased work
-  belongs under `[Unreleased]`; a deliberate amendment to a released
+  rebases, which never run `pre-commit`. Ordinary unreleased notes belong in
+  `changelog.d/` until release assembly; a deliberate amendment to a released
   section is re-pinned with
   `python scripts/test_gate/changelog_guard.py pin vX.Y.Z --amended "why"`.
   The committed guard, pins and changelog must all be readable regular files;
@@ -431,7 +454,7 @@ MPL-compatible.
 
 ### Private privacy policy
 
-The portable guard checks home paths without storing real user names. Operators
+The portable guard checks privacy patterns without storing real private names. Operators
 can add private literal terms through `VIBE_PRIVACY_TERMS_FILE` or the clone-local
 `privacy.termsFile` Git setting. Use an absolute path to a UTF-8 file outside the
 source checkout, with one literal term per line. Matching is case-insensitive;
@@ -442,3 +465,26 @@ privacy tests load the same external policy when configured.
 Site wrappers and deployment configuration are maintained separately in private
 operations storage. Product changes must use portable examples and preserve the
 existing generic installation and configuration APIs.
+
+
+### Fast source privacy preflight
+
+Enable `git config --local core.hooksPath .githooks` once in each clone.
+Run `python3 .githooks/source_privacy.py --staged` before committing and
+`python3 .githooks/source_privacy.py --tree HEAD` before requesting a release
+candidate build. The same current-tree check runs in the first CI stage on
+ordinary main pushes and release candidates, without building the numerical core.
+
+All tracked text is covered, including instructions and hooks. Keep
+operator logs, machine details and private configuration outside product checkouts.
+Use `VIBE_PRIVACY_TERMS_FILE` or local Git `privacy.termsFile` for an external
+UTF-8 file with one private literal per line. A configured empty, missing or
+in-tree file blocks the check. Canonical CI supplies this file from private CI
+configuration; the public repository contains no private term list.
+
+The two public maintainer addresses and reserved documentation domains are
+allowed. Public upstream attribution or syntax that resembles a private value
+requires independent, exact-context review in `.githooks/public_content_review.json`.
+Do not approve private values or generate a blanket baseline. Changing the text
+invalidates its exception. Binary assets and historical public objects remain
+covered by the automatic publication gate; this fast check does not replace it.

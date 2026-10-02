@@ -630,6 +630,19 @@ def cpcm_gradient(
 
     # First, before any work: every term below is the conductor gradient's.
     _refuse_direct_cosmors(solvent_result)
+    if method.lower() in ("rks", "uks"):
+        # The gas-phase piece below is the ordinary analytic RKS/UKS gradient,
+        # so a functional whose analytic gradient omits terms (#571) would get
+        # a reaction field added to a wrong surface. Refuse rather than return
+        # it; the optimizers route such functionals to full-energy finite
+        # differences, which differentiate the solvated energy.
+        from vibeqc.gradient_terms import require_complete_analytic_gradient
+
+        require_complete_analytic_gradient(
+            scf_result,
+            route="cpcm_gradient",
+            spin=1 if method.lower() == "rks" else 2,
+        )
     refuse_molecular_ecp_derivative_route(
         molecule,
         basis,

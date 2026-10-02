@@ -1290,6 +1290,10 @@ def _pre_sweep_toroidal_dlpno_mp2_options():
         # occupation-number cut that only means what the density it was
         # applied to means -- so the density is pinned with the thresholds.
         pno_norm="legacy",
+        # The DOI domain default (#190) postdates this convention; its
+        # tcut_mkn=1e-3 domains are Mulliken domains, so the criterion is
+        # pinned with them.
+        domain_criterion="mulliken",
     )
 
 
@@ -1311,6 +1315,9 @@ def _pre_sweep_toroidal_dlpno_cc_options():
         # ... and predates the semicanonical MP2 PNO correction the
         # molecular CCSD route now applies, so that stays off too.
         pno_correction=False,
+        # ... and predates the ORCA singles-PNO scale on the diagonal pairs
+        # (#190), so the diagonal pairs keep the plain tcut_pno.
+        tcut_pno_diag_scale=1.0,
     )
 
 

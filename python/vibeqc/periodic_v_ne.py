@@ -65,6 +65,85 @@ __all__ = [
 ]
 
 
+# Relative per-cell overlap threshold that fixes the DOMAIN of the real-space
+# nuclear sum, i.e. which lattice cells the libint erfc kernel runs on at all.
+# Distinct from ``screen_rel`` below, which zeroes the reciprocal-space
+# V_long(g) on cells that are already inside the domain.
+#
+# On the k-point GDF route the one-electron AO cutoff is widened to bound the
+# S/T image tail (``_gdf_oneel_cutoff_bound``), because S(k) is the metric and
+# a truncated tail there can cost it its positive definiteness. That bound runs
+# over primitive pairs and is deliberately conservative: on LiH/STO-3G it takes
+# the direct cell list from 135 to 12527 cells, while the overlap blocks that
+# motivate it have died out by 34.5 bohr (1505 cells). S and T do not care --
+# both cost 0.008 s over the whole widened list -- but the nuclear attraction
+# costs ~23 ms per cell, so inheriting that domain put a single V_ne build on a
+# two-atom, six-function cell at 286 s and made the route unusable (#196).
+#
+# The per-cell overlap norm is what bounds the nuclear sum. For s primitives
+# with combined exponent p the erfc nuclear integral is the overlap times
+# sum_I Z_I Phi_p(|P - R_I|), Phi_p(u) = [erf(sqrt(p) u) - erf(gamma u)] / u
+# and gamma = alpha sqrt(p / (p + alpha^2)), so the constant is at worst
+# Z_cell Phi_p(0) -- 17 on LiH/STO-3G, and measured max_g ||V_short(g)||_F /
+# ||S(g)||_F of 1.3 (LiH), 31 (MgO) and 58 (NaCl/STO-3G), growing with the
+# nuclear charge as that form says it should.
+#
+# Four orders tighter than ``screen_rel`` is what that constant needs: at
+# 1e-16 even the crude rigorous constant keeps the dropped tail under 1e-12 Ha,
+# while ``screen_rel``'s own 1e-12 would not clear it. Cost on LiH/STO-3G is
+# 2315 of 12527 cells against 1505 at 1e-12 -- four decades of headroom for
+# 18 s. In the far field V_short(g) approaches -(pi Z_cell / alpha^2 V) S(g),
+# which the G=0 correction cancels, so the tail actually dropped is another
+# two orders smaller again (measured: 5e-17 Ha on LiH/STO-3G).
+DEFAULT_ONEEL_DOMAIN_REL = 1e-16
+
+
+def _screened_domain_cutoff_bohr(cells, block_norms, *, tol_rel: float):
+    """Smallest lattice radius retaining every cell with AO-pair density.
+
+    ``block_norms`` are the per-cell overlap Frobenius norms on ``cells``.
+    Returns ``None`` when the caller must keep the full domain -- an empty or
+    all-zero set, a non-positive tolerance, or nothing to drop.
+
+    A radius rather than the cell set itself, because the native lattice sums
+    take a ``cutoff_bohr``, not an explicit list. The ball at this radius
+    contains every cell above the tolerance and may contain others, so the
+    result is conservative: on an anisotropic cell, or one mixing compact and
+    diffuse atoms, it keeps cells the norm test would drop. That costs work,
+    never accuracy. (On LiH/STO-3G the two sets coincide exactly.)
+    """
+    if not (tol_rel > 0.0):
+        return None
+    norms = np.asarray(block_norms, dtype=float)
+    if norms.size == 0:
+        return None
+    ref = float(norms.max())
+    if not (ref > 0.0):
+        return None
+    keep = norms > float(tol_rel) * ref
+    if not keep.any():
+        return None
+    radii = np.array(
+        [float(np.linalg.norm(np.asarray(c.r_cart))) for c in cells], dtype=float
+    )
+    r_keep = float(radii[keep].max())
+    # ``direct_lattice_cells`` keeps |R_g| <= cutoff; widen by a hair so the
+    # boundary cell survives the native floating-point comparison.
+    return r_keep * (1.0 + 1e-9) + 1e-9
+
+
+def _domain_lat_opts(basis, lat_opts, cutoff_bohr):
+    """Clone ``lat_opts`` with a narrower ``cutoff_bohr``."""
+    from .lattice_screening import RcutStrategy, make_lattice_opts
+
+    return make_lattice_opts(
+        basis,
+        strategy=RcutStrategy.FLAT,
+        base_opts=lat_opts,
+        cutoff_bohr=float(cutoff_bohr),
+    )
+
+
 def _vne_ft_g_chunk_size(
     nbf: int,
     *,
@@ -131,6 +210,7 @@ def compute_v_ne_ewald_3d_ft_gamma(
     ke_cutoff: float = 200.0,
     pair_ft_shared: "Optional[object]" = None,
     stream_pair_ft: bool = False,
+    domain_rel: float = DEFAULT_ONEEL_DOMAIN_REL,
 ) -> np.ndarray:
     """Γ-only Ewald-3D V_ne via analytical reciprocal-space FT.
 
@@ -247,6 +327,8 @@ def compute_v_ne_ewald_3d_ft_gamma(
             )
         # A dense bundle built on the historical ball has no pair-support
         # provenance. Build the coupled per-cell split on its own support.
+        # The lattice builder exempts ``pair_complete_1e`` from the domain
+        # screen on its own, for the same reason ``screen_rel`` is 0 here.
         blocks = compute_v_ne_ewald_3d_ft_lattice(
             basis, system, lat_opts, ewald_options=ewald_options,
             ke_cutoff=ke_cutoff, screen_rel=0.0,
@@ -294,8 +376,25 @@ def compute_v_ne_ewald_3d_ft_gamma(
         # def2-svp-jk).
         alpha = 2.0
 
+    # ---- Screened real-space domain, shared with the lattice builder (#196).
+    # The per-cell overlap costs milliseconds even on the widened one-electron
+    # cutoff and bounds every real-space nuclear quantity below; see
+    # :data:`DEFAULT_ONEEL_DOMAIN_REL`. ``S_dom`` is reused for the G = 0
+    # correction further down, so this adds no work of its own.
+    from ._vibeqc_core import compute_overlap_lattice
+
+    S_dom = compute_overlap_lattice(basis, system, lat_opts)
+    domain_cut = _screened_domain_cutoff_bohr(
+        S_dom.cells,
+        [float(np.linalg.norm(np.asarray(b))) for b in S_dom.blocks],
+        tol_rel=domain_rel,
+    )
+    nuc_opts = lat_opts
+    if domain_cut is not None and domain_cut < float(lat_opts.cutoff_bohr):
+        nuc_opts = _domain_lat_opts(basis, lat_opts, domain_cut)
+
     # ---- V_short via libint analytical erfc-screened nuclear attraction ----
-    V_short_lat = compute_nuclear_erfc_lattice(basis, system, alpha, lat_opts)
+    V_short_lat = compute_nuclear_erfc_lattice(basis, system, alpha, nuc_opts)
     V_short = np.real(bloch_sum(V_short_lat, np.zeros(3)))
     V_short = 0.5 * (V_short + V_short.T)
 
@@ -351,7 +450,7 @@ def compute_v_ne_ewald_3d_ft_gamma(
         from ._vibeqc_core import direct_lattice_cells
         from .aux_basis import _ao_scales_for_rsgdf
 
-        cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
+        cells = direct_lattice_cells(system, float(nuc_opts.cutoff_bohr))
         R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
         if R_g.size == 0:
             R_g = np.zeros((1, 3), dtype=float)
@@ -397,9 +496,7 @@ def compute_v_ne_ewald_3d_ft_gamma(
     # v_short(G=0) . S_muν = (-pi.S Z / (a^2.V)) . S_muν from V_short.
     Z_total = float(nuclei_Z.sum())
     if abs(Z_total) > 1e-12:
-        from ._vibeqc_core import compute_overlap_lattice
-        S_lat = compute_overlap_lattice(basis, system, lat_opts)
-        S = np.real(bloch_sum(S_lat, np.zeros(3)))
+        S = np.real(bloch_sum(S_dom, np.zeros(3)))
         S = 0.5 * (S + S.T)
         # v_short(G=0) is NEGATIVE for positive nuclear charge.
         # Subtracting v_short(G=0).S from V_short means ADDING
@@ -422,6 +519,7 @@ def compute_v_ne_ewald_3d_ft_lattice(
     ewald_options: Optional[EwaldOptions] = None,
     ke_cutoff: float = 200.0,
     screen_rel: float = 1e-12,
+    domain_rel: float = DEFAULT_ONEEL_DOMAIN_REL,
 ) -> LatticeMatrixSet:
     """Per-cell Ewald-3D V_ne via analytical reciprocal-space FT.
 
@@ -490,12 +588,22 @@ def compute_v_ne_ewald_3d_ft_lattice(
         density -- and hence its FT -- is negligible, exactly as the grid
         path produces ≈ 0 for distant cells). Set to ``0`` to compute
         every cell.
+    domain_rel
+        The same test applied one level earlier, to the *domain* of the
+        real-space erfc sum: cells below ``domain_rel x ‖S(0)‖_F`` are left
+        out of the libint lattice sum altogether, and lose their ``corr``
+        term with it. This is what stops the widened S/T cutoff from driving
+        the nuclear attraction (#196); see :data:`DEFAULT_ONEEL_DOMAIN_REL`
+        for why it is four orders tighter than ``screen_rel``. Set to ``0``
+        to run the erfc sum on every cell of ``lat_opts``.
+        ``lat_opts.pair_complete_1e`` ignores it and keeps the full domain.
 
     Returns
     -------
     LatticeMatrixSet
-        Per-cell V_ne blocks in libint AO ordering, on the same cell
-        list as :func:`compute_nuclear_erfc_lattice`.
+        Per-cell V_ne blocks in libint AO ordering, on the cell list of
+        ``lat_opts`` -- the full one, even when ``domain_rel`` shrinks the
+        domain the erfc kernel runs on.
     """
     from .aux_basis import rsgdf_dense_g_mesh, _ao_scales_for_rsgdf
     from ._vibeqc_core import (
@@ -519,30 +627,57 @@ def compute_v_ne_ewald_3d_ft_lattice(
     if alpha <= 0.0:
         alpha = 2.0
 
-    # ---- V_short per-cell (libint) -- also our LatticeMatrixSet skeleton.
-    # compute_nuclear_erfc_lattice fixes the authoritative cell list
-    # (direct_lattice_cells at lat_opts.cutoff_bohr) and nbf; we overwrite
-    # each block in place with V_short + V_long + corr via set_block.
-    V_set = compute_nuclear_erfc_lattice(basis, system, alpha, lat_opts)
+    # ---- Per-cell overlap -- also our LatticeMatrixSet skeleton. It fixes
+    # the authoritative cell list (direct_lattice_cells at
+    # lat_opts.cutoff_bohr) and nbf; we overwrite each block in place with
+    # V_short + V_long + corr via set_block. It is the cheap sum (0.008 s over
+    # 12527 cells on LiH/STO-3G) and it supplies both the G=0 correction and
+    # the domain of the expensive nuclear sum below.
+    V_set = compute_overlap_lattice(basis, system, lat_opts)
     cells = V_set.cells
     n_cells = len(cells)
-    V_short_blocks = V_set.blocks  # snapshot copy (pybind returns a fresh list)
+    S_blocks = V_set.blocks  # snapshot copy (pybind returns a fresh list)
 
-    # ---- Per-cell overlap (same cell list) for the G=0 correction + screen.
-    S_set = compute_overlap_lattice(basis, system, lat_opts)
-    if len(S_set.cells) != n_cells:
+    # Screen against the LARGEST overlap block (the home cell, but found
+    # by value rather than assuming cell index 0) so the threshold is a
+    # true relative bound regardless of cell ordering.
+    s_norms = np.array(
+        [float(np.linalg.norm(np.asarray(b))) for b in S_blocks]
+    )
+    s_ref = float(s_norms.max()) if n_cells else 0.0
+
+    # ---- V_short per-cell (libint), on the SCREENED domain (#196). Cells
+    # carrying no AO-pair density carry no nuclear attraction either, and the
+    # erfc kernel is three orders of magnitude more expensive per cell than
+    # the overlap that decides this. Their blocks stay at the G=0 correction
+    # term, which is itself proportional to the same vanishing overlap.
+    # ``pair_complete_1e`` is exempt: that mode exists to keep exact per-pair
+    # support provenance, and its consumers pin the per-cell blocks against an
+    # explicit support mask. It keeps the full domain and the old cost.
+    domain_cut = (
+        None
+        if lat_opts.pair_complete_1e
+        else _screened_domain_cutoff_bohr(cells, s_norms, tol_rel=domain_rel)
+    )
+    nuc_opts = lat_opts
+    if domain_cut is not None and domain_cut < float(lat_opts.cutoff_bohr):
+        nuc_opts = _domain_lat_opts(basis, lat_opts, domain_cut)
+    V_short_set = compute_nuclear_erfc_lattice(basis, system, alpha, nuc_opts)
+    V_short_by_cell = {
+        tuple(int(i) for i in np.asarray(c.index)): np.asarray(b)
+        for c, b in zip(V_short_set.cells, V_short_set.blocks)
+    }
+    if len(V_short_by_cell) != len(V_short_set.cells):
+        raise RuntimeError(
+            "compute_v_ne_ewald_3d_ft_lattice: duplicate cell index in the "
+            "erfc lattice set"
+        )
+    if nuc_opts is lat_opts and len(V_short_set.cells) != n_cells:
         raise RuntimeError(
             "compute_v_ne_ewald_3d_ft_lattice: overlap and erfc cell "
-            f"lists disagree ({len(S_set.cells)} vs {n_cells}); check "
+            f"lists disagree ({len(V_short_set.cells)} vs {n_cells}); check "
             "LatticeSumOptions.cutoff_bohr."
         )
-    S_blocks = S_set.blocks
-    if any(
-        not np.array_equal(np.asarray(s.index), np.asarray(v.index))
-        or not np.array_equal(np.asarray(s.r_cart), np.asarray(v.r_cart))
-        for s, v in zip(S_set.cells, cells)
-    ):
-        raise RuntimeError("compute_v_ne_ewald_3d_ft_lattice: cell ordering differs")
 
     # ---- v_long(G) on the dense FT mesh (G != 0; PySCF jellium G=0 drop).
     G_all = rsgdf_dense_g_mesh(system, float(ke_cutoff))
@@ -587,13 +722,6 @@ def compute_v_ne_ewald_3d_ft_lattice(
         else 0.0
     )
 
-    # Screen against the LARGEST overlap block (the home cell, but found
-    # by value rather than assuming cell index 0) so the threshold is a
-    # true relative bound regardless of cell ordering.
-    s_norms = np.array(
-        [float(np.linalg.norm(np.asarray(b))) for b in S_blocks]
-    )
-    s_ref = float(s_norms.max()) if n_cells else 0.0
     screen = float(screen_rel) * s_ref if s_ref > 0.0 else 0.0
 
     # Cells whose AO-pair density (and hence its FT) is negligible get
@@ -630,10 +758,22 @@ def compute_v_ne_ewald_3d_ft_lattice(
         V_long_all *= pair_scales[None, :, :] / cell_volume
 
     active_pos = {c: i for i, c in enumerate(active)}
+    zero_block = np.zeros((nbf, nbf), dtype=float)
     for c in range(n_cells):
+        key = tuple(int(i) for i in np.asarray(cells[c].index))
+        if key not in V_short_by_cell:
+            # Outside the screened nuclear domain. V_short(g) and corr(g)
+            # leave together, never one without the other: in the far field
+            # V_short(g) -> -(pi Z_cell / alpha^2 V) S(g) and corr(g) is
+            # exactly +(pi Z_cell / alpha^2 V) S(g), so they cancel to one or
+            # two parts in 10^4. Keeping corr alone would leave that whole
+            # uncancelled term behind and cost ~40x the accuracy of dropping
+            # the pair.
+            V_set.set_block(c, np.ascontiguousarray(zero_block, dtype=float))
+            continue
         S_b = np.asarray(S_blocks[c])
         corr = (-v_short_G0) * S_b if v_short_G0 != 0.0 else 0.0
-        V_short_b = np.asarray(V_short_blocks[c])
+        V_short_b = V_short_by_cell[key]
         if c not in active_pos:
             new_block = V_short_b + corr
         else:

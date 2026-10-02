@@ -21,7 +21,7 @@
       TDDFT A/B response matrices       0.00 MB
       TDDFT eigensolver workspace       0.00 MB
       TDDFT state vectors               0.00 MB
-  Available on this machine: <MEM> GB. Proceeding.
+  Available to this job: <MEM> GB. Proceeding.
 
   iter     energy (Ha)            dE          ||[F,DS]||   DIIS
   -------------------------------------------------------------

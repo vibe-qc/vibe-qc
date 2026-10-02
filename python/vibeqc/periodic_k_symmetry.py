@@ -49,9 +49,10 @@ obstruction.
 True IBZ-native reduction on every multi-k route (BIPOLE, EWALD, GDF)
 builds on the helpers below:
 
-* :func:`star_operations` -- for each full-mesh point, which symmorphic
-  operation (and optional time-reversal) maps its IBZ representative
-  onto it;
+* :func:`star_operations` -- for each full-mesh point, which operation
+  (and optional time-reversal) maps its IBZ representative onto it; the
+  default candidate set is the symmorphic subgroup, and a consumer whose
+  finite source is closed under glides and screws may admit those too;
 * :func:`expand_k_matrices_to_full` -- apply the AO rotations to
   density-like per-k matrices;
 * :func:`density_set_from_k_matrices` -- inverse-Bloch fold arbitrary
@@ -89,13 +90,16 @@ class KStarMap:
     """Mapping from a full MP mesh onto an IBZ mesh's stars.
 
     ``entries[j] = (i_rep, op_idx, time_reversal)`` -- full-mesh point j
-    is reached from IBZ representative ``i_rep`` by symmorphic operation
-    ``op_idx`` (index into ``operations``), composed with complex
-    conjugation when ``time_reversal`` is True.
+    is reached from IBZ representative ``i_rep`` by operation ``op_idx``
+    (index into ``operations``), composed with complex conjugation when
+    ``time_reversal`` is True.
     """
 
     entries: List[Tuple[int, int, bool]]
-    operations: list  # the symmorphic SymmetryOp list used for matching
+    # The SymmetryOp list used for matching: the symmorphic subgroup by
+    # default, or the admitted subset a consumer passed (which may carry
+    # fractional translations).
+    operations: list
 
 
 def _frac_coords(k_cart: np.ndarray, lattice: np.ndarray) -> np.ndarray:
@@ -117,6 +121,7 @@ def star_operations(
     kmesh_full,
     *,
     atol: float = 1e-8,
+    operations: Optional[Sequence] = None,
 ) -> KStarMap:
     """Match every full-mesh k-point to (IBZ representative, operation).
 
@@ -124,10 +129,32 @@ def star_operations(
     reciprocal-lattice translations. spglib's irreducible meshes use
     time reversal, so ``-R.k_rep`` is tried when no proper match exists.
 
+    ``operations`` restricts matching to an admitted subset of the
+    system's attached operations. The default is the symmorphic
+    subgroup, for consumers that have not qualified fractional
+    translations on their finite source. A consumer whose source is
+    closed under only some operations passes exactly those, so no star
+    member is reached through another one; the subset may include
+    glides and screws, whose fractional translation
+    :func:`expand_k_matrices_to_full` carries through the atom-image
+    shift ``L_a`` (the reciprocal action ``W^-T`` does not see it).
+
+    Only operations that map the WHOLE full mesh onto itself are used.
+    A finite-mesh quantity such as the exchange ``K(k_i) = S_j w_j
+    (.. k_i k_j ..) D(k_j)`` is covariant under an operation only when
+    that operation permutes the mesh points, so transporting through an
+    operation that merely sends one representative onto a mesh point
+    (possible on an anisotropic mesh of a cubic cell, e.g. (2,2,3) on
+    diamond) would produce a matrix of a different finite approximation.
+    The check is the whole-mesh compatibility the native Seitz transport
+    enforces (``mesh_action`` in ``periodic_ao_bloch_transport.cpp``),
+    evaluated here on the fractional coordinates of the mesh.
+
     Raises ``ValueError`` when a full-mesh point cannot be reached from
-    any representative -- that means the meshes don't belong together
-    (different mesh/shift) or the system's symmetry changed since the
-    IBZ reduction.
+    any representative through a mesh-compatible admitted operation --
+    that means the meshes don't belong together (different mesh/shift),
+    the system's symmetry changed since the IBZ reduction, or the
+    admitted operations do not cover the star.
     """
     ops_all = getattr(getattr(system, "symmetry", None), "operations", None)
     if not ops_all:
@@ -136,6 +163,27 @@ def star_operations(
             "attach_symmetry() first"
         )
     ops = symmorphic_operations(ops_all)
+    if operations is not None:
+        # Every admitted operation must be one of the attached operations
+        # (rotation AND translation), so a caller cannot admit a foreign
+        # rotation or strip a glide of its translation.
+        def _same(a, b):
+            return np.array_equal(
+                np.asarray(a.rotation), np.asarray(b.rotation)
+            ) and np.array_equal(
+                np.asarray(a.translation), np.asarray(b.translation)
+            )
+
+        chosen = list(operations)
+        if not chosen or any(
+            not any(_same(op, candidate) for candidate in ops_all)
+            for op in chosen
+        ):
+            raise ValueError(
+                "star_operations: operations must be a nonempty subset of "
+                "the system's attached symmetry operations"
+            )
+        ops = chosen
     lattice = np.asarray(system.lattice, dtype=float)
 
     k_ibz_frac = [
@@ -147,10 +195,10 @@ def star_operations(
         for k in kmesh_full.kpoints
     ]
 
-    # Reciprocal action of a real-space symmorphic operation with
-    # integer fractional rotation W (r_frac -> W.r_frac):
-    # q_frac -> W^{-T}.q_frac. For integer W with |det W| = 1, W^{-T} is
-    # integer as well.
+    # Reciprocal action of a real-space operation with integer fractional
+    # rotation W (r_frac -> W.r_frac + tau): q_frac -> W^{-T}.q_frac; the
+    # translation does not act on k. For integer W with |det W| = 1,
+    # W^{-T} is integer as well.
     op_recip = []
     for op in ops:
         W = np.rint(np.asarray(op.rotation, dtype=float)).astype(int)
@@ -161,11 +209,27 @@ def star_operations(
         d = qa - qb
         return bool(np.all(np.abs(d - np.rint(d)) < atol))
 
+    # Whole-mesh compatibility: every full-mesh point must land on a
+    # full-mesh point (modulo G) under the operation. Mesh points are
+    # rationals m/N, so a wrapped coordinate rounded well inside ``atol``
+    # is an exact key; this stays O(n_k) per operation.
+    q_all = np.asarray(k_full_frac, dtype=float).reshape(-1, 3)
+
+    def _keys(points):
+        wrapped = (points + 0.5) % 1.0 - 0.5
+        wrapped[np.abs(wrapped - 0.5) < atol] = -0.5
+        return {tuple(row) for row in np.rint(wrapped / atol * 1e-2).astype(np.int64)}
+
+    mesh_keys = _keys(q_all)
+    compatible = [_keys(q_all @ WiT.T) <= mesh_keys for WiT in op_recip]
+
     entries: List[Tuple[int, int, bool]] = []
     for j, q_full in enumerate(k_full_frac):
         found: Optional[Tuple[int, int, bool]] = None
         for i, q_rep in enumerate(k_ibz_frac):
             for op_idx, WiT in enumerate(op_recip):
+                if not compatible[op_idx]:
+                    continue
                 q_rot = WiT @ q_rep
                 if _matches(q_rot, q_full):
                     found = (i, op_idx, False)
@@ -178,8 +242,11 @@ def star_operations(
         if found is None:
             raise ValueError(
                 f"star_operations: full-mesh k-point {j} is not in the "
-                "star of any IBZ representative (mesh/shift mismatch or "
-                "stale symmetry?)"
+                "star of any IBZ representative through a mesh-compatible "
+                f"operation ({sum(compatible)} of {len(ops)} candidate "
+                "operations map the whole mesh onto itself; mesh/shift "
+                "mismatch, stale symmetry, or the admitted operations do "
+                "not cover the star)"
             )
         entries.append(found)
     return KStarMap(entries=entries, operations=list(ops))
@@ -228,17 +295,36 @@ def expand_k_matrices_to_full(
 
     The full-mesh point ``j`` is reached from IBZ representative
     ``k_rep`` by ``k = R.k_rep`` (entry ``(i_rep, op_idx, trev)``). For a
-    symmorphic operation ``g = {R|t}`` that maps home-cell atom ``a`` to
+    Seitz operation ``g = {R|tau}`` (``tau`` the fractional translation,
+    zero for a symmorphic operation) that maps home-cell atom ``a`` to
     atom ``b = perm[a]`` in the neighbouring cell ``L_a``
-    (``r_b = R.r_a + t + L_a``), the Bloch-space representation matrix at
-    ``k`` is
+    (``r_b = R.r_a + tau + L_a``), the Bloch-space representation matrix
+    at ``k`` is
 
         Γ(k)_{mu'mu} = e^{i k.L_a} . D^l(R)_{mu'mu}      (mu on a, mu' on b)
 
     so that ``M(k) = Γ(k).M(k_rep).Γ(k)+``. Derivation: with the AO Bloch
-    sum ``phi_{ν,k} = S_T e^{i k.T} chi_ν(.-t_ν-T)``,
+    sum ``phi_{ν,k} = S_T e^{i k.T} chi_ν(.-x_ν-T)`` and ``(g f)(r) =
+    f(R^-1 (r - tau))``,
+
+        g chi_ν(. - x_a - T) = S_{ν'} D_{ν'ν} chi_{ν'}(. - x_b - (R T - L_a)),
+
+    and substituting ``T' = R T - L_a`` (a lattice vector) with
+    ``k_rep.T = k.(T' + L_a)`` for the orthogonal ``R`` gives
 
         g phi_{ν,k_rep} = e^{i k.L_ν} S_{ν'} D_{ν'ν} phi_{ν',k}.
+
+    The fractional translation enters only through the atom-image shift
+    ``L_a`` (which :func:`_op_atom_shifts_cart` computes with ``tau``
+    included). There is no separate ``e^{-i k.tau}`` factor in this
+    AO-centred Bloch convention: that factor belongs to the atom-centred
+    convention ``phi' = e^{i k.x_a} phi``, where it is a global phase and
+    the per-atom ``L_a`` phases are absent; added here it cancels in
+    ``Γ M Γ+``. The native Seitz transport
+    (``cpp/src/periodic_ao_bloch_transport.cpp``) uses the same
+    convention. Proven on Bloch overlaps and explicit finite exchange
+    sources for diamond Fd-3m and hcp P6_3/mmc
+    (``tests/test_periodic_k_gdf_ibz_nonsymmorphic.py``).
 
     The per-atom phase ``e^{i k.L_a}`` is exactly the lattice-shift
     bookkeeping that the real ``P(R) = build_ao_permutation_matrix``

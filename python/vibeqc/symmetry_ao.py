@@ -38,7 +38,9 @@ The existing real Wigner implementation also handles improper operations
 through inversion parity. These pure-shell relations require matching radial
 contractions and a compatible finite operator support; geometric atom matching
 alone does not certify a truncated Fock builder or an electronic state.
-The compact molecular adapter below makes those basis checks explicit.
+The compact molecular adapter below makes those basis checks explicit and
+also supports Cartesian shells. Their polynomial blocks need not be
+Euclidean-unitary; physical overlap covariance uses ``U^dagger S U = S``.
 """
 
 from __future__ import annotations
@@ -246,7 +248,7 @@ def build_ao_permutation_matrix(
     else:
         perm = np.asarray(atom_perm)
 
-    offsets, destinations, rotations = _pure_shell_layout(
+    offsets, destinations, rotations = _shell_layout(
         list(basis.shells()), basis.nbasis, perm, R,
     )
     # Compatibility API explicitly requests a dense matrix. Compact callers
@@ -258,8 +260,9 @@ def build_ao_permutation_matrix(
     return matrix
 
 
-def _pure_shell_layout(shells, dimension, permutation, rotation, *, maximum_l=None):
-    """Shared radial-channel matching and small pure-shell rotations.
+def _shell_layout(shells, dimension, permutation, rotation, *, maximum_l=None,
+                  cartesian_rotation=None):
+    """Shared radial-channel matching and small shell rotations.
 
     Resource admission and atom/origin validation belong to the caller. The
     legacy dense API has already copied its metadata; the compact adapter
@@ -276,10 +279,10 @@ def _pure_shell_layout(shells, dimension, permutation, rotation, *, maximum_l=No
     for i, sh in enumerate(shells):
         # The legacy dense API also accepts Cartesian s shells: their
         # one-dimensional scalar action is identical to the pure action.
-        if (not sh.pure and sh.l != 0) or sh.l < 0:
+        if (not sh.pure and sh.l != 0 and cartesian_rotation is None) or sh.l < 0:
             raise ValueError("AO symmetry requires pure shells beyond s")
         if maximum_l is not None and sh.l > maximum_l:
-            raise ValueError("compact molecular action requires pure shells through l=6")
+            raise ValueError("compact molecular action requires shells through l=6")
         atom = int(sh.atom_index)
         if not 0 <= atom < len(permutation):
             raise ValueError("AO shell atom index outside atom permutation")
@@ -288,23 +291,25 @@ def _pure_shell_layout(shells, dimension, permutation, rotation, *, maximum_l=No
             raise ValueError("nonfinite AO radial profile")
         profile = (sh.l, sh.pure, exponents, coefficients)
         profiles.append(profile)
-        offsets.append(offsets[-1]+2*sh.l+1)
+        offsets.append(offsets[-1]+(2*sh.l+1 if sh.pure else (sh.l+1)*(sh.l+2)//2))
         siblings = by_profile.setdefault((atom, profile), [])
         occurrences.append(len(siblings))
         siblings.append(i)
     if offsets[-1] != dimension:
         raise ValueError("AO shell layout disagrees with basis dimension")
     destinations, rotations = [], []
-    rotation_cache: dict[int, np.ndarray] = {}
+    rotation_cache: dict[tuple[int, bool], np.ndarray] = {}
     for i, sh in enumerate(shells):
         siblings = by_profile[(sh.atom_index, profiles[i])]
         candidates = by_profile.get((int(permutation[sh.atom_index]), profiles[i]), [])
         if len(candidates) != len(siblings):
             raise ValueError("AO symmetry radial contraction mismatch")
         destinations.append(candidates[occurrences[i]])
-        if sh.l not in rotation_cache:
-            rotation_cache[sh.l] = np.asarray(wigner_d_real(sh.l, rotation))
-        rotations.append(rotation_cache[sh.l])
+        key = (sh.l, sh.pure)
+        if key not in rotation_cache:
+            rotation_cache[key] = (cartesian_rotation(sh.l) if not sh.pure and cartesian_rotation
+                                   else np.asarray(wigner_d_real(sh.l, rotation)))
+        rotations.append(rotation_cache[key])
     return offsets, destinations, rotations
 
 
@@ -313,10 +318,13 @@ def build_molecular_space_action(
     translation: np.ndarray, *, source: SpaceIdentity, target: SpaceIdentity, budget: Budget,
     antiunitary: bool = False, tolerance: float = 1e-9,
 ) -> BlockSpaceAction:
-    """Experimental molecular pure-shell adapter to shared compact transport.
+    """Experimental molecular pure/Cartesian adapter to shared compact transport.
 
     Admits native metadata before copying ShellInfo records, validates exact
-    radial profiles and origins, then uses the existing Wigner rotations.
+    radial profiles and origins. Pure shells use Wigner rotations; Cartesian
+    shells use the native polynomial kernel shared with periodic AO transport.
+    Both are supported through l=6. Cartesian blocks are generally not
+    Euclidean-unitary; operator pullback uses U^dagger F U.
     Does not change molecular SCF routing or authorize integral skipping.
     """
     from .symmetry_shared import BlockSpaceAction, Budget, _array, _core, _tolerance
@@ -340,12 +348,18 @@ def build_molecular_space_action(
     # Bound atom search and block/matrix payload before copying descriptors.
     n = int(basis.nbasis)
     na = _core()._symmetry_molecule_count(molecule, budget.native())
-    # At l<=6, packed shell rotations contain at most 13*n values.
+    # At l<=6, packed shell rotations contain at most 28*n values.
     # Reserve radial/profile metadata, packed arrays and immutable snapshots,
-    # plus fixed Wigner workspace. No n-by-n AO array is materialized here.
-    budget.admit(metadata_bytes+131072+4096*n+1024*na,
-                 256*na*na+512*n+7_000_000)
+    # plus fixed Wigner/polynomial workspaces and both rotation caches.
+    # No n-by-n AO array is materialized here. Admit the metadata snapshot
+    # first, then charge each distinct native Cartesian plan before rotations.
+    admitted_bytes = metadata_bytes+131072+4096*n+1024*na
+    admitted_work = 256*na*na+512*n+7_000_000
+    budget.admit(admitted_bytes, admitted_work)
     shells = list(basis.shells())
+    cartesian_work = sum(_core()._plan_symmetry_cartesian_rotation(l, budget.native()).work
+                         for l in {sh.l for sh in shells if not sh.pure})
+    budget.admit(admitted_bytes, admitted_work+cartesian_work)
     atoms = list(molecule.atoms)
     permutation = atom_permutation_under_op(
         molecule, rotation, translation, tolerance=tolerance,
@@ -353,14 +367,14 @@ def build_molecular_space_action(
     if len(set(permutation.tolist())) != na:
         raise ValueError("molecular atom action is not bijective")
     for sh in shells:
-        if not sh.pure:
-            raise ValueError("compact molecular action requires pure shells through l=6")
         atom = int(sh.atom_index)
         if (not 0 <= atom < na or not np.all(np.isfinite(sh.origin))
                 or np.linalg.norm(np.asarray(sh.origin)-atoms[atom].xyz) > tolerance):
             raise ValueError("molecular basis origin/atom mismatch")
-    offsets, destinations, rotations = _pure_shell_layout(
+    offsets, destinations, rotations = _shell_layout(
         shells, n, permutation, rotation, maximum_l=6,
+        cartesian_rotation=lambda l: _core()._symmetry_cartesian_rotation(
+            l, rotation, tolerance, budget.native()),
     )
     return BlockSpaceAction(source, target, np.asarray(offsets, dtype=np.int64),
         np.asarray(destinations, dtype=np.int64),

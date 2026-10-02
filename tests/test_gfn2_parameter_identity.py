@@ -326,10 +326,23 @@ def test_gradient_rejects_result_parameter_mismatch(
         _se.compute_gfn2_gradient(molecule, result, published_params)
 
 
+@pytest.mark.parametrize(
+    ("cache_directory", "expected_cache_path"),
+    [
+        ("home/cache", "~/cache/gfn2.toml"),
+        ("external-cache", "<gfn2-parameter-cache>/gfn2.toml"),
+    ],
+)
 def test_execution_provenance_freezes_every_scc_control_and_d4_input(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    cache_directory: str,
+    expected_cache_path: str,
 ) -> None:
+    # Pin the path contract independently of pytest's --basetemp location.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     params = _compact_parameters()
     molecule = _h2()
     model = GFN2Model(molecule, params, warn=False)
@@ -373,7 +386,8 @@ def test_execution_provenance_freezes_every_scc_control_and_d4_input(
     original_cache = (
         f'# source_sha256 = "{source_sha256}"\noriginal-cache\n'.encode()
     )
-    cache_path = tmp_path / "gfn2.toml"
+    cache_path = tmp_path / cache_directory / "gfn2.toml"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_bytes(original_cache)
     monkeypatch.setattr(
         _gfn2_params,
@@ -443,11 +457,32 @@ def test_execution_provenance_freezes_every_scc_control_and_d4_input(
     assert provenance["gfn2_d4_refdata_source_sha256"] == "b" * 64
     assert not any(key.startswith("gfn2_parameter_d4_") for key in provenance)
 
-    assert provenance["gfn2_cache_path"] == "<gfn2-parameter-cache>/gfn2.toml"
+    assert provenance["gfn2_cache_path"] == expected_cache_path
     assert provenance["gfn2_cache_sha256"] == hashlib.sha256(
         original_cache
     ).hexdigest()
     assert provenance["gfn2_cache_source_sha256"] == source_sha256
+
+
+@pytest.mark.parametrize(
+    ("cache_directory", "expected"),
+    [
+        ("home/cache", "~/cache/gfn2.toml"),
+        ("external-cache", "<gfn2-parameter-cache>/gfn2.toml"),
+        ("home-neighbor/cache", "<gfn2-parameter-cache>/gfn2.toml"),
+    ],
+)
+def test_portable_gfn2_cache_path_preserves_home_relative_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cache_directory: str,
+    expected: str,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    cache_path = tmp_path / cache_directory / "gfn2.toml"
+
+    assert _gfn2_method._portable_gfn2_cache_path(cache_path) == expected
 
 
 def test_d4_source_hash_is_bound_to_the_exact_parsed_bytes(

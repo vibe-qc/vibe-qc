@@ -79,10 +79,14 @@ def test_route_plan_canonicalizes_spin_and_msindo_aliases():
     assert BOUNDARY_CCM_DIRECT_TORUS == BOUNDARY_SECCM_DIRECT_TORUS
 
 
-def test_molecular_msindo_nddo_gradient_route_is_explicit_and_cited():
+@pytest.mark.parametrize(
+    ("method", "knobs"),
+    [("msindo", {"nddo": True}), ("nddo", {}), ("msindo-nddo", {})],
+)
+def test_molecular_msindo_nddo_gradient_route_is_explicit_and_cited(method, knobs):
     plan = SemiempiricalRoutePlan.from_request(
-        "msindo",
-        nddo=True,
+        method,
+        **knobs,
         properties=("energy", "gradient"),
     )
 
@@ -96,7 +100,54 @@ def test_molecular_msindo_nddo_gradient_route_is_explicit_and_cited():
     status = semiempirical_route_status(plan)
     assert status.route == "msindo-nddo-gradient-analytic"
     assert status.backend == "mixed-native"
-    assert status.production
+    assert not status.production
+
+
+@pytest.mark.parametrize("solvent", ["water", {"epsilon": 78.4}])
+def test_molecular_msindo_cosmo_status_tracks_mixed_route(solvent):
+    plan = SemiempiricalRoutePlan.from_request(
+        "msindo", solvent=solvent, properties=("energy",),
+    )
+    assert plan.status_route == "msindo-cosmo"
+    assert plan.maturity == MATURITY_MIXED_NATIVE
+    assert plan.execution == EXECUTION_PYTHON_ORCHESTRATION
+    status = semiempirical_route_status(plan)
+    assert status.backend == "mixed-native"
+    assert not status.production
+
+
+@pytest.mark.parametrize(
+    ("knobs", "error", "message"),
+    [
+        ({"properties": ("energy", "gradient")}, NotImplementedError, "gradient"),
+        ({"nddo": True}, ValueError, "cannot be combined with solvent"),
+        ({"boundary": "seccm"}, ValueError, "Implicit solvation is not supported"),
+    ],
+)
+def test_msindo_cosmo_unsupported_requests_stay_refused(knobs, error, message):
+    with pytest.raises(error, match=message):
+        SemiempiricalRoutePlan.from_request("msindo", solvent="water", **knobs)
+
+
+@pytest.mark.parametrize(
+    ("method", "knobs"),
+    [("msindo", {"nddo": True}), ("nddo", {}), ("msindo-nddo", {})],
+)
+@pytest.mark.parametrize("properties", [("energy",), ("energy", "gradient")])
+@pytest.mark.parametrize(
+    ("unsupported", "message"),
+    [
+        ({"solvent": "water"}, "cannot be combined with solvent"),
+        ({"boundary": "seccm"}, "nddo=True is not implemented for SECCM"),
+    ],
+)
+def test_msindo_nddo_aliases_preserve_knob_refusals(
+    method, knobs, properties, unsupported, message,
+):
+    with pytest.raises(ValueError, match=message):
+        SemiempiricalRoutePlan.from_request(
+            method, properties=properties, **knobs, **unsupported,
+        )
 
 
 @pytest.mark.parametrize(
@@ -186,6 +237,7 @@ def test_gfn2_seccm_hamiltonian_identity_is_canonical_and_round_trippable():
         requested_electronic_temperature=0.0,
         resolved_electronic_temperature=0.005,
         include_aes=True,
+        aes_faithful=False,
         madelung_s_weighted=False,
         madelung_no_self=False,
         ewald_gamma_molecular_onsite=True,
@@ -225,7 +277,104 @@ def test_gfn2_seccm_hamiltonian_identity_is_canonical_and_round_trippable():
         )
     with pytest.raises(ValueError, match="include_aes=True"):
         GFN2SECCMHamiltonianIdentity.from_dict(
-            {**payload, "include_aes": False}
+            {**payload, "include_aes": False, "aes_model": "none"}
+        )
+
+
+def _gfn2_seccm_aes_identity(*, include_aes, aes_faithful):
+    base = SemiempiricalRoutePlan.from_request("gfn2", boundary="seccm")
+    plan = base.with_gfn2_seccm_runtime(
+        periodic_dimension=2,
+        requested_electrostatics_family="ewald_gamma",
+        resolved_electrostatics_family="ewald_gamma",
+        requested_electronic_temperature=0.0,
+        resolved_electronic_temperature=0.0,
+        include_aes=include_aes,
+        aes_faithful=aes_faithful,
+        madelung_s_weighted=False,
+        madelung_no_self=False,
+        ewald_gamma_molecular_onsite=False,
+        molecular_delegated=False,
+        run_controls=GFN2SECCMRunControls.from_request(),
+    )
+    identity = plan.gfn2_hamiltonian_identity
+    assert identity is not None
+    return identity
+
+
+def test_gfn2_seccm_hamiltonian_identity_records_the_executed_aes_model():
+    # Issue #380: the two AES Hamiltonians give different energies for one
+    # request, so the identity must tell them apart. An aes_faithful value
+    # that include_aes=False ignores selects no Hamiltonian and must not.
+    faithful = _gfn2_seccm_aes_identity(include_aes=True, aes_faithful=True)
+    adhoc = _gfn2_seccm_aes_identity(include_aes=True, aes_faithful=False)
+    off = _gfn2_seccm_aes_identity(include_aes=False, aes_faithful=False)
+    off_faithful = _gfn2_seccm_aes_identity(
+        include_aes=False, aes_faithful=True
+    )
+
+    assert faithful.schema_version == 2
+    assert faithful.aes_model == "bannwarth_record_camm"
+    assert adhoc.aes_model == "adhoc_shell"
+    assert off.aes_model == "none"
+    assert faithful != adhoc
+    assert hash(faithful) != hash(adhoc)
+    assert off_faithful == off
+    assert len({faithful, adhoc, off}) == 3
+
+    for identity in (faithful, adhoc, off):
+        payload = json.loads(json.dumps(identity.to_dict()))
+        assert payload["schema_version"] == 2
+        assert payload["aes_model"] == identity.aes_model
+        restored = GFN2SECCMHamiltonianIdentity.from_dict(payload)
+        assert restored == identity
+        assert hash(restored) == hash(identity)
+
+    canonical = GFN2SECCMHamiltonianIdentity.from_dict(
+        {**faithful.to_dict(), "aes_model": " Bannwarth_Record_CAMM "}
+    )
+    assert canonical == faithful
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"aes_model": "invented"}, "aes_model must be one of"),
+        ({"aes_model": None}, "aes_model must be a string"),
+        ({"aes_model": "none"}, "required exactly when include_aes"),
+        (
+            {"include_aes": False, "aes_model": "adhoc_shell"},
+            "required exactly when include_aes",
+        ),
+        ({"schema_version": 3}, "schema_version must be 2"),
+        ({"schema_version": "2"}, "schema_version must be 2"),
+    ],
+)
+def test_gfn2_seccm_hamiltonian_identity_rejects_invalid_aes_payloads(
+    overrides, message
+):
+    payload = _gfn2_seccm_aes_identity(
+        include_aes=True, aes_faithful=True
+    ).to_dict()
+    with pytest.raises(ValueError, match=message):
+        GFN2SECCMHamiltonianIdentity.from_dict({**payload, **overrides})
+
+
+def test_gfn2_seccm_hamiltonian_identity_refuses_schema_1_payloads():
+    # A schema-1 payload carries no AES model; with include_aes=True it is
+    # either Hamiltonian, so restoring it would have to guess.
+    payload = _gfn2_seccm_aes_identity(
+        include_aes=True, aes_faithful=False
+    ).to_dict()
+    legacy = {
+        key: value for key, value in payload.items() if key != "aes_model"
+    }
+    legacy["schema_version"] = 1
+    with pytest.raises(ValueError, match="did not record the executed AES"):
+        GFN2SECCMHamiltonianIdentity.from_dict(legacy)
+    with pytest.raises(TypeError):
+        GFN2SECCMHamiltonianIdentity.from_dict(
+            {**legacy, "schema_version": 2}
         )
 
 
@@ -239,6 +388,7 @@ def test_gfn2_seccm_hamiltonian_identity_validates_dependent_options():
             requested_electronic_temperature=0.0,
             resolved_electronic_temperature=0.0,
             include_aes=True,
+            aes_faithful=False,
             madelung_s_weighted=True,
             madelung_no_self=False,
             ewald_gamma_molecular_onsite=False,
@@ -351,6 +501,7 @@ def test_gfn2_seccm_run_controls_defaults_round_trip_and_attach_to_route():
         requested_electronic_temperature=0.0,
         resolved_electronic_temperature=0.0,
         include_aes=True,
+        aes_faithful=False,
         madelung_s_weighted=False,
         madelung_no_self=False,
         ewald_gamma_molecular_onsite=False,
@@ -393,6 +544,7 @@ def test_gfn2_seccm_run_controls_distinguish_altered_requests(overrides):
         "requested_electronic_temperature": 0.0,
         "resolved_electronic_temperature": 0.0,
         "include_aes": True,
+        "aes_faithful": False,
         "madelung_s_weighted": False,
         "madelung_no_self": False,
         "ewald_gamma_molecular_onsite": False,
@@ -734,3 +886,163 @@ def test_pm6_seccm_fd_gradient_is_invariant_to_topology_length_unit():
 
     assert results[0].energy == results[1].energy
     np.testing.assert_allclose(results[0].gradient, results[1].gradient, atol=1.0e-10)
+
+
+# --------------------------------------------------------------------------- #
+# One canonical maturity vocabulary (#150).
+# --------------------------------------------------------------------------- #
+
+
+def _every_reachable_plan():
+    """Yield every route plan reachable through the public planner.
+
+    The sweep is the enumeration the #150 audit ran by hand: each known
+    method, crossed with every boundary, property set, and the charge/spin
+    combinations and NDDO/solvent knobs that select a distinct route.
+    Requests the validators
+    refuse are skipped -- they never reach a maturity.
+    """
+    import itertools
+
+    from vibeqc.semiempirical.routes import (
+        BOUNDARY_PERIODIC_K,
+        SEMIEMPIRICAL_METHODS,
+    )
+
+    methods = sorted(
+        SEMIEMPIRICAL_METHODS
+        | {"upm6", "upm7", "msindo", "indo", "nddo", "msindo-nddo",
+           "om1", "om2", "om3"}
+    )
+    boundaries = (
+        BOUNDARY_MOLECULE,
+        BOUNDARY_PERIODIC_GAMMA,
+        BOUNDARY_PERIODIC_K,
+        BOUNDARY_SECCM_DIRECT_TORUS,
+    )
+    propsets = (
+        None,
+        ("energy",),
+        ("gradient",),
+        ("stress",),
+        ("gradient", "stress"),
+    )
+    spins = ((0, 1, False), (0, 3, True), (1, 2, True))
+    knobsets = ({}, {"nddo": True}, {"solvent": "water"},
+                {"nddo": True, "solvent": "water"})
+
+    for method, boundary, properties, knobs in itertools.product(
+        methods, boundaries, propsets, knobsets
+    ):
+        for charge, multiplicity, unrestricted in spins:
+            try:
+                yield SemiempiricalRoutePlan.from_request(
+                    method,
+                    boundary=boundary,
+                    properties=properties,
+                    charge=charge,
+                    multiplicity=multiplicity,
+                    unrestricted=unrestricted,
+                    **knobs,
+                )
+            except (NotImplementedError, ValueError, KeyError, TypeError):
+                continue
+
+
+def test_every_plan_maturity_is_in_the_canonical_vocabulary():
+    """No route invents a maturity word outside the one vocabulary."""
+    from vibeqc.semiempirical.routes import SEMIEMPIRICAL_MATURITIES
+
+    plans = list(_every_reachable_plan())
+    assert plans, "route sweep produced no plans"
+    seen = {plan.maturity for plan in plans}
+    assert seen <= set(SEMIEMPIRICAL_MATURITIES), (
+        f"maturities outside the canonical vocabulary: "
+        f"{sorted(seen - set(SEMIEMPIRICAL_MATURITIES))}"
+    )
+
+
+def test_route_status_production_flag_tracks_plan_maturity():
+    """``status.py`` and ``routes.py`` state one maturity, not two (#150).
+
+    ``production`` is the single field the two tables share.  Before the #150
+    ruling they disagreed on molecular PM6: the plan said ``production`` while
+    the status entry said ``production=False`` and its summary said
+    heavy-heavy two-center parity was still open.
+    """
+    from vibeqc.semiempirical.routes import MATURITY_PRODUCTION
+
+    disagreements = {}
+    for plan in _every_reachable_plan():
+        status = semiempirical_route_status(plan)
+        expected = plan.maturity == MATURITY_PRODUCTION
+        if status.production != expected:
+            disagreements[plan.status_route] = (
+                plan.maturity,
+                status.production,
+            )
+
+    assert not disagreements, (
+        "routes.py maturity and status.py production disagree for "
+        f"{disagreements}"
+    )
+
+
+def test_molecular_pm6_energy_is_not_a_production_claim():
+    """Molecular PM6 is a prescreening route, not a production claim (#150)."""
+    plan = SemiempiricalRoutePlan.from_request(
+        "pm6", boundary=BOUNDARY_MOLECULE, properties=("energy",)
+    )
+    assert plan.maturity == MATURITY_EXPERIMENTAL
+    assert plan.execution == EXECUTION_NATIVE
+    assert not semiempirical_route_status(plan).production
+
+
+def test_native_registry_carries_no_second_maturity_vocabulary():
+    """The dormant C++ ``PeriodicTier`` is gone (#150).
+
+    It was written in one place, read nowhere, and disagreed with the live
+    Python classification for gfn2-xtb, msindo, pm6, and om1-3.
+    """
+    _semi = pytest.importorskip("vibeqc._vibeqc_core.semiempirical")
+
+    assert not hasattr(_semi, "PeriodicTier")
+    config = _semi.SemiempiricalMethodConfig()
+    assert not hasattr(config, "periodic_tier")
+
+
+def test_seccm_runtime_plan_records_the_ewald_split_shell_gamma_form():
+    """``shell_gamma_form`` on a SECCM plan names the Ewald-split kernel's
+    short-range gamma and routes its citations; it is refused for the
+    WS-truncated families, which perform no Ewald split."""
+    base = SemiempiricalRoutePlan.from_request("scc_dftb", boundary="seccm")
+    tailed = base.with_seccm_runtime(
+        periodic_dimension=1,
+        electrostatics_family="ewald_gamma",
+        shell_gamma_form="Elstner",
+    )
+    assert tailed.electrostatics_kernel == "ewald_gamma_wire_1d"
+    assert tailed.shell_gamma_form == "elstner"
+    extras = tailed.citation_assemble_kwargs["extra_entries"]
+    assert "ewald_lattice_sum_1921" in extras
+    assert "elstner_scc_dftb_1998" in extras
+    assert "rozzi_wire_coulomb_2006" in extras
+    plain = base.with_seccm_runtime(
+        periodic_dimension=1, electrostatics_family="ewald_gamma"
+    )
+    assert plain.shell_gamma_form is None
+    assert "extra_entries" not in plain.citation_assemble_kwargs
+    with pytest.raises(ValueError, match="requires electrostatics family"):
+        base.with_seccm_runtime(
+            periodic_dimension=1,
+            electrostatics_family="madelung",
+            shell_gamma_form="elstner",
+        )
+    with pytest.raises(ValueError, match="requires electrostatics family"):
+        base.with_seccm_runtime(periodic_dimension=2, shell_gamma_form="klopman_ohno")
+    with pytest.raises(ValueError, match="shell_gamma_form must be one of"):
+        base.with_seccm_runtime(
+            periodic_dimension=1,
+            electrostatics_family="ewald_gamma",
+            shell_gamma_form="mataga",
+        )

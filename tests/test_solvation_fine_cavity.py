@@ -1964,3 +1964,79 @@ def test_conductor_surface_and_cosmors_consume_a_fine_cavity():
     assert prof.area() == pytest.approx(desc.total_area, rel=1e-9)
     pot = rs.sigma_potential_segments([desc], np.array([1.0]), rs.KLAMT_1998)
     assert np.all(np.isfinite(pot.mu_tilde))
+
+
+# ---------------------------------------------------------------------
+# Citations follow the cavity that ran, not only the variant.
+#
+# The registry fires one solvation row per run, keyed on the variant alone.
+# A fine-cavity COSMO job through run_job therefore cited exactly what a
+# Lebedev CPCM job cites: Scalmani-Frisch's switched point-charge diagonal,
+# which it never used, and not Klamt & Diedenhofen 2018, the cavity it did.
+# ---------------------------------------------------------------------
+
+
+def test_the_citation_key_carries_the_cavity():
+    import math
+
+    from vibeqc.solvation.driver import SolventModel, solvation_citation_key
+
+    assert solvation_citation_key(None) == "cpcm"
+    assert solvation_citation_key("water") == "cpcm"
+    assert solvation_citation_key({"epsilon": 78.39, "variant": "cosmo"}) == "cosmo"
+    fine = dict(cavity="fine", fine_grid_spacing_ang=0.40)
+    assert solvation_citation_key(SolventModel(epsilon=math.inf, variant="cosmo", **fine)) == "cosmo_fine"
+    assert solvation_citation_key(SolventModel(epsilon=78.39, variant="cpcm", **fine)) == "cpcm_fine"
+
+
+@pytest.mark.parametrize("key", ["cosmo_fine", "cpcm_fine"])
+def test_fine_cavity_rows_cite_the_fine_cavity_and_not_the_lebedev_diagonal(key):
+    from vibeqc.output.citations import load_default_database
+
+    db = load_default_database()
+    fine = db.assemble(uses_cpcm=True, solvent_variant=key)
+    got = {c.key for c in fine.citations}
+    assert not any("solvent variant" in w for w in fine.warnings), fine.warnings
+    assert {
+        "klamt_fine_cavity_2018", "york_karplus_smooth_cosmo_1999",
+        "lange_herbert_swig_2010", "klamt_schuurmann_cosmo_1993",
+    } <= got
+    assert "scalmani_frisch_csc_2010" not in got
+    (yk,) = [c for c in fine.citations if c.key == "york_karplus_smooth_cosmo_1999"]
+    assert yk.doi == "10.1021/jp992097l"
+
+    # The Lebedev row of the same variant is untouched.
+    lebedev = {c.key for c in db.assemble(uses_cpcm=True, solvent_variant=key.split("_")[0]).citations}
+    assert "scalmani_frisch_csc_2010" in lebedev
+    assert "klamt_fine_cavity_2018" not in lebedev
+
+
+@pytest.mark.parametrize("entry", ["run_job", "run_cpcm_scf"])
+def test_a_fine_cavity_job_cites_the_cavity_it_used(entry, tmp_path):
+    """Both entry points write the fine-cavity bibliography.
+
+    Measured before the fix: a run_job fine-cavity COSMO job cited
+    cossi_cpcm_2003, klamt_schuurmann_cosmo_1993, lange_herbert_swig_2010 and
+    scalmani_frisch_csc_2010 -- the Lebedev CPCM bundle, bit for bit.
+    """
+    import math
+
+    vq = pytest.importorskip("vibeqc")
+    mol = vq.Molecule(
+        [vq.Atom(8, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 1.43, 1.11]),
+         vq.Atom(1, [0.0, -1.43, 1.11])], 0, 1,
+    )
+    solvent = vq.SolventModel(
+        epsilon=math.inf, variant="cosmo", cavity="fine", fine_grid_spacing_ang=0.40
+    )
+    stem = tmp_path / "fine"
+    if entry == "run_job":
+        vq.run_job(mol, basis="sto-3g", method="rhf", solvent=solvent,
+                   output=str(stem), progress=False, write_molden_file=False)
+    else:
+        vq.run_cpcm_scf(mol, vq.BasisSet(mol, "sto-3g"), method="rhf",
+                        solvent=solvent, output=stem)
+    bib = stem.with_suffix(".bibtex").read_text()
+    assert "klamt_fine_cavity_2018" in bib
+    assert "york_karplus_smooth_cosmo_1999" in bib
+    assert "scalmani_frisch_csc_2010" not in bib

@@ -155,11 +155,24 @@ class CCMOptions:
       (finite-difference, fixed Wigner-Seitz) instead.
     * **Elements per the MSINDO engine** (currently H-Xe, ``msindo._SUPPORTED``).
       A heavier element raises ``NotImplementedError`` naming the supported set.
+
+    SCF controls: ``max_iter`` bounds the cumulative SCF iterations of the
+    energy, including every stability restart; ``conv_tol`` is the energy
+    route's commutator and energy threshold; ``gradient_conv_tol`` is the
+    tighter threshold the analytic-gradient callback re-converges with. The
+    defaults are the values ``run_seccm`` applied before they were exposed.
+    ``stability`` is the SCF state policy of :func:`run_ccm`: ``"reference"``
+    (default, the reference program's state, a detected saddle flagged) or
+    ``"lowest"`` (descend from every saddle to a stable minimum).
     """
 
     translations: list | None = None
     madelung: bool = True
     cluster_radius: float | None = None
+    max_iter: int = 200
+    conv_tol: float = 1e-9
+    gradient_conv_tol: float = 1e-10
+    stability: str = "reference"
 
 
 @dataclass
@@ -178,6 +191,19 @@ class CcmResult:
     stability_analysis_converged: bool = False
     stability_eigenvalue: float = 0.0
     n_stability_restarts: int = 0
+    # The reference policy returned a state the audit found to be a saddle.
+    internal_instability: bool = False
+
+
+def _stability_flag(stability):
+    """``lowest_stable`` for a validated ``stability`` policy name."""
+    from .msindo_ccm_stability import STABILITY_POLICIES
+
+    if stability not in STABILITY_POLICIES:
+        raise ValueError(
+            f"stability must be one of {STABILITY_POLICIES!r}, got {stability!r}"
+        )
+    return stability == "lowest"
 
 
 def _build_core_and_gamma_ccm(Z, coords, blocks, nsto, ws: WignerSeitzCells):
@@ -638,8 +664,25 @@ def _core_repulsion_ccm(Z, coords, cz, ws: WignerSeitzCells) -> float:
     return e
 
 
+def net_atomic_charges(atomic_numbers, density):
+    """Net atomic charges (positive = electron-deficient) of a CCM density.
+
+    The MSINDO basis is orthonormal, so the population of an atom is the
+    trace of its diagonal density block; the charge is the effective core
+    charge minus that population. A bare small cyclic cluster can converge
+    onto a charge-ordered state whose energy lies below the neutral one
+    (bare diamond 2x2x2: alternating +/-2.95 e, 2.7 Ha below), so callers
+    should look at this before trusting an equation-of-state point.
+    """
+    Z = list(atomic_numbers)
+    blocks, _nsto = _atom_blocks(Z)
+    cz = [eff_core_charge(z) for z in Z]
+    return _net_charges(np.asarray(density, dtype=float), blocks, cz)
+
+
 def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
-            charge=0, madelung=False, max_iter=200, conv_tol=1e-9) -> CcmResult:
+            charge=0, madelung=False, max_iter=200, conv_tol=1e-9,
+            stability="reference") -> CcmResult:
     """Periodic MSINDO closed-shell (RHF) SCF in the Cyclic Cluster Model.
 
     ``translations_angstrom`` are the 1-3 supercell lattice vectors (Angstrom).
@@ -649,9 +692,18 @@ def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
     embedding is added self-consistently: the 1-D finite lattice sum follows
     ``ccm1dmadelsum.f``, the 2-D route uses the Parry/Heyes slab kernel, and
     the 3-D route uses the bulk Ewald kernel.
+
+    Every converged state is audited for restricted orbital stability
+    (#249). ``stability="reference"`` (default) keeps the reference
+    program's Hcore/DIIS state and repairs a saddle only at an unresolved
+    Hcore frontier; a saddle elsewhere is returned with
+    ``internal_instability=True``. ``stability="lowest"`` descends from every
+    saddle to a stable minimum, so the energy stays on one branch under
+    geometry changes.
     """
     Z = list(atomic_numbers)
     _require_supported_msindo_elements(Z)
+    lowest_stable = _stability_flag(stability)
 
     coords_arr = np.asarray(coords_angstrom, float)
     translations_arr = _ccm_translations_angstrom_arrays(translations_angstrom)
@@ -685,6 +737,7 @@ def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
                 max_iter=max_iter,
                 conv_tol=conv_tol,
                 charge=charge,
+                lowest_stable=lowest_stable,
             )
             if getattr(result_obj, "converged", False):
                 density = np.asarray(result_obj.density, dtype=float)
@@ -713,6 +766,7 @@ def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
                         ("stability_analysis_converged", False),
                         ("stability_eigenvalue", 0.0),
                         ("n_stability_restarts", 0),
+                        ("internal_instability", False),
                     )},
                 )
             raise RuntimeError(
@@ -724,7 +778,7 @@ def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
     total, e_elec, e_core, eps, P, converged, it = _ccm_total_energy(
         Z, C, blocks, nsto, cz, nocc, ws, T,
         madelung=madelung, max_iter=max_iter, conv_tol=conv_tol,
-        diagnostics=diagnostics)
+        diagnostics=diagnostics, lowest_stable=lowest_stable)
 
     if madelung:
         net = _net_charges(P, blocks, cz)
@@ -741,7 +795,8 @@ def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
 
 
 def _ccm_total_energy(Z, C, blocks, nsto, cz, nocc, ws, T, *,
-                      madelung, max_iter=200, conv_tol=1e-9, diagnostics=None):
+                      madelung, max_iter=200, conv_tol=1e-9, diagnostics=None,
+                      initial_density=None, lowest_stable=False):
     """Total CCM energy for an already-built Wigner-Seitz set ``ws`` at geometry
     ``C`` (bohr).  Factored out of :func:`run_ccm` so the finite-difference
     gradient can hold the WS topology fixed while displacing atoms (matching
@@ -773,13 +828,14 @@ def _ccm_total_energy(Z, C, blocks, nsto, cz, nocc, ws, T, *,
 
     P, _F, e_elec, eps, converged, it = scf_rhf_ccm(
         H, G, blocks, Z, nocc, max_iter=max_iter, conv_tol=conv_tol,
-        fock_extra=fock_extra, diagnostics=diagnostics)
+        fock_extra=fock_extra, diagnostics=diagnostics,
+        initial_density=initial_density, lowest_stable=lowest_stable)
     return e_elec + e_core, e_elec, e_core, eps, P, converged, it
 
 
 def ccm_gradient_fd(atomic_numbers, coords_angstrom, translations_angstrom, *,
                     charge=0, madelung=False, atoms=None, max_iter=200,
-                    conv_tol=1e-10, step=1e-3):
+                    conv_tol=1e-10, step=1e-3, stability="reference"):
     """Finite-difference nuclear gradient (Ha/bohr) of the CCM total energy.
 
     The Wigner-Seitz topology is built once at the reference geometry and held
@@ -790,10 +846,12 @@ def ccm_gradient_fd(atomic_numbers, coords_angstrom, translations_angstrom, *,
     Angstrom; tighten ``conv_tol`` for low SCF noise in the differences.
     ``atoms`` (default all) restricts the differentiation to a subset of atom
     indices -- the rest of the returned gradient stays zero -- which makes relaxing
-    only an adsorbate cheap.
+    only an adsorbate cheap. ``stability`` selects the SCF state policy of
+    every displaced energy, as in :func:`run_ccm`.
     """
     Z = list(atomic_numbers)
     _require_supported_msindo_elements(Z)
+    lowest_stable = _stability_flag(stability)
     coords_arr = np.asarray(coords_angstrom, float)
     translations_arr = _ccm_translations_angstrom_arrays(translations_angstrom)
     if not math.isfinite(step) or step <= 0.0:
@@ -848,6 +906,7 @@ def ccm_gradient_fd(atomic_numbers, coords_angstrom, translations_angstrom, *,
                 conv_tol=conv_tol,
                 step=step,
                 charge=charge,
+                lowest_stable=lowest_stable,
             )
             if len(grad_cpp) == 0 and len(Z) != 0:
                 raise RuntimeError("SCF not converged; cannot compute CCM FD gradient.")
@@ -864,7 +923,8 @@ def ccm_gradient_fd(atomic_numbers, coords_angstrom, translations_angstrom, *,
         )
         return _ccm_total_energy(Z, C, blocks, nsto, cz, nocc, ws, T,
                                  madelung=madelung, max_iter=max_iter,
-                                 conv_tol=conv_tol)[0]
+                                 conv_tol=conv_tol,
+                                 lowest_stable=lowest_stable)[0]
 
     which = range(len(Z)) if atoms_list is None else atoms_list
     grad = np.zeros((len(Z), 3))
@@ -874,6 +934,88 @@ def ccm_gradient_fd(atomic_numbers, coords_angstrom, translations_angstrom, *,
             cm = C0.copy(); cm[i, d] -= h
             grad[i, d] = (_energy(cp) - _energy(cm)) / (2.0 * h)
     return grad
+
+
+HARTREE_PER_BOHR3_TO_GPA = 29421.02648438959
+
+
+@dataclass
+class CcmLatticeOptimization:
+    """Result of :func:`ccm_optimize_lattice_isotropic` (energies in Hartree)."""
+
+    scale: float
+    coords_angstrom: np.ndarray
+    translations_angstrom: list
+    energy: float
+    pressure_gpa: float
+    n_evaluations: int
+    converged: bool
+
+
+def ccm_optimize_lattice_isotropic(atomic_numbers, coords_angstrom,
+                                   translations_angstrom, *, charge=0,
+                                   madelung=False, stability="reference",
+                                   max_iter=400, conv_tol=1e-10,
+                                   pressure_tol_gpa=1e-3, max_evaluations=60):
+    """Scale atoms and lattice uniformly to zero analytic pressure.
+
+    For a cubic crystal this is the full lattice optimisation, and its minimum
+    is the Birch-Murnaghan minimum of an energy-volume scan. A uniform scaling
+    preserves every exact Wigner-Seitz tie, so the frozen-topology analytic
+    pressure ``-trace(dE/deps) / (3V)`` equals the volume derivative of the
+    rebuilt-topology energy. The root of the pressure in the scale factor is
+    bracketed and then refined with Brent's method (``scipy.optimize.brentq``).
+    ``pressure_tol_gpa`` bounds the pressure of the returned cell. Only 3-D
+    cells are supported.
+    """
+    from scipy.optimize import brentq
+
+    from .msindo_ccm_gradient_analytic import ccm_strain_derivative_analytic
+
+    Z = list(atomic_numbers)
+    coords0 = np.asarray(coords_angstrom, float)
+    trans0 = [np.asarray(t, float) for t in translations_angstrom]
+    if len(trans0) != 3:
+        raise ValueError("ccm_optimize_lattice_isotropic needs a 3-D cell")
+    volume0 = abs(float(np.linalg.det(np.asarray(trans0) * ANGSTROM_TO_BOHR)))
+    count = 0
+    cache = {}
+
+    def pressure(scale):
+        nonlocal count
+        if scale not in cache:
+            count += 1
+            if count > max_evaluations:
+                raise RuntimeError(
+                    "ccm_optimize_lattice_isotropic exceeded max_evaluations")
+            W = ccm_strain_derivative_analytic(
+                Z, coords0 * scale, [t * scale for t in trans0], charge=charge,
+                madelung=madelung, max_iter=max_iter, conv_tol=conv_tol,
+                stability=stability)
+            cache[scale] = -float(np.trace(W)) / (3.0 * volume0 * scale**3) \
+                * HARTREE_PER_BOHR3_TO_GPA
+        return cache[scale]
+
+    lo = hi = 1.0
+    p0 = pressure(1.0)
+    step = 0.02
+    if p0 > 0.0:        # compressed: expand until the pressure turns negative
+        while pressure(hi) > 0.0:
+            lo, hi = hi, hi * (1.0 + step)
+    else:               # stretched: contract until the pressure turns positive
+        while pressure(lo) < 0.0:
+            hi, lo = lo, lo * (1.0 - step)
+    scale = brentq(pressure, lo, hi, xtol=1e-12, rtol=1e-12,
+                   maxiter=max_evaluations)
+    p_final = pressure(scale)
+    energy = run_ccm(Z, coords0 * scale, [t * scale for t in trans0],
+                     charge=charge, madelung=madelung, max_iter=max_iter,
+                     conv_tol=conv_tol, stability=stability).total_energy
+    return CcmLatticeOptimization(
+        scale=float(scale), coords_angstrom=coords0 * scale,
+        translations_angstrom=[t * scale for t in trans0], energy=float(energy),
+        pressure_gpa=float(p_final), n_evaluations=count,
+        converged=abs(p_final) <= pressure_tol_gpa)
 
 
 def ccm_optimize(atomic_numbers, coords_angstrom, translations_angstrom, *,

@@ -1,6 +1,7 @@
 // Restricted Hartree-Fock SCF driver for a single closed-shell molecule.
 
 #pragma once
+#include "vibeqc/opentrustregion.hpp"
 
 #include <Eigen/Dense>
 #include <optional>
@@ -25,6 +26,10 @@
 namespace vibeqc {
 
 struct RHFOptions {
+    // Explicit whole-SCF orbital optimizer; existing native phase defaults stay unchanged.
+    std::string orbital_optimizer = "native";
+    OpenTrustRegionOptions opentrustregion;
+
     int max_iter = 100;
     double conv_tol_energy = 1e-8;  // |E[k] - E[k-1]| < tol  (Hartree)
     double conv_tol_grad = 1e-6;    // ||F D S - S D F||_Frobenius
@@ -457,6 +462,17 @@ struct RHFOptions {
     double stability_tol = 1e-4;
     // Davidson matvec cap for the stability solve.
     int stability_davidson_max_iter = 60;
+    // Wall-clock budget for each post-convergence stability solve (#342).
+    // stability_wall_budget_s > 0 is used as given; 0 (default) means
+    // automatic: max(stability_wall_floor_s, stability_wall_fraction x the
+    // SCF loop's own wall, the sum of the per-iteration trace). A spent
+    // budget ends the solve with an UNVERIFIED verdict instead of running
+    // to the matvec cap; a solve that finishes inside it is unchanged.
+    // Defaults: fraction 3.0, floor 600 s (maintainer decision D1,
+    // 2026-09-29).
+    double stability_wall_budget_s = 0.0;
+    double stability_wall_fraction = 3.0;
+    double stability_wall_floor_s = 600.0;
 };
 
 // Per-iteration record populated during the SCF loop. Captured for every
@@ -493,6 +509,7 @@ struct SCFIteration {
 };
 
 struct RHFResult {
+    OpenTrustRegionReport opentrustregion;
     std::optional<BasisSet> restart_basis;
     std::optional<GuessSelection> guess_selection;
     double energy = 0.0;            // total HF energy (Hartree)
@@ -539,6 +556,14 @@ struct RHFResult {
     // negative verdict passed to the output layer.
     bool stability_checked = false;
     bool stability_analysis_converged = false;
+    // Why the stability solve ended (vibeqc::StabilityStop as int: 0
+    // converged, 1 matvec budget, 2 wall budget, 3 not run, 4 trivial,
+    // 5 stagnated), the Hessian-vector products it spent and the wall
+    // budget that applied (seconds; 0 = unbounded). Carried into every
+    // output writer by the Python verdict object (#342).
+    int stability_stop_reason = 3;
+    int stability_n_matvec = 0;
+    double stability_wall_budget_s = 0.0;
     double stability_eigenvalue = 0.0;
     bool internal_instability = false;
     // Wall / CPU seconds spent in the post-convergence stability phase.

@@ -259,6 +259,10 @@ AOPairFTTensor ao_pair_fourier_transform_bloch_ss(
 // Throws ``std::invalid_argument`` on
 //   * a Cartesian-ordered shell with L > 0, or
 //   * any shell with L > ``vibeqc::cart_to_sph_data::kMaxL``.
+// pair_cutoff_bohr >= 0 applies the shared physical pair_in_range predicate
+// to each supplied candidate cell; -1 preserves historical unmasked support.
+// The caller must supply a complete candidate enclosure. Physical support
+// evaluates all ordered shell pairs without the legacy Gamma mirror shortcut.
 AOPairFTTensor ao_pair_fourier_transform_bloch(
     const BasisSet& basis,
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
@@ -266,7 +270,8 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& R_g_list,
     const Eigen::Vector3d& k_cart,
-    double screen_tol = 0.0);
+    double screen_tol = 0.0,
+    double pair_cutoff_bohr = -1.0);
 
 // Per-cell reciprocal-weight-contracted AO-pair FT.
 //
@@ -348,7 +353,8 @@ std::vector<AOPairFTTensor> ao_pair_fourier_transform_bloch_multi(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& k_carts,
     double screen_tol = 0.0,
-    const std::vector<double>& pair_weights = {});
+    const std::vector<double>& pair_weights = {},
+    double pair_cutoff_bohr = -1.0);
 
 // Density- and reciprocal-kernel-weighted Gamma-point centre derivative.
 //

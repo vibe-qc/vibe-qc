@@ -115,6 +115,22 @@ double SemiempiricalParameters::hubbard_u(int Z) const {
     return element(Z).hubbard_u;
 }
 
+int SemiempiricalParameters::shell_principal_quantum_number(int Z, int l) const {
+    validate_atomic_number(Z, "shell principal quantum number");
+    static const int noble_gases[] = {2, 10, 18, 36, 54, 86, 118};
+    int period = 1;
+    for (int g : noble_gases) {
+        if (Z <= g) break;
+        ++period;
+    }
+    if (l <= 1) return period;
+    if (l == 2) return period - 1;
+    if (l == 3) return period - 2;
+    throw std::invalid_argument(
+        "SemiempiricalParameters: no valence shell rule for l="
+        + std::to_string(l));
+}
+
 int SemiempiricalParameters::valence_electrons(int Z) const {
     return element(Z).valence_electrons;
 }

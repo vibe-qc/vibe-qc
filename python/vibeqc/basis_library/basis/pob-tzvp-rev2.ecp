@@ -7,11 +7,21 @@
 ! primitive arrays vibeqc.basis_crystal.crystal_ecp_to_libecpint_arrays
 ! feeds libecpint on the periodic route, so molecular and periodic runs use
 ! one ECP.
-! Originating publication: D. Vilela Oliveira, J. Laun, M. F. Peintinger,
-!   T. Bredow, J. Comput. Chem. 40, 2364 (2019); DOI: 10.1002/jcc.26013
+! Originating publications (pob-TZVP-rev2 draws each range from its own
+!   paper; #288):
+!   parent: M. F. Peintinger, D. Vilela Oliveira, T. Bredow,
+!     J. Comput. Chem. 34, 451 (2013); DOI: 10.1002/jcc.23153
+!   H-Br (no ECP): D. Vilela Oliveira, J. Laun, M. F. Peintinger,
+!     T. Bredow, J. Comput. Chem. 40, 2364 (2019); DOI: 10.1002/jcc.26013
+!   Rb-I: J. Laun, T. Bredow, J. Comput. Chem. 43, 839 (2022);
+!     DOI: 10.1002/jcc.26839
+!   Cs-Ba, Hf-Po: J. Laun, T. Bredow, J. Comput. Chem. 42, 1064 (2021);
+!     DOI: 10.1002/jcc.26521
+!   La-Lu: L. M. Seidler, J. Laun, T. Bredow, J. Comput. Chem. 44, 1418
+!     (2023); DOI: 10.1002/jcc.27097
 ! ECP parameters: Stuttgart-Cologne energy-consistent pseudopotentials as
 !   distributed with the pob-TZVP-rev2 basis (see the per-element source
-!   files and the pob-TZVP-rev2 paper for the per-element references).
+!   files and the range papers above for the per-element references).
 ! Source URL: https://www.chemie.uni-bonn.de/bredow/de/software/ (pob-tzvp-rev2
 !   Rb-I, Cs-Po and La-Lu archives), retrieved 2026-09-05
 ! License: numerical parameter data from published scientific papers;

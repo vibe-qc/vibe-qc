@@ -964,3 +964,22 @@ def banner(*, width: int = 72) -> str:
 def print_banner(*, file: TextIO = sys.stdout, width: int = 72) -> None:
     """Print the banner to ``file`` (default: stdout)."""
     print(banner(width=width), file=file)
+
+
+def loaded_process_provenance() -> dict:
+    """Identify this imported release, source checkout and loaded extension.
+
+    This intentionally hashes the imported extension, not a product manifest
+    or a build-directory candidate. Callers must not overwrite a mapped core.
+    """
+    import hashlib
+    from pathlib import Path
+    from . import _vibeqc_core
+
+    info = build_info() or {}
+    path = Path(_vibeqc_core.__file__)
+    with path.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    return {"release": VIBEQC_VERSION,
+            "source_revision": info.get("sha_full") or info.get("sha"),
+            "native_core_sha256": digest, "native_core_bytes": path.stat().st_size}

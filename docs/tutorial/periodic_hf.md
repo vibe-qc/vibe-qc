@@ -11,35 +11,45 @@ from vibeqc import (
 )
 
 # Unit cell: H2 oriented along the chain, 4.0 bohr between unit cells.
-unit_cell = [Atom(1, [0, 0, 0]), Atom(1, [0, 0, 1.4])]
-lattice = np.diag([4.0, 30.0, 30.0])   # 1D axis on x; y, z are vacuum
+unit_cell = [Atom(1, [0, 0, 0]), Atom(1, [1.4, 0, 0])]
+
+# Chain axis on x. A wire that needs k sampling is run as a dim=3 cell
+# with vacuum on y and z (15 bohr here); converge the energy with it.
+lattice = np.diag([4.0, 15.0, 15.0])
 
 sysp = PeriodicSystem(
-    dim=1,
+    dim=3,
     lattice=lattice,
     unit_cell=unit_cell,
 )
 
 basis = BasisSet(sysp.unit_cell_molecule(), "pob-tzvp")
-kpoints = KPoints.monkhorst_pack(sysp, [6, 1, 1])
+kpoints = KPoints.monkhorst_pack(sysp, [4, 1, 1])
 
 result = run_periodic_job(
     sysp,
     basis,
     method="RHF",
-    jk_method="gdf",       # maintained 1D Coulomb route
+    jk_method="gdf",
     kpoints=kpoints,
     conv_tol_energy=1e-10,
 )
 print(f"E_RHF per cell = {result.energy:.10f}  ({result.n_iter} iters)")
 ```
 
-``run_periodic_job`` is the recommended user-facing dispatcher. For 1D
-wires, ``jk_method="auto"`` also selects GDF; spelling it explicitly here
-makes the Coulomb objective reproducible in the example. The historical
-``run_rhf_periodic_scf`` direct-truncated branch is retained only for
-vacuum-padded molecular-limit diagnostics, not quantitative 1D solids.
-For a Gamma-only calculation, pass ``KPoints.gamma(sysp)``.
+``run_periodic_job`` is the recommended user-facing dispatcher. The chain is
+modelled as a ``dim=3`` cell with transverse vacuum because the native GDF
+route has no consistent Coulomb gauge for a true ``dim=1`` cell:
+``PeriodicSystem(dim=1, ...)`` with ``jk_method="gdf"`` raises
+``NotImplementedError`` at Gamma and with a k mesh, and ``jk_method="auto"``
+refuses a ``dim=1`` system before any setup. (The Gamma-only form used to run,
+but its total energy depended on the lattice-sum cutoff.) The cost of the
+vacuum-box form grows with
+the box volume, so start with a modest vacuum and check how the energy per cell
+changes as it grows. The historical ``run_rhf_periodic_scf`` direct-truncated
+branch is retained only for vacuum-padded molecular-limit diagnostics, not
+quantitative 1D solids. For a Gamma-only calculation, pass
+``KPoints.gamma(sysp)``.
 
 ## Other ways to build a k-mesh, `vibeqc.KPoints`
 
@@ -89,8 +99,10 @@ The full reference is [user_guide/k_points.md](../user_guide/k_points.md).
 
 * `PeriodicSystem.dim`, number of periodic axes. `dim=1` makes only
   `lattice.col(0)` a lattice vector; the other two columns are
-  interpreted as vacuum with enough separation (30 bohr here) that
-  images don't overlap. `dim=2` treats cols 0 and 1 as in-plane
+  interpreted as vacuum with enough separation that images don't overlap. The
+  native GDF route raises `NotImplementedError` for a `dim=1` cell, at Gamma
+  and with a k mesh, so the example above pads a `dim=3` cell with vacuum
+  instead. `dim=2` treats cols 0 and 1 as in-plane
   lattice vectors; col 2 is synthesized bookkeeping, not a vacuum gap,
   and the slab energy is invariant to it (build these with
   `vq.slab_2d`). `dim=3` is full bulk.
@@ -100,6 +112,18 @@ The full reference is [user_guide/k_points.md](../user_guide/k_points.md).
 * `lattice_opts.nuclear_cutoff_bohr`, separate, usually larger,
   cutoff for the nuclear-attraction term (1/r tail decays more slowly
   than AO overlap).
+* `lattice_opts.gamma_only_0`, off by default. Set it only when you
+  mean the molecular limit: one unit cell, no periodic image coupling.
+  Image cells are selected by `|g| <= cutoff_bohr`, so if your shortest
+  lattice vector is *longer* than the cutoff, no image survives and the
+  calculation is a free-boundary cluster wearing a periodic label: it
+  converges, it returns the isolated molecule's energy, and it is
+  exactly k-independent, so refining the mesh only confirms a stable
+  wrong answer. The driver therefore refuses that cell list unless you
+  set this flag. If the refusal surprises you, raise `cutoff_bohr` or
+  use a primitive cell with a matched k mesh; if you really did mean a
+  molecule in a vacuum box (the big-box case below), set the flag. It
+  declares intent and changes no sum.
 
 ## Choosing a k-mesh
 
@@ -113,9 +137,11 @@ starting point.
 
 ## What's validated today
 
-* **Molecular limit**: a big-box (50 bohr) unit cell produces the same
-  energy as molecular RHF, machine precision across dim ∈ {1, 2, 3}
-  and multiple k-mesh sizes.
+* **Molecular limit**: a big-box (50 bohr) unit cell with
+  `lattice_opts.gamma_only_0 = True` produces the same energy as
+  molecular RHF, machine precision across dim ∈ {1, 2, 3} and multiple
+  k-mesh sizes. Without the declaration the driver refuses the box, by
+  design; see the option above.
 * **Bloch-sum machinery**: kinetic-only folding equivalence between
   1-cell × K k-points and K-cell × Γ, machine precision.
 * **Non-trivial 1D SCF convergence** at tight cell spacings.
@@ -249,8 +275,9 @@ $$
 is **conditionally convergent**: direct truncation gives shape-
 dependent answers (see [Madelung constants via Ewald summation](madelung_with_ewald.md) for
 the full story). Mixed-boundary 1D and 2D systems also require
-dimension-specific Coulomb kernels. The public routes use GDF for 1D and
-``SLAB_EWALD_2D`` (or explicit slab GDF) for 2D. ``DIRECT_TRUNCATED`` is
+dimension-specific Coulomb kernels. No public route has one for 1D yet (pad a
+``dim=3`` cell with vacuum); 2D uses ``SLAB_EWALD_2D`` (or explicit slab
+GDF). ``DIRECT_TRUNCATED`` is
 only a vacuum-padded molecular-limit diagnostic. For 3D, set
 ``opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D``;
 the dispatcher routes to vibe-qc's full-metric Ewald backend, with exact

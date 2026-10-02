@@ -302,7 +302,7 @@ def _build_uccm_pno_channels(
     Shared by the open-shell DLPNO-UMP2 and DLPNO-UCCSD(T) drivers (the open-shell
     analogue of :func:`vibeqc.periodic.ccm.dlpno._build_ccm_pno_pairs`).
     """
-    from .neutral import ccm_neutral_cderi
+    from .neutral import carried_cderi, ccm_neutral_cderi
 
     Ca = np.asarray(uhf_result.mo_coeffs_alpha, dtype=float)
     Cb = np.asarray(uhf_result.mo_coeffs_beta, dtype=float)
@@ -317,6 +317,8 @@ def _build_uccm_pno_channels(
     Coa, Cva, eoa, eva = Ca[:, nf:na], Ca[:, na:], ea[nf:na], ea[na:]
     Cob, Cvb, eob, evb = Cb[:, nf:nb], Cb[:, nb:], eb[nf:nb], eb[nb:]
 
+    if cderi is None:
+        cderi = carried_cderi(uhf_result)   # one build per job (2026-09-24)
     L = np.asarray(cderi if cderi is not None else
                    ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff), dtype=float)
     Ba = _channel_b_tensor(L, Coa, Cva)
@@ -433,10 +435,16 @@ def ccm_dlpno_ump2(
     four-center to machine ε — the correctness gate
     (``tests/test_ccm_dlpno_ump2.py``).
     """
+    # A Bloch producer result (run_ccm_*_gdf) is transformed to the real
+    # supercell-Gamma reference of the same Hamiltonian first (Theorem 1;
+    # periodic/ccm/bloch_reference.py). Real-Gamma references pass through.
+    from .bloch_reference import as_real_reference
+
+    uhf_result = as_real_reference(ccm, uhf_result)
     guess_selection = _ccm_initial_guess(
         ccm, initial_guess, driver='ccm_dlpno_ump2', reference=uhf_result,
     )
-    from .neutral import ccm_neutral_cderi
+    from .neutral import carried_cderi, ccm_neutral_cderi
 
     if tcut_pno < 0.0:
         raise ValueError("tcut_pno must be non-negative")
@@ -445,6 +453,8 @@ def ccm_dlpno_ump2(
     if pao_lindep < 0.0:
         raise ValueError("pao_lindep must be non-negative")
 
+    if cderi is None:
+        cderi = carried_cderi(uhf_result)   # one build per job (2026-09-24)
     L = np.asarray(cderi if cderi is not None else
                    ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff), dtype=float)
     if uhf_result is None:

@@ -79,19 +79,24 @@ libecpint, validated against PySCF.pbc for PBE/pob-TZVP-REV2 + ECP.
 
 ## What you see in practice
 
-Running a tutorial's H₂ molecular crystal ([input-h-chain-uniform.py](https://github.com/vibe-qc/vibe-qc/blob/main/examples/periodic/input-h-chain-uniform.py))
-with three bases and tracking SCF convergence:
+Running a tutorial's H₂ molecular crystal ([input-h-chain-uniform.py](https://github.com/vibe-qc/vibe-qc/blob/main/examples/periodic/input-h-chain-uniform.py),
+a 15 bohr lattice parameter in a `dim=3` cell with 15 bohr of
+transverse vacuum, k-point GDF on an 8 x 1 x 1 mesh) with three bases
+and tracking SCF convergence (vibe-qc 0.17.14):
 
 | Basis | nbf / atom | n_iter | Conv. |
 |---|---:|---:|---|
-| STO-3G | 1 | 2 | ✓ (too small to matter) |
-| 6-31G\* | 2 | oscillates | ✗ |
-| pob-TZVP | 6 | ~8 | ✓ |
+| STO-3G | 1 | 3 | ✓ (too small to matter) |
+| 6-31G\* | 2 | 6 | ✓ |
+| pob-TZVP | 6 | 7 | ✓ |
 
-The `pob-TZVP` calculation converges smoothly because no basis
-function is close to linear-dependent with any of its periodic
-images. The `6-31G*` case oscillates on the same geometry, not
-because the physics is wrong but because the basis is.
+All three converge here because each H₂ sits 13.6 bohr from its
+neighbours along the chain: the crystal is close to the molecular
+limit, where image overlap is negligible (see the next section). The
+case for `pob-TZVP` is the compact cell, where diffuse molecular
+functions overlap their periodic images and the overlap matrix
+approaches linear dependence; `pob-TZVP` is built to stay clear of
+that.
 
 ## When you can skip pob
 

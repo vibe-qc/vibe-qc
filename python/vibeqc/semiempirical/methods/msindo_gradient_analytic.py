@@ -564,214 +564,233 @@ def _msindo_gradient_analytic_impl(
     grad = np.zeros((natom, 3))
     n = len(blocks)
 
+    def pair_derivative(k, l, pole_azimuth=0.0):
+        """dE/d(r_l - r_k) of the K-L pair. On the z pole the azimuth is
+        ``pole_azimuth``, so the theta derivative is the tilt towards that
+        azimuth (``msindo_pair_deriv._d_trans_driver``)."""
+        rk, rl = C[k], C[l]
+        dvec = rl - rk
+        R = float(np.linalg.norm(dvec))
+        # Get per-pair derivative matrices
+        pd = _pd._pair_blocks_deriv(Z[k], Z[l], rk, rl, pole_azimuth)
+
+        # Chain rule factors: d(R,th,phi)/d(r_l - r_k)
+        E = dvec / R
+        # sin(theta) from the in-plane components (1 - cos^2 cancels next to
+        # the pole); the pole test is _d_trans_driver's.
+        cost, sint = E[2], math.hypot(E[0], E[1])
+        if abs(cost) >= 1.0 - 1e-12:
+            # z-axis aligned: phi is the chosen pole azimuth, no phi derivatives
+            sint = 0.0
+            cosphi, sinphi = math.cos(pole_azimuth), math.sin(pole_azimuth)
+            dphidx, dphidy, dphidz = 0.0, 0.0, 0.0
+        else:
+            cosphi, sinphi = E[0] / sint, E[1] / sint
+            c1 = sint * sint * R  # = (1 - costh^2) * R
+            dphidx = -E[1] / c1
+            dphidy = E[0] / c1
+            dphidz = 0.0
+
+        # EDT = dE/dth = [costh cosphi, costh sinphi, -sinth]
+        edt1 = cost * cosphi
+        edt2 = cost * sinphi
+        edt3 = -sint
+
+        # Chain rule: d(R,th,phi)/dx = (dE/dx factors from DEINV)
+        drdx, drdy, drdz = E[0], E[1], E[2]
+        dthetadx = edt1 / R
+        dthetady = edt2 / R
+        dthetadz = edt3 / R
+
+        # Extract density sub-blocks
+        lo_k, hi_k = blocks[k]
+        lo_l, hi_l = blocks[l]
+        nk = hi_k - lo_k
+        nl = hi_l - lo_l
+
+        P_kk = P[lo_k:hi_k, lo_k:hi_k]
+        P_ll = P[lo_l:hi_l, lo_l:hi_l]
+        P_kl = P[lo_k:hi_k, lo_l:hi_l]  # (nk x nl), stored as P[K_i, L_j]
+
+        # RHF: total density P, a and b are P/2
+        # For the RHF formula in DEDXYZK:
+        #   PLK = P_kl.T  (nl x nk, stored as P[L_j, K_i] in Fortran column-major)
+        #   PLKA = PLKB = 0.5 * PLK
+        PLK = P_kl.T  # (nl x nk)
+
+        # ---- DEDXYZK: 1e terms from K's perspective ----
+        # Diagonal (same-atom on K): S_i P_ii * H_ii
+        # + off-diagonal (same-atom on K): 2 S_{i<j} P_ij * H_ij
+        dx, dy, dz = 0.0, 0.0, 0.0
+        for i in range(nk):
+            Pii = P_kk[i, i]
+            dx += Pii * (
+                pd.HK1_DR[i, i] * drdx
+                + pd.HK1_DT[i, i] * dthetadx
+                + pd.HK1_DP[i, i] * dphidx
+            )
+            dy += Pii * (
+                pd.HK1_DR[i, i] * drdy
+                + pd.HK1_DT[i, i] * dthetady
+                + pd.HK1_DP[i, i] * dphidy
+            )
+            dz += Pii * (
+                pd.HK1_DR[i, i] * drdz
+                + pd.HK1_DT[i, i] * dthetadz
+                + pd.HK1_DP[i, i] * dphidz
+            )
+            for j in range(i + 1, nk):
+                Pij = P_kk[j, i]
+                # H_ij (j,i) in Fortran = P_kk[j,i] in Python
+                # 2 * Pij * dH/dcoord
+                dx += (
+                    2.0
+                    * Pij
+                    * (
+                        pd.HK1_DR[j, i] * drdx
+                        + pd.HK1_DT[j, i] * dthetadx
+                        + pd.HK1_DP[j, i] * dphidx
+                    )
+                )
+                dy += (
+                    2.0
+                    * Pij
+                    * (
+                        pd.HK1_DR[j, i] * drdy
+                        + pd.HK1_DT[j, i] * dthetady
+                        + pd.HK1_DP[j, i] * dphidy
+                    )
+                )
+                dz += (
+                    2.0
+                    * Pij
+                    * (
+                        pd.HK1_DR[j, i] * drdz
+                        + pd.HK1_DT[j, i] * dthetadz
+                        + pd.HK1_DP[j, i] * dphidz
+                    )
+                )
+
+        # ---- DEDXYZK: pair-block terms ----
+        # Formula (RHF): for each (iinK, jinL):
+        #   F_g = 1/2 . dg_ij/dR . (Pii*Pjj - (Pij/2)^2 - (Pij/2)^2)
+        #        = 1/2 . dg_ij/dR . (Pii*Pjj - 1/2 Pij^2)
+        #   F_R = Pij * HKL2_DR[j,i]
+        #   F_T = Pij * HKL2_DT[j,i]
+        #   F_P = Pij * HKL2_DP[j,i]
+        # Note: both DEDXYZK and DEDXYZL contribute these same terms,
+        # so the total gradient = 2x the single-routine contribution.
+        for i in range(nk):
+            Pii = P_kk[i, i]
+            for j in range(nl):
+                Pjj = P_ll[j, j]
+                Pij = P_kl[i, j]  # K_i, L_j
+                Pij2_half = 0.5 * Pij * Pij  # Pij^2/2 for RHF
+
+                # Gamma contribution: dg/dR (one copy, total = 2x)
+                F_gam_one = 0.5 * pd.d_gamma_local[i, j] * (Pii * Pjj - Pij2_half)
+
+                # Resonance terms (per the Fortran DEDXYZK/DEDXYZL indexing):
+                # DEDXYZK: PIJ = PLK(J,I) = P_OC[J,I] = P_CO[I,J],
+                #          FIJR = PIJ * HIJ2DR(J,I) = P_CO[I,J] * HKL2_DR[I,J]
+                # DEDXYZL: PIJ = PLK(I,J) = P_OC[I,J] = P_CO[J,I],
+                #          FIJR = PIJ * HIJ2DR(I,J) = P_CO[J,I] * HKL2_DR[J,I]
+                # Both contribute P_CO[i,j] * HKL2_DR[i,j], total = 2x.
+                F_R_one = Pij * pd.HKL2_DR[i, j]
+
+                # Both DEDXYZK and DEDXYZL contribute the same (F_gam + F_R).
+                # Total = 2x.
+                dx += (
+                    2.0 * (F_gam_one + F_R_one) * drdx
+                    + 2.0 * Pij * pd.HKL2_DT[i, j] * dthetadx
+                    + 2.0 * Pij * pd.HKL2_DP[i, j] * dphidx
+                )
+                dy += (
+                    2.0 * (F_gam_one + F_R_one) * drdy
+                    + 2.0 * Pij * pd.HKL2_DT[i, j] * dthetady
+                    + 2.0 * Pij * pd.HKL2_DP[i, j] * dphidy
+                )
+                dz += (
+                    2.0 * (F_gam_one + F_R_one) * drdz
+                    + 2.0 * Pij * pd.HKL2_DT[i, j] * dthetadz
+                    + 2.0 * Pij * pd.HKL2_DP[i, j] * dphidz
+                )
+
+        # ---- DEDXYZL: 1e terms from L's perspective ----
+        for i in range(nl):
+            Pii = P_ll[i, i]
+            dx += Pii * (
+                pd.HL1_DR[i, i] * drdx
+                + pd.HL1_DT[i, i] * dthetadx
+                + pd.HL1_DP[i, i] * dphidx
+            )
+            dy += Pii * (
+                pd.HL1_DR[i, i] * drdy
+                + pd.HL1_DT[i, i] * dthetady
+                + pd.HL1_DP[i, i] * dphidy
+            )
+            dz += Pii * (
+                pd.HL1_DR[i, i] * drdz
+                + pd.HL1_DT[i, i] * dthetadz
+                + pd.HL1_DP[i, i] * dphidz
+            )
+            for j in range(i + 1, nl):
+                Pij = P_ll[j, i]
+                dx += (
+                    2.0
+                    * Pij
+                    * (
+                        pd.HL1_DR[j, i] * drdx
+                        + pd.HL1_DT[j, i] * dthetadx
+                        + pd.HL1_DP[j, i] * dphidx
+                    )
+                )
+                dy += (
+                    2.0
+                    * Pij
+                    * (
+                        pd.HL1_DR[j, i] * drdy
+                        + pd.HL1_DT[j, i] * dthetady
+                        + pd.HL1_DP[j, i] * dphidy
+                    )
+                )
+                dz += (
+                    2.0
+                    * Pij
+                    * (
+                        pd.HL1_DR[j, i] * drdz
+                        + pd.HL1_DT[j, i] * dthetadz
+                        + pd.HL1_DP[j, i] * dphidz
+                    )
+                )
+
+        # ---- Nuclear repulsion gradient ----
+        # Both DEDXYZK and DEDXYZL add this term, so 2x total.
+        zke = float(eff_core_charge(Z[k]))
+        zle = float(eff_core_charge(Z[l]))
+        zkl = 0.5 * zke * zle  # factor from dedxyzk.f: 1/2 . CZ(K) . CZ(L)
+        drkl = -1.0 / (R * R)  # d/dR of 1/R
+        dnuc = 2.0 * zkl * drkl  # 2x from both routines
+        dx += dnuc * drdx
+        dy += dnuc * drdy
+        dz += dnuc * drdz
+
+        return np.array([dx, dy, dz])
+
+
     for k in range(natom):
         for l in range(k + 1, natom):
-            rk, rl = C[k], C[l]
-            dvec = rl - rk
+            dvec = C[l] - C[k]
             R = float(np.linalg.norm(dvec))
             if R < 1e-12:
                 continue
-
-            # Get per-pair derivative matrices
-            pd = _pd._pair_blocks_deriv(Z[k], Z[l], rk, rl)
-
-            # Chain rule factors: d(R,th,phi)/d(r_l - r_k)
-            E = dvec / R
-            cost, sint = E[2], math.sqrt(max(0.0, 1.0 - E[2] ** 2))
-            if sint < 1e-12:
-                # z-axis aligned: phi degenerate, skip phi derivatives
-                cosphi, sinphi = 1.0, 0.0
-                dphidx, dphidy, dphidz = 0.0, 0.0, 0.0
-            else:
-                cosphi, sinphi = E[0] / sint, E[1] / sint
-                c1 = sint * sint * R  # = (1 - costh^2) * R
-                dphidx = -E[1] / c1
-                dphidy = E[0] / c1
-                dphidz = 0.0
-
-            # EDT = dE/dth = [costh cosphi, costh sinphi, -sinth]
-            edt1 = cost * cosphi
-            edt2 = cost * sinphi
-            edt3 = -sint
-
-            # Chain rule: d(R,th,phi)/dx = (dE/dx factors from DEINV)
-            drdx, drdy, drdz = E[0], E[1], E[2]
-            dthetadx = edt1 / R
-            dthetady = edt2 / R
-            dthetadz = edt3 / R
-
-            # Extract density sub-blocks
-            lo_k, hi_k = blocks[k]
-            lo_l, hi_l = blocks[l]
-            nk = hi_k - lo_k
-            nl = hi_l - lo_l
-
-            P_kk = P[lo_k:hi_k, lo_k:hi_k]
-            P_ll = P[lo_l:hi_l, lo_l:hi_l]
-            P_kl = P[lo_k:hi_k, lo_l:hi_l]  # (nk x nl), stored as P[K_i, L_j]
-
-            # RHF: total density P, a and b are P/2
-            # For the RHF formula in DEDXYZK:
-            #   PLK = P_kl.T  (nl x nk, stored as P[L_j, K_i] in Fortran column-major)
-            #   PLKA = PLKB = 0.5 * PLK
-            PLK = P_kl.T  # (nl x nk)
-
-            # ---- DEDXYZK: 1e terms from K's perspective ----
-            # Diagonal (same-atom on K): S_i P_ii * H_ii
-            # + off-diagonal (same-atom on K): 2 S_{i<j} P_ij * H_ij
-            dx, dy, dz = 0.0, 0.0, 0.0
-            for i in range(nk):
-                Pii = P_kk[i, i]
-                dx += Pii * (
-                    pd.HK1_DR[i, i] * drdx
-                    + pd.HK1_DT[i, i] * dthetadx
-                    + pd.HK1_DP[i, i] * dphidx
-                )
-                dy += Pii * (
-                    pd.HK1_DR[i, i] * drdy
-                    + pd.HK1_DT[i, i] * dthetady
-                    + pd.HK1_DP[i, i] * dphidy
-                )
-                dz += Pii * (
-                    pd.HK1_DR[i, i] * drdz
-                    + pd.HK1_DT[i, i] * dthetadz
-                    + pd.HK1_DP[i, i] * dphidz
-                )
-                for j in range(i + 1, nk):
-                    Pij = P_kk[j, i]
-                    # H_ij (j,i) in Fortran = P_kk[j,i] in Python
-                    # 2 * Pij * dH/dcoord
-                    dx += (
-                        2.0
-                        * Pij
-                        * (
-                            pd.HK1_DR[j, i] * drdx
-                            + pd.HK1_DT[j, i] * dthetadx
-                            + pd.HK1_DP[j, i] * dphidx
-                        )
-                    )
-                    dy += (
-                        2.0
-                        * Pij
-                        * (
-                            pd.HK1_DR[j, i] * drdy
-                            + pd.HK1_DT[j, i] * dthetady
-                            + pd.HK1_DP[j, i] * dphidy
-                        )
-                    )
-                    dz += (
-                        2.0
-                        * Pij
-                        * (
-                            pd.HK1_DR[j, i] * drdz
-                            + pd.HK1_DT[j, i] * dthetadz
-                            + pd.HK1_DP[j, i] * dphidz
-                        )
-                    )
-
-            # ---- DEDXYZK: pair-block terms ----
-            # Formula (RHF): for each (iinK, jinL):
-            #   F_g = 1/2 . dg_ij/dR . (Pii*Pjj - (Pij/2)^2 - (Pij/2)^2)
-            #        = 1/2 . dg_ij/dR . (Pii*Pjj - 1/2 Pij^2)
-            #   F_R = Pij * HKL2_DR[j,i]
-            #   F_T = Pij * HKL2_DT[j,i]
-            #   F_P = Pij * HKL2_DP[j,i]
-            # Note: both DEDXYZK and DEDXYZL contribute these same terms,
-            # so the total gradient = 2x the single-routine contribution.
-            for i in range(nk):
-                Pii = P_kk[i, i]
-                for j in range(nl):
-                    Pjj = P_ll[j, j]
-                    Pij = P_kl[i, j]  # K_i, L_j
-                    Pij2_half = 0.5 * Pij * Pij  # Pij^2/2 for RHF
-
-                    # Gamma contribution: dg/dR (one copy, total = 2x)
-                    F_gam_one = 0.5 * pd.d_gamma_local[i, j] * (Pii * Pjj - Pij2_half)
-
-                    # Resonance terms (per the Fortran DEDXYZK/DEDXYZL indexing):
-                    # DEDXYZK: PIJ = PLK(J,I) = P_OC[J,I] = P_CO[I,J],
-                    #          FIJR = PIJ * HIJ2DR(J,I) = P_CO[I,J] * HKL2_DR[I,J]
-                    # DEDXYZL: PIJ = PLK(I,J) = P_OC[I,J] = P_CO[J,I],
-                    #          FIJR = PIJ * HIJ2DR(I,J) = P_CO[J,I] * HKL2_DR[J,I]
-                    # Both contribute P_CO[i,j] * HKL2_DR[i,j], total = 2x.
-                    F_R_one = Pij * pd.HKL2_DR[i, j]
-
-                    # Both DEDXYZK and DEDXYZL contribute the same (F_gam + F_R).
-                    # Total = 2x.
-                    dx += (
-                        2.0 * (F_gam_one + F_R_one) * drdx
-                        + 2.0 * Pij * pd.HKL2_DT[i, j] * dthetadx
-                        + 2.0 * Pij * pd.HKL2_DP[i, j] * dphidx
-                    )
-                    dy += (
-                        2.0 * (F_gam_one + F_R_one) * drdy
-                        + 2.0 * Pij * pd.HKL2_DT[i, j] * dthetady
-                        + 2.0 * Pij * pd.HKL2_DP[i, j] * dphidy
-                    )
-                    dz += (
-                        2.0 * (F_gam_one + F_R_one) * drdz
-                        + 2.0 * Pij * pd.HKL2_DT[i, j] * dthetadz
-                        + 2.0 * Pij * pd.HKL2_DP[i, j] * dphidz
-                    )
-
-            # ---- DEDXYZL: 1e terms from L's perspective ----
-            for i in range(nl):
-                Pii = P_ll[i, i]
-                dx += Pii * (
-                    pd.HL1_DR[i, i] * drdx
-                    + pd.HL1_DT[i, i] * dthetadx
-                    + pd.HL1_DP[i, i] * dphidx
-                )
-                dy += Pii * (
-                    pd.HL1_DR[i, i] * drdy
-                    + pd.HL1_DT[i, i] * dthetady
-                    + pd.HL1_DP[i, i] * dphidy
-                )
-                dz += Pii * (
-                    pd.HL1_DR[i, i] * drdz
-                    + pd.HL1_DT[i, i] * dthetadz
-                    + pd.HL1_DP[i, i] * dphidz
-                )
-                for j in range(i + 1, nl):
-                    Pij = P_ll[j, i]
-                    dx += (
-                        2.0
-                        * Pij
-                        * (
-                            pd.HL1_DR[j, i] * drdx
-                            + pd.HL1_DT[j, i] * dthetadx
-                            + pd.HL1_DP[j, i] * dphidx
-                        )
-                    )
-                    dy += (
-                        2.0
-                        * Pij
-                        * (
-                            pd.HL1_DR[j, i] * drdy
-                            + pd.HL1_DT[j, i] * dthetady
-                            + pd.HL1_DP[j, i] * dphidy
-                        )
-                    )
-                    dz += (
-                        2.0
-                        * Pij
-                        * (
-                            pd.HL1_DR[j, i] * drdz
-                            + pd.HL1_DT[j, i] * dthetadz
-                            + pd.HL1_DP[j, i] * dphidz
-                        )
-                    )
-
-            # ---- Nuclear repulsion gradient ----
-            # Both DEDXYZK and DEDXYZL add this term, so 2x total.
-            zke = float(eff_core_charge(Z[k]))
-            zle = float(eff_core_charge(Z[l]))
-            zkl = 0.5 * zke * zle  # factor from dedxyzk.f: 1/2 . CZ(K) . CZ(L)
-            drkl = -1.0 / (R * R)  # d/dR of 1/R
-            dnuc = 2.0 * zkl * drkl  # 2x from both routines
-            dx += dnuc * drdx
-            dy += dnuc * drdy
-            dz += dnuc * drdz
+            D = pair_derivative(k, l)
+            if abs(dvec[2]) >= (1.0 - 1e-12) * R:
+                # On the z pole the d_trans.f convention (phi = 0) gives only
+                # the tilt towards x; the tilt towards y is the same derivative
+                # taken at phi = pi/2 (issue #443).
+                D[1] = pair_derivative(k, l, 0.5 * math.pi)[1]
+            dx, dy, dz = D
 
             # Accumulate: DEDXYZK sign convention
             #   EDX(L) += DX, EDX(K) -= DX

@@ -204,10 +204,10 @@ inline double erfcx_stable(double x) {
 
 }  // namespace
 
-double ewald_point_charge_energy(const Eigen::Matrix3d& lattice,
+static double ewald_point_charge_energy_impl(const Eigen::Matrix3d& lattice,
                                  const Eigen::Matrix3Xd& positions_cart,
                                  const Eigen::VectorXd& charges,
-                                 const EwaldOptions& opts) {
+                                 const EwaldOptions& opts, EwaldEnergySupport* support) {
     const auto N = positions_cart.cols();
     if (charges.size() != N) {
         throw std::invalid_argument(
@@ -249,6 +249,17 @@ double ewald_point_charge_energy(const Eigen::Matrix3d& lattice,
     const auto real_fractional_spans =
         pair_fractional_spans(lattice, real_cutoff);
     const Eigen::Index n_pairs = N * N;
+    if (support) {
+        long double bound = static_cast<long double>(n_pairs);
+        for (double span : real_fractional_spans)
+            bound *= 2.0L * std::ceil(span) + 3.0L;
+        if (!std::isfinite(bound) || bound > 2000000.0L)
+            throw std::length_error("Ewald support record exceeds bounded term budget");
+        support->alpha = alpha;
+        support->real_cutoff_bohr = real_cutoff;
+        support->reciprocal_cutoff_bohr_inv = recip_cutoff;
+        support->real_pair_displacements.resize(static_cast<std::size_t>(n_pairs));
+    }
     double e_real = 0.0;
     #pragma omp parallel for schedule(static) reduction(+:e_real)
     for (Eigen::Index pair = 0; pair < n_pairs; ++pair) {
@@ -263,6 +274,7 @@ double ewald_point_charge_energy(const Eigen::Matrix3d& lattice,
                 const double r = d.norm();
                 if (r < 1.0e-14) return;   // (A=B, g=0) self-term
                 if (r > real_cutoff) return;
+                if (support) support->real_pair_displacements[pair].push_back(d);
                 e_real += charge_product * std::erfc(alpha * r) / r;
             });
     }
@@ -272,6 +284,11 @@ double ewald_point_charge_energy(const Eigen::Matrix3d& lattice,
     // (2π/V) Σ_{G≠0} |S(G)|² exp(−|G|²/(4α²)) / |G|²
     // with S(G) = Σ_A Z_A exp(i G · R_A).
     const auto G_list = enumerate_cells(B, recip_cutoff, /*include_origin=*/false);
+    if (support) {
+        if (G_list.size() > 2000000)
+            throw std::length_error("Ewald reciprocal record exceeds bounded term budget");
+        support->reciprocal_vectors = G_list;
+    }
     const int n_G = static_cast<int>(G_list.size());
 
     VIBEQC_DIAG("ewald", vibeqc::DiagLevel::VERBOSE,
@@ -311,6 +328,37 @@ double ewald_point_charge_energy(const Eigen::Matrix3d& lattice,
     const double e_bg = -M_PI * Q * Q / (2.0 * alpha * alpha * V);
 
     return e_real + e_recip + e_self + e_bg;
+}
+
+double ewald_point_charge_energy(const Eigen::Matrix3d& lattice,
+                                 const Eigen::Matrix3Xd& positions_cart,
+                                 const Eigen::VectorXd& charges,
+                                 const EwaldOptions& opts) {
+    return ewald_point_charge_energy_impl(lattice, positions_cart, charges, opts, nullptr);
+}
+
+EwaldEnergySupport ewald_nuclear_repulsion_with_support(
+    const PeriodicSystem& system, const EwaldOptions& opts) {
+    if (system.dim != 3 || !system.lattice.allFinite()
+        || !std::isfinite(opts.alpha) || !std::isfinite(opts.real_cutoff_bohr)
+        || opts.real_cutoff_bohr <= 0.0 || !std::isfinite(opts.recip_cutoff_bohr_inv)
+        || !std::isfinite(opts.tolerance) || opts.tolerance <= 0.0 || opts.tolerance >= 1.0)
+        throw std::invalid_argument("Ewald support requires finite 3D settings and positive real reach");
+    for (const auto& atom : system.unit_cell)
+        for (double x : atom.xyz)
+            if (!std::isfinite(x)) throw std::invalid_argument("Nonfinite nuclear coordinate");
+    const auto n = system.unit_cell.size();
+    Eigen::Matrix3Xd positions(3, n);
+    Eigen::VectorXd charges(n);
+    for (std::size_t a = 0; a < n; ++a) {
+        const auto& atom = system.unit_cell[a];
+        positions.col(a) << atom.xyz[0], atom.xyz[1], atom.xyz[2];
+        charges[a] = atom.Z;
+    }
+    EwaldEnergySupport support;
+    support.energy = ewald_point_charge_energy_impl(
+        system.lattice, positions, charges, opts, &support);
+    return support;
 }
 
 double ewald_nuclear_repulsion(const PeriodicSystem& system,

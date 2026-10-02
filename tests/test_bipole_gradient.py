@@ -60,7 +60,8 @@ ANG2BOHR = 1.0 / 0.529177210903
 
 @pytest.mark.parametrize("method", ["rks", "uks"])
 @pytest.mark.parametrize("functional", ["lda", "pbe"])
-def test_ks_gradient_nondefault_xc_radius_matches_fd(method, functional):
+@pytest.mark.parametrize("physical", [False, True])
+def test_ks_gradient_nondefault_xc_radius_matches_fd(method, functional, physical):
     """The gradient must use the same finite AO-image sum as the SCF grid.
 
     H3 is a doublet, so the UKS rows exercise unequal spin densities. The
@@ -78,7 +79,9 @@ def test_ks_gradient_nondefault_xc_radius_matches_fd(method, functional):
     )
     opts = PeriodicKSOptions()
     opts.lattice_opts.cutoff_bohr = 8.0
-    opts.lattice_opts.nuclear_cutoff_bohr = 8.0
+    # Keep the requested native nuclear default (25): the shared preparation
+    # must still select the original effective 8-bohr cutoff on a private copy.
+    requested_nuclear_cutoff = opts.lattice_opts.nuclear_cutoff_bohr
     opts.becke_image_radius_bohr = 3.0
     opts.grid.n_radial = 16
     opts.grid.n_theta = 7
@@ -102,11 +105,14 @@ def test_ks_gradient_nondefault_xc_radius_matches_fd(method, functional):
         mesh = monkhorst_pack(system, [1, 1, 1], use_symmetry=False)
         result = driver(
             system, basis, mesh, opts, functional=functional,
+            historical_domain=not physical,
             ewald_omega=0.6, ewald_precision=1e-10,
             sr_image_precision=None, use_fock_symmetry=False,
             use_fock_symmetry_reduce=False, progress=False,
         )
         assert result.converged
+        assert opts.lattice_opts.nuclear_cutoff_bohr == requested_nuclear_cutoff
+        assert dict(result.resolved_domain.lattice_2e.values)["nuclear_cutoff_bohr"] == 8.0
         return system, basis, mesh, result
 
     system, basis, mesh, result = run(0.0)
@@ -115,6 +121,17 @@ def test_ks_gradient_nondefault_xc_radius_matches_fd(method, functional):
             system, basis, result, lattice_opts=opts.lattice_opts,
             kmesh=mesh, grid_options=opts.grid, becke_image_radius_bohr=3.0,
         )
+    # Omitted controls must restore the nondefault SCF grid and lattice
+    # policy, not the native defaults. Compare raw forces before any FD
+    # tolerance is applied; this is a settings-replay identity.
+    with pytest.warns(UserWarning, match="preview"):
+        restored = getattr(gradients, f"compute_bipole_gradient_{method}")(
+            system, basis, result, kmesh=mesh,
+        )
+    assert np.max(np.abs(restored - analytic)) < 1e-12
+    assert result.resolved_domain.policy == (
+        "physical_pairs" if physical else "historical_index_ball"
+    )
     finite_differences = []
     for step in (1e-4, 1e-5):
         minus = run(-step)[3].energy
@@ -156,6 +173,11 @@ def test_ks_gradient_xc_radius_preserves_lattice_options(
         use_fock_symmetry_reduce=False, progress=False,
     )
     assert result.converged
+    # This mocked boundary test deliberately changes the operator after SCF.
+    # Exercise only the documented compatibility path for older results; a
+    # recorded result must reject these changes (test_bipole_domain_contract).
+    # No force accuracy is asserted by this boundary-forwarding test.
+    result.resolved_domain = None
     options = opts.lattice_opts if supplied_options else None
     if options is not None:
         # These values are only inspected at the gradient boundary. Choosing
@@ -206,13 +228,14 @@ def test_ks_gradient_xc_radius_preserves_lattice_options(
 
 
 @pytest.fixture(autouse=True)
-def _historical_sr_domain_for_analytic_regressions(monkeypatch):
-    """Keep historical analytic-vs-FD cases on their original domain.
+def _unpadded_sr_domain_for_analytic_regressions(monkeypatch):
+    """Keep broad analytic-vs-FD cases on the unpadded SR envelope.
 
     Dedicated RHF/UHF/hybrid-RKS tests opt into the supported padded M5 domain
-    explicitly. The broader legacy matrix stays unpadded so each regression
-    continues to isolate the convention it originally certified; unsupported
-    M5 combinations are pinned by the public fail-closed guard below.
+    explicitly. This fixture does not select the historical index-ball policy:
+    physical pair support remains the default unless a case explicitly asks
+    for historical replay. Unsupported M5 combinations are pinned by the
+    public fail-closed guard below.
     """
     for driver in (
         vq.run_pbc_bipole_rhf,
@@ -403,6 +426,7 @@ def test_analytic_gradient_emits_research_preview_warning():
         opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -445,6 +469,7 @@ def test_bipole_gradient_rhf_not_converged_warns(monkeypatch):
         kmesh,
         opts,
         use_ewald_j_split=True,
+        historical_domain=True,
         use_exchange_ewald_split=False,  # legacy gauge for the analytic preview
         ewald_precision=1e-6,
         progress=False,
@@ -1232,7 +1257,9 @@ def test_multik_rhf_corrected_gauge_matches_fd(padded):
     folded onto the gradient template (NOT ``result.density``). The padded
     RHF/UHF cases additionally pin the unequal-domain density adjoint, occupied
     Lagrangian correction, and full real-linear k/spin-coupled CPHF response. The
-    historical domain is FD-clean to ~6e-8; padded M5 to ~2.6e-5 Ha/bohr."""
+    unpadded row explicitly disables padding and keeps physical pair support.
+    Historical measurements were FD-clean to ~6e-8; padded M5 to ~2.6e-5
+    Ha/bohr."""
     sysp = _build_beh2_box(a_bohr=9.0)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     # 13 bohr: drift 5.1e-5 on [2,1,1] (6 bohr refused at 1.2e-1).
@@ -1244,7 +1271,10 @@ def test_multik_rhf_corrected_gauge_matches_fd(padded):
             "use_fock_symmetry_reduce": False,
         }
         if padded
-        else {}
+        else {
+            "sr_image_precision": None,
+            "use_fock_symmetry_reduce": False,
+        }
     )
     result = run_pbc_bipole_rhf(
         sysp,
@@ -1341,7 +1371,9 @@ def test_multik_uhf_corrected_gauge_matches_fd(padded):
 
 
 @pytest.mark.slow
-def test_multik_rks_corrected_gauge_matches_fd():
+@pytest.mark.parametrize("cutoff", [9.9, 10.1])
+@pytest.mark.parametrize("step", [1e-3, 3e-4])
+def test_multik_rks_corrected_gauge_matches_fd(cutoff, step):
     """Multi-k corrected-gauge RKS (LDA) *analytic* gradient matches FD on
     H2 [2,1,1]/STO-3G. The shared multi-k core (exchange scaled by the
     functional's HF fraction; zero for SVWN) + the multi-k XC Pulay
@@ -1352,20 +1384,27 @@ def test_multik_rks_corrected_gauge_matches_fd():
 
     sysp = _build_h2_box(a_bohr=7.0, bond_bohr=1.0)
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
-    # 10 bohr: drift 1.1e-5 on [2,1,1] (5 bohr refused at 2.7e-2).
-    opts = _small_svwn_multik_opts(cutoff=10.0, conv=1e-9)
+    # Straddle the old 10-bohr cutoff without placing a product midpoint
+    # exactly on it. At 10 bohr the physical SR-J domain changes across the
+    # displacement, producing a finite energy jump rather than a derivative.
+    # Both smooth domains must agree with FD at two steps, without relaxing
+    # the original force tolerance or changing the physical pair policy.
+    opts = _small_svwn_multik_opts(cutoff=cutoff, conv=1e-9)
     kmesh = monkhorst_pack(sysp, [2, 1, 1])
+    domain_kwargs = dict(sr_image_precision=None, use_fock_symmetry_reduce=False)
     result = run_pbc_bipole_rks(
         sysp, basis, kmesh, opts, use_ewald_j_split=True,
-        use_exchange_ewald_split=True, ewald_precision=1e-6, progress=False)
+        use_exchange_ewald_split=True, ewald_precision=1e-6, progress=False,
+        **domain_kwargs)
     assert result.converged
+    assert dict(result.resolved_domain.lattice_1e.values)["pair_complete_1e"]
     g_an = np.asarray(compute_bipole_gradient_rks(
         sysp, basis, result, lattice_opts=opts.lattice_opts, kmesh=kmesh,
         grid_options=opts.grid))
     g_fd = np.asarray(compute_bipole_gradient_fd(
         sysp, "sto-3g", kmesh, opts, method="RKS", functional="svwn",
-        step_bohr=1e-3, use_ewald_j_split=True, use_exchange_ewald_split=True,
-        ewald_precision=1e-6))
+        step_bohr=step, use_ewald_j_split=True, use_exchange_ewald_split=True,
+        ewald_precision=1e-6, **domain_kwargs))
     np.testing.assert_allclose(g_an, g_fd, atol=2e-5,
         err_msg="multi-k corrected-gauge RKS analytic gradient diverges from FD")
 
@@ -2360,6 +2399,7 @@ def test_analytic_gradient_matches_fd_gamma():
         opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -2376,6 +2416,7 @@ def test_analytic_gradient_matches_fd_gamma():
         step_bohr=1e-3,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
     )
     max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
@@ -2419,6 +2460,7 @@ def test_analytic_rhf_gradient_matches_fd_multi_k(monkeypatch):
         kmesh,
         opts,
         use_ewald_j_split=True,
+        historical_domain=True,
         use_exchange_ewald_split=False,
         ewald_precision=1e-8,
         progress=False,
@@ -2435,6 +2477,7 @@ def test_analytic_rhf_gradient_matches_fd_multi_k(monkeypatch):
         method="RHF",
         step_bohr=1e-3,
         use_ewald_j_split=True,
+        historical_domain=True,
         use_exchange_ewald_split=False,
         ewald_precision=1e-8,
     )
@@ -2473,6 +2516,7 @@ def test_analytic_uhf_gradient_matches_fd_gamma():
         opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -2489,6 +2533,7 @@ def test_analytic_uhf_gradient_matches_fd_gamma():
         step_bohr=1e-3,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
     )
     max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
@@ -2566,12 +2611,15 @@ def test_analytic_uhf_gradient_padded_saturated_spin_matches_fd(pair_resolved):
     opts = _rhf_opts(cutoff=11.0 if pair_resolved else 11.5, conv=1e-10)
     opts.max_iter = 300
     opts.lattice_opts.sr_range_screening = True
+    # Symmetry-projected pair controls replay the historical domain.
     m5_kwargs = {
         "use_ewald_j_split": True,
         "ewald_precision": 1e-8,
         "sr_image_precision": 1e-6,
         "use_fock_symmetry_reduce": pair_resolved,
     }
+    if pair_resolved:
+        m5_kwargs["historical_domain"] = True
     # Keep this derivative test on its original fixed radial support;
     # the bounded Ewald alpha may select a shorter automatic extent.
     if not pair_resolved:
@@ -2634,6 +2682,7 @@ def test_analytic_uhf_gradient_matches_fd_multi_k_high_spin(monkeypatch):
         kmesh,
         opts,
         use_ewald_j_split=True,
+        historical_domain=True,
         use_exchange_ewald_split=False,
         ewald_precision=1e-8,
         progress=False,
@@ -2650,6 +2699,7 @@ def test_analytic_uhf_gradient_matches_fd_multi_k_high_spin(monkeypatch):
         method="UHF",
         step_bohr=1e-3,
         use_ewald_j_split=True,
+        historical_domain=True,
         use_exchange_ewald_split=False,
         ewald_precision=1e-8,
     )
@@ -2712,6 +2762,7 @@ def test_rks_gamma_fock_reconstruction_matches_scf_exchange_fraction(monkeypatch
         kmesh,
         opts,
         use_ewald_j_split=True,
+        historical_domain=True,
         use_exchange_ewald_split=False,
         ewald_precision=1e-8,
         progress=False,
@@ -2748,10 +2799,12 @@ def test_rks_gamma_fock_reconstruction_matches_scf_exchange_fraction(monkeypatch
 
 @pytest.mark.slow
 def test_rks_lih_physical_fock_confirmation_fixed_support(monkeypatch):
-    """The tight LiH SCF confirms a stationary physical Fock within 100 steps.
+    """The historical LiH SCF confirms an unmixed Fock within 100 steps.
 
-    This preserves the 2026-07-25 state-machine regression without multiplying
-    the diffuse LiH support across thirteen finite-difference SCFs.  The test
+    Here physical Fock means the exact, unmixed Fock, not physical-pair
+    support. This preserves the 2026-07-25 state-machine regression without
+    multiplying the diffuse LiH support across thirteen finite-difference SCFs.
+    The test
     deliberately compares one fixed truncated functional, so it bypasses the
     production fold preflight exactly like the neighbouring Fock-rebuild test;
     fold reliability is covered independently by the production guards.
@@ -2780,6 +2833,7 @@ def test_rks_lih_physical_fock_confirmation_fixed_support(monkeypatch):
         opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -2820,6 +2874,7 @@ def test_analytic_rks_gradient_gamma_beh2_matches_fd():
         opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -2842,6 +2897,7 @@ def test_analytic_rks_gradient_gamma_beh2_matches_fd():
         step_bohr=1e-3,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
     )
     max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
@@ -2884,6 +2940,7 @@ def test_analytic_uks_gradient_gamma_beh_matches_fd():
         opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -2906,6 +2963,7 @@ def test_analytic_uks_gradient_gamma_beh_matches_fd():
         step_bohr=1e-3,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
     )
     max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
@@ -2935,6 +2993,7 @@ def test_analytic_rks_gradient_gamma_beh2_pbe_matches_fd():
         opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -2957,6 +3016,7 @@ def test_analytic_rks_gradient_gamma_beh2_pbe_matches_fd():
         step_bohr=1e-3,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
     )
     max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
@@ -2992,6 +3052,7 @@ def test_analytic_uks_gradient_gamma_beh_pbe_matches_fd():
         opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -3014,6 +3075,7 @@ def test_analytic_uks_gradient_gamma_beh_pbe_matches_fd():
         step_bohr=1e-3,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
     )
     max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
@@ -3558,6 +3620,7 @@ def test_analytic_rks_gradient_multi_k_svwn_matches_fd():
         opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # analytic gradient is legacy-gauge only; pin the SCF to legacy too
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -3579,6 +3642,7 @@ def test_analytic_rks_gradient_multi_k_svwn_matches_fd():
         step_bohr=1e-3,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
     )
     max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
@@ -3607,6 +3671,7 @@ def test_analytic_rks_gradient_gamma_beh2_b3lyp_matches_fd():
         opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -3629,6 +3694,7 @@ def test_analytic_rks_gradient_gamma_beh2_b3lyp_matches_fd():
         step_bohr=1e-3,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
     )
     max_abs = float(np.max(np.abs(grad_analytic - grad_fd)))
@@ -3855,12 +3921,15 @@ def test_corrected_gauge_rhf_gamma_padded_domain_matches_fd(pair_resolved):
     kmesh = monkhorst_pack(sysp, [1, 1, 1])
     # 10 bohr: drift 1.5e-5 (5 bohr refused at 3.3e-2).
     opts = _rhf_opts(cutoff=10.0, conv=1e-10)
+    # Symmetry-projected pair controls replay the historical domain.
     m5_kwargs = {
         "use_ewald_j_split": True,
         "ewald_precision": 1e-8,
         "sr_image_precision": 1e-6,
         "use_fock_symmetry_reduce": None if pair_resolved else False,
     }
+    if pair_resolved:
+        m5_kwargs["historical_domain"] = True
     result = run_pbc_bipole_rhf(
         sysp,
         basis,
@@ -3872,7 +3941,8 @@ def test_corrected_gauge_rhf_gamma_padded_domain_matches_fd(pair_resolved):
     assert result.converged
     assert result.exchange_ewald_split
     assert result.sr_image_extent_bohr > opts.lattice_opts.cutoff_bohr
-    assert opts.lattice_opts.sr_range_screening
+    assert dict(result.resolved_domain.lattice_2e.values)["sr_range_screening"]
+    assert not opts.lattice_opts.sr_range_screening  # Request stays immutable.
     assert result.pair_resolved_fock_domain is pair_resolved
 
     with pytest.warns(UserWarning, match="maintained preview"):
@@ -3913,7 +3983,9 @@ def test_corrected_gauge_uhf_gamma_pair_domain_matches_fd():
     kmesh = monkhorst_pack(sysp, [1, 1, 1])
     opts = _rhf_opts(cutoff=5.0, conv=1e-10)
     opts.max_iter = 400
+    # Symmetry-projected pair controls replay the historical domain.
     m5_kwargs = {
+        "historical_domain": True,
         "use_ewald_j_split": True,
         "ewald_precision": 1e-8,
         "sr_image_precision": 1e-6,
@@ -4028,7 +4100,9 @@ def test_corrected_gauge_rks_gamma_pair_domain_matches_fd(functional):
     opts.conv_tol_energy = 1e-10
     opts.initial_guess = InitialGuess.SAD
     opts.functional = functional
+    # Symmetry-projected pair controls replay the historical domain.
     m5_kwargs = {
+        "historical_domain": True,
         "use_ewald_j_split": True,
         "ewald_precision": 1e-8,
         "sr_image_precision": 1e-6,
@@ -4101,12 +4175,15 @@ def test_corrected_gauge_uks_gamma_gradient_matches_fd(
     opts.initial_guess = InitialGuess.SAD
     opts.functional = functional
     opts.lattice_opts.sr_range_screening = True
+    # Symmetry-projected pair controls replay the historical domain.
     m5_kwargs = {
         "use_ewald_j_split": True,
         "ewald_precision": 1e-8,
         "sr_image_precision": 1e-6,
         "use_fock_symmetry_reduce": pair_resolved,
     }
+    if pair_resolved:
+        m5_kwargs["historical_domain"] = True
     # Keep this derivative test on its original fixed radial support;
     # the bounded Ewald alpha may select a shorter automatic extent.
     if not pair_resolved:
@@ -4306,6 +4383,7 @@ def test_scf_ewald_precision_reaches_public_gradient(
     result = driver(
         system, basis, mesh, opts, ewald_omega=.4,
         use_exchange_ewald_split=corrected, sr_image_precision=None,
+        historical_domain=not corrected,
         use_fock_symmetry=False, use_fock_symmetry_reduce=False,
         progress=False, **kwargs,
     )
@@ -4387,8 +4465,9 @@ def test_gradient_old_result_defaults_ewald_precision(monkeypatch, method):
 @pytest.mark.parametrize("method", ["rhf", "uhf"])
 @pytest.mark.parametrize("mesh_size", [1, 2])
 @pytest.mark.parametrize("precision", [1e-2, 1e-8])
+@pytest.mark.parametrize("historical", [False, True])
 def test_nondefault_ewald_precision_force_matches_displaced_scf(
-    method, mesh_size, precision, record_property,
+    method, mesh_size, precision, historical, record_property,
 ):
     """A loose image tolerance exposes a different finite nuclear sum.
 
@@ -4418,12 +4497,16 @@ def test_nondefault_ewald_precision_force_matches_displaced_scf(
                   for i, (a, p) in enumerate(zip([.7, 1.1], positions))]
         basis = vq.BasisSet(system.unit_cell_molecule(), shells, "force-precision", False)
         mesh = monkhorst_pack(system, [mesh_size, 1, 1], use_symmetry=False)
+        domain_kwargs = {"historical_domain": True} if historical else {}
         result = driver(
             system, basis, mesh, opts, ewald_omega=.4, ewald_precision=precision,
             sr_image_precision=None, use_fock_symmetry=False,
-            use_fock_symmetry_reduce=False, progress=False,
+            use_fock_symmetry_reduce=False, progress=False, **domain_kwargs,
         )
         assert result.converged
+        assert result.resolved_domain.policy == (
+            "historical_index_ball" if historical else "physical_pairs"
+        )
         return system, basis, mesh, result
 
     system, basis, mesh, result = run(0.)
@@ -4622,3 +4705,16 @@ def test_custom_basis_orbital_response_matches_explicit_displacements(monkeypatc
     # Repeating with an unregistered label must leave the same numerical term.
     _, _, renamed_call = _custom_basis_response_call(consumer, "response-custom-unregistered")
     np.testing.assert_allclose(renamed_call(), expected, atol=1e-9, rtol=0.)
+
+
+def test_physical_exact_ft_hartree_gradient_requires_separate_validation():
+    """The shared core must not certify a different Ewald Hartree operator."""
+    from vibeqc.bipole_gradient import _compute_bipole_gradient_corrected_multi_k
+
+    opts = LatticeSumOptions()
+    opts.pair_complete_1e = True
+    with pytest.raises(NotImplementedError, match="analytic-FT Hartree gradient"):
+        _compute_bipole_gradient_corrected_multi_k(
+            None, None, None, None, lattice_opts=opts, alpha_hf=0.,
+            ewald_alpha=.4, j_sr_alpha_image_ball=True,
+        )

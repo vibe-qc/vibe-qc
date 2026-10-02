@@ -60,6 +60,50 @@ int main(int argc, char** argv) {
             }
         }
 
+        // #249 (verifier, 2026-09-26): under the lowest_stable policy a C3
+        // chain bent by dy at atom 0 stays on the continuous lower branch at
+        // every Hcore gap; from the Hcore guess 3e-3 bohr lands 16.6 mHa above
+        // it. The reference policy returns that state but flags it.
+        for (bool embedded : {false, true}) {
+            std::vector<int> Zc(3, 6);
+            double previous = 0, linear = 0;
+            int index = 0;
+            for (double dy : {0.0, 1e-4, 1e-3, 3e-3, 1e-2, 5e-2}) {
+                std::vector<std::array<double, 3>> coords{
+                    {0, dy / ANGSTROM_TO_BOHR, 0}, {1.283, 0, 0}, {2.56, 0, 0}};
+                std::vector<std::array<double, 3>> translations{{3.84, 0, 0}};
+                auto r = run_ccm_core(Zc, coords, translations, p, embedded, 400, 1e-9,
+                                      0, /*lowest_stable=*/true);
+                require(r.converged && r.stability_checked && r.stability_analysis_converged,
+                        "bent chain was not converged and audited");
+                if (index == 0) linear = r.total_energy;
+                else require(std::abs(r.total_energy - previous) < 2e-4,
+                             "bent chain energy is discontinuous");
+                require(r.total_energy < linear + 1e-9,
+                        "bent chain landed above the linear chain");
+                std::cout << "bent C3 embedded=" << embedded << " dy=" << dy
+                          << " E=" << r.total_energy << " iterations=" << r.n_iter
+                          << " curvature=" << r.stability_eigenvalue << '\n';
+                previous = r.total_energy;
+                ++index;
+            }
+        }
+
+        {   // Reference policy: the resolved-gap saddle is returned, flagged.
+            std::vector<int> Zc(3, 6);
+            std::vector<std::array<double, 3>> coords{
+                {0, 3e-3 / ANGSTROM_TO_BOHR, 0}, {1.283, 0, 0}, {2.56, 0, 0}};
+            std::vector<std::array<double, 3>> translations{{3.84, 0, 0}};
+            auto r = run_ccm_core(Zc, coords, translations, p, false, 400, 1e-9);
+            require(r.converged && r.stability_checked && r.internal_instability,
+                    "reference policy hid a resolved-gap saddle");
+            require(r.stability_eigenvalue < -1e-2, "flagged state is not a saddle");
+            require(std::abs(r.total_energy - (-17.5358307608)) < 1e-8,
+                    "reference policy left the reference trajectory's state");
+            std::cout << "reference policy dy=0.003 E=" << r.total_energy
+                      << " flagged curvature=" << r.stability_eigenvalue << '\n';
+        }
+
         // Check the response, including affine Madelung terms, against an
         // energy curvature. C3 is a cheap witness with a negative mode.
         const int n = 3;
@@ -126,7 +170,8 @@ int main(int argc, char** argv) {
         }
         require(refused,"an unstable short-budget result was silently returned");
         std::cout << "PASS: " << cases
-                  << " chain cases, both curvature/gradient controls, and budget guards\n";
+                  << " chain cases, the bent-chain continuity sweep, both "
+                     "curvature/gradient controls, and budget guards\n";
     } catch (const std::exception& e) {
         std::cerr << "FAIL: " << e.what() << '\n';
         return 1;

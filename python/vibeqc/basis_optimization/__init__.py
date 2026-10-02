@@ -41,8 +41,14 @@ Module layout
   papers handled by raising the lower exponent threshold) and
   ``condition_number_penalty`` (the smooth g.ln κ(S) term of the
   CRYSTAL OPTBASIS / VandeVondele objective).
-* :mod:`vibeqc.basis_optimization.drivers` -- scipy and iminuit
-  driver shims with a common :class:`OptResult` return type.
+* :mod:`vibeqc.basis_optimization.drivers` -- driver shims with a
+  common :class:`OptResult` return type: ``optimize_scipy`` (L-BFGS-B),
+  ``optimize_minuit`` (Minuit2 MIGRAD + HESSE), ``optimize_bobyqa``
+  (Py-BOBYQA, model-based derivative-free, the default when the
+  objective has no analytic gradient), ``optimize_dfols`` (DFO-LS, the
+  least-squares sibling for residual objectives) and ``optimize_cmaes``
+  (CMA-ES, the population-based global pre-pass). The last three are
+  optional backends behind the ``[basisopt-drivers]`` extra.
 * :mod:`vibeqc.basis_optimization.bdiis` -- ``optimize_bdiis``, a
   robust BDIIS / GDIIS driver (DIIS extrapolation + BFGS curvature +
   trust-region backtracking) returning the same :class:`OptResult`.
@@ -56,6 +62,10 @@ Module layout
   Stage 1 (``recipes.single_atom``) is the architecture smoke
   test: optimise one parameter on a single-atom RHF and verify
   the optimiser lands at the expected minimum.
+  ``recipes.global_then_polish`` chains a CMA-ES pre-pass with a
+  BDIIS polish for a poor starting basis. Stage 2
+  (``recipes.one_compound``) refits one exponent on a crystal through
+  the periodic runner, in process.
 
 Stages
 ------
@@ -84,6 +94,10 @@ References
   [BDIIS].
 * VandeVondele, Hutter, J. Chem. Phys. 127, 114105 (2007)
   [condition-number penalty].
+* Cartis, Fiala, Marteau, Roberts, ACM Trans. Math. Softw. 45, 32 (2019)
+  [Py-BOBYQA, DFO-LS]; Powell, DAMTP 2009/NA06 (2009) [BOBYQA].
+* Hansen, Ostermeier, Evol. Comput. 9, 159 (2001); Hansen,
+  arXiv:1604.00772 (2016) [CMA-ES].
 * iminuit: https://iminuit.readthedocs.io
 """
 
@@ -94,12 +108,23 @@ from .parametrise import (
 )
 from .objective import (
     Objective,
+    ResidualObjective,
     MockEnergy,
+    MockResiduals,
+    PeriodicSinglePointEnergy,
 )
 from .drivers import (
     OptResult,
     optimize_scipy,
     optimize_minuit,
+    optimize_bobyqa,
+    optimize_dfols,
+    optimize_cmaes,
+    cmaes_default_sigma,
+    DFO_CITATION_KEYS,
+    CMAES_CITATION_KEYS,
+    dfo_method_citations,
+    cmaes_method_citations,
 )
 from .bdiis import (
     optimize_bdiis,
@@ -147,10 +172,21 @@ __all__ = [
     "FreeSpec",
     "Transform",
     "Objective",
+    "ResidualObjective",
     "MockEnergy",
+    "MockResiduals",
+    "PeriodicSinglePointEnergy",
     "OptResult",
     "optimize_scipy",
     "optimize_minuit",
+    "optimize_bobyqa",
+    "optimize_dfols",
+    "optimize_cmaes",
+    "cmaes_default_sigma",
+    "DFO_CITATION_KEYS",
+    "CMAES_CITATION_KEYS",
+    "dfo_method_citations",
+    "cmaes_method_citations",
     "optimize_bdiis",
     "method_citations",
     "BDIIS_CITATION_KEYS",

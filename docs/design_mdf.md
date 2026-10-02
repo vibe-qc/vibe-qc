@@ -58,8 +58,11 @@ where:
   no mesh. **vibe-qc already builds this** (compcell `T_fused`).
 * `ρ_P(G)`, FT of the compensated fitting function φ_P
   (`rsgdf_aux_fourier_transform` on the fused basis; the χ−ξ FT).
-* `ρ_μν(G)`, AO-pair FT (`_rsgdf_dense_pair_ft` /
-  `ao_pair_fourier_transform_bloch`).
+* `ρ_μν(G)`, AO-pair FT (`_mdf_plane_wave_pair_ft`, one assembly for the
+  Gamma and the k-resolved builders). It sums exactly the AO pairs `T` keeps,
+  every `(mu_0, nu_g)` with `|O_mu - O_nu - g|` within the three-centre
+  cutoff, so the projection removes the densities `T` holds and does not
+  depend on which lattice image of an atom the input names (#438, #416).
 * `V̄_P` (Eq 14): `π/α_χ − π/α_ξ` for s-type fitting functions at G=0,
   else 0. The G=0 self-term.
 * `t`, the J̃-orthogonaliser (Eq 19-21) that removes Gaussian↔PW linear
@@ -85,7 +88,7 @@ residual *and* the bare (un-dressed) metric; that is its accuracy floor.
 | real-space `M_{PQ}` = (φ_P|φ_Q) | `compute_2c_eri_lattice(fused, …)` |
 | real-space `T_{P,μν}` = (φ_P|μν) | `compute_3c_eri_lattice(ao, fused, …)` |
 | `ρ_P(G)` fused-basis FT | `rsgdf_aux_fourier_transform(fused, G)` |
-| `ρ_μν(G)` AO-pair FT | `_rsgdf_dense_pair_ft` / `ao_pair_fourier_transform_bloch` |
+| `ρ_μν(G)` AO-pair FT | `ao_pair_fourier_transform_bloch` with `pair_cutoff_bohr` |
 | dense G-mesh, `coul(G)` | `rsgdf_dense_g_mesh`, `4π/(Ω|G|²)` |
 | eigendecompose/threshold | the shared pattern in `build_lpq_*` |
 
@@ -153,8 +156,12 @@ The exxdiv Madelung treatment carries over from the existing GDF K.
    PySCF UHF Γ to 9.5 µHa. `tests/test_pbc_gdf_mdf.py` (7, the Ne one
    `@slow`).
 
-   **Fail-closed on the compact-dense-core class (2026-07-29, G-GDF-001
-   MDF sub-gate).** The "MgO-at-Γ NOT usable" note above is now
+   **Fail-closed on the compact-dense-core class (2026-07-29 to
+   2026-09-29, G-GDF-001 MDF sub-gate).** Lifted on 2026-09-29: the
+   failures below were the auxiliary images the Gaussian 3c block
+   omitted (GitLab #172); with them summed and the dressed-metric floor at
+   1e-5 of max_eig, MgO/STO-3G lands 3.4 uHa from PySCF MDF at Gamma
+   (`test_mdf_dense_core_matches_pyscf`) and 70 uHa at (2,2,2). History: The "MgO-at-Γ NOT usable" note above is now
    enforced, not just documented: measured on MgO primitive FCC/STO-3G,
    Γ mdf is non-convergent and trial-dependent at ke=40/60
    (+1703/+2143/+418 Ha) and *falsely converges* at ke=80 to −1651 Ha
@@ -171,9 +178,13 @@ The exxdiv Madelung treatment carries over from the existing GDF K.
    `test_ne_box_mdf_backend_untagged`.
 5. **Multi-k + open-shell, DONE (2026-06-14).** Open-shell Γ (UHF/UKS)
    via the shared setup + complex per-spin J/K. Multi-k via
-   `build_lpq_bloch_mdf` (the per-(k_bra,k_ket) cderi: q-only real-space
-   Gaussian, only steep/local aux survive J̃, so q-only ≈ ket-resolved, 
-   + ket-resolved PW residual on `{G+q}` + V̄ρ̄ only on diagonal pairs)
+   `build_lpq_bloch_mdf` (the per-(k_bra,k_ket) cderi: real-space
+   Gaussian + ket-resolved PW residual on `{G+q}` + V̄ρ̄ only on diagonal
+   pairs). Until 2026-09-29 the Gaussian block was Bloch-summed at `q`
+   with the auxiliary function in the home cell, on the argument that only
+   steep, local auxiliary functions survive J̃; that omission of the
+   auxiliary images (Sun 2017 Eq. 15) was the dense-core failure. It is
+   now `sum_{T,R} exp(i k_ket.R) exp(-i q.T) (P_T|mu_0 nu_R)`, GitLab #172)
    wired into `run_k{rhf,uhf,uks,rks}_periodic_gdf`. H2 kmesh=(2,1,1) =
    published KRHF (−1.12013988) to 21 µHa; `build_lpq_bloch_mdf(0,0)` ≡ Γ
    to 3.6e-5.

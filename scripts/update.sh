@@ -40,6 +40,10 @@
 #     --with-openblas           Build or retain vendored OpenBLAS. A prior
 #                               vendored install is preserved automatically
 #                               during full native rebuilds.
+#     --with-opentrustregion    Fetch/build the pinned orbital optimizer.
+#                               Requires Fortran and LP64 BLAS/LAPACK.
+#     --without-opentrustregion Disable it. With neither flag, preserve the
+#                               previous selection, including with --clean.
 #     --rebuild-native-deps     Remove every pinned native source/build/install
 #                               tree before setup_native_deps.sh. Normally the
 #                               build stamp detects version, recipe, or artifact
@@ -116,6 +120,8 @@ _UPDATE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # update_native_deps.sh / build_libint.sh).
 # shellcheck source=_libint_max_am.sh
 . "$_UPDATE_SCRIPT_DIR/_libint_max_am.sh"
+# shellcheck source=_opentrustregion.sh
+. "$_UPDATE_SCRIPT_DIR/_opentrustregion.sh"
 
 _UPDATE_BRANCH_SUGGESTION='Pick one of --release / --dev / --branch NAME / --ref NAME.'
 
@@ -211,6 +217,8 @@ while [ $# -gt 0 ]; do
             WITH_OPENBLAS=true
             shift
             ;;
+        --with-opentrustregion) vibeqc_otr_select ON; shift ;;
+        --without-opentrustregion) vibeqc_otr_select OFF; shift ;;
         --rebuild-native-deps)
             REBUILD_NATIVE_DEPS=true
             shift
@@ -336,6 +344,7 @@ elif [ -n "$VENV" ]; then
     # the in-place update executes the installed environment only after locks.
     vibe_toolset_find_external_python INSPECTION_PYTHON "$VENV"
 fi
+vibeqc_otr_configure "$VENV" "${INSPECTION_PYTHON:-python3}"
 
 # ---------------------------------------------------------------------------
 # Dry-run path: peek at the target SHA, compare build-stamp, detect
@@ -422,6 +431,7 @@ if [ -z "$VENV" ]; then
 fi
 
 vibeqc_assert_safe_venv_target "$VENV" "$REPO_ROOT"
+vibeqc_otr_preflight "${INSPECTION_PYTHON:-python3}"
 vibeqc_acquire_lifecycle_lock \
     "$VENV" "$REPO_ROOT" update "${INSPECTION_PYTHON:-python3}"
 trap 'vibeqc_lifecycle_cleanup' EXIT
@@ -603,6 +613,7 @@ vibeqc_install_colocated_extra "$VENV" "$REPO_ROOT" "$VIBEQC_COLOCATED_EXTRA"
 echo
 echo "==> Verifying:"
 vibeqc_verify_install "$VENV/bin/python" "$EXTRAS_GROUP"
+vibeqc_otr_verify "$VENV/bin/python" "$VENV"
 if $RECREATE_VENV; then
     vibeqc_mark_owned_venv "$VENV" "$REPO_ROOT" "$PYTHON_BIN"
     vibeqc_commit_venv_replacement

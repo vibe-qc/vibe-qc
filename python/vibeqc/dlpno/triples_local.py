@@ -81,6 +81,17 @@ except (AttributeError, ImportError):
     _HAVE_CPP_TNO_DENSITY = False
 
 
+try:  # optional during editable rebuilds
+    from vibeqc._vibeqc_core import (
+        dlpno_ccsd_local_triples as _cpp_local_triples,
+    )
+
+    _HAVE_CPP_LOCAL_TRIPLES = True
+except (AttributeError, ImportError):
+    _cpp_local_triples = None
+    _HAVE_CPP_LOCAL_TRIPLES = False
+
+
 def _local_distinct_triple_keys(n_act, occ_dist, coupling_radius):
     """Yield sorted distinct occupied sets whose ordered triples survive."""
     R = float(coupling_radius)
@@ -259,6 +270,8 @@ def local_triples_correction(
     occ_dist=None,
     coupling_radius=0.0,
     stats=None,
+    df_factors=None,
+    use_cpp=True,
 ):
     """(T) correction on the converged local DLPNO-CCSD amplitudes.
 
@@ -270,7 +283,10 @@ def local_triples_correction(
     truncates each triple's TNO domain by occupation number (the eigenvalues
     of the triple's pair-amplitude density); 0 keeps the full union span
     (exact at full PNO domains). ``coupling_radius`` (with ``occ_dist``)
-    screens distant triples -- see the module docstring.
+    screens distant triples -- see the module docstring. ``use_cpp``
+    (default True) evaluates the keys in the compiled kernel
+    ``dlpno_ccsd_local_triples`` when the core provides it; False keeps the
+    Python loop, which the compiled kernel is pinned against.
     """
     return _local_triples_correction_eps(
         U,
@@ -288,6 +304,8 @@ def local_triples_correction(
         occ_dist=occ_dist,
         coupling_radius=coupling_radius,
         stats=stats,
+        df_factors=df_factors,
+        use_cpp=use_cpp,
     )
 
 
@@ -371,6 +389,7 @@ def t1_triples_correction(
     max_iter=20,
     conv_tol=1e-10,
     stats=None,
+    df_factors=None,
 ):
     """Compatibility ``(T1)`` correction with a canonical occupied basis.
 
@@ -427,6 +446,7 @@ def t1_triples_correction(
         occ_dist=occ_dist,
         coupling_radius=coupling_radius,
         stats=stats,
+        df_factors=df_factors,
     )
 
 
@@ -451,6 +471,8 @@ def _local_triples_correction_eps(
     occ_dist=None,
     coupling_radius=0.0,
     stats=None,
+    df_factors=None,
+    use_cpp=True,
 ):
     """Same as ``local_triples_correction`` but with explicit ``eps_o``.
 
@@ -458,9 +480,50 @@ def _local_triples_correction_eps(
     energies and by ``local_triples_correction`` itself (forwarded with
     ``eps_o = f_dd``).
     """
-    B_ov = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_vir)))
-    B_oo = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_loc)))
-    B_vv = np.ascontiguousarray(np.asarray(df.mo_transform(C_vir, C_vir)))
+    if df_factors is not None:
+        # (B_ov, B_oo, B_vv) already built by the CCSD solver over the same
+        # localised occupieds and canonical virtuals: reuse rather than
+        # transform the AO tensor again (and let the caller release it).
+        B_ov, B_oo, B_vv = (np.ascontiguousarray(np.asarray(b)) for b in df_factors)
+    else:
+        B_ov = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_vir)))
+        B_oo = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_loc)))
+        B_vv = np.ascontiguousarray(np.asarray(df.mo_transform(C_vir, C_vir)))
+
+    if _HAVE_CPP_LOCAL_TRIPLES and use_cpp:
+        # Compiled local (T0): the same TNO spaces and key list, but each key
+        # projects only the pairs that contain one of its occupieds and forms
+        # only its own DF blocks, where the loop below projects every pair
+        # into every TNO space and forms integral blocks over all occupieds.
+        naux = B_ov.shape[0]
+        n_vir = B_vv.shape[-1]
+        pair_keys = sorted(
+            (min(p, q), max(p, q)) for (p, q) in T2
+        )
+        t1_rows = np.zeros((n_act, n_vir))
+        for m in range(n_act):
+            if m in t1 and (m, m) in U:
+                t1_rows[m] = U[(m, m)] @ t1[m]
+        keys = list(_local_distinct_triple_keys(n_act, occ_dist, coupling_radius))
+        out = _cpp_local_triples(
+            B_ov.reshape(naux, -1),
+            B_oo.reshape(naux, -1),
+            B_vv.reshape(naux, -1),
+            np.ascontiguousarray(np.asarray(eps_o, dtype=float)),
+            np.ascontiguousarray(np.asarray(f_vv_full, dtype=float)),
+            [p for p, _ in pair_keys],
+            [q for _, q in pair_keys],
+            [np.asarray(U[key]) for key in pair_keys],
+            [np.asarray(T2[key]) for key in pair_keys],
+            t1_rows,
+            [list(key) for key in keys],
+            tcut_tno=float(tcut_tno),
+            lindep=float(lindep),
+        )
+        _record_screened_keys(stats, n_act, occ_dist, coupling_radius)
+        for key, size in zip(keys, out["n_tno"]):
+            _record_tno_domain(stats, key, int(size))
+        return float(out["e_t"])
 
     def has_pair(p, q):
         return (p, q) in U or (q, p) in U
@@ -637,6 +700,7 @@ def _t1_triples_energy(
     occ_dist=None,
     coupling_radius=0.0,
     stats=None,
+    df_factors=None,
 ):
     """(T1) triples energy: canonical-basis (T) on Jacobi-rotated amplitudes.
 
@@ -674,20 +738,16 @@ def _t1_triples_energy(
     t2_full_can = np.einsum("iI,jJ,ijab->IJab", X, X, t2_full_loc, optimize=True)
 
     # Step 3: Build DF integrals in the canonical occupied basis.
-    B_ov_can = np.einsum(
-        "Pia,iI->PIa",
-        np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_vir))),
-        X,
-        optimize=True,
-    )
-    B_oo_can = np.einsum(
-        "Pij,iI,jJ->PIJ",
-        np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_loc))),
-        X,
-        X,
-        optimize=True,
-    )
-    B_vv = np.ascontiguousarray(np.asarray(df.mo_transform(C_vir, C_vir)))
+    if df_factors is not None:
+        _B_ov_loc, _B_oo_loc, B_vv = (
+            np.ascontiguousarray(np.asarray(b)) for b in df_factors
+        )
+    else:
+        _B_ov_loc = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_vir)))
+        _B_oo_loc = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_loc)))
+        B_vv = np.ascontiguousarray(np.asarray(df.mo_transform(C_vir, C_vir)))
+    B_ov_can = np.einsum("Pia,iI->PIa", _B_ov_loc, X, optimize=True)
+    B_oo_can = np.einsum("Pij,iI,jJ->PIJ", _B_oo_loc, X, X, optimize=True)
 
     # Step 4: (T) correction.
     # With tcut_tno=0 (default) and no actual occupied-triple screening,

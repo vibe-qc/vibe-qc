@@ -100,10 +100,16 @@ from .mom import select_occupied_by_max_overlap as _mom_select
 from .oda import compute_oda_lambda as _compute_oda_lambda
 from .oda import oda_mix_densities as _oda_mix
 from .perf import PerfScope
+from .periodic.exchange_convention import (
+    BARE_IMAGE_SUM,
+    BVK_EWALD,
+    MOLECULAR_LIMIT,
+)
 from .periodic_corrected_exchange import (
     CorrectedEwaldExchange,
     corrected_exchange_unavailable_reason,
     is_unsupported_gauge,
+    resolve_exchange_gauge,
 )
 from .periodic_fock_multi_k import (
     build_periodic_fock_ewald3d_k,
@@ -205,6 +211,13 @@ class PeriodicRHFMultiKEwaldResult:
 
     # Preserve the physical per-k state independently of lattice cutoff.
     density_k: Optional[List[np.ndarray]] = None
+
+    # The exchange q=0 gauge that ran (vibeqc.periodic.exchange_convention):
+    # BVK_EWALD for the corrected split, MOLECULAR_LIMIT for the
+    # molecular-limit kernel at a single Gamma point, BARE_IMAGE_SUM on the
+    # gauges the split does not exist for. Analytic gradients and the
+    # runner's manifest read it, never the mesh (GitLab #23).
+    exchange_q0: str = BVK_EWALD
 
 
 class _MultiKPulayDIIS:
@@ -520,14 +533,16 @@ def run_rhf_periodic_multi_k_ewald3d(
         Per-k S(k) eigenvalue floor for canonical orthogonalisation.
     exchange_exxdiv
         Which ``q -> 0`` gauge the exact-exchange arm uses. ``None``
-        (default) keeps the historical per-mesh choice: the
-        molecular-limit kernel at a single Gamma point, the corrected
-        Ewald split on every other mesh. ``'ewald'`` takes the corrected
-        split at **every** mesh, including a single Gamma point, and
-        raises :class:`NotImplementedError` when the split is unavailable
-        rather than falling back. ``'none'`` takes the molecular-limit
-        kernel and is accepted only at a single Gamma point, where that
-        sum has exactly one term.
+        (default) takes the corrected Ewald split at **every** mesh, a
+        single Gamma point included (GitLab #23), falling back to the
+        molecular-limit kernel only at a single Gamma point on a gauge the
+        split does not exist for (2D slab, ``dim != 3``). ``'ewald'``
+        takes the corrected split everywhere and raises
+        :class:`NotImplementedError` when it is unavailable rather than
+        falling back. ``'none'`` takes the molecular-limit kernel and is
+        accepted only at a single Gamma point, where that sum has exactly
+        one term; it is the pre-#23 default there and reproduces
+        :func:`run_rhf_periodic_gamma_ewald3d`.
 
         The two are different finite-size conventions with the same
         infinite-k limit (Carrier, Rohra & Goerling, Phys. Rev. B 75,
@@ -725,63 +740,38 @@ def run_rhf_periodic_multi_k_ewald3d(
         and np.isclose(float(weights[0]), 1.0)
         and np.allclose(np.asarray(k_points[0], dtype=float), 0.0, atol=1e-12)
     )
-    # ---- Exact-exchange q -> 0 gauge (#560) ------------------------------
+    # ---- Exact-exchange q -> 0 gauge (#560, #23) -------------------------
     # Two conventions, one infinite-k limit, different at every finite mesh:
     # the corrected Ewald split carries the probe-charge q + G = 0 term and
     # the molecular-limit kernel carries none. Per Carrier, Rohra & Goerling,
     # Phys. Rev. B 75, 205126 (2007), doi:10.1103/PhysRevB.75.205126, Sec. IV,
     # the singularity correction and the uncorrected exchange energy "vary
     # oppositely with increasing number of k points", the corrected one
-    # converging far faster -- so the two are not interchangeable at a fixed
-    # mesh and a caller comparing a Gamma-supercell energy with a multi-k
-    # energy has to put both on one of them. Measured on H2/STO-3G (a = 8
-    # bohr, d = 1.4 bohr) they are 21.7 mHa apart at a single Gamma point.
-    if exchange_exxdiv not in (None, "ewald", "none"):
-        raise ValueError(
-            "run_rhf_periodic_multi_k_ewald3d: exchange_exxdiv must be "
-            "'ewald', 'none', or None for the per-mesh default; got "
-            f"{exchange_exxdiv!r}"
-        )
-    if exchange_exxdiv == "none" and not single_gamma_mesh:
-        raise NotImplementedError(
-            "run_rhf_periodic_multi_k_ewald3d: exchange_exxdiv='none' is "
-            "available only at a single Gamma point, where the exchange sum "
-            "has exactly one term. On a real k mesh the SCF density is "
-            "Born-von-Karman-torus periodic, D(g) does not decay, and the "
-            "uncorrected image sum does not converge -- H2/STO-3G in a "
-            "12-bohr cube on a (2,1,1) mesh moved from -1.4505 to -1.6863 Ha "
-            "over a 12-to-20-bohr lattice cutoff sweep. Use "
-            "exchange_exxdiv='ewald' or the default."
-        )
-    if exchange_exxdiv == "none" and lat_opts.pair_complete_1e:
-        raise NotImplementedError(
-            "Physical quartet support uses the periodic density at Gamma "
-            "and requires corrected exchange; use exchange_exxdiv='ewald' "
-            "or the default."
-        )
+    # converging far faster. Since #23 the corrected split is the default at
+    # every mesh, a single Gamma point included, so a k-convergence sequence
+    # run with defaults stays in one gauge; exchange_exxdiv='none' names the
+    # molecular-limit kernel at a single Gamma point. The rule is shared with
+    # the UHF sibling (resolve_exchange_gauge).
+    exchange_gauge = resolve_exchange_gauge(
+        system,
+        kmesh,
+        exchange_exxdiv=exchange_exxdiv,
+        slab_mode=slab_mode,
+        pair_complete_1e=bool(lat_opts.pair_complete_1e),
+        where="run_rhf_periodic_multi_k_ewald3d",
+    )
     # This flag is the gauge, not the mesh: everything keyed on it below --
     # the density localisation, the Gamma J closure, the Fock build, the ODA
     # rebuild and the final self-consistency pass -- selects the
-    # molecular-limit kernel together, and asking for 'ewald' means the
-    # single-Gamma mesh is served by the ordinary multi-k machinery.
-    single_gamma_kmesh = (
-        single_gamma_mesh and exchange_exxdiv != "ewald"
-        and not lat_opts.pair_complete_1e
-    )
+    # molecular-limit kernel together; otherwise a single-Gamma mesh is
+    # served by the ordinary multi-k machinery with the corrected split.
+    single_gamma_kmesh = exchange_gauge.molecular_limit
     plog.info(
         f"k-mesh: {n_k} k-point{'s' if n_k != 1 else ''}, "
         f"weights sum = {weights.sum():.4f}"
     )
     if single_gamma_mesh:
-        plog.info(
-            "exact-exchange q->0 gauge: "
-            + (
-                "corrected Ewald split (exxdiv='ewald')"
-                if not single_gamma_kmesh
-                else "molecular-limit kernel, no q+G=0 term "
-                "(exchange_exxdiv='ewald' selects the corrected split)"
-            )
-        )
+        plog.info(exchange_gauge.log_line)
 
     # ---- Auto-optimise lattice truncation (default ON) -------------------
     # Multi-k version: optimise against the worst k-point in the mesh.
@@ -1849,6 +1839,11 @@ def run_rhf_periodic_multi_k_ewald3d(
     from .eigs_preflight import _copy_lattice_opts
 
     return PeriodicRHFMultiKEwaldResult(
+        exchange_q0=(
+            MOLECULAR_LIMIT if single_gamma_kmesh
+            else BVK_EWALD if corrected_exchange is not None
+            else BARE_IMAGE_SUM
+        ),
                restart_mesh=tuple(kmesh.mesh),
                restart_kpoints=np.asarray(kmesh.kpoints).copy(), restart_weights=np.asarray(kmesh.weights).copy(),
                guess_selection=periodic_result_selection(system, opts.initial_guess, restarted=initial_density_k is not None),

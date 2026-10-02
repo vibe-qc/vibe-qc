@@ -431,9 +431,14 @@ def test_run_pbc_gdf_rhf_mdf_all_electron_ne_box(monkeypatch):
         f"MDF {e_mdf_hi} vs PySCF MDF {PYSCF_MDF_NE} "
         f"(Δ={(e_mdf_hi - PYSCF_MDF_NE)*1e3:.3f} mHa)"
     )
-    # (2) MDF is mesh-converged at a modest ke — the whole point.
-    assert abs(e_mdf_hi - e_mdf_lo) < 1e-4, (
-        f"MDF not mesh-converged: ke=60 {e_mdf_lo} vs ke=120 {e_mdf_hi}"
+    # (2) MDF is mesh-stable at a modest ke. On all-electron cores it still
+    # moves by ~1e-4 Ha between meshes, in PySCF too (its own MDF moves by
+    # -130 uHa from the default 19^3 mesh to 50^3 on this cell). Measured
+    # 2026-09-29: ke 60 -> 120 moves by 46.5 uHa at the old 1e-4 floor and
+    # 119.5 uHa at the recalibrated 1e-5 floor, which is the more stable of
+    # the two over ke 40 .. 160 (188 against 252 uHa).
+    assert abs(e_mdf_hi - e_mdf_lo) < 1.5e-4, (
+        f"MDF not mesh-stable: ke=60 {e_mdf_lo} vs ke=120 {e_mdf_hi}"
     )
     # (3) Modern SR/LR RSGDF is checked against its own external oracle,
     # not against an expected defect or an empirically fitted MDF gap.
@@ -459,17 +464,29 @@ def _mgo_primitive():
     return system, basis
 
 
-def test_dense_core_mdf_fails_closed_gamma_and_multik():
-    """Compact-dense-core MDF raises instead of returning garbage.
+def test_dense_core_mdf_is_admitted_on_every_entry_point(monkeypatch):
+    """Compact-dense-core MDF reaches its fit on all five drivers (#172).
 
-    G-GDF-001 MDF sub-gate (2026-07-29): Γ mdf on MgO/STO-3G is
-    non-convergent and trial-dependent at ke=40/60 (+1703/+2143/+418 Ha)
-    and falsely reports converged=True at ke=80 at -1651 Ha (PySCF MDF:
-    -271.0499); multi-k (1,1,2) mdf lands -11741 Ha non-converged. The
-    rsgdf tail remediation named by the parity-hold warning does not
-    exist for mdf, so the class fails closed (CLAUDE.md §7) across all
-    five driver entry points.
+    G-GDF-001 MDF sub-gate (2026-07-29 to 2026-09-29): Γ mdf on MgO/STO-3G
+    was non-convergent and trial-dependent (+1703/+2143/+418 Ha at ke
+    40/60, a false converged=True at -1651 Ha at ke 80; multi-k (1,1,2)
+    -11741 Ha), later 92 mHa off at the loosest useful metric cut, so the
+    class failed closed. Both symptoms were the auxiliary images the
+    Gaussian 3c block omitted; the physical check against PySCF MDF is
+    ``test_mdf_dense_core_matches_pyscf``. Here the builders are stubbed so
+    that no SCF runs: each driver must get past its setup to the MDF fit.
     """
+    import vibeqc.pbc_gdf as pg
+    import vibeqc.periodic_k_gdf as kgdf
+
+    class ReachedFit(Exception):
+        pass
+
+    def stub(*args, **kwargs):
+        raise ReachedFit
+
+    monkeypatch.setattr(pg, "build_lpq_mdf", stub)
+    monkeypatch.setattr(kgdf, "build_lpq_bloch_mdf", stub)
     system, basis = _mgo_primitive()
     opt = vq.PeriodicRHFOptions()
     opt.max_iter = 5
@@ -477,15 +494,15 @@ def test_dense_core_mdf_fails_closed_gamma_and_multik():
     opt.lattice_opts.nuclear_cutoff_bohr = 18.0
     common = dict(aux_basis="def2-svp-jk", gdf_method="mdf", progress=False)
 
-    with pytest.raises(NotImplementedError, match="dense-core"):
+    with pytest.raises(ReachedFit):
         vq.run_pbc_gdf_rhf(system, basis, opt, **common)
-    with pytest.raises(NotImplementedError, match="dense-core"):
+    with pytest.raises(ReachedFit):
         vq.run_pbc_gdf_uhf(system, basis, opt, **common)
-    with pytest.raises(NotImplementedError, match="dense-core"):
+    with pytest.raises(ReachedFit):
         vq.run_pbc_gdf_uks(system, basis, opt, functional="pbe", **common)
-    with pytest.raises(NotImplementedError, match="dense-core"):
+    with pytest.raises(ReachedFit):
         vq.run_krhf_periodic_gdf(system, basis, (1, 1, 2), opt, **common)
-    with pytest.raises(NotImplementedError, match="dense-core"):
+    with pytest.raises(ReachedFit):
         vq.run_kuhf_periodic_gdf(system, basis, (1, 1, 2), opt, **common)
 
 
@@ -499,7 +516,8 @@ def test_classifier_mdf_not_held_on_tight_basis_vacuum_box():
     untailed-RSGDF classifier still identifies this basis as requiring
     reciprocal tail resolution; production SR/LR RSGDF does not use that
     hold and tail=0 does not select the legacy builder. The compact class
-    stays held for both classifier labels (and MDF refuses it above).
+    stays held for the rsgdf label only; MDF is not held there either since
+    the auxiliary-image sum of #172.
     """
     from vibeqc.pbc_gdf import _gamma_dense_core_gdf_parity_held
 
@@ -511,7 +529,7 @@ def test_classifier_mdf_not_held_on_tight_basis_vacuum_box():
     assert _gamma_dense_core_gdf_parity_held(ne, "rsgdf", ne_basis) is True
 
     mgo, mgo_basis = _mgo_primitive()
-    assert _gamma_dense_core_gdf_parity_held(mgo, "mdf", mgo_basis) is True
+    assert _gamma_dense_core_gdf_parity_held(mgo, "mdf", mgo_basis) is False
     assert _gamma_dense_core_gdf_parity_held(mgo, "rsgdf", mgo_basis) is True
 
 
@@ -709,7 +727,7 @@ def test_mdf_dressed_metric_threshold_floor():
 
     # PW block active: a value below the floor is raised to it ...
     assert resolve(1e-9, n_pw=500, max_eig=10.0, where="t") == FRAC * 10.0
-    # ... a looser value is honoured (the dense-core class needs ~3e-2) ...
+    # ... a looser value is honoured ...
     assert resolve(3e-2, n_pw=500, max_eig=10.0, where="t") == 3e-2
     # ... and with no PW block the caller's value passes through untouched.
     assert resolve(1e-9, n_pw=0, max_eig=10.0, where="t") == 1e-9
@@ -726,14 +744,14 @@ def test_mdf_dressed_metric_threshold_floor():
 def test_mdf_linear_dep_threshold_ne_box_sweep():
     """Threshold sweep on the validated Ne envelope, vs the PySCF MDF oracle.
 
-    Promotes the 2026-08-03 triage sweep (previously recorded only as prose
-    in ``pbc_gdf._reject_dense_core_mdf``) to an executable gate.
+    Promotes the 2026-08-03 triage sweep to an executable gate.
 
     Sun 2017 Sec. III states the trade-off this pins: "A threshold too tight
     would cause numerical instability while a threshold too loose would
-    increase the basis set incompleteness error." The measured plateau of
-    best accuracy runs 1e-4 .. 3e-3; 1e-1 is past it (incompleteness), and
-    the pre-fix effective cut of ~1.1e-08 was inside the noise (instability).
+    increase the basis set incompleteness error." At these settings the
+    measured plateau of best accuracy runs 1e-5 .. 1e-3 of max_eig (+2.4
+    uHa; 2026-09-29 recalibration, see ``_MDF_DRESSED_METRIC_MIN_EIG_FRACTION``);
+    1e-1 is past it (incompleteness).
     """
     PYSCF_MDF_NE = -126.61361316  # def2-svp-jkfit, out-of-process (§10)
     system = vq.PeriodicSystem(
@@ -764,9 +782,10 @@ def test_mdf_linear_dep_threshold_ne_box_sweep():
         f"(d={(e_default - PYSCF_MDF_NE) * 1e3:+.4f} mHa)"
     )
     # The floor makes anything below it identical to the floor itself
-    # (Ne max_eig = 8.09, so the floor is 8.09e-4).
-    assert run(1e-12) == e_default
-    assert run(1e-4) == e_default
+    # (Ne max_eig = 8.09, so the floor is 8.09e-5), up to the threaded
+    # reduction order of the native integrals.
+    assert run(1e-12) == pytest.approx(e_default, abs=1e-12)
+    assert run(1e-4) == pytest.approx(e_default, abs=1e-12)
     # Past the plateau the fit loses real auxiliary support (Sun Sec. III
     # incompleteness error) and parity degrades by two orders of magnitude.
     e_loose = run(1e-1)
@@ -777,64 +796,160 @@ def test_mdf_linear_dep_threshold_ne_box_sweep():
 
 
 @pytest.mark.slow
-def test_mdf_dense_core_no_longer_diverges():
-    """The dense-core class is bounded rather than divergent.
+def test_mdf_dense_core_matches_pyscf():
+    """MgO/STO-3G Gamma MDF against PySCF MDF, production defaults.
 
-    MgO/STO-3G Gamma MDF, the G-GDF-001 wrong-answer case. Pre-fix, the
-    retained near-null shelf of J-tilde drove the SCF to grossly unphysical
-    energies -- +4.67e+05 Ha measured here at a 28-bohr cutoff, and
-    trial-dependent (the triage lane recorded -6.3e+04 for the same setup).
-    With the threshold above J-tilde's construction error the energy is
-    bounded and on the physical scale.
-
-    This class REMAINS gated (``_reject_dense_core_mdf``): the residual is
-    ~92 mHa at the loosest useful threshold, which is incompleteness error,
-    not production accuracy. What this pins is that the *divergence* is
-    gone, so a regression back into it is caught.
+    The G-GDF-001 wrong-answer case: +4.67e+05 Ha divergent (2026-07-29),
+    then bounded but 92 mHa off at the loosest useful threshold
+    (2026-09-17). Both were the auxiliary images the Gaussian 3c block
+    omitted (#172); with them summed and the dressed-metric floor
+    recalibrated (1e-5 of max_eig) this lands 3.4 uHa from the oracle.
     """
-    import vibeqc.pbc_gdf as pg
-
-    PYSCF_MDF_MGO = -271.0499046  # out-of-process oracle (§10)
-    ang2bohr = 1.8897259886
-    a = 4.211 * ang2bohr
-    prim = 0.5 * a * np.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]], dtype=float)
-    o = 0.5 * (prim[0] + prim[1] + prim[2])
+    PYSCF_MDF_MGO = -271.04988532430093  # PySCF 2.14 mix_density_fit, def2-svp-jkfit (§10)
+    h = 7.958 / 2.0
     system = vq.PeriodicSystem(
-        3, prim, [vq.Atom(12, [0.0, 0.0, 0.0]), vq.Atom(8, o.tolist())]
+        3, np.array([[0.0, h, h], [h, 0.0, h], [h, h, 0.0]]),
+        [vq.Atom(12, [0.0, 0.0, 0.0]), vq.Atom(8, [h, h, h])],
     )
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
-    opt = vq.PeriodicRHFOptions()
-    opt.max_iter = 100
-    opt.conv_tol_energy = 1e-9
-    opt.lattice_opts.cutoff_bohr = 28.0
-    opt.lattice_opts.nuclear_cutoff_bohr = 28.0
+    r = vq.run_pbc_gdf_rhf(system, basis, gdf_method="mdf", progress=False)
+    assert r.converged
+    assert "+PARITY_HELD" not in r.backend
+    assert r.energy == pytest.approx(PYSCF_MDF_MGO, abs=1e-5)
 
-    # The production entry point still fails closed on this class.
-    with pytest.raises(NotImplementedError, match="dense-core"):
-        vq.run_pbc_gdf_rhf(
-            system, basis, opt, aux_basis="def2-svp-jk", gdf_method="mdf",
-            mdf_ke_cutoff=40.0, progress=False,
+
+def test_accumulated_rcut_budgets_the_whole_lattice_sum():
+    """``precision`` must bound the SUM's error, not the largest term's.
+
+    ``estimate_rcut_pyscf`` bounds one shell pair's contribution at
+    ``rcut``; a lattice sum drops many at once, so the error that lands in
+    the assembled matrix is larger by roughly the number of cells. That is
+    why the shipped ``precision = 1e-8`` delivered 2.4e-07 on MgO and
+    7.1e-06 on LiH rocksalt (recorded on this issue 2026-08-14), and why
+    the dilute H2 box -- fewest neighbours inside ``rcut`` -- was the only
+    one that nearly delivered what it asked.
+
+    :func:`estimate_rcut_accumulated` divides the budget by that count, so
+    it must reach further than the plain estimator at equal ``precision``,
+    and exactly as far as the plain estimator reaches at the divided one.
+    """
+    from vibeqc.lattice_screening import (
+        estimate_rcut_accumulated,
+        estimate_rcut_pyscf,
+        lattice_cell_count,
+    )
+
+    system, basis = _mgo_primitive()
+    precision = 1e-12
+
+    plain = estimate_rcut_pyscf(basis, precision=precision)
+    accumulated = estimate_rcut_accumulated(basis, system, precision=precision)
+    assert accumulated > plain
+
+    # Self-consistency: at the returned radius, the per-term budget the
+    # count implies is the one the radius was solved for.
+    n_cells = lattice_cell_count(system, accumulated)
+    assert n_cells > 1.0
+    assert estimate_rcut_pyscf(
+        basis, precision=precision / n_cells
+    ) == pytest.approx(accumulated, rel=1e-6)
+
+    # Buying orders of accuracy is cheap: the radius grows only as
+    # sqrt(log(1/precision)), which is what makes a dedicated metric
+    # precision affordable at all.
+    assert accumulated < 2.5 * estimate_rcut_pyscf(basis, precision=1e-8)
+
+    # extra_multiplicity carries the element bound to the eigenvalue one.
+    assert estimate_rcut_accumulated(
+        basis, system, precision=precision, extra_multiplicity=100.0
+    ) > accumulated
+
+
+def test_dressed_metric_is_psd_and_accurate_at_precision_j2c():
+    """``J-tilde`` is a Gram matrix, so a negative eigenvalue is an error.
+
+    Sun 2017 Eq. 20 subtracts from the Coulomb metric the Coulomb inner
+    product of the aux functions' plane-wave projections. Because the PWs
+    are orthogonal in that metric, what is left is
+    ``J-tilde_PQ = ((1-Pi) phi_P | (1-Pi) phi_Q)`` with ``Pi`` the PW
+    projector -- a Gram matrix of the residuals, hence positive
+    SEMI-definite exactly. Eq. 20 is deliberately singular (Sec. II B), so
+    eigenvalues at zero are expected and fine; eigenvalues meaningfully
+    BELOW zero are construction error and nothing else, which makes
+    ``min(eig)`` a direct, cell-intrinsic readout of how well the metric
+    was built.
+
+    At the general cell precision MgO/STO-3G/def2-svp-jk carried
+    ``min(eig) = -5.4e-06`` and a spectrum error of the same size -- the
+    2026-08-14 diagnosis on this issue. With ``J-tilde`` built at
+    :data:`~vibeqc.aux_basis._MDF_PRECISION_J2C` both sit at round-off.
+    """
+    import vibeqc.aux_basis as ab
+    from vibeqc._vibeqc_core import LatticeSumOptions
+    from vibeqc.lattice_screening import (
+        estimate_rcut_accumulated,
+        estimate_rcut_pyscf,
+    )
+
+    system, _basis = _mgo_primitive()
+    mol = system.unit_cell_molecule()
+    aux = vq.BasisSet(mol, "def2-svp-jk")
+    modrho = ab.make_modrho_aux_basis(aux, mol)
+    compensating = ab.make_compensating_basis(modrho, mol, eta=1.0)
+    fused = ab.make_fused_basis(modrho, compensating, mol)
+    A = ab.fuse_transform_matrix(modrho, compensating)
+
+    def dressed(cutoff_bohr):
+        opts = LatticeSumOptions()
+        opts.cutoff_bohr = float(cutoff_bohr)
+        opts.nuclear_cutoff_bohr = float(cutoff_bohr)
+        M = A @ np.asarray(
+            ab.compute_2c_eri_lattice(fused, system, opts)
+        ) @ A.T
+        M = 0.5 * (M + M.T)
+        volume = float(abs(np.linalg.det(np.asarray(system.lattice, float))))
+        G = ab.rsgdf_dense_g_mesh(system, 40.0)
+        g2 = (G ** 2).sum(axis=1)
+        nonzero = g2 > 1e-12
+        coulomb = (4.0 * np.pi) / g2[nonzero] / volume
+        rho = A @ ab.rsgdf_aux_fourier_transform(fused, G[nonzero])
+        projected = np.real((rho.conj() * coulomb[None, :]) @ rho.T)
+        dressed_metric = M - 0.5 * (projected + projected.T)
+        return np.linalg.eigvalsh(
+            0.5 * (dressed_metric + dressed_metric.T)
         )
 
-    # Behind the gate, the answer is now bounded instead of divergent.
-    orig = pg._reject_dense_core_mdf
-    pg._reject_dense_core_mdf = lambda *a, **k: None
-    try:
-        e = pg.run_pbc_gdf_rhf(
-            system, basis, opt, aux_basis="def2-svp-jk", gdf_method="mdf",
-            mdf_ke_cutoff=40.0, exxdiv="ewald", progress=False,
-            gdf_linear_dep_threshold=3e-2,
-        ).energy
-    finally:
-        pg._reject_dense_core_mdf = orig
-    # Pre-fix this was +4.67e+05 Ha. Bounded now, and still short of
-    # production accuracy by ~92 mHa -- which is why the gate stays.
-    assert abs(e - PYSCF_MDF_MGO) < 0.5, (
-        f"dense-core MDF {e} vs PySCF MDF {PYSCF_MDF_MGO} "
-        f"(d={(e - PYSCF_MDF_MGO) * 1e3:+.1f} mHa) -- divergence regression"
+    reference = dressed(45.0)
+    loose = dressed(estimate_rcut_pyscf(fused, precision=1e-8))
+    tight = dressed(
+        estimate_rcut_accumulated(
+            fused, system, precision=ab._MDF_PRECISION_J2C,
+            extra_multiplicity=modrho.nbasis,
+        )
     )
-    assert abs(e - PYSCF_MDF_MGO) > 1e-3, (
-        "dense-core MDF unexpectedly reached production accuracy; if the "
-        "residual incompleteness error has been fixed, lift the gate in "
-        "pbc_gdf._reject_dense_core_mdf and update this test"
-    )
+
+    # The defect, still reproducible at the general precision.
+    assert loose[0] < -1e-6
+    assert np.abs(loose - reference).max() > 1e-6
+    # ... and gone at the dedicated one. A Gram matrix's eigenvalues may
+    # sit at zero but must not go meaningfully below it.
+    assert tight[0] > -1e-10, f"J-tilde not PSD: min eig = {tight[0]:.3e}"
+    assert np.abs(tight - reference).max() < 1e-10
+
+
+def test_precision_j3c_is_off_by_default_and_measured_unnecessary():
+    """The 3-centre companion is deliberately not switched on.
+
+    ``L = U_keep^T (T - PW proj) / sqrt(lambda)`` divides the 3-centre by
+    the same square root as the metric, so on paper it wants the same
+    treatment. Measured 2026-09-17 it does not: the metric's error is
+    amplified by ``1/lambda`` and the 3-centre's only by
+    ``1/sqrt(lambda)``, and at every threshold the dressed metric admits,
+    the 3-centre at ``rcut_precision`` is already inside its budget --
+    switching it on left Ne, H2 and a full MgO threshold sweep unchanged
+    while costing ~20% of the run.
+    """
+    import vibeqc.aux_basis as ab
+
+    assert ab._MDF_PRECISION_J3C is None
+    assert ab._MDF_PRECISION_J2C == 1.0e-12

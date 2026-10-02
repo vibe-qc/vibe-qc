@@ -17,7 +17,7 @@
       MO workspace                      0.00 MB
       Python runtime + NumPy overhead  000.0 MB
       DFT grid + chi                     0.0 MB
-  Available on this machine: <MEM> GB. Proceeding.
+  Available to this job: <MEM> GB. Proceeding.
 
   iter     energy (Ha)            dE          ||[F,DS]||   DIIS
   -------------------------------------------------------------

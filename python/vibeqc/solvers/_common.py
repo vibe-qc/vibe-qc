@@ -164,6 +164,9 @@ class Hamiltonian:
                 "electrons (need |ms2| <= n_active_elec and matching parity)."
             )
 
+        _refuse_window_inside_degenerate_cluster(
+            self, n_core, n_active_orb, n_active_elec, ms2
+        )
         active = slice(n_core, n_core + n_active_orb)
         e_core, h1e_active = _frozen_core_dressing(self.h1e, self.h2e, n_core, active)
         h2e_active = np.ascontiguousarray(self.h2e[active, active, active, active])
@@ -178,6 +181,71 @@ class Hamiltonian:
                 f"{self.description} | CAS({n_active_elec}e,{n_active_orb}o)"
             ).lstrip(" |"),
         )
+
+
+#: Orbital energies closer than this (Ha) at an active-window boundary mean
+#: the window cuts a degenerate cluster (#322).
+WINDOW_DEGENERACY_TOL = 1e-8
+
+
+def _closed_shell_fock(h1e: np.ndarray, h2e: np.ndarray, n_occ: int) -> np.ndarray:
+    """Closed-shell Fock matrix in the Hamiltonian's own orbital basis.
+
+    ``h2e`` is physicist's ``g_{pqrs} = <pq|rs>``, so the Coulomb term is
+    ``sum_i <pi|qi>`` and the exchange term ``sum_i <pi|iq>`` over the
+    ``n_occ`` lowest orbitals.
+    """
+    occ = h2e[:, :n_occ, :, :n_occ]
+    coulomb = np.einsum("piqi->pq", occ)
+    exchange = np.einsum("piiq->pq", h2e[:, :n_occ, :n_occ, :])
+    return np.asarray(h1e) + 2.0 * coulomb - exchange
+
+
+def _refuse_window_inside_degenerate_cluster(
+    ham: "Hamiltonian",
+    n_core: int,
+    n_active_orb: int,
+    n_active_elec: int,
+    ms2: int,
+    *,
+    tol: float = WINDOW_DEGENERACY_TOL,
+) -> None:
+    """Refuse an active window whose boundary lies inside a degenerate cluster.
+
+    #322: with canonical orbitals, a boundary between two orbitals of equal
+    energy (a 1pi_u pair split between core and active, say) makes the CI
+    energy a function of the arbitrary frame inside that pair instead of
+    the deck. The check needs the operator whose eigenvalues define the
+    clusters, so it applies to closed-shell (``ms2 == 0``, even ``nelec``)
+    Hamiltonians whose orbitals diagonalise the closed-shell Fock matrix
+    (off-diagonal below 1e-6 Ha); localised or otherwise non-canonical
+    orbital sets carry no cluster structure to protect and pass through.
+    """
+    if ms2 != 0 or ham.nelec % 2 != 0 or ham.norb < 2:
+        return
+    fock = _closed_shell_fock(ham.h1e, ham.h2e, ham.nelec // 2)
+    if np.max(np.abs(fock - np.diag(np.diag(fock)))) > 1e-6:
+        return
+    eps = np.diag(fock)
+    boundaries = []
+    if n_core > 0:
+        boundaries.append((n_core - 1, n_core, "inactive/active"))
+    last = n_core + n_active_orb
+    if last < ham.norb:
+        boundaries.append((last - 1, last, "active/virtual"))
+    for a, b, name in boundaries:
+        gap = abs(float(eps[a]) - float(eps[b]))
+        if gap <= tol:
+            raise ValueError(
+                f"active_space(n_active_orb={n_active_orb}, "
+                f"n_active_elec={n_active_elec}): the {name} boundary falls "
+                f"between orbitals {a} and {b}, whose orbital energies "
+                f"{eps[a]:.10f} and {eps[b]:.10f} Ha differ by {gap:.1e} "
+                f"(<= {tol:g}); the window cuts a degenerate cluster, so the "
+                "CI energy would depend on the orbital frame inside that "
+                "cluster instead of on the deck (#322). Move the boundary so "
+                "that whole clusters lie inside or outside the window."
+            )
 
 
 # ── Solver options ────────────────────────────────────────────────────────

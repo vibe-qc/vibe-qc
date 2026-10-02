@@ -52,6 +52,8 @@ LocalCCSDOptions = partial(
     tcut_mkn=0.0,
     tcut_pairs=1e-4,
     residual_domain="pair",
+    # Predates the ORCA singles-PNO scale on the diagonal pairs (#190).
+    tcut_pno_diag_scale=1.0,
 )
 H2O = [
     (8, [0.0, 0.0, 0.0]),
@@ -259,6 +261,9 @@ class TestTripleIteration:
             df=DummyDF(),
             n_act=no,
             tcut_tno=1e-4,
+            # The density helper belongs to the Python per-key loop; the
+            # compiled kernel builds its own (TestCompiledLocalTriples).
+            use_cpp=False,
         )
 
         native_stats = {}
@@ -582,3 +587,77 @@ class TestT1:
         assert err_t1 < 0.5 * err_t0, (
             f"(T1) error {err_t1:.2e} not substantially smaller than (T0) {err_t0:.2e}"
         )
+
+
+class TestCompiledLocalTriples:
+    """The compiled local (T0) is the Python per-key loop, key by key."""
+
+    @staticmethod
+    def _random_inputs(seed, drop=()):
+        rng = np.random.default_rng(seed)
+        no, nv, naux = 4, 7, 9
+        nbf = no + nv
+        U, T2, t1 = {}, {}, {}
+        for i in range(no):
+            for j in range(i, no):
+                if (i, j) in drop:
+                    continue
+                q, _ = np.linalg.qr(rng.normal(size=(nv, nv)))
+                k = int(rng.integers(2, nv + 1))
+                U[(i, j)] = np.ascontiguousarray(q[:, :k])
+                raw = 0.03 * rng.normal(size=(k, k))
+                T2[(i, j)] = 0.5 * (raw + raw.T) if i == j else raw
+            t1[i] = 0.01 * rng.normal(size=U[(i, i)].shape[1])
+        b_ov = 0.1 * rng.normal(size=(naux, no, nv))
+        raw = 0.1 * rng.normal(size=(naux, no, no))
+        b_oo = 0.5 * (raw + raw.transpose(0, 2, 1))
+        raw = 0.1 * rng.normal(size=(naux, nv, nv))
+        b_vv = 0.5 * (raw + raw.transpose(0, 2, 1))
+        centres = rng.normal(size=(no, 3)) * 3.0
+        occ_dist = np.linalg.norm(centres[:, None] - centres[None, :], axis=2)
+        common = dict(
+            U=U,
+            T2=T2,
+            t1=t1,
+            C_loc=np.eye(nbf, no),
+            C_vir=np.eye(nbf, nv, k=no),
+            S=np.eye(nbf),
+            f_vv_full=np.diag(0.2 + np.sort(rng.random(nv))),
+            f_dd=-0.4 - rng.random(no),
+            df=None,
+            n_act=no,
+            df_factors=(b_ov, b_oo, b_vv),
+        )
+        return common, occ_dist
+
+    @pytest.mark.parametrize("tcut_tno", [0.0, 1e-4])
+    @pytest.mark.parametrize("drop", [(), ((0, 3), (1, 2))])
+    @pytest.mark.parametrize("radius", [0.0, 4.0])
+    def test_matches_python_loop_on_random_inputs(self, tcut_tno, drop, radius):
+        assert triples_local._HAVE_CPP_LOCAL_TRIPLES
+        common, occ_dist = self._random_inputs(7, drop)
+        options = dict(
+            tcut_tno=tcut_tno, occ_dist=occ_dist, coupling_radius=radius
+        )
+        native_stats, python_stats = {}, {}
+        native = triples_local.local_triples_correction(
+            **common, **options, stats=native_stats
+        )
+        python = triples_local.local_triples_correction(
+            **common, **options, stats=python_stats, use_cpp=False
+        )
+        assert native == pytest.approx(python, rel=1e-11, abs=1e-15)
+        assert native_stats == python_stats
+
+    @pytest.mark.parametrize("tcut_tno", [0.0, 1e-9])
+    def test_matches_python_loop_through_the_solver(self, monkeypatch, tcut_tno):
+        mol, basis, rhf, df, _ = _setup(H2O, "def2-svp")
+        options = LocalCCSDOptions(
+            compute_triples=True, triples_mode="local", tcut_tno=tcut_tno
+        )
+        native = run_local_dlpno_ccsd(mol, basis, rhf, df, options)
+        monkeypatch.setattr(triples_local, "_HAVE_CPP_LOCAL_TRIPLES", False)
+        python = run_local_dlpno_ccsd(mol, basis, rhf, df, options)
+        assert native.triples_executed and python.triples_executed
+        assert native.e_t == pytest.approx(python.e_t, abs=1e-12)
+        assert native.tno_per_triple == python.tno_per_triple

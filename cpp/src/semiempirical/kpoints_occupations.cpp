@@ -293,7 +293,8 @@ KPointOccupationResult global_zero_temperature_occupations(
 KPointBandEdges compute_kpoint_band_edges(
     const std::vector<Eigen::VectorXd>& eps_per_k,
     const std::vector<Eigen::VectorXd>& occupations_per_k,
-    double occupation_tolerance) {
+    double occupation_tolerance,
+    const std::vector<double>& weights) {
     if (!std::isfinite(occupation_tolerance) ||
         occupation_tolerance <= 0.0 || occupation_tolerance >= 1.0) {
         throw std::invalid_argument(
@@ -374,6 +375,109 @@ KPointBandEdges compute_kpoint_band_edges(
         }
     }
 
+    // Issue #176: the Fermi level crossing a band (see the header). Integer
+    // occupations whose per-k occupied count differs mean a band is occupied
+    // at some k and empty at others; measure the band pair at the Fermi
+    // filling rather than the sampled-level spacing the state classes give.
+    bool band_pair = false;
+    bool crossing = false;
+    if (!any_fractional && eps_per_k.size() > 1) {
+        long first_count = -1;
+        for (const auto& occupations : occupations_per_k) {
+            long count = 0;
+            for (Eigen::Index band = 0; band < occupations.size(); ++band) {
+                if (occupations(band) > occupation_tolerance) {
+                    ++count;
+                }
+            }
+            if (first_count < 0) {
+                first_count = count;
+            } else if (count != first_count) {
+                band_pair = true;
+            }
+        }
+    }
+    if (band_pair) {
+        const std::size_t n_k = eps_per_k.size();
+        std::vector<double> w(n_k, 1.0 / static_cast<double>(n_k));
+        if (weights.size() == n_k) {
+            double total = 0.0;
+            for (double value : weights) {
+                if (!std::isfinite(value) || value < 0.0) {
+                    throw std::invalid_argument(
+                        "k-point band edges: weights must be finite and "
+                        ">= 0");
+                }
+                total += value;
+            }
+            if (total > 0.0) {
+                for (std::size_t ik = 0; ik < n_k; ++ik) {
+                    w[ik] = weights[ik] / total;
+                }
+            }
+        } else if (!weights.empty()) {
+            throw std::invalid_argument(
+                "k-point band edges: weights must match k-point count");
+        }
+        double electrons = 0.0;
+        for (std::size_t ik = 0; ik < n_k; ++ik) {
+            electrons += w[ik] * occupations_per_k[ik].sum();
+        }
+        const double filling = 0.5 * electrons;
+        const double nearest = std::round(filling);
+        long lo = 0;
+        long hi = 0;
+        if (std::abs(filling - nearest) <=
+            1.0e-8 * std::max(1.0, std::abs(filling))) {
+            lo = static_cast<long>(nearest) - 1;
+            hi = static_cast<long>(nearest);
+        } else {
+            lo = hi = static_cast<long>(std::floor(filling));
+        }
+        edges.valence_band_max_k = -1;
+        edges.conduction_band_min_k = -1;
+        edges.direct_gap_k = -1;
+        valence_max = -infinity;
+        conduction_min = infinity;
+        direct_gap = infinity;
+        for (std::size_t ik = 0; ik < n_k; ++ik) {
+            std::vector<double> ordered(
+                eps_per_k[ik].data(),
+                eps_per_k[ik].data() + eps_per_k[ik].size());
+            std::sort(ordered.begin(), ordered.end());
+            const long n_bands = static_cast<long>(ordered.size());
+            const bool has_valence = lo >= 0 && lo < n_bands;
+            const bool has_conduction = hi >= 0 && hi < n_bands;
+            const double valence_max_k =
+                has_valence ? ordered[static_cast<std::size_t>(lo)] : nan;
+            const double conduction_min_k =
+                has_conduction ? ordered[static_cast<std::size_t>(hi)] : nan;
+            edges.valence_max_per_k[ik] = valence_max_k;
+            edges.conduction_min_per_k[ik] = conduction_min_k;
+            if (has_valence && valence_max_k > valence_max) {
+                valence_max = valence_max_k;
+                edges.valence_band_max_k = static_cast<int>(ik);
+            }
+            if (has_conduction && conduction_min_k < conduction_min) {
+                conduction_min = conduction_min_k;
+                edges.conduction_band_min_k = static_cast<int>(ik);
+            }
+            if (has_valence && has_conduction &&
+                conduction_min_k - valence_max_k < direct_gap) {
+                direct_gap = conduction_min_k - valence_max_k;
+                edges.direct_gap_k = static_cast<int>(ik);
+            }
+        }
+        // With positive weights differing counts always mean a crossing
+        // (gap < 0). A ZERO-weight point is filled with the step function at
+        // the mu the weighted points fix, which can lie outside the true gap:
+        // its count then differs although no band crosses, and the band pair
+        // still measures the right, positive gap.
+        crossing = edges.valence_band_max_k >= 0 &&
+                   edges.conduction_band_min_k >= 0 &&
+                   conduction_min - valence_max <= 0.0;
+    }
+
     if (edges.valence_band_max_k >= 0) {
         edges.valence_band_max = valence_max;
     }
@@ -399,7 +503,7 @@ KPointBandEdges compute_kpoint_band_edges(
     // fill the pooled gap can never be negative, so a sign test alone is
     // vacuous on mesh rows.
     edges.is_metallic =
-        any_fractional ||
+        any_fractional || crossing ||
         (std::isfinite(edges.indirect_gap) && edges.indirect_gap <= 0.0);
     return edges;
 }

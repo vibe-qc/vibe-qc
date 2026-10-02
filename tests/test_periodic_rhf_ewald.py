@@ -164,7 +164,16 @@ def test_energy_matches_direct_truncated_in_atomic_limit():
     sysp, basis = _h2_in_box(box=box)
     opts = _default_options()
 
-    r_direct = vq.run_rhf_periodic_gamma(sysp, basis, opts)
+    # The direct route needs its cutoff balls to reach the first image
+    # shell: at cutoff 12 a 30-bohr box leaves only g = 0, which the #133
+    # guard refuses (#430). Both balls at box + 1 hold the same six
+    # images (the next shell, 42.4 bohr, is outside), so the direct sum
+    # stays neutral and still sits in the atomic limit.
+    opts_direct = _default_options()
+    opts_direct.lattice_opts.cutoff_bohr = box + 1.0
+    opts_direct.lattice_opts.nuclear_cutoff_bohr = box + 1.0
+
+    r_direct = vq.run_rhf_periodic_gamma(sysp, basis, opts_direct)
     r_ewald = _run_ewald3d(
         sysp,
         basis,

@@ -264,6 +264,12 @@ class SolverResult:
         Residual norms ‖A x_i - l_i x_i‖₂ at termination.
     n_matvec : int
         Total number of matrix-vector products performed.
+    n_converged : int or None
+        How many of the requested roots met the threshold (the native
+        Davidson kernels report it; GitLab #123/#287). ``converged`` is
+        the all-or-nothing summary. None when the backend does not say.
+    subspace_dim : int or None
+        Subspace dimension at termination, when the backend reports it.
     """
 
     eigenvalues: np.ndarray
@@ -272,6 +278,8 @@ class SolverResult:
     converged: bool
     residuals: np.ndarray | None = None
     n_matvec: int = 0
+    n_converged: int | None = None
+    subspace_dim: int | None = None
 
 
 _UPPER_ROOT_MODES = {"LA", "LM"}
@@ -759,6 +767,8 @@ class DavidsonSolver(SolverStrategy):
             converged=res.converged,
             residuals=residuals,
             n_matvec=res.n_iter * (getattr(res, "subspace_dim", 1) + 1),
+            n_converged=getattr(res, "n_converged", None),
+            subspace_dim=getattr(res, "subspace_dim", None),
         )
 
 
@@ -855,6 +865,8 @@ class HermitianDavidsonSolver(SolverStrategy):
             converged=res.converged,
             residuals=residuals,
             n_matvec=res.n_iter * (getattr(res, "subspace_dim", 1) + 1),
+            n_converged=getattr(res, "n_converged", None),
+            subspace_dim=getattr(res, "subspace_dim", None),
         )
 
 
@@ -965,11 +977,12 @@ class JDSolver(SolverStrategy):
 
 
 class GPLHRSolver(SolverStrategy):
-    """GPLHR -- Generalized Preconditioned Locally Harmonic Residual.
+    """Experimental GPLHR-derived harmonic interior eigensolver.
 
-    Interior eigenvalue solver using harmonic Ritz extraction
-    and shift-and-project strategy. Targets eigenvalues nearest
-    to a specified sigma.
+    Targets eigenvalues nearest sigma using signed shifted-diagonal
+    preconditioning and a restarted block harmonic-Davidson space.
+    This is not the full locally harmonic recurrence of the reference.
+    Raises RuntimeError if the requested roots do not converge.
 
     Reference: Zuev, D. et al. "New algorithms for iterative
     matrix-free eigensolvers in quantum chemistry."
@@ -998,6 +1011,8 @@ class GPLHRSolver(SolverStrategy):
         gopts.sigma = options.sigma
         gopts.tol = options.tol
         gopts.max_iter = options.max_iter
+        gopts.max_subspace = options.max_subspace
+        gopts.preshift = options.preshift
         if options.block_size > 0:
             gopts.block_size = options.block_size
         if options.verbosity > 0:
@@ -1006,11 +1021,24 @@ class GPLHRSolver(SolverStrategy):
             res = core.gplhr_solve(problem.matrix, gopts)
         else:
             raise ValueError("GPLHR requires an explicit matrix")
+        residuals = np.linalg.norm(
+            problem.matrix @ res.eigenvectors
+            - res.eigenvectors * res.eigenvalues,
+            axis=0,
+        )
+        if not res.converged or not np.all(residuals < options.tol):
+            raise RuntimeError(
+                f"Experimental GPLHR did not converge {options.n_roots} "
+                f"root(s) near sigma={options.sigma} after {res.n_iter} iterations "
+                f"(maximum residual={np.max(residuals):.3e}, tol={options.tol:.3e}). "
+                "Try solver='jd' or increase max_subspace/max_iter."
+            )
         return SolverResult(
             eigenvalues=res.eigenvalues,
             eigenvectors=res.eigenvectors,
             n_iter=res.n_iter,
             converged=res.converged,
+            residuals=residuals,
         )
 
 

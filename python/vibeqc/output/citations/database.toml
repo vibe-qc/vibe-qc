@@ -531,6 +531,45 @@ pages       = "2364--2376"
 year        = 2019
 doi         = "10.1002/jcc.26013"
 
+[entries.laun_pob_rev2_fifth_period_2022]
+kind        = "article"
+bibtex_key  = "laun_pob_rev2_fifth_period_2022"
+authors     = ["Laun, Joachim", "Bredow, Thomas"]
+title       = "BSSE-corrected consistent Gaussian basis sets of triple-zeta valence with polarization quality of the fifth period for solid-state calculations"
+journal     = "Journal of Computational Chemistry"
+volume      = 43
+issue       = 12
+pages       = "839--846"
+year        = 2022
+doi         = "10.1002/jcc.26839"
+notes       = "The 16 pob-TZVP-rev2 Rb-I records (Rb Sr Y Zr Nb Mo Ru Rh Pd Ag Cd In Sn Sb Te I) with their Stuttgart-Cologne ECPs; metadata verified against Crossref 2026-09-24 (#288)."
+
+[entries.laun_pob_rev2_sixth_period_2021]
+kind        = "article"
+bibtex_key  = "laun_pob_rev2_sixth_period_2021"
+authors     = ["Laun, Joachim", "Bredow, Thomas"]
+title       = "BSSE-corrected consistent Gaussian basis sets of triple-zeta valence with polarization quality of the sixth period for solid-state calculations"
+journal     = "Journal of Computational Chemistry"
+volume      = 42
+issue       = 15
+pages       = "1064--1072"
+year        = 2021
+doi         = "10.1002/jcc.26521"
+notes       = "The 15 pob-TZVP-rev2 Cs-Ba and Hf-Po records (Cs Ba Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po) with their Stuttgart-Cologne ECPs; metadata verified against Crossref 2026-09-24 (#288)."
+
+[entries.seidler_pob_rev2_lanthanides_2023]
+kind        = "article"
+bibtex_key  = "seidler_pob_rev2_lanthanides_2023"
+authors     = ["Seidler, Leopold Maximilian", "Laun, Joachim", "Bredow, Thomas"]
+title       = "BSSE-corrected consistent Gaussian basis sets of triple-zeta valence quality of the lanthanides La-Lu for solid-state calculations"
+journal     = "Journal of Computational Chemistry"
+volume      = 44
+issue       = 15
+pages       = "1418--1425"
+year        = 2023
+doi         = "10.1002/jcc.27097"
+notes       = "The 15 pob-TZVP-rev2 La-Lu records with their Stuttgart-Cologne ECPs; metadata verified against Crossref 2026-09-24 (#288)."
+
 # --- Pople-style basis sets (STO-3G, 6-31G(d) family) ----------------
 # The STO-NG paper itself is `hehre_sto_ng_1969` above; the basis routes
 # share that entry rather than carrying a second key for the same DOI.
@@ -1672,7 +1711,7 @@ issue       = 16
 pages       = "164104"
 year        = 2021
 doi         = "10.1063/5.0040798"
-notes       = "Trust-region augmented-Hessian (TRAH) SCF for HF/KS — the augmented-Hessian convergence path in cpp/src/trah.hpp. Cite when the TRAH path is engaged (RHFOptions.trah_threshold)."
+notes       = "Trust-region augmented-Hessian (TRAH) SCF for HF/KS — the augmented-Hessian convergence path in cpp/src/trah.hpp. Cite when armed through trah_threshold or invoked automatically by UHF stability recovery."
 
 # --- SCF internal stability analysis -------------------------------
 # Post-convergence internal (real unrestricted-orbital) stability check + the
@@ -2239,7 +2278,7 @@ issue       = 3
 pages       = "034108"
 year        = 2015
 doi         = "10.1063/1.4926879"
-notes       = "DLPNO-MP2 — the local MP2 implemented by vibeqc.dlpno.mp2 and the method background for its independent-spin UMP2 extension (Foster-Boys LMOs, PAO domains, semicanonical PNOs, coupled LMP2 residuals). Fires via routes.methods['dlpno-mp2'] and routes.methods['dlpno-ump2']."
+notes       = "DLPNO-MP2 — the local MP2 implemented by vibeqc.dlpno.mp2 and the method background for its independent-spin UMP2 extension (Foster-Boys LMOs, PAO domains, semicanonical PNOs, coupled LMP2 residuals). Fires via routes.methods['dlpno-mp2'] and routes.methods['dlpno-ump2']. Also the source of the differential overlap integral (Eq. 4) behind the default DOI PAO domains of the closed-shell DLPNO-MP2 and local DLPNO-CCSD routes, so it also fires via routes.methods['dlpno-ccsd'] and ['dlpno-ccsd(t)']."
 
 [entries.pinski_dlpno_mp2_thresholds_2019]
 kind        = "article"
@@ -3072,6 +3111,18 @@ year        = 2006
 doi         = "10.1021/jp056016z"
 notes       = "The Direct COSMO-RS method: the COSMO-RS sigma potential of a real solvent fed back into the SCF as extra screening charges (eq. 18-19), implemented in vibeqc.solvation.cosmors.direct and selected by SolventModel(variant=\"dcosmo-rs\"). The paper states the operator, not the energy; vibe-qc's G = E_gas[D] + (1/2) q.V_tot + sum_t a_t mu_S(sigma_t) is derived so that its density derivative is that operator."
 
+[entries.york_karplus_smooth_cosmo_1999]
+kind        = "article"
+bibtex_key  = "york_karplus_smooth_cosmo_1999"
+authors     = ["York, Darrin M.", "Karplus, Martin"]
+title       = "A Smooth Solvation Potential Based on the Conductor-Like Screening Model"
+journal     = "The Journal of Physical Chemistry A"
+volume      = 103
+pages       = "11060--11079"
+year        = 1999
+doi         = "10.1021/jp992097l"
+notes       = "Spherical Gaussian surface-charge elements for a conductor-like screening model (eq. 56) with the exponent scaling of eq. 61. vibe-qc's COSMO FINE Cavity uses this kernel (vibeqc.solvation.cpcm GAUSSIAN_CHARGE, #744), which makes the cavity A matrix a Gram matrix, positive definite for any geometry."
+
 [entries.cossi_cpcm_2003]
 kind        = "article"
 bibtex_key  = "cossi_cpcm_2003"
@@ -3553,7 +3604,7 @@ issue       = 7
 pages       = "3916-3926"
 year        = 2021
 doi         = "10.1021/acs.jctc.0c01195"
-notes       = "Eqs. 17-18 and the definition of T(P) beneath Eq. 18: a periodic two-centre matrix element sums the ket over lattice translations P and depends on P only through the physical separation ||A - B - P||, so the images a cutoff selects form a ball centred on the intra-cell offset, not on the origin. cpp/include/vibeqc/lattice_pair_cells.hpp implements that term set (pair_complete_cells / pair_in_range); the compensated 2c Coulomb metric (aux_eri.cpp) enumerates it unconditionally and the one-electron S/T/V lattice sums and their gradient partners under LatticeSumOptions.pair_complete_1e (GitLab #429, stage 2). Route it on the periodic Gaussian routes when that switch becomes their default; until then the option is opt-in and the paper is cited at the code sites."
+notes       = "Eqs. 17-18 and the definition of T(P) beneath Eq. 18: a periodic two-centre matrix element sums the ket over lattice translations P and depends on P only through the physical separation ||A - B - P||, so the images a cutoff selects form a ball centred on the intra-cell offset, not on the origin. cpp/include/vibeqc/lattice_pair_cells.hpp implements that term set (pair_complete_cells / pair_in_range); the compensated 2c Coulomb metric (aux_eri.cpp) enumerates it unconditionally and the one-electron S/T/V lattice sums and their gradient partners under LatticeSumOptions.pair_complete_1e (GitLab #429, stage 2). Cited on the BIPOLE route after its physical-domain default migration (#316); other periodic Gaussian families retain their own domain policies."
 
 # --- Periodic Gaussian density fitting (Sun et al. 2017) ---
 [entries.sun_berkelbach_gdf_2017]
@@ -5756,6 +5807,70 @@ year        = 2020
 doi         = "10.1021/acs.jctc.9b01004"
 notes       = "Condition-number-aware crystalline basis-set optimization (roadmap OPTBASIS / BDEV1). Also the BDIIS paper — Basis-set Direct Inversion in the Iterative Subspace, the optimiser behind CRYSTAL23's OPTBASIS and vibe-qc's optimize_bdiis — so this key is reached two ways: statically from routes.acceleration.optbasis, and directly via BDIIS_CITATION_KEYS. One key, one DOI: do not re-split it, since assemble() deduplicates by entry key rather than by DOI."
 
+# --- Derivative-free basis-optimisation drivers ---------------------
+# Reached dynamically from vibeqc.basis_optimization.drivers
+# (DFO_CITATION_KEYS / CMAES_CITATION_KEYS), the same channel as
+# BDIIS_CITATION_KEYS above: the optimisers are not SCF-job features and
+# have no [routes.*] row.
+[entries.powell_bobyqa_2009]
+kind        = "misc"
+bibtex_key  = "powell_bobyqa_2009"
+authors     = ["Powell, Michael J. D."]
+title       = "The BOBYQA algorithm for bound constrained optimization without derivatives"
+journal     = "Technical Report DAMTP 2009/NA06, Department of Applied Mathematics and Theoretical Physics, University of Cambridge"
+year        = 2009
+url         = "https://www.damtp.cam.ac.uk/user/na/NA_papers/NA2009_06.pdf"
+notes       = "The bound-constrained model-based derivative-free method behind optimize_bobyqa (through Py-BOBYQA) and behind vibe-basis's NLopt BOBYQA driver."
+
+[entries.cartis_dfols_2019]
+kind        = "article"
+bibtex_key  = "cartis_dfols_2019"
+authors     = ["Cartis, Coralia", "Fiala, Jan", "Marteau, Benjamin", "Roberts, Lindon"]
+title       = "Improving the Flexibility and Robustness of Model-based Derivative-free Optimization Solvers"
+journal     = "ACM Transactions on Mathematical Software"
+volume      = 45
+issue       = 3
+pages       = "32"
+year        = 2019
+doi         = "10.1145/3338517"
+notes       = "Defines Py-BOBYQA (scalar objectives) and DFO-LS (least-squares residuals), the solvers wrapped by optimize_bobyqa and optimize_dfols."
+
+[entries.hansen_cmaes_2001]
+kind        = "article"
+bibtex_key  = "hansen_cmaes_2001"
+authors     = ["Hansen, Nikolaus", "Ostermeier, Andreas"]
+title       = "Completely Derandomized Self-Adaptation in Evolution Strategies"
+journal     = "Evolutionary Computation"
+volume      = 9
+issue       = 2
+pages       = "159--195"
+year        = 2001
+doi         = "10.1162/106365601750190398"
+notes       = "The CMA-ES algorithm behind optimize_cmaes and the global pre-pass of recipes.global_then_polish."
+
+[entries.hansen_cma_tutorial_2016]
+kind        = "misc"
+bibtex_key  = "hansen_cma_tutorial_2016"
+authors     = ["Hansen, Nikolaus"]
+title       = "The CMA Evolution Strategy: A Tutorial"
+journal     = "arXiv preprint"
+pages       = "arXiv:1604.00772"
+year        = 2016
+doi         = "10.48550/arXiv.1604.00772"
+url         = "https://arxiv.org/abs/1604.00772"
+notes       = "The reference description of the CMA-ES update equations (step-size and covariance adaptation, bound handling) as implemented in pycma."
+
+[entries.hansen_pycma_software]
+kind        = "software"
+bibtex_key  = "hansen_pycma"
+authors     = ["Hansen, Nikolaus", "Akimoto, Youhei", "Baudis, Petr"]
+title       = "CMA-ES/pycma on GitHub"
+year        = 2019
+doi         = "10.5281/zenodo.2559634"
+url         = "https://github.com/CMA-ES/pycma"
+license     = "BSD-3-Clause"
+notes       = "The pycma implementation optimize_cmaes drives (ask/tell interface, BoundTransform bound handling). Optional dependency behind vibe-qc's [basisopt-drivers] extra; never imported by a plain import of vibeqc.basis_optimization."
+
 [entries.pisani_dovesi_lattice_truncation_1980]
 kind        = "article"
 bibtex_key  = "pisani_dovesi_1980"
@@ -5993,6 +6108,19 @@ pages       = "1236--1244"
 year        = 1971
 doi         = "10.1063/1.1676210"
 notes       = "Original Morokuma energy decomposition analysis (shipped in eda.py)."
+
+[entries.kitaura_morokuma_1976]
+kind        = "article"
+bibtex_key  = "kitaura_morokuma_1976"
+authors     = ["Kitaura, Kazuo", "Morokuma, Keiji"]
+title       = "A new energy decomposition scheme for molecular interactions within the Hartree-Fock approximation"
+journal     = "International Journal of Quantum Chemistry"
+volume      = 10
+issue       = 2
+pages       = "325--340"
+year        = 1976
+doi         = "10.1002/qua.560100211"
+notes       = "Kitaura-Morokuma ES/EX/PL/CT/MIX partition within Hartree-Fock. eda_morokuma reports its ES and EX terms (frozen-density electrostatics and the antisymmetrised-product exchange repulsion); PL, CT and MIX are reported lumped."
 
 # --- NBO donor-acceptor analysis (Reed, Curtiss & Weinhold 1988) ------
 [entries.reed_curtiss_weinhold_nbo_1988]
@@ -6299,7 +6427,7 @@ always = ["libint_valeev"]
 "sap_helfem_large"      = ["lehtola_visscher_engel_sap_2020"]
 "pob-tzvp"              = ["peintinger_pob_tzvp_2013", "laun_pob_fifth_period_2018", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991"]
 "pob-dzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019"]
-"pob-tzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991", "dolg_stoll_savin_preuss_lanthanide_ecp_1989"]
+"pob-tzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019", "laun_pob_rev2_fifth_period_2022", "laun_pob_rev2_sixth_period_2021", "seidler_pob_rev2_lanthanides_2023", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991", "dolg_stoll_savin_preuss_lanthanide_ecp_1989"]
 # --- roadmap / forward-looking additions ---
 "pc-0"                  = ["jensen_pc_2001"]
 "aug-pc-0"              = ["jensen_pc_2001"]
@@ -6409,6 +6537,7 @@ _libxc_always           = ["libxc_2018"]
 # --- functionals wired in xc.cpp that were missing routes (§8 backfill) ---
 "slater"                = ["slater_x_1951"]
 "blyp"                  = ["becke_b88_1988", "lee_yang_parr_1988"]
+"bpw91"                 = ["becke_b88_1988", "perdew_pw91_1992"]
 "b3lyp/g"               = ["becke_1993", "lee_yang_parr_1988", "stephens_b3lyp_1994", "vwn_1980", "hertwig_koch_1997"]
 "tpssh"                 = ["tao_tpss_2003", "staroverov_tpssh_2003"]
 "m06-l"                 = ["zhao_truhlar_m06l_2006"]
@@ -6470,6 +6599,8 @@ _libxc_always           = ["libxc_2018"]
 
 
 [routes.methods]
+# Selected from the executed orbital-optimizer report, replacing DIIS credit.
+"opentrustregion"       = ["greiner_opentrustregion_2026"]
 # Not a method name: the foundational monograph for the LCAO crystalline-orbital
 # periodic HF treatment. registry.assemble() fires this for any periodic job
 # (periodic=True), the periodic analogue of an always-on method reference -- the
@@ -6896,7 +7027,8 @@ _libxc_always           = ["libxc_2018"]
 # the atomic positions — which is what makes one scalar per SCF legitimate.
 # The same split now serves the multi-k EWALD_3D RKS route via
 # python/vibeqc/periodic_corrected_exchange.py.
-"bipole"                = ["pisani_crystal_1988", "saunders_bipole_1992", "ewald_lattice_sum_1921", "dovesi_coulomb_multipole_1983", "causa_exchange_truncation_1988", "dovesi_crystal14_2014", "gygi_baldereschi_exx_1986", "carrier_goerling_exx_singularity_2007", "sundararaman_arias_exx_2013", "mcmurchie_davidson_1978", "perez_jorda_yang_1996"]
+# Physical AO-pair support is the ab initio BIPOLE default (#44/#316).
+"bipole"                = ["pisani_crystal_1988", "saunders_bipole_1992", "ewald_lattice_sum_1921", "dovesi_coulomb_multipole_1983", "causa_exchange_truncation_1988", "dovesi_crystal14_2014", "gygi_baldereschi_exx_1986", "carrier_goerling_exx_singularity_2007", "sundararaman_arias_exx_2013", "mcmurchie_davidson_1978", "perez_jorda_yang_1996", "sharma_beylkin_two_center_2021"]
 # Charge-pair Schwarz screening for the BIPOLE direct-space
 # SR erfc J/K build (LatticeSumOptions.sr_range_screening).
 # assemble(uses_bipole_sr_range=...) walks it.
@@ -6979,11 +7111,11 @@ _libxc_always           = ["libxc_2018"]
 "eom-cc3"               = ["koch_cc3_1997", "stanton_bartlett_eomcc_1993"]
 "steom-ccsd"            = ["nooijen_steom_1997"]
 "lpno-ccsd"             = ["neese_lpno_2009"]
-"dlpno-ccsd"            = ["purvis_bartlett_ccsd_1982", "riplinger_dlpno_2013", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
+"dlpno-ccsd"            = ["purvis_bartlett_ccsd_1982", "riplinger_dlpno_2013", "riplinger_sparsemaps_2016", "pinski_dlpno_mp2_2015", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
 # LocalCCSDOptions permits local (T0), a rotated-occupied compatibility (T1),
 # and exact/canonical triples. None implements Guo Eq. (2), so the static
 # closed-shell route intentionally omits that source.
-"dlpno-ccsd(t)"         = ["purvis_bartlett_ccsd_1982", "riplinger_dlpno_2013", "riplinger_triples_2013", "riplinger_sparsemaps_2016", "raghavachari_ccsdt_1989", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
+"dlpno-ccsd(t)"         = ["purvis_bartlett_ccsd_1982", "riplinger_dlpno_2013", "riplinger_triples_2013", "riplinger_sparsemaps_2016", "pinski_dlpno_mp2_2015", "raghavachari_ccsdt_1989", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
 # Open-shell (UHF-reference) DLPNO-UCCSD(T): the closed-shell DLPNO-CCSD
 # papers plus Saitow 2017 as qualified open-shell CC background. The
 # independent-UHF-space solvers do not claim Saitow's single-spatial-orbital
@@ -7115,8 +7247,17 @@ _libxc_always           = ["libxc_2018"]
 # conductor COSMO it corrects, and the COSMO FINE Cavity the variant requires
 # with that cavity's Gaussian-charge diagonal (Lange & Herbert eq. 3.7). NOT
 # Scalmani-Frisch: its point-charge diagonal is the Lebedev cavity's, which
-# Direct COSMO-RS refuses.
-"dcosmo-rs"             = ["sinnecker_direct_cosmors_2006", "klamt_schuurmann_cosmo_1993", "klamt_cosmors_1995", "klamt_cosmors_parametrization_1998", "klamt_fine_cavity_2018", "cossi_cpcm_2003", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
+# Direct COSMO-RS refuses. Anderson 1965: the macro-iteration extrapolates the
+# feedback potential with Anderson's step on every run.
+"dcosmo-rs"             = ["sinnecker_direct_cosmors_2006", "klamt_schuurmann_cosmo_1993", "klamt_cosmors_1995", "klamt_cosmors_parametrization_1998", "klamt_fine_cavity_2018", "cossi_cpcm_2003", "york_karplus_smooth_cosmo_1999", "lange_herbert_swig_2010", "tomasi_continuum_review_2005", "anderson_mixing_1965"]
+# CPCM and COSMO on the COSMO FINE Cavity (SolventModel cavity="fine"). The
+# cavity changes the method, so it changes the row: no Scalmani-Frisch switched
+# point-charge diagonal (that is the Lebedev cavity's), and instead the FINE
+# cavity itself plus the Gaussian-charge kernel it needs (York & Karplus eq. 56,
+# diagonal from Lange & Herbert eq. 3.7). Chosen by
+# vibeqc.solvation.driver.solvation_citation_key.
+"cpcm_fine"             = ["cossi_cpcm_2003", "klamt_schuurmann_cosmo_1993", "klamt_fine_cavity_2018", "york_karplus_smooth_cosmo_1999", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
+"cosmo_fine"            = ["klamt_schuurmann_cosmo_1993", "cossi_cpcm_2003", "klamt_fine_cavity_2018", "york_karplus_smooth_cosmo_1999", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
 # COSMO-RS / COSMOSPACE thermodynamics (vibeqc.solvation.cosmors). Fires when
 # a job computes a sigma profile, sigma potential, chemical potential or any
 # property derived from them. The underlying COSMO surface cites its own
@@ -7286,6 +7427,7 @@ _libxc_always           = ["libxc_2018"]
 # construction is only defined relative to a minimal free-atom basis, and
 # vibe-qc uses MINI (Knizia's own Table 1 footnote-c variant) as that B2.
 "ibo"                   = ["knizia_ibo_2013", "huzinaga_gtos_1984"]
+"iao_wiberg"            = ["knizia_ibo_2013", "huzinaga_gtos_1984", "wiberg_bond_index_1968"]
 "vpt2"                  = ["barone_vpt2_2005"]
 "somf"                  = ["hess_somf_1996"]
 "frequency_scaling"     = ["wong_scaling_1996"]
@@ -7293,7 +7435,7 @@ _libxc_always           = ["libxc_2018"]
 # --- Bond analysis methods (v0.22.0 BOND) ---
 "wiberg"                = ["wiberg_bond_index_1968"]
 "delocalization_index"  = ["matito_esi_2007", "outeiral_di_2018"]
-"morokuma_eda"          = ["morokuma_eda_1971"]
+"morokuma_eda"          = ["morokuma_eda_1971", "kitaura_morokuma_1976"]
 "entanglement"          = ["legeza_entanglement_2003"]
 "multiorbital_correlation" = ["szalay_multiorbital_2017"]
 "entanglement_bonds"    = ["entanglement_bonds_2025"]
@@ -7421,3 +7563,15 @@ always = [
     "derenzo_2000",
     "barandiaran_seijo_aimp_1988",
 ]
+
+[entries.greiner_opentrustregion_2026]
+kind = "article"
+doi = "10.1021/acs.jctc.5c01576"
+authors = ["Greiner, Jonas", "Høyvik, Ida-Marie", "Lehtola, Susi", "Eriksen, Janus J."]
+title = "A Reusable Library for Second-Order Orbital Optimization Using the Trust Region Method"
+journal = "Journal of Chemical Theory and Computation"
+year = 2026
+volume = 22
+issue = 2
+pages = "881-895"
+bibtex_key = "greiner_opentrustregion_2026"

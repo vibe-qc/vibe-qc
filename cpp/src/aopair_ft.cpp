@@ -4,6 +4,7 @@
 // algorithm derivation.
 
 #include "vibeqc/aopair_ft.hpp"
+#include "vibeqc/lattice_pair_cells.hpp"
 #include "aopair_ft_internal.hpp"
 #include "vibeqc/cart_to_sph_data.hpp"
 
@@ -593,8 +594,12 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& R_g_list,
     const Eigen::Vector3d& k_cart,
-    double screen_tol)
+    double screen_tol,
+    double pair_cutoff_bohr)
 {
+    if (!std::isfinite(pair_cutoff_bohr) ||
+        (pair_cutoff_bohr < 0.0 && pair_cutoff_bohr != -1.0))
+        throw std::invalid_argument("pair_cutoff_bohr must be nonnegative or -1 (historical)");
     const std::vector<ShellInfo> shells = basis.shells();
     const auto bf_offsets = shell_to_bf_offsets_pure(shells);
 
@@ -648,6 +653,7 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
     // exchange by 2.0e-2 Ha/cell on LiH/sto-3g (2,1,1) (2026-07-10,
     // handovers/HANDOVER_AICCM_DIRECT_TORUS.md Finding 2 addendum).
     const bool gamma_pair_symmetric =
+        pair_cutoff_bohr < 0.0 &&
         k_cart.squaredNorm() <= 1.0e-28
         && cell_list_is_inversion_symmetric(R_g_list)
         && eval_frequencies_are_lattice_reciprocal(G_vectors, R_g_list);
@@ -765,6 +771,11 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
                 const double Rx = R_g_list(static_cast<Eigen::Index>(g), 0);
                 const double Ry = R_g_list(static_cast<Eigen::Index>(g), 1);
                 const double Rz = R_g_list(static_cast<Eigen::Index>(g), 2);
+                if (pair_cutoff_bohr >= 0.0 && !pair_in_range(
+                        basis.libint()[static_cast<std::size_t>(sM)],
+                        basis.libint()[static_cast<std::size_t>(sN)],
+                        Eigen::Vector3d(Rx, Ry, Rz), pair_cutoff_bohr))
+                    continue;
                 const double Bx = Bx0 + Rx;
                 const double By = By0 + Ry;
                 const double Bz = Bz0 + Rz;
@@ -1311,8 +1322,12 @@ std::vector<AOPairFTTensor> ao_pair_fourier_transform_bloch_multi(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& k_carts,
     double screen_tol,
-    const std::vector<double>& pair_weights)
+    const std::vector<double>& pair_weights,
+    double pair_cutoff_bohr)
 {
+    if (!std::isfinite(pair_cutoff_bohr) ||
+        (pair_cutoff_bohr < 0.0 && pair_cutoff_bohr != -1.0))
+        throw std::invalid_argument("pair_cutoff_bohr must be nonnegative or -1 (historical)");
     // Multi-k batched variant of ao_pair_fourier_transform_bloch: the
     // per-cell Cartesian McMurchie-Davidson pair-FT work (the dominant
     // transcendental cost — Eq. cderi pair density of Sun, Berkelbach,
@@ -1391,6 +1406,7 @@ std::vector<AOPairFTTensor> ao_pair_fourier_transform_bloch_multi(
     // The mirror shortcut needs every ket momentum at Gamma (see the
     // three-condition note in the single-k kernel above).
     const bool gamma_pair_symmetric =
+        pair_cutoff_bohr < 0.0 &&
         all_k_zero
         && cell_list_is_inversion_symmetric(R_g_list)
         && eval_frequencies_are_lattice_reciprocal(G_vectors, R_g_list);
@@ -1508,6 +1524,11 @@ std::vector<AOPairFTTensor> ao_pair_fourier_transform_bloch_multi(
                 const double Rx = R_g_list(static_cast<Eigen::Index>(g), 0);
                 const double Ry = R_g_list(static_cast<Eigen::Index>(g), 1);
                 const double Rz = R_g_list(static_cast<Eigen::Index>(g), 2);
+                if (pair_cutoff_bohr >= 0.0 && !pair_in_range(
+                        basis.libint()[static_cast<std::size_t>(sM)],
+                        basis.libint()[static_cast<std::size_t>(sN)],
+                        Eigen::Vector3d(Rx, Ry, Rz), pair_cutoff_bohr))
+                    continue;
                 const double Bx = Bx0 + Rx;
                 const double By = By0 + Ry;
                 const double Bz = Bz0 + Rz;

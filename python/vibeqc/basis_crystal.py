@@ -1025,9 +1025,10 @@ _BREDOW_AE_TO_ECP_KEYS: dict[str, list[str]] = {
         "pob-tzvp-rev2-cs-po",
         "pob-tzv-rev2-la-lu",
     ],
+    # pob-TZVP has no lanthanides; its papers stop at I. The rev2 La-Lu
+    # archive belongs to pob-TZVP-rev2 alone (#289).
     "pob-tzvp": [
         "pob-tzvp-rb-i",
-        "pob-tzv-rev2-la-lu",
     ],
     "pob-dzvp-rev2": [
         "pob-dzvp-rb-i",
@@ -1041,9 +1042,16 @@ _BREDOW_CITATIONS = {
         "(2013). DOI: 10.1002/jcc.23153; Rb-I: Laun, Vilela Oliveira, Bredow. "
         "J. Comput. Chem. 39, 1285-1290 (2018). DOI: 10.1002/jcc.25195"
     ),
+    # Five papers, one per range of the records (#288).
     "pob-tzvp-rev2": (
-        "Vilela Oliveira, Laun, Peintinger, Bredow. J. Comput. Chem. 40, "
-        "2364-2376 (2019). DOI: 10.1002/jcc.26013"
+        "Peintinger, Vilela Oliveira, Bredow. J. Comput. Chem. 34, 451-459 "
+        "(2013). DOI: 10.1002/jcc.23153; H-Br: Vilela Oliveira, Laun, "
+        "Peintinger, Bredow. J. Comput. Chem. 40, 2364-2376 (2019). "
+        "DOI: 10.1002/jcc.26013; Rb-I: Laun, Bredow. J. Comput. Chem. 43, "
+        "839-846 (2022). DOI: 10.1002/jcc.26839; Cs-Ba, Hf-Po: Laun, "
+        "Bredow. J. Comput. Chem. 42, 1064-1072 (2021). "
+        "DOI: 10.1002/jcc.26521; La-Lu: Seidler, Laun, Bredow. "
+        "J. Comput. Chem. 44, 1418-1425 (2023). DOI: 10.1002/jcc.27097"
     ),
     "pob-dzvp-rev2": (
         "Vilela Oliveira, Laun, Peintinger, Bredow. J. Comput. Chem. 40, "
@@ -1187,15 +1195,21 @@ def fetch_bredow_basis_sets(
     verbose: bool = True,
     return_atoms: bool = False,
 ) -> dict[str, Path] | tuple[dict[str, Path], dict[str, list[CrystalAtomBasis]]]:
-    """Download the Bredow group all-electron basis sets and convert them
-    to .g94 files loadable by libint.
+    """Download the Bredow group all-electron basis sets, parse them, and
+    optionally convert them to .g94 files loadable by libint.
 
     Parameters
     ----------
     dest_dir
-        Target directory for the .g94 output files. Defaults to
-        ``basis_library/basis/`` inside the vibe-qc source tree (the path
-        already on ``LIBINT_DATA_PATH`` in editable installs).
+        Directory for the .g94 output files. There is no default
+        destination: with ``dest_dir=None`` nothing is written and the call
+        only parses, which is useful only with ``return_atoms=True`` (a
+        call that would do neither raises ``ValueError``). The default used
+        to be ``basis_library/custom/`` inside the installed package, so any
+        caller that only wanted the records -- the runtime ECP fallback, the
+        ECP tests -- rewrote a tracked file of whatever tree it ran in
+        (#393). A maintainer refreshing the committed copy passes that
+        directory explicitly.
     names
         Subset of basis-set keys to fetch (from ``_BREDOW_ARCHIVES``).
         ``None`` fetches all supported light-element archives.
@@ -1204,19 +1218,19 @@ def fetch_bredow_basis_sets(
 
     Returns
     -------
-    dict mapping basis name -> path of the generated .g94 file.
+    dict mapping basis name -> path of the generated .g94 file (empty when
+    ``dest_dir`` is ``None``); with ``return_atoms=True``, a tuple of that
+    dict and the parsed records per basis name.
     """
-    if dest_dir is None:
-        # Default target: python/vibeqc/basis_library/custom/ — this is the
-        # committed-to-repo staging area inside the Python package.
-        # scripts/setup_basis_library.sh copies custom/*.g94 on top of
-        # libint's stock bases to populate build/basis_library/basis/,
-        # which is what LIBINT_DATA_PATH points at.
-        # Writing here keeps the generated files under version control.
-        here = Path(__file__).resolve().parent
-        dest_dir = here / "basis_library" / "custom"
-    dest = Path(dest_dir)
-    dest.mkdir(parents=True, exist_ok=True)
+    if dest_dir is None and not return_atoms:
+        raise ValueError(
+            "fetch_bredow_basis_sets: pass dest_dir to write .g94 files, or "
+            "return_atoms=True to only parse; there is no default destination "
+            "(it is never the installed package tree)"
+        )
+    dest = Path(dest_dir) if dest_dir is not None else None
+    if dest is not None:
+        dest.mkdir(parents=True, exist_ok=True)
 
     keys = list(names) if names is not None else list(_BREDOW_ARCHIVES)
     results: dict[str, Path] = {}
@@ -1309,6 +1323,8 @@ def fetch_bredow_basis_sets(
         ordered = [atoms_by_z[z] for z in sorted(atoms_by_z)]
         if return_atoms:
             parsed_atoms[key] = ordered
+        if dest is None:
+            continue
         citation = _BREDOW_CITATIONS.get(key, "")
         header = (
             f"vibeqc-generated from Bredow-group archive '{key}'.\n"
@@ -1340,7 +1356,7 @@ def _main(argv: list[str]) -> int:
         print(
             "usage:\n"
             "  python -m vibeqc.basis_crystal fetch "
-            "[--dest DIR] [name ...]\n"
+            "--dest DIR [name ...]\n"
             "       Download Bredow-group basis sets and convert to "
             ".g94 for libint.\n"
             "  python -m vibeqc.basis_crystal convert IN.crystal OUT.g94\n"
@@ -1352,9 +1368,16 @@ def _main(argv: list[str]) -> int:
     cmd, rest = argv[0], argv[1:]
     if cmd == "fetch":
         dest = None
-        if rest and rest[0] == "--dest":
+        if len(rest) >= 2 and rest[0] == "--dest":
             dest = rest[1]
             rest = rest[2:]
+        if dest is None:
+            print(
+                "fetch needs --dest DIR: there is no default output directory "
+                "(to refresh the committed copy, pass "
+                "python/vibeqc/basis_library/custom)"
+            )
+            return 2
         fetch_bredow_basis_sets(dest_dir=dest, names=rest if rest else None)
         return 0
     if cmd == "convert":
