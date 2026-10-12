@@ -20,10 +20,10 @@ vibe-qc supports two backends:
   reference polarizability, and the r4r2 / C8 table is dftd4-consistent,
   so native pairwise C6 agree with the dftd4 backend to within a few
   percent and the CH4-dimer D4 energy to <0.05 kcal/mol -- the
-  handover's production parity bars. **Supported elements: H-Ne** (the
+  historical design record's production parity bars. **Supported elements: H-Ne** (the
   Phase-D4b reference catalogue); elements outside it raise a clear
   error. ``backend="dftd4"`` remains the default for full
-  periodic-table coverage. See ``handovers/HANDOVER_D4_NATIVE.md``.
+  periodic-table coverage.
 
 Both backends are accessed through the same :func:`compute_d4` API.
 
@@ -147,7 +147,10 @@ def compute_d4(
         scaling (the main upgrade over D3). Default 0.0 (neutral).
     with_gradient
         When True, the returned :class:`D4Result` carries the
-        ``(n_atoms, 3)`` gradient of E_disp in Hartree/bohr.
+        ``(n_atoms, 3)`` gradient of E_disp in Hartree/bohr. The native
+        gradient is analytic and includes two-body and ATM geometry,
+        CN-dependent C6, and EEQ charge response at fixed ``charge``;
+        requesting it preserves the scalar energy functional.
     backend
         ``"dftd4"`` (default, requires optional dependency) or
         ``"native"`` (Phase D4b, requires generated reference dataset).
@@ -190,7 +193,8 @@ def compute_d4(
         )
     elif backend == "native":
         return _compute_d4_native(
-            mol, functional, with_gradient=with_gradient, ref_data_path=ref_data_path
+            mol, functional, charge=charge, with_gradient=with_gradient,
+            ref_data_path=ref_data_path,
         )
     else:
         raise ValueError(
@@ -248,6 +252,7 @@ def _compute_d4_native(
     mol: Molecule,
     functional: str,
     *,
+    charge: float = 0.0,
     with_gradient: bool = False,
     ref_data_path: Optional[str] = None,
 ) -> D4Result:
@@ -257,7 +262,7 @@ def _compute_d4_native(
     per-atom Eq.-6 extraction over a **correlated CPKS (PBE38/TD-DFT)**
     alpha(iw), and the r4r2 / C8 table was corrected, so native pairwise
     C6 agree with dftd4 to within a few percent and the CH4-dimer D4
-    energy to <0.05 kcal/mol (handover Sec. 5 bars met). No experimental
+    energy to <0.05 kcal/mol (historical design record Sec. 5 bars met). No experimental
     warning is emitted for the supported element set (H-Ne); elements
     outside the reference catalogue raise a clear error from the dataset
     lookup. ``backend="dftd4"`` remains the default for full
@@ -276,6 +281,7 @@ def _compute_d4_native(
             mol,
             ref_data,
             functional,
+            total_charge=charge,
             **charge_scaling,
         )
         return D4Result(
@@ -288,6 +294,7 @@ def _compute_d4_native(
             mol,
             ref_data,
             functional,
+            total_charge=charge,
             atm=True,
             **charge_scaling,
         )

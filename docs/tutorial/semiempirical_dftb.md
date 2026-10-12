@@ -97,11 +97,17 @@ orbitals (STO-6G expansions):
   form. With $\bar{h}_{AB} = \tfrac{1}{2}(h_A + h_B)$ the mean on-site
   energy of the two atoms,
   $$
-  H^0_{\mu\nu} = \tfrac{1}{2}\,\kappa\, S_{\mu\nu}\, \bar{h}_{AB},
+  H^0_{\mu\nu} = \kappa\, S_{\mu\nu}\, \bar{h}_{AB},
   \qquad \mu \in A,\ \nu \in B,
   $$
   where $\kappa$ is the Wolfsberg-Helmholz constant. Diagonal elements
-  are the tabulated on-site orbital energies.
+  are the tabulated on-site orbital energies. The pair average is applied
+  once, as in Wolfsberg and Helmholz (1952), p. 838,
+  DOI [10.1063/1.1700580](https://doi.org/10.1063/1.1700580).
+  Earlier versions inadvertently halved this coupling again; energies,
+  optimized geometries and derivatives from that Hamiltonian are not
+  interchangeable with corrected results. The atom-average approximation
+  and placeholder-repulsive limitations still apply.
 * **Charges** are Mulliken populations,
   $\Delta q_A = n_A^{\rm val} - \sum_{\mu \in A} (DS)_{\mu\mu}$.
 * **$\gamma_{AB}$** uses an Ohno-Klopman damped Coulomb,

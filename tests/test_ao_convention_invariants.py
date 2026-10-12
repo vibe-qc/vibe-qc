@@ -448,8 +448,7 @@ def test_named_basis_route_never_produces_cartesian_shells():
     undetected on the ordinary test surface. It is not the only production
     route: ``vibeqc.basis_toolkit.to_libint_basis`` honors an imported
     basis's ``harmonic_type`` and does build Cartesian shells (shipped since
-    v0.15.0), which is how the error was reachable in the field -- see
-    handovers/HANDOVER_AO_CONVENTION.md.
+    v0.15.0), which is how the error was reachable in the field.
 
     Worth pinning independently of the Cartesian fixes: the named-basis
     route is the reason a regression on the Cartesian path would again be

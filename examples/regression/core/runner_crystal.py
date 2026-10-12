@@ -37,7 +37,7 @@ Env-var knobs (laptop callers usually leave them at default):
   receives via ``--cpus`` (default: 14, matches the wrapper's own
   default).
 * ``VIBEQC_CRYSTAL_WALL_TIME_SECONDS`` — vq's hard wall-clock cap
-  (default: 7200 = 2 h). The handover's 2-h budget is enough for the
+  (default: 7200 = 2 h). the original investigation's 2-h budget is enough for the
   STO-3G / POB-* canonical regression set; tune up for tight POB-TZVP
   on larger cells.
 * ``VIBEQC_CRYSTAL_POLL_INTERVAL_S`` — how often we re-`vq status` the

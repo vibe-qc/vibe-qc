@@ -72,6 +72,137 @@ def _canonical_ump2(mol, uhf, df, nf=0):
     return ump2_energy(ea[nf:na], ea[na:], eb[nf:nb], eb[nb:], ovaa, ovbb, ovab)
 
 
+@pytest.mark.parametrize("tcut,n_kept", [(0.0, 4), (0.5, 2), (100.0, 1)])
+def test_pno_fock_spectrum_preserves_density_subspace(monkeypatch, tcut, n_kept):
+    """Truncation comes from the density; residuals belong to the Fock block."""
+    import weakref
+    from scipy.linalg import eigvalsh
+    from vibeqc.dlpno import ump2 as module
+
+    Q, _ = np.linalg.qr(np.random.default_rng(41).normal(size=(4, 4)))
+    density = Q @ np.diag([0.0, 0.1, 1.0, 2.0]) @ Q.T
+    eps_vir = np.array([0.2, 0.2 + 1e-12, 0.2, 1.0])
+    original_density, original_eps = density.copy(), eps_vir.copy()
+    refs = []
+    solve = module.solve_dense_fock
+
+    def checked_solve(matrix, **kwargs):
+        result = solve(matrix, **kwargs)
+        assert result.operator_metadata.kind == "fock"
+        assert result.operator_metadata.spin == "beta"
+        assert result.operator_metadata.basis_id == "test-pair-pno"
+        assert result.residual_frame == "orthogonal"
+        assert result.selection_verified
+        assert max(result.residuals) < 1e-12
+        assert result.orthogonality_error < 1e-12
+        refs.extend(weakref.ref(x) for x in (matrix, result, result.eigenvectors))
+        return result
+
+    monkeypatch.setattr(module, "solve_dense_fock", checked_solve)
+    U, eps = module._pnos(density, eps_vir, tcut, spin="beta", basis_id="test-pair-pno")
+    selected = Q[:, -n_kept:]
+    F = np.diag(eps_vir)
+    assert U.shape == (4, n_kept)
+    np.testing.assert_allclose(U @ U.T, selected @ selected.T, atol=1e-12)
+    np.testing.assert_allclose(U.T @ U, np.eye(n_kept), atol=1e-12)
+    np.testing.assert_allclose(U.T @ F @ U, np.diag(eps), atol=1e-12)
+    np.testing.assert_allclose(eps, eigvalsh(selected.T @ F @ selected), atol=1e-12)
+    np.testing.assert_array_equal(density, original_density)
+    np.testing.assert_array_equal(eps_vir, original_eps)
+    assert len(refs) == 3 and all(ref() is None for ref in refs)
+
+
+def test_pno_strict_density_cutoff_and_minimum_rank():
+    from vibeqc.dlpno.ump2 import _pnos
+
+    density = np.diag([0.0, 1.0, 1.0, 4.0])
+    U, eps = _pnos(density, np.arange(4.0), 1.0)
+    assert U.shape == (4, 1)  # eigenvalues equal to the cutoff are excluded
+    np.testing.assert_allclose(U @ U.T, np.diag([0., 0., 0., 1.]), atol=1e-12)
+    assert eps[0] == pytest.approx(3.0)
+    U, eps = _pnos(np.zeros((4, 4)), np.arange(4.0), 1.0)
+    assert U.shape == (4, 1) and np.isfinite(eps).all()
+
+
+@pytest.mark.parametrize("tcut", [0.0, 2e-3])
+def test_pair_energies_invariant_to_degenerate_virtual_gauge(tcut):
+    """Arbitrary bases in degenerate virtual spaces preserve pair energies."""
+    from vibeqc.dlpno.ump2 import _same_spin_channel, _opp_spin_channel
+
+    rng = np.random.default_rng(73)
+    Ba = rng.normal(size=(6, 3, 5)) * 0.2
+    Bb = rng.normal(size=(6, 2, 4)) * 0.2
+    eo_a, eo_b = np.array([-2., -1.5, -1.]), np.array([-1.8, -1.1])
+    ev_a, ev_b = np.full(5, 0.5), np.full(4, 0.7)
+    Qa, _ = np.linalg.qr(rng.normal(size=(5, 5)))
+    Qb, _ = np.linalg.qr(rng.normal(size=(4, 4)))
+
+    def energies(a, b):
+        return (
+            _same_spin_channel(a, eo_a, ev_a, tcut),
+            _same_spin_channel(b, eo_b, ev_b, tcut),
+            _opp_spin_channel(a, eo_a, ev_a, b, eo_b, ev_b, tcut),
+        )
+
+    original, rotated = energies(Ba, Bb), energies(Ba @ Qa, Bb @ Qb)
+    for (energy, sizes), (rotated_energy, rotated_sizes) in zip(original, rotated):
+        assert rotated_energy == pytest.approx(energy, abs=1e-12)
+        assert rotated_sizes == sizes
+    if tcut > 0:
+        assert min(original[0][1]) < len(ev_a)
+        assert min(original[1][1]) < len(ev_b)
+
+
+@pytest.mark.parametrize("localise,tcut", [
+    ("none", 0.0), ("none", 1e-5), ("boys", 1e-5), ("external", 1e-5),
+])
+def test_shared_spin_pair_fock_matches_previous_solve(monkeypatch, localise, tcut):
+    from types import SimpleNamespace
+    from scipy.linalg import eigvalsh
+    from vibeqc.dlpno import ump2 as module
+
+    mol, basis, uhf, df = _setup(OH, 2, "def2-svp")
+    opts = DLPNOUMP2Options(localise=localise, tcut_pno=tcut, n_frozen=1)
+    solve = module.solve_dense_fock
+    seen = set()
+
+    def checked_solve(matrix, **kwargs):
+        result = solve(matrix, **kwargs)
+        metadata = result.operator_metadata
+        identity = metadata.basis_id, metadata.spin
+        assert identity not in seen
+        seen.add(identity)
+        assert metadata.kind == "fock" and metadata.spin in {"alpha", "beta"}
+        assert result.residual_frame == "orthogonal"
+        assert result.selection_verified
+        assert max(result.residuals) < 1e-11
+        assert result.orthogonality_error < 1e-12
+        np.testing.assert_allclose(result.eigenvalues, eigvalsh(matrix), atol=1e-12)
+        return result
+
+    monkeypatch.setattr(module, "solve_dense_fock", checked_solve)
+    actual = run_dlpno_ump2(mol, basis, uhf, df, opts)
+    assert {spin for _, spin in seen} == {"alpha", "beta"}
+    frame = "canonical" if localise == "none" else "localized"
+    for pair_type in ("same", "opposite"):
+        for spin in ("alpha", "beta"):
+            assert any(name.startswith(f"dlpno-ump2-{frame}-{pair_type}-pair-")
+                       and channel == spin for name, channel in seen)
+
+    def previous_solve(matrix, **kwargs):
+        eps, C = np.linalg.eigh(matrix)
+        return SimpleNamespace(eigenvalues=eps, eigenvectors=C)
+
+    monkeypatch.setattr(module, "solve_dense_fock", previous_solve)
+    previous = run_dlpno_ump2(mol, basis, uhf, df, opts)
+    assert actual.converged and previous.converged
+    for name in ("e_aa", "e_bb", "e_ab", "e_corr"):
+        assert getattr(actual, name) == pytest.approx(getattr(previous, name), abs=1e-11)
+    for name in ("n_screened", "n_pairs_aa", "n_pairs_bb", "n_pairs_ab",
+                 "avg_pno_aa", "avg_pno_bb", "avg_pno_ab"):
+        assert getattr(actual, name) == getattr(previous, name)
+
+
 class TestExactnessRatchet:
     """Full-domain DLPNO-UMP2 == canonical UMP2, channel by channel."""
 

@@ -10,17 +10,19 @@ images.
 
 vibe-qc's Phase **SYM3a** ships orbit-reduced storage for the
 periodic one-electron integrals (overlap, kinetic, nuclear
-attraction). Compute one block per orbit instead of one block per
-cell; reconstruct the full lattice matrix on demand for SCF
-consumption. **Storage compression on a high-symmetry crystal is up
-to $|G|\times$** (group order) and pays off at every level of the
-calculation that touches lattice integrals.
+attraction). The wrappers below first compute the full lattice matrix,
+then store representative sub-blocks for reconstruction on demand.
+**Storage compression on a high-symmetry crystal can approach $|G|\times$**
+(group order). These wrappers return both compressed and full forms, so
+the call itself does not avoid the full build or its peak allocation.
 
 This tutorial covers the storage API, the verify-symmetry diagnostic,
 and the honest scope: SYM3a is **storage-only**. Kernel-level compute
-reduction (one matrix build per orbit, with reconstruction afterward)
-is Phase SYM3b, a follow-up that would also turn the storage win
-into a wall-clock win for SCF Fock builds.
+reduction is available through the separate `symmetry_integrals_reduced`
+APIs (Phase SYM3b), which evaluate representative cells before
+reconstruction. Their scope and the shared infrastructure are described in
+the [symmetry capability status](../symmetry_status.md). Storage ratios
+alone do not establish fewer Fock contractions or a wall-clock speedup.
 
 ## The basic call
 
@@ -157,9 +159,8 @@ in (y, z) gives $|G| = 8$, useful but more modest than Pm-3m's 48.
     representative the others are symmetry-related to).
 - The **`LatticeMatrixSet`** is the full uncompressed matrix, 
   exactly what the standard `compute_overlap_lattice` returns.
-  Useful for downstream consumers that don't yet understand the
-  reduced view (e.g. the SCF drivers, which today still consume the
-  full matrix; SYM3b will close that gap).
+  Useful for downstream consumers that require full matrices. Separate
+  compute-reduced APIs also reconstruct full matrices for such consumers.
 
 To go from a reduced view back to a full one (for instance, after
 loading the reduced view from disk):
@@ -173,7 +174,7 @@ full_reconstructed = vq.reconstruct_lattice_matrix_set_c(
 
 ## When to use it
 
-As of v0.4.0: **SYM3a is most useful for analysis and disk I/O**:
+**SYM3a is most useful for analysis and disk I/O**:
 
 - Saving lattice matrices to disk for later analysis (CRYSTAL-style
   `.f9`-equivalent files): write only the reduced representation;
@@ -183,14 +184,13 @@ As of v0.4.0: **SYM3a is most useful for analysis and disk I/O**:
   residual the symmetry relations are violated by, and is a
   diagnostic when something looks wrong with the lattice-sum cutoffs
   or the spglib analysis.
-- Building intuition for which crystals will benefit from SYM3b's
-  compute reduction once it ships.
+- Identifying candidate reductions to measure with the separate
+  compute-reduced APIs.
 
-Tomorrow (post-SYM3b): the same orbit partition that today gives
-$|G|\times$ storage compression will give $|G|\times$ Fock-build
-acceleration. Code written today against `compute_*_lattice_with_orbits`
-will get the SYM3b speedup transparently, vibe-qc keeps the user-
-facing API stable across the storage→compute migration.
+`compute_*_lattice_with_orbits` continues to compute the full matrix first.
+It does not transparently switch to representative-only integral evaluation.
+Actual speedup depends on the admitted operations, representative cells,
+reconstruction cost and downstream contractions, and must be measured.
 
 ## Theory
 
@@ -255,13 +255,14 @@ returns a dict:
   (orbit, operation) pairs.
 - `passes`, whether `max_residual < atol`.
 
-If `passes=False`, the most common cause is that the lattice cutoff
-(`cutoff_bohr`) is too tight: some triples have orbit partners
-*outside* the cell list, breaking symmetry-closure. The fix is
-either to enlarge the cutoff so the cell list is closed, or to pass
-`require_closed=False` to the `compute_*_with_orbits` call (which
-still computes correctly but reports a smaller compression ratio,
-since open orbits are counted as singletons).
+If `passes=False`, inspect the operator, AO maps and finite cell support.
+Some triples may have orbit partners outside the cell list. For general
+multi-atom cells, increasing an origin-centred radial cutoff does not by
+itself guarantee closure under the atom-image shifts. A group-invariant
+pair support may be required and defines a different finite approximation.
+`require_closed=False` skips absent partners during orbit construction;
+it does not repair the source or certify reconstruction. Retain the full
+reference and verify reconstructed values before using the compressed form.
 
 ## Resources
 
@@ -269,9 +270,10 @@ since open orbits are counted as singletons).
   Compute time: ~3 ms for `compute_overlap_lattice_with_orbits` on
   one core (the orbit identification dominates over the integral
   computation at this scale).
-- Memory peak: same as the full `compute_overlap_lattice` (the full
-  matrix is computed first, *then* compressed). True memory savings
-  await SYM3b's orbit-only kernel.
+- The full `compute_overlap_lattice` allocation is retained while the
+  compressed representation is constructed. Compression therefore adds
+  temporary/retained storage during this call; peak-memory savings require
+  a separately measured compute and storage plan.
 - For larger systems (10+ atoms per cell, cutoff 15+ bohr), the
   orbit-identification cost becomes a few percent of the integral-
   build time, and the storage compression gives several MB of saved
@@ -279,23 +281,20 @@ since open orbits are counted as singletons).
 
 ## Caveats
 
-- **Symmorphic operations only.** The atom-pair orbit construction
-  drops non-symmorphic operations (those with a non-zero fractional
-  translation, e.g. screw axes and glide planes). Most cubic /
-  hexagonal high-symmetry crystals are fully symmorphic; lower-
-  symmetry cells may lose a chunk of group operations to this
-  filter. Non-symmorphic SYM3a is a follow-up phase.
-- **Storage-only in v0.4.0.** The full lattice matrix is still built
-  by the standard kernel before being compressed; the SCF Fock build
-  consumes the full matrix as before. SYM3b (kernel-level reduction)
-  is the next phase and would multiply the storage win by an equal
-  wall-clock win.
+- **Zero-fractional-translation subset.** These wrappers filter out
+  operations with nonzero fractional translation. The shared periodic
+  AO/Bloch transport supports more general operations, but that does not
+  automatically extend this storage API or qualify its finite supports.
+- **Storage-only wrappers.** The full lattice matrix is built before
+  compression. The separate SYM3b APIs reduce selected one-electron work;
+  neither a storage ratio nor their availability establishes a Fock-build
+  speedup for every method.
 - **Cell-list closure.** A symmetry orbit can have partners that
   fall outside `cutoff_bohr`; the default `require_closed=True`
   raises `ValueError` if any orbit isn't fully contained in the
-  cell list. Pass `require_closed=False` to fall back to a "best-
-  effort" compression (smaller ratio, no error), useful for
-  exploration but not for production.
+  cell list. `require_closed=False` permits incomplete orbit membership
+  by skipping absent partners; it is an exploratory option, not a
+  production qualification or a promise of singleton fallback.
 - **Spglib precision.** The space-group analysis uses spglib's
   default precision (`symprec=1e-5`). Heavily-strained cells or
   numerical relaxation residuals may push spglib into a lower-
@@ -335,10 +334,10 @@ since open orbits are counted as singletons).
   walks through the precursor SYM2b / SYM2c machinery on NaCl
   (compress + reconstruct + Wigner-D rotation peek), which underpins
   the SYM3a integration this tutorial covers.
-- [Periodic SCF convergence](periodic_scf_convergence.md)
-  - once SYM3b lands, the |G|× storage compression here becomes
-  |G|× Fock-build wall-clock acceleration, which combined with the
-  C1a level shift makes tight high-symmetry SCFs much faster.
+- [Symmetry capability status](../symmetry_status.md) distinguishes the
+  available storage and compute APIs from shared transport and production
+  qualification. [Periodic SCF convergence](periodic_scf_convergence.md)
+  covers convergence controls separately from symmetry-reduction cost.
 - [Ewald user guide](../user_guide/ewald.md), the orbit machinery
   composes cleanly with EWALD_3D nuclear attraction (the orbit
   partition is method-independent), so a high-symmetry 3D bulk SCF

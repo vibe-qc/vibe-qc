@@ -69,6 +69,19 @@ Three geometry-optimizer backends are available through
 | Native L-BFGS-B | `"native"` | scipy's L-BFGS-B, limited-memory BFGS with box constraints | No-ASE workflows; frozen atoms |
 | Brent steepest-descent | `"brent"` | Steepest-descent direction + Brent 1-D line search per step | Flat/dispersion-bound PESs where Hessian extrapolation misbehaves |
 
+**`fci`, `nevpt2`, `caspt2`, and `mrci` require `optimizer_backend="native"`
+or `"brent"` explicitly.** The ASE calculator has no correlated-surface
+route for these four (unlike `casci`/`casscf`, which it does route
+correctly), so `optimizer_backend="ase"`, including the `"auto"` default
+whenever ASE is installed, raises a `ValueError` rather than silently
+optimizing the mean-field surface and reporting it under the requested
+method (GitLab #357). Pass `optimizer_backend="native"` or `"brent"` to
+reach the correlated FD surface described in
+[Supported methods](#supported-methods) below; expect it to be
+substantially slower than a mean-field optimization (minutes rather than
+seconds even on a small molecule), since each FD gradient costs
+`6 * n_atoms` correlated single points.
+
 The Brent backend never takes an uphill step (each line search is a
 rigorous 1-D minimisation) and needs no Hessian approximation.  Its
 cost is higher per geometry step (multiple energy evaluations per line
@@ -85,6 +98,77 @@ from vibeqc.molecular_optimize import optimize_molecule_brent
 result = optimize_molecule_brent(mol, basis_name="def2-svp", method="rks",
                                   functional="PBE")
 ```
+
+### When the optimizer does not converge
+
+An optimization that stops short of the gradient threshold ends the job on
+all three `optimizer_backend=` backends. The final single point, the
+frequencies and the other post-SCF steps do not run, because they would
+report the properties of a geometry that is not a stationary point.
+
+For `"native"` and `"brent"` the `.out` closes the optimization with a
+verdict. A converged run reads (H2O/STO-3G RHF from a stretched start)
+
+```text
+  Geometry optimization CONVERGED  (native L-BFGS-B, 4 iterations)
+  final max|g| = 2.328e-05 Ha/bohr (threshold 9.723e-04)
+  the largest gradient component is within the threshold
+
+  Optimized geometry
+```
+
+and a run that did not converge reads
+
+```text
+  Geometry optimization NOT CONVERGED  (native L-BFGS-B, 3 iterations)
+  final max|g| = 4.543e-03 Ha/bohr (threshold 9.723e-04)
+  stopped at the step limit (3 of 3 steps)
+
+  FATAL: geometry optimization (native L-BFGS-B) did not converge: stopped at the step limit (3 of 3 steps); final max|g| = 4.543e-03 Ha/bohr against the 9.723e-04 Ha/bohr threshold. The last geometry is in the output files.
+  Last non-converged geometry written to h2o.xyz
+```
+
+`final max|g|` is the largest gradient component (Ha/bohr) at the last
+geometry and the threshold is `fmax` converted from eV/Å. When scipy stops
+for a reason other than the step limit, the line under it quotes that reason.
+
+A run that did not converge also leaves the last geometry in the `.xyz`
+(unless `write_xyz_file=False`), marks the manifest `crashed`, and records a
+`geometry_optimization_nonconverged` event. `run_job` then raises:
+
+| Backend | Error |
+|---|---|
+| `"ase"` | `RuntimeError`, "did not converge after N of M allowed steps"; the last geometry is also in the `.traj` |
+| `"native"`, `"brent"` | `vibeqc.geomopt.GeomOptNotConvergedError`, a `RuntimeError` subclass |
+
+`GeomOptNotConvergedError` carries the last geometry as `.system` and the
+whole outcome, as a `vibeqc.geomopt.GeomOptResult` with the energy, gradient,
+iteration count and trajectory, as `.result`:
+
+```python
+from vibeqc.geomopt import GeomOptNotConvergedError
+
+try:
+    run_job(mol, basis="def2-svp", method="rks", functional="PBE",
+            optimize=True, optimizer_backend="native", max_opt_steps=20,
+            output="h2o_opt")
+except GeomOptNotConvergedError as err:
+    print(err.result.gradient)       # flat (3N,) gradient, Ha/bohr
+    restart_from = err.system        # last Molecule; continue from here
+```
+
+To get past a capped run, raise `max_opt_steps`, loosen `fmax`, restart from
+the last geometry, or try another backend (the Brent backend above is slower
+per step but takes no uphill step).
+
+The library functions `optimize_molecule` and `optimize_molecule_brent` do not
+raise. They return a `MolecularOptimizeResult` whose `converged` is `False`
+and whose `message` says why it stopped, so a script that calls them directly
+must check `converged` itself.
+
+Releases before this change handled the ASE backend this way but not the
+native and Brent backends: a capped run there wrote "Optimized geometry" and
+went on to the single point and the frequencies as if it had converged.
 
 ## The native optimizer family (`geom_opt=`)
 
@@ -148,6 +232,13 @@ to the terminal. Pass a `ProgressLogger` for a caller-controlled live sink;
 the persistent `.out` channel remains independent and no file handle is passed
 through the optimizer.
 
+Explicit MANTA RHF/UHF jobs also support `geom_opt` with independently selected
+exact/RI Coulomb and exchange. Their geometry provider retains custom auxiliary
+basis content and moves its centers with the owning atoms, including for the
+final single point. This route currently uses HCORE at each geometry and refuses
+unqualified derivative sources. See [selected HF geometry optimization](manta.md#selected-hf-geometry-optimization)
+for configuration and resource limits.
+
 ### Coordinate systems (`geom_coords=`)
 
 The native optimizer family walks Cartesian coordinates by default.
@@ -208,6 +299,12 @@ the same `grid_level` selection.
 | `casscf` | Analytic / Central FD | Validated analytic gradient for state-specific, closed-shell CASSCF (v0.15.0); SA-CASSCF, open-shell, and `compute_wz="numerical"` fall back to full-energy FD (see the note below) |
 | `caspt2` | Analytic / Central FD | Analytic IC-CASPT2 Lagrangian for state-specific closed-shell, unshifted, explicit-engine CASSCF references with `compute_corr_grad=True`; unsupported variants use the optimizer-owned full-energy FD fallback (see below) |
 | `nevpt2` | Central FD | Relaxed full-energy central FD for CASSCF-referenced, gas-phase runs with `compute_corr_grad=True`; otherwise the optimizer owns the same full-energy FD fallback |
+| `fci` | Central FD | 2-point FD on energy; full-valence unless `active_space=` truncates it |
+| `mrci` | Central FD | 2-point FD on energy; CASCI or (with `casscf_options=`) orbital-optimized CASSCF reference |
+
+`fci` and `mrci` reach `run_job(optimize=True)` only through
+`optimizer_backend="native"` or `"brent"`; see the note above the
+backends table.
 
 **Range-separated and VV10 functionals walk the finite-difference
 surface (GitLab #571).** The analytic RKS / UKS gradient kernel carries
@@ -227,13 +324,35 @@ FD gradient, against a 2.1e-6 PBE noise floor. Frequencies for these
 functionals fail closed (the FD Hessian finite-differences the analytic
 gradient).
 
-Dispersion corrections (D3-BJ) and implicit solvation (CPCM/COSMO)
-are folded into the energy and gradient automatically when passed.
+Dispersion corrections (D3-BJ) and implicit solvation (CPCM) are folded
+into the energy **and the gradient** on every backend, so a solvated
+optimization walks the solvated surface rather than the gas-phase one.
+
+Releases before this fix did not: the ASE backend -- the default whenever
+ASE is installed -- was handed no `solvent=` at all, and the native and
+`geom_opt=` routes solvated the energy while differentiating the
+gas-phase surface. On LiF/STO-3G in water, whose bond the reaction field
+lengthens by 0.025 bohr, the default backend stopped 9e-06 bohr from the
+*gas* minimum and the other two between the surfaces; the solvated
+gradient at those reported geometries was 1.7x to 6.2x the run's own
+convergence threshold. The energy printed was solvated throughout, so
+nothing in the output said the geometry was not.
+
+For a functional whose analytic gradient omits terms (the
+`functional_gradient_terms_missing` list above), a solvated run takes the
+same full-energy finite-difference route, differentiating the *solvated*
+energy; `cpcm_gradient` refuses those functionals rather than adding a
+reaction field to an incomplete gas-phase kernel.
+
 Implicit solvation composes with the mean-field methods only
 (`rhf` / `uhf` / `rks` / `uks`); requesting `solvent=...` with the
 CAS-family methods or `rohf` raises a clear `ValueError` (there is
 no CPCM composition for those methods, and silently optimizing the
-gas-phase surface instead would misreport the result).
+gas-phase surface instead would misreport the result). For the same
+reason `optimize=True` with `solvent=` and `method="msindo"` is refused:
+MSINDO's COSMO route has no nuclear gradient, so its walk would follow
+the gas-phase surface. Optimize it in gas phase, or use a mean-field
+method with CPCM.
 
 On **both** backends every per-step energy evaluation receives the
 same solver options as the final single point, `active_space`,

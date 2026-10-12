@@ -140,6 +140,9 @@ basis is optimised against, exactly as for an ordinary single point:
 - `citations`, the optimiser-method citation keys to cite when you publish an
   optimised basis (BDIIS, the conditioning penalty, the Pulay-DIIS papers);
   `summary()` prints them. Also cite the starting basis set and the functional.
+  The other drivers export their keys the same way: `DFO_CITATION_KEYS` for
+  Py-BOBYQA and DFO-LS, `CMAES_CITATION_KEYS` for CMA-ES, and
+  `recipes.global_then_polish.method_citations()` for the chained recipe.
 
 ## Worked example
 
@@ -185,6 +188,68 @@ The recipe optimises a *fixed contraction pattern* (it moves exponents
 and coefficients, it does not add or remove primitives), and it is a
 molecular path: solid-state basis libraries go through the multi-crystal
 production recipe noted above.
+
+## Choosing the optimiser
+
+`optimize_molecular_basis` always drives BDIIS. Below that one-call
+recipe, `vibeqc.basis_optimization` exposes six drivers with one shared
+return type, `OptResult`, so a script can swap them without changing
+anything else. All of them take the objective, the starting vector and
+the `bounds` from `parametrisation.optim_bounds()`; the objective and
+its analytic gradient come from
+`recipes.objective.make_native_objective_gradient` (or its
+`make_rhf_`, `make_uhf_`, `make_rks_`, `make_uks_` wrappers).
+
+| driver | needs | best for |
+|---|---|---|
+| `optimize_bdiis` | nothing (scipy-free, in-house) | the default: BDIIS with a BFGS inverse Hessian and a trust region, cheapest by far with the analytic gradient |
+| `optimize_scipy` | scipy | L-BFGS-B baseline with finite-difference gradients |
+| `optimize_minuit` | iminuit | Minuit2 MIGRAD plus HESSE parameter uncertainties for a publication |
+| `optimize_bobyqa` | Py-BOBYQA | a scalar objective *without* an analytic gradient: external-program energies, SP-shell coefficients. A model-based step costs about one SCF, a finite-difference gradient costs two per parameter |
+| `optimize_dfols` | DFO-LS | a least-squares fit of energies to reference values; needs the residual vector (`residuals=` or an objective with a `residuals()` method) and refuses a plain energy |
+| `optimize_cmaes` | cma | a global pre-pass from a poor starting basis: population-based, derivative-free, tolerant of failed SCFs, not a precise finisher |
+
+The last three are optional backends. Install them with the
+`basisopt-drivers` extra:
+
+```sh
+pip install -e '.[basisopt-drivers]'
+```
+
+Each driver imports its backend lazily and raises a `RuntimeError` naming
+the missing package, so a plain `import vibeqc.basis_optimization` never
+needs any of them. Py-BOBYQA and DFO-LS are GPL-3.0 licensed; they are
+opt-in for that reason and are never imported by the core package.
+
+A starting basis that may sit in the wrong basin (a far-off guess, an
+exponent deliberately perturbed to test robustness) is the case for the
+CMA-ES pre-pass. The recipe chains it with a BDIIS polish:
+
+```python
+from vibeqc.basis_optimization.io import TempBasisLibrary
+from vibeqc.basis_optimization.recipes.objective import make_uhf_native_objective_gradient
+from vibeqc.basis_optimization.recipes.global_then_polish import optimize_global_then_polish
+
+with TempBasisLibrary() as lib:
+    objective, gradient = make_uhf_native_objective_gradient(parametrisation, molecule_factory, lib)
+    res = optimize_global_then_polish(
+        objective, parametrisation.pack(), bounds=parametrisation.optim_bounds(),
+        grad=gradient, cmaes_max_evaluations=100, cmaes_seed=1)
+
+res.driver              # "cmaes+bdiis"
+res.raw["cmaes"].fun    # where the pre-pass got to
+optimised = parametrisation.unpack(res.x)
+```
+
+CMA-ES sizes its first step from the *optimiser-space* box, a quarter of
+the narrowest log-exponent range, so the initial population stays inside
+a sensible exponent window. Pass `cmaes_sigma0` to override it and
+`cmaes_seed` for a reproducible run.
+
+`scripts/basisset_dev/driver_benchmark_stage1.py` runs every driver on the
+single-atom Stage-1 problem and prints the evaluation counts side by side;
+the measured table is in
+[the verification report](../basisset_dev/VERIFICATION_REPORT.md).
 
 ## See also
 

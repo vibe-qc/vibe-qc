@@ -1,6 +1,6 @@
 """M2 (pair-resolved truncation): domain, orbit closure, builds, enforcement.
 
-The SYM3b root cause (HANDOVER_BIPOLE_PRODUCTION.md Sec. 0a 2026-07-12):
+The SYM3b root cause (the original investigation 2026-07-12):
 the radial cell list is closed under the bare point-group action, but
 the symmetry machinery acts on atom-pair triples
 ``(a, b, h) -> (perm[a], perm[b], R.h + s_a - s_b)`` whose per-atom

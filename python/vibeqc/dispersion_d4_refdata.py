@@ -1,7 +1,6 @@
 """D4 reference-data machinery -- Phase D4b-1.
 
-The native D4 dispersion energy (Phase D4b, see
-``handovers/HANDOVER_D4_NATIVE.md``) needs a reference C6 dataset
+The native D4 dispersion energy (Phase D4b) needs a reference C6 dataset
 re-derived from first principles. The C6 between two systems comes
 from the Casimir-Polder relation:
 
@@ -300,8 +299,7 @@ def coupled_polarizability_imag_freq(
     The signature matches :func:`uncoupled_polarizability_imag_freq`
     so it drops straight into the :func:`casimir_polder_c6` +
     :func:`imaginary_frequency_grid` pipeline unchanged -- exactly the
-    "swap only the a(iw) provider" plan of
-    ``handovers/HANDOVER_D4_NATIVE.md``.
+    "swap only the a(iw) provider" plan.
 
     Parameters
     ----------

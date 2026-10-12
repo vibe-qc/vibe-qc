@@ -112,11 +112,12 @@ the periodic GDF / exxdiv convention.
 
 from __future__ import annotations
 
-from .scf import _ccm_initial_guess, _with_ccm_guess
+from .scf import _ccm_initial_guess, _with_ccm_guess, _ccm_read_spin_densities
 
 import numpy as np
 
 from .experimental import _warn_experimental
+from .block_cderi import EXCHANGE_FORMS, is_block_cderi
 from .neutral import ccm_neutral_cderi, ccm_neutral_tail_ke_cutoff
 from .ri import (
     _rhf_loop,
@@ -215,7 +216,7 @@ def _fold_lattice_matrix_to_torus(m_lat, nrep, n_mu):
     return out
 
 
-def ccm_direct_oneelectron(ccm, *, lat_opts=None):
+def ccm_direct_oneelectron(ccm, *, lat_opts=None, rcut_strategy="pyscf_auto"):
     """One-electron matrices + nuclear energy of the BvK torus at Γ.
 
     Returns ``(S, h, e_nn)`` -- real symmetric overlap and core Hamiltonian
@@ -269,7 +270,9 @@ def ccm_direct_oneelectron(ccm, *, lat_opts=None):
     # Positive overlap alone does not certify image-tail convergence.
     kpts_cart, _ = _kmesh_to_kpoints_weights(unit, list(ccm.nrep))
     oneel = _oneel_lattice_opts(
-        unit, ubasis, base, rcut_strategy="pyscf_auto", k_points_cart=kpts_cart
+        unit, ubasis, base, rcut_strategy=rcut_strategy, k_points_cart=kpts_cart,
+        admit=lambda bound_opts: _preflight_gdf_oneel_memory(
+            unit, ubasis, bound_opts, n_kpoints=len(kpts_cart)),
     )
     _preflight_gdf_oneel_memory(unit, ubasis, oneel, n_kpoints=len(kpts_cart))
     S_lat = compute_overlap_lattice(ubasis, unit, oneel)
@@ -290,9 +293,43 @@ def ccm_direct_oneelectron(ccm, *, lat_opts=None):
 
 def _neutral_cderi_for(ccm, cderi, cderi_build, ke_cutoff, aux_basis,
                        cderi_symmetry=None, omega_screen=0.0,
-                       tail_ke_cutoff=None):
+                       tail_ke_cutoff=None, lat_opts=None, fit_cache=None,
+                       fold_threads=None, storage="dense", ws_cutoff_bohr=None,
+                       allow_block=False):
     """The neutral Γ-supercell cderi ``L`` per the shared ``cderi``/``cderi_build``
     keyword contract of the direct-route drivers (see :func:`run_ccm_rhf_direct`).
+
+    Thin wrapper over :func:`_neutral_cderi_with_info` that drops the
+    provenance record; kept for callers that only need the array.
+    """
+    return _neutral_cderi_with_info(
+        ccm, cderi, cderi_build, ke_cutoff, aux_basis, cderi_symmetry,
+        omega_screen=omega_screen, tail_ke_cutoff=tail_ke_cutoff,
+        lat_opts=lat_opts, fit_cache=fit_cache, fold_threads=fold_threads,
+        storage=storage, ws_cutoff_bohr=ws_cutoff_bohr,
+        allow_block=allow_block)[0]
+
+
+def _neutral_cderi_with_info(ccm, cderi, cderi_build, ke_cutoff, aux_basis,
+                             cderi_symmetry=None, omega_screen=0.0,
+                             tail_ke_cutoff=None, lat_opts=None,
+                             fit_cache=None, fold_threads=None,
+                             storage="dense", ws_cutoff_bohr=None,
+                             allow_block=False):
+    """``(L, info)``: the neutral cderi and a record of how it was built.
+
+    ``storage`` (``"dense"`` | ``"block"``, speed-up prompt 5) selects the
+    dense fold array or its block storage
+    (:class:`~vibeqc.periodic.ccm.block_cderi.CCMBlockCderi`, fold build
+    only); ``ws_cutoff_bohr`` is the block storage's Wigner-Seitz cutoff.
+    Only callers that contract through the block object's own operators pass
+    ``allow_block=True``; every other driver fails closed on a block object,
+    prebuilt or requested, instead of contracting it as an array.
+
+    ``info`` is what the drivers stamp on ``result.cderi_info`` (one build
+    per job, 2026-09-24): ``build`` is ``"caller"`` for a prebuilt ``cderi``,
+    ``"driver-fit-cache"`` when the fold consumed a multi-k GDF fit cache,
+    else ``cderi_build``; the fit parameters follow.
 
     ``cderi_symmetry`` is forwarded to the builder's ``symmetry`` -- the
     space-group pair reduction (supercell build) / k-pair star reduction
@@ -312,6 +349,48 @@ def _neutral_cderi_for(ccm, cderi, cderi_build, ke_cutoff, aux_basis,
     the finite zero mode the caller restores via
     :func:`~vibeqc.periodic.ccm.neutral.ccm_sr_exchange_zero_mode_constant`.
     """
+    if storage not in ("dense", "block"):
+        raise ValueError(
+            f"cderi_storage must be 'dense' or 'block', got {storage!r}")
+    if cderi is not None:
+        # A prebuilt cderi fixes its own storage; the keyword may not
+        # contradict it (a dense array cannot be contracted as blocks, and a
+        # block object is not an array).
+        if is_block_cderi(cderi):
+            storage = "block"
+        elif storage == "block":
+            raise ValueError(
+                "cderi_storage='block' with a prebuilt dense cderi array: pass "
+                "the CCMBlockCderi of ccm_neutral_cderi_blocks instead")
+    if ws_cutoff_bohr is not None and storage != "block":
+        raise ValueError(
+            "ws_cutoff_bohr (the Wigner-Seitz partition of the block storage) "
+            "requires cderi_storage='block'")
+    if storage == "block" and not allow_block:
+        raise NotImplementedError(
+            "cderi_storage='block' is wired for run_ccm_rhf_direct and "
+            "run_ccm_rks_direct (closed shell) only; this driver contracts "
+            "the dense array")
+    if cderi is not None and is_block_cderi(cderi):
+        if not allow_block:
+            raise NotImplementedError(
+                "a block-storage cderi (CCMBlockCderi) is accepted by "
+                "run_ccm_rhf_direct and run_ccm_rks_direct only; pass "
+                "cderi.to_dense() to this driver")
+        if aux_basis is not None or tail_ke_cutoff is not None or fit_cache is not None:
+            raise ValueError(
+                "aux_basis, tail_ke_cutoff and fit_cache are ignored when a "
+                "prebuilt cderi is supplied: the cderi already fixes them")
+        if ws_cutoff_bohr is not None:
+            raise ValueError(
+                "ws_cutoff_bohr is ignored when a prebuilt block cderi is "
+                "supplied: apply cderi.apply_ws_cutoff() before passing it")
+        info = {"build": "caller", "storage": "block",
+                "shape": tuple(int(n) for n in cderi.shape),
+                "nbytes": int(cderi.nbytes),
+                "omega_screen": float(omega_screen)}
+        _stamp_ws_info(info, cderi)
+        return cderi, info
     if cderi is not None:
         if aux_basis is not None:
             raise ValueError(
@@ -326,22 +405,100 @@ def _neutral_cderi_for(ccm, cderi, cderi_build, ke_cutoff, aux_basis,
                 "tail_ke_cutoff, or drop cderi and let the builder construct "
                 "it at tail_ke_cutoff."
             )
-        return np.asarray(cderi, dtype=float)
+        if fit_cache is not None:
+            raise ValueError(
+                "fit_cache is ignored when a prebuilt cderi is supplied: "
+                "pass one or the other."
+            )
+        L = np.asarray(cderi, dtype=float)
+        return L, {"build": "caller", "storage": "dense",
+                   "shape": tuple(int(n) for n in L.shape),
+                   "omega_screen": float(omega_screen)}
+    from .neutral import ccm_neutral_tail_ke_cutoff as _tail_resolver
+
+    if storage == "block" and cderi_build != "fold":
+        raise ValueError(
+            "cderi_storage='block' exists for cderi_build='fold' only: the "
+            "supercell FFT fit has no per-q block form")
+    info = {
+        "build": cderi_build,
+        "storage": storage,
+        "ke_cutoff": float(ke_cutoff),
+        "tail_ke_cutoff": _tail_resolver(
+            ccm, ke_cutoff=ke_cutoff, tail_ke_cutoff=tail_ke_cutoff),
+        "aux_basis": aux_basis,
+        "symmetry": (None if cderi_symmetry is None or cderi_symmetry is False
+                     else str(cderi_symmetry)),
+        "omega_screen": float(omega_screen),
+        # The fit's real-space cell list: the caller's base options reach
+        # the fit (2026-09-24) exactly as the multi-k driver forwards
+        # ``opts.lattice_opts`` to its builder; ``None`` means the builder's
+        # own default (LatticeSumOptions(), 15 bohr), identical to the
+        # driver's default.
+        "lat_cutoff_bohr": (None if lat_opts is None
+                            else float(lat_opts.cutoff_bohr)),
+    }
     if cderi_build == "fold":
         from .neutral import ccm_neutral_cderi_fold
 
-        return ccm_neutral_cderi_fold(ccm, ke_cutoff=ke_cutoff,
-                                      tail_ke_cutoff=tail_ke_cutoff,
-                                      aux_basis=aux_basis,
-                                      symmetry=cderi_symmetry,
-                                      omega_screen=float(omega_screen))
-    return np.asarray(
-        ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff,
-                          tail_ke_cutoff=tail_ke_cutoff,
-                          aux_basis=aux_basis,
-                          symmetry=cderi_symmetry,
-                          omega_screen=float(omega_screen)),
-        dtype=float)
+        if fit_cache is not None:
+            info["build"] = "driver-fit-cache"
+        L = ccm_neutral_cderi_fold(ccm, ke_cutoff=ke_cutoff,
+                                   tail_ke_cutoff=tail_ke_cutoff,
+                                   aux_basis=aux_basis,
+                                   lat_opts=lat_opts,
+                                   symmetry=cderi_symmetry,
+                                   omega_screen=float(omega_screen),
+                                   fold_threads=fold_threads,
+                                   fit_cache=fit_cache,
+                                   storage=storage,
+                                   ws_cutoff_bohr=ws_cutoff_bohr)
+        info["fit_batch"] = "shared-q"
+        if storage == "block":
+            info["shape"] = tuple(int(n) for n in L.shape)
+            info["nbytes"] = int(L.nbytes)
+            info["dense_nbytes_upper_bound"] = int(L.dense_nbytes_upper_bound)
+            _stamp_ws_info(info, L)
+            return L, info
+    else:
+        if fit_cache is not None:
+            raise ValueError(
+                "fit_cache applies to cderi_build='fold' only: the supercell "
+                "FFT fit is a different object from the driver's per-q fits."
+            )
+        from .neutral import _supercell_wrap_lat_opts
+
+        # The supercell build widens its cell list for cross-torus pairs;
+        # a caller's options are the BASE the widening starts from, never a
+        # replacement for it.
+        L = np.asarray(
+            ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff,
+                              tail_ke_cutoff=tail_ke_cutoff,
+                              aux_basis=aux_basis,
+                              lat_opts=(None if lat_opts is None
+                                        else _supercell_wrap_lat_opts(
+                                            ccm, base=lat_opts)),
+                              symmetry=cderi_symmetry,
+                              omega_screen=float(omega_screen)),
+            dtype=float)
+    info["shape"] = tuple(int(n) for n in L.shape)
+    return L, info
+
+
+def _stamp_ws_info(info, block):
+    """Copy the block storage's Wigner-Seitz partition record into ``info``."""
+    report = getattr(block, "ws_report", None) or {}
+    info["ws_cutoff_bohr"] = report.get("cutoff_bohr")
+    info["ws_n_omitted"] = int(report.get("n_omitted", 0))
+    info["ws_omitted_norm"] = float(report.get("omitted_norm", 0.0))
+    info["ws_omitted_norm_rel"] = float(report.get("omitted_norm_rel", 0.0))
+    info["ws_shells"] = list(report.get("shells", []))
+    return info
+
+
+def _block_jk_operators(L, S, eta, exchange_form):
+    """``(j_of_D, k_of_D)`` of a block-storage cderi with the seam ``eta S D S``."""
+    return (L.coulomb, L.exchange_operator(S, eta, form=exchange_form))
 
 
 def _supercell_density_to_lattice_blocks(D_sc, nrep, n_mu, cells):
@@ -455,14 +612,19 @@ def _reject_external_xc_neutral_hamiltonian(ccm, func, *, who):
 
 
 def _xc_lattice_options(lat_opts, becke_image_radius_bohr):
-    """Copy lattice options and synchronize the periodic-XC image reach.
+    """Copy lattice options and set the periodic-XC density-image reach.
 
     ``build_periodic_becke_grid`` uses ``becke_image_radius_bohr`` for the
     partition denominator.  ``build_xc_periodic`` independently reads the
-    same-named field from :class:`LatticeSumOptions` to select shifted AO
-    images.  They must describe one finite image convention.  Pybind value
-    objects cannot be copied with :mod:`copy`, so mirror their public fields
-    without mutating a caller-owned object.
+    same-named field from :class:`LatticeSumOptions` to select how far the
+    density's image sum reaches.  They are two different quantities (#265).
+    This helper sets the field to the grid radius, which the external-
+    functional path needs (its difference-closed cell set is built from it);
+    the built-in-functional builders then widen the reach to ``cutoff_bohr``,
+    the native kernel's own default, so that the density at a grid point is
+    not truncated at the partition radius (#378).  Pybind value objects cannot
+    be copied with :mod:`copy`, so mirror their public fields without mutating
+    a caller-owned object.
     """
     from vibeqc._vibeqc_core import LatticeSumOptions
 
@@ -519,9 +681,31 @@ def _xc_difference_closed_cells(
     )
 
 
+def _builtin_xc_image_domain(unit, ubasis, base, *, rcut_strategy="pyscf_auto"):
+    """XC lattice options and density cells for a built-in functional.
+
+    The density's image sum reaches the converged XC image bound of the
+    multi-k GDF KS drivers (:func:`vibeqc.periodic_xc_domain.xc_lattice_opts`
+    under their default automatic ``rcut_strategy``, #465), not the grid's
+    partition radius and not the caller's 15-bohr cutoff. On rocksalt
+    LiH/STO-3G PBE the reach was 6.2 mHa above PySCF at 10 bohr and 3.8 mHa at
+    15 bohr (#378, #405); the bound there is 31.4 bohr. The Bloch producer
+    grows its domain the same way, so the two producers of the neutral torus
+    evaluate one XC term. The lattice field ``becke_image_radius_bohr`` is the
+    kernel's image reach (#381), so it is set to the grown cutoff.
+    """
+    from vibeqc._vibeqc_core import direct_lattice_cells
+    from vibeqc.periodic_xc_domain import xc_lattice_opts
+
+    base = xc_lattice_opts(unit, ubasis, base, rcut_strategy=rcut_strategy)
+    cells = direct_lattice_cells(unit, float(base.cutoff_bohr))
+    base.becke_image_radius_bohr = float(base.cutoff_bohr)
+    return base, cells
+
+
 def _real_gamma_rks_xc_builder(
     ccm, func, *, grid_options=None, becke_image_radius_bohr=10.0,
-    lat_opts=None,
+    lat_opts=None, rcut_strategy="pyscf_auto",
 ):
     """Return the variational periodic-XC closure used by real-Gamma RKS.
 
@@ -570,12 +754,8 @@ def _real_gamma_rks_xc_builder(
             base.becke_image_radius_bohr,
         )
     else:
-        # Preserve the validated historical libxc real-Gamma construction.
-        # Its AUTO density-domain behavior and radial cell list are part of
-        # the existing direct-vs-GDF parity contract.
-        from vibeqc._vibeqc_core import direct_lattice_cells
-
-        cells = direct_lattice_cells(unit, float(base.cutoff_bohr))
+        base, cells = _builtin_xc_image_domain(
+            unit, ubasis, base, rcut_strategy=rcut_strategy)
 
     def xc_of_D(D):
         blocks = _supercell_density_to_lattice_blocks(
@@ -603,12 +783,13 @@ def _real_gamma_rks_xc_builder(
             0.5 * (V_sc + V_sc.T),
         )
 
+    xc_of_D.xc_lattice_cutoff_bohr = float(base.cutoff_bohr)
     return xc_of_D
 
 
 def _real_gamma_uks_xc_builder(
     ccm, func, *, grid_options=None, becke_image_radius_bohr=10.0,
-    lat_opts=None,
+    lat_opts=None, rcut_strategy="pyscf_auto",
 ):
     """Return the variational periodic-XC closure used by real-Gamma UKS.
 
@@ -652,9 +833,8 @@ def _real_gamma_uks_xc_builder(
             base.becke_image_radius_bohr,
         )
     else:
-        from vibeqc._vibeqc_core import direct_lattice_cells
-
-        cells = direct_lattice_cells(unit, float(base.cutoff_bohr))
+        base, cells = _builtin_xc_image_domain(
+            unit, ubasis, base, rcut_strategy=rcut_strategy)
 
     def xc_of_spins(Da, Db):
         blocks_a = _supercell_density_to_lattice_blocks(
@@ -687,15 +867,19 @@ def _real_gamma_uks_xc_builder(
             0.5 * (Vb + Vb.T),
         )
 
+    xc_of_spins.xc_lattice_cutoff_bohr = float(base.cutoff_bohr)
     return xc_of_spins
 
 
 def run_ccm_rks_direct(
-    ccm, functional="pbe", *, initial_guess: object = "AUTO", cderi=None, cderi_sr=None, cderi_build="fold",
+    ccm, functional="pbe", *, initial_guess: object = "AUTO", initial_density=None,
+    cderi=None, cderi_sr=None, cderi_build="fold",
     ke_cutoff=200.0, tail_ke_cutoff=None,
     aux_basis=None, cderi_symmetry=None, exxdiv="ewald", lat_opts=None,
-    grid_options=None, becke_image_radius_bohr=10.0,
+    grid_options=None, becke_image_radius_bohr=10.0, rcut_strategy="pyscf_auto",
     max_iter=128, conv_tol=1e-8, conv_tol_grad=1e-6, diis_dim=8, lindep_tol=1e-7,
+    allow_vacuum_padding=False, fit_cache=None, fold_threads=None,
+    cderi_storage="dense", ws_cutoff_bohr=None, exchange_form="transpose",
     _allow_double_hybrid_scf=False,
 ):
     """Closed-shell KS for the neutral fitted-torus **real-Γ control**.
@@ -735,7 +919,11 @@ def run_ccm_rks_direct(
     choice -- integrates the mesh-periodic density over all space instead of
     one cell and over-counts E_xc grossly on periodic densities.)
 
-    Parameters are those of :func:`run_ccm_rhf_direct` plus ``functional``
+    Parameters are those of :func:`run_ccm_rhf_direct` (including
+    ``cderi_storage``, ``ws_cutoff_bohr`` and ``exchange_form`` of the block
+    storage, whose exchange the loop scales by ``a_x`` exactly as the dense
+    one; a screened kernel rides the same storage with its ``sigma_0`` zero
+    mode in the seam slot) plus ``functional``
     (any libxc name -- pure or global hybrid), ``grid_options``
     (:class:`~vibeqc.GridOptions` for the XC quadrature; default = the
     multi-k driver's default tier) and ``becke_image_radius_bohr`` (periodic
@@ -744,6 +932,11 @@ def run_ccm_rks_direct(
     governs the seam on the exact-exchange fraction; for a pure functional
     it never enters (recorded on the result regardless, as the declared
     convention).
+
+    ``rcut_strategy="pyscf_auto"`` grows the one-electron and XC image
+    domains with the same primitive-cell bounds as the Bloch producer.
+    ``rcut_strategy="flat"`` keeps the caller's finite lattice cutoff.
+    ``xc_lattice_cutoff_bohr`` on the result records the executed XC reach.
 
     **Screened (HSE-class) hybrids -- EXPERIMENTAL (2026-07-17).**
     Range-separated functionals resolve through
@@ -779,8 +972,13 @@ def run_ccm_rks_direct(
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rks_direct"
     )
+    if exchange_form not in EXCHANGE_FORMS:
+        raise ValueError(
+            f"run_ccm_rks_direct: exchange_form must be one of "
+            f"{EXCHANGE_FORMS}, got {exchange_form!r}")
     guess_selection = _ccm_initial_guess(
         ccm, initial_guess, driver='run_ccm_rks_direct',
+        allow_read=True, initial_density=initial_density,
     )
     _warn_experimental()
     from vibeqc._vibeqc_core import Functional
@@ -793,7 +991,9 @@ def run_ccm_rks_direct(
     dim = int(ccm.unit_system.dim)
     if dim != 3:
         _reject_low_dimensional_direct(dim, who="run_ccm_rks_direct")
-    _reject_vacuum_padded_direct(ccm, who="run_ccm_rks_direct")
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who="run_ccm_rks_direct",
+        allow_vacuum_padding=allow_vacuum_padding)
     if cderi_build not in ("supercell", "fold"):
         raise ValueError(
             "run_ccm_rks_direct: cderi_build must be 'supercell' or 'fold', "
@@ -832,10 +1032,14 @@ def run_ccm_rks_direct(
         )
     alpha = float(func.hf_exchange_fraction)
 
-    L = _neutral_cderi_for(ccm, cderi, cderi_build, ke_cutoff, aux_basis,
-                           cderi_symmetry,
-                           tail_ke_cutoff=tail_ke_cutoff)
-    S, h, e_nn = ccm_direct_oneelectron(ccm, lat_opts=lat_opts)
+    L, cderi_info = _neutral_cderi_with_info(
+        ccm, cderi, cderi_build, ke_cutoff, aux_basis, cderi_symmetry,
+        tail_ke_cutoff=tail_ke_cutoff, lat_opts=lat_opts,
+        fit_cache=fit_cache, fold_threads=fold_threads,
+        storage=cderi_storage, ws_cutoff_bohr=ws_cutoff_bohr, allow_block=True)
+    S, h, e_nn = ccm_direct_oneelectron(
+        ccm, lat_opts=lat_opts, rcut_strategy=rcut_strategy)
+    block = is_block_cderi(L)
 
     # Periodic XC on the unit cell, folded onto the torus (multi-k parity by
     # construction: same grid default, same cells list, same C++ XC kernel).
@@ -845,6 +1049,7 @@ def run_ccm_rks_direct(
         grid_options=grid_options,
         becke_image_radius_bohr=becke_image_radius_bohr,
         lat_opts=lat_opts,
+        rcut_strategy=rcut_strategy,
     )
 
     k_of_D = None
@@ -864,15 +1069,26 @@ def run_ccm_rks_direct(
             ccm, cderi_sr, cderi_build, ke_cutoff, aux_basis, cderi_symmetry,
             omega_screen=exx_screened.omega_screen,
             tail_ke_cutoff=(None if cderi_sr is not None
-                            else tail_ke_cutoff))
+                            else tail_ke_cutoff),
+            lat_opts=lat_opts, fold_threads=fold_threads,
+            storage=cderi_storage, ws_cutoff_bohr=ws_cutoff_bohr,
+            allow_block=True)
         sigma0 = ccm_sr_exchange_zero_mode_constant(
             ccm, exx_screened.omega_screen)
         c_sr = float(exx_screened.c_sr)
-        k_of_D = lambda D: c_sr * _k_neutral_fast(L_sr, D, S, sigma0)
+        if is_block_cderi(L_sr):
+            _k_sr = L_sr.exchange_operator(S, sigma0, form=exchange_form)
+            k_of_D = lambda D: c_sr * _k_sr(D)
+        else:
+            k_of_D = lambda D: c_sr * _k_neutral_fast(L_sr, D, S, sigma0)
         alpha_loop = 1.0
     elif alpha != 0.0:
-        if exxdiv == "ewald":
-            xi = ccm_exchange_q0_madelung(ccm)
+        xi = ccm_exchange_q0_madelung(ccm) if exxdiv == "ewald" else 0.0
+        if block:
+            # Seam per k on the projected density; the loop's -a_x/2 scaling
+            # applies to this K exactly as to the dense one.
+            k_of_D = L.exchange_operator(S, xi, form=exchange_form)
+        elif exxdiv == "ewald":
             # Seam on the exact-exchange channel (K -> K + ξ_N S D S), scaled
             # by a_x through the -a_x/2 hybrid contraction in the loop --
             # identical convention to apply_exxdiv_ewald_to_K in the multi-k
@@ -881,17 +1097,23 @@ def run_ccm_rks_direct(
         else:
             k_of_D = lambda D: _k_neutral_fast(L, D)
 
+    j_of_D = L.coulomb if block else (lambda D: ccm_ri_j_neutral(L, D))
     res = _rks_loop(
         ccm, S, h, e_nn,
-        lambda D: ccm_ri_j_neutral(L, D), k_of_D, xc_of_D, alpha_loop,
+        j_of_D, k_of_D, xc_of_D, alpha_loop,
         functional,
         max_iter=max_iter, conv_tol=conv_tol, conv_tol_grad=conv_tol_grad,
-        diis_dim=diis_dim, lindep_tol=lindep_tol)
+        diis_dim=diis_dim, lindep_tol=lindep_tol, initial_density=initial_density)
     res.backend = "ccm-neutral-direct-rks"  # result-backend identity (IID 344)
+    res.cderi = L                      # one build per job (2026-09-24)
+    res.cderi_info = cderi_info
+    res.xc_lattice_cutoff_bohr = float(getattr(xc_of_D, "xc_lattice_cutoff_bohr", 0.0))
+    _stamp_vacuum_padding(res, allow_vacuum_padding, _padded_axes)
     res.rsgdf_tail_ke_cutoff = (
         None if cderi is not None
         else ccm_neutral_tail_ke_cutoff(
             ccm, ke_cutoff=ke_cutoff, tail_ke_cutoff=tail_ke_cutoff))
+    res.fit_source = "injected" if cderi is not None else "classic"  # #378
     res.exchange_q0 = exchange_q0_label(exxdiv)
     # "active" iff a full-range exact-exchange arm is present (the q=0
     # convention materially selects the Hamiltonian); pure functionals and
@@ -1017,7 +1239,8 @@ def _reject_low_dimensional_direct(dim, who="run_ccm_rhf_direct"):
         f"{who}: unsupported periodic dimension {dim}")
 
 
-def _reject_vacuum_padded_direct(ccm, who="run_ccm_rhf_direct"):
+def _reject_vacuum_padded_direct(ccm, who="run_ccm_rhf_direct", *,
+                                 allow_vacuum_padding=False):
     """Refuse a declared-3-D cell that is *measured* as sub-three-dimensional.
 
     IID 291: the declared-dimension check in
@@ -1030,13 +1253,46 @@ def _reject_vacuum_padded_direct(ccm, who="run_ccm_rhf_direct"):
     (largest empty inter-atom slab per axis, see
     :mod:`vibeqc.periodic.ccm.system`); the same physics rationale as the
     declared-dim refusal applies unchanged.
+
+    **Opt-in (ruling R6, 2026-09-10).** ``allow_vacuum_padding=True`` runs
+    the padded cell anyway: the refusal becomes an
+    :class:`~vibeqc.periodic.ccm.experimental.AICCMVacuumPaddingWarning`
+    naming the padded directions, and the caller stamps the result with
+    ``vacuum_padding_allowed=True`` and ``vacuum_padded_axes`` (the 1-based
+    lattice directions ``a1``/``a2``/``a3`` that measured as vacuum). The
+    transverse vacuum of a chain is thereby a *parameter* whose convergence
+    can be tested (ROUTES_AND_VALIDATION.md Section 11.1), never a silent
+    regime. The positive-converged-energy refusal in the SCF loops is
+    independent of this gate and is not relaxed.
+
+    Returns the tuple of padded lattice directions (1-based), empty for a
+    cell measured as genuinely 3-D.
     """
+    import warnings
+
+    from .experimental import AICCMVacuumPaddingWarning
     from .system import ccm_vacuum_directions
 
     vacuum = ccm_vacuum_directions(ccm)
     if not vacuum:
-        return
-    axes = ", ".join(str(i + 1) for i in vacuum)
+        return ()
+    axes_1based = tuple(int(i) + 1 for i in vacuum)
+    axes = ", ".join(str(i) for i in axes_1based)
+    if allow_vacuum_padding:
+        warnings.warn(
+            f"{who}: running a declared-3-D cell whose lattice direction(s) "
+            f"{axes} carry only vacuum padding (measured from the atom "
+            "positions, IID 291) because allow_vacuum_padding=True was "
+            "passed (ruling R6: the transverse vacuum is a parameter under "
+            "convergence test). The 3-D neutral construction has no "
+            "transverse periodic images to correct there, so the energy "
+            "depends on the padding; it is recorded as vacuum_padding_allowed "
+            "on the result and in the .system manifest and must be reported "
+            "with the padding it was computed at.",
+            category=AICCMVacuumPaddingWarning,
+            stacklevel=3,
+        )
+        return axes_1based
     raise NotImplementedError(
         f"{who}: the cell is declared 3-D but lattice direction(s) "
         f"{axes} carry only vacuum padding (measured from the atom "
@@ -1045,16 +1301,28 @@ def _reject_vacuum_padded_direct(ccm, who="run_ccm_rhf_direct"):
         "so its BvK exchange-q0 seam corrects for images that do not exist "
         "and the energy is a vacuum-padding artifact. Declare the system "
         "with its physical dimensionality (the route then fails closed with "
-        "the dim < 3 message), or use the four-center route (bare 1/r "
-        "minimum image puts all channels in one gauge)."
+        "the dim < 3 message), use the four-center route (bare 1/r "
+        "minimum image puts all channels in one gauge), or pass "
+        "allow_vacuum_padding=True to run the padded regime anyway as a "
+        "warned, recorded vacuum-parameter study (ruling R6)."
     )
 
 
+def _stamp_vacuum_padding(res, allow_vacuum_padding, padded_axes):
+    """Record the IID 291 opt-in on a result (both fields always present)."""
+    res.vacuum_padding_allowed = bool(allow_vacuum_padding)
+    res.vacuum_padded_axes = tuple(int(a) for a in (padded_axes or ()))
+    return res
+
+
 def run_ccm_rhf_direct(
-    ccm, *, initial_guess: object = "AUTO", cderi=None, cderi_build="fold", ke_cutoff=200.0,
+    ccm, *, initial_guess: object = "AUTO", initial_density=None,
+    cderi=None, cderi_build="fold", ke_cutoff=200.0,
     tail_ke_cutoff=None,
     aux_basis=None, cderi_symmetry=None, exxdiv="ewald", lat_opts=None,
     max_iter=128, conv_tol=1e-9, conv_tol_grad=1e-6, diis_dim=8, lindep_tol=1e-7,
+    allow_vacuum_padding=False, fit_cache=None, fold_threads=None,
+    cderi_storage="dense", ws_cutoff_bohr=None, exchange_form="transpose",
 ):
     """Closed-shell HF for the neutral fitted-torus **real-Γ control**.
 
@@ -1077,6 +1345,12 @@ def run_ccm_rhf_direct(
 
     Parameters
     ----------
+    initial_density : ndarray, optional
+        Prepared total density in this supercell's AO ordering. READ consumes
+        it on the first Fock build after physical-domain and population
+        checks. No basis projection or population rescaling is performed.
+        The unrestricted siblings accept an (alpha, beta) matrix pair.
+        AUTO without a density keeps the HCORE construction.
     cderi : ndarray, optional
         Reuse an already-built neutral cderi ``L`` (else built per
         ``cderi_build`` at ``ke_cutoff`` / ``aux_basis``). Passing
@@ -1123,12 +1397,57 @@ def run_ccm_rhf_direct(
         offset ``+ξ_N·N_e/(2 N_c)`` per unit cell -- kept for the pinned
         seam-demonstration control).
     lat_opts : LatticeSumOptions, optional
-        Base lattice-sum options for the one-electron/nuclear sums (defaults
-        to the GDF driver's defaults).
+        Base lattice-sum options. They reach the one-electron/nuclear sums
+        (widened there exactly as the GDF driver widens its own) AND, since
+        2026-09-24, the cderi fit's real-space cell list, as the multi-k
+        driver forwards ``opts.lattice_opts`` to its fit builder. Before,
+        the fold always fit at ``LatticeSumOptions()`` (15 bohr) whatever the
+        caller passed, so the two Γ-CCM producers would have fit on different
+        pair-image lists at any non-default cutoff. With the default (None)
+        nothing changes: both sides fit at the builder's default.
     conv_tol_grad : float
         DIIS-commutator residual bound (default ``1e-6``, the historical gate).
         ``conv_tol`` gates the energy criterion only; tighten both when
         converged densities matter.
+    allow_vacuum_padding : bool
+        ``False`` (default): a declared-3-D cell measured as vacuum-padded
+        (IID 291) is refused. ``True``: run it anyway as a warned, recorded
+        vacuum-parameter study (ruling R6); see
+        :func:`_reject_vacuum_padded_direct`. The result carries
+        ``vacuum_padding_allowed`` and ``vacuum_padded_axes`` either way.
+    fit_cache : RSGDFFitCache, optional
+        When the Bloch producer already ran in this process, its retained
+        multi-k fit (``run_ccm_rhf_gdf(ccm, retain_fit_cache=True).fit_cache``):
+        the fold consumes the driver's per-pair fits instead of refitting
+        (:func:`~vibeqc.periodic.ccm.neutral.ccm_neutral_cderi_fold`,
+        ``fit_cache``). ``cderi_build="fold"`` only; not beside ``cderi``.
+    fold_threads : int | "auto" | None
+        The fold's q-channel thread pool
+        (:func:`~vibeqc.periodic.ccm.neutral.ccm_neutral_cderi_fold`);
+        ``None`` reads ``VIBEQC_CCM_FOLD_THREADS`` and the module default.
+    cderi_storage : {"dense", "block"}
+        ``"dense"`` (default, the reference): the folded array, contracted by
+        ``ccm_ri_j_neutral`` / ``_k_neutral_fast``. ``"block"`` (2026-09-29,
+        speed-up prompt 5): the same fits kept per q-channel and never
+        folded (:class:`~vibeqc.periodic.ccm.block_cderi.CCMBlockCderi`,
+        ``O(N_c^2)`` memory instead of ``O(N_c^3)``), J and K evaluated in
+        the mesh representation on the circulant projection of the torus
+        density through the occupied-rank factor per k, the seam
+        ``xi_N S D S`` per k on the same projection; identity to the dense
+        path at 1e-10 Ha/cell (``tests/test_ccm_block_cderi.py``). Fold
+        build only; a prebuilt ``cderi`` may be a block object.
+    ws_cutoff_bohr : float, optional
+        Block storage only: the Wigner-Seitz partition (paper issue O25).
+        Block rows whose torus offset lies beyond this minimum-image distance
+        are omitted from the stored fits and the omitted norm is recorded in
+        ``.cderi_info`` (``ws_omitted_norm``, ``ws_omitted_norm_rel``,
+        ``ws_shells``). ``None`` (default) omits nothing.
+    exchange_form : {"transpose", "pair"}
+        Block storage only: ``"transpose"`` contracts each channel's exchange
+        as ``B B^H`` through the pair-density identity
+        ``L_{-k-q,-k}[P,s,n] = L_{k,k+q}[P,n,s]``; ``"pair"`` is the dense
+        contraction verbatim with the stored partner fit (the reference
+        switch, 1.5x the GEMM work).
 
     Returns
     -------
@@ -1137,13 +1456,23 @@ def run_ccm_rhf_direct(
         ``.exchange_q0`` records the convention label
         (:func:`~vibeqc.periodic.exchange_convention.exchange_q0_label`) --
         assert it matches in every cross-route comparison
-        (``assert_matched_exchange_q0``).
+        (``assert_matched_exchange_q0``). ``.cderi`` carries the neutral
+        cderi the SCF rode (the array, or the block object) and
+        ``.cderi_info`` how it was built (one build per job; ``storage``,
+        and for block storage ``nbytes`` and the ``ws_*`` record):
+        ``run_ccm_mp2`` / ``run_ccm_ccsd`` / the DLPNO family reuse
+        it when called on this result without ``cderi=``.
     """
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rhf_direct"
     )
+    if exchange_form not in EXCHANGE_FORMS:
+        raise ValueError(
+            f"run_ccm_rhf_direct: exchange_form must be one of "
+            f"{EXCHANGE_FORMS}, got {exchange_form!r}")
     guess_selection = _ccm_initial_guess(
         ccm, initial_guess, driver='run_ccm_rhf_direct',
+        allow_read=True, initial_density=initial_density,
     )
     _warn_experimental()
     from vibeqc.periodic.exchange_convention import exchange_q0_label
@@ -1155,45 +1484,60 @@ def run_ccm_rhf_direct(
     dim = int(ccm.unit_system.dim)
     if dim != 3:
         _reject_low_dimensional_direct(dim)
-    _reject_vacuum_padded_direct(ccm)
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, allow_vacuum_padding=allow_vacuum_padding)
     if cderi_build not in ("supercell", "fold"):
         raise ValueError(
             "run_ccm_rhf_direct: cderi_build must be 'supercell' or 'fold', "
             f"got {cderi_build!r}"
         )
-    L = _neutral_cderi_for(ccm, cderi, cderi_build, ke_cutoff, aux_basis,
-                           cderi_symmetry,
-                           tail_ke_cutoff=tail_ke_cutoff)
+    L, cderi_info = _neutral_cderi_with_info(
+        ccm, cderi, cderi_build, ke_cutoff, aux_basis, cderi_symmetry,
+        tail_ke_cutoff=tail_ke_cutoff, lat_opts=lat_opts,
+        fit_cache=fit_cache, fold_threads=fold_threads,
+        storage=cderi_storage, ws_cutoff_bohr=ws_cutoff_bohr, allow_block=True)
     S, h, e_nn = ccm_direct_oneelectron(ccm, lat_opts=lat_opts)
 
-    if exxdiv == "ewald":
-        xi = ccm_exchange_q0_madelung(ccm)
-        # The seam as a Fock operator: K -> K + ξ_N S D S (linear symmetric in
-        # D, so F = ∂E/∂D holds through the standard 1/2 Tr[D(h+F)] functional).
-        k_of_D = lambda D: _k_neutral_fast(L, D, S, xi)
+    xi = ccm_exchange_q0_madelung(ccm) if exxdiv == "ewald" else 0.0
+    if is_block_cderi(L):
+        # Block storage: J and K in the mesh representation on the circulant
+        # projection of D, the seam xi_N S D S per k on the same projection.
+        j_of_D, k_of_D = _block_jk_operators(L, S, xi, exchange_form)
     else:
-        k_of_D = lambda D: _k_neutral_fast(L, D)
+        j_of_D = lambda D: ccm_ri_j_neutral(L, D)
+        if exxdiv == "ewald":
+            # The seam as a Fock operator: K -> K + ξ_N S D S (linear
+            # symmetric in D, so F = ∂E/∂D holds through the standard
+            # 1/2 Tr[D(h+F)] functional).
+            k_of_D = lambda D: _k_neutral_fast(L, D, S, xi)
+        else:
+            k_of_D = lambda D: _k_neutral_fast(L, D)
 
     res = _rhf_loop(
-        ccm, S, h, e_nn,
-        lambda D: ccm_ri_j_neutral(L, D), k_of_D,
+        ccm, S, h, e_nn, j_of_D, k_of_D,
         max_iter=max_iter, conv_tol=conv_tol, conv_tol_grad=conv_tol_grad,
-        diis_dim=diis_dim, lindep_tol=lindep_tol)
+        diis_dim=diis_dim, lindep_tol=lindep_tol, initial_density=initial_density)
     res.backend = "ccm-neutral-direct-rhf"  # result-backend identity (IID 344)
+    res.cderi = L                      # one build per job (2026-09-24)
+    res.cderi_info = cderi_info
+    _stamp_vacuum_padding(res, allow_vacuum_padding, _padded_axes)
     res.rsgdf_tail_ke_cutoff = (
         None if cderi is not None
         else ccm_neutral_tail_ke_cutoff(
             ccm, ke_cutoff=ke_cutoff, tail_ke_cutoff=tail_ke_cutoff))
+    res.fit_source = "injected" if cderi is not None else "classic"  # #378
     res.exchange_q0 = exchange_q0_label(exxdiv)
     return _with_ccm_guess(res, guess_selection)
 
 
 def run_ccm_uhf_direct(
-    ccm, *, initial_guess: object = "AUTO", cderi=None, cderi_build="fold", ke_cutoff=200.0,
+    ccm, *, initial_guess: object = "AUTO", initial_density=None,
+    cderi=None, cderi_build="fold", ke_cutoff=200.0,
     tail_ke_cutoff=None,
     aux_basis=None, cderi_symmetry=None, exxdiv="ewald", lat_opts=None,
     max_iter=128, conv_tol=1e-9, conv_tol_grad=1e-6, diis_dim=8,
-    lindep_tol=1e-7,
+    lindep_tol=1e-7, allow_vacuum_padding=False, fit_cache=None,
+    fold_threads=None,
 ):
     """Open-shell UHF for the neutral fitted-torus **real-Γ control**.
 
@@ -1236,6 +1580,7 @@ def run_ccm_uhf_direct(
     )
     guess_selection = _ccm_initial_guess(
         ccm, initial_guess, driver='run_ccm_uhf_direct',
+        allow_read=True, initial_density=initial_density,
     )
     _warn_experimental()
     from vibeqc.periodic.ccm.scf import (
@@ -1253,15 +1598,18 @@ def run_ccm_uhf_direct(
     dim = int(ccm.unit_system.dim)
     if dim != 3:
         _reject_low_dimensional_direct(dim, who="run_ccm_uhf_direct")
-    _reject_vacuum_padded_direct(ccm, who="run_ccm_uhf_direct")
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who="run_ccm_uhf_direct",
+        allow_vacuum_padding=allow_vacuum_padding)
     if cderi_build not in ("supercell", "fold"):
         raise ValueError(
             "run_ccm_uhf_direct: cderi_build must be 'supercell' or 'fold', "
             f"got {cderi_build!r}"
         )
-    L = _neutral_cderi_for(ccm, cderi, cderi_build, ke_cutoff, aux_basis,
-                           cderi_symmetry,
-                           tail_ke_cutoff=tail_ke_cutoff)
+    L, cderi_info = _neutral_cderi_with_info(
+        ccm, cderi, cderi_build, ke_cutoff, aux_basis, cderi_symmetry,
+        tail_ke_cutoff=tail_ke_cutoff, lat_opts=lat_opts,
+        fit_cache=fit_cache, fold_threads=fold_threads)
     S, h, e_nn = ccm_direct_oneelectron(ccm, lat_opts=lat_opts)
 
     xi = ccm_exchange_q0_madelung(ccm) if exxdiv == "ewald" else 0.0
@@ -1300,6 +1648,8 @@ def run_ccm_uhf_direct(
     eps_b, Cb = diag(h)
     Da = density(Ca, n_alpha)
     Db = density(Cb, n_beta)
+    if initial_density is not None:
+        Da, Db = _ccm_read_spin_densities(initial_density, S, n_alpha, n_beta)
 
     diis_Fa, diis_Fb, diis_e = [], [], []
     e_last, e_elec, e_tot, conv, it = 0.0, 0.0, 0.0, False, 0
@@ -1352,21 +1702,27 @@ def run_ccm_uhf_direct(
         density_alpha=Da, density_beta=Db, overlap=S,
         idempotency_error=float(idem))
     res.backend = "ccm-neutral-direct-uhf"  # result-backend identity (IID 344)
+    res.cderi = L                      # one build per job (2026-09-24)
+    res.cderi_info = cderi_info
+    _stamp_vacuum_padding(res, allow_vacuum_padding, _padded_axes)
     res.rsgdf_tail_ke_cutoff = (
         None if cderi is not None
         else ccm_neutral_tail_ke_cutoff(
             ccm, ke_cutoff=ke_cutoff, tail_ke_cutoff=tail_ke_cutoff))
+    res.fit_source = "injected" if cderi is not None else "classic"  # #378
     res.exchange_q0 = exchange_q0_label(exxdiv)
     return _with_ccm_guess(res, guess_selection)
 
 
 def run_ccm_uks_direct(
-    ccm, functional="pbe", *, initial_guess: object = "AUTO", cderi=None, cderi_sr=None, cderi_build="fold",
+    ccm, functional="pbe", *, initial_guess: object = "AUTO", initial_density=None,
+    cderi=None, cderi_sr=None, cderi_build="fold",
     ke_cutoff=200.0, tail_ke_cutoff=None,
     aux_basis=None, cderi_symmetry=None, exxdiv="ewald", lat_opts=None,
-    grid_options=None, becke_image_radius_bohr=10.0,
+    grid_options=None, becke_image_radius_bohr=10.0, rcut_strategy="pyscf_auto",
     max_iter=128, conv_tol=1e-8, conv_tol_grad=1e-6, diis_dim=8,
-    lindep_tol=1e-7,
+    lindep_tol=1e-7, allow_vacuum_padding=False, fit_cache=None,
+    fold_threads=None,
 ):
     """Open-shell KS for the neutral fitted-torus real-Γ control.
 
@@ -1426,6 +1782,7 @@ def run_ccm_uks_direct(
     )
     guess_selection = _ccm_initial_guess(
         ccm, initial_guess, driver='run_ccm_uks_direct',
+        allow_read=True, initial_density=initial_density,
     )
     _warn_experimental()
     from vibeqc._vibeqc_core import Functional
@@ -1444,7 +1801,9 @@ def run_ccm_uks_direct(
     dim = int(ccm.unit_system.dim)
     if dim != 3:
         _reject_low_dimensional_direct(dim, who="run_ccm_uks_direct")
-    _reject_vacuum_padded_direct(ccm, who="run_ccm_uks_direct")
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who="run_ccm_uks_direct",
+        allow_vacuum_padding=allow_vacuum_padding)
     if cderi_build not in ("supercell", "fold"):
         raise ValueError(
             "run_ccm_uks_direct: cderi_build must be 'supercell' or 'fold', "
@@ -1484,10 +1843,12 @@ def run_ccm_uks_direct(
         )
     alpha = float(func.hf_exchange_fraction)
 
-    L = _neutral_cderi_for(ccm, cderi, cderi_build, ke_cutoff, aux_basis,
-                           cderi_symmetry,
-                           tail_ke_cutoff=tail_ke_cutoff)
-    S, h, e_nn = ccm_direct_oneelectron(ccm, lat_opts=lat_opts)
+    L, cderi_info = _neutral_cderi_with_info(
+        ccm, cderi, cderi_build, ke_cutoff, aux_basis, cderi_symmetry,
+        tail_ke_cutoff=tail_ke_cutoff, lat_opts=lat_opts,
+        fit_cache=fit_cache, fold_threads=fold_threads)
+    S, h, e_nn = ccm_direct_oneelectron(
+        ccm, lat_opts=lat_opts, rcut_strategy=rcut_strategy)
 
     n_elec = ccm.supercell.n_electrons()
     mult = int(ccm.supercell.multiplicity)
@@ -1508,6 +1869,7 @@ def run_ccm_uks_direct(
         grid_options=grid_options,
         becke_image_radius_bohr=becke_image_radius_bohr,
         lat_opts=lat_opts,
+        rcut_strategy=rcut_strategy,
     )
 
     if exx_screened is not None and exx_screened.is_screened:
@@ -1524,7 +1886,8 @@ def run_ccm_uks_direct(
             ccm, cderi_sr, cderi_build, ke_cutoff, aux_basis, cderi_symmetry,
             omega_screen=exx_screened.omega_screen,
             tail_ke_cutoff=(None if cderi_sr is not None
-                            else tail_ke_cutoff))
+                            else tail_ke_cutoff),
+            lat_opts=lat_opts, fold_threads=fold_threads)
         sigma0 = ccm_sr_exchange_zero_mode_constant(
             ccm, exx_screened.omega_screen)
         c_sr = float(exx_screened.c_sr)
@@ -1561,6 +1924,8 @@ def run_ccm_uks_direct(
     eps_b, Cb = diag(h)
     Da = density(Ca, n_alpha)
     Db = density(Cb, n_beta)
+    if initial_density is not None:
+        Da, Db = _ccm_read_spin_densities(initial_density, S, n_alpha, n_beta)
 
     diis_Fa, diis_Fb, diis_e = [], [], []
     e_last, e_tot, e_xc, e_coul, e_hf_x, conv, it = 0.0, 0.0, 0.0, 0.0, 0.0, False, 0
@@ -1638,10 +2003,15 @@ def run_ccm_uks_direct(
     # not a per-cell-normalized scalar.
     res.hcore = np.asarray(h)
     res.backend = "ccm-neutral-direct-uks"  # result-backend identity (IID 344)
+    res.cderi = L                      # one build per job (2026-09-24)
+    res.cderi_info = cderi_info
+    res.xc_lattice_cutoff_bohr = float(getattr(xc_of_spins, "xc_lattice_cutoff_bohr", 0.0))
+    _stamp_vacuum_padding(res, allow_vacuum_padding, _padded_axes)
     res.rsgdf_tail_ke_cutoff = (
         None if cderi is not None
         else ccm_neutral_tail_ke_cutoff(
             ccm, ke_cutoff=ke_cutoff, tail_ke_cutoff=tail_ke_cutoff))
+    res.fit_source = "injected" if cderi is not None else "classic"  # #378
     res.exchange_q0 = exchange_q0_label(exxdiv)
     # Same applicability semantics as run_ccm_rks_direct: "active" iff a
     # full-range exact-exchange arm is present (seam-carrying); pure and
@@ -1833,6 +2203,13 @@ def run_ccm_direct_gradient(
             scf_result = (run_ccm_rhf_direct(ccm, **kw, initial_guess=initial_guess) if closed
                           else run_ccm_uhf_direct(ccm, **kw, initial_guess=initial_guess))
         else:
+            kw["rcut_strategy"] = gdf_kwargs.get("rcut_strategy", "pyscf_auto")
+            options = gdf_kwargs.get("options")
+            for source, target in (("lattice_opts", "lat_opts"),
+                                   ("grid", "grid_options"),
+                                   ("becke_image_radius_bohr", "becke_image_radius_bohr")):
+                if options is not None and hasattr(options, source):
+                    kw[target] = getattr(options, source)
             scf_result = (run_ccm_rks_direct(ccm, functional, **kw, initial_guess=initial_guess) if closed
                           else run_ccm_uks_direct(ccm, functional, **kw, initial_guess=initial_guess))
     if not scf_result.converged:
@@ -1844,6 +2221,18 @@ def run_ccm_direct_gradient(
     control, gradient = _run_gdf_control_with_gradient(
         ccm, functional, closed, aux_basis, control_kwargs,
         who="run_ccm_direct_gradient")
+
+    if functional is not None:
+        direct_cutoff = float(getattr(scf_result, "xc_lattice_cutoff_bohr", 0.0))
+        control_cutoff = float(getattr(control, "xc_lattice_cutoff_bohr", 0.0))
+        if (not np.isfinite(direct_cutoff) or direct_cutoff <= 0.0
+                or not np.isfinite(control_cutoff) or control_cutoff <= 0.0
+                or direct_cutoff != control_cutoff):
+            raise ValueError(
+                "run_ccm_direct_gradient: XC image cutoff is missing or "
+                f"mismatched (direct={direct_cutoff}, Bloch={control_cutoff}); "
+                "use references with the same executed XC domain. No forces returned."
+            )
 
     # The load-bearing check: the same-Hamiltonian premise, verified at
     # this run's actual numbers (never assumed from the fixture class).
@@ -1867,8 +2256,7 @@ def run_ccm_direct_gradient(
             f"{residual:.3e} Ha/cell > parity_tol={float(parity_tol):.1e}. "
             "The two representations are not evaluating the same fitted "
             "Hamiltonian at this run's numerical settings (the documented "
-            "~1e-4 supercell-fit residual class -- see "
-            "HANDOVER_AICCM_DIRECT_TORUS.md Findings §2), so the multi-k "
+            "~1e-4 supercell-fit residual class), so the multi-k "
             "gradient cannot be attributed to the direct energy. No "
             "forces returned."
         )
@@ -2130,7 +2518,7 @@ def run_ccm_double_hybrid_direct(
     The KS eigenvalues entering the PT2 denominators carry the declared
     ``exxdiv`` convention through the SCF (each occupied shifted by
     ``-a_x·ξ_N`` under ``"ewald"``) — the same mechanism as PySCF's exxdiv
-    on KMP2 denominators, measured route-side in ``HANDOVER_D2_EXXDIV.md``
+    on KMP2 denominators, measured route-side in the original investigation
     § "Part 2". This driver composes the direct (BvK-ewald) reference by
     construction; it does not touch the ``run_ccm_ri_mp2`` default
     (``reference="neutral"``), whose flip remains the pending maintainer
@@ -2178,7 +2566,7 @@ def run_ccm_double_hybrid_direct(
     # wrong).
     L = _neutral_cderi_for(ccm, cderi, cderi_build, ke_cutoff, aux_basis,
                            cderi_symmetry,
-                           tail_ke_cutoff=tail_ke_cutoff)
+                           tail_ke_cutoff=tail_ke_cutoff, lat_opts=lat_opts)
     ks = run_ccm_rks_direct(
         ccm, functional, cderi=L, exxdiv=exxdiv, lat_opts=lat_opts,
         grid_options=grid_options,
@@ -2210,7 +2598,7 @@ def run_ccm_double_hybrid_direct(
 
 def _direct_reference_and_cderi(
     ccm, *, initial_guess: object = "AUTO", reference, ke_cutoff, aux_basis, cderi_symmetry, exxdiv,
-    fold_threads, open_shell, who,
+    fold_threads, open_shell, who, allow_vacuum_padding=False,
 ):
     """One cderi ``L`` plus the SCF reference built on that same ``L``.
 
@@ -2226,9 +2614,9 @@ def _direct_reference_and_cderi(
     from .neutral import ccm_neutral_cderi_fold
     from .ri import run_ccm_rhf_ri_neutral
 
-    if reference not in ("direct", "neutral"):
+    if reference not in ("bloch", "direct", "neutral"):
         raise ValueError(
-            f"{who}: reference must be 'direct' or 'neutral', "
+            f"{who}: reference must be 'bloch', 'direct' or 'neutral', "
             f"got {reference!r}")
     n_elec = int(ccm.supercell.n_electrons())
     closed = (n_elec % 2 == 0) and int(ccm.supercell.multiplicity) == 1
@@ -2241,20 +2629,43 @@ def _direct_reference_and_cderi(
             f"{who}: closed-shell clusters only; use "
             "run_ccm_dlpno_ump2_direct for open shells.")
 
+    if reference == "bloch":
+        # The Bloch producer transformed to the real supercell-Gamma
+        # reference (Theorem 1), L folded from its own retained fit. The
+        # seam is the driver's (exxdiv="ewald" on every HF channel), so
+        # another exxdiv cannot be honoured on this route.
+        if str(exxdiv) != "ewald":
+            raise ValueError(
+                f"{who}: reference='bloch' evaluates the Bloch producer's "
+                f"exchange convention (ewald); got exxdiv={exxdiv!r}. Use "
+                "reference='direct' for another seam.")
+        if cderi_symmetry not in (None, False):
+            raise ValueError(
+                f"{who}: cderi_symmetry is refused with reference='bloch' "
+                "(the Bloch producer pins the unreduced classic fit).")
+        from .bloch_reference import bloch_reference_and_cderi
+
+        return bloch_reference_and_cderi(
+            ccm, initial_guess=initial_guess, ke_cutoff=ke_cutoff,
+            aux_basis=aux_basis, open_shell=open_shell, who=who,
+            allow_vacuum_padding=allow_vacuum_padding, fold_threads=fold_threads)
     L = ccm_neutral_cderi_fold(
         ccm, ke_cutoff=float(ke_cutoff), aux_basis=aux_basis,
         symmetry=cderi_symmetry, fold_threads=fold_threads)
     if open_shell:
         if reference == "direct":
-            scf = run_ccm_uhf_direct(ccm, cderi=L, exxdiv=exxdiv, initial_guess=initial_guess)
+            scf = run_ccm_uhf_direct(ccm, cderi=L, exxdiv=exxdiv, initial_guess=initial_guess,
+                                     allow_vacuum_padding=allow_vacuum_padding)
         else:
             from .uhf import run_ccm_uhf
 
             scf = run_ccm_uhf(ccm, cderi=L, initial_guess=initial_guess)
     elif reference == "direct":
-        scf = run_ccm_rhf_direct(ccm, cderi=L, exxdiv=exxdiv, initial_guess=initial_guess)
+        scf = run_ccm_rhf_direct(ccm, cderi=L, exxdiv=exxdiv, initial_guess=initial_guess,
+                                 allow_vacuum_padding=allow_vacuum_padding)
     else:
-        scf = run_ccm_rhf_ri_neutral(ccm, cderi=L, initial_guess=initial_guess)
+        scf = run_ccm_rhf_ri_neutral(ccm, cderi=L, initial_guess=initial_guess,
+                                     allow_vacuum_padding=allow_vacuum_padding)
     if not scf.converged:
         raise ValueError(
             f"{who}: the {reference!r} SCF reference did not converge; "
@@ -2263,8 +2674,9 @@ def _direct_reference_and_cderi(
 
 
 def run_ccm_dlpno_mp2_direct(
-    ccm, *, initial_guess: object = "AUTO", reference="direct", ke_cutoff=200.0, aux_basis=None,
-    cderi_symmetry=None, exxdiv="ewald", fold_threads=None, **dlpno_kwargs,
+    ccm, *, initial_guess: object = "AUTO", reference="bloch", ke_cutoff=200.0, aux_basis=None,
+    cderi_symmetry=None, exxdiv="ewald", fold_threads=None,
+    allow_vacuum_padding=False, **dlpno_kwargs,
 ):
     """One-call closed-shell DLPNO-MP2 on the BvK-ewald direct-torus
     reference (EXPERIMENTAL, 2026-08-21).
@@ -2281,12 +2693,20 @@ def run_ccm_dlpno_mp2_direct(
     ``reference`` selects the complete SCF route, exactly as on
     ``run_ccm_ri_mp2``:
 
-    * ``"direct"`` (the default here) -- the BvK-ewald direct-torus SCF on
+    * ``"bloch"`` (the default since 2026-09-25) -- the Bloch producer
+      (:func:`~vibeqc.periodic.ccm.ri.run_ccm_rhf_gdf`, ``retain_fit_cache=True``)
+      transformed to real supercell-Γ orbitals
+      (:func:`~vibeqc.periodic.ccm.bloch_reference.ccm_reference_from_bloch`,
+      Theorem 1), ``L`` folded from its own fit: the same Hamiltonian and
+      seam as ``"direct"`` at 1e-9 Ha/cell on the correlation energy, from
+      the cheaper SCF. Closed-shell unit cells; ``exxdiv="ewald"`` only.
+    * ``"direct"`` (the default until 2026-09-25; the independent validation
+      producer) -- the BvK-ewald direct-torus SCF on
       the shared ``L``. The exchange-q=0 seam shifts every occupied
       eigenvalue by ``-xi_N``, i.e. every correlation denominator, which is
       why the choice matters: on the strict-zero neutral reference the
       correlation carries a distortion that GROWS with cluster size
-      (``HANDOVER_D2_EXXDIV.md``: diamond RI-MP2 -59.0 vs KMP2 -29.9/-41.1
+      (the original investigation: diamond RI-MP2 -59.0 vs KMP2 -29.9/-41.1
       mHa/atom at (2,2,2)).
     * ``"neutral"`` -- the lean strict-zero SCF, the historical default of
       the non-DLPNO one-call wrappers. Kept for continuity and for
@@ -2307,14 +2727,16 @@ def run_ccm_dlpno_mp2_direct(
         ccm, reference=reference, ke_cutoff=ke_cutoff, aux_basis=aux_basis,
         cderi_symmetry=cderi_symmetry, exxdiv=exxdiv,
         fold_threads=fold_threads, open_shell=False,
-        who="run_ccm_dlpno_mp2_direct", initial_guess=initial_guess)
+        who="run_ccm_dlpno_mp2_direct", initial_guess=initial_guess,
+        allow_vacuum_padding=allow_vacuum_padding)
     return ccm_dlpno_mp2(ccm, scf, cderi=L, ke_cutoff=float(ke_cutoff),
                          **dlpno_kwargs)
 
 
 def run_ccm_dlpno_ump2_direct(
     ccm, *, initial_guess: object = "AUTO", reference="direct", ke_cutoff=200.0, aux_basis=None,
-    cderi_symmetry=None, exxdiv="ewald", fold_threads=None, **dlpno_kwargs,
+    cderi_symmetry=None, exxdiv="ewald", fold_threads=None,
+    allow_vacuum_padding=False, **dlpno_kwargs,
 ):
     """One-call **open-shell** DLPNO-UMP2 on the direct-torus reference
     (EXPERIMENTAL, 2026-08-22).
@@ -2333,7 +2755,7 @@ def run_ccm_dlpno_ump2_direct(
       eigenvalue by ``-xi_N``, i.e. every correlation denominator, which is
       why the choice matters: on the strict-zero neutral reference the
       correlation carries a distortion that GROWS with cluster size
-      (``HANDOVER_D2_EXXDIV.md``: diamond RI-MP2 -59.0 vs KMP2 -29.9/-41.1
+      (the original investigation: diamond RI-MP2 -59.0 vs KMP2 -29.9/-41.1
       mHa/atom at (2,2,2)).
     * ``"neutral"`` -- the lean strict-zero SCF, the historical default of
       the non-DLPNO one-call wrappers. Kept for continuity and for
@@ -2349,14 +2771,16 @@ def run_ccm_dlpno_ump2_direct(
         ccm, reference=reference, ke_cutoff=ke_cutoff, aux_basis=aux_basis,
         cderi_symmetry=cderi_symmetry, exxdiv=exxdiv,
         fold_threads=fold_threads, open_shell=True,
-        who="run_ccm_dlpno_ump2_direct", initial_guess=initial_guess)
+        who="run_ccm_dlpno_ump2_direct", initial_guess=initial_guess,
+        allow_vacuum_padding=allow_vacuum_padding)
     return ccm_dlpno_ump2(ccm, scf, cderi=L, ke_cutoff=float(ke_cutoff),
                           **dlpno_kwargs, initial_guess=initial_guess)
 
 
 def run_ccm_dlpno_ccsd_direct(
     ccm, *, initial_guess: object = "AUTO", reference="direct", ke_cutoff=200.0, aux_basis=None,
-    cderi_symmetry=None, exxdiv="ewald", fold_threads=None, **dlpno_kwargs,
+    cderi_symmetry=None, exxdiv="ewald", fold_threads=None,
+    allow_vacuum_padding=False, **dlpno_kwargs,
 ):
     """One-call closed-shell DLPNO-CCSD(T) on the direct-torus reference
     (EXPERIMENTAL, 2026-08-22).
@@ -2374,7 +2798,7 @@ def run_ccm_dlpno_ccsd_direct(
       eigenvalue by ``-xi_N``, i.e. every correlation denominator, which is
       why the choice matters: on the strict-zero neutral reference the
       correlation carries a distortion that GROWS with cluster size
-      (``HANDOVER_D2_EXXDIV.md``: diamond RI-MP2 -59.0 vs KMP2 -29.9/-41.1
+      (the original investigation: diamond RI-MP2 -59.0 vs KMP2 -29.9/-41.1
       mHa/atom at (2,2,2)).
     * ``"neutral"`` -- the lean strict-zero SCF, the historical default of
       the non-DLPNO one-call wrappers. Kept for continuity and for
@@ -2390,7 +2814,8 @@ def run_ccm_dlpno_ccsd_direct(
         ccm, reference=reference, ke_cutoff=ke_cutoff, aux_basis=aux_basis,
         cderi_symmetry=cderi_symmetry, exxdiv=exxdiv,
         fold_threads=fold_threads, open_shell=False,
-        who="run_ccm_dlpno_ccsd_direct", initial_guess=initial_guess)
+        who="run_ccm_dlpno_ccsd_direct", initial_guess=initial_guess,
+        allow_vacuum_padding=allow_vacuum_padding)
     return ccm_dlpno_ccsd(ccm, scf, cderi=L, ke_cutoff=float(ke_cutoff),
                           **dlpno_kwargs)
 
@@ -2400,6 +2825,7 @@ def run_ccm_rhf_direct_rijcosx(
     aux_basis=None, exxdiv="ewald",
     omega=None, grid_options=None, lr_ke_cutoff=None, lat_opts=None,
     max_iter=128, conv_tol=1e-9, conv_tol_grad=1e-6, diis_dim=8, lindep_tol=1e-7,
+    allow_vacuum_padding=False,
 ):
     """Real-Γ RIJCOSX control in the **neutral fitted-torus gauge**.
 
@@ -2457,7 +2883,7 @@ def run_ccm_rhf_direct_rijcosx(
     * The real-space SR envelope criterion (shell extents ≲ 25 bohr at the
       1e-4 level; ultra-diffuse bases such as Li/sto-3g 2sp warn and belong
       on :func:`run_ccm_rhf_direct` / the GDF route --
-      ``handovers/HANDOVER_RIJCOSX_M3A.md`` § M3b-6).
+      M3b-6).
 
     Returns a ``CCMSCFResult`` with ``.exchange_q0`` recorded.
     """
@@ -2489,6 +2915,12 @@ def run_ccm_rhf_direct_rijcosx(
             "mixed-boundary study use run_ccm_rhf_wire within its stated "
             "light-element scope; the slab counterpart remains unavailable."
         )
+    # The measured-dimensionality gate of IID 291 (with its R6 opt-in), the
+    # same one every other neutral entry point carries; this route only had
+    # the declared-dimension check until 2026-09-16.
+    _padded_axes = _reject_vacuum_padded_direct(
+        ccm, who="run_ccm_rhf_direct_rijcosx",
+        allow_vacuum_padding=allow_vacuum_padding)
     base = lat_opts if lat_opts is not None else LatticeSumOptions()
     if omega is None:
         # The multi-k driver's SR/LR split rule (M3b-4), evaluated for the
@@ -2536,9 +2968,11 @@ def run_ccm_rhf_direct_rijcosx(
         diis_dim=diis_dim, lindep_tol=lindep_tol)
     # result-backend identity (IID 344)
     res.backend = "ccm-neutral-direct-rijcosx-rhf"
+    _stamp_vacuum_padding(res, allow_vacuum_padding, _padded_axes)
     res.rsgdf_tail_ke_cutoff = (
         None if cderi is not None
         else ccm_neutral_tail_ke_cutoff(
             ccm, ke_cutoff=ke_cutoff, tail_ke_cutoff=tail_ke_cutoff))
+    res.fit_source = "injected" if cderi is not None else "classic"  # #378
     res.exchange_q0 = exchange_q0_label(exxdiv)
     return _with_ccm_guess(res, guess_selection)

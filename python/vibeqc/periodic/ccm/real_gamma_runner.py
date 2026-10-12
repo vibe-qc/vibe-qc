@@ -12,7 +12,7 @@ evidence for it.
 The CCM direct drivers return bare per-supercell API dataclasses
 (``CCMSCFResult`` / ``CCMKSResult``); ``run_periodic_job``'s output stage
 consumes per-unit-cell results with ``getattr``-guarded optional fields
-(contract inventory: ``HANDOVER_AICCM_DIRECT_TORUS.md`` § Milestone 2d).
+(contract inventory: Milestone 2d).
 This module constructs that result:
 
 * ``energy`` is per **unit cell** (the CCM per-supercell energy / N_c);
@@ -88,12 +88,29 @@ class CCMRealGammaConvention:
     executed_fock_mixing: float
     executed_damping: float
     executed_level_shift: float
+    #: The RSGDF tail the direct producer applied (``None`` = none), read from
+    #: the result; and which fit built the operator (``"classic"``: the fold and
+    #: supercell builders; ``"injected"`` for a caller-supplied cderi). The
+    #: Bloch producer records the same two fields, which is how a Theorem-1
+    #: pair is audited from the two ``.system`` files (vibe-qc #378). Placed
+    #: after the non-default fields: a defaulted field ahead of them made the
+    #: dataclass unconstructible and every ``variant="real-gamma"`` runner job
+    #: fail at import.
+    rsgdf_tail_ke_cutoff: Optional[float] = None
+    fit_source: str = ""
+    #: Primitive-cell XC image reach actually used (zero for HF/unrecorded).
+    xc_lattice_cutoff_bohr: float = 0.0
     experimental: bool = True
     #: Screened-exchange assembly for HSE-class runs (None otherwise):
     #: (c_full, c_sr, omega_screen) -- the SR-direct (CRYSTAL-style)
     #: assembly convention; see tests/test_ccm_rsh_direct.py for the
     #: cross-code finite-size caveat.
     screened_exchange: Optional[tuple[float, float, float]] = None
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded, and the 1-based lattice directions that
+    #: measured as vacuum. Read off the driver result, never re-derived.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
 
 
 @dataclass
@@ -176,6 +193,27 @@ def _screened_assembly_for(functional: Optional[str]):
     return (float(exx.c_full), float(exx.c_sr), float(exx.omega_screen))
 
 
+def real_gamma_read_source(source, *, open_shell=False):
+    """Extract a target-supercell READ density, never a unit-cell projection.
+
+    Accept a matrix/spin pair or a direct/ccm_reference_from_bloch result.
+    A runner result is unwrapped to its supercell ccm_result. Bloch results
+    must first use ccm_reference_from_bloch so its existing mapping guards
+    remain authoritative. File-based and geometry-projected READ is separate.
+    """
+    source = getattr(source, "ccm_result", source)
+    if source is None or isinstance(source, (str, bytes)) or hasattr(source, "__fspath__"):
+        raise ValueError("real-Gamma initial_guess=READ requires an in-memory supercell density")
+    if open_shell:
+        if isinstance(source, (tuple, list)) and len(source) == 2:
+            return source
+        da, db = getattr(source, "density_alpha", None), getattr(source, "density_beta", None)
+        if da is None or db is None:
+            raise ValueError("real-Gamma READ requires supercell alpha and beta densities")
+        return da, db
+    return getattr(source, "density", source)
+
+
 def run_real_gamma_scf(
     system: PeriodicSystem,
     basis_name: str,
@@ -183,12 +221,16 @@ def run_real_gamma_scf(
     mesh: Sequence[int],
     *,
     initial_guess: object = "AUTO",
+    initial_density=None,
     functional: Optional[str] = None,
     exxdiv: Optional[str] = "ewald",
     cderi_build: str = "fold",
     cderi_symmetry=None,
     aux_basis: Optional[str] = None,
     ke_cutoff: float = 200.0,
+    # The RSGDF high-|G| tail of the neutral fit (None = the resolver's
+    # default, ccm_neutral_tail_ke_cutoff, which sizes it at every N_c).
+    tail_ke_cutoff: Optional[float] = None,
     # M4b (#778): pre-build L here and keep it on the result, so a
     # correlation driver can ride the same kernel the SCF converged on.
     # Off by default -- the default path is byte-identical to before.
@@ -198,6 +240,8 @@ def run_real_gamma_scf(
     lat_opts: Optional[LatticeSumOptions] = None,
     grid_options: Optional[GridOptions] = None,
     becke_image_radius_bohr: float = 10.0,
+    rcut_strategy: object = "pyscf_auto",
+    allow_vacuum_padding: bool = False,
 ) -> CCMRealGammaResult:
     """Run the real-Γ direct-route SCF and adapt it to the runner contract.
 
@@ -208,11 +252,19 @@ def run_real_gamma_scf(
     contract yet); use the API driver
     :func:`vibeqc.periodic.ccm.direct.run_ccm_double_hybrid_direct`.
 
+    ``allow_vacuum_padding=True`` forwards the IID 291 opt-in (ruling R6) to
+    the direct drivers: a cell measured as vacuum-padded runs as a warned,
+    recorded vacuum-parameter study instead of being refused, and the
+    convention record carries ``vacuum_padding_allowed`` and
+    ``vacuum_padded_axes`` read off the driver result.
+
     For KS methods, ``grid_options`` and ``becke_image_radius_bohr`` are
     forwarded unchanged to the periodic AO-grid XC builder.  The direct
     driver negotiates any external provider's required grid profile before
     building its cderi and uses the same image radius for the Becke partition
-    and shifted-AO density projection.  HF methods do not consume XC-grid
+    and shifted-AO density projection for external XC. Built-in XC uses the
+    shared primitive-cell AO-pair bound under ``rcut_strategy="pyscf_auto"``;
+    ``"flat"`` preserves the supplied lattice cutoff. HF methods do not consume XC-grid
     controls.
     """
     from .system import CCMSystem
@@ -227,9 +279,12 @@ def run_real_gamma_scf(
     selection = select_initial_guess(
         system.unit_cell_molecule(), initial_guess, is_periodic=True,
         is_open_shell=str(method).strip().upper() in ("UHF", "UKS"),
-        supported=(InitialGuess.HCORE,), driver="run_real_gamma_scf",
+        supported=(InitialGuess.HCORE, InitialGuess.READ),
+        restart_supplied=initial_density is not None, driver="run_real_gamma_scf",
     )
 
+    if selection.effective == InitialGuess.READ and initial_density is None:
+        raise ValueError("run_real_gamma_scf: initial_guess=READ requires initial_density")
     method_upper = str(method).strip().upper()
     nrep = tuple(int(n) for n in mesh)
     if len(nrep) != 3 or any(n < 1 for n in nrep):
@@ -252,25 +307,23 @@ def run_real_gamma_scf(
     )
     ccm = CCMSystem(system, nrep, basis_name)
 
-    kw = dict(cderi_build=cderi_build, cderi_symmetry=cderi_symmetry,
+    kw = dict(initial_density=initial_density, cderi_build=cderi_build,
+              cderi_symmetry=cderi_symmetry,
               aux_basis=aux_basis, ke_cutoff=float(ke_cutoff),
+              tail_ke_cutoff=(None if tail_ke_cutoff is None
+                              else float(tail_ke_cutoff)),
               exxdiv=exxdiv, max_iter=int(max_iter),
-              conv_tol=float(conv_tol), lat_opts=lat_opts)
-    # M4b (#778): when the caller will correlate on this reference, build L
-    # here and hand the SAME array to the SCF, so the correlation cannot ride
-    # a different kernel than the reference converged on. Only the HF
-    # branches: correlation needs an HF determinant, and the KS branches also
-    # build a screened L_sr this would not cover.
+              conv_tol=float(conv_tol), lat_opts=lat_opts,
+              allow_vacuum_padding=bool(allow_vacuum_padding))
+    # M4b (#778): when the caller will correlate on this reference, the
+    # correlation must ride the SAME array the SCF converged on. Since
+    # 2026-09-24 every direct driver stamps that array on ``result.cderi``
+    # (one build per job), so nothing is pre-built here any more: the
+    # reference is taken off the SCF result below. Only the HF branches keep
+    # it: correlation needs an HF determinant, and the KS branches also
+    # build a screened L_sr this would not cover. An SCF-only run drops the
+    # array so the result does not pin a large tensor.
     retained_cderi = None
-    if retain_cderi and method_upper in ("RHF", "UHF"):
-        from .direct import _neutral_cderi_for
-
-        retained_cderi = _neutral_cderi_for(
-            ccm, None, cderi_build, float(ke_cutoff), aux_basis,
-            cderi_symmetry)
-        # A prebuilt cderi already fixes the fitting basis, and the drivers
-        # refuse aux_basis beside one rather than silently ignoring it.
-        kw = dict(kw, cderi=retained_cderi, aux_basis=None)
     if method_upper == "RHF":
         res = run_ccm_rhf_direct(ccm, **kw, initial_guess=selection.requested)
     elif method_upper == "UHF":
@@ -281,6 +334,7 @@ def run_real_gamma_scf(
             functional or "pbe",
             grid_options=grid_options,
             becke_image_radius_bohr=float(becke_image_radius_bohr),
+            rcut_strategy=rcut_strategy,
             **kw,
             initial_guess=selection.requested,
         )
@@ -290,6 +344,7 @@ def run_real_gamma_scf(
             functional or "pbe",
             grid_options=grid_options,
             becke_image_radius_bohr=float(becke_image_radius_bohr),
+            rcut_strategy=rcut_strategy,
             **kw,
             initial_guess=selection.requested,
         )
@@ -297,6 +352,11 @@ def run_real_gamma_scf(
         raise NotImplementedError(
             "jk_method='real-gamma' implements RHF, UHF, RKS, and UKS; "
             f"got method={method_upper!r}")
+
+    if retain_cderi and method_upper in ("RHF", "UHF"):
+        retained_cderi = getattr(res, "cderi", None)
+    elif getattr(res, "cderi", None) is not None:
+        res.cderi = None
 
     n_c = int(ccm.n_cells)
     applicability = getattr(res, "exchange_q0_applicability", None)
@@ -312,11 +372,18 @@ def run_real_gamma_scf(
         nrep=nrep,
         n_cells=n_c,
         cderi_build=str(cderi_build),
+        rsgdf_tail_ke_cutoff=getattr(res, "rsgdf_tail_ke_cutoff", None),
+        fit_source=str(getattr(res, "fit_source", "") or ""),
+        xc_lattice_cutoff_bohr=float(getattr(res, "xc_lattice_cutoff_bohr", 0.0)),
         executed_fock_mixing=_EXECUTED_FOCK_MIXING,
         executed_damping=_EXECUTED_DAMPING,
         executed_level_shift=_EXECUTED_LEVEL_SHIFT,
         screened_exchange=_screened_assembly_for(
             functional if method_upper in ("RKS", "UKS") else None),
+        vacuum_padding_allowed=bool(
+            getattr(res, "vacuum_padding_allowed", False)),
+        vacuum_padded_axes=tuple(
+            int(a) for a in (getattr(res, "vacuum_padded_axes", ()) or ())),
     )
 
     open_shell = getattr(res, "density_alpha", None) is not None and \

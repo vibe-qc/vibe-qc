@@ -46,7 +46,7 @@ def _has_sad_trigger(symbols: Iterable[str]) -> bool:
 def pick_initial_guess(symbols: Iterable[str]) -> str:
     """``"SAD"`` for ionic / deep-core, ``"HCORE"`` otherwise.
 
-    See Sec. 6.1 of the structure-fetcher handover.
+
     """
     return "SAD" if _has_sad_trigger(symbols) else "HCORE"
 
@@ -54,7 +54,7 @@ def pick_initial_guess(symbols: Iterable[str]) -> str:
 def pick_damping(symbols: Iterable[str]) -> float:
     """``0.85`` for ionic / deep-core, ``0.5`` otherwise.
 
-    See Sec. 6.1 of the structure-fetcher handover.
+
     """
     return 0.85 if _has_sad_trigger(symbols) else 0.5
 
@@ -63,7 +63,7 @@ def pick_kmesh(n_atoms: int) -> Tuple[int, int, int]:
     """k-mesh seed by cell size.
 
     A *seed* for a convergence study, not a converged value.
-    See Sec. 6.2 of the structure-fetcher handover; emit a
+    Emit a
     ``# TODO: k-mesh convergence`` comment in the generated input
     referencing ``examples/input-k-mesh-convergence.py``.
     """

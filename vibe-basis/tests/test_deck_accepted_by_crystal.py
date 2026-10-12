@@ -226,7 +226,7 @@ def test_bulk_and_atom_decks_choose_the_same_integration_grid():
     reads as chemistry. The plane-wave reference work learned this
     concretely, holding atoms at a fixed cutoff while sweeping the solid
     and producing a spurious rising curve
-    (``handovers/HANDOVER_GPAW_PW_REFERENCE.md``).
+    (the original investigation).
 
     Only the atom emitter carried the grid keyword when it was first
     added, so this pins the pair rather than either one alone.

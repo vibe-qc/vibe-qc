@@ -1,6 +1,6 @@
 """Reproduce MgO RKS BIPOLE convergence oscillation.
 
-Per handovers/HANDOVER_BIPOLE_PRODUCTION.md Gap B: MgO primitive cell oscillates
+Per the original investigation Gap B: MgO primitive cell oscillates
 ~0.5 Ha in RKS BIPOLE. First rule out a gauge/physics bug (§7 CLAUDE.md),
 then decide if it's a convergence-aid gap.
 

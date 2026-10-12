@@ -152,7 +152,7 @@ reader = QVFReader("c-diamond_canonical.qvf")
 print(len(reader.sections), "sections")
 ```
 
-The vibe-view [handover](https://github.com/vibe-qc/vibe-view/blob/main/HANDOVER.md) documents the
+The vibe-view the original investigation documents the
 current capabilities (orbital isosurfaces, density, bond analysis,
 COOP/COHP).
 
@@ -195,8 +195,6 @@ unit-cell outline).
 
 - [QVF format specification](../design_qvf_format.md)
 - [QVF consumer reference](../consumer_qvf_reference.md)
-- [Archived QVF writer handover](https://vibe-qc.com/docs/)
-- [vibe-view handover](https://github.com/vibe-qc/vibe-view/blob/main/HANDOVER.md)
 - [Orbital visualization tutorial](../tutorial/orbital_visualization.md)
 - [Periodic orbital cubes tutorial](../tutorial/periodic_orbital_cubes.md)
 - [vibe-view walkthrough](../tutorial/vibe_view_walkthrough.md)

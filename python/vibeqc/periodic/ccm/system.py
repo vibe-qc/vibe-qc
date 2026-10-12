@@ -477,7 +477,7 @@ class CCMSystem:
         ``PeriodicSystem`` stores them as **columns**, so the cell is transposed
         here. (NB: ``vibeqc.ase_periodic.atoms_to_periodic_system`` omits this
         transpose, which transposes non-orthogonal cells -- flagged in
-        ``handovers/HANDOVER_AICCM.md`` for the periodic-SCF owners; we build the system
+        the original investigation for the periodic-SCF owners; we build the system
         directly so CCM is correct for every lattice regardless.)
         """
         from ase.units import Bohr

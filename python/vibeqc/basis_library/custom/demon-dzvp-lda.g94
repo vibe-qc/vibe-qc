@@ -1,0 +1,18 @@
+! deMon DZVP-LDA, hydrogen only: H (41/1). Transcribed 2026-09-17 from the original AICCM
+! program's basis file (~/gitlab/aiccm/basis/full.demon, entry
+! "O-HYDROGEN HYDROGEN H (41/1) (DZVP) (DZVP-LDA)"), the basis of P2014 Table 4
+! (Peintinger and Bredow, J. Comput. Chem. 2014). Godbout, Salahub, Andzelm, Wimmer,
+! Can. J. Chem. 70, 560 (1992).
+
+****
+H     0
+S   4   1.00
+     50.9991800000        0.0096604760
+      7.4832180000        0.0737288600
+      1.7774680000        0.2958581000
+      0.5193295000        0.7159053000
+S   1   1.00
+      0.1541100000        1.0000000000
+P   1   1.00
+      0.7500000000        1.0000000000
+****

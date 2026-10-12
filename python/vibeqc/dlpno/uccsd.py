@@ -29,8 +29,7 @@ DLPNO variational-subspace ansatz.
 This is an O(N⁶) full-space-contraction *pilot*, capped at ``max_nbf`` basis
 functions -- the correctness oracle the reduced-scaling per-pair engine will
 be validated against, exactly as the closed-shell ``run_dlpno_ccsd_pilot``
-relates to the local solver. Remaining production gates live in
-``handovers/HANDOVER_GATED_ITEMS.md``.
+relates to the local solver. Remaining production gates are outside this pilot.
 
 Diagonal spin-orbital pairs (P, P) vanish by the Pauli antisymmetry
 ``<PP||AB> = 0``, so there is no diagonal-pair PNO set; the singles use the

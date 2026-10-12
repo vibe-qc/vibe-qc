@@ -997,8 +997,10 @@ cross-bind those identities to provenance and the nested attestation. A fresh
 v2 row may clear this shared-Ewald component only; D93, D98, and D103 remain
 independent.
 
-Since `6ce142339`, the shared GDF layer rejects compact dense-core MDF systems
-in the MgO/STO-3G class, and that failure propagates through the B selector.
+From `6ce142339` until 2026-09-29 the shared GDF layer rejected compact
+dense-core MDF systems in the MgO/STO-3G class, and that failure propagated
+through the B selector. The shared layer admits them since the Gaussian
+three-centre block sums its auxiliary images (GitLab #172), and B inherits that.
 The separately validated vacuum-padded MDF envelope is unchanged, but D93
 continues to mark every fitted B row `not-qualified`. Commit `ad96a2f63` also
 gives the fitted B routes a bounded shared-q auxiliary Fourier-transform cache.

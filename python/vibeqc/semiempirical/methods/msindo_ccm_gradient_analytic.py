@@ -56,33 +56,35 @@ def _cpp_ccm_gradient_kernel():
     return ccm_gradient_analytic_cpp, params
 
 
-def ccm_gradient_analytic(
-    atomic_numbers,
-    coords_angstrom,
-    translations_angstrom,
-    *,
-    charge=0,
-    madelung=False,
-    max_iter=200,
-    conv_tol=1e-10,
-):
-    """Analytic nuclear gradient (Ha/bohr) for the CCM total energy.
+@lru_cache(maxsize=1)
+def _cpp_ccm_strain_kernel():
+    try:
+        from vibeqc._vibeqc_core.semiempirical import indo as _indo
+    except ImportError:
+        return None
+    try:
+        strain_cpp = _indo.ccm_strain_derivative_analytic
+        load_params_from_json = _indo.load_params_from_json
+    except AttributeError:
+        return None
+    params = load_params_from_json(
+        Path(__file__).with_name("msindo_params.json").read_text()
+    )
+    return strain_cpp, params
 
-    The Wigner-Seitz topology is built once at the reference geometry and held
-    FIXED while the gradient is assembled -- same as ccm_gradient_fd.
 
-    Parameters
-    ----------
-    atomic_numbers : list of int
-    coords_angstrom : (natom, 3) array-like
-    translations_angstrom : list of (3,) array-like -- lattice vectors
-    madelung : bool -- if True, includes the analytic Madelung/Ewald gradient.
+def _on_pole(E):
+    """The d_trans.f pole test on a unit pair direction ``E``."""
+    return abs(E[2]) >= 1.0 - 1e-12
 
-    Returns
-    -------
-    (natom, 3) ndarray -- gradient in Ha/bohr
-    """
+
+def _prepare(atomic_numbers, coords_angstrom, translations_angstrom, charge,
+             stability):
+    """Validated inputs and the Wigner-Seitz topology frozen at the reference."""
+    from .msindo_ccm import _stability_flag
+
     Z = list(atomic_numbers)
+    lowest_stable = _stability_flag(stability)
     coords_arr = np.asarray(coords_angstrom, float)
     translations_arr = [np.asarray(t, float) for t in translations_angstrom]
     C0 = coords_arr * ANGSTROM_TO_BOHR
@@ -103,6 +105,43 @@ def ccm_gradient_analytic(
     if not ws0.is_valid(len(Z)):
         raise ValueError("not a valid cyclic cluster (see run_ccm).")
 
+    return (Z, lowest_stable, coords_arr, translations_arr, C0, T, natom,
+            blocks, nsto, cz, nocc, ws0)
+
+
+def ccm_gradient_analytic(
+    atomic_numbers,
+    coords_angstrom,
+    translations_angstrom,
+    *,
+    charge=0,
+    madelung=False,
+    max_iter=200,
+    conv_tol=1e-10,
+    stability="reference",
+):
+    """Analytic nuclear gradient (Ha/bohr) for the CCM total energy.
+
+    The Wigner-Seitz topology is built once at the reference geometry and held
+    FIXED while the gradient is assembled -- same as ccm_gradient_fd.
+
+    Parameters
+    ----------
+    atomic_numbers : list of int
+    coords_angstrom : (natom, 3) array-like
+    translations_angstrom : list of (3,) array-like -- lattice vectors
+    madelung : bool -- if True, includes the analytic Madelung/Ewald gradient.
+    stability : str -- SCF state policy, as in ``msindo_ccm.run_ccm``.
+
+    Returns
+    -------
+    (natom, 3) ndarray -- gradient in Ha/bohr
+    """
+
+    (Z, lowest_stable, coords_arr, translations_arr, C0, T, natom,
+     blocks, nsto, cz, nocc, ws0) = _prepare(
+        atomic_numbers, coords_angstrom, translations_angstrom, charge, stability)
+
     if all(1 <= z <= 36 for z in Z):
         kernel = _cpp_ccm_gradient_kernel()
         if kernel is not None:
@@ -116,6 +155,7 @@ def ccm_gradient_analytic(
                 charge=charge,
                 max_iter=max_iter,
                 conv_tol=conv_tol,
+                lowest_stable=lowest_stable,
             )
             if len(grad_cpp) == 0 and len(Z) != 0:
                 raise RuntimeError(
@@ -123,6 +163,22 @@ def ccm_gradient_analytic(
                 )
             return np.asarray(grad_cpp, dtype=float)
 
+    grad, _virial = _analytic_derivatives(
+        Z, C0, T, ws0, blocks, nsto, cz, nocc, madelung=madelung,
+        max_iter=max_iter, conv_tol=conv_tol, lowest_stable=lowest_stable,
+        virial=False)
+    return grad
+
+
+def _analytic_derivatives(Z, C0, T, ws0, blocks, nsto, cz, nocc, *, madelung,
+                          max_iter, conv_tol, lowest_stable, virial):
+    """Python reference: SCF on the frozen reference WS topology, then the
+    nuclear gradient (Ha/bohr) and, with ``virial=True``, the strain
+    derivative ``W[a, b] = dE/deps_ab`` (Ha) under the homogeneous deformation
+    ``x -> (1 + eps) x`` of atoms and lattice together, WS weights frozen.
+    The SCF energy is variational in the density, so both are evaluated at
+    the converged density."""
+    natom = len(Z)
     # Fixed lattice translation per WS neighbour
     lattices = [
         [(nb.origin, nb.weight, nb.disp + C0[i] - C0[nb.origin]) for nb in cell]
@@ -189,11 +245,165 @@ def ccm_gradient_analytic(
         max_iter=max_iter,
         conv_tol=conv_tol,
         fock_extra=fock_extra,
+        lowest_stable=lowest_stable,
     )
     if not converged:
         raise RuntimeError("SCF not converged; cannot compute analytic gradient.")
 
     grad = np.zeros((natom, 3))
+    W = np.zeros((3, 3)) if virial else None
+
+    def record_derivative(k, j, disp, P_kk, P_ll, P_kl, nk, nj, pole_azimuth=0.0):
+        """dE_pair/d(disp) of one image record (full pair-image energy).
+
+        On the z pole (``_on_pole``) the azimuth is ``pole_azimuth``: the
+        theta derivative is then the tilt towards that azimuth.
+        """
+        # Compute pair_blocks_deriv with the IMAGE position
+        pd = _pd._pair_blocks_deriv(Z[k], Z[j], C0[k], C0[k] + disp, pole_azimuth)
+
+        R = pd.R
+        dvec = disp  # = rl - rk = image_pos - C0[k]
+        E = dvec / R
+        # sin(theta) from the in-plane components: 1 - cos^2 cancels
+        # catastrophically next to the pole. Same pole test as _d_trans_driver.
+        cost, sint = E[2], math.hypot(E[0], E[1])
+        if _on_pole(E):
+            sint = 0.0
+            cosphi, sinphi = math.cos(pole_azimuth), math.sin(pole_azimuth)
+            dphidx, dphidy, dphidz = 0.0, 0.0, 0.0
+        else:
+            cosphi, sinphi = E[0] / sint, E[1] / sint
+            c1 = sint * sint * R
+            dphidx = -E[1] / c1
+            dphidy = E[0] / c1
+            dphidz = 0.0
+        edt1 = cost * cosphi
+        edt2 = cost * sinphi
+        edt3 = -sint
+        drdx, drdy, drdz = E[0], E[1], E[2]
+        dthx = edt1 / R
+        dthy = edt2 / R
+        dthz = edt3 / R
+
+        dx, dy, dz = 0.0, 0.0, 0.0
+
+        # --- CCMDEDXYZK: K-diagonal + off-diagonal ---
+        for i in range(nk):
+            Pii = P_kk[i, i]
+            dx += Pii * (
+                pd.HK1_DR[i, i] * drdx
+                + pd.HK1_DT[i, i] * dthx
+                + pd.HK1_DP[i, i] * dphidx
+            )
+            dy += Pii * (
+                pd.HK1_DR[i, i] * drdy
+                + pd.HK1_DT[i, i] * dthy
+                + pd.HK1_DP[i, i] * dphidy
+            )
+            dz += Pii * (
+                pd.HK1_DR[i, i] * drdz
+                + pd.HK1_DT[i, i] * dthz
+                + pd.HK1_DP[i, i] * dphidz
+            )
+            for ii in range(i + 1, nk):
+                Pij = P_kk[ii, i]
+                fac = 2.0 * Pij
+                dx += fac * (
+                    pd.HK1_DR[ii, i] * drdx
+                    + pd.HK1_DT[ii, i] * dthx
+                    + pd.HK1_DP[ii, i] * dphidx
+                )
+                dy += fac * (
+                    pd.HK1_DR[ii, i] * drdy
+                    + pd.HK1_DT[ii, i] * dthy
+                    + pd.HK1_DP[ii, i] * dphidy
+                )
+                dz += fac * (
+                    pd.HK1_DR[ii, i] * drdz
+                    + pd.HK1_DT[ii, i] * dthz
+                    + pd.HK1_DP[ii, i] * dphidz
+                )
+
+        # --- CCMDEDXYZL: J-diagonal + off-diagonal ---
+        for i in range(nj):
+            Pii = P_ll[i, i]
+            dx += Pii * (
+                pd.HL1_DR[i, i] * drdx
+                + pd.HL1_DT[i, i] * dthx
+                + pd.HL1_DP[i, i] * dphidx
+            )
+            dy += Pii * (
+                pd.HL1_DR[i, i] * drdy
+                + pd.HL1_DT[i, i] * dthy
+                + pd.HL1_DP[i, i] * dphidy
+            )
+            dz += Pii * (
+                pd.HL1_DR[i, i] * drdz
+                + pd.HL1_DT[i, i] * dthz
+                + pd.HL1_DP[i, i] * dphidz
+            )
+            for ii in range(i + 1, nj):
+                Pij = P_ll[ii, i]
+                fac = 2.0 * Pij
+                dx += fac * (
+                    pd.HL1_DR[ii, i] * drdx
+                    + pd.HL1_DT[ii, i] * dthx
+                    + pd.HL1_DP[ii, i] * dphidx
+                )
+                dy += fac * (
+                    pd.HL1_DR[ii, i] * drdy
+                    + pd.HL1_DT[ii, i] * dthy
+                    + pd.HL1_DP[ii, i] * dphidy
+                )
+                dz += fac * (
+                    pd.HL1_DR[ii, i] * drdz
+                    + pd.HL1_DT[ii, i] * dthz
+                    + pd.HL1_DP[ii, i] * dphidz
+                )
+
+        # --- CCMDEDXYZK: pair block + gamma + nuclear (round 1) ---
+        for i in range(nk):
+            Pii = P_kk[i, i]
+            for jj in range(nj):
+                Pjj = P_ll[jj, jj]
+                Pij = P_kl[i, jj]
+                Fg = 0.5 * pd.d_gamma_local[i, jj] * (Pii * Pjj - 0.5 * Pij * Pij)
+                Fr = Pij * pd.HKL2_DR[i, jj]
+                Ft = Pij * pd.HKL2_DT[i, jj]
+                Fp = Pij * pd.HKL2_DP[i, jj]
+                dx += (Fg + Fr) * drdx + Ft * dthx + Fp * dphidx
+                dy += (Fg + Fr) * drdy + Ft * dthy + Fp * dphidy
+                dz += (Fg + Fr) * drdz + Ft * dthz + Fp * dphidz
+        # Nuclear repulsion (round 1)
+        zke = float(eff_core_charge(Z[k]))
+        zle = float(eff_core_charge(Z[j]))
+        zkl = 0.5 * zke * zle
+        drkl = -1.0 / (R * R)
+        dx += zkl * drkl * drdx
+        dy += zkl * drkl * drdy
+        dz += zkl * drkl * drdz
+
+        # --- CCMDEDXYZL: pair block + gamma + nuclear (round 2) ---
+        for i in range(nk):
+            Pii = P_kk[i, i]
+            for jj in range(nj):
+                Pjj = P_ll[jj, jj]
+                Pij = P_kl[i, jj]
+                Fg = 0.5 * pd.d_gamma_local[i, jj] * (Pii * Pjj - 0.5 * Pij * Pij)
+                Fr = Pij * pd.HKL2_DR[i, jj]
+                Ft = Pij * pd.HKL2_DT[i, jj]
+                Fp = Pij * pd.HKL2_DP[i, jj]
+                dx += (Fg + Fr) * drdx + Ft * dthx + Fp * dphidx
+                dy += (Fg + Fr) * drdy + Ft * dthy + Fp * dphidy
+                dz += (Fg + Fr) * drdz + Ft * dthz + Fp * dphidz
+        # Nuclear repulsion (round 2)
+        dx += zkl * drkl * drdx
+        dy += zkl * drkl * drdy
+        dz += zkl * drkl * drdz
+
+        return np.array([dx, dy, dz])
+
 
     # Loop over central atoms and their WS neighbor images
     for k in range(natom):
@@ -206,160 +416,188 @@ def ccm_gradient_analytic(
             lj, hj = blocks[j]
             nj = hj - lj
 
-            # Compute pair_blocks_deriv with the IMAGE position
-            pd = _pd._pair_blocks_deriv(Z[k], Z[j], C0[k], C0[k] + nb.disp)
             P_ll = P[lj:hj, lj:hj]
             P_kl = P[lk:hk, lj:hj]
-
-            R = pd.R
-            dvec = nb.disp  # = rl - rk = image_pos - C0[k]
-            E = dvec / R
-            cost, sint = E[2], math.sqrt(max(0.0, 1.0 - E[2] ** 2))
-            if sint < 1e-12:
-                cosphi, sinphi = 1.0, 0.0
-                dphidx, dphidy, dphidz = 0.0, 0.0, 0.0
-            else:
-                cosphi, sinphi = E[0] / sint, E[1] / sint
-                c1 = sint * sint * R
-                dphidx = -E[1] / c1
-                dphidy = E[0] / c1
-                dphidz = 0.0
-            edt1 = cost * cosphi
-            edt2 = cost * sinphi
-            edt3 = -sint
-            drdx, drdy, drdz = E[0], E[1], E[2]
-            dthx = edt1 / R
-            dthy = edt2 / R
-            dthz = edt3 / R
-
-            dx, dy, dz = 0.0, 0.0, 0.0
-
-            # --- CCMDEDXYZK: K-diagonal + off-diagonal ---
-            for i in range(nk):
-                Pii = P_kk[i, i]
-                dx += Pii * (
-                    pd.HK1_DR[i, i] * drdx
-                    + pd.HK1_DT[i, i] * dthx
-                    + pd.HK1_DP[i, i] * dphidx
-                )
-                dy += Pii * (
-                    pd.HK1_DR[i, i] * drdy
-                    + pd.HK1_DT[i, i] * dthy
-                    + pd.HK1_DP[i, i] * dphidy
-                )
-                dz += Pii * (
-                    pd.HK1_DR[i, i] * drdz
-                    + pd.HK1_DT[i, i] * dthz
-                    + pd.HK1_DP[i, i] * dphidz
-                )
-                for ii in range(i + 1, nk):
-                    Pij = P_kk[ii, i]
-                    fac = 2.0 * Pij
-                    dx += fac * (
-                        pd.HK1_DR[ii, i] * drdx
-                        + pd.HK1_DT[ii, i] * dthx
-                        + pd.HK1_DP[ii, i] * dphidx
-                    )
-                    dy += fac * (
-                        pd.HK1_DR[ii, i] * drdy
-                        + pd.HK1_DT[ii, i] * dthy
-                        + pd.HK1_DP[ii, i] * dphidy
-                    )
-                    dz += fac * (
-                        pd.HK1_DR[ii, i] * drdz
-                        + pd.HK1_DT[ii, i] * dthz
-                        + pd.HK1_DP[ii, i] * dphidz
-                    )
-
-            # --- CCMDEDXYZL: J-diagonal + off-diagonal ---
-            for i in range(nj):
-                Pii = P_ll[i, i]
-                dx += Pii * (
-                    pd.HL1_DR[i, i] * drdx
-                    + pd.HL1_DT[i, i] * dthx
-                    + pd.HL1_DP[i, i] * dphidx
-                )
-                dy += Pii * (
-                    pd.HL1_DR[i, i] * drdy
-                    + pd.HL1_DT[i, i] * dthy
-                    + pd.HL1_DP[i, i] * dphidy
-                )
-                dz += Pii * (
-                    pd.HL1_DR[i, i] * drdz
-                    + pd.HL1_DT[i, i] * dthz
-                    + pd.HL1_DP[i, i] * dphidz
-                )
-                for ii in range(i + 1, nj):
-                    Pij = P_ll[ii, i]
-                    fac = 2.0 * Pij
-                    dx += fac * (
-                        pd.HL1_DR[ii, i] * drdx
-                        + pd.HL1_DT[ii, i] * dthx
-                        + pd.HL1_DP[ii, i] * dphidx
-                    )
-                    dy += fac * (
-                        pd.HL1_DR[ii, i] * drdy
-                        + pd.HL1_DT[ii, i] * dthy
-                        + pd.HL1_DP[ii, i] * dphidy
-                    )
-                    dz += fac * (
-                        pd.HL1_DR[ii, i] * drdz
-                        + pd.HL1_DT[ii, i] * dthz
-                        + pd.HL1_DP[ii, i] * dphidz
-                    )
-
-            # --- CCMDEDXYZK: pair block + gamma + nuclear (round 1) ---
-            for i in range(nk):
-                Pii = P_kk[i, i]
-                for jj in range(nj):
-                    Pjj = P_ll[jj, jj]
-                    Pij = P_kl[i, jj]
-                    Fg = 0.5 * pd.d_gamma_local[i, jj] * (Pii * Pjj - 0.5 * Pij * Pij)
-                    Fr = Pij * pd.HKL2_DR[i, jj]
-                    Ft = Pij * pd.HKL2_DT[i, jj]
-                    Fp = Pij * pd.HKL2_DP[i, jj]
-                    dx += (Fg + Fr) * drdx + Ft * dthx + Fp * dphidx
-                    dy += (Fg + Fr) * drdy + Ft * dthy + Fp * dphidy
-                    dz += (Fg + Fr) * drdz + Ft * dthz + Fp * dphidz
-            # Nuclear repulsion (round 1)
-            zke = float(eff_core_charge(Z[k]))
-            zle = float(eff_core_charge(Z[j]))
-            zkl = 0.5 * zke * zle
-            drkl = -1.0 / (R * R)
-            dx += zkl * drkl * drdx
-            dy += zkl * drkl * drdy
-            dz += zkl * drkl * drdz
-
-            # --- CCMDEDXYZL: pair block + gamma + nuclear (round 2) ---
-            for i in range(nk):
-                Pii = P_kk[i, i]
-                for jj in range(nj):
-                    Pjj = P_ll[jj, jj]
-                    Pij = P_kl[i, jj]
-                    Fg = 0.5 * pd.d_gamma_local[i, jj] * (Pii * Pjj - 0.5 * Pij * Pij)
-                    Fr = Pij * pd.HKL2_DR[i, jj]
-                    Ft = Pij * pd.HKL2_DT[i, jj]
-                    Fp = Pij * pd.HKL2_DP[i, jj]
-                    dx += (Fg + Fr) * drdx + Ft * dthx + Fp * dphidx
-                    dy += (Fg + Fr) * drdy + Ft * dthy + Fp * dphidy
-                    dz += (Fg + Fr) * drdz + Ft * dthz + Fp * dphidz
-            # Nuclear repulsion (round 2)
-            dx += zkl * drkl * drdx
-            dy += zkl * drkl * drdy
-            dz += zkl * drkl * drdz
+            disp = np.asarray(nb.disp, float)
+            D = record_derivative(k, j, disp, P_kk, P_ll, P_kl, nk, nj)
+            if _on_pole(disp / np.linalg.norm(disp)):
+                # On the z pole the azimuth is undefined, and the d_trans.f
+                # convention (phi = 0) gives only the tilt towards x. The tilt
+                # towards y is the same derivative taken at phi = pi/2.
+                D[1] = record_derivative(k, j, disp, P_kk, P_ll, P_kl, nk, nj,
+                                         pole_azimuth=0.5 * math.pi)[1]
+            dx, dy, dz = D
 
             # Total force: -(CCMDEDXYZK + CCMDEDXYZL), both applied to K
             # EDX(K) = EDX(K) - (DX_K + DX_L)*WEIGHT
             grad[k, 0] -= w * dx
             grad[k, 1] -= w * dy
             grad[k, 2] -= w * dz
+            if W is not None:
+                # Frozen-weight virial: every image record's pair energy
+                # depends on its displacement only, so a homogeneous strain
+                # contributes dE/deps_ab = 1/2 w D_a disp_b (each unordered
+                # pair-image appears in two mirror records).
+                W += 0.5 * w * np.outer((dx, dy, dz), nb.disp)
 
     # Madelung/Ewald analytic gradient (ported from dedmadelsum.f + dmadkonst.f)
     if madelung:
         net = _net_charges(P, blocks, cz)
         _add_madelung_gradient(grad, net, C0, T, ws)
+        if W is not None:
+            W += _madelung_virial(net, T, ws)
 
-    return grad
+    return grad, W
+
+
+def ccm_strain_derivative_analytic(
+    atomic_numbers,
+    coords_angstrom,
+    translations_angstrom,
+    *,
+    charge=0,
+    madelung=False,
+    max_iter=200,
+    conv_tol=1e-10,
+    stability="reference",
+):
+    """Analytic strain derivative ``W[a, b] = dE/deps_ab`` (Ha) of the CCM energy.
+
+    ``eps`` deforms atoms and lattice vectors together, ``x -> (1 + eps) x``
+    (fixed fractional coordinates), with the Wigner-Seitz topology and weights
+    frozen at the reference geometry, as for the nuclear gradients. For a 3-D
+    cell the stress is ``W / V`` (:func:`ccm_stress_analytic`); the pressure is
+    ``-trace(W) / (3 V)``. The 1-D truncated and 3-D Ewald Madelung embeddings
+    are included; the 2-D Parry/Heyes embedding is not implemented and raises.
+
+    Exact-tie WS images (shared with fractional weights, as in MgO B1 2x2x2)
+    make the energy with a *rebuilt* topology non-differentiable under shear:
+    a shear breaks the tie and changes the weights discontinuously. ``W`` is
+    the derivative on the frozen topology, which a uniform scaling preserves,
+    so ``trace(W)`` is also the volume derivative of an equation-of-state scan.
+    """
+    (Z, lowest_stable, _coords_arr, _translations_arr, C0, T, _natom,
+     blocks, nsto, cz, nocc, ws0) = _prepare(
+        atomic_numbers, coords_angstrom, translations_angstrom, charge, stability)
+    if madelung and len(T) == 2:
+        raise NotImplementedError(
+            "The strain derivative of the 2-D Parry/Heyes Madelung embedding is "
+            "not implemented; use madelung=False or a 1-D / 3-D cell."
+        )
+    if all(1 <= z <= 36 for z in Z):
+        kernel = _cpp_ccm_strain_kernel()
+        if kernel is not None:
+            strain_cpp, params = kernel
+            W = strain_cpp(
+                Z,
+                _coords_arr.tolist(),
+                [t.tolist() for t in _translations_arr],
+                params,
+                madelung=madelung,
+                charge=charge,
+                max_iter=max_iter,
+                conv_tol=conv_tol,
+                lowest_stable=lowest_stable,
+            )
+            if len(W) == 0:
+                raise RuntimeError(
+                    "SCF not converged; cannot compute the strain derivative."
+                )
+            return np.asarray(W, dtype=float)
+    _grad, W = _analytic_derivatives(
+        Z, C0, T, ws0, blocks, nsto, cz, nocc, madelung=madelung,
+        max_iter=max_iter, conv_tol=conv_tol, lowest_stable=lowest_stable,
+        virial=True)
+    return W
+
+
+def ccm_stress_analytic(atomic_numbers, coords_angstrom, translations_angstrom,
+                        **kwargs):
+    """Analytic stress ``sigma = (1/V) dE/deps`` (Ha/bohr^3) of a 3-D CCM cell.
+
+    Same convention as the periodic semiempirical stress: positive entries are
+    tensile, the pressure is ``-trace(sigma) / 3``. ``V`` is the volume of the
+    cyclic cluster (the supercell spanned by the translations). Keyword
+    arguments are those of :func:`ccm_strain_derivative_analytic`.
+    """
+    if len(translations_angstrom) != 3:
+        raise ValueError("ccm_stress_analytic needs a 3-D cell (three translations)")
+    W = ccm_strain_derivative_analytic(
+        atomic_numbers, coords_angstrom, translations_angstrom, **kwargs)
+    T = np.asarray(translations_angstrom, float) * ANGSTROM_TO_BOHR
+    return W / abs(float(np.linalg.det(T)))
+
+
+def _madelung_virial(net_charges, translations, ws):
+    """Strain derivative (Ha) of the Madelung energy at fixed net charges.
+
+    ``e_mad = 1/2 S_I q_I S_{nb in EWS(I)} w q_o h(disp)`` over the Ewald WS set,
+    which includes each atom's own image (``disp = 0``). Every real-space
+    vector scales with the strain, so the pair parts contribute
+    ``dh/dr_a r_b``; the 3-D reciprocal and background parts carry explicit
+    ``K`` and volume dependence (Nielsen and Martin, Phys. Rev. B 32, 3792
+    (1985)). The Ewald parameter is held fixed: the converged sum does not
+    depend on it.
+    """
+    dim = len(translations)
+    ews = _ewald_ws_cells(ws)
+    eye = np.eye(3)
+    if dim == 1:
+        Tv = np.asarray(translations[0], float)
+        shells = (Tv, -Tv, 2.0 * Tv, -2.0 * Tv)
+
+        def dh(disp):
+            out = np.zeros((3, 3))
+            for sh in shells:
+                x = disp + sh
+                r = float(np.linalg.norm(x))
+                out -= np.outer(x, x) / r**3
+            return out
+
+    elif dim == 3:
+        kvecs, kb, dvecs, alpha, volume, direct_cutoff = _ewald_lattice_3d(
+            ews, translations
+        )
+        kpref = 4.0 * np.pi * np.exp(-kb / (4.0 * alpha**2)) / (kb * volume)
+        kfac = 2.0 * (1.0 / kb + 1.0 / (4.0 * alpha**2))
+        background = -np.pi / (volume * alpha**2)
+        two_over_sqrtpi = 2.0 / np.sqrt(np.pi)
+
+        def dh(disp):
+            v = -np.asarray(disp, float)
+            c = kpref * np.cos(kvecs @ v)
+            out = (kvecs * (c * kfac)[:, None]).T @ kvecs - float(c.sum()) * eye
+            x = v + dvecs
+            r = np.linalg.norm(x, axis=1)
+            far = (r > 1e-8) & (r <= direct_cutoff)
+            xr, rr = x[far], r[far]
+            # f(r) = erfc(a r)/r;  f'(r)/r multiplies x_a x_b.
+            fprime = (-erfc(alpha * rr) / rr**2
+                      - two_over_sqrtpi * alpha * np.exp(-(alpha * rr) ** 2) / rr)
+            out += (xr * (fprime / rr)[:, None]).T @ xr
+            out -= background * eye
+            d = float(np.linalg.norm(disp))
+            if d > 1e-8:
+                out += np.outer(disp, disp) / d**3  # SMADEL sphere, -1/d
+            return out
+
+    else:
+        raise NotImplementedError(
+            "The strain derivative of the 2-D Parry/Heyes Madelung embedding "
+            "is not implemented."
+        )
+
+    W = np.zeros((3, 3))
+    for i, cell in enumerate(ews):
+        qi = float(net_charges[i])
+        if qi == 0.0:
+            continue
+        for nb in cell:
+            qo = float(net_charges[nb.origin])
+            if qo == 0.0:
+                continue
+            W += 0.5 * qi * qo * nb.weight * dh(nb.disp)
+    return W
 
 
 # ============================================================================ #

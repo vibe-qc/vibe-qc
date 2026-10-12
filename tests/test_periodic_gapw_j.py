@@ -1958,29 +1958,6 @@ def test_multik_gpw_hueckel_uses_shared_fock_adapter(monkeypatch):
     assert seen == [core.InitialGuess.HUECKEL]
 
 
-@pytest.mark.parametrize(
-    ("driver_name", "args", "kwargs"),
-    [
-        (
-            "run_periodic_rks_gpw_multi_k",
-            (None, None, None),
-            {"functional": "lda"},
-        ),
-    ],
-    ids=["multik"],
-)
-def test_direct_gpw_guess_selectors_fail_closed_for_patom(
-    driver_name,
-    args,
-    kwargs,
-):
-    """A recognized guess without a GPW implementation fails early."""
-    with pytest.raises(
-        NotImplementedError,
-        match="initial_guess=PATOM.*not implemented by this route",
-    ):
-        getattr(gj, driver_name)(
-            *args,
-            initial_guess=core.InitialGuess.PATOM,
-            **kwargs,
-        )
+# Multi-k PATOM uses a full-HF seed even for pure DFT. Its supported
+# GPW/GAPW routes are covered together, including normalized seed input
+# and seed-only exchange, in test_periodic_patom.py.

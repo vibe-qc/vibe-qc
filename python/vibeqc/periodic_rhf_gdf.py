@@ -16,10 +16,10 @@ Algorithm selection
 -------------------
 
 * ``gdf_algorithm='bare'`` (default): direct image-summed 2c/3c ERIs
-  with modrho rescaling. Works for 1D/2D/3D molecular-limit cells.
-  For 3D cells where the GDF cutoff includes image cells, or when an
-  internal finite-torus caller requires the periodic Hamiltonian, the
-  driver falls back to EWALD_3D J + real-space K.
+  with modrho rescaling. Retains the 2D and 3D molecular-limit routes.
+  Public 3D calls whose GDF cutoff includes image cells are refused;
+  use the exact-Gamma or k-mesh GDF APIs for bulk crystals. The private
+  finite-torus seam retains its existing EWALD_3D J + real-space K route.
 * ``gdf_algorithm='rsgdf'``: range-separated GDF (Ye & Berkelbach 2021,
   DOI 10.1063/5.0046617). Split 1/r = erfc(\u03c9r)/r + erf(\u03c9r)/r; SR
   in real space, LR in reciprocal space. Works for 1D/2D systems;
@@ -45,6 +45,7 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
+from .periodic.exchange_convention import MOLECULAR_LIMIT
 from ._vibeqc_core import (
     apply_level_shift,
     BasisSet,
@@ -98,6 +99,7 @@ from .occupations import (
 from .smearing.apply import _global_aufbau_with_mu
 from .options_dump import dump_active_settings
 from .periodic_grid import build_periodic_becke_grid
+from .periodic_jk_method import _WIRE_VACUUM_BOX_HINT
 from .periodic_k_density import real_space_density_from_per_k_density
 from .periodic_rhf_ewald import (
     _canonical_orthogonalizer,
@@ -128,11 +130,11 @@ class PeriodicRHFGDFResult:
 
     The ``backend`` field indicates the actual J/K mechanism:
       - ``"native-gamma-gdf"`` -- true density fitting via Lpq
-        (1D/2D systems; 3D molecular-limit cells whose GDF cutoff
+        (2D systems; 3D molecular-limit cells whose GDF cutoff
         includes only the home cell).
       - ``"ewald-jk-fallback"`` -- Ewald-3D J + real-space K
-        (3D systems with image cells in the GDF cutoff, or an internal
-        finite-torus request; see :mod:`vibeqc.pbc_gdf` for the
+        (an explicit private finite-torus request; public compact 3D
+        calls are refused; see :mod:`vibeqc.pbc_gdf` for the
         compensated-cell GDF path)."""
 
     energy: float
@@ -173,6 +175,11 @@ class PeriodicRHFGDFResult:
     restart_kpoints: object = None
     restart_weights: object = None
 
+    # Every Gamma-only Ewald/GDF driver builds exchange with the
+    # molecular-limit kernel (home-cell density, image blocks zeroed); the
+    # runner's manifest records this instead of the exxdiv knob (GitLab #23).
+    exchange_q0: str = MOLECULAR_LIMIT
+
 
 @dataclass
 class _PrivateSlabKRHFGDFResult:
@@ -198,6 +205,8 @@ class _PrivateSlabKRHFGDFResult:
     e_hf_exchange: float = 0.0
     aux_basis_name: str = ""
     n_aux: int = 0
+    #: ``(k_i, k_j)`` fit tensors the SCF built (``len(fits)``).
+    gdf_cderi_pairs: int = 0
     backend: str = "private-multik-slab-truncated-gdf"
 
     restart_basis: object = None
@@ -394,7 +403,7 @@ def _density_set_gamma(
     density on the one-cell periodic grid drops every image
     contribution to ρ(r) and mis-evaluates E_xc/V_xc by ~0.3 Ha on
     tight ionic cells (the 2026-07-09 KRKS finding,
-    handovers/HANDOVER_AICCM_DIRECT_TORUS.md §4).
+    the original investigation).
     """
     if D.shape[0] != template.nbf:
         raise ValueError(
@@ -528,10 +537,21 @@ def run_rhf_periodic_gamma_gdf(
     driver adds native libxc ``V_xc`` on the periodic/molecular Becke
     grid and uses the functional's exact-exchange fraction for hybrids.
 
+    Public 3D calls are limited to a GDF integral cutoff containing only
+    the home cell. If image cells enter that cutoff, this legacy fallback
+    would pair Ewald J with molecular-limit exchange, so it raises before
+    grid or integral work. Use ``run_periodic_job(jk_method="gdf",
+    kpoints=(1, 1, 1))`` or a supported exact-Gamma API for bulk crystals.
+
     ``_force_ewald_jk`` is a private routing seam for callers whose finite
     cell is known to represent a fully periodic torus.  Such callers must
     retain the Ewald-J/real-space-K Hamiltonian even when the numerical
     lattice cutoff happens to include only the home cell.
+
+    A ``dim == 1`` cell raises ``NotImplementedError``: the route has no
+    consistent 1-D Coulomb gauge, so its total energy depends on the
+    lattice-sum cutoff. Model a wire as a ``dim=3`` cell with transverse
+    vacuum instead.
     """
     from .pbc_gdf import _refuse_ecp_options
 
@@ -570,6 +590,22 @@ def run_rhf_periodic_gamma_gdf(
                 "private slab-truncated GDF requires "
                 "coulomb_method=SLAB_EWALD_2D for V_ne and E_nuclear"
             )
+    if int(system.dim) == 1:
+        # The dim=1 Gamma route paired bare 1-D V_ne / E_nn lattice sums with
+        # Lpq J/K over the same cell set. The bare nuclear sum diverges like
+        # (Z_cell^2 / a) ln R and nothing cancels it. H2 / sto-3g, a = 4
+        # bohr, R = cutoff_bohr = nuclear_cutoff_bohr = 10, 20, 40, 80, 160:
+        # E_nuclear = 2.29, 3.08, 3.73, 4.39, 5.08 Ha (ln 2 per doubling),
+        # and the total went from -2.74 to -5.63 Ha; the defaults gave
+        # -3.106 Ha against -1.117 Ha for molecular H2. It fails closed like
+        # the k-mesh route (_gauge_lat_opts_for_v_ne_and_e_nuc).
+        raise NotImplementedError(
+            "run_rhf_periodic_gamma_gdf: no consistent Coulomb gauge for a "
+            "dim = 1 cell. The bare 1-D V_ne / E_nn lattice sums diverge "
+            "logarithmically with the lattice-sum cutoff and the Gamma J/K "
+            "does not cancel them, so the total energy depends on "
+            "cutoff_bohr. " + _WIRE_VACUUM_BOX_HINT
+        )
     func = Functional(func_name, 1) if is_ks else None
     # This legacy Γ fallback builds the molecular-limit K full-range
     # only; screened hybrids must not silently run as full-range twins.
@@ -630,6 +666,19 @@ def run_rhf_periodic_gamma_gdf(
         + " bohr"
     )
     n_int_cells = len(direct_lattice_cells(system, lat_opts.cutoff_bohr))
+    molecular_limit_gdf = int(system.dim) == 3 and n_int_cells == 1
+    use_ewald_jk = int(system.dim) == 3 and (
+        force_ewald_jk or not molecular_limit_gdf
+    )
+    if use_ewald_jk and not force_ewald_jk:
+        raise NotImplementedError(
+            "run_rhf_periodic_gamma_gdf: compact 3D cells with image cells "
+            "in the integral cutoff are unsupported by this public driver. "
+            "Its Ewald-J fallback uses molecular-limit exchange, not periodic "
+            "GDF exchange. Use run_periodic_job(jk_method='gdf', "
+            "kpoints=(1, 1, 1)) for RHF/RKS, or run_pbc_gdf_rhf for a "
+            "supported exact-Gamma RHF request."
+        )
     n_nuc_cells = len(direct_lattice_cells(system, lat_opts.nuclear_cutoff_bohr))
     plog.info(
         "lattice cells: "
@@ -683,17 +732,13 @@ def run_rhf_periodic_gamma_gdf(
             # Feeding the home-cell-only set here evaluates the
             # molecular density on the periodic grid: exact in a vacuum
             # box, ~0.3 Ha wrong on tight ionic cells (the 2026-07-09
-            # KRKS finding, HANDOVER_AICCM_DIRECT_TORUS.md §4).
+            # KRKS finding, the original investigation).
             _set_xc_density = _density_set_torus_gamma
         else:
             # Molecular Becke grid (v0.8.x reproduction path) pairs with
             # the molecular-limit home-cell-only density.
             grid = build_grid(system.unit_cell_molecule(), grid_options)
 
-    molecular_limit_gdf = int(system.dim) == 3 and n_int_cells == 1
-    use_ewald_jk = int(system.dim) == 3 and (
-        force_ewald_jk or not molecular_limit_gdf
-    )
     if force_ewald_jk and molecular_limit_gdf:
         plog.info(
             "J/K routing: Ewald-3D forced for a finite periodic torus "
@@ -723,7 +768,8 @@ def run_rhf_periodic_gamma_gdf(
         gauge_lat_opts = lat_opts
     else:
         # Lpq J/K path: 3D molecular-limit cell (GDF cutoff contains the
-        # home cell only) or any dim<3 vacuum-padded wire/slab. J and K
+        # home cell only) or a dim=2 cell outside the private slab route
+        # (dim=1 was refused above). J and K
         # come from the native Lpq tensor, which is summed over the GDF
         # integral cutoff `cutoff_bohr`. V_ne and e_nuc MUST sum nuclei
         # over the SAME cell set, or the long-range electron-nuclear
@@ -800,15 +846,6 @@ def run_rhf_periodic_gamma_gdf(
             "run_rhf_periodic_gamma_gdf: canonical orthogonalisation "
             f"dropped too many directions (n_occ={n_occ}, n_kept={n_kept})"
         )
-
-    use_davidson = getattr(opts, "use_davidson", False)
-    dav_opts = getattr(opts, "davidson", None)
-    dav_dim = getattr(opts, "davidson_min_dim", 100)
-    use_dav = use_davidson and S.shape[0] >= dav_dim
-    if use_dav and dav_opts is None:
-        from vibeqc._vibeqc_core import DavidsonOptions
-
-        dav_opts = DavidsonOptions()
 
     # ---- Native GDF factor --------------------------------------------
     mol = system.unit_cell_molecule()
@@ -895,7 +932,7 @@ def run_rhf_periodic_gamma_gdf(
     # built via the same full-range real-space path the working EWALD_3D
     # driver uses (`build_jk_gamma_molecular_limit` at omega=0).
     #
-    # The 2026-05-14 handover originally framed this molecular-limit
+    # The 2026-05-14 historical design record originally framed this molecular-limit
     # kernel as a builder bug ("misses g_l != g_s contributions"); the
     # 2026-05-15 cutoff-convergence sweep (retired forensic note in git
     # history) showed the
@@ -1004,26 +1041,12 @@ def run_rhf_periodic_gamma_gdf(
             K_out = _build_k_from_lpq(Lpq, D_in)
         return np.real(0.5 * (K_out + K_out.conj().T))
 
-    def diagonalise(F: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        Fp = X.T @ F @ X
-        Fp = 0.5 * (Fp + Fp.T)
-        if use_dav and dav_opts is not None:
-            from vibeqc._vibeqc_core import davidson_solve
+    from .solvers._scf import FockDiagonalizer
 
-            if dav_opts.n_eig == 0:
-                dav_opts.n_eig = Fp.shape[0]
-            if dav_opts.guess_vectors is not None:
-                pass  # already set from previous iteration
-            dres = davidson_solve(Fp, dav_opts)
-            if not dres.converged:
-                raise RuntimeError(
-                    f"Davidson did not converge after {dres.n_iter} iters"
-                )
-            eps, Cp = dres.eigenvalues, dres.eigenvectors
-            dav_opts.guess_vectors = Cp
-        else:
-            eps, Cp = np.linalg.eigh(Fp)
-        return X @ Cp, eps
+    diagonalise = FockDiagonalizer(
+        X, S, opts, kind="ks" if is_ks else "fock",
+        n_required=n_occ, real_only=True,
+    )
 
     def occupations_from_eps(
         eps: np.ndarray,
@@ -1949,6 +1972,7 @@ def _run_krhf_periodic_slab_gdf(
                 e_hf_exchange=e_hf_exchange,
                 aux_basis_name=aux_name,
                 n_aux=int(raw_aux.nbasis),
+                gdf_cderi_pairs=len(fits),
                 backend=(
                     "private-multik-slab-truncated-gdf-rks"
                     if is_ks
@@ -2035,6 +2059,7 @@ def _run_krhf_periodic_slab_gdf(
         e_hf_exchange=e_hf_exchange,
         aux_basis_name=aux_name,
         n_aux=int(raw_aux.nbasis),
+        gdf_cderi_pairs=len(fits),
         backend=(
             "private-multik-slab-truncated-gdf-rks"
             if is_ks

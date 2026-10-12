@@ -64,6 +64,42 @@ def _zn_ion():
     return mol, basis
 
 
+def _out_block(text, header):
+    assert header in text, f"the .out carries no {header!r} block"
+    return text.split(header, 1)[1]
+
+
+def _out_atomic_charges(text, element):
+    """Return the (Mulliken, Loewdin, Hirshfeld) row for ``element`` from the
+    .out "Atomic charges" table.
+
+    Parsed rather than substring-matched. The table prints six decimals
+    (``scf_log.py``, ``_fixed_unsigned_zero(..., 6)``), so an ``in text``
+    literal pins the charge to +/-5e-7 -- twenty times tighter than the
+    numeric assertions elsewhere in this file, and tighter than the ~3e-6
+    that a legitimate libecpint radial-quadrature change moves it (#269).
+    """
+    for line in _out_block(text, "Atomic charges").splitlines():
+        fields = line.split()
+        if len(fields) == 5 and fields[1] == element:
+            return tuple(float(x) for x in fields[2:])
+    raise AssertionError(f"no {element} row in the .out atomic-charges table")
+
+
+def _out_dipole_debye(text):
+    """``|mu|`` in Debye from the .out dipole table.
+
+    Same reasoning as :func:`_out_atomic_charges`: the printed 1.9950 is
+    2.2e-6 from rendering as 1.9949, a tighter implicit pin than the charge
+    literal that #269 was filed about.
+    """
+    for line in _out_block(text, "Dipole moment").splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[0] == "|mu|":
+            return float(fields[2])
+    raise AssertionError("no |mu| row in the .out dipole table")
+
+
 def _h2s_lanl2dz():
     """MF076 geometry: neutral singlet H2S with an S/LANL2DZ ECP."""
     mol = vq.Molecule(
@@ -437,6 +473,74 @@ def test_ecp_population_charges_sum_to_the_molecular_charge():
     assert (mulliken_charges(res, basis, mol) - q_mul)[0] == pytest.approx(10.0, abs=1e-12)
 
 
+def test_ecp_hirshfeld_promolecule_is_the_valence_only_free_atom():
+    """The Hirshfeld promolecule of an ECP result integrates to the valence count.
+
+    Charges that sum to the molecular charge do not test the promolecule: the
+    Hirshfeld weights are normalized, so any positive promolecule gives that
+    sum. Its electron count does. Confining the all-electron S atom (16 e) to
+    the LANL2DZ valence basis gave a promolecule of 18 electrons for this
+    8-electron molecule; once the atomic guesses used the supplied shells that
+    input was refused outright (#495). The ECP-aware free atom is the same one
+    the SAD initial guess uses on an ECP atom: 6 + 1 + 1.
+    """
+    from vibeqc.ecp_metadata import effective_nuclear_charges
+    from vibeqc.properties import hirshfeld_charges
+
+    mol, basis, opts, res = _h2s_lanl2dz_scf()
+    z_eff = effective_nuclear_charges(mol, opts)
+    hir = hirshfeld_charges(res, basis, mol, nuclear_charges=z_eff)
+    # The grid integrates both densities, so allow quadrature error only.
+    assert hir.promolecule_norm == pytest.approx(8.0, abs=1e-3)
+    assert hir.molecule_norm == pytest.approx(8.0, abs=1e-3)
+    q = hir.charges
+    assert abs(float(q.sum())) < 1e-3
+    assert q[0] < 0.0 < q[1] == pytest.approx(q[2], abs=1e-8)  # S^- H^+
+
+
+def test_ecp_hirshfeld_promolecule_on_the_library_route():
+    """Same contract on the libecpint library route (``ecp_centers`` +
+    ``ecp_library``), where the result stamps ``ecp_xml_*`` rather than the
+    inline ``ecp_primitive_*`` fields: ZnH+ with the ecp10mdf [Ne] core has a
+    neutral valence promolecule of 20 (Zn) + 1 (H) electrons against the
+    20 of the cation; an all-electron Zn atom would add the 10 core
+    electrons back."""
+    from vibeqc.ecp_metadata import effective_nuclear_charges
+    from vibeqc.properties import hirshfeld_charges
+
+    mol = vq.Molecule([vq.Atom(30, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 0.0, 2.83])], 1, 1)
+    basis = vq.BasisSet(mol, "6-31g")
+    opts = vq.RHFOptions()
+    opts.ecp_centers = [vq.ECPCenter(Z=30, xyz=[0.0, 0.0, 0.0])]
+    opts.ecp_library = "ecp10mdf"
+    opts.max_iter = 200
+    opts.damping = 0.5
+    res = vq.run_rhf(mol, basis, opts)
+    assert res.converged and res.ecp_xml_library == "ecp10mdf"
+
+    z_eff = effective_nuclear_charges(mol, opts)
+    np.testing.assert_allclose(z_eff, [20.0, 1.0])
+    hir = hirshfeld_charges(res, basis, mol, nuclear_charges=z_eff)
+    assert hir.promolecule_norm == pytest.approx(21.0, abs=1e-3)
+    assert hir.molecule_norm == pytest.approx(20.0, abs=1e-3)
+    assert float(hir.charges.sum()) == pytest.approx(1.0, abs=1e-3)  # the cation
+
+
+def test_all_electron_result_gives_an_inactive_promolecule_context():
+    """An all-electron result must not pick up an ECP operator: Hirshfeld
+    keeps the plain all-electron SAD promolecule there."""
+    from vibeqc.properties import _result_guess_ecp_context
+
+    mol = vq.Molecule(
+        [vq.Atom(8, [0.0, 0.0, 0.0]),
+         vq.Atom(1, [0.0, 1.43, -0.98]),
+         vq.Atom(1, [0.0, -1.43, -0.98])]
+    )
+    basis = vq.BasisSet(mol, "sto-3g")
+    res = vq.run_rhf(mol, basis, vq.RHFOptions())
+    assert not _result_guess_ecp_context(res, mol).active
+
+
 def test_run_job_ecp_properties_reach_out_and_population_file(tmp_path):
     """The runner passes the charges the SCF ran with (its route kwarg was
     None, so the ECP was auto-attached inside the dispatcher) to every
@@ -454,8 +558,15 @@ def test_run_job_ecp_properties_reach_out_and_population_file(tmp_path):
     )
     assert r.converged
     text = (tmp_path / "h2s642.out").read_text()
-    assert "1.9950" in text  # dipole, Debye
-    assert "-0.158809" in text  # Mulliken S
+    # These assert that the .out carries the Z_eff numbers rather than the
+    # bare-Z ones -- bare Z gives a Mulliken S charge of +9.84 and a different
+    # dipole -- not that the last printed digit is stable. Both were exact
+    # substring pins and both were tighter than the ~3e-6 a legitimate
+    # libecpint quadrature change moves them (#269).
+    assert _out_dipole_debye(text) == pytest.approx(1.99496, abs=1e-3)
+    q_s_out = _out_atomic_charges(text, "S")[0]
+    assert q_s_out == pytest.approx(-0.158809, abs=1e-5)
+    assert q_s_out < 0.0
     pop = json.loads((tmp_path / "h2s642.population.json").read_text())
     assert pop["dipole"]["total_debye"] == pytest.approx(1.99496, abs=1e-5)
     mul = pop.get("mulliken") or pop.get("mulliken_charges")

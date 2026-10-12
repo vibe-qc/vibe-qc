@@ -60,12 +60,13 @@ import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .formats.system_info import system_info
 from .plan import OutputPlan, PlannedFile
 from ._text_safety import toml_escape_str
 from ._stem_paths import stem_sibling
+from .verdict import verdict_section
 
 __all__ = [
     "FileOutcome",
@@ -119,6 +120,7 @@ class FileOutcome:
     checksum_status: str = "pending"
     wall_time_s: float | None = None
     error: str | None = None
+    component_errors: dict[str, str] = field(default_factory=dict)
 
     def to_toml_table(self) -> dict[str, Any]:
         """Return a plain mapping suitable for the
@@ -137,6 +139,8 @@ class FileOutcome:
         )
         # When a file was declared but not written, surface the error.
         out["error"] = str(self.error) if self.error is not None else ""
+        if self.component_errors:
+            out["component_errors"] = dict(self.component_errors)
         return out
 
 
@@ -181,6 +185,12 @@ class ManifestUpdater:
         self._extra_run_fields: dict[str, Any] = dict(extra_run_fields or {})
         self._lock = threading.Lock()
         self._status: ManifestStatus = "running"
+        self._result_status = "not_reported"
+        self._result_error = ""
+        # The run-level verdict (vibeqc.output.verdict.RunVerdict.as_dict())
+        # once a writer recorded one; [verdict] is derived from
+        # result_status until then (#342 #346 #351).
+        self._verdict: dict[str, Any] | None = None
         self._finished_at_iso: str = ""
         self._wall_seconds = float(wall_seconds)
         # Optional peak-memory estimate (bytes, configured headroom already
@@ -197,6 +207,12 @@ class ManifestUpdater:
         # dict to make it appear.  Fields: phase, iteration, energy_eh,
         # gradient_norm, diis_subspace.
         self._progress: dict[str, object] | None = None
+        # Optional [hessian] section -- which potential-energy surface a
+        # requested Hessian was built on, and whether that surface is the
+        # method the caller asked for. Set by run_job through
+        # ``set_hessian`` when hessian=True; None omits the section, so a
+        # job that ran no Hessian gains no empty stub.
+        self._hessian: dict[str, object] | None = None
         # One outcome per declared file, keyed by path for fast update.
         self._outcomes: dict[Path, FileOutcome] = {
             f.path: FileOutcome(path=f.path) for f in plan.files
@@ -334,6 +350,21 @@ class ManifestUpdater:
             outcome.error = str(error)
             self._write_unlocked()
 
+    def mark_component_failed(
+        self, path: os.PathLike | str, component: str, error: str,
+    ) -> None:
+        """Record an omitted archive component without failing its container.
+
+        Unlike a file-write error, this survives a later ``mark_written``:
+        a valid QVF archive can still lack its requested density volume.
+        """
+        if not isinstance(component, str) or not component.strip():
+            raise ValueError("output component must be a nonempty string")
+        with self._lock:
+            outcome = self._outcome_for_path_unlocked(Path(os.fspath(path)))
+            outcome.component_errors[component] = str(error)
+            self._write_unlocked()
+
     def downgrade_planned(self, path: os.PathLike | str) -> None:
         """Mark a planned file as no longer guaranteed.
 
@@ -413,6 +444,22 @@ class ManifestUpdater:
             }
             self._write_unlocked()
 
+    def set_hessian(self, fields: dict[str, Any]) -> None:
+        """Record the Hessian's surface into ``[hessian]`` and rewrite.
+
+        ``fields`` comes from
+        :func:`vibeqc.output.hessian_surface_manifest_fields` -- flat
+        scalars naming the surface the Hessian was (or would have been)
+        built on, the method the caller requested, and whether the two
+        agree. run_job resolves a correlated request down to its
+        mean-field reference before the Hessian is built, so without
+        this section a consumer reading frequencies out of a manifest
+        cannot tell an MP2 job's RHF frequencies from an RHF job's.
+        """
+        with self._lock:
+            self._hessian = dict(fields)
+            self._write_unlocked()
+
     def update_wall_seconds(self, wall_seconds: float) -> None:
         """Stamp the running wall-time figure into the ``[run]``
         section. Called periodically by the writer / on completion."""
@@ -452,6 +499,34 @@ class ManifestUpdater:
         """
         with self._lock:
             self._extra_run_fields.update(fields)
+            self._write_unlocked()
+
+    def set_result_status(self, status: str, *, error: str = "") -> None:
+        """Record the calculation outcome independently of file delivery.
+
+        Convergence is a driver's numerical verdict, not external validation
+        of its answer. Writers that have no result leave ``not_reported``.
+        """
+        if status not in {
+            "not_reported", "not_run", "converged", "not_converged",
+            "refused", "crashed",
+        }:
+            raise ValueError(f"unknown calculation result status: {status!r}")
+        with self._lock:
+            self._result_status = status
+            self._result_error = str(error)
+            self._write_unlocked()
+
+    def set_verdict(self, verdict: Mapping[str, Any]) -> None:
+        """Record the run-level verdict carried by ``[verdict]`` (#342).
+
+        ``verdict`` is ``RunVerdict.as_dict()`` (or any mapping in that
+        vocabulary; it is validated and ``usable`` is recomputed). The
+        section keeps its fixed shape whether or not this was called.
+        """
+        body = verdict_section(dict(verdict), self._result_status)
+        with self._lock:
+            self._verdict = body
             self._write_unlocked()
 
     def finish(self, *, wall_seconds: float | None = None) -> None:
@@ -496,6 +571,8 @@ class ManifestUpdater:
         """Flip status to ``"crashed"`` (SCF raised / job aborted)."""
         with self._lock:
             self._status = "crashed"
+            if self._result_status == "not_reported":
+                self._result_status = "crashed"
             self._finished_at_iso = _now_iso()
             if wall_seconds is not None:
                 self._wall_seconds = float(wall_seconds)
@@ -510,6 +587,7 @@ class ManifestUpdater:
         :func:`vibeqc.runner.run_job`."""
         with self._lock:
             self._status = "dry_run"
+            self._result_status = "not_run"
             self._finished_at_iso = _now_iso()
             self._mark_manifest_written_unlocked()
             self._write_unlocked()
@@ -530,6 +608,15 @@ class ManifestUpdater:
     @property
     def status(self) -> ManifestStatus:
         return self._status
+
+    @property
+    def result_status(self) -> str:
+        return self._result_status
+
+    @property
+    def verdict(self) -> dict[str, Any] | None:
+        """The recorded run verdict, or ``None`` when none was set."""
+        return None if self._verdict is None else dict(self._verdict)
 
     def outcomes(self) -> tuple[FileOutcome, ...]:
         """Snapshot copy of the current per-file outcome records."""
@@ -592,6 +679,9 @@ class ManifestUpdater:
             plan=self._plan,
             outcomes=tuple(self._outcomes.values()),
             status=self._status,
+            result_status=self._result_status,
+            result_error=self._result_error,
+            verdict=self._verdict,
             declared_at_iso=self._declared_at_iso,
             finished_at_iso=self._finished_at_iso,
             wall_seconds=self._wall_seconds,
@@ -601,6 +691,7 @@ class ManifestUpdater:
             estimate_bytes=self._estimate_bytes,
             extra_run_fields=self._extra_run_fields,
             progress=self._progress,
+            hessian=self._hessian,
         )
         _atomic_write(self._path, body)
 
@@ -647,8 +738,10 @@ _SECTION_ORDER = (
     "validation",
     "run",
     "progress",
+    "hessian",
     "plan",
     "outputs",
+    "verdict",
     "basis_library",
     "citations",
 )
@@ -668,6 +761,10 @@ def _render_manifest(
     estimate_bytes: int | None = None,
     extra_run_fields: dict[str, Any] | None = None,
     progress: dict[str, object] | None = None,
+    hessian: dict[str, object] | None = None,
+    result_status: str = "not_reported",
+    result_error: str = "",
+    verdict: dict[str, Any] | None = None,
 ) -> str:
     """Produce the full manifest TOML body.
 
@@ -711,12 +808,25 @@ def _render_manifest(
         info["run"][str(_k)] = _v
     if progress is not None:
         info["progress"] = dict(progress)
+    # [hessian] -- the potential-energy surface a requested Hessian was
+    # built on. Conditional like [progress]: present only when the job
+    # asked for a Hessian, absent otherwise.
+    if hessian is not None:
+        info["hessian"] = dict(hessian)
     info["plan"] = plan.to_toml_section()
     info["outputs"] = {
         "status": status,
+        "result_status": result_status,
+        "result_error": result_error,
         "finished_at_iso": finished_at_iso,
         "files": [o.to_toml_table() for o in outcomes],
     }
+    # [verdict] -- the run-level verdict every writer shares (SCF axis,
+    # stability axis, stop reason, budget, and the ``usable`` gate).
+    # Fixed shape like [citations]: the recorded RunVerdict when the
+    # writer set one, otherwise derived from result_status with
+    # stability = "not_reported" (#342 #346 #351).
+    info["verdict"] = verdict_section(verdict, result_status)
     # [citations] -- full assembled provenance for this job (CLAUDE.md
     # Sec.8.3/Sec.8.5). Always emitted (count = 0 with no entries before the
     # end-of-run assemble fires, or for citation-less paths) so the
@@ -742,9 +852,11 @@ def _render_manifest(
         "# Captures the runtime environment so generated calculation outputs are",
         "# reproducible and wall-time numbers are interpretable. The [plan]",
         "# section is the declared output contract (written once, at job start);",
-        "# the [outputs] section is the running status (rewritten as each file",
-        "# lands). External QC programs are validation references only: run",
-        "# them out-of-process and parse their outputs.",
+        "# [outputs].status describes file delivery, not scientific success.",
+        "# result_status records the driver's calculation outcome; convergence",
+        "# does not establish external validation. [verdict] carries the run",
+        "# verdict every writer shares; verdict.usable is the consumer gate.",
+        "# External QC references run them out-of-process and parse outputs.",
         "",
     ]
     for section in _SECTION_ORDER:
@@ -828,12 +940,18 @@ def _toml_str(s: str) -> str:
 
 
 def _toml_value(v: Any) -> str:
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_value(item) for item in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(_toml_str(str(k)) + " = " + _toml_value(val)
+                                 for k, val in v.items() if val is not None) + " }"
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, int):
         return str(v)
     if isinstance(v, float):
-        s = repr(v)
+        # NumPy float64 is a float subclass whose repr includes its type.
+        s = repr(float(v))
         if "." not in s and "e" not in s and "E" not in s:
             s += ".0"
         return s

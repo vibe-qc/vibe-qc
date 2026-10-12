@@ -19,7 +19,7 @@
       DIIS history             0.00 GB
       MO workspace             0.00 GB
       Open-shell UHF buffers   0.00 GB
-  Available on this machine: 88.1 GB. Proceeding.
+  Available to this job: 88.1 GB. Proceeding.
 
   iter     energy (Ha)            dE          ||[F,DS]||   DIIS
   -------------------------------------------------------------

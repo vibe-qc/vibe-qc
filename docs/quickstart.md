@@ -17,16 +17,22 @@ after completing this quickstart.
 ## 0. Install
 
 vibe-qc is **not on PyPI yet**, there is no `pip install vibe-qc`.
-The install is "clone the repo, install your platform's build
-prerequisites (compiler, CMake, Ninja, headers, a BLAS), run
-`./scripts/setup_native_deps.sh` to fetch + build the vendored
-native libraries (libint, libxc, spglib, FFTW3, libecpint), then
-`pip install -e .` in a virtualenv". The one-liner per platform
-(macOS Homebrew, Arch / Manjaro, Debian / Ubuntu) and full
-troubleshooting live in [installation](installation.md), read
-that first.
+Install your platform's build prerequisites (compiler, CMake, Ninja, headers
+and BLAS) from the [installation guide](installation.md), then clone and run
+the managed installer:
 
-Once `pip install -e .` succeeds, the package ships with every
+```sh
+git clone https://github.com/vibe-qc/vibe-qc.git
+cd vibe-qc
+./scripts/install.sh --dev
+```
+
+This selects development `main`, builds the native libraries and creates
+`.venv`. For a stable version, omit `--dev` to select the origin's `release`
+branch, or its newest stable version tag when that branch is absent. See
+[clone and version selection](installation.md#clone-the-source) for details.
+
+After installation, the package ships with every
 basis set vibe-qc supports, ~90 standard libint sets (sto-3g,
 6-31G\*, cc-pVxZ, def2-\*, ANO-RCC, …) plus the CRYSTAL pob-TZVP
 / pob-DZVP-rev2 / pob-TZVP-rev2 sets for periodic crystals. No

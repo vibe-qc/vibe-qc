@@ -1,6 +1,6 @@
 """M4a/M5: the SR erfc ket-image pad and precision-derived default.
 
-The 2026-07-12 split-gap triage (HANDOVER_BIPOLE_PRODUCTION.md Sec. 0a)
+The 2026-07-12 split-gap triage (the original investigation)
 proved the (c_lam, c_sig) ket-image sum must reach the *smeared* erfc
 kernel range, not just the output cutoff: at an 8-bohr ball MgO/STO-3G
 loses -515 mHa of J_SR. `sr_image_extent_bohr` is the explicit M4a
@@ -174,6 +174,8 @@ def test_chi_output_cell_farming_serial_is_bit_identical(compute_exchange):
     omega = float(crystal_default_ewald_alpha(volume))
     density = _home_density(basis, system, cutoff=8.0)
     kwargs = {"compute_exchange": compute_exchange}
+    from vibeqc._vibeqc_core import PeriodicJKWorkspace
+    workspace = PeriodicJKWorkspace()
     reference = _sr_image_padded_jk(
         basis, system, _lat(8.0), density, omega, 14.0, **kwargs
     )
@@ -186,6 +188,7 @@ def test_chi_output_cell_farming_serial_is_bit_identical(compute_exchange):
         14.0,
         output_cell_farming_task_kind="chi-direct-output-cell",
         output_cell_farming_strategy="cyclic",
+        workspace=workspace,
         **kwargs,
     )
     for got, want in zip(farmed.J.blocks, reference.J.blocks):
@@ -203,6 +206,7 @@ def test_chi_output_cell_farming_serial_is_bit_identical(compute_exchange):
     assert executed.global_task_count == len(farmed.J.cells)
     assert executed.local_task_counts == (len(farmed.J.cells),)
     assert executed.complete_internal_translation_sum is True
+    assert workspace.preparation_count == 1
 
 
 def test_chi_output_cell_farming_empty_rank_skips_native(
@@ -262,6 +266,7 @@ def test_chi_output_cell_farming_empty_rank_skips_native(
             cells=list(used_cells), blocks=list(blocks)
         ),
     )
+    workspace = core.PeriodicJKWorkspace()
     got = _build_jk_domains_output_cells_mpi(
         SimpleNamespace(nbasis=1),
         object(),
@@ -271,11 +276,13 @@ def test_chi_output_cell_farming_empty_rank_skips_native(
         [0, 1],
         omega=0.3,
         task_kind="chi-direct-output-cell",
+        workspace=workspace,
     )
     assert [float(block[0, 0]) for block in got.J.blocks] == [10.0, 11.0]
     assert [float(block[0, 0]) for block in got.K.blocks] == [20.0, 21.0]
     assert got.output_cell_farming_execution.local_task_count == 0
     assert got.output_cell_farming_execution.local_task_counts == (1, 1, 0)
+    assert workspace.preparation_count == 0
 
 
 def test_extent_formula_properties():

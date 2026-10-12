@@ -48,6 +48,7 @@ DLPNOMP2Options = partial(
     tcut_mkn=1e-3,
     tcut_pairs=1e-6,
     tcut_pairs_weak=1e-4,
+    domain_criterion="mulliken",  # retained with Mulliken domains; DOI became the default in #190
 )
 
 H2O_ATOMS = [
@@ -93,6 +94,56 @@ def h2o_sto3g():
 @pytest.fixture(scope="module")
 def h2o_dz():
     return _system(H2O_ATOMS, "def2-svp")
+
+
+@pytest.mark.parametrize("localise", ["none", "boys"])
+@pytest.mark.parametrize("tcut", [0.0, 1e-4])
+def test_shared_pair_fock_matches_previous_solve(monkeypatch, h2o_dz, localise, tcut):
+    """Pair frames, truncation correction and coupled energy survive migration."""
+    from types import SimpleNamespace
+    from scipy.linalg import eigvalsh
+    from vibeqc.dlpno import mp2 as module
+
+    mol, basis, rhf, df, _ = h2o_dz
+    opts = DLPNOMP2Options(
+        localise=localise, n_frozen=1, tcut_pno=tcut, tcut_pno_weak=tcut,
+        tcut_mkn=0.0, tcut_pairs=0.0,
+    )
+    solve = module.solve_dense_fock
+    sizes = {}
+
+    def checked_solve(matrix, **kwargs):
+        result = solve(matrix, **kwargs)
+        metadata = result.operator_metadata
+        assert metadata.kind == "fock" and metadata.spin == "restricted"
+        assert result.residual_frame == "orthogonal"
+        assert result.selection_verified
+        assert max(result.residuals) < 1e-11
+        assert result.orthogonality_error < 1e-12
+        np.testing.assert_allclose(result.eigenvalues, eigvalsh(matrix), atol=1e-12)
+        assert metadata.basis_id not in sizes
+        sizes[metadata.basis_id] = len(result.eigenvalues)
+        return result
+
+    monkeypatch.setattr(module, "solve_dense_fock", checked_solve)
+    actual = run_dlpno_mp2(mol, basis, rhf, df, opts)
+    assert sizes == {f"dlpno-mp2-pair-{i}-{j}-pno": n
+                     for (i, j), n in actual.pno_per_pair.items()}
+    assert sizes
+    assert all(i >= 1 and j >= 1 for i, j in actual.pno_per_pair)
+
+    def previous_solve(matrix, **kwargs):
+        eps, C = np.linalg.eigh(matrix)
+        return SimpleNamespace(eigenvalues=eps, eigenvectors=C)
+
+    monkeypatch.setattr(module, "solve_dense_fock", previous_solve)
+    previous = run_dlpno_mp2(mol, basis, rhf, df, opts)
+    assert actual.converged and previous.converged
+    assert actual.pno_per_pair == previous.pno_per_pair
+    assert actual.n_pairs_screened == previous.n_pairs_screened
+    assert actual.pair_energies == pytest.approx(previous.pair_energies, abs=1e-11)
+    for name in ("e_corr", "e_corr_iterated", "e_pno_correction", "e_distant"):
+        assert getattr(actual, name) == pytest.approx(getattr(previous, name), abs=1e-11)
 
 
 class TestExactnessLimit:

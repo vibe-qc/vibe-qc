@@ -72,9 +72,9 @@ def _oracle(b, rows, selected):
 def test_actual_real_basis_metric_fock_and_every_trim_against_independent_oracle(mesh, reduced):
     b = _bundle(mesh, reduced=reduced)
     if reduced and mesh == (3,1,1):
-        # The larger domain has a degenerate k/-k eigenspace whose valid
+        # The larger domain has a degenerate k/-k eigenspace, where a valid
         # complex semicanonical gauge is not a real local basis (see the
-        # negative regression below). This distinct two-column domain has
+        # regression below). This distinct two-column domain has
         # nondegenerate projected energies and actually real orbitals.
         b.domain = _make_domain(b.reference,np.array([[0,2],[0,3]],np.uint64))
         b.space = _make_space(b.reference,b.domain)
@@ -94,15 +94,40 @@ def test_actual_real_basis_metric_fock_and_every_trim_against_independent_oracle
 
 
 def test_real_domain_with_complex_degenerate_semicanonical_gauge_is_not_a_real_basis():
+    """A real domain does not make its degenerate virtual gauge real.
+
+    The (3,1,1) reduced domain has real matrices and a degenerate projected
+    Fock pair. A complex gauge inside that pair is a valid semicanonical
+    basis, but its actual virtual columns are not time-reversal related,
+    which is why the real local basis checks actual coefficients. The
+    native PAO space no longer returns such a gauge here: its deterministic
+    solver yields a real one, and a space cannot be built from given
+    coefficients. Earlier builds produced a complex gauge from roundoff in
+    the degenerate pair (#498). So the complex gauge is constructed
+    explicitly, and the native refusal on actual coefficients stays pinned
+    by test_actual_occupied_gauge_time_reversal_including_nyquist_is_mandatory
+    and test_real_domain_matrices_do_not_certify_actual_virtual_orbitals.
+    """
+    from tests.test_periodic_correlation_real_pao_space import _complex_degenerate_gauge
+
     b = _bundle((3,1,1),reduced=True)
     selected = _virtual(0,2,1)
     assert np.max(abs(b.domain.overlap_copy().imag)) < 1e-14
     assert np.max(abs(b.domain.fock_copy().imag)) < 1e-14
-    assert np.max(abs(b.space.coefficients_copy().imag)) > 1e-3
+    real_space = b.space.coefficients_copy()
+    complex_space = _complex_degenerate_gauge(real_space,b.space.energies_copy())
+    assert np.max(abs(complex_space.imag)) > 1e-3
+    b.space = SimpleNamespace(coefficients_copy=lambda: complex_space)
     c1,c2 = _virtual_columns(b,1,selected),_virtual_columns(b,2,selected)
     assert np.max(abs(c2-c1.conj())) > 1e-3
-    with pytest.raises(ValueError,match="actual orbital coefficients.*time reversal"):
-        _make(b,[[0,2],[0,0]],selected)
+    # The real gauge the native space now returns is time-reversal related
+    # and is certified.
+    b = _bundle((3,1,1),reduced=True)
+    np.testing.assert_allclose(b.space.coefficients_copy().imag,0,atol=1e-12)
+    c1,c2 = _virtual_columns(b,1,selected),_virtual_columns(b,2,selected)
+    np.testing.assert_allclose(c2,c1.conj(),atol=1e-10)
+    certified = _make(b,[[0,2],[0,0]],selected)
+    assert certified.diagnostics.maximum_coefficient_tr_error < 1e-10
 
 
 @pytest.mark.parametrize("mesh,k", [((3,1,1),0), ((3,1,1),1), ((2,1,1),1), ((2,2,2),7)])

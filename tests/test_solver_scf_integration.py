@@ -5,12 +5,11 @@ Verifies that the ``solver`` keyword on ``run_job`` and
 produces identical energies across all supported solvers for
 molecular RHF / UHF / RKS / UKS calculations.
 
-The three supported solvers are:
+The supported molecular SCF solvers are:
 - ``"dense"``   — full dense diagonalisation (LAPACK).
 - ``"davidson"`` — block-Davidson iterative solver (C++ backend).
-- ``"lobpcg"``   — LOBPCG iterative solver (falls back to Davidson
-                   for molecular SCF; native Python stack available
-                   for periodic drivers and ROHF).
+Molecular SCF rejects ``"lobpcg"`` instead of substituting Davidson.
+The standalone eigensolver framework tests cover explicit LOBPCG problems.
 """
 
 from __future__ import annotations
@@ -49,7 +48,7 @@ O2_ATOMS = [
 ]
 
 # Supported eigensolver names (the public keyword values).
-SOLVERS = ["dense", "davidson", "lobpcg"]
+SOLVERS = ["dense", "davidson"]
 
 
 def _water_mol() -> Molecule:
@@ -64,8 +63,22 @@ def _o2_mol() -> Molecule:
     return Molecule(atoms=list(O2_ATOMS), charge=0, multiplicity=3)
 
 
+@pytest.mark.parametrize("method,basis,molecule", [
+    ("rhf", "sto-3g", _water_mol),
+    ("rhf", "def2-svp", _water_mol),
+    ("uhf", "sto-3g", _co_mol),
+    ("rks", "sto-3g", _water_mol),
+    ("uks", "sto-3g", _o2_mol),
+])
+def test_molecular_lobpcg_refuses_backend_substitution(method, basis, molecule, tmp_path):
+    kwargs = {"functional": "PBE"} if method in {"rks", "uks"} else {}
+    with pytest.raises(NotImplementedError, match="does not implement LOBPCG SCF"):
+        run_job(molecule(), basis=basis, method=method, output=tmp_path,
+                verbose=0, solver="lobpcg", **kwargs)
+
+
 # ---------------------------------------------------------------------------
-# 1. Water / STO-3G  RHF — all three solvers must agree to 1e-10 Ha
+# 1. Water / STO-3G  RHF — supported solvers must agree to 1e-10 Ha
 # ---------------------------------------------------------------------------
 
 

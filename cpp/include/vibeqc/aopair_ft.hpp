@@ -24,8 +24,7 @@
 // Memory. The C++ kernel performs the Bloch sum **streaming over
 // the cell index** so the per-cell intermediate
 // ``(n_cells, n_orb, n_orb, n_G)`` (which OOMs on MgO 8-atom
-// conventional rocksalt — see
-// ``handovers/HANDOVER_GDF_V0_11_2026_05_29.md``)
+// conventional rocksalt)
 // never materialises. The output extent is the bounded
 // ``(n_orb, n_orb, n_G)``.
 //
@@ -214,7 +213,7 @@ AOPairFourierPanel ao_pair_gaussian_fourier_cell_panel(
 // basis
 //     AO basis. Currently REQUIRES all shells to have L=0; mixed-L
 //     bases throw. The general-L McMurchie-Davidson path lands in a
-//     subsequent milestone (Item 1b in the integrals-chat handover).
+//     subsequent milestone.
 // G_vectors
 //     ``(n_G, 3)``, Cartesian reciprocal-space samples (inverse bohr).
 // R_g_list
@@ -259,6 +258,10 @@ AOPairFTTensor ao_pair_fourier_transform_bloch_ss(
 // Throws ``std::invalid_argument`` on
 //   * a Cartesian-ordered shell with L > 0, or
 //   * any shell with L > ``vibeqc::cart_to_sph_data::kMaxL``.
+// pair_cutoff_bohr >= 0 applies the shared physical pair_in_range predicate
+// to each supplied candidate cell; -1 preserves historical unmasked support.
+// The caller must supply a complete candidate enclosure. Physical support
+// evaluates all ordered shell pairs without the legacy Gamma mirror shortcut.
 AOPairFTTensor ao_pair_fourier_transform_bloch(
     const BasisSet& basis,
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
@@ -266,7 +269,8 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& R_g_list,
     const Eigen::Vector3d& k_cart,
-    double screen_tol = 0.0);
+    double screen_tol = 0.0,
+    double pair_cutoff_bohr = -1.0);
 
 // Per-cell reciprocal-weight-contracted AO-pair FT.
 //
@@ -308,8 +312,7 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
 // n_k full passes. This is the exact work-sharing companion of the
 // RSGDF q-metric cache for the 3c side (multi-k GDF drivers batch the
 // pairs that share one momentum transfer q; see
-// ``vibeqc.aux_basis.build_lpq_bloch_native_fft`` and
-// handovers/HANDOVER_OPEN_BUGS_V015.md, production-k-sampling item).
+// ``vibeqc.aux_basis.build_lpq_bloch_native_fft``).
 //
 // Returns one tensor per row of ``k_carts``, each ``(n_orb, n_orb,
 // n_G)``. Agrees with n_k single-k calls to floating-point rounding
@@ -324,7 +327,7 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
 // per-pair factor before contracting, and that scaling is a pass over
 // the LARGEST array in the build -- single-threaded in NumPy, and
 // measurably anti-scaling against the threads this kernel itself uses
-// (handovers/HANDOVER_GDF_OUTSTANDING.md, OpenMP profile 2026-08-05).
+// (the original investigation, OpenMP profile 2026-08-05).
 // Folding it into this store costs nothing: the store already touches
 // every element, and it happens inside the parallel region.
 //
@@ -348,7 +351,8 @@ std::vector<AOPairFTTensor> ao_pair_fourier_transform_bloch_multi(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& k_carts,
     double screen_tol = 0.0,
-    const std::vector<double>& pair_weights = {});
+    const std::vector<double>& pair_weights = {},
+    double pair_cutoff_bohr = -1.0);
 
 // Density- and reciprocal-kernel-weighted Gamma-point centre derivative.
 //
@@ -412,8 +416,7 @@ ao_pair_fourier_transform_gamma_gradient_gweighted(
     const std::complex<double>* pair_weights_g,
     std::size_t n_atoms);
 
-// Bloch-phased G-resolved-weight centre derivative
-// (handovers/HANDOVER_GDF_GRADIENT_DEFERRED.md § 4, rung 1).
+// Bloch-phased G-resolved-weight centre derivative.
 //
 // Evaluates
 //

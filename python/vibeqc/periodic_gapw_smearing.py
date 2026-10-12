@@ -453,6 +453,8 @@ def smeared_v_ne_long_matrix(
     *,
     image_shells: int = 1,
     quiet: bool = False,
+    pair_cells=None,
+    pair_cutoff_bohr=None,
 ) -> np.ndarray:
     """Build the **long-range** electron-nucleus attraction matrix
     via FFT-Poisson on the smeared nuclear density.
@@ -490,6 +492,10 @@ def smeared_v_ne_long_matrix(
         Passed through to the density-on-grid summation.
     quiet
         Suppress the experimental-flag warning.
+    pair_cells, pair_cutoff_bohr
+        Together select the physical AO-pair projection. Supply the cells
+        returned by the matching erfc lattice builder and its pair cutoff.
+        Omission retains the historical AO-image grid projection.
 
     Returns
     -------
@@ -518,6 +524,16 @@ def smeared_v_ne_long_matrix(
             category=GAPWExperimentalWarning,
             stacklevel=2,
         )
+    physical = pair_cutoff_bohr is not None
+    if physical != (pair_cells is not None):
+        raise ValueError("pair_cells and pair_cutoff_bohr must be supplied together")
+    if physical:
+        # Fixed image shells are centred on the supplied charge coordinates.
+        # Canonicalize only this opt-in periodic path, without changing the
+        # caller's charges or the image-shell convergence parameter.
+        fractional = np.linalg.solve(grid.lattice_bohr, charges.positions.T).T
+        positions = np.mod(fractional, 1.0) @ grid.lattice_bohr.T
+        charges = SmearedNuclearCharges(positions, charges.Z, charges.alpha)
     rho_core = smeared_nuclear_density_on_grid(
         charges, grid, image_shells=image_shells,
     )
@@ -525,7 +541,13 @@ def smeared_v_ne_long_matrix(
     # Reuse the GPW projector primitive to avoid duplicating the
     # <chi_mu | V | chi_ν> quadrature.
     from .periodic_gapw_j import project_potential_to_ao
-    V_ao = project_potential_to_ao(basis, V_core_long, grid)
+    if physical:
+        from .periodic_gapw_j import _project_potential_to_ao_pair_domain
+        V_ao = _project_potential_to_ao_pair_domain(
+            basis, V_core_long, grid, pair_cells, pair_cutoff_bohr,
+        )
+    else:
+        V_ao = project_potential_to_ao(basis, V_core_long, grid)
     # Minus sign: electron-nucleus attraction is negative-valued.
     return -V_ao
 
@@ -639,8 +661,10 @@ def smeared_v_ne_full_gamma(
         Default 300 Ha (the M2 demo cutoff). Ignored when
         ``grid`` is supplied.
     lat_opts
-        :class:`LatticeSumOptions` for the erfc short-range
-        lattice sum. Defaults to standard cutoffs.
+        :class:`LatticeSumOptions` shared by the erfc and alpha-overlap
+        terms. With ``pair_complete_1e=True``, the long-range FFT
+        potential is projected on those same physical AO pairs. Caller
+        options are not changed. Omission retains the historical route.
     image_shells
         Image-shell count for the smeared-density grid
         collocation.
@@ -674,12 +698,25 @@ def smeared_v_ne_full_gamma(
     charges = SmearedNuclearCharges.from_periodic_system_uniform_alpha(
         system, alpha=alpha,
     )
-    V_long = smeared_v_ne_long_matrix(
-        basis, charges, grid, image_shells=image_shells, quiet=True,
-    )
-    V_short = smeared_v_ne_erfc_short_matrix(
-        basis, system, alpha, lat_opts=lat_opts,
-    )
+    physical = lat_opts is not None and bool(lat_opts.pair_complete_1e)
+    if physical:
+        # The actual SR cells are authoritative for the reciprocal projector.
+        # Do not grow only one half or mutate the caller's cutoffs/options.
+        short_lattice = _core.compute_nuclear_erfc_lattice(basis, system, alpha, lat_opts)
+        short = np.real(_core.bloch_sum(short_lattice, np.zeros(3)))
+        V_short = 0.5 * (short + short.T)
+        V_long = smeared_v_ne_long_matrix(
+            basis, charges, grid, image_shells=image_shells, quiet=True,
+            pair_cells=short_lattice.cells,
+            pair_cutoff_bohr=float(lat_opts.cutoff_bohr),
+        )
+    else:
+        V_long = smeared_v_ne_long_matrix(
+            basis, charges, grid, image_shells=image_shells, quiet=True,
+        )
+        V_short = smeared_v_ne_erfc_short_matrix(
+            basis, system, alpha, lat_opts=lat_opts,
+        )
     # The "a-correction" (standard PW-DFT G=0 bookkeeping). FFT-Poisson
     # on the smeared nuclear density r_core drops the G=0 reciprocal
     # mode, effectively coupling r_core to a uniform compensating
@@ -703,7 +740,7 @@ def smeared_v_ne_full_gamma(
     Z_total = float(charges.Z.sum())
     V_cell = grid.cell_volume_bohr3
     c_alpha = math.pi * Z_total / (alpha ** 2 * V_cell)
-    S = _overlap_lattice_gamma(basis, system)
+    S = _overlap_lattice_gamma(basis, system, lat_opts=lat_opts)
     return V_long + V_short + c_alpha * S
 
 

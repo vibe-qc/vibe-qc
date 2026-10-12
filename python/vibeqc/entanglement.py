@@ -87,6 +87,13 @@ class EntanglementResult:
 # ---------------------------------------------------------------------------
 
 
+def _entropy(probabilities: np.ndarray) -> float:
+    """Evaluate -sum(p log p), with the exact limiting value at p = 0."""
+    probabilities = np.clip(probabilities, 0.0, 1.0)
+    positive = probabilities[probabilities > 0.0]
+    return float(-np.sum(positive * np.log(positive)))
+
+
 def single_orbital_entropy(
     one_orbital_densities: np.ndarray,
 ) -> np.ndarray:
@@ -113,8 +120,7 @@ def single_orbital_entropy(
     for i in range(n_orb):
         rho = one_orbital_densities[i]
         evals = np.linalg.eigvalsh(rho)
-        evals = np.clip(evals, 1e-16, 1.0)
-        entropies[i] = -np.sum(evals * np.log(evals))
+        entropies[i] = _entropy(evals)
     return entropies
 
 
@@ -161,23 +167,28 @@ def entanglement_from_density(
 ) -> EntanglementResult:
     r"""Compute entanglement measures from the one-particle density matrix.
 
-    This is an approximate method that works with single-determinant
-    wavefunctions (HF/DFT) by using the idempotency deviation of the
-    density matrix. For multi-determinantal wavefunctions, use
+    This is an occupation-number approximation for spin-restricted,
+    spin-summed densities. Closed-shell single determinants (HF/DFT)
+    have zero occupation entropy. Fractional natural occupations in a
+    correlated density give positive entropy. For full entanglement
+    measures of multi-determinantal wavefunctions, use
     :func:`single_orbital_entropy` and :func:`mutual_information`
-    directly with the full one- and two-particle RDMs.
+    directly with the one- and two-orbital RDMs.
 
-    For a single-determinant wavefunction, the one-orbital entropy of
-    orbital i is::
+    The binary occupation entropy of natural orbital i is::
 
         s_i = -n_i ln(n_i) - (1-n_i) ln(1-n_i)
 
-    where n_i are the natural occupation numbers (eigenvalues of P·S).
+    where n_i are the per-spin natural occupations: eigenvalues of
+    S^{1/2} P S^{1/2} (equivalently P S), divided by two. These lie in
+    [0, 1]. The returned mutual information is an occupation-based
+    estimate, not the full two-orbital RDM result.
 
     Parameters
     ----------
     density_matrix : np.ndarray, shape ``(n_ao, n_ao)``
-        One-particle density matrix in the AO basis.
+        Spin-summed one-particle density matrix in the AO basis,
+        normalised so that Tr(P S) is the electron count.
     overlap : np.ndarray, shape ``(n_ao, n_ao)``
         AO overlap matrix.
     n_active : int, optional
@@ -191,37 +202,34 @@ def entanglement_from_density(
     S = np.asarray(overlap)
     n_ao = P.shape[0]
 
-    # Generalised eigenvalue problem: P·S·C = n·S·C
-    # Transform to orthogonal basis first
+    # Loewdin density, as in bond_analysis.wiberg_bond_orders:
+    # an AO density transforms with S^{1/2}, not S^{-1/2}.
     evals_S, evecs_S = np.linalg.eigh(S)
     mask = evals_S > 1e-14
-    s_inv_half = np.zeros((n_ao, n_ao), dtype=np.float64)
-    for i in range(n_ao):
-        if mask[i]:
-            s_inv_half[i, i] = evals_S[i] ** (-0.5)
-    X = evecs_S @ s_inv_half  # S^{-1/2} in columns
-
-    P_orth = X.T @ P @ X
-    occ, U = np.linalg.eigh(P_orth)
+    sqrt_evals = np.zeros_like(evals_S)
+    sqrt_evals[mask] = np.sqrt(evals_S[mask])
+    S_half = (evecs_S * sqrt_evals) @ evecs_S.conj().T
+    P_orth = S_half @ P @ S_half
+    occ = np.clip(np.linalg.eigvalsh(P_orth) / 2.0, 0.0, 1.0)
+    # Remove eigensolver roundoff at the pure-state endpoints so an
+    # idempotent closed-shell density gives exactly zero entropy.
+    occ[np.isclose(occ, 0.0, atol=1e-14, rtol=0.0)] = 0.0
+    occ[np.isclose(occ, 1.0, atol=1e-14, rtol=0.0)] = 1.0
 
     if n_active is not None:
         n_active = min(n_active, n_ao)
 
     # Single-orbital entropy from occupation numbers
-    occ_clipped = np.clip(occ, 1e-16, 1.0 - 1e-16)
-    s_i = -occ_clipped * np.log(occ_clipped) - (1.0 - occ_clipped) * np.log(
-        1.0 - occ_clipped
-    )
+    s_i = np.array([_entropy(np.array([n, 1.0 - n])) for n in occ])
 
     # Mutual information: I_ij = s_i + s_j - s_ij
     # For independent orbitals, I_ij = 0
-    # Approximate: I_ij proportional to product of natural orbital
-    # coefficients weighted by occupation
+    # Approximate: I_ij proportional to per-spin occupation variances.
     n_active_val = n_active if n_active is not None else n_ao
     mi = np.zeros((n_active_val, n_active_val), dtype=np.float64)
     for i in range(n_active_val):
         for j in range(i + 1, n_active_val):
-            # Approximate mutual information from orbital overlap
+            # Use the same per-spin occupations as the entropy.
             n_i = occ[i]
             n_j = occ[j]
             if (
@@ -235,10 +243,7 @@ def entanglement_from_density(
             mi[j, i] = mi[i, j]
 
     # Entanglement bond order: sqrt(I_ij) normalised
-    ebo = np.sqrt(np.maximum(mi, 0.0))
-    max_ebo = np.max(ebo) if np.max(ebo) > 0 else 1.0
-    if max_ebo > 0:
-        ebo = ebo / max_ebo
+    ebo = entanglement_bond_order(mi)
 
     total_info = float(np.sum(s_i[:n_active_val]))
 
@@ -292,8 +297,7 @@ def mutual_information(
             for j in range(i + 1, n_orb):
                 rho_ij = two_orbital_densities[i, j]
                 evals = np.linalg.eigvalsh(rho_ij)
-                evals = np.clip(evals, 1e-16, 1.0)
-                s_ij = -np.sum(evals * np.log(evals))
+                s_ij = _entropy(evals)
                 mi[i, j] = s_i[i] + s_i[j] - s_ij
                 mi[j, i] = mi[i, j]
     else:

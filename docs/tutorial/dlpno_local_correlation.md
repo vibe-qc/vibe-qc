@@ -12,7 +12,7 @@ go to zero, the canonical answer comes back *exactly*.
 
 This tutorial runs DLPNO-MP2 on water, shows the threshold
 convergence against canonical RI-MP2, and finishes with the
-reduced-scaling DLPNO-CCSD solver and the local DLPNO-CCSD(T). The
+local DLPNO-CCSD solver and DLPNO-CCSD(T). The
 matching ready-to-run scripts are
 [`input-h2o-dlpno-mp2.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/molecular/input-h2o-dlpno-mp2.py),
 [`input-h2o-dlpno-ccsd.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/molecular/input-h2o-dlpno-ccsd.py),
@@ -188,16 +188,19 @@ example,
 implemented by that solver are applied and reported; an omitted field is
 unsupported, not silently zero.
 
-## DLPNO-CCSD: the reduced-scaling local solver
+## DLPNO-CCSD: the local solver
 
 The same PNO machinery carries the coupled-cluster ansatz.
-`method="dlpno-ccsd"` runs the **reduced-scaling local solver**: each
-pair's amplitudes remain in its PNO basis, while the default residual is
-contracted in Riplinger and Neese's atom-based extended PAO domain and then
-projected back. No full-system amplitude tensor is formed. It is FCI-anchored;
-in the full-domain limit it reproduces canonical closed-shell CCSD bit-for-bit
-(≤ 1 µHa; on H₂ that is FCI). The project default is the supported subset of
-NormalPNO with `residual_domain="extended"`. The retained recovery percentages
+`method="dlpno-ccsd"` runs the **local solver**: each pair's amplitudes
+remain in its PNO basis, and the default `residual_domain="pno"` contracts
+every residual term in the PNO space of the amplitude that carries the
+contracted index (Riplinger and Neese 2013, Sec. II C) in a compiled kernel.
+No full-system amplitude tensor is formed. It is FCI-anchored; in the
+full-domain limit it reproduces canonical closed-shell CCSD bit-for-bit
+(≤ 1 µHa; on H₂ that is FCI), and at any truncation it reproduces the
+atom-based extended-domain contraction (`residual_domain="extended"`) to the
+convergence tolerance. The project default is the supported subset of
+NormalPNO. The retained recovery percentages
 below describe their explicitly labelled historical recipes rather than a
 newly measured current-default value.
 
@@ -247,19 +250,22 @@ override keeps it available for smoke tests and parity checks.
 ### CCSD(T): DLPNO-(T1)
 
 `method="dlpno-ccsd(t)"` runs the same local solver and then the
-rotated-occupied **(T1) compatibility route** on the converged amplitudes
-(`vibeqc.dlpno.triples_local`). The perturbative triples are evaluated per
-occupied triple in a TNO domain after diagonalising and rotating the occupied
-space. This removes the (T0) semicanonical approximation, but finite PNO/TNO
-domains remain a truncation. The open-shell local solver separately exposes
+rotated-occupied **(T1)** triples on the converged amplitudes
+(`vibeqc.dlpno.triples_local`). The occupied space is rotated to canonical
+orbitals and the full canonical (T) is evaluated on the rotated PNO
+amplitudes, so the (T0) semicanonical approximation and the TNO truncation
+are both gone and the PNO truncation is the only approximation left. Its cost
+is that of a canonical (T), so on large molecules ``triples_mode="local"``
+(below) is the mode that scales. The open-shell local solver separately exposes
 `triples_mode="t1-iterative"`, a spin-orbital generalization of the 2018 Guo
 et al. closed-shell Eq. (2); Guo et al., J. Chem. Phys. 152, 024116 (2020) is
 the dedicated open-shell method-family source. Unlike the rotated route, it
 can preserve a screened local triple list.
 At full domains it reproduces canonical CCSD(T) to machine precision (the
 (T1) parity ratchet). Set
-``triples_mode="local"`` for the older DLPNO-(T0) (diagonal localised Fock,
-~0.1 kcal/mol looser).  The (T) vanishes identically for two-electron
+``triples_mode="local"`` for DLPNO-(T0), ORCA's default triples (diagonal
+localised Fock, per-triple TNO domains, a compiled kernel whose cost follows
+the local triple list). The (T) vanishes identically for two-electron
 systems.
 
 ```python
@@ -281,85 +287,51 @@ The O(N⁶) correctness pilot is still available by passing a
 
 ## Is DLPNO-CCSD(T) accurate enough?
 
-The exactness limit above answers the question in principle, but production
-runs use truncated domains. The table below is retained, explicitly
-all-electron pre-#140/#448 evidence, not a measurement of the current
-chemical-core/NormalPNO default. The checked-in
+The exactness limit above answers the question in principle; production
+runs use truncated domains. At the shipped defaults (chemical frozen core,
+NormalPNO, cc-pVDZ) on 17 closed-shell molecules from water to C₁₀H₂₂, the
+mean absolute error against canonical DF-CCSD(T) is 0.26 kcal/mol for CCSD
+and 0.38 for CCSD(T). ORCA 6.1.1 with `NormalPNO` on the same inputs gives
+0.28 and 0.87; its larger (T) error is the semicanonical (T0) it uses by
+default, where vibe-qc's `(T1)` evaluates the canonical (T) on the PNO
+amplitudes. With the C₁₀H₂₂ TightPNO run included, TightPNO brings vibe-qc
+to 0.14 / 0.19 over the same 17 molecules. The per-molecule table,
+the TightPNO comparison with ORCA and the open findings are in the
+[user guide](../user_guide/dlpno_mp2.md#accuracy).
+
+### Historical def2-SVP recipe
+
+Before the chemical-core and NormalPNO defaults (#140, #448) the benchmark
+ran all-electron def2-SVP with `tcut_pno=1e-7`, `tcut_pairs=1e-4`,
+`tcut_mkn=0`, `residual_domain="pair"` and DLPNO-(T1) on seven small
+molecules (MAE 0.37 kcal/mol; 0.17 with `tcut_pno=1e-8`, next to a reported
+ORCA 6.1 value of 0.16). The checked-in
 [`benchmark-dlpno-ccsd-t.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/molecular/benchmark-dlpno-ccsd-t.py)
-reproduces this precise def2-SVP recipe: `tcut_pno=1e-7`,
-`tcut_pairs=1e-4`, `tcut_mkn=0`, `residual_domain="pair"`, and
-DLPNO-(T1).
+reproduces that recipe explicitly:
 
-| Molecule | Canonical CCSD(T) (Ha) | DLPNO error (kcal/mol) | Recovery |
-|---|---:|---:|---:|
-| H₂O  | -76.177021  | +0.083 | 99.95 % |
-| NH₃  | -56.357944  | -0.123 | 100.01 % |
-| CH₄  | -40.360454  | -0.670 | 100.54 % |
-| HF   | -100.141044 | +0.128 | 99.95 % |
-| CO   | -112.955086 | +0.006 | 100.01 % |
-| N₂   | -109.180282 | -0.727 | 100.33 % |
-| H₂CO | -114.125245 | -0.843 | 100.30 % |
-
-Its mean absolute error was **0.37 kcal/mol**. A separate historical run
-tightened only the PNO cutoff to `tcut_pno=1e-8` and gave **0.17 kcal/mol**,
-alongside a reported ORCA 6.1 value of 0.16 on the same set. The exact
-generator for that second snapshot is retained at
-[Archived `3e69f1960`](https://vibe-qc.com/docs/);
-its results were:
-
-| Molecule | Canonical CCSD(T) (Ha) | DLPNO error (kcal/mol) | Recovery |
-|---|---:|---:|---:|
-| H₂O  | -76.177021  | +0.135 | 99.90 % |
-| NH₃  | -56.357944  | +0.046 | 99.99 % |
-| CH₄  | -40.360454  | -0.073 | 100.06 % |
-| HF   | -100.141044 | +0.101 | 99.93 % |
-| CO   | -112.955086 | +0.288 | 99.86 % |
-| N₂   | -109.180282 | +0.401 | 99.82 % |
-| H₂CO | -114.125245 | +0.117 | 99.94 % |
-
-Both tables are recipe-specific historical evidence. The first is generated
-by the checked-in script; the second belongs to the exact historical script
-revision linked above. Neither table validates the new default.
-
-### Legacy fast-scan defaults and the high-accuracy recipe
-
-An earlier pre-#140/#448 fast-scan paired `tcut_pno=1e-7` with DLPNO-(T0)
-(MAE 0.30); that distinct historical generator is retained at
-[Archived `49492b718`](https://vibe-qc.com/docs/).
-The looser PNO caused CCSD over-recovery that accidentally cancelled the
-(T0) semicanonical error. The rotated-occupied (T1) removes that error while
-retaining TNO-domain truncation, and `tcut_pno=1e-8` removes
-the CCSD over-recovery -- the combined historical recipe gave the reported
-MAE on this benchmark. Finite domains remain an approximation.
-
-The historical all-electron recipe remains reproducible explicitly:
 ```python
 LocalCCSDOptions(n_frozen=0, tcut_pno=1e-7, tcut_pairs=1e-4,
                  tcut_mkn=0.0, residual_domain="pair",
                  triples_mode="t1", compute_triples=True)
 ```
-For an even tighter, O(N⁷) exact-(T) oracle:
-```python
-LocalCCSDOptions(n_frozen=0, tcut_pno=1e-8, tcut_pairs=1e-4,
-                 tcut_mkn=0.0, residual_domain="pair",
-                 triples_mode="exact", compute_triples=True)
-```
 
-Re-run the checked-in script for the first table. Use the two immutable
-historical revisions for the tightened and (T0) snapshots; their protocols
-must not be inferred from today's defaults.
+With `tcut_pno=1e-8` and `triples_mode="exact"` the same options give the
+O(N⁷) exact-(T) oracle. Those numbers belong to that recipe, not to the
+defaults measured above.
 
-### The point is reduced scaling
+### Cost
 
-Accuracy is only half the story; DLPNO exists because its cost grows
-far more slowly than canonical CCSD(T)'s O(N⁷). The companion reach
-demonstration in the benchmark (water clusters, same basis) makes the
-contrast concrete: canonical CCSD(T) becomes intractable past roughly
-three to four waters, while DLPNO-CCSD(T) carries on. See the reach
-walkthrough in
+Accuracy is only half the story; DLPNO exists because its cost should grow
+far more slowly than canonical CCSD(T)'s O(N⁷). What is measured for this
+implementation: the default closed-shell `(T1)` costs a canonical (T)
+(C₁₀H₂₂/cc-pVDZ took 16 hours on 16 cores, against 11 minutes for the whole
+run with `triples_mode="local"`), and the CCSD step keeps no dense
+amplitude tensor, so canonical CCSD(T) becomes intractable past roughly
+three to four waters in the reach walkthrough of
 [`benchmark-dlpno-ccsd-t.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/molecular/benchmark-dlpno-ccsd-t.py)
-and the remaining DLPNO entries in
-the canonical [GitLab issue list](https://github.com/vibe-qc/vibe-qc/issues).
+while DLPNO-CCSD(T) carries on. Whether the CCSD step's cost grows
+sub-quadratically with molecule size has not been measured; the C20/C40/C60
+alkane ladder with a `coupling_radius=0` control is #190.
 
 ## When to reach for DLPNO
 
@@ -368,24 +340,24 @@ the canonical [GitLab issue list](https://github.com/vibe-qc/vibe-qc/issues).
   energies only (no gradients yet). Historical recovery percentages earlier
   on this page belong to their explicit all-electron threshold sweep, not the
   current default.
-* **DLPNO-CCSD**, the reduced-scaling local solver: coupled-cluster
-  quality with PNO truncation control, full-domain == canonical CCSD.
+* **DLPNO-CCSD**, the local solver: coupled-cluster quality with PNO
+  truncation control, full-domain == canonical CCSD.
   `coupling_radius` defaults to 12 bohr, a no-op on compact molecules,
   bounding the occupied coupling on extended systems (set 0 for the exact
-  full-coupling reference). The default extended-domain contraction runs in
-  the compiled residual kernel once per distinct (coupling set, extended
-  domain) group, so a compact molecule pays one canonical-shaped residual per
-  iteration rather than one per pair; the explicit legacy
-  `residual_domain="pair"` mode uses the same kernel in its pair-PNO basis.
+  full-coupling reference). The default `residual_domain="pno"` contracts
+  each residual term in PNO spaces in the compiled `dlpno_ccsd_pno_solve`
+  kernel; `"extended"` (the atom-based extended domain, contracted once per
+  distinct coupling-set and domain group) is kept as its exactness oracle.
   `tcut_pno` cuts pair-density occupation numbers, and which density is used
-  is selectable with `pno_norm` (`"legacy"` by default, `"mp2"` for Riplinger
-  and Neese's published Eq. 23, `"iepa"` for the pre-2013 LPNO convention);
-  see the user guide. The solver carries a generous, overridable `max_nbf`
+  is selectable with `pno_norm` (`"mp2"` by default, Riplinger and Neese's
+  published Eq. 23; `"iepa"` for the pre-2013 LPNO convention; `"legacy"`
+  for vibe-qc's historical density); see the user guide. The solver carries a generous, overridable `max_nbf`
   guard.
-* **DLPNO-CCSD(T)**, the local DLPNO-(T) on the converged local amplitudes
-  (per-triple TNO domains), exact == canonical CCSD(T) at full domains. Both
-  closed- and open-shell public routes use their reduced-scaling local solver;
-  the opt-in open-shell ``triples_mode="t1-iterative"`` correction is an
+* **DLPNO-CCSD(T)**, the local solver followed by the triples, exact ==
+  canonical CCSD(T) at full domains. Closed shell defaults to (T1), the
+  canonical (T) on the rotated amplitudes, with the local (T0)
+  (`triples_mode="local"`) as the option that scales; open shell defaults to
+  its local (T0). The opt-in open-shell ``triples_mode="t1-iterative"`` correction is an
   experimental, capped dense spin-orbital generalization and is not itself a
   reduced-scaling triples phase.
   `DLPNOCCSDPilotOptions` / `DLPNOUCCSDPilotOptions` explicitly select the

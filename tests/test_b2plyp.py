@@ -48,6 +48,7 @@ from vibeqc import (
 )
 
 from .conftest import ANGSTROM_TO_BOHR, GEOMETRIES
+from .refusal_receipt import assert_preflight_refusal
 
 
 B2PLYP_C_OS = 0.27
@@ -287,7 +288,9 @@ def test_run_job_double_hybrid_fails_before_output(tmp_path, method, multiplicit
             progress=False,
         )
 
-    assert list(tmp_path.iterdir()) == []
+    # Since 94f71d1 (!133) the refusal leaves exactly its preflight receipt
+    # (status crashed, result_status refused) and no calculation output.
+    assert_preflight_refusal(stem)
 
 
 def test_run_b2plyp_open_shell_roks():

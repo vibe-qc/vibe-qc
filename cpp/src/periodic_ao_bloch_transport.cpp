@@ -1,4 +1,5 @@
 #include "vibeqc/periodic_ao_bloch_transport.hpp"
+#include "vibeqc/symmetry_shared.hpp"
 
 #include <libint2/solidharmonics.h>
 #include <algorithm>
@@ -18,8 +19,7 @@ using Z = std::complex<double>;
 constexpr int Lmax = kPeriodicAOBlochTransportMaximumAngularMomentum;
 constexpr int Nc = (Lmax + 1) * (Lmax + 2) / 2;
 constexpr int Np = 2 * Lmax + 1;
-constexpr int Side = Lmax + 1;
-constexpr int Poly = Side * Side * Side;
+static_assert(Lmax == detail::kCartesianRotationMaximumL);
 constexpr double TwoPi = 6.283185307179586476925286766559005768;
 
 [[noreturn]] void invalid(const char* text) {
@@ -108,12 +108,10 @@ void controls(const PeriodicAOBlochTransportOptions& o,
 
 using AtomMap = detail::PeriodicAOAtomMap;
 using ShellMap = detail::PeriodicAOShellMap;
-struct Work {
-    std::array<std::array<int,3>,Nc> powers{};
-    std::array<double,Nc*Nc> cart{}, rotation{};
+struct Work : detail::CartesianShellRotationWorkspace {
+    std::array<double,Nc*Nc> rotation{};
     std::array<double,Np*Nc> pure{}, transformed{};
     std::array<double,Np*Np> cholesky{};
-    std::array<double,Poly> polynomial{}, next{};
     std::array<double,Np> rhs{};
     // A, A^-1, R and R^-1. All matrices are row-major scalar arrays.
     std::array<double,9> a{}, inverse{}, r{}, inverse_r{};
@@ -373,40 +371,13 @@ void shell_mapping(const BasisSet& basis, const PeriodicSystem& system,
     diag.mapped_shells = map.size();
 }
 
-int poly_index(int x, int y, int z) { return (x*Side+y)*Side+z; }
-
 // Polynomial substitution is in the native axial-normalized Cartesian basis.
 // M[u,v] expands monomial_u(R^-1 x) into monomial_v(x).
 void rotation_block(Work& w, int l, bool pure,
                     const PeriodicAOBlochTransportOptions& options,
                     PeriodicAOBlochTransportDiagnostics& diag) {
     const int nc = (l+1)*(l+2)/2, np = 2*l+1;
-    int at = 0;
-    for (int x = l; x >= 0; --x)
-        for (int y = l-x; y >= 0; --y) w.powers[at++] = {x,y,l-x-y};
-    for (int u = 0; u < nc; ++u) {
-        w.polynomial.fill(0);
-        w.polynomial[0] = 1;
-        int degree = 0;
-        for (int axis = 0; axis < 3; ++axis) {
-            for (int repeat = 0; repeat < w.powers[u][axis]; ++repeat) {
-                w.next.fill(0);
-                for (int x = degree; x >= 0; --x)
-                    for (int y = degree-x; y >= 0; --y) {
-                        const int z = degree-x-y;
-                        const double p = w.polynomial[poly_index(x,y,z)];
-                        for (int d = 0; d < 3; ++d) {
-                            const int index = poly_index(x+(d==0),y+(d==1),z+(d==2));
-                            w.next[index] = finite(w.next[index]+finite(p*w.inverse_r[3*axis+d]));
-                        }
-                    }
-                w.polynomial.swap(w.next);
-                ++degree;
-            }
-        }
-        for (int v = 0; v < nc; ++v)
-            w.cart[u*Nc+v] = w.polynomial[poly_index(w.powers[v][0],w.powers[v][1],w.powers[v][2])];
-    }
+    detail::cartesian_shell_polynomials(w, l, w.inverse_r);
     if (!pure) {
         for (int a = 0; a < nc; ++a)
             for (int b = 0; b < nc; ++b) w.rotation[a*Nc+b] = w.cart[b*Nc+a];

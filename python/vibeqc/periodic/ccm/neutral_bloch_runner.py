@@ -188,6 +188,11 @@ class CCMNeutralBlochConvention:
     #: Read from the driver result: the two producers recording different
     #: values here was worth -4.99e-01 Ha/cell on MgO/STO-3G (IID 307).
     rsgdf_tail_ke_cutoff: Optional[float]
+    #: Which implementation of ``gdf_method="rsgdf"`` fitted this run,
+    #: read from the driver's executed fit-source record: ``"classic"`` is
+    #: the pin of the neutral producers (the fit the real-Γ fold builds),
+    #: ``"sr"`` the driver's shipped 3-D default (vibe-qc #378).
+    fit_source: str
     #: The inner driver's backend string, carried verbatim including any
     #: ``+PARITY_HELD`` marker.
     backend: str
@@ -199,7 +204,14 @@ class CCMNeutralBlochConvention:
     #: so the recorded value is whatever the SCF ran with.
     executed_fock_mixing: float
     executed_level_shift: float
+    #: Executed primitive-cell XC reach, read from the producer (zero for HF).
+    xc_lattice_cutoff_bohr: float = 0.0
     experimental: bool = True
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded, and the 1-based lattice directions that
+    #: measured as vacuum. Read off the producer's ``CCMGDFResult``.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
 
 
 def run_neutral_bloch_scf(
@@ -212,6 +224,7 @@ def run_neutral_bloch_scf(
     aux_basis: Optional[str] = None,
     symmetry: bool = False,
     return_lattice_density: bool = False,
+    allow_vacuum_padding: bool = False,
     **driver_kwargs,
 ):
     """Run the neutral Γ-CCM Bloch producer on the BvK torus ``mesh``.
@@ -250,6 +263,10 @@ def run_neutral_bloch_scf(
         Also return the exact lattice-cell representation of the converged
         per-k density. The runner requests this for density-grid and QVF
         output; the original per-k matrices remain untouched.
+    allow_vacuum_padding
+        The IID 291 opt-in (ruling R6): run a cell measured as vacuum-padded
+        as a warned, recorded vacuum-parameter study instead of refusing it.
+        Recorded on the convention record either way.
     **driver_kwargs
         Forwarded verbatim to the producer and on into
         ``run_k{rhf,rks,uhf,uks}_periodic_gdf`` (``options``, ``progress``,
@@ -285,22 +302,26 @@ def run_neutral_bloch_scf(
         )
 
     ccm = CCMSystem(system, nrep, basis_name)
+    _vac = bool(allow_vacuum_padding)
     if method_upper == "RHF":
         res = run_ccm_rhf_gdf(
-            ccm, aux_basis=aux_basis, symmetry=symmetry, **driver_kwargs
+            ccm, aux_basis=aux_basis, symmetry=symmetry,
+            allow_vacuum_padding=_vac, **driver_kwargs
         )
     elif method_upper == "RKS":
         res = run_ccm_rks_gdf(
             ccm, functional, aux_basis=aux_basis, symmetry=symmetry,
-            **driver_kwargs,
+            allow_vacuum_padding=_vac, **driver_kwargs,
         )
     elif method_upper == "UHF":
         # The open-shell producers take no ``symmetry`` keyword: it would be
         # forwarded into run_kuhf_periodic_gdf, which has no such parameter.
-        res = run_ccm_uhf_gdf(ccm, aux_basis=aux_basis, **driver_kwargs)
+        res = run_ccm_uhf_gdf(ccm, aux_basis=aux_basis,
+                              allow_vacuum_padding=_vac, **driver_kwargs)
     else:  # UKS
         res = run_ccm_uks_gdf(
-            ccm, functional, aux_basis=aux_basis, **driver_kwargs
+            ccm, functional, aux_basis=aux_basis,
+            allow_vacuum_padding=_vac, **driver_kwargs
         )
 
     raw = res.raw
@@ -324,15 +345,25 @@ def run_neutral_bloch_scf(
         gdf_pair_total=int(res.gdf_pair_total),
         gdf_pair_reduction_factor=float(res.gdf_pair_reduction_factor),
         rsgdf_tail_ke_cutoff=getattr(res, "rsgdf_tail_ke_cutoff", None),
+        fit_source=str(getattr(res, "fit_source", "") or ""),
+        xc_lattice_cutoff_bohr=float(getattr(res, "xc_lattice_cutoff_bohr", 0.0)),
         backend=str(res.backend or ""),
         parity_held=bool(res.parity_held),
         executed_fock_mixing=float(getattr(raw, "fock_mixing", 0.0) or 0.0),
         executed_level_shift=float(getattr(raw, "level_shift", 0.0) or 0.0),
+        vacuum_padding_allowed=bool(
+            getattr(res, "vacuum_padding_allowed", False)),
+        vacuum_padded_axes=tuple(
+            int(a) for a in (getattr(res, "vacuum_padded_axes", ()) or ())),
     )
     # The multi-k GDF results are plain (non-frozen) dataclasses, so the
     # record rides on the object the output stage already understands. The
     # chi line attaches its own convention the same way.
     setattr(raw, "neutral_bloch", convention)
     setattr(raw, "ccm_result", res)
+    # The torus the SCF ran on, so a correlation driver gets the identical
+    # cluster (as real_gamma_runner records ``ccm_system``): the Bloch
+    # reference is transformed onto exactly this supercell (Theorem 1).
+    setattr(raw, "ccm_system", ccm)
     setattr(raw, "parity_held", bool(res.parity_held))
     return raw

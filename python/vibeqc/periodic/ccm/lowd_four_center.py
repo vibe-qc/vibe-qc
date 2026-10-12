@@ -99,7 +99,7 @@ def _pair_ft_libint(basis, G_pts):
     Hartrees per atom while the H/He envelope stayed correct: the factor
     is exactly 1.0 for an s-only basis, so every H/He identity, both erf
     image-sum oracles and the M3b/M5 gates were structurally blind to it
-    (root-caused 2026-08-02; ``HANDOVER_OPEN_BUGS_V015.md``). Because of
+    (root-caused 2026-08-02; the original investigation). Because of
     that, an s-only basis must come out **bit-identical** through this
     helper -- the regression that proves it is a pure convention fix.
     """

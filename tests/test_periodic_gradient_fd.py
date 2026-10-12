@@ -75,6 +75,7 @@ def test_h2_molecular_limit_matches_molecular_gradient():
     opts_periodic = vq.PeriodicSCFOptions()
     opts_periodic.conv_tol_energy = 1e-10
     opts_periodic.lattice_opts.cutoff_bohr = 25.0
+    opts_periodic.lattice_opts.gamma_only_0 = True  # declared molecular limit (#133, #430)
     g_fd = vq.compute_gradient_periodic_rhf_fd(
         sys, "sto-3g", kmesh, opts_periodic, step_bohr=1e-3)
 
@@ -150,6 +151,7 @@ def test_h2_periodic_matches_h2_molecular_at_equilibrium():
     opts_periodic = vq.PeriodicSCFOptions()
     opts_periodic.conv_tol_energy = 1e-12
     opts_periodic.lattice_opts.cutoff_bohr = 25.0
+    opts_periodic.lattice_opts.gamma_only_0 = True  # declared molecular limit (#133, #430)
     g_fd = vq.compute_gradient_periodic_rhf_fd(
         sys, "sto-3g", kmesh, opts_periodic, step_bohr=1e-3)
 

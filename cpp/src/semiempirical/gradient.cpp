@@ -87,7 +87,7 @@ Eigen::MatrixXd compute_dftb0_gradient(
 
     // ---- Build the effective matrix M -----------------------------------
     //
-    // M_{μν} = D_{μν} · ½κ · h̄_{AB} − W_{μν}   (two-center, A≠B)
+    // M_{μν} = D_{μν} · κ · h̄_{AB} − W_{μν}   (two-center, A≠B)
     // M_{μν} = −W_{μν}                           (on-site, A=B)
     //
     // W = 2 C_occ · diag(ε_occ) · C_occ^T (energy-weighted density)
@@ -128,7 +128,7 @@ Eigen::MatrixXd compute_dftb0_gradient(
             int a_nu = ao_atom[nu];
             if (a_mu != a_nu) {
                 double h_avg = 0.5 * (hbar_atom[a_mu] + hbar_atom[a_nu]);
-                M(mu, nu) += D(mu, nu) * 0.5 * kappa * h_avg;
+                M(mu, nu) += D(mu, nu) * kappa * h_avg;
             }
         }
     }
@@ -253,7 +253,7 @@ Eigen::MatrixXd compute_scc_dftb_gradient(
     // Σ_A V_A ∂Δq_A/∂R = −½ (V_A + V_B) D_{μν} dS_{μν}/dR — the same
     // sign as the H¹ correction (Elstner et al., PRB 58, 7260 (1998),
     // Eq. 25, with our Δq > 0 = cation convention).
-    // M += D * 0.5 * (kappa*h_avg − V_A − V_B)
+    // M += D * (kappa*h_avg - 0.5*(V_A + V_B))
     Eigen::VectorXd V = gamma * result.charges;
     std::vector<double> atom_V(atoms.size());
     for (std::size_t a = 0; a < atoms.size(); ++a)
@@ -267,7 +267,7 @@ Eigen::MatrixXd compute_scc_dftb_gradient(
             int a_nu = ao_atom[nu];
             if (a_mu != a_nu) {
                 double h_avg = 0.5 * (hbar_atom[a_mu] + hbar_atom[a_nu]);
-                M(mu, nu) += D(mu, nu) * 0.5 * (kappa * h_avg - V_mu - atom_V[a_nu]);
+                M(mu, nu) += D(mu, nu) * (kappa * h_avg - 0.5 * (V_mu + atom_V[a_nu]));
             }
         }
     }
@@ -435,7 +435,7 @@ Eigen::MatrixXd compute_udftb0_gradient(
             int a_nu = ao_atom[nu];
             if (a_mu != a_nu) {
                 double h_avg = 0.5 * (hbar[a_mu] + hbar[a_nu]);
-                M(mu, nu) += D(mu, nu) * 0.5 * kappa * h_avg;
+                M(mu, nu) += D(mu, nu) * kappa * h_avg;
             }
         }
     }
@@ -542,7 +542,7 @@ Eigen::MatrixXd compute_uscc_dftb_gradient(
             if (a_mu != a_nu) {
                 double h_avg = 0.5 * (hbar_atom[a_mu] + hbar_atom[a_nu]);
                 // −V: see compute_scc_dftb_gradient (Δq > 0 = cation).
-                M(mu, nu) += D(mu, nu) * 0.5 * (kappa * h_avg - V_mu - V_uscc(a_nu));
+                M(mu, nu) += D(mu, nu) * (kappa * h_avg - 0.5 * (V_mu + V_uscc(a_nu)));
             }
         }
     }
@@ -807,7 +807,7 @@ Eigen::MatrixXd compute_periodic_dftb0_gradient(
         for (int nu = 0; nu < n_basis; ++nu) {
             int a_nu = ao_atom[nu];
             double h_avg = 0.5 * (hbar_atom[a_mu] + hbar_atom[a_nu]);
-            M(mu, nu) += D(mu, nu) * 0.5 * kappa * h_avg;
+            M(mu, nu) += D(mu, nu) * kappa * h_avg;
         }
     }
 
@@ -931,8 +931,8 @@ Eigen::MatrixXd compute_periodic_scc_dftb_gradient(
         for (int nu = 0; nu < n_basis; ++nu) {
             int a_nu = ao_atom[nu];
             double h_avg = 0.5 * (hbar_atom[a_mu] + hbar_atom[a_nu]);
-            M(mu, nu) += D(mu, nu) * 0.5
-                         * (kappa * h_avg - V_mu - V_scc(a_nu));
+            M(mu, nu) += D(mu, nu)
+                         * (kappa * h_avg - 0.5 * (V_mu + V_scc(a_nu)));
         }
     }
 
@@ -1046,7 +1046,7 @@ Eigen::MatrixXd compute_periodic_udftb0_gradient(
         for (int nu = 0; nu < n_basis; ++nu) {
             int a_nu = ao_atom[nu];
             double h_avg = 0.5 * (hbar_atom[a_mu] + hbar_atom[a_nu]);
-            M(mu, nu) += D(mu, nu) * 0.5 * kappa * h_avg;
+            M(mu, nu) += D(mu, nu) * kappa * h_avg;
         }
     }
 
@@ -1164,8 +1164,8 @@ Eigen::MatrixXd compute_periodic_uscc_dftb_gradient(
             int a_nu = ao_atom[nu];
             double h_avg = 0.5 * (hbar_atom[a_mu] + hbar_atom[a_nu]);
             // −V: see compute_scc_dftb_gradient (Δq > 0 = cation).
-            M(mu, nu) += D(mu, nu) * 0.5
-                         * (kappa * h_avg - V_mu - V_scc(a_nu));
+            M(mu, nu) += D(mu, nu)
+                         * (kappa * h_avg - 0.5 * (V_mu + V_scc(a_nu)));
         }
     }
 
@@ -1444,7 +1444,7 @@ Eigen::MatrixXd compute_periodic_dftb0_stress(
         for (int nu = 0; nu < n_basis; ++nu) {
             int a_nu = ao_atom[nu];
             double h_avg = 0.5 * (hbar_atom[a_mu] + hbar_atom[a_nu]);
-            Mmat(mu, nu) += D(mu, nu) * 0.5 * kappa * h_avg;
+            Mmat(mu, nu) += D(mu, nu) * kappa * h_avg;
         }
     }
 
@@ -1591,9 +1591,9 @@ Eigen::MatrixXd compute_periodic_scc_dftb_stress(
             const int a_nu = ao_atom[nu];
             const double h_avg =
                 0.5 * (hbar_atom[a_mu] + hbar_atom[a_nu]);
-            M(mu, nu) += D(mu, nu) * 0.5
+            M(mu, nu) += D(mu, nu)
                          * (kappa * h_avg
-                            - V_scc(a_mu) - V_scc(a_nu));
+                            - 0.5 * (V_scc(a_mu) + V_scc(a_nu)));
         }
     }
     // Per-cell masked M blocks (issue #316; see the DFTB0 stress).
@@ -1886,6 +1886,9 @@ Eigen::VectorXd gfn2_fock_shell_potential(
 // is evaluated by FD with the reduced state frozen: v± = γ±Δq + V³ + K±m9
 // at the displaced geometry.  Without AES (c = 0) the correction vanishes
 // and the assembly is exact — this mirrors compute_scc_dftb_gradient_response.
+// `smearing_temperature` is the temperature the SCC ran at: the reduced-state
+// map must fill its orbitals with the same Fermi-Dirac occupations the SCC
+// used, or J and ∂X/∂R describe a different (T = 0) ensemble (vibe-qc#343).
 Eigen::MatrixXd gfn2_aes_response_correction(
     const Molecule& mol,
     const xtb::GFN2ParameterSet& params,
@@ -1903,7 +1906,8 @@ Eigen::MatrixXd gfn2_aes_response_correction(
     const Eigen::VectorXd& dqs,
     const Eigen::VectorXd& m9,
     const Eigen::VectorXd& V_mp,
-    int n_occ) {
+    int n_occ,
+    double smearing_temperature) {
 
     const auto& atoms = mol.atoms();
     const int n_atoms = static_cast<int>(atoms.size());
@@ -1924,9 +1928,11 @@ Eigen::MatrixXd gfn2_aes_response_correction(
         vp(si) += h_v;
         vm(si) -= h_v;
         Eigen::VectorXd Xp = gfn2_reduced_state(
-            H0, S, vp, basis, mol, mp_int, ao_shell, n0_shell, n_occ);
+            H0, S, vp, basis, mol, mp_int, ao_shell, n0_shell, n_occ,
+            smearing_temperature);
         Eigen::VectorXd Xm = gfn2_reduced_state(
-            H0, S, vm, basis, mol, mp_int, ao_shell, n0_shell, n_occ);
+            H0, S, vm, basis, mol, mp_int, ao_shell, n0_shell, n_occ,
+            smearing_temperature);
         J.col(si) = (Xp - Xm) / (2.0 * h_v);
     }
 
@@ -1979,7 +1985,7 @@ Eigen::MatrixXd gfn2_aes_response_correction(
                     shell_info, gam_d, K_d, gam3_shell, dqs, m9, n_atoms);
                 X_pm[pm] = gfn2_reduced_state(
                     H0_d, S_d, v_d, basis_d, mol_d, mp_d,
-                    ao_shell, n0_shell, n_occ);
+                    ao_shell, n0_shell, n_occ, smearing_temperature);
             }
             grad(a, d) = z.dot((X_pm[0] - X_pm[1]) / (2.0 * h_R));
         }
@@ -1989,11 +1995,29 @@ Eigen::MatrixXd gfn2_aes_response_correction(
 
 }  // namespace
 
+void require_gfn2_gradient_aes_support(const xtb::GFN2Result& result) {
+    if (result.aes_functional == xtb::GFN2AESFunctional::Shell && !result.converged) {
+        throw std::invalid_argument(
+            "Molecular GFN2 shell AES gradient requires a converged full SCC Fock.");
+    }
+    if (result.aes_functional == xtb::GFN2AESFunctional::Faithful && !result.converged) {
+        throw std::invalid_argument(
+            "Molecular GFN2 faithful AES gradient requires a converged full SCC Fock.");
+    }
+    if (result.aes_functional != xtb::GFN2AESFunctional::Shell
+        && result.aes_functional != xtb::GFN2AESFunctional::Faithful) {
+        throw std::invalid_argument(
+            "Molecular GFN2 gradient requires a known executed AES functional; "
+            "rerun the SCC with a current native build.");
+    }
+}
+
 Eigen::MatrixXd compute_gfn2_gradient(
     const Molecule& mol,
     const xtb::GFN2Result& result,
     const xtb::GFN2ParameterSet& params) {
 
+    require_gfn2_gradient_aes_support(result);
     ensure_libint_initialized();
 
     const auto n_atoms = static_cast<Eigen::Index>(mol.atoms().size());
@@ -2022,11 +2046,16 @@ Eigen::MatrixXd compute_gfn2_gradient(
         ? result.overlap
         : SemiempiricalHamiltonianBuilder::build_overlap(basis);
 
-    // Energy-weighted density
-    Eigen::MatrixXd C_occ = C.leftCols(n_occ);
-    Eigen::MatrixXd W = Eigen::MatrixXd::Zero(n_basis, n_basis);
-    for (int i = 0; i < n_occ; ++i)
-        W += eps(i) * (2.0 * C_occ.col(i) * C_occ.col(i).transpose());
+    // Energy-weighted density from the converged occupations (vibe-qc#343).
+    // Hard Aufbau reproduces the historical leftCols assembly bit-for-bit;
+    // the fractional Fermi-Dirac occupations of a smeared SCC make W, and
+    // with it this gradient, the derivative of the Mermin free energy
+    // A = E - T*S in which that SCC is stationary (Bannwarth, Ehlert &
+    // Grimme, JCTC 2019, Eqs. 8 and 10), exactly as the periodic GFN2 and
+    // the DFTB routes below already do. A result that predates the
+    // occupations field falls back to hard Aufbau.
+    Eigen::MatrixXd W = gamma_energy_weighted_density(
+        C, eps, result.occupations, n_occ, n_basis);
 
     // ---- Shell-resolved SCC machinery (matches run_gfn2_xtb) ----
     auto shell_info = gfn2_enumerate_shells(basis, mol, params);
@@ -2060,22 +2089,28 @@ Eigen::MatrixXd compute_gfn2_gradient(
     }
     dqs -= n0_shell;
 
-    // AES moments + kernel at the converged density.
-    xtb::GFN2MultipoleSet mp_int =
-        xtb::build_gfn2_multipole_integrals(basis, mol, true);
-    auto moments = xtb::compute_shell_multipole_moments(
-        D, basis, mol, mp_int, ao_shell, n0_shell, ns);
-    moments.q = dqs;
-    Eigen::VectorXd m9 = gfn2_stack_moments(moments);
+    const bool faithful = result.aes_functional == xtb::GFN2AESFunctional::Faithful;
+    xtb::GFN2MultipoleSet mp_int;
+    xtb::GFN2ShellMoments moments;
+    Eigen::VectorXd m9, V_mp, v;
+    Eigen::MatrixXd K;
     const std::vector<Eigen::Vector3d> mol_shift = {Eigen::Vector3d::Zero()};
-    Eigen::MatrixXd K = gfn2_aes_kernel_matrix(
-        shell_info, gamma_shell, mol, mol_shift);
-    Eigen::VectorXd V_mp = K * m9;
-
-    // Converged Fock shell potential v = γΔq + V³ + V_mp.
-    Eigen::VectorXd v = gfn2_fock_shell_potential(
-        shell_info, gamma_shell, K, gam3_shell, dqs, m9,
-        static_cast<int>(n_atoms));
+    if (faithful) {
+        // Atom-resolved AES has a separate S/D/Q contraction below.
+        v = gamma_shell * dqs;
+        v.array() -= gam3_shell.array() * dqs.array().square();
+    } else {
+        mp_int = xtb::build_gfn2_multipole_integrals(basis, mol, true);
+        moments = xtb::compute_shell_multipole_moments(
+            D, basis, mol, mp_int, ao_shell, n0_shell, ns);
+        moments.q = dqs;
+        m9 = gfn2_stack_moments(moments);
+        K = gfn2_aes_kernel_matrix(shell_info, gamma_shell, mol, mol_shift);
+        V_mp = K * m9;
+        v = gfn2_fock_shell_potential(
+            shell_info, gamma_shell, K, gam3_shell, dqs, m9,
+            static_cast<int>(n_atoms));
+    }
 
     // ---- H⁰ shape-term derivatives ----
     Eigen::VectorXd dE_dCN = Eigen::VectorXd::Zero(n_atoms);
@@ -2200,6 +2235,56 @@ Eigen::MatrixXd compute_gfn2_gradient(
     grad += gfn2_cn_chain_gradient(mol, dE_dCN);
     grad += grad_poly;
 
+    if (faithful) {
+        // Bannwarth, Ehlert & Grimme, JCTC 2019, Eqs. 25-29, 31, 39-44
+        // (doi:10.1021/acs.jctc.8b01176). The faithful Fock is dE/dD:
+        // stationarity of E (or E-T*S for fractional occupations) cancels
+        // orbital/occupation response, leaving -W*dS plus explicit terms.
+        // Use the shared atom-CAMM derivatives with only the zero image.
+        // This includes multipole integral derivatives, moving CAMM
+        // origins, pair damping, and the CN-dependent multipole radii.
+        std::vector<int> ao_atom(n_basis);
+        for (int mu = 0; mu < n_basis; ++mu)
+            ao_atom[mu] = shell_info[ao_shell[mu]].atom_idx;
+        std::vector<Eigen::Vector3d> positions;
+        for (const auto& atom : atoms)
+            positions.emplace_back(atom.xyz[0], atom.xyz[1], atom.xyz[2]);
+        Eigen::VectorXd q_atom = Eigen::VectorXd::Zero(n_atoms);
+        for (int si = 0; si < ns; ++si)
+            q_atom(shell_info[si].atom_idx) -= dqs(si);
+        const ImageRecordSource records = [&](const ImageRecordSink& sink) {
+            for (int a = 0; a < n_atoms; ++a)
+                for (int b = 0; b < n_atoms; ++b)
+                    if (a != b) sink({a, b, Eigen::Vector3d::Zero(), 1.0});
+        };
+        const auto sums = xtb::build_gfn2_multipole_molecular_sums(
+            basis, atoms, ao_atom);
+        const auto aes_params = xtb::gfn2_aes_atom_parameters(atoms, params, molecular_cn);
+        const auto atom_moments = xtb::gfn2_aes_moments(D, sums, ao_atom, positions, q_atom);
+        const auto potentials = xtb::gfn2_aes_potentials(
+            positions, atom_moments, aes_params, records);
+        const auto filler = [&](int cell_index, const Eigen::Vector3d& shift,
+                                Eigen::MatrixXd& wS,
+                                std::array<Eigen::MatrixXd, 3>& wD,
+                                std::array<Eigen::MatrixXd, 6>& wQ) {
+            xtb::gfn2_aes_fill_derivative_weights(
+                cell_index, shift, D, ao_atom, positions, potentials, wS, wD, wQ);
+        };
+        const std::vector<LatticeCell> cells(1);
+        grad += xtb::contract_gfn2_multipole_lattice_derivatives(
+            basis, atoms, cells, ao_atom, std::numeric_limits<double>::infinity(),
+            filler).gradient;
+        grad += xtb::gfn2_aes_origin_derivatives(
+            D, sums, ao_atom, positions, potentials).gradient;
+        const auto kernel = xtb::gfn2_aes_kernel_derivatives(
+            positions, atom_moments, aes_params, records);
+        grad += kernel.gradient;
+        const Eigen::VectorXd aes_dE_dCN =
+            kernel.dE_dmrad.array() * aes_params.dmrad_dcn.array();
+        grad += gfn2_cn_chain_gradient(mol, aes_dE_dCN);
+        return grad;
+    }
+
     // AES kernel geometry force at fixed (Δq, shell moments).
     grad += gfn2_aes_kernel_force(
         shell_info, gamma_shell, mol, dqs, moments, mol_shift);
@@ -2216,7 +2301,7 @@ Eigen::MatrixXd compute_gfn2_gradient(
         mol, params, basis, S,
         build_gfn2_hamiltonian_zero(basis, S, mol, params),
         mp_int, shell_info, gamma_shell, K, ao_shell, n0_shell, gam3_shell,
-        v, dqs, m9, V_mp, n_occ);
+        v, dqs, m9, V_mp, n_occ, result.smearing_temperature);
 
     return grad;
 }

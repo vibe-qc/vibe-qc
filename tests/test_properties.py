@@ -906,6 +906,28 @@ def test_nbo_overlap_fallback_is_sized_by_the_canonical_map(monkeypatch):
         np.testing.assert_array_equal(fallback, np.eye(basis.nbasis))
 
 
+@pytest.mark.parametrize("cartesian", [False, True])
+def test_nbo_search_covers_every_ao_with_d_shells(cartesian):
+    """The #223 Cartesian water reproducer must return without losing AOs."""
+    from vibeqc.nbo import nbo_search
+
+    mol = _h2o()
+    pure = vq.BasisSet(mol, "cc-pVDZ")
+    basis = _as_cartesian(mol, pure) if cartesian else pure
+    assert basis.nbasis == (25 if cartesian else 24)
+    options = vq.RHFOptions()
+    # Custom Cartesian basis names have no SAD reference data.
+    options.initial_guess = vq.InitialGuess.HCORE
+    result = vq.run_rhf(mol, basis, options)
+    assert result.converged
+
+    analysis = nbo_search(
+        np.asarray(result.density), np.asarray(vq.compute_overlap(basis)), basis, mol
+    )
+    assert len(analysis.nbo_orbitals) == basis.nbasis
+    assert analysis.npa_charges.size == 0
+
+
 def test_bond_analysis_shell_to_atom_returns_plain_int_list():
     """bond_analysis indexes the map in a scalar loop; keep it a list."""
     from vibeqc.bond_analysis import _shell_to_atom

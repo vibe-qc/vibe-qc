@@ -1,4 +1,5 @@
 #include "vibeqc/ao_eval.hpp"
+#include "vibeqc/ao_eval_subset.hpp"
 
 #include <libint2/shell.h>
 #include <libint2/solidharmonics.h>
@@ -99,6 +100,155 @@ Eigen::MatrixXd cart_to_pure_transform(int l,
     return T;
 }
 
+// Reuse the small transform vectors across grid points. Each workspace belongs
+// to one shell in one thread (or one serial subset call); it never outlives the
+// evaluation or shares storage with the output matrices.
+struct ShellWorkspace {
+    std::array<Eigen::VectorXd, 4> cart, pure;
+
+    ShellWorkspace(int n_cart, int n_pure, bool gradients) {
+        for (int i = 0; i < (gradients ? 4 : 1); ++i) {
+            cart[i].resize(n_cart);
+            pure[i].resize(n_pure);
+        }
+    }
+};
+
+// Values of one shell at grid point g, written to out(g, col0 + i). Shared by
+// the dense evaluator and the shell-subset evaluator so the two produce
+// bit-identical columns (same statements, same operation order).
+template <class Shell, class Coeff>
+inline void shell_values_at(const Shell& shell, const Coeff& coeff, bool pure,
+                            int l, const std::vector<CartIndex>& cart,
+                            const Eigen::MatrixXd& T,
+                            const Eigen::MatrixX3d& points, Eigen::Index g,
+                            Eigen::MatrixXd& out, Eigen::Index col0,
+                            ShellWorkspace& workspace) {
+    const auto n_prim = shell.alpha.size();
+    const auto& alpha = shell.alpha;
+    const auto& O = shell.O;
+    const int n_cart = static_cast<int>(cart.size());
+    const double dx = points(g, 0) - O[0];
+    const double dy = points(g, 1) - O[1];
+    const double dz = points(g, 2) - O[2];
+    const double r2 = dx * dx + dy * dy + dz * dz;
+
+    // Contracted radial: Σ_k c_k exp(-α_k r²)
+    double radial = 0.0;
+    for (std::size_t k = 0; k < n_prim; ++k) {
+        radial += coeff[k] * std::exp(-alpha[k] * r2);
+    }
+    if (radial == 0.0) return;
+
+    // Cartesian values for this shell, on the libint-normalized
+    // monomials (see the convention note at the top of this file).
+    auto& cart_vals = workspace.cart[0];
+    for (int i = 0; i < n_cart; ++i) {
+        cart_vals(i) = ipow(dx, cart[i].lx)
+                     * ipow(dy, cart[i].ly)
+                     * ipow(dz, cart[i].lz) * radial;
+    }
+
+    if (pure) {
+        // T contains coeff(l,m,lx,ly,lz) directly, which is defined
+        // against exactly these monomials.
+        auto& pure_vals = workspace.pure[0];
+        pure_vals.noalias() = T * cart_vals;
+        for (int m = 0; m < 2 * l + 1; ++m) {
+            out(g, col0 + m) = pure_vals(m);
+        }
+    } else {
+        for (int i = 0; i < n_cart; ++i) {
+            out(g, col0 + i) = cart_vals(i);
+        }
+    }
+}
+
+// Values and gradients of one shell at grid point g (see shell_values_at).
+template <class Shell, class Coeff>
+inline void shell_values_gradients_at(
+    const Shell& shell, const Coeff& coeff, bool pure, int l,
+    const std::vector<CartIndex>& cart, const Eigen::MatrixXd& T,
+    const Eigen::MatrixX3d& points, Eigen::Index g, Eigen::MatrixXd& values,
+    std::array<Eigen::MatrixXd, 3>& gradients, Eigen::Index col0,
+    ShellWorkspace& workspace) {
+    const auto n_prim = shell.alpha.size();
+    const auto& alpha = shell.alpha;
+    const auto& O = shell.O;
+    const int n_cart = static_cast<int>(cart.size());
+    const double dx = points(g, 0) - O[0];
+    const double dy = points(g, 1) - O[1];
+    const double dz = points(g, 2) - O[2];
+    const double r2 = dx * dx + dy * dy + dz * dz;
+
+    // Two radial sums we need:
+    //   R0 = Σ_k c_k exp(-α_k r²)
+    //   R1 = Σ_k c_k (-2α_k) exp(-α_k r²)    (for gradient via -2α dx χ term)
+    double R0 = 0.0, R1 = 0.0;
+    for (std::size_t k = 0; k < n_prim; ++k) {
+        const double e = coeff[k] * std::exp(-alpha[k] * r2);
+        R0 += e;
+        R1 += -2.0 * alpha[k] * e;
+    }
+    if (R0 == 0.0 && R1 == 0.0) return;
+
+    // Cartesian values and gradient components. For a Cartesian
+    // primitive (dx)^lx (dy)^ly (dz)^lz × exp(-α r²), the spatial
+    // gradient in x is:
+    //   [lx (dx)^{lx-1} - 2α dx (dx)^lx] (dy)^ly (dz)^lz exp(-α r²)
+    // Summing over primitives with normalized coefficients yields
+    //   value = (dx)^lx (dy)^ly (dz)^lz R0
+    //   grad_x = lx (dx)^{lx-1} (dy)^ly (dz)^lz R0
+    //          + (dx)^lx (dy)^ly (dz)^lz × dx × R1
+    auto& v = workspace.cart[0];
+    auto& gx = workspace.cart[1];
+    auto& gy = workspace.cart[2];
+    auto& gz = workspace.cart[3];
+    for (int i = 0; i < n_cart; ++i) {
+        const int lx = cart[i].lx;
+        const int ly = cart[i].ly;
+        const int lz = cart[i].lz;
+        const double xlx  = ipow(dx, lx);
+        const double ylm  = ipow(dy, ly);
+        const double zln  = ipow(dz, lz);
+        const double xlxm = (lx > 0) ? ipow(dx, lx - 1) : 0.0;
+        const double ylym = (ly > 0) ? ipow(dy, ly - 1) : 0.0;
+        const double zlzm = (lz > 0) ? ipow(dz, lz - 1) : 0.0;
+        const double mon = xlx * ylm * zln;
+
+        v(i)  = mon * R0;
+        gx(i) = lx * xlxm * ylm * zln * R0 + mon * dx * R1;
+        gy(i) = ly * xlx * ylym * zln * R0 + mon * dy * R1;
+        gz(i) = lz * xlx * ylm * zlzm * R0 + mon * dz * R1;
+    }
+
+    if (pure) {
+        // T is plain coeff(l,m,lx,ly,lz), defined against the
+        // libint-normalized monomials v, gx, gy, gz computed above.
+        auto& pv = workspace.pure[0];
+        auto& pgx = workspace.pure[1];
+        auto& pgy = workspace.pure[2];
+        auto& pgz = workspace.pure[3];
+        pv.noalias() = T * v;
+        pgx.noalias() = T * gx;
+        pgy.noalias() = T * gy;
+        pgz.noalias() = T * gz;
+        for (int m = 0; m < 2 * l + 1; ++m) {
+            values      (g, col0 + m) = pv(m);
+            gradients[0](g, col0 + m) = pgx(m);
+            gradients[1](g, col0 + m) = pgy(m);
+            gradients[2](g, col0 + m) = pgz(m);
+        }
+    } else {
+        for (int i = 0; i < n_cart; ++i) {
+            values      (g, col0 + i) = v (i);
+            gradients[0](g, col0 + i) = gx(i);
+            gradients[1](g, col0 + i) = gy(i);
+            gradients[2](g, col0 + i) = gz(i);
+        }
+    }
+}
+
 }  // namespace
 
 Eigen::MatrixXd evaluate_ao(const BasisSet& basis,
@@ -124,53 +274,20 @@ Eigen::MatrixXd evaluate_ao(const BasisSet& basis,
         const int l = contr.l;
         const bool pure = contr.pure;
         const auto bf = shell2bf[s];
-        const auto n_prim = shell.alpha.size();
-        const auto& alpha = shell.alpha;
         const auto& coeff = contr.coeff;
-        const auto& O = shell.O;
 
         const auto cart = enumerate_cartesians(l);
-        const int n_cart = static_cast<int>(cart.size());
 
         // Transform to apply to cartesian values if the shell is pure.
         const Eigen::MatrixXd T =
             pure ? cart_to_pure_transform(l, cart) : Eigen::MatrixXd();
+        ShellWorkspace workspace(static_cast<int>(cart.size()),
+                                 pure ? 2 * l + 1 : 0, false);
 
         #pragma omp for schedule(static) nowait
         for (Eigen::Index g = 0; g < n_pts_i; ++g) {
-            const double dx = points(g, 0) - O[0];
-            const double dy = points(g, 1) - O[1];
-            const double dz = points(g, 2) - O[2];
-            const double r2 = dx * dx + dy * dy + dz * dz;
-
-            // Contracted radial: Σ_k c_k exp(-α_k r²)
-            double radial = 0.0;
-            for (std::size_t k = 0; k < n_prim; ++k) {
-                radial += coeff[k] * std::exp(-alpha[k] * r2);
-            }
-            if (radial == 0.0) continue;
-
-            // Cartesian values for this shell, on the libint-normalized
-            // monomials (see the convention note at the top of this file).
-            Eigen::VectorXd cart_vals(n_cart);
-            for (int i = 0; i < n_cart; ++i) {
-                cart_vals(i) = ipow(dx, cart[i].lx)
-                             * ipow(dy, cart[i].ly)
-                             * ipow(dz, cart[i].lz) * radial;
-            }
-
-            if (pure) {
-                // T contains coeff(l,m,lx,ly,lz) directly, which is defined
-                // against exactly these monomials.
-                Eigen::VectorXd pure_vals = T * cart_vals;
-                for (int m = 0; m < 2 * l + 1; ++m) {
-                    out(g, bf + m) = pure_vals(m);
-                }
-            } else {
-                for (int i = 0; i < n_cart; ++i) {
-                    out(g, bf + i) = cart_vals(i);
-                }
-            }
+            shell_values_at(shell, coeff, pure, l, cart, T, points, g, out,
+                            static_cast<Eigen::Index>(bf), workspace);
         }
     }
     return out;
@@ -197,86 +314,70 @@ AOValues evaluate_ao_with_gradient(const BasisSet& basis,
         const int l = contr.l;
         const bool pure = contr.pure;
         const auto bf = shell2bf[s];
-        const auto n_prim = shell.alpha.size();
-        const auto& alpha = shell.alpha;
         const auto& coeff = contr.coeff;
-        const auto& O = shell.O;
 
         const auto cart = enumerate_cartesians(l);
-        const int n_cart = static_cast<int>(cart.size());
         const Eigen::MatrixXd T =
             pure ? cart_to_pure_transform(l, cart) : Eigen::MatrixXd();
+        ShellWorkspace workspace(static_cast<int>(cart.size()),
+                                 pure ? 2 * l + 1 : 0, true);
 
         #pragma omp for schedule(static) nowait
         for (Eigen::Index g = 0; g < n_pts_i; ++g) {
-            const double dx = points(g, 0) - O[0];
-            const double dy = points(g, 1) - O[1];
-            const double dz = points(g, 2) - O[2];
-            const double r2 = dx * dx + dy * dy + dz * dz;
-
-            // Two radial sums we need:
-            //   R0 = Σ_k c_k exp(-α_k r²)
-            //   R1 = Σ_k c_k (-2α_k) exp(-α_k r²)    (for gradient via -2α dx χ term)
-            double R0 = 0.0, R1 = 0.0;
-            for (std::size_t k = 0; k < n_prim; ++k) {
-                const double e = coeff[k] * std::exp(-alpha[k] * r2);
-                R0 += e;
-                R1 += -2.0 * alpha[k] * e;
-            }
-            if (R0 == 0.0 && R1 == 0.0) continue;
-
-            // Cartesian values and gradient components. For a Cartesian
-            // primitive (dx)^lx (dy)^ly (dz)^lz × exp(-α r²), the spatial
-            // gradient in x is:
-            //   [lx (dx)^{lx-1} - 2α dx (dx)^lx] (dy)^ly (dz)^lz exp(-α r²)
-            // Summing over primitives with normalized coefficients yields
-            //   value = (dx)^lx (dy)^ly (dz)^lz R0
-            //   grad_x = lx (dx)^{lx-1} (dy)^ly (dz)^lz R0
-            //          + (dx)^lx (dy)^ly (dz)^lz × dx × R1
-            Eigen::VectorXd v(n_cart);
-            Eigen::VectorXd gx(n_cart), gy(n_cart), gz(n_cart);
-            for (int i = 0; i < n_cart; ++i) {
-                const int lx = cart[i].lx;
-                const int ly = cart[i].ly;
-                const int lz = cart[i].lz;
-                const double xlx  = ipow(dx, lx);
-                const double ylm  = ipow(dy, ly);
-                const double zln  = ipow(dz, lz);
-                const double xlxm = (lx > 0) ? ipow(dx, lx - 1) : 0.0;
-                const double ylym = (ly > 0) ? ipow(dy, ly - 1) : 0.0;
-                const double zlzm = (lz > 0) ? ipow(dz, lz - 1) : 0.0;
-                const double mon = xlx * ylm * zln;
-
-                v(i)  = mon * R0;
-                gx(i) = lx * xlxm * ylm * zln * R0 + mon * dx * R1;
-                gy(i) = ly * xlx * ylym * zln * R0 + mon * dy * R1;
-                gz(i) = lz * xlx * ylm * zlzm * R0 + mon * dz * R1;
-            }
-
-            if (pure) {
-                // T is plain coeff(l,m,lx,ly,lz), defined against the
-                // libint-normalized monomials v, gx, gy, gz computed above.
-                Eigen::VectorXd pv  = T * v;
-                Eigen::VectorXd pgx = T * gx;
-                Eigen::VectorXd pgy = T * gy;
-                Eigen::VectorXd pgz = T * gz;
-                for (int m = 0; m < 2 * l + 1; ++m) {
-                    result.values      (g, bf + m) = pv(m);
-                    result.gradients[0](g, bf + m) = pgx(m);
-                    result.gradients[1](g, bf + m) = pgy(m);
-                    result.gradients[2](g, bf + m) = pgz(m);
-                }
-            } else {
-                for (int i = 0; i < n_cart; ++i) {
-                    result.values      (g, bf + i) = v (i);
-                    result.gradients[0](g, bf + i) = gx(i);
-                    result.gradients[1](g, bf + i) = gy(i);
-                    result.gradients[2](g, bf + i) = gz(i);
-                }
-            }
+            shell_values_gradients_at(shell, coeff, pure, l, cart, T, points,
+                                      g, result.values, result.gradients,
+                                      static_cast<Eigen::Index>(bf), workspace);
         }
     }
     return result;
+}
+
+void evaluate_ao_shell_subset(const BasisSet& basis,
+                              const Eigen::MatrixX3d& points,
+                              const std::vector<int>& shell_list,
+                              Eigen::MatrixXd& values,
+                              std::array<Eigen::MatrixXd, 3>* gradients) {
+    const auto& shells = basis.libint();
+    const Eigen::Index n_pts = points.rows();
+    Eigen::Index n_cols = 0;
+    for (int s : shell_list) {
+        if (s < 0 || static_cast<std::size_t>(s) >= shells.size()) {
+            throw std::out_of_range("evaluate_ao_shell_subset: shell index");
+        }
+        n_cols += static_cast<Eigen::Index>(shells[s].size());
+    }
+    values = Eigen::MatrixXd::Zero(n_pts, n_cols);
+    if (gradients) {
+        for (int c = 0; c < 3; ++c) {
+            (*gradients)[c] = Eigen::MatrixXd::Zero(n_pts, n_cols);
+        }
+    }
+    Eigen::Index col0 = 0;
+    for (int s : shell_list) {
+        const auto& shell = shells[s];
+        const auto& contr = shell.contr[0];
+        const int l = contr.l;
+        const bool pure = contr.pure;
+        const auto& coeff = contr.coeff;
+        const auto cart = enumerate_cartesians(l);
+        const Eigen::MatrixXd T =
+            pure ? cart_to_pure_transform(l, cart) : Eigen::MatrixXd();
+        ShellWorkspace workspace(static_cast<int>(cart.size()),
+                                 pure ? 2 * l + 1 : 0, gradients != nullptr);
+        if (gradients) {
+            for (Eigen::Index g = 0; g < n_pts; ++g) {
+                shell_values_gradients_at(shell, coeff, pure, l, cart, T,
+                                          points, g, values, *gradients, col0,
+                                          workspace);
+            }
+        } else {
+            for (Eigen::Index g = 0; g < n_pts; ++g) {
+                shell_values_at(shell, coeff, pure, l, cart, T, points, g,
+                                values, col0, workspace);
+            }
+        }
+        col0 += static_cast<Eigen::Index>(shell.size());
+    }
 }
 
 AOValuesWithHessian evaluate_ao_with_hessian(const BasisSet& basis,

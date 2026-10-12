@@ -14,6 +14,39 @@ The old exponent-sized reciprocal repair is not used on this route.
 Production integration acceptance is still in progress; the source tests
 alone do not establish dense-cell SCF accuracy or whole-job memory bounds.
 
+## One Gamma Hamiltonian (2026-09)
+
+A bulk Gamma calculation is the one-point mesh of the k-mesh engine. The
+exact-Gamma drivers (`run_pbc_gdf_rhf`, and `run_pbc_gdf_uks` for a
+closed-shell RKS job) evaluate that Hamiltonian with real arithmetic and
+serve a job only when they implement every requested control;
+`python/vibeqc/periodic_gdf_route.py` holds that table. Any other bulk
+Gamma job, including a level shift, Fock mixing, smearing or a charged
+cell, runs the k-mesh engine at `(1, 1, 1)`. The legacy
+`run_rhf_periodic_gamma_gdf` (Ewald J and real-space exchange without a
+divergence correction) is the Gamma route only for `dim < 3`. Measured on
+main 2026-09-27, the exact-Gamma driver, the k-mesh engine at `(1, 1, 1)`
+and UHF(M=1) agree to 3e-12 Ha on MgO/STO-3G and all sit 2.9 uHa from
+PySCF GDF; before the change a level shift moved H2/STO-3G in a 6-bohr
+cube by 75.65 mHa (GitLab #400).
+
+The native three-centre kernels translate only the ket AO,
+`sum_R (P_0|mu_0 nu_R)`. The compcell and MDF builders add the auxiliary
+images that Sun et al. (2017) Eq. 15 requires (`aux_basis.aux_image_3c`):
+the fused basis is translated through the same kernel, one (atom, l) group
+at a time, because only the compensated functions have an absolutely
+convergent image sum. The image list is planned from the potential envelope
+of a compensated group, so what it leaves out stays below
+`rcut_precision / 100` per element. For a `(k_bra, k_ket)` pair the tensor
+is `sum_{T,R} exp(i k_ket.R) exp(-i q.T) (P_T|mu_0 nu_R)` with
+`q = k_ket - k_bra`; a multi-k SCF evaluates all its pairs in one pass over
+the images. compcell also removes the `G = 0` term of its real-space
+compensated integrals (Eq. 23; PySCF's `auxbar`), as MDF already did. The
+analytic compcell gradient hands the native kernel a unit cell that also
+lists the translated atoms, because the kernel assigns a shell to the atom
+at its position. Until 2026-09-29 the builders kept only `T = 0` and
+refused cells where the images mattered (GitLab #172).
+
 The 3D automatic one-electron image policy bounds the omitted overlap and
 kinetic lattice sums using absolute Gaussian envelopes, including angular
 polynomials and signed-contraction magnitudes. A positive overlap matrix
@@ -897,9 +930,8 @@ validation). The slice-1 C++ kernels are reusable as-is.
 
 ### Resumption checklist for the next session
 
-1. Read this section + check
-   [Archived `handovers/HANDOVER_GDF_OUTSTANDING.md`](https://vibe-qc.com/docs/)
-   for historical context; check current work against the new `vibe-qc/vibe-qc` repository.
+1. Read this section for historical context; check current work against
+   the `vibe-qc/vibe-qc` repository.
 2. Confirm slice-1 baseline still passes:
    `.venv/bin/python examples/debug/scratch_aux_eri_lattice_smoke.py`.
 3. Confirm slice-3b (modrho) reduces metric ill-conditioning by ~2
@@ -997,7 +1029,7 @@ exactly what (ii) needs to look like.
 
 ### Resumption checklist (updated 2026-05-09)
 
-1. Read this section + the handover docs.
+1. Read this section.
 2. Verify slices 1-3b still work:
    - `examples/debug/scratch_aux_eri_lattice_smoke.py` (slice 1
      structural check).

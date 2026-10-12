@@ -20,7 +20,7 @@ from vibeqc.semiempirical.periodic import (
 
 
 _CHAIN_LENGTH = 4.1
-_CUTOFF = 12.0
+_CUTOFF = 32.0
 _STEP = 0.001
 _TEMPERATURE = 0.05
 

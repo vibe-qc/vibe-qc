@@ -23,7 +23,7 @@ formula: ``simple_adsorbate.py``.
 
 NB: the periodic-embedding subpackage is experimental and not exported
 from the top-level ``vibeqc`` namespace; it stays internal until
-thick-slab GDF parity (see ``handovers/HANDOVER_GF_EMBEDDING.md`` SS7).
+thick-slab GDF parity.
 
 Usage:
     .venv/bin/python examples/embedding/open_shell_adsorbate.py

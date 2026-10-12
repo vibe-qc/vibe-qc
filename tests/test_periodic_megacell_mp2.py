@@ -150,6 +150,7 @@ def test_megacell_dlpno_ccsd_t_matches_molecular(chain, tmp_path):
         tcut_mkn=0.0,
         tcut_pairs=1e-4,
         residual_domain="pair",
+        tcut_pno_diag_scale=1.0,  # as the megacell builder pins (#190)
     )
     ref = run_job(
         mol, basis="def2-svp", method="dlpno-ccsd(t)",
@@ -217,7 +218,8 @@ def test_megacell_run_job_forwards_pre_sweep_correlation_contract(
         closed_mp2.tcut_pairs,
         closed_mp2.tcut_pairs_weak,
         closed_mp2.pno_norm,
-    ) == ("boys", 1e-8, 1e-7, 1e-3, 1e-6, 1e-4, "legacy")
+        closed_mp2.domain_criterion,
+    ) == ("boys", 1e-8, 1e-7, 1e-3, 1e-6, 1e-4, "legacy", "mulliken")
 
     open_mp2 = captured[3][1]["dlpno_options"]
     assert isinstance(open_mp2, DLPNOUMP2Options)
@@ -235,7 +237,8 @@ def test_megacell_run_job_forwards_pre_sweep_correlation_contract(
         closed_cc.residual_domain,
         closed_cc.pno_norm,
         closed_cc.pno_correction,
-    ) == ("boys", 1e-7, 0.0, 1e-4, "pair", "legacy", False)
+        closed_cc.tcut_pno_diag_scale,
+    ) == ("boys", 1e-7, 0.0, 1e-4, "pair", "legacy", False, 1.0)
 
     open_cc = captured[5][1]["dlpno_ccsd_options"]
     assert isinstance(open_cc, LocalUCCSDOptions)
@@ -245,7 +248,9 @@ def test_megacell_run_job_forwards_pre_sweep_correlation_contract(
         open_cc.tcut_pno,
         open_cc.tcut_mkn,
         open_cc.tcut_pairs,
-    ) == ("boys", 1e-7, 0.0, 0.0)
+        open_cc.pno_density,
+        open_cc.pno_correction,
+    ) == ("boys", 1e-7, 0.0, 0.0, "one-sided", False)
 
 
 def test_megacell_tdl_extrapolation(chain):

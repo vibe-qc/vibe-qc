@@ -889,6 +889,14 @@ vibeqc_pip_install_editable() {
     "$venv/bin/python" -m pip install --quiet \
         "scikit-build-core>=0.10" "pybind11>=2.12"
 
+    # #411: size the core build's parallelism from the memory free now, not
+    # from whatever the native-dependency phase left behind. A no-op when
+    # the caller set CMAKE_BUILD_PARALLEL_LEVEL explicitly, or on hosts
+    # without /proc/meminfo, or when _safe_build_env.sh was not sourced.
+    if declare -F vibeqc_refresh_build_parallelism >/dev/null 2>&1; then
+        vibeqc_refresh_build_parallelism "vibe-qc core" 15000
+    fi
+
     echo "==> Installing vibe-qc into $venv/ (reuses unchanged C++ objects)..."
     "$venv/bin/python" -m pip install --no-build-isolation -e "${root}${extras}"
 }

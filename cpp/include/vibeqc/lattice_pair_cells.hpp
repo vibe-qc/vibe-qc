@@ -34,9 +34,9 @@
 //     grows ~2.7x and a family of consumers that pair it index-for-index
 //     with the plain ball has to move with it. A prototype was built and
 //     measured (invariance 7.1e-15; Si/def2-SVP becomes positive definite
-//     at the shipped cutoff). See handovers/HANDOVER_OPEN_BUGS_V015.md for
-//     the measurements, the consumer inventory, and which sums must NOT
-//     get this treatment.
+//     at the shipped cutoff). These prototype measurements do not establish
+//     validity for every consumer; consumer-specific qualification is required
+//     before extending pair completion to other sums.
 //
 // A single-atom cell has zero intra-cell offset, so the |g| ball IS the
 // correct ball there; every vacuum-box fixture is structurally blind to
@@ -158,7 +158,10 @@ public:
     }
 
     PairNuclearImageSet select(const Eigen::Vector3d& center,
-                              const std::vector<double>* weights = nullptr) const {
+                              const std::vector<double>* weights = nullptr,
+                              std::vector<std::array<int, 4>>* labels = nullptr,
+                              std::size_t max_labels = std::numeric_limits<std::size_t>::max(),
+                              bool labels_only = false) const {
         if (!center.allFinite()) throw std::invalid_argument("Nonfinite AO-product center");
         PairNuclearImageSet result;
         for (std::size_t atom = 0; atom < system_.unit_cell.size(); ++atom) {
@@ -186,8 +189,15 @@ public:
                 const Eigen::Vector3d position = origin + system_.lattice * Eigen::Vector3d(i, j, k);
                 const double radius = cutoff_ + 1e-12 * (1.0 + cutoff_);
                 if ((position - center).squaredNorm() > radius * radius) continue;
-                result.charges.emplace_back(charge, std::array<double, 3>{position[0], position[1], position[2]});
-                result.atoms.push_back(static_cast<long>(atom));
+                if (labels) {
+                    if (labels->size() >= max_labels)
+                        throw std::length_error("Nuclear support record exceeds bounded term budget");
+                    labels->push_back({static_cast<int>(atom), i, j, k});
+                }
+                if (!labels_only) {
+                    result.charges.emplace_back(charge, std::array<double, 3>{position[0], position[1], position[2]});
+                    result.atoms.push_back(static_cast<long>(atom));
+                }
             }
         }
         return result;

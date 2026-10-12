@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <string>
 #include <vector>
 #include <Eigen/Dense>
 #include "basis.hpp"
@@ -117,12 +118,15 @@ Eigen::MatrixXd compute_gdf_plane_wave_projection_gradient_weighted(
     std::size_t output_byte_cap, std::size_t transient_byte_cap,
     std::size_t image_candidate_cap);
 
-// Full jellium Coulomb M(q), T(k-q,k), with the same finite AO-image
+// Jellium M(q), T(k-q,k), with the same finite AO-image
 // domain in SR, LR and the zero-mode overlap. Reciprocal vectors are p=G+q;
 // callers supply a converged omega-sized mesh. Explicit output and transient
 // caps cover numeric arrays and an admitted libint engine workspace estimate.
 // Borrowed bases, runtime/global library storage and allocator overhead are
-// separate; the workspace cap is not a whole-process RSS limit.
+// separate; the workspace cap is not a whole-process RSS limit. The optional
+// physical kernel is coulomb, erfc or erf. omega is the numerical SR/LR split;
+// omega_screen is the independent physical range for erfc/erf. Every physical
+// kernel omits p=0: finite erfc restoration and exchange Madelung are external.
 GDFRangeSeparatedIntegrals compute_gdf_range_separated_integrals(
     const BasisSet& orbital, const BasisSet& aux,
     const PeriodicSystem& system, const Eigen::Vector3d& q,
@@ -131,7 +135,8 @@ GDFRangeSeparatedIntegrals compute_gdf_range_separated_integrals(
     double omega, double pair_cutoff, double auxiliary_cutoff,
     std::size_t output_byte_cap, std::size_t transient_byte_cap,
     std::size_t image_candidate_cap, double integral_screen_error = 0.0,
-    bool compute_metric = true);
+    bool compute_metric = true, const std::string& kernel = "coulomb",
+    double omega_screen = 0.0);
 
 // Derivative of Re(sum(metric_weight*M) + sum(three_center_weight*T)).
 // Uses the energy source's pair-distance image domain and finite SR zero

@@ -22,6 +22,13 @@ understand it.
 The `job.spec` payload is declarative data, never code: running a
 container never executes an embedded script (QVF spec § 5.9).
 
+Automatically generated job specs omit an absent basis or density functional.
+For example, basis-free molecular semiempirical and MACE jobs do not acquire a
+Gaussian basis or functional label, and Hartree-Fock jobs omit the functional.
+QVF v1 permits these fields to be absent; when present, they must be nonempty
+strings. Explicit job specs passed to the low-level writer are preserved
+verbatim and must already satisfy this contract.
+
 ## Build a pending container
 
 ```python
@@ -32,15 +39,65 @@ vq.write_pending_qvf(
     mol, "job",
     method="rhf", basis="sto-3g",
     tasks=["single_point"],            # or ["optimize", "hessian"]
-    options={"perf_log": True},        # any run_job/run_periodic_job kwarg
+    options={"perf_log": True},        # supported JSON engine options
 )
 # -> job.qvf, run_status "pending"
 ```
 
 Periodic systems work the same way - pass a `PeriodicSystem` (its
 `charge`/`multiplicity` are recorded) plus `kpoints=[n1, n2, n3]`.
-`options` takes any keyword the target runner understands; unknown
-keys are refused at run time rather than silently dropped.
+`options` uses the target runner's keyword names. Values must have a supported
+JSON representation; keyword recognition alone does not make arbitrary Python
+runtime objects portable. Unknown keys and unsupported representations are
+refused at run time rather than silently dropped.
+
+### Structured engine options
+
+Supply option-class arguments as JSON objects, for example:
+
+```python
+options={"rhf_options": {
+    "use_diis": True, "damping": 0.0,
+    "max_iter": 120, "conv_tol_energy": 1e-8,
+}}
+```
+
+The engine reconstructs its options object before calling the runner. Omitted
+fields retain that class's defaults; explicit zero, false and null values are
+not replaced by defaults. Supported records are `rhf_options`, `uhf_options`,
+`rks_options`, `uks_options`, `rohf_options`, `roks_options`, `mp2_options`,
+`ump2_options`, `ccsd_options`, `cisd_options`, `cc3_options`, `ccsdt_options`,
+`selected_ci_options`, `dmrg_options`, `v2rdm_options`,
+`transcorrelated_options`, `casci_options`, `caspt2_options`, `nevpt2_options`,
+`casscf_options`, `dlpno_options`, `mlip_options`, `ccm_options`,
+`thermo_options`, periodic `smearing`, and `opentrustregion_options` when that
+constructor is available in the installed runtime.
+
+Native enum fields use their public member names as strings (case insensitive),
+for example `"initial_guess": "SAD"` or `"scf_accelerator": "DIIS"`.
+Nested option objects such as `"grid": {"n_radial": 75}` and
+`"davidson": {"max_iter": 50}` are reconstructed recursively. Typed numeric
+arrays, including level-shift schedules, are validated element by element.
+Python option records retain their constructor validation, including smearing
+aliases and CCSD frozen-core explicitness. Boolean values are not numbers here;
+`"max_iter": true`, unknown fields and non-finite numbers are errors that name
+the full option path.
+
+This is an engine-specific encoding inside QVF's existing open `options`
+object, not a new QVF schema version. It does not deserialize arbitrary classes.
+Native matrices, nonempty native object arrays (such as explicit ECP objects),
+callbacks, CASSCF `pt2` objects, and structured `band_structure`,
+`dlpno_ccsd_options`, `dft_plus_u`, `read_from`, `dispersion`, `citype`,
+`triples` or `dlpno_thresholds` objects currently receive an explicit refusal.
+Use the Python runner API for those runtime objects. Scalar shorthand forms
+remain available where the runner supports them. Existing mapping APIs such as
+`geom_opt_options` and `solvent`, and fragment atom-index lists, keep their
+normal consumer semantics (`fragments` must contain lists of integer atom
+indices; `dft_plus_u=[]` remains a no-site request). Local Python `run_container(..., **overrides)`
+values remain ordinary runner objects, outside the serialized spec.
+
+An option-conversion refusal occurs before SCF and settles an attempted
+in-place execution as `failed`, preserving the original `job.spec` bytes.
 
 ## Run it locally
 

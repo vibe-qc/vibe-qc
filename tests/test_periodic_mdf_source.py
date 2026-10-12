@@ -919,7 +919,10 @@ def test_mean_field_admits_complete_phase_before_contraction(monkeypatch):
             *args, memory_byte_cap=admitted.reserved_peak_bytes-1, **options)
 
 
-def test_private_scf_source_receives_planned_domains_and_full_memory_cap(monkeypatch):
+@pytest.mark.parametrize('requested_ke, resolved_ke', [(7., 7.), (None, 8.)])
+def test_private_scf_source_receives_planned_domains_and_full_memory_cap(
+        monkeypatch, requested_ke, resolved_ke):
+    import warnings
     from types import SimpleNamespace
     from vibeqc import aux_basis, periodic_k_gdf as driver
 
@@ -937,16 +940,25 @@ def test_private_scf_source_receives_planned_domains_and_full_memory_cap(monkeyp
         pytest.fail('private MDF injection evaluated a Gaussian-only pair source')
     monkeypatch.setattr(mdf, '_build_mdf_cache', build)
     monkeypatch.setattr(aux_basis, '_build_lpq_range_separated_shared_q', forbidden)
-    options = dict(omega=.8, pair_cutoff=6., auxiliary_cutoff=10., ke_cutoff=7.,
+    options = dict(omega=.8, pair_cutoff=6., auxiliary_cutoff=10., ke_cutoff=requested_ke,
                    raw_integral_error=1e-9, linear_dep_thr=1e-8,
                    memory_byte_cap=128*1024**2, native_workspace_byte_cap=16*1024**2,
                    image_candidate_cap=10000, reciprocal_candidate_cap=20000,
                    integral_screen_error=1e-11)
-    result = driver._build_range_separated_lpq_cache(
-        system, orbital, auxiliary, points, True,
-        pair_cache_builder=mdf._MdfScfSource(.7), **options)
+    # The MDF source receives the domains the SR/LR policy resolved. Pair
+    # and auxiliary cutoffs floor the planner. An explicit reciprocal cutoff
+    # is used exactly and warns below the plan (GitLab IID 206); without a
+    # request the planner's cutoff applies.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        result = driver._build_range_separated_lpq_cache(
+            system, orbital, auxiliary, points, True,
+            pair_cache_builder=mdf._MdfScfSource(.7), **options)
+    below_plan = [w for w in caught if issubclass(w.category, RuntimeWarning)
+                  and 'used as given' in str(w.message)]
+    assert bool(below_plan) == (requested_ke is not None)
     assert result is sentinel
-    assert (received['pair_cutoff'], received['auxiliary_cutoff'], received['ke_cutoff']) == (7., 10., 8.)
+    assert (received['pair_cutoff'], received['auxiliary_cutoff'], received['ke_cutoff']) == (7., 10., resolved_ke)
     assert received['integral_screen_error'] == 1e-13
     assert received['plane_wave_cutoff'] == .7
     for key in ('omega', 'linear_dep_thr', 'memory_byte_cap', 'native_workspace_byte_cap',

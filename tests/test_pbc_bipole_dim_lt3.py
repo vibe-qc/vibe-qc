@@ -263,3 +263,70 @@ def test_bipole_pbe0_rks_uks_closed_shell_and_component_closure(dim):
     )
     np.testing.assert_allclose(uks.fock_alpha[0], rks.fock[0], atol=1e-8)
     np.testing.assert_allclose(uks.fock_beta[0], rks.fock[0], atol=1e-8)
+
+
+# ---------------------------------------------------------------------------
+# Multi-k on a 1-D cell: the per-k density is the BvK-torus fold (#503).
+# ---------------------------------------------------------------------------
+
+def _chain_opts(driver, cutoff=11.0):
+    hf = driver in (run_pbc_bipole_rhf, run_pbc_bipole_uhf)
+    o = PeriodicRHFOptions() if hf else PeriodicKSOptions()
+    if not hf:
+        o.functional = "svwn"
+    o.lattice_opts.cutoff_bohr = cutoff
+    o.conv_tol_energy = 1.0e-10
+    o.max_iter = 40
+    return o
+
+
+@pytest.mark.parametrize("mesh", [(2, 1, 1), (3, 1, 1)], ids=["k2", "k3"])
+@pytest.mark.parametrize("driver", ALL_DRIVERS)
+def test_bipole_multik_dim1_folds_the_density_on_the_bvk_torus(driver, mesh):
+    """A stationary multi-k 1-D run is accepted as stationary.
+
+    dim<3 runs take the non-split direct gauge. Their real-space density
+    is Born-von-Karman periodic on the physical exchange support (7 cells
+    here), which is wider than the (2,1,1) or (3,1,1) torus, so an
+    unprojected Bloch sum over that list overcounts: 6 electrons for 2.
+    Until #503 the terminal acceptance counted electrons that way and
+    refused every such RHF/UHF run with ``electron_count_mismatch``, and
+    the exact-operator confirmation measured a 4e-3 gradient on a
+    stationary (3,1,1) state and ran to the iteration cap. The per-k
+    density of every consumer is now the torus fold, as on the
+    Ewald-split route. RKS/UKS carry the same fold and are controls here.
+    """
+    from vibeqc.pbc_bipole_common import (
+        _bloch_sum_blocks_multi_k,
+        bipole_electron_count,
+        bvk_torus_density_matrices,
+    )
+
+    system, basis = _h2_chain(1, a=6.0, vac=15.0)
+    kmesh = monkhorst_pack(system, list(mesh))
+    result = driver(system, basis, kmesh, _chain_opts(driver), progress=False)
+
+    assert result.converged
+    assert result.n_iter <= 10
+    density = getattr(result, "density", None)
+    if density is None:
+        density = result.density_alpha
+    assert len(density.cells) > int(np.prod(mesh))
+    acceptance = getattr(result, "chi_scf_acceptance", None)
+    if acceptance is not None:
+        assert acceptance["termination_reason"] == "stationary"
+        assert max(abs(x) for x in acceptance["electron_count_errors"]) <= 1e-7
+
+    if driver in (run_pbc_bipole_rhf, run_pbc_bipole_rks):
+        # The mechanism, stated on the returned density: the torus fold
+        # counts the electrons exactly, the unprojected list sum does not.
+        kpts = np.asarray(result.kpoints_cart)
+        weights = np.asarray(result.kpoint_weights)
+        S_k = [np.asarray(s) for s in result.overlap]
+        folded = bvk_torus_density_matrices(density, kpts, mesh)
+        unfolded = _bloch_sum_blocks_multi_k(density.blocks, density.cells, kpts)
+        n_elec = 2.0  # closed-shell H2 unit
+        assert bipole_electron_count(folded, S_k, weights) == pytest.approx(
+            n_elec, abs=1e-9
+        )
+        assert bipole_electron_count(unfolded, S_k, weights) > n_elec + 1.0

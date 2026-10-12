@@ -17,8 +17,9 @@ forever is a separate decision the maintainer makes at release time.
 
 from __future__ import annotations
 
-from .output.formats.structured_log import (
+from .output.formats.structured_log import (  # noqa: F401
     StructuredLog,
+    _resolve_structured_log_target,
     active_structured_log,
     emit,
     run_fingerprint,

@@ -43,7 +43,7 @@ from vibeqc.kpoints import (
     _is_hexagonal_like,
     _spacegroup_number,
 )
-from vibeqc.smearing import VALID_FLAVORS, SmearingOptions
+from vibeqc.smearing import SMEARING_PRESETS, VALID_FLAVORS, SmearingOptions
 
 ANGSTROM_TO_BOHR = 1.8897261339213
 
@@ -668,6 +668,9 @@ def test_runner_dispatch_rhf_accepts_bz_integration():
     kmesh = vq.KPoints.monkhorst_pack(sys, (1, 1, 1))
     opts = PeriodicSCFOptions()
     opts.lattice_opts.coulomb_method = CoulombMethod.DIRECT_TRUNCATED
+    # _h2_gdf_smoke_system is a dilute molecular-limit cell (18 bohr, default
+    # cutoff 15: only g = 0); declare it for the #133 guard (#430).
+    opts.lattice_opts.gamma_only_0 = True
     opts.max_iter = 1
     result = run_rhf_periodic_scf(sys, basis, kmesh, opts, bz_integration=None)
     assert result is not None
@@ -927,13 +930,24 @@ def test_scf_result_multik_classifies_correctly():
 # C — Gated cheap pre-SCF classifier (classifier="pre-scf")
 # ---------------------------------------------------------------------------
 
-def test_pre_scf_classifier_insulator():
-    """classifier='pre-scf' classifies Si diamond as insulator."""
+def test_pre_scf_compact_cell_is_unavailable_and_recommend_falls_back():
+    """QC468: Si's rejected legacy pre-SCF uses SAFE, not a measured gap.
+
+    The material remains an insulator; this tests the recommendation's
+    unavailable-classifier contract. Explicit/qualified gap coverage is
+    retained in test_pre_scf_explicit_hints_win and the SCF-result tests.
+    """
+    from vibeqc.kpoints import _classify_pre_scf
+
     sys = _si_diamond()
     basis = vq.BasisSet(sys.unit_cell_molecule(), "sto-3g")
-    spec = vq.KPoints.recommend(sys, classifier="pre-scf", basis=basis)
-    assert spec.rationale.startswith("insulator")
-    assert spec.smearing is None
+    assert _classify_pre_scf(sys, basis, warnings) == (None, None)
+    with pytest.warns(UserWarning, match="assuming METALLIC"):
+        spec = vq.KPoints.recommend(sys, classifier="pre-scf", basis=basis)
+    assert spec.rationale.startswith("metal")
+    assert "character from pre-SCF" not in spec.rationale
+    assert spec.smearing is not None
+    assert spec.smearing.temperature == SMEARING_PRESETS["metal"]
 
 
 def test_pre_scf_classifier_without_basis_warns():

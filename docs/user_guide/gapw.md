@@ -159,6 +159,32 @@ bases in tight cells can increase ``image_radius`` via the
 ``_AO_IMAGE_RADIUS`` module constant (not yet a public option).
 ```
 
+## Fock diagonalization
+
+Gamma GPW/GAPW RHF/RKS/UHF/UKS and range-separated GAPW route their SCF
+Fock solves through the [shared operator contract](solver_framework.md).
+Each unrestricted spin has its own operator metadata and diagnostics. The
+solver checks Hermiticity, eigenpair residuals and metric orthogonality before
+returning coefficients; it rejects inconsistent input or failed solves.
+Overlap construction, occupations, smearing, DIIS and physical support gates
+remain owned by the grid method.
+
+Closed-shell GPW retains `use_davidson` and `davidson_min_dim`. Davidson
+recycles the preceding subspace without mutating its input options. Other
+Gamma grid routes retain their dense solver. Multi-k GPW RKS/UKS/ROKS,
+GAPW RKS and the fixed-density band helper also use shared dense solves.
+AO matrices carry X/S into the solve; projected DIIS matrices remain in their
+orthogonal frame, with residuals labelled accordingly. The driver maps
+coefficients back to AO coordinates and assigns global occupations. Orbital
+normalization never includes k-point weights.
+
+Gamma GPW ROHF/ROKS now shares the molecular Roothaan solver, including
+Guest-Saunders block canonicalization. Its occupation and level-shift
+policies remain in that loop. Initial-guess diagonalizations and orbital
+transformation remain separate migration work. The
+shared boundary does not extend physical support or certify experimental
+calculations; compact GAPW's density-fold refusal remains in force.
+
 ## What GPW is
 
 The Gaussian + plane-wave (GPW) method (Lippert & Hutter 1997,

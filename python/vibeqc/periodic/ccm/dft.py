@@ -110,7 +110,23 @@ class CCMKSResult:
     #: caller-supplied ``cderi`` carries its own tail, which this route cannot
     #: observe, so the field stays ``None`` there.
     rsgdf_tail_ke_cutoff: float | None = None
+    #: Which implementation of ``gdf_method="rsgdf"`` built the fitted
+    #: operator this result was evaluated on: ``"classic"`` for the neutral
+    #: direct producers (their fold and supercell builders are the classic
+    #: all-reciprocal FFT fit), ``"injected"`` for a caller-supplied cderi,
+    #: empty where no density fit is involved (#378).
+    fit_source: str = ""
+    #: Executed primitive-cell XC image cutoff (zero where not recorded).
+    xc_lattice_cutoff_bohr: float = 0.0
     guess_selection: object = None
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded (``allow_vacuum_padding=True``) and which
+    #: 1-based lattice directions measured as vacuum. ``(False, ())`` on
+    #: every cell measured as genuinely 3-D, and on the four-centre routes,
+    #: which carry no such gate. A padded-regime energy is never reportable
+    #: without the padding it was computed at.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
 
     @property
     def parity_held(self) -> bool:

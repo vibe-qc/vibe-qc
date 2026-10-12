@@ -35,8 +35,7 @@ the alternating ±1 square ionic lattice:
 Good first demo for the periodic machinery: no SCF, no basis sets,
 just the Madelung constant landing on the textbook value. (The 2D
 ``ewald_2d_point_charge_energy`` primitive is the foundation for the
-``CoulombMethod.SLAB_EWALD_2D`` SCF path — see
-``handovers/HANDOVER_SLAB_EWALD_2D.md``.)
+``CoulombMethod.SLAB_EWALD_2D`` SCF path.)
 """
 
 from __future__ import annotations

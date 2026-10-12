@@ -82,6 +82,7 @@ from .ecp_metadata import (
     options_carry_ecp,
     reposition_ecp_centres,
 )
+from .density_fitting import resolve_default_jk_aux
 from .gradient_options import gradient_options_from_scf
 from .ase_optimizers import (  # noqa: F401  (re-exported for user scripts)
     ase_optimizer_availability,
@@ -348,6 +349,7 @@ class VibeQC(Calculator):
         uks_options: UKSOptions | None = None,
         rohf_options: "ROHFOptions | None" = None,
         dispersion: Any = None,
+        composite: Any = None,
         solvent: Any = None,
         **kwargs: Any,
     ) -> None:
@@ -385,6 +387,15 @@ class VibeQC(Calculator):
         # resolved per calculate() call so it can be a preset name,
         # a numeric e, a dict, or a SolventModel.
         self._solvent = solvent
+        # Composite 3c recipe (vibeqc.composites.CompositeRecipe). When set,
+        # calculate() applies the full correction surface (D3-BJ or D4 + gCP
+        # [damped/plain] + SRB) to both the energy and the forces, replacing
+        # the plain ``dispersion=`` D3-BJ path so the terms are not
+        # double-counted. Both this calculator and run_job's final single
+        # point read the terms from composite_correction_terms, so the
+        # surface the optimiser walks is the one the reported total is
+        # printed from.
+        self._composite = composite
 
     # GitLab #571 -- analytic-gradient completeness for the DFT branches.
     #: Central-difference step (bohr) of the FD force fallback; the same
@@ -439,6 +450,10 @@ class VibeQC(Calculator):
                 method.lower(),
                 rks_options=self._rks_options if method == "RKS" else None,
                 uks_options=self._uks_options if method == "UKS" else None,
+                # The displaced energies must be on the calculator's own
+                # surface: gas-phase FD under a reaction field is the defect
+                # this fallback exists to avoid.
+                solvent=self._solvent,
                 step_bohr=self.fd_step_bohr,
             ),
             dtype=float,
@@ -555,12 +570,17 @@ class VibeQC(Calculator):
             "ROHF": self._rohf_options,
         }[method]
         self._sync_ecp_centres(method, method_opts, mol, system_changes)
+        # A fitted SCF requested without an aux basis gets the default JK
+        # fit for this orbital basis, as run_job's single-point path does
+        # (#362); the drivers below build the aux themselves and would
+        # otherwise refuse.
+        resolve_default_jk_aux(method_opts, self.parameters["basis"])
 
         if method == "ROHF" and self._solvent is not None:
             raise NotImplementedError(
                 "VibeQC(restricted_open=True) with implicit solvation is not "
                 "yet supported; use UHF (restricted_open=False) or gas-phase "
-                "ROHF. See handovers/HANDOVER_ROHF.md."
+                "ROHF."
             )
 
         # CPCM branch (v0.9.0). Returns the underlying SCF result with
@@ -629,7 +649,35 @@ class VibeQC(Calculator):
         # Post-SCF dispersion correction. Applied after the SCF energy
         # is set so the decomposition stays available if the caller
         # wants it (see results["e_scf"] / results["e_dispersion"]).
-        disp_params = self._resolve_dispersion_params()
+        # When a composite 3c recipe is active it is superseded by the
+        # composite block above (which carries the recipe's own dispersion
+        # term), so the D3-BJ is not double-counted.
+        self._composite_gradient = None
+        if self._composite is not None:
+            from .composites import composite_correction_terms
+
+            terms = composite_correction_terms(
+                mol, self._composite, charge=float(mol.charge)
+            )
+            e_corr = 0.0
+            g_corr = None
+            for _name, e, g in terms:
+                e_corr += e
+                g_corr = g if g_corr is None else g_corr + g
+            self._composite_gradient = g_corr
+            self.results["e_corrections"] = e_corr * Hartree
+            self.results["energy"] += e_corr * Hartree
+            _log.info(
+                "composite %s corrections: E_corr = %+.6e Ha (%.4f kcal/mol)",
+                self._composite.name,
+                e_corr,
+                e_corr * 627.5094740631,
+            )
+        disp_params = (
+            None
+            if self._composite is not None
+            else self._resolve_dispersion_params()
+        )
         self.results["e_scf"] = result.energy * Hartree
         self.results["e_dispersion"] = 0.0
         if disp_params is not None:
@@ -646,7 +694,18 @@ class VibeQC(Calculator):
 
         if "forces" in properties:
             sol_result = getattr(result, "solvent_result", None)
-            if sol_result is not None:
+            if (
+                sol_result is not None
+                and method in ("RKS", "UKS")
+                and self._missing_gradient_terms(method)
+            ):
+                # GitLab #571, in solvent: cpcm_gradient's gas-phase piece is
+                # that same incomplete analytic kernel, so the reaction field
+                # would be added to a wrong surface. Differentiate the solvated
+                # energy numerically instead -- _fd_gradient carries this
+                # calculator's solvent into every displaced evaluation.
+                gradient = self._fd_gradient(mol, method)
+            elif sol_result is not None:
                 # CPCM-aware analytic gradient -- includes the gas-phase
                 # SCF piece, the closed-form (dA/dR) and (dV^nuc/dR)
                 # contributions, and an integral-FD (dV^elec/dR) piece.
@@ -703,9 +762,13 @@ class VibeQC(Calculator):
             else:
                 raise AssertionError(f"unreachable: method = {method}")
             # Fold in the dispersion gradient (already computed above
-            # when disp_params is set and forces were requested).
+            # when disp_params is set and forces were requested) and, for a
+            # composite recipe, the full correction gradient (D3-BJ/D4 + gCP
+            # [damped/plain] + SRB) accumulated in the composite block above.
             if disp_params is not None:
                 gradient = gradient + disp.gradient
+            if self._composite_gradient is not None:
+                gradient = gradient + self._composite_gradient
             self.results["forces"] = -gradient * (Hartree / Bohr)
 
         # ---- dipole moment (cheap; e.Å) -------------------------------

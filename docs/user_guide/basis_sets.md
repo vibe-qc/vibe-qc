@@ -13,6 +13,40 @@ well-engineered basis-set families. This page is a practical guide
 to picking the right one for your system, with explicit notes on
 what vibe-qc ships today and what's on the roadmap.
 
+## Filtered-basis cache and resolution
+
+`make_basis(..., exp_to_discard=...)` preserves the active library before
+adding its derived basis. The cache store resolves through
+`VIBEQC_FILTERED_BASIS_DIR`, then `$XDG_CACHE_HOME/vibeqc/basis_filter`, then
+`~/.cache/vibeqc/basis_filter`. Cache stores inside the installed package,
+repository or source library are refused, including symlinks resolving there.
+Caller-supplied store and source aliases resolve to their actual locations;
+links inside owned cache roots and their content are refused.
+
+Each complete root contains byte copies of every active library file, including
+stock orbital bases, sidecars and earlier filtered bases, plus the new filtered
+file. Its identity includes every filename and content hash. Reusing a root
+checks its complete receipt and bytes; a changed, missing, extra or linked cache
+file is a hard error. Source file symlinks are read and copied, never written
+through. Case-fold name collisions and conflicting explicit filtered names
+are refused. A generated filtered name includes the emitted content hash.
+
+Libint reads one root. The filter switches `LIBINT_DATA_PATH` only after the
+complete new root is published and validated. Unfiltered calls still find the
+same stock bytes, and named reloads find every earlier filtered basis. Normal
+filtering never deletes old roots. Internal filter writers are serialized;
+external changes to the process environment remain the caller's responsibility.
+Changing `LIBINT_DATA_PATH` manually can hide previously selected names.
+
+`clear_filtered_basis_cache()` is an explicit global purge, not an operation
+safe alongside live calculations. Stop all cache readers and writers, retire
+filtered BasisSets, and restore a stock `LIBINT_DATA_PATH` first. Cleanup refuses
+a selected root, unknown staging entries, invalid receipts or linked cache entries/content,
+and validates all owned roots before removing any. It cannot infer another
+process's use of a root. Its return value counts removed
+`_vibeqc_filtered_*.g94` files across those roots; custom-name files are retired
+with their roots but excluded from that prefix-based count.
+
 ## Reaching a basis vibe-qc does not bundle
 
 The bundled library carries 255 `.g94` files. The
@@ -147,11 +181,19 @@ family and the Pople sets. Forty-four of them are valence-only
 somewhere and ship their ECP as a `.ecp` sidecar that the molecular SCF
 wrappers attach automatically, per element: the def2 family from Rb to Rn
 (the libint H-Kr files extended with the Basis Set Exchange blocks and the
-def2-ECP), the LANL and dhf families, vDZP, the 3c bases def2-mSVP /
+def2-ECP; plain, unpolarized def2-SV is the exception, see below), the LANL and dhf families, vDZP, the 3c bases def2-mSVP /
 def2-mTZVP / def2-mTZVPP, pob-TZVP-rev2, and the 16 Peterson/Figgen
 `{,aug-}cc-p{V,wCV}{D,T,Q,5}Z-PP` sets (Cu-Kr, Y-Xe, Hf-Rn).
 `x2c-TZVPall` is all-electron
 (it needs no ECP, and none is attached). See [user guide § ECPs](ecp.md).
+
+**def2-SV stops at Ar.** The unpolarized `def2-sv` covers H-Ar only (18
+elements) and is all-electron over that range. This is a deliberate
+boundary, not a gap in the fetch: the Basis Set Exchange has no def2-SV
+record past argon, and its "Ahlrichs VDZ" (the 1992 SV) is a different set.
+A K-Rn atom in `def2-sv` is refused with an error that names the element
+(`has no functions for Z=19`). For those elements use `def2-sv(p)` or
+`def2-svp`, which reach Rn with the def2-ECP.
 ```
 
 ## Using a basis set
@@ -161,6 +203,16 @@ from vibeqc import BasisSet
 basis = BasisSet(mol, "pob-tzvp")
 print(basis.nbasis)      # number of basis functions
 ```
+
+Names are matched on their letters, digits and `+` only, ignoring case,
+spaces and other punctuation. `6-31G(d,p)`, `6-31G(d, p)` and `631gdp` all
+load `6-31g**`; `sto3g`, `STO_3G` and `Sto 3G` all load `sto-3g`. The basis
+registry (`vibeqc.basis_registry.lookup`, which supplies the default
+auxiliary sets and the ECP rules) resolves a name with the same function,
+so every spelling gets the same metadata as the file it loads. An
+`aug-cc-pV*` name loads its own bundled file when one ships (the
+cc-pVnZ-PP, `-RIFIT` and `(n+d)` families). Otherwise it loads the parent
+set plus its `augmentation-` file.
 
 For periodic systems with diffuse molecular bases, optionally
 filter the most-diffuse primitives:
@@ -620,13 +672,15 @@ to re-fetch from the Bredow group server (e.g. for a future
 revision):
 
 ```sh
-python -m vibeqc.basis_crystal fetch
+python -m vibeqc.basis_crystal fetch --dest python/vibeqc/basis_library/custom
 ./scripts/setup_basis_library.sh
 ```
 
-The fetcher writes to `basis_library/custom/`; the setup script
-assembles `basis_library/basis/` from libint's stock set plus
-those customs.
+The fetcher writes only where `--dest` (or `dest_dir=` in Python) says;
+it has no default output directory, so a call that only needs the parsed
+records (`return_atoms=True`) never writes into an installed tree. The
+setup script assembles `basis_library/basis/` from libint's stock set
+plus those customs.
 
 ## Parsing a CRYSTAL-format basis directly
 

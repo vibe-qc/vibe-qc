@@ -266,7 +266,7 @@ def _basis_for(z_atoms):
 def test_core_tail_warns_on_dense_core_at_default_ke():
     """Mg 1s (gamma_max ~ 299 in STO-3G) needs ke ~ 8300 Ha for 1e-6
     coverage; the production default 200 must warn (measured ~1.0 Ha
-    absolute deficit on MgO, handover Sec. 0a 2026-07-13)."""
+    absolute deficit on MgO, historical design record Sec. 0a 2026-07-13)."""
     with pytest.warns(RuntimeWarning, match="VIBEQC_J_EWALD3D_KE"):
         ke_needed = warn_bipole_exact_j_core_tail(
             _basis_for([12, 8]), 200.0, _SilentPlog()
@@ -612,3 +612,63 @@ def test_ecp_guard_physical_charges_do_not_override_valence_only_basis():
         common.reject_bipole_ecp_options(
             SimpleNamespace(ecp_effective_charges=[79.]), driver="test",
             basis=SimpleNamespace(name="lanl2dz"), system=system)
+
+
+def _lattice_set(cells_and_blocks):
+    return SimpleNamespace(
+        cells=[SimpleNamespace(index=list(c)) for c, _ in cells_and_blocks],
+        blocks=[_np.asarray(b, dtype=float) for _, b in cells_and_blocks],
+    )
+
+
+def test_lattice_contract_skips_zero_padding_cells_missing_from_density():
+    # The pair-complete one-electron list pads the |g| ball by the largest
+    # intra-cell offset, so an atom outside the home cell adds operator cells
+    # whose blocks are exactly zero; the density need not carry them (#502).
+    d0 = _np.array([[1.0, 0.5], [0.5, 2.0]])
+    m0 = _np.array([[3.0, -1.0], [-1.0, 0.25]])
+    density = _lattice_set([((0, 0, 0), d0)])
+    padded = _lattice_set([((0, 0, 0), m0), ((-1, -1, 0), _np.zeros((2, 2)))])
+    assert common._lattice_contract(
+        density, padded, operator_name="T"
+    ) == pytest.approx(float(_np.sum(d0 * m0)), abs=0.0)
+
+
+def test_lattice_contract_still_rejects_nonzero_block_missing_from_density():
+    density = _lattice_set([((0, 0, 0), _np.eye(2))])
+    operator = _lattice_set([
+        ((0, 0, 0), _np.eye(2)),
+        ((-1, -1, 0), _np.array([[0.0, 1e-14], [0.0, 0.0]])),
+    ])
+    with pytest.raises(ValueError, match=r"missing cell \(-1, -1, 0\)"):
+        common._lattice_contract(density, operator, operator_name="T")
+
+
+def test_bipole_rhf_energy_is_invariant_when_atoms_leave_the_home_cell():
+    # #502: relax_atoms trial steps leave atoms outside the home cell. The
+    # pair-complete T/V_ne lists then carry zero padding cells the density
+    # domain lacks, which used to raise; the energy must equal the wrapped
+    # and home-cell descriptions of the same crystal.
+    from vibeqc._vibeqc_core import PeriodicRHFOptions
+
+    def energy(z1, z2):
+        system = vq.PeriodicSystem(
+            3, _np.diag([8.0, 8.0, 8.0]),
+            [Atom(1, [0.0, 0.0, z1]), Atom(1, [0.0, 0.0, z2])],
+        )
+        basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+        opts = PeriodicRHFOptions()
+        opts.max_iter = 80
+        opts.conv_tol_energy = 1e-10
+        opts.lattice_opts.cutoff_bohr = 4.0
+        opts.lattice_opts.nuclear_cutoff_bohr = 4.0
+        result = rhf.run_pbc_bipole_rhf(
+            system, basis, vq.monkhorst_pack(system, (1, 1, 1)), opts,
+            progress=False, sr_image_precision=None,
+        )
+        assert result.converged
+        return float(result.energy)
+
+    unwrapped = energy(5.6569, -3.8569)
+    assert unwrapped == pytest.approx(energy(5.6569, 4.1431), abs=1e-10)
+    assert unwrapped == pytest.approx(energy(0.0, 1.5138), abs=1e-10)

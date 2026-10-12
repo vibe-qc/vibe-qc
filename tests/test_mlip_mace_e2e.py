@@ -126,6 +126,38 @@ def test_real_mace_off_organic_gated_then_runs(tmp_path):
     assert "batatia_mace_mp_2024" not in keys
 
 
+@pytest.mark.parametrize("max_steps", [0, 1])
+def test_real_mace_cell_optimization_rejects_exhausted_budget(max_steps):
+    """A compressed diamond Si cell has zero atomic forces but finite stress."""
+    import numpy as np
+
+    from vibeqc import PeriodicSystem
+    from vibeqc.mlip.mace import (
+        PeriodicMACECellOptimizationError,
+        optimize_periodic_mace_cell,
+    )
+
+    half_cell = 4.82276969545227  # bohr; compressed diamond primitive cell
+    lattice = half_cell * (np.ones((3, 3)) - np.eye(3))
+    system = PeriodicSystem(
+        3, lattice,
+        [Atom(14, [0., 0., 0.]), Atom(14, [half_cell / 2] * 3)],
+        charge=0, multiplicity=1,
+    )
+    with pytest.raises(PeriodicMACECellOptimizationError) as caught:
+        optimize_periodic_mace_cell(
+            system, MLIPOptions(model="medium-mpa-0", device="cpu", dtype="float64"),
+            fmax=0.01, max_steps=max_steps,
+        )
+    error = caught.value
+    assert error.n_steps == max_steps
+    assert error.max_steps == max_steps
+    assert np.isfinite(error.final_max_force)
+    assert error.final_max_force >= error.target_max_force == 0.01
+    assert error.system.dim == 3
+    assert np.array_equal(system.lattice, lattice)
+
+
 def test_real_mace_geometry_optimization(tmp_path):
     """method="mace" + optimize=True relaxes a distorted geometry via ASE
     BFGS on the MACE calculator, writes a .traj, and lowers the energy

@@ -45,6 +45,7 @@ entry point continues to accept either a raw ``BlochKMesh`` or a
 For ``PeriodicSystem.dim < 3``, mesh builders accept either active-axis
 specs (``[n]`` for 1D, ``[n1, n2]`` for 2D) or full three-axis specs.
 Inactive axes are pinned to Γ and stored as mesh size 1 / shift 0.
+Mesh entries must be exact integers; no float, bool or string coercion is used.
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ from __future__ import annotations
 from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass, field
 from itertools import product
+from operator import index
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -869,8 +871,13 @@ class KPoints:
             the built-in cheap pre-SCF classifier (resolution step 3).
             ``"pre-scf"`` runs a few-cycle Gamma-only GDF SCF with the
             user-supplied ``basis``, extracts the HOMO-LUMO gap, and
-            classifies from it.  Requires ``basis=``.  Explicitly
-            gated -- the default is the SAFE metallic fallback.
+            classifies only a converged result. Requires ``basis=``.
+            Compact 3D cells whose integral cutoff includes image cells
+            are unsupported by this legacy pre-SCF route (QC468); they
+            fall back with a warning to the SAFE metallic recommendation.
+            Supply ``band_gap``, ``is_metal`` or a qualified ``scf_result``
+            when the electronic character is known. The SAFE default is
+            a conservative mesh choice, not a measured metallic state.
         predictor, ml_predictor:
             Optional ML Δk predictor (advanced path). ``predictor`` is a
             callable ``predictor(features) -> (Δk, s)`` or the string
@@ -996,8 +1003,8 @@ class KPoints:
                 # choice -- never under-sample an unknown system.
                 character, gap_ev = "metal", 0.0
                 warnings.warn(
-                    "KPoints.recommend: no band_gap / is_metal hint and no "
-                    "classifier supplied -- assuming METALLIC (the safe, "
+                    "KPoints.recommend: no usable band_gap / is_metal hint "
+                    "or classifier result -- assuming METALLIC (the safe, "
                     "dense default) and recommending smearing. Pass "
                     "band_gap=<eV> or is_metal=<bool> to refine.",
                     UserWarning,
@@ -1653,11 +1660,63 @@ def _system_dim(system: PeriodicSystem) -> int:
     return dim
 
 
+def _count_failure_mode(value) -> str | None:
+    """Why ``value`` is not an exact integer count, in words, or ``None``."""
+    if isinstance(value, (bool, np.bool_)):
+        return "a boolean"
+    if isinstance(value, (str, bytes)):
+        return f"a {type(value).__name__}, not a number"
+    try:
+        index(value)
+    except TypeError:
+        if isinstance(value, (complex, np.complexfloating)):
+            return "a complex number"
+        if isinstance(value, (float, np.floating)):
+            return "a non-integral number"
+        return f"of type {type(value).__name__}, not an integer"
+    return None
+
+
+def _integer_counts(counts, *, name: str, repeat: int | None = None) -> list[int]:
+    """Read exact counts; optionally repeat a scalar over active directions.
+
+    Every refusal names the failure mode the caller hit (a boolean, a
+    non-integral number, a value of another type) and keeps the contract
+    phrase "must contain integers". Positivity is the caller's own check.
+    """
+
+    def _refuse(value, mode: str, position: int | None = None) -> ValueError:
+        where = "" if position is None else f" entry {position}"
+        return ValueError(
+            f"{name}{where} = {value!r} is {mode}; {name} must contain integers"
+        )
+
+    scalar_mode = _count_failure_mode(counts)
+    if isinstance(counts, (bool, np.bool_, str, bytes)):
+        raise _refuse(counts, scalar_mode or "not an integer")
+    if repeat is not None:
+        try:
+            return [index(counts)] * repeat
+        except TypeError:
+            pass
+    try:
+        values = list(counts)
+    except TypeError:
+        raise _refuse(counts, scalar_mode or "not a sequence of integers") from None
+    checked = []
+    for position, value in enumerate(values):
+        mode = _count_failure_mode(value)
+        if mode is not None:
+            raise _refuse(value, mode, position)
+        checked.append(index(value))
+    return checked
+
+
 def _mesh_tuple(mesh: Sequence[int]) -> Tuple[int, int, int]:
-    arr = list(mesh)
+    arr = _integer_counts(mesh, name="mesh")
     if len(arr) != 3:
         raise ValueError(f"mesh must have length 3, got {arr!r}")
-    out = tuple(int(m) for m in arr)
+    out = tuple(arr)
     if any(m < 1 for m in out):
         raise ValueError(f"mesh entries must be >= 1, got {arr!r}")
     return out  # type: ignore[return-value]
@@ -1668,7 +1727,7 @@ def _mesh_tuple_for_system(
     mesh: Sequence[int],
 ) -> Tuple[int, int, int]:
     dim = _system_dim(system)
-    arr = list(mesh)
+    arr = _integer_counts(mesh, name="mesh")
     if len(arr) == dim:
         arr = arr + [1] * (3 - dim)
     elif len(arr) != 3:
@@ -1676,7 +1735,7 @@ def _mesh_tuple_for_system(
             f"mesh must have length {dim} for dim={dim} systems or "
             f"length 3; got {arr!r}"
         )
-    out = tuple(int(m) for m in arr)
+    out = tuple(arr)
     if any(m < 1 for m in out):
         raise ValueError(f"mesh entries must be >= 1, got {arr!r}")
     return tuple(out[i] if i < dim else 1 for i in range(3))
@@ -2205,13 +2264,14 @@ def _classify_pre_scf(
     basis,
     warnings_mod,
 ) -> Tuple[Optional[str], Optional[float]]:
-    """Cheap Γ-only pre-SCF classifier (Hcore diagonalization).
+    """Cheap Γ-only pre-SCF classifier using at most three SCF cycles.
 
-    Lazy-imports the periodic SCF machinery.  Runs a single
-    Γ-point Hcore diagonalization (no SCF iterations) with the
-    user-supplied basis, then classifies the HOMO-LUMO gap.  Returns
-    ``(None, None)`` on any failure (basis missing, import error,
-    etc.) so the caller can fall through to the SAFE default.
+    Lazy-imports the legacy periodic SCF machinery and classifies the
+    HOMO-LUMO gap only if the result converges. Compact 3D image-cell
+    requests are unsupported by that driver (QC468). Returns
+    ``(None, None)`` on refusal, unconverged output or any other failure
+    so the caller can fall through to the SAFE metallic recommendation.
+    That fallback does not classify the material itself as metallic.
     """
     if basis is None:
         warnings_mod.warn(

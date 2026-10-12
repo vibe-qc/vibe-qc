@@ -299,6 +299,7 @@ class CitationDatabase:
         direct_scf: bool = False,
         uses_cpcm: bool = False,
         solvent_variant: str | None = None,
+        extra_solvation: Iterable[str] = (),
         pno_norm: str | None = None,
         extra_libraries: Iterable[str] = (),
         dft_plus_u: bool = False,
@@ -342,6 +343,7 @@ class CitationDatabase:
         properties: Iterable[str] = (),
         acceleration: Iterable[str] = (),
         numerics: Iterable[str] = (),
+        extra_methods: Iterable[str] = (),
         extra_entries: Iterable[str] = (),
     ) -> AssembledCitations:
         """Walk the routes table for a job and return the assembled
@@ -392,8 +394,8 @@ class CitationDatabase:
             lookup miss is silent (most parameter sets come from the
             dispersion method paper itself).
         scf_accelerator
-            ``"diis"`` / ``"ediis"`` -- keyed lookup. None => default
-            (DIIS) cite.
+            ``"diis"`` / ``"ediis"`` / ``"opentrustregion"`` -- keyed
+            lookup of the executed converger. None => default (DIIS) cite.
         uses_integrals
             True (default) => the always-on libint integral-library
             citation fires. Set False for engines that evaluate no
@@ -426,6 +428,10 @@ class CitationDatabase:
         solvent_variant
             ``"cpcm"`` (default when uses_cpcm=True) or ``"cosmo"``;
             routes through ``routes.solvation[<variant>]``.
+        extra_solvation
+            Solvation rows that fire *in addition* to the reaction-field row,
+            for thermodynamics computed on top of it -- ``"cosmors"`` when
+            ``run_job(cosmors=...)`` evaluated COSMO-RS on the conductor run.
         extra_libraries
             Additional library keys to route -- useful for tutorials
             that want to surface, e.g., Eigen by name.
@@ -587,6 +593,29 @@ class CitationDatabase:
                             if k != _DF_CC_ASSEMBLY_ENTRY
                         ]
                     _add(row, f"methods[{m_key!r}]")
+
+        # 5a. Additional method routes, for a job whose single ``method``
+        # name does not name everything that ran. An open-shell double
+        # hybrid is the motivating case: ``method="b2plyp"`` fires the
+        # Grimme 2006 route, but the run also converged a ROKS reference
+        # and took a semicanonical RI-ROHF-MP2 doubles correction, each
+        # with its own defining paper. Routed rather than passed as raw
+        # entry keys so database.toml stays the one place a method's
+        # papers are declared. A miss warns here, unlike the silent miss
+        # above: a caller naming an extra method meant to cite something.
+        for extra_method in extra_methods:
+            if not extra_method:
+                continue
+            x_key = str(extra_method).strip().lower()
+            if x_key == (method or "").strip().lower():
+                continue
+            row = self._routes.get("methods", {}).get(x_key)
+            if row is None:
+                warnings.append(
+                    f"no citation route for extra method {extra_method!r}"
+                )
+            else:
+                _add(row, f"methods[{x_key!r}]")
 
         # 6. Dispersion.
         if dispersion:
@@ -1010,6 +1039,17 @@ class CitationDatabase:
                 warnings.append(f"no citation route for solvent variant {variant!r}")
             else:
                 _add(row, f"solvation[{variant!r}]")
+
+        # 9a. Solvation thermodynamics layered on the reaction field. The row
+        # above is the one model that screened the solute; these are what was
+        # computed from its surface afterwards, so they add to it.
+        for key in extra_solvation:
+            k = str(key).strip().lower()
+            row = self._routes.get("solvation", {}).get(k)
+            if row is None:
+                warnings.append(f"no citation route for solvation extra {k!r}")
+            else:
+                _add(row, f"solvation[{k!r}]")
 
         # 9b. DLPNO pair-density convention. ``tcut_pno`` is a cut on the
         # eigenvalues of this density, so the convention is part of the method

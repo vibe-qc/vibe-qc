@@ -629,14 +629,41 @@ def run_periodic_mace(system, options: MLIPOptions | None = None):
     return PeriodicMACEEvaluator(options).run(system)
 
 
+class PeriodicMACECellOptimizationError(RuntimeError):
+    """ASE exhausted the cell-relaxation budget without converging.
+
+    ``system`` retains the last geometry for inspection or an explicit restart.
+    ``final_max_force`` is the maximum norm of the ASE cell filter's combined
+    atomic/cell forces, using the same scaling and units as its ``fmax`` test;
+    it is not a raw stress in Hartree/bohr^3 or an atomic-only force norm.
+    """
+
+    def __init__(self, *, system, n_steps, max_steps, final_max_force,
+                 target_max_force):
+        self.system = system
+        self.n_steps = n_steps
+        self.max_steps = max_steps
+        self.final_max_force = final_max_force
+        self.target_max_force = target_max_force
+        super().__init__(
+            "Periodic MACE cell optimization did not converge after "
+            f"{n_steps} of {max_steps} allowed steps: final maximum "
+            f"cell-filter force {final_max_force:.6g} does not meet the "
+            f"{target_max_force:.6g} ASE fmax target. The last geometry "
+            "is available as this exception's system attribute."
+        )
+
+
 def optimize_periodic_mace_cell(system, options: MLIPOptions | None = None,
                                 *, fmax: float = 0.05, max_steps: int = 200):
     """Variable-cell relaxation of a ``PeriodicSystem`` with MACE.
 
     BFGS on an ASE cell filter, driven by MACE's analytic energy / forces /
     stress (relaxing both atomic positions and lattice vectors). Returns the
-    relaxed ``PeriodicSystem``. ``fmax`` is the ASE force/stress convergence
-    threshold (eV/Angstrom). This API is intentionally 3D-only; use
+    relaxed ``PeriodicSystem`` only if ASE's combined atomic/cell force
+    criterion is met. Otherwise raises :class:`PeriodicMACECellOptimizationError`
+    with the last structure and residual. ``fmax`` uses ASE's cell-filter
+    force scaling (eV/Angstrom). This API is intentionally 3D-only; use
     :func:`optimize_periodic_mace_positions` for a slab or wire.
     """
     import numpy as np
@@ -661,8 +688,25 @@ def optimize_periodic_mace_cell(system, options: MLIPOptions | None = None,
     model = MACEModel(mol, options, cell=cell_bohr, pbc=(True, True, True))
     atoms = model._ase_atoms()  # cell + pbc, Angstrom
     atoms.calc = model.calculator
-    BFGS(_CellFilter(atoms), logfile=None).run(fmax=fmax, steps=max_steps)
-    return atoms_to_periodic_system(atoms)
+    cell_filter = _CellFilter(atoms)
+    optimizer = BFGS(cell_filter, logfile=None)
+    # ASE Dynamics.run returns convergence, not whether it finished its loop.
+    # The FrechetCellFilter criterion includes cell forces: zero atomic forces
+    # at a symmetric but strained cell are insufficient (ASE optimize/filters).
+    converged = bool(optimizer.run(fmax=fmax, steps=max_steps))
+    final = atoms_to_periodic_system(atoms)
+    if not converged:
+        final_max_force = float(
+            np.linalg.norm(cell_filter.get_forces(), axis=1).max()
+        )
+        raise PeriodicMACECellOptimizationError(
+            system=final,
+            n_steps=int(optimizer.nsteps),
+            max_steps=max_steps,
+            final_max_force=final_max_force,
+            target_max_force=fmax,
+        )
+    return final
 
 
 class PeriodicMACEOptimizationResult:

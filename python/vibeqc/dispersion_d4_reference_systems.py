@@ -29,9 +29,6 @@ milestone:
 * **Period-3 and below** (Si, P, S, Cl, ...) and the transition
   metals. Same machinery, more systems -- a later sweep.
 
-See ``handovers/HANDOVER_D4_NATIVE.md`` Sec. 3 (the re-derivation campaign)
-and Sec. 6 (current state / next action).
-
 Geometry provenance
 -------------------
 All geometries are standard experimental or well-established computed

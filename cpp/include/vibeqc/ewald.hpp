@@ -48,6 +48,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <vector>
 
 #include "periodic.hpp"
 
@@ -70,6 +71,19 @@ struct EwaldOptions {
     // safely converged for small to medium unit cells.
     double tolerance = 1.0e-12;
 };
+
+// Opt-in provenance captured by the actual Ewald energy traversal. Pair
+// rows are ordered (a * n_atoms + b); vectors are physical displacements.
+struct EwaldEnergySupport {
+    double energy = 0.0;
+    double alpha = 0.0;
+    double real_cutoff_bohr = 0.0;
+    double reciprocal_cutoff_bohr_inv = 0.0;
+    std::vector<std::vector<Eigen::Vector3d>> real_pair_displacements;
+    std::vector<Eigen::Vector3d> reciprocal_vectors;
+};
+EwaldEnergySupport ewald_nuclear_repulsion_with_support(
+    const PeriodicSystem& system, const EwaldOptions& opts);
 
 // Ewald-summed Madelung energy for an arbitrary lattice of point charges.
 //
@@ -192,7 +206,7 @@ Eigen::VectorXd ewald_nuclear_potential(const PeriodicSystem& system,
 // regularised. The nuclei-only Madelung energy of a crystal slab is
 // therefore *not* obtainable from this routine on its own; the
 // self-consistent total (nuclei + electrons, which is neutral) is the
-// well-defined object — see handovers/HANDOVER_SLAB_EWALD_2D.md for the planned
+// well-defined object for the planned
 // SCF decomposition.
 //
 // Throws ``std::invalid_argument`` on a non-neutral cell, a degenerate

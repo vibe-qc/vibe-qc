@@ -545,6 +545,90 @@ def test_guest_saunders_canonicalize_density_invariant():
     assert np.allclose(Da + Db, Da_gs + Db_gs, atol=1e-12)
 
 
+@pytest.mark.parametrize("n_alpha,n_beta", [(4, 2), (2, 0), (3, 3), (6, 2)])
+def test_guest_saunders_rectangular_frame_and_block_order(monkeypatch, n_alpha, n_beta):
+    """Canonicalization rotates retained orbitals only, within each shell."""
+    from vibeqc.rohf import guest_saunders_canonicalize
+    from vibeqc.solvers import _scf
+    import scipy.linalg as sla
+
+    rng = np.random.default_rng(42)
+    n, rank = 8, 6
+    s = np.diag(np.linspace(.3, 2., n))
+    c = np.diag(1 / np.sqrt(s.diagonal())) @ np.linalg.qr(rng.normal(size=(n, rank)))[0]
+    fa = rng.normal(size=(n, n))
+    fa = (fa + fa.T) / 2
+    fb = rng.normal(size=(n, n))
+    fb = (fb + fb.T) / 2
+    original = _scf.solve_dense_fock
+    seen = []
+
+    def checked(block, **kwargs):
+        result = original(block, **kwargs)
+        seen.append(result.operator_metadata.basis_id)
+        assert result.operator_metadata.kind == "ks"
+        assert result.residual_frame == "orthogonal"
+        np.testing.assert_allclose(result.eigenvalues, sla.eigh(block, eigvals_only=True), atol=1e-12)
+        return result
+
+    monkeypatch.setattr(_scf, "solve_dense_fock", checked)
+    eps, rotated = guest_saunders_canonicalize(c, fa, fb, n_alpha, n_beta, operator_kind="ks")
+    assert rotated.shape == (n, rank)
+    assert eps.shape == (rank,)
+    np.testing.assert_allclose(rotated.T @ s @ rotated, np.eye(rank), atol=1e-12)
+    for count in (n_alpha, n_beta):
+        np.testing.assert_allclose(rotated[:, :count] @ rotated[:, :count].T,
+                                   c[:, :count] @ c[:, :count].T, atol=1e-12)
+    expected_frames = []
+    for start, stop, fock, label in ((0, n_beta, (fa+fb)/2, "closed"),
+                                    (n_beta, n_alpha, fa, "open"),
+                                    (n_alpha, rank, (fa+fb)/2, "virtual")):
+        if start == stop:
+            continue
+        expected_frames.append("roothaan-mo-" + label)
+        block = c[:, start:stop].T @ fock @ c[:, start:stop]
+        np.testing.assert_allclose(eps[start:stop], sla.eigh(block, eigvals_only=True), atol=1e-12)
+        np.testing.assert_allclose(rotated[:, start:stop].T @ fock @ rotated[:, start:stop],
+                                   np.diag(eps[start:stop]), atol=1e-12)
+    assert seen == expected_frames
+
+
+@pytest.mark.parametrize("davidson", [False, True])
+def test_roothaan_overlap_reduction_keeps_complete_retained_space(davidson):
+    s = np.diag([1., 2., 3., 1e-16])
+    h = np.diag([-3., -1., 2., 4.])
+    x = _orthonormaliser(s, 1e-8)
+    da, db = _aufbau_densities(x, 2, 1)
+
+    def builder(a, b):
+        return h, h, float(np.trace((a + b) @ h))
+
+    opts = ROHFOptions(use_davidson=davidson, davidson_min_dim=0)
+    result = run_roothaan_scf(s, h, 0., 2, 1, builder, opts, da, db)
+    assert result.converged
+    assert result.mo_coeffs.shape == (4, 3)
+    np.testing.assert_allclose(result.mo_coeffs.T @ s @ result.mo_coeffs, np.eye(3), atol=1e-12)
+    np.testing.assert_allclose(result.mo_energies, [-3., -.5, 2./3], atol=1e-12)
+    np.testing.assert_allclose(result.mo_occupations, [2., 1., 0.])
+    assert np.trace(result.density_alpha @ s) == pytest.approx(2.)
+    assert np.trace(result.density_beta @ s) == pytest.approx(1.)
+
+
+def test_roothaan_rejects_partial_spectra_before_building_fock():
+    from vibeqc import DavidsonOptions
+
+    native = DavidsonOptions()
+    native.n_eig = 2
+    opts = ROHFOptions(use_davidson=True, davidson_min_dim=0, davidson=native)
+    def forbidden(*args):
+        pytest.fail("Invalid root count must be refused before building a Fock")
+    with pytest.raises(ValueError, match="all retained Fock roots"):
+        run_roothaan_scf(np.eye(4), np.eye(4), 0., 2, 1, forbidden, opts,
+                         np.diag([1., 1., 0., 0.]), np.diag([1., 0., 0., 0.]))
+    assert native.n_eig == 2
+    assert native.guess_vectors.size == 0
+
+
 def test_guest_saunders_eigenvalues_distinct_from_roothaan():
     """Guest-Saunders eigenvalues must differ from the Roothaan effective
     Fock eigenvalues for a genuine open-shell case."""
@@ -891,7 +975,7 @@ def test_roks_hessian_is_gated(tmp_path):
         [vq.Atom(8, [0.0, 0.0, 0.0]), vq.Atom(1, [1.83, 0.0, 0.0])],
         multiplicity=2,
     )
-    with pytest.raises(NotImplementedError, match="M5b"):
+    with pytest.raises(NotImplementedError, match="analytic ROKS gradient"):
         vq.run_job(
             oh,
             basis="sto-3g",
@@ -964,6 +1048,44 @@ def test_rohf_initial_guess_enum_assignment_takes_effect():
     # must NOT silently fall back to SAD.
     assert np.allclose(d_core_enum, d_core_str, atol=1e-12)
     assert not np.allclose(d_core_enum, d_sad, atol=1e-8)
+
+
+def test_rohf_hcore_seed_fills_degenerate_pi_evenly():
+    """The HCORE seed of OH must not pick one of its two pi orbitals (#477).
+
+    Hcore's pi pair is exactly degenerate and crosses the beta frontier, so
+    an aufbau seed occupies whichever pi orbital ``eigh`` returned, which
+    turns with the molecule. The #336 seed rule averages the pair: the beta
+    seed is cylindrically symmetric at every angle about the bond axis.
+    """
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.rohf import _initial_densities
+
+    mol = Molecule(
+        [Atom(8, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.8])], multiplicity=2,
+    )
+    basis = BasisSet(mol, "sto-3g")
+    s = np.asarray(core.compute_overlap(basis), dtype=float)
+    hcore = np.asarray(core.compute_kinetic(basis), dtype=float) + np.asarray(
+        core.compute_nuclear(basis, mol), dtype=float
+    )
+    x = _orthonormaliser(s, 1e-8)
+    opts = ROHFOptions()
+    opts.initial_guess = "hcore"
+    da, db = _initial_densities(mol, basis, 5, 4, opts, s, hcore, x)
+    da, db = np.asarray(da), np.asarray(db)
+    assert np.trace(da @ s) == pytest.approx(5.0, abs=1e-10)
+    assert np.trace(db @ s) == pytest.approx(4.0, abs=1e-10)
+    # O 2p is AOs 2, 3, 4 in libint's (y, z, x) order, so pi is (2, 4).
+    # Turning the pi pair about the bond axis must leave a cylindrically
+    # symmetric seed unchanged.
+    pi = np.ix_([2, 4], [2, 4])
+    for t in np.deg2rad([30.0, 45.0, 73.0]):
+        rot = np.eye(s.shape[0])
+        rot[pi] = [[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]]
+        for d in (da, db):
+            assert np.allclose(rot @ d @ rot.T, d, atol=1e-10)
+    assert db[2, 2] == pytest.approx(db[4, 4], abs=1e-10)
 
 
 def test_rohf_initial_guess_accepts_enum_and_canonical_strings():
@@ -1551,14 +1673,106 @@ def test_ro_open_shell_guess_basin(method, guess):
     run = run_rohf if method == "rohf" else run_roks
     result = run(mol, basis, options)
     assert result.converged
-    # Linear OH has two admitted ROKS occupation basins. SAD/SAP/MINAO
-    # retain the degenerate 1.5/1.5 frontier ensemble; orbital guesses can
-    # choose an integer 2/1 member. Preserve each existing basin rather than
-    # forcing one by changing the initial-guess or occupation policy.
-    integer_basin = method == "roks" and guess in ("hcore", "patom", "hueckel")
-    options.initial_guess = "hcore" if integer_basin else "sad"
+    # Linear OH has two admitted ROKS occupation basins: the degenerate
+    # 1.5/1.5 pi ensemble and an integer 2/1 member. Every molecular seed
+    # fills a degenerate frontier evenly (#336), so no guess hands the SCF
+    # an arbitrary pi orbital and all of them reach the ensemble basin
+    # (#477). Before that the HCORE seed alone reached the integer one.
+    options.initial_guess = "sad"
     baseline = run(mol, basis, options)
     assert baseline.converged
     assert result.energy == pytest.approx(baseline.energy, abs=1e-7)
     if method == "roks":
         assert np.allclose(result.mo_occupations, baseline.mo_occupations)
+
+
+@pytest.mark.parametrize("guess", ["hcore", "sad", "patom", "hueckel"])
+def test_roks_shared_solve_preserves_each_guess_basin(monkeypatch, guess):
+    """Compare each seed with itself, including the degenerate OH frontier."""
+    import vibeqc.rohf as rohf_module
+    from vibeqc.roks import ROKSOptions, run_roks
+
+    mol, basis, _, _, _ = _guess_probe_system()
+    options = ROKSOptions(initial_guess=guess, max_iter=300)
+    result = run_roks(mol, basis, options)
+
+    def legacy(fock_eff, x, s, dma, level_shift, **kwargs):
+        f = fock_eff + level_shift * (s - s @ dma @ s)
+        orth = x.T @ f @ x
+        eps, coeffs = np.linalg.eigh((orth + orth.T) / 2)
+        return eps, x @ coeffs
+    monkeypatch.setattr(rohf_module, "_solve_fock", legacy)
+    reference = run_roks(mol, basis, options)
+    assert result.converged and reference.converged
+    assert result.energy == pytest.approx(reference.energy, abs=1e-9)
+    assert result.rohf_canonicalization == reference.rohf_canonicalization
+    np.testing.assert_allclose(result.mo_occupations, reference.mo_occupations, atol=1e-12)
+    np.testing.assert_allclose(result.density, reference.density, atol=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# run_job wiring of density_fit / cosx onto the restricted open-shell
+# structs (#361)
+# ---------------------------------------------------------------------------
+
+
+def _oh_radical() -> Molecule:
+    return Molecule([Atom(8, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 0.97])], 0, 2)
+
+
+@pytest.mark.parametrize("method", ["rohf", "roks"])
+@pytest.mark.parametrize(
+    "flags, cited, not_cited",
+    [
+        ({"density_fit": True}, "eichkorn_rij_1995", "neese_rijcosx_2009"),
+        ({"cosx": True}, "neese_rijcosx_2009", None),
+    ],
+    ids=["rij", "rijcosx"],
+)
+def test_run_job_density_fit_reaches_restricted_open_shell(
+    method, flags, cited, not_cited, tmp_path
+):
+    """``run_job(density_fit=True)`` / ``cosx=True`` must land on the
+    ROHFOptions / ROKSOptions struct and be reported.
+
+    Before #361 the flags were wired onto the rhf/uhf/rks/uks structs only,
+    so an ROHF/ROKS job accepted them, ran the four-index path and cited
+    nothing. Pin all three: the caller's struct carries the flags and the
+    auto-resolved JK aux, the direct driver on that struct reproduces the
+    run_job energy, and the .references name the RI-J / RIJCOSX papers.
+    """
+    from vibeqc import run_job
+    from vibeqc.roks import ROKSOptions, run_roks
+
+    mol = _oh_radical()
+    basis = BasisSet(mol, "def2-svp")
+    functional = None if method == "rohf" else "b3lyp"
+    passed = ROHFOptions() if method == "rohf" else ROKSOptions()
+    opts_kw = {f"{method}_options": passed}
+
+    e_conv = run_job(
+        mol, basis="def2-svp", method=method, functional=functional,
+        output=str(tmp_path / "conv"),
+    ).energy
+    e_job = run_job(
+        mol, basis="def2-svp", method=method, functional=functional,
+        output=str(tmp_path / "fitted"), **flags, **opts_kw,
+    ).energy
+
+    assert passed.density_fit is True
+    assert passed.cosx is bool(flags.get("cosx", False))
+    assert passed.aux_basis == "def2-svp-jk"
+
+    if method == "rohf":
+        e_direct = run_rohf(mol, basis, passed).energy
+    else:
+        e_direct = run_roks(mol, basis, passed, functional=functional).energy
+    assert abs(e_job - e_direct) < 1e-9, (e_job, e_direct)
+    # The fitted number is not the four-index one (RI-J error ~1e-5 Ha here).
+    assert abs(e_job - e_conv) > 1e-7, (e_job, e_conv)
+
+    refs = (tmp_path / "fitted.references").read_text()
+    assert cited in refs
+    if not_cited is not None:
+        assert not_cited not in refs
+    assert cited not in (tmp_path / "conv.references").read_text()

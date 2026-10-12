@@ -1,7 +1,7 @@
 """Toroidal (Born-von Kármán) megacell periodic Γ RI-MP2 -- Stages 5a, 5b, 5c.
 
 The toroidal megacell route (maintainer decision 2026-06-17;
-``handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md`` Sec. 6) uses a **periodic** supercell
+the original investigation) uses a **periodic** supercell
 with exact translational symmetry. By the BvK theorem, a Γ-point calculation
 on an N-cell supercell is equivalent to an N-point k-mesh calculation on the
 unit cell when both calculations use the same finite Hamiltonian, Coulomb /
@@ -1290,6 +1290,10 @@ def _pre_sweep_toroidal_dlpno_mp2_options():
         # occupation-number cut that only means what the density it was
         # applied to means -- so the density is pinned with the thresholds.
         pno_norm="legacy",
+        # The DOI domain default (#190) postdates this convention; its
+        # tcut_mkn=1e-3 domains are Mulliken domains, so the criterion is
+        # pinned with them.
+        domain_criterion="mulliken",
     )
 
 
@@ -1311,6 +1315,9 @@ def _pre_sweep_toroidal_dlpno_cc_options():
         # ... and predates the semicanonical MP2 PNO correction the
         # molecular CCSD route now applies, so that stays off too.
         pno_correction=False,
+        # ... and predates the ORCA singles-PNO scale on the diagonal pairs
+        # (#190), so the diagonal pairs keep the plain tcut_pno.
+        tcut_pno_diag_scale=1.0,
     )
 
 

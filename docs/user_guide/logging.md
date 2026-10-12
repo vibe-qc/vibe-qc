@@ -271,8 +271,6 @@ and the archived `AGENTS.md` rule 11. The contributor rules are:
   the document primitives, the writer/manifest, and `progress.py` are
   owned by the IO maintainer. Coordinate a new quantity kind, table variant,
   or lifecycle hook through the [current core issue tracker](https://github.com/vibe-qc/vibe-qc/issues).
-  The [archived output-logger handover](https://vibe-qc.com/docs/)
-  preserves design history; it no longer accepts new work.
 
 ### The `.out` format is frozen
 

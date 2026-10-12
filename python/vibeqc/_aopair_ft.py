@@ -959,6 +959,62 @@ def ao_pair_fourier_transform_at_cells(
     return out
 
 
+def _physical_pair_cutoff(value):
+    if value is None:
+        return None
+    cutoff = float(value)
+    if not np.isfinite(cutoff) or cutoff < 0:
+        raise ValueError("pair_cutoff_bohr must be finite and nonnegative")
+    return cutoff
+
+
+def _physical_pair_ft_python(ao_basis, vectors, cells, momenta, cutoff):
+    """Reference physical sum, streaming one cell without a full cell tensor."""
+    n_orb = int(ao_basis.nbasis)
+    out = [np.zeros((n_orb, n_orb, len(vectors)), dtype=complex) for _ in momenta]
+    shells = ao_basis.shells()
+    origins = np.asarray([shell.origin for shell in shells], dtype=float)
+    offsets = np.cumsum([0] + [2 * int(s.l) + 1 if s.pure else
+                             (int(s.l) + 1) * (int(s.l) + 2) // 2 for s in shells])
+    for cell in cells:
+        ft = ao_pair_fourier_transform_shifted_ket(ao_basis, vectors, cell)
+        for i in range(len(shells)):
+            for j in range(len(shells)):
+                delta = origins[i] - origins[j] - cell
+                if float(delta @ delta) > cutoff * cutoff:
+                    ft[offsets[i]:offsets[i+1], offsets[j]:offsets[j+1]] = 0.0
+        for tensor, k in zip(out, momenta):
+            tensor += np.exp(1j * (cell @ k)) * ft
+    return out
+
+
+def _selected_bloch_fourier(basis, vectors, cells, momenta, engine, *, screen_tol, cutoff):
+    from . import manta
+    from .manta_scf import IntegralEngineOptions
+    from .output import record
+
+    if not isinstance(engine, IntegralEngineOptions):
+        raise TypeError("integral_engine must be IntegralEngineOptions")
+    if isinstance(engine.channel_batch, bool) or not isinstance(engine.channel_batch, int):
+        raise TypeError("channel_batch must be an integer")
+    if engine.backend != "manta" or engine.fallback != "error" or engine.channel_batch != 1:
+        raise ValueError("Selected Bloch Fourier panels require MANTA, fallback='error' and channel_batch=1")
+    if float(screen_tol) != 0.:
+        raise ValueError("Selected MANTA Bloch Fourier panels do not yet qualify amplitude screening")
+    result = manta.compute_bloch_fourier_panel(basis, vectors, cells, momenta,
+                                               pair_cutoff_bohr=cutoff, budget=engine.budget)
+    receipt = result.receipt
+    fields = ("provider", "provider_version", "normalization", "convention", "source_identity",
+              "candidate_shell_pairs", "skipped_shell_pairs", "shell_calls", "primitive_pairs",
+              "vector_primitive_products", "phase_products", "phase_accumulations",
+              "integral_elements", "modeled_peak_bytes")
+    evidence = {name: getattr(receipt, name) for name in fields}
+    evidence.update(schema_version=1, citation_methods=["manta_bloch_fourier"])
+    record("manta_bloch_fourier", f"  Bloch Fourier provider: manta; shell calls: {receipt.shell_calls}.\n",
+           integral_provenance=evidence)
+    return list(result.values)
+
+
 def ao_pair_fourier_transform_bloch(
     ao_basis: BasisSet,
     G_vectors: np.ndarray,
@@ -967,6 +1023,8 @@ def ao_pair_fourier_transform_bloch(
     *,
     ft_per_cell: Optional[np.ndarray] = None,
     screen_tol: float = 0.0,
+    pair_cutoff_bohr: Optional[float] = None,
+    integral_engine=None,
 ) -> np.ndarray:
     """Bloch-summed AO-pair FT::
 
@@ -1000,11 +1058,24 @@ def ao_pair_fourier_transform_bloch(
         bound is below the tolerance. Used by the RSGDF tail completion
         where diffuse inter-cell AO-pair contributions are exponentially
         dead.
+    integral_engine : IntegralEngineOptions or None
+        Explicit MANTA generation uses bounded panels in physical libint AO
+        normalization, with executed receipts. It requires contiguous float64
+        arrays, zero amplitude screening and no precomputed cell tensor.
+        Omission preserves the existing reference route.
 
     Returns
     -------
     out : (n_orb, n_orb, n_G) complex128
     """
+    if integral_engine is not None:
+        if ft_per_cell is not None:
+            raise ValueError("Selected Bloch Fourier generation does not accept caller-supplied ft_per_cell")
+        k = np.asarray(k_cart)
+        if k.shape != (3,):
+            raise ValueError("Selected Bloch momentum must have shape (3,)")
+        return _selected_bloch_fourier(ao_basis, G_vectors, R_g_list, k.reshape(1, 3), integral_engine,
+                                      screen_tol=screen_tol, cutoff=pair_cutoff_bohr)[0]
     R_g_arr = np.ascontiguousarray(R_g_list, dtype=float)
     if R_g_arr.ndim != 2 or R_g_arr.shape[1] != 3:
         raise ValueError(
@@ -1016,7 +1087,7 @@ def ao_pair_fourier_transform_bloch(
     # (n_g, n_orb, n_orb, n_G) per-cell intermediate that the pure-
     # Python ``ao_pair_fourier_transform_at_cells`` builds -- that
     # tensor is what OOM-kills MgO 8-atom rocksalt under the
-    # Python path (see ``handovers/HANDOVER_GDF_V0_11_2026_05_29.md``).
+    # Python path.
     #
     # Two C++ entry points:
     #   * ``ao_pair_fourier_transform_bloch_ss`` -- closed-form, no
@@ -1025,12 +1096,15 @@ def ao_pair_fourier_transform_bloch(
     #     McMurchie-Davidson chain + cart->sph; the static table at
     #     ``cpp/include/vibeqc/cart_to_sph_data.hpp`` covers L <= 6.
     G_vectors_arr = np.ascontiguousarray(G_vectors, dtype=float)
+    cutoff = _physical_pair_cutoff(pair_cutoff_bohr)
+    if cutoff is not None and ft_per_cell is not None:
+        raise ValueError("physical support does not accept unbound ft_per_cell reuse")
     backend = _aopair_ft_backend()
     screen = float(screen_tol)
     if backend != "python" and ft_per_cell is None:
         shells = ao_basis.shells()
         all_s = all(int(sh.l) == 0 for sh in shells)
-        if all_s and screen <= 0.0:
+        if all_s and screen <= 0.0 and cutoff is None:
             from ._vibeqc_core import ao_pair_fourier_transform_bloch_ss
             return ao_pair_fourier_transform_bloch_ss(
                 ao_basis, G_vectors_arr, R_g_arr, k)
@@ -1038,9 +1112,14 @@ def ao_pair_fourier_transform_bloch(
         all_pure = all(bool(sh.pure) or int(sh.l) == 0 for sh in shells)
         if all_pure and max_l <= 6:
             from ._vibeqc_core import ao_pair_fourier_transform_bloch_cxx
+            if cutoff is not None:
+                if "pair_cutoff_bohr" not in (ao_pair_fourier_transform_bloch_cxx.__doc__ or ""):
+                    raise RuntimeError("physical AO-pair support requires an updated installed native core")
+                return ao_pair_fourier_transform_bloch_cxx(
+                    ao_basis, G_vectors_arr, R_g_arr, k, screen, cutoff)
             return ao_pair_fourier_transform_bloch_cxx(
                 ao_basis, G_vectors_arr, R_g_arr, k, screen)
-        if backend == "cxx":
+        if backend == "cxx" or cutoff is not None:
             reason = []
             if not all_pure:
                 reason.append("a Cartesian (non-pure) shell with L > 0")
@@ -1058,6 +1137,10 @@ def ao_pair_fourier_transform_bloch(
             )
         # Fall through to the Python path for unsupported cases.
 
+    if cutoff is not None:
+        if screen != 0.0:
+            raise ValueError("Python physical reference requires zero FT screening")
+        return _physical_pair_ft_python(ao_basis, G_vectors_arr, R_g_arr, [k], cutoff)[0]
     if ft_per_cell is None:
         ft_per_cell = ao_pair_fourier_transform_at_cells(
             ao_basis, G_vectors_arr, R_g_arr)
@@ -1074,6 +1157,8 @@ def ao_pair_fourier_transform_bloch_multi(
     *,
     screen_tol: float = 0.0,
     pair_weights: Optional[np.ndarray] = None,
+    pair_cutoff_bohr: Optional[float] = None,
+    integral_engine=None,
 ) -> list[np.ndarray]:
     """Batched Bloch-summed AO-pair FT for several crystal momenta.
 
@@ -1109,14 +1194,22 @@ def ao_pair_fourier_transform_bloch_multi(
         contracting, and that scaling is a single-threaded NumPy pass
         over the largest array in the RSGDF cderi build — measurably
         anti-scaling against the threads this kernel itself uses
-        (``handovers/HANDOVER_GDF_OUTSTANDING.md``, OpenMP profile
+        (the original investigation, OpenMP profile
         2026-08-05). Passing it here costs nothing: the store already
         touches every element, inside the parallel region.
+    integral_engine : IntegralEngineOptions or None
+        Explicit MANTA generation has the same strict input/normalization
+        contract as the single-momentum adapter. Pair weights remain gated.
 
     Returns
     -------
     list of (n_orb, n_orb, n_G) complex128, one per row of ``k_carts``.
     """
+    if integral_engine is not None:
+        if pair_weights is not None:
+            raise ValueError("Selected Bloch Fourier generation does not yet qualify pair weights")
+        return _selected_bloch_fourier(ao_basis, G_vectors, R_g_list, k_carts, integral_engine,
+                                      screen_tol=screen_tol, cutoff=pair_cutoff_bohr)
     R_g_arr = np.ascontiguousarray(R_g_list, dtype=float)
     if R_g_arr.ndim != 2 or R_g_arr.shape[1] != 3:
         raise ValueError(
@@ -1137,6 +1230,7 @@ def ao_pair_fourier_transform_bloch_multi(
             raise ValueError(
                 f"pair_weights must be ({n_orb}, {n_orb}); got shape "
                 f"{weights_arr.shape}")
+    cutoff = _physical_pair_cutoff(pair_cutoff_bohr)
     backend = _aopair_ft_backend()
     screen = float(screen_tol)
     if backend != "python":
@@ -1149,10 +1243,15 @@ def ao_pair_fourier_transform_bloch_multi(
             # per-cell pass across k beats the per-k closed-form path
             # for any n_k > 1.
             from ._vibeqc_core import ao_pair_fourier_transform_bloch_multi_cxx
+            if cutoff is not None:
+                if "pair_cutoff_bohr" not in (ao_pair_fourier_transform_bloch_multi_cxx.__doc__ or ""):
+                    raise RuntimeError("physical AO-pair support requires an updated installed native core")
+                return list(ao_pair_fourier_transform_bloch_multi_cxx(
+                    ao_basis, G_vectors_arr, R_g_arr, k_arr, screen, weights_arr, cutoff))
             return list(ao_pair_fourier_transform_bloch_multi_cxx(
                 ao_basis, G_vectors_arr, R_g_arr, k_arr, screen,
                 weights_arr))
-        if backend == "cxx":
+        if backend == "cxx" or cutoff is not None:
             reason = []
             if not all_pure:
                 reason.append("a Cartesian (non-pure) shell with L > 0")
@@ -1168,6 +1267,16 @@ def ao_pair_fourier_transform_bloch_multi(
                 f"docs/design_rsgdf_3c_lr.md and "
                 f"cpp/include/vibeqc/cart_to_sph_data.hpp)."
             )
+
+    if cutoff is not None:
+        if screen != 0.0:
+            raise ValueError("Python physical reference requires zero FT screening")
+        result = _physical_pair_ft_python(ao_basis, G_vectors_arr, R_g_arr, k_arr, cutoff)
+        if weights_arr is not None:
+            for tensor in result:
+                tensor *= weights_arr[:, :, None]
+                tensor[weights_arr == 0.0] = 0.0
+        return result
 
     # Pure-Python fallback: materialise the per-cell FT once and fold
     # every k against it — the same work-sharing, at the memory cost of
@@ -1200,7 +1309,7 @@ def ao_pair_fourier_transform_bloch_gradient_gweighted(
 ) -> np.ndarray:
     """Bloch-phased G-resolved-weighted AO-pair FT centre gradient.
 
-    Computes (handovers/HANDOVER_GDF_GRADIENT_DEFERRED.md § 4, rung 1)::
+    Computes (the original investigation, rung 1)::
 
         grad[A, d] = d/dR_{A,d} Re S_G S_muν Q_muν(G)
                          conj( S_g exp(+ik.R_g) FT_muν(G; R_g) )

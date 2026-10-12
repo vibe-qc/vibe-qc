@@ -432,6 +432,195 @@ def test_sparse_erfc_contracted_df_shells_preserve_primitive_order():
     assert _max_diff(results[0].K, results[1].K) == 0.0
 
 
+@pytest.mark.parametrize("sparse", [False, True])
+def test_erfc_underflowing_product_tails_preserve_nearby_integrals(sparse):
+    """Tiny far products share tree nodes with nonzero near-cell products.
+
+    Tight contracted s/p envelopes underflow beyond about 40 bohr. Keep
+    those supplied cells, signed nonlocal density and a nonradial ordering,
+    and compare the screened result with the ordinary Schwarz-only build.
+    """
+    system = vq.PeriodicSystem(
+        1, np.diag([4., 100., 100.]), [vq.Atom(2, [0., 0., 0.])],
+    )
+    shells = [
+        vq.ShellInfo(0, 0, True, [1., 2.], [0.6, -0.2], [0., 0., 0.]),
+        vq.ShellInfo(0, 1, True, [1.2, 2.4], [0.8, 0.1], [0., 0., 0.]),
+    ]
+    basis = vq.BasisSet(system.unit_cell_molecule(), shells, "erfc-tail-test", False)
+    cells = list(direct_lattice_cells(system, 64.0))[::-1]
+    rng = np.random.default_rng(617)
+    density_cells = list(direct_lattice_cells(system, 128.0))
+    density = make_lattice_matrix_set(
+        int(basis.nbasis), density_cells,
+        [rng.normal(size=(basis.nbasis, basis.nbasis)) for _ in density_cells],
+    )
+    subset = [i for i, c in enumerate(cells) if int(c.index[0]) in (0, 1, 16)]
+    opts = _lat(64.0)
+    opts.schwarz_threshold = 1e-12
+    results = []
+    for range_screening in (False, True):
+        opts.sr_range_screening = range_screening
+        opts.sr_sparse_traversal = sparse
+        results.append(build_jk_2e_real_space_domains(
+            basis, system, opts, density, cells, output_indices=subset, omega=0.5,
+        ))
+    assert _max_diff(results[0].J, results[1].J) < 1e-11
+    assert _max_diff(results[0].K, results[1].K) < 1e-11
+    assert np.max(np.abs(np.asarray(results[0].J.blocks))) > 1e-3
+
+
+@pytest.mark.parametrize("compute_exchange", [False, True])
+@pytest.mark.parametrize("only_far", [False, True])
+def test_sparse_erfc_screened_outputs_preserve_mask_positions(compute_exchange, only_far):
+    """Whole-output rejection retains zero blocks and the caller's mask order."""
+    system = vq.PeriodicSystem(
+        1, np.diag([4., 100., 100.]), [vq.Atom(2, [0., 0., 0.])],
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    cells = list(direct_lattice_cells(system, 64.0))[::-1]
+    positions = {int(c.index[0]): i for i, c in enumerate(cells)}
+    requested = [16, -16] if only_far else [16, 0, 1]
+    subset = [positions[i] for i in requested]
+    masks = [np.array([i != 0], dtype=np.uint8) for i in requested]
+    density_cells = list(direct_lattice_cells(system, 128.0))
+    density = make_lattice_matrix_set(
+        1, density_cells,
+        [np.array([[0.1 * (-1.) ** int(c.index[0])]]) for c in density_cells],
+    )
+    opts = _lat(64.0)
+    opts.schwarz_threshold = 1e-12
+    results = []
+    for screening in (False, True):
+        opts.sr_range_screening = screening
+        opts.sr_sparse_traversal = screening
+        results.append(build_jk_2e_real_space_domains(
+            basis, system, opts, density, cells, output_indices=subset,
+            output_shell_masks=masks, omega=0.5, compute_exchange=compute_exchange,
+        ))
+    assert _max_diff(results[0].J, results[1].J) < 1e-11
+    assert _max_diff(results[0].K, results[1].K) < 1e-11
+    assert results[1].shell_pair_outputs == len(subset)
+    assert np.count_nonzero(results[1].J.blocks[positions[16]]) == 0
+    if only_far:
+        assert np.count_nonzero(np.asarray(results[1].J.blocks)) == 0
+        assert np.count_nonzero(np.asarray(results[1].K.blocks)) == 0
+    else:
+        assert np.count_nonzero(results[1].J.blocks[positions[0]]) == 0
+        assert np.max(np.abs(results[1].J.blocks[positions[1]])) > 1e-6
+
+
+def test_sparse_erfc_shell_density_bounds_include_off_home_blocks():
+    """Only off-diagonal shell pairs in nonzero density images contribute."""
+    system = vq.PeriodicSystem(
+        1, np.diag([4., 100., 100.]),
+        [vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [1.4, 0., 0.])],
+    )
+    shells = [vq.ShellInfo(i, 0, True, [0.3], [1.], origin)
+              for i, origin in enumerate(([0., 0., 0.], [1.4, 0., 0.]))]
+    basis = vq.BasisSet(system.unit_cell_molecule(), shells, "erfc-density-test", False)
+    cells = list(direct_lattice_cells(system, 32.0))
+    density_cells = list(direct_lattice_cells(system, 64.0))
+    blocks = []
+    for cell in density_cells:
+        block = np.zeros((2, 2))
+        if int(cell.index[0]) == 1:
+            block[0, 1] = 0.7
+        elif int(cell.index[0]) == -1:
+            block[1, 0] = 0.7
+        blocks.append(block)
+    density = make_lattice_matrix_set(2, density_cells, blocks)
+    opts = _lat(32.0)
+    opts.sr_range_screening = True
+    results = []
+    for sparse in (False, True):
+        opts.sr_sparse_traversal = sparse
+        results.append(build_jk_2e_real_space_domains(
+            basis, system, opts, density, cells, output_indices=[0], omega=0.5,
+        ))
+    assert _max_diff(results[0].J, results[1].J) == 0.0
+    assert _max_diff(results[0].K, results[1].K) == 0.0
+    assert np.max(np.abs(np.asarray(results[0].K.blocks))) > 1e-4
+
+
+@pytest.mark.parametrize("threshold", [1e-12, 1e-8, 1e-4])
+@pytest.mark.parametrize("density_scale", [1.0, 1e-6])
+def test_exchange_work_order_preserves_signed_periodic_density(threshold, density_scale):
+    """Sparse work ordering preserves every signed density-image contribution.
+
+    More than 16 cells force internal tree nodes. Angular/diffuse pairs have
+    different Schwarz ranges; shuffled cells and unequal signed shell blocks
+    expose an incorrect pair-major index or changed contraction order.
+    """
+    system = vq.PeriodicSystem(
+        1, np.diag([4., 100., 100.]), [vq.Atom(2, [0., 0., 0.])],
+    )
+    shells = [
+        vq.ShellInfo(0, 0, True, [0.15, 0.7], [0.8, -0.2], [0., 0., 0.]),
+        vq.ShellInfo(0, 1, True, [0.3, 1.2], [0.6, 0.4], [0., 0., 0.]),
+    ]
+    basis = vq.BasisSet(system.unit_cell_molecule(), shells, "erfc-tree-test", False)
+    cells = list(direct_lattice_cells(system, 64.0))
+    rng = np.random.default_rng(719)
+    cells = [cells[i] for i in rng.permutation(len(cells))]
+    assert len(cells) > 16
+    density_cells = list(direct_lattice_cells(system, 128.0))
+    blocks = [density_scale * rng.normal(size=(basis.nbasis, basis.nbasis))
+              for _ in density_cells]
+    # The largest p-p contraction occurs away from the reference cell.
+    for cell, block in zip(density_cells, blocks):
+        if int(cell.index[0]) == -3:
+            block[1:, 1:] *= 7.0
+    density = make_lattice_matrix_set(int(basis.nbasis), density_cells, blocks)
+    subset = [i for i, cell in enumerate(cells) if int(cell.index[0]) in (0, 1, 4)]
+    opts = _lat(64.0)
+    opts.schwarz_threshold = threshold
+    opts.sr_range_screening = True
+    results = []
+    for sparse in (False, True):
+        opts.sr_sparse_traversal = sparse
+        results.append(build_jk_2e_real_space_domains(
+            basis, system, opts, density, cells, output_indices=subset, omega=0.5,
+        ))
+    assert results[1].shell_pair_outputs == len(subset)
+    assert _max_diff(results[0].J, results[1].J) == 0.0
+    assert _max_diff(results[0].K, results[1].K) == 0.0
+    if threshold < density_scale * 1e-2:
+        assert np.max(np.abs(np.asarray(results[0].K.blocks))) > 0.0
+
+
+def test_sparse_erfc_lazy_pair_gates_preserve_dense_rows():
+    """A dense 65-cell domain exercises allocation and multiword gate rows."""
+    system = vq.PeriodicSystem(
+        1, np.diag([0.25, 100., 100.]), [vq.Atom(2, [0., 0., 0.])],
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), [
+        vq.ShellInfo(0, 0, True, [0.02], [1.], [0., 0., 0.]),
+    ], "erfc-order-test", False)
+    cells = list(direct_lattice_cells(system, 8.0))[::-1]
+    assert len(cells) == 65
+    density_cells = list(direct_lattice_cells(system, 16.0))
+    rng = np.random.default_rng(432)
+    density = make_lattice_matrix_set(
+        1, density_cells, [rng.normal(size=(1, 1)) for _ in density_cells],
+    )
+    opts = _lat(8.0)
+    opts.sr_range_screening = True
+    opts.schwarz_threshold = 1e-30
+    subset = [0, len(cells) - 1]
+    results = []
+    for sparse in (False, True):
+        opts.sr_sparse_traversal = sparse
+        results.append(build_jk_2e_real_space_domains(
+            basis, system, opts, density, cells, output_indices=subset, omega=0.01,
+        ))
+    assert results[1].shell_pair_outputs == len(subset)
+    # The finite-domain cell gate still applies, with many admitted pairs.
+    assert results[1].shell_quartets_considered > 1024 * len(subset)
+    assert _max_diff(results[0].J, results[1].J) == 0.0
+    assert _max_diff(results[0].K, results[1].K) == 0.0
+
+
 def test_sparse_erfc_dense_support_keeps_complete_pair_union():
     """Dense support must retain all pairs when the bounded list fills."""
     system = vq.PeriodicSystem(3, np.eye(3) * 1.2, [vq.Atom(2, [0, 0, 0])])
@@ -453,6 +642,143 @@ def test_sparse_erfc_dense_support_keeps_complete_pair_union():
     assert results[1].cell_triples_considered == len(cells) ** 2
     assert _max_diff(results[0].J, results[1].J) == 0.0
     assert _max_diff(results[0].K, results[1].K) == 0.0
+
+
+def _workspace_case(exponent=0.3, coefficient=0.8, origin=0.0, pure=True):
+    system = vq.PeriodicSystem(1, np.diag([4., 100., 100.]),
+                              [vq.Atom(2, [origin, 0., 0.])])
+    shells = [
+        vq.ShellInfo(0, 0, True, [exponent, 1.2], [coefficient, -0.2], [origin, 0., 0.]),
+        vq.ShellInfo(0, 1, pure, [0.4], [1.], [origin, 0., 0.]),
+    ]
+    basis = vq.BasisSet(system.unit_cell_molecule(), shells, "workspace-test", False)
+    cells = list(direct_lattice_cells(system, 12.0))
+    density_cells = list(direct_lattice_cells(system, 24.0))
+    rng = np.random.default_rng(937)
+    density = make_lattice_matrix_set(int(basis.nbasis), density_cells,
+        [rng.normal(size=(basis.nbasis, basis.nbasis)) for _ in density_cells])
+    opts = _lat(12.0)
+    opts.sr_range_screening = True
+    return system, basis, opts, density, cells
+
+
+def _assert_same_jk_work(left, right):
+    assert _max_diff(left.J, right.J) == 0.0
+    assert _max_diff(left.K, right.K) == 0.0
+    for name in ("cell_triples_considered", "cell_triples_possible",
+                 "shell_quartets_considered", "shell_pair_outputs", "cell_sparse_outputs",
+                 "exhaustive_outputs", "charge_screening_available", "product_screening_available"):
+        assert getattr(left, name) == getattr(right, name), name
+
+
+def test_prepared_workspace_reuses_only_geometry():
+    from vibeqc._vibeqc_core import PeriodicJKWorkspace
+
+    system, basis, opts, density, cells = _workspace_case()
+    workspace = PeriodicJKWorkspace()
+    for step in range(3):
+        # Change density values and support, output order/masks, exchange and
+        # positive screening threshold. None is cached in geometric preparation.
+        positions = [0, len(cells) - 1] if step == 0 else [len(cells) - 1, 0]
+        blocks = [np.asarray(b) * (-0.7)**step for b in density.blocks]
+        d = make_lattice_matrix_set(int(basis.nbasis), list(density.cells)[step:], blocks[step:])
+        opts.schwarz_threshold = 10.0 ** (-12 + step * 3)
+        masks = [np.array([1, step != 1, 1, 1], dtype=np.uint8) for _ in positions]
+        kw = dict(omega=0.5, output_indices=positions, output_shell_masks=masks,
+                  compute_exchange=step != 2)
+        plain = build_jk_2e_real_space_domains(basis, system, opts, d, cells, **kw)
+        cached = build_jk_2e_real_space_domains(basis, system, opts, d, cells,
+                                              workspace=workspace, **kw)
+        _assert_same_jk_work(plain, cached)
+        assert workspace.preparation_count == 1
+        assert workspace.geometry_preparation_count == 1
+
+
+@pytest.mark.parametrize("change", ["exponent", "coefficient", "origin", "pure",
+    "order", "subset", "cell_coordinates", "lattice", "omega", "coulomb", "screen", "range"])
+def test_prepared_workspace_invalidates_changed_geometry_or_kernel(change):
+    from vibeqc._vibeqc_core import PeriodicJKWorkspace
+
+    system, basis, opts, density, cells = _workspace_case()
+    workspace = PeriodicJKWorkspace()
+    build_jk_2e_real_space_domains(basis, system, opts, density, cells,
+                                  output_indices=[0], omega=0.5, workspace=workspace)
+    omega = 0.5
+    if change in ("exponent", "coefficient", "origin", "pure"):
+        values = dict(exponent=0.35, coefficient=0.75, origin=0.1, pure=False)
+        system, basis, opts, density, cells = _workspace_case(**{change: values[change]})
+    elif change == "order":
+        cells = cells[::-1]
+    elif change == "subset":
+        cells = cells[:-1]
+    elif change in ("cell_coordinates", "lattice"):
+        other = vq.PeriodicSystem(1, np.diag([4.1, 100., 100.]), [vq.Atom(2, [0., 0., 0.])])
+        if change == "lattice":
+            system = other
+        else:
+            cells = [vq.LatticeCell(other, c.index) for c in cells]
+    elif change == "omega":
+        omega = 0.6
+    elif change == "coulomb":
+        omega = 0.0
+    elif change == "screen":
+        opts.schwarz_threshold = 0.0
+    elif change == "range":
+        opts.sr_range_screening = False
+    kw = dict(output_indices=[0], omega=omega)
+    cached = build_jk_2e_real_space_domains(basis, system, opts, density, cells,
+                                          workspace=workspace, **kw)
+    plain = build_jk_2e_real_space_domains(basis, system, opts, density, cells, **kw)
+    _assert_same_jk_work(plain, cached)
+    assert workspace.preparation_count == 2
+    assert workspace.geometry_preparation_count == (
+        1 if change in ("omega", "coulomb", "screen", "range") else 2)
+
+
+def test_prepared_workspace_concurrent_generations_preserve_snapshots():
+    from concurrent.futures import ThreadPoolExecutor
+    from vibeqc._vibeqc_core import PeriodicJKWorkspace
+
+    system, basis, opts, density, cells = _workspace_case()
+    workspace = PeriodicJKWorkspace()
+    omegas = [0.4, 0.6, 0.4, 0.6]
+    def build(omega, workspace=None):
+        return build_jk_2e_real_space_domains(basis, system, opts, density, cells,
+            output_indices=[0], omega=omega, workspace=workspace)
+    expected = [build(w) for w in omegas]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        actual = list(pool.map(lambda w: build(w, workspace), omegas))
+    for plain, cached in zip(expected, actual):
+        _assert_same_jk_work(plain, cached)
+    assert workspace.preparation_count == 2
+    assert workspace.geometry_preparation_count == 1
+
+
+def test_prepared_workspace_two_kernels_have_bounded_lru_lifetime():
+    from vibeqc._vibeqc_core import PeriodicJKWorkspace
+
+    system, basis, opts, density, cells = _workspace_case()
+    workspace = PeriodicJKWorkspace()
+    # Revisit the newest two kernels, evict the oldest with a third, then
+    # change geometry and verify both old kernel states are invalidated.
+    cases = [(0.4, 1), (0.6, 2), (0.4, 2), (0.8, 3), (0.4, 3), (0.6, 4)]
+    for omega, count in cases:
+        kw = dict(output_indices=[0], omega=omega)
+        plain = build_jk_2e_real_space_domains(basis, system, opts, density, cells, **kw)
+        cached = build_jk_2e_real_space_domains(basis, system, opts, density, cells,
+                                              workspace=workspace, **kw)
+        _assert_same_jk_work(plain, cached)
+        assert workspace.preparation_count == count
+        assert workspace.geometry_preparation_count == 1
+    cells = cells[::-1]
+    for omega, count in [(0.4, 5), (0.6, 6), (0.4, 6)]:
+        kw = dict(output_indices=[0], omega=omega)
+        plain = build_jk_2e_real_space_domains(basis, system, opts, density, cells, **kw)
+        cached = build_jk_2e_real_space_domains(basis, system, opts, density, cells,
+                                              workspace=workspace, **kw)
+        _assert_same_jk_work(plain, cached)
+        assert workspace.preparation_count == count
+        assert workspace.geometry_preparation_count == 2
 
 
 def _mgo():

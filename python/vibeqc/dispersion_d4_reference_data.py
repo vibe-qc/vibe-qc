@@ -66,14 +66,14 @@ the O/N polarizabilities -- under-bound by ~15 % at the HF level -- up
 to the reference. With the corrected r4r2 / C8 table
 (:func:`vibeqc.dispersion_d4_model.r4r2_val`) the native pairwise C6
 agree with dftd4 to ~5 % (CH₄) / ~8 % (H₂O) at aug-cc-pVDZ and the
-CH₄-dimer D4 energy to <0.05 kcal/mol -- the handover Sec. 5 bars are
+CH₄-dimer D4 energy to <0.05 kcal/mol -- the original investigation bars are
 met and the native backend is **un-gated** (no
 :class:`~vibeqc.dispersion_d4.D4NativeExperimentalWarning`). The
 ``dftd4`` backend remains the default for full periodic-table coverage
 (this catalogue covers H-Ne).
 
 Re-derivation stays first-principles per the 2026-05 maintainer
-decision (``handovers/HANDOVER_D4_NATIVE.md`` Sec. 1) -- dftd4's LGPL-3.0
+decision (the original investigation) -- dftd4's LGPL-3.0
 reference C6 table is *not* transcribed; it is the validation target
 only. (The small per-element r4r2 / EEQ / BJ-damping parameter tables
 are published scientific constants, transcribed with citation per
@@ -260,7 +260,7 @@ def generate_reference_dataset(
     *not* TD-HF. The correlation it carries is what lifts the O/N
     polarizabilities up to the level dftd4's PBE38 reference was built
     at, so the resulting reference C6 meet the dftd4 parity bars
-    (handover Sec. 5: ~10 % pairwise C6, sub-0.1 kcal/mol dimer). The
+    (historical design record Sec. 5: ~10 % pairwise C6, sub-0.1 kcal/mol dimer). The
     default ``functional="pbe38"`` (37.5 % exact exchange) matches
     dftd4's own reference protocol; ``basis_name="aug-cc-pvdz"`` is the
     validated production setting. Re-derivation stays first-principles

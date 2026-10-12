@@ -155,7 +155,7 @@ license, and this caveat.
 | Periodic single point | `run_periodic_mace(system, options)` | 1D/2D/3D `.energy` in Ha and `.gradient()` in Ha/bohr; 3D-only `.stress()` in Ha/bohr³; runtime/model provenance |
 | Sequential periodic scan | `PeriodicMACEEvaluator(options).run(system)` | same result, with one retained model and calculator |
 | Fixed-cell periodic/slab relaxation | `optimize_periodic_mace_positions(system, options, fixed_indices=...)` | result containing the relaxed `PeriodicSystem`, convergence, forces, and provenance |
-| 3D periodic cell relaxation | `optimize_periodic_mace_cell(system, options, fmax=...)` | relaxed 3D `PeriodicSystem` |
+| 3D periodic cell relaxation | `optimize_periodic_mace_cell(system, options, fmax=...)` | converged 3D `PeriodicSystem`; raises on step exhaustion |
 | Registry export | `mace_model_registry()` / `save_mace_model_registry(path)` | dependency-free provenance metadata |
 
 `MACEModel` is the lower-level molecular wrapper behind these APIs.
@@ -164,6 +164,18 @@ citations, and provenance are written automatically.
 
 `run_periodic_job(method="mace")` is not supported. It is an SCF runner;
 use the direct periodic MACE APIs above.
+
+Variable-cell relaxation checks ASE's combined atomic and cell-force criterion.
+Zero atomic forces alone do not qualify a strained cell. If the step budget
+is exhausted, `optimize_periodic_mace_cell` raises
+`PeriodicMACECellOptimizationError` (a `RuntimeError`), preserving the last
+`PeriodicSystem` in `error.system`, the completed and allowed step counts in
+`error.n_steps` and `error.max_steps`, and the terminal cell-filter force norm
+and requested threshold in `error.final_max_force` and `error.target_max_force`.
+Those last two values use ASE's filter scaling, not raw physical stress units.
+An already converged starting structure may return with `max_steps=0`.
+Optimizer convergence does not establish dynamical stability or predictive
+accuracy of the selected model.
 
 ## macOS note
 

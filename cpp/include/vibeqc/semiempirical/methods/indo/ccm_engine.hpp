@@ -664,7 +664,7 @@ inline MsindoResult run_ccm_core(
     const MsindoParameterSet& p,
     bool madelung = false,
     int max_iter = 200, double conv_tol = 1e-9,
-    int charge = 0) {
+    int charge = 0, bool lowest_stable = false) {
     validate_ccm_native_inputs(
         Z, coords_angstrom, translations_angstrom, max_iter, conv_tol);
     int natom = static_cast<int>(Z.size());
@@ -757,7 +757,7 @@ inline MsindoResult run_ccm_core(
     }
 
     MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol,
-                                       fock_extra);
+                                       fock_extra, lowest_stable);
 
     if (res.converged) {
         res.total_energy = res.electronic_energy + e_core;
@@ -777,7 +777,7 @@ inline double ccm_energy_with_ws(
     int nsto, const std::vector<int>& cz, int nocc,
     const MsindoParameterSet& p, const WignerSeitzCells& ws,
     bool madelung, int ndim,
-    int max_iter, double conv_tol) {
+    int max_iter, double conv_tol, bool lowest_stable = false) {
     int natom = static_cast<int>(Z.size());
     Eigen::MatrixXd H, G;
     build_core_and_gamma_ccm(Z, C, blocks, nsto, p, ws, H, G);
@@ -808,7 +808,8 @@ inline double ccm_energy_with_ws(
         };
     }
 
-    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol, fock_extra);
+    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol,
+                                       fock_extra, lowest_stable);
     if (!res.converged) return std::numeric_limits<double>::quiet_NaN();
     return res.electronic_energy + e_core;
 }
@@ -823,7 +824,7 @@ inline std::vector<std::array<double, 3>> ccm_gradient_fd(
     bool madelung = false,
     const std::vector<int>& atoms = {},
     int max_iter = 200, double conv_tol = 1e-10, double step = 1e-3,
-    int charge = 0) {
+    int charge = 0, bool lowest_stable = false) {
     validate_ccm_native_inputs(
         Z, coords_angstrom, translations_angstrom, max_iter, conv_tol);
     if (!std::isfinite(step) || step <= 0.0) {
@@ -878,7 +879,7 @@ inline std::vector<std::array<double, 3>> ccm_gradient_fd(
                                                   C[le.origin] + le.t - C[i]});
         }
         return ccm_energy_with_ws(Z, C, T, blocks, nsto, cz, nocc, p, ws,
-                                  madelung, ndim, max_iter, conv_tol);
+                                  madelung, ndim, max_iter, conv_tol, lowest_stable);
     };
 
     std::vector<bool> which(natom, atoms.empty());
@@ -1052,14 +1053,95 @@ inline void _add_madelung_gradient(std::vector<std::array<double, 3>>& grad,
     }
 }
 
-// Analytic CCM nuclear gradient (Ha/bohr).  Closed-shell (RHF) only.
-inline std::vector<std::array<double, 3>> ccm_gradient_analytic(
+// Strain derivative (Ha) of the Madelung energy at fixed net charges, over the
+// Ewald WS set including each atom's own image. Real-space vectors scale with
+// the strain (pair virial dh/dr_a r_b); the 3-D reciprocal and background
+// terms carry explicit K and volume dependence (Nielsen and Martin, Phys. Rev.
+// B 32, 3792 (1985)). The Ewald parameter is held fixed: the converged sum
+// does not depend on it. Twin of msindo_ccm_gradient_analytic._madelung_virial.
+inline Eigen::Matrix3d _madelung_virial(const Eigen::VectorXd& net,
+                                        const std::vector<Eigen::Vector3d>& T,
+                                        const WignerSeitzCells& ws) {
+    const int dim = static_cast<int>(T.size());
+    if (dim == 2)
+        throw std::invalid_argument(
+            "The strain derivative of the 2-D Parry/Heyes Madelung embedding "
+            "is not implemented.");
+    const auto ews = _ewald_ws_cells(ws);
+    std::vector<Eigen::Vector3d> shells, kvecs, dvecs;
+    std::vector<double> kpref, kfac;
+    double alpha = 0.0, background = 0.0, direct_cutoff = 0.0;
+    if (dim == 1) {
+        shells = {T[0], -T[0], 2.0 * T[0], -2.0 * T[0]};
+    } else {
+        const EwaldLattice3D lattice = _ewald_lattice_3d(T, ews);
+        alpha = lattice.alpha;
+        direct_cutoff = lattice.direct_cutoff;
+        kvecs = lattice.reciprocal_vectors;
+        dvecs = lattice.direct_vectors;
+        const double a2 = alpha * alpha;
+        for (double kb : lattice.reciprocal_squared_norms) {
+            kpref.push_back(4.0 * M_PI * std::exp(-kb / (4.0 * a2)) / (kb * lattice.volume));
+            kfac.push_back(2.0 * (1.0 / kb + 1.0 / (4.0 * a2)));
+        }
+        background = -M_PI / (lattice.volume * a2);
+    }
+    const double two_over_sqrtpi = 2.0 / std::sqrt(M_PI);
+    const auto dh = [&](const Eigen::Vector3d& disp) {
+        Eigen::Matrix3d out = Eigen::Matrix3d::Zero();
+        if (dim == 1) {
+            for (const auto& sh : shells) {
+                const Eigen::Vector3d x = disp + sh;
+                const double r = x.norm();
+                out -= x * x.transpose() / (r * r * r);
+            }
+            return out;
+        }
+        const Eigen::Vector3d v = -disp;
+        double csum = 0.0;
+        for (size_t k = 0; k < kvecs.size(); ++k) {
+            const double c = kpref[k] * std::cos(kvecs[k].dot(v));
+            csum += c;
+            out += (c * kfac[k]) * kvecs[k] * kvecs[k].transpose();
+        }
+        out -= csum * Eigen::Matrix3d::Identity();
+        for (const auto& dv : dvecs) {
+            const Eigen::Vector3d x = v + dv;
+            const double r = x.norm();
+            if (r <= 1e-8 || r > direct_cutoff) continue;
+            const double fprime = -std::erfc(alpha * r) / (r * r)
+                - two_over_sqrtpi * alpha * std::exp(-alpha * alpha * r * r) / r;
+            out += (fprime / r) * x * x.transpose();
+        }
+        out -= background * Eigen::Matrix3d::Identity();
+        const double d = disp.norm();
+        if (d > 1e-8) out += disp * disp.transpose() / (d * d * d);  // SMADEL
+        return out;
+    };
+    Eigen::Matrix3d W = Eigen::Matrix3d::Zero();
+    for (size_t i = 0; i < ews.size(); ++i) {
+        const double qi = net(static_cast<int>(i));
+        if (qi == 0.0) continue;
+        for (const auto& nb : ews[i]) {
+            const double qo = net(nb.origin);
+            if (qo == 0.0) continue;
+            W += 0.5 * qi * qo * nb.weight * dh(nb.disp);
+        }
+    }
+    return W;
+}
+
+// Analytic CCM nuclear gradient (Ha/bohr) and, when ``virial`` is given, the
+// strain derivative W_ab = dE/deps_ab (Ha) under x -> (1 + eps) x of atoms and
+// lattice together, WS weights frozen. Closed-shell (RHF) only. Returns an
+// empty gradient when the SCF does not converge.
+inline std::vector<std::array<double, 3>> ccm_analytic_derivatives(
     const std::vector<int>& Z,
     const std::vector<std::array<double, 3>>& coords_angstrom,
     const std::vector<std::array<double, 3>>& translations_angstrom,
     const MsindoParameterSet& p,
-    bool madelung = false, int charge = 0,
-    int max_iter = 200, double conv_tol = 1e-10) {
+    bool madelung, int charge, int max_iter, double conv_tol,
+    bool lowest_stable, Eigen::Matrix3d* virial) {
     validate_ccm_native_inputs(
         Z, coords_angstrom, translations_angstrom, max_iter, conv_tol);
     int natom = static_cast<int>(Z.size());
@@ -1117,96 +1199,154 @@ inline std::vector<std::array<double, 3>> ccm_gradient_analytic(
             return {F_add, 0.5 * czd.dot(mad)};
         };
     }
-    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol, fock_extra);
+    MsindoResult res = scf_rhf_ccm_driver(H, G, blocks, Z, nocc, p, max_iter, conv_tol,
+                                       fock_extra, lowest_stable);
     if (!res.converged) return {};
     Eigen::MatrixXd P = res.density;
 
     std::vector<std::array<double, 3>> grad(natom, {0.0, 0.0, 0.0});
 
+    // dE_pair/d(disp) of one image record (the full pair-image energy). On the
+    // z pole the azimuth is pole_azimuth, so the theta derivative is the tilt
+    // towards that azimuth; the pole test is d_trans_driver's.
+    const auto record_derivative = [&](int k, int j, const Eigen::Vector3d& disp,
+                                       double pole_azimuth) -> Eigen::Vector3d {
+        int nk = blocks[k][1] - blocks[k][0];
+        int nj = blocks[j][1] - blocks[j][0];
+        auto P_kk = P.block(blocks[k][0], blocks[k][0], nk, nk);
+        auto P_ll = P.block(blocks[j][0], blocks[j][0], nj, nj);
+        auto P_kl = P.block(blocks[k][0], blocks[j][0], nk, nj);
+        std::array<double, 3> rk = {C[k].x(), C[k].y(), C[k].z()};
+        Eigen::Vector3d img = C[k] + disp;
+        std::array<double, 3> rl = {img.x(), img.y(), img.z()};
+        PairBlocksDeriv pd = pair_blocks_deriv(Z[k], Z[j], rk, rl, p, pole_azimuth);
+
+        double R = pd.R;
+        Eigen::Vector3d E = disp / R;
+        // sin(theta) from the in-plane components: 1 - cos^2 cancels next to
+        // the pole.
+        double cost = E.z(), sint = std::hypot(E.x(), E.y());
+        double cosphi = 1, sinphi = 0, dphidx = 0, dphidy = 0, dphidz = 0;
+        if (std::abs(cost) >= 1.0 - 1e-12) {
+            sint = 0.0;
+            cosphi = std::cos(pole_azimuth);
+            sinphi = std::sin(pole_azimuth);
+        } else {
+            cosphi = E.x() / sint; sinphi = E.y() / sint;
+            double c1 = sint * sint * R;
+            dphidx = -E.y() / c1; dphidy = E.x() / c1;
+        }
+        double edt1 = cost * cosphi, edt2 = cost * sinphi, edt3 = -sint;
+        double drdx = E.x(), drdy = E.y(), drdz = E.z();
+        double dthx = edt1 / R, dthy = edt2 / R, dthz = edt3 / R;
+
+        double dx = 0, dy = 0, dz = 0;
+        // K-diagonal + off-diagonal (HK1)
+        for (int i = 0; i < nk; ++i) {
+            double Pii = P_kk(i, i);
+            dx += Pii * (pd.HK1_DR(i, i) * drdx + pd.HK1_DT(i, i) * dthx + pd.HK1_DP(i, i) * dphidx);
+            dy += Pii * (pd.HK1_DR(i, i) * drdy + pd.HK1_DT(i, i) * dthy + pd.HK1_DP(i, i) * dphidy);
+            dz += Pii * (pd.HK1_DR(i, i) * drdz + pd.HK1_DT(i, i) * dthz + pd.HK1_DP(i, i) * dphidz);
+            for (int ii = i + 1; ii < nk; ++ii) {
+                double fac = 2.0 * P_kk(ii, i);
+                dx += fac * (pd.HK1_DR(ii, i) * drdx + pd.HK1_DT(ii, i) * dthx + pd.HK1_DP(ii, i) * dphidx);
+                dy += fac * (pd.HK1_DR(ii, i) * drdy + pd.HK1_DT(ii, i) * dthy + pd.HK1_DP(ii, i) * dphidy);
+                dz += fac * (pd.HK1_DR(ii, i) * drdz + pd.HK1_DT(ii, i) * dthz + pd.HK1_DP(ii, i) * dphidz);
+            }
+        }
+        // L-diagonal + off-diagonal (HL1)
+        for (int i = 0; i < nj; ++i) {
+            double Pii = P_ll(i, i);
+            dx += Pii * (pd.HL1_DR(i, i) * drdx + pd.HL1_DT(i, i) * dthx + pd.HL1_DP(i, i) * dphidx);
+            dy += Pii * (pd.HL1_DR(i, i) * drdy + pd.HL1_DT(i, i) * dthy + pd.HL1_DP(i, i) * dphidy);
+            dz += Pii * (pd.HL1_DR(i, i) * drdz + pd.HL1_DT(i, i) * dthz + pd.HL1_DP(i, i) * dphidz);
+            for (int ii = i + 1; ii < nj; ++ii) {
+                double fac = 2.0 * P_ll(ii, i);
+                dx += fac * (pd.HL1_DR(ii, i) * drdx + pd.HL1_DT(ii, i) * dthx + pd.HL1_DP(ii, i) * dphidx);
+                dy += fac * (pd.HL1_DR(ii, i) * drdy + pd.HL1_DT(ii, i) * dthy + pd.HL1_DP(ii, i) * dphidy);
+                dz += fac * (pd.HL1_DR(ii, i) * drdz + pd.HL1_DT(ii, i) * dthz + pd.HL1_DP(ii, i) * dphidz);
+            }
+        }
+        // Pair block + monopole γ + nuclear (×2 = DEDXYZK + DEDXYZL rounds).
+        for (int i = 0; i < nk; ++i) {
+            double Pii = P_kk(i, i);
+            for (int jj = 0; jj < nj; ++jj) {
+                double Pjj = P_ll(jj, jj), Pij = P_kl(i, jj);
+                double Fg = 0.5 * pd.d_gamma_local(i, jj) * (Pii * Pjj - 0.5 * Pij * Pij);
+                double Fr = Pij * pd.HKL2_DR(i, jj);
+                double Ft = Pij * pd.HKL2_DT(i, jj);
+                double Fp = Pij * pd.HKL2_DP(i, jj);
+                dx += 2.0 * ((Fg + Fr) * drdx + Ft * dthx + Fp * dphidx);
+                dy += 2.0 * ((Fg + Fr) * drdy + Ft * dthy + Fp * dphidy);
+                dz += 2.0 * ((Fg + Fr) * drdz + Ft * dthz + Fp * dphidz);
+            }
+        }
+        double zke = static_cast<double>(MsindoParameterSet::eff_core_charge(Z[k]));
+        double zle = static_cast<double>(MsindoParameterSet::eff_core_charge(Z[j]));
+        double dnuc = 2.0 * 0.5 * zke * zle * (-1.0 / (R * R));
+        dx += dnuc * drdx; dy += dnuc * drdy; dz += dnuc * drdz;
+        return Eigen::Vector3d(dx, dy, dz);
+    };
+
     // WS-weighted per-pair derivative loop (CCMDEDXYZK + CCMDEDXYZL, both on K).
     for (int k = 0; k < natom; ++k) {
-        int nk = blocks[k][1] - blocks[k][0];
-        auto P_kk = P.block(blocks[k][0], blocks[k][0], nk, nk);
-        std::array<double, 3> rk = {C[k].x(), C[k].y(), C[k].z()};
         for (auto& nb : ws.cells[k]) {
             int j = nb.origin;
             double w = nb.weight;
-            int nj = blocks[j][1] - blocks[j][0];
-            Eigen::Vector3d img = C[k] + nb.disp;
-            std::array<double, 3> rl = {img.x(), img.y(), img.z()};
-            PairBlocksDeriv pd = pair_blocks_deriv(Z[k], Z[j], rk, rl, p);
-
-            auto P_ll = P.block(blocks[j][0], blocks[j][0], nj, nj);
-            auto P_kl = P.block(blocks[k][0], blocks[j][0], nk, nj);
-
-            double R = pd.R;
-            Eigen::Vector3d E = nb.disp / R;
-            double cost = E.z(), sint = std::sqrt(std::max(0.0, 1.0 - cost * cost));
-            double cosphi = 1, sinphi = 0, dphidx = 0, dphidy = 0, dphidz = 0;
-            if (sint > 1e-12) {
-                cosphi = E.x() / sint; sinphi = E.y() / sint;
-                double c1 = sint * sint * R;
-                dphidx = -E.y() / c1; dphidy = E.x() / c1;
-            }
-            double edt1 = cost * cosphi, edt2 = cost * sinphi, edt3 = -sint;
-            double drdx = E.x(), drdy = E.y(), drdz = E.z();
-            double dthx = edt1 / R, dthy = edt2 / R, dthz = edt3 / R;
-
-            double dx = 0, dy = 0, dz = 0;
-            // K-diagonal + off-diagonal (HK1)
-            for (int i = 0; i < nk; ++i) {
-                double Pii = P_kk(i, i);
-                dx += Pii * (pd.HK1_DR(i, i) * drdx + pd.HK1_DT(i, i) * dthx + pd.HK1_DP(i, i) * dphidx);
-                dy += Pii * (pd.HK1_DR(i, i) * drdy + pd.HK1_DT(i, i) * dthy + pd.HK1_DP(i, i) * dphidy);
-                dz += Pii * (pd.HK1_DR(i, i) * drdz + pd.HK1_DT(i, i) * dthz + pd.HK1_DP(i, i) * dphidz);
-                for (int ii = i + 1; ii < nk; ++ii) {
-                    double fac = 2.0 * P_kk(ii, i);
-                    dx += fac * (pd.HK1_DR(ii, i) * drdx + pd.HK1_DT(ii, i) * dthx + pd.HK1_DP(ii, i) * dphidx);
-                    dy += fac * (pd.HK1_DR(ii, i) * drdy + pd.HK1_DT(ii, i) * dthy + pd.HK1_DP(ii, i) * dphidy);
-                    dz += fac * (pd.HK1_DR(ii, i) * drdz + pd.HK1_DT(ii, i) * dthz + pd.HK1_DP(ii, i) * dphidz);
-                }
-            }
-            // L-diagonal + off-diagonal (HL1)
-            for (int i = 0; i < nj; ++i) {
-                double Pii = P_ll(i, i);
-                dx += Pii * (pd.HL1_DR(i, i) * drdx + pd.HL1_DT(i, i) * dthx + pd.HL1_DP(i, i) * dphidx);
-                dy += Pii * (pd.HL1_DR(i, i) * drdy + pd.HL1_DT(i, i) * dthy + pd.HL1_DP(i, i) * dphidy);
-                dz += Pii * (pd.HL1_DR(i, i) * drdz + pd.HL1_DT(i, i) * dthz + pd.HL1_DP(i, i) * dphidz);
-                for (int ii = i + 1; ii < nj; ++ii) {
-                    double fac = 2.0 * P_ll(ii, i);
-                    dx += fac * (pd.HL1_DR(ii, i) * drdx + pd.HL1_DT(ii, i) * dthx + pd.HL1_DP(ii, i) * dphidx);
-                    dy += fac * (pd.HL1_DR(ii, i) * drdy + pd.HL1_DT(ii, i) * dthy + pd.HL1_DP(ii, i) * dphidy);
-                    dz += fac * (pd.HL1_DR(ii, i) * drdz + pd.HL1_DT(ii, i) * dthz + pd.HL1_DP(ii, i) * dphidz);
-                }
-            }
-            // Pair block + monopole γ + nuclear (×2 = DEDXYZK + DEDXYZL rounds).
-            for (int i = 0; i < nk; ++i) {
-                double Pii = P_kk(i, i);
-                for (int jj = 0; jj < nj; ++jj) {
-                    double Pjj = P_ll(jj, jj), Pij = P_kl(i, jj);
-                    double Fg = 0.5 * pd.d_gamma_local(i, jj) * (Pii * Pjj - 0.5 * Pij * Pij);
-                    double Fr = Pij * pd.HKL2_DR(i, jj);
-                    double Ft = Pij * pd.HKL2_DT(i, jj);
-                    double Fp = Pij * pd.HKL2_DP(i, jj);
-                    dx += 2.0 * ((Fg + Fr) * drdx + Ft * dthx + Fp * dphidx);
-                    dy += 2.0 * ((Fg + Fr) * drdy + Ft * dthy + Fp * dphidy);
-                    dz += 2.0 * ((Fg + Fr) * drdz + Ft * dthz + Fp * dphidz);
-                }
-            }
-            double zke = static_cast<double>(MsindoParameterSet::eff_core_charge(Z[k]));
-            double zle = static_cast<double>(MsindoParameterSet::eff_core_charge(Z[j]));
-            double dnuc = 2.0 * 0.5 * zke * zle * (-1.0 / (R * R));
-            dx += dnuc * drdx; dy += dnuc * drdy; dz += dnuc * drdz;
-
-            grad[k][0] -= w * dx; grad[k][1] -= w * dy; grad[k][2] -= w * dz;
+            Eigen::Vector3d D = record_derivative(k, j, nb.disp, 0.0);
+            // On the z pole the d_trans.f convention (phi = 0) gives only the
+            // tilt towards x; the tilt towards y is the same derivative taken
+            // at phi = pi/2.
+            if (std::abs(nb.disp.z()) >= (1.0 - 1e-12) * nb.disp.norm())
+                D.y() = record_derivative(k, j, nb.disp, 0.5 * M_PI).y();
+            grad[k][0] -= w * D.x(); grad[k][1] -= w * D.y(); grad[k][2] -= w * D.z();
+            // Frozen-weight virial: each unordered pair-image appears in two
+            // mirror records, and its energy depends on the displacement only.
+            if (virial) *virial += 0.5 * w * D * nb.disp.transpose();
         }
     }
 
     if (madelung) {
         Eigen::VectorXd net = _net_charges(P, blocks, cz);
         _add_madelung_gradient(grad, net, C, T, ws);
+        if (virial) *virial += _madelung_virial(net, T, ws);
     }
     return grad;
+}
+
+// Analytic CCM nuclear gradient (Ha/bohr).  Closed-shell (RHF) only.
+inline std::vector<std::array<double, 3>> ccm_gradient_analytic(
+    const std::vector<int>& Z,
+    const std::vector<std::array<double, 3>>& coords_angstrom,
+    const std::vector<std::array<double, 3>>& translations_angstrom,
+    const MsindoParameterSet& p,
+    bool madelung = false, int charge = 0,
+    int max_iter = 200, double conv_tol = 1e-10, bool lowest_stable = false) {
+    return ccm_analytic_derivatives(Z, coords_angstrom, translations_angstrom, p,
+        madelung, charge, max_iter, conv_tol, lowest_stable, nullptr);
+}
+
+// Analytic CCM strain derivative W_ab = dE/deps_ab (Ha), rows a. Empty when
+// the SCF does not converge or the input is outside the native scope.
+inline std::vector<std::array<double, 3>> ccm_strain_derivative_analytic(
+    const std::vector<int>& Z,
+    const std::vector<std::array<double, 3>>& coords_angstrom,
+    const std::vector<std::array<double, 3>>& translations_angstrom,
+    const MsindoParameterSet& p,
+    bool madelung = false, int charge = 0,
+    int max_iter = 200, double conv_tol = 1e-10, bool lowest_stable = false) {
+    if (madelung && translations_angstrom.size() == 2)
+        throw std::invalid_argument(
+            "The strain derivative of the 2-D Parry/Heyes Madelung embedding "
+            "is not implemented.");
+    Eigen::Matrix3d W = Eigen::Matrix3d::Zero();
+    const auto grad = ccm_analytic_derivatives(Z, coords_angstrom,
+        translations_angstrom, p, madelung, charge, max_iter, conv_tol,
+        lowest_stable, &W);
+    if (grad.empty() && !Z.empty()) return {};
+    std::vector<std::array<double, 3>> out(3);
+    for (int a = 0; a < 3; ++a) out[a] = {W(a, 0), W(a, 1), W(a, 2)};
+    return out;
 }
 
 }  // namespace indo

@@ -21,8 +21,7 @@ Status: M1 (this document) → **M2a/M3a scalar kernels, M2b/M4/M5 d=1 (wire) DO
 (2026-07-04): the full wire four-center + `V_ne`/`E_nn` + SCF
 (`run_ccm_rhf_wire`) with the neutral-cell Hartree gauge cancellation gated and
 the M5 4c-vs-RI gap collapsed to machine ε. **d=2 (slab)** four-center + the
-wire-Madelung exchange seam remain. Progress tracked in
-`handovers/HANDOVER_AICCM_FOLLOWON.md`.
+wire-Madelung exchange seam remain.
 
 ---
 
@@ -80,7 +79,7 @@ nuclear lattice-sum cutoff. Both the 3-D-torus route and the multi-k GDF therefo
 Hamiltonians (`run_ccm_rhf_wire`, the four-center route) are selected by name, never
 substituted silently - they are different operators, coinciding only in the
 non-interacting limit. See `tests/test_ccm_lowd_gauge_consistency.py` and
-`handovers/HANDOVER_AICCM_FOLLOWON.md` finding #6.
+the original investigation finding #6.
 
 ---
 
@@ -170,7 +169,7 @@ G^{1D}(ρ, z) = (2/L) Σ_{G_z≠0} K₀(|G_z|ρ) e^{iG_z z}   −  (2/L) ln(ρ/�
 ```
 
 This kernel is **new** to vibe-qc (the slab workstream marked `NEUTRALIZED_1D`
-explicitly out of scope, `handovers/HANDOVER_SLAB_EWALD_2D.md`). M2 implements it.
+explicitly out of scope, the original investigation). M2 implements it.
 `K₀` is available via `scipy.special.k0`; the `G_z≠0` sum converges
 exponentially (`K₀(x) ~ √(π/2x) e^{−x}`), and the `ρ→0` short-range singularity
 is `K₀(|G_z|ρ) → −ln(|G_z|ρ/2) − γ`, which combines with the `−(2/L)ln(ρ/ρ₀)`
@@ -272,7 +271,7 @@ d=2 (slab) still awaits its four-center + reduction gate.
   `periodic_v_ne_slab.py`) and the 3-D `v_E` (`neutral.py`) -- vibe-qc code, not an
   external program (CLAUDE.md §10). The 1-D wire kernel is new.
 * The slab *SCF un-gate* (the polar-dipole §7 gate) is the **periodic-SCF chat's**
-  workstream ([Archived `HANDOVER_SLAB_EWALD_2D.md`](https://vibe-qc.com/docs/),
+  workstream (the original investigation,
   blocked on `M_z≠0`); D3 builds the
   **CCM four-center + exchange-seam** layer on top and contributes the corrected
   dipole-layer term back to that gate.

@@ -86,14 +86,15 @@ def _opts(use_diis):
 
 
 def _run_gamma_uhf(use_diis):
+    # The SR/LR fit: the compcell fit this fixture first used refuses the
+    # cell, whose omitted auxiliary images reach 9.7e-8 per element (#172).
+    # The occupation/DIIS mechanics under test do not depend on the fit.
     system, basis = _h2_box()
-    with pytest.warns(UserWarning, match="apply_aft_correction=False"):
-        return vq.run_pbc_gdf_uhf(
-            system, basis, options=_opts(use_diis),
-            aux_basis="def2-svp-jk", gdf_linear_dep_threshold=1e-9,
-            exxdiv="ewald", gdf_method="compcell", compcell_eta=1.0,
-            apply_aft_correction=False, progress=False,
-        )
+    return vq.run_pbc_gdf_uhf(
+        system, basis, options=_opts(use_diis),
+        aux_basis="def2-svp-jk", gdf_linear_dep_threshold=1e-9,
+        exxdiv="ewald", gdf_method="rsgdf", progress=False,
+    )
 
 
 def _run_multik_krhf(use_diis):
@@ -378,7 +379,6 @@ def test_smeared_nonrepresentable_restart_uses_seed_fock_before_first_result(
 
 @pytest.mark.parametrize('ks', [False, True])
 def test_gamma_smeared_entropy_uses_both_accepted_spin_densities(ks):
-    from contextlib import nullcontext
     from vibeqc.pbc_gdf import _canonical_orthogonalizer
     from vibeqc.periodic_k_density import _fermi_density_entropy
 
@@ -392,15 +392,12 @@ def test_gamma_smeared_entropy_uses_both_accepted_spin_densities(ks):
     options.damping = .35
     driver = vq.run_pbc_gdf_uks if ks else vq.run_pbc_gdf_uhf
     keywords = {'functional': 'pbe'} if ks else {}
-    warning = nullcontext() if ks else pytest.warns(
-        UserWarning, match='apply_aft_correction=False',
+    # SR/LR fit: the compcell fit refuses this cell (#172), and the entropy
+    # bookkeeping under test does not depend on the fit.
+    result = driver(
+        system, basis, options, aux_basis='def2-svp-jk',
+        gdf_method='rsgdf', progress=False, **keywords,
     )
-    with warning:
-        result = driver(
-            system, basis, options, aux_basis='def2-svp-jk',
-            gdf_method='compcell', compcell_eta=1.0,
-            apply_aft_correction=False, progress=False, **keywords,
-        )
     x = _canonical_orthogonalizer(result.overlap, 1e-7)[0]
     expected = sum(
         _fermi_density_entropy([density], [result.overlap], [x], [1.0], 1.0)

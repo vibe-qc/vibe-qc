@@ -19,7 +19,9 @@
 
 #include <libecpint/api.hpp>
 #include <libecpint/config.hpp>
+#include <libecpint/diagnostics.hpp>
 #include <libecpint/ecp.hpp>
+#include <libecpint/ecpint.hpp>
 #include <libecpint/gaussquad.hpp>
 #include <libint2.hpp>
 #include <libint2/solidharmonics.h>
@@ -29,14 +31,46 @@
 #include <exception>
 #include <functional>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
+#include "vibeqc/diagnostics.hpp"
 #include "vibeqc/init.hpp"
 #include "vibeqc/integrals.hpp"
 #include "vibeqc/lattice_integrals.hpp"
+
+// The vendored libecpint is patched (scripts/build_libecpint.sh) but keeps
+// upstream's version number, so the patched API is the only mark of its
+// headers. An unpatched copy earlier on the include path, such as
+// Homebrew's, mixed with the vendored diagnostics.hpp and failed later with
+// a bare "no member" error (vibe-qc #461); cpp/CMakeLists.txt orders the
+// include path.
+namespace vibeqc::detail {
+template <typename T, typename = void>
+struct HasShellPairNegligible : std::false_type {};
+template <typename T>
+struct HasShellPairNegligible<
+    T, std::void_t<decltype(std::declval<const T&>().shell_pair_negligible(
+           std::declval<const libecpint::ECP&>(),
+           std::declval<const libecpint::GaussianShell&>(),
+           std::declval<const libecpint::GaussianShell&>()))>>
+    : std::true_type {};
+}  // namespace vibeqc::detail
+static_assert(vibeqc::detail::HasShellPairNegligible<libecpint::ECPIntegral>::value,
+              "<libecpint/ecpint.hpp> is not the patched vendored header "
+              "(no ECPIntegral::shell_pair_negligible). Another libecpint "
+              "precedes third_party/libecpint/install/include on the include "
+              "path: check CPATH and any -I in CXXFLAGS or "
+              "CMAKE_CXX_FLAGS, and rebuild libecpint with "
+              "scripts/build_libecpint.sh if its install predates that "
+              "script's patch.");
 
 namespace vibeqc {
 
@@ -152,7 +186,161 @@ void validate_primitive_ecp_centers(
     }
 }
 
+// ---- libecpint radial-quadrature records (vibe-qc #392) ----------------
+//
+// libecpint keeps one QuadratureDiagnostics record per thread (vendored patch
+// periodic-radial-v11-diagnostics). A builder resets the record on every
+// thread it uses, absorbs it into a QuadratureTally after the libecpint calls
+// of that thread, merges the tallies and publishes one report per build.
+constexpr int kQuadratureSites = libecpint::N_QUADRATURE_SITES;
+constexpr int kQuadratureChannels = LIBECPINT_MAX_L + 2;
+constexpr const char* kQuadratureSiteNames[kQuadratureSites] = {
+    "integrate_small", "type 1", "type 2 after big-grid retry"};
+
+void reset_quadrature_record() {
+    libecpint::quadrature_diagnostics() = libecpint::QuadratureDiagnostics{};
+}
+
+struct QuadratureTally {
+    std::array<std::array<std::uint64_t, kQuadratureChannels>, kQuadratureSites> failures{};
+    std::array<double, kQuadratureSites> max_change{};
+    std::array<double, kQuadratureSites> value_at_max{};
+    std::vector<std::uint64_t> by_center;
+    std::uint64_t bessel = 0;
+    std::uint64_t candidates = 0;
+    std::uint64_t skipped = 0;
+
+    void worst(int site, double change, double value) {
+        // ``!(a <= b)`` also keeps a NaN change visible in the report.
+        if (!(change <= max_change[site])) {
+            max_change[site] = change;
+            value_at_max[site] = value;
+        }
+    }
+
+    // Move this thread's record into the tally; ``center`` < 0 when the
+    // libecpint calls since the last absorb spanned several ECP centres.
+    void absorb(int center) {
+        auto& record = libecpint::quadrature_diagnostics();
+        if (record.total == 0 && record.bessel_lmax_exceeded == 0) return;
+        for (int site = 0; site < kQuadratureSites; ++site) {
+            for (int l = 0; l < kQuadratureChannels; ++l) {
+                failures[site][l] += record.failures[site][l];
+            }
+            worst(site, record.max_change[site], record.value_at_max[site]);
+        }
+        bessel += record.bessel_lmax_exceeded;
+        if (center >= 0) {
+            const auto index = static_cast<std::size_t>(center);
+            if (by_center.size() <= index) by_center.resize(index + 1, 0);
+            by_center[index] += record.total;
+        }
+        reset_quadrature_record();
+    }
+
+    void merge(const QuadratureTally& other) {
+        for (int site = 0; site < kQuadratureSites; ++site) {
+            for (int l = 0; l < kQuadratureChannels; ++l) {
+                failures[site][l] += other.failures[site][l];
+            }
+            worst(site, other.max_change[site], other.value_at_max[site]);
+        }
+        if (by_center.size() < other.by_center.size()) {
+            by_center.resize(other.by_center.size(), 0);
+        }
+        for (std::size_t c = 0; c < other.by_center.size(); ++c) {
+            by_center[c] += other.by_center[c];
+        }
+        bessel += other.bessel;
+        candidates += other.candidates;
+        skipped += other.skipped;
+    }
+};
+
+std::mutex g_quadrature_report_mutex;
+EcpQuadratureReport g_last_quadrature_report;
+
+// Publish one build's tally: keep it as the last report, write one summary
+// line through the diagnostics channel when any integral missed its
+// convergence test, and refuse a build whose Bessel table was too small.
+void publish_quadrature_report(const char* builder, const QuadratureTally& tally) {
+    EcpQuadratureReport report;
+    report.builder = builder;
+    report.failures.assign(kQuadratureSites, {});
+    for (int site = 0; site < kQuadratureSites; ++site) {
+        report.failures[site].assign(tally.failures[site].begin(), tally.failures[site].end());
+    }
+    report.max_change.assign(tally.max_change.begin(), tally.max_change.end());
+    report.value_at_max.assign(tally.value_at_max.begin(), tally.value_at_max.end());
+    report.failures_by_center = tally.by_center;
+    report.bessel_lmax_exceeded = tally.bessel;
+    report.candidates = tally.candidates;
+    report.skipped = tally.skipped;
+    {
+        std::lock_guard<std::mutex> lock(g_quadrature_report_mutex);
+        g_last_quadrature_report = report;
+    }
+    if (tally.candidates > 0) {
+        std::ostringstream stats;
+        stats << builder << " ECP build: " << tally.candidates
+              << " (shell pair, projector image, ECP centre) evaluations, "
+              << tally.skipped << " skipped as exact zeros of libecpint's screen";
+        diagnostic("ecp", DiagLevel::VERBOSE, stats.str());
+    }
+    const std::uint64_t total = report.total_failures();
+    if (total > 0) {
+        std::ostringstream line;
+        line << "libecpint radial quadrature: " << total << " integral"
+             << (total == 1 ? "" : "s") << " in the " << builder
+             << " ECP build did not meet the convergence test and were used as computed [";
+        bool first_site = true;
+        for (int site = 0; site < kQuadratureSites; ++site) {
+            std::uint64_t site_total = 0;
+            for (auto n : tally.failures[site]) site_total += n;
+            if (site_total == 0) continue;
+            line << (first_site ? "" : "; ") << kQuadratureSiteNames[site] << " " << site_total
+                 << " (ECP channel";
+            bool first_l = true;
+            for (int l = 0; l < kQuadratureChannels; ++l) {
+                if (tally.failures[site][l] == 0) continue;
+                line << (first_l ? " " : ", ") << "l=" << l << ": " << tally.failures[site][l];
+                first_l = false;
+            }
+            line << "; largest final refinement change " << tally.max_change[site]
+                 << " at |I| = " << tally.value_at_max[site] << ")";
+            first_site = false;
+        }
+        line << "]";
+        if (!tally.by_center.empty()) {
+            line << "; by ECP centre:";
+            for (std::size_t c = 0; c < tally.by_center.size(); ++c) {
+                if (tally.by_center[c] > 0) line << " #" << c << " " << tally.by_center[c];
+            }
+        }
+        line << " (vibe-qc#392)";
+        diagnostic("ecp", DiagLevel::STANDARD, line.str());
+    }
+    if (tally.bessel > 0) {
+        throw std::runtime_error(
+            std::string(builder) + " ECP build: libecpint's Bessel table was asked for "
+            "more angular momentum than it tabulated; the operator would be incomplete");
+    }
+}
+
 }  // namespace
+
+std::uint64_t EcpQuadratureReport::total_failures() const {
+    std::uint64_t total = 0;
+    for (const auto& site : failures) {
+        for (auto n : site) total += n;
+    }
+    return total;
+}
+
+EcpQuadratureReport last_ecp_quadrature_report() {
+    std::lock_guard<std::mutex> lock(g_quadrature_report_mutex);
+    return g_last_quadrature_report;
+}
 
 std::pair<double, bool> libecpint_gaussian_quadrature(
     int npoints, double exponent, double center, double tolerance) {
@@ -276,7 +464,13 @@ Eigen::MatrixXd compute_ecp_matrix(
                          "see scripts/build_libecpint.sh");
 #endif
     integrator.init(0);  // 0 = no derivatives
+    reset_quadrature_record();
     integrator.compute_integrals();
+    {
+        QuadratureTally tally;
+        tally.absorb(-1);
+        publish_quadrature_report("molecular (library)", tally);
+    }
 
     // -----------------------------------------------------------------
     // Read out integrals (Cartesian basis) and transform per shell-pair
@@ -544,7 +738,13 @@ Eigen::MatrixXd compute_ecp_gradient_contribution(
                          "see scripts/build_libecpint.sh");
 #endif
     integrator.init(1);  // first derivatives
+    reset_quadrature_record();
     integrator.compute_first_derivs();
+    {
+        QuadratureTally tally;
+        tally.absorb(-1);
+        publish_quadrature_report("molecular gradient", tally);
+    }
 
     return contract_ecp_first_derivs(
         basis, integrator, gs, D, n_atoms,
@@ -605,7 +805,13 @@ Eigen::MatrixXd compute_ecp_gradient_contribution_from_primitives(
         ecp_exp.data(), ecp_coef.data(), ecp_ams.data(), ecp_ns.data(),
         n_prim.data());
     integrator.init(1);  // first derivatives
+    reset_quadrature_record();
     integrator.compute_first_derivs();
+    {
+        QuadratureTally tally;
+        tally.absorb(-1);
+        publish_quadrature_report("molecular gradient", tally);
+    }
 
     return contract_ecp_first_derivs(
         basis, integrator, gs, D, n_atoms,
@@ -945,7 +1151,14 @@ Eigen::MatrixXd compute_ecp_matrix_from_primitives(
     libecpint::ECPIntegrator integrator;
     integrator.set_gaussian_basis(static_cast<int>(n_shells), coords.data(), exponents.data(), coefs.data(), ams.data(), shell_lengths.data());
     integrator.set_ecp_basis(static_cast<int>(n_centers), center_xyz.data(), ecp_exp.data(), ecp_coef.data(), ecp_ams.data(), ecp_ns.data(), n_prim.data());
-    integrator.init(0); integrator.compute_integrals();
+    integrator.init(0);
+    reset_quadrature_record();
+    integrator.compute_integrals();
+    {
+        QuadratureTally tally;
+        tally.absorb(-1);
+        publish_quadrature_report("molecular", tally);
+    }
     const int ncart=integrator.ncart; const std::size_t nbf=basis.nbasis();
     Eigen::MatrixXd sph_matrix=Eigen::MatrixXd::Zero(nbf,nbf);
     for (std::size_t s1=0; s1<n_shells; ++s1) {
@@ -1050,53 +1263,92 @@ LatticeMatrixSet compute_ecp_lattice_from_primitives(
     const auto shell2bf = shells.shell2bf();
     int max_basis_l = 0;
     for (const auto& shell : shells) max_basis_l = std::max(max_basis_l, shell.contr[0].l);
+    std::vector<libecpint::GaussianShell> bras;
+    bras.reserve(shells.size());
+    for (const auto& shell : shells) bras.push_back(ecp_gaussian_shell(shell, Eigen::Vector3d::Zero()));
+    // Diagnostic control for the exactness test only: "off" evaluates every
+    // (shell pair, projector image, centre) through libecpint as before.
+    const char* screen_env = std::getenv("VIBEQC_ECP_LATTICE_SCREEN");
+    const bool screen = !(screen_env && std::string(screen_env) == "off");
     std::exception_ptr failure;
-    #pragma omp parallel for schedule(dynamic)
-    for (std::size_t c = 0; c < cells.size(); ++c) {
+    QuadratureTally tally;
+    #pragma omp parallel
+    {
+        QuadratureTally local;
+        reset_quadrature_record();
+        // One engine and one movable copy of the home projectors per thread.
+        // The engine holds only tables fixed at construction, and an image
+        // differs from its home projector only in its centre (ECP::setPos).
+        std::unique_ptr<libecpint::ECPIntegral> engine;
+        std::vector<libecpint::ECP> placed;
         try {
-            libecpint::ECPIntegral engine(max_basis_l, max_ecp_l);
-            auto& block = result.blocks[c];
-            // V(g) = <mu_0 | sum_T U_T | nu_g>. It is generally NOT
-            // symmetric at fixed g. Shifting both orbitals instead repeats
-            // a home-cell matrix in every off-cell block.
-            for (std::size_t s1 = 0; s1 < shells.size(); ++s1) {
-                const auto bra = ecp_gaussian_shell(shells[s1], Eigen::Vector3d::Zero());
-                const int l1 = bra.am(), nc1 = bra.ncartesian(), ns1 = 2*l1 + 1;
-                for (std::size_t s2 = 0; s2 < shells.size(); ++s2) {
-                    const auto ket = ecp_gaussian_shell(shells[s2], cells[c].r_cart);
-                    const int l2 = ket.am(), nc2 = ket.ncartesian(), ns2 = 2*l2 + 1;
-                    std::vector<double> cartesian(nc1*nc2, 0.0);
-                    libecpint::TwoIndex<double> values;
-                    // Stream one projector image and shell pair. No full
-                    // Cartesian supercell matrix or replicated ECP stream.
-                    for (const auto& image : images) {
-                        for (const auto& home : potentials) {
-                            auto potential = home;
-                            potential.setPos(home.center_[0] + image.r_cart[0],
-                                             home.center_[1] + image.r_cart[1],
-                                             home.center_[2] + image.r_cart[2]);
-                            engine.compute_shell_pair(potential, bra, ket, values);
-                            for (int i = 0; i < nc1; ++i) {
-                                for (int j = 0; j < nc2; ++j) cartesian[i*nc2 + j] += values(i, j);
-                            }
-                        }
-                    }
-                    std::vector<double> intermediate(nc1*ns2), spherical(ns1*ns2);
-                    libint2::solidharmonics::tform_cols(nc1, l2, cartesian.data(), intermediate.data());
-                    libint2::solidharmonics::tform_rows(l1, ns2, intermediate.data(), spherical.data());
-                    for (int i = 0; i < ns1; ++i) {
-                        for (int j = 0; j < ns2; ++j) {
-                            block(shell2bf[s1] + i, shell2bf[s2] + j) = spherical[i*ns2 + j];
-                        }
-                    }
-                }
-            }
+            engine = std::make_unique<libecpint::ECPIntegral>(max_basis_l, max_ecp_l);
+            placed = potentials;
         } catch (...) {
             #pragma omp critical(vibeqc_periodic_ecp_failure)
             { if (!failure) failure = std::current_exception(); }
         }
+        libecpint::TwoIndex<double> values;
+        #pragma omp for schedule(dynamic)
+        for (std::size_t c = 0; c < cells.size(); ++c) {
+            if (!engine) continue;
+            try {
+                auto& block = result.blocks[c];
+                // V(g) = <mu_0 | sum_T U_T | nu_g>. It is generally NOT
+                // symmetric at fixed g. Shifting both orbitals instead repeats
+                // a home-cell matrix in every off-cell block.
+                for (std::size_t s1 = 0; s1 < shells.size(); ++s1) {
+                    const auto& bra = bras[s1];
+                    const int l1 = bra.am(), nc1 = bra.ncartesian(), ns1 = 2*l1 + 1;
+                    for (std::size_t s2 = 0; s2 < shells.size(); ++s2) {
+                        const auto ket = ecp_gaussian_shell(shells[s2], cells[c].r_cart);
+                        const int l2 = ket.am(), nc2 = ket.ncartesian(), ns2 = 2*l2 + 1;
+                        std::vector<double> cartesian(nc1*nc2, 0.0);
+                        // Stream one projector image and shell pair. No full
+                        // Cartesian supercell matrix or replicated ECP stream.
+                        for (const auto& image : images) {
+                            for (std::size_t a = 0; a < potentials.size(); ++a) {
+                                const auto& home = potentials[a];
+                                auto& potential = placed[a];
+                                potential.setPos(home.center_[0] + image.r_cart[0],
+                                                 home.center_[1] + image.r_cart[1],
+                                                 home.center_[2] + image.r_cart[2]);
+                                ++local.candidates;
+                                // compute_shell_pair would return exact zeros
+                                // here (#382); every retained term is added
+                                // in the same order as before, so the block
+                                // is unchanged bit for bit.
+                                if (screen && engine->shell_pair_negligible(potential, bra, ket)) {
+                                    ++local.skipped;
+                                    continue;
+                                }
+                                engine->compute_shell_pair(potential, bra, ket, values);
+                                local.absorb(static_cast<int>(a));
+                                for (int i = 0; i < nc1; ++i) {
+                                    for (int j = 0; j < nc2; ++j) cartesian[i*nc2 + j] += values(i, j);
+                                }
+                            }
+                        }
+                        std::vector<double> intermediate(nc1*ns2), spherical(ns1*ns2);
+                        libint2::solidharmonics::tform_cols(nc1, l2, cartesian.data(), intermediate.data());
+                        libint2::solidharmonics::tform_rows(l1, ns2, intermediate.data(), spherical.data());
+                        for (int i = 0; i < ns1; ++i) {
+                            for (int j = 0; j < ns2; ++j) {
+                                block(shell2bf[s1] + i, shell2bf[s2] + j) = spherical[i*ns2 + j];
+                            }
+                        }
+                    }
+                }
+            } catch (...) {
+                #pragma omp critical(vibeqc_periodic_ecp_failure)
+                { if (!failure) failure = std::current_exception(); }
+            }
+        }
+        #pragma omp critical(vibeqc_periodic_ecp_report)
+        tally.merge(local);
     }
     if (failure) std::rethrow_exception(failure);
+    publish_quadrature_report("periodic lattice", tally);
     return result;
 }
 
@@ -1186,60 +1438,81 @@ Eigen::MatrixXd ecp_lattice_gradient_contribution_from_primitives(
     std::vector<Eigen::MatrixXd> cell_gradients(
         cells.size(), Eigen::MatrixXd::Zero(n_atoms, 3));
     std::exception_ptr failure;
-    #pragma omp parallel for schedule(dynamic)
-    for (std::size_t c = 0; c < cells.size(); ++c) {
+    QuadratureTally tally;
+    #pragma omp parallel
+    {
+        QuadratureTally quadrature;
+        reset_quadrature_record();
+        // One engine and one movable projector set per thread, as in the
+        // value builder; results are unchanged.
+        std::unique_ptr<libecpint::ECPIntegral> engine;
+        std::vector<libecpint::ECP> placed;
         try {
-            libecpint::ECPIntegral engine(max_basis_l, prepared.max_l, 1);
-            auto& local = cell_gradients[c];
-            const auto& D = density.blocks[density_positions[c]];
-            for (std::size_t s1 = 0; s1 < shells.size(); ++s1) {
-                const auto bra = ecp_gaussian_shell(shells[s1], Eigen::Vector3d::Zero());
-                const int l1 = bra.am(), nc1 = bra.ncartesian(), ns1 = 2*l1 + 1;
-                for (std::size_t s2 = 0; s2 < shells.size(); ++s2) {
-                    const auto ket = ecp_gaussian_shell(shells[s2], cells[c].r_cart);
-                    const int l2 = ket.am(), nc2 = ket.ncartesian(), ns2 = 2*l2 + 1;
-                    const auto D_pair = D.block(shell2bf[s1], shell2bf[s2], ns1, ns2);
-                    if (D_pair.isZero(0.0)) continue;
-                    std::array<libecpint::TwoIndex<double>, 9> derivatives;
-                    std::vector<double> cartesian(nc1*nc2), intermediate(nc1*ns2), spherical(ns1*ns2);
-                    for (const auto& image : images) {
-                        for (std::size_t a = 0; a < potentials.size(); ++a) {
-                            const auto& home = potentials[a];
-                            auto potential = home;
-                            potential.setPos(home.center_[0] + image.r_cart[0],
-                                             home.center_[1] + image.r_cart[1],
-                                             home.center_[2] + image.r_cart[2]);
-                            engine.compute_shell_pair_derivative(potential, bra, ket, derivatives);
-                            const std::array<int, 3> owners = {
-                                shell_atoms[s1], shell_atoms[s2], projector_atoms[a]};
-                            // libecpint combines coincident-centre partials in
-                            // these nine slots. Add every slot to its owner;
-                            // do not discard or double a coincident projector.
-                            for (int center = 0; center < 3; ++center) {
-                                for (int d = 0; d < 3; ++d) {
-                                    const auto& value = derivatives[3*center + d];
-                                    for (int i = 0; i < nc1; ++i) {
-                                        for (int j = 0; j < nc2; ++j) cartesian[i*nc2 + j] = value(i, j);
+            engine = std::make_unique<libecpint::ECPIntegral>(max_basis_l, prepared.max_l, 1);
+            placed = potentials;
+        } catch (...) {
+            #pragma omp critical(vibeqc_periodic_ecp_failure)
+            { if (!failure) failure = std::current_exception(); }
+        }
+        #pragma omp for schedule(dynamic)
+        for (std::size_t c = 0; c < cells.size(); ++c) {
+            if (!engine) continue;
+            try {
+                auto& local = cell_gradients[c];
+                const auto& D = density.blocks[density_positions[c]];
+                for (std::size_t s1 = 0; s1 < shells.size(); ++s1) {
+                    const auto bra = ecp_gaussian_shell(shells[s1], Eigen::Vector3d::Zero());
+                    const int l1 = bra.am(), nc1 = bra.ncartesian(), ns1 = 2*l1 + 1;
+                    for (std::size_t s2 = 0; s2 < shells.size(); ++s2) {
+                        const auto ket = ecp_gaussian_shell(shells[s2], cells[c].r_cart);
+                        const int l2 = ket.am(), nc2 = ket.ncartesian(), ns2 = 2*l2 + 1;
+                        const auto D_pair = D.block(shell2bf[s1], shell2bf[s2], ns1, ns2);
+                        if (D_pair.isZero(0.0)) continue;
+                        std::array<libecpint::TwoIndex<double>, 9> derivatives;
+                        std::vector<double> cartesian(nc1*nc2), intermediate(nc1*ns2), spherical(ns1*ns2);
+                        for (const auto& image : images) {
+                            for (std::size_t a = 0; a < potentials.size(); ++a) {
+                                const auto& home = potentials[a];
+                                auto& potential = placed[a];
+                                potential.setPos(home.center_[0] + image.r_cart[0],
+                                                 home.center_[1] + image.r_cart[1],
+                                                 home.center_[2] + image.r_cart[2]);
+                                engine->compute_shell_pair_derivative(potential, bra, ket, derivatives);
+                                quadrature.absorb(static_cast<int>(a));
+                                const std::array<int, 3> owners = {
+                                    shell_atoms[s1], shell_atoms[s2], projector_atoms[a]};
+                                // libecpint combines coincident-centre partials in
+                                // these nine slots. Add every slot to its owner;
+                                // do not discard or double a coincident projector.
+                                for (int center = 0; center < 3; ++center) {
+                                    for (int d = 0; d < 3; ++d) {
+                                        const auto& value = derivatives[3*center + d];
+                                        for (int i = 0; i < nc1; ++i) {
+                                            for (int j = 0; j < nc2; ++j) cartesian[i*nc2 + j] = value(i, j);
+                                        }
+                                        libint2::solidharmonics::tform_cols(nc1, l2, cartesian.data(), intermediate.data());
+                                        libint2::solidharmonics::tform_rows(l1, ns2, intermediate.data(), spherical.data());
+                                        double contribution = 0.0;
+                                        for (int i = 0; i < ns1; ++i) {
+                                            for (int j = 0; j < ns2; ++j) contribution += D_pair(i, j) * spherical[i*ns2 + j];
+                                        }
+                                        local(owners[center], d) += contribution;
                                     }
-                                    libint2::solidharmonics::tform_cols(nc1, l2, cartesian.data(), intermediate.data());
-                                    libint2::solidharmonics::tform_rows(l1, ns2, intermediate.data(), spherical.data());
-                                    double contribution = 0.0;
-                                    for (int i = 0; i < ns1; ++i) {
-                                        for (int j = 0; j < ns2; ++j) contribution += D_pair(i, j) * spherical[i*ns2 + j];
-                                    }
-                                    local(owners[center], d) += contribution;
                                 }
                             }
                         }
                     }
                 }
+            } catch (...) {
+                #pragma omp critical(vibeqc_periodic_ecp_failure)
+                { if (!failure) failure = std::current_exception(); }
             }
-        } catch (...) {
-            #pragma omp critical(vibeqc_periodic_ecp_failure)
-            { if (!failure) failure = std::current_exception(); }
         }
+        #pragma omp critical(vibeqc_periodic_ecp_report)
+        tally.merge(quadrature);
     }
     if (failure) std::rethrow_exception(failure);
+    publish_quadrature_report("periodic lattice gradient", tally);
     for (const auto& local : cell_gradients) gradient += local;
     return gradient;
 }

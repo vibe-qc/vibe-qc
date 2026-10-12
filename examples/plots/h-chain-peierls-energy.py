@@ -7,8 +7,12 @@ finer (δ = 0, 0.1, 0.2, ..., 1.2 bohr) and writes
 Run:
     .venv/bin/python examples/plots/h-chain-peierls-energy.py
 
-Takes ~30 s on a single thread; each SCF on a 2-H/cell pob-tzvp
-chain with k-mesh [8,1,1] is a few seconds.
+Like the scan it repeats, the chain is a ``dim=3`` cell with
+``PAD`` bohr of vacuum on the two transverse axes, run with k-point GDF:
+vibe-qc has no route with a consistent 1-D Coulomb gauge for a
+``PeriodicSystem(dim=1, ...)``. Each SCF on the 2-H/cell pob-tzvp chain
+with k-mesh [8,1,1] takes about two minutes with 4 threads, so the 13
+points take roughly half an hour.
 """
 
 from pathlib import Path
@@ -19,24 +23,24 @@ import numpy as np
 from vibeqc import (
     Atom,
     BasisSet,
-    PeriodicSCFOptions,
+    PeriodicRHFOptions,
     PeriodicSystem,
-    monkhorst_pack,
-    run_rhf_periodic_scf,
+    run_krhf_periodic_gdf,
 )
 
 HERE = Path(__file__).resolve().parent
 PLOT_OUT = HERE.parent.parent / "docs" / "_static" / "plots" / "h-chain-peierls-energy.png"
 
 A = 5.0
-KMESH = [8, 1, 1]
+PAD = 15.0                       # transverse vacuum (y, z), bohr
+KMESH = (8, 1, 1)
 DELTAS = np.arange(0.0, 1.21, 0.1)
 
 
 def build_system(delta: float) -> PeriodicSystem:
     return PeriodicSystem(
-        dim=1,
-        lattice=np.diag([A, 30.0, 30.0]),
+        dim=3,
+        lattice=np.diag([A, PAD, PAD]),
         unit_cell=[
             Atom(1, [0.0, 0.0, 0.0]),
             Atom(1, [A / 2.0 - delta, 0.0, 0.0]),
@@ -44,10 +48,8 @@ def build_system(delta: float) -> PeriodicSystem:
     )
 
 
-def scf_opts() -> PeriodicSCFOptions:
-    opts = PeriodicSCFOptions()
-    opts.lattice_opts.cutoff_bohr = 15.0
-    opts.lattice_opts.nuclear_cutoff_bohr = 15.0
+def scf_opts() -> PeriodicRHFOptions:
+    opts = PeriodicRHFOptions()
     opts.conv_tol_energy = 1e-8
     opts.conv_tol_grad = 1e-3
     opts.max_iter = 80
@@ -60,8 +62,8 @@ def main() -> None:
     for delta in DELTAS:
         sysp = build_system(delta)
         basis = BasisSet(sysp.unit_cell_molecule(), "pob-tzvp")
-        km = monkhorst_pack(sysp, KMESH)
-        r = run_rhf_periodic_scf(sysp, basis, km, scf_opts())
+        r = run_krhf_periodic_gdf(sysp, basis, KMESH, scf_opts(),
+                                  progress=False)
         energies.append(r.energy)
         converged.append(r.converged)
         print(f"  δ={delta:.2f}  E={r.energy:+.6f} Ha  "
@@ -83,16 +85,17 @@ def main() -> None:
     ax.scatter(deltas[converged], de_kcal[converged],
                color="#1f77b4", s=70, zorder=3, edgecolor="white",
                linewidth=1.0, label="converged SCF")
-    ax.scatter(deltas[~converged], de_kcal[~converged],
-               color="#d62728", s=70, marker="x", linewidth=2.0, zorder=3,
-               label="SCF stalled (near-metallic)")
+    if (~converged).any():
+        ax.scatter(deltas[~converged], de_kcal[~converged],
+                   color="#d62728", s=70, marker="x", linewidth=2.0,
+                   zorder=3, label="SCF not converged")
 
     # Annotate the H2-equilibrium point: short bond = 1.4 bohr at δ = 1.1.
     idx_h2 = int(np.argmin(np.abs(deltas - 1.1)))
     ax.annotate(
         f"short bond = 1.4 bohr\n(isolated H$_2$ equilibrium)",
         xy=(deltas[idx_h2], de_kcal[idx_h2]),
-        xytext=(0.55, -45),
+        xytext=(0.02, -58),
         fontsize=9,
         arrowprops=dict(arrowstyle="->", color="black", lw=0.8, alpha=0.7),
     )

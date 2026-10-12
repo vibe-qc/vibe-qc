@@ -167,7 +167,9 @@ class ECPTerm:
 
     coefficient: float
     exponent: float
-    power: int  # power of r (typically 0, 1, or 2)
+    # Gaussian input includes the Jacobian: libecpint subtracts two from n.
+    # https://libecpint.readthedocs.io/en/latest/usage.html#important-note-about-ecp-definitions
+    power: int  # Gaussian n=0..4 in coefficient * r^(n-2) * exp(-exponent * r^2)
 
     def to_dict(self) -> Dict[str, Any]:
         return {

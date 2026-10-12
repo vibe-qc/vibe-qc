@@ -209,22 +209,35 @@ currently exports the DOS projection helpers but not this fat-band function.
 ## Fermi reference and band gaps
 
 When `n_electrons_per_cell` is an even integer, `BandStructure.e_fermi` is
-the highest occupied eigenvalue found on the sampled path. For an odd
-electron count it is left unset because separate spin channels are required.
+the highest occupied eigenvalue found on the sampled path, and
+`DensityOfStates.e_fermi` the highest occupied eigenvalue on the mesh under
+one Fermi level for the whole mesh (the same zero-temperature fill the SCF
+uses). On an insulator both are the valence-band maximum. For an odd electron
+count they are left unset because separate spin channels are required. A
+path is not a Brillouin-zone sample, so the path reference is not reliable
+for a metal.
 
-This reference is convenient for plotting, but it is not a finite-temperature
-chemical potential and it is not reliable for a metal. For a semiconductor or
-insulator, report
+For a semiconductor or insulator, with $n$ occupied bands, report
 
 $$
-E_g = \min_{n\in\mathrm{unocc},\mathbf{k}}\varepsilon_{n\mathbf{k}}
-- \max_{n\in\mathrm{occ},\mathbf{k}}\varepsilon_{n\mathbf{k}},
+E_g = \min_{\mathbf{k}}\varepsilon_{n\mathbf{k}}
+- \max_{\mathbf{k}}\varepsilon_{n-1,\mathbf{k}},
 $$
 
-using a converged mesh or a path that includes both extrema. State whether the
-gap is direct or indirect and identify the k points. For a metal, converge the
-k mesh, occupation model, electronic temperature, entropy term, and
-energy/free-energy convention together; see [Smearing](smearing.md).
+bands counted from zero in the energy-sorted spectrum, using a converged mesh
+or a path that includes both extrema. State whether the gap is direct or
+indirect and identify the k points.
+
+Do not compute it as "lowest empty state minus highest occupied state" of a
+zero-temperature SCF on a mesh. With one Fermi level for the whole mesh, a
+metal whose bands overlap has every occupied sampled level below every empty
+one, so that difference is positive: it is the spacing of the sampled levels
+around the Fermi level, and it shrinks to zero as the mesh is refined. A band
+that is occupied at some k-points and empty at others is the signature of a
+metal; the band-index formula above then returns the negative band overlap.
+For a metal, converge the k mesh, occupation model, electronic temperature,
+entropy term, and energy/free-energy convention together; see
+[Smearing](smearing.md).
 
 Combined plotting helpers shift each panel by that object's own `e_fermi`.
 A path-derived occupied reference and a mesh-derived reference can differ even
@@ -247,16 +260,35 @@ Use the accessors:
 import vibeqc as vq
 
 bands = vq.per_k_band_energies(result)      # list of 1-D arrays, one per k
-frontier = vq.frontier_bands(result, n_occ=n_electrons // 2)
-print(frontier.homo, frontier.lumo, frontier.gap)
+frontier = vq.frontier_bands(result)        # reads the result's occupations
+print(frontier.homo, frontier.lumo, frontier.gap, frontier.is_metallic)
 print(frontier.homo_k, frontier.lumo_k)     # direct vs indirect
 ```
 
-`frontier_bands` takes the VBM as a maximum over every sampled k and the CBM as
-a minimum, so an indirect gap is found correctly and a degenerate manifold
-reduces to a scalar rather than raising. `n_occ` is validated against the number
-of **bands**, not the number of k-points, and a ragged per-k set is refused
-rather than silently misaligned.
+`frontier_bands(result)` classifies the states from the occupations the SCF
+actually used, through `vibeqc.band_edges.result_band_edges`. That is the
+same classifier the `.out` "Band extrema (multi-k)" block, the `.system`
+`[run]` band-edge fields (`indirect_gap`, `direct_gap`, `valence_band_max`,
+`conduction_band_min`, `gap_above_fermi_manifold`, `is_metallic`, the same
+keys on every periodic route) and the semiempirical k-route result fields read,
+so every surface reports the same numbers. A metal reports
+`is_metallic=True` and a gap `<= 0`: the band overlap when the Fermi level
+crosses a band, or minus the spread of a fractionally occupied Fermi group.
+Screen on `is_metallic`, not on the sign of the gap. `gap_above_fermi_manifold`
+is the distance to the next entirely empty state; it is never the band gap.
+
+`frontier_bands(result, n_occ=n)` is the band-index reading, bands `n - 1` and
+`n` at every k, for a result without occupations. It agrees with the default
+on every insulator and every band-overlap metal. `n_occ` is validated against
+the number of **bands**, not the number of k-points, and a ragged per-k set is
+refused rather than silently misaligned. Both forms take the VBM as a maximum
+over every sampled k and the CBM as a minimum, so an indirect gap is found
+correctly and a degenerate manifold reduces to a scalar rather than raising.
+
+For an unrestricted result, `frontier_bands(result)` combines both spin
+channels (the per-spin edges are in `frontier.edges.channels`), and
+`spin="alpha"` or `spin="beta"` selects one; `per_k_band_energies` requires
+`spin=` there, since the two channels are different spectra.
 
 A worked example of what guessing costs: on H₂/STO-3G in a 6-bohr cube at
 k = (2,1,1), flattening the per-k list into one array and reading positions

@@ -186,7 +186,7 @@ coverage to covalent, 2-D, and metallic (smearing) cells.
     speedup to about 4.4× while preserving bit-identical reconstruction.
 * **GPW/GAPW ↔ CP2K/GPAW**, runners exist; gate pending.
 
-See also: [Archived `handovers/HANDOVER_CROSS_CODE_PARITY.md`](https://vibe-qc.com/docs/)
+See also: [`python/vibeqc/parity.py`](../python/vibeqc/parity.py)
 (the shipping `python/vibeqc/parity.py` energy-decomposition certification
 matrix), [`docs/license.md`](license.md) (the external-program provenance
 recorded in the `.system` manifest), and CLAUDE.md §10 / §15.

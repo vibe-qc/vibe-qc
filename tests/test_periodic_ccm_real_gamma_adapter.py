@@ -14,7 +14,7 @@ fixed-lattice relaxation landed at the API level in milestone 2c
 runner on 2026-08-23 -- see ``test_runner_real_gamma_optimize``, which
 also pins that the relaxed geometry lands in the separate ``.opt.xyz``
 artefact rather than overwriting the SCF ``.xyz``. Contract inventory +
-history: ``HANDOVER_AICCM_DIRECT_TORUS.md`` § Milestone 2d and
+history: Milestone 2d and
 § Milestone 2c LANDED.
 """
 
@@ -341,7 +341,7 @@ def test_runner_real_gamma_optimize(tmp_path):
     out = (tmp_path / "rg.out").read_text(encoding="utf-8")
     assert "real-Γ direct-torus, parity-verified" in out
     assert "parity (initial)" in out and "parity (final)" in out
-    # M0 (handovers/HANDOVER_AICCM_STANDARD_METHOD.md): the relaxation runs on
+    # M0 (the original investigation): the relaxation runs on
     # run_ccm_direct_gradient, so the citation surface owes Pulay 1969 and
     # Hellmann-Feynman via uses_gradient, next to the CCM lineage pair.
     from vibeqc.output.citations.registry import load_default_database
@@ -424,7 +424,7 @@ def test_runner_real_gamma_fail_closed_surface(tmp_path):
 
 
 def test_runner_front_door_real_gamma_matches_legacy_selector(tmp_path):
-    """M1 (handovers/HANDOVER_AICCM_STANDARD_METHOD.md): the front door
+    """M1 (the original investigation): the front door
     ``method="aiccm", variant="real-gamma"`` with the torus keyword and the
     deprecated ``jk_method="real-gamma"`` spelling with the k-mesh alias
     execute the same dispatch: same converged energy, same executed route in
@@ -577,3 +577,173 @@ def test_direct_ccm_adapters_validate_before_basis(selector, variant):
     with pytest.raises((ValueError, NotImplementedError), match="guess"):
         adapter(_h2_cell(), "intentionally-invalid-basis", "RHF", (1, 1, 1),
                 initial_guess=selector)
+
+
+# --- ruling R6: the vacuum-padding opt-in on the real-Γ arm -----------------
+
+
+def test_runner_real_gamma_vacuum_opt_in_warns_and_stamps(tmp_path):
+    """Mirror of the neutral-Bloch gate: the padded chain is refused by
+    default, runs with ``aiccm_allow_vacuum_padding=True``, and the manifest
+    records the switch and the padded directions read off the driver result.
+    Both producers run the SAME padded Hamiltonian, so the identity holds
+    there too (measured, not assumed: pinned at 1e-9 like the 3-D cells)."""
+    import tomllib
+    import warnings as _warnings
+
+    from vibeqc import run_periodic_job
+    from vibeqc._vibeqc_core import BasisSet
+    from vibeqc.periodic.ccm.experimental import AICCMVacuumPaddingWarning
+
+    cell = PeriodicSystem(
+        3, np.diag([6.0, 30.0, 30.0]),
+        [Atom(1, [0.0, 0.0, 0.0]), Atom(1, [1.4, 0.0, 0.0])], 0, 1)
+    basis = BasisSet(cell.unit_cell_molecule(), "sto-3g")
+    common = dict(progress=False, method="aiccm",
+                  aiccm_lattice_extension=(2, 1, 1), initial_guess="HCORE")
+    with pytest.raises(NotImplementedError, match="allow_vacuum_padding"):
+        _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "rg_ref"),
+               variant="real-gamma", **common)
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        _warnings.simplefilter("error", AICCMVacuumPaddingWarning)
+        with pytest.raises(AICCMVacuumPaddingWarning, match="2, 3"):
+            run_periodic_job(cell, basis, output=str(tmp_path / "rg_w"),
+                             variant="real-gamma",
+                             aiccm_allow_vacuum_padding=True, **common)
+    rg = _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "rg_pad"),
+                variant="real-gamma", aiccm_allow_vacuum_padding=True, **common)
+    assert rg.converged
+    assert rg.real_gamma.vacuum_padding_allowed is True
+    assert rg.real_gamma.vacuum_padded_axes == (2, 3)
+    run = tomllib.loads(
+        (tmp_path / "rg_pad.system").read_text(encoding="utf-8"))["run"]
+    assert run["aiccm_allow_vacuum_padding"] is True
+    assert run["aiccm_vacuum_padded_axes"] == [2, 3]
+    assert run["scf_final_residual_metric"] == (
+        "max_abs_orthonormalised_commutator")
+    assert isinstance(run["scf_final_delta_e_ha"], float)
+    nb = _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "nb_pad"),
+                variant="neutral-bloch", aiccm_allow_vacuum_padding=True,
+                progress=False, method="aiccm",
+                aiccm_lattice_extension=(2, 1, 1))
+    assert nb.energy == pytest.approx(rg.energy, abs=1e-9)
+
+
+@pytest.mark.parametrize("method", ["RHF", "RKS", "UHF", "UKS"])
+@pytest.mark.parametrize("read", [False, True])
+def test_real_gamma_first_consumed_density(monkeypatch, method, read):
+    """Exercise adapter -> direct producer -> first J build without integrals."""
+    import vibeqc._vibeqc_core as core
+    import vibeqc.periodic.ccm.direct as direct
+    import vibeqc.periodic.ccm.real_gamma_runner as adapter
+    import vibeqc.periodic.ccm.system as system_module
+    import vibeqc.pbc_bipole_common as guards
+
+    cell = _h2_cell()
+    molecule = cell.unit_cell_molecule()
+    ccm = SimpleNamespace(supercell=molecule, unit_system=cell, n_cells=2,
+                          nrep=(2, 1, 1), n_atoms=2)
+    S, h = np.diag([2., 1.]), np.diag([-4., -1.])
+    opened = method in ("UHF", "UKS")
+    seed = (np.diag([.5, 0.]), np.diag([0., 1.])) if opened else np.diag([0., 2.])
+    source = (SimpleNamespace(density_alpha=seed[0], density_beta=seed[1])
+              if opened else SimpleNamespace(density=seed))
+    payload = adapter.real_gamma_read_source(
+        SimpleNamespace(ccm_result=source), open_shell=opened)
+    expected = (sum(seed) if opened else seed) if read else np.diag([1., 0.])
+    monkeypatch.setattr(system_module, "CCMSystem", lambda *a: ccm)
+    monkeypatch.setattr(adapter, "BasisSet", lambda *a: object())
+    monkeypatch.setattr(guards, "reject_bipole_ecp_options", lambda *a, **k: None)
+    monkeypatch.setattr(core, "Functional", lambda *a: SimpleNamespace(
+        is_range_separated=False, hf_exchange_fraction=1.0))
+    monkeypatch.setattr(direct, "_warn_experimental", lambda: None)
+    monkeypatch.setattr(direct, "_reject_vacuum_padded_direct", lambda *a, **k: ())
+    monkeypatch.setattr(direct, "_reject_external_xc_neutral_hamiltonian", lambda *a, **k: None)
+    monkeypatch.setattr(direct, "_external_xc_grid_options", lambda f, g, **k: g)
+    monkeypatch.setattr(direct, "_neutral_cderi_with_info", lambda *a, **k: (None, None))
+    monkeypatch.setattr(direct, "ccm_direct_oneelectron", lambda *a, **k: (S, h, 0.))
+    monkeypatch.setattr(direct, "_real_gamma_rks_xc_builder",
+                        lambda *a, **k: lambda D: (0., np.zeros_like(D)))
+    monkeypatch.setattr(direct, "_real_gamma_uks_xc_builder",
+                        lambda *a, **k: lambda Da, Db: (0., np.zeros_like(Da), np.zeros_like(Db)))
+
+    class Consumed(Exception):
+        pass
+
+    seen = []
+
+    def first_j(_L, D):
+        np.testing.assert_allclose(D, expected, rtol=0, atol=1e-14)
+        seen.append("J")
+        return np.zeros_like(D)
+
+    def first_k(_L, D, *args):
+        index = len(seen) - 1
+        target = ((seed[index] if read else expected / 2) if opened else expected)
+        np.testing.assert_allclose(D, target, rtol=0, atol=1e-14)
+        seen.append("K")
+        if not opened or index == 1:
+            raise Consumed
+        return np.zeros_like(D)
+
+    monkeypatch.setattr(direct, "ccm_ri_j_neutral", first_j)
+    monkeypatch.setattr(direct, "_k_neutral_fast", first_k)
+    before = np.array(seed, copy=True)
+    with pytest.raises(Consumed):
+        adapter.run_real_gamma_scf(
+            cell, "synthetic", method, (2, 1, 1), exxdiv=None,
+            initial_guess="READ" if read else "AUTO",
+            initial_density=payload if read else None)
+    np.testing.assert_array_equal(np.array(seed), before)
+    assert seen == (["J", "K", "K"] if opened else ["J", "K"])
+
+
+def test_real_gamma_read_admission():
+    from vibeqc.periodic.ccm.scf import _ccm_read_density, _ccm_read_spin_densities
+    from vibeqc.periodic.ccm.real_gamma_runner import real_gamma_read_source
+
+    S = np.diag([2., 1.])
+    good = np.diag([0., 2.])
+    np.testing.assert_array_equal(_ccm_read_density(good, S, 2), good)
+    bad = [np.eye(3), np.array([[0., 1.], [0., 2.]]),
+           np.array([[np.nan, 0.], [0., 2.]]), np.diag([-.1, 2.2]),
+           np.diag([0., 1.]), np.array([[.5, .1j], [-.1j, 1.]])]
+    for density in bad:
+        with pytest.raises(ValueError, match="READ"):
+            _ccm_read_density(density, S, 2)
+    with pytest.raises(ValueError, match="spin capacity"):
+        _ccm_read_density(np.diag([1.5, 0.]), S, 3)
+    with pytest.raises(ValueError, match="alpha, beta"):
+        _ccm_read_spin_densities(good, S, 1, 1)
+    with pytest.raises(ValueError, match="electron count"):
+        _ccm_read_spin_densities((good, good), S, 1, 1)
+    for source in (None, "seed.qvf"):
+        with pytest.raises(ValueError, match="in-memory"):
+            real_gamma_read_source(source)
+
+
+def test_runner_real_gamma_read_keeps_supercell_density(monkeypatch, tmp_path):
+    """The public READ seam must not project a 4-AO seed onto 2 unit-cell AOs."""
+    from vibeqc import BasisSet, run_periodic_job
+    import vibeqc.periodic.ccm.real_gamma_runner as adapter
+    cell = _h2_cell()
+    basis = BasisSet(cell.unit_cell_molecule(), "sto-3g")
+    seed = np.eye(2 * basis.nbasis)
+    reference = SimpleNamespace(density=seed)
+
+    class Routed(Exception):
+        pass
+
+    def consume(system, basis_name, method, mesh, **kwargs):
+        assert tuple(mesh) == (2, 1, 1)
+        assert kwargs["initial_guess"].name == "READ"
+        assert kwargs["initial_density"] is seed
+        raise Routed
+
+    monkeypatch.setattr(adapter, "run_real_gamma_scf", consume)
+    with pytest.raises(Routed):
+        run_periodic_job(cell, basis, method="aiccm", variant="real-gamma",
+                         aiccm_lattice_extension=(2, 1, 1), initial_guess="READ",
+                         read_from=reference, progress=False,
+                         output=str(tmp_path / "read-supercell"))

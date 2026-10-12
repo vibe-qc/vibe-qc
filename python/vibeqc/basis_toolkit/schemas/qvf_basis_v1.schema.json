@@ -146,7 +146,12 @@
       "properties": {
         "coefficient": { "type": "number" },
         "exponent": { "type": "number", "minimum": 0 },
-        "power": { "type": "integer", "enum": [0, 1, 2] }
+        "power": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4,
+          "description": "Gaussian-format integer n in coefficient * r^(n-2) * exp(-exponent * r^2); n=0..4 represents radial powers r^-2 through r^2."
+        }
       }
     },
     "reference": {

@@ -87,10 +87,11 @@ python -c "from vibeqc import print_banner; print_banner()"
 ```
 
 This is the tested macOS command. On Linux, select your installed supported
-Python instead. The repository published the `v0.16.0` tag and the `release`
-branch on 2026-09-08, so the flag-free installer -- which targets `release`
--- is appropriate; `--dev` selects `main`. Do not assume historical monorepo
-tags exist in the new repository: its history starts at the split.
+Python instead. `--dev` selects `main`. For a stable installation, omit it:
+the installer selects origin's `release` branch when present, or its newest
+stable `vX.Y.Z` tag otherwise. An explicit `--branch NAME` remains an exact
+request. Check refs on your chosen host; do not assume historical monorepo
+tags exist in a split repository or public snapshot.
 
 ### vibe-view
 

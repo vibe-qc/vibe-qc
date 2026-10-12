@@ -16,6 +16,8 @@ from vibeqc.periodic_external_xc import (
 )
 from vibeqc.periodic_gapw_grid import PlaneWaveGrid
 
+from tests.refusal_receipt import assert_preflight_refusal
+
 
 _NAMES = itertools.count()
 
@@ -859,7 +861,7 @@ def test_high_level_external_gpw_gapw_reject_charged_cell_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("route", ("gpw-gamma", "gpw-multik", "gapw-gamma"))

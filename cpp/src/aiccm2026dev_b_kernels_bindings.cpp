@@ -92,6 +92,100 @@ py::ssize_t checked_positive_product(py::ssize_t left,
     return left * right;
 }
 
+// Admit raw Python values before pybind's narrowing forcecast. Direct calls
+// to the exported kernels must obey the same contract as Python wrappers.
+py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
+checked_integer_array(py::handle values, const char* name) {
+    auto raw = py::module_::import("numpy").attr("asarray")(
+        values, py::arg("dtype") = "object").cast<py::array>();
+    std::vector<py::ssize_t> shape(raw.shape(), raw.shape() + raw.ndim());
+    py::array_t<std::int64_t> out(shape);
+    auto* target = out.mutable_data();
+    py::ssize_t index = 0;
+    for (py::handle value : raw.attr("flat")) {
+        const auto kind = py::module_::import("numpy").attr("asarray")(value)
+            .attr("dtype").attr("kind").cast<std::string>();
+        if (kind == "i" || kind == "u" || PyLong_Check(value.ptr())) {
+            if (PyBool_Check(value.ptr())) {
+                throw py::value_error(std::string(name) + " must contain integers, not booleans");
+            }
+            py::object integer = py::reinterpret_steal<py::object>(PyNumber_Index(value.ptr()));
+            if (!integer) throw py::error_already_set();
+            const auto result = PyLong_AsLongLong(integer.ptr());
+            if (PyErr_Occurred()) {
+                PyErr_Clear();
+                throw py::value_error(std::string(name) + " exceeds the signed int64 range");
+            }
+            target[index++] = static_cast<std::int64_t>(result);
+        } else if (kind == "f") {
+            const long double x = py::cast<long double>(value);
+            const long double limit = std::ldexp(1.0L, 63);
+            if (!std::isfinite(x) || std::floor(x) != x || x < -limit || x >= limit) {
+                throw py::value_error(std::string(name) + " requires finite integral values in int64 range");
+            }
+            target[index++] = static_cast<std::int64_t>(x);
+        } else {
+            throw py::value_error(std::string(name) + " requires finite integral real values");
+        }
+    }
+    return out;
+}
+
+py::ssize_t checked_integer_scalar(py::handle value, const char* name) {
+    auto array = checked_integer_array(value, name);
+    if (array.ndim() != 0) throw py::value_error(std::string(name) + " must be scalar");
+    return static_cast<py::ssize_t>(*array.data());
+}
+
+template <typename Scalar>
+void checked_output_size(std::initializer_list<py::ssize_t> shape) {
+    py::ssize_t size = sizeof(Scalar);
+    for (auto extent : shape) {
+        if (extent < 0 || (extent && size > std::numeric_limits<py::ssize_t>::max() / extent))
+            throw py::value_error("chi transform output exceeds addressable array bounds");
+        size *= extent;
+    }
+}
+
+py::array_t<double, py::array::c_style | py::array::forcecast>
+checked_real_array(py::handle values, const char* name) {
+    auto raw = py::array::ensure(values);
+    if (!raw || (raw.dtype().kind() != 'i' && raw.dtype().kind() != 'u' && raw.dtype().kind() != 'f')) {
+        throw py::value_error(std::string(name) + " must contain finite real values");
+    }
+    auto out = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(raw);
+    for (py::ssize_t i = 0; i < out.size(); ++i) {
+        if (!std::isfinite(out.data()[i]))
+            throw py::value_error(std::string(name) + " must contain finite real values");
+    }
+    return out;
+}
+
+template <typename Scalar>
+void require_finite_values(
+    const py::array_t<Scalar, py::array::c_style | py::array::forcecast>& values) {
+    for (py::ssize_t i = 0; i < values.size(); ++i) {
+        const Complex value = values.data()[i];
+        if (!std::isfinite(value.real()) || !std::isfinite(value.imag()))
+            throw py::value_error("chi transform matrices/coefficients must be finite");
+    }
+}
+
+double modular_product(double k, std::int64_t translation) {
+    double term = k - std::floor(k);
+    const bool negative = translation < 0;
+    // Negating INT64_MIN is undefined; compute its magnitude unsigned.
+    std::uint64_t n = negative ? std::uint64_t(-(translation + 1)) + 1
+                               : std::uint64_t(translation);
+    double value = 0.;
+    while (n) {
+        if (n & 1) value = std::fmod(value + term, 1.);
+        term = std::fmod(2. * term, 1.);
+        n >>= 1;
+    }
+    return negative ? -value : value;
+}
+
 std::vector<Complex> finite_group_phases(
     const py::array_t<double, py::array::c_style | py::array::forcecast>& kfrac,
     const py::array_t<std::int64_t,
@@ -110,13 +204,13 @@ std::vector<Complex> finite_group_phases(
             "aiccm2026dev-b finite-torus kernels require one character "
             "per cyclic translation");
     }
-    std::vector<Complex> phase(static_cast<std::size_t>(n_k * n_cells));
+    std::vector<Complex> phase(static_cast<std::size_t>(checked_positive_product(n_k, n_cells, "character phase table")));
     for (py::ssize_t ik = 0; ik < n_k; ++ik) {
         for (py::ssize_t ir = 0; ir < n_cells; ++ir) {
             const double dot =
-                k(ik, 0) * static_cast<double>(t(ir, 0)) +
-                k(ik, 1) * static_cast<double>(t(ir, 1)) +
-                k(ik, 2) * static_cast<double>(t(ir, 2));
+                modular_product(k(ik, 0), t(ir, 0)) +
+                modular_product(k(ik, 1), t(ir, 1)) +
+                modular_product(k(ik, 2), t(ir, 2));
             phase[static_cast<std::size_t>(ik * n_cells + ir)] =
                 std::polar(1.0, kTwoPi * dot);
         }
@@ -137,9 +231,9 @@ std::vector<Complex> auxiliary_translation_phases(
         for (py::ssize_t ki = 0; ki < n_k; ++ki) {
             for (py::ssize_t ka = 0; ka < n_k; ++ka) {
                 const double dot =
-                    (k(ka, 0) - k(ki, 0)) * static_cast<double>(t(it, 0)) +
-                    (k(ka, 1) - k(ki, 1)) * static_cast<double>(t(it, 1)) +
-                    (k(ka, 2) - k(ki, 2)) * static_cast<double>(t(it, 2));
+                    (modular_product(k(ka, 0), t(it, 0)) - modular_product(k(ki, 0), t(it, 0))) +
+                    (modular_product(k(ka, 1), t(it, 1)) - modular_product(k(ki, 1), t(it, 1))) +
+                    (modular_product(k(ka, 2), t(it, 2)) - modular_product(k(ki, 2), t(it, 2)));
                 aux[static_cast<std::size_t>((it * n_k + ki) * n_k + ka)] =
                     std::polar(1.0, kTwoPi * dot);
             }
@@ -150,9 +244,11 @@ std::vector<Complex> auxiliary_translation_phases(
 
 py::tuple matrix_to_real_supercell(
     py::array_t<Complex, py::array::c_style | py::array::forcecast> matrices,
-    py::array_t<double, py::array::c_style | py::array::forcecast> kfrac,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
-        translations) {
+    py::object raw_kfrac,
+    py::object raw_translations) {
+    auto translations = checked_integer_array(raw_translations, "translations");
+    auto kfrac = checked_real_array(raw_kfrac, "kfrac");
+    require_finite_values(matrices);
     const py::buffer_info minfo = matrices.request();
     const py::buffer_info kinfo = kfrac.request();
     const py::buffer_info tinfo = translations.request();
@@ -176,7 +272,8 @@ py::tuple matrix_to_real_supercell(
     }
 
     const py::ssize_t n_cells = n_k;
-    const py::ssize_t n_ao = n_cells * nbf;
+    const py::ssize_t n_ao = checked_positive_product(n_cells, nbf, "real-torus AO dimension");
+    checked_positive_product(n_ao, n_ao, "real-torus matrix output");
     py::array_t<double> out({n_ao, n_ao});
     auto out_u = out.mutable_unchecked<2>();
     const auto mat = matrices.unchecked<3>();
@@ -222,10 +319,13 @@ py::tuple matrix_to_real_supercell(
 
 py::array_t<Complex> inverse_bloch_transform_blocks(
     py::array_t<Complex, py::array::c_style | py::array::forcecast> matrices,
-    py::array_t<double, py::array::c_style | py::array::forcecast> kfrac,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
-        translations,
-    py::array_t<double, py::array::c_style | py::array::forcecast> weights) {
+    py::object raw_kfrac,
+    py::object raw_translations,
+    py::object raw_weights) {
+    auto translations = checked_integer_array(raw_translations, "translations");
+    auto kfrac = checked_real_array(raw_kfrac, "kfrac");
+    auto weights = checked_real_array(raw_weights, "weights");
+    require_finite_values(matrices);
     const py::buffer_info minfo = matrices.request();
     const py::buffer_info kinfo = kfrac.request();
     const py::buffer_info tinfo = translations.request();
@@ -248,12 +348,33 @@ py::array_t<Complex> inverse_bloch_transform_blocks(
             shape_string<double>(winfo));
     }
     const py::ssize_t n_translations = tinfo.shape[0];
+    if (n_k < 1 || nbf < 1 || n_translations < 1)
+        throw py::value_error("inverse Bloch transform requires nonempty arrays");
+    double weight_sum = 0.;
+    for (py::ssize_t ik = 0; ik < n_k; ++ik) {
+        const double weight = weights.data()[ik];
+        if (weight < 0. || weight > 1.)
+            throw py::value_error("inverse Bloch weights must be nonnegative and sum to one");
+        weight_sum += weight;
+    }
+    if (std::abs(weight_sum - 1.) > 1.e-12)
+        throw py::value_error("inverse Bloch weights must sum to one");
+    checked_positive_product(n_translations, checked_positive_product(nbf, nbf, "Bloch block"), "Bloch output");
     py::array_t<Complex> out({n_translations, nbf, nbf});
     const auto mat = matrices.unchecked<3>();
     const auto k = kfrac.unchecked<2>();
     const auto t = translations.unchecked<2>();
     const auto w = weights.unchecked<1>();
     auto out_u = out.mutable_unchecked<3>();
+    std::vector<Complex> phases(static_cast<std::size_t>(
+        checked_positive_product(n_translations, n_k, "Bloch phase table")));
+    for (py::ssize_t r = 0; r < n_translations; ++r) {
+        for (py::ssize_t ik = 0; ik < n_k; ++ik) {
+            const double dot = modular_product(k(ik, 0), t(r, 0)) +
+                modular_product(k(ik, 1), t(r, 1)) + modular_product(k(ik, 2), t(r, 2));
+            phases[static_cast<std::size_t>(r * n_k + ik)] = std::polar(w(ik), -kTwoPi * dot);
+        }
+    }
 
     {
         py::gil_scoped_release release;
@@ -263,12 +384,7 @@ py::array_t<Complex> inverse_bloch_transform_blocks(
                 for (py::ssize_t col = 0; col < nbf; ++col) {
                     Complex value{0.0, 0.0};
                     for (py::ssize_t ik = 0; ik < n_k; ++ik) {
-                        const double dot =
-                            k(ik, 0) * static_cast<double>(t(r, 0)) +
-                            k(ik, 1) * static_cast<double>(t(r, 1)) +
-                            k(ik, 2) * static_cast<double>(t(r, 2));
-                        value += std::polar(w(ik), -kTwoPi * dot) *
-                                 mat(ik, row, col);
+                        value += phases[static_cast<std::size_t>(r * n_k + ik)] * mat(ik, row, col);
                     }
                     out_u(r, row, col) = value;
                 }
@@ -281,10 +397,13 @@ py::array_t<Complex> inverse_bloch_transform_blocks(
 py::array_t<Complex> canonical_wannier_coefficients(
     py::array_t<Complex, py::array::c_style | py::array::forcecast>
         coefficients_k,
-    py::array_t<double, py::array::c_style | py::array::forcecast> kfrac,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
-        translations,
-    py::ssize_t n_occ) {
+    py::object raw_kfrac,
+    py::object raw_translations,
+    py::object raw_n_occ) {
+    const auto n_occ = checked_integer_scalar(raw_n_occ, "n_occ");
+    auto translations = checked_integer_array(raw_translations, "translations");
+    auto kfrac = checked_real_array(raw_kfrac, "kfrac");
+    require_finite_values(coefficients_k);
     const py::buffer_info cinfo = coefficients_k.request();
     const py::buffer_info kinfo = kfrac.request();
     const py::buffer_info tinfo = translations.request();
@@ -306,7 +425,10 @@ py::array_t<Complex> canonical_wannier_coefficients(
             "aiccm2026dev-b Wannier transform got an invalid occupied rank");
     }
     const py::ssize_t n_cells = n_k;
-    py::array_t<Complex> out({n_cells * nbf, n_cells * n_occ});
+    const auto n_ao = checked_positive_product(n_cells, nbf, "Wannier AO dimension");
+    const auto n_orb = checked_positive_product(n_cells, n_occ, "Wannier occupied dimension");
+    checked_positive_product(n_ao, n_orb, "Wannier output");
+    py::array_t<Complex> out({n_ao, n_orb});
     const auto coeff = coefficients_k.unchecked<3>();
     auto out_u = out.mutable_unchecked<2>();
     const auto phase = finite_group_phases(kfrac, translations);
@@ -370,10 +492,14 @@ py::tuple localization_projector_audit(
     py::array_t<Complex, py::array::c_style | py::array::forcecast> canonical,
     py::array_t<Complex, py::array::c_style | py::array::forcecast> localized,
     py::object fock,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
-        translations,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> mesh,
-    py::ssize_t nbf) {
+    py::object raw_translations,
+    py::object raw_mesh,
+    py::object raw_nbf) {
+    const auto nbf = checked_integer_scalar(raw_nbf, "nbf");
+    auto translations = checked_integer_array(raw_translations, "translations");
+    auto mesh = checked_integer_array(raw_mesh, "mesh");
+    require_finite_values(canonical);
+    require_finite_values(localized);
     const py::buffer_info cinfo = canonical.request();
     const py::buffer_info linfo = localized.request();
     const py::buffer_info tinfo = translations.request();
@@ -414,8 +540,8 @@ py::tuple localization_projector_audit(
             "aiccm2026dev-b localization projector audit mesh entries must "
             "be positive");
     }
-    const py::ssize_t n_cells = n0 * n1 * n2;
-    if (tinfo.shape[0] != n_cells || n_ao != n_cells * nbf) {
+    const py::ssize_t n_cells = checked_positive_mesh_product(n0, n1, n2, "finite translation");
+    if (tinfo.shape[0] != n_cells || n_ao != checked_positive_product(n_cells, nbf, "AO count")) {
         throw std::runtime_error(
             "aiccm2026dev-b localization projector audit coefficient, "
             "translation, mesh, and AO dimensions are inconsistent");
@@ -671,10 +797,11 @@ py::tuple localization_projector_audit(
 
 py::tuple lpq_cache_to_real_supercell_impl(
     py::dict lpq_cache,
-    py::array_t<double, py::array::c_style | py::array::forcecast> kfrac,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
-        translations,
+    py::object raw_kfrac,
+    py::object raw_translations,
     bool home_auxiliary_only) {
+    auto translations = checked_integer_array(raw_translations, "translations");
+    auto kfrac = checked_real_array(raw_kfrac, "kfrac");
     const py::buffer_info kinfo = kfrac.request();
     const py::buffer_info tinfo = translations.request();
     require_rank(kinfo, 2, "kfrac");
@@ -688,6 +815,7 @@ py::tuple lpq_cache_to_real_supercell_impl(
 
     const py::ssize_t n_cells = kinfo.shape[0];
     const py::ssize_t n_k = n_cells;
+    checked_positive_product(n_k, n_k, "RI pair table");
     using ComplexArray =
         py::array_t<Complex, py::array::c_style | py::array::forcecast>;
     std::vector<ComplexArray> arrays(static_cast<std::size_t>(n_k * n_k));
@@ -709,6 +837,7 @@ py::tuple lpq_cache_to_real_supercell_impl(
                     "aiccm2026dev-b RI transform could not cast lpq_cache "
                     "entry to complex128 C-contiguous array");
             }
+            require_finite_values(arr);
             const py::buffer_info info = arr.request();
             require_rank(info, 3, "lpq_cache entry");
             if (info.shape[1] != info.shape[2]) {
@@ -733,9 +862,10 @@ py::tuple lpq_cache_to_real_supercell_impl(
         throw std::runtime_error("aiccm2026dev-b RI transform got empty LPQ cache");
     }
 
-    const py::ssize_t n_aux_super = n_cells * n_aux;
-    const py::ssize_t n_ao = n_cells * nbf;
+    const py::ssize_t n_aux_super = checked_positive_product(n_cells, n_aux, "RI auxiliary dimension");
+    const py::ssize_t n_ao = checked_positive_product(n_cells, nbf, "real-torus AO dimension");
     const py::ssize_t n_aux_out = home_auxiliary_only ? n_aux : n_aux_super;
+    checked_positive_product(n_aux_out, checked_positive_product(n_ao, n_ao, "RI AO output"), "RI output");
     py::array_t<double> out({n_aux_out, n_ao, n_ao});
     auto out_u = out.mutable_unchecked<3>();
 
@@ -814,9 +944,8 @@ py::tuple lpq_cache_to_real_supercell_impl(
 
 py::tuple lpq_cache_to_real_supercell(
     py::dict lpq_cache,
-    py::array_t<double, py::array::c_style | py::array::forcecast> kfrac,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
-        translations) {
+    py::object kfrac,
+    py::object translations) {
     return lpq_cache_to_real_supercell_impl(
         std::move(lpq_cache),
         std::move(kfrac),
@@ -876,16 +1005,16 @@ void validate_home_auxiliary_group(
         for (py::ssize_t axis = 0; axis < 3; ++axis) {
             const py::ssize_t dimension =
                 dimensions[static_cast<std::size_t>(axis)];
-            const double scaled = k(ik, axis) * static_cast<double>(dimension);
+            const double reduced = k(ik, axis) - std::floor(k(ik, axis));
+            const double scaled = reduced * static_cast<double>(dimension);
             const long double scaled_wide =
-                static_cast<long double>(k(ik, axis)) *
+                static_cast<long double>(reduced) *
                 static_cast<long double>(dimension);
             const long double lower = static_cast<long double>(
                 std::numeric_limits<py::ssize_t>::lowest());
-            const long double upper = static_cast<long double>(
-                std::numeric_limits<py::ssize_t>::max());
+            const long double upper = std::ldexp(1.0L, 63);
             if (!std::isfinite(scaled_wide) || scaled_wide < lower ||
-                scaled_wide > upper) {
+                scaled_wide >= upper) {
                 throw std::runtime_error(
                     "aiccm2026dev-b home-auxiliary transform requires finite "
                     "dual cyclic characters in the supported integer range");
@@ -913,10 +1042,12 @@ void validate_home_auxiliary_group(
 
 py::tuple lpq_cache_to_real_home_auxiliary(
     py::dict lpq_cache,
-    py::array_t<double, py::array::c_style | py::array::forcecast> kfrac,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
-        translations,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> mesh) {
+    py::object raw_kfrac,
+    py::object raw_translations,
+    py::object raw_mesh) {
+    auto translations = checked_integer_array(raw_translations, "translations");
+    auto mesh = checked_integer_array(raw_mesh, "mesh");
+    auto kfrac = checked_real_array(raw_kfrac, "kfrac");
     validate_home_auxiliary_group(kfrac, translations, mesh);
     return lpq_cache_to_real_supercell_impl(
         std::move(lpq_cache),
@@ -926,9 +1057,10 @@ py::tuple lpq_cache_to_real_home_auxiliary(
 }
 
 py::array_t<double> three_index_mo_transform_real(
-    py::array_t<double, py::array::c_style | py::array::forcecast> factors,
-    py::array_t<double, py::array::c_style | py::array::forcecast> c_left,
-    py::array_t<double, py::array::c_style | py::array::forcecast> c_right) {
+    py::object raw_factors, py::object raw_left, py::object raw_right) {
+    auto factors = checked_real_array(raw_factors, "factors");
+    auto c_left = checked_real_array(raw_left, "c_left");
+    auto c_right = checked_real_array(raw_right, "c_right");
     const py::buffer_info binfo = factors.request();
     const py::buffer_info linfo = c_left.request();
     const py::buffer_info rinfo = c_right.request();
@@ -948,6 +1080,7 @@ py::array_t<double> three_index_mo_transform_real(
     }
     const py::ssize_t n_left = linfo.shape[1];
     const py::ssize_t n_right = rinfo.shape[1];
+    checked_output_size<double>({n_aux, n_left, n_right});
     py::array_t<double> out({n_aux, n_left, n_right});
 
     const double* bptr = static_cast<const double*>(binfo.ptr);
@@ -978,6 +1111,9 @@ py::array_t<Complex> three_index_mo_transform_complex(
     py::array_t<Complex, py::array::c_style | py::array::forcecast> factors,
     py::array_t<Complex, py::array::c_style | py::array::forcecast> c_left,
     py::array_t<Complex, py::array::c_style | py::array::forcecast> c_right) {
+    require_finite_values(factors);
+    require_finite_values(c_left);
+    require_finite_values(c_right);
     const py::buffer_info binfo = factors.request();
     const py::buffer_info linfo = c_left.request();
     const py::buffer_info rinfo = c_right.request();
@@ -997,6 +1133,7 @@ py::array_t<Complex> three_index_mo_transform_complex(
     }
     const py::ssize_t n_left = linfo.shape[1];
     const py::ssize_t n_right = rinfo.shape[1];
+    checked_output_size<Complex>({n_aux, n_left, n_right});
     py::array_t<Complex> out({n_aux, n_left, n_right});
 
     const Complex* bptr = static_cast<const Complex*>(binfo.ptr);
@@ -1284,6 +1421,9 @@ py::array_t<Scalar> home_auxiliary_three_index_mo_transform_impl(
     py::array_t<Scalar, py::array::c_style | py::array::forcecast> c_right,
     py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> mesh,
     const char* scalar_label) {
+    require_finite_values(home_factors);
+    require_finite_values(c_left);
+    require_finite_values(c_right);
     const py::buffer_info binfo = home_factors.request();
     const py::buffer_info linfo = c_left.request();
     const py::buffer_info rinfo = c_right.request();
@@ -1322,6 +1462,7 @@ py::array_t<Scalar> home_auxiliary_three_index_mo_transform_impl(
     const py::ssize_t n_right = rinfo.shape[1];
     const py::ssize_t n_aux_super = checked_positive_product(
         n_cells, n_aux_home, "home-auxiliary logical auxiliary rank");
+    checked_output_size<Scalar>({n_aux_super, n_left, n_right});
     py::array_t<Scalar> out({n_aux_super, n_left, n_right});
 
     std::vector<std::array<py::ssize_t, 3>> residues(
@@ -1399,31 +1540,23 @@ py::array_t<Scalar> home_auxiliary_three_index_mo_transform_impl(
 }
 
 py::array_t<double> home_auxiliary_three_index_mo_transform_real(
-    py::array_t<double, py::array::c_style | py::array::forcecast>
-        home_factors,
-    py::array_t<double, py::array::c_style | py::array::forcecast> c_left,
-    py::array_t<double, py::array::c_style | py::array::forcecast> c_right,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> mesh) {
+    py::object home_factors, py::object c_left, py::object c_right,
+    py::object mesh) {
     return home_auxiliary_three_index_mo_transform_impl<double>(
-        std::move(home_factors),
-        std::move(c_left),
-        std::move(c_right),
-        std::move(mesh),
-        "real");
+        checked_real_array(home_factors, "home_factors"),
+        checked_real_array(c_left, "c_left"),
+        checked_real_array(c_right, "c_right"),
+        checked_integer_array(mesh, "mesh"), "real");
 }
 
 py::array_t<Complex> home_auxiliary_three_index_mo_transform_complex(
-    py::array_t<Complex, py::array::c_style | py::array::forcecast>
-        home_factors,
+    py::array_t<Complex, py::array::c_style | py::array::forcecast> home_factors,
     py::array_t<Complex, py::array::c_style | py::array::forcecast> c_left,
     py::array_t<Complex, py::array::c_style | py::array::forcecast> c_right,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> mesh) {
+    py::object mesh) {
     return home_auxiliary_three_index_mo_transform_impl<Complex>(
-        std::move(home_factors),
-        std::move(c_left),
-        std::move(c_right),
-        std::move(mesh),
-        "complex");
+        std::move(home_factors), std::move(c_left), std::move(c_right),
+        checked_integer_array(mesh, "mesh"), "complex");
 }
 
 std::pair<py::ssize_t, py::ssize_t> canonical_occupied_pair(
@@ -1441,8 +1574,9 @@ std::size_t unordered_pair_index(py::ssize_t i,
 }
 
 py::array_t<std::int64_t> translation_permutations(
-    py::ssize_t n_bands,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> mesh) {
+    py::object raw_n_bands, py::object raw_mesh) {
+    const auto n_bands = checked_integer_scalar(raw_n_bands, "n_bands");
+    auto mesh = checked_integer_array(raw_mesh, "mesh");
     const py::buffer_info minfo = mesh.request();
     require_rank(minfo, 1, "mesh");
     if (minfo.shape[0] != 3) {
@@ -1461,8 +1595,9 @@ py::array_t<std::int64_t> translation_permutations(
         throw std::runtime_error(
             "aiccm2026dev-b translation permutation mesh entries must be positive");
     }
-    const py::ssize_t n_cells = n0 * n1 * n2;
-    const py::ssize_t n_orbitals = n_cells * n_bands;
+    const py::ssize_t n_cells = checked_positive_mesh_product(n0, n1, n2, "finite translation");
+    const py::ssize_t n_orbitals = checked_positive_product(n_cells, n_bands, "orbital count");
+    checked_output_size<std::int64_t>({n_cells, n_orbitals});
     py::array_t<std::int64_t> out({n_cells, n_orbitals});
     auto out_u = out.mutable_unchecked<2>();
 
@@ -1498,9 +1633,9 @@ py::array_t<std::int64_t> translation_permutations(
 }
 
 py::tuple pair_orbits_from_permutations(
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
-        permutations,
-    py::ssize_t n_cells) {
+    py::object raw_permutations, py::object raw_n_cells) {
+    auto permutations = checked_integer_array(raw_permutations, "permutations");
+    const auto n_cells = checked_integer_scalar(raw_n_cells, "n_cells");
     const py::buffer_info pinfo = permutations.request();
     require_rank(pinfo, 2, "permutations");
     if (n_cells < 1) {
@@ -1535,15 +1670,20 @@ py::tuple pair_orbits_from_permutations(
             "aiccm2026dev-b pair mapping is not a permutation");
     }
 
-    const py::ssize_t n_pairs = n_orbitals * (n_orbitals + 1) / 2;
+    if (n_orbitals == std::numeric_limits<py::ssize_t>::max())
+        throw py::value_error("pair count exceeds supported index range");
+    const auto n_pairs = checked_positive_product(
+        n_orbitals % 2 ? n_orbitals : n_orbitals / 2,
+        n_orbitals % 2 ? (n_orbitals + 1) / 2 : n_orbitals + 1, "pair count");
+    checked_output_size<std::int64_t>({n_pairs, 2});
     std::vector<unsigned char> assigned(static_cast<std::size_t>(n_pairs), 0);
-    std::vector<int> orbit_marks(static_cast<std::size_t>(n_pairs), -1);
+    std::vector<py::ssize_t> orbit_marks(static_cast<std::size_t>(n_pairs), -1);
     std::vector<std::vector<std::pair<py::ssize_t, py::ssize_t>>> orbits;
     orbits.reserve(static_cast<std::size_t>(n_pairs));
 
     {
         py::gil_scoped_release release;
-        int orbit_id = 0;
+        py::ssize_t orbit_id = 0;
         for (py::ssize_t i_seed = 0; i_seed < n_orbitals; ++i_seed) {
             for (py::ssize_t j_seed = i_seed; j_seed < n_orbitals; ++j_seed) {
                 const std::size_t seed_index =
@@ -1626,14 +1766,13 @@ py::tuple pair_orbits_from_permutations(
 }
 
 py::array_t<double> mayer_pair_tensor_from_blocks(
-    py::array_t<double, py::array::c_style | py::array::forcecast>
-        density_blocks,
-    py::array_t<double, py::array::c_style | py::array::forcecast>
-        overlap_blocks,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
-        ao_atoms_unit,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> mesh,
+    py::object raw_density, py::object raw_overlap,
+    py::object raw_atoms, py::object raw_mesh,
     py::object density_beta_blocks_obj) {
+    auto density_blocks = checked_real_array(raw_density, "density_blocks");
+    auto overlap_blocks = checked_real_array(raw_overlap, "overlap_blocks");
+    auto ao_atoms_unit = checked_integer_array(raw_atoms, "ao_atoms_unit");
+    auto mesh = checked_integer_array(raw_mesh, "mesh");
     const py::buffer_info dinfo = density_blocks.request();
     const py::buffer_info sinfo = overlap_blocks.request();
     const py::buffer_info ainfo = ao_atoms_unit.request();
@@ -1665,7 +1804,7 @@ py::array_t<double> mayer_pair_tensor_from_blocks(
     const py::ssize_t n0 = static_cast<py::ssize_t>(mesh_u(0));
     const py::ssize_t n1 = static_cast<py::ssize_t>(mesh_u(1));
     const py::ssize_t n2 = static_cast<py::ssize_t>(mesh_u(2));
-    if (n0 <= 0 || n1 <= 0 || n2 <= 0 || n0 * n1 * n2 != n_cells) {
+    if (checked_positive_mesh_product(n0, n1, n2, "Mayer tensor") != n_cells) {
         throw std::runtime_error(
             "mesh product must match density_blocks.shape[0]");
     }
@@ -1675,12 +1814,13 @@ py::array_t<double> mayer_pair_tensor_from_blocks(
     DoubleArray beta_blocks;
     bool unrestricted = !density_beta_blocks_obj.is_none();
     if (unrestricted) {
-        beta_blocks = DoubleArray::ensure(density_beta_blocks_obj);
+        beta_blocks = checked_real_array(density_beta_blocks_obj, "density_beta_blocks");
         if (!beta_blocks) {
             throw std::runtime_error(
                 "density_beta_blocks could not be cast to a float64 "
                 "C-contiguous array");
         }
+        require_finite_values(beta_blocks);
         const py::buffer_info binfo = beta_blocks.request();
         require_rank(binfo, 3, "density_beta_blocks");
         if (binfo.shape[0] != n_cells || binfo.shape[1] != nbf ||
@@ -1693,11 +1833,12 @@ py::array_t<double> mayer_pair_tensor_from_blocks(
     const auto atoms = ao_atoms_unit.unchecked<1>();
     py::ssize_t n_atoms = 0;
     for (py::ssize_t mu = 0; mu < nbf; ++mu) {
-        if (atoms(mu) < 0) {
-            throw std::runtime_error("ao_atoms_unit contains a negative atom index");
+        if (atoms(mu) < 0 || atoms(mu) == std::numeric_limits<py::ssize_t>::max()) {
+            throw std::runtime_error("ao_atoms_unit contains an invalid atom index");
         }
         n_atoms = std::max(n_atoms, static_cast<py::ssize_t>(atoms(mu)) + 1);
     }
+    checked_output_size<double>({n_cells, n_atoms, n_atoms});
     std::vector<std::vector<py::ssize_t>> ao_by_atom(
         static_cast<std::size_t>(n_atoms));
     for (py::ssize_t mu = 0; mu < nbf; ++mu) {
@@ -1832,14 +1973,13 @@ py::array_t<double> mayer_pair_tensor_from_blocks(
 }
 
 py::array_t<double> mayer_pair_matrix_from_blocks(
-    py::array_t<double, py::array::c_style | py::array::forcecast>
-        density_blocks,
-    py::array_t<double, py::array::c_style | py::array::forcecast>
-        overlap_blocks,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast>
-        ao_atoms_unit,
-    py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> mesh,
+    py::object raw_density, py::object raw_overlap,
+    py::object raw_atoms, py::object raw_mesh,
     py::object density_beta_blocks_obj) {
+    auto density_blocks = checked_real_array(raw_density, "density_blocks");
+    auto overlap_blocks = checked_real_array(raw_overlap, "overlap_blocks");
+    auto ao_atoms_unit = checked_integer_array(raw_atoms, "ao_atoms_unit");
+    auto mesh = checked_integer_array(raw_mesh, "mesh");
     py::array_t<double> tensor = mayer_pair_tensor_from_blocks(
         density_blocks,
         overlap_blocks,
@@ -1859,7 +1999,7 @@ py::array_t<double> mayer_pair_matrix_from_blocks(
     const py::ssize_t n2 = static_cast<py::ssize_t>(mesh_u(2));
     const py::ssize_t n_cells = tinfo.shape[0];
     const py::ssize_t n_atoms = tinfo.shape[1];
-    if (tinfo.shape[2] != n_atoms || n0 * n1 * n2 != n_cells) {
+    if (tinfo.shape[2] != n_atoms || checked_positive_mesh_product(n0, n1, n2, "Mayer matrix") != n_cells) {
         throw std::runtime_error(
             "Mayer pair tensor shape does not match the requested mesh");
     }
@@ -1874,7 +2014,8 @@ py::array_t<double> mayer_pair_matrix_from_blocks(
         }
     }
 
-    const py::ssize_t n_full_atoms = n_cells * n_atoms;
+    const py::ssize_t n_full_atoms = checked_positive_product(n_cells, n_atoms, "Mayer atom count");
+    checked_output_size<double>({n_full_atoms, n_full_atoms});
     py::array_t<double> out({n_full_atoms, n_full_atoms});
     auto out_u = out.mutable_unchecked<2>();
     const auto tensor_u = tensor.unchecked<3>();

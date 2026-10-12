@@ -2,7 +2,7 @@
 
 These pin the reference-agnostic kernel arithmetic (spin decomposition,
 denominators, SCS/SOS scaling).  End-to-end parity (HF vs the C++ MP2; MSINDO vs
-the oracle) is added with the ERIProvider backends — see HANDOVER_MSINDO_ADVANCED.
+the oracle) is added with the ERIProvider backends.
 """
 
 import numpy as np

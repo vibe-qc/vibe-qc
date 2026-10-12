@@ -1,6 +1,6 @@
 """Pure-RKS exact-FT J retirement regressions (2026-07-18).
 
-Maintainer ruling 2026-07-13 (HANDOVER_BIPOLE_PRODUCTION.md): once the M4b
+Maintainer ruling 2026-07-13 (the original investigation): once the M4b
 interaction-resolved SR screening and the M5 padded image domain landed,
 pure semilocal RKS routes its Hartree J through the same padded SR+LR erfc
 composition as every other BIPOLE route, and the exact analytic-FT Ewald

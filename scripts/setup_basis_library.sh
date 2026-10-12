@@ -36,6 +36,7 @@ while [ $# -gt 0 ]; do
             echo "Usage: $0 [--target-dir PATH]" >&2
             echo "  Default target: build/basis_library (gitignored build output)" >&2
             echo "  For committing: --target-dir python/vibeqc/basis_library" >&2
+            echo "  Python >=3.11: PYTHON_BIN override, project .venv, active VIRTUAL_ENV, then python3" >&2
             exit 0
             ;;
         *)
@@ -44,6 +45,26 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# Resolve an interpreter matching pyproject.toml before changing any output.
+# An explicit nonempty PYTHON_BIN is authoritative, including on failure.
+# Otherwise prefer usable project/active environments over the system PATH.
+if [ -z "${PYTHON_BIN:-}" ]; then
+    PYTHON_BIN="python3"
+    for candidate in "$REPO_ROOT/.venv/bin/python" "${VIRTUAL_ENV:-}/bin/python"; do
+        [ "$candidate" != "/bin/python" ] || continue
+        if [ -x "$candidate" ] && "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
+            PYTHON_BIN="$candidate"
+            break
+        fi
+    done
+fi
+if ! PYTHON_VERSION=$("$PYTHON_BIN" -c 'import sys; print(sys.version.split()[0]); sys.exit(sys.version_info < (3, 11))' 2>&1); then
+    echo "Error: PYTHON_BIN='$PYTHON_BIN' must run Python >=3.11 before basis setup can write output." >&2
+    echo "  Interpreter check: $PYTHON_VERSION" >&2
+    echo "Set PYTHON_BIN to a supported Python interpreter and run setup again." >&2
+    exit 1
+fi
 
 CUSTOM_DIR="$REPO_ROOT/python/vibeqc/basis_library/custom"
 BASIS_DIR="$TARGET_DIR/basis"
@@ -97,8 +118,11 @@ fi
 # scripts/basisset_dev/split_ecp_g94.py for details.
 echo ""
 echo "Splitting ECP blocks out of any ECP-bearing .g94 files…"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
 "$PYTHON_BIN" "$SCRIPT_DIR/basisset_dev/split_ecp_g94.py" "$BASIS_DIR"
+
+# Prepare content receipts while setup owns the catalog. Imports are read-only.
+"$PYTHON_BIN" "$REPO_ROOT/python/vibeqc/_basis_overlay.py" \
+    "$TARGET_DIR" "$REPO_ROOT/python/vibeqc/basis_library"
 
 n_total=$(ls -1 "$BASIS_DIR" | wc -l | tr -d ' ')
 n_g94=$(ls -1 "$BASIS_DIR"/*.g94 2>/dev/null | wc -l | tr -d ' ')

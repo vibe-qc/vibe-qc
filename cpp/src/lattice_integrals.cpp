@@ -267,6 +267,29 @@ std::vector<LatticeCell> physical_eri_lattice_cells(
     return pair_complete_eri_cells(system, opts, basis.libint());
 }
 
+std::vector<std::vector<std::array<int, 4>>> physical_nuclear_source_indices(
+    const PeriodicSystem& system, const Eigen::MatrixXd& midpoints,
+    double cutoff_bohr) {
+    if (midpoints.cols() != 3 || !midpoints.allFinite())
+        throw std::invalid_argument("Nuclear support midpoints must be finite (n,3)");
+    PairNuclearImageSelector selector(system, cutoff_bohr);
+    constexpr std::size_t term_limit = 2000000;
+    // Bound stored rows and selected labels, not a Cartesian box containing
+    // each sphere. Enforce the remaining budget inside the shared traversal.
+    if (static_cast<std::size_t>(midpoints.rows()) > term_limit)
+        throw std::length_error("Nuclear support record exceeds bounded term budget");
+    std::size_t terms = static_cast<std::size_t>(midpoints.rows());
+    std::vector<std::vector<std::array<int, 4>>> result;
+    for (Eigen::Index row = 0; row < midpoints.rows(); ++row) {
+        std::vector<std::array<int, 4>> labels;
+        selector.select(midpoints.row(row).transpose(), nullptr, &labels,
+                        term_limit - terms, true);
+        terms += labels.size();
+        result.push_back(std::move(labels));
+    }
+    return result;
+}
+
 LatticeMatrixSet compute_overlap_lattice(const BasisSet& basis,
                                          const PeriodicSystem& system,
                                          const LatticeSumOptions& opts) {

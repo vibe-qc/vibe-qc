@@ -714,6 +714,85 @@ def test_periodic_position_optimization_forwards_integer_step_budgets(
     assert result.n_steps == 0
 
 
+@pytest.mark.parametrize(
+    "log_volume_offset,max_steps,should_converge",
+    [(0.5, 0, False), (0.5, 1, False), (0.0, 0, True), (0.5, 80, True)],
+)
+def test_periodic_cell_optimization_requires_filter_convergence(
+    monkeypatch, log_volume_offset, max_steps, should_converge
+):
+    """Zero atomic forces do not imply a relaxed cell with nonzero stress.
+
+    Exercise real ASE BFGS/FrechetCellFilter on E = log(V/V0)^2 / 2 eV.
+    Its exact stress is log(V/V0) / V times the identity in eV/Angstrom^3.
+    This is an optimizer contract control, not a MACE accuracy reference.
+    """
+    import numpy as np
+    from ase import Atoms
+    from ase.calculators.calculator import Calculator, all_changes
+    from ase.filters import FrechetCellFilter
+    from ase.units import Bohr, Hartree
+
+    import vibeqc as vq
+    from vibeqc.mlip import mace as mace_mod
+
+    lattice = np.array([[6.0, 0.8, 0.2], [0.0, 5.0, 0.5], [0.0, 0.0, 4.0]])
+    target_volume = np.linalg.det(lattice * Bohr) / np.exp(log_volume_offset)
+
+    class VolumeCalculator(Calculator):
+        implemented_properties = ["energy", "forces", "stress"]
+
+        def calculate(self, atoms=None, properties=None, system_changes=all_changes):
+            super().calculate(atoms, properties, system_changes)
+            volume = atoms.get_volume()
+            offset = np.log(volume / target_volume)
+            self.results = {
+                "energy": 0.5 * offset**2,
+                "forces": np.zeros((len(atoms), 3)),
+                "stress": offset / volume * np.array([1., 1., 1., 0., 0., 0.]),
+            }
+
+    def loader(**kwargs):
+        assert kwargs == {
+            "model": "medium-mpa-0", "device": "cpu", "default_dtype": "float64"
+        }
+        return VolumeCalculator()
+
+    monkeypatch.setattr(
+        mace_mod, "_require_backends",
+        lambda: (loader, loader, object(), Atoms, Bohr, Hartree),
+    )
+    system = vq.PeriodicSystem(3, lattice, [vq.Atom(14, [0.0, 0.0, 0.0])])
+    if should_converge:
+        final = mace_mod.optimize_periodic_mace_cell(
+            system, fmax=0.01, max_steps=max_steps
+        )
+    else:
+        with pytest.raises(RuntimeError, match="did not converge") as caught:
+            mace_mod.optimize_periodic_mace_cell(
+                system, fmax=0.01, max_steps=max_steps
+            )
+        error = caught.value
+        assert error.n_steps == max_steps
+        assert error.max_steps == max_steps
+        assert error.target_max_force == 0.01
+        final = error.system
+
+    # Recompute both parts of ASE's convergence criterion independently of
+    # the wrapper, including the cell degrees of freedom, at the terminal cell.
+    model = mace_mod.MACEModel(final.unit_cell_molecule(), cell=final.lattice)
+    atoms = model._ase_atoms()
+    atoms.calc = model.calculator
+    assert np.array_equal(atoms.get_forces(), np.zeros((1, 3)))
+    residual = np.linalg.norm(FrechetCellFilter(atoms).get_forces(), axis=1).max()
+    assert (residual < 0.01) == should_converge
+    if not should_converge:
+        assert error.final_max_force == pytest.approx(residual, abs=1e-12)
+    assert np.array_equal(system.lattice, lattice)
+    assert final.dim == 3
+    assert [atom.Z for atom in final.unit_cell] == [14]
+
+
 def test_periodic_position_optimization_preserves_slab_and_fixed_atoms(monkeypatch):
     import numpy as np
     from ase import Atoms

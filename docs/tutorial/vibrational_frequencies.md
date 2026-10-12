@@ -280,6 +280,57 @@ publication-quality output. See [Viewing geometries, orbitals, and vibrations wi
 for the MolTUI workflow that displays vibrations inline in the
 terminal.
 
+## Which surface the frequencies describe
+
+`run_job(hessian=True)` builds the Hessian by finite-differencing an
+analytic **mean-field** gradient, and it accepts only RHF, UHF, ROHF,
+RKS and UKS. A correlated request does not change that. `run_job`
+resolves `method="mp2"` down to the RHF reference its SCF actually
+runs, then differentiates RHF, so the frequencies, the normal modes and
+the RRHO thermochemistry all describe the RHF surface even though the
+job's reported energy is MP2. The same holds for `ccsd`, `ccsd(t)`,
+the DLPNO routes, the coupled-pair and QCI variants, and `ovgf`.
+
+That is a legitimate and common workflow (a correlated single point with
+mean-field frequencies), so vibe-qc computes it rather than refusing.
+It names it, in three places:
+
+* the `.out` frequency block opens with a `Surface:` line, and when the
+  surface is not the requested method's it says so outright:
+
+  ```text
+    ## Vibrational Frequencies
+    --------------------------
+    Surface: RHF/sto-3g  (NOT MP2)
+    This job's energy is MP2, but the Hessian finite-differences
+    the analytic RHF gradient. The frequencies, normal modes and
+    thermochemistry below describe the RHF reference surface;
+    no MP2 second derivatives were computed.
+  ```
+
+* the thermochemistry rows name the electronic energy they add the
+  thermal corrections to, `E(RHF) + ZPE` rather than a bare
+  `E(elec) + ZPE`. In an MP2 job that number is the RHF energy, not the
+  MP2 total, so if you want the correlated enthalpy you add the printed
+  thermal correction to `E(MP2 total)` yourself;
+
+* the `.system` manifest gains a `[hessian]` section and the `.qvf`
+  archive's `vibrations/metadata.json` gains a `surface` key, both
+  carrying `surface_is_requested_method` so a consumer can gate on it
+  without reading prose.
+
+A method that resolves to no mean-field reference at all (CASSCF, CISD,
+CASPT2, NEVPT2, FCI, selected CI, DMRG) has no finite-difference Hessian
+through `run_job`. Those jobs report their energy and then say the
+frequency block was skipped, naming the surface. For CASSCF there is a
+Python-API route,
+`vibeqc.hessian_casscf.compute_hessian_casscf(mol, basis, active_space)`,
+which finite-differences the analytic CASSCF gradient. It is not wired
+into `run_job`: its result carries unprojected modes (no translation and
+rotation projection) and no dipole derivatives, so the frequency table,
+the RRHO thermochemistry and the QVF vibrations section cannot consume
+it as it stands.
+
 ## Caveats
 
 - **Tighten the SCF + the optimization before differentiating.**

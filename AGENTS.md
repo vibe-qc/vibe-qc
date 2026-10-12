@@ -1,245 +1,164 @@
-# AGENTS.md
+# Working on vibe-qc
 
-Orientation for AI coding agents working on vibe-qc: Claude Code, Codex, Cursor,
-aider and others. [`CLAUDE.md`](CLAUDE.md) and [`CODEX.md`](CODEX.md) point here,
-so this is the one place the rules live. Humans get the same ground at more
-length in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+These are the current agent rules; user instructions take precedence.
+[CLAUDE.md](CLAUDE.md) and [CODEX.md](CODEX.md) load this policy. Older workflow
+prose does not add CI, reviewer or approval gates. Read
+[CONTRIBUTING.md](CONTRIBUTING.md) for technical detail as needed.
 
-Keep this file short and current. If a rule here stops matching the
-repository, fix the rule.
+vibe-qc is an MPL-2.0 molecular and periodic quantum-chemistry code:
+Python drivers in `python/vibeqc/`, a C++ core in `cpp/`, and separately
+versioned `vibe-basis/`. GitLab is the development authority; public
+contributions follow [the publication guide](docs/github_publication.md).
 
-## Keep this repository public-safe
-
-This product repository must remain ready for public mirroring at every commit.
-
-- Never put private email addresses, real machine names or host aliases,
-  internal hostnames or URLs, private IP addresses, account names, personal
-  filesystem paths, credentials, tokens or site-specific deployment details
-  in tracked files, filenames, generated artifacts or commit messages.
-  This includes code, comments, tests, documentation and agent instructions.
-- `project@vibe-qc.com` and `mpei@vibe-qc.com` are explicitly allowed public
-  email addresses. Use generic placeholders and reserved example addresses
-  for tests and documentation; do not copy real private values into fixtures.
-- Keep private configuration separate from product code. Store it outside
-  the product checkout on the local machine, or in the private agentic loop
-  repository. Select it through environment variables, command-line options
-  or an explicit external configuration path. Commit only portable defaults,
-  schemas and examples without private values.
-- Ignored files and custom folders under `.git` are not private configuration
-  stores. Keep private operational logs, inventories and release evidence
-  outside the product checkout too. Never commit secrets to the private loop
-  repository; use the existing credential or secret store.
-- Prevent contamination while making the change. Inspect the diff and use the
-  existing automated privacy checks before committing. Fix a finding in the
-  source; do not rely on a later sanitizer or create sanitation chats for
-  routine releases. Never bypass a privacy failure to publish a release.
-
-## What vibe-qc is
-
-A quantum-chemistry code for molecules and solids: Hartree-Fock, DFT,
-correlated methods and semiempirical methods, with periodic boundary
-conditions throughout. The numerical core is C++ (`cpp/`, bound with pybind11);
-the user-facing layer is Python (`python/vibeqc/`), driven mainly through
-`run_job` and `run_periodic_job`.
-
-On 2026-09-08 the former monorepo was split into four repositories.
-This one is **`vibe-qc/vibe-qc`**. Its licence is MPL-2.0; `vibe-basis/`
-stays here as an independently versioned subpackage. GitLab is the canonical
-development source. Public source and issues are available on GitHub; see
-[`docs/github_publication.md`](docs/github_publication.md) for the publication
-gate and the current contribution-routing status. Maintainer access recipes
-and tracker identifiers live in private operations documentation.
-
-## Where things live
-
-```
-python/vibeqc/        Python package: runners, SCF drivers, properties, output
-  output/             every user-facing file goes through here (.out, .system, QVF)
-  periodic/           periodic machinery; periodic/ccm and periodic/chi are the experimental AICCM lines
-  semiempirical/      MSINDO, PM6/OMx, GFN2-xTB, DFTB
-  basis_library/      bundled basis sets and ECPs; regenerate the runtime overlay with scripts/setup_basis_library.sh
-cpp/                  native integrals, Fock builds, lattice sums
-tests/                pytest suite, classified per file in scripts/test_gate/suite_manifest.json
-scripts/test_gate/    test lanes, the T1 release gate, the changelog guard
-docs/                 Sphinx site, published from the `release` branch
-examples/             runnable inputs (no generated outputs committed)
-vibe-basis/           basis-set optimization subpackage with its own versioning
-studies/              research studies and benchmark sets
-website/              Astro marketing site, deployed from `main`
-handovers/            public workstream notes; private operations stay external
-```
-
-| Looking for | Start at |
+| Need | Start here |
 |---|---|
-| What is planned | [`docs/roadmap.md`](docs/roadmap.md) |
-| What shipped when | [`CHANGELOG.md`](CHANGELOG.md) |
-| How a release is cut | [`docs/release_process.md`](docs/release_process.md) |
-| Setup and rebuilds | [`docs/contributor_setup.md`](docs/contributor_setup.md) |
-| Which tests to run | [`docs/developer_test_lanes.md`](docs/developer_test_lanes.md) |
-| Licences of bundled components | [`docs/license.md`](docs/license.md) |
-| Open defects | [the issue tracker](https://github.com/vibe-qc/vibe-qc/issues) |
+| Setup and rebuilds | [contributor setup](docs/contributor_setup.md) |
+| Tests | [testing policy](docs/testing.md), [lane inventory](docs/developer_test_lanes.md) |
+| Releases | [release process](docs/release_process.md) |
+| Plans and dependencies | [roadmap](docs/roadmap.md), [licenses](docs/license.md) |
+| Code | `python/vibeqc/`, `cpp/`, `tests/`, `examples/` |
+| Output and citations | `python/vibeqc/output/`, `output/citations/database.toml` |
 
-## Setup, tests and docs
+## Role boundaries
 
-```sh
-./scripts/install.sh --dev --extras test --venv .venv        # fresh clone; native deps take 15-40 min
-VIBEQC_REQUIRE_VENDORED=ON .venv/bin/pip install -e . --no-build-isolation   # rebuild after C++ changes
+- **Dev/fixers:** develop, run a focused source or functionality check, and push
+  ready work to main. Their task ends at the source landing and their own cleanup.
+  Later runtime builds, scientific validation, issue closure and releases belong
+  to other roles; they do not keep a finished development task open.
+- **Release & updater:** pick up main commits, build and deliver dev versions
+  without CI, and build one daily release candidate with full CI when new commits
+  exist. The same owner prepares, cuts and updates; no separate release cutter.
+- **Merger:** merge ready MRs. Direct main pushes need no Merger acknowledgement.
+- **Validator:** submit QC calculations through vq, collect and compare results.
+  It consumes main and available runtimes without a developer handoff. Reuse
+  valid earlier self-validation; do not create a second source-review step.
 
-.venv/bin/python scripts/test_gate/run_full_suite.py --list-lanes
-.venv/bin/python scripts/test_gate/run_full_suite.py --wt "$PWD" --py .venv/bin/python --lane <lane>
-.venv/bin/python -m pytest tests/test_<area>.py -q
-```
+Each role reads the relevant Git/runtime/job record and continues its own work.
+Building, queued and validation pending are normal states. Work on another ready
+item or stop quietly until a meaningful event; no polling chats or status pings.
+A real failure affects its operation, not the other roles. Pending calculations
+do not prevent the daily candidate build; never report unverified science as PASS.
 
-- **Check which build you are testing.** An editable install pins the native
-  extension to one checkout. After C++ changes, pulls or branch switches,
-  rebuild, and confirm the loaded `_vibeqc_core` is newer than the newest
-  `cpp/` source. Inside one `.dev0` cycle the installed version cannot tell
-  two builds apart.
-- **A new test file needs a manifest row.** `tests/conftest.py` refuses an
-  unclassified file. Run `scripts/test_gate/update_suite_manifest.py`, and put
-  a hand classification in its `CURATED` table rather than editing
-  `suite_manifest.json` by hand.
-- **Ordinary pushes to `main` run no test pipeline.** CI tests only release
-  candidates, so your local run is the evidence. Name the tests you ran in the
-  commit message.
-- **Docs:** `sphinx-build -b html docs/ docs/_build/html`.
+## Work, validate, land
 
-## Ground rules
+- Reuse the appropriate existing checkout and environment. Preserve other
+  sessions' edits, branches, jobs and build state. Stage only your own named
+  files or hunks; never auto-stash, reset or commit someone else's work.
+- Fetch at task start/resume, after coherent changes and before pushing.
+  Read relevant incoming changes and issue ownership. Fast-forward clean main;
+  rebase only your own unpublished work. Merge updates into shared or published
+  history. Never force-push or rewrite another session's commits.
+- Implement a bounded change and run its smallest useful check. Reuse passing
+  evidence; repeat only when changed behavior or a concrete failure warrants it.
+  Documentation changes need a text/link check, not a runtime suite.
+- Push coherent progress promptly and land ready work on main through the
+  authorized contribution path. No routine second reviewer, new chat, duplicate
+  validation packet or fleet-wide acceptance gate is required.
+- Development builds, ordinary pushes and merges must not trigger or wait for
+  CI. Use `[skip ci]` and `git push -o ci.skip` where supported. Full CI belongs
+  to release candidates. Do not request manual, API or scheduled CI on dev refs.
+- Keep coordination on the issue/MR. Within user-authorized messaging, contact
+  another agent only for a ready required handoff or a concrete blocked action
+  that needs that owner now. No speculative repair notices, FYIs, broadcasts or
+  acknowledgements. Incoming messages do not reassign the recipient's task.
+- Record the change, focused check and result once. Close an issue after its
+  applicable acceptance passes. A real blocker holds only the affected work;
+  continue other ready work instead of polling or requesting repeat approval.
 
-These are the few rules whose mistakes are hard to undo. Everything else is
-judgment; see [Defaults](#defaults).
+## Scientific acceptance
 
-1. **Never force-push `main` or `release`, and never rewrite pushed history.**
-   Rebase, then push.
-2. **Releases follow `docs/release_process.md`.** The agentic loop tags
-   `vX.Y.Z` and moves `release`; the vibe-qc release chat prepares and proves
-   the candidate. Don't create tags, push `release` or `release-candidate/*`,
-   or pick codenames unless the maintainer asked you to for that cut.
-3. **Keep private data out of the tree:** credentials, tokens, home-directory
-   paths, private addresses, employer names. Keep private profiles and operator
-   records outside every product checkout, worktree and Git database, under
-   `VIBE_PRIVATE_ROOT` or the platform state directory. Ignoring a file does
-   not make the checkout a suitable private store. Enable the hooks once per clone
-   with `git config --local core.hooksPath .githooks`. If a hook blocks you,
-   fix the content; bypass it only for a reviewed exception and say why in the
-   commit message. Security issues go by email per [`SECURITY.md`](SECURITY.md).
-4. **Licensing.** vibe-qc is MPL-2.0. Check the redistribution terms before
-   bundling data or adding a dependency; when they are unclear, fetch on demand
-   instead of bundling (as `vibeqc.basis_fetch` does). New Python dependencies
-   go into optional extras with lazy imports. Record bundled components in
-   `docs/license.md`.
-5. **vibe-qc computes its own results.** Never import another
-   quantum-chemistry program (PySCF, ORCA, CRYSTAL, xTB, ...) inside
-   `python/vibeqc/` or `cpp/`. Numerical libraries such as libint, libxc,
-   spglib, libecpint, Eigen, FFTW3 and ASE are fine. Tests and examples may use
-   another program as an optional reference, in-process behind
-   `pytest.importorskip` or through the subprocess runners in
-   `examples/regression/`.
-6. **Released changelog sections are pinned.** New entries go under
-   `[Unreleased]`. Changing a released section needs
-   `scripts/test_gate/changelog_guard.py pin vX.Y.Z --amended "why"` in the
-   same commit; the T1 test and `.githooks/pre-push` enforce it.
+- For a quantum-chemistry bug fix or method implementation, run a complete
+  calculation through `vq` that exercises the affected method and compare
+  with ORCA or CRYSTAL when available. Validator owns submission, collection
+  and the numerical verdict; Dev owns the checked source on main. The
+  reference comparison is required, not another source reviewer.
+- Match geometry/cell, method, basis/ECP, charge/spin, approximations,
+  convergence, units and tolerances. Record measured results, reference and
+  actual source/native runtime identity. Reuse a qualifying existing result.
+  If an external reference is unavailable, use justified literature values,
+  limits or other numerical evidence and state the remaining uncertainty.
+- Compare scientific approaches with the relevant primary papers and SI.
+  Use the configured local literature library, its catalogs and reference
+  manuals; read the relevant equations and assumptions, not just a citation.
+  Link the DOI/key and section in the issue/MR, explain material departures,
+  and request missing sources through that library's documented intake.
+  Reuse prior reading; no separate literature review chat or mandatory report.
+- **Calculations take priority over updates.** Use an available healthy
+  runtime while its replacement builds. Only a case needing a missing fix
+  waits for it; continue other ready work. Respect real resource limits and
+  job identities. Never use an old runtime to claim acceptance of a new fix.
+- Non-scientific changes need one focused functional check by their owner,
+  with no chemistry calculation or separate reviewer.
 
-## Defaults
+## Implementation essentials
 
-This is how work normally goes. Use judgment when a case doesn't fit, and say
-what you did.
+- Compute scientific results in this project. Do not import another QC
+  program inside `python/vibeqc/` or `cpp/`. Numerical libraries are allowed;
+  tests and examples may use optional reference programs.
+- Cite published algorithms beside their implementation and connect
+  user-visible methods to `python/vibeqc/output/citations/database.toml`.
+  Route user-facing files through `vibeqc.output`.
+- Confirm the Python and native modules used by a test belong to the intended
+  build. Rebuild changed native code when needed; a pull or unrelated edit
+  does not require a fresh native build. Reuse dependencies and compiler caches.
+- Classify new test files through `scripts/test_gate/update_suite_manifest.py`
+  and its `CURATED` table; do not hand-edit the generated manifest.
+  A focused invocation is `.venv/bin/python -m pytest tests/test_<area>.py -q`.
+- Add user-visible changes as `changelog.d/` fragments and update the affected
+  manual. Do not append to `CHANGELOG.md` or alter pinned released sections;
+  a necessary amendment uses the documented changelog guard.
+  Internal rules and tests-only changes need no fragment.
+- Keep MPL-2.0 compatibility and bundled-data redistribution terms documented
+  in `docs/license.md`. New Python dependencies belong in optional extras
+  with lazy imports. Ask only for an unresolved maintainer-owned decision,
+  such as licensing, a breaking API or a hard dependency.
+- Keep AICCM/CCM and SECCM labelled experimental. For periodic SCF anomalies,
+  check the formulation and reference before masking a defect with damping.
+- Releases follow the release process and the maintainer's authorization.
+  One authorized owner may prepare, qualify and release; no chain of review
+  chats is required. Preserve immutable tags and full candidate CI.
+- Report companion defects in their own trackers. Cross-repository edits and
+  fleet changes require task authorization; an existing user request suffices.
 
-- **Test what you touched**, plus its obvious consumers. Run the affected
-  lanes for shared numerical machinery.
-- **Keep `main` working.** Land in small increments, and gate unfinished
-  features rather than leaving half-wired code paths.
-- **CHANGELOG.** Add user-visible changes to `[Unreleased]`. Tests-only and
-  internal changes may skip it.
-- **Issue numbers.** When a commit fixes a tracked issue, put `(#N)` in the
-  subject; triage finds fixes that way. Untracked work needs no number.
-- **A second pair of eyes for wrong answers.** A fix to a wrong number, or to
-  anything blocking a release, is checked by someone other than its author
-  before its issue closes. Ask for that on the issue, with the commit, the
-  commands and the numbers before the fix ([`CONTRIBUTING.md`](CONTRIBUTING.md)
-  explains the form).
-- **Cite what you implement.** Name the paper beside a published algorithm or
-  reference value in the code, and give user-visible methods a citation route
-  in `python/vibeqc/output/citations/database.toml` so the output can cite
-  them.
-- **Output goes through `vibeqc.output`.** Don't write user-facing files
-  directly from a method module.
-- **Docs follow behaviour.** When you change what a user sees, update the
-  manual page in the same change. Prose in `docs/*.md` uses no em or en dashes
-  (the pre-commit hook checks).
-- **Experimental lines stay labelled.** AICCM/CCM and SECCM are experimental
-  and not release-gated; don't present their results as production.
-- **Ask the maintainer when the decision is theirs:** licensing, breaking a
-  public API, a new hard dependency, release scope or codenames, or anything
-  that commits another repository. Otherwise go ahead and explain your
-  reasoning in the commit.
+## Keep the repository public-safe
 
-## Notes that save time
+- Keep credentials, private addresses, host/account names, personal paths,
+  internal URLs and deployment details out of files, filenames, artifacts and
+  commit messages. Use portable defaults and synthetic examples.
+- Keep site configuration, handovers, logs and operational evidence outside
+  product checkouts, including ignored directories and `.git`. Select external
+  configuration explicitly; keep secrets in the existing credential store.
+- Use a public commit identity: `mpei@vibe-qc.com` or
+  `project@vibe-qc.com`. These addresses are allowed public contact details.
+- Enable `.githooks` with `git config --local core.hooksPath .githooks`.
+  Inspect the staged diff and let the privacy hook check it. Keep any
+  `VIBE_PRIVACY_TERMS_FILE` / `privacy.termsFile` outside Git; an unreadable
+  configured policy is a failure. Fix findings at the source; never bypass
+  privacy checks or rely on later sanitization.
+- Report security issues privately under [SECURITY.md](SECURITY.md). Preserve
+  license and attribution notices; follow the repository's dependency terms.
 
-- **Periodic SCF that oscillates or lands far off is usually a bug.** Look at
-  the gauge, Madelung and image sums, and reproduce against a reference,
-  before reaching for damping, level shifts or tighter DIIS.
-- **Stale builds and overlays look like real failures.** Check the four traps
-  listed in `docs/release_process.md`: editable install replaced by a copy,
-  stale `build/basis_library` overlay, same-second `.pyc`, and a core built
-  from another tree.
-- **A timeout on a loaded machine is not yet a regression.**
-  `scripts/test_gate/gate_verdict.py --reverify` re-runs a new red once in
-  isolation.
-- **Heavy lanes exist.** Some periodic GDF tests run for minutes; see
-  `docs/developer_test_lanes.md` before starting a full inventory.
+Before committing, run `python3 .githooks/source_privacy.py --staged`;
+candidate qualification uses `--tree HEAD`. Public attribution/syntax
+exceptions must be exact reviewed entries in
+`.githooks/public_content_review.json`, never exceptions for private data.
+Prose in `docs/*.md` follows its local punctuation rules.
 
-## Working alongside other sessions
+## Finish the task
 
-Several agent sessions may work on vibe-qc at once. They commit under the same
-git identity, so authorship cannot tell you who changed what.
+Finish the work assigned to your role. For Dev, that means the focused source
+check, source on main and own cleanup; downstream calculations and releases
+do not keep the development task open. Push any changes to main and confirm
+the remote contains them. Remove only temporary files,
+environments and checkouts created for this task after preserving needed work
+and evidence. Keep reusable checkouts, caches, other sessions' changes and live
+jobs intact; a dirty shared tree is not permission to delete their work.
 
-- **Work in your own clone** when you build or measure; a linked worktree
-  shares the venv's editable install with its main checkout.
-- **Treat a shared checkout's uncommitted changes as someone else's.** Stage
-  files by name; don't stash, reset or check out over changes you didn't make.
-- **Keep both sides of a conflict** in files many sessions append to, such as
-  `CHANGELOG.md` and handovers. After a rebase, check that your changelog entry
-  is still under `[Unreleased]`.
-- **Handovers are for workstreams that span sessions.** Public implementation
-  notes may live under `handovers/`. Private coordination, configuration and
-  evidence belong in the external private state directory. A defect belongs
-  on the tracker, not in a handover.
-- **Decisions that belong to the maintainer** go on the tracker as a "Needs a
-  decision" issue or a note, not a guess.
+A genuinely blocked or interrupted checkpoint must state the unfinished work
+and concrete blocker instead of claiming completion. Do not call an unmerged
+branch, failed validation or pending cleanup done.
 
-## Other repositories
+Every final completion report must end with exactly this line, with nothing
+after it:
 
-- **vibe-view** is the viewer, **vibe-queue** the job queue and fleet tooling,
-  **qvf** the file format. Each has its
-  own tracker, releases and rules.
-- **Report problems where they belong,** and don't edit another repository
-  from here; file an issue in its tracker.
-- **CI pins companions.** `VIBE_VIEW_TAG` and `QVF_TAG` in `.gitlab-ci.yml`
-  select the published tags vibe-qc validates against.
-- **Fleet hosts are vibe-queue's domain.** Don't update or reconfigure them
-  unless the maintainer asked you to.
-
-## What changed from the monorepo rules
-
-Older comments, handovers and audits cite "CLAUDE.md § N" or "AGENTS.md rule
-N". Those refer to historical monorepo instructions retained in the private
-archive, rather than to numbered sections of this file.
-They were written for dozens of parallel sessions and most were stricter than
-this repository needs:
-
-| Monorepo rule | Here |
-|---|---|
-| A fixed per-topic clone registry and per-release drop-box status files | Any clone of your own. The tracker, CHANGELOG and handovers carry status. |
-| `bugctl` claims and leases before touching an issue | Plain issue comments work. The agentic loop may still use `bugctl` for its own lanes. |
-| Issue number in every subject was non-negotiable | An issue number when there is one. |
-| A full definition-of-done checklist before every push | Test what you touched and keep `main` working. |
-| A persistent handover for every chat | Only for workstreams that span sessions. |
-| `vibeqc.output` changes requested from the IO chat, never made directly | Make the change with tests, keeping output through `vibeqc.output`. |
-| No refactors without approval | Propose large refactors in an issue first; small cleanups are fine. |
-| The `basissetdev` standing rule and fleet-host directory rules | Retired here. `basissetdev` was not transferred; fleet rules live in vibe-queue. |
-| Release operations owned by one release chat | The agentic loop tags; the release chat prepares (#230). |
-
-Kept, because their mistakes are expensive: licensing, no other QC program at
-runtime, privacy, no history rewrites, independent checks of wrong-answer
-fixes, and pinned released changelog sections.
+All done, pushed to main, cleaned up and ready to archive.

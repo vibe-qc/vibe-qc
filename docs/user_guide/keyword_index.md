@@ -33,7 +33,8 @@ See [scf_convergence](scf_convergence.md).
 | `use_diis` | `True` | Enable DIIS extrapolation. |
 | `diis_start_iter` | `2` | Iteration at which DIIS begins. |
 | `diis_subspace_size` | `8` | Number of stored vectors. EDIIS, ADIIS, and their hybrids accept 2-12; plain DIIS-family accelerators may use deeper histories. |
-| `ediis_diis_switch_threshold` | `0.1` | DIIS-error at which EDIIS hands over to plain DIIS. |
+| `ediis_diis_switch_threshold` | `0.1` | Intensive (RMS matrix-element) DIIS error at which EDIIS hands over to plain DIIS. |
+| `ediis_diis_switch_threshold_open_shell` | `1e-3` (UHF only) | Same, used instead when n_α ≠ n_β (#377). |
 | `diis_restart_tau` | `1e-4` | R_CDIIS restart parameter τ ∈ (0,1) (Chupin et al. 2021); smaller ⇒ deeper history. |
 | `diis_adaptive_delta` | `1e-4` | AD_CDIIS depth parameter δ > 0 (Chupin et al. 2021); smaller ⇒ deeper history. |
 | `damping` | `0.5` | Finite static density/Fock damping fraction in `[0, 1)`. |
@@ -71,7 +72,7 @@ the given threshold.
 
 | Keyword | Default | Meaning |
 |---|---|---|
-| `initial_guess` | `PATOM` (molecular); `AUTO` (periodic) | Starting density; one of `AUTO`, `HCORE`, `SAD`, `SAP`, `PATOM`, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`, or molecular-only `FRAGMO`. |
+| `initial_guess` | `AUTO` (molecular and periodic) | Starting density; one of `AUTO`, `HCORE`, `SAD`, `SAP`, `PATOM`, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`, or `FRAGMO` on supported molecular and periodic routes. |
 | `read_path` | `''` | File (`.qvf` / `.molden`) to read orbitals from, for `initial_guess=READ`. |
 
 See [initial_guess](initial_guess.md).
@@ -152,7 +153,7 @@ Periodic jobs additionally expose:
 |---|---|---|
 | `jk_method` | `AUTO` *(argument of `run_periodic_job`)* | Coulomb route: `GDF`, `BIPOLE`, `GPW`, `GAPW`, `RSGDF`, and others. See [choosing a periodic method](../tutorial/periodic_methods_compared.md). The AICCM formulations are not `jk_method` values: select them with `method="aiccm"` and `variant=` (see [AICCM](aiccm.md)); with `method="aiccm"`, `jk_method` stays `AUTO` or must equal the variant's own route. |
 | `variant` | *(none; mandatory with `method="aiccm"`)* | AICCM formulation: `"real-gamma"`, `"neutral-bloch"`, `"chi"`, and `"four-center"`. All four runner arms are wired and experimental; each keeps its documented, fail-closed capability envelope. |
-| `scf_reference` | `None` *(argument of `run_periodic_job`, `method="aiccm"` only)* | `None` infers the SCF reference (`functional` decides HF versus KS; the multiplicity and electron parity decide restricted versus unrestricted); `"rohf"` / `"roks"` request the restricted open-shell references explicitly (no variant implements them yet; fails closed). |
+| `scf_reference` | `None` *(argument of `run_periodic_job`, `method="aiccm"` only)* | `None` infers the SCF reference (`functional` decides HF versus KS; the multiplicity and electron parity decide restricted versus unrestricted); `"rhf"` / `"uhf"` request a Hartree-Fock reference explicitly on every variant (no `functional`; `"uhf"` mainly for a closed-shell singlet, `"rhf"` refused on an odd electron count); `"rohf"` / `"roks"` request the restricted open-shell references explicitly (no variant implements them yet; fails closed). |
 | `aiccm_lattice_extension` | `None` *(argument of `run_periodic_job`)* | Born-von Karman torus `(N1, N2, N3)` for every AICCM variant; `kpoints` is the legacy Γ-centred alias for the torus mesh, never both. `aiccm_wigner_seitz_shells=s` is the odd-extension shorthand for `2s+1`. |
 | `smearing_temperature` | `0.0` | Fermi-Dirac smearing temperature (Hartree); `0.0` is no smearing. |
 | `use_periodic_becke` | `True` (KS) | Use the periodic Becke partition for the XC grid. |
@@ -170,9 +171,9 @@ See [periodic_methods](periodic_methods.md), [smearing](smearing.md),
 
 The values each option enum accepts (the default is marked):
 
-- **`InitialGuess`**: `AUTO` *(periodic default)*, `HCORE`, `SAD`, `SAP`,
-  `PATOM` *(molecular default)*, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`,
-  `FRAGMO` *(molecular only)*.
+- **`InitialGuess`**: `AUTO` *(molecular and periodic default)*, `HCORE`, `SAD`,
+  `SAP`, `PATOM`, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`, `FRAGMO`.
+  Availability depends on the [execution route](initial_guess.md#route-coverage).
 - **`SCFAccelerator`**: `DIIS`, `EDIIS`, `EDIIS_DIIS` *(molecular and periodic default)*,
   `ADIIS`, `ADIIS_DIIS`, `KDIIS`, `R_CDIIS`, `AD_CDIIS` *(adaptive-depth
   CDIIS, Chupin et al. 2021)*.

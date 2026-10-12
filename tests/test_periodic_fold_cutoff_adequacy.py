@@ -117,7 +117,7 @@ def test_bipole_refuses_li_cells_at_the_default_rather_than_running_them(tmp_pat
     BIPOLE turns the under-converged metric into an actionable error before
     SCF. The GPW/GAPW route has no equivalent preflight and instead spends
     150 iterations not converging -- that asymmetry is the open half of the
-    bug, tracked in handovers/HANDOVER_OPEN_BUGS_V015.md.
+    bug.
     """
     from vibeqc.pbc_bipole_common import BipoleFoldUnreliableError
 

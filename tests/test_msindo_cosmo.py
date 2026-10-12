@@ -35,7 +35,7 @@ from vibeqc.solvation.screening import ScreeningModel
 from vibeqc.solvation.cpcm import build_A_matrix, solve_apparent_charges
 from vibeqc.solvation.provider import SolutePotentialProvider
 
-# H₂O, the COSMO validation geometry (Å) — O at origin (HANDOVER § 4b).
+# H₂O, the COSMO validation geometry (Å) — O at origin (historical design record § 4b).
 _H2O_Z = [8, 1, 1]
 _H2O_XYZ = [(0.0, 0.0, 0.0), (0.0, 0.757, 0.587), (0.0, -0.757, 0.587)]
 

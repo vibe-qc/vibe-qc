@@ -54,6 +54,7 @@ from .parameters import (
     get_parameterization,
 )
 from .solvent import solvent_sigma_potential
+from .job import CosmoRSOptions, CosmoRSResult
 from .potential import (
     SigmaPotential,
     hydrogen_bond_energy,
@@ -110,6 +111,8 @@ __all__ = [
     "interaction_energy",
     "interaction_energy_dsigma",
     "solvent_sigma_potential",
+    "CosmoRSOptions",
+    "CosmoRSResult",
     "ln_activity_coefficient",
     "log_partition_coefficient",
     "misfit_energy",

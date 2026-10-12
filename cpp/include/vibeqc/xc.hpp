@@ -23,11 +23,13 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <tuple>
 #include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace vibeqc {
 
@@ -138,6 +140,14 @@ public:
 
     const std::string& name() const { return name_; }
     XCKind kind() const { return kind_; }
+    /// Executed Libxc IDs and weights, including resolved custom aliases.
+    std::vector<std::pair<int, double>> components() const;
+    /// Executed exact-exchange terms: (kernel, coefficient, range in bohr^-1).
+    /// Unlike the legacy aggregate CAM fields, this retains mixed ranges.
+    std::vector<std::tuple<std::string, double, double>> exchange_components() const;
+    /// (id, kind, energy, first derivative, 3D, Laplacian) capabilities.
+    std::vector<std::tuple<int, std::string, bool, bool, bool, bool>> component_capabilities() const;
+    int spin() const;
     bool is_hybrid() const {
         return hf_exchange_fraction_ != 0.0 || cam_beta_ != 0.0;
     }

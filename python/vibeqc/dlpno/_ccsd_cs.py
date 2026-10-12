@@ -13,8 +13,7 @@ It is both a real cost reduction for the DLPNO-CCSD pilot's
 per-iteration step (spatial, not spin-orbital) and the exact template
 the per-pair *local* residual mirrors -- the local version is these same
 contractions evaluated in each pair's PNO basis with cross-pair
-PNO-overlap projections; remaining production gates live in
-``handovers/HANDOVER_GATED_ITEMS.md``.
+PNO-overlap projections; remaining production gates are outside this foundation.
 
 Density-fitted Coulomb integrals (pq|rs) = S_P B^P_{pq} B^P_{rs}; dense
 full-space here (the oracle). The diagonal Fock is kept inside

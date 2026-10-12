@@ -32,6 +32,9 @@
 
 #pragma once
 
+#include <memory>
+#include <mutex>
+
 #include <Eigen/Dense>
 
 #include <utility>
@@ -160,6 +163,33 @@ LatticeMatrixSet build_fock_2e_real_space(const BasisSet& basis,
                                           double exchange_scale = 1.0,
                                           double omega = 0.0);
 
+// Explicit, caller-owned geometry cache. Density-dependent screening and
+// integral engines remain local to each build. Changing geometry replaces
+// retained state; in-flight builds retain their snapshot.
+// Two kernel states share one geometry, covering the Ewald and screened-hybrid
+// parameters without retaining duplicate shifted shells or product trees.
+class PeriodicJKWorkspace {
+public:
+    struct Data;
+    std::shared_ptr<const Data> prepare(const BasisSet& basis,
+        const PeriodicSystem& system, const std::vector<LatticeCell>& cells,
+        double omega, bool screen, bool range_screening);
+    std::size_t preparation_count() const {
+        std::lock_guard<std::mutex> guard(mutex_);
+        return preparation_count_;
+    }
+    std::size_t geometry_preparation_count() const {
+        std::lock_guard<std::mutex> guard(mutex_);
+        return geometry_preparation_count_;
+    }
+private:
+    mutable std::mutex mutex_;
+    std::shared_ptr<const Data> data_;
+    std::shared_ptr<const Data> alternate_;
+    std::size_t preparation_count_ = 0;
+    std::size_t geometry_preparation_count_ = 0;
+};
+
 struct JKLatticeMatrixSets {
     LatticeMatrixSet J;  // direct Coulomb blocks J(g)
     LatticeMatrixSet K;  // full exchange blocks K(g), no -1/2 prefactor
@@ -284,7 +314,8 @@ JKLatticeMatrixSets build_jk_2e_real_space_domains(
         const std::vector<int>& output_indices,
         const std::vector<std::vector<uint8_t>>& output_shell_masks,
         double omega = 0.0,
-        bool compute_exchange = true);
+        bool compute_exchange = true,
+        PeriodicJKWorkspace* workspace = nullptr);
 
 // Gamma-only finite-domain density adjoint. Uses the same internal/output/
 // density-support traversal and screening decisions as the ordinary domain

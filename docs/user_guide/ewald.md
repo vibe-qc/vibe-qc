@@ -53,6 +53,31 @@ for you, and on a ``dim == 2`` slab it always selects ``SLAB_EWALD_2D``.
 Every bulk J/K route raises on a slab.
 ```
 
+### Evaluated Gamma SCF results
+
+The Python Gamma 3D RHF/UHF and Gamma 3D/slab RHF/RKS/UKS drivers return an immutable
+`result.fock_build` containing the physical Fock, its evaluated density,
+energy components and source identity. Legacy result arrays remain writable
+copies. RKS/UKS record the jointly evaluated XC energy and potential with the
+existing pure, global-hybrid or screened-hybrid exchange assembly.
+
+For restricted RHF/RKS, the returned orbitals and occupations define
+`result.density` even at an iteration limit, and the reported energy and physical Fock are evaluated on
+that density. The orbital energies are physical Rayleigh quotients; stopped
+orbitals need not diagonalize that Fock. `result.next_density` and
+`result.density_fixed_point_residual` describe the further unaccelerated
+orbital update. UHF/UKS expose the corresponding `next_density_alpha` and
+`next_density_beta` spin blocks. Convergence requires terminal energy,
+commutator and density closure checks. QVF provenance carries the evaluated build and density
+identities, energy components and stop reason through `vibeqc.output`.
+Gamma RHF/RKS/UKS require `max_iter >= 1`.
+
+Slab RHF retains the same libint exchange and analytic Parry Hartree/nuclear
+source. Its receipt identifies the open normal boundary, zero-mode profile
+and effective quadrature; unused FFT grid arguments do not enter that identity.
+HCORE, PATOM and SCF solves have separate histories. Quadratic updates retain
+the complete canonical orbital space.
+
 ### 2D slabs (``SLAB_EWALD_2D``)
 
 For a system periodic in two dimensions and finite along the third (a
@@ -224,8 +249,9 @@ The ``EWALD_3D`` path has three convergence knobs:
 - **``VIBEQC_J_EWALD3D_KE``**, kinetic-energy cutoff (Hartree) for
   the analytical AO-pair-FT Hartree J mesh. Default 200 Ha. It applies
   to the opt-in ``use_exact_ft_j=True`` cross-check oracle on
-  ``run_pbc_bipole_rks`` and to the bounded analytic-FT J contraction
-  on 3D true-multi-k pure-RKS GDF jobs with ``use_compcell=False``.
+  ``run_pbc_bipole_rks`` and to the Ewald-3D drivers' analytic-FT J.
+  GDF k-mesh jobs no longer read it: since 2026-09-29 every
+  ``gdf_method`` runs its own fitted J there.
   The production BIPOLE pure-RKS route uses the padded SR+LR erfc
   composition and does not read it. Increase the cutoff for
   benchmark-quality all-electron tight-core cells; the BIPOLE oracle

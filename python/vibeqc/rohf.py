@@ -9,7 +9,7 @@ contamination).  It is the standard reference for ROHF-MP2 / ROHF-CC
 and a cleaner CAS starting point than UHF for radicals and high-spin
 states.
 
-Architecture (see ``handovers/HANDOVER_ROHF.md``).  The production SCF loops live
+Architecture. The production SCF loops live
 in C++ (``run_uhf`` etc.) and cannot host ROHF's Roothaan coupling, so
 this is a **pure-Python driver** built on the same two-electron JK seam
 the C++ drivers expose to Python (``make_direct_jk_builder`` ->
@@ -198,7 +198,7 @@ class ROHFOptions:
     # density_fit without cosx.
     cosx: bool = False
     cosx_grid_level: int = 0
-    # Davidson/LobPCG iterative diagonalisation (optional).
+    # Davidson iterative diagonalisation (optional).
     # When True and n_bf >= davidson_min_dim, the Fock diagonalisation
     # uses the iterative Davidson solver instead of np.linalg.eigh.
     use_davidson: bool = False
@@ -421,6 +421,8 @@ def guest_saunders_canonicalize(
     fockb: np.ndarray,
     n_alpha: int,
     n_beta: int,
+    *,
+    operator_kind: str = "fock",
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Guest-Saunders canonical ROHF eigenvalues and MO coefficients.
 
@@ -459,20 +461,22 @@ def guest_saunders_canonicalize(
     ----------
     mo_coeffs
         Converged ROHF MO coefficients (eigenvectors of the Roothaan
-        effective Fock), shape ``(nbf, nbf)``.
+        effective Fock), shape ``(nbf, n_retained)``.
     focka, fockb
         Per-spin AO Fock matrices at convergence.
     n_alpha, n_beta
         Number of alpha / beta electrons.  ``n_closed = n_beta``,
         ``n_open = n_alpha - n_beta``.
+    operator_kind
+        Numerical metadata: ``"fock"`` for ROHF or ``"ks"`` for ROKS.
 
     Returns
     -------
-    eps_canonical : ndarray of shape ``(nbf,)``
+    eps_canonical : ndarray of shape ``(n_retained,)``
         Guest-Saunders eigenvalues: closed (ascending), then open
         (ascending), then virtual (ascending).  Within each subspace
         the ordering is the natural ascending sort from ``eigh``.
-    C_canonical : ndarray of shape ``(nbf, nbf)``
+    C_canonical : ndarray of shape ``(nbf, n_retained)``
         Canonical MO coefficients.  Related to ``mo_coeffs`` by a
         block-diagonal unitary rotation: ``C_canonical = mo_coeffs @ U``
         where ``U`` is the direct sum of the subspace eigenvectors.
@@ -487,39 +491,52 @@ def guest_saunders_canonicalize(
     focka = np.asarray(focka, dtype=float)
     fockb = np.asarray(fockb, dtype=float)
 
-    nbf = mo_coeffs.shape[0]
+    from .solvers._scf import solve_dense_fock
+
+    nmo = mo_coeffs.shape[1]
+    if not 0 <= n_beta <= n_alpha <= nmo:
+        raise ValueError("Closed/open populations must fit the retained orbital space")
     n_closed = n_beta
     n_open = n_alpha - n_beta
-    n_virtual = nbf - n_alpha
+    n_virtual = nmo - n_alpha
 
     # Per-spin Fock in the converged MO basis.
     Fa_mo = mo_coeffs.T @ focka @ mo_coeffs
     Fb_mo = mo_coeffs.T @ fockb @ mo_coeffs
     Fc_mo = 0.5 * (Fa_mo + Fb_mo)
 
-    eps = np.zeros(nbf)
-    U = np.eye(nbf)
+    eps = np.zeros(nmo)
+    U = np.eye(nmo)
 
     # -- Closed subspace: diagonalise Fc (doubly occupied, symmetric) --
     if n_closed > 0:
         cc = slice(0, n_closed)
-        eps_c, U_c = np.linalg.eigh(Fc_mo[cc, cc])
-        eps[cc] = eps_c
-        U[np.ix_(range(n_closed), range(n_closed))] = U_c
+        eig = solve_dense_fock(
+            Fc_mo[cc, cc], kind=operator_kind, spin="restricted-open",
+            basis_id="roothaan-mo-closed",
+        )
+        eps[cc] = eig.eigenvalues
+        U[np.ix_(range(n_closed), range(n_closed))] = eig.eigenvectors
 
     # -- Open subspace: diagonalise Fa (alpha Fock => Koopmans IPs) --
     if n_open > 0:
         oo = slice(n_closed, n_alpha)
-        eps_o, U_o = np.linalg.eigh(Fa_mo[oo, oo])
-        eps[oo] = eps_o
-        U[np.ix_(range(n_closed, n_alpha), range(n_closed, n_alpha))] = U_o
+        eig = solve_dense_fock(
+            Fa_mo[oo, oo], kind=operator_kind, spin="restricted-open",
+            basis_id="roothaan-mo-open",
+        )
+        eps[oo] = eig.eigenvalues
+        U[np.ix_(range(n_closed, n_alpha), range(n_closed, n_alpha))] = eig.eigenvectors
 
     # -- Virtual subspace: diagonalise Fc --
     if n_virtual > 0:
-        vv = slice(n_alpha, nbf)
-        eps_v, U_v = np.linalg.eigh(Fc_mo[vv, vv])
-        eps[vv] = eps_v
-        U[np.ix_(range(n_alpha, nbf), range(n_alpha, nbf))] = U_v
+        vv = slice(n_alpha, nmo)
+        eig = solve_dense_fock(
+            Fc_mo[vv, vv], kind=operator_kind, spin="restricted-open",
+            basis_id="roothaan-mo-virtual",
+        )
+        eps[vv] = eig.eigenvalues
+        U[np.ix_(range(n_alpha, nmo), range(n_alpha, nmo))] = eig.eigenvectors
 
     C_canonical = mo_coeffs @ U
     return eps, C_canonical
@@ -568,6 +585,37 @@ def _aufbau_densities(
     dma = ca @ ca.conj().T
     dmb = cb @ cb.conj().T
     return dma, dmb
+
+
+def _ensemble_seed_density(
+    c: np.ndarray, eps: np.ndarray, n_occ: int, tol: float = 1.0e-8
+) -> np.ndarray:
+    """One-spin seed density that fills a degenerate frontier evenly (#336).
+
+    Port of the native ``ensemble_seed_density`` (same block rule and
+    ``kDegenerateFrontierTol``), used by the RHF, RKS and UHF HCORE seeds.
+    When ``eps[n_occ - 1]`` and ``eps[n_occ]`` are exactly degenerate the
+    aufbau occupied set is whichever basis the eigensolver returned for
+    that block, which rotates with the molecule. Equal weights over the
+    whole block depend only on the subspace. A gapped frontier keeps the
+    integer projector.
+    """
+    n_mo = c.shape[1]
+    if n_occ <= 0:
+        return np.zeros((c.shape[0], c.shape[0]), dtype=c.dtype)
+    if n_occ == n_mo or eps[n_occ] - eps[n_occ - 1] > tol:
+        occupied = c[:, :n_occ]
+        return occupied @ occupied.conj().T
+    lo = n_occ - 1
+    while lo > 0 and eps[n_occ] - eps[lo - 1] <= tol:
+        lo -= 1
+    hi = n_occ + 1
+    while hi < n_mo and eps[hi] - eps[lo] <= tol:
+        hi += 1
+    filled = c[:, :lo]
+    frontier = c[:, lo:hi]
+    fraction = (n_occ - lo) / (hi - lo)
+    return filled @ filled.conj().T + fraction * (frontier @ frontier.conj().T)
 
 
 def _orbital_expectations(c: np.ndarray, fock: np.ndarray) -> np.ndarray:
@@ -960,6 +1008,7 @@ def run_roothaan_scf(
     init_beta: np.ndarray,
     *,
     iteration_callback: Optional[Callable[[_ScfStep], None]] = None,
+    operator_kind: str = "fock",
 ) -> ROHFResult:
     """Drive the Roothaan single-matrix SCF given a per-spin Fock builder.
 
@@ -972,19 +1021,22 @@ def run_roothaan_scf(
     is invoked once per completed SCF iteration with the same trace record
     stored on the result.  It lets periodic callers forward progress and
     divergence checks without coupling this numerical kernel to an output
-    implementation.
+    implementation. ``operator_kind`` annotates the numerical operator as
+    ``"fock"`` or ``"ks"``; it never selects a physical Fock builder.
     """
     require_nonnegative_max_iter(options.max_iter, route="run_roothaan_scf")
     s = np.asarray(s, dtype=float)
     hcore = np.asarray(hcore, dtype=float)
     x = _orthonormaliser(s, options.linear_dep_threshold)
 
-    use_dav = options.use_davidson and s.shape[0] >= options.davidson_min_dim
-    dav_opts = options.davidson
-    if use_dav and dav_opts is None:
-        from vibeqc._vibeqc_core import DavidsonOptions
+    from .solvers._scf import FockDiagonalizer
 
-        dav_opts = DavidsonOptions()
+    diagonalise = FockDiagonalizer(
+        x, s, options, kind=operator_kind, spin="restricted-open",
+        n_required=n_alpha,
+    )
+    if diagonalise.options.n_roots != x.shape[1]:
+        raise ValueError("Roothaan SCF requires all retained Fock roots for orbital occupations and canonicalization")
 
     dma = np.asarray(init_alpha, dtype=float).copy()
     dmb = np.asarray(init_beta, dtype=float).copy()
@@ -1189,8 +1241,7 @@ def run_roothaan_scf(
                 s,
                 dma,
                 0.0,
-                use_dav=use_dav,
-                dav_opts=dav_opts,
+                diagonalizer=diagonalise,
             )
             shift_contaminates_mos = False
             if open_shell_model is None and options.fractional_open_shell:
@@ -1224,8 +1275,7 @@ def run_roothaan_scf(
             s,
             dma,
             shift_now,
-            use_dav=use_dav,
-            dav_opts=dav_opts,
+            diagonalizer=diagonalise,
         )
         shift_contaminates_mos = shift_now > 0.0
         mo_eps_prev = mo_energies
@@ -1299,8 +1349,7 @@ def run_roothaan_scf(
             s,
             dma,
             0.0,
-            use_dav=use_dav,
-            dav_opts=dav_opts,
+            diagonalizer=diagonalise,
         )
     if open_shell_model is None and options.fractional_open_shell:
         open_shell_model = _occupation_model_from_degeneracy(
@@ -1334,6 +1383,7 @@ def run_roothaan_scf(
             fockb,
             n_alpha,
             n_beta,
+            operator_kind=operator_kind,
         )
         canonicalization = "guest-saunders"
     else:
@@ -1374,6 +1424,8 @@ def _solve_fock(
     level_shift: float,
     use_dav: bool = False,
     dav_opts=None,
+    *,
+    diagonalizer=None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Diagonalise the effective Fock in the orthonormal basis.
 
@@ -1389,30 +1441,24 @@ def _solve_fock(
     canonicalising diagonalisation, whose eigenvalues are reported to the
     user (the shift would leave every virtual one high by exactly ``b``).
 
-    When ``use_dav`` is True and ``dav_opts`` is provided, the Davidson
-    iterative solver is used for the leading eigenvalues/vectors instead
-    of a dense diagonalisation.
+    The SCF loop supplies one shared diagonalizer for its fixed X/S frame.
+    It owns the warm subspace without changing the caller's options. The
+    legacy private arguments create a one-shot adapter when used directly.
     """
     f = fock_eff
     if level_shift > 0.0:
         f = f + level_shift * (s - s @ dma @ s)
-    f_orth = x.conj().T @ f @ x
-    f_orth = 0.5 * (f_orth + f_orth.T)
-    if use_dav and dav_opts is not None:
-        from vibeqc._vibeqc_core import davidson_solve
+    if diagonalizer is None:
+        from types import SimpleNamespace
+        from .solvers._scf import FockDiagonalizer
 
-        if dav_opts.n_eig == 0:
-            dav_opts.n_eig = f_orth.shape[0]
-        if dav_opts.guess_vectors is not None:
-            pass  # already set from previous iteration
-        dres = davidson_solve(f_orth, dav_opts)
-        if not dres.converged:
-            raise RuntimeError(f"Davidson did not converge after {dres.n_iter} iters")
-        eps, c_orth = dres.eigenvalues, dres.eigenvectors
-        dav_opts.guess_vectors = c_orth
-    else:
-        eps, c_orth = np.linalg.eigh(f_orth)
-    c = x @ c_orth
+        diagonalizer = FockDiagonalizer(
+            x, s, SimpleNamespace(use_davidson=use_dav and dav_opts is not None,
+                                  davidson_min_dim=0, davidson=dav_opts),
+            spin="restricted-open",
+        )
+    # The method's historical symmetrization commutes with the X transform.
+    c, eps = diagonalizer(0.5 * (f + f.conj().T))
     return eps, c
 
 
@@ -1580,11 +1626,16 @@ def _initial_densities(
             raise RuntimeError(f"{kind.name} builder returned no initial density")
         da, db = g
         return np.asarray(da), np.asarray(db)
-    # Core (Hcore) guess: diagonalise Hcore in the orthonormal basis.
+    # Core (Hcore) guess: diagonalise Hcore in the orthonormal basis. Each
+    # spin fills a degenerate frontier evenly, as the RHF/RKS/UHF HCORE
+    # seeds do (#336): OH's pi pair is exactly degenerate in Hcore (#477).
     f_orth = x.conj().T @ np.asarray(hcore, dtype=float) @ x
-    _eps, c_orth = np.linalg.eigh(f_orth)
+    eps, c_orth = np.linalg.eigh(f_orth)
     c = x @ c_orth
-    return _aufbau_densities(c, n_alpha, n_beta)
+    return (
+        _ensemble_seed_density(c, eps, n_alpha),
+        _ensemble_seed_density(c, eps, n_beta),
+    )
 
 
 def _renormalise_guess_spin_density(
@@ -1820,7 +1871,7 @@ def compute_rohf_gradient(
     if use_df and bool(getattr(gradient_options, "cosx", False)):
         raise NotImplementedError(
             "Analytic ROHF RIJCOSX gradients are not yet supported; use "
-            "density fitting without COSX. See handovers/HANDOVER_ROHF.md."
+            "density fitting without COSX."
         )
 
     grad = np.asarray(

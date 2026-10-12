@@ -1122,6 +1122,7 @@ def test_use_ewald_j_split_ibz_native_energy_matches_full_mesh():
         system, basis, kmesh_full, opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # gauge-independent consistency check; legacy keeps it cheap (no BvK-torus cutoff)
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -1129,6 +1130,7 @@ def test_use_ewald_j_split_ibz_native_energy_matches_full_mesh():
         system, basis, kmesh_ibz, opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # gauge-independent consistency check; legacy keeps it cheap (no BvK-torus cutoff)
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )

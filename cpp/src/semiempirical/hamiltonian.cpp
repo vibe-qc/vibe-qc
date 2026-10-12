@@ -97,9 +97,12 @@ Eigen::MatrixXd SemiempiricalHamiltonianBuilder::build_hamiltonian_zero(
             } else {
                 double h_mu = params.average_on_site(Z_mu);
                 double h_nu = params.average_on_site(Z_nu);
+                // Wolfsberg and Helmholz, J. Chem. Phys. 20, 837 (1952),
+                // p. 838, DOI 10.1063/1.1700580: average exactly once.
+                // Retain this model's atom-averaged on-site energies.
                 double h_avg = 0.5 * (h_mu + h_nu);
                 double s_val = S(mu, nu);
-                H0(mu, nu) = 0.5 * kappa * s_val * h_avg;
+                H0(mu, nu) = kappa * s_val * h_avg;
             }
         }
     }

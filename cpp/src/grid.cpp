@@ -895,7 +895,7 @@ Grid build_grid_core(
 
     if (opts.angular == AngularScheme::Lebedev) {
         // Lebedev-Laikov rule. The static dispatch table holds every
-        // bundled tier (orders 5..53); we look up by exact ``order``.
+        // bundled tier; we look up by exact ``order``.
         // Higher orders integrate higher-degree spherical harmonics
         // exactly — see ``cpp/include/vibeqc/lebedev_data.hpp``.
         const auto* tiers = lebedev_tiers();
@@ -1561,3 +1561,40 @@ Grid build_periodic_point_grid(const PeriodicSystem& system,
 }
 
 }  // namespace vibeqc
+
+namespace vibeqc {
+Grid build_vv10_grid(const Molecule& mol,const GridOptions& opts) {
+    if(!std::isfinite(opts.vv10_grid_factor) || opts.vv10_grid_factor<=0.)
+        throw std::invalid_argument("VV10 coarse-grid factor must be finite and positive");
+    GridOptions vv10_opts = opts;
+    // Scale radial and angular resolution down by the factor.
+    const double f = opts.vv10_grid_factor;
+    vv10_opts.n_radial = std::max(5, static_cast<int>(
+        std::lround(opts.n_radial / f)));
+    if (vv10_opts.angular == AngularScheme::Lebedev) {
+        // Step down to the next lower bundled Lebedev order (29→17,
+        // 35→23, etc.).  The bundled orders are 11, 17, 23, 29, 35,
+        // 41, 47, 53.
+        int order = vv10_opts.lebedev_order;
+        if (order > 11) {
+            // Reduce by roughly factor f; at least one tier down.
+            int steps = std::max(1, static_cast<int>(std::lround(
+                static_cast<double>(order - 11) / f)));
+            order = std::max(11, order - steps * 6);
+            // Snap to the nearest bundled order.
+            if (order <= 14) order = 11;
+            else if (order <= 20) order = 17;
+            else if (order <= 26) order = 23;
+            else if (order <= 32) order = 29;
+            else if (order <= 38) order = 35;
+        }
+        vv10_opts.lebedev_order = order;
+    } else {
+        vv10_opts.n_theta = std::max(3, static_cast<int>(
+            std::lround(opts.n_theta / f)));
+        vv10_opts.n_phi = std::max(4, static_cast<int>(
+            std::lround(opts.n_phi / f)));
+    }
+    return build_grid(mol, vv10_opts);
+}
+} // namespace vibeqc

@@ -87,6 +87,7 @@ from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from .periodic.exchange_convention import MOLECULAR_LIMIT
 from ._vibeqc_core import (
     apply_level_shift,
     BasisSet,
@@ -116,18 +117,17 @@ from .ewald_composed_slab import make_slab_ewald_2d_gamma_j_builder
 from .ewald_j import auto_grid
 from ._vibeqc_core import build_jk_gamma_molecular_limit
 from .guess import initial_density_closed_shell
-from .madelung import (
-    madelung_energy_correction as _madelung_energy_correction,
-)
 from .periodic_grid import build_periodic_becke_grid
 from .periodic_rhf_ewald import _canonical_orthogonalizer, _refuse_if_dense_ionic
 from .periodic_scf_accelerators import DynamicDamping, PeriodicSCFAccelerator
 from .periodic_screened_exchange import (
-    build_exchange_gamma,
     resolve_periodic_exchange,
 )
 from .progress import ProgressLogger, resolve_progress
 from .scf_divergence import check_scf_divergence
+from .fock_state import FockBuild
+from .periodic_ks_fock import _GammaRKSBuilder, _gamma_ks_source_details
+from .solvers.operators import OperatorFrame, _snapshot
 
 __all__ = [
     "PeriodicRKSEwaldResult",
@@ -171,6 +171,27 @@ class PeriodicRKSEwaldResult:
 
     restart_kpoints: object = None
     restart_weights: object = None
+
+    # Every Gamma-only Ewald/GDF driver builds exchange with the
+    # molecular-limit kernel (home-cell density, image blocks zeroed); the
+    # runner's manifest records this instead of the exxdiv knob (GitLab #23).
+    exchange_q0: str = MOLECULAR_LIMIT
+    fock_build: FockBuild | None = None
+    occupations: np.ndarray | None = None
+    next_density: np.ndarray | None = None
+    density_fixed_point_residual: float | None = None
+    evaluated_build_history: list[dict] = field(default_factory=list)
+
+    @property
+    def run_fields(self):
+        if self.fock_build is None:
+            return {}
+        return dict(self.fock_build.output_fields(),
+                    orbital_state_relation="density-defining-physical-rayleigh-quotients",
+                    scf_stop_reason="converged" if self.converged else "iteration_limit",
+                    density_fixed_point_residual=self.density_fixed_point_residual,
+                    evaluated_build_history=[dict(row) for row in self.evaluated_build_history])
+
 
 
 def _density_set_gamma(template: LatticeMatrixSet, D: np.ndarray) -> LatticeMatrixSet:
@@ -303,6 +324,9 @@ def run_rks_periodic_gamma_ewald3d(
     :class:`PeriodicRKSEwaldResult`.
     """
     opts = options if options is not None else PeriodicKSOptions()
+    max_iter = int(opts.max_iter)
+    if max_iter < 1:
+        raise ValueError("run_rks_periodic_gamma_ewald3d: max_iter must be >= 1")
     from .guess import select_periodic_driver_guess
     selection = select_periodic_driver_guess(
         system, opts, route="ewald", method="RKS", driver="run_rks_periodic_gamma_ewald3d",
@@ -537,7 +561,7 @@ def run_rks_periodic_gamma_ewald3d(
         # makes build_xc_periodic fall back to its molecular-limit mode
         # (rho = chi_0 D chi_0, no image AO products): exact in a vacuum
         # box, ~0.3 Ha wrong on tight ionic cells (the 2026-07-09 KRKS
-        # finding, handovers/HANDOVER_AICCM_DIRECT_TORUS.md §4).
+        # finding, the original investigation).
         from .periodic_rhf_gdf import _density_set_torus_gamma
 
         _set_xc_density = _density_set_torus_gamma
@@ -561,37 +585,14 @@ def run_rks_periodic_gamma_ewald3d(
             "a less redundant basis."
         )
 
-    use_davidson = getattr(opts, "use_davidson", False)
-    dav_opts = getattr(opts, "davidson", None)
-    dav_dim = getattr(opts, "davidson_min_dim", 100)
-    use_dav = use_davidson and S.shape[0] >= dav_dim
-    if use_dav and dav_opts is None:
-        from vibeqc._vibeqc_core import DavidsonOptions
-
-        dav_opts = DavidsonOptions()
-
     e_nuc = float(nuclear_repulsion_per_cell(system, lat_opts))
 
-    def diagonalise(F: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        Fp = X.T @ F @ X
-        Fp = 0.5 * (Fp + Fp.T)
-        if use_dav and dav_opts is not None:
-            from vibeqc._vibeqc_core import davidson_solve
+    from .solvers._scf import FockDiagonalizer
 
-            if dav_opts.n_eig == 0:
-                dav_opts.n_eig = Fp.shape[0]
-            if dav_opts.guess_vectors is not None:
-                pass  # already set from previous iteration
-            dres = davidson_solve(Fp, dav_opts)
-            if not dres.converged:
-                raise RuntimeError(
-                    f"Davidson did not converge after {dres.n_iter} iters"
-                )
-            eps, Cp = dres.eigenvalues, dres.eigenvectors
-            dav_opts.guess_vectors = Cp
-        else:
-            eps, Cp = np.linalg.eigh(Fp)
-        return X @ Cp, eps
+    n_required = n_kept if int(getattr(opts, "quadratic_fallback_iter", 0)) > 0 else n_occ
+    seed_diagonalise = FockDiagonalizer(
+        X, S, opts, kind="one_electron", n_required=n_required, real_only=True,
+    )
 
     # ---- Initial guess via the unified engine ---------------------------
     if slab_mode:
@@ -631,18 +632,57 @@ def run_rks_periodic_gamma_ewald3d(
     if D_engine is not None:
         plog.info(f"initial guess: {guess.name} (density via GuessEngine)")
         D = D_engine
-        C0, eps0 = diagonalise(Hcore)  # MO trace for log symmetry
+        C0, eps0 = seed_diagonalise(Hcore)  # MO trace for log symmetry
     else:
         plog.info(f"initial guess: {guess.name} (Hcore-diagonalise)")
-        C0, eps0 = diagonalise(Hcore)
+        C0, eps0 = seed_diagonalise(Hcore)
         D = 2.0 * C0[:, :n_occ] @ C0[:, :n_occ].T
         D = 0.5 * (D + D.T)
+    # Pre-allocate a reusable LatticeMatrixSet for the V_xc density
+    # input. We mutate its blocks each iteration via set_block().
+    D_set = _empty_lattice_set_like(basis, system, lat_opts)
+
+    # Memory cliff guard -- build_xc_periodic materialises AO values
+    # per cell.  Fail fast on large systems instead of SIGKILL.
+    from .periodic_rks_multi_k_ewald import _guard_legacy_periodic_xc_memory
+
+    _guard_legacy_periodic_xc_memory(
+        n_grid=int(np.asarray(grid.points).shape[0]),
+        nbf=int(basis.nbasis),
+        n_cells=len(D_set),
+        is_gga=(func.kind == XCKind.GGA),
+        functional=str(opts.functional),
+    )
+
+    import hashlib
+    import json
+
+    def source_details(*, hf_seed=False):
+        return _gamma_ks_source_details(
+            basis, system, lat_opts, opts, func, exx, grid, D_set,
+            omega=omega, grid_shape=grid_shape_t, origin=origin,
+            spacing_bohr=spacing_bohr, ewald_options=eopts, hf_seed=hf_seed)
+
+    source_basis = source_details()
+    frame = OperatorFrame(
+        n=basis.nbasis, basis_id=hashlib.sha256(json.dumps(
+            source_basis["shells"], sort_keys=True).encode()).hexdigest(),
+        ordering=source_basis["ordering"], image_gauge="gamma-bloch-at-declared-shell-origins",
+        overlap=S, X=X)
+    X, S = frame.X, frame.overlap
+    diagonalise = FockDiagonalizer(
+        X, S, opts, kind="ks", n_required=n_required, real_only=True, frame=frame)
+    build_fock = _GammaRKSBuilder(
+        basis, system, lat_opts, T, V, frame, e_nuc, j_build,
+        func, exx, grid, D_set, _set_xc_density, source_details)
+    T, V, Hcore = build_fock.kinetic, build_fock.nuclear, build_fock.hcore
     if guess == InitialGuess.PATOM:
-        # PATOM is one full-HF in-field step, independent of the target XC.
-        J_seed = j_build(D)
-        K_seed = np.asarray(build_jk_gamma_molecular_limit(
-            basis, system, lat_opts, D, 0.0).K)
-        C0, eps0 = diagonalise(Hcore + J_seed - 0.5 * K_seed)
+        # PATOM is a full-HF state, independent of the target XC and its
+        # eigensolver recycle history.
+        seed = build_fock(D, hf_seed=True)
+        hf_diagonalise = FockDiagonalizer(
+            X, S, opts, kind="fock", n_required=n_required, real_only=True, frame=frame)
+        C0, eps0 = hf_diagonalise(seed.channels[0].operator)
         D = 2.0 * C0[:, :n_occ] @ C0[:, :n_occ].T
         D = 0.5 * (D + D.T)
     D_prev = D.copy()
@@ -687,22 +727,6 @@ def run_rks_periodic_gamma_ewald3d(
     C_prev_mo = C0
     eps_prev_mo = eps0
 
-    # Pre-allocate a reusable LatticeMatrixSet for the V_xc density
-    # input. We mutate its blocks each iteration via set_block().
-    D_set = _empty_lattice_set_like(basis, system, lat_opts)
-
-    # Memory cliff guard -- build_xc_periodic materialises AO values
-    # per cell.  Fail fast on large systems instead of SIGKILL.
-    from .periodic_rks_multi_k_ewald import _guard_legacy_periodic_xc_memory
-
-    _guard_legacy_periodic_xc_memory(
-        n_grid=int(np.asarray(grid.points).shape[0]),
-        nbf=int(basis.nbasis),
-        n_cells=len(D_set),
-        is_gga=(func.kind == XCKind.GGA),
-        functional=str(opts.functional),
-    )
-
     # ---- SCF loop --------------------------------------------------------
     scf_trace: List[SCFIteration] = []
     result = PeriodicRKSEwaldResult(
@@ -721,7 +745,7 @@ def run_rks_periodic_gamma_ewald3d(
         mo_coeffs=np.empty((0, 0)),
         density=D.copy(),
         fock=np.empty((0, 0)),
-        overlap=S,
+        overlap=S.copy(),
         functional=str(opts.functional),
         scf_trace=scf_trace,
         omega=float(omega),
@@ -739,7 +763,7 @@ def run_rks_periodic_gamma_ewald3d(
     # docs/pbc_audit_2026-06.md. ``j_build(D)`` is bit-identical to a
     # per-iteration build_j_ewald_3d call (grid backend: uncached, unchanged).
 
-    for iter_idx in range(1, int(opts.max_iter) + 1):
+    for iter_idx in range(1, max_iter + 1):
         if damper is not None:
             damping = damper.alpha
         diis_active = use_diis and iter_idx >= diis_start_iter
@@ -749,72 +773,15 @@ def run_rks_periodic_gamma_ewald3d(
             else damping * D_prev + (1.0 - damping) * D
         )
 
-        # Hartree J via composed Ewald-3D (cached analytic-FT machinery).
-        J = j_build(D_used)
-
-        # Coefficient-folded exact exchange (full-range and/or erfc-
-        # screened per the CAM assembly). None for pure DFT.
-        K = build_exchange_gamma(basis, system, lat_opts, D_used, exx)
-
-        # V_xc via libxc on the KS grid. The density-set convention is
-        # paired with the grid choice above (torus set on the periodic
-        # grid, home-cell-only on the molecular grid).
-        _set_xc_density(D_set, D_used)
-        xc_contrib = build_xc_periodic(
-            basis,
-            system,
-            grid,
-            func,
-            D_set,
-            lat_opts,
-        )
-        # V_xc lives in the LatticeMatrixSet -- Bloch-fold to Γ.
-        V_xc = np.real(bloch_sum(xc_contrib.V_xc, k_gamma))
-        V_xc = 0.5 * (V_xc + V_xc.T)
-        E_xc = float(xc_contrib.e_xc)
-
-        # F_HF_part = J - K_HF/2 (K already carries the assembly
-        # coefficients).
-        if K is not None:
-            F_HF_part = J - 0.5 * K
-        else:
-            F_HF_part = J
-
-        F = Hcore + F_HF_part + V_xc
-        F = 0.5 * (F + F.T)
-
-        # Energy: E_elec = E_xc + tr(D.Hcore) + 1/2 tr(D.F_HF_part)
-        E_HF_trace = 0.5 * float(np.einsum("ij,ij->", D_used, F_HF_part))
-        E_core_trace = float(np.einsum("ij,ij->", D_used, Hcore))
-        E_elec = E_xc + E_core_trace + E_HF_trace
-        # Madelung-leak correction (v0.6.1) -- disabled for EWALD_3D in
-        # v0.7.0 since V_ne now dispatches to the gauge-aligned Ewald path.
-        if lat_opts.coulomb_method in (
-            CoulombMethod.EWALD_3D,
-            CoulombMethod.SLAB_EWALD_2D,
-        ):
-            E_madelung_fix = 0.0
-        else:
-            E_madelung_fix = _madelung_energy_correction(
-                D_used,
-                S,
-                system,
-                nuclear_uses_ewald=False,
-            )
-        E_total = E_elec + e_nuc + E_madelung_fix
-
-        # Coulomb / HF-exchange decomposition for reporting.
-        E_coulomb = 0.5 * float(np.einsum("ij,ij->", D_used, J))
-        E_hf_K = (
-            -0.25 * float(np.einsum("ij,ij->", D_used, K))
-            if K is not None
-            else 0.0
-        )
-
-        # Orbital-gradient norm.
+        physical = build_fock(D_used)
+        F = physical.channels[0].operator.matrix
+        E_elec, E_total = physical.energy.electronic, physical.energy.total
+        components = dict(physical.energy.components)
+        E_xc, E_coulomb, E_hf_K = (components[key] for key in ("xc", "coulomb", "exchange"))
+        E_madelung_fix = dict(physical.energy.corrections)["madelung"]
         FDS = F @ D_used @ S
         grad = FDS - FDS.T
-        grad_norm = float(np.linalg.norm(grad))
+        grad_norm = physical.commutator_norm
 
         dE = E_total - E_prev
         scf_trace.append(
@@ -826,6 +793,9 @@ def run_rks_periodic_gamma_ewald3d(
                 diis_subspace=(accel.subspace_size if accel is not None else 0),
             )
         )
+        result.evaluated_build_history.append(dict(
+            iteration=iter_idx, generation=physical.generation,
+            build_id=physical.identity, density_id=physical.density_id))
         plog.iteration(
             iter_idx,
             energy=float(E_total),
@@ -836,8 +806,8 @@ def run_rks_periodic_gamma_ewald3d(
         # Per-iter energy decomposition (E_kin / E_ne / E_J / E_xc /
         # E_K / E_nuc / E_madelung). Always emitted at level 4+ for
         # cross-code (PySCF) parity comparison and bug localisation.
-        E_kin_iter = float(np.einsum("ij,ij->", D_used, T))
-        E_ne_iter = float(np.einsum("ij,ij->", D_used, V))
+        E_kin_iter = components["kinetic"]
+        E_ne_iter = components["nuclear_attraction"]
         plog.energy_decomposition(
             iter_idx,
             E_kin=E_kin_iter,
@@ -918,7 +888,9 @@ def run_rks_periodic_gamma_ewald3d(
                 else apply_level_shift(F, S, D_used, b, LevelShiftDensity.TOTAL)
             )
 
-            C_new, eps_new = diagonalise(F_diag)
+            solver_fock = physical.solver_operator(
+                0, F_diag, modification="method-acceleration-level-shift")
+            C_new, eps_new = diagonalise(solver_fock)
 
         C_prev_mo = C_new
         eps_prev_mo = eps_new
@@ -926,83 +898,54 @@ def run_rks_periodic_gamma_ewald3d(
         D = 2.0 * C_new[:, :n_occ] @ C_new[:, :n_occ].T
         D = 0.5 * (D + D.T)
 
-        # Stash latest state.
-        result.energy = E_total
-        result.e_electronic = E_elec
-        result.e_xc = E_xc
-        result.e_coulomb = E_coulomb
-        result.e_hf_exchange = E_hf_K
-        result.n_iter = iter_idx
-        result.mo_energies = eps_new
-        result.mo_coeffs = C_new
-        result.density = D_used
-        result.fock = F
-
         if damper is not None:
             damper.update(E_total)
         E_prev = E_total
 
-        if converged:
-            # Final consistency pass on the fresh D (matches RHF
-            # driver convention).
-            J_f = j_build(D)
-            K_f = build_exchange_gamma(basis, system, lat_opts, D, exx)
-            _set_xc_density(D_set, D)
-            xc_f = build_xc_periodic(
-                basis,
-                system,
-                grid,
-                func,
-                D_set,
-                lat_opts,
-            )
-            V_xc_f = np.real(bloch_sum(xc_f.V_xc, k_gamma))
-            V_xc_f = 0.5 * (V_xc_f + V_xc_f.T)
-            E_xc_f = float(xc_f.e_xc)
-            if K_f is not None:
-                F_HF_f = J_f - 0.5 * K_f
-            else:
-                F_HF_f = J_f
-            F_f = Hcore + F_HF_f + V_xc_f
-            F_f = 0.5 * (F_f + F_f.T)
-            C_f, eps_f = diagonalise(F_f)
-            E_HF_f = 0.5 * float(np.einsum("ij,ij->", D, F_HF_f))
-            E_core_f = float(np.einsum("ij,ij->", D, Hcore))
-            E_elec_f = E_xc_f + E_core_f + E_HF_f
-            E_coulomb_f = 0.5 * float(np.einsum("ij,ij->", D, J_f))
-            E_hf_K_f = (
-                -0.25 * float(np.einsum("ij,ij->", D, K_f))
-                if K_f is not None
-                else 0.0
-            )
-            if lat_opts.coulomb_method in (
-                CoulombMethod.EWALD_3D,
-                CoulombMethod.SLAB_EWALD_2D,
-            ):
-                E_madelung_fix_f = 0.0
-            else:
-                E_madelung_fix_f = _madelung_energy_correction(
-                    D,
-                    S,
-                    system,
-                    nuclear_uses_ewald=False,
-                )
-            result.energy = E_elec_f + e_nuc + E_madelung_fix_f
-            result.e_electronic = E_elec_f
-            result.e_xc = E_xc_f
-            result.e_coulomb = E_coulomb_f
-            result.e_hf_exchange = E_hf_K_f
-            result.mo_energies = eps_f
-            result.mo_coeffs = C_f
-            result.density = D
-            result.fock = F_f
-            result.converged = True
-            plog.converged(
-                n_iter=result.n_iter,
-                energy=result.energy,
-                converged=True,
-            )
-            return result
+        result.n_iter = iter_idx
+        if converged or iter_idx == max_iter:
+            # The orbitals define the returned density. Evaluate the physical
+            # Fock/energy on exactly that density, including at an iteration
+            # cap. A further eigensolve is a look-ahead density, not this state.
+            terminal = build_fock(D)
+            channel = terminal.channels[0]
+            C_next, _ = diagonalise(channel.operator)
+            D_next = 2.0 * C_next[:, :n_occ] @ C_next[:, :n_occ].T
+            D_next = .5 * (D_next + D_next.T)
+            closure = float(np.max(np.abs(D_next - D)))
+            result.fock_build = terminal
+            result.next_density = _snapshot(D_next)
+            result.density_fixed_point_residual = closure
+            result.energy, result.e_electronic = terminal.energy.total, terminal.energy.electronic
+            terminal_components = dict(terminal.energy.components)
+            result.e_xc = terminal_components["xc"]
+            result.e_coulomb = terminal_components["coulomb"]
+            result.e_hf_exchange = terminal_components["exchange"]
+            result.mo_coeffs = C_new
+            result.mo_energies = np.real(np.diag(C_new.T @ channel.operator.matrix @ C_new))
+            result.occupations = np.zeros(C_new.shape[1])
+            result.occupations[:n_occ] = 2.0
+            result.density = channel.density.copy()
+            result.fock = channel.operator.matrix.copy()
+            terminal_converged = (
+                converged
+                and abs(result.energy - E_total) < float(opts.conv_tol_energy)
+                and terminal.commutator_norm < float(opts.conv_tol_grad)
+                and closure < float(opts.conv_tol_grad))
+            if terminal_converged or iter_idx == max_iter:
+                previous = scf_trace[-1]
+                scf_trace[-1] = SCFIteration(
+                    iter=previous.iter, energy=result.energy,
+                    delta_e=result.energy - previous.energy,
+                    grad_norm=terminal.commutator_norm,
+                    diis_subspace=previous.diis_subspace)
+                result.evaluated_build_history[-1] = dict(
+                    iteration=iter_idx, generation=terminal.generation,
+                    build_id=terminal.identity, density_id=terminal.density_id)
+            if terminal_converged:
+                result.converged = True
+                plog.converged(n_iter=result.n_iter, energy=result.energy, converged=True)
+                return result
 
     result.converged = False
     plog.converged(

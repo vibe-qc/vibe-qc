@@ -680,7 +680,7 @@ def _aiccm_dlpno(ccm, level, tcut_pno, ke_cutoff, frozen_core=False):
     ⚠ **dim=3 caveat (2026-07-10, D2 KMP2 anchor, benchmark chat's job
     ``2874a52c8d39``): this route's HF reference is the strict-zero neutral SCF,
     and that reference is WRONG at dim=3 — its error grows with cluster size (it
-    deletes the free-space exchange monopole, ``handovers/HANDOVER_D2_EXXDIV.md``).
+    deletes the free-space exchange monopole, the original investigation).
     The correlation inherits the distortion: c-diamond (2,2,2) CCM-neutral RI-MP2
     gave E_corr = −59.0 mHa/atom against out-of-process PySCF KMP2@ewald −29.9
     (~2×). Do NOT curate dim=3 DLPNO/RI correlation from this route until it is

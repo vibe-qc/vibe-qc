@@ -45,7 +45,7 @@ _RUNNER_SCC_DFTB_MAX_ITER = 500
 # standard DFTB+/tblite/xtb remedy is Fermi-Dirac occupation smearing.
 #
 # Verified 2026-08-11 against all six pi-conjugated Thiel systems
-# (handovers/HANDOVER_SCC_DFTB_CONVERGENCE.md): electronic_temperature=0.001 Ha
+# (the original investigation): electronic_temperature=0.001 Ha
 # (~316 K), no DIIS, charge_mixing=0.05 converges every one of them, while the
 # historical 0.1-0.2 mixing re-enters the non-smooth regime (e.g. HCOOH at
 # T=0.0012 Ha stalls past the 500-iteration budget at mix=0.2 but converges in
@@ -269,6 +269,7 @@ class SemiempiricalResult:
         parameter_identity=None,
         parameter_sha256=None,
         n_electrons=None,
+        placeholder_repulsive_pairs=None,
     ):
         # Tripwire (#160): a total energy of exactly 0.0 Ha, or a non-finite
         # one, is refused here rather than reported.  Every semiempirical
@@ -323,6 +324,20 @@ class SemiempiricalResult:
         )
         self.parameter_sha256 = (
             None if parameter_sha256 is None else str(parameter_sha256)
+        )
+        # DFTB0 / SCC-DFTB only: the element pairs whose repulsive potential
+        # is the A/R^12 placeholder (issue #306), as ``(z1, z2)`` tuples with
+        # ``z1 <= z2``; an empty list means every pair was checked and none
+        # is a placeholder. ``None`` for routes without a repulsive table.
+        # The main runner writes it to the .out, the .system [run] section
+        # and the QVF job spec (#345), the same list the model's
+        # ``DFTB0RepulsivePlaceholderWarning`` names on stderr.
+        self.placeholder_repulsive_pairs = (
+            None
+            if placeholder_repulsive_pairs is None
+            else [
+                (int(pair[0]), int(pair[1])) for pair in placeholder_repulsive_pairs
+            ]
         )
         # Flat scalar dict of parameter provenance for auditability (BUG 69).
         # Method backends populate source-lineage fields for externally-sourced
@@ -604,9 +619,16 @@ def _run_molecular_semiempirical(
             UDFTB0Model,
             USCCDFTBModel,
         )
+        from vibeqc.semiempirical.dftb0 import placeholder_repulsive_record
         from vibeqc.semiempirical.parameters import default_parameters
 
         params = default_parameters()
+        # The pairs the model will warn about on stderr, recorded on the
+        # result so the run's authoritative record carries them too (#345).
+        # None when the parameters cannot be probed (duck-typed stand-ins).
+        placeholder_pairs = placeholder_repulsive_record(
+            params, [atom.Z for atom in molecule.atoms]
+        )
         if method == "dftb0":
             model_type = UDFTB0Model if plan.spin == "unrestricted" else DFTB0Model
         else:
@@ -632,7 +654,7 @@ def _run_molecular_semiempirical(
         ):
             # Bounded Mermin free-energy retry ladder.  A zero-T failure on
             # pi-conjugated N/O systems is a non-smooth charge-response
-            # fixed point (see handovers/HANDOVER_SCC_DFTB_CONVERGENCE.md),
+            # fixed point,
             # not a mixer defect: Fermi-Dirac smearing at low mixing is the
             # standard remedy.  The ladder is only reached after a zero-T
             # failure, so systems whose integer-occupation SCC converges keep
@@ -693,6 +715,7 @@ def _run_molecular_semiempirical(
                 else parameter_provenance["parameter_sha256"]
             ),
             n_electrons=molecule.n_electrons(),
+            placeholder_repulsive_pairs=placeholder_pairs,
         )
 
     if method == "gfn2_xtb":
@@ -707,17 +730,18 @@ def _run_molecular_semiempirical(
         # The auto-stabilisation ladder can accept a finite-temperature rung
         # when no temperature was requested (#3), so the executed ensemble
         # comes from the native result, never from the requested options
-        # (#247).  At T > 0 report the Mermin free energy A = E - T*S, as the
-        # SCC-DFTB retry does, and keep E and S for the .out.
+        # (#247).  At T > 0 the model already reports the Mermin free energy
+        # A = E - T*S (plus D4), the ensemble its analytic gradient
+        # differentiates (#343); reconstruct E and keep S for the .out, as the
+        # SCC-DFTB retry does.
         electronic_temperature = float(
             getattr(native_result, "smearing_temperature", 0.0) or 0.0
         )
         e_internal = None
         entropy = None
         if electronic_temperature > 0.0:
-            e_internal = float(energy)
             entropy = float(native_result.entropy)
-            energy = e_internal - electronic_temperature * entropy
+            e_internal = float(energy) + electronic_temperature * entropy
         return SemiempiricalResult(
             energy,
             model.gradient,
@@ -769,6 +793,82 @@ def _run_molecular_semiempirical(
     raise ValueError(f"Unhandled semiempirical method: {method!r}")
 
 
+_PM6_RECOVERY_TEMPERATURES = (0.005, 0.01, 0.02)
+# #154: how far two converged zero-temperature PM6 fixed points may disagree
+# before the calculation is refused as basin-ambiguous.  Four orders of
+# magnitude above zero-T SCF noise (a re-cool moves the total by ~1e-8 Ha) and
+# four below the measured basin gaps (0.28 to 0.84 Ha on norbornadiene), so it
+# separates "the same solution twice" from "two different solutions".
+_PM6_BASIN_AGREEMENT_TOL = 1.0e-4
+# Budgets for the homotopy rungs.  Generous on purpose: a rung that fails for
+# want of iterations removes a candidate, and a missing candidate is what
+# hides a second basin (#154).
+_PM6_HOMOTOPY_WARM_MAX_ITER = 300
+_PM6_HOMOTOPY_COOL_MAX_ITER = 300
+_PM6_HOMOTOPY_RECOOL_MAX_ITER = 100
+
+
+def _pm6_homotopy_fixed_points(molecule, params):
+    """Zero-T PM6 fixed points reachable through bounded Mermin homotopies.
+
+    Hard Aufbau occupations can leave a near-degenerate closed-shell density
+    cycling between fragment-localised orbitals.  Smearing selects a smooth
+    density, which is cooled back to an ordinary zero-temperature PM6 fixed
+    point and re-cooled to prove it is one: the first cool can appear
+    converged while sitting on a metastable occupation that collapses to a
+    cycle on the next SCF (BUG-024).
+
+    Every rung of the temperature ladder is run, not just the first that
+    converges.  Different rungs reach different fixed points on the systems
+    this guard exists for -- norbornadiene's rungs land on -33.3644211,
+    -33.8171396 and -33.9206691 Ha -- and stopping at the first success is
+    what let one noise-selected basin be reported as the answer (#154).
+
+    Returns ``(fixed_points, iterations)``: a list of ``(temperature, result)``
+    for each rung that produced a converged, re-cooled zero-temperature
+    solution, and the total SCC iterations spent, including unusable rungs.
+    """
+    from vibeqc._vibeqc_core.semiempirical.nddo import (
+        run_pm6_with_density,
+        run_pm6_with_smearing,
+    )
+
+    fixed_points = []
+    iterations = 0
+    for recovery_T in _PM6_RECOVERY_TEMPERATURES:
+        try:
+            warm = run_pm6_with_smearing(
+                molecule,
+                params,
+                electronic_temperature=recovery_T,
+                max_iter=_PM6_HOMOTOPY_WARM_MAX_ITER,
+            )
+        except RuntimeError:
+            # NaN/Inf guard fired in the C++ layer: this temperature did not
+            # help, so charge the budget and try the next rung.
+            iterations += _PM6_HOMOTOPY_WARM_MAX_ITER
+            continue
+        iterations += int(warm.n_iter)
+        if not warm.converged:
+            continue
+        cooled = run_pm6_with_density(
+            molecule, params, warm.density, max_iter=_PM6_HOMOTOPY_COOL_MAX_ITER
+        )
+        iterations += int(cooled.n_iter)
+        if not cooled.converged:
+            continue
+        recooled = run_pm6_with_density(
+            molecule,
+            params,
+            cooled.density,
+            max_iter=_PM6_HOMOTOPY_RECOOL_MAX_ITER,
+        )
+        iterations += int(recooled.n_iter)
+        if recooled.converged:
+            fixed_points.append((recovery_T, recooled))
+    return fixed_points, iterations
+
+
 def _run_pm6(
     plan: SemiempiricalRoutePlan,
     molecule: Molecule,
@@ -795,56 +895,66 @@ def _run_pm6(
         result_obj = run_pm6(molecule, params, max_iter=200)
         from vibeqc._vibeqc_core.semiempirical.nddo import (
             compute_pm6_gradient_fd_from_result,
-            run_pm6_with_density,
-            run_pm6_with_smearing,
         )
 
         n_iter = int(result_obj.n_iter)
-        if not result_obj.converged:
-            # A symmetric weakly coupled dimer or strained bridged bicycle
-            # can leave hard Aufbau occupations cycling between
-            # near-degenerate fragment orbitals.  Use a bounded Mermin
-            # homotopy to select a smooth density, then cool back to the
-            # ordinary zero-temperature PM6 fixed point.  The finite-T
-            # energy is never exposed as a successful PM6 result.
-            #
-            # Try a temperature ladder: formamide-dimer responds to
-            # T=0.005 Ha (v0.15.57), but more strongly coupled systems
-            # like norbornadiene need T >= 0.01 Ha to escape the
-            # occupation cycle (BUG-024).
-            _PM6_RECOVERY_TEMPERATURES = (0.005, 0.01, 0.02)
-            for _recovery_T in _PM6_RECOVERY_TEMPERATURES:
-                try:
-                    warm = run_pm6_with_smearing(
-                        molecule,
-                        params,
-                        electronic_temperature=_recovery_T,
-                        max_iter=100,
-                    )
-                except RuntimeError:
-                    # NaN/Inf guard fired in the C++ layer — this
-                    # temperature didn't help; try the next rung.
-                    n_iter += 100
-                    continue
-                n_iter += int(warm.n_iter)
-                if warm.converged:
-                    cooled = run_pm6_with_density(
-                        molecule, params, warm.density, max_iter=200
-                    )
-                    n_iter += int(cooled.n_iter)
-                    if cooled.converged:
-                        # Re-cool verification: the cooled solution
-                        # must be a genuine zero-T fixed point (BUG-024
-                        # on compute-study: the first cool can appear converged
-                        # but land on a metastable occupation that
-                        # collapses to a cycle on the next SCF).
-                        recooled = run_pm6_with_density(
-                            molecule, params, cooled.density, max_iter=50
-                        )
-                        n_iter += int(recooled.n_iter)
-                        if recooled.converged:
-                            result_obj = recooled
-                            break
+        # #154: a converged PM6 SCF is not on its own an answer.  A strained
+        # bridged bicycle or a weakly coupled symmetric dimer has several
+        # genuine zero-temperature fixed points, and hard occupations leave
+        # the iteration selecting between them on arithmetic noise rather
+        # than on the input.  Measured on norbornadiene: the direct SCF
+        # converges to -33.0848096 Ha, and to -33.9206690 Ha (0.836 Ha,
+        # 22.7 eV lower) after a 1e-9 A nudge of one bridgehead carbon, while
+        # homotopy rungs reach -33.3644211, -33.8171396 and -33.9206691.
+        # Four fleet hosts reported four of those values for one input and
+        # one build, every one labelled converged.
+        #
+        # Nothing here can pick the right basin: the smeared paths are
+        # noise-sensitive too, "report the lowest" is not stable because the
+        # direct solution is sometimes itself the lowest, and thread count
+        # changes nothing, so this is not an arithmetic-determinism defect.
+        # What the route can do is notice.  It gathers every fixed point a
+        # fixed, deterministic probe set reaches and refuses when they
+        # disagree: an energy selected by rounding is not a result.  Every
+        # host then reaches the same outcome instead of a different number.
+        # Systems with one basin -- nearly all of them -- see agreement and
+        # are reported exactly as before.  This is the same class of guard as
+        # the exactly-zero tripwire above.
+        fixed_points, probe_iterations = _pm6_homotopy_fixed_points(
+            molecule, params
+        )
+        n_iter += probe_iterations
+
+        candidates = []
+        if result_obj.converged:
+            candidates.append(("the direct SCF", float(result_obj.energy)))
+        for probe_T, probe in fixed_points:
+            candidates.append(
+                (f"a T = {probe_T} Ha homotopy", float(probe.energy))
+            )
+
+        if len(candidates) > 1:
+            energies = [energy for _, energy in candidates]
+            spread = max(energies) - min(energies)
+            if spread > _PM6_BASIN_AGREEMENT_TOL:
+                detail = "; ".join(
+                    f"{energy:.10f} Ha from {label}"
+                    for label, energy in candidates
+                )
+                raise SemiempiricalEnergyError(
+                    "PM6 reached more than one converged zero-temperature "
+                    f"fixed point for this input, spanning {spread:.6f} Ha: "
+                    f"{detail}. Hard occupations make the selection between "
+                    "them depend on arithmetic noise rather than on the "
+                    "input, so none of these values is this system's PM6 "
+                    "energy and the calculation is refused instead of "
+                    "reporting one of them. See GitLab #154."
+                )
+
+        if not result_obj.converged and fixed_points:
+            # The direct SCF never reached a fixed point; the homotopy's
+            # agreeing solution is the answer, as before.
+            result_obj = fixed_points[0][1]
 
         def gradient():
             return compute_pm6_gradient_fd_from_result(
@@ -1121,6 +1231,7 @@ def run_seccm(molecule: Molecule, ccm_options=None) -> SemiempiricalResult:
         )
     Z = [at.Z for at in molecule.atoms]
     coords_ang = [[c / _A2B for c in at.xyz] for at in molecule.atoms]
+    max_iter, conv_tol, gradient_conv_tol, stability = _seccm_scf_controls(ccm_options)
 
     from vibeqc.semiempirical.methods.msindo_ccm import run_ccm as _run_ccm_validated
 
@@ -1130,6 +1241,9 @@ def run_seccm(molecule: Molecule, ccm_options=None) -> SemiempiricalResult:
         translations,
         charge=int(molecule.charge),
         madelung=madelung,
+        max_iter=max_iter,
+        conv_tol=conv_tol,
+        stability=stability,
     )
 
     from vibeqc.semiempirical.methods.msindo_ccm_gradient_analytic import (
@@ -1144,6 +1258,9 @@ def run_seccm(molecule: Molecule, ccm_options=None) -> SemiempiricalResult:
             translations,
             charge=int(molecule.charge),
             madelung=madelung,
+            max_iter=max_iter,
+            conv_tol=gradient_conv_tol,
+            stability=stability,
         ),
         "seccm",
         converged=bool(result_obj.converged),
@@ -1164,8 +1281,63 @@ def run_seccm(molecule: Molecule, ccm_options=None) -> SemiempiricalResult:
                           ("stability_eigenvalue", 0.0),
                           ("n_stability_restarts", 0)):
         setattr(result, name, getattr(result_obj, name, default))
-    result.internal_instability = False  # unresolved/unstable audited states raise
+    # The reference policy can return a flagged saddle or an unconverged audit
+    # at a resolved gap. Preserve audit convergence separately from the verdict.
+    result.internal_instability = bool(getattr(result_obj, "internal_instability", False))
+    # The facts a reader needs to bind this number to its executed controls:
+    # the dimensional kernel (the MSINDO 1-D "Madelung" is a truncated sum,
+    # not Ewald) and the SCF controls actually applied (#249).
+    from vibeqc.semiempirical.methods.msindo_ccm import net_atomic_charges
+    from vibeqc.output.formats.semiempirical_record import semiempirical_record_fields
+
+    net_charges = net_atomic_charges(Z, result_obj.density)
+    result.run_fields = {
+        **semiempirical_record_fields(
+            route_maturity=result.route_plan.maturity,
+            route_status=result.route_plan.status_route,
+        ),
+        "seccm_periodic_dimension": len(translations),
+        "seccm_electrostatics_kernel": result.route_plan.electrostatics_kernel,
+        "seccm_scf_max_iter": max_iter,
+        "seccm_scf_conv_tol": conv_tol,
+        "seccm_gradient_conv_tol": gradient_conv_tol,
+        "seccm_stability_policy": stability,
+        # Per-point stability record: an equation-of-state or scan consumer
+        # must be able to tell a stable minimum from a flagged saddle (#249).
+        "seccm_stability_checked": bool(result.stability_checked),
+        "seccm_stability_analysis_converged": bool(result.stability_analysis_converged),
+        "seccm_stability_eigenvalue": float(result.stability_eigenvalue),
+        "seccm_stability_restarts": int(result.n_stability_restarts),
+        "seccm_internal_instability": bool(result.internal_instability),
+        # A charge-ordered state on a bare small cluster is a stable SCF
+        # minimum of that model; the reader must be able to see it.
+        "seccm_max_abs_net_charge": float(max(abs(float(q)) for q in net_charges)),
+    }
     return result
+
+
+def _seccm_scf_controls(ccm_options):
+    """Validated ``(max_iter, conv_tol, gradient_conv_tol, stability)``.
+
+    Missing attributes fall back to the historical ``run_seccm`` values so
+    option doubles without the new fields keep their behaviour.
+    """
+    max_iter = int(getattr(ccm_options, "max_iter", 200))
+    conv_tol = float(getattr(ccm_options, "conv_tol", 1e-9))
+    gradient_conv_tol = float(getattr(ccm_options, "gradient_conv_tol", 1e-10))
+    if max_iter < 1:
+        raise ValueError("ccm_options.max_iter must be a positive integer")
+    for name, value in (("conv_tol", conv_tol),
+                        ("gradient_conv_tol", gradient_conv_tol)):
+        if not (value > 0.0) or value != value or value == float("inf"):
+            raise ValueError(f"ccm_options.{name} must be positive and finite")
+    stability = str(getattr(ccm_options, "stability", "reference"))
+    if stability not in ("reference", "lowest"):
+        raise ValueError(
+            "ccm_options.stability must be 'reference' or 'lowest', "
+            f"got {stability!r}"
+        )
+    return max_iter, conv_tol, gradient_conv_tol, stability
 
 
 # Compatibility symbol retained for existing callers and implementation

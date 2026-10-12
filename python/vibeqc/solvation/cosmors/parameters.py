@@ -56,7 +56,9 @@ class Parameterization:
         Combinatorial exponent, eq. 30.
     omega_ring, eta_entropy
         Ring correction (kcal/mol per ring atom) and the gas-to-liquid entropy
-        constant (dimensionless; enters as ``eta R T``). Eq. 21.
+        constant (dimensionless). Eq. 21: the gas reference gets
+        ``- omega n_ring + eta R T``; the eta sign is section 5.1's, not the
+        printed equation's (#435).
     dispersion
         Element-specific dispersion constants ``gamma_k``,
         kcal/(mol angstrom^2), keyed by atomic number. Eq. 21.
@@ -81,6 +83,14 @@ class Parameterization:
     cavity_radii: dict[int, float] = field(default_factory=dict)
     reference: str = ""
     notes: str = ""
+    # Width, in e/A^2, of the smooth ramps that replace the max/min corners of
+    # Klamt 1998 eq. 22. ``0.0`` is the published form exactly, and the default:
+    # every published number is unchanged. A positive width makes the
+    # hydrogen-bond term, and so the COSMO-RS energy, differentiable in sigma,
+    # which a Direct COSMO-RS nuclear gradient needs (next step 5, decided
+    # 2026-09-29). It departs from the published functional form by an amount
+    # proportional to the width; see ``hydrogen_bond_energy``.
+    hb_smoothing: float = 0.0
 
     def beta(self, temperature_k: float = T_ROOM_K) -> float:
         """``beta = kT / a_eff`` in kcal/(mol angstrom^2).
@@ -127,7 +137,7 @@ KLAMT_1998 = Parameterization(
     sigma_hb=0.0082,           # section 5.1
     lambda_comb=0.14,          # eq. 30
     omega_ring=-0.21,          # section 5.1, kcal/mol per ring atom
-    eta_entropy=-9.15,         # section 5.1; eta k T = -5.4 kcal/mol at 298 K
+    eta_entropy=-9.15,         # section 5.1; eta k T = -5.4 kcal/mol at 298 K, lowers mu_gas
     dispersion={
         1: -0.041,   # H
         6: -0.037,   # C

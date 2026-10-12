@@ -224,7 +224,16 @@ The gradient per step is printed in ``.out``:
   ...
   Geometry optimization (Brent): 4 steps, 63 energy evals,
   E = -76.01830427 Ha, max|grad| = 2.1819e-03 Ha/bohr, converged=True
+  Geometry optimization CONVERGED  (Brent steepest-descent, 4 iterations)
+  final max|g| = 2.182e-03 Ha/bohr (threshold 2.250e-03)
+  the largest gradient component is within the threshold
 ```
+
+A run that stops at `max_opt_steps` before reaching the threshold prints
+`Geometry optimization NOT CONVERGED` instead and ends the job with a
+`GeomOptNotConvergedError`; see
+[When the optimizer does not converge](../user_guide/geometry_optimization.md)
+in the user guide.
 
 ### When to use each backend
 
@@ -235,6 +244,7 @@ The gradient per step is printed in ``.out``:
 | Flat PES (H-bonded clusters, vdW complexes) | Brent or ASE BFGS |
 | Near-degenerate states, Hessian misbehaves | Brent |
 | Semi-empirical / MLIP methods | ASE BFGS only (auto-fallback) |
+| `fci`, `nevpt2`, `caspt2`, `mrci` | Native L-BFGS-B or Brent **only**: ASE (including the `"auto"` default) refuses these with a `ValueError` instead of silently optimizing the mean-field surface (GitLab #357); see the [user guide](../user_guide/geometry_optimization.md) |
 
 ## Theory
 

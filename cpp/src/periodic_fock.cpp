@@ -12,8 +12,10 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <unordered_map>
 #include <utility>
@@ -22,6 +24,44 @@
 namespace vibeqc {
 
 namespace {
+
+// Memoize the finite-domain J/K union only for lambda rows actually reached
+// by sparse traversal. A dense nc*nc table clears quadratic scratch storage
+// even when screening visits a small neighborhood. Rows retain the original
+// two-bit state per cell pair and are published only after initialization.
+class SparsePairGates {
+    using Word = std::atomic<std::uint64_t>;
+public:
+    explicit SparsePairGates(std::size_t cells)
+        : row_words_((cells + 31) / 32), rows_(cells) {
+        for (auto& row : rows_) row.store(nullptr, std::memory_order_relaxed);
+    }
+    ~SparsePairGates() {
+        // Destruction occurs after all output-shell-pair workers have joined.
+        for (auto& row : rows_) delete[] row.load(std::memory_order_relaxed);
+    }
+    SparsePairGates(const SparsePairGates&) = delete;
+    SparsePairGates& operator=(const SparsePairGates&) = delete;
+    Word& at(std::size_t lambda, std::size_t sigma) {
+        Word* row = rows_[lambda].load(std::memory_order_acquire);
+        if (row == nullptr) {
+            auto candidate = std::make_unique<Word[]>(row_words_);
+            for (std::size_t i = 0; i < row_words_; ++i)
+                candidate[i].store(0, std::memory_order_relaxed);
+            if (rows_[lambda].compare_exchange_strong(row, candidate.get(),
+                    std::memory_order_acq_rel, std::memory_order_acquire))
+                row = candidate.release();
+            // A losing allocation is destroyed; 'row' is the published row.
+        }
+        return row[sigma / 32];
+    }
+    static std::size_t max_bytes(std::size_t cells) {
+        return cells * (sizeof(std::atomic<Word*>) + ((cells + 31) / 32) * sizeof(Word));
+    }
+private:
+    std::size_t row_words_;
+    std::vector<std::atomic<Word*>> rows_;
+};
 
 // Local alias so existing code keeps using the short name.
 inline std::vector<libint2::Shell> shift_shells(
@@ -471,7 +511,7 @@ public:
     };
     ErfcProductBounds(const libint2::BasisSet& shells,
                       const std::vector<LatticeCell>& cells, bool requested)
-        : ns_(shells.size()) {
+        : ns_(shells.size()), nc_(cells.size()) {
         constexpr std::size_t budget = 128 * 1024 * 1024;
         if (!requested || ns_ == 0 || ns_ > 256 || cells.empty() ||
             cells.size() > budget / sizeof(Entry) / (ns_ * ns_)) return;
@@ -480,15 +520,18 @@ public:
             amplitudes.push_back(erfc_radial_amplitudes(shell, 0.25));
             if (amplitudes.back().empty()) return;
         }
-        entries_.resize(cells.size() * ns_ * ns_);
+        // Exchange traverses many cells for one fixed shell pair. Keep those
+        // entries together instead of striding over every other shell pair.
+        entries_.resize(nc_ * ns_ * ns_);
         const double pi = std::acos(-1.0);
         double max_cell_norm = 0.0;
         for (const auto& cell : cells) max_cell_norm = std::max(max_cell_norm, cell.r_cart.norm());
         #pragma omp parallel for schedule(dynamic)
         for (int key = 0; key < static_cast<int>(entries_.size()); ++key) {
-            const auto b = static_cast<std::size_t>(key) % ns_;
-            const auto a = static_cast<std::size_t>(key) / ns_ % ns_;
-            const auto cell = static_cast<std::size_t>(key) / (ns_ * ns_);
+            const auto cell = static_cast<std::size_t>(key) % nc_;
+            const auto pair = static_cast<std::size_t>(key) / nc_;
+            const auto b = pair % ns_;
+            const auto a = pair / ns_;
             const Eigen::Vector3d A(shells[a].O[0], shells[a].O[1], shells[a].O[2]);
             const Eigen::Vector3d B = Eigen::Vector3d(shells[b].O[0],
                 shells[b].O[1], shells[b].O[2]) + cells[cell].r_cart;
@@ -507,10 +550,35 @@ public:
                     mass += ga.weight * gb.weight * std::pow(pi / sum, 1.5)
                         * std::exp(-ga.exponent * gb.exponent / sum * distance * distance);
                 }
-            if (!(mass > 0.0) || !std::isfinite(mass) || !(exponent > 0.0) ||
+            if (!std::isfinite(mass) || mass < 0.0 || !(exponent > 0.0) ||
                 !lower.allFinite() || !upper.allFinite()) continue;
+            double log_mass;
+            if (mass >= std::numeric_limits<double>::min()) {
+                log_mass = std::log(mass) + 1e-12;
+            } else {
+                // Underflow is not an unknown envelope. An infinite entry
+                // would also disable pruning in every enclosing tree node.
+                // For N positive terms, sum(t) <= N * max(t); evaluate that
+                // conservative ceiling in logs without exponentiating tails.
+                double largest = -std::numeric_limits<double>::infinity();
+                bool finite = true;
+                for (const auto& ga : amplitudes[a])
+                    for (const auto& gb : amplitudes[b]) {
+                        if (ga.weight == 0.0 || gb.weight == 0.0) continue;
+                        const double sum = ga.exponent + gb.exponent;
+                        const double term = std::log(ga.weight) + std::log(gb.weight)
+                            + 1.5 * (std::log(pi) - std::log(sum))
+                            - ga.exponent * (gb.exponent / sum) * distance * distance;
+                        finite = finite && std::isfinite(term);
+                        largest = std::max(largest, term);
+                    }
+                if (!finite || !std::isfinite(largest)) continue;
+                log_mass = largest + std::log(static_cast<double>(
+                    amplitudes[a].size() * amplitudes[b].size()));
+                log_mass += 1e-12 * (1.0 + std::abs(log_mass));
+            }
             auto& entry = entries_[key];
-            entry.log_mass = std::log(mass) + 1e-12;
+            entry.log_mass = log_mass;
             entry.inverse_exponent = 1.0 / exponent;
             entry.center = 0.5 * (lower + upper);
             entry.radius = 0.5 * (upper - lower).norm() + geometry_slack;
@@ -535,7 +603,7 @@ public:
             std::iota(order_.begin() + begin, order_.begin() + begin + cells.size(), 0);
             int next = static_cast<int>(static_cast<std::size_t>(pair) * nodes_per_pair);
             const auto entry_at = [&](int cell) -> const Entry& {
-                return entries_[static_cast<std::size_t>(cell) * ns_ * ns_ + pair];
+                return entries_[static_cast<std::size_t>(pair) * nc_ + cell];
             };
             const auto build = [&](auto&& self, std::size_t first, std::size_t last) -> int {
                 const int pos = next++;
@@ -574,7 +642,7 @@ public:
     bool enabled() const { return enabled_; }
     bool indexed() const { return !roots_.empty(); }
     const Entry& at(int cell, std::size_t a, std::size_t b) const {
-        return entries_[static_cast<std::size_t>(cell) * ns_ * ns_ + a * ns_ + b];
+        return entries_[(a * ns_ + b) * nc_ + static_cast<std::size_t>(cell)];
     }
     static double query_radius(const Entry& a, const Entry& b,
                                double omega, double log_density, double log_threshold) {
@@ -632,7 +700,7 @@ public:
         return walk(walk, roots_[a * ns_ + b]);
     }
 private:
-    std::size_t ns_;
+    std::size_t ns_, nc_;
     bool enabled_ = false;
     std::vector<Entry> entries_;
     std::vector<Node> nodes_;
@@ -640,6 +708,114 @@ private:
 };
 
 }  // namespace
+
+struct PeriodicJKWorkspace::Data {
+    struct Geometry {
+        libint2::BasisSet shells;
+        Eigen::Matrix3d lattice;
+        std::vector<LatticeCell> cells;
+        std::vector<std::vector<libint2::Shell>> shells_at;
+        bool valid_charge_geometry;
+
+        Geometry(const BasisSet& basis, const PeriodicSystem& system,
+                 const std::vector<LatticeCell>& input_cells)
+            : shells(basis.libint()), lattice(system.lattice), cells(input_cells) {
+            for (const auto& cell : cells)
+                shells_at.push_back(shift_shells_to_cell(shells, cell.r_cart));
+            valid_charge_geometry = std::all_of(cells.begin(), cells.end(), [&](const auto& cell) {
+                const Eigen::Vector3d expected = lattice * cell.index.template cast<double>();
+                return (expected - cell.r_cart).norm() <= 1e-12 * (1.0 + expected.norm());
+            });
+        }
+
+        bool matches(const BasisSet& basis, const PeriodicSystem& system,
+                     const std::vector<LatticeCell>& other) const {
+            // Compare actual values, not object addresses or a collision-prone hash.
+            // Signed zero and every primitive/contraction byte participate in identity.
+            if (cells.size() != other.size() ||
+                std::memcmp(lattice.data(), system.lattice.data(), 9 * sizeof(double)) != 0)
+                return false;
+            const auto& rhs = basis.libint();
+            if (shells.size() != rhs.size()) return false;
+            const auto same = [](const auto& a, const auto& b) {
+                return a.size() == b.size() && (a.empty() ||
+                    std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0);
+            };
+            for (std::size_t i = 0; i < shells.size(); ++i) {
+                const auto& a = shells[i]; const auto& b = rhs[i];
+                if (!same(a.O, b.O) || !same(a.alpha, b.alpha) || a.contr.size() != b.contr.size())
+                    return false;
+                for (std::size_t c = 0; c < a.contr.size(); ++c)
+                    if (a.contr[c].l != b.contr[c].l || a.contr[c].pure != b.contr[c].pure ||
+                        !same(a.contr[c].coeff, b.contr[c].coeff)) return false;
+            }
+            for (std::size_t i = 0; i < cells.size(); ++i)
+                if (cells[i].index != other[i].index ||
+                    std::memcmp(cells[i].r_cart.data(), other[i].r_cart.data(), 3 * sizeof(double)) != 0)
+                    return false;
+            return true;
+        }
+    };
+    std::shared_ptr<const Geometry> geometry;
+    double omega;
+    bool screen, range_screening;
+    std::vector<std::vector<double>> Q;
+    std::unique_ptr<ErfcChargeBounds> charge;
+    std::shared_ptr<const ErfcProductBounds> product;
+
+    Data(std::shared_ptr<const Geometry> g, double w, bool s, bool r,
+         const Data* previous)
+        : geometry(std::move(g)), omega(w), screen(s), range_screening(r) {
+        const auto& shells = geometry->shells;
+        if (screen) {
+            libint2::Engine engine(omega > 0.0 ? libint2::Operator::erfc_coulomb
+                : libint2::Operator::coulomb, shells.max_nprim(), shells.max_l(), 0);
+            if (omega > 0.0) engine.set_params(omega);
+            Q = compute_schwarz_factors_per_cell(shells, geometry->shells_at, engine);
+        }
+        charge = std::make_unique<ErfcChargeBounds>(shells, geometry->cells, omega,
+            screen && range_screening && omega > 0.0 && geometry->valid_charge_geometry);
+        // Product envelopes depend on the basis/images, not on omega. The
+        // kernel-dependent charge bounds still determine whether they apply.
+        if (previous && previous->geometry == geometry &&
+                previous->charge->enabled() == charge->enabled())
+            product = previous->product;
+        else
+            product = std::make_shared<ErfcProductBounds>(shells, geometry->cells, charge->enabled());
+    }
+
+    bool matches_kernel(double w, bool s, bool r) const {
+        return screen == s && range_screening == r &&
+            std::memcmp(&omega, &w, sizeof(double)) == 0;
+    }
+};
+
+std::shared_ptr<const PeriodicJKWorkspace::Data> PeriodicJKWorkspace::prepare(
+        const BasisSet& basis, const PeriodicSystem& system,
+        const std::vector<LatticeCell>& cells, double omega, bool screen, bool range_screening) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    const bool same_geometry = data_ && data_->geometry->matches(basis, system, cells);
+    if (same_geometry) {
+        if (data_->matches_kernel(omega, screen, range_screening)) return data_;
+        if (alternate_ && alternate_->matches_kernel(omega, screen, range_screening)) {
+            std::swap(data_, alternate_);
+            return data_;
+        }
+    }
+    // Bound retained preparation to one geometry and two kernels. Drop the
+    // least recently used kernel before allocating its replacement; in-flight
+    // builds continue to own their immutable snapshots independently.
+    alternate_.reset();
+    auto geometry = same_geometry ? data_->geometry
+        : std::make_shared<Data::Geometry>(basis, system, cells);
+    auto next = std::make_shared<Data>(geometry, omega, screen, range_screening,
+                                     same_geometry ? data_.get() : nullptr);
+    if (same_geometry) alternate_ = data_;
+    else ++geometry_preparation_count_;
+    data_ = std::move(next);
+    ++preparation_count_;
+    return data_;
+}
 
 JKMatrices build_jk_gamma_molecular_limit(const BasisSet& basis,
                                           const PeriodicSystem& system,
@@ -942,7 +1118,8 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
         // (s1*nsh^3 + s2*nsh^2 + s3*nsh + s4); quartets in this mask
         // are FAR-FIELD and SKIPPED from the exact ERI evaluation.
         // Empty (default) → no skip, existing behaviour.
-        const std::vector<std::vector<int>>& bipolar_skip_mask = {}) {
+        const std::vector<std::vector<int>>& bipolar_skip_mask = {},
+        PeriodicJKWorkspace* workspace = nullptr) {
     ensure_libint_initialized();
 
     const auto& shells_ref = basis.libint();
@@ -957,6 +1134,10 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
     }
 
     const auto n_c = cells.size();
+    const double schwarz_thr = opts.schwarz_threshold;
+    const bool screen = (schwarz_thr > 0.0);
+    const auto prepared = workspace ? workspace->prepare(basis, system, cells, omega,
+        screen, opts.sr_range_screening) : nullptr;
 
     // Pre-shift shells once per cell.
     auto shift_shells = [&](const Eigen::Vector3d& dr) {
@@ -966,10 +1147,13 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
         }
         return out;
     };
-    std::vector<std::vector<libint2::Shell>> shells_at(n_c);
-    for (std::size_t c = 0; c < n_c; ++c) {
-        shells_at[c] = shift_shells(cells[c].r_cart);
+    std::vector<std::vector<libint2::Shell>> uncached_shells;
+    if (!prepared) {
+        uncached_shells.resize(n_c);
+        for (std::size_t c = 0; c < n_c; ++c)
+            uncached_shells[c] = shift_shells(cells[c].r_cart);
     }
+    const auto& shells_at = prepared ? prepared->geometry->shells_at : uncached_shells;
 
     // Density cell lookup by integer index. We'll use it to fetch P(h)
     // where h = g_σ − g_λ. Store blocks flat and index by cell position.
@@ -1021,11 +1205,10 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
     // cost is O(n_c³ · n_shells⁴) libint quartet calls per Fock build —
     // O(10⁹) for LiH/STO-3G with cutoff 15 bohr; with screening it
     // drops to seconds.
-    const double schwarz_thr = opts.schwarz_threshold;
-    const bool screen = (schwarz_thr > 0.0);
-    const auto Q = screen
+    const auto uncached_Q = screen && !prepared
         ? compute_schwarz_factors_per_cell(shells_ref, shells_at, prototype)
         : std::vector<std::vector<double>>{};
+    const auto& Q = prepared ? prepared->Q : uncached_Q;
     const double D_max = screen ? density_envelope(P_real_space.blocks) : 0.0;
     // Cell-level Schwarz: ``Q_max[c] = max_{s_a, s_b} Q[c][s_a, s_b]``.
     // For any cell triple (c_g, c_lam, c_sig) the bound on *any* shell
@@ -1089,9 +1272,11 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
         const Eigen::Vector3d expected = system.lattice * cell.index.template cast<double>();
         return (expected - cell.r_cart).norm() <= 1e-12 * (1.0 + expected.norm());
     });
-    const ErfcChargeBounds charge_bounds(shells_ref, cells, omega,
-        screen && opts.sr_range_screening && omega > 0.0 && valid_charge_geometry);
-    const ErfcProductBounds product_bounds(shells_ref, cells, charge_bounds.enabled());
+    const ErfcChargeBounds uncached_charge(shells_ref, cells, omega,
+        !prepared && screen && opts.sr_range_screening && omega > 0.0 && valid_charge_geometry);
+    const auto& charge_bounds = prepared ? *prepared->charge : uncached_charge;
+    const ErfcProductBounds uncached_product(shells_ref, cells, !prepared && charge_bounds.enabled());
+    const auto& product_bounds = prepared ? *prepared->product : uncached_product;
     const double ln_thr = screen ? std::log(schwarz_thr) : 0.0;
     constexpr double LN_STAGE1_MARGIN = 1e-6;
     std::vector<std::vector<double>> lnQ;
@@ -1181,7 +1366,7 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
     // factor in the existing quartet Schwarz test, with the same product
     // order. These are bounds on that test, not extra integral estimates.
     std::vector<std::vector<double>> q_row_max, d_row_max;
-    std::vector<double> d_block_max;
+    std::vector<double> d_block_max, d_pair_max;
     if (sparse) {
         q_row_max.assign(n_c, std::vector<double>(nshells, 0.0));
         for (std::size_t c = 0; c < n_c; ++c)
@@ -1190,10 +1375,14 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                     q_row_max[c][s] = std::max(q_row_max[c][s], Q[c][s * nshells + t]);
         d_row_max.assign(Dpair_per_block.size(), std::vector<double>(nshells, 0.0));
         d_block_max.assign(Dpair_per_block.size(), 0.0);
+        d_pair_max.assign(nshells * nshells, 0.0);
         for (std::size_t p = 0; p < Dpair_per_block.size(); ++p) {
             for (std::size_t s = 0; s < nshells; ++s) {
-                for (std::size_t t = 0; t < nshells; ++t)
+                for (std::size_t t = 0; t < nshells; ++t) {
                     d_row_max[p][s] = std::max(d_row_max[p][s], Dpair_per_block[p](s, t));
+                    d_pair_max[s * nshells + t] = std::max(
+                        d_pair_max[s * nshells + t], Dpair_per_block[p](s, t));
+                }
                 d_block_max[p] = std::max(d_block_max[p], d_row_max[p][s]);
             }
         }
@@ -1435,6 +1624,39 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
     std::uint64_t pair_fallback_outputs =
         pair_traversal_attempted && !pair_traversal ? n_out : 0;
     if (pair_traversal) {
+        const double max_q = q_order.empty() ? 0.0 : Q_max[q_order.front()];
+        double max_charge_ceiling = 0.0;
+        if (charge_bounds.enabled())
+            for (std::size_t s3 = 0; s3 < nshells; ++s3)
+                for (std::size_t s4 = 0; s4 < nshells; ++s4)
+                    max_charge_ceiling = std::max(max_charge_ceiling,
+                        charge_bounds.ceiling(s3, s4));
+        const double output_threshold = schwarz_thr * (1.0 - 1e-12);
+        const auto exchange_output_possible = [&](int g, std::size_t s1, std::size_t s2) {
+            // The existing quartet predicate includes C12(g) C34(sigma-lambda).
+            // Its second factor never exceeds the zero-distance ceiling.
+            // Use the full density maximum, including all periodic images.
+            return compute_exchange && (!charge_bounds.enabled() ||
+                !(charge_bounds.at(g, s1, s2) * max_charge_ceiling
+                    * pair_density_max * 0.5 < output_threshold));
+        };
+        std::vector<int> active_outputs;
+        active_outputs.reserve(n_out);
+        for (int oi = 0; oi < n_out; ++oi) {
+            const int g = use_subset ? output_indices[oi] : oi;
+            bool possible = !(Q_max[g] * max_q * pair_density_max < output_threshold);
+            for (std::size_t s1 = 0; !possible && s1 < nshells; ++s1)
+                for (std::size_t s2 = 0; !possible && s2 < nshells; ++s2)
+                    possible = exchange_output_possible(g, s1, s2);
+            if (possible) active_outputs.push_back(oi);
+            else {
+                // Retain the supplied output block as zero without allocating
+                // its cell-pair gate table or entering any shell-pair trees.
+                pair_outputs_done[oi] = 1;
+                output_traversal[oi] = 1;
+            }
+        }
+        const int n_active = static_cast<int>(active_outputs.size());
         const auto origin = [](const libint2::Shell& shell) {
             return Eigen::Vector3d(shell.O[0], shell.O[1], shell.O[2]);
         };
@@ -1447,15 +1669,17 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
         // Batching output cells keeps several expensive diffuse pairs ready
         // at once, without allocating a gate table for every output cell.
         const int n_pairs = static_cast<int>(nshells * nshells);
-        const std::size_t gate_words = (n_c * n_c + 31) / 32;
         constexpr std::size_t gate_bytes_limit = 64 * 1024 * 1024;
-        const int batch_width = static_cast<int>(std::min<std::size_t>(n_out,
-            std::max<std::size_t>(1, gate_bytes_limit / (sizeof(std::uint64_t) * gate_words))));
-        for (int batch_begin = 0; batch_begin < n_out; batch_begin += batch_width) {
-            const int batch_size = std::min(batch_width, n_out - batch_begin);
+        const std::size_t gate_bytes = SparsePairGates::max_bytes(n_c);
+        const int batch_width = static_cast<int>(std::max<std::size_t>(1,
+            std::min<std::size_t>(n_active,
+                gate_bytes_limit / gate_bytes)));
+        for (int batch_begin = 0; batch_begin < n_active; batch_begin += batch_width) {
+            const int batch_size = std::min(batch_width, n_active - batch_begin);
             // Two atomic bits memoize the historical J/K union gate.
-            std::vector<std::atomic<std::uint64_t>> gates(batch_size * gate_words);
-            for (auto& word : gates) word.store(0, std::memory_order_relaxed);
+            std::vector<std::unique_ptr<SparsePairGates>> gates;
+            for (int local = 0; local < batch_size; ++local)
+                gates.push_back(std::make_unique<SparsePairGates>(n_c));
             std::vector<std::atomic<bool>> complete_outputs(batch_size);
             std::vector<std::atomic<std::uint64_t>> seen_counts(batch_size);
             std::vector<std::atomic<std::uint64_t>> possible_counts(batch_size);
@@ -1469,7 +1693,7 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
             #pragma omp parallel for schedule(dynamic)
             for (int task = 0; task < batch_size * n_pairs; ++task) {
                 const int local = task / n_pairs;
-                const int oi = batch_begin + local;
+                const int oi = active_outputs[batch_begin + local];
                 const int pair = task % n_pairs;
                 auto& output_complete = complete_outputs[local];
                 if (!output_complete.load(std::memory_order_relaxed)) continue;
@@ -1488,9 +1712,8 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                 auto& engine = engines[tid];
                 const auto& buf = engine.results();
                 const auto admitted_cell = [&](int lam, int sig) {
-                    const auto flat = static_cast<std::size_t>(lam) * n_c + sig;
-                    const unsigned shift = (flat % 32) * 2;
-                    auto& word = gates[local * gate_words + flat / 32];
+                    const unsigned shift = (sig % 32) * 2;
+                    auto& word = gates[local]->at(lam, sig);
                     auto state = (word.load(std::memory_order_relaxed) >> shift) & 3;
                     if (state == 0) {
                         const int h = cell_pos_table.at(cells[sig].index - cells[lam].index);
@@ -1572,7 +1795,7 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                     if (!complete) break;
                 }
                 if (!complete) { output_complete.store(false); continue; }
-                if (compute_exchange) {
+                if (exchange_output_possible(c_g, s1, s2)) {
                     const auto& bras = exchange_pairs[s1];
                     const auto& kets = exchange_pairs[s2];
                     const double max_q24 = kets.empty() ? 0.0 : kets.front().q;
@@ -1583,11 +1806,18 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                         const int p_minus_g = cell_pos_table.at(cells[lam].index - cells[c_g].index);
                         const double c23 = charge_bounds.enabled()
                             ? charge_bounds.at(p_minus_g, s2, s3) : 0.0;
+                        if (charge_bounds.enabled() && c23 == 0.0) continue;
                         for (std::size_t s4 = 0; s4 < nshells; ++s4) {
+                            // Retain all density images, but only this shell
+                            // pair can enter the final exchange contraction.
+                            const double density_bound = d_pair_max[s3 * nshells + s4];
+                            if (density_bound == 0.0) continue;
                             // The cross-pair bound is C14(sigma) C23(lambda-g).
-                            double radius = charge_bounds.enabled()
+                            const double scaled_density = density_bound * c23 * 0.5;
+                            double radius = charge_bounds.enabled() && scaled_density > 0.0
+                                && std::isfinite(scaled_density)
                                 ? charge_bounds.radius(s1, s4,
-                                    schwarz_thr * (1.0 - 1e-12) / (0.5 * pair_density_max * c23))
+                                    schwarz_thr * (1.0 - 1e-12) / scaled_density)
                                 : std::numeric_limits<double>::infinity();
                             if (radius < 0.0) continue;
                             Eigen::Vector3d center = origin(a) - origin(shells_ref[s4]);
@@ -1615,7 +1845,7 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                             if (product_bounds.indexed()) {
                                 complete = product_bounds.visit(s2, s4,
                                     product_bounds.at(lam, s1, s3), cells[c_g].r_cart,
-                                    omega, std::log(0.5 * pair_density_max), ln_thr - 1e-12,
+                                    omega, std::log(density_bound) + std::log(0.5), ln_thr - 1e-12,
                                     center - cells[c_g].r_cart, radius + query_slack, cells,
                                     [&](int t) {
                                         const int sig = cell_pos_table.at(cells[t].index + cells[c_g].index);
@@ -1677,7 +1907,7 @@ JKLatticeMatrixSets build_jk_2e_real_space_impl(
                 visited_counts[local].fetch_add(visited, std::memory_order_relaxed);
             }
             for (int local = 0; local < batch_size; ++local) {
-                const int oi = batch_begin + local;
+                const int oi = active_outputs[batch_begin + local];
                 if (complete_outputs[local].load(std::memory_order_relaxed)) {
                     pair_outputs_done[oi] = 1;
                     output_traversal[oi] = 1;
@@ -2212,10 +2442,10 @@ JKLatticeMatrixSets build_jk_2e_real_space_domains(
         const std::vector<int>& output_indices,
         const std::vector<std::vector<uint8_t>>& output_shell_masks,
         double omega,
-        bool compute_exchange) {
+        bool compute_exchange, PeriodicJKWorkspace* workspace) {
     return build_jk_2e_real_space_impl(
         basis, system, opts, P_real_space, cells, compute_exchange, omega,
-        output_indices, output_shell_masks);
+        output_indices, output_shell_masks, {}, nullptr, false, {}, workspace);
 }
 
 JKLatticeMatrixSets build_jk_2e_real_space_bipolar_dispatch(
@@ -3145,6 +3375,166 @@ JKMatrices build_jk_ccm_weighted(
         for (const auto& m : J_tls) Jm += m;
         for (const auto& m : K_tls) Km += m;
         // Same final Hermitisation as the full bra_home_full branch.
+        const Eigen::MatrixXd Jh = 0.5 * (Jm + Jm.transpose());
+        const Eigen::MatrixXd Kh = 0.5 * (Km + Km.transpose());
+        return JKMatrices{Jh, Kh};
+    }
+
+    if (method == "p2014-direct") {
+        // ================================================================
+        // p2014-direct: the 2012 program / P2014 Eqs. 18-19 with the bra
+        // partner IMAGED (Python padded.ccm_eri_p2014). For a home function
+        // mu: nu over every image (cell g_b) in the closed Wigner-Seitz
+        // supercell of mu, weight w_ab = W[g_b](a,b); lambda over every image
+        // (cell p) with the bridge (W[p](a,c) + W[p-g_b](b,c))/2 -- the second
+        // term relative to the IMAGED nu, which "bra_home_full" (nu kept in the
+        // home copy) does not have; sigma over every image in the cell of
+        // lambda (cell p+g_d), weight W[g_d](c,d). The 2012 contraction
+        //   J_ij = V[i,j,k,l] D_kl,  K_ij = (V[i,k,j,l] + V[i,l,k,j]) D_kl / 2
+        // is the standard contraction of the ket-symmetrised tensor
+        // Vbar = (V_ijkl + V_ijlk)/2, which is eight-fold symmetric, so each
+        // weighted quartet t folds as
+        //   J(mu,nu) += t (P(la,si)+P(si,la))/2
+        //   K(mu,si) += t P(la,nu)/2 ;  K(mu,la) += t P(si,nu)/2.
+        // Weights are hoisted per cell triple (dense atom matrices), and a
+        // serial pre-pass keeps only the triples that carry weight and refuses
+        // to drop one for a missing image cell.
+        // ================================================================
+        std::vector<Eigen::MatrixXd> J_tls(n_threads, Eigen::MatrixXd::Zero(nbf, nbf));
+        std::vector<Eigen::MatrixXd> K_tls(n_threads, Eigen::MatrixXd::Zero(nbf, nbf));
+
+        auto wmat = [&](const Eigen::Vector3i& g) -> const Eigen::MatrixXd* {
+            auto it = wlookup.find(g);
+            return it == wlookup.end() ? nullptr : &it->second;
+        };
+        const std::vector<Eigen::Vector3i> g_list(weight_cells.begin(), weight_cells.end());
+        const int n_g = static_cast<int>(g_list.size());
+
+        struct Triple { int igb; int c_p; int igd; int b_idx; int q_idx; };
+        std::vector<Triple> triples;
+        for (int igb = 0; igb < n_g; ++igb) {
+            const Eigen::MatrixXd* Wab = wmat(g_list[igb]);
+            if (!Wab || Wab->maxCoeff() <= 0.0) continue;
+            for (int c_p = 0; c_p < n_c; ++c_p) {
+                const Eigen::Vector3i cell_p = cells[c_p].index;
+                const Eigen::Vector3i rel_p(cell_p[0]-g_list[igb][0], cell_p[1]-g_list[igb][1],
+                                            cell_p[2]-g_list[igb][2]);
+                const Eigen::MatrixXd* Wac = wmat(cell_p);
+                const Eigen::MatrixXd* Wbc = wmat(rel_p);
+                if (!Wac && !Wbc) continue;
+                // atoms c reachable with a non-zero bra*bridge weight
+                std::vector<char> c_on(n_atoms, 0);
+                bool any_c = false;
+                for (int a = 0; a < n_atoms; ++a)
+                    for (int b = 0; b < n_atoms; ++b) {
+                        if ((*Wab)(a, b) == 0.0) continue;
+                        for (int c = 0; c < n_atoms; ++c) {
+                            const double br = (Wac ? (*Wac)(a, c) : 0.0) + (Wbc ? (*Wbc)(b, c) : 0.0);
+                            if (br != 0.0) { c_on[c] = 1; any_c = true; }
+                        }
+                    }
+                if (!any_c) continue;
+                for (int igd = 0; igd < n_g; ++igd) {
+                    const Eigen::MatrixXd* Wcd = wmat(g_list[igd]);
+                    if (!Wcd) continue;
+                    bool active = false;
+                    for (int c = 0; c < n_atoms && !active; ++c)
+                        if (c_on[c] && Wcd->row(c).maxCoeff() > 0.0) active = true;
+                    if (!active) continue;
+                    const Eigen::Vector3i cell_q(cell_p[0]+g_list[igd][0], cell_p[1]+g_list[igd][1],
+                                                 cell_p[2]+g_list[igd][2]);
+                    auto it_b = cell_pos_map.find(g_list[igb]);
+                    auto it_q = cell_pos_map.find(cell_q);
+                    if (it_b == cell_pos_map.end() || it_q == cell_pos_map.end())
+                        throw std::runtime_error(
+                            "build_jk_ccm_weighted(p2014-direct): an image cell that carries "
+                            "four-centre weight is missing from the lattice cell list; "
+                            "increase the lattice cutoff (weighted quartets would be dropped)");
+                    triples.push_back(Triple{igb, c_p, igd, it_b->second, it_q->second});
+                }
+            }
+        }
+        const long n_triples = static_cast<long>(triples.size());
+
+        #pragma omp parallel for schedule(dynamic)
+        for (long idx = 0; idx < n_triples; ++idx) {
+            const Triple& tr = triples[static_cast<std::size_t>(idx)];
+            const Eigen::Vector3i gb = g_list[tr.igb];
+            const Eigen::Vector3i gd = g_list[tr.igd];
+            const Eigen::Vector3i cell_p = cells[tr.c_p].index;
+            const Eigen::Vector3i rel_p(cell_p[0]-gb[0], cell_p[1]-gb[1], cell_p[2]-gb[2]);
+            const Eigen::MatrixXd* Wab = wmat(gb);
+            const Eigen::MatrixXd* Wac = wmat(cell_p);
+            const Eigen::MatrixXd* Wbc = wmat(rel_p);
+            const Eigen::MatrixXd* Wcd = wmat(gd);
+
+            const auto tid = static_cast<std::size_t>(omp_thread_index());
+            auto& engine = engines[tid];
+            const auto& buf = engine.results();
+            auto& Jloc = J_tls[tid];
+            auto& Kloc = K_tls[tid];
+            const auto& shells_b = shells_at[tr.b_idx];
+            const auto& shells_p = shells_at[tr.c_p];
+            const auto& shells_q = shells_at[tr.q_idx];
+
+            int gb_idx = -1, gd_idx = -1;
+            if (screen) {
+                auto itb = cell_index_map.find(gb); if (itb != cell_index_map.end()) gb_idx = itb->second;
+                auto itg = cell_index_map.find(gd); if (itg != cell_index_map.end()) gd_idx = itg->second;
+            }
+            const bool do_screen = screen && gb_idx >= 0 && gd_idx >= 0;
+
+            for (std::size_t s1 = 0; s1 < shells_ref.size(); ++s1) {
+                const auto bf1 = shell2bf[s1]; const auto n1 = shells_ref[s1].size();
+                const int a = atom_of_shell[s1];
+                for (std::size_t s2 = 0; s2 < shells_b.size(); ++s2) {
+                    const int b = atom_of_shell[s2];
+                    const double w_ab = (*Wab)(a, b);
+                    if (w_ab == 0.0) continue;
+                    const auto bf2 = shell2bf[s2]; const auto n2 = shells_b[s2].size();
+                    const double q_bra = do_screen ? Q[gb_idx][s1*nshells + s2] : 0.0;
+                    if (do_screen && q_bra * Q_max[gd_idx] * D_max < schwarz_thr) continue;
+                    for (std::size_t s3 = 0; s3 < shells_p.size(); ++s3) {
+                        const int c = atom_of_shell[s3];
+                        const double bridge = 0.5 * ((Wac ? (*Wac)(a, c) : 0.0)
+                                                     + (Wbc ? (*Wbc)(b, c) : 0.0));
+                        if (bridge == 0.0) continue;
+                        const auto bf3 = shell2bf[s3]; const auto n3 = shells_p[s3].size();
+                        for (std::size_t s4 = 0; s4 < shells_q.size(); ++s4) {
+                            const int d = atom_of_shell[s4];
+                            const double w4 = w_ab * bridge * (*Wcd)(c, d);
+                            if (w4 == 0.0) continue;
+                            const auto bf4 = shell2bf[s4]; const auto n4 = shells_q[s4].size();
+                            if (do_screen &&
+                                w4 * q_bra * Q[gd_idx][s3*nshells + s4] * D_max < schwarz_thr)
+                                continue;
+                            engine.compute(shells_ref[s1], shells_b[s2],
+                                           shells_p[s3], shells_q[s4]);
+                            if (const double* blk = buf[0])
+                                for (std::size_t i = 0; i < n1; ++i)
+                                for (std::size_t j = 0; j < n2; ++j)
+                                for (std::size_t k = 0; k < n3; ++k)
+                                for (std::size_t l = 0; l < n4; ++l) {
+                                    const double t = blk[((i*n2+j)*n3+k)*n4+l] * w4;
+                                    if (t == 0.0) continue;
+                                    const int mu = bf1 + i, nu = bf2 + j;
+                                    const int la = bf3 + k, si = bf4 + l;
+                                    Jloc(mu, nu) += 0.5 * t * (P_gamma(la, si) + P_gamma(si, la));
+                                    Kloc(mu, si) += 0.5 * t * P_gamma(la, nu);
+                                    Kloc(mu, la) += 0.5 * t * P_gamma(si, nu);
+                                }
+                        }
+                    }
+                }
+            }
+        }
+
+        Eigen::MatrixXd Jm = Eigen::MatrixXd::Zero(nbf, nbf);
+        Eigen::MatrixXd Km = Eigen::MatrixXd::Zero(nbf, nbf);
+        for (const auto& m : J_tls) Jm += m;
+        for (const auto& m : K_tls) Km += m;
+        // Vbar is eight-fold symmetric, so J and K are symmetric up to rounding;
+        // the hermitisation is a safety net, not part of the construction.
         const Eigen::MatrixXd Jh = 0.5 * (Jm + Jm.transpose());
         const Eigen::MatrixXd Kh = 0.5 * (Km + Km.transpose());
         return JKMatrices{Jh, Kh};
