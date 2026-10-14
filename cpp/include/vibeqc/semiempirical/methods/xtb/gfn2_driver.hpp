@@ -7,6 +7,7 @@
 #pragma once
 
 #include <string>
+#include <memory>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -16,6 +17,7 @@
 #include "vibeqc/semiempirical/core/parameter_identity.hpp"
 #include "vibeqc/semiempirical/core/periodic_gamma.hpp"
 #include "vibeqc/semiempirical/methods/xtb/gfn2_parameters.hpp"
+#include "vibeqc/semiempirical/methods/xtb/gfn2_dispersion.hpp"
 
 namespace vibeqc {
 namespace semiempirical {
@@ -55,16 +57,13 @@ inline int gfn2_valence_electrons(int Z) {
     // a flat 3, matching La's 5d¹6s².  (La itself, Z = 57, has no 4f electron;
     // the general rule below already returns 3 for it.)
     //
-    // KNOWN EDGE CASE (even-Z lanthanides, isolated neutral atom): Ce (Z=58),
+    // Valence-spin edge case (even-Z lanthanides, isolated neutral atom): Ce (Z=58),
     // Nd (60), Sm (62), Gd (64), Dy (66), Er (68), Yb (70) are even-Z atoms
     // whose total electron count is even, but the f-in-core valence count is odd
-    // (3).  An isolated neutral atom is an open-shell doublet; the closed-shell
-    // driver (run_gfn2_xtb, multiplicity=1) silently truncates n_occ = 3/2 = 1,
-    // leaving one valence electron unpaired → the energy is that of the +1
-    // cation.  This is harmless in real molecules (where only the total electron
-    // count matters and the molecule's overall charge + multiplicity controls
-    // n_occ), but for a bare-atom energy benchmark, use the unrestricted driver
-    // (run_ugfn2_xtb) with the correct multiplicity.
+    // (3). The closed-shell molecular driver rejects this odd valence count
+    // instead of truncating it to a cation. Use the experimental unrestricted
+    // driver with a multiplicity compatible with the valence space. The same
+    // charge/spin accounting applies to molecules containing these elements.
     if (Z >= 58 && Z <= 71) return 3;
 
     static const int nobles[] = {2, 10, 18, 36, 54, 86};
@@ -209,16 +208,14 @@ struct XTBSccOptions {
     // gamma^n multipole path runs and the result is byte-identical to before
     // this flag existed.  When true, the on-site DPOL/QPOL XC kernel + the
     // CN-damped (fdmp3/fdmp5) inter-site multipoles replace it.  Gated off by
-    // default until validated against the live-xtb decomposition oracle; see
-    // handovers/HANDOVER_GFN2_AES.md.
+    // default until validated against the live-xtb decomposition oracle.
     bool aes_faithful = false;
     // AES potential damping (faithful path): fraction of the NEW atom
     // charge/dipole/quadrupole potentials mixed into the Fock each SCC
     // iteration (1.0 = undamped). The damping changes only the iteration
     // path; the converged fixed point is unchanged. The on-site DPOL/QPOL
     // feedback is stiff on polarizable heterocycles (adenine two-cycles
-    // under simple mixing and diverges under Broyden without it); see
-    // handovers/HANDOVER_GFN2_AES.md.
+    // under simple mixing and diverges under Broyden without it).
     double aes_damping = 0.5;
 };
 
@@ -245,9 +242,12 @@ struct GFN2SCCAttempt {
     SCCMixer scc_mixer = SCCMixer::Simple;
     bool restart_supplied = false;
     bool molecular_delegated = false;
-    // Closed values: "converged", "iteration_limit", "unphysical_basin",
-    // and "gap_rejected".  Strings keep this internal diagnostic record
-    // JSON-ready at the Python boundary without exposing another public enum.
+    // Closed values: "converged", "iteration_limit", "stalled_checkpoint",
+    // "unphysical_basin", and "gap_rejected".  Strings keep this internal
+    // diagnostic record JSON-ready at the Python boundary without exposing
+    // another public enum.  "stalled_checkpoint" is the SECCM primary attempt
+    // handed to the stabilization ladder by the budget-independent checkpoint
+    // (#294); like "iteration_limit" it never reached the residual tolerance.
     std::string exit_reason = "iteration_limit";
     // True when the SCC residual reached tolerance, including a fixed point
     // later rejected by the finite-torus gap or physical-basin gates.
@@ -256,10 +256,23 @@ struct GFN2SCCAttempt {
     Eigen::VectorXd max_change_trace;
 };
 
+// Executed molecular AES functional, independent of mutable caller options.
+// Unknown is deliberate: legacy/default-constructed results cannot attest
+// which energy their density belongs to (vibe-qc#427).
+enum class GFN2AESFunctional { Unknown, Shell, Faithful };
+
 struct GFN2Result : ParameterIdentifiedResult {
+    // Optional immutable molecular dispersion execution; absent on legacy
+    // SCC-only runs. Its explicit geometry derivative accompanies the
+    // charge potential already included in the converged Hamiltonian.
+    std::shared_ptr<const GFN2D4Data> dispersion;
+    double e_dispersion = 0.0;
+    GFN2AESFunctional aes_functional = GFN2AESFunctional::Unknown;
     // Internal total E. Molecular GFN2 historically exposes this value as
-    // energy; finite-temperature callers that need the variational potential
-    // use free_energy = E - T*S below.
+    // energy. A smeared SCC (smearing_temperature > 0) is stationary in the
+    // Mermin free energy free_energy = E - T*S below: that is the surface
+    // the SCC gradient differentiates and the Python model reports
+    // (vibe-qc#343). At T = 0 the two coincide.
     double energy = 0.0;
     double free_energy = 0.0;
     double entropy = 0.0;
@@ -274,12 +287,22 @@ struct GFN2Result : ParameterIdentifiedResult {
     double shell_dip_rms = 0.0; // RMS of shell dipole moments, debug
     Eigen::VectorXd mo_energies;
     Eigen::MatrixXd mo_coeffs;
+    // Last evaluated common-orbital occupations. Alpha/beta each conserve
+    // their valence electron count: 1/0 under hard T=0 Aufbau, separate
+    // Fermi-Dirac distributions at T>0. Total occupations build the density
+    // and energy-weighted density; entropy sums the two spin channels.
+    // Retained on SCC exhaustion, without implying stationarity (#343).
+    Eigen::VectorXd occupations;
+    Eigen::VectorXd occupations_alpha;
+    Eigen::VectorXd occupations_beta;
     Eigen::MatrixXd density;
     Eigen::MatrixXd overlap;
     Eigen::MatrixXd hamiltonian;
     Eigen::VectorXd charges;
     int n_basis = 0;
     int n_occ = 0;
+    int n_alpha = 0;
+    int n_beta = 0;
     int n_iter = 0;
     bool converged = false;
     // Concatenation of every attempt trace, in execution order.  The closure
@@ -298,7 +321,8 @@ struct GFN2Result : ParameterIdentifiedResult {
 GFN2Result run_gfn2_xtb(
     const Molecule& mol,
     const GFN2ParameterSet& params,
-    const XTBSccOptions& opts = {});
+    const XTBSccOptions& opts = {},
+    std::shared_ptr<const GFN2D4Data> dispersion = nullptr);
 
 }  // namespace xtb
 }  // namespace semiempirical

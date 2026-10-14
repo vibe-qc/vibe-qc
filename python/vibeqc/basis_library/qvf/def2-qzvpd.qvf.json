@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "def2-qzvpd",
+  "description": "Basis set: def2-qzvpd\nOriginating publication: F. Weigend, R. Ahlrichs, Phys. Chem. Chem.\n  Phys. 7, 3297 (2005); DOI: 10.1039/b508541a; diffuse augmentation: D. Rappoport, F. Furche, J. Chem. Phys.\n  133, 134105 (2010); DOI: 10.1063/1.3484283\ndef2-qzvpd: libint 2.13.1's H-Kr file, unchanged, followed by the\nRb-Rn (36 elements) valence blocks from the Basis Set Exchange\n(BSE 1, Turbomole 7.3 data). The heavy blocks are\nvalence-only and pair with the def2-ECP in def2-qzvpd.ecp, which the\nmolecular SCF wrappers attach per element.\nFetched from: https://www.basissetexchange.org (REST API), 2026-09-05\nLicense: numerical parameter data from published scientific\n  papers, distributed by BSE under CC-BY-4.0; see docs/license.md\n Def2-QZVPD  EMSL  Basis Set Exchange Library   2/01/15 6:54\nElements                             References\nH He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn: Dmitrij Rappoport and F. Furche, Property-optimized Gaussian basis sets for molecular response calculations, J. Chem. Phys. 133, 134105 (2010).\n\nECP sidecar:\nBasis set: def2-qzvpd ECPs\nOriginating publication: F. Weigend, R. Ahlrichs, Phys. Chem. Chem.\n  Phys. 7, 3297 (2005); DOI: 10.1039/b508541a; diffuse augmentation: D. Rappoport, F. Furche, J. Chem. Phys.\n  133, 134105 (2010); DOI: 10.1063/1.3484283\ndef2-qzvpd ECPs: the def2-ECP blocks for Rb-Rn (36 elements), from the\nBasis Set Exchange record of def2-qzvpd (BSE 1).\nPer-element originating publications:\n  Y-Cd (ecp-28), Hf-Hg (ecp-60): D. Andrae, U. Haeussermann, M. Dolg,\n    H. Stoll, H. Preuss, Theor. Chim. Acta 77, 123 (1990)\n  In-Sb (ecp-28), Tl-Bi (ecp-60): B. Metz, H. Stoll, M. Dolg,\n    J. Chem. Phys. 113, 2563 (2000)\n  Te-Xe (ecp-28), Po-Rn (ecp-60): K. A. Peterson, D. Figgen, E. Goll,\n    H. Stoll, M. Dolg, J. Chem. Phys. 119, 11113 (2003)\n  Rb (ecp-28), Cs (ecp-46): T. Leininger, A. Nicklass, W. Kuechle,\n    H. Stoll, M. Dolg, A. Bergner, Chem. Phys. Lett. 255, 274 (1996)\n  Sr (ecp-28), Ba (ecp-46): M. Kaupp, P. v. R. Schleyer, H. Stoll,\n    H. Preuss, J. Chem. Phys. 94, 1360 (1991)\n  La-Lu (ecp-28 / ecp-46): M. Dolg, H. Stoll, A. Savin, H. Preuss,\n    Theor. Chim. Acta 75, 173 (1989); M. Dolg, H. Stoll, H. Preuss,\n    J. Chem. Phys. 90, 1730 (1989)\nFetched from: https://www.basissetexchange.org (REST API), 2026-09-05\nLicense: numerical parameter data from published scientific\n  papers, distributed by BSE under CC-BY-4.0; see docs/license.md",
   "role": "orbital",
   "elements": {
     "H": {
@@ -24449,6 +24449,7 @@
       "ecp_id": "Rn"
     }
   },
+  "basis_family": "ahlrichs",
   "ecps": {
     "Rb": {
       "element": "Rb",
@@ -28203,7 +28204,152 @@
       ]
     }
   },
+  "references": [
+    {
+      "key": "weigend_ahlrichs_def2_2005",
+      "description": "F. Weigend, R. Ahlrichs, Physical Chemistry Chemical Physics 7, 3297-3305 (2005)",
+      "doi": "10.1039/B508541A"
+    },
+    {
+      "key": "rappoport_furche_2010",
+      "description": "D. Rappoport, F. Furche, Journal of Chemical Physics 133, 134105 (2010)",
+      "doi": "10.1063/1.3484283"
+    },
+    {
+      "key": "andrae_ecp_1990",
+      "description": "D. Andrae, U. Häußermann, M. Dolg, H. Stoll, H. Preuß, Theoretica Chimica Acta 77, 123-141 (1990)",
+      "doi": "10.1007/BF01114537"
+    },
+    {
+      "key": "metz_stoll_dolg_ecp_2000",
+      "description": "B. Metz, H. Stoll, M. Dolg, Journal of Chemical Physics 113, 2563-2569 (2000)",
+      "doi": "10.1063/1.1305880"
+    },
+    {
+      "key": "peterson_pp_2003",
+      "description": "K. A. Peterson, D. Figgen, E. Goll, H. Stoll, M. Dolg, Journal of Chemical Physics 119, 11113-11123 (2003)",
+      "doi": "10.1063/1.1622924"
+    },
+    {
+      "key": "leininger_nicklass_ecp_1996",
+      "description": "T. Leininger, A. Nicklass, W. Küchle, H. Stoll, M. Dolg, A. Bergner, Chemical Physics Letters 255, 274-280 (1996)",
+      "doi": "10.1016/0009-2614(96)00382-X"
+    },
+    {
+      "key": "kaupp_schleyer_stoll_preuss_ecp_1991",
+      "description": "M. Kaupp, P. v. R. Schleyer, H. Stoll, H. Preuss, Journal of Chemical Physics 94, 1360-1366 (1991)",
+      "doi": "10.1063/1.459993"
+    },
+    {
+      "key": "dolg_stoll_savin_preuss_lanthanide_ecp_1989",
+      "description": "M. Dolg, H. Stoll, A. Savin, H. Preuss, Theoretica Chimica Acta 75, 173-194 (1989)",
+      "doi": "10.1007/BF00528565"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "def2-qzvpd",
+        "detail": "libint's element blocks, unchanged"
+      },
+      {
+        "name": "basis-set-exchange",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "def2-qzvpd",
+        "detail": "element blocks libint omits, merged as reviewed imports"
+      }
+    ],
+    "retrieval_date": "2026-09-05",
+    "content_sha256": "05a6da5a8e0267dcdf087ebd10a4e7a8b66362bcf09fe75cbaa7d5c7832914ee",
+    "citations": [
+      {
+        "keys": [
+          "weigend_ahlrichs_def2_2005",
+          "rappoport_furche_2010"
+        ]
+      },
+      {
+        "keys": [
+          "andrae_ecp_1990"
+        ],
+        "elements": [
+          "Y",
+          "Zr",
+          "Nb",
+          "Mo",
+          "Tc",
+          "Ru",
+          "Rh",
+          "Pd",
+          "Ag",
+          "Cd",
+          "Hf",
+          "Ta",
+          "W",
+          "Re",
+          "Os",
+          "Ir",
+          "Pt",
+          "Au",
+          "Hg"
+        ]
+      },
+      {
+        "keys": [
+          "metz_stoll_dolg_ecp_2000"
+        ],
+        "elements": [
+          "In",
+          "Sn",
+          "Sb",
+          "Tl",
+          "Pb",
+          "Bi"
+        ]
+      },
+      {
+        "keys": [
+          "peterson_pp_2003"
+        ],
+        "elements": [
+          "Te",
+          "I",
+          "Xe",
+          "Po",
+          "At",
+          "Rn"
+        ]
+      },
+      {
+        "keys": [
+          "leininger_nicklass_ecp_1996"
+        ],
+        "elements": [
+          "Rb",
+          "Cs"
+        ]
+      },
+      {
+        "keys": [
+          "kaupp_schleyer_stoll_preuss_ecp_1991"
+        ],
+        "elements": [
+          "Sr",
+          "Ba"
+        ]
+      },
+      {
+        "keys": [
+          "dolg_stoll_savin_preuss_lanthanide_ecp_1989"
+        ],
+        "elements": [
+          "La"
+        ]
+      }
+    ]
   }
 }

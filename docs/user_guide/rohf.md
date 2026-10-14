@@ -71,6 +71,14 @@ vq.run_job(oh, basis="6-31g*", method="roks", functional="b3lyp",
            output="oh_roks")          # see examples/molecular/input-ch3-roks.py
 ```
 
+`run_job(density_fit=True)` and `cosx=True` reach `ROHFOptions` /
+`ROKSOptions` exactly as they reach the other four references: the JK
+auxiliary basis is resolved from the orbital basis (`def2-svp` gives
+`def2-svp-jk`, or pass `aux_basis=`), the memory estimate lists the
+three-index tensors, and the run cites RI-J or RIJCOSX in the `.references`
+and `.system` files. Before v0.17.7 the two flags were accepted and ignored
+for `method="rohf"` / `"roks"` (#361).
+
 ROKS supports **LDA, GGA, meta-GGA, global-hybrid, and
 range-separated-hybrid** functionals (B3LYP, PBE0, TPSS, r²SCAN,
 ωB97X, ωB97M-V, …). **Double hybrids** (B2PLYP, DSD-PBEP86, PWPB95)
@@ -89,6 +97,22 @@ restricted open-shell symmetry and prevents the larger-basis ROKS/PBE
 oscillation that an integer `2, 2, 2, 2, 1, 0, ...` assignment produces.
 
 ## Convergence
+
+Molecular ROHF/ROKS and Gamma GPW ROHF/ROKS use the shared Fock/KS solver
+contract. Dense remains the default; molecular `use_davidson` and
+`davidson_min_dim` retain their meanings. Davidson options are copied for
+each calculation, and warm subspaces are private to that calculation.
+The Roothaan loop needs all retained orbitals for occupations and reported
+energies, so a partial `davidson.n_eig` request is rejected. Use zero (the
+default) or the complete retained rank. Unsupported solver options fail
+explicitly, as described in [the solver guide](solver_framework.md).
+
+Overlap reduction retains the existing `linear_dep_threshold`. Both the
+Roothaan solve and Guest-Saunders block rotations respect the retained
+orbital count. Guest-Saunders energies remain closed/open/virtual ordered,
+with sorting only inside each block. Fractional shells keep their Roothaan
+orbitals and occupations. Level shifts remain part of SCF convergence and
+are removed by the existing canonicalization on exit.
 
 The Roothaan loop carries the same convergence controls as the rest of
 the tree: `damping` / `dynamic_damping`, the DIIS family via
@@ -230,6 +254,12 @@ ROHF/ROKS also drive:
   **molecular optimiser** (`vibeqc.molecular_optimize.optimize_molecule`).
 * **The ASE calculator**: `VibeQC(restricted_open=True)` runs ROHF with
   analytic forces; see [`ase_integration.md`](ase_integration.md).
+* **Excited states**: `run_job(method="rohf", tddft=True)` runs ROHF TDA/CIS
+  over the doubly-occupied to virtual space only (no excitations out of or
+  into the singly occupied orbitals); the `.out` block is labelled
+  `TDA-ROHF` and states that restriction. `tddft_type="casida"` on ROHF
+  and `tddft=True` on ROKS are not implemented and are refused before the
+  SCF rather than replaced by the closed-shell response (#361).
 
 ## Periodic ROHF
 
@@ -312,3 +342,21 @@ open block. Its energy uses E_xc[ρα, ρβ] in place of full exact exchange. Th
 * [`non_hf_solvers.md`](non_hf_solvers.md): CAS / multireference methods
   (`cas_reference="rohf"`).
 * [`ccsd.md`](ccsd.md): coupled cluster, incl. `ccsd_reference="rohf"`.
+
+## Gamma Ewald ROHF orbital output
+
+`run_rohf_periodic_gamma_ewald3d` reports the unshifted Roothaan effective
+Fock energies. Finalization diagonalizes that Fock separately within the
+closed, open and virtual occupation spaces, preserving the determinant,
+both spin densities and the open-shell selection made using alpha energies.
+This is occupation-preserving canonicalization (Guest and Saunders,
+Mol. Phys. 28, 819, 1974, section 2, equation 8); it retains the Gamma
+driver's Roothaan energy convention.
+
+For a converged result the orbitals diagonalize the full effective Fock
+within SCF accuracy. If `converged` is false, the reported energies are
+occupation-block eigenvalues. The full `fock` still contains the residual
+couplings between different occupation spaces; those orbitals are not
+claimed to be eigenvectors of the full Fock. A zero-iteration call keeps
+`n_iter=0`, an empty trace and `converged=False`; its initial-Fock orbitals
+and occupations define the density used for the returned Fock and energy.

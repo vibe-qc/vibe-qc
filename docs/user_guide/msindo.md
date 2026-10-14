@@ -221,7 +221,7 @@ print(run_job(h2o_plus, method="msindo").energy)
 The UHF engine includes the s/p/d one-centre Fock terms. Its production claim is
 fixture-based: the light s/p radical set and the named heavy trajectory-SCF
 fixtures are validated against the oracle, while near-degenerate heavy cases
-remain basin-sensitive and are tracked in `handovers/HANDOVER_MSINDO_SCF.md`.
+remain basin-sensitive.
 
 ### UHF reduces to RHF for closed-shell
 
@@ -233,6 +233,15 @@ automatically (the odd electron count selects it).
 ---
 
 ## Periodic: Cyclic Cluster Model (CCM)
+
+MSINDO SECCM energy and gradient routes are **experimental**, including the
+`seccm`, `se-ccm`, `msindo-seccm`, `msindo-ccm`, and `ccm` aliases. The route
+plan, status registry, `.out`, `.system`, and QVF run provenance carry this
+designation. Native execution, agreement for a reference case, or SCF
+convergence does not establish production maturity or electronic stability.
+Inspect the separate per-point stability audit described below; the default
+state policy remains `stability="reference"`. This designation does not change
+the maturity of molecular MSINDO.
 
 MSINDO treats periodic solids and surfaces with the **Cyclic Cluster Model**
 (Bredow, Geudtner & Jug, *J. Comput. Chem.* **22**, 89 (2001); Peintinger &
@@ -372,28 +381,104 @@ is in [`examples/semiempirical/11_msindo_ccm.py`](../../examples/semiempirical/1
 > Adsorption examples target the ionic oxides MgO and Al₂O₃, INDO/CCM is not
 > parametrized for metallic bonding, so metal surfaces are out of method scope.
 
-### CCM gradient details
+### SECCM stability audit
 
-CCM checks restricted orbital stability when the initial core-Hamiltonian
-occupied/virtual gap is at most `1e-6` Ha. In this domain, tiny coordinate
-changes can rotate the initial occupied projector and send DIIS to different
-stationary states even when their final orbital gaps are large. A negative
-orbital-rotation curvature identifies a saddle: the driver searches both
-signs of that mode, reconverges lower-energy seeds, and checks the selected
-state again. The density used for analytic and finite-difference gradients
-follows the same selection. The Hamiltonian and integer occupations are
-unchanged.
+Every converged closed-shell CCM SCF is followed by a restricted
+orbital-stability audit (issue #249). A vanishing SCF residual certifies a
+stationary point, not a minimum. The Hcore guess can start DIIS from an
+ambiguous projector, and even a well-resolved start can converge onto a
+saddle: a C3 chain bent by 3e-3 bohr converges 16.6 mHa above the
+continuous lower branch. The audit finds the lowest orbital-rotation
+curvature; a negative one marks a saddle.
 
-`max_iter` bounds the cumulative SCF iterations across these restarts. An
-unresolved stability analysis, an exhausted restart budget, or failure to
-escape a detected saddle raises a diagnostic error. The result records
+What happens next is set by the `stability` policy:
+
+| `stability` | Behaviour |
+|---|---|
+| `"reference"` (default) | Keeps the reference program's Hcore/DIIS state at a resolved initial frontier. A saddle is repaired where that trajectory is ill-defined, an unresolved Hcore frontier (gap at most `1e-6` Ha). Elsewhere the state is returned with `internal_instability=True` and `run_job` prints a warning. This reproduces reference MSINDO, whose own converged states include such saddles on three of the seventeen frozen CCM oracle clusters. |
+| `"lowest"` | Attempts descent from every detected saddle to a stable minimum. Use it for scans, forces and equations of state, while checking state continuity; local stability does not prove global uniqueness. |
+
+For a frontier with one occupied orbital or one hole and at most eight
+orbitals, both implementations first minimize the initial projector's energy
+within that subspace. The `"reference"` policy enables this at an unresolved
+Hcore gap (at most `1e-6` Ha). The explicit `"lowest"` policy also considers
+the highest occupied and lowest virtual whole Hcore blocks at a resolved
+gap. Other occupations retain the established Hcore path. This bounded
+search does not prove global state uniqueness.
+
+After minimizing the projector, the solver checks curvature toward the next
+whole adjacent Hcore block. Negative curvature below `-1e-8` triggers
+expansion if the full block fits the eight-orbital limit. The solver
+continues from its current projector in the enlarged space. It then recovers
+the seed's occupied orbitals and uses the existing SOSCF direction with an
+energy-decreasing line search for the full SCF. Continuing from the actual
+seed avoids the DIIS basin change that selected a higher stable C19 state
+under a `0.004` Angstrom local bond distortion.
+
+Every seed Fock evaluation and every orbital line-search trial counts against
+`max_iter`. Only the remaining budget is available for stability restarts.
+On exhaustion the native kernel and Python solver retain their last
+accepted physical density and energy with `converged=False`; the public
+native route raises a convergence error. Results expose
+`frontier_seed_evaluations`, `frontier_seed_completed`,
+`frontier_seed_orbitals`, `frontier_seed_expansions`, and
+`orbital_optimization_used`; output records the executed work. Explicit
+starting densities bypass seed construction and retain their DIIS
+continuation for tracking a chosen state. An unresolved primary frontier
+outside the rank-one seed scope retains the earlier SOSCF fallback after
+29 DIIS updates.
+
+The C19 permutation and local-distortion checks compare fresh solutions
+with density continuation. For bent C3, the resolved-gap `"lowest"` seed
+selects a continuous lower branch. The old pinned DIIS energies remain
+separate controls: rotating the lower-state atomic p orbitals and following
+that density recovers the higher branch. Local stability alone therefore
+does not establish that the lowest state was selected. These state-selection
+repairs still require independent numerical acceptance before issue closure.
+
+A repair scans rotations along the unstable mode for both signs,
+re-converges the lower-energy seed first with the whole remaining budget and
+the other sign only if the first does not descend, then audits the result
+again. A mode whose rotations cannot lower the energy by 1 µHa is accepted
+as stable within the SCF's resolution, and its eigenvalue is still reported.
+The density used for analytic and finite-difference gradients follows the
+same selection. The Hamiltonian and integer occupations are unchanged.
+
+Small bare clusters deserve a look at their charges. For bare diamond 2x2x2
+the neutral state is a saddle of the WS-truncated bare Coulomb model, and
+`"lowest"` descends to its minimum, which alternates +/-2.95 e on the two
+sublattices 2.75 Ha lower. The Madelung-embedded cluster and the 3x3x3
+clusters are neutral stable minima under both policies. `run_job` records
+the largest net atomic charge (`seccm_max_abs_net_charge`), and
+`msindo_ccm.net_atomic_charges` computes them from any CCM density.
+
+Forces are defined per SCF state. On a nearly linear chain the lowest state
+can break the chain plane's mirror symmetry, with its pi pattern rotated
+about the axis, and it then has a mirror-image partner of equal energy. The
+lowest-energy surface then has a cusp at the planar geometry: an
+out-of-plane displacement lowers the energy linearly in its magnitude either
+way (a C3 chain bent by 3e-3 bohr, issue #249). The analytic gradient is the
+exact derivative of the state it converged to. A finite difference of
+independent SCFs across such a cusp is not the derivative of either branch.
+
+`max_iter` bounds the cumulative SCF iterations across these restarts and
+`conv_tol` sets the SCF threshold. Both are `CCMOptions` fields for `run_job`
+and `run_seccm`, with defaults 200 and `1e-9`, alongside `stability`; the
+analytic-gradient callback re-converges with `gradient_conv_tol`, default
+`1e-10`. Under the reference policy at a resolved Hcore gap, an unconverged
+stability audit returns an unverified result and `run_job` warns. When a corrective
+restart is required, an unresolved analysis, exhausted restart budget or
+failed repair raises a diagnostic error. The result records
 `stability_checked`, `stability_analysis_converged`, `stability_eigenvalue`
-(the energy Hessian eigenvalue), and `n_stability_restarts`; `run_job` also
-prints the verdict and cites the stability algorithm. This is a local
-minimum check within restricted HF, not a global-minimum guarantee or a
-test against unrestricted spin solutions. Initial guesses with a resolved
-gap keep their established SCF path. See [Lehtola et al. (2020), section
+(the energy Hessian eigenvalue), `n_stability_restarts` and
+`internal_instability`. `run_job` prints the verdict, the executed SCF
+controls and policy, and the electrostatics kernel; the 1-D MSINDO embedding
+is a truncated +/-2-shell bare sum, not an Ewald sum. This is a local minimum
+check within restricted HF, not a global-minimum guarantee or a test against
+unrestricted spin solutions. See [Lehtola et al. (2020), section
 10](https://doi.org/10.3390/molecules25051218) and issue #249.
+
+### CCM gradient details
 
 `ccm_gradient_fd` computes the nuclear gradient by central finite differences
 (Ha/bohr), holding the **Wigner-Seitz topology fixed** while displacing atoms.

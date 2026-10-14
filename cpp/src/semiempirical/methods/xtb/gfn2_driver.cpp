@@ -1,4 +1,6 @@
 #include "vibeqc/semiempirical/methods/xtb/gfn2_driver.hpp"
+#include "gfn2_electron_counts.hpp"
+#include "vibeqc/semiempirical/kpoints_occupations.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <algorithm>
@@ -25,6 +27,43 @@ namespace xtb {
 
 namespace {
 
+// The shipped shell-AES potential, shared by the SCC iteration and its
+// full-Fock acceptance check. Keep this distinct from the faithful CAMM
+// functional: E_AES = 1/2 dq^T V_mp and the Fock uses the full V_mp, so
+// the existing nonvariational shell response correction is still required.
+Eigen::VectorXd shell_aes_potential(
+    const Molecule& mol,
+    const std::vector<GFN2ShellInfo>& shell_info,
+    const Eigen::MatrixXd& gamma_shell,
+    const GFN2ShellMoments& moments) {
+    const auto& atoms = mol.atoms();
+    const int n_shells = static_cast<int>(shell_info.size());
+    Eigen::VectorXd V_mp = Eigen::VectorXd::Zero(n_shells);
+    for (int si = 0; si < n_shells; ++si) {
+        int a = shell_info[si].atom_idx;
+        for (int sj = 0; sj < n_shells; ++sj) {
+            int b = shell_info[sj].atom_idx;
+            if (a == b) continue;
+            double g = gamma_shell(si,sj);
+            if (g < 1e-15) continue;
+            double g3 = g*g*g, g5 = g3*g*g;
+            double dx = atoms[a].xyz[0]-atoms[b].xyz[0];
+            double dy = atoms[a].xyz[1]-atoms[b].xyz[1];
+            double dz = atoms[a].xyz[2]-atoms[b].xyz[2];
+            double R2 = dx*dx+dy*dy+dz*dz, R = std::sqrt(R2);
+            if (R < 1e-12) continue;
+            double invR3 = 1.0/(R2*R);
+            double pot_dip = -g3*(moments.ox(sj)*dx+moments.oy(sj)*dy+moments.oz(sj)*dz)*invR3;
+            double invR5 = invR3/R2;
+            double qxx=3*dx*dx-R2,qxy=3*dx*dy,qxz=3*dx*dz,qyy=3*dy*dy-R2,qyz=3*dy*dz,qzz=3*dz*dz-R2;
+            double pot_quad = 0.5*g5*(moments.txx(sj)*qxx+moments.txy(sj)*qxy*2
+                +moments.txz(sj)*qxz*2+moments.tyy(sj)*qyy+moments.tyz(sj)*qyz*2+moments.tzz(sj)*qzz)*invR5;
+            V_mp(si) += pot_dip + pot_quad;
+        }
+    }
+    return V_mp;
+}
+
 // ===========================================================================
 // EXPERIMENTAL faithful GFN2 anisotropic electrostatics (AES).
 // Bannwarth, Ehlert & Grimme, J. Chem. Theory Comput. 2019, 15, 1652,
@@ -32,8 +71,7 @@ namespace {
 // is set.  The flag-on path uses the atom-resolved AES potential in the SCC
 // Fock build and evaluates the matching AES energy at the converged density
 // (the ad-hoc shell-resolved AES is disabled on that path to avoid double
-// counting).  Quantitative xtb parity is still tracked in
-// handovers/HANDOVER_GFN2_AES.md.
+// counting).  Quantitative xtb parity remains unverified here.
 // ===========================================================================
 
 using Vec3 = std::array<double, 3>;
@@ -368,63 +406,53 @@ void add_aes_potential_to_hamiltonian(
     }
 }
 
+// Occupations of one closed-shell spectrum, on the shared kernel the periodic
+// GFN2 and DFTB drivers and the gradient's AES response map already use
+// (kpoints_occupations.cpp): exact hard Aufbau at T = 0, the
+// particle-conserving Fermi-Dirac map n_i = 2 / (1 + exp((eps_i - mu) / T))
+// with its Mermin entropy at T > 0.  One solver for the SCC, the reported
+// entropy and the gradient's response keeps the three on the same ensemble
+// (vibe-qc#343); the driver used to carry a private copy of the same map.
+//
 // The default molecular GFN2 path uses the exact closed-shell Aufbau map.
 // A nonzero temperature is reserved for SCC stabilization retries: long-range
 // ionic diatomics can bounce between neutral and charge-transfer fixed points
 // when the third-order term is active and the frontier levels are nearly
 // discontinuous under hard occupations.
-Eigen::VectorXd closed_shell_occupations(
+KPointOccupationResult closed_shell_occupations(
     const Eigen::VectorXd& eps,
-    int n_electrons,
+    int n_occ,
     double temperature) {
-    const int n = static_cast<int>(eps.size());
-    Eigen::VectorXd occ = Eigen::VectorXd::Zero(n);
-    const double target = std::max(0.0, std::min(static_cast<double>(n_electrons),
-                                                 2.0 * static_cast<double>(n)));
+    KPointOccupationOptions options;
+    options.smearing_temperature = temperature;
+    return compute_closed_shell_kpoint_occupations(
+        {eps}, {1.0}, 2.0 * n_occ, n_occ, options);
+}
 
-    if (temperature <= 0.0) {
-        const int n_occ = std::min(n, static_cast<int>(target) / 2);
-        for (int i = 0; i < n_occ; ++i) occ(i) = 2.0;
-        return occ;
-    }
+struct MolecularOccupations {
+    Eigen::VectorXd total;
+    Eigen::VectorXd alpha;
+    Eigen::VectorXd beta;
+    double entropy;
+};
 
-    if (target <= 1e-12) return occ;
-    if (target >= 2.0 * static_cast<double>(n) - 1e-12) {
-        occ.setConstant(2.0);
-        return occ;
+// GFN2's energy depends on the total density (Bannwarth, Ehlert & Grimme,
+// JCTC 2019, DOI 10.1021/acs.jctc.8b01176, Eqs. 8-10). Open shells use
+// common orbitals, with separately conserved alpha/beta populations, not
+// two spin-dependent Fock matrices. Each spin channel has capacity one;
+// halving the shared capacity-two kernel also halves its Mermin entropy.
+MolecularOccupations molecular_occupations(
+    const Eigen::VectorXd& eps, int n_alpha, int n_beta, double temperature) {
+    const auto alpha = closed_shell_occupations(eps, n_alpha, temperature);
+    const Eigen::VectorXd& a = alpha.occupations_per_k.front();
+    if (n_alpha == n_beta) {
+        // Preserve the closed-shell density and entropy arithmetic exactly.
+        return {a, 0.5 * a, 0.5 * a, alpha.entropy};
     }
-
-    auto particle_count = [&](double mu) {
-        double total = 0.0;
-        for (int i = 0; i < n; ++i) {
-            double x = (eps(i) - mu) / temperature;
-            x = std::max(-50.0, std::min(50.0, x));
-            total += 2.0 / (1.0 + std::exp(x));
-        }
-        return total;
-    };
-
-    const double width = std::max(temperature, 1e-8);
-    double lo = eps.minCoeff() - 80.0 * width - 1.0;
-    double hi = eps.maxCoeff() + 80.0 * width + 1.0;
-    for (int expand = 0; expand < 20; ++expand) {
-        if (particle_count(lo) <= target && particle_count(hi) >= target) break;
-        lo -= 2.0 * width;
-        hi += 2.0 * width;
-    }
-
-    for (int it = 0; it < 200; ++it) {
-        const double mid = 0.5 * (lo + hi);
-        if (particle_count(mid) < target) lo = mid;
-        else hi = mid;
-    }
-    const double mu = 0.5 * (lo + hi);
-    for (int i = 0; i < n; ++i) {
-        double x = (eps(i) - mu) / temperature;
-        x = std::max(-50.0, std::min(50.0, x));
-        occ(i) = 2.0 / (1.0 + std::exp(x));
-    }
-    return occ;
+    const auto beta = closed_shell_occupations(eps, n_beta, temperature);
+    const Eigen::VectorXd& b = beta.occupations_per_k.front();
+    return {0.5 * (a + b), 0.5 * a, 0.5 * b,
+            0.5 * (alpha.entropy + beta.entropy)};
 }
 
 const char* eigen_status_name(Eigen::ComputationInfo info) {
@@ -631,10 +659,19 @@ void prepend_attempt_history(
 GFN2Result run_gfn2_xtb(
     const Molecule& mol,
     const GFN2ParameterSet& params,
-    const XTBSccOptions& opts) {
+    const XTBSccOptions& opts,
+    std::shared_ptr<const GFN2D4Data> dispersion) {
 
-    if (mol.multiplicity() != 1)
-        throw std::invalid_argument("run_gfn2_xtb: only closed-shell supported");
+    if (dispersion) {
+        dispersion->require_geometry(mol);
+        if (!opts.aes_faithful)
+            throw std::invalid_argument("GFN2 SCC D4 requires the variational faithful AES functional");
+    }
+
+    if (mol.multiplicity() != 1 && !opts.aes_faithful)
+        throw std::invalid_argument(
+            "run_gfn2_xtb: open-shell occupations require aes_faithful=True; "
+            "the legacy shell AES response supports closed shells only");
     if (opts.scc_mixer == SCCMixer::Newton)
         throw std::invalid_argument(
             "run_gfn2_xtb: SCCMixer::Newton is unavailable for molecular "
@@ -647,10 +684,21 @@ GFN2Result run_gfn2_xtb(
         if (!params.has_element(atom.Z))
             throw std::runtime_error("run_gfn2_xtb: element Z="
                 + std::to_string(atom.Z) + " not in parameter set");
+    // The shared occupation kernel refuses a negative or non-finite
+    // temperature; say so in this driver's name. The private map this
+    // driver used to carry read T <= 0 as exact Aufbau silently.
+    if (!std::isfinite(opts.electronic_temperature)
+            || opts.electronic_temperature < 0.0)
+        throw std::invalid_argument(
+            "run_gfn2_xtb: electronic_temperature must be finite and >= 0 "
+            "(0 = exact zero-temperature Aufbau)");
 
     // n_primitives=0: GFN2-xTB per-element auto (H,He->3; else->4).
     BasisSet basis = SemiempiricalBasis::build(mol, params, 0);
     const int n_basis = static_cast<int>(basis.nbasis());
+    const auto occupations = detail::valence_occupations(mol, n_basis, "run_gfn2_xtb");
+    const int n_val_elec = occupations.alpha + occupations.beta;
+    const int n_occ = occupations.alpha;
     const int n_atoms = static_cast<int>(mol.atoms().size());
     const auto& atoms = mol.atoms();
 
@@ -716,10 +764,6 @@ GFN2Result run_gfn2_xtb(
         const int Z = atoms[shell_info[si].atom_idx].Z;
         n0_shell(si) = gfn2_reference_occupation(Z, shell_info[si].l);
     }
-
-    int n_val_elec = -mol.charge();
-    for (int a = 0; a < n_atoms; ++a) n_val_elec += gfn2_valence_electrons(atoms[a].Z);
-    const int n_occ = std::min(std::max(n_val_elec,0)/2, n_basis);
 
     // GFN2 globpar l-dependent GAM3 scaling (Bannwarth et al. 2019).
     // gam3s=1.0, gam3p=0.5, gam3d1=0.25, gam3d2=0.25.
@@ -809,8 +853,14 @@ GFN2Result run_gfn2_xtb(
 
     Eigen::VectorXd dq_shell = Eigen::VectorXd::Zero(n_shells);
     GFN2Result result;
+    result.dispersion = dispersion;
+    // Set on every attempt, including retries and nonconverged results.
+    result.aes_functional = opts.aes_faithful
+        ? GFN2AESFunctional::Faithful : GFN2AESFunctional::Shell;
     result.n_basis = n_basis;
     result.n_occ = n_occ;
+    result.n_alpha = occupations.alpha;
+    result.n_beta = occupations.beta;
     std::vector<double> max_change_trace;
     GFN2ShellMoments moments; moments.resize(n_shells);
     bool have_moments = false;
@@ -846,6 +896,32 @@ GFN2Result run_gfn2_xtb(
     const int total_max_iter = std::max(0, opts.max_iter);
     const bool use_stabilization =
         has_gam3 && opts.auto_stabilize && total_max_iter >= 2500;
+    // The auto-stabilisation ladder, hoisted above the SCC loop so the primary
+    // attempt's extension ceiling is computed from the rungs that will actually
+    // run rather than from duplicated literals.  Consumed after the loop.
+    struct Retry {
+        double charge_mixing;
+        int max_iter;
+        double electronic_temperature;
+    };
+    std::vector<Retry> retries;
+    if (use_stabilization) {
+        retries = {
+            {0.01, 1800, 0.0},
+            {0.05, 500, 0.005},
+        };
+        if (has_extended_period_element(mol)) {
+            retries.push_back({0.05, 600, 0.05});
+        }
+    }
+    // vibe-qc#306: the ladder is not optional rescue capacity.  For the
+    // affected systems its finite-temperature rung is the ONLY stage that
+    // converges at all -- measured: neither the primary nor the slow T=0 rung
+    // converges at any budget, while the T=0.005 rung converges them in a few
+    // hundred iterations.  Its budget must therefore never be spendable by the
+    // primary attempt.
+    int ladder_reserve = 0;
+    for (const auto& retry : retries) ladder_reserve += retry.max_iter;
     // The 700-iteration checkpoint is ADVISORY, not a hard cap (vibe-qc#3).
     // It exists to hand an oscillating solve to the retry ladder early, but a
     // primary attempt that is still contracting must not be abandoned merely
@@ -859,6 +935,24 @@ GFN2Result run_gfn2_xtb(
     // 2500 it turned a converged run into an outright failure.
     int primary_max_iter =
         use_stabilization ? std::min(700, total_max_iter) : total_max_iter;
+    // Ceiling for the advisory extension (vibe-qc#306).  ea2d4cb capped it at
+    // total_max_iter, i.e. at the whole budget including the ladder's share.
+    // Measured at the default 3600: norbornadiene's primary took 3500 of 3600
+    // and p-benzoquinone's took 2800, leaving rung 1 a truncated 100 and 800
+    // iterations and rung 2 nothing at all -- "did not converge after 3600
+    // iterations", a count v0.17.1 could not produce (its worst light-element
+    // failure was 700+1800+500 = 3000).
+    //
+    // The floor is the ceiling the DEFAULT budget affords, so a caller who
+    // lowers max_iter does not lose the vibe-qc#3 extension that adenine needs
+    // (its primary converges at 720, measured).  It is derived from constants
+    // already here, not fitted: 3600 - 2300 = 1300 for a light-element
+    // molecule, and 3600 - 2900 = 700 -- i.e. exactly the pre-ea2d4cb
+    // behaviour -- for an extended-period one.
+    constexpr int kDefaultMaxIter = 3600;  // XTBSccOptions::max_iter default
+    const int primary_extension_ceiling = std::max(
+        std::min(kDefaultMaxIter - ladder_reserve, total_max_iter),
+        total_max_iter - ladder_reserve);
     // Contraction test over the two most recent windows of the residual
     // trace.  A genuinely oscillating or stalled attempt cannot improve its
     // window minimum and so still reaches the ladder at the checkpoint.
@@ -896,6 +990,14 @@ GFN2Result run_gfn2_xtb(
         for (int si = 0; si < n_shells; ++si)
             q_atom(shell_info[si].atom_idx) -= dq_shell(si);
 
+        // q = Zval - Mulliken population, hence the negative potential
+        // in the +1/2 S(V_l+V_l') Hamiltonian convention.
+        if (dispersion) {
+            const auto d4 = dispersion->evaluate(q_atom);
+            for (int si = 0; si < n_shells; ++si)
+                V_shell(si) -= d4.potential(shell_info[si].atom_idx);
+        }
+
         // Anisotropic second-order (multipole / AES) potential — kept separate
         // so its energy (charge·field) can be formed cleanly in the assembly.
         // Anisotropic 2nd-order potential.  Default: the shipped ad-hoc
@@ -904,28 +1006,7 @@ GFN2Result run_gfn2_xtb(
         // potential is added below through dipole/quadrupole integral channels.
         Eigen::VectorXd V_mp = Eigen::VectorXd::Zero(n_shells);
         if (have_moments && !opts.aes_faithful) {
-            for (int si = 0; si < n_shells; ++si) {
-                int a = shell_info[si].atom_idx;
-                for (int sj = 0; sj < n_shells; ++sj) {
-                    int b = shell_info[sj].atom_idx;
-                    if (a == b) continue;
-                    double g = gamma_shell(si,sj);
-                    if (g < 1e-15) continue;
-                    double g3 = g*g*g, g5 = g3*g*g;
-                    double dx = atoms[a].xyz[0]-atoms[b].xyz[0];
-                    double dy = atoms[a].xyz[1]-atoms[b].xyz[1];
-                    double dz = atoms[a].xyz[2]-atoms[b].xyz[2];
-                    double R2 = dx*dx+dy*dy+dz*dz, R = std::sqrt(R2);
-                    if (R < 1e-12) continue;
-                    double invR3 = 1.0/(R2*R);
-                    double pot_dip = -g3*(moments.ox(sj)*dx+moments.oy(sj)*dy+moments.oz(sj)*dz)*invR3;
-                    double invR5 = invR3/R2;
-                    double qxx=3*dx*dx-R2,qxy=3*dx*dy,qxz=3*dx*dz,qyy=3*dy*dy-R2,qyz=3*dy*dz,qzz=3*dz*dz-R2;
-                    double pot_quad = 0.5*g5*(moments.txx(sj)*qxx+moments.txy(sj)*qxy*2
-                        +moments.txz(sj)*qxz*2+moments.tyy(sj)*qyy+moments.tyz(sj)*qyz*2+moments.tzz(sj)*qzz)*invR5;
-                    V_mp(si) += pot_dip + pot_quad;
-                }
-            }
+            V_mp = shell_aes_potential(mol, shell_info, gamma_shell, moments);
         }
         V_shell += V_mp;
 
@@ -973,8 +1054,10 @@ GFN2Result run_gfn2_xtb(
         }
         Eigen::VectorXd eps = solver.eigenvalues();
         Eigen::MatrixXd C = solver.eigenvectors();
-        Eigen::VectorXd occ = closed_shell_occupations(
-            eps, 2 * n_occ, opts.electronic_temperature);
+        const auto occupation = molecular_occupations(
+            eps, occupations.alpha, occupations.beta,
+            opts.electronic_temperature);
+        const Eigen::VectorXd& occ = occupation.total;
         Eigen::MatrixXd D = C * occ.asDiagonal() * C.transpose();
         Eigen::MatrixXd DS = D*S;
 
@@ -985,10 +1068,82 @@ GFN2Result run_gfn2_xtb(
         double max_change = (dq_new - dq_shell).cwiseAbs().maxCoeff();
         max_change_trace.push_back(max_change);
 
-        if (max_change < opts.conv_tol_charge) {
-            // Converged. Evaluate the energy functional at the converged
-            // density's own Mulliken charges for self-consistency.
+        bool stationary = max_change < opts.conv_tol_charge;
+        if (stationary) {
+            // Charge convergence alone is insufficient: symmetric H2 has
+            // neutral charges at iteration one but nonzero CAMM moments.
+            // Moreover, unchanged moments do not imply that the damped AES
+            // potential has caught up. Both the faithful stationary energy
+            // derivative and the nonvariational shell response require
+            // eigenpairs (and hence W) of the FULL executed Fock at D.
+            // Rebuild that undamped Fock from the current density, including
+            // isotropic/third-order terms, and require its max AO-element
+            // difference from the diagonalized Fock to be below the same
+            // numerical tolerance, in Hartree (vibe-qc#427, #436).
+            Eigen::VectorXd v_fresh = gamma_shell * dq_new;
+            v_fresh.array() -= gam3_shell.array() * dq_new.array().square();
+            Eigen::VectorXd v_mp_fresh;
+            GFN2ShellMoments moments_fresh;
+            if (!opts.aes_faithful) {
+                moments_fresh = compute_shell_multipole_moments(
+                    D, basis, mol, mp_int, ao_shell, n0_shell, n_shells);
+                moments_fresh.q = dq_new;
+                v_mp_fresh = shell_aes_potential(
+                    mol, shell_info, gamma_shell, moments_fresh);
+                v_fresh += v_mp_fresh;
+            }
+            Eigen::MatrixXd h_fresh = H0;
+            for (int mu = 0; mu < n_basis; ++mu)
+                for (int nu = 0; nu < n_basis; ++nu)
+                    h_fresh(mu, nu) += 0.5 * S(mu, nu)
+                        * (v_fresh(ao_shell[mu]) + v_fresh(ao_shell[nu]));
+            if (opts.aes_faithful) {
+                Eigen::VectorXd q_fresh = Eigen::VectorXd::Zero(n_atoms);
+                for (int si = 0; si < n_shells; ++si)
+                    q_fresh(shell_info[si].atom_idx) -= dq_new(si);
+                if (dispersion) {
+                    const auto d4 = dispersion->evaluate(q_fresh);
+                    for (int mu = 0; mu < n_basis; ++mu)
+                        for (int nu = 0; nu < n_basis; ++nu)
+                            h_fresh(mu,nu) -= .5*S(mu,nu)
+                                *(d4.potential(ao_atom[mu])+d4.potential(ao_atom[nu]));
+                }
+                std::vector<Vec3> mu_fresh, vd_fresh;
+                std::vector<Vec6> th_fresh, vq_fresh;
+                Eigen::VectorXd vs_fresh;
+                compute_atom_moments(D, S, aes_Dg, aes_Qg, mol, ao_atom,
+                                    n_atoms, n_basis, mu_fresh, th_fresh);
+                aes_potentials(mol, q_fresh, mu_fresh, th_fresh,
+                               dpol_at, qpol_at, mrad_at,
+                               vs_fresh, vd_fresh, vq_fresh);
+                add_aes_potential_to_hamiltonian(
+                    h_fresh, S, aes_Dg, aes_Qg, ao_atom,
+                    vs_fresh, vd_fresh, vq_fresh, n_basis);
+            }
+            stationary = h_fresh.allFinite()
+                && (h_fresh - H_scc).cwiseAbs().maxCoeff() < opts.conv_tol_charge;
+            if (stationary && !opts.aes_faithful) {
+                // Evaluate the shell functional at the accepted density's
+                // own moments, not the previous iteration's V_mp (#436).
+                V_mp = std::move(v_mp_fresh);
+                moments = std::move(moments_fresh);
+            }
+        }
+
+        const bool extend_primary = use_stabilization && iter == primary_max_iter
+            && primary_max_iter < primary_extension_ceiling && still_contracting();
+        if (stationary || (iter == primary_max_iter && !extend_primary)) {
+            // Materialize the accepted state or the last evaluated iterate.
+            // Exhaustion must not replace physical observables with the
+            // result struct's default zeros. Failed states remain explicitly
+            // unconverged and cannot be used for analytic derivatives.
             dq_shell = dq_new;
+            if (!stationary && !opts.aes_faithful) {
+                moments = compute_shell_multipole_moments(
+                    D, basis, mol, mp_int, ao_shell, n0_shell, n_shells);
+                moments.q = dq_new;
+                V_mp = shell_aes_potential(mol, shell_info, gamma_shell, moments);
+            }
             Eigen::VectorXd dq_atom = Eigen::VectorXd::Zero(n_atoms);
             for (int mu = 0; mu < n_basis; ++mu) dq_atom(ao_atom[mu]) += DS(mu,mu);
             for (int a = 0; a < n_atoms; ++a)
@@ -1036,22 +1191,19 @@ GFN2Result run_gfn2_xtb(
                 E_3rd += G * q * q * q / 3.0;
             }
 
-            result.energy = E_band0 + E_es + E_aes + E_3rd + E_rep;
-            double entropy = 0.0;
-            if (opts.electronic_temperature > 0.0) {
-                for (int orbital = 0; orbital < occ.size(); ++orbital) {
-                    const double fraction = std::clamp(
-                        occ(orbital) / 2.0, 1.0e-300, 1.0 - 1.0e-15);
-                    entropy -= 2.0 * (
-                        fraction * std::log(fraction)
-                        + (1.0 - fraction) * std::log(1.0 - fraction));
-                }
-            }
-            result.entropy = entropy;
+            const double E_dispersion = dispersion ? dispersion->evaluate(dq_atom).energy : 0.;
+            result.e_dispersion = E_dispersion;
+            result.energy = E_band0 + E_es + E_aes + E_3rd + E_rep + E_dispersion;
+            // Mermin entropy of the occupations that built D (zero under
+            // exact Aufbau), from the same kernel: A = E - T*S is the
+            // stationary potential of a smeared SCC (Bannwarth, Ehlert &
+            // Grimme, JCTC 2019, Eqs. 8 and 10; Mermin, Phys. Rev. 137,
+            // A1441 (1965)), and the surface the analytic gradient reports.
+            result.entropy = occupation.entropy;
             result.smearing_temperature = opts.electronic_temperature;
             result.free_energy = result.energy
-                - opts.electronic_temperature * entropy;
-            result.e_electronic = E_band0 + E_es + E_aes + E_3rd;
+                - opts.electronic_temperature * result.entropy;
+            result.e_electronic = E_band0 + E_es + E_aes + E_3rd + E_dispersion;
             result.e_repulsive = E_rep; result.e_scc = E_es;
             result.e_band0 = E_band0; result.e_aes = E_aes; result.e_3rd = E_3rd;
             // Debug: RMS of V_mp and shell dipoles
@@ -1063,17 +1215,21 @@ GFN2Result run_gfn2_xtb(
                       + moments.oz(si)*moments.oz(si);
             result.shell_dip_rms = std::sqrt(dip2 / std::max(1, n_shells));
             result.mo_energies = std::move(eps); result.mo_coeffs = std::move(C);
+            result.occupations = occ;
+            result.occupations_alpha = occupation.alpha;
+            result.occupations_beta = occupation.beta;
             result.density = std::move(D); result.overlap = S;
             result.hamiltonian = std::move(H_scc); result.charges = std::move(dq_atom);
             result.n_basis = n_basis; result.n_occ = n_occ;
-            result.n_iter = iter; result.converged = true;
+            result.n_iter = iter; result.converged = stationary;
             stamp_single_attempt(
                 result,
                 opts,
                 primary_max_iter,
                 max_change_trace,
                 attempt_solver);
-            return result;
+            if (stationary) return result;
+            break;
         }
 
         // Hybrid polyalgorithm bookkeeping (has_gam3 default path).
@@ -1147,11 +1303,11 @@ GFN2Result run_gfn2_xtb(
         }
 
         // Advisory checkpoint: extend the primary attempt by another block
-        // while it is still contracting and budget remains (vibe-qc#3).
-        if (use_stabilization && iter == primary_max_iter
-                && primary_max_iter < total_max_iter && still_contracting()) {
+        // while it is still contracting, without ever spending the ladder's
+        // reserve (vibe-qc#3, bounded by vibe-qc#306).
+        if (extend_primary) {
             primary_max_iter =
-                std::min(total_max_iter, primary_max_iter + 700);
+                std::min(primary_extension_ceiling, primary_max_iter + 700);
         }
     }
     result.n_iter = primary_max_iter;
@@ -1161,11 +1317,6 @@ GFN2Result run_gfn2_xtb(
         result, opts, primary_max_iter, max_change_trace, attempt_solver);
 
     if (use_stabilization) {
-        struct Retry {
-            double charge_mixing;
-            int max_iter;
-            double electronic_temperature;
-        };
         // BUG 45: the former ladder ran three increasingly long T=0 retries
         // (3000 + 5000 + 12000 iterations) before trying the finite-temperature
         // path that actually converges the affected neutral heterocycles in a
@@ -1179,19 +1330,21 @@ GFN2Result run_gfn2_xtb(
         // bounded high-T retry.  Light-element automatic stabilization remains
         // bounded to 3000 SCC iterations; extended-period systems are bounded
         // to 3600 SCC iterations with the default max_iter.
-        std::vector<Retry> retries = {
-            {0.01, 1800, 0.0},
-            {0.05, 500, 0.005},
-        };
-        if (has_extended_period_element(mol)) {
-            retries.push_back({0.05, 600, 0.05});
-        }
+        // The rungs were built above the SCC loop, because the primary
+        // attempt's extension ceiling is derived from their total budget.
         for (const auto& retry : retries) {
             const int remaining_iters = total_max_iter - result.n_iter;
             if (remaining_iters <= 0) break;
+            // vibe-qc#306: skip a rung that cannot have its whole budget
+            // rather than truncating it.  A truncated rung cannot converge --
+            // measured, adenine's rung 1 needs 1984 of its nominal 1800, and
+            // at the default budget ea2d4cb left rung 1 just 100 iterations --
+            // but it still consumes the budget of the rung behind it, which is
+            // how the only rung that converges these systems was starved.
+            if (remaining_iters < retry.max_iter) continue;
             XTBSccOptions ropts = opts;
             ropts.charge_mixing = retry.charge_mixing;
-            ropts.max_iter = std::min(retry.max_iter, remaining_iters);
+            ropts.max_iter = retry.max_iter;
             // vibe-qc#3: never override an EXPLICITLY requested electronic
             // temperature.  gfn2_driver.hpp promised that this driver's
             // default stays exact zero-temperature Aufbau, and the pybind
@@ -1211,7 +1364,7 @@ GFN2Result run_gfn2_xtb(
             }
             ropts.scc_mixer = SCCMixer::Simple;
             ropts.auto_stabilize = false;
-            GFN2Result r = run_gfn2_xtb(mol, params, ropts);
+            GFN2Result r = run_gfn2_xtb(mol, params, ropts, dispersion);
             prepend_attempt_history(r, result);
             if (r.converged) {
                 return r;

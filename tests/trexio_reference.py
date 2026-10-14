@@ -16,13 +16,25 @@ only checks able to catch a convention regression had not run (#253).
 gate that did not run, and turns the skip into a failure when
 ``VIBEQC_REQUIRE_TREXIO_REFERENCE`` is set, which is what a release gate
 should set once its runner carries a reference interpreter.
+
+The same switch has to govern the in-process ``import trexio`` that the two
+convention modules perform at module level. ``pytest.importorskip`` there
+fired before any test reached :func:`reference_python`: with the variable set
+and no in-process ``trexio`` both modules were skipped, pytest exited 5, and
+the release gate counted that as non-gating ``NOTESTS``, so a lane that was
+meant to run the check still went green by omission (#253, generation 2).
+:func:`import_trexio` replaces ``importorskip("trexio")`` at every such site;
+``tests/test_trexio_reference_gate.py`` pins that no direct call remains.
 """
 
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 from collections.abc import Callable, Mapping
+from types import ModuleType
+from typing import NoReturn
 
 import pytest
 
@@ -38,6 +50,37 @@ def reference_required(environ: Mapping[str, str] | None = None) -> bool:
     """True when ``VIBEQC_REQUIRE_TREXIO_REFERENCE`` is set to a truthy value."""
     environ = os.environ if environ is None else environ
     return environ.get(REQUIRE_VAR, "").strip().lower() not in _FALSE
+
+
+def import_trexio(
+    environ: Mapping[str, str] | None = None,
+    importer: Callable[[str], ModuleType] = importlib.import_module,
+) -> ModuleType:
+    """Import ``trexio`` in-process for a module that cannot run without it.
+
+    Use this instead of ``pytest.importorskip("trexio")``. Without ``trexio``
+    the module is skipped and the reason names the gate that did not run;
+    with ``VIBEQC_REQUIRE_TREXIO_REFERENCE`` set the module fails at
+    collection, which the release gate classifies as ``COLLECT_ERR`` and
+    counts as red, not as an all-skipped ``NOTESTS`` run.
+    ``environ`` and ``importer`` are injection points for the tests of this
+    helper.
+    """
+    __tracebackhide__ = True  # pytest reports the importing module, as importorskip does
+    environ = os.environ if environ is None else environ
+    try:
+        return importer("trexio")
+    except ImportError as exc:
+        error = exc
+    # Outside the ``except`` block, so the outcome carries no chained traceback.
+    _refuse(
+        reference_required(environ),
+        f"{GATE} did not run: `trexio` cannot be imported in-process "
+        f"({error}). The tests need it to write the file the reference "
+        "interpreter then reads",
+        remedy="Install the [trexio] extra",
+        missing="in-process trexio",
+    )
 
 
 def reference_python(
@@ -74,14 +117,25 @@ def reference_python(
     return exe
 
 
-def _refuse(required: bool, reason: str) -> None:
+def _refuse(
+    required: bool,
+    reason: str,
+    remedy: str = f"Point {REFERENCE_VAR} at an interpreter with trexio and pyscf",
+    missing: str = "reference interpreter",
+) -> NoReturn:
+    """Stop the test, or the module being collected, as a failure or a skip.
+
+    ``allow_module_level`` lets the same call serve the module-level import in
+    :func:`import_trexio`; inside a test body it changes nothing.
+    """
+    __tracebackhide__ = True
     if required:
         pytest.fail(
-            f"{reason}. {REQUIRE_VAR} is set, so a missing reference "
-            "interpreter is a failure, not a skip.",
+            f"{reason}. {REQUIRE_VAR} is set, so a missing {missing} is a "
+            "failure, not a skip.",
             pytrace=False,
         )
     pytest.skip(
-        f"{reason}. Point {REFERENCE_VAR} at an interpreter with trexio and "
-        f"pyscf; set {REQUIRE_VAR}=1 to fail instead of skipping."
+        f"{reason}. {remedy}; set {REQUIRE_VAR}=1 to fail instead of skipping.",
+        allow_module_level=True,
     )

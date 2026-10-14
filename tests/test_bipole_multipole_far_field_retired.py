@@ -88,6 +88,7 @@ def lih_one_iter():
         res = run_pbc_bipole_rhf(
             system, basis, kmesh, opts,
             use_ewald_j_split=True, use_exchange_ewald_split=False,
+            historical_domain=True,
             use_multipole_far_field=False, multipole_l_max=L_MAX,
             ewald_precision=1e-8, progress=False,
         )

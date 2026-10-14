@@ -207,6 +207,9 @@ def run_four_center_scf(
     from .uhf import run_ccm_uhf
 
     from ...guess import InitialGuess, select_initial_guess
+    from ...kpoints import _integer_counts
+
+    nrep = tuple(_integer_counts(mesh, name="four-center BvK mesh"))
     selection = select_initial_guess(
         system.unit_cell_molecule(), initial_guess, is_periodic=True,
         is_open_shell=str(method).strip().upper() in ("UHF", "UKS"),
@@ -214,7 +217,6 @@ def run_four_center_scf(
     )
 
     method_upper = str(method).strip().upper()
-    nrep = tuple(int(n) for n in mesh)
     if len(nrep) != 3 or any(n < 1 for n in nrep):
         raise ValueError(
             "run_four_center_scf: mesh must be three positive integers "

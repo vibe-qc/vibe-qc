@@ -150,6 +150,15 @@ def test_fno_releases_dense_mp2_setup_before_native_cc(monkeypatch):
     real_einsum = np.einsum
     b_refs = []
     g_refs = []
+    solve_refs = []
+    solve = cc_module.solve_dense_fock
+
+    def tracking_solve(matrix, **kwargs):
+        result = solve(matrix, **kwargs)
+        solve_refs.extend(weakref.ref(value) for value in (
+            matrix, result, result.eigenvalues, result.eigenvectors,
+        ))
+        return result
 
     class TrackingDF:
         def __init__(self, *args, **kwargs):
@@ -174,10 +183,13 @@ def test_fno_releases_dense_mp2_setup_before_native_cc(monkeypatch):
         assert len(g_refs) == 2
         assert all(ref() is None for ref in b_refs)
         assert all(ref() is None for ref in g_refs)
+        assert len(solve_refs) == 4
+        assert all(ref() is None for ref in solve_refs)
         raise NativeBoundaryReached
 
     monkeypatch.setattr(df_module, "DensityFitting", TrackingDF)
     monkeypatch.setattr(np, "einsum", tracking_einsum)
+    monkeypatch.setattr(cc_module, "solve_dense_fock", tracking_solve)
     monkeypatch.setattr(cc_module, "_run_ccsd_from_mos", final_native_call)
 
     opts = CCSDOptions(
@@ -190,6 +202,46 @@ def test_fno_releases_dense_mp2_setup_before_native_cc(monkeypatch):
     )
     with pytest.raises(NativeBoundaryReached):
         run_fno_ccsd(mol, basis, hf, opts)
+
+
+@pytest.mark.parametrize("keep_fraction", [0.6, 1.0])
+def test_fno_shared_fock_matches_previous_solve(monkeypatch, keep_fraction):
+    """Retained virtual energies and correlated energies match the old solve."""
+    from types import SimpleNamespace
+    from scipy.linalg import eigvalsh
+    import vibeqc.cc as cc_module
+
+    mol, basis, hf = _rhf()
+    solve = cc_module.solve_dense_fock
+    seen = []
+
+    def checked_solve(matrix, **kwargs):
+        result = solve(matrix, **kwargs)
+        seen.append(matrix.shape[0])
+        assert result.operator_metadata.basis_id == "fno-retained-virtual"
+        assert result.operator_metadata.kind == "fock"
+        assert result.operator_metadata.spin == "restricted"
+        assert result.residual_frame == "orthogonal"
+        assert result.selection_verified
+        assert max(result.residuals) < 1e-11
+        assert result.orthogonality_error < 1e-12
+        np.testing.assert_allclose(result.eigenvalues, eigvalsh(matrix), atol=1e-12)
+        return result
+
+    monkeypatch.setattr(cc_module, "solve_dense_fock", checked_solve)
+    actual = _fno(mol, basis, hf, keep_fraction=keep_fraction)
+    assert seen == [actual.n_virtual_kept]
+
+    def previous_solve(matrix, **kwargs):
+        eps, C = np.linalg.eigh(matrix)
+        return SimpleNamespace(eigenvalues=eps, eigenvectors=C)
+
+    monkeypatch.setattr(cc_module, "solve_dense_fock", previous_solve)
+    previous = _fno(mol, basis, hf, keep_fraction=keep_fraction)
+    assert actual.converged and previous.converged
+    assert actual.n_virtual_kept == previous.n_virtual_kept
+    for name in ("e_ccsd_correlation", "e_t", "e_ccsd_t", "delta_mp2"):
+        assert getattr(actual, name) == pytest.approx(getattr(previous, name), abs=1e-10)
 
 
 def test_fno_routes_through_run_ccsd_options():

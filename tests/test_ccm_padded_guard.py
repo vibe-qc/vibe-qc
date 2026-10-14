@@ -10,7 +10,7 @@ scalable four-center path for the same Γ-CCM construction. It labels GDF as a
 separately declared neutral fitted-torus control, not a Γ-CCM substitute.
 
 Reported by the AICCM benchmark chat (c-diamond 2×2×2 OOM). Action per
-`handovers/HANDOVER_AICCM_FOLLOWON.md`: error rather than OOM; route the same
+the original investigation: error rather than OOM; route the same
 Γ-CCM construction to the scalable four-center builder.
 """
 

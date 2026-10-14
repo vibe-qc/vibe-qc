@@ -1,16 +1,14 @@
 """ECP `.g94` + `.ecp` sidecar contract for the bundled basis library.
 
-ECP-bearing basis sets (vDZP, LANL2DZ family, dhf-*, …) arrive from
-BSE as a single `.g94` that mixes orbital blocks with `<Sym>-ECP`
-blocks. libint2 cannot parse the ECP blocks, so
-``scripts/basisset_dev/split_ecp_g94.py`` (driven by
-``scripts/setup_basis_library.sh``) splits each affected file into
-an orbital-only ``<name>.g94`` plus a ``<name>.ecp`` sidecar that
-vibe-qc reads via libecpint.
+An ECP-bearing basis set (vDZP, the LANL2DZ family, dhf-*, def2 beyond
+Kr, the pob sets, ...) is one QVF-Basis record carrying both its shells
+and its potentials. libint2 cannot parse ECP blocks, so the record is
+rendered as an orbital-only ``<name>.g94`` plus a ``<name>.ecp`` sidecar
+that vibe-qc reads via libecpint (``vibeqc.basis_toolkit.exporter_g94``).
 
-These tests pin the post-split contract on the runtime-shipped
+These tests pin that contract on the runtime-shipped
 ``python/vibeqc/basis_library/basis/`` tree so an accidental deletion
-of a sidecar — easy to miss inside a large basis-data diff — fails
+of a sidecar, easy to miss inside a large basis-data diff, fails
 loudly instead of silently breaking ECP SCF for the affected basis.
 """
 
@@ -26,12 +24,9 @@ import vibeqc as _vq
 
 BUNDLED_BASIS_DIR = Path(_vq.__file__).resolve().parent / "basis_library"
 BASIS_DIR = BUNDLED_BASIS_DIR / "basis"
-CUSTOM_DIR = BUNDLED_BASIS_DIR / "custom"
 
-# Same regex as scripts/basisset_dev/split_ecp_g94.py — matches the
-# BSE convention "<Symbol>-ECP <ncore> <lmax>", accepting both
-# mixed-case (Na) and the Pople-era all-caps form (NA) used by
-# LANL2DZ and friends.
+# Matches the BSE convention "<Symbol>-ECP <lmax> <ncore>", accepting both
+# mixed-case (Na) and the Pople-era all-caps form (NA).
 _ECP_HEADER_RE = re.compile(r"^\s*([A-Z][A-Za-z]?)-ECP\s+(\d+)\s+(\d+)\s*$")
 
 
@@ -40,9 +35,9 @@ def _has_ecp_block(path: Path) -> bool:
     return any(_ECP_HEADER_RE.match(line) for line in text.splitlines())
 
 
-# Pinned inventory: every basis set the build pipeline is expected to
-# emit an `.ecp` sidecar for. Update intentionally when adding a new
-# ECP-bearing basis to ``custom/`` (or when libint ships a new one).
+# Pinned inventory: every record the renderer is expected to emit an
+# `.ecp` sidecar for. Update intentionally when a new ECP-bearing record
+# joins ``basis_library/qvf/``.
 EXPECTED_ECP_BASES = frozenset({
     "dhf-qzvp", "dhf-qzvpp",
     "dhf-sv(p)", "dhf-svp",
@@ -115,8 +110,8 @@ def test_every_expected_ecp_basis_has_sidecar():
     if empty:
         problems.append(f".ecp sidecar present but contains no ECP block: {empty}")
     assert not problems, (
-        "Bundled basis library is missing expected ECP sidecars — "
-        "re-run scripts/setup_basis_library.sh. "
+        "Bundled basis library is missing expected ECP sidecars; "
+        "re-render with scripts/render_basis_library.py. "
         + " | ".join(problems)
     )
 
@@ -134,62 +129,12 @@ def test_no_orphan_ecp_sidecars():
 
 def test_no_unsplit_ecp_blocks_in_orbital_g94():
     """After ``setup_basis_library.sh`` runs, no shipped `.g94` should
-    still contain `<Sym>-ECP` header lines — libint2 would reject the
-    file on load. A failure here means the build-time split did not
-    run on a file it should have."""
+    still contain `<Sym>-ECP` header lines: libint2 would reject the
+    file on load. The renderer writes potentials to the sidecar only."""
     unsplit = [p.name for p in sorted(BASIS_DIR.glob("*.g94")) if _has_ecp_block(p)]
     assert not unsplit, (
-        f".g94 files still contain unsplit ECP blocks: {unsplit} — "
-        "re-run scripts/setup_basis_library.sh"
-    )
-
-
-def test_custom_ecp_sources_all_have_sidecar():
-    """Source-of-truth cross-check: every ``custom/*.g94`` that carries
-    ECP blocks must have a corresponding sidecar in ``basis/``. Catches
-    the case where a new ECP-bearing basis lands in ``custom/`` but
-    ``setup_basis_library.sh`` was never re-run."""
-    if not CUSTOM_DIR.is_dir():
-        pytest.skip(f"{CUSTOM_DIR} not present in this checkout")
-    missing: list[str] = []
-    for src in sorted(CUSTOM_DIR.glob("*.g94")):
-        if not _has_ecp_block(src):
-            continue
-        if not (BASIS_DIR / f"{src.stem}.ecp").is_file():
-            missing.append(src.name)
-    assert not missing, (
-        "custom/*.g94 sources contain ECP blocks but no sidecar shipped in "
-        f"basis/: {missing} — re-run scripts/setup_basis_library.sh"
-    )
-
-
-def test_custom_ecp_sidecar_sources_land_in_basis():
-    """Pre-split ``custom/*.ecp`` sources must be copied into ``basis/``.
-
-    This catches already-split custom bases such as vDZP: the orbital
-    ``custom/vdzp.g94`` has no ECP block left, so the splitter cannot
-    recreate ``basis/vdzp.ecp`` unless the setup script copies the
-    source sidecar first.
-    """
-    if not CUSTOM_DIR.is_dir():
-        pytest.skip(f"{CUSTOM_DIR} not present in this checkout")
-    missing: list[str] = []
-    changed: list[str] = []
-    for src in sorted(CUSTOM_DIR.glob("*.ecp")):
-        dst = BASIS_DIR / src.name
-        if not dst.is_file():
-            missing.append(src.name)
-            continue
-        if dst.read_bytes() != src.read_bytes():
-            changed.append(src.name)
-    problems = []
-    if missing:
-        problems.append(f"missing from basis/: {missing}")
-    if changed:
-        problems.append(f"basis/ copy differs from custom/: {changed}")
-    assert not problems, (
-        "custom/*.ecp sidecars did not land cleanly: "
-        + " | ".join(problems)
+        f".g94 files still contain ECP blocks: {unsplit}; "
+        "re-render with scripts/render_basis_library.py"
     )
 
 

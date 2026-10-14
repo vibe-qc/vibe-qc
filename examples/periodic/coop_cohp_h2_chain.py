@@ -7,6 +7,11 @@ Demonstrates::
     periodic_mayer_bond_orders  -- k-space Mayer bond orders
     coop_figure / cohp_figure   -- matplotlib plotters
 
+The chain is a ``dim=3`` cell with vacuum on the two transverse axes:
+vibe-qc has no route with a consistent 1-D Coulomb gauge, so a
+``PeriodicSystem(dim=1, ...)`` cannot run a k-mesh SCF. The vacuum is
+part of the model.
+
 Requires matplotlib for the plot output.
 """
 
@@ -15,12 +20,13 @@ from __future__ import annotations
 import vibeqc as vq
 
 # ---------------------------------------------------------------------------
-# 1. Build a 1-D H₂ chain (6 bohr cell, 1.4 bohr bond, 30 bohr vacuum)
+# 1. Build an H₂ chain (6 bohr cell, 1.4 bohr bond) in a dim=3 cell with
+#    15 bohr of transverse vacuum
 # ---------------------------------------------------------------------------
 a = 6.0
-vac = 30.0
+vac = 15.0
 system = vq.PeriodicSystem(
-    1,
+    3,
     [[a, 0.0, 0.0], [0.0, vac, 0.0], [0.0, 0.0, vac]],
     [vq.Atom(1, [0.0, vac / 2, vac / 2]), vq.Atom(1, [1.4, vac / 2, vac / 2])],
 )
@@ -34,11 +40,13 @@ result = vq.run_periodic_job(
     basis,
     method="RKS",
     functional="lda",
-    kpoints=[8, 1, 1],  # 1-D k-mesh
+    jk_method="gdf",
+    kpoints=[8, 1, 1],  # k sampling along the chain only
     output="h2_chain_coop",
     output_qvf=True,
     coop_cohp=True,
-    dos_kmesh=[32, 1, 1],  # finer mesh for smooth curves
+    # The GDF spectral properties use the SCF k mesh; a finer dos_kmesh
+    # would need the Hamiltonian evaluated at the new k points.
     verbose=1,
 )
 

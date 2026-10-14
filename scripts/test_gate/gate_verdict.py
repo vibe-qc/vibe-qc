@@ -19,7 +19,7 @@ baseline.json schema:
   }
 
 Usage: gate_verdict.py triage.jsonl baseline.json [--reverify --wt W --py P]
-Exit 0 = green, 1 = red (new failures), 2 = usage error.
+Exit 0 = green, 1 = red (new failures), 2 = rejected input or usage error.
 
 Contention re-verify (--reverify)
 ---------------------------------
@@ -46,6 +46,11 @@ import sys
 
 FAILING = {"FAIL", "SEGFAULT", "ABORT", "OOM_KILLED", "SIGKILLED", "TIMEOUT", "COLLECT_ERR"}
 
+# Statuses without valid compiled-core provenance for the whole run. They
+# are not reds and must never be counted as passes either: an artifact holding
+# one cannot produce a verdict at all (#285).
+VOID = {"STALE_CORE", "CORE_PROVENANCE_ERROR"}
+
 # A re-verified single-file run is a contention artifact (does NOT gate) only
 # if it now cleanly passes or collects nothing; anything else is a real red.
 RECOVERED = {"PASS", "NOTESTS"}
@@ -63,7 +68,7 @@ def load_jsonl(p):
 
 
 def validate_blocking_artifact(runs, path):
-    """Reject advisory or unclassified data before computing a verdict."""
+    """Reject advisory, unclassified or void data before computing a verdict."""
     bad = sorted(
         {
             record.get("tier", "UNCLASSIFIED")
@@ -77,10 +82,34 @@ def validate_blocking_artifact(runs, path):
             f"{path}: blocking verdict accepts only T0/T1 records; found {labels}"
         )
 
+    # A stale or unqualified worker voids all results, including any tests
+    # already executed by healthy workers. Neither a regression nor a recovery
+    # can be inferred from this aggregate (#285).
+    voided = sorted({r.get("file", "?") for r in runs if r.get("status") in VOID})
+    if voided:
+        shown = ", ".join(voided[:3]) + (" ..." if len(voided) > 3 else "")
+        statuses = ", ".join(sorted({r["status"] for r in runs if r.get("status") in VOID}))
+        raise ValueError(
+            f"{path}: {len(voided)} target(s) exited {statuses}; compiled-core "
+            f"provenance was not valid for every participant ({shown}). "
+            "Check the worker infrastructure, rebuild stale cores and re-run; "
+            "this artifact cannot produce a verdict either way"
+        )
+
 
 def is_failing(status: str) -> bool:
-    """A status that, on an unlisted file, would gate the build RED."""
-    return status in FAILING or status.startswith(("SIGNAL_", "RC_"))
+    """A status that, on an unlisted file, would gate the build RED.
+
+    ``VOID`` statuses are included so that no path can quietly count them as
+    healthy. A blocking run never reaches here with one — it is rejected in
+    :func:`validate_blocking_artifact` — but an advisory lane still has to show
+    it rather than pass over it (#285).
+    """
+    return (
+        status in FAILING
+        or status in VOID
+        or status.startswith(("SIGNAL_", "RC_"))
+    )
 
 
 def reverify_new_reds(candidates, runner):
@@ -110,13 +139,25 @@ def reverify_new_reds(candidates, runner):
         ``(original_record, reverify_record)`` for files that PASSED (or
         collected NOTESTS) on the isolated re-run — contention artifacts that
         must NOT gate. A runner that returns ``None`` (or any non-passing
-        status) is treated conservatively as still-red: an inconclusive re-run
-        never clears a red.
+        status other than a void result) is treated conservatively as
+        still-red: an inconclusive re-run never clears a red.
+
+    Raises
+    ------
+    ValueError
+        A re-run has void compiled-core provenance,
+        so the gate cannot report either a regression or a recovery.
     """
     still_red, recovered = [], []
     for rec in candidates:
         res = runner(rec["file"])
         status = (res or {}).get("status")
+        if status in VOID:
+            raise ValueError(
+                f"re-verification of {rec['file']} exited {status}; "
+                "rebuild the core and run the gate again. "
+                "This run cannot produce a verdict either way."
+            )
         if status in RECOVERED:
             recovered.append((rec, res))
         else:
@@ -239,7 +280,11 @@ def main(argv=None):
         print(f"\n-- re-verifying {len(new_red)} NEW non-PASS file(s) in "
               f"isolation before reding --", flush=True)
         runner = _build_isolated_runner(args)
-        new_red, recovered = reverify_new_reds(new_red, runner)
+        try:
+            new_red, recovered = reverify_new_reds(new_red, runner)
+        except ValueError as exc:
+            print(f"gate re-verification rejected: {exc}", file=sys.stderr)
+            return 2
 
     print("\n===== GATE VERDICT =====")
     print(f"pass={n_pass}  notests={n_notests}  known-red={len(known_red)}  "

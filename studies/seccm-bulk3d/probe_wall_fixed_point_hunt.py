@@ -12,7 +12,7 @@ aes off; optionally the real gam3 confinement) on fcc Cu cells:
     charge-density-wave response: J(0) min goes from -14 at T=0.005
     to -23 at T=0.05 on 2x2x4).
 
-Verdict recorded in handovers/HANDOVER_SECCM_BULK3D.md (2026-08-26):
+Verdict recorded in the original investigation (2026-08-26):
 the 2x2x4 and 4x4x4 maps have NO physical fixed point; every root any
 method finds sits in the large-amplitude CDW basin (|dq_shell| 6.6-8.6
 on 2x2x4; the 4x4x4 hunt diverges to |dq| ~ 3e2). The 2x2x2 control

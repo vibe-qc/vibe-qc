@@ -5,8 +5,8 @@ counterpart of ``_pyscf_decompose`` in ``tests/test_parity_hf_dft.py``.
 It reads a plain ORCA single-point ``.out`` and returns a dict the
 parity comparison can assert against, piece by piece.
 
-**What ORCA actually prints — and the one place the original handover
-was wrong.** The retired ORCA-parity handover rev 2 expected separate
+**What ORCA actually prints — and the one place the original historical design record
+was wrong.** The retired ORCA-parity historical design record rev 2 expected separate
 ``Coulomb Energy :`` and ``Exchange Energy :`` lines. ORCA 6.1.1's
 standard ``TOTAL SCF ENERGY`` block does *not* emit those — it prints a
 single combined::

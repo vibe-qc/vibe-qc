@@ -62,8 +62,9 @@ Common triggers:
   reference becomes a poor description of the multireference state).
 - Transition-metal complex with ligand-field-degenerate d orbitals.
 - Broken-symmetry singlet biradical.
-- Wrong initial guess (e.g. AUTO picked SAP on a system where SAD
-  starts closer to the true minimum).
+- An initial guess that reaches a different stationary solution or stalls.
+  Inspect `result.guess_selection` when a result is available, or the SCF log,
+  before comparing supported alternatives.
 
 ### Fix
 
@@ -76,7 +77,7 @@ The remaining levers, in order of bang-for-buck:
 # doc-audit: skip - option adjustments for an existing SCF setup
 opts.level_shift   = 0.2          # Saunders-Hillier shift
 opts.newton_threshold = 1.0       # Phase D2c Newton finalizer
-opts.initial_guess = vq.InitialGuess.SAD  # if AUTO picked SAP
+opts.initial_guess = vq.InitialGuess.SAD  # compare only if not already selected
 opts.max_iter      = 200          # last resort - buys time
 ```
 
@@ -263,11 +264,12 @@ Either:
 
 - Switch to a basis that covers the element (`def2-tzvp` /
   `cc-pvtz` for molecular work, `pob-tzvp-rev2` for periodic).
-- Add the element by hand: copy the matching block from
-  [BSE](https://www.basissetexchange.org/) into a `custom/*.g94`
-  file (see [user_guide/basis_sets.md](user_guide/basis_sets.md)
-  § Custom basis sets) and rebuild the library with
-  `./scripts/setup_basis_library.sh`.
+- Add the element as a reviewed import: merge the block from
+  [BSE](https://www.basissetexchange.org/) into the basis's record under
+  `basis_library/qvf/`, record the source in its provenance, and
+  re-render with `./scripts/setup_basis_library.sh --target-dir
+  python/vibeqc/basis_library` (see the library README). Fetching does
+  not graft blocks onto a bundled name.
 
 ## "Explicit block-mode GAPW is Ha-scale wrong on a molecule like H₂O"
 
@@ -421,8 +423,8 @@ this path. If a displaced SCF point does not converge, the FD helper raises
 instead of differentiating a failed iterate; pass
 `require_converged=False` only when deliberately diagnosing a failed surface.
 The analytic drivers remain available for research (`force_mode="analytic"`);
-stay on the maintained regression surface if you compare them directly. The
-full analytic gradient certification is tracked in `handovers/HANDOVER_BIPOLE_GRADIENT.md`;
+stay on the maintained regression surface if you compare them directly;
+
 the regression guards are in `tests/test_bipole_gradient.py`.
 
 ## CASPT2/NEVPT2 `compute_corr_grad=True` gradient has no PT2 correction (v0.15.17)
@@ -535,7 +537,7 @@ Gilat scheme is dropped). Regression pins:
 route + a static callsite/signature contract over every
 `run_pbc_bipole_*` dispatch) and the strengthened forwarding assertion
 in `tests/test_bz_integration_gilat_scf.py`. Full provenance:
-BUG-PER-002 in `handovers/HANDOVER_OPEN_BUGS_V015.md`.
+BUG-PER-002 in the original investigation.
 
 ## `ImportError: cannot import name 'EEQOptions' from 'vibeqc._vibeqc_core'`
 
@@ -658,7 +660,7 @@ components by `sqrt((2l-1)!!/((2lx-1)!!(2ly-1)!!(2lz-1)!!))` on top of
 libint's shell-wide axial normalization, which makes a d_xy density 3x
 too large. Spherical shells were immune (the factor cancels through the
 cart-to-pure transform), which is why ordinary named-basis coverage never
-saw it. Full record: `handovers/HANDOVER_AO_CONVENTION.md` and the
+saw it. Full record: the original investigation and the
 CHANGELOG reclassification entry (2026-08-06).
 
 ### Fix
@@ -720,7 +722,7 @@ only. `backend="native"` on a molecule containing any other element
 raises a clear error (no reference data). For full periodic-table
 coverage use the default `backend="dftd4"` (optional `dftd4` package,
 bit-exact to upstream) -- every built-in `dispersion="d4"` route does.
-Historical background is recorded in [Archived `HANDOVER_D4_NATIVE.md`](https://vibe-qc.com/docs/);
+Historical background is recorded in the original investigation;
 extending the catalogue past period 2 is the prerequisite for making
 native the default backend.
 
@@ -808,9 +810,10 @@ inside the corrected-gauge branch only; `6299692ae` fixed that gap.
   `dim=2` before SCF. The low-level drivers expose `DIRECT_TRUNCATED` for
   diagnostics, but it is not a wire/slab Coulomb model and its compact-cell
   energy is cutoff-dependent. Raising the direct-space cutoff cannot make it
-  a valid optimisation objective. For a 1-D wire use `jk_method='auto'` or
-  `'gdf'`; for a 2-D surface use `'auto'`/`'slab_ewald_2d'`, or explicit GDF
-  for its supported closed-shell slab envelope.
+  a valid optimisation objective. A 1-D wire has no public route: model it
+  as a `dim=3` cell with transverse vacuum. For a 2-D surface use
+  `'auto'`/`'slab_ewald_2d'`, or explicit GDF for its supported closed-shell
+  slab envelope.
 * **A refusal during a geometry optimisation is not always yours to fix.**
   The optimisers take trial steps, and a BFGS unit step in fractional
   coordinates can move an atom by a whole lattice vector, into a geometry

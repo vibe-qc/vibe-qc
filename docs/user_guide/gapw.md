@@ -159,6 +159,32 @@ bases in tight cells can increase ``image_radius`` via the
 ``_AO_IMAGE_RADIUS`` module constant (not yet a public option).
 ```
 
+## Fock diagonalization
+
+Gamma GPW/GAPW RHF/RKS/UHF/UKS and range-separated GAPW route their SCF
+Fock solves through the [shared operator contract](solver_framework.md).
+Each unrestricted spin has its own operator metadata and diagnostics. The
+solver checks Hermiticity, eigenpair residuals and metric orthogonality before
+returning coefficients; it rejects inconsistent input or failed solves.
+Overlap construction, occupations, smearing, DIIS and physical support gates
+remain owned by the grid method.
+
+Closed-shell GPW retains `use_davidson` and `davidson_min_dim`. Davidson
+recycles the preceding subspace without mutating its input options. Other
+Gamma grid routes retain their dense solver. Multi-k GPW RKS/UKS/ROKS,
+GAPW RKS and the fixed-density band helper also use shared dense solves.
+AO matrices carry X/S into the solve; projected DIIS matrices remain in their
+orthogonal frame, with residuals labelled accordingly. The driver maps
+coefficients back to AO coordinates and assigns global occupations. Orbital
+normalization never includes k-point weights.
+
+Gamma GPW ROHF/ROKS now shares the molecular Roothaan solver, including
+Guest-Saunders block canonicalization. Its occupation and level-shift
+policies remain in that loop. Initial-guess diagonalizations and orbital
+transformation remain separate migration work. The
+shared boundary does not extend physical support or certify experimental
+calculations; compact GAPW's density-fold refusal remains in force.
+
 ## What GPW is
 
 The Gaussian + plane-wave (GPW) method (Lippert & Hutter 1997,
@@ -1233,3 +1259,27 @@ The full milestone map is in
   - the foundational GPW paper.
 * Hutter, Iannuzzi, Schiffmann, VandeVondele, *WIREs Comp.
   Mol. Sci.* 4, 15 (2014), CP2K + GPW from the implementers.
+
+## Evaluated Gamma RHF state
+
+The Python Gamma GPW RHF driver without DFT+U exposes `result.fock_build`.
+It owns the physical Fock, evaluated density, energy components, metric frame
+and numerical-source identity. DIIS operators remain separate solver states.
+The final energy uses the requested nuclear-potential convention, including
+`smeared_erfc`, and any density-independent dispersion correction.
+
+At an iteration limit, the returned density and physical Fock still belong to
+one evaluation. `next_density` is a separate look-ahead SCF step and
+`density_fixed_point_residual` measures its Frobenius distance. Returned
+orbitals and occupations reconstruct the evaluated density, including mixed
+densities from damping; orbital energies are physical-Fock Rayleigh quotients.
+They need not be canonical eigenpairs before convergence. Finite-temperature
+entropy uses those evaluated occupations. QVF labels these density orbitals
+`natural`, with the energy interpretation recorded in the run fields. The runner preserves this state and
+its identity in output. GPW KS, DFT+U, open-shell and augmented GAPW paths retain
+their existing result conventions pending their own migrations.
+
+The retained home-cell exchange approximation is qualified in its padded
+molecular limit. A compact-cell energy-derivative inconsistency in that
+existing kernel is tracked in issue #534; this migration does not establish
+compact-cell variational or bulk reference parity.

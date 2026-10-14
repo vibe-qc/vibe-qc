@@ -17,6 +17,7 @@ absolute metric thresholds are explicit parts of each fitting contract.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 from typing import Any, NamedTuple, Optional, Sequence
@@ -115,6 +116,17 @@ def _metric_keep_mask(
 # The rsgdf/FFT builders are deliberately NOT given a floor: they already
 # compared absolutely before the 2026-08-14 harmonisation and are validated
 # at that behaviour.
+#
+# Measured 2026-09-29 (#172 follow-up): the compcell metric built at the
+# default lattice precision is indefinite by up to 1.2e-5 on dense cells
+# (diamond, MgO STO-3G). The floor cuts far above that noise, and building
+# the metric to 1e-12 changes energies by < 5 uHa while making a floor-free
+# fit fragile (LiH: +197 uHa, and divergent at a 1e-13 cut), so the metric
+# keeps the default precision. compcell's remaining offset from rsgdf on
+# dense cells (diamond +109, MgO +24 uHa) is the retained mode set, not the
+# integrals: at the same 127 modes the two diamond tensors give fitted J
+# and K within 0.7 uHa. rsgdf fits the raw auxiliary basis and compcell the
+# modrho-scaled one, so the same absolute cut keeps different modes.
 _PLAIN_METRIC_MIN_EIG_FRACTION = 1.0e-9
 
 
@@ -136,41 +148,147 @@ _PLAIN_METRIC_MIN_EIG_FRACTION = 1.0e-9
 # absolute floor calibrated on the first two annihilates the third.
 #
 # The floor is a vibe-qc calibration, NOT a value from either paper (Sun
-# 2017 Sec. II B quotes a 1e-9 default and Sec. III finds 1e-10 best; PySCF
-# ships 1e-10). Those tighter values are supported there because PySCF
-# builds its 2-centre metric at a dedicated, far tighter precision
-# (``precision_j2c``) than the general cell precision, precisely because
-# errors in the 2c metric propagate into the fitted tensor. vibe-qc builds
-# J-tilde at the general lattice-sum precision, so its own construction
-# error sets the floor:
+# 2017 Sec. II B quotes a 1e-9 default and Sec. III finds 1e-10 best;
+# PySCF ships 1e-10).
 #
-#   MgO/STO-3G/def2-svp-jk primitive, production rcut ("pyscf_auto",
-#   rcut_precision 1e-8) against a converged 34-bohr reference: the
-#   J-tilde spectrum carries up to 5.4e-06 absolute error. At the previous
-#   default the smallest RETAINED eigenvalue was 2.9e-08 with its own
-#   error bar at 6.6e-08 -- the mode was smaller than its uncertainty, and
-#   Eq. 19 divides the Eq.-23 numerator by its square root (amplification
-#   ~6e+03). That is the mechanism behind the measured MDF blow-ups.
+# It USED to be set by J-tilde's construction error. At the general
+# lattice-sum precision the MgO/STO-3G/def2-svp-jk spectrum carried up to
+# 5.4e-06 absolute error, and the smallest retained eigenvalue at the old
+# default was 2.9e-08 against its own 6.6e-08 error bar -- a mode smaller
+# than its uncertainty, divided by its own square root. Since 2026-09-17
+# that is no longer the binding constraint: :data:`_MDF_PRECISION_J2C`
+# builds J-tilde to 1.8e-13 on the same cell (see
+# :func:`_mdf_fit_lattice_opts`).
 #
-# Calibration, Gamma RHF against out-of-process PySCF MDF oracles (see
-# tests/test_pbc_gdf_mdf.py::test_mdf_linear_dep_threshold_ne_box_sweep):
+# The 2026-09-17 sweep that kept the floor (MgO with the accurate metric
+# and no floor: -92 mHa at 3e-2, divergent at 1e-8) measured the missing
+# auxiliary images of the Gaussian 3c block, not the metric (#172). With
+# the image sum (:func:`aux_image_3c`) the small-lambda modes are usable
+# on the dense-core class, and the floor is now a mild accuracy choice.
 #
-#   Ne/STO-3G/10-bohr box (the validated envelope), oracle -126.61361316,
-#   as a fraction of max_eig:
-#     1e-09 (old cut)   -126.6136772952   -0.064 mHa
-#     1e-05 .. 1e-03    -126.6136107693   +0.0024 mHa   <- accuracy plateau
-#     1e-02             -126.6127728140   +0.840 mHa    (too loose: Sun
-#                                                        Sec. III
-#                                                        incompleteness)
-#   MgO/STO-3G primitive (gated dense-core class), oracle -271.0499046:
-#     1e-09 (old cut)   +467152.38        divergent, trial-dependent
-#     1e-03               -271.145742     bounded
+# Calibration 2026-09-29, Gamma RHF at the default ``mdf_ke_cutoff=40``,
+# error against out-of-process PySCF 2.14 MDF (def2-svp-jkfit), uHa:
 #
-# 1e-4 sits mid-plateau for Ne -- a 26x improvement in PySCF-MDF parity
-# over the old cut -- removes the divergence on the dense-core class, and
-# leaves the dilute H2 box untouched (1e-4 x 9.17e-06 = 9.2e-10, below the
-# 1e-9 default, so max() keeps the caller's value).
-_MDF_DRESSED_METRIC_MIN_EIG_FRACTION = 1.0e-4
+#   floor       H2 6-bohr   Ne 10-bohr   LiH    MgO     C diamond
+#   1e-4        +0.02       +160         -0.9   +204.5  -20.9
+#   1e-5        +0.02       +57.5        -0.9   -3.4    -20.9   <- chosen
+#   1e-7        +0.02       -9.9         +5.3   -14.6   -6.8
+#   none        +0.02       -25.8        +5.3   -71.8   +1.5
+#
+# and Ne at the settings of test_mdf_linear_dep_threshold_ne_box_sweep
+# (mdf_ke_cutoff=60, 30-bohr cells): +2.4 at 1e-3 .. 1e-5, -37 at 1e-6 ..
+# 1e-8, -72 with none. MDF on all-electron cores is itself mesh-dependent
+# by 1e-4 Ha in both codes (Ne: vibe-qc -65 / -92 uHa at ke 80 / 160;
+# PySCF's own MDF moves by -130 uHa from its default 19^3 mesh to 50^3),
+# so the floor is chosen to be robust rather than to chase the oracle's
+# mesh: 1e-5 keeps the tested Ne setting on its plateau and cuts the
+# worst default-mesh error from 204 to 58 uHa. H2 (max_eig 9.6e-6) never
+# reaches it.
+_MDF_DRESSED_METRIC_MIN_EIG_FRACTION = 1.0e-5
+
+
+# vibe-qc's analogue of PySCF's ``precision_j2c``: the accuracy the
+# PW-dressed MDF metric ``J-tilde`` (Sun 2017 Eq. 20) is built to, which is
+# NOT the general cell precision. The fit is ``W = T^T J-tilde^{-1} T``, so
+# an error dJ in the metric reaches the fitted tensor as ``|T|^2 dJ /
+# lambda^2`` -- two inverse powers of the very eigenvalues the
+# linear-dependence cut is deciding about. No mode can be retained below
+# the accuracy of the matrix it is an eigenvalue of. PySCF makes the same
+# separation and for the same reason (``pyscf/pbc/df/df.py``,
+# ``precision_j2c``), which is what lets it ship a 1e-10 linear-dependence
+# default where a metric built at the general precision cannot support one.
+#
+# 1e-12 is four orders below the 1e-8 general default and costs little: a
+# Gaussian lattice sum's radius grows only as ``sqrt(log(1/precision))``,
+# so buying the four orders (plus the cell-count budget of
+# :func:`_mdf_fit_lattice_opts`) moved MgO's metric rcut 15.5 -> 28.9 bohr
+# and no measured MDF run got measurably slower. The 2-centre metric is
+# the smallest of the three lattice sums MDF runs (n_aux^2 elements
+# against the 3-centre's n_aux.n_orb^2), so this is the cheap place to buy
+# accuracy.
+#
+# Delivered, against a converged 45-bohr reference (2026-09-17):
+#
+#              max|dJ_PQ|            max|dlambda|
+#              1e-8 rcut   here      1e-8 rcut   here
+#   MgO        4.51e-06  1.14e-13    5.42e-06  1.82e-13
+#   LiH        4.56e-06  1.14e-13    3.79e-06  1.32e-13
+#   H2 box     3.19e-09  4.44e-15    3.46e-09  6.00e-15
+#   Ne box     3.84e-10  3.02e-14    2.26e-10  4.09e-14
+#
+# The H2 box row is the one with a live consequence for a SUPPORTED class:
+# its 3.46e-09 spectrum error exceeded the 1e-9 threshold that was meant
+# to cut on it, so modes inside the noise were being retained in
+# production. Ne, whose floor sat far above its error either way, is
+# unchanged below a nanohartree.
+_MDF_PRECISION_J2C = 1.0e-12
+
+# The three-centre companion, DEFAULT OFF (None = build the 3-centre at
+# the caller's ``rcut_precision``, as before).
+#
+# It exists because ``L = U_keep^T (T - PW proj) / sqrt(lambda)`` divides
+# the 3-centre by the same square root that divides the metric, so on
+# paper a retained mode amplifies the 3-centre's construction error too.
+# MEASURED 2026-09-17, and the paper argument does not bite at any
+# threshold actually reachable: switching it on at 1e-10 leaves
+# Ne/STO-3G/10-bohr identical to below a nanohartree and H2/STO-3G/12-bohr
+# identical to all printed digits, and on MgO/STO-3G it left every energy
+# in a 3e-2 .. 1e-10 threshold sweep unchanged while costing ~20% of the
+# run. The metric's error is amplified by ``1/lambda`` and the 3-centre's
+# only by ``1/sqrt(lambda)``, and that one extra power is the whole
+# difference: at the thresholds the dressed metric admits, the 3-centre at
+# ``rcut_precision`` is already well inside its budget.
+#
+# Kept as a knob rather than deleted because the reasoning is sound and a
+# future tighter-admitting fit would need it; do not switch it on without
+# re-measuring, since the 3-centre is the expensive sum of the three
+# (n_aux.n_orb^2 elements over the joint AO-union-fused basis, whose rcut
+# is already the longest).
+_MDF_PRECISION_J3C = None
+
+
+def _mdf_fit_lattice_opts(
+    basis: BasisSet,
+    system: PeriodicSystem,
+    base_opts: "LatticeSumOptions",
+    precision: float,
+    multiplicity: int,
+) -> "LatticeSumOptions":
+    """Lattice-sum options for one half of the PW-dressed MDF fit.
+
+    Uses :class:`~vibeqc.lattice_screening.RcutStrategy.ACCUMULATED`, so
+    ``precision`` bounds the error of the SUMMED tensor rather than of its
+    largest dropped term -- the distinction that made the shipped
+    ``precision = 1e-8`` deliver 2.4e-07 on MgO and 7.1e-06 on LiH
+    rocksalt. ``multiplicity`` carries the bound from the element error to
+    the error in what is actually used: for the metric that is Weyl's
+    ``|dlambda| <= ||dJ||_2 <= n_aux max|dJ_PQ|`` over its eigenvalues, and
+    for the 3-centre the same row count over its contraction.
+    """
+    from .lattice_screening import RcutStrategy, make_lattice_opts
+
+    return make_lattice_opts(
+        basis,
+        strategy=RcutStrategy.ACCUMULATED,
+        base_opts=base_opts,
+        precision=float(precision),
+        system=system,
+        extra_multiplicity=float(max(1, int(multiplicity))),
+    )
+
+
+def _mdf_joint_basis(
+    ao_basis: BasisSet, fused: BasisSet, molecule: Molecule
+) -> BasisSet:
+    """The AO-union-fused basis whose reach sizes the MDF 3-centre sum."""
+    shells = [
+        ShellInfo(
+            int(s.atom_index), int(s.l), bool(s.pure),
+            list(s.exponents), list(s.coefficients), list(s.origin),
+        )
+        for s in list(ao_basis.shells()) + list(fused.shells())
+    ]
+    return BasisSet(molecule, shells, "<ao∪fused>", True)
 
 
 def _mdf_dressed_metric_threshold(
@@ -183,7 +301,7 @@ def _mdf_dressed_metric_threshold(
     decomposed is J-tilde (Eq. 20), not that metric, so the value is raised
     to :data:`_MDF_DRESSED_METRIC_MIN_EIG_FRACTION` x ``max_eig`` when it
     falls below what J-tilde's construction accuracy supports. A caller may
-    still go *looser* (the dense-core class needs ~3e-2).
+    still go *looser*.
 
     With the PW block empty (``mdf_ke_cutoff <= 0``) there is no dressing:
     J-tilde is the plain metric, and the caller's value is honoured
@@ -276,7 +394,7 @@ __all__ = [
 # native source implements that decomposition. Exchange Madelung remains
 # a later Fock correction, separate from the integral zero-mode convention.
 # Historical prototype evidence remains in
-# handovers/HANDOVER_GDF_V0_11_2026_05_29.md and git history.
+# the original investigation and git history.
 
 
 # ============================================================
@@ -805,6 +923,454 @@ def fuse_transform_matrix(
     return A
 
 
+# ---------------------------------------------------------------------------
+# Auxiliary images of the compensated three-centre tensor (compcell / MDF), #172
+# ---------------------------------------------------------------------------
+#
+# compute_3c_eri_lattice and compute_3c_eri_lattice_blocks translate only the
+# ket AO shell: T_{P,mu nu} = sum_R (P_0 | mu_0 nu_R). The periodic tensor
+# needs a second, independent translation of the auxiliary function,
+# sum_{T,R} (P_T | mu_0 nu_R) (Sun et al., J. Chem. Phys. 147, 164119 (2017),
+# doi:10.1063/1.4998644, Eq. 15; Ye and Berkelbach, J. Chem. Phys. 154,
+# 131104 (2021), doi:10.1063/5.0046617, Eqs. 12-13). For a (k_bra, k_ket)
+# pair with q = k_ket - k_bra the Bloch tensor is
+#
+#     sum_{T,R} exp(i k_ket.R) exp(-i q.T) (P_T | mu_0 nu_R),
+#
+# which at k_bra = 0 reduces to the single-sum form at q for the T = 0 term.
+# Only the compensated functions phi_P = chi_P - xi_P have an absolutely
+# convergent image sum (their exterior multipoles vanish), so the images are
+# summed per (atom, l) group of the fused basis, each group whole, and are
+# meaningful only after the fuse transform. They are evaluated with the same
+# native kernel by translating the fused basis. Before 2026-09-29 the
+# builders kept only T = 0 and refused cells where that mattered; measured
+# largest omitted element: H2/STO-3G in a 6-bohr cube 4.1e-3, 10-bohr cube
+# 1.5e-6; MgO/STO-3G 0.23; LiH/STO-3G 2.4.
+
+
+def _shell_nbf(shell) -> int:
+    l = int(shell.l)
+    return 2 * l + 1 if bool(shell.pure) else (l + 1) * (l + 2) // 2
+
+
+def _shell_envelope(shell) -> tuple:
+    """(a, log C) with |shell(r - A)| <= C exp(-a |r - A|^2), per component.
+
+    The absolute polynomial bound of :func:`_rsgdf_shell_envelopes`, kept
+    per shell so the shell's centre stays attached.
+    """
+    alpha = np.asarray(shell.exponents, dtype=float)
+    coefficients = np.asarray(shell.coefficients, dtype=float)
+    angular = int(shell.l)
+    exponent = float(alpha.min()) / (2 if angular else 1)
+    live = coefficients != 0
+    terms = np.log(np.abs(coefficients[live]))
+    if angular:
+        half_l = angular / 2
+        terms = terms + half_l * (np.log(half_l / (alpha[live] - exponent)) - 1)
+    return exponent, float(np.logaddexp.reduce(terms, initial=-np.inf))
+
+
+def _compensated_potential_envelope(shells, angular: int) -> tuple:
+    """(a', log W) with |V(r)| <= W exp(-a' |r - A|^2) for a compensated group.
+
+    Every fused function is rho^l y_lm(rho-hat) F(rho), with y_lm the
+    harmonic of libint's normalisation (|y_lm| <= 1) and F a sum of Gaussians
+    whose l-th radial moment vanishes (make_compensating_basis). Its
+    potential is (4 pi / (2l+1)) y_lm [rho^-(l+1) Q_<(rho) + rho^l Q_>(rho)]
+    with Q_< = int_0^rho s^(2l+2) F and Q_> = int_rho^inf s F; the vanishing
+    moment turns Q_< into minus the outer tail. With |F| <= K exp(-a s^2),
+    both terms are Gaussian tails, bounded here with the exponent softened
+    to a' = 0.8 a so the polynomial factors fit under one Gaussian.
+    """
+    alphas = np.concatenate([np.asarray(s.exponents, float) for s in shells])
+    coefficients = np.concatenate([np.asarray(s.coefficients, float) for s in shells])
+    a = float(alphas.min())
+    softened = 0.8 * a
+    log_k = float(np.log(np.abs(coefficients).sum()))
+    l = int(angular)
+    gap = a - softened
+    n = 2 * l + 1
+    # s^(2l+2) e^(-a s^2) <= [n/(2e gap)]^(n/2) s e^(-a' s^2)
+    log_c = 0.5 * n * np.log(n / (2 * np.e * gap))
+    inner = max(np.exp(log_c) / (2 * softened), np.exp(softened) / (2 * l + 3))
+    outer = (np.exp(0.5 * l * np.log(l / (2 * np.e * gap))) if l else 1.0) / (2 * a)
+    log_w = np.log(4 * np.pi / (2 * l + 1)) + log_k + np.log(inner + outer)
+    return softened, float(log_w)
+
+
+class _AuxImagePlan(NamedTuple):
+    """Which translated fused shells the image sum evaluates.
+
+    ``images[i]`` is a translation ``T != 0`` (bohr, nearest first) and
+    ``members[i]`` the fused-shell indices whose (atom, l) group reaches an
+    AO pair from ``T``; every group is taken whole. ``remainder`` bounds,
+    per tensor element and at every k pair, what the plan leaves out.
+    """
+
+    images: tuple
+    members: tuple
+    offsets: np.ndarray
+    remainder: float
+    radius: float
+
+
+def _aux_image_plan(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    fused: BasisSet,
+    *,
+    precision: float,
+) -> _AuxImagePlan:
+    """Plan the auxiliary-image sum to a remainder of ``precision / 100``.
+
+    Every image whose Gaussian envelope bound can exceed the remainder
+    target is listed; the bound on what is left out uses the potential
+    envelope of a compensated group (:func:`_compensated_potential_envelope`)
+    and the AO envelopes of :func:`_shell_envelope`, summed over the ket
+    images with :func:`_rsgdf_log_lattice_gaussian_bound`.
+    """
+    from ._vibeqc_core import direct_lattice_cells
+
+    if not np.isfinite(precision) or precision <= 0:
+        raise ValueError("auxiliary-image plan requires a positive finite precision")
+    fused_shells = list(fused.shells())
+    offsets = np.cumsum([0] + [_shell_nbf(s) for s in fused_shells])
+    if int(system.dim) == 0:
+        return _AuxImagePlan((), (), offsets, 0.0, 0.0)
+    lattice = np.asarray(system.lattice, dtype=float)
+    sigma = float(np.linalg.svd(lattice, compute_uv=False)[-1])
+    ao_env = [(*_shell_envelope(s), np.asarray(s.origin, float))
+              for s in ao_basis.shells()]
+    groups: dict = {}
+    for index, shell in enumerate(fused_shells):
+        groups.setdefault((int(shell.atom_index), int(shell.l)), []).append(index)
+    remainder = precision / 100.0
+    log_target = float(np.log(remainder))
+    reach = {}      # group -> (centre, [(mu centre, radius)])
+    for key, group in groups.items():
+        a_g, log_w = _compensated_potential_envelope(
+            [fused_shells[i] for i in group], key[1])
+        centre = np.asarray(fused_shells[group[0]].origin, float)
+        radii = []
+        for a_mu, log_c_mu, centre_mu in ao_env:
+            gamma = a_g * a_mu / (a_g + a_mu)
+            worst = max(
+                log_w + log_c_mu + log_c_nu
+                + _rsgdf_log_lattice_gaussian_bound(a_nu, sigma)
+                + 1.5 * np.log(np.pi / (a_g + a_mu))
+                for a_nu, log_c_nu, _ in ao_env
+            )
+            # sum_{|d| > D} e^(-gamma d^2) <= e^(-gamma D^2/2) sum e^(-gamma d^2/2)
+            log_tail = worst + _rsgdf_log_lattice_gaussian_bound(0.5 * gamma, sigma)
+            radius = np.sqrt(max(0.0, 2.0 * (log_tail - log_target) / gamma))
+            radii.append((centre_mu, float(radius)))
+        reach[key] = (centre, radii)
+    radius = max(
+        r + float(np.linalg.norm(centre - centre_mu))
+        for centre, radii in reach.values() for centre_mu, r in radii
+    )
+    cells = sorted(
+        (np.asarray(c.r_cart, float) for c in direct_lattice_cells(system, radius)),
+        key=lambda t: float(np.linalg.norm(t)),
+    )
+    images, members = [], []
+    for image in cells:
+        if float(np.linalg.norm(image)) == 0.0:
+            continue
+        selected = sorted(
+            i for key, (centre, radii) in reach.items()
+            if any(np.linalg.norm(centre + image - centre_mu) <= r
+                   for centre_mu, r in radii)
+            for i in groups[key]
+        )
+        if selected:
+            images.append(image)
+            members.append(tuple(selected))
+    return _AuxImagePlan(tuple(images), tuple(members), offsets, remainder, float(radius))
+
+
+def _translated_fused_basis(
+    system: PeriodicSystem, fused: BasisSet, members: Sequence[int], image: np.ndarray,
+) -> BasisSet:
+    """The fused shells ``members`` translated by ``image``.
+
+    ``BasisSet`` wants a molecule whose atoms match the shell origins, so
+    the unit cell is translated with it; the shells keep their atom
+    indices, which is what maps a derivative back onto the home atom.
+    """
+    molecule = system.unit_cell_molecule()
+    n_electrons = sum(int(atom.Z) for atom in molecule.atoms)
+    shifted_molecule = Molecule(
+        [type(atom)(int(atom.Z), list(np.asarray(atom.xyz, float) + image))
+         for atom in molecule.atoms],
+        0, 1 + n_electrons % 2,
+    )
+    shells = list(fused.shells())
+    return BasisSet(
+        shifted_molecule,
+        [ShellInfo(int(s.atom_index), int(s.l), bool(s.pure), list(s.exponents),
+                   list(s.coefficients), list(np.asarray(s.origin, float) + image))
+         for s in (shells[i] for i in members)],
+        "<fused image>", True,
+    )
+
+
+def _member_rows(plan: _AuxImagePlan, members: Sequence[int]) -> np.ndarray:
+    """Fused-basis row indices of the shells ``members``, in order."""
+    return np.concatenate([
+        np.arange(plan.offsets[i], plan.offsets[i + 1]) for i in members
+    ])
+
+
+def _aux_image_plan_cached(system, ao_basis, fused, precision) -> _AuxImagePlan:
+    key = _aux_image_key(system, ao_basis, fused, None, precision)
+    if key not in _AUX_IMAGE_PLANS:
+        if len(_AUX_IMAGE_PLANS) > 16:
+            _AUX_IMAGE_PLANS.clear()
+        _AUX_IMAGE_PLANS[key] = _aux_image_plan(
+            system, ao_basis, fused, precision=precision)
+    return _AUX_IMAGE_PLANS[key]
+
+
+_AUX_IMAGE_PLANS: dict = {}
+
+
+def _aux_image_key(system, ao_basis, fused, lat_opts, precision, extra=()) -> str:
+    digest = hashlib.sha256()
+    digest.update(np.ascontiguousarray(system.lattice, dtype=float).tobytes())
+    cutoff = -1.0 if lat_opts is None else float(lat_opts.cutoff_bohr)
+    digest.update(np.asarray([int(system.dim), cutoff, float(precision)]).tobytes())
+    for basis in (ao_basis, fused):
+        for shell in basis.shells():
+            digest.update(np.asarray(
+                [shell.l, shell.pure, *shell.origin, *shell.exponents,
+                 *shell.coefficients], dtype=float).tobytes())
+    digest.update(np.asarray(extra, dtype=float).tobytes())
+    return digest.hexdigest()
+
+
+def aux_image_3c(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    fused: BasisSet,
+    lat_opts: LatticeSumOptions,
+    *,
+    precision: float,
+    k_pairs: Optional[Sequence] = None,
+):
+    """Auxiliary-image part of the periodic fused three-centre tensor.
+
+    Without ``k_pairs`` returns the real Gamma tensor
+    ``X[P, mu, nu] = sum_{T != 0} sum_R (phi_{P,T} | mu_0 nu_R)``; with
+    ``k_pairs = [(k_bra, k_ket), ...]`` a list of complex tensors
+    ``sum_{T != 0} exp(-i q.T) sum_R exp(i k_ket.R) (phi_{P,T} | mu_0 nu_R)``,
+    ``q = k_ket - k_bra``. ``R`` runs over the ket images of ``lat_opts``
+    as in :func:`compute_3c_eri_lattice`. Rows are fused functions and the
+    sum over ``T`` converges only for the compensated combinations, so
+    apply the fuse transform before using it. The plan's remainder is at
+    most ``precision / 100`` per element (:func:`_aux_image_plan`).
+    """
+    plan = _aux_image_plan_cached(system, ao_basis, fused, float(precision))
+    n_fused = int(plan.offsets[-1])
+    n_orb = int(ao_basis.nbasis)
+    if k_pairs is None:
+        total = np.zeros((n_fused, n_orb, n_orb))
+        for image, members in zip(plan.images, plan.members):
+            partial = np.asarray(compute_3c_eri_lattice(
+                ao_basis, _translated_fused_basis(system, fused, members, image),
+                system, lat_opts))
+            total[_member_rows(plan, members)] += partial
+        _logger.info(
+            "auxiliary images of the 3c tensor: %d translations within %.1f bohr, "
+            "remainder <= %.1e per element", len(plan.images), plan.radius,
+            plan.remainder)
+        return total
+    pairs = [(np.asarray(kb, float).reshape(3), np.asarray(kk, float).reshape(3))
+             for kb, kk in k_pairs]
+    kets, ket_index = [], []
+    for _, k_ket in pairs:
+        for j, known in enumerate(kets):
+            if np.allclose(known, k_ket, atol=1e-12):
+                ket_index.append(j)
+                break
+        else:
+            ket_index.append(len(kets))
+            kets.append(k_ket)
+    kets_arr = np.asarray(kets)
+    transfers = np.asarray([kk - kb for kb, kk in pairs])
+    totals = np.zeros((len(pairs), n_fused, n_orb * n_orb), dtype=np.complex128)
+    ket_index = np.asarray(ket_index)
+    for image, members in zip(plan.images, plan.members):
+        _, vectors, blocks = compute_3c_eri_lattice_blocks(
+            ao_basis, _translated_fused_basis(system, fused, members, image),
+            system, lat_opts)
+        blocks = np.asarray(blocks)
+        n_cells = blocks.shape[0]
+        per_ket = np.exp(1j * (kets_arr @ np.asarray(vectors, float).T)) @ blocks.reshape(n_cells, -1)
+        per_ket = per_ket.reshape(len(kets), -1, n_orb * n_orb)
+        phase = np.exp(-1j * (transfers @ image))
+        rows = _member_rows(plan, members)
+        totals[:, rows] += phase[:, None, None] * per_ket[ket_index]
+    _logger.info(
+        "auxiliary images of the 3c tensor: %d translations within %.1f bohr "
+        "for %d k pair(s), remainder <= %.1e per element", len(plan.images),
+        plan.radius, len(pairs), plan.remainder)
+    return [t.reshape(n_fused, n_orb, n_orb) for t in totals]
+
+
+def _aux_image_3c_gradient_weighted(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    fused: BasisSet,
+    lat_opts: LatticeSumOptions,
+    weight: np.ndarray,
+    *,
+    precision: float,
+) -> np.ndarray:
+    """``sum_{P, mu nu} W[P, mu nu] d/dR`` of :func:`aux_image_3c` at Gamma.
+
+    ``weight`` has shape ``(n_fused, n_orb * n_orb)``. The native kernel
+    assigns a shell to the atom at its position (libint ``shell2atom``),
+    and an unmatched shell would index the gradient out of bounds, so each
+    call gets a system whose unit cell also lists the translated atoms;
+    their rows fold back onto the home atoms, as translation invariance
+    requires.
+    """
+    from ._vibeqc_core import compute_3c_eri_lattice_gradient_weighted
+
+    plan = _aux_image_plan_cached(system, ao_basis, fused, float(precision))
+    weight = np.asarray(weight, dtype=np.float64)
+    home = list(system.unit_cell)
+    n_atoms = len(home)
+    lattice = np.asarray(system.lattice, dtype=float)
+    grad = np.zeros((n_atoms, 3))
+    for image, members in zip(plan.images, plan.members):
+        rows = _member_rows(plan, members)
+        shifted = [type(atom)(int(atom.Z), list(np.asarray(atom.xyz, float) + image))
+                   for atom in home]
+        augmented = PeriodicSystem(int(system.dim), lattice, home + shifted, 0, 1)
+        partial = np.asarray(compute_3c_eri_lattice_gradient_weighted(
+            ao_basis, _translated_fused_basis(system, fused, members, image),
+            augmented, lat_opts, np.ascontiguousarray(weight[rows])), dtype=np.float64)
+        grad += partial[:n_atoms] + partial[n_atoms:]
+    return grad
+
+
+def _pair_aux_images(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    fused: BasisSet,
+    lat_opts: LatticeSumOptions,
+    k_bra: np.ndarray,
+    k_ket: np.ndarray,
+    *,
+    precision: float,
+    cache: Optional[dict] = None,
+    pairs: Optional[Sequence] = None,
+) -> np.ndarray:
+    """:func:`aux_image_3c` for one (k_bra, k_ket) pair.
+
+    A multi-k caller passes an empty ``cache`` dict and every pair it will
+    request as ``pairs``: the first call then evaluates the images once
+    for all of them (one kernel call per image instead of one per image
+    and pair), and each later call takes its pair out of the cache. The
+    batch holds one fused-frame tensor per pair, about the size of the Lpq
+    cache it feeds; entries are released as their pairs are built.
+    """
+    def key(kb, kk):
+        return tuple(np.round(np.concatenate([np.asarray(kb, float).reshape(3),
+                                              np.asarray(kk, float).reshape(3)]), 10))
+
+    this = key(k_bra, k_ket)
+    if cache is not None:
+        if this not in cache and pairs is not None:
+            wanted = [(np.asarray(kb, float), np.asarray(kk, float)) for kb, kk in pairs]
+            if this not in {key(kb, kk) for kb, kk in wanted}:
+                wanted.append((np.asarray(k_bra, float), np.asarray(k_ket, float)))
+            tensors = aux_image_3c(system, ao_basis, fused, lat_opts,
+                                   precision=precision, k_pairs=wanted)
+            cache.update({key(kb, kk): t for (kb, kk), t in zip(wanted, tensors)})
+        if this in cache:
+            return cache.pop(this)
+    return aux_image_3c(system, ao_basis, fused, lat_opts, precision=precision,
+                        k_pairs=[(k_bra, k_ket)])[0]
+
+
+def _fused_g0_potential(fused: BasisSet) -> np.ndarray:
+    """Per fused function, ``Vbar`` with ``Vbar r_bar`` the G = 0 term of Eq. 23.
+
+    The real-space three-centre integral of a compensated function carries
+    the finite ``G -> 0`` limit of ``(4 pi / G^2) phi_P(G) rho(G)``, the
+    second-moment term ``Vbar_P S_mu nu / Omega`` (Sun et al. 2017, Eq. 23);
+    every reciprocal-space piece of the fit excludes ``G = 0``, so the
+    tensor must too. ``Vbar_P = -pi^(5/2) sum_k c_k a_k^(-5/2)`` over the
+    s-type fused shells; higher-l functions carry no monopole. Contract
+    with the fuse transform for the compensated functions. This is PySCF's
+    ``auxbar`` correction (``pyscf/pbc/df/df.py``).
+    """
+    vbar = np.zeros(fused.nbasis)
+    offset = 0
+    for shell in fused.shells():
+        width = _shell_nbf(shell)
+        if int(shell.l) == 0:
+            a = np.asarray(shell.exponents, dtype=float)
+            c = np.asarray(shell.coefficients, dtype=float)
+            vbar[offset:offset + width] = -(np.pi ** 2.5) * float(np.sum(c * a ** (-2.5)))
+        offset += width
+    return vbar
+
+
+def _g0_overlap_lattice_opts(
+    lat_opts: LatticeSumOptions, system: PeriodicSystem, ao_basis: BasisSet,
+) -> LatticeSumOptions:
+    """Pair-complete cells for the overlap of the G = 0 term.
+
+    The overlap multiplies ``Vbar``, so its image tail must be converged
+    like the SCF's own: the cutoff is raised to the one-electron bound of
+    ``periodic_k_gdf._gdf_oneel_cutoff_bound`` (1e-12 per element) and every
+    pair within it is taken. The 3c cutoff alone, enumerated by ``|g|``,
+    left ``S`` 4.2e-6 short on H2/STO-3G in a 6-bohr cube.
+    """
+    opts = LatticeSumOptions()
+    for name in ("cutoff_bohr", "nuclear_cutoff_bohr", "schwarz_threshold",
+                 "screening_overlap_threshold"):
+        setattr(opts, name, getattr(lat_opts, name))
+    opts.pair_complete_1e = True
+    if int(system.dim) == 3:
+        from .periodic_k_gdf import _gdf_oneel_cutoff_bound
+
+        opts.cutoff_bohr = max(float(opts.cutoff_bohr), _gdf_oneel_cutoff_bound(
+            system, ao_basis, pair_complete=True))
+    return opts
+
+
+def _compcell_g0_term(
+    fused: BasisSet,
+    ao_basis: BasisSet,
+    system: PeriodicSystem,
+    lat_opts: LatticeSumOptions,
+    k_ket: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """``Vbar_P S_mu nu(k_ket) / Omega`` per fused row (:func:`_fused_g0_potential`).
+
+    Only a zero momentum transfer has a ``G + q = 0`` mode to exclude, so
+    callers apply it to diagonal k pairs; ``S`` is the Bloch overlap at
+    the ket k point, on the pair-complete cells of
+    :func:`_g0_overlap_lattice_opts`.
+    """
+    from ._vibeqc_core import bloch_sum as _bloch_sum
+
+    k = np.zeros(3) if k_ket is None else np.asarray(k_ket, dtype=float).reshape(3)
+    overlap = _bloch_sum(compute_overlap_lattice(
+        ao_basis, system, _g0_overlap_lattice_opts(lat_opts, system, ao_basis)), k)
+    overlap = 0.5 * (overlap + overlap.conj().T)
+    if float(np.linalg.norm(k)) < 1e-14:
+        overlap = np.real(overlap)
+    volume = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
+    return _fused_g0_potential(fused)[:, None, None] * (overlap / volume)[None, :, :]
+
+
 def _aft_g_mesh(
     system: PeriodicSystem,
     eta: float,
@@ -1296,6 +1862,48 @@ def _per_ao_pair_libint_to_libcint_scale(basis: BasisSet) -> np.ndarray:
     return scales
 
 
+def _physical_pair_ft_cells(
+    ao_basis: BasisSet, system: PeriodicSystem, cutoff_bohr: float,
+) -> np.ndarray:
+    """Cells enclosing every AO pair the native three-centre kernels keep.
+
+    ``compute_3c_eri_lattice`` keeps the term ``(mu_0, nu_g)`` when the
+    physical separation ``|O_mu - O_nu - g|`` is within the cutoff
+    (``lattice_pair_cells.hpp``). A reciprocal-space piece subtracted from,
+    or fitted against, that tensor has to Fourier transform the same pair
+    densities, so pass these cells together with ``pair_cutoff_bohr`` equal
+    to that cutoff. The ``|g|`` ball keeps an origin-dependent set instead:
+    moving an atom by a lattice vector changed the compcell and MDF fits
+    (2.3e-4 Ha on H2/STO-3G in a 6-bohr cube, #438).
+    """
+    from ._vibeqc_core import pair_complete_lattice_cells
+
+    cells = pair_complete_lattice_cells(ao_basis, system, float(cutoff_bohr))
+    R_g = np.array([list(c.r_cart) for c in cells], dtype=float).reshape(-1, 3)
+    return R_g if R_g.size else np.zeros((1, 3), dtype=float)
+
+
+def _physical_pair_cell_groups(
+    ao_basis: BasisSet, R_g: np.ndarray, cutoff_bohr: float,
+) -> list:
+    """``[(cells, ao_pair_mask), ...]``: cells grouped by their supported pairs.
+
+    For kernels without a ``pair_cutoff_bohr`` argument: run them once per
+    group on that group's cells with the out-of-range pair weights zeroed,
+    which sums exactly the terms of :func:`_physical_pair_ft_cells`. Cells
+    with no supported pair are dropped.
+    """
+    from .lattice_screening import ao_pair_support_mask
+
+    groups: dict = {}
+    for row, shift in enumerate(np.asarray(R_g, dtype=float)):
+        mask = ao_pair_support_mask(ao_basis, shift, cutoff_bohr)
+        if mask.any():
+            groups.setdefault(mask.tobytes(), (mask, []))[1].append(row)
+    return [(np.asarray(R_g, dtype=float)[rows], mask)
+            for mask, rows in groups.values()]
+
+
 def _compcell_aft_correction_3c(
     fused: BasisSet,
     ao_basis: BasisSet,
@@ -1307,6 +1915,7 @@ def _compcell_aft_correction_3c(
     ft_convention: str = "libcint",
     q: Optional[np.ndarray] = None,
     lat_opts: Optional[LatticeSumOptions] = None,
+    k_ket: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """The PySCF ``_CCGDFBuilder.add_ft_j3c`` 3c AFT subtraction.
 
@@ -1332,6 +1941,10 @@ def _compcell_aft_correction_3c(
     q
         Momentum shift in Cartesian bohr⁻¹, shape ``(3,)`` or
         ``None`` (Γ-only, real). Nonzero ``q`` returns complex.
+    k_ket
+        Ket k point at which the AO-pair FT is Bloch-summed; defaults to
+        ``q`` (the pair ``(0, q)``). A diagonal pair away from Γ has
+        ``q = 0`` and a complex result.
 
     References
     ----------
@@ -1339,7 +1952,6 @@ def _compcell_aft_correction_3c(
     and ``weighted_ft_ao`` (lines 359-389).
     """
     from ._aopair_ft import ao_pair_fourier_transform_bloch
-    from ._vibeqc_core import direct_lattice_cells
 
     n_total = fused.nbasis
     n_chg = n_total - n_aux
@@ -1348,7 +1960,9 @@ def _compcell_aft_correction_3c(
         np.zeros(3, dtype=float) if q is None else np.asarray(q, dtype=float).reshape(3)
     )
     is_gamma_q = float(np.linalg.norm(q_arr)) < 1e-14
-    dtype_out = np.float64 if is_gamma_q else np.complex128
+    ket = q_arr if k_ket is None else np.asarray(k_ket, dtype=float).reshape(3)
+    real_pair = is_gamma_q and float(np.linalg.norm(ket)) < 1e-14
+    dtype_out = np.float64 if real_pair else np.complex128
 
     if n_chg <= 0:
         return np.zeros((n_chg, n_orb, n_orb), dtype=dtype_out)
@@ -1393,13 +2007,16 @@ def _compcell_aft_correction_3c(
     # approximation accidentally worked there and the bug went
     # undiagnosed until 2026-05-26.
     #
-    # The lattice-cell list comes from ``direct_lattice_cells`` with the
-    # *same* cutoff as the bare T_fused 3c integral (``lat_opts``); this
-    # keeps the bare-3c minus AFT-3c subtraction internally consistent
-    # in the lattice cutoff. Verified on LiH primitive FCC: Bloch-sum
-    # at k=0 over 959 cells (cutoff 30 bohr) reproduces PySCF's
-    # ``ft_aopair(cell, Gv, ...)`` element-wise bit-exactly at every G
-    # tested (``examples/debug/gdf_j3c_p_same_mesh_lih.py`` Step 7b).
+    # The pair set is the bare T_fused 3c integral's own (``lat_opts``):
+    # every (mu_0, nu_g) with |O_mu - O_nu - g| within its cutoff
+    # (:func:`_physical_pair_ft_cells`), so the bare-3c minus AFT-3c
+    # subtraction is consistent pair by pair and does not depend on which
+    # lattice image of an atom the input names (#438; the |g| ball it used
+    # before moved E by 2.3e-4 Ha under a lattice translation). Verified on
+    # LiH primitive FCC: Bloch-sum at k=0 over 959 cells (cutoff 30 bohr)
+    # reproduces PySCF's ``ft_aopair(cell, Gv, ...)`` element-wise
+    # bit-exactly at every G tested
+    # (``examples/debug/gdf_j3c_p_same_mesh_lih.py`` Step 7b).
     #
     # SOLID-HARMONIC NORMALIZATION (2026-05-26 fix). vibe-qc has two
     # families of FT routines that use *different* per-L solid-harmonic
@@ -1440,26 +2057,27 @@ def _compcell_aft_correction_3c(
     # F_chg convention; tracked for the next M1 session).
     if lat_opts is None:
         lat_opts = LatticeSumOptions()
-    cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
-    R_g_list = np.array([list(c.r_cart) for c in cells], dtype=float)
-    if R_g_list.size == 0:
-        # Defensive: cutoff so small no cells qualified. Use the home
-        # cell only -- same as molecular pair-FT (back-compat behaviour).
-        R_g_list = np.zeros((1, 3), dtype=float)
+    pair_cutoff = float(lat_opts.cutoff_bohr)
     rho_pair = ao_pair_fourier_transform_bloch(
         ao_basis,
         Gq,
-        R_g_list,
-        k_cart=q_arr,
+        _physical_pair_ft_cells(ao_basis, system, pair_cutoff),
+        k_cart=ket,
+        pair_cutoff_bohr=pair_cutoff,
     )  # (n_orb, n_orb, n_G), complex even at Γ; .real for is_gamma_q.
     if ft_convention == "libcint":
         scales = _per_ao_pair_libint_to_libcint_scale(ao_basis)
         inv = 1.0 / scales
         rho_pair = rho_pair * inv[:, None, None] * inv[None, :, None]
-    # else (libint): no pair-FT rescale. Internally consistent only for
-    # pure-L=0 ao_basis (e.g. H₂ STO-3G); for L>0 ao_basis the libint
-    # path under-represents j3c_p -- open issue; the libcint path is
-    # the recommended setting until the convention is fully unified.
+    else:
+        # libint: the pair FT needs the same per-L solid-harmonic factor
+        # as the aux FT and the native 3c integrals, exactly as the MDF
+        # projection applies it. Without it the s-p and p-p AO-pair blocks
+        # of the compensated tensor were off from the rsgdf integrals by
+        # 5.6e-2 and 0.33 on MgO/STO-3G while the s-s blocks agreed to
+        # 3e-8 (#172).
+        scales = _ao_scales_for_rsgdf(ao_basis)
+        rho_pair = rho_pair * scales[:, None, None] * scales[None, :, None]
 
     # j3c_p[chg_i, mu, ν] = S_G F̂_chg_i*(G+q) . coul(G+q) . r̂_muν(G+q)
     F_chg_w = np.conj(F_chg) * coul[None, :]  # (n_chg, n_G)
@@ -1470,7 +2088,7 @@ def _compcell_aft_correction_3c(
     # Result is real at Γ (Hermitian product of real basis functions);
     # complex for q != 0 (the AO-pair density's FT no longer satisfies
     # r̂(-G) = conj(r̂(G)) at G + q != 0).
-    if is_gamma_q:
+    if real_pair:
         return np.real(j3c_p)
     return j3c_p
 
@@ -1510,17 +2128,16 @@ def _compcell_aft_correction_3c_gradient_weighted(
       conj(r̂)`` matching the kernel's conjugation convention (the
       ``compute_v_ne_ewald_3d_ft_gamma_gradient`` usage).
 
-    The reciprocal mesh, Coulomb kernel, radial FT content, and the
-    direct-lattice cell list depend on the lattice/exponents/cutoff
-    only, so these two pieces are the complete derivative — pinned by
-    the isolation FD regression
+    The reciprocal mesh, Coulomb kernel and radial FT content depend on the
+    lattice/exponents/cutoff only, and the physical pair set of
+    :func:`_physical_pair_ft_cells` is held fixed like the native
+    three-centre derivatives hold theirs (a sharp boundary; finite
+    differences must not cross it), so these two pieces are the complete
+    derivative — pinned by the isolation FD regression
     (``tests/test_periodic_gdf_gradient.py``).
     """
     from ._aopair_ft import ao_pair_fourier_transform_bloch
-    from ._vibeqc_core import (
-        ao_pair_fourier_transform_gamma_gradient_gweighted,
-        direct_lattice_cells,
-    )
+    from ._vibeqc_core import ao_pair_fourier_transform_gamma_gradient_gweighted
 
     n_total = int(fused.nbasis)
     n_chg = n_total - int(n_aux)
@@ -1561,10 +2178,8 @@ def _compcell_aft_correction_3c_gradient_weighted(
 
     if lat_opts is None:
         lat_opts = LatticeSumOptions()
-    cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
-    R_g_list = np.array([list(c.r_cart) for c in cells], dtype=float)
-    if R_g_list.size == 0:
-        R_g_list = np.zeros((1, 3), dtype=float)
+    pair_cutoff = float(lat_opts.cutoff_bohr)
+    R_g_list = _physical_pair_ft_cells(ao_basis, system, pair_cutoff)
 
     # Per-pair solid-harmonic conversion, exactly as the value route:
     # G-independent, so it folds into the pair weights.
@@ -1572,7 +2187,8 @@ def _compcell_aft_correction_3c_gradient_weighted(
         inv = 1.0 / _per_ao_pair_libint_to_libcint_scale(ao_basis)
         pair_conv = np.outer(inv, inv)
     else:
-        pair_conv = np.ones((n_orb, n_orb), dtype=np.float64)
+        scales = _ao_scales_for_rsgdf(ao_basis)
+        pair_conv = np.outer(scales, scales)
     W3_conv = W3 * pair_conv[None, :, :]  # (n_chg, n_orb, n_orb)
 
     # ---- Piece A: chg-function phase derivative ------------------------
@@ -1583,6 +2199,7 @@ def _compcell_aft_correction_3c_gradient_weighted(
         G,
         R_g_list,
         k_cart=np.zeros(3, dtype=np.float64),
+        pair_cutoff_bohr=pair_cutoff,
     )  # (n_orb, n_orb, n_G)
     P = W3_conv.reshape(n_chg, n_orb * n_orb) @ rho_pair.reshape(
         n_orb * n_orb, G.shape[0]
@@ -1599,22 +2216,23 @@ def _compcell_aft_correction_3c_gradient_weighted(
     # ---- Piece B: AO-pair FT centre derivative -------------------------
     # One G-resolved-weight kernel call for the whole chg batch (M6
     # rung 7): Q[munu, k] = sum_c W3_conv[c, munu] (coul F_chg_c)(k).
+    # The kernel takes no pair cutoff, so it runs once per group of cells
+    # sharing a supported pair set, with the other pairs' weights zeroed.
     rw_batch = F_chg * coul[None, :]  # (n_chg, n_G)
-    Q = np.ascontiguousarray(
-        (
-            W3_conv.reshape(n_chg, n_orb * n_orb).T @ rw_batch
-        ).reshape(n_orb, n_orb, G.shape[0])
-    )
-    grad += np.asarray(
-        ao_pair_fourier_transform_gamma_gradient_gweighted(
-            ao_basis,
-            G,
-            R_g_list,
-            Q,
-            n_atoms,
-        ),
-        dtype=np.float64,
-    )
+    Q = (
+        W3_conv.reshape(n_chg, n_orb * n_orb).T @ rw_batch
+    ).reshape(n_orb, n_orb, G.shape[0])
+    for cells, mask in _physical_pair_cell_groups(ao_basis, R_g_list, pair_cutoff):
+        grad += np.asarray(
+            ao_pair_fourier_transform_gamma_gradient_gweighted(
+                ao_basis,
+                G,
+                cells,
+                np.ascontiguousarray(np.where(mask[:, :, None], Q, 0.0)),
+                n_atoms,
+            ),
+            dtype=np.float64,
+        )
     return grad
 
 
@@ -1802,7 +2420,12 @@ def _build_lpq_compcell_state(
 
     M_fused = np.asarray(compute_2c_eri_lattice(fused, system, lat_opts_2c))
     M_fused = 0.5 * (M_fused + M_fused.T)
+    # Periodic in the auxiliary index too (Sun 2017 Eq. 15): the kernel
+    # keeps P in the home cell, so add its images (#172).
     T_fused = np.asarray(compute_3c_eri_lattice(ao_basis, fused, system, lat_opts_3c))
+    T_fused = T_fused + aux_image_3c(
+        system, ao_basis, fused, lat_opts_3c, precision=float(rcut_precision),
+    )
 
     # AFT long-range correction (PySCF gdf_builder.py:139-196). Subtract
     # the reciprocal-space (chg | fused) long-range Coulomb from the
@@ -1837,6 +2460,11 @@ def _build_lpq_compcell_state(
             lat_opts=lat_opts_3c,
         )
         T_fused[n_aux_for_aft:, :, :] -= j3c_p
+        # Every reciprocal-space piece excludes G = 0, so remove the G = 0
+        # term the real-space compensated integrals carry (Sun 2017 Eq. 23;
+        # PySCF's auxbar). Without it the energy depended on compcell_eta
+        # (-0.6 mHa on H2/STO-3G in a 16-bohr cube at eta = 1, #172).
+        T_fused -= _compcell_g0_term(fused, ao_basis, system, lat_opts_3c)
         # Restore symmetry in the AO-pair indices (the subtraction
         # leaves micro-asymmetry from floating-point reduction order).
         T_fused = 0.5 * (T_fused + T_fused.transpose(0, 2, 1))
@@ -2005,6 +2633,9 @@ def build_lpq_bloch_compcell(
     rcut_strategy: Optional[object] = "pyscf_auto",
     rcut_precision: float = 1e-8,
     symmetrize_gamma: bool = True,
+    k_ket: Optional[np.ndarray] = None,
+    _image_cache: Optional[dict] = None,
+    _image_pairs: Optional[Sequence] = None,
 ) -> np.ndarray:
     """Multi-k compcell GDF ``Lpq(k)`` from cell-resolved blocks.
 
@@ -2023,11 +2654,17 @@ def build_lpq_bloch_compcell(
     aft_precision, aft_ft_convention, rcut_strategy, rcut_precision
         Same as :func:`build_lpq_compcell`.
     k_cart
-        Cartesian k-point (bohr⁻¹), shape ``(3,)``.
+        Momentum transfer ``q = k_ket - k_bra`` (Cartesian bohr⁻¹),
+        shape ``(3,)``; the fitting functions are Bloch sums at ``q``.
     symmetrize_gamma
-        If ``True`` and ``k_cart ≈ 0``, symmetrise the 3c tensor in
-        the (mu, ν) AO-pair indices (analytic property at Γ; reduces
-        floating-point noise).
+        If ``True`` and ``k_cart ≈ 0`` and ``k_ket ≈ 0``, symmetrise the
+        3c tensor in the (mu, ν) AO-pair indices (analytic property at
+        Γ; reduces floating-point noise).
+    k_ket
+        Ket k point of the AO pair (Cartesian bohr⁻¹). Defaults to
+        ``k_cart``, the pair ``(0, k_cart)``. The 3c tensor is
+        ``sum_{T,R} exp(i k_ket.R) exp(-i q.T) (phi_{P,T} | mu_0 nu_R)``
+        (see :func:`aux_image_3c`), so pairs with the same ``q`` differ.
 
     Returns
     -------
@@ -2051,6 +2688,8 @@ def build_lpq_bloch_compcell(
         molecule = system.unit_cell_molecule()
     k = np.asarray(k_cart, dtype=float).reshape(3)
     is_gamma = float(np.linalg.norm(k)) < 1e-14
+    ket = k if k_ket is None else np.asarray(k_ket, dtype=float).reshape(3)
+    real_pair = is_gamma and float(np.linalg.norm(ket)) < 1e-14
 
     modrho_aux = make_modrho_aux_basis(aux_basis, molecule)
     chg = make_compensating_basis(modrho_aux, molecule, eta=compcell_eta)
@@ -2115,11 +2754,15 @@ def build_lpq_bloch_compcell(
         lat_opts_3c,
     )
     M_fused = bloch_sum_2c_eri_blocks(m_vecs, m_blocks, k)
-    T_fused = bloch_sum_3c_eri_blocks(t_vecs, t_blocks, k)
+    T_fused = bloch_sum_3c_eri_blocks(t_vecs, t_blocks, ket)
+    T_fused = T_fused + _pair_aux_images(
+        system, ao_basis, fused, lat_opts_3c, ket - k, ket,
+        precision=float(rcut_precision), cache=_image_cache, pairs=_image_pairs,
+    )
 
     # Hermitian symmetrise the 2c metric (M(-g)^* = M(g) up to noise).
     M_fused = 0.5 * (M_fused + M_fused.conj().T)
-    if symmetrize_gamma and is_gamma:
+    if symmetrize_gamma and real_pair:
         T_fused = 0.5 * (T_fused + np.swapaxes(T_fused, 1, 2))
 
     # AFT correction at k (q = k for the chg-anything subtraction). At
@@ -2148,6 +2791,7 @@ def build_lpq_bloch_compcell(
             ft_convention=str(aft_ft_convention),
             q=q_aft,
             lat_opts=lat_opts_3c,
+            k_ket=ket,
         )
         # Promote M_fused / T_fused to complex if the subtraction is
         # complex (q != 0). The Bloch-summed tensors are already complex
@@ -2164,7 +2808,12 @@ def build_lpq_bloch_compcell(
         M_fused[:n_aux, n_aux:] -= j2c_p[:, :n_aux].conj().T
         M_fused = 0.5 * (M_fused + M_fused.conj().T)
         T_fused[n_aux:, :, :] -= j3c_p
-        if symmetrize_gamma and is_gamma:
+        if is_gamma:
+            # The G + q = 0 mode exists only at zero transfer (see
+            # _build_lpq_compcell_state).
+            T_fused = T_fused - _compcell_g0_term(
+                fused, ao_basis, system, lat_opts_3c, k_ket=ket)
+        if symmetrize_gamma and real_pair:
             T_fused = 0.5 * (T_fused + np.swapaxes(T_fused, 1, 2))
 
     # Compensated metric + tensor (A is real; M_fused complex at k != 0).
@@ -2684,7 +3333,7 @@ def _rsgdf_weighted_3c_tensor_gradient(
         # rung 9 bit-consistency); piece B's gweighted derivative
         # kernel has no screen -- its screened-block derivative is
         # direct and unamplified (~1e-9-class), documented in the M6
-        # handover entry.
+        # historical design record entry.
         rho_pair = ao_pair_fourier_transform_bloch(
             ao_basis, Gc, R_g, k_cart=np.zeros(3, dtype=np.float64),
             screen_tol=float(screen_tol),
@@ -2744,6 +3393,7 @@ def _rsgdf_weighted_3c_tensor_gradient_bloch(
     tail_chunk_g: int = 65536,
     g_mesh: Optional[np.ndarray] = None,
     kernel_weights: Optional[np.ndarray] = None,
+    support_policy: Optional[str] = None,
 ) -> np.ndarray:
     """Atomic gradient of a complex-weighted shared-q rsgdf 3c tensor.
 
@@ -2776,9 +3426,18 @@ def _rsgdf_weighted_3c_tensor_gradient_bloch(
     With both defaults ``None`` this function is byte-identical to its
     pre-parameter behaviour (the default branch below is untouched).
 
+    ``support_policy='physical_pairs'`` differentiates the same finite
+    AO-pair domain as the classic value builder: candidate cells enclose
+    all pairs within ``lat_opts.cutoff_bohr`` and each pair is filtered by
+    its physical center separation. The existing weighted derivative kernel
+    runs per group of cells sharing a support mask. The default retains
+    historical index-ball support. This is a fixed-support derivative;
+    finite differences must avoid a pair crossing the sharp cutoff.
+    Full classic SCF gradient admission also requires a matching fit cache.
+
     Two atom-position dependencies, each analytic (mesh, Coulomb
-    kernel, radial FT content, pair scales, and cell list are
-    lattice/exponent/cutoff-only):
+    kernel, radial FT content and pair scales are lattice/exponent/cutoff-only;
+    the discrete pair support is held fixed):
 
     * **Aux-shell phase.** ``F̂_P`` carries ``exp(-i(G+q).R_P)``
       (:func:`rsgdf_aux_fourier_transform`), so for P on atom A
@@ -2848,10 +3507,22 @@ def _rsgdf_weighted_3c_tensor_gradient_bloch(
     )
     k = np.ascontiguousarray(np.asarray(k_ket, dtype=float).reshape(3))
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-    cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
-    R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
-    if R_g.size == 0:
-        R_g = np.zeros((1, 3), dtype=float)
+    policy = _fitted_support_policy(support_policy)
+    if policy == "physical_pairs":
+        R_g = _classic_pair_cells(
+            system, ao_basis, lat_opts.cutoff_bohr, policy
+        )
+        pair_options = {"pair_cutoff_bohr": float(lat_opts.cutoff_bohr)}
+        pair_groups = _physical_pair_cell_groups(
+            ao_basis, R_g, lat_opts.cutoff_bohr
+        )
+    else:
+        cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
+        R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
+        if R_g.size == 0:
+            R_g = np.zeros((1, 3), dtype=float)
+        pair_options = {}
+        pair_groups = [(R_g, None)]
 
     ao_scales = _ao_scales_for_rsgdf(ao_basis)
     pair_scales = np.outer(ao_scales, ao_scales)
@@ -2885,7 +3556,7 @@ def _rsgdf_weighted_3c_tensor_gradient_bloch(
             coul_c = np.asarray(w_block, dtype=np.float64)
         F = rsgdf_aux_fourier_transform(aux_basis, Gc)
         rho_pair = ao_pair_fourier_transform_bloch(
-            ao_basis, Gc, R_g, k_cart=k
+            ao_basis, Gc, R_g, k_cart=k, **pair_options
         )  # (n_orb, n_orb, n_G), unscaled
         # ---- aux-phase piece --------------------------------------
         P = W3_flat @ rho_pair.reshape(n_orb * n_orb, Gc.shape[0])
@@ -2904,9 +3575,12 @@ def _rsgdf_weighted_3c_tensor_gradient_bloch(
                 n_orb, n_orb, Gc.shape[0]
             )
         )
-        grad[:, :] += ao_pair_fourier_transform_bloch_gradient_gweighted(
-            ao_basis, Gc, R_g, k, Q, n_atoms
-        )
+        for group_cells, pair_mask in pair_groups:
+            group_Q = (Q if pair_mask is None else
+                       np.where(pair_mask[:, :, None], Q, 0.0))
+            grad[:, :] += ao_pair_fourier_transform_bloch_gradient_gweighted(
+                ao_basis, Gc, group_cells, k, group_Q, n_atoms
+            )
 
     if g_mesh is not None:
         mesh = np.asarray(g_mesh, dtype=float)
@@ -3126,6 +3800,9 @@ def build_lpq_native_fft(
     fit_screen_threshold: float = 0.0,
     fit_pair_list: Optional[np.ndarray] = None,
     progress: Any = None,
+    support_policy: Optional[str] = None,
+    memory_byte_cap: Optional[int] = None,
+    reciprocal_candidate_cap: Optional[int] = None,
 ) -> np.ndarray:
     """All-FT Γ-only GDF Lpq builder -- dense FFT mesh + Bloch pair-FT.
 
@@ -3218,7 +3895,7 @@ def build_lpq_native_fft(
     fit_screen_threshold, fit_pair_list
         Cauchy-Schwarz fit screen / shell-pair restriction, exactly as
         on :func:`build_lpq_bloch_native_fft` (M1 of
-        ``handovers/HANDOVER_GDF_FIT_SCREENING.md``). When either is
+        the original investigation). When either is
         requested the build **delegates to the** ``k_bra = k_ket = 0``
         **Bloch builder** -- the general builder whose Γ block this
         routine is the special case of -- and returns its real part
@@ -3236,6 +3913,13 @@ def build_lpq_native_fft(
         Optional progress logger with an ``info`` method. Tail chunk
         counters are emitted here so long promotion runs show pre-SCF
         progress.
+    support_policy, memory_byte_cap, reciprocal_candidate_cap
+        ``None`` (default) keeps the historical cells within
+        ``lat_opts.cutoff_bohr`` of the origin. ``'physical_pairs'`` takes
+        every AO pair within the cutoff of each other through the k = 0
+        Bloch builder, which needs an explicit ``memory_byte_cap`` for its
+        bounded reciprocal enumeration (#466); ``reciprocal_candidate_cap``
+        overrides that builder's census bound.
 
     Returns
     -------
@@ -3258,6 +3942,31 @@ def build_lpq_native_fft(
     # comes with it so the (n_ao, n_ao, n_G) pair FT is never
     # materialised. Real part is exact at true Γ (the (0,0) block is
     # real; see the q == 0 note in build_lpq_bloch_native_fft).
+    if support_policy is not None and _fitted_support_policy(support_policy) == "physical_pairs":
+        # Physical AO pairs (#466): every pair within lat_opts.cutoff_bohr of
+        # each other, through the k = 0 Bloch builder that implements it.
+        # The dense bundle below takes cells around the origin instead.
+        if pair_ft_shared is not None:
+            raise ValueError(
+                "build_lpq_native_fft: support_policy='physical_pairs' builds its "
+                "own pair FT and cannot consume a pair_ft_shared bundle")
+        if float(tail_pair_ft_screen) > 0.0:
+            raise NotImplementedError(
+                "build_lpq_native_fft: tail_pair_ft_screen is not implemented "
+                "with support_policy='physical_pairs'")
+        k0 = np.zeros(3)
+        return np.real(np.asarray(build_lpq_bloch_native_fft(
+            system, ao_basis, aux_basis, k0, k0,
+            ke_cutoff=float(ke_cutoff),
+            tail_ke_cutoff=(float(tail_ke_cutoff) if tail_ke_cutoff is not None else None),
+            tail_chunk_g=int(tail_chunk_g), lat_opts=lat_opts,
+            linear_dep_thr=float(linear_dep_thr),
+            fit_screen_threshold=float(fit_screen_threshold), fit_pair_list=fit_pair_list,
+            progress=progress, support_policy="physical_pairs",
+            memory_byte_cap=memory_byte_cap,
+            **({} if reciprocal_candidate_cap is None
+               else {"reciprocal_candidate_cap": int(reciprocal_candidate_cap)}),
+        )))
     if float(fit_screen_threshold) > 0.0 or fit_pair_list is not None:
         if pair_ft_shared is not None:
             raise ValueError(
@@ -3422,6 +4131,45 @@ class _MdfCderi(NamedTuple):
     n_pw: int
 
 
+def _mdf_plane_wave_pair_ft(
+    ao_basis: BasisSet,
+    system: PeriodicSystem,
+    ke_cutoff: float,
+    pair_cutoff: float,
+    q: np.ndarray,
+    k_ket: np.ndarray,
+) -> tuple:
+    """``(G + q, |G + q|^2, r_mu nu(G + q; k_ket))`` for the MDF plane waves.
+
+    One assembly for :func:`build_lpq_mdf` and :func:`build_lpq_bloch_mdf`:
+    the ``G + q != 0`` points of the modest mesh and the ket-Bloch AO-pair FT
+    on them, scaled to the libint convention, over the Gaussian three-centre
+    tensor's own pair set (:func:`_physical_pair_ft_cells` at
+    ``pair_cutoff``). The plane-wave projection then removes exactly the pair
+    densities the Gaussian tensor holds, and the two builders agree at Gamma.
+    They had used different ``|g|`` balls (the caller's cutoff and the
+    tuned three-centre one): 7.8e-8 Ha apart on H2/STO-3G in a 6-bohr cube
+    (#416), and neither was invariant under a lattice translation (#438).
+    """
+    from ._aopair_ft import ao_pair_fourier_transform_bloch
+
+    G_all = rsgdf_dense_g_mesh(system, float(ke_cutoff))
+    Gq = G_all + np.asarray(q, dtype=float).reshape(3)[None, :]
+    Gq2 = (Gq**2).sum(axis=1)
+    nonzero = Gq2 > 1e-12
+    Gq, Gq2 = Gq[nonzero], Gq2[nonzero]
+    pair_ft = ao_pair_fourier_transform_bloch(
+        ao_basis,
+        Gq,
+        _physical_pair_ft_cells(ao_basis, system, pair_cutoff),
+        k_cart=np.asarray(k_ket, dtype=float).reshape(3),
+        pair_cutoff_bohr=float(pair_cutoff),
+    )
+    ao_scales = _ao_scales_for_rsgdf(ao_basis)
+    pair_ft *= np.outer(ao_scales, ao_scales)[:, :, None]
+    return Gq, Gq2, pair_ft
+
+
 def build_lpq_mdf(
     system: PeriodicSystem,
     ao_basis: BasisSet,
@@ -3434,6 +4182,8 @@ def build_lpq_mdf(
     mdf_ke_cutoff: float = 40.0,
     rcut_strategy: Optional[object] = "pyscf_auto",
     rcut_precision: float = 1e-8,
+    precision_j2c: Optional[float] = None,
+    precision_j3c: Optional[float] = None,
 ) -> "_MdfCderi":
     """Mixed Density Fitting cderi -- Gaussian fit + plane-wave residual.
 
@@ -3491,7 +4241,7 @@ def build_lpq_mdf(
         to it whenever
         the PW block is active -- see
         :func:`_mdf_dressed_metric_threshold`. Callers may set a *looser*
-        value; the dense-core class needs ~3e-2.
+        value.
     compcell_eta
         Compensating-charge exponent for the fused basis (default ``1.0``).
     mdf_ke_cutoff
@@ -3501,8 +4251,19 @@ def build_lpq_mdf(
         needs. ``<= 0`` disables the PW part (the compcell-equivalent
         sanity limit).
     rcut_strategy, rcut_precision
-        Real-space lattice-cutoff auto-tuning for the libint 2c/3c, as in
-        :func:`build_lpq_compcell` (default ``"pyscf_auto"``).
+        Real-space lattice-cutoff auto-tuning for the libint 3c, as in
+        :func:`build_lpq_compcell` (default ``"pyscf_auto"``). Also sizes
+        the 2c metric in the no-PW (compcell-equivalent) limit.
+    precision_j2c
+        Accuracy the PW-dressed metric ``J-tilde`` is built to -- vibe-qc's
+        analogue of PySCF's ``precision_j2c``; default
+        :data:`_MDF_PRECISION_J2C`. Whenever the PW block is active the 2c
+        metric gets its own, much tighter lattice sum (see
+        :func:`_mdf_fit_lattice_opts`), because Eq. 19's
+        ``1/sqrt(lambda)`` makes the metric's own construction error -- not
+        ``rcut_precision`` -- what decides how small a mode may honestly be
+        kept. Ignored with the PW block off, where ``J-tilde`` IS the plain
+        metric and the compcell-equivalent limit must stay bit-identical.
 
     Returns
     -------
@@ -3535,6 +4296,11 @@ def build_lpq_mdf(
         lat_opts = LatticeSumOptions()
     if molecule is None:
         molecule = system.unit_cell_molecule()
+    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
+    if precision_j2c is None:
+        precision_j2c = _MDF_PRECISION_J2C
+    if precision_j3c is None:
+        precision_j3c = _MDF_PRECISION_J3C
 
     # --- Gaussian part: compensated fused basis + real-space libint 2c/3c.
     #     Identical to build_lpq_compcell (sans AFT correction). ---
@@ -3542,6 +4308,8 @@ def build_lpq_mdf(
     chg = make_compensating_basis(modrho_aux, molecule, eta=compcell_eta)
     fused = make_fused_basis(modrho_aux, chg, molecule)
     A = fuse_transform_matrix(modrho_aux, chg)
+
+    joint_basis = _mdf_joint_basis(ao_basis, fused, molecule)
 
     if rcut_strategy is not None:
         from .lattice_screening import RcutStrategy, make_lattice_opts
@@ -3557,20 +4325,6 @@ def build_lpq_mdf(
         lat_opts_2c = make_lattice_opts(
             fused, strategy=rcut_strategy, base_opts=lat_opts, precision=rcut_precision
         )
-        from ._vibeqc_core import ShellInfo as _SI
-
-        joint_shells = [
-            _SI(
-                int(s.atom_index),
-                int(s.l),
-                bool(s.pure),
-                list(s.exponents),
-                list(s.coefficients),
-                list(s.origin),
-            )
-            for s in list(ao_basis.shells()) + list(fused.shells())
-        ]
-        joint_basis = BasisSet(molecule, joint_shells, "<ao∪fused>", True)
         lat_opts_3c = make_lattice_opts(
             joint_basis,
             strategy=rcut_strategy,
@@ -3581,9 +4335,27 @@ def build_lpq_mdf(
         lat_opts_2c = lat_opts
         lat_opts_3c = lat_opts
 
+    if pw_on:
+        # J-tilde is built to its own accuracy, not the cell's (Eq. 20 is
+        # deliberately singular and Eq. 19 divides by sqrt of its modes).
+        lat_opts_2c = _mdf_fit_lattice_opts(
+            fused, system, lat_opts_2c, precision_j2c, modrho_aux.nbasis
+        )
+        if precision_j3c is not None:
+            lat_opts_3c = _mdf_fit_lattice_opts(
+                joint_basis, system, lat_opts_3c, precision_j3c,
+                modrho_aux.nbasis,
+            )
+
     M_fused = np.asarray(compute_2c_eri_lattice(fused, system, lat_opts_2c))
     M_fused = 0.5 * (M_fused + M_fused.T)
+    # The kernel keeps P in the home cell; add its images (Sun 2017
+    # Eq. 15, #172). Without them the dense-core class diverged or sat
+    # ~92 mHa off; the dressed-metric floor was recalibrated without them.
     T_fused = np.asarray(compute_3c_eri_lattice(ao_basis, fused, system, lat_opts_3c))
+    T_fused = T_fused + aux_image_3c(
+        system, ao_basis, fused, lat_opts_3c, precision=float(rcut_precision),
+    )
 
     M = A @ M_fused @ A.T
     M = 0.5 * (M + M.T)
@@ -3598,14 +4370,13 @@ def build_lpq_mdf(
         )
 
     # --- PW residual: modest dense mesh; compensated-aux FT + AO-pair FT. ---
-    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
     if pw_on:
         V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-        _ft = _resolve_pair_ft_shared(
-            None, ao_basis, system, float(mdf_ke_cutoff), lat_opts_3c
-        )
-        G, pair_ft = _ft.G, _ft.pair_ft  # pair_ft: (n_orb, n_orb, n_G)
-        coul = (4.0 * np.pi) / _ft.G2 / V  # (n_G,)
+        G, G2, pair_ft = _mdf_plane_wave_pair_ft(
+            ao_basis, system, float(mdf_ke_cutoff),
+            float(lat_opts_3c.cutoff_bohr), np.zeros(3), np.zeros(3),
+        )  # pair_ft: (n_orb, n_orb, n_G)
+        coul = (4.0 * np.pi) / G2 / V  # (n_G,)
 
         # FT of the *compensated* aux phi_P = chi_P - ξ_P (Eq 5): apply the
         # fuse transform A to the fused-basis FT.
@@ -3637,21 +4408,15 @@ def build_lpq_mdf(
         # giving the per-aux  V̄_P = -pi^{5/2}.(A @ m_fused)  and r̄_muν = S_muν/Ω.
         # Verified: matches the exact T_real-T_recip(dense) gap to 1e-5 and
         # the constant -pi^{5/2} to machine precision across all aux.
-        m_fused = np.zeros(fused.nbasis)
-        _off = 0
-        for sh in fused.shells():
-            nb = (2 * sh.l + 1) if sh.pure else ((sh.l + 1) * (sh.l + 2) // 2)
-            if sh.l == 0:
-                a = np.asarray(sh.exponents, dtype=float)
-                c = np.asarray(sh.coefficients, dtype=float)
-                m_fused[_off : _off + nb] = float(np.sum(c * a ** (-2.5)))
-            _off += nb
-        vbar = -(np.pi**2.5) * (A @ m_fused)  # (n_aux,)
+        vbar = A @ _fused_g0_potential(fused)  # (n_aux,)
         from ._vibeqc_core import bloch_sum as _bloch_sum
 
         S_ao = np.real(
             _bloch_sum(
-                compute_overlap_lattice(ao_basis, system, lat_opts), np.zeros(3)
+                compute_overlap_lattice(
+                    ao_basis, system,
+                    _g0_overlap_lattice_opts(lat_opts, system, ao_basis)),
+                np.zeros(3),
             )
         )
         S_ao = 0.5 * (S_ao + S_ao.T)
@@ -3885,6 +4650,195 @@ def _rsgdf_fit_pair_keep_mask(
     return pair_keep_ao
 
 
+def _fitted_support_policy(policy):
+    if policy not in (None, "physical_pairs", "historical_index_ball"):
+        raise ValueError("support_policy must be physical_pairs or historical_index_ball")
+    return "historical_index_ball" if policy is None else policy
+
+
+def _immutable_fit_array(array):
+    value = np.ascontiguousarray(array)
+    return np.frombuffer(value.tobytes(), dtype=value.dtype).reshape(value.shape)
+
+
+def _physical_fit_kernel(kernel, omega_screen):
+    """Validate a physical exchange kernel separately from a numerical split."""
+    if kernel not in ('coulomb', 'erfc', 'erf'):
+        raise ValueError("fitted kernel must be coulomb, erfc or erf")
+    if (isinstance(omega_screen, (bool, np.bool_))
+            or not np.isscalar(omega_screen) or np.iscomplexobj(omega_screen)):
+        raise ValueError('physical kernel omega_screen must be a finite real scalar')
+    omega_screen = float(omega_screen)
+    if not np.isfinite(omega_screen) or omega_screen < 0:
+        raise ValueError('physical kernel omega_screen must be finite and nonnegative')
+    if kernel == 'coulomb' and omega_screen != 0:
+        raise ValueError('Coulomb kernel requires omega_screen=0')
+    squared_range = omega_screen * omega_screen
+    if kernel != 'coulomb' and (omega_screen <= 0 or not np.isfinite(squared_range)
+                               or squared_range == 0):
+        raise ValueError('erfc/erf kernels require a positive finite squared range parameter')
+    return kernel, omega_screen
+
+
+def _physical_fit_reciprocal_weights(p_squared, volume, kernel, omega_screen):
+    """Primed physical M/T kernel; finite erfc zero mode is restored by SCF.
+
+    Both metric and three-center sweeps must use these same weights. The
+    finite constant is kept outside the fit so erf never needs an indefinite
+    metric. See Heyd, Scuseria and Ernzerhof, JCP 118, 8207 (2003).
+    """
+    kernel, omega_screen = _physical_fit_kernel(kernel, omega_screen)
+    p_squared = np.asarray(p_squared, dtype=float)
+    if (not np.isfinite(p_squared).all() or np.any(p_squared < 0)
+            or not np.isfinite(volume) or volume <= 0):
+        raise ValueError('physical kernel needs finite nonnegative p squared and positive volume')
+    weights = np.zeros_like(p_squared)
+    nonzero = p_squared > 1e-12
+    weights[nonzero] = (4.0 * np.pi) / p_squared[nonzero] / volume
+    if kernel != 'coulomb':
+        x = p_squared[nonzero] / (4.0 * omega_screen * omega_screen)
+        weights[nonzero] *= -np.expm1(-x) if kernel == 'erfc' else np.exp(-x)
+    return weights
+
+
+def _fit_record_json(record, byte_cap):
+    """Serialize bounded metadata without accepting NaN or mutable array aliases."""
+    cap = int(byte_cap)
+    if cap <= 0:
+        raise ValueError("support record byte cap must be positive")
+    def estimate(value):
+        if isinstance(value, np.ndarray):
+            return 40 * value.size + 64 * value.ndim
+        if isinstance(value, dict):
+            return sum(len(str(key)) + estimate(item) + 8 for key, item in value.items())
+        if isinstance(value, (list, tuple)):
+            return sum(estimate(item) + 2 for item in value)
+        return len(str(value)) + 8
+    if estimate(record) > cap:
+        raise MemoryError("fitted source support record exceeds explicit byte cap")
+    payload = json.dumps(record, sort_keys=True, separators=(",", ":"), allow_nan=False,
+                         default=lambda value: value.tolist() if isinstance(value, np.ndarray)
+                         else (_ for _ in ()).throw(TypeError(type(value).__name__)))
+    if len(payload.encode("utf-8")) > cap:
+        raise MemoryError("fitted source support record exceeds explicit byte cap")
+    return payload
+
+
+def _fit_basis_record(basis):
+    return dict(fingerprint=_basis_fingerprint(basis), shells=[
+        dict(atom=int(sh.atom_index), l=int(sh.l), pure=bool(sh.pure),
+             origin=np.asarray(sh.origin), exponents=np.asarray(sh.exponents),
+             coefficients=np.asarray(sh.coefficients)) for sh in basis.shells()])
+
+
+def _classic_pair_cells(system, ao_basis, cutoff, policy, candidate_cap=2_000_000):
+    from ._vibeqc_core import direct_lattice_cells, pair_complete_lattice_cells
+    radius = float(cutoff)
+    if not np.isfinite(radius) or radius < 0:
+        raise ValueError("classic AO-pair cutoff must be finite and nonnegative")
+    lattice = np.asarray(system.lattice, dtype=float)
+    origins = np.asarray([sh.origin for sh in ao_basis.shells()], dtype=float)
+    if int(system.dim) != 3 or not np.isfinite(lattice).all() or not np.isfinite(origins).all():
+        raise ValueError("explicit fitted support requires finite three-dimensional geometry")
+    # The existing shared selector returns an enclosure, not a term trace.
+    # Bound its padded Cartesian ball before entering native allocation.
+    span = float(np.linalg.norm(np.ptp(origins, axis=0))) if len(origins) else 0.0
+    extent = radius + (span if policy == "physical_pairs" else 0.0)
+    reach = extent * np.linalg.norm(np.linalg.inv(lattice), axis=1)
+    candidates = 1
+    for bound in reach:
+        candidates *= 2 * int(np.ceil(bound)) + 3
+        if candidates > candidate_cap:
+            raise MemoryError("classic AO-pair candidate enclosure exceeds explicit capacity")
+    cells = (pair_complete_lattice_cells(ao_basis, system, radius)
+             if policy == "physical_pairs" else direct_lattice_cells(system, radius))
+    return np.asarray([c.r_cart for c in cells], dtype=float).reshape(-1, 3)
+
+
+def _classic_build_reservation(ao_basis, aux_basis, n_batch, chunk, memory_byte_cap,
+                               image_candidate_cap):
+    if memory_byte_cap is None:
+        return None
+    from ._vibeqc_core import get_num_threads
+    no, na = int(ao_basis.nbasis), int(aux_basis.nbasis)
+    threads = max(1, int(get_num_threads()))
+    # Conservative array reservation, including the legacy general-L kernel's
+    # per-worker Cartesian/spherical scratch (L <= 6), LAPACK and immutable
+    # metric copies. Library state and allocator overhead are separate.
+    angular = max(int(sh.l) for sh in ao_basis.shells())
+    if angular > 6 or any(not sh.pure and int(sh.l) > 0 for sh in ao_basis.shells()):
+        raise NotImplementedError("bounded classic fitting requires pure spherical L <= 6")
+    cart = (angular + 1) * (angular + 2) // 2
+    sph = 2 * angular + 1
+    scratch_per_g = 16 * threads * (3 * (2 * angular + 1) + cart**2
+                                   + (n_batch + 3) * sph**2 + 8)
+    fixed = 16 * (8 * na**2 + 4 * n_batch * na * no**2)
+    fixed += int(image_candidate_cap) * (128 + 16 * n_batch) + 2**20
+    transient = int(chunk) * (scratch_per_g + 16 * (n_batch * no**2 + 4 * na) + 128)
+    remaining = int(memory_byte_cap) - fixed - transient
+    if remaining <= 4096 + 128 * 512:
+        raise MemoryError("classic fitted source numerical reservation exceeds memory_byte_cap")
+    return remaining // 8
+
+
+def _classic_reciprocal_mesh(system, q, cutoff, mesh_byte_cap, candidate_cap):
+    if mesh_byte_cap is None:
+        return _rsgdf_shifted_dense_g_mesh(system, q, cutoff)
+    vectors = _rsgdf_bounded_reciprocal_sphere(
+        system, q, cutoff, output_byte_cap=mesh_byte_cap,
+        workspace_byte_cap=min(mesh_byte_cap, 4096 + 128 * 512),
+        candidate_cap=candidate_cap, allow_empty=True)
+    # Classic Gamma uses an exact-radius base/tail partition. The shared SR
+    # enumerator includes boundary slack; remove it here to avoid a point
+    # appearing in both the classic base and its strict complementary tail.
+    if float(np.linalg.norm(q)) < 1e-14:
+        vectors = vectors[np.linalg.norm(vectors, axis=1) <= np.sqrt(2.0 * float(cutoff))]
+    return vectors
+
+
+def _classic_source_descriptor(system, orbital, auxiliary, q, *, ke_cutoff,
+                               tail_ke_cutoff, cutoff, linear_dep_thr,
+                               fit_screen_threshold, fit_pair_list, omega_screen,
+                               canonical_auxiliary_basis, policy, bounded_mesh=False,
+                               physical_kernel=None):
+    return _fit_record_json(dict(
+        version="classic-ft-source-v1",
+        source_signature=_range_separated_gdf_source_signature(system, orbital, auxiliary),
+        q=np.asarray(q), ke_cutoff=float(ke_cutoff),
+        tail_ke_cutoff=None if tail_ke_cutoff is None else float(tail_ke_cutoff),
+        pair_cutoff=float(cutoff), rank_threshold=float(linear_dep_thr),
+        fit_screen_threshold=float(fit_screen_threshold),
+        fit_pair_list=None if fit_pair_list is None else np.asarray(fit_pair_list),
+        omega_screen=float(omega_screen), canonical_auxiliary_basis=bool(canonical_auxiliary_basis),
+        support_policy=policy, reciprocal_enumeration="bounded-index-order" if bounded_mesh else "legacy-norm-order", q_zero="omit p squared <= 1e-12", normalization="libint AO, 4*pi/(volume*p squared)",
+        **({} if physical_kernel is None else dict(physical_kernel=physical_kernel,
+            zero_mode_restoration='external exact overlap; erfc positive pi/(V*omega_screen^2), erf negative counterpart plus full Madelung'))),
+        8 * 1024**2)
+
+
+def _record_classic_support(callback, cap, descriptor, system, ao_basis, aux_basis,
+                            q, k_kets, cells, base, tail, metric):
+    if callback is None:
+        return
+    callback(_fit_record_json(dict(
+        schema="fitted-executed-support-v1", source="classic", descriptor=json.loads(descriptor),
+        lattice=np.asarray(system.lattice), orbital=_fit_basis_record(ao_basis),
+        auxiliary=_fit_basis_record(aux_basis), q=np.asarray(q), k_kets=np.asarray(k_kets),
+        cell_enclosure_cart_bohr=cells,
+        cell_evidence="candidate enclosure; per-shell predicate and fit mask determine executed terms",
+        pair_selector="shared pair_in_range: squared norm(A-B-R) <= pair_cutoff squared; historical accepts entire cell enclosure",
+        reciprocal_base=base, reciprocal_tail=tail,
+        reciprocal_evidence="actual ordered reciprocal inputs to metric and three-center sweeps",
+        metric_eigenvalues=metric.eigvals, metric_keep=metric.keep,
+        pair_keep_ao=metric.pair_keep_ao,
+        kernel=dict(volume=float(abs(np.linalg.det(system.lattice))),
+                    weight=("4*pi/(V*p^2)*exp(-p^2/(4*omega_screen^2))"
+                            if json.loads(descriptor).get('physical_kernel') == 'erf' else
+                            "4*pi/(V*p^2), multiplied by -expm1(-p^2/(4*omega_screen^2)) only when omega_screen > 0"),
+                    zero_mode="omit p^2 <= 1e-12; no finite erfc zero-mode restoration inside this builder"),
+        rank=int(np.count_nonzero(metric.keep))), cap))
+
+
 class _RsgdfQMetricCacheEntry(NamedTuple):
     """Exact q-only state shared by ket-resolved multi-k RSGDF fits."""
 
@@ -3892,6 +4846,7 @@ class _RsgdfQMetricCacheEntry(NamedTuple):
     eigvecs: np.ndarray
     keep: np.ndarray
     pair_keep_ao: Optional[np.ndarray]
+    source_descriptor: str = ""
 
 
 def build_lpq_bloch_native_fft(
@@ -3912,6 +4867,12 @@ def build_lpq_bloch_native_fft(
     omega_screen: float = 0.0,
     progress: Optional[Any] = None,
     _q_metric_cache: Optional[dict] = None,
+    support_policy: Optional[str] = None,
+    memory_byte_cap: Optional[int] = None,
+    reciprocal_candidate_cap: int = 2_000_000,
+    image_candidate_cap: int = 2_000_000,
+    _support_recorder: Optional[Any] = None,
+    _support_record_byte_cap: int = 8 * 1024**2,
 ) -> np.ndarray:
     r"""Per-(k_bra, k_ket) all-FT GDF cderi for tight periodic cells.
 
@@ -4066,7 +5027,7 @@ def build_lpq_bloch_native_fft(
         are zero). This is the composition seam for space-group
         pair reduction (symmetry drops *redundant* pairs, the Schwarz
         screen drops *negligible* ones; both act on one build path --
-        handovers/HANDOVER_SYMMETRY_PAIR_REDUCTION.md). ``None`` (the
+        the original investigation). ``None`` (the
         default) keeps every shell pair.
     omega_screen
         Optional short-range (erfc) attenuation of the fitted kernel
@@ -4096,6 +5057,21 @@ def build_lpq_bloch_native_fft(
     progress
         Optional progress logger with an ``info`` method; receives the
         fit-screen statistics line.
+    support_policy
+        ``None`` retains historical index-ball support. ``physical_pairs``
+        uses the shared complete cell enclosure and an exact native per-pair
+        distance predicate. It currently requires unscreened complete AO
+        pairs; fit screens and restricted pair lists are explicitly refused.
+        ``historical_index_ball`` deliberately selects the old support.
+    memory_byte_cap, reciprocal_candidate_cap, image_candidate_cap
+        Explicit numeric-array/candidate reservations refuse oversized builds.
+        A bounded reciprocal enumeration changes summation order, never the
+        requested support. Process/library state and allocator overhead are
+        outside this reservation. Physical support defaults to a 1 GiB cap.
+    _support_recorder, _support_record_byte_cap
+        Optional callback receives immutable canonical JSON with the actual
+        reciprocal inputs, candidate cells, selector, metric spectrum/mask,
+        normalized bases and source identity. It is not an integral-call trace.
     _q_metric_cache
         Internal setup-local cache used by the multi-k drivers. Entries share
         only the q-dependent metric, eigensystem, and Schwarz mask; the
@@ -4111,6 +5087,14 @@ def build_lpq_bloch_native_fft(
     from ._aopair_ft import ao_pair_fourier_transform_bloch
     from ._vibeqc_core import direct_lattice_cells
 
+    policy = _fitted_support_policy(support_policy)
+    if policy == "physical_pairs":
+        if float(fit_screen_threshold) != 0.0 or fit_pair_list is not None:
+            raise NotImplementedError("physical classic support requires unscreened complete AO pairs")
+        if memory_byte_cap is None:
+            memory_byte_cap = 1024**3
+    if min(int(image_candidate_cap), int(reciprocal_candidate_cap)) <= 0:
+        raise ValueError("fitted source candidate caps must be positive")
     if lat_opts is None:
         lat_opts = LatticeSumOptions()
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
@@ -4130,7 +5114,16 @@ def build_lpq_bloch_native_fft(
     # invariant and time-reversal covariant at a Nyquist transfer. The shifted
     # sphere below has both properties by construction. Its p=0 point is
     # dropped (jellium/Ewald G=0 omission).
-    Gq = _rsgdf_shifted_dense_g_mesh(system, q, ke_cutoff)
+    mesh_byte_cap = _classic_build_reservation(
+        ao_basis, aux_basis, 1, max(int(tail_chunk_g), 1), memory_byte_cap, image_candidate_cap)
+    if support_policy is not None or _support_recorder is not None or memory_byte_cap is not None:
+        R_g = _classic_pair_cells(system, ao_basis, lat_opts.cutoff_bohr, policy, image_candidate_cap)
+    else:
+        cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
+        R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
+        if R_g.size == 0:
+            R_g = np.zeros((1, 3), dtype=float)
+    Gq = _classic_reciprocal_mesh(system, q, ke_cutoff, mesh_byte_cap, reciprocal_candidate_cap)
     Gq2 = (Gq**2).sum(axis=1)
     nz = Gq2 > 1e-12
     Gq = Gq[nz]
@@ -4144,7 +5137,7 @@ def build_lpq_bloch_native_fft(
         # evaluates the small-p attenuation without cancellation.
         coul = coul * (-np.expm1(-Gq2 / (4.0 * w_scr * w_scr)))
 
-    # G-chunked accumulation (M2 of HANDOVER_GDF_FIT_SCREENING.md): the
+    # G-chunked accumulation (M2 of the original investigation): the
     # base mesh is swept in ``tail_chunk_g``-point chunks, exactly like
     # the high-|G| tail below, so the builder's peak transient is the
     # (n_orb, n_orb, chunk) pair-FT block -- NOT (n_orb, n_orb, n_G) --
@@ -4163,12 +5156,24 @@ def build_lpq_bloch_native_fft(
     n_aux = int(aux_basis.nbasis)
     n_chunks = int((n_base + chunk - 1) // chunk) if n_base else 0
 
+    source_descriptor = _classic_source_descriptor(
+        system, ao_basis, aux_basis, q, ke_cutoff=ke_cutoff, tail_ke_cutoff=tail_ke_cutoff,
+        cutoff=lat_opts.cutoff_bohr, linear_dep_thr=linear_dep_thr,
+        fit_screen_threshold=fit_screen_threshold, fit_pair_list=fit_pair_list,
+        omega_screen=omega_screen, canonical_auxiliary_basis=canonical_auxiliary_basis,
+        policy=policy, bounded_mesh=memory_byte_cap is not None)
+    Gq_tail = np.empty((0, 3), dtype=float)
+    pair_ft_options = ({"pair_cutoff_bohr": float(lat_opts.cutoff_bohr)}
+                       if policy == "physical_pairs" else {})
     q_key = tuple(float(value) for value in np.round(q, 14))
     q_metric = (
         _q_metric_cache.get(q_key)
         if _q_metric_cache is not None
         else None
     )
+    if q_metric is not None and q_metric.source_descriptor != source_descriptor:
+        raise ValueError("classic GDF q-metric cache belongs to a different source")
+
 
     # Sweep A -- 2c metric M(q)_PQ, (naux, naux) Hermitian. The metric
     # depends only on q, not on the ket Bloch phase. Multi-k drivers pass a
@@ -4185,10 +5190,6 @@ def build_lpq_bloch_native_fft(
             M += (
                 aux_ft_c.conj() * coul[lo : lo + chunk][None, :]
             ) @ aux_ft_c.T
-    cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
-    R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
-    if R_g.size == 0:
-        R_g = np.zeros((1, 3), dtype=float)
 
     # ---- Cauchy-Schwarz fit screen (fit_screen_threshold > 0) --------
     # |T_{P,muν}| <= sqrt(M_PP) . sqrt(S_G coul |r̂_muν|^2): AO pairs whose
@@ -4201,7 +5202,7 @@ def build_lpq_bloch_native_fft(
     # ``fit_pair_list`` optionally restricts the computed shell pairs
     # further (the seam for space-group pair reduction -- symmetry drops
     # redundant pairs, Schwarz drops negligible ones; one build path,
-    # handovers/HANDOVER_SYMMETRY_PAIR_REDUCTION.md).
+    # the original investigation).
     if q_metric is None:
         if M is None:
             raise RuntimeError("RSGDF q-metric cache miss did not build M(q)")
@@ -4239,7 +5240,7 @@ def build_lpq_bloch_native_fft(
     for lo in range(0, n_base, chunk):
         aux_ft_c = rsgdf_aux_fourier_transform(aux_basis, Gq[lo : lo + chunk])
         pair_ft_c = ao_pair_fourier_transform_bloch(
-            ao_basis, Gq[lo : lo + chunk], R_g, k_cart=k_ket
+            ao_basis, Gq[lo : lo + chunk], R_g, k_cart=k_ket, **pair_ft_options
         )
         pair_ft_c *= pair_scales[:, :, None]
         if pair_keep_ao is not None:
@@ -4267,10 +5268,8 @@ def build_lpq_bloch_native_fft(
     # as exp(-|G+q|^2 / (4 (z_mu + z_nu))): only the steep-pair rows
     # survive at high G, which is exactly the under-resolved physics.
     if tail_ke_cutoff is not None and float(tail_ke_cutoff) > float(ke_cutoff):
-        Gq_tail_all = _rsgdf_shifted_dense_g_mesh(
-            system,
-            q,
-            float(tail_ke_cutoff),
+        Gq_tail_all = _classic_reciprocal_mesh(
+            system, q, float(tail_ke_cutoff), mesh_byte_cap, reciprocal_candidate_cap
         )
         G_base_max = float(np.sqrt(2.0 * float(ke_cutoff)))
         tail_norms = np.linalg.norm(Gq_tail_all, axis=1)
@@ -4305,7 +5304,7 @@ def build_lpq_bloch_native_fft(
                 )
             aux_ft_c = rsgdf_aux_fourier_transform(aux_basis, Gqc)
             pair_ft_c = ao_pair_fourier_transform_bloch(
-                ao_basis, Gqc, R_g, k_cart=k_ket
+                ao_basis, Gqc, R_g, k_cart=k_ket, **pair_ft_options
             )
             pair_ft_c *= np.outer(ao_scales, ao_scales)[:, :, None]
             if pair_keep_ao is not None:
@@ -4348,13 +5347,18 @@ def build_lpq_bloch_native_fft(
                 "aux basis or threshold invalid."
             )
         q_metric = _RsgdfQMetricCacheEntry(
-            eigvals=eigvals,
-            eigvecs=U,
-            keep=keep,
-            pair_keep_ao=pair_keep_ao,
+            eigvals=_immutable_fit_array(eigvals),
+            eigvecs=_immutable_fit_array(U),
+            keep=_immutable_fit_array(keep),
+            pair_keep_ao=None if pair_keep_ao is None else _immutable_fit_array(pair_keep_ao),
+            source_descriptor=source_descriptor,
         )
         if _q_metric_cache is not None:
             _q_metric_cache[q_key] = q_metric
+    _record_classic_support(
+        _support_recorder, _support_record_byte_cap, source_descriptor,
+        system, ao_basis, aux_basis, q, k_ket[None, :], R_g, Gq,
+        Gq_tail[np.sum(Gq_tail**2, axis=1) > 1e-12], q_metric)
     eigvals = q_metric.eigvals
     U = q_metric.eigvecs
     keep = q_metric.keep
@@ -4510,6 +5514,7 @@ class _RangeSeparatedGdfBatch(NamedTuple):
     reciprocal_vector_count: int
     reserved_peak_bytes: int
     fit_state: Optional[_RangeSeparatedGdfFitState] = None
+    executed_support: Optional[str] = None
 
 
 class _RangeSeparatedGdfAdmissionError(MemoryError):
@@ -4722,6 +5727,10 @@ def _build_lpq_range_separated_shared_q(
     retain_fit_state: bool = False,
     _metric_state: Optional[dict] = None,
     canonical_auxiliary_basis: bool = False,
+    _support_recorder: Optional[Any] = None,
+    _support_record_byte_cap: int = 8 * 1024**2,
+    kernel: str = 'coulomb',
+    omega_screen: float = 0.0,
 ) -> _RangeSeparatedGdfBatch:
     """One admitted SR/LR fit for Gamma or a general shared-q batch.
 
@@ -4740,10 +5749,20 @@ def _build_lpq_range_separated_shared_q(
     This is the covariant fitting frame needed for auxiliary symmetry
     transport; it reconstructs the same Gram operator as the smaller
     eigenmode factors. Fit-response retention currently uses eigenmodes.
+
+    ``kernel`` selects physical Coulomb, erfc or erf, with independent
+    ``omega_screen``. The numerical ``omega`` split stays fixed: physical
+    erfc uses real erfc(omega) plus reciprocal erf(omega)-erf(omega_screen),
+    while physical erf uses only its smooth reciprocal source. Both M and T
+    use the selected kernel before whitening. All fits omit p=0, whose
+    finite physical constant and full/LR exchange Madelung belong to SCF.
     """
     from scipy.linalg import get_lapack_funcs
     from ._vibeqc_core import compute_gdf_range_separated_integrals
 
+    kernel, omega_screen = _physical_fit_kernel(kernel, omega_screen)
+    if kernel != 'coulomb' and retain_fit_state:
+        raise NotImplementedError('physical screened-kernel fit derivatives are not implemented')
     n_aux, n_orb = int(aux_basis.nbasis), int(ao_basis.nbasis)
     n_k = len(k_bra_list)
     if min(n_aux, n_orb, n_k) < 1:
@@ -4798,6 +5817,8 @@ def _build_lpq_range_separated_shared_q(
         source_signature, tuple(q), omega, pair_cutoff, auxiliary_cutoff,
         ke_cutoff, linear_dep_thr, integral_screen_error, bool(canonical_auxiliary_basis),
     )
+    if kernel != 'coulomb':
+        source_key += (kernel, omega_screen)
     metric_hit = bool(_metric_state)
     if metric_hit and _metric_state.get("source_key") != source_key:
         raise ValueError("range-separated GDF metric state belongs to a different source")
@@ -4810,6 +5831,7 @@ def _build_lpq_range_separated_shared_q(
         pair_cutoff, auxiliary_cutoff, metric_bytes + tensor_bytes,
         int(native_workspace_byte_cap), int(image_candidate_cap),
         float(integral_screen_error), not metric_hit,
+        **({} if kernel == 'coulomb' else dict(kernel=kernel, omega_screen=omega_screen)),
     )
     if metric_hit:
         eigenvalues = _metric_state["eigenvalues"]
@@ -4885,9 +5907,48 @@ def _build_lpq_range_separated_shared_q(
             source_key=source_key, eigenvalues=eigenvalues,
             eigenvectors=eigenvectors, whitener=whitener, kept=kept,
         )
+    executed_support = None
+    if _support_recorder is not None:
+        executed_support = _fit_record_json(dict(
+            schema="fitted-executed-support-v1", source="sr", support_policy="physical_pairs",
+            source_signature=source_signature, lattice=np.asarray(system.lattice),
+            orbital=_fit_basis_record(ao_basis), auxiliary=_fit_basis_record(aux_basis),
+            q=q, k_kets=k_kets, omega=float(omega), pair_cutoff=float(pair_cutoff),
+            auxiliary_cutoff=float(auxiliary_cutoff), ke_cutoff=float(ke_cutoff),
+            integral_screen_error=float(integral_screen_error), image_candidate_cap=int(image_candidate_cap),
+            selector_evidence="lossless finite native selector specification; geometric membership replay, not integral call trace",
+            selectors=dict(metric=("reciprocal only; no real-space auxiliary images" if kernel == 'erf' else
+                    "MetricImageDomain: aux pair physical separation <= auxiliary_cutoff"),
+                three_center=("reciprocal only; no real-space auxiliary images" if kernel == 'erf' else
+                    "ThreeCenterImageDomain: AO pair physical separation <= pair_cutoff; aux image distance to AO-center segment <= auxiliary_cutoff"),
+                reciprocal_pair="ao_pair_gaussian_fourier_panel: physical AO-pair image ball <= pair_cutoff",
+                screen=("none" if kernel == 'erf' else
+                    "native ShellEnvelope and GaussianSRBound with recorded normalized shell data, omega, integral_screen_error")),
+            reciprocal_vectors=vectors, reciprocal_nonzero_count=int(n_g),
+            reciprocal_evidence="actual ordered native reciprocal input; singular p squared <= 1e-24 omitted",
+            metric_eigenvalues=eigenvalues, metric_keep=_metric_keep_mask(eigenvalues, linear_dep_thr),
+            rank_threshold=float(linear_dep_thr), canonical_auxiliary_basis=bool(canonical_auxiliary_basis),
+            kernel=dict(volume=float(abs(np.linalg.det(system.lattice))),
+                real="none" if kernel == 'erf' else "erfc(omega*r)/r",
+                reciprocal=("4*pi*exp(-p^2/(4*omega_screen^2))/(V*p^2)" if kernel == 'erf' else
+                    "4*pi*(exp(-p^2/(4*omega^2))-exp(-p^2/(4*omega_screen^2)))/(V*p^2)" if kernel == 'erfc' else
+                    "4*pi*exp(-p^2/(4*omega^2))/(V*p^2)"),
+                zero_transfer_test="norm(L.T*q/(2*pi)-round(L.T*q/(2*pi))) < 1e-12",
+                short_range_zero_mode=0. if kernel == 'erf' else float(np.pi / (abs(np.linalg.det(system.lattice)) * omega**2))),
+            q_zero=("reciprocal erf omits p^2 <= 1e-24; negative physical zero constant and full Madelung external"
+                    if kernel == 'erf' else
+                    "subtract pi/(V*omega^2) times charge/overlap factors once at zero transfer; LR omits p^2 <= 1e-24"),
+            normalization="libint AO and auxiliary; Coulomb reciprocal weights divided by cell volume",
+            **({} if kernel == 'coulomb' else dict(physical_kernel=kernel,
+                omega_screen=float(omega_screen),
+                rank=int(len(kept)),
+                numerical_split_omega_bohr_inv=float(omega),
+                zero_mode_restoration='external exact overlap; erfc positive pi/(V*omega_screen^2), erf negative counterpart plus full Madelung'))),
+            _support_record_byte_cap)
+        _support_recorder(executed_support)
     return _RangeSeparatedGdfBatch(
         factors, q, eigenvalues, int(n_g), nonmesh_bytes + 2 * vectors.nbytes,
-        fit_state,
+        fit_state, executed_support,
     )
 
 
@@ -4909,6 +5970,15 @@ def build_lpq_bloch_native_fft_shared_q(
     omega_screen: float = 0.0,
     progress: Optional[Any] = None,
     _q_metric_cache: Optional[dict] = None,
+    support_policy: Optional[str] = None,
+    memory_byte_cap: Optional[int] = None,
+    reciprocal_candidate_cap: int = 2_000_000,
+    image_candidate_cap: int = 2_000_000,
+    _support_recorder: Optional[Any] = None,
+    _support_record_byte_cap: int = 8 * 1024**2,
+    kernel: Optional[str] = None,
+    _fit_response_state: Optional[dict] = None,
+    _fit_response_byte_cap: Optional[int] = None,
 ) -> list[np.ndarray]:
     r"""Batched shared-q RSGDF cderi: one pair-FT pass for n_k bra momenta.
 
@@ -4940,10 +6010,28 @@ def build_lpq_bloch_native_fft_shared_q(
     ``tests/test_rsgdf_shared_q_batch.py`` (floating-point rounding
     only; the batched kernel folds the Bloch phase after the cart→sph
     transform).
+
+    An explicit ``kernel='coulomb'|'erfc'|'erf'`` fits that physical kernel
+    in both M and T; ``omega_screen`` is its range. The historical default
+    ``kernel=None`` preserves the existing omega_screen-only interface.
+    Every fitted kernel omits p=0. SCF restores the finite erfc/erf constant
+    through exact overlaps, outside metric whitening.
     """
     from ._aopair_ft import ao_pair_fourier_transform_bloch_multi
     from ._vibeqc_core import direct_lattice_cells
 
+    # None preserves the historical omega_screen-only interface and cache
+    # identity. Explicit physical kernels are independently fitted in M and T.
+    if kernel is not None:
+        kernel, omega_screen = _physical_fit_kernel(kernel, omega_screen)
+    policy = _fitted_support_policy(support_policy)
+    if policy == "physical_pairs":
+        if float(fit_screen_threshold) != 0.0 or fit_pair_list is not None:
+            raise NotImplementedError("physical classic support requires unscreened complete AO pairs")
+        if memory_byte_cap is None:
+            memory_byte_cap = 1024**3
+    if min(int(image_candidate_cap), int(reciprocal_candidate_cap)) <= 0:
+        raise ValueError("fitted source candidate caps must be positive")
     if lat_opts is None:
         lat_opts = LatticeSumOptions()
     k_bras = np.ascontiguousarray(k_bra_list, dtype=float).reshape(-1, 3)
@@ -4958,14 +6046,25 @@ def build_lpq_bloch_native_fft_shared_q(
     # the single-pair builder's `k_ket = k_bra + q`).
     k_kets = k_bras + q[None, :]
 
-    Gq = _rsgdf_shifted_dense_g_mesh(system, q, ke_cutoff)
+    mesh_byte_cap = _classic_build_reservation(
+        ao_basis, aux_basis, n_batch, max(int(tail_chunk_g) // max(n_batch, 1), 1), memory_byte_cap, image_candidate_cap)
+    if support_policy is not None or _support_recorder is not None or memory_byte_cap is not None:
+        R_g = _classic_pair_cells(system, ao_basis, lat_opts.cutoff_bohr, policy, image_candidate_cap)
+    else:
+        cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
+        R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
+        if R_g.size == 0:
+            R_g = np.zeros((1, 3), dtype=float)
+    Gq = _classic_reciprocal_mesh(system, q, ke_cutoff, mesh_byte_cap, reciprocal_candidate_cap)
     Gq2 = (Gq**2).sum(axis=1)
     nz = Gq2 > 1e-12
     Gq = Gq[nz]
     Gq2 = Gq2[nz]
     coul = (4.0 * np.pi) / Gq2 / V
     w_scr = float(omega_screen)
-    if w_scr > 0.0:
+    if kernel is not None:
+        coul = _physical_fit_reciprocal_weights(Gq2, V, kernel, w_scr)
+    elif w_scr > 0.0:
         coul = coul * (-np.expm1(-Gq2 / (4.0 * w_scr * w_scr)))
 
     # Batched transient bound: divide the configured G-chunk by the
@@ -4977,12 +6076,24 @@ def build_lpq_bloch_native_fft_shared_q(
     n_aux = int(aux_basis.nbasis)
     n_chunks = int((n_base + chunk - 1) // chunk) if n_base else 0
 
+    source_descriptor = _classic_source_descriptor(
+        system, ao_basis, aux_basis, q, ke_cutoff=ke_cutoff, tail_ke_cutoff=tail_ke_cutoff,
+        cutoff=lat_opts.cutoff_bohr, linear_dep_thr=linear_dep_thr,
+        fit_screen_threshold=fit_screen_threshold, fit_pair_list=fit_pair_list,
+        omega_screen=omega_screen, canonical_auxiliary_basis=canonical_auxiliary_basis,
+        policy=policy, bounded_mesh=memory_byte_cap is not None, physical_kernel=kernel)
+    Gq_tail = np.empty((0, 3), dtype=float)
+    pair_ft_options = ({"pair_cutoff_bohr": float(lat_opts.cutoff_bohr)}
+                       if policy == "physical_pairs" else {})
     q_key = tuple(float(value) for value in np.round(q, 14))
     q_metric = (
         _q_metric_cache.get(q_key)
         if _q_metric_cache is not None
         else None
     )
+    if q_metric is not None and q_metric.source_descriptor != source_descriptor:
+        raise ValueError("classic GDF q-metric cache belongs to a different source")
+
 
     # Sweep A -- 2c metric M(q), shared by construction (q-only). The
     # per-chunk aux FT is cached here and handed to Sweep B below (same
@@ -5007,7 +6118,7 @@ def build_lpq_bloch_native_fft_shared_q(
     M: Optional[np.ndarray] = None
     aux_ft_cache: list[Optional[np.ndarray]] = []
     if q_metric is None:
-        cache_budget = _rsgdf_aux_ft_cache_budget_bytes()
+        cache_budget = _rsgdf_aux_ft_cache_budget_bytes() if memory_byte_cap is None else 0
         cached_bytes = 0
         M = np.zeros((n_aux, n_aux), dtype=np.complex128)
         for lo in range(0, n_base, chunk):
@@ -5023,10 +6134,6 @@ def build_lpq_bloch_native_fft_shared_q(
             M += (
                 aux_ft_c.conj() * coul[lo : lo + chunk][None, :]
             ) @ aux_ft_c.T
-    cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
-    R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
-    if R_g.size == 0:
-        R_g = np.zeros((1, 3), dtype=float)
 
     if q_metric is None:
         if M is None:
@@ -5065,7 +6172,7 @@ def build_lpq_bloch_native_fft_shared_q(
     # the kernel's own store adds no pass at all -- that store already
     # writes every element, from inside the parallel region -- and is
     # worth 1.5% of the cderi build, which is ~97% of a multi-k GDF SCF
-    # (handovers/HANDOVER_GDF_OUTSTANDING.md, 2026-08-05).
+    # (the original investigation, 2026-08-05).
     #
     # This is NOT the reverted 2026-08-05 micro-optimisation, which
     # merged the same two operations into one NumPy pass and could not
@@ -5103,7 +6210,7 @@ def build_lpq_bloch_native_fft_shared_q(
         # `pair_weights` (and zeroed where the fit screen masks a
         # pair), fused into its own store — see the note above.
         pair_ft_batch = ao_pair_fourier_transform_bloch_multi(
-            ao_basis, Gq_chunk, R_g, k_kets, pair_weights=pair_weights
+            ao_basis, Gq_chunk, R_g, k_kets, pair_weights=pair_weights, **pair_ft_options
         )
         n_chunk_g = int(Gq_chunk.shape[0])
         for i_k, pair_ft_c in enumerate(pair_ft_batch):
@@ -5125,10 +6232,8 @@ def build_lpq_bloch_native_fft_shared_q(
     # metric tail accumulates only on a cache miss, matching the
     # single-pair builder.
     if tail_ke_cutoff is not None and float(tail_ke_cutoff) > float(ke_cutoff):
-        Gq_tail_all = _rsgdf_shifted_dense_g_mesh(
-            system,
-            q,
-            float(tail_ke_cutoff),
+        Gq_tail_all = _classic_reciprocal_mesh(
+            system, q, float(tail_ke_cutoff), mesh_byte_cap, reciprocal_candidate_cap
         )
         G_base_max = float(np.sqrt(2.0 * float(ke_cutoff)))
         tail_norms = np.linalg.norm(Gq_tail_all, axis=1)
@@ -5153,7 +6258,9 @@ def build_lpq_bloch_native_fft_shared_q(
             if Gqc.shape[0] == 0:
                 continue
             coul_c = (4.0 * np.pi) / Gq2c[nzc] / V
-            if w_scr > 0.0:
+            if kernel is not None:
+                coul_c = _physical_fit_reciprocal_weights(Gq2c[nzc], V, kernel, w_scr)
+            elif w_scr > 0.0:
                 coul_c = coul_c * (
                     -np.expm1(-Gq2c[nzc] / (4.0 * w_scr * w_scr))
                 )
@@ -5196,13 +6303,18 @@ def build_lpq_bloch_native_fft_shared_q(
                 "aux basis or threshold invalid."
             )
         q_metric = _RsgdfQMetricCacheEntry(
-            eigvals=eigvals,
-            eigvecs=U,
-            keep=keep,
-            pair_keep_ao=pair_keep_ao,
+            eigvals=_immutable_fit_array(eigvals),
+            eigvecs=_immutable_fit_array(U),
+            keep=_immutable_fit_array(keep),
+            pair_keep_ao=None if pair_keep_ao is None else _immutable_fit_array(pair_keep_ao),
+            source_descriptor=source_descriptor,
         )
         if _q_metric_cache is not None:
             _q_metric_cache[q_key] = q_metric
+    _record_classic_support(
+        _support_recorder, _support_record_byte_cap, source_descriptor,
+        system, ao_basis, aux_basis, q, k_kets, R_g, Gq,
+        Gq_tail[np.sum(Gq_tail**2, axis=1) > 1e-12], q_metric)
     eigvals = q_metric.eigvals
     U = q_metric.eigvecs
     keep = q_metric.keep
@@ -5223,6 +6335,24 @@ def build_lpq_bloch_native_fft_shared_q(
             ) / np.sqrt(eigvals[keep])[:, None]
             n_factor = n_kept
         out.append(Lpq.reshape(n_factor, T.shape[1], T.shape[2]))
+    if _fit_response_state is not None:
+        # Expose the actual raw source assembled by this call. The response
+        # consumer owns these arrays and verifies the factors against its SCF.
+        tail_nz = np.sum(Gq_tail**2, axis=1) > 1e-12
+        n_response_g = len(Gq) + int(np.count_nonzero(tail_nz))
+        # Admit the consumer's retained T, reconstructed M, inverse response,
+        # inverse eigenvalues, ordered mesh and kernel BEFORE allocating the
+        # response-only arrays, including on the final q group.
+        response_bytes = (sum(t.nbytes for t in T_list) + 32*n_aux*n_aux
+                          + 8*n_aux + 32*n_response_g)
+        if (_fit_response_byte_cap is not None
+                and response_bytes > int(_fit_response_byte_cap)):
+            raise MemoryError("classic gradient retained response exceeds memory budget")
+        reciprocal = np.empty((n_response_g, 3), dtype=float)
+        reciprocal[:len(Gq)] = Gq
+        reciprocal[len(Gq):] = Gq_tail[tail_nz]
+        _fit_response_state.update(metric=q_metric, tensors=T_list,
+                                   reciprocal=reciprocal, retained_bytes=response_bytes)
     return out
 
 
@@ -5240,6 +6370,10 @@ def build_lpq_bloch_mdf(
     mdf_ke_cutoff: float = 40.0,
     rcut_strategy: Optional[object] = "pyscf_auto",
     rcut_precision: float = 1e-8,
+    precision_j2c: Optional[float] = None,
+    precision_j3c: Optional[float] = None,
+    _image_cache: Optional[dict] = None,
+    _image_pairs: Optional[Sequence] = None,
 ) -> np.ndarray:
     r"""Per-(k_bra, k_ket) Mixed Density Fitting cderi (multi-k MDF).
 
@@ -5254,14 +6388,14 @@ def build_lpq_bloch_mdf(
     Structure (``q = k_ket - k_bra``):
 
     * **Gaussian part -- real-space libint on the compensated fused basis,
-      Bloch-summed at q** (``compute_2c/3c_eri_lattice_blocks`` +
-      ``bloch_sum_*`` at ``q``, as in :func:`build_lpq_bloch_compcell`).
-      This is q-only, but that is *correct for MDF*: only the steep aux
-      survive the PW-dressed-metric orthogonalisation, and a steep core
-      fit is local, so its q-only and ket-resolved forms coincide. The
-      smooth, inter-cell part the q-only Gaussian misses is carried by the
-      ket-resolved PW residual below (this is the whole point of the MDF
-      split).
+      ket-resolved.** The metric is Bloch-summed at ``q``; the 3c tensor
+      is ``sum_{T,R} exp(i k_ket.R) exp(-i q.T) (phi_{P,T} | mu_0 nu_R)``,
+      the ket images at ``k_ket`` and the auxiliary images at ``-q``
+      (:func:`aux_image_3c`, Sun 2017 Eq. 15). Until 2026-09-29 it was
+      Bloch-summed at ``q`` with the auxiliary function kept in the home
+      cell, which is exact only when neither image family reaches the AO
+      pairs; that omission, not the auxiliary basis, is what made the
+      dense-core class diverge (#172).
     * **PW residual -- ket-resolved on the q-shifted modest mesh**
       ``{G + q}``: the ket-Bloch AO-pair FT ``r̂_muν(G+q; k_ket)`` (C++
       kernel at ``k_cart = k_ket``) and the q-shifted compensated-aux FT,
@@ -5274,6 +6408,10 @@ def build_lpq_bloch_mdf(
       G=0 term arises. The overlap is the k-resolved Bloch overlap at
       ``k_ket``.
 
+    ``precision_j2c`` (default :data:`_MDF_PRECISION_J2C`) sets the
+    accuracy the dressed metric ``J̃(q)`` is built to, independently of
+    ``rcut_precision``; see :func:`build_lpq_mdf`.
+
     See :func:`build_lpq_mdf` for the V̄_P closed form and
     ``docs/design_mdf.md`` for the derivation. Γ-diagonal
     (``k_bra=k_ket=0``) reproduces :func:`build_lpq_mdf` to ~1e-12.
@@ -5283,9 +6421,7 @@ def build_lpq_bloch_mdf(
     cderi : (n_kept + n_pw, n_orb, n_orb) complex128
         Combined Gaussian + PW residual cderi, libint m-ordering.
     """
-    from ._aopair_ft import ao_pair_fourier_transform_bloch
     from ._vibeqc_core import bloch_sum as _bloch_sum
-    from ._vibeqc_core import direct_lattice_cells
 
     if lat_opts is None:
         lat_opts = LatticeSumOptions()
@@ -5296,15 +6432,23 @@ def build_lpq_bloch_mdf(
     k_ket = np.asarray(k_ket, dtype=float).reshape(3)
     q = k_ket - k_bra
     is_gamma = float(np.linalg.norm(q)) < 1e-12
+    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
+    if precision_j2c is None:
+        precision_j2c = _MDF_PRECISION_J2C
+    if precision_j3c is None:
+        precision_j3c = _MDF_PRECISION_J3C
 
-    # --- Gaussian part: compensated fused basis, real-space cell blocks
-    #     Bloch-summed at q (q-only; see docstring). No AFT (MDF uses PW). ---
+    # --- Gaussian part: compensated fused basis, real-space cell blocks,
+    #     ket-resolved with the auxiliary images (see docstring). No AFT
+    #     (MDF uses PW). ---
     modrho_aux = make_modrho_aux_basis(aux_basis, molecule)
     chg = make_compensating_basis(modrho_aux, molecule, eta=compcell_eta)
     fused = make_fused_basis(modrho_aux, chg, molecule)
     A = fuse_transform_matrix(modrho_aux, chg)
     n_aux = modrho_aux.nbasis
     n_orb = ao_basis.nbasis
+
+    joint_basis = _mdf_joint_basis(ao_basis, fused, molecule)
 
     if rcut_strategy is not None:
         from .lattice_screening import RcutStrategy, make_lattice_opts
@@ -5314,14 +6458,6 @@ def build_lpq_bloch_mdf(
         lat_opts_2c = make_lattice_opts(
             fused, strategy=rcut_strategy, base_opts=lat_opts, precision=rcut_precision
         )
-        joint_shells = [
-            ShellInfo(
-                int(s.atom_index), int(s.l), bool(s.pure),
-                list(s.exponents), list(s.coefficients), list(s.origin),
-            )
-            for s in list(ao_basis.shells()) + list(fused.shells())
-        ]
-        joint_basis = BasisSet(molecule, joint_shells, "<ao∪fused>", True)
         lat_opts_3c = make_lattice_opts(
             joint_basis, strategy=rcut_strategy, base_opts=lat_opts,
             precision=rcut_precision,
@@ -5330,39 +6466,43 @@ def build_lpq_bloch_mdf(
         lat_opts_2c = lat_opts
         lat_opts_3c = lat_opts
 
+    if pw_on:
+        # J-tilde(q) is built to its own accuracy, not the cell's.
+        lat_opts_2c = _mdf_fit_lattice_opts(
+            fused, system, lat_opts_2c, precision_j2c, n_aux
+        )
+        if precision_j3c is not None:
+            lat_opts_3c = _mdf_fit_lattice_opts(
+                joint_basis, system, lat_opts_3c, precision_j3c, n_aux
+            )
+
     _, m_vecs, m_blocks = compute_2c_eri_lattice_blocks(fused, system, lat_opts_2c)
     _, t_vecs, t_blocks = compute_3c_eri_lattice_blocks(
         ao_basis, fused, system, lat_opts_3c
     )
     M_fused = bloch_sum_2c_eri_blocks(m_vecs, m_blocks, q)
-    T_fused = bloch_sum_3c_eri_blocks(t_vecs, t_blocks, q)
+    T_fused = bloch_sum_3c_eri_blocks(t_vecs, t_blocks, k_ket)
+    T_fused = T_fused + _pair_aux_images(
+        system, ao_basis, fused, lat_opts_3c, k_bra, k_ket,
+        precision=float(rcut_precision), cache=_image_cache, pairs=_image_pairs,
+    )
     M_fused = 0.5 * (M_fused + M_fused.conj().T)
-    if is_gamma:
+    if is_gamma and float(np.linalg.norm(k_ket)) < 1e-12:
         T_fused = 0.5 * (T_fused + np.swapaxes(T_fused, 1, 2))
     M = A @ M_fused @ A.T
     M = 0.5 * (M + M.conj().T)
     T = np.einsum("iP,Pmn->imn", A, T_fused, optimize=True)
 
     # --- PW residual: q-shifted modest mesh, ket-Bloch pair FT. ---
-    pw_on = mdf_ke_cutoff is not None and float(mdf_ke_cutoff) > 0.0
     if pw_on:
-        G_all = rsgdf_dense_g_mesh(system, float(mdf_ke_cutoff))
-        Gq = G_all + q[None, :]
-        Gq2 = (Gq**2).sum(axis=1)
-        nz = Gq2 > 1e-12
-        Gq = Gq[nz]
-        coul = (4.0 * np.pi) / Gq2[nz] / V
+        Gq, Gq2, pair_ft = _mdf_plane_wave_pair_ft(
+            ao_basis, system, float(mdf_ke_cutoff),
+            float(lat_opts_3c.cutoff_bohr), q, k_ket,
+        )
+        coul = (4.0 * np.pi) / Gq2 / V
 
         aux_ft_fused = rsgdf_aux_fourier_transform(fused, Gq)
         rho_aux = A @ aux_ft_fused  # (n_aux, n_G)
-
-        cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
-        R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
-        if R_g.size == 0:
-            R_g = np.zeros((1, 3), dtype=float)
-        pair_ft = ao_pair_fourier_transform_bloch(ao_basis, Gq, R_g, k_cart=k_ket)
-        ao_scales = _ao_scales_for_rsgdf(ao_basis)
-        pair_ft = pair_ft * np.outer(ao_scales, ao_scales)[:, :, None]
 
         aux_w = rho_aux.conj() * coul[None, :]  # (n_aux, n_G)
         pw_2c = aux_w @ rho_aux.T  # (n_aux, n_aux) complex Hermitian
@@ -5372,18 +6512,12 @@ def build_lpq_bloch_mdf(
         if is_gamma:
             # G=0 self-term (diagonal pair only): V̄_P = -pi^{5/2}.(A@m),
             # r̄_muν = S^{k_ket}_muν / Ω (the k-resolved Bloch overlap).
-            m_fused = np.zeros(fused.nbasis)
-            _off = 0
-            for sh in fused.shells():
-                nb = (2 * sh.l + 1) if sh.pure else ((sh.l + 1) * (sh.l + 2) // 2)
-                if sh.l == 0:
-                    a = np.asarray(sh.exponents, dtype=float)
-                    c = np.asarray(sh.coefficients, dtype=float)
-                    m_fused[_off : _off + nb] = float(np.sum(c * a ** (-2.5)))
-                _off += nb
-            vbar = -(np.pi**2.5) * (A @ m_fused)  # (n_aux,)
+            vbar = A @ _fused_g0_potential(fused)  # (n_aux,)
             S_ao = _bloch_sum(
-                compute_overlap_lattice(ao_basis, system, lat_opts), k_ket
+                compute_overlap_lattice(
+                    ao_basis, system,
+                    _g0_overlap_lattice_opts(lat_opts, system, ao_basis)),
+                k_ket,
             )
             S_ao = 0.5 * (S_ao + S_ao.conj().T)
             T = T - vbar[:, None, None] * (S_ao / V)[None, :, :]
@@ -6214,7 +7348,7 @@ def _contract_slab_gdf_gamma(
     Exchange additionally receives the rigorous 2D probe-charge correction.
     This helper is deliberately Gamma-only while multi-k weights and singular
     transfer ownership remain unversioned follow-ups (G-PBC-004's energy
-    envelope is resolved; see `handovers/HANDOVER_GATED_ITEMS.md`).
+    envelope is resolved).
     """
     if float(np.linalg.norm(fit.q_cart)) > 1e-12:
         raise ValueError("_contract_slab_gdf_gamma requires q_cart == 0")

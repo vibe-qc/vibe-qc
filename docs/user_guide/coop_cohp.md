@@ -17,15 +17,17 @@ COHP curves.
 
 The high-level periodic runner is the supported way to compute COOP, COHP,
 periodic Mayer bond orders, total DOS, and PDOS as one post-SCF output family.
-The following complete example uses a 1D H2 chain:
+The following complete example uses an H2 chain. vibe-qc has no route with a
+consistent 1-D Coulomb gauge, so the chain is a `dim=3` cell with vacuum on
+the two transverse axes:
 
 ```python
 import vibeqc as vq
 
 a = 6.0
-vacuum = 30.0
+vacuum = 15.0
 system = vq.PeriodicSystem(
-    dim=1,
+    dim=3,
     lattice=[[a, 0.0, 0.0], [0.0, vacuum, 0.0], [0.0, 0.0, vacuum]],
     unit_cell=[
         vq.Atom(1, [0.0, vacuum / 2, vacuum / 2]),
@@ -39,8 +41,8 @@ result = vq.run_periodic_job(
     basis,
     method="RKS",
     functional="lda",
+    jk_method="gdf",
     kpoints=[8, 1, 1],
-    dos_kmesh=[32, 1, 1],
     output_qvf=True,
     coop_cohp=True,
     output="h2-chain-coop-cohp",

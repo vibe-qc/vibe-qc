@@ -88,3 +88,67 @@ def test_qvf_snapshot_link_resolution_preserves_unrelated_references(monkeypatch
     )
     for source, target in unrelated:
         assert resolve(str(source), target) is None, (source, target)
+
+
+def test_included_and_external_document_links_render(tmp_path: Path) -> None:
+    """Repository navigation survives inclusion in the published Sphinx site."""
+    import subprocess
+    import sys
+
+    pytest.importorskip("sphinx")
+    pytest.importorskip("myst_parser")
+    source = tmp_path / "docs"
+    (source / "user_guide").mkdir(parents=True)
+    (tmp_path / "studies/skala-showcase").mkdir(parents=True)
+    (source / "conf.py").write_text(
+        "extensions = ['myst_parser']\nmaster_doc = 'index'\n", encoding="utf-8"
+    )
+    (source / "index.md").write_text(
+        "# Navigation\n\n```{toctree}\ncontributing\nuser_guide/skala\ntesting\n```\n",
+        encoding="utf-8",
+    )
+    (source / "contributing.md").write_text(
+        "```{include} ../CONTRIBUTING.md\n```\n", encoding="utf-8"
+    )
+    (source / "testing.md").write_text("# Testing\n", encoding="utf-8")
+    (tmp_path / "studies/skala-showcase/README.md").write_text(
+        "# Campaign\n\n## Select BIPOLE for the LiF inputs\n", encoding="utf-8"
+    )
+    cases = (
+        (REPO / "CONTRIBUTING.md", "testing policy and inventory",
+         tmp_path / "CONTRIBUTING.md", "# Contributing\n\n"),
+        (DOCS / "user_guide/skala.md", "campaign instructions",
+         source / "user_guide/skala.md", "# SKALA\n\n"),
+    )
+    for original, label, fixture, heading in cases:
+        # Read the link under test from the real source, preserving its target.
+        match = re.search(r"\[" + re.escape(label) + r"\]\([^\n)]+\)",
+                          original.read_text(encoding="utf-8"))
+        assert match is not None, label
+        fixture.write_text(heading + match.group(0) + "\n", encoding="utf-8")
+
+    def build(name: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "sphinx", "-b", "html", "-W",
+             "--keep-going", "-q", str(source), str(tmp_path / name)],
+            capture_output=True, text=True, timeout=60,
+        )
+
+    rendered = build("html")
+    assert rendered.returncode == 0, rendered.stderr
+    for page, label, destination in (
+        ("contributing.html", "testing policy and inventory",
+         "https://vibe-qc.com/docs/testing.html"),
+        ("user_guide/skala.html", "campaign instructions",
+         "https://github.com/vibe-qc/vibe-qc/blob/main/studies/skala-showcase/README.md"
+         "#select-bipole-for-the-lif-inputs"),
+    ):
+        html = (tmp_path / "html" / page).read_text(encoding="utf-8")
+        assert f'href="{destination}"' in html, label
+
+    # Strict checking must still reject an unrelated typo in the same source.
+    with (source / "user_guide/skala.md").open("a", encoding="utf-8") as stream:
+        stream.write("\n[unrelated reference](missing-document.md)\n")
+    control = build("control-html")
+    assert control.returncode != 0
+    assert "missing-document" in control.stderr, control.stderr

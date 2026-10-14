@@ -101,9 +101,264 @@ enumeration with the same screening. Low-level J/K results expose
 `shell_quartets_considered` to compare work independently of machine load.
 Shell-prefix bounds reject groups before quartet expansion, and surviving
 integrals reuse primitive shell pairs in a bounded worker-local cache.
+The cell-pair gate cache allocates rows only when traversal reaches them,
+avoiding a quadratic clearing pass for mostly unvisited image pairs. Concurrent
+shell-pair workers share each initialized row; dense traversal retains the same
+two-bit gate states and work counters. Screening, summation order, and supplied
+domains are unchanged.
+Within the sparse shell-pair traversal, Coulomb and exchange use separate
+worker tasks because they accumulate into separate matrices. Each task retains
+the complete ordered sum for its output shell pair. This exposes more work
+to the existing workers and shortens their sorting lists, with the same
+per-worker scratch budget. Pure Coulomb and pure exchange builds use only
+their requested channel. This is an implementation choice addressing integral
+processing cost, one of the direct-SCF priorities in Almlöf et al. (1982),
+Section II.A, [doi:10.1002/jcc.540030314](https://doi.org/10.1002/jcc.540030314);
+it introduces no new integral bound or density approximation.
+Quartet work entries use fixed integer fields for the two cell and two shell
+indices. Their numeric order is the same as the direct contraction order;
+decoding uses shifts instead of division. The existing sparse limits of
+16384 cells and 256 shells fit in 44 bits. Larger domains retain the direct
+fallback, and the work-list memory budget is unchanged.
+This complements the hierarchy of Schwarz and distance screening described by
+Izmaylov, Scuseria and Frisch, J. Chem. Phys. **125**, 104103 (2006),
+[doi:10.1063/1.2347713](https://doi.org/10.1063/1.2347713).
+The implementation uses the supplied density images instead of assuming
+insulating density decay. Causà et al., J. Phys. Chem. **92**, 909-913 (1988),
+[doi:10.1021/j100315a010](https://doi.org/10.1021/j100315a010), discuss why
+exchange ranges differ between insulating and metallic systems.
+For all-s-shell quartets, the sparse short-range traversal evaluates the scalar
+fundamental integral directly, using the existing Libint primitive-pair screens
+and Boys evaluator. Other angular classes keep the general integral engine.
+This follows Ahlrichs (2006), Eqs. (39), (40) and (52),
+[doi:10.1039/b605188j](https://doi.org/10.1039/b605188j).
+Primitive order, integral precision, finite image domains and density contraction
+order are preserved; this is not an additional screening approximation.
+Quartets with exactly one p shell use the first angular recurrence directly,
+following Ahlrichs (2006), Eqs. (24), (31) and (52). They retain the general
+engine's canonical primitive ordering and Cartesian or solid-harmonic output
+convention. Quartets with two p shells use the second recurrence and, when both
+p shells are on the same electron, the angular-transfer relation of Eq. (34)
+after primitive contraction. Three-p quartets use the vertical recurrence
+through the canonical `ps|ds` intermediate, then transfer angular momentum
+on the ket after contraction to obtain `ps|pp`, following Eqs. (31)-(34).
+The evaluator restores the caller's pair order after the Cartesian or
+solid-harmonic transformation. Four-p and higher angular classes continue
+through the general engine.
+Unrestricted HF and hybrids share an ERI evaluation when both spin densities
+need the same quartet. Each spin retains its own screening predicate and
+summation order. Incremental builds prepare both density changes before the
+joint traversal, keeping separate references and reset schedules. This uses
+the compressed shell-density bounds and incremental Fock relation of
+Almlöf et al. (1982), Eqs. (17)-(20),
+[doi:10.1002/jcc.540030314](https://doi.org/10.1002/jcc.540030314).
+The shared traversal serves the unreduced serial padded route, including
+dedicated screened exchange. Existing symmetry, MPI output-cell farming and
+older native runtimes retain their separate builds. The native paired-domain
+API requires matching ordered density cell templates; its two results report
+the same shared work counters, which must not be added together.
+Logarithms of the compressed shell-density bounds are prepared once per build
+and reused by product screening. Each density update rebuilds them. A smaller
+spin bound retains its own scalar logarithm, and the final screening predicates
+and conservative candidate-search margin are unchanged.
+Exchange leaves can refine their density maximum using 64 classes of integer
+lattice indices modulo four. Each class contains the maximum over every
+supplied density image for the shell pair, including distant images and both
+spin channels when paired. This does not assume periodic density or decay.
+The class table is rebuilt for each density update and is limited to 8 MiB;
+larger shell sets retain the global shell-pair maximum. Final integral gates
+and the summation order remain unchanged, while earlier rejection can reduce
+candidate counters. This adapts the density-bound hierarchy of Izmaylov et al.
+(2006), Eqs. (51)-(56), to nonmonotonic finite-mesh density images.
+Before geometric traversal, exchange also tests a density-weighted Schwarz
+maximum for each product subtree. A rejection skips every contained ket pair;
+the final Schwarz product association and accepted integral set are unchanged.
+These maxima depend on the range parameter and belong to the kernel snapshot,
+separately from the shared geometric tree. The table is limited to 8 MiB per
+retained kernel, with the existing traversal as fallback. This applies the
+batched screening hierarchy of Izmaylov et al. (2006), Sections II.B and II.D,
+using maxima of the prepared Schwarz factors.
+The whole-tree maximum is also tested before constructing the charge search
+sphere. A rejected ket shell pair therefore avoids the radius lookup and
+traversal setup, using the same kernel-specific bound and multiplication order.
+Bra pairs are grouped by partner shell and sorted by their Schwarz factor
+within each range. For a fixed density shell pair, the ket maximum and density
+maximum are constant, so rejection can stop the remaining range. These maxima
+still include every supplied image; no density decay or periodicity is assumed.
+Compact range offsets share the 64 MiB pair-list budget, and accepted quartets
+are sorted into the original order before accumulation.
+Final exchange screening reuses the cross-pair charge factor and ket displacement
+already resolved by the same traversal. This removes repeated geometry lookups
+without retaining state across density updates or changing any screening test.
+The product-center hierarchy uses subtree jump indices for iterative traversal.
+It retains the same bounds, leaf order and early termination, without a recursive
+call for each tree node. When the combined envelope and index memory budgets
+have room, leaves also retain contiguous copies of the product envelopes,
+cell positions and cell indices. This avoids indirect geometry loads during
+repeated scans. The copies use spare capacity within the existing combined
+192 MiB preparation limit; larger domains retain the original indexed lookup.
+The copies belong to the geometry workspace and preserve the bounds,
+leaf order and summation order.
+This follows the separation of geometry preparation and contraction in
+Izmaylov et al. (2006), Section II.D.
+For normal positive distances, power-of-two bounds on the distance logarithm
+can settle a product-screening decision without evaluating that logarithm.
+The bounds include rounding slack; ambiguous decisions and exceptional distances
+retain the original scalar logarithm and screening threshold.
+During an SCF calculation, the Fock context retains geometry-only preparation
+for the direct erfc build: shifted shells, Schwarz factors, and charge/product
+search bounds. The workspace checks the exact shell primitives, contractions,
+centers, angular conventions, ordered cell indices and coordinates, lattice,
+kernel parameter and screening modes before reuse. A geometry change replaces
+retained preparation. Up to two kernel states share the same shifted shells
+and, when applicable, Gaussian-product tree. This covers the Ewald split and
+HSE screened-exchange parameters without rebuilding geometry when they
+alternate. Each kernel retains its own Schwarz and charge bounds; a third
+kernel evicts the least recently used state. In-flight builds retain their
+own snapshots. Density values and support, output masks, density-weighted bounds,
+integral engines and accumulated J/K matrices are rebuilt for each call.
+This follows the separation of two-index preparation from the density
+contraction described in Section II.D of Izmaylov et al. (2006). Each Fock
+context owns its workspace; there is no process-global geometry cache.
+For unrestricted screened hybrids, exactly equal alpha and beta lattice
+densities share one screened-exchange traversal within a Fock build. Density
+blocks, ordered cell indices and coordinates must all match; no tolerance or
+spin-multiplicity assumption is used. Each spin retains its own Fock and energy
+contraction, and exchange matrices are not reused across Fock builds.
+The short-range Ewald J/K build for unrestricted HF and global hybrids also
+shares a traversal for exactly matching spin inputs. Incremental builds compare
+the actual density increments after each spin's independent history and reset
+schedule, so equal current densities alone do not trigger reuse. Returned spin
+matrices remain independent for in-place Fock assembly. This reuses the same
+density contraction in Izmaylov et al. (2006), Eq. (7); it does not introduce a
+spin approximation or alter integral screening.
+The dedicated screened-exchange traversal skips Coulomb candidates and
+contractions: its J contribution is already supplied by the base Fock build.
+The native domain API offers `compute_coulomb=False` for this purpose and
+returns zero J blocks while preserving the selected K domain, output masks
+and contraction order. Padded and symmetry-reduced screened builds use this
+selection when supported by the native runtime; older runtimes retain the
+combined J/K traversal. This separates the screened exchange operator of
+Heyd et al. (2003), Section II.A, Eq. (6),
+[doi:10.1063/1.1564060](https://doi.org/10.1063/1.1564060), from the independently
+assembled Coulomb term without changing either operator.
+Padded-domain projection, MPI output collection and screened-exchange Fock
+updates export each native block vector once per pass. This avoids repeated
+conversion of the entire lattice inside per-cell loops. Cell ordering, copied
+output blocks and the exchange contraction are unchanged; symmetry reads the
+updated Fock blocks after the screened correction.
+On the existing historical-domain symmetry route (`historical_domain=True`),
+pure DFT requests only J, including incremental and final-density builds.
+The reduced helper returns `K=None`, so no exchange
+matrices are built, reconstructed or stored in the incremental accumulator.
+This optimization does not extend symmetry admission to physical quartet domains.
+Very small Gaussian-product envelopes retain logarithmic upper bounds, keeping
+the screening tree usable when their direct masses underflow. Source domains
+and screening tolerances remain unchanged.
+Whole-output bounds avoid allocating cell-pair gate tables for blocks whose
+contributions are all screened out; these blocks remain present as zeros in
+the result. Exchange tree queries use a separate density maximum for each
+shell pair, taken over every supplied density image. The final quartet tests
+and contraction order remain unchanged.
 Dense candidate lists switch to a bitmap when the full pair domain fits
 within the same 2 MiB scratch budget. Larger domains fall back to exhaustive
 enumeration if their candidate list fills.
+
+Reciprocal J-cache normalization updates its owned Fourier array in place,
+avoiding a second array of the same size. The retained reciprocal cache can
+still dominate memory for large cells or reciprocal cutoffs; this reduces
+temporary storage without changing its support or numerical values.
+
+Multi-k long-range exchange groups target/source pairs by their existing
+momentum-transfer channel and evaluates source Bloch phases in batches.
+Unrestricted HF and hybrid KS share those panels across both spins. The
+physical AO-pair support, full source mesh and weights are preserved.
+The default method builders retain at most 256 MiB of nonzero-transfer Fourier
+panel payload and request at most 64 MiB of new panel payload per batch.
+Small calculations reuse retained panels; larger calculations recompute panels
+that do not fit. These limits exclude native scratch, metadata, densities,
+outputs and the shared J cache, so they are not total process-memory limits.
+The low-level `compute_K_long_range_mesh` helper accepts `max_cached_bytes`
+and `max_batch_bytes` overrides. Oversized panels are contracted in reciprocal
+vector slices and are not retained. Budgets below one AO-pair reciprocal
+slice are refused before Fourier evaluation. The diagnostic per-target helper
+retains its existing cache behavior. This optimization does not qualify symmetry reduction,
+change the exchange zero-mode convention or establish CRYSTAL23 speed parity.
+
+Per-k density reconstruction uses the native torus contraction when available.
+Its Hermitian projection is evaluated before writing the result, preserving
+conjugate off-diagonal entries even when the unprojected fold is asymmetric.
+
+Periodic meta-GGA and external-functional XC builds reuse the AO-gradient
+times density matrix product when forming the density gradient and kinetic
+energy density. Each worker retains one gradient product at a time. The image
+domain, quadrature and screening settings are unchanged; the external provider still
+receives the complete grid in one call.
+
+AO value and gradient evaluation reuses small Cartesian and spherical
+transform vectors within each shell's grid-point loop. Each thread owns its
+scratch storage, including when building screened periodic image tables.
+This removes repeated allocations without changing AO conventions, grid
+points, image support or screening.
+
+BIPOLE RKS and UKS request XC potentials directly in k-point order. On a
+complete uniform mesh, the native builder checks that the supplied real-space
+density obeys the mesh's signed periodicity, including half-step shifts. It
+then groups retained AO-image pairs with identical torus residues and neighbor
+sets, sums their screened AO columns, and contracts each group once. This
+preserves missing image differences, separate density and potential screens,
+spin channels and the full external-provider grid. It applies to semilocal,
+hybrid and external XC functionals, including the SKALA host interface.
+When a group's bra and ket image lists are identical, both contractions use
+the same signed AO sum, including its gradients, within that grid batch.
+
+Nonperiodic initial densities, incompatible meshes and groups that would cost
+more than the original pairs retain the pair calculation. The original grid
+batch boundaries are preserved; grouping is also skipped when its extra
+scratch would exceed the native workspace limit. Native
+`build_xc_periodic_kpoints` and `build_xc_periodic_uks_kpoints` return per-k
+potentials and report whether grouping was used. Consumers needing individual
+real-space XC matrices or their derivatives continue to use
+`build_xc_periodic` and `build_xc_periodic_uks`. A contraction optimization
+alone does not establish full-SCF performance parity with a reference code.
+
+For angular-grid convergence studies, `GridOptions` also supports Lebedev
+orders 59, 65, 77 and 95, with 1202, 1454, 2030 and 3074 points per radial
+shell. Select `angular="lebedev"`, the requested `lebedev_order`, and
+`angular_pruning="none"` to compare uniform rules. These are explicit choices;
+the default grid and named presets are unchanged. Check XC energy, potential
+and SCF convergence as well as radial and image support before replacing a
+converged product grid with a smaller Lebedev grid.
+
+For Gamma and multi-k RHF/UHF/RKS/UKS, `run_periodic_job` accepts
+`conv_tol_grad` as a positive finite SCF commutator tolerance, including
+hybrid and external-functional calculations. It is independent of the
+atomic-force tolerance used for geometry optimization. Omitting it retains
+the driver default of `1e-6`; an explicit value is preserved under
+`convergence="auto"`. The `.out` file reports the executed value. For example,
+`conv_tol_energy=1e-9, conv_tol_grad=1e-8` tightens both SCF checks without
+changing the basis, lattice support or quadrature.
+
+RKS also checks that diagonalizing the physical Fock reproduces the evaluated
+density to `conv_tol_grad`. A small commutator can coexist with an update above this
+fixed-point tolerance. If that provisional update fails density closure and
+SCF acceleration is active, RKS retries the orbital update once using the
+already computed accelerated Fock. It evaluates the resulting density in the
+next SCF iteration before considering convergence. The retry uses the
+configured occupation rules and retains the ordinary stationarity guards for
+Fock mixing and level shifts. It adds no Fock or XC build. The progress stream
+reports this retry explicitly.
+
+All four ab initio BIPOLE drivers repeat the density-closure check on the
+final non-incremental Fock, using their occupation rules, full mesh weights
+and real-space density support. UHF and UKS check both spin densities.
+Passing energy and commutator checks alone is insufficient. A failed density
+check continues SCF when iterations remain; at the iteration limit the result
+is non-converged. The check adds no Fock or XC build. Finalization reuses the
+exact Fock; RKS and UKS also reuse its canonical bands. HF retains its
+semicanonical output convention. Evaluated density, energy and entropy remain
+authoritative, including fractional occupations, MOM and spinlock. The separate
+experimental chi XC path retains its existing convergence checks.
 
 The loop's Fock is built incrementally (`use_incremental_fock`, the
 J$_{SR}$/K$_{SR}$ increments from $\Delta D$ under density-envelope
@@ -122,7 +377,13 @@ values are logged and emitted as `scf_terminal_check` structured events
 (`phase` `in_loop` / `post_loop`, `energy_loop`, `energy_exact`, `delta_e`,
 `grad_norm_loop`, `grad_norm_exact`, `passed`), and a refused run's
 `RuntimeError` names the terminal delta and commutator norm against the
-tolerances. `scf_trace[-1].delta_e` is that terminal delta.
+tolerances. `scf_trace[-1].delta_e` is that terminal delta. On a
+Monkhorst-Pack mesh the commutator norm and the terminal electron count
+are measured on the Born-von-Karman torus fold of the real-space density
+in every gauge, including the direct gauge of 1-D and 2-D cells, whenever
+the density cell list covers the torus: the stored density is periodic on a
+cell list wider than the torus, and a plain Bloch sum over that list would
+overcount it. A list shorter than the torus keeps the plain sum.
 
 That exact rebuild is the expensive post-SCF phase. It screens the full
 density, whose image support can be much larger than the localized initial
@@ -142,6 +403,13 @@ mandatory cold build on a max-iteration exit if no exact build already exists
 for that density. A failed confirmation at the iteration cap also reuses its
 exact build and remains non-converged. A build that raises ends
 with `status="raised"` rather than a successful end.
+
+When a native-functional RKS or UKS confirmation is refused and SCF continues,
+the next iteration reuses its XC quadrature only if the committed density is
+unchanged and undamped. J/K construction and the later exact confirmation still
+run. This one-shot reuse retains the XC energy and potential together; it does
+not reuse the assembled Fock or its DFT+U correction. External-functional
+callbacks and the separate chi XC path retain their existing evaluation sequence.
 
 `vibeqc.run_pbc_bipole_uhf` uses the same one-electron and Ewald-J
 machinery with unrestricted spin densities:
@@ -219,7 +487,7 @@ Two reasons:
 | 5b | retired | Cell-level multipole far-field research artifact; not driver-reachable |
 | 6a | **fail-closed (2026-08-13)** | Quartet-level prototype retained for redesign; explicit driver requests raise before SCF |
 | 6b | landed | `compute_ext_el_spheropole` higher-l terms |
-| POLIPO | **landed (2026-08-11)** | Native C++ multipole moment engine (McMurchie-Davidson Hermite kernel, OpenMP); 6/6 libint parity tests pass; ~200\u00d7 slower than libint (optimization pending) |
+| POLIPO | **landed (2026-08-11)** | Native C++ multipole moment engine (McMurchie-Davidson Hermite kernel, OpenMP); 6/6 libint parity tests pass; ~200× slower than libint (optimization pending) |
 | 7 | roadmap | CRYSTAL14 numerical-parity sign-off on the 15 demo set; BIPOLE parity tests cover LiH/NaCl/MgO/diamond/Si to < 1 mHa |
 
 Phase 1-5 plus the exact Ewald-J split give the production BIPOLE
@@ -386,12 +654,30 @@ examples/periodic/input-bipole-*.py
     run_periodic_job with jk_method="bipole".
 ```
 
+## Finite-temperature results
+
+For finite-temperature RKS/UKS, `energy`, `entropy` and `free_energy` describe
+the committed density, with `free_energy = energy - smearing_temperature * entropy`.
+Final canonical band eigenpairs and their refilled occupations describe the
+Fock operator evaluated at that density. On an iteration-limited return they
+can predict a different next density; their refilled entropy must not replace
+the committed density's entropy. Exact convergence checks use the same
+committed-density free energy before and after final canonicalization.
+
 ## Forces and analytic-gradient preview
 
 Production BIPOLE atomic forces use
 ``compute_bipole_gradient_fd``.  It finite-differences the same total
 energy reported by the SCF driver, so it is the default path used by
 geometry optimization and NEB for all four BIPOLE methods.
+
+Physical pair and product-midpoint cutoffs are sharp. A displacement that
+adds or removes a retained integral can produce a small energy jump, so
+neither a finite-difference quotient nor the analytic preview is a smooth
+force at that boundary. Check force stability against both displacement size
+and domain cutoff; reducing the displacement alone can amplify a boundary
+jump. Analytic comparisons require unchanged support across the displaced
+geometries, in addition to the capability restrictions below.
 
 ```python
 from vibeqc.bipole_gradient import (
@@ -469,10 +755,11 @@ objective and finite-difference forces, including custom bases whose names
 do not exist in the library. Trajectory output keeps the basis name as its
 display label.
 
-For an in-memory basis name, select `initial_guess="HCORE"` in
-`run_periodic_job`, or set the direct API's `options.initial_guess` to
-`InitialGuess.HCORE`. The default SAD guess still resolves atomic bases by
-name; preserving the optimization basis does not change that guess builder.
+SAD constructs atomic states from the supplied basis shells, including
+in-memory bases with arbitrary display names and modified primitives retaining
+a library name. It preserves their normalized coefficients and angular
+representation. Equal-element atoms with different local bases have separate
+atomic states; identical local bases share the atomic calculation.
 
 Atomic relaxation preserves the input lattice. The historical
 `relax_cell`, `relax_cell_gradient`, and `relax_full` entry points remain
@@ -492,13 +779,14 @@ virial = compute_stress_tensor(system, gradient)  # diagnostic 3×3, Ha/bohr³
 |---|---|---|---|---|
 | 3D | Ewald J-split (default) or DIRECT_TRUNCATED | FD production; analytic research preview | Fixed-cell atoms | Variable-cell entry points fail closed |
 | 2D (surfaces) | DIRECT_TRUNCATED only | Diagnostic coverage only | Fails closed | Public BIPOLE rejects; use SLAB_EWALD_2D or slab GDF |
-| 1D (wires) | DIRECT_TRUNCATED only | Diagnostic coverage only | Fails closed | Public BIPOLE rejects; AUTO uses GDF |
+| 1D (wires) | DIRECT_TRUNCATED only | Diagnostic coverage only | Fails closed | Public BIPOLE and AUTO reject; model a wire as a `dim=3` cell with transverse vacuum |
 
 For 2D/1D, only the direct BIPOLE drivers automatically fall back to
 ``DIRECT_TRUNCATED`` when ``use_ewald_j_split=None``. Treat that branch as a
 vacuum-padded molecular-limit diagnostic, not a low-dimensional Coulomb
-model. Use GDF for wires and SLAB_EWALD_2D (or the bounded closed-shell slab
-GDF route) for genuine surfaces.
+model. Model a wire as a `dim=3` cell with transverse vacuum, and use
+SLAB_EWALD_2D (or the bounded closed-shell slab GDF route) for genuine
+surfaces.
 
 ## Orbital and population sidecars
 
@@ -508,8 +796,12 @@ and the difference matters:
 
 | Sidecar | Option | What BIPOLE writes |
 |---|---|---|
-| `{out}.population.{txt,json}` | `write_population_file` | A **crystal** population. Mulliken contracts the real-space lattice density and overlap blocks in the same convention as the BIPOLE SCF energy; Löwdin and Mayer contract over the full SCF k-mesh. No Γ restriction. Dipole stays unsupported: the bulk position operator needs a Berry-phase polarization. |
+| `{out}.population.{txt,json}` | `write_population_file` | A **crystal** population. Mulliken contracts the real-space lattice density with overlap on the recorded SCF one-electron domain; Löwdin and Mayer contract over the full SCF k-mesh. No Γ restriction. Dipole stays unsupported: the bulk position operator needs a Berry-phase polarization. |
 | `{out}.molden` | `write_molden_file` | The **Γ-block orbitals only**, truncated to the home cell. Requires the k-mesh to contain Γ. |
+
+For UHF and UKS, QVF atom properties also store Mulliken spin populations
+from the accepted alpha-minus-beta lattice density on that same overlap
+domain. Restricted closed-shell archives omit the spin member.
 
 ```{admonition} Prefer QVF and vibe-view over Molden for crystals
 :class: important
@@ -534,13 +826,23 @@ including every translated lattice block. For a full uniform
 Monkhorst-Pack mesh, vibe-qc performs an exact Born-von-Karman transform of
 that returned density and verifies the inverse transform against every
 source block before evaluating Bloch AOs. Alpha and beta densities are
-verified separately. The archive receives `volume.density` only when the
-same-cell lattice trace, periodic AO-image convergence, and the numerical
+verified separately. A refold-certified BvK density uses the returned SCF
+Bloch overlap to validate its electron count. Its padded density-cell list
+does not define a replacement overlap domain. Malformed overlaps or
+contradictory mesh metadata are refused. The archive receives `volume.density`
+only when this analytic count, periodic AO-image convergence, and the numerical
 primitive-cell electron count all agree. If k-point provenance is incomplete,
 the returned blocks cannot be refolded exactly, or the requested real-space
 grid is too coarse, the calculation remains successful and QVF is written
 without a density volume, together with a nonfatal output diagnostic. This
 boundary never regenerates density from orbitals or a surrogate Hamiltonian.
+The QVF file's `.system` outcome retains an omitted volume's error in
+`component_errors["volume.density"]`, independently of whether the archive
+itself was written successfully. Tight core functions can require much finer
+sampling than the default `density_spacing_bohr=0.2`: Ne/STO-3G in a 7-bohr
+cell gives 10.000022 electrons at 0.05 bohr, within the 0.005-electron charge
+check. Refinement changes only the artifact sampling, not the SCF density or
+its normalization.
 
 All three options are tri-state. `None` (the default) emits the
 sidecar when the route can produce it truthfully; `True` is a
@@ -616,3 +918,96 @@ It must also validate independent Coulomb and exchange penetration criteria,
 screened interactions, nontrivial symmetry operations, and energy-gradient
 consistency. The low-level prototype modules are not a supported numerical
 API and their isolated unit tests do not certify an SCF route.
+
+## Resolved finite-domain settings
+
+The four ab initio BIPOLE drivers return a `resolved_domain` record. It contains
+separate one-electron and two-electron lattice options, the common Ewald alpha,
+real and reciprocal reaches, Ewald precision, short-range interaction reach,
+energy and force screening settings, exact output zone and the selected XC grid.
+An explicit nuclear quadrature and the exact-FT J diagnostic cutoff are recorded
+when requested. `resolved_domain.as_dict()` is serializable;
+`resolved_domain.settings_sha256` identifies these settings. It does not identify
+the geometry, basis, native library or the retained integral tensor, and is not a
+convergence or accuracy certificate. The ordinary SCF output discloses the record.
+
+The same record accompanies exact and incremental Fock builds. Changing their
+lattice options after resolution raises an error before accumulator reuse.
+The check also covers the exact-FT J diagnostic selection and its cutoff.
+Each driver copies caller lattice options before preparing its finite operator,
+so a nuclear-cutoff clamp does not change a later run that reuses those options.
+Analytic gradient previews restore omitted lattice and grid settings from the
+result, and reject explicitly conflicting settings. Explicit original SCF lattice
+options undergo the same neutral-cell cutoff preparation on a private copy
+before comparison. The reconstructed nuclear Ewald alpha, real and reciprocal
+reaches and precision must all agree with the recorded state. Both multi-k KS orbital
+response helpers use the selected grid profile, periodic or molecular grid, and
+image radius. Older results without this record retain the previous defaults.
+Explicit nuclear-grid and exact-FT J diagnostic runs need the finite-difference
+force path with matching SCF options; the analytic preview does not certify those
+operators. Existing analytic-force capability restrictions still apply.
+Recorded non-`AUTO` XC density domains (`MOLECULAR_HOME` or
+`PERIODIC_LATTICE`) also raise `NotImplementedError` in the analytic preview:
+its Pulay, grid-motion and orbital-response helpers currently use `AUTO`.
+Use `compute_bipole_gradient_fd` with the same `xc_density_domain` and SCF
+options until all analytic consumers support that selection consistently.
+
+### Default policy and historical reproduction
+
+`run_pbc_bipole_rhf`, `run_pbc_bipole_uhf`, `run_pbc_bipole_rks` and
+`run_pbc_bipole_uks` now default to `historical_domain=False`, selecting
+`physical_pairs`. AO-product separation determines pair support, while
+short-range quartet interaction reach is a separate midpoint distance. Exchange
+retains its AC/BD integral products. This reuses the physical nuclear, J/K and
+derivative kernels; it does not enlarge a historical index ball by an arbitrary
+amount.
+
+For reproduction, pass `historical_domain=True` to a direct driver or
+`bipole_historical_domain=True` to `run_periodic_job`. This selects
+`historical_index_ball`, which is not invariant under atom-image relabelling.
+The named keyword **overrides** `options.lattice_opts.pair_complete_1e`, including
+an explicitly assigned False. Migrate an old historical input to the named
+keyword. The shared native default remains False for other consumers;
+ROHF/ROKS, GDF, semiempirical methods and SECCM are outside this migration.
+The runner rejects an explicit historical request on an inactive route.
+
+The runner forwards this choice through its RHF/UHF/RKS/UKS dispatches and
+geometry optimization. Direct optimization and `compute_bipole_gradient_fd`
+accept `historical_domain` through their driver keywords. Pass the same policy,
+Ewald, screening and grid controls at every displaced geometry. The analytic
+preview restores the SCF record when controls are omitted; an original requested
+lattice-options snapshot or the resolved snapshot is accepted, but unrelated
+changes are rejected. Caller options are never changed by policy resolution.
+KS preview calls validate that snapshot before preparing the separate XC image
+radius, so supplying the original options agrees with omitting them. Disabling
+automatic SR padding with `sr_image_precision=None` still retains the physical
+exchange density and output support in Gamma and multi-k HF derivatives. The
+one-electron and reciprocal contractions retain their own pair support.
+The shared analytic-FT Hartree derivative used by other periodic Ewald drivers
+does not yet support physical pair domains; it refuses that combination. Use
+finite differences of the same periodic SCF energy for that separate route.
+
+Physical AUTO uses the full direct Fock build. Explicit historical symmetry
+projection or symmetry reduction is refused for physical support; ECP, COSX
+and other unsupported combinations retain their capability refusals. No new
+support for those combinations follows from this default change.
+In 3D with Ewald J, physical BIPOLE also requires corrected exchange. Explicit
+`use_exchange_ewald_split=False` and an automatic fallback caused by incomplete
+Monkhorst-Pack metadata are refused before SCF. Use a complete mesh for the
+physical operator, or request the historical domain explicitly for legacy-gauge
+replay. Supported low-dimensional direct calculations are unaffected.
+
+At equal nominal radii, the two policies can retain different terms and yield
+different energies, forces and runtimes. Old energy references must be explained
+component by component and independently verified before replacement. Tolerances,
+SCF damping and cutoff defaults have not been loosened or inflated. Production
+relabelling, twelve-crystal and performance acceptance remain pending; the
+settings record is not a numerical correctness certificate.
+
+SAP uses all-space quadrature for localized initial-guess AO products. The XC
+settings in this record describe the per-cell functional and must not replace
+that SAP quadrature. No semiempirical method uses this BIPOLE record.
+
+The [physical-domain design and acceptance matrix](../bipole_domain_contract.md)
+separates the supported kernels, the approved default migration and the
+remaining numerical acceptance.

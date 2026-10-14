@@ -429,21 +429,17 @@ def _h2_cell_and_basis():
     return cell, BasisSet(cell.unit_cell_molecule(), "sto-3g")
 
 
-def test_correlation_on_chi_refuses_as_unwired():
-    """chi refuses rather than quietly running SCF-only.
-
-    A job that asked for correlation and got an SCF number back would be
-    indistinguishable from one that never asked, so this fails loudly and
-    names the library entry point that does exist.
-    """
+def test_correlation_on_chi_requires_explicit_source():
+    """Historical auto remains refused rather than silently changing source."""
 
     cell, basis = _h2_cell_and_basis()
     with tempfile.TemporaryDirectory() as d:
-        with pytest.raises(NotImplementedError, match="four-center") as exc:
+        with pytest.raises(NotImplementedError, match="explicit classic or sr") as exc:
             run_periodic_job(cell, basis, method="aiccm", variant="chi",
                              correlation="mp2", kpoints=(2, 1, 1),
                              output=os.path.join(d, "t.out"))
-        assert "chi.posthf" in str(exc.value)
+        assert "historical auto defaults are unchanged" in str(exc.value)
+        assert "No SCF-only result" in str(exc.value)
 
 
 def test_correlation_on_neutral_bloch_names_the_exact_workaround():
@@ -838,3 +834,78 @@ def test_scf_only_run_claims_no_correlation_provenance():
                          initial_guess="HCORE", output=stem)
         manifest = open(stem + ".system", encoding="utf-8").read()
         assert "aiccm_correlation" not in manifest
+
+
+@pytest.mark.parametrize('override,pattern', [
+    ({'aiccm_backend': 'four_center'}, 'RI HF'),
+    ({'chi_coulomb_controls': None}, 'explicit chi_coulomb_controls'),
+    ({'chi_support_policy': 'historical_index_ball'}, 'physical_pairs'),
+    ({'gdf_method': 'mdf'}, 'rsgdf physical_pairs'),
+    ({'conv_tol_energy': 1e-7}, 'conv_tol_energy'),
+    ({'conv_tol_grad': None}, 'conv_tol_grad'),
+    ({'smearing_temperature': .01}, 'zero-temperature'),
+    ({'optimize': True}, 'single point'),
+    ({'hessian': True}, 'single point'),
+    ({'restart_from': 'unused.npz'}, 'single point'),
+    ({'use_mom': True}, 'Aufbau'),
+    ({'symmetry_reduce_k': True}, 'unreduced'),
+    ({'chi_frozen_core': (0, 1)}, 'frozen cores'),
+    ({'chi_auxiliary_batch_size': 0}, 'positive integer'),
+])
+def test_chi_mp2_unsupported_requests_refuse_before_scf(tmp_path, monkeypatch, override, pattern):
+    import tomllib
+    import vibeqc.periodic_runner as runner
+    from vibeqc.periodic.chi.fitted import ChiCoulombControls
+    cell, basis = _h2_cell_and_basis()
+    monkeypatch.setattr(runner, 'run_aiccm2026dev_b_rhf',
+                        lambda *a, **k: pytest.fail('unsupported MP2 must refuse before SCF'))
+    stem = tmp_path / 'refused'
+    request = dict(method='aiccm', variant='chi', correlation='mp2',
+        fit_source='classic', aiccm_backend='ri', conv_tol_energy=1e-11,
+        conv_tol_grad=1e-9, chi_coulomb_controls=ChiCoulombControls(6.2,6.2,18.,8.,5.,.6),
+        kpoints=(1,1,1), output=stem, output_qvf=False, record_hostname=False)
+    with pytest.raises((ValueError, TypeError, NotImplementedError), match=pattern) as exc:
+        run_periodic_job(cell, basis, **(request | override))
+    if isinstance(exc.value, NotImplementedError):
+        manifest = tomllib.loads(stem.with_suffix('.system').read_text())
+        assert manifest['run']['refusal_stage'] == 'preflight'
+        assert manifest['outputs']['result_status'] == 'refused'
+    assert not stem.with_suffix('.out').exists()
+
+
+def test_chi_mp2_options_do_not_silently_apply_to_other_routes(tmp_path):
+    cell, basis = _h2_cell_and_basis()
+    with pytest.raises(ValueError, match='require chi correlation'):
+        run_periodic_job(cell, basis, method='rhf', chi_frozen_core=0,
+                         output=tmp_path / 'wrong-route')
+
+
+def test_chi_mp2_ecp_refuses_before_scf(tmp_path, monkeypatch):
+    import vibeqc.periodic_runner as runner
+    from vibeqc.periodic.chi.fitted import ChiCoulombControls
+    cell, basis = _h2_cell_and_basis()
+    monkeypatch.setattr(runner, '_resolve_ecp_data', lambda *a: ([], [], [], 2))
+    monkeypatch.setattr(runner, 'run_aiccm2026dev_b_rhf',
+                        lambda *a, **k: pytest.fail('ECP MP2 must refuse before SCF'))
+    with pytest.raises(NotImplementedError, match='all-electron'):
+        run_periodic_job(cell, basis, method='aiccm', variant='chi', correlation='mp2',
+            fit_source='classic', aiccm_backend='ri', conv_tol_energy=1e-11,
+            conv_tol_grad=1e-9, chi_coulomb_controls=ChiCoulombControls(6.2,6.2,18.,8.,5.,.6),
+            kpoints=(1,1,1), initial_guess='HCORE', output=tmp_path / 'ecp',
+            output_qvf=False, record_hostname=False)
+
+
+def test_chi_mp2_shifted_kpoints_refuse_before_output(tmp_path, monkeypatch):
+    import vibeqc.periodic_runner as runner
+    from vibeqc import KPoints
+    from vibeqc.periodic.chi.fitted import ChiCoulombControls
+    cell, basis = _h2_cell_and_basis()
+    monkeypatch.setattr(runner, 'run_aiccm2026dev_b_rhf',
+                        lambda *a, **k: pytest.fail('shifted chi MP2 must refuse before SCF'))
+    shifted = KPoints.monkhorst_pack(cell, (2,1,1), shift=(1,0,0), symmetry=False)
+    with pytest.raises(NotImplementedError, match='unshifted'):
+        run_periodic_job(cell, basis, method='aiccm', variant='chi', correlation='mp2',
+            fit_source='classic', aiccm_backend='ri', conv_tol_energy=1e-11,
+            conv_tol_grad=1e-9, chi_coulomb_controls=ChiCoulombControls(6.2,6.2,18.,8.,5.,.6),
+            kpoints=shifted, output=tmp_path / 'shifted')
+    assert not (tmp_path / 'shifted.out').exists()

@@ -164,7 +164,14 @@ class ConductorSurface:
 
     @property
     def ideal_screening_energy(self) -> Optional[float]:
-        """``Delta^X = E_gas - E_COSMO`` (Klamt 1998 eq. 4), Hartree.
+        """``E_gas - E_COSMO``, Hartree: the screening gain, positive for a
+        solute the conductor stabilizes.
+
+        This is Klamt 1998 eq. 4 as printed. Klamt's numbers quote the same
+        quantity with the opposite sign (water -9.3 kcal/mol in Klamt 1995;
+        -12 to 0 in Fig. 2 of the 1998 paper), and eq. 21 is written for that
+        convention; :func:`~vibeqc.solvation.cosmors.gas_phase_chemical_potential`
+        accounts for it (#435).
 
         ``None`` when either endpoint is absent; the caller must not silently
         substitute zero, which would read as "no screening gain".

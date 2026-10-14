@@ -12,7 +12,10 @@ The behaviour these pin, in order of how much a mistake would cost:
 * writes are atomic, because a truncated ``.g94`` in the cache is
   indistinguishable from a short basis and the next run would load it;
 * the cache is keyed on the catalogue version, so upgrading the
-  distribution does not silently keep serving the old record.
+  distribution does not silently keep serving the old record;
+* the cache is content-addressed (#408): a record is stored once under
+  its content hash, the name index points at it, and a record or
+  rendering whose bytes changed refuses loudly, naming the file.
 """
 
 from __future__ import annotations
@@ -87,8 +90,13 @@ def catalogue(monkeypatch):
 
 @pytest.fixture
 def cache(tmp_path, monkeypatch):
+    """The cache root; records/, render/<sha>/basis/ and index.json live under it."""
     monkeypatch.setenv("VIBEQC_BSE_CACHE", str(tmp_path / "c"))
-    return tmp_path / "c" / "basis"
+    return tmp_path / "c"
+
+
+def _records(cache):
+    return sorted((cache / "records").glob("*.qvf.json")) if (cache / "records").is_dir() else []
 
 
 # ---------------------------------------------------------------------------
@@ -163,37 +171,44 @@ def test_fetch_writes_the_basis_and_a_provenance_record(catalogue, cache):
     catalogue({"demo": _PLAIN})
     got = fetch_basis_from_bse("demo")
 
-    assert got.g94_path == cache / "demo.g94"
+    assert got.g94_path == cache / "render" / got.content_sha256 / "basis" / "demo.g94"
+    assert got.g94_path.is_file()
     assert got.ecp_path is None and not got.has_ecp
     assert got.elements == (1, 8)
     assert got.bse_version == "9.9"
+    assert got.fetched_at
 
-    prov = json.loads(got.provenance_path.read_text())
-    assert prov["bse_version"] == "9.9"
-    assert prov["elements"] == [1, 8]
-    assert "pritchard_bse_2019" in prov["citation_keys"]
-    assert prov["fetched_at"]
+    # the provenance is the record itself, stored under its content hash
+    assert got.provenance_path == cache / "records" / f"{got.content_sha256}.qvf.json"
+    record = json.loads(got.provenance_path.read_text())
+    prov = record["provenance"]
+    assert prov["kind"] == "bse"
+    assert prov["upstream"][0]["version"] == "9.9" and prov["upstream"][0]["identifier"] == "demo"
+    assert prov["content_sha256"] == got.content_sha256
+    assert "pritchard_bse_2019" in prov["citations"][0]["keys"]
+    index = json.loads((cache / "index.json").read_text())["records"]["demo"]
+    assert index["bse_version"] == "9.9" and index["content_sha256"] == got.content_sha256
 
 
 def test_the_written_file_says_it_is_not_a_bundled_basis(catalogue, cache):
     catalogue({"demo": _PLAIN})
     text = fetch_basis_from_bse("demo").g94_path.read_text()
     assert "Not a bundled vibe-qc basis" in text
-    assert "catalogue version 9.9" in text
-    assert "Originating publication" in text     # BSE's own header survives
+    assert "BSE catalogue version 9.9" in text
+    assert "Someone, J. Chem. Phys. 1, 1 (2000)" in text     # BSE's own header survives
 
 
 def test_an_ecp_record_lands_as_two_files(catalogue, cache):
     catalogue({"demo": _WITH_ECP})
     got = fetch_basis_from_bse("demo")
-    assert got.has_ecp and got.ecp_path == cache / "demo.ecp"
-    assert "NA-ECP" in got.ecp_path.read_text()
-    assert "NA-ECP" not in got.g94_path.read_text()
+    assert got.has_ecp and got.ecp_path == got.g94_path.with_suffix(".ecp")
+    assert "Na-ECP" in got.ecp_path.read_text()
+    assert "-ECP" not in got.g94_path.read_text()
 
 
 def test_names_are_lowercased_for_the_cache_filename(catalogue, cache):
     catalogue({"demo": _PLAIN})
-    assert fetch_basis_from_bse("DeMo").g94_path == cache / "demo.g94"
+    assert fetch_basis_from_bse("DeMo").g94_path.name == "demo.g94"
 
 
 def test_an_unknown_name_says_how_big_the_catalogue_is(catalogue, cache):
@@ -206,14 +221,14 @@ def test_an_empty_record_is_refused_rather_than_written(catalogue, cache):
     catalogue({"demo": "   \n"})
     with pytest.raises(LookupError, match="empty record"):
         fetch_basis_from_bse("demo")
-    assert not (cache / "demo.g94").exists()
+    assert not _records(cache)
 
 
 def test_a_record_with_no_element_blocks_is_refused(catalogue, cache):
     catalogue({"demo": "! only a comment\n"})
     with pytest.raises(LookupError, match="no element blocks"):
         fetch_basis_from_bse("demo")
-    assert not (cache / "demo.g94").exists()
+    assert not _records(cache)
 
 
 # ---------------------------------------------------------------------------
@@ -235,8 +250,8 @@ def test_a_record_missing_an_element_is_refused_and_writes_nothing(catalogue, ca
     catalogue({"demo": _PLAIN})
     with pytest.raises(LookupError, match=r"Ag \(Z=47\)"):
         fetch_basis_from_bse("demo", elements=[1, 8, 47])
-    assert not (cache / "demo.g94").exists()
-    assert not (cache / "demo.provenance.json").exists()
+    assert not _records(cache)
+    assert not (cache / "index.json").exists()
 
 
 def test_the_refusal_explains_why_it_will_not_graft(catalogue, cache):
@@ -271,10 +286,43 @@ def test_a_second_call_serves_the_cache_without_re_rendering(catalogue, cache):
 
 def test_refresh_re_renders_even_on_a_hit(catalogue, cache):
     catalogue({"demo": _PLAIN})
-    fetch_basis_from_bse("demo")
-    (cache / "demo.g94").write_text("clobbered\n")
-    fetch_basis_from_bse("demo", refresh=True)
-    assert "clobbered" not in (cache / "demo.g94").read_text()
+    first = fetch_basis_from_bse("demo")
+    first.g94_path.unlink()
+    second = fetch_basis_from_bse("demo", refresh=True)
+    assert second.g94_path == first.g94_path and second.g94_path.is_file()
+    assert len(_records(cache)) == 1
+
+
+def test_a_clobbered_rendering_refuses_on_the_next_hit(catalogue, cache):
+    """#408: a hash mismatch is a hard error, never a warning, and it names the file."""
+    from vibeqc.basis_store import BasisStoreIntegrityError
+
+    catalogue({"demo": _PLAIN})
+    got = fetch_basis_from_bse("demo")
+    got.g94_path.write_text("clobbered\n")
+    with pytest.raises(BasisStoreIntegrityError, match="demo.g94"):
+        fetch_basis_from_bse("demo")
+
+
+def test_a_corrupted_record_refuses_and_names_it(catalogue, cache):
+    from vibeqc.basis_store import BasisStoreIntegrityError
+
+    catalogue({"demo": _PLAIN})
+    got = fetch_basis_from_bse("demo")
+    text = got.provenance_path.read_text().replace("2.0", "2.5", 1)
+    got.provenance_path.write_text(text)
+    with pytest.raises(BasisStoreIntegrityError, match=got.content_sha256[:12]):
+        fetch_basis_from_bse("demo")
+
+
+def test_identical_content_under_two_names_is_stored_once(catalogue, cache):
+    catalogue({"demo": _PLAIN, "twin": _PLAIN})
+    a = fetch_basis_from_bse("demo")
+    b = fetch_basis_from_bse("twin")
+    assert a.content_sha256 == b.content_sha256
+    assert a.provenance_path == b.provenance_path
+    assert len(_records(cache)) == 1
+    assert a.g94_path.name == "demo.g94" and b.g94_path.name == "twin.g94"
 
 
 def test_a_catalogue_upgrade_invalidates_the_cache(catalogue, cache):
@@ -286,13 +334,17 @@ def test_a_catalogue_upgrade_invalidates_the_cache(catalogue, cache):
     catalogue({"demo": _PLAIN.replace("2.0000000", "3.0000000")}, version="10.0")
     second = fetch_basis_from_bse("demo")
     assert second.bse_version == "10.0"
-    assert "3.0000000" in second.g94_path.read_text()
+    assert second.content_sha256 != first.content_sha256
+    from vibeqc.basis_toolkit import from_g94
+
+    exponents = [p.exponent for p in from_g94(second.g94_path.read_text()).elements["O"].shells[0].primitives]
+    assert exponents == [3.0]
 
 
 def test_writes_are_atomic_and_leave_no_partial_behind(catalogue, cache):
     catalogue({"demo": _WITH_ECP})
     fetch_basis_from_bse("demo")
-    assert not list(cache.glob("*.partial"))
+    assert not list(cache.rglob("*.partial"))
 
 
 # ---------------------------------------------------------------------------
@@ -316,10 +368,11 @@ def test_a_real_unbundled_basis_renders_and_loads(tmp_path, monkeypatch):
     import vibeqc as vq
 
     monkeypatch.setenv("VIBEQC_BSE_CACHE", str(tmp_path / "c"))
+    monkeypatch.setenv("LIBINT_DATA_PATH", os.environ.get("LIBINT_DATA_PATH", ""))
     got = fetch_basis_from_bse("sadlej pvtz", elements=[1, 8])
     assert got.elements and 8 in got.elements
 
-    monkeypatch.setitem(os.environ, "LIBINT_DATA_PATH", str(tmp_path / "c"))
+    assert ensure_bases_available(["sadlej pvtz"], elements=[1, 8])
     mol = vq.Molecule(
         [vq.Atom(8, [0, 0, 0]), vq.Atom(1, [0, 0, 1.8]), vq.Atom(1, [1.7, 0, -0.5])],
         0, 1,
@@ -379,7 +432,7 @@ def test_a_bundled_name_is_a_complete_no_op(catalogue, cache, pinned_libint):
     catalogue({"demo": _PLAIN})
     assert ensure_bases_available(["def2-svp"], elements=[1, 8]) == ()
     assert os.environ["LIBINT_DATA_PATH"] == pinned_libint
-    assert not cache.exists() or not list(cache.glob("*.g94"))
+    assert not _records(cache)
 
 
 def test_blank_names_are_ignored(catalogue, cache, pinned_libint):
@@ -426,7 +479,7 @@ def test_composition_is_reused_rather_than_rebuilt(catalogue, cache, pinned_libi
     first = os.environ["LIBINT_DATA_PATH"]
     ensure_bases_available(["demo"])
     assert os.environ["LIBINT_DATA_PATH"] == first
-    assert not list((cache.parent / "composed").glob("*.partial-*"))
+    assert not list((cache / "composed").glob("*.partial-*"))
 
 
 def test_an_ecp_sidecar_is_composed_alongside_its_orbital_file(

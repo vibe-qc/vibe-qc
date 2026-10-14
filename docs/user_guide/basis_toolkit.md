@@ -93,7 +93,7 @@ The `BasisSetData` object carries a format-neutral representation:
 - `Shell` / `Primitive` / `HarmonicType` -- angular-momentum encoding
 - `ECPEntry` / `ECPPotential` / `ECPTerm` -- effective core potentials
 - `Provenance` / `Reference` -- source and citation tracking
-- `BasisRole` -- `orbital`, `jkfit`, `mp2fit`, `ecp`
+- `BasisRole` -- `orbital`, `auxiliary`, `fitting`, `ecp`
 
 ### Validation
 
@@ -110,6 +110,22 @@ The validator checks structural completeness, angular-momentum
 consistency, primitive ordering, ECP coherency, and metadata
 completeness.
 
+### The bundled library as a record store
+
+`vibeqc.basis_toolkit.library` is the bundled library seen as records:
+`stems()`, `load_record(name)`, `save_record(data, path)`,
+`render_record(data)` (the `.g94` and `.ecp` text of one record),
+`render_library(target)` and `check_library()`. The committed
+`basis_library/basis/` directory is what `render_library` writes and
+`check_library` verifies; `scripts/render_basis_library.py` exposes both
+without importing `vibeqc`, so the install scripts can render the runtime
+overlay before the native core exists.
+
+`BasisSetData.content_sha256()` is the record's content identity, the
+SHA-256 of its elements and ECPs in canonical JSON; `Provenance`
+(schema 1.1.0) carries `kind`, `upstream`, `retrieval_date`,
+`content_sha256` and per-range `citations`.
+
 ## `vibeqc.basis_toolkit` -- CLI
 
 ```bash
@@ -125,9 +141,24 @@ python -m vibeqc.basis_toolkit.cli convert sto-3g.bse.json -o sto-3g.g94 -f g94
 # Show loss report for a conversion
 python -m vibeqc.basis_toolkit.cli loss -f g94 sto-3g.bse.json
 
-# Inspect a basis set (summary)
+# Inspect a basis set (summary, references, provenance)
 python -m vibeqc.basis_toolkit.cli inspect sto-3g.qvf.json
+
+# Render the bundled records into libint's text, or verify the rendering
+vibe-qc-basis render --target build/basis_library/basis
+vibe-qc-basis check
+
+# Your own basis sets: into the user store, where BasisSet resolves them by name
+vibe-qc-basis import my-basis.g94 --kind hand-written --cite some_key
+vibe-qc-basis list
+vibe-qc-basis resolve my-basis def2-svp
+vibe-qc-basis remove my-basis
 ```
+
+`vibeqc.basis_store` is the Python face of the same thing: `import_record`,
+`list_records`, `remove_record`, `resolve`, and the content-addressed fetch
+cache (`cache_put`, `cache_get`). The resolution order it implements is in
+[basis_sets](basis_sets.md) § "Where a basis name resolves".
 
 ## `vibe-basis` -- basis-set optimisation
 

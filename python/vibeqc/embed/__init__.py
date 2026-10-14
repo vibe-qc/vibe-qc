@@ -10,7 +10,7 @@
    Import it explicitly (``from vibeqc import embed``) and treat every number
    it produces as unvalidated.
 
-   The ``handovers/HANDOVER_PERIODIC_MULTIREF.md`` orphan-branch audit of
+   An orphan-branch audit on
    2026-07-15 found concrete defects, none of which have been fixed here:
 
    * **MR6** uses formal charges rather than the periodic-SCF-density route,
@@ -33,8 +33,8 @@ The pipeline it sketches: carve a finite QM cluster from a periodic crystal,
 embed it in a Madelung point-charge array, and hand it to the molecular CAS
 solvers.
 
-See ``handovers/HANDOVER_PERIODIC_MULTIREF.md`` for the roadmap, the audit,
-and milestone status, and ``studies/embedded-cluster-cas/GOTCHAS.md`` for the
+See ``studies/embedded-cluster-cas/GOTCHAS.md`` for the
+
 workstream's recorded gotchas (OpenMolcas parity basis, AIMP licensing).
 
 Public API

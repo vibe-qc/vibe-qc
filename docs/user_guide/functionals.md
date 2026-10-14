@@ -114,6 +114,7 @@ vibe-qc resolves these short names in `xc.cpp::resolve_alias()`
 | `lda` / `svwn` | LDA | 0 % | 1 + 7 | Slater exchange + VWN5 correlation. Fast sanity check. |
 | `pbe` | GGA | 0 % | 101 + 130 | Workhorse for solid state. |
 | `blyp` | GGA | 0 % | 106 + 131 | Classic molecular GGA. |
+| `bpw91` | GGA | 0 % | 106 + 134 | Becke 88 exchange with Perdew-Wang 91 correlation, the functional Klamt's 1998 COSMO-RS parameters were fitted at (see [Implicit solvation](solvation.md)). There is no `bp86` alias: codes differ on which local correlation fills its P86 slot (PZ81 or VWN). |
 | `b3lyp` (= `b3lyp5`) | hybrid | 20 % | 475 | de-facto for organics; VWN5 / ORCA convention, **see the flavor box above**. |
 | `b3lyp/g` (= `b3lypg`) | hybrid | 20 % | 402 | Gaussian-compatible B3LYP (VWN-RPA), what Gaussian / PySCF / Psi4 mean by the bare name. |
 | `pbe0` / `pbeh` | hybrid | 25 % | 406 | PBE + 25% Fock exchange. |
@@ -338,11 +339,37 @@ D3(BJ) is the standard. D4 (Caldeweyher-Bannwarth-Grimme, 2019)
 ships alongside D3(BJ): use `dispersion="d4"` to opt in. There
 are two D4 backends, the optional `dftd4` package (production
 default, bit-exact to upstream) and an in-tree native MPL-2.0
-implementation (`compute_d4(mol, func, backend="native")`) that
-is parity-validated for **H-Ne** (correlated CPKS/PBE38 reference
-C6 within a few percent of dftd4); use the `dftd4` backend for
-elements outside that set. Both are documented in
+implementation (`compute_d4(mol, func, backend="native")`). Its frozen
+reference dataset covers **H, He, B, C, N, O, F, Ne, and Cu**. Light-element
+checks use independently computed correlated CPKS/PBE38 reference C6;
+Cu uses the separate protocol in the semiempirical manual. Use the
+`dftd4` backend for elements outside that set. Both are documented in
 [`molecules.md`](molecules.md) § Dispersion.
+
+For standalone native D4, `compute_d4(mol, func, backend="native",
+charge=Q, with_gradient=True)` returns the same energy as the scalar call
+and its complete analytic nuclear gradient. It includes BJ pair and ATM
+three-body geometry derivatives, coordination-dependent C6, and EEQ charge
+response at fixed `Q`. The adjoint EEQ solve differentiates the native
+coordination-number soft cap and charge constraint. The `charge` argument
+is honored by both native paths and defaults to zero; it is not inferred
+from the molecule's electron-count metadata. Consistent derivatives do
+not imply bit-exact agreement with the external
+D4 functional.
+
+Custom datasets selected with `ref_data_path` may include `n_gaussian`
+in each element's JSON record: one positive integer per reference, in the
+same order as `cns`. These counts specify the Gaussian sum for each
+reference in both the energy and analytic gradient. Store them explicitly
+when covalent reference CNs do not preserve the nominal environment groups.
+If omitted, the existing rounded-CN grouping remains in effect. The
+low-level pair functions' explicit `n_gaussian` argument overrides dataset
+counts for both atoms. The bundled dataset retains its existing grouping.
+
+An explicit `ref_data_path` takes precedence over `VIBEQC_D4_REFDATA`,
+which takes precedence over the bundled dataset. If a selected path does
+not name a file, native D4 raises `FileNotFoundError` instead of falling
+back to another dataset. File-reading and JSON errors also propagate.
 
 ## Meta-GGA functionals (TPSS / TPSSh, M06-L / M06-2X, SCAN / r²SCAN)
 

@@ -17,6 +17,18 @@ electron, Γ-only) on both **RHF** and **RKS-PBE**, and report:
 A clean parity (|ΔE| < 1e-3 Ha) means our periodic SCF is sound. Any
 larger gap is a bug to fix before claiming the v0.7 release.
 
+Routes
+------
+PySCF runs GDF with ``exxdiv='ewald'``, and its RKS-PBE uses Becke grids
+(level 5): its default uniform XC grid cannot resolve all-electron core
+densities. vibe-qc runs native GDF at Γ through ``run_periodic_job``, the
+route of ``examples/periodic/input-mgo-rocksalt-*.py``, except for Al2O3 RHF,
+which uses ``run_krhf_periodic_gdf`` with the settings of
+``examples/periodic/input-al2o3-cubic-rhf.py`` (``RHF_SLOW_GRADIENT``). The
+cubic Al2O3 model has no PBE gap at Γ, so its RKS-PBE case uses Fermi-Dirac
+smearing of 0.01 Ha on both codes (``RKS_SMEARING_HA``) and compares the
+energy E, not the free energy E - TS.
+
 Why these two systems
 ---------------------
 MgO and Al2O3 are the canonical "ionic wide-gap insulator" benchmarks
@@ -55,9 +67,24 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 ANG2BOHR = 1.0 / 0.529177210903
 
+# Fermi-Dirac smearing (Ha) for the RKS-PBE case, by system label. The Al2O3
+# model has no PBE gap at Γ: with integer occupations the vibe-qc SCF does not
+# converge, and smeared it has an electronic entropy of about 5 k_B.
+RKS_SMEARING_HA = {"Al2O3-cubic": 0.01}
+
+# RHF options for systems whose orbital gradient converges far more slowly
+# than their energy. The Al2O3 model needs a start-up level shift to reach its
+# lower state, then about 160 cycles to a 1e-4 gradient; the energy is then
+# within 1e-7 Ha of an 800-cycle run.
+RHF_SLOW_GRADIENT = {
+    "Al2O3-cubic": {"level_shift": 0.5, "conv_tol_grad": 1e-4, "max_iter": 300},
+}
+
 try:
     from pyscf.pbc import gto as pbc_gto, dft as pbc_dft, scf as pbc_scf
     from pyscf.pbc import df as pbc_df
+    from pyscf.pbc.scf.smearing import smearing as pbc_smearing
+    from pyscf.pbc.dft import gen_grid as pbc_gen_grid
     PYSCF_AVAILABLE = True
 except ImportError:
     PYSCF_AVAILABLE = False
@@ -127,7 +154,8 @@ class Result:
 
 
 def run_vibeqc(label: str, system: vq.PeriodicSystem, *,
-               method: str, basis_name: str = "sto-3g") -> Result:
+               method: str, basis_name: str = "sto-3g",
+               smearing_ha: float = 0.0) -> Result:
     """Run vibe-qc Γ-only periodic SCF."""
     rec = Result(code="vibeqc", label=label, method=method,
                  converged=None, n_iter=None, energy=None,
@@ -136,40 +164,47 @@ def run_vibeqc(label: str, system: vq.PeriodicSystem, *,
     try:
         basis = vq.BasisSet(system.unit_cell_molecule(), basis_name)
 
-        if method == "RHF":
-            opts = vq.PeriodicRHFOptions() if hasattr(vq, "PeriodicRHFOptions") \
-                else vq.PeriodicKSOptions()
-            opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
-            opts.lattice_opts.cutoff_bohr = 12.0
-            opts.lattice_opts.nuclear_cutoff_bohr = 25.0
-            opts.max_iter = 60
-            opts.use_diis = True
-            opts.damping = 0.85
+        if method == "RHF" and label in RHF_SLOW_GRADIENT:
+            # Same settings as examples/periodic/input-al2o3-cubic-rhf.py:
+            # the energy converges fast but the orbital gradient slowly, so
+            # use the k-point driver with an explicit gradient tolerance
+            # (run_periodic_job keeps 1e-6 and refuses this SCF).
+            opts = vq.PeriodicRHFOptions()
             opts.conv_tol_energy = 1e-7
-            opts.initial_guess = vq.InitialGuess.SAD
-            # v0.7.1: dispatch RHF to the new GDF driver (Lpq from
-            # PySCF spike — see python/vibeqc/periodic_rhf_gdf.py for
-            # the native-replacement plan). The legacy
-            # run_rhf_periodic_gamma_ewald3d path is kept available
-            # but is known broken on MgO (Δ ≈ +241 Ha vs PySCF).
-            r = vq.run_rhf_periodic_gamma_gdf(
-                system, basis, opts,
-                progress=False,
+            for key, value in RHF_SLOW_GRADIENT[label].items():
+                setattr(opts, key, value)
+            r = vq.run_krhf_periodic_gdf(system, basis, (1, 1, 1), opts,
+                                         progress=False)
+        elif method == "RHF":
+            # Native GDF at Γ through the runner, the route of
+            # examples/periodic/input-*-rhf.py. Calling
+            # run_rhf_periodic_gamma_gdf directly, as this script used to,
+            # runs its ewald-jk-fallback engine with molecular-limit
+            # exchange on these compact cells, several Ha from PySCF.
+            r = vq.run_periodic_job(
+                system, basis,
+                method="RHF",
+                jk_method="gdf", kpoints=(1, 1, 1),
+                max_iter=60, conv_tol_energy=1e-7,
+                output=str(OUT_DIR / f"{label}-rhf"),
             )
         elif method == "RKS-PBE":
-            opts = vq.PeriodicKSOptions()
-            opts.functional = "pbe"
-            opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
-            opts.lattice_opts.cutoff_bohr = 12.0
-            opts.lattice_opts.nuclear_cutoff_bohr = 25.0
-            opts.max_iter = 60
-            opts.use_diis = True
-            opts.damping = 0.85
-            opts.conv_tol_energy = 1e-7
-            opts.initial_guess = vq.InitialGuess.SAD
-            r = vq.run_rks_periodic_gamma_ewald3d(
-                system, basis, opts, omega=0.3, spacing_bohr=0.5,
-                progress=False,
+            # Native GDF at Γ through the runner, the same route as
+            # examples/periodic/input-*-rks-pbe.py. The retired Γ-only
+            # EWALD_3D driver used before is not a parity route for compact
+            # crystals (its molecular-limit density convention breaks
+            # there). Smearing is passed only when asked for, so the runner's
+            # automatic convergence strategy stays in charge otherwise.
+            kw = {}
+            if smearing_ha > 0.0:
+                kw["smearing_temperature"] = smearing_ha
+            r = vq.run_periodic_job(
+                system, basis,
+                method="RKS", functional="pbe",
+                jk_method="gdf", kpoints=(1, 1, 1),
+                max_iter=60, conv_tol_energy=1e-7,
+                output=str(OUT_DIR / f"{label}-rks-pbe"),
+                **kw,
             )
         else:
             raise ValueError(f"unknown method: {method}")
@@ -189,7 +224,8 @@ def run_vibeqc(label: str, system: vq.PeriodicSystem, *,
 def run_pyscf(label: str,
               pyscf_atoms: List[Tuple[str, float, float, float]],
               a_ang: float, *,
-              method: str, basis_name: str = "sto-3g") -> Result:
+              method: str, basis_name: str = "sto-3g",
+              smearing_ha: float = 0.0) -> Result:
     """Run PySCF.pbc Γ-only periodic SCF using GDF (Gaussian density
     fitting) — the all-electron-friendly J path."""
     rec = Result(code="pyscf", label=label, method=method,
@@ -220,6 +256,12 @@ def run_pyscf(label: str,
         elif method == "RKS-PBE":
             mf = pbc_dft.RKS(cell)
             mf.xc = "pbe"
+            # All-electron: the default uniform XC grid (the cell's mesh)
+            # cannot resolve the Al/Mg/O core densities. On the Al2O3 model
+            # it put PBE 13.66 Ha too high; Becke grids at level 3 and 5
+            # agree to 3e-5 Ha there.
+            mf.grids = pbc_gen_grid.BeckeGrids(cell)
+            mf.grids.level = 5
         else:
             raise ValueError(f"unknown method: {method}")
 
@@ -228,6 +270,9 @@ def run_pyscf(label: str,
         mf.with_df.build()
         mf.max_cycle = 60
         mf.conv_tol = 1e-7
+        if smearing_ha > 0.0:
+            # e_tot stays the energy E; e_free = E - sigma*S is separate.
+            mf = pbc_smearing(mf, sigma=smearing_ha, method="fermi")
 
         e = mf.kernel()
         rec.wall_s = time.perf_counter() - t0
@@ -295,12 +340,16 @@ def main() -> None:
             print(f"  >>> {label} / {method} (a = {a_ang:.3f} Å, "
                   f"{len(sys_p.unit_cell)} atoms in cell)")
 
-            v = run_vibeqc(label, sys_p, method=method)
+            smear = RKS_SMEARING_HA.get(label, 0.0) if method == "RKS-PBE" else 0.0
+            if smear:
+                print(f"      Fermi-Dirac smearing {smear} Ha on both codes")
+            v = run_vibeqc(label, sys_p, method=method, smearing_ha=smear)
             flag = "✓" if v.converged else "✗"
             print(f"      vibeqc {flag}  iter={v.n_iter}  "
                   f"E={v.energy}  wall={v.wall_s:.1f}s  {v.note}")
 
-            p = run_pyscf(label, pyscf_atoms, a_ang, method=method)
+            p = run_pyscf(label, pyscf_atoms, a_ang, method=method,
+                          smearing_ha=smear)
             if PYSCF_AVAILABLE:
                 flag = "✓" if p.converged else "✗"
                 print(f"      pyscf  {flag}  iter={p.n_iter}  "

@@ -40,6 +40,1215 @@ FILE_OWNERS = {
 # here therefore widens or narrows the release gate on its own; pin one only as
 # the file's owning chat, and say why in the rationale.
 CURATED: dict[str, dict[str, str]] = {
+    "tests/test_dlpno_parity_aux_name.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "DLPNO",
+        "disposition": "new",
+        "rationale": "Source-only parity CLI forwarding of canonical universal JKfit names through full, default, fold and reference calls; declared calculation doubles, no scientific acceptance.",
+    },
+    "tests/test_ccm_xc_domain.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Real-Gamma and Bloch primitive-cell XC image-domain agreement across spin, torus replication and automatic/flat cutoffs, using explicit native and XC stand-ins; no scientific acceptance.",
+    },
+    "tests/test_symmetry_hierarchical_bounds.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "symmetry", "disposition": "new",
+        "rationale": "Native bubble/error envelopes, whole-orbit intersection of bounded candidates, complex nonsymmetric J/K, actual skipped reads and source/budget refusal. No default or periodic admission.",
+    },
+    "tests/test_symmetry_producer_bounds.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "symmetry", "disposition": "new",
+        "rationale": "Source-bound MANTA Q/V envelopes, whole-orbit omission before reads, retained-source equivariance audit, arbitrary complex J/K, domain and budget refusals. No default or periodic admission.",
+    },
+    "tests/test_symmetry_streaming_screening.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "symmetry",
+        "disposition": "new",
+        "rationale": "Compact fixed-orbit masks from a complete streamed source audit: ordered J/K oracles, non-Hermitian density covariance, Cartesian norms, actual work and fail-closed budget/source admission.",
+    },
+    "tests/test_symmetry_molecular_scf.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "symmetry", "disposition": "new",
+        "rationale": "Public fixed-source RHF/UHF entry, physical terminal FockBuild, stopped/fractional states, retained-frame orbital reconstruction, output metadata and incompatible option refusal.",
+    },
+    "tests/test_symmetry_molecular_routing.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "symmetry", "disposition": "new",
+        "rationale": "Measured same-mask molecular routing, immutable producer qualification, complex nonsymmetric ordered references, work accounting and fail-closed cost/resource admission. No default or periodic dispatch.",
+    },
+    "tests/test_symmetry_molecular_hf.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "symmetry",
+        "disposition": "new",
+        "rationale": "Opt-in fixed-source molecular JKBuilder and HF FockBuild bridge: ordered-source contractions, nonsymmetric covariance, owned states, HF density response and native RHF/UHF SCF. No default dispatch or derivative admission.",
+    },
+    "tests/test_symmetry_quartets.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "symmetry",
+        "disposition": "new",
+        "rationale": "Finite-source-admitted molecular quartet orbits and streamed J/K. Full source audit, stabilizers, arbitrary complex densities and MANTA tile counts; no default solver, periodic or derivative admission.",
+    },
+    "tests/test_symmetry_abelian.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "symmetry",
+        "disposition": "new",
+        "rationale": "Complex Abelian selection and finite-ERI block J/K; independent molecular AO contractions, nonsymmetric densities, source rejection and resource admission. No production routing or derivative acceptance.",
+    },
+    "tests/test_manta_periodic_ri_job.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Public finite fitted UHF jobs: independent spin SCF, explicit J/K and fitting admission, evaluated-density QVF with image gauges, provenance, citations and complete output/source budgets.",
+    },
+    "tests/test_manta_periodic_ri_rhf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Restricted finite periodic RI HF: independent closed-shell SCF, explicit/cutoff/public sources, rank/gauge and energy checks, shared Fock contracts and evaluated-density output with joint admission.",
+    },
+    "tests/test_periodic_gamma_gdf_admission.py": {
+        "maturity": "production", "tier": "T1", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Public compact Gamma fallback refusal before grids/integrals; preserves molecular-limit, slab, private torus and dimension guard contracts without native work.",
+    },
+    "tests/test_manta_periodic_ri_domains.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Bounded fitted UHF cutoff sources: independent reciprocal spheres and pair-complete image gauges, libint/NumPy spin SCF, ket-minus-bra conventions and five joint admission caps.",
+    },
+    "tests/test_manta_periodic_ri_uhf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Physical finite-source fitted UHF: independent libint/NumPy SCF, fixed projector and evaluated-epoch contracts, spin Madelung correction and five aggregate resource gates.",
+    },
+    "tests/test_manta_periodic_ri_fock.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Whole-mesh periodic RI Fock: independent Gaussian/libint spin response, weighted energy derivatives, reverse-source/projector admission, gauge and aggregate resource gates.",
+    },
+    "tests/test_manta_periodic_ri_targets.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Independent whole-mesh RI J/K selection: Gaussian/libint references, weighted energy variations, fixed projectors, reduced J-only admission and shared Fock/gauge transport.",
+    },
+    "tests/test_manta_periodic_mixed_hf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Mixed exact/RI periodic RHF/UHF: independent libint/fourier SCF, source orientations and corrections, evaluated-state Fock/output and joint native/public admission.",
+    },
+    "tests/test_manta_periodic_ri_ks.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Fitted pure/global periodic KS: independent raw-fit/functional SCF, method-owned energies, fixed sources and joint native/output admission.",
+    },
+    "tests/test_manta_periodic_ri_ks_domains.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Generated fitted KS: independent integer spheres and raw-fit SCF, complete grid/source/solver/output admission, shared Fock and image-gauge contracts.",
+    },
+    "tests/test_manta_periodic_ri_range_fock.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Whole-mesh physical range K: independent q metrics, weighted functional SCF, finite zero, fixed projectors and separate Coulomb J admission.",
+    },
+    "tests/test_manta_periodic_ri_range_ks_domains.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Generated fitted range KS: independent reciprocal supports and functional SCF, joint grid/kernel/projector admission, selected evidence and shared Fock/image contracts.",
+    },
+    "tests/test_manta_periodic_ri_range_ks_job.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Public fitted range KS: complete physical-kernel SCF and evaluated QVF, joint job/output admission, immutable per-source evidence and shared operator/image contracts.",
+    },
+    "tests/test_manta_periodic_ri_range_ks.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Bounded fitted physical range KS: independent kernel projectors and functional SCF, method-owned corrections, shared Fock and aggregate source/solver admission.",
+    },
+    "tests/test_manta_periodic_range_fitting.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Physical erfc/erf fitting: independent finite sources, zero ownership, fixed RI projectors, frame and bounded source admission.",
+    },
+    "tests/test_manta_periodic_ri_ks_job.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA", "disposition": "demote T2",
+        "rationale": "Public fitted periodic KS: independent functional SCF, evaluated-state QVF and shared Fock, explicit exact/RI choices and joint native/output admission.",
+    },
+    "tests/test_periodic_dlpno_gamma.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "correlation/multireference",
+        "disposition": "new",
+        "rationale": (
+            "GDF route of DLPNO-CCSD(T) on crystals at Gamma (increment B1 of "
+            "the DLPNO design), on a Gamma-centred mesh folded to the real "
+            "BvK supercell (B2) and through the run_periodic_job front door "
+            "(B2b): the adapter's factors reproduce the SCF Coulomb energy, "
+            "full domains equal canonical CCSD on the same source, the folded "
+            "(1, 1, 2) mesh equals the explicit Gamma supercell, the front "
+            "door lands the result on the .out, .system, structured log, "
+            "citations and QVF, and BIPOLE, symmetry-reduced, fit-less and "
+            "half-shifted-mesh references and the requests the front door "
+            "cannot run are refused with their reason. H2 chain and H2 cube "
+            "cells in STO-3G and def2-SVP; about two minutes."
+        ),
+    },
+    "tests/test_dlpno_source.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "correlation/multireference",
+        "disposition": "new",
+        "rationale": (
+            "Correlation-source contract (increment A of the DLPNO design): "
+            "the molecular adapter re-packages the engine inputs without "
+            "changing a number (bit-identical closed- and open-shell results "
+            "through the source), the source overlap is the one the engine "
+            "uses, and the source identity reaches the result, the .system "
+            "manifest and the structured log. H2O, OH and H2 in STO-3G or "
+            "def2-SVP; seconds."
+        ),
+    },
+    "tests/test_manta_periodic_ri_q.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Streamed periodic fixed-projector RI q channels: independent Gaussian/libint J/K, spin densities, weighted energy derivatives, image gauges, rank and joint admission checks.",
+    },
+    "tests/test_manta_periodic_gdf_tiles.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Immutable periodic GDF shell tiles: independent/dense source reconstruction, normalization, owned snapshots, source identities and bounded traversal without a full coupling tensor.",
+    },
+    "tests/test_manta_periodic_gdf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Complete finite Coulomb fitting source: analytic SR/LR and zero-mode checks, independent converged reciprocal reference, complex responses, gauges and joint admission.",
+    },
+    "tests/test_periodic_gdf_molecular_grid_response.py": {
+        "maturity": "production", "tier": "T1", "owner": "periodic-GDF",
+        "disposition": "new",
+        "rationale": "Native-free Gamma molecular-grid response composition and route/provenance controls; numerical FD acceptance remains separate.",
+    },
+    "tests/test_manta_periodic_fitting.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Periodic short-range fitting: independent analytic image sums, same-source libint blocks, complex actions, gauge/screening ownership and joint resource bounds.",
+    },
+    "tests/test_manta_periodic_hybrid_xc_refinement.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Hybrid semilocal grid diagnostics: independent contractions, fixed-density full-Fock differences, complete descriptors, gauges and joint resource admission.",
+    },
+    "tests/test_periodic_rohf_finalization.py": {
+        "maturity": "production", "tier": "T1", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Bounded Gamma ROHF final-state algebra: unshifted spectra, occupation and density preservation, rank reduction and explicit unconverged residuals.",
+    },
+    "tests/test_manta_periodic_range_separated_job.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Public range-separated RKS/UKS: independent full SCF and components, signed kernel/zero-mode provenance, owned evaluated-state QVF, gauges, resources and output lifecycle.",
+    },
+    "tests/test_manta_periodic_range_separated_domains.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Range-separated cutoff and joint-grid KS: independent spheres/SCF, finite screened zeros, mixed ranges, spin and source ownership, and complete pre-generation resource admission.",
+    },
+    "tests/test_manta_periodic_range_separated_ks.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Complete finite range-separated spin/k KS: independent energy/Fock/SCF, finite erfc zero modes, long-range-only Madelung, distinct ranges, evaluated epochs and aggregate resource caps.",
+    },
+    "tests/test_manta_periodic_global_hybrid_job.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Public global-hybrid KS: independent full spin/k SCF and scaled exchange energies, physical epochs, QVF/gauge roundtrip, complete job admission and unqualified-source refusals.",
+    },
+    "tests/test_manta_periodic_xc_refinement.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Frozen-density periodic XC grid refinement against independent energy and all spin/k potentials, joint resource admission, exact caps, gauge/source identities and owned evidence.",
+    },
+    "tests/test_manta_periodic_ks_job.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Public finite pure-KS jobs: independent spin/k SCF, evaluated epochs, lossless QVF, gauge transport, complete grid/domain admission and unqualified-source refusals.",
+    },
+    "tests/test_bounded_periodic_functional_solver.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": "Joint same-density functional energy/potential, independent nonlinear spin/k fixed points, variational derivatives, capped states and bounded admission.",
+    },
+    "tests/test_manta_periodic_job.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Selected periodic MANTA job source parity, standard artifacts, evaluated-density QVF roundtrip, full regular mesh admission and unsupported-request refusals before SCF.",
+    },
+    "tests/test_manta_periodic_domains.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Bounded physical-pair and reciprocal cutoff domains, skew/shifted mesh conjugacy, image covariance and complete MANTA RHF admission.",
+    },
+    "tests/test_manta_periodic_madelung.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "BvK Ewald correction in complete MANTA RHF, independent same-source SCF, spectrum/energy seam, shared Ewald parity and aggregate admission.",
+    },
+    "tests/test_manta_periodic_uhf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": (
+            "Physical neutral 3D finite-source UHF, independent spin/k SCF "
+            "quadrature and libint references, BvK exchange correction, "
+            "evaluated densities, history and aggregate resource admission."
+        ),
+    },
+    "tests/test_manta_periodic_uhf_domains.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": (
+            "Cutoff-generated neutral 3D UHF, independent spin/k SCF "
+            "quadrature and libint references, BvK exchange correction, "
+            "evaluated densities, history and aggregate resource admission."
+        ),
+    },
+    "tests/test_manta_periodic_uhf_job.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MANTA",
+        "disposition": "demote T2",
+        "rationale": (
+            "Public fixed-spin UHF jobs and evaluated-density QVF, independent spin/k SCF "
+            "quadrature and libint references, BvK exchange correction, "
+            "evaluated densities, history and aggregate resource admission."
+        ),
+    },
+    "tests/test_manta_periodic_rhf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Complete finite-source MANTA RHF, independent SCF and nuclear-energy references, fixed-density terminal reconstruction and resource refusal.",
+    },
+    "tests/test_manta_periodic_ks_grid.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Joint grid/domain/KS admission, same-source explicit equality, independent physical SCF, capped states and retained-grid resource ownership.",
+    },
+    "tests/test_manta_periodic_quadrature.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Bounded periodic atomic quadrature, independent radial/partition and Fourier integrals, XC energy/potential refinement and owned provenance.",
+    },
+    "tests/test_manta_periodic_ks_domains.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Pure KS cutoff source membership, independent SCF and shell gauges, mesh-independent domains, exact aggregate admission and owned provenance.",
+    },
+    "tests/test_manta_periodic_global_hybrid_domains.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Global hybrid cutoff spheres, HF source identity, AO image gauges, independent physical SCF, joint atomic quadrature ownership and pre-generation resource admission.",
+    },
+    "tests/test_manta_periodic_global_hybrid_ks.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Finite global hybrid RKS/UKS, independent Fock and energy derivatives, spin and zero-mode factors, capped evaluated states, AO gauge and joint resource admission.",
+    },
+    "tests/test_manta_periodic_ks.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Physical finite RKS/UKS, independent Gaussian/libxc and SciPy SCF, same-density confirmation and aggregate resource refusal.",
+    },
+    "tests/test_manta_periodic_semilocal_xc.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Complex finite LDA/GGA energy and gradient adjoints, spin cross terms, independent AO algebra, gauge, complete functional refusal and bounded resource admission.",
+    },
+    "tests/test_manta_periodic_local_exchange.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Complex direct-Bloch local exchange, independent AO polynomials/libxc, variational derivatives, shell gauge, spin factors, quadrature refinement and bounded admission.",
+    },
+    "tests/test_manta_periodic_fock.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Whole-mesh spin Fock snapshots, independent quadrature, electronic-energy derivatives, restricted factors, immutable ownership and aggregate resource caps.",
+    },
+    "tests/test_manta_periodic_screened_exchange.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Finite erf/erfc periodic exchange, explicit finite zero mode, independent quadrature/real-space Gaussian sums, positive tails and energy derivatives.",
+    },
+    "tests/test_manta_periodic_exchange.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Whole-mesh multi-density finite reciprocal exchange, independent Gaussian quadrature and scalar references, energy derivative, transfer reversal, image covariance and resource admission.",
+    },
+    "tests/test_manta_periodic_nuclear.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Finite 3D MANTA Ewald nuclear composition, independent short/reciprocal/constant references, image covariance, scalar split convergence and aggregate admission.",
+    },
+    "tests/test_manta_bloch_one_electron.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Finite MANTA S/T cell blocks and whole-mesh Bloch folding, independent libint/quadrature references, pair-support image covariance, raw residuals and resource admission.",
+    },
+    "tests/test_manta_screened_potential.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "MANTA erf/erfc nuclear attraction, independent libint/libcint and high-precision tail references, fixed-range center derivatives, identity compatibility and resource refusal.",
+    },
+    "tests/test_manta_periodic_hartree.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Finite MANTA whole-mesh reciprocal Hartree: independent quadrature and density response, complex phases, exact support and resource boundaries, executed periodic J adapter provenance.",
+    },
+    "tests/test_manta_bloch_fourier.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Finite MANTA Bloch Fourier sums with shared momentum work, independent quadrature, explicit physical support and phase covariance, strict aggregate admission and periodic Fourier adapter provenance.",
+    },
+    "tests/test_manta_geometry.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Selected HF geometry sources preserve custom orbital/auxiliary content, fitting policy and budgets across displaced geometries; independent energy differences, optimizer convergence and explicit capability refusals.",
+    },
+    "tests/test_manta_run_job.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "io/runner",
+        "disposition": "new",
+        "rationale": "Complete selected molecular engine jobs, independent J/K choices, actual provenance/citations/QVF, preserved range-XC retry sources, caller options, explicit capability and resource refusals.",
+    },
+    "tests/test_manta_properties.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Executed static and IAO/localization property providers, independent libint comparison, occupied-density conservation, source refusals, separate receipts, charged origin shifts and retained moment/reference storage.",
+    },
+    "tests/test_manta_qvf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "io/runner",
+        "disposition": "new",
+        "rationale": "QVF file and in-memory exports of actual molecular engine receipts, exact/RI/BUPO/RI-BUPO and libint sources, failed confirmation, extension coexistence and reserved provenance ownership.",
+    },
+    "tests/test_manta_ri_bupo_scf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Molecular RHF/UHF/RKS/UKS RI-BUPO selection, exact RI terminal confirmation, false-convergence controls, independent exchange/XC composition, executed receipts and memory boundaries.",
+    },
+    "tests/test_manta_bupo_ri.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Paired RI-BUPO J with exact positive metric, independent dense comparisons, separated pass defects and amplified error bounds, rank deficiency, energy derivatives and combined confirmation admission.",
+    },
+    "tests/test_manta_bupo_fitting.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Paired molecular BUPO three-center forward and adjoint maps, independent dense integrals, error ledgers, exact near limits, variational energy algebra, ownership and aggregate admission.",
+    },
+    "tests/test_manta_auxiliary_distributions.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Single auxiliary Gaussian moment panels through l=7/order=12 and absolute full/tail extent bounds against independent quadrature and radial gamma integrals, with source ownership and resource admission.",
+    },
+    "tests/test_manta_bupo_scf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "RHF/UHF/RKS/UKS BUPO selection with independent exact terminal J, exact/RI and range exchange composition, false-convergence rejection, source receipts and combined memory admission.",
+    },
+    "tests/test_manta_bupo.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Native paired hierarchical BUPO-J versus independent dense integrals, arbitrary densities, exact near limit, far-field approximation ledger, reciprocity and energy derivatives, geometry/partition controls and aggregate admission.",
+    },
+    "tests/test_manta_shell_tiles.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Independent shell-tile workspace admission for MANTA/libint, exact source and tile parity, range kernels, owned outputs and resource controls without whole-basis quartic schedule costs.",
+    },
+    "tests/test_manta_bupo_errors.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Gaussian BUPO compact, penetration and full-moment-tail error ledger against independent libint and analytic Gaussian Coulomb, node envelopes, refinement and resource admission.",
+    },
+    "tests/test_manta_pair_moments.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Shared shell-pair moment panels through degree twelve against independent polynomial quadrature, translation and libint low moments; full absolute radial envelope and resource admission.",
+    },
+    "tests/test_manta_bubbles.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Immutable bubble hierarchy, child-sphere enclosure, exhaustive disjoint unordered interaction partitions, forced refinement, always-near isolation and bounded traversal resource failures.",
+    },
+    "tests/test_manta_multipole.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Bounded raw Cartesian multipole translations, adjoint and Coulomb reciprocity, independent Legendre expansions and compact-support remainder controls through order twelve.",
+    },
+    "tests/test_manta_lattice_tail.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Bounded finite 3D Ewald-minus-near Cartesian coefficients, independent Gaussian derivative quadrature and periodic Gaussian energies, gauge/trace/near-set invariance, domain ownership and count-only admission.",
+    },
+    "tests/test_manta_lattice_remainder.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Finite Ewald compact-support Taylor remainder against independent incomplete gamma integrals and complete signed charge energies, singularity/underflow guards, source identities and count-only admission; excludes lattice, Gaussian and roundoff errors.",
+    },
+    "tests/test_manta_lattice_gaussian.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Finite Ewald Gaussian approximation ledger from native pair/auxiliary envelopes, independent signed angular Gaussian convolutions and full charge energies, separate penetration and full-moment tails, immutable source binding and joint resource admission.",
+    },
+    "tests/test_manta_periodic_pairs.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Native canonical periodic pair-image extents and density moments, independent signed angular quadrature and ordered Bloch sums, weighted forward/adjoint energy derivatives, finite Coulomb energies, immutable source ownership and joint resource caps.",
+    },
+    "tests/test_manta_periodic_bupo.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Source-bound periodic bubble Coulomb traversal with near/tail Gaussian admission, exact finite Ewald fallback, fixed whole-mesh density derivatives, aggregate component/energy error bounds and resource caps.",
+    },
+    "tests/test_manta_periodic_bupo_domain.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Whole-source native Gaussian infinite-Ewald error aggregation, independent complete Coulomb limits, diagonal and Bloch multiplicities, fixed finite-response invariance and joint resource admission.",
+    },
+    "tests/test_manta_periodic_image_bounds.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Native all-image Gaussian source envelopes, missing source and target Coulomb errors against unreduced ordered Bloch sums, independent domain refinement, density scaling, fixed-partition invariance and joint resource caps.",
+    },
+    "tests/test_manta_periodic_bupo_hf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Complete native matched-electrostatic BUPO RHF/UHF, independent Gaussian and reciprocal SCF references, source-bound error admission, terminal evaluated states, shared Fock compatibility and joint resource caps.",
+    },
+    "tests/test_manta_periodic_one_electron_images.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Native all-image overlap and kinetic gradient envelopes against independent ordered Gaussian quadrature, physical cutoff omissions, finite-domain refinement, HF accuracy admission and all five resource caps.",
+    },
+    "tests/test_manta_periodic_exchange_bounds.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Full reciprocal and AO-image exchange bounds against independent ordered Gaussian Fourier sums, coupled spin density energy envelopes, fixed-Madelung overlap correction and explicit HF/resource admission.",
+    },
+    "tests/test_manta_periodic_electrostatic.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Matched electron and point-charge Ewald components, independent angular Gaussian and infinite-source references, charge/background/self policy, energy derivatives, aggregate bounds and resource caps.",
+    },
+    "tests/test_manta_periodic_ewald.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Complete finite Ewald Coulomb response from native canonical pair images, independent signed Gaussian and angular polynomial integrals, component energies, whole-mesh derivatives, charge gauge, source identities and joint admission.",
+    },
+    "tests/test_manta_periodic_bubbles.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Typed periodic pair-image hierarchy, disjoint traversal, signed density moment/tail aggregation, weighted reverse pass, independent ordered Bloch Coulomb energies and joint resource caps.",
+    },
+    "tests/test_manta_lattice_domain.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Complete integer-cube Ewald domain remainder bounds, independent infinite shell envelopes and ionic energies, compact signed source and periodic covariance errors, metric guards and count-only resource admission.",
+    },
+    "tests/test_manta_gaussian_domain.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Native pointwise Gaussian majorants and infinite Ewald domain bounds for signed orbital-pair and auxiliary components, independent full Gaussian convolution/Fourier energies, source ownership and count-only resource admission.",
+    },
+    "tests/test_manta_extents.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Conservative 3D BUPO shell-pair envelopes, integrated Gaussian tail/moment and potential bounds, signed angular shells, explicit radius refusal and resource caps.",
+    },
+    "tests/test_manta_molecular_ks.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "scf",
+        "disposition": "new",
+        "rationale": "Opt-in MANTA KS source selection, independent exact/RI range kernels, XC composition and final-density proof.",
+    },
+    "tests/test_manta_molecular_hf.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "scf",
+        "disposition": "new",
+        "rationale": "Opt-in bounded molecular RHF/UHF engines, independent exact/RI J and K choices, terminal-density evidence, selected gradient source guards and provider output.",
+    },
+    "tests/test_manta_gradient.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Experimental bounded all-electron MANTA HF Lagrangian gradients, independent RHF/UHF forces, relaxed and fixed-density finite differences, Pulay and resource contracts.",
+    },
+    "tests/test_manta_derivatives.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Experimental analytic MANTA 2c/3c/4c shell-center derivative tiles, independent libcint and finite-difference references, translation identities, angular limits and bounded component admission.",
+    },
+    "tests/test_manta_channels.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Experimental bounded sharing across general and partial contraction channels, independent integral and executed primitive-count references, mixed representations and multi-density digestion.",
+    },
+    "tests/test_manta_ri_hf_gradient.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Complete MANTA HF RI/exact Lagrangian composition, independent fixed-density and relaxed nuclear derivatives, Pulay and auxiliary response, mixed J/K sources and aggregate resource admission.",
+    },
+    "tests/test_manta_ri_gradient.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Bounded streamed RI Coulomb and spin-pair exchange fixed-density gradients, independent libint energy differences, auxiliary and orbital motion, retained-projector response, range kernels, rank refusals, block admission and actual work counts.",
+    },
+    "tests/test_manta_ri_metric.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Positive RI metric inverse/projector response, retained-discarded mixing, spectral finite differences, Frobenius adjoints, cutoff-crossing refusal and bounded count-before-copy admission.",
+    },
+    "tests/test_manta_ri.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Experimental streamed MANTA RI-J/K, independent libint/libcint references, positive metric rank policies, paired energy/adjoint contracts, bounded mode blocks and native HF hosts.",
+    },
+    "tests/test_manta_batch.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Experimental multi-density MANTA direct contraction, spin-pair reuse, independent dense references, immutable receipts and count-before-copy batch admission.",
+    },
+    "tests/test_manta_fourier.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Experimental batched MANTA AO-pair and auxiliary Fourier panels, independent quadrature and native references, phase conventions, shared primitive work and resource admission.",
+    },
+    "tests/test_manta_range.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Experimental MANTA erf/erfc kernels, high-precision radial references, independent angular tiles, range identities and bounded quadrature admission.",
+    },
+    "tests/test_manta_fitting.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Experimental streamed MANTA two- and three-center tiles, independent libint/libcint and analytic references, auxiliary angular limits and resource admission.",
+    },
+    "tests/test_manta_one_electron.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Experimental MANTA one-electron matrices and analytic basis/charge/origin derivatives, cross-basis ownership, independent libcint and quadrature references, and finite resource admission.",
+    },
+    "tests/test_manta_md.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Independent analytic, high-precision, quadrature and libint references for experimental MANTA MD primitives, shell representations and direct J/K with resource caps.",
+    },
+    "tests/test_manta_reference.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Bounded libint provider and independent ordered J/K contraction, AO normalization, ownership, capability and resource-admission checks for the experimental MANTA boundary.",
+    },
+    "tests/test_filtered_basis_store.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": "Pure Python filesystem isolation and integrity contracts for filtered-basis cache materialization; native reload acceptance remains separate.",
+    },
+    "tests/test_dftb_wh_normalization.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "semiempirical",
+        "disposition": "new",
+        "rationale": "Independent Gaussian two-orbital normalization, ordering, gradient and strain oracles for molecular and periodic DFTB; native numerical acceptance pending.",
+    },
+    "tests/test_mpi_environment.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "MPI",
+        "disposition": "new",
+        "rationale": "Bounded Python-only maintained-module import and MPI lifecycle contracts; isolated launch environment and fake mpi4py, no native package or scheduler processes.",
+    },
+    "tests/test_qtaim.py": {
+        "maturity": "verified",
+        "tier": "T1",
+        "owner": "release/test-health",
+        "disposition": "blocking regression",
+        "rationale": "Bounded QTAIM bond-path regression: nine tests pass with the fixed Python module and all four new behavioral controls fail with its parent on the same native core. Candidate T1 repeats the full file after native build.",
+    },
+    "tests/basisset_dev/test_one_compound_recipe.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": (
+            "Stage-2 one-compound basis refit (recipes.one_compound) and the "
+            "periodic single-point objective on a mock periodic runner: the "
+            "runner arguments one evaluation carries, failure scoring, driver "
+            "dispatch, the result report and the OPTBASIS penalty composition. "
+            "Pure Python, no SCF, a few seconds; the one real LiH-cell test "
+            "skips without a built vibeqc, the Py-BOBYQA and CMA-ES cases "
+            "without their optional packages."
+        ),
+    },
+    "tests/test_periodic_output_lifecycle_sentinels.py": {
+        "maturity": "verified",
+        "tier": "T1",
+        "owner": "output/docs",
+        "disposition": "blocking T1",
+        "rationale": (
+            "pins run_periodic_job's output lifecycle at the pre-cut gate "
+            "(GitLab #429, #440): a finished periodic job writes "
+            "status = complete, a writer failure raises "
+            "IncompleteOutputError, a capability refusal before the plan "
+            "leaves its .system receipt, a delivery failure keeps the "
+            "driver verdict, and non-convergence is recorded. v0.17.11 "
+            "shipped with the lifecycle decorator displaced onto a helper "
+            "and only advisory T2 files noticed; each node delegates to the "
+            "owning pin and runs in seconds"
+        ),
+    },
+    "tests/test_d4_native_gradient.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "dispersion",
+        "disposition": "new",
+        "rationale": (
+            "Native D4 complete scalar/gradient contract (#437): pair and ATM "
+            "derivatives, adjoint EEQ/CN response, charged systems, saturation, "
+            "rigid motions and two-step full Cartesian finite differences. "
+            "Small molecular cases; no external D4 dependency or SCC."
+        ),
+    },
+    "tests/test_orbital_frame.py": {
+        "maturity": "under-review", "tier": "T2",
+        "owner": "correlation/multireference",
+        "disposition": "new",
+        "rationale": (
+            "The orbital-frame contract inside degenerate clusters (#322): "
+            "canonicaliser determinism, provider literals, window guard; pure "
+            "Python on N2/cc-pVDZ and O2/STO-3G"
+        ),
+    },
+    "tests/test_run_verdict.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "output/docs",
+        "disposition": "new",
+        "rationale": (
+            "The run-level verdict every writer shares (#342 #346 #351): "
+            "vocabulary, the usable gate and the fail-closed manifest reader; "
+            "pure Python, no native core"
+        ),
+    },
+    "tests/test_runner_optimize_nonconverged.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "molecular/DFT",
+        "disposition": "new",
+        "rationale": (
+            "run_job(optimize=True) on optimizer_backend=native and brent "
+            "fails closed when the optimizer does not converge: the .out "
+            "verdict with the final max gradient, the last xyz, a crashed "
+            "manifest and GeomOptNotConvergedError before the single point; "
+            "water/STO-3G, seconds"
+        ),
+    },
+    "tests/test_periodic_k_gdf_ibz_admission.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "IBZ-native multi-k GDF exchange admits only operations closed on "
+            "the executed SR/LR or classic source; transported vs directly "
+            "built K on nonsymmetric trial densities, classic negative "
+            "control, refusal before any cderi build"
+        ),
+    },
+    "tests/test_periodic_k_gdf_ibz_state_gate.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "IBZ-native state gate measures the little group at every wedge "
+            "representative (#470): little-group entries vs an independent "
+            "search, symmetric guesses at the floor, a star-consistent "
+            "little-group break refused by the real gate, cderi stubbed"
+        ),
+    },
+    "tests/test_periodic_k_gdf_ibz_occupations.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "IBZ-native multi-k GDF occupations filled once per star with the "
+            "symmetry-noise-snapped representative spectrum (#428): helper on "
+            "synthetic spectra, the triplet HCORE guess at the wedge gate with "
+            "the cderi build stubbed, gilat refusal"
+        ),
+    },
+    "tests/test_periodic_k_gdf_ibz_nonsymmorphic.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "IBZ-native multi-k GDF exchange through glides and screws (#452): "
+            "the Seitz Bloch law on overlaps and against the native transport, "
+            "transported vs directly built K on explicit diamond Fd-3m and hcp "
+            "P6_3/mmc SR/LR and classic sources, stabilizers, executed "
+            "reduction, refusal before any cderi build"
+        ),
+    },
+    # Recovered verbatim on 2026-09-30 while rebasing the basis-optimiser driver
+    # branch: the #385 / #268 rows below were written straight into the generated
+    # JSON without a CURATED backing row, so the regeneration this branch needs
+    # (one new test file) refused to run rather than clobber them. Values are the
+    # committed ones, copied without re-judging them; their owning chat may reword.
+    "tests/test_periodic_xc_grid_charge.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "Multi-k GDF KS drivers report a truncated XC grid density (#385): H2 "
+            "8-bohr cube STO-3G (2,1,1) at cutoff 8 / image radius 6 bohr warns "
+            "with PeriodicXCGridChargeWarning and records xc_grid_electrons; "
+            "16/12 is silent for the external provider and LDA; home-cell "
+            "densities are not checked."
+        ),
+    },
+    "tests/test_periodic_xc_screening.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": (
+            "Periodic XC AO-reach screen (#268, #299, #53): screened "
+            "build_xc_periodic/_uks equal the dense kernel (ao_screening_tol=0) "
+            "on MgO and LiH STO-3G for LDA/PBE/r2SCAN, including the potential of "
+            "a home-cell density; the screen prunes on compact images; a loose "
+            "tolerance moves E_xc (non-vacuity); n_electrons_grid reports the "
+            "grid electron count (#385)."
+        ),
+    },
+    "tests/test_periodic_xc_image_domain.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "XC density image domain of the 3-D GDF KS routes (#465): the "
+            "2 r_ao + span bound on the cubic Al2O3 STO-3G cell, the "
+            "pyscf_auto/flat/non-3-D gate, a fixed-density E_xc that is "
+            "mHa-off at 15 bohr and converged at the bound, and both GDF KS "
+            "drivers handing the grown cutoff to their first XC build."
+        ),
+    },
+    "tests/basisset_dev/test_basis_opt_dfo_drivers.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": (
+            "Derivative-free basis-optimisation drivers (Py-BOBYQA, DFO-LS, "
+            "CMA-ES) and the CMA-ES-then-BDIIS recipe on the same mock "
+            "objectives test_bdiis_driver.py uses: minimum recovery in 1-D and "
+            "3-D, bounds, +inf iterates, the OptResult contract, the log-space "
+            "pack/unpack round trip and citation provenance. Pure Python, no "
+            "SCF, well under ten seconds; each backend is an optional "
+            "[basisopt-drivers] package, so a test skips without it and the "
+            "missing-package error path is pinned separately."
+        ),
+    },
+    "tests/test_release_msindo_cyclic_cluster_pins.py": {
+        "maturity": "under-review",
+        "tier": "T1",
+        "owner": "semiempirical/seccm (MSINDO)",
+        "disposition": "blocking T1",
+        "rationale": (
+            "pins the audited MSINDO-SECCM states of the semi-empirical "
+            "article's systems under both SCF state policies (#249): the bent C3 "
+            "chain sweep (bare and embedded) and the reference policy's flagged "
+            "saddle at 3e-3 bohr, and the MgO B1 / diamond 2x2x2 clusters, bare "
+            "and Madelung-embedded, with net charges and stability flags. "
+            "Blocking T1 at the article's request so a release cannot change "
+            "these numbers silently; about six seconds of native SCF. "
+            "under-review, not production: the pins are change-safety "
+            "evidence, and the route's maturity is a separate maintainer decision "
+            "while #249 awaits independent verification. The multi-start "
+            "uniqueness, 3x3x3 and force checks stay in the T3 test_msindo_ccm.py."
+        ),
+    },
+    "tests/test_ccm_block_cderi_open_shell.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "implementing chat",
+        "disposition": "new",
+        "rationale": (
+            "Block-circulant cderi storage on the open-shell real-Gamma "
+            "drivers (#519, RG-5): UHF, PBE and PBE0 against the dense fold at "
+            "1e-10 Ha/cell on the Li doublet cube (2,1,1), the drivers build "
+            "block storage themselves, the Wigner-Seitz partition reaches them"
+        ),
+    },
+    "tests/test_ccm_fock_build.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "implementing chat",
+        "disposition": "new",
+        "rationale": (
+            "Evaluated state of the real-Gamma producer (#472, #519 RG-3) on "
+            "the H2 cube (2,1,1): the terminal FockBuild is the reported state, "
+            "its Fock is the derivative of an independent energy functional, "
+            "it owns its arrays, an iteration-capped run reports an evaluated "
+            "state, the KS build carries E_xc, the runner manifest carries the "
+            "identities"
+        ),
+    },
+    "tests/test_ccm_neutral_source.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "implementing chat",
+        "disposition": "new",
+        "rationale": (
+            "Source identity of the neutral fitted torus (#519, RG-2): both "
+            "producers record one SourceProvenance on the H2 cube (2,1,1), "
+            "every Hamiltonian-selecting knob changes it, an injected array "
+            "is refused as a built fit, both runner arms write it to the "
+            ".system manifest; the KS rows are slow"
+        ),
+    },
+    "tests/test_ccm_block_cderi.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "implementing chat",
+        "disposition": "new",
+        "rationale": (
+            "Block-circulant storage of the real-Gamma neutral cderi "
+            "(speed-up prompt 5): J/K and the materialised array against the "
+            "dense fold to rounding, HF/PBE/PBE0 energies against the dense "
+            "path and the Bloch producer at 1e-10 Ha/cell on the H2 cube and "
+            "on LiH/MgO STO-3G (2,2,2), the MP2 factor route, the Wigner-Seitz "
+            "partition (O25) and the refusals; the rocksalt rows are slow"
+        ),
+    },
+    "tests/test_symmetry_gdf.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Finite SR/LR GDF retained auxiliary gauge and tensor diagnostics, independent full-build comparisons and resource refusals; no production reduction",
+    },
+    "tests/test_ecp_native_output.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": (
+            "ECP integral builds write nothing to the process's stdout or "
+            "stderr (#392): child processes with captured file descriptors "
+            "on the W2/pob-TZVP-rev2 and H2S/LANL2DZ cases libecpint flags; "
+            "the quadrature report counts what it used to print, once per "
+            "build, and the periodic lattice screen is exact (#382)."
+        ),
+    },
+    "tests/test_gdf_cross_route_parity.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "One bulk GDF Hamiltonian across the Gamma routes (#54, #87, "
+            "#400): exact-Gamma vs k-mesh (1,1,1) and RHF vs UHF(M=1) "
+            "identities, knob- and charge-invariant default-Gamma energies, "
+            "driver control refusals, and the compcell/MDF single-image guard "
+            "(#172) checked against the exact omission. PySCF pins are "
+            "out-of-process numbers; the dense-core pins are slow."
+        ),
+    },
+    "tests/test_periodic_gdf_route.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "GDF",
+        "disposition": "new",
+        "rationale": (
+            "One decision for the GDF engine (row 3 of the 2026-09-29 cluster "
+            "audit: #54, #297, #301, #395, #400): the resolve_gdf_route table, "
+            "the .system record of engine/driver/reason/gauge, RHF vs UHF(M=1) "
+            "at (1,1,1) on the delegating mdf/compcell fits, RKS Fock mixing "
+            "across engines, and the open-shell k-mesh driver's refusals. "
+            "H2/STO-3G cells only; seconds per case."
+        ),
+    },
+    "tests/test_sr_q_mpi.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-chi",
+        "disposition": "new",
+        "rationale": "Optional SR q ownership, ordered gathering and collective source/domain/memory/failure protocol; numerical acceptance remains separate",
+    },
+    "tests/test_bipole_domain_contract.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "BIPOLE",
+        "disposition": "new",
+        "rationale": (
+            "Source-only resolved-domain, grid propagation and metadata contracts "
+            "for #316/#44. Standalone unittest command imports no native core. "
+            "Not numerical relabelling, energy or force acceptance."
+        ),
+    },
+    "tests/test_chi_reference_transport.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-chi",
+        "disposition": "new",
+        "rationale": "Chi accepted-reference state, source/frame/support admission and library reuse; no cross-construction oracle",
+    },
+    "tests/test_qvf_job_options.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "input/output",
+        "disposition": "new",
+        "rationale": (
+            "Executable QVF JSON-to-options boundary (#366): constructors, "
+            "nested records/enums, strict field types and explicit refusals. "
+            "No SCF; native option constructors only. Numerical lifecycle "
+            "acceptance is separate from these adapter contracts."
+        ),
+    },
+    "tests/test_chi_posthf_batch.py": {
+        "maturity": "experimental",
+        "tier": "T3",
+        "owner": "periodic/chi",
+        "disposition": "new",
+        "rationale": "Classic chi shared-q post-HF batching: complete ordered pairs, bounded AO lifetime, controls and exceptions. D93 remains not-qualified.",
+    },
+    "tests/test_roadmap_release_table.py": {
+        "maturity": "verified",
+        "tier": "T2",
+        "owner": "output/docs",
+        "disposition": "new",
+        "rationale": (
+            "The roadmap's release table against the repository. "
+            "docs/roadmap.md stated the current release in prose and that "
+            "prose went stale six releases running (#259), so the table "
+            "that replaced it is cross-checked rather than trusted: every "
+            "codename against RELEASE_CODENAMES, every minor with a "
+            "CHANGELOG.md section or a git tag against the rows, and no row "
+            "claiming planned while a tag exists. Pure file and catalog "
+            "reads plus one git tag -l; no SCF, well under a second."
+        ),
+    },
+    "tests/test_double_hybrid_run_job.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular correlation",
+        "disposition": "new",
+        "rationale": (
+            "GitLab #365: run_job now dispatches double hybrids "
+            "(method='b2plyp' and the other three) to run_double_hybrid, "
+            "which until then was reachable only through its own wrappers "
+            "while the release paper named run_job as the molecular entry "
+            "point. Pins the two properties that can silently go wrong: "
+            "energy parity between the two entry points -- run_job spells "
+            "several defaults None where the dispatcher spells them True, "
+            "and coercing those with bool() turned density fitting off for "
+            "a ~1e-6 Ha drift -- and the refusal of every run_job feature "
+            "the dispatcher does not carry, so optimize=True cannot be "
+            "dropped and reported as a double-hybrid number. Also pins the "
+            "open-shell construction on all three surfaces: the .out named "
+            "an RKS reference for a ROKS SCF, the .system could not tell "
+            "the branches apart, and the .bibtex omitted the semicanonical "
+            "ROHF-MP2 papers. Water and OH / cc-pVDZ; seconds per job, no "
+            "external runtime."
+        ),
+    },
+    "tests/test_xyz_energy_method.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "output/docs",
+        "disposition": "new",
+        "rationale": (
+            "A .xyz written by run_job must name the method its energy is "
+            "on. run_job writes the comment line from the SCF result's "
+            "energy and _select_method has already collapsed a correlated "
+            "request to its mean-field reference, so method='mp2' produced "
+            "a geometry file carrying the RHF energy under a bare energy= "
+            "tag, byte-identical to an RHF job's file (#360). ASE reads "
+            "energy= as the energy of the structure, so post-processing "
+            "MP2 optimizations silently yielded Hartree-Fock numbers. Pins "
+            "the energy_method= and method= tags end to end, that the "
+            "tagged number really is the reference energy and is "
+            "unchanged, that the two jobs' files now differ only in the "
+            "comment line, the auto-resolution case, the optimize=True "
+            "case, and an ASE round-trip proving the consumer sees both "
+            "the unchanged energy and the new labels. Water / STO-3G; "
+            "under a second per job, ASE behind importorskip."
+        ),
+    },
+    "tests/test_chi_fitted_uhf.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Spin-resolved finite-source HF state contracts; no production qualification",
+    },
+    "tests/test_chi_direct_uhf.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Spin-resolved finite-source HF state contracts; no production qualification",
+    },
+    "tests/test_chi_hybrid_contract.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Finite-array hybrid exchange, derivative and capability contracts; no production qualification",
+    },
+    "tests/test_chi_hybrid_direct.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Direct hybrid coefficient and energy assembly contracts; no production qualification",
+    },
+    "tests/test_chi_hybrid_fitted.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Kernel-specific classic and SR metric/factor source contracts; no production qualification",
+    },
+    "tests/test_chi_hybrid_native.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Native Gaussian-oracle M/T, exchange and variational checks requiring a fresh core; no production qualification",
+    },
+    "tests/test_chi_xc.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Semilocal chi density, adjoint and accepted-state contracts; no scientific qualification",
+    },
+    "tests/test_chi_direct_ks.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Semilocal chi density, adjoint and accepted-state contracts; no scientific qualification",
+    },
+    "tests/test_chi_ks_reference.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Semilocal chi density, adjoint and accepted-state contracts; no scientific qualification",
+    },
+    "tests/test_chi_cc_equations.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Independent complex CCSD residuals and nonzero triples; no production qualification",
+    },
+    "tests/test_chi_rohf_reference.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Shared-spatial ROHF orbital gradients and stationary finite-source contracts; native acceptance pending",
+    },
+    "tests/test_chi_rohf_mp2.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Independent Knowles RMP2 singles, doubles and invariant source transport; native acceptance pending",
+    },
+    "tests/test_chi_rohf_public.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "ROHF RMP2 public refusal, runner and output contracts; no scientific qualification",
+    },
+    "tests/test_chi_ecp_operator.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Independent scalar ECP primitive and image operators, complex covariance; no scientific qualification",
+    },
+    "tests/test_chi_ecp_checkpoint.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Complete scalar ECP identities, explicit populations and correlation restart contracts; no scientific qualification",
+    },
+    "tests/test_chi_ecp_public.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Scalar ECP runner, library, refusal and output parity; no scientific qualification",
+    },
+    "tests/test_chi_ecp_hamiltonian.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Native scalar ECP one-electron HF assembly and effective ionic energy scaling; no scientific qualification",
+    },
+    "tests/test_chi_hf_checkpoint.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Safe restart storage and fresh-process stationary HF reconstruction; no scientific qualification",
+    },
+    "tests/test_chi_mp2_checkpoint.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Interrupted deterministic spin MP2 and RMP2 progress with exact source binding; no scientific qualification",
+    },
+    "tests/test_chi_cc_checkpoint.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "CCSD history and DIIS restart plus independently checked streamed triples coverage; no scientific qualification",
+    },
+    "tests/test_chi_restart_public.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Public and library restart routing on synthetic retained sources; no native scientific qualification",
+    },
+    "tests/test_chi_canonical_mp2.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Independent finite-space same-source MP2 algebra; native acceptance pending",
+    },
+    "tests/test_chi_hf_reference.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Spin-resolved finite-source HF state contracts; no production qualification",
+    },
+    "tests/test_chi_fitted_controls.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Finite fitted control propagation, immutable source identity and unsupported-route refusal; no production qualification",
+    },
+    "tests/test_chi_operator_diagnostics.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Independent array operator diagnostics and deliberately wrong operator controls; no production qualification",
+    },
+    "tests/test_rsgdf_physical_support.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Physical AO product selection, independent primitive Gaussian Fourier controls and finite reciprocal boundaries; no production qualification",
+    },
+    "tests/test_chi_physical_support.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Explicit direct chi support, actual domain provenance and independent finite-domain nuclear tests; no production qualification",
+    },
+    "tests/test_chi_transform_inputs.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Finite-character input admission, overflow, round trips and native parity; no scientific qualification",
+    },
+    "tests/test_chi_fit_source.py": {
+        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": "Explicit chi fit source, canonical source admission, typed execution metadata and process provenance; no qualification or cross-construction oracle",
+    },
+    "tests/test_omx_hessian_contract.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "semiempirical",
+        "disposition": "new",
+        "rationale": "Synthetic OM2/OM3 Hessian routing, signed algebra and failure controls; not native scientific acceptance",
+    },
+    "tests/test_hessian_surface.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular correlation",
+        "disposition": "new",
+        "rationale": (
+            "A reported Hessian must name the surface it was built on. "
+            "run_job resolves a correlated request down to its mean-field "
+            "reference before compute_hessian_fd differentiates it, so "
+            "method='mp2', hessian=True produced a frequency block "
+            "byte-for-byte identical to the RHF one with E(elec)-labelled "
+            "thermochemistry rows carrying the RHF energy -- nothing in the "
+            ".out, the .system manifest or the .qvf said which surface the "
+            "numbers described. Pins the Surface: line and its "
+            "not-the-requested-method note, the surface-named "
+            "thermochemistry labels and their arithmetic, the [hessian] "
+            "manifest section, the QVF vibrations surface key, and the "
+            "clean SKIPPED refusal for a method that resolves to no "
+            "mean-field reference at all. Water / STO-3G; under a second "
+            "per job, no external runtime."
+        ),
+    },
+    "tests/test_pbc_gaussian_image_guard.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "periodic-scf",
+        "disposition": "new",
+        "rationale": (
+            "Issue #133 fail-closed guard for the Gaussian periodic drivers: "
+            "a Gamma cell wider than cutoff_bohr leaves the translation ball "
+            "holding only g=0, and run_rhf_periodic / run_rks_periodic / "
+            "run_rhf_periodic_gamma returned the isolated cluster's energy "
+            "silently. Pins the refusal on all three entry points, the message "
+            "naming the cutoff and the way out, the "
+            "LatticeSumOptions.gamma_only_0 declaration that keeps the "
+            "molecular limit reachable, and two controls that the guard does "
+            "not fire on a genuinely periodic cell. Small STO-3G H2 chains; "
+            "seconds, no external runtime."
+        ),
+    },
+    "tests/test_stale_core_guard.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "release/test-health",
+        "disposition": "new",
+        "rationale": (
+            "Pins the stale-compiled-core refusal (#285): pytest exits the "
+            "reserved status 97 before collecting when _vibeqc_core predates "
+            "cpp/, run_full_suite.classify labels it STALE_CORE rather than "
+            "FAIL, and gate_verdict refuses to compute a verdict from an "
+            "artifact holding one. Pure Python; never touches cpp/ mtimes, "
+            "which would make the core stale for real."
+        ),
+    },
+    "tests/test_relocalization_worker.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "analysis/localization",
+        "disposition": "new",
+        "rationale": (
+            "Standalone JSONL relocalization protocol, native readiness, exact "
+            "archived basis reconstruction, molecular and experimental finite-torus "
+            "complex subspace invariants, strict refusals and explicit-only SCF. "
+            "Small local native calculations; no viewer or external QC runtime."
+        ),
+    },
+    "tests/test_opentrustregion.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "molecular-SCF",
+        "disposition": "new",
+        "rationale": "Optional pinned orbital optimizer: matrix-free energy derivatives, C ABI/state isolation, molecular HF/KS and public output; real-library checks skip when absent",
+    },
     "tests/test_contributor_workflow_contract.py": {
         "maturity": "verified",
         "tier": "T2",
@@ -67,6 +1276,25 @@ CURATED: dict[str, dict[str, str]] = {
         "rationale": "Hermetic external study profile and interpreter dispatch boundaries; no native calculation",
     },
 
+    "tests/test_semiempirical_pm6_basin_selection.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "semiempirical",
+        "disposition": "new",
+        "rationale": (
+            "pins GitLab #154's live limb: PM6/norbornadiene has several "
+            "genuine zero-temperature fixed points and the direct Pulay "
+            "iteration selects between them on arithmetic noise (a 1e-9 A "
+            "bridgehead nudge moves the converged total by 0.836 Ha), which "
+            "is why four fleet hosts reported four different converged "
+            "energies for one input and one build. Asserts the route refuses "
+            "such a system naming every solution it found, that the refusal "
+            "is the same outcome under noise-level input changes, that a "
+            "single-basin control (water) still reports, and that the direct "
+            "SCF no longer depends on the iteration budget. Real PM6 SCF "
+            "runs; no fleet access."
+        ),
+    },
     "tests/test_libint_capability_configure.py": {
         "maturity": "under-review",
         "tier": "T2",
@@ -175,6 +1403,31 @@ CURATED: dict[str, dict[str, str]] = {
             "Sub-second parity guard between registry.toml's alias table and "
             "the C++ basis_data_name, which resolved names independently and "
             "disagreed (#743). Constructs tiny water bases; no SCF."
+        ),
+    },
+    "tests/test_basis_aug_own_file.py": {
+        "maturity": "verified",
+        "tier": "T2",
+        "owner": "basis/integrals",
+        "disposition": "demote T2",
+        "rationale": (
+            "Shell-by-shell guard that every aug-cc-pV* name loads its own "
+            "shipped .g94 instead of libint's base + augmentation- split, "
+            "which silently dropped the diffuse shells of 17 sets (#30). "
+            "One BasisSet per set over its elements plus one SAD guess; no SCF."
+        ),
+    },
+    "tests/test_basis_store.py": {
+        "maturity": "verified",
+        "tier": "T2",
+        "owner": "basis/integrals",
+        "disposition": "new",
+        "rationale": (
+            "The user basis store, the content-addressed fetch cache and the "
+            "documented resolution order (#408, #410): tampered records and "
+            "renderings refuse naming the file, bundle beats store beats cache, "
+            "composed roots are supersets, an imported record runs a molecule "
+            "end to end by name. Seconds; one H2 RHF pair; no network."
         ),
     },
     "tests/test_basis_overlay_freshness.py": {
@@ -839,6 +2092,17 @@ CURATED: dict[str, dict[str, str]] = {
             "admission without a converged-HF claim."
         ),
     },
+    "tests/test_bounded_periodic_uhf_solver.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "periodic-SCF",
+        "disposition": "demote T2",
+        "rationale": (
+            "Bounded fixed-spin full-k UHF numerical iteration, independent "
+            "complex NumPy fixed points, separate spin populations and gaps, "
+            "evaluated-density limit semantics and resource admission."
+        ),
+    },
     "tests/test_bounded_periodic_rhf_solver.py": {
         "maturity": "under-review",
         "tier": "T2",
@@ -1283,6 +2547,18 @@ CURATED: dict[str, dict[str, str]] = {
             "Small synthetic operators plus one sto-3g fixture; seconds."
         ),
     },
+    "tests/test_band_edges.py": {
+        # Rationale only; maturity/tier/owner stay derived from the lane.
+        "rationale": (
+            "pins GitLab #176: one band-edge classifier for every periodic "
+            "surface. The .out block and the native k-route fields read a "
+            "zero-temperature band-overlap metal as a positive-gap insulator "
+            "(the two-k discriminator printed 0.300000 Ha, 8.2 eV) while "
+            "frontier_bands said -0.3, and open-shell T = 0 still filled "
+            "each k independently. Pure-numpy synthetic spectra plus the "
+            "native parity check; seconds."
+        ),
+    },
     "tests/test_bipole_per_k_band_accessor.py": {
         # Rationale only; maturity/tier/owner stay derived from the lane.
         "rationale": (
@@ -1351,7 +2627,7 @@ CURATED: dict[str, dict[str, str]] = {
         # runs that exit 0), but promoting it would make this the one T1
         # file in an all-T2 family and would widen the release gate; that
         # call belongs to the output/IO owning chat, and is raised to them
-        # in handovers/HANDOVER_OUTPUT_LOGGER.md rather than taken here.
+        # in the original investigation rather than taken here.
         "rationale": (
             "pins GitLab #254: output= is a documented path STEM, but every "
             "artifact path was derived with Path.with_suffix, which "
@@ -1616,6 +2892,15 @@ CURATED: dict[str, dict[str, str]] = {
             "external functional on separate smooth/hard/soft densities"
         ),
     },
+    "tests/test_skala_showcase_inputs.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "periodic-SCF",
+        "disposition": "new",
+        "rationale": (
+            "Experimental SKALA BIPOLE UKS input CLI, complete-mesh forwarding "
+            "and spin-occupation bookkeeping controls. Standalone NumPy tests "
+            "import no native core or checkpoint; no scientific acceptance."
+        ),
+    },
     "tests/test_skala_adapter.py": {
         "maturity": "under-review",
         "tier": "T2",
@@ -1656,7 +2941,7 @@ CURATED: dict[str, dict[str, str]] = {
             "(test_evaluate_ao_reproduces_the_integral_basis) is the invariant "
             "every DFT XC quadrature rests on, and this defect class shipped "
             "once already (v0.15.0-v0.15.114, via the basis_toolkit Cartesian "
-            "import route; handovers/HANDOVER_AO_CONVENTION.md). Measured "
+            "import route). Measured "
             "2.9 s / 150 MB -- cheap enough for the blocking set"
         ),
     },
@@ -1758,6 +3043,13 @@ CURATED: dict[str, dict[str, str]] = {
     "tests/test_gfn2_parameter_identity.py": {
         "rationale": (
             "canonical GFN2 parameter identity and immutable execution snapshots"
+        ),
+    },
+    "tests/test_gfn2_dispersion_functional.py": {
+        "owner": "semiempirical",
+        "rationale": (
+            "fixed-geometry D4 charge functional: pair energy, analytic charge "
+            "potential, variational Mulliken Fock and neutral ATM convention"
         ),
     },
     "tests/test_periodic_gfn2_aes.py": {
@@ -1864,11 +3156,20 @@ CURATED: dict[str, dict[str, str]] = {
             "tier remains derived T2 through molecular-scf-dft"
         ),
     },
+    "tests/test_iao_population.py": {
+        "maturity": "production",
+        "tier": "T2",
+        "owner": "analysis/populations",
+        "disposition": "new",
+        "rationale": (
+            "Molecular determinant IAO charges, spin and IAO-Wiberg indices: "
+            "analytical covariance, matched-reference oracle and public output coverage"
+        ),
+    },
     "tests/test_iao_ibo.py": {
         "owner": "analysis/localization",
         "rationale": (
-            "IAO/IBO published-value and Jacobi-increment coverage "
-            "(handovers/HANDOVER_IBO.md)"
+            "IAO/IBO published-value and Jacobi-increment coverage"
         ),
     },
     "tests/test_periodic_fold_cutoff_adequacy.py": {
@@ -1905,6 +3206,18 @@ CURATED: dict[str, dict[str, str]] = {
             "supercell-Gamma results, the up-front refusal for per-k routes "
             "at true multi-k, and that D:S certification still refuses an "
             "uncertifiable density"
+        ),
+    },
+    "tests/test_periodic_slab_density_grid_origin.py": {
+        "maturity": "production",
+        "owner": "periodic-SCF",
+        "rationale": (
+            "slab and chain artifact grids must contain their atoms (#45): "
+            "the AO image sum translates along periodic axes only, so a box "
+            "pinned at the Cartesian origin dropped the charge below z=0 and "
+            "refused a 2-D UKS density artifact at 1.07 of 2.0 electrons. "
+            "Pins the centring, that dim=3 is untouched, and that a truly "
+            "thin slab is still refused with the cell named as the remedy"
         ),
     },
     "tests/test_periodic_runner_method_gate.py": {
@@ -2564,6 +3877,13 @@ CURATED: dict[str, dict[str, str]] = {
             "(None-valued spin densities)"
         ),
     },
+    "tests/test_operator_contract.py": {
+        "maturity": "under-review",
+        "tier": "T2",
+        "owner": "eigensolver",
+        "disposition": "new",
+        "rationale": "Bounded operator contract checks for complex metrics, root selection, sparse and callback refusal, residuals, clustered subspaces and warm starts; native Davidson is required.",
+    },
 }
 
 CURATED_FIELDS = frozenset({"maturity", "tier", "owner", "disposition", "rationale"})
@@ -2595,6 +3915,7 @@ EXPERIMENTAL_PATTERNS = (
     "tests/test_aiccm*.py",
     "tests/test_*seccm*.py",
     "tests/test_ccm*.py",
+    "tests/test_chi*.py",
     "tests/test_lowd_greens*.py",
     "tests/test_msindo_ccm*.py",
     "tests/test_periodic_aiccm*.py",
@@ -2606,6 +3927,13 @@ EXPERIMENTAL_PATTERNS = (
     "tests/test_periodic_ccm*.py",
     "tests/test_periodic_megacell*.py",
     "tests/test_periodic_toroidal_mp2.py",
+    # test_polipo_parity.py is hand-classified experimental in CURATED but
+    # matched none of the patterns above, so derive() fell through to its
+    # ("verified", "T2", "release/test-health", "demote T2") fallback and the
+    # disposition string survived classify() into suite_manifest.json, where
+    # it reads as a pending instruction to un-experimental the file. It is
+    # not one. Added 2026-09-18 (#370).
+    "tests/test_polipo*.py",
     "tests/test_seccm*.py",
 )
 

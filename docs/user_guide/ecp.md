@@ -216,9 +216,15 @@ Things that follow from the convention:
   `loewdin_charges` / `hirshfeld_charges` on an ECP system passes
   `nuclear_charges=vibeqc.ecp_metadata.effective_nuclear_charges(mol,
   opts)`; the default is bare `Z`, correct only all-electron.
-  Hirshfeld partitions with all-electron free-atom weights even on
-  ECP systems, so its per-atom split there is approximate although
-  the charges now sum to the molecular charge.
+  `hirshfeld_charges` reads the ECP operator the SCF ran with from
+  its result and builds the promolecule from valence-only free atoms
+  (the same atomic calculation the SAD initial guess uses on an ECP
+  atom), so the reference density integrates to the same valence
+  count as the molecular density: 8 electrons for H2S/LANL2DZ. Earlier
+  versions confined an all-electron free atom to the valence basis,
+  which carried the replaced core's electrons (18 for that molecule)
+  and distorted the per-atom split although the charges still summed
+  to the molecular charge.
 
 ## Phase-14e auto-helper (`vq.auto_ecp_centers`)
 

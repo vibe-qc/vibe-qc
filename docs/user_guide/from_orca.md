@@ -161,7 +161,7 @@ jfit` matches ORCA's `def2/J`).
 
 | ORCA `%basis` | vibe-qc |
 |---|---|
-| `NewGTO 78 "LANL2DZ" end` (per-element basis override) | Use a `basis_library/custom/*.g94` file; vibe-qc applies it per element. See [basis_sets](basis_sets.md) § Custom basis sets. |
+| `NewGTO 78 "LANL2DZ" end` (per-element basis override) | Build a record carrying the override element (`vibe-qc-basis convert`) and point `LIBINT_DATA_PATH` at its rendering. See [basis_sets](basis_sets.md). |
 | `NewECP 78 "LANL2DZ" end` | `opts.ecp_centers = [vq.ECPCenter(Z=78, xyz=...)]` + `opts.ecp_library = "lanl2dz"` |
 | `Aux "def2/J"` | `opts.aux_basis = "def2-universal-jkfit"` |
 | `AuxJ "def2-svp/J"` / `AuxC "cc-pVDZ/C"` | `opts.aux_basis_j` / `opts.aux_basis_c` (these split-aux fields are roadmap; today `aux_basis` is the single field) |

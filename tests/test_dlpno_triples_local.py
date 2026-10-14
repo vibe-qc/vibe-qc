@@ -18,6 +18,7 @@ FCI-anchored (CCSD(T) ⊃ the exact (T) for the closed-shell reference).
 from __future__ import annotations
 
 from functools import partial
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -52,6 +53,8 @@ LocalCCSDOptions = partial(
     tcut_mkn=0.0,
     tcut_pairs=1e-4,
     residual_domain="pair",
+    # Predates the ORCA singles-PNO scale on the diagonal pairs (#190).
+    tcut_pno_diag_scale=1.0,
 )
 H2O = [
     (8, [0.0, 0.0, 0.0]),
@@ -59,6 +62,47 @@ H2O = [
     (1, [0.0, -0.793353 * A, -0.613510 * A]),
 ]
 H2 = [(1, [0.0, 0.0, 0.0]), (1, [0.0, 0.0, 1.4])]
+
+
+@pytest.mark.parametrize("rotate_occ,rotate_vir", [(True, False), (False, True), (True, True)])
+def test_exact_triples_accepts_prelocalised_source(rotate_occ, rotate_vir):
+    """The exact oracle is invariant to separate active/virtual gauge rotations.
+
+    Include a nonorthogonal AO metric and a frozen orbital outside the
+    active space, as in a real periodic source adapter.
+    """
+    from vibeqc.dlpno.source import LpqFactors
+
+    rng = np.random.default_rng(508)
+    no, nv, nf = 3, 4, 1
+    nbf = nf + no + nv
+    metric = rng.normal(size=(nbf, nbf))
+    S = metric @ metric.T + np.eye(nbf)
+    w, V = np.linalg.eigh(S)
+    C = V / np.sqrt(w)
+    eo, ev = np.array([-0.8, -0.6, -0.4]), np.array([0.2, 0.4, 0.7, 0.9])
+    F = S @ C @ np.diag(np.r_[-2.0, eo, ev]) @ C.T @ S
+    Co, Cv = C[:, nf:nf + no], C[:, nf + no:]
+    L = 0.2 * rng.normal(size=(9, nbf, nbf))
+    df = LpqFactors(0.5 * (L + L.transpose(0, 2, 1)))
+    t1 = 0.01 * rng.normal(size=(no, nv))
+    raw = 0.02 * rng.normal(size=(no, no, nv, nv))
+    t2 = 0.5 * (raw + raw.transpose(1, 0, 3, 2))
+    expected = _spatial_triples_correction(
+        t1, t2, df.mo_transform(Co, Cv), df.mo_transform(Co, Co),
+        df.mo_transform(Cv, Cv), eo, ev, use_cpp=False,
+    )
+    Qo = np.linalg.qr(rng.normal(size=(no, no)))[0] if rotate_occ else np.eye(no)
+    Qv = np.linalg.qr(rng.normal(size=(nv, nv)))[0] if rotate_vir else np.eye(nv)
+    t1_rot = Qo.T @ t1 @ Qv
+    t2_rot = np.einsum("Ii,Jj,IJAB,Aa,Bb->ijab", Qo, Qo, t2, Qv, Qv)
+    pairs = {(i, j): np.eye(nv) for i in range(no) for j in range(i, no)}
+    got = triples_local.exact_triples_correction(
+        pairs, {k: t2_rot[k] for k in pairs}, dict(enumerate(t1_rot)),
+        Co @ Qo, Co @ Qo, Cv @ Qv, S, F, Qv.T @ np.diag(ev) @ Qv, df, no,
+    )
+    assert abs(expected) > 1e-10
+    assert got == pytest.approx(expected, rel=1e-10, abs=1e-13)
 
 
 class TestTripleIteration:
@@ -259,6 +303,9 @@ class TestTripleIteration:
             df=DummyDF(),
             n_act=no,
             tcut_tno=1e-4,
+            # The density helper belongs to the Python per-key loop; the
+            # compiled kernel builds its own (TestCompiledLocalTriples).
+            use_cpp=False,
         )
 
         native_stats = {}
@@ -582,3 +629,176 @@ class TestT1:
         assert err_t1 < 0.5 * err_t0, (
             f"(T1) error {err_t1:.2e} not substantially smaller than (T0) {err_t0:.2e}"
         )
+
+
+class TestCompiledLocalTriples:
+    """The compiled local (T0) is the Python per-key loop, key by key."""
+
+    def test_rank_deficient_pair_union_is_basis_invariant(self):
+        """The captured HCO spaces also break the closed-shell union builder."""
+        from vibeqc._vibeqc_core import dlpno_ccsd_local_triples
+
+        with np.load(Path(__file__).parent / "data/dlpno_hco_beta_pair_spaces.npz") as data:
+            spaces = [
+                np.vstack((np.zeros((25, data[f"pair_{q}"].shape[1])), data[f"pair_{q}"]))
+                for q in range(3)
+            ]
+        rng = np.random.default_rng(190)
+        bov = rng.normal(size=(2, 3 * 51)) * 0.1
+
+        def symmetric(n):
+            raw = rng.normal(size=(2, n, n)) * 0.1
+            return np.ascontiguousarray((raw + raw.transpose(0, 2, 1)).reshape(2, -1))
+
+        boo, bvv = symmetric(3), symmetric(51)
+        amplitudes = [rng.normal(size=(u.shape[1], u.shape[1])) * 0.01 for u in spaces]
+        vectors, values, _ = np.linalg.svd(np.hstack(spaces), full_matrices=False)
+        union = vectors[:, values > 1e-9 * values[0]]
+        union_amplitudes = [
+            (union.T @ u) @ t @ (union.T @ u).T
+            for u, t in zip(spaces, amplitudes)
+        ]
+        energies = []
+        for u, t in (
+            (spaces, amplitudes),
+            ([u[:, ::-1].copy() for u in spaces], [t[::-1, ::-1].copy() for t in amplitudes]),
+            ([union] * 3, union_amplitudes),
+        ):
+            out = dlpno_ccsd_local_triples(
+                bov, boo, bvv, -np.ones(3), np.diag(1.0 + 0.1 * np.arange(51)),
+                [0, 0, 1], [1, 2, 2], u, t, np.zeros((3, 51)), [[0, 1, 2]],
+            )
+            assert out["n_tno"] == [26]
+            assert np.isfinite(out["e_t"])
+            assert np.all(np.isfinite(out["e_key"]))
+            energies.append(out["e_t"])
+        assert energies == pytest.approx([energies[-1]] * 3, abs=1e-12)
+
+    @pytest.mark.parametrize("bad_energy", [np.nan, np.inf, -np.inf])
+    @pytest.mark.parametrize("per_key", [True, False])
+    def test_nonfinite_native_correction_fails(self, monkeypatch, bad_energy, per_key):
+        common, _ = self._random_inputs(7)
+
+        def broken_triples(*args, **kwargs):
+            keys = args[10]
+            assert keys and tuple(keys[0]) == (0,)
+            contributions = [0.0] * len(keys)
+            if per_key:
+                contributions[0] = bad_energy
+            return {
+                "e_t": 0.0 if per_key else bad_energy,
+                "e_key": contributions,
+                "n_tno": [3] * len(keys),
+            }
+
+        monkeypatch.setattr(triples_local, "_cpp_local_triples", broken_triples)
+        message = (
+            r"non-finite energy for occupied key \(0,\)"
+            if per_key else "non-finite total correction"
+        )
+        with pytest.raises(RuntimeError, match=message):
+            triples_local.local_triples_correction(**common)
+
+    @staticmethod
+    def _random_inputs(seed, drop=()):
+        rng = np.random.default_rng(seed)
+        no, nv, naux = 4, 7, 9
+        nbf = no + nv
+        U, T2, t1 = {}, {}, {}
+        for i in range(no):
+            for j in range(i, no):
+                if (i, j) in drop:
+                    continue
+                q, _ = np.linalg.qr(rng.normal(size=(nv, nv)))
+                k = int(rng.integers(2, nv + 1))
+                U[(i, j)] = np.ascontiguousarray(q[:, :k])
+                raw = 0.03 * rng.normal(size=(k, k))
+                T2[(i, j)] = 0.5 * (raw + raw.T) if i == j else raw
+            t1[i] = 0.01 * rng.normal(size=U[(i, i)].shape[1])
+        b_ov = 0.1 * rng.normal(size=(naux, no, nv))
+        raw = 0.1 * rng.normal(size=(naux, no, no))
+        b_oo = 0.5 * (raw + raw.transpose(0, 2, 1))
+        raw = 0.1 * rng.normal(size=(naux, nv, nv))
+        b_vv = 0.5 * (raw + raw.transpose(0, 2, 1))
+        centres = rng.normal(size=(no, 3)) * 3.0
+        occ_dist = np.linalg.norm(centres[:, None] - centres[None, :], axis=2)
+        common = dict(
+            U=U,
+            T2=T2,
+            t1=t1,
+            C_loc=np.eye(nbf, no),
+            C_vir=np.eye(nbf, nv, k=no),
+            S=np.eye(nbf),
+            f_vv_full=np.diag(0.2 + np.sort(rng.random(nv))),
+            f_dd=-0.4 - rng.random(no),
+            df=None,
+            n_act=no,
+            df_factors=(b_ov, b_oo, b_vv),
+        )
+        return common, occ_dist
+
+    @pytest.mark.parametrize("tcut_tno", [0.0, 1e-4])
+    @pytest.mark.parametrize("drop", [(), ((0, 3), (1, 2))])
+    @pytest.mark.parametrize("radius", [0.0, 4.0])
+    def test_matches_python_loop_on_random_inputs(self, tcut_tno, drop, radius):
+        assert triples_local._HAVE_CPP_LOCAL_TRIPLES
+        common, occ_dist = self._random_inputs(7, drop)
+        options = dict(
+            tcut_tno=tcut_tno, occ_dist=occ_dist, coupling_radius=radius
+        )
+        native_stats, python_stats = {}, {}
+        native = triples_local.local_triples_correction(
+            **common, **options, stats=native_stats
+        )
+        python = triples_local.local_triples_correction(
+            **common, **options, stats=python_stats, use_cpp=False
+        )
+        assert native == pytest.approx(python, rel=1e-11, abs=1e-15)
+        assert native_stats == python_stats
+
+    @pytest.mark.parametrize("tcut_tno", [0.0, 1e-9])
+    def test_matches_python_loop_through_the_solver(self, monkeypatch, tcut_tno):
+        mol, basis, rhf, df, _ = _setup(H2O, "def2-svp")
+        options = LocalCCSDOptions(
+            compute_triples=True, triples_mode="local", tcut_tno=tcut_tno
+        )
+        native = run_local_dlpno_ccsd(mol, basis, rhf, df, options)
+        monkeypatch.setattr(triples_local, "_HAVE_CPP_LOCAL_TRIPLES", False)
+        python = run_local_dlpno_ccsd(mol, basis, rhf, df, options)
+        assert native.triples_executed and python.triples_executed
+        assert native.e_t == pytest.approx(python.e_t, abs=1e-12)
+        assert native.tno_per_triple == python.tno_per_triple
+
+
+class TestT1IgnoresLocalisedDistanceScreening:
+    """(T1) triples are canonical-occupied: the localised-orbital radius must
+    not screen them (it lost 18% of the C6H14/cc-pVDZ (T) at 12 bohr)."""
+
+    def test_screening_radius_does_not_drop_canonical_triples(self):
+        atoms = [
+            (8, [0, 0, 0]),
+            (1, [0, 0.79 * A, -0.61 * A]),
+            (1, [0, -0.79 * A, -0.61 * A]),
+            (8, [0, 0, 16.0]),
+            (1, [0, 0.79 * A, 16 - 0.61 * A]),
+            (1, [0, -0.79 * A, 16 - 0.61 * A]),
+        ]
+        mol, basis, rhf, df, _ = _setup(atoms, "sto-3g")
+        common = dict(
+            localise="boys",
+            tcut_pno=1e-7,
+            tcut_pairs=0.0,
+            compute_triples=True,
+            coupling_radius=10.0,
+        )
+        t1 = run_local_dlpno_ccsd(
+            mol, basis, rhf, df, LocalCCSDOptions(triples_mode="t1", **common)
+        )
+        exact = run_local_dlpno_ccsd(
+            mol, basis, rhf, df, LocalCCSDOptions(triples_mode="exact", **common)
+        )
+        assert t1.triples_executed and exact.triples_executed
+        # Same CCSD amplitudes, so (T1) must be the canonical (T) on them.
+        assert t1.e_corr == pytest.approx(exact.e_corr, abs=1e-12)
+        assert t1.e_t == pytest.approx(exact.e_t, abs=1e-9)
+        assert t1.n_triple_keys_screened == 0

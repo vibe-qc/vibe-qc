@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from .molecule import ANGSTROM_TO_BOHR, _atomic_number
+from ._qvf_options import hydrate_option
 from .output._text_safety import safe_json_bytes
 from .output._stem_paths import stem_sibling
 
@@ -75,6 +76,37 @@ _RESERVED_OPTION_KEYS = frozenset(
         "output_qvf",
     }
 )
+
+def _is_json_unsafe(value: object) -> bool:
+    """Return True if *value* is not safe to embed in ``job.spec.options``.
+
+    The QVF serialises the options dict as JSON (QVF spec § 5.9).  Any value
+    that cannot round-trip through ``json.dumps → json.loads`` without loss of
+    type or data is "unsafe" here — embedding it will corrupt the container at
+    write time or cause a wrong-answer / abort at read time.
+
+    pybind11-wrapped C++ option classes (RHFOptions, CCSDOptions, …) are not
+    JSON-serializable and must be passed as direct ``run_job`` kwargs, never
+    inside ``options``.
+    """
+    # Direct type check: pybind11 classes are not instances of any JSON-safe
+    # Python primitive or standard container.
+    if isinstance(value, (
+        str, int, float, bool, type(None),
+        list, tuple, dict,
+    )):
+        return False
+    # numpy arrays / ndarrays also survive round-trip (via __array__ → list)
+    # but are not standard JSON types; we flag them for clarity even though
+    # json.dumps will raise TypeError later.
+    try:
+        import numpy as np  # local to avoid startup cost when safe
+        if isinstance(value, np.ndarray):
+            return False
+    except ImportError:
+        pass
+    # Everything else (pybind11 types, custom classes, …) is unsafe.
+    return True
 
 
 @dataclasses.dataclass
@@ -247,7 +279,9 @@ def _runner_kwargs(
     """Map the JobSpecPayload onto ``runner``'s keyword surface.
 
     Unknown tasks and unknown / reserved option keys are refused (QVF
-    spec § 5.9: a runner MUST refuse rather than silently drop).
+    spec § 5.9: a runner MUST refuse rather than silently drop).  Native
+    option records are hydrated through their public constructors, with
+    unsupported fields refused rather than silently discarded (issue #366).
     """
     spec = container.spec
     kwargs: dict[str, Any] = {}
@@ -284,7 +318,7 @@ def _runner_kwargs(
     has_var_keyword = any(
         p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
     )
-    options = spec.get("options") or {}
+    options = spec.get("options", {})
     if not isinstance(options, dict):
         raise ValueError(
             f"QVF container {container.path.name}: job.spec options must "
@@ -303,7 +337,7 @@ def _runner_kwargs(
                 f"not understood by {runner.__name__} -- refusing to "
                 f"silently drop it (QVF spec 5.9)"
             )
-        kwargs[key] = value
+        kwargs[key] = hydrate_option(key, value)
     return kwargs
 
 
@@ -758,17 +792,17 @@ def run_container(
         runner = run_periodic_job
     else:
         runner = run_job
-    kwargs = _runner_kwargs(container, runner)
-    kwargs.update(overrides)
-    if update_in_place:
-        # The runner-produced QVF supplies the latest result sections for
-        # the terminal merge; a container execution cannot opt out of it.
-        kwargs["output_qvf"] = True
     if output is None:
         output = container.path.with_suffix("")
     output = Path(os.fspath(output))
 
     def invoke_runner():
+        # Hydration is part of the attempted execution: refusal settles the
+        # archive as failed while preserving the submitted spec verbatim.
+        kwargs = _runner_kwargs(container, runner)
+        kwargs.update(overrides)
+        if update_in_place:
+            kwargs["output_qvf"] = True
         if container.job_type == "periodic":
             # run_periodic_job wants a BasisSet object (or None for
             # basis-free semiempirical methods), not a name string.
@@ -921,6 +955,20 @@ def write_pending_qvf(
                 f"write_pending_qvf: options {bad!r} restate typed "
                 f"job.spec fields -- pass them as keyword arguments"
             )
+        # Guard against non-JSON-safe values in the container's options dict.
+        # pybind11-wrapped native option classes cannot round-trip through
+        # QVF's JSON serialisation path; embedding them would silently corrupt
+        # the archive and cause aborts at read time (issue #366).
+        for key, value in sorted(options.items()):
+            if _is_json_unsafe(value):
+                raise TypeError(
+                    f"write_pending_qvf: options[{key!r}] is a "
+                    f"{type(value).__name__} which cannot be embedded in a "
+                    "QVF job container. Native option classes must be passed "
+                    "as direct run_job() kwargs (e.g. run_job(mol, "
+                    "rhf_options=opts)), not inside the ``options`` dict of "
+                    "write_pending_qvf()."
+                )
         spec["options"] = dict(options)
 
     # OutputPlan wants string method/basis for provenance labels; a

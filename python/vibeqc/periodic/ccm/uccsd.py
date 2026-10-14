@@ -108,6 +108,12 @@ def run_ccm_uccsd(
     guess_selection = _ccm_initial_guess(
         ccm, initial_guess, driver='run_ccm_uccsd', reference=uhf_result,
     )
+    # A Bloch producer result (run_ccm_*_gdf) is transformed to the real
+    # supercell-Gamma reference of the same Hamiltonian (Theorem 1;
+    # periodic/ccm/bloch_reference.py). Real-Gamma references pass through.
+    from .bloch_reference import as_real_reference
+
+    uhf_result = as_real_reference(ccm, uhf_result)
     from ..ccm.uhf import run_ccm_uhf
     from .neutral import ccm_neutral_cderi
 

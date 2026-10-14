@@ -10,7 +10,7 @@ Because the supercell is a finite (open-boundary) cluster, there is **no periodi
 ones, so the MP2 denominator ``(eᵢ+eⱼ-eₐ-e_b)`` is clean and the per-cell energy
 converges to the thermodynamic limit as the megacell grows. This is exactly why
 the megacell route sidesteps the boundary that blocks the Γ-Bloch route
-(``handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md`` Sec. 6.5): the exxdiv contamination of
+(the original investigation): the exxdiv contamination of
 the Bloch MP2 denominator never arises in a finite cluster.
 
 :func:`megacell_mp2` computes the canonical (untruncated) megacell MP2 energy by
@@ -274,6 +274,10 @@ def _pre_sweep_megacell_run_kwargs(molecule, method: str) -> dict[str, object]:
                 # means what the density it was cut against means, so the
                 # density is pinned with the thresholds.
                 pno_norm="legacy",
+                # The DOI domain default (#190) postdates this convention; its
+                # tcut_mkn=1e-3 domains are Mulliken domains, so the criterion is
+                # pinned with them.
+                domain_criterion="mulliken",
             )
     elif method_key in {"dlpno-ccsd", "dlpno-ccsd(t)"}:
         if int(molecule.multiplicity) > 1:
@@ -284,6 +288,11 @@ def _pre_sweep_megacell_run_kwargs(molecule, method: str) -> dict[str, object]:
                 tcut_pno=1e-7,
                 tcut_pairs=0.0,
                 tcut_mkn=0.0,
+                # This builder holds the pre-sweep convention, which predates
+                # the two-sided spin-orbital PNO density and the MP2 PNO
+                # correction of the open-shell route (#190).
+                pno_density="one-sided",
+                pno_correction=False,
             )
         else:
             from .dlpno.ccsd_local_solver import LocalCCSDOptions
@@ -302,6 +311,9 @@ def _pre_sweep_megacell_run_kwargs(molecule, method: str) -> dict[str, object]:
                 # ... and predates the semicanonical MP2 PNO correction the
                 # molecular CCSD route now applies, so that stays off too.
                 pno_correction=False,
+                # ... and predates the ORCA singles-PNO scale on the diagonal pairs
+                # (#190), so the diagonal pairs keep the plain tcut_pno.
+                tcut_pno_diag_scale=1.0,
             )
     return kwargs
 

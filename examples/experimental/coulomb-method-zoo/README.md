@@ -50,7 +50,7 @@ The molecular-limit choice is forced by the molecular-DF integral
 machinery, `compute_3c_eri` is molecular, not lattice-summed, so
 true bulk geometries (tight unit cells with cell-to-cell density
 overlap) need a separate native-periodic 3c-ERI binding that doesn't
-exist yet (per `docs/handover_periodic_scf_followup.md`).
+exist yet.
 
 ## Math summary
 

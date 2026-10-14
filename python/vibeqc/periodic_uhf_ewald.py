@@ -42,11 +42,15 @@ from __future__ import annotations
 from .guess import periodic_result_selection
 
 import math
+import hashlib
+import json
+import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from .periodic.exchange_convention import MOLECULAR_LIMIT
 from ._vibeqc_core import (
     apply_level_shift,
     BasisSet,
@@ -77,6 +81,10 @@ from .periodic_rhf_ewald import _canonical_orthogonalizer, _refuse_if_dense_ioni
 from .periodic_scf_accelerators import DynamicDamping, PeriodicSCFAccelerator
 from .progress import ProgressLogger, resolve_progress
 from .scf_divergence import check_scf_divergence
+from .solvers._scf import FockDiagonalizer
+from .solvers.operators import OperatorFrame, _snapshot
+from .fock_state import EnergyComponents, FockBuild, SourceProvenance
+from .periodic_fock_source import _gamma_source_details
 
 __all__ = [
     "PeriodicUHFEwaldResult",
@@ -130,6 +138,83 @@ class PeriodicUHFEwaldResult:
 
     restart_kpoints: object = None
     restart_weights: object = None
+
+    # Every Gamma-only Ewald/GDF driver builds exchange with the
+    # molecular-limit kernel (home-cell density, image blocks zeroed); the
+    # runner's manifest records this instead of the exxdiv knob (GitLab #23).
+    exchange_q0: str = MOLECULAR_LIMIT
+    fock_build: FockBuild | None = None
+    next_density_alpha: np.ndarray | None = None
+    next_density_beta: np.ndarray | None = None
+    density_fixed_point_residual: float | None = None
+    evaluated_build_history: list[dict] = field(default_factory=list)
+
+    @property
+    def run_fields(self):
+        if self.fock_build is None:
+            return {}
+        return dict(self.fock_build.output_fields(),
+                    orbital_state_relation="density-defining-physical-rayleigh-quotients",
+                    scf_stop_reason="converged" if self.converged else "iteration_limit",
+                    density_fixed_point_residual=self.density_fixed_point_residual,
+                    evaluated_build_history=[dict(row) for row in self.evaluated_build_history])
+
+
+class _GammaUHFBuilder:
+    """Synchronous method construction; completed states retain no builder.
+
+    One J[Dalpha+Dbeta] and two existing K[2 Dspin]/2 source calls per build.
+    Source drift is refused rather than reusing an invalid integral cache.
+    Concurrent mutation of provider objects during a call is unsupported.
+    """
+    def __init__(self, basis, system, lattice_options, kinetic, nuclear, frame,
+                 e_nuclear, j_build, source_details, *, method="UHF"):
+        if method not in {"UHF", "ROHF"}:
+            raise ValueError("Gamma spin HF builder requires UHF or ROHF")
+        self.method = method
+        self.basis, self.system, self.lattice_options = basis, system, lattice_options
+        self.kinetic, self.nuclear = _snapshot(kinetic), _snapshot(nuclear)
+        self.hcore = _snapshot(.5 * ((kinetic + nuclear) + (kinetic + nuclear).T))
+        self.frame, self.e_nuclear, self.j_build = frame, e_nuclear, j_build
+        self.source_details = source_details
+        self.source = SourceProvenance.capture("libint2+periodic-ewald-j", **source_details())
+        self.generation = 0
+
+    def __call__(self, density_alpha, density_beta):
+        if SourceProvenance.capture(self.source.provider, **self.source_details()) != self.source:
+            raise ValueError("Gamma spin HF numerical source changed; rebuild its provider and metric frame")
+        da, db = _snapshot(density_alpha), _snapshot(density_beta)
+        if np.iscomplexobj(da) or np.iscomplexobj(db):
+            raise NotImplementedError("Gamma Ewald UHF requires real spin densities")
+        dt = da + db
+        j = self.j_build(dt)
+        ka, kb = (0.5 * np.asarray(build_jk_gamma_molecular_limit(
+            self.basis, self.system, self.lattice_options, 2.0 * d, 0.0).K)
+                  for d in (da, db))
+        fa, fb = (self.hcore + j - k for k in (ka, kb))
+        fa, fb = .5 * (fa + fa.T), .5 * (fb + fb.T)
+        # Retain the method's HF half trace, including its summation order.
+        electronic = (0.5 * float(np.einsum("ij,ij->", dt, self.hcore))
+                      + 0.5 * float(np.einsum("ij,ij->", da, fa))
+                      + 0.5 * float(np.einsum("ij,ij->", db, fb)))
+        components = (
+            ("kinetic", float(np.einsum("ij,ij->", dt, self.kinetic))),
+            ("nuclear_attraction", float(np.einsum("ij,ij->", dt, self.nuclear))),
+            ("coulomb", 0.5 * float(np.einsum("ij,ij->", dt, j))),
+            ("exchange", -0.5 * float(np.einsum("ij,ij->", da, ka))
+             - 0.5 * float(np.einsum("ij,ij->", db, kb))),
+        )
+        correction = _madelung_energy_correction_for_lat(
+            dt, self.frame.overlap, self.system, self.lattice_options)
+        state = FockBuild.from_dense(
+            method=self.method, generation=self.generation, source=self.source,
+            energy=EnergyComponents(electronic=electronic, nuclear=self.e_nuclear,
+                                    components=components, corrections=(("madelung", correction),)),
+            densities=(da, db), focks=(fa, fb), frames=(self.frame, self.frame),
+            spins=("alpha", "beta"), kpoints=((0., 0., 0.),) * 2, weights=(1., 1.),
+        )
+        self.generation += 1
+        return state
 
 
 def _integer_spin_occupations(
@@ -194,6 +279,12 @@ def run_uhf_periodic_gamma_ewald3d(
     ``periodic_scf_accelerators``; the Ewald J / real-space K builds
     are identical to the closed-shell path.
 
+    Per-spin Fock solves use independent shared-solver histories and leave
+    the caller's Davidson controls unchanged. Ordinary SCF may request only
+    occupied roots; PATTERN_HOLD and quadratic updates require the complete
+    retained spectrum. The HCORE seed follows the same dense/Davidson choice
+    in a separate one-electron solve, without seeding either spin history.
+
     Parameters
     ----------
     system, basis, options
@@ -247,7 +338,7 @@ def run_uhf_periodic_gamma_ewald3d(
     lat_opts: LatticeSumOptions = opts.lattice_opts
     plog = resolve_progress(progress, verbose=verbose)
 
-    # ---- Force EWALD_3D gauge (gauge consistency; handover F4 2026-06-01) ----
+    # ---- Force EWALD_3D gauge (gauge consistency; historical design record F4 2026-06-01) ----
     # This driver hard-codes the Hartree J to the Ewald-3D builder, so V_ne
     # (compute_nuclear_lattice_dispatch) and e_nuc (nuclear_repulsion_per_cell)
     # MUST share that gauge. Without the force, a default options object
@@ -429,37 +520,35 @@ def run_uhf_periodic_gamma_ewald3d(
             f"(n_a={n_alpha}, n_b={n_beta})."
         )
 
-    use_davidson = getattr(opts, "use_davidson", False)
-    dav_opts = getattr(opts, "davidson", None)
-    dav_dim = getattr(opts, "davidson_min_dim", 100)
-    use_dav = use_davidson and S.shape[0] >= dav_dim
-    if use_dav and dav_opts is None:
-        from vibeqc._vibeqc_core import DavidsonOptions
+    # State following and orbital rotations need every retained candidate,
+    # while ordinary Aufbau SCF needs only the occupied space for each spin.
+    needs_full_space = (
+        (getattr(opts, "spinlock_mode", SpinlockMode.OFF) == SpinlockMode.PATTERN_HOLD
+         and int(getattr(opts, "spinlock_iterations", 0)) > 0)
+        or int(getattr(opts, "quadratic_fallback_iter", 0)) > 0
+    )
+    def source_details():
+        return _gamma_source_details(
+            basis, system, lat_opts, omega=omega, grid_shape=grid_shape_t,
+            origin=origin, spacing_bohr=spacing_bohr)
 
-        dav_opts = DavidsonOptions()
+    source_basis = source_details()
+    frame = OperatorFrame(
+        n=basis.nbasis, basis_id=hashlib.sha256(json.dumps(
+            source_basis["shells"], sort_keys=True).encode()).hexdigest(),
+        ordering=source_basis["ordering"], image_gauge="gamma-bloch-at-declared-shell-origins",
+        overlap=S, X=X)
+    X, S = frame.X, frame.overlap
+    diagonalize_alpha = FockDiagonalizer(
+        X, S, opts, spin="alpha", n_required=n_kept if needs_full_space else n_alpha,
+        real_only=True, frame=frame,
+    )
+    diagonalize_beta = FockDiagonalizer(
+        X, S, opts, spin="beta", n_required=n_kept if needs_full_space else n_beta,
+        real_only=True, frame=frame,
+    )
 
     e_nuc = float(nuclear_repulsion_per_cell(system, lat_opts))
-
-    def diagonalize(F: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        Fp = X.T @ F @ X
-        Fp = 0.5 * (Fp + Fp.T)
-        if use_dav and dav_opts is not None:
-            from vibeqc._vibeqc_core import davidson_solve
-
-            if dav_opts.n_eig == 0:
-                dav_opts.n_eig = Fp.shape[0]
-            if dav_opts.guess_vectors is not None:
-                pass  # already set from previous iteration
-            dres = davidson_solve(Fp, dav_opts)
-            if not dres.converged:
-                raise RuntimeError(
-                    f"Davidson did not converge after {dres.n_iter} iters"
-                )
-            eps, Cp = dres.eigenvalues, dres.eigenvectors
-            dav_opts.guess_vectors = Cp
-        else:
-            eps, Cp = np.linalg.eigh(Fp)
-        return X @ Cp, eps
 
     # Cache the iteration-invariant analytic-FT Hartree-J machinery once
     # (Bloch AO-pair FT, dense G-mesh, 4pi/G^2 kernel) so the PATOM
@@ -473,6 +562,9 @@ def run_uhf_periodic_gamma_ewald3d(
         origin=origin,
         spacing_bohr=spacing_bohr,
     )
+    build_fock = _GammaUHFBuilder(
+        basis, system, lat_opts, T, V, frame, e_nuc, j_build, source_details)
+    T, V, Hcore = build_fock.kinetic, build_fock.nuclear, build_fock.hcore
 
     # ---- Initial guess via the unified engine.
     # Bug fix (v0.9.x): this Γ-only UHF path previously ignored
@@ -483,8 +575,16 @@ def run_uhf_periodic_gamma_ewald3d(
     seed_guess = InitialGuess.SAD if guess == InitialGuess.PATOM else guess
     # Always seed the per-spin MO frame from Hcore -- used by the
     # quadratic-step tracking even when SAD provides the start density.
-    C_alpha, eps_alpha = diagonalize(Hcore)
-    C_beta, eps_beta = diagonalize(Hcore)
+    # Preserve the configured seed solver, with a one-electron identity and
+    # no shared warm state between the seed and density-dependent Focks.
+    C_seed, eps_seed = FockDiagonalizer(
+        X, S, opts, kind="one_electron", spin="restricted",
+        n_required=n_kept if needs_full_space else max(n_alpha, n_beta),
+        real_only=True,
+    )(Hcore)
+    C_alpha, eps_alpha = C_seed.copy(), eps_seed.copy()
+    C_beta, eps_beta = C_seed.copy(), eps_seed.copy()
+    del C_seed, eps_seed
     split = initial_densities_open_shell(
         system.unit_cell_molecule(),
         basis,
@@ -501,7 +601,7 @@ def run_uhf_periodic_gamma_ewald3d(
         read_density_alpha=getattr(opts, "read_density_alpha", None),
         read_density_beta=getattr(opts, "read_density_beta", None),
         read_path=getattr(opts, "read_path", ""),
-        overlap=S,
+        overlap=S.copy(),
     )
     if split is not None:
         D_alpha, D_beta = split
@@ -522,28 +622,10 @@ def run_uhf_periodic_gamma_ewald3d(
         D_beta = 0.5 * (D_beta + D_beta.T)
     if guess == InitialGuess.PATOM:
         plog.info("initial guess: PATOM (SAD + one periodic in-field step)")
-        D_total = D_alpha + D_beta
-        J = j_build(D_total)
-        jk_alpha = build_jk_gamma_molecular_limit(
-            basis,
-            system,
-            lat_opts,
-            2.0 * D_alpha,
-            0.0,
-        )
-        jk_beta = build_jk_gamma_molecular_limit(
-            basis,
-            system,
-            lat_opts,
-            2.0 * D_beta,
-            0.0,
-        )
-        K_alpha = 0.5 * np.asarray(jk_alpha.K)
-        K_beta = 0.5 * np.asarray(jk_beta.K)
-        F_alpha_seed = 0.5 * ((Hcore + J - K_alpha) + (Hcore + J - K_alpha).T)
-        F_beta_seed = 0.5 * ((Hcore + J - K_beta) + (Hcore + J - K_beta).T)
-        C_alpha, eps_alpha = diagonalize(F_alpha_seed)
-        C_beta, eps_beta = diagonalize(F_beta_seed)
+        seed_build = build_fock(D_alpha, D_beta)
+        C_alpha, eps_alpha = diagonalize_alpha(seed_build.channels[0].operator)
+        C_beta, eps_beta = diagonalize_beta(seed_build.channels[1].operator)
+        del seed_build
         D_alpha = (
             C_alpha[:, :n_alpha] @ C_alpha[:, :n_alpha].T
             if n_alpha > 0
@@ -664,57 +746,11 @@ def run_uhf_periodic_gamma_ewald3d(
             D_alpha_used = damping * D_alpha_prev + (1.0 - damping) * D_alpha
             D_beta_used = damping * D_beta_prev + (1.0 - damping) * D_beta
 
-        # Total density for J. Note the factor-2 convention: UHF
-        # densities are one-particle (no factor 2); the J builder in
-        # ``build_jk_gamma_molecular_limit`` expects the closed-shell
-        # convention D_total = D_a + D_b (which gives the right Hartree
-        # potential). ``build_j_ewald_3d`` follows the same convention.
-        D_total = D_alpha_used + D_beta_used
-
-        # Hartree J via composed Ewald-3D (cached analytic-FT machinery).
-        J = j_build(D_total)
-
-        # Per-spin K via the full-range real-space builder. The
-        # closed-shell ``build_jk_gamma_molecular_limit`` returns
-        # K(D) where D is the input density; for UHF we feed in
-        # 2.D_a (the closed-shell-convention density that gives the
-        # right K(D_a)) and divide the resulting K by 2 to recover
-        # the per-spin exchange.
-        # Equivalently: jk_a.K = K(2.D_a) = 2.K(D_a), so K(D_a)
-        # = jk_a.K / 2.
-        jk_alpha = build_jk_gamma_molecular_limit(
-            basis,
-            system,
-            lat_opts,
-            2.0 * D_alpha_used,
-            0.0,
-        )
-        jk_beta = build_jk_gamma_molecular_limit(
-            basis,
-            system,
-            lat_opts,
-            2.0 * D_beta_used,
-            0.0,
-        )
-        K_alpha = 0.5 * np.asarray(jk_alpha.K)
-        K_beta = 0.5 * np.asarray(jk_beta.K)
-
-        F_alpha = Hcore + J - K_alpha
-        F_beta = Hcore + J - K_beta
-        F_alpha = 0.5 * (F_alpha + F_alpha.T)
-        F_beta = 0.5 * (F_beta + F_beta.T)
-
-        # Per-cell electronic energy
-        E_elec = (
-            0.5 * float(np.einsum("ij,ij->", D_alpha_used + D_beta_used, Hcore))
-            + 0.5 * float(np.einsum("ij,ij->", D_alpha_used, F_alpha))
-            + 0.5 * float(np.einsum("ij,ij->", D_beta_used, F_beta))
-        )
-        # Madelung-leak correction (v0.6.1).
-        E_madelung_fix = _madelung_energy_correction_for_lat(
-            D_alpha_used + D_beta_used, S, system, lat_opts
-        )
-        E_total = E_elec + e_nuc + E_madelung_fix
+        physical = build_fock(D_alpha_used, D_beta_used)
+        alpha, beta = physical.channels
+        F_alpha, F_beta = alpha.operator.matrix, beta.operator.matrix
+        D_alpha_used, D_beta_used = alpha.density, beta.density
+        E_elec, E_total = physical.energy.electronic, physical.energy.total
 
         # Orbital-gradient norms per spin.
         FDS_alpha = F_alpha @ D_alpha_used @ S
@@ -744,6 +780,9 @@ def run_uhf_periodic_gamma_ewald3d(
                 diis_subspace=diis_sub,
             )
         )
+        result.evaluated_build_history.append(dict(
+            iteration=iter_idx, generation=physical.generation,
+            build_id=physical.identity, density_id=physical.density_id))
         plog.iteration(
             iter_idx,
             energy=float(E_total),
@@ -752,19 +791,14 @@ def run_uhf_periodic_gamma_ewald3d(
             diis=diis_sub,
         )
         # Per-iter energy decomposition for cross-code parity comparison.
-        D_total_iter = D_alpha_used + D_beta_used
-        E_kin_iter = float(np.einsum("ij,ij->", D_total_iter, T))
-        E_ne_iter = float(np.einsum("ij,ij->", D_total_iter, V))
-        E_J_iter = 0.5 * float(np.einsum("ij,ij->", D_total_iter, J))
-        E_K_iter = -0.5 * float(
-            np.einsum("ij,ij->", D_alpha_used, K_alpha)
-        ) - 0.5 * float(np.einsum("ij,ij->", D_beta_used, K_beta))
+        components = dict(physical.energy.components)
+        E_madelung_fix = dict(physical.energy.corrections)["madelung"]
         plog.energy_decomposition(
             iter_idx,
-            E_kin=E_kin_iter,
-            E_ne=E_ne_iter,
-            E_J=E_J_iter,
-            E_K=E_K_iter,
+            E_kin=components["kinetic"],
+            E_ne=components["nuclear_attraction"],
+            E_J=components["coulomb"],
+            E_K=components["exchange"],
             E_nuc=float(e_nuc),
             E_madelung=float(E_madelung_fix),
         )
@@ -857,8 +891,15 @@ def run_uhf_periodic_gamma_ewald3d(
                     F_beta, S, D_beta_used, b, LevelShiftDensity.SPIN)
 
             # Diagonalize + update.
-            C_alpha_new, eps_alpha_new = diagonalize(F_alpha_diag)
-            C_beta_new, eps_beta_new = diagonalize(F_beta_diag)
+            modification = "+".join(
+                name for active, name in ((diis_active and accel is not None and not hold_active, "extrapolation"),
+                                          (b != 0., "level_shift")) if active)
+            op_alpha = (physical.solver_operator(0, F_alpha_diag, modification=modification)
+                        if modification else alpha.operator)
+            op_beta = (physical.solver_operator(1, F_beta_diag, modification=modification)
+                       if modification else beta.operator)
+            C_alpha_new, eps_alpha_new = diagonalize_alpha(op_alpha)
+            C_beta_new, eps_beta_new = diagonalize_beta(op_beta)
 
         # SPINLOCK PATTERN_HOLD: after both the normal and quadratic branches
         # produce C_*_new, reorder the occupied set by max overlap with the
@@ -913,28 +954,10 @@ def run_uhf_periodic_gamma_ewald3d(
             # that D.  At a non-fixed-point iteration cap those orbitals do
             # not diagonalise F[D] (by definition), so the reported orbital
             # energies are their Rayleigh quotients in the rebuilt Fock.
-            D_total_f = D_alpha + D_beta
-            J_f = j_build(D_total_f)
-            jk_a_f = build_jk_gamma_molecular_limit(
-                basis,
-                system,
-                lat_opts,
-                2.0 * D_alpha,
-                0.0,
-            )
-            jk_b_f = build_jk_gamma_molecular_limit(
-                basis,
-                system,
-                lat_opts,
-                2.0 * D_beta,
-                0.0,
-            )
-            F_alpha_f = Hcore + J_f - 0.5 * np.asarray(jk_a_f.K)
-            F_beta_f = Hcore + J_f - 0.5 * np.asarray(jk_b_f.K)
-            F_alpha_f = 0.5 * (F_alpha_f + F_alpha_f.T)
-            F_beta_f = 0.5 * (F_beta_f + F_beta_f.T)
-            C_a_f, eps_a_f = diagonalize(F_alpha_f)
-            C_b_f, eps_b_f = diagonalize(F_beta_f)
+            terminal = build_fock(D_alpha, D_beta)
+            F_alpha_f, F_beta_f = (c.operator.matrix for c in terminal.channels)
+            C_a_f, eps_a_f = diagonalize_alpha(terminal.channels[0].operator)
+            C_b_f, eps_b_f = diagonalize_beta(terminal.channels[1].operator)
             # Keep the look-ahead map in the MOM-held occupied basin while
             # PATTERN_HOLD is active. Comparing the held density against an
             # aufbau slice would measure a state swap, not its fixed-point
@@ -963,16 +986,12 @@ def run_uhf_periodic_gamma_ewald3d(
                 float(np.max(np.abs(D_alpha_next - D_alpha))),
                 float(np.max(np.abs(D_beta_next - D_beta))),
             )
-            E_elec_f = (
-                0.5 * float(np.einsum("ij,ij->", D_alpha + D_beta, Hcore))
-                + 0.5 * float(np.einsum("ij,ij->", D_alpha, F_alpha_f))
-                + 0.5 * float(np.einsum("ij,ij->", D_beta, F_beta_f))
-            )
-            E_madelung_fix_f = _madelung_energy_correction_for_lat(
-                D_alpha + D_beta, S, system, lat_opts
-            )
-            result.energy = E_elec_f + e_nuc + E_madelung_fix_f
-            result.e_electronic = E_elec_f
+            result.fock_build = terminal
+            result.next_density_alpha = _snapshot(D_alpha_next)
+            result.next_density_beta = _snapshot(D_beta_next)
+            result.density_fixed_point_residual = density_fixed_point_residual
+            result.energy = terminal.energy.total
+            result.e_electronic = terminal.energy.electronic
             result.mo_energies_alpha = np.real(
                 np.diag(C_alpha_new.T @ F_alpha_f @ C_alpha_new)
             )
@@ -980,8 +999,8 @@ def run_uhf_periodic_gamma_ewald3d(
                 result.mo_energies_alpha, n_alpha
             )
             result.mo_coeffs_alpha = C_alpha_new
-            result.density_alpha = D_alpha
-            result.fock_alpha = F_alpha_f
+            result.density_alpha = terminal.channels[0].density.copy()
+            result.fock_alpha = F_alpha_f.copy()
             result.mo_energies_beta = np.real(
                 np.diag(C_beta_new.T @ F_beta_f @ C_beta_new)
             )
@@ -989,8 +1008,8 @@ def run_uhf_periodic_gamma_ewald3d(
                 result.mo_energies_beta, n_beta
             )
             result.mo_coeffs_beta = C_beta_new
-            result.density_beta = D_beta
-            result.fock_beta = F_beta_f
+            result.density_beta = terminal.channels[1].density.copy()
+            result.fock_beta = F_beta_f.copy()
             result.s_squared = _spin_squared(
                 n_alpha,
                 n_beta,
@@ -1002,14 +1021,7 @@ def run_uhf_periodic_gamma_ewald3d(
             # state uses the freshly diagonalised D_*.  Damping can make
             # those materially different.  Verify the actual return
             # candidate before accepting it as an SCF fixed point.
-            FDS_alpha_f = F_alpha_f @ D_alpha @ S
-            FDS_beta_f = F_beta_f @ D_beta @ S
-            grad_norm_f = float(
-                np.sqrt(
-                    np.linalg.norm(FDS_alpha_f - FDS_alpha_f.T) ** 2
-                    + np.linalg.norm(FDS_beta_f - FDS_beta_f.T) ** 2
-                )
-            )
+            grad_norm_f = terminal.commutator_norm
             terminal_converged = (
                 converged
                 and abs(result.energy - E_total) < float(opts.conv_tol_energy)
@@ -1030,6 +1042,9 @@ def run_uhf_periodic_gamma_ewald3d(
                     grad_norm=float(grad_norm_f),
                     diis_subspace=previous_trace.diis_subspace,
                 )
+                result.evaluated_build_history[-1] = dict(
+                    iteration=iter_idx, generation=terminal.generation,
+                    build_id=terminal.identity, density_id=terminal.density_id)
             if terminal_converged:
                 result.converged = True
                 plog.converged(

@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "cc-pv6z",
+  "description": "Basis set: cc-pv6z\ncc-pv6z: libint's own file, element data unchanged, followed\nby the Be block(s) from the Basis Set Exchange. libint\nomits these because they were added to the set by a later and\nseparate publication, not because the data is in doubt:\n  Be: B. P. Prascher, D. E. Woon, K. A. Peterson, T. H. Dunning, Theor. Chem. Acc. 128, 69 (2011); DOI: 10.1007/s00214-010-0764-0\nFetched from the basis-set-exchange distribution, catalogue\n  version 0.12, on 2026-09-10. No network access involved.\nLicense: numerical parameter data from published scientific\n  papers; see docs/license.md section 3a.\n cc-pV6Z  EMSL  Basis Set Exchange Library   1/2/16 11:21 AM\nElements                             References\nH:         K.A. Peterson, D.E. Woon and T. H. Dunning, Jr., (to be published).\nB - Ne:    A. K. Wilson, T. v. Mourik and T. H. Dunning, Jr., J. Mol. Struct.\n(THEOCHEM) 388, 339 (1997).\nS:         J.G. Hill, S. Mazumder, and K.A. Peterson, Correlation consistent basis sets for molecular core-valence effects with explicitly correlated wave functions: the atoms B-Ne and Al-Ar, Journal of Chemical Physics 132, 054108 (2010).",
   "role": "orbital",
   "elements": {
     "H": {
@@ -7320,7 +7320,52 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "dunning_ccpvxz_1989",
+      "description": "T. H. Dunning, Journal of Chemical Physics 90, 1007-1023 (1989)",
+      "doi": "10.1063/1.456153"
+    },
+    {
+      "key": "wilson_vanmourik_dunning_1996",
+      "description": "A. K. Wilson, T. van Mourik, T. H. Dunning, Journal of Molecular Structure: THEOCHEM 388, 339-349 (1996)",
+      "doi": "10.1016/S0166-1280(96)80048-0"
+    },
+    {
+      "key": "prascher_ccpvnz_be_2011",
+      "description": "B. P. Prascher, D. E. Woon, K. A. Peterson, T. H. Dunning, A. K. Wilson, Theoretical Chemistry Accounts 128, 69-82 (2011)",
+      "doi": "10.1007/s00214-010-0764-0"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "cc-pv6z",
+        "detail": "libint's element blocks, unchanged"
+      },
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "cc-pv6z",
+        "detail": "element blocks libint omits, merged as reviewed imports"
+      }
+    ],
+    "retrieval_date": "2026-09-10",
+    "content_sha256": "b6fef7260d6e0dce194ef246a629b3e55eaab800b5ea1201372a25e599701c40",
+    "citations": [
+      {
+        "keys": [
+          "dunning_ccpvxz_1989",
+          "wilson_vanmourik_dunning_1996",
+          "prascher_ccpvnz_be_2011"
+        ]
+      }
+    ]
   }
 }

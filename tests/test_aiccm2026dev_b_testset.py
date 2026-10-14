@@ -3534,7 +3534,8 @@ def test_design_and_fleet_docs_do_not_claim_low_d_ri_is_runnable() -> None:
     assert _EXPECTED_EXACT_EXCHANGE_SCHEMA in readme
     assert "short-range-direct" in design
     assert "full-range-minus-long-range" in guide
-    assert "They remain `not-qualified`" in guide
+    assert ("all fitted and all post-HF chi results remain `not-qualified` permanently in v1"
+            in " ".join(guide.split()))
     assert "`audit_b.py` and `compare_b.py` reject" in guide
     assert "Two-electron numerical-support qualification" in design
     assert "exact executed M5" in design
@@ -3882,19 +3883,9 @@ def test_validation_docs_do_not_relabel_pbe0_ri_as_rijcosx() -> None:
         .read_text(encoding="utf-8")
         .split()
     )
-    handover = " ".join(
-        (_ROOT / "handovers" / "HANDOVER_AICCM2026DEV_B.md")
-        .read_text(encoding="utf-8")
-        .split()
-    )
 
     assert "matching STO-3G/PBE0/RIJCOSX runs converged" not in decisions
-    assert (
-        "direct hybrid COSX smoke is the PBE0/RIJCOSX block above"
-        not in handover
-    )
     assert "PBE0/RIJCOSX validation remains open" in decisions
-    assert "PBE0/RIJCOSX remains unrun" in handover
 
 
 def test_four_center_runner_records_resolved_direct_lattice_cutoffs(
@@ -4198,6 +4189,32 @@ def test_four_center_producer_does_not_qualify_unbound_m5_provenance(
         b_routes.two_electron_support_reportability_failure(support, "rhf-4c")
         is not None
     )
+
+
+def test_native_chi_physical_default_cannot_qualify_historical_m5_support() -> None:
+    import vibeqc as vq
+    from vibeqc.periodic.chi.scf import (
+        AICCM2026DevBExperimentalWarning, run_aiccm2026dev_b_rhf,
+    )
+
+    system = vq.PeriodicSystem(3, np.diag([8., 12., 12.]), [
+        vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [1.4, 0., 0.]),
+    ])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    with pytest.warns(AICCM2026DevBExperimentalWarning):
+        result = run_aiccm2026dev_b_rhf(
+            system, basis, (2, 1, 1), backend="four_center", progress=False,
+        )
+    assert result.converged
+    assert result.resolved_domain.policy == "physical_pairs"
+    executed = dict(result.resolved_domain.lattice_2e.values)
+    support = run_case_b._direct_two_electron_support(result, "rhf-4c", {
+        "electronic_cutoff_bohr": executed["cutoff_bohr"],
+        "nuclear_cutoff_bohr": executed["nuclear_cutoff_bohr"],
+    })
+    assert support["qualification"] == "not-qualified"
+    assert support["direct"]["domain_policy"] == "m5-physical-pair-midpoint-erfc/v1"
+    assert b_routes.two_electron_support_reportability_failure(support, "rhf-4c") is not None
 
 
 @pytest.mark.parametrize(

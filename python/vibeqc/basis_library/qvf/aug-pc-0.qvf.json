@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "aug-pc-0",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: aug-pc-0\nCanonical name in vibe-qc: aug-pc-0\nOriginating publication: F. Jensen, J. Chem. Phys. 115, 9113 (2001); 117, 9234 (2002); DOI: 10.1063/1.1413513\nNote:\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: aug-pc-0\nDescription: aug-pc-0\n       Role: orbital\n    Version: 0  (Data from the Original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -4791,7 +4791,38 @@
       ]
     }
   },
+  "basis_family": "jensen",
+  "references": [
+    {
+      "key": "jensen_pc_2001",
+      "description": "F. Jensen, Journal of Chemical Physics 115, 9113-9125 (2001)",
+      "doi": "10.1063/1.1413524"
+    },
+    {
+      "key": "doi:10.1063/1.1413513",
+      "description": "F. Jensen, J. Chem. Phys. 115, 9113 (2001); 117, 9234 (2002)",
+      "doi": "10.1063/1.1413513"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "aug-pc-0"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "d85898084117724b122f45e85bedd6b390f4708c17100825085242a880690407",
+    "citations": [
+      {
+        "keys": [
+          "jensen_pc_2001"
+        ]
+      }
+    ]
   }
 }

@@ -307,8 +307,7 @@ Eigen::MatrixXd build_cosx_q(const BasisSet& basis,
 // full Γ-folded exchange: at Γ-only sampling the density couples all
 // cell pairs, generating long-range exchange classes this single sum
 // does not contain (measured H-chain anchor, D = I: home-only
-// ||K|| = 1.74 → image-summed 3.94, vs Γ-folded GDF 16.16; see
-// handovers/HANDOVER_RIJCOSX_M3A.md § "M3a measured outcome"). Pass the
+// ||K|| = 1.74 → image-summed 3.94, vs Γ-folded GDF 16.16). Pass the
 // truncated cell list from
 // ``direct_lattice_cells(system, cutoff_bohr)``; the radial-cutoff
 // active-shell pre-prune skips cells with no shell in range of
@@ -324,7 +323,7 @@ Eigen::MatrixXd build_cosx_q(const BasisSet& basis,
 //   * When image summation is active, ``grid_batches`` is ignored
 //     and the kernel runs the unbatched path (the per-batch L2
 //     hierarchy does not yet know about per-cell primary shells —
-//     a separate optimization; handovers/HANDOVER_RIJCOSX_M3A.md §4.5).
+//     a separate optimization).
 Eigen::MatrixXd compute_cosx_k(const BasisSet& basis,
                                const Eigen::MatrixXd& D,
                                const Grid& cosx_grid,

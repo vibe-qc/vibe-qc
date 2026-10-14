@@ -209,8 +209,14 @@ def _A_matrix_gradient_contribution(
     n_atoms: int,
     switching_sigma_bohr: float = 0.5,
     deriv=None,
+    q_left: Optional[np.ndarray] = None,
+    scale: Optional[float] = None,
 ) -> np.ndarray:
     """Per-atom Cartesian contribution from ``(1/(2f)) q^T (dA/dR) q``.
+
+    With ``q_left`` and ``scale`` given it is the general bilinear form
+    ``scale * q_left^T (dA/dR) q``, which the Direct COSMO-RS gradient needs
+    for its cross term ``q^dRS^T (dA/dR) q``; see :func:`cpcm_gradient`.
 
     Two halves, and the split is what makes this construction-agnostic:
 
@@ -228,7 +234,22 @@ def _A_matrix_gradient_contribution(
 
     Returns ``(n_atoms, 3)`` Hartree/bohr.
     """
-    d = _cavity_derivative(cavity, deriv)
+    adj_position, adj_area = _A_matrix_adjoints(
+        cavity, q, f_dielectric, q_left=q_left, scale=scale
+    )
+    return _cavity_derivative(cavity, deriv).contract(adj_position, adj_area)
+
+
+def _A_matrix_adjoints(
+    cavity,
+    q: np.ndarray,
+    f_dielectric: float,
+    *,
+    q_left: Optional[np.ndarray] = None,
+    scale: Optional[float] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-segment adjoints of ``scale * q_left^T A q`` (default
+    ``(1/(2f)) q^T A q``), before the cavity's chain rule."""
     # The representation is read off the cavity, never chosen here: the
     # adjoints must differentiate the kernel the energy actually used
     # (#744). Passing the wrong one is silent and costs a factor of ~4 in the
@@ -237,17 +258,16 @@ def _A_matrix_gradient_contribution(
 
     representation = getattr(cavity, "charge_representation", POINT_CHARGE)
     switching = getattr(cavity, "switching", None)
-    adj_position, adj_area = cavity_A_adjoints(
+    return cavity_A_adjoints(
         cavity.points,
         cavity.weights,
+        q if q_left is None else q_left,
         q,
-        q,
-        1.0 / (2.0 * f_dielectric),
+        (1.0 / (2.0 * f_dielectric)) if scale is None else float(scale),
         representation=representation,
         switching=switching if representation == GAUSSIAN_CHARGE else None,
         n_points_per_sphere=getattr(cavity, "n_points_per_sphere", None),
     )
-    return d.contract(adj_position, adj_area)
 
 
 # =====================================================================
@@ -277,6 +297,18 @@ def _nuclear_esp_gradient_contribution(
 
     Returns ``(n_atoms, 3)`` Hartree/bohr matrix.
     """
+    grad, adj_position = _nuclear_esp_pieces(cavity, q, R_atoms, Z_atoms)
+    return grad + _cavity_derivative(cavity, deriv).contract(adj_position)
+
+
+def _nuclear_esp_pieces(
+    cavity,
+    q: np.ndarray,
+    R_atoms: np.ndarray,
+    Z_atoms: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The direct per-atom part of ``q^T dV^nuc/dR`` and the segment-position
+    adjoint of its segment-motion part, before the cavity's chain rule."""
     pts = cavity.points  # (n_pts, 3)
     n_atoms = R_atoms.shape[0]
 
@@ -298,8 +330,7 @@ def _nuclear_esp_gradient_contribution(
     adj_position = q[:, None] * np.einsum(
         "aik,ai->ik", diff, (Z_atoms[:, None] * inv_r3)
     )  # (n_pts, 3)
-    grad += _cavity_derivative(cavity, deriv).contract(adj_position)
-    return grad
+    return grad, adj_position
 
 
 # =====================================================================
@@ -494,6 +525,19 @@ def _electronic_esp_gradient_analytic(
     One libint pass -- no geometry rebuilds, no FD step error. The exact
     closed-form replacement for :func:`_electronic_esp_gradient_via_fd`.
     """
+    grad, adj_position = _electronic_esp_pieces(cavity, q, density, molecule, basis)
+    return grad + _cavity_derivative(cavity, deriv).contract(adj_position)
+
+
+def _electronic_esp_pieces(
+    cavity,
+    q: np.ndarray,
+    density: np.ndarray,
+    molecule,
+    basis,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The basis-centre part of ``q^T dV^elec/dR`` and the segment-position
+    adjoint of its segment-motion part, before the cavity's chain rule."""
     from vibeqc import compute_external_charge_density_gradient
 
     ext = compute_external_charge_density_gradient(
@@ -505,9 +549,8 @@ def _electronic_esp_gradient_analytic(
     )
     grad_ext = np.array(ext.atom_grad, dtype=np.float64)  # (n_atoms, 3)
     point_grad = np.asarray(ext.point_grad, dtype=np.float64)  # (n_pts, 3)
-    grad_ext += _cavity_derivative(cavity, deriv).contract(point_grad)
     # q . dV^elec/dR = -dE_ext/dR (V^elec carries the electron sign).
-    return -grad_ext
+    return -grad_ext, -point_grad
 
 
 def _screening_model(solvent_result: SolventResult) -> Optional[ScreeningModel]:
@@ -620,16 +663,61 @@ def cpcm_gradient(
     cavity + basis rebuilds instead -- slower, kept only for
     verification.
 
+    Direct COSMO-RS
+    ---------------
+    A ``variant="dcosmo-rs"`` result reports
+    ``G = E_gas[D] + (1/2) q^T V + sum_t a_t mu_S(sigma_t)`` with ``q`` the
+    conductor charges (``A q = -V``) and ``sigma_t = q_t / a_t``, and its SCF
+    is stationary for ``G`` under the operator of ``q + q^dRS``
+    (:mod:`vibeqc.solvation.cosmors.direct`). The envelope theorem then gives,
+    at fixed density, with ``phi_t = mu_S'(sigma_t)`` and ``q^dRS = -A^-1 phi``::
+
+        dG/dR = dE_gas/dR|_D
+              + (1/2) q^T (dA/dR) q + q^dRS^T (dA/dR) q
+              + (q + q^dRS)^T dV/dR
+              + sum_t [mu_S(sigma_t) - mu_S'(sigma_t) sigma_t] da_t/dR
+
+    The second line comes from ``d(sum_t a_t mu_S)/dq = phi`` and
+    ``dq/dR = -A^-1 (dA/dR q + dV/dR)``: the correction charges contract the
+    same ``dA/dR`` and ``dV/dR`` the conductor charges do, so the three
+    conductor pieces below are reused with ``q`` replaced by ``q + q^dRS``
+    where the energy is linear in the charges, plus the bilinear cross term.
+    The last line is the explicit area dependence of the COSMO-RS term, with
+    ``sigma_t`` held by its charge. Every term is a contraction through the
+    same cavity chain rule, so the fine cavity's own derivative (the only
+    cavity Direct COSMO-RS runs on) carries all of them.
+
+    This requires the hydrogen-bond term to be smoothed
+    (``Parameterization.hb_smoothing > 0``). With Klamt's published corner
+    ``mu_S'`` jumps at ``sigma = +-sigma_hb`` and the energy has no
+    derivative wherever a segment sits on it, so an unsmoothed result is
+    refused; see :func:`_direct_cosmors_feedback_for_gradient`.
+
     Raises
     ------
     NotImplementedError
-        For a Direct COSMO-RS result (``variant="dcosmo-rs"``), whose energy is
-        not differentiable in the geometry; see :func:`_refuse_direct_cosmors`.
+        For a Direct COSMO-RS result computed with the unsmoothed
+        hydrogen-bond term, whose energy is not differentiable in the
+        geometry.
     """
     from vibeqc.ecp_metadata import refuse_molecular_ecp_derivative_route
 
-    # First, before any work: every term below is the conductor gradient's.
-    _refuse_direct_cosmors(solvent_result)
+    # First, before any work: a Direct COSMO-RS result either carries the
+    # feedback the extra terms need, or is refused.
+    feedback = _direct_cosmors_feedback_for_gradient(solvent_result)
+    if method.lower() in ("rks", "uks"):
+        # The gas-phase piece below is the ordinary analytic RKS/UKS gradient,
+        # so a functional whose analytic gradient omits terms (#571) would get
+        # a reaction field added to a wrong surface. Refuse rather than return
+        # it; the optimizers route such functionals to full-energy finite
+        # differences, which differentiate the solvated energy.
+        from vibeqc.gradient_terms import require_complete_analytic_gradient
+
+        require_complete_analytic_gradient(
+            scf_result,
+            route="cpcm_gradient",
+            spin=1 if method.lower() == "rks" else 2,
+        )
     refuse_molecular_ecp_derivative_route(
         molecule,
         basis,
@@ -689,16 +777,37 @@ def cpcm_gradient(
         method, molecule, basis, scf_result, options=options, grid_options=grid_options
     )
 
-    # The cavity's chain rule, built once. All three cavity terms contract
-    # against the same object, which for a FINE cavity means the iso-surface
-    # Jacobians are assembled once instead of three times.
-    deriv = _cavity_derivative(cav)
+    # Every cavity term is a per-segment adjoint on the positions and areas,
+    # and the cavity's chain rule is linear in them, so the adjoints are summed
+    # and contracted once. For a FINE cavity that contraction is the whole
+    # cost of the gradient (the Becke-coarsening vector-Jacobian product is
+    # 95 percent of it on methanol/def2-SVP), and it used to run once per
+    # term: three times for a conductor, five for Direct COSMO-RS.
+    adj_position = np.zeros_like(cav.points, dtype=np.float64)
+    adj_area = np.zeros(cav.points.shape[0], dtype=np.float64)
 
     # Component 2: (1/(2f)) q^T (dA/dR) q -- closed-form.
-    grad += _A_matrix_gradient_contribution(cav, q, f, n_atoms, deriv=deriv)
+    dp, da = _A_matrix_adjoints(cav, q, f)
+    adj_position += dp
+    adj_area += da
+
+    # The charges the ESP derivatives contract against: the conductor charges,
+    # plus the Direct COSMO-RS correction charges, whose operator the SCF saw.
+    q_esp = q
+    if feedback is not None:
+        q_drs = np.asarray(feedback.charges, dtype=np.float64)
+        q_esp = q + q_drs
+        # Component 2': q^dRS^T (dA/dR) q, the cross term of dq/dR.
+        dp, da = _A_matrix_adjoints(cav, q, f, q_left=q_drs, scale=1.0)
+        adj_position += dp
+        adj_area += da
+        # Component 5: sum_t [mu_S(sigma_t) - mu_S'(sigma_t) sigma_t] da_t/dR.
+        adj_area += _direct_cosmors_area_adjoint(feedback)
 
     # Component 3: q^T (dV^{nuc}/dR) -- closed-form.
-    grad += _nuclear_esp_gradient_contribution(cav, q, R, Zs_grad, deriv=deriv)
+    direct, dp = _nuclear_esp_pieces(cav, q_esp, R, Zs_grad)
+    grad += direct
+    adj_position += dp
 
     # Component 4: q^T (dV^{elec}/dR).
     open_shell = method.lower() in ("uhf", "uks")
@@ -708,7 +817,7 @@ def cpcm_gradient(
         basis_name = _resolve_basis_name(basis)
         grad += _electronic_esp_gradient_via_fd(
             cav,
-            q,
+            q_esp,
             density,
             molecule,
             basis_name,
@@ -716,61 +825,85 @@ def cpcm_gradient(
         )
     else:
         # Closed-form path (default) -- one libint gradient pass.
-        grad += _electronic_esp_gradient_analytic(
-            cav,
-            q,
-            density,
-            molecule,
-            basis,
-            deriv=deriv,
-        )
+        direct, dp = _electronic_esp_pieces(cav, q_esp, density, molecule, basis)
+        grad += direct
+        adj_position += dp
 
+    grad += _cavity_derivative(cav).contract(adj_position, adj_area)
     return grad
 
 
-def _refuse_direct_cosmors(solvent_result) -> None:
-    """Refuse a Direct COSMO-RS result: there is no gradient to return for it.
+def _direct_cosmors_area_adjoint(feedback) -> np.ndarray:
+    """The per-segment area adjoint ``mu_S(sigma_t) - mu_S'(sigma_t) sigma_t``
+    of the COSMO-RS term, Hartree/bohr^2, before the cavity's chain rule.
 
-    Nothing in :func:`cpcm_gradient` knows the variant. Handed a
-    ``variant="dcosmo-rs"`` result it assembled the conductor-COSMO gradient --
-    no ``sum_t a_t mu_S(sigma_t)`` energy term and no ``q^dRS`` operator -- and
-    returned it. Nothing about that number looks wrong: on asymmetric water
+    The COSMO-RS term ``sum_t a_t mu_S(q_t / a_t)`` depends on a segment's
+    area twice: through the prefactor and through the density it is evaluated
+    at. Holding the charge fixed (its own derivative is the cross term and the
+    ``q^dRS`` ESP pieces in :func:`cpcm_gradient`), the area derivative is the
+    bracket above. ``feedback.mu`` is ``mu_S(sigma_t)`` in kcal/(mol A^2) and
+    ``feedback.phi`` is ``mu_S'(sigma_t)`` already in Hartree/e, so
+    ``mu_S' sigma_t`` in Hartree/A^2 is ``phi_t sigma_t``; the areas the cavity
+    chain differentiates are in bohr^2.
+    """
+    from .cosmors.direct import BOHR_TO_ANG, HARTREE_TO_KCAL
+
+    mu = np.asarray(feedback.mu, dtype=np.float64) / HARTREE_TO_KCAL
+    phi = np.asarray(feedback.phi, dtype=np.float64)
+    sigma = np.asarray(feedback.sigma, dtype=np.float64)
+    return (mu - phi * sigma) * (BOHR_TO_ANG ** 2)
+
+
+def _direct_cosmors_feedback_for_gradient(solvent_result):
+    """The Direct COSMO-RS feedback a gradient needs, or ``None``, or a refusal.
+
+    A ``variant="dcosmo-rs"`` result carries its converged feedback: the
+    correction charges ``q^dRS`` the SCF's operator used, and the per-segment
+    ``mu_S`` and ``mu_S'`` the area term needs. Handed such a result, the
+    conductor gradient alone is wrong without looking it: on asymmetric water
     (RHF/STO-3G, fine cavity at 0.40 A) its translation residual was 2.1e-15,
     yet it sat 1.4e-03 Ha/bohr off a central difference of the energy the run
-    reported, with one component of the wrong sign, where the conductor
-    gradient at the same settings agrees with its own to 1.0e-06.
+    reported, with one component of the wrong sign. Both markers are read, so
+    a result that carries a feedback is used even if its variant label is lost.
 
-    Adding the two missing terms would not make a gradient. Klamt's
-    hydrogen-bond term makes ``mu_S'`` jump by about 40 against values near 70
-    at ``sigma = +-sigma_hb``; every solvent partner steps at the same sigma, so
-    the Boltzmann average does not damp it, and about a quarter of a real
-    solute's segments sit within a bin of the corner. The energy is not
-    differentiable wherever a segment crosses it, and a smooth one means
-    changing a published functional form -- a maintainer decision.
-
-    Both markers are read, so a result that carries a feedback is refused even
-    if its variant label is lost.
+    What cannot be differentiated is the published hydrogen-bond term. Klamt's
+    ``c_hb max[0, acc - sigma_hb] min[0, don + sigma_hb]`` makes ``mu_S'`` jump
+    by about 40 against values near 70 at ``sigma = +-sigma_hb``; every solvent
+    partner steps at the same sigma, so the Boltzmann average does not damp it,
+    and about a quarter of a real solute's segments sit within a bin of the
+    corner. The energy is not differentiable wherever a segment crosses it,
+    and a smooth one means changing a published functional form, which is why
+    ``Parameterization.hb_smoothing`` is opt-in. A result computed with the
+    corner is refused rather than given the one-sided derivative of whichever
+    branch its segments happen to be on.
     """
     variant = str(getattr(solvent_result, "solvent_variant", "") or "")
-    if (
-        variant.strip().lower() != "dcosmo-rs"
-        and getattr(solvent_result, "direct_feedback", None) is None
-    ):
-        return
-    raise NotImplementedError(
-        "cpcm_gradient: there is no nuclear gradient for a Direct COSMO-RS "
-        "result (variant='dcosmo-rs'). Klamt's hydrogen-bond term makes the "
-        "sigma potential's derivative mu_S' jump at sigma = +-sigma_hb, and "
-        "segments cross that corner as the atoms move, so the Direct COSMO-RS "
-        "energy is not differentiable in the geometry. A gradient needs a "
-        "smoothed hydrogen-bond term, which departs from the published "
-        "functional form and is a maintainer decision. Returning the "
-        "conductor-COSMO gradient instead would silently omit the "
-        "sum_t a_t mu_S(sigma_t) energy term and the q^dRS operator. For an "
-        "analytic gradient use variant='cosmo', which is a different energy; "
-        "cpcm_gradient_fd rebuilds the Direct COSMO-RS energy, but it steps "
-        "wherever a segment crosses the corner."
-    )
+    feedback = getattr(solvent_result, "direct_feedback", None)
+    if variant.strip().lower() != "dcosmo-rs" and feedback is None:
+        return None
+    if feedback is None:
+        raise ValueError(
+            "cpcm_gradient: this result is labelled variant='dcosmo-rs' but "
+            "carries no converged feedback (direct_feedback is None), so the "
+            "Direct COSMO-RS terms of its gradient cannot be assembled."
+        )
+    if float(getattr(feedback, "hb_smoothing", 0.0)) <= 0.0:
+        raise NotImplementedError(
+            "cpcm_gradient: there is no nuclear gradient for a Direct COSMO-RS "
+            "result (variant='dcosmo-rs') computed with the published "
+            "hydrogen-bond term. Klamt's hydrogen-bond term makes the sigma "
+            "potential's derivative mu_S' jump at sigma = +-sigma_hb, and "
+            "segments cross that corner as the atoms move, so the Direct "
+            "COSMO-RS energy is not differentiable in the geometry. Build the "
+            "solvent potential with a smoothed term, "
+            "dataclasses.replace(KLAMT_1998, hb_smoothing=5e-4), which departs "
+            "from the published functional form by a measured amount (see the "
+            "user guide), and the analytic gradient is available; for the "
+            "published form use variant='cosmo', which is a different energy, "
+            "or cpcm_gradient_fd, which rebuilds the Direct COSMO-RS energy "
+            "but steps wherever a segment crosses the corner."
+        )
+    return feedback
 
 
 def _resolve_basis_name(basis) -> str:

@@ -6,12 +6,72 @@ myst:
 
 # χ-CCM / aiccm2026dev-b (experimental)
 
+For opt-in fitted classic/SR RI RHF construction, independent Coulomb controls,
+immutable source identities and supported-scope refusals, see the
+[fitted support contract](../chi_fitted_support.md). Its implementation does not
+confer independent numerical acceptance or production qualification.
+
+## Explicit direct physical support
+
+All-electron, three-dimensional direct RHF can select
+`support_policy="physical_pairs"` in `run_aiccm2026dev_b_rhf`, or
+`chi_support_policy="physical_pairs"` in
+`run_periodic_job(method="aiccm", variant="chi", aiccm_backend="four_center")`.
+The explicitly selected reproduction mode is `"historical_index_ball"`.
+Omitting the keyword preserves the existing route selection and does not
+request the new support record. Generic native defaults are unchanged.
+
+The physical mode uses the shared periodic pair and quartet kernels. S, T,
+and both halves of V_ne use physical AO-pair separation. The erfc nuclear
+sources are centered on the geometric AO midpoint. J retains AB/CD products;
+K retains AC/BD products and their wider output/density enclosure. Both
+products obey the pair radius, and their midpoint separation obeys the
+interaction radius. The long-range terms share the resolved Ewald envelope,
+with the existing q=0/Madelung convention. E_nn uses its own pair-complete
+point-charge sum, including self and background corrections. These are
+consistent conventions, not a claim that the distinct operator domains are
+identical. See Sharma and Beylkin, JCTC 17 (2021), 3916,
+DOI: 10.1021/acs.jctc.0c01195, and the shared
+[BIPOLE domain contract](../bipole_domain_contract.md).
+
+`result.executed_support.as_dict()` records ordered S/T/V_ne, density and
+terminal Fock cell labels and Cartesian vectors, actual J/V_ne reciprocal
+arrays, all K transfer channels including q=0, full basis fingerprint,
+requested/resolved settings, and normalization. Nuclear-repulsion domains
+are captured during the actual energy traversal. Electron-nuclear membership
+is a replay of the same native source selector on the returned V_ne shell
+pairs; it is identified as geometric support before numerical screening.
+Quartet cell lists are enclosures with explicit predicates and screening
+controls, not a log claiming every enclosed quartet was evaluated. The
+`.system` manifest stores the record and its SHA-256 identity.
+
+This opt-in recorder uses unreduced full-character traversal and refuses an
+estimated provenance size above two million terms before SCF. Native record
+exports also enforce a bounded term budget. A refusal never lowers a physical
+cutoff or emits a partial support record. Large-system streaming provenance
+is not implemented. Fitted sources, ECP, other spin/functional methods,
+post-HF, lower dimensions and non-diagonal SCF extension matrices are outside
+this increment. Explicit unsupported combinations fail; no alternate source
+is substituted. Skew three-dimensional Bravais cells with diagonal cyclic
+extensions are distinct from non-diagonal extension matrices.
+
+Converge AO-pair, quartet-interaction, nuclear and reciprocal supports
+independently using their **executed** sets. Nuclear requests can be resolved
+from Ewald precision, so an unchanged executed set is not a convergence step.
+Compare fixed-density J/K and separate nuclear/electronic components as well
+as totals. Overlap closure, an old energy pin, and agreement with a shared
+builder do not establish physical accuracy. No cell-specific cutoff is a
+universal default. Independent imported-runtime numerical acceptance remains
+required; chi stays experimental and D93 v1 fitted/post-HF stays not-qualified.
+
+
 For small-system symmetry studies, D128 can now project a compact AO action
 into a χ localization result using its actual overlap. The diagnostic keeps
 phases and general orbital mixing, and rejects a metric or occupied subspace
 that fails covariance. It does not yet reduce DLPNO work or enable analytic
 gradients. The [occupied-action specification](../experimental/aiccm2026dev_b_symmetry.md#occupied-space-action)
-describes its API, tolerance, provenance and dense-memory limits.
+describes its API, tolerance, provenance and dense-memory limits, including
+why cutoff convergence must be checked before changing a symmetry tolerance.
 D129 extends these diagnostics to every product of a supplied closed spatial
 set, retaining the nonsymmorphic whole-cell translations and testing their
 occupied-space representation. It is not yet permission to omit equivalent
@@ -39,7 +99,7 @@ CCM. The name is prose only: select it with
 resolving with a `DeprecationWarning`. Its sibling is
 [`aiccm2026dev-a`](../aiccm2026dev_a.md), Γ-CCM, which uses the
 union-and-weight/Wigner--Seitz integral-weighting construction. The selectors,
-core mathematics, tests, examples, and handovers remain separate so comparison
+core mathematics, tests, examples, and historical design records remain separate so comparison
 of the two approaches stays auditable.
 
 [^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM uses
@@ -71,12 +131,12 @@ The 3D SCF routes remain active experimental diagnostics, but their numerical
 two-electron supports are not all absolute-energy converged. Current
 four-center RHF, PBE, and PBE0 fleet rows preserve the low-level backend and
 record the exact M5 precision/policy plus the resolved padded erfc image
-radius. They qualify only when the backend and policy match, the radius is
-finite and beyond the executed electronic cutoff, and the duplicated physical
-cutoffs agree. Dense-core RSGDF-200 RI/RIJCOSX, MDF, and post-HF rows are
-still convergence or route-plumbing evidence because their high-G, COSX, MDF,
-or correlation-factor support contracts are not established. The fleet marks
-them `not-qualified`, and both audit and comparison commands reject them as
+radius. Their support is eligible only when the backend and policy match, the radius
+is finite and beyond the executed electronic cutoff, and the duplicated
+physical cutoffs agree. Eligibility is not numerical qualification. Every
+fitted RI/RIJCOSX/MDF and post-HF chi result remains permanently
+`not-qualified` in D93 v1. These rows provide convergence, representation or
+route-plumbing evidence; both audit and comparison commands reject them as
 quantitative rows. Missing or malformed support metadata also fails closed.
 
 D103 independently binds corrected-gauge direct overlap-fold support. A drift
@@ -138,8 +198,9 @@ enumeration. Pre-repair and D102 v1 records remain revision-bound; fresh rows
 must satisfy D104 v2. Gamma-only here names the one-character evaluation path
 within χ-CCM, not the union-and-weight Γ-CCM construction.
 
-Since `6ce142339`, compact dense-core MDF calculations in the MgO/STO-3G
-class fail closed through the B selector. The validated vacuum-padded MDF
+From `6ce142339` until 2026-09-29 compact dense-core MDF calculations in the
+MgO/STO-3G class failed closed through the B selector; the shared GDF layer
+admits them since its auxiliary-image sum (GitLab #172), and B inherits that. The validated vacuum-padded MDF
 envelope is unchanged, but every fitted row remains D93 `not-qualified`.
 Commit `ad96a2f63` supplies a bounded shared-q auxiliary Fourier-transform
 cache with bit-identical results and memory/performance effects only. B also
@@ -266,6 +327,13 @@ density plus alpha/beta Wannier centres, not spin-resolved orbital grids.
 five primitive translations in every active direction, from (-2) through
 (+2), and hence an odd cyclic extension of five. The legacy `kpoints=` tuple
 is retained as an exact alias, but it is not a second convergence parameter.
+
+Mesh, lattice-extension and Wigner-Seitz shell counts must be integers.
+Python and NumPy integer inputs are accepted; floats (including `2.0`),
+booleans and strings are rejected before constructing cells or k-points.
+Orders must be positive and shell counts nonnegative. Scalar counts repeat
+over active directions; omitted inactive directions use one cell and zero
+shells. Explicit inactive entries must use those same values.
 
 ## Creating inputs
 
@@ -502,9 +570,10 @@ python make_jobs_b.py --profile posthf --system lih-rocksalt --host compute-larg
 The coverage profile emits ten runnable fitted LiH jobs, 18 explicit
 lower-dimensional failures, and three direct LiH/STO-3G support failures at
 the measured 15-bohr drift of `7.0985e-2`. Runnable does not mean quantitative.
-Other direct commands may be run as diagnostics, but no result is reportable
-unless its fresh finalized D77 provenance and independent D93, D103, and D104
-contracts all pass.
+Other direct commands may be run as diagnostics; their support eligibility
+requires fresh finalized D77 provenance and independent D93, D103 and D104
+contracts. Eligibility alone is not qualification. Fitted and post-HF results
+remain permanently not-qualified in v1.
 
 Each emitted job claims 4 CPU slots / 8 GB memory. Select an enabled external
 `AICCM_SITE_CONFIG` profile before using host defaults, or choose an explicit
@@ -518,8 +587,9 @@ supplies a shared wire/slab Coulomb kernel. See the study's
 ### 3. Building a system from scratch - worked examples
 
 Every example is a complete, runnable script. Copy-paste, adjust the geometry
-and basis, and run. Any printed energy is a local diagnostic unless a fresh
-fleet record independently passes D77, D93, D103, and D104.
+and basis, and run. Printed fitted and post-HF energies are local diagnostics
+and remain permanently not-qualified in v1. Direct-route support eligibility
+requires independent D77, D93, D103 and D104 evidence.
 
 ---
 
@@ -1128,7 +1198,7 @@ existing energy. Existing rows are not upgraded to this contract.
 The `qc-input-library` has independent input generation for both streams:
 
 ```bash
-cd ~/gitlab/qc-input-library/aiccm2026testset
+cd /path/to/qc-input-library/aiccm2026testset
 
 # Generate χ-CCM inputs for all 3-D systems
 python generate_inputs.py --stream b
@@ -1249,9 +1319,10 @@ accepted only with `gdf_method="rsgdf"`; the base must be positive and finite,
 and the tail must be finite and strictly above it. The value is printed in the
 `.out` file and recorded as `aiccm_resolved_rsgdf_tail_ke_cutoff`. This is a
 D106 transport diagnostic, not D93 support qualification. The current fleet
-schema still requires a null tail. On Gamma-only dense-core RHF/RI, a null
-request that the shared driver would extend above the base instead fails
-before SCF, so the field cannot hide an executed complementary tail.
+schema still requires a null tail. The explicit fitted-source API below
+separately records requested and executed support. SR execution clears the
+inactive classic tail; explicit classic execution uses the general engine
+and does not auto-select a Gamma tail.
 
 Full-grid external XC providers have a separate, deliberately narrow χ-CCM
 contract. They are accepted for 3D RKS and UKS only with
@@ -1518,6 +1589,22 @@ localized independently. The full-domain UCCSD(T) implementation is the
 explicitly cost-capped O(N^6) correctness oracle from the DLPNO stack, not a
 claim of production reduced scaling. The truncated route uses PNO subspaces,
 but representative-only pair propagation remains disabled.
+
+The finite-torus local correlation wrappers keep their historical all-electron
+`n_frozen=0` defaults. With custom solver options, frozen core is supported
+with `localise="none"`. The complete-space DLPNO-MP2 correction uses the
+solver's resolved active occupied space, while PAO virtuals remain orthogonal
+to all occupied orbitals, including frozen core. Explicit integer counts refer
+to the full torus, and published chemical-core selectors resolve on that
+full-torus molecule in the solver.
+
+Nonzero frozen core with Wannier, IAO, or Pipek-Mezey localization is rejected
+before electronic work. These localizers currently rotate the entire occupied
+space, so removing the first orbitals afterwards would freeze a different
+projector. This guard covers restricted and unrestricted local MP2 and
+CCSD(T). Published selectors with a zero core count remain compatible with
+localization. The restriction does not establish physical multi-k validation
+or production readiness of the experimental chi route.
 
 Every canonical and DLPNO post-HF entry point requires
 `lattice_cutoff_bohr`, `rsgdf_ke_cutoff`, and
@@ -1867,9 +1954,16 @@ the exact three-translation Fock domain. This pin changes no Coulomb convention
 and applies to RHF, RKS, UHF, and UKS.
 That pair describes coherent physical density/nuclear support. The larger
 internal ket-image traversal for smeared AO-pair charges is now supplied by
-the shared M4b/M5 QQR-padded erfc default and returned as the resolved absolute
-`sr_image_extent_bohr`. Fleet records bind that actual radius through the D93
-support schema. Earlier unpadded records remain revision-bound. Since the
+the shared M4b/M5 erfc builder and returned as `sr_image_extent_bohr`.
+With the shared BIPOLE physical default, this radius bounds pair-midpoint
+separation; the historical QQR policy instead uses an absolute ket-image
+radius. Chi labels the policy from the producer's immutable `resolved_domain`,
+and emits no domain attestation when that record is absent or its extent
+disagrees with the reported radius. Caller options do not identify the
+executed domain because the BIPOLE driver resolves its default without
+mutating those options. Current D93 fleet acceptance admits only the
+historical QQR policy, so physical-domain results remain `not-qualified`.
+Earlier unpadded records remain revision-bound. Since the
 2026-07-18 exact-FT retirement, pure restricted semilocal RKS also routes its
 Hartree J through the padded SR+LR composition; the finite-KE analytic-FT
 partial sum remains only as the explicit ``use_exact_ft_j`` oracle. Records
@@ -1889,9 +1983,10 @@ tail, but current D93 fleet records still require null because there is no
 accepted B-owned tail-convergence attestation. They serialize the requested
 RSGDF or MDF base support, runtime backend, and absence of an accepted tail or
 COSX-domain contract. Pre-D106 Gamma RHF/RI records that inherited the shared
-automatic tail are revision-bound; a new run stops before SCF instead of
-serializing a false null. They remain `not-qualified`; post-HF records also
-lack a bound correlation-factor support contract. D107 separately rejects
+automatic tail are revision-bound. Current execution records distinguish
+requested support from the selected engine and its executed tail. Under D93,
+all fitted and all post-HF chi results remain `not-qualified` permanently in
+v1, including results that bind a common SCF/correlation factor source. D107 separately rejects
 either shift form on Gamma-only RHF/RI: a static shift would leave the fitted
 periodic operator, while a scheduled shift would not execute. D108 rejects the
 same ignored request on restricted four-center routes whenever the schedule is
@@ -1960,3 +2055,580 @@ The [Archived comparative manuscript](https://vibe-qc.com/docs/)
 is the detailed theory record. It includes the historical ab-initio weighting,
 the Janetzko--Köster--Salahub deMon2k KS-ADFT construction, both 2026
 development streams, and the reciprocal-space reference formulation.
+
+## Explicit fitted source
+
+`run_periodic_job(method="aiccm", variant="chi", aiccm_backend="ri",
+fit_source="classic")` selects the classic shared-q FFT fit. The same selector
+is accepted by the χ RHF, RKS, UHF and UKS library drivers, with `backend="ri"`
+or `"rijcosx"`. `fit_source="auto"` preserves the existing default, including
+the 3D SR/LR source. `fit_source="sr"` selects that source explicitly.
+This is a choice of fitted operator: classic and SR energies are separate
+baselines. Neither source is numerically qualified. D93 permanently keeps all
+fitted χ and all χ post-HF results **not-qualified** in v1.
+Their result objects expose `quantitative_status="not-qualified"`.
+
+Explicit source selection requires 3D RSGDF. Missing values such as `None`,
+unknown names, four-center/MDF combinations and private fit adapters are
+refused. An analytic gradient of the explicit classic fit is available with
+`classic_support_policy="historical_index_ball"`, the support the neutral
+Gamma-CCM producers pin; on the physical-pair support it is refused (#404).
+The generic GDF front-door defaults are unchanged.
+For χ reference campaigns, the front door accepts `conv_tol_energy=1e-11` and
+`conv_tol_grad=1e-9`; omitting the latter preserves its existing orbital tolerance.
+An energy tolerance alone does not establish orbital convergence.
+
+The explicit classic profile retains canonical modrho auxiliary factors from
+SCF. The χ MP2 and local/canonical CC library drivers accept
+`fit_source="classic"` and consume those same factors. Set
+`lattice_cutoff_bohr` equal to `options.lattice_opts.cutoff_bohr`; inconsistent
+support is refused. `gdf_linear_dep_threshold` and an explicit
+`rsgdf_tail_ke_cutoff` reach the SCF source. The independent pair-by-pair canonical
+builder remains available internally as an operator oracle. Canonical storage
+can be larger than the reduced eigenmode frame. The explicit classic result
+retains its full AO-pair cache through correlation and for the result's lifetime;
+this trades memory for reuse compared with independently streamed factors.
+This profile preserves the
+current independently resolved one-electron domain, including its S/T image-tail
+bound, the BvK q=0 exchange seam, hybrid scaling and primitive-cell normalization.
+
+The historical post-HF `auto` behavior still rebuilds its independent classic
+fit after the default SCF. Its `executed_fit_source` identifies that independent
+classic shared-q engine, while `reference_fit_source` identifies SCF separately.
+Both independent classic post-HF consumers group all ordered pairs by the
+shared canonical reciprocal-transfer helper. They use bounded batches without
+symmetry reduction. The internal `batch_memory_bytes` control defaults to
+64 MiB for three batch-dependent three-center buffers per admitted pair
+(accumulation, canonical factors, and transform workspace), with a one-pair
+minimum. The shared engine separately bounds reciprocal chunks and its
+auxiliary Fourier cache; this control is not a limit on total process memory.
+The AO consumer retains the complete cache. The streamed consumer transforms
+each batch to occupied-virtual factors and releases its AO factors before the
+next batch. Returned caches keep deterministic row-major pair order.
+The unchanged `_build_canonical_lpq_cache_pairwise` and
+`_build_canonical_lov_cache_pairwise` remain internal numerical oracles.
+Chunk widths can change factor-element rounding; operator and energy identity
+must be checked separately. Cutoffs, metric thresholds, canonical auxiliary
+frame, source selection and D93 status are unchanged.
+
+The streaming auto MP2 descriptor labels its emitted factors `occupied-virtual`;
+their hash identifies that projection. Full retained factors are labelled
+`ao-pair`. Explicit `sr` post-HF is refused
+until a compatible canonical SR frame is implemented and checked. The χ
+correlation front door remains library-only.
+
+Results expose an immutable `executed_fit_source` descriptor and a separate
+`rsgdf_fit_request`. The descriptor records engine/version, normalized orbital
+and auxiliary fingerprints, resolved numerical support, metric threshold,
+auxiliary frame, momentum-transfer grouping, k points, reciprocal cutoff,
+executed tail and factor digest. `process_provenance` identifies the imported
+release, source revision and SHA-256 of the loaded native extension.
+The `.system` output includes executed source metadata, requested settings,
+typed mesh/lattice arrays and the loaded native hash. An absent executed tail is
+recorded separately from the requested tail. The SR engine does not execute the
+classic reciprocal tail, and Γ admission does not consult that inactive policy.
+An explicit classic Γ call uses the general finite-character engine with current
+one-electron support; it does not inherit a legacy Γ auto-tail.
+
+The alternating H4 two-cell regression separates historical energy from current
+routing. Its original `-2.1648043358` Ha/cell pin belongs to classic fitting
+on the historical index ball with a flat 15-bohr one-electron domain,
+reproduced explicitly through `run_krhf_periodic_gdf(..., fit_source="classic",
+classic_support_policy="historical_index_ball", rcut_strategy="flat")`.
+That finite-support value is not a reference for the current χ default, which
+uses the SR/LR fit and independently grows the one-electron domain. The current
+χ test checks energy, AO matrices and executed source metadata against the
+shared engine with matching settings, and retains the coarse CCM comparisons.
+These routing checks do not provide independent absolute-energy acceptance or
+change the fitted source's `not-qualified` status.
+
+
+### Reusing an accepted restricted reference (experimental)
+
+`vibeqc.periodic.chi.reference.prepare_chi_reference` builds a process-local
+`ChiAcceptedReference` for several restricted library consumers. Pass it as
+`reference=` to canonical MP2, DLPNO-MP2, CCSD/CCSD(T), or their DLPNO variants:
+
+```python
+from vibeqc import PeriodicRHFOptions
+from vibeqc.periodic.chi.reference import prepare_chi_reference
+from vibeqc.periodic.chi.posthf import (
+    run_aiccm2026dev_b_mp2, run_aiccm2026dev_b_dlpno_mp2,
+)
+
+options = PeriodicRHFOptions()
+options.conv_tol_energy = 1e-11
+options.conv_tol_grad = 1e-9
+controls = dict(fit_source="classic", rsgdf_ke_cutoff=200.0,
+                lattice_cutoff_bohr=15.0, gdf_linear_dep_threshold=1e-9)
+reference = prepare_chi_reference(system, basis, (2, 1, 1), options, **controls)
+mp2 = run_aiccm2026dev_b_mp2(
+    system, basis, (2, 1, 1), options, reference=reference, **controls)
+local_mp2 = run_aiccm2026dev_b_dlpno_mp2(
+    system, basis, (2, 1, 1), options, reference=reference, **controls)
+```
+
+The consumer must request the same geometry, orbital and auxiliary bases,
+mesh, source, tail, and numerical support. Explicit SCF options must match;
+omitting them with a supplied reference accepts its recorded SCF controls.
+The builder's default SCF tolerances are energy `1e-11` and commutator `1e-9`.
+It checks achieved energy change, accepted-density and orbital-density
+commutators, `FC-SCε`, metric orthogonality and density agreement before
+admission. Changed states, factor arrays, descriptors or process build
+identities fail closed. Raw SCF result objects are not accepted as transport.
+
+`auto` retains the existing SR SCF and separate classic correlation source.
+`classic` borrows the already canonical, attested SCF factors; no auxiliary
+frame conversion or replacement of an SR fit by a classic fit is performed.
+The reference stores full character AO-pair factors and the existing home-cell
+auxiliary representation, without constructing an Nc-fold real auxiliary
+copy. Retaining factors can use more memory than a single cold streamed MP2
+call. `reference.build_stages` and each result's `reference_execution` identify
+built/reused stages and their sources. Caller-owned factor mappings are not
+cleared. Omit `reference` for the independent cold path.
+
+Closed-shell CCSD and CCSD(T), including the DLPNO variants, pass the cyclic
+AO metric and compact home-auxiliary factors to the shared correlation-source
+contract. They do not replace the process-wide molecular overlap function.
+The result reports `source_kind="chi-real-torus"`, `source_identity` and
+`same_source`; `solver_result` carries the same source identity. The identity
+includes the actual Fock, overlap, orbitals and stored home factors, their
+representation and the finite-torus convention. Validated `classic` reuse
+reports `same_source=True`; a separate `auto` correlation fit reports false.
+The historical local thresholds, pair-mode residual and screen guards remain
+in effect, and this packaging change does not qualify the fitted Hamiltonian.
+
+The object carries separate SCF/correlation fit descriptors, requested and
+executed tails, actual one-electron support, finite-torus and exchange
+conventions, orbital residuals and the process release/source/native-core
+triple. It is process-local and does not provide disk or distributed caching.
+Unrestricted, fractional-occupation, ECP and non-RHF references are unsupported.
+RIJCOSX preserves its iterated Fock/orbitals as `iterated_fock`,
+`iterated_mo_coeffs` and `iterated_mo_energies`, alongside its corrected returned
+Fock/orbitals. Its `energy_operator` is `iterated`, while `returned_operator`
+is `post-convergence-one-center-corrected`. The energy and accepted density
+retain their existing meaning. A small iterated commutator cannot attest the
+corrected state, and this transport refuses it as a stationary correlation
+reference.
+
+All fitted and post-HF results remain **not-qualified** (D93). The correlation
+front door, gradients, numerical support and truncation defaults are unchanged.
+At zero cuts, inspect both `raw_local_e_corr_per_cell` and the returned MP2
+energy: the latter includes the existing canonical complete-space correction.
+
+### Optional SR q-batch MPI execution
+
+The admitted SR fit used by `run_periodic_job(method="aiccm", variant="chi",
+aiccm_backend="ri", fit_source="sr")` can distribute its complete q groups.
+Set `VIBEQC_SR_Q_MPI=1` under an MPI launcher; the default is `0`, including
+when MPI is installed. Default serial helper calls remain noncollective,
+including calls made on only one rank. The optional `[mpi]` extra supplies
+`mpi4py`. This switch changes ownership of the existing SR integral batches. It preserves
+the selected fit, auxiliary eigenmode frame, ordered bra pairs, metric
+threshold, screening and one-electron support. It does not enable public SR
+post-HF support or change the permanent D93 **not-qualified** status.
+
+For a total budget of eight OpenMP threads, a two-rank invocation is:
+
+```sh
+OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+VECLIB_MAXIMUM_THREADS=1 BLIS_NUM_THREADS=1 \
+OMP_MAX_ACTIVE_LEVELS=1 OMP_WAIT_POLICY=PASSIVE KMP_BLOCKTIME=0 \
+VIBEQC_SR_Q_MPI=1 VIBEQC_SR_Q_TOTAL_THREADS=8 \
+mpiexec -n 2 python calculation.py
+```
+
+Choose launcher binding appropriate to the allocation. Each rank must call
+the same calculation, with the same source and numerical controls. Give
+each rank a separate output stem when using the front door. The source
+builder collectively checks its SCF memory preflight, resolved domain,
+loaded release/source/native-core identities and thread requests before
+partitioning. A caught preparation or native-build error is reported on all
+ranks before ordered gather. Ranks owning no q groups still participate.
+Private MDF and symmetry pair-cache adapters are outside this SR loop and
+are refused when this switch is enabled.
+
+This mode replicates the complete gathered factor cache and subsequent SCF
+state on every rank. Its memory admission reserves local retention,
+serialization and gathered-copy overlap, plus one native workspace per rank.
+SCF admission divides available memory conservatively across the world
+before subtracting each rank's retained SCF and one-electron state. It is not
+a distributed-memory SCF implementation. Increasing rank count can increase
+memory use without increasing throughput, particularly beyond the q count.
+
+`result.rsgdf_q_execution` and `run.rsgdf_q_execution` in the `.system` file
+report world size, q ownership, per-rank task counts, actual local build and
+ordered-gather intervals, retained/gathered memory, process provenance and
+the loaded thread pools when available. Timers report both `perf_counter`
+and realtime clocks with load samples. Differences between clocks and gaps
+in external monitoring require investigation before treating an interval
+as an end-to-end wall bound. Task counts alone are not a scaling result.
+
+For repeated runs on the same source and domain, set
+`VIBEQC_SR_Q_COST_PROFILE` to an external JSON file containing
+`domain_sha256` from the execution record and `q_build_seconds`, a list of
+measured build times in its ordered q sequence. The scheduler assigns the
+largest measured costs first to the least loaded rank using
+[Graham's longest-processing-time rule](https://epubs.siam.org/doi/10.1137/0117039),
+then restores the original q and pair ordering. All ranks must read the same
+profile; a domain mismatch is refused. Keep the originating process provenance and timing
+records with that profile. Without a profile the existing block partition is
+used. Serial execution remains the default; a measured benefit depends on
+integral costs, gathering and host contention.
+
+### Finite-character transform input contract
+
+`inverse_bloch_transform(M, k, R, weights=None)` requires finite nonempty
+square matrix blocks `(n_k, nbf, nbf)`, finite real fractional coordinates
+`(n_k, 3)`, and integral translations `(n_R, 3)` in signed 64-bit range.
+Integral real translations are accepted; fractional, nonfinite, boolean and
+out-of-range values are refused before integer conversion or native dispatch.
+Weights have shape `(n_k,)`, are finite and nonnegative, and sum to one.
+Zero weights and nonuniform normalized weighted sums remain supported.
+
+The optional keyword `extension_matrix=S` declares the complete character
+group of the column-lattice extension `A_super = A S`. It requires a
+nonsingular integral 3 by 3 matrix with addressable group order, exactly
+`abs(det S)` distinct dual characters (`k S` integral modulo reciprocal
+translations), and uniform weights `1/abs(det S)`. The same uniform contract
+applies to the distributed residue transform and occupied localization.
+Non-diagonal and orientation-reversing matrices are valid for this algebraic
+check; this does not add non-diagonal SCF or Hamiltonian support. Round-trip
+reconstruction additionally requires a complete set of translation residues.
+
+Native transform entry points also validate raw values before narrowing.
+Large integer translations use modular phase arithmetic, preserving character
+parity without converting the translation to a floating-point integer.
+Fractional reciprocal coordinates are interpreted modulo primitive reciprocal
+lattice integers. Finite representatives of any magnitude remain valid when
+their represented value reduces to an admitted character. For example,
+`1e300` is an integral binary floating-point value and represents the trivial
+character; it is not an overflow of the signed-integer translation input.
+Fractions already lost when creating a floating-point input cannot be recovered.
+The home-auxiliary factor transform applies this same convention and still
+requires complete, distinct dual characters. Nonfinite reciprocal coordinates
+raise `ValueError` before native evaluation, including direct native calls;
+they are not treated as reciprocal-lattice representatives.
+The same raw integer checks apply to cyclic meshes, orbital counts and
+permutation indices in the home-auxiliary MO, occupied-pair and Mayer
+transform entry points. Mesh and output-size products are checked before
+allocation. Real MO and Mayer inputs must be finite real arrays; use the
+complex MO entry point for complex coefficients instead of discarding their
+imaginary parts. Empty occupied or virtual MO spaces remain valid zero-width
+outputs. These admission checks do not change the physical support.
+These checks leave chi experimental and D93 v1 fitted/post-HF not-qualified.
+
+## Explicit KS energy contract
+
+The opt-in contract supports RKS and UKS with Libxc LDA, GGA and
+kinetic-energy-density meta-GGA functionals, including supported global,
+screened and range-separated hybrids. Semilocal examples include LDA, PBE and r2SCAN.
+It remains experimental. Implementation, SCF stationarity and independent
+scientific acceptance are separate; fitted results remain D93 not-qualified.
+
+```python
+from vibeqc import PeriodicKSOptions, run_aiccm2026dev_b_rks
+from vibeqc.periodic.chi.xc import ChiXCControls
+
+options = PeriodicKSOptions()
+options.conv_tol_energy = 1e-11
+options.conv_tol_grad = 1e-9
+xc = ChiXCControls(density_image_radius_bohr=24.0,
+                   partition_radius_bohr=12.0, block_size=128)
+result = run_aiccm2026dev_b_rks(
+    system, basis, "pbe", (3, 1, 1), options,
+    support_policy="physical_pairs", xc_controls=xc,
+)
+```
+
+The radii above are example convergence controls, not universal sufficient
+cutoffs. Vary the density-image radius separately from the partition radius
+and radial/angular grid resolution. Record changes in `xc_grid_electrons`,
+XC energy and the XC operator. An unchanged result proves no convergence if
+the executed support did not change. Successive differences are measurements,
+not rigorous error bounds. Coulomb and one-electron support retain their
+separate controls. No 10-bohr density cap is imposed.
+
+For RI use `backend="ri"`, explicit `fit_source="classic"` or `"sr"`,
+`coulomb_controls=ChiCoulombControls(...)`, and the same `xc_controls`.
+Classic and SR remain distinct finite constructions. Gamma and complete
+complex cyclic meshes use the same XC density assembly. The corresponding
+UKS driver takes paired alpha/beta densities for `initial_density_k`.
+The public `run_periodic_job` keywords are `chi_xc_controls`,
+`chi_support_policy`, `chi_coulomb_controls`, and `chi_ks_reference`.
+
+| Capability | Explicit KS contract |
+|---|---|
+| LDA / GGA / tau meta-GGA | RKS and UKS energies and variational operators |
+| Coulomb sources | Direct, classic RI, SR/LR RI, each with explicit support |
+| Density | Complex character matrices with occupation and per-cell weights |
+| Occupations | Neutral insulating cells, integer fixed population per character |
+| Geometry | All-electron 3D, diagonal cyclic extensions, including skew cells |
+| Reference reuse | Process-local, sealed, identical KS request and executed state |
+| Global, screened, range-separated hybrids | Kernel-specific direct, classic RI and SR fitted exchange |
+| Laplacian, nonlocal XC, Yukawa, multiple screening ranges | Refused before quadrature allocation |
+| Forces, ECP, correlation, persistent restart | Separate unsupported contracts |
+| Scientific qualification | Pending independent native acceptance |
+
+### Hybrid kernels and source identity
+
+Use the same library or public-runner controls above with, for example,
+`functional="pbe0"`, `"hse06"`, `"cam-b3lyp"` or `"wb97x"`.
+Admission reads the executed Libxc component capabilities, weights and
+exchange kernels. It requires 3D XC energies and first derivatives; a
+potential-only or kinetic functional cannot stand in for an XC energy.
+Hybrid tau meta-GGAs use the same tau adjoint as the semilocal path.
+VV10, double hybrids, external providers, negative short- or long-distance
+exchange fractions and multiple distinct screening ranges remain unsupported.
+
+| Functional class | Executed exchange kernel | Direct | Classic RI | SR fitted |
+|---|---|---|---|---|
+| PBE0 | 0.25 / r | Implemented | Implemented | Implemented |
+| HSE06 | 0.25 erfc(0.11 r) / r | Implemented | Implemented | Implemented |
+| CAM-B3LYP | [0.65 - 0.46 erfc(0.33 r)] / r | Implemented | Implemented | Implemented |
+| wB97X | [1 - 0.842294 erfc(0.3 r)] / r | Implemented | Implemented | Implemented |
+| Eligible hybrid tau meta-GGA | Native component coefficients and range | Implemented | Implemented | Implemented |
+
+Every cell in this matrix is experimental and awaits independent native
+scientific acceptance. Existing HF and semilocal prerequisite gates remain
+in force; source tests and stationary SCF alone do not qualify a result.
+
+For spin-summed restricted density D, the exchange operator and energy are
+`F_x = -K(D)/2` and `E_x = -sum_k w_k Tr[D_k K(D)_k]/4`. For unrestricted
+spin densities they are `F_x,s = -K(D_s)` and
+`E_x = -sum_s,k w_k Tr[D_s,k K(D_s)_k]/2`. K already includes the functional
+coefficients. Hartree always uses full Coulomb. The Libxc semilocal pieces
+already contain their hybrid subtraction and are not rescaled a second time.
+
+SR fitting is a numerical split with its own parameter eta. It does not
+select a physically screened interaction. Each physical kernel uses matching
+two- and three-center integrals and its own metric/rank selection. The finite
+fitted CAM operator is explicitly a full fit plus a signed erfc fit. Separate
+fits are nonlinear in the kernel, so separately fitted full, erfc and erf
+operators need not obey an exact additive identity at finite auxiliary rank.
+The raw kernel integrals do obey the corresponding identity.
+
+All fitted metrics omit p=0. Full exchange restores the BvK Ewald overlap
+term `xi S D S`. Physical erfc exchange restores
+`pi/(omega^2 V_BvK) S D S`, and full-minus-erfc long-range exchange has
+`[xi - pi/(omega^2 V_BvK)] S D S`. Direct real-space erfc sums already
+contain their finite zero mode, so no extra Madelung term is added to them.
+This declared long-range convention must be matched when comparing another
+implementation. At fixed finite BvK volume the erfc zero term diverges as
+omega tends to zero; only the nonzero-momentum kernel approaches full
+Coulomb in that limit. The omega-to-infinity erfc limit vanishes, including
+its zero term. Coefficient limits retain the explicitly selected semilocal
+correlation and are not automatically pure HF or pure PBE.
+
+The accepted final Fock and energy are rebuilt without shifts or mixing.
+Reference reuse binds backend/component identity, coefficients, physical range,
+spin/occupations, grid/images, source/support, rank and factor bytes. Output
+records `executed_chi_exchange` and coefficient-weighted exchange components
+through the normal `vibeqc.output` manifest. Direct routes require real Gamma
+densities and time-reversal paired complex characters; they refuse incompatible
+densities rather than replacing them with a real projection.
+
+Bloch AOs are summed over a point-centered physical sphere for each AO
+center. Values and gradients use the identical image mask. Grid and image
+loops are streamed; a candidate-budget refusal never truncates the image
+sum. The finite support boundary is not differentiated with respect to
+nuclear positions. This energy support therefore does not provide forces.
+The convention is `tau = sum_i occupation_i |grad psi_i|^2 / 2`, and the
+potential differentiates the executed energy without an additional tau floor.
+Libxc supplies pointwise functional values and derivatives; the chi density
+and AO operator assembly are independently constructed. See the
+[Libxc derivative conventions](https://libxc.gitlab.io/manual/libxc-5.1.x/).
+
+`result.executed_chi_xc` records resolved functional IDs/weights, Libxc
+version, grid identity, density-image policy and measured integrated charge.
+The output manifest carries that record alongside Coulomb support and final
+SCF acceptance. Use `prepare_chi_ks_reference` from `periodic.chi.reference`
+to prepare a tight process-local reference; pass it as `ks_reference` to an
+identical library request. Changed functional, spin, occupations, grid,
+images, Coulomb source, controls, runtime or mutated result bytes reject
+reuse. A KS reference is not an HF post-HF reference.
+
+The public runner accepts `chi_grid_options=GridOptions(...)` for the same
+quadrature settings as the library `PeriodicKSOptions.grid`. Its density-image
+and partition radii remain separate in `chi_xc_controls`. Direct Coulomb
+cutoff overrides currently require the library options; public direct parity
+uses the common default Coulomb options.
+
+Direct support recording bounds the stored nuclear membership: shell-pair/cell
+mappings, unique AO midpoints and selected atom/image labels. The limit remains
+2,000,000 entries. Native image selection runs in bounded midpoint panels and
+uses the same geometric predicate as the nuclear-attraction operator. A loose
+product of enclosing image boxes is not the stored record size. Paneling
+preserves all membership labels, their order and the canonical v1 JSON identity.
+An actual record above the limit refuses before SCF without reducing any radius.
+
+### R5.1 same-source canonical MP2 and UMP2
+
+The developer entry point
+`vibeqc.periodic.chi.canonical_mp2.evaluate_same_source_mp2` consumes a sealed
+`ChiHFReference` made by `prepare_chi_hf_reference` with explicit fitted Coulomb
+controls and `fit_source="classic"` or `"sr"`. It borrows that reference's actual
+canonical AO factors. It never builds a classic fit for an SR determinant.
+This developer entry point does not stamp public admission. Use the public
+entry points below for admitted MP2/UMP2. The legacy post-HF routes, their
+explicit-SR refusals and historical `auto` behavior are unchanged.
+
+The public library entry point
+`vibeqc.periodic.chi.correlation.run_chi_mp2(reference, frozen_core=0,
+auxiliary_batch_size=64)` and the runner's `method="aiccm", variant="chi",
+correlation="mp2"` adapter admit the explicit finite-source contract below.
+Use `aiccm_backend="ri"`, `fit_source="classic"` or `"sr"`, explicit
+`chi_coulomb_controls=ChiCoulombControls(...)`, `conv_tol_energy=1e-11`
+and `conv_tol_grad=1e-9` (or tighter tolerances). The controls must select
+`physical_pairs`, no reciprocal tail, and zero integral and fit screening.
+The route requires a 3D all-electron full-Coulomb HF energy single point.
+Implicit controls, the default four-center backend, historical support,
+smearing, constrained occupations, reduced characters, generic orbital-file
+restarts, optimization and response requests refuse before SCF. Explicit
+classic accepted-reference and correlation restart use the separate
+[checkpoint contract](../chi_restart.md). The final state must
+also pass the achieved stationarity, source and occupation checks below.
+Use `scf_reference="uhf"` to request UMP2 explicitly, including on a singlet;
+an open-shell cell otherwise selects UHF automatically. The correlation
+selector stays `"mp2"` for either reference. Public UMP2 currently requires
+`fit_source="classic"`; SR UMP2 remains gated pending independent
+complex-spin operator acceptance.
+
+The runner accepts `chi_frozen_core` and `chi_auxiliary_batch_size`, with
+the same meaning as the library arguments. Omitting them uses zero frozen
+orbitals and panels of 64. These keywords refuse on every other route.
+Nonzero public frozen counts require explicit classic RHF, or the separate
+shared closed-space projector defined for classic ROHF RMP2.
+SR and UHF frozen active spaces remain gated pending applicable native
+acceptance; all-electron MP2/UMP2 uses zero frozen counts.
+The adapter seals the already executed HF result and borrows its factors;
+it does not run another SCF or refit. Its output-layer integration carries
+actual spin-resolved correlation and total energies, source/reference identity,
+rank and stationarity records to `.out` and `.system`, never an SCF-only
+success for a correlation request. The `.system` source record preserves
+momentum coordinates as TOML numbers, including with NumPy 2.
+As on other periodic correlated runners,
+the result's `energy` is HF; `e_correlation` and `e_total_correlated` name
+the post-HF energies. Kernel preparation and output tests are not native
+acceptance. There is no environment switch to bypass these checks.
+
+| Source | Reference | Method | Implemented | Publicly admitted | Independently accepted native | Production qualified |
+|---|---|---|---|---|---|---|
+| Explicit classic | RHF | MP2 | Kernel and public adapter | Scoped contract | Finite native controls | No |
+| Explicit SR | RHF | MP2 | Kernel and public adapter | Scoped contract | Finite native controls | No |
+| Explicit classic | UHF | UMP2 | Kernel and public adapter | Scoped contract | Finite native controls | No |
+| Explicit SR | UHF | UMP2 | Kernel and gated adapter | No | Partial; complex triplet criterion open | No |
+| Direct | RHF/UHF | MP2/UMP2 | No adapter | No | No | No |
+| Explicit classic | ROHF | Knowles RMP2 including singles | Kernel and public adapter | Scoped source contract | Pending | No |
+| Any | KS/hybrid | Correlation | Later increment | No | No | No |
+
+Classic RHF/UHF [CCSD(T)](../chi_ccsd.md) and classic
+[ROHF Knowles RMP2](../chi_rohf_mp2.md) have separate source contracts.
+ROHF-CC and ECP correlation remain unsupported. Existing
+legacy library methods retain their documented scope; this table describes
+only the new same-source route. Chi remains experimental and D93 v1 fitted and
+post-HF results remain not-qualified.
+
+Classic RHF/UHF/ROHF references and their admitted canonical correlation
+routes support persistent [source-preserving restart](../chi_restart.md).
+Use `chi_reference_checkpoint`/`chi_reference_from` for the HF archive and
+`chi_correlation_checkpoint`/`chi_correlation_resume` for correlation, with
+`chi_checkpoint_interval` controlling complete iteration/work-unit publication.
+A restored reference is physically revalidated before resealing; correlation
+resume checks its exact source, frozen/canonical spaces and numerical controls.
+The loader's explicit guess mode requires renewed convergence. SR, KS/hybrid,
+ECP and ROHF-CC restart are not enabled, and native restart acceptance remains
+pending.
+
+The canonical adapter retains each q record, metric eigenvalues and keep mask,
+rank, factor hash, basis and auxiliary identities, executed support, kernel and
+zero-mode convention. Current three-dimensional sources use positive retained
+metric modes. Signed metrics and eigenmode-only frames refuse. The full
+canonical auxiliary dimension is preserved even when the retained rank is
+smaller. No whitening, rank selection or refit occurs in correlation.
+
+For complex characters the Coulomb tensor uses
+`(ia|jb) = sum_P L(ki,ka)[P,i,a] * conj(L(kb,kj)[P,b,j])`.
+Both factors have the same momentum transfer. This does not require phase
+matching of independently diagonalized q and minus-q metrics. Momentum is
+conserved exactly on the complete unshifted finite character group. Ordered
+same-spin pairs carry a factor of one quarter after antisymmetrization;
+opposite-spin pairs carry one. Primitive-cell factors give an overall
+`Nk**-3` energy normalization. The external overlap-only exchange zero-mode
+restoration vanishes in occupied-virtual matrix elements of the admitted
+orthonormal canonical state; its effect on HF orbital energies is retained.
+These are the conventional Moller-Plesset equations (1934), with periodic
+normalization described by McClain et al. (2017); output citation routes are
+`chi-same-source-mp2` and `chi-same-source-ump2`.
+
+Admission requires the sealed stationary full-exchange RI HF state, achieved
+energy and energy-rebuild errors at most `1e-11` hartree, and orbital and density
+residuals at most `1e-9`. Canonical eigenpairs, metric orthogonality and orbital
+versus reported density are checked again. Smearing, fractional occupations,
+metallic gaps, noncanonical states, ECP and KS/hybrid references refuse.
+Denominators must be strictly below `-denominator_tolerance` (default `1e-12`
+hartree); no clamping or regularization occurs.
+
+Explicit fitted RHF and UHF use fixed integer populations for their initial
+orbital fill and intermediate SCF trials. A degenerate HCORE seed can therefore
+evolve into a gapped determinant instead of remaining a fractional ensemble.
+Convergence and terminal reporting still refill the physical unshifted Fock
+globally across the mesh and require integer Aufbau populations at every
+character. A final metallic or fractional state remains unsupported. This
+trial rule does not change ordinary GDF or KS occupations.
+
+`frozen_core` is an explicit nonnegative count of lowest occupied orbitals per
+character and spin, or a pair of counts for UHF. RHF counts must agree. A core
+boundary through a degenerate occupied subspace refuses. Returned active-space
+triples are `(frozen, active occupied, virtual)` for alpha and beta; retained
+overlap dimensions are preserved. `auxiliary_batch_size` controls factor panels;
+one occupied pair's virtual matrix is stored at a time. It is not a process
+memory cap or a new distributed implementation. Existing batching and reference
+transport remain in place.
+
+`vibeqc.output.chi_correlation.chi_correlation_record(result)` supplies SCF,
+correlation and total energies, spin components, active spaces, exact source and
+reference identities, convergence evidence, citation route and admission status.
+The successful public result stamps its admission policy separately from
+`quantitative_status="not-qualified"`; a direct developer evaluation records
+`public_admission="not-requested: developer evaluation"`. A correlation failure
+cannot become a successful SCF-only correlated job.
+
+Native finite controls compare the retained operator against a separate
+Gaussian construction, rebuild stationary HF from exported raw operands,
+and compare spin-resolved correlation against an explicit spin-orbital
+tensor. H2 covers classic/SR, RHF/UHF, Gamma and complex characters,
+cold/reused factors, panels 1/7/64 and same-root closed-shell collapse.
+Classic LiH adds restricted frozen-core bookkeeping and genuine triplet
+UMP2, including nonzero alpha-alpha, beta-beta and alpha-beta terms on the
+complex mesh. Zero same-spin channels in a Gamma determinant remain explicit.
+
+The original SR LiH auxiliary radius of 10 bohr gives an indefinite metric
+and remains refused. Supplementary SR triplet measurements use a separately
+recorded 32-bohr auxiliary domain with the same remaining finite controls
+and rank threshold. The Gamma measurement passes, but the complex
+triplet comparison exceeds the inherited independent Fock tolerance
+of `1e-9`. Reference-integral accuracy may contribute to this unresolved
+comparison, so public SR UMP2 remains gated. These measurements do not
+make the original 10-bohr source valid or establish physical support
+convergence. Negative modes are never sign-clipped.
+
+Source comparisons retain operator tolerance `2e-8` and the inherited
+independent Fock tolerance `1e-9`. Correlation tolerance remains `1e-10`
+hartree per cell. The separate raw-state HF prerequisites above also apply.
+They establish the experimental capability envelope; physical basis/support
+convergence, ORCA/CRYSTAL parity, production qualification and completion of
+the whole R5 program remain separate. Broader source/support ladders and
+ionic obligations remain open. Array-level oracle agreement alone is not
+native acceptance.
+
+### Stationary ROHF and named RMP2
+
+Select `scf_reference="rohf"` with `method="aiccm", variant="chi"`, explicit
+classic physical-pair Coulomb controls and `aiccm_backend="ri"`. The SCF
+optimizes one shared spatial frame. Add `correlation="mp2"` for
+`ROHF-RMP2`, the Knowles spin-semicanonical partition including singles.
+The [ROHF/RMP2 manual](../chi_rohf_mp2.md) specifies the effective Fock,
+stationarity, canonicalizations, denominators, frozen spaces, numerical
+refusals and reproducible Validator cases. Native acceptance is pending;
+chi remains experimental and D93 fitted/post-HF remains not-qualified.

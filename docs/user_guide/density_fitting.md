@@ -97,6 +97,15 @@ aux = default_aux_basis_for(orbital, kind="jk")
 # → "def2-tzvp-jk"
 ```
 
+`run_job(density_fit=True)` calls this for you when `aux_basis` is empty,
+and since v0.17.7 so do every route that reaches the bare SCF drivers from
+that request: the geometry optimiser (`optimize=True`), the `VibeQC` ASE
+calculator given an options struct with `density_fit=True`, and
+`compute_hessian_fd`. Before that only the single point resolved the aux and
+an optimisation failed with "density_fit=true requires aux_basis" (#362). An
+orbital basis with no registered default (`sto-3g`, Pople bases, `pob-*`)
+still raises that explicit error; pass `aux_basis=` there.
+
 Recommended aux bases per orbital basis (the helper's table):
 
 | Orbital basis | Recommended `aux_basis` (kind="jk") | Recommended `aux_basis` (kind="ri") |
@@ -298,8 +307,10 @@ on which the reported exchange energy is built.
 
 **Reach across methods.** RIJCOSX accelerates the mean-field exchange
 build, so it applies to **RHF, UHF, RKS, UKS** (C++ drivers, with the
-multi-stage progression) and to **ROHF** (`ROHFOptions(cosx=True,
-cosx_grid_level=...)`, single-grid). Every post-HF method that builds on a
+multi-stage progression) and to **ROHF and ROKS** (`ROHFOptions(cosx=True,
+cosx_grid_level=...)` / `ROKSOptions`, single-grid; `run_job(cosx=True)`
+sets them for `method="rohf"` / `"roks"` as it does for the C++ drivers,
+#361). Every post-HF method that builds on a
 mean-field reference (**MP2, RI-MP2, DLPNO-MP2, CCSD, CCSD(T), DLPNO-CC,
 TDDFT**) inherits RIJCOSX automatically through its reference SCF: set
 `cosx=True` on the reference's options (`rhf_options` / `uhf_options` /
@@ -408,9 +419,7 @@ contributing landings, in chronological order:
   wall over the pre-batch baseline.
 
 The full per-commit measurement table + references lives in
-`CHANGELOG.md` under `[Unreleased]` for v0.8.0. Further perf
-work (custom Boys-table integral kernel replacing libint) was
-recorded in [Archived `handovers/HANDOVER_PERF_OPT.md`](https://vibe-qc.com/docs/).
+`CHANGELOG.md` under `[Unreleased]` for v0.8.0.
 
 ## DF analytic gradient status
 
@@ -541,3 +550,41 @@ Plus your basis-set + functional citations per the rest of
 * [`scf_convergence.md`](scf_convergence.md), DIIS / EDIIS+DIIS
   / level-shift / quadratic-fallback that the JKBuilder
   dispatch lands inside.
+
+
+## Evaluated states from the native Gamma RHF/RKS API
+
+`run_rhf_periodic_gamma_gdf` returns `result.fock_build` for bare-fit RHF/RKS in
+3D molecular-limit cells whose integral cutoff contains only the home cell,
+with no active symmetry operations, stabilization or Fock reduction.
+The builder owns the fitted tensor and one-electron matrices. Its receipt
+records the actual auxiliary shells, fitting threshold, modrho setting and
+resolved integral/nuclear options. Existing libint fitting is unchanged.
+
+RKS adds the joint libxc energy and potential for the evaluated density. Its
+receipt records the actual functional, grid points/weights, lattice options,
+AO shells and XC density convention. Changes to live XC inputs require a new
+builder; completed states own their values. The XC energy remains an explicit
+component and is never inferred from half a density-potential trace. PATOM
+uses a separate full-HF build and eigensolver history, including for pure DFT.
+Pure functionals omit the fitted exchange contraction during KS builds;
+global hybrids retain the functional's exchange fraction.
+
+The returned orbitals and occupations define `result.density`, including when
+SCF reaches its iteration limit. The physical Fock and energy are evaluated
+on that density. Orbital energies are its physical Rayleigh quotients;
+`next_density` records the further unaccelerated orbital/occupation update.
+Convergence checks this density closure as well as energy and stationarity.
+Legacy arrays remain writable, separate from the immutable build.
+
+At finite temperature, entropy belongs to the returned occupations and
+`free_energy = energy - smearing_temperature * entropy`. The SCF trace records
+free energy; the FockBuild and QVF energy record the physical internal energy.
+Dense and Davidson solves both request the complete retained spectrum for
+Fermi occupations. Positive `max_iter` is required on this migrated route.
+
+This state migration does not change fitting accuracy or admit additional
+methods. External XC providers, RSGDF, private slab and torus routes, symmetry-projected sources
+and multi-k GDF retain their existing behavior and do not yet provide this
+FockBuild result. Native bounded MANTA sources and BIPOLE domains remain
+separately qualified.

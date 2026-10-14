@@ -155,7 +155,7 @@ The complete script is `examples/embedding/open_shell_adsorbate.py`.
   (Lloyd adsorption energy) walkthrough.
 - **Spin-polarised DFT (UKS)**: a roadmap item. The open-shell route is
   UHF (J + K) today; UKS with a `Vxc` augmentation is future work
-  (`handovers/HANDOVER_GF_EMBEDDING.md`).
+  (the original investigation).
 - **Conventional supercell slabs**: for the non-embedding picture, see
   [Slabs and adsorbates](../user_guide/slabs_and_adsorbates.md) and the
   [slab-adsorbate DFT tutorial](slab_adsorbate_dft.md).

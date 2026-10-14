@@ -15,7 +15,7 @@ density fitting (RI-MP2) and with the unrestricted (UHF) reference.
 | SCS-MP2 | `run_scs_mp2(mol, basis, rhf)` | Grimme 2003 (c_os=6/5, c_ss=1/3) | Thermochemistry, reactions |
 | SOS-MP2 | `run_sos_mp2(mol, basis, rhf)` | Jung-Lochan-Dutoi-Head-Gordon 2004 (c_os=1.3, c_ss=0) | Even cheaper than SCS |
 | Canonical / RI / SCS / SOS UMP2 | `run_ump2`, `run_scs_ump2`, `run_sos_ump2` | UHF reference | Open-shell |
-| B2PLYP | `run_b2plyp(mol, basis)` | Grimme 2006 | First double hybrid |
+| B2PLYP | `run_job(..., method="b2plyp")` or `run_b2plyp(mol, basis)` | Grimme 2006 | First double hybrid |
 
 The high-level molecular dispatcher `run_job(..., method="mp2")`
 runs the same **canonical, four-index** MP2 kernel as
@@ -320,16 +320,54 @@ vibe-qc ships four double hybrids out of the box:
 | **revDSD-PBEP86-D4** | 0.69·HF + 0.31·PBE, 0.4210·P86 | 0.5922, 0.0636 | Santra-Sylvetsky-Martin 2019 |
 | **PWPB95** | 0.50·HF + 0.50·mPW(PW6), 0.731·B95 | 0.269, 0.0 | Goerigk-Grimme 2011 |
 
-All four are dispatched via name-specific wrappers (`run_b2plyp`,
-`run_dsd_pbep86`, `run_revdsd_pbep86`, `run_pwpb95`) or the generic
-`run_double_hybrid(mol, basis, "name", ...)`, and return a
-:class:`DoubleHybridResult` with the same shape.
+### Which entry points run a double hybrid
 
-For open-shell molecules, the double-hybrid dispatcher runs the
-spin-pure **ROKS** SCF half and then a semicanonical **ROHF-MP2**
-doubles correction. This includes the meta-GGA PWPB95 route; a direct
-`run_roks(..., functional="pwpb95")` still raises because the SCF
-energy alone is not the complete double-hybrid method.
+Three spellings run the complete method, and they return the same
+numbers:
+
+```python
+run_job(mol, basis="cc-pvdz", method="b2plyp", output="h2o")   # standard files
+run_b2plyp(mol, basis)                                          # named wrapper
+run_double_hybrid(mol, basis, "b2plyp")                         # generic
+```
+
+`run_job` takes `"b2plyp"`, `"dsd-pbep86"`, `"revdsd-pbep86"` and
+`"pwpb95"` as **methods**, because a double hybrid names a complete
+calculation rather than an XC functional. It writes the usual file set
+(`.out`, `.system`, `.bibtex`, `.references`, `.molden`, `.xyz`,
+population files, `.qvf`) and returns a `DoubleHybridResult`, the same
+object the wrappers return.
+
+One spelling does **not** run a double hybrid and raises instead:
+
+```python
+run_job(mol, basis="cc-pvdz", method="rks", functional="b2plyp")
+# NotImplementedError: ... would return only its SCF component and omit
+# the required perturbative correlation.
+```
+
+That request asks for the hybrid SCF step on its own. Its energy is not
+B2PLYP, and reporting it under the functional's name would be a wrong
+number under a right-looking label, so the low-level `run_rks`,
+`run_uks` and `run_roks` wrappers fail closed the same way.
+
+The `run_job` route is deliberately narrow: it carries the basis, grid,
+density-fitting, dispersion and output keywords, and **refuses** every
+other `run_job` feature (`optimize`, `hessian`, `tddft`, `solvent`,
+`frozen_core`, ...) rather than dropping it silently. The dispatcher has
+no geometry optimizer or response machinery, and a request that was
+ignored must not come back as a double-hybrid number.
+
+### Open-shell double hybrids
+
+For open-shell molecules the dispatcher runs the spin-pure **ROKS** SCF
+half and then a **semicanonical RI-ROHF-MP2** doubles-only correction
+(the singles term is excluded, as on the closed-shell path). This
+includes the meta-GGA PWPB95 route. The `.out` names the construction on
+its `Construction:` line, the `.system` manifest records
+`scf_reference = "ROKS"` and `correlation_method = "rohf-mp2"`, and the
+`.bibtex` adds the Roothaan ROHF and Knowles RMP2 papers alongside the
+functional's own. There is no UKS-reference double-hybrid route.
 
 ### B2PLYP
 
@@ -614,8 +652,7 @@ all live now; the maintainer has scoped the remaining work to a
 **self-consistent** ωB97M(2) variant (optimising the functional's own
 orbitals, not the published xDH form on ωB97M-V orbitals, which has no
 external parity anchor to validate against). What's left is the
-self-consistent SCF driver itself; see `handovers/HANDOVER_WB97M2.md`
-for the full recipe. `xc="wb97m(2)"` keeps its honest gate until that
+self-consistent SCF driver itself. `xc="wb97m(2)"` keeps its honest gate until that
 lands.
 
 ### Cross-code parity

@@ -62,7 +62,7 @@
       GDF Lpq factor cache              0.01 GB
       per-k complex buffers             0.00 GB
       Python runtime + NumPy overhead   0.10 GB
-  Available on this machine: 899.9 GB. Proceeding.
+  Available to this job: 899.9 GB. Proceeding.
 
     kpoints            = [2, 2, 2]
   iter     energy (Ha)            dE          ||[F,DS]||   DIIS

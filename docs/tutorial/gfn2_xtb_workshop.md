@@ -150,11 +150,25 @@ What *is* meaningful within GFN2-xTB:
 
 ---
 
-## 3. Spin polarization -- unrestricted GFN2-xTB
+## 3. Experimental open-shell occupations
 
-For open-shell systems (radicals, triplet ground states), use the
-unrestricted driver `run_ugfn2_xtb`. The unrestricted model handles
-different α and β orbital occupations:
+The low-level `run_ugfn2_xtb` driver supports different alpha and beta
+occupations of a common Hamiltonian. It counts the parameterized valence
+electrons minus the molecular charge. Incompatible multiplicities,
+negative electron counts and occupations exceeding the basis capacity
+raise `ValueError`; occupations are never truncated or clamped.
+
+This legacy driver is experimental. Its atom-charge SCC loop does not
+implement the closed-shell driver's shell SCC, third-order and AES terms,
+or the Python model's D4 correction. Electron-count validation does not
+establish quantitative open-shell GFN2 accuracy. Only the native low-level
+entry point is available; `run_job` remains closed-shell for GFN2.
+Its configurable iteration controls are `max_iter`, `conv_tol_charge`, and
+`charge_mixing`. The shared options must select `scc_mixer=Simple`,
+`electronic_temperature=0`, `gamma_form=KlopmanOhno`, and
+`aes_faithful=False`; other values raise `ValueError`. The restricted
+driver's `auto_stabilize` ladder, accelerator history, and AES damping
+controls do not apply to this partial model.
 
 ```python
 from vibeqc._vibeqc_core import Atom as CAtom, Molecule as CMolecule
@@ -165,19 +179,32 @@ oh = CMolecule([CAtom(8, [0, 0, 0]), CAtom(1, [0, 0, 1.81])], 0, 2)
 
 opts = _xtb.XTBSccOptions()
 result = _xtb.run_ugfn2_xtb(oh, params, opts)
+if not result.converged:
+    raise RuntimeError("Experimental U-GFN2 SCC did not converge")
 print(f"U-GFN2-xTB OH: {result.energy:.8f} Ha")
 print(f"n_alpha={result.n_alpha}  n_beta={result.n_beta}")
 print(f"converged={result.converged}  n_iter={result.n_iter}")
 ```
 
 ```text
-U-GFN2-xTB OH: -4.935... Ha
-n_alpha=5  n_beta=4
-converged=True  n_iter=...
+n_alpha=4  n_beta=3
 ```
 
-The unrestricted driver is required for any molecule with multiplicity > 1;
-the closed-shell `run_gfn2_xtb` refuses open-shell input.
+OH has seven valence electrons, with oxygen's 1s pair frozen. The fuller
+native `run_gfn2_xtb` accepts open shells only with `aes_faithful=True`.
+It retains the shell SCC, third-order and faithful AES functional, and can
+consume explicit SCC D4 operands. Its common orbitals carry separate alpha
+and beta occupations, with separate Fermi levels at positive temperature.
+Inspect `occupations_alpha`, `occupations_beta`, `n_alpha`, and `n_beta`, and
+check `converged` before using a result. This remains an experimental native
+route; `run_job` is still closed-shell, and quantitative open-shell accuracy
+requires further validation. The legacy example above uses the partial
+atom-charge model and is not a substitute for this fuller functional.
+For elements with an f-in-core model, check the valence spin count rather
+than inferring it from the sum of atomic numbers alone. The `Molecule`
+constructor also requires compatible all-electron spin parity. Cases such
+as an isolated neutral Ce atom cannot currently satisfy both constraints;
+they are rejected instead of silently producing a different charge state.
 
 Triplet O{sub}`2`:
 
@@ -625,7 +652,7 @@ with warnings.catch_warnings(record=True) as w:
 | Workshop topic | vibe-qc GFN2-xTB | Notes |
 |---|---|---|
 | Single-point | ✓ | Molecular + periodic Gamma-point |
-| Spin polarization | ✓ | `run_ugfn2_xtb` |
+| Open-shell occupations | Experimental partial model | low-level `run_ugfn2_xtb`; no quantitative acceptance |
 | Geometry optimization | ✓ | Via `run_job` or ASE |
 | Frequencies | ✓ | FD Hessian from analytic gradients |
 | Molecular dynamics | ✓ | ASE NVE / NVT with `SemiempiricalCalculator` |

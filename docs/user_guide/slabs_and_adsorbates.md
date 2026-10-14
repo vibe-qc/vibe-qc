@@ -271,10 +271,11 @@ vq.run_periodic_job(
 ```
 
 ```{note}
-Passing an explicit **bulk** `jk_method` (`"gdf"`, `"bipole"`, `"gpw"`,
+Passing an explicit **bulk** `jk_method` (`"bipole"`, `"gpw"`,
 `"gapw"`, `"rijcosx"`) to a `dim=2` slab now raises
 `NotImplementedError` rather than silently returning an `a3`-dependent
-energy. Use `"auto"` (or `"slab_ewald_2d"`). `method="UHF"` on a slab
+energy. Use `"auto"` (or `"slab_ewald_2d"`), or `"gdf"` for the
+closed-shell slab GDF route (RHF/RKS). `method="UHF"` on a slab
 also raises for now; use `RHF`, `RKS`, or `UKS`.
 ```
 
@@ -318,6 +319,25 @@ every range-separated functional; see
 [Functionals § HSE06](functionals.md#hse06-screened-range-separated-hybrid).
 Analytic slab gradients do not cover screened hybrids (they fail
 closed; see below).
+
+## Exact exchange on a slab k mesh
+
+The direct `SLAB_EWALD_2D` route has no convergent full-range exact
+exchange on a k mesh. The corrected Ewald split that the 3-D drivers use
+is 3-D only, and the bare real-space image sum over a k-mesh density
+grows with the lattice cutoff: an H2/STO-3G slab on `(2, 2, 1)` went
+from -1.68 Ha at a 15-bohr cutoff to -2.87 Ha at 30 bohr, against
+-0.918 Ha from slab GDF (GitLab #485). So:
+
+* `jk_method="auto"` sends slab **RHF**, and slab **RKS** with a
+  full-range hybrid (PBE0, B3LYP), on a k mesh to the closed-shell slab
+  GDF route. At a single Gamma point, and for semilocal or screened
+  (HSE06) functionals, it keeps `SLAB_EWALD_2D`.
+* The direct drivers refuse that exchange on a slab k mesh
+  (`run_rhf_periodic_scf`, `run_rks_periodic_scf`,
+  `run_uks_periodic_multi_k_ewald3d`). Open-shell slab hybrids on a k
+  mesh have no route yet; a 2-D corrected exchange split is tracked in
+  GitLab #488.
 
 ## What's not here yet
 

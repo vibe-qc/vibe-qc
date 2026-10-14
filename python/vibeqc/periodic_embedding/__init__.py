@@ -44,7 +44,7 @@ Gaussian-basis modules are landed and green:
 
 The Hartree + XC SCF loop and the ASE calculator surface are follow-ups.
 The end-to-end pipeline from tags -> region -> S_emb -> G0 -> ΔV -> Lloyd is
-operational.  See ``handovers/HANDOVER_GF_EMBEDDING.md``.
+operational.
 
 References
 ----------

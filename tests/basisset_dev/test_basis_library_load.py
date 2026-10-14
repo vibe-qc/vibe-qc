@@ -119,13 +119,11 @@ AUX_SUFFIX_RE = re.compile(
     r"|^augmentation-",
 )
 
-# Detection of ECP-bearing files: the splitter
-# (scripts/basisset_dev/split_ecp_g94.py) leaves a sister `.ecp`
-# file alongside any .g94 it had to strip ECP blocks out of. After
-# the split, the .g94 itself is orbital-only and libint loads it
-# fine — but the SCF still cannot run correctly without inline-ECP
-# auto-population (Phase 14e), so test_single_atom_scf still xfails
-# on these.
+# Detection of ECP-bearing files: the renderer writes a record's
+# potentials to a sister `.ecp` file, so the .g94 itself is orbital-only
+# and libint loads it fine. The SCF still needs the inline-ECP
+# auto-population to use the right valence count, so
+# test_single_atom_scf xfails on these.
 
 
 def has_ecp_sidecar(g94: Path) -> bool:
@@ -234,7 +232,7 @@ def _xfail_if_unsupported(g94: Path, *, scf_path: bool) -> None:
         pytest.xfail("SAP atomic-density helper (SCF guess fixture, not an orbital basis)")
     if scf_path and has_ecp_sidecar(g94):
         pytest.xfail(
-            "ECP-bearing basis: load works (orbital-only g94 after split), "
+            "ECP-bearing basis: load works (orbital-only g94 rendering), "
             "but SCF needs Phase 14e (auto-populate ecp_centers from inline "
             "ECP definitions in the sidecar) to use the correct valence "
             "electron count"

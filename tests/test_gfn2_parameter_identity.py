@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -326,10 +327,23 @@ def test_gradient_rejects_result_parameter_mismatch(
         _se.compute_gfn2_gradient(molecule, result, published_params)
 
 
+@pytest.mark.parametrize(
+    ("cache_directory", "expected_cache_path"),
+    [
+        ("home/cache", "~/cache/gfn2.toml"),
+        ("external-cache", "<gfn2-parameter-cache>/gfn2.toml"),
+    ],
+)
 def test_execution_provenance_freezes_every_scc_control_and_d4_input(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    cache_directory: str,
+    expected_cache_path: str,
 ) -> None:
+    # Pin the path contract independently of pytest's --basetemp location.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     params = _compact_parameters()
     molecule = _h2()
     model = GFN2Model(molecule, params, warn=False)
@@ -373,7 +387,8 @@ def test_execution_provenance_freezes_every_scc_control_and_d4_input(
     original_cache = (
         f'# source_sha256 = "{source_sha256}"\noriginal-cache\n'.encode()
     )
-    cache_path = tmp_path / "gfn2.toml"
+    cache_path = tmp_path / cache_directory / "gfn2.toml"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_bytes(original_cache)
     monkeypatch.setattr(
         _gfn2_params,
@@ -443,11 +458,32 @@ def test_execution_provenance_freezes_every_scc_control_and_d4_input(
     assert provenance["gfn2_d4_refdata_source_sha256"] == "b" * 64
     assert not any(key.startswith("gfn2_parameter_d4_") for key in provenance)
 
-    assert provenance["gfn2_cache_path"] == "<gfn2-parameter-cache>/gfn2.toml"
+    assert provenance["gfn2_cache_path"] == expected_cache_path
     assert provenance["gfn2_cache_sha256"] == hashlib.sha256(
         original_cache
     ).hexdigest()
     assert provenance["gfn2_cache_source_sha256"] == source_sha256
+
+
+@pytest.mark.parametrize(
+    ("cache_directory", "expected"),
+    [
+        ("home/cache", "~/cache/gfn2.toml"),
+        ("external-cache", "<gfn2-parameter-cache>/gfn2.toml"),
+        ("home-neighbor/cache", "<gfn2-parameter-cache>/gfn2.toml"),
+    ],
+)
+def test_portable_gfn2_cache_path_preserves_home_relative_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cache_directory: str,
+    expected: str,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    cache_path = tmp_path / cache_directory / "gfn2.toml"
+
+    assert _gfn2_method._portable_gfn2_cache_path(cache_path) == expected
 
 
 def test_d4_source_hash_is_bound_to_the_exact_parsed_bytes(
@@ -562,3 +598,33 @@ def test_captured_d4_row_determines_energy_after_global_row_mutation(
 
     assert frozen_energy == pytest.approx(baseline, abs=0.0)
     assert mutated_energy != pytest.approx(baseline, rel=1e-8, abs=1e-12)
+
+
+@pytest.mark.parametrize("explicit_counts", [False, True])
+def test_frozen_d4_retains_gaussian_counts_and_binds_their_identity(explicit_counts):
+    from vibeqc.dispersion_d4_model import compute_d4_c6_pair
+    from vibeqc.dispersion_d4_reference_data import D4ReferenceDataset
+
+    payload = json.loads(_gfn2_method._gfn2_d4_refdata_bytes())
+    for record in payload["elements"].values():
+        record.pop("n_gaussian", None)
+    source = D4ReferenceDataset.from_dict(payload)
+    original_hash = _gfn2_method._gfn2_d4_reference_content_sha256(source)
+    if explicit_counts:
+        source.elements[6].n_gaussian = list(range(1, source.elements[6].n_ref + 1))
+    frozen = _gfn2_method._FrozenD4ReferenceDataset.from_dataset(source)
+    assert frozen.to_dict() == source.to_dict()
+    digest = _gfn2_method._gfn2_d4_reference_content_sha256(frozen)
+    assert (digest != original_hash) is explicit_counts
+    args = (1.35, -.2, 6, 1.65, .1, 8)
+    value = compute_d4_c6_pair(*args, frozen)
+    assert value == pytest.approx(compute_d4_c6_pair(*args, source), abs=1e-13)
+    if explicit_counts:
+        expected_counts = tuple(source.elements[6].n_gaussian)
+        source.elements[6].n_gaussian[0] = 20
+        assert frozen.get_n_gaussian(6) == expected_counts
+        assert _gfn2_method._gfn2_d4_reference_content_sha256(frozen) == digest
+        assert compute_d4_c6_pair(*args, frozen) == value
+        assert abs(compute_d4_c6_pair(*args, source) - value) > 1e-8
+    else:
+        assert frozen.get_n_gaussian(6) is None

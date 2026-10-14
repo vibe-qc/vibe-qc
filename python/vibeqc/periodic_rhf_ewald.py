@@ -63,6 +63,7 @@ from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from .periodic.exchange_convention import MOLECULAR_LIMIT
 from ._vibeqc_core import (
     apply_level_shift,
     BasisSet,
@@ -91,6 +92,9 @@ from .options_dump import dump_active_settings
 from .periodic_scf_accelerators import DynamicDamping, PeriodicSCFAccelerator
 from .progress import ProgressLogger, resolve_progress
 from .scf_divergence import check_scf_divergence
+from .fock_state import EnergyComponents, FockBuild, SourceProvenance
+from .periodic_fock_source import _gamma_source_details, _slab_source_details
+from .solvers.operators import OperatorFrame, _snapshot
 
 __all__ = [
     "PeriodicRHFEwaldResult",
@@ -130,6 +134,74 @@ class PeriodicRHFEwaldResult:
 
     restart_kpoints: object = None
     restart_weights: object = None
+
+    # Every Gamma-only Ewald/GDF driver builds exchange with the
+    # molecular-limit kernel (home-cell density, image blocks zeroed); the
+    # runner's manifest records this instead of the exxdiv knob (GitLab #23).
+    exchange_q0: str = MOLECULAR_LIMIT
+    fock_build: FockBuild | None = None
+    occupations: np.ndarray | None = None
+    next_density: np.ndarray | None = None
+    density_fixed_point_residual: float | None = None
+    evaluated_build_history: list[dict] = field(default_factory=list)
+
+    @property
+    def run_fields(self):
+        if self.fock_build is None:
+            return {}
+        return dict(self.fock_build.output_fields(),
+                    orbital_state_relation="density-defining-physical-rayleigh-quotients",
+                    scf_stop_reason="converged" if self.converged else "iteration_limit",
+                    density_fixed_point_residual=self.density_fixed_point_residual,
+                    evaluated_build_history=[dict(row) for row in self.evaluated_build_history])
+
+
+class _GammaRHFBuilder:
+    """One evaluated total-density RHF state from the existing libint source.
+
+    The method owns the closed-shell factors: F = H + J[D] - K[D]/2
+    and E = tr(D H)/2 + tr(D F)/2. Completed states retain neither
+    this mutable provider nor its J/K temporaries.
+    """
+    def __init__(self, basis, system, lattice_options, kinetic, nuclear, frame,
+                 e_nuclear, j_build, source_details):
+        self.basis, self.system, self.lattice_options = basis, system, lattice_options
+        self.kinetic, self.nuclear = _snapshot(kinetic), _snapshot(nuclear)
+        self.hcore = _snapshot(.5 * ((kinetic + nuclear) + (kinetic + nuclear).T))
+        self.frame, self.e_nuclear, self.j_build = frame, e_nuclear, j_build
+        self.source_details = source_details
+        self.source = SourceProvenance.capture("libint2+periodic-ewald-j", **source_details())
+        self.generation = 0
+
+    def __call__(self, density):
+        if SourceProvenance.capture(self.source.provider, **self.source_details()) != self.source:
+            raise ValueError("Gamma RHF numerical source changed; rebuild its provider and metric frame")
+        d = _snapshot(density)
+        if np.iscomplexobj(d):
+            raise NotImplementedError("Gamma Ewald RHF requires a real total density")
+        j = self.j_build(d)
+        k = np.asarray(build_jk_gamma_molecular_limit(
+            self.basis, self.system, self.lattice_options, d, 0.0).K)
+        f = self.hcore + j - .5 * k
+        f = .5 * (f + f.T)
+        electronic = .5 * float(np.einsum("ij,ij->", d, self.hcore + f))
+        from .madelung import madelung_energy_correction_for_lat
+        # Parry's open-normal zero mode is already included by slab J/V/ne.
+        correction = (0.0 if self.lattice_options.coulomb_method == CoulombMethod.SLAB_EWALD_2D
+                      else madelung_energy_correction_for_lat(
+                          d, self.frame.overlap, self.system, self.lattice_options))
+        state = FockBuild.from_dense(
+            method="RHF", generation=self.generation, source=self.source,
+            energy=EnergyComponents(electronic=electronic, nuclear=self.e_nuclear,
+                components=(("kinetic", float(np.einsum("ij,ij->", d, self.kinetic))),
+                            ("nuclear_attraction", float(np.einsum("ij,ij->", d, self.nuclear))),
+                            ("coulomb", .5 * float(np.einsum("ij,ij->", d, j))),
+                            ("exchange", -.25 * float(np.einsum("ij,ij->", d, k)))),
+                corrections=(("madelung", correction),)),
+            densities=(d,), focks=(f,), frames=(self.frame,),
+            spins=("restricted",), kpoints=((0., 0., 0.),), weights=(1.,))
+        self.generation += 1
+        return state
 
 
 def _canonical_orthogonalizer(
@@ -340,8 +412,7 @@ def run_rhf_periodic_gamma_ewald3d(
         AO basis for the unit cell.
     options
         Optional :class:`PeriodicRHFOptions` controlling max_iter,
-        damping, convergence tolerances. ``use_diis`` is currently
-        ignored -- plain damping only; DIIS is a planned follow-up.
+        damping, convergence tolerances and SCF acceleration controls.
     omega
         Ewald splitting parameter. Result is w-independent at
         convergence to ~ µHa across w in [0.3, 2.0].
@@ -364,6 +435,9 @@ def run_rhf_periodic_gamma_ewald3d(
     :class:`PeriodicRHFEwaldResult`.
     """
     opts = options if options is not None else PeriodicRHFOptions()
+    max_iter = int(opts.max_iter)
+    if max_iter < 1:
+        raise ValueError("run_rhf_periodic_gamma_ewald3d: max_iter must be >= 1")
     from .guess import select_periodic_driver_guess
     selection = select_periodic_driver_guess(
         system, opts, route="ewald", method="RHF", driver="run_rhf_periodic_gamma_ewald3d",
@@ -538,48 +612,20 @@ def run_rhf_periodic_gamma_ewald3d(
             "a less redundant basis."
         )
 
-    use_davidson = getattr(opts, "use_davidson", False)
-    dav_opts = getattr(opts, "davidson", None)
-    dav_dim = getattr(opts, "davidson_min_dim", 100)
-    use_dav = use_davidson and S.shape[0] >= dav_dim
-    if use_dav and dav_opts is None:
-        from vibeqc._vibeqc_core import DavidsonOptions
-
-        dav_opts = DavidsonOptions()
-
     # ---- Nuclear repulsion per cell ---------------------------------------
     e_nuc = nuclear_repulsion_per_cell(system, lat_opts)
-
-    # ---- Madelung-leak correction (v0.6.1 fix) ---------------------------
-    # See vibeqc.madelung.madelung_energy_correction for the rationale.
-    from .madelung import madelung_energy_correction
 
     # ---- Initial guess via the unified engine.
     # SAD is the right default for ionic / covalent insulators (NaCl,
     # MgO, Si) where Hcore underbinds the deep core states so badly
     # that DIIS can amplify the swing into +30 000 / -16 000 Ha
     # territory before recovering.
-    def diagonalise(F):
-        Fp = X.T @ F @ X
-        Fp = 0.5 * (Fp + Fp.T)
-        if use_dav and dav_opts is not None:
-            from vibeqc._vibeqc_core import davidson_solve
+    from .solvers._scf import FockDiagonalizer
 
-            if dav_opts.n_eig == 0:
-                dav_opts.n_eig = Fp.shape[0]
-            if dav_opts.guess_vectors is not None:
-                pass  # already set from previous iteration
-            dres = davidson_solve(Fp, dav_opts)
-            if not dres.converged:
-                raise RuntimeError(
-                    f"Davidson did not converge after {dres.n_iter} iters"
-                )
-            eps, Cp = dres.eigenvalues, dres.eigenvectors
-            dav_opts.guess_vectors = Cp
-        else:
-            eps, Cp = np.linalg.eigh(Fp)
-        C = X @ Cp
-        return C, eps
+    n_required = n_kept if int(getattr(opts, "quadratic_fallback_iter", 0)) > 0 else n_occ
+    seed_diagonalise = FockDiagonalizer(
+        X, S, opts, kind="one_electron", n_required=n_required, real_only=True,
+    )
 
     j_build = make_ewald_3d_gamma_j_builder(
         basis,
@@ -610,18 +656,37 @@ def run_rhf_periodic_gamma_ewald3d(
     if D_engine is not None:
         plog.info(f"initial guess: {guess.name} (density via GuessEngine)")
         D = D_engine
-        C0, eps0 = diagonalise(Hcore)  # MO trace for log symmetry
+        C0, eps0 = seed_diagonalise(Hcore)  # MO trace for log symmetry
     else:
         plog.info(f"initial guess: {guess.name} (Hcore-diagonalise)")
-        C0, eps0 = diagonalise(Hcore)
+        C0, eps0 = seed_diagonalise(Hcore)
         D = 2.0 * C0[:, :n_occ] @ C0[:, :n_occ].T
         D = 0.5 * (D + D.T)
+    # Match the UHF producer's AO/source frame without encoding the spin
+    # convention in the numerical integral source identity.
+    import hashlib
+    import json
+
+    def source_details():
+        return _gamma_source_details(
+            basis, system, lat_opts, omega=omega, grid_shape=grid_shape_t,
+            origin=origin, spacing_bohr=spacing_bohr)
+
+    source_basis = source_details()
+    frame = OperatorFrame(
+        n=basis.nbasis, basis_id=hashlib.sha256(json.dumps(
+            source_basis["shells"], sort_keys=True).encode()).hexdigest(),
+        ordering=source_basis["ordering"], image_gauge="gamma-bloch-at-declared-shell-origins",
+        overlap=S, X=X)
+    X, S = frame.X, frame.overlap
+    diagonalise = FockDiagonalizer(
+        X, S, opts, kind="fock", n_required=n_required, real_only=True, frame=frame)
+    build_fock = _GammaRHFBuilder(
+        basis, system, lat_opts, T, V, frame, float(e_nuc), j_build, source_details)
+    T, V, Hcore = build_fock.kinetic, build_fock.nuclear, build_fock.hcore
     if guess == InitialGuess.PATOM:
-        # PATOM is one full-HF in-field step, independent of the target XC.
-        J_seed = j_build(D)
-        K_seed = np.asarray(build_jk_gamma_molecular_limit(
-            basis, system, lat_opts, D, 0.0).K)
-        C0, eps0 = diagonalise(Hcore + J_seed - 0.5 * K_seed)
+        seed = build_fock(D)
+        C0, eps0 = diagonalise(seed.channels[0].operator)
         D = 2.0 * C0[:, :n_occ] @ C0[:, :n_occ].T
         D = 0.5 * (D + D.T)
     D_prev = D.copy()
@@ -717,14 +782,13 @@ def run_rhf_periodic_gamma_ewald3d(
         mo_coeffs=np.empty((0, 0)),
         density=D.copy(),
         fock=np.empty((0, 0)),
-        overlap=S,
+        overlap=S.copy(),
         scf_trace=scf_trace,
         omega=float(omega),
         grid_shape=grid_shape_t,
     )
 
     E_prev = 0.0
-    F_final = Hcore.copy()
     C_final = C0
     eps_final = eps0
 
@@ -734,7 +798,7 @@ def run_rhf_periodic_gamma_ewald3d(
     # docs/pbc_audit_2026-06.md. ``j_build(D)`` is bit-identical to a
     # per-iteration build_j_ewald_3d call (grid backend: uncached, unchanged).
 
-    for iter_idx in range(1, int(opts.max_iter) + 1):
+    for iter_idx in range(1, max_iter + 1):
         # Dynamic-damping read: ``damper.alpha`` carries the a
         # selected by the previous iteration's energy step. On iter 1
         # this equals the initial a (the previous-iteration energy
@@ -752,53 +816,12 @@ def run_rhf_periodic_gamma_ewald3d(
             else damping * D_prev + (1.0 - damping) * D
         )
 
-        # J via composed Ewald-3D analytic FT, reusing the cached
-        # iteration-invariant machinery (see j_build above).
-        J = j_build(D_used)
-        # K via full-range real-space builder (omega=0).  At Γ-only with
-        # N_k = 1 this is the inverse-Bloch convention P(g) = P_Γ.d_{g,0}
-        # -- density localized to the home cell, cross-cell P(h!=0) set
-        # to zero (no information available without multi-k sampling).
-        # The 2026-05-14 handover originally framed this as a builder
-        # bug; the cutoff-convergence sweep on 2026-05-15 showed the
-        # alternative "homogeneous-D" build diverges and the
-        # molecular-limit kernel is in fact the correct Γ-only build.
-        # Tight-ionic-crystal accuracy needs multi-k sampling.
-        jk_full = build_jk_gamma_molecular_limit(
-            basis,
-            system,
-            lat_opts,
-            D_used,
-            0.0,
-        )
-        K = np.asarray(jk_full.K)
-
-        F = Hcore + J - 0.5 * K
-        F = 0.5 * (F + F.T)
-
-        # Closed-shell electronic energy: 1/2 tr[D (Hcore + F)]
-        E_elec = 0.5 * float(np.einsum("ij,ij->", D_used, Hcore + F))
-
-        # Madelung-leak correction (v0.6.1) -- disabled for EWALD_3D in
-        # v0.7.0 since V_ne now dispatches to the Ewald path that's
-        # gauge-aligned with J. See ``madelung_energy_correction_for_lat``
-        # docstring + LiH dense-ionic decomposition in
-        # ``examples/debug/lih_energy_decomposition.py``.
-        if lat_opts.coulomb_method == CoulombMethod.EWALD_3D:
-            E_madelung_fix = 0.0
-        else:
-            E_madelung_fix = madelung_energy_correction(
-                D_used,
-                S,
-                system,
-                nuclear_uses_ewald=False,
-            )
-        E_total = E_elec + float(e_nuc) + E_madelung_fix
-
-        # Orbital-gradient norm
+        physical = build_fock(D_used)
+        F = physical.channels[0].operator.matrix
+        E_elec, E_total = physical.energy.electronic, physical.energy.total
         FDS = F @ D_used @ S
         grad = FDS - FDS.T
-        grad_norm = float(np.linalg.norm(grad))
+        grad_norm = physical.commutator_norm
 
         dE = E_total - E_prev
         # Divergence detection (v0.6.2 generalisation of v0.5.6 hook).
@@ -823,6 +846,9 @@ def run_rhf_periodic_gamma_ewald3d(
                 diis_subspace=(accel.subspace_size if accel is not None else 0),
             )
         )
+        result.evaluated_build_history.append(dict(
+            iteration=iter_idx, generation=physical.generation,
+            build_id=physical.identity, density_id=physical.density_id))
         plog.iteration(
             iter_idx,
             energy=float(E_total),
@@ -830,20 +856,11 @@ def run_rhf_periodic_gamma_ewald3d(
             grad=float(grad_norm),
             diis=(accel.subspace_size if accel is not None else 0),
         )
-        # Per-iter energy decomposition for cross-code parity comparison.
-        E_kin_iter = float(np.einsum("ij,ij->", D_used, T))
-        E_ne_iter = float(np.einsum("ij,ij->", D_used, V))
-        E_J_iter = 0.5 * float(np.einsum("ij,ij->", D_used, J))
-        E_K_iter = -0.5 * 0.5 * float(np.einsum("ij,ij->", D_used, K))
+        components = dict(physical.energy.components)
         plog.energy_decomposition(
-            iter_idx,
-            E_kin=E_kin_iter,
-            E_ne=E_ne_iter,
-            E_J=E_J_iter,
-            E_K=E_K_iter,
-            E_nuc=float(e_nuc),
-            E_madelung=float(E_madelung_fix),
-        )
+            iter_idx, E_kin=components["kinetic"], E_ne=components["nuclear_attraction"],
+            E_J=components["coulomb"], E_K=components["exchange"], E_nuc=float(e_nuc),
+            E_madelung=dict(physical.energy.corrections)["madelung"])
 
         # Phase C1c gate: when the quadratic fallback is enabled and
         # we've passed its activation iteration, take a Newton step
@@ -928,14 +945,15 @@ def run_rhf_periodic_gamma_ewald3d(
                 else apply_level_shift(F, S, D_used, b, LevelShiftDensity.TOTAL)
             )
 
-            C_new, eps_new = diagonalise(F_diag)
+            solver_fock = physical.solver_operator(
+                0, F_diag, modification="method-acceleration-mixing-level-shift")
+            C_new, eps_new = diagonalise(solver_fock)
         D_prev = D_used
         D = 2.0 * C_new[:, :n_occ] @ C_new[:, :n_occ].T
         D = 0.5 * (D + D.T)
 
         C_final = C_new
         eps_final = eps_new
-        F_final = F
         # Dynamic-damping update -- feed the just-computed E_total so
         # the *next* iteration reads an a adapted to this iteration's
         # energy step. No-op when ``damper is None`` (static damping).
@@ -943,54 +961,46 @@ def run_rhf_periodic_gamma_ewald3d(
             damper.update(E_total)
         E_prev = E_total
 
-        # Stash the per-iter state on the result for inspection even
-        # if we don't converge.
-        result.energy = E_total
-        result.e_electronic = E_elec
         result.n_iter = iter_idx
-        result.mo_energies = eps_new
-        result.mo_coeffs = C_new
-        result.density = D_used
-        result.fock = F
-
-        if converged:
-            # Final self-consistency pass on the fresh D (same
-            # convention as the C++ driver).
-            J_f = j_build(D)
-            jk_f = build_jk_gamma_molecular_limit(
-                basis,
-                system,
-                lat_opts,
-                D,
-                0.0,
-            )
-            K_f = np.asarray(jk_f.K)
-            F_f = Hcore + J_f - 0.5 * K_f
-            F_f = 0.5 * (F_f + F_f.T)
-            C_f, eps_f = diagonalise(F_f)
-            E_elec_f = 0.5 * float(np.einsum("ij,ij->", D, Hcore + F_f))
-            if lat_opts.coulomb_method == CoulombMethod.EWALD_3D:
-                E_madelung_fix_f = 0.0
-            else:
-                E_madelung_fix_f = madelung_energy_correction(
-                    D,
-                    S,
-                    system,
-                    nuclear_uses_ewald=False,
-                )
-            result.energy = E_elec_f + float(e_nuc) + E_madelung_fix_f
-            result.e_electronic = E_elec_f
-            result.mo_energies = eps_f
-            result.mo_coeffs = C_f
-            result.density = D
-            result.fock = F_f
-            result.converged = True
-            plog.converged(
-                n_iter=result.n_iter,
-                energy=result.energy,
-                converged=True,
-            )
-            return result
+        if converged or iter_idx == max_iter:
+            # The orbitals define the returned density. Evaluate the physical
+            # Fock/energy on exactly that density, including at an iteration
+            # cap. A further eigensolve is a look-ahead density, not this state.
+            terminal = build_fock(D)
+            channel = terminal.channels[0]
+            C_next, _ = diagonalise(channel.operator)
+            D_next = 2.0 * C_next[:, :n_occ] @ C_next[:, :n_occ].T
+            D_next = .5 * (D_next + D_next.T)
+            closure = float(np.max(np.abs(D_next - D)))
+            result.fock_build = terminal
+            result.next_density = _snapshot(D_next)
+            result.density_fixed_point_residual = closure
+            result.energy, result.e_electronic = terminal.energy.total, terminal.energy.electronic
+            result.mo_coeffs = C_new
+            result.mo_energies = np.real(np.diag(C_new.T @ channel.operator.matrix @ C_new))
+            result.occupations = np.zeros(C_new.shape[1])
+            result.occupations[:n_occ] = 2.0
+            result.density = channel.density.copy()
+            result.fock = channel.operator.matrix.copy()
+            terminal_converged = (
+                converged
+                and abs(result.energy - E_total) < float(opts.conv_tol_energy)
+                and terminal.commutator_norm < float(opts.conv_tol_grad)
+                and closure < float(opts.conv_tol_grad))
+            if terminal_converged or iter_idx == max_iter:
+                previous = scf_trace[-1]
+                scf_trace[-1] = SCFIteration(
+                    iter=previous.iter, energy=result.energy,
+                    delta_e=result.energy - previous.energy,
+                    grad_norm=terminal.commutator_norm,
+                    diis_subspace=previous.diis_subspace)
+                result.evaluated_build_history[-1] = dict(
+                    iteration=iter_idx, generation=terminal.generation,
+                    build_id=terminal.identity, density_id=terminal.density_id)
+            if terminal_converged:
+                result.converged = True
+                plog.converged(n_iter=result.n_iter, energy=result.energy, converged=True)
+                return result
 
     result.converged = False
     plog.converged(
@@ -1030,6 +1040,9 @@ def run_rhf_periodic_gamma_ewald2d(
     and z-profile based rather than FFT-Poisson based.
     """
     opts = options if options is not None else PeriodicRHFOptions()
+    max_iter = int(opts.max_iter)
+    if max_iter < 1:
+        raise ValueError("run_rhf_periodic_gamma_ewald2d: max_iter must be >= 1")
     from .guess import select_periodic_driver_guess
     selection = select_periodic_driver_guess(
         system, opts, route="ewald", method="RHF", driver="run_rhf_periodic_gamma_ewald2d",
@@ -1143,35 +1156,14 @@ def run_rhf_periodic_gamma_ewald2d(
             f"dropped too many directions (n_occ = {n_occ}, n_kept = {n_kept})"
         )
 
-    use_davidson = getattr(opts, "use_davidson", False)
-    dav_opts = getattr(opts, "davidson", None)
-    dav_dim = getattr(opts, "davidson_min_dim", 100)
-    use_dav = use_davidson and S.shape[0] >= dav_dim
-    if use_dav and dav_opts is None:
-        from vibeqc._vibeqc_core import DavidsonOptions
-
-        dav_opts = DavidsonOptions()
-
     e_nuc = nuclear_repulsion_per_cell(system, lat_opts)
 
-    def diagonalise(F):
-        Fp = X.T @ F @ X
-        Fp = 0.5 * (Fp + Fp.T)
-        if use_dav and dav_opts is not None:
-            from vibeqc._vibeqc_core import davidson_solve
+    from .solvers._scf import FockDiagonalizer
 
-            if dav_opts.n_eig == 0:
-                dav_opts.n_eig = Fp.shape[0]
-            dres = davidson_solve(Fp, dav_opts)
-            if not dres.converged:
-                raise RuntimeError(
-                    f"Davidson did not converge after {dres.n_iter} iters"
-                )
-            eps, Cp = dres.eigenvalues, dres.eigenvectors
-            dav_opts.guess_vectors = Cp
-        else:
-            eps, Cp = np.linalg.eigh(Fp)
-        return X @ Cp, eps
+    n_required = n_kept if int(getattr(opts, "quadratic_fallback_iter", 0)) > 0 else n_occ
+    seed_diagonalise = FockDiagonalizer(
+        X, S, opts, kind="one_electron", n_required=n_required, real_only=True,
+    )
 
     j_build = make_slab_ewald_2d_gamma_j_builder(
         basis, system, lattice_opts=lat_opts, alpha=alpha
@@ -1194,18 +1186,35 @@ def run_rhf_periodic_gamma_ewald2d(
     if D_engine is not None:
         plog.info(f"initial guess: {guess.name} (density via GuessEngine)")
         D = D_engine
-        C0, eps0 = diagonalise(Hcore)
+        C0, eps0 = seed_diagonalise(Hcore)
     else:
         plog.info(f"initial guess: {guess.name} (Hcore-diagonalise)")
-        C0, eps0 = diagonalise(Hcore)
+        C0, eps0 = seed_diagonalise(Hcore)
         D = 2.0 * C0[:, :n_occ] @ C0[:, :n_occ].T
         D = 0.5 * (D + D.T)
+    import hashlib
+    import json
+
+    def source_details():
+        return _slab_source_details(basis, system, lat_opts, ewald_options=eopts)
+
+    source_basis = source_details()
+    frame = OperatorFrame(
+        n=basis.nbasis, basis_id=hashlib.sha256(json.dumps(
+            source_basis["shells"], sort_keys=True).encode()).hexdigest(),
+        ordering=source_basis["ordering"], image_gauge="gamma-bloch-at-declared-shell-origins",
+        overlap=S, X=X)
+    X, S = frame.X, frame.overlap
+    diagonalise = FockDiagonalizer(
+        X, S, opts, kind="fock", n_required=n_required, real_only=True, frame=frame)
+    build_fock = _GammaRHFBuilder(
+        basis, system, lat_opts, T, V, frame, float(e_nuc), j_build, source_details)
+    T, V, Hcore = build_fock.kinetic, build_fock.nuclear, build_fock.hcore
     if guess == InitialGuess.PATOM:
-        # PATOM is one full-HF in-field step, independent of the target XC.
-        J_seed = j_build(D)
-        K_seed = np.asarray(build_jk_gamma_molecular_limit(
-            basis, system, lat_opts, D, 0.0).K)
-        C0, eps0 = diagonalise(Hcore + J_seed - 0.5 * K_seed)
+        seed = build_fock(D)
+        patom_diagonalise = FockDiagonalizer(
+            X, S, opts, kind="fock", n_required=n_required, real_only=True, frame=frame)
+        C0, eps0 = patom_diagonalise(seed.channels[0].operator)
         D = 2.0 * C0[:, :n_occ] @ C0[:, :n_occ].T
         D = 0.5 * (D + D.T)
     D_prev = D.copy()
@@ -1266,7 +1275,7 @@ def run_rhf_periodic_gamma_ewald2d(
         mo_coeffs=np.empty((0, 0)),
         density=D.copy(),
         fock=np.empty((0, 0)),
-        overlap=S,
+        overlap=S.copy(),
         scf_trace=scf_trace,
         omega=alpha,
         grid_shape=(0, 0, 0),
@@ -1276,9 +1285,8 @@ def run_rhf_periodic_gamma_ewald2d(
     E_prev = 0.0
     C_final = C0
     eps_final = eps0
-    F_final = Hcore.copy()
 
-    for iter_idx in range(1, int(opts.max_iter) + 1):
+    for iter_idx in range(1, max_iter + 1):
         if damper is not None:
             damping = damper.alpha
         diis_active = use_diis and iter_idx >= diis_start_iter
@@ -1288,19 +1296,12 @@ def run_rhf_periodic_gamma_ewald2d(
             else damping * D_prev + (1.0 - damping) * D
         )
 
-        J = j_build(D_used)
-        jk_full = build_jk_gamma_molecular_limit(
-            basis, system, lat_opts, D_used, 0.0
-        )
-        K = np.asarray(jk_full.K)
-        F = Hcore + J - 0.5 * K
-        F = 0.5 * (F + F.T)
-        E_elec = 0.5 * float(np.einsum("ij,ij->", D_used, Hcore + F))
-        E_total = E_elec + float(e_nuc)
-
+        physical = build_fock(D_used)
+        F = physical.channels[0].operator.matrix
+        E_elec, E_total = physical.energy.electronic, physical.energy.total
         FDS = F @ D_used @ S
         grad = FDS - FDS.T
-        grad_norm = float(np.linalg.norm(grad))
+        grad_norm = physical.commutator_norm
         dE = E_total - E_prev
         check_scf_divergence(
             "run_rhf_periodic_gamma_ewald2d",
@@ -1323,6 +1324,9 @@ def run_rhf_periodic_gamma_ewald2d(
                 diis_subspace=(accel.subspace_size if accel is not None else 0),
             )
         )
+        result.evaluated_build_history.append(dict(
+            iteration=iter_idx, generation=physical.generation,
+            build_id=physical.identity, density_id=physical.density_id))
         plog.iteration(
             iter_idx,
             energy=float(E_total),
@@ -1330,15 +1334,11 @@ def run_rhf_periodic_gamma_ewald2d(
             grad=float(grad_norm),
             diis=(accel.subspace_size if accel is not None else 0),
         )
+        components = dict(physical.energy.components)
         plog.energy_decomposition(
-            iter_idx,
-            E_kin=float(np.einsum("ij,ij->", D_used, T)),
-            E_ne=float(np.einsum("ij,ij->", D_used, V)),
-            E_J=0.5 * float(np.einsum("ij,ij->", D_used, J)),
-            E_K=-0.25 * float(np.einsum("ij,ij->", D_used, K)),
-            E_nuc=float(e_nuc),
-            E_madelung=0.0,
-        )
+            iter_idx, E_kin=components["kinetic"], E_ne=components["nuclear_attraction"],
+            E_J=components["coulomb"], E_K=components["exchange"], E_nuc=float(e_nuc),
+            E_madelung=0.0)
 
         in_quadratic_phase = (
             quadratic_fallback_iter > 0 and iter_idx > quadratic_fallback_iter
@@ -1392,51 +1392,60 @@ def run_rhf_periodic_gamma_ewald2d(
                 F if b == 0.0
                 else apply_level_shift(F, S, D_used, b, LevelShiftDensity.TOTAL)
             )
-            C_new, eps_new = diagonalise(F_diag)
+            solver_fock = physical.solver_operator(
+                0, F_diag, modification="method-acceleration-mixing-level-shift")
+            C_new, eps_new = diagonalise(solver_fock)
 
         D_prev = D_used
         D = 2.0 * C_new[:, :n_occ] @ C_new[:, :n_occ].T
         D = 0.5 * (D + D.T)
         C_final = C_new
         eps_final = eps_new
-        F_final = F
         if damper is not None:
             damper.update(E_total)
         E_prev = E_total
 
-        result.energy = E_total
-        result.e_electronic = E_elec
         result.n_iter = iter_idx
-        result.mo_energies = eps_new
-        result.mo_coeffs = C_new
-        result.density = D_used
-        result.fock = F
+        if converged or iter_idx == max_iter:
+            # The orbitals define the returned density. Evaluate the physical
+            # Fock/energy on exactly that density, including at an iteration
+            # cap. A further eigensolve is a look-ahead density, not this state.
+            terminal = build_fock(D)
+            channel = terminal.channels[0]
+            C_next, _ = diagonalise(channel.operator)
+            D_next = 2.0 * C_next[:, :n_occ] @ C_next[:, :n_occ].T
+            D_next = .5 * (D_next + D_next.T)
+            closure = float(np.max(np.abs(D_next - D)))
+            result.fock_build = terminal
+            result.next_density = _snapshot(D_next)
+            result.density_fixed_point_residual = closure
+            result.energy, result.e_electronic = terminal.energy.total, terminal.energy.electronic
+            result.mo_coeffs = C_new
+            result.mo_energies = np.real(np.diag(C_new.T @ channel.operator.matrix @ C_new))
+            result.occupations = np.zeros(C_new.shape[1])
+            result.occupations[:n_occ] = 2.0
+            result.density = channel.density.copy()
+            result.fock = channel.operator.matrix.copy()
+            terminal_converged = (
+                converged
+                and abs(result.energy - E_total) < float(opts.conv_tol_energy)
+                and terminal.commutator_norm < float(opts.conv_tol_grad)
+                and closure < float(opts.conv_tol_grad))
+            if terminal_converged or iter_idx == max_iter:
+                previous = scf_trace[-1]
+                scf_trace[-1] = SCFIteration(
+                    iter=previous.iter, energy=result.energy,
+                    delta_e=result.energy - previous.energy,
+                    grad_norm=terminal.commutator_norm,
+                    diis_subspace=previous.diis_subspace)
+                result.evaluated_build_history[-1] = dict(
+                    iteration=iter_idx, generation=terminal.generation,
+                    build_id=terminal.identity, density_id=terminal.density_id)
+            if terminal_converged:
+                result.converged = True
+                plog.converged(n_iter=result.n_iter, energy=result.energy, converged=True)
+                return result
 
-        if converged:
-            J_f = j_build(D)
-            jk_f = build_jk_gamma_molecular_limit(
-                basis, system, lat_opts, D, 0.0
-            )
-            K_f = np.asarray(jk_f.K)
-            F_f = Hcore + J_f - 0.5 * K_f
-            F_f = 0.5 * (F_f + F_f.T)
-            C_f, eps_f = diagonalise(F_f)
-            E_elec_f = 0.5 * float(np.einsum("ij,ij->", D, Hcore + F_f))
-            result.energy = E_elec_f + float(e_nuc)
-            result.e_electronic = E_elec_f
-            result.mo_energies = eps_f
-            result.mo_coeffs = C_f
-            result.density = D
-            result.fock = F_f
-            result.converged = True
-            plog.converged(
-                n_iter=result.n_iter,
-                energy=result.energy,
-                converged=True,
-            )
-            return result
-
-    result.fock = F_final
     result.converged = False
     plog.converged(
         n_iter=result.n_iter,

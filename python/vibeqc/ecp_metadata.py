@@ -2,8 +2,7 @@
 
 Phase 14e of the libecpint integration: given a basis like ``lanl2dz``,
 ``dhf-tzvp``, etc. -- one of the 13 ECP-bearing bases that
-``scripts/basisset_dev/split_ecp_g94.py`` produced ``<name>.ecp``
-sidecar files for -- read the sidecar, extract per-element ``ncore``,
+the library renders ``<name>.ecp`` sidecars for -- read the sidecar, extract per-element ``ncore``,
 and produce a ready-to-go ``opts.ecp_centers`` + ``opts.ecp_library``
 without making the user do the bookkeeping by hand.
 
@@ -237,8 +236,8 @@ def _parse_float(token: str) -> float:
 def parse_inline_ecp_sidecar(path: Path) -> dict[int, InlineECPRecord]:
     """Parse a Gaussian/NWChem ``.ecp`` sidecar into inline ECP records.
 
-    The sidecars produced by ``scripts/basisset_dev/split_ecp_g94.py`` use
-    the usual BSE/Gaussian ECP layout::
+    The sidecars rendered by ``vibeqc.basis_toolkit.exporter_g94`` use the
+    usual BSE/Gaussian ECP layout::
 
         O     0
         O-ECP     3     2

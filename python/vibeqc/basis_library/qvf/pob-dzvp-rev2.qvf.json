@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "pob-dzvp-rev2",
+  "description": "Basis set: pob-dzvp-rev2\npob-dzvp-rev2: libint's own file, element data unchanged, followed\nby the Si, Cr, Mn, Fe, Co, Ni, Cu, Zn, Ga, Ge, As, Se, Br block(s) from the Basis Set Exchange. libint\nomits these because they were added to the set by a later and\nseparate publication, not because the data is in doubt:\n  Si, Cr, Mn, Fe, Co, Ni, Cu, Zn, Ga, Ge, As, Se, Br: D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, J. Comput. Chem. 40, 2364 (2019); DOI: 10.1002/jcc.26013\nFetched from the basis-set-exchange distribution, catalogue\n  version 0.12, on 2026-09-10. No network access involved.\nLicense: numerical parameter data from published scientific\n  papers; see docs/license.md section 3a.",
   "role": "orbital",
   "elements": {
     "H": {
@@ -5201,7 +5201,46 @@
       ]
     }
   },
+  "basis_family": "pob",
+  "references": [
+    {
+      "key": "peintinger_pob_tzvp_2013",
+      "description": "M. F. Peintinger, D. Vilela Oliveira, T. Bredow, Journal of Computational Chemistry 34, 451-459 (2013)",
+      "doi": "10.1002/jcc.23153"
+    },
+    {
+      "key": "vilela_oliveira_pob_rev2_2019",
+      "description": "D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, Journal of Computational Chemistry 40, 2364-2376 (2019)",
+      "doi": "10.1002/jcc.26013"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "Bredow group basis-set archive",
+        "url": "https://www.chemie.uni-bonn.de/bredow/de/software",
+        "identifier": "pob-DZVP-rev2",
+        "detail": "per-element CRYSTAL records under basis_library/sources/pob-DZVP-rev2/"
+      },
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "pob-DZVP-rev2",
+        "detail": "Si, Cr-Br, checked against the archive-derived records"
+      }
+    ],
+    "retrieval_date": "2026-09-10",
+    "content_sha256": "aa1738226e56f6cff508069d9252a373dd2c2beb6124be324b7ec11f362d821c",
+    "citations": [
+      {
+        "keys": [
+          "peintinger_pob_tzvp_2013",
+          "vilela_oliveira_pob_rev2_2019"
+        ]
+      }
+    ]
   }
 }

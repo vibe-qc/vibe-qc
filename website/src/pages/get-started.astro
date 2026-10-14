@@ -58,7 +58,8 @@ print(f"gap     = {(eps[homo+1] - eps[homo])*27.211386:.2f} eV")`;
         <p class="note">Clone the public source, then enter it and install:</p>
         <pre class="code"><code>git clone https://github.com/vibe-qc/vibe-qc.git</code></pre>
         <pre class="code"><code>cd vibe-qc
-./scripts/install.sh --dev</code></pre>
+./scripts/install.sh --dev
+source .venv/bin/activate</code></pre>
         <p class="note">
           <code>install.sh</code> builds the native core, creates a virtualenv and
           installs vibe-qc. It accepts <code>--dev</code> (track main) and
@@ -73,6 +74,9 @@ print(f"gap     = {(eps[homo+1] - eps[homo])*27.211386:.2f} eV")`;
       </li>
       <li>
         <h2><span class="n">2</span> Run RHF on water</h2>
+        <p class="note">With the environment activated, save this code as
+          <code>water.py</code> in a working directory outside the source checkout.
+          From that directory, run <code>python water.py</code>.</p>
         <pre class="code"><code>{code}</code></pre>
       </li>
       <li>

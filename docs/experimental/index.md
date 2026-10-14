@@ -64,6 +64,7 @@ Open-shell capabilities across both lines are documented in
 
 ../aiccm2026dev_a
 ../aiccm2026dev_a_followon
+../aiccm2026dev_a_production
 ../user_guide/aiccm2026dev_b
 ../design_aiccm2026dev_b
 ../aiccm2026dev_b_decisions

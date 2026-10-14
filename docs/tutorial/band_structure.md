@@ -102,6 +102,18 @@ Use careful language:
 closed-shell electron count. It is a convenient plot reference, not a
 finite-temperature chemical potential.
 
+On a `dim=1` cell the nuclear attraction in Hcore is a bare lattice sum that
+grows logarithmically with the lattice-sum cutoff, so the absolute band
+energies, and `bands.e_fermi` with them, shift rigidly when the cutoff
+changes. For this chain the lower band at $\Gamma$ moves from -2.276 Ha to
+-4.004 Ha as `cutoff_bohr` and `nuclear_cutoff_bohr` (both passed through
+`lattice_opts`) go from 15 to 200 bohr, while its width along
+$\Gamma\rightarrow X$ settles at 0.0122 Ha and the gap at $X$ changes by about
+3 mHa. Read widths and gaps from this model, not absolute positions. The same
+divergence is why a `dim=1` cell has no self-consistent route yet: a wire that
+needs SCF bands is run as a `dim=3` cell with transverse vacuum, as in
+[Periodic HF](periodic_hf.md).
+
 ## See the endpoint orbitals
 
 The accompanying plot evaluates the bonding-like and antibonding-like Hcore

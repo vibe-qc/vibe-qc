@@ -59,7 +59,10 @@ and turns a clear green/red verdict — so regressions can no longer hide on
 
 Native CI (`.gitlab-ci.yml` on the 32 GB `build-runner` runner) executes no
 regression pytest on ordinary `main` pushes: compilation plus import is T0.
-Release-candidate branches additionally execute the sole T1 file. The tag
+Release-candidate branches additionally execute the sole T1 file. A RED
+`gate_verdict.py` (exit 1), or any other failing step of that chain, fails the
+`build-test` job; `scripts/ci/tests/test_build_test_gate_exit.py` replays the
+gated chains with stubbed steps to keep it so (#446). The tag
 reuses the green exact-SHA candidate evidence and does not run CI again.
 CI never collects the monolithic suite.
 Broad lane/full-suite correctness remains an isolated local or nightly gate.
@@ -134,6 +137,19 @@ not a bigger box. (See the memory-tier table below for routing.)
   optional explicit pytest node ids, trigger paths, `method_maturity`,
   `lane_class`, linked global bug/gate items, target release, and the full
   matched calculation required before a scientific value can be promoted.
+
+### Run artifacts are local-only
+
+Every `--out` artifact in this README lands in the working directory you run
+from, which is normally the repo root. They are gitignored (`/*.jsonl`, plus
+`/LANE_HEALTH.md` and `/lane_health.json`) and must stay that way: a record's
+`tail` field holds the tail of the captured pytest output, warnings summary
+included, and pytest prints each warning with the absolute path of its origin.
+A green run is therefore no safer than a red one: any lane whose tests warn
+quotes your checkout's path. Staging one makes `.githooks/pre-commit` reject the
+commit with "staged content contains personal-info patterns [values redacted]"
+*without naming the file*. Re-run the lane to regenerate an artifact; don't
+commit one. Retain release evidence outside the product checkout.
 
 ## Partition policy
 
@@ -393,9 +409,9 @@ at the workdir. On **localhost** (this Mac, 128 GB, manual daemon
 **Fleet status 2026-06-10:** the distributed (compute-study/compute-small/compute-medium-fanned) gate is
 blocked on fleet repair - compute-small's managed venv can't import vibeqc
 (`libint2.so`), compute-study is commits-stale, compute-medium's configured python path is
-missing, and none have `pytest-forked`/`pytest-timeout`. See
-`handovers/HANDOVER_TEST_HEALTH.md` § fleet for the asks to the queue chat. Until then the
-gate runs on localhost.
+missing, and none have `pytest-forked`/`pytest-timeout`.
+The June 2026 fleet repair status above is historical.
+The gate ran on localhost at that time.
 
 ## Memory-tier table (for shard routing)
 

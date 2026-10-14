@@ -351,6 +351,24 @@ The image set used by the periodic Becke partition is currently an
 implementation-pinned part of this experimental adaptation, not an independent
 high-level convergence keyword.
 
+The [LiF Gamma input](../../studies/skala-showcase/lif_gamma.py) and
+[LiF complete 2x2x2 input](../../studies/skala-showcase/lif_k222.py) can select
+BIPOLE with `--jk-method bipole --bipole-cutoff-bohr R`, where `R` is an
+explicit positive finite cutoff in bohr. Add `--dry-run` to check dispatch
+without evaluating the checkpoint. These experimental RKS inputs retain GDF
+as their default; selecting BIPOLE does not establish cutoff convergence or
+extend validation to UKS. See the
+[campaign instructions](https://github.com/vibe-qc/vibe-qc/blob/main/studies/skala-showcase/README.md#select-bipole-for-the-lif-inputs)
+for output separation and comparison limits.
+
+The [BeH doublet input](../../studies/skala-showcase/beh_bipole_uks.py) exercises
+BIPOLE UKS with unequal spin populations, at Gamma or a complete mesh supplied
+with `--kpoints NX NY NZ`. It requires `--bipole-cutoff-bohr R` and supports
+`--dry-run`. A real run checks the returned occupations for three alpha and
+two beta electrons. This experimental periodic molecular cell tests routing
+and spin bookkeeping; it does not certify grid densities, forces or chemical
+accuracy.
+
 For any periodic SKALA calculation:
 
 1. Converge the public controls for the selected route, including the cell and

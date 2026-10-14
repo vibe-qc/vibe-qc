@@ -581,7 +581,7 @@ class TestGapwScf:
         BOTH symptoms — core kinetic energy and total vs GDF — so a future
         Fock regression that re-empties the core fails here.
 
-        See ``handovers/HANDOVER_GAPW_PRODUCTION.md`` § milestone 3 and
+        See
         ``examples/regression/gapw_parity/milestone3_analytic_fock.py``.
         """
         L = 12.0
@@ -593,13 +593,17 @@ class TestGapwScf:
         basis = vq.BasisSet(mol, "sto-3g")
         grid = PlaneWaveGrid(np.eye(3) * L, 24, 24, 24)
 
-        # All-electron GDF reference (same gauge, in-process).
+        # Supported periodic all-electron reference. Its full periodic
+        # exchange differs from GAPW's molecular-limit approximation;
+        # retain the 0.3 Ha error bound rather than assume equivalence.
         opts = vq.PeriodicRHFOptions()
         opts.max_iter = 120
         opts.conv_tol_energy = 1e-9
-        e_gdf = float(
-            vq.run_rhf_periodic_gamma_gdf(system, basis, opts, progress=False).energy
+        gdf_result = vq.run_pbc_gdf_rhf(
+            system, basis, opts, exxdiv="ewald", progress=False,
         )
+        assert gdf_result.converged, "O all-electron GDF reference did not converge"
+        e_gdf = float(gdf_result.energy)
 
         result = run_periodic_rhf_gapw(
             system, basis, grid=grid, quiet=True,
@@ -705,7 +709,7 @@ class TestGapwScf:
         assert run["gapw_one_centre_resolved"] == "analytic"
         assert run["gapw_molecular_limit_declared"] is True
 
-    def test_gapw_rhf_runner_requires_molecular_limit_declaration(self):
+    def test_gapw_rhf_runner_requires_molecular_limit_declaration(self, tmp_path):
         """The public runner must not infer a molecular box from geometry."""
         L = 12.0
         system = _he_periodic(L)
@@ -722,6 +726,7 @@ class TestGapwScf:
                 dry_run=True,
                 write_density=False,
                 citations=False,
+                output=tmp_path / "refused",
             )
 
     def test_gapw_rks_runner_rejects_irrelevant_molecular_limit(self):
@@ -752,6 +757,7 @@ class TestGapwScf:
     )
     def test_gapw_hf_runner_derivatives_fail_closed(
         self,
+        tmp_path,
         derivative_kwargs,
     ):
         """High-level derivatives must not switch away from the GAPW energy."""
@@ -772,6 +778,7 @@ class TestGapwScf:
                 write_density=False,
                 citations=False,
                 **derivative_kwargs,
+                output=tmp_path / "refused",
             )
 
     def test_gapw_energy_finite_for_different_cutoffs(self):
@@ -1255,7 +1262,7 @@ def test_gapw_molecule_matches_molecular(functional):
     a single-functional Hartree/XC cancellation). The residual is the intrinsic
     GAPW soft-basis bond representation, well within the ±5 mHa target.
 
-    See ``handovers/HANDOVER_GAPW_PRODUCTION.md`` § milestone 3.
+
     """
     L = 12.0
     c = L / 2
@@ -1870,31 +1877,6 @@ def test_multik_gapw_hueckel_uses_shared_fock_adapter(monkeypatch):
     assert seen == [core.InitialGuess.HUECKEL]
 
 
-@pytest.mark.parametrize(
-    ("driver_name", "args", "kwargs"),
-    [
-        (
-            "run_periodic_rks_gapw_multi_k",
-            (None, None, None),
-            {"functional": "lda"},
-        ),
-    ],
-    ids=["rks-multik"],
-)
-def test_direct_gapw_guess_selectors_fail_closed_for_patom(
-    driver_name,
-    args,
-    kwargs,
-):
-    """Pure-DFT multi-k GAPW lacks the exact exchange required by PATOM."""
-    import vibeqc.periodic_gapw_augment as gapw_module
-
-    with pytest.raises(
-        NotImplementedError,
-        match="initial_guess=PATOM.*not implemented by this route",
-    ):
-        getattr(gapw_module, driver_name)(
-            *args,
-            initial_guess=core.InitialGuess.PATOM,
-            **kwargs,
-        )
+# Multi-k PATOM uses a full-HF seed even for pure DFT. Its supported
+# GPW/GAPW routes are covered together, including normalized seed input
+# and seed-only exchange, in test_periodic_patom.py.

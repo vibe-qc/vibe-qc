@@ -1,55 +1,52 @@
 # vibe-qc bundled basis library
 
-Basis sets shipped with vibe-qc as Gaussian `.g94` text files — the same
-format [libint](https://github.com/evaleev/libint) parses natively.
+Every basis set vibe-qc ships is one **QVF-Basis record**,
+`qvf/<name>.qvf.json`: its shells, its effective core potentials, its
+originating publications and its provenance in one schema-validated JSON
+file. The `.g94` and `.ecp` text files libint and libecpint read are
+**renderings** of those records, written by
+`vibeqc.basis_toolkit.library` and pinned byte for byte to the records
+by `tests/test_basis_qvf_parity.py`. Edit a record and re-render; never
+edit the text.
 
-This directory lives **inside the Python package** so it ships in every
-wheel and source distribution. A fresh `pip install -e .` from the
-vibe-qc checkout already has every standard libint basis plus vibe-qc's
-custom additions; users do **not** need to set `LIBINT_DATA_PATH` or
-run any separate setup step.
+This directory lives inside the Python package so it ships in every
+wheel and source distribution. A fresh `pip install -e .` has every
+record immediately; users do not set `LIBINT_DATA_PATH` or run a setup
+step.
 
 ## Layout
 
 ```
 python/vibeqc/basis_library/
-├── basis/         ← assembled and committed: every basis set ships here
-│                    (<name>.g94 orbital blocks + <name>.ecp ECP sidecars)
-├── custom/        ← source of truth for vibe-qc's custom additions,
-│                    orbital .g94 files and pre-split .ecp sidecars alike
-├── sources/       ← per-element CRYSTAL records the pob-* files derive from
-├── qvf/           ← QVF-Basis structured sidecars (.qvf.json), orbital + ECP
-├── registry.toml  ← curated metadata: default fitting sets, ECP-requirement
-│                    and all-electron family rules (read by vibeqc.basis_registry)
+├── qvf/           ← the records: one <name>.qvf.json per basis set (source of truth)
+├── basis/         ← rendered for libint and libecpint: <name>.g94 shells, <name>.ecp potentials
+├── sources/       ← per-element CRYSTAL records the pob-* sets derive from (archive of record)
+├── registry.toml  ← curated metadata: default fitting sets, ECP-requirement and
+│                    all-electron family rules (read by vibeqc.basis_registry)
 └── README.md
 ```
 
+- **`qvf/`** is what you change. A record carries `elements[Sym].shells`,
+  `ecps[Sym]` (`n_core_electrons`, `angular_momentum_max`, `potentials`
+  with Gaussian-format powers, see #207), `references` with DOIs, and a
+  `provenance` block (schema 1.1.0): `kind` (`vendor`, `bse`,
+  `hand-written`, `vibe-basis`), the `upstream` sources, the
+  `retrieval_date`, `content_sha256` of the numerical content, and
+  `citations` routed per element range (#288).
 - **`basis/`** is what libint reads at runtime. `vibeqc/__init__.py`
-  points `LIBINT_DATA_PATH` at the parent `basis_library/` directory at
-  import time, so `BasisSet(mol, "<name>")` resolves any `.g94` file
-  in `basis/`. The contents are:
-  - libint's standard set (sto-3g, 6-31g\*, cc-pVxZ, def2-\*, ...)
-  - vibe-qc's custom additions (POB crystal bases, BSE-sourced additions,
-    and release-paper exact reproduction bases)
-- **`custom/`** is the source of truth for the custom overlay. Edit files
-  here, then re-run `scripts/setup_basis_library.sh` to refresh `basis/`.
-  (The standard set in `basis/` is overwritten with libint's current bundle;
-  custom files are layered on top so they win on a name conflict.) A
-  pre-split `custom/<name>.ecp` sidecar is copied into `basis/` verbatim;
-  this is the only way an ECP survives regeneration for a basis whose
-  orbital file carries no embedded ECP block (vDZP, def2-mSVP, def2-mTZVP,
-  def2-mTZVPP, pob-TZVP-rev2).
-- **`<name>.ecp` is the ECP for `<name>.g94`, per element.** The molecular
-  SCF wrappers read it and attach its primitives inline whenever an atom of
-  the molecule has a block there (`vibeqc.ecp_metadata.
-  attach_inline_ecp_options_from_basis_sidecar`); an atom without a block
-  runs all-electron in that basis. `vibeqc.basis_registry.ecp_requirements`
+  points `LIBINT_DATA_PATH` at a verified rendering of this library (the
+  `build/basis_library/` overlay when `scripts/setup_basis_library.sh`
+  made one, else this committed copy), so `BasisSet(mol, "<name>")`
+  resolves any record. `<name>.ecp` is the ECP for `<name>.g94`, per
+  element: the molecular SCF wrappers attach its primitives inline for
+  every atom with a block there, and `vibeqc.basis_registry.ecp_requirements`
   is the per-element question every guard asks.
+- **`sources/`** stays untouched: it is the archive the independent pob
+  checks read (#228), and `scripts/basisset_dev/pob_basis_verify.py`
+  compares it with the records.
 - **`registry.toml`** names the default JK / RI fitting set per orbital
-  basis (one table for the molecular and the periodic callers), the
-  valence-only families that need an ECP beyond a given element, and the
-  all-electron relativistic families. Add a row when you add a basis that
-  has a published fit or that is valence-only anywhere.
+  basis, the valence-only families that need an ECP beyond a given
+  element, and the all-electron relativistic families.
 
 ## End-user perspective
 
@@ -59,107 +56,95 @@ mol = vq.Molecule([vq.Atom(8, [0, 0, 0]),
                    vq.Atom(1, [0, 1.43, -0.98]),
                    vq.Atom(1, [0, -1.43, -0.98])])
 
-# All of these "just work" out of a vibe-qc editable install:
 vq.BasisSet(mol, "sto-3g")        # libint standard
 vq.BasisSet(mol, "6-31g*")        # libint standard
 vq.BasisSet(mol, "cc-pvtz")       # libint standard
-vq.BasisSet(mol, "pob-tzvp")      # vibe-qc custom (CRYSTAL pob set)
+vq.BasisSet(mol, "pob-tzvp")      # Bredow group crystal basis
 vq.BasisSet(mol, "6-311+g3df2p")  # exact PBE 1996 reproduction basis
 ```
 
-The user override (`LIBINT_DATA_PATH=/path/to/your/own/library`) still
-wins if you set it explicitly; vibe-qc only sets the variable when the
-user hasn't.
+A user-set `LIBINT_DATA_PATH` still wins; vibe-qc only sets the variable
+when the user has not. Your own records live in the user store
+(`vibe-qc-basis import`, `vibeqc.basis_store`), never here, and resolve by
+name after the bundle. The five-layer resolution order is documented in
+[the basis-set guide](https://vibe-qc.com/docs/user_guide/basis_sets.html).
 
-## Adding a new basis (developers)
+## Changing or adding a bundled basis (developers)
 
-1. Format the basis as a Gaussian `.g94` text file. If you have it in
-   another format (CRYSTAL, ORCA, Turbomole, PySCF, JSON from
-   [BSE](https://www.basissetexchange.org)), convert to `.g94` — BSE
-   exports Gaussian format directly.
-2. Save as `python/vibeqc/basis_library/custom/<name>.g94`, where
-   `<name>` is the case-folded identifier users will pass to
-   `BasisSet(mol, name)` (libint normalises to lowercase internally).
-3. Re-run `./scripts/setup_basis_library.sh` so the file lands in
-   `basis/` (overwriting any libint standard with the same name).
-4. Commit both `custom/<name>.g94` *and* `basis/<name>.g94` so the
-   wheel ships the new file.
-5. Add an entry to the inventory below documenting source, revision,
-   and citation.
+1. Produce the record. `vibe-qc-basis convert <input> -o qvf/<name>.qvf.json`
+   accepts BSE JSON, Gaussian94 (with or without ECP blocks), ORCA, NWChem
+   and CRYSTAL per-element files; `<name>` is the lower-case identifier
+   users pass to `BasisSet`. Fill `references` and `provenance` (kind,
+   upstream, retrieval date, citation routes) before committing: the
+   parity test refuses a record without them.
+2. Render: `./scripts/setup_basis_library.sh --target-dir python/vibeqc/basis_library`
+   (or `python scripts/render_basis_library.py --target python/vibeqc/basis_library/basis`).
+3. Route the citation in `python/vibeqc/output/citations/database.toml`
+   (`[routes.basis_sets]` must equal the record's citation keys) and record
+   the component in `docs/license.md`.
+4. Commit the record and its rendering together. `python
+   scripts/render_basis_library.py --check` says whether they agree.
+
+The runtime overlay under `build/basis_library/` is rendered from the same
+records by `scripts/setup_basis_library.sh` and carries a content receipt;
+an overlay that disagrees with the committed rendering refuses to load
+(#409). The import tool for hand-written and vibe-basis records writes to
+the user's own store, never here (#410).
 
 ## Inventory
 
-### vibe-qc custom sets (committed in `custom/`)
+### Bredow group pob-* sets
 
-| File | Purpose | Source | Citation |
+| Record | Purpose | Source | Citation |
 |------|---------|--------|----------|
-| `pob-tzvp.g94` (+ `pob-tzvp.ecp` for Rb-I) | Triple-ζ valence + polarisation, optimised for periodic crystals | `sources/pob-TZVP/` (Bredow group archives, H-Br and Rb-I) | M. F. Peintinger, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **34**, 451 (2013), DOI 10.1002/jcc.23153; Rb-I: J. Laun, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **39**, 1285 (2018), DOI 10.1002/jcc.25195 |
-| `pob-tzvp-rev2.g94` | Triple-ζ valence + polarisation, revision 2 (BSSE-aware re-optimisation) | `sources/pob-TZVP-rev2/` (Bredow group archive) | D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, *J. Comput. Chem.* **40**, 2364 (2019), DOI 10.1002/jcc.26013 |
-| `pob-dzvp-rev2.g94` | Double-ζ valence + polarisation, revision 2 (H–V) | `sources/pob-DZVP-rev2/` (Bredow group archive) | D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, *J. Comput. Chem.* **40**, 2364 (2019), DOI 10.1002/jcc.26013 |
+| `pob-tzvp` (ECP on Rb-I) | Triple-zeta valence + polarisation, optimised for periodic crystals | `sources/pob-TZVP/` (Bredow group archives, H-Br and Rb-I) | M. F. Peintinger, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **34**, 451 (2013), DOI 10.1002/jcc.23153; Rb-I: J. Laun, D. Vilela Oliveira, T. Bredow, *J. Comput. Chem.* **39**, 1285 (2018), DOI 10.1002/jcc.25195 |
+| `pob-tzvp-rev2` (ECP on Rb-Po, La-Lu) | Revision 2 (BSSE-aware re-optimisation) | `sources/pob-TZVP-rev2/` (Bredow group archive) | 2013 parent; H-Br: D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, *J. Comput. Chem.* **40**, 2364 (2019), DOI 10.1002/jcc.26013; Rb-I: Laun, Bredow 2022, DOI 10.1002/jcc.26839; Cs-Ba, Hf-Po: Laun, Bredow 2021, DOI 10.1002/jcc.26521; La-Lu: Seidler, Laun, Bredow 2023, DOI 10.1002/jcc.27097 |
+| `pob-dzvp-rev2` | Double-zeta valence + polarisation, revision 2 (H-Br) | `sources/pob-DZVP-rev2/` plus BSE for Si, Cr-Br | D. Vilela Oliveira, J. Laun, M. F. Peintinger, T. Bredow, *J. Comput. Chem.* **40**, 2364 (2019), DOI 10.1002/jcc.26013 |
 
-The `.g94` files in `custom/` and `basis/` are auto-generated by
-`scripts/basisset_dev/pob_basis_verify.py --regenerate` from the
-authoritative per-element CRYSTAL-format sources in `sources/`. Edit
-the source files, never the `.g94` directly. The verifier doubles as
-parity-check tool; see `docs/basisset_dev/VERIFICATION_REPORT.md` for
-the audit history.
+The pob records derive from the per-element CRYSTAL sources in
+`sources/`; the ECP radial powers are converted from CRYSTAL's literal
+power of r to libecpint's Gaussian convention by
+`vibeqc.basis_crystal.crystal_ecp_to_libecpint_arrays` (#207), and the
+verifier `scripts/basisset_dev/pob_basis_verify.py` compares both sides.
+See `docs/basisset_dev/VERIFICATION_REPORT.md` for the audit history.
 
-### BSE-derived custom sets
+### libint's standard set, completed where libint's files are short
 
-| File | Purpose | Source | Citation |
-|------|---------|--------|----------|
-| `6-311+g3df2p.g94` | Exact `6-311+G(3df,2p)` basis for the PBE 1996 reproduction benchmark | Constructed from BSE 0.12 Pople component bases: H-He from `6-311G(2df,2pd)` with D shells removed; Li-Ar from `6-311++G(3df,3pd)` heavy-atom blocks | Krishnan/Binkley/Seeger/Pople 1980; McLean/Chandler 1980; Hariharan/Pople 1973; Frisch/Pople/Binkley 1984 |
+The `vendor` records whose upstream is libint 2.13.1 carry libint's own
+element data. A few are libint files plus reviewed Basis Set Exchange
+blocks for elements libint omits because a later publication added them:
+`def2-*` beyond Kr (with the def2-ECP as the sidecar), `cc-pvqz` (Ca),
+`cc-pv6z` (Be) and `sto-3g` (Xe). Each record's `provenance.upstream`
+names both sources and which elements came from which.
 
-### ECP sidecars shipped for valence-only custom bases
+### Basis Set Exchange records
 
-| Sidecar | Elements | Source | Notes |
-|------|---------|--------|-------|
-| `vdzp.ecp` | B-F, Al-Ar, Ga-Kr, Rb-Rn (82 blocks) | BSE 0.12 vDZP record, split by `split_ecp_g94.py` | Müller, Hansen, Grimme 2023 (ωB97X-3c); custom cores, inline only |
-| `def2-msvp.ecp` | Rb-Rn (36 blocks) | Psi4 / BSE def2-mSVP record | The def2-ECP set; PBEh-3c, HSE-3c, B3LYP-3c |
-| `def2-mtzvp.ecp`, `def2-mtzvpp.ecp` | Rb-Rn (36 blocks) | Same def2-ECP data as `def2-msvp.ecp` | B97-3c and r²SCAN-3c pair with the def2-ECP beyond Kr like the parent def2 sets; the BSE records ship without the ECP blocks |
-| `pob-tzvp-rev2.ecp` | Rb-I, Cs-Po, La-Lu (46 blocks) | `sources/pob-TZVP-rev2/` CRYSTAL Z+200 records via `vibeqc.basis_crystal.emit_ecp_sidecar` | One ECP for molecular and periodic runs; round-trips to the arrays the periodic bridge feeds libecpint |
-| `def2-{sv(p),svp,tzvp,tzvpp,qzvp,qzvpp}.ecp` | Rb-Rn (50 blocks) | BSE def2 records, split by `scripts/basisset_dev/merge_def2_heavy_blocks.py` | The def2-ECP; the matching `custom/def2-*.g94` are libint's H-Kr files with the BSE Rb-Rn valence blocks appended |
-| `def2-{svpd,tzvpd,tzvppd,qzvpd,qzvppd}.ecp` | Rb-La, Hf-Rn (36 blocks) | same | The diffuse sets carry no lanthanide block |
+The `bse` records (the PP correlation-consistent family, vDZP, the 3c
+composite bases, LANL, dhf-*, the Jensen and ANO families, and the rest)
+are whole catalogue records; `provenance.upstream` carries the catalogue
+version and the BSE name, and the `references` the publications the
+catalogue lists.
 
-### QVF-Basis sidecars
+### ECP sidecars
 
-The `qvf/` directory contains structured JSON sidecars for every basis
-set, generated from the `.g94` files by `scripts/convert_basis_library_to_qvf.py`.
-These are schema-validated, diff-friendly, and carry metadata (name, role,
-family, provenance) that G94 comments can't encode.  Regenerate after any
-change to the `.g94` files:
+Every record with `ecps` renders a sidecar: vDZP (B-F, Al-Ar, Ga-Kr,
+Rb-Rn; custom cores, inline only), the def2 family and the def2-m*
+composite bases beyond Kr (the def2-ECP), the LANL family, dhf-*, the
+Peterson/Figgen PP sets, and pob-TZVP(-rev2). The sidecar's channels are
+the arrays libecpint receives; the molecular and the periodic route read
+the same record.
 
-```bash
-.venv/bin/python scripts/convert_basis_library_to_qvf.py --write
-.venv/bin/python -m vibeqc.basis_toolkit.cli validate python/vibeqc/basis_library/qvf/
-```
+## Licensing and attribution
 
-The `.g94` files remain the runtime source for libint; the `.qvf.json` files
-are the canonical structured representation.
+Records inherited from libint 2.13.1 ship under the terms libint applies
+to its bundled basis-set data (libint itself is LGPL 3.0). The pob sets
+are bundled with the Bredow group's agreement. Basis Set Exchange records
+are numerical data from published papers distributed by BSE under
+CC-BY-4.0. Every record names its originating publications in
+`references`, the rendered headers repeat them, and a run's `.references`
+file cites what the record's citation routes say.
 
-### Standard sets (assembled from libint 2.13.1)
-
-`sto-3g`, `3-21g`, `6-31g`, `6-31g*`, `6-31g**`, `6-311g`, `6-311g*`,
-`6-311g**`, `cc-pvdz`, `cc-pvtz`, `cc-pvqz`, `cc-pv5z`, `aug-cc-pv{d,t,q,5}z`,
-`def2-{sv,svp,svpd,tzv,tzvp,tzvpd,tzvpp,qzvp,qzvpp}`, JKFIT / CABS / RI
-variants, ANO-RCC, and others. Full list: `ls basis/`.
-
-## Licensing + attribution
-
-The standard sets in `basis/` are inherited from libint 2.13.1's
-upstream distribution and ship under the same redistribution
-terms libint applies to its bundled basis-set data (libint
-itself is LGPL 3.0 for the library). The POB custom sets in
-`custom/` are originated by the Bredow group at the University
-of Bonn and Mike Peintinger; no external clearance required.
-BSE-derived custom files carry their source and originating
-publication references in the file header.
-
-**For published work that uses any of these basis sets**, cite
-the originating publication for the specific basis set you
-used — the per-publication references are preserved in each
-`.g94` file's header.
-
-The full inventory, per-family citation hints, and redistribution
-notes for the 239 bundled `.g94` runtime basis files are documented in
+**For published work that uses any of these basis sets**, cite the
+originating publications of the basis set you used. The full inventory
+and redistribution notes are in
 [`docs/license.md`](https://vibe-qc.com/docs/license.html#bundled-basis-sets).

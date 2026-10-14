@@ -22,10 +22,11 @@ here because neither is exercised by anything cheaper than a real build:
   on a tree carrying a different one.
 
 These drive the *real* shipped shell, mirroring
-``test_native_dep_artifact_health.py``'s style. No compile happens: the
-build_libint.sh cases stop at ``VIBEQC_FETCH_ONLY=1``, which exits right
+``test_native_dep_artifact_health.py``'s style. The build_libint.sh cases
+stop at an injected pre-configure fixture boundary, which exits right
 after the source check and well after the short-circuit decision under
-test.
+test. One optional native check compiles a small evaluator probe against an
+existing vendored installation; it does not build or modify Libint.
 
 Update this file in lockstep with ``scripts/_libint_max_am.sh``.
 """
@@ -60,7 +61,10 @@ OTHER_DEPS = ["libxc", "spglib", "fftw", "libecpint", "openblas"]
 
 def _bash(snippet: str, *, cwd: Path | None = None, env: dict | None = None,
           source: Path = HELPER) -> subprocess.CompletedProcess:
-    script = f". {shlex.quote(str(source))}\n{snippet}\n"
+    # Stamp fixtures below are metadata stand-ins; actual artifact admission
+    # is exercised by test_native_dep_artifact_health's real-image controls.
+    protocol_stub = "vibeqc_verify_cached_libint() { :; }\n" if source == NATIVE_STAMP else ""
+    script = f". {shlex.quote(str(source))}\n{protocol_stub}{snippet}\n"
     full_env = dict(os.environ)
     # Never inherit a developer's own setting into the assertions.
     full_env.pop("VIBEQC_LIBINT_MAX_AM", None)
@@ -195,14 +199,14 @@ def test_spec_accessor_is_errexit_safe():
 
 @pytest.fixture
 def stamp_tree(tmp_path: Path) -> Path:
-    """A minimal 'already built' tree for all five deps, stamped at the
-    default spec — so the only thing that can flag drift is the setting."""
+    """Stamp-only stand-ins for deps whose admission is presence-based.
+
+    FFTW/libxc/spglib loaded-image admission is covered by test_native_dep_artifact_health;
+    an empty file is deliberately no longer a valid native cache fixture.
+    """
     (tmp_path / "scripts").mkdir()
     libs = {
         "libint": ("LIBINT_VERSION", "v2.13.1", "libint2"),
-        "libxc": ("LIBXC_VERSION", "7.0.0", "libxc"),
-        "spglib": ("SPGLIB_VERSION", "2.7.0", "libsymspg"),
-        "fftw": ("FFTW_VERSION", "3.3.10", "libfftw3"),
         "libecpint": ("LIBECPINT_VERSION", "1.0.7", "libecpint"),
     }
     for dep, (var, ver, soname) in libs.items():
@@ -351,12 +355,30 @@ def libint_tree(tmp_path: Path) -> Path:
     (tmp_path / "scripts").mkdir()
     for name in (
         "build_libint.sh",
+        "attest_native_image.py",
         "_safe_build_env.sh",
         "_verify_source.sh",
         "_build_lock.sh",
         "_libint_max_am.sh",
     ):
         shutil.copy(SCRIPTS / name, tmp_path / "scripts" / name)
+    real = os.environ.get("VIBEQC_TEST_LIBINT_LIBRARY")
+    if not real:
+        pytest.skip("set VIBEQC_TEST_LIBINT_LIBRARY to an existing C library; no build")
+    library = tmp_path / "third_party/libint/install/lib" / Path(real).name
+    library.parent.mkdir(parents=True)
+    shutil.copyfile(real, library)
+    builder = tmp_path / "scripts/build_libint.sh"
+    text = builder.read_text()
+    boundary = "# --- Platform-aware prefix detection"
+    assert boundary in text
+    builder.write_text(text.replace(boundary, "echo 'FIXTURE_BUILD_BOUNDARY'; exit 0\n" + boundary, 1))
+    guard = tmp_path / ".no-native-tools"
+    guard.mkdir()
+    for tool in ("git", "curl", "wget", "cmake", "make", "ninja", "cc", "c++", "gcc", "g++", "clang", "clang++", "gfortran", "configure"):
+        stub = guard / tool
+        stub.write_text('#!/bin/sh\necho REFUSED_NATIVE_TOOL >&2\nexit 77\n')
+        stub.chmod(0o755)
     # Pre-staged source so the fetch step is a no-op (no network, no clone).
     src = tmp_path / "third_party" / "libint" / "src"
     src.mkdir(parents=True)
@@ -368,8 +390,17 @@ def libint_tree(tmp_path: Path) -> Path:
         header = prefix / "include/libint2/boys.h"
         header.parent.mkdir(parents=True)
         header.write_text(
+            "#include <algorithm>\n"
             "class FmEval_Chebyshev7 {\n"
             "    if (x > T_crit) {\n    }\n  }  // eval()\n};\n"
+            "struct erfx_coulomb_gm_eval\n    : private scratch_base {\n"
+            "  void operator()(Real* Gm, Real rho, Real T, int mmax, Real omega, Real lambda,\n"
+            "                  Real sigma) {\n"
+            "    evaluate(&base_type::Fm_[0], T, mmax);\n"
+            "    Gm[m] = sigma * base_type::Fm_[m];\n"
+            "    evaluate(&base_type::Fm_[0], scaled_T, mmax);\n"
+            "    Gm[m] -= factor * base_type::Fm_[m];\n"
+            "  }\n};\n}  // namespace os_core_ints\n"
         )
     (tmp_path / "third_party/libint/install/.vibeqc-fitting-max-am").write_text("6_6_6\n")
     return tmp_path
@@ -383,7 +414,11 @@ def _run_build_libint(tree: Path, spec: str | None) -> subprocess.CompletedProce
     env = dict(os.environ)
     env.pop("VIBEQC_LIBINT_MAX_AM", None)
     # Stop before configure/compile; the decision under test happens earlier.
-    env["VIBEQC_FETCH_ONLY"] = "1"
+    env["VIBEQC_FETCH_ONLY"] = "0"
+    guard = tree / ".no-native-tools"
+    env["PATH"] = str(guard) + os.pathsep + env.get("PATH", "")
+    for key, tool in (("CC", "cc"), ("CXX", "c++"), ("FC", "gfortran"), ("CMAKE_MAKE_PROGRAM", "ninja")):
+        env[key] = str(guard / tool)
     # Skip the Linux nice/ionice self-re-exec so the test is deterministic.
     env["VIBEQC_BUILD_NICED"] = "1"
     if spec is not None:
@@ -416,6 +451,126 @@ def test_boys_endpoint_patch_updates_fresh_source_and_rejects_unknown_code(libin
     result = _run_build_libint(libint_tree, DEFAULT_SPEC)
     assert result.returncode != 0
     assert "unexpected evaluator" in result.stderr
+
+
+@pytest.mark.parametrize("installed", [False, True])
+def test_erfc_scratch_patch_is_idempotent_and_preserves_arithmetic(libint_tree, installed):
+    _marker(libint_tree).write_text(DEFAULT_SPEC + "\n")
+    if not installed:
+        shutil.rmtree(libint_tree / "third_party/libint/install")
+    prefix = "install" if installed else "src"
+    header = libint_tree / f"third_party/libint/{prefix}/include/libint2/boys.h"
+    result = _run_build_libint(libint_tree, DEFAULT_SPEC)
+    assert result.returncode == 0, result.stderr
+    text = header.read_text()
+    assert "std::array<Real, 32> local;" in text
+    assert ": base_type(-1), fm_eval_(other.fm_eval_) {}" in text
+    assert "base_type::Fm_.resize(mmax + 1);" in text
+    assert "Gm[m] = sigma * scratch[m];" in text
+    assert "Gm[m] -= factor * scratch[m];" in text
+    changed_at = header.stat().st_mtime_ns
+    result = _run_build_libint(libint_tree, DEFAULT_SPEC)
+    assert result.returncode == 0, result.stderr
+    assert header.read_text() == text
+    assert header.stat().st_mtime_ns == changed_at
+
+
+@pytest.mark.parametrize("already_patched", [False, True])
+def test_erfc_scratch_patch_refuses_unrecognized_or_partial_header(libint_tree, already_patched):
+    _marker(libint_tree).write_text(DEFAULT_SPEC + "\n")
+    header = libint_tree / "third_party/libint/install/include/libint2/boys.h"
+    if already_patched:
+        result = _run_build_libint(libint_tree, DEFAULT_SPEC)
+        assert result.returncode == 0, result.stderr
+        text = header.read_text().replace("std::array<Real, 32>", "std::array<Real, 31>")
+    else:
+        # Apply the unrelated endpoint repair first, so this check can assert
+        # the scratch patch leaves an unrecognized header completely intact.
+        text = header.read_text().replace("x > T_crit", "x >= T_crit")
+        text = text.replace("factor * base_type::Fm_[m]", "factor * unknown[m]")
+    header.write_text(text)
+    result = _run_build_libint(libint_tree, DEFAULT_SPEC)
+    assert result.returncode != 0
+    assert "libint erfc scratch patch: unexpected" in result.stderr
+    assert header.read_text() == text
+
+
+def test_erfc_scratch_native_copy_allocations_and_high_order_fallback(tmp_path):
+    prefix = REPO_ROOT / "third_party/libint/install"
+    upstream = prefix / "include/libint2/boys.h"
+    compiler = shlex.split(os.environ.get("CXX", "c++"))
+    if os.name == "nt" or not upstream.is_file() or not shutil.which(compiler[0]):
+        pytest.skip("requires a POSIX C++ compiler and existing vendored Libint")
+    if not any((prefix / "lib" / f"libint2-cxx{suffix}").is_file()
+               for suffix in (".so", ".dylib")):
+        pytest.skip("vendored Libint C++ shared library is unavailable")
+    header = tmp_path / "include/libint2/boys.h"
+    header.parent.mkdir(parents=True)
+    shutil.copyfile(upstream, header)
+    recipe = (SCRIPTS / "build_libint.sh").read_text()
+    function = "patch_erfc_scratch() {" + recipe.split("patch_erfc_scratch() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+    patched = subprocess.run(
+        ["bash", "-c", function + '\npatch_erfc_scratch "$1"', "patch", str(header)],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert patched.returncode == 0, patched.stderr
+    source = tmp_path / "scratch.cpp"
+    source.write_text(r'''
+#include <libint2/boys.h>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
+#include <new>
+#include <thread>
+static std::atomic<unsigned> allocations{0};
+void* operator new(std::size_t n) {
+    ++allocations;
+    if (void* p = std::malloc(n ? n : 1)) return p;
+    throw std::bad_alloc();
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+using Eval = libint2::GenericGmEval<libint2::os_core_ints::erfx_coulomb_gm_eval<double>>;
+int main() {
+    for (int order : {0, 8, 31, 32, 40}) {
+        const Eval eval(order, 1e-15);
+        std::array<double, 43> value;
+        value.fill(-123.);
+        allocations = 0;
+        for (int i = 0; i < 200; ++i) {
+            eval.eval(value.data() + 1, 1., 0., order, 0., 0., 1.);
+            for (int m = 0; m <= order; ++m)
+                if (std::abs(value[m + 1] - 1. / (2 * m + 1)) > 1e-14) return 1;
+        }
+        if (order < 32 ? allocations != 0 : allocations != 200) return 2;
+        if (value.front() != -123. || value[order + 2] != -123.) return 3;
+    }
+    const Eval shared(16, 1e-15);
+    std::array<std::array<double, 17>, 4> values;
+    std::array<std::thread, 4> workers;
+    for (int j = 0; j < 4; ++j) workers[j] = std::thread([&, j] {
+        for (int i = 0; i < 1000; ++i)
+            shared.eval(values[j].data(), 1. + j, .1 * j, 16, .4, .2, .8);
+    });
+    for (auto& worker : workers) worker.join();
+    for (int j = 0; j < 4; ++j) {
+        std::array<double, 17> expected;
+        shared.eval(expected.data(), 1. + j, .1 * j, 16, .4, .2, .8);
+        if (values[j] != expected) return 4;
+    }
+}
+''')
+    executable = tmp_path / "scratch"
+    command = compiler + [
+        "-std=c++17", "-O2", "-pthread", "-I", str(tmp_path / "include"),
+        "-I", str(prefix / "include"), str(source), "-L", str(prefix / "lib"),
+        "-lint2-cxx", "-lint2", f"-Wl,-rpath,{prefix / 'lib'}", "-o", str(executable),
+    ]
+    built = subprocess.run(command, capture_output=True, text=True, timeout=90)
+    assert built.returncode == 0, built.stderr
+    result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
 
 
 def test_installed_spec_reads_the_marker(libint_tree: Path):

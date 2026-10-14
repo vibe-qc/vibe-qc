@@ -29,8 +29,9 @@ MACE is an optional dependency (a heavy PyTorch + e3nn stack), behind the
 pip install 'vibe-qc[mace]'
 ```
 
-On Python 3.14 the runtime is import-gated with a clear message (MACE's
-`matscipy` dependency has no 3.14 wheel yet). On macOS, vibe-qc auto-sets
+On Python 3.14 the `[mace]` extra installs no backend; a missing backend
+raises a clear installation error. Manually installing a newer stack does
+not extend the supported interpreter range. On macOS, vibe-qc auto-sets
 `KMP_DUPLICATE_LIB_OK=TRUE` (its native core and PyTorch each link an
 OpenMP runtime) and caps MACE's OpenMP/BLAS pools to one thread by
 default, verified not to change results. Set
@@ -65,6 +66,12 @@ run_job(mol, method="mace", output="h2o_mace")
 references; `h2o_mace.bibtex` / `.references` cite the MACE method
 paper + the foundation-model paper. There is no `.molden`, MACE has no
 orbitals.
+
+The single-point wrappers require a finite scalar energy, one three-component
+force per atom, and a finite six-component stress for a 3D periodic run.
+Missing, malformed, or non-finite backend results raise `ValueError` before
+an energy or converged periodic result is returned. Failed evaluations do
+not populate the result cache; backend loading and evaluation errors propagate.
 
 > **Energy scale.** A MACE energy lives on a **model-specific reference
 > scale** (each model subtracts its own per-element atomic energies),

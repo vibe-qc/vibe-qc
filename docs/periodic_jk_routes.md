@@ -69,6 +69,36 @@ exchange convention, and each real/reciprocal support must also be audited.
 Component comparisons remain useful, but an unexplained total residual cannot
 be classified as implementation error from the route labels alone.
 
+### A converged secondary UKS reference
+
+The H2/STO-3G triplet in a cubic 12 bohr cell illustrates why reference
+approximations must also be converged. At a 1.4 bohr bond length, PBE0,
+`exxdiv='ewald'`, and two alpha electrons per cell, default PySCF Gaussian
+fitting lowers the 2x1x1 energy by about 0.837 mHa relative to analytic
+Fourier density fitting (AFTDF). The earlier regression incorrectly
+attributed this difference to BIPOLE grid or truncation error.
+
+The reference generator
+[`multik_exchange_split_refs_pyscf.py`](../examples/regression/bipole_parity/multik_exchange_split_refs_pyscf.py)
+now provides `--uks-aft-only`. PySCF 2.14.0 / LibXC 7.0.0 gives
+-0.5412195286366139 Ha at Gamma and -0.5406849537256424 Ha at 2x1x1,
+using cell precision 1e-10, a 101-cubed Fourier mesh, and an unpruned
+150 radial by 590 angular Becke grid. Refining to 121-cubed and
+220 radial by 974 angular changes either total by less than 4e-11 Ha.
+BIPOLE with 18 bohr lattice support, 16 bohr Becke partition radius,
+150 radial by 29 by 60 product angular quadrature, Ewald omega 7/30
+bohr^-1 and precision 1e-8 agrees within 3.2e-9 Ha. The regression checks
+Coulomb, scaled exact exchange and semilocal XC separately, as well as
+the total, spin and electron count.
+
+[Sun et al. (2017), DOI 10.1063/1.4998644](https://doi.org/10.1063/1.4998644),
+Section II A, Equation 16 and Section III, Figure 1 describe analytic
+AO-pair Fourier transforms and distinguish Gaussian fitting error from
+plane-wave convergence. This reference uses a pure plane-wave auxiliary
+expansion; it does not implement that paper's mixed Gaussian/plane-wave
+scheme. The small-cell numerical check is independent secondary evidence,
+not a CRYSTAL23 performance or production acceptance result.
+
 ## How parity runs, the §10 subprocess pattern
 
 External programs are executed **out-of-process** and their output parsed;
@@ -186,7 +216,7 @@ coverage to covalent, 2-D, and metallic (smearing) cells.
     speedup to about 4.4× while preserving bit-identical reconstruction.
 * **GPW/GAPW ↔ CP2K/GPAW**, runners exist; gate pending.
 
-See also: [Archived `handovers/HANDOVER_CROSS_CODE_PARITY.md`](https://vibe-qc.com/docs/)
+See also: [`python/vibeqc/parity.py`](../python/vibeqc/parity.py)
 (the shipping `python/vibeqc/parity.py` energy-decomposition certification
 matrix), [`docs/license.md`](license.md) (the external-program provenance
 recorded in the `.system` manifest), and CLAUDE.md §10 / §15.

@@ -191,7 +191,7 @@ keyword (`scf_method=`, `scf_mixing=`, and so on) is forwarded to
 ```{note}
 The open-shell route here is **UHF** (J + K only). Spin-polarised
 *Kohn-Sham* embedded surfaces (UKS with a `Vxc` augmentation) are a
-roadmap item (see ``handovers/HANDOVER_GF_EMBEDDING.md``).
+roadmap item.
 ```
 
 ## Runnable example

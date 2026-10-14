@@ -25,6 +25,95 @@ _ROHF_GPW_TEST_CUTOFF_HA = 50.0
 _ROKS_GPW_TEST_CUTOFF_HA = 10.0
 
 
+@pytest.mark.parametrize("route,family,use_davidson", [
+    (route, family, False)
+    for route in ("gpw", "gapw")
+    for family in ("rhf", "rks", "uhf", "uks")
+] + [("gpw", family, True) for family in ("rhf", "rks")]
+  + [("gpw", family, False) for family in ("rohf", "roks")])
+def test_gamma_grid_shared_fock_solve_matches_legacy(
+    monkeypatch, route, family, use_davidson,
+):
+    """Physical SCF parity plus an independent generalized solve at every step."""
+    import scipy.linalg as sla
+    from vibeqc import periodic_gapw_augment as gapw
+    from vibeqc import periodic_gapw_j as gpw
+    from vibeqc import periodic_gapw_open_shell as gpw_open
+    from vibeqc.periodic_gapw_grid import PlaneWaveGrid
+    from vibeqc.solvers._scf import FockDiagonalizer
+
+    restricted_open = family.startswith("ro")
+    open_shell = family.startswith("u") or restricted_open
+    if open_shell:
+        # The asymmetric H3 doublet also exercises unequal occupied subspaces.
+        system = vq.PeriodicSystem(
+            3, np.eye(3) * 12.,
+            [vq.Atom(1, xyz) for xyz in ([5.1, 6., 6.], [6.9, 6., 6.], [6., 7.4, 6.])],
+            multiplicity=2,
+        )
+    else:
+        system = _h2_system(12.0)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    grid = PlaneWaveGrid(system.lattice, 18, 18, 18)
+    module = gapw if route == "gapw" else (gpw_open if open_shell else gpw)
+    driver = getattr(module, f"run_periodic_{family}_{route}")
+    kwargs = dict(grid=grid, quiet=True, max_iter=60)
+    if family.endswith("ks"):
+        kwargs["functional"] = "lda"
+    if route == "gapw":
+        kwargs.update(one_centre="block", n_radial=24, lebedev_order=17)
+    elif not open_shell:
+        kwargs.update(use_davidson=use_davidson, davidson_min_dim=0)
+
+    original_call = FockDiagonalizer.__call__
+    channels = {}
+
+    def checked_call(diagonalizer, fock):
+        c, e = original_call(diagonalizer, fock)
+        result = diagonalizer.last_result
+        metadata = result.operator_metadata
+        assert metadata.kind == ("ks" if family.endswith("ks") else "fock")
+        assert metadata.kpoint == (0., 0., 0.)
+        assert diagonalizer.iterative == use_davidson
+        generations = channels.setdefault(metadata.spin, [])
+        assert metadata.generation == len(generations)
+        generations.append(metadata.generation)
+        # LAPACK's direct generalized problem is independent of the driver's X.
+        reference = sla.eigh(fock, diagonalizer.overlap, eigvals_only=True)
+        np.testing.assert_allclose(e, reference, atol=1e-9, rtol=0)
+        np.testing.assert_allclose(
+            c.T @ diagonalizer.overlap @ c, np.eye(len(e)), atol=1e-10, rtol=0,
+        )
+        assert max(result.residuals) < 1e-7
+        return c, e
+
+    monkeypatch.setattr(FockDiagonalizer, "__call__", checked_call)
+    result = driver(system, basis, **kwargs)
+    assert result.converged
+    expected_channels = ({"restricted-open"} if restricted_open else
+                         ({"alpha", "beta"} if open_shell else {"restricted"}))
+    assert set(channels) == expected_channels
+    assert all(len(generations) >= 2 for generations in channels.values())
+
+    # Re-run the physical loop with the historical symmetrized dense solve.
+    def legacy_call(diagonalizer, fock):
+        projected = diagonalizer.X.T @ fock @ diagonalizer.X
+        e, y = np.linalg.eigh(0.5 * (projected + projected.T))
+        return diagonalizer.X @ y, e
+
+    monkeypatch.setattr(FockDiagonalizer, "__call__", legacy_call)
+    reference = driver(system, basis, **kwargs)
+    assert reference.converged
+    assert result.energy == pytest.approx(reference.energy, abs=1e-10)
+    overlap = gpw._overlap_lattice_gamma(basis, system)
+    fields = ("density_alpha", "density_beta") if open_shell else ("density",)
+    populations = (2, 1) if open_shell else (2,)
+    for field, electrons in zip(fields, populations):
+        density = np.asarray(getattr(result, field))
+        np.testing.assert_allclose(density, getattr(reference, field), atol=1e-9, rtol=0)
+        assert np.trace(density @ overlap) == pytest.approx(electrons, abs=1e-10)
+
+
 def _he_system(L: float = 16.0):
     sys = core.PeriodicSystem()
     sys.dim = 3
@@ -1002,43 +1091,9 @@ def test_gamma_open_shell_gpw_density_guesses_use_shared_adapter(
     assert seen == [(effective, system)]
 
 
-@pytest.mark.parametrize(
-    ("driver_name", "args", "kwargs"),
-    [
-        (
-            "run_periodic_uks_gpw_multi_k",
-            (None, None, None),
-            {"functional": "lda"},
-        ),
-        (
-            "run_periodic_roks_gpw_multi_k",
-            (None, None, None),
-            {"functional": "lda"},
-        ),
-    ],
-    ids=["uks-multik", "roks-multik"],
-)
-def test_direct_open_shell_gpw_guess_selectors_fail_closed_for_patom(
-    driver_name,
-    args,
-    kwargs,
-):
-    """Pure-DFT multi-k GPW has no exact exchange for the PATOM step."""
-    import vibeqc.periodic_gapw_open_shell as gpw_open
-
-    system = vq.PeriodicSystem(3, 10 * np.eye(3), [vq.Atom(1, [5., 5., 5.])], multiplicity=2)
-    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
-    args = (system, basis, vq.monkhorst_pack(system, [3, 1, 1]))
-
-    with pytest.raises(
-        NotImplementedError,
-        match="initial_guess=PATOM.*not implemented by this route",
-    ):
-        getattr(gpw_open, driver_name)(
-            *args,
-            initial_guess=core.InitialGuess.PATOM,
-            **kwargs,
-        )
+# Multi-k PATOM uses a full-HF seed even for pure DFT. Its supported
+# GPW/GAPW routes are covered together, including normalized seed input
+# and seed-only exchange, in test_periodic_patom.py.
 
 
 @pytest.mark.parametrize(

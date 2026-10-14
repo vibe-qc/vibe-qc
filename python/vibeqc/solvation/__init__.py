@@ -66,6 +66,7 @@ from .driver import (
 from .gradient import cpcm_gradient, cpcm_gradient_fd
 from .fine_cavity import FineCavity, build_fine_cavity
 from .presets import SOLVENT_PRESETS
+from .cosmors.job import CosmoRSOptions, CosmoRSResult
 from .screening import ScreeningModel, dielectric_factor
 
 __all__ = [
@@ -79,6 +80,8 @@ __all__ = [
     "SOLVENT_PRESETS",
     "SolventModel",
     "SolventResult",
+    "CosmoRSOptions",
+    "CosmoRSResult",
     "build_A_matrix",
     "build_cavity_A_matrix",
     "build_cavity",

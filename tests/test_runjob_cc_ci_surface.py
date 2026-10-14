@@ -185,3 +185,41 @@ class TestSelectorGuards:
     def test_coupled_pair_citype_variants_supported(self, tmp_path, good):
         res = _run(tmp_path, method="ci", citype=good)
         assert res.method == good
+
+
+OH = Molecule(
+    [Atom(8, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.832])],
+    charge=0,
+    multiplicity=2,
+)
+WATTS = "watts_gauss_bartlett_openshell_triples_1993"
+
+
+def _run_oh(tmp_path, **kw):
+    return run_job(
+        OH, basis="cc-pvdz", output=tmp_path / "j", citations=True,
+        write_molden_file=False, write_xyz_file=False,
+        write_population_file=False, **kw,
+    )
+
+
+class TestOpenShellTriplesCitation:
+    """The UHF-based (T) kernel evaluates the spin-orbital expression for a
+    general single-determinant reference (Watts, Gauss and Bartlett 1993);
+    only a run that executed it cites that paper, in all three artifacts."""
+
+    def test_uhf_ccsd_t_cites_watts_gauss_bartlett(self, tmp_path):
+        res = _run_oh(tmp_path, method="ccsd(t)")
+        assert res.energy < 0.0
+        assert WATTS in _bibtex_keys(tmp_path)
+        assert WATTS in _system_keys(tmp_path)
+        assert "Watts" in _out_references_block(tmp_path)
+        assert "raghavachari_ccsdt_1989" in _bibtex_keys(tmp_path)
+
+    def test_uhf_ccsd_without_triples_does_not(self, tmp_path):
+        _run_oh(tmp_path, method="ccsd")
+        assert WATTS not in _bibtex_keys(tmp_path)
+
+    def test_closed_shell_ccsd_t_does_not(self, tmp_path):
+        _run(tmp_path, method="ccsd(t)")
+        assert WATTS not in _bibtex_keys(tmp_path)

@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "pcj-1",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: pcJ-1\nCanonical name in vibe-qc: pcj-1\nOriginating publication: Jensen, J. Chem. Theory Comput. 2, 1360 (2006); DOI: 10.1021/ct600126u\nNote: same\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: pcJ-1\nDescription: Contracted version of the pcJ-1 basis\n       Role: orbital\n    Version: 1  (Data from Frank Jensen)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -2863,7 +2863,38 @@
       ]
     }
   },
+  "basis_family": "jensen",
+  "references": [
+    {
+      "key": "jensen_pcj_2006",
+      "description": "F. Jensen, Journal of Chemical Theory and Computation 2, 1360-1369 (2006)",
+      "doi": "10.1021/ct600166u"
+    },
+    {
+      "key": "doi:10.1021/ct600126u",
+      "description": "Jensen, J. Chem. Theory Comput. 2, 1360 (2006)",
+      "doi": "10.1021/ct600126u"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "pcJ-1"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "7e3ef01ef64ced20ab98b3b4155005e8f3541c977d631eb1a344290987b9c006",
+    "citations": [
+      {
+        "keys": [
+          "jensen_pcj_2006"
+        ]
+      }
+    ]
   }
 }

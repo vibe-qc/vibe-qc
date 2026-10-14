@@ -50,9 +50,9 @@ Implementation details
 
 The filter walks every contracted shell, drops primitives with
 exponent below the threshold, and re-emits a synthesised ``.g94``
-basis-set file in a temporary directory. The new BasisSet is then
-loaded via libint's standard data-path mechanism (``LIBINT_DATA_PATH``
-swapped temporarily to the temp dir, then restored).
+basis-set file in an immutable user-cache root with copies of every active
+library file. Libint keeps that complete root for subsequent named reloads;
+installed data is never modified.
 
 Coefficient un-normalisation: ``ShellInfo.coefficients`` in vibe-qc
 mirrors libint's internal contraction coefficients, which include
@@ -69,6 +69,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
+from functools import wraps
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -145,69 +147,48 @@ def make_basis(
     return filtered
 
 
+_FILTERED_BASIS_LOCK = threading.RLock()
+
+
+def _serialized_filter(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with _FILTERED_BASIS_LOCK:
+            return function(*args, **kwargs)
+    return wrapped
+
+
 def _filtered_basis_cache_dir() -> Path:
-    """Resolve the on-disk cache directory for filtered .g94 files.
+    """User-owned store: explicit override, XDG cache, then home cache.
 
-    Filtered bases need to live somewhere libint can re-load them by
-    name -- the SAD initial-guess code calls
-    ``libint2::BasisSet(name, atoms)`` again from inside the C++ SCF
-    driver, so a one-shot temp-directory load is not sufficient.
-
-    Resolution order:
-
-    1. ``$VIBEQC_FILTERED_BASIS_DIR`` if set (user override / CI hook).
-    2. ``<LIBINT_DATA_PATH>/basis/`` if writable -- the bundled
-       ``python/vibeqc/basis_library/basis/`` ships there and libint
-       finds it without further setup.
-    3. ``$XDG_CACHE_HOME/vibeqc/basis_filter/`` (falls back to
-       ``~/.cache/vibeqc/basis_filter/``) -- used when the bundled
-       ``basis/`` dir isn't writable (e.g. system-wide install).
-       This path also has to be added to ``LIBINT_DATA_PATH``;
-       caller is expected to do that via :func:`_ensure_data_path`.
-
-    All filtered .g94 files use the ``_vibeqc_filtered_`` prefix so
-    they're trivial to identify and clean up via
-    :func:`clear_filtered_basis_cache`.
+    Never select the active libint or installed package directory. Complete
+    immutable roots inside this store preserve stock files and named reloads.
     """
     override = os.environ.get("VIBEQC_FILTERED_BASIS_DIR")
     if override:
-        target = Path(override)
-        target.mkdir(parents=True, exist_ok=True)
-        return target
-
-    libint_data_path = os.environ.get("LIBINT_DATA_PATH")
-    if libint_data_path:
-        candidate = Path(libint_data_path) / "basis"
-        if candidate.is_dir() and os.access(candidate, os.W_OK):
-            return candidate
-
+        return Path(override).expanduser()
     xdg = os.environ.get("XDG_CACHE_HOME")
-    if xdg:
-        cache_root = Path(xdg)
-    else:
-        cache_root = Path.home() / ".cache"
-    target = cache_root / "vibeqc" / "basis_filter"
-    target.mkdir(parents=True, exist_ok=True)
-    return target
+    cache_root = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
+    return cache_root / "vibeqc" / "basis_filter"
 
 
 def clear_filtered_basis_cache() -> int:
-    """Remove every cached ``_vibeqc_filtered_*.g94`` file.
+    """Explicitly purge validated filtered-basis materializations.
 
-    Returns the number of files deleted. Safe to call between SCF
-    runs; if a previously-filtered :class:`BasisSet` is still alive in
-    memory its shell data was copied at construction time and is
-    unaffected by the on-disk cleanup.
+    Stop all readers and writers, retire filtered BasisSets, and restore a
+    stock LIBINT_DATA_PATH before calling this function. It refuses the
+    currently selected root, unknown entries and changed or linked cache
+    content. It cannot infer whether another process is reading a root.
+    Returns the actual number of ``_vibeqc_filtered_*.g94`` files removed
+    across purged roots; explicit custom-name files are also retired with their
+    owning roots but are not included in this prefix-based count.
+    Normal filtering retains all prior roots for named SAD reloads.
     """
-    cache_dir = _filtered_basis_cache_dir()
-    n = 0
-    for p in cache_dir.glob("_vibeqc_filtered_*.g94"):
-        try:
-            p.unlink()
-            n += 1
-        except OSError:
-            pass
-    return n
+    from ._filtered_basis_store import purge
+
+    selected = os.environ.get("LIBINT_DATA_PATH")
+    with _FILTERED_BASIS_LOCK:
+        return purge(_filtered_basis_cache_dir(), Path(selected) if selected else None)
 
 
 # Element symbol lookup by atomic number Z. Up to Z = 86 (radon)
@@ -372,15 +353,20 @@ def _source_basis_comments(original_name: str) -> List[str]:
     roots first, then the package's bundled library.  External bases without a
     readable source file simply keep the generated header above.
     """
+    from .basis_registry import canonical_basis_name
+
+    # The stem BasisSet opens, not the caller's spelling: "def2-SVP.g94" does
+    # not exist on a case-sensitive file system (#321).
+    stem = canonical_basis_name(original_name)
     candidates: List[Path] = []
     for root in os.environ.get("LIBINT_DATA_PATH", "").split(os.pathsep):
         if root:
-            candidates.append(Path(root) / "basis" / f"{original_name}.g94")
+            candidates.append(Path(root) / "basis" / f"{stem}.g94")
     candidates.append(
         Path(__file__).resolve().parent
         / "basis_library"
         / "basis"
-        / f"{original_name}.g94"
+        / f"{stem}.g94"
     )
 
     seen: set[Path] = set()
@@ -408,6 +394,7 @@ def _source_basis_comments(original_name: str) -> List[str]:
 # Public API
 # ---------------------------------------------------------------------------
 
+@_serialized_filter
 def filter_basis_by_exponent(
     basis: BasisSet,
     molecule: Molecule,
@@ -513,41 +500,26 @@ def filter_basis_by_exponent(
             "GTH-cc-pVXZ / MOLOPT)."
         )
 
+    g94_text = _emit_g94(basis.name, exp_to_discard, filtered)
     if new_name is None:
-        digest = hashlib.sha1(
-            f"{basis.name}@{exp_to_discard}".encode("utf-8")
-        ).hexdigest()[:8]
+        digest = hashlib.sha256(g94_text.encode()).hexdigest()[:16]
         new_name = f"_vibeqc_filtered_{basis.name}_{digest}"
 
-    g94_text = _emit_g94(basis.name, exp_to_discard, filtered)
+    from .basis_registry import canonical_basis_name
+    from ._filtered_basis_store import materialize
 
-    # Persist the synthesised .g94 in a cache location libint can
-    # re-find by name. Necessary because the C++ SAD initial-guess
-    # code (atomic_sad_density in cpp/src/guess.cpp) re-loads the
-    # basis from LIBINT_DATA_PATH inside the SCF driver -- a one-shot
-    # tempdir load isn't enough. See module docstring +
-    # _filtered_basis_cache_dir for the resolution order. Cleanup is
-    # the user's responsibility via :func:`clear_filtered_basis_cache`.
-    cache_dir = _filtered_basis_cache_dir()
-    target = cache_dir / f"{new_name}.g94"
-    target.write_text(g94_text)
-
-    # If the cache dir isn't already in LIBINT_DATA_PATH, the bundled
-    # path resolution stays untouched but our filtered file is unreachable.
-    # Detect that case and either (a) extend LIBINT_DATA_PATH or (b) point
-    # at the cache dir's parent.
-    libint_dp = os.environ.get("LIBINT_DATA_PATH")
-    expected_root = str(cache_dir.parent)   # libint expects <root>/basis/<name>.g94
-    if libint_dp != expected_root and (Path(libint_dp or "") / "basis") != cache_dir:
-        # Point libint at our cache dir's parent. We don't try to chain
-        # multiple data paths (libint reads a single env var), so the
-        # bundled bases must already be present at expected_root, OR
-        # the user is expected to keep using stock bases that are also
-        # findable via the new path. The default cache_dir is exactly
-        # ``<LIBINT_DATA_PATH>/basis/`` -- see _filtered_basis_cache_dir
-        # -- so this branch only fires when the user overrode
-        # VIBEQC_FILTERED_BASIS_DIR or fell through to ~/.cache.
-        os.environ["LIBINT_DATA_PATH"] = expected_root
+    stem = canonical_basis_name(new_name)
+    if not stem or stem in (".", "..") or any(c in stem for c in ("/", "\\", "\0")):
+        raise ValueError("filtered basis name must resolve to a plain file stem")
+    source = os.environ.get("LIBINT_DATA_PATH")
+    if not source:
+        raise RuntimeError("filtering requires a resolved LIBINT_DATA_PATH")
+    root = materialize(_filtered_basis_cache_dir(), Path(source), f"{stem}.g94", g94_text)
+    # Publish the complete library before changing libint's single lookup root.
+    # Previous filtered names and stock/sidecar bytes remain reachable.
+    if os.environ.get("LIBINT_DATA_PATH") != source:
+        raise RuntimeError("LIBINT_DATA_PATH changed while filtering; materialization retained without selecting it")
+    os.environ["LIBINT_DATA_PATH"] = str(root)
 
     new_basis = BasisSet(molecule, new_name)
     report = BasisFilterReport(

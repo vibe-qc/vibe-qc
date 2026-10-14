@@ -1,7 +1,7 @@
 """MR6a: the exact Madelung potential, and why a naive finite charge
 shell is not enough (the target + the gap that motivates MR6b).
 
-Embedded-cluster CASSCF path (handovers/HANDOVER_PERIODIC_MULTIREF.md, MR6). The
+Embedded-cluster CASSCF path (the original investigation, MR6). The
 embedding must make the QM cluster feel the crystal's Madelung
 potential. This script:
 

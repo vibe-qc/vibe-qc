@@ -1,4 +1,9 @@
 #include "vibeqc/periodic_gdf_short_range.hpp"
+#include "vibeqc/manta_periodic_fitting.hpp"
+#include "vibeqc/manta_admission.hpp"
+#include "vibeqc/manta_shells.hpp"
+#include "vibeqc/detail/sha256.hpp"
+#include <cstring>
 #include "vibeqc/init.hpp"
 #include "vibeqc/lattice_pair_cells.hpp"
 #include "vibeqc/thread_pool.hpp"
@@ -839,9 +844,18 @@ GDFRangeSeparatedIntegrals compute_gdf_range_separated_integrals(
     const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& vectors,
     double omega, double pair_cutoff, double auxiliary_cutoff,
     std::size_t output_byte_cap, std::size_t transient_byte_cap,
-    std::size_t image_candidate_cap, double integral_screen_error, bool compute_metric) {
+    std::size_t image_candidate_cap, double integral_screen_error, bool compute_metric,
+    const std::string& physical_kernel, double omega_screen) {
     validate(system, q, omega, pair_cutoff);
     validate(system, q, omega, auxiliary_cutoff);
+    if (physical_kernel != "coulomb" && physical_kernel != "erfc" && physical_kernel != "erf")
+        throw std::invalid_argument("RSGDF physical kernel must be coulomb, erfc or erf");
+    const bool screened = physical_kernel != "coulomb";
+    const bool real_short_range = physical_kernel != "erf";
+    if (!std::isfinite(omega_screen) || (screened
+        ? (omega_screen <= 0.0 || !std::isfinite(omega_screen * omega_screen)
+            || omega_screen * omega_screen == 0.0) : omega_screen != 0.0))
+        throw std::invalid_argument("RSGDF physical range is zero for Coulomb, finite and positive for erfc/erf");
     if (ket_kpoints.cols() != 3 || ket_kpoints.rows() == 0 || !ket_kpoints.allFinite())
         throw std::invalid_argument("RSGDF ket kpoints must have finite shape (n_k, 3)");
     if (!vectors.allFinite() || vectors.rows() == 0)
@@ -890,15 +904,23 @@ GDFRangeSeparatedIntegrals compute_gdf_range_separated_integrals(
         0, 0, pair_cutoff, image_candidate_cap, pair_bytes);
 
     GDFRangeSeparatedIntegrals result;
-    if (compute_metric)
-        result.metric = compute_gdf_sr_metric(aux, system, q, omega,
-            auxiliary_cutoff, metric_bytes, image_candidate_cap, transient_byte_cap - charge_bytes,
-            integral_screen_error);
-    result.three_center = compute_gdf_sr_three_center(orbital, aux, system,
-        q, ket_kpoints, omega, pair_cutoff, auxiliary_cutoff,
-        tensor_bytes, image_candidate_cap, transient_byte_cap - charge_bytes, integral_screen_error);
+    if (real_short_range) {
+        if (compute_metric)
+            result.metric = compute_gdf_sr_metric(aux, system, q, omega,
+                auxiliary_cutoff, metric_bytes, image_candidate_cap, transient_byte_cap - charge_bytes,
+                integral_screen_error);
+        result.three_center = compute_gdf_sr_three_center(orbital, aux, system,
+            q, ket_kpoints, omega, pair_cutoff, auxiliary_cutoff,
+            tensor_bytes, image_candidate_cap, transient_byte_cap - charge_bytes, integral_screen_error);
+    } else {
+        // Physical erf is a smooth, independently fitted reciprocal source.
+        // No full-minus-SR factor subtraction or numerical real-space tail.
+        if (compute_metric) result.metric = Eigen::MatrixXcd::Zero(na, na);
+        result.three_center = {nk, na, no,
+            std::vector<Complex>(product(product(nk, na), pairs))};
+    }
     const RangeSeparatedCoulombKernel kernel(system, q, omega);
-    if (kernel.zero_transfer) {
+    if (real_short_range && kernel.zero_transfer) {
         // Ye 2021 Eq. (12), and its two-center analogue: subtract the
         // finite SR p=0 mode once. The LR primed sum below omits p=0.
         const double g0 = kernel.short_range_zero_mode;
@@ -928,7 +950,25 @@ GDFRangeSeparatedIntegrals compute_gdf_range_separated_integrals(
         for (std::size_t g = 0; g < ng; ++g) {
             const double p2 = vectors.row(first_g + g).squaredNorm();
             if (RangeSeparatedCoulombKernel::singular(p2)) continue;
-            weights[g] = kernel.long_range(p2);
+            if (!screened) {
+                weights[g] = kernel.long_range(p2);
+            } else {
+                const double physical_exponent = p2 / (4.0 * omega_screen * omega_screen);
+                if (!real_short_range) {
+                    weights[g] = kernel.bare(p2) * std::exp(-physical_exponent);
+                } else {
+                    // erfc(eta) + erf(eta) - erf(omega_screen). eta is
+                    // numerical, omega_screen physical. expm1 avoids losing
+                    // precision when the two ranges nearly coincide.
+                    const double numerical_exponent = p2 / (4.0 * kernel.omega_squared);
+                    const double difference = numerical_exponent <= physical_exponent
+                        ? -std::exp(-numerical_exponent)
+                            * std::expm1(-(physical_exponent - numerical_exponent))
+                        : std::exp(-physical_exponent)
+                            * std::expm1(-(numerical_exponent - physical_exponent));
+                    weights[g] = kernel.bare(p2) * difference;
+                }
+            }
             ++result.reciprocal_vector_count;
         }
         // Columns own disjoint metric slices, and (k,pair-tile) tasks own
@@ -1197,4 +1237,583 @@ Eigen::MatrixXd compute_gdf_plane_wave_projection_gradient_weighted(
         pair_cutoff, metric_weight, three_center_weight, output_byte_cap,
         transient_byte_cap, image_candidate_cap, 0.0, true, factor_weight);
 }
+
+// MANTA replaces only the primitive evaluator. These entry points intentionally
+// live beside the existing GDF implementation so both use the exact same
+// MetricImageDomain/ThreeCenterImageDomain and optional screening predicates.
+namespace manta {
+namespace {
+struct FittingDigest {
+    vibeqc::detail::Sha256 hash;
+    void word(Count v) { std::array<std::uint8_t,8> b{};for(int i=0;i<8;++i)b[i]=v>>(56-8*i);hash.update(b.data(),8); }
+    void text(const std::string& s) { word(s.size());hash.update(reinterpret_cast<const std::uint8_t*>(s.data()),s.size()); }
+    void real(double v) { if(v==0)v=0.;Count bits;std::memcpy(&bits,&v,8);word(bits); }
+    template<class M> void matrix(const M& m) { word(m.rows());word(m.cols());for(Eigen::Index i=0;i<m.rows();++i)for(Eigen::Index j=0;j<m.cols();++j)real(m(i,j)); }
+};
+void fitting_caps(const PeriodicGDFShortRangePlan& p,const ResourceBudget& b) {
+    using namespace admission;
+    cap(p.modeled_peak_bytes,b.memory_bytes,"MANTA periodic fitting memory budget exceeded");
+    cap(p.shell_calls,b.shell_calls,"MANTA periodic fitting shell-call budget exceeded");
+    cap(p.primitive_products,b.primitive_quartets,"MANTA periodic fitting primitive-product budget exceeded");
+    cap(p.scalar_terms,b.scalar_terms,"MANTA periodic fitting scalar-work budget exceeded");
+    cap(p.kernel_terms,b.kernel_terms,"MANTA periodic fitting kernel-work budget exceeded");
+}
+void fitting_add(Complex v,Complex& total,Complex& error) {
+    if(!std::isfinite(v.real()) || !std::isfinite(v.imag()))
+        throw std::overflow_error("MANTA periodic fitting contribution is nonfinite");
+    const auto y=v-error,next=total+y;error=(next-total)-y;total=next;
+    if(!std::isfinite(total.real()) || !std::isfinite(total.imag()))
+        throw std::overflow_error("MANTA periodic fitting sum is nonfinite");
+}
+Complex fitting_phase(double angle,PeriodicGDFShortRangeReceipt& r) {
+    admission::require_finite(angle);++r.phase_products;return std::exp(Complex(0.,angle));
+}
+std::string fitting_identity(bool three,const PeriodicSystem& system,const Eigen::Vector3d& q,
+    const md::Matrix& k,const PeriodicGDFShortRangeOptions& o,const PeriodicGDFShortRangeReceipt& r) {
+    FittingDigest h;h.text("manta.periodic-gdf-short-range.v1");h.text(r.provider_version);h.text(r.normalization);
+    h.text(r.convention);h.word(three);h.text(r.auxiliary_basis_identity);h.matrix(system.lattice);h.matrix(q);
+    h.real(o.omega);h.real(o.auxiliary_cutoff_bohr);h.real(o.integral_screen_error);
+    if(three) { h.text(r.orbital_basis_identity);h.matrix(k);h.real(o.pair_cutoff_bohr); }
+    return h.hash.finish_hex();
+}
+}
+PeriodicGDFShortRangePlan plan_periodic_gdf_short_range(const BasisSet& orbital,const BasisSet& aux,
+    const PeriodicSystem& system,Count nk,const PeriodicGDFShortRangeOptions& o,const ResourceBudget& budget) {
+    using namespace admission;
+    margin(budget);validate(system,Eigen::Vector3d::Zero(),o.omega,o.pair_cutoff_bohr);
+    validate(system,Eigen::Vector3d::Zero(),o.omega,o.auxiliary_cutoff_bohr);
+    if(!nk) throw std::invalid_argument("MANTA periodic fitting requires nonempty ket momenta");
+    cap(nk,std::numeric_limits<Eigen::Index>::max()/3,"MANTA periodic fitting momenta are not addressable");
+    const MetricImageDomain metric(system,o.auxiliary_cutoff_bohr,o.omega,o.image_candidate_cap,o.integral_screen_error);
+    const ThreeCenterImageDomain three(system,o.pair_cutoff_bohr,o.auxiliary_cutoff_bohr,o.omega,o.image_candidate_cap,o.integral_screen_error);
+    PeriodicGDFShortRangePlan p;p.n_aux=aux.nbasis();p.n_orb=orbital.nbasis();p.momenta=nk;p.compute_metric=o.compute_metric;
+    p.metric_image_candidates=o.compute_metric?metric.images.count_bound:0;
+    p.pair_image_candidates=three.pair_images.count_bound;p.auxiliary_image_candidates=three.aux_images.count_bound;
+    const Count mi=p.metric_image_candidates,ti=mul(p.pair_image_candidates,p.auxiliary_image_candidates);
+    const Count me=o.compute_metric?square(p.n_aux):0,te=mul(nk,mul(p.n_aux,square(p.n_orb)));
+    for(auto e:{me,te}) cap(e,std::numeric_limits<Eigen::Index>::max(),"MANTA periodic fitting output is not addressable");
+    p.output_bytes=mul(16,add(me,te));
+    // Native outputs/compensation, one exported copy of each output, binding
+    // copies, receipt/digest owners and conservative spare output ownership.
+    p.driver_live_bytes=add(65536,add(mul(4,p.output_bytes),mul(64,add(nk,1))));
+    p.modeled_peak_bytes=add(p.driver_live_bytes,add(budget.other_live_bytes,budget.backend_margin_bytes));
+    cap(p.modeled_peak_bytes,budget.memory_bytes,"MANTA periodic fitting output memory budget exceeded");
+    auto leaf=budget;leaf.other_live_bytes=0;
+    leaf.memory_bytes=leaf.shell_calls=leaf.primitive_quartets=leaf.scalar_terms=leaf.kernel_terms=std::numeric_limits<Count>::max();
+    auto request=fitting_request(3);request.kernel="erfc";request.omega=o.omega;
+    p.three_center=plan_fitting({&aux,&orbital,&orbital},request,leaf);
+    if(o.compute_metric) { request.centers=2;p.metric=plan_fitting({&aux,&aux},request,leaf); }
+    p.metric_shell_calls=mul(mi,p.metric.shell_calls);p.three_center_shell_calls=mul(ti,p.three_center.shell_calls);
+    p.shell_calls=add(p.metric_shell_calls,p.three_center_shell_calls);
+    p.primitive_products=add(mul(mi,p.metric.primitive_products),mul(ti,p.three_center.primitive_products));
+    const Count pair_calls=mul(p.pair_image_candidates,p.three_center.shell_calls);
+    const Count phases=add(p.shell_calls,mul(nk,pair_calls));
+    const Count contractions=add(mul(mi,p.metric.integral_elements),
+        mul(p.three_center.integral_elements,add(ti,mul(nk,p.pair_image_candidates))));
+    // Candidate distance checks, phase construction and compensated digestion
+    // are charged even where the shared geometric/screening selector skips.
+    p.scalar_terms=add(mul(8,add(me,te)),mul(128,add(p.shell_calls,add(phases,contractions))));
+    p.kernel_terms=add(mul(mi,p.metric.kernel_terms),add(mul(ti,p.three_center.kernel_terms),mul(8,p.scalar_terms)));
+    p.modeled_peak_bytes=add(p.modeled_peak_bytes,add(std::max(p.metric.modeled_peak_bytes,p.three_center.modeled_peak_bytes),
+        mul(32,p.three_center.tile_elements)));
+    fitting_caps(p,budget);validate_centers(orbital,system);validate_centers(aux,system);return p;
+}
+PeriodicGDFShortRangeResult compute_periodic_gdf_short_range(const BasisSet& orbital,const BasisSet& aux,
+    const PeriodicSystem& system,const Eigen::Vector3d& q,const md::Matrix& k,
+    const PeriodicGDFShortRangeOptions& o,const ResourceBudget& budget) {
+    using namespace admission;
+    if(k.cols()!=3) throw std::invalid_argument("MANTA periodic fitting momenta require three components");
+    PeriodicGDFShortRangeResult result;result.plan=plan_periodic_gdf_short_range(orbital,aux,system,k.rows(),o,budget);
+    const auto& p=result.plan;auto& r=result.receipt;
+    if(!q.allFinite() || !k.allFinite()) throw std::invalid_argument("MANTA periodic fitting momenta must be finite");
+    r.omega=o.omega;r.pair_cutoff_bohr=o.pair_cutoff_bohr;r.auxiliary_cutoff_bohr=o.auxiliary_cutoff_bohr;
+    r.integral_screen_error=o.integral_screen_error;r.modeled_peak_bytes=p.modeled_peak_bytes;
+    r.orbital_basis_identity=auxiliary_basis_content_identity_sha256(orbital);
+    r.auxiliary_basis_identity=auxiliary_basis_content_identity_sha256(aux);
+    if(o.compute_metric) r.metric_source_identity=fitting_identity(false,system,q,k,o,r);
+    r.three_center_source_identity=fitting_identity(true,system,q,k,o,r);
+    FittingDigest combined;combined.text("manta.periodic-gdf-short-range.joint.v1");
+    combined.text(r.metric_source_identity);combined.text(r.three_center_source_identity);r.source_identity=combined.hash.finish_hex();
+    const auto& a=aux.libint();const auto& b=orbital.libint();const auto ai=a.shell2bf(),bi=b.shell2bf();
+    const Count na=p.n_aux,no=p.n_orb,nk=p.momenta;
+    const MetricImageDomain metric(system,o.auxiliary_cutoff_bohr,o.omega,o.image_candidate_cap,o.integral_screen_error);
+    const ThreeCenterImageDomain three(system,o.pair_cutoff_bohr,o.auxiliary_cutoff_bohr,o.omega,o.image_candidate_cap,o.integral_screen_error);
+    if(o.compute_metric) {
+        result.metric_values.assign(square(na),{});std::vector<Complex> errors(square(na));
+        for(Count is=0;is<a.size();++is) for(Count js=0;js<a.size();++js)
+            metric.each(a[is],a[js],[&](const Eigen::Vector3d& t) {
+                const auto ket=shifted(a[js],t);
+                const auto values=md::shell_coulomb({&a[is],nullptr,&ket,nullptr},md::RadialKernel::Erfc,o.omega);
+                const auto phase=fitting_phase(q.dot(t),r);
+                ++r.metric_shell_calls;r.primitive_products+=a[is].nprim()*a[js].nprim();
+                for(Count i=0;i<a[is].size();++i) for(Count j=0;j<a[js].size();++j) {
+                    const Count out=(ai[is]+i)*na+ai[js]+j;
+                    fitting_add(phase*values(i,j),result.metric_values[out],errors[out]);++r.phase_accumulations;
+                }
+            });
+    }
+    const Count elements=mul(nk,mul(na,square(no)));
+    result.three_center_values.assign(elements,{});std::vector<Complex> errors(elements);
+    for(Count ip=0;ip<a.size();++ip) for(Count im=0;im<b.size();++im) for(Count in=0;in<b.size();++in) {
+        const Count np=a[ip].size(),nm=b[im].size(),nn=b[in].size(),tile=mul(np,mul(nm,nn));
+        std::vector<Complex> contracted(tile),correction(tile);auto ket=b[in];
+        three.each(a[ip],b[im],b[in],[&](const Eigen::Vector3d& t) {
+            ket=shifted(b[in],t);std::fill(contracted.begin(),contracted.end(),Complex{});
+            std::fill(correction.begin(),correction.end(),Complex{});++r.pair_shell_images;
+        },[&](const Eigen::Vector3d&,const Eigen::Vector3d& t) {
+            const auto bra=shifted(a[ip],t);
+            const auto values=md::shell_coulomb({&bra,nullptr,&b[im],&ket},md::RadialKernel::Erfc,o.omega);
+            const auto phase=fitting_phase(-q.dot(t),r);
+            ++r.three_center_shell_calls;r.primitive_products+=a[ip].nprim()*b[im].nprim()*b[in].nprim();
+            for(Count i=0;i<tile;++i) { fitting_add(phase*values.data()[i],contracted[i],correction[i]);++r.phase_accumulations; }
+        },[&](const Eigen::Vector3d& t) {
+            for(Count ik=0;ik<nk;++ik) {
+                const auto phase=fitting_phase(k.row(ik).dot(t),r);
+                for(Count i=0;i<np;++i) for(Count j=0;j<nm;++j) for(Count l=0;l<nn;++l) {
+                    const Count out=((ik*na+ai[ip]+i)*no+bi[im]+j)*no+bi[in]+l;
+                    fitting_add(phase*contracted[(i*nm+j)*nn+l],result.three_center_values[out],errors[out]);++r.phase_accumulations;
+                }
+            }
+        });
+    }
+    cap(r.metric_shell_calls,p.metric_shell_calls,"MANTA periodic metric executed-work bound exceeded");
+    cap(r.three_center_shell_calls,p.three_center_shell_calls,"MANTA periodic coupling executed-work bound exceeded");
+    cap(r.primitive_products,p.primitive_products,"MANTA periodic fitting executed primitive bound exceeded");
+    return result;
+}
+namespace {
+void gdf_caps(const PeriodicGDFPlan& p,const ResourceBudget& b) {
+    using namespace admission;
+    cap(p.modeled_peak_bytes,b.memory_bytes,"MANTA GDF memory budget exceeded");
+    cap(p.shell_calls,b.shell_calls,"MANTA GDF shell-call budget exceeded");
+    cap(p.primitive_products,b.primitive_quartets,"MANTA GDF primitive-product budget exceeded");
+    cap(p.scalar_terms,b.scalar_terms,"MANTA GDF scalar-work budget exceeded");
+    cap(p.kernel_terms,b.kernel_terms,"MANTA GDF kernel-work budget exceeded");
+}
+ResourceBudget gdf_leaf_budget(ResourceBudget b) {
+    b.memory_bytes=b.shell_calls=b.primitive_quartets=b.scalar_terms=b.kernel_terms=std::numeric_limits<Count>::max();
+    b.other_live_bytes=0;return b;
+}
+std::string gdf_identity(bool metric,const md::Matrix& vectors,const PeriodicGDFReceipt& r) {
+    FittingDigest h;h.text("manta.periodic-gdf.v1");h.text(r.provider_version);h.text(r.normalization);
+    h.text(r.algorithm);h.text(r.kernel);h.text(r.convention);h.word(metric);
+    h.text(metric?r.short_range.metric_source_identity:r.short_range.three_center_source_identity);
+    h.matrix(vectors);
+    if(r.kernel!="coulomb") h.real(r.physical_omega);
+    return h.hash.finish_hex();
+}
+void validate_physical_gdf(const PeriodicGDFKernelOptions& p,const PeriodicSystem& system) {
+    if(p.kernel!="coulomb" && p.kernel!="erfc" && p.kernel!="erf")
+        throw std::invalid_argument("MANTA GDF physical kernel must be coulomb, erfc or erf");
+    const double squared=p.omega*p.omega;
+    if(!std::isfinite(p.omega) || (p.kernel=="coulomb" ? p.omega!=0. :
+        p.omega<=0. || !std::isfinite(squared) || squared==0.))
+        throw std::invalid_argument("MANTA GDF physical omega is zero for Coulomb, positive and representable for erf/erfc");
+    if(p.kernel=="erfc" && !std::isfinite((std::acos(-1.)/std::abs(system.lattice.determinant()))/squared))
+        throw std::invalid_argument("MANTA GDF physical finite-zero coefficient is not representable");
+}
+// Fourier decomposition of erfc(omega*r)/r = erfc(eta*r)/r
+// + erf(eta*r)/r - erf(omega*r)/r. Eta is only the numerical split.
+// Same Gaussian Fourier convention as Sun et al., JCP 147,164119 (2017).
+double physical_gdf_weight(const RangeSeparatedCoulombKernel& numerical,
+    const PeriodicGDFKernelOptions& p,double p2,bool zero) {
+    if(p.kernel=="coulomb") return zero?-numerical.short_range_zero_mode:numerical.long_range(p2);
+    if(zero) return p.kernel=="erf"?0.:
+        .25*numerical.reciprocal_prefactor/(p.omega*p.omega)-numerical.short_range_zero_mode;
+    if(RangeSeparatedCoulombKernel::singular(p2)) return 0.;
+    const double physical=-.25*p2/(p.omega*p.omega);
+    if(p.kernel=="erf") return numerical.bare(p2)*std::exp(physical);
+    const double split=-.25*p2/numerical.omega_squared;
+    if(split==physical) return 0.;
+    // Avoid cancellation when the physical and numerical ranges are close.
+    const double difference=split>=physical?std::exp(split)*(-std::expm1(physical-split)):
+        std::exp(physical)*std::expm1(split-physical);
+    return numerical.bare(p2)*difference;
+}
+void describe_physical_gdf(PeriodicGDFReceipt& r,const PeriodicGDFKernelOptions& p,bool gamma) {
+    r.kernel=p.kernel;r.physical_omega=p.omega;r.zero_transfer=gamma;r.real_short_range=p.kernel!="erf";
+    r.finite_zero_removed=gamma && r.real_short_range;
+    r.physical_zero_included=gamma && p.kernel=="erfc";
+    if(p.kernel=="erfc") r.convention="physical-erfc;finite-zero-included-once;numerical-SR-zero-removed-once;no-exchange-correction";
+    if(p.kernel=="erf") r.convention="physical-erf;reciprocal-only;zero-pole-omitted;no-exchange-correction";
+}
+PeriodicGDFShortRangeReceipt describe_gdf_short_range(const BasisSet& orbital,const BasisSet& aux,
+    const PeriodicSystem& system,const Eigen::Vector3d& q,const md::Matrix& k,
+    const PeriodicGDFShortRangeOptions& o,Count peak,bool real_short_range) {
+    PeriodicGDFShortRangeReceipt sr;
+    sr.orbital_basis_identity=auxiliary_basis_content_identity_sha256(orbital);
+    sr.auxiliary_basis_identity=auxiliary_basis_content_identity_sha256(aux);
+    auto effective=o;
+    if(!real_short_range) {
+        sr.algorithm="not-evaluated";sr.kernel="none";sr.convention="no-real-space-short-range-source";
+        effective.omega=effective.auxiliary_cutoff_bohr=effective.integral_screen_error=0.;
+    }
+    sr.omega=effective.omega;sr.pair_cutoff_bohr=o.pair_cutoff_bohr;sr.auxiliary_cutoff_bohr=effective.auxiliary_cutoff_bohr;
+    sr.integral_screen_error=effective.integral_screen_error;sr.modeled_peak_bytes=peak;
+    if(o.compute_metric) sr.metric_source_identity=fitting_identity(false,system,q,k,effective,sr);
+    sr.three_center_source_identity=fitting_identity(true,system,q,k,effective,sr);
+    FittingDigest sj;sj.text("manta.periodic-gdf-short-range.joint.v1");sj.text(sr.metric_source_identity);
+    sj.text(sr.three_center_source_identity);sr.source_identity=sj.hash.finish_hex();return sr;
+}
+}
+
+PeriodicGDFPlan plan_periodic_gdf(const BasisSet& orbital,const BasisSet& aux,
+    const PeriodicSystem& system,Count nv,Count nk,const PeriodicGDFShortRangeOptions& o,const ResourceBudget& budget,
+    const PeriodicGDFKernelOptions& physical) {
+    using namespace admission;
+    margin(budget);validate_physical_gdf(physical,system);
+    if(!nv) throw std::invalid_argument("MANTA GDF requires a nonempty reciprocal domain");
+    cap(nv,std::numeric_limits<Eigen::Index>::max()/3,"MANTA GDF vectors are not addressable");
+    const auto leaf=gdf_leaf_budget(budget);
+    PeriodicGDFPlan p;p.vectors=nv;p.momenta=nk;p.n_aux=aux.nbasis();p.n_orb=orbital.nbasis();p.compute_metric=o.compute_metric;
+    // A count-only plan always admits one extra zero panel. Whether it is
+    // needed is decided by the shared q convention only after input admission.
+    p.panel_vectors=std::min<Count>(16,nv);p.panel_count=add(nv/16+(nv%16!=0),1);
+    p.short_range=plan_periodic_gdf_short_range(orbital,aux,system,nk,o,leaf);
+    p.output_bytes=p.short_range.output_bytes;
+    p.modeled_peak_bytes=add(p.short_range.modeled_peak_bytes,
+        add(budget.other_live_bytes,add(65536,mul(48,nv))));
+    cap(p.modeled_peak_bytes,budget.memory_bytes,"MANTA GDF output/input memory budget exceeded");
+    p.auxiliary_fourier=plan_fourier(aux,nullptr,p.panel_vectors,leaf);
+    p.ao_pair_fourier=plan_fourier(orbital,&orbital,p.panel_vectors,leaf);
+    const Count images=p.short_range.pair_image_candidates;
+    const Count fs=add(p.auxiliary_fourier.shell_calls,mul(images,p.ao_pair_fourier.shell_calls));
+    const Count fp=add(p.auxiliary_fourier.primitive_pairs,mul(images,p.ao_pair_fourier.primitive_pairs));
+    p.shell_calls=add(p.short_range.shell_calls,mul(p.panel_count,fs));
+    p.primitive_products=add(p.short_range.primitive_products,mul(p.panel_count,fp));
+    p.vector_primitive_products=mul(add(nv,1),fp);
+    const Count pair_elements=square(p.n_orb),metric_elements=o.compute_metric?square(p.n_aux):0;
+    const Count phase=mul(p.panel_count,mul(nk,mul(images,p.ao_pair_fourier.shell_calls)));
+    const Count fold=mul(add(nv,1),mul(nk,mul(images,pair_elements)));
+    const Count digest=mul(add(nv,1),add(metric_elements,mul(nk,mul(p.n_aux,pair_elements))));
+    p.scalar_terms=add(p.short_range.scalar_terms,mul(128,add(p.shell_calls,add(phase,add(fold,digest)))));
+    p.kernel_terms=add(p.short_range.kernel_terms,add(mul(p.panel_count,
+        add(p.auxiliary_fourier.kernel_terms,mul(images,p.ao_pair_fourier.kernel_terms))),mul(8,p.scalar_terms)));
+    // One auxiliary panel plus one shell-pair panel folded into all k rows.
+    // No global AO-square by G or k/G/auxiliary/AO tensor is allocated.
+    const Count panels=add(mul(16,mul(p.n_aux,p.panel_vectors)),
+        add(mul(32,mul(nk,p.ao_pair_fourier.tile_elements)),mul(128,add(nk,p.panel_vectors))));
+    p.modeled_peak_bytes=add(p.modeled_peak_bytes,add(panels,
+        std::max(p.auxiliary_fourier.modeled_peak_bytes,p.ao_pair_fourier.modeled_peak_bytes)));
+    gdf_caps(p,budget);return p;
+}
+
+namespace {
+RangeSeparatedCoulombKernel validate_gdf_domain(const PeriodicSystem& system,const Eigen::Vector3d& q,
+    const md::Matrix& k,const md::Matrix& vectors,const PeriodicGDFShortRangeOptions& o) {
+    if(k.cols()!=3 || vectors.cols()!=3)
+        throw std::invalid_argument("MANTA GDF momenta and reciprocal vectors require three components");
+    if(!q.allFinite() || !k.allFinite() || !vectors.allFinite())
+        throw std::invalid_argument("MANTA GDF momenta and reciprocal vectors must be finite");
+    const double volume=std::abs(system.lattice.determinant());
+    if(!std::isfinite(volume) || volume<=0.)
+        throw std::invalid_argument("MANTA GDF cell volume is not representable");
+    const RangeSeparatedCoulombKernel kernel(system,q,o.omega);
+    if(!std::isfinite(kernel.short_range_zero_mode) || !std::isfinite(kernel.reciprocal_prefactor)
+        || !std::isfinite(kernel.omega_squared) || kernel.omega_squared==0.)
+        throw std::invalid_argument("MANTA GDF Coulomb kernel is not representable");
+    const Eigen::Vector3d fractional_q=system.lattice.transpose()*q/(2.*std::acos(-1.));
+    for(Eigen::Index g=0;g<vectors.rows();++g) {
+        const Eigen::Vector3d fractional_p=system.lattice.transpose()*vectors.row(g).transpose()/(2.*std::acos(-1.));
+        const Eigen::Vector3d index=fractional_p-fractional_q;
+        // Existing GDF domains quantize transfer labels to 12 fractional
+        // decimals. Admit that half-unit plus arithmetic roundoff, without
+        // a loose tolerance that could lose a resolvable small-q pole.
+        const double tolerance=5e-13+128.*std::numeric_limits<double>::epsilon()*(1.+std::max(
+            fractional_p.cwiseAbs().maxCoeff(),fractional_q.cwiseAbs().maxCoeff()));
+        if(!index.allFinite() || !std::isfinite(tolerance)
+            || (index-index.array().round().matrix()).cwiseAbs().maxCoeff()>tolerance)
+            throw std::invalid_argument("MANTA GDF reciprocal vectors must belong to the G+q lattice");
+    }
+    return kernel;
+}
+}
+PeriodicGDFResult compute_periodic_gdf(const BasisSet& orbital,const BasisSet& aux,
+    const PeriodicSystem& system,const Eigen::Vector3d& q,const md::Matrix& k,const md::Matrix& vectors,
+    const PeriodicGDFShortRangeOptions& o,const ResourceBudget& budget,const PeriodicGDFKernelOptions& physical) {
+    using namespace admission;
+    if(k.cols()!=3 || vectors.cols()!=3)
+        throw std::invalid_argument("MANTA GDF momenta and reciprocal vectors require three components");
+    PeriodicGDFResult result;result.plan=plan_periodic_gdf(orbital,aux,system,vectors.rows(),k.rows(),o,budget,physical);
+    const auto& p=result.plan;auto& r=result.receipt;
+    const auto kernel=validate_gdf_domain(system,q,k,vectors,o);
+    describe_physical_gdf(r,physical,kernel.zero_transfer);
+    PeriodicGDFShortRangeResult sr;
+    if(r.real_short_range) sr=compute_periodic_gdf_short_range(orbital,aux,system,q,k,o,gdf_leaf_budget(budget));
+    else {
+        sr.receipt=describe_gdf_short_range(orbital,aux,system,q,k,o,p.modeled_peak_bytes,false);
+        sr.metric_values.resize(o.compute_metric?square(p.n_aux):0);
+        sr.three_center_values.resize(mul(p.momenta,mul(p.n_aux,square(p.n_orb))));
+    }
+    result.metric_values=std::move(sr.metric_values);result.three_center_values=std::move(sr.three_center_values);
+    r.short_range=std::move(sr.receipt);r.modeled_peak_bytes=p.modeled_peak_bytes;
+    r.shell_calls=r.short_range.metric_shell_calls+r.short_range.three_center_shell_calls;
+    r.primitive_products=r.short_range.primitive_products;
+    r.phase_products=r.short_range.phase_products;r.phase_accumulations=r.short_range.phase_accumulations;
+    if(o.compute_metric) r.metric_source_identity=gdf_identity(true,vectors,r);
+    r.three_center_source_identity=gdf_identity(false,vectors,r);
+    FittingDigest joint;joint.text("manta.periodic-gdf.joint.v1");joint.text(r.metric_source_identity);
+    joint.text(r.three_center_source_identity);r.source_identity=joint.hash.finish_hex();
+    std::vector<Complex> metric_error(result.metric_values.size()),three_error(result.three_center_values.size());
+    const auto& a=aux.libint();const auto& b=orbital.libint();const auto ai=a.shell2bf(),bi=b.shell2bf();
+    const Count na=p.n_aux,no=p.n_orb,nk=p.momenta;
+    const ImageBox images(system,o.pair_cutoff_bohr,o.image_candidate_cap);
+    auto contract_panel=[&](const md::Matrix& v,bool zero) {
+        const Count ng=v.rows();md::ComplexMatrix aft(na,ng);
+        std::vector<double> weights(ng);
+        for(Count g=0;g<ng;++g) {
+            const double squared=v.row(g).squaredNorm();
+            require_finite(squared);
+            weights[g]=physical_gdf_weight(kernel,physical,squared,zero);
+            require_finite(weights[g]);
+            if(!zero && !RangeSeparatedCoulombKernel::singular(squared)) ++r.reciprocal_vectors;
+        }
+        for(Count is=0;is<a.size();++is) {
+            const auto tile=md::shell_fourier_panel(&a[is],nullptr,v);
+            if(!tile.allFinite()) throw std::overflow_error("MANTA GDF auxiliary Fourier tile is nonfinite");
+            aft.middleRows(ai[is],a[is].size())=tile;
+            ++r.auxiliary_fourier_shell_calls;++r.shell_calls;r.primitive_products+=a[is].nprim();
+            r.vector_primitive_products+=ng*a[is].nprim();
+        }
+        if(o.compute_metric) for(Count is=0;is<na;++is) for(Count js=0;js<na;++js) for(Count g=0;g<ng;++g) {
+            fitting_add(weights[g]*std::conj(aft(is,g))*aft(js,g),result.metric_values[is*na+js],metric_error[is*na+js]);
+            ++r.contraction_terms;
+        }
+        for(Count im=0;im<b.size();++im) for(Count in=0;in<b.size();++in) {
+            const Count nm=b[im].size(),nn=b[in].size(),np=mul(nm,nn);
+            std::vector<Complex> folded(mul(nk,mul(np,ng))),error(folded.size());
+            images.each(origin(b[im])-origin(b[in]),[&](const Eigen::Vector3d& t) {
+                if(!pair_in_range(b[im],b[in],t,o.pair_cutoff_bohr)) return;
+                const auto ket=shifted(b[in],t);const auto tile=md::shell_fourier_panel(&b[im],&ket,v);
+                if(!tile.allFinite()) throw std::overflow_error("MANTA GDF pair Fourier tile is nonfinite");
+                ++r.pair_fourier_shell_calls;++r.shell_calls;
+                const Count primitives=b[im].nprim()*b[in].nprim();r.primitive_products+=primitives;
+                r.vector_primitive_products+=ng*primitives;
+                for(Count ik=0;ik<nk;++ik) {
+                    const double angle=k.row(ik).dot(t);require_finite(angle);
+                    const Complex phase=std::exp(Complex(0.,angle));++r.phase_products;
+                    for(Count pair=0;pair<np;++pair) for(Count g=0;g<ng;++g) {
+                        const Count out=(ik*np+pair)*ng+g;
+                        fitting_add(phase*tile(pair,g),folded[out],error[out]);++r.phase_accumulations;
+                    }
+                }
+            });
+            for(Count ik=0;ik<nk;++ik) for(Count ip=0;ip<na;++ip) for(Count imf=0;imf<nm;++imf)
+                for(Count inf=0;inf<nn;++inf) for(Count g=0;g<ng;++g) {
+                    const Count pair=imf*nn+inf,out=((ik*na+ip)*no+bi[im]+imf)*no+bi[in]+inf;
+                    fitting_add(weights[g]*std::conj(aft(ip,g))*folded[(ik*np+pair)*ng+g],
+                        result.three_center_values[out],three_error[out]);++r.contraction_terms;
+                }
+        }
+    };
+    if(kernel.zero_transfer && r.real_short_range) {
+        contract_panel(md::Matrix::Zero(1,3),true);
+    }
+    for(Count first=0;first<p.vectors;first+=p.panel_vectors) {
+        const md::Matrix panel=vectors.middleRows(first,std::min(p.panel_vectors,p.vectors-first));
+        contract_panel(panel,false);
+    }
+    cap(r.shell_calls,p.shell_calls,"MANTA GDF executed shell-call bound exceeded");
+    cap(r.primitive_products,p.primitive_products,"MANTA GDF executed primitive bound exceeded");
+    cap(r.vector_primitive_products,p.vector_primitive_products,"MANTA GDF executed Fourier-work bound exceeded");
+    return result;
+}
+namespace {
+void gdf_tile_caps(const PeriodicGDFTilesPlan& p,const ResourceBudget& b) {
+    using namespace admission;
+    cap(p.modeled_peak_bytes,b.memory_bytes,"MANTA GDF tiles memory budget exceeded");
+    cap(p.shell_calls,b.shell_calls,"MANTA GDF tiles shell-call budget exceeded");
+    cap(p.primitive_products,b.primitive_quartets,"MANTA GDF tiles primitive-product budget exceeded");
+    cap(p.scalar_terms,b.scalar_terms,"MANTA GDF tiles scalar-work budget exceeded");
+    cap(p.kernel_terms,b.kernel_terms,"MANTA GDF tiles kernel-work budget exceeded");
+}
+void finish_gdf_tile(PeriodicGDFTile& tile) {
+    auto& r=tile.receipt;
+    r.shell_calls+=r.short_range.metric_shell_calls+r.short_range.three_center_shell_calls;
+    r.primitive_products+=r.short_range.primitive_products;
+    r.phase_products+=r.short_range.phase_products;r.phase_accumulations+=r.short_range.phase_accumulations;
+}
+}
+PeriodicGDFTilesPlan plan_periodic_gdf_tiles(const BasisSet& orbital,const BasisSet& aux,
+    const PeriodicSystem& system,Count nv,Count nk,const PeriodicGDFShortRangeOptions& o,const ResourceBudget& budget,
+    const PeriodicGDFKernelOptions& physical) {
+    using namespace admission;
+    margin(budget);validate_physical_gdf(physical,system);
+    if(!nv) throw std::invalid_argument("MANTA GDF tiles require a nonempty reciprocal domain");
+    cap(nv,std::numeric_limits<Eigen::Index>::max()/3,"MANTA GDF tile vectors are not addressable");
+    const auto leaf=gdf_leaf_budget(budget);
+    const auto sr=plan_periodic_gdf_short_range(orbital,aux,system,nk,o,leaf);
+    const auto a=census(aux,7),b=census(orbital,6);
+    PeriodicGDFTilesPlan p;p.n_aux=aux.nbasis();p.n_orb=orbital.nbasis();p.momenta=nk;p.vectors=nv;
+    p.panel_vectors=std::min<Count>(16,nv);p.compute_metric=o.compute_metric;p.external_live_bytes=budget.other_live_bytes;
+    const Count panels=add(nv/16+(nv%16!=0),1),images=sr.pair_image_candidates;
+    const auto af=plan_fourier(aux,nullptr,p.panel_vectors,leaf),bf=plan_fourier(orbital,&orbital,p.panel_vectors,leaf);
+    const Count pair_shells=square(orbital.nshells()),aux_shells=aux.nshells(),pairs=square(p.n_orb);
+    p.maximum_tile_elements=mul(nk,sr.three_center.tile_elements);
+    cap(p.maximum_tile_elements,std::numeric_limits<Eigen::Index>::max(),"MANTA GDF shell tile is not addressable");
+    // Full basis snapshots and numerical import/binding copies. Only the
+    // lattice/dimension are retained from PeriodicSystem, never its symmetry
+    // metadata or nuclear state. Those remain with the consuming method.
+    p.retained_bytes=add(65536,add(mul(4,add(a.bytes,b.bytes)),mul(96,add(nv,add(nk,1)))));
+    const Count common=add(p.retained_bytes,add(budget.other_live_bytes,budget.backend_margin_bytes));
+    p.metric_peak_bytes=o.compute_metric?add(common,add(mul(48,square(p.n_aux)),
+        add(std::max(sr.metric.modeled_peak_bytes,af.modeled_peak_bytes),mul(32,mul(p.n_aux,p.panel_vectors))))):0;
+    p.coupling_peak_bytes=add(common,add(add(mul(48,p.maximum_tile_elements),mul(32,sr.three_center.tile_elements)),
+        add(std::max({sr.three_center.modeled_peak_bytes,af.modeled_peak_bytes,bf.modeled_peak_bytes}),
+            add(mul(32,mul(nk,bf.tile_elements)),mul(64,mul(a.maximum_size,p.panel_vectors))))));
+    p.modeled_peak_bytes=std::max(p.metric_peak_bytes,p.coupling_peak_bytes);
+    if(o.compute_metric) {
+        p.metric_shell_calls=add(sr.metric_shell_calls,mul(panels,af.shell_calls));
+        p.metric_primitive_products=add(mul(sr.metric_image_candidates,sr.metric.primitive_products),mul(panels,af.primitive_pairs));
+        p.metric_scalar_terms=mul(128,add(p.metric_shell_calls,mul(square(p.n_aux),add(sr.metric_image_candidates,add(nv,1)))));
+        p.metric_kernel_terms=add(mul(sr.metric_image_candidates,sr.metric.kernel_terms),add(mul(panels,af.kernel_terms),mul(8,p.metric_scalar_terms)));
+    }
+    // Shell tiling recomputes auxiliary FT per AO shell pair and AO FT per
+    // auxiliary shell. Admission charges that work, including the zero panel.
+    const Count shell_ft=add(mul(pair_shells,af.shell_calls),mul(aux_shells,mul(images,bf.shell_calls)));
+    const Count primitive_ft=add(mul(pair_shells,af.primitive_pairs),mul(aux_shells,mul(images,bf.primitive_pairs)));
+    p.coupling_shell_calls=add(sr.three_center_shell_calls,mul(panels,shell_ft));
+    p.coupling_primitive_products=add(mul(mul(images,sr.auxiliary_image_candidates),sr.three_center.primitive_products),mul(panels,primitive_ft));
+    const Count phase=mul(panels,mul(nk,mul(images,mul(pair_shells,aux_shells))));
+    const Count folds=mul(add(nv,1),mul(nk,mul(images,mul(pairs,aux_shells))));
+    const Count digests=mul(add(nv,1),mul(nk,mul(pairs,p.n_aux)));
+    p.coupling_scalar_terms=add(sr.scalar_terms,mul(128,add(p.coupling_shell_calls,add(phase,add(folds,digests)))));
+    p.coupling_kernel_terms=add(mul(mul(images,sr.auxiliary_image_candidates),sr.three_center.kernel_terms),
+        add(mul(panels,add(mul(pair_shells,af.kernel_terms),mul(aux_shells,mul(images,bf.kernel_terms)))),mul(8,p.coupling_scalar_terms)));
+    p.shell_calls=add(p.metric_shell_calls,p.coupling_shell_calls);
+    p.primitive_products=add(p.metric_primitive_products,p.coupling_primitive_products);
+    p.scalar_terms=add(p.metric_scalar_terms,p.coupling_scalar_terms);p.kernel_terms=add(p.metric_kernel_terms,p.coupling_kernel_terms);
+    gdf_tile_caps(p,budget);return p;
+}
+
+PeriodicGDFTiles::PeriodicGDFTiles(const BasisSet& orbital,const BasisSet& aux,const PeriodicSystem& system,
+    const Eigen::Vector3d& q,const md::Matrix& k,const md::Matrix& vectors,
+    const PeriodicGDFShortRangeOptions& o,const ResourceBudget& budget,const PeriodicGDFKernelOptions& physical)
+    : plan_([&] {
+        if(k.cols()!=3 || vectors.cols()!=3) throw std::invalid_argument("MANTA GDF tile input vectors require three components");
+        return plan_periodic_gdf_tiles(orbital,aux,system,vectors.rows(),k.rows(),o,budget,physical);
+      }()),orbital_(orbital),auxiliary_(aux),q_(q),k_(k),vectors_(vectors),options_(o),physical_(physical) {
+    const auto kernel=validate_gdf_domain(system,q,k,vectors,o);
+    system_.dim=system.dim;system_.lattice=system.lattice;
+    describe_physical_gdf(source_,physical_,kernel.zero_transfer);
+    source_.short_range=describe_gdf_short_range(orbital_,auxiliary_,system_,q_,k_,options_,plan_.modeled_peak_bytes,source_.real_short_range);
+    if(o.compute_metric) source_.metric_source_identity=gdf_identity(true,vectors_,source_);
+    source_.three_center_source_identity=gdf_identity(false,vectors_,source_);
+    FittingDigest joint;joint.text("manta.periodic-gdf.joint.v1");joint.text(source_.metric_source_identity);
+    joint.text(source_.three_center_source_identity);source_.source_identity=joint.hash.finish_hex();
+    source_.modeled_peak_bytes=plan_.modeled_peak_bytes;
+}
+
+PeriodicGDFTile PeriodicGDFTiles::metric() const {
+    if(!options_.compute_metric) throw std::invalid_argument("MANTA GDF tile source has no admitted metric");
+    const auto& a=auxiliary_.libint();const auto offsets=a.shell2bf();const Count n=plan_.n_aux;
+    PeriodicGDFTile result;result.shape={n,n};result.offsets={0,0};result.receipt=source_;
+    auto& r=result.receipt;result.values.assign(admission::square(n),{});std::vector<Complex> error(result.values.size());
+    const MetricImageDomain domain(system_,options_.auxiliary_cutoff_bohr,options_.omega,options_.image_candidate_cap,options_.integral_screen_error);
+    if(source_.real_short_range) for(Count is=0;is<a.size();++is) for(Count js=0;js<a.size();++js)
+        domain.each(a[is],a[js],[&](const Eigen::Vector3d& t) {
+            const auto ket=shifted(a[js],t);const auto values=md::shell_coulomb({&a[is],nullptr,&ket,nullptr},md::RadialKernel::Erfc,options_.omega);
+            const auto phase=fitting_phase(q_.dot(t),r.short_range);
+            ++r.short_range.metric_shell_calls;r.short_range.primitive_products+=a[is].nprim()*a[js].nprim();
+            for(Count i=0;i<a[is].size();++i) for(Count j=0;j<a[js].size();++j) {
+                const Count out=(offsets[is]+i)*n+offsets[js]+j;
+                fitting_add(phase*values(i,j),result.values[out],error[out]);++r.short_range.phase_accumulations;
+            }
+        });
+    // Match the raw-SR -> LR boundary of the dense reference: SR rounding
+    // compensation is not carried into the independently accumulated LR sum.
+    std::fill(error.begin(),error.end(),Complex{});
+    const RangeSeparatedCoulombKernel kernel(system_,q_,options_.omega);
+    auto panel=[&](const md::Matrix& v,bool zero) {
+        const Count ng=v.rows();md::ComplexMatrix aft(n,ng);
+        for(Count is=0;is<a.size();++is) {
+            const auto tile=md::shell_fourier_panel(&a[is],nullptr,v);
+            if(!tile.allFinite()) throw std::overflow_error("MANTA GDF metric Fourier tile is nonfinite");
+            aft.middleRows(offsets[is],a[is].size())=tile;
+            ++r.auxiliary_fourier_shell_calls;++r.shell_calls;r.primitive_products+=a[is].nprim();r.vector_primitive_products+=ng*a[is].nprim();
+        }
+        std::vector<double> weights(ng);
+        for(Count g=0;g<ng;++g) {
+            const double p2=v.row(g).squaredNorm();admission::require_finite(p2);
+            weights[g]=physical_gdf_weight(kernel,physical_,p2,zero);admission::require_finite(weights[g]);
+            if(!zero && !RangeSeparatedCoulombKernel::singular(p2)) ++r.reciprocal_vectors;
+        }
+        for(Count i=0;i<n;++i) for(Count j=0;j<n;++j) for(Count g=0;g<ng;++g) {
+            fitting_add(weights[g]*std::conj(aft(i,g))*aft(j,g),result.values[i*n+j],error[i*n+j]);++r.contraction_terms;
+        }
+    };
+    if(kernel.zero_transfer && source_.real_short_range) panel(md::Matrix::Zero(1,3),true);
+    for(Count first=0;first<plan_.vectors;first+=plan_.panel_vectors)
+        panel(vectors_.middleRows(first,std::min(plan_.panel_vectors,plan_.vectors-first)),false);
+    finish_gdf_tile(result);
+    admission::cap(r.shell_calls,plan_.metric_shell_calls,"MANTA GDF metric executed-work bound exceeded");
+    admission::cap(r.primitive_products,plan_.metric_primitive_products,"MANTA GDF metric primitive bound exceeded");
+    return result;
+}
+
+PeriodicGDFTile PeriodicGDFTiles::evaluate(Count ip,Count im,Count in) const {
+    if(ip>=auxiliary_.nshells() || im>=orbital_.nshells() || in>=orbital_.nshells())
+        throw std::out_of_range("MANTA GDF coupling shell index");
+    const auto& a=auxiliary_.libint();const auto& b=orbital_.libint();const auto& sp=a[ip];const auto& sm=b[im];const auto& sn=b[in];
+    const Count np=sp.size(),nm=sm.size(),nn=sn.size(),nk=plan_.momenta,tile=np*nm*nn;
+    const auto ai=a.shell2bf(),bi=b.shell2bf();PeriodicGDFTile result;
+    result.shape={nk,np,nm,nn};result.offsets={0,ai[ip],bi[im],bi[in]};result.receipt=source_;auto& r=result.receipt;
+    result.values.assign(admission::mul(nk,tile),{});std::vector<Complex> error(result.values.size()),contracted(tile),correction(tile);
+    const ThreeCenterImageDomain domain(system_,options_.pair_cutoff_bohr,options_.auxiliary_cutoff_bohr,options_.omega,
+        options_.image_candidate_cap,options_.integral_screen_error);
+    auto ket=sn;
+    if(source_.real_short_range) domain.each(sp,sm,sn,[&](const Eigen::Vector3d& t) {
+        ket=shifted(sn,t);std::fill(contracted.begin(),contracted.end(),Complex{});std::fill(correction.begin(),correction.end(),Complex{});
+        ++r.short_range.pair_shell_images;
+    },[&](const Eigen::Vector3d&,const Eigen::Vector3d& t) {
+        const auto bra=shifted(sp,t);const auto values=md::shell_coulomb({&bra,nullptr,&sm,&ket},md::RadialKernel::Erfc,options_.omega);
+        const auto phase=fitting_phase(-q_.dot(t),r.short_range);++r.short_range.three_center_shell_calls;
+        r.short_range.primitive_products+=sp.nprim()*sm.nprim()*sn.nprim();
+        for(Count i=0;i<tile;++i) { fitting_add(phase*values.data()[i],contracted[i],correction[i]);++r.short_range.phase_accumulations; }
+    },[&](const Eigen::Vector3d& t) {
+        for(Count ik=0;ik<nk;++ik) {
+            const auto phase=fitting_phase(k_.row(ik).dot(t),r.short_range);
+            for(Count i=0;i<tile;++i) { fitting_add(phase*contracted[i],result.values[ik*tile+i],error[ik*tile+i]);++r.short_range.phase_accumulations; }
+        }
+    });
+    std::fill(error.begin(),error.end(),Complex{});
+    const RangeSeparatedCoulombKernel kernel(system_,q_,options_.omega);const ImageBox images(system_,options_.pair_cutoff_bohr,options_.image_candidate_cap);
+    auto panel=[&](const md::Matrix& v,bool zero) {
+        const Count ng=v.rows(),pairs=nm*nn;const auto aft=md::shell_fourier_panel(&sp,nullptr,v);
+        if(!aft.allFinite()) throw std::overflow_error("MANTA GDF auxiliary Fourier tile is nonfinite");
+        ++r.auxiliary_fourier_shell_calls;++r.shell_calls;r.primitive_products+=sp.nprim();r.vector_primitive_products+=ng*sp.nprim();
+        std::vector<Complex> folded(nk*pairs*ng),fold_error(folded.size());std::vector<double> weights(ng);
+        for(Count g=0;g<ng;++g) {
+            const double p2=v.row(g).squaredNorm();admission::require_finite(p2);
+            weights[g]=physical_gdf_weight(kernel,physical_,p2,zero);admission::require_finite(weights[g]);
+            if(!zero && !RangeSeparatedCoulombKernel::singular(p2)) ++r.reciprocal_vectors;
+        }
+        images.each(origin(sm)-origin(sn),[&](const Eigen::Vector3d& t) {
+            if(!pair_in_range(sm,sn,t,options_.pair_cutoff_bohr)) return;
+            const auto translated=shifted(sn,t);const auto ft=md::shell_fourier_panel(&sm,&translated,v);
+            if(!ft.allFinite()) throw std::overflow_error("MANTA GDF pair Fourier tile is nonfinite");
+            ++r.pair_fourier_shell_calls;++r.shell_calls;r.primitive_products+=sm.nprim()*sn.nprim();
+            r.vector_primitive_products+=ng*sm.nprim()*sn.nprim();
+            for(Count ik=0;ik<nk;++ik) {
+                const double angle=k_.row(ik).dot(t);admission::require_finite(angle);const Complex phase=std::exp(Complex(0.,angle));++r.phase_products;
+                for(Count pair=0;pair<pairs;++pair) for(Count g=0;g<ng;++g) {
+                    const Count out=(ik*pairs+pair)*ng+g;
+                    fitting_add(phase*ft(pair,g),folded[out],fold_error[out]);++r.phase_accumulations;
+                }
+            }
+        });
+        for(Count ik=0;ik<nk;++ik) for(Count i=0;i<np;++i) for(Count j=0;j<pairs;++j) for(Count g=0;g<ng;++g) {
+            const Count out=(ik*np+i)*pairs+j;
+            fitting_add(weights[g]*std::conj(aft(i,g))*folded[(ik*pairs+j)*ng+g],result.values[out],error[out]);++r.contraction_terms;
+        }
+    };
+    if(kernel.zero_transfer && source_.real_short_range) panel(md::Matrix::Zero(1,3),true);
+    for(Count first=0;first<plan_.vectors;first+=plan_.panel_vectors)
+        panel(vectors_.middleRows(first,std::min(plan_.panel_vectors,plan_.vectors-first)),false);
+    finish_gdf_tile(result);
+    admission::cap(r.shell_calls,plan_.coupling_shell_calls,"MANTA GDF tile executed-work bound exceeded");
+    admission::cap(r.primitive_products,plan_.coupling_primitive_products,"MANTA GDF tile primitive bound exceeded");
+    return result;
+}
+} // namespace manta
 }  // namespace vibeqc

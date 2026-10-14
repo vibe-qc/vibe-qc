@@ -546,7 +546,7 @@ def test_gamma_mirror_disabled_on_momentum_shifted_mesh(monkeypatch):
     shifted by ``q = -k_bra``). Mirroring there corrupted the multi-k GDF
     exchange by 2.0e-2 Ha/cell on LiH/sto-3g (2,1,1) — the 2026-07-10
     three-way HF disagreement of
-    ``handovers/HANDOVER_AICCM_DIRECT_TORUS.md`` Finding 2. Ultra-diffuse
+    the original investigation Finding 2. Ultra-diffuse
     Li makes the R != 0 terms large, which is what let the corruption
     through every vacuum-padded gate.
     """
@@ -610,12 +610,15 @@ def test_parity_hold_lifts_with_sufficient_tail():
         )
         is False
     )
-    # mdf has no tail plumbing: tail does not lift its hold.
+    # mdf is never held, with or without a tail: MDF fits the steep core in
+    # real space, and its compact dense-core refusal was lifted with the
+    # auxiliary-image sum (#172).
+    assert _gamma_dense_core_gdf_parity_held(sysp, "mdf", ao_basis=basis) is False
     assert (
         _gamma_dense_core_gdf_parity_held(
             sysp, "mdf", ao_basis=basis, tail_ke_cutoff=3200.0
         )
-        is True
+        is False
     )
 
 

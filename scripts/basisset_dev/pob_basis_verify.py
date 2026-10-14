@@ -1,36 +1,46 @@
-"""Verify shipped pob-* .g94 files against the upstream Bredow-group sources.
+#!/usr/bin/env python3
+"""Verify the bundled pob-* records against the upstream Bredow-group sources.
 
 Three pob basis sets are bundled in vibe-qc:
 
-  * pob-TZVP        Peintinger / Vilela Oliveira / Bredow JCC 34, 451 (2013)
+  * pob-TZVP        Peintinger / Vilela Oliveira / Bredow JCC 34, 451 (2013);
+                    Rb-I: Laun / Vilela Oliveira / Bredow JCC 39, 1285 (2018)
   * pob-TZVP-rev2   Vilela Oliveira / Laun / Peintinger / Bredow JCC 40, 2364 (2019)
+                    and the fifth-period, sixth-period and lanthanide papers (#288)
   * pob-DZVP-rev2   Vilela Oliveira / Laun / Peintinger / Bredow JCC 40, 2364 (2019)
 
-The authoritative numbers live in `python/vibeqc/basis_library/sources/`,
+The authoritative numbers live in ``python/vibeqc/basis_library/sources/``,
 in the per-element CRYSTAL-format files distributed by the Bredow group.
 Those files are byte-identical to the basis listings in the supporting
 information of the cited papers (cross-checked against the JCC 23153 SI
 Section 2 by hand for H, Li, Be, B, C, N, O, F, Na, Mg, Al, Si, P, S,
 Cl, K, Ca, Sc, Ti, V).
 
-This script:
+The bundled library stores each set as a QVF-Basis record
+(``basis_library/qvf/<name>.qvf.json``) and renders the ``.g94`` libint
+reads from it (#406). This script parses the sources with its own
+Decimal-based reader, so it shares no code with the importer it checks,
+and compares every exponent and contraction coefficient of the record and
+of the rendering with the source to a configurable tolerance.
 
-  1. Parses each per-element CRYSTAL file under `sources/<basis>/`.
-  2. Parses the corresponding element block in the shipped
-     `basis/<basis>.g94` and `custom/<basis>.g94` files.
-  3. Compares exponents and contraction coefficients to a configurable
-     tolerance and reports differences.
-  4. Optionally re-emits the .g94 files at full source precision (i.e.
-     preserving the trailing digit the Bredow source publishes — the
-     shipped file currently rounds to 10 dp; the source has 11 dp for
-     pob-TZVP and pob-TZVP-rev2 and 8 dp for pob-DZVP-rev2).
+With ``--regenerate`` it rebuilds the record from the sources through
+``vibeqc.basis_toolkit.from_crystal_file`` (orbital shells and, for the
+Z+200 records, the ECP through the #207 bridge), keeps the existing
+record's description, references and provenance, and re-renders the
+library. The regenerated record must then agree with the sources, which
+the same run checks.
+
+Usage::
+
+    .venv/bin/python scripts/basisset_dev/pob_basis_verify.py
+    .venv/bin/python scripts/basisset_dev/pob_basis_verify.py --basis pob-TZVP-rev2 --atol 1e-12
+    .venv/bin/python scripts/basisset_dev/pob_basis_verify.py --regenerate
 """
 
 from __future__ import annotations
 
 import argparse
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -38,38 +48,11 @@ from pathlib import Path
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "python" / "vibeqc" / "basis_library"
 SOURCES = PACKAGE_ROOT / "sources"
 BASIS_DIR = PACKAGE_ROOT / "basis"
-CUSTOM_DIR = PACKAGE_ROOT / "custom"
+QVF_DIR = PACKAGE_ROOT / "qvf"
 
-# CRYSTAL shell-type → Gaussian g94 angular-momentum letter
+# CRYSTAL shell-type -> Gaussian g94 angular-momentum letter
 SHELL_LETTER = {0: "S", 1: "SP", 2: "P", 3: "D", 4: "F"}
-
-# Per-basis publication citation. Embedded verbatim in every emitted
-# .g94 header so the per-publication reference travels with the basis
-# data through the libint / BSE pipeline and is reachable from the
-# SCF log (CLAUDE.md § 1 + § 8, AGENTS.md § 8). A pointer to the
-# README is not a substitute — the README is not parsed and the
-# pointer breaks the moment the file is mirrored or fetched.
-CITATIONS = {
-    "pob-TZVP": (
-        "Peintinger, Vilela Oliveira, Bredow. "
-        "J. Comput. Chem. 34, 451–459 (2013). "
-        "DOI: 10.1002/jcc.23153; "
-        "Rb-I: Laun, Vilela Oliveira, Bredow. "
-        "J. Comput. Chem. 39, 1285–1290 (2018). "
-        "DOI: 10.1002/jcc.25195"
-    ),
-    "pob-TZVP-rev2": (
-        "Vilela Oliveira, Laun, Peintinger, Bredow. "
-        "J. Comput. Chem. 40, 2364–2376 (2019). "
-        "DOI: 10.1002/jcc.26013"
-    ),
-    "pob-DZVP-rev2": (
-        "Vilela Oliveira, Laun, Peintinger, Bredow. "
-        "J. Comput. Chem. 40, 2364–2376 (2019). "
-        "DOI: 10.1002/jcc.26013"
-    ),
-}
-
+LETTER_TO_AM = {"S": [0], "SP": [0, 1], "P": [1], "D": [2], "F": [3]}
 
 ELEMENT_BY_Z = {
     1: "H", 2: "He", 3: "Li", 4: "Be", 5: "B", 6: "C", 7: "N", 8: "O",
@@ -79,7 +62,12 @@ ELEMENT_BY_Z = {
     30: "Zn", 31: "Ga", 32: "Ge", 33: "As", 34: "Se", 35: "Br", 36: "Kr",
     37: "Rb", 38: "Sr", 39: "Y", 40: "Zr", 41: "Nb", 42: "Mo", 43: "Tc",
     44: "Ru", 45: "Rh", 46: "Pd", 47: "Ag", 48: "Cd", 49: "In", 50: "Sn",
-    51: "Sb", 52: "Te", 53: "I",
+    51: "Sb", 52: "Te", 53: "I", 54: "Xe", 55: "Cs", 56: "Ba", 57: "La",
+    58: "Ce", 59: "Pr", 60: "Nd", 61: "Pm", 62: "Sm", 63: "Eu", 64: "Gd",
+    65: "Tb", 66: "Dy", 67: "Ho", 68: "Er", 69: "Tm", 70: "Yb", 71: "Lu",
+    72: "Hf", 73: "Ta", 74: "W", 75: "Re", 76: "Os", 77: "Ir", 78: "Pt",
+    79: "Au", 80: "Hg", 81: "Tl", 82: "Pb", 83: "Bi", 84: "Po", 85: "At",
+    86: "Rn",
 }
 
 
@@ -128,8 +116,8 @@ def parse_crystal_file(path: Path) -> ElementBasis:
     if z > 200:
         # CRYSTAL's Z+200 header: an INPUT pseudopotential precedes the
         # shells (ZNUC M M0 M1 M2 M3 M4, then one "alpha C n" row per term).
-        # Only the orbital shells belong in the .g94; the ECP goes to the
-        # .ecp sidecar through vibeqc.basis_crystal.emit_ecp_sidecar.
+        # Only the orbital shells are compared here; the ECP's conversion is
+        # pinned by tests/test_basis_ecp_sidecars.py against PySCF.
         z -= 200
         if next(li).upper() != "INPUT":
             raise ValueError(f"{path}: Z+200 header without an INPUT ECP block")
@@ -162,12 +150,8 @@ def parse_crystal_file(path: Path) -> ElementBasis:
     return el
 
 
-def _tokenise(text: str) -> list[str]:
-    return re.split(r"\s+", text.strip())
-
-
 def _token_to_str(tok: str) -> str:
-    """Pass through, normalising scientific notation keys (D→E)."""
+    """Pass through, normalising scientific notation keys (D->E)."""
     return tok.replace("D", "E").replace("d", "e")
 
 
@@ -217,6 +201,49 @@ def parse_g94_file(path: Path) -> dict[str, ElementBasis]:
     return out
 
 
+# ---------- record reader ---------------------------------------------------
+
+
+def parse_record(path: Path) -> dict[str, ElementBasis]:
+    """Read a QVF-Basis record into the same shape as :func:`parse_g94_file`.
+
+    The record stores SP shells blocked (N s-coefficients, then N
+    p-coefficients over the same exponents); here they fold back into
+    two-coefficient primitives. Floats are turned into Decimals through
+    ``repr`` so an exactly representable source value compares equal.
+    """
+    import json
+
+    record = json.loads(path.read_text(encoding="utf-8"))
+    out: dict[str, ElementBasis] = {}
+    for symbol, element in record["elements"].items():
+        z = next(z for z, sym in ELEMENT_BY_Z.items() if sym == symbol)
+        el = ElementBasis(z=z)
+        for shell in element["shells"]:
+            am = shell["angular_momentum"]
+            letter = {str(v): k for k, v in LETTER_TO_AM.items()}[str(am)]
+            ltype = {"S": 0, "SP": 1, "P": 2, "D": 3, "F": 4}[letter]
+            prims = shell["primitives"]
+            out_shell = Shell(crystal_type=ltype, occupation=Decimal(0), scale=Decimal(1))
+            if ltype == 1:
+                n = len(prims) // 2
+                for i in range(n):
+                    out_shell.primitives.append(Primitive(
+                        exponent=Decimal(repr(float(prims[i]["exponent"]))),
+                        coeffs=(Decimal(repr(float(prims[i]["coefficient"]))),
+                                Decimal(repr(float(prims[i + n]["coefficient"])))),
+                    ))
+            else:
+                for prim in prims:
+                    out_shell.primitives.append(Primitive(
+                        exponent=Decimal(repr(float(prim["exponent"]))),
+                        coeffs=(Decimal(repr(float(prim["coefficient"]))),),
+                    ))
+            el.shells.append(out_shell)
+        out[symbol] = el
+    return out
+
+
 # ---------- comparison -------------------------------------------------------
 
 
@@ -233,14 +260,13 @@ class Diff:
     def abs_diff(self) -> Decimal:
         return abs(self.source - self.shipped)
 
-    @property
-    def rel_diff(self) -> Decimal:
-        ref = abs(self.source) if self.source != 0 else Decimal("1")
-        return self.abs_diff / ref
-
 
 def compare(source: ElementBasis, shipped: ElementBasis, *, atol: Decimal) -> list[Diff]:
-    """Compare two ElementBasis objects, returning per-number diffs above atol."""
+    """Compare two ElementBasis objects, returning per-number diffs above atol.
+
+    CRYSTAL scales exponents by the shell's scale factor; the shipped
+    numbers are the scaled ones.
+    """
     diffs: list[Diff] = []
     if source.z != shipped.z:
         raise ValueError(f"Z mismatch: {source.z} vs {shipped.z}")
@@ -261,9 +287,10 @@ def compare(source: ElementBasis, shipped: ElementBasis, *, atol: Decimal) -> li
         for pi, (p_src, p_ship) in enumerate(
             zip(s_src.primitives, s_ship.primitives, strict=True)
         ):
-            if abs(p_src.exponent - p_ship.exponent) > atol:
+            src_exp = p_src.exponent * s_src.scale if s_src.scale != 1 else p_src.exponent
+            if abs(src_exp - p_ship.exponent) > atol:
                 diffs.append(
-                    Diff(source.symbol, si, pi, "exponent", p_src.exponent, p_ship.exponent)
+                    Diff(source.symbol, si, pi, "exponent", src_exp, p_ship.exponent)
                 )
             for ci, (c_src, c_ship) in enumerate(zip(p_src.coeffs, p_ship.coeffs, strict=True)):
                 if abs(c_src - c_ship) > atol:
@@ -273,69 +300,31 @@ def compare(source: ElementBasis, shipped: ElementBasis, *, atol: Decimal) -> li
     return diffs
 
 
-# ---------- g94 emitter ------------------------------------------------------
-
-
-def emit_g94(basis_name: str, source_dir: Path, *, header_lines: list[str]) -> str:
-    """Emit a full Gaussian-94 file for a basis from per-element CRYSTAL sources."""
-    elements = sorted(source_dir.glob("[0-9][0-9]_*"), key=lambda p: int(p.name.split("_")[0]))
-    out: list[str] = []
-    out.extend(header_lines)
-    out.append("")
-    for elem_path in elements:
-        el = parse_crystal_file(elem_path)
-        out.append("****")
-        out.append(f"{el.symbol:<5} 0")
-        for shell in el.shells:
-            out.append(f"{shell.letter:<2}{len(shell.primitives):>4}   {shell.scale}")
-            ncoeff = 2 if shell.crystal_type == 1 else 1
-            for prim in shell.primitives:
-                # right-align exponent in 22-char column with high precision
-                fields = [_format_number(prim.exponent)]
-                for c in prim.coeffs[:ncoeff]:
-                    fields.append(_format_number(c))
-                out.append("    " + "    ".join(fields))
-    out.append("****")
-    out.append("")
-    return "\n".join(out)
-
-
-def _format_number(value: Decimal) -> str:
-    """Format a Decimal preserving every digit the source file carried.
-
-    The Bredow CRYSTAL files print 8-12 significant digits, mostly with
-    a trailing 0 padding to 10-11 dp. Decimal preserves the literal
-    text we parsed, so str(value) gives the source precision exactly.
-    We just right-pad with spaces to 22 columns for visual alignment.
-    """
-    return f"{value:>22}"
-
-
 # ---------- driver -----------------------------------------------------------
 
 
 @dataclass
 class Verdict:
     basis: str
+    surface: str
     elements_checked: int
-    elements_missing_in_g94: list[str]
-    elements_extra_in_g94: list[str]
+    elements_missing: list[str]
+    elements_extra: list[str]
     diffs: list[Diff]
 
 
-def verify_basis(basis_name: str, *, atol: Decimal) -> Verdict:
+def _source_elements(basis_name: str) -> list[ElementBasis]:
     src_dir = SOURCES / basis_name
-    g94_path = BASIS_DIR / f"{basis_name.lower()}.g94"
     if not src_dir.exists():
         raise FileNotFoundError(src_dir)
-    if not g94_path.exists():
-        raise FileNotFoundError(g94_path)
-    shipped = parse_g94_file(g94_path)
-    source_files = sorted(src_dir.glob("[0-9][0-9]_*"))
-    source_symbols = []
+    return [parse_crystal_file(p) for p in sorted(
+        src_dir.glob("[0-9][0-9]_*"), key=lambda p: int(p.name.split("_")[0]))]
+
+
+def verify_surface(basis_name: str, surface: str, shipped: dict[str, ElementBasis], *, atol: Decimal) -> Verdict:
+    source_symbols: list[str] = []
     diffs: list[Diff] = []
-    for sf in source_files:
-        src_el = parse_crystal_file(sf)
+    for src_el in _source_elements(basis_name):
         sym = src_el.symbol
         source_symbols.append(sym)
         if sym not in shipped:
@@ -343,13 +332,46 @@ def verify_basis(basis_name: str, *, atol: Decimal) -> Verdict:
         diffs.extend(compare(src_el, shipped[sym], atol=atol))
     missing = [s for s in source_symbols if s not in shipped]
     extra = [s for s in shipped if s not in source_symbols]
-    return Verdict(
-        basis=basis_name,
-        elements_checked=len(source_symbols) - len(missing),
-        elements_missing_in_g94=missing,
-        elements_extra_in_g94=extra,
-        diffs=diffs,
-    )
+    return Verdict(basis_name, surface, len(source_symbols) - len(missing), missing, extra, diffs)
+
+
+def regenerate(basis_name: str) -> Path:
+    """Rebuild the record from ``sources/`` and re-render the library.
+
+    Shells and ECPs come from ``from_crystal_file`` per element (the #207
+    bridge converts the ECP); description, references and provenance are
+    kept from the record being replaced, with the retrieval date reset to
+    today. The pob-DZVP-rev2 elements the archive lacks (Si, Cr-Br, from
+    the Basis Set Exchange) are kept from the old record too.
+    """
+    import datetime as dt
+
+    from vibeqc.basis_toolkit import from_crystal_file, library
+
+    stem = basis_name.lower()
+    old = library.load_record(stem)
+    new_elements = {}
+    new_ecps = {}
+    for path in sorted((SOURCES / basis_name).glob("[0-9][0-9]_*"),
+                       key=lambda p: int(p.name.split("_")[0])):
+        atom = from_crystal_file(path, name=stem)
+        new_elements.update(atom.elements)
+        if atom.ecps:
+            new_ecps.update(atom.ecps)
+    for sym, element in old.elements.items():
+        new_elements.setdefault(sym, element)
+    for sym, entry in (old.ecps or {}).items():
+        new_ecps.setdefault(sym, entry)
+    old.elements = dict(sorted(new_elements.items(), key=lambda kv: next(
+        z for z, s in ELEMENT_BY_Z.items() if s == kv[0])))
+    old.ecps = new_ecps or None
+    for sym, element in old.elements.items():
+        element.ecp_id = sym if sym in (old.ecps or {}) else None
+    if old.provenance is not None:
+        old.provenance.retrieval_date = dt.date.today().isoformat()
+    path = library.save_record(old, library.record_path(stem))
+    library.render_library(library.renderings_dir())
+    return path
 
 
 def cli() -> None:
@@ -357,45 +379,42 @@ def cli() -> None:
     parser.add_argument("--basis", action="append", default=None,
                         help="basis name to verify (default: all three pob-* sets)")
     parser.add_argument("--atol", type=str, default="1e-9",
-                        help="absolute tolerance for parity check (Decimal-parseable)")
+                        help="absolute tolerance for the parity check (Decimal-parseable)")
     parser.add_argument("--regenerate", action="store_true",
-                        help="emit full-precision .g94 from sources to "
-                             "basis_library/{basis,custom}/<basis>.g94")
+                        help="rebuild the record from sources/ and re-render, then verify")
     args = parser.parse_args()
     atol = Decimal(args.atol)
     bases = args.basis or ["pob-TZVP", "pob-TZVP-rev2", "pob-DZVP-rev2"]
     rc = 0
     for basis in bases:
-        verdict = verify_basis(basis, atol=atol)
-        print(f"\n=== {basis} ===")
-        print(f"  source elements:  {verdict.elements_checked + len(verdict.elements_missing_in_g94)}")
-        print(f"  in shipped g94:   {verdict.elements_checked}")
-        if verdict.elements_missing_in_g94:
-            print(f"  MISSING IN g94:   {verdict.elements_missing_in_g94}")
-            rc = 2
-        if verdict.elements_extra_in_g94:
-            print(f"  EXTRA  IN g94:    {verdict.elements_extra_in_g94}")
-        if verdict.diffs:
-            print(f"  DIFFS (>atol={atol}): {len(verdict.diffs)}")
-            for d in verdict.diffs[:20]:
-                print(f"    {d.element} shell{d.shell_idx} prim{d.prim_idx} {d.field}: "
-                      f"src={d.source} shipped={d.shipped} |Δ|={d.abs_diff}")
-            if len(verdict.diffs) > 20:
-                print(f"    ... and {len(verdict.diffs) - 20} more")
-            rc = max(rc, 1)
-        else:
-            print("  parity:           CLEAN within tolerance")
+        stem = basis.lower()
         if args.regenerate:
-            citation = CITATIONS[basis]
-            header = [
-                f"! vibeqc-generated from Bredow-group archive '{basis.lower()}'.",
-                f"! Source dir: python/vibeqc/basis_library/sources/{basis}/",
-                f"! Cite: {citation}",
-            ]
-            text = emit_g94(basis, SOURCES / basis, header_lines=header)
-            for target in (BASIS_DIR / f"{basis.lower()}.g94", CUSTOM_DIR / f"{basis.lower()}.g94"):
-                target.write_text(text)
-                print(f"  regenerated:      {target.relative_to(PACKAGE_ROOT.parents[1])}")
+            path = regenerate(basis)
+            print(f"regenerated {path.relative_to(PACKAGE_ROOT.parents[2])} and re-rendered basis/")
+        surfaces = {
+            "record": parse_record(QVF_DIR / f"{stem}.qvf.json"),
+            "rendering": parse_g94_file(BASIS_DIR / f"{stem}.g94"),
+        }
+        print(f"\n=== {basis} ===")
+        for surface, shipped in surfaces.items():
+            verdict = verify_surface(basis, surface, shipped, atol=atol)
+            print(f"  [{surface}] source elements {verdict.elements_checked + len(verdict.elements_missing)},"
+                  f" present {verdict.elements_checked}")
+            if verdict.elements_missing:
+                print(f"    MISSING: {verdict.elements_missing}")
+                rc = 2
+            if verdict.elements_extra:
+                print(f"    extra (not in sources/): {verdict.elements_extra}")
+            if verdict.diffs:
+                print(f"    DIFFS (>atol={atol}): {len(verdict.diffs)}")
+                for d in verdict.diffs[:20]:
+                    print(f"      {d.element} shell{d.shell_idx} prim{d.prim_idx} {d.field}: "
+                          f"src={d.source} shipped={d.shipped} |diff|={d.abs_diff}")
+                if len(verdict.diffs) > 20:
+                    print(f"      ... and {len(verdict.diffs) - 20} more")
+                rc = max(rc, 1)
+            else:
+                print("    parity: CLEAN within tolerance")
     raise SystemExit(rc)
 
 

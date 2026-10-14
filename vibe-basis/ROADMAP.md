@@ -15,7 +15,6 @@ is the contract that keeps the two honest about it.
 |---|---|
 | **Current version** | 0.4.0 (M-0 landed; M0 API + vibe-qc engine landed, gate open) |
 | **1.0.0 criterion** | first production basis published from this driver + frozen backend/transport API ([`VERSIONING.md`](VERSIONING.md)) |
-| **Working tracker** | [`handovers/HANDOVER_BASISOPT.md`](../handovers/HANDOVER_BASISOPT.md) — current state, SHAs, blockers, asks |
 | **vibe-qc's roadmap** | [`docs/roadmap.md`](../docs/roadmap.md) § "OPTBASIS-style basis optimiser" |
 
 ---
@@ -171,7 +170,7 @@ stable view; that one moves.
 ## 5. Dependencies on vibe-qc
 
 None of these are vibe-basis's to fix. Each is owned by a vibe-qc dev chat and
-tracked in that chat's handover.
+documented in the dependency table below.
 
 | Id | Need | Blocks | Owner |
 |----|------|--------|-------|
@@ -274,11 +273,7 @@ library alongside, or go on the wishlist if it cannot be obtained.
 
 * [`README.md`](README.md) — what vibe-basis is, install, why a separate package.
 * [`VERSIONING.md`](VERSIONING.md) — the version line and the 1.0.0 criterion.
-* [`handovers/HANDOVER_BASISOPT.md`](../handovers/HANDOVER_BASISOPT.md)
-  — the working tracker: current state, SHAs, per-milestone detail, progress log.
 * [`docs/roadmap.md`](../docs/roadmap.md) — vibe-qc's own roadmap (§ 6 above).
 * [`docs/basisset_dev/`](../docs/basisset_dev/) — the basis-set development
   documentation set, incl. `GOAL8_MPEI_TZVP.md` (the 1.0.0 target basis) and
   `OPTIMISING_A_BASIS.md` (the in-process molecular optimiser user guide).
-* [`handovers/HANDOVER_GPAW_PW_REFERENCE.md`](../handovers/HANDOVER_GPAW_PW_REFERENCE.md)
-  — the PW-limit oracle this roadmap consumes.

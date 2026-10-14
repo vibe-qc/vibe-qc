@@ -13,7 +13,7 @@ Also handles periodic systems (named by composition without guessing a phase).
 
 References
 ----------
-- Handover: ``handovers/HANDOVER_IUPAC_NAMING.md`` work stream 5
+- historical design record: the original investigation work stream 5
 """
 
 from __future__ import annotations

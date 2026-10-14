@@ -103,6 +103,94 @@ def oh_sto3g():
     return _setup(OH, "sto-3g")
 
 
+def test_explicit_source_keeps_interleaved_spin_triples_overlap(monkeypatch, oh_sto3g):
+    """Triples rotations use their calculation's AO metric under reentry."""
+    from dataclasses import asdict, replace
+    from types import SimpleNamespace
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.dlpno.source import CorrelationSource
+
+    mol, basis, uhf, df = oh_sto3g
+    overlap = np.asarray(core.compute_overlap(basis))
+    options = DLPNOUCCSDPilotOptions(
+        localise="external", n_frozen=1, tcut_pno=0.0, compute_triples=True,
+    )
+    before_options = asdict(options)
+    expected = run_dlpno_uccsd_pilot(mol, basis, uhf, df, options)
+
+    def make_source(scale):
+        transform = np.diag(scale)
+        arrays = {}
+        for spin in ("alpha", "beta"):
+            arrays[f"mo_coeffs_{spin}"] = (
+                np.asarray(getattr(uhf, f"mo_coeffs_{spin}")) / scale[:, None]
+            )
+            arrays[f"fock_{spin}"] = (
+                transform @ np.asarray(getattr(uhf, f"fock_{spin}")) @ transform
+            )
+        reference = SimpleNamespace(energy=uhf.energy, **arrays)
+
+        class Factors:
+            on_transform = None
+
+            def mo_transform(self, left, right=None):
+                if self.on_transform is not None:
+                    callback, self.on_transform = self.on_transform, None
+                    callback()
+                right = left if right is None else right
+                return df.mo_transform(transform @ left, transform @ right)
+
+        source = CorrelationSource(
+            kind="test-spin-ao-frame", reference_kind="uhf", molecule=mol,
+            basis=basis, reference=reference, factors=Factors(),
+            overlap=transform @ overlap @ transform,
+            provenance={"ao_scale": scale.tolist()},
+        )
+        for array in (*arrays.values(), source.overlap):
+            array.flags.writeable = False
+        return source
+
+    outer = make_source(np.ones(basis.nbasis))
+    inner = make_source(np.linspace(0.7, 1.3, basis.nbasis))
+    assert not np.allclose(inner.reference.fock_alpha, inner.reference.fock_beta)
+    assert not np.allclose(inner.reference.mo_coeffs_alpha, inner.reference.mo_coeffs_beta)
+    nested = []
+    outer.factors.on_transform = lambda: nested.append(
+        run_dlpno_uccsd_pilot(None, None, None, None, options, source=inner)
+    )
+
+    def forbidden_overlap(_):
+        raise AssertionError("explicit sources must not reconstruct AO overlap")
+
+    monkeypatch.setattr(core, "compute_overlap", forbidden_overlap)
+    actual = run_dlpno_uccsd_pilot(None, None, None, None, options, source=outer)
+    for result, source in ((actual, outer), (nested[0], inner)):
+        assert result.converged and result.n_frozen == 1
+        assert result.triples_executed
+        assert result.n_pairs == 21
+        assert result.e_corr == pytest.approx(expected.e_corr, abs=1e-10)
+        assert result.e_t == pytest.approx(expected.e_t, abs=1e-12)
+        assert result.source_kind == source.kind
+        assert result.source_identity == source.identity
+    assert outer.identity != inner.identity
+
+    class FailedFactors:
+        def mo_transform(self, left, right=None):
+            raise RuntimeError("factor transform failed")
+
+    with pytest.raises(RuntimeError, match="factor transform failed"):
+        run_dlpno_uccsd_pilot(
+            None, None, None, None, options,
+            source=replace(outer, factors=FailedFactors()),
+        )
+    assert asdict(options) == before_options
+    assert core.compute_overlap is forbidden_overlap
+    for spin in ("alpha", "beta"):
+        assert not getattr(outer.reference, f"mo_coeffs_{spin}").flags.writeable
+        assert not getattr(outer.reference, f"fock_{spin}").flags.writeable
+    assert not outer.overlap.flags.writeable
+
+
 class TestAnchorReproduced:
     """run_ref_uccsd on OH/STO-3G is the documented anchor (e_corr ≈ -0.024515)."""
 

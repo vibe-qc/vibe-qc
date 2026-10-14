@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "cc-pvqz",
+  "description": "Basis set: cc-pvqz\ncc-pvqz: libint's own file, element data unchanged, followed\nby the Ca block(s) from the Basis Set Exchange. libint\nomits these because they were added to the set by a later and\nseparate publication, not because the data is in doubt:\n  Ca: J. Koput, K. A. Peterson, J. Phys. Chem. A 106, 9595 (2002); DOI: 10.1021/jp026283u\nFetched from the basis-set-exchange distribution, catalogue\n  version 0.12, on 2026-09-10. No network access involved.\nLicense: numerical parameter data from published scientific\n  papers; see docs/license.md section 3a.\n cc-pVQZ  EMSL  Basis Set Exchange Library   12/2/14 2:24 PM\nElements                             References\nH     : T.H. Dunning, Jr. J. Chem. Phys. 90, 1007 (1989).\nHe    : D.E. Woon and T.H. Dunning, Jr. J. Chem. Phys. 100, 2975 (1994).\nLi - Ne: T.H. Dunning, Jr. J. Chem. Phys. 90, 1007 (1989).\nNa - Mg: D.E. Woon and T.H. Dunning, Jr.  (to be published)\nAl - Ar: D.E. Woon and T.H. Dunning, Jr.  J. Chem. Phys. 98, 1358 (1993).\nCa     : J. Koput and K.A. Peterson, J. Phys. Chem. A, 106, 9595 (2002).\nSc - Zn: N.B. Balabanov and K.A. Peterson, J. Chem. Phys, 123, 064107 (2005)\nGa - Kr: A.K. Wilson, D.E. Woon, K.A. Peterson, T.H. Dunning, Jr. J. Chem. Phys., 110, 7667 (1999)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -24640,7 +24640,46 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "dunning_ccpvxz_1989",
+      "description": "T. H. Dunning, Journal of Chemical Physics 90, 1007-1023 (1989)",
+      "doi": "10.1063/1.456153"
+    },
+    {
+      "key": "koput_peterson_ca_2002",
+      "description": "J. Koput, K. A. Peterson, Journal of Physical Chemistry A 106, 9595-9599 (2002)",
+      "doi": "10.1021/jp026283u"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "cc-pvqz",
+        "detail": "libint's element blocks, unchanged"
+      },
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "cc-pvqz",
+        "detail": "element blocks libint omits, merged as reviewed imports"
+      }
+    ],
+    "retrieval_date": "2026-09-10",
+    "content_sha256": "a24ebcbae98d1fae7932c897e80643a36f9fd7dba04710948275b0551994c320",
+    "citations": [
+      {
+        "keys": [
+          "dunning_ccpvxz_1989",
+          "koput_peterson_ca_2002"
+        ]
+      }
+    ]
   }
 }

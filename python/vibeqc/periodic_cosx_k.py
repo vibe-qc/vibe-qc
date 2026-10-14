@@ -14,8 +14,8 @@ Connects the real-space COSX K(g) block engine
 The K(g) build cost is independent of the k-mesh size -- the mesh only
 enters through the two folds. This is the structural advantage over
 the k-space GDF exchange contraction, which scales with the number of
-(k, k') pairs (see handovers/HANDOVER_RIJCOSX_M3A.md Sec. "M3b direction", scope
-block). The exxdiv='ewald' Madelung finite-size correction is applied
+(k, k') pairs. The exxdiv='ewald' Madelung finite-size correction is applied
+
 by the caller at the K(k) level, exactly as for the GDF exchange
 (``vibeqc.madelung.apply_exxdiv_ewald_to_K``).
 
@@ -137,7 +137,7 @@ class KPointCosxK:
         # demands more (LiH/sto-3g: Li 2sp extents of 50-56 bohr at
         # 1e-7 -- ultra-diffuse exponents outside the real-space SR
         # envelope; measured consequence at the 15-bohr domain:
-        # broken omega-invariance + 534 mHa, handover Sec. M3b-5).
+        # broken omega-invariance + 534 mHa, historical design record Sec. M3b-5).
         if sr_cell_cutoff_bohr is not None:
             r_sr = float(sr_cell_cutoff_bohr)
         elif self.omega > 0.0:
@@ -164,7 +164,7 @@ class KPointCosxK:
             r_derived = r_shell + 5.0 / self.omega + spread
             r_sr = min(r_derived, self.SR_CELL_RADIUS_CAP)
             # Envelope criterion (CRYSTAL-style diffuse-exponent
-            # constraint, measured on LiH/sto-3g -- handover Sec. M3b-5/6):
+            # constraint, measured on LiH/sto-3g -- historical design record Sec. M3b-5/6):
             # shells reaching past ~25 bohr at the 1e-4 level are
             # outside the real-space SR exchange envelope
             # (H/sto-3g: 20.6 -- inside, chain-validated; Li 2p
@@ -176,7 +176,7 @@ class KPointCosxK:
                     "(> 12). This is outside the real-space SR "
                     "exchange envelope (measured on LiH/sto-3g: "
                     "w-invariance broken at 2e-2...3.6e-2 for 15...40-"
-                    "bohr domains; handovers/HANDOVER_RIJCOSX_M3A.md Sec. M3b-6). "
+                    "bohr domains). "
                     "Use the k-space GDF exchange or a periodic-"
                     "adapted (pob-class) basis, or set "
                     "sr_cell_cutoff_bohr explicitly at your own "
@@ -320,7 +320,7 @@ class KPointCosxK:
 
         Lifecycle contract (molecular RIJCOSX + the dedicated Gamma
         builders, commit 40dad042 + the 2026-07-15 increment in
-        handovers/HANDOVER_RIJCOSX_PBC.md): the SCF iterates and
+        the original investigation): the SCF iterates and
         reports its energy on the UNCORRECTED seminumerical surface;
         the correction upgrades only the post-convergence returned
         Fock and orbitals.

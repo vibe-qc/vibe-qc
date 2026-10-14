@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "cc-pv5z-ri",
+  "description": " cc-pV5Z-RI  EMSL  Basis Set Exchange Library   11/01/15 15:14\nElements                             References\nH He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar : Christof Hattig, Optimization of auxiliary basis sets for RI-MP2 and RI-CC2 calculations: Core-valence and quintuple-? basis sets for H to Ar and QZVPP basis sets for Li to Kr, Physical Chemistry Chemical Physics 7, 59 (2005).",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -8951,7 +8951,40 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "dunning_ccpvxz_1989",
+      "description": "T. H. Dunning, Journal of Chemical Physics 90, 1007-1023 (1989)",
+      "doi": "10.1063/1.456153"
+    },
+    {
+      "key": "haettig_aux_5z_2005",
+      "description": "C. Hättig, Physical Chemistry Chemical Physics 7, 59-66 (2005)",
+      "doi": "10.1039/B415208E"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "cc-pv5z-ri",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "837d82315df4467a1a552d91097620fa6ac093fe5208b962ed530da50da34206",
+    "citations": [
+      {
+        "keys": [
+          "dunning_ccpvxz_1989",
+          "haettig_aux_5z_2005"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

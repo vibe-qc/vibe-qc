@@ -22,8 +22,7 @@
 Math + validation record for the three follow-on features on the
 `aiccm2026dev-a` cyclic-cluster line: **(1) localization**, **(2) DLPNO natural
 orbitals**, **(3) space-group symmetry**. Each sits behind its own option and
-does not change existing behavior. Decisions + open-questions log:
-[Archived `handovers/HANDOVER_AICCM_FOLLOWON.md`](https://vibe-qc.com/docs/).
+does not change existing behavior.
 
 Every numerical claim here is grounded in a real run (test file named per
 section). SI/atomic units (bohr, hartree).

@@ -608,6 +608,9 @@ The improved-tangent force, climbing image, frozen atoms, and the
 [minimum-image handling](#periodic-systems) for cross-boundary periodic
 hops all work exactly as for the SCF methods, only the per-image
 energy/force evaluation changes.
+MACE bands preserve the endpoint's `dim=1`, `dim=2`, or `dim=3` periodic
+axes, including skew cells. Non-periodic directions in wires and slabs stay
+non-periodic during every image evaluation.
 
 **How it runs.** The MACE model (torch weights) is loaded **once** and
 its ASE calculator reused for every image and outer iteration;

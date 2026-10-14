@@ -238,6 +238,10 @@ different compatibility defaults for `madelung`:
 |---|---|---|
 | `translations` | *(required)* | The 1 to 3 supercell lattice vectors, in Angstrom. The count sets the dimensionality: 1 vector is CCM1D (a polymer), 2 is CCM2D (a surface), 3 is CCM3D (bulk). |
 | `madelung` | `True` in `CCMOptions`; `False` in `run_ccm`, `ccm_gradient_fd`, `ccm_gradient_analytic`, and `ccm_optimize` | Add the long-range Madelung electrostatic embedding. Recommended for ionic systems; the dimensionality of the embedding follows the number of translation vectors, and so does the kernel (2-D/3-D Ewald, 1-D truncated direct sum -- see [Madelung embedding](#madelung-embedding)). |
+| `max_iter` | `200` | Cumulative SCF iteration budget of the energy, including every stability restart. A run that exhausts it raises; it is not silently accepted. |
+| `conv_tol` | `1e-9` | Energy-route SCF threshold on both the commutator `[F,P]` and the energy change. |
+| `gradient_conv_tol` | `1e-10` | The tighter threshold the analytic-gradient callback re-converges with. |
+| `stability` | `"reference"` | SCF state policy after the stability audit: `"reference"` keeps the reference program's state and flags a detected saddle, `"lowest"` descends to a stable minimum. See [SECCM stability audit](msindo.md#seccm-stability-audit). |
 
 Nuclear gradients (Ha/bohr) come in two flavours, both holding the
 Wigner-Seitz topology fixed: `ccm_gradient_fd` (central finite differences) and
@@ -245,6 +249,40 @@ Wigner-Seitz topology fixed: `ccm_gradient_fd` (central finite differences) and
 including the Madelung embedding, closed-shell).  Both are C++-backed.
 `ccm_optimize` relaxes the structure (selected atoms) on the CCM energy
 surface.
+
+### Stress and lattice optimisation
+
+`ccm_strain_derivative_analytic` returns the analytic strain derivative
+`W[a, b] = dE/deps_ab` in Hartree, for the deformation `x -> (1 + eps) x` of
+atoms and lattice vectors together. `ccm_stress_analytic` returns the stress
+`W / V` in Ha/bohr^3 for a 3-D cell, where `V` is the volume of the cyclic
+cluster. Positive entries are tensile, and the pressure is `-trace / 3`. Both
+take the same keywords as `ccm_gradient_analytic`, `stability` included, and
+are native for H to Kr with the Python reference beyond.
+
+The derivative is taken with the Wigner-Seitz topology and weights frozen at
+the reference geometry, like the nuclear gradients. Exact-tie images, shared
+between cells with fractional weights as in MgO B1 2x2x2, make the energy
+with a rebuilt topology non-differentiable under shear, because a shear
+breaks the tie and changes the weights discontinuously. A uniform scaling
+keeps every tie, so the pressure is also the volume derivative of an
+equation-of-state scan. The 1-D truncated and 3-D Ewald Madelung embeddings
+are included. The 2-D Parry/Heyes embedding is not, and asking for it
+raises.
+
+`ccm_optimize_lattice_isotropic` scales atoms and lattice together until the
+analytic pressure vanishes. For a cubic crystal that is the full lattice
+optimisation, and it reproduces the minimum of a Birch-Murnaghan fit
+(`vibeqc.eos.fit_birch_murnaghan`) to an energy-volume scan.
+
+```python
+from vibeqc.semiempirical.methods.msindo_ccm import ccm_optimize_lattice_isotropic
+from vibeqc.semiempirical.methods.msindo_ccm_gradient_analytic import ccm_stress_analytic
+
+sigma = ccm_stress_analytic(Z, coords, translations, madelung=True)
+opt = ccm_optimize_lattice_isotropic(Z, coords, translations, madelung=True)
+print(opt.scale, opt.energy, opt.pressure_gpa)
+```
 
 ### Scope and validation
 
@@ -257,6 +295,27 @@ Each limit below is a clean error, not a silent wrong answer (CLAUDE.md § 7):
 
 CCM energies are validated out-of-process against reference MSINDO to better
 than 1 µHa (CLAUDE.md § 10).
+
+Every converged closed-shell CCM SCF is followed by a restricted
+orbital-stability audit (see [MSINDO](msindo.md#seccm-stability-audit));
+the `.out` prints its verdict, the cyclic-cluster dimension, the
+electrostatics kernel (naming the 1-D truncated sum as such), the SCF
+controls and state policy that ran, and the largest net atomic charge. The
+`.system` manifest records the same facts under `[run]` as
+`seccm_periodic_dimension`, `seccm_electrostatics_kernel`,
+`seccm_scf_max_iter`, `seccm_scf_conv_tol`, `seccm_gradient_conv_tol`,
+`seccm_stability_policy` and `seccm_max_abs_net_charge`. Every point also
+carries its stability record, `seccm_stability_checked`,
+`seccm_stability_analysis_converged`,
+`seccm_stability_eigenvalue`, `seccm_stability_restarts` and
+`seccm_internal_instability`, so a scan or equation-of-state consumer can
+separate stable minima from flagged saddles. A flagged saddle is a
+reference-state result, not a stable-minimum claim.
+These fields also appear in QVF `provenance.run_fields`. A checked audit
+that did not converge has no stability verdict, even when the SCF converged
+and no instability was reported. An unchecked audit likewise cannot certify
+a minimum. Older records missing the audit-convergence field carry unknown
+audit status; absence must not be interpreted as success.
 
 ## The ab-initio CCM roadmap
 

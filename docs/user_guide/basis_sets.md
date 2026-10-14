@@ -13,6 +13,148 @@ well-engineered basis-set families. This page is a practical guide
 to picking the right one for your system, with explicit notes on
 what vibe-qc ships today and what's on the roadmap.
 
+## How the bundled library is stored
+
+Every bundled basis set is one QVF-Basis record,
+`python/vibeqc/basis_library/qvf/<name>.qvf.json`: shells, effective core
+potentials, originating publications and provenance in one
+schema-validated JSON file. The `.g94` and `.ecp` text files libint and
+libecpint read are renderings of the records, written at full precision
+by `vibeqc.basis_toolkit.library` and pinned byte for byte to the records
+by the test suite; nothing edits them by hand. A record's `provenance`
+says what it is (`kind`: `vendor`, `bse`, `hand-written` or `vibe-basis`),
+where it came from (`upstream`, `retrieval_date`), its content identity
+(`content_sha256` of the numbers alone) and which publication covers
+which elements (`citations`). `vibe-qc-basis inspect
+python/vibeqc/basis_library/qvf/pob-tzvp-rev2.qvf.json` prints all of it.
+
+The runtime overlay under `build/basis_library/` that
+`scripts/setup_basis_library.sh` writes is rendered from the same records
+and carries a content receipt; an overlay whose bytes disagree with the
+committed rendering refuses to load before any integral is computed.
+
+## Where a basis name resolves
+
+A basis name is looked up in five layers, in this order. The first layer
+that answers wins, and nothing below it is consulted.
+
+1. **A `LIBINT_DATA_PATH` you set yourself**, when it holds a complete
+   library (the `def2-svp`, `6-311+g3df2p` and `pob-tzvp-rev2` files are
+   the canaries). vibe-qc never changes it, verifies nothing in it, and
+   consults no other layer.
+2. **The bundled library**: the verified `build/basis_library/` overlay
+   when `scripts/setup_basis_library.sh` made one, else the copy inside the
+   package. Both are renderings of the bundled records.
+3. **Your store** (`$VIBEQC_BASIS_STORE`, else `$XDG_DATA_HOME/vibeqc/basis`,
+   else `~/.local/share/vibeqc/basis`): records you imported with
+   `vibe-qc-basis import`, hand-written or produced by vibe-basis. A store
+   record never shadows a bundled name unless you imported it with
+   `--replace-bundled`; that choice is recorded in the store index and
+   makes your record win for that one name.
+4. **The fetch cache** (`$VIBEQC_BSE_CACHE`, else `$XDG_CACHE_HOME/vibeqc/basis`,
+   else `~/.cache/vibeqc/basis`): records rendered from the Basis Set
+   Exchange on an earlier run. Each is stored once under the SHA-256 of its
+   numerical content; the name index points at it.
+5. **Fetching from the catalogue**, only when you opt in with
+   `run_job(fetch_from_bse=True)` or `VIBEQC_FETCH_BSE=1`. The result lands
+   in layer 4.
+
+Layers 3 to 5 reach libint through a directory of symlinks composed over
+the bundled library, so a composed root is always a superset of the bundle:
+a fetched orbital basis with a bundled auxiliary keeps working. Before a
+store or cache record is used, its file is re-hashed against its recorded
+identity and its rendering is compared byte for byte with what the record
+renders to; a mismatch stops the run, naming the file, and nothing is
+substituted silently.
+
+Every run records which layer answered. The `.system` manifest names the
+root libint read (`resolved_root`), one `[[basis_library.fetched]]` row per
+set rendered from the catalogue, and one `[[basis_library.records]]` row
+(name, kind, layer, content hash) per store or cache record the resolution
+added. To pin a result to a particular record, keep the record file the row
+points at, or import it under a distinct name; `basis="name"` always means
+the record the layers currently hold under that name.
+`vibe-qc-basis resolve <name> ...` prints which layer answers a name.
+
+## Your own basis sets
+
+A hand-written set and a vibe-basis product enter through the same door as
+a bundled one and resolve by name with no other change (#410). Put the shells
+in a Gaussian94 file (an `.ecp` of the same stem beside it carries the
+potentials), a BSE JSON file, a CRYSTAL per-element file or directory, or a
+QVF-Basis record, and import it:
+
+```sh
+vibe-qc-basis import my-basis.g94 --kind hand-written --cite some_database_key
+vibe-qc-basis import run-42/mgo-opt.g94      # a vibe-basis export: the sidecar names kind and run
+vibe-qc-basis list
+vibe-qc-basis resolve my-basis
+```
+
+```python
+basis = vq.BasisSet(mol, "my-basis")               # resolves in every new process
+result = vq.run_job(mol, basis="my-basis", method="rhf")
+```
+
+The import refuses a name a bundled set already uses unless you pass
+`--replace-bundled`, and a name already in your store unless you pass
+`--replace`. The record it writes carries `provenance.kind` (`hand-written`
+or `vibe-basis`), the upstream you name, the import date, the content hash
+and the citation keys you give with `--cite`; the `.references` output of a
+run cites those keys and says "user-supplied" where there is no publication.
+Nothing under `python/vibeqc/basis_library/` is ever written by the import.
+`vibe-qc-basis remove <name>` takes a record out again.
+
+vibe-basis writes its optimised basis with
+`vibe_basis.io.export.write_basis_for_import`, which produces the `.g94`
+and a `<name>.provenance.json` sidecar naming the run; importing that file
+needs no flags.
+
+Store records are activated when `vibeqc` is imported, so `BasisSet` finds
+them on both the molecular and the periodic route. Fetched records (layer
+4) are consulted by `run_job`; a periodic job constructs its `BasisSet`
+before the runner sees the name, so make a fetched set visible first:
+
+```python
+from vibeqc import basis_store
+basis_store.resolve(["sadlej pvtz"], fetch=True)     # composes the root and points libint at it
+basis = vq.BasisSet(cell.unit_cell_molecule(), "sadlej pvtz")
+```
+
+## Filtered-basis cache and resolution
+
+`make_basis(..., exp_to_discard=...)` preserves the active library before
+adding its derived basis. The cache store resolves through
+`VIBEQC_FILTERED_BASIS_DIR`, then `$XDG_CACHE_HOME/vibeqc/basis_filter`, then
+`~/.cache/vibeqc/basis_filter`. Cache stores inside the installed package,
+repository or source library are refused, including symlinks resolving there.
+Caller-supplied store and source aliases resolve to their actual locations;
+links inside owned cache roots and their content are refused.
+
+Each complete root contains byte copies of every active library file, including
+stock orbital bases, sidecars and earlier filtered bases, plus the new filtered
+file. Its identity includes every filename and content hash. Reusing a root
+checks its complete receipt and bytes; a changed, missing, extra or linked cache
+file is a hard error. Source file symlinks are read and copied, never written
+through. Case-fold name collisions and conflicting explicit filtered names
+are refused. A generated filtered name includes the emitted content hash.
+
+Libint reads one root. The filter switches `LIBINT_DATA_PATH` only after the
+complete new root is published and validated. Unfiltered calls still find the
+same stock bytes, and named reloads find every earlier filtered basis. Normal
+filtering never deletes old roots. Internal filter writers are serialized;
+external changes to the process environment remain the caller's responsibility.
+Changing `LIBINT_DATA_PATH` manually can hide previously selected names.
+
+`clear_filtered_basis_cache()` is an explicit global purge, not an operation
+safe alongside live calculations. Stop all cache readers and writers, retire
+filtered BasisSets, and restore a stock `LIBINT_DATA_PATH` first. Cleanup refuses
+a selected root, unknown staging entries, invalid receipts or linked cache entries/content,
+and validates all owned roots before removing any. It cannot infer another
+process's use of a root. Its return value counts removed
+`_vibeqc_filtered_*.g94` files across those roots; custom-name files are retired
+with their roots but excluded from that prefix-based count.
+
 ## Reaching a basis vibe-qc does not bundle
 
 The bundled library carries 255 `.g94` files. The
@@ -76,13 +218,13 @@ unbundled name refuses exactly as it always has. A **bundled** name is a
 complete no-op even with the flag on: no lookup, no cache entry, and
 resolution untouched.
 
-When a render does happen, vibe-qc composes a library root that carries the
-current one *plus* the rendered files, and points libint at that. It is a
-superset on purpose: pointing libint at the cache alone would hide the
-bundled library, so a run using a fetched orbital basis with a bundled
-auxiliary would then fail on the auxiliary. Each render prints a warning
-naming the basis, the catalogue version and the file, because a non-bundled
-basis is something a reader of your results needs to know about.
+When a render does happen, the record is stored in the fetch cache under its
+content hash (layer 4 above), its `.g94` and `.ecp` are rendered beside it,
+and vibe-qc composes a library root that carries the bundled one *plus* the
+rendering, then points libint at that (see "Where a basis name resolves").
+Each render prints a warning naming the basis, the catalogue version and the
+file, because a non-bundled basis is something a reader of your results
+needs to know about.
 
 Every rendered file carries a header saying it is not a bundled vibe-qc
 basis, the catalogue version it came from, and BSE's own originating
@@ -108,10 +250,11 @@ provenance_path = "/.../cache/basis/sadlej pvtz.provenance.json"
 `resolved_root` is written on **every** run, fetching or not. vibe-qc prefers
 a build overlay over the committed library, so a result produced against a
 stale overlay is otherwise indistinguishable from one produced against
-current data; now the manifest says which answered. Branch on
-`fetched_count`, not on `fetched`: an empty array of tables is dropped from
-the file, so on an ordinary run the `fetched` key is absent rather than
-empty.
+current data; now the manifest says which answered. A `[[basis_library.records]]`
+row names every store or cache record the resolution added (`records_count`
+counts them). Branch on `fetched_count` and `records_count`, not on the
+arrays: an empty array of tables is dropped from the file, so on an ordinary
+run the keys are absent rather than empty.
 
 ## What vibe-qc ships today
 
@@ -147,11 +290,19 @@ family and the Pople sets. Forty-four of them are valence-only
 somewhere and ship their ECP as a `.ecp` sidecar that the molecular SCF
 wrappers attach automatically, per element: the def2 family from Rb to Rn
 (the libint H-Kr files extended with the Basis Set Exchange blocks and the
-def2-ECP), the LANL and dhf families, vDZP, the 3c bases def2-mSVP /
+def2-ECP; plain, unpolarized def2-SV is the exception, see below), the LANL and dhf families, vDZP, the 3c bases def2-mSVP /
 def2-mTZVP / def2-mTZVPP, pob-TZVP-rev2, and the 16 Peterson/Figgen
 `{,aug-}cc-p{V,wCV}{D,T,Q,5}Z-PP` sets (Cu-Kr, Y-Xe, Hf-Rn).
 `x2c-TZVPall` is all-electron
 (it needs no ECP, and none is attached). See [user guide § ECPs](ecp.md).
+
+**def2-SV stops at Ar.** The unpolarized `def2-sv` covers H-Ar only (18
+elements) and is all-electron over that range. This is a deliberate
+boundary, not a gap in the fetch: the Basis Set Exchange has no def2-SV
+record past argon, and its "Ahlrichs VDZ" (the 1992 SV) is a different set.
+A K-Rn atom in `def2-sv` is refused with an error that names the element
+(`has no functions for Z=19`). For those elements use `def2-sv(p)` or
+`def2-svp`, which reach Rn with the def2-ECP.
 ```
 
 ## Using a basis set
@@ -161,6 +312,16 @@ from vibeqc import BasisSet
 basis = BasisSet(mol, "pob-tzvp")
 print(basis.nbasis)      # number of basis functions
 ```
+
+Names are matched on their letters, digits and `+` only, ignoring case,
+spaces and other punctuation. `6-31G(d,p)`, `6-31G(d, p)` and `631gdp` all
+load `6-31g**`; `sto3g`, `STO_3G` and `Sto 3G` all load `sto-3g`. The basis
+registry (`vibeqc.basis_registry.lookup`, which supplies the default
+auxiliary sets and the ECP rules) resolves a name with the same function,
+so every spelling gets the same metadata as the file it loads. An
+`aug-cc-pV*` name loads its own bundled file when one ships (the
+cc-pVnZ-PP, `-RIFIT` and `(n+d)` families). Otherwise it loads the parent
+set plus its `augmentation-` file.
 
 For periodic systems with diffuse molecular bases, optionally
 filter the most-diffuse primitives:
@@ -614,19 +775,25 @@ reference inputs follow this principle.
 
 ## Re-fetching the pob-\* library
 
-Because we ship the `.g94` conversions in the repository, a fresh
-clone already has them under `basis_library/custom/`. If you want
-to re-fetch from the Bredow group server (e.g. for a future
-revision):
+The pob records ship in the repository (`basis_library/qvf/pob-*.qvf.json`,
+derived from the per-element CRYSTAL sources under `basis_library/sources/`),
+so a fresh clone has them. To re-fetch from the Bredow group server (for a
+future revision), write the archive's `.g94` conversion somewhere outside
+the package and turn it into a record:
 
 ```sh
-python -m vibeqc.basis_crystal fetch
-./scripts/setup_basis_library.sh
+python -m vibeqc.basis_crystal fetch --dest /tmp/pob-refetch
+vibe-qc-basis convert /tmp/pob-refetch/pob-tzvp-rev2.g94 --ecp /tmp/pob-refetch/pob-tzvp-rev2.ecp \
+    -o python/vibeqc/basis_library/qvf/pob-tzvp-rev2.qvf.json --kind vendor \
+    --upstream "Bredow group basis-set archive" --retrieval-date 2026-10-11
+./scripts/setup_basis_library.sh --target-dir python/vibeqc/basis_library
 ```
 
-The fetcher writes to `basis_library/custom/`; the setup script
-assembles `basis_library/basis/` from libint's stock set plus
-those customs.
+The fetcher writes only where `--dest` (or `dest_dir=` in Python) says;
+it has no default output directory, so a call that only needs the parsed
+records (`return_atoms=True`) never writes into an installed tree.
+`scripts/basisset_dev/pob_basis_verify.py` compares the sources with the
+records and renderings, and can regenerate the records from the sources.
 
 ## Parsing a CRYSTAL-format basis directly
 
@@ -639,8 +806,11 @@ with open("my-basis.g94", "w") as f:
     f.write(emit_g94([atom]))
 ```
 
-Drop the resulting `my-basis.g94` into `basis_library/custom/` and
-run `./scripts/setup_basis_library.sh` to pick it up.
+To use the result by name, turn it into a record with `vibe-qc-basis
+convert my-basis.g94 -o my-basis.qvf.json --kind hand-written` and point
+`LIBINT_DATA_PATH` at a directory holding its rendering, or, for a bundled
+set, save the record under `basis_library/qvf/` and re-render (see the
+library [README](https://github.com/vibe-qc/vibe-qc/blob/main/python/vibeqc/basis_library/README.md)).
 
 ### CRYSTAL format in one page
 

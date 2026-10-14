@@ -134,28 +134,60 @@ def placeholder_repulsive_pairs(
     return placeholders
 
 
+def placeholder_repulsive_labels(pairs) -> list[str]:
+    """Render placeholder pairs as the ``"Z1-Z2"`` labels every record uses.
+
+    One spelling for the warning text, the ``.out`` line, the ``.system``
+    manifest and the QVF job spec (issues #306, #345), so a consumer can grep
+    any surface for the same token.
+    """
+    return [f"{int(z1)}-{int(z2)}" for z1, z2 in pairs]
+
+
+def placeholder_repulsive_record(
+    params: SemiempiricalParameters,
+    atomic_numbers,
+) -> list[tuple[int, int]] | None:
+    """The placeholder pairs to put in a run's record, or ``None`` when the
+    parameters cannot be probed.
+
+    Same admission rule as :func:`warn_placeholder_repulsives`: a duck-typed
+    parameter stand-in without a ``repulsive_energy`` probe (test doubles,
+    stored verbatim by the models) yields ``None``, so the record leaves the
+    key out instead of asserting "checked, none" about a table it never saw.
+    """
+    if getattr(params, "repulsive_energy", None) is None:
+        return None
+    return placeholder_repulsive_pairs(params, atomic_numbers)
+
+
 def warn_placeholder_repulsives(
     params: SemiempiricalParameters,
     atomic_numbers,
     *,
     route: str,
-) -> None:
+) -> list[tuple[int, int]]:
     """Emit a loud warning when a run consumes a repulsive pair carried by the
     ``A/R^12`` placeholder, so a placeholder number is never promoted as
     chemistry (issue #306). Fixed-geometry differences stay exactly valid.
     Duck-typed parameter stand-ins without a ``repulsive_energy`` probe
     are stored verbatim by the models and cannot be inspected; the warning
-    is skipped for them."""
+    is skipped for them.
+
+    Returns the pairs that warned (empty when none, or when the parameters
+    could not be probed), so the caller can put the same list into the run's
+    authoritative record instead of leaving it on stderr (issue #345).
+    """
     if getattr(params, "repulsive_energy", None) is None:
-        return
+        return []
     pairs = placeholder_repulsive_pairs(params, atomic_numbers)
     if not pairs:
-        return
+        return []
     import warnings
 
     from vibeqc.semiempirical import DFTB0RepulsivePlaceholderWarning
 
-    labels = ", ".join(f"{z1}-{z2}" for z1, z2 in pairs)
+    labels = ", ".join(placeholder_repulsive_labels(pairs))
     warnings.warn(
         f"{route}: the DFTB parameter set carries no fitted repulsive for "
         f"the pair(s) {labels}; their potential is the A/R^12 placeholder "
@@ -168,6 +200,7 @@ def warn_placeholder_repulsives(
         category=DFTB0RepulsivePlaceholderWarning,
         stacklevel=2,
     )
+    return pairs
 
 
 def run_dftb0(

@@ -11,8 +11,7 @@ The calculator is intentionally minimal in this first landing:
   the gradient of whatever energy expression the calculator returns;
   as the energy model matures (full Ishida two-step SCF, double-counting
   corrections) the forces follow automatically.  Analytical lattice-
-  integral + S_emb gradients are future work -- see
-  ``handovers/HANDOVER_GF_EMBEDDING.md`` remaining-work item 1.
+  integral + S_emb gradients are future work.
 * Gated as experimental until validated against thick-slab GDF limit.
 
 Unit conventions: ASE works in Å + eV, vibe-qc in bohr + Hartree.

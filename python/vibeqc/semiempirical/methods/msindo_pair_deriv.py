@@ -729,20 +729,27 @@ def _deltah_deriv(
 # --------------------------------------------------------------------------- #
 
 
-def _d_trans_driver(E):
+def _d_trans_driver(E, pole_azimuth=0.0):
     """Port d_trans.f: compute rotation matrix T, dT/dth (TDT), and dT/dphi (TDP).
 
     Returns (T, TDT, TDP) as 9x9 numpy arrays.
     T matches the existing _harmtr(3, E).
+
+    On the z pole the azimuth is undefined. ``pole_azimuth`` chooses it: 0 (the
+    d_trans.f convention) makes TDT the tilt towards x, pi/2 the tilt towards
+    y. T itself does not depend on the choice for the axially symmetric local
+    integrals. Off the pole sin(theta) comes from the in-plane components,
+    which stay accurate where 1 - cos^2 cancels.
     """
     cost = E[2]
     tol = 1e-12
     if abs(cost) >= 1.0 - tol:
-        sint, cosp, sinp = 0.0, 1.0, 0.0
+        sint = 0.0
+        cosp, sinp = math.cos(pole_azimuth), math.sin(pole_azimuth)
     elif abs(cost) <= tol:
         sint, cosp, sinp = 1.0, E[0], E[1]
     else:
-        sint = math.sqrt(1.0 - cost**2)
+        sint = math.hypot(E[0], E[1])
         cosp, sinp = E[0] / sint, E[1] / sint
 
     sqrt3 = math.sqrt(3.0)
@@ -902,7 +909,8 @@ def _rotate_derivatives_to_global(
     )
 
 
-def _pair_blocks_deriv(zk: int, zl: int, rk, rl) -> _PairBlocksDeriv:
+def _pair_blocks_deriv(zk: int, zl: int, rk, rl,
+                       pole_azimuth: float = 0.0) -> _PairBlocksDeriv:
     """Compute per-pair two-center quantities AND local-frame R-derivatives.
 
     This is the Phase 2 output: local-frame 9x9 matrices for the SKL, GAMM,
@@ -1186,7 +1194,7 @@ def _pair_blocks_deriv(zk: int, zl: int, rk, rl) -> _PairBlocksDeriv:
     )
 
     # ----- Phase 3: rotate derivatives to global frame (ROTINT GRAD) -----
-    T, TDT, TDP = _d_trans_driver(E)
+    T, TDT, TDP = _d_trans_driver(E, pole_azimuth)
     (HK1_DR, HK1_DT, HK1_DP), (HL1_DR, HL1_DT, HL1_DP), (HKL2_DR, HKL2_DT, HKL2_DP) = (
         _rotate_derivatives_to_global(
             (HK1_local, HL1_local),

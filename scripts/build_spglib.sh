@@ -38,14 +38,18 @@ SRC_DIR="$SPGLIB_DIR/src"
 BUILD_DIR="$SPGLIB_DIR/build"
 INSTALL_DIR="$SPGLIB_DIR/install"
 
+# Cache admission does not change the source pin or compilation options.
+# vibeqc-recipe-hash: lifecycle-only-begin
 for candidate in \
         "$INSTALL_DIR/lib/cmake/Spglib/SpglibConfig.cmake" \
         "$INSTALL_DIR/lib64/cmake/Spglib/SpglibConfig.cmake"; do
     if [ -f "$candidate" ]; then
-        echo "spglib $SPGLIB_VERSION already installed at $INSTALL_DIR"
+        python3 "$SCRIPT_DIR/attest_native_image.py" spglib "$INSTALL_DIR" || exit 3
+        echo "spglib cache admitted at $INSTALL_DIR (recipe pin $SPGLIB_VERSION; source/build provenance not attested)"
         exit 0
     fi
 done
+# vibeqc-recipe-hash: lifecycle-only-end
 
 if [ ! -f "$SRC_DIR/CMakeLists.txt" ]; then
     echo "Cloning spglib $SPGLIB_VERSION..."
@@ -61,6 +65,13 @@ if [ "${VIBEQC_FETCH_ONLY:-0}" = "1" ]; then
     echo "VIBEQC_FETCH_ONLY=1 -- spglib source staged at $SRC_DIR; skipping build."
     exit 0
 fi
+
+# Optional observation changes no compilation semantics or cache recipe.
+# vibeqc-recipe-hash: lifecycle-only-begin
+# shellcheck source=_native_collector.sh
+. "$SCRIPT_DIR/_native_collector.sh"
+vibeqc_enable_native_collector spglib
+# vibeqc-recipe-hash: lifecycle-only-end
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"

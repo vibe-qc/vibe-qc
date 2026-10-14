@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "def2-universal-jfit",
+  "description": "Basis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\nOriginating publication: Weigend, Phys. Chem. Chem. Phys. 8, 1057 (2006); DOI: 10.1039/b515623h\n  Basis set: def2-universal-JFIT\nDescription: Coulomb fitting auxiliary basis for def2 basis sets\n       Role: jfit\n    Version: 1  (Data from Turbomole 7.3)",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -27027,7 +27027,34 @@
       ]
     }
   },
+  "basis_family": "ahlrichs",
+  "references": [
+    {
+      "key": "weigend_jfit_2006",
+      "description": "F. Weigend, Physical Chemistry Chemical Physics 8, 1057-1065 (2006)",
+      "doi": "10.1039/B515623H"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "def2-universal-jfit"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "308ee5fb24510441f91dc6b7afad74ea86b716cebd87ad14109f481683500715",
+    "citations": [
+      {
+        "keys": [
+          "weigend_jfit_2006"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

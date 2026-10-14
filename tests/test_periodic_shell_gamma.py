@@ -10,6 +10,7 @@ covariance, gradient and strain derivative against finite differences.
 from __future__ import annotations
 
 import itertools
+import math
 
 import numpy as np
 import pytest
@@ -472,3 +473,241 @@ def test_molecular_assembly_reproduces_the_shipped_gfn2_shell_gamma():
     ))
     # The shipped on-site block is 1/sqrt(1/gab^2), one ulp from 1/(1/gab).
     np.testing.assert_allclose(ours, shipped, rtol=0.0, atol=2e-16)
+
+
+# ---------------------------------------------------------------------------
+# External anchor: xtb's periodic GFN1-xTB Coulomb matrix (#245)
+# ---------------------------------------------------------------------------
+
+# Converged GFN1-xTB shell charges of the 64-atom conventional MgO cell
+# (a = 4.212 A, atoms in the order of _mgo_conventional_2x2x2 below; two
+# shells per atom, s then p), read from xtb 6.7.0's xtbrestart after an SCC
+# converged to 2e-8 e with the Ewald tolerance set to 1e-14.  Only the
+# quadratic form 0.5 qsh^T J qsh is compared, so the charges are inputs, not
+# something vibe-qc has to reproduce.
+_XTB_MGO64_QSH = np.array([
+    1.6408725534422306, -0.6949241476534399, 0.19366898254555817,
+    -1.1395139584730398, 1.6412651687424011, -0.6954763247296132,
+    0.19366849756427781, -1.1394485049560956, 1.641265168742403,
+    -0.6954763247296146, 0.1936682618534974, -1.139480927877689,
+    1.6412651687423996, -0.6954763247296121, 0.19366826185349562,
+    -1.139480927877687, 1.641069115185367, -0.6952004331994002,
+    0.19366826185349628, -1.1394809278776852, 1.6410691151853676,
+    -0.6952004331994013, 0.19366826185349856, -1.1394809278776872,
+    1.6410691151853676, -0.6952004331994021, 0.19366898254555895,
+    -1.1395139584730427, 1.6414607129335177, -0.6957518219578049,
+    0.19366849756427634, -1.1394485049560956, 1.6410691151853665,
+    -0.6952004331994, 0.19366826185349567, -1.1394809278776867,
+    1.6410691151853656, -0.6952004331994, 0.19366826185349684,
+    -1.1394809278776854, 1.6414607129335197, -0.6957518219578065,
+    0.1936684975642773, -1.1394485049560976, 1.6410691151853682,
+    -0.6952004331994021, 0.19366898254555678, -1.1395139584730416,
+    1.6412651687423998, -0.6954763247296122, 0.1936684975642761,
+    -1.1394485049560945, 1.6408725534422302, -0.69492414765344,
+    0.193668982545559, -1.1395139584730398, 1.6412651687424005,
+    -0.6954763247296121, 0.19366826185349728, -1.1394809278776874,
+    1.6412651687424011, -0.6954763247296131, 0.1936682618534983,
+    -1.139480927877688, 1.64106911518537, -0.6952004331994012,
+    0.19367066862629606, -1.1395476098080626, 1.641460712933519,
+    -0.6957518219578048, 0.1936682618534972, -1.1394809278776874,
+    1.6410691151853674, -0.6952004331994015, 0.19366898254555717,
+    -1.1395139584730405, 1.6410691151853678, -0.6952004331994004,
+    0.19366898254555737, -1.1395139584730427, 1.6412651687423985,
+    -0.6954763247296104, 0.19366898254555867, -1.1395139584730436,
+    1.6412651687424007, -0.6954763247296136, 0.19366898254555845,
+    -1.1395139584730418, 1.6408725534422293, -0.6949241476534398,
+    0.193670668626297, -1.139547609808063, 1.6412651687424,
+    -0.6954763247296125, 0.19366826185349542, -1.1394809278776887,
+    1.6412651687423994, -0.69547632472961, 0.1936689825455604,
+    -1.1395139584730427, 1.6412651687424, -0.6954763247296111,
+    0.19366898254556017, -1.1395139584730432, 1.6412651687424005,
+    -0.6954763247296135, 0.1936682618534969, -1.1394809278776892,
+    1.6408725534422308, -0.6949241476534419, 0.1936706686262961,
+    -1.1395476098080664, 1.6414607129335215, -0.6957518219578058,
+    0.19366826185349525, -1.1394809278776867, 1.6410691151853685,
+    -0.6952004331994014, 0.19367066862629628, -1.1395476098080661,
+    1.6410691151853638, -0.695200433199398, 0.1936689825455569,
+    -1.1395139584730403, 1.6410691151853662, -0.6952004331993998,
+    0.19366898254555895, -1.1395139584730434,
+])
+# 0.5 qsh^T J qsh with xtb's own Coulomb matrix at that tolerance, evaluated
+# from the matrix xtb dumped (studies/probe_periodic_gfn1_coulomb_anchor.py
+# documents the dump); xtb prints electrostatic 3.960220733566 Eh, of which
+# 0.997398261248 Eh is the atomic third-order term.
+_XTB_MGO64_SECOND_ORDER = 2.9628224723181216
+_XTB_MGO64_ALPHA = 0.15859712
+_XTB_MGO64_R_CUT = 32.54779904
+_XTB_MGO64_TOLERANCE = 1.0e-14
+
+# Isolated MgO diatomic at 3.5 bohr, same provenance: xtb prints
+# electrostatic 0.080549134921 Eh; minus the third-order 0.006487670743 Eh.
+_XTB_MGO_DIATOMIC_QSH = np.array([
+    1.033001583894995, -0.4724668055543587,
+    0.2122868267380975, -0.77282160507872,
+])
+_XTB_MGO_DIATOMIC_SECOND_ORDER = 0.080549134921 - 0.006487670743
+
+# GFN1-xTB per-shell hardnesses U_Z (1 + kappa_l), xtb src/xtb/gfn1.f90
+# (chemicalHardness, shellHardness); Gamma_A is not needed here.
+_GFN1_SHELL_HARDNESS = {
+    8: (0.583349, 0.583349 * (1.0 + 0.0374608)),
+    12: (0.354151, 0.354151 * (1.0 + 0.0674819)),
+}
+
+
+def _mgo_conventional_2x2x2(a_angstrom: float = 4.212):
+    """64-atom rocksalt cell as xtb saw it: fractional coordinates wrapped
+    into [0, 1) with xtb's 1e-14 epsilon, so the tied Wigner-Seitz images
+    come out exactly as in its run."""
+    bohr = 1.8897261246257702
+    edge = 2 * a_angstrom * bohr
+    fcc = np.array([[0, 0, 0], [0, 0.5, 0.5], [0.5, 0, 0.5], [0.5, 0.5, 0]])
+    coords, Z = [], []
+    for i, j, k in itertools.product(range(2), repeat=3):
+        for site in fcc:
+            base = (np.array([i, j, k]) + site) * a_angstrom * bohr
+            coords.append(base)
+            Z.append(12)
+            coords.append(base + np.array([a_angstrom / 2 * bohr, 0.0, 0.0]))
+            Z.append(8)
+    coords = np.array(coords)
+    frac = coords / edge
+    frac = np.where(np.abs(frac - 1.0) < 1.0e-14, frac - 1.0, frac)
+    frac = np.where(frac > 1.0 + 1.0e-14, frac - np.floor(frac), frac)
+    return frac * edge, Z, np.eye(3) * edge
+
+
+def _xtb_wigner_seitz_records(coords, lattice, alpha, r_cut):
+    """xtb's real-space set (klopmanohno.F90 getCoulombMatrixPBC3D with a
+    TWignerSeitzCell generated non-symmetrically): for every pair (a, b >= a)
+    the closest images of b around a within r_cut (ties within 0.01 bohr^2
+    share the weight), each combined with every lattice translation of
+    length <= r_cut.  Returns the directed record arrays and the erfc
+    deficit: xtb sums erfc(alpha r)/r over this weighted set instead of the
+    whole lattice, so images reachable from fewer than all tied images are
+    under-weighted; the shared kernel's Ewald potential carries the whole
+    lattice and that difference has to be removed before comparing."""
+    from scipy.special import erfc
+
+    def points(cutoff):
+        tmax = int(math.ceil(cutoff / float(lattice[0, 0])))
+        out = []
+        for n in itertools.product(range(-tmax, tmax + 1), repeat=3):
+            T = lattice @ np.asarray(n, float)
+            d2 = float(T @ T)
+            if d2 <= cutoff ** 2 + 1.0e-10:
+                out.append((d2, T))
+        out.sort(key=lambda p: p[0])
+        return np.array([p[1] for p in out])
+
+    r_trans = points(r_cut)
+    n = len(coords)
+    lists = {a: [] for a in range(n)}
+    for i in range(n):
+        for j in range(i + 1):
+            candidates = []
+            for k, T in enumerate(r_trans):
+                d2 = float(np.sum((coords[i] + T - coords[j]) ** 2))
+                if d2 > r_cut ** 2 or (d2 < 1.0e-4 and k == 0 and i == j):
+                    continue
+                candidates.append((d2, k))
+            candidates.sort(key=lambda c: c[0])
+            keep = [c for c in candidates if c[0] <= candidates[0][0] + 0.01 ** 2]
+            for _d2, k in keep:
+                lists[j].append((i, 1.0 / len(keep), coords[i] + r_trans[k]))
+    rec_a, rec_b, shifts, weights = [], [], [], []
+    for a, entries in lists.items():
+        for b, w, image in entries:
+            vec = image - coords[a]
+            for T in r_trans:
+                d = vec + T
+                if float(d @ d) < 1.0e-18:
+                    continue
+                shift = d - (coords[b] - coords[a])
+                rec_a.append(a)
+                rec_b.append(b)
+                shifts.append(shift)
+                weights.append(w)
+                if a != b:
+                    rec_a.append(b)
+                    rec_b.append(a)
+                    shifts.append(-shift)
+                    weights.append(w)
+    big = points(r_cut + 2.0 * float(lattice[0, 0]) + 5.0)
+    deficit = np.zeros((n, n))
+    for a in range(n):
+        for b in range(a, n):
+            r = np.linalg.norm((coords[b] - coords[a]) + big, axis=1)
+            full = float(np.sum(erfc(alpha * r[r > 1.0e-9]) / r[r > 1.0e-9]))
+            partial = 0.0
+            for bb, w, image in lists[a]:
+                if bb != b:
+                    continue
+                rr = np.linalg.norm((image - coords[a]) + r_trans, axis=1)
+                partial += w * float(np.sum(erfc(alpha * rr[rr > 1.0e-9]) / rr[rr > 1.0e-9]))
+            deficit[a, b] = deficit[b, a] = full - partial
+    return rec_a, rec_b, np.asarray(shifts).reshape(-1, 3), weights, deficit, len(r_trans)
+
+
+def test_klopman_ohno_kernel_reproduces_xtb_periodic_gfn1_coulomb_energy():
+    """The lane's external anchor (#245): the shared kernel against xtb.
+
+    xtb's periodic GFN1-xTB Coulomb matrix is the same Ewald-split
+    Klopman-Ohno construction as build_periodic_shell_gamma with the
+    harmonic hardness average and gExp = 2, so on the same cell, the same
+    per-shell hardnesses and the same real-space truncation the two must
+    agree to their Ewald convergence.  Measured 2026-09-24 against xtb 6.7.0
+    with its Ewald tolerance at 1e-14: element-wise 2.5e-13 Ha over the
+    128 x 128 matrix and 9e-14 Eh on the quadratic form, once xtb's
+    under-weighted erfc sum over tied Wigner-Seitz images (7.9e-8 per
+    element here; 5.9e-3 at xtb's default tolerance 1e-8) is removed.  The
+    tolerance below is the one fixed on the issue before measuring.
+    """
+    coords, Z, lattice = _mgo_conventional_2x2x2()
+    site_atom, hardness = [], []
+    for a, z in enumerate(Z):
+        for U in _GFN1_SHELL_HARDNESS[z]:
+            site_atom.append(a)
+            hardness.append(U)
+    qsh = _XTB_MGO64_QSH
+    assert len(qsh) == len(hardness) == 128
+    assert abs(float(qsh.sum())) < 1.0e-8
+
+    rec_a, rec_b, shifts, weights, deficit, n_trans = _xtb_wigner_seitz_records(
+        coords, lattice, _XTB_MGO64_ALPHA, _XTB_MGO64_R_CUT
+    )
+    assert n_trans == 33
+    spec = _spec(KO, _se.KlopmanOhnoAverage.InverseHardnessMean)
+    deficit_sites = deficit[np.ix_(site_atom, site_atom)]
+    energies = {}
+    for alpha in (0.0, _XTB_MGO64_ALPHA, 2.0 * _XTB_MGO64_ALPHA):
+        kernel = _se.EwaldCoulombKernel(lattice.copy(), alpha)
+        gamma = _se._periodic_shell_gamma_from_records(
+            site_atom, hardness, coords, spec, kernel, rec_a, rec_b, shifts, weights
+        )
+        np.testing.assert_allclose(gamma, gamma.T, rtol=0.0, atol=1.0e-13)
+        energies[alpha] = 0.5 * qsh @ (gamma - deficit_sites) @ qsh
+    # The vibe-qc side must not move with its own Ewald splitting parameter.
+    values = list(energies.values())
+    assert max(values) - min(values) < 1.0e-9
+    # The anchor itself, at the tolerance fixed before measuring.
+    for value in values:
+        assert value == pytest.approx(_XTB_MGO64_SECOND_ORDER, abs=1.0e-8)
+
+
+def test_klopman_ohno_kernel_reproduces_xtb_gfn1_coulomb_energy_of_a_molecule():
+    """Molecular limit of the same anchor: tables, harmonic average and the
+    on-site rule, through build_molecular_shell_gamma (xtb's cluster
+    Coulomb matrix); agrees to 5e-13 Eh."""
+    coords = np.array([[0.0, 0.0, 0.0], [3.5, 0.0, 0.0]])
+    site_atom, hardness = [], []
+    for a, z in enumerate((12, 8)):
+        for U in _GFN1_SHELL_HARDNESS[z]:
+            site_atom.append(a)
+            hardness.append(U)
+    spec = _spec(KO, _se.KlopmanOhnoAverage.InverseHardnessMean)
+    gamma = _se._molecular_shell_gamma(site_atom, hardness, coords, spec)
+    qsh = _XTB_MGO_DIATOMIC_QSH
+    assert 0.5 * qsh @ gamma @ qsh == pytest.approx(
+        _XTB_MGO_DIATOMIC_SECOND_ORDER, abs=1.0e-10
+    )

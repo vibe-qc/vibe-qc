@@ -134,9 +134,9 @@ once you convert Å → bohr.
 | CRYSTAL | vibe-qc |
 |---|---|
 | `BASISSET / POB-TZVP / END` block | `BasisSet(mol, "pob-tzvp")`, same name |
-| Per-element CRYSTAL-format basis lines | Drop the file under `basis_library/custom/` and re-run `./scripts/setup_basis_library.sh`. The CRYSTAL-format parser (`vibeqc.basis_crystal`) handles the per-element layout. |
-| Mixed BSE + custom basis | Same pattern, drop in `custom/`, rebuild. See [basis_sets](basis_sets.md) § "Custom basis sets". |
-| `INPUT` block with explicit primitive coefficients | Same `custom/` mechanism. |
+| Per-element CRYSTAL-format basis lines | Convert the file into a QVF-Basis record with `vibe-qc-basis convert`. The CRYSTAL-format parser (`vibeqc.basis_crystal`) handles the per-element layout. |
+| Mixed BSE + custom basis | Same pattern: one record per basis set. See [basis_sets](basis_sets.md). |
+| `INPUT` block with explicit primitive coefficients | Same record mechanism; the ECP radial powers are converted to the Gaussian convention (#207). |
 
 The bundled pob-* family on `main` covers H-Br (the same coverage
 as the original Peintinger 2013 paper). Current installs ship the
@@ -391,7 +391,7 @@ inline the basis block instead.
   submit CRYSTAL14 jobs through the same `vq` queue used for
   vibe-qc.
 - [user_guide/basis_sets](basis_sets.md) § "CRYSTAL-format basis
-  parser", drop a CRYSTAL `.bas` file under `custom/`.
+  parser", converting a CRYSTAL per-element file into a record.
 - [Why solid-state calculations use `pob-TZVP`](../tutorial/pob_tzvp.md), why
   CRYSTAL-style basis sets matter for periodic calculations.
 - [MgO from the Materials Project: `vqfetch` end-to-end](../tutorial/mgo_from_materials_project.md)

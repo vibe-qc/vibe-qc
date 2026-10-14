@@ -16,6 +16,10 @@ Pipeline::
       -> chemical_potential       mu*_S^X                (eq. 19, 20)
       -> dG_solv, activity and partition coefficients
 
+``run_job(cosmors=CosmoRSOptions(solvent="water"))`` runs that chain for a
+library solvent (:mod:`.solvents`), computing the solvent's surface at the
+solute's protocol once and caching it per user.
+
 COSMOSPACE (:mod:`.cosmospace`) solves the same pairing problem exactly
 rather than under the independent-patch approximation, and is exposed
 alongside rather than in place of it -- the shipped parameterization was
@@ -54,6 +58,15 @@ from .parameters import (
     get_parameterization,
 )
 from .solvent import solvent_sigma_potential
+from .solvents import (
+    available_solvents,
+    cosmors_cache_dir,
+    solvent_molecule,
+    solvent_sigma_potential_from_surface,
+    solvent_surface,
+)
+from .rings import ring_atom_count, ring_atoms
+from .job import CosmoRSOptions, CosmoRSResult
 from .potential import (
     SigmaPotential,
     hydrogen_bond_energy,
@@ -110,6 +123,15 @@ __all__ = [
     "interaction_energy",
     "interaction_energy_dsigma",
     "solvent_sigma_potential",
+    "available_solvents",
+    "cosmors_cache_dir",
+    "solvent_molecule",
+    "solvent_sigma_potential_from_surface",
+    "solvent_surface",
+    "ring_atom_count",
+    "ring_atoms",
+    "CosmoRSOptions",
+    "CosmoRSResult",
     "ln_activity_coefficient",
     "log_partition_coefficient",
     "misfit_energy",

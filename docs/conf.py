@@ -530,6 +530,7 @@ def _on_missing_reference(app, env, node, contnode):
             "Molecule",
             "SolventModel",
             "HessianResult",
+            "GeomOptResult",
             "SpinDet",
             "Crystal",
             "Hamiltonian",

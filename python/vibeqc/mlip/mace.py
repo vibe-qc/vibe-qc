@@ -36,7 +36,7 @@ weight download.
 
 The heavy ML stack (PyTorch, e3nn) is the optional ``[mace]`` extra and
 is import-gated -- using a MIT model without it installed raises a clear,
-actionable error. MACE currently requires Python <= 3.13.
+actionable error. The supported ``[mace]`` extra targets Python <= 3.13.
 
 OpenMP note (macOS)
 -------------------
@@ -58,7 +58,8 @@ from __future__ import annotations
 
 import os
 import sys
-from numbers import Integral
+from dataclasses import asdict, replace
+from numbers import Integral, Real
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -85,8 +86,8 @@ def mace_cache_root() -> Path:
     """Return the cache directory used by upstream MACE model loaders.
 
     MACE honors ``XDG_CACHE_HOME`` and otherwise uses ``~/.cache/mace``.
-    vibe-qc never bundles or copies model weights; the upstream loader fetches
-    a registered weight on first use.
+    vibe-qc never bundles model weights; a registered checkpoint is fetched
+    on first use, preserving upstream cache names.
     """
     xdg = os.environ.get("XDG_CACHE_HOME")
     root = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
@@ -182,7 +183,8 @@ def _require_backends():
         import torch
         from ase import Atoms
         from ase.units import Bohr, Hartree
-        from mace.calculators import mace_mp, mace_off
+        from mace.calculators import MACECalculator  # noqa: F401 - dependency check
+        from ._mace_checkpoint import load_mp as mace_mp, load_off as mace_off
     except ImportError as exc:  # pragma: no cover - import-time guard
         hint = (
             "vibeqc.mlip.mace requires the MACE stack (PyTorch + e3nn). "
@@ -192,9 +194,9 @@ def _require_backends():
         if sys.version_info >= (3, 14):
             hint += (
                 f"  NOTE: this interpreter is Python {sys.version_info.major}."
-                f"{sys.version_info.minor}; MACE caps at Python 3.13 today "
-                "(its matscipy dependency ships no 3.14 wheel). Use a "
-                "Python <= 3.13 environment for MACE."
+                f"{sys.version_info.minor}; vibe-qc enables its supported "
+                "[mace] extra only on Python <= 3.13. Use a Python <= 3.13 "
+                "environment for the supported MACE installation."
             )
         raise ImportError(hint) from exc
     return mace_mp, mace_off, torch, Atoms, Bohr, Hartree
@@ -281,6 +283,46 @@ def _validate_mlip_input(molecule, info: MaceModelInfo) -> None:
         )
 
 
+def _validate_runtime_options(options: MLIPOptions) -> None:
+    digest = options.weight_sha256
+    if digest is not None and (
+        not isinstance(digest, str) or len(digest) != 64
+        or any(c not in "0123456789abcdefABCDEF" for c in digest)
+    ):
+        raise ValueError("MACE weight_sha256 must be a 64-character hexadecimal digest")
+    if options.dtype not in ("float32", "float64"):
+        raise ValueError("MACE dtype must be 'float32' or 'float64'")
+    if str(options.device).split(":", 1)[0] == "mps" and options.dtype != "float32":
+        raise ValueError("MACE on MPS requires dtype='float32'; MPS cannot represent float64")
+
+
+def _load_calculator(info, options, mace_mp, mace_off, torch):
+    loader = mace_mp if info.loader == "mace_mp" else mace_off
+    identity_options = {}
+    if options.weight_sha256 is not None:
+        identity_options["expected_sha256"] = options.weight_sha256
+    if info.is_academic_only:
+        identity_options["accept_academic_license"] = options.academic_license_acknowledged()
+    if str(options.device).split(":", 1)[0] != "mps":
+        return loader(model=info.loader_arg, device=options.device,
+                      default_dtype=options.dtype, **identity_options)
+    if not torch.backends.mps.is_available():
+        raise RuntimeError("MACE requested MPS, but this PyTorch runtime has no available MPS device")
+    # MACE's ordinary loader maps checkpoint tensors to the target device
+    # before casting their dtype. A float64 checkpoint cannot even deserialize
+    # on MPS. Keep the registered loader and license gate, but cast on CPU
+    # before MACECalculator transfers the model to the requested device.
+    from mace.calculators import MACECalculator
+
+    model = loader(model=info.loader_arg, device="cpu",
+                   default_dtype="float32", return_raw_model=True, **identity_options)
+    identity = getattr(model, "_vibeqc_checkpoint_identity", None)
+    calculator = MACECalculator(models=model.float(), device=options.device,
+                                default_dtype="float32")
+    calculator._vibeqc_checkpoint_identity = identity
+    return calculator
+
+
 def mace_calculator(options: MLIPOptions | None = None):
     """Return the bare MACE ASE ``Calculator`` (eV / Angstrom) for the
     selected model -- for ASE-native workflows (custom optimizers, MD,
@@ -289,12 +331,31 @@ def mace_calculator(options: MLIPOptions | None = None):
     use :class:`MACEModel` instead."""
     if options is None:
         options = MLIPOptions()
+    else:
+        options = replace(options)
     info = resolve_model(options.model)
     enforce_academic_license(info, options)
-    mace_mp, mace_off, _torch, _Atoms, _Bohr, _Hartree = _require_backends()
-    loader = mace_mp if info.loader == "mace_mp" else mace_off
-    return loader(model=info.loader_arg, device=options.device,
-                  default_dtype=options.dtype)
+    _validate_runtime_options(options)
+    mace_mp, mace_off, torch, _Atoms, _Bohr, _Hartree = _require_backends()
+    return _load_calculator(info, options, mace_mp, mace_off, torch)
+
+
+def _checked_backend_result(results, name, shape, model_name):
+    """Copy one required finite property before accepting a backend result."""
+    import numpy as np
+
+    try:
+        value = np.array(results[name], dtype=float, copy=True)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"MACE model {model_name!r} returned missing or nonnumeric {name}"
+        ) from exc
+    if value.shape != shape or not np.all(np.isfinite(value)):
+        raise ValueError(
+            f"MACE model {model_name!r} returned invalid {name}: "
+            f"expected finite values with shape {shape}, got shape {value.shape}"
+        )
+    return value
 
 
 class MACEModel:
@@ -313,7 +374,8 @@ class MACEModel:
     options
         An :class:`vibeqc.mlip.MLIPOptions` selecting the model, device,
         dtype, and (for ASL models) the academic-license acknowledgment.
-        Defaults to the MIT MACE-MPA-0 on CPU in float64.
+        Defaults to the MIT MACE-MPA-0 on CPU in float64. Values are copied
+        at construction, so later configuration edits cannot relabel this model.
     """
 
     def __init__(
@@ -326,23 +388,21 @@ class MACEModel:
     ):
         if options is None:
             options = MLIPOptions()
+        options = replace(options)
         self._options = options
         self._info = resolve_model(options.model)
         # ASL gate (CLAUDE.md Sec.1/Sec.10): academic, non-commercial models
         # require explicit acknowledgment; MIT models are ungated. Fires
         # before any torch/mace import or weight download.
         enforce_academic_license(self._info, options)
+        _validate_runtime_options(options)
         self._set_structure(molecule, cell=cell, pbc=pbc)
-        mace_mp, mace_off, _torch, Atoms, Bohr, Hartree = _require_backends()
+        mace_mp, mace_off, torch, Atoms, Bohr, Hartree = _require_backends()
         self._Atoms = Atoms
         self._Bohr = float(Bohr)
         self._Hartree = float(Hartree)
-        loader = mace_mp if self._info.loader == "mace_mp" else mace_off
-        self._calc = loader(
-            model=self._info.loader_arg,
-            device=options.device,
-            default_dtype=options.dtype,
-        )
+        self._calc = _load_calculator(self._info, options, mace_mp, mace_off, torch)
+        self._weight_identity = getattr(self._calc, "_vibeqc_checkpoint_identity", None)
 
     def _set_structure(self, molecule, *, cell=None, pbc=None) -> None:
         """Replace the evaluated structure while retaining the loaded model.
@@ -352,24 +412,51 @@ class MACEModel:
         evaluator below owns one model and calls this sequentially between
         scan points.
         """
+        import numpy as np
+
         _validate_mlip_input(molecule, self._info)
-        self._mol = molecule
-        # 3x3 lattice vectors (bohr) for a periodic system; None = molecular.
-        self._cell = cell
+        position_error = "MACE positions must be finite with shape (n_atoms, 3)"
+        try:
+            positions = np.asarray([atom.xyz for atom in molecule.atoms], dtype=float)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError(position_error) from exc
+        if positions.shape != (len(molecule.atoms), 3) or not np.all(np.isfinite(positions)):
+            raise ValueError(position_error)
+
         if cell is None:
             if pbc is not None:
                 raise ValueError("pbc requires a periodic MACE cell")
-            self._pbc = None
-        elif pbc is None:
-            # Backward-compatible lower-level default: a caller that supplies
-            # only a cell means a fully 3D-periodic system. Public periodic
-            # drivers always pass the PeriodicSystem's exact dimensionality.
-            self._pbc = (True, True, True)
+            values = None
         else:
-            values = tuple(bool(value) for value in pbc)
-            if len(values) != 3:
-                raise ValueError(f"pbc must contain three flags; got {pbc!r}")
-            self._pbc = values
+            cell_error = "MACE cell must be finite with shape (3, 3)"
+            try:
+                cell = np.array(cell, dtype=float, copy=True)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(cell_error) from exc
+            if cell.shape != (3, 3) or not np.all(np.isfinite(cell)):
+                raise ValueError(cell_error)
+            if pbc is None:
+                # Supplying only a cell retains the lower-level 3-D default.
+                # Public periodic drivers pass the exact dimensionality.
+                values = (True, True, True)
+            else:
+                pbc_error = "pbc must contain three boolean flags (or integer 0/1)"
+                try:
+                    values = tuple(pbc)
+                except TypeError as exc:
+                    raise ValueError(pbc_error) from exc
+                if len(values) != 3 or any(
+                    not isinstance(value, (bool, np.bool_, Integral)) or value not in (0, 1)
+                    for value in values
+                ):
+                    raise ValueError(pbc_error)
+                values = tuple(bool(value) for value in values)
+
+        # Validate before replacing any state. A rejected scan point must
+        # leave the previous structure and its cached result consistent.
+        self._mol = molecule
+        self._cell = cell
+        self._pbc = values
         self._e_eV = None
         self._f_eVA = None
         self._stress_eVA3 = None
@@ -411,8 +498,13 @@ class MACEModel:
                 properties.append("stress")
             self._calc.calculate(atoms, properties=properties)
             results = self._calc.results
-            self._e_eV = results["energy"]
-            self._f_eVA = results["forces"]
+
+            def checked(name, shape):
+                return _checked_backend_result(results, name, shape, self.model_name)
+
+            energy = float(checked("energy", ()))
+            forces = checked("forces", (len(self._mol.atoms), 3))
+            stress = None
             if "stress" in properties:
                 # MACECalculator stores stress as the Voigt 6-vector; ASE's
                 # Atoms.get_stress(voigt=False) converts it back to the 3x3
@@ -421,9 +513,16 @@ class MACEModel:
                 # this internal Atoms object, so the values are identical).
                 from ase.stress import voigt_6_to_full_3x3_stress
 
-                self._stress_eVA3 = voigt_6_to_full_3x3_stress(
-                    results["stress"]
+                stress = voigt_6_to_full_3x3_stress(
+                    checked("stress", (6,))
                 )
+            # Publish the cache only after the entire result is valid. A
+            # failed force/stress read must not make the next energy() call
+            # succeed with a partially initialized result. Own the arrays:
+            # a reused ASE calculator may overwrite its result buffers.
+            self._f_eVA = forces
+            self._stress_eVA3 = stress
+            self._e_eV = energy
 
     def energy(self) -> float:
         """Total energy in Hartree (reference-shifted DFT-surface energy)."""
@@ -478,8 +577,13 @@ class MACEModel:
 
     @property
     def options(self) -> MLIPOptions:
-        """Model runtime choices used by this wrapper."""
-        return self._options
+        """A detached copy of the runtime choices used to load this model."""
+        return replace(self._options)
+
+    @property
+    def weight_identity(self) -> dict:
+        """Identity of the checkpoint bytes consumed at model loading."""
+        return asdict(self._weight_identity) if self._weight_identity is not None else {}
 
     @property
     def pbc(self) -> tuple[bool, bool, bool] | None:
@@ -511,6 +615,7 @@ class _PeriodicMaceResult:
         *,
         options,
         pbc,
+        weight_identity=None,
         converged=True,
         n_iter=1,
     ):
@@ -522,6 +627,7 @@ class _PeriodicMaceResult:
         self.n_iter = n_iter
         self.scf_trace = []
         self.model_info = model_info
+        self.weight_identity = dict(weight_identity or {})
         self.device = options.device
         self.dtype = options.dtype
         self.loader = model_info.loader
@@ -552,6 +658,7 @@ def _periodic_result(model: MACEModel) -> _PeriodicMaceResult:
         model_info=model.info,
         options=model.options,
         pbc=model.pbc,
+        weight_identity=model.weight_identity,
     )
 
 
@@ -574,17 +681,13 @@ class PeriodicMACEEvaluator:
     def __init__(self, options: MLIPOptions | None = None):
         if options is None:
             options = MLIPOptions()
-        self._options = MLIPOptions(
-            model=options.model,
-            device=options.device,
-            dtype=options.dtype,
-            accept_academic_license=options.accept_academic_license,
-        )
+        self._options = replace(options)
         self._info = resolve_model(self._options.model)
         # Preserve the established fail-fast contract: an ASL model is
         # rejected when the evaluator is configured, before torch import,
         # weight download, or the first structure.
         enforce_academic_license(self._info, self._options)
+        _validate_runtime_options(self._options)
         self._model: MACEModel | None = None
 
     def run(self, system) -> _PeriodicMaceResult:
@@ -629,16 +732,65 @@ def run_periodic_mace(system, options: MLIPOptions | None = None):
     return PeriodicMACEEvaluator(options).run(system)
 
 
+class PeriodicMACECellOptimizationError(RuntimeError):
+    """ASE exhausted the cell-relaxation budget without converging.
+
+    ``system`` retains the last geometry for inspection or an explicit restart.
+    ``final_max_force`` is the maximum norm of the ASE cell filter's combined
+    atomic/cell forces, using the same scaling and units as its ``fmax`` test;
+    it is not a raw stress in Hartree/bohr^3 or an atomic-only force norm.
+    """
+
+    def __init__(self, *, system, n_steps, max_steps, final_max_force,
+                 target_max_force):
+        self.system = system
+        self.n_steps = n_steps
+        self.max_steps = max_steps
+        self.final_max_force = final_max_force
+        self.target_max_force = target_max_force
+        super().__init__(
+            "Periodic MACE cell optimization did not converge after "
+            f"{n_steps} of {max_steps} allowed steps: final maximum "
+            f"cell-filter force {final_max_force:.6g} does not meet the "
+            f"{target_max_force:.6g} ASE fmax target. The last geometry "
+            "is available as this exception's system attribute."
+        )
+
+
+def _validate_optimization_controls(fmax, max_steps, *, step_option="max_steps") -> int:
+    """Reject invalid stopping criteria before model loading or ASE work."""
+    import math
+
+    if (
+        isinstance(fmax, bool) or not isinstance(fmax, Real)
+        or not math.isfinite(fmax) or fmax <= 0.0
+    ):
+        raise ValueError(f"fmax must be finite and positive; got {fmax!r}")
+    if (
+        isinstance(max_steps, bool) or not isinstance(max_steps, Integral)
+        or max_steps < 0
+    ):
+        raise ValueError(
+            f"{step_option} must be a non-negative integer; got {max_steps!r}"
+        )
+    return int(max_steps)
+
+
 def optimize_periodic_mace_cell(system, options: MLIPOptions | None = None,
                                 *, fmax: float = 0.05, max_steps: int = 200):
     """Variable-cell relaxation of a ``PeriodicSystem`` with MACE.
 
     BFGS on an ASE cell filter, driven by MACE's analytic energy / forces /
     stress (relaxing both atomic positions and lattice vectors). Returns the
-    relaxed ``PeriodicSystem``. ``fmax`` is the ASE force/stress convergence
-    threshold (eV/Angstrom). This API is intentionally 3D-only; use
+    relaxed ``PeriodicSystem`` only if ASE's combined atomic/cell force
+    criterion is met. Otherwise raises :class:`PeriodicMACECellOptimizationError`
+    with the last structure and residual. ``fmax`` uses ASE's cell-filter
+    force scaling (eV/Angstrom). This API is intentionally 3D-only; use
     :func:`optimize_periodic_mace_positions` for a slab or wire.
+    Both the relaxed and last-on-failure structures retain the input charge
+    and spin multiplicity for subsequent electronic-structure calculations.
     """
+    max_steps = _validate_optimization_controls(fmax, max_steps)
     import numpy as np
     from ase.optimize import BFGS
 
@@ -661,15 +813,42 @@ def optimize_periodic_mace_cell(system, options: MLIPOptions | None = None,
     model = MACEModel(mol, options, cell=cell_bohr, pbc=(True, True, True))
     atoms = model._ase_atoms()  # cell + pbc, Angstrom
     atoms.calc = model.calculator
-    BFGS(_CellFilter(atoms), logfile=None).run(fmax=fmax, steps=max_steps)
-    return atoms_to_periodic_system(atoms)
+    cell_filter = _CellFilter(atoms)
+    optimizer = BFGS(cell_filter, logfile=None)
+    # ASE Dynamics.run returns convergence, not whether it finished its loop.
+    # The FrechetCellFilter criterion includes cell forces: zero atomic forces
+    # at a symmetric but strained cell are insufficient (ASE optimize/filters).
+    converged = bool(optimizer.run(fmax=fmax, steps=max_steps))
+    final_results = {
+        "energy": atoms.get_potential_energy(),
+        "forces": atoms.get_forces(apply_constraint=False),
+        "stress": atoms.get_stress(),
+    }
+    for name, shape in (("energy", ()), ("forces", (len(atoms), 3)), ("stress", (6,))):
+        _checked_backend_result(final_results, name, shape, model.info.key)
+    final = atoms_to_periodic_system(
+        atoms, charge=int(system.charge), multiplicity=int(system.multiplicity),
+    )
+    if not converged:
+        final_max_force = float(
+            np.linalg.norm(cell_filter.get_forces(), axis=1).max()
+        )
+        raise PeriodicMACECellOptimizationError(
+            system=final,
+            n_steps=int(optimizer.nsteps),
+            max_steps=max_steps,
+            final_max_force=final_max_force,
+            target_max_force=fmax,
+        )
+    return final
 
 
 class PeriodicMACEOptimizationResult:
     """Result of a fixed-cell periodic MACE position optimization.
 
-    ``system`` is the relaxed :class:`vibeqc.PeriodicSystem`; ``energy`` and
-    ``gradient()`` use Hartree/bohr units. ``max_force_eva`` is the terminal
+    ``system`` is the relaxed :class:`vibeqc.PeriodicSystem`; ``energy`` is in
+    Hartree and ``gradient()`` in Hartree/bohr. The gradient is the physical
+    energy derivative, including frozen atoms. ``max_force_eva`` is the terminal
     constrained ASE force norm in eV/Angstrom, matching the input ``fmax``.
     """
 
@@ -686,6 +865,7 @@ class PeriodicMACEOptimizationResult:
         options,
         pbc,
         fixed_indices,
+        weight_identity=None,
     ):
         self.system = system
         self.energy = energy
@@ -696,6 +876,7 @@ class PeriodicMACEOptimizationResult:
         self.n_iter = n_steps
         self.max_force_eva = max_force_eva
         self.model_info = model_info
+        self.weight_identity = dict(weight_identity or {})
         self.device = options.device
         self.dtype = options.dtype
         self.loader = model_info.loader
@@ -734,27 +915,22 @@ def optimize_periodic_mace_positions(
     The optimizer reports ``converged=False`` when ``max_steps`` is reached;
     a capped run is not silently presented as a relaxed structure.
     """
+    max_steps_value = _validate_optimization_controls(fmax, max_steps)
     import numpy as np
     from ase.constraints import FixAtoms
     from ase.optimize import BFGS
 
     from vibeqc import Atom, PeriodicSystem
 
-    if fmax <= 0.0:
-        raise ValueError(f"fmax must be positive; got {fmax}")
-    if (
-        isinstance(max_steps, bool)
-        or not isinstance(max_steps, Integral)
-        or max_steps < 0
-    ):
-        raise ValueError(
-            f"max_steps must be a non-negative integer; got {max_steps!r}"
-        )
-    max_steps_value = int(max_steps)
-
     molecule = system.unit_cell_molecule()
     n_atoms = len(molecule.atoms)
-    fixed = tuple(sorted({int(index) for index in fixed_indices}))
+    indices = tuple(fixed_indices)
+    if any(
+        isinstance(index, bool) or not isinstance(index, Integral)
+        for index in indices
+    ):
+        raise ValueError("fixed_indices must contain integer atom indices")
+    fixed = tuple(sorted({int(index) for index in indices}))
     invalid = [index for index in fixed if index < 0 or index >= n_atoms]
     if invalid:
         raise IndexError(
@@ -772,9 +948,20 @@ def optimize_periodic_mace_positions(
 
     optimizer = BFGS(atoms, logfile=None)
     converged = bool(optimizer.run(fmax=fmax, steps=max_steps_value))
-    forces_eva = np.asarray(atoms.get_forces(), dtype=float)
+    final_results = {
+        "energy": atoms.get_potential_energy(),
+        "forces": atoms.get_forces(apply_constraint=False),
+    }
+    energy_eV = float(
+        _checked_backend_result(final_results, "energy", (), model.info.key)
+    )
+    forces_eva = _checked_backend_result(
+        final_results, "forces", (n_atoms, 3), model.info.key,
+    )
     gradient = -forces_eva * model._Bohr / model._Hartree
-    force_norms = np.linalg.norm(forces_eva, axis=1)
+    # Constraints project the optimizer's stopping residual, not the physical
+    # derivative of the reported energy at the returned structure.
+    force_norms = np.linalg.norm(atoms.get_forces(), axis=1)
     max_force_eva = float(force_norms.max()) if force_norms.size else 0.0
 
     relaxed_atoms = [
@@ -790,7 +977,7 @@ def optimize_periodic_mace_positions(
     )
     return PeriodicMACEOptimizationResult(
         system=relaxed,
-        energy=float(atoms.get_potential_energy()) / model._Hartree,
+        energy=energy_eV / model._Hartree,
         gradient=gradient,
         converged=converged,
         n_steps=int(getattr(optimizer, "nsteps", 0)),
@@ -799,4 +986,5 @@ def optimize_periodic_mace_positions(
         options=model.options,
         pbc=pbc,
         fixed_indices=fixed,
+        weight_identity=model.weight_identity,
     )

@@ -1,6 +1,6 @@
 """M2 (pair-resolved truncation): domain, orbit closure, builds, enforcement.
 
-The SYM3b root cause (HANDOVER_BIPOLE_PRODUCTION.md Sec. 0a 2026-07-12):
+The SYM3b root cause (the original investigation 2026-07-12):
 the radial cell list is closed under the bare point-group action, but
 the symmetry machinery acts on atom-pair triples
 ``(a, b, h) -> (perm[a], perm[b], R.h + s_a - s_b)`` whose per-atom
@@ -382,6 +382,9 @@ def test_pair_mode_end_to_end_enforce_equals_reduce():
     closed-shell cell. The 12-bohr image domain is the smallest measured
     fixture cutoff below the legacy-gauge fold-refusal threshold. This is an
     algorithm-parity check, not a production-energy witness."""
+    # The physical pair default (#316) refuses the legacy SYM3b projector;
+    # this test pins the historical composition, so it replays it explicitly
+    # (#503).
     from vibeqc._vibeqc_core import PeriodicRHFOptions, monkhorst_pack
 
     system, _a = _mgo()
@@ -405,6 +408,7 @@ def test_pair_mode_end_to_end_enforce_equals_reduce():
             use_fock_symmetry_reduce=False,
             use_exchange_ewald_split=False,
             sr_image_precision=None,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -414,6 +418,7 @@ def test_pair_mode_end_to_end_enforce_equals_reduce():
             use_fock_symmetry_reduce=True,
             use_exchange_ewald_split=False,
             sr_image_precision=None,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -426,6 +431,7 @@ def test_pair_mode_end_to_end_enforce_equals_reduce():
             use_fock_symmetry_reduce=True,
             use_exchange_ewald_split=False,
             sr_image_precision=None,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -438,6 +444,9 @@ def test_pair_mode_pure_rks_exact_j_runs():
     for He-at-origin, keeping this cheap); the key-based enforcement
     must accept the density-template blocks (the pre-M2 positional
     association scrambled exactly this combination)."""
+    # The physical pair default (#316) refuses the legacy SYM3b projector;
+    # this test pins the historical composition, so it replays it explicitly
+    # (#503).
     from vibeqc._vibeqc_core import PeriodicKSOptions, monkhorst_pack
     from vibeqc.pbc_bipole_rks import run_pbc_bipole_rks
 
@@ -458,6 +467,7 @@ def test_pair_mode_pure_rks_exact_j_runs():
             system, basis, kmesh, opts,
             use_fock_symmetry=True,
             use_fock_symmetry_reduce=False,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -472,6 +482,7 @@ def test_pair_mode_pure_rks_exact_j_runs():
             kmesh,
             opts,
             use_fock_symmetry_reduce=False,
+            historical_domain=True,
             progress=False,
         ).energy
     )

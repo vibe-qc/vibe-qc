@@ -174,6 +174,35 @@ def test_gamma_rhf_gdf_converges_without_external_backend():
     np.testing.assert_allclose(result.occupations, [2.0, 0.0])
 
 
+@pytest.mark.parametrize("functional", [None, "PBE"])
+def test_gamma_shared_operator_davidson_matches_dense(functional, monkeypatch):
+    from vibeqc.solvers._scf import FockDiagonalizer
+    observed = []
+    original = FockDiagonalizer.__call__
+    def record(self, fock):
+        result = original(self, fock)
+        observed.append((self.iterative, self.last_result))
+        return result
+    monkeypatch.setattr(FockDiagonalizer, "__call__", record)
+    system, basis = _h2_box()
+    options = _opts() if functional is None else _ks_opts(functional)
+    common = dict(aux_basis="def2-svp-jk", progress=False)
+    dense = vq.run_rhf_periodic_gamma_gdf(system, basis, options, **common)
+    options.use_davidson = True
+    options.davidson_min_dim = 0
+    iterative = vq.run_rhf_periodic_gamma_gdf(system, basis, options, **common)
+    assert dense.converged and iterative.converged
+    assert any(flag for flag, _ in observed)
+    assert any(not flag for flag, _ in observed)
+    assert {r.operator_metadata.kind for _, r in observed} == ({"one_electron", "ks"} if functional else {"one_electron", "fock"})
+    np.testing.assert_allclose(iterative.energy, dense.energy, atol=1e-10, rtol=0)
+    np.testing.assert_allclose(iterative.density, dense.density, atol=1e-9)
+    np.testing.assert_allclose(iterative.occupations, dense.occupations, atol=1e-12)
+    assert all(r.orthogonality_error < 1e-8 for _, r in observed)
+    assert options.davidson.n_eig == 0
+    assert options.davidson.guess_vectors.size == 0
+
+
 @pytest.mark.parametrize("dim", (1, 2))
 def test_gamma_rhf_gdf_private_ewald_force_requires_3d(dim):
     system, basis = _h2_dimensional_box(dim)
@@ -191,12 +220,11 @@ def test_gamma_rhf_gdf_private_ewald_force_requires_3d(dim):
 @pytest.mark.parametrize(
     "dim, expected_energy",
     [
-        # 1D / 2D vacuum-padded H₂: Steps 1 + 2 of the 2026-05-13
-        # gauge fix are no-ops (Ewald-3D is 3D-only on the C++ side,
-        # so dim<3 falls through to the bare lattice sum that 1D / 2D
-        # wires + slabs always used).  Pinned values unchanged from
-        # pre-fix.
-        (1, -1.116738328690913),
+        # 2D vacuum-padded H₂: Steps 1 + 2 of the 2026-05-13 gauge fix
+        # are no-ops (Ewald-3D is 3D-only on the C++ side, so dim<3 falls
+        # through to the bare lattice sum).  Pinned value unchanged from
+        # pre-fix.  A dim=1 wire is refused instead (no consistent 1-D
+        # Coulomb gauge); tests/test_periodic_lowd_guards.py pins that.
         (2, -1.116738328690913),
         # 3D-periodic H2 with a molecular-limit GDF cutoff uses the
         # internally consistent native direct-truncated gauge, matching
@@ -377,7 +405,8 @@ def test_gamma_rks_gdf_converges_without_external_backend(functional):
         assert result.e_hf_exchange != pytest.approx(0.0)
 
 
-@pytest.mark.parametrize("dim", [1, 2, 3])
+# dim=1 is refused; tests/test_periodic_lowd_guards.py pins that.
+@pytest.mark.parametrize("dim", [2, 3])
 @pytest.mark.parametrize("functional", ["pbe", "b3lyp"])
 def test_gamma_rks_gdf_supports_periodic_dimensionalities(dim, functional):
     system, basis = _h2_dimensional_box(dim)
@@ -438,9 +467,11 @@ def test_run_periodic_job_rks_gdf_smoke(tmp_path):
     assert "fmixing_percent     = 30.0" in out.with_suffix(".out").read_text()
 
 
+# A dim=1 wire has no public ab initio route, so its "periodic length"
+# wording is no longer reachable through this driver.
 @pytest.mark.parametrize(
     "dim,measure_label",
-    [(1, "periodic length"), (2, "periodic area"), (3, "cell volume")],
+    [(2, "periodic area"), (3, "cell volume")],
 )
 def test_run_periodic_job_logs_periodic_dimensionality(
     tmp_path,
@@ -680,14 +711,21 @@ def test_run_periodic_job_rsgdf_tail_cutoff_fails_closed_off_gdf(tmp_path):
 
 
 def test_run_periodic_job_kpoints_gamma_rks_tail_cutoff_supported(tmp_path):
-    """Γ RKS at kpoints=(1,1,1) with rsgdf_tail_ke_cutoff now RUNS.
+    """Γ RKS at kpoints=(1,1,1) with rsgdf_tail_ke_cutoff RUNS, and says the
+    knob is obsolete rather than failing closed on it.
 
     Historically this failed closed: the Γ KS fast path fell back to the
     legacy molecular-limit gamma driver, which has no high-|G| tail
-    correction. Since the Finding-§4 Γ-KS routing fix, closed-shell Γ KS
-    delegates to run_pbc_gdf_rks (the run_pbc_gdf_rhf KS branch), which
-    honours the tail cutoff like the RHF path does — so the capability
-    exists and the loud refusal would be a regression in reverse.
+    correction, and a loud refusal would have been a regression in reverse.
+
+    What it does NOT assert any more is that the cutoff is honoured. Since
+    `bulk_sr` gave the general multi-k engine the Γ limit of the SR/LR route
+    (periodic_k_gdf.py:3719, :3770), this lands on that engine, whose SR/LR
+    fit has no separate high-|G| tail to extend: the request is accepted,
+    reported obsolete, and resolved to None. `rsgdf_g_precision` is the knob
+    that controls the raw integral error there. The positive capability is
+    still covered for RHF by
+    test_run_periodic_job_gamma_rhf_gdf_forwards_rsgdf_tail_cutoff (#283).
     """
     system, basis = _h2_box()
 
@@ -706,7 +744,35 @@ def test_run_periodic_job_kpoints_gamma_rks_tail_cutoff_supported(tmp_path):
         progress=False,
     )
     assert r.converged
-    assert r.backend == "native-gamma-gdf-via-k-gdf"
+    assert r.backend == "native-multi-k-gdf-gdf-rks"
+    # Accepted and obsoleted, not honoured: the SR/LR fit resolves it away.
+    assert r.rsgdf_tail_ke_cutoff is None
+
+
+def test_gamma_adapter_is_still_reached_by_the_non_rsgdf_methods():
+    """The Γ adapter did not go away when `bulk_sr` took Γ off the rsgdf route.
+
+    `bulk_sr` is `gdf_method == "rsgdf" and dim == 3`, so mdf and compcell at a
+    Γ mesh still go through `_wrap_gamma_gdf_result` and still carry
+    "native-gamma-gdf-via-k-gdf". Without this, re-pinning the two rsgdf tests
+    to the general-engine label would leave that adapter with no end-to-end
+    coverage at all -- every other use of the string in this suite is a
+    monkeypatched fake (#283).
+    """
+    from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
+
+    system, basis = _h2_box()
+    for gdf_method in ("mdf", "compcell"):
+        opts = vq.PeriodicRHFOptions()
+        opts.max_iter = 30
+        opts.conv_tol_energy = 1e-9
+        opts.initial_guess = vq.InitialGuess.HCORE
+        result = run_krhf_periodic_gdf(
+            system, basis, (1, 1, 1), opts, aux_basis="def2-svp-jk",
+            gdf_method=gdf_method, progress=False,
+        )
+        assert result.converged
+        assert result.backend == "native-gamma-gdf-via-k-gdf", gdf_method
 
 
 def test_run_periodic_job_gamma_rks_gdf_uses_pure_gdf_ks_backend(tmp_path):
@@ -743,19 +809,18 @@ def test_run_periodic_job_gamma_rks_gdf_uses_pure_gdf_ks_backend(tmp_path):
     assert r.s_squared == pytest.approx(0.0, abs=1e-12)
 
 
-def test_run_periodic_job_gamma_rhf_gdf_smearing_stays_on_legacy(tmp_path):
-    """Finite-T smearing at Γ keeps the legacy molecular-limit GDF driver:
-    run_pbc_gdf_rhf has no smearing, so the domain gate must fall back rather
-    than silently route a smeared job to a driver that ignores smearing.
+def test_run_periodic_job_gamma_rhf_gdf_smearing_runs_the_k_mesh_engine(tmp_path):
+    """Finite-T smearing at Γ runs the k-mesh engine at (1, 1, 1).
+
+    run_pbc_gdf_rhf has no smearing, so the smeared job must not reach it.
+    It used to fall back to the legacy Ewald-J driver instead, a different
+    Hamiltonian (no exchange divergence correction, #400); it now runs the
+    engine an explicit kpoints=(1, 1, 1) selects, with the same energy.
     """
     system, basis = _h2_box()
-    out = tmp_path / "h2-rhf-gdf-smear"
-    r = vq.run_periodic_job(
-        system,
-        basis,
+    common = dict(
         method="RHF",
         jk_method="gdf",
-        output=out,
         aux_basis="def2-svp-jk",
         max_iter=40,
         conv_tol_energy=1e-9,
@@ -763,9 +828,15 @@ def test_run_periodic_job_gamma_rhf_gdf_smearing_stays_on_legacy(tmp_path):
         write_molden_file=False,
         progress=False,
     )
+    r = vq.run_periodic_job(
+        system, basis, output=tmp_path / "h2-rhf-gdf-smear", **common)
+    explicit = vq.run_periodic_job(
+        system, basis, output=tmp_path / "h2-rhf-gdf-smear-111",
+        kpoints=(1, 1, 1), **common)
     assert r.converged
-    assert r.backend == "ewald-jk-fallback"
+    assert r.backend == "native-multi-k-gdf-gdf-rhf"
     assert r.smearing_temperature == pytest.approx(0.01)
+    assert r.energy == pytest.approx(explicit.energy, abs=1e-10)
 
 
 def test_legacy_gamma_gdf_rejects_held_class_before_scf():
@@ -910,12 +981,35 @@ def test_kpoints_gamma_equals_single_k_identity(method, tmp_path):
         progress=False,
     )
 
-    assert r1.converged and r2.converged
-    # Default Γ RHF/GDF now routes through run_pbc_gdf_rhf (exxdiv='ewald');
-    # the explicit (1,1,1) k-mesh delegates to the same driver via run_krhf,
-    # so the two agree on the exxdiv='ewald' energy (no molecular-limit gap).
+    r3 = vq.run_periodic_job(
+        system,
+        basis,
+        method=method,
+        output=tmp_path / "h2-k211",
+        kpoints=(2, 1, 1),
+        aux_basis="def2-svp-jk",
+        max_iter=30,
+        conv_tol_energy=1e-9,
+        initial_guess="HCORE",
+        write_molden_file=False,
+        progress=False,
+    )
+
+    assert r1.converged and r2.converged and r3.converged
+    # Default Γ RHF/GDF routes through run_pbc_gdf_rhf (exxdiv='ewald'). An
+    # explicit (1,1,1) mesh does NOT reach the dedicated Γ adapter: `bulk_sr`
+    # hands the Γ limit of the SR/LR route to the general multi-k engine
+    # (periodic_k_gdf.py:3719, :3770), so Γ is that engine's Nk=1 case and
+    # carries its label, exactly like the ROHF path
+    # (test_krohf_gamma_is_the_one_one_one_mesh). Pinning the label alone
+    # would not say that, so pin the routing it stands for (#283).
     assert r1.backend == "pbc-gdf-rsgdf"
-    assert r2.backend == "native-gamma-gdf-via-k-gdf"
+    assert r2.backend == "native-multi-k-gdf-gdf-rhf"
+    assert r2.backend == r3.backend
+    assert r1.backend != r2.backend
+    # The energy identity is therefore the stronger claim it looks like: two
+    # different drivers agreeing on the exxdiv='ewald' gauge, with no
+    # molecular-limit gap between them.
     assert r1.energy == pytest.approx(r2.energy, abs=1e-10)
 
 
@@ -1291,10 +1385,28 @@ def test_rsgdf_fails_closed_below_3d(dim):
     Hamiltonian is the mixed-boundary wire kernel
     (``vibeqc.periodic.ccm.lowd_scf.run_ccm_rhf_wire``, ``dim == 1``).
 
-    The ``bare`` algorithm does not build that mesh and still runs at ``dim < 3``.
+    The ``bare`` algorithm does not build that mesh and still runs at ``dim = 2``.
+    A ``dim = 1`` cell is refused before either algorithm is reached, because
+    its bare ``V_ne``/``E_nn`` sums diverge with the lattice-sum cutoff.
     """
     system, basis = _h2_dimensional_box(dim)
     opts = _opts()
+
+    if dim == 1:
+        for algorithm in ("rsgdf", "bare"):
+            with pytest.raises(
+                NotImplementedError,
+                match="no consistent Coulomb gauge for a dim = 1 cell",
+            ):
+                vq.run_rhf_periodic_gamma_gdf(
+                    system,
+                    basis,
+                    opts,
+                    aux_basis="def2-svp-jk",
+                    gdf_algorithm=algorithm,
+                    progress=False,
+                )
+        return
 
     with pytest.raises(NotImplementedError, match="transverse-collapsed"):
         vq.run_rhf_periodic_gamma_gdf(
@@ -1348,3 +1460,319 @@ def test_rsgdf_3d_scf_converges_with_known_error():
     delta_ha = abs(r_bare.energy - r_rsgdf.energy)
     assert delta_ha == pytest.approx(0.2306236417, abs=1e-3)
     assert r_rsgdf.energy < 0.0
+
+
+def _evaluated_gdf_he_setup(max_iter=80, temperature=0.0, iterative=False):
+    system = vq.PeriodicSystem(3, np.eye(3) * 24., [vq.Atom(2, [12., 12., 12.])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "6-31g")
+    opts = _opts(max_iter)
+    opts.initial_guess = vq.InitialGuess.PATOM if max_iter > 1 else vq.InitialGuess.HCORE
+    opts.smearing_temperature = temperature
+    opts.conv_tol_energy, opts.conv_tol_grad = 1e-11, 1e-8
+    opts.level_shift, opts.level_shift_warmup_cycles = .2, 2 if max_iter > 1 else 0
+    opts.use_davidson, opts.davidson_min_dim = iterative, 0
+    opts.davidson.conv_tol = 1e-12
+    return system, basis, opts
+
+
+@pytest.mark.parametrize("max_iter,temperature,iterative", [
+    (1, 0., False), (80, 0., False), (80, 0., True),
+    (1, .3, True), (80, .3, False), (80, .3, True)])
+def test_native_gdf_evaluated_state(monkeypatch, tmp_path, max_iter, temperature, iterative):
+    import json
+    import zipfile
+    from vibeqc import periodic_rhf_gdf as driver
+    from vibeqc.output import OutputPlan
+    from vibeqc.output.formats.qvf import write_qvf, qvf_wf_data, scf_history_from_result
+    from vibeqc.solvers import _scf
+
+    system, basis, opts = _evaluated_gdf_he_setup(max_iter, temperature, iterative)
+    builds, instances, originals, operators = [], [], [], []
+    init = driver._NativeGammaGDFRHFBuilder.__init__
+    call = driver._NativeGammaGDFRHFBuilder.__call__
+    solve = _scf.solve_operator
+
+    def capture_init(self, *args, **kwargs):
+        originals.append(args[0])
+        init(self, *args, **kwargs)
+        instances.append(self)
+
+    def capture_build(self, density):
+        state = call(self, density)
+        builds.append(state)
+        return state
+
+    def capture_solve(operator, *args, **kwargs):
+        operators.append(operator)
+        return solve(operator, *args, **kwargs)
+
+    monkeypatch.setattr(driver._NativeGammaGDFRHFBuilder, "__init__", capture_init)
+    monkeypatch.setattr(driver._NativeGammaGDFRHFBuilder, "__call__", capture_build)
+    monkeypatch.setattr(_scf, "solve_operator", capture_solve)
+    r = vq.run_rhf_periodic_gamma_gdf(system, basis, opts,
+        aux_basis="def2-svp-jk", fock_mixing=.15, progress=False)
+    state, builder = r.fock_build, instances[0]
+    assert r.converged == (max_iter > 1)
+    assert state is builds[-1]
+    assert len({b.source.identity for b in builds}) == 1
+    assert [b.generation for b in builds] == list(range(len(builds)))
+    assert r.energy == state.energy.total
+    assert r.free_energy == r.scf_trace[-1].energy
+    assert len(r.evaluated_build_history) == r.n_iter
+    assert r.evaluated_build_history[-1]["build_id"] == state.identity
+    assert r.run_fields["scf_trace_energy"] == "free_energy"
+    assert state.metric_electron_counts == pytest.approx((2.,), abs=1e-10)
+    np.testing.assert_allclose(r.density, (r.mo_coeffs*r.occupations)@r.mo_coeffs.T, atol=1e-12)
+    np.testing.assert_array_equal(r.fock, state.channels[0].operator.matrix)
+    np.testing.assert_allclose(r.mo_energies, np.diag(r.mo_coeffs.T@r.fock@r.mo_coeffs), atol=1e-12)
+    assert r.density_fixed_point_residual == pytest.approx(np.max(abs(r.next_density-r.density)))
+    assert r.e_electronic == pytest.approx(.5*np.einsum("ij,ij->", r.density, builder.hcore+r.fock), abs=1e-12)
+    assert r.e_coulomb == dict(state.energy.components)["coulomb"]
+    assert r.e_hf_exchange == dict(state.energy.components)["exchange"]
+    if temperature:
+        assert r.mo_coeffs.shape[1] == state.channels[0].operator.frame.retained_rank
+        assert min(r.occupations) > 1e-4
+        p = r.occupations / 2.
+        entropy = -2.*np.sum(p*np.log(p)+(1.-p)*np.log(1.-p))
+        assert r.entropy == pytest.approx(entropy, abs=1e-10)
+        assert r.free_energy == pytest.approx(r.energy-temperature*entropy, abs=1e-10)
+    assert operators[0].metadata.kind == "one_electron"
+    by_id = {b.identity:b for b in builds}
+    for op in operators[1:]:
+        parent = by_id[op.metadata.build_id]
+        assert op.frame is parent.channels[0].operator.frame
+        assert op.metadata.density_id == parent.density_id
+        if op.metadata.role == "solver":
+            assert op.metadata.modification
+    assert opts.davidson.n_eig == 0 and opts.davidson.guess_vectors.size == 0
+
+    stem = tmp_path/"gdf_rhf"
+    plan = OutputPlan.from_run_job_kwargs(output=stem, method="rhf", basis=basis.name, functional=None)
+    path = write_qvf(stem, plan, molecule=system.unit_cell_molecule(), system=system,
+        result=r, method="rhf", basis=basis.name, record_hostname=False,
+        wf_data=qvf_wf_data(r,basis,system.unit_cell_molecule()), scf_history=scf_history_from_result(r))
+    with zipfile.ZipFile(path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["provenance"]["run_fields"]["fock_build_id"] == state.identity
+    assert manifest["provenance"]["scf_energy"]["value"] == r.energy
+
+    direction = np.array([[.05, -.03], [-.03, -.02]])
+    step = 1e-5
+    plus, minus = builder(r.density+step*direction), builder(r.density-step*direction)
+    assert (plus.energy.total-minus.energy.total)/(2*step) == pytest.approx(
+        np.einsum("ij,ij->", r.fock, direction), abs=2e-9)
+    original_energy = state.energy.total
+    originals[0][:] = 0.
+    opts.lattice_opts.cutoff_bohr += 1.
+    # A completed fitted source owns values, independent of later mutable
+    # provider arrays and options; it does not recompute live integrals.
+    assert builder(r.density).energy.total == original_energy
+    with pytest.raises(ValueError):
+        builder.factors.setflags(write=True)
+    r.density[:] = 0.; r.fock[:] = 0.; r.overlap[:] = 0.; r.hcore[:] = 0.
+    assert state.metric_electron_counts == pytest.approx((2.,), abs=1e-10)
+    assert np.linalg.norm(state.channels[0].operator.matrix) > 0.
+
+
+def test_native_gdf_evaluated_state_rejects_zero_iterations():
+    system, basis, opts = _evaluated_gdf_he_setup(0)
+    with pytest.raises(ValueError, match="max_iter must be >= 1"):
+        vq.run_rhf_periodic_gamma_gdf(system, basis, opts, aux_basis="def2-svp-jk", progress=False)
+
+
+def _evaluated_gdf_rks_he_setup(functional, max_iter=80, temperature=0., iterative=False):
+    system, basis, _ = _evaluated_gdf_he_setup()
+    opts = _ks_opts(functional, max_iter)
+    opts.initial_guess = vq.InitialGuess.PATOM
+    opts.smearing_temperature = temperature
+    opts.conv_tol_energy, opts.conv_tol_grad = 1e-11, 1e-8
+    opts.level_shift, opts.level_shift_warmup_cycles = .2, 2 if max_iter > 1 else 0
+    opts.use_davidson, opts.davidson_min_dim = iterative, 0
+    opts.davidson.conv_tol = 1e-12
+    return system, basis, opts
+
+
+@pytest.mark.parametrize("functional,max_iter,temperature,iterative", [
+    ("pbe", 80, 0., False), ("b3lyp", 80, 0., False),
+    ("b3lyp", 80, 0., True), ("pbe", 80, .3, True),
+    ("b3lyp", 1, 0., False), ("pbe", 1, .3, True)])
+def test_native_gdf_rks_evaluated_state(monkeypatch, tmp_path, functional, max_iter,
+                                        temperature, iterative):
+    import json
+    import zipfile
+    from vibeqc import periodic_rhf_gdf as driver
+    from vibeqc.output import OutputPlan
+    from vibeqc.output.formats.qvf import write_qvf, qvf_wf_data, scf_history_from_result
+    from vibeqc.solvers import _scf
+
+    system, basis, opts = _evaluated_gdf_rks_he_setup(functional, max_iter, temperature, iterative)
+    instances, builds, operators, xc_densities = [], [], [], []
+    init, call = driver._NativeGammaGDFRKSBuilder.__init__, driver._NativeGammaGDFRKSBuilder.__call__
+    solve, xc_call = _scf.solve_operator, driver.build_xc_periodic
+
+    def capture_init(self, *args, **kwargs):
+        init(self, *args, **kwargs)
+        instances.append(self)
+
+    def capture_build(self, density, **kwargs):
+        state = call(self, density, **kwargs)
+        builds.append(state)
+        return state
+
+    def capture_solve(operator, *args, **kwargs):
+        operators.append(operator)
+        return solve(operator, *args, **kwargs)
+
+    def capture_xc(basis, system, grid, func, density_set, lattice_options):
+        xc_densities.append(np.real(vq.bloch_sum(density_set, np.zeros(3))))
+        return xc_call(basis, system, grid, func, density_set, lattice_options)
+
+    monkeypatch.setattr(driver._NativeGammaGDFRKSBuilder, "__init__", capture_init)
+    monkeypatch.setattr(driver._NativeGammaGDFRKSBuilder, "__call__", capture_build)
+    monkeypatch.setattr(_scf, "solve_operator", capture_solve)
+    monkeypatch.setattr(driver, "build_xc_periodic", capture_xc)
+    r = vq.run_rhf_periodic_gamma_gdf(system, basis, opts,
+        aux_basis="def2-svp-jk", fock_mixing=.15, progress=False)
+    state, builder = r.fock_build, instances[0]
+    ks_builds = [b for b in builds if b.method == "RKS"]
+    assert r.converged == (max_iter > 1)
+    assert state is builds[-1] and state.method == "RKS"
+    assert len(xc_densities) == len(ks_builds)
+    for b, d in zip(ks_builds, xc_densities):
+        np.testing.assert_array_equal(b.channels[0].density, d)
+    seed = builds[0]
+    assert seed.method == "RHF" and seed.source == builder.hf_builder.source
+    assert seed.source != state.source and "xc" not in dict(seed.energy.components)
+    assert [b.generation for b in ks_builds] == list(range(len(ks_builds)))
+    assert len({b.source.identity for b in ks_builds}) == 1
+    assert r.energy == state.energy.total
+    assert r.free_energy == r.scf_trace[-1].energy
+    assert r.e_xc == dict(state.energy.components)["xc"]
+    assert r.e_xc < 0. and r.e_hf_exchange <= 0.
+    assert (r.e_hf_exchange == 0.) == (functional == "pbe")
+    assert abs(r.e_electronic-.5*np.einsum("ij,ij->", r.density, builder.hcore+r.fock)) > 1e-3
+    assert state.metric_electron_counts == pytest.approx((2.,), abs=1e-10)
+    np.testing.assert_allclose(r.density, (r.mo_coeffs*r.occupations)@r.mo_coeffs.T, atol=1e-12)
+    np.testing.assert_array_equal(r.fock, state.channels[0].operator.matrix)
+    np.testing.assert_allclose(r.mo_energies, np.diag(r.mo_coeffs.T@r.fock@r.mo_coeffs), atol=1e-12)
+    assert r.evaluated_build_history[-1]["build_id"] == state.identity
+    assert r.density_fixed_point_residual == pytest.approx(np.max(abs(r.next_density-r.density)))
+    if temperature:
+        assert min(r.occupations) > 1e-4
+        p = r.occupations / 2.
+        entropy = -2.*np.sum(p*np.log(p)+(1.-p)*np.log(1.-p))
+        assert r.entropy == pytest.approx(entropy, abs=1e-10)
+        assert r.free_energy == pytest.approx(r.energy-temperature*entropy, abs=1e-10)
+    by_id = {b.identity:b for b in builds}
+    assert operators[0].metadata.kind == "one_electron"
+    assert operators[1].metadata.kind == "fock"
+    for op in operators[1:]:
+        parent = by_id[op.metadata.build_id]
+        assert op.metadata.density_id == parent.density_id
+        assert op.frame is parent.channels[0].operator.frame
+        assert op.metadata.kind == ("fock" if parent.method == "RHF" else "ks")
+    assert opts.davidson.n_eig == 0 and opts.davidson.guess_vectors.size == 0
+
+    stem = tmp_path/"gdf_rks"
+    plan = OutputPlan.from_run_job_kwargs(output=stem, method="rks", basis=basis.name, functional=functional)
+    path = write_qvf(stem, plan, molecule=system.unit_cell_molecule(), system=system,
+        result=r, method="rks", basis=basis.name, record_hostname=False,
+        wf_data=qvf_wf_data(r,basis,system.unit_cell_molecule()), scf_history=scf_history_from_result(r))
+    with zipfile.ZipFile(path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["provenance"]["run_fields"]["fock_build_id"] == state.identity
+    assert manifest["provenance"]["scf_energy"]["value"] == r.energy
+
+    direction = np.array([[.05, -.03], [-.03, -.02]])
+    step = 1e-5
+    plus, minus = builder(r.density+step*direction), builder(r.density-step*direction)
+    assert (plus.energy.total-minus.energy.total)/(2*step) == pytest.approx(
+        np.einsum("ij,ij->", r.fock, direction), abs=2e-8)
+    old_functional = builder.functional
+    builder.functional = vq.Functional("pbe0", 1)
+    with pytest.raises(ValueError, match="numerical source changed"):
+        builder(r.density)
+    builder.functional = old_functional
+    opts.lattice_opts.cutoff_bohr += 1.
+    with pytest.raises(ValueError, match="numerical source changed"):
+        builder(r.density)
+    r.density[:] = 0.; r.fock[:] = 0.; r.overlap[:] = 0.; r.hcore[:] = 0.
+    assert state.metric_electron_counts == pytest.approx((2.,), abs=1e-10)
+    assert state.energy.total != 0.
+
+
+def test_native_gdf_rks_builder_declines_external_xc():
+    from types import SimpleNamespace
+    from vibeqc.periodic_rhf_gdf import _NativeGammaGDFRKSBuilder
+
+    # Source admission precedes access to any HF or XC provider workspace.
+    with pytest.raises(NotImplementedError, match="require a libxc functional"):
+        _NativeGammaGDFRKSBuilder(None, None, None, None,
+            SimpleNamespace(is_external=True), None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# #468: a compact dim=3 cell runs the GDF Hamiltonian at Gamma.
+# ---------------------------------------------------------------------------
+
+def _h2_cube_468():
+    system = vq.PeriodicSystem(
+        3, 6.0 * np.eye(3), [vq.Atom(1, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 0.0, 1.4])])
+    return system, vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+
+
+def _tight(cls=None):
+    options = (cls or vq.PeriodicRHFOptions)()
+    options.conv_tol_energy = 1e-10
+    return options
+
+
+def test_bulk_gamma_gdf_runs_the_ewald_exchange_k_gdf_hamiltonian():
+    """The 3-D branch used molecular-limit exchange (images inside the
+    cutoff, no divergence correction): 2.6 to 3.1 Ha low on MgO and Al2O3.
+    A bulk cell now equals run_krhf_periodic_gdf at (1, 1, 1), says so in
+    a GammaExchangeRouteWarning, and returns real Gamma orbitals."""
+    from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
+    from vibeqc.periodic_rhf_gdf import GammaExchangeRouteWarning
+
+    system, basis = _h2_cube_468()
+    with pytest.warns(GammaExchangeRouteWarning, match="exxdiv='ewald'"):
+        result = vq.run_rhf_periodic_gamma_gdf(system, basis, _tight(), progress=False)
+    reference = run_krhf_periodic_gdf(system, basis, (1, 1, 1), _tight(), progress=False)
+    assert result.converged
+    assert result.energy == pytest.approx(reference.energy, abs=1e-12)
+    assert result.exchange_q0 == "BvK-ewald"
+    c, s, f, e = result.mo_coeffs, result.overlap, result.fock, result.mo_energies
+    assert not np.iscomplexobj(c)
+    np.testing.assert_allclose(c.T @ s @ c, np.eye(c.shape[1]), atol=1e-10)
+    np.testing.assert_allclose(c.T @ f @ c, np.diag(e), atol=1e-10)
+    # The private torus seam keeps molecular-limit exchange, and warns.
+    with pytest.warns(GammaExchangeRouteWarning, match="molecular-limit"):
+        legacy = vq.run_rhf_periodic_gamma_gdf(
+            system, basis, _tight(), progress=False, _force_ewald_jk=True)
+    assert legacy.exchange_q0 == "molecular-limit"
+    assert abs(legacy.energy - result.energy) > 1e-2
+
+
+def test_bulk_gamma_gdf_functional_with_rhf_options_uses_the_periodic_xc_grid():
+    """A functional with PeriodicRHFOptions runs on PeriodicKSOptions, so
+    the k-mesh engine does not integrate XC on a molecular grid (#505)."""
+    from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
+    from vibeqc.periodic_rhf_gdf import GammaExchangeRouteWarning
+
+    system, basis = _h2_cube_468()
+    with pytest.warns(GammaExchangeRouteWarning, match="PeriodicKSOptions"):
+        result = vq.run_rks_periodic_gamma_gdf(
+            system, basis, _tight(), functional="pbe", progress=False)
+    reference = run_krhf_periodic_gdf(
+        system, basis, (1, 1, 1), _tight(vq.PeriodicKSOptions), functional="pbe",
+        progress=False)
+    assert result.energy == pytest.approx(reference.energy, abs=1e-12)
+    assert -1.3 < result.energy < -1.1
+
+
+def test_bulk_gamma_gdf_refuses_fock_symmetrisation():
+    system, basis = _h2_cube_468()
+    with pytest.raises(NotImplementedError, match="symmetry_stabilize"):
+        vq.run_rhf_periodic_gamma_gdf(
+            system, basis, _tight(), progress=False, symmetry_stabilize=True)
