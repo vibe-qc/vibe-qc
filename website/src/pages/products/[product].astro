@@ -5,13 +5,11 @@ import ProductWordmark from '../../components/ProductWordmark.astro';
 import Footer from '../../components/Footer.astro';
 import OrbitalField from '../../components/OrbitalField.astro';
 import { products } from '../../data/products.mjs';
-import { repositories } from '../../data/repositories.mjs';
 
 export function getStaticPaths() {
   return products.map(product => ({ params: { product: product.id }, props: { product } }));
 }
 const { product } = Astro.props;
-const repository = repositories.find(item => item.id === product.id);
 const base = import.meta.env.BASE_URL;
 const artwork = {
   'vibe-qc': { social: 'vibe-qc-product-social.png', alt: 'vibe-qc: Quantum chemistry. Molecules to solids.' },
@@ -69,9 +67,9 @@ const artwork = {
           <a href={product.docs}>Documentation {product.docsPending ? '(publishing soon)' : '↗'}</a>
           {product.docsPending && <p>The companion documentation site is being brought online. Its source README has the installation instructions available today.</p>}
           {product.guides.map(([label, href]) => <a href={href}>{label} ↗</a>)}
+          {product.id === 'vibe-qc' && <a href={`${base}methods/`}>Methods and status →</a>}
           <a href={`${product.repository}/releases`}>Independent releases ↗</a>
           <a href={product.repository}>GitHub source ↗</a>
-          <a href={repository.github}>GitHub mirror ↗</a>
           <a href={`${product.repository}/tags`}>Tagged source downloads ↗</a>
         </aside>
       </div>

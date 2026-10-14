@@ -1,3 +1,9 @@
+# HISTORICAL DIAGNOSTIC, NO LONGER RUNNABLE.
+# This script imports the module vibeqc.xc_lattice,
+# which no longer exists in vibeqc (the PySCF-backed GDF spike it
+# probed was retired). It is retained unchanged as a record of the
+# diagnostic; see examples/debug/README.md, "Historical, no longer
+# runnable".
 """LiH conventional rocksalt — iter-1 energy decomposition.
 
 Goal: localise which component of the SCF total is responsible for

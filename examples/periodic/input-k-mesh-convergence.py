@@ -1,4 +1,5 @@
-"""K-mesh convergence demo — exercises every ``vibeqc.KPoints`` flavor.
+"""K-mesh convergence demo on a cubic Mg cell at RHF / STO-3G: exercises every
+``vibeqc.KPoints`` flavor.
 
 Walks a small cubic Mg cell through:
 

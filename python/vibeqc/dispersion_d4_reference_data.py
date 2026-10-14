@@ -12,19 +12,21 @@ For each reference system, the model needs:
 * **Reference charge** ``q_ref,i`` -- the EEQ partial charge of the
   target atom in the reference molecule, used by the charge-scaling
   factor ζ(q) (:func:`vibeqc.dispersion_d4_model.zeta_charge_scaling`).
-* **Reference coordination number** ``cn_ref,i`` -- the nominal CN
-  of the target atom (from the catalogue; the same as
-  ``ReferenceSystem.nominal_cn``).
+* **Reference coordination number** ``cn_ref,i`` -- the CN of the target
+  atom. The bundled dataset uses the catalogue's nominal CN.
+* **Gaussian counts** ``n_gaussian`` -- optional positive integer counts
+  for each reference's CN interpolation. These retain nominal-environment
+  multiplicities when ``cn_ref,i`` contains continuous covalent CNs.
 
 This module provides the storage format (:class:`D4ReferenceDataset`)
 and the generation machinery -- run the D4b-2 pipeline
 (:func:`vibeqc.molecular_c6`) over the D4b-3 catalogue.
 
-Dataset convention -- per-atom Eq.-6 extraction (2026-06-26)
+Dataset convention -- per-atom Eq.-5 extraction (2026-06-26)
 -----------------------------------------------------------
 The generator stores the **per-atom** reference polarizability
 ``a_ref,A(iw)`` extracted from each reference host's whole-molecule
-``a(iw)`` via Eq. 6 of Caldeweyher et al., *J. Chem. Phys.* **150**,
+``a(iw)`` via Eq. 5 of Caldeweyher et al., *J. Chem. Phys.* **150**,
 154122 (2019), doi:10.1063/1.5090222. For a reference host containing
 ``m`` equivalent target atoms of element A and any number of partner
 atoms of other elements, subtract each partner's charge-scaled
@@ -66,14 +68,15 @@ the O/N polarizabilities -- under-bound by ~15 % at the HF level -- up
 to the reference. With the corrected r4r2 / C8 table
 (:func:`vibeqc.dispersion_d4_model.r4r2_val`) the native pairwise C6
 agree with dftd4 to ~5 % (CH₄) / ~8 % (H₂O) at aug-cc-pVDZ and the
-CH₄-dimer D4 energy to <0.05 kcal/mol -- the handover Sec. 5 bars are
+CH₄-dimer D4 energy to <0.05 kcal/mol -- the original investigation bars are
 met and the native backend is **un-gated** (no
 :class:`~vibeqc.dispersion_d4.D4NativeExperimentalWarning`). The
 ``dftd4`` backend remains the default for full periodic-table coverage
-(this catalogue covers H-Ne).
+(the bundled generation catalogue covers H-Ne; the frozen runtime dataset
+also includes Cu from the separately recorded copper protocol).
 
 Re-derivation stays first-principles per the 2026-05 maintainer
-decision (``handovers/HANDOVER_D4_NATIVE.md`` Sec. 1) -- dftd4's LGPL-3.0
+decision (the original investigation) -- dftd4's LGPL-3.0
 reference C6 table is *not* transcribed; it is the validation target
 only. (The small per-element r4r2 / EEQ / BJ-damping parameter tables
 are published scientific constants, transcribed with citation per
@@ -95,8 +98,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Sequence, TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from .dispersion_d4_reference_systems import ReferenceSystem
 
 __all__ = [
     "D4ReferenceDataset",
@@ -129,6 +136,24 @@ class _PerElement:
     # Pre-computed reference C6 coefficients between this element's
     # reference systems, shape (n_ref, n_ref).
     c6_self: np.ndarray
+
+    # Optional per-reference Gaussian counts (Caldeweyher et al. 2019,
+    # Eq.8). None retains the legacy policy of grouping rounded cns.
+    n_gaussian: list[int] | None = None
+
+    def __post_init__(self) -> None:
+        if self.n_gaussian is not None:
+            counts = np.asarray(self.n_gaussian, dtype=object)
+            if counts.shape != (len(self.cns),) or any(
+                not isinstance(n, (int, np.integer))
+                or isinstance(n, (bool, np.bool_)) or n < 1
+                for n in counts.flat
+            ):
+                raise ValueError(
+                    f"D4 reference Z={self.z}: n_gaussian must contain "
+                    "one positive integer per reference"
+                )
+            self.n_gaussian = [int(n) for n in counts]
 
     @property
     def n_ref(self) -> int:
@@ -169,6 +194,10 @@ class D4ReferenceDataset:
         """Reference EEQ charges for element ``z``."""
         return self.elements[z].qs
 
+    def get_n_gaussian(self, z: int) -> list[int] | None:
+        """Explicit Gaussian counts, or None for rounded-CN grouping."""
+        return self.elements[z].n_gaussian
+
     def get_c6_ref(self, za: int, ia: int, zb: int, jb: int) -> float:
         """Reference C6 between reference system ``ia`` of element
         ``za`` and reference system ``jb`` of element ``zb``."""
@@ -197,6 +226,8 @@ class D4ReferenceDataset:
                 "alpha_iw": e.alpha_iw.tolist(),
                 "c6_self": e.c6_self.tolist(),
             }
+            if e.n_gaussian is not None:
+                elem_dict[str(z)]["n_gaussian"] = list(e.n_gaussian)
         cross_dict = {}
         for (za, zb), mat in self.c6_cross.items():
             cross_dict[f"{za},{zb}"] = mat.tolist()
@@ -214,6 +245,7 @@ class D4ReferenceDataset:
                 qs=ed["qs"],
                 alpha_iw=np.array(ed["alpha_iw"], dtype=float),
                 c6_self=np.array(ed["c6_self"], dtype=float),
+                n_gaussian=ed.get("n_gaussian"),
             )
         c6_cross = {}
         for key_str, mat in d.get("c6_cross", {}).items():
@@ -245,46 +277,48 @@ def generate_reference_dataset(
     n_grid: int = N_GRID_POINTS,
     omega_scale: float = 0.5,
     verbose: bool = True,
+    reference_systems: Sequence["ReferenceSystem"] | None = None,
 ) -> D4ReferenceDataset:
     """Run the full reference-data generation pipeline.
 
-    The pipeline performs the per-atom Eq.-6 extraction (Caldeweyher
+    The pipeline performs the per-atom Eq.-5 extraction (Caldeweyher
     et al. 2019; see module docstring): each reference host's
     whole-molecule ``a(iw)`` is partitioned to the target atom by
     subtracting the charge-scaled canonical atomic references of its
     partner atoms. The result is a per-atom reference dataset.
 
     The molecular ``a(iw)`` is the **coupled CPKS / TD-DFT (adiabatic)**
-    response of an RKS reference at ``functional``
+    response of an RKS or UKS reference at ``functional``
     (:func:`vibeqc.dispersion_d4_refdata.coupled_polarizability_imag_freq_dft`),
     *not* TD-HF. The correlation it carries is what lifts the O/N
     polarizabilities up to the level dftd4's PBE38 reference was built
     at, so the resulting reference C6 meet the dftd4 parity bars
-    (handover Sec. 5: ~10 % pairwise C6, sub-0.1 kcal/mol dimer). The
+    (historical design record Sec. 5: ~10 % pairwise C6, sub-0.1 kcal/mol dimer). The
     default ``functional="pbe38"`` (37.5 % exact exchange) matches
-    dftd4's own reference protocol; ``basis_name="aug-cc-pvdz"`` is the
-    validated production setting. Re-derivation stays first-principles
+    dftd4's own reference protocol. The frozen light-element dataset uses
+    ``basis_name="aug-cc-pvtz"``; the less expensive generation default
+    remains ``"aug-cc-pvdz"``. Re-derivation stays first-principles
     (CLAUDE.md s1) -- dftd4's reference C6 table is never transcribed.
 
     For every reference system in the D4b-3 catalogue
     (:mod:`vibeqc.dispersion_d4_reference_systems`):
 
     1. Build the host molecule.
-    2. Run RKS -> coupled CPKS a(iw) on the imaginary-frequency grid ->
+    2. Run RKS/UKS -> coupled response a(iw) on the imaginary-frequency grid ->
        molecular isotropic ``a(iw)``.
     3. Compute EEQ charges (every atom; the target's is ``q_ref``).
 
     Then build the canonical atomic references (H from H₂, noble gases
     from their free atom, B/C/N/O/F from their pure hydride), extract
-    the per-atom ``a_ref(iw)`` for every system via the Eq.-6 partner
+    the per-atom ``a_ref(iw)`` for every system via the Eq.-5 partner
     subtraction, and pre-compute the intra-element and cross-element
     reference C6 coefficients via Casimir-Polder integration.
 
     Parameters
     ----------
     basis_name
-        Orbital basis for the RKS reference and CPKS response. The
-        production default ``"aug-cc-pvdz"`` (diffuse functions matter
+        Orbital basis for the SCF reference and coupled response. The
+        generation default ``"aug-cc-pvdz"`` (diffuse functions matter
         for quantitative polarizabilities) is the validated setting;
         a smaller basis (e.g. ``"def2-svp"``) is faster but does not
         meet the parity bars.
@@ -298,6 +332,14 @@ def generate_reference_dataset(
     omega_scale
         Grid scale parameter -- see
         :func:`dispersion_d4_refdata.imaginary_frequency_grid`.
+    reference_systems
+        Optional explicit catalogue, including all partner-element canonical
+        references needed for extraction. Defaults to the bundled catalogue.
+        Singlets use RKS; higher multiplicities use UKS with a spin-resolved
+        response and a strict SCF gradient threshold. A unique free-atom
+        host supplies an element's canonical reference when present;
+        otherwise a pure hydride is required. Hydrogen retains its H2
+        canonical reference. Custom catalogues do not update bundled data.
 
     Returns
     -------
@@ -305,16 +347,25 @@ def generate_reference_dataset(
         The complete dataset, ready to be saved or consumed directly.
     """
     # Deferred imports to avoid circularity at module level.
-    from ._vibeqc_core import RKSOptions, eeq_charges, run_rks
+    from ._vibeqc_core import RKSOptions, UKSOptions, eeq_charges, run_rks, run_uks
     from .dispersion_d4_refdata import (
         casimir_polder_c6,
         coupled_polarizability_imag_freq_dft,
+        coupled_polarizability_imag_freq_uks,
         imaginary_frequency_grid,
     )
     from .dispersion_d4_reference_systems import (
         all_reference_systems,
         build_molecule,
+        ReferenceSystem,
     )
+
+    references = tuple(all_reference_systems() if reference_systems is None
+                       else reference_systems)
+    if not references or not all(isinstance(ref, ReferenceSystem) for ref in references):
+        raise ValueError("reference_systems must contain ReferenceSystem records")
+    if len({ref.label for ref in references}) != len(references):
+        raise ValueError("reference-system labels must be unique")
 
     _ensure_functional_registered(functional)
 
@@ -328,29 +379,38 @@ def generate_reference_dataset(
     apply_ks_grid_default(rks_opts, grid_level)
     rks_opts.functional = functional
     rks_opts.conv_tol_energy = 1.0e-10
+    uks_opts = UKSOptions()
+    apply_ks_grid_default(uks_opts, grid_level)
+    uks_opts.functional = functional
+    uks_opts.conv_tol_energy = 1.0e-12
+    uks_opts.conv_tol_grad = 1.0e-10
 
     # ---- Phase 1: collect per-reference-system molecular a(iw) and
-    # the EEQ charge of EVERY atom (partners are needed for the Eq.-6
+    # the EEQ charge of EVERY atom (partners are needed for the Eq.-5
     # extraction; the target's is q_ref). ----
     systems: list[dict] = []
-    for ref in all_reference_systems():
+    for ref in references:
         if verbose:
             print(f"  {ref.label:20s} ...", end=" ", flush=True)
 
         mol = build_molecule(ref)
         basis = _resolve_basis(basis_name, mol)
 
-        # RKS reference + coupled CPKS (TD-DFT adiabatic) a(iw).
-        rks = run_rks(mol, basis, rks_opts)
-        if not rks.converged:
+        unrestricted = ref.multiplicity != 1
+        options = uks_opts if unrestricted else rks_opts
+        scf = (run_uks if unrestricted else run_rks)(mol, basis, options)
+        if not scf.converged:
             raise RuntimeError(
-                f"RKS did not converge for {ref.label} (n_iter={rks.n_iter})."
+                f"{'UKS' if unrestricted else 'RKS'} did not converge for "
+                f"{ref.label} (n_iter={scf.n_iter})."
             )
-        alpha = coupled_polarizability_imag_freq_dft(
-            rks, basis, mol, omegas, functional, grid_options=rks_opts.grid)
+        response = (coupled_polarizability_imag_freq_uks if unrestricted
+                    else coupled_polarizability_imag_freq_dft)
+        alpha = response(scf, basis, mol, omegas, functional,
+                         grid_options=options.grid)
 
         # EEQ charge of every atom in the host.
-        charges = np.asarray(eeq_charges(mol).charges, dtype=float)
+        charges = np.asarray(eeq_charges(mol, total_charge=ref.charge).charges, dtype=float)
         zs = [atom.Z for atom in mol.atoms]
 
         if verbose:
@@ -367,7 +427,7 @@ def generate_reference_dataset(
             }
         )
 
-    # ---- Phase 1b: per-atom Eq.-6 extraction ----
+    # ---- Phase 1b: per-atom Eq.-5 extraction ----
     # Build canonical atomic references, then partition every host's
     # molecular a(iw) onto its target atom (see module docstring).
     canon = _build_canonical_references(systems)
@@ -482,7 +542,7 @@ def _ensure_functional_registered(functional: str) -> None:
     )
 
 
-# ---- Per-atom Eq.-6 extraction helpers ----
+# ---- Per-atom Eq.-5 extraction helpers ----
 
 
 def _num_target_atoms(system: dict) -> int:
@@ -562,9 +622,13 @@ def _build_canonical_references(
             m = _num_target_atoms(host)
             q_ref = float(host["charges"][host["ref"].target_index])
             canon[1] = (host["alpha"] / m, q_ref)
-        elif len(hosts) == 1 and _host_is_free_atom(hosts[0]):
-            s = hosts[0]
-            canon[z] = (s["alpha"].copy(), float(s["charges"][s["ref"].target_index]))
+        else:
+            atoms = [s for s in hosts if _host_is_free_atom(s)]
+            if len(atoms) > 1:
+                raise ValueError(f"ambiguous canonical free-atom references for Z={z}")
+            if atoms:
+                s = atoms[0]
+                canon[z] = (s["alpha"].copy(), float(s["charges"][s["ref"].target_index]))
 
     # Pass 2: heavy elements (B, C, N, O, F) -- from the pure-hydride
     # host (all partners are H), subtracting the canonical H reference.
@@ -607,7 +671,7 @@ def _extract_atom_alpha(
     canon: dict[int, tuple[np.ndarray, float]],
 ) -> np.ndarray:
     """Per-atom reference ``a_ref,A(iw)`` for one reference host, via
-    the Eq.-6 partner subtraction (Caldeweyher 2019; module docstring).
+    the Eq.-5 partner subtraction (Caldeweyher 2019; module docstring).
 
         a_ref,A = [ a(host) - Σ_{j: Z_j≠A} ζ(q_j; q_ref,P) . a_canon,P ] / m
 

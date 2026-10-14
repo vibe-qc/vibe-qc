@@ -1,6 +1,6 @@
 """Pure-RKS exact-FT J retirement regressions (2026-07-18).
 
-Maintainer ruling 2026-07-13 (HANDOVER_BIPOLE_PRODUCTION.md): once the M4b
+Maintainer ruling 2026-07-13 (the original investigation): once the M4b
 interaction-resolved SR screening and the M5 padded image domain landed,
 pure semilocal RKS routes its Hartree J through the same padded SR+LR erfc
 composition as every other BIPOLE route, and the exact analytic-FT Ewald
@@ -109,8 +109,19 @@ def _run(system, basis, opts, **kwargs):
 # -1.121196859728) within the unchanged 5e-9 Ha tolerance; kinetic,
 # nuclear-attraction and Coulomb terms stay unchanged. These remain
 # implementation regression anchors, not independent grid-limit energies.
-E_H2_SVWN_SRLR = -1.1211921387820452
-E_H2_SVWN_EXACT_FT = -1.121192800449332
+#
+# 2026-10-12, #503: the physical pair domain, the ab initio default since
+# 3a7d097f (#316), bounds the padded erfc traversal by pair-centre
+# separation instead of the origin ball. On this cell that removes the
+# 6.5995e-7 Ha route difference entirely: the padded SR+LR composition and
+# the exact-FT oracle now agree to 8e-12 Ha (-1.1211929603723623 vs
+# -1.1211929603642383). ``historical_domain=True`` reproduces the previous
+# pins bit for bit on the same core, so they are kept below as the
+# index-ball anchors and the oracle test still measures that difference.
+E_H2_SVWN_SRLR = -1.1211929603723623
+E_H2_SVWN_EXACT_FT = -1.1211929603642383
+E_H2_SVWN_SRLR_HISTORICAL = -1.1211921387820452
+E_H2_SVWN_EXACT_FT_HISTORICAL = -1.121192800449332
 
 
 def test_pure_rks_default_routes_srlr_with_padded_extent():
@@ -137,8 +148,25 @@ def test_exact_ft_oracle_reproduces_historical_route():
     # No erfc J traversal -> no M5 image extent on the oracle.
     assert res.sr_image_extent_bohr is None
     assert res.energy == pytest.approx(E_H2_SVWN_EXACT_FT, abs=5e-9)
-    # The two routes are close on a soft covalent cell but NOT identical.
-    assert res.energy != pytest.approx(E_H2_SVWN_SRLR, abs=1e-8)
+    # On the physical pair domain the padded SR+LR composition reproduces
+    # the exact FT on this soft covalent cell (8e-12 Ha measured); the
+    # historical index ball is where the two routes differ, by 6.5995e-7
+    # Ha, and that difference is what distinguishes the oracle from the
+    # production composition (#503).
+    assert res.energy == pytest.approx(E_H2_SVWN_SRLR, abs=1e-10)
+    historical_srlr = _run(system, basis, _ks_opts(), historical_domain=True)
+    historical_ft = _run(
+        system, basis, _ks_opts(), historical_domain=True, use_exact_ft_j=True
+    )
+    assert historical_srlr.energy == pytest.approx(
+        E_H2_SVWN_SRLR_HISTORICAL, abs=5e-9
+    )
+    assert historical_ft.energy == pytest.approx(
+        E_H2_SVWN_EXACT_FT_HISTORICAL, abs=5e-9
+    )
+    assert historical_ft.energy - historical_srlr.energy == pytest.approx(
+        -6.5995e-7, abs=1e-8
+    )
 
 
 def test_exact_ft_oracle_fails_closed_on_hybrids():
@@ -157,6 +185,9 @@ def test_exact_ft_oracle_fails_closed_on_screened_hybrids():
 
 def test_exact_ft_oracle_fails_closed_on_legacy_gauge():
     system, basis = _h2_box()
+    # The physical pair default (#316) refuses the legacy gauge before the
+    # oracle check; replay the historical operator so this still reaches the
+    # oracle refusal it pins (#503).
     with pytest.raises(ValueError, match="corrected"):
         _run(
             system,
@@ -164,6 +195,7 @@ def test_exact_ft_oracle_fails_closed_on_legacy_gauge():
             _ks_opts(),
             use_exchange_ewald_split=False,
             use_exact_ft_j=True,
+            historical_domain=True,
         )
 
 

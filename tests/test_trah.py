@@ -27,12 +27,17 @@ import pytest
 
 from vibeqc import (
     BasisSet,
+    InitialGuess,
     RHFOptions,
+    RKSOptions,
     SCFAccelerator,
     TRAHOptions,
     UHFOptions,
+    UKSOptions,
     run_rhf,
+    run_rks,
     run_uhf,
+    run_uks,
 )
 
 from .conftest import ANGSTROM_TO_BOHR, make_molecule
@@ -212,8 +217,12 @@ def test_trah_level_shift_surfaces_in_scf_trace(h2o_basis):
     assert all(it.trah_level_shift == 0.0 for it in r_diis.scf_trace)
 
     # TRAH with a tiny capped radius — forces level-shifted boundary
-    # steps once the gradient drops below trah_threshold.
+    # steps once the gradient drops below trah_threshold. HCORE starts far
+    # enough out for the steps to reach the boundary; from the default
+    # atomic seed the first TRAH step is already interior. (Before #426 a
+    # bogus first step from the Hcore frame supplied the shift here.)
     o_trah = RHFOptions()
+    o_trah.initial_guess = InitialGuess.HCORE
     o_trah.trah_threshold = 1.0
     o_trah.conv_tol_energy = 1e-10
     o_trah.conv_tol_grad = 1e-7
@@ -343,3 +352,52 @@ def test_trah_wins_over_soscf_when_both_set(h2o_basis):
     # TRAH records CG iters in the trace (shared with Newton); if SOSCF
     # had won, no CG iters would be recorded.
     assert any(it.newton_cg_iter > 0 for it in r.scf_trace)
+
+
+# ---------------------------------------------------------------------------
+# #426: a converged READ seed must survive the first second-order step
+# ---------------------------------------------------------------------------
+
+_SEEDED_DRIVERS = {
+    "rhf": (RHFOptions, run_rhf, _h2o_atoms, 1, None),
+    "rks": (RKSOptions, run_rks, _h2o_atoms, 1, "pbe"),
+    "uhf": (UHFOptions, run_uhf, _oh_radical_atoms, 2, None),
+    "uks": (UKSOptions, run_uks, _oh_radical_atoms, 2, "pbe"),
+}
+
+
+@pytest.mark.parametrize("driver", sorted(_SEEDED_DRIVERS))
+@pytest.mark.parametrize("phase", ["trah", "newton", "soscf"])
+def test_second_order_keeps_converged_read_seed(driver, phase):
+    """A READ seed carries a density but no orbitals, so the MO frame the
+    driver starts from is Hcore's eigenbasis. A second-order step at
+    iteration 1 (the seed's gradient is already below the threshold)
+    rotated that frame and threw the seed away: +4 Ha on water, +3 Ha on
+    OH (#426). The first step must wait for MOs of the seed density.
+    """
+    options_cls, run, atoms, mult, functional = _SEEDED_DRIVERS[driver]
+    mol = make_molecule(atoms(), multiplicity=mult)
+    basis = BasisSet(mol, "6-31g")
+
+    def options():
+        o = options_cls()
+        if functional:
+            o.functional = functional
+        o.conv_tol_energy = 1e-11
+        o.conv_tol_grad = 1e-7
+        return o
+
+    ref = run(mol, basis, options())
+    assert ref.converged
+
+    o = options()
+    setattr(o, phase + "_threshold", 0.01)
+    o.initial_guess = InitialGuess.READ
+    seeded = run(mol, basis, o, read_from=ref)
+    trace = seeded.scf_trace
+    assert seeded.converged
+    assert trace[0].grad_norm < 1e-5
+    assert abs(trace[1].energy - trace[0].energy) < 1e-9, [
+        (row.energy, row.grad_norm) for row in trace[:3]
+    ]
+    assert seeded.energy == pytest.approx(ref.energy, abs=1e-8)

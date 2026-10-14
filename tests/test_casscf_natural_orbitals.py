@@ -153,3 +153,97 @@ def test_casscf_qvf_carries_a_natural_wavefunction_section(tmp_path):
     # No fabricated orbital spectrum: a natural orbital's eigenvalue is its
     # occupancy, not an energy.
     assert all(e == 0.0 for e in meta["energies"])
+
+
+# ---------------------------------------------------------------------------
+# GitLab #33: an ECP reference silently lost the whole wavefunction section.
+#
+# `_cas_natural_orbitals` sanity-checks its own core/active partition by
+# summing the occupations and comparing them against the electron count. On an
+# ECP reference the two counts are different things: the replaced core is not
+# in the wavefunction, so the occupations sum to the VALENCE count while
+# `molecule.n_electrons()` is the PHYSICAL one. The CASSCF branch passed the
+# physical count, so the check compared 8 against 18 for H2S/LANL2DZ, decided
+# the partition was wrong, and returned None.
+#
+# Nothing then said so. `natural_orbitals` came back None, the QVF gate that
+# keys on it was skipped, and -- because a CASSCF has no mean-field MOs to
+# fall back on -- the archive was written with no wavefunction section at all.
+# The `.out` was unaffected, since its occupations come from the RDM directly,
+# so the loss was visible only in the archive. These pin the valence count and
+# the section that depends on it.
+# ---------------------------------------------------------------------------
+
+# H2S with LANL2DZ: 18 physical electrons, 10 replaced by the ECP, so the
+# wavefunction holds 8. The two counts differ, which is the whole point.
+ECP_PHYSICAL_ELECTRONS = 18
+ECP_VALENCE_ELECTRONS = 8
+
+
+def _h2s():
+    return vq.Molecule(
+        [
+            vq.Atom(16, [0.0, 0.0, 0.0]),
+            vq.Atom(1, [0.0, 1.815, 1.425]),
+            vq.Atom(1, [0.0, -1.815, 1.425]),
+        ],
+        0,
+        1,
+    )
+
+
+@pytest.fixture(scope="module")
+def h2s_ecp_casscf(tmp_path_factory):
+    """One CASSCF(4e,4o) on an ECP reference, shared by the tests below."""
+    stem = tmp_path_factory.mktemp("ecp_cas") / "h2s_lanl2dz"
+    result = vq.run_job(
+        _h2s(), basis="lanl2dz", method="casscf", active_space=(4, 4),
+        output=str(stem), output_qvf=True, progress=False,
+    )
+    return result, stem
+
+
+def test_ecp_casscf_publishes_natural_orbitals_at_the_valence_count(
+    h2s_ecp_casscf,
+):
+    """The occupations must sum to the electrons the wavefunction holds.
+
+    Pre-fix this returned None outright, because the sum (8) was checked
+    against the physical count (18).
+    """
+    result, _ = h2s_ecp_casscf
+    assert _h2s().n_electrons() == ECP_PHYSICAL_ELECTRONS  # guard the premise
+    occ = result.natural_occupations
+    assert occ is not None, (
+        "an ECP reference lost its CASSCF natural orbitals entirely"
+    )
+    occ = np.asarray(occ, dtype=float)
+    assert occ.sum() == pytest.approx(ECP_VALENCE_ELECTRONS, abs=1e-8)
+    assert occ.sum() != pytest.approx(ECP_PHYSICAL_ELECTRONS, abs=1e-6)
+    assert result.natural_orbitals is not None
+    # Still a real active space, not a closed-shell determinant relabelled.
+    assert ((occ > 0.002) & (occ < 1.998)).sum() >= 2
+
+
+def test_ecp_casscf_archive_keeps_its_wavefunction_section(h2s_ecp_casscf):
+    """The archive must not silently lose the wavefunction on an ECP.
+
+    A CASSCF has no mean-field MOs, so when the natural-orbital payload is
+    skipped there is no fallback: the .qvf came out with structure, citations
+    and the run record and nothing else. The .out was unaffected, which is
+    why this was invisible without opening the archive.
+    """
+    _, stem = h2s_ecp_casscf
+    path = stem.with_suffix(".qvf")
+    assert path.exists()
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        manifest = json.loads(z.read("manifest.json"))
+        wf = [s for s in manifest["sections"] if s["kind"] == "wavefunction.gto"]
+        assert wf, f"ECP CASSCF archive has no wavefunction section: {names}"
+        meta = json.loads(z.read(wf[0]["members"]["mo_metadata"]["path"]))
+
+    assert meta["orbital_kind"] == "natural"
+    occ = np.asarray(meta["occupations"], dtype=float)
+    # The archive states the valence count too, not the physical one.
+    assert occ.sum() == pytest.approx(ECP_VALENCE_ELECTRONS, abs=1e-8)

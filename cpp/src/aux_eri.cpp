@@ -826,8 +826,13 @@ Eigen::MatrixXd compute_3c_eri_lattice_gradient_weighted(
                     const long atomM_canon = orb_s2a[sM_canon];
                     const long atomN_canon = orb_s2a[sN_canon];
 
-                    engine.compute(aux_sh[sP],
-                                    orb_sh[sM_canon], orb_shells_g[sN_canon]);
+                    // Reorder the selected physical shells, not just their
+                    // indices: N carries g even when it becomes ket-1.
+                    // Moving g to M would differentiate a different pair
+                    // from the one admitted by pair_in_range above.
+                    const auto& ket1 = swap ? orb_shells_g[sN] : orb_sh[sM];
+                    const auto& ket2 = swap ? orb_sh[sM] : orb_shells_g[sN];
+                    engine.compute(aux_sh[sP], ket1, ket2);
                     const long centres[3] = {
                         atomP, atomM_canon, atomN_canon};
                     for (int icenter = 0; icenter < 3; ++icenter) {
@@ -841,10 +846,14 @@ Eigen::MatrixXd compute_3c_eri_lattice_gradient_weighted(
                                     const auto mu = bfM_canon + im;
                                     for (std::size_t in = 0; in < nN_canon; ++in) {
                                         const auto nu = bfN_canon + in;
+                                        // W labels the original (M, N)
+                                        // pair, not the canonical ket order.
+                                        const auto pair_index = swap
+                                            ? nu * n_orb + mu
+                                            : mu * n_orb + nu;
                                         acc += W(
                                             static_cast<Eigen::Index>(Pidx),
-                                            static_cast<Eigen::Index>(
-                                                mu * n_orb + nu))
+                                            static_cast<Eigen::Index>(pair_index))
                                             * block[(ip * nM_canon + im)
                                                     * nN_canon + in];
                                     }

@@ -21,23 +21,24 @@
 #      sourced helpers only runs the check once.
 #
 #   3. Sets CMAKE_BUILD_PARALLEL_LEVEL to a memory-safe default if the
-#      caller hasn't set it already:
-#         min(nproc, max(2, mem_mb // 15000), 8)
-#      ...which keeps `ninja` from firing more cc1plus workers than the
-#      host has RAM headroom for. Each cc1plus on vibe-qc's
-#      template-heavy headers (libint integrals, periodic_*.cpp,
-#      gradient.cpp) peaks at 8–10 GB resident; budgeting 15 GB/worker
-#      leaves a clean 50% margin, and the hard cap of 8 prevents
-#      ninja's link/IO contention regime on monster boxes.
+#      caller hasn't set it already (#411):
+#         min(nproc, max(1, usable_mb // budget_mb), 8)
+#      where usable = min(MemAvailable, headroom of every enclosing
+#      cgroup) — the memory the build can actually get, not MemTotal —
+#      and budget is the measured per-worker peak of the phase (5000 MB
+#      for libint's library, 15000 MB for everything else). The level is
+#      recomputed at each build start (each build_*.sh sourcing, and
+#      before the core's pip build), and the hard cap of 8 prevents
+#      ninja's link/IO contention regime on monster boxes. Details and
+#      measurements at section (3) below.
 #
 #      Pre-existing CMAKE_BUILD_PARALLEL_LEVEL in env is honored
 #      verbatim — explicit user / parent-script intent wins.
 #
-# Concrete fleet numbers under this cap:
-#
-#   compute-host-d  (32 th, 125 GB) → 8 workers (≤80 GB peak, ≥45 GB headroom)
-#   compute-host-a     (16 th,  62 GB) → 4 workers (≤40 GB peak, ≥22 GB headroom)
-#   macbook  (10 th,  32 GB) → cap not engaged (no /proc/meminfo)
+# Example: a host whose GPU driver reserves part of RAM (MemTotal ~60 GB,
+# of which ~36 GB is held by the amdgpu driver, MemAvailable ~24 GB): the
+# MemTotal formula gave 4 workers everywhere and was OOM-killed (#411); now
+# libint builds with 4 workers and the core with 1 (with a warning line).
 #
 # macOS / non-Linux: the /proc/meminfo gate fails, both side-effects
 # skip, and the caller's existing PHYS_CORES fallback governs
@@ -151,22 +152,148 @@ if [ -z "${VIBEQC_TOOLING_CHECKED:-}" ] && [ "${VIBEQC_SKIP_PREFLIGHT:-0}" != "1
     export VIBEQC_TOOLING_CHECKED=1
 fi
 
+# ---------------------------------------------------------------------------
+# (3) Size CMAKE_BUILD_PARALLEL_LEVEL from the memory the build can get.
+#
+# #411: this used to read MemTotal. MemTotal is not headroom: on a host whose
+# GPU driver reserves part of RAM, ~36 GB of its ~60 GB is held by the amdgpu
+# driver, MemAvailable was ~24 GB, and the MemTotal-sized level (4) was
+# OOM-killed. The usable figure is now
+#
+#     usable = min(MemAvailable, cgroup headroom of every enclosing cgroup)
+#
+# where a cgroup's headroom is its limit minus its working set
+# (usage - inactive_file, the figure the kernel reclaims last). The level is
+#
+#     min(nproc, max(1, usable_mb // budget_mb), 8)
+#
+# evaluated again every time the helper is sourced (each build_*.sh start) and
+# by vibeqc_pip_install_editable before the core build, so a long update
+# resizes each phase from the memory free at that moment. A value this helper
+# derived carries the marker VIBEQC_BUILD_PARALLEL_AUTO; any other preset
+# CMAKE_BUILD_PARALLEL_LEVEL is explicit intent and wins verbatim.
+#
+# The per-worker budget (VIBEQC_BUILD_MEM_PER_JOB_MB, default below) comes
+# from the measured peak RSS of the heaviest translation units; see the
+# comment on its default. A floor of 1 means a host with less usable memory
+# than one budget builds serially and says so, rather than being OOM-killed.
+#
+# Non-Linux (no /proc/meminfo): unchanged — nothing is set and the callers'
+# PHYS_CORES fallback governs.
+#
+# Test seams (internal): _VIBEQC_MEMINFO, _VIBEQC_PROC_SELF_CGROUP,
+# _VIBEQC_CGROUP_ROOT, _VIBEQC_NPROC replace /proc/meminfo, /proc/self/cgroup,
+# /sys/fs/cgroup and nproc.
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# (3) Set CMAKE_BUILD_PARALLEL_LEVEL if unset on Linux.
-# ---------------------------------------------------------------------------
-if [ -z "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ] && [ -r /proc/meminfo ]; then
-    _vqsafe_nproc=$(nproc 2>/dev/null || echo 4)
-    _vqsafe_mem_mb=$(awk '/^MemTotal:/ {print int($2/1024); exit}' /proc/meminfo)
-    if [ -n "${_vqsafe_mem_mb:-}" ] && [ "$_vqsafe_mem_mb" -gt 0 ]; then
-        _vqsafe_cap=$(( _vqsafe_mem_mb / 15000 ))
-        [ "$_vqsafe_cap" -lt 2 ] && _vqsafe_cap=2
-        [ "$_vqsafe_cap" -gt "$_vqsafe_nproc" ] && _vqsafe_cap=$_vqsafe_nproc
-        [ "$_vqsafe_cap" -gt 8 ] && _vqsafe_cap=8
-        export CMAKE_BUILD_PARALLEL_LEVEL=$_vqsafe_cap
-        if [ -z "${VIBEQC_BUILD_ENV_QUIET:-}" ]; then
-            echo "==> CMAKE_BUILD_PARALLEL_LEVEL=$_vqsafe_cap (nproc=$_vqsafe_nproc, mem=${_vqsafe_mem_mb}MB; cap@8 / 15GB-per-worker)"
-        fi
+# Print the tightest cgroup headroom in MB for this process, or nothing when
+# no enclosing cgroup has a memory limit (or cgroups are unreadable).
+_vqsafe_cgroup_headroom_mb() {
+    local self="${_VIBEQC_PROC_SELF_CGROUP:-/proc/self/cgroup}"
+    local root="${_VIBEQC_CGROUP_ROOT:-/sys/fs/cgroup}"
+    [ -r "$self" ] || return 0
+    local rel dir best="" max cur inactive head
+    # cgroup v2: the single "0::<path>" line.
+    rel=$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' "$self")
+    if [ -n "$rel" ] && [ -r "$root/cgroup.controllers" ]; then
+        dir="$root${rel%/}"
+        while :; do
+            if [ -r "$dir/memory.max" ]; then
+                max=$(cat "$dir/memory.max" 2>/dev/null)
+                if [ -n "$max" ] && [ "$max" != "max" ]; then
+                    cur=$(cat "$dir/memory.current" 2>/dev/null || echo 0)
+                    inactive=$(awk '$1 == "inactive_file" { print $2; exit }' \
+                        "$dir/memory.stat" 2>/dev/null)
+                    head=$(( (max - cur + ${inactive:-0}) / 1048576 ))
+                    [ "$head" -lt 0 ] && head=0
+                    if [ -z "$best" ] || [ "$head" -lt "$best" ]; then
+                        best=$head
+                    fi
+                fi
+            fi
+            [ "$dir" = "$root" ] && break
+            case "$dir" in "$root"/*) dir="${dir%/*}" ;; *) break ;; esac
+        done
+        [ -n "$best" ] && echo "$best"
+        return 0
     fi
-    unset _vqsafe_nproc _vqsafe_mem_mb _vqsafe_cap
-fi
+    # cgroup v1: the memory controller's hierarchical limit already folds in
+    # every ancestor; treat values above physical memory as "no limit".
+    rel=$(awk -F: '$2 ~ /(^|,)memory(,|$)/ { print $3; exit }' "$self")
+    [ -n "$rel" ] || return 0
+    dir="$root/memory${rel%/}"
+    [ -r "$dir/memory.stat" ] || dir="$root/memory"
+    [ -r "$dir/memory.stat" ] || return 0
+    max=$(awk '$1 == "hierarchical_memory_limit" { print $2; exit }' "$dir/memory.stat")
+    inactive=$(awk '$1 == "total_inactive_file" { print $2; exit }' "$dir/memory.stat")
+    cur=$(cat "$dir/memory.usage_in_bytes" 2>/dev/null || echo 0)
+    [ -n "$max" ] || return 0
+    # 2^62 bytes or more is the kernel's "unlimited".
+    [ "${#max}" -ge 19 ] && return 0
+    head=$(( (max - cur + ${inactive:-0}) / 1048576 ))
+    [ "$head" -lt 0 ] && head=0
+    echo "$head"
+}
+
+# Per-worker memory budget (MB) for a build phase, from the measured peak RSS
+# of its heaviest translation units (vibe-qc#411, single-TU /usr/bin/time
+# measurements, 2026-09-29, GCC 16 and Apple clang):
+#   * libint's library phase (~4.7k unity TUs): <= 1.8 GiB with GCC, <= 4.0 GiB
+#     with clang per TU -> 5000 MB.
+#   * the vibe-qc core (guess.cpp, df.cpp, periodic_*.cpp, bindings.cpp): 5-8
+#     GiB with GCC per TU -> 15000 MB, the long-standing budget; the other
+#     dependencies are unmeasured and keep it too.
+# VIBEQC_BUILD_MEM_PER_JOB_MB overrides every phase.
+_vqsafe_budget_mb() {
+    case "${1:-}" in
+        build_libint.sh) echo 5000 ;;
+        *)               echo 15000 ;;
+    esac
+}
+
+# vibeqc_refresh_build_parallelism [LABEL [BUDGET_MB]]
+#   (Re)derive CMAKE_BUILD_PARALLEL_LEVEL unless it was set explicitly.
+vibeqc_refresh_build_parallelism() {
+    local meminfo="${_VIBEQC_MEMINFO:-/proc/meminfo}"
+    local label="${1:-}"
+    local default_budget="${2:-$(_vqsafe_budget_mb "$label")}"
+    if [ -n "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ] && \
+       [ "${CMAKE_BUILD_PARALLEL_LEVEL}" != "${VIBEQC_BUILD_PARALLEL_AUTO:-}" ]; then
+        return 0
+    fi
+    [ -r "$meminfo" ] || return 0
+    local nproc total avail source usable cgroup budget level note=""
+    nproc="${_VIBEQC_NPROC:-$(nproc 2>/dev/null || echo 4)}"
+    total=$(awk '/^MemTotal:/ { print int($2 / 1024); exit }' "$meminfo")
+    avail=$(awk '/^MemAvailable:/ { print int($2 / 1024); exit }' "$meminfo")
+    if [ -n "$avail" ]; then
+        source="MemAvailable"; usable=$avail
+    elif [ -n "$total" ]; then
+        # Kernels before 3.14 have no MemAvailable.
+        source="MemTotal(no MemAvailable)"; usable=$total
+    else
+        return 0
+    fi
+    cgroup=$(_vqsafe_cgroup_headroom_mb)
+    if [ -n "$cgroup" ] && [ "$cgroup" -lt "$usable" ]; then
+        usable=$cgroup; source="cgroup"
+    fi
+    budget="${VIBEQC_BUILD_MEM_PER_JOB_MB:-$default_budget}"
+    case "$budget" in ''|*[!0-9]*|0) budget=$default_budget ;; esac
+    level=$(( usable / budget ))
+    if [ "$level" -lt 1 ]; then
+        level=1
+        note="; WARNING usable memory is below one worker's budget"
+    fi
+    [ "$level" -gt "$nproc" ] && level=$nproc
+    [ "$level" -gt 8 ] && level=8
+    export CMAKE_BUILD_PARALLEL_LEVEL=$level
+    export VIBEQC_BUILD_PARALLEL_AUTO=$level
+    if [ -z "${VIBEQC_BUILD_ENV_QUIET:-}" ]; then
+        echo "==> CMAKE_BUILD_PARALLEL_LEVEL=$level${label:+ for $label} (nproc=$nproc, MemTotal=${total:-?}MB, MemAvailable=${avail:-?}MB, cgroup_headroom=${cgroup:-none}${cgroup:+MB}, usable=${usable}MB from $source; ${budget}MB-per-worker, cap@8$note)"
+    fi
+}
+
+_vqsafe_caller="${BASH_SOURCE[1]:-}"
+vibeqc_refresh_build_parallelism "${_vqsafe_caller##*/}"
+unset _vqsafe_caller

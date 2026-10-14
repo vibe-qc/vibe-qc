@@ -106,6 +106,7 @@ def warn_output_failure(
     *,
     category: OutputFailureKind,
     manifest: Optional["ManifestUpdater"] = None,
+    component: str | None = None,
 ) -> OutputFailureRecord:
     """Record and surface a non-fatal output failure.
 
@@ -124,6 +125,9 @@ def warn_output_failure(
         If provided, the failure is also recorded in the manifest so
         downstream consumers (``vq fetch``, ``.system`` readers) can
         see that this artefact was *declared* but not *written*.
+    component:
+        Optional archive component that failed. Records its error separately
+        from the containing file, which can still be written successfully.
 
     Returns
     -------
@@ -151,7 +155,12 @@ def warn_output_failure(
     # Optionally record in the manifest so the failure is visible
     # to ``vq`` / downstream tooling, not just the console.
     if manifest is not None:
-        manifest.mark_failed(record.path, record.manifest_error_string())
+        if component is None:
+            manifest.mark_failed(record.path, record.manifest_error_string())
+        else:
+            manifest.mark_component_failed(
+                record.path, component, record.manifest_error_string(),
+            )
 
     return record
 

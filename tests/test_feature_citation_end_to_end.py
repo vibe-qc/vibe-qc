@@ -577,6 +577,53 @@ def test_trah_threshold_cites_helmich_paris(tmp_path: Path) -> None:
     _assert_cited(_surface(stem), ["helmich_paris_trah_2021"], feature="TRAH")
 
 
+@pytest.mark.parametrize("route", ["molecular", "periodic-envelope"])
+@pytest.mark.parametrize("recovery_used", [False, True])
+def test_uhf_stability_recovery_cites_trah_without_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recovery_used: bool, route: str
+) -> None:
+    """The real output route must use result provenance, not just options."""
+    import vibeqc.runner as runner_module
+
+    target = runner_module if route == "molecular" else vq
+    function = "run_uhf" if route == "molecular" else "run_uhf_scf_with_jk"
+    original = getattr(target, function)
+
+    class RecoveryResult:
+        stability_trah_used = recovery_used
+
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+
+        def __getattr__(self, name):
+            return getattr(self.wrapped, name)
+
+    def with_recovery_provenance(*args, **kwargs):
+        return RecoveryResult(original(*args, **kwargs))
+
+    # The FeCl3 numerical regression checks the native flag. This small real
+    # UHF calculation isolates its propagation to written references.
+    monkeypatch.setattr(target, function, with_recovery_provenance)
+    opts = vq.UHFOptions()
+    assert opts.trah_threshold == 0.0
+    stem = tmp_path / "uhf_recovery"
+    if route == "molecular":
+        vq.run_job(
+            _h2(), basis="sto-3g", method="uhf", uhf_options=opts,
+            output=str(stem), verbose=0,
+        )
+    else:
+        import numpy as np
+
+        cell = vq.PeriodicSystem(
+            3, np.eye(3) * 50.0,
+            unit_cell=[vq.Atom(1, [0.0, 0.0, 0.0])], multiplicity=2,
+        )
+        _run_periodic(cell, stem, method="UHF", jk_method="rijcosx")
+    key = _bibtex_keys("helmich_paris_trah_2021")[0]
+    assert (key in _surface(stem)) is recovery_used
+
+
 # --------------------------------------------------------------------------- #
 # SCF initial guess — explicit SAD                                            #
 # --------------------------------------------------------------------------- #
@@ -808,7 +855,9 @@ def test_bipole_sr_range_screening_cites_charge_pair_bound(tmp_path: Path) -> No
         basis = vq.BasisSet(cell.unit_cell_molecule(), "sto-3g")
         run_periodic_job(
             cell, basis, method="RHF", output=stem,
-            jk_method="bipole", bipole_cutoff_bohr=6.0,
+            # 6 bohr is refused by the fold-reliability guard (S(Gamma)
+            # truncation 5.2e-2, #316); 8 bohr is accepted (#527).
+            jk_method="bipole", bipole_cutoff_bohr=8.0,
             max_iter=8, conv_tol_energy=1e-4,
             write_xyz_file=False, write_poscar_file=False,
             write_cif_file=False, write_xsf_structure_file=False,
@@ -1208,7 +1257,7 @@ def test_r2scan_d4_cites_the_damping_fit_paper(tmp_path: Path) -> None:
 
 # --------------------------------------------------------------------------- #
 # AICCM front door M0 -- the wired AICCM routes cite what they execute          #
-# (handovers/HANDOVER_AICCM_STANDARD_METHOD.md). T2 placement per D-8: nothing #
+# (the original investigation). T2 placement per D-8: nothing #
 # here imports vibeqc.periodic.ccm; the routes are reached through            #
 # run_periodic_job and the warning classes through their public vibeqc names. #
 # --------------------------------------------------------------------------- #

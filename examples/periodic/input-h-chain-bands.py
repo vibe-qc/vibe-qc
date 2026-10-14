@@ -1,4 +1,4 @@
-"""1D H2 chain — band structure + density of states.
+"""1D H2 chain: Hcore band structure + density of states at STO-3G.
 
 Run:
     .venv/bin/python input-h-chain-bands.py

@@ -1,0 +1,160 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import { methodAreas, STATUS, allMethods } from '../data/methods.mjs';
+
+const base = import.meta.env.BASE_URL;
+const DOCS = '/docs';
+const counts = Object.fromEntries(
+  Object.keys(STATUS).map((key) => [key, allMethods.filter((m) => m.status === key).length]),
+);
+---
+
+<Base
+  title="Methods and status - vibe-qc"
+  description="Every method family in vibe-qc with its status: production, preview, experimental or gated. Molecular mean field, correlated wavefunction, semiempirical, periodic, workflows and properties, each linked to the manual."
+>
+  <Nav />
+
+  <main>
+    <section class="hero methods-hero">
+      <div class="wrap hero-inner">
+        <span class="eyebrow">methods and status</span>
+        <h1>Every method, with the label the manual gives it.</h1>
+        <p class="lede">
+          vibe-qc implements each electronic-structure method itself; established codes serve
+          only as out-of-process references. Not every route is at the same stage, so each
+          family below carries one of four labels. The manual is the source of truth:
+          the <a href={`${DOCS}/features.html`}>feature matrix</a> has the full option tables and
+          the <a href={`${DOCS}/roadmap.html#experimental-lines-not-release-gated`}>roadmap</a>
+          lists the experimental lines.
+        </p>
+      </div>
+    </section>
+
+    <section class="block legend-block" aria-labelledby="legend-heading">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">how to read the labels</span>
+          <h2 id="legend-heading">Four labels, one rule: the output tells you which one applies.</h2>
+          <p>
+            An experimental route emits an <code>ExperimentalWarning</code> every time it runs and
+            records <code>method_status = "experimental"</code> in the run manifest, so a research
+            result never slips into a script unnoticed. A gated route refuses with a scientific
+            message rather than returning a number it cannot stand behind.
+          </p>
+        </div>
+        <dl class="legend">
+          {Object.entries(STATUS).map(([key, { label, meaning }]) => (
+            <div class="legend-item">
+              <dt><span class={`status ${key}`}>{label}</span> <span class="count">{counts[key]} {counts[key] === 1 ? 'family' : 'families'}</span></dt>
+              <dd>{meaning}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </section>
+
+    {methodAreas.map((area) => (
+      <section class="block area-block" id={area.id} aria-labelledby={`${area.id}-heading`}>
+        <div class="wrap">
+          <div class="sec-head">
+            <h2 id={`${area.id}-heading`}>{area.title}</h2>
+            <p>{area.intro}</p>
+          </div>
+          <ul class="method-list">
+            {area.methods.map((method) => (
+              <li class="method-row" data-status={method.status}>
+                <div class="method-name">
+                  <a href={method.docs}>{method.name} <span aria-hidden="true">↗</span></a>
+                </div>
+                <div class="method-status"><span class={`status ${method.status}`}>{STATUS[method.status].label}</span></div>
+                <p class="method-note">{method.note}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+    ))}
+
+    <section class="block next-block">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">go deeper</span>
+          <h2>From a label to a worked calculation.</h2>
+        </div>
+        <div class="grid">
+          <a class="card" href={`${DOCS}/tutorial/index.html#choose-a-learning-path`}>
+            <h4>Tutorial learning paths ↗</h4>
+            <p>Eight ordered reading paths, from a first SCF calculation to periodic materials and remote operation. Every page derives the theory and runs.</p>
+          </a>
+          <a class="card" href={`${DOCS}/validation.html`}>
+            <h4>Validation ↗</h4>
+            <p>Which numbers were checked against PySCF, ORCA, CRYSTAL and CP2K, at what tolerance, and where the reference data lives.</p>
+          </a>
+          <a class="card" href="https://github.com/vibe-qc/vibe-qc/blob/main/examples/README.md">
+            <h4>Examples catalog ↗</h4>
+            <p>Complete runnable inputs for molecules, crystals, workflows and cross-code comparisons, organised by goal.</p>
+          </a>
+        </div>
+        <p class="back"><a href={`${base}get-started`}>Install vibe-qc and run the first calculation →</a></p>
+      </div>
+    </section>
+  </main>
+
+  <Footer />
+</Base>
+
+<style>
+  .methods-hero .hero-inner { padding: 72px 28px 64px; }
+  .methods-hero h1 { max-width: 22ch; }
+  .lede a { color: var(--phase-pos); text-decoration: underline; text-underline-offset: 4px; }
+  .legend-block { padding-top: 0; }
+  .sec-head code { font-family: var(--mono); font-size: 0.9em; color: var(--phase-neg); background: var(--surface-2); padding: 1px 5px; border-radius: 5px; }
+
+  .status {
+    display: inline-block;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; font-weight: 600; line-height: 1;
+    padding: 5px 9px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--surface-2); color: var(--slate); white-space: nowrap;
+  }
+  .status.production { color: var(--phase-pos); border-color: color-mix(in srgb, var(--phase-pos) 45%, var(--line)); background: color-mix(in srgb, var(--phase-pos) 10%, var(--surface)); }
+  .status.preview { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 25%, var(--line)); }
+  .status.experimental { color: var(--phase-neg); border-color: color-mix(in srgb, var(--phase-neg) 45%, var(--line)); background: color-mix(in srgb, var(--phase-neg) 8%, var(--surface)); }
+  .status.gated { color: var(--slate); border-style: dashed; }
+
+  .legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin: 0; }
+  .legend-item { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; }
+  .legend-item dt { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+  .legend-item .count { font-family: var(--mono); font-size: 12.5px; color: var(--slate); }
+  .legend-item dd { margin: 0; color: var(--slate); font-size: 15px; }
+
+  .area-block { padding-top: 48px; padding-bottom: 32px; }
+  .area-block .sec-head { margin-bottom: 22px; }
+  .method-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .method-row {
+    display: grid; grid-template-columns: minmax(0, 1.15fr) auto minmax(0, 2fr);
+    gap: 10px 24px; align-items: start;
+    padding: 18px 0; border-bottom: 1px solid var(--line);
+  }
+  .method-name { font-weight: 700; letter-spacing: -0.005em; }
+  .method-name a { color: var(--ink); }
+  .method-name a:hover { color: var(--phase-pos); text-decoration: underline; text-underline-offset: 4px; }
+  .method-name span { color: var(--phase-pos); font-weight: 400; }
+  .method-status { padding-top: 3px; }
+  .method-note { margin: 0; color: var(--slate); font-size: 15px; line-height: 1.55; }
+  .method-row[data-status="experimental"] .method-name a, .method-row[data-status="gated"] .method-name a { color: var(--slate-soft); }
+
+  .next-block .card h4 { color: var(--phase-pos); }
+  .back { margin-top: 28px; }
+  .back a { color: var(--phase-pos); text-decoration: underline; text-underline-offset: 4px; font-weight: 600; }
+
+  @media (max-width: 1000px) { .legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 760px) {
+    .legend { grid-template-columns: 1fr; }
+    .method-row { grid-template-columns: 1fr; gap: 8px; }
+    .method-status { padding-top: 0; }
+  }
+</style>

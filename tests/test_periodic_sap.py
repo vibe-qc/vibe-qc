@@ -302,6 +302,49 @@ def test_periodic_sap_python_gamma_ewald_reaches_same_basin_as_sad():
                - rks_energy(vq.InitialGuess.SAD)) < 1e-7
 
 
+def test_periodic_sap_gamma_ewald_rohf_reaches_same_basin_as_sad():
+    """The exact-Gamma Ewald ROHF driver takes the SAP seed as real.
+
+    The shared periodic guess adapter returns the Gamma seed as a complex
+    array with a zero imaginary part. The Gamma Ewald evaluated states are
+    real-only (#472), so SAP stopped every Gamma Ewald RHF, RKS, UHF, UKS
+    and ROHF run with "requires a real total density" or "requires real
+    spin densities" (#527 follow-up). RHF/RKS are pinned above and UHF/UKS
+    in test_periodic_open_shell_guesses.py; this pins ROHF.
+    """
+    def rohf_energy(guess):
+        system, basis = _he_box()
+        opts = vq.PeriodicRHFOptions()
+        opts.conv_tol_energy = 1e-9
+        opts.initial_guess = guess
+        result = vq.run_rohf_periodic_gamma_ewald3d(
+            system, basis, opts, auto_optimize_truncation=False, verbose=0)
+        assert result.converged, f"ROHF/{guess.name} did not converge"
+        return result.energy
+
+    assert abs(rohf_energy(vq.InitialGuess.SAP)
+               - rohf_energy(vq.InitialGuess.SAD)) < 1e-7
+
+
+def test_real_gamma_seed_takes_a_zero_imaginary_seed_and_refuses_a_complex_one():
+    """The exact-Gamma seed contract shared by the GDF and Ewald drivers."""
+    from vibeqc.guess import _real_gamma_seed
+
+    real = np.array([[2.0, 0.1], [0.1, 0.5]])
+    assert _real_gamma_seed(real, "test") is real
+
+    as_complex = real.astype(complex)
+    taken = _real_gamma_seed(as_complex, "test")
+    assert not np.iscomplexobj(taken)
+    np.testing.assert_array_equal(taken, real)
+
+    material = as_complex.copy()
+    material[0, 1] += 1e-6j
+    material[1, 0] -= 1e-6j
+    with pytest.raises(ValueError, match="material imaginary part"):
+        _real_gamma_seed(material, "test")
+
+
 def test_periodic_sap_python_gdf_rhf_reaches_same_basin_as_sad():
     """The Python GDF RHF driver passes the periodic SAP context."""
     def energy(guess):

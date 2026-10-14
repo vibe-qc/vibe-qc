@@ -1,6 +1,6 @@
 """M4a/M5: the SR erfc ket-image pad and precision-derived default.
 
-The 2026-07-12 split-gap triage (HANDOVER_BIPOLE_PRODUCTION.md Sec. 0a)
+The 2026-07-12 split-gap triage (the original investigation)
 proved the (c_lam, c_sig) ket-image sum must reach the *smeared* erfc
 kernel range, not just the output cutoff: at an 8-bohr ball MgO/STO-3G
 loses -515 mHa of J_SR. `sr_image_extent_bohr` is the explicit M4a
@@ -167,13 +167,16 @@ def test_output_cells_beyond_home_also_match_wide_build():
 
 
 @pytest.mark.parametrize("compute_exchange", [False, True])
-def test_chi_output_cell_farming_serial_is_bit_identical(compute_exchange):
+@pytest.mark.parametrize("compute_coulomb", [False, True])
+def test_chi_output_cell_farming_serial_is_bit_identical(compute_exchange, compute_coulomb):
     """The χ scheduling seam changes no serial direct-ERI arithmetic."""
     system, basis = _mgo()
     volume = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
     omega = float(crystal_default_ewald_alpha(volume))
     density = _home_density(basis, system, cutoff=8.0)
-    kwargs = {"compute_exchange": compute_exchange}
+    kwargs = {"compute_exchange": compute_exchange, "compute_coulomb": compute_coulomb}
+    from vibeqc._vibeqc_core import PeriodicJKWorkspace
+    workspace = PeriodicJKWorkspace()
     reference = _sr_image_padded_jk(
         basis, system, _lat(8.0), density, omega, 14.0, **kwargs
     )
@@ -186,6 +189,7 @@ def test_chi_output_cell_farming_serial_is_bit_identical(compute_exchange):
         14.0,
         output_cell_farming_task_kind="chi-direct-output-cell",
         output_cell_farming_strategy="cyclic",
+        workspace=workspace,
         **kwargs,
     )
     for got, want in zip(farmed.J.blocks, reference.J.blocks):
@@ -203,6 +207,7 @@ def test_chi_output_cell_farming_serial_is_bit_identical(compute_exchange):
     assert executed.global_task_count == len(farmed.J.cells)
     assert executed.local_task_counts == (len(farmed.J.cells),)
     assert executed.complete_internal_translation_sum is True
+    assert workspace.preparation_count == 1
 
 
 def test_chi_output_cell_farming_empty_rank_skips_native(
@@ -262,6 +267,7 @@ def test_chi_output_cell_farming_empty_rank_skips_native(
             cells=list(used_cells), blocks=list(blocks)
         ),
     )
+    workspace = core.PeriodicJKWorkspace()
     got = _build_jk_domains_output_cells_mpi(
         SimpleNamespace(nbasis=1),
         object(),
@@ -271,11 +277,135 @@ def test_chi_output_cell_farming_empty_rank_skips_native(
         [0, 1],
         omega=0.3,
         task_kind="chi-direct-output-cell",
+        workspace=workspace,
     )
     assert [float(block[0, 0]) for block in got.J.blocks] == [10.0, 11.0]
     assert [float(block[0, 0]) for block in got.K.blocks] == [20.0, 21.0]
     assert got.output_cell_farming_execution.local_task_count == 0
     assert got.output_cell_farming_execution.local_task_counts == (1, 1, 0)
+    assert workspace.preparation_count == 0
+
+
+class _CountedNativeBlocks:
+    """Model the native vector export, including its copy semantics."""
+
+    def __init__(self, blocks):
+        self.values = blocks
+        self.reads = 0
+
+    @property
+    def blocks(self):
+        self.reads += 1
+        return [block.copy() for block in self.values]
+
+
+@pytest.mark.parametrize("physical", [False, True])
+@pytest.mark.parametrize("exchange", [False, True])
+@pytest.mark.parametrize("zone", [None, 2.0])
+def test_padded_projection_exports_each_native_vector_once(monkeypatch, physical, exchange, zone):
+    from types import SimpleNamespace
+    import vibeqc.pbc_bipole_fock as fock
+
+    system = vq.PeriodicSystem(3, np.eye(3) * 4., [vq.Atom(2, [0., 0., 0.])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    opts = _lat(4.1)
+    opts.pair_complete_1e = physical
+    exported = []
+    wanted = {}
+
+    def native(_basis, _system, _opts, density, cells, indices, masks, **kwargs):
+        blocks = [np.zeros((1, 1)) for _ in cells]
+        for i in indices:
+            blocks[i][0, 0] = i + 1.
+            wanted[tuple(cells[i].index)] = i + 1.
+        j, k = _CountedNativeBlocks(blocks), _CountedNativeBlocks([-b for b in blocks])
+        exported.extend([j, k])
+        return SimpleNamespace(J=j, K=k if exchange else None)
+
+    monkeypatch.setattr(fock, "_build_jk_domains_output_cells_mpi", native)
+    result = fock._sr_image_padded_jk(
+        basis, system, opts, object(), .4, 6.,
+        compute_exchange=exchange, exact_zone_bohr=zone,
+    )
+    assert exported[0].reads == 1
+    assert exported[1].reads == int(exchange)
+    for cell, block in zip(result.J.cells, result.J.blocks):
+        np.testing.assert_array_equal(block, [[wanted.get(tuple(cell.index), 0.)]])
+    if exchange:
+        for j, k in zip(result.J.blocks, result.K.blocks):
+            np.testing.assert_array_equal(k, -j)
+    else:
+        assert result.K is None
+
+
+@pytest.mark.parametrize("exchange", [False, True])
+def test_output_farming_exports_each_owned_vector_once(monkeypatch, exchange):
+    from types import SimpleNamespace
+    import vibeqc.mpi as mpi
+    import vibeqc.pbc_bipole_fock as fock
+    import vibeqc._vibeqc_core as core
+
+    cells = [SimpleNamespace(index=(i, 0, 0)) for i in range(5)]
+    requested = [4, 1, 3, 0, 2]
+    j = _CountedNativeBlocks([np.array([[i + 1.]]) for i in range(5)])
+    k = _CountedNativeBlocks([np.array([[-i - 1.]]) for i in range(5)])
+    ordered = [(j.values[i], k.values[i] if exchange else None) for i in requested]
+
+    def gather(local):
+        for got, pos in zip(local, [0, 2, 4]):
+            np.testing.assert_array_equal(got[0], ordered[pos][0])
+            if exchange:
+                np.testing.assert_array_equal(got[1], ordered[pos][1])
+        return ordered
+
+    partition = SimpleNamespace(size=2, rank=0, strategy="cyclic", n_tasks=5,
+        n_local=3, local_indices=[0, 2, 4], task_counts=(3, 2),
+        task_fingerprint="test", allgather_ordered=gather)
+    monkeypatch.setattr(mpi.LatticeOutputPartition, "create", lambda *a, **k: partition)
+    monkeypatch.setattr(core, "build_jk_2e_real_space_domains",
+                        lambda *a, **kw: SimpleNamespace(J=j, K=k if exchange else None))
+    monkeypatch.setattr(fock, "make_lattice_matrix_set",
+                        lambda n, c, b: SimpleNamespace(cells=c, blocks=b))
+    result = fock._build_jk_domains_output_cells_mpi(
+        SimpleNamespace(nbasis=1), object(), object(), object(), cells, requested,
+        omega=.4, compute_exchange=exchange, task_kind="chi-direct-output-cell",
+    )
+    assert (j.reads, k.reads) == (1, int(exchange))
+    np.testing.assert_array_equal(np.asarray(result.J.blocks).ravel(), np.arange(1., 6.))
+    if exchange:
+        np.testing.assert_array_equal(np.asarray(result.K.blocks).ravel(), -np.arange(1., 6.))
+    else:
+        assert result.K is None
+
+
+@pytest.mark.parametrize("exchange", [False, True])
+def test_paired_output_empty_worklist_never_enters_native(monkeypatch, exchange):
+    from types import SimpleNamespace
+    import vibeqc.pbc_bipole_fock as fock
+    import vibeqc._vibeqc_core as core
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("empty paired worklist reached native all-cells semantics")
+    monkeypatch.setattr(core, "build_jk_2e_real_space_domains_pair", unexpected)
+    monkeypatch.setattr(fock, "make_lattice_matrix_set",
+        lambda n, c, b: SimpleNamespace(cells=c, blocks=[np.array(x, copy=True) for x in b]))
+    cells = [SimpleNamespace(index=(i, 0, 0)) for i in range(3)]
+    args = (SimpleNamespace(nbasis=1), object(), object(), object(), cells, [])
+    results = fock._build_jk_domains_output_cells_mpi(
+        *args, omega=.4, companion_density=object(), compute_exchange=exchange,
+    )
+    for result in results:
+        np.testing.assert_array_equal(result.J.blocks, np.zeros((3, 1, 1)))
+        if exchange:
+            np.testing.assert_array_equal(result.K.blocks, np.zeros((3, 1, 1)))
+        else:
+            assert result.K is None
+    results[0].J.blocks[0][0, 0] = 1.
+    assert results[1].J.blocks[0][0, 0] == 0.
+    with pytest.raises(ValueError, match="serial output-cell ownership"):
+        fock._build_jk_domains_output_cells_mpi(
+            *args, omega=.4, companion_density=object(), task_kind="test-farming",
+        )
 
 
 def test_extent_formula_properties():
@@ -456,6 +586,9 @@ def _h2_cell():
 @pytest.mark.parametrize("exchange_split", [True, False])
 def test_driver_defaults_to_precision_padded_sr_domain(exchange_split):
     """End-to-end M5 default: padded SR mass moves E vs the legacy opt-out."""
+    # The physical pair default (#316) refuses the legacy gauge
+    # (exchange_split=False); that row replays the historical operator
+    # explicitly (#503).
     system, basis = _h2_cell()
     kmesh = vq.monkhorst_pack(system, [1, 1, 1], use_symmetry=False)
 
@@ -472,6 +605,7 @@ def test_driver_defaults_to_precision_padded_sr_domain(exchange_split):
         kmesh,
         _opts(),
         use_exchange_ewald_split=exchange_split,
+        historical_domain=not exchange_split,
         sr_image_precision=None,
         progress=False,
     )
@@ -481,6 +615,7 @@ def test_driver_defaults_to_precision_padded_sr_domain(exchange_split):
         kmesh,
         _opts(),
         use_exchange_ewald_split=exchange_split,
+        historical_domain=not exchange_split,
         progress=False,
     )
     assert np.isfinite(float(r_pad.energy))
@@ -499,6 +634,9 @@ def test_extent_composes_with_sym3b_reduce():
     padded internal ball runs through the M1 full-domain binding; this
     raised NotImplementedError before M4b). Enforce == reduce stays
     exact under the pad, and the pad recovers repulsive J_SR mass."""
+    # The physical pair default (#316) refuses the legacy SYM3b projector;
+    # this test pins the historical composition, so it replays it explicitly
+    # (#503).
     system, basis = _h2_cell()
     vq.attach_symmetry(system)
     kmesh = vq.monkhorst_pack(system, [1, 1, 1], use_symmetry=False)
@@ -515,6 +653,7 @@ def test_extent_composes_with_sym3b_reduce():
             system, basis, kmesh, _opts(),
             sr_image_extent_bohr=14.0,
             use_fock_symmetry_reduce=True,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -524,6 +663,7 @@ def test_extent_composes_with_sym3b_reduce():
         kmesh,
         _opts(),
         sr_image_extent_bohr=14.0,
+        historical_domain=True,
         progress=False,
     )
     e_auto = float(auto.energy)
@@ -533,6 +673,7 @@ def test_extent_composes_with_sym3b_reduce():
             sr_image_extent_bohr=14.0,
             use_fock_symmetry=True,
             use_fock_symmetry_reduce=False,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -541,6 +682,7 @@ def test_extent_composes_with_sym3b_reduce():
             system, basis, kmesh, _opts(),
             use_fock_symmetry_reduce=True,
             sr_image_precision=None,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -550,6 +692,7 @@ def test_extent_composes_with_sym3b_reduce():
         kmesh,
         _opts(),
         sr_image_precision=None,
+        historical_domain=True,
         progress=False,
     )
     assert np.isfinite(e_red)

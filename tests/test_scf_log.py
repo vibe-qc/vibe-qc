@@ -243,3 +243,45 @@ def test_fixed_unsigned_zero_drops_noise_sign_only():
     assert _fixed_unsigned_zero(-0.6079, 4) == "-0.6079"
     assert _fixed_unsigned_zero(1.2803, 4) == "1.2803"
     assert _fixed_unsigned_zero(-1e-9, 6) == "0.000000"
+
+
+@pytest.mark.parametrize("temperature", [0.0, 0.001])
+def test_finite_temperature_trace_labels(temperature, caplog):
+    from vibeqc.output.formats.scf_log import format_scf_trace, log_scf_trace
+    energy, entropy = -10.0, 2.0
+    free = energy - temperature * entropy
+    result = SimpleNamespace(energy=energy, free_energy=free, entropy=entropy,
+        smearing_temperature=temperature, n_iter=2, converged=True,
+        scf_trace=[dict(iter=2, energy=free, delta_e=-0.01, grad_norm=1e-8, diis_subspace=2)])
+    text = format_scf_trace(result, include_banner=False, include_properties=False)
+    if temperature:
+        assert "F (Ha)" in text and "dF" in text
+        assert f"F = {free:.10f} Ha (free energy)" in text
+        assert f"E = {energy:.10f} Ha (internal energy)" in text
+        replay = format_scf_trace(result, include_banner=False, include_properties=False,
+                                  iterations_already_streamed=True)
+        assert "F = " in replay and "internal energy" in replay
+    else:
+        assert "energy (Ha)" in text and "dE" in text
+        assert "(free energy)" not in text
+    with caplog.at_level(logging.DEBUG, logger="vibeqc.scf"):
+        log_scf_trace(result)
+    assert ("(free energy)" in caplog.text) == bool(temperature)
+    # Quiet output retains the thermodynamic identity beside the verdict.
+    from vibeqc.output.formats.scf_log import _scf_trace_segments
+    from vibeqc.output.channel import Level
+    quiet = "".join(seg[0] for seg in _scf_trace_segments(result, include_banner=False,
+                    include_properties=False) if seg[1] == Level.QUIET)
+    assert ("(internal energy)" in quiet) == bool(temperature)
+
+
+def test_progress_free_energy_labels_preserve_values():
+    import io
+    from vibeqc.progress import ProgressLogger
+    stream = io.StringIO()
+    progress = ProgressLogger(stream=stream)
+    progress.iteration(1, energy=-10.002, dE=0.0, energy_kind="F")
+    progress.iteration(2, energy=-10.003, dE=-0.001, energy_kind="F")
+    text = stream.getvalue()
+    assert "F =" in text and "dF =" in text and "E =" not in text
+    assert "-10.0030000000" in text

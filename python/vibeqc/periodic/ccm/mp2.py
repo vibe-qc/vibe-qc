@@ -6,7 +6,7 @@ the WSSC-weighted AO ERIs (:func:`vibeqc.periodic.ccm.padded.ccm_eri`) and the
 HF-CCM canonical MOs (:func:`vibeqc.periodic.ccm.scf.run_ccm_rhf`) are fed to the
 ordinary closed-shell RMP2 energy expression. The correlation *algebra* is the
 molecular one unchanged; only the *integral source* is the CCM-weighted tensor
-(handovers/HANDOVER_AICCM.md Sec.7) -- vibe-qc's C++ ``run_mp2`` recomputes *canonical* AO ERIs
+(the original investigation) -- vibe-qc's C++ ``run_mp2`` recomputes *canonical* AO ERIs
 internally and would silently ignore the weighting, so the energy expression is
 evaluated here instead.
 
@@ -18,7 +18,7 @@ evaluated here instead.
 
 As with the HF-CCM driver this is the small-cluster / 1-D (feasibly 2-D)
 validation path: it consumes the dense ``ccm_eri`` tensor, so 3-D supercells need
-the scalable weighted four-center (still open -- see handovers/HANDOVER_AICCM.md M3). In the
+the scalable weighted four-center (still open). In the
 isolated-cell limit the weighted ERI is the molecular ERI, so this reproduces
 vibe-qc's molecular ``run_mp2`` exactly; for a periodic cluster the correlation
 energy per cell converges with cluster size (Peintinger & Bredow, J. Comput.
@@ -99,10 +99,33 @@ def run_ccm_mp2(ccm, scf_result: "CCMSCFResult | None" = None, *, initial_guess:
     neutral reference (e.g. :func:`~vibeqc.periodic.ccm.ri.run_ccm_rhf_gdf` or
     ``run_ccm_rhf(eri=ccm_eri_neutral(ccm))``). The no-AO-tensor limit equals the
     dense MP2 on ``g_eff = Σ_P L⊗L`` to machine ε.
+
+    **A reference that carries its cderi is correlated on it** (one build per
+    job, 2026-09-24): with ``cderi=None`` and ``eri=None``, a ``scf_result``
+    from :func:`~vibeqc.periodic.ccm.direct.run_ccm_rhf_direct` (or the lean
+    neutral SCF) supplies ``scf_result.cderi`` and this is the RI-MP2 above,
+    on the very array the reference converged on; ``method`` is then not
+    consulted. Pass ``eri=`` explicitly to force a four-centre kernel.
     """
     guess_selection = _ccm_initial_guess(
         ccm, initial_guess, driver='run_ccm_mp2', reference=scf_result,
     )
+    # A Bloch producer result (run_ccm_*_gdf) is transformed to the real
+    # supercell-Gamma reference of the same Hamiltonian (Theorem 1;
+    # periodic/ccm/bloch_reference.py). Real-Gamma references pass through.
+    from .bloch_reference import as_real_reference
+
+    scf_result = as_real_reference(ccm, scf_result)
+    if cderi is None and eri is None:
+        # One build per job (2026-09-24): a reference that carries the
+        # neutral cderi it converged on is correlated on that very array. A
+        # block-storage reference (speed-up prompt 5) is correlated through
+        # its MO factor below and never materialises the dense array.
+        from .block_cderi import is_block_cderi
+        from .neutral import carried_cderi
+
+        raw = getattr(scf_result, "cderi", None)
+        cderi = raw if is_block_cderi(raw) else carried_cderi(scf_result)
     if cderi is not None:
         if scf_result is None:
             raise ValueError(
@@ -143,8 +166,15 @@ def run_ccm_mp2(ccm, scf_result: "CCMSCFResult | None" = None, *, initial_guess:
     if cderi is not None:
         # RI-MP2: (ia|jb) = Σ_P B^o_{ia,P} B^o_{jb,P} from the neutral cderi --
         # the dense n_ref_ao**4 AO four-center is never formed.
-        L = np.asarray(cderi, dtype=float)
-        B = np.einsum("Pmn,mi,na->Pia", L, Co, Cv, optimize=True)  # (naux, n_occ, n_vir)
+        from .block_cderi import is_block_cderi
+
+        if is_block_cderi(cderi):
+            # Block storage: the same factor from the per-q fits, the dense
+            # AO array never formed either (CCMBlockCderi.mo_factor).
+            B = cderi.mo_factor(Co, Cv)                         # (rows, n_occ, n_vir)
+        else:
+            L = np.asarray(cderi, dtype=float)
+            B = np.einsum("Pmn,mi,na->Pia", L, Co, Cv, optimize=True)  # (naux, n_occ, n_vir)
         ovov = np.einsum("Pia,Pjb->iajb", B, B, optimize=True)
     else:
         # (ia|jb) in Mulliken order from the CCM-weighted AO tensor eri[m,n,l,s]=(mn|ls).
@@ -174,7 +204,8 @@ def run_ccm_mp2(ccm, scf_result: "CCMSCFResult | None" = None, *, initial_guess:
 
 
 def run_ccm_ri_mp2(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 200.0, aux_basis=None,
-                   reference: str = "direct", symmetry=None):
+                   reference: str = "bloch", symmetry=None,
+                   allow_vacuum_padding: bool = False, fold_threads=None):
     """One-call neutral canonical RI-MP2 -- build the neutral cderi ``L`` once, the
     *matching* lean SCF reference, and the RI correlation, with no dense
     ``n_ref_ao**4`` four-center anywhere (reaches moderate 3-D).
@@ -188,8 +219,25 @@ def run_ccm_ri_mp2(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 20
     kernel -- calling ``run_ccm_mp2(scf, cderi=L)`` with a mismatched ``scf`` (e.g. a
     bare-four-center reference) is silently wrong.
 
-    ``reference`` selects the complete SCF reference route. Both routes ride the
-    same ``L``, but they do not differ only at exchange q=0: the neutral route
+    ``reference`` selects the complete SCF reference route.
+
+    * ``"bloch"`` (default since 2026-09-25, speed-up prompt 4) -- the Bloch
+      producer :func:`~vibeqc.periodic.ccm.ri.run_ccm_rhf_gdf` (the multi-k
+      GDF driver on the unit cell over the torus's Γ-centred mesh, with
+      ``retain_fit_cache=True``), transformed to real supercell-Γ orbitals
+      by :func:`~vibeqc.periodic.ccm.bloch_reference.ccm_reference_from_bloch`
+      (Theorem 1), with ``L`` folded from the driver's own fit. The same
+      Hamiltonian as ``"direct"`` (identity pinned at 1e-9 Ha/cell on the
+      correlation energy, ``tests/test_ccm_bloch_reference.py``), the
+      cheaper SCF (``N_c`` eigenproblems of size ``n`` instead of one of
+      size ``N_c·n``) and the better converged orbitals. Closed-shell
+      unit cells only; open-shell clusters need the per-cell spin
+      replication (see :func:`~vibeqc.periodic.ccm.bloch_reference.
+      bloch_reference_and_cderi`), else use ``"direct"``. ``symmetry``
+      is refused on this route (the k-pair star reduction is approximate).
+
+    The two other routes ride the
+    same ``L`` (the supercell FFT build), but they do not differ only at exchange q=0: the neutral route
     carries WSSC overlap, one-electron, and nuclear terms, while the direct route
     carries their folded/Ewald counterparts. Their energy difference therefore
     does not isolate the seam.
@@ -209,7 +257,8 @@ def run_ccm_ri_mp2(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 20
       climbing (0.478, 0.817, 1.018 Ha/cell). Over the same range the
       correlation itself moves only 6.1 to 7.8 mHa, so the defect is in this
       reference, not in the correlation built on it.
-    * ``"direct"`` (default) -- the BvK-ewald direct-torus SCF
+    * ``"direct"`` (the default before 2026-09-25; the independent validation
+      producer, ruling R1) -- the BvK-ewald direct-torus SCF
       (:func:`~vibeqc.periodic.ccm.direct.run_ccm_rhf_direct` closed /
       :func:`~vibeqc.periodic.ccm.direct.run_ccm_uhf_direct` open, on the same
       ``L``, exchange-q=0 seam included). Measured against out-of-process PySCF
@@ -233,21 +282,48 @@ def run_ccm_ri_mp2(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 20
     from .neutral import ccm_neutral_cderi
     from .ri import run_ccm_rhf_ri_neutral
 
-    if reference not in ("neutral", "direct"):
+    if reference not in ("bloch", "neutral", "direct"):
         raise ValueError(
-            f"run_ccm_ri_mp2: reference must be 'neutral' or 'direct', "
+            f"run_ccm_ri_mp2: reference must be 'bloch', 'neutral' or 'direct', "
             f"got {reference!r}")
-    L = ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff, aux_basis=aux_basis,
-                          symmetry=symmetry)
     n_elec = int(ccm.supercell.n_electrons())
     closed = (n_elec % 2 == 0) and int(ccm.supercell.multiplicity) == 1
+    if reference == "bloch":
+        if symmetry not in (None, False):
+            raise ValueError(
+                "run_ccm_ri_mp2: symmetry= (the CCM k-pair star reduction) is "
+                "refused with reference='bloch'; the reduction is approximate on "
+                "3-D cells and the Bloch producer pins the unreduced classic fit.")
+        from .bloch_reference import bloch_reference_and_cderi
+
+        scf, L = bloch_reference_and_cderi(
+            ccm, initial_guess=initial_guess, ke_cutoff=ke_cutoff,
+            aux_basis=aux_basis, open_shell=not closed, who="run_ccm_ri_mp2",
+            allow_vacuum_padding=allow_vacuum_padding, fold_threads=fold_threads)
+        if closed:
+            # The same neutral-RI stamp as the routes below (plain literal:
+            # tests/test_citations.py reads it out of the AST).
+            return replace(
+                run_ccm_mp2(ccm, scf, cderi=L, initial_guess=initial_guess),
+                backend="aiccm2026dev-a-ri-mp2",
+            )
+        from .ump2 import run_ccm_ump2
+
+        return replace(
+            run_ccm_ump2(ccm, scf, cderi=L, initial_guess=initial_guess),
+            backend="aiccm2026dev-a-ri-ump2",
+        )
+    L = ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff, aux_basis=aux_basis,
+                          symmetry=symmetry)
     if closed:
         if reference == "direct":
             from .direct import run_ccm_rhf_direct
 
-            scf = run_ccm_rhf_direct(ccm, cderi=L, initial_guess=initial_guess)
+            scf = run_ccm_rhf_direct(ccm, cderi=L, initial_guess=initial_guess,
+                                     allow_vacuum_padding=allow_vacuum_padding)
         else:
-            scf = run_ccm_rhf_ri_neutral(ccm, cderi=L, initial_guess=initial_guess)
+            scf = run_ccm_rhf_ri_neutral(ccm, cderi=L, initial_guess=initial_guess,
+                                         allow_vacuum_padding=allow_vacuum_padding)
         # Stamp the NEUTRAL-RI lineage, overriding whatever run_ccm_mp2 set
         # for the bare four-centre path: this call built its own matching
         # neutral reference and `L`, so the citation owed is the RI one.
@@ -262,7 +338,8 @@ def run_ccm_ri_mp2(ccm, *, initial_guess: object = "AUTO", ke_cutoff: float = 20
     if reference == "direct":
         from .direct import run_ccm_uhf_direct
 
-        uhf = run_ccm_uhf_direct(ccm, cderi=L, initial_guess=initial_guess)
+        uhf = run_ccm_uhf_direct(ccm, cderi=L, initial_guess=initial_guess,
+                                 allow_vacuum_padding=allow_vacuum_padding)
     else:
         from .uhf import run_ccm_uhf
 

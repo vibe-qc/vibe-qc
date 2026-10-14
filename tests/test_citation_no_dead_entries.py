@@ -63,15 +63,6 @@ DATABASE_TOML = _PACKAGE_ROOT / "output" / "citations" / "database.toml"
 # grow it. Adding an entry with no route in the same commit is the bug CLAUDE.md
 # § 8 step 2 exists to prevent.
 _KNOWN_DEAD_ENTRIES: dict[str, str] = {
-    # Translation-invariant periodic two-centre lattice sums, the theory behind
-    # LatticeSumOptions.pair_complete_1e. Added by accae7ff9 (#429) with no
-    # route and nothing emitting a routes.numerics key for the flag, so wiring
-    # it means emitting that key from the periodic one-electron path -- the
-    # #429 lane's call, not a basis/ECP one. Owner: the pbc lane (#429, #731).
-    "sharma_beylkin_two_center_2021": (
-        "added by #429 without a route; needs a routes.numerics key emitted "
-        "when pair_complete_1e is active"
-    ),
     # Everything else the 2026-07-10/-11 audit flagged is now reachable:
     #   - the stress paper is nielsen_martin_1985 via STRESS_CITATION_KEYS, and
     #     the Doll / phonopy / Parlinski-Li-Kawazoe entries were removed as

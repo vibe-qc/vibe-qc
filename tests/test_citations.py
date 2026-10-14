@@ -138,6 +138,16 @@ def test_software_citation_is_first(tmp_path: Path) -> None:
     assert result.citations[0].key == "vibeqc_software"
 
 
+def test_explicit_lebedev_grid_citation(tmp_path: Path) -> None:
+    plan = _plan(tmp_path, basis="sto-3g", functional="pbe")
+    default = assemble(plan)
+    assert "lebedev_laikov_1999" not in {c.key for c in default.citations}
+    selected = assemble(plan, numerics=["lebedev_grid"])
+    citations = [c for c in selected.citations if c.key == "lebedev_laikov_1999"]
+    assert len(citations) == 1
+    assert citations[0].print is True
+
+
 @pytest.mark.parametrize("numerics", ["bipole_erfc_panel", "bipole_erfc_bloch", "bipole_finite_panel", "bipole_finite_jk"])
 def test_native_erfc_numerics_have_range_separation_sources(tmp_path: Path, numerics: str) -> None:
     result = assemble(_plan(tmp_path, basis="sto-3g", method="rhf"), numerics=[numerics])
@@ -325,6 +335,24 @@ def test_accsdt_route_pins_lambda_triples_papers(tmp_path: Path) -> None:
     assert "raghavachari_ccsdt_1989" not in by_key
 
 
+def test_dlpno_local_solver_routes_cite_their_working_equations() -> None:
+    """The compiled closed- and open-shell PNO-space kernels transcribe the
+    Stanton-Gauss-Watts-Bartlett 1991 spin-orbital CCSD equations with
+    DePrince and Sherrill's density-fitted integrals, so every DLPNO-CCSD
+    route cites both; the DLPNO-MP2 routes do not."""
+    db = load_default_database()
+    working = {
+        "stanton_gauss_watts_bartlett_ccsd_1991",
+        "deprince_sherrill_df_ccsd_2013",
+    }
+    for route in ("dlpno-ccsd", "dlpno-ccsd(t)", "dlpno-uccsd", "dlpno-uccsd(t)"):
+        keys = {c.key for c in db.assemble(method=route).citations}
+        assert working <= keys, route
+    for route in ("dlpno-mp2", "dlpno-ump2"):
+        keys = {c.key for c in db.assemble(method=route).citations}
+        assert not (working & keys), route
+
+
 def test_plain_ccsd_route_omits_triples_paper(tmp_path: Path) -> None:
     """Plain CCSD must not cite the Raghavachari (T) paper."""
     keys = {
@@ -469,7 +497,11 @@ def test_frozen_core_source_gate_covers_every_correlated_option_route() -> None:
 
 
 def test_dlpno_t1_source_is_runtime_gated() -> None:
-    """Only an executed iterative local-basis UCCSD (T1) adds Guo."""
+    """Only an executed iterative local-basis UCCSD (T1) adds both Guo
+    sources; only an executed compiled closed-shell local (T0) adds
+    Rendell-Lee-Komornicki; an executed open-shell local (T0) adds Guo 2020
+    and Watts-Gauss-Bartlett, and an executed rotated open-shell (T1) adds
+    Watts-Gauss-Bartlett alone."""
     from types import SimpleNamespace
 
     from vibeqc.dlpno.ccsd import DLPNOCCSDPilotOptions
@@ -497,12 +529,37 @@ def test_dlpno_t1_source_is_runtime_gated() -> None:
         SimpleNamespace(triples_executed=False),
     ) == ()
     assert _dlpno_triples_citation_entries("dlpno-ccsd(t)", options) == ()
+    from vibeqc.dlpno import triples_local
+
+    local_t0 = LocalCCSDOptions(compute_triples=True, triples_mode="local")
+    assert _dlpno_triples_citation_entries(
+        "dlpno-ccsd(t)", local_t0, SimpleNamespace(triples_executed=True)
+    ) == (
+        ("rendell_lee_komornicki_triples_1991",)
+        if triples_local._HAVE_CPP_LOCAL_TRIPLES
+        else ()
+    )
+    assert _dlpno_triples_citation_entries(
+        "dlpno-ccsd(t)", local_t0, SimpleNamespace(triples_executed=False)
+    ) == ()
+    open_t0 = LocalUCCSDOptions(compute_triples=True)
+    assert _dlpno_triples_citation_entries(
+        "dlpno-ccsd(t)", open_t0, SimpleNamespace(triples_executed=True)
+    ) == (
+        "guo_openshell_dlpno_triples_2020",
+        "watts_gauss_bartlett_openshell_triples_1993",
+    )
+    assert _dlpno_triples_citation_entries(
+        "dlpno-ccsd(t)", open_t0, SimpleNamespace(triples_executed=False)
+    ) == ()
+    assert _dlpno_triples_citation_entries(
+        "dlpno-ccsd(t)",
+        LocalUCCSDOptions(compute_triples=True, triples_mode="t1"),
+        SimpleNamespace(triples_executed=True),
+    ) == ("watts_gauss_bartlett_openshell_triples_1993",)
     for options in (
-        LocalCCSDOptions(compute_triples=True, triples_mode="local"),
         LocalCCSDOptions(compute_triples=True, triples_mode="t1"),
         LocalCCSDOptions(compute_triples=True, triples_mode="exact"),
-        LocalUCCSDOptions(compute_triples=True),
-        LocalUCCSDOptions(compute_triples=True, triples_mode="t1"),
     ):
         assert _dlpno_triples_citation_entries(
             "dlpno-ccsd(t)",
@@ -656,6 +713,34 @@ def test_pob_tzvp_rev2_pulls_both_basis_papers(tmp_path: Path) -> None:
     keys = {c.key for c in result.citations}
     assert "peintinger_pob_tzvp_2013" in keys
     assert "vilela_oliveira_pob_rev2_2019" in keys
+
+
+# The five publications pob-TZVP-rev2's 78 shipped records come from (#288):
+# the parent paper, H-Br (2019), and one paper per heavy range. The heavy
+# ranges are counted from basis/pob-tzvp-rev2.ecp's 46 -ECP blocks, and each
+# paper's title names its own range (metadata from Crossref 2026-09-24).
+POB_TZVP_REV2_DOIS: dict[str, str] = {
+    "10.1002/jcc.23153": "peintinger_pob_tzvp_2013",  # parent
+    "10.1002/jcc.26013": "vilela_oliveira_pob_rev2_2019",  # H-Br
+    "10.1002/jcc.26839": "laun_pob_rev2_fifth_period_2022",  # Rb-I
+    "10.1002/jcc.26521": "laun_pob_rev2_sixth_period_2021",  # Cs-Ba, Hf-Po
+    "10.1002/jcc.27097": "seidler_pob_rev2_lanthanides_2023",  # La-Lu
+}
+
+
+def test_pob_tzvp_rev2_route_carries_all_five_publications(
+    tmp_path: Path,
+) -> None:
+    """A pob-TZVP-rev2 run cites every paper its records come from (#288).
+
+    Before #288 the route named only the 2013 and 2019 papers, so a result
+    on Ag or Gd credited neither the paper its exponents came from nor that
+    paper's authors. The 46 heavy records are in neither of those papers.
+    """
+    result = assemble(_plan(tmp_path, basis="pob-tzvp-rev2"))
+    by_doi = {c.doi: c.key for c in result.citations if c.doi}
+    for doi, key in POB_TZVP_REV2_DOIS.items():
+        assert by_doi.get(doi) == key, (doi, key)
 
 
 def test_pm6_pm7_routes_carry_the_mopac_parameter_source() -> None:
@@ -1158,6 +1243,7 @@ _REQUIRED_FUNCTIONALS = (
     "vv10",
     # functionals wired in xc.cpp that were missing routes (§8 backfill).
     "blyp",
+    "bpw91",  # COSMO-RS protocol functional (Klamt 1998)
     "tpssh",
     "m06-l",
     "m06-2x",
@@ -2352,6 +2438,7 @@ def test_bipole_sr_range_screening_route() -> None:
         uses_bipole_sr_range=True,
     )
     assert "sun_range_separated_exchange_2023" in {c.key for c in on.citations}
+    assert "izmaylov_short_range_exchange_2006" in {c.key for c in on.citations}
     off = db.assemble(
         method="rhf",
         basis="sto-3g",
@@ -2359,6 +2446,7 @@ def test_bipole_sr_range_screening_route() -> None:
         uses_bipole=True,
     )
     assert "sun_range_separated_exchange_2023" not in {c.key for c in off.citations}
+    assert "izmaylov_short_range_exchange_2006" not in {c.key for c in off.citations}
 
 
 def test_bipole_route_fires_when_enabled() -> None:
@@ -2375,6 +2463,9 @@ def test_bipole_route_fires_when_enabled() -> None:
     keys = {c.key for c in result.citations}
     assert "pisani_crystal_1988" in keys
     assert "saunders_bipole_1992" in keys
+    assert "sharma_beylkin_two_center_2021" in keys
+    assert "ahlrichs_general_os_2006" in keys
+    assert "almlof_direct_scf_1982" in keys
     # The Ewald J/K split of the production BIPOLE route (its erfc/erf
     # arms and the #674 alpha/cutoff contract) is Ewald 1921.
     assert "ewald_lattice_sum_1921" in keys
@@ -2461,6 +2552,7 @@ def test_trah_route_fires_when_enabled() -> None:
     result = db.assemble(method="rhf", basis="sto-3g", uses_trah=True)
     keys = {c.key for c in result.citations}
     assert "helmich_paris_trah_2021" in keys
+    assert "more_sorensen_trust_1983" in keys
 
 
 def test_soscf_trah_silent_when_disabled() -> None:
@@ -3107,13 +3199,14 @@ def test_forward_scf_accelerator_routes(accel, expected) -> None:
     assert expected in keys
 
 
-def test_dft_integration_grid_fires_for_any_functional() -> None:
+@pytest.mark.parametrize("method", ["rks", "uks"])
+def test_dft_integration_grid_fires_for_any_functional(method: str) -> None:
     """Becke 1988 multicenter integration + Treutler-Ahlrichs 1995 fire for
     any KS-DFT run (the XC grid), but not for pure Hartree-Fock."""
     db = load_default_database()
     dft = {
         c.key
-        for c in db.assemble(method="rks", basis="def2-svp", functional="pbe").citations
+        for c in db.assemble(method=method, basis="def2-svp", functional="pbe").citations
     }
     assert {"becke_grid_1988", "treutler_ahlrichs_1995"} <= dft
     hf = {c.key for c in db.assemble(method="rhf", basis="sto-3g").citations}
@@ -3334,6 +3427,7 @@ def test_gradient_and_hessian_driver_routes() -> None:
         for c in db.assemble(method="rhf", basis="sto-3g", uses_hessian=True).citations
     }
     assert "wilson_decius_cross_1955" in h
+    assert "ase_2017" in h
     # silent by default
     plain = {c.key for c in db.assemble(method="rhf", basis="sto-3g").citations}
     assert "pulay_forces_1969" not in plain
@@ -3657,7 +3751,7 @@ def test_b_posthf_routes_all_have_a_producer() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AICCM front door M0 (handovers/HANDOVER_AICCM_STANDARD_METHOD.md): ruling R1
+# AICCM front door M0 (the original investigation): ruling R1
 # at the database level.
 # ---------------------------------------------------------------------------
 

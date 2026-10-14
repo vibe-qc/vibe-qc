@@ -1,5 +1,11 @@
 """Build a pending molecular QVF job container.
 
+Success criterion: ``runs/h2-rhf.qvf`` exists with ``run_status = pending``
+and ``job_type = molecular`` (``inspect_job.py`` prints both). After
+``vibeqc run`` the same file reports ``run_status = converged``,
+``run_count = 1`` and an RHF/STO-3G energy of E = -1.1167143 Ha for H2 at
+1.4 bohr (converges in 2 iterations; vibe-qc 0.17.10 development build).
+
 Run from the repository root:
 
     .venv/bin/python examples/qvf_containers/build_h2_job.py

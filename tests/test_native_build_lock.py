@@ -309,6 +309,11 @@ VIBEQC_STAMP_PATH="$PWD/third_party/.native-build-stamp"
 _vibeqc_stamp_pairs() { :; }
 vibeqc_stamp_drifted_deps() { :; }
 vibeqc_stamp_write() { :; }
+vibeqc_verify_cached_fftw() { :; }
+vibeqc_verify_cached_libxc() { :; }
+vibeqc_verify_cached_spglib() { :; }
+vibeqc_verify_cached_openblas() { :; }
+vibeqc_verify_cached_libint() { :; }
 """,
         encoding="utf-8",
     )
@@ -346,6 +351,11 @@ VIBEQC_STAMP_PATH="$PWD/third_party/.native-build-stamp"
 _vibeqc_stamp_pairs() { :; }
 vibeqc_stamp_drifted_deps() { :; }
 vibeqc_stamp_write() { :; }
+vibeqc_verify_cached_fftw() { :; }
+vibeqc_verify_cached_libxc() { :; }
+vibeqc_verify_cached_spglib() { :; }
+vibeqc_verify_cached_openblas() { :; }
+vibeqc_verify_cached_libint() { :; }
 """,
         encoding="utf-8",
     )

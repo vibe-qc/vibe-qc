@@ -157,10 +157,17 @@ def test_overlap_criterion_separates_lih_from_compact_crystals():
 
 
 def test_lih_rocksalt_gdf_energy_in_physical_range():
-    """GDF on LiH rocksalt gives a physical energy — it is the correct
-    production route for the image-overlapping regime (live PASS guard)."""
+    """Supported bulk GDF on LiH must converge inside the retained range.
+
+    This coarse plausibility check does not establish reference parity.
+    """
     system, basis = _lih_rocksalt_conventional()
-    r = vq.run_rks_periodic_gamma_gdf(system, basis, _common_opts(), progress=False)
+    # The supported bulk RKS route accepts these options unchanged;
+    # QC468 refuses the legacy Ewald-J/molecular-limit-K public bridge.
+    r = vq.run_krks_periodic_gdf(
+        system, basis, (1, 1, 1), _common_opts(), progress=False,
+    )
+    assert r.converged, "LiH rocksalt GDF reference did not converge"
     assert -50.0 < r.energy < -10.0, (
         f"LiH rocksalt GDF converged to {r.energy:.2f} Ha, "
         "outside the physical range (-50, -10) Ha."

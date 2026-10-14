@@ -19,6 +19,29 @@ wavefunction. This tutorial makes the boundary explicit with two workflows:
 The MACE energy is not carried into either electronic calculation. It lives
 on a model-specific reference scale and selected the geometry only.
 
+## Background
+
+MACE ({vibeqc-cite}`batatia_mace_2022`) is a learned interatomic potential: an
+equivariant message-passing network whose energy is a sum of atomic site
+energies and whose forces are its analytic gradient. **It is an external
+pre-trained model, not a vibe-qc method.** vibe-qc drives its forward pass and
+cites the papers, but the energy and forces are MACE's, on a model-specific
+reference scale, and the geometry they produce is only as good as the model's
+training distribution (Materials Project data for the MACE-MP/MPA family, MIT
+licence; organic molecules for MACE-OFF23, Academic Software License, gated).
+The [MACE tutorial](mace_mlip.md#background) and the
+[MACE user guide](../user_guide/mlip.md#background-what-mace-is) give the
+longer account. That is why this page uses MACE only to propose structures:
+the electronic stage recomputes everything with a real quantum-chemical
+method, and no MACE number crosses over.
+
+```{note}
+The MACE stages need the optional `[mace]` extra on Python 3.13 or earlier;
+the interpreter used to check this documentation pass does not carry it, so
+the MACE calls below were not re-run and no new output is quoted. The DLPNO
+and periodic-DFT stages do not need the extra.
+```
+
 ## Choose the workflow before choosing the method
 
 | Structure after optimization | Valid electronic handoff | Not implied |

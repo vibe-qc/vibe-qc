@@ -184,7 +184,7 @@ def test_parse_accepts_text_and_path(tmp_path: Path) -> None:
 def test_self_check_fires_on_corrupted_total() -> None:
     """A tampered FINAL SINGLE POINT ENERGY must fail the self-check loudly.
 
-    This is the discipline the handover demands: a wrong parse / sign /
+    This is the discipline the original investigation demands: a wrong parse / sign /
     label drift breaks ORCA's own ``E_total = E_nuc + E_1e + E_2e``
     identity — it must raise, not feed a bad reference into the matrix.
     """

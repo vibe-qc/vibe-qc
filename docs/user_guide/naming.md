@@ -2,7 +2,7 @@
 
 # Molecular naming
 
-vibe-qc can produce IUPAC names from 3D molecular structures and,
+vibe-qc can identify supported molecular structures by name and,
 conversely, build 3D coordinates from chemical names. The naming
 engine is a standalone, pure-Python package (`vibeqc_naming`) that
 works without the C++ extension compiled.
@@ -37,7 +37,32 @@ run_job(mol, basis="def2-SVP", method="rks", functional="PBE")
 #   IUPAC name: ethanol
 ```
 
-Pass `name_molecule=False` to suppress the name.
+Pass `name_molecule=False` to suppress the name. If a structure or electronic
+state is unsupported, the calculation omits the name and continues normally.
+
+## Molecular identity and supported states
+
+Organic structure naming checks a bounded catalog of neutral constitutional
+connectivities. Element identity, attached hydrogen counts, connectivity and
+perceived bond orders must all match; a shared molecular formula is insufficient.
+For example, hexane and 2-methylpentane, ethanol and dimethyl ether, and acetone
+and propanal have distinct names. An unsupported connectivity raises `ValueError`
+instead of returning a formula-derived structural name, even with
+`with_external=True`. This is not a general IUPAC or stereochemical naming engine.
+A high-confidence organic result identifies the supported constitutional graph;
+it does not assign stereochemistry or certify the input geometry.
+
+The atom and graph APIs accept `charge=0` and `multiplicity=1`. Nonzero charge
+or non-singlet multiplicity raises `ValueError`; molecule APIs read these fields
+from the molecule. Pass the actual electronic state when using raw atoms or a
+graph: coordinates alone cannot distinguish every ion or radical. Odd-electron
+neutral compositions also refuse a name. These restrictions apply to molecular
+naming, not to the separate solid composition API. `formula_to_name` remains a
+composition-only utility and must not be used as a structural identity check.
+
+Reverse SMILES preserve carbonyl branches and ring closures. The built-in
+acetone and glycine coordinates encode the corresponding neutral connectivity;
+SMILES output is not a canonical or stereochemical identifier.
 
 ## NamedResult
 
@@ -272,7 +297,10 @@ provide authoritative IUPAC names:
 result = name_from_atoms_detailed(complex_atoms, with_external=True)
 ```
 
-Backends tried in order: RDKit (local) → CACTUS REST → PubChem REST.
+Backends tried in order: CACTUS REST, then PubChem REST. There is no
+local backend: RDKit has no structure-to-name function, so
+`name_from_rdkit` is kept only for compatibility, warns, and always
+returns `None`.
 REST API results are cached in a 256-entry LRU to avoid repeated
 network calls.
 

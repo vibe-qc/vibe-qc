@@ -1,6 +1,6 @@
 """Phase 17a-1 -- molecular finite-difference Hessian + harmonic frequencies.
 
-Two-sided finite differences on the analytic atomic gradient give the
+Two-sided finite differences on the atomic gradient give the
 3N x 3N nuclear Hessian in Hartree/bohr^2. Diagonalizing the mass-
 weighted Hessian (with translation + rotation modes projected out)
 returns the 3N - 6 (or 3N - 5 for linear molecules) harmonic
@@ -28,7 +28,14 @@ For DFT methods, pass ``scf_options`` carrying the functional plus
 
 Cost
 ----
-6N gradient evaluations (one ± displacement per Cartesian DOF). Each
+6N gradient evaluations (one ± displacement per Cartesian DOF). OM2/OM3
+use the existing checked native energy differences inside this outer stencil.
+The initial inner step is 0.001 bohr; the native guard may refine individual
+components by factors of 0.1 up to three times. Actual accepted inner steps
+are not exposed by the gradient API. Their cost is quadratic in Cartesian degrees of
+freedom times the SCF cost; IR intensities are unavailable. These Hessians
+describe the implemented OMx approximations, not published-method parity.
+For Gaussian methods, each
 evaluation = SCF + analytic gradient -- typically a few seconds for
 small molecules and order N^3 in basis size for the SCF itself. Phase
 17b (analytic CPHF) replaces this with a single linear-response solve
@@ -42,10 +49,10 @@ Convention notes
   ``i * |ν|``; the negative-real encoding is just convenient for
   sorting and plotting.
 
-* Trans / rot projection is "exact zero" -- when
-  ``project_trans_rot=True`` (default) the 6 (or 5 for linear) lowest
-  modes are replaced with literal zeros so the user can rely on
-  ``frequencies_cm1[6:]`` (or ``[5:]``) being the vibrational subset.
+* Trans / rot projection inserts exact zeros when
+  ``project_trans_rot=True`` (default). Negative vibrational frequencies
+  sort before these rigid-body zeros; do not discard the first six
+  frequencies to select vibrations at a saddle point.
 
 * Mass weighting uses standard atomic masses (the same table used by
   :func:`vibeqc.center_of_mass`). For isotope effects, edit
@@ -105,6 +112,7 @@ from .ecp_metadata import (
     ecp_centres_follow_atoms,
     effective_nuclear_charges,
 )
+from .density_fitting import resolve_default_jk_aux
 from .gradient_options import gradient_options_from_scf
 from .properties import _ATOMIC_MASSES, _total_density, center_of_mass
 
@@ -223,7 +231,9 @@ class HessianResult:
         ``normal_modes[3i:3i+3, k] / sqrt(M_i)``.
 
     imaginary_count
-        Number of modes with w^2 < 0 after trans/rot projection.
+        Number of modes with w^2 < -1e-10 (atomic units), the existing
+        summary threshold. The full signed frequencies retain smaller
+        negative values too; the count is not a stability certificate.
 
     n_displacements
         ``6 * n_atoms`` for centered FD.
@@ -370,6 +380,10 @@ def _scf_and_gradient_at(
         scf_options, reference_mol, mol, gradient_options
     ):
         if gradient_options is None:
+            # The displaced SCFs below call the bare drivers, so give a
+            # fitted request its default JK aux first (#362); the gradient
+            # options derived next then mirror the resolved name.
+            resolve_default_jk_aux(scf_options, basis_name)
             gradient_options = gradient_options_from_scf(scf_options)
         # Preloaded READ matrices belong to the reference geometry. Project
         # from that fixed basis at every displacement and restore them after
@@ -470,6 +484,30 @@ def _scf_and_gradient_at_impl(
             "Expected one of {'RHF', 'UHF', 'RKS', 'UKS', 'ROHF'}."
         )
     return basis, result, np.asarray(g, dtype=np.float64)
+
+
+def _omx_and_gradient_at(mol: Molecule, method: str):
+    """Evaluate the implemented OM2/OM3 surface, without a Gaussian basis.
+
+    The dispatcher retains the native energy/parameter snapshot used by
+    its checked numerical gradient. Inner displaced SCF failures propagate;
+    this is a nested finite difference, not an analytic OMx derivative.
+    """
+    from .semiempirical.runner import run_semiempirical
+
+    result = run_semiempirical(method.lower(), mol)
+    if not bool(result.converged):
+        raise RuntimeError(
+            f"FD Hessian: {method} SCF failed at a displaced geometry."
+        )
+    if not np.isfinite(result.energy):
+        raise ValueError("FD Hessian: non-finite OMx energy.")
+    gradient = np.asarray(result.gradient(), dtype=np.float64)
+    if gradient.shape != (len(mol.atoms), 3):
+        raise ValueError("FD Hessian: OMx gradient must have shape (n_atoms, 3).")
+    if not np.all(np.isfinite(gradient)):
+        raise ValueError("FD Hessian: non-finite OMx gradient.")
+    return None, result, gradient
 
 
 def _resolve_masses(mol: Molecule,
@@ -607,7 +645,7 @@ def compute_hessian_fd(
     hessian_options: Optional[HessianFDOptions] = None,
 ) -> HessianResult:
     """Build the 3N x 3N nuclear Hessian by central differences on the
-    analytic atomic gradient and return mass-weighted normal-mode
+    atomic gradient and return mass-weighted normal-mode
     frequencies.
 
     See module docstring for API examples and convention notes.
@@ -621,10 +659,14 @@ def compute_hessian_fd(
         non-equilibrium force constants can be evaluated too.
     basis_name :
         Basis-set name. Re-built per displacement so basis-center
-        derivative pieces are absorbed into the FD.
+        derivative pieces are absorbed into the FD. Use an empty string
+        for basis-free OM2/OM3.
     method :
         One of ``"RHF"``, ``"UHF"``, ``"ROHF"``, ``"RKS"``, ``"UKS"``
-        (case-insensitive).
+        or molecular ``"OM2"`` / ``"OM3"`` (case-insensitive). OMx uses
+        the run_job dispatcher defaults and retained-result numerical
+        gradients; Gaussian SCF/grid/gradient options and dipole derivatives
+        are refused. Charge, multiplicity and element gates are unchanged.
     scf_options :
         Per-method options struct. Default-initialises a fresh
         ``RHFOptions`` / ``UHFOptions`` / ``ROHFOptions`` /
@@ -657,52 +699,65 @@ def compute_hessian_fd(
         hessian_options = HessianFDOptions()
 
     method_norm = method.upper()
-    if method_norm not in {"RHF", "UHF", "ROHF", "RKS", "UKS"}:
+    from .output.formats.vibrational import FD_HESSIAN_SURFACES
+
+    if method_norm.lower() not in FD_HESSIAN_SURFACES:
         raise ValueError(
             f"FD Hessian: unknown method {method!r}. "
-            "Expected one of 'RHF', 'UHF', 'ROHF', 'RKS', 'UKS'."
+            "Expected one of 'RHF', 'UHF', 'ROHF', 'RKS', 'UKS', 'OM2', 'OM3'."
+        )
+    is_omx = method_norm in {"OM2", "OM3"}
+    if is_omx:
+        if basis_name or any(
+            value is not None for value in (scf_options, grid_options, gradient_options)
+        ):
+            raise ValueError(
+                "FD Hessian: OM2/OM3 require an empty basis name and use the "
+                "molecular dispatcher defaults, without Gaussian options."
+            )
+        if hessian_options.include_dipole_derivatives:
+            raise NotImplementedError("FD Hessian: OM2/OM3 dipole derivatives are unavailable.")
+    else:
+        if scf_options is None:
+            if method_norm == "ROHF":
+                from .rohf import ROHFOptions
+
+                scf_options = ROHFOptions()
+            else:
+                scf_options = {
+                    "RHF": RHFOptions(),
+                    "UHF": UHFOptions(),
+                    "RKS": RKSOptions(),
+                    "UKS": UKSOptions(),
+                }[method_norm]
+        if method_norm in {"RKS", "UKS"}:
+            from .runner import apply_ks_grid_default
+            if grid_options is not None:
+                scf_options.grid = grid_options
+            else:
+                apply_ks_grid_default(scf_options, grid_level)
+            grid_options = scf_options.grid
+        elif grid_options is None:
+            grid_options = GridOptions()
+
+        # A direct caller commonly supplies only an ECP-paired basis name. Attach
+        # that sidecar before deriving GradientOptions or entering the displacement
+        # loop; otherwise the first displaced SCF would discover the ECP too late
+        # and its gradient would still describe the all-electron defaults.
+        attach_inline_ecp_options_from_basis_sidecar(
+            scf_options, mol, BasisSet(mol, basis_name)
         )
 
-    if scf_options is None:
-        if method_norm == "ROHF":
-            from .rohf import ROHFOptions
-
-            scf_options = ROHFOptions()
-        else:
-            scf_options = {
-                "RHF": RHFOptions(),
-                "UHF": UHFOptions(),
-                "RKS": RKSOptions(),
-                "UKS": UKSOptions(),
-            }[method_norm]
-    if method_norm in {"RKS", "UKS"}:
-        from .runner import apply_ks_grid_default
-        if grid_options is not None:
-            scf_options.grid = grid_options
-        else:
-            apply_ks_grid_default(scf_options, grid_level)
-        grid_options = scf_options.grid
-    elif grid_options is None:
-        grid_options = GridOptions()
-
-    # A direct caller commonly supplies only an ECP-paired basis name. Attach
-    # that sidecar before deriving GradientOptions or entering the displacement
-    # loop; otherwise the first displaced SCF would discover the ECP too late
-    # and its gradient would still describe the all-electron defaults.
-    attach_inline_ecp_options_from_basis_sidecar(
-        scf_options, mol, BasisSet(mol, basis_name)
-    )
-
-    # ECP centres are absolute coordinates on the SCF options. Refuse a
-    # set that does not sit on the atoms of ``mol`` before spending any
-    # SCF on it: such an SCF is already inconsistent (bare Z on the atom,
-    # V_ECP still acting), and the displaced-geometry loop below relies on
-    # this mapping to move each centre with its atom (#576).
-    ecp_centre_atom_indices(scf_options, mol)
-    # Nuclear charges for the dipole-derivative rows: Z - n_core on ECP
-    # atoms (both routes), bare Z otherwise. Resolved once here -- the
-    # displaced geometries carry the same ECP assignment (#642).
-    _dipole_nuclear_charges = effective_nuclear_charges(mol, scf_options)
+        # ECP centres are absolute coordinates on the SCF options. Refuse a
+        # set that does not sit on the atoms of ``mol`` before spending any
+        # SCF on it: such an SCF is already inconsistent (bare Z on the atom,
+        # V_ECP still acting), and the displaced-geometry loop below relies on
+        # this mapping to move each centre with its atom (#576).
+        ecp_centre_atom_indices(scf_options, mol)
+        # Nuclear charges for the dipole-derivative rows: Z - n_core on ECP
+        # atoms (both routes), bare Z otherwise. Resolved once here -- the
+        # displaced geometries carry the same ECP assignment (#642).
+        _dipole_nuclear_charges = effective_nuclear_charges(mol, scf_options)
 
     # ---- Build the Hessian via centered FD ---------------------------------
     n_atoms = len(mol.atoms)
@@ -711,8 +766,8 @@ def compute_hessian_fd(
     n_dof = 3 * n_atoms
     H = np.zeros((n_dof, n_dof), dtype=np.float64)
     delta = float(hessian_options.step_bohr)
-    if delta <= 0:
-        raise ValueError("FD Hessian: step_bohr must be positive")
+    if not np.isfinite(delta) or delta <= 0:
+        raise ValueError("FD Hessian: step_bohr must be finite and positive")
 
     # Partial-Hessian (frozen atoms): displace only the unfrozen atoms;
     # the result is the (3M, 3M) sub-block over them (see HessianFDOptions
@@ -746,23 +801,43 @@ def compute_hessian_fd(
         dipole_derivs = None
 
     n_disp = 0
+    omx_parameter_snapshot = None
     for i in range(n_atoms):
         if i in frozen_set:
             continue  # frozen atom: not displaced (partial Hessian)
         for cart in range(3):
             mol_plus = _displaced_molecule(mol, i, cart, +delta)
             mol_minus = _displaced_molecule(mol, i, cart, -delta)
-            basis_p, res_p, g_plus = _scf_and_gradient_at(
-                mol_plus, basis_name, method_norm,
-                scf_options, grid_options, gradient_options,
-                reference_mol=mol,
-            )
-            basis_m, res_m, g_minus = _scf_and_gradient_at(
-                mol_minus, basis_name, method_norm,
-                scf_options, grid_options, gradient_options,
-                reference_mol=mol,
-            )
+            if is_omx:
+                basis_p, res_p, g_plus = _omx_and_gradient_at(mol_plus, method_norm)
+                basis_m, res_m, g_minus = _omx_and_gradient_at(mol_minus, method_norm)
+                for displaced_result in (res_p, res_m):
+                    snapshot = (
+                        displaced_result.parameter_identity,
+                        displaced_result.parameter_sha256,
+                    )
+                    if not all(snapshot):
+                        raise RuntimeError("FD Hessian: missing OMx parameter identity.")
+                    if omx_parameter_snapshot is None:
+                        omx_parameter_snapshot = snapshot
+                    elif snapshot != omx_parameter_snapshot:
+                        raise RuntimeError(
+                            "FD Hessian: OMx parameters changed across displacements."
+                        )
+            else:
+                basis_p, res_p, g_plus = _scf_and_gradient_at(
+                    mol_plus, basis_name, method_norm,
+                    scf_options, grid_options, gradient_options,
+                    reference_mol=mol,
+                )
+                basis_m, res_m, g_minus = _scf_and_gradient_at(
+                    mol_minus, basis_name, method_norm,
+                    scf_options, grid_options, gradient_options,
+                    reference_mol=mol,
+                )
             n_disp += 2
+            # Larsen et al., J. Phys.: Condens. Matter 29, 273002 (2017),
+            # sec. 8.1, eq. (3): H = -dF/dR = dg/dR (g is not force).
             # Column 3i+cart of H = (g(+d) - g(-d)) / (2d), flattened.
             col = (g_plus - g_minus).reshape(-1) / (2.0 * delta)
             H[:, 3 * i + cart] = col

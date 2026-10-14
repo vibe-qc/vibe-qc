@@ -373,6 +373,18 @@ an `.out` says
 *"SCF total: 0.015 s"* with no indication whether that's a fast
 machine, a slow one, or a single-threaded build.
 
+The `[vibeqc]` section includes `native_core_sha256` and `native_core_bytes`,
+computed from the native extension loaded by the writing process. Keep these
+with `version` and the full `git_sha` when reporting measurements. An editable
+install's package version alone does not identify its native binary.
+
+For fitted chi jobs, `[run]` also records the requested fit source and cutoffs
+separately from the executed source descriptor. The descriptor identifies the
+engine, basis and auxiliary fingerprints, resolved numerical support, metric
+threshold, auxiliary frame, q groups and factor hash. Meshes and lattice data
+remain TOML arrays. An executed source identity is not numerical qualification;
+the fitted chi result remains `not-qualified`.
+
 Sample manifest:
 
 ```toml
@@ -380,8 +392,8 @@ Sample manifest:
 # Captures the runtime environment so generated calculation outputs are
 # reproducible and wall-time numbers are interpretable. The [plan]
 # section is the declared output contract (written once, at job start);
-# the [outputs] section is the running status (rewritten as each file
-# lands). External QC programs are validation references only.
+# [outputs].status describes file delivery, not scientific success.
+# result_status records the driver's verdict, not external validation.
 
 [vibeqc]
 version       = "0.12.0"
@@ -389,6 +401,8 @@ codename      = "Knuth's Beaver"
 git_sha       = "0123456789abcdef0123456789abcdef01234567"
 git_branch    = "main"
 is_release    = true
+native_core_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+native_core_bytes = 12345678
 
 [host]
 hostname      = "workstation.invalid"
@@ -406,6 +420,8 @@ omp_threads_used = 12
 [memory]
 total_gb      = 32.0
 available_gb  = 24.0
+host_total_gb = 32.0
+effective_available_gb = 24.0
 
 [python]
 version       = "3.14.0"
@@ -429,6 +445,23 @@ timestamp_iso  = "2026-04-29T21:42:14-04:00"
 wall_seconds   = 0.084
 basename       = "input-h2o-rhf"
 pid            = 51284
+
+# Present only when the job requested a Hessian (hessian=True). Names
+# the potential-energy surface the frequencies describe, which is not
+# always the method that was asked for: run_job resolves a correlated
+# request down to the mean-field reference its SCF runs, and the
+# finite-difference Hessian differentiates that reference. For
+# method="mp2" the surface is RHF, so surface_is_requested_method is
+# false. available = false means the requested method resolves to no
+# surface with a finite-difference Hessian at all, and no frequencies
+# were reported.
+
+[hessian]
+requested_method = "mp2"
+surface        = "RHF/6-31g*"
+surface_method = "rhf"
+surface_is_requested_method = false
+available      = true
 
 # v0.8.x+ Phase-O1 additions: declarative pre-flight plan + running
 # outputs status. vq's `--vibeqc-preflight` reads [plan] to know what
@@ -462,6 +495,8 @@ description = "Runtime manifest (this file)."
 
 [outputs]
 status          = "complete"         # running | complete | crashed | dry_run
+result_status   = "converged"        # driver's verdict, separate from delivery
+result_error    = ""
 finished_at_iso = "2026-04-29T21:42:14-04:00"
 
 [[outputs.files]]
@@ -494,12 +529,85 @@ are explicit sentinels, not a failed validation. Older manifests that contain
 a self-digest captured the pre-finalization file and that digest must not be
 used to validate the fetched `.system` file.
 
+The memory section names both scopes: `host_total_gb` is physical host RAM,
+while `effective_available_gb` is the memory available to the current job,
+including allocation limits. The legacy `total_gb` and `available_gb` keys are
+aliases for these respective values. Their ratio is not host memory usage.
+The output banner therefore says "Available to this job". A zero value means
+the corresponding probe could not determine the quantity.
+
 An `[outputs].status = "complete"` manifest guarantees that every planned row
 with `always = true` has `written = true`. Finalization cannot silently leave
 a requested guaranteed sidecar pending: the manifest is instead written with
 `status = "crashed"`, the missing row gets `checksum_status = "failed"`, and
 the runner raises `IncompleteOutputError`. Rows with `always = false` describe
 conditional files and may remain pending on a successful run.
+
+`outputs.result_status` reports the calculation outcome separately. The periodic
+runner records `converged` or `not_converged` from its returned result, and
+`refused` for an unsupported capability. Early periodic capability refusals
+write a minimal `.system` record even before the full output plan exists;
+`result_error` contains the refusal reason. An exception without a recorded
+result is `crashed`; a dry run is `not_run`. The molecular runner records
+`converged` or `not_converged` (with the reason in `result_error`) for every
+SCF route, and a `NotImplementedError` raised before its output plan exists
+leaves the same preflight refusal receipt. Writers that do not report a
+calculation verdict leave `not_reported`. Never infer convergence from file
+delivery. Convergence records
+the driver's numerical verdict and does not establish external validation or
+the accuracy of an experimental method. A later delivery failure preserves an
+already recorded calculation verdict. The verdict is recorded when an SCF or
+optimization driver returns, before writing its results. It describes that
+calculation stage, not the success of every subsequently requested property.
+
+QVF `provenance.scf_converged` is present only when the result reports an
+SCF convergence verdict. Periodic DFTB0 is noniterative: it records
+`scf_applicable = false` and omits `scf_converged` and `n_scf_iterations`.
+Its terminal `run_status = "converged"` means the calculation completed,
+not that an SCF loop ran. A missing convergence report from an unspecified
+route is not converted into a failed-SCF boolean.
+
+`[verdict]` is the run-level verdict every writer shares (the same mapping is
+`provenance.verdict` in the QVF and `verdict` on the structured `scf_converged`
+and `job_end` events). It always has this shape:
+
+```toml
+[verdict]
+scf            = "converged"        # converged | not_converged | not_run | not_reported
+stability      = "unverified"       # verified_stable | unstable | unverified |
+                                    # not_checked | unsupported | not_applicable | not_reported
+stability_reason = "wall_budget"    # converged | matvec_budget | wall_budget | not_run |
+                                    # trivial | stagnated | opt_out | unsupported_route | ...
+usable         = false              # the consumer gate
+stability_eigenvalue = 0.09287      # lowest orbital-rotation Hessian eigenvalue (estimate
+                                    # unless verified_stable / unstable)
+stability_restarts = 0
+stability_matvec_used = 17
+stability_matvec_cap = 60
+stability_wall_s = 612.4
+stability_wall_budget_s = 600.0     # 0 = unbounded
+```
+
+`usable` is true when the SCF converged and the stability analysis neither
+produced no verdict (`unverified`: its matvec or wall budget ran out) nor
+found an instability (`unstable`). An explicit opt-out (`not_checked`), a
+route whose response is not plumbed (`unsupported`), a method without an SCF
+stability surface (`not_applicable`) and a writer that recorded no stability
+verdict (`not_reported`, e.g. periodic routes) stay visible and usable; a
+consumer that needs certification gates on `stability == "verified_stable"`.
+`vibeqc.output.usable_from_manifest(manifest)` is the reference reader: it
+returns `usable`, `not_usable` or `unknown`, and every manifest written before
+this section existed is `unknown` -- `outputs.status` is never read as a
+scientific verdict. The stability solve itself is bounded by
+`stability_wall_budget_s` (default: `max(600 s, 3.0 x the SCF loop wall)`) as
+well as by `stability_davidson_max_iter`; a spent budget ends it within one
+Hessian-vector product and the `.out` line says which budget and what it cost.
+
+An archive can be written successfully while an optional component is omitted.
+Its file outcome then includes a `component_errors` table mapping component
+names to error messages. For example, `"volume.density"` records a rejected
+periodic QVF density grid. This error survives successful archive writing;
+`written = true` certifies the container file, not every optional component.
 
 The shape is fixed, every section + key listed above is always
 present, even when a probe falls back to `"unknown"`. Downstream
@@ -540,7 +648,18 @@ also record their convention: `exchange_q0` and its applicability,
 `lattice_vector_convention`, `bvk_nrep`, `bvk_n_cells` and the
 executed mixing values; `neutral-bloch` adds the fit accounting
 `lpq_pair_symmetry`, `gdf_pair_builds`, `gdf_pair_total`,
-`gdf_pair_reduction_factor` and `rsgdf_tail_ke_cutoff_executed`.
+`gdf_pair_reduction_factor`, `rsgdf_tail_ke_cutoff_executed` and
+`rsgdf_fit_source_executed` (`classic` or `sr`, the implementation of
+`gdf_method="rsgdf"` that built the fit, read from the driver); `real-gamma`
+records the last two as well, so a Theorem-1 pair is audited from its two
+`.system` files (vibe-qc #378). Both arms also record
+`neutral_source_identity`, the digest of the whole operator record (geometry,
+torus, bases, fit engine and cutoffs, tail, cell list, exchange seam and, for
+KS, the functional and XC reach): equal digests mean one Hamiltonian, and the
+full record is in each arm's QVF convention section (#519). The `real-gamma`
+arm also records its terminal evaluated state (#472): `fock_build_id`,
+`evaluated_density_id`, `fock_source_id`, the frame identities, the metric
+electron count and the energy components the state was evaluated with.
 
 Those finite-torus fields are listed above but their **values** carry the
 distinctions the AICCM taxonomy exists to make, so read them as a vocabulary
@@ -578,7 +697,45 @@ e.g. `"aiccm2026dev-a-ri-ccsd(t)"`). Read the second, not the first, when you
 need the provenance: it carries the lineage (`-ri-` for the neutral fitted
 torus, bare for the union-and-weight rows) and whether the perturbative
 triples ran, neither of which the request determines. An SCF-only run writes
-neither key.
+neither key. On `variant="neutral-bloch"` a correlated job also writes
+`aiccm_correlation_reference` (`"bloch-fold (...)"`: the correlation ran on
+the Bloch SCF folded to real-Gamma orbitals, Theorem 1) and the transform's
+passed checks, `aiccm_bloch_fold_fock_offdiag_max`,
+`aiccm_bloch_fold_orthonormality_max_dev`, `aiccm_bloch_fold_density_max_dev`
+and `aiccm_bloch_fold_cderi_build` (`"driver-fit-cache"` when the supercell
+cderi was folded from the driver's retained fit, `"fold"` when it was
+refitted).
+
+**DLPNO runs** write the `dlpno_*` fields of their thresholds, triples
+mode and engine, and since v0.17.16 `dlpno_source_kind` and
+`dlpno_source_identity`: the correlation source the engine read
+(for example `"molecular-df"`, `"gamma-gdf"` or `"bvk-supercell"`) and a hash of its
+reference and factors, so a correlation energy names the Hamiltonian it was
+computed on. Periodic DLPNO jobs add `correlation_method`,
+`correlation_route` (the citation route, for example
+`"periodic-gdf-dlpno-ccsd(t)"` or `"periodic-gdf-dlpno-uccsd(t)"`),
+`dlpno_kmesh`, `dlpno_n_cells`, the per-cell energies
+(`dlpno_e_hf_per_cell`, `dlpno_e_corr_per_cell`, `dlpno_e_t_per_cell`,
+`dlpno_e_total_per_cell`), `dlpno_exchange_q0`, `dlpno_localisation`,
+`dlpno_same_source` and, on a UHF reference, `dlpno_reference_kind`,
+`dlpno_n_occ_alpha` and `dlpno_n_vir_alpha`. The QVF archive carries the
+same record in its `x_vibeqc.dlpno_correlation` section. See
+[local correlation on crystals](periodic_local_correlation.md#output-manifest-and-qvf).
+
+**Selected integral engines** (the experimental `integral_engine=`,
+`coulomb=` and `exchange=` keywords) record the executed providers and
+algorithms, source identities, work counters and the final-density
+confirmation in the `.out` and in a non-critical vendor section of the QVF;
+periodic MANTA jobs add `integral_backend_executed`, `jk_method_executed`
+and their domain cutoffs to the manifest. See
+[integral engines](integral_engines.md#provenance).
+
+**Geometry optimisations that do not converge** on the native or Brent
+backend write the last geometry to the `.xyz`, mark the manifest
+`status = "crashed"`, record a `geometry_optimization_nonconverged` event
+and raise `vibeqc.geomopt.GeomOptNotConvergedError` before the single point
+and the frequencies; the `.out` says `Geometry optimization NOT CONVERGED`
+with the iteration count, the largest gradient component and the reason.
 
 **Privacy: hostname opt-out.** For runs you plan to share
 publicly, pass `record_hostname=False` to `run_job`, or set the
@@ -626,11 +783,29 @@ plain-text geometry over `.molden`):
 
 ```text
 3
-energy=-76.04939147 prop=energy
+vibe-qc final geometry (bohr -> Å, CODATA 2018 a₀) energy=-76.0493914700 energy_method=rhf method=rhf
 O    0.0000000000    0.0000000000    0.0000000000
 H    0.0000000000    0.7569997744   -0.5184799434
 H    0.0000000000   -0.7569997744   -0.5184799434
 ```
+
+`energy=` is the **SCF** energy, which is not always the job's
+headline energy. `run_job` resolves a post-SCF correlated request
+down to the mean-field reference its SCF runs, so `method="mp2"`
+writes the RHF energy here. The two tags beside it say so: the
+`energy_method=` tag names the method that produced `energy=`, and
+`method=` names the job. For an MP2 run the comment line reads
+
+```text
+... energy=-74.9630231287 energy_method=rhf method=mp2
+```
+
+so a reader, and ASE's `Atoms.info`, can tell that number apart
+from an MP2 total energy. Take the correlated total from the `.out`
+or from the `.system` manifest's `[progress]` section, which
+carries it under its own method name. Before v0.17.7 the tags were
+absent and a correlated job's `.xyz` was byte-identical to its
+reference job's.
 
 For periodic runs the comment line carries
 `Lattice="ax ay az bx by bz cx cy cz" pbc="T T T"` so any
@@ -725,6 +900,15 @@ explains the missing NAO construction under `unavailable.npa`, and the text
 section says `npa: not implemented`. This known limitation is not a
 calculation error. See the [bond analysis guide](bond_analysis.md) for the
 theory, provisional NBO APIs, EDA, orbital entanglement and citations.
+
+With `iao_analysis=True`, molecular RHF/RKS/UHF/UKS jobs add an
+`iao` object and a labeled IAO text section. This contains MINI/symmetric
+IAO charges, optional alpha-minus-beta spin populations, dense spin-resolved
+IAO-Wiberg bond orders, conventions and diagnostics. An unsupported analysis
+has `available=false`, null numerical arrays and an `unavailable_reason`;
+population summaries also record that reason under `unavailable.iao`.
+The existing `wiberg` field keeps its original AO-based meaning.
+See [IAO analysis](iao_population.md) for the API and QVF extension payload.
 
 A property-computation failure (e.g. Mayer bond orders on a
 near-singular overlap) on one section does NOT suppress the others
@@ -1266,15 +1450,21 @@ with vq.structured_log("output.scf.jsonl"):
 # emit per-iter rows live via the same context-var funnel that
 # vibeqc.ProgressLogger uses.
 
-# (3) run_job kwarg — one-shot:
+# (3) run_job / run_periodic_job kwarg — one-shot:
 vq.run_job(mol, basis="cc-pVDZ", method="rks", functional="pbe",
            output="x", structured_log=True)        # → x.scf.jsonl
 vq.run_job(mol, basis="cc-pVDZ", method="rks", functional="pbe",
            output="x", structured_log="other.jsonl")  # explicit
+vq.run_periodic_job(system, basis, method="rhf",
+                    output="cell", structured_log=True)  # → cell.scf.jsonl
 ```
 
-Off by default, `run_job` only writes the file when the caller
-opts in. Explicit `structured_log=` always wins over the env var.
+Off by default. `run_job` and `run_periodic_job` resolve the
+destination the same way, highest first: an explicit
+`structured_log=True` or path, then `VIBEQC_STRUCTURED_LOG`, then
+`{output}.scf.jsonl` when `$VQ_WORKDIR` is set (a vq job), else no
+file. The periodic semiempirical routes write no structured log and
+refuse an explicit request.
 
 ### Tail-friendly
 
@@ -1424,8 +1614,10 @@ want to inspect a failed iterate keep working.
 | `fmax=` | `0.05` | optimizer convergence in eV/Å (ASE convention) |
 | `max_opt_steps=` | `200` | optimizer iteration limit |
 | `write_molden_file=` | `None` (auto) | emit `.molden` when the route exposes a Gaussian AO wavefunction; explicit `True` guarantees it or fails before calculation |
-| `write_xyz_file=` | `True` | emit `{output}.xyz` final geometry (Å, plus `energy=<Ha>` in the comment line) |
+| `write_xyz_file=` | `True` | emit `{output}.xyz` final geometry (Å, plus `energy=<Ha>` and the `energy_method=` / `method=` tags naming it, in the comment line) |
 | `write_population_file=` | `None` (auto) | emit `{output}.population.{txt,json}` on compatible routes; explicit `True` guarantees the pair or fails before calculation |
+| `iao_analysis=` | `False` | request molecular determinant IAO charges, spin populations and IAO-Wiberg bonds independently of localization/QVF |
+| `iao_bond_threshold=` | `0.05` | text display threshold for IAO bond pairs; leaves the dense API/JSON result unchanged |
 | `write_cube=` | `False` | volumetric cubes; `True` / `"density"` / `"homo"` / `"lumo"` / int / list (see [cube section](#output-h2odensitycube--output-h2ohomolumocube--volumetric-data-opt-in-v08x)) |
 | `cube_spacing=` / `cube_padding=` | `0.2` / `4.0` (bohr) | grid spacing + padding for cubes; ignored when `write_cube=False` |
 | `output_qvf=` | `True` | bundle structure + density + the `write_cube=` grids + basis/coefficients into one `{output}.qvf` archive for vibe-view (vibe-qc's native visualization format) |

@@ -222,8 +222,8 @@ def test_frozen_core_outer_call_preserves_full_hf_constant_and_active_dimensions
     assert result.converged and result.periodic_energy_per_cell
     assert result.pair_ccsd.memory.occupied_count == result.local_triples.memory.occupied_count == nk
     assert result.local_triples.memory.common_virtual_dimension == 2*nk
-    assert b.hf.state.reference_energy_per_cell == b.unfrozen_hf.state.reference_energy_per_cell
-    assert result.total_energy_per_cell == pytest.approx(b.unfrozen_hf.state.reference_energy_per_cell
+    assert result.diagnostics.hf_energy_per_cell == b.hf.state.reference_energy_per_cell
+    assert result.total_energy_per_cell == pytest.approx(b.hf.state.reference_energy_per_cell
         +(result.pair_ccsd.solver.final_snapshot.correlation_energy
           +result.local_triples.solver.final_snapshot.triples_energy)/nk, abs=3e-15)
     _prepare_leaves(b, localization_options=controls[0].localization)

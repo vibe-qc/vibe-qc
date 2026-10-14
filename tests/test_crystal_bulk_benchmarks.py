@@ -193,7 +193,11 @@ def test_multi_k_111_mesh_equals_gamma_dispatch(name, fixture):
     """Multi-k Ewald dispatch at a [1,1,1] mesh reproduces the
     Γ-only Ewald dispatch energy to ~µHa when the lattice-cell
     cutoff captures only the g=0 cell — both drivers then use the
-    single-cell density convention.
+    single-cell density convention. The Γ-only driver's exact exchange
+    is the molecular-limit kernel, so the multi-k side names it
+    (``exchange_exxdiv='none'``); the multi-k default is the corrected
+    split at every mesh since #23, 0.37 mHa below it in this 30-bohr box
+    (the 1/L^3 finite-size term).
 
     At smaller boxes (cutoff > a) the multi-k driver's J_LR uses the
     proper multi-cell periodic density while the Γ-only driver uses
@@ -216,6 +220,7 @@ def test_multi_k_111_mesh_equals_gamma_dispatch(name, fixture):
     )
     r_mk = vq.run_rhf_periodic_scf(
         sysp, basis, km, scf_opts, omega=0.5, spacing_bohr=0.3,
+        exchange_exxdiv="none",
     )
     assert r_gamma.converged
     if not r_mk.converged:
@@ -225,6 +230,14 @@ def test_multi_k_111_mesh_equals_gamma_dispatch(name, fixture):
             "construction at [1,1,1] mesh"
         )
     assert r_gamma.energy == pytest.approx(r_mk.energy, abs=5e-6)
+    assert r_mk.exchange_q0 == "molecular-limit"
+
+    r_default = vq.run_rhf_periodic_scf(
+        sysp, basis, km, scf_opts, omega=0.5, spacing_bohr=0.3,
+    )
+    assert r_default.exchange_q0 == "BvK-ewald"
+    # Measured -3.715e-4 Ha: the corrected split's finite-size term.
+    assert r_default.energy - r_gamma.energy == pytest.approx(-3.7e-4, abs=5e-5)
 
 
 # ---------------------------------------------------------------------------

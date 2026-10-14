@@ -17,8 +17,7 @@ Current vibe-qc analytic-V_ne Ewald-J result (cutoff 14, SHRINK 8):
 
 The driver now defaults to the CRYSTAL-gauge Ewald-J two-electron
 composition for 3D systems. Pass ``use_ewald_j_split=False`` only for
-the legacy direct-only diagnostic path described in the 2026-05-17
-BIPOLE handover.
+the legacy direct-only diagnostic path.
 """
 from __future__ import annotations
 

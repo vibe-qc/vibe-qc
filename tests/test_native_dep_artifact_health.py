@@ -95,7 +95,10 @@ def _bash(tree: Path, snippet: str) -> subprocess.CompletedProcess:
     """Run ``snippet`` with CWD = ``tree`` and the real _native_stamp.sh
     sourced (so the test pins the as-shipped helper, not a copy)."""
     script = (
-        f"cd {shlex.quote(str(tree))}\n. {shlex.quote(str(NATIVE_STAMP))}\n{snippet}\n"
+        f"cd {shlex.quote(str(tree))}\n. {shlex.quote(str(NATIVE_STAMP))}\n"
+        # These legacy stand-ins test stamp protocol, not loaded-image admission.
+        # Real admission/caller controls below use _fftw_shell without this stub.
+        f"vibeqc_verify_cached_libint() {{ :; }}\n{snippet}\n"
     )
     return subprocess.run(
         ["bash", "-c", script], capture_output=True, text=True, check=False
@@ -126,7 +129,7 @@ def _relabel_stand_in_builder(
     fingerprint depends on state outside the builder file. Tests of the
     generic stamp mechanics use this to run on a dep without that property.
     """
-    soname = {"libxc": "libxc", "spglib": "libsymspg", "fftw": "libfftw3"}[dep]
+    soname = {"libxc": "libxc", "spglib": "libsymspg", "fftw": "libfftw3", "openblas": "libopenblas", "libecpint": "libecpint"}[dep]
     (tree / "scripts" / f"build_{dep}.sh").write_text(
         f'{version_var}="{version}"\n'
         "# pretend configure flags — body is what the recipe hash pins\n"
@@ -274,13 +277,8 @@ def test_recipe_hash_failure_preserves_previous_stamp(built_tree: Path):
 def test_v015121_fleet_stamp_migrates_without_rebuild(
     builder: str, expected: str
 ):
-    hashed = _bash(
-        REPO_ROOT,
-        f"_vibeqc_legacy_recipe_hash {shlex.quote(builder)}",
-    )
-    assert hashed.returncode == 0, hashed.stderr
-    assert hashed.stdout.strip() == expected
-
+    # The immutable historical row must still be accepted. Admission-only
+    # code can now change the v1 text; exact reviewed aliases preserve reuse.
     matched = _bash(
         REPO_ROOT,
         (
@@ -446,11 +444,10 @@ def test_pre_unified_libint_alias_requires_valid_current_markers(
     recipe = pre_unified_libint_tree / "scripts" / "build_libint.sh"
     source = recipe.read_text(encoding="utf-8")
     end_marker = "# vibeqc-recipe-hash: lifecycle-only-end\n"
-    # Three balanced pairs since 2026-08-13: the build lock plus the two
-    # quiet-build-logging blocks around `cmake --build`. Dropping the LAST
+    # Admission, lock and logging blocks are balanced. Dropping the LAST
     # end marker leaves its begin unmatched, which is the fail-closed shape
     # this test pins ("without a matching end").
-    assert source.count(end_marker) == 3
+    assert source.count(end_marker) == source.count("# vibeqc-recipe-hash: lifecycle-only-begin\n")
     head, _, tail = source.rpartition(end_marker)
     recipe.write_text(head + tail, encoding="utf-8")
 
@@ -632,7 +629,7 @@ def test_three_field_legacy_stamp_upgrades_without_rebuild(built_tree: Path):
     # all-executable-lines v1 hash, so the pre-locking v1 == current v2
     # shortcut cannot apply to it. Renaming the stand-in builder keeps this
     # testing the generic legacy-upgrade mechanism rather than libint's.
-    _relabel_stand_in_builder(built_tree, "libxc", "LIBXC_VERSION", "7.0.0")
+    _relabel_stand_in_builder(built_tree, "libecpint", "LIBECPINT_VERSION", "1.0.7")
     stamp_path = built_tree / "third_party" / ".build-stamp"
     lines = stamp_path.read_text(encoding="utf-8").splitlines()
     legacy_lines = [
@@ -644,7 +641,7 @@ def test_three_field_legacy_stamp_upgrades_without_rebuild(built_tree: Path):
     # Simulate the v0.15.119 -> v0.15.121 transition: the legacy stamp was
     # written before the builder acquired its own lifecycle lock. Adding only
     # an explicitly excluded lock block must not turn that old binary stale.
-    recipe = built_tree / "scripts" / "build_libxc.sh"
+    recipe = built_tree / "scripts" / "build_libecpint.sh"
     original = recipe.read_text(encoding="utf-8")
     recipe.write_text(
         original.replace(
@@ -773,3 +770,915 @@ def test_lib_basename_mapping(tmp_path: Path, dep, expected):
 def test_lib_basename_unknown_is_nonzero(tmp_path: Path):
     res = _bash(tmp_path, "_vibeqc_dep_lib_basename nope; echo RC=$?")
     assert "RC=1" in res.stdout, res.stdout
+
+
+# These controls inspect library metadata only; they never compile or run FFTs.
+def _fftw_cache_tree(tmp_path: Path, *, real_library=None) -> Path:
+    import os
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    for source in (REPO_ROOT / "scripts").glob("*.sh"):
+        shutil.copy2(source, scripts / source.name)
+    for name in ("attest_fftw_image.py", "attest_native_image.py"):
+        helper = REPO_ROOT / "scripts" / name
+        if helper.exists():
+            shutil.copy2(helper, scripts / helper.name)
+    # Prevent pressure/lock setup from obscuring the cache contract in fixtures.
+    (scripts / "_safe_build_env.sh").write_text(":\n")
+    (scripts / "_build_lock.sh").write_text("vibeqc_acquire_build_lock() { :; }\n")
+    install = tmp_path / "third_party/fftw/install"
+    config = install / "lib/cmake/fftw3/FFTW3Config.cmake"
+    config.parent.mkdir(parents=True)
+    config.write_text("# cache metadata alone is not artifact evidence\n")
+    library = install / "lib" / (Path(real_library).name if real_library else "libfftw3.so")
+    if real_library:
+        shutil.copy2(real_library, library)
+        link_name = "libfftw3.dylib" if library.name.endswith(".dylib") else "libfftw3.so"
+        if library.name != link_name:
+            (library.parent / link_name).symlink_to(library.name)
+    else:
+        library.write_bytes(b"not a shared library\n")
+    (tmp_path / "third_party/.build-stamp").write_text("previous stamp: preserve me\n")
+    # If reconciliation reaches a builder, fail cheaply and leave a witness.
+    for dep in ("libint", "libxc", "spglib", "libecpint", "openblas"):
+        (scripts / f"build_{dep}.sh").write_text(
+            f'#!/bin/bash\n{dep.upper()}_VERSION="1"\n'
+            'touch "$(dirname "$0")/../BUILD_ATTEMPTED"\nexit 99\n'
+        )
+        os.chmod(scripts / f"build_{dep}.sh", 0o755)
+    return install
+
+
+def _fftw_shell(tree: Path, command: str):
+    import os
+
+    env = dict(os.environ, VIBEQC_SKIP_PREFLIGHT="1", OMP_NUM_THREADS="2")
+    guard = tree / ".no-native-tools"
+    if guard.is_dir():
+        env["PATH"] = str(guard) + os.pathsep + env.get("PATH", "")
+        for name, tool in (("CC", "cc"), ("CXX", "c++"), ("FC", "gfortran"),
+                           ("CMAKE_MAKE_PROGRAM", "ninja")):
+            env[name] = str(guard / tool)
+    return subprocess.run(["/bin/bash", "-c", command], cwd=tree, env=env,
+                          text=True, capture_output=True, timeout=30)
+
+
+@pytest.mark.parametrize("command", [
+    "/bin/bash scripts/build_fftw.sh",
+    ". scripts/_native_stamp.sh; vibeqc_stamp_write",
+    "/bin/bash scripts/update_native_deps.sh",
+    "/bin/bash scripts/setup_native_deps.sh",
+])
+def test_fftw_unloadable_cache_refused_without_mutation(tmp_path, command):
+    install = _fftw_cache_tree(tmp_path)
+    stamp = tmp_path / "third_party/.build-stamp"
+    before = {str(p.relative_to(install)): p.read_bytes() for p in install.rglob("*") if p.is_file()}
+    result = _fftw_shell(tmp_path, command)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "identity unavailable" in result.stderr
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+    assert stamp.read_text() == "previous stamp: preserve me\n"
+    assert before == {str(p.relative_to(install)): p.read_bytes() for p in install.rglob("*") if p.is_file()}
+
+
+def test_fftw_cache_admission_is_separate_from_recipe_drift(tmp_path):
+    _fftw_cache_tree(tmp_path)
+    result = _fftw_shell(tmp_path, ". scripts/_native_stamp.sh; vibeqc_stamp_check")
+    assert result.returncode == 3, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("args", ["--all", "--dep fftw"])
+def test_fftw_explicit_rebuild_preview_preserves_invalid_cache(tmp_path, args):
+    install = _fftw_cache_tree(tmp_path)
+    result = _fftw_shell(tmp_path, f"/bin/bash scripts/update_native_deps.sh --dry-run {args}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fftw" in result.stdout
+    assert install.exists()
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+
+
+@pytest.mark.parametrize("v2", ["", "v2:1aaac633983c4a69f5304deb3997734c259028e6ce33fe2e90871c12e53717cd"])
+def test_fftw_admission_preserves_exact_qualified_recipe(tmp_path, v2):
+    _fftw_cache_tree(tmp_path)
+    predicate = ('. scripts/_native_stamp.sh; _vibeqc_stamp_recipe_matches '
+                 'scripts/build_fftw.sh '
+                 '5e4c72c10655584c2dd511080e982a4177c5afaf81633de3df8a4aecd1e61fd2 '
+                 + shlex.quote(v2))
+    assert _fftw_shell(tmp_path, predicate).returncode == 0
+    builder = tmp_path / "scripts/build_fftw.sh"
+    builder.write_text(builder.read_text().replace('-DENABLE_OPENMP=ON', '-DENABLE_OPENMP=OFF'))
+    assert _fftw_shell(tmp_path, predicate).returncode != 0
+
+
+def test_fftw_real_image_admission_and_loader_substitution(tmp_path):
+    import hashlib
+    import json
+    import os
+    import sys
+
+    real = os.environ.get("VIBEQC_TEST_FFTW_LIBRARY")
+    if not real:
+        pytest.skip("set VIBEQC_TEST_FFTW_LIBRARY to an existing qualified library; no build")
+    install = _fftw_cache_tree(tmp_path, real_library=real)
+    result = _fftw_shell(tmp_path, "/bin/bash scripts/build_fftw.sh")
+    assert result.returncode == 0, result.stderr
+    record = json.loads(result.stdout.splitlines()[0])
+    assert record["source_build_provenance"] == "not_attested"
+    artifact = record["artifacts"][0]
+    local = install / "lib" / Path(real).name
+    assert artifact["requested_path"] == artifact["loaded_path"] == str(local.resolve())
+    assert artifact["sha256"] == hashlib.sha256(local.read_bytes()).hexdigest()
+    assert "source/build provenance not attested" in result.stdout
+    # Real artifact + exact qualified historical stamps stay on the reuse path.
+    for dep in ("libint", "libxc", "spglib", "libecpint", "openblas"):
+        (tmp_path / "scripts" / f"build_{dep}.sh").unlink()
+    stamp = tmp_path / "third_party/.build-stamp"
+    legacy = "fftw 3.3.10 5e4c72c10655584c2dd511080e982a4177c5afaf81633de3df8a4aecd1e61fd2"
+    for row in (legacy, legacy + " v2:1aaac633983c4a69f5304deb3997734c259028e6ce33fe2e90871c12e53717cd"):
+        stamp.write_text(row + "\n")
+        checked = _fftw_shell(tmp_path, ". scripts/_native_stamp.sh; vibeqc_stamp_check")
+        assert checked.returncode == 0, checked.stderr + checked.stdout
+        preview = _fftw_shell(tmp_path, "/bin/bash scripts/update_native_deps.sh --dry-run")
+        assert preview.returncode == 0, preview.stderr
+        assert "all current" in preview.stdout
+        assert stamp.read_text() == row + "\n"
+    # The same basename in an override directory must never qualify a fake file.
+    local.write_bytes(b"not a loadable image")
+    env = dict(os.environ, DYLD_LIBRARY_PATH=str(Path(real).parent), LD_LIBRARY_PATH=str(Path(real).parent))
+    helper = tmp_path / "scripts/attest_fftw_image.py"
+    for args in ([str(install)], ["--attest", str(local)]):
+        negative = subprocess.run([sys.executable, str(helper), *args], env=env,
+                                  capture_output=True, text=True, timeout=30)
+        assert negative.returncode != 0, negative.stdout
+
+
+def _libxc_cache_tree(tmp_path, *, real_library=None, config_only=False):
+    _fftw_cache_tree(tmp_path)
+    shutil.rmtree(tmp_path / "third_party/fftw")
+    shutil.copy2(REPO_ROOT / "scripts/build_libxc.sh", tmp_path / "scripts/build_libxc.sh")
+    install = tmp_path / "third_party/libxc/install"
+    config = install / "lib/cmake/Libxc/LibxcConfig.cmake"
+    config.parent.mkdir(parents=True)
+    config.write_text("# config alone is not loaded artifact identity\n")
+    if not config_only:
+        library = install / "lib" / (Path(real_library).name if real_library else "libxc.so")
+        if real_library:
+            shutil.copy2(real_library, library)
+            bare = "libxc.dylib" if library.name.endswith(".dylib") else "libxc.so"
+            if library.name != bare:
+                (library.parent / bare).symlink_to(library.name)
+        else:
+            library.write_bytes(b"not a shared library\n")
+    return install
+
+
+@pytest.mark.parametrize("config_only", [False, True])
+@pytest.mark.parametrize("command", [
+    "/bin/bash scripts/build_libxc.sh",
+    ". scripts/_native_stamp.sh; vibeqc_stamp_write",
+    ". scripts/_native_stamp.sh; vibeqc_stamp_check",
+    "/bin/bash scripts/update_native_deps.sh",
+    "/bin/bash scripts/setup_native_deps.sh",
+])
+def test_libxc_invalid_cache_refused_without_mutation(tmp_path, command, config_only):
+    install = _libxc_cache_tree(tmp_path, config_only=config_only)
+    stamp = tmp_path / "third_party/.build-stamp"
+    before = {str(p.relative_to(install)): p.read_bytes() for p in install.rglob("*") if p.is_file()}
+    result = _fftw_shell(tmp_path, command)
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "identity unavailable" in result.stderr
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+    assert stamp.read_text() == "previous stamp: preserve me\n"
+    assert before == {str(p.relative_to(install)): p.read_bytes() for p in install.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("args", ["--all", "--dep libxc"])
+def test_libxc_explicit_rebuild_preview_preserves_invalid_cache(tmp_path, args):
+    install = _libxc_cache_tree(tmp_path)
+    result = _fftw_shell(tmp_path, f"/bin/bash scripts/update_native_deps.sh --dry-run {args}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "libxc" in result.stdout
+    assert install.exists()
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+
+
+@pytest.mark.parametrize("v2", ["", "v2:ba791910b05b03d672db9b327dfdb0d11f4bd3b59b63183d980f461bec8c008f"])
+def test_libxc_admission_preserves_exact_qualified_recipe(tmp_path, v2):
+    _libxc_cache_tree(tmp_path)
+    predicate = ('. scripts/_native_stamp.sh; _vibeqc_stamp_recipe_matches '
+                 'scripts/build_libxc.sh '
+                 '4bae92e0e9cfbb4dce430145fa20b20772657f2995f721db90afc32d2310fc59 '
+                 + shlex.quote(v2))
+    assert _fftw_shell(tmp_path, predicate).returncode == 0
+    builder = tmp_path / "scripts/build_libxc.sh"
+    builder.write_text(builder.read_text().replace('-DENABLE_FORTRAN=OFF', '-DENABLE_FORTRAN=ON'))
+    assert _fftw_shell(tmp_path, predicate).returncode != 0
+
+
+def test_libxc_real_image_admission_and_loader_substitution(tmp_path):
+    import hashlib
+    import json
+    import os
+    import sys
+
+    real = os.environ.get("VIBEQC_TEST_LIBXC_LIBRARY")
+    if not real:
+        pytest.skip("set VIBEQC_TEST_LIBXC_LIBRARY to an existing library; no build")
+    install = _libxc_cache_tree(tmp_path, real_library=real)
+    result = _fftw_shell(tmp_path, "/bin/bash scripts/build_libxc.sh")
+    assert result.returncode == 0, result.stderr
+    record = json.loads(result.stdout.splitlines()[0])
+    assert record["source_build_provenance"] == "not_attested"
+    artifact = record["artifacts"][0]
+    local = install / "lib" / Path(real).name
+    assert artifact["requested_path"] == artifact["loaded_path"] == str(local.resolve())
+    assert artifact["sha256"] == hashlib.sha256(local.read_bytes()).hexdigest()
+    assert "source/build provenance not attested" in result.stdout
+    for dep in ("libint", "fftw", "spglib", "libecpint", "openblas"):
+        (tmp_path / "scripts" / f"build_{dep}.sh").unlink()
+    stamp = tmp_path / "third_party/.build-stamp"
+    legacy = "libxc 7.0.0 4bae92e0e9cfbb4dce430145fa20b20772657f2995f721db90afc32d2310fc59"
+    for row in (legacy, legacy + " v2:ba791910b05b03d672db9b327dfdb0d11f4bd3b59b63183d980f461bec8c008f"):
+        stamp.write_text(row + "\n")
+        checked = _fftw_shell(tmp_path, ". scripts/_native_stamp.sh; vibeqc_stamp_check")
+        assert checked.returncode == 0, checked.stderr + checked.stdout
+        preview = _fftw_shell(tmp_path, "/bin/bash scripts/update_native_deps.sh --dry-run")
+        assert preview.returncode == 0, preview.stderr
+        assert "all current" in preview.stdout
+        assert stamp.read_text() == row + "\n"
+    local.write_bytes(b"not a loadable image")
+    env = dict(os.environ, DYLD_LIBRARY_PATH=str(Path(real).parent), LD_LIBRARY_PATH=str(Path(real).parent))
+    helper = tmp_path / "scripts/attest_native_image.py"
+    for args in ([str(install)], ["--attest", str(local)]):
+        negative = subprocess.run([sys.executable, str(helper), "libxc", *args], env=env,
+                                  capture_output=True, text=True, timeout=30)
+        assert negative.returncode != 0, negative.stdout
+
+
+@pytest.mark.parametrize("selection", ["fftw", "libxc"])
+def test_explicit_rebuild_cannot_replace_another_invalid_cache(tmp_path, selection):
+    libxc = _libxc_cache_tree(tmp_path)
+    fftw = tmp_path / "third_party/fftw/install/lib"
+    fftw.mkdir(parents=True)
+    (fftw / "libfftw3.so").write_bytes(b"not a shared library")
+    result = _fftw_shell(tmp_path, f"/bin/bash scripts/update_native_deps.sh --dry-run --dep {selection}")
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert libxc.exists() and fftw.exists()
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+
+
+def test_libxc_rejects_real_library_without_version_entry_point(tmp_path):
+    import os
+
+    wrong_library = os.environ.get("VIBEQC_TEST_FFTW_LIBRARY")
+    if not wrong_library:
+        pytest.skip("set VIBEQC_TEST_FFTW_LIBRARY for a real wrong-library control")
+    install = _libxc_cache_tree(tmp_path)
+    fake = install / "lib/libxc.so"
+    fake.unlink()
+    name = "libxc.dylib" if wrong_library.endswith(".dylib") else "libxc.so"
+    shutil.copy2(wrong_library, install / "lib" / name)
+    result = _fftw_shell(tmp_path, "/bin/bash scripts/build_libxc.sh")
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "xc_version" in result.stderr
+    assert "identity unavailable" in result.stderr
+
+
+def _spglib_cache_tree(tmp_path, *, real_library=None, config_only=False):
+    _libxc_cache_tree(tmp_path, config_only=True)
+    shutil.rmtree(tmp_path / "third_party/libxc")
+    shutil.copy2(REPO_ROOT / "scripts/build_spglib.sh", tmp_path / "scripts/build_spglib.sh")
+    install = tmp_path / "third_party/spglib/install"
+    config = install / "lib/cmake/Spglib/SpglibConfig.cmake"
+    config.parent.mkdir(parents=True)
+    config.write_text("# config alone is not loaded artifact identity\n")
+    if not config_only:
+        library = install / "lib" / (Path(real_library).name if real_library else "libsymspg.so")
+        if real_library:
+            shutil.copy2(real_library, library)
+            bare = "libsymspg.dylib" if library.name.endswith(".dylib") else "libsymspg.so"
+            if library.name != bare:
+                (library.parent / bare).symlink_to(library.name)
+        else:
+            library.write_bytes(b"not a shared library\n")
+    return install
+
+
+@pytest.mark.parametrize("config_only", [False, True])
+@pytest.mark.parametrize("command", [
+    "/bin/bash scripts/build_spglib.sh",
+    ". scripts/_native_stamp.sh; vibeqc_stamp_write",
+    ". scripts/_native_stamp.sh; vibeqc_stamp_check",
+    "/bin/bash scripts/update_native_deps.sh",
+    "/bin/bash scripts/setup_native_deps.sh",
+])
+def test_spglib_invalid_cache_refused_without_mutation(tmp_path, command, config_only):
+    install = _spglib_cache_tree(tmp_path, config_only=config_only)
+    stamp = tmp_path / "third_party/.build-stamp"
+    before = {str(p.relative_to(install)): p.read_bytes() for p in install.rglob("*") if p.is_file()}
+    result = _fftw_shell(tmp_path, command)
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "identity unavailable" in result.stderr
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+    assert stamp.read_text() == "previous stamp: preserve me\n"
+    assert before == {str(p.relative_to(install)): p.read_bytes() for p in install.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("args", ["--all", "--dep spglib"])
+def test_spglib_explicit_rebuild_preview_preserves_invalid_cache(tmp_path, args):
+    install = _spglib_cache_tree(tmp_path)
+    result = _fftw_shell(tmp_path, f"/bin/bash scripts/update_native_deps.sh --dry-run {args}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "spglib" in result.stdout
+    assert install.exists()
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+
+
+@pytest.mark.parametrize("v2", ["", "v2:5d0e3001218aa57c4a7a15a7213fbf276bbae08b60cd2a74baacd1f9d8239179"])
+def test_spglib_admission_preserves_exact_qualified_recipe(tmp_path, v2):
+    _spglib_cache_tree(tmp_path)
+    predicate = ('. scripts/_native_stamp.sh; _vibeqc_stamp_recipe_matches '
+                 'scripts/build_spglib.sh '
+                 'e07be4baf5d5adee173497d6250badcedb9f9662cc3b525c07fc411b0422bf16 '
+                 + shlex.quote(v2))
+    assert _fftw_shell(tmp_path, predicate).returncode == 0
+    builder = tmp_path / "scripts/build_spglib.sh"
+    builder.write_text(builder.read_text().replace('-DSPGLIB_WITH_TESTS=OFF', '-DSPGLIB_WITH_TESTS=ON'))
+    assert _fftw_shell(tmp_path, predicate).returncode != 0
+
+
+def test_spglib_real_image_admission_and_loader_substitution(tmp_path):
+    import hashlib
+    import json
+    import os
+    import sys
+
+    real = os.environ.get("VIBEQC_TEST_SPGLIB_LIBRARY")
+    if not real:
+        pytest.skip("set VIBEQC_TEST_SPGLIB_LIBRARY to an existing library; no build")
+    install = _spglib_cache_tree(tmp_path, real_library=real)
+    result = _fftw_shell(tmp_path, "/bin/bash scripts/build_spglib.sh")
+    assert result.returncode == 0, result.stderr
+    record = json.loads(result.stdout.splitlines()[0])
+    assert record["source_build_provenance"] == "not_attested"
+    artifact = record["artifacts"][0]
+    local = install / "lib" / Path(real).name
+    assert artifact["requested_path"] == artifact["loaded_path"] == str(local.resolve())
+    assert artifact["sha256"] == hashlib.sha256(local.read_bytes()).hexdigest()
+    assert "source/build provenance not attested" in result.stdout
+    for dep in ("libint", "fftw", "libxc", "libecpint", "openblas"):
+        (tmp_path / "scripts" / f"build_{dep}.sh").unlink()
+    stamp = tmp_path / "third_party/.build-stamp"
+    legacy = "spglib v2.7.0 e07be4baf5d5adee173497d6250badcedb9f9662cc3b525c07fc411b0422bf16"
+    for row in (legacy, legacy + " v2:5d0e3001218aa57c4a7a15a7213fbf276bbae08b60cd2a74baacd1f9d8239179"):
+        stamp.write_text(row + "\n")
+        checked = _fftw_shell(tmp_path, ". scripts/_native_stamp.sh; vibeqc_stamp_check")
+        assert checked.returncode == 0, checked.stderr + checked.stdout
+        preview = _fftw_shell(tmp_path, "/bin/bash scripts/update_native_deps.sh --dry-run")
+        assert preview.returncode == 0, preview.stderr
+        assert "all current" in preview.stdout
+        assert stamp.read_text() == row + "\n"
+    local.write_bytes(b"not a loadable image")
+    env = dict(os.environ, DYLD_LIBRARY_PATH=str(Path(real).parent), LD_LIBRARY_PATH=str(Path(real).parent))
+    helper = tmp_path / "scripts/attest_native_image.py"
+    for args in ([str(install)], ["--attest", str(local)]):
+        negative = subprocess.run([sys.executable, str(helper), "spglib", *args], env=env,
+                                  capture_output=True, text=True, timeout=30)
+        assert negative.returncode != 0, negative.stdout
+
+
+
+
+@pytest.mark.parametrize("selection", ["fftw", "libxc", "spglib"])
+def test_spglib_mixed_explicit_rebuild_preserves_other_invalid_cache(tmp_path, selection):
+    install = _spglib_cache_tree(tmp_path)
+    fftw = tmp_path / "third_party/fftw/install/lib"
+    fftw.mkdir(parents=True)
+    (fftw / "libfftw3.so").write_bytes(b"not a shared library")
+    result = _fftw_shell(tmp_path, f"/bin/bash scripts/update_native_deps.sh --dry-run --dep {selection}")
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert install.exists() and fftw.exists()
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+
+
+def test_spglib_rejects_real_library_without_version_entry_point(tmp_path):
+    import os
+
+    wrong_library = os.environ.get("VIBEQC_TEST_FFTW_LIBRARY")
+    if not wrong_library:
+        pytest.skip("set VIBEQC_TEST_FFTW_LIBRARY for a real wrong-library control")
+    install = _spglib_cache_tree(tmp_path)
+    (install / "lib/libsymspg.so").unlink()
+    name = "libsymspg.dylib" if wrong_library.endswith(".dylib") else "libsymspg.so"
+    shutil.copy2(wrong_library, install / "lib" / name)
+    result = _fftw_shell(tmp_path, "/bin/bash scripts/build_spglib.sh")
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "spg_get_version" in result.stderr
+    assert "identity unavailable" in result.stderr
+
+
+def _openblas_cache_tree(tmp_path, *, real_library=None, header_only=False):
+    _spglib_cache_tree(tmp_path, config_only=True)
+    shutil.rmtree(tmp_path / "third_party/spglib")
+    shutil.copy2(REPO_ROOT / "scripts/build_openblas.sh", tmp_path / "scripts/build_openblas.sh")
+    install = tmp_path / "third_party/openblas/install"
+    header = install / "include/lapacke.h"
+    header.parent.mkdir(parents=True)
+    header.write_text("/* A header alone is not loaded backend identity. */\n")
+    if not header_only:
+        library = install / "lib" / (Path(real_library).name if real_library else "libopenblas.so")
+        library.parent.mkdir()
+        if real_library:
+            shutil.copy2(real_library, library)
+            bare = "libopenblas.dylib" if library.name.endswith(".dylib") else "libopenblas.so"
+            if library.name != bare:
+                (library.parent / bare).symlink_to(library.name)
+        else:
+            library.write_bytes(b"not a shared library\n")
+    return install
+
+
+@pytest.mark.parametrize("header_only", [False, True])
+@pytest.mark.parametrize("command", [
+    "/bin/bash scripts/build_openblas.sh",
+    ". scripts/_native_stamp.sh; vibeqc_stamp_write",
+    ". scripts/_native_stamp.sh; vibeqc_stamp_check",
+    "/bin/bash scripts/update_native_deps.sh",
+    "/bin/bash scripts/setup_native_deps.sh",
+])
+def test_openblas_invalid_cache_refused_without_mutation(tmp_path, command, header_only):
+    install = _openblas_cache_tree(tmp_path, header_only=header_only)
+    stamp = tmp_path / "third_party/.build-stamp"
+    before = {str(p.relative_to(install)): p.read_bytes() for p in install.rglob("*") if p.is_file()}
+    result = _fftw_shell(tmp_path, command)
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "identity unavailable" in result.stderr
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+    assert stamp.read_text() == "previous stamp: preserve me\n"
+    assert before == {str(p.relative_to(install)): p.read_bytes() for p in install.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("args", ["--all", "--dep openblas"])
+def test_openblas_explicit_rebuild_preview_preserves_invalid_cache(tmp_path, args):
+    install = _openblas_cache_tree(tmp_path)
+    result = _fftw_shell(tmp_path, f"/bin/bash scripts/update_native_deps.sh --dry-run {args}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "openblas" in result.stdout
+    assert install.exists()
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+
+
+@pytest.mark.parametrize("v2", ["", "v2:51acb78acc510a3c19e9ab0394cd572c220d7fcdc378f868af95b64c7b1027f3"])
+def test_openblas_admission_preserves_exact_qualified_recipe(tmp_path, v2):
+    _openblas_cache_tree(tmp_path)
+    predicate = ('. scripts/_native_stamp.sh; _vibeqc_stamp_recipe_matches '
+                 'scripts/build_openblas.sh '
+                 '821eaeb47a6bc6f56c6f91fdb8fbfeecbbf83ad5d2eb99e1d1ceda1be208e723 '
+                 + shlex.quote(v2))
+    assert _fftw_shell(tmp_path, predicate).returncode == 0
+    builder = tmp_path / "scripts/build_openblas.sh"
+    builder.write_text(builder.read_text().replace('USE_LAPACKE=1', 'USE_LAPACKE=0'))
+    assert _fftw_shell(tmp_path, predicate).returncode != 0
+
+
+def test_openblas_real_image_admission_and_loader_substitution(tmp_path):
+    import hashlib
+    import json
+    import os
+    import sys
+
+    real = os.environ.get("VIBEQC_TEST_OPENBLAS_LIBRARY")
+    if not real:
+        pytest.skip("set VIBEQC_TEST_OPENBLAS_LIBRARY to an existing library; no build")
+    install = _openblas_cache_tree(tmp_path, real_library=real)
+    result = _fftw_shell(tmp_path, "/bin/bash scripts/build_openblas.sh")
+    assert result.returncode == 0, result.stderr
+    record = json.loads(result.stdout.splitlines()[0])
+    assert record["source_build_provenance"] == "not_attested"
+    artifact = record["artifacts"][0]
+    local = install / "lib" / Path(real).name
+    assert artifact["requested_path"] == artifact["loaded_path"] == str(local.resolve())
+    assert artifact["sha256"] == hashlib.sha256(local.read_bytes()).hexdigest()
+    assert "source/build provenance not attested" in result.stdout
+    for dep in ("libint", "fftw", "libxc", "libecpint", "spglib"):
+        (tmp_path / "scripts" / f"build_{dep}.sh").unlink()
+    stamp = tmp_path / "third_party/.build-stamp"
+    legacy = "openblas 0.3.33 821eaeb47a6bc6f56c6f91fdb8fbfeecbbf83ad5d2eb99e1d1ceda1be208e723"
+    for row in (legacy, legacy + " v2:51acb78acc510a3c19e9ab0394cd572c220d7fcdc378f868af95b64c7b1027f3"):
+        stamp.write_text(row + "\n")
+        checked = _fftw_shell(tmp_path, ". scripts/_native_stamp.sh; vibeqc_stamp_check")
+        assert checked.returncode == 0, checked.stderr + checked.stdout
+        preview = _fftw_shell(tmp_path, "/bin/bash scripts/update_native_deps.sh --dry-run")
+        assert preview.returncode == 0, preview.stderr
+        assert "all current" in preview.stdout
+        assert stamp.read_text() == row + "\n"
+    local.chmod(0o644)  # Only the local copy; installed controls may be read-only.
+    local.write_bytes(b"not a loadable image")
+    env = dict(os.environ, DYLD_LIBRARY_PATH=str(Path(real).parent), LD_LIBRARY_PATH=str(Path(real).parent))
+    helper = tmp_path / "scripts/attest_native_image.py"
+    for args in ([str(install)], ["--attest", str(local)]):
+        negative = subprocess.run([sys.executable, str(helper), "openblas", *args], env=env,
+                                  capture_output=True, text=True, timeout=30)
+        assert negative.returncode != 0, negative.stdout
+
+
+
+
+
+
+@pytest.mark.parametrize("selection", ["fftw", "libxc", "spglib", "openblas"])
+def test_openblas_mixed_explicit_rebuild_preserves_other_invalid_cache(tmp_path, selection):
+    install = _openblas_cache_tree(tmp_path)
+    fftw = tmp_path / "third_party/fftw/install/lib"
+    fftw.mkdir(parents=True)
+    (fftw / "libfftw3.so").write_bytes(b"not a shared library")
+    result = _fftw_shell(tmp_path, f"/bin/bash scripts/update_native_deps.sh --dry-run --dep {selection}")
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert install.exists() and fftw.exists()
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+
+
+def test_openblas_absence_does_not_opt_in(tmp_path):
+    _openblas_cache_tree(tmp_path)
+    shutil.rmtree(tmp_path / "third_party/openblas")
+    checked = _fftw_shell(tmp_path, ". scripts/_native_stamp.sh; vibeqc_verify_cached_openblas; _vibeqc_stamp_pairs")
+    assert checked.returncode == 0, checked.stderr
+    assert "openblas" not in checked.stdout
+    assert not (tmp_path / "third_party/openblas").exists()
+
+
+def test_openblas_explicit_rebuild_reaches_builder_without_admitting_cache(tmp_path):
+    install = _openblas_cache_tree(tmp_path, header_only=True)
+    # Stop immediately at the compiler prerequisite, before any cold-build work.
+    builder = tmp_path / "scripts/build_openblas.sh"
+    source = builder.read_text()
+    source = source.replace('if ! command -v gfortran >/dev/null 2>&1; then',
+                            'echo EXPLICIT_REBUILD_REACHED; exit 42\nif false; then')
+    builder.write_text(source)
+    result = _fftw_shell(tmp_path, "REBUILD=1 /bin/bash scripts/build_openblas.sh")
+    assert result.returncode == 42, result.stdout + result.stderr
+    assert "EXPLICIT_REBUILD_REACHED" in result.stdout
+    assert "cache admitted" not in result.stdout
+    assert install.exists()
+
+
+@pytest.mark.parametrize("configuration,admitted", [
+    ("OpenBLAS 0.3.34 USE_OPENMP MAX_THREADS=56", True),
+    ("OpenBLAS 0.3.33 DYNAMIC_ARCH MAX_THREADS=128", True),
+    ("OpenBLAS 0.3.34 USE64BITINT DYNAMIC_ARCH", False),
+    ("OpenBLAS 0.3.34 NO_LAPACK", False),
+    ("OpenBLAS 0.3.34 NO_LAPACKE", False),
+])
+def test_openblas_configuration_keeps_abi_and_backend_distinctions(configuration, admitted):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("native_identity", REPO_ROOT / "scripts/attest_native_image.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if admitted:
+        assert module.parse_openblas_configuration(configuration) in ("0.3.33", "0.3.34")
+    else:
+        with pytest.raises(ValueError):
+            module.parse_openblas_configuration(configuration)
+
+
+def test_openblas_rejects_real_library_without_identification_entry_point(tmp_path):
+    import os
+
+    wrong_library = os.environ.get("VIBEQC_TEST_FFTW_LIBRARY")
+    if not wrong_library:
+        pytest.skip("set VIBEQC_TEST_FFTW_LIBRARY for a real wrong-library control")
+    install = _openblas_cache_tree(tmp_path)
+    (install / "lib/libopenblas.so").unlink()
+    name = "libopenblas.dylib" if wrong_library.endswith(".dylib") else "libopenblas.so"
+    shutil.copy2(wrong_library, install / "lib" / name)
+    result = _fftw_shell(tmp_path, "/bin/bash scripts/build_openblas.sh")
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "openblas_get_config" in result.stderr
+
+
+def test_openblas_missing_lapacke_export_is_refused_before_configuration_call(monkeypatch):
+    import importlib.util
+    import os
+
+    real = os.environ.get("VIBEQC_TEST_OPENBLAS_LIBRARY")
+    if not real:
+        pytest.skip("set VIBEQC_TEST_OPENBLAS_LIBRARY; no build")
+    spec = importlib.util.spec_from_file_location("native_identity", REPO_ROOT / "scripts/attest_native_image.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    original = module.ctypes.CDLL
+
+    class MissingLapacke:
+        def __init__(self, library):
+            self.library = library
+
+        def __getattr__(self, name):
+            if name == "LAPACKE_dsyev":
+                raise AttributeError("missing required LAPACKE_dsyev")
+            return getattr(self.library, name)
+
+    def controlled_loader(path):
+        library = original(path)
+        return MissingLapacke(library) if path is not None else library
+
+    monkeypatch.setattr(module.ctypes, "CDLL", controlled_loader)
+    with pytest.raises(AttributeError, match="LAPACKE_dsyev"):
+        module.probe_identity(real, "openblas")
+
+
+def test_setup_routes_explicit_openblas_rebuild_through_drift_reconciliation(tmp_path):
+    _openblas_cache_tree(tmp_path, header_only=True)
+    updater = tmp_path / "scripts/update_native_deps.sh"
+    updater.write_text('#!/bin/bash\nprintf "REQUEST:%s\\n" "$@"\nexit 42\n')
+    result = _fftw_shell(tmp_path, "REBUILD=1 WITH_OPENBLAS=1 /bin/bash scripts/setup_native_deps.sh")
+    assert result.returncode == 42, result.stdout + result.stderr
+    assert "REQUEST:--dep\nREQUEST:openblas" in result.stdout
+    assert not (tmp_path / "BUILD_ATTEMPTED").exists()
+
+
+def _libint_cache_tree(tmp_path, *, unloaded=False, real_prefix=None):
+    _fftw_cache_tree(tmp_path)
+    guard = tmp_path / '.no-native-tools'
+    guard.mkdir()
+    for tool in ('git', 'curl', 'wget', 'cmake', 'make', 'ninja', 'cc', 'c++',
+                 'gcc', 'g++', 'clang', 'clang++', 'gfortran', 'configure'):
+        stub = guard / tool
+        stub.write_text('#!/bin/sh\necho "REFUSED_NATIVE_TOOL:$0" >&2\nexit 77\n')
+        stub.chmod(0o755)
+    shutil.rmtree(tmp_path / 'third_party/fftw/install')
+    builder = (REPO_ROOT / 'scripts/build_libint.sh').read_text()
+    boundary = '# --- Source ---------------------------------------------------------------'
+    assert boundary in builder
+    builder = builder.replace(boundary,
+        '# vibeqc-recipe-hash: lifecycle-only-begin\n'
+        'if [ "${VIBEQC_FETCH_ONLY:-0}" != "1" ]; then\n'
+        'touch "$(dirname "$0")/../BUILD_ATTEMPTED"; exit 99\nfi\n'
+        '# vibeqc-recipe-hash: lifecycle-only-end\n' + boundary, 1)
+    (tmp_path / 'scripts/build_libint.sh').write_text(builder)
+    install = tmp_path / 'third_party/libint/install'
+    config = install / 'lib/cmake/libint2/libint2-config.cmake'
+    config.parent.mkdir(parents=True)
+    config.write_text('# recipe metadata is not an artifact identity\n')
+    (install / '.vibeqc-max-am').write_text('5_4_4\n')
+    (install / '.vibeqc-fitting-max-am').write_text('6_6_6\n')
+    header = install / 'include/libint2/boys.h'
+    header.parent.mkdir(parents=True)
+    header.write_text(
+        '#include <algorithm>\n'
+        'class FmEval_Chebyshev7 {\n    if (x > T_crit) {\n    }\n  }  // eval()\n};\n'
+        'struct erfx_coulomb_gm_eval\n    : private scratch_base {\n'
+        '  void operator()(Real* Gm, Real rho, Real T, int mmax, Real omega, Real lambda,\n'
+        '                  Real sigma) {\n'
+        '    evaluate(&base_type::Fm_[0], T, mmax);\n'
+        '    Gm[m] = sigma * base_type::Fm_[m];\n'
+        '    evaluate(&base_type::Fm_[0], scaled_T, mmax);\n'
+        '    Gm[m] -= factor * base_type::Fm_[m];\n'
+        '  }\n};\n}  // namespace os_core_ints\n')
+    if unloaded:
+        (install / 'lib/libint2.so').write_bytes(b'not a loadable library')
+        (install / 'lib/libint2-cxx.so').write_bytes(b'not a loadable library')
+    if real_prefix:
+        for name in ('libint2.dylib', 'libint2-cxx.dylib'):
+            shutil.copyfile(Path(real_prefix) / 'lib' / name, install / 'lib' / name)
+    return install
+
+
+@pytest.mark.parametrize('unloaded', [False, True])
+@pytest.mark.parametrize('command', [
+    '/bin/bash scripts/build_libint.sh',
+    '. scripts/_native_stamp.sh; vibeqc_stamp_write',
+    '. scripts/_native_stamp.sh; vibeqc_stamp_check',
+    '/bin/bash scripts/update_native_deps.sh',
+    '/bin/bash scripts/setup_native_deps.sh',
+])
+def test_libint_invalid_cache_refused_before_header_or_stamp_mutation(tmp_path, command, unloaded):
+    install = _libint_cache_tree(tmp_path, unloaded=unloaded)
+    header = install / 'include/libint2/boys.h'
+    original = header.read_bytes()
+    stamp = tmp_path / 'third_party/.build-stamp'
+    old_stamp = stamp.read_bytes()
+    result = _fftw_shell(tmp_path, command)
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert 'identity unavailable' in result.stderr
+    assert header.read_bytes() == original
+    assert stamp.read_bytes() == old_stamp
+    assert not (tmp_path / 'BUILD_ATTEMPTED').exists()
+
+
+def test_libint_real_c_image_precedes_cached_header_patch(tmp_path):
+    import json
+    import os
+    real = os.environ.get('VIBEQC_TEST_LIBINT_LIBRARY')
+    if not real:
+        pytest.skip('set VIBEQC_TEST_LIBINT_LIBRARY; no build')
+    install = _libint_cache_tree(tmp_path, real_prefix=Path(real).parent.parent)
+    # The core links the header-only C++ interface to the C shared library.
+    # libint2-cxx is deliberately absent, not an inferred required artifact.
+    (install / 'lib/libint2-cxx.dylib').unlink()
+    result = _fftw_shell(tmp_path, '/bin/bash scripts/build_libint.sh')
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = json.loads(result.stdout.splitlines()[0])['artifacts'][0]
+    assert record['version'] == record['runtime_capabilities'] == 'not_attested'
+    assert record['requested_path'] == record['loaded_path'] == str((install / 'lib/libint2.dylib').resolve())
+    header = install / 'include/libint2/boys.h'
+    assert 'x >= T_crit' in header.read_text()
+    assert 'std::array<Real, 32> local' in header.read_text()
+    original = header.stat().st_mtime_ns
+    again = _fftw_shell(tmp_path, '/bin/bash scripts/build_libint.sh')
+    assert again.returncode == 0, again.stderr
+    assert header.stat().st_mtime_ns == original
+    assert not (tmp_path / 'BUILD_ATTEMPTED').exists()
+    for dep in ('fftw', 'libxc', 'spglib', 'openblas', 'libecpint'):
+        (tmp_path / 'scripts' / f'build_{dep}.sh').unlink()
+    stamp = tmp_path / 'third_party/.build-stamp'
+    old = 'libint v2.13.1 15c929d322009784daff6981454e439dbead4b5518be2d43e032e795d86757c5'
+    for row in (old, old + ' v2:5bf93e44e0ffedba0604cd0ab7fb3b1bbd64248a8ca9e2483ee746e07568a5e7'):
+        stamp.write_text(row + '\n')
+        checked = _fftw_shell(tmp_path, '. scripts/_native_stamp.sh; vibeqc_stamp_check')
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        preview = _fftw_shell(tmp_path, '/bin/bash scripts/update_native_deps.sh --dry-run')
+        assert preview.returncode == 0 and 'all current' in preview.stdout, preview.stderr
+        assert stamp.read_text() == row + '\n'
+    builder = tmp_path / 'scripts/build_libint.sh'
+    builder.write_text(builder.read_text().replace('-DBUILD_SHARED_LIBS=ON', '-DBUILD_SHARED_LIBS=OFF'))
+    changed = _fftw_shell(tmp_path, '. scripts/_native_stamp.sh; _vibeqc_stamp_recipe_matches scripts/build_libint.sh 15c929d322009784daff6981454e439dbead4b5518be2d43e032e795d86757c5')
+    assert changed.returncode != 0
+    # Loader search overrides cannot rescue the invalid requested image.
+    local = install / 'lib/libint2.dylib'
+    local.write_bytes(b'not a loadable image')
+    helper = tmp_path / 'scripts/attest_native_image.py'
+    for arg in (str(install), '--attest ' + str(local)):
+        negative = _fftw_shell(tmp_path, 'DYLD_LIBRARY_PATH=' + str(Path(real).parent) +
+                              ' LD_LIBRARY_PATH=' + str(Path(real).parent) +
+                              ' python3 ' + str(helper) + ' libint ' + arg)
+        assert negative.returncode != 0, negative.stdout
+
+
+@pytest.mark.parametrize('selection,expected', [('--all', 0), ('--dep libint', 0), ('--dep fftw', 3)])
+def test_libint_explicit_rebuild_preview_stays_scoped(tmp_path, selection, expected):
+    install = _libint_cache_tree(tmp_path, unloaded=True)
+    original = (install / 'include/libint2/boys.h').read_bytes()
+    result = _fftw_shell(tmp_path, '/bin/bash scripts/update_native_deps.sh --dry-run ' + selection)
+    assert result.returncode == expected, result.stdout + result.stderr
+    assert (install / 'include/libint2/boys.h').read_bytes() == original
+    assert not (tmp_path / 'BUILD_ATTEMPTED').exists()
+
+
+def test_libint_fetch_only_does_not_admit_or_patch_invalid_install(tmp_path):
+    install = _libint_cache_tree(tmp_path, unloaded=True)
+    header = install / 'include/libint2/boys.h'
+    original = header.read_bytes()
+    src = tmp_path / 'third_party/libint/src'
+    (src / 'include/libint2').mkdir(parents=True)
+    (src / 'CMakeLists.txt').write_text('# pre-staged fixture\n')
+    (src / 'include/libint2/boys.h').write_bytes(original)
+    result = _fftw_shell(tmp_path, 'VIBEQC_FETCH_ONLY=1 /bin/bash scripts/build_libint.sh')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'source staged' in result.stdout
+    assert 'already installed' not in result.stdout
+    assert header.read_bytes() == original
+    assert not (tmp_path / 'BUILD_ATTEMPTED').exists()
+
+
+@pytest.mark.parametrize('kind', ['wrong', 'ambiguous', 'escape', 'static'])
+def test_libint_unsupported_images_refused_without_header_mutation(tmp_path, kind):
+    import os
+    real = os.environ.get('VIBEQC_TEST_LIBINT_LIBRARY')
+    wrong = os.environ.get('VIBEQC_TEST_FFTW_LIBRARY')
+    if not real or not wrong:
+        pytest.skip('set existing libint and FFTW controls; no build')
+    install = _libint_cache_tree(tmp_path)
+    primary = install / 'lib/libint2.dylib'
+    if kind == 'wrong':
+        shutil.copyfile(wrong, primary)
+    elif kind == 'escape':
+        primary.symlink_to(real)
+    elif kind == 'static':
+        (install / 'lib/libint2.a').write_bytes(b'not a shared image')
+    else:
+        shutil.copyfile(real, primary)
+        shutil.copyfile(real, install / 'lib/libint2.99.dylib')
+    header = install / 'include/libint2/boys.h'
+    original = header.read_bytes()
+    result = _fftw_shell(tmp_path, '/bin/bash scripts/build_libint.sh')
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert header.read_bytes() == original
+    assert not (tmp_path / 'BUILD_ATTEMPTED').exists()
+
+
+def test_libint_selection_does_not_hide_other_invalid_cache(tmp_path):
+    _libint_cache_tree(tmp_path, unloaded=True)
+    other = tmp_path / 'third_party/fftw/install/lib'
+    other.mkdir(parents=True)
+    (other / 'libfftw3.so').write_bytes(b'invalid other dependency')
+    result = _fftw_shell(tmp_path, '/bin/bash scripts/update_native_deps.sh --dry-run --dep libint')
+    assert result.returncode == 3
+    assert 'fftw artifact identity unavailable' in result.stderr
+    assert not (tmp_path / 'BUILD_ATTEMPTED').exists()
+
+
+@pytest.mark.parametrize('command', [
+    '/bin/bash scripts/build_libint.sh',
+    '. scripts/_native_stamp.sh; vibeqc_stamp_write',
+    '. scripts/_native_stamp.sh; vibeqc_stamp_check',
+    '/bin/bash scripts/setup_native_deps.sh',
+])
+def test_libint_missing_config_never_triggers_cache_repair(tmp_path, command):
+    install = _libint_cache_tree(tmp_path)
+    (install / 'lib/cmake/libint2/libint2-config.cmake').unlink()
+    original = (install / 'include/libint2/boys.h').read_bytes()
+    result = _fftw_shell(tmp_path, command)
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert 'lacks libint2-config.cmake' in result.stderr
+    assert (install / 'include/libint2/boys.h').read_bytes() == original
+    assert not (tmp_path / 'BUILD_ATTEMPTED').exists()
+
+
+@pytest.mark.parametrize("dep", ["fftw", "libxc", "spglib"])
+@pytest.mark.parametrize("mode", ["unset", "enabled", "failure", "fetch", "cache", "inside", "relative"])
+def test_optional_native_collector_build_boundary(tmp_path, dep, mode):
+    """Exercise public argv plumbing with all native/network work replaced."""
+    import json
+    import os
+    import sys
+
+    tree = tmp_path / "product with spaces"
+    scripts = tree / "scripts"
+    scripts.mkdir(parents=True)
+    for name in (f"build_{dep}.sh", "_native_collector.sh"):
+        shutil.copy2(REPO_ROOT / "scripts" / name, scripts / name)
+    # The lock and cache probes have their own actual-image/lifecycle controls.
+    # This fixture isolates the observer boundary, never a compiler or loader.
+    (scripts / "_safe_build_env.sh").write_text(":\n")
+    (scripts / "_build_lock.sh").write_text("vibeqc_acquire_build_lock() { :; }\n")
+    (scripts / "_verify_source.sh").write_text("git_clone_pinned() { exit 77; }\n")
+    for name in ("attest_fftw_image.py", "attest_native_image.py"):
+        (scripts / name).write_text("raise SystemExit(0)\n")
+    source = tree / "third_party" / dep / "src"
+    source.mkdir(parents=True)
+    (source / "CMakeLists.txt").write_text("# staged fixture; never configured\n")
+    build = source.parent / "build"
+    install = source.parent / "install"
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    log = tmp_path / "commands.jsonl"
+    observer_log = tmp_path / "observer.jsonl"
+    # PATH and explicit compiler variables both refuse native/network tools.
+    refusal = "#!/bin/sh\nexit 77\n"
+    for name in ("git", "curl", "wget", "ninja", "make", "cc", "c++", "gcc", "g++", "clang", "clang++", "gfortran", "configure", "brew"):
+        tool = binary / name
+        tool.write_text(refusal)
+        tool.chmod(0o755)
+    cmake = binary / "cmake"
+    cmake.write_text(f"#!{sys.executable}\n" + "import json, os, sys\nwith open(os.environ['COLLECTOR_TEST_LOG'], 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n")
+    cmake.chmod(0o755)
+    observer = tmp_path / "external collector"
+    observer.write_text(f"#!{sys.executable}\n" + "import json, os, subprocess, sys\nwith open(os.environ['COLLECTOR_TEST_OBSERVER'], 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\nif os.environ['COLLECTOR_TEST_MODE'] == 'failure': raise SystemExit(19)\nraise SystemExit(subprocess.call(sys.argv[sys.argv.index('--')+1:]))\n")
+    observer.chmod(0o755)
+    receipts = tmp_path / "external receipts"
+    receipts.mkdir()
+    env = {key: value for key, value in os.environ.items() if not key.startswith("VIBEQC_")}
+    env.update(PATH=str(binary) + os.pathsep + os.environ["PATH"],
+               CC=str(binary / "cc"), CXX=str(binary / "c++"), FC=str(binary / "gfortran"),
+               CMAKE_BUILD_PARALLEL_LEVEL="1", COLLECTOR_TEST_LOG=str(log),
+               COLLECTOR_TEST_OBSERVER=str(observer_log), COLLECTOR_TEST_MODE=mode)
+    if mode != "unset":
+        env.update(VIBEQC_NATIVE_BUILD_COLLECTOR=str(observer), VIBEQC_NATIVE_RECEIPT_DIR=str(receipts))
+    if mode == "fetch":
+        env["VIBEQC_FETCH_ONLY"] = "1"
+    if mode == "cache":
+        suffix = {"fftw": "fftw3/FFTW3Config.cmake", "libxc": "Libxc/LibxcConfig.cmake", "spglib": "Spglib/SpglibConfig.cmake"}[dep]
+        config = install / "lib/cmake" / suffix
+        config.parent.mkdir(parents=True)
+        config.write_text("# cache route fixture\n")
+    if mode == "inside":
+        alias = tmp_path / "receipt alias"
+        alias.symlink_to(tree, target_is_directory=True)
+        env["VIBEQC_NATIVE_RECEIPT_DIR"] = str(alias)
+    if mode == "relative":
+        env["VIBEQC_NATIVE_BUILD_COLLECTOR"] = "external collector"
+    result = subprocess.run(["/bin/bash", str(scripts / f"build_{dep}.sh")], cwd=tree,
+                            env=env, text=True, capture_output=True, timeout=15)
+    assert result.returncode == (19 if mode == "failure" else 3 if mode in ("inside", "relative") else 0), result.stderr
+    commands = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    observed = [json.loads(line) for line in observer_log.read_text().splitlines()] if observer_log.exists() else []
+    if mode in ("cache", "fetch", "inside", "relative"):
+        assert commands == observed == []
+        assert not build.exists()
+        return
+    assert commands[0][:4] == ["-S", str(source), "-B", str(build)]
+    assert ("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON" in commands[0]) == (mode != "unset")
+    if mode == "unset":
+        assert observed == []
+    else:
+        expected = ["record", "--source", f"{dep}={source}"]
+        for name in (f"build_{dep}.sh", "_native_collector.sh", "_safe_build_env.sh", "_verify_source.sh", "_build_lock.sh"):
+            expected += ["--recipe", str(scripts / name)]
+        expected += ["--cmake-build", str(build), "--install", str(install),
+                     "--artifact-manifest", str(build / "install_manifest.txt"),
+                     "--cwd", str(tree), "--output", str(receipts / f"{dep}.json"),
+                     "--", "cmake", "--build", str(build), "--target", "install"]
+        assert observed == [expected]
+    assert commands[1:] == ([] if mode == "failure" else [["--build", str(build), "--target", "install"]])

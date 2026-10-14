@@ -280,7 +280,7 @@ class ExperimentalReference:
         # "no defaultless field after a defaulted field" rule (every
         # property field above has a default), then enforce
         # required-ness here. Cleaner than the default_factory-throw
-        # idiom in the handover-doc draft, which fires on EVERY
+        # idiom in the earlier design draft, which fires on EVERY
         # construction including legitimate ``provenance=...`` calls.
         if self.provenance is None:
             raise ValueError(

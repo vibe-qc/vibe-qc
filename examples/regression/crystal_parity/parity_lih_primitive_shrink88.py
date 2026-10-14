@@ -15,7 +15,7 @@ Uses CRYSTAL-defaults-equivalent SCF aids:
   - ODA:      OFF
 
 The K-matrix Madelung shift (PySCF's `exxdiv='ewald'` analogue) is
-NOT applied here — per handover §A.7 ("K — SHELLEXCH — no monopole
+NOT applied here — per historical design record §A.7 ("K — SHELLEXCH — no monopole
 issue (antisymmetric)") CRYSTAL has no analogue and vibe-qc's K
 from `build_fock_2e_real_space` should share the antisymmetric-no-
 monopole property. The K-Madelung helpers live on a hold-out

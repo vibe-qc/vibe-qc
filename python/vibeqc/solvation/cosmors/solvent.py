@@ -135,4 +135,5 @@ def solvent_sigma_potential(
         [descriptors], np.array([1.0]), params, **potential_kwargs
     )
     potential.protocol = surface.provenance.descriptor()
+    potential.solvent_area = float(descriptors.total_area)
     return potential

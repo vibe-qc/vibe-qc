@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "x2c-tzvpall-2c",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: x2c-TZVPall-2c\nCanonical name in vibe-qc: x2c-tzvpall-2c\nOriginating publication: Pollak, Weigend, J. Chem. Theory Comput. 13, 3696 (2017); DOI: 10.1021/acs.jctc.7b00365\nNote: two-component X2C\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: x2c-TZVPall-2c\nDescription: x2c-TZVPall-2c\n       Role: orbital\n    Version: 0  (Data from the original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -37279,7 +37279,38 @@
       ]
     }
   },
+  "basis_family": "ahlrichs",
+  "references": [
+    {
+      "key": "pollak_weigend_x2c_2017",
+      "description": "P. Pollak, F. Weigend, Journal of Chemical Theory and Computation 13, 3696-3705 (2017)",
+      "doi": "10.1021/acs.jctc.7b00593"
+    },
+    {
+      "key": "doi:10.1021/acs.jctc.7b00365",
+      "description": "Pollak, Weigend, J. Chem. Theory Comput. 13, 3696 (2017)",
+      "doi": "10.1021/acs.jctc.7b00365"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "x2c-TZVPall-2c"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "081f24e33fb3ad78bed467730f48dee19c70277ec1be96e4f32d6e9ecd46d09f",
+    "citations": [
+      {
+        "keys": [
+          "pollak_weigend_x2c_2017"
+        ]
+      }
+    ]
   }
 }

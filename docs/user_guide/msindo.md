@@ -10,9 +10,13 @@ Center for Theoretical Chemistry, University of Bonn.
 
 vibe-qc carries an **independent re-implementation** of MSINDO, it imports no
 MSINDO source code.  The method is validated out-of-process against a reference
-MSINDO build (see [CLAUDE.md § 10](../CLAUDE.md) and
-`examples/regression/msindo/`); validated INDO routes and the closed-shell NDDO
-scope reproduce reference MSINDO total energies to **well under 1 µHa**.
+MSINDO build (see `examples/regression/msindo/`); validated INDO routes and the
+closed-shell NDDO scope reproduce reference MSINDO total energies to **well
+under 1 µHa**. MSINDO is **production within that documented scope**: INDO
+H to Xe (Z 1 to 54), NDDO H, Li to F and Na to Cl, closed-shell analytic
+gradients. The periodic cyclic-cluster route belongs to the experimental SECCM
+line; see the status note in that section and
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 
 > **Licensing.** vibe-qc's re-implementation ships under MPL-2.0; the bundled
 > MSINDO parameters are redistributed by permission of the Mulliken Center /
@@ -53,9 +57,103 @@ ionisation potentials (`IPOT*`), and orbital-exponent Slater-Condon scaling
 the MSINDO oracle; open-shell UHF is validated on the documented light-element
 and heavy d/p-block fixtures.
 
-### Theory in one paragraph
+## Theory
 
-The SCF loop builds:
+MSINDO ({vibeqc-cite}`ahlswede_jug_msindo_1_1999`,
+{vibeqc-cite}`ahlswede_jug_msindo_2_1999`) is the 1999 revision of SINDO1.
+Like every INDO method it solves Roothaan-Hall equations in a minimal
+valence basis, here of Slater-type orbitals with s, p and (from Al onwards
+and for the transition metals) d functions, and it departs from the CNDO
+and INDO textbook schemes in three places: the orthogonalisation
+correction, the pseudopotential treatment of the core, and a
+parametrisation fitted for solids and surfaces as well as molecules.
+
+### INDO integral approximations
+
+In the zero-differential-overlap approximation every two-electron integral
+that contains a two-centre charge distribution $\chi_\mu^A\chi_\nu^B$
+($A \ne B$) is dropped. INDO keeps, beyond CNDO, all one-centre integrals
+with their full angular structure, so that
+
+$$
+(\mu^A\nu^B|\lambda^C\sigma^D) = \delta_{AB}\,\delta_{CD}\,
+\big[\delta_{AC}\,(\mu\nu|\lambda\sigma)_A
+ + (1-\delta_{AC})\,\delta_{\mu\nu}\delta_{\lambda\sigma}\,\gamma_{AB}\big] .
+$$
+
+On one centre the integrals are expressed through Slater-Condon parameters
+$F^0, F^2, G^1, \dots$, which MSINDO evaluates analytically from the STO
+exponents and scales with the per-element `MUSE`/`MUPE`/`MUDE` factors (the
+`GMUNU` block packs them for up to nine functions per atom); between two
+centres only the spherically averaged monopole Coulomb integral
+$\gamma_{AB}$ between valence shells survives. All one-electron integrals,
+overlap, kinetic energy and nuclear attraction, are computed analytically
+over the STOs rather than parametrised, and rotated from the diatomic frame
+into the molecular frame (`ROTINT`). The closed-shell Fock matrix is
+
+$$
+F_{\mu\nu} = H_{\mu\nu} + \sum_{\lambda\sigma} P_{\lambda\sigma}
+ \Big[(\mu\nu|\lambda\sigma) - \tfrac12(\mu\lambda|\nu\sigma)\Big]
+$$
+
+with the INDO integral set inserted, which reduces to the one-centre
+Coulomb/exchange rules plus the $\gamma_{AB}$ terms; the UHF variant builds
+Coulomb from the total and exchange from the same-spin density. The
+electronic energy is $E_{\mathrm{el}} = \tfrac12\mathrm{Tr}[\mathbf P(\mathbf H + \mathbf F)]$,
+the total adds the repulsion $\sum_{I<J} Z_I^{\mathrm{core}}Z_J^{\mathrm{core}}/R_{IJ}$
+of the effective core charges, and the **binding energy** subtracts the
+parametrised atomic reference energies `ATENG`.
+
+### The orthogonalisation correction
+
+ZDO is exact only in an orthogonal basis, so the Hamiltonian the ZDO
+integrals belong to is the Loewdin-transformed one,
+$\mathbf H^{\lambda} = \mathbf S^{-1/2}\mathbf H\mathbf S^{-1/2}$. MSINDO
+does not parametrise this away: it expands the transformation in the
+overlap,
+
+$$
+\mathbf H^{\lambda} \approx \mathbf H
+ - \tfrac12\big(\mathbf S'\mathbf H + \mathbf H\mathbf S'\big)
+ + \tfrac38\big(\mathbf S'^2\mathbf H + \mathbf H\mathbf S'^2\big)
+ + \tfrac14\,\mathbf S'\mathbf H\mathbf S',
+\qquad \mathbf S' = \mathbf S - \mathbf 1,
+$$
+
+and adds the resulting correction to every atom-pair block of the
+resonance integrals (`HORTH`, assembled from the auxiliary `LMUNU`
+quantities of the local diatomic frame). The correction is repulsive at
+short range and is what gives INDO the Pauli wall that keeps atoms from
+collapsing. Because the matrix products run over all atoms, a geometry
+change on one pair shifts the correction on every other pair; that is the
+"global Loewdin coupling" that makes naive per-pair finite differences of
+the gradient fail and why the analytic gradient carries the full
+derivative. After the correction the working overlap is the identity and
+the SCF is the ordinary eigenvalue problem $\mathbf F\mathbf C = \mathbf C\boldsymbol\varepsilon$.
+The remaining resonance is an empirical term (`DELTAH`) with the per-pair
+parameters `AL` that also correct for the missing penetration.
+
+### Pseudopotential and penetration terms
+
+From sodium onwards the inner shells are not carried explicitly. Their
+effect on the valence electrons enters through the frozen-core
+pseudopotential `V2CORE`: for a valence orbital on atom $A$ and the core of
+atom $B$, the nuclear attraction $-Z_B/r$ is replaced by the attraction of
+the effective core charge, and a repulsive term built from the squared
+Slater overlaps of the valence orbital with each core shell of $B$,
+weighted by the fitted core charges `FCP1S`, `FCP2S`, `FCP2P`, ..., is
+added to the diagonal of the core Hamiltonian. This is a
+Phillips-Kleinman-type projection in minimal form: it keeps the valence
+orbitals out of the core region without orthogonalising them to explicit
+core functions. A penetration correction (`VCORRK`/`VCORRL`) restores the
+difference between the point-charge core attraction and the attraction of
+a spherical shell charge, using the monopole $\gamma$ between the valence
+shell and the core shells. The element-specific ingredients are the valence
+exponents `MUS`, `MUP`, `MUD`, the core exponents `TAU*` and charges
+`FCP*`, the ionisation potentials `IPOT*` that fix the diagonal `ENEG`, and
+the Slater-Condon scalings.
+
+### The SCF loop in four steps
 
 1. **Core Hamiltonian H⁰**, per-atom diagonal `ENEG(Z, shell)` plus per-pair
    resonance blocks built from STO overlap, the nuclear attraction
@@ -73,7 +171,54 @@ The SCF loop builds:
 4. **Energy**, `E_elec = ½ Tr[P(H+F)]`, `E_total = E_elec + Σ_{I<J} CZ_I·CZ_J/R_IJ`,
    `E_binding = E_total − Σ ATENG(Z)`.
 
-### NDDO mode
+### Excited states, propagators and solvation
+
+Everything beyond the ground-state SCF reuses vibe-qc's reference-agnostic
+engines over the INDO integral tensor rather than MSINDO's own drivers.
+**CIS** diagonalises the singles block
+$\langle\Phi_i^a|\hat H - E_0|\Phi_j^b\rangle = \delta_{ij}\delta_{ab}(\varepsilon_a - \varepsilon_i) + 2(ia|jb) - (ij|ab)$
+for singlets (the exchange-only form for triplets) with the INDO integrals,
+so its excitation energies are the rigorous unscaled ones, not the
+empirically scaled `SCALEDCIS` values of the reference program;
+excited-state gradients follow a root by the overlap of its amplitude
+vector or, for non-degenerate states, analytically through the CPHF
+Z-vector. **CISD** and **MP2/UMP2** are the general determinant CI and the
+canonical second-order energy over the same MO integrals. **OVGF/GF2**
+solves the Dyson equation with the diagonal second-order self-energy,
+$\varepsilon_p^{\mathrm{qp}} = \varepsilon_p + \Sigma_{pp}(\varepsilon_p^{\mathrm{qp}})$,
+iterated to self-consistency and optionally renormalised with the
+third-order term; it corrects Koopmans ionisation potentials for relaxation
+and correlation. **COSMO** embeds the solute in a conductor scaled by
+$f(\varepsilon) = (\varepsilon-1)/(\varepsilon+0.5)$; the solute-cavity
+coupling is MSINDO-specific, a distributed-multipole coupling through the
+two-centre penetration integrals $\langle\mu|\,1/|\mathbf r-\mathbf s_i|\,|\nu\rangle$,
+because a point-charge coupling over-screens the near-surface segments, and
+the reaction field is folded into the SCF. Each of these has its own
+section below.
+
+### The cyclic cluster construction in words
+
+For solids MSINDO does not use Bloch functions. The **cyclic cluster
+model** takes one supercell, imposes cyclic (Born-von Karman) boundary
+conditions on it directly in real space, and treats every atom as the
+centre of its own Wigner-Seitz cell of the supercell lattice: an
+interaction between atoms $A$ and $B$ is counted with the image of $B$ that
+lies inside $A$'s Wigner-Seitz cell, with fractional weights when an image
+sits on a cell face. The result is a finite, molecule-like Hamiltonian, one
+SCF at the Gamma point of the supercell with no k-point sampling, that has
+the full translational symmetry of the crystal, so that a defect, a surface
+or a localised state is described without an artificial periodic array of
+copies. What the truncation loses is the Coulomb tail beyond the
+Wigner-Seitz cell; for ionic systems it is restored by a classical Madelung
+embedding, an Ewald-summed potential of the SCF net charges minus the part
+the cluster already contains, which enters the Fock diagonal. Because every
+quantity is a real-space sum over a finite cluster, the energy converges
+with the supercell size towards the dense-k limit rather than with a
+k-mesh, and the analytic gradient is the derivative at fixed Wigner-Seitz
+topology. The [cyclic cluster model guide](cyclic_cluster_model.md) gives
+the equations; the CCM sections below give the API.
+
+### NDDO parametrisation
 
 MSINDO's **default** mode in the reference program is **NDDO** (Neglect of
 Diatomic Differential Overlap) rather than INDO.  NDDO retains the two-centre
@@ -221,7 +366,7 @@ print(run_job(h2o_plus, method="msindo").energy)
 The UHF engine includes the s/p/d one-centre Fock terms. Its production claim is
 fixture-based: the light s/p radical set and the named heavy trajectory-SCF
 fixtures are validated against the oracle, while near-degenerate heavy cases
-remain basin-sensitive and are tracked in `handovers/HANDOVER_MSINDO_SCF.md`.
+remain basin-sensitive.
 
 ### UHF reduces to RHF for closed-shell
 
@@ -234,6 +379,15 @@ automatically (the odd electron count selects it).
 
 ## Periodic: Cyclic Cluster Model (CCM)
 
+MSINDO SECCM energy and gradient routes are **experimental**, including the
+`seccm`, `se-ccm`, `msindo-seccm`, `msindo-ccm`, and `ccm` aliases. The route
+plan, status registry, `.out`, `.system`, and QVF run provenance carry this
+designation. Native execution, agreement for a reference case, or SCF
+convergence does not establish production maturity or electronic stability.
+Inspect the separate per-point stability audit described below; the default
+state policy remains `stability="reference"`. This designation does not change
+the maturity of molecular MSINDO.
+
 MSINDO treats periodic solids and surfaces with the **Cyclic Cluster Model**
 (Bredow, Geudtner & Jug, *J. Comput. Chem.* **22**, 89 (2001); Peintinger &
 Bredow, *J. Comput. Chem.* **35**, 839 (2014)): a finite cyclic cluster (a
@@ -242,6 +396,19 @@ periodic environment, with the long-range electrostatics added by a classical
 Ewald (Madelung) embedding.  vibe-qc's implementation lives in
 `vibeqc.semiempirical.methods.msindo_ccm` and is validated out-of-process against
 reference MSINDO (every number below reproduces the oracle to < 1 µHa).
+
+```{admonition} Status: experimental
+:class: warning
+
+The cyclic cluster model belongs to the SECCM line, which is experimental
+overall and is not part of the release gate. The MSINDO route is the most
+mature member of that line: its closed-shell energies are validated against
+the reference program within the scope below, and `run_job(method="ccm")`
+routes the CCM citations into the `.out`, `.bibtex` and `.system` manifest.
+Open shells, `optimize=True` through `run_job`, and elements beyond Xe fail
+closed. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
 
 ### Quick-start: bulk MgO
 
@@ -313,7 +480,7 @@ print(res.energy)   # ≈ -66.20383741 Ha
 ```
 
 Through `run_job`, CCM is **closed-shell (RHF) single-point only**.  Each
-boundary is a clean error, never a silent gap (CLAUDE.md §7): an open-shell
+boundary is a clean error, never a silent gap: an open-shell
 cell (`multiplicity != 1`) or `optimize=True` raises `NotImplementedError`
 (use `ccm_optimize`, below, for relaxation), a call without `ccm_options`
 raises `ValueError`, and an element beyond the engine's scope (H-Xe) raises
@@ -372,28 +539,104 @@ is in [`examples/semiempirical/11_msindo_ccm.py`](../../examples/semiempirical/1
 > Adsorption examples target the ionic oxides MgO and Al₂O₃, INDO/CCM is not
 > parametrized for metallic bonding, so metal surfaces are out of method scope.
 
-### CCM gradient details
+### SECCM stability audit
 
-CCM checks restricted orbital stability when the initial core-Hamiltonian
-occupied/virtual gap is at most `1e-6` Ha. In this domain, tiny coordinate
-changes can rotate the initial occupied projector and send DIIS to different
-stationary states even when their final orbital gaps are large. A negative
-orbital-rotation curvature identifies a saddle: the driver searches both
-signs of that mode, reconverges lower-energy seeds, and checks the selected
-state again. The density used for analytic and finite-difference gradients
-follows the same selection. The Hamiltonian and integer occupations are
-unchanged.
+Every converged closed-shell CCM SCF is followed by a restricted
+orbital-stability audit (issue #249). A vanishing SCF residual certifies a
+stationary point, not a minimum. The Hcore guess can start DIIS from an
+ambiguous projector, and even a well-resolved start can converge onto a
+saddle: a C3 chain bent by 3e-3 bohr converges 16.6 mHa above the
+continuous lower branch. The audit finds the lowest orbital-rotation
+curvature; a negative one marks a saddle.
 
-`max_iter` bounds the cumulative SCF iterations across these restarts. An
-unresolved stability analysis, an exhausted restart budget, or failure to
-escape a detected saddle raises a diagnostic error. The result records
+What happens next is set by the `stability` policy:
+
+| `stability` | Behaviour |
+|---|---|
+| `"reference"` (default) | Keeps the reference program's Hcore/DIIS state at a resolved initial frontier. A saddle is repaired where that trajectory is ill-defined, an unresolved Hcore frontier (gap at most `1e-6` Ha). Elsewhere the state is returned with `internal_instability=True` and `run_job` prints a warning. This reproduces reference MSINDO, whose own converged states include such saddles on three of the seventeen frozen CCM oracle clusters. |
+| `"lowest"` | Attempts descent from every detected saddle to a stable minimum. Use it for scans, forces and equations of state, while checking state continuity; local stability does not prove global uniqueness. |
+
+For a frontier with one occupied orbital or one hole and at most eight
+orbitals, both implementations first minimize the initial projector's energy
+within that subspace. The `"reference"` policy enables this at an unresolved
+Hcore gap (at most `1e-6` Ha). The explicit `"lowest"` policy also considers
+the highest occupied and lowest virtual whole Hcore blocks at a resolved
+gap. Other occupations retain the established Hcore path. This bounded
+search does not prove global state uniqueness.
+
+After minimizing the projector, the solver checks curvature toward the next
+whole adjacent Hcore block. Negative curvature below `-1e-8` triggers
+expansion if the full block fits the eight-orbital limit. The solver
+continues from its current projector in the enlarged space. It then recovers
+the seed's occupied orbitals and uses the existing SOSCF direction with an
+energy-decreasing line search for the full SCF. Continuing from the actual
+seed avoids the DIIS basin change that selected a higher stable C19 state
+under a `0.004` Angstrom local bond distortion.
+
+Every seed Fock evaluation and every orbital line-search trial counts against
+`max_iter`. Only the remaining budget is available for stability restarts.
+On exhaustion the native kernel and Python solver retain their last
+accepted physical density and energy with `converged=False`; the public
+native route raises a convergence error. Results expose
+`frontier_seed_evaluations`, `frontier_seed_completed`,
+`frontier_seed_orbitals`, `frontier_seed_expansions`, and
+`orbital_optimization_used`; output records the executed work. Explicit
+starting densities bypass seed construction and retain their DIIS
+continuation for tracking a chosen state. An unresolved primary frontier
+outside the rank-one seed scope retains the earlier SOSCF fallback after
+29 DIIS updates.
+
+The C19 permutation and local-distortion checks compare fresh solutions
+with density continuation. For bent C3, the resolved-gap `"lowest"` seed
+selects a continuous lower branch. The old pinned DIIS energies remain
+separate controls: rotating the lower-state atomic p orbitals and following
+that density recovers the higher branch. Local stability alone therefore
+does not establish that the lowest state was selected. These state-selection
+repairs still require independent numerical acceptance before issue closure.
+
+A repair scans rotations along the unstable mode for both signs,
+re-converges the lower-energy seed first with the whole remaining budget and
+the other sign only if the first does not descend, then audits the result
+again. A mode whose rotations cannot lower the energy by 1 µHa is accepted
+as stable within the SCF's resolution, and its eigenvalue is still reported.
+The density used for analytic and finite-difference gradients follows the
+same selection. The Hamiltonian and integer occupations are unchanged.
+
+Small bare clusters deserve a look at their charges. For bare diamond 2x2x2
+the neutral state is a saddle of the WS-truncated bare Coulomb model, and
+`"lowest"` descends to its minimum, which alternates +/-2.95 e on the two
+sublattices 2.75 Ha lower. The Madelung-embedded cluster and the 3x3x3
+clusters are neutral stable minima under both policies. `run_job` records
+the largest net atomic charge (`seccm_max_abs_net_charge`), and
+`msindo_ccm.net_atomic_charges` computes them from any CCM density.
+
+Forces are defined per SCF state. On a nearly linear chain the lowest state
+can break the chain plane's mirror symmetry, with its pi pattern rotated
+about the axis, and it then has a mirror-image partner of equal energy. The
+lowest-energy surface then has a cusp at the planar geometry: an
+out-of-plane displacement lowers the energy linearly in its magnitude either
+way (a C3 chain bent by 3e-3 bohr, issue #249). The analytic gradient is the
+exact derivative of the state it converged to. A finite difference of
+independent SCFs across such a cusp is not the derivative of either branch.
+
+`max_iter` bounds the cumulative SCF iterations across these restarts and
+`conv_tol` sets the SCF threshold. Both are `CCMOptions` fields for `run_job`
+and `run_seccm`, with defaults 200 and `1e-9`, alongside `stability`; the
+analytic-gradient callback re-converges with `gradient_conv_tol`, default
+`1e-10`. Under the reference policy at a resolved Hcore gap, an unconverged
+stability audit returns an unverified result and `run_job` warns. When a corrective
+restart is required, an unresolved analysis, exhausted restart budget or
+failed repair raises a diagnostic error. The result records
 `stability_checked`, `stability_analysis_converged`, `stability_eigenvalue`
-(the energy Hessian eigenvalue), and `n_stability_restarts`; `run_job` also
-prints the verdict and cites the stability algorithm. This is a local
-minimum check within restricted HF, not a global-minimum guarantee or a
-test against unrestricted spin solutions. Initial guesses with a resolved
-gap keep their established SCF path. See [Lehtola et al. (2020), section
+(the energy Hessian eigenvalue), `n_stability_restarts` and
+`internal_instability`. `run_job` prints the verdict, the executed SCF
+controls and policy, and the electrostatics kernel; the 1-D MSINDO embedding
+is a truncated +/-2-shell bare sum, not an Ewald sum. This is a local minimum
+check within restricted HF, not a global-minimum guarantee or a test against
+unrestricted spin solutions. See [Lehtola et al. (2020), section
 10](https://doi.org/10.3390/molecules25051218) and issue #249.
+
+### CCM gradient details
 
 `ccm_gradient_fd` computes the nuclear gradient by central finite differences
 (Ha/bohr), holding the **Wigner-Seitz topology fixed** while displacing atoms.
@@ -911,7 +1154,7 @@ NH2         -10.7659659754    -10.7659659674   -8.01e-09  OK   (UHF doublet)
 The regression harness (`examples/regression/msindo/`) can rebuild the reference
 energies from source (`build_oracle.sh`) and re-run the comparison
 (`runner_msindo.py`), vibe-qc never imports MSINDO; it executes a reference
-binary out-of-process and parses its output (CLAUDE.md § 10).
+binary out-of-process and parses its output.
 
 ---
 
@@ -952,9 +1195,9 @@ image.
 | **Elements** | H-Xe (Z 1-54): full INDO parameter scope |
 | **s / p shells** | ✅ Python **and** C++ backend |
 | **d shell** (polarization and transition-metal valence) | ✅ Python **and** C++ backend for validated INDO routes; closed-shell NDDO SPDD for Al-Cl |
-| **Periodic (CCM)** | ✅ 1-D/2-D/3-D, Ewald Madelung, gradients + relaxation |
-| **CCM via `run_job`** | ✅ `method="ccm"` with `CCMOptions` |
-| **SECCM reaction paths** | ✅ closed-shell MSINDO via `run_neb(method="seccm", ccm_options=...)` |
+| **Periodic (CCM)** | ✅ 1-D/2-D/3-D, Ewald Madelung, gradients + relaxation (experimental SECCM line, oracle-validated closed-shell energies) |
+| **CCM via `run_job`** | ✅ `method="ccm"` with `CCMOptions` (experimental SECCM line) |
+| **SECCM reaction paths** | ✅ closed-shell MSINDO via `run_neb(method="seccm", ccm_options=...)` (experimental SECCM line) |
 | **Molecular gradients** | ✅ finite difference; closed-shell INDO analytic gradients via C++; closed-shell NDDO analytic gradients via Python |
 | **Geometry optimization** | ✅ L-BFGS-B via `msindo_optimize`; finite-difference gradients for INDO and NDDO |
 | **Transition states (NEB)** | ✅ `run_neb(method="msindo")` |

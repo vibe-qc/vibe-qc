@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "augmentation-cc-pvdz-ri",
+  "description": " aug-cc-pVDZ-RI diffuse  EMSL  Basis Set Exchange Library   1/2/16 11:12 AM\nElements                             References\nH He B C N O F Ne Al Si P S Cl Ar Ga Ge As Se Br Kr : F. Weigend, A. Kohn, C. Hattig, Efficient use of the correlation consistent basis sets in resolution of the identity MP2 calculations, The Journal of Chemical Physics 116, 3175 (2002).",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -1029,7 +1029,40 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "kendall_dunning_harrison_1992",
+      "description": "R. A. Kendall, T. H. Dunning, R. J. Harrison, Journal of Chemical Physics 96, 6796-6806 (1992)",
+      "doi": "10.1063/1.462569"
+    },
+    {
+      "key": "weigend_ccpvxz_rifit_2002",
+      "description": "F. Weigend, A. Köhn, C. Hättig, Journal of Chemical Physics 116, 3175-3183 (2002)",
+      "doi": "10.1063/1.1445115"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "augmentation-cc-pvdz-ri",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "1d3d44deddc8d7fe1489f985601663ec7a8624db463bfbac071d118dfe963dcb",
+    "citations": [
+      {
+        "keys": [
+          "kendall_dunning_harrison_1992",
+          "weigend_ccpvxz_rifit_2002"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

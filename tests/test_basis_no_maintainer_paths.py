@@ -18,16 +18,12 @@ Three scopes:
   runtime-shipped basis directory. Catches leaks in ``.g94``
   provenance headers, which are easy to miss in a large basis
   diff.
-* ``test_no_maintainer_paths_in_custom_basis_sources`` — the
-  ``custom/`` source the build pipeline promotes into ``basis/``;
-  a leak here would be copied into the generated dir on the next
-  ``setup_basis_library.sh`` run.
-* ``test_no_maintainer_paths_in_repo_tree`` — the rest of the
-  repository (every committed file under the source extensions the
-  hook inspects). Catches doc, example, and test leaks that the
-  basis-only scopes miss. Excludes build artefacts and the
-  policy-meta files the hook itself excludes (``CLAUDE.md``,
-  ``AGENTS.md``, ``.mailmap``, ``.githooks/``, this file).
+* ``test_no_maintainer_paths_in_basis_records`` — the QVF-Basis
+  records under ``qvf/`` the renderings are generated from; a leak in
+  a record's description would be rendered into every ``.g94`` header.
+* ``test_no_maintainer_paths_in_repo_tree`` delegates to the shared committed-tree
+  privacy preflight. It includes all tracked agent, hook and handover files.
+
 """
 
 from __future__ import annotations
@@ -96,15 +92,11 @@ def test_no_maintainer_paths_in_generated_basis_dir():
     assert not hits, _format_hits(hits, "basis/")
 
 
-def test_no_maintainer_paths_in_custom_basis_sources():
-    """``custom/`` is the source the build pipeline promotes into
-    ``basis/``; a leak here will be copied into the generated dir on
-    the next re-run of ``setup_basis_library.sh``."""
-    custom = BUNDLED_BASIS_DIR / "custom"
-    if not custom.is_dir():
-        pytest.skip(f"{custom} not present in this checkout")
-    hits = _scan(custom)
-    assert not hits, _format_hits(hits, "custom/")
+def test_no_maintainer_paths_in_basis_records():
+    """``qvf/`` holds the records the renderings are generated from; a
+    leak in a record's description is rendered into every header."""
+    hits = _scan(BUNDLED_BASIS_DIR / "qvf")
+    assert not hits, _format_hits(hits, "qvf/")
 
 
 # Repo root = two levels up from this file (tests/<file> → repo/).
@@ -127,10 +119,10 @@ _REPO_SCAN_SUFFIXES = frozenset({
 _REPO_SCAN_SKIP_DIRS = frozenset({
     ".git", ".venv", ".venv-rebase", "venv", ".pytest_cache", ".mypy_cache",
     "__pycache__", "node_modules",
-    # `build_dev` is the build-dir name `HANDOVER_PERIODIC_BASIS_GRADIENT.md`
+    # `build_dev` is the build-dir name the original investigation
     # tells developers to use, and `.gitignore` covers it -- but CMake stamps
     # absolute paths into CMakeCache.txt, so leaving it out of this list made
-    # the scan fail for anyone who followed that handover.
+    # the scan fail for anyone who followed that historical design record.
     "build", "build-local", "build_dev", "_build", "_skbuild", "_static",
     "dist",
     "third_party",
@@ -138,18 +130,9 @@ _REPO_SCAN_SKIP_DIRS = frozenset({
     ".claude",  # gitignored local-only agent worktrees (full repo copies)
 })
 
-# Files the hook itself excludes (.githooks/pre-commit pathspec list).
-# Optional agent-instruction filenames are reserved, .mailmap re-maps
-# historical author emails, and this file mirrors the hook patterns for CI.
-# The public policy is in CONTRIBUTING.md; no agent file is required.
-_REPO_SCAN_SKIP_FILES = frozenset({
-    "CLAUDE.md", "AGENTS.md", ".mailmap",
-    str(Path("tests") / "test_basis_no_maintainer_paths.py"),
-})
-
-# Entire directory trees the hook excludes. ``.githooks/`` holds the
-# hook itself, which documents the patterns it blocks.
-_REPO_SCAN_SKIP_REL_DIRS = frozenset({".githooks"})
+# No agent, hook or handover files are exempt from the local supplemental scan.
+_REPO_SCAN_SKIP_FILES = frozenset()
+_REPO_SCAN_SKIP_REL_DIRS = frozenset()
 
 
 def _scan_repo_tree(root: Path) -> list[tuple[Path, int, str, str]]:
@@ -194,13 +177,14 @@ def _scan_repo_tree(root: Path) -> list[tuple[Path, int, str, str]]:
 
 
 def test_no_maintainer_paths_in_repo_tree():
-    """The committed source tree (docs, examples, scripts, tests, all
-    file types the hook inspects) must be free of author home paths
-    and the day-job employer string. Mirrors CONTRIBUTING.md / the
-    .githooks/pre-commit denylist across the whole repo, not just the
-    basis library."""
-    hits = _scan_repo_tree(_REPO_ROOT)
-    assert not hits, _format_hits(hits, "<repo>/")
+    """Check committed bytes with the same policy as early CI and staged hooks."""
+    import subprocess
+    import sys
+    completed = subprocess.run(
+        [sys.executable, str(_REPO_ROOT / ".githooks/source_privacy.py"), "--tree", "HEAD"],
+        cwd=_REPO_ROOT, capture_output=True, text=True, timeout=120, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_repo_scan_ignores_local_build_trees(tmp_path: Path):

@@ -89,6 +89,76 @@ _ATOMIC_MASSES: tuple[float, ...] = (
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _property_provider(result, basis, molecule=None):
+    """Validate a selected molecular source before evaluating new integrals."""
+    receipt = getattr(result, "engine_provenance", None)
+    if receipt is None:
+        return None
+    from . import _vibeqc_core as core
+
+    if not isinstance(receipt, core._manta.MolecularEngineProvenance):
+        raise TypeError("Molecular properties require a native engine provenance receipt")
+    if molecule is None:
+        matches = (core._auxiliary_basis_content_identity_sha256(basis)
+                   == receipt.orbital_basis_identity)
+    else:
+        matches = core._manta._matches_molecular_engine_source(molecule, basis, receipt)
+    if not matches:
+        raise ValueError("Molecular property basis or molecule does not match the executed SCF source")
+    if receipt.one_electron_provider not in ("manta", "libint"):
+        raise ValueError("Unsupported molecular property integral provider")
+    return receipt.one_electron_provider
+
+
+def _manta_property_integral(result, basis, operation, *, origin=(0., 0., 0.),
+                            powers=(0, 0, 0), retained_bytes=0, ket=None):
+    """A separate bounded build; its receipt does not alter the SCF counters."""
+    from . import manta, _vibeqc_core as core
+    from .output import record
+
+    request = manta.OneElectronRequest()
+    request.operation, request.origin, request.powers = operation, origin, powers
+    budget = manta.ResourceBudget()
+    # Earlier moment outputs remain live while subsequent axes are built.
+    # The SCF result and Python property algebra have their own lifetime and
+    # are outside this integral-build budget, as in compute_one_electron.
+    budget.other_live_bytes = retained_bytes
+    integral = manta.compute_one_electron(basis, basis if ket is None else ket, request, budget)
+    receipt = integral.receipt
+    evidence = {name: getattr(receipt, name) for name in (
+        "provider", "provider_version", "normalization", "operation", "source_identity",
+        "shell_calls", "primitive_pairs", "primitive_integrals_evaluated",
+        "integral_elements", "modeled_peak_bytes",
+    )}
+    evidence.update(schema_version=1, budget_scope="property-integral-build",
+                    orbital_basis_identity=result.engine_provenance.orbital_basis_identity,
+                    molecule_identity=result.engine_provenance.molecule_identity,
+                    bra_basis_identity=core._auxiliary_basis_content_identity_sha256(basis),
+                    ket_basis_identity=core._auxiliary_basis_content_identity_sha256(basis if ket is None else ket),
+                    origin=list(origin), powers=list(powers))
+    record("molecular_property_integrals", "", property_integral_provenance=evidence)
+    return np.asarray(integral.values)
+
+
+def _property_overlap(result, basis, molecule=None):
+    if _property_provider(result, basis, molecule) == "manta":
+        return _manta_property_integral(result, basis, "overlap")
+    return np.asarray(compute_overlap(basis))
+
+
+def _property_dipole_integrals(result, basis, molecule=None, origin=(0., 0., 0.)):
+    if _property_provider(result, basis, molecule) == "manta":
+        moments = []
+        for axis in range(3):
+            powers = [0, 0, 0]
+            powers[axis] = 1
+            moments.append(_manta_property_integral(
+                result, basis, "moment", origin=origin, powers=powers,
+                retained_bytes=sum(matrix.nbytes for matrix in moments)))
+        return tuple(moments)
+    dip = compute_dipole(basis, [float(x) for x in origin])
+    return tuple(np.asarray(matrix) for matrix in (dip.x, dip.y, dip.z))
+
 def _real_if_hermitian(P: np.ndarray, *, what: str = "density matrix") -> np.ndarray:
     """Return the real part of a complex-but-Hermitian density matrix.
 
@@ -272,6 +342,39 @@ def _resolve_nuclear_charges(
     return q
 
 
+def _result_guess_ecp_context(result, molecule: Molecule):
+    """ECP operator context of the SCF that produced ``result``.
+
+    A result stamps the operator it ran with: ``ecp_xml_centers`` /
+    ``ecp_xml_library`` for the libecpint library route,
+    ``ecp_primitive_blocks`` / ``ecp_primitive_centers`` /
+    ``ecp_effective_charges`` for the inline route, and ``ecp_total_ncore``.
+    The options struct spells the library fields ``ecp_centers`` /
+    ``ecp_library``. Mapping to that spelling and reusing
+    :func:`vibeqc.guess.guess_ecp_context` builds the context, and
+    recognizes an all-electron result, exactly as the SCF initial guess does.
+    A result carrying no ECP fields gives an inactive (all-electron) context.
+    """
+    from types import SimpleNamespace
+
+    from .guess import guess_ecp_context
+
+    def stamped(name):
+        return getattr(result, name, None)
+
+    return guess_ecp_context(
+        SimpleNamespace(
+            ecp_centers=stamped("ecp_xml_centers"),
+            ecp_library=stamped("ecp_xml_library"),
+            ecp_primitive_blocks=stamped("ecp_primitive_blocks"),
+            ecp_primitive_centers=stamped("ecp_primitive_centers"),
+            ecp_effective_charges=stamped("ecp_effective_charges"),
+            ecp_total_ncore=stamped("ecp_total_ncore"),
+        ),
+        molecule=molecule,
+    )
+
+
 def mulliken_charges(
     result,
     basis: BasisSet,
@@ -292,7 +395,7 @@ def mulliken_charges(
     charges ``Z - n_core`` (see :func:`_resolve_nuclear_charges`, #642).
     """
     P = _total_density(result)
-    S = np.asarray(compute_overlap(basis))
+    S = _property_overlap(result, basis, molecule)
     PS_diag = np.einsum("ij,ji->i", P, S)   # diag(P . S)
     ao_to_atom = _shell_to_atom(basis)
     n_atoms = len(molecule.atoms)
@@ -327,7 +430,7 @@ def loewdin_charges(
     #642).
     """
     P = _total_density(result)
-    S = np.asarray(compute_overlap(basis))
+    S = _property_overlap(result, basis, molecule)
     S_half = _symmetric_matrix_power(
         S,
         0.5,
@@ -452,6 +555,13 @@ def hirshfeld_charges(
     basis-function range gives r_A^free evaluated at the molecular
     geometry. No per-atom SCF, no ionic-fragment branching.
 
+    On an ECP calculation the promolecule is the *valence-only* free atom:
+    the ECP operator the SCF ran with is read from ``result`` and handed to
+    the atomic calculations, so the replaced core is neither occupied nor
+    squeezed into the valence basis, and the promolecule integrates to the
+    valence electron count the molecular density does. ``nuclear_charges``
+    (below) supplies the matching ``Z - n_core`` reference.
+
     Parameters
     ----------
     result
@@ -519,6 +629,9 @@ def hirshfeld_charges(
     sensitive -- is a clean follow-on; same API, different inner
     loop. Tracked as a v0.10.0 D2b-i candidate.
     """
+    if _property_provider(result, basis, molecule) == "manta":
+        raise NotImplementedError(
+            "Hirshfeld atomic SAD promolecules are not yet qualified with MANTA")
     grid = build_grid(molecule, grid_options if grid_options is not None
                       else GridOptions())
     points = np.asarray(grid.points, dtype=np.float64)
@@ -530,7 +643,10 @@ def hirshfeld_charges(
     P_mol = _total_density(result)
     # Promolecular density matrix is the SAD guess (block-diagonal
     # by atom -- see docstring above).
-    P_pro = np.asarray(sad_density(molecule, basis), dtype=np.float64)
+    P_pro = np.asarray(
+        sad_density(molecule, basis, _result_guess_ecp_context(result, molecule)),
+        dtype=np.float64,
+    )
     ao_to_atom = _shell_to_atom(basis)
     # Precompute per-atom AO masks + the diagonal P_pro blocks once.
     atom_masks = [(ao_to_atom == A) for A in range(n_atoms)]
@@ -608,9 +724,9 @@ def hirshfeld_charges(
         promolecule_norm += float((w * rho_pro).sum())
         molecule_norm += float((w * rho_mol).sum())
 
-    # ECP systems: the promolecule weights are the all-electron free-atom
-    # densities (shape only), but the charge must be referenced to the
-    # valence-only nuclear charge the density integrates against (#642).
+    # ECP systems: the promolecule is the valence-only free atom (above), and
+    # the charge is referenced to the valence-only nuclear charge the density
+    # integrates against (#642).
     Z = _resolve_nuclear_charges(molecule, nuclear_charges, what="hirshfeld_charges")
     charges = Z - electron_pop
 
@@ -644,7 +760,7 @@ def mayer_bond_orders(result, basis: BasisSet,
 
     Off-diagonal entries are atom-pair bond orders; diagonal entries are zero.
     """
-    S = np.asarray(compute_overlap(basis))
+    S = _property_overlap(result, basis, molecule)
     ao_to_atom = _shell_to_atom(basis)
     n_atoms = len(molecule.atoms)
 
@@ -764,10 +880,7 @@ def dipole_moment(
         if origin_vec.shape != (3,):
             raise ValueError("dipole_moment: origin must be a 3-vector (bohr)")
 
-    dip = compute_dipole(basis, [float(x) for x in origin_vec])
-    Mx = np.asarray(dip.x)
-    My = np.asarray(dip.y)
-    Mz = np.asarray(dip.z)
+    Mx, My, Mz = _property_dipole_integrals(result, basis, molecule, origin_vec)
     P = _total_density(result)
 
     # Electronic contribution (electrons are negative): -tr(P . M_c).
@@ -953,7 +1066,7 @@ def natural_orbitals(result, basis: BasisSet, *,
             f"'rhf', 'uhf-total', 'uhf-alpha', 'uhf-beta', 'uhf-spin'."
         )
 
-    S = np.asarray(compute_overlap(basis))
+    S = _property_overlap(result, basis)
     occupations, coefficients = _diagonalise_density(D, S)
     return NaturalOrbitals(
         occupations=occupations,

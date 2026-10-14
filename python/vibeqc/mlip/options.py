@@ -21,18 +21,23 @@ class MLIPOptions:
         Torch device -- ``"cpu"`` (default), ``"mps"``, or ``"cuda"``.
     dtype
         ``"float64"`` (default; recommended for energies / geometry) or
-        ``"float32"`` (faster, for MD).
+        ``"float32"`` (faster, for MD). MPS requires ``"float32"`` and
+        an upstream MACE build with MPS-compatible node-energy accumulation.
     accept_academic_license
         Set ``True`` to acknowledge the Academic Software License (ASL)
         when selecting an ASL model -- i.e. that your use is academic and
         non-commercial. Equivalent to setting ``VIBEQC_ACCEPT_ASL=1``.
         MIT-licensed models ignore this flag.
+    weight_sha256
+        Optional expected SHA256 of the serialized checkpoint. A mismatch
+        fails before deserialization. QVF replay supplies the recorded digest.
     """
 
     model: str = "medium-mpa-0"
     device: str = "cpu"
     dtype: str = "float64"
     accept_academic_license: bool = False
+    weight_sha256: str | None = None
 
     def academic_license_acknowledged(self) -> bool:
         """True if the ASL is acknowledged via this flag or the

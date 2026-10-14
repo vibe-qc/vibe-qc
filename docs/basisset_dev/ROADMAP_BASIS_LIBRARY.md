@@ -333,7 +333,7 @@ BSE database; the call is offline-friendly. The fetcher will:
 
 * [PLAN.md](PLAN.md), top-level basissetdev plan; this roadmap
   is rolled in as a new long-term goal slot.
-* [REQUIREMENTS-PERIODIC.md](REQUIREMENTS-PERIODIC.md), handover
+* [REQUIREMENTS-PERIODIC.md](REQUIREMENTS-PERIODIC.md), historical design record
   to the periodic chat; the periodic-Gaussian items above
   partly depend on R1-R5 there.
 * [GOAL4_DESIGN.md](GOAL4_DESIGN.md), basis-optimisation engine

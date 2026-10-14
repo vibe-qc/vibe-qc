@@ -9,13 +9,10 @@ the typed ``BasisSetData`` / ``ECPEntry`` model.
 from __future__ import annotations
 
 from pathlib import Path
-
-from vibeqc.basis_crystal import (
-    CrystalAtomBasis,
-    parse_crystal_atom_basis,
-)
+from typing import TYPE_CHECKING
 
 from .model import (
+    SCHEMA_VERSION,
     BasisRole,
     BasisSetData,
     ECPEntry,
@@ -27,6 +24,9 @@ from .model import (
     Provenance,
     Shell,
 )
+
+if TYPE_CHECKING:
+    from vibeqc.basis_crystal import CrystalAtomBasis
 
 __all__ = ["from_crystal_atom", "from_crystal_file"]
 
@@ -107,57 +107,49 @@ def from_crystal_atom(
                 )
             )
 
-    # Build ECP if present.
+    # Build ECP if present. The conversion goes through the same bridge
+    # the periodic driver and the sidecar writer use
+    # (``basis_crystal.crystal_ecp_to_libecpint_arrays``): CRYSTAL's NKL is
+    # the literal power of r and libecpint's Gaussian-format n is NKL + 2,
+    # and a record without local terms needs the zero local placeholder so
+    # the highest projector is not promoted to the local potential (#207).
+    # A previous version copied NKL unconverted and dropped the local block.
     ecps: dict[str, ECPEntry] | None = None
     if atom.has_ecp and atom.ecp is not None:
-        ecp = atom.ecp
-        potentials: list[ECPPotential] = []
-        current_l: int | None = None
-        current_terms: list[ECPTerm] = []
+        from vibeqc.basis_crystal import crystal_ecp_to_libecpint_arrays
 
-        for term in ecp.terms:
-            # Determine L for this term.
-            if term.ell == "local":
-                continue  # local potential not stored in OVF-Basis ECP model
-            l_val = int(term.ell)
-            if l_val != current_l:
-                if current_l is not None and current_terms:
-                    potentials.append(
-                        ECPPotential(angular_momentum=current_l, terms=current_terms)
-                    )
-                current_l = l_val
-                current_terms = []
-            current_terms.append(
-                ECPTerm(
-                    coefficient=term.coefficient,
-                    exponent=term.alpha,
-                    power=term.n_pow,
-                )
+        arrays = crystal_ecp_to_libecpint_arrays(atom.ecp)
+        by_l: dict[int, list[ECPTerm]] = {}
+        for exponent, coefficient, am, n in zip(
+            arrays.exponents, arrays.coefficients, arrays.ams, arrays.ns
+        ):
+            by_l.setdefault(int(am), []).append(
+                ECPTerm(coefficient=float(coefficient), exponent=float(exponent), power=int(n))
             )
-        if current_l is not None and current_terms:
-            potentials.append(
-                ECPPotential(angular_momentum=current_l, terms=current_terms)
-            )
-
-        n_core = atom.Z - int(ecp.znuc)
+        lmax = int(arrays.local_ell)
+        potentials = [ECPPotential(angular_momentum=lmax, terms=by_l[lmax])]
+        potentials.extend(
+            ECPPotential(angular_momentum=ell, terms=by_l[ell])
+            for ell in range(lmax)
+            if ell in by_l
+        )
+        n_core = atom.Z - round(float(atom.ecp.znuc))
         ecps = {
             sym: ECPEntry(
                 element=sym,
                 n_core_electrons=n_core,
-                angular_momentum_max=max(
-                    (p.angular_momentum for p in potentials), default=0
-                ),
+                angular_momentum_max=lmax,
                 potentials=potentials,
             )
         }
 
     return BasisSetData(
-        schema_version="1.0.0",
+        schema_version=SCHEMA_VERSION,
         name=name or f"<crystal-import-Z{atom.Z}>",
         description=f"Imported from CRYSTAL: Z={atom.Z}",
         role=BasisRole(role),
         basis_family=family,
-        elements={sym: ElementBasis(element=sym, shells=shells)},
+        elements={sym: ElementBasis(element=sym, shells=shells, ecp_id=sym if ecps else None)},
         ecps=ecps,
         provenance=Provenance(origin="crystal"),
     )
@@ -172,6 +164,8 @@ def from_crystal_file(
     harmonic_type: str = "spherical",
 ) -> BasisSetData:
     """Read a CRYSTAL per-element file and convert to :class:`BasisSetData`."""
+    from vibeqc.basis_crystal import parse_crystal_atom_basis
+
     text = Path(path).read_text(encoding="utf-8")
     atom = parse_crystal_atom_basis(text, source=str(path))
     return from_crystal_atom(

@@ -41,7 +41,7 @@ vibe-qc versions and for ad-hoc citations outside `run_job`.
 Always cite this. APA-style:
 
 > Peintinger, M. F. (2026). *vibe-qc: a quantum-chemistry code for
-> molecules and solids* (version 0.17.3) [Software]. Mozilla Public
+> molecules and solids* (version 0.17.18) [Software]. Mozilla Public
 > License 2.0. <https://vibe-qc.com/>
 
 BibTeX:
@@ -51,7 +51,7 @@ BibTeX:
   author  = {Peintinger, Michael F.},
   title   = {{vibe-qc}: a quantum-chemistry code for molecules and solids},
   year    = {2026},
-  version = {0.17.3},
+  version = {0.17.18},
   license = {MPL-2.0},
   url     = {https://vibe-qc.com/},
 }
@@ -76,9 +76,24 @@ The originating paper (covers pob-TZVP):
 ```{vibeqc-cite-entry} peintinger_pob_tzvp_2013
 ```
 
-The revised (`-rev2`) variants extend coverage to heavier elements:
+The revised (`-rev2`) variants, H-Br:
 
 ```{vibeqc-cite-entry} vilela_oliveira_pob_rev2_2019
+```
+
+pob-TZVP-rev2's heavier records each come from their own paper: Rb-I,
+
+```{vibeqc-cite-entry} laun_pob_rev2_fifth_period_2022
+```
+
+Cs-Ba and Hf-Po,
+
+```{vibeqc-cite-entry} laun_pob_rev2_sixth_period_2021
+```
+
+and La-Lu:
+
+```{vibeqc-cite-entry} seidler_pob_rev2_lanthanides_2023
 ```
 
 Or, equivalently, render whichever set of papers the runtime would
@@ -86,6 +101,22 @@ cite for a specific basis-set name:
 
 ```{vibeqc-cite-route} basis_sets pob-tzvp-rev2
 ```
+
+## When you use OpenTrustRegion orbital optimization
+
+For molecular SCF calculations that execute the optional OpenTrustRegion
+backend, cite its defining library paper:
+
+```{vibeqc-cite-entry} greiner_opentrustregion_2026
+```
+
+`run_job(orbital_optimizer="opentrustregion", ...)` adds this entry to the
+normal output bibliography when the backend actually runs. Native SCF does
+not add it, and an OpenTrustRegion solve does not receive default DIIS
+credit. This is electronic orbital optimization at a fixed geometry.
+See the [theory](user_guide/opentrustregion_theory.md),
+[options](user_guide/opentrustregion.md), and
+[worked examples](tutorial/opentrustregion.md).
 
 ## When you use DFT (any functional)
 

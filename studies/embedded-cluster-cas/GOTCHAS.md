@@ -1,7 +1,7 @@
 # MEMORY.md: cross-cutting gotchas for embedded-cluster CAS
 
 Embedded-cluster CASSCF/CASPT2 workstream (MR6-MR10).
-Keep this current; the handover carries milestone progress, this carries gotchas.
+This file records gotchas for the MR6-MR10 workstream.
 
 ---
 
@@ -22,7 +22,7 @@ Source: MR6c (parity_mr6c.py), MR10 (test_embed_parity.py).
 NEVER bundle AIMP data.  LGPL 2.1 + MPL 2.0 = incompatible for bundling.
 Parser reads from user's OpenMolcas install at runtime.  ECP XML in temp dir.
 
-Source: CLAUDE.md s1, HANDOVER_PERIODIC_MULTIREF.md s8.
+Source: CLAUDE.md s1, the original investigation s8.
 
 ---
 

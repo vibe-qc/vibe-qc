@@ -1,16 +1,14 @@
 """ECP `.g94` + `.ecp` sidecar contract for the bundled basis library.
 
-ECP-bearing basis sets (vDZP, LANL2DZ family, dhf-*, …) arrive from
-BSE as a single `.g94` that mixes orbital blocks with `<Sym>-ECP`
-blocks. libint2 cannot parse the ECP blocks, so
-``scripts/basisset_dev/split_ecp_g94.py`` (driven by
-``scripts/setup_basis_library.sh``) splits each affected file into
-an orbital-only ``<name>.g94`` plus a ``<name>.ecp`` sidecar that
-vibe-qc reads via libecpint.
+An ECP-bearing basis set (vDZP, the LANL2DZ family, dhf-*, def2 beyond
+Kr, the pob sets, ...) is one QVF-Basis record carrying both its shells
+and its potentials. libint2 cannot parse ECP blocks, so the record is
+rendered as an orbital-only ``<name>.g94`` plus a ``<name>.ecp`` sidecar
+that vibe-qc reads via libecpint (``vibeqc.basis_toolkit.exporter_g94``).
 
-These tests pin the post-split contract on the runtime-shipped
+These tests pin that contract on the runtime-shipped
 ``python/vibeqc/basis_library/basis/`` tree so an accidental deletion
-of a sidecar — easy to miss inside a large basis-data diff — fails
+of a sidecar, easy to miss inside a large basis-data diff, fails
 loudly instead of silently breaking ECP SCF for the affected basis.
 """
 
@@ -26,12 +24,9 @@ import vibeqc as _vq
 
 BUNDLED_BASIS_DIR = Path(_vq.__file__).resolve().parent / "basis_library"
 BASIS_DIR = BUNDLED_BASIS_DIR / "basis"
-CUSTOM_DIR = BUNDLED_BASIS_DIR / "custom"
 
-# Same regex as scripts/basisset_dev/split_ecp_g94.py — matches the
-# BSE convention "<Symbol>-ECP <ncore> <lmax>", accepting both
-# mixed-case (Na) and the Pople-era all-caps form (NA) used by
-# LANL2DZ and friends.
+# Matches the BSE convention "<Symbol>-ECP <lmax> <ncore>", accepting both
+# mixed-case (Na) and the Pople-era all-caps form (NA).
 _ECP_HEADER_RE = re.compile(r"^\s*([A-Z][A-Za-z]?)-ECP\s+(\d+)\s+(\d+)\s*$")
 
 
@@ -40,9 +35,9 @@ def _has_ecp_block(path: Path) -> bool:
     return any(_ECP_HEADER_RE.match(line) for line in text.splitlines())
 
 
-# Pinned inventory: every basis set the build pipeline is expected to
-# emit an `.ecp` sidecar for. Update intentionally when adding a new
-# ECP-bearing basis to ``custom/`` (or when libint ships a new one).
+# Pinned inventory: every record the renderer is expected to emit an
+# `.ecp` sidecar for. Update intentionally when a new ECP-bearing record
+# joins ``basis_library/qvf/``.
 EXPECTED_ECP_BASES = frozenset({
     "dhf-qzvp", "dhf-qzvpp",
     "dhf-sv(p)", "dhf-svp",
@@ -50,11 +45,12 @@ EXPECTED_ECP_BASES = frozenset({
     "lanl08", "lanl08(d)", "lanl08(f)",
     "lanl2dz", "lanl2dzdp", "lanl2tz",
     "vdzp",
-    # The 3c composite bases carry the def2-ECP beyond Kr; pob-TZVP-rev2 and
-    # pob-TZVP carry the Stuttgart ECPs of their CRYSTAL Z+200 records
-    # (2026-09; pob-TZVP's Rb-I from the Laun 2018 archive, #228).
+    # The 3c composite bases carry the def2-ECP beyond Kr; the pob sets carry
+    # the Stuttgart ECPs of their CRYSTAL Z+200 records (2026-09; pob-TZVP's
+    # Rb-I from the Laun 2018 archive, #228; pob-DZVP-rev2's Rb-I from the
+    # same paper's pob-DZVP archive, 2026-10, #292).
     "def2-msvp", "def2-mtzvp", "def2-mtzvpp",
-    "pob-tzvp-rev2", "pob-tzvp",
+    "pob-tzvp-rev2", "pob-tzvp", "pob-dzvp-rev2",
     # The def2 family beyond Kr (BSE Rb-Rn blocks appended to libint's
     # H-Kr files) ships the def2-ECP as a sidecar (2026-09).
     "def2-sv(p)",
@@ -115,8 +111,8 @@ def test_every_expected_ecp_basis_has_sidecar():
     if empty:
         problems.append(f".ecp sidecar present but contains no ECP block: {empty}")
     assert not problems, (
-        "Bundled basis library is missing expected ECP sidecars — "
-        "re-run scripts/setup_basis_library.sh. "
+        "Bundled basis library is missing expected ECP sidecars; "
+        "re-render with scripts/render_basis_library.py. "
         + " | ".join(problems)
     )
 
@@ -134,62 +130,12 @@ def test_no_orphan_ecp_sidecars():
 
 def test_no_unsplit_ecp_blocks_in_orbital_g94():
     """After ``setup_basis_library.sh`` runs, no shipped `.g94` should
-    still contain `<Sym>-ECP` header lines — libint2 would reject the
-    file on load. A failure here means the build-time split did not
-    run on a file it should have."""
+    still contain `<Sym>-ECP` header lines: libint2 would reject the
+    file on load. The renderer writes potentials to the sidecar only."""
     unsplit = [p.name for p in sorted(BASIS_DIR.glob("*.g94")) if _has_ecp_block(p)]
     assert not unsplit, (
-        f".g94 files still contain unsplit ECP blocks: {unsplit} — "
-        "re-run scripts/setup_basis_library.sh"
-    )
-
-
-def test_custom_ecp_sources_all_have_sidecar():
-    """Source-of-truth cross-check: every ``custom/*.g94`` that carries
-    ECP blocks must have a corresponding sidecar in ``basis/``. Catches
-    the case where a new ECP-bearing basis lands in ``custom/`` but
-    ``setup_basis_library.sh`` was never re-run."""
-    if not CUSTOM_DIR.is_dir():
-        pytest.skip(f"{CUSTOM_DIR} not present in this checkout")
-    missing: list[str] = []
-    for src in sorted(CUSTOM_DIR.glob("*.g94")):
-        if not _has_ecp_block(src):
-            continue
-        if not (BASIS_DIR / f"{src.stem}.ecp").is_file():
-            missing.append(src.name)
-    assert not missing, (
-        "custom/*.g94 sources contain ECP blocks but no sidecar shipped in "
-        f"basis/: {missing} — re-run scripts/setup_basis_library.sh"
-    )
-
-
-def test_custom_ecp_sidecar_sources_land_in_basis():
-    """Pre-split ``custom/*.ecp`` sources must be copied into ``basis/``.
-
-    This catches already-split custom bases such as vDZP: the orbital
-    ``custom/vdzp.g94`` has no ECP block left, so the splitter cannot
-    recreate ``basis/vdzp.ecp`` unless the setup script copies the
-    source sidecar first.
-    """
-    if not CUSTOM_DIR.is_dir():
-        pytest.skip(f"{CUSTOM_DIR} not present in this checkout")
-    missing: list[str] = []
-    changed: list[str] = []
-    for src in sorted(CUSTOM_DIR.glob("*.ecp")):
-        dst = BASIS_DIR / src.name
-        if not dst.is_file():
-            missing.append(src.name)
-            continue
-        if dst.read_bytes() != src.read_bytes():
-            changed.append(src.name)
-    problems = []
-    if missing:
-        problems.append(f"missing from basis/: {missing}")
-    if changed:
-        problems.append(f"basis/ copy differs from custom/: {changed}")
-    assert not problems, (
-        "custom/*.ecp sidecars did not land cleanly: "
-        + " | ".join(problems)
+        f".g94 files still contain ECP blocks: {unsplit}; "
+        "re-render with scripts/render_basis_library.py"
     )
 
 
@@ -203,14 +149,17 @@ def test_custom_ecp_sidecar_sources_land_in_basis():
 # to the local potential on the periodic route.
 # ---------------------------------------------------------------------------
 
-# basis -> (ECP records bundled, cc-pVDZ-PP overlap floor, Ag V_ECP trace and
-# AgCl RHF energy from PySCF 2.14). The PySCF inputs were built straight from
-# the CRYSTAL source records with the +2 power conversion written by hand, so
-# they share no code with vibe-qc's bridge. pob-TZVP's Rb-I records carry the
-# same potentials as pob-TZVP-rev2's; only the orbital shells differ (#228).
+# basis -> (ECP records bundled, cc-pVDZ-PP overlap floor, Ag V_ECP trace,
+# AgCl RHF energy and the largest |V_ECP| element, from PySCF 2.14). The
+# PySCF inputs were built straight from the CRYSTAL source records with the
+# +2 power conversion written by hand, so they share no code with vibe-qc's
+# bridge. All three pob sets carry the same potentials block for block; only
+# the orbital shells differ (#228, #292), which is why the traces and the
+# maxima differ while the potentials agree.
 _POB_ECP_CASES = {
-    "pob-tzvp-rev2": (46, 25, 312.6082409892, -605.5273792995),
-    "pob-tzvp": (16, 14, 314.3796712067, -605.5487242661),
+    "pob-tzvp-rev2": (46, 25, 312.6082409892, -605.5273792995, 165.9358),
+    "pob-tzvp": (16, 14, 314.3796712067, -605.5487242661, 165.9358),
+    "pob-dzvp-rev2": (16, 14, 111.9109001638, -605.3124001041, 79.39038),
 }
 
 
@@ -297,10 +246,9 @@ def test_pob_silver_ecp_matrix_matches_the_independent_reference(name):
     """The Ag V_ECP over an AgCl pair, against PySCF 2.14 ``ECPscalar`` fed
     the same basis and the same ECP parameters in Gaussian convention.
 
-    Reference traces in ``_POB_ECP_CASES``; the largest element is
-    1.659358e+02 Ha for both bases (PySCF 2.14, spherical AOs). Before #207
-    the pob-TZVP-rev2 trace was +18101.65 on the molecular route and
-    +16254.03 on the periodic one.
+    Reference traces and largest elements in ``_POB_ECP_CASES`` (PySCF 2.14,
+    spherical AOs). Before #207 the pob-TZVP-rev2 trace was +18101.65 on the
+    molecular route and +16254.03 on the periodic one.
     """
     import numpy as np
 
@@ -318,9 +266,9 @@ def test_pob_silver_ecp_matrix_matches_the_independent_reference(name):
         compute_ecp_matrix_from_primitives(basis, list(centers[0]), [blocks[0]]),
         dtype=float,
     )
-    trace = _POB_ECP_CASES[name][2]
+    trace, largest = _POB_ECP_CASES[name][2], _POB_ECP_CASES[name][4]
     assert float(np.trace(matrix)) == pytest.approx(trace, abs=1e-6)
-    assert float(np.abs(matrix).max()) == pytest.approx(165.9358, abs=1e-3)
+    assert float(np.abs(matrix).max()) == pytest.approx(largest, abs=1e-3)
 
 
 @pytest.mark.parametrize("name", sorted(_POB_ECP_CASES))

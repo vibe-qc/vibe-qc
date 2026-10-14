@@ -1,16 +1,15 @@
 """Optional external naming backends.
 
 Provides fallback name resolution via:
-- RDKit (local, if installed): ``Chem.MolToIUPACName(mol)``
 - CACTUS REST API (NCI/CADD): formula/SMILES → IUPAC name
 - PubChem REST API: formula → CID → IUPAC name
 
-These are optional — all imports and network calls are wrapped in
-try/except so that the built-in naming engine is always available.
+These are optional — all network calls are wrapped in try/except so
+that the built-in naming engine is always available. There is no local
+backend: RDKit has no structure-to-name function (#538).
 
 References
 ----------
-- RDKit: https://www.rdkit.org/docs/IUPAC.html
 - CACTUS (NCI): https://cactus.nci.nih.gov/
 - PubChem: https://pubchem.ncbi.nlm.nih.gov/
 """
@@ -19,63 +18,41 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
-def _try_import_rdkit():
-    """Import RDKit, return None if unavailable."""
-    try:
-        from rdkit import Chem  # noqa: F401
-        from rdkit.Chem import rdFreeSASA  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
 
 
 def name_from_rdkit(atoms: list[tuple[int, float, float, float]]) -> Optional[str]:
-    """Try to get an IUPAC name from RDKit.
+    """Return None: RDKit cannot name a structure.
+
+    RDKit has no structure-to-IUPAC-name function under any name, so there
+    is no local external backend. This function used to call
+    ``Chem.MolToIUPACName``, which does not exist, and log the resulting
+    ``AttributeError`` at debug level, so it always returned None while
+    looking like a backend that had been tried (#538). It is kept so that
+    existing imports keep working, warns, and is no longer part of
+    :func:`name_from_atoms_external`.
 
     Parameters
     ----------
     atoms :
-        List of (Z, x_ang, y_ang, z_ang) tuples.
+        List of (Z, x_ang, y_ang, z_ang) tuples. Ignored.
 
     Returns
     -------
-    IUPAC name string or None if RDKit is not installed / fails.
+    None, always.
     """
-    try:
-        from rdkit import Chem
-        from rdkit.Chem.rdMolDescriptors import CalcFormula
-
-        # Build an RDKit molecule from atomic numbers and coordinates
-        conf = Chem.Conformer(len(atoms))
-        for i, (z, x, y, z_coord) in enumerate(atoms):
-            conf.SetAtomPosition(i, (x, y, z_coord))
-
-        mol = Chem.RWMol()
-        atom_ids = []
-        for i, (z, *_rest) in enumerate(atoms):
-            a = Chem.Atom(z)
-            aid = mol.AddAtom(a)
-            atom_ids.append(aid)
-            conf.SetAtomPosition(i, (x, y, z_coord))
-
-        mol.AddConformer(conf)
-
-        # Try to sanitize and add hydrogens (required for IUPAC naming)
-        Chem.SanitizeMol(mol)
-        mol = Chem.AddHs(mol)
-
-        name = Chem.MolToIUPACName(mol)
-        if name:
-            return name
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("RDKit naming failed: %s", exc)
-
+    warnings.warn(
+        "name_from_rdkit always returns None: RDKit has no structure-to-name "
+        "function. name_from_atoms_detailed(..., with_external=True) uses the "
+        "CACTUS and PubChem REST backends instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return None
 
 
@@ -193,7 +170,9 @@ def name_from_atoms_external(
 ) -> Optional[tuple[str, str]]:
     """Try external backends for atom-coordinate-to-name resolution.
 
-    Tries RDKit first (fastest), then CACTUS/PubChem via formula conversion.
+    Converts the atoms to a Hill formula and tries CACTUS, then PubChem.
+    There is no local backend: RDKit has no structure-to-name function
+    (#538).
 
     Parameters
     ----------
@@ -204,12 +183,7 @@ def name_from_atoms_external(
     -------
     Tuple of (name, source_tag) or None if all backends fail.
     """
-    # Try RDKit first
-    name = name_from_rdkit(atoms)
-    if name:
-        return (name, "rdkit")
-
-    # Fallback: convert to formula and use REST APIs
+    # Convert to a formula and use the REST APIs.
     from collections import Counter
 
     from .molecular_graph import ATOMIC_NUMBER_TO_SYMBOL

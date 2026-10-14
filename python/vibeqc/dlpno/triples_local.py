@@ -81,6 +81,17 @@ except (AttributeError, ImportError):
     _HAVE_CPP_TNO_DENSITY = False
 
 
+try:  # optional during editable rebuilds
+    from vibeqc._vibeqc_core import (
+        dlpno_ccsd_local_triples as _cpp_local_triples,
+    )
+
+    _HAVE_CPP_LOCAL_TRIPLES = True
+except (AttributeError, ImportError):
+    _cpp_local_triples = None
+    _HAVE_CPP_LOCAL_TRIPLES = False
+
+
 def _local_distinct_triple_keys(n_act, occ_dist, coupling_radius):
     """Yield sorted distinct occupied sets whose ordered triples survive."""
     R = float(coupling_radius)
@@ -259,6 +270,8 @@ def local_triples_correction(
     occ_dist=None,
     coupling_radius=0.0,
     stats=None,
+    df_factors=None,
+    use_cpp=True,
 ):
     """(T) correction on the converged local DLPNO-CCSD amplitudes.
 
@@ -270,7 +283,10 @@ def local_triples_correction(
     truncates each triple's TNO domain by occupation number (the eigenvalues
     of the triple's pair-amplitude density); 0 keeps the full union span
     (exact at full PNO domains). ``coupling_radius`` (with ``occ_dist``)
-    screens distant triples -- see the module docstring.
+    screens distant triples -- see the module docstring. ``use_cpp``
+    (default True) evaluates the keys in the compiled kernel
+    ``dlpno_ccsd_local_triples`` when the core provides it; False keeps the
+    Python loop, which the compiled kernel is pinned against.
     """
     return _local_triples_correction_eps(
         U,
@@ -288,6 +304,8 @@ def local_triples_correction(
         occ_dist=occ_dist,
         coupling_radius=coupling_radius,
         stats=stats,
+        df_factors=df_factors,
+        use_cpp=use_cpp,
     )
 
 
@@ -371,6 +389,7 @@ def t1_triples_correction(
     max_iter=20,
     conv_tol=1e-10,
     stats=None,
+    df_factors=None,
 ):
     """Compatibility ``(T1)`` correction with a canonical occupied basis.
 
@@ -381,11 +400,14 @@ def t1_triples_correction(
     removes both by expanding to full virtual space + canonical occupied
     rotation, at O(N⁷).
 
-    (T1) removes the occupied-basis error while **keeping the TNO-domain
-    scaling**: ``f_oo`` is diagonalised via a localised Jacobi sweep, the
-    converged eigenvectors rotate the amplitudes from the localised to the
-    canonical occupied basis, and the triples are then evaluated per triple
-    in its TNO domain (same as local-(T0)).  The eigenvalue correction alone
+    (T1) removes the occupied-basis error: ``f_oo`` is diagonalised via a
+    localised Jacobi sweep, the converged eigenvectors rotate the amplitudes
+    from the localised to the canonical occupied basis, and the triples are
+    then evaluated by canonical index: the full canonical (T) at
+    ``tcut_tno=0`` (the default), or per triple in a TNO domain when
+    ``tcut_tno > 0``.  The rotated occupieds are delocalised, so this is not a
+    reduced-scaling triples phase and no occupied-distance screening applies
+    (see ``_t1_triples_energy``).  The eigenvalue correction alone
     accounts for only ~18% of the (T0) error; the amplitude rotation is
     essential.  This direct occupied-space rotation is deliberately distinct
     from the iterative local-basis Eq. (2) algorithm of Guo et al. (2018),
@@ -427,6 +449,7 @@ def t1_triples_correction(
         occ_dist=occ_dist,
         coupling_radius=coupling_radius,
         stats=stats,
+        df_factors=df_factors,
     )
 
 
@@ -451,6 +474,8 @@ def _local_triples_correction_eps(
     occ_dist=None,
     coupling_radius=0.0,
     stats=None,
+    df_factors=None,
+    use_cpp=True,
 ):
     """Same as ``local_triples_correction`` but with explicit ``eps_o``.
 
@@ -458,9 +483,61 @@ def _local_triples_correction_eps(
     energies and by ``local_triples_correction`` itself (forwarded with
     ``eps_o = f_dd``).
     """
-    B_ov = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_vir)))
-    B_oo = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_loc)))
-    B_vv = np.ascontiguousarray(np.asarray(df.mo_transform(C_vir, C_vir)))
+    if df_factors is not None:
+        # (B_ov, B_oo, B_vv) already built by the CCSD solver over the same
+        # localised occupieds and canonical virtuals: reuse rather than
+        # transform the AO tensor again (and let the caller release it).
+        B_ov, B_oo, B_vv = (np.ascontiguousarray(np.asarray(b)) for b in df_factors)
+    else:
+        B_ov = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_vir)))
+        B_oo = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_loc)))
+        B_vv = np.ascontiguousarray(np.asarray(df.mo_transform(C_vir, C_vir)))
+
+    if _HAVE_CPP_LOCAL_TRIPLES and use_cpp:
+        # Compiled local (T0): the same TNO spaces and key list, but each key
+        # projects only the pairs that contain one of its occupieds and forms
+        # only its own DF blocks, where the loop below projects every pair
+        # into every TNO space and forms integral blocks over all occupieds.
+        naux = B_ov.shape[0]
+        n_vir = B_vv.shape[-1]
+        pair_keys = sorted(
+            (min(p, q), max(p, q)) for (p, q) in T2
+        )
+        t1_rows = np.zeros((n_act, n_vir))
+        for m in range(n_act):
+            if m in t1 and (m, m) in U:
+                t1_rows[m] = U[(m, m)] @ t1[m]
+        keys = list(_local_distinct_triple_keys(n_act, occ_dist, coupling_radius))
+        out = _cpp_local_triples(
+            B_ov.reshape(naux, -1),
+            B_oo.reshape(naux, -1),
+            B_vv.reshape(naux, -1),
+            np.ascontiguousarray(np.asarray(eps_o, dtype=float)),
+            np.ascontiguousarray(np.asarray(f_vv_full, dtype=float)),
+            [p for p, _ in pair_keys],
+            [q for _, q in pair_keys],
+            [np.asarray(U[key]) for key in pair_keys],
+            [np.asarray(T2[key]) for key in pair_keys],
+            t1_rows,
+            [list(key) for key in keys],
+            tcut_tno=float(tcut_tno),
+            lindep=float(lindep),
+        )
+        bad_keys = np.flatnonzero(~np.isfinite(out["e_key"]))
+        if bad_keys.size:
+            key = keys[int(bad_keys[0])]
+            raise RuntimeError(
+                "native closed-shell (T0) returned a non-finite energy "
+                f"for occupied key {key}"
+            )
+        if not np.isfinite(out["e_t"]):
+            raise RuntimeError(
+                "native closed-shell (T0) returned a non-finite total correction"
+            )
+        _record_screened_keys(stats, n_act, occ_dist, coupling_radius)
+        for key, size in zip(keys, out["n_tno"]):
+            _record_tno_domain(stats, key, int(size))
+        return float(out["e_t"])
 
     def has_pair(p, q):
         return (p, q) in U or (q, p) in U
@@ -637,6 +714,7 @@ def _t1_triples_energy(
     occ_dist=None,
     coupling_radius=0.0,
     stats=None,
+    df_factors=None,
 ):
     """(T1) triples energy: canonical-basis (T) on Jacobi-rotated amplitudes.
 
@@ -647,9 +725,18 @@ def _t1_triples_energy(
 
     This reproduces ``exact_triples_correction`` when the Jacobi eigensystem
     converges (X == Uo^T where Uo = C_act^T S C_loc).  The TNO truncation
-    (``tcut_tno``) and triple screening (``coupling_radius``) are applied on
-    top if desired, making this the scaling-preserving, semicanonical-free
-    (T1) production path.
+    (``tcut_tno``) may be applied on top.
+
+    The occupied-distance screening (``coupling_radius`` with ``occ_dist``)
+    is NOT applied here. ``occ_dist`` holds distances between localised
+    orbitals, while the triples below are indexed by canonical occupieds,
+    each of which mixes every localised orbital, so the criterion has no
+    meaning for them: applying it dropped arbitrary canonical triples. On
+    C6H14/cc-pVDZ at the default 12 bohr that lost 18% of the (T) energy
+    (+3.4 kcal/mol). The canonical rotation is what makes this route
+    non-local; ``triples_mode="local"`` is the scalable closed-shell triples
+    mode. ``occ_dist`` and ``coupling_radius`` are accepted for signature
+    compatibility and recorded as screening nothing.
     """
     nv = C_vir.shape[1]
 
@@ -674,30 +761,25 @@ def _t1_triples_energy(
     t2_full_can = np.einsum("iI,jJ,ijab->IJab", X, X, t2_full_loc, optimize=True)
 
     # Step 3: Build DF integrals in the canonical occupied basis.
-    B_ov_can = np.einsum(
-        "Pia,iI->PIa",
-        np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_vir))),
-        X,
-        optimize=True,
-    )
-    B_oo_can = np.einsum(
-        "Pij,iI,jJ->PIJ",
-        np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_loc))),
-        X,
-        X,
-        optimize=True,
-    )
-    B_vv = np.ascontiguousarray(np.asarray(df.mo_transform(C_vir, C_vir)))
+    if df_factors is not None:
+        _B_ov_loc, _B_oo_loc, B_vv = (
+            np.ascontiguousarray(np.asarray(b)) for b in df_factors
+        )
+    else:
+        _B_ov_loc = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_vir)))
+        _B_oo_loc = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_loc)))
+        B_vv = np.ascontiguousarray(np.asarray(df.mo_transform(C_vir, C_vir)))
+    B_ov_can = np.einsum("Pia,iI->PIa", _B_ov_loc, X, optimize=True)
+    B_oo_can = np.einsum("Pij,iI,jJ->PIJ", _B_oo_loc, X, X, optimize=True)
 
-    # Step 4: (T) correction.
-    # With tcut_tno=0 (default) and no actual occupied-triple screening,
-    # full (T) is the validated spatial triples contraction.  Use the native
-    # OpenMP kernel when the extension provides it; the helper falls back to
-    # the Python oracle for older editable builds.  When tcut_tno>0 or a
-    # finite radius really screens triples, use the per-triple TNO loop below.
-    if tcut_tno <= 0.0 and _triples_screening_is_noop(
-        occ_dist, coupling_radius
-    ):
+    # Step 4: (T) correction over every canonical triple; see the docstring
+    # for why the localised-orbital distance screening is not applied.
+    # With tcut_tno=0 (default) full (T) is the validated spatial triples
+    # contraction.  Use the native OpenMP kernel when the extension provides
+    # it; the helper falls back to the Python oracle for older editable
+    # builds.  With tcut_tno>0, use the per-triple TNO loop below.
+    occ_dist, coupling_radius = None, 0.0
+    if tcut_tno <= 0.0:
         if stats is not None:
             _record_screened_keys(stats, n_act, occ_dist, coupling_radius)
             for key in _local_distinct_triple_keys(
@@ -714,7 +796,7 @@ def _t1_triples_energy(
             np.diag(f_vv_full),
         )
 
-    # With TNO truncation or triple screening: per-triple loop.
+    # With TNO truncation: per-triple loop over every canonical key.
     # Each triple (I,J,K) uses the full virtual space chopped into a TNO
     # domain from the pair amplitudes projected to the full space.
     def build_tno(distinct):
@@ -772,11 +854,14 @@ def exact_triples_correction(
     The local DLPNO-(T0) above uses the diagonal localised Fock in the triples
     denominators -- a semicanonical approximation worth ~0.1 kcal/mol. This
     removes it entirely: expand the per-pair PNO amplitudes to the full virtual
-    space, rotate the occupied from the localised to the canonical basis
-    (``Uo = C_actᵀ S C_loc``, the localisation rotation), and apply the
+    space, diagonalise the Fock within the active occupied and virtual
+    blocks, rotate the amplitudes into those bases, and apply the
     validated spatial (T) (``cs_triples_correction``) in the *canonical* basis,
     where the occupied Fock is diagonal so the (T) is exact for these
-    amplitudes. O(N⁷) (full virtual space, no TNO truncation) -- the
+    amplitudes. A correlation-source adapter may have localised ``C_act``
+    before calling the engine, so it must not be assumed canonical. The
+    frozen occupied block is excluded from this rotation. O(N⁷) (full
+    virtual space, no TNO truncation) -- the
     high-accuracy mode for when the (T) is still affordable; (T1) is the
     scaling-preserving route to the same accuracy.
     """
@@ -792,17 +877,22 @@ def exact_triples_correction(
         t2f[i, j] = blk
         if i != j:
             t2f[j, i] = blk.T
-    # occupied: localised -> canonical (amplitudes transform with the orbitals)
-    Uo = C_act.T @ S @ C_loc
-    t1c = Uo @ t1f
-    t2c = np.einsum("Ii,Jj,ijab->IJab", Uo, Uo, t2f, optimize=True)
+    # Semicanonicalise both spaces, including when an adapter supplies
+    # pre-localised orbitals. Taking only the diagonal in that gauge would
+    # silently turn this exact oracle into another (T0) approximation.
+    f_oo = C_act.T @ F @ C_act
+    eps_o, Ro = np.linalg.eigh(0.5 * (f_oo + f_oo.T))
+    eps_v, Rv = np.linalg.eigh(0.5 * (f_vv_full + f_vv_full.T))
+    C_can = C_act @ Ro
+    C_vir_can = C_vir @ Rv
+    Uo = C_can.T @ S @ C_loc
+    t1c = Uo @ t1f @ Rv
+    t2c = np.einsum("Ii,Jj,ijab,aA,bB->IJAB", Uo, Uo, t2f, Rv, Rv, optimize=True)
     # canonical-basis chemist integrals + canonical orbital energies
-    B_ov = np.asarray(df.mo_transform(C_act, C_vir))
-    B_oo = np.asarray(df.mo_transform(C_act, C_act))
-    B_vv = np.asarray(df.mo_transform(C_vir, C_vir))
+    B_ov = np.asarray(df.mo_transform(C_can, C_vir_can))
+    B_oo = np.asarray(df.mo_transform(C_can, C_can))
+    B_vv = np.asarray(df.mo_transform(C_vir_can, C_vir_can))
     V = _blocks(B_ov, B_vv, B_oo)
-    eps_o = np.diag(C_act.T @ F @ C_act)
-    eps_v = np.diag(f_vv_full)
     return cs_triples_correction(
         t1c, t2c, V["ovvv"], V["ooov"], V["ovov"], eps_o, eps_v
     )

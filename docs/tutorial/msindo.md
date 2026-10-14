@@ -1,3 +1,10 @@
+---
+myst:
+  html_meta:
+    "description": "MSINDO in vibe-qc: the INDO theory in brief (one-centre integral retention, the orthogonalisation correction, pseudopotential terms) and the cyclic cluster idea, then a complete workflow from a single-point energy through geometry optimisation, NDDO mode, open shells, periodic MgO bulk and surface calculations with the cyclic cluster model, COSMO solvation, CIS, MP2, GF2 and NEB. Production within its documented scope (INDO H to Xe)."
+    "og:title": "vibe-qc tutorial - MSINDO: semiempirical INDO"
+---
+
 # MSINDO: semiempirical INDO
 
 This tutorial walks through a complete MSINDO workflow inside vibe-qc, 
@@ -7,7 +14,117 @@ surface calculations, and excited states.  MSINDO uses **no external basis set**
 script.
 
 The MSINDO engine is validated against a reference MSINDO build to
-**≤ 1 µHa** on the full H-Br element set.
+**≤ 1 µHa** for closed-shell INDO energies over the full H to Xe (Z 1 to 54)
+element set, and for closed-shell NDDO on H, Li to F and Na to Cl. Within that
+documented scope MSINDO is a production route; the semiempirical cyclic cluster
+model of section 5 is experimental overall, with the MSINDO route the most
+mature (see the status box there and
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)).
+The numbers quoted on this page come from a vibe-qc 0.17.x development build
+on Apple M2.
+
+## Theory
+
+MSINDO ({vibeqc-cite}`ahlswede_jug_msindo_1_1999`,
+{vibeqc-cite}`ahlswede_jug_msindo_2_1999`) is the modern form of the
+SINDO1 method of Jug and co-workers: an INDO-type semiempirical
+Hamiltonian in a minimal valence basis of Slater orbitals, with a small
+set of per-element parameters fitted to heats of formation, geometries,
+ionisation energies and dipole moments. Three ideas distinguish it from
+the NDDO family described on the [PM6 page](pm6_and_gfn2.md).
+
+**One-centre integral retention (the "I" in INDO).** Intermediate neglect
+of differential overlap keeps every one-centre two-electron integral
+$(\mu_A\nu_A|\lambda_A\sigma_A)$, including the exchange-type integrals
+$(\mu_A\nu_A|\mu_A\nu_A)$ that CNDO drops, but reduces every two-centre
+Coulomb integral to a single value per atom pair and shell pair,
+$(\mu_A\mu_A|\nu_B\nu_B) \to \gamma_{AB}^{l l'}$, evaluated analytically
+over the Slater functions. Keeping the one-centre exchange integrals is
+what lets INDO distinguish singlet from triplet states and describe
+open shells, which is why MSINDO has UHF and CIS variants and CNDO does
+not. All one-electron integrals (overlap, kinetic energy, nuclear attraction) are
+evaluated analytically over the Slater orbitals rather than parametrised, and
+the one-centre integrals come from Slater-Condon parameters scaled by
+per-element factors, so the empirical freedom sits in a small set of
+per-element and per-pair parameters rather than in the integrals themselves.
+
+**The orthogonalisation correction.** The Roothaan equations of an NDO
+method are written in an implicitly orthogonal basis, but the Slater
+orbitals overlap. MSINDO makes the connection explicit: the one-electron
+Hamiltonian is set up in the Slater basis and transformed with the
+symmetric Loewdin orthogonalisation, expanded to second order in the
+overlap,
+
+$$
+\mathbf h^{\lambda} = \mathbf S^{-1/2}\,\mathbf h\,\mathbf S^{-1/2}
+\approx \mathbf h - \tfrac12\bigl(\mathbf S'\mathbf h + \mathbf h\mathbf S'\bigr)
++ \tfrac38\bigl(\mathbf S'^2\mathbf h + \mathbf h\mathbf S'^2\bigr)
++ \tfrac14\,\mathbf S'\mathbf h\mathbf S' ,
+\qquad \mathbf S' = \mathbf S - \mathbf 1 ,
+$$
+
+so that the resulting matrix elements carry the Pauli repulsion between
+neighbouring atoms that a plain resonance term $\beta S_{\mu\nu}$ misses.
+The correction is repulsive at short range: it is the Pauli wall that keeps
+atoms from collapsing, and it plays the role that the ad hoc Gaussian
+core-core terms play in AM1 and PM3. The matrix products run over all atoms,
+so a geometry change on one pair shifts the correction on every other pair,
+which is why the analytic gradient must carry the full derivative. The
+remaining resonance is an empirical term with per-pair parameters that also
+correct for the missing penetration.
+
+**Pseudopotential terms.** From sodium onwards the inner shells are not
+carried explicitly, so the repulsion between the valence electrons of one
+atom and the frozen core of a neighbour would be lost. MSINDO restores it
+with a frozen-core pseudopotential: for a valence orbital on atom $A$ and the
+core of atom $B$, the attraction $-Z_B/r$ is replaced by that of the
+effective core charge, and a repulsive term built from the squared Slater
+overlaps of the valence orbital with each core shell of $B$, weighted by
+fitted core charges, is added to the core Hamiltonian. This is a
+Phillips-Kleinman-type projection in minimal form, and a separate
+penetration correction restores the difference between a point-charge core
+and a spherical shell charge. The core-core repulsion itself is the plain
+point-charge sum of the effective core charges,
+
+$$
+E_{\text{core}} = \sum_{A<B} \frac{Z_A^{\text{core}} Z_B^{\text{core}}}{R_{AB}} .
+$$
+
+The total energy is the SCF electronic energy plus $E_{\text{core}}$;
+`run_job` additionally reports the binding energy relative to the parametrised
+atomic references $\sum_A \mathrm{ATENG}(Z_A)$ (section 1). The NDDO mode of
+section 3 keeps the same one-electron machinery but retains the full
+two-centre NDDO integral set in place of the single monopole $\gamma_{AB}$;
+absolute energies shift by more than a hartree between the two modes (about
+1.27 Ha for HF in section 3), so only compare energies within one mode.
+
+**The cyclic cluster idea (SECCM).** MSINDO was developed for solids as
+much as for molecules, and its periodic model is not a k-point method.
+The semiempirical cyclic cluster model
+({vibeqc-cite}`bredow_geudtner_jug_ccm_2001`) takes one finite cluster of
+$N$ atoms cut from the crystal, imposes cyclic (Born-von Karman) boundary
+conditions on it in real space, and lets every atom interact only with the
+single nearest image of each other atom that falls inside its own
+Wigner-Seitz cell, with fractional weights for images on the cell
+boundary. Because only one- and two-centre terms occur in INDO, the
+cyclic sum closes exactly at half a translation and the Hamiltonian
+remains a finite, molecule-like matrix that is diagonalised once at
+$\Gamma$; the long-range Coulomb field that the truncated sum misses is
+restored, for ionic systems, by a classical Ewald (Madelung) embedding
+whose point-charge potential enters the Fock diagonal. Section 5 runs
+this construction on bulk MgO, its (100) surface and an adsorbate; the
+[cyclic cluster model tutorial](cyclic_cluster_model.md) develops the
+weighting rule and its ab initio extension.
+
+**Where MSINDO helps and where it fails.** It is fast enough for hundreds
+of atoms, for dynamics and for metadynamics, it handles open shells and
+excited states (CIS) within the INDO approximation, and its solid-state
+lineage means surface adsorption and defect energetics are natural. Its
+weaknesses are those of every INDO scheme: dispersion is absent, absolute
+energies are on the method's own scale, transition-metal and heavy
+$p$-block chemistry inherits whatever the parametrisation saw, and the
+rigorous (unscaled) CIS of section 7 does not reproduce the empirically
+scaled spectra of the reference program by design.
 
 > **What you need.** A working vibe-qc install (``pip install -e .`` from a
 > clone); see {doc}`../quickstart`.  The examples in this tutorial can be
@@ -38,7 +155,8 @@ print(f"Binding energy: {result.binding_energy:.6f} Ha")
 
 The ``binding_energy`` is ``E_total − Σ ATENG(Z)``, the energy needed to
 separate the molecule into its constituent atoms at the INDO reference level.
-For H₂O the MSINDO total is −17.01820877 Ha.
+For this H₂O geometry the MSINDO total is −17.01820747 Ha and the binding
+energy −0.362166 Ha.
 
 ### Using the direct API
 
@@ -66,7 +184,9 @@ or feeding into a subsequent post-SCF method.
 
 ## 2. Geometry optimisation
 
-``msindo_optimize`` wraps SciPy's L-BFGS-B with a finite-difference gradient:
+``msindo_optimize`` wraps SciPy's L-BFGS-B with a finite-difference gradient
+and returns a pair, the relaxed coordinates (Å) and the ``MsindoResult`` at
+that geometry:
 
 ```python
 from vibeqc.semiempirical.methods.msindo import msindo_optimize
@@ -75,17 +195,25 @@ from vibeqc.semiempirical.methods.msindo import msindo_optimize
 Z = [8, 1, 1]
 xyz_start = [[0.0, 0.0, 0.0], [0.0, 0.8, 0.6], [0.0, -0.8, 0.6]]
 
-result = msindo_optimize(Z, xyz_start, fmax=4.5e-4)
-print(f"Optimised in {result.n_iter} steps")
-print(f"Final energy:    {result.energy:.10f} Ha")
-print(f"Max gradient:    {result.fmax:.6f} Ha/bohr")
+coords, res = msindo_optimize(Z, xyz_start, fmax=4.5e-4)
+print(f"Final energy:    {res.total_energy:.10f} Ha  ({res.n_iter} SCF iterations)")
 print("Geometry (Å):")
-for row in result.coords_angstrom:
+for row in coords:
     print(f"  {row[0]:.6f} {row[1]:.6f} {row[2]:.6f}")
 ```
 
-The ``history`` field in the result records the energy and max gradient at
-every optimisation step, so you can plot the convergence.
+```text
+Final energy:    -17.0182238752 Ha  (35 SCF iterations)
+Geometry (Å):
+  -0.000000 0.000000 0.008926
+  -0.000000 0.760156 0.595537
+  0.000000 -0.760156 0.595537
+```
+
+Pass ``frozen=[...]`` to hold atoms fixed, ``nddo=True`` for the NDDO
+parametrisation, and ``max_steps`` / ``conv_tol`` to control the loop; the
+optimiser does not return a per-step history, so wrap the call in your own
+loop if you want to plot the convergence.
 
 ---
 
@@ -105,7 +233,12 @@ nddo = msindo.run_msindo([9, 1], [[0, 0, 0], [0, 0, 0.917]], nddo=True)
 print(f"INDO total  = {indo.total_energy:.10f} Ha")
 print(f"NDDO total  = {nddo.total_energy:.10f} Ha")
 print(f"Δ(NDDO−INDO) = {nddo.total_energy - indo.total_energy:.4f} Ha")
-# Δ ≈ +1.2654 Ha — NDDO significantly shifts the absolute energy
+```
+
+```text
+INDO total  = -24.3089965040 Ha
+NDDO total  = -23.0436304984 Ha
+Δ(NDDO−INDO) = 1.2654 Ha
 ```
 
 The difference between INDO and NDDO is large (up to ~1.3 Ha per molecule)
@@ -129,18 +262,21 @@ for name, (Z, xyz) in targets.items():
 
 ## 4. Open-shell calculations (UHF)
 
-MSINDO UHF is available for s/p elements (H-F).  Pass ``multiplicity > 1``
+MSINDO UHF includes the s/p/d one-centre Fock terms and is validated on the
+light s/p radical set and named heavier fixtures (near-degenerate heavy cases
+remain basin-sensitive; see the {doc}`../user_guide/msindo`).  The examples here
+use light radicals.  Pass ``multiplicity > 1``
 to ``run_msindo`` or build a ``Molecule`` with the desired multiplicity:
 
 ```python
 from vibeqc import Atom, Molecule, run_job
 from vibeqc.semiempirical.methods import msindo
 
-# O₂ triplet — through run_job
+# O₂ triplet, through run_job
 o2 = Molecule([Atom(8, [0, 0, 0]), Atom(8, [0, 0, 2.283])], multiplicity=3)
 print(f"O₂ triplet: {run_job(o2, method='msindo').energy:.10f} Ha")
 
-# OH radical — through the direct API
+# OH radical, through the direct API
 oh = msindo.run_msindo([8, 1], [[0, 0, 0], [0, 0, 1.833]], multiplicity=2)
 print(f"OH radical: {oh.total_energy:.10f} Ha  ({oh.n_iter} iterations)")
 
@@ -157,7 +293,20 @@ print(f"H₂O⁺: {run_job(h2o_plus, method='msindo').energy:.10f} Ha")
 
 For solids and surfaces, MSINDO uses the **Cyclic Cluster Model**, 
 a finite supercell with Wigner-Seitz periodic environment and optional
-Ewald Madelung embedding.
+Ewald Madelung embedding (the Theory section above sketches the idea).
+
+```{admonition} Status: experimental
+:class: warning
+
+The semiempirical cyclic cluster model (SECCM) is an experimental route
+overall. The MSINDO route used here is its most mature member: closed-shell
+CCM energies are validated against reference MSINDO within the documented
+scope, and `run_job(method="seccm")` (legacy `"ccm"`) reaches it. The DFTB0,
+SCC-DFTB, GFN2-xTB and PM6 cyclic-cluster adapters are gated experimental and
+library-only. SECCM results are research output and are not part of the
+release gate. See
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
 
 ### 5a. Bulk MgO (3-D periodic)
 
@@ -182,6 +331,10 @@ bulk = run_ccm(Z, coords, cell_3d, madelung=True)
 print(f"Bulk MgO (Madelung):  {bulk.total_energy:.10f} Ha  ({bulk.n_iter} it)")
 ```
 
+```text
+Bulk MgO (Madelung):  -66.2038374448 Ha  (11 it)
+```
+
 ### 5b. MgO(100) surface (2-D periodic)
 
 Dropping to a 2-D cell (two lattice vectors, finite in z) turns the same
@@ -189,15 +342,22 @@ machinery into a slab calculation: an MgO(100) bilayer that is periodic
 in-plane and terminated along the surface normal.
 
 ```python
-# MgO(100) bilayer slab: periodic in-plane, finite in z
+# MgO(100) bilayer slab: periodic in-plane, finite in z.  Nearest
+# Mg-O neighbours sit a/2 apart, so the eight atoms span one a x a x a/2
+# block and the in-plane cell is a x a.
 a_half = a / 2
 slab_Z = [12, 8, 8, 12, 8, 12, 12, 8]
-slab_C = [[0, 0, 0], [a, 0, 0], [0, a, 0], [a, a, 0],
-          [0, 0, a], [a, 0, a], [0, a, a], [a, a, a]]
-cell_2d = [[2*a, 0, 0], [0, 2*a, 0]]
+slab_C = [[0, 0, 0], [a_half, 0, 0], [0, a_half, 0], [a_half, a_half, 0],
+          [0, 0, a_half], [a_half, 0, a_half], [0, a_half, a_half],
+          [a_half, a_half, a_half]]
+cell_2d = [[a, 0, 0], [0, a, 0]]
 
 slab = run_ccm(slab_Z, slab_C, cell_2d, madelung=True)
 print(f"MgO(100) slab:        {slab.total_energy:.10f} Ha")
+```
+
+```text
+MgO(100) slab:        -66.4395927266 Ha
 ```
 
 ### 5c. Water adsorption on MgO(100)
@@ -210,9 +370,9 @@ surface-chemistry quantity this CCM workflow is built for.
 # Add an H₂O adsorbate above the surface
 water_Z = slab_Z + [8, 1, 1]
 water_C = slab_C + [
-    [a, 0, a + 2.2],                 # O (adsorbate)
-    [a + 0.76, 0, a + 2.76],          # H
-    [a - 0.76, 0, a + 2.76],          # H
+    [a_half, 0, a_half + 2.2],                 # O (adsorbate), 2.2 A above a Mg
+    [a_half + 0.76, 0, a_half + 2.76],          # H
+    [a_half - 0.76, 0, a_half + 2.76],          # H
 ]
 sys = run_ccm(water_Z, water_C, cell_2d, madelung=True)
 print(f"Slab + H₂O:           {sys.total_energy:.10f} Ha")
@@ -227,6 +387,11 @@ KCAL_PER_HA = 627.509474
 print(f"E_ads = {e_ads:.6f} Ha  =  {e_ads * KCAL_PER_HA:.2f} kcal/mol")
 ```
 
+```text
+Slab + H₂O:           -83.4685198932 Ha
+E_ads = -0.010718 Ha  =  -6.73 kcal/mol
+```
+
 ### 5d. Adsorbate relaxation
 
 Relax the water molecule on the frozen MgO slab:
@@ -234,7 +399,7 @@ Relax the water molecule on the frozen MgO slab:
 ```python
 from vibeqc.semiempirical.methods.msindo_ccm import ccm_optimize
 
-# Freeze the slab atoms (indices 0–7), relax the adsorbate (8,9,10)
+# Freeze the slab atoms (indices 0-7), relax the adsorbate (8,9,10)
 relaxed_C, relaxed_res = ccm_optimize(
     water_Z, water_C, cell_2d, madelung=True,
     frozen=list(range(8)),           # hold the slab fixed
@@ -250,6 +415,11 @@ grad = ccm_gradient_fd(water_Z, relaxed_C, cell_2d, madelung=True)
 adsorbate_forces = grad[len(slab_Z):]
 import numpy as np
 print(f"Max adsorbate force: {np.max(np.abs(adsorbate_forces)):.2e} Ha/bohr")
+```
+
+```text
+Relaxed E_ads = -0.011300 Ha  =  -7.09 kcal/mol
+Max adsorbate force: 1.84e-03 Ha/bohr
 ```
 
 > **Valid clusters** must satisfy the CCM validity rule: the summed
@@ -310,7 +480,7 @@ MSINDO CIS gives vertical singlet and triplet excitation energies:
 ```python
 from vibeqc.semiempirical.methods.msindo import msindo_cis
 
-# H₂O — first 5 singlet states
+# H₂O, first 5 singlet states
 s = msindo_cis([8, 1, 1],
                [[0, 0, 0.117], [0, 0.757, -0.467], [0, -0.757, -0.467]],
                spin="singlet", n_states=5)
@@ -439,7 +609,7 @@ for i_atom, (lo, hi) in enumerate(blocks):
     q = msindo.eff_core_charge(Z[i_atom]) - pop
     sym = {16: "S", 1: "H"}[Z[i_atom]]
     print(f"  {sym}  pop = {pop:.4f}  charge = {q:+.4f}")
-# H₂S: S ≈ −0.25, H ≈ +0.12 — the expected slight polarity
+# H₂S: S ≈ −0.25, H ≈ +0.12, the expected slight polarity
 ```
 
 ---

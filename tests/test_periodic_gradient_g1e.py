@@ -90,7 +90,10 @@ def test_periodic_forces_lda_h2_box():
     basis = vq.BasisSet(sys.unit_cell_molecule(), "sto-3g")
     F = periodic_forces(atoms, basis, kpts=[1, 1, 1],
                           functional="lda",
-                          cutoff_bohr=25.0, nuclear_cutoff_bohr=25.0,
+                          # 20 Angstrom = 37.8 bohr: both balls reach the six
+                          # nearest images (next shell 53.5 bohr), which the
+                          # #133 guard requires on this direct route (#430).
+                          cutoff_bohr=38.0, nuclear_cutoff_bohr=38.0,
                           conv_tol_energy=1e-12)
     assert F.shape == (2, 3)
     # Newton's-3rd-law along z (the bond axis).

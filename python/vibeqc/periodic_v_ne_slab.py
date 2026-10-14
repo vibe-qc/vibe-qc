@@ -6,7 +6,7 @@ The ``CoulombMethod.SLAB_EWALD_2D`` analogue of
 0, 1) and finite along the normal, in the rigorous Parry / de Leeuw-Perram
 2D-Ewald gauge -- the *bare* (non-neutral nuclei, no neutralising sheet)
 block that the SCF total assembles bilinearly,
-``E = E_nn + Tr[D.V_ne] + 1/2 Tr[D.J]`` (handovers/HANDOVER_SLAB_EWALD_2D.md, "Option 1").
+``E = E_nn + Tr[D.V_ne] + 1/2 Tr[D.J]`` (the original investigation, "Option 1").
 
 The split mirrors the 3D Ewald-FT path::
 
@@ -63,10 +63,10 @@ sum does not.  Validated to ~1e-9 in ``tests/test_v_ne_slab_ewald_2d.py``.
    ~1e-11 vs ``compute_multipole_moments_lattice``), *not* the home-cell
    ``<mu|z|ν>``. The two differ by O(7e-3) for diffuse functions at small
    in-plane spacing -- the physical cross-cell image dipole, which is exactly
-   what the slab g=0 term needs. (An earlier handover mis-read that difference
+   what the slab g=0 term needs. (An earlier historical design record mis-read that difference
    as a "surface-dipole bug"; the real ~0.1 Ha polar-slab error was the
    undamped-J core under-convergence, fixed by the Ewald split in
-   :mod:`vibeqc.ewald_composed_slab`. See ``handovers/HANDOVER_SLAB_EWALD_2D.md``.)
+   :mod:`vibeqc.ewald_composed_slab`.)
 
 The Gamma-only and multi-k RHF/RKS/UKS slab SCF paths consume this kernel.
 """
@@ -87,7 +87,6 @@ from ._vibeqc_core import (
     bloch_sum,
     compute_nuclear_erfc_lattice,
     compute_overlap_lattice,
-    direct_lattice_cells,
 )
 
 __all__ = [
@@ -107,13 +106,38 @@ __all__ = [
 _DEFAULT_ALPHA = 0.4
 
 
+def _slab_pair_cutoff(lat_opts: LatticeSumOptions) -> Optional[float]:
+    """AO-pair cutoff the reciprocal slab terms share with ``V_short``.
+
+    Under ``lat_opts.pair_complete_1e`` the libint ``V_short`` keeps the
+    terms ``(mu_0, nu_g)`` with ``|O_mu - O_nu - g| <= cutoff_bohr`` on the
+    pair-complete cell list (``lattice_pair_cells.hpp``), so ``V_long``,
+    ``V_g0`` and the ``int n dz = S`` check Fourier transform exactly those
+    pairs. Off, every pair of every ball cell enters (``None``).
+    """
+    return float(lat_opts.cutoff_bohr) if lat_opts.pair_complete_1e else None
+
+
+def _mask_pair_ft_at_cells(basis, R_g, ft_at_cells, pair_cutoff_bohr):
+    """Zero the per-cell AO-pair FTs outside the ``pair_cutoff_bohr`` support."""
+    if pair_cutoff_bohr is None:
+        return ft_at_cells
+    from .lattice_screening import ao_pair_support_mask
+
+    for ig, shift in enumerate(R_g):
+        mask = ao_pair_support_mask(basis, shift, pair_cutoff_bohr)
+        if not mask.all():
+            ft_at_cells[ig] *= mask[:, :, None]
+    return ft_at_cells
+
+
 @dataclass
 class SlabVneDecomposition:
     """Per-component Γ-point ``V_ne`` for ``SLAB_EWALD_2D``.
 
     ``v_total = v_short + v_long + v_g0``. The components are exposed
     separately for the downstream BIPOLE dim=2 analytic surface gradient
-    (Gap 2 in ``handovers/HANDOVER_SURFACE_REACTIONS.md``), which consumes the
+    (Gap 2 in the original investigation), which consumes the
     short / long / g0 decomposition term-by-term.
     """
 
@@ -233,6 +257,7 @@ def _z_resolved_pair_profiles(
     profile_tol=1e-7,
     z_spacing=0.025,
     context="slab Ewald 2D",
+    pair_cutoff_bohr=None,
 ):
     """z-resolved Γ-Bloch AO-pair density ``n_muν(z)`` on a z-grid.
 
@@ -259,7 +284,9 @@ def _z_resolved_pair_profiles(
         z_spacing=z_spacing,
     )
     G0 = Gz_p[:, None] * nhat[None, :]
-    ft0 = ao_pair_fourier_transform_bloch(basis, G0, R_g, k_gamma)
+    ft0 = ao_pair_fourier_transform_bloch(
+        basis, G0, R_g, k_gamma, pair_cutoff_bohr=pair_cutoff_bohr
+    )
     ft0 = ft0 * pair_scales[:, :, None]  # r̂_muν(0, G_z), (nbf, nbf, n_Gz)
     phase_z = np.exp(1j * np.outer(Gz_p, z_grid))  # (n_Gz, n_z)
     n_prof = (dGz_p / (2.0 * np.pi)) * np.real(
@@ -296,6 +323,7 @@ def _z_resolved_pair_profiles_at_cells(
     profile_tol=1e-7,
     z_spacing=0.025,
     context="slab Ewald 2D",
+    pair_cutoff_bohr=None,
 ):
     """Per-cell sibling of :func:`_z_resolved_pair_profiles`.
 
@@ -314,7 +342,10 @@ def _z_resolved_pair_profiles_at_cells(
         z_spacing=z_spacing,
     )
     G0 = Gz_p[:, None] * nhat[None, :]
-    ft0 = ao_pair_fourier_transform_at_cells(basis, G0, R_g)
+    ft0 = _mask_pair_ft_at_cells(
+        basis, R_g, ao_pair_fourier_transform_at_cells(basis, G0, R_g),
+        pair_cutoff_bohr,
+    )
     ft0 = ft0 * pair_scales[None, :, :, None]
     phase_z = np.exp(1j * np.outer(Gz_p, z_grid))
     n_prof = (dGz_p / (2.0 * np.pi)) * np.real(
@@ -376,6 +407,7 @@ def build_v_ne_slab_ewald_2d_k_cache(
     if R_g.size == 0:
         R_g = np.zeros((1, 3), dtype=float)
     n_cells = len(cells)
+    pair_cutoff = _slab_pair_cutoff(lat_opts)
     nbf = int(basis.nbasis)
     ao_scales = _ao_scales_for_rsgdf(basis)
     pair_scales = np.outer(ao_scales, ao_scales)
@@ -391,7 +423,10 @@ def build_v_ne_slab_ewald_2d_k_cache(
         G_recip = (
             g_list[:, None, :] + Gz[None, :, None] * nhat[None, None, :]
         ).reshape(-1, 3)
-        pair_at_cells = ao_pair_fourier_transform_at_cells(basis, G_recip, R_g)
+        pair_at_cells = _mask_pair_ft_at_cells(
+            basis, R_g, ao_pair_fourier_transform_at_cells(basis, G_recip, R_g),
+            pair_cutoff,
+        )
         pair_at_cells = pair_at_cells * pair_scales[None, :, :, None]
         G2 = (G_recip**2).sum(axis=1)
         damp = (4.0 * np.pi / G2) * np.exp(-G2 / (4.0 * alpha**2))
@@ -415,6 +450,7 @@ def build_v_ne_slab_ewald_2d_k_cache(
         profile_tol=profile_tol,
         z_spacing=z_spacing,
         context="build_v_ne_slab_ewald_2d_k_cache",
+        pair_cutoff_bohr=pair_cutoff,
     )
 
     return SlabVneKCache(
@@ -578,11 +614,6 @@ def compute_v_ne_slab_ewald_2d_gamma(
     nuclei_R = np.array([list(a.xyz) for a in system.unit_cell], dtype=float)
     z_I = nuclei_R @ nhat
 
-    # ---- Bloch-sum cell list shared by V_short (libint) and the AO-pair FT.
-    cells = direct_lattice_cells(system, lat_opts.cutoff_bohr)
-    R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
-    if R_g.size == 0:
-        R_g = np.zeros((1, 3), dtype=float)
     ao_scales = _ao_scales_for_rsgdf(basis)
     pair_scales = np.outer(ao_scales, ao_scales)
     k_gamma = np.zeros(3)
@@ -591,6 +622,16 @@ def compute_v_ne_slab_ewald_2d_gamma(
     # (already electron-signed: -Z erfc(ar)/r integrated against the AOs).
     V_short_lat = compute_nuclear_erfc_lattice(basis, system, alpha, lat_opts)
     V_short = np.real(bloch_sum(V_short_lat, k_gamma))
+
+    # ---- AO-pair term set shared by V_short and the AO-pair FTs: its cells
+    # (the |g| ball, or the pair-complete list under pair_complete_1e) and
+    # the pair cutoff. With the ball alone, moving an atom by an in-plane
+    # lattice vector changed V_long and V_g0, and the pair-complete V_short
+    # failed the int n dz = S check against them (#44).
+    R_g = np.array([list(c.r_cart) for c in V_short_lat.cells], dtype=float)
+    if R_g.size == 0:
+        R_g = np.zeros((1, 3), dtype=float)
+    pair_cutoff = _slab_pair_cutoff(lat_opts)
     V_short = 0.5 * (V_short + V_short.T)
 
     # ---- V_long, in-plane g != 0: 1D G_z quadrature of the 3D Coulomb kernel.
@@ -605,7 +646,9 @@ def compute_v_ne_slab_ewald_2d_gamma(
     G_recip = (
         g_list[:, None, :] + Gz[None, :, None] * nhat[None, None, :]
     ).reshape(-1, 3)
-    ft = ao_pair_fourier_transform_bloch(basis, G_recip, R_g, k_gamma)
+    ft = ao_pair_fourier_transform_bloch(
+        basis, G_recip, R_g, k_gamma, pair_cutoff_bohr=pair_cutoff
+    )
     ft = ft * pair_scales[:, :, None]  # r̂_muν(G), (nbf, nbf, n_G)
     G2 = (G_recip**2).sum(axis=1)
     # v_long(G) = -S_I Z_I (4pi/G^2) e^{-G^2/4a^2} e^{-iG.R_I} (the -Z gives the
@@ -634,6 +677,7 @@ def compute_v_ne_slab_ewald_2d_gamma(
         profile_tol=profile_tol,
         z_spacing=z_spacing,
         context="compute_v_ne_slab_ewald_2d_gamma",
+        pair_cutoff_bohr=pair_cutoff,
     )
 
     # V_g0_muν = (2pi/A) S_I Z_I ∫ dz n_muν(z) g0(z - z_I), electron-signed.

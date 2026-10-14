@@ -1,24 +1,24 @@
 """H2 on Pt(111) surface, periodic ASE geometry fixture.
 
-This script keeps the surface-adsorption setup reproducible while
-the periodic ASE calculator adapter is still being completed. The
-native periodic drivers already provide energies and gradients, but
-``ase.Atoms`` to ``PeriodicSystem`` dispatch is not yet a public ASE
-calculator path. Until then, the script:
+This script keeps a surface-adsorption setup reproducible without
+running an SCF. The periodic ASE calculator exists
+(``vibeqc.ase_periodic.VibeQCPeriodic``, Gaussian basis, Ewald or
+Gamma-only GDF backend), but a 20-atom Pt slab needs an ECP basis and
+a k-mesh, which is a heavy production job rather than an example, so the
+script:
 
-  1. Builds a Pt(111) 2×2 surface with ``ase.build.fcc111`` —
+  1. Builds a Pt(111) 2×2 surface with ``ase.build.fcc111``,
      pure ASE, no calculator needed.
   2. Adds an H2 molecule above the surface (atop site).
-  3. Shows the intended ``VibeQCPeriodic`` calculator + ``BFGS``
-     driver shape.
+  3. Prints the ``VibeQCPeriodic`` calculator + ``BFGS`` driver shape
+     with the real import path and keyword names.
   4. Writes a local geometry artifact
      (``output-surface-h2-pt111.xyz``) for scratch inspection.
 
 Run:
     .venv/bin/python examples/ase_workflows/surface-h2-pt111-singlepoint.py
 
-(Will print the geometry, then exit cleanly with a "not yet
-supported" notice, no SCF run.)
+(Prints the geometry and the calculator sketch, then exits; no SCF run.)
 """
 
 from __future__ import annotations
@@ -56,26 +56,27 @@ def main() -> None:
     write(str(xyz_path), slab)
     print(f"\n  Geometry: {xyz_path.relative_to(HERE.parent.parent)}")
 
-    # The intended workflow, as a comment-only sketch — keep here so
-    # the next maintainer (or our future self) sees the full plan and
-    # can wire it up the moment G1 + G2 ship.
-    print("\n  Once the periodic ASE adapter lands, this script becomes:")
+    # The production workflow, printed rather than run: the calculator
+    # exists, but Pt needs an ECP basis and a converged k-mesh, which is
+    # a production job rather than an example.
+    print("\n  To relax this slab through the periodic ASE calculator:")
     print("  ")
-    print("    from vibeqc.ase import VibeQCPeriodic           # v0.6+")
+    print("    from vibeqc.ase_periodic import VibeQCPeriodic")
     print("    from ase.optimize import BFGS")
     print("  ")
     print("    slab.calc = VibeQCPeriodic(")
-    print("        basis='pob-tzvp', functional='PBE', dispersion='d3bj',")
-    print("        kmesh=[3, 3, 1],          # 3×3 in-plane, 1 normal")
+    print("        basis='pob-tzvp', functional='pbe',")
+    print("        kpts=(3, 3, 1),           # 3x3 in-plane, 1 normal")
     print("    )")
     print("    BFGS(slab).run(fmax=0.05)     # full surface relaxation")
-    print("    print(slab.get_potential_energy())   # binding energy reference")
+    print("    print(slab.get_potential_energy())   # eV")
     print("  ")
-    print("  See `docs/user_guide/ase_integration.md` for the")
-    print("  current periodic-ASE integration status.")
+    print("  VibeQCPeriodic keywords: basis, kpts, functional, charge,")
+    print("  multiplicity, backend ('ewald' or 'gdf'), cutoff_bohr,")
+    print("  conv_tol_energy, max_iter. See docs/user_guide/ase_integration.md")
+    print("  and docs/user_guide/slabs_and_adsorbates.md.")
     print()
-    print("  vibe-qc periodic ASE calculator adapter not yet shipping.")
-    print("    Setup written; SCF skipped.")
+    print("  Geometry fixture written; SCF deliberately skipped.")
 
 
 if __name__ == "__main__":

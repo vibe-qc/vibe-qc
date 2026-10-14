@@ -76,6 +76,9 @@ def _pre_140_448_dlpno_mp2_options() -> DLPNOMP2Options:
         # means. Under the current default this row moves by
         # -0.878 mHa.
         pno_norm="legacy",
+        # ... and its tcut_mkn=1e-3 domains are Mulliken domains, recorded
+        # before DOI became the default (#190).
+        domain_criterion="mulliken",
     )
 
 
@@ -93,6 +96,9 @@ def _pre_140_448_local_ccsd_options() -> LocalCCSDOptions:
         # now applies to its iterated pairs. Same reasoning: reproduce the
         # recorded row exactly rather than rebaseline it.
         pno_correction=False,
+        # ... and predates the ORCA singles-PNO scale on the diagonal pairs
+        # (#190), so the diagonal pairs keep the plain tcut_pno.
+        tcut_pno_diag_scale=1.0,
     )
 
 
@@ -109,7 +115,13 @@ def test_dlpno_project_defaults_match_published_normalpno_contract():
     assert ccsd_opts.tcut_pno == pytest.approx(3.33e-7)
     assert ccsd_opts.tcut_pairs == pytest.approx(1e-4)
     assert ccsd_opts.tcut_mkn == pytest.approx(1e-3)
-    assert ccsd_opts.residual_domain == "extended"
+    assert ccsd_opts.residual_domain == "pno"
+    # PAO domains follow ORCA's differential-overlap criterion at its
+    # NormalPNO TCutDO.
+    assert ccsd_opts.domain_criterion == "doi"
+    assert ccsd_opts.tcut_do == pytest.approx(1e-2)
+    # Singles PNOs (the diagonal pairs' space) at ORCA's 0.03 * TCutPNO.
+    assert ccsd_opts.tcut_pno_diag_scale == pytest.approx(0.03)
     assert ccsd_opts.triples_mode == "t1"
 
 
@@ -144,6 +156,7 @@ def test_m16_nbutane_ccpvdz_dlpno_mp2_records_legacy_orca_tightpno_gap():
             tcut_pairs=0.0,
             tcut_pairs_weak=0.0,
             tcut_mkn=1e-3,
+            domain_criterion="mulliken",  # retained with Mulliken domains; DOI became the default in #190
             # Retained value, measured before #65. Note the irony recorded
             # for whoever revisits this: with "mp2" now the default, an
             # "ORCA-like" row could finally use ORCA's own pair density --
@@ -231,7 +244,7 @@ def test_m16_legacy_nbutane_ccpvdz_dlpno_ccsdt_out_emits_audit_components(
     assert res.energy_total == pytest.approx(seen["e_total"])
 
     out = (tmp_path / "m16.out").read_text()
-    assert "DLPNO-CCSD(T) local reduced-scaling (M3c)" in out
+    assert "DLPNO-CCSD(T) local PNO-space (M3c)" in out
     assert "E(CCSD correlation)" in out
     assert f"{ORCA_M16_DLPNO_CCSD_CORR:16.10f} Ha" in out
     assert "E((T) correction)" in out

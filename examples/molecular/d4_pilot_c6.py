@@ -8,7 +8,7 @@ coefficients against literature dipole-oscillator-strength-
 distribution (DOSD) values.
 
 This is the validation artefact for milestone D4b-2 of
-``handovers/HANDOVER_D4_NATIVE.md`` — it exercises the whole reference-C6
+the original investigation — it exercises the whole reference-C6
 machinery that the native D4 model (Phase D4b-4 onwards) will consume.
 
 What to expect

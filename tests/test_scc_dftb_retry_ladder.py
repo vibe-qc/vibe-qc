@@ -4,7 +4,6 @@ A zero-temperature SCC-DFTB failure on a pi-conjugated N/O system is a
 non-smooth charge-response fixed point, not a mixer defect; Fermi-Dirac
 occupation smearing at low charge mixing is the standard DFTB+/tblite remedy
 and is what ``run_job`` retries with (see
-``handovers/HANDOVER_SCC_DFTB_CONVERGENCE.md`` and
 ``_RUNNER_SCC_DFTB_RETRY_SETTINGS``).
 
 Issue #78 left four archived single-point rows failing closed after that
@@ -71,8 +70,8 @@ FORMIC_ACID_DIMER = [
 
 # Mermin free energies at the converging rung, measured 2026-08-21.
 PINNED_FREE_ENERGY_HA = {
-    "adenine": -19.63356440,          # T = 0.002 Ha rung, 232 iterations
-    "formic_acid_dimer": -16.43989628,  # T = 0.0012 Ha rung, 573 iterations
+    "adenine": -27.089575576045554,   # T = 0.002 Ha rung; re-pinned (#373), was -19.63356440
+    "formic_acid_dimer": -20.49301121435573,  # T = 0.0012 Ha rung; re-pinned (#373), was -16.43989628
 }
 TOL_HA = 1e-5
 

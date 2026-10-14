@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "def2-sv(p)-jkfit",
+  "description": "Basis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\nOriginating publication: Weigend, Phys. Chem. Chem. Phys. 8, 1057 (2006); DOI: 10.1039/b515623h\n  Basis set: def2-SV(P)-JKFIT\nDescription: Coulomb/Exchange fitting auxiliary basis for def2 basis\n                   sets\n       Role: jkfit\n    Version: 1  (Data from Turbomole 7.3)",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -54015,7 +54015,52 @@
       ]
     }
   },
+  "basis_family": "ahlrichs",
+  "references": [
+    {
+      "key": "schafer_horn_ahlrichs_1992",
+      "description": "A. Schäfer, H. Horn, R. Ahlrichs, Journal of Chemical Physics 97, 2571-2577 (1992)",
+      "doi": "10.1063/1.463096"
+    },
+    {
+      "key": "weigend_ahlrichs_def2_2005",
+      "description": "F. Weigend, R. Ahlrichs, Physical Chemistry Chemical Physics 7, 3297-3305 (2005)",
+      "doi": "10.1039/B508541A"
+    },
+    {
+      "key": "weigend_jk_aux_2008",
+      "description": "F. Weigend, Journal of Computational Chemistry 29, 167-175 (2008)",
+      "doi": "10.1002/jcc.20702"
+    },
+    {
+      "key": "weigend_jfit_2006",
+      "description": "F. Weigend, Physical Chemistry Chemical Physics 8, 1057-1065 (2006)",
+      "doi": "10.1039/B515623H"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "def2-sv(p)-jkfit"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "ea1b07e7246946f4152b87c1677660c2c4955439e8f9dec86f4a49cde7fe4067",
+    "citations": [
+      {
+        "keys": [
+          "schafer_horn_ahlrichs_1992",
+          "weigend_ahlrichs_def2_2005",
+          "weigend_jk_aux_2008",
+          "weigend_jfit_2006"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

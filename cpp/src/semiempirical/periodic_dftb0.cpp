@@ -119,7 +119,7 @@ PeriodicDFTB0Result run_dftb0_gamma(
                     // For now use the on-site energy directly
                 } else if (S_g(mu, nu) != 0.0) {
                     double h_avg = 0.5 * (hbar[a_mu] + hbar[a_nu]);
-                    H_g(mu, nu) = 0.5 * kappa * S_g(mu, nu) * h_avg;
+                    H_g(mu, nu) = kappa * S_g(mu, nu) * h_avg;
                 }
             }
         }
@@ -314,7 +314,7 @@ PeriodicUDFTB0Result run_udftb0_gamma(
                 if (is_zero_cell && a_mu == a_nu && mu == nu) {
                 } else if (S_g(mu, nu) != 0.0) {
                     double h_avg = 0.5 * (hbar[a_mu] + hbar[a_nu]);
-                    H_g(mu, nu) = 0.5 * kappa * S_g(mu, nu) * h_avg;
+                    H_g(mu, nu) = kappa * S_g(mu, nu) * h_avg;
                 }
             }
         }

@@ -48,6 +48,12 @@ std::vector<LatticeCell> physical_eri_lattice_cells(
     const BasisSet& basis, const PeriodicSystem& system,
     double pair_cutoff_bohr, double interaction_cutoff_bohr);
 
+// Exact source labels selected by the shared physical nuclear selector for
+// each supplied AO midpoint. Provenance only; no integral or alternate domain.
+std::vector<std::vector<std::array<int, 4>>> physical_nuclear_source_indices(
+    const PeriodicSystem& system, const Eigen::MatrixXd& midpoints,
+    double cutoff_bohr);
+
 LatticeMatrixSet compute_overlap_lattice(const BasisSet& basis,
                                          const PeriodicSystem& system,
                                          const LatticeSumOptions& opts);

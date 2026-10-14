@@ -124,8 +124,7 @@ Installing it this way is what makes
 lane. It does have its own release test lane. It is a *client*: it emits
 decks and submits them through the
 `vq` CLI, and what runs on the compute host is CRYSTAL, not this
-package. The reasoning is recorded in
-[`handovers/HANDOVER_VIBE_BASIS_DEPLOYMENT.md`](../handovers/HANDOVER_VIBE_BASIS_DEPLOYMENT.md).
+package.
 
 ## Roadmap
 
@@ -142,10 +141,6 @@ would still work with an external code and no vibe-qc installed lives
 here; anything needing vibe-qc internals or the native build lives in
 `python/vibeqc/basis_optimization/`. The arrow never reverses, and
 `tests/test_no_vibeqc_dependency.py` enforces it.
-
-Day-to-day state (current progress, SHAs, blockers, asks) is in the
-working tracker,
-[`handovers/HANDOVER_BASISOPT.md`](../handovers/HANDOVER_BASISOPT.md).
 
 ## Versioning
 

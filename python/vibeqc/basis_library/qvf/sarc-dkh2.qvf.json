@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "sarc-dkh2",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: SARC-DKH2\nCanonical name in vibe-qc: sarc-dkh2\nOriginating publication: Pantazis, Neese, J. Chem. Theory Comput. 5, 2229 (2009); DOI: 10.1021/ct9002012; 15, 4201 (2019); DOI: 10.1021/acs.jctc.9b00213\nNote: Stuttgart Augmented Rel. Core DKH2\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: SARC-DKH2\nDescription: SARC-DKH2\n       Role: orbital\n    Version: 0  (Data from the original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "La": {
@@ -28238,7 +28238,31 @@
       ]
     }
   },
+  "basis_family": "sarc",
+  "references": [
+    {
+      "key": "doi:10.1021/ct9002012",
+      "description": "Pantazis, Neese, J. Chem. Theory Comput. 5, 2229 (2009) 15, 4201 (2019)",
+      "doi": "10.1021/ct9002012"
+    },
+    {
+      "key": "doi:10.1021/acs.jctc.9b00213",
+      "description": "Pantazis, Neese, J. Chem. Theory Comput. 5, 2229 (2009) 15, 4201 (2019)",
+      "doi": "10.1021/acs.jctc.9b00213"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "SARC-DKH2"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "23689871282afe81ed84f98107d012b9054efe5353cc88b1fb2609b37a4467ba"
   }
 }

@@ -442,7 +442,8 @@ def run_roks(
         )
 
     base = run_roothaan_scf(
-        s, hcore, e_nuc, n_alpha, n_beta, fock_builder, options, init_a, init_b
+        s, hcore, e_nuc, n_alpha, n_beta, fock_builder, options, init_a, init_b,
+        operator_kind="ks",
     )
     comps = fock_builder.components  # consistent with the converged density
 

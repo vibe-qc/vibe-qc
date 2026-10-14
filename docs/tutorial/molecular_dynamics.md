@@ -20,7 +20,8 @@ holds temperature, and the barostat that holds pressure.
 
 ```{warning}
 The `run_nve` / `run_nvt` / `run_npt` helpers drive MD through the
-**periodic GAPW** route, which is experimental: the underlying SCF emits a
+**periodic GAPW** route ({vibeqc-cite}`lippert_hutter_parrinello_gapw_1999`,
+{vibeqc-cite}`krack_parrinello_allelectron_2000`), which is experimental: the underlying SCF emits a
 `GAPWExperimentalWarning` you opt past, and its absolute energies are not
 yet production-validated (see the [GAPW tutorial](periodic_gapw.md)). MD on
 this route is for learning the mechanics and for small exploratory runs,
@@ -33,7 +34,8 @@ gradient. Keep `n_steps` and the system small.
 
 vibe-qc exposes molecular dynamics as four functions at the top level,
 `vibeqc.run_md` and the three ensemble shorthands `run_nve`, `run_nvt`,
-`run_npt`. Each takes an ASE `Atoms` object that must be fully 3D-periodic
+`run_npt`. Each takes an ASE ({vibeqc-cite}`ase_2017`) `Atoms` object
+that must be fully 3D-periodic
 (the GAPW SCF underneath only runs in a cell), attaches the
 [`VibeqcGAPW`](periodic_gapw.md) calculator, seeds velocities from a
 Maxwell-Boltzmann distribution at the requested temperature, removes the
@@ -47,8 +49,10 @@ same `Atoms` object comes back with updated positions and velocities.
 | `run_npt` | NPT (isothermal-isobaric) | temperature T, pressure P | Berendsen thermostat + barostat |
 
 The full general driver, its `MDTrajectory` return object, the alternative
-Berendsen and Nose-Hoover thermostats, and well-tempered metadynamics on
-top of MD are documented in the
+Berendsen and Nose-Hoover thermostats, and well-tempered metadynamics
+({vibeqc-cite}`laio_parrinello_metadynamics_2002`,
+{vibeqc-cite}`barducci_well_tempered_2008`) on top of MD are documented in
+the
 [molecular-dynamics user guide](../user_guide/molecular_dynamics.md). This
 tutorial stays on the three periodic-GAPW ensemble helpers.
 
@@ -127,14 +131,17 @@ NVE wall: 527.25 s
 
 The MD status rows follow vibe-qc's active output policy: they use Ha by
 default, while `VIBEQC_OUTPUT_UNITS=eV` converts both values and labels. The
-total energy holds near -1.296 Ha across the run, its full excursion under
-0.7 mHa (from -1.295830 Ha at step 0 to -1.296458 Ha at step 3), while the
-potential energy barely moves (the bond is at its minimum) and the
-temperature swings as kinetic energy trades with potential. That bounded wobble, not a flat line, is the correct signature of
-a symplectic integrator at finite timestep: velocity Verlet has no secular
-energy drift, and the wobble amplitude shrinks with the timestep (it scales
-as the square of the step). Halve `timestep_fs` and the energy excursion
-falls by about four.
+total energy is not flat here: it falls by 0.63 mHa over the first three
+steps (from -1.295830 Ha at step 0 to -1.296458 Ha at step 3), about half of
+the starting kinetic energy, while the potential energy barely moves (the
+bond is at its minimum). Velocity Verlet is symplectic: at a finite timestep
+it shows a bounded wobble with no secular drift, and the wobble shrinks as
+the square of the step. A loss this large on a 0.25 fs step is more than
+that wobble should give, so read this four-step trace as a demonstration of
+the mechanics, not as evidence of energy conservation; a drift of this size
+usually means the forces are not fully consistent with the energy (or the
+SCF is converged too loosely for MD), which is worth checking before a
+longer run.
 
 ```{note}
 The instantaneous temperature of a two-atom molecule swings wildly because
@@ -235,8 +242,10 @@ integrator and sketch each coupling.
 
 MD integrates Newton's second law, $\ddot{\mathbf{R}} = \mathbf{F}/M$ with
 $\mathbf{F} = -\nabla_{\mathbf{R}} E$, by discrete timesteps $\Delta t$.
-The **velocity-Verlet** scheme (Swope et al. 1982) advances positions and
-velocities as
+The **velocity-Verlet** scheme (Swope et al. 1982,
+{vibeqc-cite}`swope_velocity_verlet_1982`; the velocity form of
+L. Verlet, *Phys. Rev.* **159**, 98 (1967), doi:10.1103/PhysRev.159.98)
+advances positions and velocities as
 
 $$
 \mathbf{R}(t + \Delta t) = \mathbf{R}(t) + \mathbf{v}(t)\,\Delta t
@@ -276,10 +285,14 @@ where $\gamma$ is the friction coefficient and $\boldsymbol{\xi}$ is
 Gaussian white noise. The friction drains energy, the noise feeds it back,
 and the fluctuation-dissipation balance between them fixes the stationary
 distribution at temperature $T$. ASE integrates this with the
-quasi-symplectic Vanden-Eijnden-Ciccotti propagator (2006). The general
+quasi-symplectic Vanden-Eijnden-Ciccotti propagator (2006: E. Vanden-Eijnden
+and G. Ciccotti, *Chem. Phys. Lett.* **429**, 310 (2006),
+doi:10.1016/j.cplett.2006.07.086). The general
 `vibeqc.md` driver additionally offers the **Berendsen** weak-coupling
-thermostat (velocities rescaled toward the target each step) and the
-**Nose-Hoover** extended-system thermostat (a genuine conserved quantity,
+thermostat ({vibeqc-cite}`berendsen_thermostat_1984`; velocities rescaled
+toward the target each step) and the **Nose-Hoover** extended-system
+thermostat ({vibeqc-cite}`nose_thermostat_1984`,
+{vibeqc-cite}`hoover_thermostat_1985`; a genuine conserved quantity,
 samples the exact canonical distribution); see the
 [user guide](../user_guide/molecular_dynamics.md).
 
@@ -287,7 +300,7 @@ samples the exact canonical distribution); see the
 
 To hold pressure rather than volume, NPT adds a **barostat** that lets the
 cell breathe. vibe-qc's `run_npt` uses the **Berendsen** scheme (Berendsen
-et al. 1984): each step the cell vectors (and the atomic coordinates with
+et al. 1984, {vibeqc-cite}`berendsen_thermostat_1984`): each step the cell vectors (and the atomic coordinates with
 them) are scaled by a factor that relaxes the instantaneous pressure toward
 the target with a weak-coupling time $\tau_P$,
 
@@ -303,7 +316,8 @@ thermostat runs alongside it for the temperature. Berendsen coupling is
 robust and strongly damping but does not reproduce the exact NPT
 fluctuations, so it is a fine equilibrator and a serviceable production
 barostat for averages, while distributional quantities call for an
-extended-system (Parrinello-Rahman style) barostat.
+extended-system (Parrinello-Rahman style: M. Parrinello and A. Rahman,
+*J. Appl. Phys.* **52**, 7182 (1981), doi:10.1063/1.328693) barostat.
 
 ## Resources
 

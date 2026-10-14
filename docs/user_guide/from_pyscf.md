@@ -524,9 +524,8 @@ you:
   solid-state basis family is bundled. See
   [basis_sets](basis_sets.md) and
   [Why solid-state calculations use `pob-TZVP`](../tutorial/pob_tzvp.md).
-* **CRYSTAL-format basis parser.** Drop a CRYSTAL-style per-element
-  file under `basis_library/custom/` and `setup_basis_library.sh`
-  picks it up.
+* **CRYSTAL-format basis parser.** `vibe-qc-basis convert` turns a
+  CRYSTAL-style per-element file into a QVF-Basis record.
 
 ## What PySCF does that vibe-qc doesn't (yet)
 

@@ -109,6 +109,7 @@ def test_legacy_mgo_symmetry_fixture_refuses_truncated_overlap(attach):
     with pytest.raises(BipoleFoldUnreliableError, match="S.*fold"):
         run_pbc_bipole_rhf(
             system, basis, monkhorst_pack(system, [1, 1, 1]), opts,
+            historical_domain=True,  # Preserve this historical cutoff-10 witness.
             use_ewald_j_split=True,
             use_exchange_ewald_split=False,
             use_fock_symmetry_reduce=False,
@@ -167,6 +168,9 @@ def test_symmetry_fock_reconstruction_runs_with_bipole():
 def test_bipole_symmetry_fock_preserves_energy():
     """SYM3b Fock symmetry enforcement must not change the SCF energy
     on a symmetric system (He in simple cubic)."""
+    # The physical pair default (#316) refuses the legacy SYM3b projector;
+    # this test pins the historical composition, so it replays it explicitly
+    # (#503).
     system = _he_sc()
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
     kmesh = monkhorst_pack(system, [1, 1, 1])
@@ -184,6 +188,7 @@ def test_bipole_symmetry_fock_preserves_energy():
         use_ewald_j_split=True,
         ewald_precision=1e-8,
         progress=False,
+        historical_domain=True,
         use_fock_symmetry=False,
         use_fock_symmetry_reduce=False,
         sr_image_precision=None,
@@ -196,6 +201,7 @@ def test_bipole_symmetry_fock_preserves_energy():
         use_ewald_j_split=True,
         ewald_precision=1e-8,
         progress=False,
+        historical_domain=True,
         use_fock_symmetry=True,
         use_fock_symmetry_reduce=False,
         sr_image_precision=None,
@@ -222,7 +228,9 @@ def _mgo_sym(cutoff: float):
     return system, basis, lat
 
 
-def test_sym3b_reduced_build_equals_symmetrized_full_build():
+@pytest.mark.parametrize("compute_coulomb", [False, True])
+@pytest.mark.parametrize("internal_extent", [None, 10.0])
+def test_sym3b_reduced_build_equals_symmetrized_full_build(compute_coulomb, internal_extent):
     """SYM3b core: ``build_jk_reduced_symmetrized`` (build J/K only at orbit-
     representative cells with the full internal lattice sum, then reconstruct
     by rotation) is BIT-IDENTICAL to ``symmetrize_fock_blocks`` applied to a
@@ -242,7 +250,13 @@ def test_sym3b_reduced_build_equals_symmetrized_full_build():
     )
 
     system, basis, lat = _mgo_sym(8.0)
-    full = build_jk_2e_real_space(basis, system, lat, _stand_in_density(basis, system, lat), 0.30)
+    density = _stand_in_density(basis, system, lat)
+    if internal_extent is None:
+        full = build_jk_2e_real_space(basis, system, lat, density, 0.30)
+    else:
+        from vibeqc.pbc_bipole_fock import _sr_image_padded_jk
+
+        full = _sr_image_padded_jk(basis, system, lat, density, 0.30, internal_extent)
     # Use the JK build's OWN cell list so rep indices line up with the output.
     mapping = cell_orbit_mapping(system, basis, list(full.J.cells))
     assert mapping is not None
@@ -256,7 +270,8 @@ def test_sym3b_reduced_build_equals_symmetrized_full_build():
 
     red = build_jk_reduced_symmetrized(
         basis, system, lat, _stand_in_density(basis, system, lat),
-        0.30, mapping, reps)
+        0.30, mapping, reps, compute_coulomb=compute_coulomb,
+        internal_extent_bohr=internal_extent)
     farmed = build_jk_reduced_symmetrized(
         basis,
         system,
@@ -266,10 +281,13 @@ def test_sym3b_reduced_build_equals_symmetrized_full_build():
         mapping,
         reps,
         output_cell_farming_task_kind="chi-direct-output-cell",
+        compute_coulomb=compute_coulomb,
+        internal_extent_bohr=internal_extent,
     )
     for c in range(len(j_ref)):
         np.testing.assert_allclose(
-            np.asarray(red.J.blocks[c]), j_ref[c], atol=1e-12, rtol=0.0)
+            np.asarray(red.J.blocks[c]), j_ref[c] if compute_coulomb else 0.0,
+            atol=1e-12, rtol=0.0)
         np.testing.assert_allclose(
             np.asarray(red.K.blocks[c]), k_ref[c], atol=1e-12, rtol=0.0)
         np.testing.assert_array_equal(
@@ -289,12 +307,116 @@ def _stand_in_density(basis, system, lat):
     return compute_overlap_lattice(basis, system, lat)
 
 
+@pytest.mark.parametrize("extent", [None, 6.0])
+@pytest.mark.parametrize("farming", [None, "chi-direct-output-cell"])
+def test_reduced_j_only_matches_combined_build(monkeypatch, extent, farming):
+    import vibeqc.pbc_bipole_fock as fock
+    from vibeqc._vibeqc_core import direct_lattice_cells, make_lattice_matrix_set
+    from vibeqc.bipole_symmetry_fock import (
+        build_jk_reduced_symmetrized, cell_orbit_mapping, representative_cell_indices,
+    )
+
+    system = _he_sc()
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    opts = LatticeSumOptions()
+    opts.cutoff_bohr = 4.1
+    opts.pair_complete_1e = False
+    cells = list(direct_lattice_cells(system, opts.cutoff_bohr))
+    mapping = cell_orbit_mapping(system, basis, cells)
+    reps = representative_cell_indices(mapping)
+    assert len(reps) < len(cells)
+    density_cells = list(direct_lattice_cells(system, 12.0))
+    density = make_lattice_matrix_set(
+        1, density_cells, [np.ones((1, 1)) for _ in density_cells],
+    )
+    kwargs = dict(internal_extent_bohr=extent, output_cell_farming_task_kind=farming)
+    combined = build_jk_reduced_symmetrized(
+        basis, system, opts, density, 0.4, mapping, reps, **kwargs)
+    assert any(np.any(block) for block in combined.K.blocks)
+    original = fock._build_jk_domains_output_cells_mpi
+    native_selections = []
+
+    def selected_domains(*args, **kwargs):
+        native_selections.append(kwargs.get("compute_exchange", True))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(fock, "_build_jk_domains_output_cells_mpi", selected_domains)
+    selected = build_jk_reduced_symmetrized(
+        basis, system, opts, density, 0.4, mapping, reps,
+        compute_exchange=False, **kwargs)
+    assert selected.K is None
+    assert native_selections == [False]
+    for actual, expected in zip(selected.J.blocks, combined.J.blocks):
+        np.testing.assert_array_equal(actual, expected)
+    if farming:
+        assert selected.output_cell_farming_execution == combined.output_cell_farming_execution
+
+
+@pytest.mark.parametrize("uks", [False, True])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (2, 1, 1)])
+@pytest.mark.parametrize("incremental", [False, True])
+def test_reduced_pure_dft_skips_exchange_through_complete_scf(
+    monkeypatch, uks, mesh, incremental
+):
+    import vibeqc.bipole_symmetry_fock as symmetry
+    from vibeqc.pbc_bipole_rks import run_pbc_bipole_rks
+    from vibeqc.pbc_bipole_uks import run_pbc_bipole_uks
+
+    system = vq.PeriodicSystem(
+        3, np.eye(3) * 20.0,
+        [vq.Atom(1, [0.0, 0.0, -0.7]), vq.Atom(1, [0.0, 0.0, 0.7])],
+    )
+    attach_symmetry(system)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    original = symmetry.build_jk_reduced_symmetrized
+    calls = []
+
+    def selected(*args, **kwargs):
+        calls.append(kwargs.get("compute_exchange", True))
+        result = original(*args, **kwargs)
+        assert result.K is None
+        return result
+
+    monkeypatch.setattr(symmetry, "build_jk_reduced_symmetrized", selected)
+    driver = run_pbc_bipole_uks if uks else run_pbc_bipole_rks
+
+    def run():
+        opts = PeriodicKSOptions()
+        opts.functional = "svwn"
+        # Exercise the existing admitted radial symmetry domain. Physical
+        # quartet support remains deliberately rejected by the driver gate.
+        result = driver(
+            system, basis, monkhorst_pack(system, mesh), opts,
+            use_fock_symmetry_reduce=True, use_incremental_fock=incremental,
+            historical_domain=True,
+            progress=False,
+        )
+        assert result.converged
+        return result
+
+    j_only = run()
+    assert len(calls) > 1 and not any(calls)
+
+    def combined(*args, **kwargs):
+        kwargs["compute_exchange"] = True
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(symmetry, "build_jk_reduced_symmetrized", combined)
+    reference = run()
+    assert j_only.energy == reference.energy
+    assert j_only.e_xc == reference.e_xc
+    assert j_only.n_iter == reference.n_iter
+
+
 def test_sym3b_reduce_matches_full_symmetry_uhf_rks_uks():
     """SYM3b wiring for the other three BIPOLE drivers: ``use_fock_symmetry_
     reduce=True`` gives the SAME SCF energy as ``use_fock_symmetry=True`` for
     UHF / RKS / UKS (the reduced build reconstructs the same symmetrised J/K,
     so the SCF trajectories are identical). H2 box, cubic symmetry (7 cells →
     4 orbit-representative)."""
+    # The physical pair default (#316) refuses the legacy SYM3b projector;
+    # this test pins the historical composition, so it replays it explicitly
+    # (#503).
     from vibeqc.pbc_bipole_rks import run_pbc_bipole_rks
     from vibeqc.pbc_bipole_uhf import run_pbc_bipole_uhf
     from vibeqc.pbc_bipole_uks import run_pbc_bipole_uks
@@ -334,12 +456,12 @@ def test_sym3b_reduce_matches_full_symmetry_uhf_rks_uks():
             system, basis, kmesh, mk(), use_exchange_ewald_split=True,
             use_fock_symmetry=True, use_fock_symmetry_reduce=False,
             sr_image_precision=None, ewald_precision=1e-8,
-            progress=False).energy)
+            historical_domain=True, progress=False).energy)
         e_red = float(fn(
             system, basis, kmesh, mk(), use_exchange_ewald_split=True,
             use_fock_symmetry_reduce=True, sr_image_precision=None,
             ewald_precision=1e-8,
-            progress=False).energy)
+            historical_domain=True, progress=False).energy)
         assert e_red == pytest.approx(e_sym, abs=1e-7), (
             f"{name}: SYM3b reduce {e_red:.10f} != full-symmetry {e_sym:.10f}")
 
@@ -412,6 +534,9 @@ def test_unrestricted_explicit_symmetry_rejects_atomspin_state(method):
 def test_sym3b_reduce_falls_back_without_symmetry():
     """``use_fock_symmetry_reduce`` on a cell with no usable symmetry must not
     crash — it falls back to the full build (no rep-cell reduction)."""
+    # The physical pair default (#316) refuses the legacy SYM3b projector;
+    # this test pins the historical composition, so it replays it explicitly
+    # (#503).
     # 1-atom cubic He still has symmetry; use a deliberately asymmetric 2-atom
     # cell so the orbit machinery may decline. The run must still converge.
     a = 6.0
@@ -431,7 +556,7 @@ def test_sym3b_reduce_falls_back_without_symmetry():
         system, basis, kmesh, opts,
         use_exchange_ewald_split=True,
         use_fock_symmetry_reduce=True,
-        ewald_precision=1e-8, progress=False)
+        ewald_precision=1e-8, historical_domain=True, progress=False)
     assert r.converged
 
 

@@ -175,10 +175,12 @@ def test_export_nwchem(sto3g: BasisSetData) -> None:
 
 
 def test_loss_report_g94_not_lossless(sto3g: BasisSetData) -> None:
-    """loss_report_g94 returns a non-lossless report with 7 dropped fields."""
+    """A G94 rendering cannot encode the harmonic type; metadata survives
+    only as comment text, which the report names."""
     report = loss_report_g94(sto3g)
     assert report.is_lossless is False
-    assert len(report.fields_dropped) == 7
+    assert "harmonic_type" in report.fields_dropped
+    assert "ecps" not in report.fields_dropped  # STO-3G carries no ECP
 
 
 # ===================================================================
@@ -629,42 +631,84 @@ end"""
 # ===================================================================
 
 
-def test_write_to_library_g94(sto3g: BasisSetData) -> None:
-    """Write G94 to library, read back, verify."""
-    import re
+def test_write_to_library_needs_provenance(sto3g: BasisSetData, tmp_path: Path) -> None:
+    """A bundled record must say what it is before it can join the library."""
+    from vibeqc.basis_toolkit import write_to_library
 
+    data = BasisSetData.from_dict(sto3g.to_dict())
+    data.name = "sto-3g-test"
+    data.provenance = None
+    with pytest.raises(ValueError, match="provenance"):
+        write_to_library(data, root=tmp_path)
+    with pytest.raises(ValueError, match="records only"):
+        write_to_library(sto3g, fmt="g94", root=tmp_path)
+
+
+def test_write_to_library_saves_the_record_and_renders(sto3g: BasisSetData, tmp_path: Path) -> None:
+    """The record lands under qvf/ with its content hash; basis/ is rendered
+    from it; both read back."""
     from vibeqc.basis_toolkit import (
+        Provenance,
+        ProvenanceKind,
+        Upstream,
+        from_g94,
         read_from_library,
         write_to_library,
     )
 
-    path = write_to_library(sto3g, fmt="g94", subdir="custom")
-    safe_name = re.sub(r"[^a-z0-9-]", "-", sto3g.name.lower()).strip("-")
-    try:
-        assert path.exists()
-        assert path.suffix == ".g94"
-        # Read back -- name is lowercased by library writer.
-        reloaded = read_from_library(safe_name, fmt="g94", subdir="custom")
-        assert reloaded.name.lower() == sto3g.name.lower()
-        assert set(reloaded.elements.keys()) == set(sto3g.elements.keys())
-    finally:
-        path.unlink(missing_ok=True)
+    data = BasisSetData.from_dict(sto3g.to_dict())
+    data.name = "sto-3g-test"
+    data.provenance = Provenance(
+        origin="bse", kind=ProvenanceKind.BSE, retrieval_date="2026-10-11",
+        upstream=[Upstream(name="basis-set-exchange", version="0.12")],
+    )
+    path = write_to_library(data, root=tmp_path)
+    assert path == tmp_path / "qvf" / "sto-3g-test.qvf.json"
+    reloaded = read_from_library("sto-3g-test", root=tmp_path)
+    assert reloaded.name == "sto-3g-test"
+    assert reloaded.provenance.content_sha256 == data.content_sha256()
+    text = read_from_library("sto-3g-test", fmt="g94", root=tmp_path)
+    assert set(from_g94(text).elements) == set(sto3g.elements)
+    with pytest.raises(FileNotFoundError):
+        read_from_library("sto-3g-test", fmt="ecp", root=tmp_path)
 
 
-def test_write_to_library_qvf(sto3g: BasisSetData) -> None:
-    """Write QVF JSON to library, read back."""
-    import re
-
+def test_rendering_is_full_precision_and_reimports_exactly() -> None:
+    """Every number comes back as the identical double; ECPs render to the
+    sidecar in the layout the production reader expects."""
     from vibeqc.basis_toolkit import (
-        read_from_library,
-        write_to_library,
+        ECPEntry, ECPPotential, ECPTerm, ElementBasis, HarmonicType, Primitive,
+        Shell, from_g94, to_ecp_sidecar, to_g94,
     )
 
-    path = write_to_library(sto3g, fmt="qvf_json", subdir="custom")
-    safe_name = re.sub(r"[^a-z0-9-]", "-", sto3g.name.lower()).strip("-")
-    try:
-        assert path.name.endswith(".qvf.json")
-        reloaded = read_from_library(safe_name, fmt="qvf_json", subdir="custom")
-        assert reloaded.name.lower() == sto3g.name.lower()
-    finally:
-        path.unlink(missing_ok=True)
+    awkward = [0.1 + 0.2, 1e-7, 1234567.8901234567, 0.04268788542106363]
+    data = BasisSetData(
+        schema_version="1.1.0", name="awkward",
+        elements={"Na": ElementBasis(element="Na", shells=[
+            Shell(angular_momentum=[0, 1], harmonic_type=HarmonicType.SPHERICAL, primitives=[
+                Primitive(awkward[0], -0.0036099808435155673), Primitive(awkward[1], 1.0),
+                Primitive(awkward[0], 0.5), Primitive(awkward[1], -1e-05),
+            ]),
+            Shell(angular_momentum=[2], harmonic_type=HarmonicType.SPHERICAL,
+                  primitives=[Primitive(awkward[2], awkward[3])]),
+        ], ecp_id="Na")},
+        ecps={"Na": ECPEntry(element="Na", n_core_electrons=10, angular_momentum_max=2, potentials=[
+            ECPPotential(angular_momentum=0, terms=[ECPTerm(coefficient=3.0, exponent=243.3605846, power=0)]),
+            ECPPotential(angular_momentum=2, terms=[ECPTerm(coefficient=-10.0, exponent=175.550259, power=1)]),
+        ])},
+    )
+    g94 = to_g94(data)
+    sidecar = to_ecp_sidecar(data)
+    back = from_g94(g94, name="awkward")
+    shells = back.elements["Na"].shells
+    assert [(p.exponent, p.coefficient) for p in shells[0].primitives] == [
+        (awkward[0], -0.0036099808435155673), (awkward[1], 1.0), (awkward[0], 0.5), (awkward[1], -1e-05)]
+    assert shells[1].primitives[0].exponent == awkward[2]
+    assert shells[1].primitives[0].coefficient == awkward[3]
+    ecp = from_g94(sidecar, name="awkward", role="ecp").ecps["Na"]
+    assert ecp.n_core_electrons == 10 and ecp.angular_momentum_max == 2
+    # local channel first, then the projectors in ascending l
+    assert [p.angular_momentum for p in ecp.potentials] == [2, 0]
+    assert ecp.potentials[0].terms[0].power == 1 and ecp.potentials[1].terms[0].power == 0
+    assert "Na-ECP     2    10" in sidecar and "d potential" in sidecar and "s-d potential" in sidecar
+    assert "! Originating publication" in g94 and "-ECP" not in g94

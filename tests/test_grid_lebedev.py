@@ -178,7 +178,7 @@ def test_lebedev_integrates_polynomial_through_order(order):
 
     Easy cross-check: ∫_{S²} x^{2a} y^{2b} z^{2c} dΩ has a closed form
 
-        4π · Γ(a+½) Γ(b+½) Γ(c+½) / Γ(a+b+c+3/2)  ·  ¹/π^{3/2}
+        2 · Γ(a+½) Γ(b+½) Γ(c+½) / Γ(a+b+c+3/2)
 
     Pick a few monomials with total degree = order (the hardest case
     for an order-L rule) and verify to ~1e-12.
@@ -242,3 +242,38 @@ def test_unsupported_lebedev_order_raises():
     opts.n_radial = 1
     with pytest.raises(ValueError, match="bundled tiers"):
         build_grid(mol, opts)
+
+
+@pytest.mark.parametrize("order,n_points", [(59, 1202), (65, 1454),
+                                           (77, 2030), (95, 3074)])
+def test_high_order_lebedev_rotated_legendre_moments(order, n_points):
+    """Resolve high-degree moments without tiny Cartesian-monomial scales.
+
+    The sphere integral of P_l(n dot r) is zero for every unit vector n
+    and 1 <= l <= order. Legendre's recurrence keeps the integrands O(1),
+    including near the tier's exactness limit (Lebedev and Laikov, 1999).
+    """
+    grid, mol = _single_atom_one_radial_shell(order)
+    assert len(grid.weights) == n_points
+    product = GridOptions()
+    product.angular = "product"
+    product.n_radial = 1
+    product.n_theta = 4
+    product.n_phi = 8
+    reference = build_grid(mol, product)
+    np.testing.assert_allclose(grid.weights.sum(), reference.weights.sum(),
+                               atol=2e-12, rtol=1e-14)
+    directions = np.array([[1., 0., 0.], [1., 2., 3.],
+                           [-2., 1., 4.], [3., -5., 2.]])
+    directions /= np.linalg.norm(directions, axis=1)[:, None]
+    points = np.asarray(grid.points)
+    points = points / np.linalg.norm(points, axis=1)[:, None]
+    x = points @ directions.T
+    weights = np.asarray(grid.weights) / reference.weights.sum()
+    previous = np.ones_like(x)
+    current = x.copy()
+    for degree in range(1, order + 1):
+        np.testing.assert_allclose(weights @ current, 0., atol=2e-13, rtol=0,
+                                   err_msg=f"order {order}, degree {degree}")
+        following = ((2 * degree + 1) * x * current - degree * previous) / (degree + 1)
+        previous, current = current, following

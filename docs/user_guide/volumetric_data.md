@@ -20,8 +20,11 @@ solid-state or molecular viewer is what you need:
   molecular orbitals, and ESP. Read by VMD, Avogadro, PyMOL,
   ChimeraX, and moltui.
 * **XCrySDen XSF** (``.xsf``), periodic crystal structures and
-  volumetric data on a primitive-cell grid.  Read by VESTA,
-  XCrySDen, and moltui (since v0.8.x+ moltui).
+  volumetric data on a primitive-cell grid.  Read by VESTA
+  (K. Momma, F. Izumi, *J. Appl. Crystallogr.* **44**, 1272 (2011),
+  doi:10.1107/S0021889811038970), XCrySDen (A. Kokalj, *J. Mol. Graphics
+  Modell.* **17**, 176 (1999), doi:10.1016/S1093-3263(99)00028-5), and
+  moltui (since v0.8.x+ moltui).
 * **XCrySDen BXSF** (``.bxsf``), band energies on a 3D k-mesh
   for Fermi-surface plots. Read by XCrySDen and moltui.
 
@@ -56,8 +59,8 @@ $$
 the same evaluator is invoked, but the values written are
 $\phi_i(\mathbf{r})$ (signed amplitude) rather than $|\phi_i|^2$,
 so isosurface viewers (Avogadro, VMD, ChimeraX) can render both
-lobes of a $\pi$ orbital. To render a density-of-states-like view
-of a single MO, square the file post-hoc in your viewer.
+lobes of a $\pi$ orbital. To render the orbital density
+$|\phi_i|^2$ of a single MO, square the file post-hoc in your viewer.
 
 The file format itself is documented in Gaussian's
 [cube specification](https://gaussian.com/cubegen/);
@@ -171,7 +174,7 @@ rows are bookkeeping, not cell edges; see
 import numpy as np
 
 # Evaluate your scalar field on a primitive-cell grid …
-rho = evaluate_density_on_grid(...)  # shape (n1, n2, n3), in bohr
+rho = evaluate_density_on_grid(...)  # shape (n1, n2, n3), in bohr^-3
 
 vq.write_xsf_volume(
     "rho.xsf", system,

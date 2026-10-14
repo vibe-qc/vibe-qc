@@ -60,6 +60,7 @@ Install each product independently and follow its own documentation.
 | Open a `.qvf` without installing vibe-qc | [vibe-view quickstart](https://vibe-qc.com/vibe-view/docs/quickstart.html) |
 | Submit, watch, and retrieve queued work | [vq user guide](https://vibe-qc.com/vibe-queue/docs/user/index.html) |
 | Install or operate a queue host | [vq operator guide](https://vibe-qc.com/vibe-queue/docs/operator/index.html) |
+| Choose a method and check its status | [Methods: theory and status](methods.md) |
 | Learn methods through worked calculations | [Tutorial learning paths](tutorial/index.md#choose-a-learning-path) |
 | Look up options, defaults, and limitations | [User guide task index](user_guide/index.md#find-the-page-from-the-task) |
 | Browse complete runnable inputs | [Examples catalog](https://github.com/vibe-qc/vibe-qc/blob/main/examples/README.md) |
@@ -134,49 +135,63 @@ for now; see the {ref}`macOS auto-update sponsorship opportunity
 <macos-desktop-auto-update>` for details.
 ```
 
-```{admonition} ✅ New in v0.17 (Tew's Tern)
+```{admonition} ✅ New in v0.17 (Tew's Tern), now at v0.17.17
 :class: tip
 
 <p class="codename-art codename-art-home">
   <img src="_static/images-codenames/17-vibe-qc-v0.17.0-tews-tern.png" alt="AI-generated Tew's Tern codename artwork for vibe-qc v0.17">
 </p>
 
-v0.17 lays **symmetry and periodic groundwork**. The shared group and space
-infrastructure the periodic symmetry paths had been duplicating is restored;
-retained group composition, Bloch factors and retained subspaces are audited
-across panel backends, so the reduction a backend claims is the reduction it
-performs; and periodic subspace probes are bound to immutable states.
+v0.17 lays **symmetry and periodic groundwork**, and the 0.17.x patches
+turn parts of it into routes you can run:
 
-On the BIPOLE side, finite Seitz supports and AO maps are audited, an exact
-geometric builder supplies physical quartet supports for the short-range
-kernel, the native long-range Gram kernel accepts independent left/right
-AO-product cell lists with provenance for both, and exact-mesh HF long-range
-contractions are bridged.
+- **Local correlation on crystals.** `run_periodic_job(method="dlpno-ccsd(t)")`
+  correlates an RHF or UHF GDF reference at the Gamma point or on a
+  Gamma-centred k mesh folded to the Born-von Karman supercell, with the
+  molecular DLPNO engine and its retained fit as the correlation factors
+  ([guide](user_guide/periodic_local_correlation.md),
+  [tutorial](tutorial/periodic_dlpno_ccsd_t.md)).
+- **DLPNO kernels.** Closed-shell local (T0) and the open-shell PNO-space
+  CCSD solver run in compiled kernels; the default (T1) evaluates every
+  canonical triple; the shipped defaults carry measured accuracy against
+  canonical CCSD(T) and ORCA ([guide](user_guide/dlpno_mp2.md#accuracy)).
+- **Periodic fixes.** The compcell and MDF fits and the one-electron terms no
+  longer depend on which lattice image an atom is given; the classic fit sums
+  physical AO pairs, so a Gamma supercell matches its folded k mesh; the XC
+  image domain grows to the reach of the basis; a 1-D wire is refused on
+  every public route and is modelled as a `dim=3` cell with transverse
+  vacuum; slab exchange on a k mesh runs on slab GDF; IBZ-native reduction
+  admits glides and screws and fills occupations once per star.
+- **Experimental integral engine.** MANTA, a second integral provider with
+  independent Coulomb and exchange algorithms (exact, RI, BUPO), is
+  selectable on `run_job` and `run_periodic_job`
+  ([guide](user_guide/integral_engines.md)); libint remains the default.
+- **Basis sets as records.** The bundled library is a store of QVF-Basis
+  records with provenance and per-element citations, and `vibe-qc-basis`
+  imports hand-written or vibe-basis sets into a user store that the
+  runners resolve by name ([basis sets](user_guide/basis_sets.md)).
+- **Solvation.** COSMO-RS takes solvents by name with a per-user surface
+  cache, and Direct COSMO-RS has an analytic nuclear gradient
+  ([solvation](user_guide/solvation.md)).
+- **One eigensolver boundary.** Molecular, periodic and semiempirical SCF
+  drivers solve their Fock operators through a shared Hermitian operator
+  contract with portable diagnostics ([guide](user_guide/solver_framework.md)).
+- Also: OM2/OM3 finite-difference Hessians, Lebedev orders up to 95,
+  Hirshfeld charges with a valence-only promolecule on ECP results, native
+  and Brent geometry optimisations that fail closed, QTAIM bond paths traced
+  to both nuclei, and the DFTB off-site Hamiltonian normalisation fix.
 
-⚠️ **These are supports and audits, not a production route.** Production HF
-and complete source integration remain open, and the quartet builder does not
-authorize symmetry reduction. v0.17 does **not** ship periodic local
-correlation; that is the next minor's milestone on the [roadmap](roadmap.md).
-
-Also in v0.17:
-
-- **The COSMO FINE cavity is built in its molecule-fixed frame by default**,
-  with the analytic nuclear derivative running through that frame, and the
-  cavity assigns basis points to atoms smoothly.
-- **The 16 cc-pVnZ-PP orbital sets**, and vibe-basis 0.11.0 with the
-  cohesive objective.
-- **`correlation=` on the AICCM front door** (four-centre arm), with
-  Gamma-CCM correlation citation stamps and routes.
-- **Per-product marketing pages** for vibe-qc, vibe-view and vibe-queue, with
-  the website deploy no longer overwriting companion documentation subtrees.
+⚠️ **AICCM/CCM, chi and SECCM stay experimental**, and so does MANTA
+selection. Production HF and complete source integration for the BIPOLE
+supports remain open. Several 0.17.1x changes shipped under a maintainer
+override of the independent-verification rule; the
+[CHANGELOG](https://github.com/vibe-qc/vibe-qc/blob/main/CHANGELOG.md)
+lists them per release.
 
 The preceding v0.16 line (*Pople's Puffin*) carried the repository split:
 `vibe-qc`, `vibe-view`, `vibe-queue` and `qvf` became four independently
 adoptable projects, with vibe-qc reading its own QVF against the published
 spec. Nothing depends on `qvf`.
-
-See [CHANGELOG](https://github.com/vibe-qc/vibe-qc/blob/main/CHANGELOG.md)
-for the full notes.
 ```
 
 ```{admonition} 🔜 Current focus: v0.17.x bug fixing and paper publication
@@ -197,11 +212,13 @@ pointers, status of each known bug), see
 [`troubleshooting`](troubleshooting.md) and the
 [issue tracker](https://github.com/vibe-qc/vibe-qc/issues).
 
-Periodic COHP/ICOHP output currently projects the core Hamiltonian rather
-than the full Hamiltonian defining the analyzed bands. These curves are not
-yet qualified as standard COHP; the correction is tracked in
-[#765](https://github.com/vibe-qc/vibe-qc/issues), alongside the
-ECP property-output defect [#741](https://github.com/vibe-qc/vibe-qc/issues).
+Periodic COOP/COHP is computed with the same spin Hamiltonian that produced
+the analysed bands on the GDF routes, and the kernel refuses any other
+operator; on BIPOLE, AICCM and external-XC routes the DOS and COOP/COHP
+sections are skipped with a stated reason. Property output on ECP results
+is tracked as issue 32 on the [issue tracker](https://github.com/vibe-qc/vibe-qc/issues)
+(monorepo number 741); Hirshfeld charges on ECP results now build their
+promolecule from valence-only free atoms.
 
 ## Install
 
@@ -226,8 +243,9 @@ or tag), and other knobs, see [installation.md](installation.md)
 for the full surface and the manual `setup_native_deps.sh` recipe.
 `git clone` selects the project's default branch, `main`. The command above
 keeps the development line with `--dev`; the flag-free installer selects
-`release`, which follows approved tags. Use `--branch vX.Y.Z` to select
-a tag that exists in this repository for reproducibility.
+`release` when that branch exists on the selected origin, or its newest
+stable `vX.Y.Z` tag otherwise. Use `--branch vX.Y.Z` to pin an exact
+published tag for reproducibility.
 
 Public source repositories are listed in
 [repositories and downloads](installation.md#repositories-and-downloads),
@@ -393,8 +411,8 @@ weighted-sum functional, all supported. Møller-Plesset theory
 B2PLYP / DSD-PBEP86 / revDSD-PBEP86-D4 double hybrids. The dense correlated
 routes are accuracy references for the demonstrated small-molecule envelope;
 they are not yet claimed as production-size solvers. Density fitting with the RIJK and
-RIJCOSX Fock-build kernels (RIJCOSX validated to 0.13 mHa vs ORCA
-6.1.1). Effective core potentials for heavy-element chemistry.
+RIJCOSX Fock-build kernels (RIJCOSX energies within 0.26 mHa of ORCA
+6.1.1 on glycine/def2-TZVP). Effective core potentials for heavy-element chemistry.
 CPCM / COSMO implicit solvation via the SolutePotentialProvider seam.
 Grimme D3(BJ) / D4 dispersion. 255 bundled Gaussian basis files,
 including the solid-state pob-\* family. Numerical anchors use out-of-process
@@ -416,20 +434,26 @@ coupling and reaches canonical (T) in the full-domain limit. Multi-root CASCI wi
 to ~1e-7, shipped in v0.15.0). **TDDFT** via the Casida linear-response
 formalism and the Tamm-Dancoff approximation (RHF/RKS/UHF/UKS), with
 Natural Transition Orbitals and FD excited-state gradients.
-**Eigensolver framework**: Davidson, LOBPCG
-(GF2 / OVGF, renormalised GF2). The `vibeqc.solvers` family, Full CI,
-selected CI, DMRG, variational 2-RDM, via
+**Green's-function** quasiparticle ionisation energies (GF2 / OVGF,
+renormalised GF2). An **eigensolver framework** (Davidson, LOBPCG, plus
+experimental Jacobi-Davidson and GPLHR) selectable by keyword. The
+`vibeqc.solvers` family, Full CI, selected CI, variational 2-RDM,
+transcorrelated CI and an experimental DMRG toy solver, via
 [`vibeqc.solvers`](user_guide/non_hf_solvers.md). General atomisation
 energies and RRHO thermochemistry.
 
 **Semiempirical + MLIP.** The MSINDO semiempirical engine covers
-elements H-Br (Z 1-35, including 3d and 4th-row p-block), supports
-NDDO mode, molecular geometry optimisation, implicit solvation
-(COSMO), NEB, velocity-Verlet molecular dynamics, well-tempered
-metadynamics, and penalty-function MECI conical-intersection
-optimisation. The MACE machine-learning interatomic potential
-(`method="mace"`) is available as an alternative energy surface.
-GFN2-xTB rounds out the semiempirical roster.
+elements H-Xe (Z 1-54), supports NDDO mode for the main group, molecular
+geometry optimisation, implicit solvation (COSMO), NEB, velocity-Verlet
+molecular dynamics, well-tempered metadynamics, and penalty-function MECI
+conical-intersection optimisation; it is production within that scope.
+DFTB0 and SCC-DFTB ship as screening and preoptimisation routes (preview:
+in-house parameters, no DFTB+ parity). GFN2-xTB and PM6 are experimental,
+OM1 to OM3 are experimental and scheduled for retirement, and PM7 is gated.
+The semiempirical cyclic cluster model (SECCM) is experimental. The MACE
+machine-learning interatomic potential (`method="mace"`) is an external
+pre-trained model available as an alternative energy surface. Every label
+is defined in [Methods: theory and status](methods.md).
 
 
 **Periodic.** 1D / 2D / 3D `PeriodicSystem` geometry, Monkhorst-Pack
@@ -446,11 +470,13 @@ Fermi-Dirac, Methfessel-Paxton, and Marzari-Vanderbilt smearing for
 metals, with Anderson / Broyden / Kerker density mixers and an AUTO
 k-point and smearing recommender. MSINDO periodic CCM through bulk
 MgO (Wigner-Seitz, periodic INDO, Ewald Madelung). **Experimental
-ab-initio CCM:** two independent lines, [Γ-CCM](aiccm2026dev_a.md)
-(union-and-weight/Wigner-Seitz integral weighting, HF→CCSD(T)) and
-[χ-CCM](user_guide/aiccm2026dev_b.md) (finite-character, 3D SCF +
-finite-torus correlation). They are under active side-by-side study on a
-28-system benchmark, but no cross-approach delta is currently reportable. Band structure
+ab-initio CCM:** two independent lines. The [Γ-CCM line](aiccm2026dev_a.md)
+hosts the neutral finite-torus construction (variants `real-gamma` and
+`neutral-bloch`) and the 2014 union-and-weight four-centre lineage
+(`four-center`), HF→CCSD(T); [χ-CCM](user_guide/aiccm2026dev_b.md) is the
+finite-character construction (3D SCF + finite-torus correlation). They are
+under active side-by-side study on a 28-system benchmark, but no
+cross-approach delta is currently reportable; every driver warns. Band structure
 and density-of-states plotters. **COOP/COHP** bonding analysis
 (Crystal Orbital Overlap/Hamilton Population; C++ kernels, QVF,
 plotters, `vibeqc coop` CLI). **Periodic Mayer bond orders**
@@ -476,8 +502,10 @@ structure renderer). The
 basis-set import/export (BSE, CRYSTAL, G94, NWChem, ORCA). The
 [`vq` queue](user_guide/queue.md) for remote job submission.
 
-See the [feature matrix](features.md) for details and the
-[roadmap](roadmap.md) for what's next.
+See [Methods: theory and status](methods.md) for what each method computes
+and which of the four status labels (production, preview, experimental,
+gated) it carries, the [feature matrix](features.md) for the option tables,
+and the [roadmap](roadmap.md) for what's next.
 
 ## Where to go next
 
@@ -491,6 +519,7 @@ toolset_lifecycle
 quickstart
 using_claude
 running
+qcschema
 good_practices
 troubleshooting
 updating
@@ -503,6 +532,7 @@ tour
 :caption: QVF and vibe-view
 
 visualization
+relocalization_worker
 ```
 
 ```{toctree}
@@ -526,6 +556,7 @@ user_guide/index
 design_qvf_format
 design_output_module
 developer_shared_symmetry
+symmetry_status
 design_integrals_first
 design_mpi_parallelization
 design_vibeqc_vs_gpaw
@@ -538,12 +569,15 @@ design_vibeqc_vs_gpaw
 design_qvf_basis
 design_native_gdf
 design_rsgdf_3c_lr
+design_dlpno_correlation_source
 design_basis_ao_section
 design_periodic_gapw
 design_mdf
 design_smearing
+design_cosmors_run_job
 design_aiccm2026dev_b
 design_shared_symmetry
+symmetry_literature
 aiccm2026dev_a_scalability
 aiccm2026dev_a_lowd_greens
 aiccm2026dev_a_analytic_gradient
@@ -555,10 +589,13 @@ qvf_basis_conversion_matrix
 :maxdepth: 1
 :caption: Reference
 
+methods
 api/index
 features
+experimental/catalog
 validation
 roadmap
+roadmap_history
 ```
 
 ```{toctree}
@@ -589,6 +626,7 @@ site_publishing
 contributing
 contributor_setup
 developer_test_lanes
+testing
 support
 sponsors
 citing
@@ -607,8 +645,9 @@ periodic stack supports three production routes: GDF (µHa parity vs
 PySCF), GPW (Gaussian Plane Waves with Γ-point analytic gradients;
 MPI grid overlay experimental), and BIPOLE (exact Ewald-J with production
 finite-difference forces and fixed-cell atomic relaxation; analytic gradients
-remain a gated preview). The eigensolver framework (Davidson / LOBPCG +
-experimental Jacobi-Davidson / GPLHR) is selectable by keyword.
+remain a gated preview). The eigensolver framework offers Davidson and
+LOBPCG by keyword, with experimental Jacobi-Davidson and GPLHR at library
+level.
 Analysis tools (COOP/COHP, QTAIM, Mayer bond orders, fat bands)
 and the basis_toolkit import/export system shipped in v0.15.0.
 The ab-initio CCM (Γ-CCM and χ-CCM) ships as experimental.

@@ -148,9 +148,11 @@ $$
 M_\mathrm{ERI} = 8N_\mathrm{bf}^4\ \text{bytes}.
 $$
 
-Direct SCF avoids retaining that tensor and recomputes screened shell
-quartets during Fock builds. That choice trades memory for integral work; it
-does not change the Hartree-Fock model. The measured H2O2/cc-pVQZ example and
+Direct SCF ({vibeqc-cite}`almlof_direct_scf_1982`) avoids retaining that
+tensor and recomputes screened shell quartets during Fock builds
+(Schwarz screening, {vibeqc-cite}`haser_ahlrichs_schwarz_1989`). That
+choice trades memory for integral work; it does not change the
+Hartree-Fock model. The measured H2O2/cc-pVQZ example and
 a safe crossover sweep are in
 [Direct SCF or in-core integrals?](direct_scf_memory_tradeoff.md).
 
@@ -194,7 +196,9 @@ Check the controls relevant to the chosen method:
   is energy or free energy;
 - geometry force and displacement criteria.
 
-The SCF convergence criterion can be written schematically as
+The SCF convergence criterion can be written schematically (the
+commutator form is Pulay's DIIS error vector,
+{vibeqc-cite}`pulay_diis_1982`) as
 
 $$
 |E^{(n)}-E^{(n-1)}| < \tau_E,

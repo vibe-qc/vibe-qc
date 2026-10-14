@@ -1958,29 +1958,446 @@ def test_multik_gpw_hueckel_uses_shared_fock_adapter(monkeypatch):
     assert seen == [core.InitialGuess.HUECKEL]
 
 
-@pytest.mark.parametrize(
-    ("driver_name", "args", "kwargs"),
-    [
-        (
-            "run_periodic_rks_gpw_multi_k",
-            (None, None, None),
-            {"functional": "lda"},
-        ),
-    ],
-    ids=["multik"],
-)
-def test_direct_gpw_guess_selectors_fail_closed_for_patom(
-    driver_name,
-    args,
-    kwargs,
-):
-    """A recognized guess without a GPW implementation fails early."""
-    with pytest.raises(
-        NotImplementedError,
-        match="initial_guess=PATOM.*not implemented by this route",
-    ):
-        getattr(gj, driver_name)(
-            *args,
-            initial_guess=core.InitialGuess.PATOM,
-            **kwargs,
-        )
+# Multi-k PATOM uses a full-HF seed even for pure DFT. Its supported
+# GPW/GAPW routes are covered together, including normalized seed input
+# and seed-only exchange, in test_periodic_patom.py.
+
+
+# Evaluated-state migration: exercise the unchanged finite GPW/libint source.
+def _fock_state_case(length=9.0):
+    lattice = np.eye(3) * length
+    shift = (length - 9.0) / 2.0
+    system = vq.PeriodicSystem(3, lattice, [
+        vq.Atom(1, np.array([3.83, 4.41, 4.2]) + shift),
+        vq.Atom(1, np.array([5.23, 4.41, 4.2]) + shift)])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    n = 24 if length == 9.0 else 48
+    grid = PlaneWaveGrid(lattice, n, n, n)
+    return system, basis, grid
+
+
+@pytest.mark.parametrize("max_iter,damping,temperature", [
+    (0, 0., 0.), (1, .3, 0.), (1, .3, .08), (60, 0., 0.), (60, .2, .08)])
+def test_gpw_rhf_evaluated_state(max_iter, damping, temperature):
+    from vibeqc.periodic_gapw_runner_adapter import gpw_result_to_runner_shape
+    system, basis, grid = _fock_state_case()
+    result = gj.run_periodic_rhf_gpw(
+        system, basis, grid=grid, max_iter=max_iter, damping=damping,
+        smearing_temperature=temperature, initial_density=np.diag([1.2, .8]), quiet=True)
+    build = result.fock_build
+    channel = build.channels[0]
+    np.testing.assert_array_equal(result.density, channel.density)
+    np.testing.assert_array_equal(result.fock, channel.operator.matrix)
+    assert result.energy == build.energy.total == result.breakdown.e_total
+    assert channel.operator.metadata.role == "physical"
+    assert result.converged == (max_iter == 60)
+    assert build.metric_electron_counts[0] == pytest.approx(2., abs=1e-11)
+    c, occ = result.mo_coeffs, np.asarray(result.occupations)
+    np.testing.assert_allclose(c.T @ result.overlap @ c, np.eye(2), atol=2e-12)
+    np.testing.assert_allclose((c * occ) @ c.T, result.density, atol=2e-12)
+    np.testing.assert_allclose(result.mo_energies, np.diag(c.T @ result.fock @ c), atol=1e-12)
+    reference = gj.evaluate_gpw_energy(system, basis, result.density, grid=grid, quiet=True)
+    assert result.energy == pytest.approx(reference.e_total, abs=2e-12)
+    adapted = gpw_result_to_runner_shape(result, system, basis)
+    from vibeqc.output.formats.qvf import qvf_wf_data
+    wf = qvf_wf_data(adapted, basis, system.unit_cell_molecule())
+    assert wf["mo_metadata"]["orbital_kind"] == "natural"
+    explicit = qvf_wf_data(adapted, basis, system.unit_cell_molecule(), orbital_kind="localized")
+    assert explicit["mo_metadata"]["orbital_kind"] == "localized"
+    assert adapted.fock_build is build
+    assert adapted.run_fields["fock_build_id"] == build.identity
+    np.testing.assert_array_equal(adapted.occupations, occ)
+    assert adapted.free_energy == pytest.approx(result.free_energy, abs=1e-14)
+    if temperature:
+        p = np.clip(occ/2, 0, 1)
+        mask = (p > 0) & (p < 1)
+        entropy = -2*np.sum(p[mask]*np.log(p[mask])+(1-p[mask])*np.log1p(-p[mask]))
+        assert result.smearing_entropy == pytest.approx(entropy, abs=1e-13)
+    original = channel.operator.matrix.copy()
+    result.fock[:] = 17.
+    np.testing.assert_array_equal(channel.operator.matrix, original)
+    with pytest.raises(ValueError):
+        channel.density.setflags(write=True)
+
+
+def test_gpw_rhf_builder_derivative_source_guard_and_solver_role(monkeypatch):
+    import vibeqc.periodic_gpw_fock as state
+    import vibeqc.solvers._scf as scf
+    # The retained home-cell exchange is variational in its padded-cell limit.
+    # Compact-cell image terms have a pre-existing derivative defect (#534).
+    system, basis, grid = _fock_state_case(16.0)
+    builders, roles = [], []
+    original_builder, original_solve = state._GpwRHFBuilder, scf.solve_operator
+
+    class CaptureBuilder(original_builder):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            builders.append(self)
+
+    def solve(operator, *args, **kwargs):
+        roles.append(operator.metadata.role)
+        return original_solve(operator, *args, **kwargs)
+
+    monkeypatch.setattr(state, "_GpwRHFBuilder", CaptureBuilder)
+    monkeypatch.setattr(scf, "solve_operator", solve)
+    result = gj.run_periodic_rhf_gpw(system, basis, grid=grid, max_iter=3,
+        initial_guess="PATOM", diis_start_iter=1, quiet=True)
+    assert "physical" in roles and "solver" in roles
+    builder = builders[0]
+    D = result.density
+    delta = np.array([[.2, .13], [.13, -.15]])
+    eps = 1e-5
+    plus, minus = builder(D+eps*delta), builder(D-eps*delta)
+    numerical = (plus.energy.total-minus.energy.total)/(2*eps)
+    assert numerical == pytest.approx(np.sum(result.fock*delta), abs=2e-9)
+    repeated = builder(D)
+    assert repeated.source == result.fock_build.source
+    assert repeated.density_id == result.fock_build.density_id
+    assert repeated.identity != result.fock_build.identity
+    with pytest.raises(ValueError, match="Hermitian"):
+        builder(np.array([[1., .3], [.1, 1.]]))
+    for array in (builder.gpw.chi(), grid.lattice_bohr):
+        saved = array.flat[0]
+        array.flat[0] += .01
+        with pytest.raises(ValueError, match="source changed"):
+            builder(D)
+        array.flat[0] = saved
+    builder.lattice_options.cutoff_bohr += 1
+    with pytest.raises(ValueError, match="source changed"):
+        builder(D)
+
+
+def test_gpw_rhf_terminal_keeps_requested_nuclear_convention():
+    system, basis, grid = _fock_state_case()
+    result = gj.run_periodic_rhf_gpw(system, basis, grid=grid, max_iter=1,
+        v_ne_convention="smeared_erfc", smearing_alpha=.7, quiet=True)
+    reference = gj.evaluate_gpw_energy(system, basis, result.density, grid=grid,
+        v_ne_convention="smeared_erfc", smearing_alpha=.7, quiet=True)
+    assert result.energy == pytest.approx(reference.e_total, abs=2e-12)
+    assert result.fock_build.source.as_dict()["details"]["smearing_alpha"] == .7
+
+
+def _rks_fock_state_case():
+    system, _, grid = _fock_state_case(16.0)
+    return system, vq.BasisSet(system.unit_cell_molecule(), "6-31g"), grid
+
+
+@pytest.mark.parametrize("functional,max_iter,damping,temperature,davidson", [
+    ("lda", 60, 0., 0., False), ("pbe", 60, .2, 0., False),
+    ("pbe0", 60, 0., .04, True), ("r2scan", 60, 0., 0., False),
+    ("pbe", 1, .3, .08, False), ("pbe0", 0, 0., 0., False)])
+def test_gpw_rks_evaluated_state(functional, max_iter, damping, temperature, davidson):
+    from vibeqc.periodic_gapw_runner_adapter import gpw_result_to_runner_shape
+    from vibeqc.output.formats.qvf import qvf_wf_data
+    system, basis, grid = _rks_fock_state_case()
+    result = gj.run_periodic_rks_gpw(system, basis, functional=functional, grid=grid,
+        max_iter=max_iter, damping=damping, smearing_temperature=temperature,
+        initial_density=np.eye(basis.nbasis), use_davidson=davidson,
+        davidson_min_dim=1, quiet=True)
+    build = result.fock_build
+    channel = build.channels[0]
+    assert build.method == "RKS" and channel.operator.metadata.kind == "ks"
+    assert channel.operator.metadata.role == "physical"
+    assert result.converged == (max_iter == 60)
+    assert result.energy == build.energy.total == result.breakdown.e_total
+    assert dict(build.energy.components)["xc"] == result.breakdown.e_xc
+    assert build.metric_electron_counts[0] == pytest.approx(2., abs=2e-11)
+    np.testing.assert_array_equal(result.density, channel.density)
+    np.testing.assert_array_equal(result.fock, channel.operator.matrix)
+    c, occ = result.mo_coeffs, np.asarray(result.occupations)
+    np.testing.assert_allclose((c*occ)@c.T, result.density, atol=2e-12)
+    np.testing.assert_allclose(c.T@result.overlap@c, np.eye(len(occ)), atol=2e-12)
+    np.testing.assert_allclose(result.mo_energies, np.diag(c.T@result.fock@c), atol=2e-12)
+    fresh = gj.evaluate_gpw_energy(system, basis, result.density, grid=grid,
+                                  functional=functional, quiet=True)
+    assert result.energy == pytest.approx(fresh.e_total, abs=2e-11)
+    if temperature:
+        p = np.clip(occ/2, 0., 1.); mask = (p > 0) & (p < 1)
+        entropy = -2*np.sum(p[mask]*np.log(p[mask])+(1-p[mask])*np.log1p(-p[mask]))
+        assert result.smearing_entropy == pytest.approx(entropy, abs=2e-12)
+    adapted = gpw_result_to_runner_shape(result, system, basis)
+    assert adapted.fock_build is build
+    assert adapted.e_xc == result.breakdown.e_xc
+    assert adapted.free_energy == pytest.approx(result.free_energy, abs=1e-14)
+    wf = qvf_wf_data(adapted, basis, system.unit_cell_molecule())
+    assert wf["mo_metadata"]["orbital_kind"] == "natural"
+    np.testing.assert_array_equal(wf["mo_metadata"]["occupations"], occ)
+    assert adapted.run_fields["fock_build_id"] == build.identity
+    if result.scf_trace:
+        assert result.scf_trace[-1]["energy"] == result.energy
+        assert result.scf_trace[-1]["e_xc"] == result.breakdown.e_xc
+    original = channel.operator.matrix.copy()
+    result.fock[:] = 23.
+    np.testing.assert_array_equal(channel.operator.matrix, original)
+
+
+@pytest.mark.parametrize("functional", ["lda", "pbe", "pbe0", "r2scan"])
+def test_gpw_rks_energy_derivative_and_source_guard(functional, monkeypatch, record_property):
+    import vibeqc.periodic_gpw_fock as state
+    system, basis, grid = _rks_fock_state_case()
+    builders = []
+    original = state._GpwRKSBuilder
+
+    class Capture(original):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw); builders.append(self)
+
+    monkeypatch.setattr(state, "_GpwRKSBuilder", Capture)
+    result = gj.run_periodic_rks_gpw(system, basis, functional=functional,
+        grid=grid, max_iter=0, initial_density=np.eye(basis.nbasis), quiet=True)
+    builder = builders[0]
+    d = result.density
+    rng = np.random.default_rng(472)
+    direction = rng.normal(size=d.shape); direction = (direction+direction.T)/2
+    step = 2e-5
+    numerical = (builder(d+step*direction).energy.total-builder(d-step*direction).energy.total)/(2*step)
+    record_property("energy_derivative_error", abs(numerical-np.sum(result.fock*direction)))
+    assert numerical == pytest.approx(np.sum(result.fock*direction), abs=2e-8)
+    # XC is not the half trace of the physical KS potential.
+    hf = builder.hf_builder
+    assert abs(result.energy-(.5*np.sum(d*(hf.hcore+result.fock))+hf.e_nuclear)) > 1e-3
+    repeated = builder(d)
+    assert repeated.density_id == result.fock_build.density_id
+    assert repeated.source == result.fock_build.source
+    assert repeated.identity != result.fock_build.identity
+    for array in (builder.cache.chi, builder.cache.recip):
+        saved = array.flat[0]; array.flat[0] += .01
+        with pytest.raises(ValueError, match="source changed"):
+            builder(d)
+        array.flat[0] = saved
+    original_func = builder.functional
+    builder.functional = core.Functional("blyp" if functional == "pbe" else "pbe", 1)
+    with pytest.raises(ValueError, match="source changed"):
+        builder(d)
+    builder.functional = original_func
+    if functional == "r2scan":
+        monkeypatch.setattr(gj, "_MGGA_DENSITY_SCREEN", 2*gj._MGGA_DENSITY_SCREEN)
+        with pytest.raises(ValueError, match="source changed"):
+            builder(d)
+
+
+@pytest.mark.parametrize("seed", ["HCORE", "PATOM"])
+def test_gpw_rks_seed_roles_and_pure_exchange_skip(seed, monkeypatch):
+    import vibeqc.periodic_gpw_fock as state
+    import vibeqc.solvers._scf as scf
+    system, basis, grid = _rks_fock_state_case()
+    roles, builds, calls = [], [], []
+    solve, hf_call, ks_call = scf.solve_operator, state._GpwRHFBuilder.__call__, state._GpwRKSBuilder.__call__
+    exchange = core.build_jk_gamma_molecular_limit
+
+    def capture_solve(operator, *a, **kw):
+        roles.append(operator.metadata)
+        return solve(operator, *a, **kw)
+
+    def capture_hf(self, d):
+        b = hf_call(self, d); builds.append(b); return b
+
+    def capture_ks(self, d):
+        b = ks_call(self, d); builds.append(b); return b
+
+    def capture_exchange(*a, **kw):
+        calls.append(1); return exchange(*a, **kw)
+
+    monkeypatch.setattr(scf, "solve_operator", capture_solve)
+    monkeypatch.setattr(state._GpwRHFBuilder, "__call__", capture_hf)
+    monkeypatch.setattr(state._GpwRKSBuilder, "__call__", capture_ks)
+    monkeypatch.setattr(core, "build_jk_gamma_molecular_limit", capture_exchange)
+    result = gj.run_periodic_rks_gpw(system, basis, functional="pbe", grid=grid,
+        initial_guess=seed, max_iter=3, diis_start_iter=1, quiet=True)
+    assert len(calls) == (1 if seed == "PATOM" else 0)
+    by_id = {b.identity:b for b in builds}
+    for meta in roles:
+        parent = by_id[meta.build_id]
+        assert meta.density_id == parent.density_id
+        assert meta.kind == ("fock" if parent.method == "RHF" else "ks")
+    assert any(meta.role == "solver" for meta in roles)
+    if seed == "PATOM":
+        assert builds[0].method == "RHF"
+        assert builds[0].source != result.fock_build.source
+    assert result.breakdown.e_hf_exchange == 0.
+
+
+def test_gpw_rks_terminal_keeps_smeared_nuclear_convention():
+    system, basis, grid = _rks_fock_state_case()
+    result = gj.run_periodic_rks_gpw(system, basis, functional="pbe", grid=grid,
+        max_iter=1, v_ne_convention="smeared_erfc", smearing_alpha=.7, quiet=True)
+    fresh = gj.evaluate_gpw_energy(system, basis, result.density, grid=grid,
+        functional="pbe", v_ne_convention="smeared_erfc", smearing_alpha=.7, quiet=True)
+    assert result.energy == pytest.approx(fresh.e_total, abs=2e-11)
+
+
+def _gpw_dftu_terms(density, overlap, basis, sites):
+    """Independent closed-shell Dudarev formula for the existing AO projector."""
+    from vibeqc.dft_plus_u import ao_group_indices
+    groups = ao_group_indices(basis)
+    energy, potential = 0., np.zeros_like(density)
+    for site in sites:
+        b = overlap[:, groups[(site.atom_index, site.l)]]
+        n = .5 * b.T @ density @ b
+        energy += site.U_eff_hartree * (np.trace(n) - np.trace(n @ n))
+        potential += site.U_eff_hartree * b @ (.5*np.eye(len(n)) - n) @ b.T
+    return energy, potential
+
+
+@pytest.mark.parametrize("functional,max_iter,damping,temperature", [
+    ("pbe", 60, .2, 0.), ("pbe0", 60, 0., .04), ("r2scan", 60, 0., 0.),
+    ("pbe", 1, .3, .08), ("pbe0", 0, 0., 0.),
+    (None, 60, .2, 0.), (None, 60, 0., .04),
+    (None, 1, .3, .08), (None, 0, 0., 0.)])
+def test_gpw_restricted_dftu_evaluated_state(functional, max_iter, damping, temperature):
+    from vibeqc.periodic_gapw_runner_adapter import gpw_result_to_runner_shape
+    from vibeqc.output.formats.qvf import qvf_wf_data
+    system, basis, grid = _rks_fock_state_case()
+    sites = [vq.HubbardSite(0, 0, U_ev=4., J_ev=.5), vq.HubbardSite(1, 0, U_ev=1.)]
+    r = gj.run_periodic_rhf_gpw(system, basis, functional=functional, grid=grid,
+        dft_plus_u_sites=sites, max_iter=max_iter, damping=damping,
+        smearing_temperature=temperature, initial_density=np.eye(basis.nbasis), quiet=True)
+    b = r.fock_build
+    assert b.method == ("RHF" if functional is None else "RKS")
+    assert b.channels[0].operator.metadata.kind == ("fock" if functional is None else "ks")
+    assert b.channels[0].operator.metadata.role == "physical"
+    assert r.converged == (max_iter == 60)
+    np.testing.assert_array_equal(r.density, b.channels[0].density)
+    np.testing.assert_array_equal(r.fock, b.channels[0].operator.matrix)
+    eu, vu = _gpw_dftu_terms(r.density, r.overlap, basis, sites)
+    bare = gj.run_periodic_rhf_gpw(system, basis, functional=functional, grid=grid,
+        max_iter=0, initial_density=r.density, quiet=True)
+    assert r.energy == pytest.approx(bare.energy + eu, abs=2e-11)
+    np.testing.assert_allclose(r.fock, bare.fock + vu, atol=2e-11, rtol=0)
+    assert r.energy == b.energy.total == r.breakdown.e_total
+    assert r.e_dft_plus_u == r.breakdown.e_dft_plus_u == dict(b.energy.corrections)["dft_plus_u"]
+    assert r.e_dft_plus_u == pytest.approx(eu, abs=2e-13)
+    assert b.energy.electronic == pytest.approx(bare.fock_build.energy.electronic, abs=2e-11)
+    np.testing.assert_allclose((r.mo_coeffs*np.asarray(r.occupations))@r.mo_coeffs.T, r.density, atol=3e-12)
+    np.testing.assert_allclose(r.mo_energies, np.diag(r.mo_coeffs.T@r.fock@r.mo_coeffs), atol=2e-12)
+    shaped = gpw_result_to_runner_shape(r, system, basis)
+    assert shaped.fock_build is b and shaped.e_dft_plus_u == r.e_dft_plus_u
+    assert shaped.energy == pytest.approx(shaped.e_electronic+shaped.e_nuclear+shaped.e_dft_plus_u, abs=2e-12)
+    assert shaped.free_energy == r.free_energy
+    wf = qvf_wf_data(shaped, basis, system.unit_cell_molecule())
+    assert wf["mo_metadata"]["orbital_kind"] == "natural"
+    np.testing.assert_array_equal(wf["mo_metadata"]["occupations"], r.occupations)
+    if r.scf_trace:
+        assert r.scf_trace[-1]["energy"] == r.energy
+
+
+@pytest.mark.parametrize("functional", [None, "pbe", "pbe0", "r2scan"])
+def test_gpw_restricted_dftu_derivative_and_source(functional, monkeypatch, record_property):
+    import vibeqc.periodic_gpw_fock as state
+    system, basis, grid = _rks_fock_state_case()
+    builders = []
+    builder_name = "_GpwRHFUBuilder" if functional is None else "_GpwRKSBuilder"
+    original = getattr(state, builder_name)
+
+    class Capture(original):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw); builders.append(self)
+
+    monkeypatch.setattr(state, builder_name, Capture)
+    sites = [vq.HubbardSite(0, 0, U_ev=4., J_ev=.5)]
+    r = gj.run_periodic_rhf_gpw(system, basis, functional=functional, grid=grid,
+        max_iter=0, initial_density=np.eye(basis.nbasis), dft_plus_u_sites=sites, quiet=True)
+    builder = builders[0]
+    sites.clear()  # The caller's mutable site list is not retained.
+    assert builder(r.density).source == r.fock_build.source
+    rng = np.random.default_rng(472)
+    direction = rng.normal(size=r.density.shape); direction = .5*(direction+direction.T)
+    h = 2e-5
+    numerical = (builder(r.density+h*direction).energy.total-builder(r.density-h*direction).energy.total)/(2*h)
+    error = abs(numerical-np.sum(r.fock*direction))
+    record_property("dftu_energy_derivative_error", error)
+    assert error < 2e-8
+    saved = builder.dftu_sites
+    builder.dftu_sites = (vq.HubbardSite(0, 0, U_ev=4., J_ev=.4),)
+    with pytest.raises(ValueError, match="source changed"):
+        builder(r.density)
+    builder.dftu_sites = saved
+    indices = builder.dftu_groups[(0, 0)]
+    builder.dftu_groups[(0, 0)] = indices[::-1]
+    with pytest.raises(ValueError, match="source changed"):
+        builder(r.density)
+    builder.dftu_groups[(0, 0)] = indices
+    builder.dftu_sites = (vq.HubbardSite(1, 0, U_ev=3.5),)
+    with pytest.raises(ValueError, match="source changed"):
+        builder(r.density)
+
+
+def test_gpw_rks_dftu_zero_limit_and_seed(monkeypatch, record_property):
+    import vibeqc.periodic_gpw_fock as state
+    system, basis, grid = _rks_fock_state_case()
+    builds = []
+    original = state._GpwRHFBuilder.__call__
+
+    def capture(self, d):
+        b = original(self, d); builds.append(b); return b
+
+    monkeypatch.setattr(state._GpwRHFBuilder, "__call__", capture)
+    common = dict(functional="pbe", grid=grid, initial_guess="PATOM", quiet=True)
+    bare = gj.run_periodic_rks_gpw(system, basis, **common)
+    zero = gj.run_periodic_rks_gpw(system, basis,
+        dft_plus_u_sites=[vq.HubbardSite(0, 0, U_ev=4., J_ev=4.)], **common)
+    assert bare.converged and zero.converged
+    assert zero.energy == pytest.approx(bare.energy, abs=2e-12) and zero.e_dft_plus_u == 0.
+    # Independent SCF solves can differ by floating-point roundoff even when
+    # the additional potential is zero; this is a numerical zero-U limit.
+    record_property("zero_u_density_difference", float(np.max(abs(zero.density-bare.density))))
+    np.testing.assert_allclose(zero.density, bare.density, atol=2e-12, rtol=0)
+    np.testing.assert_allclose(zero.fock, bare.fock, atol=2e-12, rtol=0)
+    assert len(builds) == 2
+    assert all(b.method == "RHF" for b in builds)
+    assert builds[0].source == builds[1].source
+    assert "dft_plus_u" not in builds[1].source.as_dict()["details"]
+    assert zero.fock_build.source != bare.fock_build.source
+    assert len(zero.fock_build.source.as_dict()["details"]["dft_plus_u"]["details"]["sites"]) == 1
+    with pytest.raises(ValueError, match="has no AOs"):
+        gj.run_periodic_rks_gpw(system, basis, functional="pbe", grid=grid,
+            dft_plus_u_sites=[vq.HubbardSite(0, 2, U_ev=4.)], quiet=True)
+
+
+@pytest.mark.parametrize("seed", ["HCORE", "PATOM"])
+def test_gpw_rhf_dftu_zero_limit_and_seed(seed, monkeypatch, record_property):
+    import vibeqc.periodic_gpw_fock as state
+    import vibeqc.solvers._scf as scf
+    system, basis, grid = _rks_fock_state_case()
+    solved, builds = [], {}
+    solve = scf.solve_operator
+    hf_call = state._GpwRHFBuilder.__call__
+
+    def capture_hf(self, density):
+        build = hf_call(self, density)
+        builds[build.identity] = build
+        return build
+
+    monkeypatch.setattr(state._GpwRHFBuilder, "__call__", capture_hf)
+
+    def capture(operator, *a, **kw):
+        solved.append(operator.metadata)
+        return solve(operator, *a, **kw)
+
+    common = dict(grid=grid, initial_guess=seed, quiet=True)
+    bare = gj.run_periodic_rhf_gpw(system, basis, **common)
+    monkeypatch.setattr(scf, "solve_operator", capture)
+    zero = gj.run_periodic_rhf_gpw(system, basis,
+        dft_plus_u_sites=[vq.HubbardSite(0, 0, U_ev=4., J_ev=4.)], **common)
+    assert bare.converged and zero.converged
+    assert zero.energy == pytest.approx(bare.energy, abs=2e-12)
+    assert zero.e_dft_plus_u == 0.
+    record_property("zero_u_density_difference", float(np.max(abs(zero.density-bare.density))))
+    np.testing.assert_allclose(zero.density, bare.density, atol=2e-12, rtol=0)
+    np.testing.assert_allclose(zero.fock, bare.fock, atol=2e-12, rtol=0)
+    assert zero.fock_build.source != bare.fock_build.source
+    assert any(meta.role == "solver" for meta in solved)
+    assert all(meta.kind == "fock" for meta in solved)
+    if seed == "PATOM":
+        assert solved[0].role == "physical"
+        assert builds[solved[0].build_id].source == bare.fock_build.source
+    # A genuine Hubbard term must not contaminate PATOM's HF seed.
+    solved.clear()
+    finite = gj.run_periodic_rhf_gpw(system, basis,
+        dft_plus_u_sites=[vq.HubbardSite(0, 0, U_ev=4.)], max_iter=0, **common)
+    if seed == "PATOM":
+        assert builds[solved[0].build_id].source == bare.fock_build.source
+        assert builds[solved[0].build_id].source != finite.fock_build.source
+    with pytest.raises(ValueError, match="has no AOs"):
+        gj.run_periodic_rhf_gpw(system, basis, grid=grid,
+            dft_plus_u_sites=[vq.HubbardSite(0, 2, U_ev=4.)], quiet=True)
