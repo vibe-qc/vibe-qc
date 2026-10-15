@@ -320,7 +320,7 @@ def emit_input_atom(
     **aspherical and spin-polarised**. This is not a refinement: in the
     plane-wave reference work, spin-restricting the bromine reference
     alone moved KBr's atomization energy by 37 kJ/mol
-    (``handovers/HANDOVER_GPAW_PW_REFERENCE.md``, GPAW-PWREF-002), which
+    (the original investigation, GPAW-PWREF-002), which
     is far larger than the basis-set effects a campaign is trying to
     resolve. Comparing a spin-restricted atom reference against an
     oracle that used a polarised one produces a discrepancy that looks

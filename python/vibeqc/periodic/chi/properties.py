@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from itertools import product
 from typing import Sequence
 
+from ._transform_inputs import integer_array, checked_mesh_size
+
 import numpy as np
 
 from ..._vibeqc_core import (
@@ -140,7 +142,9 @@ def _mesh_from_result(result: object) -> tuple[int, int, int]:
     diagnostics = getattr(result, "aiccm2026dev_b", None)
     if diagnostics is None:
         raise TypeError("result is not an AICCM2026DEV-B SCF result")
-    return tuple(int(value) for value in diagnostics.mesh)
+    mesh = integer_array(diagnostics.mesh, name="mesh", shape=(3,))
+    checked_mesh_size(mesh)
+    return tuple(mesh.tolist())
 
 
 def _finite_torus_convention_from_result(

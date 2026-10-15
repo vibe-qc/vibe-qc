@@ -19,9 +19,10 @@ Useful when:
   cited" -- calling ``vibeqc-cite output-h2o`` is cheaper than
   embedding the output verbatim.
 
-The ``[plan]`` section in the manifest carries the resolved method
-+ basis + functional that the job used, so the assembled citation
-list matches what would have been auto-emitted at run time.
+Recorded ``[[citations.entries]]`` select the actual runtime bibliography,
+including optional optimizers and analysis. Current database metadata is used
+for those keys. Older manifests without recorded entries fall back to the
+method, basis and functional in ``[plan]``.
 
 Exit codes
 ----------
@@ -34,6 +35,7 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import os
 import sys
 import tomllib
@@ -153,6 +155,36 @@ def _assemble(manifest: dict[str, Any]) -> AssembledCitations:
         )
         sys.exit(2)
     job = _job_descriptor(manifest)
+    # Runtime-only choices (orbital optimizer, guesses, analysis, etc.) cannot
+    # be reconstructed from method/basis/functional alone. Preserve the actual
+    # recorded selection and order, resolving bibliographic data from the DB.
+    recorded = manifest.get("citations", {})
+    if not isinstance(recorded, dict):
+        sys.stderr.write("vibeqc-cite: manifest [citations] must be a table\n")
+        sys.exit(1)
+    if "entries" in recorded:
+        rows = recorded["entries"]
+        if not isinstance(rows, list):
+            sys.stderr.write("vibeqc-cite: manifest citations.entries must be a list\n")
+            sys.exit(1)
+        entries = db.entries()
+        selected = {}
+        for row in rows:
+            key = row.get("key") if isinstance(row, dict) else None
+            if not isinstance(key, str) or key not in entries:
+                sys.stderr.write(
+                    f"vibeqc-cite: unknown or invalid recorded citation key {key!r}; "
+                    "cannot regenerate a complete bibliography\n"
+                )
+                sys.exit(1)
+            entry = entries[key]
+            visible = row.get("print", entry.print)
+            if not isinstance(visible, bool):
+                sys.stderr.write("vibeqc-cite: recorded citation print must be boolean\n")
+                sys.exit(1)
+            selected.setdefault(key, replace(entry, print=entry.print and visible))
+        return AssembledCitations(citations=tuple(selected.values()))
+    # Older manifests without recorded citation entries retain plan routing.
     return db.assemble(
         method=job["method"] or None,
         basis=job["basis"] or None,

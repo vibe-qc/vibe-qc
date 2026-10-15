@@ -1,6 +1,6 @@
 """H2O / RHF / 5 bases: vibe-qc vs ORCA, head-to-head.
 
-Designed for the dev chat's bug-fixing handover. Same molecule,
+Designed for the dev chat's bug-fixing historical design record. Same molecule,
 same geometry, same bases across both codes; tabulates total
 energy + |F|max + per-code wall time so any divergence is
 immediately visible.

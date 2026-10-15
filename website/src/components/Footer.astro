@@ -20,6 +20,9 @@ const REPO = 'https://github.com/vibe-qc/vibe-qc';
         <h5>Docs</h5>
         <ul>
           {products.map(product => <li><a href={product.docs}>{product.name} docs{product.docsPending ? ' (soon)' : ''}</a></li>)}
+          <li><a href={`${DOCS}/tutorial/index.html`}>Tutorials</a></li>
+          <li><a href={`${DOCS}/features.html`}>Feature matrix</a></li>
+          <li><a href={`${DOCS}/validation.html`}>Validation</a></li>
           <li><a href={`${DOCS}/citing.html`}>Citing vibe-qc</a></li>
         </ul>
       </div>
@@ -27,6 +30,7 @@ const REPO = 'https://github.com/vibe-qc/vibe-qc';
         <h5>Products</h5>
         <ul>
           {products.map(product => <li><a href={`${base}products/${product.id}/`}>{product.name}</a></li>)}
+          <li><a href={`${base}methods/`}>Methods and status</a></li>
           <li><a href={`${DOCS}/changelog.html`}>Changelog</a></li>
         </ul>
       </div>
@@ -34,7 +38,7 @@ const REPO = 'https://github.com/vibe-qc/vibe-qc';
         <h5>Project</h5>
         <ul>
           <li><a href={REPO}>GitHub source</a></li>
-          <li><a href="https://github.com/vibe-qc/vibe-qc">GitHub mirror</a></li>
+          <li><a href={`${REPO}/issues`}>Issue tracker</a></li>
           <li><a href={`${base}download`}>Downloads</a></li>
           <li><a href={`${base}sponsor`}>Sponsor</a></li>
           <li><a href={`${base}contact`}>Contact</a></li>

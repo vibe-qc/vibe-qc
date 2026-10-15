@@ -740,7 +740,7 @@ def test_indefinite_bloch_overlap_guard_is_available_and_correct():
 # ---------------------------------------------------------------------------
 # The -18 Ha: what the GPW energy functional itself converges to.
 #
-# HANDOVER_GPW_MULTIK_OVERLAP_PSD.md left the production switch unlanded
+# the original investigation left the production switch unlanded
 # because converging the Bloch-overlap lattice sum moved LiF/def2-SVP/
 # (2,2,2)/PBE from -107.25 Ha to -125.43 Ha "and nobody can explain it".
 # Its stated untested hypothesis was that all-electron GPW at 150-300 Ha
@@ -762,7 +762,7 @@ def test_indefinite_bloch_overlap_guard_is_available_and_correct():
 # The functional converges to about -107.3852 Ha -- the physical scale --
 # and the whole plane-wave discretisation error at the campaign's 150 Ha is
 # 0.50 Ha, not 18 Ha. So the 18 Ha is NOT the grid, the correct GPW target
-# for this cell is -107.385 (the handover was working from "about -107.6",
+# for this cell is -107.385 (the original investigation was working from "about -107.6",
 # taken from a run that used the broken metric), and the queued cluster
 # ladder is unnecessary.
 #
@@ -790,7 +790,7 @@ def test_fixed_density_gpw_functional_converges_to_physical_scale():
         )
 
     # Converged by 300 -> 600 Ha: the remaining drift is <= 50 mHa, two
-    # orders below the 18 Ha the handover needed explaining.
+    # orders below the 18 Ha the original investigation needed explaining.
     assert abs(e[600.0] - e[300.0]) < 0.05, (
         f"GPW functional not converged in the cutoff: 300 Ha "
         f"{e[300.0]:.6f} vs 600 Ha {e[600.0]:.6f}"

@@ -52,7 +52,7 @@ References
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional, Sequence, Union
 
@@ -629,6 +629,11 @@ class NEBResult:
     # surface even when ``method`` is the canonical dispatcher key.
     semiempirical_variant: Optional[str] = None
     semiempirical_citation_entries: tuple[str, ...] = ()
+    # Identity captured from the loaded MACE model, not mutable caller options.
+    model_info: Any = None
+    device: Optional[str] = None
+    dtype: Optional[str] = None
+    weight_identity: dict[str, Any] = field(default_factory=dict)
 
     def write_qvf(
         self,
@@ -816,6 +821,7 @@ class NEBResult:
             functional=(
                 None if (is_mace or is_semiempirical) else self.functional
             ),
+            mlip_result=self if is_mace else None,
             extra_assemble_kwargs=extra,
             compression=compression,
         )
@@ -1835,6 +1841,8 @@ def _load_mace_model(
     template: System,
     mlip_options: Any,
     is_periodic: bool,
+    *,
+    mlip_execution: Optional[dict[str, Any]] = None,
 ) -> tuple[Any, np.ndarray, Optional[np.ndarray], str]:
     """Load the MACE model once and return ``(calc, numbers, cell, citation)``.
 
@@ -1843,12 +1851,21 @@ def _load_mace_model(
     ``citation`` the per-model foundation-model citation key (for the
     references block -- e.g. ``batatia_mace_mp_2024``). The ASL gate (academic,
     non-commercial models) fires inside :class:`vibeqc.mlip.mace.MACEModel`.
+    When supplied, ``mlip_execution`` receives the loaded model's identity
+    for the path result and output, before the first geometry evaluation.
     """
-    from .mlip.mace import MACEModel
+    from .mlip.mace import MACEModel, _pbc_for_dimension
 
     cell = np.asarray(template.lattice, dtype=float) if is_periodic else None
     seed = template.unit_cell_molecule() if is_periodic else template
-    model = MACEModel(seed, mlip_options, cell=cell)
+    pbc = _pbc_for_dimension(template.dim) if is_periodic else None
+    model = MACEModel(seed, mlip_options, cell=cell, pbc=pbc)
+    if mlip_execution is not None:
+        options = model.options
+        mlip_execution.update(
+            model_info=model.info, device=options.device, dtype=options.dtype,
+            weight_identity=model.weight_identity,
+        )
     citation = getattr(getattr(model, "info", None), "citation", "") or ""
     return model.calculator, _atomic_numbers_of(template), cell, citation
 
@@ -1859,6 +1876,7 @@ def _evaluate_image_mace(
     calc: Any,
     numbers: np.ndarray,
     cell: Optional[np.ndarray],
+    pbc: Optional[tuple[bool, bool, bool]] = None,
     **_ignored: Any,
 ) -> tuple[float, np.ndarray, None]:
     """Energy + analytic gradient at one geometry from a pre-loaded MACE
@@ -1871,18 +1889,28 @@ def _evaluate_image_mace(
     """
     from ase import Atoms
     from ase.units import Bohr, Hartree
+    from .mlip.mace import _checked_backend_result
 
     atoms = Atoms(
         numbers=[int(z) for z in numbers],
         positions=np.asarray(positions, dtype=float) * Bohr,
     )
     if cell is not None:
-        atoms.set_cell(np.asarray(cell, dtype=float) * Bohr)
-        atoms.set_pbc(True)
-    atoms.calc = calc
-    energy_ha = float(atoms.get_potential_energy()) / Hartree
+        # PeriodicSystem stores lattice vectors in columns; ASE uses rows.
+        atoms.set_cell(np.asarray(cell, dtype=float).T * Bohr)
+        atoms.set_pbc(pbc if pbc is not None else (True, True, True))
+    # Match the single-point wrapper: accept the whole forward pass only
+    # after checking its scalar energy and one finite force vector per atom.
+    # ASE getters alone can return NaNs or a shape that broadcasts across the
+    # band, contaminating its tangents and optimizer state without an error.
+    calc.calculate(atoms, properties=["energy", "forces"])
+    energy_eV = _checked_backend_result(calc.results, "energy", (), "NEB image")
+    forces = _checked_backend_result(
+        calc.results, "forces", (len(numbers), 3), "NEB image",
+    )
+    energy_ha = float(energy_eV) / Hartree
     # ASE forces are eV/Angstrom; gradient = -force in Ha/bohr.
-    grad = -np.asarray(atoms.get_forces(), dtype=float) * Bohr / Hartree
+    grad = -forces * Bohr / Hartree
     return energy_ha, grad, None
 
 
@@ -3474,18 +3502,22 @@ def run_neb(
 
     # --- 2. Evaluate endpoints once + cache --------------------------------
     mace_citation = ""
+    mlip_execution: dict[str, Any] = {}
     if is_mace:
+        from .mlip.mace import _pbc_for_dimension
+
         # Load the MACE model once and reuse the calculator for every image.
         # Per-image work is a single forward pass (analytic energy + forces),
         # so the band is evaluated serially rather than pickling the torch
         # model across joblib processes. No SCF, no k-mesh, no basis.
         _mace_calc, _mace_numbers, _mace_cell, mace_citation = _load_mace_model(
-            reactant, mlip_options, is_periodic
+            reactant, mlip_options, is_periodic, mlip_execution=mlip_execution
         )
         eval_kwargs: dict[str, Any] = {
             "calc": _mace_calc,
             "numbers": _mace_numbers,
             "cell": _mace_cell,
+            "pbc": _pbc_for_dimension(neb_dim) if is_periodic else None,
         }
         evaluator = _evaluate_image_mace
         n_jobs = 1
@@ -3773,6 +3805,7 @@ def run_neb(
         is_periodic=is_periodic,
         used_dft_plus_u=bool(dft_plus_u),
         mace_model_citation=(mace_citation or None),
+        **mlip_execution,
         semiempirical_route_method=(
             "dftb0_seccm" if is_dftb0_seccm else None
         ),

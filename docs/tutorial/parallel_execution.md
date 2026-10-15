@@ -143,29 +143,75 @@ dense density-fitting GEMM is the one place a threaded BLAS pays off.
   runs. For small systems this doesn't matter; for very large
   systems it becomes a bottleneck. Parallel LAPACK integration is
   tracked on the roadmap.
-- **Production MPI across nodes.** OpenMP is the broad production
-  shared-memory path today. The optional `[mpi]` extra provides
-  `mpi4py` helpers, an experimental GPW z-slab overlay, and two
-  production seams on multi-k GDF, both via `vibeqc.mpi.KPointPartition`:
-  the cderi (density-fitting 3-center integral) build farms
-  momentum-transfer q-groups across ranks once per SCF *setup*
-  (`run_krhf_periodic_gdf` / `run_kuhf_periodic_gdf` /
-  `run_krohf_periodic_gdf`), and -- landed 2026-08-05 -- the
-  per-*iteration* O(n_k²) exchange contraction is farmed too, over the
-  bra k-index, with ranks exchanging whole `K(k_i)` matrices (exact,
-  not approximate) and reassembling via `KPointPartition.allgather_ordered`.
-  Restricted 3D χ-CCM four-center RHF additionally uses
-  `LatticeOutputPartition` to farm complete direct short-range J/K output
-  blocks. The full internal translation sum stays inside each task, while
-  reciprocal long-range layers and the rest of SCF remain replicated. This
-  is neither Γ-CCM WSC farming nor χ finite-group residue farming. Other HF /
-  DFT / MP2 drivers are not distributed across MPI ranks yet. The production
-  strategy is documented in
-  [MPI Parallelization](../design_mpi_parallelization.md).
-  Installing the extra alone does not initialize MPI: ordinary Python
-  processes stay serial, while validated launcher ranks bind
-  `MPI.COMM_WORLD` automatically and fail closed if the communicator does not
-  match the launch contract.
+- **Production MPI across nodes.** OpenMP is the production shared-memory
+  path today. What ships beyond it is an MPI *substrate*, not a set of
+  distributed drivers; the details are in the next section.
+
+## What the `[mpi]` extra actually provides
+
+The optional `[mpi]` extra installs `mpi4py` and enables the helpers in
+`vibeqc.mpi`. Installing it does not initialise MPI: an ordinary Python
+process stays serial, and only a process started by a recognised launcher
+(`mpirun`, `srun` and the PMI/PMIx family) binds `MPI.COMM_WORLD`, failing
+closed if the communicator disagrees with the launch contract. Under a
+single rank every helper below is the identity, so serial runs are
+untouched. The pieces, and exactly where each is used, are:
+
+- **Collectives.** `mpi_world()`, `mpi_allreduce`, `mpi_reduce_sum`,
+  `mpi_bcast`, `mpi_gather`, `mpi_allgather`, `mpi_barrier`: thin wrappers
+  that other modules build on.
+- **`KPointPartition`.** Assigns independent Brillouin-zone tasks to ranks
+  (block, cyclic or cost-weighted) and, more importantly, reassembles the
+  per-rank results in global k order through `allgather_ordered`, so a
+  call site never flattens a rank-ordered gather by hand. It is threaded
+  into the multi-k **GDF** route (`run_krhf_periodic_gdf`,
+  `run_kuhf_periodic_gdf`, `run_krohf_periodic_gdf`) at two seams: the
+  density-fitting three-centre (cderi) build is farmed over
+  momentum-transfer groups once per SCF *setup*, and the per-iteration
+  exchange contraction is farmed over the bra k index, each rank building
+  complete `K(k_i)` matrices that are gathered exactly. Both seams use a
+  replicated-data model: every rank ends up holding the full cderi cache,
+  so they parallelise build time, not memory, and the rest of the SCF runs
+  identically on every rank.
+- **Opt-in short-range GDF q batches.** With the environment variable
+  `VIBEQC_SR_Q_MPI=1` (all ranks must agree), the independent momentum-transfer
+  batches of the short-range GDF factor build are owned by ranks through the
+  same `KPointPartition`; every rank still keeps the complete ordered factor
+  cache and runs the usual SCF. It is off by default.
+- **`LatticeOutputPartition`.** A construction-neutral scheduler for
+  complete real-space output blocks with a fingerprinted, validated gather.
+  It is used by the BIPOLE direct short-range J/K builder when a caller
+  declares output-cell tasks, and by the restricted 3-D chi-CCM four-centre
+  RHF (an experimental AICCM line) around that kernel. The full internal
+  translation sum stays inside each task; reciprocal long-range layers and
+  the rest of the SCF remain replicated.
+- **`distribute_shell_pairs` and `distribute_tasks`.** Exported and tested
+  but not wired into the molecular SCF or Fock builders.
+- **The GPW z-slab grid overlay.** `grid_slab_partition`,
+  `collocate_density_mpi` and `project_potential_mpi`, selected with
+  `GpwJBuilder(..., mpi_aware=True)`, split the GPW real-space grid into
+  z-slabs per rank, assemble the replicated full-grid density, run the FFT
+  Poisson solve on every rank and allreduce the projected Hartree matrix.
+
+```{admonition} Status: experimental
+:class: warning
+
+The GPW z-slab grid overlay (`GpwJBuilder(mpi_aware=True)`) is an experimental
+route: its multi-rank Hartree-J build was broken through v0.12.0 (the per-rank
+slabs were summed elementwise), was fixed post-release, and is pinned only by
+simulated-rank tests until a real multi-rank `mpirun` validation enters the
+gate. Its numbers under more than one rank are research output, not validated
+results, and it is not part of the release gate. The label vocabulary is
+defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
+None of this amounts to a distributed HF, DFT, MP2, TDDFT or multi-k SCF
+*driver*: the [feature matrix](../features.md) lists the layer as "MPI
+substrate", and the production strategy, phase plan and validation gates
+are documented in [MPI Parallelization](../design_mpi_parallelization.md).
+Size your jobs by OpenMP threads per rank today, and treat any multi-rank
+speed-up you measure on the GDF seams as an unvalidated bonus.
 
 ## Performance-checking checklist
 

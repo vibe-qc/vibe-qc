@@ -24,8 +24,9 @@ $$
 $S$ is a Gram matrix and so is **positive semi-definite by
 construction**: every eigenvalue $\lambda_i \ge 0$. Numerically,
 finite precision and finite cutoffs can drive $\lambda_\text{min}$
-below zero, and once $S$ has a negative eigenvalue the canonical
-$S^{-1/2}$ used to orthogonalise the basis blows up, the SCF
+below zero, and once $S$ has a negative eigenvalue the symmetric
+$S^{-1/2}$ used to orthogonalise the basis ({vibeqc-cite}`lowdin_1950`,
+{vibeqc-cite}`lowdin_ortho_1970`) blows up, the SCF
 either fails outright or converges to a physically meaningless
 single-determinant.
 
@@ -67,7 +68,8 @@ and the right fix is different in each:
 
 2. **Under-converged exchange screening.** The negative eigenvalues
    are an artefact of too-loose lattice-sum truncation: contributions
-   that should have been kept got Schwarz-screened away, leaving
+   that should have been kept got Schwarz-screened away
+   ({vibeqc-cite}`haser_ahlrichs_schwarz_1989`), leaving
    the overlap matrix incomplete. Fix at SCF-options time: tighten
    `lat_opts.cutoff_bohr` and `lat_opts.schwarz_threshold`. CRYSTAL
    surfaces this as the ITOL4/ITOL5 distinction in the TOLINTEG
@@ -173,13 +175,17 @@ basis = vq.BasisSet(mol, "pob-tzvp")        # Peintinger 2013
 basis = vq.BasisSet(mol, "pob-dzvp-rev2")   # Vilela Oliveira 2019
 ```
 
-These are **not** simply re-tabulated molecular basis sets, the
-diffuse primitives have been re-optimised against a condition-number
-penalty so that the overlap matrix stays well-conditioned even
-in tight ionic crystals. See [Peintinger, Vilela Oliveira, Bredow,
+These are **not** simply re-tabulated molecular basis sets: the
+primitives with exponents below 0.1 were removed and the remaining
+valence exponents re-optimised in solids with a lower bound on the
+exponents, so that the overlap matrix stays well-conditioned even
+in tight ionic crystals; the rev2 sets add a BSSE-correction scheme.
+See [Peintinger, Vilela Oliveira, Bredow,
 *J. Comput. Chem.* **34**, 451 (2013)](https://doi.org/10.1002/jcc.23153)
+({vibeqc-cite}`peintinger_pob_tzvp_2013`)
 and [Vilela Oliveira, Laun, Peintinger, Bredow, *J. Comput. Chem.*
-**40**, 2364 (2019)](https://doi.org/10.1002/jcc.26013) for the
+**40**, 2364 (2019)](https://doi.org/10.1002/jcc.26013)
+({vibeqc-cite}`vilela_oliveira_pob_rev2_2019`) for the
 design philosophy and per-element parametrisation.
 
 The [user guide on basis sets](basis_sets.md) and
@@ -222,7 +228,7 @@ the largest primitive-pair overlap the truncation would drop. It
 needs no search and no repeated overlap builds, and it is what the
 periodic-LCAO literature has always used: CRYSTAL's ITOL1 thresholds
 the overlap of the two shells' adjoined Gaussians rather than a
-radius. On the primitive rocksalt and diamond cells it puts
+radius ({vibeqc-cite}`pisani_dovesi_lattice_truncation_1980`, Sec. 4). On the primitive rocksalt and diamond cells it puts
 `pob-TZVP-rev2` at 25-29 bohr and def2-SVP at 33-52 bohr, which is a
 fair measure of what a molecular basis costs on a dense lattice.
 
@@ -274,7 +280,11 @@ reminder (`vq.format_basis_filter_report`).
 If you've decided the SCF must run despite a `critical` preflight
 - for example, you're reproducing an old calculation that was
 done with silent truncation, three explicit orthogonalisation
-methods are available:
+methods are available: canonical orthogonalisation
+({vibeqc-cite}`lowdin_ortho_1970`, in the lineage of
+{vibeqc-cite}`lykos_schmeising_1961`), pivoted Cholesky
+({vibeqc-cite}`lehtola_pivoted_cholesky_2019`) and symmetric
+orthogonalisation ({vibeqc-cite}`lowdin_1950`):
 
 ```python
 X, info = vq.orthogonalise_overlap(S, method="canonical")     # Löwdin 1970
@@ -347,9 +357,8 @@ A short table for picking the right combination by system type:
 
 ## References
 
-* Lykos, P. G., & Schmeising, H. N. (1961). *Linear dependence in
-  Gaussian basis sets and the catastrophe of orthonormalization.*
-  J. Chem. Phys., **35**, 288.
+* Lykos, P. G., & Schmeising, H. N. (1961). *Maximum overlap atomic
+  and molecular orbitals.* J. Chem. Phys., **35**, 288.
 * Löwdin, P.-O. (1970). *On the nonorthogonality problem.* Adv.
   Quantum Chem., **5**, 185, the canonical-orthogonalisation paper
   that gives the v0.7 codename *Löwdin's Compass*.

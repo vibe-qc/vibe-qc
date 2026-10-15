@@ -759,6 +759,7 @@ def compute_j_ewald_3d_ft_k_density_to_cells(
     ke_cutoff: float = 200.0,
     chunk_size: int = 512,
     cell_chunk_size: Optional[int] = None,
+    integral_engine=None,
 ):
     """Exact G=0-dropped Hartree J blocks from per-k density matrices.
 
@@ -775,7 +776,22 @@ def compute_j_ewald_3d_ft_k_density_to_cells(
     short-range envelope that caused the pure-RKS mHa Hartree offset.
     ``omega`` is accepted for API compatibility; the total exact J is
     independent of the Ewald split parameter.
+
+    Explicit ``IntegralEngineOptions(backend="manta")`` uses the bounded
+    native composition in physical AO normalization, with a whole-mesh
+    receipt. It requires unique inversion-closed supports and normalized
+    nonnegative weights. The selected source streams one cell at a time.
     """
+    if integral_engine is not None:
+        from .manta_periodic import _selected_periodic_hartree
+
+        result = _selected_periodic_hartree(
+            basis, system, D_k_list, k_points, weights, list(output_cells), omega,
+            lattice_opts=lattice_opts, ke_cutoff=ke_cutoff, reciprocal_batch=chunk_size,
+            cell_chunk_size=cell_chunk_size, integral_engine=integral_engine)
+        # The native producer checks the imaginary residual before this
+        # explicit conversion to the legacy real-space block interface.
+        return [np.ascontiguousarray(block.real) for block in result.cell_values]
     _ = float(omega)
     if system.dim != 3:
         raise ValueError(

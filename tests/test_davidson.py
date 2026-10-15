@@ -621,3 +621,132 @@ def test_no_budget_returns_a_null_ritz_pair(n_eig: int, max_subspace: int) -> No
                 f"n_eig={n_eig} max_subspace={max_subspace}: reported "
                 "convergence on the wrong roots"
             )
+
+
+# ---------------------------------------------------------------------------
+# GitLab #287: a partial-spectrum problem too small to hold the restart floor
+# (n < 2 * n_eig + 6) used to spin to max_iter and return converged=False
+# with the residual stalled (5.2e-2 in the #123 verification sweep: all
+# Hermitian, n=12, n_eig=8, warm start of 10 columns).  The kernels now
+# solve such a problem densely: exact roots, n_iter = 0, converged = True.
+# ---------------------------------------------------------------------------
+
+
+def _real_ladder(n: int, seed: int) -> np.ndarray:
+    """Real symmetric operator with a unit-spaced diagonal ladder (the
+    #123 sweep's ``ladder_real`` shape, numpy-generated)."""
+    rng = np.random.default_rng(seed)
+    z = rng.normal(size=(n, n)) * 0.02
+    return np.diag(np.arange(1.0, n + 1.0)) + (z + z.T) / 2
+
+
+def _warm_start(n: int, n_cols: int, seed: int, complex_: bool) -> np.ndarray:
+    rng = np.random.default_rng(1000 + seed)
+    guess = np.eye(n, n_cols, dtype=complex if complex_ else float)
+    noise = rng.normal(size=(n, n_cols)) * 0.05
+    if complex_:
+        noise = noise + 1j * rng.normal(size=(n, n_cols)) * 0.05
+    return guess + noise
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_hermitian_tiny_partial_spectrum_below_the_restart_floor_converges(seed):
+    """The #287 shape: n=12, n_eig=8, warm start of 10 columns."""
+    A = _hermitian_ladder(12, seed=seed)
+    reference = np.linalg.eigvalsh(A)[:8]
+    opts = _core.DavidsonOptions()
+    opts.n_eig = 8
+    opts.conv_tol = 1e-6
+    opts.max_iter = 100
+    opts.guess_vectors_cplx = _warm_start(12, 10, seed, complex_=True)
+    res = _core.davidson_solve_hermitian(A, opts)
+    evals = np.asarray(res.eigenvalues)
+    X = np.asarray(res.eigenvectors)
+    assert res.converged, f"stalled: {np.abs(evals - reference).max():.3e}"
+    assert res.n_converged == 8
+    assert np.abs(evals - reference).max() < 1e-8
+    residuals = np.linalg.norm(A @ X - X * evals, axis=0)
+    assert residuals.max() < 1e-6
+
+
+@pytest.mark.parametrize("n_eig, n_guess", [(4, 0), (4, 6), (8, 0)])
+def test_real_tiny_partial_spectrum_below_the_restart_floor_converges(n_eig, n_guess):
+    A = _real_ladder(12, seed=1)
+    reference = np.linalg.eigvalsh(A)[:n_eig]
+    opts = _core.DavidsonOptions()
+    opts.n_eig = n_eig
+    opts.n_guess = n_guess
+    opts.conv_tol = 1e-6
+    opts.max_iter = 100
+    res = _core.davidson_solve(A, opts)
+    evals = np.asarray(res.eigenvalues)
+    assert res.converged, f"stalled: {np.abs(evals - reference).max():.3e}"
+    assert res.n_converged == n_eig
+    assert np.abs(evals - reference).max() < 1e-8
+
+
+def test_matrix_free_tiny_partial_spectrum_uses_the_operator_once_per_column():
+    A = _real_ladder(12, seed=2)
+    calls = {"n": 0}
+
+    def matvec(v):
+        calls["n"] += 1
+        return A @ np.asarray(v)
+
+    opts = _core.DavidsonOptions()
+    opts.n_eig = 4
+    opts.conv_tol = 1e-6
+    opts.max_iter = 100
+    res = _core.davidson_solve_matvec(12, matvec, np.diag(A).copy(), opts)
+    assert res.converged
+    assert calls["n"] == 12, "the dense fallback assembles the operator once"
+    assert np.abs(np.asarray(res.eigenvalues) - np.linalg.eigvalsh(A)[:4]).max() < 1e-8
+
+
+def test_full_spectrum_request_keeps_the_iterative_path():
+    """n_eig == n is not a #287 shape: one sweep converges it (unchanged)."""
+    A = _real_ladder(12, seed=3)
+    opts = _core.DavidsonOptions()
+    opts.n_eig = 12
+    opts.conv_tol = 1e-8
+    res = _core.davidson_solve(A, opts)
+    assert res.converged
+    assert res.n_iter >= 1
+    assert np.abs(np.asarray(res.eigenvalues) - np.linalg.eigvalsh(A)).max() < 1e-8
+
+
+def test_subspace_budget_matches_the_documented_contract():
+    """davidson.hpp: auto = min(max(8 n_eig, n_guess + 20), n), raised to the
+    floor n_eig + min(5, n - n_eig) + n_eig + 1 and capped at n."""
+    A = _real_ladder(120, seed=0)
+    for n_guess, requested in ((0, 0), (0, 4), (0, 40)):
+        opts = _core.DavidsonOptions()
+        opts.n_eig = 3
+        opts.n_guess = n_guess
+        opts.max_subspace = requested
+        opts.conv_tol = 1e-7
+        res = _core.davidson_solve(A, opts)
+        auto_guess = max(3 + 5, min(2 * 3, 120))
+        auto_budget = min(max(8 * 3, auto_guess + 20), 120)
+        budget = requested if requested > 0 else auto_budget
+        floor = 3 + min(5, 120 - 3) + 3 + 1
+        assert res.converged
+        assert res.subspace_dim <= min(120, max(budget, floor))
+        assert res.n_converged == 3
+
+
+def test_solver_result_exposes_n_converged_and_subspace_dim():
+    """#287: the count stopped at the pybind11 layer; SolverResult carries it."""
+    from vibeqc.solvers.eigensolver import (
+        EigenProblem,
+        SolverOptions,
+        solve_eigenproblem,
+    )
+
+    A = _real_ladder(120, seed=4)
+    res = solve_eigenproblem(
+        EigenProblem(matrix=A), SolverOptions(n_roots=3), solver="davidson"
+    )
+    assert res.converged
+    assert res.n_converged == 3
+    assert res.subspace_dim is not None and res.subspace_dim >= 3

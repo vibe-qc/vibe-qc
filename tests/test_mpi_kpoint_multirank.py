@@ -1,4 +1,4 @@
-"""Real multi-rank tests for the k-point partition (HANDOVER_MPI.md step 1).
+"""Real multi-rank tests for the k-point partition (the original investigation step 1).
 
 Every other MPI test in the suite runs single-process, which exercises
 only the serial fallbacks -- the branches that matter under ``mpirun``
@@ -727,7 +727,7 @@ def test_inconsistent_partition_fails_loudly(tmp_path):
 @requires_mpi
 @pytest.mark.parametrize("n_ranks", [2])
 def test_multik_gdf_cderi_farming_matches_serial(n_ranks, tmp_path):
-    """The first production k-point farming path (HANDOVER_MPI.md step 4).
+    """The first production k-point farming path (the original investigation step 4).
 
     The multi-k GDF cderi cache is built by farming momentum-transfer
     groups across ranks and reassembling with one ordered gather. Every
@@ -802,7 +802,7 @@ def test_multik_gdf_cderi_farming_matches_serial(n_ranks, tmp_path):
 @requires_mpi
 @pytest.mark.parametrize("n_ranks", [2, 3])
 def test_multik_gdf_exchange_farming_matches_serial(n_ranks, tmp_path):
-    """Per-iteration GDF exchange farming (HANDOVER_MPI.md step 4c).
+    """Per-iteration GDF exchange farming (the original investigation step 4c).
 
     Distinct from the cderi farming above, which runs once per SCF
     *setup*. This is the O(n_k^2) fitted-exchange contraction every

@@ -542,3 +542,128 @@ def semicanonical_pao_basis(
     eps_pao, c = np.linalg.eigh(F_x)
     V_semi = X @ c
     return V_semi, eps_pao
+
+
+#: PAO-domain criteria understood by :func:`orbital_domain_atom_mask`.
+DOMAIN_CRITERIA = ("mulliken", "doi")
+
+
+def orbital_doi_atoms(
+    molecule,
+    basis,
+    C_loc: np.ndarray,
+    S: np.ndarray,
+    Q_vir: np.ndarray,
+    atom_first_ao: np.ndarray,
+    *,
+    n_radial: int = 40,
+    lebedev_order: int = 17,
+    batch: int = 4096,
+) -> np.ndarray:
+    """Differential overlap of each localised orbital with each atom's PAOs.
+
+    Returns ``doi[i, A] = max_{mu on A} DOI(i, mu)`` with
+
+        DOI(i, mu) = sqrt( integral |phi_i(r)|^2 |chi~_mu(r)|^2 dr ),
+
+    the differential overlap integral of Pinski, Riplinger, Valeev and Neese,
+    J. Chem. Phys. 143, 034108 (2015), Eq. 4, between the localised occupied
+    orbital ``phi_i`` and the normalised projected atomic orbital
+    ``chi~_mu = Q_vir[:, mu] / ||Q_vir[:, mu]||_S``. ORCA builds its DLPNO PAO
+    domains from it (``TCutDO``). Unlike a Mulliken population it cannot be
+    small or negative merely because two basis functions overlap little: a
+    lone pair's density overlaps the PAOs on the atoms next to it whatever the
+    AO populations say.
+
+    The integral is evaluated on a coarse molecular grid (Becke partition,
+    Treutler-Ahlrichs radial, Lebedev angular); domains only need it to about
+    a percent, well inside the spacing of the published cut-offs.
+    """
+    from vibeqc._vibeqc_core import (
+        AngularScheme,
+        GridOptions,
+        build_grid,
+        evaluate_ao,
+    )
+
+    opts = GridOptions()
+    opts.n_radial = int(n_radial)
+    opts.angular = AngularScheme.Lebedev
+    opts.lebedev_order = int(lebedev_order)
+    grid = build_grid(molecule, opts)
+    points = np.asarray(grid.points)
+    weights = np.asarray(grid.weights)
+
+    # Normalised PAOs. A PAO whose projection vanishes (an AO lying entirely
+    # in the occupied space) carries no virtual function and gets DOI 0.
+    norm2 = np.einsum("mp,mn,np->p", Q_vir, S, Q_vir, optimize=True)
+    norm = np.sqrt(np.clip(norm2, 0.0, None))
+    scale = np.where(norm > 1e-12, 1.0 / np.where(norm > 1e-12, norm, 1.0), 0.0)
+    Qn = Q_vir * scale[None, :]
+
+    n_orb = C_loc.shape[1]
+    nbf = C_loc.shape[0]
+    acc = np.zeros((n_orb, nbf))
+    for start in range(0, points.shape[0], int(batch)):
+        stop = min(start + int(batch), points.shape[0])
+        chi = np.asarray(evaluate_ao(basis, np.ascontiguousarray(points[start:stop])))
+        phi = chi @ C_loc
+        pao = chi @ Qn
+        acc += (weights[start:stop, None] * phi * phi).T @ (pao * pao)
+    doi_mu = np.sqrt(np.clip(acc, 0.0, None))
+
+    natom = len(atom_first_ao) - 1
+    doi = np.zeros((n_orb, natom))
+    for a in range(natom):
+        lo, hi = int(atom_first_ao[a]), int(atom_first_ao[a + 1])
+        if hi > lo:
+            doi[:, a] = doi_mu[:, lo:hi].max(axis=1)
+    return doi
+
+
+def orbital_domain_atom_mask(
+    molecule,
+    basis,
+    C_loc: np.ndarray,
+    S: np.ndarray,
+    Q_vir: np.ndarray,
+    atom_first_ao: np.ndarray,
+    *,
+    criterion: str = "mulliken",
+    tcut_mkn: float = 1e-3,
+    tcut_do: float = 1e-2,
+) -> np.ndarray:
+    """Boolean ``(n_orb, natom)`` mask of each localised orbital's atom domain.
+
+    ``"mulliken"`` keeps atom A for orbital i when ``|q_iA| > tcut_mkn`` (the
+    Mulliken population test of :func:`select_domain_atoms_mulliken`, whose
+    pair domain is the union of the two orbitals' masks). ``"doi"`` keeps A
+    when some PAO on A has ``DOI(i, mu) > tcut_do`` (:func:`orbital_doi_atoms`).
+    A zero threshold keeps every atom, the exactness setting of either
+    criterion. A threshold no atom passes leaves the orbital's row empty; the
+    callers decide what an empty domain means (the closed-shell routes drop
+    such a pair, the open-shell route refuses it), as they did before this
+    helper existed.
+    """
+    natom = len(atom_first_ao) - 1
+    n_orb = C_loc.shape[1]
+    if criterion not in DOMAIN_CRITERIA:
+        raise ValueError(
+            f"unknown domain criterion {criterion!r} (expected one of "
+            f"{', '.join(DOMAIN_CRITERIA)})"
+        )
+    CS = C_loc.T @ S
+    pops = np.zeros((n_orb, natom))
+    for a in range(natom):
+        lo, hi = int(atom_first_ao[a]), int(atom_first_ao[a + 1])
+        pops[:, a] = np.einsum("im,mi->i", CS[:, lo:hi], C_loc[lo:hi, :])
+    if criterion == "mulliken":
+        if tcut_mkn <= 0.0:
+            return np.ones((n_orb, natom), dtype=bool)
+        mask = np.abs(pops) > tcut_mkn
+    else:
+        if tcut_do <= 0.0:
+            return np.ones((n_orb, natom), dtype=bool)
+        doi = orbital_doi_atoms(molecule, basis, C_loc, S, Q_vir, atom_first_ao)
+        mask = doi > tcut_do
+    return mask

@@ -12,6 +12,7 @@ import {
 import { sponsorshipProgram } from '../data/sponsors.mjs';
 import { components } from '../data/components.mjs';
 import { products } from '../data/products.mjs';
+import { allMethods } from '../data/methods.mjs';
 
 const base = import.meta.env.BASE_URL;
 const ociImages = distributionMatrix.oci.images.map((image) => ({
@@ -31,8 +32,9 @@ const distributionCta = availableDistributionCount > 0
   : 'Distribution preview';
 
 // Method chips — mirror the real molecular / periodic stacks.
-const MOLECULAR = ['RHF / UHF', 'DFT', 'MP2', 'DLPNO-CCSD(T)', 'TD-DFT', 'CASSCF', 'IC-CASPT2', 'D3(BJ)', '∇E analytic'];
-const PERIODIC = ['periodic HF', 'KS-DFT', 'k-meshes', 'band structure', 'DOS', 'COOP / COHP', 'Mayer bond order', 'GPW · GDF · BIPOLE'];
+const MOLECULAR = ['RHF / UHF / ROHF', 'DFT', 'MP2', 'CCSD(T)', 'DLPNO-CCSD(T)', 'TD-DFT', 'CASSCF', 'IC-CASPT2 / NEVPT2', 'full CI', 'D3(BJ) / D4', 'CPCM', '∇E analytic'];
+const PERIODIC = ['periodic HF', 'KS-DFT', 'k-meshes', 'smearing', 'DFT+U', 'band structure', 'DOS', 'COOP / COHP', 'Mayer bond order', 'QTAIM', 'GPW · GDF · BIPOLE'];
+const experimentalCount = allMethods.filter((method) => method.status === 'experimental').length;
 ---
 
 <Base>
@@ -46,10 +48,11 @@ const PERIODIC = ['periodic HF', 'KS-DFT', 'k-meshes', 'band structure', 'DOS', 
         <span class="eyebrow">three products, one scientific workflow</span>
         <h1>Quantum chemistry for molecules&nbsp;and <span class="solids">solids</span>.</h1>
         <p class="lede">
-          Calculate with vibe-qc's <strong>C++17</strong> engine —
-          Hartree–Fock through DLPNO-CCSD(T), TD-DFT and CASSCF for molecules, and 1D/2D/3D
-          periodic HF and Kohn–Sham DFT for solids. <strong>Every method implemented from the
-          ground up</strong>. Explore with vibe-view and schedule with vibe-queue,
+          Calculate with vibe-qc's <strong>C++17</strong> engine:
+          Hartree-Fock through CCSD(T) and DLPNO-CCSD(T), TD-DFT and CASSCF for molecules, and 1D/2D/3D
+          periodic HF and Kohn-Sham DFT for solids. <strong>Every electronic-structure method is its
+          own implementation</strong>, validated against established codes that run only as
+          out-of-process references. Explore with vibe-view and schedule with vibe-queue,
           two independently installed products that also work with other codes.
         </p>
 
@@ -66,7 +69,7 @@ const PERIODIC = ['periodic HF', 'KS-DFT', 'k-meshes', 'band structure', 'DOS', 
     <div class="strip">
       <div class="wrap strip-inner">
         <div>
-          <div class="lead-k">Its <b>own C++17 implementation</b> of every method — no external quantum-chemistry program on the runtime path, from a single molecule to an infinite crystal.</div>
+          <div class="lead-k">Its <b>own implementation</b> of every method on a C++17 core. No external quantum-chemistry program runs on the runtime path, from a single molecule to an infinite crystal; molecular HF, DFT and MP2 agree with PySCF to machine precision.</div>
         </div>
         <div>
           <div class="k">500<span class="unit">+</span></div>
@@ -89,7 +92,7 @@ const PERIODIC = ['periodic HF', 'KS-DFT', 'k-meshes', 'band structure', 'DOS', 
         <div class="sec-head">
           <span class="eyebrow">one engine, molecules to solids</span>
           <h2>The same engine, from a single molecule to an infinite crystal.</h2>
-          <p>vibe-qc implements every method itself — no wrapped external QC program. Pick the stack; the Python front-end is identical.</p>
+          <p>vibe-qc implements every electronic-structure method itself; the only external model is the optional MACE potential, attributed as such. Pick the stack; the Python front end is identical.</p>
         </div>
 
         <div class="stacks">
@@ -119,14 +122,14 @@ const PERIODIC = ['periodic HF', 'KS-DFT', 'k-meshes', 'band structure', 'DOS', 
         <div class="sec-head">
           <span class="eyebrow">what's inside</span>
           <h2>Research-grade methods, honestly attributed.</h2>
-          <p>Every basis set, functional and ECP carries its citation through to the run log — and every method is vibe-qc's own implementation, not a wrapper.</p>
+          <p>Every basis set, functional and ECP carries its citation through to the run log, and every route carries a status label: production, preview, experimental or gated. <a class="methods-link" href={`${base}methods/`}>See all {allMethods.length} method families and their status →</a></p>
         </div>
 
         <div class="grid">
           <div class="card">
             <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><ellipse cx="12" cy="12" rx="10" ry="4.5"/><ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(120 12 12)"/></svg>
             <h4>DLPNO local correlation</h4>
-            <p>DLPNO-MP2 and the per-pair DLPNO-CCSD(T) solver bring gold-standard correlation to systems far larger than canonical scaling allows.</p>
+            <p>DLPNO-MP2 and the per-pair DLPNO-CCSD(T) solver, closed- and open-shell, reach beyond the canonical CCSD(T) reference. Accuracy evidence is recipe-specific and pinned in the manual.</p>
           </div>
           <div class="card">
             <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 17c3 0 3-9 6-9s3 9 6 9 3-6 6-6"/><path d="M3 21h18" opacity="0.4"/></svg>
@@ -136,22 +139,22 @@ const PERIODIC = ['periodic HF', 'KS-DFT', 'k-meshes', 'band structure', 'DOS', 
           <div class="card">
             <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20V6a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" opacity="0.5"/><path d="M8 13l2.5 2.5L16 10"/></svg>
             <h4>Analytic gradients</h4>
-            <p>Production CASSCF and exact IC-CASPT2 analytic gradients, FD-tight to ~1e-7, driving geometry optimization.</p>
+            <p>Analytic nuclear gradients for HF and DFT with ECPs and solvent, analytic Hessians, and a state-specific CASSCF gradient FD-tight to ~1e-7. Where a term is missing, the optimizer falls back to finite differences and says so.</p>
           </div>
           <div class="card">
             <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12h4l2-7 3 14 2-9 2 5h5"/></svg>
             <h4>Band structure &amp; DOS</h4>
-            <p>Full band paths and densities of states for periodic systems, with COOP/COHP bonding analysis in 1D, 2D and 3D.</p>
+            <p>Full band paths, densities of states, fat bands and periodic Mayer bond orders in 1D, 2D and 3D. COOP/COHP analysis ships as a <span class="soon">preview</span> while the COHP projection is qualified.</p>
           </div>
           <div class="card">
             <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1" opacity="0.5"/><rect x="3" y="14" width="7" height="7" rx="1" opacity="0.5"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
             <h4>Fast eigensolvers</h4>
-            <p>Davidson, LOBPCG (3–12× faster), plus experimental Jacobi–Davidson and GPLHR — selectable with one <code>solver=</code> keyword.</p>
+            <p>Davidson and LOBPCG (3 to 12 times fewer iterations than Davidson) selectable with one <code>solver=</code> keyword, plus <span class="soon">experimental</span> Jacobi-Davidson and GPLHR at library level.</p>
           </div>
           <div class="card">
             <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 8h16M4 16h16M8 4v16M16 4v16" opacity="0.5"/><circle cx="8" cy="8" r="1.7" fill="currentColor" stroke="none"/><circle cx="16" cy="8" r="1.7" fill="currentColor" stroke="none"/><circle cx="8" cy="16" r="1.7" fill="currentColor" stroke="none"/><circle cx="16" cy="16" r="1.7" fill="currentColor" stroke="none"/></svg>
             <h4>Cyclic Cluster Model <span class="soon">experimental</span></h4>
-            <p><strong>AICCM</strong> and <strong>SECCM</strong> — vibe-qc's own methods bring correlated wavefunction theory to periodic solids: a crystal treated as a finite cluster under exact translational symmetry. Unique to vibe-qc.</p>
+            <p><strong>AICCM</strong> and <strong>SECCM</strong>: an open-source ab initio implementation of the cyclic cluster model, a crystal treated as a finite cluster under cyclic boundary conditions, from HF through local coupled cluster. Research output, not a validated method; every driver warns.</p>
           </div>
         </div>
       </div>
@@ -286,10 +289,10 @@ const PERIODIC = ['periodic HF', 'KS-DFT', 'k-meshes', 'band structure', 'DOS', 
           </div>
         </div>
         <ul>
-          <li><span class="m">correlation</span><span><b>DLPNO-CCSD(T)</b> <span class="dsc">— local density fitting, sparse pair lists, open-shell pilots.</span></span></li>
-          <li><span class="m">excited</span><span><b>TD-DFT engine</b> <span class="dsc">— Casida + TDA with NTOs and UV/Vis reconstruction.</span></span></li>
-          <li><span class="m">multiref</span><span><b>CASSCF &amp; IC-CASPT2 gradients</b> <span class="dsc">— analytic, FD-pinned, driving optimization.</span></span></li>
-          <li><span class="m">periodic</span><span><b>Periodic-DFT accuracy fix</b> <span class="dsc">— cross-cell XC within ~1 mHa of CRYSTAL23 on dense ionic crystals.</span></span></li>
+          <li><span class="m">symmetry</span><span><b>Shared group and space infrastructure</b> <span class="dsc">restored for the periodic symmetry paths, with retained subspaces audited across panel backends.</span></span></li>
+          <li><span class="m">solvation</span><span><b>COSMO FINE cavity</b> <span class="dsc">built in the molecule-fixed frame by default, with the analytic nuclear derivative running through that frame.</span></span></li>
+          <li><span class="m">basis</span><span><b>16 cc-pVnZ-PP orbital sets</b> <span class="dsc">and vibe-basis 0.11 with the cohesive objective.</span></span></li>
+          <li><span class="m">status</span><span><b>{experimentalCount} experimental families</b> <span class="dsc">labelled as such, AICCM included; see the <a href={`${base}methods/`}>methods page</a> and the <a href="/docs/changelog.html">changelog</a>.</span></span></li>
         </ul>
       </div>
     </div>
@@ -346,6 +349,8 @@ const PERIODIC = ['periodic HF', 'KS-DFT', 'k-meshes', 'band structure', 'DOS', 
 </Base>
 
 <style>
+  .methods-link { display: inline-block; margin-top: 10px; color: var(--phase-pos); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+  .release .dsc a { color: var(--phase-pos); text-decoration: underline; text-underline-offset: 3px; }
   .suite-intro { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; margin-bottom: 40px; }
   .suite-intro .sec-head { margin-bottom: 0; }
   .suite-artwork { display: block; width: 100%; height: auto; border-radius: 16px; }

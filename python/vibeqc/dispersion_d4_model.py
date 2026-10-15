@@ -376,93 +376,92 @@ _EFFECTIVE_CHARGE: tuple[float, ...] = (
 )
 
 
+def _cn_gaussian_weights_derivative(cn, reference_cns, weighting_factor, n_gaussian):
+    """Shared normalized CN interpolation and its analytic derivative."""
+    ref = np.asarray(reference_cns, dtype=float)
+    if ref.ndim != 1 or ref.size == 0:
+        raise ValueError("cn_gaussian_weights: reference_cns must be a non-empty 1-D sequence")
+    if not np.isfinite(cn) or not np.all(np.isfinite(ref)):
+        raise ValueError("cn_gaussian_weights: coordination numbers must be finite")
+    if not np.isfinite(weighting_factor) or weighting_factor <= 0.0:
+        raise ValueError("cn_gaussian_weights: weighting_factor must be finite and positive")
+
+    if n_gaussian is None:
+        # Caldeweyher et al., JCP 150, 154122 (2019), Eq.8 and Fig.4:
+        # add narrower Gaussians to crowded reference environments. Group by
+        # rounded nominal CN, then sum the first m integers. The free-atom
+        # environment has one additional count (also GFN2-xTB Eq.35).
+        nominal = np.floor(ref + 0.5)
+        multiplicity = np.sum(nominal[:, None] == nominal[None, :], axis=1)
+        multiplicity += nominal == 0
+        counts = multiplicity * (multiplicity + 1) // 2
+    else:
+        counts = np.asarray(n_gaussian)
+        if (
+            counts.dtype.kind not in "iu" or np.any(counts < 1)
+            or (counts.ndim != 0 and counts.shape != ref.shape)
+        ):
+            raise ValueError(
+                "cn_gaussian_weights: n_gaussian must be a positive integer "
+                "or one positive integer per reference"
+            )
+        counts = np.broadcast_to(counts, ref.shape)
+
+    delta = cn - ref
+    delta2 = delta * delta
+    nearest_delta2 = np.min(delta2)
+    gw = np.zeros_like(ref)
+    dgw = np.zeros_like(ref)
+    for k in range(1, int(np.max(counts)) + 1):
+        # Remove a common exponent before summation. It cancels from both
+        # the normalized weights and derivative, and preserves symmetric
+        # references even when every unscaled Gaussian would underflow.
+        g = np.exp(-weighting_factor * (k * delta2 - nearest_delta2))
+        g = np.where(counts >= k, g, 0.0)
+        gw += g
+        dgw += -2.0 * weighting_factor * k * delta * g
+    total = gw.sum()
+    weights = gw / total
+    derivative = (dgw - weights * dgw.sum()) / total
+    return weights, derivative
+
+
 def cn_gaussian_weights(
     cn: float,
     reference_cns: Sequence[float],
     *,
     weighting_factor: float = D4_WEIGHTING_FACTOR,
-    n_gaussian: int = 3,
+    n_gaussian: int | Sequence[int] | None = None,
 ) -> np.ndarray:
-    """Coordination-number Gaussian weights for one atom's reference
-    systems.
+    """Normalized D4 coordination-number weights for one atom's references.
 
-    Given an atom's actual coordination number ``cn`` and the nominal
-    CN of each of its element's reference systems, return the
-    normalised weight of each reference -- the D3-inherited CN half of
-    the D4 reference weight ``W_A,i``.
+    Caldeweyher et al., J. Chem. Phys. 150, 154122 (2019), Eq.8 and Fig.4,
+    assign each reference a sum of Gaussians in its coordination gap::
 
-    The unnormalised weight of reference *i* is a sum of Gaussians in
-    the CN gap ``ΔCN_i = cn - reference_cns[i]``::
+        gw_i = sum(exp(-weighting_factor * k * (cn - reference_cns[i])**2)
+                   for k in range(1, N_i + 1))
+        W_i = gw_i / sum(gw)
 
-        gw_i = S_{k=1}^{n_gaussian}  exp(-weighting_factor . k . ΔCN_i^2)
+    The extra terms distinguish nearby reference environments; they are not
+    an underflow remedy. By default, references are grouped by their rounded
+    nominal CN. A group of m references uses N_i = m*(m+1)/2 terms, with one
+    additional count in the zero-CN group. Thus an isolated nonzero-CN
+    reference has one term and an isolated free-atom reference has three.
 
-    and the returned weights are ``W_i = gw_i / S_j gw_j``.
+    ``n_gaussian`` explicitly overrides this policy with either one positive
+    integer for all references (including the former uniform choice of 3),
+    or one integer per reference. Explicit counts allow nominal-environment
+    multiplicities to be retained when using noninteger covalent reference
+    CNs. ``weighting_factor`` defaults to the D4 value 6.0.
 
-    The single Gaussian (``k = 1``) is the textbook D3/D4 form; the
-    extra ``k = 2, 3`` terms are a numerical-robustness device (from
-    the D4 reference implementation) so that an atom in an environment
-    far from *every* reference -- where the ``k = 1`` Gaussians all
-    underflow -- still gets a well-defined, normalised weight vector
-    rather than ``0/0``. The ``k > 1`` terms decay faster, so near a
-    reference they are negligible and ``k = 1`` dominates.
-
-    Parameters
-    ----------
-    cn
-        The atom's actual coordination number (the continuous D4 erf
-        coordination number; see ``vibeqc.eeq_coordination_numbers``).
-    reference_cns
-        Nominal CN of each reference system for this atom's element,
-        in catalogue order. Must be non-empty.
-    weighting_factor
-        The Gaussian sharpness ``wf``. Default :data:`D4_WEIGHTING_FACTOR`.
-    n_gaussian
-        Number of Gaussian terms in the robustness sum. ``1`` gives
-        the pure single-Gaussian D3 form; the D4 default is ``3``.
-
-    Returns
-    -------
-    numpy.ndarray
-        Weights, shape ``(len(reference_cns),)``, non-negative and
-        summing to 1.
-
-    Notes
-    -----
-    If every Gaussian underflows to exactly zero (an atom absurdly
-    far from all references, or a pathological ``weighting_factor``),
-    the weight collapses onto the single nearest reference -- the
-    correct limiting behaviour.
+    Returns nonnegative weights of shape ``(len(reference_cns),)`` summing
+    to one. A common exponent is removed before normalization to avoid
+    underflow without selecting an arbitrary reference in a tie.
     """
-    ref = np.asarray(reference_cns, dtype=float)
-    if ref.ndim != 1 or ref.size == 0:
-        raise ValueError(
-            "cn_gaussian_weights: reference_cns must be a non-empty 1-D sequence"
-        )
-    if weighting_factor <= 0.0:
-        raise ValueError(
-            f"cn_gaussian_weights: weighting_factor must be positive, "
-            f"got {weighting_factor}"
-        )
-    if n_gaussian < 1:
-        raise ValueError(
-            f"cn_gaussian_weights: n_gaussian must be >= 1, got {n_gaussian}"
-        )
+    return _cn_gaussian_weights_derivative(
+        cn, reference_cns, weighting_factor, n_gaussian,
+    )[0]
 
-    delta2 = (cn - ref) ** 2  # ΔCN_i^2
-
-    gw = np.zeros_like(ref)
-    for k in range(1, n_gaussian + 1):
-        gw += np.exp(-weighting_factor * k * delta2)
-
-    total = gw.sum()
-    if total > 0.0:
-        return gw / total
-
-    # Underflow fallback: all Gaussians vanished. Put unit weight on
-    # the single reference with the smallest CN gap.
-    weights = np.zeros_like(ref)
-    weights[int(np.argmin(delta2))] = 1.0
-    return weights
 
 
 # ---- ζ(q) charge-scaling factor (D4b-4 part 2) ----
@@ -581,7 +580,7 @@ def d4_reference_weights(
     z: int,
     *,
     weighting_factor: float = D4_WEIGHTING_FACTOR,
-    n_gaussian: int = 3,
+    n_gaussian: int | Sequence[int] | None = None,
     ga: Optional[float] = None,
     gc: Optional[float] = None,
 ) -> np.ndarray:
@@ -618,7 +617,8 @@ def d4_reference_weights(
     weighting_factor
         CN Gaussian sharpness. Default :data:`D4_WEIGHTING_FACTOR`.
     n_gaussian
-        Number of Gaussian terms. Default 3.
+        Optional common or per-reference Gaussian count. By default, use
+        the nominal-CN environment policy in :func:`cn_gaussian_weights`.
     ga
         Charge-scaling height. Default None -> :data:`D4_CHARGE_HEIGHT`.
     gc
@@ -681,7 +681,7 @@ def compute_d4_c6_pair(
     ref_data: "D4ReferenceDataset",
     *,
     weighting_factor: float = D4_WEIGHTING_FACTOR,
-    n_gaussian: int = 3,
+    n_gaussian: int | Sequence[int] | None = None,
     ga: Optional[float] = None,
     gc: Optional[float] = None,
 ) -> float:
@@ -709,6 +709,9 @@ def compute_d4_c6_pair(
         The reference dataset (:class:`~dispersion_d4_reference_data.D4ReferenceDataset`).
     weighting_factor, n_gaussian, ga, gc
         Weight parameters forwarded to :func:`d4_reference_weights`.
+        When ``n_gaussian`` is omitted, each element's explicit dataset
+        counts are used if present, otherwise rounded-CN grouping applies.
+        An explicit argument overrides the dataset for both atoms.
 
     Returns
     -------
@@ -727,7 +730,7 @@ def compute_d4_c6_pair(
         qs_a,
         z_a,
         weighting_factor=weighting_factor,
-        n_gaussian=n_gaussian,
+        n_gaussian=ref_data.get_n_gaussian(z_a) if n_gaussian is None else n_gaussian,
         ga=ga,
         gc=gc,
     )
@@ -738,7 +741,7 @@ def compute_d4_c6_pair(
         qs_b,
         z_b,
         weighting_factor=weighting_factor,
-        n_gaussian=n_gaussian,
+        n_gaussian=ref_data.get_n_gaussian(z_b) if n_gaussian is None else n_gaussian,
         ga=ga,
         gc=gc,
     )
@@ -995,6 +998,7 @@ def compute_d4_energy(
     ref_data: "D4ReferenceDataset",
     functional: str = "pbe",
     *,
+    total_charge: float = 0.0,
     _damping_parameters: object | None = None,
     **kwargs: object,
 ) -> float:
@@ -1038,7 +1042,7 @@ def compute_d4_energy(
 
     # Per-atom properties.
     cn_arr = eeq_coordination_numbers(mol)
-    q_arr = eeq_charges(mol).charges
+    q_arr = eeq_charges(mol, total_charge=total_charge).charges
     params = (
         get_d4_params(functional)
         if _damping_parameters is None
@@ -1110,7 +1114,9 @@ def d4_atm_triple_energy(
 ) -> float:
     """ATM triple energy for one atom triplet (A, B, C).
 
-    The angle factor is the Axilrod-Teller-Muto geometrical term
+    With the negative C9 convention of :func:`compute_c9`, the energy is
+    ``-C9 * angle_factor * f_damp``. The angle factor is the
+    Axilrod-Teller-Muto geometrical term
     ``(3.costh_A.costh_B.costh_C + 1) / (R_AB.R_BC.R_AC)^3``, damped
     by the BJ-style rational function with exponent ``alp``.
 
@@ -1153,19 +1159,25 @@ def d4_atm_triple_energy(
         + 1.0 / r3
     )
 
-    return float(c9 * ang * fdmp)
+    # C9 follows the negative-coefficient convention of Caldeweyher et al.,
+    # J. Chem. Phys. 150, 154122 (2019), doi:10.1063/1.5090222.
+    # The energy therefore carries an additional minus sign: equilateral
+    # triplets repel and collinear triplets attract (Axilrod-Teller-Muto).
+    return float(-c9 * ang * fdmp)
 
 
 def _compute_c6_matrix(
     mol: "Molecule",
     ref_data: "D4ReferenceDataset",
+    *,
+    total_charge: float = 0.0,
     **kwargs: object,
 ) -> np.ndarray:
     """Compute the full atom-pair C6 matrix for the molecule."""
     from ._vibeqc_core import eeq_charges, eeq_coordination_numbers
 
     cn_arr = eeq_coordination_numbers(mol)
-    q_arr = eeq_charges(mol).charges
+    q_arr = eeq_charges(mol, total_charge=total_charge).charges
     natom = len(mol.atoms)
     z_arr = [atom.Z for atom in mol.atoms]
 
@@ -1192,6 +1204,7 @@ def compute_d4_atm_energy(
     ref_data: "D4ReferenceDataset",
     functional: str = "pbe",
     *,
+    total_charge: float = 0.0,
     alp: float = D4_ALP_DEFAULT,
     _damping_parameters: object | None = None,
     **kwargs: object,
@@ -1200,7 +1213,7 @@ def compute_d4_atm_energy(
 
     The ATM term is the leading three-body dispersion contribution::
 
-        E^(3) = S_{A<B<C}  C9_ABC . w(th) / (R_AB.R_BC.R_CA)^3 . f_damp
+        E^(3) = -S_{A<B<C}  C9_ABC . w(th) / (R_AB.R_BC.R_CA)^3 . f_damp
 
     where ``C9_ABC ≈ -s9.sqrt(|C6_AB.C6_BC.C6_CA|)`` and ``w(th)`` is
     the angular factor ``3.cos th_A.cos th_B.cos th_C + 1``.  The
@@ -1238,7 +1251,7 @@ def compute_d4_atm_energy(
     if abs(params.s9) < 1e-15:
         return 0.0
 
-    c6 = _compute_c6_matrix(mol, ref_data, **kwargs)
+    c6 = _compute_c6_matrix(mol, ref_data, total_charge=total_charge, **kwargs)
     natom = len(mol.atoms)
     z_arr = [atom.Z for atom in mol.atoms]
     xyz = np.array([atom.xyz for atom in mol.atoms])
@@ -1309,6 +1322,7 @@ def compute_d4_energy_total(
     ref_data: "D4ReferenceDataset",
     functional: str = "pbe",
     *,
+    total_charge: float = 0.0,
     atm: bool = True,
     alp: float = D4_ALP_DEFAULT,
     _damping_parameters: object | None = None,
@@ -1316,9 +1330,9 @@ def compute_d4_energy_total(
 ) -> float:
     """Full D4 dispersion energy (two-body + optional three-body ATM).
 
-    Convenience wrapper that calls :func:`compute_d4_energy` and
-    (if ``atm=True``) :func:`compute_d4_atm_energy`, sharing a single
-    C6 matrix computation where possible.
+    Calls :func:`compute_d4_energy` and (if ``atm=True``)
+    :func:`compute_d4_atm_energy` with the same native charge model,
+    reference data and interpolation parameters.
 
     Parameters
     ----------
@@ -1328,6 +1342,9 @@ def compute_d4_energy_total(
         The D4 reference dataset.
     functional
         Functional keyword.
+    total_charge
+        Total charge constrained by the EEQ solve (default 0.0).
+        This is independent of the molecule's electron-count metadata.
     atm
         Include the three-body ATM term (default ``True``).
     alp
@@ -1344,6 +1361,7 @@ def compute_d4_energy_total(
         mol,
         ref_data,
         functional,
+        total_charge=total_charge,
         _damping_parameters=_damping_parameters,
         **kwargs,
     )
@@ -1353,6 +1371,7 @@ def compute_d4_energy_total(
             ref_data,
             functional,
             alp=alp,
+            total_charge=total_charge,
             _damping_parameters=_damping_parameters,
             **kwargs,
         )
@@ -1381,7 +1400,7 @@ def d4_reference_weights_derivs(
     z: int,
     *,
     weighting_factor: float = D4_WEIGHTING_FACTOR,
-    n_gaussian: int = 3,
+    n_gaussian: int | Sequence[int] | None = None,
     ga: Optional[float] = None,
     gc: Optional[float] = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -1398,31 +1417,10 @@ def d4_reference_weights_derivs(
     gi = zeta_hardness(z) * _gc
     z_eff = effective_nuclear_charge(z)
 
-    # ---- Step 1: CN Gaussian weights and their CN derivative ----
-    delta = cn - ref_cns
-    delta2 = delta * delta
-
-    # Unnormalized weights and their CN derivatives.
-    gw = np.zeros(n_ref)
-    dgw = np.zeros(n_ref)
-    for k in range(1, n_gaussian + 1):
-        wf_k = weighting_factor * k
-        g = np.exp(-wf_k * delta2)
-        gw += g
-        dgw += 2.0 * wf_k * (ref_cns - cn) * g  # = -2*wf_k*delta*g
-
-    total = gw.sum()
-    if total <= 0.0:
-        # Underflow fallback.
-        idx = int(np.argmin(delta2))
-        w_cn = np.zeros(n_ref)
-        w_cn[idx] = 1.0
-        return w_cn.copy(), np.zeros(n_ref), np.zeros(n_ref)
-
-    inv_total = 1.0 / total
-    w_cn = gw * inv_total
-    # dw_cn/dCN = inv_total * dgw - w_cn * inv_total * sum(dgw)
-    dw_cn = inv_total * (dgw - w_cn * dgw.sum())
+    # Use exactly the same interpolation and normalization as the energy.
+    w_cn, dw_cn = _cn_gaussian_weights_derivative(
+        cn, ref_cns, weighting_factor, n_gaussian,
+    )
 
     # ---- Step 2: ζ charge-scaling factor and its q-derivative ----
     qmod = float(q) + z_eff
@@ -1451,7 +1449,7 @@ def compute_d4_c6_pair_derivs(
     ref_data: "D4ReferenceDataset",
     *,
     weighting_factor: float = D4_WEIGHTING_FACTOR,
-    n_gaussian: int = 3,
+    n_gaussian: int | Sequence[int] | None = None,
     ga: Optional[float] = None,
     gc: Optional[float] = None,
 ) -> tuple[float, float, float, float, float]:
@@ -1464,12 +1462,16 @@ def compute_d4_c6_pair_derivs(
     cns_b = ref_data.get_cns(z_b)
     qs_b = ref_data.get_qs(z_b)
 
-    kw = dict(weighting_factor=weighting_factor, n_gaussian=n_gaussian, ga=ga, gc=gc)
+    kw = dict(weighting_factor=weighting_factor, ga=ga, gc=gc)
     w_a, dw_a_dcn, dw_a_dq = d4_reference_weights_derivs(
-        cn_a, q_a, cns_a, qs_a, z_a, **kw
+        cn_a, q_a, cns_a, qs_a, z_a,
+        n_gaussian=ref_data.get_n_gaussian(z_a) if n_gaussian is None else n_gaussian,
+        **kw,
     )
     w_b, dw_b_dcn, dw_b_dq = d4_reference_weights_derivs(
-        cn_b, q_b, cns_b, qs_b, z_b, **kw
+        cn_b, q_b, cns_b, qs_b, z_b,
+        n_gaussian=ref_data.get_n_gaussian(z_b) if n_gaussian is None else n_gaussian,
+        **kw,
     )
 
     c6 = 0.0
@@ -1522,101 +1524,140 @@ def d4_bj_damping_gradient(
     edisp0 = s6 * t6 + s8 * (float(c8) / float(c6)) * t8
     e_pair = -float(c6) * edisp0
 
-    # Gradient w.r.t. R: d/dr2(edisp0) = s6*d6 + s8*rrij*d8
-    d6 = -6.0 * r2 * r2 * t6 * t6
-    d8 = -8.0 * r2 * r2 * r2 * t8 * t8
-    rrij = float(c8) / float(c6)
-    gdisp = s6 * d6 + s8 * rrij * d8
-    # dE/dR_a = -c6 * gdisp * 2r * vec/r = -2*c6*gdisp*vec
-    grad_a = -2.0 * float(c6) * gdisp * vec_ab
-
-    # Derivative w.r.t. C6 (for CN/q chain rule).
-    # d/dC6 of: -c6 * (s6*t6 + s8*c8/c6*t8)
-    # = -(s6*t6 + s8*c8/c6*t8) - c6 * s8 * (-c8/c6^2*t8)
-    # = -edisp0 + s8 * c8/c6 * t8
-    # Actually the full dE/dC6 is needed for the CN/q chain.
-    # From dftd4: dE/dC6 = -edisp where edisp = s6*t6 + s8*rrij*t8
+    # dE/dr divided by r converts the radial derivative to dE/dR_a.
+    # C8/C6 = 3*r4r2(A)*r4r2(B) is constant in the C6 response.
+    grad_a = float(c6) * (
+        6.0 * s6 * r2**2 * t6**2
+        + 8.0 * s8 * (float(c8) / float(c6)) * r2**3 * t8**2
+    ) * vec_ab
     dE_dc6 = -edisp0
 
     return float(e_pair), grad_a, float(dE_dc6)
+
+
+def _d4_atm_distance_derivatives(
+    distances_squared: np.ndarray,
+    radii_product: float,
+    c9: float,
+    alp: float,
+) -> tuple[float, np.ndarray]:
+    """ATM energy and derivatives with respect to squared edge lengths.
+
+    Caldeweyher et al., JCP 150, 154122 (2019), doi:10.1063/1.5090222.
+    The negative C9 convention requires E = -C9 * angular * damping.
+    Differentiate the scalar kernel's polynomial rather than angles, so
+    collinear triplets remain well defined.
+    """
+    x, y, z = distances_squared
+    product = x * y * z
+    factors = np.array([x+y-z, x-y+z, -x+y+z])
+    a, b, c = factors
+    numerator = a * b * c
+    dnumerator = np.array([b*c + a*c - a*b,
+                          b*c - a*c + a*b,
+                          -b*c + a*c + a*b])
+    angular = 0.375 * numerator / product**2.5 + product**-1.5
+    dangular = (0.375 * dnumerator / product**2.5
+                - (2.5 * 0.375 * numerator / product**2.5
+                   + 1.5 * product**-1.5) / distances_squared)
+    damp = 1.0 / (1.0 + 6.0 * (radii_product / np.sqrt(product))**(alp / 3.0))
+    ddamp = damp * (1.0-damp) * alp / (6.0 * distances_squared)
+    return float(-c9 * angular * damp), -c9 * (dangular*damp + angular*ddamp)
 
 
 def compute_d4_gradient(
     mol: "Molecule",
     ref_data: "D4ReferenceDataset",
     functional: str = "pbe",
+    *,
+    total_charge: float = 0.0,
+    atm: bool = True,
+    alp: float = D4_ALP_DEFAULT,
+    _damping_parameters: object | None = None,
     **kwargs: object,
-) -> tuple[float, np.ndarray]:
-    """Full-molecule D4 two-body dispersion energy and gradient.
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
+    """Native D4 energy and complete analytic nuclear gradient.
 
-    Returns ``(energy, gradient)`` where ``gradient`` has shape
-    ``(n_atoms, 3)`` in Hartree/bohr.
+    The scalar functional is :func:`compute_d4_energy_total`: pairwise BJ
+    dispersion plus optional ATM, with the same native EEQ charges, CN,
+    reference data and interpolation parameters. The gradient includes
+    explicit geometry, both terms' C6 response, and an adjoint contraction
+    through the native EEQ solve and CN soft cap at fixed total charge.
 
-    The gradient includes the geometric derivative (dE/dR) and the
-    chain-rule terms through C6 w.r.t. CN and q (dE/dCN and dE/dq).
-    The further chain through dCN/dR and dq/dR (EEQ charge gradient)
-    is deferred -- those are small corrections for most geometries.
+    Returns ``(energy, gradient, dE_dcn, dE_dq)``. The latter two arrays
+    are partial sensitivities for diagnostics; their nuclear response is
+    already included in ``gradient`` and must not be added a second time.
+    Coordinates and gradients use bohr and Hartree/bohr, respectively.
     """
-    from ._vibeqc_core import eeq_charges, eeq_coordination_numbers
+    from ._vibeqc_core import eeq_charges, eeq_coordination_numbers, eeq_response_gradient
     from .dispersion_d4_parameters import get_d4_params
 
     cn_arr = eeq_coordination_numbers(mol)
-    q_arr = eeq_charges(mol).charges
-    params = get_d4_params(functional)
-
+    q_arr = eeq_charges(mol, total_charge=total_charge).charges
+    params = get_d4_params(functional) if _damping_parameters is None else _damping_parameters
     natom = len(mol.atoms)
     z_arr = [atom.Z for atom in mol.atoms]
     xyz = np.array([atom.xyz for atom in mol.atoms])
-
     energy = 0.0
     gradient = np.zeros((natom, 3))
-    dEdcn = np.zeros(natom)
-    dEdq = np.zeros(natom)
+    c6 = np.zeros((natom, natom))
+    dc6_cn = np.zeros_like(c6)
+    dc6_q = np.zeros_like(c6)
+    sensitivity = np.zeros_like(c6)
+    radii = np.zeros_like(c6)
 
     for a in range(natom):
-        ra = xyz[a]
         for b in range(a):
-            vec_ab = ra - xyz[b]
-            r_ab = float(np.linalg.norm(vec_ab))
-            if r_ab < 1e-12:
-                continue
-
-            c6, dc6_dcn_a, dc6_dcn_b, dc6_dq_a, dc6_dq_b = compute_d4_c6_pair_derivs(
-                float(cn_arr[a]),
-                float(q_arr[a]),
-                z_arr[a],
-                float(cn_arr[b]),
-                float(q_arr[b]),
-                z_arr[b],
-                ref_data,
-                **kwargs,  # type: ignore[arg-type]
+            val, cn_a, cn_b, q_a, q_b = compute_d4_c6_pair_derivs(
+                float(cn_arr[a]), float(q_arr[a]), z_arr[a],
+                float(cn_arr[b]), float(q_arr[b]), z_arr[b], ref_data, **kwargs,
             )
-            if c6 <= 0.0:
+            if val <= 0.0:
                 continue
-
-            c8 = compute_c8(c6, z_arr[a], z_arr[b])
-            e_pair, grad_a, dE_dc6 = d4_bj_damping_gradient(
-                r_ab,
-                vec_ab,
-                c6,
-                c8,
-                params.s6,
-                params.s8,
-                params.a1,
-                params.a2,
+            c6[a, b] = c6[b, a] = val
+            dc6_cn[a, b], dc6_cn[b, a] = cn_a, cn_b
+            dc6_q[a, b], dc6_q[b, a] = q_a, q_b
+            c8 = compute_c8(val, z_arr[a], z_arr[b])
+            radii[a, b] = radii[b, a] = params.a1 * np.sqrt(c8/val) + params.a2
+            vec = xyz[a] - xyz[b]
+            pair_energy, pair_gradient, pair_sensitivity = d4_bj_damping_gradient(
+                float(np.linalg.norm(vec)), vec, val, c8,
+                params.s6, params.s8, params.a1, params.a2,
             )
+            energy += pair_energy
+            gradient[a] += pair_gradient
+            gradient[b] -= pair_gradient
+            sensitivity[a, b] = pair_sensitivity
 
-            energy += e_pair
-            gradient[a] += grad_a
-            gradient[b] -= grad_a
+    if atm and abs(params.s9) >= 1e-15:
+        for a in range(natom):
+            for b in range(a):
+                for c in range(b):
+                    if min(c6[a,b], c6[a,c], c6[b,c]) <= 0.0:
+                        continue
+                    ab, bc, ac = xyz[a]-xyz[b], xyz[b]-xyz[c], xyz[a]-xyz[c]
+                    distances2 = np.array([ab@ab, bc@bc, ac@ac])
+                    c9 = params.s9 * compute_c9(c6[a,b], c6[a,c], c6[b,c])
+                    triple_energy, derivatives = _d4_atm_distance_derivatives(
+                        distances2, radii[a,b]*radii[b,c]*radii[a,c], c9, alp,
+                    )
+                    energy += triple_energy
+                    gab, gbc, gac = (2.0 * derivative * vector for derivative, vector
+                                     in zip(derivatives, (ab, bc, ac)))
+                    gradient[a] += gab + gac
+                    gradient[b] += gbc - gab
+                    gradient[c] -= gbc + gac
+                    # Damping radii depend only on element-specific C8/C6.
+                    # C9's geometric mean gives dE/dC6 = E/(2*C6).
+                    for i, j in ((a,b), (a,c), (b,c)):
+                        sensitivity[i,j] += triple_energy / (2.0 * c6[i,j])
 
-            # Chain rule: dE/dCN = dE/dC6 * dC6/dCN
-            dEdcn[a] += dE_dc6 * dc6_dcn_a
-            dEdcn[b] += dE_dc6 * dc6_dcn_b
-            dEdq[a] += dE_dc6 * dc6_dq_a
-            dEdq[b] += dE_dc6 * dc6_dq_b
-
-    # dCN/dR and dq/dR contributions are deferred (requires EEQ gradient).
-    # Return energy, gradient, and auxiliary derivatives for downstream
-    # consumers to chain through.
+    dEdcn = np.zeros(natom)
+    dEdq = np.zeros(natom)
+    for a in range(natom):
+        for b in range(a):
+            for i, j in ((a,b), (b,a)):
+                dEdcn[i] += sensitivity[a,b] * dc6_cn[i,j]
+                dEdq[i] += sensitivity[a,b] * dc6_q[i,j]
+    gradient += eeq_response_gradient(mol, dEdcn, dEdq, total_charge=total_charge)
     return float(energy), gradient, dEdcn, dEdq

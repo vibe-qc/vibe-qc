@@ -28,7 +28,7 @@ E_ads = E[slab + adsorbate] - E[slab] - E[adsorbate, gas]
 ```
 
 while this smeared tutorial must instead use the electronic Mermin free energy
-in every term,
+({vibeqc-cite}`mermin_finite_temperature_dft_1965`) in every term,
 
 ```
 F_ads(electronic) = F[slab + adsorbate] - F[slab] - F[adsorbate, gas].
@@ -65,8 +65,10 @@ three-dimensional. Build such a cell either by hand, as below, or with
 (see [Slabs and adsorbates](../user_guide/slabs_and_adsorbates.md)). MgO
 is ionic rocksalt, not in that table, so we lay the cell out by hand,
 which is the general recipe for any non-metal surface. The MgO(100) face
-is a square net of alternating Mg and O; one atomic layer holds one Mg
-and one O, and successive layers shift by half the cell diagonal:
+is a square net of alternating Mg and O with the in-plane Mg-O distance
+`a/2` = 2.105 Angstrom. The `a x a` square cell used here is the c(2x2)
+cell of that face: one atomic layer holds two Mg and two O on a
+checkerboard, and successive layers swap the Mg and O sublattices:
 
 ```python
 import numpy as np
@@ -84,8 +86,8 @@ slab_thick = (n_layers - 1) * d
 c_len = slab_thick + vacuum
 z0 = (c_len - slab_thick) / 2.0
 
-# Square in-plane cell of side a; one Mg + one O per layer, checkerboarded,
-# with successive layers swapping the Mg/O sublattices.
+# Square in-plane cell of side a; two Mg + two O per layer, checkerboarded
+# (in-plane Mg-O = a/2), with successive layers swapping the Mg/O sublattices.
 lattice = np.zeros((3, 3))
 lattice[:, 0] = [a, 0.0, 0.0]
 lattice[:, 1] = [0.0, a, 0.0]
@@ -98,10 +100,12 @@ def to_atoms(coords):                      # coords: (Z, x, y, z) in Angstrom
 slab_coords = []
 for L in range(n_layers):
     z = z0 + L * d
-    if L % 2 == 0:
-        slab_coords += [(12, 0.0, 0.0, z), (8, a / 2, a / 2, z)]   # Mg, O
-    else:
-        slab_coords += [(8, 0.0, 0.0, z), (12, a / 2, a / 2, z)]   # O, Mg
+    mg_sites = [(0.0, 0.0), (a / 2, a / 2)]
+    o_sites = [(a / 2, 0.0), (0.0, a / 2)]
+    if L % 2 == 1:                     # next layer: O above Mg, Mg above O
+        mg_sites, o_sites = o_sites, mg_sites
+    slab_coords += [(12, x, y, z) for (x, y) in mg_sites]
+    slab_coords += [(8, x, y, z) for (x, y) in o_sites]
 
 slab = vq.PeriodicSystem(3, lattice * ANG2BOHR, to_atoms(slab_coords))
 print(f"slab: dim={slab.dim}, {len(slab.unit_cell)} atoms, "
@@ -117,7 +121,7 @@ the Coulomb gauge matches:
 ```python
 # top-layer Mg site (the slab's top layer swaps sublattices each layer)
 z_top = max(c[3] for c in slab_coords)
-mg_xy = (0.0, 0.0) if (n_layers - 1) % 2 == 0 else (a / 2, a / 2)
+mg_xy = (0.0, 0.0) if (n_layers - 1) % 2 == 0 else (a / 2, 0.0)
 
 h = 2.2  # Angstrom, O above the surface
 water_on = [(8, mg_xy[0], mg_xy[1], z_top + h),
@@ -134,13 +138,31 @@ slab_with_water = vq.PeriodicSystem(3, lattice * ANG2BOHR,
 water_box = vq.PeriodicSystem(3, lattice * ANG2BOHR, to_atoms(water_gas))
 ```
 
+```{note}
+**Geometry corrected; slab observations not yet re-measured.** Earlier
+versions of this page placed one Mg and one O per layer in this `a x a`
+cell, which stretched the in-plane Mg-O distance to `a/sqrt(2)` = 2.98
+Angstrom. The cell above has the bulk value of 2.105 Angstrom in plane and
+between layers, with two Mg and two O per layer (8 atoms, 80 electrons in
+the clean slab). The slab-dependent observations further down (the ~0.5 eV
+Gamma-point gap, the 0.003 Ha sub-gap smearing value, the near-metallic
+basin at 0.01 Ha and the wall times) were measured on the stretched slab
+and have not been re-measured for this geometry; check the gap and the
+basin warning in your own `.out` before relying on them. The gas-phase
+water term and the bulk MgO cross-check do not use the slab and are
+unaffected.
+```
+
 ## Run the three single points
 
 With the geometry in hand, the calculation is three calls to the same
-periodic SCF driver. We use closed-shell RKS with the PBE functional and
-the minimal STO-3G basis, the cheapest combination that still produces a
+periodic SCF driver. We use closed-shell RKS with the PBE functional
+({vibeqc-cite}`pbe_1996`) and the minimal STO-3G basis
+({vibeqc-cite}`hehre_sto_ng_1969`, {vibeqc-cite}`hehre_pople_stong_2nd_row_1970`),
+the cheapest combination that still produces a
 real ionic-surface energy; `jk_method="bipole"` selects the CRYSTAL-gauge
-Ewald J/K build that converges on tight ionic cells. A thin oxide slab
+Ewald J/K build ({vibeqc-cite}`saunders_bipole_1992`,
+{vibeqc-cite}`dovesi_crystal14_2014`) that converges on tight ionic cells. A thin oxide slab
 has surface states that crowd the gap, so the plain SCF oscillates;
 **Fermi-Dirac smearing** (`smearing_temperature`) lets the occupations go
 fractional near the Fermi level and settles it. The value matters: keep
@@ -201,8 +223,9 @@ F_ads(electronic) = F_sys - F_slab - F_water
 
 For this deliberately cheap model, even a converged negative
 `F_ads(electronic)` is only a starting point. The minimal STO-3G basis has
-large basis-set superposition error, and the unrelaxed thin slab at full
-monolayer coverage is not a publication model. The
+large basis-set superposition error, and the unrelaxed thin slab at
+half-monolayer coverage (one water per two surface Mg) is not a
+publication model. The
 [MACE tutorial](mace_mlip.md) gives about -0.8 eV for its separately defined
 model; do not treat that as a parity target for this electronic-structure
 setup.
@@ -282,7 +305,8 @@ separated; properties converge from below as layers are added, and a
 two- or three-layer slab is a starting point, not a converged answer.
 
 Because the cell above is declared `dim=3`, vibe-qc sums the Coulomb
-interaction in all three dimensions with Ewald (see
+interaction in all three dimensions with Ewald
+({vibeqc-cite}`ewald_lattice_sum_1921`; see
 [Madelung constants via Ewald summation](madelung_with_ewald.md) for why
 the three-dimensional electrostatic sum is only conditionally convergent
 and needs Ewald rather than naive truncation). A symmetric, charge-
@@ -292,7 +316,8 @@ correction is required; an asymmetric slab or a polar face would.
 The better model, when you can use it, is `dim=2`. A `PeriodicSystem`
 built with two in-plane lattice vectors (`vq.slab_2d`) is periodic in
 only two directions, and vibe-qc evaluates its electrostatics with the
-rigorous vacuum-free 2D Ewald sum of Parry and of de Leeuw and Perram.
+rigorous vacuum-free 2D Ewald sum of Parry ({vibeqc-cite}`parry_2d_ewald_1975`)
+and of de Leeuw and Perram ({vibeqc-cite}`de_leeuw_perram_2d_ewald_1979`).
 That total energy is provably independent of the synthesized third
 lattice column, and its nuclear repulsion does not depend on the k-mesh.
 There is no vacuum to converge and no slab-slab image error to cancel.
@@ -354,7 +379,8 @@ adsorption energy.
 **Basis-set superposition error (BSSE).** With atom-centred Gaussian
 basis functions, the slab-plus-adsorbate complex borrows basis functions
 from its partner and artificially lowers its energy, over-binding the
-adsorbate. The counterpoise correction recomputes each fragment in the
+adsorbate. The counterpoise correction ({vibeqc-cite}`boys_bernardi_1970`)
+recomputes each fragment in the
 presence of the other's (ghost) basis functions and subtracts the
 difference. BSSE shrinks as the basis grows; with STO-3G it is large, so the
 raw adsorption difference here is an over-bound estimate.
@@ -416,7 +442,8 @@ dissociated, the two are different physical states.
 - **Relax the structure.** Run the frozen-substrate relaxation from
   [Slabs and adsorbates](../user_guide/slabs_and_adsorbates.md) and watch
   the consistently recomputed adsorption difference converge.
-- **Add dispersion.** For physisorption, the D3-BJ correction matters;
+- **Add dispersion.** For physisorption, the D3-BJ correction
+  ({vibeqc-cite}`grimme_d3_2010`, {vibeqc-cite}`grimme_d3bj_2011`) matters;
   pass `dispersion="pbe"` (see
   [Dispersion corrections](dispersion.md) and the periodic D3 section of
   [Slabs and adsorbates](../user_guide/slabs_and_adsorbates.md)).

@@ -1,7 +1,8 @@
 """CASSCF analytic-gradient diagnostic: H2O/STO-3G CAS(4,4).
 
-The exposed z-vector-free value is incomplete and not full-energy FD-tight.
-This example is for development inspection, not production forces.
+The exposed analytic value is the complete derivative of the variational
+CASSCF energy and is the production force. This example prints its
+components and the translational-invariance residual for inspection.
 
 Run with:
     python examples/wavefunction/02_casscf_gradient.py
@@ -11,7 +12,11 @@ from __future__ import annotations
 
 import numpy as np
 from vibeqc import Atom, Molecule
+from pathlib import Path
+
 from vibeqc.runner import run_job
+
+HERE = Path(__file__).resolve().parent
 
 # Water molecule (Bohr)
 h2o = Molecule(
@@ -30,6 +35,7 @@ print("=" * 60)
 result = run_job(
     h2o,
     basis="sto-3g",
+    output=str(HERE / "output-02-casscf-gradient"),
     method="casscf",
     active_space=(4, 4),
     write_xyz_file=False,
@@ -47,7 +53,7 @@ if grad is None:
     print("\nERROR: gradient is None! (SA-CASSCF or non-converged?)")
     exit(1)
 
-print(f"\nIncomplete analytic preview (dE/dR, Hartree/bohr):")
+print(f"\nAnalytic gradient (dE/dR, Hartree/bohr):")
 print(f"  Shape: {grad.shape}")
 for i, row in enumerate(grad):
     print(f"  atom {i}: {row[0]:12.8f} {row[1]:12.8f} {row[2]:12.8f}")

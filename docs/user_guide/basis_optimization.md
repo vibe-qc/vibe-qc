@@ -17,6 +17,90 @@ solid-state basis libraries. It needs an extra install step, see
 [The external-program path](#the-external-program-path) below.
 ```
 
+The molecular recipe is a production route; the label vocabulary is
+defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Theory
+
+**The variational objective.** A Gaussian basis is a set of
+parameters, the exponents $\zeta$ and contraction coefficients $c$ of
+each primitive, and for a fixed molecule the SCF energy is a function
+of them, $E(\zeta, c)$. Because the SCF energy is variational in the
+orbital coefficients, lowering it by moving the basis parameters
+improves the basis in the same sense that a larger basis would: the
+best basis of a given size for that molecule is the minimiser of $E$.
+The optimiser works in a transformed space, typically
+$x = \ln \zeta$ (`Transform.LOG`), so that exponents stay positive and
+steps are relative, and it minimises the composite objective
+
+$$
+\Omega(x) = E_{\rm SCF}(x) + \gamma\, \ln \kappa\!\bigl(S(x)\bigr) + \lambda\, P_{\rm LD}(x),
+$$
+
+in which $\kappa(S)$ is the condition number of the atomic overlap
+matrix and $P_{\rm LD}$ a linear-dependence penalty. The penalties are
+what keeps the minimiser away from the trivial solution: two exponents
+drifting together, or a diffuse function collapsing toward a neighbour,
+lower $E$ by a negligible amount while making the basis numerically
+singular, and VandeVondele and Hutter
+({vibeqc-cite}`vandevondele_basisopt_2007`) introduced the
+$\gamma \ln \kappa$ term for exactly that reason when fitting their
+molecularly optimised sets.
+
+**The analytic gradient.** The derivative of the SCF energy with
+respect to a basis parameter has the same structure as a nuclear
+gradient: with the converged density $D$ and energy-weighted density $W$,
+
+$$
+\frac{\partial E}{\partial \zeta}
+  = \sum_{\mu\nu} D_{\mu\nu} \frac{\partial h_{\mu\nu}}{\partial \zeta}
+  + \frac12 \sum_{\mu\nu\lambda\sigma} \Gamma_{\mu\nu\lambda\sigma}
+      \frac{\partial (\mu\nu|\lambda\sigma)}{\partial \zeta}
+  + \int v_{xc}\, \frac{\partial \rho}{\partial \zeta}\, d\mathbf r
+  - \sum_{\mu\nu} W_{\mu\nu} \frac{\partial S_{\mu\nu}}{\partial \zeta},
+$$
+
+where the derivative of each integral with respect to an exponent is
+again a Gaussian integral (differentiating $e^{-\zeta r^2}$ brings down
+$-r^2$, a shell of angular momentum raised by two) and the overlap term
+accounts for the orbitals' response. That is what `analytic=True`
+evaluates; SP-shared contraction coefficients have no closed form and
+fall back to finite differences.
+
+**The BDIIS update.** CRYSTAL's `OPTBASIS` and its BDIIS optimiser
+({vibeqc-cite}`daga_optbasis_2020`) apply Pulay's direct inversion in
+the iterative subspace ({vibeqc-cite}`pulay_diis_1980`;
+{vibeqc-cite}`pulay_diis_1982`) to the basis parameters: the last
+`diis_size` iterates $x_k$ and their error vectors $e_k$ are combined
+with coefficients that minimise $\|\sum_k c_k e_k\|$ subject to
+$\sum_k c_k = 1$, and the extrapolated point is the next iterate.
+vibe-qc's implementation uses a BFGS inverse Hessian for the error
+vectors, $e_k = -H_k^{-1} g_k$, so that the extrapolation carries
+curvature information, and guards each step with a trust radius and
+Armijo backtracking so that $\Omega$ never increases on an accepted
+step; an ill-conditioned DIIS system falls back to the quasi-Newton
+step. Convergence is declared when $|\Delta\Omega|$ and
+$\|g\|_\infty$ fall below `tol_energy` and `tol_grad`.
+
+**The cohesive objective.** A basis for solids is not optimised on one
+molecule. The multi-crystal recipes (pob-TZVP was made this way)
+minimise a weighted sum over a training set of structures,
+$\Omega = \sum_s w_s E_s(x)$ with isolated atoms and bulk crystals in
+the set, so that the same exponents serve the free atom and the solid;
+a cohesive-energy objective $E_{\rm bulk} - \sum E_{\rm atom}$ balances
+the two explicitly. That recipe drives an external periodic program
+through the `vibe-basis` driver and is described below.
+
+**Where it helps and where it fails.** Re-optimising a handful of
+valence and polarisation exponents recovers a few mHa on a small
+molecule and adapts a solid-state basis to a molecular environment (or
+the reverse). The optimum is specific to the training set: a basis
+fitted to one molecule at one functional is not transferable in the
+way a published family is, and pushing exponents diffuse to chase the
+energy produces near-linear-dependent sets that other geometries cannot
+converge, which is what the penalties and bounds guard against.
+
 ## The external-program path
 
 The molecular recipe below runs entirely inside vibe-qc and needs
@@ -140,6 +224,9 @@ basis is optimised against, exactly as for an ordinary single point:
 - `citations`, the optimiser-method citation keys to cite when you publish an
   optimised basis (BDIIS, the conditioning penalty, the Pulay-DIIS papers);
   `summary()` prints them. Also cite the starting basis set and the functional.
+  The other drivers export their keys the same way: `DFO_CITATION_KEYS` for
+  Py-BOBYQA and DFO-LS, `CMAES_CITATION_KEYS` for CMA-ES, and
+  `recipes.global_then_polish.method_citations()` for the chained recipe.
 
 ## Worked example
 
@@ -185,6 +272,68 @@ The recipe optimises a *fixed contraction pattern* (it moves exponents
 and coefficients, it does not add or remove primitives), and it is a
 molecular path: solid-state basis libraries go through the multi-crystal
 production recipe noted above.
+
+## Choosing the optimiser
+
+`optimize_molecular_basis` always drives BDIIS. Below that one-call
+recipe, `vibeqc.basis_optimization` exposes six drivers with one shared
+return type, `OptResult`, so a script can swap them without changing
+anything else. All of them take the objective, the starting vector and
+the `bounds` from `parametrisation.optim_bounds()`; the objective and
+its analytic gradient come from
+`recipes.objective.make_native_objective_gradient` (or its
+`make_rhf_`, `make_uhf_`, `make_rks_`, `make_uks_` wrappers).
+
+| driver | needs | best for |
+|---|---|---|
+| `optimize_bdiis` | nothing (scipy-free, in-house) | the default: BDIIS with a BFGS inverse Hessian and a trust region, cheapest by far with the analytic gradient |
+| `optimize_scipy` | scipy | L-BFGS-B baseline with finite-difference gradients |
+| `optimize_minuit` | iminuit | Minuit2 MIGRAD plus HESSE parameter uncertainties for a publication |
+| `optimize_bobyqa` | Py-BOBYQA | a scalar objective *without* an analytic gradient: external-program energies, SP-shell coefficients. A model-based step costs about one SCF, a finite-difference gradient costs two per parameter |
+| `optimize_dfols` | DFO-LS | a least-squares fit of energies to reference values; needs the residual vector (`residuals=` or an objective with a `residuals()` method) and refuses a plain energy |
+| `optimize_cmaes` | cma | a global pre-pass from a poor starting basis: population-based, derivative-free, tolerant of failed SCFs, not a precise finisher |
+
+The last three are optional backends. Install them with the
+`basisopt-drivers` extra:
+
+```sh
+pip install -e '.[basisopt-drivers]'
+```
+
+Each driver imports its backend lazily and raises a `RuntimeError` naming
+the missing package, so a plain `import vibeqc.basis_optimization` never
+needs any of them. Py-BOBYQA and DFO-LS are GPL-3.0 licensed; they are
+opt-in for that reason and are never imported by the core package.
+
+A starting basis that may sit in the wrong basin (a far-off guess, an
+exponent deliberately perturbed to test robustness) is the case for the
+CMA-ES pre-pass. The recipe chains it with a BDIIS polish:
+
+```python
+from vibeqc.basis_optimization.io import TempBasisLibrary
+from vibeqc.basis_optimization.recipes.objective import make_uhf_native_objective_gradient
+from vibeqc.basis_optimization.recipes.global_then_polish import optimize_global_then_polish
+
+with TempBasisLibrary() as lib:
+    objective, gradient = make_uhf_native_objective_gradient(parametrisation, molecule_factory, lib)
+    res = optimize_global_then_polish(
+        objective, parametrisation.pack(), bounds=parametrisation.optim_bounds(),
+        grad=gradient, cmaes_max_evaluations=100, cmaes_seed=1)
+
+res.driver              # "cmaes+bdiis"
+res.raw["cmaes"].fun    # where the pre-pass got to
+optimised = parametrisation.unpack(res.x)
+```
+
+CMA-ES sizes its first step from the *optimiser-space* box, a quarter of
+the narrowest log-exponent range, so the initial population stays inside
+a sensible exponent window. Pass `cmaes_sigma0` to override it and
+`cmaes_seed` for a reproducible run.
+
+`scripts/basisset_dev/driver_benchmark_stage1.py` runs every driver on the
+single-atom Stage-1 problem and prints the evaluation counts side by side;
+the measured table is in
+[the verification report](../basisset_dev/VERIFICATION_REPORT.md).
 
 ## See also
 

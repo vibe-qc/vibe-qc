@@ -375,8 +375,8 @@ def test_h2_pt111_barrier_parity_PRODUCTION():
        regression and unblock the roadmap rows
        (`Surface diffusion via NEB`, `NEB + Dimer on Al(110)`).
 
-    See the NEB user guide (test/verification gate) and
-    handovers/HANDOVER_SURFACE_REACTIONS.md (Gap 4) for the full plan.
+    See the NEB user guide for the test/verification gate.
+
     """
     pytest.skip(
         "production H₂/Pt(111) periodic-NEB parity is a compute-reference job + "

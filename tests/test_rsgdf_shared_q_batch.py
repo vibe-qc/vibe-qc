@@ -11,7 +11,7 @@ through the Bloch phase ``exp(+i k.R)`` -- so the batch must agree with
 per-pair single builds to floating-point rounding while running the
 dominant pair-FT pass once per unique q instead of once per pair
 (``n_k^2 -> n_k`` on a regular full mesh; the open perf item in
-``handovers/HANDOVER_OPEN_BUGS_V015.md``, production-k-sampling
+the original investigation, production-k-sampling
 follow-ups).
 """
 
@@ -1544,8 +1544,8 @@ def test_aux_ft_cache_budget_handles_a_bad_env_value(monkeypatch):
 # the fit screen). Those were single-threaded passes over the largest
 # array in the cderi build, and they anti-scaled against the threads the
 # kernel itself uses -- 0.537 s at one thread against 0.671 s at sixteen
-# (measured 2026-08-05; see handovers/HANDOVER_GDF_OUTSTANDING.md, which
-# also records that the profile's larger 4.428 s figure is the whole of
+# (measured 2026-08-05; the profile's larger 4.428 s figure is the whole of
+#
 # `_accumulate_chunk`'s own time, NOT these passes). The kernel now
 # applies the weight as it stores, so neither pass exists.
 #
@@ -1840,9 +1840,12 @@ def test_production_gamma_and_general_spin_paths_share_sr_lr_source(monkeypatch)
     options.lattice_opts.nuclear_cutoff_bohr = 18.0
     energies = []
     for omega in (.45, .7):
+        # No rsgdf_ke_cutoff: each omega runs at the planner's cutoff for
+        # rsgdf_g_precision (21.28 / 51.55 Ha), which is what the former 20 Ha
+        # floor executed. An explicit value is now used exactly (GitLab IID 206).
         controls = dict(options=options, gdf_method='rsgdf', aux_basis='test',
                         rsgdf_omega=omega, rsgdf_g_precision=1e-10,
-                        rsgdf_ke_cutoff=20.0, progress=False)
+                        progress=False)
         gamma = gamma_module.run_pbc_gdf_rhf(system, basis, **controls)
         restricted = k_module.run_krhf_periodic_gdf(system, basis, **controls)
         unrestricted = k_module.run_kuhf_periodic_gdf(system, basis, **controls)

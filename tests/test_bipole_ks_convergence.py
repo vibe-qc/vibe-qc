@@ -1,8 +1,8 @@
 """Regression: RKS/UKS BIPOLE SCF convergence robustness.
 
-Gap B from handovers/HANDOVER_BIPOLE_PRODUCTION.md: RKS BIPOLE
+Gap B from the original investigation: RKS BIPOLE
 historically oscillated ~0.5 Ha on MgO primitive. The 2026-07-13
-Gap-B validation (Sec. 0a of that handover) closed the question:
+Gap-B validation (Sec. 0a of that historical design record) closed the question:
 
 * The oscillation does not exist in the current corrected-gauge code.
   Plain DIIS converges the MgO fixture monotonically in ~10 iterations
@@ -513,7 +513,7 @@ def test_bipole_spin_schedule_forwards_exact_zone_to_both_phases(
 # ---------------------------------------------------------------------------
 # The actual Gap B case: MgO primitive (tight ionic cell), multi-k RKS.
 # The four tests above use H2 boxes — soft covalent cells that converge
-# easily; they never exercised the system the Gap B handover is about.
+# easily; they never exercised the system the Gap B historical design record is about.
 # ---------------------------------------------------------------------------
 
 
@@ -689,5 +689,6 @@ def test_band_overlap_t0_mesh_uses_the_occupation_driven_density():
         run_pbc_bipole_rks(
             system, basis, kmesh, opts, functional="lda",
             use_ewald_j_split=True, use_exchange_ewald_split=False,
+            historical_domain=True,
             ewald_precision=1e-8, progress=False,
         )

@@ -22,6 +22,8 @@ from vibeqc.semiempirical.runner import (
     run_semiempirical,
 )
 
+from tests.refusal_receipt import assert_preflight_refusal
+
 
 def _water() -> vq.Molecule:
     return vq.Molecule(
@@ -277,7 +279,9 @@ def test_scc_dftb_explicit_molden_request_fails_before_engine(
             write_molden_file=True,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    # Since 94f71d1 (!133) the refusal leaves exactly its preflight receipt
+    # (status crashed, result_status refused) and no calculation output.
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("method", ["pm6", "om2", "om3", "msindo"])
@@ -301,7 +305,9 @@ def test_basis_free_explicit_population_request_fails_before_engine(
             write_population_file=True,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    # Since 94f71d1 (!133) the refusal leaves exactly its preflight receipt
+    # (status crashed, result_status refused) and no calculation output.
+    assert_preflight_refusal(stem)
 
 
 def test_dftb0_writes_method_native_mulliken_population(tmp_path) -> None:
@@ -416,7 +422,9 @@ def test_mace_explicit_wavefunction_sidecar_is_inapplicable(tmp_path) -> None:
             citations=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    # Since 94f71d1 (!133) the refusal leaves exactly its preflight receipt
+    # (status crashed, result_status refused) and no calculation output.
+    assert_preflight_refusal(stem)
 
 
 def test_supported_rhf_default_plan_keeps_wavefunction_sidecars(tmp_path) -> None:
@@ -1072,10 +1080,13 @@ def test_pm6_route_still_reports_a_real_energy(monkeypatch):
     result = _drive_real_pm6_route(monkeypatch, -33.08480958728282)
     assert result.energy == -33.08480958728282
     assert result.converged is False
-    # 300 from the native stub plus 100 per unusable recovery rung: the
+    # 300 from the native stub plus 300 per unusable recovery rung: the
     # ladder was entered and exhausted, so this control walks exactly the
     # code path the refusing cases take and differs only in the value.
-    assert result.n_iter == 600
+    # The per-rung charge is the warm budget, raised from 100 to 300 with
+    # #154's basin guard -- a rung that fails for want of iterations removes
+    # a candidate, and a missing candidate is what hid the second basin.
+    assert result.n_iter == 1200
 
 
 def test_pm6_route_accepts_a_legitimately_tiny_energy(monkeypatch):
@@ -1128,3 +1139,153 @@ def test_electron_free_system_keeps_its_legitimate_zero():
     # A non-finite energy is refused even for an electron-free system.
     with pytest.raises(RuntimeError):
         SemiempiricalResult(float("nan"), None, "pm6", n_electrons=0)
+
+
+# ---------------------------------------------------------------------------
+# #345: the molecular DFTB record names the placeholder repulsive pairs on the
+# .out, the .system [run] section and the QVF job spec, the same pairs the
+# stderr warning names.
+# ---------------------------------------------------------------------------
+
+
+def _placeholder_pairs_named_by_warning(recorded) -> list[str]:
+    from vibeqc.semiempirical import DFTB0RepulsivePlaceholderWarning
+
+    messages = [
+        str(w.message)
+        for w in recorded
+        if issubclass(w.category, DFTB0RepulsivePlaceholderWarning)
+    ]
+    assert messages, "the placeholder warning did not fire"
+    text = messages[0]
+    head = "no fitted repulsive for the pair(s) "
+    start = text.index(head) + len(head)
+    return [label.strip() for label in text[start : text.index(";", start)].split(",")]
+
+
+def _qvf_job_spec_options(stem) -> dict:
+    import zipfile
+
+    with zipfile.ZipFile(stem.with_suffix(".qvf")) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        job = next(
+            section for section in manifest["sections"] if section["kind"] == "job.spec"
+        )
+        return json.loads(zf.read(job["members"]["spec"]["path"]))["options"]
+
+
+@pytest.mark.parametrize("method", ["dftb0", "scc_dftb"])
+def test_molecular_dftb_record_carries_the_placeholder_pairs_that_warned(
+    tmp_path, method
+):
+    import warnings
+
+    from vibeqc.output.formats.semiempirical_record import (
+        PLACEHOLDER_REPULSIVE_RUN_FIELD,
+    )
+    from vibeqc.semiempirical.dftb0 import placeholder_repulsive_pairs
+    from vibeqc.semiempirical.parameters import default_parameters
+
+    stem = tmp_path / f"water_{method}"
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        result = vq.run_job(
+            _water(),
+            method=method,
+            output=stem,
+            citations=False,
+            progress=False,
+            write_molden_file=False,
+            write_xyz_file=False,
+            write_population_file=False,
+        )
+    warned = _placeholder_pairs_named_by_warning(recorded)
+    # The probe and the warning agree on the shipped set: water's three pairs.
+    expected = [
+        f"{z1}-{z2}"
+        for z1, z2 in placeholder_repulsive_pairs(default_parameters(), [8, 1, 1])
+    ]
+    assert warned == expected == ["1-1", "1-8", "8-8"]
+    assert result.placeholder_repulsive_pairs == [(1, 1), (1, 8), (8, 8)]
+
+    run = tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))["run"]
+    assert run[PLACEHOLDER_REPULSIVE_RUN_FIELD] == warned
+
+    text = stem.with_suffix(".out").read_text("utf-8")
+    assert "## DFTB repulsive qualification" in text
+    assert f"  {PLACEHOLDER_REPULSIVE_RUN_FIELD} = 1-1, 1-8, 8-8\n" in text
+    assert "A/R^12 placeholder repulsive" in text
+
+    assert _qvf_job_spec_options(stem)[PLACEHOLDER_REPULSIVE_RUN_FIELD] == warned
+
+
+def test_molecular_gfn2_record_has_no_placeholder_key(tmp_path):
+    """No repulsive table, no key: absence means not applicable."""
+    import warnings
+
+    from vibeqc.output.formats.semiempirical_record import (
+        PLACEHOLDER_REPULSIVE_RUN_FIELD,
+    )
+
+    stem = tmp_path / "water_gfn2"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = vq.run_job(
+            _water(),
+            method="gfn2",
+            output=stem,
+            citations=False,
+            progress=False,
+            write_molden_file=False,
+            write_xyz_file=False,
+            write_population_file=False,
+        )
+    assert result.placeholder_repulsive_pairs is None
+    run = tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))["run"]
+    assert PLACEHOLDER_REPULSIVE_RUN_FIELD not in run
+    assert "DFTB repulsive qualification" not in stem.with_suffix(".out").read_text("utf-8")
+    assert PLACEHOLDER_REPULSIVE_RUN_FIELD not in _qvf_job_spec_options(stem)
+
+
+def test_semiempirical_record_formatter_spells_every_surface_alike():
+    from vibeqc.output.formats import semiempirical_record as rec
+
+    assert rec.placeholder_repulsive_labels([(8, 1), (1, 1), "6-6", (6, 6)]) == [
+        "1-1",
+        "1-8",
+        "6-6",
+    ]
+    assert rec.placeholder_repulsive_labels(None) == []
+    assert rec.semiempirical_record_fields(
+        route_maturity="experimental", route_status="dftb", placeholder_pairs=[]
+    ) == {
+        "route_maturity": "experimental",
+        "route_status": "dftb",
+        "placeholder_repulsive_pairs": [],
+    }
+    # Absent pairs (no repulsive table) leave the key out entirely.
+    assert rec.semiempirical_record_fields(route_maturity="production") == {
+        "route_maturity": "production"
+    }
+    lines = rec.format_semiempirical_record_lines(
+        route_maturity="production", placeholder_pairs=[(14, 14)]
+    )
+    assert lines.splitlines() == [
+        "    maturity            = production",
+        "    placeholder_repulsive_pairs = 14-14",
+        "      (A/R^12 placeholder repulsive: absolute energies, equilibrium "
+        "geometries and EOS fits are placeholder physics; fixed-geometry "
+        "differences remain exactly valid)",
+    ]
+    assert rec.format_semiempirical_record_lines(
+        route_maturity="production", placeholder_pairs=[]
+    ).splitlines() == [
+        "    maturity            = production",
+        "    placeholder_repulsive_pairs = none",
+    ]
+    assert rec.format_semiempirical_record_lines(route_maturity="experimental") == (
+        "    maturity            = experimental\n"
+    )
+    assert rec.format_semiempirical_record_section(placeholder_pairs=[]) == (
+        "  placeholder_repulsive_pairs = none\n"
+    )

@@ -24,7 +24,9 @@ Algorithm sketch
 3. Find seeds: voxels where |∇ρ| is a local minimum (≤ all 26 neighbours).
 4. Newton-Raphson refine each seed to a stationary point.
 5. Classify by Hessian eigenvalues (3,-3) → ncp, (3,-1) → bcp, etc.
-6. For each BCP, trace gradient paths to the two connected atoms.
+6. For each BCP, leave along plus and minus the eigenvector of the one
+   positive Hessian eigenvalue and follow steepest ascent on ρ to the two
+   nuclei the bond path joins.
 
 The module is MPL 2.0 licensed.  QTAIM is an open method; the algorithm
 follows the standard approach described in Bader (1990) and the MultiWFN
@@ -34,6 +36,7 @@ manual (Lu & Chen, J. Comput. Chem. 2012).
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
@@ -107,7 +110,10 @@ class BondPath:
     atoms
         ``(i, j)`` — the two connected atom indices.
     path
-        ``(N, 3)`` array of points (Angstrom) tracing the bond path.
+        ``(N, 3)`` array of points (Angstrom) tracing the bond path.  It runs
+        from the nucleus of atom ``i``, through the bond critical point, to the
+        nucleus of atom ``j``; the density falls monotonically from each
+        nucleus down to the bond critical point.
     """
 
     atoms: tuple[int, int]
@@ -354,40 +360,73 @@ def _trace_bond_path(
     step_size: float = 0.05,
     max_steps: int = 500,
     capture_radius: float = 0.3,
+    initial_step: float = 0.01,
 ) -> np.ndarray:
-    """Trace a gradient path from a BCP toward an atom.
+    """Trace half a bond path from a BCP up to a nucleus.
 
-    Follows steepest ascent on ρ by stepping along ∇ρ.
+    ``start`` is a bond critical point, where ∇ρ vanishes, so the gradient
+    there cannot say which way to go.  ``direction`` is a unit vector along
+    the eigenvector of the positive Hessian eigenvalue, taken with either
+    sign; the two signs give the two halves of the bond path.  The trace
+    first moves ``initial_step`` off the BCP along ``direction`` and then
+    follows steepest ascent on ρ in steps of ``step_size`` along ∇ρ,
+    halving any step that fails to raise ρ, until it comes within
+    ``capture_radius`` of a nucleus.  All lengths are in bohr.
 
     Returns
     -------
-    (N, 3) array of positions in bohr.
+    (N, 3) array of positions in bohr.  Row 0 is ``start``.  If the trace
+    reached a nucleus, the last row is that nucleus's position.  Otherwise
+    (``max_steps`` used up, or the ascent stalled) the trace is returned as
+    far as it got, and it is not a bond path.
     """
-    current = start.copy()
-    trace = [start.copy()]
+    direction = np.asarray(direction, dtype=np.float64)
+    direction = direction / np.linalg.norm(direction)
+    # A step longer than the capture sphere could hop over a nucleus.
+    step_size = min(step_size, 0.5 * capture_radius)
+    min_step = 1e-3 * step_size
+
+    def _rho_grad(point: np.ndarray) -> tuple[float, np.ndarray]:
+        rho, grad, _ = eval_fn(point[np.newaxis, :])
+        return float(rho[0]), grad[0]
+
+    current = start + initial_step * direction
+    rho_cur, grad_cur = _rho_grad(current)
+    trace = [start.copy(), current.copy()]
+    step = step_size
 
     for _ in range(max_steps):
-        # Check atom capture.
         dists = np.linalg.norm(atom_positions - current, axis=1)
         nearest = int(np.argmin(dists))
         if dists[nearest] < capture_radius:
             trace.append(atom_positions[nearest].copy())
             break
 
-        rh, gh, _ = eval_fn(current[np.newaxis, :])
-        grad = gh[0]
-        gn = float(np.linalg.norm(grad))
+        gn = float(np.linalg.norm(grad_cur))
         if gn < 1e-12:
             break
-        step_dir = grad / gn
-        current = current + step_dir * step_size
+        step_dir = grad_cur / gn
+        while True:
+            trial = current + step * step_dir
+            rho_try, grad_try = _rho_grad(trial)
+            if rho_try > rho_cur:
+                break
+            step *= 0.5
+            if step < min_step:
+                return np.array(trace, dtype=np.float64)
+        current, rho_cur, grad_cur = trial, rho_try, grad_try
         trace.append(current.copy())
-    else:
-        # Max steps — snap to nearest atom.
-        dists = np.linalg.norm(atom_positions - current, axis=1)
-        trace.append(atom_positions[int(np.argmin(dists))].copy())
+        step = min(2.0 * step, step_size)
 
     return np.array(trace, dtype=np.float64)
+
+
+def _terminal_atom(trace: np.ndarray, atom_positions: np.ndarray) -> Optional[int]:
+    """Index of the nucleus a :func:`_trace_bond_path` trace ended on, or
+    ``None`` if it stopped short of one."""
+    dists = np.linalg.norm(atom_positions - trace[-1], axis=1)
+    nearest = int(np.argmin(dists))
+    return nearest if dists[nearest] < 1e-8 else None
 
 
 # ---------------------------------------------------------------------------
@@ -527,26 +566,49 @@ def qtaim_analysis(
     ]
     for cp, pos_bohr in bcp_entries:
         i, j = cp.atom_pair  # type: ignore[misc]
-        vec_i = atom_pos[i] - pos_bohr
-        vec_j = atom_pos[j] - pos_bohr
-        ni, nj = np.linalg.norm(vec_i), np.linalg.norm(vec_j)
-        if ni < 1e-10 or nj < 1e-10:
+
+        # The density curves up along the bond, the one positive Hessian
+        # eigenvalue, and down across it, so the bond path leaves the BCP
+        # along plus and minus that eigenvector.
+        _rho, _grad, hess = _eval(pos_bohr[np.newaxis, :])
+        v3 = np.linalg.eigh(hess[0])[1][:, -1]
+
+        halves = [
+            _trace_bond_path(
+                pos_bohr, sign * v3, _eval, atom_pos,
+                step_size=grid_spacing * 0.5,
+            )
+            for sign in (1.0, -1.0)
+        ]
+        ends = [_terminal_atom(half, atom_pos) for half in halves]
+        if None in ends or ends[0] == ends[1]:
+            warnings.warn(
+                f"QTAIM: the gradient paths from the bond critical point "
+                f"assigned to atoms {i}-{j} do not reach two different nuclei "
+                f"(they end on {ends}); no bond path was recorded for it.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             continue
 
-        path_i = _trace_bond_path(
-            pos_bohr, vec_i / ni, _eval, atom_pos,
-            step_size=grid_spacing * 0.5,
-        )
-        path_j = _trace_bond_path(
-            pos_bohr, vec_j / nj, _eval, atom_pos,
-            step_size=grid_spacing * 0.5,
-        )
+        # Run the path from atom i to atom j.  The proximity rule behind
+        # ``atom_pair`` can disagree with where the paths actually end; the
+        # traced nuclei are the bond.
+        if set(ends) == {i, j}:
+            first, second = halves if ends[0] == i else halves[::-1]
+        else:
+            warnings.warn(
+                f"QTAIM: the bond critical point assigned to atoms {i}-{j} "
+                f"by proximity has gradient paths ending on atoms "
+                f"{ends[0]} and {ends[1]}; the bond path joins those.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            first, second = halves
+            i, j = ends
 
-        full_path = (
-            np.vstack([path_j[::-1], path_i[1:]])
-            if len(path_j) > 1 and len(path_i) > 1
-            else np.vstack([path_j[::-1], path_i])
-        )
+        # Each half starts at the BCP: run one reversed, drop the repeat.
+        full_path = np.vstack([first[::-1], second[1:]])
 
         bond_paths.append(
             BondPath(

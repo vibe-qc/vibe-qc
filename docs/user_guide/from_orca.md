@@ -10,8 +10,9 @@ myst:
 
 vibe-qc's molecular SCF stack validates against
 [ORCA 6.1.1](https://orcaforum.kofo.mpg.de/) for parity at the
-0.13 mHa level on glycine / def2-TZVP / RIJCOSX (see
-[RIJCOSX SCF and analytic gradients on glycine](../tutorial/rijcosx_glycine.md)). The chemistry
+0.26 mHa level on glycine / def2-TZVP / RIJCOSX (see
+[RIJCOSX SCF and analytic gradients on glycine](../tutorial/rijcosx_glycine.md)
+and the authoritative numbers in [Features](../features.md)). The chemistry
 maps cleanly; the **input idiom** is different, ORCA takes a
 keyword-driven plain-text deck while vibe-qc takes a Python
 script. This page is a side-by-side crosswalk.
@@ -161,7 +162,7 @@ jfit` matches ORCA's `def2/J`).
 
 | ORCA `%basis` | vibe-qc |
 |---|---|
-| `NewGTO 78 "LANL2DZ" end` (per-element basis override) | Use a `basis_library/custom/*.g94` file; vibe-qc applies it per element. See [basis_sets](basis_sets.md) § Custom basis sets. |
+| `NewGTO 78 "LANL2DZ" end` (per-element basis override) | Build a record carrying the override element (`vibe-qc-basis convert`) and point `LIBINT_DATA_PATH` at its rendering. See [basis_sets](basis_sets.md). |
 | `NewECP 78 "LANL2DZ" end` | `opts.ecp_centers = [vq.ECPCenter(Z=78, xyz=...)]` + `opts.ecp_library = "lanl2dz"` |
 | `Aux "def2/J"` | `opts.aux_basis = "def2-universal-jkfit"` |
 | `AuxJ "def2-svp/J"` / `AuxC "cc-pVDZ/C"` | `opts.aux_basis_j` / `opts.aux_basis_c` (these split-aux fields are roadmap; today `aux_basis` is the single field) |
@@ -173,7 +174,7 @@ jfit` matches ORCA's `def2/J`).
 | `Functional B3LYP` | `opts.functional = "B3LYP"` (same flavor in both codes; see the B3LYP-convention box above) |
 | `Method DFT` | implicit by calling `run_rks` / `run_uks` |
 | `RI on` | `opts.density_fit = True` |
-| `RunTyp Energy / Gradient / Opt / Freq` | call `run_job(optimize=True)` / `run_job(compute_hessian=True)` / `compute_gradient_rhf(...)` etc. directly |
+| `RunTyp Energy / Gradient / Opt / Freq` | call `run_job(optimize=True)` / `run_job(hessian=True)` / `vq.compute_gradient(...)` (RHF) or `compute_gradient_uhf` / `_rks` / `_uks` directly |
 
 ### `%pal` block
 
@@ -198,17 +199,29 @@ TIGHTSCF`. The vibe-qc equivalent is:
 
 ```python
 opts = vq.RKSOptions()
-opts.functional   = "PBE0"
-opts.dispersion   = "d3bj"
-opts.density_fit  = True
-opts.cosx         = True
-opts.aux_basis    = "def2-tzvp-jk"     # default; auto-picked by basis name
-opts.cosx_grid    = vq.default_cosx_grid_options()  # = ORCA's default GridX
 opts.conv_tol_energy = 1e-9             # TIGHTSCF
+
+vq.run_job(
+    mol, basis="def2-tzvp", method="rks", functional="PBE0",
+    dispersion="d3bj",
+    density_fit=True, cosx=True,
+    aux_basis="def2-tzvp-jk",           # default; auto-picked by basis name
+    rks_options=opts,                   # cosx_grid_level -1 auto-selects ORCA's GridX tier
+    output="rijcosx_pbe0",
+)
 ```
 
-The RIJCOSX SCF + analytic gradient match ORCA's to **0.13 mHa**
-on glycine / def2-TZVP per [RIJCOSX SCF and analytic gradients on glycine](../tutorial/rijcosx_glycine.md).
+The RIJCOSX SCF **energy** matches ORCA 6.1.1 to **0.26 mHa** on
+glycine / def2-TZVP. The RIJCOSX **analytic gradient** matches finite
+differences of vibe-qc's own RIJCOSX energy up to the neglected
+grid-motion band (about 2e-4 Ha/bohr on H2O/def2-TZVP); against ORCA's
+EnGrad on glycine / def2-TZVP the componentwise RMS deviation is 3.3e-3
+and the maximum 1.1e-2 Ha/bohr (|grad| 0.08696 versus 0.08703 Ha/bohr),
+the residual being the fitted-Fock response term plus grid-motion and
+weight derivatives that the COSX gradient omits. See
+[Features](../features.md) for the current numbers and
+[RIJCOSX SCF and analytic gradients on glycine](../tutorial/rijcosx_glycine.md)
+for the walkthrough.
 
 ## ECPs
 
@@ -311,8 +324,10 @@ grep "Total energy:" my-input.out
 ```
 
 Expected agreement after the v0.8.0 B3LYP-convention alignment:
-~µHa per atom for closed-shell HF / DFT; ~0.13 mHa per atom for
-RIJCOSX hybrids; ~10 µHa per atom for D3(BJ) corrections (the
+~µHa per atom for closed-shell HF / DFT; a few tenths of a mHa in
+total for RIJCOSX hybrids (0.26 mHa on glycine / def2-TZVP, the grid
+and fitting difference between the two COSX implementations); ~10 µHa
+per atom for D3(BJ) corrections (the
 dispersion is bit-identical because both codes use
 [Grimme's reference implementation](https://github.com/dftd3/simple-dftd3)).
 

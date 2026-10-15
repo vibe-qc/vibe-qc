@@ -1,10 +1,14 @@
 # Thermodynamics at temperature
 
 Once you have the electronic energy (SCF) and the vibrational
-frequencies (Hessian), ASE's ``IdealGasThermo`` does the standard
-statistical-mechanics arithmetic to produce **enthalpy**, **entropy**,
-and **Gibbs free energy** at any (T, P). That's everything you need
-for reaction thermochemistry in the ideal-gas approximation.
+frequencies (Hessian), ASE's ({vibeqc-cite}`ase_2017`)
+``IdealGasThermo`` does the standard statistical-mechanics arithmetic to
+produce **enthalpy**, **entropy**, and **Gibbs free energy** at any (T, P). That's everything you need
+for reaction thermochemistry in the ideal-gas approximation. vibe-qc also
+ships the same arithmetic natively, as `vibeqc.compute_thermochemistry`,
+which is described after the ASE route below and gives the same numbers.
+Both are production routes (label vocabulary in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)).
 
 This tutorial chains off of the
 [vibrational frequencies](vibrational_frequencies.md) tutorial, 
@@ -66,6 +70,10 @@ T=298.15 K   H=-2067.5934 eV   S=1.95 meV/K   G=-2068.1750 eV
 T=373.15 K   H=-2067.5674 eV   S=2.03 meV/K   G=-2068.3244 eV
 ```
 
+The output above was reproduced on a vibe-qc 0.17.10 development build
+(the relaxation, the finite-difference Hessian and the thermo arithmetic took
+under half a minute on an Apple M-series laptop).
+
 ## What `IdealGasThermo` accounts for
 
 ``IdealGasThermo`` prints a full breakdown when you call
@@ -95,8 +103,8 @@ H                  -2067.593 eV    enthalpy
 And entropy:
 
 ```
-S_trans (1 bar)    0.00150 eV/K        0.448 eV·K⁻¹ at 298 K
-S_rot              0.00045 eV/K        0.134 eV·K⁻¹
+S_trans (1 bar)    0.00150 eV/K        T·S = 0.448 eV at 298 K
+S_rot              0.00045 eV/K        T·S = 0.134 eV
 S_elec             0.00000 eV/K        (singlet → zero)
 S_vib              0.00000 eV/K        (stiff modes → zero)
 ```
@@ -104,6 +112,93 @@ S_vib              0.00000 eV/K        (stiff modes → zero)
 The translational entropy dominates, which is why small molecules
 have large ``-TS`` and binding equilibria favor one big fragment
 over two small ones.
+
+## The native route: `compute_thermochemistry`
+
+The ASE chain needs an ASE `Atoms` object and a calculator wrapper. The same
+partition-function arithmetic is available directly on a vibe-qc `Molecule`
+and a Hessian result, with the conditions and the symmetry number collected in
+a `ThermoOptions`. This snippet runs the whole chain in the STO-3G basis, both
+routes side by side, so it finishes in seconds:
+
+```python
+import numpy as np
+import vibeqc as vq
+from ase import Atoms
+from ase.units import Bohr, Hartree
+from ase.vibrations import Vibrations
+from ase.thermochemistry import IdealGasThermo
+from vibeqc.ase import VibeQC
+
+mol = vq.Molecule([                      # coordinates in bohr
+    vq.Atom(8, [0.0,  0.00,  0.00]),
+    vq.Atom(1, [0.0,  1.43, -0.98]),
+    vq.Atom(1, [0.0, -1.43, -0.98]),
+])
+
+# 1. Relax, then finite-difference the analytic gradient for the Hessian.
+opt = vq.optimize_molecule(mol, "sto-3g", method="rhf", conv_tol_grad=1e-6)
+mol_eq = opt.system
+hess = vq.compute_hessian_fd(mol_eq, "sto-3g", "RHF")
+
+# 2. Native thermochemistry: thermal corrections in Hartree per molecule.
+th = vq.compute_thermochemistry(
+    mol_eq, hess,
+    options=vq.ThermoOptions(temperature=298.15, pressure=101325.0,
+                             symmetry_number=2),        # C2v water
+)
+E_el = opt.energy
+print(f"ZPE           = {th.zpe:.6f} Ha")
+print(f"H(298 K)      = {E_el + th.h_thermal:.6f} Ha")
+print(f"S(298 K)      = {th.s_total:.4e} Ha/K")
+print(f"G(298 K)      = {E_el + th.g_thermal:.6f} Ha")
+
+# 3. The ASE route on the same geometry.
+atoms = Atoms(numbers=[a.Z for a in mol_eq.atoms],
+              positions=np.array([list(a.xyz) for a in mol_eq.atoms]) * Bohr)
+atoms.calc = VibeQC(basis="sto-3g")
+vib = Vibrations(atoms, name="water_sto3g")
+vib.run()
+ase_thermo = IdealGasThermo(
+    vib_energies=vib.get_energies(), potentialenergy=atoms.get_potential_energy(),
+    atoms=atoms, geometry="nonlinear", symmetrynumber=2, spin=0,
+)
+print(f"ASE  H(298 K) = {ase_thermo.get_enthalpy(298.15) / Hartree:.6f} Ha")
+print(f"ASE  S(298 K) = {ase_thermo.get_entropy(298.15, 101325.0) / Hartree:.4e} Ha/K")
+print(f"ASE  G(298 K) = {ase_thermo.get_gibbs_energy(298.15, 101325.0) / Hartree:.6f} Ha")
+```
+
+On a vibe-qc 0.17.10 development build the frequencies come out at
+2169.8, 4139.6 and 4390.7 cm⁻¹ (RHF/STO-3G, the usual large STO-3G
+overestimate) and the two routes agree:
+
+| Quantity (298.15 K, 1 atm) | `compute_thermochemistry` | ASE `IdealGasThermo` |
+|---|---:|---:|
+| ZPE (Ha) | 0.024377 | 0.024376 |
+| H (Ha) | -74.937747 | -74.937748 |
+| S (Ha/K) | 7.216e-05 | 7.216e-05 |
+| G (Ha) | -74.959263 | -74.959263 |
+
+The enthalpy and Gibbs energy differ by 7e-7 Ha (0.002 kJ/mol), which is the
+small difference between the two libraries' physical constants and mass
+tables; the entropies agree to 3e-11 Ha/K. On the HF/6-31G\* geometry of the
+previous sections the agreement is the same: the native route reproduces
+H = -2067.5934 eV, G = -2068.1750 eV and S = 1.95 meV/K at 298.15 K to the
+digits printed there.
+
+Three conventions differ from the ASE route. `ThermoResult` holds *thermal
+corrections* (`h_thermal`, `g_thermal`, `zpe`, `u_thermal`) in Hartree per
+molecule, and you add the electronic energy yourself, while ASE returns
+absolute energies in eV including the potential energy. The symmetry number is
+not detected: `ThermoOptions.symmetry_number` defaults to 1 (correct only for
+an asymmetric top), so set it (2 for H₂O, 3 for NH₃, 12 for CH₄). And the
+electronic degeneracy defaults to the molecule's multiplicity 2S+1 instead of
+being an ASE `spin=` value; override it with
+`ThermoOptions.electronic_degeneracy` for states with orbital degeneracy.
+Modes with an imaginary frequency below -1 cm⁻¹ are dropped from the
+vibrational partition function and counted in
+`n_imaginary_modes_excluded`, so a non-zero value there means the geometry is
+not a minimum.
 
 ## Reaction thermodynamics
 
@@ -155,10 +250,13 @@ which is why water-dimer isn't the dominant species in the gas phase.
   ``RHFOptions``.
 - **No scaling factor applied.** The raw harmonic frequencies over-
   estimate fundamentals by ~10-15% at HF/6-31G\*; multiply by ~0.89
-  (or 0.96 for DFT) if comparing to IR data.
+  (or 0.96 for DFT) if comparing to IR data ({vibeqc-cite}`wong_scaling_1996`;
+  A. P. Scott and L. Radom, *J. Phys. Chem.* **100**, 16502 (1996),
+  doi:10.1021/jp960976r).
 - **Missing dispersion at HF.** Weakly-bound species (van der Waals,
-  H-bonded dimers) under-bind at HF. Dispersion corrections (D3/D4)
-  are on the wishlist.
+  H-bonded dimers) under-bind at HF. Add a D3(BJ) or D4 correction to the
+  electronic energy (see the [dispersion tutorial](dispersion.md)), or use a
+  dispersion-corrected functional.
 
 ## Theory
 
@@ -170,7 +268,8 @@ regimes where the ideal-gas treatment breaks down.
 ### The ideal-gas partition function
 
 Classical statistical mechanics gives every thermodynamic quantity
-from the canonical partition function $Z(T, V, N)$. For an ideal
+from the canonical partition function $Z(T, V, N)$ (D. A. McQuarrie,
+*Statistical Mechanics*, University Science Books (2000)). For an ideal
 gas of non-interacting molecules, $Z$ factorises into translational,
 rotational, vibrational, and electronic contributions:
 
@@ -188,7 +287,7 @@ pressure.
   Dominates the entropy.
 - **Rotational** (non-linear rigid rotor):
   $Z_\text{rot} = \tfrac{\sqrt{\pi}}{\sigma} \prod_{i} \sqrt{T / \theta_{\text{rot},i}}$
-  where $\sigma$ is the symmetry number (2 for H₂O, 6 for NH₃, 12
+  where $\sigma$ is the symmetry number (2 for H₂O, 3 for NH₃, 12
   for CH₄) and $\theta_{\text{rot},i} = \hbar^2 / (2 I_i k_B)$ are
   the principal-axis rotational temperatures.
 - **Vibrational** (harmonic): a product of independent
@@ -254,11 +353,14 @@ The assumptions break when:
    approximation gives huge entropy contributions to floppy modes
    that aren't really harmonic. ``HinderedThermo`` in ASE handles
    hindered rotors; manual damping or mode-by-mode replacement of
-   the partition function is the alternative.
+   the partition function is the alternative (for example the
+   quasi-RRHO interpolation of S. Grimme, *Chem. Eur. J.* **18**, 9955
+   (2012), doi:10.1002/chem.201200497).
 2. **Condensed phase / solution**, translational / rotational
    partition functions need heavy modification. For aqueous
-   chemistry you want an implicit-solvation method (roadmap item)
-   and a careful treatment of the standard-state change.
+   chemistry you want an implicit-solvation method (see the
+   [solvation tutorial](solvation_water.md)) and a careful treatment of
+   the standard-state change.
 3. **Transition metals with dense excited-state manifolds**, $Z_\text{elec}$
    stops being ~1 when there are excitations within $k_B T$.
 
@@ -294,7 +396,9 @@ which dominates the total wall time.
 
 ## Next
 
-Transition-state search via NEB, reaction thermochemistry across a
-series, and activation-energy calculations are all reachable with the
-same ASE-driven pattern used here, write-ups will land as those
-examples stabilise.
+Transition-state search is covered in
+[Nudged elastic band](neb_reaction_path.md) and
+[Following the IRC](irc_from_transition_state.md); reaction thermochemistry
+across a series and activation free energies are reachable with the same
+pattern used here, using either the ASE chain or `compute_thermochemistry`
+on each species.

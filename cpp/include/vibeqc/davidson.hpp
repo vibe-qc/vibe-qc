@@ -43,7 +43,17 @@ struct DavidsonOptions {
     // Subspace size budget: when the subspace exceeds this many
     // vectors, a "collapse" resets to the current n_conv converged
     // Ritz vectors + n_eig unconverged + a few extra.
-    int max_subspace = 0;  // 0 = auto (min(6 * n_eig, n_basis))
+    //
+    // 0 = auto: min(max(8 * n_eig, n_guess + 20), n_basis).  Any value,
+    // explicit or automatic, is raised to the smallest workable budget
+    // n_eig + min(5, n_basis - n_eig) + n_eig + 1 (the restart block plus
+    // one sweep of corrections; GitLab #123) and capped at n_basis, so
+    // ``DavidsonResult::subspace_dim`` can exceed a smaller request.  A
+    // partial-spectrum problem too small to hold that floor
+    // (n_basis < 2 * n_eig + 6, n_eig < n_basis) is solved densely
+    // instead (GitLab #287): n_iter = 0, subspace_dim = n_basis,
+    // n_converged = n_eig, converged = true.
+    int max_subspace = 0;
 
     // Convergence threshold on the residual norm ‖r_i‖₂ for each
     // eigenpair.  Residual r_i = A·x_i − λ_i·x_i.
@@ -145,6 +155,16 @@ DavidsonResult davidson_solve_matvec(
     const Eigen::VectorXd& diag,
     const DavidsonOptions& opts);
 
+// Block callback form. The action receives n_basis x block_width and must
+// return the same shape. Callback owners keep the operator fixed throughout
+// the solve. Both callback forms retain the documented small-problem dense
+// fallback; strict Python operators refuse that dimensional regime.
+DavidsonResult davidson_solve_matmat(
+    int n_basis,
+    const std::function<Eigen::MatrixXd(const Eigen::MatrixXd&)>& matmat,
+    const Eigen::VectorXd& diag,
+    const DavidsonOptions& opts);
+
 // Complex Hermitian variant — used for k ≠ Γ periodic Fock matrices.
 //
 // A is n × n Hermitian.  The returned eigenvectors are column-wise
@@ -153,10 +173,19 @@ DavidsonResultComplex davidson_solve_hermitian(
     const Eigen::MatrixXcd& A_H,
     const DavidsonOptions& opts);
 
-// Complex Hermitian matvec variant.
+// Complex Hermitian callback variants. The supplied real diagonal is used
+// for preconditioning. Operator applications share the explicit kernel;
+// there is no dense reconstruction except the documented small-problem
+// fallback. Full-spectrum requests naturally require n x n subspaces.
 DavidsonResultComplex davidson_solve_hermitian_matvec(
     int n_basis,
     const std::function<Eigen::VectorXcd(const Eigen::VectorXcd&)>& matvec,
+    const Eigen::VectorXd& diag,
+    const DavidsonOptions& opts);
+
+DavidsonResultComplex davidson_solve_hermitian_matmat(
+    int n_basis,
+    const std::function<Eigen::MatrixXcd(const Eigen::MatrixXcd&)>& matmat,
     const Eigen::VectorXd& diag,
     const DavidsonOptions& opts);
 

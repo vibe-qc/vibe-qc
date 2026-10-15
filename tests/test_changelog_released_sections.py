@@ -199,6 +199,36 @@ def test_audit_requires_a_reason_where_a_section_differs_from_its_tag(tmp_path):
     assert guard.audit(later, explained, repo)[0] == []
 
 
+@needs_git
+def test_audit_require_tagged_rejects_a_clone_that_audits_nothing(tmp_path):
+    """A tagless clone skips every section, so audit passes without auditing.
+
+    That is the silent stop the guard exists to prevent, so a caller that
+    depends on the audit can demand a floor on how much it actually compared.
+    """
+    repo = _repo(tmp_path, BASE)
+    pins_path = tmp_path / "pins.toml"
+    pins_path.write_text(
+        guard.dump_pins(_pinned(BASE), guard.section_order(BASE)), encoding="utf-8"
+    )
+    argv = [
+        "audit",
+        "--changelog", str(repo / "CHANGELOG.md"),
+        "--pins", str(pins_path),
+        "--repo", str(repo),
+    ]
+
+    # No tags yet. The default is unchanged: nothing to compare is not a failure.
+    assert guard.main(argv) == 0
+    # But a caller that relies on the comparison can refuse a vacuous pass.
+    assert guard.main([*argv, "--require-tagged", "1"]) == 1
+
+    assert _git(repo, "tag", "v1.1.0").returncode == 0
+    assert guard.main([*argv, "--require-tagged", "1"]) == 0
+    # Asking for more than exist still fails: only v1.1.0 is tagged here.
+    assert guard.main([*argv, "--require-tagged", "2"]) == 1
+
+
 def _hook(repo: Path, line: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
     env = {**_ISOLATED_ENV, "VIBEQC_PRE_PUSH_PYTHON": sys.executable, **(extra_env or {})}
     return subprocess.run(

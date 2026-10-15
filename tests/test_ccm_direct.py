@@ -35,6 +35,7 @@ from vibeqc.periodic.exchange_convention import (
     STRICT_ZERO,
     assert_matched_exchange_q0,
 )
+from vibeqc.periodic.ccm.source import assert_matched_neutral_source
 
 pytestmark = pytest.mark.experimental  # Γ-CCM (aiccm2026dev-a) research lane
 
@@ -125,12 +126,18 @@ def _li_cubic_ccm(nrep=(1, 1, 1), a=8.0):
     return CCMSystem(cell, nrep, "sto-3g")
 
 
-def _assert_direct_gdf_parity(ccm, tol=1e-8):
+def _assert_direct_gdf_parity(ccm, tol=1e-8, *, rcut_strategy="pyscf_auto",
+                              lat_opts=None):
     """Shared gate: direct-torus == multi-k GDF per unit cell at matched
     exchange-q=0 convention AND matched reciprocal support. Returns
     (direct, gdf) results."""
-    r = run_ccm_rhf_direct(ccm)
-    g = run_ccm_rhf_gdf(ccm)
+    from vibeqc import PeriodicRHFOptions
+
+    options = PeriodicRHFOptions()
+    if lat_opts is not None:
+        options.lattice_opts = lat_opts
+    r = run_ccm_rhf_direct(ccm, lat_opts=lat_opts, rcut_strategy=rcut_strategy)
+    g = run_ccm_rhf_gdf(ccm, options=options, rcut_strategy=rcut_strategy)
     assert r.converged and g.converged
     # The GDF route is exxdiv='ewald' throughout (multi-k branch and the
     # dim=3 Γ fast-path both); assert before comparing energies.
@@ -153,6 +160,9 @@ def _assert_direct_gdf_parity(ccm, tol=1e-8):
         f"direct={r.rsgdf_tail_ke_cutoff!r} gdf={g.rsgdf_tail_ke_cutoff!r}; "
         "these are different Hamiltonians, not a tolerance question"
     )
+    # The whole-operator identity (#519): geometry, torus, bases, fit engine
+    # and cutoffs, tail, cell list and seam in one record on both sides.
+    assert_matched_neutral_source([r, g], context="direct-vs-gdf")
     # A held absolute energy must never be compared as if it were converged.
     assert not r.parity_held and not g.parity_held
     assert r.normalization == "total_cyclic_cluster"
@@ -229,7 +239,7 @@ def test_supercell_cderi_lih_documented_residual():
     supercell-fit path specifically — the fold-built cderi on the same torus
     matches the GDF to 4e-14 (test above), which is what localizes it.
     Li/sto-3g's 42–56-bohr 2sp extents are the documented problem class of
-    the shared rsgdf machinery (handovers/HANDOVER_RIJCOSX_M3A.md § M3b-5,
+    the shared rsgdf machinery (M3b-5,
     escalated).
     Pinned at 5e-4 so a builder fix is noticed and this gate tightened.
     """
@@ -320,7 +330,7 @@ def test_direct_matches_gdf_non_trim_mesh():
 # (KPointCosxK, M3b) carries an intrinsic ~22-30 µHa/cell composition/DF floor
 # vs the exact neutral-cderi exchange — invariant under ω, LR cutoff, and grid
 # tier, and equal to the engine's own validated backend parity (0.024-0.027
-# mHa, handovers/HANDOVER_RIJCOSX_M3A.md § M3b-4c). The gates below pin the route at
+# mHa, M3b-4c). The gates below pin the route at
 # 5e-5 Ha/cell (floor + margin); tightening to the mission's ~10 µHa target
 # requires a floor improvement in the shared engine, not CCM-side tuning.
 
@@ -587,7 +597,7 @@ def test_positive_closed_shell_energy_fails_closed():
 #
 # ccm_neutral_tail_ke_cutoff now resolves the tail for BOTH routes.
 #
-# THE CANONICAL GATE FOR THAT IS tests/test_ccm_neutral_tail_parity.py (16
+# THE CANONICAL GATE FOR THAT IS tests/test_ccm_neutral_tail_parity.py (15
 # tests, landed with the fix): end-to-end direct-vs-GDF parity on fcc Be and
 # diamond, each asserting that the UNTAILED control still fails the same
 # tolerance, so the negative branch is exercised. Do not duplicate it here.
@@ -652,18 +662,109 @@ def test_direct_matches_gdf_tight_core_diamond_3d():
 
     With the tail plumbing reverted the direct side returns -74.0179352366
     against the GDF's -74.0020515730, a 1.6e-2 Ha/cell gap this fails on.
+
+    This absolute anchor belongs to the historical flat 15-bohr one-electron
+    image ball, with a 25-bohr nuclear cutoff. The physical automatic domain
+    introduced for #438 moves BOTH routes by -3.7467 microHa; it remains the
+    production default and is exercised by test_ccm_neutral_tail_parity.
+    Replaying the declared historical domain recovers this unchanged anchor
+    within 1.6e-11 Ha (#513), without changing the fit or analytic tail.
     """
+    from vibeqc import LatticeSumOptions
+
+    historical = LatticeSumOptions()
+    historical.cutoff_bohr = 15.0
+    historical.nuclear_cutoff_bohr = 25.0
+    historical.pair_complete_1e = False
     ccm = _diamond_ccm()
-    r, g = _assert_direct_gdf_parity(ccm, tol=1e-8)
+    r, g = _assert_direct_gdf_parity(
+        ccm, tol=1e-8, rcut_strategy="flat", lat_opts=historical)
 
     # Not vacuously satisfied by "both None": this cell must actually tail.
     assert r.rsgdf_tail_ke_cutoff == pytest.approx(
         DIAMOND_STO3G_AUTO_TAIL, rel=1e-9)
     assert g.rsgdf_tail_ke_cutoff == pytest.approx(
         DIAMOND_STO3G_AUTO_TAIL, rel=1e-9)
-    # The Γ fast path is what runs at a single-Γ mesh; pin that too, since the
-    # whole defect was this route switch going unnoticed.
-    assert "gamma" in str(g.raw.backend).lower()
+    # The neutral Bloch producer uses the multi-k classic fit even at N=1
+    # (#378). Pin its executed source, not the retired Gamma fast-path name.
+    assert g.executed_fit_source is not None
+    assert g.executed_fit_source.source == "classic"
     # Absolute anchor, so a future change that moves BOTH routes together
     # still fails here rather than passing on self-consistency alone.
     assert r.energy / ccm.n_cells == pytest.approx(-74.0020515731, abs=1e-8)
+
+
+# ---------------------------------------------------------------------------
+# Ruling R6 (2026-09-10): the IID 291 gate gains an explicit, warned,
+# recorded opt-in so the transverse vacuum of a chain becomes a parameter
+# with a convergence test instead of a silent regime.
+# ---------------------------------------------------------------------------
+
+
+def _padded_h2_chain_30_ccm(nrep=(1, 1, 1)):
+    """1-D H2 chain along a1, declared 3-D, 30 bohr transverse vacuum: the
+    gap on a2/a3 (30 bohr) exceeds both the 25-bohr floor and four shortest
+    lattice vectors (24 bohr), so the classifier flags directions 2 and 3.
+    Converges to a NEGATIVE energy on the neutral routes (measured
+    2026-09-16: -1.15531 Ha/cell at (1,1,1) on both producers), so the
+    second IID 291 arm does not fire and the opt-in itself is what is
+    exercised."""
+    cell = PeriodicSystem(
+        3, np.diag([6.0, 30.0, 30.0]),
+        [Atom(1, [0.0, 0.0, 0.0]), Atom(1, [1.4, 0.0, 0.0])], 0, 1)
+    return CCMSystem(cell, nrep, "sto-3g")
+
+
+def test_vacuum_padding_opt_in_runs_warns_and_records():
+    """Default: refused, and the refusal names the opt-in. With
+    ``allow_vacuum_padding=True``: an ``AICCMVacuumPaddingWarning`` naming
+    the padded directions (1-based), a converged result carrying
+    ``vacuum_padding_allowed=True`` and ``vacuum_padded_axes=(2, 3)``, on
+    BOTH producers of the neutral Hamiltonian and on the lean neutral SCF."""
+    from vibeqc.periodic.ccm.experimental import AICCMVacuumPaddingWarning
+    from vibeqc.periodic.ccm.ri import run_ccm_rhf_gdf, run_ccm_rhf_ri_neutral
+
+    ccm = _padded_h2_chain_30_ccm()
+    for fn in (run_ccm_rhf_direct, run_ccm_rhf_gdf, run_ccm_rhf_ri_neutral):
+        with pytest.raises(NotImplementedError, match="allow_vacuum_padding"):
+            fn(ccm)
+    results = {}
+    for name, fn in (("direct", run_ccm_rhf_direct),
+                     ("gdf", run_ccm_rhf_gdf),
+                     ("ri_neutral", run_ccm_rhf_ri_neutral)):
+        with pytest.warns(AICCMVacuumPaddingWarning, match="direction\\(s\\) 2, 3"):
+            r = fn(ccm, allow_vacuum_padding=True)
+        assert r.converged
+        assert r.vacuum_padding_allowed is True
+        assert r.vacuum_padded_axes == (2, 3)
+        results[name] = r
+    # The two producers of the neutral Hamiltonian agree on the padded cell
+    # too (they run the same padded Hamiltonian); the lean neutral SCF is the
+    # strict-zero-mode Hamiltonian and is NOT expected to agree.
+    e_direct = results["direct"].energy / ccm.n_cells
+    assert abs(e_direct - results["gdf"].energy) < 1e-8
+    assert e_direct < 0.0
+
+
+def test_vacuum_padding_default_stamps_negative_on_measured_3d_cells():
+    """A cell measured as genuinely 3-D records the opt-in as False with an
+    empty axis tuple, on the direct route and on the RIJCOSX sibling (which
+    carried no IID 291 gate at all until 2026-09-16)."""
+    ccm = _h2_cubic_ccm((1, 1, 1))
+    r = run_ccm_rhf_direct(ccm)
+    assert r.vacuum_padding_allowed is False and r.vacuum_padded_axes == ()
+    c = run_ccm_rhf_direct_rijcosx(ccm)
+    assert c.vacuum_padding_allowed is False and c.vacuum_padded_axes == ()
+    with pytest.raises(NotImplementedError, match="vacuum"):
+        run_ccm_rhf_direct_rijcosx(_padded_h2_chain_30_ccm())
+
+
+def test_vacuum_padding_opt_in_does_not_relax_the_positive_energy_refusal():
+    """The second arm of IID 291 is independent of the geometric gate: a
+    closed-shell neutral SCF converging to a positive energy is refused
+    with or without the opt-in. The compressed padded chain (2.8-bohr
+    period, 40-bohr padding) is the documented +0.03 Ha garbage case."""
+    from vibeqc.periodic.ccm.scf import run_ccm_rhf
+
+    with pytest.raises(ValueError, match="positive total energy"):
+        run_ccm_rhf(_padded_h_chain_ccm(), method="aiccm2026dev-a")

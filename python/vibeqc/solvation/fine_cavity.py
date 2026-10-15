@@ -433,13 +433,19 @@ def molecular_frame_jacobian(atom_positions_bohr) -> np.ndarray:
     # ``share[A]`` is ``delta_{sel,A} - 1/n``: the selected atom moves the
     # centre with it, so its own displacement is reduced by the centroid's.
     #
-    # Averaging this over a *tied* selection was tried and is wrong, which is
-    # worth recording because it is the obvious idea. At a tie the frame does
-    # not vary smoothly with two one-sided derivatives to average -- it *jumps*
-    # between two finite directions -- so an averaged Jacobian is not the
-    # derivative of any frame, and it breaks the exact rotation identity that
-    # the real one satisfies to machine precision. What a tie actually costs is
-    # measured by ``test_the_gradient_is_ill_conditioned_near_a_frame_tie``.
+    # Averaging this *Jacobian* over a tied selection was tried and is wrong,
+    # which is worth recording because it is the obvious idea. At a tie the
+    # frame does not vary smoothly with two one-sided derivatives to average --
+    # it *jumps* between two finite directions -- so an averaged Jacobian is not
+    # the derivative of any frame, and it breaks the exact rotation identity
+    # that the real one satisfies to machine precision.
+    #
+    # What a tie costs is a cusp in the *energy* (two genuine smooth energies,
+    # one per candidate frame, meeting at the tie), so the raw gradient is one
+    # branch's slope. The remedy is at the level of the gradient, not the
+    # Jacobian: ``cpcm_gradient`` averages the gradient over the solute's point
+    # group, which is the central difference's answer (#535,
+    # ``vibeqc.solvation.point_group``).
     def share(sel: int) -> np.ndarray:
         s = np.full(n_at, -1.0 / n_at)
         s[sel] += 1.0

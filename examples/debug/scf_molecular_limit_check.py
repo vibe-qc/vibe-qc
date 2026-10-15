@@ -116,7 +116,7 @@ def run_check(label: str, builder: Callable, L_bohr: float = 30.0,
     t0 = time.perf_counter()
     try:
         with vq.crash_dump_context(out_stem):
-            with vq.perf_log(out_stem.with_suffix(".perf")):
+            with vq.perf_log(out_stem.parent / f"{out_stem.name}.perf"):
                 per_result = vq.run_rhf_periodic_scf(
                     sys_periodic, per_basis,
                     vq.KPoints.gamma(sys_periodic),

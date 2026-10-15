@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="950" viewBox="0 0 1120 950" role="img" aria-labelledby="title desc">
+  <title id="title">MANTA architecture and ownership boundaries</title>
+  <desc id="desc">A numerical source and shell data feed a bounded plan qualified by shared symmetry. Libint and MANTA provide integral tiles and factorized actions to density-dependent consumers. The method builds a fixed operator for the solver and sends provenance to output.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#54657a"/></marker>
+    <style>
+      text {font-family: sans-serif; fill: #142a42; text-anchor: middle; font-size: 18px;}
+      .label {font-size: 15px; fill: #40556a;}
+      .box {fill: #f2f6fa; stroke: #9aacbe; stroke-width: 1.5; rx: 10;}
+      .native {fill: #e7f4f1; stroke: #448779; stroke-width: 1.5; rx: 10;}
+      .fixed {fill: #e9edfc; stroke: #626ea7; stroke-width: 2; rx: 10;}
+      .edge {fill: none; stroke: #54657a; stroke-width: 2; marker-end: url(#arrow);}
+    </style>
+  </defs>
+  <rect width="1120" height="950" fill="white"/>
+  <text x="560" y="35" style="font-size:26px;font-weight:bold">MANTA: providers, builders and fixed operators</text>
+  <rect class="box" x="300" y="65" width="520" height="75"/>
+  <text x="560" y="95">Method options and numerical source</text>
+  <text class="label" x="560" y="120">Domains, weights, kernels, boundary conditions, gauge</text>
+  <rect class="box" x="25" y="190" width="260" height="85"/>
+  <text x="155" y="221">Immutable shell / pair data</text>
+  <text class="label" x="155" y="248">BasisSet / ShellInfo adapter</text>
+  <rect class="box" x="350" y="190" width="420" height="85"/>
+  <text x="560" y="221">Bounded execution plan</text>
+  <text class="label" x="560" y="248">Budget, tiles, supports and reconstruction</text>
+  <rect class="box" x="830" y="178" width="265" height="110"/>
+  <text x="962" y="209">Shared symmetry machinery</text>
+  <text class="label" x="962" y="234">Group, space, orbit, tensor actions</text>
+  <text class="label" x="962" y="261">Method-owned qualification</text>
+  <path class="edge" d="M560 140 V190"/>
+  <path class="edge" d="M820 105 H962 V178"/>
+  <path class="edge" d="M285 232 H350"/>
+  <path class="edge" d="M830 232 H770"/>
+  <rect class="native" x="300" y="335" width="235" height="65"/>
+  <text x="417" y="374">Libint provider</text>
+  <rect class="native" x="585" y="335" width="235" height="65"/>
+  <text x="702" y="374">MANTA MD provider</text>
+  <path class="edge" d="M480 275 V304 H417 V335"/>
+  <path class="edge" d="M640 275 V304 H702 V335"/>
+  <rect class="native" x="300" y="455" width="520" height="70"/>
+  <text x="560" y="484">Ephemeral integral tiles / factorized actions</text>
+  <text class="label" x="560" y="510">Workspace-owned, consumed before reuse</text>
+  <path class="edge" d="M417 400 V455"/>
+  <path class="edge" d="M702 400 V455"/>
+  <rect class="box" x="25" y="581" width="260" height="82"/>
+  <text x="155" y="612">Immutable density epoch</text>
+  <text class="label" x="155" y="640">All k points / spins / right sides</text>
+  <rect class="native" x="340" y="580" width="440" height="85"/>
+  <text x="560" y="612">Contraction consumers</text>
+  <text class="label" x="560" y="640">Direct J/K, RI, BUPO-J, RI-BUPO-J</text>
+  <rect class="box" x="835" y="581" width="260" height="82"/>
+  <text x="965" y="612">Other method contributions</text>
+  <text class="label" x="965" y="640">Hcore, XC, ECP, corrections</text>
+  <path class="edge" d="M560 525 V580"/>
+  <path class="edge" d="M285 622 H340"/>
+  <rect class="box" x="340" y="725" width="440" height="65"/>
+  <text x="560" y="764">Density-dependent method Fock builder</text>
+  <path class="edge" d="M560 665 V725"/>
+  <path class="edge" d="M965 663 V705 H730 V725"/>
+  <rect class="box" x="25" y="725" width="260" height="105"/>
+  <text x="155" y="758">Build receipt / provenance</text>
+  <text class="label" x="155" y="784">Actual providers and approximations</text>
+  <text class="label" x="155" y="809">Formatted by vibeqc.output</text>
+  <path class="edge" d="M340 758 H285"/>
+  <rect class="fixed" x="340" y="850" width="440" height="65"/>
+  <text x="560" y="889">Fixed FockOperator snapshot</text>
+  <path class="edge" d="M560 790 V850"/>
+  <text class="label" x="726" y="826">Freeze this generation</text>
+  <rect class="fixed" x="850" y="850" width="245" height="65"/>
+  <text x="972" y="877">Strict solver</text>
+  <text class="label" x="972" y="900">Then method occupations</text>
+  <path class="edge" d="M780 882 H850"/>
+</svg>

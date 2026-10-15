@@ -171,16 +171,19 @@ q = mulliken_charges(r, basis, mol)
 print("Charges on:", q)
 ```
 
-!!! note "Citing the population analysis"
-    A `run_job` that writes the population dump now also emits the
-    defining-paper references, Mulliken (1955), Löwdin (1950) and Mayer
-    (1983), into the job's `.references` / `.bibtex` siblings
-    automatically. Hirshfeld (1977) joins them when the best-effort
-    Hirshfeld charges actually compute, that column needs a Becke-
-    Lebedev grid plus a SAD promolecule, so it is cited only when it
-    reaches the `.out` "Atomic charges" table, not on every run. Keep
-    them when you publish charges or bond orders; see
-    [Citing vibe-qc](../citing.md).
+```{admonition} Citing the population analysis
+:class: note
+
+A `run_job` that writes the population dump now also emits the
+defining-paper references, Mulliken (1955), Löwdin (1950) and Mayer
+(1983), into the job's `.references` / `.bibtex` siblings
+automatically. Hirshfeld (1977) joins them when the best-effort
+Hirshfeld charges actually compute, that column needs a Becke-
+Lebedev grid plus a SAD promolecule, so it is cited only when it
+reaches the `.out` "Atomic charges" table, not on every run. Keep
+them when you publish charges or bond orders; see
+[Citing vibe-qc](../citing.md).
+```
 
 ## Theory
 
@@ -205,7 +208,8 @@ where $\mathbf{O}$ is the AO-basis matrix of the operator.
 
 ### Mulliken population analysis
 
-Mulliken starts from the observation that
+Mulliken ({vibeqc-cite}`mulliken_1955`) starts from the observation
+that
 
 $$
 N = \operatorname{Tr}(\mathbf{P} \mathbf{S})
@@ -229,8 +233,8 @@ basis sets, different codes, or different method families.**
 
 ### Löwdin population analysis
 
-Löwdin orthogonalises the AO basis first with $\mathbf{S}^{-1/2}$, the
-symmetric Löwdin transformation, then partitions the trace in the
+Löwdin ({vibeqc-cite}`lowdin_1950`) orthogonalises the AO basis first
+with $\mathbf{S}^{-1/2}$, the symmetric Löwdin transformation, then partitions the trace in the
 orthogonal basis:
 
 $$
@@ -246,8 +250,9 @@ analysis and for comparing similar molecules.
 
 ### Mayer bond order
 
-Mayer's bond order generalises the one-basis-function-per-atom
-Wiberg index to general contracted bases. For closed-shell, the
+Mayer's bond order ({vibeqc-cite}`mayer_bond_order_1983`) generalises
+the one-basis-function-per-atom Wiberg index
+({vibeqc-cite}`wiberg_bond_index_1968`) to general contracted bases. For closed-shell, the
 bond order between atoms $A$ and $B$ is
 
 $$
@@ -257,9 +262,10 @@ $$
 For idealised bonding patterns this reproduces chemical intuition:
 $B \approx 1$ for single bonds, $\approx 2$ for double, $\approx 3$
 for triple. Unlike raw orbital analyses, Mayer's index is
-**rotationally invariant** and **converges to a finite limit as the
-basis improves**, a genuine measure of "number of shared electron
-pairs" rather than an artefact of how the basis partitions charge.
+**rotationally invariant**. Like Mulliken charges, though, it rests on
+assigning basis functions to atoms, so it **depends on the basis** and
+can become erratic with diffuse functions; compare values within one
+basis family.
 
 ### Dipole moment
 
@@ -267,7 +273,8 @@ The electric dipole moment is a first-order response of the energy
 to a uniform electric field:
 
 $$
-\mu_\alpha = \int \rho(\mathbf{r}) \, r_\alpha \, \mathrm{d}^3 r
+\mu_\alpha = -\int \rho(\mathbf{r}) \, r_\alpha \, \mathrm{d}^3 r
+  + \sum_A Z_A \, R_{A,\alpha}
   = -\sum_{\mu\nu} P_{\mu\nu} \, \langle \chi_\mu | r_\alpha | \chi_\nu \rangle
   \;+\; \sum_A Z_A \, R_{A,\alpha}.
 $$
@@ -315,5 +322,4 @@ density and ride free on top of any SCF you've already paid for.
 - Dipole moment tracks the molecular geometry; see
   [geometry optimization](geometry_optimization.md) for relaxations.
 - For vibrational contributions (IR intensities = dipole derivatives)
-  see [vibrational frequencies](vibrational_frequencies.md) once
-  the Hessian infrastructure lands.
+  see [vibrational frequencies](vibrational_frequencies.md).

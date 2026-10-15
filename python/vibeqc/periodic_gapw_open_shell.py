@@ -284,6 +284,31 @@ class GpwUhfScfResult:
     restart_kpoints: object = None
     restart_weights: object = None
 
+    # Plain UHF owns one evaluated state; +U retains its legacy convention.
+    fock_alpha: Optional[np.ndarray] = None
+    fock_beta: Optional[np.ndarray] = None
+    overlap: Optional[np.ndarray] = None
+    occupations_alpha: tuple = ()
+    occupations_beta: tuple = ()
+    fock_build: object = None
+    next_density: object = None
+    density_fixed_point_residual: Optional[float] = None
+    evaluated_build_history: tuple = ()
+
+    @property
+    def orbital_kind(self):
+        return "natural" if self.fock_build is not None else "canonical"
+
+    @property
+    def run_fields(self):
+        if self.fock_build is None:
+            return {}
+        return dict(self.fock_build.output_fields(),
+                    orbital_state_relation="density-defining-physical-rayleigh-quotients",
+                    scf_stop_reason="converged" if self.converged else "iteration_limit",
+                    density_fixed_point_residual=self.density_fixed_point_residual,
+                    evaluated_build_history=[dict(row) for row in self.evaluated_build_history])
+
 
 @dataclass(frozen=True)
 class GpwUksScfResult:
@@ -819,6 +844,15 @@ def _run_open_shell_gpw(
     # Canonical-orthonormaliser S^{-1/2}.
     s_eigs, U = _eigh_safe(S)
     S_half_inv = U @ np.diag(1.0 / np.sqrt(s_eigs)) @ U.T
+    from .solvers._scf import FockDiagonalizer
+
+    kind = "ks" if functional is not None else "fock"
+    diagonalise_alpha = FockDiagonalizer(
+        S_half_inv, S, None, kind=kind, spin="alpha", n_required=n_alpha_resolved,
+    )
+    diagonalise_beta = FockDiagonalizer(
+        S_half_inv, S, None, kind=kind, spin="beta", n_required=n_beta_resolved,
+    )
 
     # Density-mode guesses use the shared periodic adapter. An explicit
     # restart wins and HCORE deliberately retains this route's local fallback.
@@ -875,6 +909,18 @@ def _run_open_shell_gpw(
     D_alpha, D_beta = normalize_spin_density_guess(
         D_alpha, D_beta, S, n_alpha_resolved, n_beta_resolved,
     )
+
+    if functional is None and not _dftu_sites:
+        from .periodic_gpw_fock import _run_gpw_uhf_state
+        return _run_gpw_uhf_state(
+            basis=basis, system=system, gpw=gpw, lattice_options=lo,
+            kinetic=T, nuclear=V_ne, overlap=S, X=S_half_inv, e_nuclear=E_nn,
+            densities=(D_alpha, D_beta), occupations=(n_alpha_resolved, n_beta_resolved),
+            patom=initial_guess == _core.InitialGuess.PATOM, max_iter=max_iter,
+            conv_tol_energy=conv_tol_energy, conv_tol_density=conv_tol_density,
+            damping=damping, use_diis=use_diis, diis_subspace_size=diis_subspace_size,
+            diis_start_iter=diis_start_iter, nuclear_convention=v_ne_convention,
+            smearing_alpha=smearing_alpha, plog=plog)
 
     if initial_guess == _core.InitialGuess.PATOM:
         from .guess import patom_spin_density_step
@@ -1030,10 +1076,8 @@ def _run_open_shell_gpw(
             )
 
         # Solve F_s C_s = e_s S C_s per spin in the orthonormal basis.
-        e_a, C_orth_a = _eigh_safe(S_half_inv @ F_alpha @ S_half_inv)
-        C_alpha = S_half_inv @ C_orth_a
-        e_b, C_orth_b = _eigh_safe(S_half_inv @ F_beta @ S_half_inv)
-        C_beta = S_half_inv @ C_orth_b
+        C_alpha, e_a = diagonalise_alpha(F_alpha)
+        C_beta, e_b = diagonalise_beta(F_beta)
 
         # Aufbau per spin.
         if n_alpha_resolved > 0:
@@ -1507,6 +1551,7 @@ def _run_periodic_restricted_open_gpw(
         init_alpha,
         init_beta,
         iteration_callback=on_iteration,
+        operator_kind="ks" if func is not None else "fock",
     )
 
     # Rebuild the component energies once at the returned density so the
@@ -1780,7 +1825,7 @@ def run_periodic_uhf_gpw(
         Per-spin occupations. Default ``None`` falls back to
         ``n_alpha = n_beta = n_elec // 2`` for even-electron cells
         (closed-shell forced into the UHF path; reduces to RHF
-        bit-for-bit, which is the parity test pin). Open-shell
+        numerically, which is the parity test pin). Open-shell
         cells require both to be supplied.
     grid, cutoff_ha
         Optional pre-built grid + plane-wave cutoff. Default
@@ -1816,13 +1861,7 @@ def run_periodic_uhf_gpw(
         restart_supplied=initial_density is not None,
     )
     input_restart_supplied = initial_density is not None
-    (breakdown,
-     D_alpha, D_beta,
-     C_alpha, C_beta,
-     e_a, e_b,
-     n_alpha_resolved, n_beta_resolved,
-     converged, n_iter, grid_out,
-     scf_trace) = _run_open_shell_gpw(
+    evaluated = _run_open_shell_gpw(
         system, basis,
         n_alpha=n_alpha, n_beta=n_beta,
         grid=grid, cutoff_ha=cutoff_ha,
@@ -1844,6 +1883,14 @@ def run_periodic_uhf_gpw(
         progress=progress,
                       atomic_spins=atomic_spins,
     )
+    if isinstance(evaluated, GpwUhfScfResult):
+        from dataclasses import replace
+        return replace(evaluated,
+            restart_kpoints=np.zeros((1, 3)), restart_weights=np.ones(1),
+            guess_selection=periodic_result_selection(system, initial_guess, restarted=input_restart_supplied),
+            restart_basis=basis, restart_lattice=np.asarray(system.lattice).copy())
+    (breakdown, D_alpha, D_beta, C_alpha, C_beta, e_a, e_b,
+     n_alpha_resolved, n_beta_resolved, converged, n_iter, grid_out, scf_trace) = evaluated
     return GpwUhfScfResult(
                restart_kpoints=np.zeros((1, 3)), restart_weights=np.ones(1),
                guess_selection=periodic_result_selection(system, initial_guess, restarted=input_restart_supplied),
@@ -2003,6 +2050,13 @@ class GpwUksMultiKScfResult:
     kmesh: object = None
     scf_trace: tuple = ()
     method: str = "uks"
+    #: Per-spin, per-k occupations of the returned orbitals (#176): the
+    #: zero-temperature fill with one chemical potential per spin over the
+    #: mesh (UKS), or the restricted Roothaan pattern (ROKS).
+    occupations_alpha_k: tuple = ()
+    occupations_beta_k: tuple = ()
+    fermi_level_alpha: float = 0.0
+    fermi_level_beta: float = 0.0
 
     restart_basis: object = None
     restart_lattice: object = None
@@ -2129,8 +2183,10 @@ def run_periodic_uks_gpw_multi_k(
       jointly over both spins (one B matrix, alpha + beta error blocks) on
       both regimes -- the driver is new, so there is no historical linear-
       mixing behaviour to preserve.
-    * **T = 0 hard aufbau per spin** -- ``n_alpha`` / ``n_beta`` electrons
-      at every k (resolved from ``system.multiplicity`` when not given).
+    * **T = 0 global fill per spin** -- ``n_alpha`` / ``n_beta`` electrons
+      (resolved from ``system.multiplicity`` when not given) with one
+      chemical potential per spin over the whole mesh (#176); a gapped mesh
+      is the per-k hard Aufbau.
       Smearing / DFT+U / dispersion are not wired at this milestone.
     """
     from .guess import select_initial_guess
@@ -2348,15 +2404,33 @@ def run_periodic_uks_gpw_multi_k(
             )
         return V_a, V_b
 
-    def _build_D_k(C_list, n_occ):
+    def _build_D_k(C_list, occ_list):
+        """Per-k spin density from per-k occupations (single-spin, [0, 1])."""
         return [
-            (
-                C_list[ik][:, :n_occ] @ C_list[ik][:, :n_occ].conj().T
-                if n_occ > 0
-                else np.zeros((n_basis, n_basis), dtype=complex)
-            )
+            (C_list[ik] * np.asarray(occ_list[ik], dtype=float)[None, :])
+            @ C_list[ik].conj().T
             for ik in range(n_k)
         ]
+
+    def _spin_fill(eps_list, n_spin):
+        """Occupations of one spin channel for the returned orbitals.
+
+        UKS: one chemical potential per spin over the whole mesh, also at
+        T = 0 (#176); the per-k ``C[:, :n]`` slice this replaced occupies a
+        state above the Fermi level at one k and leaves one below it empty
+        at another wherever the bands overlap. ROKS keeps its restricted
+        Roothaan selection, which the loop has already permuted to the front
+        of every ``C(k)``, so its fill is positional.
+        """
+        from .smearing import spin_channel_occupations
+
+        res = spin_channel_occupations(
+            [np.asarray(np.real(e), dtype=float) for e in eps_list],
+            weights=weights,
+            n_electrons=float(n_spin),
+            fixed_occupied_subspace=bool(_restricted_open),
+        )
+        return [np.asarray(o, dtype=float) for o in res.occupations_per_k], float(res.mu)
 
     def _gamma_sum(D_k_list):
         D = np.zeros((n_basis, n_basis), dtype=float)
@@ -2433,11 +2507,14 @@ def run_periodic_uks_gpw_multi_k(
                     ],
                 )
 
+    from .solvers._scf import solve_dense_fock
+
     # Initial guess: diagonalise the selected per-k one-particle Hamiltonian
     # and Aufbau-fill per spin. Spin symmetry is broken by the occupation
     # counts when n_alpha != n_beta, matching the Gamma open-shell driver.
     C_a_k: list = []
     C_b_k: list = []
+    _guess_eps_k: list = []
     for ik in range(n_k):
         guess_fock = (
             guess_fock_k[ik]
@@ -2450,8 +2527,11 @@ def run_periodic_uks_gpw_multi_k(
         C = X_k[ik] @ C_orth
         C_a_k.append(C)
         C_b_k.append(C)
-    D_a_k = _build_D_k(C_a_k, n_alpha_res)
-    D_b_k = _build_D_k(C_b_k, n_beta_res)
+        _guess_eps_k.append(_eps)
+    occ_a_k, mu_a = _spin_fill(_guess_eps_k, n_alpha_res)
+    occ_b_k, mu_b = _spin_fill(_guess_eps_k, n_beta_res)
+    D_a_k = _build_D_k(C_a_k, occ_a_k)
+    D_b_k = _build_D_k(C_b_k, occ_b_k)
     if initial_density_k is not None:
         if len(initial_density_k) != 2:
             raise ValueError(
@@ -2630,8 +2710,11 @@ def run_periodic_uks_gpw_multi_k(
         for ik in range(n_k):
             if _restricted_open:
                 Fo = 0.5 * (Forth_use[ik] + Forth_use[ik].conj().T)
-                eps, C_orth = np.linalg.eigh(Fo)
-                C = X_k[ik] @ C_orth
+                eig = solve_dense_fock(
+                    Fo, kind="ks", spin="restricted-open",
+                    kpoint=kpoints[ik], generation=it,
+                )
+                eps, C = eig.eigenvalues, X_k[ik] @ eig.eigenvectors
                 eps_alpha = np.einsum(
                     "pi,pq,qi->i", C.conj(), F_a_raw[ik], C
                 ).real
@@ -2650,15 +2733,21 @@ def run_periodic_uks_gpw_multi_k(
             Fo_b = Forth_use[n_k + ik]
             Fo_a = 0.5 * (Fo_a + Fo_a.conj().T)
             Fo_b = 0.5 * (Fo_b + Fo_b.conj().T)
-            eps_a, C_orth_a = np.linalg.eigh(Fo_a)
-            eps_b, C_orth_b = np.linalg.eigh(Fo_b)
-            new_C_a.append(X_k[ik] @ C_orth_a)
-            new_C_b.append(X_k[ik] @ C_orth_b)
-            new_e_a.append(eps_a)
-            new_e_b.append(eps_b)
+            eig_a = solve_dense_fock(
+                Fo_a, kind="ks", spin="alpha", kpoint=kpoints[ik], generation=it,
+            )
+            eig_b = solve_dense_fock(
+                Fo_b, kind="ks", spin="beta", kpoint=kpoints[ik], generation=it,
+            )
+            new_C_a.append(X_k[ik] @ eig_a.eigenvectors)
+            new_C_b.append(X_k[ik] @ eig_b.eigenvectors)
+            new_e_a.append(eig_a.eigenvalues)
+            new_e_b.append(eig_b.eigenvalues)
 
-        D_a_k_new = _build_D_k(new_C_a, n_alpha_res)
-        D_b_k_new = _build_D_k(new_C_b, n_beta_res)
+        new_occ_a, new_mu_a = _spin_fill(new_e_a, n_alpha_res)
+        new_occ_b, new_mu_b = _spin_fill(new_e_b, n_beta_res)
+        D_a_k_new = _build_D_k(new_C_a, new_occ_a)
+        D_b_k_new = _build_D_k(new_C_b, new_occ_b)
         D_a_new = _gamma_sum(D_a_k_new)
         D_b_new = _gamma_sum(D_b_k_new)
 
@@ -2698,11 +2787,15 @@ def run_periodic_uks_gpw_multi_k(
             D_a, D_b = D_a_new, D_b_new
             C_a_k, C_b_k = new_C_a, new_C_b
             e_a_k, e_b_k = new_e_a, new_e_b
+            occ_a_k, occ_b_k = new_occ_a, new_occ_b
+            mu_a, mu_b = new_mu_a, new_mu_b
             break
         D_a_k, D_b_k = D_a_k_new, D_b_k_new
         D_a, D_b = D_a_new, D_b_new
         C_a_k, C_b_k = new_C_a, new_C_b
         e_a_k, e_b_k = new_e_a, new_e_b
+        occ_a_k, occ_b_k = new_occ_a, new_occ_b
+        mu_a, mu_b = new_mu_a, new_mu_b
         E_prev = E
 
     # ROKS rebuilds the nonlinear Hartree and XC energies once at the returned
@@ -2796,6 +2889,10 @@ def run_periodic_uks_gpw_multi_k(
         mo_coeffs_beta_k=tuple(C_b_k),
         mo_energies_alpha_k=tuple(e_a_k),
         mo_energies_beta_k=tuple(e_b_k),
+        occupations_alpha_k=tuple(np.asarray(o).copy() for o in occ_a_k),
+        occupations_beta_k=tuple(np.asarray(o).copy() for o in occ_b_k),
+        fermi_level_alpha=float(mu_a),
+        fermi_level_beta=float(mu_b),
         n_alpha=n_alpha_res,
         n_beta=n_beta_res,
         converged=converged,

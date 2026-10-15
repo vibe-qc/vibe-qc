@@ -6,9 +6,10 @@ Independent Gaussian sums, image relabelling and finite differences check
 the physical nuclear/quartet predicates; coupled split tests separately
 check that the real-space and reciprocal terms describe the same operator.
 
-The switch stays off by default. Native regression anchors pin each finite
-operator convention; the independent periodic references below test its
-convergence separately.
+The native switch stays off by default; public BIPOLE uses physical support
+and requires an explicit historical replay. Native regression anchors pin
+each finite operator convention; the independent periodic references below
+test its convergence separately.
 """
 
 from __future__ import annotations
@@ -452,8 +453,15 @@ def test_bipole_1d_direct_nuclear_route_runs_under_the_switch():
         opts.conv_tol_energy = 1.0e-10
         opts.lattice_opts.pair_complete_1e = on
         opts.lattice_opts.cutoff_bohr = 11.0
-        result = vq.run_pbc_bipole_rhf(system, basis, kmesh, opts, progress=False)
+        # Preserve both existing finite-operator anchors after the public
+        # default migration; a False native flag is not a historical request.
+        result = vq.run_pbc_bipole_rhf(
+            system, basis, kmesh, opts, historical_domain=not on, progress=False,
+        )
         assert result.converged
+        assert result.resolved_domain.policy == (
+            "physical_pairs" if on else "historical_index_ball"
+        )
         energies[on] = float(result.energy)
     assert energies[False] == pytest.approx(-1.839238747730, abs=_PIN_TOL)
     assert energies[True] == pytest.approx(-1.8152364308953906, rel=0, abs=_PIN_TOL)

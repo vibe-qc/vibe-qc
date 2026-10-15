@@ -40,8 +40,8 @@ Shell shape mirrors ``vibeqc.basis_crystal.CrystalShell`` field for field
 (``shell_type``, ``exponents``, ``coefficients``, ``coefficients_p``,
 ``occupancy``, ``scale_factor``) so the Tier-2 adapter is a transcription and
 not a translation. It is deliberately a separate class rather than an import:
-see the duplicated-``OptResult`` incident in HANDOVER_BASISOPT.md 3.6, whose
-lesson was that the boundary needs *declared* shapes, not shared ones.
+the duplicated-``OptResult`` incident demonstrated that the boundary needs
+*declared* shapes, not shared ones.
 """
 
 from __future__ import annotations

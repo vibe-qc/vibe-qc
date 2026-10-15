@@ -2,7 +2,8 @@
 
 In 3D periodic solids the Coulomb series $\sum_{g,A,B} Z_A Z_B / |R_{AB} + g|$
 is **conditionally convergent**: different truncation shapes give
-different answers. The standard fix is Ewald summation, which splits
+different answers. The standard fix is Ewald summation
+({vibeqc-cite}`ewald_lattice_sum_1921`), which splits
 each $1/r$ term into a short-range part (evaluated in real space, where
 it converges exponentially) plus a long-range part (evaluated in
 reciprocal space, where the Gaussian damping makes the sum converge
@@ -13,8 +14,12 @@ this page tells you how to use it.
 
 ## The user-facing recommendation
 
-For any 3D-periodic SCF, **set the Coulomb method to ``EWALD_3D`` and
-call the dispatcher**:
+For a production 3D-periodic SCF, use `run_periodic_job` with the
+default `jk_method="auto"` (GDF for closed shells, BIPOLE for open
+shells; see [periodic methods](periodic_methods.md)). To drive the Ewald
+infrastructure directly, **set the Coulomb method to ``EWALD_3D`` and
+call the dispatcher**; as the table below notes, that SCF route is a
+parity/debug path:
 
 ```python
 import vibeqc as vq
@@ -53,14 +58,40 @@ for you, and on a ``dim == 2`` slab it always selects ``SLAB_EWALD_2D``.
 Every bulk J/K route raises on a slab.
 ```
 
+### Evaluated Gamma SCF results
+
+The Python Gamma 3D RHF/UHF and Gamma 3D/slab RHF/RKS/UKS drivers return an immutable
+`result.fock_build` containing the physical Fock, its evaluated density,
+energy components and source identity. Legacy result arrays remain writable
+copies. RKS/UKS record the jointly evaluated XC energy and potential with the
+existing pure, global-hybrid or screened-hybrid exchange assembly.
+
+For restricted RHF/RKS, the returned orbitals and occupations define
+`result.density` even at an iteration limit, and the reported energy and physical Fock are evaluated on
+that density. The orbital energies are physical Rayleigh quotients; stopped
+orbitals need not diagonalize that Fock. `result.next_density` and
+`result.density_fixed_point_residual` describe the further unaccelerated
+orbital update. UHF/UKS expose the corresponding `next_density_alpha` and
+`next_density_beta` spin blocks. Convergence requires terminal energy,
+commutator and density closure checks. QVF provenance carries the evaluated build and density
+identities, energy components and stop reason through `vibeqc.output`.
+Gamma RHF/RKS/UKS require `max_iter >= 1`.
+
+Slab RHF retains the same libint exchange and analytic Parry Hartree/nuclear
+source. Its receipt identifies the open normal boundary, zero-mode profile
+and effective quadrature; unused FFT grid arguments do not enter that identity.
+HCORE, PATOM and SCF solves have separate histories. Quadratic updates retain
+the complete canonical orbital space.
+
 ### 2D slabs (``SLAB_EWALD_2D``)
 
 For a system periodic in two dimensions and finite along the third (a
 slab / layer, ``dim == 2`` with lattice columns 0,1 in-plane and column 2
 an auto-synthesized, non-physical normal vector), the correct Coulomb sum
 is the **rigorous 2D Ewald** of
-Parry (Surf. Sci. **49**, 433 (1975)) and de Leeuw & Perram (Mol. Phys.
-**37**, 1313 (1979)): the *true* 2D lattice sum, with no vacuum-gap
+Parry (Surf. Sci. **49**, 433 (1975), {vibeqc-cite}`parry_2d_ewald_1975`)
+and de Leeuw & Perram (Mol. Phys. **37**, 1313 (1979),
+{vibeqc-cite}`de_leeuw_perram_2d_ewald_1979`): the *true* 2D lattice sum, with no vacuum-gap
 parameter and no spurious inter-image dipole field along the normal. It
 adds a reciprocal-space term with an ``erfc(α z)`` structure and a special
 ``g = 0`` term that has no 3D analogue.
@@ -224,8 +255,9 @@ The ``EWALD_3D`` path has three convergence knobs:
 - **``VIBEQC_J_EWALD3D_KE``**, kinetic-energy cutoff (Hartree) for
   the analytical AO-pair-FT Hartree J mesh. Default 200 Ha. It applies
   to the opt-in ``use_exact_ft_j=True`` cross-check oracle on
-  ``run_pbc_bipole_rks`` and to the bounded analytic-FT J contraction
-  on 3D true-multi-k pure-RKS GDF jobs with ``use_compcell=False``.
+  ``run_pbc_bipole_rks`` and to the Ewald-3D drivers' analytic-FT J.
+  GDF k-mesh jobs no longer read it: since 2026-09-29 every
+  ``gdf_method`` runs its own fitted J there.
   The production BIPOLE pure-RKS route uses the padded SR+LR erfc
   composition and does not read it. Increase the cutoff for
   benchmark-quality all-electron tight-core cells; the BIPOLE oracle
@@ -254,7 +286,8 @@ cell volume while ``cutoff_bohr`` stays put, so since GitLab #651 it is
 bounded below by ``sqrt(-ln tol) / cutoff_bohr`` (0.35 bohr⁻¹ at the 15-bohr
 default and ``tol = opts.ewald_tolerance = 1e-12``). Cells up to an 8-bohr
 cube keep the CRYSTAL value; larger cells get the bound. The exposed sum is
-the erfc arm of the corrected exchange split (``exchange_exxdiv='ewald'``);
+the erfc arm of the corrected exchange split (``exchange_exxdiv='ewald'``, the
+probe-charge Madelung correction of {vibeqc-cite}`sundararaman_arias_exx_2013`);
 the analytic-FT Hartree ``J`` is $\omega$-invariant and the nuclear terms
 size their own $\alpha$. Measured on H₂ in a 16-bohr cube at a (2,1,1) mesh,
 the unbounded ``omega = 0.175`` at 15 bohr was 4.3e-5 Ha short of the 30-bohr
@@ -291,8 +324,9 @@ an explicit ``ewald_omega=0.0933`` (CRYSTAL's value there) reproduces the
 pre-fix shortfall, which is what the regression test pins. Ewald's
 potential is invariant to the screening parameter only when both series
 are summed to convergence, and CRYSTAL's ``2.8 / V^(1/3)`` is the cost
-optimum for fully summed series (Saunders, Freyria-Fava, Dovesi and
-Roetti, Mol. Phys. 77, 629 (1992), Property 11 and Eq. (55)), not an
+optimum for fully summed series (Saunders, Freyria-Fava, Dovesi, Salasco
+and Roetti, Mol. Phys. 77, 629 (1992), Property 11 and Eq. (55);
+{vibeqc-cite}`saunders_bipole_1992`), not an
 accuracy requirement: the bound restores the first condition where the
 BIPOLE real-space sum is not carried to convergence.
 
@@ -313,10 +347,8 @@ SCF iteration. The driver now raises `MemoryError` with an allocation
 estimate instead of letting the operating system kill the process.
 Use the GDF periodic route (`run_krhf_periodic_gdf` /
 `run_krks_periodic_gdf`) where available, or coarsen the DFT grid only
-for small debug runs. The current multi-k GDF spike uses PySCF's
-k-point-symmetry classes for weighted IBZ meshes when available, with a
-full-mesh fallback for older PySCF / shifted meshes. A fully native GDF
-loop remains the long-term performance follow-up.
+for small debug runs. The multi-k GDF loop is native; see
+[multi-k SCF](multi_k_scf.md) for how it treats symmetry-reduced meshes.
 ```
 
 ## Low-level Ewald primitives
@@ -353,6 +385,71 @@ Other low-level entry points:
 
 These all operate on the same ``EwaldOptions`` / ``LatticeSumOptions``
 machinery; the dispatcher just wires them together at SCF time.
+
+### Reciprocal-space Poisson and long-range J primitives
+
+The long-range half of the Ewald split is, for a smooth density on a grid,
+one FFT-based Poisson solve. The C++ core exposes it directly (bindings in
+``cpp/src/bindings.cpp``, FFTW3 underneath, {vibeqc-cite}`fftw3`), and the Python layer builds the
+long-range Hartree matrix on top of it:
+
+- ``vq.solve_poisson_coulomb(rho, lattice)``: ``rho`` is a real
+  ``(nx, ny, nz)`` array sampled on the uniform cell grid (fractional
+  coordinates ``i / n``), ``lattice`` the ``(3, 3)`` cell matrix with the
+  lattice vectors in its columns. Applies $\tilde V(\mathbf G) = 4\pi\,
+  \tilde\rho(\mathbf G)/|\mathbf G|^2$ and returns $V$ on the same grid. The
+  $\mathbf G = 0$ component is dropped, so the returned potential has zero
+  mean (the periodic-cell gauge every other Ewald primitive uses).
+- ``vq.solve_poisson_erf_screened(rho, lattice, omega)``: the same solve
+  with the erf-screened kernel $\operatorname{erf}(\omega r)/r$, that is
+  $\tilde V(\mathbf G) = (4\pi/|\mathbf G|^2)\,e^{-|\mathbf G|^2/4\omega^2}
+  \tilde\rho(\mathbf G)$; this is the long-range arm of the erfc/erf split
+  above.
+- ``vq.hartree_energy_on_grid(rho, V, cell_volume_bohr3)``: the quadrature
+  $\tfrac12\int\rho V\,\mathrm d^3r$ on that grid.
+- ``vq.auto_grid(lattice, spacing_bohr=0.3)``: picks an ``(nx, ny, nz)``
+  grid with about ``spacing_bohr`` per voxel along each lattice vector,
+  rounded up to even counts (FFTW prefers even, small-factor lengths). Use
+  0.3 bohr for general DFT-style work and 0.15 to 0.20 bohr for tight
+  valence bases.
+- ``vq.build_j_long_range(basis, D, lattice, omega, grid_shape=None, *,
+  origin=None, spacing_bohr=0.3, chunk_size=200_000, system=None,
+  ao_image_radius=1, restore_g0_finite_part=False)``: the long-range Hartree
+  matrix $J^{LR}_{\mu\nu} = \int \chi_\mu\chi_\nu V^{LR}[\rho]\,\mathrm d^3r$
+  for a molecular-limit or Gamma-only density ``D`` (pass ``D_a + D_b`` for
+  an open shell), built by collocating the AO-pair density, calling the
+  erf-screened solver and projecting back with the same quadrature; the
+  grid is ``auto_grid`` unless ``grid_shape`` is given, and the result is
+  in the zero-mean gauge. ``vq.build_j_long_range_periodic(basis, system,
+  D_real, omega, *, grid_shape=None, ...)`` is the lattice-block variant that
+  takes a real-space ``LatticeMatrixSet`` density and returns the per-cell
+  $J^{LR}$ blocks the multi-k Ewald drivers consume.
+
+A short check of the gauge and the grid picker (vibe-qc 0.17.x development
+build on Apple M2, under a second):
+
+```python
+import numpy as np
+import vibeqc as vq
+
+lattice = np.eye(3) * 10.0                      # 10-bohr cube, columns are a1, a2, a3
+shape = vq.auto_grid(lattice, spacing_bohr=0.5)  # even grid counts, about 0.5 bohr per voxel
+x = np.arange(shape[0]) / shape[0] * 10.0
+X, Y, Z = np.meshgrid(x, x, x, indexing="ij")
+rho = np.exp(-((X - 5.0) ** 2 + (Y - 5.0) ** 2 + (Z - 5.0) ** 2))   # a Gaussian blob
+
+V = vq.solve_poisson_coulomb(rho, lattice)                 # bare 1/r kernel
+V_lr = vq.solve_poisson_erf_screened(rho, lattice, 0.4)    # erf(0.4 r)/r kernel
+print(shape, V.shape)                                      # (20, 20, 20) (20, 20, 20)
+print(f"zero-mean gauge: {abs(V.mean()):.1e} {abs(V_lr.mean()):.1e}")   # both ~1e-17
+print(f"E_H[rho] = {vq.hartree_energy_on_grid(rho, V, 1000.0):.6f} Ha")
+```
+
+These are the kernels behind ``CoulombMethod.EWALD_3D`` in the legacy
+``run_*_periodic_*_ewald3d`` drivers (``VIBEQC_J_EWALD3D_BACKEND=grid``) and
+behind the GPW Hartree build described in [GPW and GAPW](gapw.md); the
+production BIPOLE and GDF routes evaluate their long-range terms analytically
+from AO-pair Fourier transforms instead and do not call them.
 
 ### Madelung constant for arbitrary Bravais cells
 
@@ -391,7 +488,8 @@ E_{\text{nn}} = \tfrac{1}{2} \sum_{A, B} {\sum_{g}}' \frac{Z_A Z_B}{|R_A - R_B +
 $$
 
 (primed sum excludes the $A = B, g = 0$ term) is conditionally
-convergent. Ewald's 1921 trick is to split each $1/r$ as
+convergent. Ewald's 1921 trick ({vibeqc-cite}`ewald_lattice_sum_1921`) is to
+split each $1/r$ as
 
 $$
 \frac{1}{r} = \frac{\operatorname{erfc}(\alpha r)}{r} + \frac{\operatorname{erf}(\alpha r)}{r}
@@ -419,7 +517,8 @@ For an AO basis the analogous construction extends the same split to
 shell-pair products into an exact penetration zone and a multipole-treated
 outer zone. The periodic bipolar quartet expansion itself is given in
 Chapter II.4c, especially Eqs. II.4.7-II.4.10, of the 1988 monograph by
-Pisani, Dovesi, and Roetti. Saunders et al. 1992 develops the related
+Pisani, Dovesi, and Roetti ({vibeqc-cite}`pisani_crystal_1988`). Saunders et
+al. 1992 ({vibeqc-cite}`saunders_bipole_1992`) develops the related
 electrostatic-potential shell model, penetration terms, and spheropole.
 
 The supported vibe-qc BIPOLE route does not currently replace distant

@@ -37,7 +37,7 @@ pi/omega^2), so no Madelung / exxdiv seam applies. This matches the
 CRYSTAL treatment (CRYSTAL23 manual pp. 136-137: the SR operator is
 assembled directly, not as full-minus-long-range).
 
-Policy (maintainer decision 2026-07-09, HANDOVER_SLAB_2D_ROUTING.md):
+Policy (maintainer decision 2026-07-09, the original investigation):
 periodic routes ship
 
 * global hybrids (``is_range_separated`` false): ``c_full =

@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "ano-r2",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: ANO-R2\nCanonical name in vibe-qc: ano-r2\nOriginating publication: Zobel, Widmark, Veryazov, J. Chem. Theory Comput. 16, 278 (2020); DOI: 10.1021/acs.jctc.9b00829\nNote:\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: ANO-R2\nDescription: ANO-R2\n       Role: orbital\n    Version: 2  (Data from supporting information of erratum)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -113571,7 +113571,38 @@
       ]
     }
   },
+  "basis_family": "ano",
+  "references": [
+    {
+      "key": "zobel_ano_r_2020",
+      "description": "J. P. Zobel, P. O. Widmark, V. Veryazov, Journal of Chemical Theory and Computation 16, 278-294 (2020)",
+      "doi": "10.1021/acs.jctc.9b00873"
+    },
+    {
+      "key": "doi:10.1021/acs.jctc.9b00829",
+      "description": "Zobel, Widmark, Veryazov, J. Chem. Theory Comput. 16, 278 (2020)",
+      "doi": "10.1021/acs.jctc.9b00829"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "ANO-R2"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "34d2ff9a95eb0902950e31834fa225baabc9af0720c336f51368db056c3a1f23",
+    "citations": [
+      {
+        "keys": [
+          "zobel_ano_r_2020"
+        ]
+      }
+    ]
   }
 }

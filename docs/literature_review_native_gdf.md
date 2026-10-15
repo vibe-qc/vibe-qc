@@ -7,8 +7,7 @@ orphan: true
 Authoritative reference for the native-GDF feature work. Commissioned
 2026-05-09 from a separate Claude chat; the transient commissioning
 brief was retired in the 2026-05-17 archive sweep. Pre-split implementation
-notes are preserved in [Archived `handovers/HANDOVER_GDF_OUTSTANDING.md`](https://vibe-qc.com/docs/).
-The results below resolve the open algorithmic question that blocked
+notes are historical. The results below resolve the open algorithmic question that blocked
 slice 3c at the end of the previous session.
 
 ## Headline findings (read this if nothing else)

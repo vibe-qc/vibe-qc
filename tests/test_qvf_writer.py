@@ -6,10 +6,13 @@ vibe-view consumer (vibe-view/src/vibeview/qvf.py).
 
 from __future__ import annotations
 
+import ast
 import json
 import sys
 import zipfile
+from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -1222,6 +1225,82 @@ class TestTerminalRunStatus:
             assert prov["run_status"] == "converged"
             assert prov["scf_converged"] is True
 
+    @pytest.mark.parametrize("reported", [None, True, False])
+    def test_noniterative_result_has_no_scf_verdict(self, tmp_path, reported):
+        from types import SimpleNamespace
+        from vibeqc.output.formats.qvf import terminal_run_status
+
+        result = SimpleNamespace(energy=-0.5, n_iter=0)
+        if reported is not None:
+            # A wrapper's generic calculation-success flag is not an SCF.
+            result.converged = reported
+        path = write_qvf(
+            tmp_path / "noniterative", _plan(tmp_path),
+            molecule=_stub_molecule(), result=result, method="dftb0",
+            scf_applicable=False, run_status=terminal_run_status(result),
+            record_hostname=False,
+        )
+        with zipfile.ZipFile(path) as archive:
+            provenance = _read_manifest(archive)["provenance"]
+        assert provenance["scf_applicable"] is False
+        assert "scf_converged" not in provenance
+        assert "n_scf_iterations" not in provenance
+        assert provenance["run_status"] == (
+            "failed" if reported is False else "converged"
+        )
+
+    @pytest.mark.parametrize("reported", [None, True, False])
+    def test_iterative_convergence_requires_an_actual_report(self, tmp_path, reported):
+        from types import SimpleNamespace
+        from vibeqc.output.formats.qvf import terminal_run_status
+
+        result = SimpleNamespace(energy=-0.5)
+        if reported is not None:
+            result.converged = reported
+        path = write_qvf(
+            tmp_path / "iterative", _plan(tmp_path),
+            molecule=_stub_molecule(), result=result, method="scc_dftb",
+            scf_applicable=True, run_status=terminal_run_status(result),
+            record_hostname=False,
+        )
+        with zipfile.ZipFile(path) as archive:
+            provenance = _read_manifest(archive)["provenance"]
+        assert provenance["scf_applicable"] is True
+        if reported is None:
+            assert "scf_converged" not in provenance
+        else:
+            assert provenance["scf_converged"] is reported
+
+    def test_unreported_convergence_does_not_infer_scf_applicability(self):
+        from types import SimpleNamespace
+        from vibeqc.output.formats.qvf import _build_provenance
+
+        provenance = _build_provenance({
+            "result": SimpleNamespace(energy=-0.5), "record_hostname": False,
+        })
+        assert "scf_converged" not in provenance
+        assert "scf_applicable" not in provenance
+
+    def test_periodic_route_supplies_scf_applicability(self):
+        """Pin the live output call's route metadata without running chemistry."""
+        import ast
+        import vibeqc
+
+        source = Path(vibeqc.__file__).parent / "periodic_runner.py"
+        calls = [node for node in ast.walk(ast.parse(source.read_text()))
+                 if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute)
+                 and node.func.attr == "dispatch_role"
+                 and any(key.arg == "method" and isinstance(key.value, ast.Name)
+                         and key.value.id == "method_key" for key in node.keywords)]
+        assert len(calls) == 1
+        applicability = next(key.value for key in calls[0].keywords
+                             if key.arg == "scf_applicable")
+        expression = compile(ast.Expression(applicability), "route-metadata", "eval")
+        assert eval(expression, {"method_key": "dftb0"}) is False
+        assert eval(expression, {"method_key": "scc_dftb"}) is True
+        assert eval(expression, {"method_key": "gfn2_xtb"}) is True
+
     def test_periodic_stamps_from_the_archived_result(self):
         """`run_status` must describe the same result the archive does.
 
@@ -1421,6 +1500,150 @@ class TestRunRecordSection:
         assert assemble_run_record(plan) is None
 
 
+@lru_cache
+def _automatic_job_spec_expression(filename, method_variable):
+    """Exercise the complete runner expression without running any chemistry."""
+    import vibeqc
+
+    source = Path(vibeqc.__file__).parent / filename
+    expressions = []
+    for call in ast.walk(ast.parse(source.read_text())):
+        if not isinstance(call, ast.Call):
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+        method = keywords.get("method")
+        if (
+            isinstance(method, ast.Name)
+            and method.id == method_variable
+            and "job_spec" in keywords
+        ):
+            expressions.append(keywords["job_spec"])
+    assert len(expressions) == 1
+    return compile(ast.Expression(expressions[0]), str(source), "eval")
+
+
+@pytest.fixture(params=["bundled_schema", "official_reader"])
+def job_spec_archive_validator(request):
+    """Use QVF's contract, not the producer's lighter internal validator.
+
+    The official-reader cases run when the pinned QVF source's ``python/``
+    directory is on PYTHONPATH (or qvf-writer is installed). They require
+    schema validation to be active, never a silent schema-free pass.
+    """
+    if request.param == "official_reader":
+        reader = pytest.importorskip("qvf_reader")
+        assert reader._load_schema_validator() is not None
+        assert reader._load_payload_validator("JobSpecPayload") is not None
+
+        def validate(path):
+            report = reader.validate_qvf(str(path))
+            assert report["ok"], report
+
+        return validate
+
+    import jsonschema
+    from vibeqc.output.formats.qvf import _load_canonical_schema
+
+    schema = _load_canonical_schema(1)
+    manifest_validator = jsonschema.Draft202012Validator(schema)
+    payload_validator = jsonschema.Draft202012Validator({
+        "$schema": schema["$schema"],
+        "$ref": "#/$defs/JobSpecPayload",
+        "$defs": schema["$defs"],
+    })
+
+    def validate(path):
+        with zipfile.ZipFile(path) as archive:
+            manifest = _read_manifest(archive)
+            manifest_validator.validate(manifest)
+            payload_validator.validate(json.loads(archive.read("job_spec/spec.json")))
+
+    return validate
+
+
+class TestAutomaticJobSpec:
+    """Regression for #489: actual runner expressions through the QVF writer."""
+
+    @staticmethod
+    def _check(tmp_path, spec, expected, validator):
+        path = write_qvf(
+            tmp_path / "automatic", _plan(tmp_path),
+            molecule=_stub_molecule(), job_spec=spec, record_hostname=False,
+        )
+        # Run the validator first so a baseline failure identifies the schema
+        # violation in the emitted archive, not just a different Python dict.
+        validator(path)
+        with zipfile.ZipFile(path) as archive:
+            assert json.loads(archive.read("job_spec/spec.json")) == expected
+
+    @pytest.mark.parametrize("method", [
+        "msindo", "pm6", "om2", "om3", "gfn2-xtb", "dftb0",
+        "scc-dftb", "dftb3", "mace",
+    ])
+    def test_basis_free_molecular(self, tmp_path, job_spec_archive_validator, method):
+        from vibeqc.output.formats.mlip_record import mlip_job_options
+        from vibeqc.output.formats.semiempirical_record import semiempirical_record_fields
+
+        identity = None if method == "mace" else "reference-set"
+        spec = eval(_automatic_job_spec_expression("runner.py", "resolved_method"), {
+            "resolved_method": method, "basis": "", "functional": None,
+            "_parameter_identity": identity, "_parameter_sha256": "a" * 64,
+            "_placeholder_pairs": None,
+            "semiempirical_record_fields": semiempirical_record_fields,
+            "mlip_job_options": mlip_job_options,
+            "result": SimpleNamespace(
+                model_info=SimpleNamespace(key="small"), device="cpu", dtype="float32",
+            ),
+        })
+        expected = {"job_type": "molecular", "method": method}
+        if identity is not None:
+            expected["options"] = {
+                "parameter_identity": identity, "parameter_sha256": "a" * 64,
+            }
+        else:
+            expected["options"] = {"mlip_options": {
+                "model": "small", "device": "cpu", "dtype": "float32",
+            }}
+        self._check(tmp_path, spec, expected, job_spec_archive_validator)
+
+    @pytest.mark.parametrize("method", [
+        "msindo", "pm6", "om2", "om3", "gfn2-xtb", "dftb0",
+        "scc-dftb", "dftb3", "seccm",
+    ])
+    def test_basis_free_periodic(self, tmp_path, job_spec_archive_validator, method):
+        fields = {"route_maturity": "experimental", "route_status": "experimental"}
+        spec = eval(_automatic_job_spec_expression("periodic_runner.py", "method_key"), {
+            # This route already supplies a nonempty display label, not the
+            # empty placeholder used by the molecular runner. Preserve it.
+            "method_key": method, "basis_label": "<basis-free>", "_record_fields": fields,
+            "parameter_identity": None, "parameter_sha256": None,
+        })
+        expected = {"job_type": "periodic", "method": method,
+                    "basis": "<basis-free>", "options": fields}
+        self._check(tmp_path, spec, expected, job_spec_archive_validator)
+
+    @pytest.mark.parametrize("functional", [None, "", "pbe0"])
+    @pytest.mark.parametrize("periodic", [False, True])
+    def test_gaussian_methods(self, tmp_path, job_spec_archive_validator, functional, periodic):
+        method = "rks" if functional else "rhf"
+        expected = {"job_type": "periodic" if periodic else "molecular",
+                    "method": method, "basis": "sto-3g"}
+        if functional:
+            expected["functional"] = functional
+        if periodic:
+            expression = _automatic_job_spec_expression("periodic_runner.py", "method_upper")
+            bindings = {"method_upper": method, "basis": SimpleNamespace(name="sto-3g"),
+                        "resolved_jk": SimpleNamespace(value="direct"),
+                        "system": SimpleNamespace(charge=0, multiplicity=1)}
+            expected.update(jk_method="direct", charge=0, multiplicity=1)
+        else:
+            expression = _automatic_job_spec_expression("runner.py", "resolved_method")
+            bindings = {"resolved_method": method, "basis": "sto-3g",
+                        "_parameter_identity": None, "_placeholder_pairs": None}
+        spec = eval(expression, {**bindings, "functional": functional})
+        self._check(tmp_path, spec, expected, job_spec_archive_validator)
+
+
 class TestJobSpecSection:
     def test_pending_container_round_trip(self, tmp_path):
         mol = _stub_molecule()
@@ -1515,6 +1738,17 @@ class TestJobSpecSection:
 
 
 class TestProvenance:
+    def test_legacy_result_does_not_invent_audit_run_fields(self, tmp_path):
+        path = write_qvf(
+            tmp_path / "legacy", _plan(tmp_path),
+            molecule=_stub_molecule(), result=_stub_result(),
+            record_hostname=False,
+        )
+        with zipfile.ZipFile(path) as archive:
+            provenance = _read_manifest(archive)["provenance"]
+        assert "run_fields" not in provenance
+        assert "seccm_stability_analysis_converged" not in provenance
+
     def test_provenance_in_manifest(self, tmp_path):
         mol = _stub_molecule()
         plan = _plan(tmp_path)

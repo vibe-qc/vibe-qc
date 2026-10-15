@@ -141,6 +141,35 @@ def default_aux_basis_for(orbital_basis_name: str, kind: str = "jk") -> str:
     return default_aux_basis(orbital_basis_name, kind, allow_standin=False)
 
 
+def resolve_default_jk_aux(options, orbital_basis_name) -> bool:
+    """Fill ``options.aux_basis`` with the default JK-fit aux when a fitted
+    SCF was requested without one.
+
+    A silent no-op unless ``density_fit`` or ``cosx`` is set and
+    ``aux_basis`` is empty; returns ``True`` when it wrote a name. An orbital
+    basis with no registered default (``sto-3g``, ``pob-*``) leaves
+    ``aux_basis`` empty so the driver raises its own explicit error, which
+    names this autodetection as the fallback.
+
+    Every route that hands an SCF option struct to a bare driver must call
+    this, or the request fails only on that route: before #362
+    ``run_job(density_fit=True)`` resolved the aux inside its single-point
+    path while the optimiser (ASE calculator) and the FD Hessian handed the
+    unresolved struct straight to ``run_rhf`` and friends.
+    """
+    wants_fit = bool(getattr(options, "density_fit", False)) or bool(
+        getattr(options, "cosx", False)
+    )
+    if not wants_fit or getattr(options, "aux_basis", ""):
+        return False
+    name = getattr(orbital_basis_name, "name", orbital_basis_name)
+    try:
+        options.aux_basis = default_aux_basis_for(str(name), kind="jk")
+    except Exception:
+        return False
+    return True
+
+
 # -----------------------------------------------------------------------------
 # Auxiliary-basis element coverage (GitLab #480).
 # -----------------------------------------------------------------------------

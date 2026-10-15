@@ -1,7 +1,7 @@
 """Periodic projected-atomic-orbital (PAO) virtual space at the Γ-point -- Stage 3.
 
 Builds the virtual-space foundation for periodic local correlation
-([`handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md`], Stage 3): project the occupied
+(Stage 3): project the occupied
 manifold out of the AO space to obtain the virtual-space projector
 ``Q = 1 - C_occ C_occᵀ S``, and form an S-orthonormal, Fock-diagonal virtual
 basis over the home cell.

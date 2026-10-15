@@ -13,6 +13,7 @@
 #include <vector>
 
 namespace vibeqc {
+namespace detail { struct BoundedPeriodicSCFKernel; }
 inline constexpr std::uint32_t kBoundedPeriodicRHFSolverVersion = 1U;
 
 struct BoundedPeriodicRHFInput {
@@ -142,6 +143,7 @@ public:
     const std::complex<double>* coefficients_data() const;
     const double* orbital_energies_data() const;
 private:
+    friend struct detail::BoundedPeriodicSCFKernel;
     BoundedPeriodicRHFResult() = default;
     void require_live() const;
     BoundedPeriodicRHFMemoryPlan memory_;

@@ -459,7 +459,7 @@ inline std::pair<Eigen::MatrixXd, Eigen::MatrixXd> assemble_weighted_dftb_h0(
                     * (params.average_on_site(atoms[central].Z)
                        + params.average_on_site(atoms[origin].Z));
                 hamiltonian(mu, nu) +=
-                    image.weight * 0.5 * params.kappa() * s * average;
+                    image.weight * params.kappa() * s * average;
             }
         }
     }

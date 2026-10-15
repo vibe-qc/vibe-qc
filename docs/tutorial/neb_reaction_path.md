@@ -3,14 +3,16 @@
 Geometry optimization (the `geometry_optimization` tutorial) finds minima. **Transition-state
 search** finds first-order saddle points, the structures where a
 reaction actually happens. The **Nudged Elastic Band (NEB)**
-algorithm does this by threading a chain of intermediate geometries
+algorithm (H. Jónsson, G. Mills and K. W. Jacobsen, in *Classical and
+Quantum Dynamics in Condensed Phase Simulations*, World Scientific
+(1998), p. 385, doi:10.1142/9789812839664_0016) does this by threading a chain of intermediate geometries
 ("images") between two minima, connecting them with fictitious
 springs, and relaxing the chain onto the minimum-energy path on the
 PES. The highest-energy image approximates the transition state.
 
 This tutorial walks through the canonical closed-shell example:
 **NH₃ umbrella inversion**, the molecule flips through a planar
-(D₃h) transition state to invert its chirality.
+(D₃h) transition state, turning its pyramid inside out.
 
 ## The one-liner
 
@@ -21,9 +23,15 @@ endpoints, a basis, and `climbing_image=True`:
 import vibeqc as vq
 
 result = vq.run_neb(reactant, product, basis="sto-3g", method="RHF",
-                    n_images=5, climbing_image=True)
+                    n_images=5, climbing_image=True, n_jobs=1)
 ts = result.path.images[result.transition_state_index].system
 ```
+
+`n_jobs=1` runs the per-image SCFs serially, as the shipped example does. On
+the vibe-qc 0.17.10 development build used to check this page, the default
+`n_jobs=0` (bounded automatic parallelism) raised a `PicklingError` ("cannot
+pickle '_vibeqc_core.Molecule' object") from the process pool, so pass
+`n_jobs=1` explicitly for a small band like this one.
 
 `run_neb` builds the interpolated band, runs the per-image SCFs (in
 parallel if you ask), assembles the improved-tangent NEB force, and
@@ -87,6 +95,7 @@ result = vq.run_neb(
     climbing_image=True,
     climbing_image_start_fraction=0.1,   # promote the climber early (see note)
     conv_tol_force=1e-3,                 # ≈ 0.05 eV/Å, the Kolsbjerg 2016 default
+    n_jobs=1,                            # serial; see the note above
 )
 ```
 
@@ -107,16 +116,18 @@ result = vq.run_neb(
 3. **`interpolation="linear"`.** The umbrella flip is a smooth
    geometric motion with no change in bonding, so a straight-line
    interpolation seeds the band well. For reactions that break or
-   form bonds, use `"idpp"` (image-dependent pair potential), which
-   avoids atom-atom clashes in the starting path.
+   form bonds, use `"idpp"` (image-dependent pair potential,
+   {vibeqc-cite}`smidstrup_idpp_2014`), which avoids atom-atom clashes in
+   the starting path.
 
 There is no optimizer to choose: `run_neb` uses a quick-min
 (damped-MD) outer loop internally, which is the right integrator for
 the non-conservative NEB force (see [Theory](#theory)). On this
-system the band converges in well under two seconds on a single
-core; the default `n_jobs=0` uses bounded automatic parallelism, and
-`n_jobs=-1` explicitly parallelises the per-image SCFs across all
-cores for bigger problems.
+system the band converges in well under two seconds on a single idle
+core (the barrier came out at 11.141 kcal/mol in a re-run on the
+0.17.10 development build); `n_jobs=-1` explicitly parallelises the
+per-image SCFs across all cores for bigger problems, subject to the pickling
+caveat above.
 
 ## Read the MEP
 
@@ -188,10 +199,31 @@ for a in ts.atoms:
 ```
 
 All three H atoms sit at $z = 0$, the planar D₃h transition state
-that connects the two pyramidal enantiomers. N-H bond length
-(1.005 Å) is a touch shorter than the pyramidal equilibrium
-(1.012 Å): the in-plane geometry is sp²-like and the overlap
+that connects the two equivalent pyramidal minima. N-H bond length
+(1.005 Å) is shorter than at the pyramidal STO-3G minimum
+(1.033 Å in the band's end images; experiment 1.012 Å): the in-plane geometry is sp²-like and the overlap
 tightens.
+
+## Following the intrinsic reaction coordinate
+
+A converged climbing image is a candidate saddle, not a proof that it connects
+the two minima you started from. The intrinsic reaction coordinate (IRC)
+answers that: starting from the transition state, `vq.run_irc` follows the
+mass-weighted steepest-descent path downhill in both directions and reports
+where it ends. It uses the imaginary mode of a finite-difference Hessian at
+the TS as the initial direction, so it can be called on `ts` from the previous
+section as it stands (the call is shown in
+[What NEB doesn't find](#what-neb-doesnt-find)). On this NH₃ climbing image, at
+RHF/STO-3G with the default step, a run traced 26 points in each direction,
+both branches converged, and both ended in the pyramidal minima:
+the TS lies 11.139 kcal/mol above either (the NEB barrier was 11.141),
+and the end-point energy `-55.45541646` Ha agrees with the NEB end-point
+`-55.45541963` Ha to 3e-6 Ha. The
+[IRC tutorial](irc_from_transition_state.md) develops this in full, from a
+dimer-method saddle search through the imaginary frequency to the
+energy-versus-arc-length profile, and the
+[IRC and dimer user guide](../user_guide/irc_and_dimer.md) is the reference
+for the options.
 
 ## Comparing to experiment
 
@@ -234,8 +266,8 @@ The refreshed reference bundle is downloadable from the docs site:
 
 The 3D molecule on the left flips through the seven NEB images while
 the right inset highlights which image is currently shown on the MEP
-curve. Reactant (image 1) and product (image 7) are mirror images of
-each other through the planar TS at image 4, the classic D₃ₕ
+curve. Reactant (image 0) and product (image 6) are mirror images of
+each other through the planar TS at image 3, the classic D₃ₕ
 transition state of the umbrella inversion.
 
 For interactive inspection (rotation, atom labeling, distance
@@ -258,7 +290,8 @@ reactant/TS/product waypoints and an energy profile.
 ## Driving NEB through ASE
 
 `run_neb` is the native path and the one this tutorial recommends.
-But vibe-qc also exposes an ASE `Calculator`, so you can drive NEB
+But vibe-qc also exposes an ASE ({vibeqc-cite}`ase_2017`) `Calculator`,
+so you can drive NEB
 (and the dimer method, IRC, …) through ASE's own optimizers when you
 are already in an ASE workflow:
 
@@ -322,8 +355,8 @@ decrease) fails on NEB, and why `run_neb` uses a quick-min
 (damped-MD) outer loop instead. At convergence
 ($\mathbf{F}_i^\text{NEB} = \mathbf{0}$ for every interior $i$), the
 band traces the minimum-energy path on the PES. The
-*improved-tangent* variant (Henkelman-Jónsson 2000), `run_neb`'s
-default, uses a smarter tangent definition that avoids kinking on
+*improved-tangent* variant (Henkelman-Jónsson 2000,
+{vibeqc-cite}`henkelman_jonsson_neb_2000`), `run_neb`'s default, uses a smarter tangent definition that avoids kinking on
 asymmetric paths.
 
 ### Why NEB is so much cheaper than it looks
@@ -345,8 +378,8 @@ optimization.
 
 Plain NEB leaves the highest-energy image pulled slightly *below*
 the true saddle point by the spring force from its neighbors. The
-**climbing image** variant (Henkelman, Uberuaga, Jónsson 2000)
-identifies the highest-energy image and replaces its force with
+**climbing image** variant (Henkelman, Uberuaga, Jónsson 2000,
+{vibeqc-cite}`henkelman_uberuaga_jonsson_ci_neb_2000`) identifies the highest-energy image and replaces its force with
 
 $$
 \mathbf{F}_\text{ci}^\text{CI-NEB} = -\nabla E(\mathbf{R}_\text{ci}) + 2\,(\nabla E(\mathbf{R}_\text{ci}) \cdot \hat{\tau})\, \hat{\tau},
@@ -367,7 +400,9 @@ mechanism you're looking for goes via an intermediate you didn't
 anticipate, NEB gives you a suboptimal path with multiple local
 maxima. Complements:
 
-- **Intrinsic Reaction Coordinate (IRC)**, starts from an
+- **Intrinsic Reaction Coordinate (IRC)**
+  ({vibeqc-cite}`fukui_irc_1981`,
+  {vibeqc-cite}`ishida_morokuma_komornicki_irc_1977`), starts from an
   already-known TS and traces the path downhill in both directions
   to identify the connected minima. **This ships natively** as
   `vq.run_irc`, the natural follow-up to a dimer/NEB saddle search:
@@ -383,7 +418,9 @@ maxima. Complements:
   unavailable until the ROKS analytic gradient is implemented. Periodic
   restricted-open-shell IRC remains unsupported.
 
-- **Dimer method / eigenvector-following**, finds saddle points
+- **Dimer method / eigenvector-following**
+  ({vibeqc-cite}`henkelman_jonsson_dimer_1999`;
+  {vibeqc-cite}`baker_ts_1986`), finds saddle points
   from a single starting geometry plus a direction, no pre-specified
   endpoints needed. **This ships natively** as `vq.run_dimer` (same
   SCF / MACE method surface as `run_neb`):
@@ -393,13 +430,17 @@ maxima. Complements:
                         initial_direction=mode)   # guessed reaction direction
   ts = result.system                              # result.is_saddle, result.curvature
   ```
-- **Metadynamics / enhanced sampling**, explores the PES
+- **Metadynamics / enhanced sampling**
+  ({vibeqc-cite}`laio_parrinello_metadynamics_2002`), explores the PES
   adaptively, good for systems where the mechanism is genuinely
   unknown.
 
-Metadynamics doesn't ship natively yet; ASE has a module for it that
-drives through the `VibeQC` calculator exactly like the
-[ASE NEB route](#driving-neb-through-ase) above.
+Well-tempered metadynamics also ships natively, as
+`vibeqc.metadynamics.run_metadynamics` on top of the MD driver (see the
+[molecular-dynamics user guide](../user_guide/molecular_dynamics.md));
+ASE has a module for it as well that drives through the `VibeQC`
+calculator exactly like the [ASE NEB route](#driving-neb-through-ase)
+above.
 
 ## Resources
 

@@ -1,0 +1,50 @@
+{
+  "runtime": {
+    "vibeqc_version": "0.17.18",
+    "source_commit": "5df0e7722464"
+  },
+  "tolinteg": "8 8 8 8 16",
+  "toldee": 10,
+  "latvec": 50000,
+  "systems": {
+    "c-diamond": {
+      "basis": "sto-3g",
+      "crystal": [
+        {
+          "shrink": 8,
+          "energy": -74.877121707089,
+          "cycles": 157,
+          "volume_A3": 11.346171,
+          "conducting_warning": false,
+          "wall_s": 284.1354053330142
+        }
+      ]
+    },
+    "lih-rocksalt": {
+      "basis": "sto-3g",
+      "crystal": [
+        {
+          "shrink": 8,
+          "energy": -7.9381930773669,
+          "cycles": 68,
+          "volume_A3": 17.029316,
+          "conducting_warning": false,
+          "wall_s": 2819.515476875007
+        }
+      ]
+    },
+    "mgo": {
+      "basis": "sto-3g",
+      "crystal": [
+        {
+          "shrink": 8,
+          "energy": -271.21482217052,
+          "cycles": 10,
+          "volume_A3": 18.839982,
+          "conducting_warning": false,
+          "wall_s": 7.977424666984007
+        }
+      ]
+    }
+  }
+}

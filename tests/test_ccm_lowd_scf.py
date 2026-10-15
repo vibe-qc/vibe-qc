@@ -104,13 +104,17 @@ def test_wire_ewald_seam(chain):
     ccm = chain
     n_e = ccm.supercell.n_electrons()
     xi = wire_self_energy(float(ccm.cluster_vectors[0, 0]))
-    st = run_ccm_rhf_wire(ccm, exxdiv="strict")
-    ew = run_ccm_rhf_wire(ccm, exxdiv="ewald")
+    # Converge both sides far below the density bound. At the default
+    # conv_tol_grad=1e-6 the two densities differ by their SCF residual
+    # (1.8e-6, #529); at 1e-9 by 3.9e-10, so the bound tests the seam.
+    tight = dict(conv_tol=1e-12, conv_tol_grad=1e-9)
+    st = run_ccm_rhf_wire(ccm, exxdiv="strict", **tight)
+    ew = run_ccm_rhf_wire(ccm, exxdiv="ewald", **tight)
     assert ew.exchange_q0 == "BvK-ewald"
     # energy shift is exactly ξ_wire·N_e/2 (ewald sits below strict by that)
-    assert ew.energy - st.energy == pytest.approx(-xi * n_e / 2.0, abs=1e-6)
+    assert ew.energy - st.energy == pytest.approx(-xi * n_e / 2.0, abs=1e-9)
     # block-diagonal seam -> identical converged density
-    assert np.linalg.norm(np.asarray(ew.density) - np.asarray(st.density)) < 1e-6
+    assert np.linalg.norm(np.asarray(ew.density) - np.asarray(st.density)) < 1e-8
     # g_perp_min-independent (physical constant, not the IR gauge)
     ew2 = run_ccm_rhf_wire(ccm, exxdiv="ewald", g_perp_min=1e-3)
     assert abs(ew.energy - ew2.energy) < 1e-4

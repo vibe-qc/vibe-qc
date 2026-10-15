@@ -6,7 +6,7 @@ corundum primitive cell (R-3c, spacegroup 167) and parses the total
 energy and Mulliken charges.
 
 Purpose: the GFN2-SECCM corundum SCC surface is branch-discontinuous
-(razor basin boundary near a = 4.759 A; see the SECCM audit handover).
+(razor basin boundary near a = 4.759 A).
 This reference identifies which charge state is physical so the branch
 question can be settled. Out-of-process results are the only valid
 comparison targets.
@@ -16,8 +16,7 @@ CORRECTION (2026-08-26): the "$lattice:" xyz comment line is
 IGNORED by xtb (verified: bit-identical energy without it), and
 xtb 6.7.0 aborts on genuine periodic GFN2 input ("Multipoles not
 available with PBC"). Energies produced here are FREE MOLECULAR
-CLUSTER references, not periodic ones. See
-handovers/HANDOVER_SECCM_BULK3D.md, evidence-correction section.
+CLUSTER references, not periodic ones.
 """
 
 from __future__ import annotations

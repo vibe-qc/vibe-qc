@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "cc-pvtz-f12-cabs",
+  "description": "Recovered from: http://tyr0.chem.wsu.edu/~kipeters/basissets/optri1_basis.html\nPublished in: K.E. Yousaf and K.A. Peterson, J. Chem. Phys. 129, 184108 (2008).\nLi Be Na Mg: from EMSL Basis Set Exchange Library, J. Grant Hill and Kirk A. Peterson, Phys. Chem. Chem. Phys. 12, 10460 (2010)\nAuxiliary RI (OptRI) matched to the cc-pVnZ-F12 Basis Set\nThis should be used within the CABS/CABS+ framework with the above orbital set",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -3486,7 +3486,20 @@
       ]
     }
   },
+  "basis_family": "dunning",
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "cc-pvtz-f12-cabs",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "6f551eff0757fde3ef4d31080e175f6bbe198557e00839b873e574ac9d6bc13b",
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

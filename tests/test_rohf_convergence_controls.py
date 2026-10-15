@@ -118,6 +118,68 @@ def _options(**kwargs) -> ROHFOptions:
     return opts
 
 
+@pytest.mark.parametrize("method", ["rohf", "roks"])
+@pytest.mark.parametrize("davidson", [False, True])
+def test_roothaan_shared_solve_matches_legacy(monkeypatch, method, davidson):
+    """Keep the physical iteration, shell order and level-shift exit intact."""
+    import scipy.linalg as sla
+    from vibeqc import DavidsonOptions
+    from vibeqc.roks import ROKSOptions, run_roks
+    from vibeqc.solvers import _scf
+
+    mol, basis = _ch3_doublet()
+    native = DavidsonOptions()
+    native.conv_tol = 1e-10
+    native.guess_vectors = np.eye(basis.nbasis)
+    seed = np.asarray(native.guess_vectors).copy()
+    cls = ROHFOptions if method == "rohf" else ROKSOptions
+    options = cls(max_iter=200, conv_tol_energy=1e-10, conv_tol_grad=1e-7,
+                  use_davidson=davidson, davidson_min_dim=0, davidson=native,
+                  level_shift=.3, level_shift_warmup_cycles=0)
+    def run():
+        if method == "rohf":
+            return run_rohf(mol, basis, options)
+        return run_roks(mol, basis, options, functional="pbe")
+
+    original = _scf.FockDiagonalizer.__call__
+    generations = []
+    def checked(self, fock):
+        c, e = original(self, fock)
+        result = self.last_result
+        assert result.operator_metadata.kind == ("fock" if method == "rohf" else "ks")
+        assert result.operator_metadata.spin == "restricted-open"
+        assert result.residual_frame == "original"
+        assert max(result.residuals) < 1e-8
+        np.testing.assert_allclose(e, sla.eigh(fock, self.overlap, eigvals_only=True), atol=1e-9, rtol=0)
+        generations.append(result.operator_metadata.generation)
+        return c, e
+
+    monkeypatch.setattr(_scf.FockDiagonalizer, "__call__", checked)
+    result = run()
+    assert result.converged
+    assert generations == list(range(len(generations)))
+    assert len(generations) > 1
+    assert native.n_eig == 0
+    np.testing.assert_array_equal(native.guess_vectors, seed)
+
+    def legacy(fock_eff, x, s, dma, level_shift, **kwargs):
+        f = fock_eff + level_shift * (s - s @ dma @ s)
+        orth = x.T @ f @ x
+        eps, coeffs = np.linalg.eigh((orth + orth.T) / 2)
+        return eps, x @ coeffs
+    monkeypatch.setattr(rohf_module, "_solve_fock", legacy)
+    reference = run()
+    assert reference.converged
+    assert result.energy == pytest.approx(reference.energy, abs=1e-9)
+    assert result.rohf_canonicalization == reference.rohf_canonicalization
+    np.testing.assert_allclose(result.mo_energies, reference.mo_energies, atol=1e-7)
+    np.testing.assert_allclose(result.mo_occupations, reference.mo_occupations, atol=1e-12)
+    for field in ("density_alpha", "density_beta"):
+        np.testing.assert_allclose(getattr(result, field), getattr(reference, field), atol=1e-7)
+    assert native.n_eig == 0
+    np.testing.assert_array_equal(native.guess_vectors, seed)
+
+
 # ---------------------------------------------------------------------------
 # Defect 1 -- the shift must never reach the reported orbital energies
 # ---------------------------------------------------------------------------

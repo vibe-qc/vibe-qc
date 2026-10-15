@@ -325,6 +325,7 @@ class ProgressLogger:
         """One SCF iteration line.
 
         Recognized fields: ``energy`` (Ha), ``dE`` (Ha),
+        ``energy_kind`` (``E`` or ``F`` for internal or free energy),
         ``grad`` (``||[F,DS]||``), ``diis`` (subspace dim). Any other
         key/value pair is appended at the end. Wall time since logger
         construction is appended automatically.
@@ -358,16 +359,20 @@ class ProgressLogger:
         _dE = fields.get("dE")
         _grad = fields.get("grad")
         _diis = fields.get("diis")
+        energy_kind = fields.pop("energy_kind", "E")
+        if energy_kind not in ("E", "F"):
+            raise ValueError("iteration energy_kind must be E or F")
 
         if self._level >= 4:
             cells = [f"iter {n:4d}"]
             e = fields.pop("energy", None)
             if e is not None:
-                cells.append(f"E = {float(e):18.10f} Ha")
+                cells.append(f"{energy_kind} = {float(e):18.10f} Ha")
             dE = fields.pop("dE", None)
             if dE is not None:
                 cells.append(
-                    "dE =     --   " if n <= 1 else f"dE = {float(dE):+.3e}"
+                    f"d{energy_kind} =     --   " if n <= 1
+                    else f"d{energy_kind} = {float(dE):+.3e}"
                 )
             grad = fields.pop("grad", None)
             if grad is not None:

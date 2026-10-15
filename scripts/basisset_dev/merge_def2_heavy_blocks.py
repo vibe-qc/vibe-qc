@@ -9,8 +9,9 @@ wrappers attach.
 
 Inputs are the raw BSE ``gaussian94`` responses saved as
 ``<dir>/<name>.g94`` (one per basis, elements 37-86; the diffuse ``-D``
-sets carry no lanthanides). Outputs land in ``basis_library/custom/`` and
-``basis_library/basis/``::
+sets carry no lanthanides). The heavy blocks and the ECPs join the bundled
+def2 records under ``basis_library/qvf/`` (provenance gains the BSE
+upstream) and ``basis/`` is re-rendered::
 
     python scripts/basisset_dev/merge_def2_heavy_blocks.py <dir>
 
@@ -76,7 +77,6 @@ def _header(name: str, kind: str, bse_text: str, heavy: list[str]) -> str:
             f"! Per-element originating publications:\n{_ECP_REFS}"
         )
     return (
-        "! ----------------------------------------------------------\n"
         f"! Basis set: {name}{' ECPs' if kind == 'ecp' else ''}\n"
         f"! Originating publication: F. Weigend, R. Ahlrichs, Phys. Chem. Chem.\n"
         f"!   Phys. 7, 3297 (2005); DOI: 10.1039/b508541a"
@@ -90,7 +90,6 @@ def _header(name: str, kind: str, bse_text: str, heavy: list[str]) -> str:
         + f"! Fetched from: https://www.basissetexchange.org (REST API), {today}\n"
         "! License: numerical parameter data from published scientific\n"
         "!   papers, distributed by BSE under CC-BY-4.0; see docs/license.md\n"
-        "! ----------------------------------------------------------\n"
     )
 
 
@@ -104,7 +103,6 @@ def _element_symbols(lines: list[str]) -> list[str]:
 
 def merge(name: str, bse_dir: Path) -> tuple[int, int]:
     bse_path = bse_dir / f"{name}.g94"
-    libint_path = LIBRARY / "basis" / f"{name}.g94"
     bse_text = bse_path.read_text()
     if bse_text.lstrip().startswith("{"):
         raise RuntimeError(f"{bse_path}: BSE returned an error, not a basis")
@@ -118,29 +116,30 @@ def merge(name: str, bse_dir: Path) -> tuple[int, int]:
     if not heavy or not ecp_lines:
         raise RuntimeError(f"{name}: no heavy orbital blocks or no ECP blocks parsed")
 
-    libint_text = libint_path.read_text()
-    if not libint_text.endswith("\n"):
-        libint_text += "\n"
-    light = _element_symbols(libint_text.splitlines())
-    if set(light) & set(heavy):
-        raise RuntimeError(f"{name}: libint file already carries {set(light) & set(heavy)}")
+    from vibeqc.basis_toolkit import Upstream, from_g94, library
 
-    orbital_out = (
-        _header(name, "orbital", bse_text, heavy)
-        + libint_text
-        + "\n".join(orbital_lines).rstrip("\n")
-        + "\n"
-    )
-    ecp_out = (
-        _header(name, "ecp", bse_text, heavy)
-        + "\n"
-        + "\n".join(ecp_lines).rstrip("\n")
-        + "\n"
-    )
-    for target in (LIBRARY / "custom", LIBRARY / "basis"):
-        (target / f"{name}.g94").write_text(orbital_out)
-        (target / f"{name}.ecp").write_text(ecp_out)
-    n_ecp = len(re.findall(r"^\s*[A-Z][A-Za-z]?-ECP", "\n".join(ecp_lines), re.MULTILINE))
+    record = library.load_record(name)
+    if set(record.elements) & set(heavy):
+        raise RuntimeError(f"{name}: record already carries {set(record.elements) & set(heavy)}")
+
+    blocks = from_g94("\n".join(orbital_lines), name=name)
+    potentials = from_g94("\n".join(ecp_lines), name=name, role="ecp")
+    record.elements.update(blocks.elements)
+    merged = dict(record.ecps or {})
+    merged.update(potentials.ecps or {})
+    record.ecps = merged
+    for sym, element in record.elements.items():
+        element.ecp_id = sym if sym in merged else None
+    span = f"{heavy[0]}-{heavy[-1]} ({len(heavy)} elements)"
+    record.description = (record.description + "\n\n" if record.description else "") + (
+        _header(name, "orbital", bse_text, heavy) + _header(name, "ecp", bse_text, heavy)
+    ).replace("! ", "").replace("!", "").strip()
+    record.provenance.upstream.append(Upstream(
+        name="basis-set-exchange", version=_bse_version(bse_text),
+        url="https://www.basissetexchange.org", identifier=name,
+        detail=f"{span} valence blocks and the def2-ECP"))
+    library.save_record(record, library.record_path(name))
+    n_ecp = len(potentials.ecps or {})
     return len(heavy), n_ecp
 
 
@@ -152,6 +151,10 @@ def main(argv: list[str]) -> int:
     for name in NAMES:
         n_orb, n_ecp = merge(name, bse_dir)
         print(f"{name:12s} +{n_orb:2d} heavy orbital blocks, {n_ecp:2d} ECP blocks")
+    from vibeqc.basis_toolkit import library
+
+    library.render_library(library.renderings_dir())
+    print("Re-rendered basis/; check with: python scripts/render_basis_library.py --check")
     return 0
 
 

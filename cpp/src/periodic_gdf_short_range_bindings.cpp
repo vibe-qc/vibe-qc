@@ -145,14 +145,16 @@ void bind_periodic_gdf_short_range(py::module_& m) {
              const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& vectors,
              double omega, double pair_cutoff, double auxiliary_cutoff,
              std::size_t output_byte_cap, std::size_t transient_byte_cap,
-             std::size_t image_candidate_cap, double integral_screen_error, bool compute_metric) {
+             std::size_t image_candidate_cap, double integral_screen_error, bool compute_metric,
+             const std::string& kernel, double omega_screen) {
               vibeqc::GDFRangeSeparatedIntegrals result;
               {
                   py::gil_scoped_release release;
                   result = vibeqc::compute_gdf_range_separated_integrals(
                       orbital, aux, system, q, ket_kpoints, vectors, omega,
                       pair_cutoff, auxiliary_cutoff, output_byte_cap,
-                      transient_byte_cap, image_candidate_cap, integral_screen_error, compute_metric);
+                      transient_byte_cap, image_candidate_cap, integral_screen_error, compute_metric,
+                      kernel, omega_screen);
               }
               return py::make_tuple(gdf_metric_array(std::move(result.metric)),
                   gdf_sr_batch_array(std::move(result.three_center)), result.reciprocal_vector_count);
@@ -162,8 +164,11 @@ void bind_periodic_gdf_short_range(py::module_& m) {
           py::arg("output_byte_cap"), py::arg("transient_byte_cap"), py::arg("image_candidate_cap"),
           py::arg("integral_screen_error") = 0.0,
           py::arg("compute_metric") = true,
+          py::arg("kernel") = "coulomb", py::arg("omega_screen") = 0.0,
           "Periodic Coulomb (M,T,nG) from real-space erfc plus compact reciprocal erf integrals. "
-          "compute_metric=False returns an empty M when the caller already owns this q metric.");
+          "compute_metric=False returns an empty M when the caller already owns this q metric. "
+          "kernel selects independently fitted coulomb/erfc/erf at physical omega_screen; "
+          "omega remains the numerical split. All kernels omit p=0; exchange constants are external.");
     m.def("_compute_gdf_plane_wave_projection",
           [](const vibeqc::BasisSet& orbital, const vibeqc::BasisSet& aux,
              const vibeqc::PeriodicSystem& system, const Eigen::Vector3d& q,

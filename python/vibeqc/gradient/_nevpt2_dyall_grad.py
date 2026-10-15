@@ -1,5 +1,5 @@
 # EXPERIMENTAL - validated Dyall Fock, pending chain-rule integration.
-# See handovers/HANDOVER_GATED_ITEMS.md. Numerical FD in _nevpt2.py is production.
+# Numerical FD in _nevpt2.py is production.
 """Analytic NEVPT2 orbital gradient dE^2/dk via Dyall Fock commutators.
 
 For NEVPT2 with Dyall H_0, the orbital gradient has a simple analytic form:

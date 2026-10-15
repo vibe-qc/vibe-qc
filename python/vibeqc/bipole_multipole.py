@@ -258,8 +258,7 @@ def _cartesian_derivative_inv_r(gamma: Tuple[int, int, int], R: np.ndarray) -> f
 # Raising the clamp to total order 4 (within the truncation scheme discussed
 # by Pisani-Dovesi-Roetti 1988, p. 51)
 # needs derivatives of the kernel to order 4 for the tensor and order 5 for
-# its gradient; the erf ladder currently refuses order 5.  See
-# ``handovers/HANDOVER_BIPOLE_PRODUCTION.md``.  Keep this constant and its
+# its gradient; the erf ladder currently refuses order 5. Keep this constant and its
 # C++ twin (``kMaxBipolarTotalOrder`` in ``cpp/src/bipole_multipole.cpp``)
 # in lock-step -- the two contractors are pinned against each other by
 # ``tests/test_bipole_contractor_parity.py``.

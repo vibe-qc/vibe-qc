@@ -73,7 +73,7 @@ def test_ccm_rhf_h4_alternating_parity():
     (period 4.0 Å); energy/atom converges with cluster size.
 
     The home-bra + bra-ket-symmetrised four-center reproduces the supercell-model
-    HF energy to ~1e-5 Ha/atom (not yet bit-exact — see handovers/HANDOVER_AICCM.md M2b).
+    HF energy to ~1e-5 Ha/atom (not yet bit-exact).
     """
     pos = [[x * BOHR, 0, 0] for x in (0.0, 0.8, 2.0, 2.8)]
     unit = _cell(np.diag([4.0 * BOHR, 40.0, 40.0]), [Atom(1, p) for p in pos])

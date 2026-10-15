@@ -171,7 +171,9 @@ struct KPointOccupationResult {
 // is_metallic makes the gapless case STRUCTURALLY visible rather than
 // leaving a screen to infer it from a small number: it is true exactly
 // when the Fermi level is pinned inside a partially filled manifold (some
-// occupation is fractional) or the measured indirect_gap is <= 0. Note
+// occupation is fractional), crosses a band (integer occupations whose
+// per-k count differs; see compute_kpoint_band_edges, issue #176), or the
+// measured indirect_gap is <= 0. Note
 // that under a zero-temperature global aufbau fill the pooled gap can
 // never be negative, so a "negative gap" screen alone is VACUOUS on mesh
 // rows (the judge measured 0 negative gaps in 1,625 rows -- a tautology,
@@ -206,10 +208,31 @@ struct KPointBandEdges {
     std::vector<double> conduction_min_per_k;
 };
 
+// THE FERMI LEVEL CROSSING A BAND (issue #176). Under the zero-temperature
+// global fill a band that dips below the Fermi level at one k-point and rises
+// above it at another is occupied at the first and empty at the second, with
+// every occupation still an integer. The state classes above then never
+// overlap -- the fill puts every occupied state below every empty one -- so
+// CBM - VBM comes out POSITIVE for a metal: the spacing of the sampled levels
+// around the Fermi level, which shrinks to zero with the mesh. When the
+// occupations are integer and the occupied-state count differs between
+// k-points, the edges are therefore taken from the band pair at the Fermi
+// filling instead: with n_f = sum_k w_k sum_i n_ki / 2 bands' worth of
+// electrons, valence band ceil(n_f) - 1 and conduction band floor(n_f) of the
+// energy-sorted spectrum at every k (the CRYSTAL convention). The measured
+// gap is then the (negative) band overlap, or minus the width of a partially
+// filled band, and is_metallic is set. A zero-weight point (band-structure
+// spelling) is filled with the step function at the mu the weighted points
+// fix, which can lie outside the true gap, so its count can differ with no
+// band crossing; the band pair then measures the correct positive gap and
+// is_metallic stays false. Nothing changes on a row whose counts agree. `weights` are the k-point weights of the fill (empty, or all zero:
+// equal weights). The Python twin is vibeqc.band_edges.kpoint_band_edges;
+// tests/test_band_edges.py pins the two equal.
 KPointBandEdges compute_kpoint_band_edges(
     const std::vector<Eigen::VectorXd>& eps_per_k,
     const std::vector<Eigen::VectorXd>& occupations_per_k,
-    double occupation_tolerance = 1.0e-8);
+    double occupation_tolerance = 1.0e-8,
+    const std::vector<double>& weights = {});
 
 // Copy a computed edge set onto a k-route result object carrying the
 // matching flat fields (KPointDFTB0Result, KPointSCCDFTBResult,

@@ -82,3 +82,34 @@ def test_density_integral_equals_electron_count(h2o_mol):
     rho = np.einsum("gm,mn,gn->g", chi, D, chi)
     n_elec = (rho * g.weights).sum()
     assert n_elec == pytest.approx(float(h2o_mol.n_electrons()), abs=1e-5)
+
+
+@pytest.mark.parametrize("pure", [False, True])
+def test_ao_shell_scratch_preserves_high_l_gradients_and_zero_tails(pure):
+    """Reused vectors must not leak values between points or angular shells."""
+    from vibeqc._vibeqc_core import ShellInfo
+
+    origin = np.array([0.13, -0.27, 0.31])
+    mol = Molecule([Atom(2, origin)])
+    shells = [ShellInfo(
+        atom_index=0, l=l, pure=pure, origin=origin,
+        exponents=[0.2, 0.7, 2.3], coefficients=[0.6, -0.15, 0.8],
+    ) for l in range(7)]
+    basis = BasisSet(mol, shells, "AO scratch control", False)
+    points = np.array([
+        origin, origin + [0.3, -0.6, 0.9], [1000., 1000., 1000.],
+        origin + [-0.7, 0.2, 0.4], origin,
+    ])
+    values, *gradients = (
+        np.asarray(x) for x in evaluate_ao_with_gradient(basis, points)
+    )
+    np.testing.assert_allclose(evaluate_ao(basis, points), values, atol=1e-14)
+    for matrix in [values, *gradients]:
+        np.testing.assert_array_equal(matrix[2], np.zeros(basis.nbasis))
+        np.testing.assert_array_equal(matrix[0], matrix[-1])
+    h = 1e-5
+    for axis, gradient in enumerate(gradients):
+        shift = np.eye(3)[axis] * h
+        fd = (evaluate_ao(basis, points + shift)
+              - evaluate_ao(basis, points - shift)) / (2 * h)
+        np.testing.assert_allclose(gradient, fd, rtol=0, atol=1e-8)

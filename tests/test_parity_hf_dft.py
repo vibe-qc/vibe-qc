@@ -1,6 +1,6 @@
 """HF/DFT cross-code parity — per-intermediate energy decomposition.
 
-The v0.13.5 certification matrix (``handovers/HANDOVER_CROSS_CODE_PARITY.md``):
+The v0.13.5 certification matrix (the original investigation):
 instead of only checking the total SCF energy, decompose every cell
 into E_nuc / E_1e / E_coulomb / E_exchange / E_xc / MO eigenvalues
 (via :mod:`vibeqc.parity`) and assert each piece independently against

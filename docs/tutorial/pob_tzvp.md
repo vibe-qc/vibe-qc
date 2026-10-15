@@ -57,13 +57,30 @@ threshold rather than the chemistry.
 
 ## What pob does
 
-Peintinger-Vilela-Oliveira-Bredow (2013) took the def2-TZVP /
+Peintinger-Vilela-Oliveira-Bredow (2013,
+{vibeqc-cite}`peintinger_pob_tzvp_2013`) took the def2-TZVP /
 def2-DZVP molecular bases and, for every element from H through
 Br, **systematically trimmed or replaced** the primitives with
 $\alpha < \alpha_\text{min}^\text{solid-state}$, where
 $\alpha_\text{min}^\text{solid-state}$ is chosen so that the
 inter-cell overlap integral for typical crystalline densities
-stays below a tolerance. The result is:
+stays below a tolerance. The pruning is not only about numerical
+conditioning. In a molecule the diffuse tail of a basis function
+describes the decay of the density into vacuum, a region that
+carries little energy but must be present for the wavefunction to
+be normalisable. In a dense crystal there is no vacuum: every point
+in space is already inside the tails of several atoms, so the same
+diffuse primitive describes nothing new, its Bloch sum
+$\sum_{\mathbf T} e^{i\mathbf k\cdot\mathbf T}\chi_\alpha(\mathbf r - \mathbf T)$
+becomes nearly $\mathbf k$-independent and nearly proportional to
+the Bloch sums of its neighbours, and the overlap matrix
+$\mathbf S(\mathbf k)$ acquires eigenvalues that approach zero. The
+variational freedom the function was supposed to add is instead
+spent describing linear dependence. Removing it costs a small,
+element-specific amount of atomic energy (which is why pob bases are
+re-optimised rather than merely truncated) and buys a basis whose
+$\mathbf S(\mathbf k)$ stays well conditioned at every crystalline
+density the family was fitted on. The result is:
 
 - **pob-TZVP**, triple-zeta valence + polarization, the most
   commonly used solid-state basis.
@@ -72,26 +89,35 @@ stays below a tolerance. The result is:
 - **pob-DZVP-rev2**, double-zeta equivalent, cheaper, for
   screening work.
 
-Covers H through Br at the all-electron level. For elements 4d/5d/5f+
+The bundled `pob-tzvp` covers H through Br (rare gases excepted) from the
+2013 set plus Rb through I from the fifth-period extension
+({vibeqc-cite}`laun_pob_fifth_period_2018`), 48 elements at the all-electron
+level; the rev2 revisions ({vibeqc-cite}`vilela_oliveira_pob_rev2_2019`)
+re-optimise the family. For elements 4d/5d/5f+
 the bundled pob-TZVP-REV2 runtime basis carries ECP-based definitions
 (the `Z+200` convention) that vibe-qc resolves and applies via
 libecpint, validated against PySCF.pbc for PBE/pob-TZVP-REV2 + ECP.
 
 ## What you see in practice
 
-Running a tutorial's H₂ molecular crystal ([input-h-chain-uniform.py](https://github.com/vibe-qc/vibe-qc/blob/main/examples/periodic/input-h-chain-uniform.py))
-with three bases and tracking SCF convergence:
+Running a tutorial's H₂ molecular crystal ([input-h-chain-uniform.py](https://github.com/vibe-qc/vibe-qc/blob/main/examples/periodic/input-h-chain-uniform.py),
+a 15 bohr lattice parameter in a `dim=3` cell with 15 bohr of
+transverse vacuum, k-point GDF on an 8 x 1 x 1 mesh) with three bases
+and tracking SCF convergence (vibe-qc 0.17.14):
 
 | Basis | nbf / atom | n_iter | Conv. |
 |---|---:|---:|---|
-| STO-3G | 1 | 2 | ✓ (too small to matter) |
-| 6-31G\* | 2 | oscillates | ✗ |
-| pob-TZVP | 6 | ~8 | ✓ |
+| STO-3G | 1 | 3 | ✓ (too small to matter) |
+| 6-31G\* | 2 | 6 | ✓ |
+| pob-TZVP | 6 | 7 | ✓ |
 
-The `pob-TZVP` calculation converges smoothly because no basis
-function is close to linear-dependent with any of its periodic
-images. The `6-31G*` case oscillates on the same geometry, not
-because the physics is wrong but because the basis is.
+All three converge here because each H₂ sits 13.6 bohr from its
+neighbours along the chain: the crystal is close to the molecular
+limit, where image overlap is negligible (see the next section). The
+case for `pob-TZVP` is the compact cell, where diffuse molecular
+functions overlap their periodic images and the overlap matrix
+approaches linear dependence; `pob-TZVP` is built to stay clear of
+that.
 
 ## When you can skip pob
 

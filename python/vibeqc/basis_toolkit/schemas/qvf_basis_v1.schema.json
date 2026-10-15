@@ -1,10 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vibe-qc.org/spec/qvf-basis/1/schema.json",
-  "title": "QVF-Basis v1.0 — Basis Set Container",
-  "description": "Canonical structured JSON format for Gaussian-type orbital basis sets, effective core potentials, auxiliary bases, and their metadata.",
+  "title": "QVF-Basis v1.1 — Basis Set Container",
+  "description": "Canonical structured JSON format for Gaussian-type orbital basis sets, effective core potentials, auxiliary bases, and their metadata. 1.1.0 widened 'provenance' with kind, upstream identity, content hash and per-range citation routes; every 1.0.0 record remains valid.",
   "type": "object",
-  "required": ["schema_version", "name", "role", "elements"],
+  "required": [
+    "schema_version",
+    "name",
+    "role",
+    "elements"
+  ],
   "additionalProperties": false,
   "properties": {
     "schema_version": {
@@ -24,7 +29,12 @@
     },
     "role": {
       "type": "string",
-      "enum": ["orbital", "auxiliary", "fitting", "ecp"],
+      "enum": [
+        "orbital",
+        "auxiliary",
+        "fitting",
+        "ecp"
+      ],
       "description": "Intended use of this basis set."
     },
     "basis_family": {
@@ -55,7 +65,9 @@
     "references": {
       "type": "array",
       "description": "Bibliographic references for this basis set.",
-      "items": { "$ref": "#/$defs/reference" }
+      "items": {
+        "$ref": "#/$defs/reference"
+      }
     },
     "provenance": {
       "$ref": "#/$defs/provenance",
@@ -65,14 +77,22 @@
   "$defs": {
     "element_basis": {
       "type": "object",
-      "required": ["element", "shells"],
+      "required": [
+        "element",
+        "shells"
+      ],
       "additionalProperties": false,
       "properties": {
-        "element": { "type": "string", "description": "Element symbol." },
+        "element": {
+          "type": "string",
+          "description": "Element symbol."
+        },
         "shells": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/shell" }
+          "items": {
+            "$ref": "#/$defs/shell"
+          }
         },
         "ecp_id": {
           "type": "string",
@@ -82,98 +102,280 @@
     },
     "shell": {
       "type": "object",
-      "required": ["angular_momentum", "harmonic_type", "primitives"],
+      "required": [
+        "angular_momentum",
+        "harmonic_type",
+        "primitives"
+      ],
       "additionalProperties": false,
       "properties": {
         "angular_momentum": {
           "type": "array",
           "minItems": 1,
           "maxItems": 2,
-          "items": { "type": "integer", "minimum": 0, "maximum": 12 },
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 12
+          },
           "description": "Angular momentum quantum numbers. [0]=S, [1]=P, [0,1]=SP."
         },
         "harmonic_type": {
           "type": "string",
-          "enum": ["spherical", "cartesian"]
+          "enum": [
+            "spherical",
+            "cartesian"
+          ]
         },
         "primitives": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/primitive" },
+          "items": {
+            "$ref": "#/$defs/primitive"
+          },
           "description": "Primitive Gaussians, exponent descending."
         }
       }
     },
     "primitive": {
       "type": "object",
-      "required": ["exponent", "coefficient"],
+      "required": [
+        "exponent",
+        "coefficient"
+      ],
       "additionalProperties": false,
       "properties": {
-        "exponent": { "type": "number", "exclusiveMinimum": 0 },
-        "coefficient": { "type": "number" }
+        "exponent": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "coefficient": {
+          "type": "number"
+        }
       }
     },
     "ecp_entry": {
       "type": "object",
-      "required": ["element", "n_core_electrons", "angular_momentum_max", "potentials"],
+      "required": [
+        "element",
+        "n_core_electrons",
+        "angular_momentum_max",
+        "potentials"
+      ],
       "additionalProperties": false,
       "properties": {
-        "element": { "type": "string" },
-        "n_core_electrons": { "type": "integer", "minimum": 1 },
-        "angular_momentum_max": { "type": "integer", "minimum": 0 },
+        "element": {
+          "type": "string"
+        },
+        "n_core_electrons": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "angular_momentum_max": {
+          "type": "integer",
+          "minimum": 0
+        },
         "potentials": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ecp_potential" }
+          "items": {
+            "$ref": "#/$defs/ecp_potential"
+          }
         }
       }
     },
     "ecp_potential": {
       "type": "object",
-      "required": ["angular_momentum", "terms"],
+      "required": [
+        "angular_momentum",
+        "terms"
+      ],
       "additionalProperties": false,
       "properties": {
-        "angular_momentum": { "type": "integer", "minimum": 0 },
+        "angular_momentum": {
+          "type": "integer",
+          "minimum": 0
+        },
         "terms": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ecp_term" }
+          "items": {
+            "$ref": "#/$defs/ecp_term"
+          }
         }
       }
     },
     "ecp_term": {
       "type": "object",
-      "required": ["coefficient", "exponent", "power"],
+      "required": [
+        "coefficient",
+        "exponent",
+        "power"
+      ],
       "additionalProperties": false,
       "properties": {
-        "coefficient": { "type": "number" },
-        "exponent": { "type": "number", "minimum": 0 },
-        "power": { "type": "integer", "enum": [0, 1, 2] }
+        "coefficient": {
+          "type": "number"
+        },
+        "exponent": {
+          "type": "number",
+          "minimum": 0
+        },
+        "power": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4,
+          "description": "Gaussian-format integer n in coefficient * r^(n-2) * exp(-exponent * r^2); n=0..4 represents radial powers r^-2 through r^2."
+        }
       }
     },
     "reference": {
       "type": "object",
-      "required": ["key"],
+      "required": [
+        "key"
+      ],
       "additionalProperties": false,
       "properties": {
-        "key": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "doi": { "type": "string" },
-        "bibtex": { "type": "string" },
-        "url": { "type": "string", "format": "uri" }
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "doi": {
+          "type": "string"
+        },
+        "bibtex": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        }
       }
     },
     "provenance": {
       "type": "object",
-      "required": ["origin"],
+      "required": [
+        "origin"
+      ],
       "additionalProperties": false,
       "properties": {
         "origin": {
           "type": "string",
-          "enum": ["bse", "manual", "crystal", "file", "generated"]
+          "enum": [
+            "bse",
+            "manual",
+            "crystal",
+            "file",
+            "generated"
+          ],
+          "description": "Which importer produced the record (1.0.0 field)."
         },
-        "retrieval_date": { "type": "string", "format": "date" },
-        "source_doi": { "type": "string" },
-        "source_version": { "type": "string" },
-        "source_checksum": { "type": "string" }
+        "kind": {
+          "type": "string",
+          "enum": [
+            "vendor",
+            "bse",
+            "hand-written",
+            "vibe-basis"
+          ],
+          "description": "What class of record this is: bundled from a vendor distribution, rendered from the Basis Set Exchange, supplied by a user, or produced by vibe-basis. Required by the bundled library since 1.1.0."
+        },
+        "upstream": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/upstream"
+          },
+          "description": "Upstream sources, one per distribution the record draws on."
+        },
+        "retrieval_date": {
+          "type": "string",
+          "format": "date",
+          "description": "ISO 8601 date the data was retrieved or generated."
+        },
+        "source_doi": {
+          "type": "string"
+        },
+        "source_version": {
+          "type": "string"
+        },
+        "source_checksum": {
+          "type": "string"
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the canonical JSON of {elements, ecps}; the record's content identity."
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/citation_route"
+          },
+          "description": "Per-element-range citation routes."
+        },
+        "run_id": {
+          "type": "string",
+          "description": "vibe-basis run identity for optimised records."
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "upstream": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Distribution or archive the data came from, e.g. 'libint', 'basis-set-exchange', 'Bredow group basis-set archive'."
+        },
+        "version": {
+          "type": "string",
+          "description": "Version or catalogue release of that source."
+        },
+        "url": {
+          "type": "string",
+          "description": "Where it was obtained."
+        },
+        "identifier": {
+          "type": "string",
+          "description": "The record's name in that source."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Which part of this record it supplied, e.g. 'H-Kr'."
+        }
+      }
+    },
+    "citation_route": {
+      "type": "object",
+      "required": [
+        "keys"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Citation keys in vibeqc.output.citations (database.toml entries)."
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Element symbols the route covers; omitted means every element of the record."
+        }
       }
     }
   }

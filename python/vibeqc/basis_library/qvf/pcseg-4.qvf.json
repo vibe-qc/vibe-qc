@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "pcseg-4",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: pcseg-4\nCanonical name in vibe-qc: pcseg-4\nOriginating publication: F. Jensen, J. Chem. Theory Comput. 10, 1074 (2014); DOI: 10.1021/ct401026a\nNote:\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: pcseg-4\nDescription: Segmented contracted version of the pc-4 basis\n       Role: orbital\n    Version: 1  (Data from Frank Jensen (2014))",
   "role": "orbital",
   "elements": {
     "H": {
@@ -15905,7 +15905,33 @@
       ]
     }
   },
+  "basis_family": "jensen",
+  "references": [
+    {
+      "key": "jensen_pcseg_2014",
+      "description": "F. Jensen, Journal of Chemical Theory and Computation 10, 1074-1085 (2014)",
+      "doi": "10.1021/ct401026a"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "pcseg-4"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "6c93a70077b02c441b2ca5ad318d1b534c2b52e4246d2ececfe202649a9a3ee6",
+    "citations": [
+      {
+        "keys": [
+          "jensen_pcseg_2014"
+        ]
+      }
+    ]
   }
 }

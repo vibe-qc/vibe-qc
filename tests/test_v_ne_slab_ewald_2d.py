@@ -1,7 +1,7 @@
 """Rigorous 2D (slab) Ewald electron–nuclear attraction ``V_ne``.
 
 Increment 2 of the ``CoulombMethod.SLAB_EWALD_2D`` workstream
-(``handovers/HANDOVER_SLAB_EWALD_2D.md``). The Γ-point ``V_ne`` matrix is built by the
+(the original investigation). The Γ-point ``V_ne`` matrix is built by the
 z-resolved Ewald FT (``vibeqc.periodic_v_ne_slab``): libint ``V_short`` + the
 in-plane ``g ≠ 0`` reciprocal sum as a 1D ``G_z`` quadrature of the 3D Coulomb
 kernel + the analytic ``g = 0`` Parry slab term against the z-resolved AO-pair
@@ -237,7 +237,7 @@ def test_z_profile_first_moment_is_bloch_dipole():
     against the home-cell ``compute_dipole(...).z`` (which omits those images)
     and so mis-flagged the FT as broken; the ~0.1 Ha polar-SCF error it was
     blamed for was in fact the undamped-J core under-convergence, now fixed by
-    the Ewald split (see ``handovers/HANDOVER_SLAB_EWALD_2D.md``).
+    the Ewald split.
     """
     from vibeqc import direct_lattice_cells
     from vibeqc._vibeqc_core import compute_multipole_moments_lattice
@@ -558,3 +558,79 @@ def test_slab_v_ne_k_conjugates_the_pair_ft_not_the_bloch_phase():
     assert np.max(np.abs(shipped - correct)) < 1e-12
     # The two conventions must actually differ here, or the test is vacuous.
     assert np.max(np.abs(correct - defective)) > 1e-3
+
+
+# ---------------------------------------------------------------------------
+# pair_complete_1e: one AO-pair term set for V_short, V_long and V_g0 (#483)
+# ---------------------------------------------------------------------------
+def _h2_slab_moved(shift, x0=0.4):
+    """``_h2_slab`` with atom 1 moved by the in-plane lattice vector ``shift``."""
+    lat = np.diag([4.6, 4.6, 30.0])
+    atoms = [vq.Atom(1, [x0, 0.3, 0.55]),
+             vq.Atom(1, list(np.array([2.1, 1.8, -0.55]) + shift))]
+    system = vq.PeriodicSystem(2, lat, atoms)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    return system, basis
+
+
+def _pair_complete_opts():
+    lo = _lat_opts(cutoff=12.0, nuc_cutoff=12.0)
+    lo.pair_complete_1e = True
+    return lo
+
+
+@pytest.mark.parametrize("shift", [[4.6, 0.0, 0.0], [-9.2, 4.6, 0.0]])
+def test_pair_complete_gamma_v_ne_is_invariant_under_a_lattice_translation(shift):
+    """Under pair_complete_1e the libint V_short is pair complete, but V_long,
+    V_g0 and the int n dz = S check Fourier transformed the |g| ball: the
+    check raised (S off by 2.9e-3 and 1.4e-1 for these two moves). With the
+    shared term set every component is invariant (measured <= 4.4e-16)."""
+    lo = _pair_complete_opts()
+    base = _vne(*_h2_slab_moved(np.zeros(3)), lo, 0.25)
+    moved = _vne(*_h2_slab_moved(np.array(shift)), lo, 0.25)
+    for part in ("v_total", "v_short", "v_long", "v_g0"):
+        np.testing.assert_allclose(
+            getattr(moved, part), getattr(base, part), atol=1e-12, rtol=0)
+
+
+def test_pair_complete_k_v_ne_is_invariant_under_a_lattice_translation():
+    """At a generic k the moved atom's Bloch AO picks up e^{-ik.a}."""
+    lo = _pair_complete_opts()
+    shift = np.array([4.6, 0.0, 0.0])
+    k = np.array([0.25, 0.5, 0.0]) * 2.0 * np.pi / 4.6
+    system, basis = _h2_slab_moved(np.zeros(3))
+    V0 = compute_v_ne_slab_ewald_2d_k_matrix(basis, system, lo, k)
+    system, basis = _h2_slab_moved(shift)
+    V1 = compute_v_ne_slab_ewald_2d_k_matrix(basis, system, lo, k)
+    P = np.diag([1.0, np.exp(-1j * (k @ shift))])
+    np.testing.assert_allclose(P.conj().T @ V0 @ P, V1, atol=1e-12, rtol=0)
+
+
+def test_pair_complete_v_ne_gradient_matches_fd():
+    """The derivative kernels run per pair-mask group; FD measured 3.6e-10."""
+    from vibeqc.periodic_v_ne_slab_gradient import (
+        compute_v_ne_slab_ewald_2d_gradient,
+    )
+
+    lo = _pair_complete_opts()
+    kpts = [np.zeros(3), np.array([0.25, 0.5, 0.0]) * 2.0 * np.pi / 4.6]
+    weights = [0.5, 0.5]
+    rng = np.random.default_rng(0)
+    densities = []
+    for k in kpts:
+        M = rng.normal(size=(2, 2)) + 1j * rng.normal(size=(2, 2)) * bool(k.any())
+        densities.append(M @ M.conj().T)
+
+    def energy(x0):
+        system, basis = _h2_slab_moved(np.zeros(3), x0=x0)
+        return sum(
+            w * np.real(np.trace(D @ compute_v_ne_slab_ewald_2d_k_matrix(
+                basis, system, lo, k)))
+            for D, k, w in zip(densities, kpts, weights))
+
+    system, basis = _h2_slab_moved(np.zeros(3))
+    grad = compute_v_ne_slab_ewald_2d_gradient(
+        basis, system, lo, densities, weights, kpts)
+    h = 1e-4
+    fd = (energy(0.4 + h) - energy(0.4 - h)) / (2.0 * h)
+    assert abs(grad[0, 0] - fd) < 5e-9

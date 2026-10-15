@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "aug-cc-pvtz-rifit",
+  "description": "Basis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\nOriginating publication: Weigend, Kohn, Hattig, J. Chem. Phys. 116, 3175 (2002); DOI: 10.1063/1.1445115\n  Basis set: aug-cc-pVTZ-RIFIT\nDescription: RI Fitting basis for use with aug-cc-pVTZ\n       Role: rifit\n    Version: 1  (Data from Turbomole 7.3)",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -15909,7 +15909,40 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "kendall_dunning_harrison_1992",
+      "description": "R. A. Kendall, T. H. Dunning, R. J. Harrison, Journal of Chemical Physics 96, 6796-6806 (1992)",
+      "doi": "10.1063/1.462569"
+    },
+    {
+      "key": "weigend_ccpvxz_rifit_2002",
+      "description": "F. Weigend, A. Köhn, C. Hättig, Journal of Chemical Physics 116, 3175-3183 (2002)",
+      "doi": "10.1063/1.1445115"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "aug-cc-pvtz-rifit"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "67ef9a1400cb62e5851c35978cadc3e3e9c4efc22c3a12d4c09e7c17bfabfba3",
+    "citations": [
+      {
+        "keys": [
+          "kendall_dunning_harrison_1992",
+          "weigend_ccpvxz_rifit_2002"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

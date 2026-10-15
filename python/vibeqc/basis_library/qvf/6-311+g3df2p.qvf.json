@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "name": "6-311+g3df2p",
-  "description": "Imported from G94: 6-311+g3df2p",
+  "description": "vibeqc-constructed from Basis Set Exchange on 2026-06-30.\nCanonical name in vibe-qc: 6-311+g3df2p\nLiterature/Gaussian name: 6-311+G(3df,2p)\nConstruction: H-He use BSE 6-311G(2df,2pd) with D shells removed;\nLi-Ar use BSE 6-311++G(3df,3pd) heavy-atom blocks, which are the\nsame heavy-atom diffuse/3df blocks required by single-plus 6-311+G.\nThis is an exact Pople-component construction, not an alias to\n6-311+G(2d,p), 6-311+G**, 6-311++G(3df,3pd), or 6-311G(2df,2pd).\nOriginating publication: Krishnan, Binkley, Seeger, Pople, J. Chem. Phys. 72, 650 (1980); McLean, Chandler, J. Chem. Phys. 72, 5639 (1980); Hariharan, Pople, Theor. Chim. Acta 28, 213 (1973); Frisch, Pople, Binkley, J. Chem. Phys. 80, 3265 (1984)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -3479,7 +3479,50 @@
       ]
     }
   },
+  "basis_family": "pople",
+  "references": [
+    {
+      "key": "krishnan_pople_6311g_1980",
+      "description": "R. Krishnan, J. S. Binkley, R. Seeger, J. A. Pople, Journal of Chemical Physics 72, 650-654 (1980)",
+      "doi": "10.1063/1.438955"
+    },
+    {
+      "key": "mclean_chandler_6311g_1980",
+      "description": "A. D. McLean, G. S. Chandler, Journal of Chemical Physics 72, 5639-5648 (1980)",
+      "doi": "10.1063/1.438980"
+    },
+    {
+      "key": "hariharan_pople_1973",
+      "description": "P. C. Hariharan, J. A. Pople, Theoretica Chimica Acta 28, 213-222 (1973)",
+      "doi": "10.1007/BF00533485"
+    },
+    {
+      "key": "frisch_pople_binkley_supplementary_1984",
+      "description": "M. J. Frisch, J. A. Pople, J. S. Binkley, Journal of Chemical Physics 80, 3265-3269 (1984)",
+      "doi": "10.1063/1.447079"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "6-311+g3df2p"
+      }
+    ],
+    "retrieval_date": "2026-06-30",
+    "content_sha256": "f6d2d56b6f45f94a695d93b783435c0f6813102b98b272a756edae32f7cc15f9",
+    "citations": [
+      {
+        "keys": [
+          "krishnan_pople_6311g_1980",
+          "mclean_chandler_6311g_1980",
+          "hariharan_pople_1973",
+          "frisch_pople_binkley_supplementary_1984"
+        ]
+      }
+    ]
   }
 }

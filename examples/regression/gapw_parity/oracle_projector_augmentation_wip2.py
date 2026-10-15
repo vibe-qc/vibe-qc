@@ -2,7 +2,7 @@
 augmentation - the H2O Hartree identity CLOSES to +9 mHa (from
 -4213 mHa in production).
 
-Milestone step (a) COMPLETE (HANDOVER_GAPW_PRODUCTION.md "NEXT
+Milestone step (a) COMPLETE (the original investigation "NEXT
 MILESTONE"; v1 empirical map in oracle_projector_augmentation_wip.py).
 Fixed converged molecular RHF density of H2O/STO-3G/12-bohr;
 gauge-consistent periodic E_H target 35.7134 Ha (exact free-space

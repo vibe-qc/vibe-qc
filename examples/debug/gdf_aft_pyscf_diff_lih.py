@@ -3,8 +3,7 @@
 LiH variant of ``gdf_aft_pyscf_diff.py`` (which targets H2). The H2
 system has L=0 AOs only and L≥1 only on the aux side; LiH primitive
 brings a Li 2p (L=1) ORBITAL shell and exposes the convention layer
-that the +22 Ha LiH multi-k residue lives in (see
-``handovers/HANDOVER_GDF_V0_11_2026_05_29.md`` § "LiH residue").
+behind the +22 Ha LiH multi-k residue.
 
 Compares, on the compcell fused (modrho_aux ∪ chg) basis:
 
@@ -112,7 +111,7 @@ j2c_mol = 0.5 * (j2c_mol + j2c_mol.T)
 # 3c analog of (1b). The 2026-05-25 M1 attempt 1 (pair-FT conversion
 # in `_compcell_aft_correction_3c` libint path) had ZERO effect on
 # the LiH +11 686 Ha SCF blowup, ruling out that as the convention
-# bug. Per the handover, the next data needed is whether
+# bug. Per the original investigation, the next data needed is whether
 # `compute_3c_eri(ao_basis, fused)` bit-matches PySCF
 # `aux_e2(cell, fused_cell, intor='int3c2e')` (analogous to the
 # MOLECULAR 2c bit-exact confirmation).
@@ -612,7 +611,7 @@ def main() -> int:
     print()
 
     # Per-(region,L) block ratio of the COMPENSATED metric vs PySCF.
-    # The handover (§Bug 4b reframing) says this — not the bare metric —
+    # the original investigation (§Bug 4b reframing) says this — not the bare metric —
     # is the cutoff-independent / convergent target. A block stuck away
     # from 1.0 here is the actual residue source.
     py_M_comp = None

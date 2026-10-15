@@ -58,7 +58,8 @@ print(f"gap     = {(eps[homo+1] - eps[homo])*27.211386:.2f} eV")`;
         <p class="note">Clone the public source, then enter it and install:</p>
         <pre class="code"><code>git clone https://github.com/vibe-qc/vibe-qc.git</code></pre>
         <pre class="code"><code>cd vibe-qc
-./scripts/install.sh --dev</code></pre>
+./scripts/install.sh --dev
+source .venv/bin/activate</code></pre>
         <p class="note">
           <code>install.sh</code> builds the native core, creates a virtualenv and
           installs vibe-qc. It accepts <code>--dev</code> (track main) and
@@ -73,14 +74,20 @@ print(f"gap     = {(eps[homo+1] - eps[homo])*27.211386:.2f} eV")`;
       </li>
       <li>
         <h2><span class="n">2</span> Run RHF on water</h2>
+        <p class="note">With the environment activated, save this code as
+          <code>water.py</code> in a working directory outside the source checkout.
+          From that directory, run <code>python water.py</code>.</p>
         <pre class="code"><code>{code}</code></pre>
       </li>
       <li>
         <h2><span class="n">3</span> Read the result</h2>
         <p class="note">
-          You get the SCF energy in hartree and the HOMO energy plus HOMO–LUMO gap in
-          eV. Swap <code>run_rhf</code> for <code>run_rks</code>, <code>run_mp2</code>,
-          or a periodic driver to go further — same front-end, same objects.
+          You get the SCF energy in hartree and the HOMO energy plus HOMO-LUMO gap in
+          eV. Swap <code>run_rhf</code> for <code>run_rks</code> to run DFT, or call
+          <code>run_job(mol, basis="6-31g*", method="mp2")</code> to add correlation:
+          same front end, same objects. The
+          <a href={`${base}methods/`}>methods page</a> lists every route with its
+          production, preview, experimental or gated label.
         </p>
       </li>
     </ol>
@@ -114,19 +121,27 @@ print(f"gap     = {(eps[homo+1] - eps[homo])*27.211386:.2f} eV")`;
       <div class="next-grid">
         <a class="ncard" href={`${DOCS}/quickstart.html`}>
           <h3>Quickstart <span class="arrow">→</span></h3>
-          <p>The full first-run walkthrough, line by line.</p>
+          <p>The full first-run walkthrough, line by line: molecular HF, an open-shell radical, a periodic solid and an orbital picture.</p>
         </a>
-        <a class="ncard" href={`${DOCS}/tutorial/index.html`}>
-          <h3>Tutorials <span class="arrow">→</span></h3>
-          <p>Step-by-step tutorials, molecular through periodic.</p>
+        <a class="ncard" href={`${DOCS}/tutorial/index.html#choose-a-learning-path`}>
+          <h3>Tutorial learning paths <span class="arrow">→</span></h3>
+          <p>Eight ordered paths, from a first calculation through correlated energies, periodic materials and remote operation. Every page derives the theory it uses.</p>
+        </a>
+        <a class="ncard" href={`${base}methods/`}>
+          <h3>Methods and status <span class="arrow">→</span></h3>
+          <p>Every method family with its production, preview, experimental or gated label and a link into the manual.</p>
         </a>
         <a class="ncard" href={`${DOCS}/user_guide/index.html`}>
           <h3>User guide <span class="arrow">→</span></h3>
-          <p>Methods, basis sets, functionals, ECPs, periodic systems.</p>
+          <p>Options, defaults and limitations by concept: basis sets, functionals, ECPs, SCF convergence, periodic systems, properties.</p>
+        </a>
+        <a class="ncard" href="https://github.com/vibe-qc/vibe-qc/blob/main/examples/README.md">
+          <h3>Examples catalog <span class="arrow">→</span></h3>
+          <p>Complete runnable inputs organised by goal, from a water single point to periodic crystals, NEB and cross-code comparisons.</p>
         </a>
         <a class="ncard" href={`${DOCS}/example_outputs.html`}>
           <h3>Example outputs <span class="arrow">→</span></h3>
-          <p>Annotated output from real vibe-qc runs.</p>
+          <p>Annotated output from real vibe-qc runs, with the QVF archives and viewer captures they produced.</p>
         </a>
       </div>
     </section>

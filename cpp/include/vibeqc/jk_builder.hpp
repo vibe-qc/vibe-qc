@@ -31,6 +31,7 @@
 
 #include <Eigen/Dense>
 #include <memory>
+#include <tuple>
 #include <utility>
 
 #include "basis.hpp"
@@ -140,6 +141,25 @@ public:
                                           int slot) const {
         (void)slot;
         return build_K(D);
+    }
+
+    // Joint open-shell build in the order J(D_alpha+D_beta), K(D_alpha),
+    // K(D_beta). The default preserves the existing incremental slots and
+    // call order. Stateless providers may override to share integral reads
+    // across all three channels. No spin equality, spatial-state symmetry,
+    // exchange correction, or density projection is implied by batching.
+    using SpinJK = std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd>;
+    virtual SpinJK build_jk_uhf(const Eigen::MatrixXd& D_alpha,
+                              const Eigen::MatrixXd& D_beta) const {
+        if (D_alpha.rows() == 0 || D_alpha.rows() != D_alpha.cols()
+                || D_beta.rows() != D_alpha.rows() || D_beta.cols() != D_alpha.cols()
+                || !D_alpha.allFinite() || !D_beta.allFinite())
+            throw std::invalid_argument("Joint UHF J/K requires matching finite square densities");
+        const Eigen::MatrixXd D_total = D_alpha + D_beta;
+        Eigen::MatrixXd J = build_J_slot(D_total, 0);
+        Eigen::MatrixXd Ka = build_K_slot(D_alpha, 0);
+        Eigen::MatrixXd Kb = build_K_slot(D_beta, 1);
+        return {std::move(J), std::move(Ka), std::move(Kb)};
     }
 
     // Long-range (erf-attenuated) exchange matrix

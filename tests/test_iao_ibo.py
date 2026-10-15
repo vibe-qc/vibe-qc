@@ -11,7 +11,7 @@ Three families of assertion:
 3. **The Jacobi increments.** Knizia's Appendix D prints them with corrupted
    subscripts, so they are *derived* in ``localise.ibo_localise`` and pinned
    here against a brute-force scan of the rotation functional rather than
-   transcribed from the PDF. See handovers/HANDOVER_IBO.md § 4b.
+   transcribed from the PDF.
 """
 
 from __future__ import annotations
@@ -164,7 +164,7 @@ def test_iao_reference_uses_huzinaga_mini_not_the_minao_guess_basis():
     ``ano-rcc-mb`` is what the MINAO *initial guess* uses and is the obvious
     thing to reach for, but it is a poor IAO reference: it shifts the CH4
     carbon charge from -0.47 to -0.39, roughly 20 %, and out of agreement
-    with Knizia Table 1. See handovers/HANDOVER_IBO.md § 4a.
+    with Knizia Table 1.
     """
     mol, basis, occupied = _rhf(CH4_ATOMS, "def2-svp")
     overlap = np.asarray(compute_overlap(basis))

@@ -275,7 +275,7 @@ struct CosxKernelWorkspace {
 //     erfc-attenuated SHORT-RANGE kernel erfc(ω·r)/r (matching
 //     libint's ``Operator::erfc_nuclear`` with the same ω), the
 //     building block for range-separated periodic exchange
-//     (M3b-4a; handovers/HANDOVER_RIJCOSX_M3A.md). Implemented as a seeding
+//     (M3b-4a). Implemented as a seeding
 //     change only — the attenuated Boys family ρ^{m+1/2}F_m(ρT),
 //     ρ = ω²/(ω²+α), obeys the same downward derivative relation,
 //     so the Obara-Saika recursion is shared.
