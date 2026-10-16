@@ -441,13 +441,13 @@ PARITY_CELLS: List[Cell] = [
     Cell("OH", "cc-pvtz", "UMP2", spin=1, df=True),
 ]
 
-# The single cell the handover says to run first, end-to-end, to nail
+# The single cell the original investigation says to run first, end-to-end, to nail
 # the submit -> fetch -> parse -> compare loop before parametrising.
 FIRST_CELL = Cell("H2O", "def2-svp", "RHF")
 
 
 # --- speed benchmark ----------------------------------------------------
-# The handover: vibe-qc should be at least as fast as ORCA for the same
+# the original investigation: vibe-qc should be at least as fast as ORCA for the same
 # method + basis. Sweep system size — a single small molecule is
 # misleading (setup overhead dominates) — and sweep the Fock-build path,
 # because that is where the gap lives. The maintainer's own same-box

@@ -1,6 +1,6 @@
 """Milestone 1: molecular RHF/CASCI/CASSCF/CASPT2 in a static external
 point-charge field. Embedded-cluster CASSCF spike (see README +
-handovers/HANDOVER_PERIODIC_MULTIREF.md, MR6-MR10).
+the original investigation, MR6-MR10).
 
 Proves the enabler exists with NO new core code: V_ext via
 compute_nuclear_with_charges injected into a custom Hcore +

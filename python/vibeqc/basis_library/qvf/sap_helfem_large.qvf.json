@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "sap_helfem_large",
+  "description": "This basis set was reported in the following publication:\nLehtola, S.; Visscher, L.; Engel, E.\nEfficient Implementation of the Superposition of Atomic\nPotentials Initial Guess for Electronic Structure\nCalculations in Gaussian Basis  Sets.\nThe Journal of Chemical Physics 2020, 152, 144105.\nhttps://doi.org/10.1063/5.0004046",
   "role": "orbital",
   "elements": {
     "H": {
@@ -8918,7 +8918,33 @@
       ]
     }
   },
+  "references": [
+    {
+      "key": "lehtola_visscher_engel_sap_2020",
+      "description": "S. Lehtola, L. Visscher, E. Engel, Journal of Chemical Physics 152, 144105 (2020)",
+      "doi": "10.1063/5.0004046"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "sap_helfem_large",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "140e25975d42888647b8a3022db5b736178b9d3866cab60460249768c507c85e",
+    "citations": [
+      {
+        "keys": [
+          "lehtola_visscher_engel_sap_2020"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

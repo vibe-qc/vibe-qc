@@ -88,6 +88,20 @@ class GpwRunnerResult:
     restart_lattice: object = None
     guess_selection: object = None
 
+    fock_build: object = None
+    run_fields: dict = field(default_factory=dict)
+    smearing_temperature: float = 0.0
+    smearing_entropy: float = 0.0
+    fermi_level: float = 0.0
+
+    @property
+    def orbital_kind(self):
+        return "natural" if self.fock_build is not None else "canonical"
+
+    @property
+    def free_energy(self):
+        return self.energy - self.smearing_temperature * self.smearing_entropy
+
 
 @dataclass
 class GpwRohfRunnerResult:
@@ -230,6 +244,8 @@ def gpw_result_to_runner_shape(
     n_occ = n_elec // 2
     occupations = np.zeros(n_basis, dtype=float)
     occupations[:n_occ] = 2.0
+    if getattr(gpw_result, "fock_build", None) is not None:
+        occupations = np.asarray(gpw_result.occupations).copy()
 
     # Energy decomposition.
     e_xc = float(getattr(bd, "e_xc", 0.0))
@@ -247,8 +263,8 @@ def gpw_result_to_runner_shape(
     e_dft_plus_u = float(getattr(gpw_result, "e_dft_plus_u", 0.0))
 
     # The Fock surfaced to post-SCF consumers. Preferred source: the
-    # driver's own converged (post-DIIS) Fock -- the operator whose
-    # eigenpairs are the returned mo_coeffs/mo_energies. GPW, GAPW,
+    # driver's stored Fock (the evaluated physical Fock for migrated
+    # RHF; its run_fields describes the density/orbital relationship). GPW, GAPW,
     # and the C++-hosted driver all carry it. The reconstruction
     # below is a fallback for producers that predate the field; note
     # it is HF-shaped (Hcore + J - K/2 with the *un-augmented* GPW J,
@@ -320,6 +336,11 @@ def gpw_result_to_runner_shape(
         overlap=S,
         occupations=occupations,
         scf_trace=trace,
+        fock_build=getattr(gpw_result, "fock_build", None),
+        run_fields=dict(getattr(gpw_result, "run_fields", {})),
+        smearing_temperature=float(getattr(gpw_result, "smearing_temperature", 0.0)),
+        smearing_entropy=float(getattr(gpw_result, "smearing_entropy", 0.0)),
+        fermi_level=float(getattr(gpw_result, "fermi_level", 0.0)),
         one_centre=getattr(gpw_result, "one_centre", None),
         molecular_limit_declared=bool(
             getattr(gpw_result, "molecular_limit_declared", False)
@@ -383,6 +404,13 @@ class GpwOpenShellRunnerResult:
     restart_lattice: object = None
     guess_selection: object = None
 
+    fock_build: object = None
+    run_fields: dict = field(default_factory=dict)
+
+    @property
+    def orbital_kind(self):
+        return "natural" if self.fock_build is not None else "canonical"
+
 
 def _gpw_open_shell_to_runner(
     gpw_result,
@@ -392,8 +420,8 @@ def _gpw_open_shell_to_runner(
     """Shared adapter body -- used by both UHF and UKS converters.
 
     Preserves stored F_alpha / F_beta + S when the producer exposes them, so
-    callers (e.g., post-SCF analysis or Molden export) receive the operator
-    that generated the reported eigenpairs. Older GPW-shaped objects fall
+    callers receive the evaluated physical operator for migrated GPW states
+    or the producer-supplied operator for legacy GAPW states. Older objects fall
     back to reconstruction at their converged densities.
     """
     from .periodic_gapw_j import (
@@ -421,6 +449,9 @@ def _gpw_open_shell_to_runner(
     occ_alpha[:n_alpha] = 1.0
     occ_beta = np.zeros(n_basis, dtype=float)
     occ_beta[:n_beta] = 1.0
+    if getattr(gpw_result, "fock_build", None) is not None:
+        occ_alpha = np.asarray(gpw_result.occupations_alpha)
+        occ_beta = np.asarray(gpw_result.occupations_beta)
     # Combined "closed-shell-style" occupations for the runner's
     # single-vector path (alpha + beta -- sums to n_elec).
     occ_combined = occ_alpha + occ_beta
@@ -577,6 +608,8 @@ def _gpw_open_shell_to_runner(
         ]
 
     return GpwOpenShellRunnerResult(
+        fock_build=getattr(gpw_result, "fock_build", None),
+        run_fields=dict(getattr(gpw_result, "run_fields", {})),
                restart_basis=basis, restart_lattice=np.asarray(system.lattice).copy(),
         guess_selection=getattr(gpw_result, "guess_selection", None),
         restart_kpoints=getattr(gpw_result, "restart_kpoints", None),
@@ -761,17 +794,25 @@ def gpw_uks_multik_result_to_runner_shape(
         occ[: min(n_occ, n_mo)] = 1.0
         return occ
 
-    occ_a_k = [_occ(n_alpha, C.shape[1]) for C in C_a_k]
-    occ_b_k = [_occ(n_beta, C.shape[1]) for C in C_b_k]
+    def _driver_occupations(name: str, n_occ: int, C_k):
+        # The driver's own per-spin occupations (#176: one chemical
+        # potential per spin over the mesh). A result from before they were
+        # recorded falls back to the positional fill it then implied.
+        stored = getattr(gpw_result, name, ()) or ()
+        if len(stored) == len(C_k) and all(
+            np.asarray(o).shape == (C.shape[1],) for o, C in zip(stored, C_k)
+        ):
+            return [np.asarray(o, dtype=float) for o in stored]
+        return [_occ(n_occ, C.shape[1]) for C in C_k]
 
-    def _dens(C: np.ndarray, n_occ: int) -> np.ndarray:
-        if n_occ <= 0:
-            return np.zeros((C.shape[0], C.shape[0]), dtype=complex)
-        Co = C[:, :n_occ]
-        return Co @ Co.conj().T
+    occ_a_k = _driver_occupations("occupations_alpha_k", n_alpha, C_a_k)
+    occ_b_k = _driver_occupations("occupations_beta_k", n_beta, C_b_k)
 
-    D_a_k = [_dens(C_a_k[ik], n_alpha) for ik in range(n_k)]
-    D_b_k = [_dens(C_b_k[ik], n_beta) for ik in range(n_k)]
+    def _dens(C: np.ndarray, occ: np.ndarray) -> np.ndarray:
+        return (C * occ[None, :]) @ C.conj().T
+
+    D_a_k = [_dens(C_a_k[ik], occ_a_k[ik]) for ik in range(n_k)]
+    D_b_k = [_dens(C_b_k[ik], occ_b_k[ik]) for ik in range(n_k)]
 
     def _fock(Sk: np.ndarray, C: np.ndarray, eps: np.ndarray) -> np.ndarray:
         # F = S C diag(eps) C^H S: satisfies F C = S C eps on the solved

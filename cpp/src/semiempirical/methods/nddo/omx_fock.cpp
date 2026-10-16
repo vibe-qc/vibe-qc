@@ -905,6 +905,23 @@ struct DiisState {
 // secular equation.
 // ===========================================================================
 
+OMxLegacyPairOperands evaluate_omx_legacy_pair_operands(
+    const Molecule& mol, const OMxParameterSet& params,
+    const Eigen::MatrixXd& density) {
+    if (mol.atoms().size() != 2)
+        throw std::invalid_argument("OMx legacy operands: exactly two atoms required");
+    for (const auto& atom : mol.atoms())
+        for (double x : atom.xyz)
+            if (!std::isfinite(x))
+                throw std::invalid_argument("OMx legacy operands: nonfinite coordinate");
+    const OMxContext ctx = omx_setup(mol, params, "OMx legacy operands");
+    if (density.rows() != ctx.n_basis || density.cols() != ctx.n_basis
+        || !density.allFinite() || !density.isApprox(density.transpose(), 1e-12))
+        throw std::invalid_argument("OMx legacy operands: invalid density");
+    const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(ctx.n_basis, ctx.n_basis);
+    return {ctx.S, build_omx_fock_v2(ctx, density) - build_omx_fock_v2(ctx, zero)};
+}
+
 PM6Result run_omx_v2(
     const Molecule& mol,
     const OMxParameterSet& params,

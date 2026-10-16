@@ -51,6 +51,19 @@ from vibeqc.structured_log import emit as emit_module
 # Fixture: tiny H2 molecule for end-to-end tests.
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _hermetic_structured_log_env(monkeypatch):
+    """Isolate every test from the ambient queue environment (#303).
+
+    Under vq the daemon exports ``VQ_WORKDIR``, which auto-enables
+    ``{output}.scf.jsonl`` in ``run_job``; an inherited
+    ``VIBEQC_STRUCTURED_LOG`` would reroute the log. Tests that need
+    either variable set it explicitly with ``monkeypatch``.
+    """
+    monkeypatch.delenv("VQ_WORKDIR", raising=False)
+    monkeypatch.delenv("VIBEQC_STRUCTURED_LOG", raising=False)
+
+
 @pytest.fixture
 def h2_molecule() -> Molecule:
     return Molecule(
@@ -572,8 +585,7 @@ def test_run_job_explicit_path_routes_correctly(tmp_path, h2_molecule):
 
 
 def test_env_var_routes_run_job(tmp_path, h2_molecule, monkeypatch):
-    # Default structured_log=False; the env var has to win when the
-    # caller explicitly opts in (passing False blocks the env var).
+    # structured_log=None (like the default False) defers to the env var.
     out_stem = tmp_path / "h2"
     env_path = tmp_path / "env.scf.jsonl"
     monkeypatch.setenv("VIBEQC_STRUCTURED_LOG", str(env_path))
@@ -588,6 +600,71 @@ def test_env_var_routes_run_job(tmp_path, h2_molecule, monkeypatch):
         rhf_options=_opts_loose(),
     )
     assert env_path.exists()
+
+
+def test_env_var_wins_over_vq_workdir_auto_enable(
+    tmp_path, h2_molecule, monkeypatch,
+):
+    """#303: with both ``VQ_WORKDIR`` and ``VIBEQC_STRUCTURED_LOG`` set
+    and ``structured_log`` left at its default, the env var decides the
+    destination; the vq auto-enable is only the fallback."""
+    out_stem = tmp_path / "h2"
+    env_path = tmp_path / "env.scf.jsonl"
+    monkeypatch.setenv("VQ_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("VIBEQC_STRUCTURED_LOG", str(env_path))
+    run_job(
+        h2_molecule,
+        basis="sto-3g",
+        method="rhf",
+        output=out_stem,
+        progress=False,
+        rhf_options=_opts_loose(),
+    )
+    assert env_path.exists()
+    assert "banner" in [r["event"] for r in _read_records(env_path)]
+    assert not out_stem.with_suffix(".scf.jsonl").exists()
+
+
+def test_vq_workdir_auto_enables_run_job_stem_log(
+    tmp_path, h2_molecule, monkeypatch,
+):
+    """#303 fallback leg: ``VQ_WORKDIR`` alone still auto-enables
+    ``{output}.scf.jsonl`` (v0.24 always-on progress under vq)."""
+    out_stem = tmp_path / "h2"
+    monkeypatch.setenv("VQ_WORKDIR", str(tmp_path))
+    run_job(
+        h2_molecule,
+        basis="sto-3g",
+        method="rhf",
+        output=out_stem,
+        progress=False,
+        rhf_options=_opts_loose(),
+    )
+    assert out_stem.with_suffix(".scf.jsonl").exists()
+
+
+def test_explicit_structured_log_wins_over_both_env_vars(
+    tmp_path, h2_molecule, monkeypatch,
+):
+    """#303: an explicit ``structured_log`` path beats both the env var
+    and the vq auto-enable."""
+    out_stem = tmp_path / "h2"
+    explicit = tmp_path / "explicit.jsonl"
+    env_path = tmp_path / "env.scf.jsonl"
+    monkeypatch.setenv("VQ_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("VIBEQC_STRUCTURED_LOG", str(env_path))
+    run_job(
+        h2_molecule,
+        basis="sto-3g",
+        method="rhf",
+        output=out_stem,
+        structured_log=str(explicit),
+        progress=False,
+        rhf_options=_opts_loose(),
+    )
+    assert explicit.exists()
+    assert not env_path.exists()
+    assert not out_stem.with_suffix(".scf.jsonl").exists()
 
 
 def test_records_round_trip_independently(tmp_path, h2_molecule):
@@ -657,3 +734,160 @@ def test_periodic_job_start_carries_resolved_method(tmp_path, monkeypatch):
         functional=None,
         molecule=sysp.unit_cell_molecule(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Periodic runner: structured_log precedence, shared with run_job (#384).
+# ---------------------------------------------------------------------------
+
+def _run_periodic_h2(stem: Path, **kwargs) -> None:
+    sysp, basis = _h2_periodic()
+    run_periodic_job(
+        sysp, basis, method="RHF", jk_method="bipole", kpoints=(1, 1, 1),
+        max_iter=20, output=stem, output_qvf=False, write_density=False,
+        citations=False, progress=False, **kwargs,
+    )
+
+
+def _jsonl_files(root: Path) -> list[Path]:
+    return sorted(root.rglob("*.jsonl"))
+
+
+def test_periodic_env_var_wins_over_vq_workdir_auto_enable(
+    tmp_path, monkeypatch,
+):
+    """#384 acceptance 1: under ``VQ_WORKDIR`` with
+    ``VIBEQC_STRUCTURED_LOG`` set, a periodic job writes the log at the
+    env-var path, not at ``{output}.scf.jsonl``."""
+    stem = tmp_path / "per_h2"
+    env_path = tmp_path / "env" / "periodic.scf.jsonl"
+    env_path.parent.mkdir()
+    monkeypatch.setenv("VQ_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("VIBEQC_STRUCTURED_LOG", str(env_path))
+    _run_periodic_h2(stem)
+    assert env_path.exists()
+    events = [r["event"] for r in _read_records(env_path)]
+    assert events[0] == "banner"
+    assert "job_start" in events
+    assert not stem.with_suffix(".scf.jsonl").exists()
+    assert _jsonl_files(tmp_path) == [env_path]
+
+
+@pytest.mark.parametrize("request_kind", ["true", "path"])
+def test_periodic_structured_log_argument_works_outside_vq(
+    tmp_path, request_kind,
+):
+    """#384 acceptance 2: ``structured_log=True`` or a path writes the
+    periodic log with neither ``VQ_WORKDIR`` nor the env var set."""
+    stem = tmp_path / "per_h2"
+    if request_kind == "true":
+        requested: object = True
+        target = stem.with_suffix(".scf.jsonl")
+    else:
+        target = tmp_path / "explicit.jsonl"
+        requested = str(target)
+    _run_periodic_h2(stem, structured_log=requested)
+    events = [r["event"] for r in _read_records(target)]
+    assert events[0] == "banner"
+    assert "job_start" in events
+    assert "scf_iter" in events
+    assert "scf_converged" in events
+    assert _jsonl_files(tmp_path) == [target]
+    # Declared in the plan like run_job's, and recorded before finish().
+    import tomllib
+
+    manifest = tomllib.loads(
+        stem.with_suffix(".system").read_text(encoding="utf-8")
+    )
+    rows = [
+        row for row in manifest["outputs"]["files"]
+        if Path(row["path"]).name == target.name
+    ]
+    assert len(rows) == 1 and rows[0]["written"] is True
+
+
+@pytest.mark.parametrize("requested", [False, None])
+def test_periodic_structured_log_off_without_vq_or_env(tmp_path, requested):
+    """#384 acceptance 3: with neither variable set, the default
+    (``False``, and ``None``) writes no structured log anywhere."""
+    stem = tmp_path / "per_h2"
+    _run_periodic_h2(stem, structured_log=requested)
+    assert stem.with_suffix(".out").exists()
+    assert _jsonl_files(tmp_path) == []
+
+
+def test_periodic_explicit_structured_log_wins_over_both_env_vars(
+    tmp_path, monkeypatch,
+):
+    """#384: an explicit ``structured_log`` path beats both the env var
+    and the vq auto-enable on the periodic entry point, as on run_job."""
+    stem = tmp_path / "per_h2"
+    explicit = tmp_path / "explicit.jsonl"
+    env_path = tmp_path / "env.scf.jsonl"
+    monkeypatch.setenv("VQ_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("VIBEQC_STRUCTURED_LOG", str(env_path))
+    _run_periodic_h2(stem, structured_log=explicit)
+    assert _jsonl_files(tmp_path) == [explicit]
+
+
+def test_periodic_structured_log_keyword_matches_run_job():
+    """#384: the periodic keyword has run_job's name, default and
+    annotation, and both runners use the one shared resolver."""
+    import inspect
+
+    from vibeqc import periodic_runner, runner
+    from vibeqc.output.formats import structured_log as sl_module
+
+    mol_param = inspect.signature(run_job).parameters["structured_log"]
+    per_param = inspect.signature(run_periodic_job).parameters["structured_log"]
+    assert per_param.default is False
+    assert per_param.default is mol_param.default
+    assert per_param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert per_param.annotation == mol_param.annotation
+    resolver = sl_module._resolve_structured_log_target
+    assert runner._resolve_structured_log_target is resolver
+    assert periodic_runner._resolve_structured_log_target is resolver
+
+
+@pytest.mark.parametrize(
+    ("requested", "env", "vq", "expected"),
+    [
+        (True, None, False, "stem"),
+        (True, "env", True, "stem"),
+        ("explicit", "env", True, "explicit"),
+        (False, "env", True, "env"),
+        (None, "env", True, "env"),
+        (False, "env", False, "env"),
+        (False, None, True, "stem"),
+        (None, None, True, "stem"),
+        (False, None, False, None),
+        (None, None, False, None),
+        (False, "   ", False, None),
+    ],
+)
+def test_shared_structured_log_resolver_precedence(
+    tmp_path, monkeypatch, requested, env, vq, expected,
+):
+    """#303/#384 precedence table for the resolver both runners call:
+    explicit True / path, then VIBEQC_STRUCTURED_LOG, then the
+    VQ_WORKDIR auto-enable, then off."""
+    from vibeqc.output.formats.structured_log import (
+        _resolve_structured_log_target,
+    )
+
+    stem = tmp_path / "job.name"
+    paths = {
+        "stem": tmp_path / "job.name.scf.jsonl",
+        "env": tmp_path / "env.jsonl",
+        "explicit": tmp_path / "explicit.jsonl",
+        None: None,
+    }
+    if env == "env":
+        monkeypatch.setenv("VIBEQC_STRUCTURED_LOG", str(paths["env"]))
+    elif env is not None:
+        monkeypatch.setenv("VIBEQC_STRUCTURED_LOG", env)
+    if vq:
+        monkeypatch.setenv("VQ_WORKDIR", str(tmp_path))
+    if requested == "explicit":
+        requested = paths["explicit"]
+    assert _resolve_structured_log_target(requested, stem) == paths[expected]

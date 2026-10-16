@@ -9,7 +9,8 @@ basis atoms that turn it into a real material.
 
 This page is the reference for **which lattice to pick, how to set
 it up in vibe-qc, and what the Brillouin zone of each looks like**.
-For the *sampling* of the BZ (Monkhorst-Pack, IBZ reduction, mesh
+For the *sampling* of the BZ (Monkhorst-Pack,
+{vibeqc-cite}`monkhorst_pack_1976`; IBZ reduction, mesh
 choice, band paths), see [k-point meshes](k_points.md).
 
 ## Lattice + basis = crystal
@@ -49,22 +50,24 @@ import vibeqc as vq
 #    too, so a row-major literal handed to it is silently transposed --
 #    harmless on this cubic cell, a different crystal on a hexagonal or
 #    monoclinic one (issue #445; see periodic_systems.md).
-a = 3.92 / 0.529177210903   # conventional cubic edge, Angstrom -> bohr
+a = 4.12 / 0.529177210903   # CsCl cubic edge, Angstrom -> bohr
 a1 = [a, 0.0, 0.0]
 a2 = [0.0, a, 0.0]
 a3 = [0.0, 0.0, a]
 
 # 2. Basis atoms in CARTESIAN bohr (``Atom`` never takes fractional
-#    coordinates): Na at the corner, Cl at the body centre (a/2, a/2, a/2).
+#    coordinates): Cs at the corner, Cl at the body centre (a/2, a/2, a/2).
+#    This is CsCl, simple cubic + 2-atom basis (NaCl needs the FCC
+#    lattice; see Rocksalt below).
 sysp = vq.PeriodicSystem(
     dim=3,
     lattice_vectors=[a1, a2, a3],
     unit_cell=[
-        vq.Atom(11, [0.0, 0.0, 0.0]),
+        vq.Atom(55, [0.0, 0.0, 0.0]),
         vq.Atom(17, [a / 2, a / 2, a / 2]),
     ],
 )
-vq.cell_parameters(sysp)      # a = b = c = 7.408 bohr, alpha = beta = gamma = 90
+vq.cell_parameters(sysp)      # a = b = c = 7.786 bohr, alpha = beta = gamma = 90
 ```
 
 The `lattice` vectors, the choice of which atom sits at the origin,
@@ -124,7 +127,8 @@ The Bravais classification covers only **point groups of the
 lattice**. The full classification of crystals (which adds the basis
 + point-group symmetries) gives the **230 space groups**, of which
 the 14 Bravais lattices are the translational backbone. vibe-qc uses
-[spglib](https://spglib.readthedocs.io/) to identify the space group
+[spglib](https://spglib.readthedocs.io/)
+({vibeqc-cite}`togo_shinohara_tanaka_2024`) to identify the space group
 of a `PeriodicSystem` — `attach_symmetry(sysp)` returns the spglib
 classification + the symmetry operations.
 ```
@@ -160,21 +164,20 @@ lattice and chemistry you're targeting:
 ```{note}
 :name: a-note-on-metals
 
-**Metals** — vibe-qc's metallic-smearing helpers landed in v0.8.0
-(`run_*_periodic_gamma_gdf(..., smearing="0.01 Ha")`) but **multi-k
-GDF is still Γ-only** at the public-API level (non-Γ meshes
-deliberately raise; see [`multi_k_scf.md`](multi_k_scf.md)). True
-metallic convergence needs a dense k-mesh, so a production
+**Metals**: Fermi-Dirac smearing is available
+(`run_periodic_job(..., smearing_temperature="0.01 Ha")`, see
+[smearing](smearing.md)), and the multi-k GDF drivers run any
+Monkhorst-Pack mesh (see [`multi_k_scf.md`](multi_k_scf.md)). True
+metallic convergence needs a dense k-mesh, and a production
 metals example doesn't ship yet. The metal-lattice **visualisations
 below are correct**; the **example inputs slot is intentionally
-empty** until the native multi-k loop lands. Tracked at
-[`docs/roadmap.md` § native-multi-k GDF](../roadmap.md).
+empty**.
 ```
 
 ### Inline-example shortcut: MgO rocksalt
 
 One full example inline so this page is self-contained, MgO
-rocksalt at the conventional 8-atom cell, Γ-only RHF / pob-TZVP,
+rocksalt at the conventional 8-atom cell, Γ-only RHF / sto-3g,
 matching `examples/periodic/MgO-rocksalt/MgO-rocksalt-RHF-sto3g.py`:
 
 ```python
@@ -193,12 +196,12 @@ a_ang = 4.211  # MgO experimental lattice constant (Å)
 cell_bohr = np.eye(3) * a_ang * ANG2BOHR
 
 atoms = [
-    # Mg at corners (FCC sublattice)
+    # Mg at the corner and face centres (FCC sublattice)
     Atom(12, [0.0, 0.0, 0.0]),
     Atom(12, [0.0, a_ang/2, a_ang/2]),
     Atom(12, [a_ang/2, 0.0, a_ang/2]),
     Atom(12, [a_ang/2, a_ang/2, 0.0]),
-    # O at face centers (interpenetrating FCC, offset by ½ diagonal)
+    # O at the body centre and edge centres (interpenetrating FCC, offset by ½ diagonal)
     Atom(8, [a_ang/2, a_ang/2, a_ang/2]),
     Atom(8, [a_ang/2, 0.0, 0.0]),
     Atom(8, [0.0, a_ang/2, 0.0]),
@@ -206,7 +209,7 @@ atoms = [
 ]
 atoms = [Atom(a.Z, [c * ANG2BOHR for c in a.xyz]) for a in atoms]
 system = PeriodicSystem(3, cell_bohr, atoms)
-basis = BasisSet(system, "sto-3g")
+basis = BasisSet(system.unit_cell_molecule(), "sto-3g")
 
 result = run_periodic_job(
     system, basis=basis,
@@ -248,7 +251,7 @@ solid at ambient conditions. A useful **toy model** for periodic SCF
 testing, large, isotropic, easy to converge.
 
 ```python
-a = 3.50  # bohr
+a = 6.35  # bohr (alpha-Po, a = 3.36 Å)
 sysp = vq.PeriodicSystem(
     dim=3,
     lattice=a * np.eye(3),
@@ -280,7 +283,7 @@ Primitive (1-atom basis):
   Basis: (0, 0, 0)
 ```
 
-**Real materials**: α-Fe (3.16 Å), Na, K, Cr, Mo, W, V, Nb, Ta,
+**Real materials**: α-Fe (2.87 Å), Na, K, Cr, Mo, W, V, Nb, Ta,
 many transition metals and alkali metals. **Metal-typical**;
 needs dense k-mesh + Fermi-Dirac smearing in production. See the
 [metals note](#a-note-on-metals) above.
@@ -336,7 +339,7 @@ Primitive (FCC):
 ```
 
 ```python
-a = 6.74  # bohr (Si)
+a = 10.26  # bohr (Si)
 sysp = vq.PeriodicSystem(
     dim=3,
     lattice_vectors=(a / 2) * np.array([   # FCC primitive vectors, one per row
@@ -676,7 +679,8 @@ $$
 
 The **first Brillouin zone (BZ)** is the Wigner-Seitz cell of the
 reciprocal lattice, the set of $\mathbf{k}$ closer to $\mathbf{G}=0$
-than to any other reciprocal-lattice point. Bloch's theorem says
+than to any other reciprocal-lattice point. Bloch's theorem
+(F. Bloch, *Z. Phys.* **52**, 555 (1929), doi:10.1007/BF01339455) says
 every electronic state in a periodic crystal can be labeled by a
 $\mathbf{k}$ in this region.
 
@@ -688,18 +692,19 @@ The BZ shape depends on the Bravais lattice:
 | BCC (cI) | Rhombic dodecahedron |
 | FCC (cF) | Truncated octahedron |
 | Hexagonal (hP) | Hexagonal prism |
-| Trigonal (hR) | Distorted hexagonal prism |
+| Trigonal (hR) | Depends on the rhombohedral angle (Setyawan-Curtarolo RHL1 for α < 90°, RHL2 for α > 90°) |
 
 vibe-qc doesn't currently provide a BZ-shape visualization tool;
 external packages like [seekpath](https://github.com/giovannipizzi/seekpath)
-or [pymatgen](https://pymatgen.org/) do this well.
+({vibeqc-cite}`hinuma_seekpath_2017`) or [pymatgen](https://pymatgen.org/) do this well.
 
 ## High-symmetry points
 
 These are the special $\mathbf{k}$-points where the BZ has extra
 symmetry. Band structures conventionally trace a path through them.
-The Setyawan-Curtarolo (2010) convention is what almost everyone
-uses today:
+The Setyawan-Curtarolo (2010) convention (W. Setyawan, S. Curtarolo,
+*Comput. Mater. Sci.* **49**, 299 (2010), doi:10.1016/j.commatsci.2010.05.010)
+is what almost everyone uses today:
 
 | BZ shape | High-symmetry points |
 |---|---|
@@ -712,13 +717,14 @@ The $\Gamma$ point is always at the BZ center, $\mathbf{k} = (0,0,0)$
 in any units. Other points are at half- or quarter-cell positions
 in reciprocal space.
 
-For example, on FCC (using conventional-cell reciprocal vectors):
+For example, on FCC (fractions of the primitive reciprocal vectors
+$\mathbf{b}_1, \mathbf{b}_2, \mathbf{b}_3$, Setyawan-Curtarolo convention):
 
 ```text
 Γ  =  (0,    0,    0   )         # BZ centre
-X  =  (½,    0,    ½   )         # face centre of cube
-L  =  (½,    ½,    ½   )         # body-diagonal corner of cube
-K  =  (3/8,  3/8,  3/4 )         # midpoint of two adjacent X's
+X  =  (½,    0,    ½   )         # centre of a square face
+L  =  (½,    ½,    ½   )         # centre of a hexagonal face
+K  =  (3/8,  3/8,  3/4 )         # midpoint of an edge shared by two hexagonal faces
 W  =  (½,    ¼,    ¾   )         # corner of square face
 ```
 
@@ -773,7 +779,7 @@ si_diamond = vq.PeriodicSystem(
     ]),
     unit_cell=[
         vq.Atom(14, [0.00, 0.00, 0.00]),
-        vq.Atom(14, [0.25, 0.25, 0.25]),
+        vq.Atom(14, [a / 4, a / 4, a / 4]),     # Cartesian bohr
     ],
 )
 
@@ -785,21 +791,21 @@ nacl = vq.PeriodicSystem(
     ]),
     unit_cell=[
         vq.Atom(11, [0.0, 0.0, 0.0]),
-        vq.Atom(17, [0.5, 0.5, 0.5]),
+        vq.Atom(17, [a / 2, a / 2, a / 2]),     # Cartesian bohr
     ],
 )
 
 # --- Hexagonal close packed (Mg, a = 3.21 Å, c = 5.21 Å) --------
 a, c = 6.06, 9.85   # bohr
 mg_hcp = vq.PeriodicSystem(
-    dim=3, lattice=np.array([
+    dim=3, lattice_vectors=[           # one vector per row; not lattice=
         [a,    0.0,                 0.0],
         [-a/2, a * np.sqrt(3) / 2,  0.0],
         [0.0,  0.0,                 c  ],
-    ]),
+    ],
     unit_cell=[
-        vq.Atom(12, [0.0,    0.0,    0.0]),
-        vq.Atom(12, [1.0/3,  2.0/3,  0.5]),
+        vq.Atom(12, [0.0,  0.0,              0.0]),
+        vq.Atom(12, [0.0,  a / np.sqrt(3),   c / 2]),   # fractional (1/3, 2/3, 1/2)
     ],
 )
 ```

@@ -117,19 +117,26 @@ centered on the lightgrey "H" markers, almost nothing on the white
 ## Going beyond Hcore: SCF orbitals
 
 The example above uses the non-interacting (Hcore) Hamiltonian for
-brevity. For a real SCF orbital, take the coefficients from the
-``run_rhf_periodic_scf`` (multi-k) or ``run_rhf_periodic_gamma_scf``
-(Γ-only) result:
+brevity. For a real SCF orbital, run the SCF and take the coefficients
+from its result. No ab-initio SCF route has a consistent 1-D Coulomb
+gauge for a `dim=1` cell (Γ-only `EWALD_3D` raises on `dim=1`), so the
+SCF uses the same chain declared as a `dim=3` cell with transverse
+vacuum, on the GDF route:
 
 ```python
-opts_scf = vq.PeriodicSCFOptions()
-opts_scf.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
-result = vq.run_rhf_periodic_gamma_scf(system, basis, opts_scf)
+system3 = vq.PeriodicSystem(
+    3,
+    [[A, 0, 0], [0, 30, 0], [0, 0, 30]],
+    [vq.Atom(3, [0.0,    0.0, 0.0]),
+     vq.Atom(1, [0.5*A,  0.0, 0.0])],
+)
+basis3 = vq.BasisSet(system3.unit_cell_molecule(), "sto-3g")
+result = vq.run_periodic_job(system3, basis3, method="RHF",
+                             jk_method="gdf", kpoints=[1, 1, 1])
 
-# At Γ, the SCF result already has a per-k-point coefficient block:
-C_at_gamma = result.mo_coefficients_real
-# (or result.mo_coefficients_k[0] for the multi-k variant)
-vq.write_xsf_mo("lih_bonding_scf.xsf", system, basis, C_at_gamma,
+# One coefficient block per k-point; block 0 is Γ here.
+C_at_gamma = np.asarray(result.mo_coeffs[0])
+vq.write_xsf_mo("lih_bonding_scf.xsf", system3, basis3, C_at_gamma,
                 np.zeros(3), band_index=1, spacing_bohr=0.15)
 ```
 
@@ -151,10 +158,12 @@ $$
 e^{i\,\mathbf{k} \cdot \mathbf{T}} \, \psi_{n,\mathbf{k}}(\mathbf{r})
 $$
 
-(Bloch 1928). The **crystal momentum** $\mathbf{k}$ labels states
+(Bloch 1929). The **crystal momentum** $\mathbf{k}$ labels states
 within the first Brillouin zone; the **band index** $n$ labels
 states at fixed $\mathbf{k}$. In an LCAO basis vibe-qc constructs
-$\psi$ as
+$\psi$ as a Gaussian crystalline orbital
+({vibeqc-cite}`pisani_crystal_1988`,
+{vibeqc-cite}`zicovich_wilson_crystalline_orbitals_1998`),
 
 $$
 \psi_{n,\mathbf{k}}(\mathbf{r}) \;=\; \sum_{\mathbf{T}}
@@ -162,7 +171,8 @@ e^{i\,\mathbf{k} \cdot \mathbf{T}}
 \sum_\mu C_{\mu n}(\mathbf{k}) \, \chi_\mu(\mathbf{r} - \mathbf{T})
 $$
 
-where $\chi_\mu$ are the Cartesian Gaussian AOs and the inner sum is
+where $\chi_\mu$ are the contracted Gaussian AOs (spherical by
+default) and the inner sum is
 the molecular-style LCAO at the displaced cell. The outer
 $\mathbf{T}$-sum is truncated at ``lattice_cutoff_bohr`` (default
 15 bohr), far enough that the contracted Gaussian tails are
@@ -246,15 +256,15 @@ matching the XSF convention. If you are building grids by hand,
   band 1 in one calculation isn't the same as band 1 in another,
   identify by orbital character, not by index.
 - For metallic systems the "fully occupied" set of bands is
-  $\mathbf{k}$-dependent. The Phase C1b smearing infrastructure
-  (forthcoming) will give you a Fermi-Dirac-weighted occupation
-  per $\mathbf{k}$; until then, render bands by index and trust
-  the user to know which is occupied.
+  $\mathbf{k}$-dependent. [Smearing](../user_guide/smearing.md) has
+  shipped on the routes listed on that page, and a smeared result
+  carries per-$\mathbf{k}$ `occupations`; use them to decide which
+  bands are occupied instead of rendering by index alone.
 
 ## References
 
 - **Bloch, F.** "Über die Quantenmechanik der Elektronen in
-  Kristallgittern," *Z. Phys.* **52**, 555 (1928). The original
+  Kristallgittern," *Z. Phys.* **52**, 555 (1929). The original
   derivation of the Bloch periodicity theorem.
 - **Kokalj, A.** "Computer graphics and graphical user interfaces as
   tools in simulations of matter at the atomic scale," *Comput.

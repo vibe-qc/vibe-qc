@@ -46,6 +46,7 @@ from .apply import (
     occupations_are_per_k_integer_aufbau,
     require_fixed_occupied_subspace,
     smeared_occupation_selfconsistency_tolerance,
+    spin_channel_occupations,
     unresolved_frontier_cut,
 )
 
@@ -78,5 +79,6 @@ __all__ = [
     "rydberg_to_hartree_temperature",
     "unresolved_frontier_cut",
     "smeared_occupation_selfconsistency_tolerance",
+    "spin_channel_occupations",
     "temperature_in_hartree",
 ]

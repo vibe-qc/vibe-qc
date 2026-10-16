@@ -472,7 +472,7 @@ On the day v0.8.0 ships:
    API names + factory functions match what shipped.
 3. Refresh **`08_software_availability.md`**, version
    `0.8.0`, date, citation BibTeX.
-4. Re-pull **`13_molecular_methods_handover_2026-05-09.md`**
+4. Re-pull **`13_molecular_methods_the original investigation**
    commit-SHA references, the 8 stacked branches' SHAs become
    merged-into-main commits at v0.8.0.
 5. Notify the paper-writer chat that the package is current.

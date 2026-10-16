@@ -1,15 +1,17 @@
 # vibe-qc website
 
-Marketing / landing site for [vibe-qc](https://vibe-qc.com), built with
+Technical website for [vibe-qc](https://vibe-qc.com), built with
 [Astro](https://astro.build). Static output — no runtime, no database.
 
-One marketing site presents three independent products. Sphinx documentation
+One technical site presents four independent tools: vibe-qc, vibe-sketch,
+vibe-view and vibe-queue. The separate vibyverse.com site owns the broader
+marketing presentation. Sphinx documentation
 is published separately: core under `/docs/`, viewer under `/vibe-view/docs/`,
-and queue under `/vibe-queue/docs/`. Each repository publishes only its own
+queue under `/vibe-queue/docs/`, and sketcher under `/vibe-sketch/docs/`. Each repository publishes only its own
 subtree. Astro links to those sites and never imports their content.
 
-Marketing product pages live under `/products/<product>/`. Do not put them
-under `/vibe-view/` or `/vibe-queue/`: those subtrees are excluded from the
+Technical product pages live under `/products/<product>/`. Do not put them
+under `/vibe-view/`, `/vibe-queue/` or `/vibe-sketch/`: those subtrees are excluded from the
 root deploy and reserved for their independent publishers.
 
 ## Repository ownership
@@ -26,6 +28,30 @@ Website builds read package versions only from the core and vibe-basis
 own releases. Do not read files from assumed companion subdirectories or
 assume a core tag selects matching companion tags. The get-started page
 shows this repository map and links to the separate installation guides.
+
+
+## Technical content and product availability
+
+The homepage, documentation directory, workflows and product pages prioritize
+installation, supported interfaces, method scope and reproducible results.
+Keep broader marketing on vibyverse.com. The shared footer links there without
+copying its content or establishing a build dependency.
+
+vibe-sketch is a testing version and currently proprietary. Its manual is public
+at `/vibe-sketch/docs/`; source and release URLs remain unset. The product page
+links to the manual, local setup instructions for authorized users and the
+existing contact form for software access. Do not infer a public source URL from
+the product name, claim a desktop package is released, or label the whole
+family MPL-2.0. QVF remains a format project, not a fifth application.
+
+The queued workflow is sketch, submit, calculate, then analyze. Direct local
+calculations can skip submission. The homepage, workflow guide and shared
+artwork use that sequence.
+
+The methods catalog supports text and status filters. Without JavaScript all
+methods remain readable. Mobile navigation, keyboard focus, Escape handling,
+reduced motion and the skip-to-content target are part of the shared shell.
+Existing download qualification and contact-handler checks remain in force.
 
 ## Develop
 
@@ -46,53 +72,64 @@ npm run verify       # release-data tests + production build
 `dist/` is what gets rsynced to the web root in CI (alongside the Sphinx
 `/docs/` deploy). Both are plain static file trees.
 
-## Deploy
+## Publish
 
-The marketing site is **decoupled from version releases** — copy and fixes ship
-from `main` on their own. The CI jobs (see `../.gitlab-ci.yml`):
+The technical site is decoupled from engine releases. Website publication uses checked source on
+`main` and the configured website publication workflow; the core manual
+waits for a qualified release. Each publisher owns a separate URL subtree:
 
-- **`website-deploy`** → the production root (`example-web-account@vibe-qc.com:/web/`). Runs
-  **automatically on every `main` push that changes `website/`**, and is also
-  available as a manual job on `main` to force a redeploy. `needs: []` runs it
-  immediately, gated only by its own `npm run build` — independent of the C++
-  test suite. `--delete-after` excludes `/docs/`, `/updates/`, `/preview/`,
-  `/vibe-view/`, `/vibe-queue/`, and
-  the server-managed cPanel/Apache files (incl. `.htaccess`).
-- **`website-staging`** → `/web/preview/` (**https://vibe-qc.com/preview/**,
-  `noindex`). Same `main` + `website/`-changed trigger, built with
-  `PREVIEW_BASE=/preview/`. A parallel preview of the same main push for reviewing the built site.
+| Public path | Content owner | Source |
+| --- | --- | --- |
+| `/` | vibe-qc | `website/` on `main` |
+| `/preview/` | vibe-qc | `website/` on `main`, built with `PREVIEW_BASE=/preview/` |
+| `/docs/` | vibe-qc | `docs/` on `release` |
+| `/vibe-view/docs/` | vibe-view | its own documentation and release process |
+| `/vibe-queue/docs/` | vibe-queue | its own documentation and release process |
+| `/vibe-sketch/docs/` | vibe-sketch | its own documentation from committed source |
 
-The **docs** are versioned, so they deploy differently:
+Ordinary development pushes skip CI under the repository policy. Website-only
+publication can use the configured operator workflow after local verification;
+do not launch full engine CI for a site edit. The product `.gitlab-ci.yml` contains portable validation jobs and imports the
+configured external deployment definition. Credentials, accounts, SSH setup,
+job dependencies and destination commands are maintained in private operations
+documentation. Do not copy those settings into this checkout or infer the
+current deployment job implementation from an old example here.
 
-- **`docs-deploy`** → `/web/docs/`. Runs **only on `release`**, which the
-  release owner fast-forwards from a tag on `main`. A docs edit on `main`
-  waits for the next release; manual main pipelines may build docs but cannot
-  publish them over the released site.
+The root publisher must preserve the independent `/docs/`, `/updates/`,
+`/preview/`, `/vibe-view/`, `/vibe-queue/` and `/vibe-sketch/` trees, along with server-managed
+configuration and verification files. Companion publishers must restrict
+deletion to their own subtree. Source clones or tags do not grant deployment
+access.
+
+Before proposing a site change, verify both URL layouts from `website/`:
+
+```sh
+npm run verify
+PREVIEW_BASE=/preview/ npm run verify
+```
+
+The preview is `noindex`; companion and core manual links remain rooted at
+their published documentation paths, outside `/preview/`. A manual change on
+`main` does not update `/docs/` until the next qualified release.
 
 See [site publishing and shared appearance](../docs/site_publishing.md) for
-companion ownership, protected refs, CSS synchronization, and gallery policy.
-
-All jobs `--delete-after` within their own subtree only, and share the SSH setup
-via the `.deploy_ssh` `!reference` template. To reproduce a staging build
-locally: `PREVIEW_BASE=/preview/ npm run build`.
-
-**One-time server-side step (already applied 2026-07-17):** legacy root doc URLs
-(`/quickstart.html`, `/_static/…`) are 301-redirected to `/docs/` by Apache
-rewrite rules in `../deploy/htaccess-redirects.conf`. CI deploys deliberately
-exclude `.htaccess`, so those rules live in `/web/.htaccess` on the server and
-persist across deploys. **Re-apply only if the URL structure changes again.**
+CSS synchronization and per-product gallery policy. The portable legacy URL
+rules are in `deploy/htaccess-redirects.conf` at the repository root; applying
+or changing server configuration is an operator task.
 
 ## Structure
 
 ```
 src/
   data/products.mjs         # product ownership, copy, docs and source links
-  pages/products/[product].astro # three independently addressable product pages
+  pages/products/[product].astro # four independently addressable product pages
   layouts/Base.astro         # <html> shell, <head> meta, OG tags
-  components/OrbitalField.astro  # animated MO iso-contour hero canvas
+  components/WorkflowFigure.astro # accessible illustrative workflow schematic
   data/distributions.mjs     # download readiness + release coordinates
   data/sponsors.mjs          # tier prices + public recognition records
-  pages/index.astro          # the landing page (edit content here)
+  pages/index.astro          # technical home and tool directory
+  pages/documentation.astro  # manuals, APIs and reference links
+  pages/workflows.astro      # task-oriented routes through the tools
   pages/download.astro       # fail-closed distribution matrix
   pages/sponsor.astro        # sponsorship plans, public wall, priorities
   pages/contact.astro        # contact form (posts to public/contact.php)
@@ -101,7 +138,7 @@ src/
 public/
   contact.php                # the only server-side file on the site
   sponsors/                  # opt-in local sponsor logos, when present
-  favicon.svg                # placeholder — swap for the official mark
+  logo/                      # generated identities and social previews
 ```
 
 Content is edited as files in git — add a page by dropping a new

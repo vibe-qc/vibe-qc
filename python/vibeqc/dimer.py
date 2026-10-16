@@ -33,7 +33,9 @@ J. Chem. Phys. 111, 7010 (1999). doi:10.1063/1.480097.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from math import isfinite
+from numbers import Integral, Real
 from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
@@ -53,6 +55,26 @@ from .progress import ProgressLogger, resolve_progress
 
 # positions (n_atoms, 3) bohr -> (energy Ha, force Ha/bohr); force = -gradient.
 ForceFn = Callable[[np.ndarray], "tuple[float, np.ndarray]"]
+
+
+def _validated_iteration_budget(max_iter: int) -> int:
+    if isinstance(max_iter, bool) or not isinstance(max_iter, Integral) or max_iter < 1:
+        raise ValueError("run_dimer: max_iter must be a positive integer")
+    return int(max_iter)
+
+
+def _validate_search_controls(*, dimer_separation, conv_tol_force, max_step,
+                              initial_step, rotation_force_tol) -> None:
+    for name, value in (
+        ("dimer_separation", dimer_separation),
+        ("conv_tol_force", conv_tol_force),
+        ("max_step", max_step),
+        ("initial_step", initial_step),
+        ("rotation_force_tol", rotation_force_tol),
+    ):
+        if (isinstance(value, bool) or not isinstance(value, Real)
+                or not isfinite(value) or value <= 0):
+            raise ValueError(f"run_dimer: {name} must be finite and positive")
 
 
 @dataclass
@@ -97,6 +119,11 @@ class DimerResult:
     functional: Optional[str] = None
     is_periodic: bool = False
     mace_model_citation: Optional[str] = None
+    # Identity captured from the loaded MACE model, not mutable caller options.
+    model_info: Any = None
+    device: Optional[str] = None
+    dtype: Optional[str] = None
+    weight_identity: dict[str, Any] = field(default_factory=dict)
 
     def write_citations(self, stem: Any) -> "tuple[Any, Any]":
         """Write ``{stem}.bibtex`` + ``{stem}.references`` for this search.
@@ -170,6 +197,12 @@ def _dimer_search(
     PES along the translation direction (Kästner & Sherwood, J. Chem.
     Phys. 128, 014106, 2008), converging superlinearly.
     """
+    max_iter = _validated_iteration_budget(max_iter)
+    _validate_search_controls(
+        dimer_separation=dimer_separation, conv_tol_force=conv_tol_force,
+        max_step=max_step, initial_step=initial_step,
+        rotation_force_tol=rotation_force_tol,
+    )
     n_atoms = x0.shape[0]
     if hasattr(progress, "write") and not isinstance(progress, ProgressLogger):
         plog = ProgressLogger(stream=progress, verbose=2)
@@ -294,6 +327,11 @@ def _dimer_search(
         if max_force < conv_tol_force:
             converged = True
             break
+        if n_iter == max_iter:
+            # No budget remains to evaluate another centre. Return the
+            # physical state whose energy and force were just measured,
+            # rather than an unevaluated step with stale observables.
+            break
 
         # --- compute translation direction ---
         if lbfgs_acceleration and s_list_lbfgs:
@@ -386,6 +424,7 @@ def _build_force_fn(
     kmesh: Any,
     fd_step_bohr: float,
     dft_plus_u: Optional[Sequence[Any]],
+    mlip_execution: Optional[dict[str, Any]] = None,
 ) -> "tuple[ForceFn, str]":
     """Return ``(force_fn, mace_citation)``.
 
@@ -395,13 +434,16 @@ def _build_force_fn(
     """
     mace_citation = ""
     if is_mace:
+        from .mlip.mace import _pbc_for_dimension
+
         calc, numbers, cell, mace_citation = _load_mace_model(
-            template, mlip_options, is_periodic
+            template, mlip_options, is_periodic, mlip_execution=mlip_execution
         )
+        pbc = _pbc_for_dimension(template.dim) if is_periodic else None
 
         def force_fn(positions: np.ndarray) -> "tuple[float, np.ndarray]":
             e, grad, _ = _evaluate_image_mace(
-                positions, calc=calc, numbers=numbers, cell=cell
+                positions, calc=calc, numbers=numbers, cell=cell, pbc=pbc
             )
             return e, -np.asarray(grad, dtype=float)
 
@@ -568,7 +610,8 @@ def run_dimer(
         (Ha/bohr), and quick-min step controls.
     n_rotations, rotation_force_tol
         Max dimer-rotation steps per translation, and the rotational-force
-        tolerance at which rotation stops early.
+        tolerance at which rotation stops early. Force tolerances, dimer
+        separation, and translation step controls must be finite and positive.
     freeze_indices
         Atom indices to hold fixed (e.g. slab-substrate atoms) -- their
         force components and the search direction are zeroed.
@@ -584,6 +627,12 @@ def run_dimer(
     -------
     :class:`DimerResult`
     """
+    max_iter = _validated_iteration_budget(max_iter)
+    _validate_search_controls(
+        dimer_separation=dimer_separation, conv_tol_force=conv_tol_force,
+        max_step=max_step, initial_step=initial_step,
+        rotation_force_tol=rotation_force_tol,
+    )
     is_periodic = isinstance(initial, PeriodicSystem)
     if not is_periodic and not isinstance(initial, Molecule):
         raise NotImplementedError(
@@ -649,7 +698,9 @@ def run_dimer(
 
             kmesh = as_bloch_kmesh(kpoints)
         else:
-            kmesh = _mp(initial, tuple(int(k) for k in kpoints))
+            from .kpoints import _integer_counts
+
+            kmesh = _mp(initial, _integer_counts(kpoints, name="dimer kpoints mesh"))
 
     # DFT+U on the molecular SCF path is applied Options-side (as in
     # run_neb); periodic forwards the list per call.
@@ -683,6 +734,7 @@ def run_dimer(
         else:
             uks_options = _cur
 
+    mlip_execution: dict[str, Any] = {}
     force_fn, mace_citation = _build_force_fn(
         initial,
         basis,
@@ -700,6 +752,7 @@ def run_dimer(
         grid_options=grid_options,
         dispersion_params=dispersion_params,
         mlip_options=mlip_options,
+        mlip_execution=mlip_execution,
         kmesh=kmesh,
         fd_step_bohr=fd_step_bohr,
         dft_plus_u=dft_plus_u,
@@ -739,6 +792,7 @@ def run_dimer(
         ),
         is_periodic=is_periodic,
         mace_model_citation=(mace_citation or None),
+        **mlip_execution,
     )
 
 

@@ -8,11 +8,11 @@ import numpy as np
 
 from vibeqc._vibeqc_core import Molecule
 from vibeqc._vibeqc_core import semiempirical as _se_cxx
-from vibeqc.molecule import ANGSTROM_TO_BOHR
 from vibeqc.semiempirical.parameters import default_parameters
 from vibeqc.semiempirical.routes import SemiempiricalRoutePlan
 
-from .topology import SECCMTopology, SECCMTopologyError
+from ._adapter_common import flatten_topology_records, topology_length_unit_scale
+from .topology import SECCMTopology
 
 
 DFTB0_SECCM_PARAMETER_SET = "vibeqc-inhouse-dftb-screening-v1"
@@ -90,32 +90,22 @@ def run_dftb0_seccm(
             "DFTB0-SECCM T3a supports only parameter_set="
             f"{DFTB0_SECCM_PARAMETER_SET!r}"
         )
-    if not topology.finite_group_bound:
-        raise SECCMTopologyError(
-            "DFTB0-SECCM requires an explicitly bound finite translation group"
-        )
-    if not topology.current_lattice_group_compatible:
-        raise SECCMTopologyError(
-            "DFTB0-SECCM cyclic translations are incompatible with the bound "
-            "finite group"
-        )
-    # One, two, and three cyclic dimensions are supported; the native
-    # seam and every stage below it are dimension-generic (see the note
-    # in cpp/src/semiempirical/seccm/dftb0.cpp).
-    if topology.length_unit is None:
-        raise SECCMTopologyError(
-            "DFTB0-SECCM requires explicit topology length-unit metadata"
-        )
-    if len(topology.cells) != len(molecule.atoms):
-        raise SECCMTopologyError(
-            "DFTB0-SECCM topology atom count does not match the molecule"
-        )
-    if not topology.is_valid(len(molecule.atoms)):
-        raise SECCMTopologyError(
-            "DFTB0-SECCM topology fails the directed ownership validity rule"
-        )
-    topology.reversal_map()
-
+    # The shared contract (bound finite group, compatible lattice, length
+    # unit, atom count, directed ownership validity, reversal map and, while
+    # a bound action makes it usable, the record-orbit partition) is the one
+    # every SECCM adapter applies; DFTB0 used to carry a copy that skipped
+    # the orbit check.
+    (
+        translations,
+        central,
+        origin,
+        shell_label_matrix,
+        weights,
+        multiplicities,
+        displacement_matrix,
+        primitive_vectors,
+        replicas,
+    ) = flatten_topology_records(molecule, topology, route_name="DFTB0-SECCM")
     # Scope is the explicit repulsive-pair table, not a hardcoded
     # element list: the shipped set covers H, C, N, O, F, P, S, Cl and
     # every one of their 36 unordered pairs. The native seam applies the
@@ -125,45 +115,16 @@ def run_dftb0_seccm(
     for index, first in enumerate(atomic_numbers):
         for second in atomic_numbers[index:]:
             if not parameters.has_repulsive_pair(first, second):
-                raise NotImplementedError(
+                raise ValueError(
                     "DFTB0-SECCM requires an explicit repulsive pair for "
                     "every element pair in the cell; the shipped "
                     "vibeqc-inhouse-dftb-screening-v1 set covers "
                     "H, C, N, O, F, P, S, Cl"
                 )
 
-    unit_scale = 1.0 if topology.length_unit == "bohr" else ANGSTROM_TO_BOHR
-    translations = np.asarray(topology.translations, dtype=float) * unit_scale
-    central: list[int] = []
-    origin: list[int] = []
-    shell_labels: list[tuple[int, int, int]] = []
-    weights: list[float] = []
-    multiplicities: list[int] = []
-    displacements: list[np.ndarray] = []
-    for central_index, cell in enumerate(topology.cells):
-        for image in cell:
-            central.append(central_index)
-            origin.append(int(image.origin))
-            shell_labels.append(tuple(int(value) for value in image.image_shell_label))
-            weights.append(float(image.weight))
-            multiplicities.append(int(image.ownership_multiplicity))
-            displacements.append(np.asarray(image.disp, dtype=float) * unit_scale)
-
     group = topology.finite_group
     assert group is not None
-    primitive_vectors = (
-        np.asarray(group.primitive_vectors, dtype=float) * unit_scale
-    )
-    replicas = tuple(int(value) for value in group.replicas)
-    shell_label_matrix = np.asarray(
-        shell_labels,
-        dtype=np.int32,
-    ).reshape((-1, 3))
-    displacement_matrix = np.asarray(
-        displacements,
-        dtype=float,
-    ).reshape((-1, 3))
-    params = default_parameters()
+    params = parameters
     native = _se_cxx._run_dftb0_seccm_from_records(
         molecule,
         params,
@@ -176,7 +137,7 @@ def run_dftb0_seccm(
         displacement_matrix,
         primitive_vectors,
         replicas,
-        float(group.geometry_tolerance) * unit_scale,
+        float(group.geometry_tolerance) * topology_length_unit_scale(topology),
         bool(compute_gradient),
     )
     return DFTB0SECCMResult(

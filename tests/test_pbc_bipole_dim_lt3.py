@@ -263,3 +263,134 @@ def test_bipole_pbe0_rks_uks_closed_shell_and_component_closure(dim):
     )
     np.testing.assert_allclose(uks.fock_alpha[0], rks.fock[0], atol=1e-8)
     np.testing.assert_allclose(uks.fock_beta[0], rks.fock[0], atol=1e-8)
+
+
+# ---------------------------------------------------------------------------
+# Multi-k on a 1-D cell: the per-k density is the BvK-torus fold (#503).
+# ---------------------------------------------------------------------------
+
+def _chain_opts(driver, cutoff=11.0):
+    hf = driver in (run_pbc_bipole_rhf, run_pbc_bipole_uhf)
+    o = PeriodicRHFOptions() if hf else PeriodicKSOptions()
+    if not hf:
+        o.functional = "svwn"
+    o.lattice_opts.cutoff_bohr = cutoff
+    o.conv_tol_energy = 1.0e-10
+    o.max_iter = 40
+    return o
+
+
+@pytest.mark.parametrize("mesh", [(2, 1, 1), (3, 1, 1)], ids=["k2", "k3"])
+@pytest.mark.parametrize("driver", ALL_DRIVERS)
+def test_bipole_multik_dim1_folds_the_density_on_the_bvk_torus(driver, mesh):
+    """A stationary multi-k 1-D run is accepted as stationary.
+
+    dim<3 runs take the non-split direct gauge. Their real-space density
+    is Born-von-Karman periodic on the physical exchange support (7 cells
+    here), which is wider than the (2,1,1) or (3,1,1) torus, so an
+    unprojected Bloch sum over that list overcounts: 6 electrons for 2.
+    Until #503 the terminal acceptance counted electrons that way and
+    refused every such RHF/UHF run with ``electron_count_mismatch``, and
+    the exact-operator confirmation measured a 4e-3 gradient on a
+    stationary (3,1,1) state and ran to the iteration cap. The per-k
+    density of every consumer is now the torus fold, as on the
+    Ewald-split route. RKS/UKS carry the same fold and are controls here.
+    """
+    from vibeqc.pbc_bipole_common import (
+        _bloch_sum_blocks_multi_k,
+        bipole_electron_count,
+        bvk_torus_density_matrices,
+    )
+
+    system, basis = _h2_chain(1, a=6.0, vac=15.0)
+    kmesh = monkhorst_pack(system, list(mesh))
+    result = driver(system, basis, kmesh, _chain_opts(driver), progress=False)
+
+    assert result.converged
+    assert result.n_iter <= 10
+    density = getattr(result, "density", None)
+    if density is None:
+        density = result.density_alpha
+    assert len(density.cells) > int(np.prod(mesh))
+    acceptance = getattr(result, "chi_scf_acceptance", None)
+    if acceptance is not None:
+        assert acceptance["termination_reason"] == "stationary"
+        assert max(abs(x) for x in acceptance["electron_count_errors"]) <= 1e-7
+
+    if driver in (run_pbc_bipole_rhf, run_pbc_bipole_rks):
+        # The mechanism, stated on the returned density: the torus fold
+        # counts the electrons exactly, the unprojected list sum does not.
+        kpts = np.asarray(result.kpoints_cart)
+        weights = np.asarray(result.kpoint_weights)
+        S_k = [np.asarray(s) for s in result.overlap]
+        folded = bvk_torus_density_matrices(density, kpts, mesh)
+        unfolded = _bloch_sum_blocks_multi_k(density.blocks, density.cells, kpts)
+        n_elec = 2.0  # closed-shell H2 unit
+        assert bipole_electron_count(folded, S_k, weights) == pytest.approx(
+            n_elec, abs=1e-9
+        )
+        assert bipole_electron_count(unfolded, S_k, weights) > n_elec + 1.0
+
+
+# ---------------------------------------------------------------------------
+# Direct gauge: the beta two-electron operator keeps the J build's own
+# template (#503, the dim<3 PBE0 ``fock_beta`` rows).
+# ---------------------------------------------------------------------------
+
+def _unequal_h2_chain(dim, a=10.0, vac=25.0):
+    """Two unequal H2 units per cell, so the eigenvectors are not fixed by
+    symmetry and a beta-only operator error shows in the energy. The cell
+    length equals the cutoff so that neighbouring-cell pairs are inside the
+    pair reach and the pair-complete two-electron list is wider than the
+    radial one-electron ball."""
+    lat = np.diag([a, vac, vac]) if dim == 1 else np.diag([a, a, vac])
+    atoms = [vq.Atom(1, [x, 0.0, 0.0]) for x in (0.0, 1.4, 5.0, 6.6)]
+    system = vq.PeriodicSystem(dim, lat, atoms)
+    return system, vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+
+
+def _spin_symmetry_opts(hf, cutoff=10.0):
+    o = PeriodicRHFOptions() if hf else PeriodicKSOptions()
+    if not hf:
+        o.functional = "pbe0"
+    o.lattice_opts.cutoff_bohr = cutoff
+    o.lattice_opts.nuclear_cutoff_bohr = cutoff
+    o.use_diis = True
+    o.conv_tol_energy = 1.0e-11
+    o.max_iter = 80
+    o.initial_guess = InitialGuess.SAD
+    return o
+
+
+@pytest.mark.parametrize("dim", [1])
+def test_bipole_direct_gauge_closed_shell_uhf_uks_keep_spin_symmetry(dim):
+    """Closed-shell UHF/UKS on the direct gauge reproduce RHF/RKS exactly.
+
+    Until #503 the direct-gauge unrestricted build copied the beta
+    two-electron operator onto the radial overlap list, which under
+    physical pair support is narrower than the pair-complete
+    two-electron list, so the beta Fock silently lost its far exchange
+    blocks while alpha kept them. On this chain closed-shell UHF then
+    converged 4.9e-5 Ha above RHF with a 6.6e-3 spin polarisation, and
+    UKS-PBE0 1.6e-5 Ha above RKS; the H2/STO-3G fixtures above hid it
+    because their 2x2 eigenvectors are fixed by symmetry.
+    """
+    system, basis = _unequal_h2_chain(dim)
+    kmesh = monkhorst_pack(system, [1, 1, 1])
+
+    rhf = run_pbc_bipole_rhf(system, basis, kmesh, _spin_symmetry_opts(True), progress=False)
+    uhf = run_pbc_bipole_uhf(system, basis, kmesh, _spin_symmetry_opts(True), progress=False)
+    rks = run_pbc_bipole_rks(
+        system, basis, kmesh, _spin_symmetry_opts(False), functional="pbe0", progress=False
+    )
+    uks = run_pbc_bipole_uks(
+        system, basis, kmesh, _spin_symmetry_opts(False), functional="pbe0", progress=False
+    )
+    for r in (rhf, uhf, rks, uks):
+        assert r.converged
+    for u, r in ((uhf, rhf), (uks, rks)):
+        assert float(u.energy) == pytest.approx(float(r.energy), abs=1e-10)
+        for a, b in zip(u.density_alpha.blocks, u.density_beta.blocks):
+            np.testing.assert_allclose(np.asarray(a), np.asarray(b), atol=1e-12, rtol=0)
+        for fa, fb in zip(u.fock_alpha, u.fock_beta):
+            np.testing.assert_allclose(np.asarray(fa), np.asarray(fb), atol=1e-13, rtol=0)

@@ -1,4 +1,4 @@
-"""MgO is the handover's slow-converging periodic cell (Eyert 87 iters at
+"""MgO is the original investigation's slow-converging periodic cell (Eyert 87 iters at
 alpha 0.4, 437 at alpha 0.2).  Does any setting land it in the 501-2499
 window where the stabilization reserve cuts the primary attempt?"""
 import sys; sys.path.insert(0, "tests")

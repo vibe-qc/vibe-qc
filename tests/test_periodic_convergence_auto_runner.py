@@ -396,7 +396,10 @@ def test_gdf_explicit_level_shift_reaches_multi_k_closed_shell_driver(
     assert captured["gdf_method"] == "mdf"
 
 
-def test_gdf_explicit_level_shift_reaches_gamma_fallback(monkeypatch, tmp_path):
+def test_gdf_explicit_level_shift_reaches_gamma_k_mesh_engine(monkeypatch, tmp_path):
+    """A default-Gamma level shift runs the k-mesh engine at (1, 1, 1),
+    which applies it on the same Hamiltonian; it used to reach the legacy
+    molecular-limit driver, which changed the exchange convention (#400)."""
     sysp = _h2_box()
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     captured = {}
@@ -404,12 +407,13 @@ def test_gdf_explicit_level_shift_reaches_gamma_fallback(monkeypatch, tmp_path):
     class _Captured(RuntimeError):
         pass
 
-    def fake_driver(_system, _basis, options, **_kwargs):
+    def fake_driver(_system, _basis, kmesh, options, **_kwargs):
+        captured["kmesh"] = tuple(kmesh)
         captured["level_shift"] = float(options.level_shift)
         raise _Captured("captured before SCF")
 
     monkeypatch.setattr(
-        "vibeqc.periodic_runner.run_rhf_periodic_gamma_gdf",
+        "vibeqc.periodic_runner.run_krhf_periodic_gdf",
         fake_driver,
     )
 
@@ -426,7 +430,7 @@ def test_gdf_explicit_level_shift_reaches_gamma_fallback(monkeypatch, tmp_path):
             **_QUIET,
         )
 
-    assert captured["level_shift"] == pytest.approx(0.31)
+    assert captured == {"kmesh": (1, 1, 1), "level_shift": pytest.approx(0.31)}
 
 
 def test_gdf_explicit_level_shift_reaches_shifted_single_k_driver(
@@ -554,13 +558,32 @@ def test_gdf_fock_mixing_fails_closed_for_open_shell_kmesh_driver(tmp_path):
     ],
     ids=["implicit-gamma", "tuple-gamma", "bloch-gamma"],
 )
-def test_gdf_gamma_explicit_method_level_shift_fails_closed(
-    tmp_path, kpoints_factory
+@pytest.mark.parametrize(
+    "control", [{"level_shift": 0.25}, {"fock_mixing": 0.25}],
+    ids=["level_shift", "fock_mixing"],
+)
+def test_gdf_gamma_explicit_method_controls_run_the_k_mesh_engine(
+    monkeypatch, tmp_path, kpoints_factory, control
 ):
+    """An explicit gdf_method plus a level shift or Fock mixing at Gamma
+    reaches the k-mesh driver with both kept. These were refused while the
+    only Gamma driver that implemented them was the legacy fallback, which
+    drops gdf_method (#283, #400)."""
     sysp = _h2_box()
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
+    captured = {}
 
-    with pytest.raises(NotImplementedError, match="explicit gdf_method"):
+    class _Captured(RuntimeError):
+        pass
+
+    def fake_driver(_system, _basis, _kmesh, options, **kwargs):
+        captured["gdf_method"] = kwargs["gdf_method"]
+        captured["level_shift"] = float(options.level_shift)
+        captured["fock_mixing"] = float(kwargs.get("fock_mixing") or 0.0)
+        raise _Captured("captured before SCF")
+
+    monkeypatch.setattr("vibeqc.periodic_runner.run_krhf_periodic_gdf", fake_driver)
+    with pytest.raises(_Captured, match="captured before SCF"):
         vq.run_periodic_job(
             sysp,
             basis,
@@ -568,31 +591,15 @@ def test_gdf_gamma_explicit_method_level_shift_fails_closed(
             jk_method="gdf",
             gdf_method="rsgdf",
             kpoints=kpoints_factory(sysp),
-            level_shift=0.25,
-            output=str(tmp_path / "gdf_gamma_explicit_level_shift"),
+            output=str(tmp_path / "gdf_gamma_explicit_control"),
             output_qvf=False,
             citations=False,
+            **control,
             **_QUIET,
         )
-
-
-def test_gdf_gamma_explicit_method_fock_mixing_fails_closed(tmp_path):
-    sysp = _h2_box()
-    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
-
-    with pytest.raises(NotImplementedError, match="fock_mixing"):
-        vq.run_periodic_job(
-            sysp,
-            basis,
-            method="RHF",
-            jk_method="gdf",
-            gdf_method="rsgdf",
-            fock_mixing=0.25,
-            output=str(tmp_path / "gdf_gamma_explicit_fock_mixing"),
-            output_qvf=False,
-            citations=False,
-            **_QUIET,
-        )
+    assert captured["gdf_method"] == "rsgdf"
+    name, value = next(iter(control.items()))
+    assert captured[name] == pytest.approx(value)
 
 
 @pytest.mark.parametrize("convergence", [None, "auto"], ids=["default", "requested"])

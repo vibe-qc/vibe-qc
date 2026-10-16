@@ -102,7 +102,7 @@ def test_runner_gilat_bipole_rks_path_runs(tmp_path, monkeypatch):
     accepted the keyword and silently dropped it at the run_pbc_bipole_rks
     callsite, and the earlier result-is-not-None form of this test stayed
     green for those eight releases (BUG-PER-002 in
-    handovers/HANDOVER_OPEN_BUGS_V015.md). The run uses a converged SCF
+    the original investigation). The run uses a converged SCF
     because ``run_periodic_job`` now fails closed on non-convergence
     (the 2026-08-13 periodic SCF gate).
     """

@@ -46,9 +46,15 @@ def main() -> None:
 
     system, basis = h2_system(args.dim)
     mesh = (2, 1, 1)
+    # The front door: method="aiccm" plus the mandatory variant. "chi"
+    # is chi-CCM, the finite-translation-group character construction
+    # (the former jk_method="aiccm2026dev-b" spelling, now deprecated).
+    # The SCF reference is inferred: functional=None runs RHF, a
+    # functional name runs RKS.
     common = dict(
-        jk_method="aiccm2026dev-b",
-        kpoints=mesh,
+        method="aiccm",
+        variant="chi",
+        aiccm_lattice_extension=mesh,
         aiccm_backend=args.backend,
         max_iter=40,
         progress=False,
@@ -97,14 +103,13 @@ def main() -> None:
     rhf = vq.run_periodic_job(
         system,
         basis,
-        method="RHF",
+        functional=None,
         output=f"aiccm2026dev-b-{args.dim}d-{args.backend}-rhf",
         **common,
     )
     rks = vq.run_periodic_job(
         system,
         basis,
-        method="RKS",
         functional=args.functional,
         output=f"aiccm2026dev-b-{args.dim}d-{args.backend}-rks",
         **common,

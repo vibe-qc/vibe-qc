@@ -8,6 +8,7 @@ const pages = [
   ['index.html', 'vibe-qc-social.png'],
   ['products/vibe-qc/index.html', 'vibe-qc-product-social.png', 'vibe-qc'],
   ['products/vibe-view/index.html', 'vibe-view-social.png', 'vibe-view'],
+  ['products/vibe-sketch/index.html', 'vibe-sketch-social.png', 'vibe-sketch'],
   ['products/vibe-queue/index.html', 'vibe-queue-social.png', 'vibe-queue'],
 ];
 

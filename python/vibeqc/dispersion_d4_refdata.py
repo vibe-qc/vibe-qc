@@ -1,7 +1,6 @@
 """D4 reference-data machinery -- Phase D4b-1.
 
-The native D4 dispersion energy (Phase D4b, see
-``handovers/HANDOVER_D4_NATIVE.md``) needs a reference C6 dataset
+The native D4 dispersion energy (Phase D4b) needs a reference C6 dataset
 re-derived from first principles. The C6 between two systems comes
 from the Casimir-Polder relation:
 
@@ -61,6 +60,7 @@ __all__ = [
     "uncoupled_polarizability_imag_freq",
     "coupled_polarizability_imag_freq",
     "coupled_polarizability_imag_freq_dft",
+    "coupled_polarizability_imag_freq_uks",
     "london_c6_single_pole",
     "molecular_c6",
 ]
@@ -300,8 +300,7 @@ def coupled_polarizability_imag_freq(
     The signature matches :func:`uncoupled_polarizability_imag_freq`
     so it drops straight into the :func:`casimir_polder_c6` +
     :func:`imaginary_frequency_grid` pipeline unchanged -- exactly the
-    "swap only the a(iw) provider" plan of
-    ``handovers/HANDOVER_D4_NATIVE.md``.
+    "swap only the a(iw) provider" plan.
 
     Parameters
     ----------
@@ -477,6 +476,96 @@ def coupled_polarizability_imag_freq_dft(
         alpha = 0.5 * (alpha + alpha.T)
         out[g] = float(np.trace(alpha) / 3.0)
     return out
+
+
+# ---------------------------------------------------------------------
+# Spin-resolved response for open-shell reference systems.
+# ---------------------------------------------------------------------
+
+def coupled_polarizability_imag_freq_uks(
+        uks_result, basis: BasisSet, molecule: Molecule,
+        omegas: Sequence[float], functional: Optional[str], *,
+        eri: Optional[np.ndarray] = None, grid_options=None) -> np.ndarray:
+    """Spin-resolved imaginary-frequency response for D4 reference work.
+
+    Uses the unrestricted Casida A/B matrices (Casida 1995, in Recent
+    Advances in Density Functional Methods, Part I, p. 155). Both spin
+    channels respond together. ``functional=None`` selects TDHF; otherwise
+    supply the same global hybrid or pure functional and grid as the UKS
+    reference. Occupations must be integral, and both orbital-Hessian
+    combinations must be positive definite. Unstable references are refused,
+    never repaired by clipping eigenvalues to generate reference data.
+
+    Returns isotropic alpha(iw) in bohr^3. This low-level generator does not
+    extend the frozen production D4 dataset by itself.
+    """
+    from ._vibeqc_core import compute_eri, compute_overlap
+    from .tddft import (
+        _build_uhf_casida_matrices, _compute_polarised_kernel_mo_uhf,
+        _resolve_exact_exchange_fraction,
+    )
+
+    omega_arr = np.asarray(omegas, dtype=float)
+    if omega_arr.ndim != 1 or not np.isfinite(omega_arr).all() or (omega_arr < 0).any():
+        raise ValueError("imaginary frequencies must be a finite nonnegative vector")
+    if not uks_result.converged:
+        raise ValueError("UKS reference must be converged")
+    overlap = np.asarray(compute_overlap(basis), dtype=float)
+    coeffs, energies, densities, counts = [], [], [], []
+    for spin in ("alpha", "beta"):
+        c = np.asarray(getattr(uks_result, f"mo_coeffs_{spin}"), dtype=float)
+        eps = np.asarray(getattr(uks_result, f"mo_energies_{spin}"), dtype=float)
+        density = np.asarray(getattr(uks_result, f"density_{spin}"), dtype=float)
+        occupations = c.T @ overlap @ density @ overlap @ c
+        count = int(round(float(np.trace(occupations))))
+        target = np.zeros_like(occupations)
+        if count < 0 or count > len(eps):
+            raise ValueError("invalid UKS occupied-space size")
+        target[np.arange(count), np.arange(count)] = 1.0
+        if not np.allclose(occupations, target, atol=1e-7, rtol=0):
+            raise ValueError("UKS response requires integral Aufbau occupations")
+        coeffs.append(c)
+        energies.append(eps)
+        densities.append(density)
+        counts.append(count)
+    if not sum(n * (len(e) - n) for n, e in zip(counts, energies)):
+        raise ValueError("UKS response requires occupied-virtual pairs")
+    kernel = None
+    if functional is not None:
+        kernel = _compute_polarised_kernel_mo_uhf(
+            molecule, basis, functional, *coeffs, *densities, *counts,
+            grid_options=grid_options,
+        )
+    if eri is None:
+        eri = np.asarray(compute_eri(basis), dtype=float)
+    a, b = _build_uhf_casida_matrices(
+        *energies, *coeffs, *counts, eri,
+        _resolve_exact_exchange_fraction(functional), kernel_blocks=kernel,
+    )
+    plus, minus = a + b, a - b
+    if not np.isfinite(plus).all() or not np.isfinite(minus).all():
+        raise ValueError("UKS response Hessian must be finite")
+    try:
+        np.linalg.cholesky(plus)
+        np.linalg.cholesky(minus)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError("UKS reference has an unstable or singular response Hessian") from exc
+    minus_inv = np.linalg.solve(minus, np.eye(len(minus)))
+    dip = compute_dipole(basis, center_of_mass(molecule).tolist())
+    perturbations = []
+    for mu in (dip.x, dip.y, dip.z):
+        perturbations.append(np.concatenate([
+            (c[:, :n].T @ np.asarray(mu) @ c[:, n:]).ravel()
+            for c, n in zip(coeffs, counts)
+        ]))
+    p = np.asarray(perturbations)
+    values = []
+    for omega in omega_arr:
+        # Spin orbitals have occupation one: no closed-shell factor of two
+        # in the final contraction. The two spin blocks supply it instead.
+        response = np.linalg.solve(plus + omega**2 * minus_inv, -2 * p.T)
+        values.append(float(-np.trace(p @ response) / 3))
+    return np.asarray(values)
 
 
 # ---------------------------------------------------------------------

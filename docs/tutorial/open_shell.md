@@ -133,18 +133,22 @@ For $N_\alpha$ unpaired-spin-up and $N_\beta$ spin-down electrons
 with $N_\alpha \neq N_\beta$, we need at least two paths forward:
 
 - **UHF (unrestricted HF).** Give α and β electrons *different*
-  spatial orbitals, $\phi^\alpha_i$ and $\phi^\beta_i$. Double the
+  spatial orbitals, $\phi^\alpha_i$ and $\phi^\beta_i$ (J. A. Pople
+  and R. K. Nesbet, *J. Chem. Phys.* **22**, 571 (1954),
+  doi:10.1063/1.1740120). Double the
   SCF unknowns, but now every electron has full variational freedom
   in its spatial part.
 - **ROHF (restricted open-shell HF).** Keep the doubly-occupied
   orbitals spin-restricted (same $\phi_i$ for α and β when both are
-  occupied), and let only the singly-occupied orbitals be separate.
+  occupied), and let only the singly-occupied orbitals be separate
+  ({vibeqc-cite}`roothaan_rohf_1960`).
   The determinant stays a pure spin eigenstate, at a small energy cost
   versus UHF. vibe-qc ships this as `run_rohf` (above).
 
 ### UHF equations
 
-UHF solves two coupled generalised eigenvalue problems:
+UHF solves two coupled generalised eigenvalue problems, the
+Pople-Nesbet equations:
 
 $$
 \mathbf{F}^\alpha \, \mathbf{C}^\alpha = \mathbf{S} \, \mathbf{C}^\alpha \, \boldsymbol{\varepsilon}^\alpha,
@@ -163,8 +167,8 @@ $$
 
 The Coulomb ($J$) term sees the *total* density; the exchange ($K$)
 term is **spin-diagonal**, α electrons only exchange with α, β with
-β. This is the physics of Fermi correlation that makes UHF give a
-lower energy than RHF for any open-shell reference.
+β. This is the physics of Fermi correlation that gives UHF an energy
+at or below ROHF's for any open-shell state.
 
 ### Spin contamination, the price you pay
 
@@ -193,13 +197,16 @@ Large spin contamination often signals the real problem, the
 reference determinant isn't a good starting point for a
 single-determinant method, and you need a multireference approach.
 Active-space FCI / selected-CI / DMRG and orbital-optimised CASSCF /
-CASPT2 / NEVPT2 all ship via `vibeqc.solvers`, with CASSCF also exposed
+CASPT2 / NEVPT2 ({vibeqc-cite}`white_dmrg_1992`,
+{vibeqc-cite}`roos_taylor_siegbahn_casci_1980`,
+{vibeqc-cite}`andersson_caspt2_1990`, {vibeqc-cite}`angeli_nevpt2_2001`)
+all ship via `vibeqc.solvers`, with CASSCF also exposed
 as `run_job(method="casscf", active_space=(...))`.
 
 ### UMP2
 
-Second-order Møller-Plesset perturbation theory on a UHF reference
-partitions correlation energy into **same-spin** and **opposite-spin**
+Second-order Møller-Plesset perturbation theory
+({vibeqc-cite}`moller_plesset_1934`) on a UHF reference partitions correlation energy into **same-spin** and **opposite-spin**
 channels:
 
 $$
@@ -209,16 +216,21 @@ $$
 with
 
 $$
-E_{\sigma\tau}^{(2)} = \sum_{ij \in \text{occ}} \sum_{ab \in \text{virt}}
-  \frac{\langle ij \| ab \rangle^2}{\varepsilon_i + \varepsilon_j - \varepsilon_a - \varepsilon_b}
+E_{\sigma\tau}^{(2)} = c_{\sigma\tau} \sum_{ij \in \text{occ}} \sum_{ab \in \text{virt}}
+  \frac{\langle ij \| ab \rangle^2}{\varepsilon_i + \varepsilon_j - \varepsilon_a - \varepsilon_b},
+\qquad c_{\sigma\sigma} = \tfrac14, \quad c_{\alpha\beta} = 1,
 $$
 
-summed over pairs where orbital $i$ has spin $\sigma$ and $j$ has
-$\tau$. The `ump2.e_aa`, `.e_bb`, and `.e_ab` fields surface this
+summed over orbitals where $i$ and $a$ have spin $\sigma$ and $j$ and
+$b$ have spin $\tau$. The factor ¼ removes the double counting of
+$i \leftrightarrow j$ and $a \leftrightarrow b$ in the same-spin sums;
+in the opposite-spin channel the exchange integral vanishes, so
+$\langle ij \| ab \rangle = \langle ij | ab \rangle$. The `ump2.e_aa`, `.e_bb`, and `.e_ab` fields surface this
 decomposition directly. The same-spin/opposite-spin split is the
 starting point for **spin-component-scaled MP2** (SCS-MP2,
-Grimme 2003), where the two channels get different empirical
-prefactors, roadmap item for the future.
+{vibeqc-cite}`grimme_scs_mp2_2003`), where the two channels get different empirical
+prefactors; it ships as `vibeqc.run_scs_mp2` (RHF reference) and
+`vibeqc.run_scs_ump2` (UHF reference).
 
 ## Resources
 

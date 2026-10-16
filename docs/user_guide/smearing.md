@@ -30,6 +30,117 @@ your accuracy target, or extrapolate $T \to 0$ from a ladder of
 runs. The recommended workflow per flavor is in
 [§ Choosing T](#choosing-t).
 
+Fermi-Dirac and Mermin smearing, including their GDF analytic
+gradients, are production routes; Methfessel-Paxton and
+Marzari-Vanderbilt energies are production while their GDF force paths
+fail closed pending validation (see the per-backend table). The label
+vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Theory
+
+**Why fractional occupations.** At zero temperature the density of a
+periodic system is a Brillouin-zone integral over the occupied bands,
+$\rho(\mathbf r) = \sum_i \int_{\rm BZ} \theta(\mu - \varepsilon_i(\mathbf k))\, |\psi_{i\mathbf k}(\mathbf r)|^2\, d\mathbf k$,
+and a finite k-mesh replaces it by a weighted sum. For an insulator the
+step function is constant across the mesh and the sum converges
+exponentially. For a metal the step falls inside a band: which sampled
+states are occupied changes discontinuously with the geometry, the
+density and the k-mesh, the SCF map becomes discontinuous, and the sum
+converges only as a power of the mesh spacing. Smearing replaces the
+step by a smooth occupation function of width $\sigma = k_B T$,
+
+$$
+n_i(\mathbf k) = g\, f\!\left(\frac{\varepsilon_i(\mathbf k) - \mu}{\sigma}\right),
+\qquad
+\sum_{\mathbf k} w_{\mathbf k} \sum_i n_i(\mathbf k) = N,
+$$
+
+with $g = 2$ for a closed shell (or $g = 1$ per spin channel with one
+$\mu_\sigma$ per spin), and the chemical potential $\mu$ fixed by the
+electron count through a bisection. Every route builds its density from
+these occupations, $D = \sum_i n_i\, c_i c_i^\dagger$.
+
+**The Mermin free energy.** Mermin
+({vibeqc-cite}`mermin_finite_temperature_dft_1965`) showed that at
+finite electronic temperature the variational quantity is the free
+energy, not the energy: for fixed $T$ and $N$ the self-consistent
+solution makes
+
+$$
+A = E - T S,
+\qquad
+S = -k_B \sum_{\mathbf k} w_{\mathbf k} \sum_i g \left[ f_i \ln f_i + (1 - f_i) \ln (1 - f_i) \right]
+$$
+
+stationary with respect to both the orbitals and the occupations, and
+the occupation function that does so is Fermi-Dirac,
+$f(x) = 1/(1 + e^{x})$. Because $A$ is stationary in the occupations,
+the forces are derivatives of $A$ at fixed $(T, N)$ with no
+occupation-response or $\mu$-response term, which is why the GDF
+gradients on this page return $dA/dR$ from the ordinary
+Hellmann-Feynman plus Pulay assembly at the fractional-occupation
+density. `result.energy` is $E$, `result.free_energy` is $A$, and
+`result.entropy` is $S/k_B$. The `"mermin"` flavour is the same
+occupation function under its variational name and cites the Mermin
+paper.
+
+**Cold smearing.** Fermi-Dirac occupations carry a physical entropy,
+and $A$ and $E$ both differ from the ground-state energy by terms
+linear in $T$. Methfessel and Paxton
+({vibeqc-cite}`methfessel_paxton_1989`) replaced the step by the
+Gaussian-broadened step plus Hermite-polynomial corrections,
+
+$$
+f_N(x) = \tfrac12\, \mathrm{erfc}(x) + \sum_{n=1}^{N} A_n\, H_{2n-1}(x)\, e^{-x^2},
+\qquad A_n = \frac{(-1)^n}{n!\, 4^n \sqrt{\pi}},
+$$
+
+which integrates any polynomial of degree $2N+1$ exactly across the
+Fermi surface, so the leading error in $E$ and $A$ becomes
+$O(\sigma^{2N+2})$; vibe-qc implements orders $N = 1$ and $2$
+(`mp_order=`). The price is that $f_N$ overshoots: occupations can
+exceed $g$ or go negative near the Fermi level, which is harmless for
+energies but means the generalised entropy is not a physical one and
+the square-root density assembly of the analytic gradient cannot
+represent it. Marzari and Vanderbilt
+({vibeqc-cite}`marzari_vanderbilt_1999`) instead chose the
+first-order form
+$f(x) = \tfrac12\,\mathrm{erfc}(x + 1/\sqrt2) + e^{-(x + 1/\sqrt2)^2}/\sqrt{2\pi}$,
+whose generalised entropy vanishes at the Fermi level; the occupations
+stay positive, the free energy $A$ is very close to the $T \to 0$
+energy, and the leading error is cubic in $\sigma$. For every flavour
+the generalised entropy is defined by
+$s'(x) = x\, f'(x)$, which is exactly the condition that makes
+$A = E - TS$ stationary at fixed particle number; that is how
+`result.free_energy` stays variational for all four flavours.
+
+**The chemical potential and the fill.** One $\mu$ is shared across
+the whole Brillouin zone (Weinert and Davenport,
+{vibeqc-cite}`weinert_fractional_occupations_1992`), so that a band
+overlapping between k points is filled consistently rather than per k
+point; the same global fill is used at $T = 0$, where it produces a
+sharp ensemble with integer or symmetry-shared occupations rather than
+smearing.
+
+**Extrapolation to zero temperature.** Since both $E$ and $A$ deviate
+from $E_0$ with the same leading power of $\sigma$ but opposite sign
+for Fermi-Dirac (to first order $E \approx E_0 + \tfrac12 \gamma \sigma^2$
+and $A \approx E_0 - \tfrac12 \gamma \sigma^2$ in the low-temperature
+Sommerfeld regime), the average $\tfrac12 (E + A)$ cancels the leading
+term and is the usual single-run estimate of $E_0$; a ladder of two or
+three widths and a fit in $\sigma^2$ (Fermi-Dirac), $\sigma^{2N+2}$
+(Methfessel-Paxton) or $\sigma^3$ (Marzari-Vanderbilt) does better,
+and the practical recipe is in [Choosing T](#choosing-t).
+
+**Where it helps and where it fails.** Smearing is the right tool for
+any system where a band crosses the Fermi level; there it is not
+optional. It is the wrong tool for a gapped system, where it only adds
+a spurious entropy, and it is never a remedy for an SCF that oscillates
+for another reason, as the section
+[When smearing is the wrong knob](#when-smearing-is-the-wrong-knob)
+explains.
+
 ## Quick start
 
 ### High-level wrapper
@@ -140,9 +251,10 @@ vq.hartree_to_kelvin_temperature(0.005)         # → 1579.3
 
 The Mermin free-energy formalism is exact in $T$, but **only the
 $T \to 0$ limit gives the strict ground-state energy**. Finite $T$
-adds a $TS$ shift that for Fermi-Dirac smearing decays only linearly
-in $T$ as $T \to 0$ (Marzari et al. 1999), so the strategy is one
-of:
+shifts both $E$ and $A$ away from $E_0$; for Fermi-Dirac smearing the
+leading shift is quadratic in $T$ (Sommerfeld; Marzari et al. 1999),
+which is slow compared with the higher-order cold-smearing schemes, so
+the strategy is one of:
 
 * **Pick $T$ small enough that the $TS$ correction is below your
   accuracy target.** For ~mHa/atom accuracy on typical
@@ -153,11 +265,13 @@ of:
   correction near µHa.
 * **Extrapolate $T \to 0$ from a ladder of runs.** Two to three
   $T$ values plus a polynomial fit in the asymptotic regime gives
-  a defensible ground-state estimate. The order of the
-  extrapolation depends on flavor (linear for Fermi-Dirac,
-  quadratic for Methfessel-Paxton, cubic for Marzari-Vanderbilt
-  cold). A user-facing helper (`vq.extrapolate_t_zero`) is queued
-  for a later milestone, until then, fit manually.
+  a defensible ground-state estimate. The leading power depends on
+  the flavor: $\sigma^2$ for Fermi-Dirac (where the single-run
+  average $\tfrac12 (E + A)$ already cancels it), $\sigma^{2N+2}$
+  for Methfessel-Paxton of order $N$, and $\sigma^3$ for
+  Marzari-Vanderbilt cold smearing; see [Theory](#theory). A
+  user-facing helper (`vq.extrapolate_t_zero`) is queued for a later
+  milestone, until then, fit manually.
 
 ### Recommended starting points
 
@@ -192,50 +306,57 @@ Fermi occupations. This seed step precedes the counted SCF iterations;
 `max_iter=0` still returns the selected initial guess without this step.
 
 When `smearing_temperature == 0`, the smearing fields collapse:
-`free_energy == energy` and `entropy == 0`. On **every closed-shell multi-k
-route**, which dispatches through `vibeqc.smearing.apply_smearing`, Aufbau
-uses one Fermi level across the full Brillouin zone. A gapped insulator
-therefore retains the usual per-k hard-Aufbau
-`{0, 2}` arrays and conventional midgap value. If bands overlap between k
-points, the number of occupied bands may differ by k point; states that are
-equal at the Fermi boundary to roundoff receive the same fractional occupation
-so mesh ordering cannot break their symmetry. This is a sharp, zero-temperature
+`free_energy == energy` and `entropy == 0`. On **every multi-k route**,
+closed-shell (`vibeqc.smearing.apply_smearing`) and open-shell
+(`vibeqc.smearing.apply_smearing_open_shell`, one chemical potential per
+spin), Aufbau uses one Fermi level across the full Brillouin zone
+(Weinert and Davenport, Phys. Rev. B 45, 13709 (1992)). A gapped insulator
+therefore retains the usual per-k hard-Aufbau `{0, 2}` (or per-spin `{0, 1}`)
+arrays and the conventional midgap value. If bands overlap between k points,
+the number of occupied bands may differ by k point; states that are equal at
+the Fermi boundary to roundoff receive the same fractional occupation so mesh
+ordering cannot break their symmetry. This is a sharp, zero-temperature
 ensemble, not positive-temperature smearing. Analytic GDF gradients currently
 require either the gapped integer pattern or supported positive-temperature
 Fermi-Dirac occupations; a band-overlap T=0 ensemble fails closed for
 `compute_gradient=True`.
 
+The maximum overlap method (`use_mom`, and the SPINLOCK pattern hold) is the
+one exception: it chooses its occupied states itself, and the fill holds that
+selection positionally rather than re-picking the lowest states (GitLab #725).
+
 A Γ-only calculation is a single spectrum, so there is nothing for a shared
 chemical potential to reorder; it keeps the historical hard-Aufbau path
-unchanged. Open-shell (UHF/UKS) `T = 0` is still a per-spin, per-k Aufbau and
-has **not** moved to the global fill; that remains an open ask recorded on
-GitLab #85.
+unchanged. Until GitLab #176 the open-shell `T = 0` fill was still a per-spin,
+per-k Aufbau on the Ewald-3D and BIPOLE UHF/UKS routes, and those routes
+reported a chemical potential of zero; they now share the global fill and
+report the real per-spin Fermi levels.
 
-Not every route can yet *represent* a band-overlap `T = 0` state. The Ewald-3D
-multi-k (`run_rhf_periodic_multi_k_ewald3d`,
-`run_rks_periodic_multi_k_ewald3d`) and BIPOLE RKS multi-k
-(`run_pbc_bipole_rks`) drivers build their zero-temperature density from a
-single fixed occupied subspace `C[:, :n_occ]` at every k, which cannot express
-a differing per-k occupied count. Rather than converge one density and report
-the band edges of another, those routes now **fail closed** with a
-`NotImplementedError` naming the per-k occupied counts and pointing at
-`smearing_temperature > 0`, `bz_integration="gilat"`, or the multi-k GDF route,
-which builds its density from the occupations directly. Giving them the same
-density build is tracked as GitLab #509. Gapped meshes never reach this guard.
+Every multi-k route builds its zero-temperature density from the occupations
+the fill returns, so a band-overlap state is represented rather than refused:
+the fixed occupied-subspace slice `C[:, :n_occ]` is used only when the
+occupations are exactly the per-k integer Aufbau pattern, where the two are
+the same density. The legacy BIPOLE Ewald-J gauge (the non-default
+`use_exchange_ewald_split=False`) reconstructs its long-range density from
+that slice, so a band-overlap state fails closed there. ODA on the
+closed-shell Ewald-3D and BIPOLE routes also refuses a band-overlap state,
+because it needs a sharp occupied subspace.
 
-Why it matters: filling the lowest `n_occ` bands at each k point separately
-occupies a state above the Fermi level at one k while leaving a state below it
-empty at another. The band-extrema block then reports a **negative** indirect
-gap, because the valence-band maximum it finds genuinely does sit above the
-state it has been told is the conduction-band minimum. That is a wrong answer,
-not a convergence complaint (GitLab #85).
+Why it matters, twice over. Filling the lowest `n_occ` bands at each k point
+separately occupies a state above the Fermi level at one k while leaving a
+state below it empty at another (GitLab #85). And once the fill is global, a
+band-overlap metal has every occupied sampled level below every empty one,
+so reading "the highest occupied and the lowest empty state" reports a
+positive number: the spacing of the sampled levels around the Fermi level,
+which shrinks to zero with the mesh, printed as a band gap (GitLab #176). The
+band edges are therefore measured by one shared classifier; see
+[Band structure](band_structure.md#fermi-reference-and-band-gaps).
 
 ## Per-backend availability
 
-Smearing is being rolled out backend-by-backend as the v0.10.x
-smearing program (see [`docs/design_smearing.md`](../design_smearing.md)
-for the full design and milestone plan). The state as shipped on
-the current `main`:
+Smearing support depends on the selected backend and spin treatment.
+The table describes the current source;
+[the original design](../design_smearing.md) retains the milestone history.
 
 | Backend | Spin | k-mesh | Fermi-Dirac smearing | Notes |
 |---|---|---|---|---|
@@ -247,8 +368,9 @@ the current `main`:
 | GDF | RHF / RKS | Γ-only | ✅ | `run_rhf_periodic_gamma_gdf` |
 | GDF | UHF / UKS | any | ✅ | `run_pbc_gdf_uhf`, `run_pbc_gdf_uks` (Γ), `run_kuhf_periodic_gdf`, `run_kuks_periodic_gdf` (multi-k); per-spin $\mu_\alpha$/$\mu_\beta$; analytic $dA/dR$ gradients since 2026-07-30 |
 | BIPOLE | RKS / UHF / UKS | Γ-only + multi-k | ✅ | `run_pbc_bipole_rks`, `run_pbc_bipole_uhf`, `run_pbc_bipole_uks`; analytic KS gradients reject smeared results, so production forces use FD for forces |
-| BIPOLE | RHF | any | ❌ | Closed-shell HF BIPOLE keeps integer occupations today |
-| GAPW | - | - | n/a (driver not yet a thing, queued M8) | |
+| BIPOLE | RHF | any | ❌ | Closed-shell HF BIPOLE has no finite-temperature occupations; `T = 0` uses the global Brillouin-zone fill (GitLab #176) |
+| GPW | RHF / RKS | Γ; multi-k pure-DFT RKS | ✅ | `run_periodic_rhf_gpw`, `run_periodic_rks_gpw`, `run_periodic_rks_gpw_multi_k` |
+| GAPW | RHF / RKS | Γ; multi-k pure-DFT RKS | ✅ | Experimental all-electron augmentation: `run_periodic_rhf_gapw`, `run_periodic_rks_gapw`, `run_periodic_rks_gapw_multi_k`. Open-shell augmentation has no finite-temperature occupation option; see [GPW / GAPW](gapw.md). |
 
 ### Choosing a smearing flavor
 

@@ -97,6 +97,35 @@ fi
 # shellcheck source=_native_stamp.sh
 . "$SCRIPT_DIR/_native_stamp.sh"
 
+# Only explicit operator selection authorizes replacing an invalid cache.
+_libint_rebuild_selected=false
+_fftw_rebuild_selected=false
+_libxc_rebuild_selected=false
+_spglib_rebuild_selected=false
+_openblas_rebuild_selected=false
+for _selected_dep in ${EXPLICIT_DEPS[@]+"${EXPLICIT_DEPS[@]}"}; do
+    [ "$_selected_dep" != "libint" ] || _libint_rebuild_selected=true
+    [ "$_selected_dep" != "fftw" ] || _fftw_rebuild_selected=true
+    [ "$_selected_dep" != "libxc" ] || _libxc_rebuild_selected=true
+    [ "$_selected_dep" != "spglib" ] || _spglib_rebuild_selected=true
+    [ "$_selected_dep" != "openblas" ] || _openblas_rebuild_selected=true
+done
+if ! $FORCE_ALL && ! $_libint_rebuild_selected; then
+    vibeqc_verify_cached_libint || exit 3
+fi
+if ! $FORCE_ALL && ! $_fftw_rebuild_selected; then
+    vibeqc_verify_cached_fftw || exit 3
+fi
+if ! $FORCE_ALL && ! $_libxc_rebuild_selected; then
+    vibeqc_verify_cached_libxc || exit 3
+fi
+if ! $FORCE_ALL && ! $_spglib_rebuild_selected; then
+    vibeqc_verify_cached_spglib || exit 3
+fi
+if ! $FORCE_ALL && ! $_openblas_rebuild_selected; then
+    vibeqc_verify_cached_openblas || exit 3
+fi
+
 STAMP_WRITE_SAFE=true
 if [ ! -f "$VIBEQC_STAMP_PATH" ]; then
     for _legacy_dep in libint libxc spglib fftw libecpint openblas; do

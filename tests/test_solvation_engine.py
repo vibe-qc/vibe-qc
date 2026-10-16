@@ -11,6 +11,16 @@ What stays separate is the outer convergence strategy: Gaussian macro-iterates
 an outer ``q`` loop around a full inner SCF; MSINDO folds the field into a
 single SCF at every Fock build. Those are different, legitimate strategies
 over the same step.
+
+"Shared" means one *reference* implementation, not one code path at runtime.
+MSINDO's shipped route runs a fused native kernel (``indo.cosmo_reaction_field``)
+that does the same five steps in one C++ call and never calls
+:func:`reaction_field_step`; its Python branch is the reference/fallback. That
+is deliberate, and safe only because the kernel is pinned to this step by
+``tests/test_msindo_cosmo.py::test_cosmo_reaction_field_cpp_matches_python_reference``
+(``1e-12`` on identical inputs) and by the converged-run comparison below. The
+failure this file guards against is a native fast path added *without* such a
+pin (#254).
 """
 
 from __future__ import annotations
@@ -198,22 +208,77 @@ def test_step_fails_loudly_on_a_singular_cavity():
         )
 
 
-def test_both_shipped_routes_use_the_shared_step():
-    """Guard against a third copy reappearing.
+# ---------------------------------------------------------------------
+# Behaviour, not source text (#254).
+#
+# The guard these replace asserted only that the string "reaction_field_step"
+# appeared in each route's source. MSINDO's native kernel returns before the
+# branch that holds that string, so a real MSINDO COSMO run made zero calls to
+# the shared step while the guard stayed green. These observe calls on real
+# runs instead, so they fail the moment a route stops reaching the step.
+# ---------------------------------------------------------------------
 
-    The point of #554 is that there is one implementation. If a route stops
-    importing it, this fails rather than the duplication being rediscovered by
-    a divergence years later.
+_WATER_BOHR = [(8, (0.0, 0.0, 0.0)), (1, (0.0, 1.43, 1.11)), (1, (0.0, -1.43, 1.11))]
+_WATER_ANG = [(8, (0.0, 0.0, 0.0)), (1, (0.0, 0.757, 0.587)), (1, (0.0, -0.757, 0.587))]
+
+
+def _counting(fn, box):
+    def spy(*args, **kwargs):
+        box["calls"] += 1
+        return fn(*args, **kwargs)
+
+    return spy
+
+
+def test_the_gaussian_route_calls_the_shared_step_on_a_real_run(monkeypatch):
+    """``run_cpcm_scf`` must reach the shared step at runtime, every macro-iteration.
+
+    This is the one route where "one implementation" is literally true, and
+    nothing observed it: the text check would still have passed with the call
+    deleted and the name left in a comment. Measured on this water case: 5
+    calls over the macro-iteration.
     """
-    import inspect
-
-    from vibeqc.semiempirical.methods import msindo_cosmo as msindo
+    vq = pytest.importorskip("vibeqc")
     from vibeqc.solvation import driver
 
-    assert "reaction_field_step" in inspect.getsource(driver.run_cpcm_scf)
-    assert "reaction_field_step" in inspect.getsource(
-        msindo._cosmo_reaction_field
-    )
-    assert isinstance(
-        msindo._cosmo_reaction_field.__doc__, str
-    ) and "ReactionField" in msindo._cosmo_reaction_field.__doc__
+    box = {"calls": 0}
+    monkeypatch.setattr(driver, "reaction_field_step", _counting(driver.reaction_field_step, box))
+
+    mol = vq.Molecule([vq.Atom(z, list(xyz)) for z, xyz in _WATER_BOHR], 0, 1)
+    sol = vq.run_cpcm_scf(mol, vq.BasisSet(mol, "sto-3g"), method="rhf", solvent="water")
+
+    assert sol.converged
+    assert box["calls"] >= 1, "run_cpcm_scf no longer reaches reaction_field_step"
+
+
+def test_the_msindo_reference_path_calls_the_shared_step_and_agrees_with_native(
+    monkeypatch,
+):
+    """MSINDO's reference branch must stay live, and land where the kernel lands.
+
+    The shipped route never calls the shared step -- its native kernel returns
+    first -- so the Python branch holding it is exercised only when the kernel
+    is unavailable. Nothing observed that branch at runtime, so it could rot into
+    dead code while the text check stayed green. With the kernel disabled the
+    run must reach the step, and the converged energy must match the native
+    run's: the parity test pins one density at ``1e-12``, this pins the whole
+    self-consistent answer. Measured: the two paths agree to ``6.7e-17`` in
+    every reaction-field quantity across all 13 SCF iterations of this run.
+    """
+    pytest.importorskip("vibeqc")
+    from vibeqc.semiempirical.methods import msindo_cosmo as msindo
+
+    if msindo._cpp_cosmo_reaction_kernel() is None:
+        pytest.skip("native MSINDO COSMO kernel not built; nothing to compare")
+    Z = [z for z, _ in _WATER_ANG]
+    xyz = [list(c) for _, c in _WATER_ANG]
+    native = msindo.msindo_cosmo(Z, xyz, epsilon=78.39)
+
+    box = {"calls": 0}
+    monkeypatch.setattr(msindo, "_cpp_cosmo_reaction_kernel", lambda: None)
+    monkeypatch.setattr(msindo, "reaction_field_step", _counting(msindo.reaction_field_step, box))
+    reference = msindo.msindo_cosmo(Z, xyz, epsilon=78.39)
+
+    assert box["calls"] >= 1, "MSINDO's reference branch no longer reaches the shared step"
+    assert reference.total_energy == pytest.approx(native.total_energy, abs=1e-10)
+    assert reference.e_pol == pytest.approx(native.e_pol, abs=1e-10)

@@ -117,7 +117,7 @@ for func in ["B3LYP/G", "PBE0", "wB97X-D"]:
 | `6-31G(d)`, `6-31G(d,p)`, `6-31+G(d,p)` | `basis="6-31g*"`, `"6-31g**"`, `"6-31+g**"` |
 | `cc-pVDZ`, `cc-pVTZ` | `basis="cc-pvdz"`, `"cc-pvtz"` (case-insensitive) |
 | `Def2TZVP` / `Def2TZVPP` | `basis="def2-tzvp"` / `"def2-tzvpp"` |
-| `GEN` (general basis from input block) | Drop the per-element basis into `basis_library/custom/`; see [basis_sets](basis_sets.md). |
+| `GEN` (general basis from input block) | Convert the per-element basis into a QVF-Basis record (`vibe-qc-basis convert`); see [basis_sets](basis_sets.md). |
 | `Pseudo=Read` (read ECP from input block) | `opts.ecp_centers = [ECPCenter(Z=..., xyz=...)]` + `opts.ecp_library = "lanl2dz"` / `"ecp46mdf"` / ... See [ecp](ecp.md). |
 | `EmpiricalDispersion=GD3` | `dispersion="d3"` |
 | `EmpiricalDispersion=GD3BJ` | `dispersion="d3bj"` |
@@ -197,9 +197,10 @@ S   1 1.00
 ```
 
 vibe-qc's CRYSTAL-format parser at `vibeqc.basis_crystal` handles
-the equivalent per-element format. Drop the file under
-`basis_library/custom/my_basis.g94` and re-run
-`./scripts/setup_basis_library.sh`; then load it by name:
+the equivalent per-element format. Convert the file into a record
+(`vibe-qc-basis convert my_basis.g94 -o my_basis.qvf.json --kind hand-written`),
+put its `.g94` rendering under a directory `LIBINT_DATA_PATH` names, and
+load it by name:
 
 ```python
 basis = vq.BasisSet(mol, "my_basis")

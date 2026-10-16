@@ -1,0 +1,40 @@
+# Collect the include directories that vendored dependencies
+# (third_party/<dep>/install) contribute through the given imported targets,
+# following each target's INTERFACE_LINK_LIBRARIES. Directories outside
+# third_party/ and generator expressions are skipped: those are what the
+# vendored headers must be searched before, not part of the vendored set.
+# The order of the targets is kept, and each directory is listed once.
+function(vibeqc_vendored_include_directories out_var)
+    set(_root "${CMAKE_SOURCE_DIR}/third_party/")
+    set(_dirs "")
+    set(_seen "")
+    set(_queue ${ARGN})
+    list(LENGTH _queue _pending)
+    while(_pending GREATER 0)
+        list(POP_FRONT _queue _target)
+        if(TARGET "${_target}" AND NOT "${_target}" IN_LIST _seen)
+            list(APPEND _seen "${_target}")
+            # An unset property reads as <var>-NOTFOUND; skip it as empty.
+            get_target_property(_includes "${_target}" INTERFACE_INCLUDE_DIRECTORIES)
+            if(_includes)
+                foreach(_dir IN LISTS _includes)
+                    string(FIND "${_dir}" "${_root}" _at)
+                    if(_at EQUAL 0 AND NOT _dir MATCHES "\\$<")
+                        list(APPEND _dirs "${_dir}")
+                    endif()
+                endforeach()
+            endif()
+            get_target_property(_links "${_target}" INTERFACE_LINK_LIBRARIES)
+            if(_links)
+                foreach(_link IN LISTS _links)
+                    if(NOT _link MATCHES "\\$<")
+                        list(APPEND _queue "${_link}")
+                    endif()
+                endforeach()
+            endif()
+        endif()
+        list(LENGTH _queue _pending)
+    endwhile()
+    list(REMOVE_DUPLICATES _dirs)
+    set(${out_var} "${_dirs}" PARENT_SCOPE)
+endfunction()

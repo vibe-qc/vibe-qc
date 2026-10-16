@@ -10,7 +10,7 @@ for the canonical example. PySCF mirror in
 same energy to sub-µHa.
 
 Run::
-    .venv/bin/python examples/periodic/Al2O3-corundum-RHF-sto3g/Al2O3-corundum-RHF-sto3g.py
+    .venv/bin/python examples/periodic/Al2O3-corundum/Al2O3-corundum-RHF-sto3g.py
 
 Produces (sibling files, sharing the script's stem):
     {stem}.out      — text log

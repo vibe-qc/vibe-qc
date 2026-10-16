@@ -7,7 +7,7 @@ exchange ``K``, an analytic reciprocal-space long-range ``J_LR`` with a
 neutralising background, and -- under the Ewald exchange split -- the k-space
 ``K_LR`` + G=0/Madelung correction. This module hosts that assembly once.
 
-Design (see ``handovers/HANDOVER_BIPOLE_VARIANT_UNIFICATION.md`` Sec. M2):
+Design:
 
 * :func:`build_bipole_restricted_fock` serves RHF (``alpha_hf=1.0``) and RKS
   (``alpha_hf`` = the functional's HF-exchange fraction). It reproduces the
@@ -23,7 +23,7 @@ Design (see ``handovers/HANDOVER_BIPOLE_VARIANT_UNIFICATION.md`` Sec. M2):
   pieces, plus the component energies.
 
 The gauge invariants the builder must preserve are documented inline at the
-RHF driver and in the handover: one shared Ewald (alpha, K_max) envelope for
+RHF driver: one shared Ewald (alpha, K_max) envelope for
 ``V_ne``/``E_nn``/``J_LR``; Gamma-only density locality applied by the driver
 before each rebuild; the energy-component closure
 ``e_2e = e_j_short_range + e_j_long_range + e_exchange``.
@@ -105,6 +105,19 @@ class BipoleFockContext:
     symmetry_reconstruction_map: Any = None  # SymmetryFockReconstructionMap for far-field
     output_cell_farming_task_kind: Optional[str] = None
     output_cell_farming_strategy: str = "cyclic"
+    resolved_domain: Any = None
+    sr_workspace: Any = None
+
+
+def _sr_workspace_for(ctx):
+    """Own geometry-only native preparation for the lifetime of this Fock context."""
+    if getattr(ctx, "sr_workspace", None) is None:
+        from . import _vibeqc_core
+
+        factory = getattr(_vibeqc_core, "PeriodicJKWorkspace", None)
+        if factory is not None:
+            ctx.sr_workspace = factory()
+    return getattr(ctx, "sr_workspace", None)
 
 
 @dataclass(frozen=True)
@@ -185,6 +198,33 @@ class BipoleScreenedExchangeExecution:
         object.__setattr__(self, "omega_screen_bohr_inv", omega)
 
 
+@dataclass(frozen=True)
+class BipoleChiScreenedExchangeExecution(BipoleScreenedExchangeExecution):
+    """Executed signed erfc arm, available only on the explicit chi route.
+
+    CAM/LRC exchange uses a negative erfc coefficient in the canonical
+    full-plus-erfc representation. This attestation deliberately leaves the
+    legacy HSE-only execution contract unchanged.
+    """
+
+    schema: str = field(
+        init=False, default="vibeqc.chi.screened-exchange-execution/v1",
+    )
+
+    def __post_init__(self) -> None:
+        if isinstance(self.c_sr, bool) or isinstance(self.omega_screen_bohr_inv, bool):
+            raise ValueError("chi screened exchange requires finite nonzero c_sr and positive omega")
+        try:
+            c_sr = float(self.c_sr)
+            omega = float(self.omega_screen_bohr_inv)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError("chi screened exchange requires finite nonzero c_sr and positive omega") from exc
+        if not np.isfinite(c_sr) or c_sr == 0.0 or not np.isfinite(omega) or omega <= 0.0:
+            raise ValueError("chi screened exchange requires finite nonzero c_sr and positive omega")
+        object.__setattr__(self, "c_sr", c_sr)
+        object.__setattr__(self, "omega_screen_bohr_inv", omega)
+
+
 @dataclass
 class BipoleRestrictedFockBuild:
     """Restricted (closed-shell) BIPOLE two-electron Fock build.
@@ -216,6 +256,9 @@ class BipoleRestrictedFockBuild:
     output_cell_farming_execution: Optional[
         BipoleOutputCellFarmingExecution
     ] = None
+
+    # Executed physical-kernel energies; erfc includes its finite zero mode.
+    e_hf_exchange_components: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -250,8 +293,13 @@ class BipoleUnrestrictedFockBuild:
         BipoleScreenedExchangeExecution
     ] = None
 
+    # Executed physical-kernel energies; erfc includes its finite zero mode.
+    e_hf_exchange_components: Dict[str, float] = field(default_factory=dict)
 
-def split_k_density_list(ctx: BipoleFockContext, density: LatticeMatrixSet) -> List[np.ndarray]:
+
+def split_k_density_list(
+    ctx: BipoleFockContext, density: LatticeMatrixSet, *, retained_density_k=None,
+) -> List[np.ndarray]:
     """Per-k density matrices for the Ewald-exchange-split paths.
 
     Exact for every density representation the SCF loop produces (orbital
@@ -260,6 +308,33 @@ def split_k_density_list(ctx: BipoleFockContext, density: LatticeMatrixSet) -> L
     block; at multi-k the BvK-torus fold inverts the Bloch transform
     exactly (see ``bvk_torus_density_matrices``).
     """
+    if retained_density_k is not None:
+        # The chi route retains the physical density through damping and
+        # terminal rebuilds. Recovering it from a selected real-space support
+        # can alias finite-group characters when that support omits residues.
+        matrices = np.asarray(retained_density_k, dtype=complex)
+        expected = (ctx.n_k, int(ctx.basis.nbasis), int(ctx.basis.nbasis))
+        if matrices.shape != expected or not np.all(np.isfinite(matrices)):
+            raise ValueError("chi exchange requires finite per-k density matrices")
+        if not np.allclose(matrices, matrices.conj().transpose(0, 2, 1), atol=1e-10, rtol=0.0):
+            raise ValueError("chi exchange requires Hermitian per-k density matrices")
+        fractional = (np.asarray(ctx.k_points) @ np.asarray(ctx.system.lattice)
+                      / (2.0 * np.pi))
+        weights = np.asarray(ctx.weights)
+        for i, point in enumerate(fractional):
+            sums = fractional + point
+            partners = np.flatnonzero(
+                np.max(np.abs(sums - np.rint(sums)), axis=1) < 1e-8
+            )
+            if (len(partners) != 1
+                    or not np.isclose(weights[i], weights[partners[0]], atol=1e-12, rtol=0.0)
+                    or not np.allclose(matrices[i], matrices[partners[0]].conj(),
+                                       atol=1e-8, rtol=1e-10)):
+                raise NotImplementedError(
+                    "direct chi exchange requires a complete "
+                    "time-reversal-compatible Bloch density"
+                )
+        return [matrix for matrix in matrices]
     if ctx.n_k == 1:
         return [home_cell_block(density).astype(complex)]
     assert ctx.bvk_mesh is not None
@@ -319,10 +394,22 @@ def unrestricted_density_from_coeffs(
     return out
 
 
+def _can_pair_sr(ctx) -> bool:
+    from . import _vibeqc_core as core
+
+    return (hasattr(core, "build_jk_2e_real_space_domains_pair")
+            and getattr(ctx, "rep_cell_indices", None) is None
+            and not getattr(getattr(ctx, "fock_sym_map", None), "pair_resolved", False)
+            and getattr(ctx, "output_cell_farming_task_kind", None) is None)
+
+
 def _screened_exchange_lattice(
     ctx: BipoleFockContext,
     density: LatticeMatrixSet,
     omega_screen: float,
+    *,
+    _chi_exchange: bool = False,
+    companion_density=None,
 ):
     """Direct real-space erfc(omega_screen*r)/r exchange lattice matrix.
 
@@ -331,13 +418,33 @@ def _screened_exchange_lattice(
     the same resolved padded domain as the erfc J build. Keeping those
     domains aligned is required because a translated ket pair can remain
     inside the smeared erfc range even when its output block is inside the
-    smaller electronic cutoff.
+    smaller electronic cutoff. Under physical pair support
+    (``pair_complete_1e``, the ab initio default since #316) that padded
+    radius is the pair-interaction reach, which bounds the exchange
+    pair-pair distance as well: a Gamma-only (Born-von-Karman-periodic)
+    density then gains its image-shell screened exchange out to the
+    resolved precision, where the historical index ball kept K on the
+    electronic-cutoff cell list. The multi-k Ewald drivers sum the same
+    K_erfc only to ``cutoff_bohr`` (#501).
     Deliberately NOT routed through the multipole/bipolar far-field
     (CRYSTAL disables the bipolar expansion for RSH exchange) and
     carries NO K_LR / Madelung / exxdiv seam: the erfc kernel's G -> 0
     limit is the finite pi/omega_screen^2, which the absolutely-
     convergent direct sum already contains correctly.
     """
+    from . import _vibeqc_core as core
+
+    # Older native runtimes retain the combined J/K traversal. Selection is
+    # an optimization only; never infer support from a caught build error.
+    k_only = bool(getattr(core, "periodic_jk_coulomb_selection", False))
+    selection = {"compute_coulomb": False} if k_only else {}
+    if companion_density is not None:
+        if not _can_pair_sr(ctx):
+            raise ValueError("paired screened exchange requires the unreduced serial route")
+        selection["companion_density"] = companion_density
+    if (_chi_exchange and ctx.fock_sym_map is not None
+            and getattr(ctx.fock_sym_map, "pair_resolved", False)):
+        density = _pair_resolved_density_for_sr(ctx.basis, ctx.fock_sym_map, density)
     if ctx.rep_cell_indices is not None:
         from .bipole_symmetry_fock import build_jk_reduced_symmetrized
 
@@ -352,6 +459,8 @@ def _screened_exchange_lattice(
             internal_extent_bohr=ctx.sr_image_extent,
             output_cell_farming_task_kind=ctx.output_cell_farming_task_kind,
             output_cell_farming_strategy=ctx.output_cell_farming_strategy,
+            workspace=_sr_workspace_for(ctx),
+            **selection,
         )
     elif ctx.sr_image_extent is not None:
         if ctx.exact_zone_bohr is not None:
@@ -369,12 +478,25 @@ def _screened_exchange_lattice(
             float(ctx.sr_image_extent),
             output_cell_farming_task_kind=ctx.output_cell_farming_task_kind,
             output_cell_farming_strategy=ctx.output_cell_farming_strategy,
+            workspace=_sr_workspace_for(ctx),
+            **selection,
+        )
+    elif k_only or companion_density is not None:
+        cells = _sr_internal_cells(
+            ctx.basis, ctx.system, ctx.lat_opts_2e,
+            None if ctx.lat_opts_2e.pair_complete_1e else ctx.lat_opts_2e.cutoff_bohr,
+        )
+        jk = _build_jk_domains_output_cells_mpi(
+            ctx.basis, ctx.system, ctx.lat_opts_2e, density, cells,
+            list(range(len(cells))), omega=float(omega_screen),
+            workspace=_sr_workspace_for(ctx), compute_coulomb=False,
+            **({"companion_density": companion_density} if companion_density is not None else {}),
         )
     else:
         jk = build_jk_2e_real_space(
             ctx.basis, ctx.system, ctx.lat_opts_2e, density, float(omega_screen)
         )
-    return jk.K
+    return jk.K if companion_density is None else tuple(part.K for part in jk)
 
 
 def _screened_k_blocks_for_cells(K_lat, cells, c_sr: float):
@@ -408,36 +530,52 @@ def _add_screened_exchange_restricted(
     density: LatticeMatrixSet,
     base: BipoleRestrictedFockBuild,
     exx,
+    *,
+    _chi_exchange: bool = False,
 ) -> BipoleRestrictedFockBuild:
-    """Fold ``- c_sr/2 * K_erfc(omega_screen)`` into a J-only build."""
-    K_lat = _screened_exchange_lattice(ctx, density, exx.omega_screen)
+    """Add ``-c_sr/2 K_erfc`` to the base J plus full-exchange build."""
+    screened_kwargs = {"_chi_exchange": True} if _chi_exchange else {}
+    K_lat = _screened_exchange_lattice(ctx, density, exx.omega_screen, **screened_kwargs)
     f2e = base.f2e_real
     n_cells = len(f2e.cells)
     K_blocks = _screened_k_blocks_for_cells(K_lat, f2e.cells, exx.c_sr)
+    # Native .blocks converts the complete vector on every access.
+    source_blocks = f2e.blocks
     for c in range(n_cells):
         f2e.set_block(
-            c, np.asarray(f2e.blocks[c], dtype=float) - 0.5 * K_blocks[c]
+            c, np.asarray(source_blocks[c], dtype=float) - 0.5 * K_blocks[c]
         )
     # Re-apply the SYM3b Fock symmetrisation after the K fold (the
     # base build's blocks were symmetrised before we touched them).
-    if ctx.fock_sym_map is not None:
+    if (ctx.fock_sym_map is not None
+            and getattr(ctx.fock_sym_map, "physical_plan", None) is None):
         from .bipole_symmetry_fock import symmetrize_fock_blocks
 
         f2e_blocks = [
-            np.asarray(f2e.blocks[c], dtype=float) for c in range(n_cells)
+            np.asarray(block, dtype=float) for block in f2e.blocks
         ]
         symmetrize_fock_blocks(
             f2e_blocks, ctx.fock_sym_map, cells=list(f2e.cells)
         )
         for c in range(n_cells):
             f2e.set_block(c, f2e_blocks[c])
-    base.e_exchange = -0.25 * _lattice_contract_blocks(
+    erfc_energy = -0.25 * _lattice_contract_blocks(
         density,
         f2e.cells,
         K_blocks,
         operator_name="K_erfc",
     )
-    base.screened_exchange_execution = BipoleScreenedExchangeExecution(
+    # The base is the executed full-only arm. Record its physical zero
+    # term before adding the independently contracted erfc contribution.
+    base.e_hf_exchange_components = {
+        "full_nonzero": float(base.e_exchange or 0.0) - float(base.e_exchange_finite_size or 0.0),
+        "full_zero": float(base.e_exchange_finite_size or 0.0),
+        "erfc": float(erfc_energy),
+    }
+    base.e_exchange = (sum(base.e_hf_exchange_components.values()) if _chi_exchange
+                       else float(base.e_exchange or 0.0) + erfc_energy)
+    execution_type = BipoleChiScreenedExchangeExecution if _chi_exchange else BipoleScreenedExchangeExecution
+    base.screened_exchange_execution = execution_type(
         c_sr=exx.c_sr,
         omega_screen_bohr_inv=exx.omega_screen,
     )
@@ -446,24 +584,14 @@ def _add_screened_exchange_restricted(
 
 def _sr_padded_lat_opts(lat_opts_2e, image_extent: float):
     """Preserve physical AO-pair support and set the internal interaction reach."""
-    from ._vibeqc_core import LatticeSumOptions
+    from .pbc_bipole_common import _lattice_options_passthrough
 
-    lp = LatticeSumOptions()
+    lp = _lattice_options_passthrough(lat_opts_2e)
     physical_pairs = getattr(lat_opts_2e, "pair_complete_1e", False)
     lp.cutoff_bohr = lat_opts_2e.cutoff_bohr if physical_pairs else float(image_extent)
     if physical_pairs:
         lp.eri_interaction_cutoff_bohr = float(image_extent)
-    lp.nuclear_cutoff_bohr = lat_opts_2e.nuclear_cutoff_bohr
     lp.coulomb_method = lat_opts_2e.coulomb_method
-    lp.schwarz_threshold = lat_opts_2e.schwarz_threshold
-    lp.schwarz_threshold_forces = lat_opts_2e.schwarz_threshold_forces
-    lp.screening_exchange_threshold = lat_opts_2e.screening_exchange_threshold
-    lp.screening_overlap_threshold = lat_opts_2e.screening_overlap_threshold
-    lp.becke_image_radius_bohr = lat_opts_2e.becke_image_radius_bohr
-    lp.slab_ewald_alpha = lat_opts_2e.slab_ewald_alpha
-    lp.sr_range_screening = lat_opts_2e.sr_range_screening
-    lp.sr_sparse_traversal = lat_opts_2e.sr_sparse_traversal
-    lp.pair_complete_1e = getattr(lat_opts_2e, "pair_complete_1e", False)
     return lp
 
 
@@ -490,6 +618,42 @@ def _sr_internal_cells(basis, system, lattice_opts, image_extent):
     return list(direct_lattice_cells(system, extent))
 
 
+def _density_on_cache_cells(density, cache, system):
+    """The density on the Ewald long-range J cache's own cell list (#503).
+
+    Without a precomputed ``rho_hat`` the long-range J sums the per-cell
+    density over the cache's cells and refuses a different list. The KS
+    drivers widen their density list by the exact XC difference cells
+    (#434, 60de9754) while the cache stays on the operator list, so on the
+    legacy gauge every first-cycle, damped or mixed density was refused.
+    Hand the J kernel exactly the operator cells, which is the historical
+    operator before that widening. Returns ``density`` itself when the two
+    lists already coincide.
+    """
+    from ._vibeqc_core import make_lattice_matrix_set as _make_lms
+
+    indices = np.rint(np.linalg.solve(
+        np.asarray(system.lattice, dtype=float),
+        np.asarray(cache.cells_r_cart, dtype=float).T,
+    )).astype(int).T
+    keys = [tuple(int(v) for v in index) for index in indices]
+    density_keys = [_cell_key(cell) for cell in density.cells]
+    if density_keys == keys:
+        return density
+    by_key = dict(zip(density_keys, zip(density.cells, density.blocks)))
+    missing = [key for key in keys if key not in by_key]
+    if missing:
+        raise ValueError(
+            "long-range J: the density list lacks cache cell(s) "
+            f"{missing[:4]}; it must cover the operator cell list"
+        )
+    return _make_lms(
+        int(density.nbf),
+        [by_key[key][0] for key in keys],
+        [np.asarray(by_key[key][1], dtype=float) for key in keys],
+    )
+
+
 def _reciprocal_blocks_on_output(blocks, cache, system, output_cells):
     """Align reciprocal pair blocks with an exchange output enclosure."""
     indices = np.rint(np.linalg.solve(
@@ -513,8 +677,11 @@ def _build_jk_domains_output_cells_mpi(
     *,
     omega: float,
     compute_exchange: bool = True,
+    compute_coulomb: bool = True,
     task_kind: Optional[str] = None,
     strategy: str = "cyclic",
+    workspace=None,
+    companion_density=None,
 ):
     """Build complete direct-ERI output blocks, optionally farmed by MPI.
 
@@ -539,6 +706,16 @@ def _build_jk_domains_output_cells_mpi(
 
     from ._vibeqc_core import build_jk_2e_real_space_domains
 
+    if workspace is not None or not compute_coulomb:
+        from functools import partial
+
+        native_options = {"workspace": workspace} if workspace is not None else {}
+        if not compute_coulomb:
+            native_options["compute_coulomb"] = False
+        build_jk_2e_real_space_domains = partial(
+            build_jk_2e_real_space_domains, **native_options,
+        )
+
     cells = list(cells)
     requested = tuple(int(index) for index in output_indices)
     if any(index < 0 or index >= len(cells) for index in requested):
@@ -557,6 +734,25 @@ def _build_jk_domains_output_cells_mpi(
             "_build_jk_domains_output_cells_mpi: output_shell_masks must "
             "be empty or parallel to output_indices"
         )
+
+    if companion_density is not None:
+        if task_kind is not None:
+            raise ValueError("paired density traversal requires serial output-cell ownership")
+        from ._vibeqc_core import build_jk_2e_real_space_domains_pair
+
+        if requested:
+            return build_jk_2e_real_space_domains_pair(
+                basis, system, opts, density, companion_density, cells,
+                list(requested), masks, float(omega), bool(compute_exchange),
+                workspace=workspace, compute_coulomb=compute_coulomb,
+            )
+        def empty_result():
+            zeros = [np.zeros((int(basis.nbasis), int(basis.nbasis))) for _ in cells]
+            return SimpleNamespace(
+                J=make_lattice_matrix_set(int(basis.nbasis), cells, zeros),
+                K=make_lattice_matrix_set(int(basis.nbasis), cells, zeros) if compute_exchange else None,
+            )
+        return empty_result(), empty_result()
 
     if task_kind is None and requested:
         return build_jk_2e_real_space_domains(
@@ -633,14 +829,17 @@ def _build_jk_domains_output_cells_mpi(
             float(omega),
             bool(compute_exchange),
         )
+        # Export each native vector once, not once per owned output cell.
+        local_j_blocks = local_jk.J.blocks
+        local_k_blocks = local_jk.K.blocks if compute_exchange else None
         for output_index in local_output_indices:
             j_block = np.array(
-                local_jk.J.blocks[output_index], dtype=float, copy=True
+                local_j_blocks[output_index], dtype=float, copy=True
             )
             k_block = None
             if compute_exchange:
                 k_block = np.array(
-                    local_jk.K.blocks[output_index], dtype=float, copy=True
+                    local_k_blocks[output_index], dtype=float, copy=True
                 )
             local_values.append((j_block, k_block))
 
@@ -681,13 +880,16 @@ def _sr_image_padded_jk(
     image_extent: float,
     *,
     compute_exchange: bool = True,
+    compute_coulomb: bool = True,
     exact_zone_bohr: Optional[float] = None,
     output_cell_farming_task_kind: Optional[str] = None,
     output_cell_farming_strategy: str = "cyclic",
+    workspace=None,
+    companion_density=None,
 ):
     """SR erfc J/K with the ket-image sum extended past the cutoff (M4a).
 
-    The 2026-07-12 split-gap triage (HANDOVER_BIPOLE_PRODUCTION.md
+    The 2026-07-12 split-gap triage (the original investigation
     Sec. 0a) proved the (c_lam, c_sig) ket-image sum in
     ``build_jk_2e_real_space_impl`` must reach the *smeared* erfc kernel
     range (``erf(sqrt(m) r) - erf(sqrt(m_w) r)`` decay,
@@ -707,7 +909,9 @@ def _sr_image_padded_jk(
     support are skipped by the builder exactly as before.
     ``compute_exchange=False`` skips the K contraction entirely
     (pure-functional padded J; ``K`` comes back ``None`` -- pre-M4b
-    this path computed and discarded a full padded K). The padded
+    this path computed and discarded a full padded K).
+    ``compute_coulomb=False`` skips Coulomb work for dedicated screened
+    exchange, returning zero J blocks on the unchanged output template. The padded
     traversal honors ``lat_opts_2e.sr_range_screening`` (charge-pair
     Schwarz screening with angular and contraction envelopes). The native
     flag is OFF by default; the production precision policy enables it.
@@ -789,8 +993,11 @@ def _sr_image_padded_jk(
         output_masks,
         omega=float(omega),
         compute_exchange=compute_exchange,
+        compute_coulomb=compute_coulomb,
         task_kind=output_cell_farming_task_kind,
         strategy=output_cell_farming_strategy,
+        workspace=workspace,
+        **({"companion_density": companion_density} if companion_density is not None else {}),
     )
 
     nbf = int(basis.nbasis)
@@ -799,50 +1006,55 @@ def _sr_image_padded_jk(
         blocks = [
             np.zeros((nbf, nbf), dtype=float) for _ in range(len(orig_cells))
         ]
+        # Each pybind .blocks read exports the whole padded domain.
+        source_blocks = src.blocks if output_indices else ()
         for pos, pad_i in zip(zone_positions, output_indices):
-            blocks[pos] = np.asarray(src.blocks[pad_i], dtype=float).copy()
+            blocks[pos] = np.asarray(source_blocks[pad_i], dtype=float).copy()
         return blocks
 
-    if lat_opts_2e.pair_complete_1e:
-        from ._vibeqc_core import make_lattice_matrix_set
+    def project(jk):
+        if lat_opts_2e.pair_complete_1e:
+            from ._vibeqc_core import make_lattice_matrix_set
 
-        return SimpleNamespace(
-            J=make_lattice_matrix_set(nbf, orig_cells, _blocks_on_template(jk.J)),
-            K=(make_lattice_matrix_set(nbf, orig_cells, _blocks_on_template(jk.K))
-               if compute_exchange else None),
-            output_cell_farming_execution=getattr(jk, "output_cell_farming_execution", None),
-        )
+            return SimpleNamespace(
+                J=make_lattice_matrix_set(nbf, orig_cells, _blocks_on_template(jk.J)),
+                K=(make_lattice_matrix_set(nbf, orig_cells, _blocks_on_template(jk.K))
+                   if compute_exchange else None),
+                output_cell_farming_execution=getattr(jk, "output_cell_farming_execution", None),
+            )
 
-    # The template is compute_overlap_lattice's cell list, which under
-    # pair_complete_1e (#429) extends past the plain |g| ball this
-    # two-electron build enumerates (cpp/include/vibeqc/lattice_pair_cells.hpp);
-    # J/K are zero out there by their own truncation. Identical lists with
-    # the switch off, where fill_missing never fires.
-    J = _copy_lattice_with_blocks(
-        basis,
-        system,
-        lat_opts_2e,
-        orig_cells,
-        _blocks_on_template(jk.J),
-        fill_missing=True,
-    )
-    K = None
-    if compute_exchange:
-        K = _copy_lattice_with_blocks(
+        # The template is compute_overlap_lattice's cell list, which under
+        # pair_complete_1e (#429) extends past the plain |g| ball this
+        # two-electron build enumerates (cpp/include/vibeqc/lattice_pair_cells.hpp);
+        # J/K are zero out there by their own truncation. Identical lists with
+        # the switch off, where fill_missing never fires.
+        J = _copy_lattice_with_blocks(
             basis,
             system,
             lat_opts_2e,
             orig_cells,
-            _blocks_on_template(jk.K),
+            _blocks_on_template(jk.J),
             fill_missing=True,
         )
-    return SimpleNamespace(
-        J=J,
-        K=K,
-        output_cell_farming_execution=getattr(
-            jk, "output_cell_farming_execution", None
-        ),
-    )
+        K = None
+        if compute_exchange:
+            K = _copy_lattice_with_blocks(
+                basis,
+                system,
+                lat_opts_2e,
+                orig_cells,
+                _blocks_on_template(jk.K),
+                fill_missing=True,
+            )
+        return SimpleNamespace(
+            J=J,
+            K=K,
+            output_cell_farming_execution=getattr(
+                jk, "output_cell_farming_execution", None
+            ),
+        )
+
+    return project(jk) if companion_density is None else tuple(project(part) for part in jk)
 
 
 def build_bipole_restricted_fock(
@@ -852,6 +1064,8 @@ def build_bipole_restricted_fock(
     coeffs_for_rho: Optional[Sequence[np.ndarray]],
     alpha_hf: float = 1.0,
     exchange_assembly=None,
+    _chi_exchange: bool = False,
+    _chi_density_k=None,
     use_incremental: bool = True,
     reseed_incremental: bool = False,
 ) -> BipoleRestrictedFockBuild:
@@ -872,22 +1086,25 @@ def build_bipole_restricted_fock(
 
     ``exchange_assembly`` (a
     :class:`vibeqc.periodic_screened_exchange.PeriodicExchangeAssembly`)
-    generalises the exchange to the CAM form for screened hybrids
-    (hse06): the driver passes ``alpha_hf = exchange_assembly.c_full``
-    (0 for HSE-type, so none of the full-range split machinery --
-    xi_M, K_LR, K_corr -- engages) and the erfc short-range K is added
-    here on top of the J-only build. The screened K build is NOT
-    incremental (full rebuild per call).
+    adds the physical erfc kernel to the full-range exchange build.
+    The private ``_chi_exchange`` opt-in permits mixed CAM/LRC assemblies;
+    ordinary periodic callers retain the HSE-only screened contract.
+    Only ``c_full`` scales the Ewald split and Madelung correction.
+    The physical erfc arm contains its finite zero mode in the direct sum,
+    adds no Madelung term, and is rebuilt on every call. The chi caller
+    supplies its authoritative per-k density through ``_chi_density_k``.
 
     The per-k Fock assembly (Bloch sum + Hcore + V_xc + K_corr) stays in
     the caller; this returns the real-space ``f2e_real`` and ``k_corr_per_k``.
     """
+    if ctx.resolved_domain is not None:
+        ctx.resolved_domain.require_fock_context(ctx)
     if exchange_assembly is not None and exchange_assembly.is_screened:
-        if float(exchange_assembly.c_full) != 0.0 or float(alpha_hf) != 0.0:
-            # resolve_periodic_exchange fails closed on mixed
-            # (full-range + screened) assemblies before any driver
-            # reaches this point; a nonzero alpha_hf here would
-            # double-count the full-range arm.
+        if not _chi_exchange and (
+            float(exchange_assembly.c_full) != 0.0 or float(alpha_hf) != 0.0
+        ):
+            # Mixed CAM/LRC assemblies belong only to the explicit chi
+            # route. The established periodic resolver stays fail-closed.
             raise NotImplementedError(
                 "build_bipole_restricted_fock: screened exchange with a "
                 "nonzero full-range arm is not supported (got c_full = "
@@ -926,11 +1143,15 @@ def build_bipole_restricted_fock(
             base_ctx,
             density,
             coeffs_for_rho=coeffs_for_rho,
-            alpha_hf=0.0,
+            alpha_hf=float(exchange_assembly.c_full),
+            _chi_exchange=_chi_exchange,
+            _chi_density_k=_chi_density_k,
             use_incremental=use_incremental,
+            reseed_incremental=reseed_incremental,
         )
         return _add_screened_exchange_restricted(
-            base_ctx, density, base, exchange_assembly
+            base_ctx, density, base, exchange_assembly,
+            _chi_exchange=_chi_exchange,
         )
     if exchange_assembly is not None:
         alpha_hf = float(exchange_assembly.c_full)
@@ -995,7 +1216,7 @@ def build_bipole_restricted_fock(
         return jk
 
     def _split_k_density_list(d: LatticeMatrixSet) -> List[np.ndarray]:
-        return split_k_density_list(ctx, d)
+        return split_k_density_list(ctx, d, retained_density_k=_chi_density_k)
 
     def _density_matrices_from_coeffs(
         coeffs_per_k: Sequence[np.ndarray],
@@ -1066,6 +1287,7 @@ def build_bipole_restricted_fock(
                     jk = build_jk_reduced_symmetrized(
                         basis, system, lat_opts_2e, d,
                         float(omega_used), _fock_sym_map, _rep_cell_indices,
+                        compute_exchange=need_k,
                         internal_extent_bohr=ctx.sr_image_extent,
                         output_cell_farming_task_kind=(
                             ctx.output_cell_farming_task_kind
@@ -1073,6 +1295,7 @@ def build_bipole_restricted_fock(
                         output_cell_farming_strategy=(
                             ctx.output_cell_farming_strategy
                         ),
+                        workspace=_sr_workspace_for(ctx),
                     )
                     return _record_output_cell_farming(jk)
                 if _pair_mode:
@@ -1088,6 +1311,7 @@ def build_bipole_restricted_fock(
                         output_cell_farming_strategy=(
                             ctx.output_cell_farming_strategy
                         ),
+                        workspace=_sr_workspace_for(ctx),
                     )
                     return _record_output_cell_farming(jk)
                 if ctx.sr_image_extent is not None:
@@ -1101,6 +1325,7 @@ def build_bipole_restricted_fock(
                         output_cell_farming_strategy=(
                             ctx.output_cell_farming_strategy
                         ),
+                        workspace=_sr_workspace_for(ctx),
                     )
                     return _record_output_cell_farming(jk)
                 return build_jk_2e_real_space(
@@ -1153,6 +1378,7 @@ def build_bipole_restricted_fock(
                         output_cell_farming_strategy=(
                             ctx.output_cell_farming_strategy
                         ),
+                        workspace=_sr_workspace_for(ctx),
                     )
                     return _record_output_cell_farming(jk)
                 if ctx.sr_image_extent is not None:
@@ -1168,6 +1394,7 @@ def build_bipole_restricted_fock(
                         output_cell_farming_strategy=(
                             ctx.output_cell_farming_strategy
                         ),
+                        workspace=_sr_workspace_for(ctx),
                     )
                     return _record_output_cell_farming(jk)
                 return SimpleNamespace(
@@ -1230,6 +1457,7 @@ def build_bipole_restricted_fock(
                     output_cell_farming_strategy=(
                         ctx.output_cell_farming_strategy
                     ),
+                    workspace=_sr_workspace_for(ctx),
                 ).J
             else:
                 F_J_SR_lat = build_fock_2e_real_space(
@@ -1253,10 +1481,13 @@ def build_bipole_restricted_fock(
         cells_lr = F_J_SR_lat.cells
         F2e_direct_blocks = []
         K_full_blocks = []
+        # Convert each native block vector once, outside the cell loop.
+        j_sr_blocks = F_J_SR_lat.blocks
+        k_full_blocks = F_K_full_lat.blocks if F_K_full_lat is not None else None
         for c in range(len(cells_lr)):
-            j_sr = np.asarray(F_J_SR_lat.blocks[c], dtype=float)
-            if F_K_full_lat is not None:
-                k_full = np.asarray(F_K_full_lat.blocks[c], dtype=float)
+            j_sr = np.asarray(j_sr_blocks[c], dtype=float)
+            if k_full_blocks is not None:
+                k_full = np.asarray(k_full_blocks[c], dtype=float)
             else:
                 k_full = np.zeros_like(j_sr)
             K_full_blocks.append(k_full)
@@ -1275,7 +1506,7 @@ def build_bipole_restricted_fock(
             from .bipole_fock_ewald import compute_rho_hat_from_k_density
 
             rho_hat_for_LR = compute_rho_hat_from_k_density(
-                [home_cell_block(density).astype(complex)],
+                _split_k_density_list(density),
                 [np.zeros(3)],
                 [1.0],
                 j_lr_cache,
@@ -1317,8 +1548,12 @@ def build_bipole_restricted_fock(
                 )
         from .bipole_fock_ewald import compute_J_long_range_real_space_blocks
 
+        lr_density = (
+            density if rho_hat_for_LR is not None
+            else _density_on_cache_cells(density, j_lr_cache, system)
+        )
         F_LR_blocks = compute_J_long_range_real_space_blocks(
-            density,
+            lr_density,
             basis,
             system,
             omega_used,
@@ -1326,7 +1561,7 @@ def build_bipole_restricted_fock(
             cache=j_lr_cache,
             rho_hat=rho_hat_for_LR,
         )
-        if lat_opts_2e.pair_complete_1e:
+        if lat_opts_2e.pair_complete_1e or lr_density is not density:
             F_LR_blocks = _reciprocal_blocks_on_output(
                 F_LR_blocks, j_lr_cache, system, F_J_SR_lat.cells,
             )
@@ -1406,7 +1641,7 @@ def build_bipole_restricted_fock(
                 exchange_q0_gauge_constant,
             )
 
-            D_gamma = home_cell_block(density)
+            D_gamma = np.real(_split_k_density_list(density)[0])
             K_LR_gamma = compute_K_long_range_gamma(j_lr_cache, D_gamma)
             S_gamma = np.real(np.asarray(S_k_list[0]))
             c_g0 = exchange_q0_gauge_constant(
@@ -1448,7 +1683,7 @@ def build_bipole_restricted_fock(
             # constant at every k. References as in the Γ branch
             # (Gygi-Baldereschi 1986; Sundararaman-Arias 2013).
             from .bipole_fock_ewald import (
-                compute_K_long_range_at_k,
+                compute_K_long_range_mesh,
                 exchange_q0_gauge_constant,
             )
 
@@ -1456,16 +1691,13 @@ def build_bipole_restricted_fock(
             c_g0 = exchange_q0_gauge_constant(
                 _xi_madelung, omega_used, ewald_cell_volume, n_k
             )
+            K_LR_per_k = compute_K_long_range_mesh(
+                x_lr_cache, k_points, weights, [D_k_split],
+            )[0]
             K_corr_per_k = []
             e_exchange_finite_size = 0.0
             for k_idx in range(n_k):
-                K_LR_k = compute_K_long_range_at_k(
-                    x_lr_cache,
-                    np.asarray(k_points[k_idx], dtype=float),
-                    k_points,
-                    weights,
-                    D_k_split,
-                )
+                K_LR_k = K_LR_per_k[k_idx]
                 S_k_c = np.asarray(S_k_list[k_idx], dtype=complex)
                 D_k_c = D_k_split[k_idx]
                 sds_k = S_k_c @ D_k_c @ S_k_c
@@ -1739,20 +1971,26 @@ def build_bipole_restricted_fock(
     # association across different radial lists silently scrambles
     # blocks (direct_lattice_cells tie order is not stable across
     # radii) -- the key-based association is exact for both templates.
-    if _fock_sym_map is not None:
+    if (_fock_sym_map is not None
+            and getattr(_fock_sym_map, "physical_plan", None) is None):
         from .bipole_symmetry_fock import symmetrize_fock_blocks
 
-        f2e_blocks = [
-            np.asarray(f2e_real.blocks[c], dtype=float)
-            for c in range(len(f2e_real.cells))
-        ]
+        f2e_blocks = [np.asarray(block, dtype=float) for block in f2e_real.blocks]
         symmetrize_fock_blocks(
             f2e_blocks, _fock_sym_map, cells=list(f2e_real.cells)
         )
         for c in range(len(f2e_real.cells)):
             f2e_real.set_block(c, f2e_blocks[c])
 
+    exchange_components = {
+        "full_nonzero": float(e_exchange or 0.0) - float(e_exchange_finite_size or 0.0),
+        "full_zero": float(e_exchange_finite_size or 0.0),
+        "erfc": 0.0,
+    }
+    if _chi_exchange:
+        e_exchange = sum(exchange_components.values())
     return BipoleRestrictedFockBuild(
+        e_hf_exchange_components=exchange_components,
         f2e_real=f2e_real,
         k_corr_per_k=K_corr_per_k,
         e_j_short_range=e_j_short_range,
@@ -1766,49 +2004,122 @@ def build_bipole_restricted_fock(
     )
 
 
+def _same_lattice_density(left: LatticeMatrixSet, right: LatticeMatrixSet) -> bool:
+    """Exact ordered inputs, including cell geometry, for within-build reuse."""
+    if left.nbf != right.nbf:
+        return False
+    left_cells, right_cells = left.cells, right.cells
+    left_blocks, right_blocks = left.blocks, right.blocks
+    if not (len(left_cells) == len(right_cells) == len(left_blocks) == len(right_blocks)):
+        return False
+    return all(
+        np.array_equal(a.index, b.index)
+        and np.array_equal(a.r_cart, b.r_cart)
+        and np.array_equal(da, db)
+        for a, b, da, db in zip(left_cells, right_cells, left_blocks, right_blocks)
+    )
+
+
+def _reuse_paired_spin_jk(build_jk):
+    """Share identical inputs in one sequential pair of spin builds.
+
+    Compare the actual callback inputs, including incremental delta densities,
+    rather than assuming equal absolute spin densities imply equal histories.
+    Both calls must finish before their results are mutated. The second result
+    owns independent matrices because unrestricted assembly modifies J in place.
+    This closure must be recreated for every Fock build, never retained in a
+    context or accumulator. The density contraction is unchanged (Izmaylov et
+    al., JCP 125, 104103 (2006), Eq. (7), doi:10.1063/1.2347713).
+    """
+    from types import SimpleNamespace
+
+    previous_density = previous_jk = None
+
+    def build(density):
+        nonlocal previous_density, previous_jk
+        if previous_density is not None and _same_lattice_density(previous_density, density):
+            def copy_lattice(lattice):
+                if lattice is None:
+                    return None
+                return make_lattice_matrix_set(
+                    int(lattice.nbf), list(lattice.cells),
+                    [np.asarray(block, dtype=float).copy() for block in lattice.blocks],
+                )
+
+            return SimpleNamespace(
+                J=copy_lattice(previous_jk.J), K=copy_lattice(previous_jk.K),
+                output_cell_farming_execution=getattr(
+                    previous_jk, "output_cell_farming_execution", None),
+            )
+        previous_density = density
+        previous_jk = build_jk(density)
+        return previous_jk
+
+    return build
+
+
 def _add_screened_exchange_unrestricted(
     ctx: BipoleFockContext,
     density_alpha: LatticeMatrixSet,
     density_beta: LatticeMatrixSet,
     base: BipoleUnrestrictedFockBuild,
     exx,
+    *,
+    _chi_exchange: bool = False,
 ) -> BipoleUnrestrictedFockBuild:
-    """Fold per-spin ``- c_sr * K_erfc(D_s)`` into a J-only build.
+    """Add per-spin ``-c_sr K_erfc(D_s)`` to a J plus full-exchange build.
 
     Per-spin convention: ``F_s -= c_sr * K_s(D_s)`` (K built from the
     per-spin density; no 1/2), so
     ``e_exchange = -c_sr/2 * sum_s Tr[D_s K_s]`` -- same closure as the
     full-range per-spin fold.
     """
-    K_a_lat = _screened_exchange_lattice(ctx, density_alpha, exx.omega_screen)
-    K_b_lat = _screened_exchange_lattice(ctx, density_beta, exx.omega_screen)
+    screened_kwargs = {"_chi_exchange": True} if _chi_exchange else {}
+    # K is the density contraction of the same spin-independent erfc ERIs:
+    # Heyd et al. (2003), Sec. II.A, Eq. (6), doi:10.1063/1.1564060.
+    # See also Izmaylov et al. (2006), Eq. (7), doi:10.1063/1.2347713.
+    # Identical spin densities therefore need only one traversal. Require
+    # exact input equality, not a closed-shell label or a numerical tolerance;
+    # keep both spin folds/energy contractions and never retain K across builds.
+    same_density = _same_lattice_density(density_alpha, density_beta)
+    if not same_density and _can_pair_sr(ctx):
+        K_a_lat, K_b_lat = _screened_exchange_lattice(
+            ctx, density_alpha, exx.omega_screen,
+            companion_density=density_beta, **screened_kwargs,
+        )
+    else:
+        K_a_lat = _screened_exchange_lattice(ctx, density_alpha, exx.omega_screen, **screened_kwargs)
+        K_b_lat = (K_a_lat if same_density else _screened_exchange_lattice(
+            ctx, density_beta, exx.omega_screen, **screened_kwargs))
     f2e_a = base.f2e_alpha_real
     f2e_b = base.f2e_beta_real
     n_cells = len(f2e_a.cells)
     K_a_blocks = _screened_k_blocks_for_cells(K_a_lat, f2e_a.cells, exx.c_sr)
     K_b_blocks = _screened_k_blocks_for_cells(K_b_lat, f2e_b.cells, exx.c_sr)
+    source_a_blocks, source_b_blocks = f2e_a.blocks, f2e_b.blocks
     for c in range(n_cells):
         f2e_a.set_block(
-            c, np.asarray(f2e_a.blocks[c], dtype=float) - K_a_blocks[c]
+            c, np.asarray(source_a_blocks[c], dtype=float) - K_a_blocks[c]
         )
         f2e_b.set_block(
-            c, np.asarray(f2e_b.blocks[c], dtype=float) - K_b_blocks[c]
+            c, np.asarray(source_b_blocks[c], dtype=float) - K_b_blocks[c]
         )
-    if ctx.fock_sym_map is not None:
+    if (ctx.fock_sym_map is not None
+            and getattr(ctx.fock_sym_map, "physical_plan", None) is None):
         from .bipole_symmetry_fock import symmetrize_fock_blocks
 
         a_blocks = [
-            np.asarray(f2e_a.blocks[c], dtype=float) for c in range(n_cells)
+            np.asarray(block, dtype=float) for block in f2e_a.blocks
         ]
         b_blocks = [
-            np.asarray(f2e_b.blocks[c], dtype=float) for c in range(n_cells)
+            np.asarray(block, dtype=float) for block in f2e_b.blocks
         ]
         symmetrize_fock_blocks(a_blocks, ctx.fock_sym_map, cells=list(f2e_a.cells))
         symmetrize_fock_blocks(b_blocks, ctx.fock_sym_map, cells=list(f2e_b.cells))
         for c in range(n_cells):
             f2e_a.set_block(c, a_blocks[c])
             f2e_b.set_block(c, b_blocks[c])
-    base.e_exchange = -0.5 * (
+    erfc_energy = -0.5 * (
         _lattice_contract_blocks(
             density_alpha,
             f2e_a.cells,
@@ -1822,7 +2133,17 @@ def _add_screened_exchange_unrestricted(
             operator_name="K_erfc_beta",
         )
     )
-    base.screened_exchange_execution = BipoleScreenedExchangeExecution(
+    # The base is the executed full-only arm. Record its physical zero
+    # term before adding the independently contracted erfc contribution.
+    base.e_hf_exchange_components = {
+        "full_nonzero": float(base.e_exchange or 0.0) - float(base.e_exchange_finite_size or 0.0),
+        "full_zero": float(base.e_exchange_finite_size or 0.0),
+        "erfc": float(erfc_energy),
+    }
+    base.e_exchange = (sum(base.e_hf_exchange_components.values()) if _chi_exchange
+                       else float(base.e_exchange or 0.0) + erfc_energy)
+    execution_type = BipoleChiScreenedExchangeExecution if _chi_exchange else BipoleScreenedExchangeExecution
+    base.screened_exchange_execution = execution_type(
         c_sr=exx.c_sr,
         omega_screen_bohr_inv=exx.omega_screen,
     )
@@ -1849,6 +2170,8 @@ def build_bipole_unrestricted_fock(
     reseed_incremental: bool = False,
     alpha_hf: float = 1.0,
     exchange_assembly=None,
+    _chi_exchange: bool = False,
+    _chi_density_k=None,
     patom_hf_like: bool = False,
     use_reduced_j_only: bool = False,
 ) -> BipoleUnrestrictedFockBuild:
@@ -1872,11 +2195,14 @@ def build_bipole_unrestricted_fock(
       (UKS inserts per-spin V_xc before hermitising).
     - ``exchange_assembly`` generalises the exchange to the CAM form
       for screened hybrids exactly as in
-      :func:`build_bipole_restricted_fock`: the J-only build runs
-      first (``alpha_hf = 0``) and the per-spin erfc short-range K is
-      folded on top. Requires ``hcore_k_list=None`` (the UKS calling
+      :func:`build_bipole_restricted_fock`: the base J plus full-range
+      exchange build runs first and the per-spin physical erfc K is
+      added. Mixed assemblies require the private ``_chi_exchange`` opt-in.
+      Requires ``hcore_k_list=None`` (the UKS calling
       convention; UHF carries no functional and never screens).
     """
+    if ctx.resolved_domain is not None:
+        ctx.resolved_domain.require_fock_context(ctx)
     # The PATOM in-field seed is one full-HF-like build independent of
     # the target functional (patom_hf_like forces exchange_scale=1.0),
     # so it bypasses the screened branch by design.
@@ -1885,7 +2211,9 @@ def build_bipole_unrestricted_fock(
         and exchange_assembly.is_screened
         and not patom_hf_like
     ):
-        if float(exchange_assembly.c_full) != 0.0 or float(alpha_hf) != 0.0:
+        if not _chi_exchange and (
+            float(exchange_assembly.c_full) != 0.0 or float(alpha_hf) != 0.0
+        ):
             raise NotImplementedError(
                 "build_bipole_unrestricted_fock: screened exchange with a "
                 "nonzero full-range arm is not supported "
@@ -1929,12 +2257,16 @@ def build_bipole_unrestricted_fock(
             incremental_jk_beta=incremental_jk_beta,
             incremental_jk_total=incremental_jk_total,
             use_incremental=use_incremental,
-            alpha_hf=0.0,
+            reseed_incremental=reseed_incremental,
+            alpha_hf=float(exchange_assembly.c_full),
+            _chi_exchange=_chi_exchange,
+            _chi_density_k=_chi_density_k,
             patom_hf_like=False,
             use_reduced_j_only=use_reduced_j_only,
         )
         return _add_screened_exchange_unrestricted(
-            ctx, density_alpha, density_beta, base, exchange_assembly
+            ctx, density_alpha, density_beta, base, exchange_assembly,
+            _chi_exchange=_chi_exchange,
         )
     if exchange_assembly is not None:
         alpha_hf = float(exchange_assembly.c_full)
@@ -1976,6 +2308,10 @@ def build_bipole_unrestricted_fock(
 
     exchange_scale = 1.0 if patom_hf_like else float(alpha_hf)
     need_k = exchange_scale > 0.0
+
+    def _spin_density_k(density, spin):
+        retained = None if _chi_density_k is None else _chi_density_k[spin]
+        return split_k_density_list(ctx, density, retained_density_k=retained)
 
     # Combine on the spin densities' OWN template, never the radial
     # overlap list. Under the Ewald exchange split the spin densities
@@ -2026,7 +2362,9 @@ def build_bipole_unrestricted_fock(
                     float(omega_used),
                     _fock_sym_map,
                     _rep_cell_indices,
+                    compute_exchange=need_k,
                     internal_extent_bohr=ctx.sr_image_extent,
+                    workspace=_sr_workspace_for(ctx),
                 )
             if _pair_mode:
                 from .bipole_symmetry_fock import build_jk_pair_resolved
@@ -2035,12 +2373,14 @@ def build_bipole_unrestricted_fock(
                     basis, system, lat_opts_2e, d,
                     float(omega_used), _fock_sym_map,
                     internal_extent_bohr=ctx.sr_image_extent,
+                    workspace=_sr_workspace_for(ctx),
                 )
             if ctx.sr_image_extent is not None:
                 return _sr_image_padded_jk(
                     basis, system, lat_opts_2e, d,
                     float(omega_used), float(ctx.sr_image_extent),
                     exact_zone_bohr=ctx.exact_zone_bohr,
+                    workspace=_sr_workspace_for(ctx),
                 )
             return build_jk_2e_real_space(
                 basis, system, lat_opts_2e, d, float(omega_used)
@@ -2061,6 +2401,7 @@ def build_bipole_unrestricted_fock(
                     float(omega_used), _fock_sym_map,
                     compute_exchange=False,
                     internal_extent_bohr=ctx.sr_image_extent,
+                    workspace=_sr_workspace_for(ctx),
                 )
                 return SimpleNamespace(J=jk_pr.J, K=None)
             if ctx.sr_image_extent is not None:
@@ -2070,6 +2411,7 @@ def build_bipole_unrestricted_fock(
                     float(omega_used), float(ctx.sr_image_extent),
                     compute_exchange=False,
                     exact_zone_bohr=ctx.exact_zone_bohr,
+                    workspace=_sr_workspace_for(ctx),
                 )
             return SimpleNamespace(
                 J=build_fock_2e_real_space(
@@ -2084,27 +2426,52 @@ def build_bipole_unrestricted_fock(
             )
 
         if exchange_split_active and need_k:
+            # Keep each spin accumulator independent; only share the actual
+            # full-density or delta-density contraction within this build.
+            _jk_sr_spin_build = _reuse_paired_spin_jk(_jk_sr_build)
+
+            def _jk_sr_pair_build(first, second):
+                if (_can_pair_sr(ctx) and ctx.sr_image_extent is not None
+                        and not _same_lattice_density(first, second)):
+                    return _sr_image_padded_jk(
+                        basis, system, lat_opts_2e, first,
+                        float(omega_used), float(ctx.sr_image_extent),
+                        exact_zone_bohr=ctx.exact_zone_bohr,
+                        workspace=_sr_workspace_for(ctx), companion_density=second,
+                    )
+                return _jk_sr_spin_build(first), _jk_sr_spin_build(second)
+
             if incremental_jk_alpha is not None and use_incremental:
                 from types import SimpleNamespace
+                from .bipole_fock_ewald import IncrementalJK
 
-                _Ja, _Ka = incremental_jk_alpha.build(density_alpha, _jk_sr_build)
-                _Jb, _Kb = incremental_jk_beta.build(density_beta, _jk_sr_build)
+                if type(incremental_jk_alpha) is IncrementalJK and type(incremental_jk_beta) is IncrementalJK:
+                    (_Ja, _Ka), (_Jb, _Kb) = IncrementalJK.build_pair(
+                        incremental_jk_alpha, incremental_jk_beta,
+                        density_alpha, density_beta, _jk_sr_pair_build,
+                    )
+                else:
+                    # Keep the existing build callback contract for custom
+                    # accumulators; their preparation/commit rules may differ.
+                    _Ja, _Ka = incremental_jk_alpha.build(density_alpha, _jk_sr_spin_build)
+                    _Jb, _Kb = incremental_jk_beta.build(density_beta, _jk_sr_spin_build)
                 jk_alpha = SimpleNamespace(J=_Ja, K=_Ka)
                 jk_beta = SimpleNamespace(J=_Jb, K=_Kb)
             else:
-                jk_alpha = _jk_sr_build(density_alpha)
-                jk_beta = _jk_sr_build(density_beta)
+                jk_alpha, jk_beta = _jk_sr_pair_build(density_alpha, density_beta)
                 if incremental_jk_alpha is not None and reseed_incremental:
                     # #116: re-sync both spin chains to this exact build
                     # (seed() copies, before the in-place J summation below).
                     incremental_jk_alpha.seed(density_alpha, jk_alpha.J, jk_alpha.K)
                     incremental_jk_beta.seed(density_beta, jk_beta.J, jk_beta.K)
             F_J_SR_lat = jk_alpha.J
-            for c in range(len(F_J_SR_lat.cells)):
+            j_alpha_blocks = F_J_SR_lat.blocks
+            j_beta_blocks = jk_beta.J.blocks
+            for c in range(len(j_alpha_blocks)):
                 F_J_SR_lat.set_block(
                     c,
-                    np.asarray(F_J_SR_lat.blocks[c], dtype=float)
-                    + np.asarray(jk_beta.J.blocks[c], dtype=float),
+                    np.asarray(j_alpha_blocks[c], dtype=float)
+                    + np.asarray(j_beta_blocks[c], dtype=float),
                 )
             K_alpha_blocks = [
                 np.asarray(block, dtype=float).copy() for block in jk_alpha.K.blocks
@@ -2119,8 +2486,7 @@ def build_bipole_unrestricted_fock(
             if incremental_jk_total is not None and use_incremental:
                 F_J_SR_lat, _ = incremental_jk_total.build(
                     density_total,
-                    # SYM3b: reduced J (K built at rep cells then dropped --
-                    # a J-only output-subset is a follow-up) when active;
+                    # SYM3b: reduced J-only contraction when active;
                     # else the J-only build (image-padded when
                     # sr_image_extent is set).
                     (lambda d: _jk_sr_build(d))
@@ -2168,9 +2534,9 @@ def build_bipole_unrestricted_fock(
         if exchange_split_active and n_k == 1:
             from .bipole_fock_ewald import compute_rho_hat_from_k_density
 
-            D_gamma_total = home_cell_block(density_alpha) + home_cell_block(
-                density_beta
-            )
+            D_gamma_total = _spin_density_k(density_alpha, 0)[0] + _spin_density_k(
+                density_beta, 1
+            )[0]
             rho_hat_for_LR = compute_rho_hat_from_k_density(
                 [D_gamma_total.astype(complex)],
                 [np.zeros(3)],
@@ -2180,8 +2546,8 @@ def build_bipole_unrestricted_fock(
         elif exchange_split_active:
             from .bipole_fock_ewald import compute_rho_hat_from_k_density
 
-            D_a_k_split = split_k_density_list(ctx, density_alpha)
-            D_b_k_split = split_k_density_list(ctx, density_beta)
+            D_a_k_split = _spin_density_k(density_alpha, 0)
+            D_b_k_split = _spin_density_k(density_beta, 1)
             rho_hat_for_LR = compute_rho_hat_from_k_density(
                 [Da + Db for Da, Db in zip(D_a_k_split, D_b_k_split)],
                 k_points,
@@ -2218,8 +2584,12 @@ def build_bipole_unrestricted_fock(
 
         from .bipole_fock_ewald import compute_J_long_range_real_space_blocks
 
+        lr_density = (
+            density_total if rho_hat_for_LR is not None
+            else _density_on_cache_cells(density_total, j_lr_cache, system)
+        )
         F_LR_blocks = compute_J_long_range_real_space_blocks(
-            density_total,
+            lr_density,
             basis,
             system,
             omega_used,
@@ -2227,7 +2597,7 @@ def build_bipole_unrestricted_fock(
             cache=j_lr_cache,
             rho_hat=rho_hat_for_LR,
         )
-        if lat_opts_2e.pair_complete_1e:
+        if lat_opts_2e.pair_complete_1e or lr_density is not density_total:
             F_LR_blocks = _reciprocal_blocks_on_output(
                 F_LR_blocks, j_lr_cache, system, F_J_SR_lat.cells,
             )
@@ -2508,8 +2878,8 @@ def build_bipole_unrestricted_fock(
             c_g0 = exchange_q0_gauge_constant(
                 _xi_madelung, omega_used, ewald_cell_volume, 1
             )
-            D_a_gamma = home_cell_block(density_alpha)
-            D_b_gamma = home_cell_block(density_beta)
+            D_a_gamma = np.real(_spin_density_k(density_alpha, 0)[0])
+            D_b_gamma = np.real(_spin_density_k(density_beta, 1)[0])
             K_corr_alpha_per_k = [
                 exchange_scale
                 * (
@@ -2541,7 +2911,7 @@ def build_bipole_unrestricted_fock(
             e_exchange = (e_exchange or 0.0) + e_2e_k_correction
         elif exchange_split_active and need_k:
             from .bipole_fock_ewald import (
-                compute_K_long_range_at_k,
+                compute_K_long_range_mesh,
                 exchange_q0_gauge_constant,
             )
 
@@ -2550,22 +2920,20 @@ def build_bipole_unrestricted_fock(
             c_g0 = exchange_q0_gauge_constant(
                 _xi_madelung, omega_used, ewald_cell_volume, n_k
             )
+            K_LR_alpha, K_LR_beta = compute_K_long_range_mesh(
+                x_lr_cache, k_points, weights, [D_a_k_split, D_b_k_split],
+            )
             K_corr_alpha_per_k = []
             K_corr_beta_per_k = []
             e_exchange_finite_size = 0.0
             for k_idx in range(n_k):
-                k_arr = np.asarray(k_points[k_idx], dtype=float)
                 S_k_c = np.asarray(S_k_list[k_idx], dtype=complex)
                 K_a = exchange_scale * (
-                    compute_K_long_range_at_k(
-                        x_lr_cache, k_arr, k_points, weights, D_a_k_split
-                    )
+                    K_LR_alpha[k_idx]
                     + c_g0 * (S_k_c @ D_a_k_split[k_idx] @ S_k_c)
                 )
                 K_b = exchange_scale * (
-                    compute_K_long_range_at_k(
-                        x_lr_cache, k_arr, k_points, weights, D_b_k_split
-                    )
+                    K_LR_beta[k_idx]
                     + c_g0 * (S_k_c @ D_b_k_split[k_idx] @ S_k_c)
                 )
                 K_corr_alpha_per_k.append(K_a)
@@ -2631,13 +2999,15 @@ def build_bipole_unrestricted_fock(
         f2e_alpha_real = F_J_lat
         for c, block in enumerate(alpha_blocks):
             f2e_alpha_real.set_block(c, block)
-        f2e_beta_real = _copy_lattice_with_blocks(
-            basis,
-            system,
-            lat_opts_2e,
-            F_J_lat.cells,
-            beta_blocks,
-            fill_missing=True,
+        # On the J build's OWN template, as in the Ewald-split branch
+        # above: _copy_lattice_with_blocks re-templates onto the radial
+        # overlap list, which under physical pair support is narrower
+        # than the pair-complete two-electron list and silently dropped
+        # the far exchange blocks from the beta operator only (#503:
+        # F_beta differed from F_alpha by 2e-6 on a closed-shell 1-D
+        # H2 chain, F_alpha matching the RKS Fock).
+        f2e_beta_real = make_lattice_matrix_set(
+            int(basis.nbasis), list(F_J_lat.cells), beta_blocks
         )
         e_j_short_range = 0.5 * _lattice_contract_blocks(
             density_total,
@@ -2669,17 +3039,12 @@ def build_bipole_unrestricted_fock(
         e_2e_k_correction = 0.0
         e_exchange_finite_size = None
 
-    if _fock_sym_map is not None:
+    if (_fock_sym_map is not None
+            and getattr(_fock_sym_map, "physical_plan", None) is None):
         from .bipole_symmetry_fock import symmetrize_fock_blocks
 
-        a_blocks = [
-            np.asarray(f2e_alpha_real.blocks[c], dtype=float)
-            for c in range(len(f2e_alpha_real.cells))
-        ]
-        b_blocks = [
-            np.asarray(f2e_beta_real.blocks[c], dtype=float)
-            for c in range(len(f2e_beta_real.cells))
-        ]
+        a_blocks = [np.asarray(block, dtype=float) for block in f2e_alpha_real.blocks]
+        b_blocks = [np.asarray(block, dtype=float) for block in f2e_beta_real.blocks]
         symmetrize_fock_blocks(
             a_blocks, _fock_sym_map, cells=list(f2e_alpha_real.cells)
         )
@@ -2712,7 +3077,15 @@ def build_bipole_unrestricted_fock(
             f_alpha_k_list.append(0.5 * (F_a + F_a.conj().T))
             f_beta_k_list.append(0.5 * (F_b + F_b.conj().T))
 
+    exchange_components = {
+        "full_nonzero": float(e_exchange or 0.0) - float(e_exchange_finite_size or 0.0),
+        "full_zero": float(e_exchange_finite_size or 0.0),
+        "erfc": 0.0,
+    }
+    if _chi_exchange:
+        e_exchange = sum(exchange_components.values())
     return BipoleUnrestrictedFockBuild(
+        e_hf_exchange_components=exchange_components,
         f2e_alpha_real=f2e_alpha_real,
         f2e_beta_real=f2e_beta_real,
         f_alpha_k_list=f_alpha_k_list,

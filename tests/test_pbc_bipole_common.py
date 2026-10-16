@@ -266,7 +266,7 @@ def _basis_for(z_atoms):
 def test_core_tail_warns_on_dense_core_at_default_ke():
     """Mg 1s (gamma_max ~ 299 in STO-3G) needs ke ~ 8300 Ha for 1e-6
     coverage; the production default 200 must warn (measured ~1.0 Ha
-    absolute deficit on MgO, handover Sec. 0a 2026-07-13)."""
+    absolute deficit on MgO, historical design record Sec. 0a 2026-07-13)."""
     with pytest.warns(RuntimeWarning, match="VIBEQC_J_EWALD3D_KE"):
         ke_needed = warn_bipole_exact_j_core_tail(
             _basis_for([12, 8]), 200.0, _SilentPlog()
@@ -412,6 +412,32 @@ def test_m5_symmetry_reduce_auto_enables_only_on_corrected_split():
         exchange_split_active=True,
         auto_reduce_safe=False,
     ) == (None, None)
+
+
+@pytest.mark.parametrize("attached,reduction,safe,cutoff,expected", [
+    (True, None, True, 2.1, True),
+    (True, False, True, 2.1, False),
+    (True, None, False, 2.1, False),
+    (False, None, True, 2.1, False),
+    (True, None, True, 4., False),  # Physical distance exactly at the cutoff.
+])
+def test_physical_auto_symmetry_admission(attached, reduction, safe, cutoff, expected):
+    system = vq.PeriodicSystem(3, _np.eye(3) * 4., [vq.Atom(2, [0., 0., 0.])])
+    if attached:
+        vq.attach_symmetry(system)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    opts = common.LatticeSumOptions()
+    opts.pair_complete_1e = True
+    opts.cutoff_bohr = cutoff
+    opts.eri_interaction_cutoff_bohr = 3.1
+    mapping, reps = common.resolve_bipole_fock_symmetry(
+        system, basis, opts, None, reduction, _SilentPlog(), auto_reduce_safe=safe,
+    )
+    if expected:
+        assert mapping.physical_plan is not None and not mapping.pair_resolved
+        assert len(reps) < len(mapping.cells)
+    else:
+        assert (mapping, reps) == (None, None)
 
 
 def test_terminal_trace_refresh_compares_against_evaluated_terminal_state():
@@ -612,3 +638,153 @@ def test_ecp_guard_physical_charges_do_not_override_valence_only_basis():
         common.reject_bipole_ecp_options(
             SimpleNamespace(ecp_effective_charges=[79.]), driver="test",
             basis=SimpleNamespace(name="lanl2dz"), system=system)
+
+
+def _lattice_set(cells_and_blocks):
+    return SimpleNamespace(
+        cells=[SimpleNamespace(index=list(c)) for c, _ in cells_and_blocks],
+        blocks=[_np.asarray(b, dtype=float) for _, b in cells_and_blocks],
+    )
+
+
+def test_lattice_contract_skips_zero_padding_cells_missing_from_density():
+    # The pair-complete one-electron list pads the |g| ball by the largest
+    # intra-cell offset, so an atom outside the home cell adds operator cells
+    # whose blocks are exactly zero; the density need not carry them (#502).
+    d0 = _np.array([[1.0, 0.5], [0.5, 2.0]])
+    m0 = _np.array([[3.0, -1.0], [-1.0, 0.25]])
+    density = _lattice_set([((0, 0, 0), d0)])
+    padded = _lattice_set([((0, 0, 0), m0), ((-1, -1, 0), _np.zeros((2, 2)))])
+    assert common._lattice_contract(
+        density, padded, operator_name="T"
+    ) == pytest.approx(float(_np.sum(d0 * m0)), abs=0.0)
+
+
+def test_lattice_contract_still_rejects_nonzero_block_missing_from_density():
+    density = _lattice_set([((0, 0, 0), _np.eye(2))])
+    operator = _lattice_set([
+        ((0, 0, 0), _np.eye(2)),
+        ((-1, -1, 0), _np.array([[0.0, 1e-14], [0.0, 0.0]])),
+    ])
+    with pytest.raises(ValueError, match=r"missing cell \(-1, -1, 0\)"):
+        common._lattice_contract(density, operator, operator_name="T")
+
+
+def test_bipole_rhf_energy_is_invariant_when_atoms_leave_the_home_cell():
+    # #502: relax_atoms trial steps leave atoms outside the home cell. The
+    # pair-complete T/V_ne lists then carry zero padding cells the density
+    # domain lacks, which used to raise; the energy must equal the wrapped
+    # and home-cell descriptions of the same crystal.
+    from vibeqc._vibeqc_core import PeriodicRHFOptions
+
+    def energy(z1, z2):
+        system = vq.PeriodicSystem(
+            3, _np.diag([8.0, 8.0, 8.0]),
+            [Atom(1, [0.0, 0.0, z1]), Atom(1, [0.0, 0.0, z2])],
+        )
+        basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+        opts = PeriodicRHFOptions()
+        opts.max_iter = 80
+        opts.conv_tol_energy = 1e-10
+        opts.lattice_opts.cutoff_bohr = 4.0
+        opts.lattice_opts.nuclear_cutoff_bohr = 4.0
+        result = rhf.run_pbc_bipole_rhf(
+            system, basis, vq.monkhorst_pack(system, (1, 1, 1)), opts,
+            progress=False, sr_image_precision=None,
+        )
+        assert result.converged
+        return float(result.energy)
+
+    unwrapped = energy(5.6569, -3.8569)
+    assert unwrapped == pytest.approx(energy(5.6569, 4.1431), abs=1e-10)
+    assert unwrapped == pytest.approx(energy(0.0, 1.5138), abs=1e-10)
+
+
+class _CountedLatticeExports:
+    """Model native copy-out accessors while keeping mutation independent."""
+
+    def __init__(self, cells, blocks):
+        self._cells = cells
+        self._blocks = [block.copy() for block in blocks]
+        self.cell_reads = self.block_reads = 0
+
+    @property
+    def cells(self):
+        self.cell_reads += 1
+        return list(self._cells)
+
+    @property
+    def blocks(self):
+        self.block_reads += 1
+        return [block.copy() for block in self._blocks]
+
+    def set_block(self, index, block):
+        self._blocks[index] = block.copy()
+
+
+def test_overlap_fold_exports_once_for_all_kpoints(monkeypatch):
+    from vibeqc import _vibeqc_core as core
+
+    cells = [SimpleNamespace(r_cart=_np.array([x, 0., 0.])) for x in [-1., 0., 1.]]
+    kpoints = [_np.zeros(3), _np.array([.4, 0., 0.])]
+    records = []
+
+    def overlap(basis, system, options):
+        record = _CountedLatticeExports(cells, [_np.eye(2) * options.cutoff_bohr for _ in cells])
+        records.append(record)
+        return record
+
+    monkeypatch.setattr(core, "compute_overlap_lattice", overlap)
+    options = vq.LatticeSumOptions()
+    options.cutoff_bohr = 4.
+    assert common.s_fold_truncation_drift(None, None, options, k_points=kpoints) == pytest.approx(6.)
+    assert [(r.cell_reads, r.block_reads) for r in records] == [(1, 1), (1, 1)]
+
+
+def test_nuclear_ewald_assembly_exports_once_and_keeps_overlap(monkeypatch):
+    cells = [SimpleNamespace(index=_np.array([x, 0, 0]), r_cart=_np.array([float(x), 0., 0.]))
+             for x in [-1, 0, 1]]
+    overlap_blocks = [_np.array([[1. + i, .1], [.1, 2.]]) for i in range(3)]
+    short_blocks = [-2. * block for block in overlap_blocks]
+    overlap = _CountedLatticeExports(cells, overlap_blocks)
+    short = _CountedLatticeExports(cells, short_blocks)
+    monkeypatch.setattr(common, "compute_nuclear_erfc_lattice", lambda *args: short)
+    system = vq.PeriodicSystem(3, 4. * _np.eye(3), [vq.Atom(2, [0., 0., 0.])])
+    options = vq.LatticeSumOptions()
+    options.pair_complete_1e = False
+    ewald = SimpleNamespace(alpha=.5)
+    ft = _np.arange(24).reshape(3, 2, 2, 2).astype(complex) * (.01 + .02j)
+    cache = SimpleNamespace(
+        cells_r_cart=_np.array([c.r_cart for c in cells]), pair_cutoff_bohr=None,
+        K_vectors=_np.array([[1., 0., 0.], [-1., 0., 0.]]),
+        kernel=_np.array([.2, .2]), ft_per_cell=ft,
+    )
+    result, returned_cache = common._compute_nuclear_lattice_ewald_reciprocal_ft(
+        None, system, options, ewald, overlap, cache=cache, resolved_erfc_options=options,
+    )
+    expected = [v - _np.real(_np.einsum("k,mnk->mn", 2. * cache.kernel, f.conj()))
+                + _np.pi * 2. / (.5**2 * 64.) * s
+                for v, s, f in zip(short_blocks, overlap_blocks, ft)]
+    assert result is short and returned_cache is cache
+    _np.testing.assert_allclose(result._blocks, expected, rtol=0, atol=1e-15)
+    _np.testing.assert_array_equal(overlap._blocks, overlap_blocks)
+    assert (short.cell_reads, short.block_reads) == (1, 1)
+    assert (overlap.cell_reads, overlap.block_reads) == (1, 1)
+
+
+@pytest.mark.parametrize("displacement", [1e-8, 2e-6])
+def test_physical_auto_declines_approximate_attached_symmetry(displacement):
+    system = vq.PeriodicSystem(
+        3, _np.eye(3) * 6.,
+        [vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [3. + displacement, 0., 0.])],
+    )
+    vq.attach_symmetry(system, symprec=1e-4)
+    assert len(system.symmetry.operations) > 2
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    opts = common.LatticeSumOptions()
+    opts.pair_complete_1e = True
+    opts.cutoff_bohr = 2.1
+    opts.eri_interaction_cutoff_bohr = 3.1
+    assert common.resolve_bipole_fock_symmetry(
+        system, basis, opts, None, None, _SilentPlog(),
+    ) == (None, None)

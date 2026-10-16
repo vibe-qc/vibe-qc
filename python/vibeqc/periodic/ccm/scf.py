@@ -13,20 +13,30 @@ This is the small-cluster validation driver: it consumes the dense effective
 ERI tensor (:func:`vibeqc.periodic.ccm.padded.ccm_eri`) and runs a plain
 DIIS-accelerated RHF in Python. The production path (large 3-D clusters,
 all SCF methods) is a C++ ``WeightedLatticeJKBuilder`` fed into the existing
-``run_*_scf_with_jk`` entry points; see ``handovers/HANDOVER_AICCM.md``. The energy
+``run_*_scf_with_jk`` entry points. The energy
 per atom from this driver converges to periodic Hartree-Fock as the cluster
 grows (Peintinger & Bredow 2014, Tables 2-4).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from contextlib import contextmanager
+
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from .experimental import _reject_open_shell_cluster, _warn_experimental
 from .integrals import ccm_overlap
-from .padded import ccm_eri, ccm_eri_symmetric, ccm_hcore, ccm_nuclear_repulsion
+from .padded import (
+    P2014_NUCLEAR_VARIANTS,
+    ccm_eri,
+    ccm_eri_p2014,
+    ccm_eri_symmetric,
+    ccm_hcore,
+    ccm_hcore_p2014,
+    ccm_nuclear_repulsion,
+)
 
 __all__ = ["CCMSCFResult", "run_ccm_rhf"]
 
@@ -57,7 +67,12 @@ def _commutator_exit_ok(d_e, err, conv_tol, conv_tol_grad):
     return abs(d_e) < conv_tol and np.max(np.abs(err)) < conv_tol_grad
 
 # Effective four-center builders selectable via run_ccm_rhf(method=...).
-#   "union12"  -- historical eq-18 product weight (Peintinger & Bredow 2014);
+#   "union12"  -- NOT the 2012/2014 algorithm, despite its name (2026-09-17):
+#                the bra partner stays in the home copy of the cluster, where
+#                P2014 Eq. 19 and the original program image it; see "p2014"
+#                below. Kept unchanged because archived records depend on it.
+#                The rest of this note predates that finding and describes
+#                "union12" as built: eq-18 product weight, home bra;
 #                validated in 1-D IN A MINIMAL BASIS ONLY, breaks 8-fold ERI
 #                symmetry in >=2-D. The weighted four-center is M = R^T G-hat C
 #                with R != C, so it is not a congruence of the padded ERI Gram
@@ -75,6 +90,40 @@ def _commutator_exit_ok(d_e, err, conv_tol, conv_tol_grad):
 #   "aiccm2026dev-a" -- the symmetric Born-von Kármán-torus four-center
 #                (AICCM_ALGORITHM.md Sec.13): exactly 8-fold symmetric for any
 #                lattice. This is *this* development line's method of record.
+#   "p2014"    -- the 2012 program / P2014 Eqs. 18-19 with the bra partner
+#                IMAGED over the Wigner-Seitz supercell (padded.ccm_eri_p2014),
+#                which "union12" is not: "union12" keeps the partner in the
+#                home copy and misses P2014 Table 2 by 1.9e-4 to 1.7e-5 Eh per
+#                atom. "p2014" reproduces that table to the printed digits
+#                (tests/test_ccm_p2014_table2.py). It carries its own nuclear
+#                attraction (P2014_NUCLEAR_VARIANTS), so it is deliberately NOT
+#                in the registry the MP2/CCSD/gradient/UHF drivers share: only
+#                run_ccm_rhf and run_ccm_rhf_scalable accept it.
+#: The faithful-2014 selector (diagnosis lineage, ruling R1).
+P2014_METHOD = "p2014"
+#: What the other four-centre selectors use for the nuclear attraction
+#: (padded.ccm_nuclear: Eq. 13 pair weight, the partner-side nucleus weight
+#: taken relative to the HOME image of the partner).
+DEFAULT_NUCLEAR_ATTRACTION = "eq13-home-image"
+
+
+def _resolve_nuclear_attraction(method, nuclear_attraction, *, who):
+    """Name of the nuclear-attraction construction ``method`` runs with."""
+    if method == P2014_METHOD:
+        variant = nuclear_attraction or "program-union"
+        if variant not in P2014_NUCLEAR_VARIANTS:
+            raise ValueError(
+                f"{who}: nuclear_attraction must be one of "
+                f"{P2014_NUCLEAR_VARIANTS} for method='p2014'; got {variant!r}")
+        return variant
+    if nuclear_attraction not in (None, DEFAULT_NUCLEAR_ATTRACTION):
+        raise ValueError(
+            f"{who}: nuclear_attraction={nuclear_attraction!r} exists only for "
+            f"method='p2014'; method={method!r} runs with "
+            f"{DEFAULT_NUCLEAR_ATTRACTION!r}.")
+    return DEFAULT_NUCLEAR_ATTRACTION
+
+
 _CCM_ERI_METHODS = {
     "union12": ccm_eri,
     "aiccm2026dev-a": ccm_eri_symmetric,
@@ -184,6 +233,11 @@ class CCMSCFResult:
     #: record consumer can tell WHICH backend a number came from without
     #: out-of-band knowledge; ``""`` only on results predating the field.
     backend: str = ""
+    #: Nuclear-attraction construction the four-centre SCF ran with
+    #: (``"eq13-home-image"``, or a ``P2014_NUCLEAR_VARIANTS`` name for
+    #: ``method="p2014"``). Empty on results that do not come from a
+    #: four-centre driver.
+    nuclear_attraction: str = ""
     #: The RSGDF high-``|G|`` tail cutoff (Ha) actually applied when building
     #: this route's neutral cderi, or ``None`` for base-mesh-only (GitLab IID
     #: 307). Recorded because the tail is what makes the direct and multi-k
@@ -194,7 +248,72 @@ class CCMSCFResult:
     #: caller-supplied ``cderi`` carries its own tail, which this route cannot
     #: observe, so the field stays ``None`` there.
     rsgdf_tail_ke_cutoff: float | None = None
+    #: Which implementation of ``gdf_method="rsgdf"`` built the fitted
+    #: operator this result was evaluated on: ``"classic"`` for the neutral
+    #: direct producers (their fold and supercell builders are the classic
+    #: all-reciprocal FFT fit), ``"injected"`` for a caller-supplied cderi,
+    #: empty where no density fit is involved (#378).
+    fit_source: str = ""
     guess_selection: object = None
+    #: The terminal evaluated state as a :class:`~vibeqc.fock_state.FockBuild`
+    #: (#472): the physical Fock, density, energy components, source and frame
+    #: identities frozen together, the last state the SCF evaluated. Set by
+    #: the neutral real-Gamma producers (#519, RG-3); ``None`` elsewhere.
+    fock_build: object = None
+    #: Stability verdict of the returned solution
+    #: (:class:`~vibeqc.periodic.ccm.stability.CCMRHFStability`) when the
+    #: real-Gamma RHF driver ran with ``stability_check`` or
+    #: ``follow_instability`` (#519, RG-9), and the instability-following
+    #: steps it took; ``None`` and ``()`` otherwise.
+    stability: object = None
+    instability_follow: tuple = ()
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded (``allow_vacuum_padding=True``) and which
+    #: 1-based lattice directions measured as vacuum. ``(False, ())`` on
+    #: every cell measured as genuinely 3-D, and on the four-centre routes,
+    #: which carry no such gate. A padded-regime energy is never reportable
+    #: without the padding it was computed at.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
+
+    #: The neutral cderi ``L`` this SCF actually rode (2026-09-24, one build
+    #: per job): the direct-route drivers stamp the array they contracted J/K
+    #: from -- built here or passed in as ``cderi=`` -- so the correlated
+    #: entry points (``run_ccm_mp2``, ``run_ccm_ccsd``, the DLPNO family)
+    #: reuse it when called without ``cderi=`` instead of refitting (or, worse,
+    #: fitting a different kernel). ``None`` on routes that build no cderi.
+    #: Large; a caller that keeps many results may set it to ``None``.
+    cderi: object = field(default=None, repr=False)
+    #: How :attr:`cderi` was built: ``build`` (``"fold"``, ``"supercell"``,
+    #: ``"caller"`` or ``"driver-fit-cache"``), ``ke_cutoff``,
+    #: ``tail_ke_cutoff``, ``aux_basis``, ``fit_batch``, ``lat_cutoff_bohr``,
+    #: ``shape``. ``None`` where :attr:`cderi` is.
+    cderi_info: dict | None = None
+    #: The :class:`~vibeqc.periodic.ccm.bloch_reference.BlochFoldReport`
+    #: when this reference was transformed from the Bloch producer's
+    #: SCF (Theorem 1), else ``None``.
+    bloch_transform: object = field(default=None, repr=False)
+
+    @property
+    def achieved_convergence(self) -> dict:
+        """The convergence actually reached, read from the per-cycle trace.
+
+        O29 (paper issue #17): a requested threshold describes the
+        calculation that was asked for, not the one that ran. This returns
+        ``{"delta_e": last energy step, "grad_max": last max-abs
+        orthonormalised commutator residual, "cycles": n}`` from
+        :attr:`scf_trace`, or an empty dict for loops that record no trace.
+        """
+        tr = tuple(self.scf_trace or ())
+        if not tr:
+            return {}
+        last = tr[-1]
+        return {
+            "delta_e": float(last.delta_e),
+            "grad_max": float(last.grad_max),
+            "grad_metric": "max_abs_orthonormalised_commutator",
+            "cycles": int(len(tr)),
+        }
 
     @property
     def parity_held(self) -> bool:
@@ -248,14 +367,24 @@ def _require_retained_occ(X, n_occ, *, who, lindep_tol):
         )
 
 
-def _ccm_initial_guess(ccm, initial_guess, *, driver, reference=None):
-    """Canonical contract for the cyclic SCF loops that construct HCORE only.
+def _ccm_initial_guess(ccm, initial_guess, *, driver, reference=None,
+                       allow_read=False, initial_density=None, route=None):
+    """Canonical guess contract for cyclic SCF loops.
 
-    These explicit/RI cyclic loops have no atomic or restart seed interface.
+    Direct real-Gamma loops name their route (``"aiccm-real-gamma"``) and take
+    its shared capability set: HCORE, a prepared READ density and, only when
+    named, SAD (#519 RG-9), so AUTO stays HCORE. ``allow_read`` is the older
+    spelling of HCORE plus READ; other explicit/RI cyclic loops retain
+    HCORE-only capability.
     The GDF control wrappers retain their producer's wider capability set.
     A supplied, already calculated reference retains its own provenance.
     """
-    from ...guess import InitialGuess, coerce_initial_guess, select_initial_guess
+    from ...guess import (
+        InitialGuess,
+        coerce_initial_guess,
+        periodic_guess_capabilities,
+        select_initial_guess,
+    )
 
     requested = coerce_initial_guess(initial_guess)
     if reference is not None:
@@ -268,23 +397,148 @@ def _ccm_initial_guess(ccm, initial_guess, *, driver, reference=None):
                 f"{driver}: initial_guess cannot replace or relabel a supplied SCF reference"
             )
         return previous
+    if route is not None:
+        supported = periodic_guess_capabilities(route, requested=requested)
+    elif allow_read:
+        supported = (InitialGuess.HCORE, InitialGuess.READ)
+    else:
+        supported = (InitialGuess.HCORE,)
+    if (InitialGuess.READ in supported and requested == InitialGuess.READ
+            and initial_density is None):
+        raise ValueError(f"{driver}: initial_guess=READ requires initial_density")
     molecule = ccm.supercell
     return select_initial_guess(
         molecule, requested, is_periodic=True,
         is_open_shell=int(molecule.multiplicity) != 1,
-        supported=(InitialGuess.HCORE,), driver=driver,
+        supported=supported,
+        restart_supplied=initial_density is not None, driver=driver,
     )
 
 
+def _ccm_read_density(density, S, electrons, *, occupation=2.0):
+    """Admit an already mapped real supercell density without changing it.
+
+    Shared READ validation supplies shape, Hermiticity and positivity checks.
+    Unlike a basis-projected molecular restart, this seed already uses the
+    target cyclic AO metric: reject a wrong population instead of rescaling.
+    """
+    from ...guess import _validated_density_guess_block
+
+    D = _validated_density_guess_block(density, S.shape)
+    if np.max(np.abs(D.imag), initial=0.0) > 1e-10:
+        raise ValueError("CCM READ: real-Gamma cannot discard an imaginary density")
+    D = D.real.copy()
+    count = float(np.trace(D @ S))
+    if not np.isclose(count, electrons, rtol=0.0, atol=1e-8):
+        raise ValueError(
+            f"CCM READ: density electron count {count} != target {electrons}")
+    # Physical natural occupations live in the overlap metric, not AO space.
+    w, U = np.linalg.eigh(S)
+    sqrt_S = (U * np.sqrt(np.maximum(w, 0.0))) @ U.T
+    occupations = np.linalg.eigvalsh(sqrt_S @ D @ sqrt_S)
+    if np.max(occupations, initial=0.0) > occupation + 1e-8:
+        raise ValueError("CCM READ: density occupations exceed the spin capacity")
+    return D
+
+
+def _ccm_read_spin_densities(densities, S, n_alpha, n_beta):
+    if not isinstance(densities, (tuple, list)) or len(densities) != 2:
+        raise ValueError("CCM READ: open-shell initial_density requires (alpha, beta)")
+    return tuple(_ccm_read_density(d, S, n, occupation=1.0)
+                 for d, n in zip(densities, (n_alpha, n_beta)))
+
+
+def _evaluated_state_orbitals(F, D, S, X, n_occ):
+    """Orbitals of an evaluated state ``(D, F[D])`` of a cyclic SCF loop.
+
+    The occupied space is spanned by the ``n_occ`` natural orbitals of ``D``
+    with the largest occupations in the metric ``S``, the virtual space by
+    the rest of the span of the orthonormaliser ``X``, and each block is
+    rotated to diagonalise the physical ``F``. For the idempotent density a
+    loop accepts, the occupied orbitals regenerate ``D`` exactly and the
+    eigenvalues are ``F[D]``'s within each space; at convergence they are
+    its canonical orbitals. Returns ``(eps, C)``, the occupied block first,
+    each ascending (#519 RG-9: the loops used to return the spectrum of the
+    last DIIS trial Fock instead).
+    """
+    Dp = X.T @ S @ D @ S @ X
+    w, U = np.linalg.eigh(0.5 * (Dp + Dp.T))
+    U = U[:, ::-1]
+    Uo, Uv = U[:, :n_occ], U[:, n_occ:]
+    Fp = X.T @ F @ X
+    Fp = 0.5 * (Fp + Fp.T)
+    eo, Ro = np.linalg.eigh(Uo.T @ Fp @ Uo)
+    ev, Rv = np.linalg.eigh(Uv.T @ Fp @ Uv)
+    return (np.concatenate([eo, ev]),
+            X @ np.hstack([Uo @ Ro, Uv @ Rv]))
+
+
+def _ccm_constructed_density(density, S, electrons, *, where):
+    """Admit a density the guess engine built in the torus metric ``S``.
+
+    A superposition of atomic densities is normalised to the target
+    population in ``S`` by the engine, but it is not idempotent, and its
+    natural occupations in the crystal metric may exceed the spin capacity
+    where atoms overlap. Unlike a READ density it is therefore checked only
+    for shape, finiteness, reality and population; the first Fock
+    diagonalisation of the loop makes the next density idempotent.
+    """
+    D = np.asarray(density)
+    if D.shape != S.shape or not np.all(np.isfinite(D)):
+        raise ValueError(
+            f"{where}: the constructed seed must be a finite {S.shape} matrix")
+    if np.iscomplexobj(D):
+        if np.max(np.abs(D.imag), initial=0.0) > 1e-10:
+            raise ValueError(f"{where}: the constructed seed is not real")
+        D = D.real
+    D = 0.5 * (D + D.T)
+    count = float(np.trace(D @ S))
+    if not np.isclose(count, electrons, rtol=0.0, atol=1e-8):
+        raise ValueError(
+            f"{where}: seed electron count {count} != target {electrons}")
+    return np.ascontiguousarray(D, dtype=float)
+
+
+def _ccm_sad_seed(ccm, S, *, n_alpha=None, n_beta=None):
+    """SAD on the CCM supercell in the torus metric ``S`` (#519 RG-9).
+
+    The shared guess engine superposes the atomic densities of the
+    supercell's atoms and normalises the population in ``S``. Every cell's
+    copy of an atom carries the same block, so the seed is translation
+    invariant on the torus and lies in the space where the real-Gamma and
+    neutral-Bloch producers share their stationary points (Theorem 1).
+    Closed shell returns ``D``; with ``n_alpha``/``n_beta`` it returns the
+    engine's spin split ``(D_alpha, D_beta)``.
+    """
+    from ...guess import (
+        InitialGuess,
+        initial_densities_open_shell,
+        initial_density_closed_shell,
+    )
+
+    mol = ccm.supercell
+    if n_alpha is None:
+        n_occ = int(mol.n_electrons()) // 2
+        D = initial_density_closed_shell(
+            mol, ccm.basis, n_occ, InitialGuess.SAD, is_periodic=False,
+            overlap=S)
+        return _ccm_constructed_density(D, S, 2 * n_occ, where="CCM SAD")
+    Da, Db = initial_densities_open_shell(
+        mol, ccm.basis, int(n_alpha), int(n_beta), InitialGuess.SAD,
+        is_periodic=False, overlap=S)
+    return (_ccm_constructed_density(Da, S, int(n_alpha), where="CCM SAD alpha"),
+            _ccm_constructed_density(Db, S, int(n_beta), where="CCM SAD beta"))
+
+
 def _with_ccm_guess(result, selection):
-    """Attach the selection consumed by an existing cyclic HCORE SCF loop."""
+    """Attach the selection consumed by a cyclic SCF loop."""
     result.guess_selection = selection
     return result
 
 
 def run_ccm_rhf(
     ccm, *, initial_guess: object = "AUTO", method="union12", max_iter=128, conv_tol=1e-9, conv_tol_grad=1e-6,
-    diis_dim=8, lindep_tol=1e-7, eri=None
+    diis_dim=8, lindep_tol=1e-7, eri=None, nuclear_attraction=None
 ):
     """Run closed-shell HF-CCM on ``ccm`` (a :class:`CCMSystem`).
 
@@ -292,7 +546,9 @@ def run_ccm_rhf(
     four-center weighting (see :data:`_CCM_ERI_METHODS`):
 
     * ``"union12"`` (default) -- the historical eq-18 product weight
-      (Peintinger & Bredow 2014); validated in 1-D.
+      (Peintinger & Bredow 2014); validated in 1-D **in a minimal basis
+      only**, breaks 8-fold ERI symmetry in >=2-D. The basis qualifier is not
+      a caution, it is a measured limit (issue #242).
     * ``"aiccm2026dev-a"`` -- the symmetric Born-von Kármán-torus four-center
       (:func:`~vibeqc.periodic.ccm.padded.ccm_eri_symmetric`,
       ``AICCM_ALGORITHM.md`` Sec.13), exactly 8-fold permutationally symmetric for
@@ -323,7 +579,7 @@ def run_ccm_rhf(
     supercells blow up the padded basis and need the production C++ lattice-sum
     (next milestone). The four-center is not yet bit-exact (not perfectly
     cyclically invariant), so small high-symmetry clusters show minor orbital-
-    degeneracy splitting. See ``handovers/HANDOVER_AICCM.md`` Sec. "M2b status".
+    degeneracy splitting.
     """
     conv_tol_grad = _validate_conv_tol_grad(
         conv_tol_grad, who="run_ccm_rhf"
@@ -338,11 +594,17 @@ def run_ccm_rhf(
         "ccm-fourcenter-dense-injected-rhf" if eri is not None
         else f"ccm-fourcenter-dense-{method}-rhf"
     )
+    _nuclear = _resolve_nuclear_attraction(
+        method, nuclear_attraction, who="run_ccm_rhf")
     if eri is None:
-        eri = _ccm_eri_for_method(ccm, method)
+        eri = (ccm_eri_p2014(ccm) if method == P2014_METHOD
+               else _ccm_eri_for_method(ccm, method))
 
     S = ccm_overlap(ccm)
-    h, _, _ = ccm_hcore(ccm)
+    if method == P2014_METHOD:
+        h, _, _ = ccm_hcore_p2014(ccm, nuclear_attraction=_nuclear)
+    else:
+        h, _, _ = ccm_hcore(ccm)
     e_nn = ccm_nuclear_repulsion(ccm)
 
     _reject_open_shell_cluster(ccm, who="run_ccm_rhf", sibling="run_ccm_uhf")
@@ -421,6 +683,7 @@ def run_ccm_rhf(
         hcore=h,
         idempotency_error=float(idem),
         backend=_backend,
+        nuclear_attraction=_nuclear,
     ), guess_selection)
 
 
@@ -522,7 +785,7 @@ _CCM_SCALABLE_METHODS = {
 }
 
 
-def _ccm_scalable_cxx_method(method, four_center):
+def _ccm_scalable_cxx_method(method, four_center, *, allow_p2014=False):
     """Map a CCM ``(method, four_center)`` selection to the C++ JK kernel name.
 
     ``method`` picks the base kernel (:data:`_CCM_SCALABLE_METHODS`);
@@ -536,12 +799,27 @@ def _ccm_scalable_cxx_method(method, four_center):
     Shared by :func:`run_ccm_rhf_scalable` and the KS-CCM JK builder
     (``dft._ccm_jk_builder``) so ``four_center`` means the same thing everywhere.
     """
+    if method == P2014_METHOD:
+        # Only the RHF driver pairs this kernel with its own nuclear attraction
+        # (padded.ccm_hcore_p2014); the KS builder would mix it with
+        # padded.ccm_nuclear, so it must opt in explicitly.
+        if not allow_p2014:
+            raise ValueError(
+                "method='p2014' is available on run_ccm_rhf and "
+                "run_ccm_rhf_scalable only (it carries its own nuclear "
+                "attraction).")
+        if four_center != "direct":
+            raise ValueError(
+                "method='p2014' has the integral-direct C++ kernel only "
+                "(four_center='direct'); the dense effective tensor is "
+                "run_ccm_rhf(method='p2014').")
+        return "p2014-direct"
     try:
         base = _CCM_SCALABLE_METHODS[method]
     except KeyError:
         raise ValueError(
             f"unknown CCM four-center method {method!r}; "
-            f"choose from {sorted(_CCM_SCALABLE_METHODS)}"
+            f"choose from {sorted(_CCM_SCALABLE_METHODS) + [P2014_METHOD]}"
         )
     if four_center == "direct":
         return base + "-direct"
@@ -552,6 +830,33 @@ def _ccm_scalable_cxx_method(method, four_center):
         "J/K, O(nbf**2) memory -- default) or 'full' (dense effective tensor, "
         "O(nbf**4) memory -- small-cluster comparison reference)"
     )
+
+
+@contextmanager
+def _ccm_jk_lattice_options(ccm, cxx_method, schwarz_threshold):
+    """``ccm.lattice_options`` as the C++ CCM JK kernels need them, restored on exit.
+
+    The C++ side copies the options by value, so they are edited in place around
+    the call. ``schwarz_threshold`` is forced (``0.0`` = exact). The default
+    cutoff encloses the FIRST shell of cluster translations, which is all the
+    home-bra kernels reach; ``"p2014-direct"`` images the bra partner, so its ket
+    partner reaches the SECOND shell (the +-2 supercell translations of the 2012
+    program) and the cutoff is widened to enclose it -- the kernel refuses to
+    drop a weighted quartet for a missing cell rather than truncate silently.
+    """
+    opts = ccm.lattice_options
+    saved = (opts.schwarz_threshold, opts.cutoff_bohr)
+    try:
+        opts.schwarz_threshold = float(schwarz_threshold)
+        if str(cxx_method).startswith("p2014"):
+            from .wigner_seitz import first_shell_vectors
+
+            corner = float(np.linalg.norm(
+                first_shell_vectors(ccm.cluster_vectors), axis=1).max())
+            opts.cutoff_bohr = max(float(opts.cutoff_bohr), 2.1 * corner)
+        yield opts
+    finally:
+        opts.schwarz_threshold, opts.cutoff_bohr = saved
 
 
 def _make_ccm_jk_builder(ccm, cxx_method, schwarz_threshold):
@@ -568,20 +873,17 @@ def _make_ccm_jk_builder(ccm, cxx_method, schwarz_threshold):
     from vibeqc._vibeqc_core import make_periodic_gamma_ccm_jk_builder
 
     weight_cells, weight_matrices = _prepare_ccm_weights(ccm)
-    saved = ccm.lattice_options.schwarz_threshold
-    try:
-        ccm.lattice_options.schwarz_threshold = float(schwarz_threshold)
+    with _ccm_jk_lattice_options(ccm, cxx_method, schwarz_threshold) as opts:
         return make_periodic_gamma_ccm_jk_builder(
             ccm.basis, ccm.cluster_system, weight_cells, weight_matrices,
-            ccm.lattice_options, cxx_method,
+            opts, cxx_method,
         )
-    finally:
-        ccm.lattice_options.schwarz_threshold = saved
 
 
 def run_ccm_rhf_scalable(
     ccm, *, initial_guess: object = "AUTO", method="union12", four_center="direct", schwarz_threshold=0.0,
-    max_iter=128, conv_tol=1e-9, conv_tol_grad=1e-6, diis_dim=8, lindep_tol=1e-7
+    max_iter=128, conv_tol=1e-9, conv_tol_grad=1e-6, diis_dim=8, lindep_tol=1e-7,
+    nuclear_attraction=None
 ):
     """Run closed-shell HF-CCM using the scalable C++ lattice-sum JK builder.
 
@@ -637,7 +939,9 @@ def run_ccm_rhf_scalable(
         ccm, initial_guess, driver='run_ccm_rhf_scalable',
     )
     _warn_experimental()
-    cxx_method = _ccm_scalable_cxx_method(method, four_center)
+    cxx_method = _ccm_scalable_cxx_method(method, four_center, allow_p2014=True)
+    _nuclear = _resolve_nuclear_attraction(
+        method, nuclear_attraction, who="run_ccm_rhf_scalable")
     # Result-backend identity (IID 344): the executed contraction mode is
     # what _ccm_scalable_cxx_method resolved ("full"/"dense" both mean the
     # dense effective tensor).
@@ -651,10 +955,13 @@ def run_ccm_rhf_scalable(
     )
 
     from .integrals import ccm_overlap
-    from .padded import ccm_hcore, ccm_nuclear_repulsion
+    from .padded import ccm_hcore, ccm_hcore_p2014, ccm_nuclear_repulsion
 
     S = ccm_overlap(ccm)
-    h, _, _ = ccm_hcore(ccm)
+    if method == P2014_METHOD:
+        h, _, _ = ccm_hcore_p2014(ccm, nuclear_attraction=_nuclear)
+    else:
+        h, _, _ = ccm_hcore(ccm)
     e_nn = ccm_nuclear_repulsion(ccm)
 
     _reject_open_shell_cluster(
@@ -729,4 +1036,5 @@ def run_ccm_rhf_scalable(
         hcore=np.asarray(h),
         idempotency_error=float(idem),
         backend=_backend,
+        nuclear_attraction=_nuclear,
     ), guess_selection)

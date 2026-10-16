@@ -137,7 +137,7 @@ Python utilities
 - Finite-difference gradients
 
 ### Stage 2, Analytic molecular gradients
-- dE/dR = Σ [D·½κ·h̄ - W] · dS/dR + dE_rep/dR
+- dE/dR = Σ [D·κ·h̄ - W] · dS/dR + dE_rep/dR
 - Uses libint overlap derivative engine (deriv_order=1)
 - Geometry optimization converges
 
@@ -187,7 +187,7 @@ Python utilities
 ### DFTB0
 ```
 H⁰_{μν} = ε_l                    (on-site, same atom)
-H⁰_{μν} = ½κ · S_{μν} · h̄_{AB}  (two-center, Wolfsberg-Helmholtz)
+H⁰_{μν} = κ · S_{μν} · h̄_{AB}  (two-center, Wolfsberg-Helmholtz)
 E = 2 Σ_i^{occ} ε_i + Σ_{A<B} V_rep(R_AB)
 ```
 
@@ -203,7 +203,7 @@ E = Σ_i n_i ε_i + E_rep + ½ Σ_{AB} γ_{AB} Δq_A Δq_B
 ### Analytic gradient (DFTB0)
 ```
 W = 2 C_occ diag(ε_occ) C_occ^T
-M_{μν} = D_{μν} · ½κ · h̄_{AB} − W_{μν}     (two-center)
+M_{μν} = D_{μν} · κ · h̄_{AB} − W_{μν}     (two-center)
 M_{μν} = −W_{μν}                             (on-site)
 dE/dR_A = Σ_{μν} M_{μν} · dS_{μν}/dR_A + dE_rep/dR_A
 ```

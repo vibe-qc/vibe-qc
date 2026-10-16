@@ -108,3 +108,51 @@ def test_run_job_uhf_nonconverged_fails_closed_no_artifacts(tmp_path: Path):
         assert heading not in text, (
             f"{heading} was computed from a non-converged density"
         )
+
+
+# ---------------------------------------------------------------------------
+# GitLab #377: CN radical, UHF/cc-pVTZ, all-default ``run_job``.
+#
+# On main before the fix the default SCF ran 100 iterations and failed
+# closed about 40 mHa above the minimum (E(iter 100) = -92.1943239574 Ha,
+# identical at 1 and 4 OpenMP threads, and unchanged with max_iter=1000).
+# Reference: PySCF 2.14.0 ``scf.UHF`` (default minao guess, DIIS) on the same
+# geometry, basis and spin converges in 20 cycles to the values below, and
+# ``mf.stability()`` reports the solution internally stable (lowest orbital
+# Hessian eigenvalue +0.218).
+# ---------------------------------------------------------------------------
+
+E_REF_CN_PYSCF = -92.2348034576
+S2_REF_CN_PYSCF = 1.149321
+
+
+def _cn_radical() -> Molecule:
+    return Molecule(
+        [
+            Atom(6, [0.0, 0.0, 0.0]),
+            Atom(7, [0.0, 0.0, 1.17 * ANGSTROM_TO_BOHR]),
+        ],
+        charge=0,
+        multiplicity=2,
+    )
+
+
+def test_run_job_cn_uhf_ccpvtz_converges_with_defaults(tmp_path: Path):
+    """The #377 reproducer: default ``run_job`` UHF on CN/cc-pVTZ reaches
+    the PySCF ground state and certifies it internally stable."""
+    result = run_job(
+        _cn_radical(),
+        basis="cc-pvtz",
+        method="uhf",
+        localize=False,
+        output=tmp_path / "cn-uhf-ccpvtz",
+    )
+    assert result.converged
+    # The reference needs 20 cycles; 60 leaves slack without letting a
+    # wandering DIIS trajectory pass on the iteration budget.
+    assert result.n_iter <= 60, result.n_iter
+    assert result.energy == pytest.approx(E_REF_CN_PYSCF, abs=1e-6)
+    assert result.s_squared == pytest.approx(S2_REF_CN_PYSCF, abs=1e-4)
+    assert result.stability_checked
+    assert result.stability_analysis_converged
+    assert not result.internal_instability

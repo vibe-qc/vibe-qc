@@ -38,6 +38,97 @@ from vibeqc.periodic_gapw_open_shell import (
 warnings.simplefilter("ignore", GAPWExperimentalWarning)
 
 
+@pytest.mark.parametrize("route", ["gpw-rks", "gpw-uks", "gpw-roks", "gapw-rks"])
+@pytest.mark.parametrize("length", [6., 12.])
+def test_multik_grid_shared_solve_preserves_frames_and_occupations(monkeypatch, route, length):
+    """Compare complete physical iterations in compact and vacuum regimes."""
+    from types import SimpleNamespace
+    import scipy.linalg as sla
+    from vibeqc.periodic_gapw_augment import run_periodic_rks_gapw_multi_k
+    from vibeqc.periodic_gapw_j import multik_one_electron_lattice_options
+    from vibeqc.solvers import _scf
+
+    system, basis, _ = _h2_singlet_system(length)
+    grid = PlaneWaveGrid(system.lattice, 18, 18, 18)
+    kmesh = core.monkhorst_pack(system, [3, 1, 1])
+    drivers = {"gpw-rks": run_periodic_rks_gpw_multi_k,
+               "gpw-uks": run_periodic_uks_gpw_multi_k,
+               "gpw-roks": run_periodic_roks_gpw_multi_k,
+               "gapw-rks": run_periodic_rks_gapw_multi_k}
+    kwargs = dict(functional="lda", grid=grid, quiet=True, max_iter=80)
+    if route == "gapw-rks":
+        kwargs.update(n_radial=24, lebedev_order=17)
+    original = _scf.solve_dense_fock
+    frames = set()
+    channels = set()
+
+    def checked(fock, **kw):
+        result = original(fock, **kw)
+        metadata = result.operator_metadata
+        assert metadata.kind == "ks"
+        assert metadata.generation >= 1
+        assert np.iscomplexobj(fock)
+        frames.add(metadata.basis_id)
+        channels.add((metadata.spin, metadata.kpoint))
+        if kw.get("X") is None:
+            expected = sla.eigh(fock, eigvals_only=True)
+            assert result.residual_frame == "orthogonal"
+        else:
+            expected = sla.eigh(fock, kw["overlap"], eigvals_only=True)
+            assert result.residual_frame == "original"
+        np.testing.assert_allclose(result.eigenvalues, expected, atol=1e-10, rtol=0)
+        assert max(result.residuals) < 1e-7
+        return result
+
+    monkeypatch.setattr(_scf, "solve_dense_fock", checked)
+    if route == "gapw-rks" and length == 6.:
+        # H2 has no active core augmentation. Its compact Gamma fold is
+        # invalid; sharing a solver must not bypass the physical guard.
+        with pytest.raises(NotImplementedError, match="Gamma-folded density"):
+            drivers[route](system, basis, kmesh, **kwargs)
+        assert not frames
+        return
+    result = drivers[route](system, basis, kmesh, **kwargs)
+    assert result.converged
+    projected = route in ("gpw-uks", "gpw-roks") or (route == "gpw-rks" and length == 6.)
+    assert frames == ({"orthogonal-scf"} if projected else {"ao-scf"})
+    spins = ("alpha", "beta") if route == "gpw-uks" else (
+        ("restricted-open",) if route == "gpw-roks" else ("restricted",))
+    assert channels == {(spin, tuple(k)) for spin in spins for k in kmesh.kpoints}
+
+    # Re-run with precisely the old coordinate transformation and NumPy solve.
+    def legacy(fock, **kw):
+        x = kw.get("X")
+        matrix = fock if x is None else x.conj().T @ fock @ x
+        e, y = np.linalg.eigh(matrix)
+        return SimpleNamespace(eigenvalues=e, eigenvectors=y if x is None else x @ y)
+
+    monkeypatch.setattr(_scf, "solve_dense_fock", legacy)
+    reference = drivers[route](system, basis, kmesh, **kwargs)
+    assert reference.converged
+    assert result.energy == pytest.approx(reference.energy, abs=1e-8)
+    spinful = route in ("gpw-uks", "gpw-roks")
+    density_fields = ("density_alpha", "density_beta") if spinful else ("density",)
+    for field in density_fields:
+        np.testing.assert_allclose(getattr(result, field), getattr(reference, field), atol=1e-6, rtol=0)
+
+    overlap_lattice = core.compute_overlap_lattice(
+        basis, system, multik_one_electron_lattice_options(basis, system))
+    if spinful:
+        pairs = [(result.mo_coeffs_alpha_k, result.occupations_alpha_k, 1.),
+                 (result.mo_coeffs_beta_k, result.occupations_beta_k, 1.)]
+    else:
+        pairs = [(result.mo_coeffs_k, result.occupations_k, 2.)]
+    for coefficients, occupations, electrons in pairs:
+        charge = 0.
+        for c, occ, k, weight in zip(coefficients, occupations, kmesh.kpoints, kmesh.weights):
+            s = np.asarray(core.bloch_sum(overlap_lattice, k))
+            np.testing.assert_allclose(c.conj().T @ s @ c, np.eye(c.shape[1]), atol=1e-9, rtol=0)
+            density = (c * np.asarray(occ)) @ c.conj().T
+            charge += weight * np.trace(density @ s).real
+        assert charge == pytest.approx(electrons, abs=1e-8)
+
+
 def _h_doublet_system(L: float = 12.0):
     sysp = core.PeriodicSystem()
     sysp.dim = 3

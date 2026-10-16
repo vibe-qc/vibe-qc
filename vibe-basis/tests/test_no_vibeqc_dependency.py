@@ -17,8 +17,7 @@ silently -- the import would resolve fine on a developer machine where
 vibe-qc happens to be installed, and fail only for the collaborator.
 Hence a mechanical guard rather than a convention.
 
-The rule and its rationale are recorded in
-``handovers/HANDOVER_BASISOPT_COHESIVE_ROADMAP.md`` section 3.6.
+The dependency rule is enforced by the tests below.
 
 If you need a vibe-qc capability from driver code, invert the call:
 declare a protocol here and implement it in
@@ -80,8 +79,7 @@ def test_no_module_imports_vibeqc() -> None:
             offenders.append(f"{path.relative_to(SRC)}:{lineno}: imports {module!r}")
 
     assert not offenders, (
-        "vibe-basis must not import vibe-qc (see this module's docstring "
-        "and HANDOVER_BASISOPT_COHESIVE_ROADMAP.md section 3.6):\n  "
+        "vibe-basis must not import vibe-qc (see this module's docstring):\n  "
         + "\n  ".join(offenders)
     )
 

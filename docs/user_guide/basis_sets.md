@@ -13,6 +13,203 @@ well-engineered basis-set families. This page is a practical guide
 to picking the right one for your system, with explicit notes on
 what vibe-qc ships today and what's on the roadmap.
 
+## Theory
+
+**Contracted Gaussians.** A basis function on centre $\mathbf A$ is a fixed contraction of
+$K$ primitive Gaussians sharing that centre and angular part,
+
+$$
+\chi_\mu(\mathbf r) = \sum_{p=1}^{K} d_{p\mu}\, N_p\,
+x_A^{\,i}\, y_A^{\,j}\, z_A^{\,k}\, e^{-\alpha_p r_A^2},
+\qquad \mathbf r_A = \mathbf r - \mathbf A,\quad \ell = i + j + k ,
+$$
+
+with $\alpha_p$ and $d_{p\mu}$ fixed by the published set. Gaussians stand in for Slater
+functions because a product of Gaussians on two centres is a Gaussian on a third, which makes
+every integral analytic; STO-nG fits $n$ Gaussians to one Slater function
+({vibeqc-cite}`hehre_sto_ng_1969`). Chapters 6 and 8 of
+{vibeqc-cite}`helgaker_jorgensen_olsen_2000` treat this material in full.
+
+**Pure and Cartesian shells.** A shell has $(\ell+1)(\ell+2)/2$ Cartesian or $2\ell+1$ pure
+(real solid harmonic) functions. The Cartesian $d$ shell contains the $s$-type combination
+$x^2+y^2+z^2$, so the two span different spaces and give different energies; the representation
+a set was optimised in is part of its definition
+({vibeqc-cite}`schlegel_frisch_spherical_1995` gives the transformation).
+
+**Segmented and general contraction.** In a segmented set (Pople, def2, pcseg) each primitive
+enters essentially one contracted function; in a general contraction (ANO, cc-pVnZ) every
+contracted function of a given $\ell$ combines the same primitives. Jensen's
+P-orthogonalisation turns a general set into a cheaper segmented one of the same accuracy
+({vibeqc-cite}`jensen_pcseg_2014`).
+
+**The cc-pVnZ and def2 families.** The cc-pVnZ sets ({vibeqc-cite}`dunning_ccpvxz_1989`) add
+polarisation shells in groups that recover similar amounts of correlation energy, so correlated
+energies converge systematically with the cardinal number $X$ (2 for D, 3 for T, ...), which
+supports the extrapolation $E^{\rm corr}_X = E^{\rm corr}_\infty + A X^{-3}$ (T. Helgaker,
+W. Klopper, H. Koch, J. Noga, *J. Chem. Phys.* **106**, 9639 (1997), doi:10.1063/1.473863);
+aug- adds one diffuse function per angular momentum ({vibeqc-cite}`kendall_dunning_harrison_1992`).
+The segmented def2 sets ({vibeqc-cite}`weigend_ahlrichs_def2_2005`, built on
+{vibeqc-cite}`schafer_horn_ahlrichs_1992`) target Hartree-Fock and DFT with balanced errors from
+H to Rn, with Stuttgart-Cologne core potentials beyond Kr.
+
+**Auxiliary sets.** Density fitting ([density fitting](density_fitting.md)) expands orbital
+products in a second basis $\{P\}$ with Coulomb metric $J_{PQ} = (P|Q)$,
+$(\mu\nu|\lambda\sigma) \approx \sum_{PQ} (\mu\nu|P)\,[\mathbf J^{-1}]_{PQ}\,(Q|\lambda\sigma)$.
+Each fitting set matches an orbital family and a task: def2/J for Coulomb
+({vibeqc-cite}`weigend_jfit_2006`), def2 JK sets for exchange ({vibeqc-cite}`weigend_jk_aux_2008`),
+cc-pVnZ-JKFIT ({vibeqc-cite}`weigend_jkfit_2002`) and cc-pVnZ-RIFIT for RI-MP2
+({vibeqc-cite}`weigend_ccpvxz_rifit_2002`).
+
+**BSSE and counterpoise.** In a finite basis each fragment of a complex borrows its partner's
+functions, so interaction energies come out too negative. The Boys-Bernardi counterpoise
+correction ({vibeqc-cite}`boys_bernardi_1970`) evaluates every term in the full dimer basis
+(superscript) at the dimer geometry, $\Delta E^{\rm CP} = E_{AB}^{AB} - E_{A}^{AB} - E_{B}^{AB}$.
+The geometrical counterpoise gCP ({vibeqc-cite}`kruse_grimme_gcp_2012`) replaces the ghost-atom
+calculations by an atom-pairwise function of the geometry, and the pob-rev2 sets for solids were
+reoptimised with a BSSE-correction scheme ({vibeqc-cite}`vilela_oliveira_pob_rev2_2019`).
+
+## How the bundled library is stored
+
+Every bundled basis set is one QVF-Basis record,
+`python/vibeqc/basis_library/qvf/<name>.qvf.json`: shells, effective core
+potentials, originating publications and provenance in one
+schema-validated JSON file. The `.g94` and `.ecp` text files libint and
+libecpint read are renderings of the records, written at full precision
+by `vibeqc.basis_toolkit.library` and pinned byte for byte to the records
+by the test suite; nothing edits them by hand. A record's `provenance`
+says what it is (`kind`: `vendor`, `bse`, `hand-written` or `vibe-basis`),
+where it came from (`upstream`, `retrieval_date`), its content identity
+(`content_sha256` of the numbers alone) and which publication covers
+which elements (`citations`). `vibe-qc-basis inspect
+python/vibeqc/basis_library/qvf/pob-tzvp-rev2.qvf.json` prints all of it.
+
+The runtime overlay under `build/basis_library/` that
+`scripts/setup_basis_library.sh` writes is rendered from the same records
+and carries a content receipt; an overlay whose bytes disagree with the
+committed rendering refuses to load before any integral is computed.
+
+## Where a basis name resolves
+
+A basis name is looked up in five layers, in this order. The first layer
+that answers wins, and nothing below it is consulted.
+
+1. **A `LIBINT_DATA_PATH` you set yourself**, when it holds a complete
+   library (the `def2-svp`, `6-311+g3df2p` and `pob-tzvp-rev2` files are
+   the canaries). vibe-qc never changes it, verifies nothing in it, and
+   consults no other layer.
+2. **The bundled library**: the verified `build/basis_library/` overlay
+   when `scripts/setup_basis_library.sh` made one, else the copy inside the
+   package. Both are renderings of the bundled records.
+3. **Your store** (`$VIBEQC_BASIS_STORE`, else `$XDG_DATA_HOME/vibeqc/basis`,
+   else `~/.local/share/vibeqc/basis`): records you imported with
+   `vibe-qc-basis import`, hand-written or produced by vibe-basis. A store
+   record never shadows a bundled name unless you imported it with
+   `--replace-bundled`; that choice is recorded in the store index and
+   makes your record win for that one name.
+4. **The fetch cache** (`$VIBEQC_BSE_CACHE`, else `$XDG_CACHE_HOME/vibeqc/basis`,
+   else `~/.cache/vibeqc/basis`): records rendered from the Basis Set
+   Exchange on an earlier run. Each is stored once under the SHA-256 of its
+   numerical content; the name index points at it.
+5. **Fetching from the catalogue**, only when you opt in with
+   `run_job(fetch_from_bse=True)` or `VIBEQC_FETCH_BSE=1`. The result lands
+   in layer 4.
+
+Layers 3 to 5 reach libint through a directory of symlinks composed over
+the bundled library, so a composed root is always a superset of the bundle:
+a fetched orbital basis with a bundled auxiliary keeps working. Before a
+store or cache record is used, its file is re-hashed against its recorded
+identity and its rendering is compared byte for byte with what the record
+renders to; a mismatch stops the run, naming the file, and nothing is
+substituted silently.
+
+Every run records which layer answered. The `.system` manifest names the
+root libint read (`resolved_root`), one `[[basis_library.fetched]]` row per
+set rendered from the catalogue, and one `[[basis_library.records]]` row
+(name, kind, layer, content hash) per store or cache record the resolution
+added. To pin a result to a particular record, keep the record file the row
+points at, or import it under a distinct name; `basis="name"` always means
+the record the layers currently hold under that name.
+`vibe-qc-basis resolve <name> ...` prints which layer answers a name.
+
+## Your own basis sets
+
+A hand-written set and a vibe-basis product enter through the same door as
+a bundled one and resolve by name with no other change (#410). Put the shells
+in a Gaussian94 file (an `.ecp` of the same stem beside it carries the
+potentials), a BSE JSON file, a CRYSTAL per-element file or directory, or a
+QVF-Basis record, and import it:
+
+```sh
+vibe-qc-basis import my-basis.g94 --kind hand-written --cite some_database_key
+vibe-qc-basis import run-42/mgo-opt.g94      # a vibe-basis export: the sidecar names kind and run
+vibe-qc-basis list
+vibe-qc-basis resolve my-basis
+```
+
+```python
+basis = vq.BasisSet(mol, "my-basis")               # resolves in every new process
+result = vq.run_job(mol, basis="my-basis", method="rhf")
+```
+
+The import refuses a name a bundled set already uses unless you pass
+`--replace-bundled`, and a name already in your store unless you pass
+`--replace`. The record it writes carries `provenance.kind` (`hand-written`
+or `vibe-basis`), the upstream you name, the import date, the content hash
+and the citation keys you give with `--cite`; the `.references` output of a
+run cites those keys and says "user-supplied" where there is no publication.
+Nothing under `python/vibeqc/basis_library/` is ever written by the import.
+`vibe-qc-basis remove <name>` takes a record out again.
+
+vibe-basis writes its optimised basis with
+`vibe_basis.io.export.write_basis_for_import`, which produces the `.g94`
+and a `<name>.provenance.json` sidecar naming the run; importing that file
+needs no flags.
+
+Store records are activated when `vibeqc` is imported, so `BasisSet` finds
+them on both the molecular and the periodic route. Fetched records (layer
+4) are consulted by `run_job`; a periodic job constructs its `BasisSet`
+before the runner sees the name, so make a fetched set visible first:
+
+```python
+from vibeqc import basis_store
+basis_store.resolve(["sadlej pvtz"], fetch=True)     # composes the root and points libint at it
+basis = vq.BasisSet(cell.unit_cell_molecule(), "sadlej pvtz")
+```
+
+## Filtered-basis cache and resolution
+
+`make_basis(..., exp_to_discard=...)` preserves the active library before
+adding its derived basis. The cache store resolves through
+`VIBEQC_FILTERED_BASIS_DIR`, then `$XDG_CACHE_HOME/vibeqc/basis_filter`, then
+`~/.cache/vibeqc/basis_filter`. Cache stores inside the installed package,
+repository or source library are refused, including symlinks resolving there.
+Caller-supplied store and source aliases resolve to their actual locations;
+links inside owned cache roots and their content are refused.
+
+Each complete root contains byte copies of every active library file, including
+stock orbital bases, sidecars and earlier filtered bases, plus the new filtered
+file. Its identity includes every filename and content hash. Reusing a root
+checks its complete receipt and bytes; a changed, missing, extra or linked cache
+file is a hard error. Source file symlinks are read and copied, never written
+through. Case-fold name collisions and conflicting explicit filtered names
+are refused. A generated filtered name includes the emitted content hash.
+
+Libint reads one root. The filter switches `LIBINT_DATA_PATH` only after the
+complete new root is published and validated. Unfiltered calls still find the
+same stock bytes, and named reloads find every earlier filtered basis. Normal
+filtering never deletes old roots. Internal filter writers are serialized;
+external changes to the process environment remain the caller's responsibility.
+Changing `LIBINT_DATA_PATH` manually can hide previously selected names.
+
+`clear_filtered_basis_cache()` is an explicit global purge, not an operation
+safe alongside live calculations. Stop all cache readers and writers, retire
+filtered BasisSets, and restore a stock `LIBINT_DATA_PATH` first. Cleanup refuses
+a selected root, unknown staging entries, invalid receipts or linked cache entries/content,
+and validates all owned roots before removing any. It cannot infer another
+process's use of a root. Its return value counts removed
+`_vibeqc_filtered_*.g94` files across those roots; custom-name files are retired
+with their roots but excluded from that prefix-based count.
+
 ## Reaching a basis vibe-qc does not bundle
 
 The bundled library carries 255 `.g94` files. The
@@ -76,13 +273,13 @@ unbundled name refuses exactly as it always has. A **bundled** name is a
 complete no-op even with the flag on: no lookup, no cache entry, and
 resolution untouched.
 
-When a render does happen, vibe-qc composes a library root that carries the
-current one *plus* the rendered files, and points libint at that. It is a
-superset on purpose: pointing libint at the cache alone would hide the
-bundled library, so a run using a fetched orbital basis with a bundled
-auxiliary would then fail on the auxiliary. Each render prints a warning
-naming the basis, the catalogue version and the file, because a non-bundled
-basis is something a reader of your results needs to know about.
+When a render does happen, the record is stored in the fetch cache under its
+content hash (layer 4 above), its `.g94` and `.ecp` are rendered beside it,
+and vibe-qc composes a library root that carries the bundled one *plus* the
+rendering, then points libint at that (see "Where a basis name resolves").
+Each render prints a warning naming the basis, the catalogue version and the
+file, because a non-bundled basis is something a reader of your results
+needs to know about.
 
 Every rendered file carries a header saying it is not a bundled vibe-qc
 basis, the catalogue version it came from, and BSE's own originating
@@ -108,10 +305,11 @@ provenance_path = "/.../cache/basis/sadlej pvtz.provenance.json"
 `resolved_root` is written on **every** run, fetching or not. vibe-qc prefers
 a build overlay over the committed library, so a result produced against a
 stale overlay is otherwise indistinguishable from one produced against
-current data; now the manifest says which answered. Branch on
-`fetched_count`, not on `fetched`: an empty array of tables is dropped from
-the file, so on an ordinary run the `fetched` key is absent rather than
-empty.
+current data; now the manifest says which answered. A `[[basis_library.records]]`
+row names every store or cache record the resolution added (`records_count`
+counts them). Branch on `fetched_count` and `records_count`, not on the
+arrays: an empty array of tables is dropped from the file, so on an ordinary
+run the keys are absent rather than empty.
 
 ## What vibe-qc ships today
 
@@ -147,11 +345,19 @@ family and the Pople sets. Forty-four of them are valence-only
 somewhere and ship their ECP as a `.ecp` sidecar that the molecular SCF
 wrappers attach automatically, per element: the def2 family from Rb to Rn
 (the libint H-Kr files extended with the Basis Set Exchange blocks and the
-def2-ECP), the LANL and dhf families, vDZP, the 3c bases def2-mSVP /
+def2-ECP; plain, unpolarized def2-SV is the exception, see below), the LANL and dhf families, vDZP, the 3c bases def2-mSVP /
 def2-mTZVP / def2-mTZVPP, pob-TZVP-rev2, and the 16 Peterson/Figgen
 `{,aug-}cc-p{V,wCV}{D,T,Q,5}Z-PP` sets (Cu-Kr, Y-Xe, Hf-Rn).
 `x2c-TZVPall` is all-electron
 (it needs no ECP, and none is attached). See [user guide § ECPs](ecp.md).
+
+**def2-SV stops at Ar.** The unpolarized `def2-sv` covers H-Ar only (18
+elements) and is all-electron over that range. This is a deliberate
+boundary, not a gap in the fetch: the Basis Set Exchange has no def2-SV
+record past argon, and its "Ahlrichs VDZ" (the 1992 SV) is a different set.
+A K-Rn atom in `def2-sv` is refused with an error that names the element
+(`has no functions for Z=19`). For those elements use `def2-sv(p)` or
+`def2-svp`, which reach Rn with the def2-ECP.
 ```
 
 ## Using a basis set
@@ -161,6 +367,16 @@ from vibeqc import BasisSet
 basis = BasisSet(mol, "pob-tzvp")
 print(basis.nbasis)      # number of basis functions
 ```
+
+Names are matched on their letters, digits and `+` only, ignoring case,
+spaces and other punctuation. `6-31G(d,p)`, `6-31G(d, p)` and `631gdp` all
+load `6-31g**`; `sto3g`, `STO_3G` and `Sto 3G` all load `sto-3g`. The basis
+registry (`vibeqc.basis_registry.lookup`, which supplies the default
+auxiliary sets and the ECP rules) resolves a name with the same function,
+so every spelling gets the same metadata as the file it loads. An
+`aug-cc-pV*` name loads its own bundled file when one ships (the
+cc-pVnZ-PP, `-RIFIT` and `(n+d)` families). Otherwise it loads the parent
+set plus its `augmentation-` file.
 
 For periodic systems with diffuse molecular bases, optionally
 filter the most-diffuse primitives:
@@ -237,16 +453,19 @@ Key descriptors:
 - **Contraction**, segmented vs. general. Segmented (Pople,
   def2, pcseg) is faster in most integral codes. Generally
   contracted (cc, ANO) is more compact and accurate per primitive
-  but needs a code that exploits it.
+  but needs a code that exploits it ({vibeqc-cite}`jensen_pcseg_2014`
+  converts one form into the other).
 - **Effective core potential (ECP)**, replaces inner-shell
   electrons with a parameterised potential. Reduces cost, builds
   in scalar relativistic effects. The Stuttgart/Cologne ECPs
+  ({vibeqc-cite}`andrae_ecp_1990` for the 4d and 5d transition metals)
   paired with def2 valence sets are the de facto standard above
   Kr.
 - **Polarisation-consistent vs. correlation-consistent**,
   cc-pVnZ was optimised to recover correlation energy in
-  CCSD/CCSD(T). pc-n / pcseg-n was optimised to converge HF and
-  DFT energies. For DFT, pcseg-n is technically the better-targeted
+  CCSD/CCSD(T) ({vibeqc-cite}`dunning_ccpvxz_1989`). pc-n / pcseg-n was
+  optimised to converge HF and DFT energies ({vibeqc-cite}`jensen_pc_2001`,
+  {vibeqc-cite}`jensen_pcseg_2014`). For DFT, pcseg-n is technically the better-targeted
   choice, but def2-TZVP achieves nearly the same accuracy at lower
   cost in practice.
 
@@ -254,8 +473,11 @@ A note on **basis set superposition error (BSSE)** and **basis
 set incompleteness error (BSIE)**: these are large at the
 double-zeta level (several kcal/mol on noncovalent interactions)
 and are the reason a triple-zeta basis is now the recommended
-floor for any quantitative molecular work. The geometrical
-counterpoise correction (gCP) of Kruse and Grimme is the cheapest
+floor for any quantitative molecular work. The Boys-Bernardi
+counterpoise correction ({vibeqc-cite}`boys_bernardi_1970`) corrects for
+BSSE with ghost-basis calculations. The geometrical
+counterpoise correction (gCP) of Kruse and Grimme
+({vibeqc-cite}`kruse_grimme_gcp_2012`) is the cheapest
 practical fix and is built into the 3c composite methods below.
 
 ## Choosing a molecular basis set
@@ -268,7 +490,7 @@ practical fix and is built into the 3c composite methods below.
 | **MINI / MINIs** (Huzinaga) | SZ | Slightly better than STO-3G atomic energies. Niche use. |
 | **3-21G** | DZ (unpol) | Old Pople split-valence. Faster than 6-31G but unpolarised. Avoid for production. |
 | **pcseg-0 / pc-0** | DZ (unpol) | Jensen DZ without polarisation. Better-balanced than 3-21G. |
-| **6-31G** | DZ (unpol) | Historical workhorse without polarisation. Pitman et al. (2024) showed unpolarised DZ basis sets perform poorly and should not be used. |
+| **6-31G** | DZ (unpol) | Historical workhorse without polarisation. Pitman et al. (2023) showed unpolarised DZ basis sets perform poorly and should not be used. |
 
 **Bottom line.** Support STO-3G (legacy + pedagogical) and 3-21G
 (rare speed-dominated contexts). All other small basis sets
@@ -280,7 +502,7 @@ should carry a "not for production" warning.
 |---|---|
 | **def2-SVP** | Karlsruhe segmented DZ with polarisation on heavy atoms. The most widely used DZ basis in modern DFT codes. Best speed/accuracy balance for routine geometry optimisation. |
 | **vDZP** (Grimme 2023) | Custom polarised DZ used inside ωB97X-3c. Large-core ECPs and deep contraction. On TorsionNet206 drug-like benchmark, vDZP-based methods give MAEs of 0.4-0.5 kcal/mol, comparable to triple-zeta hybrid methods. |
-| **6-31++G(d,p)** | Pitman et al. (2024) found this the best-performing DZ basis on diet-GMTKN55. Diffuse functions matter. |
+| **6-31++G(d,p)** | Pitman et al. (2023) found this the best-performing DZ basis on diet-GMTKN55. Diffuse functions matter. |
 | **6-31G(d,p) / 6-31G\*\*** | Classic Pople workhorse. Acceptable for organic structures, inferior to def2-SVP at similar cost. |
 | **pcseg-1** | Jensen segmented DZ-polarised. Slightly better than def2-SVP for HF/DFT energies, less widely supported. |
 | **cc-pVDZ** | Dunning DZ. Designed for correlation; for pure DFT less efficient than pcseg-1 or def2-SVP. Useful as a stepping stone in cc-pVnZ extrapolations. |
@@ -322,7 +544,7 @@ for multireference.
 
 Pople basis sets (6-31G(d), 6-311G(2df,p)) remain in widespread use
 due to inertia. The polarised 6-311G family is poorly parameterised
-(Pitman et al. 2024 explicitly recommends avoiding it). For new
+(Pitman et al. 2023 explicitly recommends avoiding it). For new
 work, support 6-31G(d) and 6-31++G(d,p) for compatibility but
 encourage def2.
 
@@ -341,7 +563,8 @@ def2) are more accurate.
 
 For 4d / 5d transition metals, scalar relativistic effects matter.
 Either use def2-ECP, or for explicit treatment use dhf-TZVP /
-x2c-TZVPall (Pollak-Weigend 2017) or DKH-recontracted def2
+x2c-TZVPall (Pollak-Weigend 2017, {vibeqc-cite}`pollak_weigend_x2c_2017`)
+or DKH-recontracted def2
 (def2-TZVP-DKH).
 
 #### Inorganic main-group (clusters, oxides, halides, hypervalent)
@@ -355,7 +578,8 @@ x2c-TZVPall (Pollak-Weigend 2017) or DKH-recontracted def2
 | Heavy main group (Sn, Pb, Bi) | def2-TZVP plus ECP, or all-electron x2c-TZVPall |
 
 For second-row hypervalent (SO₃²⁻, SF₆, PF₅, ClO₄⁻), the "tight d"
-variants (e.g. aug-cc-pV(T+d)Z, Dunning et al. 2001) are essential.
+variants (e.g. aug-cc-pV(T+d)Z, Dunning et al. 2001,
+{vibeqc-cite}`dunning_tightd_2001`) are essential.
 The def2 family already includes appropriate d-functions for these
 atoms.
 
@@ -442,7 +666,8 @@ equation-of-state data, the practical floor for DFT precision.
 | **dcm-TZVP** | CRYSTAL | Daga-Civalleri-Maschio 2020. System-specific re-optimisations for diamond, graphene, carbyne. Illustrative of all-purpose-library limits. |
 | **MOLOPT-aug (aug-MOLOPT-ae)** | CP2K | Augmented MOLOPT for excited states (TDDFT, BSE-GW). Recent. |
 
-vibe-qc users default to **pob-TZVP-rev2** for ionic crystals; see
+vibe-qc users default to **pob-TZVP-rev2**
+({vibeqc-cite}`vilela_oliveira_pob_rev2_2019`) for ionic crystals; see
 the *pob basis sets in detail* section further down this page and
 [user guide § linear dependence](linear_dependence.md) for the
 design philosophy.
@@ -504,8 +729,9 @@ PseudoDojo or VASP PAW with `LSORBIT = .TRUE.`.
 ## Composite "3c" methods
 
 These bundle a tailored basis with corrections (geometric
-counterpoise gCP, dispersion D3/D4, sometimes a modified short-range
-correction).
+counterpoise gCP, {vibeqc-cite}`kruse_grimme_gcp_2012`; dispersion D3/D4,
+{vibeqc-cite}`grimme_d3_2010` and {vibeqc-cite}`caldeweyher_d4_2019`;
+sometimes a modified short-range correction).
 
 | Method | Functional | Basis | Year | Notes |
 |---|---|---|---|---|
@@ -572,32 +798,40 @@ solid-state calculations. Standard molecular TZVP bases contain
 very diffuse functions that, when periodic images overlap across
 unit cells, produce near-linear-dependent basis sets, SCF
 convergence suffers or fails outright. The pob family tightens
-those functions to make them usable in solids.
+those functions to make them usable in solids
+({vibeqc-cite}`peintinger_pob_tzvp_2013`).
 
 ### Coverage
 
 | Name | Elements | Reference |
 |---|---|---|
 | pob-TZVP | H-Br, Rb-I (48) | [Peintinger, Vilela Oliveira, Bredow, *J. Comput. Chem.* **34**, 451 (2013)](https://doi.org/10.1002/jcc.23153); Rb-I: [Laun, Vilela Oliveira, Bredow, *J. Comput. Chem.* **39**, 1285 (2018)](https://doi.org/10.1002/jcc.25195) |
-| pob-TZVP-rev2 | H-Br, Rb-Po, La-Lu (78) | [Vilela Oliveira, Laun, Peintinger, Bredow, *J. Comput. Chem.* **40**, 2364 (2019)](https://doi.org/10.1002/jcc.26013) |
-| pob-DZVP-rev2 | H-Br (32) | *(same as above)* |
+| pob-TZVP-rev2 | H-Br, Rb-Po, La-Lu (78) | H-Br: [Vilela Oliveira, Laun, Peintinger, Bredow, *J. Comput. Chem.* **40**, 2364 (2019)](https://doi.org/10.1002/jcc.26013); Rb-Po and La-Lu: the three later papers named below the table |
+| pob-DZVP-rev2 | H-Br, Rb-I (48) | *(same as above)*; Rb-I: [Laun, Vilela Oliveira, Bredow, *J. Comput. Chem.* **39**, 1285 (2018)](https://doi.org/10.1002/jcc.25195) |
+
+The pob-TZVP-rev2 records beyond Br come from three later papers: Rb-I
+({vibeqc-cite}`laun_pob_rev2_fifth_period_2022`), Cs-Ba and Hf-Po
+({vibeqc-cite}`laun_pob_rev2_sixth_period_2021`), and La-Lu
+({vibeqc-cite}`seidler_pob_rev2_lanthanides_2023`).
 
 ### Heavy elements
 
-The pob-TZVP records for Rb-I and the pob-TZVP-rev2 records for Rb-Po
-and La-Lu are valence-only: each carries a Stuttgart-Cologne
-effective core potential in CRYSTAL's `Z+200` format. vibe-qc bundles
-those records and ships the potentials as `pob-tzvp.ecp` and
-`pob-tzvp-rev2.ecp` sidecars, which are applied automatically on the
-molecular route and on the periodic k-point GDF route. No network
-access is needed.
+The pob-TZVP and pob-DZVP-rev2 records for Rb-I and the pob-TZVP-rev2
+records for Rb-Po and La-Lu are valence-only: each carries a
+Stuttgart-Cologne effective core potential in CRYSTAL's `Z+200` format
+(the same potentials block for block across the three sets). vibe-qc
+bundles those records and ships the potentials as `pob-tzvp.ecp`,
+`pob-dzvp-rev2.ecp` and `pob-tzvp-rev2.ecp` sidecars, which are applied
+automatically on the molecular route and on the periodic k-point GDF
+route. No network access is needed.
 
 ### Method scope
 
 The pob-\* basis sets are **optimised for DFT and hybrid-DFT
 work on solids**, that's the regime the parameter
 re-optimisations in Peintinger 2013 / Vilela Oliveira 2019
-targeted, and the regime where the bundled `.g94` files have
+({vibeqc-cite}`peintinger_pob_tzvp_2013`,
+{vibeqc-cite}`vilela_oliveira_pob_rev2_2019`) targeted, and the regime where the bundled `.g94` files have
 been validated. **For pure Hartree-Fock or correlated methods
 (MP2, CCSD, ...) on periodic systems, pob-\* is not the right
 basis choice**: SCF convergence under defaults is unreliable
@@ -614,19 +848,25 @@ reference inputs follow this principle.
 
 ## Re-fetching the pob-\* library
 
-Because we ship the `.g94` conversions in the repository, a fresh
-clone already has them under `basis_library/custom/`. If you want
-to re-fetch from the Bredow group server (e.g. for a future
-revision):
+The pob records ship in the repository (`basis_library/qvf/pob-*.qvf.json`,
+derived from the per-element CRYSTAL sources under `basis_library/sources/`),
+so a fresh clone has them. To re-fetch from the Bredow group server (for a
+future revision), write the archive's `.g94` conversion somewhere outside
+the package and turn it into a record:
 
 ```sh
-python -m vibeqc.basis_crystal fetch
-./scripts/setup_basis_library.sh
+python -m vibeqc.basis_crystal fetch --dest /tmp/pob-refetch
+vibe-qc-basis convert /tmp/pob-refetch/pob-tzvp-rev2.g94 --ecp /tmp/pob-refetch/pob-tzvp-rev2.ecp \
+    -o python/vibeqc/basis_library/qvf/pob-tzvp-rev2.qvf.json --kind vendor \
+    --upstream "Bredow group basis-set archive" --retrieval-date 2026-10-11
+./scripts/setup_basis_library.sh --target-dir python/vibeqc/basis_library
 ```
 
-The fetcher writes to `basis_library/custom/`; the setup script
-assembles `basis_library/basis/` from libint's stock set plus
-those customs.
+The fetcher writes only where `--dest` (or `dest_dir=` in Python) says;
+it has no default output directory, so a call that only needs the parsed
+records (`return_atoms=True`) never writes into an installed tree.
+`scripts/basisset_dev/pob_basis_verify.py` compares the sources with the
+records and renderings, and can regenerate the records from the sources.
 
 ## Parsing a CRYSTAL-format basis directly
 
@@ -639,8 +879,11 @@ with open("my-basis.g94", "w") as f:
     f.write(emit_g94([atom]))
 ```
 
-Drop the resulting `my-basis.g94` into `basis_library/custom/` and
-run `./scripts/setup_basis_library.sh` to pick it up.
+To use the result by name, turn it into a record with `vibe-qc-basis
+convert my-basis.g94 -o my-basis.qvf.json --kind hand-written` and point
+`LIBINT_DATA_PATH` at a directory holding its rendering, or, for a bundled
+set, save the record under `basis_library/qvf/` and re-render (see the
+library [README](https://github.com/vibe-qc/vibe-qc/blob/main/python/vibeqc/basis_library/README.md)).
 
 ### CRYSTAL format in one page
 

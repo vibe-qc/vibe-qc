@@ -502,8 +502,8 @@ def test_metallic_chain_krhf_smear_matches_pyscf():
     nor a smearing bug — exxdiv-K and the fractional-occupation energy
     expression both matched PySCF to <0.3 mHa. Fixed by dropping the spurious
     ``L_jj.conj()`` in run_krhf/kuhf_periodic_gdf._build_j_from_lpq, which
-    reproduces PySCF ``get_j_kpts`` exactly. See handovers/HANDOVER_GDF_OUTSTANDING.md
-    §9.2."""
+    reproduces PySCF ``get_j_kpts`` exactly.
+    """
     sysp, basis = _metal_h_chain()
     r = run_krhf_periodic_gdf(
         sysp, basis, kmesh=(1, 1, 8), options=_metal_opts(0.01),
@@ -518,7 +518,7 @@ def test_metallic_chain_krhf_smear_matches_pyscf():
 # --- open-shell rsgdf high-|G| tail plumbing --------------------------------
 # The closed-shell drivers have carried rsgdf_tail_ke_cutoff since the P01
 # dense-core audit; the open-shell route was recorded as "no tail plumbing
-# yet -- held unconditionally on the class" (HANDOVER_OPEN_BUGS_V015,
+# yet -- held unconditionally on the class" (the original investigation,
 # production-k-sampling item). These pin the plumbed knob: the exact
 # same-support identity, the parity-hold lift, and the fail-closed guard.
 
@@ -546,7 +546,7 @@ def test_kuhf_tail_completion_identity():
 
 def test_kuhf_dense_core_hold_lifts_with_parity_tail(monkeypatch):
     """Dense-core cells warn + tag on the open-shell route at the untailed
-    default, and a parity-sized rsgdf_tail_ke_cutoff lifts the hold --
+    classic fit, and a parity-sized rsgdf_tail_ke_cutoff lifts the hold --
     mirroring the closed-shell test. A sentinel replaces the cderi cache
     build so no MgO SCF runs; the warning must fire before the build."""
     import vibeqc.periodic_k_gdf as kgdf
@@ -554,7 +554,10 @@ def test_kuhf_dense_core_hold_lifts_with_parity_tail(monkeypatch):
     class _Sentinel(Exception):
         pass
 
+    reached = []
+
     def _boom(*a, **k):
+        reached.append(k["tail_ke_cutoff"])
         raise _Sentinel()
 
     monkeypatch.setattr(kgdf, "_build_rsgdf_lpq_cache_shared_q", _boom)
@@ -569,8 +572,10 @@ def test_kuhf_dense_core_hold_lifts_with_parity_tail(monkeypatch):
     with pytest.warns(UserWarning, match="parity-held"):
         with pytest.raises(_Sentinel):
             run_kuhf_periodic_gdf(
-                system, basis, kmesh=(1, 1, 2), progress=False
+                system, basis, kmesh=(1, 1, 2), fit_source="classic", progress=False
             )
+
+    assert reached == [None]
 
     import warnings as _warnings
 
@@ -581,9 +586,12 @@ def test_kuhf_dense_core_hold_lifts_with_parity_tail(monkeypatch):
                 system,
                 basis,
                 kmesh=(1, 1, 2),
+                fit_source="classic",
                 rsgdf_tail_ke_cutoff=3300.0,
                 progress=False,
             )
+
+    assert reached == [None, 3300.0]
 
 
 def test_kuhf_tail_requires_rsgdf():

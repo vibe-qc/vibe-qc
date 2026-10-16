@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "def2-qzvp-c",
+  "description": "def2-QZVP C-Basis set for H, He, Li, Be, B, C, N, O, F, Ne, Na, Mg, Al, Si, P, S, Cl, Ar, K, Ca, Ga, Ge, As, Se, Br, Kr, Rb, Sr, In, Sn, Sb, Te, I, Xe, Cs, Ba, Tl, Pb, Bi, Po, At and Rn in Gaussian-format",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -21935,7 +21935,46 @@
       ]
     }
   },
+  "basis_family": "ahlrichs",
+  "references": [
+    {
+      "key": "weigend_ahlrichs_def2_2005",
+      "description": "F. Weigend, R. Ahlrichs, Physical Chemistry Chemical Physics 7, 3297-3305 (2005)",
+      "doi": "10.1039/B508541A"
+    },
+    {
+      "key": "hellweg_haettig_pp_rifit_2007",
+      "description": "A. Hellweg, C. Hättig, S. Höfener, W. Klopper, Theoretical Chemistry Accounts 117, 587-597 (2007)",
+      "doi": "10.1007/s00214-007-0250-5"
+    },
+    {
+      "key": "haettig_aux_5z_2005",
+      "description": "C. Hättig, Physical Chemistry Chemical Physics 7, 59-66 (2005)",
+      "doi": "10.1039/B415208E"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "def2-qzvp-c",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "d752b93a3b53d17c8e0755ce79fe29eed399fb5b1541985bff05a8e78912981a",
+    "citations": [
+      {
+        "keys": [
+          "weigend_ahlrichs_def2_2005",
+          "hellweg_haettig_pp_rifit_2007",
+          "haettig_aux_5z_2005"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

@@ -285,7 +285,7 @@ Eigen::MatrixXd compute_dftb0_seccm_gradient(
                 * (params.average_on_site(atoms[central].Z)
                    + params.average_on_site(atoms[origin].Z));
             effective(mu, nu) += result.density(mu, nu)
-                * 0.5 * params.kappa() * average;
+                * params.kappa() * average;
         }
     }
 

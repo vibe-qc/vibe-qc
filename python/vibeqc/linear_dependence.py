@@ -407,9 +407,10 @@ class PeriodicLinearDependenceSummary:
     ``n_fit_kept`` / ``n_aux`` describe the *auxiliary* fit rather than
     the AO overlap: the density-fitting metric is orthogonalised on its
     own threshold, and on compact dense-core cells that is the dominant
-    failure mode (measured: sweeping it moved MgO MDF from -62874 Ha to
-    -271.146 Ha against a -271.0499 Ha reference, with none of this
-    state observable at the time).
+    failure mode (measured before the auxiliary-image sum of #172:
+    sweeping it moved MgO MDF from -62874 Ha to -271.146 Ha against a
+    -271.0499 Ha reference, with none of this state observable at the
+    time).
     """
 
     n_basis: int

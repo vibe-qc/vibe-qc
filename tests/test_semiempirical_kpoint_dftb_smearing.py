@@ -17,7 +17,7 @@ from vibeqc.smearing import fermi_dirac_occupations_per_k
 
 
 _CHAIN_LENGTH = 4.1
-_CUTOFF = 12.0
+_CUTOFF = 32.0
 _TEMPERATURE = 0.05
 
 

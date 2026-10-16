@@ -23,7 +23,7 @@ _SCHEMA_PATH = (
     / "vibeqc"
     / "output"
     / "formats"
-    / "qvf_manifest_v2.schema.json"
+    / "qvf_manifest.schema.json"
 )
 with open(_SCHEMA_PATH, encoding="utf-8") as _f:
     _SCHEMA = json.load(_f)

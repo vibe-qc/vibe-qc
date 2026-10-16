@@ -134,9 +134,9 @@ once you convert Å → bohr.
 | CRYSTAL | vibe-qc |
 |---|---|
 | `BASISSET / POB-TZVP / END` block | `BasisSet(mol, "pob-tzvp")`, same name |
-| Per-element CRYSTAL-format basis lines | Drop the file under `basis_library/custom/` and re-run `./scripts/setup_basis_library.sh`. The CRYSTAL-format parser (`vibeqc.basis_crystal`) handles the per-element layout. |
-| Mixed BSE + custom basis | Same pattern, drop in `custom/`, rebuild. See [basis_sets](basis_sets.md) § "Custom basis sets". |
-| `INPUT` block with explicit primitive coefficients | Same `custom/` mechanism. |
+| Per-element CRYSTAL-format basis lines | Convert the file into a QVF-Basis record with `vibe-qc-basis convert`. The CRYSTAL-format parser (`vibeqc.basis_crystal`) handles the per-element layout. |
+| Mixed BSE + custom basis | Same pattern: one record per basis set. See [basis_sets](basis_sets.md). |
+| `INPUT` block with explicit primitive coefficients | Same record mechanism; the ECP radial powers are converted to the Gaussian convention (#207). |
 
 The bundled pob-* family on `main` covers H-Br (the same coverage
 as the original Peintinger 2013 paper). Current installs ship the
@@ -173,9 +173,16 @@ Gilat-Raubenheimer cell quadrature (no smearing width to converge). It is
 self-consistent for **insulators** (full or symmetry-reduced meshes), and
 parameter-free **post-SCF** for **metals**: converge with
 `smearing_temperature`, then take the GR Fermi level / occupations / `gilat_dos`
-on the converged eigenvalues. Self-consistent GR-driven *metals* await the
-periodic density-mixing program (Kerker / Anderson / Broyden, roadmap v0.10.x);
-until then a metal total energy comes from smearing.
+on the converged eigenvalues. The periodic density mixers shipped in v0.14:
+`run_periodic_job(..., density_mixer="anderson" | "broyden",
+density_mixer_kerker=True)` on the closed-shell GDF route (`jk_method="gdf"`,
+RHF/RKS) and on multi-k RIJCOSX, both with an explicit `kpoints=` mesh; see
+[SCF convergence](scf_convergence.md) for the periodic convergence aids and
+[periodic methods](periodic_methods.md) for the route table. They damp charge
+sloshing, but they do not make a sharp Fermi surface differentiable: a
+GR-driven metallic SCF still has a discontinuous occupation map, so a metal
+total energy still comes from smearing and GR stays the post-SCF analysis
+step (see [metallic BZ integration](metallic_bz_integration.md)).
 ```
 
 ### Coulomb / exchange truncation (TOLINTEG)
@@ -391,7 +398,7 @@ inline the basis block instead.
   submit CRYSTAL14 jobs through the same `vq` queue used for
   vibe-qc.
 - [user_guide/basis_sets](basis_sets.md) § "CRYSTAL-format basis
-  parser", drop a CRYSTAL `.bas` file under `custom/`.
+  parser", converting a CRYSTAL per-element file into a record.
 - [Why solid-state calculations use `pob-TZVP`](../tutorial/pob_tzvp.md), why
   CRYSTAL-style basis sets matter for periodic calculations.
 - [MgO from the Materials Project: `vqfetch` end-to-end](../tutorial/mgo_from_materials_project.md)

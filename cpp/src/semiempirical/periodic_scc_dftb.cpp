@@ -94,7 +94,7 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> build_h0_s0_gamma(
 
                 if (!is_zero || a_mu != a_nu) {
                     double h_avg = 0.5 * (hbar[a_mu] + hbar[a_nu]);
-                    H_g(mu, nu) = 0.5 * kappa * S_g(mu, nu) * h_avg;
+                    H_g(mu, nu) = kappa * S_g(mu, nu) * h_avg;
                 }
             }
         }

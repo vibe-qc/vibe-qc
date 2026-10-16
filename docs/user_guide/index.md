@@ -18,13 +18,18 @@ you're new to vibe-qc.
 | choose a periodic Coulomb route | [Periodic methods](periodic_methods.md) | [Periodic JK routes](../periodic_jk_routes.md) |
 | run the ab initio cyclic cluster model (experimental) | [AICCM](aiccm.md) | [chi-CCM](aiccm2026dev_b.md), [Gamma-CCM](../aiccm2026dev_a.md) |
 | converge a crystal calculation | [k-points](k_points.md) | [Smearing](smearing.md), [density fitting](density_fitting.md) |
+| select an integral engine or J/K algorithm (experimental) | [Integral engines](integral_engines.md) | [MANTA developer reference](manta.md), [density fitting](density_fitting.md) |
 | understand files and provenance | [Output files](output_files.md) | [Logging](logging.md), [citations](citations.md) |
+| analyze IAO charges, spins and bonds | [IAO analysis](iao_population.md) | [Numerical comparisons](iao_validation.md) |
 | hand a wavefunction to another program | [TREXIO](trexio.md) | [Output files](output_files.md), [citations](citations.md) |
 | open or automate a QVF result | [QVF and vibe-view](../visualization.md) | [vibe-view CLI](vibe_view_cli.md) |
 | run on another host | [Queue](queue.md) | [Running](../running.md) |
 
 ## Tutorial, guide, or API reference?
 
+- Use **[Methods: theory and status](../methods.md)** to choose a method:
+  one page walks every family with its physics, its `run_job` spelling and
+  its production, preview, experimental or gated label.
 - Use a **tutorial** when learning a method or workflow. Tutorials include a
   runnable calculation, theory, expected output, and interpretation.
 - Use this **user guide** for supported behavior, options, defaults, and
@@ -48,8 +53,11 @@ skala
 rohf
 mp2_and_double_hybrids
 ccsd
+tddft
 dlpno_mp2
+periodic_local_correlation
 non_hf_solvers
+ovgf
 composites
 mlip
 semiempirical
@@ -88,6 +96,8 @@ coop_cohp
 :caption: SCF & convergence
 
 scf_convergence
+opentrustregion
+opentrustregion_theory
 scf_modes
 solver_framework
 initial_guess
@@ -95,6 +105,8 @@ smearing
 metallic_bz_integration
 linear_dependence
 density_fitting
+integral_engines
+manta
 solvation
 settings
 memory
@@ -104,11 +116,17 @@ memory
 :maxdepth: 1
 :caption: Workflows & properties
 
+geometry_optimization
 relaxed_scan
 neb
+irc_and_dimer
+vibrational_analysis
+equation_of_state
 molecular_dynamics
 properties
 bond_analysis
+iao_population
+iao_validation
 band_structure
 volumetric_data
 data_library

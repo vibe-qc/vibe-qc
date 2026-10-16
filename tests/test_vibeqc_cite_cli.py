@@ -3,9 +3,9 @@
 Pins the contract documented in
 ``docs/design_output_module.md § Phase O3 — vibeqc-cite CLI``:
 
-  1. ``vibeqc-cite <stem>`` reads ``{stem}.system``, extracts the
-     ``[plan]`` section, walks the citation database, and prints
-     the plain-text reference list to stdout.
+  1. ``vibeqc-cite <stem>`` reads ``{stem}.system``, preserves recorded
+     citation keys (falling back to ``[plan]`` for older manifests),
+     and prints the plain-text reference list to stdout.
   2. ``--write`` writes ``{stem}.bibtex`` + ``{stem}.references``
      siblings instead of printing.
   3. ``--bibtex-only`` selects only the BibTeX surface (stdout or
@@ -159,3 +159,49 @@ def test_cite_accepts_path_with_out_suffix(
     rc = cite_main([str(stem.with_suffix(".out"))])
     assert rc == 0
     assert "[1]" in capsys.readouterr().out
+
+
+def test_recorded_citations_preserve_selection_order_and_visibility():
+    from vibeqc.output.citations.cli import _assemble
+    from vibeqc.output.citations.bibtex import format_bibtex
+
+    manifest = {
+        "plan": {"method": "rhf", "basis": "sto-3g"},
+        "citations": {"entries": [
+            {"key": "greiner_opentrustregion_2026"},
+            {"key": "vibeqc_software"},
+            {"key": "greiner_opentrustregion_2026"},
+            {"key": "pulay_diis_1980", "print": False},
+            {"key": "eigen", "print": True},
+        ]},
+    }
+    result = _assemble(manifest)
+    assert [c.key for c in result.citations] == [
+        "greiner_opentrustregion_2026", "vibeqc_software", "pulay_diis_1980", "eigen",
+    ]
+    assert [c.key for c in result.printable] == [
+        "greiner_opentrustregion_2026", "vibeqc_software",
+    ]
+    assert "pulay_diis" not in format_bibtex(result)
+    assert result.citations[0].issue == 2
+
+
+@pytest.mark.parametrize("recorded", [
+    [], {"entries": "invalid"}, {"entries": [None]},
+    {"entries": [{"key": "unknown_recorded_paper"}]},
+    {"entries": [{"key": "vibeqc_software", "print": "false"}]},
+])
+def test_invalid_recorded_citations_refuse_partial_regeneration(recorded, capsys):
+    from vibeqc.output.citations.cli import _assemble
+
+    with pytest.raises(SystemExit) as error:
+        _assemble({"plan": {"method": "rhf"}, "citations": recorded})
+    assert error.value.code == 1
+    assert "vibeqc-cite:" in capsys.readouterr().err
+
+
+def test_explicitly_empty_recorded_citations_do_not_invent_defaults():
+    from vibeqc.output.citations.cli import _assemble
+
+    result = _assemble({"plan": {"method": "rhf"}, "citations": {"entries": []}})
+    assert not result.citations

@@ -80,7 +80,7 @@ from vibeqc.fetch import (
 
 # ID-lookup is unambiguous — formula-based queries hit the
 # polymorph-disambiguation footgun (MgO has rocksalt + CsCl + hex
-# polymorphs all in MP; see § 11 of the structure-fetcher handover).
+# polymorphs all in MP).
 spec = fetch_optimade(optimade_id="mp/mp-1265", quick=True)[0]
 
 emit_spec_module(spec,  "examples/regression/systems/periodic/")

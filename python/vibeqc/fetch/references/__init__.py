@@ -9,7 +9,7 @@ ionization energies -- for QC method validation. See
 The phase-1 fetch infrastructure (``FetchCache``, ``Provenance``,
 ``vqfetch`` CLI scaffolding) carries over directly.
 
-**Architecture deviation from the handover-doc draft.** The doc
+**Architecture deviation from the earlier design draft.** The doc
 proposed many table-code-specific parsers
 (``ea2x.asp``, ``enthalpyx.asp``, ``vibs2x.asp``, ...). Live probing
 revealed that:

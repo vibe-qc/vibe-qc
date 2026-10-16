@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "cologne-dkh2",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: Cologne DKH2\nCanonical name in vibe-qc: cologne-dkh2\nOriginating publication: Dolg et al. — Cologne DKH2 basis set compilation\nNote: DKH2 light-element basis\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: Cologne DKH2\nDescription: Cologne DKH2\n       Role: orbital\n    Version: 0  (Data from the original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "La": {
@@ -8540,7 +8540,19 @@
       ]
     }
   },
+  "basis_family": "cologne",
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "Cologne DKH2"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "6146d72adfef7aa6140eae14f43bbbe01bb38fc81e64209c9ef554c3f77e06ba"
   }
 }

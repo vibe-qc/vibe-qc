@@ -4,6 +4,7 @@ job.spec onto the runner kwarg surface (QVF spec § 5.9, § 3.2)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import types
 import zipfile
@@ -144,6 +145,89 @@ class TestLoadJobContainer:
                 zf.writestr(name, data)
         with pytest.raises(ValueError, match="sha256"):
             load_job_container(path)
+
+
+class TestJsonUnsafeGuardIssue366:
+    """Write-time rejection of native-option records in job.spec.options.
+
+    Issue #366: an executable QVF that embeds native C++ option objects
+    (RHFOptions, CCSDOptions, etc.) inside ``job.spec.options`` would corrupt
+    the archive at write time and abort RHF before SCF at read time.
+
+    Guard: *write_pending_qvf* refuses non-JSON-safe values with a clear
+    TypeError; *run_container / _runner_kwargs* strictly hydrates supported
+    JSON option dictionaries through their public constructors.
+    """
+
+    def test_native_rhf_options_refused_at_write_time(self, tmp_path):
+        from vibeqc._vibeqc_core import RHFOptions
+
+        opts = RHFOptions()
+        with pytest.raises(TypeError, match="cannot be embedded"):
+            write_pending_qvf(
+                _h2(),
+                tmp_path / "bad",
+                method="rhf",
+                basis="sto-3g",
+                options={"rhf_options": opts},
+            )
+
+    def test_native_ccsd_options_refused_at_write_time(self, tmp_path):
+        from vibeqc._vibeqc_core import CCSDOptions
+
+        opts = CCSDOptions()
+        with pytest.raises(TypeError, match="cannot be embedded"):
+            write_pending_qvf(
+                _h2(),
+                tmp_path / "bad",
+                method="ccsd",
+                basis="sto-3g",
+                options={"ccsd_options": opts},
+            )
+
+    def test_scalar_options_roundtrip_ok(self, tmp_path):
+        path = write_pending_qvf(
+            _h2(),
+            tmp_path / "job",
+            method="rhf",
+            basis="sto-3g",
+            options={"max_iter": 100, "damping": 0.5},
+        )
+        container = load_job_container(path)
+        assert container.spec["options"]["max_iter"] == 100
+        assert container.spec["options"]["damping"] == 0.5
+
+    def test_read_time_cohesion_rhf_options(self, tmp_path, monkeypatch):
+        path = write_pending_qvf(
+            _h2(), tmp_path / "job", method="rhf",
+            options={"rhf_options": {
+                "max_iter": 200, "conv_tol_energy": 1e-10, "damping": 0.3,
+            }},
+        )
+
+        # Verify the container loads correctly.
+        container = load_job_container(path)
+        assert isinstance(container.spec["options"]["rhf_options"], dict)
+
+        # Stub run_job to capture what _runner_kwargs would pass.
+        captured: dict | None = None
+
+        def fake_run_job(molecule, **kwargs):
+            nonlocal captured
+            captured = kwargs
+            return types.SimpleNamespace(converged=True, energy=-1.0)
+
+        monkeypatch.setattr(vibeqc, "run_job", fake_run_job)
+        run_container(path, update_in_place=False)
+
+        assert captured is not None
+        rhf_opts = captured.get("rhf_options")
+        assert rhf_opts is not None
+        # Coerced type check: should be RHFOptions, not a dict.
+        from vibeqc._vibeqc_core import RHFOptions
+        assert isinstance(rhf_opts, RHFOptions)
+        assert int(getattr(rhf_opts, "max_iter", 0)) == 200
+        assert float(getattr(rhf_opts, "damping", 0)) == 0.3
 
 
 class TestBuildSystem:
@@ -682,7 +766,81 @@ class TestInPlaceUpdate:
         assert report["valid"], report["errors"]
 
 
+@pytest.mark.parametrize("options,match", [
+    ({"rhf_options": {"max_iter": True}}, r"options\.rhf_options\.max_iter"),
+    ({"rhf_options": {"unsupported_control": 1}}, "unsupported_control"),
+    ([], "options must be an object"),
+    (False, "options must be an object"),
+    (0, "options must be an object"),
+    ("", "options must be an object"),
+    (None, "options must be an object"),
+])
+def test_invalid_native_options_settle_failed_before_runner(tmp_path, monkeypatch, options, match):
+    path = write_pending_qvf(
+        _h2(), tmp_path / "invalid-options", method="rhf", basis="sto-3g",
+    )
+    # External producers can supply malformed options despite our writer's
+    # guard. Keep the archive checksum valid so execution reaches hydration.
+    with zipfile.ZipFile(path) as archive:
+        members = {name: archive.read(name) for name in archive.namelist()}
+    manifest = json.loads(members["manifest.json"])
+    section = next(s for s in manifest["sections"] if s["kind"] == "job.spec")
+    member = section["members"]["spec"]
+    spec = json.loads(members[member["path"]])
+    spec["options"] = options
+    members[member["path"]] = json.dumps(spec).encode()
+    member["sha256"] = hashlib.sha256(members[member["path"]]).hexdigest()
+    members["manifest.json"] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, data in members.items():
+            archive.writestr(name, data)
+    before = load_job_container(path).job_spec_bytes
+    called = []
+
+    def should_not_run(molecule, **kwargs):
+        called.append(kwargs)
+        raise AssertionError("invalid options reached the runner")
+
+    monkeypatch.setattr(vibeqc, "run_job", should_not_run)
+    with pytest.raises(ValueError, match=match):
+        run_container(path)
+    assert not called
+    settled = load_job_container(path)
+    assert settled.run_status == "failed"
+    assert settled.job_spec_bytes == before
+    report = validate_qvf(path)
+    assert report["valid"], report["errors"]
+
+
 class TestEndToEnd:
+    def test_explicit_rhf_options_match_direct_lih_call(self, tmp_path):
+        """JSON controls reach real SCF and preserve the direct-call result."""
+        mol = Molecule([
+            Atom(3, [0.0, 0.0, 0.0]),
+            Atom(1, [0.0, 0.0, 1.595 * ANGSTROM_TO_BOHR]),
+        ], 0, 1)
+        controls = {"use_diis": True, "damping": 0.0,
+                    "max_iter": 120, "conv_tol_energy": 1e-8}
+        path = write_pending_qvf(
+            mol, tmp_path / "lih-container", method="rhf", basis="def2-svp",
+            options={"rhf_options": controls, "record_hostname": False},
+        )
+        spec_before = load_job_container(path).job_spec_bytes
+        result = run_container(path)
+        opts = vibeqc.RHFOptions()
+        for name, value in controls.items():
+            setattr(opts, name, value)
+        direct = vibeqc.run_job(
+            mol, method="rhf", basis="def2-svp", rhf_options=opts,
+            output=tmp_path / "lih-direct", record_hostname=False,
+        )
+        assert result.converged and direct.converged
+        assert result.energy == pytest.approx(direct.energy, abs=1e-8, rel=0)
+        settled = load_job_container(path)
+        assert settled.run_status == "converged"
+        assert settled.job_spec_bytes == spec_before
+        assert settled.spec["options"]["rhf_options"] == controls
+
     def test_h2_sto3g_single_point_updates_container(self, tmp_path):
         """A pending container runs a real SCF and becomes the settled,
         self-contained archive: results + run.record + complete log +
@@ -808,6 +966,167 @@ class TestEndToEnd:
         assert load_job_container(path).run_status == "converged"
         report = validate_qvf(path)
         assert report["valid"], report["errors"]
+
+
+def _restamp_spec(path: Path, **changes) -> Path:
+    """Rewrite the job.spec payload (and its sha256) of a pending container."""
+    with zipfile.ZipFile(path) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        payloads = {n: zf.read(n) for n in zf.namelist()}
+    section = next(s for s in manifest["sections"] if s["kind"] == "job.spec")
+    member = section["members"]["spec"]
+    spec = json.loads(payloads[member["path"]])
+    for key, value in changes.items():
+        if value is _ABSENT:
+            spec.pop(key, None)
+        else:
+            spec[key] = value
+    raw = json.dumps(spec).encode()
+    payloads[member["path"]] = raw
+    member["sha256"] = hashlib.sha256(raw).hexdigest()
+    payloads["manifest.json"] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, payload in payloads.items():
+            zf.writestr(name, payload)
+    return path
+
+
+_ABSENT = object()
+
+
+class TestJobSpecNoneSpellings:
+    """QVF spec Sec. 5.9: ``null`` = the method takes none, ``""`` is its
+    deprecated spelling, absent = the engine's default."""
+
+    def test_pending_rhf_records_functional_null(self, tmp_path):
+        path = write_pending_qvf(_h2(), tmp_path / "rhf", method="rhf",
+                                 basis="sto-3g")
+        spec = load_job_container(path).spec
+        assert spec["basis"] == "sto-3g"
+        assert "functional" in spec and spec["functional"] is None
+        assert validate_qvf(path)["valid"]
+
+    def test_pending_semiempirical_records_basis_and_functional_null(
+        self, tmp_path
+    ):
+        path = write_pending_qvf(_h2(), tmp_path / "xtb", method="gfn2")
+        spec = load_job_container(path).spec
+        assert spec["basis"] is None and spec["functional"] is None
+        assert validate_qvf(path)["valid"]
+
+    def test_pending_dft_without_functional_leaves_engine_default(
+        self, tmp_path
+    ):
+        path = write_pending_qvf(_h2(), tmp_path / "rks", method="rks",
+                                 basis="sto-3g")
+        spec = load_job_container(path).spec
+        assert "functional" not in spec
+
+    def test_pending_empty_strings_are_never_written(self, tmp_path):
+        path = write_pending_qvf(_h2(), tmp_path / "empty", method="rhf",
+                                 basis="sto-3g", functional="")
+        assert load_job_container(path).spec["functional"] is None
+        path = write_pending_qvf(_h2(), tmp_path / "nomethod", basis="",
+                                 functional="")
+        spec = load_job_container(path).spec
+        assert "basis" not in spec and "functional" not in spec
+
+    @pytest.mark.parametrize("value", [None, "", _ABSENT])
+    def test_molecular_reader_supplies_no_basis_or_functional(
+        self, tmp_path, monkeypatch, value
+    ):
+        path = write_pending_qvf(_h2(), tmp_path / "job", method="rhf",
+                                 basis="sto-3g")
+        _restamp_spec(path, basis=value, functional=value)
+        seen = {}
+
+        def fake_run_job(molecule, **kwargs):
+            seen.update(kwargs)
+            return "ok"
+
+        monkeypatch.setattr(vibeqc, "run_job", fake_run_job)
+        assert run_container(path, update_in_place=False) == "ok"
+        assert "basis" not in seen and "functional" not in seen
+
+    @pytest.mark.parametrize("value", [None, ""])
+    def test_periodic_reader_passes_no_basis_set(
+        self, tmp_path, monkeypatch, value
+    ):
+        path = write_pending_qvf(_mgo(), tmp_path / "mgo", method="scc_dftb")
+        _restamp_spec(path, basis=value, functional=value)
+        seen = {}
+
+        def fake_run_periodic_job(system, basis, **kwargs):
+            seen["basis"] = basis
+            seen["kwargs"] = kwargs
+            return "ok"
+
+        monkeypatch.setattr(vibeqc, "run_periodic_job", fake_run_periodic_job)
+        assert run_container(path, update_in_place=False) == "ok"
+        assert seen["basis"] is None
+        assert "functional" not in seen["kwargs"]
+
+    def test_non_string_name_is_refused(self, tmp_path, monkeypatch):
+        path = write_pending_qvf(_h2(), tmp_path / "job", method="rhf",
+                                 basis="sto-3g")
+        _restamp_spec(path, functional=3)
+        monkeypatch.setattr(vibeqc, "run_job", lambda *a, **k: "ok")
+        with pytest.raises(ValueError, match="functional must be a string or null"):
+            run_container(path, update_in_place=False)
+
+
+class TestWithdrawnVersion:
+    """QVF spec Sec. 3.1 on the ``vibeqc run`` path."""
+
+    @staticmethod
+    def _stamp(path: Path, version) -> Path:
+        with zipfile.ZipFile(path) as zf:
+            manifest = json.loads(zf.read("manifest.json"))
+            payloads = {n: zf.read(n) for n in zf.namelist()}
+        manifest["qvf_version"] = version
+        manifest["schema_uri"] = "https://vibe-qc.org/spec/qvf/2/manifest.schema.json"
+        payloads["manifest.json"] = json.dumps(manifest).encode()
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, payload in payloads.items():
+                zf.writestr(name, payload)
+        return path
+
+    def test_version_2_container_runs_and_is_rewritten_as_1(
+        self, tmp_path, monkeypatch
+    ):
+        from vibeqc.output.formats.qvf import _SCHEMA_URI, W_VERSION_WITHDRAWN
+
+        path = write_pending_qvf(_h2(), tmp_path / "job", method="rhf",
+                                 basis="sto-3g")
+        self._stamp(path, 2)
+        report = validate_qvf(path)
+        assert report["valid"], report["errors"]
+        assert any(w.startswith(W_VERSION_WITHDRAWN) for w in report["warnings"])
+        with pytest.warns(UserWarning, match=W_VERSION_WITHDRAWN):
+            assert load_job_container(path).spec["method"] == "rhf"
+
+        def fake_run_job(molecule, **kwargs):
+            return _write_results_archive(kwargs["output"], molecule) and types.SimpleNamespace(
+                converged=True
+            )
+
+        monkeypatch.setattr(vibeqc, "run_job", fake_run_job)
+        with pytest.warns(UserWarning, match=W_VERSION_WITHDRAWN):
+            run_container(path)
+        with zipfile.ZipFile(path) as zf:
+            manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["qvf_version"] == 1
+        assert manifest["schema_uri"] == _SCHEMA_URI
+        assert manifest["provenance"]["run_status"] == "converged"
+        report = validate_qvf(path)
+        assert report["valid"] and report["warnings"] == []
+
+    def test_other_versions_are_refused(self, tmp_path):
+        path = write_pending_qvf(_h2(), tmp_path / "job", method="rhf",
+                                 basis="sto-3g")
+        self._stamp(path, 3)
+        with pytest.raises(ValueError, match="unsupported qvf_version 3"):
+            load_job_container(path)
 
 
 class TestModuleEntryPoint:

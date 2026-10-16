@@ -91,6 +91,14 @@ deprecation path, the C++ contract, and how GAPW composes with it.
 >   as well as a k-mesh. Tests: boron 2p¹ fractional degenerate shell in
 >   `tests/test_pbc_gdf_compcell.py::test_pbc_gdf_u{hf,ks}_gamma_smearing_fractional`.
 >
+> **Open-shell T = 0 (GitLab #176, 2026-09-27).** The entries above record
+> that the open-shell T = 0 fill stayed "the exact per-k Aufbau". That is
+> superseded: every multi-k open-shell route (GDF, Ewald-3D, BIPOLE) now fills
+> each spin with one chemical potential over the whole mesh through
+> `smearing.spin_channel_occupations`, positional under MOM, and builds its
+> density from those occupations. Gapped meshes keep the per-k `{0, 1}`
+> arrays bit for bit, which is what the UHF(M=1) = KRHF anchors test.
+>
 > **Still pending for M3 / open-shell smearing completeness:**
 > * Ewald-3D multi-k UHF/UKS (the table row above), `periodic_uhf/uks_multi_k_ewald.py`
 >   still call `reject_unsupported_smearing_temperature`. (PBC-chat-owned.)
@@ -585,8 +593,8 @@ audited matrix in §1 of the drop-box. The smearing row in the
 | Chat | What we're asking | Why now |
 |---|---|---|
 | **release** | Sign off on `SmearingOptions` contract + v0.11.0 deprecation timeline for `smearing_temperature` | Establishes the contract before downstream user docs cite it |
-| **GDF** ([Archived `handovers/HANDOVER_GDF_V0_11_2026_05_29.md`](https://vibe-qc.com/docs/)) | Review M0 for compat with existing `periodic_k_gdf.py` smearing wiring; confirm UHF/UKS GDF schedule | M4 sequencing depends on it |
-| **BIPOLE** ([Archived `handovers/HANDOVER_BIPOLE_PRODUCTION.md`](https://vibe-qc.com/docs/) / [`bipole_status.md`](bipole_status.md)) | Confirm BIPOLE RKS/UHF/UKS smearing coverage on Γ + multi-k; BIPOLE RHF remains rejected | M5 sequencing depends on keeping the method gates explicit |
+| **GDF** (the original investigation) | Review M0 for compat with existing `periodic_k_gdf.py` smearing wiring; confirm UHF/UKS GDF schedule | M4 sequencing depends on it |
+| **BIPOLE** (the original investigation / [`bipole_status.md`](bipole_status.md)) | Confirm BIPOLE RKS/UHF/UKS smearing coverage on Γ + multi-k; BIPOLE RHF remains rejected | M5 sequencing depends on keeping the method gates explicit |
 | **GAPW** ([`docs/design_periodic_gapw.md`](design_periodic_gapw.md)) | Review M0, `SmearingOptions` is the surface their M4 (metallic GAPW) consumes; pre-commit alignment avoids a re-design later | Their design doc is live; coordinate before either freezes |
 | **scf-mix** | Confirm `SmearingOptions` ↔ `MixingOptions` composition; coordinate metallic-system test set | Both chats target the same metallic test cells |
 

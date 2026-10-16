@@ -214,8 +214,9 @@ thing.
 Post-HF is library-only on every line. With `method="aiccm"` the SCF
 reference is inferred (`functional` decides HF versus KS, the multiplicity
 and electron parity decide restricted versus unrestricted;
-`scf_reference="rohf" | "roks"` is explicit and refused by every variant
-today), so MP2, CCSD(T), and DLPNO are reached through the drivers tabulated
+`scf_reference="rhf" | "uhf"` selects a Hartree-Fock reference explicitly on
+every variant; `scf_reference="rohf" | "roks"` is explicit and refused by
+every variant today), so MP2, CCSD(T), and DLPNO are reached through the drivers tabulated
 above, not through `run_periodic_job`.
 
 The A-prefixed spellings for the real-Gamma control (`aiccm2026dev-a-real-gamma`,

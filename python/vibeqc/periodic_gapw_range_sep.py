@@ -406,6 +406,11 @@ def run_periodic_rhf_rsgapw(
     result
         :class:`GapwScfResult`.
     """
+    if initial_density is not None:
+        from .guess_read import _real_density
+
+        initial_density = _real_density(initial_density)
+
     if not quiet:
         warnings.warn(
             f"run_periodic_rhf_rsgapw: RS-GAPW with w={omega}, "
@@ -460,6 +465,12 @@ def run_periodic_rhf_rsgapw(
     # Orthogonalizer.
     s_eigs, U = _eigh_safe(S)
     S_half_inv = U @ np.diag(1.0 / np.sqrt(s_eigs)) @ U.T
+    from .solvers._scf import FockDiagonalizer
+
+    diagonalise = FockDiagonalizer(
+        S_half_inv, S, None,
+        kind="ks" if functional is not None else "fock", n_required=n_occ,
+    )
 
     # Functional.
     func = None
@@ -533,8 +544,7 @@ def run_periodic_rhf_rsgapw(
             F = diis.extrapolate(F, err)
 
         # Solve F C = e S C.
-        e, C_orth = _eigh_safe(S_half_inv @ F @ S_half_inv)
-        C = S_half_inv @ C_orth
+        C, e = diagonalise(F)
         D_new = 2.0 * C[:, :n_occ] @ C[:, :n_occ].T
         if damping > 0.0:
             D_new = (1.0 - damping) * D_new + damping * D

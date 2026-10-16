@@ -11,7 +11,7 @@ Why this works without any periodic-exchange correction: a finite supercell is
 an ordinary *molecular* calculation, so there is no periodic ``exxdiv`` / G=0
 divergence to subtract — the MP2 denominators are clean and the per-cell energy
 converges as the megacell grows. (The alternative Γ-Bloch route *does* need a
-finite-size correction; see handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md § 6.5.)
+finite-size correction.)
 
 Run with:
     python examples/periodic/periodic-megacell-local-correlation.py

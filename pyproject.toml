@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "vibe-qc"
-version = "0.17.3"
+version = "0.17.20"
 description = "vibe-qc — a quantum chemistry code targeting the cyclic cluster model for solids"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -128,7 +128,7 @@ dispersion = [
     # (Phase D4b, backend="native") is feature-complete and available
     # via an MPL-2.0 reimplementation; dftd4 remains the default
     # pending the production reference-dataset upgrade (aug-cc-pVDZ +
-    # SEC subtraction).  See handovers/HANDOVER_D4_NATIVE.md.
+    # SEC subtraction).
     "dftd4>=4.0",
 ]
 mace = [
@@ -142,17 +142,17 @@ mace = [
     # Strictly optional: pulls the heavy PyTorch +
     # e3nn stack (~650 MB), never a core dependency.
     #
-    # Python <=3.13 ONLY — MACE's matscipy dependency has no cp314 wheel
-    # yet, so the requirement is marked python_version<"3.14" and the
-    # runtime import is gated (vibeqc.mlip.mace raises a clear <=3.13
-    # message on 3.14). The repo dev .venv is 3.14, so this extra is a
-    # no-op there; MACE work runs in a <=3.13 env.
+    # The supported extra targets Python <=3.13. Manually installed newer
+    # stacks may import, but that alone does not qualify a new interpreter
+    # range. Keep the extra disabled on 3.14 pending runtime acceptance.
     #
     # Foundation-model WEIGHTS are NOT installed here — they are fetched
     # on demand into the XDG cache at first use (MIT models ungated; ASL
     # models behind a non-commercial acknowledgment). See docs/roadmap.md
     # § MACE MLIP interface (M2) and docs/license.md.
-    	"mace-torch>=0.3.16 ; python_version < '3.14'",
+    # ACEsuit supports the 0.3.x API; its planned 1.0 rewrite changes APIs
+    # and checkpoint loading. Mendoza's MACE is a separate workflow tool.
+    "mace-torch>=0.3.16,<0.4 ; python_version < '3.14'",
     ]
 skala = [
     # Microsoft SKALA-1.1 runs the official, MIT-licensed TorchScript
@@ -324,7 +324,7 @@ basisopt = [
     # vibe-qc is installed. Pinned by tests/test_packaging_extras.py
     # (TestBasisoptExtraIsDeclared + TestBasisOptimizationModulesImport).
     # The decision not to give vibe-basis a fleet rollout lane is
-    # recorded in handovers/HANDOVER_VIBE_BASIS_DEPLOYMENT.md.
+    # recorded in the original investigation.
     #
     # Same shape as ``viewer-gpu`` above: an ordinary version pin, with
     # the ``[tool.uv.sources]`` table below redirecting it to the local
@@ -358,13 +358,33 @@ basisopt = [
     # this pin adds only click + numpy — both already vibe-qc deps.
     "vibe-basis>=0.1",
 ]
+basisopt-drivers = [
+    # Optional optimiser backends for vibeqc.basis_optimization.drivers.
+    # Each is imported lazily inside the one driver that needs it, so a
+    # plain ``import vibeqc.basis_optimization`` (scipy L-BFGS-B and the
+    # in-house BDIIS) never touches them:
+    #   optimize_bobyqa -> Py-BOBYQA   model-based derivative-free (scalar)
+    #   optimize_dfols  -> DFO-LS      model-based derivative-free (residuals)
+    #   optimize_cmaes  -> cma         CMA-ES global pre-pass
+    #   optimize_minuit -> iminuit     Minuit2 MIGRAD + HESSE uncertainties
+    # Licences: Py-BOBYQA and DFO-LS are GPL-3.0 (Numerical Algorithms
+    # Group / University of Oxford); cma is BSD-3-Clause; iminuit is MIT
+    # over the LGPL-2.1 Minuit2 library. Nothing here is bundled or
+    # imported at package load, which is why they are an opt-in extra and
+    # not core dependencies (AGENTS.md, Licensing). DFO-LS pulls pandas.
+    "Py-BOBYQA>=1.4",
+    "DFO-LS>=1.5",
+    "cma>=4.0",
+    "iminuit>=2.25",
+]
 
 # Console-script entry points. The on-disk command is spelled "vibe-qc"
 # (the brand name, matching vibe-qc.com); the Python module path stays
 # "vibeqc" because Python identifiers can't carry dashes.
 [project.scripts]
-vibe-qc = "vibeqc.cli:main"
-vibeqc = "vibeqc._cli:main"
+vibe-qc = "vibeqc_bootstrap:branded_main"
+vibe-qc-relocalize = "vibeqc_relocalize:main"
+vibeqc = "vibeqc_bootstrap:main"
 vibe-qc-basis = "vibeqc.basis_toolkit.cli:main"
 vibeqc-cite = "vibeqc.output.citations.cli:main"
 vibeqc-outputs = "vibeqc.output.outputs_cli:main"
@@ -387,7 +407,7 @@ vibe-basis = { path = "vibe-basis" }
 
 [tool.scikit-build]
 # Python sources live under python/, compiled module is installed alongside
-wheel.packages = ["python/vibeqc", "python/vibeqc_naming"]
+wheel.packages = ["python/vibeqc", "python/vibeqc_naming", "python/vibeqc_relocalize", "python/vibeqc_bootstrap"]
 # vibe-qc's pinned SKALA parity profile adapts Apache-2.0 PySCF 2.14 routines
 # and tables. Ship the upstream license and NOTICE in every wheel alongside
 # the project license; source archives include these tracked files naturally.

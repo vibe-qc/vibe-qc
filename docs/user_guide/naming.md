@@ -2,7 +2,7 @@
 
 # Molecular naming
 
-vibe-qc can produce IUPAC names from 3D molecular structures and,
+vibe-qc can identify supported molecular structures by name and,
 conversely, build 3D coordinates from chemical names. The naming
 engine is a standalone, pure-Python package (`vibeqc_naming`) that
 works without the C++ extension compiled.
@@ -37,7 +37,69 @@ run_job(mol, basis="def2-SVP", method="rks", functional="PBE")
 #   IUPAC name: ethanol
 ```
 
-Pass `name_molecule=False` to suppress the name.
+Pass `name_molecule=False` to suppress the name. If a structure or electronic
+state is unsupported, the calculation omits the name and continues normally.
+
+## Molecular identity and supported states
+
+Organic structure naming checks a bounded catalog of neutral constitutional
+connectivities. Element identity, attached hydrogen counts, connectivity and
+perceived bond orders must all match; a shared molecular formula is insufficient.
+For example, hexane and 2-methylpentane, ethanol and dimethyl ether, and acetone
+and propanal have distinct names. An unsupported connectivity raises `ValueError`
+instead of returning a formula-derived structural name, even with
+`with_external=True`. This is not a general IUPAC or stereochemical naming engine.
+A high-confidence organic result identifies the supported constitutional graph;
+it does not assign stereochemistry or certify the input geometry.
+
+The atom and graph APIs accept `charge=0` and `multiplicity=1`. Nonzero charge
+or non-singlet multiplicity raises `ValueError`; molecule APIs read these fields
+from the molecule. Pass the actual electronic state when using raw atoms or a
+graph: coordinates alone cannot distinguish every ion or radical. Odd-electron
+neutral compositions also refuse a name. These restrictions apply to molecular
+naming, not to the separate solid composition API. `formula_to_name` remains a
+composition-only utility and must not be used as a structural identity check.
+
+Reverse SMILES preserve carbonyl branches and ring closures. The built-in
+acetone and glycine coordinates encode the corresponding neutral connectivity;
+SMILES output is not a canonical or stereochemical identifier.
+
+## Explicit bonds and stereodescriptors
+
+A caller that already knows the bonds, such as a molecule sketcher, can build
+the graph from them instead of having them perceived from coordinates.
+`MolecularGraph.from_bonds` takes element symbols or atomic numbers with explicit
+hydrogens and `(i, j, order)` bonds with order 1, 2 or 3. Give aromatic rings in
+a Kekule form; they are recognised as aromatic as in coordinate-built graphs.
+Coordinates are optional, in Angstrom, and naming does not use them.
+
+The same call accepts stereodescriptors the caller has assigned: a CIP label
+`R`, `S`, `r` or `s` per atom, and `E` or `Z` per double bond. vibe-qc does not
+compute them. It only checks that each label sits where one can apply: an atom
+with four neighbours and at most one hydrogen, or a double bond whose ends each
+carry two substituents that are not both hydrogen. The name then carries the
+descriptors with their locants in ascending order (IUPAC 2013 recommendations,
+chapter P-9):
+
+```python
+from vibeqc_naming import MolecularGraph, name_from_graph
+
+# C[C@@H](O)CC with explicit hydrogens; the CIP label R sits on atom 1
+elements = ["C", "C", "O", "C", "C"] + ["H"] * 10
+bonds = [(0, 1, 1), (1, 2, 1), (1, 3, 1), (3, 4, 1),
+         (0, 5, 1), (0, 6, 1), (0, 7, 1), (1, 8, 1), (2, 9, 1),
+         (3, 10, 1), (3, 11, 1), (4, 12, 1), (4, 13, 1), (4, 14, 1)]
+graph = MolecularGraph.from_bonds(elements, bonds, atom_stereo={1: "R"})
+name_from_graph(graph)   # "(2R)-butan-2-ol"
+```
+
+Double-bond labels are keyed by the bonded atom pair in either order, for
+example `bond_stereo={(1, 2): "E"}` for `(2E)-but-2-ene`. Without descriptors
+the name is unchanged. Locants come from the catalog entry that matched, and
+only entries with a recorded numbering accept descriptors, at present
+butan-2-ol and but-2-ene. A descriptor on another catalog name, or on an atom
+the name does not number, raises `ValueError` rather than being placed by
+guesswork.
 
 ## NamedResult
 
@@ -272,7 +334,10 @@ provide authoritative IUPAC names:
 result = name_from_atoms_detailed(complex_atoms, with_external=True)
 ```
 
-Backends tried in order: RDKit (local) → CACTUS REST → PubChem REST.
+Backends tried in order: CACTUS REST, then PubChem REST. There is no
+local backend: RDKit has no structure-to-name function, so
+`name_from_rdkit` is kept only for compatibility, warns, and always
+returns `None`.
 REST API results are cached in a 256-entry LRU to avoid repeated
 network calls.
 
@@ -287,6 +352,7 @@ network calls.
    vibeqc_naming.name_molecule
    vibeqc_naming.name_molecule_detailed
    vibeqc_naming.name_from_graph
+   vibeqc_naming.MolecularGraph.from_bonds
    vibeqc_naming.formula_to_name
    vibeqc_naming.name_from_qvf
    vibeqc_naming.structure_from_name

@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from .molecule import ANGSTROM_TO_BOHR, _atomic_number
+from ._qvf_options import hydrate_option
 from .output._text_safety import safe_json_bytes
 from .output._stem_paths import stem_sibling
 
@@ -44,6 +45,8 @@ __all__ = [
     "build_system",
     "run_container",
     "write_pending_qvf",
+    "job_spec_method_fields",
+    "job_spec_name",
 ]
 
 # Task identifiers understood by vibe-qc's runners. ``single_point`` is
@@ -75,6 +78,168 @@ _RESERVED_OPTION_KEYS = frozenset(
         "output_qvf",
     }
 )
+
+# QVF spec Sec. 5.9: a job.spec ``functional`` / ``basis`` is a non-empty
+# name, ``null`` ("the method takes none": a runner MUST NOT supply one), or
+# absent (the engine's default). ``""`` is a deprecated spelling of null that
+# earlier vibe-qc versions wrote; readers accept it, producers never write it.
+#
+# Methods that take no exchange-correlation functional: Hartree-Fock and the
+# correlated wavefunction methods (the semiempirical and MLIP methods, which
+# take neither a functional nor a basis, are recognised separately). A
+# Kohn-Sham method, a DFT composite or a double hybrid takes one, and
+# ``auto`` may; an absent functional then leaves the choice to the engine.
+_NO_FUNCTIONAL_METHODS = frozenset(
+    {
+        "hf",
+        "rhf",
+        "uhf",
+        "rohf",
+        "ghf",
+        "hf-3c",
+        "selected_ci",
+        "dmrg",
+        "v2rdm",
+        "transcorrelated_ci",
+        "casci",
+        "mrci",
+        "casscf",
+        "nevpt2",
+        "caspt2",
+        "fci",
+        "ci",
+        "cisd",
+        "ccsd",
+        "ccsd(t)",
+        "cc3",
+        "ccsdt",
+        "bccd",
+        "bccd(t)",
+        "cc2",
+        "ccd",
+        "lccd",
+        "lccsd",
+        "cepa(0)",
+        "cepa(1)",
+        "cepa(2)",
+        "cepa(3)",
+        "qcisd",
+        "qcisd(t)",
+        "mp2",
+        "scs-mp2",
+        "sos-mp2",
+        "dlpno-mp2",
+        "dlpno-ccsd",
+        "dlpno-ccsd(t)",
+        "ovgf",
+    }
+)
+# Machine-learning interatomic potentials: no basis set, no functional.
+_MLIP_METHOD_KEYS = frozenset({"mace"})
+
+
+def _method_key(method: object) -> Optional[str]:
+    if method is None:
+        return None
+    key = str(method).strip().lower()
+    return key or None
+
+
+def _method_is_basis_free(key: str) -> bool:
+    """Semiempirical / tight-binding and MLIP methods take no basis set."""
+    if key in _MLIP_METHOD_KEYS:
+        return True
+    from .semiempirical.routes import is_semiempirical_method
+
+    return is_semiempirical_method(key)
+
+
+def job_spec_method_fields(
+    method: object,
+    *,
+    basis: object = None,
+    functional: object = None,
+) -> dict[str, Any]:
+    """The ``basis`` / ``functional`` entries of a job.spec payload.
+
+    QVF spec Sec. 5.9: a given name is written as a string; a method that
+    takes no basis set (semiempirical, tight-binding, MLIP) writes
+    ``basis: null``, and a method that takes no functional (Hartree-Fock, a
+    correlated wavefunction method, a semiempirical or MLIP method) writes
+    ``functional: null``; otherwise an unnamed input is left out, which means
+    the engine's default. Never writes the deprecated empty string. A
+    basis-free method records ``basis: null`` even when a placeholder label
+    was passed, because the method takes no basis set.
+    """
+    key = _method_key(method)
+    basis_free = key is not None and _method_is_basis_free(key)
+    fields: dict[str, Any] = {}
+
+    basis_name = None if basis is None else str(basis).strip()
+    if basis_free:
+        fields["basis"] = None
+    elif basis_name:
+        fields["basis"] = basis_name
+
+    functional_name = None if functional is None else str(functional).strip()
+    if functional_name:
+        fields["functional"] = functional_name
+    elif key is not None and (basis_free or key in _NO_FUNCTIONAL_METHODS):
+        fields["functional"] = None
+    return fields
+
+
+def job_spec_name(
+    spec: dict[str, Any], key: str, *, source: str = "job.spec"
+) -> Optional[str]:
+    """Read a job.spec ``basis`` / ``functional`` as a name or None.
+
+    ``None`` covers an absent key, ``null`` ("the method takes none") and the
+    deprecated empty string, which QVF spec Sec. 5.9 reads as ``null``. The
+    runner supplies no such input in any of these cases. Anything other than
+    a string or null is refused rather than stringified.
+    """
+    value = spec.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{source}: job.spec {key} must be a string or null, got {value!r}"
+        )
+    name = value.strip()
+    return name or None
+
+
+def _is_json_unsafe(value: object) -> bool:
+    """Return True if *value* is not safe to embed in ``job.spec.options``.
+
+    The QVF serialises the options dict as JSON (QVF spec § 5.9).  Any value
+    that cannot round-trip through ``json.dumps → json.loads`` without loss of
+    type or data is "unsafe" here — embedding it will corrupt the container at
+    write time or cause a wrong-answer / abort at read time.
+
+    pybind11-wrapped C++ option classes (RHFOptions, CCSDOptions, …) are not
+    JSON-serializable and must be passed as direct ``run_job`` kwargs, never
+    inside ``options``.
+    """
+    # Direct type check: pybind11 classes are not instances of any JSON-safe
+    # Python primitive or standard container.
+    if isinstance(value, (
+        str, int, float, bool, type(None),
+        list, tuple, dict,
+    )):
+        return False
+    # numpy arrays / ndarrays also survive round-trip (via __array__ → list)
+    # but are not standard JSON types; we flag them for clarity even though
+    # json.dumps will raise TypeError later.
+    try:
+        import numpy as np  # local to avoid startup cost when safe
+        if isinstance(value, np.ndarray):
+            return False
+    except ImportError:
+        pass
+    # Everything else (pybind11 types, custom classes, …) is unsafe.
+    return True
 
 
 @dataclasses.dataclass
@@ -119,9 +284,14 @@ def load_job_container(path: Union[str, os.PathLike]) -> QvfJobContainer:
     ``structure`` section; verifies both members against their declared
     sha256 before use. Raises :class:`ValueError` on anything malformed.
     """
+    from .output.formats.qvf import qvf_read_version
+
     p = Path(os.fspath(path))
     with zipfile.ZipFile(p, "r") as zf:
         manifest = json.loads(zf.read("manifest.json"))
+        # Spec Sec. 3.1: the withdrawn version 2 is read as 1 (with a
+        # W_VERSION_WITHDRAWN warning); any other version is refused.
+        qvf_read_version(manifest, source=f"QVF container {p.name}")
         sections = manifest.get("sections", [])
         job_specs = [s for s in sections if s.get("kind") == "job.spec"]
         structures = [s for s in sections if s.get("kind") == "structure"]
@@ -247,14 +417,19 @@ def _runner_kwargs(
     """Map the JobSpecPayload onto ``runner``'s keyword surface.
 
     Unknown tasks and unknown / reserved option keys are refused (QVF
-    spec § 5.9: a runner MUST refuse rather than silently drop).
+    spec § 5.9: a runner MUST refuse rather than silently drop).  Native
+    option records are hydrated through their public constructors, with
+    unsupported fields refused rather than silently discarded (issue #366).
     """
     spec = container.spec
     kwargs: dict[str, Any] = {}
     if spec.get("method") is not None:
         kwargs["method"] = str(spec["method"])
-    if spec.get("functional") is not None:
-        kwargs["functional"] = str(spec["functional"])
+    functional = job_spec_name(
+        spec, "functional", source=f"QVF container {container.path.name}"
+    )
+    if functional is not None:
+        kwargs["functional"] = functional
     if container.job_type == "periodic":
         if spec.get("kpoints") is not None:
             kwargs["kpoints"] = [int(n) for n in spec["kpoints"]]
@@ -284,7 +459,7 @@ def _runner_kwargs(
     has_var_keyword = any(
         p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
     )
-    options = spec.get("options") or {}
+    options = spec.get("options", {})
     if not isinstance(options, dict):
         raise ValueError(
             f"QVF container {container.path.name}: job.spec options must "
@@ -303,7 +478,7 @@ def _runner_kwargs(
                 f"not understood by {runner.__name__} -- refusing to "
                 f"silently drop it (QVF spec 5.9)"
             )
-        kwargs[key] = value
+        kwargs[key] = hydrate_option(key, value)
     return kwargs
 
 
@@ -354,6 +529,28 @@ def _copy_zip_member(
     written.add(name)
 
 
+def _settle_withdrawn_version(manifest: dict[str, Any]) -> None:
+    """Rewrite a withdrawn ``qvf_version`` 2 as 1 before an in-place update.
+
+    QVF spec Sec. 3.1: a tool that updates such an archive in place writes
+    ``qvf_version: 1`` and the v1 ``schema_uri`` into its new manifest.
+    """
+    from .output.formats.qvf import (
+        QVF_FORMAT_VERSION,
+        _SCHEMA_URI,
+        _WITHDRAWN_QVF_VERSION,
+    )
+
+    version = manifest.get("qvf_version")
+    if (
+        isinstance(version, int)
+        and not isinstance(version, bool)
+        and version == _WITHDRAWN_QVF_VERSION
+    ):
+        manifest["qvf_version"] = QVF_FORMAT_VERSION
+        manifest["schema_uri"] = _SCHEMA_URI
+
+
 def _write_manifest(
     target: zipfile.ZipFile, manifest: dict[str, Any]
 ) -> None:
@@ -388,6 +585,7 @@ def _mark_container_running(path: Path) -> None:
                     continue
                 _copy_zip_member(source, target, info.filename, written)
             manifest = json.loads(source.read("manifest.json"))
+            _settle_withdrawn_version(manifest)
             provenance = manifest.setdefault("provenance", {})
             provenance["run_status"] = "running"
             provenance.pop("checkpoint", None)
@@ -682,6 +880,7 @@ def _finalize_container(
                 record["program_version"] = str(program_version)
 
             manifest = deepcopy(base_manifest)
+            _settle_withdrawn_version(manifest)
             manifest["sections"] = (
                 retained_sections
                 + [job_spec_section]
@@ -758,35 +957,39 @@ def run_container(
         runner = run_periodic_job
     else:
         runner = run_job
-    kwargs = _runner_kwargs(container, runner)
-    kwargs.update(overrides)
-    if update_in_place:
-        # The runner-produced QVF supplies the latest result sections for
-        # the terminal merge; a container execution cannot opt out of it.
-        kwargs["output_qvf"] = True
     if output is None:
         output = container.path.with_suffix("")
     output = Path(os.fspath(output))
 
     def invoke_runner():
+        # Hydration is part of the attempted execution: refusal settles the
+        # archive as failed while preserving the submitted spec verbatim.
+        kwargs = _runner_kwargs(container, runner)
+        kwargs.update(overrides)
+        if update_in_place:
+            kwargs["output_qvf"] = True
+        # ``null``, absent and the deprecated ``""`` all mean "supply no
+        # basis set" (QVF spec Sec. 5.9).
+        basis_name = job_spec_name(
+            container.spec,
+            "basis",
+            source=f"QVF container {container.path.name}",
+        )
         if container.job_type == "periodic":
             # run_periodic_job wants a BasisSet object (or None for
             # basis-free semiempirical methods), not a name string.
-            basis_name = container.spec.get("basis")
             if basis_name is None:
                 basis = None
             else:
                 from . import BasisSet
 
-                basis = BasisSet(
-                    system.unit_cell_molecule(), str(basis_name)
-                )
+                basis = BasisSet(system.unit_cell_molecule(), basis_name)
             result = runner(
                 system, basis, output=os.fspath(output), **kwargs
             )
             return result
-        if container.spec.get("basis") is not None:
-            kwargs["basis"] = str(container.spec["basis"])
+        if basis_name is not None:
+            kwargs["basis"] = basis_name
         return runner(system, output=os.fspath(output), **kwargs)
 
     if not update_in_place:
@@ -876,7 +1079,12 @@ def write_pending_qvf(
 
     ``system`` is a :class:`Molecule` (molecular job) or
     :class:`PeriodicSystem` (periodic job); its ``charge`` /
-    ``multiplicity`` are recorded in the job.spec. The archive carries
+    ``multiplicity`` are recorded in the job.spec. ``basis`` and
+    ``functional`` follow QVF spec Sec. 5.9 (:func:`job_spec_method_fields`):
+    a given name is recorded; for a ``method`` that takes no basis set
+    (semiempirical, tight-binding, MLIP) or no functional (Hartree-Fock,
+    correlated wavefunction methods) the spec records ``null``; otherwise an
+    omitted input is left out, meaning the engine's default. The archive carries
     the structure, the declarative ``job.spec``, and
     ``provenance.run_status = "pending"`` -- ready for
     ``vibeqc run <stem>.qvf`` locally or through vq.
@@ -890,10 +1098,11 @@ def write_pending_qvf(
     }
     if method is not None:
         spec["method"] = str(method)
-    if basis is not None:
-        spec["basis"] = str(basis)
-    if functional is not None:
-        spec["functional"] = str(functional)
+    # ``basis: null`` / ``functional: null`` for a method that takes none,
+    # the given name otherwise, absent for "the engine's default".
+    spec.update(
+        job_spec_method_fields(method, basis=basis, functional=functional)
+    )
     charge = getattr(system, "charge", None)
     if charge is not None:
         spec["charge"] = int(charge)
@@ -921,6 +1130,20 @@ def write_pending_qvf(
                 f"write_pending_qvf: options {bad!r} restate typed "
                 f"job.spec fields -- pass them as keyword arguments"
             )
+        # Guard against non-JSON-safe values in the container's options dict.
+        # pybind11-wrapped native option classes cannot round-trip through
+        # QVF's JSON serialisation path; embedding them would silently corrupt
+        # the archive and cause aborts at read time (issue #366).
+        for key, value in sorted(options.items()):
+            if _is_json_unsafe(value):
+                raise TypeError(
+                    f"write_pending_qvf: options[{key!r}] is a "
+                    f"{type(value).__name__} which cannot be embedded in a "
+                    "QVF job container. Native option classes must be passed "
+                    "as direct run_job() kwargs (e.g. run_job(mol, "
+                    "rhf_options=opts)), not inside the ``options`` dict of "
+                    "write_pending_qvf()."
+                )
         spec["options"] = dict(options)
 
     # OutputPlan wants string method/basis for provenance labels; a
@@ -928,8 +1151,8 @@ def write_pending_qvf(
     plan = OutputPlan.from_run_job_kwargs(
         output=stem,
         method=str(method) if method is not None else "auto",
-        basis=str(basis) if basis is not None else "",
-        functional=str(functional) if functional is not None else None,
+        basis=str(basis) if basis else "",
+        functional=str(functional) if functional else None,
         job_kind="periodic_scf" if periodic else "molecular_scf",
         output_qvf=True,
     )

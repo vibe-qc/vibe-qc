@@ -156,6 +156,10 @@ public:
     // SOSCF phase, so stale curvature from a different frame is not reused).
     void clear();
 
+    // Record a backtracked fraction of the last proposed rotation before
+    // the next step forms its curvature pair. The accepted factor is in (0, 1].
+    void scale_previous_step(double factor);
+
 private:
     SOSCFOptions opts_;
     std::deque<Eigen::VectorXd> s_hist_;  // orbital-rotation steps κ

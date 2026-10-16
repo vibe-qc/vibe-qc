@@ -58,7 +58,7 @@ std::unique_ptr<JKBuilder> make_periodic_gamma_cosx_jk_builder(
 // periodic Becke grid, with the exchange summed over the truncated
 // image-cell list (M3a single-lattice-sum model — adds the home-bra
 // → image-ket exchange class; Γ-folded GDF exchange parity is still
-// open, see handovers/HANDOVER_RIJCOSX_M3A.md). No exxdiv='ewald' Madelung
+// open). No exxdiv='ewald' Madelung
 // shift is applied — COSX-K is entirely real-space (direct-truncated
 // lattice sum) and does not have a G=0 mode that needs correcting.
 std::unique_ptr<JKBuilder> make_periodic_tight_cosx_jk_builder(

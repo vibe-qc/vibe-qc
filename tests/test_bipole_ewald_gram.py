@@ -472,9 +472,52 @@ def test_ewald_weighted_product_preserves_a_restored_cancellation_residual():
     assert actual.imag == pytest.approx(2.0**-959, rel=3e-16)
 
 
+@pytest.mark.parametrize("exponents", [(0, 0, 0), (-530, -530, 80),
+                                       (500, 550, -100), (-1070, 970, 20)])
+@pytest.mark.parametrize("rotate", [False, True])
+@pytest.mark.parametrize("rounded_products", [False, True])
+def test_ewald_weighted_product_accepts_exact_cancellation(exponents, rotate, rounded_products):
+    from decimal import Decimal, localcontext
+    import math
+
+    # Unequal individual factors, equal exact products. The second recipe
+    # has a nonzero product rounding remainder, so comparing rounded high
+    # parts alone cannot prove cancellation. Scaling also tests subnormal
+    # factors and overflowing unweighted products restored by the weight.
+    x, y = (2.**26+1, 2.**26+3) if rounded_products else (1., 2.)
+    left = complex(3*x, 5*x) * 2.**exponents[0]
+    right = complex(3*y, 5*y) * 2.**exponents[1]
+    if rotate:
+        right *= 1j
+    weight = 2.**exponents[2]
+    with localcontext() as ctx:
+        ctx.prec = 200
+        a, b, c, d, w = map(Decimal.from_float,
+                            (left.real, left.imag, right.real, right.imag, weight))
+        expected = complex(float((a*c+b*d)*w), float((a*d-b*c)*w))
+    assert (expected.real if rotate else expected.imag) == 0
+    actual = core._bipole_ewald_weighted_product_diagnostic(left, right, weight)
+    for value, reference in zip((actual.real, actual.imag), (expected.real, expected.imag)):
+        if reference == 0:
+            assert value == 0
+        else:
+            assert math.isfinite(value)
+            assert abs(value-reference) <= 2*math.ulp(reference)
+
+
+@pytest.mark.parametrize("zero", [complex(0., 0.), complex(-0., -0.)])
+@pytest.mark.parametrize("swap", [False, True])
+def test_ewald_weighted_product_accepts_zero_factors(zero, swap):
+    large = complex(np.finfo(float).max, np.finfo(float).max)
+    left, right = (large, zero) if swap else (zero, large)
+    assert core._bipole_ewald_weighted_product_diagnostic(
+        left, right, np.finfo(float).max) == 0j
+
+
 @pytest.mark.parametrize("left,right,weight", [
     (complex(np.inf, 0), 1+0j, 1.0), (1+0j, complex(0, np.nan), 1.0),
     (1+0j, 1+0j, np.inf), (1+0j, 1+0j, -1.0),
+    (complex(np.finfo(float).max, 0), 2+0j, 1.0),
 ])
 def test_ewald_scalar_diagnostic_rejects_invalid_inputs(left, right, weight):
     with pytest.raises((ValueError, OverflowError), match="finite|weight|nonnegative"):

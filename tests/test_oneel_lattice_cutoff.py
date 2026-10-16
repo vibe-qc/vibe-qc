@@ -264,16 +264,16 @@ def test_p01k_mgo_def2_svp_full_basis_supported_after_cutoff_growth():
     assert min(n_kept) < full.nbasis
 
 
-def test_p12_mgo_mdf_overlap_failure_is_superseded_by_dense_core_gate():
-    """The archived P12 overlap abort is fixed; MDF physics still fails closed.
+def test_p12_mgo_mdf_overlap_failure_is_fixed():
+    """The archived P12 overlap abort is fixed; the deck starts its SCF.
 
     P12 used rocksalt MgO at 4.212 Angstrom, full def2-SVP, RKS/PBE,
     ``gdf_method="mdf"``, and a Gamma-centred ``(4,4,4)`` mesh.  Its flat
     15-bohr S/T lattice sum is genuinely non-PSD, reproducing the v0.15.1
     failure, but the basis-aware cutoff growth removes every critical negative
-    S(k) direction.  The exact MDF deck must then stop at the independent
-    compact-dense-core validity gate, never regress to ``LinearDependenceError``
-    and never enter an unstable SCF.
+    S(k) direction, so the deck must start its SCF instead of raising
+    ``LinearDependenceError``. (It used to stop earlier, at the compact
+    dense-core MDF gate lifted with the auxiliary-image sum of #172.)
     """
     from vibeqc.periodic_k_gdf import run_krks_periodic_gdf
 
@@ -299,19 +299,16 @@ def test_p12_mgo_mdf_overlap_failure_is_superseded_by_dense_core_gate():
 
     options = vq.PeriodicKSOptions()
     options.max_iter = 1
-    with pytest.raises(
-        NotImplementedError,
-        match=r"gdf_method='mdf'.*compact dense-core",
-    ):
-        run_krks_periodic_gdf(
-            sysp,
-            basis,
-            (4, 4, 4),
-            options,
-            functional="pbe",
-            gdf_method="mdf",
-            progress=False,
-        )
+    result = run_krks_periodic_gdf(
+        sysp,
+        basis,
+        (4, 4, 4),
+        options,
+        functional="pbe",
+        gdf_method="mdf",
+        progress=False,
+    )
+    assert np.isfinite(result.energy)
 
 
 @pytest.mark.parametrize(

@@ -36,7 +36,9 @@ What is pinned here, and why each pin exists:
    round trips in section 4 cancel it. Without that interpreter the check
    skips with a reason naming the gate that did not run, and fails instead
    when ``VIBEQC_REQUIRE_TREXIO_REFERENCE`` is set (#253, see
-   ``tests/trexio_reference.py``).
+   ``tests/trexio_reference.py``). The in-process ``trexio`` import below
+   follows the same switch through ``import_trexio()``; a plain
+   ``importorskip`` there would skip before it is consulted.
 """
 
 from __future__ import annotations
@@ -52,7 +54,7 @@ import numpy as np
 import pytest
 
 import vibeqc
-from tests.trexio_reference import reference_python
+from tests.trexio_reference import import_trexio, reference_python
 from vibeqc import Atom, BasisSet, Molecule, compute_kinetic, compute_nuclear, compute_overlap
 from vibeqc._primitive_norm import libint_primitive_norm
 from vibeqc.output.citations.registry import load_default_database
@@ -181,7 +183,7 @@ def test_spherical_ao_permutation_matches_trexio_order():
 # 4. Exact round trips (need the extra)                                 #
 # --------------------------------------------------------------------- #
 
-trexio = pytest.importorskip("trexio")
+trexio = import_trexio()
 
 
 def _target(tmp_path: Path, backend: str, stem: str) -> Path:

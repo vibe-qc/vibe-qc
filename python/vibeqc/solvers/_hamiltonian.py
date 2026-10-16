@@ -7,6 +7,8 @@ transformation.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from .._vibeqc_core import (
@@ -139,6 +141,189 @@ def transform_hamiltonian(
     )
 
 
+@dataclass(frozen=True)
+class OrbitalFrameReport:
+    """What :func:`canonicalize_degenerate_orbitals` did to an orbital set.
+
+    ``clusters`` are the half-open column ranges whose clustering values
+    (orbital energies or occupations) were within ``tol`` of their
+    neighbour; ``unresolved`` are the sub-blocks the three second moments
+    could not split (left as given, signs fixed). ``origin`` is the nuclear
+    centre of charge in bohr about which the moments were taken.
+    """
+
+    tol: float
+    origin: tuple[float, float, float]
+    clusters: tuple[tuple[int, int], ...]
+    unresolved: tuple[tuple[int, int], ...]
+
+    @property
+    def description(self) -> str:
+        n = len(self.clusters)
+        text = (
+            "canonical frame: degenerate clusters aligned by successive "
+            "projected second moments about the nuclear centre of charge "
+            f"({n} cluster{'s' if n != 1 else ''}, tol {self.tol:g})"
+        )
+        if self.unresolved:
+            text += f"; {len(self.unresolved)} sub-block(s) left as given"
+        return text
+
+
+def _resolve_block(
+    block: np.ndarray, operator: np.ndarray, moment_tol: float
+) -> tuple[np.ndarray, list[list[int]]]:
+    """Re-span one degenerate block by an operator's eigenvectors, where it can.
+
+    Returns the new columns (ordered by ascending eigenvalue of
+    ``block^T operator block``) and the groups of local column indices the
+    operator left degenerate (to ``moment_tol``). A group of one is
+    resolved: its column is the eigenvector. A group of several is not
+    resolved by this operator, and its frame must then not be the arbitrary
+    one ``eigh`` returns inside a degenerate eigenspace (that frame changes
+    from call to call, so a second pass would move the orbitals): its
+    columns are the projections of the *input* columns onto the group's
+    eigenspace, orthonormalised in input order, which is a deterministic
+    function of the input and leaves an already-canonical block untouched.
+    A block the operator does not split at all is returned unchanged.
+    """
+    w, U = np.linalg.eigh(block.T @ operator @ block)
+    k = len(w)
+    groups: list[list[int]] = []
+    start = 0
+    for t in range(1, k + 1):
+        if t == k or w[t] - w[t - 1] > moment_tol:
+            groups.append(list(range(start, t)))
+            start = t
+    if len(groups) == 1:
+        return block, [list(range(k))]
+    columns: list[np.ndarray] = []
+    out_groups: list[list[int]] = []
+    col = 0
+    for group in groups:
+        V = U[:, group]
+        if len(group) == 1:
+            columns.append(block @ V)
+        else:
+            P = V @ V.T
+            basis: list[np.ndarray] = []
+            for j in range(k):
+                q = P[:, j].copy()
+                for b in basis:
+                    q -= b * float(b @ q)
+                norm = float(np.linalg.norm(q))
+                if norm > 0.5:
+                    basis.append(q / norm)
+                if len(basis) == len(group):
+                    break
+            Q = np.column_stack(basis) if len(basis) == len(group) else V
+            columns.append(block @ Q)
+        out_groups.append(list(range(col, col + len(group))))
+        col += len(group)
+    return np.hstack(columns), out_groups
+
+
+def canonicalize_degenerate_orbitals(
+    molecule: Molecule,
+    basis: BasisSet,
+    mo_coeffs: np.ndarray,
+    values: np.ndarray,
+    *,
+    tol: float = 1e-8,
+    moment_tol: float = 1e-6,
+) -> tuple[np.ndarray, OrbitalFrameReport]:
+    """Fix the frame inside every degenerate cluster of an orbital set (#322).
+
+    ``values`` (one per column of ``mo_coeffs``: orbital energies, or
+    occupations for natural orbitals) define the clusters: consecutive
+    columns whose value is within ``tol`` of the previous column's form
+    one. Inside a cluster the eigensolver's frame is rounding noise --
+    N2/cc-pVDZ's 1pi_u and 1pi_g pairs come out mixed differently on
+    different hosts and even at two bond lengths on one host -- and every
+    quantity that is not invariant under rotations within the cluster
+    inherits that noise: the seniority-zero (DOCI) energy swept 16 mHa
+    across the recorded frames, a truncated selected-CI rung, a DMRG at
+    finite bond dimension and an active window ending inside the cluster
+    behave the same way.
+
+    Each cluster is re-spanned by the eigenvectors of the projected second
+    moments ``X2 = B^T D_x S^-1 D_x B`` (then ``Y2`` and ``Z2`` inside the
+    sub-blocks the previous operator left degenerate, to ``moment_tol``),
+    with ``D_k`` the dipole integrals about the nuclear centre of charge
+    and ``S`` the AO overlap. ``x^2`` is totally symmetric, so wherever the
+    point group allows an axis-aligned choice (pi_x/pi_y of a linear
+    molecule along z, t2g, ...) this is it; elsewhere the frame is still a
+    function of the deck alone. Columns outside clusters are returned
+    unchanged; inside a cluster they are ordered by ascending moment
+    eigenvalue and signed so their largest coefficient is positive. The
+    rotation stays inside eigenspaces of the operator that produced
+    ``values``, so a diagonal Fock matrix stays diagonal and every
+    rotation-invariant energy (SCF, MP2, CC, CASCI, FCI) is unchanged.
+
+    Returns the new coefficient matrix and an :class:`OrbitalFrameReport`.
+    """
+    from .._vibeqc_core import compute_dipole, compute_overlap
+
+    C = np.array(mo_coeffs, dtype=float, order="C")
+    v = np.asarray(values, dtype=float).reshape(-1)
+    n = C.shape[1]
+    if v.shape[0] != n:
+        raise ValueError(
+            "canonicalize_degenerate_orbitals: need one clustering value per "
+            f"orbital column; got {v.shape[0]} values for {n} columns"
+        )
+    charges = np.array([float(atom.Z) for atom in molecule.atoms])
+    positions = np.array([list(atom.xyz) for atom in molecule.atoms], dtype=float)
+    if charges.size and charges.sum() > 0:
+        centre = (charges[:, None] * positions).sum(axis=0) / charges.sum()
+    else:
+        centre = np.zeros(3)
+    origin = (float(centre[0]), float(centre[1]), float(centre[2]))
+    overlap = np.asarray(compute_overlap(basis))
+    dipole = compute_dipole(basis, list(origin))
+    # Projected second moments in the AO basis: D S^-1 D, one per axis.
+    moments = [
+        np.asarray(D) @ np.linalg.solve(overlap, np.asarray(D))
+        for D in (dipole.x, dipole.y, dipole.z)
+    ]
+
+    clusters: list[tuple[int, int]] = []
+    unresolved: list[tuple[int, int]] = []
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and abs(v[j] - v[j - 1]) <= tol:
+            j += 1
+        if j - i > 1:
+            clusters.append((i, j))
+            blocks = [list(range(i, j))]
+            for A in moments:
+                split: list[list[int]] = []
+                for blk in blocks:
+                    if len(blk) == 1:
+                        split.append(blk)
+                        continue
+                    new_block, groups = _resolve_block(C[:, blk], A, moment_tol)
+                    C[:, blk] = new_block
+                    split.extend([blk[g] for g in group] for group in groups)
+                blocks = split
+            for blk in blocks:
+                if len(blk) > 1:
+                    unresolved.append((blk[0], blk[-1] + 1))
+            for k in range(i, j):
+                m = int(np.argmax(np.abs(C[:, k])))
+                if C[m, k] < 0.0:
+                    C[:, k] *= -1.0
+        i = j
+    report = OrbitalFrameReport(
+        tol=float(tol),
+        origin=origin,
+        clusters=tuple(clusters),
+        unresolved=tuple(unresolved),
+    )
+    return np.ascontiguousarray(C), report
+
+
 def get_hf_orbital_provider(
     molecule: Molecule,
     basis: BasisSet,
@@ -146,6 +331,8 @@ def get_hf_orbital_provider(
     method: str = "rhf",
     _with_result: bool = False,
     scf_options: object = None,
+    canonical_frame: bool = True,
+    degeneracy_tol: float = 1e-8,
 ) -> np.ndarray | tuple[np.ndarray, object]:
     """Run vibe-qc's RHF and return the MO coefficient matrix.
 
@@ -157,7 +344,19 @@ def get_hf_orbital_provider(
     molecule : Molecule
     basis : BasisSet
     method : str
-        ``"rhf"`` (default) or ``"uhf"``.
+        ``"rhf"`` (default), ``"uhf"``, ``"uno"`` or ``"rohf"``.
+    canonical_frame : bool
+        ``True`` (default) passes the orbitals through
+        :func:`canonicalize_degenerate_orbitals`, keyed on the orbital
+        energies (``"uno"``: the natural occupations), so that the frame
+        inside every degenerate cluster is a function of the deck rather
+        than of the host's eigensolver (#322). ``False`` returns the SCF's
+        own eigenvectors: a frame-dependent result computed on them (a
+        seniority-zero energy, a truncated selected-CI rung) is then
+        reproducible only on the host that produced it.
+    degeneracy_tol : float
+        Cluster tolerance handed to the canonicaliser (1e-8 Ha, or 1e-8 in
+        occupation for ``"uno"``).
     scf_options : RHFOptions | UHFOptions, optional
         The caller's SCF options, used as the base instead of a fresh
         object. Callers that accept ``rhf_options=`` / ``uhf_options=``
@@ -170,7 +369,8 @@ def get_hf_orbital_provider(
     Returns
     -------
     mo_coeffs : (n_ao, n_ao) ndarray
-        Columns are canonical HF molecular orbitals.
+        Columns are canonical HF molecular orbitals, in the canonical
+        frame unless ``canonical_frame=False``.
     """
     # The package-level wrappers (not the raw bindings) attach a bundled
     # basis' ECP sidecar, so the orbitals -- and the result handed back with
@@ -178,8 +378,12 @@ def get_hf_orbital_provider(
     from .. import run_rhf, run_uhf
     from .._vibeqc_core import RHFOptions, UHFOptions
 
-    def finish(coeffs: np.ndarray, result: object):
+    def finish(coeffs: np.ndarray, result: object, values: object):
         orbitals = np.asarray(coeffs, order="C")
+        if canonical_frame:
+            orbitals, _frame = canonicalize_degenerate_orbitals(
+                molecule, basis, orbitals, np.asarray(values), tol=degeneracy_tol
+            )
         if _with_result:
             return orbitals, result
         return orbitals
@@ -214,10 +418,10 @@ def get_hf_orbital_provider(
 
     if method == "rhf":
         result = run_rhf(molecule, basis, _tighten(scf_options, RHFOptions))
-        return finish(result.mo_coeffs, result)
+        return finish(result.mo_coeffs, result, result.mo_energies)
     elif method == "uhf":
         result = run_uhf(molecule, basis, _tighten(scf_options, UHFOptions))
-        return finish(result.mo_coeffs_alpha, result)
+        return finish(result.mo_coeffs_alpha, result, result.mo_energies_alpha)
     elif method == "uno":
         # UHF natural orbitals (UNO-CAS) -- P. Pulay & T. P. Hamilton,
         # J. Chem. Phys. 88, 4926 (1988), doi:10.1063/1.454704: diagonalize
@@ -253,7 +457,9 @@ def get_hf_orbital_provider(
         s_inv_half = (s_vec / np.sqrt(s_val)) @ s_vec.T
         occ, u_no = np.linalg.eigh(s_half @ dm_total @ s_half)
         order = np.argsort(occ)[::-1]  # descending occupation
-        return finish(np.ascontiguousarray(s_inv_half @ u_no[:, order]), result)
+        return finish(
+            np.ascontiguousarray(s_inv_half @ u_no[:, order]), result, occ[order]
+        )
     elif method == "rohf":
         # Restricted open-shell HF reference (Roothaan, Rev. Mod. Phys. 32,
         # 179 (1960)).  ROHF gives ONE spin-restricted orbital set already
@@ -270,7 +476,7 @@ def get_hf_orbital_provider(
         opts.conv_tol_energy = 1e-12
         opts.conv_tol_grad = 1e-9
         result = run_rohf(molecule, basis, opts)
-        return finish(result.mo_coeffs, result)
+        return finish(result.mo_coeffs, result, result.mo_energies)
     else:
         raise ValueError(f"Unknown HF method: {method!r}")
 

@@ -3,21 +3,24 @@
 The multi-replica adapter evaluates the molecular GFN2-xTB machinery over the
 WS-weighted supercell: one-center S/H0 blocks are the molecular ones, every
 directed two-center coupling (H0 image block, shell-resolved gamma, the
-ad-hoc shell-resolved AES potential, pair repulsion) is accumulated through
-the WS records with their fractional weights, and the SCC loop mirrors the
+AES multipole integrals, pair repulsion) is accumulated through the WS
+records with their fractional weights, and the SCC loop mirrors the
 molecular driver (damped simple mixing, GAM3 third order, the stabilization
-retry ladder). At T=0 the molecular limit (1x1x1 cyclic cluster) reproduces
-the validated molecular driver bit-for-bit; at finite T it reports the same
-state with the variational Mermin free energy instead of the molecular
-driver's historical internal-energy field. The experimental atom-resolved
-"faithful" AES and the D4 dispersion stay out, exactly as in the molecular
-driver's default path.
+retry ladder). The default AES is the atom-resolved Bannwarth 2019 model on
+record-resolved CAMM (``aes_faithful=True``, issue #140); the molecular
+driver's ad-hoc shell-resolved kernel is ``aes_faithful=False``. At T=0 the
+molecular limit (1x1x1 cyclic cluster) reproduces the validated molecular
+driver run with the same AES model bit-for-bit; at finite T it reports the
+same state with the variational Mermin free energy instead of the molecular
+driver's historical internal-energy field. D4 dispersion stays out, exactly
+as in the molecular driver's default path.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, replace
 from typing import Mapping
 
 import numpy as np
@@ -54,7 +57,19 @@ _ATTEMPT_SOLVERS = frozenset(
     }
 )
 _ATTEMPT_EXIT_REASONS = frozenset(
-    {"converged", "iteration_limit", "unphysical_basin", "gap_rejected"}
+    {
+        "converged",
+        "iteration_limit",
+        "stalled_checkpoint",
+        "unphysical_basin",
+        "gap_rejected",
+    }
+)
+#: Exit reasons of an attempt that never reached the SCC residual tolerance:
+#: it exhausted its budget, or it stopped contracting at a stabilization
+#: checkpoint and was handed to the ladder with the budget it had left (#294).
+_ATTEMPT_UNCONVERGED_EXITS = frozenset(
+    {"iteration_limit", "stalled_checkpoint"}
 )
 _SCC_MIXERS = frozenset(
     {"simple", "diis", "broyden", "broyden_eyert", "newton"}
@@ -189,9 +204,15 @@ class GFN2SECCMAttempt:
             raise ValueError(
                 "GFN2-SECCM attempt convergence flags must be boolean"
             )
-        if exit_reason == "iteration_limit" and self.scc_converged:
-            raise ValueError("iteration-limit attempt cannot be SCC-converged")
-        if exit_reason != "iteration_limit" and not self.scc_converged:
+        if exit_reason in _ATTEMPT_UNCONVERGED_EXITS and self.scc_converged:
+            raise ValueError(
+                "iteration-limit and stalled-checkpoint attempts cannot be "
+                "SCC-converged"
+            )
+        if (
+            exit_reason not in _ATTEMPT_UNCONVERGED_EXITS
+            and not self.scc_converged
+        ):
             raise ValueError(
                 "converged, gap-rejected, and unphysical attempts must reach "
                 "the SCC residual tolerance"
@@ -350,6 +371,60 @@ class GFN2SECCMResult:
     hamiltonian_identity: GFN2SECCMHamiltonianIdentity
     run_controls: GFN2SECCMRunControls
     route_plan: SemiempiricalRoutePlan
+    state_audit: GFN2SECCMStateAudit | None = None
+
+    @property
+    def total_n_iter(self) -> int:
+        """Iterations in the selected solve and the bounded state audit."""
+        return self.n_iter + (self.state_audit.n_iter if self.state_audit else 0)
+
+
+class GFN2SECCMStateAmbiguityWarning(UserWarning):
+    """Two accepted same-Hamiltonian solves disagree in free energy."""
+
+
+@dataclass(frozen=True)
+class GFN2SECCMStateAudit:
+    """Alternative neutral-start solve; never a claim of global stability."""
+
+    status: str
+    iteration_budget: int
+    alternative: GFN2SECCMResult | None = None
+    energy_difference: float | None = None
+    energy_tolerance: float = 1e-6
+    selection_reason: str = "Retained the first accepted solve under the requested controls."
+
+    @property
+    def n_iter(self) -> int:
+        return self.alternative.n_iter if self.alternative is not None else 0
+
+    def to_dict(self) -> dict:
+        alternative = self.alternative
+        def finite(value):
+            return float(value) if math.isfinite(value) else None
+
+        return {
+            "status": self.status,
+            "iteration_budget": self.iteration_budget,
+            "n_iter": self.n_iter,
+            "energy_difference": self.energy_difference,
+            "energy_tolerance": self.energy_tolerance,
+            "selection_reason": self.selection_reason,
+            "alternative": None if alternative is None else {
+                "converged": alternative.converged,
+                "free_energy": alternative.free_energy if alternative.converged else None,
+                "charges": [finite(value) for value in alternative.charges],
+                "shell_charges": [finite(value) for value in alternative.shell_charges],
+                "homo_lumo_gap": finite(alternative.homo_lumo_gap),
+                "e_scc": finite(alternative.e_scc),
+                "smearing_temperature": finite(alternative.smearing_temperature),
+                "translation_symmetry_charge_spread": finite(alternative.translation_symmetry_charge_spread),
+                "attempts": [attempt.to_dict() for attempt in alternative.attempts],
+                "parameter_sha256": alternative.parameter_sha256,
+                "hamiltonian_identity": alternative.hamiltonian_identity.to_dict(),
+                "run_controls": alternative.run_controls.to_dict(),
+            },
+        }
 
 
 @dataclass(frozen=True)
@@ -577,7 +652,7 @@ def run_gfn2_seccm(
     max_iter: int = 3600,
     conv_tol_charge: float = 1.0e-6,
     charge_mixing: float | None = None,
-    electronic_temperature: float = 0.0,
+    electronic_temperature: float | None = None,
     madelung: bool = False,
     madelung_s_weighted: bool = False,
     madelung_no_self: bool = False,
@@ -586,28 +661,36 @@ def run_gfn2_seccm(
     ewald_gamma_molecular_onsite: bool = False,
     ewald_gamma_k0_global: bool = False,
     gamma_form: str = "klopman_ohno",
-    aes_faithful: bool = False,
+    aes_faithful: bool = True,
     aes_damping: float = 0.5,
     scc_mixer: str = "simple",
     initial_shell_charges: np.ndarray | None = None,
+    audit_states: bool = True,
 ) -> GFN2SECCMResult:
     """Evaluate the GFN2-xTB-SECCM finite-cluster route.
 
     The route is restricted to neutral closed-shell clusters with one to
     three cyclic dimensions. It evaluates the complete frozen WS record set
     with the WS-weighted supercell GFN2-xTB SCC (molecular-limit bit parity
-    with the molecular driver; the experimental atom-resolved faithful AES
-    and D4 dispersion are not part of the adapter). Charged cells and
+    with the molecular driver run under the same AES model; D4 dispersion is
+    not part of the adapter). Charged cells and
     open-shell inputs fail closed until the embedding and unrestricted
     layers land.
 
     ``electronic_temperature`` switches on Fermi-Dirac fractional
-    occupations (Ha; 0 = hard Aufbau, the default). Metallic supercells
+    occupations (Ha; 0 = hard Aufbau). Left at ``None`` (the default) the
+    primary attempt runs at T = 0 and the stabilisation ladder may converge
+    a stalled solve on its bounded finite-T rung, which is then reported as
+    the executed ``smearing_temperature``. An explicit value, ``0.0``
+    included, is honoured on every rung and on the zero-image molecular
+    delegation: a caller who asked for exact Aufbau is never handed a smeared
+    free energy (the molecular driver's vibe-qc#3 contract). Metallic supercells
     (bulk Cu/Pd/Ag and other degenerate-frontier clusters) can jump between
     occupation branches under hard Aufbau, making the energy surface
     discontinuous between neighbouring geometries; a small temperature
-    (e.g. 0.002-0.01 Ha) converges branch-free and the reported energy is
-    the Mermin free energy A = E - T*S (``free_energy`` alias, with
+    (e.g. 0.002-0.01 Ha) smooths occupations but does not guarantee a unique
+    SCC state. The reported energy is the Mermin free energy A = E - T*S
+    (``free_energy`` alias, with
     ``entropy`` and ``smearing_temperature`` recorded).
 
     A converged state that violates a shell's Pauli capacity, the conservative
@@ -669,21 +752,22 @@ def run_gfn2_seccm(
       kernel differs.
 
     ``include_aes=False`` is an experimental validation knob that
-    removes the WS-folded anisotropic second-order (AES) channel (the
-    ad-hoc shell-resolved gamma^3/gamma^5 multipole potential and its
-    energy term) for channel isolation of SCC instabilities. The
+    removes the WS-folded anisotropic second-order (AES) channel (whichever
+    ``aes_faithful`` selects, and its energy term) for channel isolation of SCC instabilities. The
     reported energy then misses a physical term and must not be used
     for production numbers. Even on a zero-image record set this option
     runs the SECCM engine instead of delegating to the molecular driver,
     which does not expose this model change.
 
-    ``aes_faithful=True`` replaces the ad-hoc shell-resolved
-    ``gamma^3``/``gamma^5`` multipole channel with the Bannwarth 2019 model
-    (Eq. 25 energy, Eqs. 39-44 Fock) on cumulative atomic multipole moments
-    built from the **Wigner-Seitz record inventory** rather than from the
-    home-cell molecule. That construction is what fixes issue #348: with the
-    default kernel the AES is the only remaining term in the route that
-    depends on which lattice copy of an atom the caller typed. On a 4-unit
+    ``aes_faithful=True`` (the default since issue #140) evaluates the
+    Bannwarth 2019 model (Eq. 25 energy, Eqs. 39-44 Fock) on cumulative
+    atomic multipole moments built from the **Wigner-Seitz record
+    inventory** rather than from the home-cell molecule.
+    ``aes_faithful=False`` selects the molecular driver's ad-hoc
+    shell-resolved ``gamma^3``/``gamma^5`` multipole channel, whose moment
+    integrals come from the home-cell molecule. It is then the only term in
+    the route that depends on which lattice copy of an atom the caller
+    typed (issue #140, monorepo #348). On a 4-unit
     polar HF chain, three representatives of one crystal give
 
     ==========  ===============  ===============  ===============
@@ -699,12 +783,17 @@ def run_gfn2_seccm(
     shell-resolved moments and a pair inventory produces atom-resolved ones
     -- so this is a model flag, not a repair of the existing kernel.
 
-    It defaults to ``False`` while the molecular driver's own
-    ``aes_faithful`` default is ``False``, so that molecular-limit bit parity
-    between the two routes keeps meaning; the defaults move together. On a
-    zero-image topology the flag is passed through to the delegated
-    molecular solve, so a single-replica torus returns the model that was
-    asked for.
+    It defaults to ``True`` because the default route has to be
+    representative-invariant (issue #140). The molecular driver's own
+    ``XTBSccOptions.aes_faithful`` default deliberately stays ``False``
+    while issue #777 (adenine basin multiplicity) blocks moving it, so
+    **the two defaults differ on purpose**. On a zero-image topology the
+    flag is passed through to the delegated molecular solve, so a
+    single-replica torus returns the model that was asked for. A 1x1x1
+    default SECCM therefore equals ``run_gfn2_xtb`` with
+    ``aes_faithful=True`` bit for bit (H2O: -5.033680484741314 Ha), not the
+    molecular default (-5.031468971990033 Ha). Pass ``aes_faithful=False``
+    to reproduce pre-#140 SECCM numbers, or to use ``scc_mixer="newton"``.
 
     On the faithful path the multipole moments are part of the mixed SCC
     state, not a lagged input to it (issue #409): the reduced iterate is
@@ -760,7 +849,25 @@ def run_gfn2_seccm(
 
     ``charge_mixing`` defaults per mixer when left unset: 0.4 for
     ``"broyden_eyert"`` (xtb's bromix default) and 0.1 for every other
-    mixer. An explicit value in (0, 1] always wins.
+    mixer. An explicit value in (0, 1] always wins for the primary attempt.
+
+    After unsuccessful stabilization rungs, any remaining total budget
+    permits a final neutral Eyert retry (at most 500 steps, mixing 0.4)
+    at the original requested temperature. Its executed controls are
+    recorded in ``attempts``; the primary's requested mixer and mixing
+    remain in ``run_controls``. Earlier successful attempts retain their result.
+
+    ``audit_states=True`` uses any unused iteration budget for one alternative
+    neutral-start solve: Eyert after another mixer, Simple after Eyert, with
+    that mixer's standard mixing and the selected result's temperature. The
+    selected result is retained. ``state_audit`` records the alternative,
+    failures and an energy comparison at 1e-6 Ha per primitive cell; a larger
+    same-Hamiltonian difference emits ``GFN2SECCMStateAmbiguityWarning``.
+    Agreement of two solves does not establish uniqueness or stability.
+    ``n_iter`` and ``attempts`` describe the selected solve; ``total_n_iter``
+    includes the audit and cannot exceed ``max_iter``. Exact molecular
+    delegation is not audited. Set ``audit_states=False`` for an explicitly
+    single-start calculation; its ``state_audit`` is None.
 
     ``initial_shell_charges`` optionally supplies one finite charge
     fluctuation per GFN2 shell as the SCC starting point. A nonempty vector
@@ -768,7 +875,14 @@ def run_gfn2_seccm(
     molecular-delegation topology because the delegated molecular driver has
     no shell-charge restart channel; such a vector is rejected rather than
     silently ignored.
+
+    ``result.hamiltonian_identity.aes_model`` records the AES Hamiltonian
+    that ran: ``"bannwarth_record_camm"`` for ``aes_faithful=True``,
+    ``"adhoc_shell"`` otherwise, and ``"none"`` when ``include_aes=False``,
+    where ``aes_faithful`` selects nothing (issue #380).
     """
+    if not isinstance(audit_states, bool):
+        raise TypeError("audit_states must be a boolean")
     if initial_shell_charges is None:
         restart_shell_charges = np.zeros(0, dtype=float)
     else:
@@ -877,6 +991,12 @@ def run_gfn2_seccm(
         ewald_gamma_k0_global=ewald_gamma_k0_global,
         initial_shell_charges=restart_shell_charges,
     )
+    # ``None`` is "not requested": the primary attempt runs at T = 0 and the
+    # stabilisation ladder may accept a finite-T rung. An explicit value,
+    # 0.0 included, is honoured on every rung (vibe-qc#3 contract).
+    electronic_temperature_explicit = electronic_temperature is not None
+    if electronic_temperature is None:
+        electronic_temperature = 0.0
     native = _se_cxx._run_gfn2_seccm_from_records(
         molecule,
         params,
@@ -908,6 +1028,7 @@ def run_gfn2_seccm(
         aes_damping=float(aes_damping),
         scc_mixer=_SCC_MIXER_BY_NAME[scc_mixer],
         initial_shell_charges=restart_shell_charges,
+        electronic_temperature_explicit=electronic_temperature_explicit,
     )
     native_requested = (
         float(native.requested_electronic_temperature),
@@ -916,6 +1037,7 @@ def run_gfn2_seccm(
         bool(native.requested_madelung_no_self),
         bool(native.requested_ewald_gamma),
         bool(native.requested_include_aes),
+        bool(native.requested_aes_faithful),
         bool(native.requested_ewald_gamma_molecular_onsite),
     )
     python_requested = (
@@ -925,6 +1047,7 @@ def run_gfn2_seccm(
         bool(madelung_no_self),
         bool(ewald_gamma),
         bool(include_aes),
+        bool(aes_faithful),
         bool(ewald_gamma_molecular_onsite),
     )
     if native_requested != python_requested:
@@ -979,6 +1102,7 @@ def run_gfn2_seccm(
         requested_electronic_temperature=float(electronic_temperature),
         resolved_electronic_temperature=float(native.smearing_temperature),
         include_aes=bool(native.requested_include_aes),
+        aes_faithful=bool(native.requested_aes_faithful),
         madelung_s_weighted=bool(native.requested_madelung_s_weighted),
         madelung_no_self=bool(native.requested_madelung_no_self),
         ewald_gamma_molecular_onsite=bool(
@@ -1063,6 +1187,56 @@ def run_gfn2_seccm(
                 "C++ GFN2-SECCM did not converge within the iteration budget"
             )
         raise GFN2SECCMConvergenceError(message, result)
+    if audit_states:
+        remaining = int(max_iter) - result.n_iter
+        if result.molecular_delegated:
+            audit = GFN2SECCMStateAudit("molecular_delegation", 0)
+        elif remaining <= 0:
+            audit = GFN2SECCMStateAudit("budget_exhausted", 0)
+        else:
+            # Audit the executed Hamiltonian, including any retry temperature.
+            # Solver choice and a neutral start vary; the requested solve is
+            # retained even when an alternative has a lower free energy.
+            selected_solver = result.attempts[-1].solver
+            alternative_solver = (
+                "simple" if selected_solver == "supercell_broyden_eyert"
+                else "broyden_eyert"
+            )
+            try:
+                alternative = run_gfn2_seccm(
+                    molecule, topology, parameter_set=parameter_set,
+                    max_iter=remaining, conv_tol_charge=conv_tol_charge,
+                    electronic_temperature=result.smearing_temperature,
+                    madelung=madelung, madelung_s_weighted=madelung_s_weighted,
+                    madelung_no_self=madelung_no_self, ewald_gamma=ewald_gamma,
+                    include_aes=include_aes,
+                    ewald_gamma_molecular_onsite=ewald_gamma_molecular_onsite,
+                    ewald_gamma_k0_global=ewald_gamma_k0_global,
+                    gamma_form=gamma_form, aes_faithful=aes_faithful,
+                    aes_damping=aes_damping, scc_mixer=alternative_solver,
+                    audit_states=False,
+                )
+            except GFN2SECCMConvergenceError as error:
+                alternative = error.result
+            difference = None
+            status = "alternative_failed"
+            if alternative.converged:
+                comparison = compare_gfn2_seccm_states(result, alternative)
+                status = "different_hamiltonian"
+                if comparison.same_hamiltonian:
+                    difference = comparison.free_energy_change
+                    status = "different" if abs(difference) > 1e-6 else "consistent"
+            audit = GFN2SECCMStateAudit(status, remaining, alternative, difference)
+            if status == "different":
+                warnings.warn(
+                    "GFN2-SECCM state ambiguity: the requested solve was retained "
+                    f"at {result.free_energy:.12f} Ha; a neutral-start "
+                    f"{alternative_solver} solve reached {alternative.free_energy:.12f} Ha "
+                    "with the same Hamiltonian. Inspect result.state_audit; "
+                    "convergence does not establish a unique electronic state.",
+                    GFN2SECCMStateAmbiguityWarning, stacklevel=2,
+                )
+        result = replace(result, state_audit=audit)
     return result
 
 
@@ -1072,6 +1246,8 @@ __all__ = [
     "GFN2SECCMConvergenceError",
     "GFN2SECCMResult",
     "GFN2SECCMStateChange",
+    "GFN2SECCMStateAudit",
+    "GFN2SECCMStateAmbiguityWarning",
     "compare_gfn2_seccm_states",
     "run_gfn2_seccm",
 ]

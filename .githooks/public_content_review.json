@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "reviews": [
+    {
+      "path": "CHANGELOG.md",
+      "rule": "internal-host",
+      "key": "ae829d233766a8620fe4d9a4fe95d52b9250d84e0ec4cdee802e36be9be3b388",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "rule": "email",
+      "key": "1d81d5005ceb097fbeaa388d50bd413703553471ad9eaac2323a59f94718f7ed",
+      "reason": "Escaped Python decorator or systemd user service syntax, not an email address."
+    },
+    {
+      "path": "LICENSES/PYSCF-2.14.0-NOTICE",
+      "rule": "email",
+      "key": "b2d009487fe4cb5932592b9ca8e250aed3bff2867e2c99c9d9c1a7decb50b148",
+      "reason": "Public upstream PySCF copyright attribution; preserve the required notice."
+    },
+    {
+      "path": "LICENSES/PYSCF-2.14.0-NOTICE",
+      "rule": "email",
+      "key": "c6a7de7773f8b54efc40c2c924e48b8d50ac4795190f6eb38bfbf53a8f00277f",
+      "reason": "Public upstream PySCF copyright attribution; preserve the required notice."
+    },
+    {
+      "path": "deploy/htaccess-redirects.conf",
+      "rule": "email",
+      "key": "70eb57543b011a0093ea25862797a5d7f1b5211dfe37f6753263a0e9ff936305",
+      "reason": "Explicit example web-account placeholder under the public project domain."
+    },
+    {
+      "path": "docs/bug_hunt_brief.md",
+      "rule": "email",
+      "key": "2f6d7fd26dec9d4d78b2bfa47beed342f5bfd413457af0cfdae1af550642e64a",
+      "reason": "Public model-provider no-reply attribution example."
+    },
+    {
+      "path": "docs/user_guide/cohesive_energies.md",
+      "rule": "internal-host",
+      "key": "ad117b7e9e211e0cb78cecc09662a1587dbe31d3c86eca1a782e3993dafa0577",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "docs/user_guide/cohesive_energies.md",
+      "rule": "internal-host",
+      "key": "ad117b7e9e211e0cb78cecc09662a1587dbe31d3c86eca1a782e3993dafa0577",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "examples/regression/README.md",
+      "rule": "email",
+      "key": "6f39fedc592a8ebbff06839ab7857b5bc2b77c975a59e79fd0ae0c8914554b1a",
+      "reason": "Escaped Python decorator or systemd user service syntax, not an email address."
+    },
+    {
+      "path": "python/vibeqc/periodic_corrected_exchange.py",
+      "rule": "internal-host",
+      "key": "cea42228b614c8b24d6f5657d559c12e2e6b52273fcd32b6ce7a844489db56de",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "studies/aiccm-2026/site-profile.example.json",
+      "rule": "internal-host",
+      "key": "3ae65b44d7ad97387189ae18476d869a547bd73c6708da64e3e6bee9d8671ae2",
+      "reason": "Synthetic workstation mDNS alias in the portable example profile and its tests; no real machine identity."
+    },
+    {
+      "path": "tests/data/cccbdb/h2o_exp2.html",
+      "rule": "email",
+      "key": "ad321abfd1e74afff78cdad971c34ec247d8c7d0c5696c7b00ed3b28c1dce0f8",
+      "reason": "Public NIST CCCBDB contact in the archived scientific reference page."
+    },
+    {
+      "path": "tests/test_aiccm_site_settings.py",
+      "rule": "internal-host",
+      "key": "925008d95a5a27dc7c4b610d6139fa122c1883af75807cc7454aaa06b554385a",
+      "reason": "Synthetic workstation mDNS alias in the portable example profile and its tests; no real machine identity."
+    },
+    {
+      "path": "tests/test_aiccm_site_settings.py",
+      "rule": "internal-host",
+      "key": "8e9a6616ce03edf6571a151333cd427b0e3b1b6cb5008c3568d5825a88a54a24",
+      "reason": "Synthetic workstation mDNS alias in the portable example profile and its tests; no real machine identity."
+    },
+    {
+      "path": "tests/test_aiccm_site_settings.py",
+      "rule": "internal-host",
+      "key": "8e530c5923983e82f1d86bd482e45c469c4221ca3e542056d32b1ffd751a778d",
+      "reason": "Synthetic workstation mDNS alias in the portable example profile and its tests; no real machine identity."
+    },
+    {
+      "path": "tests/test_output_channel.py",
+      "rule": "internal-host",
+      "key": "817f8e9b0354e39e7b0dd5a734a065fc69f032b8513c49539b020c1ccaa8c9e7",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "tests/test_output_channel.py",
+      "rule": "internal-host",
+      "key": "ce4c76c32b3e226c8b1697c26588b7fafa088e7065eca59a8ea78c1313209784",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "tests/test_output_channel.py",
+      "rule": "internal-host",
+      "key": "917545d5916320bbfd214d7a0f852f8f0e10b78c15007171e04fdee3c112a5fd",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "vibe-basis/RECIPE_PATTERNS.md",
+      "rule": "internal-host",
+      "key": "fec501173be8c4be27c38c5db6dfcecbf02c8aca8797bedcd67c08fa70775865",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "vibe-basis/RECIPE_PATTERNS.md",
+      "rule": "internal-host",
+      "key": "fec501173be8c4be27c38c5db6dfcecbf02c8aca8797bedcd67c08fa70775865",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "vibe-basis/TUTORIAL.md",
+      "rule": "internal-host",
+      "key": "cd6e5e1a656d851e6fe87995e4766243bd4e7925e8974d51bed3f1c5e016b78c",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "vibe-basis/TUTORIAL.md",
+      "rule": "internal-host",
+      "key": "cd6e5e1a656d851e6fe87995e4766243bd4e7925e8974d51bed3f1c5e016b78c",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "vibe-basis/TUTORIAL.md",
+      "rule": "internal-host",
+      "key": "cd6e5e1a656d851e6fe87995e4766243bd4e7925e8974d51bed3f1c5e016b78c",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "vibe-basis/src/vibe_basis/recipes/remote.py",
+      "rule": "internal-host",
+      "key": "fa893e0b11563dd0e54c3b7a41129daba6c4311ff01016df6d382c70011e3431",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "website/README.md",
+      "rule": "email",
+      "key": "3ff82e26e70f3894f2aebd27b2e7a823cfc5b9253021add1875bf742634bf585",
+      "reason": "Explicit example web-account placeholder under the public project domain."
+    },
+    {
+      "path": "website/README.md",
+      "rule": "email",
+      "key": "bc3d717e045448fa16e12bd05fc69252d560f45701d780f2cf555fd30f14671d",
+      "reason": "Existing public project website contact-form sender address."
+    },
+    {
+      "path": "website/public/contact.php",
+      "rule": "email",
+      "key": "94b3193db930b032350aac30dd6ba9653145a6dd2d6b9a5fe921a2ee6c334d72",
+      "reason": "Existing public project website contact-form sender address."
+    },
+    {
+      "path": ".githooks/test_privacy_source.py",
+      "rule": "internal-host",
+      "key": "6022ed136d8b26634b76d7d8af790a9598d7c565b8c3846c9a2e60e8107a12ea",
+      "reason": "Public Python API or import syntax in documentation/test text, not a host."
+    },
+    {
+      "path": "docs/roadmap.md",
+      "rule": "private-term",
+      "key": "12e66fdb7398ad4c45701000a27b7e0c9863e28fc2747951384b0a88c31be9b2",
+      "reason": "Public scientific author attribution for the cited 2023 local NEVPT2 study; preserve the scholarly credit."
+    },
+    {
+      "path": "python/vibeqc/output/citations/database.toml",
+      "rule": "private-term",
+      "key": "8d40d15a06aa44ebee4003123fdd0126fd96c26be2599b44934f56b0bf97d00d",
+      "reason": "Public scientific author attribution for DOI 10.1021/acs.jctc.3c00717; preserve the bibliographic record."
+    }
+  ]
+}

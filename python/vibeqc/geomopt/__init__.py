@@ -83,7 +83,12 @@ from .providers import (
 )
 from .registry import resolve as resolve_optimizer  # alias for convenience
 from .runner import run_geomopt
-from .state import GeomOptResult, OptimizerState
+from .state import (
+    GeomOptFailedError,
+    GeomOptNotConvergedError,
+    GeomOptResult,
+    OptimizerState,
+)
 
 __all__ = [
     # Providers
@@ -102,6 +107,8 @@ __all__ = [
     # State
     "GeomOptResult",
     "OptimizerState",
+    "GeomOptFailedError",
+    "GeomOptNotConvergedError",
     # Convergence
     "ConvergencePolicy",
     "ConvergenceReport",

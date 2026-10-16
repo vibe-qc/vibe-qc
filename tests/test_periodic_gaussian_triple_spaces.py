@@ -215,7 +215,7 @@ def test_frozen_core_actual_owners_keep_only_active_occupied_triples(nk):
     assert (result.memory.occupied_count, result.memory.common_virtual_dimension) == (nk, 2*nk)
     assert result.memory.triple_count == nk*(nk+1)*(nk+2)//6
     assert result.state.n_frozen_core == result.state.n_correlated_occupied == 1
-    assert result.state.reference_energy_per_cell == b.unfrozen_hf.state.reference_energy_per_cell
+    assert result.state.reference_energy_per_cell == b.hf.state.reference_energy_per_cell
     _check_batch(b, mp2, ccsd, result)
     with pytest.raises((ValueError, IndexError), match="range|canonical|triple|occupied"):
         result.triple_diagnostics(0, 0, nk)

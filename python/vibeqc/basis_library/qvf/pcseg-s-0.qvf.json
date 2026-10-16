@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "pcseg-s-0",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: pcSseg-0\nCanonical name in vibe-qc: pcseg-s-0\nOriginating publication: Jensen, J. Chem. Theory Comput. 11, 132 (2015); DOI: 10.1021/ct500814y\nNote: segmented NMR shielding\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: pcSseg-0\nDescription: Segmented contracted version of the pcS-0 basis\n       Role: orbital\n    Version: 1  (Data from Frank Jensen (2015))",
   "role": "orbital",
   "elements": {
     "H": {
@@ -5041,7 +5041,38 @@
       ]
     }
   },
+  "basis_family": "jensen",
+  "references": [
+    {
+      "key": "jensen_pcseg_2014",
+      "description": "F. Jensen, Journal of Chemical Theory and Computation 10, 1074-1085 (2014)",
+      "doi": "10.1021/ct401026a"
+    },
+    {
+      "key": "doi:10.1021/ct500814y",
+      "description": "Jensen, J. Chem. Theory Comput. 11, 132 (2015)",
+      "doi": "10.1021/ct500814y"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "pcSseg-0"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "28b37b414fd0a1ccf28dd2051bb7cc977023eaf8a2d2bb3de98424839c952a48",
+    "citations": [
+      {
+        "keys": [
+          "jensen_pcseg_2014"
+        ]
+      }
+    ]
   }
 }

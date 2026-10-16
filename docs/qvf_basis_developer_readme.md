@@ -123,8 +123,13 @@ JSON Schema lives at `schemas/qvf_basis_v1.schema.json`. It validates:
 - Element symbols (all 118)
 - Shell constraints (angular_momentum length 1-2, L ≤ 12)
 - Primitive constraints (exponent > 0)
-- ECP structure
+- ECP structure, including Gaussian-format integer powers 0 through 4
 - Reference keys
+
+An ECP term's `power` stores the Gaussian integer `n`: its radial function is
+`coefficient * r^(n-2) * exp(-exponent * r^2)`. Thus `n=2` is a constant
+radial power and `n=4` supplies `r^2`; the literal radial power is `n-2`.
+The schema accepts these terms without changing bundled basis or ECP data.
 
 ### Lossiness
 

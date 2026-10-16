@@ -694,27 +694,106 @@ class TestPreoptimization:
     @pytest.mark.slow
     @pytest.mark.parametrize("method", ["dftb0", "scc_dftb"])
     def test_preoptimize_improves_distorted_water(self, method):
-        """Preoptimization must actually move a distorted geometry into the
-        well, not merely return 3 atoms.
-
-        Regression for the 2026-07-08 vibe-view live-opt finding: with the
-        runaway SCC Hamiltonian sign + core-electron over-filling,
-        BFGSLineSearch either returned the input geometry unchanged or
-        wandered downhill toward dissociation, and the old test
-        (``assert len(result.atoms) == 3``) could not notice."""
+        """Preoptimization must converge for this model, whose R^-12
+        repulsives cannot predict a physical water equilibrium geometry."""
         pytest.importorskip("ase")
+        import warnings
+        from ase.units import Bohr, Hartree
+
+        from vibeqc.semiempirical import DFTB0RepulsivePlaceholderWarning
         from vibeqc.semiempirical.preoptimize import preoptimize_molecule
+        from vibeqc.semiempirical.runner import run_semiempirical
 
         mol = self._distorted_h2o()
-        result = preoptimize_molecule(mol, method=method, fmax=0.02, max_steps=100)
-        assert len(result.atoms) == 3
-        pos = np.array([a.xyz for a in result.atoms])
-        for ih in (1, 2):
-            r_oh = float(np.linalg.norm(pos[ih] - pos[0]))
-            assert 1.55 <= r_oh <= 2.15, (
-                f"{method}: O-H{ih} = {r_oh:.3f} bohr after preopt; "
-                f"started from 2.46/2.65 bohr, well is near 1.8 bohr"
+        initial = np.array([atom.xyz for atom in mol.atoms])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", DFTB0RepulsivePlaceholderWarning)
+            result = preoptimize_molecule(mol, method=method, fmax=0.02, max_steps=100)
+        placeholders = [
+            str(w.message)
+            for w in caught
+            if issubclass(w.category, DFTB0RepulsivePlaceholderWarning)
+        ]
+        assert placeholders, f"{method}: missing placeholder qualification"
+        assert any(
+            # Warning and run-record pairs use atomic-number labels.
+            all(pair in message for pair in ("1-1", "1-8", "8-8"))
+            and "equilibrium geometries" in message
+            and "placeholder physics" in message
+            for message in placeholders
+        )
+
+        assert [atom.Z for atom in result.atoms] == [8, 1, 1]
+        assert (result.charge, result.multiplicity) == (0, 1)
+        np.testing.assert_array_equal(np.array([atom.xyz for atom in mol.atoms]), initial)
+        final = np.array([atom.xyz for atom in result.atoms])
+        assert final.shape == (3, 3) and np.all(np.isfinite(final))
+        # Pair distances reject an unchanged input and a rigid translation.
+        pairs = ((0, 1), (0, 2), (1, 2))
+        distance_change = max(
+            abs(
+                np.linalg.norm(final[i] - final[j])
+                - np.linalg.norm(initial[i] - initial[j])
             )
+            for i, j in pairs
+        )
+        assert distance_change > 0.05, f"{method}: no internal relaxation"
+
+        def evaluate(positions, *, with_gradient=True):
+            candidate = Molecule(
+                [Atom(z, list(xyz)) for z, xyz in zip((8, 1, 1), positions)],
+                charge=0,
+                multiplicity=1,
+            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DFTB0RepulsivePlaceholderWarning)
+                observed = run_semiempirical(method, candidate)
+            assert observed.converged, f"{method}: model evaluation did not converge"
+            gradient = (
+                np.asarray(observed.gradient(), dtype=float) if with_gradient else None
+            )
+            return float(observed.energy), gradient, observed.electronic_temperature
+
+        # The ASE force threshold is eV/Angstrom; model gradients are Ha/bohr.
+        force_scale = Hartree / Bohr
+        for label, positions in (("initial", initial), ("final", final)):
+            energy, gradient, state = evaluate(positions)
+            assert np.isfinite(energy)
+            assert gradient.shape == (3, 3) and np.all(np.isfinite(gradient))
+            force = float(np.max(np.linalg.norm(gradient, axis=1))) * force_scale
+            if label == "initial":
+                initial_energy, initial_force = energy, force
+            else:
+                final_energy, final_force = energy, force
+
+            # Existing molecular SCC gradient contract allows 5e-6 Ha/bohr;
+            # DFTB0 uses the same conservative absolute FD envelope here.
+            for step in (1e-4, 5e-5):
+                fd = np.empty((3, 3))
+                for atom in range(3):
+                    for axis in range(3):
+                        shifted = positions.copy()
+                        shifted[atom, axis] += step
+                        plus, _, plus_state = evaluate(shifted, with_gradient=False)
+                        shifted[atom, axis] -= 2 * step
+                        minus, _, minus_state = evaluate(shifted, with_gradient=False)
+                        assert plus_state == minus_state == state, (
+                            f"{method} {label}: SCC objective changed under FD"
+                        )
+                        fd[atom, axis] = (plus - minus) / (2 * step)
+                np.testing.assert_allclose(
+                    gradient, fd, atol=5e-6, rtol=0,
+                    err_msg=f"{method} {label} gradient at {step:g} bohr",
+                )
+
+        assert initial_force > 0.02, f"{method}: initial state already converged"
+        assert final_energy < initial_energy - 1e-6, f"{method}: no model descent"
+        assert final_force < initial_force, f"{method}: force did not decrease"
+        # Only floating-point evaluation slack is allowed at the requested cutoff.
+        force_roundoff = 64 * np.finfo(float).eps * max(1.0, initial_force)
+        assert final_force <= 0.02 + force_roundoff, (
+            f"{method}: unconverged force {final_force:g}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1261,3 +1340,106 @@ class TestGeometryOptimization:
         final_forces = atoms.get_forces()
         max_force = np.max(np.abs(final_forces))
         assert max_force < 0.1
+
+
+# ---------------------------------------------------------------------------
+# The DFTB basis is a Slater fit of its tabulated exponents
+# ---------------------------------------------------------------------------
+# Until 2026-09-19 the n_primitives = 6 path expanded every shell with two
+# l-keyed tables of unknown provenance: every 2s got the "1s" row, and the
+# rows themselves projected onto the Slater function they claimed to fit by
+# only 0.968 (s) and 0.689 (p). Measured then: the C 2p-2p pi overlap at the
+# graphene bond length was 0.016 where the Slater value is 0.243, so hopping
+# was almost absent and Si and h-BN came out gapless. The tables are now
+# Stewart's STO-6G rows (J. Chem. Phys. 52, 431 (1970)), keyed by principal
+# quantum number, and these tests pin the analytic Slater overlaps.
+
+
+def _slater_overlap(kind: str, rho: float) -> float:
+    """Two-centre overlap of equal-exponent Slater orbitals (Mulliken 1949),
+    rho = zeta * R."""
+    e = np.exp(-rho)
+    if kind == "1s1s":
+        return e * (1 + rho + rho**2 / 3)
+    if kind == "2s2s":
+        return e * (1 + rho + 4 * rho**2 / 9 + rho**3 / 9 + rho**4 / 45)
+    if kind == "2ps2ps":
+        return -e * (1 + rho + rho**2 / 5 - 2 * rho**3 / 15 - rho**4 / 15)
+    if kind == "2pp2pp":
+        return e * (1 + rho + 2 * rho**2 / 5 + rho**3 / 15)
+    raise ValueError(kind)
+
+
+def _homonuclear_overlap_block(Z: int, R: float) -> np.ndarray:
+    mol = Molecule([Atom(Z, [0.0, 0.0, 0.0]), Atom(Z, [0.0, 0.0, R])], 0, 1)
+    S = np.asarray(run_dftb0(mol, default_parameters()).overlap)
+    n = S.shape[0] // 2
+    return S[:n, n:]
+
+
+class TestDftbBasisIsASlaterFit:
+    # STO-6G reproduces a Slater two-centre overlap to a few 1e-3; the old
+    # tables missed these values by 0.16 (H) and 0.23 (C 2p pi).
+    TOL = 4.0e-3
+
+    @pytest.mark.parametrize("R", [1.0, 1.4, 2.0, 3.0])
+    def test_hydrogen_1s_overlap_matches_slater(self, R):
+        zeta = default_parameters().sto_exponent(1, 0)
+        assert abs(_homonuclear_overlap_block(1, R)[0, 0] - _slater_overlap("1s1s", zeta * R)) < self.TOL
+
+    @pytest.mark.parametrize("R", [2.0, 2.68, 3.5])
+    def test_carbon_2s_2p_overlaps_match_slater(self, R):
+        params = default_parameters()
+        zeta_s = params.sto_exponent(6, 0)
+        zeta_p = params.sto_exponent(6, 1)
+        block = _homonuclear_overlap_block(6, R)
+        # AO order per atom: 2s, 2p(-1)=py, 2p(0)=pz, 2p(+1)=px; the bond is along z.
+        assert abs(block[0, 0] - _slater_overlap("2s2s", zeta_s * R)) < self.TOL
+        # Both pz point along +z, so the sigma overlap carries the opposite
+        # sign of Mulliken's convention (orbitals facing each other).
+        assert abs(-block[2, 2] - _slater_overlap("2ps2ps", zeta_p * R)) < self.TOL
+        assert abs(block[1, 1] - _slater_overlap("2pp2pp", zeta_p * R)) < self.TOL
+        assert abs(block[3, 3] - _slater_overlap("2pp2pp", zeta_p * R)) < self.TOL
+
+    def test_second_row_p_shells_use_the_third_row_expansion(self):
+        """Si 3p is a 3p fit, not the 2p row: its overlap at fixed rho differs
+        from carbon's by the n = 3 radial shape (Slater 3p-3p pi has an extra
+        rho^4 term), so equal-rho overlaps must not coincide."""
+        params = default_parameters()
+        zc, zsi = params.sto_exponent(6, 1), params.sto_exponent(14, 1)
+        rho = 3.0
+        c_pi = _homonuclear_overlap_block(6, rho / zc)[1, 1]
+        si_pi = _homonuclear_overlap_block(14, rho / zsi)[1, 1]
+        assert abs(c_pi - _slater_overlap("2pp2pp", rho)) < self.TOL
+        assert abs(si_pi - c_pi) > 0.02
+
+    def test_honeycomb_bands_disperse(self):
+        """With real hopping the honeycomb spectra spread over more than a
+        Hartree (the old tables gave graphene a 0.02 Ha pi band).  Whether
+        h-BN or Si is gapped under the in-house on-site energies is a
+        parameterisation question (#130), deliberately not asserted here:
+        measured on the corrected basis, h-BN's valence and conduction bands
+        still overlap on a 6x6x1 mesh."""
+        from vibeqc import PeriodicSystem
+
+        a = 4.732
+        lattice = np.array(
+            [[a, 0.0, 0.0], [a / 2, a * np.sqrt(3) / 2, 0.0], [0.0, 0.0, 20.0]]
+        )
+        for zs in ((5, 7), (6, 6)):
+            cell = PeriodicSystem(
+                2,
+                lattice,
+                [Atom(zs[0], [0, 0, 0]), Atom(zs[1], [a / 2, a * np.sqrt(3) / 6, 0])],
+                0,
+                1,
+            )
+            r = _se_cxx.run_dftb0_gamma(cell, default_parameters())
+            eps = np.asarray(r.mo_energies)
+            assert eps.max() - eps.min() > 1.0
+
+    def test_period_seven_elements_fail_closed(self):
+        """No STO-6G row exists for 7s/7p/6d, so Th cannot be given a
+        1s-shaped 7s silently any more."""
+        with pytest.raises(RuntimeError, match="STO-6G: no \\(n, l\\) row for n=7"):
+            run_dftb0(Molecule([Atom(90, [0.0, 0.0, 0.0])], 0, 1), default_parameters())

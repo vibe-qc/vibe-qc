@@ -1,16 +1,26 @@
 # Diamond Γ-CCM / χ-CCM bond and band comparison
 
+```{admonition} Status: experimental
+:class: warning
+
+Both routes this input runs (the four-centre Γ-line drivers `run_ccm_rhf_scalable` / `run_ccm_rks` and the χ-CCM drivers) is an experimental route. Every Γ-line SCF driver emits `vibeqc.AICCM2026DevAExperimentalWarning` and every χ-CCM driver emits `vibeqc.AICCM2026DevBExperimentalWarning`; the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant=...)`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 This experimental input compares two distinct CCM development approaches on
 primitive diamond:
 
-- `aiccm2026dev-a`, Γ-CCM, the union-and-weight/Wigner--Seitz
-  integral-weighting stream in
-  `vibeqc.periodic.ccm`.
+- `aiccm2026dev-a`, the Γ-CCM development line in `vibeqc.periodic.ccm`:
+  Γ-CCM is the neutral finite-torus construction (variants `real-gamma` and
+  `neutral-bloch`); the script's Γ side runs the `four-center` variant, the
+  2014 union-and-weight/Wigner-Seitz lineage kept in the same line.
 - `aiccm2026dev-b`, χ-CCM[^xccm-convention], the finite-translation-group
   character stream in `vibeqc.periodic.chi`.
 
-[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM uses
-    the union-and-weight/Wigner--Seitz integral-weighting construction; χ-CCM
+[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM is
+    the neutral finite-torus construction with two producers, `variant="real-gamma"`
+    and `variant="neutral-bloch"` (ruling R1, 2026-08-21); the `four-center` variant
+    is the 2014 union-and-weight/Wigner-Seitz lineage, a different construction
+    kept in the same `aiccm2026dev-a` development line. χ-CCM
     uses the finite-translation-group character construction. They are compared
     at a declared common exchange-q=0 convention. Their distinction is not a
     choice of Coulomb kernels, and equality for a specified operator/route is

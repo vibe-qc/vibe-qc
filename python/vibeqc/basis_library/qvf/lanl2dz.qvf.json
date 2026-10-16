@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "lanl2dz",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: LANL2DZ\nCanonical name in vibe-qc: lanl2dz\nOriginating publication: Hay, Wadt, J. Chem. Phys. 82, 270 (1985); DOI: 10.1063/1.448975\nNote: deprecated — UI label: prefer def2-TZVP+def2-ECP\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: LANL2DZ\nDescription: LANL2DZ\n       Role: orbital\n    Version: 0  (Data from the Original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -7626,6 +7626,7 @@
       "ecp_id": "Pu"
     }
   },
+  "basis_family": "lanl",
   "ecps": {
     "Na": {
       "element": "Na",
@@ -15492,7 +15493,37 @@
       ]
     }
   },
+  "references": [
+    {
+      "key": "hay_wadt_lanl_1985",
+      "description": "P. J. Hay, W. R. Wadt, Journal of Chemical Physics 82, 270-283 (1985)",
+      "doi": "10.1063/1.448799"
+    },
+    {
+      "key": "doi:10.1063/1.448975",
+      "description": "Hay, Wadt, J. Chem. Phys. 82, 270 (1985)",
+      "doi": "10.1063/1.448975"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "LANL2DZ"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "58bd5f9bca440a05a07ae82c78393c2255756776e13b2d4ade524ee61b8035aa",
+    "citations": [
+      {
+        "keys": [
+          "hay_wadt_lanl_1985"
+        ]
+      }
+    ]
   }
 }

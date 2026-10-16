@@ -21,8 +21,7 @@ gracefully*:
 * F4 -- ``optimize_molecule(method="rks", functional=None)`` raised a
   ``TypeError`` from an operator-precedence bug in the SCF dispatch.
 
-CI on this repo runs ``pytest --collect-only`` (no execution), so these
-must be run locally; see the audit handover for the de-hook harness.
+Collection-only checks do not execute these process-control tests.
 """
 
 from __future__ import annotations

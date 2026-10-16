@@ -7,12 +7,14 @@ partial charge ``q``. Each reference data point is computed from a
 fixes it at one particular coordination environment.
 
 This module is the **catalogue** of those reference systems. For each
-element in scope it provides a list of closed-shell host molecules
+element in scope it provides a list of host molecules
 with standard geometries, the index of the target (reference) atom,
 and the target's nominal coordination number. Phase D4b-4 feeds each
-system through the :func:`vibeqc.molecular_c6` pipeline (RHF ->
-coupled ``a(iw)`` -> Casimir-Polder) to produce the reference
+system through the PBE38 coupled-response pipeline and Casimir-Polder
+integration to produce the reference
 ``a(iw)`` / C6 table.
+The CH doublet uses spin-resolved UKS response; the other bundled hosts
+use closed-shell RKS response.
 
 Scope of this milestone
 -----------------------
@@ -23,14 +25,12 @@ chemistry needs more than one reference system. Deferred to a later
 milestone:
 
 * **Free-atom references** for the open-shell first-row atoms
-  (C ^3P, N ⁴S, O ^3P, F ^2P, B ^2P, H ^2S). The reference-C6 pipeline
-  is RHF-only; the free-atom limit needs the UHF/ROHF response path.
-  Closed-shell free atoms (He, Ne) *are* included.
+  (C ^3P, N ⁴S, O ^3P, F ^2P, B ^2P, H ^2S) are not in the bundled
+  catalogue. Custom catalogues can use spin-resolved UKS response;
+  stable reference states and adequate basis sets still need validation.
+  Closed-shell free atoms (He, Ne) *are* included in the bundled catalogue.
 * **Period-3 and below** (Si, P, S, Cl, ...) and the transition
   metals. Same machinery, more systems -- a later sweep.
-
-See ``handovers/HANDOVER_D4_NATIVE.md`` Sec. 3 (the re-derivation campaign)
-and Sec. 6 (current state / next action).
 
 Geometry provenance
 -------------------
@@ -68,8 +68,7 @@ _SYMBOL = {1: "H", 2: "He", 5: "B", 6: "C", 7: "N", 8: "O", 9: "F",
 
 @dataclass(frozen=True)
 class ReferenceSystem:
-    """One D4 reference system: an element in a fixed coordination
-    environment, given by a closed-shell host molecule.
+    """One D4 reference system in a fixed coordination environment.
 
     Attributes
     ----------
@@ -99,9 +98,8 @@ class ReferenceSystem:
         milestone; the non-neutral references that calibrate the
         D4 charge dependence are a later addition.
     multiplicity
-        Spin multiplicity. ``1`` (closed shell) for every system
-        here -- a hard requirement of the RHF-only reference
-        pipeline.
+        Spin multiplicity. The bundled catalogue uses singlets; custom
+        open-shell systems use the spin-resolved UKS response pipeline.
     geometry_source
         Provenance string for the geometry.
     """
@@ -127,15 +125,13 @@ class ReferenceSystem:
             raise ValueError(
                 f"{self.label}: target atom Z={target_z} but element="
                 f"{self.element}")
-        if self.multiplicity != 1:
-            raise ValueError(
-                f"{self.label}: only closed-shell (multiplicity=1) "
-                f"reference systems are supported in Phase D4b-3")
         n_elec = sum(z for z, *_ in self.atoms_angstrom) - self.charge
-        if n_elec % 2 != 0:
+        spin = self.multiplicity - 1
+        if (not isinstance(self.multiplicity, int)
+                or spin < 0 or spin > n_elec or (n_elec - spin) % 2):
             raise ValueError(
-                f"{self.label}: odd electron count ({n_elec}) is "
-                f"inconsistent with multiplicity=1")
+                f"{self.label}: electron count ({n_elec}) is inconsistent "
+                f"with multiplicity={self.multiplicity}")
 
     @property
     def symbol(self) -> str:
@@ -271,6 +267,11 @@ _REFERENCE_SYSTEMS: tuple[ReferenceSystem, ...] = (
         element=6, label="C/CH4-sp3",
         atoms_angstrom=_tetrahedral(6, 1, 1.0870),
         target_index=0, nominal_cn=4.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=6, label="C/CH-doublet",
+        atoms_angstrom=((6, 0.0, 0.0, 0.0), (1, 0.0, 0.0, 1.1199)),
+        target_index=0, nominal_cn=1.0, multiplicity=2,
+        geometry_source="https://webbook.nist.gov/cgi/cbook.cgi?ID=C3315375&Mask=1000"),
     ReferenceSystem(
         element=6, label="C/C2H4-sp2",
         atoms_angstrom=(

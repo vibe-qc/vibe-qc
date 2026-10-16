@@ -20,7 +20,7 @@ reciprocal-space sum is symmetric in ``G`` by construction, so every
 per-cell block — hence the Bloch sum at every k — preserves the symmetry
 exactly.
 
-See ``handovers/HANDOVER_GDF_V0_11_2026_05_29.md`` (2026-05-31 entry) and
+See
 ``compute_v_ne_ewald_3d_ft_lattice`` for the derivation + references
 (Lippert-Hutter-Parrinello 1997 / Sun-Berkelbach-McClain-Chan 2017 /
 McClain-Sun-Chan-Berkelbach 2017).
@@ -167,7 +167,7 @@ def test_vne_contracted_chunk_bound_is_nbf_independent():
 
 def test_ewald3d_gamma_streamed_matches_dense(monkeypatch):
     """The stream_pair_ft mode (memory-lean companion of the screened
-    GDF fit, handovers/HANDOVER_GDF_FIT_SCREENING.md) reproduces the
+    GDF fit, the original investigation) reproduces the
     dense-bundle V_ne to numerical noise -- forced multi-chunk so the
     chunk boundary handling is actually exercised."""
     system, basis = _lih_fcc_primitive()
@@ -389,3 +389,277 @@ def test_weighted_per_cell_kernel_is_chunk_additive():
         np.ascontiguousarray(w[half:]),
     )
     np.testing.assert_allclose(split, whole, atol=1e-12, rtol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# #196: the widened one-electron AO cutoff must not drive the nuclear sums.
+#
+# ``_gdf_oneel_cutoff_bound`` widens the one-electron cutoff so the S/T image
+# tail is converged (the S(k) metric needs it, #179). On LiH/STO-3G that takes
+# the direct cell list from 135 to 12527 cells. S and T cost 0.008 s over the
+# whole widened list; the libint erfc nuclear sum costs ~23 ms per cell, so
+# inheriting the same domain put one V_ne build at 286 s on a two-atom cell.
+# The builders now derive their own domain from the per-cell overlap norms.
+# ---------------------------------------------------------------------------
+
+
+def _widened_oneel_opts(system, basis):
+    """A flat ball at the S/T image-tail bound.
+
+    The k-point GDF driver resolved to this ball until its bulk domain became
+    pair complete and screened (#438). A ``"flat"`` strategy with a cutoff as
+    wide still hands the builders such a domain, so the screen below keeps
+    its #196 fixture.
+    """
+    from vibeqc.lattice_screening import RcutStrategy, make_lattice_opts
+    from vibeqc.periodic_k_gdf import _gdf_oneel_cutoff_bound
+
+    base = vq.LatticeSumOptions()
+    base.coulomb_method = CoulombMethod.EWALD_3D
+    return make_lattice_opts(
+        basis, strategy=RcutStrategy.FLAT, base_opts=base,
+        cutoff_bohr=_gdf_oneel_cutoff_bound(system, basis),
+    )
+
+
+def test_screened_domain_radius_covers_every_cell_it_keeps():
+    """The helper's contract: the radius it returns contains every cell
+    whose overlap block is above the tolerance."""
+    from vibeqc._vibeqc_core import compute_overlap_lattice
+    from vibeqc.periodic_v_ne import _screened_domain_cutoff_bohr
+
+    system, basis = _lih_fcc_primitive()
+    opts = _widened_oneel_opts(system, basis)
+    S = compute_overlap_lattice(basis, system, opts)
+    norms = np.array([float(np.linalg.norm(np.asarray(b))) for b in S.blocks])
+    radii = np.array(
+        [float(np.linalg.norm(np.asarray(c.r_cart))) for c in S.cells]
+    )
+
+    for tol in (1e-12, 1e-16, 1e-20):
+        r = _screened_domain_cutoff_bohr(S.cells, norms, tol_rel=tol)
+        keep = norms > tol * norms.max()
+        assert r is not None
+        assert radii[keep].max() <= r, (
+            f"tol {tol:g}: radius {r} excludes a cell it must keep"
+        )
+
+    # A non-positive tolerance means "keep everything" -- the escape hatch
+    # the pair-complete route relies on.
+    assert _screened_domain_cutoff_bohr(S.cells, norms, tol_rel=0.0) is None
+
+
+def test_widened_one_electron_cutoff_does_not_drive_the_nuclear_domain(
+    monkeypatch,
+):
+    """#196 regression guard. The erfc lattice sum must be asked for a
+    strictly smaller domain than the widened S/T cutoff, while the returned
+    LatticeMatrixSet still spans the full cell list its consumers expect.
+
+    ``screen_rel=1.0`` empties the V_long active set so the test costs no
+    reciprocal-space work; the erfc call is spied on and answered with the
+    (cheap) overlap sum on whatever domain it asked for.
+    """
+    from vibeqc import periodic_v_ne as vne
+    from vibeqc._vibeqc_core import compute_overlap_lattice, direct_lattice_cells
+
+    system, basis = _lih_fcc_primitive()
+    opts = _widened_oneel_opts(system, basis)
+    n_full = len(direct_lattice_cells(system, float(opts.cutoff_bohr)))
+    assert n_full > 10_000, (
+        "fixture no longer reproduces the widened domain #196 is about "
+        f"(got {n_full} cells at {opts.cutoff_bohr:.2f} bohr)"
+    )
+
+    seen = {}
+
+    def _spy(basis_, system_, alpha_, opts_):
+        seen["cutoff"] = float(opts_.cutoff_bohr)
+        return compute_overlap_lattice(basis_, system_, opts_)
+
+    monkeypatch.setattr(vne, "compute_nuclear_erfc_lattice", _spy)
+    V = vne.compute_v_ne_ewald_3d_ft_lattice(
+        basis, system, opts, ke_cutoff=120.0, screen_rel=1.0,
+    )
+
+    assert "cutoff" in seen, "the erfc lattice sum was never called"
+    n_nuc = len(direct_lattice_cells(system, seen["cutoff"]))
+    assert seen["cutoff"] < float(opts.cutoff_bohr), (
+        "the nuclear sum inherited the widened S/T cutoff again (#196): "
+        f"{seen['cutoff']:.2f} vs {opts.cutoff_bohr:.2f} bohr"
+    )
+    assert n_nuc * 3 < n_full, (
+        f"the screened nuclear domain ({n_nuc} cells) is not materially "
+        f"smaller than the widened one ({n_full} cells)"
+    )
+    assert len(V.cells) == n_full, (
+        "the per-cell V_ne set must still span the full one-electron cell "
+        f"list ({len(V.cells)} vs {n_full})"
+    )
+
+    # ``domain_rel=0`` restores the old, unscreened domain exactly.
+    seen.clear()
+    vne.compute_v_ne_ewald_3d_ft_lattice(
+        basis, system, opts, ke_cutoff=120.0, screen_rel=1.0, domain_rel=0.0,
+    )
+    assert seen["cutoff"] == float(opts.cutoff_bohr)
+
+
+def test_domain_screen_is_a_no_op_at_a_converged_cutoff():
+    """At a cutoff that is not over-wide, every cell carries AO-pair density,
+    so the screen must change nothing at all -- bit for bit."""
+    system, basis = _lih_fcc_primitive()
+    lo = _ewald_lat_opts()
+
+    screened = compute_v_ne_ewald_3d_ft_lattice(basis, system, lo, ke_cutoff=120.0)
+    full = compute_v_ne_ewald_3d_ft_lattice(
+        basis, system, lo, ke_cutoff=120.0, domain_rel=0.0,
+    )
+    assert len(screened.cells) == len(full.cells)
+    a = np.array([np.asarray(x) for x in screened.blocks])
+    b = np.array([np.asarray(x) for x in full.blocks])
+    assert np.array_equal(a, b), (
+        "the domain screen must be inert where nothing can be dropped; "
+        f"max abs diff {np.abs(a - b).max():.3e}"
+    )
+
+
+def test_dropped_cells_carry_no_nuclear_attraction():
+    """The physical claim behind the screen: V_short(g) is bounded by the
+    AO-pair overlap of cell g, so cells below the tolerance carry nothing.
+
+    Loosened to 3e-3 so the screen actually bites on an 18 bohr domain, where
+    the outermost blocks still carry 8.6e-4 of the home cell. The residual must
+    track the tolerance, not the matrix scale: measured C = 0.03, i.e. the
+    overlap norm overestimates the nuclear attraction it stands in for by ~30x,
+    which is the headroom the shipped 1e-16 default banks on.
+    """
+    from vibeqc._vibeqc_core import compute_overlap_lattice
+
+    system, basis = _lih_fcc_primitive()
+    lo = _ewald_lat_opts()
+    tol = 3e-3
+
+    S = compute_overlap_lattice(basis, system, lo)
+    s_ref = max(float(np.linalg.norm(np.asarray(b))) for b in S.blocks)
+
+    screened = compute_v_ne_ewald_3d_ft_lattice(
+        basis, system, lo, ke_cutoff=120.0, domain_rel=tol,
+    )
+    full = compute_v_ne_ewald_3d_ft_lattice(
+        basis, system, lo, ke_cutoff=120.0, domain_rel=0.0,
+    )
+    a = np.array([np.asarray(x) for x in screened.blocks])
+    b = np.array([np.asarray(x) for x in full.blocks])
+    residual = np.abs(a - b).max()
+    assert residual > 0.0, (
+        "the loosened tolerance did not drop any cell, so this test proves "
+        "nothing -- raise it"
+    )
+    assert residual < 10.0 * tol * s_ref, (
+        "V_short on a dropped cell exceeded the overlap bound the screen "
+        f"relies on: {residual:.3e} vs {10.0 * tol * s_ref:.3e}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-product nuclear source radius of the pair-complete erfc sum (#196).
+# Each AO product sums the nuclear images within its own erfc range instead of
+# every image within nuclear_cutoff_bohr of its midpoint; the native bound
+# keeps the dropped attraction under source_tol per matrix element.
+# ---------------------------------------------------------------------------
+
+
+def _pair_complete_opts(cutoff: float, nuclear_cutoff: float):
+    lo = vq.LatticeSumOptions()
+    lo.cutoff_bohr = cutoff
+    lo.nuclear_cutoff_bohr = nuclear_cutoff
+    lo.pair_complete_1e = True
+    return lo
+
+
+def _diamond_631gs():
+    """Diamond, 6-31G*: d shells exercise the angular part of the bound."""
+    a = 3.567 * ANG2BOHR
+    lat = np.array([[0.0, 0.5, 0.5], [0.5, 0.0, 0.5], [0.5, 0.5, 0.0]]) * a
+    atoms = [vq.Atom(6, [0, 0, 0]), vq.Atom(6, [0.25 * a] * 3)]
+    system = vq.PeriodicSystem(3, lat, atoms)
+    return system, vq.BasisSet(system.unit_cell_molecule(), "6-31g*")
+
+
+def _erfc_blocks(system, basis, opts, source_tol=0.0):
+    from vibeqc._vibeqc_core import compute_nuclear_erfc_lattice
+
+    out = compute_nuclear_erfc_lattice(basis, system, 2.0, opts, source_tol)
+    return out.cells, np.array([np.asarray(b) for b in out.blocks])
+
+
+@pytest.mark.parametrize("fixture", [_lih_fcc_primitive, _diamond_631gs])
+def test_nuclear_source_radius_bounds_the_dropped_attraction(fixture):
+    """Every element moves by at most the tolerance (plus rounding), at a
+    tolerance loose enough that the screen measurably drops images, and the
+    shipped default changes the elements only by summation order."""
+    system, basis = fixture()
+    opts = _pair_complete_opts(10.0, 16.0)
+    cells, full = _erfc_blocks(system, basis, opts)
+    rounding = 64.0 * np.finfo(float).eps * float(np.abs(full).max())
+
+    for tol in (1e-4, 1e-6):
+        screened_cells, screened = _erfc_blocks(system, basis, opts, tol)
+        assert [tuple(c.index) for c in screened_cells] == [tuple(c.index) for c in cells]
+        moved = float(np.abs(screened - full).max())
+        assert moved > rounding, (
+            f"tol {tol:g} dropped no measurable image, so this proves nothing"
+        )
+        assert moved <= tol + rounding, (
+            f"tol {tol:g}: an element moved by {moved:.3e}, above the bound"
+        )
+
+    from vibeqc.periodic_v_ne import DEFAULT_NUCLEAR_SOURCE_TOL
+
+    _, shipped = _erfc_blocks(system, basis, opts, DEFAULT_NUCLEAR_SOURCE_TOL)
+    assert float(np.abs(shipped - full).max()) <= DEFAULT_NUCLEAR_SOURCE_TOL + rounding
+
+
+def test_nuclear_source_radius_needs_a_pair_complete_bulk_sum():
+    """The origin-centred sum shares one nuclear list across every product,
+    so a per-product tolerance has nothing to act on there: refused, not
+    silently ignored."""
+    from vibeqc._vibeqc_core import compute_nuclear_erfc_lattice
+
+    system, basis = _lih_fcc_primitive()
+    opts = _pair_complete_opts(8.0, 10.0)
+    opts.pair_complete_1e = False
+    with pytest.raises(ValueError, match="pair_complete_1e"):
+        compute_nuclear_erfc_lattice(basis, system, 2.0, opts, 1e-12)
+    with pytest.raises(ValueError, match="nonnegative"):
+        compute_nuclear_erfc_lattice(basis, system, 2.0, opts, -1.0)
+
+
+def test_lattice_builder_passes_the_source_tolerance_only_to_pair_complete_sums(
+    monkeypatch,
+):
+    """The V_ne builders hand the erfc kernel the shipped tolerance for a
+    pair-complete domain and the historical call otherwise."""
+    from vibeqc import periodic_v_ne as vne
+    from vibeqc._vibeqc_core import compute_overlap_lattice
+
+    seen = []
+
+    def _spy(basis_, system_, alpha_, opts_, *tol):
+        seen.append(tol)
+        return compute_overlap_lattice(basis_, system_, opts_)
+
+    monkeypatch.setattr(vne, "compute_nuclear_erfc_lattice", _spy)
+    system, basis = _lih_fcc_primitive()
+    for pair_complete, expected in ((True, (vne.DEFAULT_NUCLEAR_SOURCE_TOL,)), (False, ())):
+        opts = _pair_complete_opts(8.0, 10.0)
+        opts.pair_complete_1e = pair_complete
+        seen.clear()
+        vne.compute_v_ne_ewald_3d_ft_lattice(basis, system, opts, ke_cutoff=60.0, screen_rel=1.0)
+        assert seen == [expected]
+    opts = _pair_complete_opts(8.0, 10.0)
+    seen.clear()
+    vne.compute_v_ne_ewald_3d_ft_lattice(
+        basis, system, opts, ke_cutoff=60.0, screen_rel=1.0, source_tol=0.0)
+    assert seen == [()]

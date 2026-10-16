@@ -13,6 +13,18 @@
 #include <utility>
 #include <vector>
 
+// <xc.h> must belong to the libxc that is linked. A copy earlier on the
+// include path compiles silently (vibe-qc #461); cpp/CMakeLists.txt passes
+// the version of the libxc package it selected.
+#if defined(VIBEQC_LINKED_LIBXC_VERSION_MAJOR)
+static_assert(XC_MAJOR_VERSION == VIBEQC_LINKED_LIBXC_VERSION_MAJOR &&
+                  XC_MINOR_VERSION == VIBEQC_LINKED_LIBXC_VERSION_MINOR &&
+                  XC_MICRO_VERSION == VIBEQC_LINKED_LIBXC_VERSION_PATCH,
+              "<xc.h> is not the header of the libxc being linked. Another "
+              "libxc precedes the selected one on the include path: check "
+              "CPATH and any -I in CXXFLAGS or CMAKE_CXX_FLAGS.");
+#endif
+
 namespace vibeqc {
 
 struct Functional::Impl {
@@ -21,6 +33,7 @@ struct Functional::Impl {
     // fxc when accumulating libxc outputs. Default 1.0; non-unit values come
     // from custom-mix aliases like PW1PW (0.80·PW91-X + 1.00·PW91-C).
     std::vector<double> weights;
+    double extra_hf_fraction = 0.0;
     // Number of entries in `funcs` that have been successfully initialized
     // via xc_func_init. Only those may be handed to xc_func_end — calling
     // xc_func_end on an uninitialized (zero-filled) xc_func_type segfaults.
@@ -327,6 +340,17 @@ AliasSpec resolve_alias(const std::string& name_in) {
         {"pbesol",  {{{XC_GGA_X_PBE_SOL, 1.0}, {XC_GGA_C_PBE_SOL, 1.0}}, 0.0}},
         {"pbe_sol", {{{XC_GGA_X_PBE_SOL, 1.0}, {XC_GGA_C_PBE_SOL, 1.0}}, 0.0}},
         {"blyp",  {{{XC_GGA_X_B88, 1.0}, {XC_GGA_C_LYP, 1.0}}, 0.0}},
+        // BPW91: Becke 1988 exchange (Phys. Rev. A 38, 3098) with the
+        // Perdew-Wang 1991 GGA correlation (Perdew et al., Phys. Rev. B 46,
+        // 6671 (1992)), whose local part is PW92. Named because it is the
+        // functional Klamt's 1998 COSMO-RS parameters were fitted against
+        // (KLAMT_1998.fitted_protocol "dmol/bpw91/dnp/cosmo-inf/nspa92"), so a
+        // solvent sigma potential computed near that protocol needs it. It
+        // was reachable before only as the libxc ids "106,134", which cite
+        // nothing. BP86 is deliberately not added: codes disagree on which
+        // local correlation fills its P86 slot (PZ81 or VWN), the same trap
+        // as B3LYP's, and a silent choice would misreport the method.
+        {"bpw91", {{{XC_GGA_X_B88, 1.0}, {XC_GGA_C_PW91, 1.0}}, 0.0}},
         // B3LYP — the "B3LYP" recipe (HF + Slater + B88 exchange,
         // VWN + LYP correlation, Becke's 3 weights; Stephens, Devlin,
         // Chabalowski & Frisch, J. Phys. Chem. 98, 11623 (1994)) is
@@ -699,7 +723,7 @@ AliasSpec resolve_alias(const std::string& name_in) {
         // dependent HF exchange via a second erf-attenuated K build.
         // (ωB97X-D — the dispersion-corrected re-parameterisation,
         // libxc id 471 — registers separately once the Chai-Head-Gordon
-        // dispersion term is wired; see handovers/HANDOVER_META_GGA.md § 4.)
+        // dispersion term is wired.)
         {"wb97x", {{{XC_HYB_GGA_XC_WB97X, 1.0}}, 0.0}},
         // ωB97 — Chai & Head-Gordon, JCP 128, 084106 (2008). The parent
         // range-separated hybrid of the ωB97X/ωB97X-D family (100%
@@ -891,6 +915,7 @@ Functional::Functional(const std::string& name, int spin)
     // libxc components are pure GGAs). Any libxc-reported hybrid fractions
     // pick up below, scaled by their per-component weight.
     hf_exchange_fraction_ = spec.extra_hf_fraction;
+    impl_->extra_hf_fraction = spec.extra_hf_fraction;
 
     // Double-hybrid MP2-correction coefficients. Non-zero only for
     // B2PLYP / DSD-PBEP86 / etc.; see ``is_double_hybrid``.
@@ -1050,6 +1075,60 @@ ExternalXCEvaluation Functional::eval_external(
             + "'. Rebuild the grid with the required atomic_grid_profile.");
     }
     return impl_->external_provider->evaluate(input);
+}
+
+int Functional::spin() const { return impl_->spin; }
+
+std::vector<std::pair<int, double>> Functional::components() const {
+    std::vector<std::pair<int, double>> result;
+    for (std::size_t i = 0; i < impl_->n_init; ++i)
+        result.emplace_back(impl_->funcs[i].info->number, impl_->weights[i]);
+    return result;
+}
+
+std::vector<std::tuple<std::string, double, double>> Functional::exchange_components() const {
+    std::vector<std::tuple<std::string, double, double>> result;
+    if (is_external()) {
+        result.emplace_back("external", hf_exchange_fraction_, 0.0);
+        return result;
+    }
+    if (impl_->extra_hf_fraction != 0.0)
+        result.emplace_back("coulomb", impl_->extra_hf_fraction, 0.0);
+    for (std::size_t i = 0; i < impl_->n_init; ++i) {
+        const auto& f = impl_->funcs[i];
+        const auto weight = impl_->weights[i];
+        if (weight == 0.0) continue;
+        // Libxc's CAM representation is a/r + b*erfc(omega*r)/r.
+        // CAMY has a Yukawa attenuator and must never be relabelled erfc.
+        if (f.info->flags & (XC_FLAGS_HYB_CAM | XC_FLAGS_HYB_CAMY | XC_FLAGS_HYB_LC | XC_FLAGS_HYB_LCY)) {
+            double omega = 0.0, a = 0.0, b = 0.0;
+            xc_hyb_cam_coef(&f, &omega, &a, &b);
+            if (a != 0.0) result.emplace_back("coulomb", weight * a, 0.0);
+            if (b != 0.0) result.emplace_back(
+                (f.info->flags & (XC_FLAGS_HYB_CAMY | XC_FLAGS_HYB_LCY)) ? "yukawa" : "erfc",
+                weight * b, omega);
+        } else {
+            const auto a = xc_hyb_exx_coef(&f);
+            if (a != 0.0) result.emplace_back("coulomb", weight * a, 0.0);
+        }
+    }
+    return result;
+}
+
+std::vector<std::tuple<int, std::string, bool, bool, bool, bool>> Functional::component_capabilities() const {
+    std::vector<std::tuple<int, std::string, bool, bool, bool, bool>> result;
+    for (std::size_t i = 0; i < impl_->n_init; ++i) {
+        const auto* info = impl_->funcs[i].info;
+        std::string kind = "unsupported";
+        if (info->kind == XC_EXCHANGE) kind = "exchange";
+        else if (info->kind == XC_CORRELATION) kind = "correlation";
+        else if (info->kind == XC_EXCHANGE_CORRELATION) kind = "exchange-correlation";
+        else if (info->kind == XC_KINETIC) kind = "kinetic";
+        result.emplace_back(info->number, kind, (info->flags & XC_FLAGS_HAVE_EXC) != 0,
+            (info->flags & XC_FLAGS_HAVE_VXC) != 0, (info->flags & XC_FLAGS_3D) != 0,
+            (info->flags & XC_FLAGS_NEEDS_LAPLACIAN) != 0);
+    }
+    return result;
 }
 
 void Functional::eval_unpolarised(const Eigen::VectorXd& rho,

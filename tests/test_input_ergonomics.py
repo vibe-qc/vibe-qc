@@ -174,6 +174,7 @@ class TestFunctionalAliases:
             ("rev-tpss", False, 0.0),
             ("pbesol", False, 0.0),
             ("pbe_sol", False, 0.0),
+            ("bpw91", False, 0.0),
             ("bhlyp", True, 0.5),
             ("bhandhlyp", True, 0.5),
             ("wb97", True, 0.0),  # RSH: HF fraction lives in the range split
@@ -183,3 +184,24 @@ class TestFunctionalAliases:
         f = Functional(name)
         assert bool(f.is_hybrid) == is_hybrid
         assert f.hf_exchange_fraction == pytest.approx(exx, abs=1e-9)
+
+    def test_bpw91_is_b88_exchange_with_pw91_correlation(self):
+        """``bpw91`` is exactly the libxc pair ``106,134`` (B88 + PW91).
+
+        Klamt's 1998 COSMO-RS parameters were fitted at BPW91; before the name
+        existed the functional was reachable only as bare libxc ids, which
+        cite nothing. Pinned by energy against the id spelling, and against
+        BLYP so a mis-wired correlation slot cannot pass.
+        """
+        mol = Molecule([Atom(1, [0, 0, 0]), Atom(1, [0, 0, 1.4])])
+        basis = BasisSet(mol, "sto-3g")
+
+        def energy(xc):
+            opts = vq.RKSOptions()
+            opts.functional = xc
+            opts.conv_tol_energy = 1e-12
+            return vq.run_rks(mol, basis, opts).energy
+
+        named = energy("bpw91")
+        assert named == pytest.approx(energy("106,134"), abs=1e-11)
+        assert abs(named - energy("blyp")) > 1e-3

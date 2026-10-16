@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "sarc2-qzvp-dkh2",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: SARC2-QZVP-DKH2\nCanonical name in vibe-qc: sarc2-qzvp-dkh2\nOriginating publication: Pantazis, Neese, J. Chem. Theory Comput. 15, 4201 (2019); DOI: 10.1021/acs.jctc.9b00213\nNote:\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: SARC2-QZVP-DKH2\nDescription: SARC2-QZVP-DKH2\n       Role: orbital\n    Version: 0  (Data from the original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "La": {
@@ -9620,7 +9620,26 @@
       ]
     }
   },
+  "basis_family": "sarc",
+  "references": [
+    {
+      "key": "doi:10.1021/acs.jctc.9b00213",
+      "description": "Pantazis, Neese, J. Chem. Theory Comput. 15, 4201 (2019)",
+      "doi": "10.1021/acs.jctc.9b00213"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "SARC2-QZVP-DKH2"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "dbd96a6f97acebb0316945d949d44160f047634e09d1560af7e74da69e00a714"
   }
 }

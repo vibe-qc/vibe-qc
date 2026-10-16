@@ -85,9 +85,8 @@
 //   future entry point and reuses the matrix builders here.
 // * Element coverage: Z = 1..103 (the range Caldeweyher 2019 fits).
 //   Atoms with Z outside this range produce a clear ``std::invalid_argument``.
-// * Energy + gradient w.r.t. nuclear coordinates is not yet wired up
-//   here — only the charges. (The dispersion-energy gradient needs
-//   dq/dR; this header will gain it in a subsequent step.)
+// * eeq_response_gradient contracts CN and charge sensitivities with
+//   their nuclear response at fixed total charge using an adjoint solve.
 
 #pragma once
 
@@ -148,6 +147,17 @@ EEQResult eeq_atomic_charges(const Molecule& mol,
 // distance sweeps, or feeding into a different downstream model.
 Eigen::VectorXd eeq_coordination_numbers(const Molecule& mol,
                                           const EEQOptions& opts = {});
+
+// Nuclear response of a scalar E(CN,q), excluding its explicit geometry
+// derivative. Returns an n_atoms x 3 matrix in bohr^-1 times E's units.
+// Differentiating A x = b gives dE = u^T(db - dA x), where
+// A u = (dE/dq, 0). Includes the CN soft cap and the regularized EEQ RHS.
+Eigen::MatrixXd eeq_response_gradient(
+    const Molecule& mol,
+    const Eigen::VectorXd& dE_dcn,
+    const Eigen::VectorXd& dE_dq,
+    double total_charge = 0.0,
+    const EEQOptions& opts = {});
 
 
 // =============================================================================

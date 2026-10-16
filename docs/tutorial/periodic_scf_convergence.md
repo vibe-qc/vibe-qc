@@ -12,9 +12,11 @@ ships three knobs that stabilise the SCF in this regime:
 
 1. **Density damping** (`damping`), linear mix of old and new
    density before the next Fock build. Default 0.5.
-2. **Pulay DIIS** (`use_diis`), extrapolate to the SCF fixed point
+2. **Pulay DIIS** (`use_diis`, {vibeqc-cite}`pulay_diis_1980`,
+   {vibeqc-cite}`pulay_diis_1982`), extrapolate to the SCF fixed point
    using a history of past densities. Default `True`.
-3. **Level shift** (`level_shift`, Phase **C1a**, v0.4.0 new), 
+3. **Level shift** (`level_shift`, Phase **C1a**, v0.4.0 new;
+   {vibeqc-cite}`saunders_hillier_levelshift_1973`),
    raise virtual MO eigenvalues by $b$ during iteration, which
    smoothly biases each step toward the lower-energy state without
    changing the SCF fixed point. The headliner of v0.4.0's tight-
@@ -80,7 +82,7 @@ opts.level_shift_warmup_cycles = -1   # default: auto
 * `N > 0` shifts iterations `1..N`, then releases.
 
 For full control, give an explicit per-iteration decay curve (CRYSTAL's
-`LEVSHIFT B IRESET` idea). It supersedes `level_shift` + the warm-up:
+`LEVSHIFT B IRESET` idea; {vibeqc-cite}`dovesi_crystal14_2014`). It supersedes `level_shift` + the warm-up:
 
 ```python
 from vibeqc import LevelShiftSchedule
@@ -157,7 +159,7 @@ The three convergence aids work in different parts of the iteration:
 - **Damping** averages *densities* before the Fock build:
   $D_{i} \leftarrow (1 - \alpha) D_{i-1} + \alpha D_i^{\text{new}}$.
 - **DIIS** extrapolates *Fock matrices* using a history of past
-  iterations to minimize the residual norm.
+  iterations to minimize the residual norm ({vibeqc-cite}`pulay_diis_1980`).
 - **Level shift** modifies the *Fock matrix* before diagonalisation
   in each iteration, raising virtual eigenvalues so the
   diagonalisation doesn't easily mix occupieds and virtuals.
@@ -196,7 +198,7 @@ without re-running.
 
 ## Theory
 
-The sections below give the mechanism behind the level shift: the Saunders-Hillier shifted-Fock transformation, why raising the virtual eigenvalues during iteration kills the near-degenerate occupation swap that drives oscillation, how it composes with Fermi-Dirac smearing for genuinely metallic cells, and what remains on the roadmap.
+The sections below give the mechanism behind the level shift: the Saunders-Hillier shifted-Fock transformation, why raising the virtual eigenvalues during iteration kills the near-degenerate occupation swap that drives oscillation, how it composes with Fermi-Dirac smearing for genuinely metallic cells, and the second-order fallback.
 
 ### The Saunders-Hillier transformation
 
@@ -211,12 +213,15 @@ $$
 
 where $\mathbf{S}$ is the AO overlap, $\mathbf{D}$ is the current
 density matrix, and $b > 0$ (Hartree) is the level-shift parameter.
-Saunders and Hillier (1973) showed this transformation:
+Saunders and Hillier (1973, {vibeqc-cite}`saunders_hillier_levelshift_1973`)
+showed this transformation:
 
 1. **Raises virtual eigenvalues** by $b$ at the SCF fixed point
-   (since $\mathbf{S}\mathbf{D}\mathbf{S} = \mathbf{S}$ on virtuals
-   and $\mathbf{S}\mathbf{D}\mathbf{S} = 2\mathbf{S}$ on occupieds
-   for a closed-shell idempotent density).
+   (since $\mathbf{S}\mathbf{D}\mathbf{S}\mathbf{c} = 0$ for a virtual
+   coefficient vector $\mathbf{c}$ and
+   $\mathbf{S}\mathbf{D}\mathbf{S}\mathbf{c} = 2\mathbf{S}\mathbf{c}$
+   for an occupied one, for a closed-shell idempotent density, so the
+   shift adds $+b$ on virtuals and cancels on occupieds).
 2. **Leaves the SCF fixed point unchanged** because at convergence
    the ground-state density $\mathbf{D}^*$ satisfies
    $\tilde{\mathbf{F}}(\mathbf{D}^*) \mathbf{C}^* = (\mathbf{F}^*
@@ -246,7 +251,9 @@ the small gap is no longer a numerical problem.
 
 ### Composing with C1b smearing
 
-**C1b (Fermi-Dirac smearing + fractional occupations)** has shipped
+**C1b (Fermi-Dirac smearing + fractional occupations;
+{vibeqc-cite}`mermin_finite_temperature_dft_1965`,
+{vibeqc-cite}`weinert_fractional_occupations_1992`)** has shipped
 in the multi-k Ewald RHF/RKS drivers and the native Γ-GDF RHF/RKS
 driver. Low-level option objects still store
 ``opts.smearing_temperature = T_Ha`` (Hartree, default 0.0), but the
@@ -289,12 +296,19 @@ matters for total energies). C1b smearing currently lives in the
 native Γ-GDF RHF/RKS path and periodic multi-k Ewald RHF/RKS paths, 
 molecular and periodic UKS smearing land in follow-up sub-phases.
 
-### Still on the roadmap
+### Second-order fallback
 
 - **C1c, second-order / quadratically-convergent SCF** as a fallback
-  when DIIS + smearing still oscillate. Used for the very hardest
-  tight-cell cases (3D defect supercells, transition-metal oxides).
-  Tutorial will follow when shipped.
+  when DIIS + smearing still oscillate. It ships as
+  `opts.quadratic_fallback_iter` (default `0`, off) on
+  `PeriodicSCFOptions` and is honoured by the Python Ewald drivers:
+  after that many unconverged iterations the driver replaces the
+  diagonalisation by a diagonally preconditioned Newton step in MO
+  space, with DIIS and the level shift skipped
+  (`quadratic_fallback_shift` and `quadratic_fallback_max_step`
+  set the denominator shift and the step cap). It is meant for the
+  hardest tight-cell cases (3D defect supercells, transition-metal
+  oxides). This tutorial does not exercise it.
 
 ## Resources
 
@@ -312,10 +326,10 @@ molecular and periodic UKS smearing land in follow-up sub-phases.
 
 ## Caveats
 
-- **`level_shift` only on the periodic drivers in v0.4.0.** Molecular
-  RHF / UHF / RKS / UKS get the level-shift hook in C1a-2 (a
-  follow-up phase). For molecular cases use `damping` + `use_diis`,
-  which already handle nearly all cases.
+- **`level_shift` is not periodic-only.** The molecular RHF / UHF /
+  RKS / UKS drivers honour the same option (see above), but for
+  molecular cases `damping` + `use_diis` already handle nearly all
+  cases.
 - **Don't over-shift.** $b > 1$ Ha for a system with a gap of $\sim$
   1 Ha effectively pushes virtuals far enough that the iteration
   becomes a pure damping loop with no real Fock-matrix dynamics, 
@@ -339,9 +353,10 @@ molecular and periodic UKS smearing land in follow-up sub-phases.
   The case of SCF iteration," *Chem. Phys. Lett.* **73**, 393 (1980).
   The DIIS algorithm vibe-qc's `use_diis` implements.
 - **Pulay, P.** "Improved SCF convergence acceleration,"
-  *J. Comput. Chem.* **3**, 556 (1982). Refinements to the DIIS
-  weight calculation (the "C2" residual norm) that vibe-qc's
-  multi-k DIIS uses.
+  *J. Comput. Chem.* **3**, 556 (1982). Introduces the commutator
+  error vector $\mathbf{FDS} - \mathbf{SDF}$ that vibe-qc's DIIS
+  extrapolates on (the $\|[\mathbf{F},\mathbf{DS}]\|$ column of the
+  SCF trace).
 - **Helgaker, T.; Jørgensen, P.; Olsen, J.** *Molecular Electronic-
   Structure Theory*. Wiley (2000), Chapter 10. Standard textbook
   treatment of HF iteration, level shifts, and DIIS, the source

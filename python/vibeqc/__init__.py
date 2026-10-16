@@ -96,113 +96,21 @@ def _basis_library_has_standard_payload(root: _Path | str | None) -> bool:
 
 
 def _warn_if_basis_overlay_is_stale(overlay: _Path, bundled: _Path) -> None:
-    """Warn when the build overlay is older than the committed library.
+    """Refuse an unverified generated overlay before loading the native core."""
+    from ._basis_overlay import compare_overlay_content, _refuse
 
-    ``setup_native_deps.sh`` assembles ``build/basis_library`` once from
-    libint's payload plus ``custom/``, and nothing invalidates it when the
-    committed library changes -- ``pip install -e .`` does not regenerate
-    it. Because the overlay is *preferred* by the resolution above, a clone
-    whose overlay predates a basis-data commit silently resolves the older
-    library. That is how ``def2-svp`` lost silver on a loop-runner clone
-    after 6664da63d (#88) added it: eleven guess tests died in BasisSet
-    construction, and the seven negative ECP-contract cases among them were
-    indistinguishable from a real refusal regression.
-
-    Two checks, because they catch different failures, reported together in
-    one warning so that neither hides the other.
-
-    *Inventory*: a basis the overlay simply does not have. A newly added
-    basis changes no existing file, so a content comparison cannot see it --
-    which is exactly what happened when the sixteen cc-pVnZ-PP sets landed
-    (2026-09-08) and every clone's overlay kept resolving without them. The
-    symptom is ``BasisSet: no shells loaded for basis '...'`` naming a basis
-    that is plainly committed. Only *missing* names are reported: the overlay
-    legitimately merges libint's payload with ``custom/``, so extras are not
-    evidence of staleness.
-
-    *Content*: the same file present in both but different, over three
-    orbital canaries and every committed ``.ecp`` sidecar. Compared by
-    bytes, not size: #207 (8826f98) corrected the radial powers in
-    ``pob-tzvp-rev2.ecp`` without changing its 27,983-byte length, so a
-    size comparison kept a 40.9 Ha-wrong ECP operator in a stale overlay
-    with no warning (#235). Sizes are still checked first, so bytes are
-    read only for files whose sizes agree, and a pair that cannot be read
-    is skipped on its own rather than ending the pass for the files after
-    it.
-
-    Both are cheap enough for import: two directory listings, then about
-    1.5 MB read from each tree when everything matches (about 3 ms cold
-    against 1.3 ms for the size-only check, of a ~460 ms import). The
-    overlay is still *used* -- the bundled tree alone may not carry every
-    libint base, so silently switching could lose bases rather than gain
-    them. The defect being fixed is the silence, not the preference.
-    """
     try:
-        overlay_basis = overlay / "basis"
-        bundled_basis = bundled / "basis"
-        if not (overlay_basis.is_dir() and bundled_basis.is_dir()):
-            return
-        have = {q.name for q in overlay_basis.iterdir()}
-        want = {q.name for q in bundled_basis.iterdir()}
-    except OSError:
-        return
+        have = {q.name for q in (overlay / "basis").iterdir()}
+        want = {q.name for q in (bundled / "basis").iterdir()
+                if q.suffix in (".g94", ".ecp")}
+    except OSError as exc:
+        _refuse(overlay, f"cannot inspect basis catalog ({exc.strerror})")
     absent = sorted(want - have)
-
-    names = ["def2-svp.g94", "6-311+g3df2p.g94", "pob-tzvp-rev2.g94"]
-    # Every ECP sidecar: an in-place correction to one of them is the #235
-    # blind spot, and the whole set is about 1.3 MB.
-    names += sorted(n for n in want if n.endswith(".ecp") and n not in names)
-    differing: list[str] = []
-    for name in names:
-        if name not in have or name not in want:
-            continue  # the inventory line covers what is missing
-        a = overlay_basis / name
-        b = bundled_basis / name
-        try:
-            if not a.is_file() or not b.is_file():
-                continue
-            if a.stat().st_size == b.stat().st_size:
-                if a.read_bytes() == b.read_bytes():
-                    continue
-        except OSError:
-            # One unreadable pair says nothing about the others; a stale
-            # sidecar sorted after it must still be found.
-            continue
-        differing.append(name)
-
-    if not absent and not differing:
-        return
-    import warnings as _warnings
-
-    def _shown(items: list[str]) -> str:
-        more = f" (+{len(items) - 4} more)" if len(items) > 4 else ""
-        return ", ".join(items[:4]) + more
-
-    lines = [
-        "vibe-qc basis library: the build overlay is out of date and is "
-        "being used in preference to the committed one.",
-        f"  overlay (used):    {overlay_basis}",
-        f"  committed (newer): {bundled_basis}",
-    ]
     if absent:
-        lines.append(
-            f"  {len(absent)} file(s) missing from the overlay: {_shown(absent)}"
-        )
+        _refuse(overlay, "missing files: " + ", ".join(absent))
+    differing = compare_overlay_content(overlay, bundled, sorted(want))
     if differing:
-        lines.append(
-            f"  {len(differing)} file(s) present in both with different "
-            f"content: {_shown(differing)}"
-        )
-        lines.append(f"    overlay (used):    {overlay_basis / differing[0]}")
-        lines.append(f"    committed (newer): {bundled_basis / differing[0]}")
-    lines.append("Regenerate with:  bash scripts/setup_basis_library.sh")
-    lines.append(
-        "Until then, missing bases do not resolve at all (the error names "
-        "the basis rather than the stale overlay), and bases the overlay "
-        "does have may be older than the committed ones. Nothing else warns "
-        "about this."
-    )
-    _warnings.warn("\n".join(lines), RuntimeWarning, stacklevel=3)
+        _refuse(overlay, "different content: " + ", ".join(differing))
 
 
 def _basis_library_has_basis_dir(root: _Path | str | None) -> bool:
@@ -253,9 +161,36 @@ def _install_basis_library() -> None:
     chosen = _resolve_basis_library()
     if chosen is not None:
         _os.environ["LIBINT_DATA_PATH"] = str(chosen)
+        _activate_user_basis_store()
 
 
-_install_basis_library()
+def _activate_user_basis_store() -> None:
+    """Layer 3 of the resolution order: the user's imported records.
+
+    Costs one ``stat`` when the store has no index. With records present,
+    each is verified and a composed root over the bundled library is
+    selected (``vibeqc.basis_store.activate_user_store``), so a record
+    imported with ``vibe-qc-basis import`` resolves in ``BasisSet`` by name.
+    An integrity failure there is the same refusal as a stale overlay.
+    """
+    from .basis_store import user_store_root
+
+    if not (user_store_root() / "index.json").is_file():
+        return
+    from .basis_store import activate_user_store
+
+    activate_user_store()
+
+
+from ._basis_overlay import BasisOverlayIntegrityError, module_startup as _module_startup
+
+try:
+    _install_basis_library()
+except BasisOverlayIntegrityError as _basis_error:
+    if _module_startup():
+        print(str(_basis_error), file=_sys.stderr)
+        raise SystemExit(_basis_error.exit_status) from None
+    raise
 
 
 def _resolve_bundled_ecp_share_dir() -> str:
@@ -386,6 +321,8 @@ from ._vibeqc_core import (
     Molecule,
     MP2Options,
     MP2Result,
+    OpenTrustRegionOptions,
+    has_opentrustregion,
     NewtonOptions,
     PairJKContribution,
     PeriodicKSOptions,
@@ -956,6 +893,15 @@ def _coerce_molecular_basis(molecule, basis):
     return basis
 
 
+def _refuse_otr_native_multiguess(options):
+    if (getattr(options, "orbital_optimizer", "native") == "opentrustregion"
+            and getattr(options, "multi_guess_seeds", [])):
+        raise ValueError(
+            "OpenTrustRegion does not use native multi_guess_seeds or restart "
+            "schedules; run separately chosen starting densities, or select native"
+        )
+
+
 def _attach_inline_ecp_from_basis_sidecar(options, molecule, basis) -> None:
     """Populate molecular SCF options from the basis ECP sidecar."""
 
@@ -982,7 +928,8 @@ def _guard_scf_aux_basis_coverage(options, molecule, basis, *, route) -> None:
 
 
 def run_rhf(
-    molecule, basis, options=None, *, dft_plus_u=None, read_from=None, fragments=None
+    molecule, basis, options=None, *, dft_plus_u=None, read_from=None, fragments=None,
+    integral_engine=None, coulomb=None, exchange=None, symmetry_reduction=None,
 ):
     """Restricted Hartree-Fock SCF on a closed-shell molecule.
 
@@ -1017,12 +964,38 @@ def run_rhf(
         tr n^2)`` (closed-shell, summed over both spins) appears as
         ``result.e_dft_plus_u`` and is included in ``result.energy``.
 
+    integral_engine, coulomb, exchange
+        Optional explicit IntegralEngineOptions, CoulombBuildOptions and
+        ExchangeBuildOptions. The experimental selected route supports
+        all-electron molecular RHF with independent exact/RI J and K,
+        HCORE or supplied-density READ, and executed-provider provenance.
+        Omission preserves the existing driver. See the MANTA manual.
+
+    symmetry_reduction
+        Explicit MolecularSymmetryOptions, MolecularRISymmetryOptions or a
+        reusable PreparedMolecularSymmetry for all-electron fixed-source HF.
+        Returns a method-owned evaluated FockBuild and natural
+        orbitals defining the returned density, including stopped states.
+        Other integral engines and analytic gradients need separate
+        source admission. Omission preserves existing dispatch.
+
     Returns
     -------
     RHFResult
         Same shape as the C++ binding, with the additional
         ``e_dft_plus_u`` field populated when +U was active.
     """
+    if symmetry_reduction is not None:
+        from .symmetry_molecular_scf import run_symmetry_scf
+        return run_symmetry_scf('rhf', molecule, basis, options,
+            symmetry_reduction=symmetry_reduction, integral_engine=integral_engine,
+            coulomb=coulomb, exchange=exchange, read_from=read_from,
+            fragments=fragments, dft_plus_u=dft_plus_u)
+    if integral_engine is not None or coulomb is not None or exchange is not None:
+        from .manta_scf import run_selected_scf
+        return run_selected_scf("rhf", molecule, basis, options,
+            integral_engine=integral_engine, coulomb=coulomb, exchange=exchange,
+            read_from=read_from, fragments=fragments, dft_plus_u=dft_plus_u)
     if options is None:
         options = RHFOptions()
     require_nonnegative_max_iter(options.max_iter, route="run_rhf")
@@ -1056,6 +1029,9 @@ def run_rks(
     fragments=None,
     grid_level="orca-defgrid3",
     _allow_double_hybrid_scf=False,
+    integral_engine=None,
+    coulomb=None,
+    exchange=None,
 ):
     """Restricted Kohn-Sham SCF on a closed-shell molecule.
 
@@ -1074,7 +1050,17 @@ def run_rks(
     calculator, the geometry-optimization provider) apply it to any options
     whose grid is untouched, so passing ``RKSOptions()`` to them does not
     select the legacy grid (GitLab #663).
+
+    ``integral_engine``, ``coulomb`` and ``exchange`` opt into the molecular
+    engine route, with exact or RI J/K and matching range-separated exchange.
+    See the MANTA manual for capability and resource limits.
     """
+    if integral_engine is not None or coulomb is not None or exchange is not None:
+        from .manta_scf import run_selected_scf
+        return run_selected_scf("rks", molecule, basis, options,
+            integral_engine=integral_engine, coulomb=coulomb, exchange=exchange,
+            read_from=read_from, fragments=fragments, dft_plus_u=dft_plus_u,
+            grid_level=grid_level)
     if options is None:
         options = RKSOptions()
         from .runner import _apply_grid_level
@@ -1108,7 +1094,8 @@ def run_rks(
 
 
 def run_uhf(
-    molecule, basis, options=None, *, dft_plus_u=None, read_from=None, fragments=None
+    molecule, basis, options=None, *, dft_plus_u=None, read_from=None, fragments=None,
+    integral_engine=None, coulomb=None, exchange=None, symmetry_reduction=None,
 ):
     """Unrestricted Hartree-Fock SCF on an open-shell molecule.
 
@@ -1123,9 +1110,26 @@ def run_uhf(
     prior alpha/beta densities are projected onto the current basis.
     ``fragments=`` drives the FRAGMO fragment-superposition guess (each
     fragment's a/b densities feed the corresponding supersystem spin blocks).
+
+    ``integral_engine``, ``coulomb`` and ``exchange`` select the experimental
+    all-electron molecular engine route described by :func:`run_rhf`.
+    ``symmetry_reduction`` selects its separately qualified fixed P0 or RI
+    counterpart with independent spin densities and evaluated output state.
     """
+    if symmetry_reduction is not None:
+        from .symmetry_molecular_scf import run_symmetry_scf
+        return run_symmetry_scf('uhf', molecule, basis, options,
+            symmetry_reduction=symmetry_reduction, integral_engine=integral_engine,
+            coulomb=coulomb, exchange=exchange, read_from=read_from,
+            fragments=fragments, dft_plus_u=dft_plus_u)
+    if integral_engine is not None or coulomb is not None or exchange is not None:
+        from .manta_scf import run_selected_scf
+        return run_selected_scf("uhf", molecule, basis, options,
+            integral_engine=integral_engine, coulomb=coulomb, exchange=exchange,
+            read_from=read_from, fragments=fragments, dft_plus_u=dft_plus_u)
     if options is None:
         options = UHFOptions()
+    _refuse_otr_native_multiguess(options)
     require_nonnegative_max_iter(options.max_iter, route="run_uhf")
     basis = _coerce_molecular_basis(molecule, basis)
     _attach_inline_ecp_from_basis_sidecar(options, molecule, basis)
@@ -1223,6 +1227,9 @@ def run_uks(
     fragments=None,
     grid_level="orca-defgrid3",
     _allow_double_hybrid_scf=False,
+    integral_engine=None,
+    coulomb=None,
+    exchange=None,
 ):
     """Unrestricted Kohn-Sham SCF on an open-shell molecule.
 
@@ -1238,11 +1245,22 @@ def run_uks(
     :func:`run_rks`, a supplied ``options`` object is used as given here,
     while the high-level entry points apply ``grid_level`` to an untouched
     grid (GitLab #663).
+
+    ``integral_engine``, ``coulomb`` and ``exchange`` opt into the molecular
+    engine route, with exact or RI J/K and matching range-separated exchange.
+    See the MANTA manual for capability and resource limits.
     """
+    if integral_engine is not None or coulomb is not None or exchange is not None:
+        from .manta_scf import run_selected_scf
+        return run_selected_scf("uks", molecule, basis, options,
+            integral_engine=integral_engine, coulomb=coulomb, exchange=exchange,
+            read_from=read_from, fragments=fragments, dft_plus_u=dft_plus_u,
+            grid_level=grid_level)
     if options is None:
         options = UKSOptions()
         from .runner import _apply_grid_level
         _apply_grid_level(options.grid, grid_level)
+    _refuse_otr_native_multiguess(options)
     require_nonnegative_max_iter(options.max_iter, route="run_uks")
     from .roks import _refuse_plain_double_hybrid
 
@@ -1530,6 +1548,10 @@ def compute_gradient(
     at 6.9x10⁻¹¹ Ha/bohr.
     """
     del _auto_df_for_fshell  # no-op (v0.7.4); will be removed in v0.8.0.
+    if isinstance(result, MolecularSymmetryResult):
+        raise NotImplementedError('fixed-mask molecular symmetry requires separately qualified support and response derivatives')
+    if dft_plus_u and getattr(result, "engine_provenance", None) is not None:
+        raise ValueError("Selected all-electron HF engine result has no matching DFT+U gradient source")
     if options is None:
         options = GradientOptions()
     _validate_gradient_ecp_contract(
@@ -1544,6 +1566,8 @@ def compute_gradient(
     grad = np.asarray(
         _compute_gradient_core(mol, basis, native_result, options)
     )
+    from .manta_scf import record_selected_hf_gradient
+    record_selected_hf_gradient(native_result)
     if dft_plus_u:
         from ._vibeqc_core import compute_overlap
         from .dft_plus_u import _compute_dft_plus_u_gradient
@@ -1647,6 +1671,10 @@ def compute_gradient_uhf(
     pulled from ``result.density_alpha`` / ``density_beta``.
     """
     del _auto_df_for_fshell  # no-op (v0.7.4); will be removed in v0.8.0.
+    if isinstance(result, MolecularSymmetryResult):
+        raise NotImplementedError('fixed-mask molecular symmetry requires separately qualified support and response derivatives')
+    if dft_plus_u and getattr(result, "engine_provenance", None) is not None:
+        raise ValueError("Selected all-electron HF engine result has no matching DFT+U gradient source")
     if options is None:
         options = GradientOptions()
     _validate_gradient_ecp_contract(
@@ -1661,6 +1689,8 @@ def compute_gradient_uhf(
     grad = np.asarray(
         _compute_gradient_uhf_core(mol, basis, native_result, options)
     )
+    from .manta_scf import record_selected_hf_gradient
+    record_selected_hf_gradient(native_result)
     if dft_plus_u:
         from ._vibeqc_core import compute_overlap
         from .dft_plus_u import _compute_dft_plus_u_gradient
@@ -2148,9 +2178,21 @@ def _write_double_hybrid_outputs(
         OutputWriter,
         Quantity,
         active_policy,
+        double_hybrid_construction,
         write,
     )
     from .output._stem_paths import stem_sibling
+
+    # The dispatcher branches on multiplicity (see _run_double_hybrid_core),
+    # so the description of what ran is derived the same way rather than
+    # guessed from the result object. vibeqc.output owns the wording.
+    functional = Functional(functional_name)
+    construction = double_hybrid_construction(
+        open_shell=int(getattr(mol, "multiplicity", 1)) > 1,
+        density_fit_mp2=bool(getattr(result.mp2, "density_fit", True)),
+        c_os=functional.mp2_c_os,
+        c_ss=functional.mp2_c_ss,
+    )
 
     plan = OutputPlan.from_run_job_kwargs(
         output=stem,
@@ -2172,6 +2214,7 @@ def _write_double_hybrid_outputs(
         {
             "frozen_core_orbitals": 0,
             "frozen_core_convention": "all-electron-explicit",
+            **construction.manifest_fields(),
         }
     )
 
@@ -2187,6 +2230,10 @@ def _write_double_hybrid_outputs(
                 basis=basis_name,
                 functional=functional_name,
                 dispersion=_double_hybrid_dispersion_key(dispersion),
+                # Open shell adds a ROKS reference and a semicanonical
+                # RI-ROHF-MP2 correction; both have defining papers the
+                # functional's own route does not carry (#365).
+                extra_methods=construction.citation_methods,
             )
             writer.set_citations(_double_hybrid_citation_rows(refs))
             writer.record(bib_path)
@@ -2211,6 +2258,7 @@ def _write_double_hybrid_outputs(
         write(f"  Charge:            {int(getattr(mol, 'charge', 0))}\n")
         write(f"  Multiplicity:      {int(getattr(mol, 'multiplicity', 1))}\n")
         write("  MP2 frozen core:   0 (explicit all-electron model component)\n")
+        write(f"  Construction:      {construction.summary_line}\n")
         # The same content-sized headerless primitive owns every molecular
         # energy-components block. Values and the unit-bearing title follow
         # the active FormatPolicy; no caller guesses a rule width.
@@ -2224,10 +2272,11 @@ def _write_double_hybrid_outputs(
             unit_for="energy",
         )
         energy_block.add_row(
-            "RKS reference", Quantity(float(result.rks.energy), "energy")
+            construction.scf_row_label,
+            Quantity(float(result.rks.energy), "energy"),
         )
         energy_block.add_row(
-            "MP2 correlation",
+            construction.correlation_row_label,
             Quantity(float(result.mp2.e_correlation), "energy"),
         )
         if result.dispersion is not None:
@@ -2298,6 +2347,7 @@ def _write_double_hybrid_outputs(
             terminal_run_status,
             write_qvf,
         )
+        from .output.verdict import verdict_from_result
 
         wf_data = qvf_wf_data(result.rks, basis, mol) if write_molden_file else None
         run_record = assemble_run_record(plan, wall_seconds=wall_seconds)
@@ -2315,6 +2365,7 @@ def _write_double_hybrid_outputs(
             wall_seconds=wall_seconds,
             run_record=run_record,
             run_status=terminal_run_status(result.rks),
+            run_verdict=verdict_from_result(result.rks).as_dict(),
             bond_orders_data=(
                 _double_hybrid_bond_orders_data(population_summary, mol)
                 if population_summary is not None
@@ -3325,6 +3376,13 @@ from .output.formats.trexio import (
     write_trexio,
     write_trexio_fields,
 )
+from .qcschema import (
+    molecule_from_qcschema,
+    molecule_to_qcschema,
+    read_qcschema,
+    run_qcschema,
+)
+from .output.formats.qcschema import write_qcschema
 from .io import (
     normal_mode_trajectory,
     write_molden,
@@ -3558,6 +3616,7 @@ from .periodic.chi.scf import (
     run_aiccm2026dev_b_rhf,
     run_aiccm2026dev_b_rks,
     run_aiccm2026dev_b_uhf,
+    run_aiccm2026dev_b_rohf,
     run_aiccm2026dev_b_uks,
     uhf_idempotency_error,
     wigner_seitz_representatives,
@@ -3724,9 +3783,14 @@ from .periodic_gradient_open_shell import (
 )
 from .periodic_gradient_rks import compute_gradient_periodic_rks_gamma
 from .lattice_convention import (
+    CRYSTAL_SYSTEMS,
+    PLANE_LATTICE_SYSTEMS,
     CellParameters,
+    LatticeDeclarationError,
     NearestNeighbour,
     cell_parameters,
+    check_crystal_system,
+    check_space_group,
     lattice_from_vectors,
     lattice_vectors,
     nearest_neighbour_distance,
@@ -3909,6 +3973,8 @@ from .smearing import (
 from .solvation import (
     SOLVENT_PRESETS,
     CavityTessellation,
+    CosmoRSOptions,
+    CosmoRSResult,
     CPCMResult,
     SolventModel,
     SolventResult,
@@ -3959,6 +4025,8 @@ from .structured_log import (
 from .structured_log import (
     emit as emit_structured,
 )
+from .symmetry_molecular_scf import (MolecularSymmetryOptions, MolecularRISymmetryOptions, MolecularSymmetryResult,
+    PreparedMolecularSymmetry, prepare_molecular_symmetry)
 from .symmetry_ao import (
     AtomPermutation,
     atom_permutation_under_op,
@@ -4138,7 +4206,18 @@ def define_external_functional(
     _register_runtime_external_functional(name)
 
 
+from .manta_scf import IntegralEngineOptions, CoulombBuildOptions, ExchangeBuildOptions
+from .manta_periodic_job import PeriodicIntegralOptions, PeriodicXCOptions, PeriodicFittingOptions, PeriodicMANTAResult
+
+
 __all__ = [
+    "MolecularSymmetryOptions",
+    "MolecularRISymmetryOptions",
+    "MolecularSymmetryResult",
+    "PreparedMolecularSymmetry",
+    "prepare_molecular_symmetry",
+    "IntegralEngineOptions", "CoulombBuildOptions", "ExchangeBuildOptions",
+    "PeriodicIntegralOptions", "PeriodicXCOptions", "PeriodicFittingOptions", "PeriodicMANTAResult",
     "__version__",
     "RELEASE_CODENAMES",
     "VIBEQC_VERSION",
@@ -4222,7 +4301,12 @@ __all__ = [
     "PeriodicXCDensityDomain",
     "CellParameters",
     "NearestNeighbour",
+    "CRYSTAL_SYSTEMS",
+    "LatticeDeclarationError",
+    "PLANE_LATTICE_SYSTEMS",
     "cell_parameters",
+    "check_crystal_system",
+    "check_space_group",
     "lattice_from_vectors",
     "lattice_vectors",
     "nearest_neighbour_distance",
@@ -4246,6 +4330,8 @@ __all__ = [
     "SCFIteration",
     "SCFMode",
     "SCFRestartOptions",
+    "OpenTrustRegionOptions",
+    "has_opentrustregion",
     "NewtonOptions",
     "SOSCFOptions",
     "TRAHOptions",
@@ -4595,6 +4681,7 @@ __all__ = [
     "run_aiccm2026dev_b_rhf",
     "run_aiccm2026dev_b_rks",
     "run_aiccm2026dev_b_uhf",
+    "run_aiccm2026dev_b_rohf",
     "run_aiccm2026dev_b_uks",
     "run_aiccm2026dev_b_ccsd",
     "run_aiccm2026dev_b_ccsd_t",
@@ -4860,6 +4947,8 @@ __all__ = [
     "CavityTessellation",
     "CPCMResult",
     "SolventModel",
+    "CosmoRSOptions",
+    "CosmoRSResult",
     "SolventResult",
     "build_cavity",
     "cpcm_gradient",
@@ -4886,6 +4975,11 @@ __all__ = [
     "read_trexio",
     "read_trexio_fields",
     "write_trexio_fields",
+    "read_qcschema",
+    "write_qcschema",
+    "molecule_from_qcschema",
+    "molecule_to_qcschema",
+    "run_qcschema",
     "TrexioData",
     "TrexioMOBlock",
     "TrexioSparse",
@@ -4971,3 +5065,9 @@ __all__ = [
     "ensure_skala_model",
     "skala_model_provenance",
 ]
+
+from .manta_periodic_bupo_job import PeriodicBupoIntegralOptions
+__all__ += ['PeriodicBupoIntegralOptions']
+
+from .manta_periodic_job import PeriodicMANTABupoRHFResult
+__all__ += ['PeriodicMANTABupoRHFResult']

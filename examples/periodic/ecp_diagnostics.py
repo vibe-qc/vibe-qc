@@ -121,12 +121,8 @@ def _build_w_bcc() -> vq.PeriodicSystem:
 def main() -> None:
     vq.print_banner()
 
-    # Ensure pob-TZVP-REV2 .g94 files are in the libint data path.
-    from vibeqc.basis_crystal import fetch_bredow_basis_sets
-
-    path_map = fetch_bredow_basis_sets(names=["pob-tzvp-rev2"], verbose=True)
-    if not path_map:
-        print("WARNING: could not fetch pob-TZVP-REV2; libint BasisSet load will fail.")
+    # pob-TZVP-REV2 ships with the basis library, and its ECP records are
+    # bundled, so nothing is fetched or written here.
 
     for label, build_fn in [
         ("Ag fcc", _build_ag_fcc),

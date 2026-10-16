@@ -34,7 +34,9 @@ $$
 
 The three terms are the electronic kinetic energy, the
 electron-nucleus attraction, and the electron-electron repulsion. Clamping
-the nuclei is the **Born-Oppenheimer approximation**: nuclei are thousands
+the nuclei is the **Born-Oppenheimer approximation** (M. Born and
+R. Oppenheimer, *Ann. Phys.* **389**, 457 (1927),
+doi:10.1002/andp.19273892002): nuclei are thousands
 of times heavier than electrons, so the electrons relax essentially
 instantaneously to any nuclear arrangement. The constant nuclear-repulsion
 energy $\sum_{A<B} Z_A Z_B/|\mathbf{R}_A-\mathbf{R}_B|$ is added back at the
@@ -53,16 +55,24 @@ approach $E_0$ from above, never undershoot it. The methods in this course
 are, in large part, different choices of that family and different ways of
 doing the minimisation:
 
-- **Hartree-Fock (HF)** takes $\Psi$ to be a single antisymmetrised
-  product of one-electron orbitals (a Slater determinant) and minimises
-  the energy over those orbitals. The electron-electron repulsion is felt
+- **Hartree-Fock (HF)** (D. R. Hartree, *Proc. Cambridge Philos. Soc.*
+  **24**, 89 (1928), doi:10.1017/S0305004100011919; V. Fock, *Z. Phys.*
+  **61**, 126 (1930), doi:10.1007/BF01340294) takes $\Psi$ to be a single
+  antisymmetrised product of one-electron orbitals (a Slater determinant)
+  and minimises the energy over those orbitals. The electron-electron repulsion is felt
   only on average (mean field). See [molecular_hf](molecular_hf.md).
-- **Density-functional theory (DFT / KS-DFT)** replaces the wavefunction
+- **Density-functional theory (DFT / KS-DFT)** (P. Hohenberg and W. Kohn,
+  *Phys. Rev.* **136**, B864 (1964), doi:10.1103/PhysRev.136.B864; W. Kohn
+  and L. J. Sham, *Phys. Rev.* **140**, A1133 (1965),
+  doi:10.1103/PhysRev.140.A1133) replaces the wavefunction
   with the electron density and an approximate exchange-correlation
   functional, recovering much of the missing physics at HF-like cost. See
   [molecular_dft](molecular_dft.md).
-- **Correlated wavefunction methods** (MP2, coupled cluster, configuration
-  interaction, multireference) systematically add the electron-electron
+- **Correlated wavefunction methods** (MP2,
+  {vibeqc-cite}`moller_plesset_1934`; coupled cluster,
+  {vibeqc-cite}`cizek_cc_1966`; configuration interaction;
+  multireference, {vibeqc-cite}`roos_taylor_siegbahn_casci_1980`)
+  systematically add the electron-electron
   correlation that mean-field methods miss, at higher cost. See
   [dlpno_local_correlation](dlpno_local_correlation.md) and
   [non_hf_solvers](non_hf_solvers.md).
@@ -81,7 +91,8 @@ The high-level entry point is `run_job`, and the lower-level drivers are
 
 **Periodic** calculations treat an infinite crystal, surface slab, or wire
 through **Born-von-Karman periodic boundary conditions**: a unit cell is
-tiled to fill space, and the orbitals carry a Bloch phase indexed by a
+tiled to fill space, and the orbitals carry a Bloch phase (F. Bloch,
+*Z. Phys.* **52**, 555 (1929), doi:10.1007/BF01339455) indexed by a
 crystal momentum $\mathbf{k}$. The entry point is `run_periodic_job`.
 Periodic boundary conditions are vibe-qc's headline focus, and **surface
 chemistry** (slab energies, adsorption, reaction paths) is the flagship
@@ -90,17 +101,22 @@ workflow. Start at [periodic_hf](periodic_hf.md), and read
 $\mathbf{k}$ that the periodic track rests on.
 
 The periodic track also has a choice the molecular track does not: **which
-Coulomb-build route to use** (GDF, BIPOLE, or the plane-wave GPW/GAPW
-family). That choice has its own comparison tutorial,
+Coulomb-build route to use** (GDF, {vibeqc-cite}`sun_berkelbach_gdf_2017`;
+BIPOLE, {vibeqc-cite}`saunders_bipole_1992`; or the plane-wave GPW/GAPW
+family, {vibeqc-cite}`lippert_hutter_gpw_1997`,
+{vibeqc-cite}`lippert_hutter_parrinello_gapw_1999`). That choice has its own comparison tutorial,
 [periodic_methods_compared](periodic_methods_compared.md).
 
 vibe-qc's **signature** periodic approach, though, is the
-[cyclic cluster model](cyclic_cluster_model.md) (CCM): a real-space
-alternative to k-point sampling and the project's original motivating
+[cyclic cluster model](cyclic_cluster_model.md) (CCM;
+{vibeqc-cite}`bredow_geudtner_jug_ccm_2001`, {vibeqc-cite}`peintinger_ccm_2014`):
+a real-space alternative to k-point sampling and the project's original motivating
 feature. CCM treats a crystal as a single finite cyclic cluster, which makes
-it especially natural for defects and surfaces. It runs today at the
-semi-empirical level, with ab-initio CCM (Hartree-Fock through coupled
-cluster) the flagship roadmap.
+it especially natural for defects and surfaces. It runs at the
+semi-empirical level, and an experimental ab-initio CCM (AICCM:
+Hartree-Fock and Kohn-Sham, with optional correlation on top) runs
+through `run_periodic_job(method="aiccm", variant=...)`; see the
+[AICCM guide](../user_guide/aiccm.md).
 
 ## The shape of a calculation
 

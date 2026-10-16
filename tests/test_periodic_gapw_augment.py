@@ -576,12 +576,20 @@ class TestGapwScf:
         so the SCF aufbau left the core EMPTY and isolated O collapsed to
         ~−35 Ha (e_kin ~17) instead of the all-electron ~−73.8.
 
-        With the analytic Fock the core is recovered: O → −73.557 (+215 mHa
-        vs the GDF all-electron reference), e_kin ~73.4, ε₁ₛ ≈ −20. This pins
-        BOTH symptoms — core kinetic energy and total vs GDF — so a future
-        Fock regression that re-empties the core fails here.
+        With the analytic Fock the core is recovered: e_kin ~73.4, ε₁ₛ ≈ −20.
+        This pins BOTH symptoms — core kinetic energy and total vs GDF — so a
+        future Fock regression that re-empties the core fails here.
 
-        See ``handovers/HANDOVER_GAPW_PRODUCTION.md`` § milestone 3 and
+        The reference must be in the same occupation state as GAPW. GAPW
+        converges to the integer closed-shell state 1s² 2s² 2pₓ² 2p_y²
+        (2p_z empty). The default GDF SCF starts from a spherical SAD density
+        and keeps the degenerate-frontier ensemble (2p occupations 4/3 each),
+        about 0.43 Ha higher, so comparing against it measured the state
+        difference, not the GAPW error. The GDF reference is therefore
+        seeded (READ) with the integer state and converged self-consistently
+        in it; at fixed density the two formulations differ by ~5 mHa there.
+
+        See
         ``examples/regression/gapw_parity/milestone3_analytic_fock.py``.
         """
         L = 12.0
@@ -593,13 +601,29 @@ class TestGapwScf:
         basis = vq.BasisSet(mol, "sto-3g")
         grid = PlaneWaveGrid(np.eye(3) * L, 24, 24, 24)
 
-        # All-electron GDF reference (same gauge, in-process).
+        # Supported periodic all-electron reference. Its full periodic
+        # exchange differs from GAPW's molecular-limit approximation;
+        # retain the 0.3 Ha error bound rather than assume equivalence.
+        # Matched occupation state: seed the integer 1s² 2s² 2px² 2py² density
+        # (STO-3G AO order 1s, 2s, 2px, 2py, 2pz; occupied columns made
+        # S-orthonormal by Cholesky; closed-shell D = 2 C Cᵀ, tr(DS) = 8).
+        S = np.asarray(vq.compute_overlap(basis))
+        C = np.eye(5)[:, :4]
+        C = C @ np.linalg.inv(np.linalg.cholesky(C.T @ S @ C)).T
         opts = vq.PeriodicRHFOptions()
         opts.max_iter = 120
         opts.conv_tol_energy = 1e-9
-        e_gdf = float(
-            vq.run_rhf_periodic_gamma_gdf(system, basis, opts, progress=False).energy
+        opts.initial_guess = vq.InitialGuess.READ
+        opts.read_density = 2.0 * C @ C.T
+        gdf_result = vq.run_pbc_gdf_rhf(
+            system, basis, opts, exxdiv="ewald", progress=False,
         )
+        assert gdf_result.converged, "O all-electron GDF reference did not converge"
+        eps_gdf = np.asarray(gdf_result.mo_energies)
+        assert eps_gdf[4] - eps_gdf[3] > 0.1, (
+            f"GDF reference left the integer 2p state: eps={eps_gdf}"
+        )
+        e_gdf = float(gdf_result.energy)
 
         result = run_periodic_rhf_gapw(
             system, basis, grid=grid, quiet=True,
@@ -616,9 +640,8 @@ class TestGapwScf:
             f"O core not occupied: e_kin={e_kin:.2f} (collapsed core ~17, "
             f"all-electron ~74.8)"
         )
-        # Total within ~0.3 Ha of the all-electron GDF reference (the GAPW
-        # augmentation residual at N=24 is +215 mHa; the collapsed state was
-        # ~+38 Ha off).
+        # Total within ~0.3 Ha of the matched-state all-electron GDF
+        # reference (~+6 mHa at N=24; the collapsed state was ~+38 Ha off).
         assert abs(result.energy - e_gdf) < 0.3, (
             f"O GAPW total {result.energy:.4f} too far from GDF {e_gdf:.4f}"
         )
@@ -705,7 +728,7 @@ class TestGapwScf:
         assert run["gapw_one_centre_resolved"] == "analytic"
         assert run["gapw_molecular_limit_declared"] is True
 
-    def test_gapw_rhf_runner_requires_molecular_limit_declaration(self):
+    def test_gapw_rhf_runner_requires_molecular_limit_declaration(self, tmp_path):
         """The public runner must not infer a molecular box from geometry."""
         L = 12.0
         system = _he_periodic(L)
@@ -722,6 +745,7 @@ class TestGapwScf:
                 dry_run=True,
                 write_density=False,
                 citations=False,
+                output=tmp_path / "refused",
             )
 
     def test_gapw_rks_runner_rejects_irrelevant_molecular_limit(self):
@@ -752,6 +776,7 @@ class TestGapwScf:
     )
     def test_gapw_hf_runner_derivatives_fail_closed(
         self,
+        tmp_path,
         derivative_kwargs,
     ):
         """High-level derivatives must not switch away from the GAPW energy."""
@@ -772,6 +797,7 @@ class TestGapwScf:
                 write_density=False,
                 citations=False,
                 **derivative_kwargs,
+                output=tmp_path / "refused",
             )
 
     def test_gapw_energy_finite_for_different_cutoffs(self):
@@ -1255,7 +1281,7 @@ def test_gapw_molecule_matches_molecular(functional):
     a single-functional Hartree/XC cancellation). The residual is the intrinsic
     GAPW soft-basis bond representation, well within the ±5 mHa target.
 
-    See ``handovers/HANDOVER_GAPW_PRODUCTION.md`` § milestone 3.
+
     """
     L = 12.0
     c = L / 2
@@ -1870,31 +1896,6 @@ def test_multik_gapw_hueckel_uses_shared_fock_adapter(monkeypatch):
     assert seen == [core.InitialGuess.HUECKEL]
 
 
-@pytest.mark.parametrize(
-    ("driver_name", "args", "kwargs"),
-    [
-        (
-            "run_periodic_rks_gapw_multi_k",
-            (None, None, None),
-            {"functional": "lda"},
-        ),
-    ],
-    ids=["rks-multik"],
-)
-def test_direct_gapw_guess_selectors_fail_closed_for_patom(
-    driver_name,
-    args,
-    kwargs,
-):
-    """Pure-DFT multi-k GAPW lacks the exact exchange required by PATOM."""
-    import vibeqc.periodic_gapw_augment as gapw_module
-
-    with pytest.raises(
-        NotImplementedError,
-        match="initial_guess=PATOM.*not implemented by this route",
-    ):
-        getattr(gapw_module, driver_name)(
-            *args,
-            initial_guess=core.InitialGuess.PATOM,
-            **kwargs,
-        )
+# Multi-k PATOM uses a full-HF seed even for pure DFT. Its supported
+# GPW/GAPW routes are covered together, including normalized seed input
+# and seed-only exchange, in test_periodic_patom.py.

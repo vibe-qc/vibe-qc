@@ -6,8 +6,7 @@ spectrum, a photochemical pathway, or the colour of a dye, you need the
 *excited* states and how brightly each one absorbs. Time-dependent
 density-functional theory (TDDFT) is the workhorse for this: it takes a
 converged ground-state Kohn-Sham reference and returns vertical
-excitation energies and oscillator strengths at a cost only a small
-multiple of the ground-state SCF. This page runs TDDFT on formaldehyde
+excitation energies and oscillator strengths. This page runs TDDFT on formaldehyde
 two ways, the full Casida linear-response equation and its
 Tamm-Dancoff approximation (TDA), compares them on the same molecule,
 and the theory section below derives where the eigenproblem comes from
@@ -17,6 +16,21 @@ vibe-qc builds the excitation problem from the ground-state molecular
 orbitals you already have, so the workflow is always two steps: converge
 an SCF, then hand its MO energies, MO coefficients, and density to the
 TDDFT solver.
+
+```{admonition} Known defect: oscillator strengths are currently too large
+:class: warning
+
+Excitation energies from this route agree with PySCF to about 1e-4 eV, but the
+oscillator strengths it prints are over-scaled: the transition dipole is built
+as $2\sum_{ia} X_{ia}\mu_{ia}$ where the spin-adapted singlet value is
+$\sqrt{2}\sum_{ia} X_{ia}\mu_{ia}$, which makes $f$ about twice the correct
+value on closed-shell references and about four times on unrestricted ones
+(water RHF/6-31G\*: 0.0375 against 0.0187). Read the oscillator strengths on
+this page as relative intensities within one calculation, not as absolute
+values, until the normalisation is fixed. See the
+[TDDFT guide](../user_guide/tddft.md) for the other known defects of this
+route.
+```
 
 ```python
 import math
@@ -128,8 +142,12 @@ interesting. Experiment places it near 3.94 eV and TD-B3LYP benchmarks
 land at 3.9 to 4.0 eV, so 4.09 eV is the expected GGA-hybrid result for
 this basis.
 
-The second state, 9.05 eV with `f = 0.42`, is the bright **pi -> pi\***
-transition (HOMO into the next virtual). Its large oscillator strength
+The second state, 9.05 eV with `f = 0.42`, is bright. Its leading
+amplitude takes the HOMO (the oxygen lone pair) into the next virtual,
+an a₁ orbital, so it is an **n -> sigma\*** transition; the
+**pi -> pi\*** transition (HOMO-1 into the LUMO) is state 4, 9.81 eV
+with `f = 0.31` in Casida (amplitudes checked with a vibe-qc 0.17.17
+development build). The second state's large oscillator strength
 is the dominant feature any computed formaldehyde UV spectrum would
 show. The `dominant_amplitudes` field on each state names the leading
 orbital pair behind the excitation, so you can label a peak as
@@ -153,9 +171,9 @@ the answer on formaldehyde is "very little for the states that matter":
 | State | Character | TDA / eV | Casida / eV | TDA - Casida |
 |---|---|---|---|---|
 | 1 | n -> pi\* (dark) | 4.1116 | 4.0906 | +0.021 |
-| 2 | pi -> pi\* (bright) | 9.1021 | 9.0529 | +0.049 |
+| 2 | n -> sigma\* (bright) | 9.1021 | 9.0529 | +0.049 |
 | 3 | sigma -> pi\* | 9.2420 | 9.1606 | +0.081 |
-| 4 | mixed | 10.2013 | 9.8107 | +0.391 |
+| 4 | mostly pi -> pi\* (mixed) | 10.2013 | 9.8107 | +0.391 |
 | 5 | dark | 10.3771 | 10.3709 | +0.006 |
 
 Two patterns are worth internalizing. First, **TDA sits systematically
@@ -175,6 +193,21 @@ a near-degenerate reference. Reach for full Casida when you want
 oscillator strengths right to a few percent or when comparing against
 experimental intensities; reach for TDA for fast, stable state orderings
 and excited-state geometries.
+
+## Natural transition orbital weights
+
+With `run_job(tddft=True, nto=True, output_qvf=True)`, the archive contains
+an `excited_states` table and linked hole/particle NTO sections. Their
+occupations are pair weights λ = σ², where σ is a singular value of the
+transition-amplitude matrix. The weights sum to one for the normalized
+state. For an unrestricted reference, sum both spin channels together.
+In the library API use `compute_nto(...).weights`; the existing
+`hole_weights` and `particle_weights` attributes contain σ for compatibility.
+
+`vibeqc nto result.qvf` displays these occupations. Older archives contain
+σ in this slot and the CLI reports those stored values without converting
+them. Regenerate an archive to obtain the canonical squared weights and
+state links.
 
 ## The XC kernel and why the reference matters
 
@@ -198,7 +231,8 @@ rather than converging cleanly (a real SCF difficulty of the small-gap
 GGA on this system, not a vibe-qc bug). The 20 percent exact exchange in
 B3LYP opens the gap, the SCF converges in 34 iterations, and the hybrid
 TDDFT kernel (exact exchange plus the ALDA part of the functional, the
-Bauernschmitt-Ahlrichs composition) is the canonical, well-benchmarked
+Bauernschmitt-Ahlrichs composition, {vibeqc-cite}`bauernschmitt_ahlrichs_1996`)
+is the canonical, well-benchmarked
 choice for organic chromophores. If you do want a pure-functional
 spectrum, converge the ground state first with a level shift or a tighter
 accelerator, then feed the converged MOs to the solver exactly as above.
@@ -292,7 +326,8 @@ strength comes from.
 Static Kohn-Sham DFT (see [Molecular DFT](molecular_dft.md)) is a
 ground-state theory: the Hohenberg-Kohn theorems are about the lowest
 state of a given external potential. The bridge to excited states is the
-**Runge-Gross theorem** (1984), the time-dependent analogue: for a system
+**Runge-Gross theorem** (1984, {vibeqc-cite}`runge_gross_1984`), the
+time-dependent analogue: for a system
 evolving from a fixed initial state, the time-dependent external potential
 is a unique functional of the time-dependent density. That legitimizes a
 time-dependent Kohn-Sham system whose density matches the true one, and
@@ -306,9 +341,9 @@ diverges, and read off the spectrum.
 Linearizing the time-dependent Kohn-Sham equations about the ground state,
 and expanding the response in the space of occupied-to-virtual orbital
 transitions (labeled by an occupied index `i` and a virtual index `a`),
-turns "find the poles of the response" into a matrix eigenvalue problem.
-The excitation energies omega are the eigenvalues of the coupled
-non-Hermitian system
+turns "find the poles of the response" into a matrix eigenvalue problem
+({vibeqc-cite}`casida_tddft_1995`). The excitation energies omega are the
+eigenvalues of the coupled non-Hermitian system
 
 $$
 \begin{pmatrix} \mathbf{A} & \mathbf{B} \\ -\mathbf{B}^{*} & -\mathbf{A}^{*} \end{pmatrix}
@@ -351,12 +386,14 @@ $$
 whose eigenvalues are the squared excitation energies. The square root of
 `A - B` requires that matrix to be positive definite, which holds for a
 stable ground state; a negative eigenvalue there signals a triplet or
-singlet instability of the reference, and the squared form makes that
+singlet instability of the reference ({vibeqc-cite}`seeger_pople_stability_1977`,
+{vibeqc-cite}`bauernschmitt_ahlrichs_ks_stability_1996`), and the squared form makes that
 failure visible as an imaginary omega.
 
 ### The Tamm-Dancoff approximation
 
-The Tamm-Dancoff approximation (TDA) sets `B = 0`: it discards the coupling
+The Tamm-Dancoff approximation (TDA, {vibeqc-cite}`hirata_headgordon_tda_1999`)
+sets `B = 0`: it discards the coupling
 between excitations and de-excitations entirely. The coupled non-Hermitian
 problem then collapses to a single Hermitian eigenvalue problem
 
@@ -366,7 +403,7 @@ $$
 
 a plain symmetric diagonalization of the `A` block alone. When the kernel
 has no `f_xc` (pure exact exchange, `c_x = 1`) this is exactly
-configuration interaction singles (CIS); with the DFT kernel it is
+configuration interaction singles (CIS, {vibeqc-cite}`foresman_cis_1992`); with the DFT kernel it is
 TDA-DFT. Dropping `B` is rarely a large error for low valence states (the
 formaldehyde table above quantifies it at tens of meV), and it buys three
 things: lower cost, a numerically more stable eigenproblem, and immunity to
@@ -398,20 +435,22 @@ with omega and the dipole in atomic units. A symmetry-forbidden
 transition has a vanishing transition dipole and so `f = 0` (the
 formaldehyde n -> pi\* state), while a strongly dipole-allowed transition
 such as pi -> pi\* carries most of the spectral weight. The length-gauge
-form above is accurate to roughly 5 percent for valence excitations, which
-is why intensities are usually quoted to two significant figures rather
-than more.
+value still depends on the basis and the functional, which is why
+intensities are usually quoted to two significant figures rather than
+more.
 
 ## Resources
 
-The formaldehyde example runs in well under a second on one core after the
-ground-state SCF, on the same order as the RKS reference itself. The cost
-driver is the four-index AO-to-MO integral transformation and the
-diagonalization of the transition-space matrix, both of which scale with
-the number of occupied-virtual pairs; the ALDA/AGGA kernel adds one grid
-pass per occupied-virtual pair. For the small 6-31G\* basis here that is
-negligible, but it grows quickly with basis size, so request only as many
-`n_states` as you need.
+The cost of a TDA or Casida solve on a DFT reference has three parts: the
+four-index AO-to-MO integral transformation, the diagonalization of the
+transition-space matrix, and the exchange-correlation kernel evaluated on the
+grid for the occupied-virtual pairs. The last one dominates: a profile of a
+water TDA solve on a loaded development machine attributed more than 99
+percent of the time to the kernel routine, and the wall time grew from a few
+seconds in STO-3G to minutes in def2-SVP. A Hartree-Fock reference (CIS) has
+no XC kernel to evaluate, so it avoids that part. Wall times depend on the machine, so time
+your own case in a small basis first, keep the basis modest, and request only
+as many `n_states` as you need.
 
 ## References
 
@@ -442,8 +481,9 @@ negligible, but it grows quickly with basis size, so request only as many
 ## Next
 
 - [Natural orbitals](natural_orbitals.md) cover the ground-state density
-  analysis that complements the natural transition orbitals you can extract
-  from a TDDFT state with `compute_nto`, the most compact orbital picture of
+  analysis that complements the natural transition orbitals
+  ({vibeqc-cite}`martin_nto_2003`) you can extract from a TDDFT state with
+  `compute_nto`, the most compact orbital picture of
   an excitation.
 - [Molecular DFT](molecular_dft.md) is the ground-state reference every
   TDDFT run starts from; the functional and grid choices there set the

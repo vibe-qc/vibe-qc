@@ -10,8 +10,9 @@ Exempt from the check (dashes there are real content, not prose style):
   * fenced code blocks (``` / ~~~), which carry program output and code,
   * inline-code spans (`like this`),
   * inline math ($...$), where '-' is a minus sign anyway.
-  * provenance-marked QVF snapshots under docs/qvf/_vendored/, whose
-    upstream bytes must be preserved when re-vendoring.
+  * the six QVF snapshots under docs/qvf/_vendored/, whose upstream bytes
+    are enforced by scripts/ci/check_qvf_schema.py. Provenance belongs in
+    docs/qvf/index.md; adding headers would break byte identity.
 
 The check looks at the full staged content of each touched docs/*.md
 file, so a file that still carries a legacy dash must be scrubbed before
@@ -26,8 +27,11 @@ _INLINE_CODE = re.compile(r'(`+)(.+?)\1')
 _FENCE = re.compile(r'^[ \t]*(```|~~~)')
 _INLINE_MATH = re.compile(r'\$[^$]*\$')
 _DASHES = ('—', '–')  # em dash, en dash
-_QVF_PROVENANCE = re.compile(
-    r'\A<!-- VENDORED from the qvf repository, \S+ at \S+ \([0-9a-f]{12,40}\)\.\n'
+_QVF_SNAPSHOTS = frozenset(
+    'docs/qvf/_vendored/' + name for name in (
+        'qvf-format-spec.md', 'GOVERNANCE.md', 'README.md',
+        'integration_guide.md', 'library_guide.md', 'orca_integration.md',
+    )
 )
 
 
@@ -58,7 +62,7 @@ def main():
         content = subprocess.run(
             ['git', 'show', f':{f}'],
             capture_output=True, text=True).stdout
-        if f.startswith('docs/qvf/_vendored/') and _QVF_PROVENANCE.match(content):
+        if f in _QVF_SNAPSHOTS:
             continue
         for lineno, text in prose_dash_hits(content):
             bad.append(f'  {f}:{lineno}: {text}')
