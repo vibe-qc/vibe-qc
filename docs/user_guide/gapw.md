@@ -1,11 +1,24 @@
 # Plane-wave Hartree-J via GPW / GAPW
 
-```{admonition} Feature status - production + experimental gates
-:class: warning
+```{admonition} Status: GPW production within its shipped envelope; GAPW experimental
+:class: note
 
-The Gaussian + plane-wave (GPW/GAPW) route serves two tiers:
+**GPW** (`jk_method="gpw"`) is production within the envelope listed below:
+Gamma RHF / UHF / RKS / UKS, multi-k pure-DFT RKS / ROKS / UKS, Gamma analytic
+gradients, DFT+U and D3-BJ. The `.out` route description carries an
+experimental tag (`J/K method: GPW -- ...; experimental`) while the GPW / GAPW
+family is completed. `run_periodic_job` calls the GPW drivers with
+`quiet=True`, so their own opt-in warning is silent, but the grid and
+J-builder infrastructure still emit `GAPWExperimentalWarning` once per build
+(measured 2026-09-29 on a Gamma RHF run: `PlaneWaveGrid built at
+cutoff=...` and `GPW J build: GpwJBuilder ...`); read it as a scope reminder,
+not as a defect flag. **GAPW** (`jk_method="gapw"`) is experimental: its
+numbers are research output, not validated results, and it is not part of the
+release gate. **GPW ROHF and ROKS** are a maintained preview. The **MPI
+z-slab grid overlay** is experimental. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 
-**Production (ungated) - ship as of v0.12:**
+**GPW production envelope, shipped since v0.12:**
 
 - RHF / RKS / UHF / UKS at Γ via ``run_periodic_job(jk_method="gpw")``
   or the standalone ``run_periodic_*_gpw`` entries.
@@ -23,8 +36,8 @@ The Gaussian + plane-wave (GPW/GAPW) route serves two tiers:
 - Reproduces the molecular RHF limit to **sub-µHa** (0.9 µHa vs
   ``pyscf`` RHF on H₂/STO-3G, run out of process).
 
-**All-electron GAPW augmentation - correctness-validated, ungated at Γ
-(accuracy preliminary), as of 2026-07-21:**
+**All-electron GAPW augmentation (experimental; the two Γ correctness bugs
+are fixed as of 2026-07-21, accuracy preliminary):**
 
 - **GAPW augmentation** - all-electron per-atom radial × Lebedev
   Hartree/XC correction (``\`jk_method="gapw"\```, ``periodic_gapw_augment``).
@@ -90,7 +103,7 @@ The Gaussian + plane-wave (GPW/GAPW) route serves two tiers:
     soft-generation telescoping fix (the UKS smooth XC previously collocated
     the hard density, over-binding ~300 mHa for *all* functionals).
 
-**Experimental (opt-in, still gated by ``GAPWExperimentalWarning``):**
+**Experimental extensions (opt-in):**
 
 - **Multi-k GAPW** (``run_periodic_rks_gapw_multi_k``) handles compact
   crystals as of 2026-08-01. Its Hartree term is split by locality: the
@@ -159,6 +172,32 @@ bases in tight cells can increase ``image_radius`` via the
 ``_AO_IMAGE_RADIUS`` module constant (not yet a public option).
 ```
 
+## Fock diagonalization
+
+Gamma GPW/GAPW RHF/RKS/UHF/UKS and range-separated GAPW route their SCF
+Fock solves through the [shared operator contract](solver_framework.md).
+Each unrestricted spin has its own operator metadata and diagnostics. The
+solver checks Hermiticity, eigenpair residuals and metric orthogonality before
+returning coefficients; it rejects inconsistent input or failed solves.
+Overlap construction, occupations, smearing, DIIS and physical support gates
+remain owned by the grid method.
+
+Closed-shell GPW retains `use_davidson` and `davidson_min_dim`. Davidson
+recycles the preceding subspace without mutating its input options. Other
+Gamma grid routes retain their dense solver. Multi-k GPW RKS/UKS/ROKS,
+GAPW RKS and the fixed-density band helper also use shared dense solves.
+AO matrices carry X/S into the solve; projected DIIS matrices remain in their
+orthogonal frame, with residuals labelled accordingly. The driver maps
+coefficients back to AO coordinates and assigns global occupations. Orbital
+normalization never includes k-point weights.
+
+Gamma GPW ROHF/ROKS now shares the molecular Roothaan solver, including
+Guest-Saunders block canonicalization. Its occupation and level-shift
+policies remain in that loop. Initial-guess diagonalizations and orbital
+transformation remain separate migration work. The
+shared boundary does not extend physical support or certify experimental
+calculations; compact GAPW's density-fold refusal remains in force.
+
 ## What GPW is
 
 The Gaussian + plane-wave (GPW) method (Lippert & Hutter 1997,
@@ -204,7 +243,100 @@ canonical multi-k one, a different code path now shown broken
 independently of overlap-truncation/R-set issues. Do not treat a
 Gamma-point smoke test as evidence a GPW route "works" until this
 lands on the canonical orthogonaliser or the floored branch is fixed.
+Measured on the 2026-09-29 development build: H₂/STO-3G in an 8-bohr cube
+converges at Gamma through `run_periodic_job(jk_method="gpw")` to
+-1.123531 Ha; the compact-basis batch above has not been re-measured here.
 ```
+
+## Theory
+
+GPW ({vibeqc-cite}`lippert_hutter_gpw_1997`; the Quickstep implementation is
+{vibeqc-cite}`vandevondele_hutter_quickstep_2005`) keeps the Gaussian
+orbitals for the wavefunction and moves the density onto a uniform grid
+spanning the cell, $N_g = N_xN_yN_z$ points $\mathbf r_g$ with volume element
+$\Delta V = \Omega/N_g$. From the density matrix $\mathbf D$,
+
+$$
+\rho(\mathbf r_g) = \sum_{\mu\nu} D_{\mu\nu}\,\chi_\mu(\mathbf r_g)\,\chi_\nu(\mathbf r_g),
+\qquad
+\tilde\rho(\mathbf G) = \frac{1}{N_g}\sum_g \rho(\mathbf r_g)\,e^{-i\mathbf G\cdot\mathbf r_g},
+$$
+
+where the AOs are summed over the neighbouring image cells so that a tail
+leaving the cell re-enters on the other side. The Hartree potential is one
+Poisson solve in reciprocal space, $\nabla^2 V_H = -4\pi\rho$,
+
+$$
+\tilde V_H(\mathbf G) = \frac{4\pi}{|\mathbf G|^2}\,\tilde\rho(\mathbf G)
+\quad(\mathbf G\neq 0),\qquad \tilde V_H(0) = 0,
+\qquad
+E_H = 2\pi\Omega\sum_{\mathbf G\neq 0}\frac{|\tilde\rho(\mathbf G)|^2}{|\mathbf G|^2},
+$$
+
+with the $\mathbf G = 0$ term dropped, which is the uniform neutralising
+background of a periodic cell (the same Madelung convention as the rest of
+vibe-qc; see the section on the Madelung shift below). The Coulomb matrix and
+the exchange-correlation terms are then grid quadratures,
+
+$$
+J_{\mu\nu} = \Delta V\sum_g \chi_\mu(\mathbf r_g)\chi_\nu(\mathbf r_g)\,V_H(\mathbf r_g),
+\qquad
+E_{xc} = \Delta V\sum_g \rho(\mathbf r_g)\,\varepsilon_{xc}\big(\rho,\nabla\rho\big)(\mathbf r_g),
+\qquad
+V^{xc}_{\mu\nu} = \Delta V\sum_g \chi_\mu\chi_\nu\,v_{xc}(\mathbf r_g)
++ \text{(gradient terms for GGA / meta-GGA)},
+$$
+
+and the grid is sized by the plane-wave cutoff, $|\mathbf G|^2/2 \le
+E_{\mathrm{cut}}$. The cost is $\mathcal O(N_g\log N_g)$ for the FFTs plus
+$\mathcal O(N^2 N_g)$ for collocation and projection, so the method wins as
+the cell grows and the basis stays smooth. The approximation that enters is
+the grid: the density must be resolvable at $E_{\mathrm{cut}}$, which is why
+GPW is normally paired with pseudopotentials and why an all-electron core on
+the grid is prohibitively expensive.
+
+GAPW ({vibeqc-cite}`lippert_hutter_parrinello_gapw_1999`,
+{vibeqc-cite}`krack_parrinello_allelectron_2000`) keeps the all-electron
+problem by splitting the density into a smooth part that lives on the grid
+and one-centre corrections that live on atom-centred radial grids, the same
+dual-grid construction that Blochl's projector augmented wave method uses
+({vibeqc-cite}`blochl_paw_1994`):
+
+$$
+\rho(\mathbf r) = \tilde\rho(\mathbf r) + \sum_A\big[\rho_A(\mathbf r) - \tilde\rho_A(\mathbf r)\big],
+\qquad
+\rho_A = \sum_{\mu\nu\in A} D_{\mu\nu}\,\chi_\mu\chi_\nu,
+\qquad
+\tilde\rho_A = \sum_{\mu\nu\in A} D_{\mu\nu}\,\tilde\chi_\mu\tilde\chi_\nu .
+$$
+
+Here $\tilde\rho$ is the density built from the soft (small-exponent) part of
+every basis function and collocated on the plane-wave grid; $\rho_A$ is the
+hard one-centre density of atom $A$ from all its primitives, expanded on a
+radial times Lebedev grid inside the atomic sphere; and $\tilde\rho_A$ is the
+soft one-centre density of the same atom, so that $\rho_A - \tilde\rho_A$
+vanishes outside the sphere and the three pieces sum to the all-electron
+density. Because the Hartree and exchange-correlation functionals are
+evaluated piecewise,
+
+$$
+V_H[\rho] = V_H[\tilde\rho] + \sum_A\big(V_H[\rho_A] - V_H[\tilde\rho_A]\big),
+\qquad
+E_{xc}[\rho] = E_{xc}[\tilde\rho] + \sum_A\big(E_{xc}[\rho_A] - E_{xc}[\tilde\rho_A]\big),
+$$
+
+the smooth term reuses the GPW Poisson solve and the atomic terms are local
+one-dimensional radial Poisson solves and atomic-grid quadratures with no
+FFT; the atomic spheres must not overlap for the split to be exact, which
+vibe-qc enforces with a partition of unity across spheres and an own-atom
+compensating charge whose multipoles match those of $\rho_A - \tilde\rho_A$
+(the `one_centre=` modes below choose between the fitted block construction
+and the fit-free analytic one-centre ERIs). The approximations are the soft
+/ hard split of the basis, the atomic-grid quadrature, and the compensation
+charge; the method helps wherever an all-electron answer is wanted on a large
+smooth cell without pseudopotential files, and it fails, today, on compact
+crystals and multi-k cells, where the augmentation residual is tens of
+millihartree and GDF is the route to use.
 
 ## What today's implementation does
 
@@ -1025,7 +1157,7 @@ The v0.12 R2 cycle wires the open-shell GPW route:
 `n_alpha` / `n_beta`, run a Γ-only joint α + β DIIS-accelerated
 SCF, and return a `GpwUhfScfResult` / `GpwUksScfResult` with
 per-spin densities, MO coefficients, and MO energies. They
-reduce bit-for-bit to the closed-shell `run_periodic_rhf_gpw` /
+reduce numerically to the closed-shell `run_periodic_rhf_gpw` /
 `run_periodic_rks_gpw` results when `n_alpha == n_beta`, that
 parity is the regression test pin.
 
@@ -1233,3 +1365,82 @@ The full milestone map is in
   - the foundational GPW paper.
 * Hutter, Iannuzzi, Schiffmann, VandeVondele, *WIREs Comp.
   Mol. Sci.* 4, 15 (2014), CP2K + GPW from the implementers.
+
+## Evaluated Gamma HF and KS states
+
+The Python Gamma GPW RHF and libxc RKS drivers, including their Dudarev
+DFT+U paths, expose `result.fock_build`.
+It owns the physical Fock, evaluated density, energy components, metric frame
+and numerical-source identity. DIIS operators remain separate solver states.
+The final energy uses the requested nuclear-potential convention, including
+`smeared_erfc`, and any density-independent dispersion correction.
+
+At an iteration limit, the returned density and physical Fock still belong to
+one evaluation. `next_density` is a separate look-ahead SCF step and
+`density_fixed_point_residual` measures its Frobenius distance. Returned
+orbitals and occupations reconstruct the evaluated density, including mixed
+densities from damping; orbital energies are physical-Fock Rayleigh quotients.
+They need not be canonical eigenpairs before convergence. Finite-temperature
+entropy uses those evaluated occupations. QVF labels these density orbitals
+`natural`, with the energy interpretation recorded in the run fields. The runner preserves this state and
+its identity in output. External XC, UKS+U and augmented GAPW paths retain
+their existing result conventions pending their own migrations.
+
+The retained home-cell exchange approximation is qualified in its padded
+molecular limit. A compact-cell energy-derivative inconsistency in that
+existing kernel is tracked in issue #534; this migration does not establish
+compact-cell variational or bulk reference parity.
+
+For libxc RKS, the same evaluated build owns both the explicit XC energy and
+its AO potential. LDA, GGA, admitted meta-GGA and global-hybrid functionals
+retain their existing grid, density-gradient, kinetic-energy-density and
+stiffness policies. Pure functionals skip libint exchange; PATOM still uses a
+separate full-HF seed. The source receipt includes the functional components,
+exchange fraction, collocation table, reciprocal grid and meta-GGA policy.
+Changing a captured numerical source requires a fresh provider and frame.
+Range-separated GPW functionals retain their existing refusal; external XC
+state migration is deferred.
+
+For RHF and libxc RKS with DFT+U, the same build includes the explicit spin-summed
+Dudarev energy as a separate `dft_plus_u` correction and its potential in the
+physical Fock or KS matrix. It retains the existing AO projectors: each per-spin
+occupation is the active block of `S (D/2) S`, and the AO potential is
+`S V_U S`. The source identity includes the active AO groups, effective
+Hubbard parameters and metric frame. PATOM remains a full-HF seed without U.
+The result and runner retain `e_dft_plus_u`; it is already included in the
+total energy and must not be added again. This changes state ownership, not
+the projector definition or its physical validation envelope.
+
+Gamma GPW UHF, including UHF+U, also returns one evaluated `fock_build`, with ordered
+alpha/beta density and physical-Fock channels. Their shared Coulomb term uses
+the total density; libint exchange retains its per-spin convention. PATOM
+and coupled DIIS use the common spin-labelled solver boundary. PATOM retains
+its canonical overlap cutoff of `1e-7` in a separate seed frame. Returned
+`occupations_alpha` and `occupations_beta` reconstruct each evaluated density,
+including damping and zero-iteration restarts. The physical Rayleigh energies,
+source/frame identities and coupled fixed-point residual survive the runner
+and QVF output. The numerical source keeps the existing grid, nuclear gauge,
+image sum and zero mode; this adds no MANTA, BIPOLE or symmetry admission.
+
+For UHF+U, each Hubbard occupation uses its own `S D_spin S` active AO
+block. The two Dudarev energies enter one explicit `dft_plus_u` correction;
+the separate `S V_spin S` potentials enter the physical alpha/beta Focks.
+The Hubbard source binds the metric, ordered active AO groups and effective
+U parameters. PATOM remains bare UHF without U, with its existing retained
+space. Zero U recovers plain UHF numerically; an empty spin contributes zero
+Hubbard energy but may retain a nonzero Hubbard potential.
+
+Plain Gamma GPW UKS with libxc also returns one evaluated `fock_build`.
+Both physical spin Focks share the total-density Hartree potential and a
+joint spin XC evaluation. The XC energy is an explicit electronic component,
+not half a trace of its potential. GGA cross-spin gradients and meta-GGA
+kinetic-energy terms retain the existing grid projection and regularisation.
+Pure functionals skip exact exchange during SCF; global hybrids retain
+libint per-spin exchange. PATOM still uses a separate full-HF seed.
+
+Converged, capped, damped and zero-iteration UKS results preserve their
+actual spin densities, density-defining occupations and physical Rayleigh
+energies through runner and QVF output. A stopped state's orbitals need not
+diagonalise its physical Focks. Functional, grid, collocation and meta-GGA
+policy changes require a new provider. This migration does not add UKS+U,
+range-separated, augmented GAPW, multi-k or symmetry capabilities.

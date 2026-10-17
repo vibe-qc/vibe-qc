@@ -574,24 +574,38 @@ _SYMBOL_TO_Z = {
 _L_TO_NUM = {"s": 0, "p": 1, "d": 2, "f": 3}
 
 # --- Faithful-AES per-element multipole radius / valence CN ------------------
-# tblite GFN2 p_rad (bohr) and p_vcn, hardcoded in tblite src/tblite/xtb/gfn2.f90
-# (Bannwarth, Ehlert & Grimme, JCTC 2019, 15, 1652, doi:10.1021/acs.jctc.8b01176).
-# Only the values verified against the tblite source are listed; elements not
-# present fall back in the C++ faithful-AES path.  NOT fabricated (CLAUDE.md §8).
+# The GFN2 anisotropic-electrostatics damping radius of Eq. 29 (Bannwarth,
+# Ehlert & Grimme, JCTC 2019, 15, 1652, doi:10.1021/acs.jctc.8b01176) needs a
+# per-element base radius R0_A (bohr) and valence coordination number N_val,A.
+# Neither is in the published parameter file; the method implementations carry
+# them as code tables: xtb src/xtb/data.f90 (multiRad, valenceCN) and tblite
+# src/tblite/xtb/gfn2.f90 (p_rad, p_vcn). The values below are those tables for
+# Z = 1..86, transcribed 2026-10-12 and compared element by element against xtb
+# 6.7.0. Until then only Z <= 10 was listed and every heavier element fell back
+# to R0 = 3.0 bohr and N_val = 0 in the native path, which left the anisotropic
+# electrostatics of e.g. NaF 2.9 mHa, ZnF2 1.4 mHa and SiF4 1.4 mHa away from
+# xtb. NOT fabricated (CLAUDE.md §8).
 _MP_RAD_BOHR = {
-    1: 1.4, 2: 3.0, 3: 5.0, 4: 5.0, 5: 5.0, 6: 3.0, 7: 1.9, 8: 1.8, 9: 2.4, 10: 5.0,
+    1: 1.4, 2: 3, 3: 5, 4: 5, 5: 5, 6: 3, 7: 1.9, 8: 1.8, 9: 2.4, 10: 5,
+    11: 5, 12: 5, 13: 5, 14: 3.9, 15: 2.1, 16: 3.1, 17: 2.5, 18: 5, 19: 5, 20: 5,
+    21: 5, 22: 5, 23: 5, 24: 5, 25: 5, 26: 5, 27: 5, 28: 5, 29: 5, 30: 5,
+    31: 5, 32: 5, 33: 5, 34: 3.9, 35: 4, 36: 5, 37: 5, 38: 5, 39: 5, 40: 5,
+    41: 5, 42: 5, 43: 5, 44: 5, 45: 5, 46: 5, 47: 5, 48: 5, 49: 5, 50: 5,
+    51: 5, 52: 5, 53: 5, 54: 5, 55: 5, 56: 5, 57: 5, 58: 5, 59: 5, 60: 5,
+    61: 5, 62: 5, 63: 5, 64: 5, 65: 5, 66: 5, 67: 5, 68: 5, 69: 5, 70: 5,
+    71: 5, 72: 5, 73: 5, 74: 5, 75: 5, 76: 5, 77: 5, 78: 5, 79: 5, 80: 5,
+    81: 5, 82: 5, 83: 5, 84: 5, 85: 5, 86: 5,
 }
 _MP_VCN = {
-    1: 1.0,
-    2: 1.0,
-    3: 1.0,
-    4: 2.0,
-    5: 3.0,
-    6: 3.0,
-    7: 3.0,
-    8: 2.0,
-    9: 1.0,
-    10: 1.0,
+    1: 1, 2: 1, 3: 1, 4: 2, 5: 3, 6: 3, 7: 3, 8: 2, 9: 1, 10: 1,
+    11: 1, 12: 2, 13: 3, 14: 3, 15: 3, 16: 3, 17: 1, 18: 1, 19: 1, 20: 2,
+    21: 4, 22: 4, 23: 6, 24: 6, 25: 6, 26: 6, 27: 6, 28: 4, 29: 4, 30: 2,
+    31: 3, 32: 3, 33: 3, 34: 3, 35: 1, 36: 1, 37: 1, 38: 2, 39: 4, 40: 4,
+    41: 6, 42: 6, 43: 6, 44: 6, 45: 6, 46: 4, 47: 4, 48: 2, 49: 3, 50: 3,
+    51: 3, 52: 3, 53: 1, 54: 1, 55: 1, 56: 2, 57: 4, 58: 6, 59: 6, 60: 6,
+    61: 6, 62: 6, 63: 6, 64: 6, 65: 6, 66: 6, 67: 6, 68: 6, 69: 6, 70: 6,
+    71: 6, 72: 4, 73: 6, 74: 6, 75: 6, 76: 6, 77: 6, 78: 4, 79: 4, 80: 2,
+    81: 3, 82: 3, 83: 3, 84: 3, 85: 1, 86: 1,
 }
 
 

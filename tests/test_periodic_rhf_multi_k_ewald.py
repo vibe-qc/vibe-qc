@@ -135,14 +135,17 @@ def test_driver_converges_and_result_shapes_are_consistent():
 # ---------------------------------------------------------------------------
 
 def test_single_k_mesh_matches_gamma_ewald_driver():
-    """With a [1,1,1] mesh the inverse-Bloch fold puts D(0) into every
-    cell — the same molecular-limit convention used by
-    ``run_rhf_periodic_gamma_ewald3d``. Both drivers solve the same
-    SCF and must reach the same energy."""
+    """With a [1,1,1] mesh and ``exchange_exxdiv='none'`` the multi-k
+    driver takes the molecular-limit convention used by
+    ``run_rhf_periodic_gamma_ewald3d``. Both drivers solve the same SCF
+    and must reach the same energy. (The default at [1,1,1] is the
+    corrected split since #23; see
+    ``test_periodic_exchange_gauge_band_folding.py``.)"""
     sysp, basis = _h2()
     km = vq.monkhorst_pack(sysp, [1, 1, 1])
     r_mk = _run_mk(
         sysp, basis, km, _opts(), omega=0.5, spacing_bohr=0.3,
+        exchange_exxdiv="none",
     )
     r_g = _run_g(
         sysp, basis, _opts(), omega=0.5, spacing_bohr=0.3,
@@ -359,12 +362,13 @@ def test_multi_k_diis_off_disables_extrapolation():
 
 
 def test_single_gamma_multi_k_matches_gamma_driver_on_tight_cell():
-    """The [1,1,1] multi-k path must use the Γ molecular-limit Fock.
+    """The [1,1,1] molecular-limit gauge must be the Γ molecular-limit Fock.
 
     A previous regression fed the one-point inverse-Bloch density into
     the generic multi-cell Fock builder, producing a homogeneous-density
     fixed point near +8 Ha. The dedicated Γ driver is the reference for
-    the single-k convention.
+    the single-k molecular-limit convention, which the multi-k driver
+    takes on ``exchange_exxdiv='none'`` since #23.
     """
     sysp, basis = _h2_chain_tight()
     km = vq.monkhorst_pack(sysp, [1, 1, 1])
@@ -372,6 +376,7 @@ def test_single_gamma_multi_k_matches_gamma_driver_on_tight_cell():
     opts_g = _diis_options(use_diis=False)
     r_mk = _run_mk(
         sysp, basis, km, opts_mk, omega=0.5, spacing_bohr=0.3,
+        exchange_exxdiv="none",
     )
     r_g = _run_g(
         sysp, basis, opts_g, omega=0.5, spacing_bohr=0.3,

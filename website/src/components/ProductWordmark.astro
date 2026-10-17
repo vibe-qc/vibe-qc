@@ -1,6 +1,6 @@
 ---
 interface Props {
-  product: 'vibe-qc' | 'vibe-view' | 'vibe-queue';
+  product: 'vibe-qc' | 'vibe-view' | 'vibe-queue' | 'vibe-sketch';
   label: string;
   large?: boolean;
 }
@@ -8,7 +8,7 @@ const { product, label, large = false } = Astro.props;
 // Intrinsic widths of the generated wordmarks, which vary with the name's
 // length. Keep in step with scripts/generate-brand.py; the SVGs carry the
 // same numbers in their width attribute.
-const width = { 'vibe-qc': 217, 'vibe-view': 259, 'vibe-queue': 294 }[product];
+const width = { 'vibe-qc': 217, 'vibe-view': 259, 'vibe-queue': 294, 'vibe-sketch': 303 }[product];
 const base = import.meta.env.BASE_URL;
 ---
 

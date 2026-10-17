@@ -1,11 +1,17 @@
 ---
 myst:
   html_meta:
-    "description": "The equidistant hydrogen chain as a cyclic cluster: the 1D-metal sibling of the dimerized H2-pair chain, folded onto a finite H6 ring. Why the equal-spacing chain is the hard case for reciprocal-space sampling and the clean case for the cyclic cluster model, the crystal-orbital degeneracy pattern, and the published CCM-HF/STO-3G benchmark from Peintinger's thesis (now reproduced by vibe-qc's Γ-CCM)."
+    "description": "The equidistant hydrogen chain as a cyclic cluster: the 1D-metal sibling of the dimerized H2-pair chain, folded onto a finite H6 ring. Why the equal-spacing chain is the hard case for reciprocal-space sampling and the clean case for the cyclic cluster model, the crystal-orbital degeneracy pattern, and the published CCM-HF/STO-3G benchmark from Peintinger's thesis (quoted from the thesis, not a vibe-qc run)."
     "og:title": "vibe-qc tutorial - the equidistant H chain on a cyclic ring"
 ---
 
 # The equidistant H chain: a 1D metal on a cyclic ring
+
+```{admonition} Status: experimental
+:class: warning
+
+The ab initio cyclic cluster model this page motivates (every AICCM variant, `run_periodic_job(method="aiccm", variant=...)`) is an experimental route. Every Γ-line SCF driver emits `vibeqc.AICCM2026DevAExperimentalWarning` and every χ-CCM driver emits `vibeqc.AICCM2026DevBExperimentalWarning`; the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant=...)`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
 
 This is the **equal-spacing** companion to the
 [dimerized H-chain tutorial](h8_chain_ccm_ancestor.md). That one strings
@@ -15,6 +21,9 @@ one change turns the chain into a **one-dimensional metal**, the
 Peierls-unstable parent the pairs chain dimerizes away from. The metal is the
 harder system, and it is exactly the case the
 [cyclic cluster model](cyclic_cluster_model.md) handles most gracefully.
+This page is conceptual by design: it explains the physics and quotes the
+published benchmark, and it carries no runnable code. The step-by-step
+calculation lives in the [Γ-CCM tutorial](aiccm2026dev_a.md).
 
 ```{admonition} Two H-chains, kept separate on purpose
 :class: note
@@ -40,16 +49,20 @@ undistorted, metallic reference that instability starts from.
 Metals are the awkward case for reciprocal-space sampling. The Brillouin-zone
 integrand is discontinuous at the Fermi surface, so an integer-occupation
 calculation on a coarse k-mesh will not settle, and the cure is
-[Fermi-Dirac smearing](fermi_dirac_smearing.md) on a fine mesh. vibe-qc is
-explicit about this: ask its Γ-only periodic route for smearing and it
-refuses rather than silently running an integer-Aufbau metal, pointing you at
-the multi-k driver instead.
+[Fermi-Dirac smearing](fermi_dirac_smearing.md)
+({vibeqc-cite}`mermin_finite_temperature_dft_1965`) on a fine mesh. vibe-qc is
+explicit about this: ask its legacy direct-truncated Γ-only driver for
+smearing and it refuses rather than silently running an integer-Aufbau metal,
+pointing you at the multi-k Ewald driver instead. (The Γ-only GDF route does
+accept smearing, but a single Γ point is still far too coarse a sample for a
+metal.)
 
 ## The cyclic cluster makes a ring
 
-The cyclic cluster model takes the other road. Wrap $N$ equidistant atoms into
-a **ring** by imposing the cyclic Born-von-Kármán boundary conditions (the
-[derivation here](kpoints_brillouin_bloch.md)), and the infinite metallic
+The cyclic cluster model ({vibeqc-cite}`bredow_geudtner_jug_ccm_2001`,
+{vibeqc-cite}`peintinger_ccm_2014`) takes the other road. Wrap $N$ equidistant
+atoms into a **ring** by imposing the cyclic Born-von-Kármán boundary
+conditions (the [derivation here](kpoints_brillouin_bloch.md)), and the infinite metallic
 chain becomes a finite system: a particle on a ring. A ring of $N$ atoms holds
 exactly $N$ crystal orbitals, the Bloch states $e^{ikx}$ at the discrete
 wavevectors
@@ -81,7 +94,8 @@ The orbital energies of the equidistant H₆ ring, computed at Hartree-Fock /
 STO-3G with the ab-initio cyclic cluster model, are tabulated in the project
 author's dissertation (M. F. Peintinger, *Elektronenstruktur von
 Molekülkristallen*, Univ. Bonn, 2013, §8.6.4, Table 8.6; published as
-Peintinger and Bredow, *J. Comput. Chem.* **35**, 839, 2014):
+Peintinger and Bredow, *J. Comput. Chem.* **35**, 839, 2014,
+{vibeqc-cite}`peintinger_ccm_2014`):
 
 | Crystal orbital | Occupation | Energy (Ha) | $k$ ($2\pi/a$) |
 |---|---|---|---|
@@ -104,11 +118,16 @@ limits.
 ```{admonition} What this benchmark is, and is not
 :class: important
 These numbers are the **ab-initio CCM-HF** result computed in the thesis
-(with the AICCM program of that work), not a vibe-qc run. vibe-qc now
-reproduces them with [Γ-CCM / `aiccm2026dev-a`](../aiccm2026dev_a.md),
-the union-and-weight/Wigner--Seitz integral-weighting CCM that ships as an
-experimental feature.
-Run the [Γ-CCM tutorial](aiccm2026dev_a.md) to reproduce Table 8.6. The
+(with the AICCM program of that work), not a vibe-qc run. The 2014
+union-and-weight/Wigner-Seitz construction ships in vibe-qc as the
+experimental `four-center` variant of AICCM
+(`run_periodic_job(method="aiccm", variant="four-center")`, library
+selector `method="aiccm2026dev-a"`), kept in the same
+[development line](../aiccm2026dev_a.md) as Γ-CCM, the neutral finite-torus
+construction (variants `real-gamma` and `neutral-bloch`). This page does not
+restate the thesis geometry, so it makes no digit-for-digit reproduction
+claim. The [Γ-CCM tutorial](aiccm2026dev_a.md) shows how to set up a cyclic
+H chain step by step. The
 [ab-initio CCM theory section](cyclic_cluster_model.md#how-the-ab-initio-ccm-works)
 works through the Wigner-Seitz weighting that produces it.
 ```

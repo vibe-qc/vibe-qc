@@ -10,7 +10,7 @@ cell outside the radial domain -- 100% of MgO cells are orbit-open at
 production cutoffs, cell-list expansion provably never closes them,
 and the resulting truncation asymmetry is the ~4e-2 Ha SYM3b
 enforcement shift that keeps ``use_fock_symmetry*`` opt-in
-(HANDOVER_BIPOLE_PRODUCTION.md Sec. 0a, 2026-07-12).
+(the original investigation, 2026-07-12).
 
 The fix is to truncate by the PAIR criterion CRYSTAL uses:
 

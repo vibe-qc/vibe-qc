@@ -9,8 +9,7 @@ CORRECTION (2026-08-26): the "$lattice:" xyz comment line is
 IGNORED by xtb (verified: bit-identical energy without it), and
 xtb 6.7.0 aborts on genuine periodic GFN2 input ("Multipoles not
 available with PBC"). Energies produced here are FREE MOLECULAR
-CLUSTER references, not periodic ones. See
-handovers/HANDOVER_SECCM_BULK3D.md, evidence-correction section.
+CLUSTER references, not periodic ones.
 """
 
 from __future__ import annotations

@@ -927,7 +927,7 @@ def test_krhf_gdf_c_diamond_default_accelerator_does_not_stall() -> None:
     # neutral-torus full-mesh control at -74.83069166358 Ha/cell. The physical
     # shifted reciprocal support correction (3e5bbd8a) then moved the fixed
     # point by -81.385 microHa to the value below (remeasured 2026-07-18 on
-    # origin/main @ 37afbcac). See HANDOVER_GDF_FIT_SCREENING.md.
+    # origin/main @ 37afbcac).
     assert result.energy == pytest.approx(-74.8307730489, abs=1e-6)
 
 

@@ -1,6 +1,6 @@
 """MR6c: the physical embedded RHF/CASSCF on an ionic MgO cluster, validated
 vs OpenMolcas XFIELD with the SAME Madelung point-charge array (MR6b).
-Embedded-cluster CASSCF path (HANDOVER_PERIODIC_MULTIREF.md, MR6).
+Embedded-cluster CASSCF path (the original investigation, MR6).
 
 This is the payoff of MR6a (the exact Madelung target) + MR6b (a neutral,
 boundary-corrected finite array reproducing that target): hand a real crystal

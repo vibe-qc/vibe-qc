@@ -45,8 +45,9 @@ for r, e in zip(scan.values, scan.energies):
 2.20 bohr   -74.939884 Ha
 ```
 
-The minimum sits near 1.8 bohr (about 0.95 Angstrom), the equilibrium O-H
-distance. The relaxed scan recovers it because the other coordinates (the
+The minimum sits between 1.8 and 2.0 bohr: a parabola through the three
+lowest points puts it near 1.88 bohr (about 0.995 Angstrom), the HF/STO-3G
+equilibrium O-H distance (experiment: 0.96 Angstrom). The relaxed scan recovers it because the other coordinates (the
 second O-H and the H-O-H angle) relax at every step; a rigid scan of a
 distorted starting geometry would not.
 
@@ -62,6 +63,40 @@ distorted starting geometry would not.
 The `coordinate` argument also takes `("angle", i, j, k)` and
 `("dihedral", i, j, k, l)`, and a periodic system can be scanned the same way
 by passing `kpoints=`.
+
+## Theory
+
+A relaxed scan evaluates the constrained minimum of the Born-Oppenheimer
+energy along one internal coordinate $q(\mathbf R)$:
+
+$$
+E_\text{relaxed}(q_0) = \min_{\mathbf R:\; q(\mathbf R) = q_0} E(\mathbf R).
+$$
+
+At such a point the only gradient left is along the constraint. This is the
+stationarity condition of the Lagrangian
+$L(\mathbf R, \lambda) = E(\mathbf R) - \lambda\,[q(\mathbf R) - q_0]$,
+
+$$
+\nabla_{\mathbf R} E = \lambda\, \nabla_{\mathbf R}\, q,
+\qquad q(\mathbf R) = q_0,
+\qquad \lambda = \frac{\mathrm{d}E_\text{relaxed}}{\mathrm{d}q_0},
+$$
+
+so the multiplier is the generalised force needed to hold the coordinate
+(J. Nocedal and S. J. Wright, *Numerical Optimization*, 2nd ed., Springer
+(2006), chapter 12). vibe-qc imposes the constraint by a rigid step: the
+atoms that define $q$ are moved so that $q = q_0$ exactly and then frozen,
+and the remaining atoms relax on the analytic gradient with the L-BFGS-B
+optimizer behind `optimize_molecule` (R. H. Byrd, P. Lu, J. Nocedal and
+C. Zhu, *SIAM J. Sci. Comput.* **16**, 1190 (1995), doi:10.1137/0916069),
+or with `relax_atoms` for a periodic system. Each point starts from the
+previous relaxed geometry. For angles and dihedrals, freezing whole atoms is
+stricter than the Lagrangian condition; the
+[reference page](../user_guide/relaxed_scan.md) explains the consequence.
+The highest point of a profile is only a transition-state candidate: confirm
+it with a [frequency calculation](vibrational_frequencies.md), which must
+show exactly one imaginary mode.
 
 ## See also
 

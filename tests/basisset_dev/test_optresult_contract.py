@@ -31,9 +31,8 @@ the vibe-basis one, ``bdiis.py`` the vibe-qc one) must be able to hand
 either to the same consumer. If someone adds a field to one, this test
 fails and forces the decision to be made on purpose.
 
-Rationale + the alternative (promote vibe-basis to a core vibe-qc
-dependency, collapsing the two) are in
-``handovers/HANDOVER_BASISOPT_COHESIVE_ROADMAP.md`` section 3.6.
+The alternative would promote vibe-basis to a core vibe-qc dependency,
+collapsing the two independently installable packages.
 """
 
 from __future__ import annotations

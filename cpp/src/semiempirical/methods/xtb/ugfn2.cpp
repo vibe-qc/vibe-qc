@@ -1,6 +1,8 @@
 #include "vibeqc/semiempirical/methods/xtb/ugfn2.hpp"
+#include "gfn2_electron_counts.hpp"
 
 #include <Eigen/Eigenvalues>
+#include <cmath>
 #include <stdexcept>
 
 #include "vibeqc/semiempirical/basis.hpp"
@@ -16,13 +18,30 @@ UGFN2Result run_ugfn2_xtb(
     const GFN2ParameterSet& params,
     const XTBSccOptions& opts) {
 
-    int mult = mol.multiplicity();
-    // GFN2 is valence-only: use Z minus noble-core electrons.
-    int n_val_elec = 0;
-    for (const auto& atom : mol.atoms())
-        n_val_elec += gfn2_valence_electrons(atom.Z);
-    int n_alpha = (n_val_elec + mult - 1) / 2;
-    int n_beta = (n_val_elec - mult + 1) / 2;
+    if (opts.max_iter < 1)
+        throw std::invalid_argument("run_ugfn2_xtb: max_iter must be positive");
+    if (!std::isfinite(opts.conv_tol_charge) || opts.conv_tol_charge <= 0.0)
+        throw std::invalid_argument(
+            "run_ugfn2_xtb: conv_tol_charge must be finite and positive");
+    if (!std::isfinite(opts.charge_mixing) || opts.charge_mixing < 0.0
+            || opts.charge_mixing > 1.0)
+        throw std::invalid_argument(
+            "run_ugfn2_xtb: charge_mixing must be finite and in [0, 1]");
+    // XTBSccOptions is shared with the fuller restricted/periodic drivers.
+    // Do not silently substitute this partial model for a requested solver,
+    // occupation rule, or energy functional that it cannot evaluate.
+    if (opts.scc_mixer != SCCMixer::Simple)
+        throw std::invalid_argument(
+            "run_ugfn2_xtb: only scc_mixer=Simple is implemented");
+    if (opts.electronic_temperature != 0.0)
+        throw std::invalid_argument(
+            "run_ugfn2_xtb: only electronic_temperature=0 is implemented");
+    if (opts.gamma_form != ShellGammaForm::KlopmanOhno)
+        throw std::invalid_argument(
+            "run_ugfn2_xtb: only gamma_form=KlopmanOhno is implemented");
+    if (opts.aes_faithful)
+        throw std::invalid_argument(
+            "run_ugfn2_xtb: aes_faithful is not implemented in the atom-charge model");
 
     for (const auto& atom : mol.atoms()) {
         if (!params.has_element(atom.Z)) {
@@ -34,8 +53,9 @@ UGFN2Result run_ugfn2_xtb(
     // n_primitives=0: GFN2-xTB per-element auto (H,He->3; else->4).
     BasisSet basis = SemiempiricalBasis::build(mol, params, 0);
     const int n_basis = static_cast<int>(basis.nbasis());
-    if (n_alpha > n_basis) n_alpha = n_basis;
-    if (n_beta > n_basis) n_beta = n_basis;
+    const auto occupations = detail::valence_occupations(mol, n_basis, "run_ugfn2_xtb");
+    const int n_alpha = occupations.alpha;
+    const int n_beta = occupations.beta;
     const int n_atoms = static_cast<int>(mol.atoms().size());
 
     Eigen::MatrixXd S = SemiempiricalHamiltonianBuilder::build_overlap(basis);
@@ -54,7 +74,7 @@ UGFN2Result run_ugfn2_xtb(
         }
 
     Eigen::VectorXd dq = Eigen::VectorXd::Zero(n_atoms);
-    const double mix = std::max(0.0, std::min(1.0, opts.charge_mixing));
+    const double mix = opts.charge_mixing;
     const auto& shells = basis.shells();
     const auto& lib_shells = basis.libint();
     const auto shell2bf = lib_shells.shell2bf();
@@ -77,7 +97,10 @@ UGFN2Result run_ugfn2_xtb(
                     int bf0 = shell2bf[s]; int nf = lib_shells[s].size();
                     if (nu >= bf0 && nu < bf0 + nf) { a_nu = shells[s].atom_index; break; }
                 }
-                H_scc(mu, nu) += 0.5 * S(mu, nu) * (V_mu + V(a_nu));
+                // q = Z_val - Mulliken population. Differentiating
+                // E_SCC = q^T gamma q / 2 with respect to the density
+                // therefore gives a negative overlap-weighted potential.
+                H_scc(mu, nu) -= 0.5 * S(mu, nu) * (V_mu + V(a_nu));
             }
         }
 
@@ -110,21 +133,23 @@ UGFN2Result run_ugfn2_xtb(
         bool conv = (max_change < opts.conv_tol_charge);
         dq = mix * dq_new + (1.0 - mix) * dq;
 
-        if (conv) {
-            double E_elec = 0.0;
-            for (int i = 0; i < n_alpha; ++i) E_elec += eps(i);
-            for (int i = 0; i < n_beta; ++i) E_elec += eps(i);
-            double E_scc = 0.5 * dq.dot(gamma * dq);
-            result.energy = E_elec + E_rep - E_scc;
-            result.e_electronic = E_elec; result.e_repulsive = E_rep;
+        if (conv || iter == opts.max_iter) {
+            // Evaluate the functional from the returned density and its
+            // charges, not a sum of shifted eigenvalues or mixed charges.
+            const double E_band0 = (D_total.array() * H0.array()).sum();
+            const double E_scc = 0.5 * dq_new.dot(gamma * dq_new);
+            result.energy = E_band0 + E_scc + E_rep;
+            result.e_electronic = E_band0 + E_scc; result.e_repulsive = E_rep;
             result.e_scc = E_scc;
             result.mo_energies = std::move(eps); result.mo_coeffs = std::move(C);
             result.density_alpha = std::move(Da); result.density_beta = std::move(Db);
             result.overlap = S; result.hamiltonian = std::move(H_scc);
-            result.charges = dq;
+            result.charges = dq_new;
             result.n_basis = n_basis; result.n_alpha = n_alpha;
             result.n_beta = n_beta; result.n_iter = iter;
-            result.converged = true;
+            // An exhausted calculation retains the last evaluated state,
+            // but never presents it as a converged SCC solution.
+            result.converged = conv;
             return result;
         }
     }

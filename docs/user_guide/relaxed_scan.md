@@ -6,7 +6,54 @@ angle, or a dihedral, across a sequence of target values and relaxes
 all other degrees of freedom at each step. This is the canonical
 "scan the reaction coordinate" workflow used to locate transition-state
 guesses and map reaction energy profiles. It works for both molecules
-and periodic systems with the same API.
+and periodic systems with the same API. The driver is production on every
+method that supplies a gradient; see
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Theory
+
+A relaxed scan reports the constrained minimum-energy profile along one
+internal coordinate $q(\mathbf R)$, a bond length, an angle or a dihedral:
+
+$$
+E_{\mathrm{relaxed}}(q_0) = \min_{\mathbf R:\; q(\mathbf R) = q_0} E(\mathbf R),
+$$
+
+that is, at every target value $q_0$ all other nuclear degrees of freedom
+are relaxed while the constraint holds. Formally this is the stationary
+point of the Lagrangian $L = E(\mathbf R) - \lambda\,[q(\mathbf R) - q_0]$
+(J. Nocedal and S. J. Wright, *Numerical Optimization*, 2nd ed., Springer
+(2006), chapter 12),
+where the multiplier $\lambda$ is the generalised force needed to hold the
+coordinate; it is what the unrelaxed gradient components on the constrained
+atoms report at convergence. vibe-qc realises the constraint by the
+rigid-step construction described below: the atoms that define $q$ are
+moved so that $q = q_0$ exactly and then frozen, and the remaining atoms
+relax with the ordinary analytic-gradient optimiser. Freezing whole atoms
+is stricter than the Lagrangian condition (it also pins their motion
+perpendicular to $q$), so for angles and dihedrals the profile is an upper
+bound to the fully relaxed one; for a bond between two atoms the two
+constructions coincide up to overall rotation and translation.
+
+A relaxed profile is not a rigid one. A rigid scan keeps every other
+coordinate at its value in the starting structure and therefore
+overestimates the energy away from that structure, often by a large
+margin: stretching an O-H bond in water without letting the angle and the
+other bond respond, or twisting a dihedral without letting the neighbouring
+bonds bend, raises the profile and shifts the apparent barrier. The relaxed
+profile is the lowest-energy path parametrised by $q$, so its minima are
+genuine local minima and its maximum is an upper bound to the saddle-point
+energy along that coordinate. Two caveats follow. First, a scan maximum is
+only a transition-state candidate: when $q$ is not the dominant reaction
+coordinate the path cuts a corner of the surface and the maximum lies above
+the true saddle, which is why a frequency check is required before a frame
+is called a transition state. Second, relaxed scans show hysteresis. Each
+point warm-starts from the previous relaxed geometry, so when a secondary
+coordinate has two minima (a rotamer, a hydrogen-bond flip) the scan follows
+the branch it started on and jumps when that branch disappears. Scanning the
+same range in the opposite direction and comparing the two profiles exposes
+such jumps; when both coordinates matter, the two-dimensional
+`relaxed_scan_2d` below resolves them explicitly.
 
 ## Quick start, molecular O-H stretch
 
@@ -122,7 +169,8 @@ At each scan point:
 2. The atoms participating in the constraint are added to the
    optimizer's `freeze_indices`. The remaining atoms relax around the
    constrained geometry using the existing analytic-gradient L-BFGS-B
-   driver.
+   driver (R. H. Byrd, P. Lu, J. Nocedal and C. Zhu, *SIAM J. Sci.
+   Comput.* **16**, 1190 (1995), doi:10.1137/0916069).
 3. The resulting geometry, energy, and convergence flag are recorded.
 
 This is the same "rigid step" approach used by most QC packages for
@@ -152,7 +200,7 @@ highest-energy frame is tagged as a generic `point` waypoint. (It is
 see {doc}`../tutorial/vibrational_frequencies`.)
 
 The energy-plot x-axis is labelled from the scan coordinate, a bond
-scan reads `bond 0–1 (bohr)`, an angle/dihedral scan reads radians, 
+scan reads `bond 0-1 (bohr)`, an angle/dihedral scan reads radians,
 so the plot is self-describing without you annotating it.
 
 **Marking a verified transition state.** If you have *independently*
@@ -204,8 +252,10 @@ containing the BibTeX for every per-frame SCF (method / basis /
 functional). The relaxed-scan driver itself doesn't fire a
 driver-specific paper (relaxed coordinate scans are textbook;
 there is no single "scan paper" to cite). NEB callers needing
-the Henkelman+Jónsson 2000 / Henkelman+Uberuaga+Jónsson 2000 /
-Smidstrup 2014 citations should use
+the Henkelman+Jónsson 2000 ({vibeqc-cite}`henkelman_jonsson_neb_2000`) /
+Henkelman+Uberuaga+Jónsson 2000
+({vibeqc-cite}`henkelman_uberuaga_jonsson_ci_neb_2000`) /
+Smidstrup 2014 ({vibeqc-cite}`smidstrup_idpp_2014`) citations should use
 {meth}`vibeqc.NEBResult.write_qvf` instead, it fires the
 `routes.drivers.neb` (and optionally `ci_neb`) routes
 automatically.

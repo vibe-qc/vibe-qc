@@ -64,24 +64,70 @@ def test_periodic_patom_multik_reaches_same_basin_as_sad():
 
 @pytest.mark.parametrize("route", ["gpw", "gapw", "uks", "roks"])
 def test_multik_gpw_patom_full_exchange_is_seed_only(monkeypatch, route):
-    from vibeqc.periodic_gapw_j import run_periodic_rks_gpw_multi_k
+    """Pure DFT supports PATOM through one normalized full-HF seed step."""
+    import vibeqc.guess as guess_module
     from vibeqc.periodic_corrected_exchange import CorrectedEwaldExchange
-    system=vq.PeriodicSystem(3,np.eye(3)*12,[vq.Atom(1,[6,6,5.3]),vq.Atom(1,[6,6,6.7])])
-    basis=vq.BasisSet(system.unit_cell_molecule(),'sto-3g')
-    mesh=vq.monkhorst_pack(system,[1,1,3])
-    seen=[]
-    original=CorrectedEwaldExchange.k_space_terms_all_k
-    def count(self,*args,**kwargs):
-        seen.append(1)
-        return original(self,*args,**kwargs)
-    monkeypatch.setattr(CorrectedEwaldExchange,'k_space_terms_all_k',count)
     from vibeqc.periodic_gapw_augment import run_periodic_rks_gapw_multi_k
-    from vibeqc.periodic_gapw_open_shell import run_periodic_uks_gpw_multi_k, run_periodic_roks_gpw_multi_k
-    driver = {'gpw':run_periodic_rks_gpw_multi_k,'gapw':run_periodic_rks_gapw_multi_k,
-              'uks':run_periodic_uks_gpw_multi_k,'roks':run_periodic_roks_gpw_multi_k}[route]
-    result=driver(system,basis,mesh,functional='lda',initial_guess='PATOM',
-        cutoff_ha=8,max_iter=2,quiet=True)
-    assert len(seen)==2
-    assert result.guess_selection.effective == vq.InitialGuess.PATOM
+    from vibeqc.periodic_gapw_j import run_periodic_rks_gpw_multi_k
+    from vibeqc.periodic_gapw_open_shell import (
+        run_periodic_roks_gpw_multi_k,
+        run_periodic_uks_gpw_multi_k,
+    )
+
+    system = vq.PeriodicSystem(
+        3, np.eye(3) * 12,
+        [vq.Atom(1, [6, 6, 5.3]), vq.Atom(1, [6, 6, 6.7])],
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    mesh = vq.monkhorst_pack(system, [1, 1, 3])
+    seed_calls = []
+    exchange_calls = []
+    original_seed = guess_module.patom_full_hf_focks_k
+    original_exchange = CorrectedEwaldExchange.k_space_terms_all_k
+
+    def observed_seed(*args, **kwargs):
+        # Both spin channels of this H2 singlet contain one electron.
+        assert args[5:7] == (1, 1)
+        seed_calls.append(args[:3])
+        return original_seed(*args, **kwargs)
+
+    def observed_exchange(builder, overlaps, densities):
+        # Inspect the actual SAD input to the full-HF PATOM construction,
+        # in its Bloch metric, rather than trusting selector metadata alone.
+        assert len(densities) == len(overlaps) == len(mesh.weights)
+        population = 0.0
+        for weight, density, overlap in zip(mesh.weights, densities, overlaps):
+            density = np.asarray(density)
+            assert np.all(np.isfinite(density))
+            np.testing.assert_allclose(
+                density, density.conj().T, atol=1e-12, rtol=0,
+            )
+            assert np.linalg.eigvalsh(density).min() >= -1e-12
+            population += weight * np.trace(density @ overlap).real
+        assert population == pytest.approx(1.0, abs=1e-11, rel=0)
+        exchange_calls.append(population)
+        return original_exchange(builder, overlaps, densities)
+
+    monkeypatch.setattr(guess_module, "patom_full_hf_focks_k", observed_seed)
+    monkeypatch.setattr(
+        CorrectedEwaldExchange, "k_space_terms_all_k", observed_exchange,
+    )
+    driver = {
+        "gpw": run_periodic_rks_gpw_multi_k,
+        "gapw": run_periodic_rks_gapw_multi_k,
+        "uks": run_periodic_uks_gpw_multi_k,
+        "roks": run_periodic_roks_gpw_multi_k,
+    }[route]
+    result = driver(
+        system, basis, mesh, functional="lda", initial_guess="PATOM",
+        cutoff_ha=8, max_iter=2, quiet=True,
+    )
+    assert seed_calls == [(system, basis, mesh)]
+    # Full exchange runs once for each seed spin, never in the DFT iterations.
+    assert len(exchange_calls) == 2
+    selection = result.guess_selection
+    assert (selection.requested, selection.effective, selection.transport) == (
+        vq.InitialGuess.PATOM, vq.InitialGuess.PATOM, vq.InitialGuess.PATOM,
+    )
     assert np.isfinite(result.energy)
-    assert result.n_iter==2
+    assert result.n_iter == 2

@@ -102,6 +102,16 @@ class DirectFeedback:
         Zero as constructed, because this module does not own a factorization
         and inventing one would be a second, differently-conditioned ``A``
         beside the energy's -- the defect shape this package keeps meeting.
+    mu : ndarray (n_seg,), kcal/(mol angstrom^2)
+        ``mu_S(sigma_t)``, the sigma potential at each segment, zero on
+        segments too small to carry a density. The nuclear gradient needs the
+        per-segment value, not only its area-weighted sum in :attr:`energy`:
+        a segment's area derivative enters as ``mu_S(sigma_t) -
+        mu_S'(sigma_t) sigma_t`` (see :func:`vibeqc.solvation.gradient.cpcm_gradient`).
+    hb_smoothing : float, e/angstrom^2
+        The parameterization's hydrogen-bond smoothing width the potential
+        was evaluated with. ``0.0`` is Klamt's published corner, at which
+        ``mu_S'`` jumps and the energy has no nuclear gradient.
     """
 
     phi: np.ndarray
@@ -110,10 +120,14 @@ class DirectFeedback:
     near_hb_corner: np.ndarray
     charges: np.ndarray = None  # type: ignore[assignment]
     _outside_area_fraction: float = 0.0
+    mu: np.ndarray = None  # type: ignore[assignment]
+    hb_smoothing: float = 0.0
 
     def __post_init__(self):
         if self.charges is None:
             object.__setattr__(self, "charges", np.zeros_like(self.phi))
+        if self.mu is None:
+            object.__setattr__(self, "mu", np.zeros_like(self.phi))
 
     @property
     def fraction_outside_grid(self) -> float:
@@ -201,8 +215,10 @@ def direct_cosmors_feedback(
         beta * np.asarray(potential.derivative(sigma[live]), dtype=np.float64)
     ) / HARTREE_TO_KCAL
 
-    mu = beta * np.asarray(potential.evaluate(sigma[live]), dtype=np.float64)
-    energy = float(np.dot(a_ang[live], mu)) / HARTREE_TO_KCAL
+    mu_live = beta * np.asarray(potential.evaluate(sigma[live]), dtype=np.float64)
+    energy = float(np.dot(a_ang[live], mu_live)) / HARTREE_TO_KCAL
+    mu = np.zeros_like(q)
+    mu[live] = mu_live
 
     s_hb = float(potential.params.sigma_hb)
     near = live & (np.abs(np.abs(sigma) - s_hb) < float(corner_window))
@@ -215,5 +231,6 @@ def direct_cosmors_feedback(
     )
     return DirectFeedback(
         phi=phi, sigma=sigma, energy=energy, near_hb_corner=near,
-        _outside_area_fraction=outside_fraction,
+        _outside_area_fraction=outside_fraction, mu=mu,
+        hb_smoothing=float(getattr(potential.params, "hb_smoothing", 0.0)),
     )

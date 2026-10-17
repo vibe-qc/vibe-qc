@@ -44,8 +44,16 @@ constexpr int kMaximumAtomicNumber = 86;
 // re-run recipe: tests/test_gfn2_parameter_identity.py at
 // GFN2_PUBLISHED_SHA256, and docs/user_guide/semiempirical.md
 // ("Published-parameter identity").
+// 2026-10-12 (issue #520): the digest moved again, from 0b3c70a5... to
+// 7c42ae77..., because the parsed object gained the per-element
+// anisotropic-electrostatics damping radius R0_A and valence coordination
+// number N_val,A (Bannwarth 2019 eq 29) for Z = 11..86; the converter
+// had carried Z <= 10 only, and the native path fell back to 3.0 bohr and
+// zero for every heavier element. The values are the xtb / tblite code
+// tables (not part of the parameter file), compared element by element
+// against xtb 6.7.0; the upstream-file parameters are bit-identical.
 constexpr const char* kGFN2XTB2019Sha256 =
-    "0b3c70a5a7a8dec49953a59e72e8709a9b6e9a58ec55fb063f7d08a3067cc8ef";
+    "7c42ae77765f39d2fa73fad23184eb7391d442605229e0110e22be1be1dd7fd2";
 constexpr const char* kGFN2XTB2019Identity =
     "published:gfn2-xtb-2019-v1";
 

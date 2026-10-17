@@ -23,12 +23,27 @@ The viewer and reference toolkit are independent implementations too; their
 agreement through the corpus is the interoperability check.
 ```
 
-The six included reference pages are vendored from the immutable QVF source
-commit `80432442f318bb679e1afcef55bea166994ea28c`. Each header records the
-original source path and commit. Do not edit `docs/qvf/_vendored/`; change QVF
-upstream, then deliberately re-vendor. This documentation update changes no
-format, reference implementation or interoperability pin: `QVF_TAG` remains
-`v0.1.0-docs.1` in `.gitlab-ci.yml`. The snapshot builds without a sibling
+vibe-qc pins one QVF release, `v0.4.0` (commit
+`702c1b602beb30972874e6d336b082d6a0b691e4`), as `QVF_TAG` in `.gitlab-ci.yml`.
+The QVF repository is the single master of the format: vibe-qc carries only
+byte-identical copies of that tag's files, no derived or edited schema. Its
+manifest schema `python/vibeqc/output/formats/qvf_manifest.schema.json` is the
+tag's `spec/qvf_manifest.schema.json`. The six included reference pages are
+vendored from the same tag. `scripts/ci/check_qvf_schema.py` checks all seven
+files byte for byte. The source paths for the pages are:
+
+| Vendored filename | Path in QVF |
+|---|---|
+| `qvf-format-spec.md` | `spec/qvf-format-spec.md` |
+| `GOVERNANCE.md` | `GOVERNANCE.md` |
+| `README.md` | `conformance/README.md` |
+| `integration_guide.md` | `docs/integration_guide.md` |
+| `library_guide.md` | `docs/library_guide.md` |
+| `orca_integration.md` | `docs/orca_integration.md` |
+
+Keep provenance here so the copies remain identical to upstream. Do not edit
+`docs/qvf/_vendored/` or the schema copy; change QVF upstream, then
+deliberately re-vendor and bump the pin. The snapshot builds without a sibling
 QVF checkout.
 
 For reference-toolkit distributions, use the

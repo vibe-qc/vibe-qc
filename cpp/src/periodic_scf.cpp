@@ -1,3 +1,4 @@
+#include "vibeqc/hermitian_operator.hpp"
 #include "vibeqc/periodic_scf.hpp"
 
 #include "vibeqc/diis.hpp"
@@ -132,23 +133,9 @@ struct KDiag {
 
 KDiag diag_k(const ComplexMatrix& F_k, const ComplexMatrix& X_k,
              const DavidsonOptions* dav_opts = nullptr) {
-    ComplexMatrix F_prime = X_k.adjoint() * F_k * X_k;
-    // Symmetrize the tiny numerical drift.
-    F_prime = 0.5 * (F_prime + F_prime.adjoint().eval());
-    if (dav_opts != nullptr && dav_opts->n_eig > 0) {
-        DavidsonResultComplex dres =
-            davidson_solve_hermitian(F_prime, *dav_opts);
-        if (!dres.converged) {
-            throw std::runtime_error(
-                "run_rhf_periodic: Davidson diagonalisation failed at k");
-        }
-        return KDiag{dres.eigenvalues, X_k * dres.eigenvectors};
-    }
-    Eigen::SelfAdjointEigenSolver<ComplexMatrix> solver(F_prime);
-    if (solver.info() != Eigen::Success) {
-        throw std::runtime_error("run_rhf_periodic: F(k) diagonalisation failed");
-    }
-    return KDiag{solver.eigenvalues(), X_k * solver.eigenvectors()};
+    auto result = solve_fock_matrix(F_k, X_k,
+        dav_opts && dav_opts->n_eig > 0 ? dav_opts : nullptr);
+    return KDiag{result.eigenvalues, X_k * result.eigenvectors};
 }
 
 double capture_idempotency_limit(double scf_gradient_tolerance,
@@ -187,6 +174,70 @@ ComplexMatrix capture_spin_summed_density(
 
 }  // namespace
 
+namespace {
+
+// Inverse of the Bloch convention in Sun et al. (2017), Eq. (3),
+// doi:10.1063/1.4998644. Keep supplied k order and the historical real
+// projection; this is not an IBZ expansion or a change of density domain.
+LatticeMatrixSet fold_density_components(
+    int nbf, const std::vector<Eigen::MatrixXd>& Pk_re,
+    const std::vector<Eigen::MatrixXd>& Pk_im,
+    const BlochKMesh& kmesh, const std::vector<LatticeCell>& cells) {
+    const std::size_t n_k = kmesh.kpoints.size();
+    LatticeMatrixSet P_set;
+    P_set.nbf = nbf;
+    P_set.cells = cells;
+    P_set.blocks.assign(cells.size(), Eigen::MatrixXd::Zero(nbf, nbf));
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::size_t c = 0; c < cells.size(); ++c) {
+        for (std::size_t ik = 0; ik < n_k; ++ik) {
+            const double w = kmesh.weights[ik];
+            const double phase = kmesh.kpoints[ik].dot(cells[c].r_cart);
+            const std::complex<double> z(std::cos(phase), -std::sin(phase));
+            P_set.blocks[c] +=
+                w * (z.real() * Pk_re[ik] - z.imag() * Pk_im[ik]);
+        }
+    }
+    return P_set;
+}
+
+}  // namespace
+
+LatticeMatrixSet real_space_density_from_density_matrices(
+    const std::vector<ComplexMatrix>& D_per_k,
+    const BlochKMesh& kmesh,
+    const std::vector<LatticeCell>& cells) {
+    if (D_per_k.empty() || D_per_k.size() != kmesh.kpoints.size() ||
+        kmesh.weights.size() != kmesh.kpoints.size()) {
+        throw std::runtime_error(
+            "real_space_density_from_density_matrices: nonempty matching k inputs required");
+    }
+    const int nbf = static_cast<int>(D_per_k.front().rows());
+    for (const auto& D : D_per_k) {
+        if (nbf == 0 || D.rows() != nbf || D.cols() != nbf || !D.allFinite()) {
+            throw std::runtime_error(
+                "real_space_density_from_density_matrices: finite square densities "
+                "with matching AO dimensions required");
+        }
+    }
+    std::vector<Eigen::MatrixXd> Pk_re(D_per_k.size()), Pk_im(D_per_k.size());
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::size_t ik = 0; ik < D_per_k.size(); ++ik) {
+        // Mixed/extrapolated densities can be indefinite. Preserve their
+        // Hermitian part directly, without an occupation clipping or an
+        // eigensolve followed by a cubic orbital reconstruction.
+        const ComplexMatrix D = 0.5 * (D_per_k[ik] + D_per_k[ik].adjoint());
+        Pk_re[ik] = D.real();
+        Pk_im[ik] = D.imag();
+    }
+    return fold_density_components(nbf, Pk_re, Pk_im, kmesh, cells);
+}
+
 LatticeMatrixSet real_space_density_from_kpoints_fractional(
     const std::vector<ComplexMatrix>& C_per_k,
     const std::vector<Eigen::VectorXd>& occ_per_k,
@@ -201,11 +252,6 @@ LatticeMatrixSet real_space_density_from_kpoints_fractional(
     }
     const int nbf = C_per_k.empty() ? 0
                                     : static_cast<int>(C_per_k[0].rows());
-
-    LatticeMatrixSet P_set;
-    P_set.nbf = nbf;
-    P_set.cells = cells;
-    P_set.blocks.assign(cells.size(), Eigen::MatrixXd::Zero(nbf, nbf));
 
     // P(k) = C · diag(occ) · C†  with each occ_i ∈ [0, 2] for closed-
     // shell RHF (or [0, 1] for spin-orbital). Reduces to the integer-
@@ -240,19 +286,7 @@ LatticeMatrixSet real_space_density_from_kpoints_fractional(
         Pk_im[ik] = P_k.imag();
     }
 
-#ifdef _OPENMP
-    #pragma omp parallel for schedule(static)
-#endif
-    for (std::size_t c = 0; c < cells.size(); ++c) {
-        for (std::size_t ik = 0; ik < n_k; ++ik) {
-            const double w = kmesh.weights[ik];
-            const double phase = kmesh.kpoints[ik].dot(cells[c].r_cart);
-            const std::complex<double> z(std::cos(phase), -std::sin(phase));
-            P_set.blocks[c] +=
-                w * (z.real() * Pk_re[ik] - z.imag() * Pk_im[ik]);
-        }
-    }
-    return P_set;
+    return fold_density_components(nbf, Pk_re, Pk_im, kmesh, cells);
 }
 
 LatticeMatrixSet real_space_density_from_kpoints(
@@ -528,6 +562,19 @@ PeriodicRHFResult run_rhf_periodic_impl(
     validate_fraction_01("run_rhf_periodic: fock_mixing",
                          opts.fock_mixing);
     const int nocc = n_elec_valence / 2;
+
+    // Image selection is a translation ball, |g| <= cutoff_bohr, so a cell
+    // wider than the cutoff leaves only g = 0: every lattice sum below
+    // collapses to its molecular form, F(k) = F(0) at every k, and the driver
+    // reports a converged free-boundary cluster as a periodic result (#133).
+    // Refuse unless the caller declared the molecular limit. cutoff_bohr, not
+    // nuclear_cutoff_bohr: it is the smaller of the two by default and governs
+    // the AO sums, so it collapses first and this is the stricter test.
+    if (!opts.lattice_opts.gamma_only_0) {
+        require_nonzero_lattice_image(
+            direct_lattice_cells(system, opts.lattice_opts.cutoff_bohr),
+            opts.lattice_opts.cutoff_bohr, "run_rhf_periodic");
+    }
 
     // The correlation-capture entry point has a stricter, allocation-free
     // preflight than ordinary SCF. It cannot be mistaken for full resource
@@ -1380,6 +1427,15 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
     validate_fraction_01("run_rks_periodic: fock_mixing",
                          opts.fock_mixing);
     const int nocc = n_elec_valence_rks / 2;
+
+    // See run_rhf_periodic above: a cell wider than cutoff_bohr leaves the
+    // translation ball holding only g = 0, and this driver would return a
+    // converged cluster labelled periodic (#133).
+    if (!opts.lattice_opts.gamma_only_0) {
+        require_nonzero_lattice_image(
+            direct_lattice_cells(system, opts.lattice_opts.cutoff_bohr),
+            opts.lattice_opts.cutoff_bohr, "run_rks_periodic");
+    }
 
     Functional func(opts.functional, /*spin=*/1);
     const double exchange_scale = func.hf_exchange_fraction();

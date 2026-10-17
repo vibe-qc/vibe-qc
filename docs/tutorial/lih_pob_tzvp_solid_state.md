@@ -4,7 +4,7 @@ A complete v0.5 solid-state calculation: build a real ionic crystal,
 run multi-k periodic RHF with the full Ewald Coulomb sum, read off
 properties (gap, bands, DOS), and visualize a crystalline orbital.
 LiH was the canonical testbed for the pob-TZVP basis (Peintinger,
-Vilela Oliveira & Bredow, 2013), so this tutorial doubles as a
+Vilela Oliveira & Bredow, 2013, {vibeqc-cite}`peintinger_pob_tzvp_2013`), so this tutorial doubles as a
 calibration check that your install reproduces the published numbers.
 
 **Wall:** ~5-15 min on a laptop, ~2-3 min on a 32-core box.
@@ -88,7 +88,9 @@ something else, double-check the atom assignment.
 ## Step 2: SCF with EWALD_3D + IBZ-reduced k-mesh
 
 Run periodic RHF with the unconditionally convergent Ewald Coulomb sum
-on a 4×4×4 Monkhorst-Pack mesh that spglib reduces to the irreducible
+({vibeqc-cite}`ewald_lattice_sum_1921`) on a 4×4×4 Monkhorst-Pack mesh
+({vibeqc-cite}`monkhorst_pack_1976`) that spglib
+({vibeqc-cite}`togo_shinohara_tanaka_2024`) reduces to the irreducible
 Brillouin zone:
 
 ```python
@@ -102,7 +104,7 @@ opts.max_iter = 80
 
 # 4×4×4 Monkhorst-Pack mesh, reduced to the IBZ via spglib.
 # Fm-3m at this mesh has only 4 irreducible k-points; the SCF is
-# 4× cheaper than the naïve 64-point full mesh.
+# 16× cheaper than the naïve 64-point full mesh.
 kpts = vq.KPoints.monkhorst_pack(system, [4, 4, 4], symmetry=True)
 print(f"k-mesh: 4×4×4 → {len(kpts)} IBZ points")
 
@@ -199,7 +201,7 @@ calculation route in
 
 ```{note}
 The path `vq.KPoints.band_path(system)` returns is the
-**HPKOT (Hinuma 2017)** standard, the same convention used by
+**HPKOT (Hinuma 2017)** standard ({vibeqc-cite}`hinuma_seekpath_2017`), the same convention used by
 Materials Project, AFLOW, and seekpath itself. Cross-checking
 your bands against published reference data is straightforward
 because the path is fixed by Bravais type.
@@ -318,7 +320,8 @@ real-space lattice-summed matrix
 $\mathbf{F}(\mathbf{k}) = \sum_\mathbf{T} e^{i\mathbf{k}\cdot\mathbf{T}}\mathbf{F}(\mathbf{T})$.
 This is the "build in real space, diagonalize in k-space" pattern
 that CRYSTAL pioneered for Gaussian crystalline orbitals
-([Periodic HF on a 1D H chain](periodic_hf.md) covers it in detail).
+({vibeqc-cite}`pisani_crystal_1988`; [Periodic HF on a 1D H chain](periodic_hf.md)
+covers it in detail).
 
 ### Why pob-TZVP
 
@@ -327,16 +330,20 @@ cc-pVTZ, …) include a long tail of small-exponent primitives that
 extend deep into neighboring cells and produce a near-singular
 overlap matrix when summed across the lattice. Stripping those
 primitives (or replacing them with sharper alternatives) gives
-**pob-\***, the "Periodic, Optimized, Bredow" family. Three variants
-ship today:
+**pob-\***, the family named for its authors Peintinger, (Vilela)
+Oliveira and Bredow. Three variants ship today:
 
 | Basis | Source | Strengths |
 |---|---|---|
-| pob-DZVP | Bredow group, 2013 | Cheapest; minimal redundancy |
 | **pob-TZVP** | PVO-Bredow, 2013 | Standard production basis; this tutorial |
-| pob-TZVP-rev2 | PVO-Bredow, 2018 | Refined valence space; pairs well with PBE |
-| pob-DZVP-rev2 | PVO-Bredow, 2018 | Cheaper rev2 variant |
+| pob-TZVP-rev2 | Vilela Oliveira et al., 2019 | Refined valence space; pairs well with PBE |
+| pob-DZVP-rev2 | Vilela Oliveira et al., 2019 | Cheaper rev2 variant |
 
+The original 2013 pob-DZVP is not bundled; `pob-dzvp-rev2` is the
+double-zeta member to use.
+
+The primary references are {vibeqc-cite}`peintinger_pob_tzvp_2013` for
+pob-TZVP and {vibeqc-cite}`vilela_oliveira_pob_rev2_2019` for the rev2 sets.
 For more on the design, see [Why solid-state calculations use `pob-TZVP`](pob_tzvp.md).
 
 ### Coulomb sum convergence in 3D
@@ -347,7 +354,8 @@ convergent**: in 3D it sums to different values depending on the
 shape over which you truncate (sphere, cube, slab). Direct truncation
 (`CoulombMethod.DIRECT_TRUNCATED`, vibe-qc's default for
 back-compat) gives shape-dependent energies and 0.1-1 Ha per-cell
-errors on bulk. The fix is **Ewald summation**, split each $1/r$
+errors on bulk. The fix is **Ewald summation**
+({vibeqc-cite}`ewald_lattice_sum_1921`), split each $1/r$
 into an erfc-screened short-range piece (real-space, exponential
 convergence) plus a Gaussian-charge long-range piece (FFT-based
 reciprocal-space convolution, exponential convergence too). vibe-qc's
@@ -358,10 +366,15 @@ H₂ / LiH / MgO / Ne reference cells, see
 ### IBZ reduction and the speed-up
 
 For an MP mesh of $N$ k-points and a system with point-group order
-$|G|$, the irreducible Brillouin zone contains roughly $N/|G|$
-distinct k-points (modulo time-reversal symmetry). Per-iteration
+$|G|$, the irreducible Brillouin zone of a large mesh contains roughly
+$N/|G|$ distinct k-points; small meshes keep more, because points on
+symmetry elements are fixed by part of the group (modulo time-reversal
+symmetry; the Bloch-basis
+relations between symmetry-equivalent k-points are those of
+{vibeqc-cite}`dovesi_symmetry_lcao_1986`). Per-iteration
 SCF cost scales as $O(N_\text{IBZ} \cdot N_\text{bf}^4)$, for LiH
-at 4×4×4 with $|G|=48$, that's a **16× saving** over the full mesh.
+at 4×4×4 with $|G|=48$ the IBZ keeps 4 of the 64 points (not
+$64/48 \approx 1.3$), a **16× saving** over the full mesh.
 
 Hex / trigonal cells have a subtle trap: the classical
 Monkhorst-Pack convention shifts even meshes by half a step, which
@@ -373,10 +386,13 @@ classical shift is fine and gets applied automatically.
 
 ## Next
 
-* **Phonons + thermochemistry of LiH.** Needs Phase 21 (periodic
-  phonons via finite-difference on top of Phase G1 periodic
-  gradients). G1a-e (the gradient stack) shipped in v0.6; periodic
-  phonons remain queued for a later v0.6.x or v0.7.
+* **Phonons + thermochemistry of LiH.** A q-resolved phonon
+  dispersion is not available yet. What exists is Gamma-point only:
+  the preview finite-displacement phonons of the GAPW route
+  (`vibeqc.periodic_gapw_phonon`) and the Gamma-point ZPE stage of the
+  cohesive-energy `VibeQcEngine`; see the
+  [vibrational analysis guide](../user_guide/vibrational_analysis.md)
+  and [cohesive energies](../user_guide/cohesive_energies.md).
 * **Full SCF bands** instead of Hcore bands. Use a helper documented for
   the selected SCF route; generic periodic results do not all expose the
   same real-space Fock representation. The current route table is in

@@ -175,6 +175,38 @@ class ShortRangeCorrection:
         HF-3c SRB = -0.035456180 Ha (-22.249 kcal/mol); B97-3c SRB =
         -0.005713243 Ha (-3.585 kcal/mol).
         """
+        return self._evaluate(atomic_numbers, positions)[0]
+
+    def evaluate_gradient(self, atomic_numbers, positions):
+        """Evaluate ``(E_SRB, dE_SRB/dR)`` (Hartree, Hartree/bohr).
+
+        The nuclear gradient of :meth:`evaluate`. Each pair energy is a
+        single exponential ``-qscal . (Z_A Z_B)^p . exp(-r0 . R)`` with a
+        pair-specific exponent ``r0`` (``rscal . r0ab^0.75`` for the HF-3c
+        base form, ``rscal / r0ab`` for the B97-3c modified form -- see
+        :meth:`evaluate`), so the pair gradient is its radial derivative
+        projected onto the pair vector::
+
+            dE_pair/dR_A = qscal (Z_A Z_B)^p r0 exp(-r0 R) (R_A - R_B)/R
+            dE_pair/dR_B = -dE_pair/dR_A
+
+        (Newton's third law keeps the array translationally invariant:
+        ``sum_A dE/dR_A = 0``). Mirrors :meth:`evaluate` pair-for-pair so
+        the two cannot drift; validated against a central finite difference
+        of the (grimme-lab/gcp-validated) energy and the published gradient
+        forms ``gcp.f90::basegrad`` / ``gcp.f90::srb_egrad2``.
+        """
+        import numpy as np
+
+        return self._evaluate(atomic_numbers, positions)
+
+    def _evaluate(self, atomic_numbers, positions):
+        """Shared per-pair loop returning ``(energy, gradient)`` (Ha, Ha/bohr).
+
+        Single source of truth for both :meth:`evaluate` and
+        :meth:`evaluate_gradient` so the gradient is by construction the
+        derivative of the reported energy.
+        """
         import numpy as np
 
         from ._d3_r0ab import r0ab
@@ -182,29 +214,39 @@ class ShortRangeCorrection:
         positions = np.asarray(positions, dtype=float)
         n = len(atomic_numbers)
         energy = 0.0
+        gradient = np.zeros((n, 3))
         for a in range(n):
             za = int(atomic_numbers[a])
             for b in range(a + 1, n):
                 zb = int(atomic_numbers[b])
-                R = float(np.linalg.norm(positions[a] - positions[b]))
+                dvec = positions[a] - positions[b]
+                R = float(np.linalg.norm(dvec))
                 if R < 1e-10:
                     continue
                 if self.kind == "hf3c_base":
                     # gcp.f90::basegrad -- HF-3c, Z=1..18 only.
                     if not (1 <= za <= 18 and 1 <= zb <= 18):
                         continue
+                    power = 1.5
                     r0 = self.rscal * r0ab(za, zb) ** 0.75
-                    energy -= (za * zb) ** 1.5 * np.exp(-r0 * R)
                 elif self.kind == "b973c_mod":
                     # gcp.f90::srb_egrad2 -- B97-3c, all elements.
+                    power = 0.5
                     r0 = self.rscal / r0ab(za, zb)
-                    energy -= (za * zb) ** 0.5 * np.exp(-r0 * R)
                 else:
                     raise ValueError(
                         f"ShortRangeCorrection: unknown kind {self.kind!r} "
                         f"(expected 'hf3c_base' or 'b973c_mod')."
                     )
-        return self.qscal * energy
+                zprod = (za * zb) ** power
+                exp_term = np.exp(-r0 * R)
+                # pair = -zprod * exp(-r0 R), so d(pair)/dR = +zprod r0 exp(-r0 R).
+                energy -= zprod * exp_term
+                d_pair_dR = zprod * r0 * exp_term
+                d_pair_d_R_a = d_pair_dR * dvec / R
+                gradient[a] += d_pair_d_R_a
+                gradient[b] -= d_pair_d_R_a
+        return self.qscal * energy, self.qscal * gradient
 
 
 @dataclass(frozen=True)
@@ -590,6 +632,105 @@ _register(CompositeRecipe(
                  "HSE-3c's own -- see [variants.hse-3c] in def2-msvp.toml.",
     ),
 ))
+
+
+def composite_correction_terms(
+    mol,
+    recipe: "CompositeRecipe",
+    charge: float = 0.0,
+) -> list:
+    """Return the composite recipe's post-SCF corrections as
+    ``(name, energy_Ha, gradient_(n_atoms, 3))`` tuples, in the order the
+    final single point applies them: D3-BJ or D4 (mutually exclusive per
+    recipe), then gCP (damped or plain), then SRB.
+
+    This is the single source of truth for the composite correction
+    surface: the ASE geometry optimiser (:class:`vibeqc.ase.VibeQC`) reads
+    its energy and forces from here, so the surface the optimiser walks is
+    by construction the same one the reported total is printed from
+    (runner's final single point). Every gradient is analytic where
+    available (D3-BJ / D4 / gCP / SRB) and translationally invariant
+    (``sum_A dE/dR_A = 0``).
+
+    Raises
+    ------
+    ImportError
+        If the recipe uses D4 but the optional ``dftd4`` backend is absent.
+    GCPDataMissing
+        If the recipe's gCP basis/element set is not bundled (propagated
+        from :func:`vibeqc.gcp.compute_gcp`).
+    """
+    import numpy as np
+
+    terms = []
+
+    # --- Dispersion: exactly one of D3-BJ / D4 -------------------------
+    if recipe.dispersion == "d3bj" and recipe.d3bj_damping is not None:
+        from .dispersion import D3BJParams, compute_d3bj
+
+        params = D3BJParams(
+            s6=recipe.d3bj_damping.s6,
+            s8=recipe.d3bj_damping.s8,
+            a1=recipe.d3bj_damping.a1,
+            a2=recipe.d3bj_damping.a2,
+            s9=recipe.d3bj_damping.s9,
+        )
+        disp = compute_d3bj(mol, params, with_gradient=True)
+        terms.append(
+            ("D3-BJ", float(disp.energy), np.asarray(disp.gradient, dtype=float))
+        )
+    elif recipe.dispersion == "d4":
+        from .dispersion_d4 import compute_d4, dftd4_available
+
+        if not dftd4_available():
+            raise ImportError(
+                f"composite recipe {recipe.name!r} requests D4 dispersion "
+                "but the optional 'dftd4' package is not installed.\n  "
+                "Install via `pip install -e '.[dispersion]'` or "
+                "`pip install dftd4`."
+            )
+        # dftd4 ships per-composite damping keyed on the composite name
+        # (e.g. 'r2scan-3c'), distinct from the parent-functional damping.
+        d4 = compute_d4(
+            mol, recipe.name, charge=float(charge), with_gradient=True
+        )
+        terms.append(("D4", float(d4.energy), np.asarray(d4.gradient, dtype=float)))
+
+    # --- gCP (damped or plain), if the recipe carries a gCP basis --------
+    if recipe.gcp_basis:
+        from .gcp import GCPDataMissing, compute_gcp
+
+        damping = (
+            (recipe.gcp_damping.dmp_scal, recipe.gcp_damping.dmp_exp)
+            if recipe.gcp_damping is not None
+            else None
+        )
+        try:
+            gcp = compute_gcp(
+                mol,
+                recipe.gcp_basis,
+                variant=recipe.gcp_variant,
+                damping=damping,
+                with_gradient=True,
+            )
+        except GCPDataMissing:
+            # The gCP per-element table is not bundled for this basis. The
+            # final single point handles the same gap by logging "SKIPPED"
+            # and continuing with E_gCP = 0, so the optimiser must drop the
+            # term too -- otherwise it would walk a surface the reported
+            # total is not printed from. (wb97x-3c / vdZP today.)
+            pass
+        else:
+            terms.append(("gCP", float(gcp.energy), np.asarray(gcp.gradient, dtype=float)))
+
+    # --- SRB (short-range bond), if the recipe carries one --------------
+    if recipe.sr_mod is not None:
+        atomic_numbers = [int(a.Z) for a in mol.atoms]
+        positions = [list(a.xyz) for a in mol.atoms]
+        e_srb, g_srb = recipe.sr_mod.evaluate_gradient(atomic_numbers, positions)
+        terms.append(("SRB", float(e_srb), np.asarray(g_srb, dtype=float)))
+
+    return terms
 
 
 def list_composites() -> list[CompositeRecipe]:

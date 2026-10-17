@@ -378,9 +378,13 @@ class SelectedCISolver:
                 f"{_seniority_zero_space} closed-shell (seniority-zero) "
                 f"determinants of this space and cannot represent open-shell "
                 f"configurations: its limit is the seniority-zero (DOCI) "
-                f"energy. If the target is the CAS/full-CI energy, this run "
-                f"cannot reach it -- rerun with spin_restricted=False (the "
-                f"default).",
+                f"energy. That energy depends on the orbital frame inside "
+                f"degenerate clusters (#322); vibe-qc's HF orbital provider "
+                f"fixes it (canonical frame: degenerate clusters aligned by "
+                f"second moments about the nuclear centre of charge), so "
+                f"compare it only with values computed on that frame. If the "
+                f"target is the CAS/full-CI energy, this run cannot reach it "
+                f"-- rerun with spin_restricted=False (the default).",
                 method="selected_ci",
             )
 

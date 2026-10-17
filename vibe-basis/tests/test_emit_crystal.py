@@ -6,9 +6,10 @@ and that emit_input_inline produces correct .d12 decks.
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -23,15 +24,25 @@ _BASIS_CRYSTAL_PATH = (
 
 @pytest.fixture(scope="module")
 def basis_crystal():
-    """Import basis_crystal.py directly, bypassing vibe-qc.__init__."""
-    spec = importlib.util.spec_from_file_location(
-        "vibeqc_basis_crystal", str(_BASIS_CRYSTAL_PATH)
-    )
-    # Patch: spec.loader.exec_module needs sys.modules entry for dataclass.
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["vibeqc_basis_crystal"] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    """Load the real parser and its element data without either package initializer."""
+    namespace = "_vibe_basis_crystal_test"
+    package_dir = _BASIS_CRYSTAL_PATH.parent
+    # Keep relative imports valid without importing the native QC extension or
+    # replacing a real vibeqc module another test may already have loaded.
+    with pytest.MonkeyPatch.context() as patch:
+        for name, directory in (
+            (namespace, package_dir),
+            (f"{namespace}.basis_toolkit", package_dir / "basis_toolkit"),
+        ):
+            package = ModuleType(name)
+            package.__path__ = [str(directory)]
+            patch.setitem(sys.modules, name, package)
+        try:
+            yield importlib.import_module(f"{namespace}.basis_crystal")
+        finally:
+            for name in tuple(sys.modules):
+                if name.startswith(f"{namespace}."):
+                    sys.modules.pop(name, None)
 
 
 @pytest.fixture
@@ -124,11 +135,8 @@ class TestEmitCrystal:
 class TestEmitInputInline:
     @pytest.fixture(scope="class")
     @classmethod
-    def mgo_crystal_basis(cls):
-        spec = importlib.util.spec_from_file_location("bc2", str(_BASIS_CRYSTAL_PATH))
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["bc2"] = mod
-        spec.loader.exec_module(mod)
+    def mgo_crystal_basis(cls, basis_crystal):
+        mod = basis_crystal
 
         mg = mod.parse_crystal_atom_basis_file(
             Path(__file__).resolve().parent.parent.parent

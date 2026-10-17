@@ -4,7 +4,8 @@ See also the [tutorial](../tutorial/dft_plus_u.md) for a worked
 transition-metal-oxide walkthrough.
 
 vibe-qc implements the **Dudarev rotationally-invariant** flavour of
-DFT+U on Mulliken-style AO projectors. The same surface works for
+DFT+U ({vibeqc-cite}`dudarev_dft_plus_u_1998`) on Mulliken-style AO
+projectors ({vibeqc-cite}`mulliken_1955`). The same surface works for
 molecular and periodic calculations, closed and open shell,
 energies and analytic gradients.
 
@@ -41,9 +42,11 @@ Gaussian AO bases the sandwich is load-bearing; without it the analytic
 gradient mismatches finite-difference by `O(10 mHa/bohr)` and the SCF
 converges to a non-variational stationary point.)
 
-Cite Dudarev *et al.* PRB **57**, 1505 (1998) for the rotationally-
+Cite Dudarev *et al.* PRB **57**, 1505 (1998,
+{vibeqc-cite}`dudarev_dft_plus_u_1998`) for the rotationally-
 invariant formulation, and Cococcioni & de Gironcoli PRB **71**, 035105
-(2005) for the linear-response prescription for `U_eff`, both fire
+(2005, {vibeqc-cite}`cococcioni_gironcoli_2005`) for the linear-response
+prescription for `U_eff`, both fire
 automatically into the run's `.bibtex` / `.references` when
 `dft_plus_u=` is set.
 
@@ -158,7 +161,7 @@ fires per spin per k internally.
 * Multi-k periodic RKS, energy.
 * Multi-k periodic UHF / UKS via the BIPOLE drivers, energy.
 
-## What's queued
+## Also wired: gradients and closed-shell BIPOLE
 
 * **Γ-only periodic +U gradient** is wired via
   `compute_gradient_periodic_rhf_gamma(..., dft_plus_u=[...])` and the
@@ -183,14 +186,16 @@ fires per spin per k internally.
 
 * **U is per (atom, l), not per orbital.** Passing `l=2` on a Ni
   atom in a basis whose `d`-channel actually has *two* shells (e.g.
-  a TZ basis with 4d outer-core polarisation in addition to 3d) puts
+  a TZ basis that splits the 3d into two contractions, or adds a
+  diffuse d polarisation shell) puts
   *all* of them in the same Mulliken block. If you want a single
   3d-shell projector you need a basis that doesn't expose the second.
 * **`U_ev` is in eV, `U_eff_hartree` (HartreeAU) is what the kernel
   uses internally.** The `HubbardSite` dataclass converts for you.
-* **Citation discipline (CLAUDE.md § 8).** When a job uses `+U`,
+* **Citations are automatic.** When a job uses `+U`,
   Dudarev 1998 + Cococcioni 2005 fire automatically into the
-  end-of-run citation block. Don't re-cite them by hand in tutorials.
+  end-of-run citation block; a script does not need to add them by
+  hand.
 
 ## See also
 

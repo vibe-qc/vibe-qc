@@ -2,19 +2,23 @@
 
 Every density-functional approximation is a model for the
 exchange-correlation energy $E_{\text{xc}}[\rho]$. They climb a
-well-known hierarchy, "Jacob's ladder", trading cost for physics:
+well-known hierarchy, "Jacob's ladder" (J. P. Perdew and K. Schmidt,
+*AIP Conf. Proc.* **577**, 1 (2001), doi:10.1063/1.1390175), trading
+cost for physics:
 
 | Rung | Input | Cost | Examples |
 |---|---|---|---|
 | 1. LDA | density $\rho$ only | cheapest | Slater, SVWN, PW92 |
 | 2. GGA | $\rho$ + $\nabla\rho$ | +~10% | PBE, BLYP, PW91 |
 | 3. meta-GGA | + $\tau = \sum_i \lvert\nabla\phi_i\rvert^2 / 2$ | +~20% | TPSS, SCAN, M06-L |
-| 4. hybrid | + fraction of HF exchange | +~2× | B3LYP, PBE0, M06-2X |
-| 5. range-separated hybrid | + long-range HF exchange | +~3× | ωB97X, CAM-B3LYP |
+| 4. hybrid | + fraction of HF exchange (global or range-separated) | +~2× | B3LYP, PBE0, M06-2X, ωB97X, CAM-B3LYP |
+| 5. double hybrid / RPA | + unoccupied (virtual) orbitals | + a post-SCF correlation step | B2PLYP, RPA |
 
 Going up the ladder usually improves accuracy at the cost of more
-compute per SCF step. vibe-qc currently supports rungs 1, 2, and 4
-(LDA, GGA, hybrid) via named functionals; anything libxc catalogs
+compute per SCF step. vibe-qc names functionals on all five rungs
+(LDA, GGA, meta-GGA, hybrid, and double hybrids, which run as `method=`
+keywords; see [MP2 and double hybrids](../user_guide/mp2_and_double_hybrids.md));
+anything libxc catalogs
 is also reachable through its numeric ID. This tutorial sweeps a set
 and compares them on water.
 
@@ -70,12 +74,14 @@ frontier-orbital levels (HF/6-31G\* experimental-geometry water):
 | hybrid (PBE0)  | −76.31857 | 1.971 |  −8.32 | +2.70 | 11.02 |
 
 Experimental reference: dipole 1.855 D (gas phase); vertical ionisation
-potential 12.6 eV ≈ −$\varepsilon_{HOMO}$ by Koopmans' theorem.
+potential 12.6 eV ≈ −$\varepsilon_{HOMO}$ by Koopmans' theorem
+(T. Koopmans, *Physica* **1**, 104 (1934),
+doi:10.1016/S0031-8914(34)90011-2).
 
 Reading across:
 
-- **Total energies drift**, LDA is too high (electronic correlation
-  is underestimated); GGAs drop ~0.3-0.5 Ha; BLYP sits lowest here,
+- **Total energies drift**, LDA is too high (LDA exchange is too small
+  in magnitude, which outweighs its overestimated correlation); GGAs drop ~0.3-0.5 Ha; BLYP sits lowest here,
   with B3LYP just above it (its 20 % exact exchange pulls back part
   of the GGA over-binding). Absolute totals aren't meaningful to
   compare across functionals, they live on different reference
@@ -92,11 +98,12 @@ Reading across:
   DFT gap-underestimation problem driven by self-interaction error.
 - **Hybrids sit in the middle** because they mix in ~20-25% exact HF
   exchange, which partially corrects both the self-interaction and
-  the overbound electrons. B3LYP (−7.95 eV) and PBE0 (−8.32 eV) are
+  the overbound electrons. B3LYP (−7.85 eV) and PBE0 (−8.32 eV) are
   much closer to experiment.
-- **B3LYP beats PBE on total energy** because the LYP correlation
-  functional is particularly well-parametrised for first-row
-  chemistry. This is an empirical match, not a systematic
+- **B3LYP's lower total energy than PBE's is not a ranking**: total
+  energies are not comparable across functionals (first bullet). The
+  LYP correlation functional is well parametrised for first-row
+  chemistry, but that is an empirical match, not a systematic
   improvement, don't extrapolate to transition metals.
 
 ```{figure} ../_static/plots/water-functional-comparison.png
@@ -137,7 +144,7 @@ functionals):
 
 ```python
 opts.functional = "406"          # PBE0 (XC_HYB_GGA_XC_PBEH)
-opts.functional = "402,101"      # separate X and C IDs, comma-separated
+opts.functional = "106,131"      # separate X and C IDs: B88 + LYP (= BLYP)
 ```
 
 Look up IDs at
@@ -148,17 +155,18 @@ meta-GGA family, `tpss`, `tpssh`, `m06-l`, `m06-2x`. The kinetic-
 energy density τ is built from the AO gradients on the DFT grid;
 parity to PySCF.dft is at grid-quadrature precision. See
 [`functionals.md`](../user_guide/functionals.md) § Meta-GGA
-functionals for the coverage matrix (periodic + analytic gradients
-still pending). Currently **still out of reach**: range-separated
-hybrids (ωB97X, ωB97X-D, ωB97X-V, CAM-B3LYP, HSE06), they need
-the range-separation machinery. Meta-GGAs that additionally depend
+functionals for the coverage matrix (the analytic Hessian is still
+pending). Range-separated hybrids (`wb97x`, `wb97x-d`, `hse06`) ship
+as well; the SCF builds a second, erf-attenuated exchange matrix
+beside the ordinary one (§ Range-separated hybrids in the same
+guide). Meta-GGAs that additionally depend
 on the density laplacian ∇²ρ (TB09, etc.) are also out of reach
 until the grid extends to second derivatives. Track status on
 the [roadmap](../roadmap.md).
 
 ## Cost across the ladder
 
-On water / 6-31G\* (11 basis functions; same machine, 12 OpenMP
+On water / 6-31G\* (18 basis functions; same machine, 12 OpenMP
 threads), SCF wall-clock time was roughly:
 
 | Method         | time (s) | iters |
@@ -271,11 +279,15 @@ $$
 
 where $\varepsilon_\text{xc}^\text{HEG}$ is the per-electron XC energy of
 the homogeneous electron gas, known analytically for exchange
-(Slater / Dirac formula) and numerically for correlation (Ceperley-
-Alder quantum Monte Carlo, 1980; VWN parametrisation, 1980).
+(Slater / Dirac formula, {vibeqc-cite}`dirac_local_exchange_1930`,
+{vibeqc-cite}`slater_x_1951`) and numerically for correlation
+(Ceperley-Alder quantum Monte Carlo, D. M. Ceperley and B. J. Alder,
+*Phys. Rev. Lett.* **45**, 566 (1980), doi:10.1103/PhysRevLett.45.566;
+VWN parametrisation, {vibeqc-cite}`vwn_1980`).
 vibe-qc's ``SVWN`` is Slater exchange + VWN5 correlation, the
-canonical LDA. LDA over-binds bonds by ~0.2 Å of length and ~10
-kcal/mol of dissociation energy on typical organics; now used mostly
+canonical LDA. LDA over-binds: bonds come out slightly too short
+(typically by 0.01 to 0.02 Å) and atomization energies too large,
+often by tens of kcal/mol on typical organics; now used mostly
 for teaching, quick screens, and metallic solids.
 
 ### GGA, adding the gradient
@@ -287,11 +299,13 @@ $$
 E_\text{xc}^\text{GGA}[\rho] = \int \rho \, \varepsilon_\text{xc}^\text{GGA}\bigl(\rho, |\nabla\rho|\bigr) \, \mathrm{d}^3 r.
 $$
 
-**PBE** (Perdew-Burke-Ernzerhof 1996) is the non-empirical GGA, 
+**PBE** (Perdew-Burke-Ernzerhof 1996, {vibeqc-cite}`pbe_1996`) is
+the non-empirical GGA, 
 every parameter fixed by physical constraints (UEG limit,
 Lieb-Oxford bound, correct slowly-varying expansion). Workhorse for
-periodic calculations. **BLYP** (Becke 1988 exchange + Lee-Yang-Parr
-1988 correlation) is an empirical GGA with different strengths, 
+periodic calculations. **BLYP** (Becke 1988 exchange,
+{vibeqc-cite}`becke_b88_1988`, + Lee-Yang-Parr 1988 correlation,
+{vibeqc-cite}`lee_yang_parr_1988`) is an empirical GGA with different strengths, 
 better for organic thermochemistry at the cost of transferability.
 
 ### Hybrid functionals and self-interaction
@@ -306,7 +320,10 @@ $$
 E_\text{xc}^\text{hybrid} = \alpha \, E_\text{x}^\text{HF} + (1 - \alpha) \, E_\text{x}^\text{GGA} + E_\text{c}^\text{GGA}.
 $$
 
-**B3LYP** (Becke 1993, reparametrised Stephens et al. 1994) uses
+**B3LYP** (Becke's 1993 three-parameter form, {vibeqc-cite}`becke_1993`,
+with LYP correlation substituted by Stephens et al. 1994,
+{vibeqc-cite}`stephens_b3lyp_1994`, who kept Becke's parameters; on the VWN
+flavour in the last term see {vibeqc-cite}`hertwig_koch_1997`) uses
 $\alpha = 0.20$ with three empirical coefficients fit to a
 thermochemistry benchmark; the "3" refers to three parameters:
 
@@ -314,9 +331,11 @@ $$
 E_\text{xc}^\text{B3LYP} = 0.20 \, E_\text{x}^\text{HF} + 0.80 \, E_\text{x}^\text{S} + 0.72 \, \Delta E_\text{x}^\text{B88} + 0.81 \, E_\text{c}^\text{LYP} + 0.19 \, E_\text{c}^\text{VWN}.
 $$
 
-**PBE0** (Adamo-Barone 1999) is parameter-free, PBE's GGA with a
-quarter of HF exchange mixed in on rigorous adiabatic-connection
-grounds:
+**PBE0** (Adamo-Barone 1999, {vibeqc-cite}`adamo_barone_pbe0_1999`)
+is parameter-free, PBE's GGA with a quarter of HF exchange mixed in on
+rigorous adiabatic-connection grounds (J. P. Perdew, M. Ernzerhof and
+K. Burke, *J. Chem. Phys.* **105**, 9982 (1996),
+doi:10.1063/1.472933):
 
 $$
 E_\text{xc}^\text{PBE0} = 0.25 \, E_\text{x}^\text{HF} + 0.75 \, E_\text{x}^\text{PBE} + E_\text{c}^\text{PBE}.
@@ -337,7 +356,9 @@ accurate. Different functionals are **different physical models for
 the same unknown object**. Benchmarking against CCSD(T) or
 experiment on a target system class is the only defensible way to
 choose. The [GMTKN55 benchmark](https://www.chemie.uni-bonn.de/grimme/de/software/gmtkn)
-(Grimme's group, 2017) is the canonical test set.
+(Grimme's group, 2017: L. Goerigk *et al.*, *Phys. Chem. Chem. Phys.*
+**19**, 32184 (2017), doi:10.1039/C7CP04913G) is the canonical test
+set.
 
 ## Resources
 
@@ -345,8 +366,8 @@ choose. The [GMTKN55 benchmark](https://www.chemie.uni-bonn.de/grimme/de/softwar
 four-functional H₂O sweep. Hybrid functionals (B3LYP, PBE0, M06)
 add ~30% over a pure GGA at this size due to the HF exchange
 contribution to the Fock build; range-separated hybrids
-($\omega$B97X-D) add another factor of ~2 because the long-range
-exchange goes through a separately-screened lattice sum.
+($\omega$B97X-D) add more, because the SCF builds a second,
+erf-attenuated exchange matrix beside the ordinary one.
 
 ## References
 
@@ -376,8 +397,9 @@ exchange goes through a separately-screened lattice sum.
   vibrational absorption and circular dichroism spectra using
   density functional force fields," *J. Phys. Chem.* **98**, 11623
   (1994). This is the paper that defines "B3LYP" as every code now
-  implements it (Becke's 1993 half-and-half mixed VWN for
-  correlation; Stephens et al. swap in LYP).
+  implements it (Becke's three-parameter fit used PW91 gradient
+  correlation; Stephens et al. swap in LYP, with VWN for the local
+  part).
 - **PBE0.** C. Adamo and V. Barone, "Toward reliable density
   functional methods without adjustable parameters: the PBE0
   model," *J. Chem. Phys.* **110**, 6158 (1999).

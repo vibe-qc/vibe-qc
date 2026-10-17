@@ -307,7 +307,12 @@ def test_pm6_formamide_dimer_reaches_hard_occupation_root_without_cooling():
 
     assert cold.converged
     assert result.converged
-    assert result.n_iter == cold.n_iter
+    # #154: the route now always probes for a second zero-temperature basin,
+    # so its iteration count carries that cost even when, as here, the probe
+    # agrees with the direct SCF and nothing is refused.  What must still
+    # match the direct run is the ROOT it reports: the zero temperature, the
+    # energy to 1e-12 Ha and the density trace below.
+    assert result.n_iter >= cold.n_iter
     assert result.electronic_temperature == 0.0
     assert result.energy == pytest.approx(cold.energy, abs=1.0e-12)
     assert np.trace(np.asarray(result.density)) == pytest.approx(36.0)
@@ -625,8 +630,7 @@ def test_scc_dftb_hcooh_trial_prefers_zero_temperature_relaxation():
     # charge fixed point before reaching that retry.
     #
     # 2026-08-12: the ladder rungs were re-pinned to the verified recipe
-    # (no DIIS, charge_mixing=0.05; see
-    # handovers/HANDOVER_SCC_DFTB_CONVERGENCE.md).  At the historical 0.2
+    # (no DIIS, charge_mixing=0.05). At the historical 0.2
     # mixing the T=0.0012 Ha rung stalls past the 500-iteration budget (619
     # needed); at 0.05 it converges in 332.  The converged fixed point is
     # unchanged -- only the path length differs.

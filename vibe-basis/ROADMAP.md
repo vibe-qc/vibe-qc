@@ -13,9 +13,8 @@ is the contract that keeps the two honest about it.
 
 | | |
 |---|---|
-| **Current version** | 0.4.0 (M-0 landed; M0 API + vibe-qc engine landed, gate open) |
+| **Current version** | 0.12.0 (M-0 done; code for M0, M1, M2 (0.11.0) and M3 (0.12.0) landed; the gates of M0 to M3 are open, see § 4) |
 | **1.0.0 criterion** | first production basis published from this driver + frozen backend/transport API ([`VERSIONING.md`](VERSIONING.md)) |
-| **Working tracker** | [`handovers/HANDOVER_BASISOPT.md`](../handovers/HANDOVER_BASISOPT.md) — current state, SHAs, blockers, asks |
 | **vibe-qc's roadmap** | [`docs/roadmap.md`](../docs/roadmap.md) § "OPTBASIS-style basis optimiser" |
 
 ---
@@ -143,8 +142,8 @@ vibe-basis bump the milestone earns.
 | **M-0** | Boundary cleanup + `EnergyEngine` protocol + CRYSTAL14→23 retarget | 0.3.0 | one engine abstraction; import-direction guard green; CRYSTAL23 `.out` round-trips with a version probe | ✅ **done** |
 | **M0** | Cohesive pipeline: relax → hybrid SP → ZPE → atoms → assemble | 0.4.0 | two-engine: CRYSTAL23 reproduces `E_pob` < 1 kJ/mol; then vibe-qc reproduces CRYSTAL23 < 2 kJ/mol | 🟡 **API (M0a) + `VibeQcEngine` (M0b) landed; gate open** |
 | **M1** | Γ-point ZPE on the Gaussian route (FD Hessian **from energies** — see BOC-2) | 0.4.x | MgO + NaCl optical modes within 5 cm⁻¹ of the GAPW route; acoustic within 15 cm⁻¹ of zero | 🟡 **driver + engine landed; gate open** |
-| **M2** | `CohesiveObjective` vs the PW limit | 0.5.0 | evaluating at pob-TZVP-REV2 reproduces MD −24.6 / MAD 35.4 kJ/mol (n=28) | ⬜ |
-| **M3** | **Topology search — the d/f scan** | 0.6.0 | Mg-d in MgO + Si-d in SiC: terminates, ranked Pareto front, **rediscovers the shipped pob topology** on a total-energy objective | ⬜ |
+| **M2** | `CohesiveObjective` vs the PW limit | 0.5.0 | evaluating at pob-TZVP-REV2 reproduces MD −24.6 / MAD 35.4 kJ/mol (n=28) | 🟡 **objective landed (0.11.0); rung 2a passes**: the published pob energies through `CohesiveObjective` give −24.58 / 35.40 with the static-lattice and counterpoise conventions pinned (`tests/basisset_dev/test_m2_gate_published_pob.py`); rung 2b, an engine reproducing those energies, is open (#224) |
+| **M3** | **Topology search — the d/f scan** | 0.6.0 | Mg-d in MgO + Si-d in SiC: terminates, ranked Pareto front, **rediscovers the shipped pob topology** on a total-energy objective | 🟡 **topology code landed (0.12.0); gate open** (#225) |
 | **M4** | Campaign orchestration on `vq` | 0.7.0 | 200-eval campaign survives a mid-run kill and resumes identically; zero writes into managed checkouts | ⬜ |
 | **M5** | Cross-validation ladder (Gaussian ↔ PW limit) | 0.8.0 | ≥ 28 systems, rungs 1/2/2′/3 + extrapolation residual demonstrably smaller than the gap it measures | ⬜ |
 | **M6** | Production run — the optimised basis | **1.0.0** | runs on `VibeQcEngine`; held-out MAD beats pob-TZVP-REV2's 35.4 kJ/mol by a stated margin at equal-or-lower primitive count | ⬜ |
@@ -171,7 +170,7 @@ stable view; that one moves.
 ## 5. Dependencies on vibe-qc
 
 None of these are vibe-basis's to fix. Each is owned by a vibe-qc dev chat and
-tracked in that chat's handover.
+documented in the dependency table below.
 
 | Id | Need | Blocks | Owner |
 |----|------|--------|-------|
@@ -274,11 +273,7 @@ library alongside, or go on the wishlist if it cannot be obtained.
 
 * [`README.md`](README.md) — what vibe-basis is, install, why a separate package.
 * [`VERSIONING.md`](VERSIONING.md) — the version line and the 1.0.0 criterion.
-* [`handovers/HANDOVER_BASISOPT.md`](../handovers/HANDOVER_BASISOPT.md)
-  — the working tracker: current state, SHAs, per-milestone detail, progress log.
 * [`docs/roadmap.md`](../docs/roadmap.md) — vibe-qc's own roadmap (§ 6 above).
 * [`docs/basisset_dev/`](../docs/basisset_dev/) — the basis-set development
   documentation set, incl. `GOAL8_MPEI_TZVP.md` (the 1.0.0 target basis) and
   `OPTIMISING_A_BASIS.md` (the in-process molecular optimiser user guide).
-* [`handovers/HANDOVER_GPAW_PW_REFERENCE.md`](../handovers/HANDOVER_GPAW_PW_REFERENCE.md)
-  — the PW-limit oracle this roadmap consumes.

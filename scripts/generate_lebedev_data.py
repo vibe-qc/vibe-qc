@@ -35,7 +35,11 @@ Standard tier ladder (matches the PySCF / ORCA / Q-Chem default ladder):
    35     434   default for heavier elements (PySCF level 3, period 3+)
    41     590   tight (PySCF level 5)
    47     770   very tight
-   53     974   extra-tight (rarely needed)
+   53     974   extra-tight
+   59    1202   angular convergence studies
+   65    1454   angular convergence studies
+   77    2030   angular convergence studies
+   95    3074   angular convergence studies
 
 Re-run after a scipy upgrade to verify the data still matches; commit
 diff = bug in scipy or data corruption.
@@ -51,7 +55,8 @@ from scipy.integrate import lebedev_rule
 
 # The full ladder the C++ code will expose. Adding more orders is
 # straight-forward — just extend this list.
-STANDARD_ORDERS = [5, 7, 11, 15, 17, 23, 27, 29, 31, 35, 41, 47, 53]
+STANDARD_ORDERS = [5, 7, 11, 15, 17, 23, 27, 29, 31, 35, 41, 47, 53,
+                   59, 65, 77, 95]
 
 
 def _format_block(order: int) -> tuple[str, int]:

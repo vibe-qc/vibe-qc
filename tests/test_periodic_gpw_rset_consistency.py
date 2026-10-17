@@ -4,7 +4,7 @@ Registry: GPW-SK-HK-RSET-INCONSISTENT (agentic-loop/bug-claims.md in the
 loop checkout). Follow-up to GPW-MULTIK-OVERLAP-NOT-PSD, whose validated
 overlap-cutoff remedy was backed out because completing the overlap lattice
 sum ALONE moved LiF/def2-SVP/(2,2,2)/PBE from -107.25 Ha to -125.43 Ha --
-"and nobody can explain it" (HANDOVER_GPW_MULTIK_OVERLAP_PSD.md).
+"and nobody can explain it" (the original investigation).
 
 The explanation, measured here with NO grid, NO SCF and NO density: the
 multi-k GPW drivers build the generalized-eigenproblem pencil

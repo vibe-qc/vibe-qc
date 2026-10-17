@@ -30,7 +30,7 @@ res = vq.run_periodic_job(
     method="aiccm",
     variant="real-gamma",                # real-gamma | chi | neutral-bloch | four-center
     functional=None,                     # None -> Hartree-Fock, a functional name -> Kohn-Sham
-    scf_reference=None,                  # None -> inferred; "rohf" | "roks" explicit
+    scf_reference=None,                  # None -> inferred; "rhf" | "uhf" | "rohf" | "roks" explicit
     aiccm_lattice_extension=(2, 2, 2),   # the Born-von Karman torus, every variant
     correlation=None,                    # None -> SCF only; mp2 | ccsd | dlpno-*
     output="lih-aiccm",
@@ -48,7 +48,7 @@ also refused rather than ignored.
 | `variant=` | what it runs | Hamiltonian | code path | status today |
 |---|---|---|---|---|
 | `"real-gamma"` | the neutral Gamma-CCM construction in its k-free real-Gamma supercell representation | neutral finite torus | `vibeqc.periodic.ccm.direct` through the per-unit-cell adapter `periodic/ccm/real_gamma_runner.py` | RHF, RKS, UHF, UKS; dim 3 only; `optimize=True` with a fixed cell works |
-| `"chi"` | chi-CCM, the finite-translation-group character construction on a Gamma-centred character mesh | neutral, chi-defined | `vibeqc.periodic.chi` | RHF, RKS, UHF, UKS; dim 3 only; `aiccm_backend="four_center" \| "ri" \| "rijcosx"` plus the `aiccm_symmetry*` and `aiccm_wigner_seitz_shells` keywords |
+| `"chi"` | chi-CCM, the finite-translation-group character construction on a Gamma-centred character mesh | neutral, chi-defined | `vibeqc.periodic.chi` | RHF, RKS, UHF, UKS; classic physical-pair RI ROHF; dim 3 only; `aiccm_backend="four_center" \| "ri" \| "rijcosx"` plus the `aiccm_symmetry*` and `aiccm_wigner_seitz_shells` keywords |
 | `"neutral-bloch"` | the same neutral construction as `real-gamma`, in the Bloch representation: the producer `run_ccm_*_gdf` on the torus mesh, through the adapter `periodic/ccm/neutral_bloch_runner.py` | neutral finite torus | `vibeqc.periodic.ccm.ri` | RHF, RKS, UHF, UKS; dim 3 only; the Gamma-centred mesh IS the torus; no gradients, no DFT+U, no restart |
 | `"four-center"` | the union-and-weight / Wigner-Seitz four-centre lineage (2014 AICCM, symmetrised) | bare 1/r on the torus | `vibeqc.periodic.ccm.scf`, `dft`, `uhf` through the adapter `periodic/ccm/four_center_runner.py` | RHF, RKS, UHF, UKS; dim 3 only; HF on the scalable builder; no gradients, DFT+U or mixing controls |
 
@@ -95,8 +95,9 @@ res = vq.run_periodic_job(
 )
 ```
 
-Today the vocabulary is `"mp2"` and `"ccsd"`, wired on
-`variant="four-center"` and `variant="real-gamma"`. The driver is chosen to
+Today the vocabulary is `"mp2"`, `"ccsd"`, `"dlpno-mp2"` and `"dlpno-ccsd"`,
+wired on `variant="four-center"` (the first two), `variant="real-gamma"` and
+`variant="neutral-bloch"`. The driver is chosen to
 **match the construction the SCF ran**, never to substitute another one, so
 each arm cites its own lineage:
 
@@ -108,6 +109,10 @@ each arm cites its own lineage:
 | `"real-gamma"` | `"ccsd"` | neutral fitted torus | `aiccm2026dev-a-ri-ccsd(t)` |
 | `"real-gamma"` | `"dlpno-mp2"` | neutral fitted torus | `aiccm2026dev-a-dlpno-mp2` |
 | `"real-gamma"` | `"dlpno-ccsd"` | neutral fitted torus | `aiccm2026dev-a-dlpno-ccsd(t)` |
+| `"neutral-bloch"` | `"mp2"` | neutral fitted torus | `aiccm2026dev-a-ri-mp2` |
+| `"neutral-bloch"` | `"ccsd"` | neutral fitted torus | `aiccm2026dev-a-ri-ccsd(t)` |
+| `"neutral-bloch"` | `"dlpno-mp2"` | neutral fitted torus | `aiccm2026dev-a-dlpno-mp2` |
+| `"neutral-bloch"` | `"dlpno-ccsd"` | neutral fitted torus | `aiccm2026dev-a-dlpno-ccsd(t)` |
 
 Open-shell clusters take the `u` siblings of those rows automatically
 (`aiccm2026dev-a-ri-ump2`, `-ri-uccsd(t)`, `-dlpno-ump2`, `-dlpno-uccsd(t)`).
@@ -123,7 +128,8 @@ stamps a bare four-centre open-shell CCSD route. On `real-gamma` open-shell
 CCSD **does** run: `run_ccm_uccsd` being neutral-only is precisely what makes
 it right on that reference. `"mp2"` has an open-shell driver on both arms.
 
-The two `dlpno-*` treatments are **`real-gamma` only**, and the reason is
+The two `dlpno-*` treatments are **fitted-reference only** (`real-gamma`
+and `neutral-bloch`), and the reason is
 structural rather than a gap: DLPNO screens pair energies on a fitted
 reference and every driver takes the neutral `cderi`, while the bare
 four-centre operator has no RI decomposition -- which is exactly why that arm
@@ -142,13 +148,40 @@ building a second one -- on `real-gamma` the adapter keeps the neutral
 number reported is the correlation *of the energy printed beside it*, by
 identity rather than by two builds agreeing.
 
-`variant="neutral-bloch"` refuses, and for a reason worth knowing: its
-reference is the per-k Bloch representation while the correlation drivers
-work in the real-Gamma supercell space. Ruling R1 makes `real-gamma` the
-**same neutral Hamiltonian** in the representation those drivers speak, so
-the refusal names it as an exact substitute. `variant="chi"` refuses as
-simply not yet wired; its drivers stay reachable as
-`vibeqc.periodic.chi.posthf`.
+`variant="neutral-bloch"` correlates through Theorem 1 (since 2026-09-25;
+it used to refuse). Its reference is the per-k Bloch representation while
+the correlation drivers work in the real-Gamma supercell space, and ruling
+R1 makes the two the **same neutral Hamiltonian**: the arm runs the multi-k
+SCF with its classic per-pair fit retained, folds overlap, core
+Hamiltonian, Fock and density onto the supercell (the inverse finite
+Fourier transform of the torus), builds real S-orthonormal canonical
+supercell orbitals from every time-reversal pair or self-paired mesh
+point, folds the driver's own fit to the supercell `cderi` (a rotation,
+not a refit) and hands that reference to the same neutral-RI drivers the
+`real-gamma` arm uses. The transform checks itself (fold realness,
+orthonormality, Fock diagonality, eigenvalues, density, electron count,
+integer occupations) and refuses a reference that fails; the `.out`
+names the representation and the manifest records the residuals
+(`aiccm_correlation_reference`, `aiccm_bloch_fold_*`, see
+[output files](output_files.md)). One SCF then serves both the Bloch-side
+artefacts (DOS, bands) and the correlation, and the eigenproblem is `N_c`
+matrices of size `n` instead of one of size `N_c·n`. On the small tori
+measured, LiH and MgO at (2,2,2), the two SCFs cost the same, because both
+producers now build the same shared-q fit. The identity of the
+correlation energies from the two producers is pinned at 1e-9 Ha/cell in
+`tests/test_ccm_bloch_reference.py`; `real-gamma` stays the independent
+validation producer. The same transform serves the library:
+`vibeqc.periodic.ccm.ccm_reference_from_bloch` turns a
+`run_ccm_{rhf,rks,uhf,uks}_gdf` result into the object
+`run_ccm_rhf_direct` returns, every correlated entry point accepts a
+Bloch result directly, and the one-call wrappers `run_ccm_ri_mp2`,
+`run_ccm_ri_ccsd` and `run_ccm_dlpno_mp2_direct` default to
+`reference="bloch"` (closed-shell unit cells; `"direct"` and `"neutral"`
+stay selectable). `variant="chi"` has separate admitted explicit-source
+[MP2/UMP2](aiccm2026dev_b.md#r51-same-source-canonical-mp2-and-ump2),
+[ROHF RMP2](../chi_rohf_mp2.md) and [RHF/UHF CCSD(T)](../chi_ccsd.md)
+routes. Their classic sources support [persistent restart](../chi_restart.md);
+legacy `vibeqc.periodic.chi.posthf` entries retain their separate scope.
 
 `correlation="mp2"` needs a Hartree-Fock reference; with a `functional=`
 set, the inferred reference is RKS or UKS and the request fails closed
@@ -170,16 +203,25 @@ derived the way the library's `run_ccm_scf` already derives it:
 * The system decides restricted versus unrestricted: a multiplicity of 1
   with an even electron count is restricted (RHF or RKS); any other
   multiplicity, or an odd electron count, is unrestricted (UHF or UKS).
+* `scf_reference="rhf"` or `"uhf"` asks for a Hartree-Fock reference
+  explicitly, on every variant, so both reject a `functional`. `"uhf"` is
+  mainly useful on a closed-shell singlet, which the rule above would run as
+  RHF. `"rhf"` on an odd electron count is refused by the closed-shell check
+  rather than changed to UHF. Kohn-Sham references have no explicit
+  spelling: `functional=` selects them and the system decides restricted
+  versus unrestricted.
 * `scf_reference="rohf"` or `"roks"` asks for the restricted open-shell
   references explicitly (`"rohf"` rejects a `functional`, `"roks"` requires
-  one). No variant implements them today, so the request fails closed with
-  the runner's ROHF/ROKS refusal rather than being downgraded.
+  one). Classic physical-pair RI chi supports ROHF under its
+  [shared-orbital contract](../chi_rohf_mp2.md). Other ROHF/ROKS combinations
+  retain their capability refusals.
 
 The keyword is not called `reference`: on the library correlation drivers
 that name already means the correlation reference (`"neutral"` versus
-`"direct"`). A broken-symmetry UHF on a closed-shell singlet cannot be
-expressed through the front door; the deprecated `jk_method` spellings with
-an explicit `method="UHF"` still reach it.
+`"direct"`). A UHF reference on a closed-shell singlet is requested with
+`scf_reference="uhf"`. That alone does not break the spin symmetry: from a
+spin-symmetric initial guess the UHF iterations can stay on the restricted
+solution.
 
 ## The torus
 
@@ -191,6 +233,36 @@ k-mesh argument `kpoints=` stays an accepted alias for the torus mesh
 rule is "the real-space control or the legacy k-mesh alias, not both", and a
 shifted mesh is rejected because the mesh defines the torus, not a Bloch
 sampling.
+
+## The transverse vacuum of a padded cell
+
+The two neutral producers refuse a cell declared 3-D whose atom positions
+leave an empty slab above 25 bohr (and above four times the shortest lattice
+vector) along a lattice direction, because the 3-D neutral construction then
+corrects for periodic images that do not exist and the energy becomes a
+padding artefact (the measured-dimensionality guard, IID 291). Since ruling
+R6 (2026-09-10) the transverse vacuum of a chain is a *parameter whose
+convergence is tested*, so the guard has an explicit opt-in:
+
+```python
+run_periodic_job(system, basis, method="aiccm", variant="neutral-bloch",
+                 aiccm_lattice_extension=(4, 1, 1),
+                 aiccm_allow_vacuum_padding=True, output="chain_L40")
+```
+
+With the opt-in the run proceeds, emits an `AICCMVacuumPaddingWarning`
+naming the padded lattice directions, prints `allow_vacuum_padding = True`
+in the `.out` header, and records `aiccm_allow_vacuum_padding = true` and
+`aiccm_vacuum_padded_axes = "[2, 3]"` (the 1-based lattice directions that
+measured as vacuum) in the `.system` manifest. The library drivers take the
+same switch as `allow_vacuum_padding=True` and stamp the result with
+`vacuum_padding_allowed` and `vacuum_padded_axes`. Three things do not
+change: the default is off, so an unmarked padded run is still refused; the
+keyword is refused on `four-center` and `chi`, which carry no such guard, so
+it can never be silently ignored; and the second arm of IID 291, the refusal
+of a converged *positive* energy on a neutral cell, stays in force. A
+padded-regime energy is reportable only together with the padding it was
+computed at, which is why the record carries it.
 
 ## Convergence keywords
 
@@ -217,10 +289,120 @@ so an explicit `damping=`, `fock_mixing=`, `fmixing_percent=`,
 `density_mixer=` or `level_shift=` on that variant raises;
 `dynamic_damping=` is chi-only, as before. The real-gamma adapter forwards
 neither the DIIS controls (`use_diis`, `diis_start_iter`,
-`diis_subspace_size`) nor `initial_guess` / `solver`; those keep their
-defaults on that variant. `convergence="auto"` is wired for the GDF and
+`diis_subspace_size`) nor `solver`; those keep their defaults on that
+variant. It forwards `initial_guess`: HCORE (the AUTO default), a prepared
+READ density, and an explicit SAD built on the supercell (see
+[initial guesses](initial_guess.md#real-gamma-ccm-prepared-density)).
+Both neutral variants take `fit_source="sr"`, the multi-k driver's default
+SR/LR fit, which needs no RSGDF tail on core-heavy cells; the two variants
+then record one neutral-source identity. The classic fit remains their
+default (#519 RG-12). `convergence="auto"` is wired for the GDF and
 BIPOLE routes only and is reported as "plain defaults" on every AICCM
 variant.
+
+## The real-Gamma producer in Python
+
+The front door runs the real-Gamma producer with its defaults. The library
+drivers `run_ccm_rhf_direct`, `run_ccm_rks_direct`, `run_ccm_uhf_direct` and
+`run_ccm_uks_direct` in `vibeqc.periodic.ccm.direct` take the controls
+below (#519). Only the fit, one-electron and XC sources change the
+Hamiltonian, and each of them enters the neutral-source identity, so a
+comparison across two sources is refused by identity instead of averaged.
+
+### Storage of the fitted integrals
+
+| `cderi_storage=` | what is kept | use |
+|---|---|---|
+| `"dense"` (default) | the supercell tensor `L[P, mu, nu]` | the reference; memory grows as `N_c^3` |
+| `"block"` | one block per transfer `q` of the block-circulant torus | `N_c > 1`; J and K are built per channel |
+| `"block-star"` | only the fits the k-pair star plan builds, every other member as a recipe on its representative; the `q = 0` channel whole | symmetric cells; implies `cderi_symmetry=True` |
+
+The three storages are one operator. J and K agree to rounding on any
+density, including one without the crystal symmetry, because the auxiliary
+map of a star member is unitary and cancels in the exchange sum; the storage
+is therefore not part of the source identity. `cderi_info["star_storage"]`
+records the stored and total fit counts and the build's recipe check. The
+front door selects the storage with
+`run_periodic_job(..., method="aiccm", variant="real-gamma",
+aiccm_cderi_storage="block")` and records it in the `.system` manifest as
+`cderi_storage_executed`; dense stays the default, and a job with
+`correlation=` keeps the dense array its treatment reads.
+
+`exchange_wedge=True` (block or star storage built with symmetry) builds the
+exchange at one bra per k-star and transports it to the others,
+`K(Rk) = Om K(k) Om^H`. That identity needs a density with the star plan's
+symmetry, so every call first measures the density's distance from it and
+builds the full exchange when the distance is above `1e-10` of the density's
+scale. `cderi_info["exchange_wedge"]` counts the calls, the wedge builds and
+the fallbacks.
+
+### Fit, one-electron and XC sources
+
+`fit_source=` takes a fold source object:
+
+* `ClassicRSGDFFitSource` (the default), the classic all-reciprocal fit of
+  the multi-k GDF driver with its auto-sized high-|G| tail;
+* `RangeSeparatedFitSource()`, the SR/LR range-separated fit of Ye and
+  Berkelbach (J. Chem. Phys. 154, 131104 (2021)), planned from a raw
+  integral error and needing no tail; the front door's `fit_source="sr"`;
+* `MANTAFitSource(options, reciprocal_energy_cutoff)`, MANTA's periodic GDF
+  tiles. Its Bloch control is MANTA's own whole-mesh RI method.
+
+The classic fit takes its AO pairs from a ball of lattice cells of radius
+`lat_opts.cutoff_bohr` (15 bohr by default) around the origin (#466). On cells
+with diffuse shells that truncates pair densities once the torus resolves
+them: LiH/STO-3G at `(3,3,3)` moves by 161 uHa/cell between a 15 and a
+25 bohr list and is converged at 25 bohr. Give both producers the larger
+`lat_opts.cutoff_bohr`, or use the SR fit, which has no such ball; its build
+is still slow at `N_c > 1` (#543).
+
+With the MANTA fit, `oneelectron=MANTAOneElectronSource(...)` takes the
+overlap, core Hamiltonian and nuclear repulsion from MANTA too, and the KS
+drivers take `xc_source=MANTAXCSource(...)` for MANTA's semilocal XC on its
+own image domain. Together they reproduce MANTA's fitted HF and KS energies
+per cell. The classes live in `vibeqc.periodic.ccm.fit_source`,
+`vibeqc.periodic.ccm.one_electron_source` and
+`vibeqc.periodic.ccm.xc_source`.
+
+`run_ccm_rks_direct(xc_torus_complete=True)` (and the UKS sibling) sums the
+XC density over every pair of images that reaches a grid batch, through the
+torus residue of the pair, instead of the pair graph truncated at the XC
+image domain. That is the domain-converged XC term, and much cheaper on cells
+with diffuse shells: LiH/STO-3G PBE at `(1,1,1)` converges in 40 s instead of
+444 s, 2.9e-11 Ha/cell away. It is opt-in because the Bloch producer keeps the
+truncated pair graph, so the two differ by the domain's truncation (up to
+about 1e-10 Ha/cell) and record different neutral-source identities.
+
+### Initial guess and state selection
+
+The default guess is HCORE. `initial_guess="sad"` builds the superposition
+of atomic densities on the supercell, and `initial_density=` takes a
+prepared READ density, for example the Bloch reference folded by
+`ccm_reference_from_bloch`. An ionic cell started from HCORE can converge to
+a saddle point: MgO/pob-DZVP-rev2 at `(1,1,1)` lands about 0.26 Ha/cell
+above the ground state, with a negative singlet stability eigenvalue.
+
+`run_ccm_rhf_direct(stability_check=True)` evaluates the lowest RHF
+orbital-Hessian eigenvalues in the singlet and triplet sectors after
+convergence and stamps the molecular drivers' verdict fields
+(`stability_checked`, `stability_eigenvalue`, `internal_instability`).
+`follow_instability=True` rotates the occupied orbitals along a
+translation-invariant singlet mode below `-stability_tol`, keeps the lowest
+energy of an angle scan and converges again, at most
+`max_instability_follow` times (default 3); `instability_follow` records
+the steps. The runner arm `run_real_gamma_scf` takes the same two switches,
+and the `.system` manifest records the frontier gap as `frontier_gap_ha`.
+
+### Cross-code evidence
+
+`studies/aiccm-2026/ladder_pyscf.py` compares the real-Gamma energy per cell
+with PySCF's KRHF on the same Gamma-centred mesh, with vibe-qc's AO and
+auxiliary shells transported to PySCF and `exxdiv='ewald'` on both sides. On
+diamond, LiH, MgO and fcc Be (STO-3G) from `(1,1,1)` to `(2,2,2)` and MgO
+pob-DZVP-rev2 at `(1,1,1)`, the SR fit agrees with PySCF's range-separated GDF
+to 18 uHa/cell or better, the size of PySCF's own spread between its two fits.
+The classic fit sits 32 to 215 uHa/cell above PySCF's GDF, its documented
+dense-core floor. The measured tables are in the study's README.
 
 ## Legacy selector spellings
 
@@ -254,7 +436,33 @@ convention record (`exchange_q0`, torus size, representation; see
 [output files](output_files.md)). `neutral-bloch` adds the fit accounting
 that makes the two producers auditable against each other:
 `lpq_pair_symmetry`, `gdf_pair_builds`, `gdf_pair_total`,
-`gdf_pair_reduction_factor` and `rsgdf_tail_ke_cutoff_executed`. The
+`gdf_pair_reduction_factor`, `rsgdf_tail_ke_cutoff_executed` and
+`rsgdf_fit_source_executed`; `real-gamma` records the last two as well.
+Both record `neutral_source_identity`, one digest of the whole operator
+(#519): a Theorem-1 pair must agree on it before its energies are compared.
+Without the star reduction both pair counts are the number of `(k_i, k_j)`
+fit tensors the multi-k driver built, read from its result
+(`gdf_cderi_pairs`), not re-derived from its routing. The
+two producers must agree on the tail and on the fit source, or they are not
+one operator: since v0.17.1 the multi-k driver's default source for 3-D cells
+is its range-separated fit (`sr`), while the real-Γ fold builds the classic
+all-reciprocal fit, so the `neutral-bloch` producer pins `classic` and reads
+the executed source back from the driver (vibe-qc #378). Pass
+`fit_source="sr"` to the front door to run the driver's own default
+deliberately; it is a different fitted operator.
+Both neutral
+variants record the vacuum opt-in (`aiccm_allow_vacuum_padding`,
+`aiccm_vacuum_padded_axes`). Every periodic run whose producer keeps a
+per-cycle trace also records the convergence it actually reached, beside
+the thresholds it was compared against: `scf_cycles_recorded`,
+`scf_final_delta_e_ha`, `scf_final_residual` and
+`scf_final_residual_metric` (`max_abs_orthonormalised_commutator` for the
+real-Gamma and lean neutral loops, `gradient_norm` for the multi-k driver
+behind `neutral-bloch`; `not-recorded` where the loop keeps no trace). The
+`[vibeqc]` section carries `native_core_sha256` and `native_core_bytes`,
+the checksum of the compiled core the process actually loaded, so the
+three-layer build identity (release, source revision, core checksum) is read
+from the run without an out-of-tree wrapper. The
 references block cites the variant's own route (`real-gamma`,
 `neutral-bloch`, `aiccm2026dev-a`, or `aiccm2026dev-b`) rather than a plain
 periodic SCF.
@@ -278,7 +486,9 @@ periodic SCF.
   carry the neutral-torus guards: a cell declared 3-D whose transverse
   directions are measured as pure vacuum (a gap above 25 bohr and above the
   ratio to the shortest lattice vector) and a converged POSITIVE energy on a
-  neutral cell are refused rather than reported.
+  neutral cell are refused rather than reported. The first refusal has the
+  explicit, warned, recorded opt-in `aiccm_allow_vacuum_padding=True`
+  described above; the second has none.
 * None of `real-gamma`, `neutral-bloch` and `four-center` forwards a mixing
   control, so an explicit `damping`, `fock_mixing`, `fmixing_percent`,
   `density_mixer` or `level_shift` fails closed on all three rather than
@@ -290,11 +500,12 @@ periodic SCF.
   open-shell comparison between the variants at a larger torus needs an
   explicit spin-state decision first.
 * Post-HF from the runner is `correlation="mp2"` or `"ccsd"` on
-  `variant="four-center"` and `variant="real-gamma"` (see
-  [Correlation](#correlation)), plus `"dlpno-mp2"` / `"dlpno-ccsd"` on
-  `real-gamma`. Correlation on `chi` stays library-only; `neutral-bloch` has
-  no runner arm by representation rather than by schedule. Those are later
-  milestones.
+  `variant="four-center"`, `variant="real-gamma"` and
+  `variant="neutral-bloch"` (see [Correlation](#correlation)), plus
+  `"dlpno-mp2"` / `"dlpno-ccsd"` on the two fitted producers. On
+  `neutral-bloch` the reference is the Bloch SCF folded to real-Gamma
+  orbitals (Theorem 1). Chi has separate admitted same-source canonical
+  correlation routes described above.
 * External full-grid XC is available on the `real-gamma`, `four-center`, and
   four-center-backed `chi` KS routes described above; `neutral-bloch` fails
   closed pending representation-invariance evidence.
@@ -321,3 +532,17 @@ periodic SCF.
   and the parity policy.
 * [chi-CCM decisions log](../aiccm2026dev_b_decisions.md): D56, D74, D89,
   D90, D124.
+
+The explicit classic chi route also provides a shared-orbital ROHF reference
+and Knowles RMP2 including singles. Select `scf_reference="rohf"` and
+`correlation="mp2"` with the [ROHF/RMP2 controls](../chi_rohf_mp2.md).
+Scientific acceptance is pending and ROHF-CC remains unsupported.
+
+Classic chi HF and admitted canonical correlation also provide
+[source-preserving `.vqr` restart](../chi_restart.md). The four explicit paths
+are `chi_reference_checkpoint`, `chi_reference_from`,
+`chi_correlation_checkpoint` and `chi_correlation_resume`;
+`chi_checkpoint_interval` controls complete iteration/work-unit publication.
+Accepted-reference reconstruction is distinct from a convergence-required
+guess, and neither storage integrity nor successful continuation establishes
+scientific acceptance.

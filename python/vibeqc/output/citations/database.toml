@@ -61,7 +61,42 @@ bibtex_key  = "valeev_libint"
 authors     = ["Valeev, Edward F."]
 title       = "Libint: A library for the evaluation of molecular integrals of many-body operators over Gaussian functions"
 url         = "https://github.com/evaleev/libint"
-notes       = "Underlies all Gaussian integral evaluation in vibe-qc."
+notes       = "Default Gaussian integral provider and shared Gaussian basis adapter in vibe-qc."
+
+[entries.neese_bubblepole_2025]
+kind        = "article"
+bibtex_key  = "neese_bubblepole_2025"
+authors     = ["Neese, Frank", "Colinet, Pauline", "DeSouza, Bernardo", "Helmich-Paris, Benjamin", "Wennmohs, Frank", "Becker, Ute"]
+title       = "The Bubblepole (BUPO) Method for Linear-Scaling Coulomb Matrix Construction with or without Density Fitting"
+journal     = "The Journal of Physical Chemistry A"
+year        = 2025
+volume      = "129"
+pages       = "2618-2637"
+doi         = "10.1021/acs.jpca.4c07415"
+notes       = "Bubble hierarchy and extent motivation; the MANTA absolute 3D polynomial envelope is a documented implementation extension."
+
+[entries.higham_matrix_functions_2008]
+kind        = "book"
+bibtex_key  = "higham_matrix_functions_2008"
+authors     = ["Higham, Nicholas J."]
+title       = "Functions of Matrices: Theory and Computation"
+publisher   = "Society for Industrial and Applied Mathematics"
+year        = 2008
+url         = "https://nhigham.com/2020/06/23/what-is-a-frechet-derivative/"
+notes       = "Chapter 3: spectral Frechet derivatives. MANTA applies divided differences to a locally fixed retained rank, including projector motion."
+
+[entries.neese_shark_2023]
+kind        = "article"
+bibtex_key  = "neese_shark_2023"
+authors     = ["Neese, Frank"]
+title       = "The SHARK integral generation and digestion system"
+journal     = "Journal of Computational Chemistry"
+volume      = "44"
+issue       = "3"
+pages       = "381-396"
+year        = "2023"
+doi         = "10.1002/jcc.26942"
+notes       = "Matrix formulation of MD integrals. Citing this formulation does not imply that every SHARK schedule is implemented in MANTA."
 
 # --- DFTB0 (Porezag et al. 1995) ------------------------------------
 [entries.porezag_dftb0_1995]
@@ -284,6 +319,17 @@ notes       = "The STO-NG Gaussian expansions. Routed from the STO-3G / STO-6G b
 
 
 # --- libxc ----------------------------------------------------------
+[entries.neumann_semilocal_1996]
+kind = "article"
+bibtex_key = "neumann_semilocal_1996"
+authors = ["Neumann, Ralf", "Nobes, Robert H.", "Handy, Nicholas C."]
+title = "Exchange functionals and potentials"
+journal = "Molecular Physics"
+volume = "87"
+pages = "1-36"
+year = 1996
+doi = "10.1080/00268979600100011"
+
 [entries.libxc_2018]
 kind        = "article"
 bibtex_key  = "lehtola_libxc_2018"
@@ -530,6 +576,45 @@ issue       = 27
 pages       = "2364--2376"
 year        = 2019
 doi         = "10.1002/jcc.26013"
+
+[entries.laun_pob_rev2_fifth_period_2022]
+kind        = "article"
+bibtex_key  = "laun_pob_rev2_fifth_period_2022"
+authors     = ["Laun, Joachim", "Bredow, Thomas"]
+title       = "BSSE-corrected consistent Gaussian basis sets of triple-zeta valence with polarization quality of the fifth period for solid-state calculations"
+journal     = "Journal of Computational Chemistry"
+volume      = 43
+issue       = 12
+pages       = "839--846"
+year        = 2022
+doi         = "10.1002/jcc.26839"
+notes       = "The 16 pob-TZVP-rev2 Rb-I records (Rb Sr Y Zr Nb Mo Ru Rh Pd Ag Cd In Sn Sb Te I) with their Stuttgart-Cologne ECPs; metadata verified against Crossref 2026-09-24 (#288)."
+
+[entries.laun_pob_rev2_sixth_period_2021]
+kind        = "article"
+bibtex_key  = "laun_pob_rev2_sixth_period_2021"
+authors     = ["Laun, Joachim", "Bredow, Thomas"]
+title       = "BSSE-corrected consistent Gaussian basis sets of triple-zeta valence with polarization quality of the sixth period for solid-state calculations"
+journal     = "Journal of Computational Chemistry"
+volume      = 42
+issue       = 15
+pages       = "1064--1072"
+year        = 2021
+doi         = "10.1002/jcc.26521"
+notes       = "The 15 pob-TZVP-rev2 Cs-Ba and Hf-Po records (Cs Ba Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po) with their Stuttgart-Cologne ECPs; metadata verified against Crossref 2026-09-24 (#288)."
+
+[entries.seidler_pob_rev2_lanthanides_2023]
+kind        = "article"
+bibtex_key  = "seidler_pob_rev2_lanthanides_2023"
+authors     = ["Seidler, Leopold Maximilian", "Laun, Joachim", "Bredow, Thomas"]
+title       = "BSSE-corrected consistent Gaussian basis sets of triple-zeta valence quality of the lanthanides La-Lu for solid-state calculations"
+journal     = "Journal of Computational Chemistry"
+volume      = 44
+issue       = 15
+pages       = "1418--1425"
+year        = 2023
+doi         = "10.1002/jcc.27097"
+notes       = "The 15 pob-TZVP-rev2 La-Lu records with their Stuttgart-Cologne ECPs; metadata verified against Crossref 2026-09-24 (#288)."
 
 # --- Pople-style basis sets (STO-3G, 6-31G(d) family) ----------------
 # The STO-NG paper itself is `hehre_sto_ng_1969` above; the basis routes
@@ -1117,6 +1202,17 @@ notes       = "Defines the SAP (superposition of atomic potentials) initial-gues
 # ====================================================================
 
 # --- LDA-family components ------------------------------------------
+[entries.dirac_local_exchange_1930]
+kind        = "article"
+bibtex_key  = "dirac_local_exchange_1930"
+authors     = ["Dirac, P. A. M."]
+title       = "Note on Exchange Phenomena in the Thomas Atom"
+journal     = "Mathematical Proceedings of the Cambridge Philosophical Society"
+year        = 1930
+volume      = 26
+pages       = "376--385"
+doi         = "10.1017/S0305004100016108"
+
 [entries.slater_x_1951]
 kind        = "article"
 bibtex_key  = "slater_x_1951"
@@ -1672,7 +1768,7 @@ issue       = 16
 pages       = "164104"
 year        = 2021
 doi         = "10.1063/5.0040798"
-notes       = "Trust-region augmented-Hessian (TRAH) SCF for HF/KS — the augmented-Hessian convergence path in cpp/src/trah.hpp. Cite when the TRAH path is engaged (RHFOptions.trah_threshold)."
+notes       = "Trust-region augmented-Hessian (TRAH) SCF for HF/KS — the augmented-Hessian convergence path in cpp/src/trah.hpp. Cite when armed through trah_threshold or invoked automatically by UHF stability recovery."
 
 # --- SCF internal stability analysis -------------------------------
 # Post-convergence internal (real unrestricted-orbital) stability check + the
@@ -2033,6 +2129,32 @@ year        = 1989
 doi         = "10.1016/S0009-2614(89)87395-6"
 notes       = "Cite when the (T) triples correction is used in vibe-qc."
 
+[entries.rendell_lee_komornicki_triples_1991]
+kind        = "article"
+bibtex_key  = "rendell_lee_komornicki_triples_1991"
+authors     = ["Rendell, Alistair P.", "Lee, Timothy J.", "Komornicki, Andrew"]
+title       = "A parallel vectorized implementation of triple excitations in CCSD(T): application to the binding energies of the AlH3, AlH2F, AlHF2 and AlF3 dimers"
+journal     = "Chemical Physics Letters"
+volume      = 178
+issue       = "5-6"
+pages       = "462--470"
+year        = 1991
+doi         = "10.1016/0009-2614(91)87003-T"
+notes       = "Spatial closed-shell (T) expression with W and V intermediates, E = 1/3 sum_abc (4 W^abc + W^cab + W^bca)(V^abc - V^cba)/D, evaluated per occupied key by the compiled closed-shell local DLPNO-(T0) kernel (cpp/src/dlpno_ccsd.cpp, dlpno_ccsd_local_triples). Added at runtime by runner._dlpno_triples_citation_entries only when a closed-shell triples_mode='local' run executes that kernel. The canonical spatial (T) behind the default (T1) and 'exact' is spin-integrated by spin class instead and does not cite it."
+
+[entries.watts_gauss_bartlett_openshell_triples_1993]
+kind        = "article"
+bibtex_key  = "watts_gauss_bartlett_openshell_triples_1993"
+authors     = ["Watts, John D.", "Gauss, Jürgen", "Bartlett, Rodney J."]
+title       = "Coupled-cluster methods with noniterative triple excitations for restricted open-shell Hartree–Fock and other general single determinant reference functions. Energies and analytical gradients"
+journal     = "Journal of Chemical Physics"
+volume      = 98
+issue       = "11"
+pages       = "8718--8733"
+year        = 1993
+doi         = "10.1063/1.464480"
+notes       = "Spin-orbital (T) correction for UHF and other single-determinant open-shell references: the connected/disconnected form that python/vibeqc/dlpno/_ccsd_ref.py::so_triple_energy and the compiled open-shell local (T0) kernel (cpp/src/dlpno_uccsd.cpp, dlpno_uccsd_local_triples) evaluate on PNO and TNO amplitudes, and that the canonical UHF- and ROHF-based CCSD(T) kernel evaluates in the full virtual space. Added at runtime by runner._dlpno_triples_citation_entries when an open-shell DLPNO run executes its local (T0) or rotated (T1) triples, and by the canonical CC block when an open-shell (T) ran; the closed-shell routes evaluate the spatial expression and do not cite it."
+
 [entries.kucharski_bartlett_accsdt_1998]
 kind        = "article"
 bibtex_key  = "kucharski_bartlett_accsdt_1998"
@@ -2084,6 +2206,84 @@ pages       = "366--384"
 year        = 2020
 doi         = "10.1021/acs.jctc.9b00957"
 notes       = "Integral-direct density-fitted CCSD(T) factor contractions and occupied-slice caching. Fired only when the bounded blocked/direct/disk triples kernel actually runs."
+
+[entries.kitsaras_stopkowicz_complex_abelian_2026]
+kind        = "article"
+bibtex_key  = "kitsaras_stopkowicz_complex_abelian_2026"
+authors     = ["Kitsaras, Marios-Petros", "Stopkowicz, Stella"]
+title       = "Exploitation of Complex Abelian Point Groups in Quantum-Chemical Calculations"
+journal     = "The Journal of Physical Chemistry A"
+volume      = 130
+issue       = 24
+pages       = "4683--4692"
+year        = 2026
+doi         = "10.1021/acs.jpca.6c00998"
+notes       = "Implementation reference inspected as arXiv:2602.12457v1, Sections II B-C, Eqs. (16)-(25). The experimental finite-ERI J/K adapter implements conjugate-aware selection and block contractions, not double-coset integral generation or finite-field CCSD. The stored preprint is not represented as the publisher version."
+
+[entries.hellmann_gauss_direct_product_2026]
+kind        = "article"
+bibtex_key  = "hellmann_gauss_direct_product_2026"
+authors     = ["Hellmann, Malte", "Gauss, Jürgen"]
+title       = "The Direct-Product Decomposition Approach for Symmetry Exploitation in Many-Body Methods in Case of Non-Abelian Point Groups"
+journal     = "The Journal of Physical Chemistry A"
+volume      = 130
+issue       = 14
+pages       = "2918-2928"
+year        = 2026
+doi         = "10.1021/acs.jpca.6c00311"
+notes       = "C3v direct-product reduction, reduced/full tensor conversion and re-sorting, Eqs. (4)-(12). The demonstrated closed-shell CCSD pilot is not a general non-Abelian CC implementation."
+
+[entries.goodlett_molsym_2024]
+kind        = "article"
+bibtex_key  = "goodlett_molsym_2024"
+authors     = ["Goodlett, Stephen M.", "Kitzmiller, Nathaniel L.", "Turney, Justin M.", "Schaefer, Henry F."]
+title       = "MolSym: A Python package for handling symmetry in molecular quantum chemistry"
+journal     = "The Journal of Chemical Physics"
+volume      = 161
+issue       = 2
+pages       = "024107"
+year        = 2024
+doi         = "10.1063/5.0216738"
+notes       = "Complete matrix projectors, Eq. (3), align partner functions across repeated irreducible representations. Representation and RHF supplements distinguish complex irreps and invariant-state degeneracy weights."
+
+[entries.melega_ccsd_cd_symmetry_2026]
+kind        = "article"
+bibtex_key  = "melega_ccsd_cd_symmetry_2026"
+authors     = ["Melega, Luca", "Nottoli, Tommaso", "Gauss, Jürgen", "Lipparini, Filippo"]
+title       = "A Novel Implementation of CCSD Analytic Gradients Using Cholesky Decomposition of the Two-Electron Integrals and Abelian Point-Group Symmetry"
+journal     = "The Journal of Physical Chemistry A"
+volume      = 130
+issue       = 10
+pages       = "2097--2111"
+year        = 2026
+doi         = "10.1021/acs.jpca.5c08579"
+notes       = "Section 2.1, Eqs. (3)-(5), informs the experimental molecular RI factor consumer. It uses an explicit auxiliary basis and the native retained metric factor, not two-step Cholesky generation or the paper's relaxed CCSD gradient."
+
+[entries.davidson_double_cosets_1975]
+kind        = "article"
+bibtex_key  = "davidson_double_cosets_1975"
+authors     = ["Davidson, Ernest R."]
+title       = "Use of double cosets in constructing integrals over symmetry orbitals"
+journal     = "The Journal of Chemical Physics"
+volume      = 62
+issue       = 2
+pages       = "400--403"
+year        = 1975
+doi         = "10.1063/1.430484"
+notes       = "Pair-stabilizer orbits resolve double cosets with representative-dependent intersections. The experimental streaming real-AO quartet scheduler applies this index algebra, resolves pair exchange explicitly and still audits the complete numerical source; it is not a reduced non-Abelian integral representation."
+
+[entries.dupuis_king_symmetry_scf_1977]
+kind        = "article"
+bibtex_key  = "dupuis_king_symmetry_scf_1977"
+authors     = ["Dupuis, Michel", "King, Harry F."]
+title       = "Molecular symmetry and closed-shell SCF calculations. I"
+journal     = "International Journal of Quantum Chemistry"
+volume      = 11
+issue       = 4
+pages       = "613--625"
+year        = 1977
+doi         = "10.1002/qua.560110408"
+notes       = "Shell-distribution symmetry and petite-list integral execution. The experimental quartet consumer audits a complete finite source and transports full AO blocks; it does not assume a symmetric trial density or provide analytic derivatives."
 
 [entries.stanton_gauss_watts_bartlett_ccsd_1991]
 kind        = "article"
@@ -2239,7 +2439,7 @@ issue       = 3
 pages       = "034108"
 year        = 2015
 doi         = "10.1063/1.4926879"
-notes       = "DLPNO-MP2 — the local MP2 implemented by vibeqc.dlpno.mp2 and the method background for its independent-spin UMP2 extension (Foster-Boys LMOs, PAO domains, semicanonical PNOs, coupled LMP2 residuals). Fires via routes.methods['dlpno-mp2'] and routes.methods['dlpno-ump2']."
+notes       = "DLPNO-MP2 — the local MP2 implemented by vibeqc.dlpno.mp2 and the method background for its independent-spin UMP2 extension (Foster-Boys LMOs, PAO domains, semicanonical PNOs, coupled LMP2 residuals). Fires via routes.methods['dlpno-mp2'] and routes.methods['dlpno-ump2']. Also the source of the differential overlap integral (Eq. 4) behind the default DOI PAO domains of the closed-shell DLPNO-MP2 and local DLPNO-CCSD routes, so it also fires via routes.methods['dlpno-ccsd'] and ['dlpno-ccsd(t)']."
 
 [entries.pinski_dlpno_mp2_thresholds_2019]
 kind        = "article"
@@ -2265,7 +2465,7 @@ issue       = 16
 pages       = "164105"
 year        = 2017
 doi         = "10.1063/1.4981521"
-notes       = "Open-shell DLPNO-CCSD background and motivation. The paper replaces genuinely unrestricted separate-spin PNOs with a single spatial-orbital set and NEV-PNO construction. vibe-qc's open-shell local CC solver instead retains independent UHF alpha/beta orbital spaces, so this is a qualified background citation: the implementation does not claim the paper's central orbital construction or section III B TScaleTCutPairs rule. It is not a DLPNO-UMP2 source. Fires only via routes.methods['dlpno-uccsd'/'dlpno-uccsd(t)'] (open-shell auto-route of method='dlpno-ccsd'/'dlpno-ccsd(t)')."
+notes       = "Open-shell DLPNO-CCSD background and motivation. The paper replaces genuinely unrestricted separate-spin PNOs with a single spatial-orbital set and NEV-PNO construction. vibe-qc's open-shell local CC solver instead retains independent UHF alpha/beta orbital spaces, so this is a qualified background citation: the implementation does not claim the paper's central orbital construction or section III B TScaleTCutPairs rule. It is not a DLPNO-UMP2 source. Fires on the molecular and periodic UHF DLPNO-CC routes (open-shell auto-route of method='dlpno-ccsd'/'dlpno-ccsd(t)')."
 
 [entries.jung_sos_mp2_2004]
 kind        = "article"
@@ -2667,7 +2867,7 @@ issue       = 8
 pages       = "083001"
 year        = 2011
 doi         = "10.1103/PhysRevLett.106.083001"
-notes       = "Boundary-point SDP solver for V2RDM — the practical algorithm vibe-qc's V2RDM solver uses."
+notes       = "Boundary-point SDP algorithm for V2RDM; cited as background for vibe-qc's V2RDM solver, which solves within the exact N-representable set and does not yet implement the Q/G SDP feedback route."
 
 [entries.boys_handy_transcorrelated_1969]
 kind        = "article"
@@ -3072,6 +3272,18 @@ year        = 2006
 doi         = "10.1021/jp056016z"
 notes       = "The Direct COSMO-RS method: the COSMO-RS sigma potential of a real solvent fed back into the SCF as extra screening charges (eq. 18-19), implemented in vibeqc.solvation.cosmors.direct and selected by SolventModel(variant=\"dcosmo-rs\"). The paper states the operator, not the energy; vibe-qc's G = E_gas[D] + (1/2) q.V_tot + sum_t a_t mu_S(sigma_t) is derived so that its density derivative is that operator."
 
+[entries.york_karplus_smooth_cosmo_1999]
+kind        = "article"
+bibtex_key  = "york_karplus_smooth_cosmo_1999"
+authors     = ["York, Darrin M.", "Karplus, Martin"]
+title       = "A Smooth Solvation Potential Based on the Conductor-Like Screening Model"
+journal     = "The Journal of Physical Chemistry A"
+volume      = 103
+pages       = "11060--11079"
+year        = 1999
+doi         = "10.1021/jp992097l"
+notes       = "Spherical Gaussian surface-charge elements for a conductor-like screening model (eq. 56) with the exponent scaling of eq. 61. vibe-qc's COSMO FINE Cavity uses this kernel (vibeqc.solvation.cpcm GAUSSIAN_CHARGE, #744), which makes the cavity A matrix a Gram matrix, positive definite for any geometry."
+
 [entries.cossi_cpcm_2003]
 kind        = "article"
 bibtex_key  = "cossi_cpcm_2003"
@@ -3301,7 +3513,7 @@ issue       = 3
 pages       = "553-572"
 year        = 1983
 doi         = "10.1137/0904038"
-notes       = "The Moré-Sorensen algorithm for the trust-region subproblem: solve the secular equation for the boundary Lagrange multiplier (level shift) so the step lies on or inside the trust radius. The subproblem solver behind vibeqc.geomopt.trust.trust_region. Fires via routes.optimizers for geom_opt='trust'."
+notes       = "The Moré-Sorensen algorithm for the trust-region subproblem: solve the secular equation for the boundary Lagrange multiplier (level shift) so the step lies on or inside the trust radius. The subproblem solver behind vibeqc.geomopt.trust.trust_region. Fires via routes.optimizers for geom_opt='trust' and the TRAH SCF route, whose bounded small-space solver includes the hard-case completion of Eq. (3.3)."
 
 [entries.baker_kessi_delley_dlc_1996]
 kind        = "article"
@@ -3528,7 +3740,20 @@ volume      = 8
 pages       = "3072-3077"
 year        = 2006
 doi         = "10.1039/b605188j"
-notes       = "Eqs. 40 and 52 supply the positive Boys series and attenuated Coulomb seed used by the bounded native finite-Gaussian nuclear operator. Nuclear erfc subtraction diagnostics are not propagated roundoff error certificates."
+notes       = "Eqs. 40 and 52 supply the positive Boys series and attenuated Coulomb seed used by the bounded native finite-Gaussian nuclear operator. Nuclear erfc subtraction diagnostics are not propagated roundoff error certificates. Eqs. 39, 40 and 52 also give the all-s fundamental integral used by the periodic direct erfc scalar specialization; the existing Libint Boys evaluator and primitive screens are retained. Eqs. 31-34 give the vertical recurrence and post-contraction angular transfer for the periodic one-, two- and three-p specializations."
+
+[entries.schlegel_frisch_spherical_1995]
+kind        = "article"
+bibtex_key  = "schlegel_frisch_spherical_1995"
+authors     = ["Schlegel, H. Bernhard", "Frisch, Michael J."]
+title       = "Transformation between Cartesian and pure spherical harmonic Gaussians"
+journal     = "International Journal of Quantum Chemistry"
+volume      = 54
+issue       = 2
+pages       = "83-87"
+year        = 1995
+doi         = "10.1002/qua.560540202"
+notes       = "Eq. 15 and its real-harmonic combinations underpin the periodic single-term p-shell transforms. The implementation obtains the configured component order and actual rounded coefficients from Libint, preserving sequential per-axis accumulation rather than replacing near-unit coefficients by one."
 
 # --- Molecular electronic-structure textbook (HJO 2000) ---
 [entries.helgaker_jorgensen_olsen_2000]
@@ -3553,7 +3778,7 @@ issue       = 7
 pages       = "3916-3926"
 year        = 2021
 doi         = "10.1021/acs.jctc.0c01195"
-notes       = "Eqs. 17-18 and the definition of T(P) beneath Eq. 18: a periodic two-centre matrix element sums the ket over lattice translations P and depends on P only through the physical separation ||A - B - P||, so the images a cutoff selects form a ball centred on the intra-cell offset, not on the origin. cpp/include/vibeqc/lattice_pair_cells.hpp implements that term set (pair_complete_cells / pair_in_range); the compensated 2c Coulomb metric (aux_eri.cpp) enumerates it unconditionally and the one-electron S/T/V lattice sums and their gradient partners under LatticeSumOptions.pair_complete_1e (GitLab #429, stage 2). Route it on the periodic Gaussian routes when that switch becomes their default; until then the option is opt-in and the paper is cited at the code sites."
+notes       = "Eqs. 17-18 and the definition of T(P) beneath Eq. 18: a periodic two-centre matrix element sums the ket over lattice translations P and depends on P only through the physical separation ||A - B - P||, so the images a cutoff selects form a ball centred on the intra-cell offset, not on the origin. cpp/include/vibeqc/lattice_pair_cells.hpp implements that term set (pair_complete_cells / pair_in_range); the compensated 2c Coulomb metric (aux_eri.cpp) enumerates it unconditionally and the one-electron S/T/V lattice sums and their gradient partners under LatticeSumOptions.pair_complete_1e (GitLab #429, stage 2). Cited on the BIPOLE route after its physical-domain default migration (#316); other periodic Gaussian families retain their own domain policies."
 
 # --- Periodic Gaussian density fitting (Sun et al. 2017) ---
 [entries.sun_berkelbach_gdf_2017]
@@ -3582,6 +3807,18 @@ year        = 2021
 doi         = "10.1063/5.0046617"
 print       = true
 notes       = "Coulomb-kernel range separation, reciprocal long-range integrals, double-image short-range three-center integrals, and finite zero-mode subtraction; Eqs. (9)-(14)."
+
+[entries.izmaylov_short_range_exchange_2006]
+kind        = "article"
+bibtex_key  = "izmaylov_short_range_exchange_2006"
+authors     = ["Izmaylov, Artur F.", "Scuseria, Gustavo E.", "Frisch, Michael J."]
+title       = "Efficient evaluation of short-range Hartree-Fock exchange in large molecules and periodic systems"
+journal     = "Journal of Chemical Physics"
+volume      = 125
+pages       = "104103"
+year        = 2006
+doi         = "10.1063/1.2347713"
+notes       = "Section II.D motivates the precomputed product-box hierarchy and final density screening in periodic erfc exchange. Equations 51-56 motivate image-class maxima over all supplied density blocks; this implementation uses integer-index classes instead of a distance envelope and assumes neither periodic density nor decay. Subtree Schwarz maxima apply the batched hierarchy of Sections II.B and II.D; they remain specific to each range kernel. The positive Gaussian envelopes, leaf capacity and image classes are implementation choices, not parameters from this paper."
 
 [entries.sun_range_separated_exchange_2023]
 kind        = "article"
@@ -3964,7 +4201,7 @@ issue       = "3"
 pages       = "034106"
 year        = 2013
 doi         = "10.1063/1.4773581"
-notes       = "Defining closed-shell DLPNO-CCSD paper and the source for the atom-based extended PAO residual domain used by vibe-qc's shipped local CCSD solver; also cited as method background for the independent-spin open-shell extension."
+notes       = "Defining closed-shell DLPNO-CCSD paper. Source of the term-by-term PNO-space residual (Sec. II C) of the default residual_domain=\"pno\" route, of the atom-based extended PAO domain (Sec. II B) of its \"extended\" exactness oracle, and of the semicanonical MP2 corrections for dropped pairs and PNO truncation; also cited as method background for the independent-spin open-shell extension."
 
 [entries.riplinger_triples_2013]
 kind        = "article"
@@ -4042,7 +4279,7 @@ issue       = "2"
 pages       = "024116"
 year        = 2020
 doi         = "10.1063/1.5127550"
-notes       = "Dedicated open-shell iterative DLPNO triples source. The molecular spin-orbital t1-iterative route cites it dynamically alongside the 2018 closed-shell Eq. (2) source only after a triples contraction executes; this records method ancestry without claiming that vibe-qc reproduces every published open-shell implementation detail."
+notes       = "Dedicated open-shell DLPNO triples source, (T0) and iterative (T). The molecular open-shell local (T0) (per-triple TNO spaces, diagonal localised-Fock denominators) cites it as its method source, and the spin-orbital t1-iterative route cites it alongside the 2018 closed-shell Eq. (2) source; both only after a triples contraction executes (runner._dlpno_triples_citation_entries). This records method ancestry without claiming that vibe-qc reproduces every published open-shell implementation detail."
 
 [entries.taube_bartlett_fno_2008]
 kind        = "article"
@@ -4083,6 +4320,18 @@ year        = 1974
 doi         = "10.1002/qua.560080106"
 notes       = "The Davidson (+Q) size-consistency correction. Routed from method='mrci' (whose solver applies +Q by default, `_mrci.do_q_correction=True`) and from 'mrci+q'."
 
+[entries.xing_lin_finite_size_cc_2024]
+kind        = "article"
+bibtex_key  = "xing_lin_finite_size_cc_2024"
+authors     = ["Xing, Xin", "Lin, Lin"]
+title       = "Inverse Volume Scaling of Finite-Size Error in Periodic Coupled Cluster Theory"
+journal     = "Physical Review X"
+volume      = "14"
+pages       = "011059"
+year        = 2024
+doi         = "10.1103/PhysRevX.14.011059"
+notes       = "Section II B, equations 7-11: matching Madelung corrections to orbital energies and diagonal ERIs. Experimental chi canonical CC offers an explicit matched-ERI option alongside its historical energy-only default; no finite-size accuracy qualification is implied."
+
 [entries.mcclain_berkelbach_periodic_cc_2017]
 kind        = "article"
 bibtex_key  = "mcclain_berkelbach_periodic_cc_2017"
@@ -4109,12 +4358,24 @@ year        = 2009
 doi         = "10.1063/1.3126249"
 notes       = "Periodic MP2 (roadmap v0.19.0)."
 
+[entries.ye_berkelbach_periodic_lno_2024]
+kind        = "article"
+bibtex_key  = "ye_berkelbach_periodic_lno_2024"
+authors     = ["Ye, Hong-Zhou", "Berkelbach, Timothy C."]
+title       = "Periodic Local Coupled-Cluster Theory for Insulators and Metals"
+journal     = "Journal of Chemical Theory and Computation"
+volume      = "20"
+pages       = "8948-8959"
+year        = 2024
+doi         = "10.1021/acs.jctc.4c00936"
+notes       = "Finite full-mesh Bloch to Gamma-supercell equivalence, Eq. (1), cited when the periodic GDF DLPNO front door folds a mesh. The paper assumes spin-restricted HF and uses fragment LNOs; vibe-qc reuses the finite BvK equivalence with its pair-specific DLPNO engine, including independent UHF spin spaces, and does not claim the paper's LNO approximation."
+
 # --- Nejad/Zhu/Tew periodic DLPNO-MP2 (Turbomole, 2025) -------------
 # The first true DLPNO method for periodic systems; the method papers for
 # vibe-qc's megacell periodic-correlation route (python/vibeqc/
 # periodic_megacell_mp2.py). DOIs verified against Crossref + PubMed
 # 2026-06-17 — they correct the wrong DOIs that were in
-# handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md § 8 (5.0241579/580, which resolve
+# the original investigation (5.0241579/580, which resolve
 # to unrelated AIP conference papers). Both: J. Chem. Phys. 163, issue 21.
 [entries.nejad_periodic_dlpno_pbc_2025]
 kind        = "article"
@@ -4127,7 +4388,7 @@ issue       = "21"
 pages       = "214107"
 year        = 2025
 doi         = "10.1063/5.0290816"
-notes       = "Paper I: domain-based local pair natural orbital MP2 under Born-von Kármán boundary conditions on Wannier functions (LCAO). The native BvK route of handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md (roadmap v0.16.0). Companion to zhu_periodic_dlpno_megacell_2025."
+notes       = "Paper I: domain-based local pair natural orbital MP2 under Born-von Kármán boundary conditions on Wannier functions (LCAO). Sec. II Eqs. (2)-(10) supply the finite Fourier convention for retained-Bloch chi factor contractions and the exact character-block symmetric Lowdin seed spectrum/home reconstruction (D15); the translation identity after Eq. (13) and Sec. IV A Eqs. (26)-(28) support selected home columns and exact projected pair recipes; Sec. V Eqs. (42)-(44) supply the shared occupied-coupling residual. The chi provider preserves the executed global fit, without adopting Sec. VI local fitting or claiming production accuracy. Companion to zhu_periodic_dlpno_megacell_2025."
 
 [entries.zhu_periodic_dlpno_megacell_2025]
 kind        = "article"
@@ -4672,6 +4933,18 @@ year        = 1987
 doi         = "10.1016/0021-9991(87)90140-9"
 notes       = "The fast multipole method (FMM) (roadmap v0.11.x)."
 
+[entries.kudin_scuseria_periodic_fmm_2000]
+kind        = "article"
+bibtex_key  = "kudin_scuseria_periodic_fmm_2000"
+authors     = ["Kudin, Konstantin N.", "Scuseria, Gustavo E."]
+title       = "Linear-scaling density-functional theory with Gaussian orbitals and periodic boundary conditions: Efficient evaluation of energy and forces via the fast multipole method"
+journal     = "Physical Review B"
+volume      = "61"
+pages       = "16440--16453"
+year        = 2000
+doi         = "10.1103/PhysRevB.61.16440"
+notes       = "Periodic Gaussian fast-multipole context. MANTA's finite Ewald-minus-near raw Cartesian lattice operator is derived from its declared Green function; it does not implement this paper's complete periodic FMM method."
+
 [entries.kudin_scuseria_pfmm_2004]
 kind        = "article"
 bibtex_key  = "kudin_scuseria_pfmm_2004"
@@ -4821,7 +5094,33 @@ issue       = "4"
 pages       = "2547--2553"
 year        = 1988
 doi         = "10.1063/1.454033"
-notes       = "Becke multicenter numerical integration (the atomic-partition DFT grid). Cite for any KS-DFT run; underlies vibe-qc's molecular + periodic XC grids and the COSX grid."
+notes       = "Becke multicenter numerical integration (the atomic-partition DFT grid). Cite for any KS-DFT run; underlies vibe-qc's molecular + periodic XC grids and the COSX grid, including molecular Gamma compcell RKS/UKS quadrature-motion response (Eqs. 2, 22-24)."
+
+[entries.stratmann_grid_1996]
+kind        = "article"
+bibtex_key  = "stratmann_grid_1996"
+authors     = ["Stratmann, R. Eric", "Scuseria, Gustavo E.", "Frisch, Michael J."]
+title       = "Achieving linear scaling in exchange-correlation density functional quadratures"
+journal     = "Chemical Physics Letters"
+volume      = "257"
+issue       = "3-4"
+pages       = "213--223"
+year        = 1996
+doi         = "10.1016/0009-2614(96)00600-8"
+notes       = "Piecewise polynomial atomic partition. Select numerics=[\"stratmann_grid\"] when using that partition."
+
+[entries.lebedev_laikov_1999]
+kind        = "article"
+bibtex_key  = "lebedev_laikov_1999"
+authors     = ["Lebedev, V. I.", "Laikov, D. N."]
+title       = "A quadrature formula for the sphere of the 131st algebraic order of accuracy"
+journal     = "Doklady Mathematics"
+volume      = "59"
+issue       = "3"
+pages       = "477--481"
+year        = 1999
+url         = "https://www.mathnet.ru/eng/dan3035"
+notes       = "Lebedev-Laikov spherical quadrature used by explicit Lebedev angular grids. No DOI is recorded; the primary MathNet record identifies the Russian original, Doklady Akademii Nauk 366(6), 741-745 (1999), corresponding to this English translation. Select numerics=[\"lebedev_grid\"] when reporting a calculation using these grids."
 
 [entries.treutler_ahlrichs_1995]
 kind        = "article"
@@ -5756,6 +6055,70 @@ year        = 2020
 doi         = "10.1021/acs.jctc.9b01004"
 notes       = "Condition-number-aware crystalline basis-set optimization (roadmap OPTBASIS / BDEV1). Also the BDIIS paper — Basis-set Direct Inversion in the Iterative Subspace, the optimiser behind CRYSTAL23's OPTBASIS and vibe-qc's optimize_bdiis — so this key is reached two ways: statically from routes.acceleration.optbasis, and directly via BDIIS_CITATION_KEYS. One key, one DOI: do not re-split it, since assemble() deduplicates by entry key rather than by DOI."
 
+# --- Derivative-free basis-optimisation drivers ---------------------
+# Reached dynamically from vibeqc.basis_optimization.drivers
+# (DFO_CITATION_KEYS / CMAES_CITATION_KEYS), the same channel as
+# BDIIS_CITATION_KEYS above: the optimisers are not SCF-job features and
+# have no [routes.*] row.
+[entries.powell_bobyqa_2009]
+kind        = "misc"
+bibtex_key  = "powell_bobyqa_2009"
+authors     = ["Powell, Michael J. D."]
+title       = "The BOBYQA algorithm for bound constrained optimization without derivatives"
+journal     = "Technical Report DAMTP 2009/NA06, Department of Applied Mathematics and Theoretical Physics, University of Cambridge"
+year        = 2009
+url         = "https://www.damtp.cam.ac.uk/user/na/NA_papers/NA2009_06.pdf"
+notes       = "The bound-constrained model-based derivative-free method behind optimize_bobyqa (through Py-BOBYQA) and behind vibe-basis's NLopt BOBYQA driver."
+
+[entries.cartis_dfols_2019]
+kind        = "article"
+bibtex_key  = "cartis_dfols_2019"
+authors     = ["Cartis, Coralia", "Fiala, Jan", "Marteau, Benjamin", "Roberts, Lindon"]
+title       = "Improving the Flexibility and Robustness of Model-based Derivative-free Optimization Solvers"
+journal     = "ACM Transactions on Mathematical Software"
+volume      = 45
+issue       = 3
+pages       = "32"
+year        = 2019
+doi         = "10.1145/3338517"
+notes       = "Defines Py-BOBYQA (scalar objectives) and DFO-LS (least-squares residuals), the solvers wrapped by optimize_bobyqa and optimize_dfols."
+
+[entries.hansen_cmaes_2001]
+kind        = "article"
+bibtex_key  = "hansen_cmaes_2001"
+authors     = ["Hansen, Nikolaus", "Ostermeier, Andreas"]
+title       = "Completely Derandomized Self-Adaptation in Evolution Strategies"
+journal     = "Evolutionary Computation"
+volume      = 9
+issue       = 2
+pages       = "159--195"
+year        = 2001
+doi         = "10.1162/106365601750190398"
+notes       = "The CMA-ES algorithm behind optimize_cmaes and the global pre-pass of recipes.global_then_polish."
+
+[entries.hansen_cma_tutorial_2016]
+kind        = "misc"
+bibtex_key  = "hansen_cma_tutorial_2016"
+authors     = ["Hansen, Nikolaus"]
+title       = "The CMA Evolution Strategy: A Tutorial"
+journal     = "arXiv preprint"
+pages       = "arXiv:1604.00772"
+year        = 2016
+doi         = "10.48550/arXiv.1604.00772"
+url         = "https://arxiv.org/abs/1604.00772"
+notes       = "The reference description of the CMA-ES update equations (step-size and covariance adaptation, bound handling) as implemented in pycma."
+
+[entries.hansen_pycma_software]
+kind        = "software"
+bibtex_key  = "hansen_pycma"
+authors     = ["Hansen, Nikolaus", "Akimoto, Youhei", "Baudis, Petr"]
+title       = "CMA-ES/pycma on GitHub"
+year        = 2019
+doi         = "10.5281/zenodo.2559634"
+url         = "https://github.com/CMA-ES/pycma"
+license     = "BSD-3-Clause"
+notes       = "The pycma implementation optimize_cmaes drives (ask/tell interface, BoundTransform bound handling). Optional dependency behind vibe-qc's [basisopt-drivers] extra; never imported by a plain import of vibeqc.basis_optimization."
+
 [entries.pisani_dovesi_lattice_truncation_1980]
 kind        = "article"
 bibtex_key  = "pisani_dovesi_1980"
@@ -5790,7 +6153,7 @@ volume      = 29
 pages       = "1755--1774"
 year        = 1986
 doi         = "10.1002/qua.560290608"
-notes       = "Journal version of the Bloch-basis symmetry machinery in Pisani/Dovesi/Roetti 1988 Sec. II.7: the W(V;k) representation matrices (Eq. II.7.15), the density rotation law between symmetry-equivalent k-points (Eq. II.7.21, D(Vk) = W D(k) W^H in vibe-qc's convention), and the IBZ orbit-sum reconstruction (Eq. II.7.48). Implemented by python/vibeqc/periodic_k_symmetry.py (star_operations / expand_k_matrices_to_full / KMeshUnfolding) and consumed by the corrected-Ewald exchange split for symmetry-reduced Monkhorst-Pack meshes. Fires via routes.numerics.kpoint_symmetry_unfolding."
+notes       = "Journal version of the Bloch-basis symmetry machinery in Pisani/Dovesi/Roetti 1988 Sec. II.7: the W(V;k) representation matrices (Eq. II.7.15), the density rotation law between symmetry-equivalent k-points (Eq. II.7.21, D(Vk) = W D(k) W^H in vibe-qc's convention), and the IBZ orbit-sum reconstruction (Eq. II.7.48). Implemented by python/vibeqc/periodic_k_symmetry.py (star_operations / expand_k_matrices_to_full / KMeshUnfolding) and consumed by the corrected-Ewald exchange split for symmetry-reduced Monkhorst-Pack meshes. Fires via routes.numerics.kpoint_symmetry_unfolding. Physical BIPOLE direct J/K reduction uses Eqs. (31)-(36), (43), with an unchanged pair/midpoint domain and an actual-density covariance check; see physical_bipole_symmetry.py and routes.numerics.physical_bipole_fock_symmetry."
 
 [entries.zicovich_wilson_crystalline_orbitals_1998]
 kind        = "article"
@@ -5994,6 +6357,19 @@ year        = 1971
 doi         = "10.1063/1.1676210"
 notes       = "Original Morokuma energy decomposition analysis (shipped in eda.py)."
 
+[entries.kitaura_morokuma_1976]
+kind        = "article"
+bibtex_key  = "kitaura_morokuma_1976"
+authors     = ["Kitaura, Kazuo", "Morokuma, Keiji"]
+title       = "A new energy decomposition scheme for molecular interactions within the Hartree-Fock approximation"
+journal     = "International Journal of Quantum Chemistry"
+volume      = 10
+issue       = 2
+pages       = "325--340"
+year        = 1976
+doi         = "10.1002/qua.560100211"
+notes       = "Kitaura-Morokuma ES/EX/PL/CT/MIX partition within Hartree-Fock. eda_morokuma reports its ES and EX terms (frozen-density electrostatics and the antisymmetrised-product exchange repulsion); PL, CT and MIX are reported lumped."
+
 # --- NBO donor-acceptor analysis (Reed, Curtiss & Weinhold 1988) ------
 [entries.reed_curtiss_weinhold_nbo_1988]
 kind        = "article"
@@ -6162,9 +6538,9 @@ always = ["libint_valeev"]
 "cc-pvqz-ri"            = ["dunning_ccpvxz_1989", "weigend_ccpvxz_rifit_2002"]
 "cc-pvqz-rifit"         = ["dunning_ccpvxz_1989", "weigend_ccpvxz_rifit_2002"]
 "cc-pv5z-ri"            = ["dunning_ccpvxz_1989", "haettig_aux_5z_2005"]
-"cc-pv5z-rifit"         = ["dunning_ccpvxz_1989", "haettig_aux_5z_2005"]
+"cc-pv5z-rifit"         = ["dunning_ccpvxz_1989", "haettig_aux_5z_2005", "weigend_ccpvxz_rifit_2002"]
 "cc-pv6z-ri"            = ["dunning_ccpvxz_1989", "wilson_vanmourik_dunning_1996", "haettig_aux_5z_2005"]
-"cc-pv6z-rifit"         = ["dunning_ccpvxz_1989", "wilson_vanmourik_dunning_1996", "haettig_aux_5z_2005"]
+"cc-pv6z-rifit"         = ["dunning_ccpvxz_1989", "wilson_vanmourik_dunning_1996", "haettig_aux_5z_2005", "weigend_ccpvxz_rifit_2002"]
 "cc-pvdz-jkfit"         = ["dunning_ccpvxz_1989", "weigend_jkfit_2002"]
 "cc-pvtz-jkfit"         = ["dunning_ccpvxz_1989", "weigend_jkfit_2002"]
 "cc-pvqz-jkfit"         = ["dunning_ccpvxz_1989", "weigend_jkfit_2002"]
@@ -6172,18 +6548,18 @@ always = ["libint_valeev"]
 "cc-pvdz-f12"           = ["peterson_adler_werner_f12_2008"]
 "cc-pvtz-f12"           = ["peterson_adler_werner_f12_2008"]
 "cc-pvqz-f12"           = ["peterson_adler_werner_f12_2008"]
-"cc-pvdz-pp-rifit"      = ["peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"cc-pvtz-pp-rifit"      = ["peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"cc-pvqz-pp-rifit"      = ["peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"cc-pv5z-pp-rifit"      = ["peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
+"cc-pvdz-pp-rifit"      = ["peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"cc-pvtz-pp-rifit"      = ["peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"cc-pvqz-pp-rifit"      = ["peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"cc-pv5z-pp-rifit"      = ["peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
 "cc-pwcvdz-rifit"       = ["peterson_dunning_wcv_2002", "weigend_ccpvxz_rifit_2002"]
 "cc-pwcvtz-rifit"       = ["peterson_dunning_wcv_2002", "weigend_ccpvxz_rifit_2002"]
 "cc-pwcvqz-rifit"       = ["peterson_dunning_wcv_2002", "weigend_ccpvxz_rifit_2002"]
-"cc-pwcv5z-rifit"       = ["peterson_dunning_wcv_2002", "haettig_aux_5z_2005"]
-"cc-pwcvdz-pp-rifit"    = ["peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"cc-pwcvtz-pp-rifit"    = ["peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"cc-pwcvqz-pp-rifit"    = ["peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"cc-pwcv5z-pp-rifit"    = ["peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
+"cc-pwcv5z-rifit"       = ["peterson_dunning_wcv_2002", "haettig_aux_5z_2005", "weigend_ccpvxz_rifit_2002"]
+"cc-pwcvdz-pp-rifit"    = ["peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"cc-pwcvtz-pp-rifit"    = ["peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"cc-pwcvqz-pp-rifit"    = ["peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"cc-pwcv5z-pp-rifit"    = ["peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
 
 # The PP orbital sets (2026-09-08). Each name routes the union of the
 # publications the Basis Set Exchange records across its 39 elements -- the
@@ -6230,20 +6606,20 @@ always = ["libint_valeev"]
 "aug-cc-pvdz-rifit"     = ["kendall_dunning_harrison_1992", "weigend_ccpvxz_rifit_2002"]
 "aug-cc-pvtz-rifit"     = ["kendall_dunning_harrison_1992", "weigend_ccpvxz_rifit_2002"]
 "aug-cc-pvqz-rifit"     = ["kendall_dunning_harrison_1992", "weigend_ccpvxz_rifit_2002"]
-"aug-cc-pv5z-rifit"     = ["kendall_dunning_harrison_1992", "haettig_aux_5z_2005"]
-"aug-cc-pv6z-rifit"     = ["kendall_dunning_harrison_1992", "wilson_vanmourik_dunning_1996", "haettig_aux_5z_2005"]
-"aug-cc-pvdz-pp-rifit"  = ["kendall_dunning_harrison_1992", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"aug-cc-pvtz-pp-rifit"  = ["kendall_dunning_harrison_1992", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"aug-cc-pvqz-pp-rifit"  = ["kendall_dunning_harrison_1992", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"aug-cc-pv5z-pp-rifit"  = ["kendall_dunning_harrison_1992", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
+"aug-cc-pv5z-rifit"     = ["kendall_dunning_harrison_1992", "haettig_aux_5z_2005", "weigend_ccpvxz_rifit_2002"]
+"aug-cc-pv6z-rifit"     = ["kendall_dunning_harrison_1992", "wilson_vanmourik_dunning_1996", "haettig_aux_5z_2005", "weigend_ccpvxz_rifit_2002"]
+"aug-cc-pvdz-pp-rifit"  = ["kendall_dunning_harrison_1992", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"aug-cc-pvtz-pp-rifit"  = ["kendall_dunning_harrison_1992", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"aug-cc-pvqz-pp-rifit"  = ["kendall_dunning_harrison_1992", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"aug-cc-pv5z-pp-rifit"  = ["kendall_dunning_harrison_1992", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
 "aug-cc-pwcvdz-rifit"   = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "weigend_ccpvxz_rifit_2002"]
 "aug-cc-pwcvtz-rifit"   = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "weigend_ccpvxz_rifit_2002"]
 "aug-cc-pwcvqz-rifit"   = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "weigend_ccpvxz_rifit_2002"]
-"aug-cc-pwcv5z-rifit"   = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "haettig_aux_5z_2005"]
-"aug-cc-pwcvdz-pp-rifit" = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"aug-cc-pwcvtz-pp-rifit" = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"aug-cc-pwcvqz-pp-rifit" = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
-"aug-cc-pwcv5z-pp-rifit" = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007"]
+"aug-cc-pwcv5z-rifit"   = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "haettig_aux_5z_2005", "weigend_ccpvxz_rifit_2002"]
+"aug-cc-pwcvdz-pp-rifit" = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"aug-cc-pwcvtz-pp-rifit" = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"aug-cc-pwcvqz-pp-rifit" = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
+"aug-cc-pwcv5z-pp-rifit" = ["kendall_dunning_harrison_1992", "peterson_dunning_wcv_2002", "peterson_pp_2003", "hellweg_haettig_pp_rifit_2007", "haettig_aux_5z_2005"]
 "def2-sv"               = ["schafer_horn_ahlrichs_1992", "weigend_ahlrichs_def2_2005"]
 "def2-sv(p)"            = ["schafer_horn_ahlrichs_1992", "weigend_ahlrichs_def2_2005", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991", "dolg_stoll_savin_preuss_lanthanide_ecp_1989"]
 "def2-svp"              = ["weigend_ahlrichs_def2_2005", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991", "dolg_stoll_savin_preuss_lanthanide_ecp_1989"]
@@ -6259,12 +6635,12 @@ always = ["libint_valeev"]
 "def2-svp-jk"           = ["weigend_ahlrichs_def2_2005", "weigend_jk_aux_2008"]
 "def2-svp-jkfit"        = ["weigend_ahlrichs_def2_2005", "weigend_jk_aux_2008"]
 "def2-sv(p)-jk"         = ["schafer_horn_ahlrichs_1992", "weigend_ahlrichs_def2_2005", "weigend_jk_aux_2008"]
-"def2-sv(p)-jkfit"      = ["schafer_horn_ahlrichs_1992", "weigend_ahlrichs_def2_2005", "weigend_jk_aux_2008"]
+"def2-sv(p)-jkfit"      = ["schafer_horn_ahlrichs_1992", "weigend_ahlrichs_def2_2005", "weigend_jk_aux_2008", "weigend_jfit_2006"]
 "def2-tzvp-jk"          = ["weigend_ahlrichs_def2_2005", "weigend_jk_aux_2008"]
 "def2-tzvpp-jk"         = ["weigend_ahlrichs_def2_2005", "weigend_jk_aux_2008"]
 "def2-qzvp-jk"          = ["weigend_ahlrichs_def2_2005", "weigend_jk_aux_2008"]
 "def2-qzvpp-jk"         = ["weigend_ahlrichs_def2_2005", "weigend_jk_aux_2008"]
-"def2-universal-jkfit"  = ["weigend_jk_aux_2008"]
+"def2-universal-jkfit"  = ["weigend_jk_aux_2008", "weigend_jfit_2006"]
 "def2-universal-jfit"   = ["weigend_jfit_2006"]
 "def2-svp-j"            = ["weigend_ahlrichs_def2_2005", "weigend_jfit_2006"]
 "def2-sv(p)-j"          = ["schafer_horn_ahlrichs_1992", "weigend_ahlrichs_def2_2005", "weigend_jfit_2006"]
@@ -6298,8 +6674,8 @@ always = ["libint_valeev"]
 "sap_grasp_large"       = ["lehtola_visscher_engel_sap_2020"]
 "sap_helfem_large"      = ["lehtola_visscher_engel_sap_2020"]
 "pob-tzvp"              = ["peintinger_pob_tzvp_2013", "laun_pob_fifth_period_2018", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991"]
-"pob-dzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019"]
-"pob-tzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991", "dolg_stoll_savin_preuss_lanthanide_ecp_1989"]
+"pob-dzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019", "laun_pob_fifth_period_2018", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991"]
+"pob-tzvp-rev2"         = ["peintinger_pob_tzvp_2013", "vilela_oliveira_pob_rev2_2019", "laun_pob_rev2_fifth_period_2022", "laun_pob_rev2_sixth_period_2021", "seidler_pob_rev2_lanthanides_2023", "andrae_ecp_1990", "metz_stoll_dolg_ecp_2000", "peterson_pp_2003", "leininger_nicklass_ecp_1996", "kaupp_schleyer_stoll_preuss_ecp_1991", "dolg_stoll_savin_preuss_lanthanide_ecp_1989"]
 # --- roadmap / forward-looking additions ---
 "pc-0"                  = ["jensen_pc_2001"]
 "aug-pc-0"              = ["jensen_pc_2001"]
@@ -6409,6 +6785,7 @@ _libxc_always           = ["libxc_2018"]
 # --- functionals wired in xc.cpp that were missing routes (§8 backfill) ---
 "slater"                = ["slater_x_1951"]
 "blyp"                  = ["becke_b88_1988", "lee_yang_parr_1988"]
+"bpw91"                 = ["becke_b88_1988", "perdew_pw91_1992"]
 "b3lyp/g"               = ["becke_1993", "lee_yang_parr_1988", "stephens_b3lyp_1994", "vwn_1980", "hertwig_koch_1997"]
 "tpssh"                 = ["tao_tpss_2003", "staroverov_tpssh_2003"]
 "m06-l"                 = ["zhao_truhlar_m06l_2006"]
@@ -6470,6 +6847,47 @@ _libxc_always           = ["libxc_2018"]
 
 
 [routes.methods]
+"manta_ri_hf_gradient" = ["mcmurchie_davidson_1978", "neese_shark_2023", "higham_matrix_functions_2008", "pople_derivatives_1979"]
+"manta_ri_exchange_gradient" = ["mcmurchie_davidson_1978", "neese_shark_2023", "higham_matrix_functions_2008"]
+"manta_ri_coulomb_gradient" = ["mcmurchie_davidson_1978", "neese_shark_2023", "higham_matrix_functions_2008"]
+"manta_ri_metric_response" = ["higham_matrix_functions_2008"]
+"manta_bupo_extents"   = ["neese_bubblepole_2025"]
+"manta_multipoles"     = ["neese_bubblepole_2025"]
+"manta_lattice_tail"   = ["ewald_lattice_sum_1921", "mcmurchie_davidson_1978", "kudin_scuseria_periodic_fmm_2000"]
+"manta_lattice_gaussian" = ["ewald_lattice_sum_1921", "mcmurchie_davidson_1978", "kudin_scuseria_periodic_fmm_2000"]
+"manta_lattice_domains" = ["ewald_lattice_sum_1921"]
+"manta_gaussian_domains" = ["ewald_lattice_sum_1921", "mcmurchie_davidson_1978"]
+"manta_bubbles"        = ["neese_bubblepole_2025"]
+"manta_periodic_bubbles" = ["neese_bubblepole_2025", "sun_berkelbach_gdf_2017", "mcmurchie_davidson_1978"]
+"manta_periodic_ewald" = ["ewald_lattice_sum_1921", "mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017"]
+"manta_periodic_bupo" = ["neese_bubblepole_2025", "ewald_lattice_sum_1921", "mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017"]
+"manta_periodic_electrostatic" = ["neese_bubblepole_2025", "ewald_lattice_sum_1921", "mcmurchie_davidson_1978"]
+"manta_periodic_bupo_hf" = ["neese_bubblepole_2025", "ewald_lattice_sum_1921", "mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017", "helgaker_jorgensen_olsen_2000"]
+"manta_periodic_one_electron_images" = ["mcmurchie_davidson_1978", "helgaker_jorgensen_olsen_2000"]
+"manta_periodic_exchange_bounds" = ["mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017", "sundararaman_arias_exx_2013"]
+"manta_bupo_errors"    = ["neese_bubblepole_2025"]
+"manta_bupo"           = ["mcmurchie_davidson_1978", "neese_shark_2023", "neese_bubblepole_2025"]
+"manta_md"             = ["mcmurchie_davidson_1978", "neese_shark_2023"]
+"manta_bloch_fourier"  = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017"]
+"manta_periodic_pairs" = ["mcmurchie_davidson_1978", "neese_bubblepole_2025", "sun_berkelbach_gdf_2017"]
+"manta_bloch_one_electron" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017"]
+"manta_periodic_rhf" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017", "helgaker_jorgensen_olsen_2000", "ewald_lattice_sum_1921"]
+"manta_periodic_ks" = ["mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017", "ewald_lattice_sum_1921", "neumann_semilocal_1996", "libxc_2018"]
+"manta_periodic_global_hybrid_ks" = ["mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017", "ewald_lattice_sum_1921", "neumann_semilocal_1996", "libxc_2018", "sundararaman_arias_exx_2013"]
+"manta_periodic_range_separated_ks" = ["mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017", "ewald_lattice_sum_1921", "neumann_semilocal_1996", "libxc_2018", "sundararaman_arias_exx_2013"]
+"manta_periodic_uhf" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017", "helgaker_jorgensen_olsen_2000", "ewald_lattice_sum_1921"]
+"manta_periodic_ri_uhf" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017", "ye_berkelbach_rsgdf_2021", "helgaker_jorgensen_olsen_2000", "ewald_lattice_sum_1921"]
+"manta_periodic_ri_rhf" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017", "ye_berkelbach_rsgdf_2021", "helgaker_jorgensen_olsen_2000", "ewald_lattice_sum_1921"]
+"manta_periodic_ri_ks" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017", "ye_berkelbach_rsgdf_2021", "neumann_semilocal_1996", "libxc_2018", "ewald_lattice_sum_1921"]
+"manta_periodic_ri_global_hybrid_ks" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017", "ye_berkelbach_rsgdf_2021", "neumann_semilocal_1996", "libxc_2018", "ewald_lattice_sum_1921", "sundararaman_arias_exx_2013"]
+"manta_periodic_ri_range_separated_ks" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017", "ye_berkelbach_rsgdf_2021", "neumann_semilocal_1996", "libxc_2018", "ewald_lattice_sum_1921", "sundararaman_arias_exx_2013"]
+"manta_periodic_madelung" = ["ewald_lattice_sum_1921", "sundararaman_arias_exx_2013", "carrier_goerling_exx_singularity_2007"]
+"manta_periodic_nuclear" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017", "helgaker_jorgensen_olsen_2000"]
+"manta_periodic_exchange" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017"]
+"manta_periodic_hartree" = ["mcmurchie_davidson_1978", "neese_shark_2023", "sun_berkelbach_gdf_2017"]
+"manta_hf_gradient"    = ["mcmurchie_davidson_1978", "neese_shark_2023", "pople_derivatives_1979"]
+# Selected from the executed orbital-optimizer report, replacing DIIS credit.
+"opentrustregion"       = ["greiner_opentrustregion_2026"]
 # Not a method name: the foundational monograph for the LCAO crystalline-orbital
 # periodic HF treatment. registry.assemble() fires this for any periodic job
 # (periodic=True), the periodic analogue of an always-on method reference -- the
@@ -6596,7 +7014,7 @@ _libxc_always           = ["libxc_2018"]
 "ad_cdiis"              = ["pulay_diis_1980", "pulay_diis_1982", "chupin_adaptive_diis_2021"]
 # Second-order SCF (SOSCF/TRAH) — fired via uses_soscf / uses_trah flags.
 "soscf"                 = ["bacskay_qcscf_1981", "neese_soscf_2000"]
-"trah"                  = ["helmich_paris_trah_2021"]
+"trah"                  = ["helmich_paris_trah_2021", "more_sorensen_trust_1983"]
 # Internal SCF stability analysis (supported molecular UHF/UKS default-on;
 # fired via assemble(uses_scf_stability=...) from the result verdict).
 # Davidson 1975 rides along for the matrix-free lowest-eigenpair solver.
@@ -6685,7 +7103,7 @@ _libxc_always           = ["libxc_2018"]
 # "real-gamma" (periodic/ccm/direct.py run_ccm_*_direct, reached from
 # run_periodic_job through periodic/ccm/real_gamma_runner.py) and
 # "neutral-bloch" (periodic/ccm/ri.py run_ccm_*_gdf). The keys are the
-# front-door variant names (handovers/HANDOVER_AICCM_STANDARD_METHOD.md
+# front-door variant names (the original investigation
 # § 3.2) and the manifest's jk_method_executed value. Same Hamiltonian
 # (Theorem 1) => identical rows: the CCM lineage pair every cyclic-cluster
 # row carries. What each producer executes on top rides on the runner's
@@ -6733,9 +7151,7 @@ _libxc_always           = ["libxc_2018"]
 #
 # Wiring that surface is the -b chat's call (the driver module is theirs) and
 # needs an output/plan.py + dispatch.py registration, which CLAUDE.md § 16
-# reserves to the IO chat. The ask is filed in
-# handovers/HANDOVER_AICCM2026DEV_B.md § "2026-08-22 post-HF citation surface"
-# and handovers/HANDOVER_OUTPUT_LOGGER.md § "Asks pending". Keep these rows: step
+# reserves to the IO chat. Keep these rows: step
 # 5b of CitationDatabase.assemble treats a routes.methods miss as SILENT, so
 # the day that wiring lands, a missing route drops the method papers with no
 # warning -- which is exactly what the two unrestricted canonical rows below
@@ -6744,6 +7160,17 @@ _libxc_always           = ["libxc_2018"]
 # and dropped both CCM papers silently). tests/test_citations.py
 # ::test_b_posthf_backend_labels_all_have_routes now derives the producible
 # label set from that module's AST and fails if the two sides drift again.
+"chi-same-source-ccsd" = ["stanton_gauss_watts_bartlett_ccsd_1991", "mcclain_berkelbach_periodic_cc_2017", "sun_berkelbach_gdf_2017", "xing_lin_finite_size_cc_2024"]
+"chi-same-source-ccsd(t)" = ["stanton_gauss_watts_bartlett_ccsd_1991", "raghavachari_ccsdt_1989", "mcclain_berkelbach_periodic_cc_2017", "sun_berkelbach_gdf_2017", "xing_lin_finite_size_cc_2024"]
+# Canonical UHF only; the output triples_variant states the complex Hermitian
+# extension of Raghavachari Eq. 14. No ROHF/general-reference triples claim.
+"chi-same-source-uccsd" = ["stanton_gauss_watts_bartlett_ccsd_1991", "mcclain_berkelbach_periodic_cc_2017", "sun_berkelbach_gdf_2017", "xing_lin_finite_size_cc_2024"]
+"chi-same-source-uccsd(t)" = ["stanton_gauss_watts_bartlett_ccsd_1991", "raghavachari_ccsdt_1989", "mcclain_berkelbach_periodic_cc_2017", "sun_berkelbach_gdf_2017", "xing_lin_finite_size_cc_2024"]
+"chi-same-source-mp2" = ["moller_plesset_1934", "feyereisen_rimp2_1993", "sun_berkelbach_gdf_2017", "mcclain_berkelbach_periodic_cc_2017"]
+"chi-translation-local-mp2" = ["moller_plesset_1934", "riplinger_dlpno_2013", "nejad_periodic_dlpno_pbc_2025", "sun_berkelbach_gdf_2017", "mcclain_berkelbach_periodic_cc_2017"]
+"chi-same-source-ump2" = ["moller_plesset_1934", "feyereisen_rimp2_1993", "sun_berkelbach_gdf_2017", "mcclain_berkelbach_periodic_cc_2017"]
+"chi-same-source-rohf-rmp2" = ["roothaan_rohf_1960", "guest_saunders_rohf_1974", "knowles_rmp2_1991", "feyereisen_rimp2_1993", "sun_berkelbach_gdf_2017", "mcclain_berkelbach_periodic_cc_2017"]
+"chi-rohf" = ["roothaan_rohf_1960", "guest_saunders_rohf_1974", "knowles_rmp2_1991", "sun_berkelbach_gdf_2017"]
 "aiccm2026dev-b-ri-mp2"   = ["bredow_geudtner_jug_ccm_2001", "peintinger_ccm_2014", "moller_plesset_1934", "feyereisen_rimp2_1993", "sun_berkelbach_gdf_2017", "mcclain_berkelbach_periodic_cc_2017"]
 "aiccm2026dev-b-dlpno-mp2" = ["bredow_geudtner_jug_ccm_2001", "peintinger_ccm_2014", "moller_plesset_1934", "feyereisen_rimp2_1993", "pinski_dlpno_mp2_2015", "pipek_mezey_1989", "nejad_periodic_dlpno_pbc_2025", "zhu_periodic_dlpno_megacell_2025"]
 "aiccm2026dev-b-dlpno-ccsd" = ["bredow_geudtner_jug_ccm_2001", "peintinger_ccm_2014", "purvis_bartlett_ccsd_1982", "riplinger_dlpno_2013", "riplinger_sparsemaps_2016", "pipek_mezey_1989", "mcclain_berkelbach_periodic_cc_2017", "zhu_periodic_dlpno_megacell_2025"]
@@ -6771,7 +7198,7 @@ _libxc_always           = ["libxc_2018"]
 # (fit_screen_threshold on run_krhf/krks/kuhf_periodic_gdf and on the
 # Gamma drivers run_pbc_gdf_rhf/uhf/uks ->
 # build_lpq_bloch_native_fft / build_lpq_native_fft;
-# HANDOVER_GDF_FIT_SCREENING.md). The bound
+# the original investigation). The bound
 # is Häser-Ahlrichs Schwarz applied to the RI three-index tensor per
 # Neese 2009 Sec. 3.1 (Chem. Phys. 356, 98), with the Almlöf direct-SCF
 # philosophy and the Ochsenfeld 1998 linear-scaling pair-list rationale.
@@ -6896,11 +7323,12 @@ _libxc_always           = ["libxc_2018"]
 # the atomic positions — which is what makes one scalar per SCF legitimate.
 # The same split now serves the multi-k EWALD_3D RKS route via
 # python/vibeqc/periodic_corrected_exchange.py.
-"bipole"                = ["pisani_crystal_1988", "saunders_bipole_1992", "ewald_lattice_sum_1921", "dovesi_coulomb_multipole_1983", "causa_exchange_truncation_1988", "dovesi_crystal14_2014", "gygi_baldereschi_exx_1986", "carrier_goerling_exx_singularity_2007", "sundararaman_arias_exx_2013", "mcmurchie_davidson_1978", "perez_jorda_yang_1996"]
+# Physical AO-pair support is the ab initio BIPOLE default (#44/#316).
+"bipole"                = ["pisani_crystal_1988", "saunders_bipole_1992", "ewald_lattice_sum_1921", "dovesi_coulomb_multipole_1983", "causa_exchange_truncation_1988", "dovesi_crystal14_2014", "gygi_baldereschi_exx_1986", "carrier_goerling_exx_singularity_2007", "sundararaman_arias_exx_2013", "mcmurchie_davidson_1978", "perez_jorda_yang_1996", "sharma_beylkin_two_center_2021", "ahlrichs_general_os_2006", "almlof_direct_scf_1982", "schlegel_frisch_spherical_1995"]
 # Charge-pair Schwarz screening for the BIPOLE direct-space
 # SR erfc J/K build (LatticeSumOptions.sr_range_screening).
 # assemble(uses_bipole_sr_range=...) walks it.
-"bipole_sr_range"       = ["sun_range_separated_exchange_2023"]
+"bipole_sr_range"       = ["sun_range_separated_exchange_2023", "izmaylov_short_range_exchange_2006"]
 # Analytical AO-pair-FT Hartree J for the native EWALD_3D path
 # (python/vibeqc/ewald_composed.py::compute_j_ewald_3d_ft_gamma).
 "ewald_ao_ft"           = ["sun_berkelbach_gdf_2017", "mcmurchie_davidson_1978", "helgaker_jorgensen_olsen_2000"]
@@ -6979,11 +7407,24 @@ _libxc_always           = ["libxc_2018"]
 "eom-cc3"               = ["koch_cc3_1997", "stanton_bartlett_eomcc_1993"]
 "steom-ccsd"            = ["nooijen_steom_1997"]
 "lpno-ccsd"             = ["neese_lpno_2009"]
-"dlpno-ccsd"            = ["purvis_bartlett_ccsd_1982", "riplinger_dlpno_2013", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
+"dlpno-ccsd"            = ["purvis_bartlett_ccsd_1982", "stanton_gauss_watts_bartlett_ccsd_1991", "deprince_sherrill_df_ccsd_2013", "riplinger_dlpno_2013", "riplinger_sparsemaps_2016", "pinski_dlpno_mp2_2015", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
 # LocalCCSDOptions permits local (T0), a rotated-occupied compatibility (T1),
 # and exact/canonical triples. None implements Guo Eq. (2), so the static
 # closed-shell route intentionally omits that source.
-"dlpno-ccsd(t)"         = ["purvis_bartlett_ccsd_1982", "riplinger_dlpno_2013", "riplinger_triples_2013", "riplinger_sparsemaps_2016", "raghavachari_ccsdt_1989", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
+"dlpno-ccsd(t)"         = ["purvis_bartlett_ccsd_1982", "stanton_gauss_watts_bartlett_ccsd_1991", "deprince_sherrill_df_ccsd_2013", "riplinger_dlpno_2013", "riplinger_triples_2013", "riplinger_sparsemaps_2016", "pinski_dlpno_mp2_2015", "raghavachari_ccsdt_1989", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
+# The periodic GDF front door of the same engine (run_periodic_job with
+# method="dlpno-ccsd"/"dlpno-ccsd(t)", docs/design_dlpno_correlation_source.md
+# increment B2b): the molecular DLPNO sources with Pipek-Mezey in place of
+# Boys (the adapter localises the occupied block on the cell). The GDF fit,
+# the Ewald exchange zero mode and the executed triples kernel are cited by
+# the runner's feature flags and runtime-gated extra entries.
+"periodic-gdf-dlpno-ccsd"    = ["purvis_bartlett_ccsd_1982", "stanton_gauss_watts_bartlett_ccsd_1991", "deprince_sherrill_df_ccsd_2013", "riplinger_dlpno_2013", "riplinger_sparsemaps_2016", "pinski_dlpno_mp2_2015", "feyereisen_rimp2_1993", "pipek_mezey_1989", "liakos_dlpno_thresholds_2015"]
+"periodic-gdf-dlpno-ccsd(t)" = ["purvis_bartlett_ccsd_1982", "stanton_gauss_watts_bartlett_ccsd_1991", "deprince_sherrill_df_ccsd_2013", "riplinger_dlpno_2013", "riplinger_triples_2013", "riplinger_sparsemaps_2016", "pinski_dlpno_mp2_2015", "raghavachari_ccsdt_1989", "feyereisen_rimp2_1993", "pipek_mezey_1989", "liakos_dlpno_thresholds_2015"]
+# The periodic UHF adapter keeps independent alpha/beta spaces, with the
+# same qualified Saitow background citation as the molecular open-shell
+# engine below. Localisation is Pipek-Mezey, applied per spin by the adapter.
+"periodic-gdf-dlpno-uccsd" = ["purvis_bartlett_ccsd_1982", "stanton_gauss_watts_bartlett_ccsd_1991", "deprince_sherrill_df_ccsd_2013", "riplinger_dlpno_2013", "saitow_openshell_dlpno_2017", "feyereisen_rimp2_1993", "pipek_mezey_1989", "liakos_dlpno_thresholds_2015"]
+"periodic-gdf-dlpno-uccsd(t)" = ["purvis_bartlett_ccsd_1982", "stanton_gauss_watts_bartlett_ccsd_1991", "deprince_sherrill_df_ccsd_2013", "riplinger_dlpno_2013", "riplinger_triples_2013", "saitow_openshell_dlpno_2017", "raghavachari_ccsdt_1989", "feyereisen_rimp2_1993", "pipek_mezey_1989", "liakos_dlpno_thresholds_2015"]
 # Open-shell (UHF-reference) DLPNO-UCCSD(T): the closed-shell DLPNO-CCSD
 # papers plus Saitow 2017 as qualified open-shell CC background. The
 # independent-UHF-space solvers do not claim Saitow's single-spatial-orbital
@@ -6994,8 +7435,8 @@ _libxc_always           = ["libxc_2018"]
 # equation source and dedicated 2020 open-shell source dynamically.
 # Fires via routes.methods['dlpno-uccsd'/'(t)']
 # (open-shell auto-route of method='dlpno-ccsd'/'dlpno-ccsd(t)').
-"dlpno-uccsd"           = ["purvis_bartlett_ccsd_1982", "riplinger_dlpno_2013", "saitow_openshell_dlpno_2017", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
-"dlpno-uccsd(t)"        = ["purvis_bartlett_ccsd_1982", "riplinger_dlpno_2013", "riplinger_triples_2013", "saitow_openshell_dlpno_2017", "raghavachari_ccsdt_1989", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
+"dlpno-uccsd"           = ["purvis_bartlett_ccsd_1982", "stanton_gauss_watts_bartlett_ccsd_1991", "deprince_sherrill_df_ccsd_2013", "riplinger_dlpno_2013", "saitow_openshell_dlpno_2017", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
+"dlpno-uccsd(t)"        = ["purvis_bartlett_ccsd_1982", "stanton_gauss_watts_bartlett_ccsd_1991", "deprince_sherrill_df_ccsd_2013", "riplinger_dlpno_2013", "riplinger_triples_2013", "saitow_openshell_dlpno_2017", "raghavachari_ccsdt_1989", "feyereisen_rimp2_1993", "foster_boys_1960", "liakos_dlpno_thresholds_2015"]
 "fno-ccsd(t)"           = ["taube_bartlett_fno_2008", "deprince_sherrill_df_ccsd_2013", "raghavachari_ccsdt_1989"]
 # NOTE: the "mrci" method route is defined once, in the multireference
 # block above (roos_taylor_siegbahn_casci_1980 + buenker_peyerimhoff_mrci_1974
@@ -7115,8 +7556,17 @@ _libxc_always           = ["libxc_2018"]
 # conductor COSMO it corrects, and the COSMO FINE Cavity the variant requires
 # with that cavity's Gaussian-charge diagonal (Lange & Herbert eq. 3.7). NOT
 # Scalmani-Frisch: its point-charge diagonal is the Lebedev cavity's, which
-# Direct COSMO-RS refuses.
-"dcosmo-rs"             = ["sinnecker_direct_cosmors_2006", "klamt_schuurmann_cosmo_1993", "klamt_cosmors_1995", "klamt_cosmors_parametrization_1998", "klamt_fine_cavity_2018", "cossi_cpcm_2003", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
+# Direct COSMO-RS refuses. Anderson 1965: the macro-iteration extrapolates the
+# feedback potential with Anderson's step on every run.
+"dcosmo-rs"             = ["sinnecker_direct_cosmors_2006", "klamt_schuurmann_cosmo_1993", "klamt_cosmors_1995", "klamt_cosmors_parametrization_1998", "klamt_fine_cavity_2018", "cossi_cpcm_2003", "york_karplus_smooth_cosmo_1999", "lange_herbert_swig_2010", "tomasi_continuum_review_2005", "anderson_mixing_1965"]
+# CPCM and COSMO on the COSMO FINE Cavity (SolventModel cavity="fine"). The
+# cavity changes the method, so it changes the row: no Scalmani-Frisch switched
+# point-charge diagonal (that is the Lebedev cavity's), and instead the FINE
+# cavity itself plus the Gaussian-charge kernel it needs (York & Karplus eq. 56,
+# diagonal from Lange & Herbert eq. 3.7). Chosen by
+# vibeqc.solvation.driver.solvation_citation_key.
+"cpcm_fine"             = ["cossi_cpcm_2003", "klamt_schuurmann_cosmo_1993", "klamt_fine_cavity_2018", "york_karplus_smooth_cosmo_1999", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
+"cosmo_fine"            = ["klamt_schuurmann_cosmo_1993", "cossi_cpcm_2003", "klamt_fine_cavity_2018", "york_karplus_smooth_cosmo_1999", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
 # COSMO-RS / COSMOSPACE thermodynamics (vibeqc.solvation.cosmors). Fires when
 # a job computes a sigma profile, sigma potential, chemical potential or any
 # property derived from them. The underlying COSMO surface cites its own
@@ -7186,7 +7636,7 @@ _libxc_always           = ["libxc_2018"]
 # gradients — so it pairs with vibe-qc's finite-difference excited-state gradients.
 "conical_intersection"  = ["levine_meci_2008"]
 "gradient"              = ["pulay_forces_1969", "feynman_forces_1939"]
-"hessian"               = ["wilson_decius_cross_1955", "pople_derivatives_1979"]
+"hessian"               = ["wilson_decius_cross_1955", "pople_derivatives_1979", "ase_2017"]
 
 
 [routes.optimizers]
@@ -7286,6 +7736,7 @@ _libxc_always           = ["libxc_2018"]
 # construction is only defined relative to a minimal free-atom basis, and
 # vibe-qc uses MINI (Knizia's own Table 1 footnote-c variant) as that B2.
 "ibo"                   = ["knizia_ibo_2013", "huzinaga_gtos_1984"]
+"iao_wiberg"            = ["knizia_ibo_2013", "huzinaga_gtos_1984", "wiberg_bond_index_1968"]
 "vpt2"                  = ["barone_vpt2_2005"]
 "somf"                  = ["hess_somf_1996"]
 "frequency_scaling"     = ["wong_scaling_1996"]
@@ -7293,7 +7744,7 @@ _libxc_always           = ["libxc_2018"]
 # --- Bond analysis methods (v0.22.0 BOND) ---
 "wiberg"                = ["wiberg_bond_index_1968"]
 "delocalization_index"  = ["matito_esi_2007", "outeiral_di_2018"]
-"morokuma_eda"          = ["morokuma_eda_1971"]
+"morokuma_eda"          = ["morokuma_eda_1971", "kitaura_morokuma_1976"]
 "entanglement"          = ["legeza_entanglement_2003"]
 "multiorbital_correlation" = ["szalay_multiorbital_2017"]
 "entanglement_bonds"    = ["entanglement_bonds_2025"]
@@ -7317,6 +7768,28 @@ _libxc_always           = ["libxc_2018"]
 
 
 [routes.numerics]
+# Selected periodic MANTA coupling-only multipoles in HF/KS provenance.
+"manta_periodic_ri_multipole" = ["neese_bubblepole_2025", "mcmurchie_davidson_1978", "ye_berkelbach_rsgdf_2021"]
+"eigensolver_davidson" = ["davidson_iterative_1975"]
+"eigensolver_hermitian_davidson" = ["davidson_iterative_1975"]
+"eigensolver_lobpcg" = ["knyazev_lobpcg_2001"]
+"eigensolver_jd" = ["sleijpen_jd_1996"]
+# The harmonic variant cites its source, not a claim of the full recurrence.
+"eigensolver_harmonic_davidson" = ["zuev_gplhr_2015"]
+"eigensolver_gplhr" = ["zuev_gplhr_2015"]
+"manta_periodic_ri_fock" = ["mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017", "ye_berkelbach_rsgdf_2021", "neese_shark_2023"]
+"manta_periodic_ri_q" = ["mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017", "ye_berkelbach_rsgdf_2021", "neese_shark_2023"]
+"manta_periodic_gdf_tiles" = ["mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017", "ye_berkelbach_rsgdf_2021"]
+"manta_periodic_gdf" = ["mcmurchie_davidson_1978", "sun_berkelbach_gdf_2017", "ye_berkelbach_rsgdf_2021"]
+"manta_periodic_gdf_short_range" = ["mcmurchie_davidson_1978", "ye_berkelbach_rsgdf_2021"]
+"manta_periodic_semilocal_xc" = ["neumann_semilocal_1996", "libxc_2018"]
+# Explicit grid studies select assemble(numerics=["lebedev_grid"]).
+"lebedev_grid" = ["lebedev_laikov_1999"]
+"manta_periodic_quadrature" = ["becke_grid_1988", "treutler_ahlrichs_1995", "lebedev_laikov_1999"]
+"stratmann_grid" = ["stratmann_grid_1996"]
+"manta_periodic_local_exchange" = ["dirac_local_exchange_1930"]
+"chi_semilocal_quadrature" = ["neumann_semilocal_1996", "libxc_2018"]
+"chi_hybrid_exchange" = ["yanai_camb3lyp_2004", "sun_berkelbach_gdf_2017", "sundararaman_arias_exx_2013"]
 "bipole_erfc_panel" = ["sun_range_separated_exchange_2023", "mcmurchie_davidson_1978", "libint_valeev"]
 "bipole_erfc_bloch" = ["sun_range_separated_exchange_2023", "mcmurchie_davidson_1978", "libint_valeev"]
 "bipole_finite_panel" = ["sun_range_separated_exchange_2023", "sun_berkelbach_gdf_2017", "mcmurchie_davidson_1978", "libint_valeev", "sundararaman_arias_exx_2013"]
@@ -7337,6 +7810,11 @@ _libxc_always           = ["libxc_2018"]
 "chi_occupied_symmetry" = ["casassa_symmetry_wannier_2006"]
 # Shared group/space diagnostics, independent of method admission.
 "shared_symmetry" = ["casassa_symmetry_wannier_2006", "dovesi_symmetry_lcao_1986"]
+"complex_abelian_tensor_blocks" = ["kitsaras_stopkowicz_complex_abelian_2026", "stanton_gauss_watts_bartlett_ccsd_1991"]
+"symmetry_molecular_ri" = ["melega_ccsd_cd_symmetry_2026", "kitsaras_stopkowicz_complex_abelian_2026", "neese_shark_2023"]
+"symmetry_irreducible_products" = ["hellmann_gauss_direct_product_2026", "goodlett_molsym_2024", "stanton_gauss_watts_bartlett_ccsd_1991"]
+"molecular_quartet_symmetry" = ["dupuis_king_symmetry_scf_1977"]
+"molecular_quartet_pair_stabilizers" = ["davidson_double_cosets_1975", "dupuis_king_symmetry_scf_1977"]
 # D129 spatial cosets and their occupied translation/cocycle witness.
 "chi_torus_symmetry_group" = ["casassa_symmetry_wannier_2006", "dovesi_symmetry_lcao_1986"]
 # KPoints.generalized_regular / KPoints.from_kppra / KPoints.from_database.
@@ -7360,6 +7838,7 @@ _libxc_always           = ["libxc_2018"]
 # assembly today; the -a chat's runner integration should pass this key.
 "ccm_wire_kernel" = ["rozzi_wire_coulomb_2006", "trefethen_weideman_trapezoid_2014"]
 # (result.used_kpoint_symmetry_unfolding, appended by the runner).
+"physical_bipole_fock_symmetry" = ["dovesi_symmetry_lcao_1986"]
 "kpoint_symmetry_unfolding" = ["pisani_crystal_1988", "dovesi_symmetry_lcao_1986"]
 # Internal native numerical transport leaf; not an enabled correlated method.
 "periodic_ao_bloch_transport" = ["dovesi_symmetry_lcao_1986", "zicovich_wilson_crystalline_orbitals_1998"]
@@ -7421,3 +7900,15 @@ always = [
     "derenzo_2000",
     "barandiaran_seijo_aimp_1988",
 ]
+
+[entries.greiner_opentrustregion_2026]
+kind = "article"
+doi = "10.1021/acs.jctc.5c01576"
+authors = ["Greiner, Jonas", "Høyvik, Ida-Marie", "Lehtola, Susi", "Eriksen, Janus J."]
+title = "A Reusable Library for Second-Order Orbital Optimization Using the Trust Region Method"
+journal = "Journal of Chemical Theory and Computation"
+year = 2026
+volume = 22
+issue = 2
+pages = "881-895"
+bibtex_key = "greiner_opentrustregion_2026"

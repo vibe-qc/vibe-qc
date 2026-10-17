@@ -380,25 +380,28 @@ view(frames)                                # opens the ASE GUI
 
 ## 7. Custom basis sets
 
-Drop a Gaussian `.g94` file into `basis_library/custom/` and re-run
-`./scripts/setup_basis_library.sh`. See
-[`python/vibeqc/basis_library/README.md`](https://github.com/vibe-qc/vibe-qc/blob/main/python/vibeqc/basis_library/README.md)
-for the file format.
+A basis set is a QVF-Basis record; the `.g94` text libint reads is
+rendered from it. Turn your Gaussian `.g94` file into a record and render it
+into a directory libint reads:
 
 ```sh
-cp my-basis.g94 basis_library/custom/my-basis.g94
-./scripts/setup_basis_library.sh
+vibe-qc-basis convert my-basis.g94 -o my-basis.qvf.json --kind hand-written
+mkdir -p my-library/basis && cp my-basis.g94 my-library/basis/
+export LIBINT_DATA_PATH=$PWD/my-library
 ```
+
+See
+[`python/vibeqc/basis_library/README.md`](https://github.com/vibe-qc/vibe-qc/blob/main/python/vibeqc/basis_library/README.md)
+for how a record joins the bundled library.
 
 ```python
 # doc-audit: skip - uses the molecule constructed in section 1
 basis = BasisSet(mol, "my-basis")      # libint picks it up by name
 ```
 
-A custom file with the same name as a standard basis (e.g.
-`basis_library/custom/6-31g.g94`) overrides the standard one, useful
-for replacing a contracted basis with a more accurate variant without
-touching the shipped library.
+A user-set `LIBINT_DATA_PATH` wins over the bundled library, so a
+directory of your own that carries a complete library plus your file
+replaces a standard basis without touching the shipped records.
 
 ## 8. Accessing the full API
 

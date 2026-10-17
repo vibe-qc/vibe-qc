@@ -264,7 +264,7 @@ def test_native_localization_projector_audit_validates_inputs() -> None:
         )
     nonfinite = np.array(canonical, copy=True)
     nonfinite[0, 0] = np.nan
-    with pytest.raises(RuntimeError, match="coefficients must be finite"):
+    with pytest.raises(ValueError, match="coefficients must be finite"):
         _localization_projector_audit(
             nonfinite,
             localized,
@@ -273,6 +273,45 @@ def test_native_localization_projector_audit_validates_inputs() -> None:
             (2, 1, 1),
             2,
         )
+
+
+@pytest.mark.parametrize("boundary", ["native", "python"])
+@pytest.mark.parametrize("operand", ["canonical", "localized"])
+@pytest.mark.parametrize(
+    "nonfinite",
+    [
+        pytest.param(np.nan, id="real-nan"),
+        pytest.param(np.inf, id="real-posinf"),
+        pytest.param(-np.inf, id="real-neginf"),
+        pytest.param(complex(1.0, np.nan), id="imag-nan"),
+        pytest.param(complex(1.0, np.inf), id="imag-posinf"),
+        pytest.param(complex(1.0, -np.inf), id="imag-neginf"),
+    ],
+)
+def test_localization_projector_audit_nonfinite_coefficient_contract(
+    boundary, operand, nonfinite
+) -> None:
+    audit = (
+        localization.aiccm2026dev_b_localization_projector_audit
+        if boundary == "native"
+        else _localization_projector_audit
+    )
+    canonical = np.ones((4, 2), dtype=complex)
+    localized = np.array(canonical, copy=True)
+    translations = np.asarray([[0, 0, 0], [1, 0, 0]], dtype=np.int64)
+
+    # The unmodified fixture has identical, translation-invariant projectors.
+    # Keep a finite control so a boundary rejecting every input cannot pass.
+    np.testing.assert_allclose(
+        audit(canonical, localized, None, translations, (2, 1, 1), 2),
+        (0.0, 0.0, 0.0),
+        rtol=0.0,
+        atol=0.0,
+    )
+    coefficients = canonical if operand == "canonical" else localized
+    coefficients[0, 0] = nonfinite
+    with pytest.raises(ValueError, match="coefficients must be finite"):
+        audit(canonical, localized, None, translations, (2, 1, 1), 2)
 
 
 def test_localization_production_uses_native_projector_audit(monkeypatch) -> None:

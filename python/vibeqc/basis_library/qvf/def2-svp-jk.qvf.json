@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "def2-svp-jk",
+  "description": "def2-SVP JK-Basis set for H, He, Li, Be, B, C, N, O, F, Ne, Na, Mg, Al, Si, P, S, Cl, Ar, K, Ca, Sc, Ti, V, Cr, Mn, Fe, Co, Ni, Cu, Zn, Ga, Ge, As, Se, Br, Kr, Rb, Sr, Y, Zr, Nb, Mo, Tc, Ru, Rh, Pd, Ag, Cd, In, Sn, Sb, Te, I, Xe, Cs, Ba, Hf, Ta, W, Re, Os, Ir, Pt, Au, Hg, Tl, Pb, Bi, Po, At and Rn in Gaussian-format",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -40128,7 +40128,40 @@
       ]
     }
   },
+  "basis_family": "ahlrichs",
+  "references": [
+    {
+      "key": "weigend_ahlrichs_def2_2005",
+      "description": "F. Weigend, R. Ahlrichs, Physical Chemistry Chemical Physics 7, 3297-3305 (2005)",
+      "doi": "10.1039/B508541A"
+    },
+    {
+      "key": "weigend_jk_aux_2008",
+      "description": "F. Weigend, Journal of Computational Chemistry 29, 167-175 (2008)",
+      "doi": "10.1002/jcc.20702"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "def2-svp-jk",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "ab5146cec55526ffdbda78229f9845ec1f214cf0a85249cf40bc5402d34f4b3b",
+    "citations": [
+      {
+        "keys": [
+          "weigend_ahlrichs_def2_2005",
+          "weigend_jk_aux_2008"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

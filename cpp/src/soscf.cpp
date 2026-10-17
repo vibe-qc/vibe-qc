@@ -233,6 +233,14 @@ UHFSOSCFStepResult uhf_soscf_step(const Eigen::MatrixXd& F_alpha,
 
 SOSCF::SOSCF(SOSCFOptions opts) : opts_(opts) {}
 
+void SOSCF::scale_previous_step(double factor) {
+    if (!(factor > 0. && factor <= 1.))
+        throw std::invalid_argument("SOSCF accepted step factor must lie in (0, 1]");
+    if (!have_prev_)
+        throw std::logic_error("SOSCF has no proposed step to scale");
+    kappa_prev_ *= factor;
+}
+
 void SOSCF::clear() {
     s_hist_.clear();
     y_hist_.clear();

@@ -16,7 +16,7 @@ Usage::
     # compare every cell that already has a cached ORCA result
     python -m examples.regression.parity_matrix_orca.run_parity
 
-    # run ONE cell end-to-end on compute-host-d first (the handover's
+    # run ONE cell end-to-end on compute-host-d first (the original investigation's
     # "nail the loop before parametrising" step), refresh its cache
     python -m examples.regression.parity_matrix_orca.run_parity --first --run
 
@@ -282,7 +282,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="run ORCA on compute-host-d for cache misses (and "
                          "refresh hits); default: compare cached only")
     ap.add_argument("--first", action="store_true",
-                    help=f"only the handover's first cell "
+                    help=f"only the first parity-matrix cell "
                          f"({FIRST_CELL.cell_id})")
     ap.add_argument("--cells", default="",
                     help="substring filter on cell id")

@@ -291,6 +291,9 @@ def _independent_lattice_mulliken_populations(
     opts = vq.LatticeSumOptions()
     opts.cutoff_bohr = float(lattice_options.cutoff_bohr)
     opts.nuclear_cutoff_bohr = float(lattice_options.nuclear_cutoff_bohr)
+    # The request is immutable; the producer records the executed pair policy.
+    if result.resolved_domain is not None:
+        opts.pair_complete_1e = result.resolved_domain.policy == "physical_pairs"
     overlap = vq.compute_overlap_lattice(basis, system, opts)
     density_by_key = {
         _test_cell_key(cell): np.asarray(block)
@@ -1120,3 +1123,109 @@ def test_gdf_gamma_population_sidecar_uses_scf_overlap(tmp_path, mesh, method):
             np.testing.assert_allclose(spin, expected_spin, atol=1e-10, rtol=0)
             assert sum(spin) == pytest.approx(2., abs=1e-8)
     np.testing.assert_allclose(charges, expected, atol=1e-10, rtol=0)
+
+
+@pytest.mark.parametrize("mesh", [None, (1, 1, 1), (2, 1, 1)], ids=["default-gamma", "explicit-gamma", "multi-k"])
+@pytest.mark.parametrize("method", ["RHF", "RKS", "UHF", "UKS"])
+def test_bipole_archive_charge_and_spin(tmp_path, mesh, method):
+    """Native BIPOLE archives retain charge and triplet spin across k meshes."""
+    import vibeqc as vq
+
+    open_shell = method in ("UHF", "UKS")
+    system = vq.PeriodicSystem(
+        3, np.eye(3) * 12.,
+        [vq.Atom(1, [0., 0., -.7]), vq.Atom(1, [0., 0., .7])],
+        multiplicity=3 if open_shell else 1,
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    stem = tmp_path / "bipole-pop"
+    result = vq.run_periodic_job(
+        system, basis, method=method, functional="LDA" if method.endswith("KS") else None,
+        jk_method="bipole", kpoints=mesh, output=stem,
+        initial_guess="HCORE", max_iter=80, conv_tol_energy=1e-9,
+        write_molden_file=False, write_density=False, write_population_file=True,
+        output_qvf=True, density_spacing_bohr=0.5, progress=False,
+    )
+    assert result.converged
+    payload = json.loads(stem.with_suffix(".population.json").read_text())
+    np.testing.assert_allclose([r["charge"] for r in payload["mulliken"]], 0., atol=1e-8)
+    assert all(key not in payload["errors"] for key in ("mulliken", "loewdin", "mayer", "mulliken_spin"))
+    with zipfile.ZipFile(stem.with_suffix(".qvf")) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        section, = [s for s in manifest["sections"] if s["kind"] == "atom_properties"]
+        members = section["members"]
+        charges = np.frombuffer(archive.read(members["mulliken_charge"]["path"]), dtype=np.float64)
+        np.testing.assert_allclose(charges, 0., atol=1e-8)
+        assert "mulliken_spin" not in members
+        if open_shell:
+            spin = np.frombuffer(archive.read(members["spin_population"]["path"]), dtype=np.float64)
+            np.testing.assert_allclose(spin, 1., atol=1e-8)
+        else:
+            assert "spin_population" not in members
+
+
+@pytest.mark.parametrize("relabel", [False, True])
+@pytest.mark.parametrize("recorded_domain", [False, True])
+@pytest.mark.parametrize("spin_case", [None, "unequal", "half", "missing-cell", "nonfinite", "count", "duplicate"])
+def test_bipole_population_uses_resolved_physical_overlap(relabel, recorded_domain, spin_case):
+    """A prescribed Gamma density contracts with its producer's pair support."""
+    import vibeqc as vq
+    from vibeqc.bipole_domain import OptionSnapshot
+
+    lattice = np.array([[6., .4, .2], [.3, 6.2, .5], [.1, .6, 6.4]])
+    position = np.array([3., 1., .5]) + (lattice[:, 0] if relabel else 0.)
+    system = vq.PeriodicSystem(3, lattice, [vq.Atom(3, [0., 0., 0.]), vq.Atom(1, position)])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    executed = vq.LatticeSumOptions()
+    executed.cutoff_bohr = executed.nuclear_cutoff_bohr = 5.5
+    executed.pair_complete_1e = True
+    overlap = vq.compute_overlap_lattice(basis, system, executed)
+    gamma_overlap = sum(np.asarray(block) for block in overlap.blocks)
+    assert np.linalg.eigvalsh(gamma_overlap).min() > 0.
+    # Full-rank fractional density: D S = (4 / n_AO) I. Its independent
+    # per-atom populations are known without using the population adapter.
+    density = (4. / basis.nbasis) * np.linalg.inv(gamma_overlap)
+    result = SimpleNamespace(
+        density=SimpleNamespace(cells=overlap.cells, blocks=[density.copy() for _ in overlap.cells], nbf=basis.nbasis),
+        resolved_domain=SimpleNamespace(lattice_1e=OptionSnapshot.capture(
+            executed, ("cutoff_bohr", "nuclear_cutoff_bohr", "pair_complete_1e"))),
+    )
+    if spin_case:
+        result.density_alpha = SimpleNamespace(
+            cells=overlap.cells, blocks=[.7 * density for _ in overlap.cells], nbf=basis.nbasis,
+        )
+        if spin_case != "half":
+            cells = list(overlap.cells)
+            blocks = [.3 * density for _ in cells]
+            if spin_case == "missing-cell":
+                cells, blocks = cells[:-1], blocks[:-1]
+            elif spin_case == "nonfinite":
+                blocks[0][0, 0] = np.nan
+            elif spin_case == "count":
+                blocks = blocks[:-1]
+            elif spin_case == "duplicate":
+                cells.append(cells[0])
+                blocks.append(blocks[0])
+            result.density_beta = SimpleNamespace(cells=cells, blocks=blocks, nbf=basis.nbasis)
+    request = vq.LatticeSumOptions()  # Raw request still has historical native defaults.
+    request.cutoff_bohr = request.nuclear_cutoff_bohr = 5.5
+    if not recorded_domain:
+        del result.resolved_domain
+    summary = compute_bipole_population_summary(
+        result, basis, system.unit_cell_molecule(), system,
+        lattice_options=request if recorded_domain else executed,
+    )
+    expected = np.array([3., 1.]) - (4. / basis.nbasis) * np.bincount(_test_ao_to_atom_map(basis))
+    np.testing.assert_allclose([row[3] for row in summary.mulliken_atoms], expected, atol=1e-12, rtol=0)
+    assert not request.pair_complete_1e
+    assert executed.pair_complete_1e
+    if spin_case == "unequal":
+        np.testing.assert_allclose(
+            [row[3] for row in summary.mulliken_spin_atoms], .4 * (np.array([3., 1.]) - expected),
+            atol=1e-12, rtol=0,
+        )
+        assert "mulliken_spin" not in summary.errors
+    else:
+        assert not summary.mulliken_spin_atoms
+    if spin_case not in (None, "unequal"):
+        assert "mulliken_spin" in summary.errors

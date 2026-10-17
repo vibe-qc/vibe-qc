@@ -61,6 +61,15 @@ Eigen::MatrixXd build_omx_overlap(
     const std::vector<int>& ao_atom,
     const std::vector<int>& ao_type);
 
+// Private algebraic baseline access. No SCF or state-acceptance claim.
+struct OMxLegacyPairOperands {
+    Eigen::MatrixXd overlap;
+    Eigen::MatrixXd fock_delta;
+};
+OMxLegacyPairOperands evaluate_omx_legacy_pair_operands(
+    const Molecule& mol, const OMxParameterSet& params,
+    const Eigen::MatrixXd& density);
+
 // ---------------------------------------------------------------------------
 // Closed-shell OMx SCF (v2): F C = C ε in the NDDO basis with Pulay DIIS.
 // ---------------------------------------------------------------------------

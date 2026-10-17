@@ -3,7 +3,7 @@
 > **Experimental, energy-evaluator only.** This is the validated
 > construction from the 2026-07-29 oracle work
 > (``examples/regression/gapw_parity/oracle_projector_augmentation_wip2.py``,
-> ``handovers/HANDOVER_GAPW_PRODUCTION.md`` "NEXT MILESTONE"): it closes
+> the original investigation "NEXT MILESTONE"): it closes
 > the H2O fixed-density Hartree identity to +9 mHa where the production
 > block-restricted augmentation is -4213 mHa off. The production SCF
 > does NOT use this module yet - the analytic Fock (dE/dD of this
@@ -589,8 +589,7 @@ def projector_hartree_energy_and_fock(
 class AnalyticAugmentation:
     """D-independent data for the fit-free analytic-ERI augmentation.
 
-    The formulation (validated 2026-07-30, see
-    HANDOVER_GAPW_PRODUCTION.md):
+    The formulation (validated 2026-07-30):
 
         E_H_per[D] = E_sm_per[rho_tilde + rho0]
                    + 1/2 D . ERI_hard . D

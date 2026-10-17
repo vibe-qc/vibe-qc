@@ -215,9 +215,12 @@ def evaluate_periodic_density_on_grid(
     # .cube artifacts inherited the error on every periodic route.
     # Filed as PERIODIC-DENSITY-GRID-DOUBLE-COUNTS-IMAGES.
     #
-    # Cost is unchanged: the old form evaluated two image-summed AO
-    # tables per g block (each internally (2r+1)^3 cells), the new one
-    # evaluates (2r+1)^3 shared-R translations of two plain tables.
+    # Cost was unchanged by that correction: the old form evaluated two
+    # image-summed AO tables per g block (each internally (2r+1)^3 cells),
+    # the tied form evaluates (2r+1)^3 shared-R translations of two plain
+    # tables.  The accumulation below then regroups those translations by
+    # partner shift so each distinct plain table is built once; see the
+    # comment at the rho loop.
     lattice_vectors = np.asarray(lat, dtype=float)
     radius = int(ao_image_radius)
     if radius < 0 or radius != ao_image_radius:
@@ -229,24 +232,14 @@ def evaluate_periodic_density_on_grid(
         range(-radius, radius + 1) if axis < dim else (0,)
         for axis in range(3)
     ]
-    translations = [
-        (i * lattice_vectors[:, 0]
-         + j * lattice_vectors[:, 1]
-         + k * lattice_vectors[:, 2])
+    cube_keys = [
+        (i, j, k)
         for i in image_ranges[0]
         for j in image_ranges[1]
         for k in image_ranges[2]
     ]
-
-    def _plain_ao(basis_obj) -> np.ndarray:
-        """AO table with NO image summing (the image sum is the R loop)."""
-        out = np.empty((n_points, basis.nbasis), dtype=float)
-        for i in range(0, n_points, chunk_size):
-            block = points[i:i + chunk_size]
-            out[i:i + chunk_size, :] = evaluate_ao_periodic(
-                basis_obj, system, block, image_radius=0,
-            )
-        return out
+    cube_slot = {key: slot for slot, key in enumerate(cube_keys)}
+    n_cube = len(cube_keys)
 
     density_cells = list(D_real.cells)
     density_blocks = list(D_real.blocks)
@@ -325,27 +318,131 @@ def evaluate_periodic_density_on_grid(
         if np.any(matrix != 0.0):
             live_cells.append((cell, matrix, key))
 
+    # rho(r) = S_R S_g D(g)_{munu} chi_mu(r-R) chi_nu(r-R-R_g), regrouped by
+    # the PARTNER shift t = R + R_g so each distinct AO table is evaluated
+    # once:
+    #
+    #   rho(r) = S_t [ S_{R : t-R live} chi(r-R) D(t-R) ] . chi(r-t)
+    #
+    # The two AO factors are the same plain table at two lattice shifts, so
+    # the (R, g) double loop this replaces asked the native evaluator for
+    # |R| x |live| tables when only |{R} u {R+g}| distinct ones exist.  On
+    # the H2/STO-3G 30^3 density artifact that is 40095 ``evaluate_ao``
+    # calls for 2127 distinct tables over the runner's image radii 1..3 --
+    # the artifact cost 79x its own SCF, essentially all of it here.
+    #
+    # Order matters for true multi-k densities: D(g) need not be symmetric.
+    # This convention integrates to S_g D(g):S(g), matching
+    # D(g)=S_k w_k exp(-ik.R_g)D(k) and S(k)=S_g exp(+ik.R_g)S(g), so the
+    # left factor of each term stays chi(r-R) and the right one chi(r-t).
+    n_basis = int(basis.nbasis)
     rho_flat = np.zeros(n_points, dtype=float)
-    for R in translations:
-        # chi_ν(r - R): the home-cell AO label, translated by R.
-        chi_ref = _plain_ao(_shifted_basis(basis, system, R))
-        for cell, Dg, key in live_cells:
-            shift = R + np.asarray(cell.r_cart, dtype=float)
-            if key == (0, 0, 0):
-                chi_g = chi_ref
-            else:
-                # chi_mu(r - R - R_g): shell mu on atom a evaluated at r
-                # equals the AO of a basis whose atom a sits at
-                # r_a + R + R_g.
-                chi_g = _plain_ao(_shifted_basis(basis, system, shift))
-            # rho(r) += S_muν D(g)_{muν} chi_mu(r-R) chi_ν(r-R-R_g).
-            # Order matters for true multi-k densities: D(g) need not be
-            # symmetric. This convention integrates to
-            # S_g D(g):S(g), matching D(g)=S_k w_k exp(-ik.R_g)D(k)
-            # and S(k)=S_g exp(+ik.R_g)S(g).
-            rho_flat += np.einsum(
-                "gi,ij,gj->g", chi_ref, Dg, chi_g, optimize=True,
+
+    if live_cells:
+        # D blocks as one contiguous (n_live, nbf, nbf) stack of TRANSPOSED
+        # blocks, so the inner R sum for one partner shift is a single gemm
+        # against a (nbf, n_terms * nbf) row of them.
+        d_stack_t = np.ascontiguousarray(
+            np.stack([matrix.T for _cell, matrix, _key in live_cells])
+        )
+        partner_terms: dict[
+            tuple[int, int, int], tuple[list[int], list[int]]
+        ] = {}
+        for r_slot, r_key in enumerate(cube_keys):
+            for g_slot, (_cell, _matrix, g_key) in enumerate(live_cells):
+                t_key = (
+                    r_key[0] + g_key[0],
+                    r_key[1] + g_key[1],
+                    r_key[2] + g_key[2],
+                )
+                terms = partner_terms.get(t_key)
+                if terms is None:
+                    partner_terms[t_key] = ([r_slot], [g_slot])
+                else:
+                    terms[0].append(r_slot)
+                    terms[1].append(g_slot)
+        partner_plan = [
+            (
+                t_key,
+                cube_slot.get(t_key, -1),
+                np.asarray(r_slots, dtype=np.intp),
+                np.asarray(g_slots, dtype=np.intp),
             )
+            for t_key, (r_slots, g_slots) in partner_terms.items()
+        ]
+        max_terms = max(len(item[2]) for item in partner_plan)
+
+        # Hold the |R| cube tables for one bounded point block, not for the
+        # whole grid: the cube cache, the gathered right factor and the two
+        # (nbf, n_block) work arrays are what the cap below budgets for.
+        workspace_bytes = 256 * 1024 * 1024
+        bytes_per_point = 8 * n_basis * (n_cube + max_terms + 2) + 24
+        block_size = max(
+            1,
+            min(int(chunk_size), workspace_bytes // bytes_per_point),
+        )
+
+        shifted_bases: dict[tuple[int, int, int], BasisSet] = {}
+
+        def _shift_basis(key: tuple[int, int, int]) -> BasisSet:
+            """Shifted basis for an integer lattice index, memoised locally.
+
+            Every shift here is integer-aligned by construction, so this is
+            exactly what :func:`_shifted_basis` resolves to -- without its
+            per-call ``solve`` -- and it shares
+            :mod:`vibeqc.ewald_j`'s cache.  The local dict keeps the tables
+            this call needs alive past that cache's LRU bound.
+            """
+            cached = shifted_bases.get(key)
+            if cached is None:
+                cached = get_shifted_basis(basis, system, key)
+                shifted_bases[key] = cached
+            return cached
+
+        # The cube cache is SHIFT-major -- (n_cube, nbf, n_block), one
+        # contiguous AO plane per translation.  Gathering a partner shift's
+        # contributing translations is then a bulk copy of whole planes.
+        # Point-major (n_block, n_cube, nbf) gathers the same bytes with a
+        # stride of n_cube * nbf * 8, one cache line touched per 16 bytes,
+        # and measured 18.1 s of a 31.2 s radius-3 evaluation on the H2
+        # artifact cell against 10.0 s for the AO evaluation it replaced.
+        for start in range(0, n_points, block_size):
+            stop = min(start + block_size, n_points)
+            block = points[start:stop]
+            n_block = stop - start
+            cube_ao = np.empty((n_cube, n_basis, n_block), dtype=float)
+            for slot, r_key in enumerate(cube_keys):
+                cube_ao[slot] = evaluate_ao_periodic(
+                    _shift_basis(r_key), system, block, image_radius=0,
+                ).T
+            streamed = np.empty((n_basis, n_block), dtype=float)
+            rho_block = np.zeros(n_block, dtype=float)
+            for t_key, t_slot, r_slots, g_slots in partner_plan:
+                if t_slot >= 0:
+                    # chi(r - t) is already in the cube cache.
+                    chi_t = cube_ao[t_slot]
+                else:
+                    # chi_mu(r - R - R_g): shell mu on atom a evaluated at
+                    # r equals the AO of a basis whose atom a sits at
+                    # r_a + R + R_g.
+                    streamed[:] = evaluate_ao_periodic(
+                        _shift_basis(t_key), system, block, image_radius=0,
+                    ).T
+                    chi_t = streamed
+                # [D(t-R_1)^T | D(t-R_2)^T | ...]: the (nbf, k * nbf) left
+                # operand that sums this shift's R terms in one gemm.  Built
+                # per block rather than once, because holding every shift's
+                # row costs |(R, g) pairs| * nbf^2 -- fine for the two
+                # functions of H2/STO-3G, gigabytes for a real basis.  It is
+                # a k * nbf^2 copy against a 2 * n_block * k * nbf^2 gemm.
+                d_row = (
+                    np.take(d_stack_t, g_slots, axis=0)
+                    .transpose(1, 0, 2)
+                    .reshape(n_basis, -1)
+                )
+                left = np.take(cube_ao, r_slots, axis=0).reshape(-1, n_block)
+                rho_block += np.einsum("np,np->p", d_row @ left, chi_t)
+            rho_flat[start:stop] = rho_block
 
     if _return_workspace:
         # The workspace's ``chi_ref`` is the IMAGE-SUMMED home-cell AO

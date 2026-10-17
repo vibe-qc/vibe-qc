@@ -54,6 +54,66 @@ def _accepted_channels(result, *, rohf_effective_spectrum=False):
     return channels
 
 
+def _spectral_energy_grid(channels, sigma, emin, emax, base_bytes,
+                          bytes_per_point, memory_byte_cap):
+    """Resolve every Gaussian without allocating the empty spectral gaps.
+
+    Keep the original uniform grid when it fits. Otherwise merge nine-sigma
+    neighborhoods of *all* accepted eigenvalues (including virtual states).
+    Broadening itself still truncates at eight sigma: the extra interval
+    endpoints are exactly zero, so linear consumers cannot bridge a gap with
+    nonzero spectral weight. No eigenstate or Gaussian width is discarded.
+    """
+    step = sigma / 4
+    first, last = emin - 8 * sigma, emax + 8 * sigma
+    span = (last - first) / step
+    if not np.isfinite(span):
+        raise ValueError('GDF spectral energy range cannot be resolved')
+    n_grid = max(500, int(np.ceil(span)) + 1)
+    reserved = base_bytes + bytes_per_point * n_grid
+    if reserved <= memory_byte_cap:
+        return np.linspace(first, last, n_grid), reserved
+
+    n_states = sum(len(e) for channel in channels for e in channel[0])
+    # Conservative allowance for sorted Python floats and merged interval
+    # tuples, in addition to the coordinate/spectrum allocation below.
+    planning_bytes = 256 * n_states
+    if base_bytes + planning_bytes >= memory_byte_cap:
+        raise MemoryError(
+            f'GDF spectral properties require more than '
+            f'{base_bytes + planning_bytes} bytes; cap is {memory_byte_cap}'
+        )
+    if max(abs(emin), abs(emax)) * np.finfo(float).eps >= step:
+        raise ValueError('GDF spectral broadening is below energy-coordinate precision')
+    levels = sorted(float(e) for channel in channels for energies in channel[0]
+                    for e in energies)
+    intervals = []
+    left, right = levels[0] - 9 * sigma, levels[0] + 9 * sigma
+    for energy in levels[1:]:
+        start, stop = energy - 9 * sigma, energy + 9 * sigma
+        if start <= right:
+            right = max(right, stop)
+        else:
+            intervals.append((left, right))
+            left, right = start, stop
+    intervals.append((left, right))
+    del levels
+    sizes = [int(np.ceil((stop - start) / step)) + 1
+             for start, stop in intervals]
+    n_grid = sum(sizes)
+    reserved = base_bytes + planning_bytes + bytes_per_point * n_grid
+    if reserved > memory_byte_cap:
+        raise MemoryError(
+            f'GDF spectral properties require {reserved} bytes; cap is {memory_byte_cap}'
+        )
+    grid = np.empty(n_grid)
+    offset = 0
+    for (start, stop), size in zip(intervals, sizes):
+        grid[offset:offset + size] = np.linspace(start, stop, size)
+        offset += size
+    return grid, reserved
+
+
 def gdf_properties_from_result(
     result, system, basis, *, coop_cohp=False, sigma_ev=0.05,
     memory_byte_cap=128 * 1024**2, _rohf_effective_spectrum=False,
@@ -125,19 +185,14 @@ def gdf_properties_from_result(
     pair_keys = sorted(pairs)
     pair_meta = _pair_metadata(system, pair_keys)
     ngroups, npairs = len(groups), len(pairs)
-    first, last = emin - 8 * sigma, emax + 8 * sigma
-    n_grid = max(500, int(np.ceil((last - first) / (sigma / 4))) + 1)
-    # Include all persistent spectra and the returned energy coordinate,
-    # plus contraction scratch. Returned arrays share their storage.
-    reserved = scratch_bytes + 8 * (
-        n_grid * (2 + n_spin * (1 + ngroups + 2*npairs))
-        + (ngroups + 2*npairs)*nbf + 2*n_spin*npairs
+    # Include persistent spectra, both energy coordinates and contraction
+    # scratch. A sparse energy span must not consume memory for empty gaps.
+    base_bytes = scratch_bytes + 8 * ((ngroups + 2*npairs)*nbf + 2*n_spin*npairs)
+    bytes_per_point = 8 * (2 + n_spin * (1 + ngroups + 2*npairs))
+    energy_grid, reserved = _spectral_energy_grid(
+        channels, sigma, emin, emax, base_bytes, bytes_per_point, int(memory_byte_cap),
     )
-    if reserved > int(memory_byte_cap):
-        raise MemoryError(
-            f'GDF spectral properties require {reserved} bytes; cap is {memory_byte_cap}'
-        )
-    energy_grid = np.linspace(first, last, n_grid)
+    n_grid = len(energy_grid)
     dos = np.zeros((n_spin, n_grid))
     pdos = np.zeros((n_spin, ngroups, n_grid))
     coop = np.zeros((n_spin, npairs, n_grid))

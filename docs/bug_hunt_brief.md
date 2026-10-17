@@ -202,7 +202,7 @@ whatever you were hunting: stop, investigate, and report.
 | Zn²⁺ | LANL2DZ ECP / 6-31G / UHF | matches PySCF to µHa | `tests/test_ecp_validation.py` |
 | NaCl | Madelung constant | −1.7475645946… | `tests/test_madelung.py` |
 | H atom | any DFT functional / UKS | ⟨S²⟩ = 0.75 | `tests/test_periodic_uks_ewald.py` |
-| Multi-k Ewald [1,1,1] | molecular-limit cell | matches Γ-only to 1e-10 Ha | `tests/test_periodic_*_multi_k_ewald.py` |
+| Multi-k Ewald [1,1,1], `exchange_exxdiv='none'` | molecular-limit cell | matches Γ-only to 1e-10 Ha (the default is the corrected split since #23) | `tests/test_periodic_*_multi_k_ewald.py` |
 
 > The former H₂O / 6-31G\* RHF canary (`tests/test_h2o.py`, −76.0107 Ha)
 > was retired in the test-suite reorganisation. Re-pin it to the current

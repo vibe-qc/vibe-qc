@@ -26,13 +26,17 @@ hood (parallel to :mod:`vibeqc.perf`):
       with vq.structured_log("output.scf.jsonl"):
           vq.run_rhf(mol, basis, opts)
 
-* **``run_job`` kwarg** -- one-shot::
+* **``run_job`` / ``run_periodic_job`` kwarg** -- one-shot::
 
       vq.run_job(mol, basis="cc-pVDZ", method="rks",
                  functional="pbe", structured_log=True)
 
-The ``run_job`` kwarg accepts ``True`` (writes ``{output}.scf.jsonl``),
-a path-like (writes there), or ``False`` / ``None`` (off).
+The runner kwarg accepts ``True`` (writes ``{output}.scf.jsonl``),
+a path-like (writes there), or ``False`` / ``None`` (the default:
+defer to ``VIBEQC_STRUCTURED_LOG``, then to the ``$VQ_WORKDIR``
+auto-enable, else off). Both runners resolve it through
+``_resolve_structured_log_target``, so the precedence cannot
+drift between the molecular and periodic entry points (#303, #384).
 
 Public surface
 --------------
@@ -57,6 +61,7 @@ from pathlib import Path
 from typing import Any, Iterator, Optional, Union
 
 from .._errors import OutputFailureKind, warn_output_failure
+from .._stem_paths import stem_sibling
 
 
 __all__ = [
@@ -408,6 +413,49 @@ def structured_log(
     finally:
         _active.reset(token)
         log.close()
+
+
+# ---------------------------------------------------------------------------
+# Runner-level target resolution (shared by run_job and run_periodic_job).
+# ---------------------------------------------------------------------------
+
+def _resolve_structured_log_target(
+    structured_log: Union[bool, str, os.PathLike, None],
+    output_stem: Union[str, os.PathLike],
+) -> Optional[Path]:
+    """Resolve a runner's ``structured_log`` keyword to a destination.
+
+    The single resolver behind ``run_job`` and ``run_periodic_job``
+    (#303, #384), so the two entry points cannot drift. Precedence,
+    highest first:
+
+    * ``True`` -> ``{output}.scf.jsonl``;
+    * a str / path-like -> that path, verbatim;
+    * ``False`` / ``None`` ->
+
+      1. ``$VIBEQC_STRUCTURED_LOG``, when set (the documented "env var
+         wins when ``structured_log`` is left at ``False``");
+      2. ``$VQ_WORKDIR`` set (a vq job) -> ``{output}.scf.jsonl``, the
+         always-on machine-readable progress for vq;
+      3. otherwise ``None`` (no log).
+
+    ``False`` is the runners' default, so an explicit ``False`` and the
+    default are the same value and resolve identically. The returned
+    path is passed to :func:`structured_log` as its explicit ``path``.
+    """
+    if structured_log is True:
+        return stem_sibling(output_stem, ".scf.jsonl")
+    if structured_log is False or structured_log is None:
+        env = os.environ.get("VIBEQC_STRUCTURED_LOG", "").strip()
+        if env:
+            return Path(env)
+        # Auto-enable when running under vq -- the daemon always sets
+        # $VQ_WORKDIR. Machine-readable progress lets vq status /
+        # monitors show iteration + energy without parsing .out.
+        if os.environ.get("VQ_WORKDIR"):
+            return stem_sibling(output_stem, ".scf.jsonl")
+        return None
+    return Path(os.fspath(structured_log))
 
 
 # ---------------------------------------------------------------------------

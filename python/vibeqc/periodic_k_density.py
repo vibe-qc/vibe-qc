@@ -12,7 +12,7 @@ import numpy as np
 from ._vibeqc_core import (
     BlochKMesh,
     LatticeMatrixSet,
-    real_space_density_from_kpoints_fractional,
+    real_space_density_from_density_matrices,
 )
 
 __all__ = [
@@ -98,25 +98,16 @@ def real_space_density_from_per_k_density(
 ) -> LatticeMatrixSet:
     """Inverse-Bloch fold already-formed per-k AO densities.
 
-    ``real_space_density_from_kpoints_fractional`` owns the canonical
-    C++ fold from Bloch orbitals.  Diagonalising each Hermitian
-    ``D(k)`` lets SCF loops reuse that fold for mixed or damped
-    densities, where no MO coefficient/occupation pair exists.
+    Fold the Hermitian part of each ``D(k)`` directly using the same native
+    accumulation as the fractional-orbital API. This avoids diagonalizing
+    and reconstructing mixed or damped densities. Negative eigenvalues are
+    retained; the existing real projection and supplied k weights apply.
     """
     if len(D_per_k) == 0:
         raise ValueError("cannot fold an empty per-k density list")
 
-    C_pseudo: List[np.ndarray] = []
-    occ_pseudo: List[np.ndarray] = []
-    for D_raw in D_per_k:
-        D = np.asarray(D_raw, dtype=complex)
-        D = 0.5 * (D + D.conj().T)
-        occ, C = np.linalg.eigh(D)
-        C_pseudo.append(C.astype(complex))
-        occ_pseudo.append(np.asarray(occ, dtype=float))
-    return real_space_density_from_kpoints_fractional(
-        C_pseudo,
-        occ_pseudo,
+    return real_space_density_from_density_matrices(
+        [np.asarray(D, dtype=complex) for D in D_per_k],
         kmesh,
         cells,
     )

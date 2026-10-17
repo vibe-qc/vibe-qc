@@ -24,11 +24,21 @@ Three regimes covered here:
 from __future__ import annotations
 
 import math
+import os
+import json
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 import vibeqc as vq
+
+
+@pytest.fixture(autouse=True)
+def _isolated_filtered_store(monkeypatch, tmp_path):
+    # Tests own their cache and restore the process-wide libint selection.
+    monkeypatch.setenv("LIBINT_DATA_PATH", os.environ.get("LIBINT_DATA_PATH", ""))
+    monkeypatch.setenv("VIBEQC_FILTERED_BASIS_DIR", str(tmp_path / "filtered-store"))
 
 
 # ---------------------------------------------------------------------------
@@ -166,14 +176,18 @@ def test_make_basis_with_filter_returns_filtered_basis():
     assert n_prim_via_make == 10   # 12 original - 2 dropped
 
 
-def test_clear_filtered_basis_cache_returns_count():
-    """Filter once, clear, and check we deleted at least one file."""
+def test_clear_filtered_basis_cache_returns_count(monkeypatch):
+    """Explicit cleanup refuses a selected root, then reports actual removal."""
+    stock_root = os.environ["LIBINT_DATA_PATH"]
     mol = vq.Molecule([vq.Atom(3, [0, 0, 0]), vq.Atom(1, [3, 0, 0])])
     basis = vq.BasisSet(mol, "sto-3g")
-    vq.filter_basis_by_exponent(basis, mol, 0.1)
-    n = vq.clear_filtered_basis_cache()
-    assert n >= 1
-    # Second cleanup is a no-op.
+    filtered, report = vq.filter_basis_by_exponent(basis, mol, 0.1)
+    with pytest.raises(RuntimeError, match="selected"):
+        vq.clear_filtered_basis_cache()
+    # This isolated fixture has no other readers; retire the filtered object.
+    del filtered, report
+    monkeypatch.setenv("LIBINT_DATA_PATH", stock_root)
+    assert vq.clear_filtered_basis_cache() == 1
     assert vq.clear_filtered_basis_cache() == 0
 
 
@@ -220,7 +234,6 @@ def test_lih_filter_makes_overlap_psd():
     assert rep_f.n_negative == 0
     assert rep_f.min_eigenvalue > 0
 
-    vq.clear_filtered_basis_cache()
 
 
 def test_lih_filter_unblocks_scf_run():
@@ -262,7 +275,6 @@ def test_lih_filter_unblocks_scf_run():
     # (still xfail-strict pending the multi-cell-density fix).
     assert math.isfinite(r.energy)
 
-    vq.clear_filtered_basis_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +306,6 @@ def test_filter_records_dropped_primitives_explicitly():
         assert d.shell_letter in ("S", "P")
         assert d.exponent < 0.1
         assert d.threshold == pytest.approx(0.1)
-    vq.clear_filtered_basis_cache()
 
 
 def test_format_basis_filter_report_lists_every_drop():
@@ -312,7 +323,6 @@ def test_format_basis_filter_report_lists_every_drop():
     assert "Li" in text
     # And the threshold.
     assert "0.1" in text
-    vq.clear_filtered_basis_cache()
 
 
 def test_format_basis_filter_report_handles_no_drops():
@@ -325,7 +335,6 @@ def test_format_basis_filter_report_handles_no_drops():
     assert "no primitives below threshold" in text or \
            "basis unchanged" in text
     assert report.n_primitives_dropped == 0
-    vq.clear_filtered_basis_cache()
 
 
 def test_format_basis_filter_report_records_dropped_shell():
@@ -341,7 +350,6 @@ def test_format_basis_filter_report_records_dropped_shell():
     assert len(report.dropped_shells) >= 1
     text = vq.format_basis_filter_report(report)
     assert "Shells removed entirely" in text
-    vq.clear_filtered_basis_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -357,3 +365,64 @@ def test_critical_error_message_recommends_pob_and_make_basis():
     assert "pob-tzvp" in text or "pob-tzvp-rev2" in text
     assert "make_basis" in text
     assert "exp_to_discard" in text
+
+
+@pytest.mark.parametrize("read_only", [False, True], ids=["writable", "read-only"])
+def test_filtered_basis_isolation_and_native_reload(monkeypatch, tmp_path, read_only, record_property):
+    """Installed bytes, unfiltered names and native SAD survive filtering."""
+    import hashlib
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.basis_registry import basis_file_path
+
+    installed = tmp_path / "installed"
+    data = installed / "basis"
+    data.mkdir(parents=True)
+    (data / "sto-3g.g94").write_bytes(basis_file_path("sto-3g").read_bytes())
+    (data / "preserved.ecp").write_bytes(b"synthetic untouched sidecar\n")
+    before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in data.iterdir()}
+    if read_only:
+        for p in data.iterdir():
+            p.chmod(0o444)
+        data.chmod(0o555)
+        installed.chmod(0o555)
+    monkeypatch.setenv("LIBINT_DATA_PATH", str(installed))
+    monkeypatch.delenv("VIBEQC_FILTERED_BASIS_DIR", raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    operands = {"read_only": read_only, "installed_before": before}
+    try:
+        mol = vq.Molecule([vq.Atom(3, [0, 0, 0]), vq.Atom(1, [3, 0, 0])])
+        plain = vq.BasisSet(mol, "sto-3g")
+        filtered = vq.make_basis(mol, "sto-3g", exp_to_discard=0.1)
+        active = Path(os.environ["LIBINT_DATA_PATH"])
+        operands["active_is_installed"] = active.resolve().is_relative_to(installed.resolve())
+        assert not operands["active_is_installed"]
+        reloaded = vq.BasisSet(mol, filtered.name)
+        plain_again = vq.BasisSet(mol, "sto-3g")
+        assert plain_again.nbasis == plain.nbasis
+        assert (active / "basis/preserved.ecp").read_bytes() == b"synthetic untouched sidecar\n"
+        def shells(basis):
+            return [{"l":int(sh.l), "exponents":list(sh.exponents),
+                     "coefficients":list(sh.coefficients)} for sh in basis.shells()]
+        assert shells(reloaded) == shells(filtered)
+        assert shells(plain_again) == shells(plain)
+        assert sum(len(sh.exponents) for sh in filtered.shells()) == 10
+        sad = np.asarray(core.sad_density(mol, reloaded))
+        overlap = np.asarray(vq.compute_overlap(reloaded))
+        assert np.all(np.isfinite(sad))
+        assert float(np.trace(sad @ overlap)) == pytest.approx(4.0, abs=1e-8)
+        after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in data.iterdir()}
+        assert before == after
+        operands.update(
+            filtered_shells=shells(filtered), reloaded_shells=shells(reloaded),
+            plain_shells=shells(plain), plain_again_shells=shells(plain_again),
+            sad=sad.tolist(), overlap=overlap.tolist(),
+            electron_count=float(np.trace(sad @ overlap)),
+        )
+    finally:
+        operands["installed_after"] = {
+            p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in data.iterdir()
+        }
+        record_property("cache_reload_operands", json.dumps(operands, allow_nan=False))
+        if read_only:
+            installed.chmod(0o755)
+            data.chmod(0o755)

@@ -304,7 +304,7 @@ none of the data in CCCBDB carries a warranty of any kind.
 
 ## Architecture note: one URL, one parser
 
-The original handover doc proposed many table-code-specific
+The original historical design record doc proposed many table-code-specific
 parsers (`ea2x.asp`, `enthalpyx.asp`, `vibs2x.asp`, …). Live
 probing during the v0.8.0 implementation showed:
 

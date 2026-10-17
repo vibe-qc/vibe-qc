@@ -1,0 +1,28 @@
+# Rocksalt NaCl, conventional cubic cell, a = 5.64 angstrom.
+# Minimal hand-written CIF for the vibe-qc external-structures example:
+# the four F-centring operations expand the two symmetry-unique sites
+# to the eight atoms of the conventional cell.
+data_NaCl
+_chemical_formula_sum            'Na Cl'
+_cell_length_a                   5.64
+_cell_length_b                   5.64
+_cell_length_c                   5.64
+_cell_angle_alpha                90
+_cell_angle_beta                 90
+_cell_angle_gamma                90
+_space_group_name_H-M_alt        'F m -3 m'
+_space_group_IT_number           225
+loop_
+_space_group_symop_operation_xyz
+'x, y, z'
+'x, y+1/2, z+1/2'
+'x+1/2, y, z+1/2'
+'x+1/2, y+1/2, z'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Na1 Na 0.0 0.0 0.0
+Cl1 Cl 0.5 0.5 0.5

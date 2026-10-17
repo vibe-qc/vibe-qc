@@ -7,10 +7,10 @@ import { fileURLToPath } from 'node:url';
 
 const assets = new URL('../public/logo/', import.meta.url);
 const path = name => fileURLToPath(new URL(name, assets));
-for (const stem of ['vibe-qc-social', 'vibe-qc-product-social', 'vibe-view-social', 'vibe-queue-social']) {
+for (const stem of ['vibe-qc-social', 'vibe-qc-product-social', 'vibe-view-social', 'vibe-queue-social', 'vibe-sketch-social']) {
   await sharp(path(`${stem}.svg`), { density: 144 }).resize(1200, 630).png().toFile(path(`${stem}.png`));
 }
-for (const kind of ['vibe-qc', 'vibe-view', 'vibe-queue']) {
+for (const kind of ['vibe-qc', 'vibe-view', 'vibe-queue', 'vibe-sketch']) {
   await sharp(path(`${kind}-favicon.svg`)).resize(32, 32).png().toFile(path(`${kind}-favicon.png`));
 }
 await sharp(path('vibe-qc-favicon.svg')).resize(180, 180).flatten({ background: '#0F766E' }).png().toFile(path('vibe-qc-apple-touch-icon.png'));

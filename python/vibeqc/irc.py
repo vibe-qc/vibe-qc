@@ -36,7 +36,9 @@ References
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from math import isfinite
+from numbers import Integral, Real
 from typing import Any, Callable, Optional
 
 import numpy as np
@@ -49,14 +51,26 @@ System = Molecule
 GradFn = Callable[[np.ndarray], "tuple[float, np.ndarray]"]
 
 
+def _validate_path_controls(*, step_size, max_points, conv_tol_grad) -> None:
+    for name, value in (("step_size", step_size), ("conv_tol_grad", conv_tol_grad)):
+        if (isinstance(value, bool) or not isinstance(value, Real)
+                or not isfinite(value) or value <= 0):
+            raise ValueError(f"run_irc: {name} must be finite and positive")
+    if (isinstance(max_points, bool) or not isinstance(max_points, Integral)
+            or max_points < 0):
+        raise ValueError("run_irc: max_points must be a nonnegative integer")
+
+
 @dataclass
 class IRCResult:
     """Outcome of a :func:`run_irc` reaction-path trace.
 
     The two branches are ordered **starting at the transition state**:
     ``forward_path[0]`` / ``reverse_path[0]`` are the first points off the
-    TS (along ``+mode`` and ``-mode``), and the last entry of each is the
-    converged minimum on that side.
+    TS (along ``+mode`` and ``-mode``). The last entry is the last accepted
+    geometry. Only a true ``forward_converged`` / ``reverse_converged`` flag
+    confirms that its gradient satisfies the requested threshold; a stalled
+    or exhausted branch retains its endpoint without certifying a minimum.
     """
 
     transition_state: System
@@ -71,18 +85,25 @@ class IRCResult:
     basis: Optional[str] = None
     functional: Optional[str] = None
     mace_model_citation: Optional[str] = None
+    # Identity captured from the loaded MACE model, not mutable caller options.
+    model_info: Any = None
+    device: Optional[str] = None
+    dtype: Optional[str] = None
+    weight_identity: dict[str, Any] = field(default_factory=dict)
 
     @property
     def forward_minimum(self) -> Optional[System]:
+        """Last forward geometry; check ``forward_converged`` before use."""
         return self.forward_path[-1] if self.forward_path else None
 
     @property
     def reverse_minimum(self) -> Optional[System]:
+        """Last reverse geometry; check ``reverse_converged`` before use."""
         return self.reverse_path[-1] if self.reverse_path else None
 
     @property
     def barrier_forward(self) -> Optional[float]:
-        """TS energy minus the forward-minimum energy (Hartree)."""
+        """TS minus forward-endpoint energy (Ha); check convergence first."""
         if len(self.forward_energies):
             return float(self.ts_energy - self.forward_energies[-1])
         return None
@@ -145,6 +166,9 @@ def _irc_branch(
     ``sign`` selects the branch (+1 / -1). Returns ``(positions, energies,
     converged)``.
     """
+    _validate_path_controls(
+        step_size=step_size, max_points=max_points, conv_tol_grad=conv_tol_grad,
+    )
     n_atoms = x_ts.shape[0]
     m3 = np.repeat(np.asarray(masses_amu, dtype=float), 3)
     sqrt_m = np.sqrt(m3)
@@ -160,11 +184,9 @@ def _irc_branch(
     positions = [x.reshape(n_atoms, 3).copy()]
     energies = [energy]
     s = float(step_size)
-    converged = False
 
     for _ in range(max_points):
         if float(np.max(np.abs(grad))) < conv_tol_grad:
-            converged = True
             break
         g_mw = grad / sqrt_m                       # mass-weighted gradient
         gn = float(np.linalg.norm(g_mw))
@@ -177,7 +199,7 @@ def _irc_branch(
             # Overshot the path / the minimum -- reject and shrink the step.
             s *= 0.5
             if s < 1e-5 * step_size:
-                converged = True
+                # Step stagnation is not evidence that the gradient vanished.
                 break
             continue
         x = x + dx
@@ -187,6 +209,9 @@ def _irc_branch(
         energies.append(energy)
         s = min(s * 1.2, step_size)
 
+    # Also inspect a final accepted step (or the initial point at zero budget).
+    # Rejected trial gradients never replace the last accepted state's gradient.
+    converged = float(np.max(np.abs(grad))) < conv_tol_grad
     return positions, energies, converged
 
 
@@ -288,10 +313,15 @@ def run_irc(
     direction
         ``"both"`` (default), ``"forward"`` (``+mode``) or ``"reverse"``.
     step_size
-        Mass-weighted steepest-descent step (bohr.amu^1/2).
-    max_points, conv_tol_grad
-        Cap on points per branch and the max-force convergence threshold
-        (Ha/bohr) at which a branch is declared to have reached a minimum.
+        Finite positive mass-weighted steepest-descent step (bohr.amu^1/2).
+    max_points
+        Nonnegative integer cap on step attempts per branch after the initial
+        displacement, including rejected trials. Zero evaluates that first
+        point only. There are at most ``max_points + 1`` accepted points.
+    conv_tol_grad
+        Finite positive max-gradient threshold (Ha/bohr). A branch is
+        converged only when its last accepted point satisfies this threshold;
+        exhausting the budget or shrinking the step alone is insufficient.
 
     Returns
     -------
@@ -328,6 +358,9 @@ def run_irc(
             "the FD-Hessian auto-mode requires an analytic ROKS gradient, "
             "which is not yet available.")
 
+    _validate_path_controls(
+        step_size=step_size, max_points=max_points, conv_tol_grad=conv_tol_grad,
+    )
     ts_positions = _positions_of(transition_state)
     if transition_mode is not None:
         try:
@@ -370,6 +403,7 @@ def run_irc(
 
     # Cartesian gradient evaluator (reuses run_neb's per-geometry evaluators
     # via the dimer's force builder; force = -gradient).
+    mlip_execution: dict[str, Any] = {}
     force_fn, mace_citation = _build_force_fn(
         transition_state, basis, method_lower,
         is_periodic=False, is_mace=is_mace, functional=functional,
@@ -378,6 +412,7 @@ def run_irc(
         rohf_options=rohf_options, roks_options=roks_options,
         gradient_options=gradient_options, grid_options=grid_options,
         dispersion_params=dispersion_params, mlip_options=mlip_options,
+        mlip_execution=mlip_execution,
         kmesh=None, fd_step_bohr=fd_step_bohr, dft_plus_u=None,
         grid_level=grid_level)
 
@@ -429,6 +464,7 @@ def run_irc(
             functional if method_lower in ("rks", "uks", "roks") else None
         ),
         mace_model_citation=(mace_citation or None),
+        **mlip_execution,
     )
 
 

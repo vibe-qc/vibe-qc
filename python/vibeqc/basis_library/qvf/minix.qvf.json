@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "minix",
+  "description": "Basis set: minix\nBundled with vibe-qc v0.9.0 (composite 3c stack)\nOriginating publication: Sure & Grimme, J. Comput. Chem. 34, 1672 (2013); DOI: 10.1002/jcc.23317 [HF-3c parent basis; MINIS + Huzinaga p-augmentation per Table 1 of the cited paper]\nFetched from: Psi4 master branch (https://raw.githubusercontent.com/psi4/psi4/master/psi4/share/psi4/basis/minix.gbs) — numerical content from the originating publication, Psi4 is the secondary distribution channel\nBundled date: 2026-05-18\nLicense: numerical parameter data from a published\n  scientific paper; redistribution is standard practice\n  (see python/vibeqc/data_library/README.md § License).\nminix basis set from S. Grimme\nnote: minix is available from Grimme's website. However it is in turbomole format.\nFrom Table 1 of the Hf3C paper: (Corrected Small Basis Set Hartree-Fock Method for Large Systems,\n                                 R. Sure and  S. Grimme; J Comp Chem 2013, 34, 1672-1685)\nHere is Composition of the MINIX basis set:\nH-He, B-Ne            MINIS\nLi-Be                 MINIS + 1(p)\nNa-Mg                 MINIS + 1(p)\nAl-Ar                 MINIS + 1(d)\nK-Zn                  SV\nGa-Kr                 SVP\nRb-Xe                 def2-SV(P) with ECP\nBelow is MINIX up to Kr. The last row has not yet been implemented due to lack of ECP in psi4\nThe process consisted of downloading the above basis sets from EMSL Basis Set exchange\nin gaussian94 format and comparing shells with the minix obtained from Grimme's basis set,\nwith minor edits to add or delete a shell.\nNote that e.g. the 2nd shell from bottom, has only one term in contraction but\nthe coefficient is not 1. This matches that in Grimme's basis set, but should not matter.",
   "role": "orbital",
   "elements": {
     "H": {
@@ -4929,7 +4929,32 @@
       ]
     }
   },
+  "basis_family": "minimal",
+  "references": [
+    {
+      "key": "sure_grimme_hf3c_2013",
+      "description": "R. Sure, S. Grimme, Journal of Computational Chemistry 34, 1672-1685 (2013)",
+      "doi": "10.1002/jcc.23317"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "minix"
+      }
+    ],
+    "retrieval_date": "2026-05-18",
+    "content_sha256": "49db74a6808b6d4844e6ba402bcbde0cabadeab1fc0341ed9a7cf864e3d2ce71",
+    "citations": [
+      {
+        "keys": [
+          "sure_grimme_hf3c_2013"
+        ]
+      }
+    ]
   }
 }

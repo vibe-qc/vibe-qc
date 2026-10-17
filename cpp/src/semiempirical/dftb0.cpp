@@ -1,3 +1,4 @@
+#include "vibeqc/hermitian_operator.hpp"
 #include "vibeqc/semiempirical/dftb0.hpp"
 
 #include <Eigen/Eigenvalues>
@@ -58,14 +59,9 @@ DFTB0Result run_dftb0(const Molecule& mol,
         basis, S, mol, params);
 
     // ---- Solve generalized eigenvalue problem H⁰ C = S C ε ----
-    Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> solver(H0, S);
-    if (solver.info() != Eigen::Success) {
-        throw std::runtime_error(
-            "run_dftb0: generalized eigenvalue solver failed to converge");
-    }
-
-    Eigen::VectorXd eps = solver.eigenvalues();         // ascending
-    Eigen::MatrixXd C = solver.eigenvectors();           // S-orthonormal
+    const auto solution = solve_one_electron_metric(H0, S);
+    Eigen::VectorXd eps = solution.eigenvalues;
+    Eigen::MatrixXd C = solution.eigenvectors;
 
     // ---- Electronic energy ----
     double E_elec = 0.0;
@@ -143,12 +139,9 @@ UDFTB0Result run_udftb0(const Molecule& mol,
     Eigen::MatrixXd H0 = SemiempiricalHamiltonianBuilder::build_hamiltonian_zero(
         basis, S, mol, params);
 
-    Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> solver(H0, S);
-    if (solver.info() != Eigen::Success) {
-        throw std::runtime_error("run_udftb0: eigendecomposition failed");
-    }
-    Eigen::VectorXd eps = solver.eigenvalues();
-    Eigen::MatrixXd C = solver.eigenvectors();
+    const auto solution = solve_one_electron_metric(H0, S);
+    Eigen::VectorXd eps = solution.eigenvalues;
+    Eigen::MatrixXd C = solution.eigenvectors;
 
     // Band energy: sum of occupied α + β eigenvalues
     double E_elec = 0.0;

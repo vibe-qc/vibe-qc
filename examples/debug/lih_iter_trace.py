@@ -103,7 +103,7 @@ def run_lih_scf(basis_name: str, atomic_refs: dict) -> Optional[dict]:
     t0 = time.perf_counter()
     try:
         with vq.crash_dump_context(out_stem):
-            with vq.perf_log(out_stem.with_suffix(".perf")):
+            with vq.perf_log(out_stem.parent / f"{out_stem.name}.perf"):
                 r = vq.run_rks_periodic_gamma_ewald3d(
                     sysp, basis, opts,
                     omega=0.5, spacing_bohr=0.5,

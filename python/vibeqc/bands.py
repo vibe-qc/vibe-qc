@@ -54,6 +54,7 @@ from ._vibeqc_core import (
     diagonalize_bloch,
     monkhorst_pack,
 )
+from .band_edges import BandEdges
 from .basis_crystal import _ELEMENT_SYMBOLS
 from .properties import _shell_nao
 from .properties import _shell_to_atom as _canonical_shell_to_atom
@@ -543,6 +544,44 @@ def _gaussian_dos(
     return dos
 
 
+def _mesh_highest_occupied(
+    energies_per_k: np.ndarray,
+    weights: np.ndarray,
+    n_electrons_per_cell: Optional[int],
+) -> Optional[float]:
+    """Highest occupied eigenvalue on a Brillouin-zone MESH (a DOS reference).
+
+    A k-mesh is a Brillouin-zone sample, so its occupations obey one particle
+    constraint with one Fermi level over the whole mesh (#176): the
+    zero-temperature fill of :func:`vibeqc.smearing.apply_smearing`. On an
+    insulator this is the valence-band maximum, exactly what the band-index
+    reading ``max(energies[:, :n_occ])`` gives; on a band-overlap metal it is
+    the highest level below the Fermi level, where the band-index reading
+    returns the top of the valence BAND, which lies above it. ``None`` for an
+    odd or missing electron count, as before.
+    """
+    if n_electrons_per_cell is None or n_electrons_per_cell % 2 != 0:
+        return None
+    n_occ = int(n_electrons_per_cell) // 2
+    if n_occ <= 0:
+        return None
+    from .smearing import apply_smearing
+
+    blocks = [np.asarray(row, dtype=float) for row in energies_per_k]
+    w = np.asarray(weights, dtype=float)
+    w = w / float(np.sum(w))
+    occ = apply_smearing(
+        blocks,
+        weights=w,
+        n_electrons_per_cell=float(n_electrons_per_cell),
+        n_occ_each=n_occ,
+    ).occupations_per_k
+    occupied = [
+        float(np.max(e[o > 1.0e-8])) for e, o in zip(blocks, occ) if np.any(o > 1.0e-8)
+    ]
+    return max(occupied) if occupied else None
+
+
 def density_of_states(
     F_real: LatticeMatrixSet,
     S_real: LatticeMatrixSet,
@@ -577,11 +616,9 @@ def density_of_states(
 
     dos = _gaussian_dos(energies_per_k, weights, energy_grid, sigma)
 
-    e_fermi: Optional[float] = None
-    if n_electrons_per_cell is not None and n_electrons_per_cell % 2 == 0:
-        n_occ = n_electrons_per_cell // 2
-        if n_occ > 0:
-            e_fermi = float(energies_per_k[:, :n_occ].max())
+    e_fermi = _mesh_highest_occupied(
+        energies_per_k, weights, n_electrons_per_cell
+    )
 
     return DensityOfStates(
         energies=energy_grid,
@@ -625,11 +662,9 @@ def _density_of_states_from_terms(
 
     dos = _gaussian_dos(energies_per_k, weights, energy_grid, sigma)
 
-    e_fermi: Optional[float] = None
-    if n_electrons_per_cell is not None and n_electrons_per_cell % 2 == 0:
-        n_occ = n_electrons_per_cell // 2
-        if n_occ > 0:
-            e_fermi = float(energies_per_k[:, :n_occ].max())
+    e_fermi = _mesh_highest_occupied(
+        energies_per_k, weights, n_electrons_per_cell
+    )
 
     return DensityOfStates(
         energies=energy_grid,
@@ -643,8 +678,7 @@ def _density_of_states_from_terms(
 # Projected density of states (V5b)
 # ---------------------------------------------------------------------------
 
-# Spectroscopic letter for a given angular-momentum quantum number; "?" past
-# h since vibe-qc only ships through l=5.
+# Spectroscopic letters through h; higher angular momenta use l<number>.
 _L_LETTERS = ("s", "p", "d", "f", "g", "h")
 
 
@@ -706,7 +740,7 @@ def ao_groups_per_atom_l(
 ) -> Dict[str, List[int]]:
     """Partition AO indices by atom x angular momentum.
 
-    Labels look like ``"H1-s"`` or ``"O3-p"``. Empty channels are
+    Labels look like ``"H1-s"``, ``"O3-p"`` or ``"C1-l6"``. Empty channels are
     dropped (so an atom with only an s shell yields one entry, not
     six)."""
     ao_to_atom = _shell_to_atom(basis)
@@ -721,6 +755,34 @@ def ao_groups_per_atom_l(
             label = f"{_atom_label(int(atom.Z), atom_idx + 1)}-{_l_letter(l)}"
             out[label] = ao_indices
     return out
+
+
+def _ao_group_channels(
+    system: PeriodicSystem,
+    basis: BasisSet,
+    groups: Mapping[str, Sequence[int]],
+) -> Dict[str, dict[str, Union[int, str]]]:
+    """Metadata for atom/l groups, derived from AOs rather than display labels."""
+    ao_to_atom = _shell_to_atom(basis)
+    ao_to_l = _shell_to_l(basis)
+    channels: Dict[str, dict[str, Union[int, str]]] = {}
+    for label, indices in groups.items():
+        if not indices:
+            raise ValueError(f"PDOS channel {label!r} has no AOs")
+        atoms = ao_to_atom[list(indices)]
+        momenta = ao_to_l[list(indices)]
+        atom_idx, angular = int(atoms[0]), int(momenta[0])
+        if np.any(atoms != atom_idx) or np.any(momenta != angular):
+            raise ValueError(f"PDOS channel {label!r} mixes atoms or angular momenta")
+        z = int(system.unit_cell[atom_idx].Z)
+        symbol = _ELEMENT_SYMBOLS[z] if 0 < z < len(_ELEMENT_SYMBOLS) else f"Z{z}"
+        channels[label] = {
+            "atom_index": atom_idx,
+            "symbol": symbol,
+            "l": angular,
+            "label": label,
+        }
+    return channels
 
 
 def _mulliken_band_weights(C_k: np.ndarray, S_k: np.ndarray) -> np.ndarray:
@@ -820,11 +882,9 @@ def _projected_dos_from_terms(
         contributions[label] = pdos
         total += pdos
 
-    e_fermi: Optional[float] = None
-    if n_electrons_per_cell is not None and n_electrons_per_cell % 2 == 0:
-        n_occ = n_electrons_per_cell // 2
-        if n_occ > 0:
-            e_fermi = float(energies_per_k[:, :n_occ].max())
+    e_fermi = _mesh_highest_occupied(
+        energies_per_k, k_weights, n_electrons_per_cell
+    )
 
     return ProjectedDensityOfStates(
         energies=energy_grid,
@@ -979,11 +1039,9 @@ def density_of_states_hcore(
 
     dos = _gaussian_dos(energies_per_k, weights, energy_grid, sigma)
 
-    e_fermi: Optional[float] = None
-    if n_electrons_per_cell is not None and n_electrons_per_cell % 2 == 0:
-        n_occ = n_electrons_per_cell // 2
-        if n_occ > 0:
-            e_fermi = float(energies_per_k[:, :n_occ].max())
+    e_fermi = _mesh_highest_occupied(
+        energies_per_k, weights, n_electrons_per_cell
+    )
 
     return DensityOfStates(
         energies=energy_grid,
@@ -1027,10 +1085,15 @@ def density_of_states_hcore(
 class FrontierBands:
     """Valence-band maximum, conduction-band minimum, and gap.
 
-    ``homo`` / ``lumo`` are Hartree; ``gap`` is ``lumo - homo`` and may be
-    negative for a metal, which is a real result and is not clamped.
-    ``homo_k`` / ``lumo_k`` index the sampled k-set, so a caller can say
-    *where* each extremum was found (direct vs indirect).
+    ``homo`` / ``lumo`` are Hartree; ``gap`` is ``lumo - homo`` and is
+    ``<= 0`` for a metal, which is a real result and is not clamped: it is
+    the measured band overlap (or minus the width of a partially filled
+    band), never the spacing of the sampled levels around the Fermi level.
+    ``is_metallic`` is the structural flag to screen on. ``homo_k`` /
+    ``lumo_k`` index the sampled k-set, so a caller can say *where* each
+    extremum was found (direct vs indirect). ``edges`` carries the full
+    :class:`vibeqc.band_edges.BandEdges` record when the result was read
+    from its own occupations.
     """
 
     homo: float
@@ -1040,35 +1103,77 @@ class FrontierBands:
     lumo_k: int
     n_kpoints: int
     n_bands: int
+    is_metallic: bool = False
+    direct_gap: float = float("nan")
+    edges: Optional[BandEdges] = field(default=None, repr=False, compare=False)
 
 
-def per_k_band_energies(result) -> List[np.ndarray]:
+def _spin_channel_energies(result, spin: str):
+    for name in (f"mo_energies_{spin}_k", f"mo_energies_{spin}"):
+        value = getattr(result, name, None)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)) and not value:
+            continue
+        return value
+    return None
+
+
+def per_k_band_energies(result, spin: Optional[str] = None) -> List[np.ndarray]:
     """Return this periodic result's eigenvalues as one array per k-point.
 
     Accepts any converged periodic SCF result -- BIPOLE, GDF, GPW, GAPW,
-    Gamma-only or multi-k -- and always returns a list of 1-D float arrays
-    of equal length, ordered as the driver sampled the Brillouin zone.  A
-    Gamma-only result yields a one-element list.
+    Gamma-only or multi-k, restricted or unrestricted -- and always returns a
+    list of 1-D float arrays of equal length, ordered as the driver sampled
+    the Brillouin zone.  A Gamma-only result yields a one-element list.
 
     Parameters
     ----------
     result
         A periodic SCF result carrying ``mo_energies_k`` or
-        ``mo_energies``.
+        ``mo_energies`` (restricted), or ``mo_energies_alpha`` /
+        ``mo_energies_beta`` (unrestricted, optionally with a ``_k``
+        suffix).
+    spin
+        ``"alpha"`` or ``"beta"`` selects one channel of an unrestricted
+        result. It is required there: the two channels are different
+        spectra, and picking one silently is the class of mistake #505
+        documents.
 
     Raises
     ------
     TypeError
-        If *result* exposes neither attribute, or exposes something that
-        is not eigenvalue data.
+        If *result* exposes no eigenvalue data, or is unrestricted and no
+        ``spin`` was given.
     ValueError
         If the per-k blocks do not all carry the same number of bands.
         A ragged set cannot be compared across k and silently misaligns
         every band index, so it is refused rather than padded.
     """
-    raw = getattr(result, "mo_energies_k", None)
-    if raw is None or (isinstance(raw, (list, tuple)) and not raw):
-        raw = getattr(result, "mo_energies", None)
+    if spin is not None:
+        if spin not in ("alpha", "beta"):
+            raise ValueError(f"spin must be 'alpha' or 'beta'; got {spin!r}")
+        raw = _spin_channel_energies(result, spin)
+        if raw is None:
+            raise TypeError(
+                f"{type(result).__name__} carries no {spin} spin channel"
+            )
+    else:
+        raw = getattr(result, "mo_energies_k", None)
+        if raw is None or (isinstance(raw, (list, tuple)) and not raw):
+            raw = getattr(result, "mo_energies", None)
+        method = str(getattr(result, "method", "") or "").strip().lower()
+        unrestricted = method not in ("rohf", "roks") and (
+            _spin_channel_energies(result, "alpha") is not None
+            or _spin_channel_energies(result, "beta") is not None
+        )
+        if raw is None and unrestricted:
+            raise TypeError(
+                f"{type(result).__name__} is an unrestricted result with "
+                "separate alpha and beta spectra; pass spin='alpha' or "
+                "spin='beta', or call frontier_bands(result) without n_occ "
+                "for the combined band edges"
+            )
     if raw is None:
         raise TypeError(
             f"{type(result).__name__} exposes neither 'mo_energies_k' nor "
@@ -1112,22 +1217,30 @@ def per_k_band_energies(result) -> List[np.ndarray]:
     return flat
 
 
-def frontier_bands(result, n_occ: int) -> FrontierBands:
+def frontier_bands(
+    result, n_occ: Optional[int] = None, *, spin: Optional[str] = None
+) -> FrontierBands:
     """Valence/conduction extrema across the whole sampled k-set.
 
-    The VBM is the largest occupied eigenvalue over every k-point and the
-    CBM the smallest virtual one, so an indirect gap is found correctly.
+    The VBM is the largest valence eigenvalue over every k-point and the
+    CBM the smallest conduction one, so an indirect gap is found correctly.
     Degenerate manifolds are handled by construction: the reduction is a
     ``max`` / ``min`` over scalars, never an index into a manifold, which
     is the #15 failure.
 
-    Parameters
-    ----------
-    result
-        A periodic SCF result -- see :func:`per_k_band_energies`.
-    n_occ
-        Number of occupied bands per k-point (doubly occupied bands for a
-        closed shell, i.e. ``n_electrons // 2``).
+    Two ways to say which states are valence:
+
+    * ``n_occ=None`` (recommended): read the result's own occupations with
+      :func:`vibeqc.band_edges.result_band_edges`, the one classifier the
+      ``.out`` band-extrema block, the ``.system`` manifest and the
+      semiempirical k-route fields share. An unrestricted result is
+      reduced over both spin channels (``spin`` selects one). A metal --
+      a Fermi level crossing a band, or pinned in a fractionally occupied
+      group -- reports ``is_metallic=True`` and a gap ``<= 0``.
+    * ``n_occ=n``: the band-index reading, bands ``n - 1`` and ``n`` of the
+      energy-sorted spectrum at every k (``n_electrons // 2`` for a closed
+      shell). It needs no occupations and agrees with the first reading on
+      every insulator and on every band-overlap metal.
 
     Raises
     ------
@@ -1136,8 +1249,44 @@ def frontier_bands(result, n_occ: int) -> FrontierBands:
         checked against the number of BANDS, not the number of k-points --
         the #135 guard counted k-points and therefore passed on a set that
         had no virtual band to report at all.
+    TypeError
+        If ``n_occ`` is omitted and the result carries no occupations to
+        classify with.
     """
-    blocks = per_k_band_energies(result)
+    if n_occ is None:
+        from .band_edges import result_band_edges
+
+        edges = result_band_edges(result)
+        if edges is None:
+            raise TypeError(
+                f"{type(result).__name__} carries no occupations for every "
+                "channel; pass n_occ for the band-index reading"
+            )
+        if spin is not None:
+            chosen = [e for e in edges.channels if e.spin == spin]
+            if not chosen:
+                if edges.spin == spin:
+                    chosen = [edges]
+                else:
+                    raise TypeError(
+                        f"{type(result).__name__} carries no {spin} spin "
+                        "channel"
+                    )
+            edges = chosen[0]
+        return FrontierBands(
+            homo=float(edges.valence_band_max),
+            lumo=float(edges.conduction_band_min),
+            gap=float(edges.indirect_gap),
+            homo_k=int(edges.valence_band_max_k),
+            lumo_k=int(edges.conduction_band_min_k),
+            n_kpoints=int(edges.n_kpoints),
+            n_bands=int(edges.n_bands),
+            is_metallic=bool(edges.is_metallic),
+            direct_gap=float(edges.direct_gap),
+            edges=edges,
+        )
+
+    blocks = per_k_band_energies(result, spin=spin)
     n_bands = int(blocks[0].size)
     if n_occ < 1:
         raise ValueError(f"n_occ must be >= 1; got {n_occ}")
@@ -1152,6 +1301,7 @@ def frontier_bands(result, n_occ: int) -> FrontierBands:
     homo = -np.inf
     lumo = np.inf
     homo_k = lumo_k = 0
+    direct = np.inf
     for index, block in enumerate(blocks):
         ordered = np.sort(block)
         top = float(ordered[n_occ - 1])
@@ -1160,12 +1310,16 @@ def frontier_bands(result, n_occ: int) -> FrontierBands:
             homo, homo_k = top, index
         if bottom < lumo:
             lumo, lumo_k = bottom, index
+        direct = min(direct, bottom - top)
+    gap = lumo - homo
     return FrontierBands(
         homo=homo,
         lumo=lumo,
-        gap=lumo - homo,
+        gap=gap,
         homo_k=homo_k,
         lumo_k=lumo_k,
         n_kpoints=len(blocks),
         n_bands=n_bands,
+        is_metallic=bool(gap <= 0.0),
+        direct_gap=float(direct),
     )

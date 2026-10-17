@@ -140,9 +140,15 @@ def ccm_dlpno_ccsd(
     neutral-control CCSD(T) on the same neutral four-center to ~µHa
     (``tests/test_ccm_dlpno_ccsd.py``).
     """
+    # A Bloch producer result (run_ccm_*_gdf) is transformed to the real
+    # supercell-Gamma reference of the same Hamiltonian first (Theorem 1;
+    # periodic/ccm/bloch_reference.py). Real-Gamma references pass through.
+    from .bloch_reference import as_real_reference
+
+    scf_result = as_real_reference(ccm, scf_result)
     from .ccsd import _ccsd_iterate, _spin_block_eri_phys, _triples
     from .dlpno import _build_ccm_pno_pairs, _occ
-    from .neutral import ccm_eri_neutral, ccm_neutral_cderi
+    from .neutral import carried_cderi, ccm_eri_neutral, ccm_neutral_cderi
 
     if not getattr(scf_result, "converged", True):
         raise ValueError("DLPNO-CCSD-CCM requires a converged SCF reference.")
@@ -159,6 +165,9 @@ def ccm_dlpno_ccsd(
     nbf = int(ccm.nbf)
 
     # cderi (for the pair build) and g (for the CCSD MO transform), both neutral.
+    # One build per job (2026-09-24): the reference's own cderi comes first.
+    if cderi is None:
+        cderi = carried_cderi(scf_result)
     L = np.asarray(cderi if cderi is not None else
                    ccm_neutral_cderi(ccm, ke_cutoff=ke_cutoff), dtype=float)
     if g_neutral is None:
