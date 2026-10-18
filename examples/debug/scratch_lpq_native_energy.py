@@ -1,3 +1,9 @@
+# HISTORICAL DIAGNOSTIC, NO LONGER RUNNABLE.
+# This script imports vibeqc.periodic_rhf_gdf._pyscf_cell_from_vibeqc, _build_permutation_matrix and _lpq_tensor_from_pyscf,
+# which no longer exists in vibeqc (the PySCF-backed GDF spike it
+# probed was retired). It is retained unchanged as a record of the
+# diagnostic; see examples/debug/README.md, "Historical, no longer
+# runnable".
 """End-to-end energy test for the native Lpq pipeline.
 
 Builds the same MgO/sto-3g system as the v0.7.1 baseline runs through

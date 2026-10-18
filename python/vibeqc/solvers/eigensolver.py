@@ -49,9 +49,10 @@ def _get_core():
 class EigenProblem:
     """Standard Hermitian eigenproblem: H x = l x.
 
-    At least one of ``matrix`` or ``matvec`` must be provided.  When both
-    are given, ``matvec`` takes precedence for matrix-free solvers and
-    ``matrix`` is used for explicit-diagonalisation solvers.
+    At least one of ``matrix``, ``matvec`` or ``matmat`` must be provided.
+    Legacy strategies have differing precedence when multiple representations
+    are supplied. Prefer one representation, or the strict operator API which
+    rejects an ambiguous matrix plus callback.
 
     Attributes
     ----------
@@ -59,6 +60,10 @@ class EigenProblem:
         Explicit real symmetric / complex Hermitian matrix.
     matvec : callable(v) -> ndarray or None
         Matrix-vector product H @ v for matrix-free operation.
+    matmat : callable(V) -> ndarray or None
+        Optional block action used by the real and complex Davidson adapters.
+        Supply ``diagonal`` with a block-only descriptor; other historical
+        strategies consume ``matvec``. Strict operators adapt either action.
     n : int
         Dimension.  Auto-detected from ``matrix`` when zero.
     dtype : type
@@ -79,6 +84,8 @@ class EigenProblem:
     n: int = 0
     dtype: type = np.float64
     diagonal: np.ndarray | None = None
+    # Optional block action for Davidson. Appended for positional compatibility.
+    matmat: Callable[[np.ndarray], np.ndarray] | None = None
 
     def __post_init__(self) -> None:
         if self.n == 0 and self.matrix is not None:
@@ -264,6 +271,12 @@ class SolverResult:
         Residual norms ‖A x_i - l_i x_i‖₂ at termination.
     n_matvec : int
         Total number of matrix-vector products performed.
+    n_converged : int or None
+        How many of the requested roots met the threshold (the native
+        Davidson kernels report it; GitLab #123/#287). ``converged`` is
+        the all-or-nothing summary. None when the backend does not say.
+    subspace_dim : int or None
+        Subspace dimension at termination, when the backend reports it.
     """
 
     eigenvalues: np.ndarray
@@ -271,10 +284,18 @@ class SolverResult:
     n_iter: int
     converged: bool
     residuals: np.ndarray | None = None
-    n_matvec: int = 0
+    n_matvec: int | None = 0
+    n_converged: int | None = None
+    subspace_dim: int | None = None
+    projected_residuals: np.ndarray | None = None
+    orthogonality_error: float | None = None
+    residual_frame: str = "orthogonal"
+    retained_rank: int | None = None
+    selection_verified: bool = False
+    operator_metadata: object | None = None
 
 
-_UPPER_ROOT_MODES = {"LA", "LM"}
+_UPPER_ROOT_MODES = {"LA"}
 
 
 def _wants_upper_roots(options: SolverOptions) -> bool:
@@ -324,6 +345,7 @@ def _negated_problem(problem: EigenProblem) -> EigenProblem:
         n=problem.n,
         dtype=problem.dtype,
         diagonal=diagonal,
+        matmat=(lambda v: -problem.matmat(v)) if problem.matmat is not None else None,
     )
 
 
@@ -455,7 +477,7 @@ def solve_eigenproblem(
 ) -> SolverResult:
     """Solve an eigenproblem via a named solver strategy.
 
-    This is the single entry point for all diagonalisation in vibe-qc.
+    This is the historical descriptor entry point; new consumers use solve_operator.
     It dispatches to the registered solver, handling interior and
     generalised problems by reduction to the standard Hermitian form
     when possible.
@@ -474,10 +496,25 @@ def solve_eigenproblem(
     -------
     SolverResult
     """
+    from .operators import HermitianOperator, solve_operator
+    if isinstance(problem, HermitianOperator):
+        return solve_operator(problem, options, solver=solver)
     if options is None:
         options = SolverOptions()
 
     strategy = get_solver(solver)
+    underlying = problem.problem if isinstance(problem, InteriorEigenProblem) else problem
+    if getattr(underlying, "matrix", None) is not None:
+        if np.iscomplexobj(underlying.matrix) and isinstance(
+            strategy, (DavidsonSolver, LOBPCGSolver, JDSolver, GPLHRSolver)
+        ):
+            raise NotImplementedError(f"{solver} does not support complex operators")
+    if options.which not in {"SA", "LA", "SM", "LM", "BE"}:
+        raise ValueError(f"Unknown eigenvalue selector {options.which}")
+    if not isinstance(strategy, DenseSolver) and options.which not in {"SA", "LA"}:
+        raise NotImplementedError(f"{solver} does not implement {options.which}")
+    if options.sigma is not None and not strategy.supports_interior:
+        raise NotImplementedError(f"{solver} does not support an interior shift")
 
     # Dispatch interior problems
     if isinstance(problem, InteriorEigenProblem):
@@ -507,6 +544,8 @@ def solve_eigenproblem(
             # for upper-spectrum requests.
             s_eigvals, s_eigvecs = np.linalg.eigh(problem.overlap)
             s_cutoff = max(1e-12, 1e-12 * float(np.max(np.abs(s_eigvals))))
+            if s_eigvals[0] < -s_cutoff:
+                raise ValueError("GeneralizedEigenProblem overlap is indefinite")
             mask = s_eigvals > s_cutoff
             if not np.any(mask):
                 raise ValueError(
@@ -515,7 +554,7 @@ def solve_eigenproblem(
                 )
             s_inv_sqrt = s_eigvecs[:, mask] / np.sqrt(s_eigvals[mask])
             if problem.matrix is not None:
-                H_prime = s_inv_sqrt.T @ problem.matrix @ s_inv_sqrt
+                H_prime = s_inv_sqrt.conj().T @ problem.matrix @ s_inv_sqrt
                 reduced = EigenProblem(matrix=H_prime, n=H_prime.shape[0])
             else:
                 # Matrix-free: wrap matvec
@@ -527,12 +566,24 @@ def solve_eigenproblem(
                     )
 
                 def wrapped_matvec(v):
-                    return S_is.T @ _matvec(S_is @ v)
+                    return S_is.conj().T @ _matvec(S_is @ v)
 
-                reduced = EigenProblem(matvec=wrapped_matvec, n=S_is.shape[1])
-            result = strategy.solve(reduced, options)
+                reduced = EigenProblem(matvec=wrapped_matvec, n=S_is.shape[1], dtype=S_is.dtype.type)
+            reduced_options = options
+            if options.guess_vectors is not None:
+                reduced_options = replace(options, guess_vectors=np.linalg.lstsq(
+                    s_inv_sqrt, options.guess_vectors, rcond=None)[0])
+            result = strategy.solve(reduced, reduced_options)
             # Back-transform eigenvectors: C = S^(-1/2) C'
             result.eigenvectors = s_inv_sqrt @ result.eigenvectors
+            c = result.eigenvectors
+            hc = problem.matrix @ c if problem.matrix is not None else np.column_stack([
+                problem.matvec(v) for v in c.T])
+            result.projected_residuals = result.residuals
+            result.residuals = np.linalg.norm(hc - (problem.overlap @ c) * result.eigenvalues, axis=0)
+            result.residual_frame = "original"
+            result.retained_rank = s_inv_sqrt.shape[1]
+            result.orthogonality_error = float(np.linalg.norm(c.conj().T @ problem.overlap @ c - np.eye(c.shape[1])))
             return result
         return strategy.solve(problem, options)  # type: ignore[arg-type]
 
@@ -560,6 +611,7 @@ class DenseSolver(SolverStrategy):
     """
 
     supports_extremal = True
+    supports_interior = True
     supports_generalized = False  # handled by solve_eigenproblem reduction
     supports_block = False
     supports_matrix_free = False
@@ -576,86 +628,43 @@ class DenseSolver(SolverStrategy):
                 "DenseSolver requires an explicit matrix; "
                 "use a matrix-free-capable solver instead."
             )
-        A = problem.matrix
+        A = np.asarray(problem.matrix)
+        from .operators import _hermitian
+        _hermitian(A, "Dense operator")
+        if not np.all(np.isfinite(A)):
+            raise ValueError("Dense operator must be finite")
         n = A.shape[0]
-        n_roots = options.n_roots if options.n_roots > 0 else n
-        n_roots = min(n_roots, n)
-
-        # Use scipy when available (supports a subset-by-index parameter);
-        # fall back to numpy eigh (always available).
-        try:
-            import scipy.linalg  # noqa: F401
-
-            _has_scipy = True
-        except ImportError:
-            _has_scipy = False
-
-        if np.iscomplexobj(A):
-            # Hermitian case
-            if _has_scipy:
-                import scipy.linalg
-
-                if options.which in ("SA", "SM"):
-                    w, v = scipy.linalg.eigh(A, subset_by_index=[0, n_roots - 1])
-                elif options.which in ("LA", "LM"):
-                    w, v = scipy.linalg.eigh(A, subset_by_index=[n - n_roots, n - 1])
-                elif options.which == "BE":
-                    # Both ends: get first and last
-                    k_half = n_roots // 2
-                    w_lo, v_lo = scipy.linalg.eigh(A, subset_by_index=[0, k_half - 1])
-                    w_hi, v_hi = scipy.linalg.eigh(
-                        A, subset_by_index=[n - (n_roots - k_half), n - 1]
-                    )
-                    w = np.concatenate([w_lo, w_hi])
-                    v = np.concatenate([v_lo, v_hi], axis=1)
-                else:
-                    w, v = scipy.linalg.eigh(A)
-            else:
-                w, v = np.linalg.eigh(A)
+        k = options.n_roots or n
+        if not 1 <= k <= n:
+            raise ValueError("n_roots must be between 1 and the operator dimension")
+        if options.which not in {"SA", "LA", "SM", "LM", "BE"}:
+            raise ValueError("Unknown eigenvalue selector")
+        w, v = np.linalg.eigh(A)
+        if options.sigma is not None:
+            if not np.isfinite(options.sigma):
+                raise ValueError("sigma must be finite")
+            index = np.argsort(np.abs(w - options.sigma), kind="stable")[:k]
+        elif options.which == "SM":
+            index = np.argsort(np.abs(w), kind="stable")[:k]
+        elif options.which == "LM":
+            index = np.argsort(-np.abs(w), kind="stable")[:k]
+        elif options.which == "LA":
+            index = np.arange(n-k, n)
+        elif options.which == "BE":
+            low = k // 2
+            index = np.r_[np.arange(low), np.arange(n-(k-low), n)]
         else:
-            # Real symmetric case
-            if _has_scipy:
-                import scipy.linalg
-
-                if options.which in ("SA", "SM"):
-                    w, v = scipy.linalg.eigh(A, subset_by_index=[0, n_roots - 1])
-                elif options.which in ("LA", "LM"):
-                    w, v = scipy.linalg.eigh(A, subset_by_index=[n - n_roots, n - 1])
-                elif options.which == "BE":
-                    k_half = n_roots // 2
-                    w_lo, v_lo = scipy.linalg.eigh(A, subset_by_index=[0, k_half - 1])
-                    w_hi, v_hi = scipy.linalg.eigh(
-                        A, subset_by_index=[n - (n_roots - k_half), n - 1]
-                    )
-                    w = np.concatenate([w_lo, w_hi])
-                    v = np.concatenate([v_lo, v_hi], axis=1)
-                else:
-                    w, v = scipy.linalg.eigh(A)
-            else:
-                w, v = np.linalg.eigh(A)
-
-        # Slice to requested roots if full diagonalisation was done
-        if options.n_roots > 0 and w.size > n_roots:
-            if options.which in ("LA", "LM"):
-                w = w[-n_roots:]
-                v = v[:, -n_roots:]
-            else:
-                w = w[:n_roots]
-                v = v[:, :n_roots]
-
-        # Residuals
-        residuals = np.zeros(w.size)
-        for i in range(w.size):
-            r = A @ v[:, i] - w[i] * v[:, i]
-            residuals[i] = np.linalg.norm(r)
-
+            index = np.arange(k)
+        # Selection and presentation are separate: always ascending energy.
+        index = index[np.argsort(w[index], kind="stable")]
+        w, v = w[index], v[:, index]
+        residuals = np.linalg.norm(A @ v - v * w, axis=0)
         return SolverResult(
-            eigenvalues=w,
-            eigenvectors=v,
-            n_iter=1,  # dense: single-shot
-            converged=True,
-            residuals=residuals,
-            n_matvec=0,
+            eigenvalues=w, eigenvectors=v, n_iter=1,
+            converged=bool(np.all(residuals <= options.tol)),
+            residuals=residuals, n_matvec=0,
+            n_converged=int(np.count_nonzero(residuals <= options.tol)),
+            selection_verified=True,
         )
 
 
@@ -720,12 +729,15 @@ class DavidsonSolver(SolverStrategy):
             )
 
         # Dispatch: matrix-free vs explicit
-        if solve_problem.matvec is not None and solve_problem.matrix is None:
+        if solve_problem.matrix is None and (solve_problem.matvec is not None or solve_problem.matmat is not None):
             # Matrix-free path: need diagonal for preconditioner
             # When we only have matvec, compute diag via probing
             n = solve_problem.n
             diag = _matvec_diagonal(solve_problem, dtype=np.float64)
-            res = _core.davidson_solve_matvec(n, solve_problem.matvec, diag, c_opts)
+            if solve_problem.matmat is not None:
+                res = _core.davidson_solve_matmat(n, solve_problem.matmat, diag, c_opts)
+            else:
+                res = _core.davidson_solve_matvec(n, solve_problem.matvec, diag, c_opts)
         elif solve_problem.matrix is not None:
             A = np.asarray(solve_problem.matrix, dtype=np.float64)
             res = _core.davidson_solve(A, c_opts)
@@ -759,6 +771,8 @@ class DavidsonSolver(SolverStrategy):
             converged=res.converged,
             residuals=residuals,
             n_matvec=res.n_iter * (getattr(res, "subspace_dim", 1) + 1),
+            n_converged=getattr(res, "n_converged", None),
+            subspace_dim=getattr(res, "subspace_dim", None),
         )
 
 
@@ -770,8 +784,8 @@ class HermitianDavidsonSolver(SolverStrategy):
     """Blocked Davidson for complex Hermitian matrices via the C++ core.
 
     Wraps ``_vibeqc_core.davidson_solve_hermitian``.  Used for k != Γ
-    periodic Fock matrices where the Hamiltonian is complex-symmetric
-    (Hermitian) but not purely real.
+    periodic Fock matrices where the Hamiltonian is complex Hermitian
+    but not purely real.
     """
 
     supports_extremal = True
@@ -815,12 +829,13 @@ class HermitianDavidsonSolver(SolverStrategy):
             )
 
         # Dispatch: matrix-free vs explicit
-        if solve_problem.matvec is not None and solve_problem.matrix is None:
+        if solve_problem.matrix is None and (solve_problem.matvec is not None or solve_problem.matmat is not None):
             n = solve_problem.n
             diag = _matvec_diagonal(solve_problem, dtype=np.complex128)
-            res = _core.davidson_solve_hermitian_matvec(
-                n, solve_problem.matvec, diag, c_opts
-            )
+            if solve_problem.matmat is not None:
+                res = _core.davidson_solve_hermitian_matmat(n, solve_problem.matmat, diag, c_opts)
+            else:
+                res = _core.davidson_solve_hermitian_matvec(n, solve_problem.matvec, diag, c_opts)
         elif solve_problem.matrix is not None:
             A = np.asarray(solve_problem.matrix, dtype=np.complex128)
             res = _core.davidson_solve_hermitian(A, c_opts)
@@ -855,6 +870,8 @@ class HermitianDavidsonSolver(SolverStrategy):
             converged=res.converged,
             residuals=residuals,
             n_matvec=res.n_iter * (getattr(res, "subspace_dim", 1) + 1),
+            n_converged=getattr(res, "n_converged", None),
+            subspace_dim=getattr(res, "subspace_dim", None),
         )
 
 
@@ -965,11 +982,12 @@ class JDSolver(SolverStrategy):
 
 
 class GPLHRSolver(SolverStrategy):
-    """GPLHR -- Generalized Preconditioned Locally Harmonic Residual.
+    """Experimental GPLHR-derived harmonic interior eigensolver.
 
-    Interior eigenvalue solver using harmonic Ritz extraction
-    and shift-and-project strategy. Targets eigenvalues nearest
-    to a specified sigma.
+    Targets eigenvalues nearest sigma using signed shifted-diagonal
+    preconditioning and a restarted block harmonic-Davidson space.
+    This is not the full locally harmonic recurrence of the reference.
+    Raises RuntimeError if the requested roots do not converge.
 
     Reference: Zuev, D. et al. "New algorithms for iterative
     matrix-free eigensolvers in quantum chemistry."
@@ -977,7 +995,7 @@ class GPLHRSolver(SolverStrategy):
     DOI: 10.1002/jcc.23800
     """
 
-    _aliases = ["gplhr"]
+    _aliases = ["gplhr", "harmonic_davidson"]
 
     supports_extremal: bool = False
     supports_interior: bool = True
@@ -998,6 +1016,8 @@ class GPLHRSolver(SolverStrategy):
         gopts.sigma = options.sigma
         gopts.tol = options.tol
         gopts.max_iter = options.max_iter
+        gopts.max_subspace = options.max_subspace
+        gopts.preshift = options.preshift
         if options.block_size > 0:
             gopts.block_size = options.block_size
         if options.verbosity > 0:
@@ -1006,11 +1026,24 @@ class GPLHRSolver(SolverStrategy):
             res = core.gplhr_solve(problem.matrix, gopts)
         else:
             raise ValueError("GPLHR requires an explicit matrix")
+        residuals = np.linalg.norm(
+            problem.matrix @ res.eigenvectors
+            - res.eigenvectors * res.eigenvalues,
+            axis=0,
+        )
+        if not res.converged or not np.all(residuals < options.tol):
+            raise RuntimeError(
+                f"Experimental GPLHR did not converge {options.n_roots} "
+                f"root(s) near sigma={options.sigma} after {res.n_iter} iterations "
+                f"(maximum residual={np.max(residuals):.3e}, tol={options.tol:.3e}). "
+                "Try solver='jd' or increase max_subspace/max_iter."
+            )
         return SolverResult(
             eigenvalues=res.eigenvalues,
             eigenvectors=res.eigenvectors,
             n_iter=res.n_iter,
             converged=res.converged,
+            residuals=residuals,
         )
 
 
@@ -1075,10 +1108,9 @@ class LanczosSolver(SolverStrategy):
 
         n_matvec = 0
         j = 0
-        k = 0
+        k = 1 if n_krylov == 1 else 0
 
         # --- Lanczos iteration ---
-        converged = False
         for j in range(n_krylov - 1):
             # Matrix-vector product
             w = matvec(Q[:, j])
@@ -1109,20 +1141,6 @@ class LanczosSolver(SolverStrategy):
             # Store next Lanczos vector
             Q[:, j + 1] = r / beta_next
 
-            # Optional early convergence check (every 10 steps)
-            if (j + 1) % 10 == 0 and j + 1 > n_roots:
-                T_small = (
-                    np.diag(alpha[: j + 2])
-                    + np.diag(beta[1 : j + 2], -1)
-                    + np.diag(beta[1 : j + 2], 1)
-                )
-                theta = np.linalg.eigh(T_small)[0]
-                if getattr(self, "_prev_theta", None) is not None:
-                    delta = np.max(np.abs(theta[:n_roots] - self._prev_theta[:n_roots]))
-                    if delta < options.tol and j + 1 > n_roots + 5:
-                        converged = True
-                        break
-                self._prev_theta = theta.copy()
         else:
             # Loop completed without break -- all n_krylov vectors built.
             # Need one more matvec to get a for the last stored vector.
@@ -1130,10 +1148,10 @@ class LanczosSolver(SolverStrategy):
             j = n_krylov - 1  # update for final-alpha logic below
 
         # Compute alpha for the final Lanczos vector if needed.
-        # When the loop broke early (breakdown or convergence), alpha up to
+        # When the loop broke early (breakdown), alpha up to
         # k-1 are already set.  When the loop ran to completion, we need
         # alpha[n_krylov - 1] (the last stored vector's Rayleigh quotient).
-        if k == n_krylov and n_krylov > 1:
+        if k == n_krylov:
             w_last = matvec(Q[:, n_krylov - 1])
             n_matvec += 1
             alpha[n_krylov - 1] = np.real(np.vdot(Q[:, n_krylov - 1], w_last))
@@ -1171,7 +1189,7 @@ class LanczosSolver(SolverStrategy):
             eigenvalues=eigenvalues,
             eigenvectors=eigenvectors,
             n_iter=k_use,
-            converged=bool(converged or np.all(residuals < options.tol)),
+            converged=bool(n_out == n_roots and np.all(residuals < options.tol)),
             residuals=residuals,
             n_matvec=n_matvec,
         )
@@ -1207,36 +1225,15 @@ def solve_scf_step(
         Eigenvalues and eigenvectors in the **original** (non-orthogonal)
         basis.
     """
+    from .operators import FockOperator, solve_operator
     if options is None:
         options = SolverOptions(n_roots=scf_step.n_occ, which="SA")
-
-    F = np.asarray(scf_step.fock, dtype=np.float64)
-
-    # Build guess from previous coefficients if available
-    if scf_step.prev_C is not None and options.guess_vectors is None:
-        if scf_step.X is not None:
-            X_g = np.asarray(scf_step.X)
-            # In the orthonormal basis, the previous eigenvectors are
-            # X^T S C_prev = X^{-1} C_prev (since X^T S X = I, S X = X^{-T})
-            # For canonical orthogonalisation: X = U s^{-1/2} -> X^T S = X^{-1}
-            guess = np.linalg.solve(X_g.T, scf_step.prev_C)
-        else:
-            guess = scf_step.prev_C
-        options.guess_vectors = guess[:, : scf_step.n_occ]
-
-    # Apply orthogonaliser
-    if scf_step.X is not None:
-        X_mat = np.asarray(scf_step.X)
-        F_orth = X_mat.T @ F @ X_mat
-        problem = EigenProblem(matrix=F_orth, n=F_orth.shape[0])
-        result = solve_eigenproblem(problem, options, solver=solver)
-        # Transform back: C = X @ C_orth
-        result.eigenvectors = X_mat @ result.eigenvectors
     else:
-        problem = EigenProblem(matrix=F, n=F.shape[0])
-        result = solve_eigenproblem(problem, options, solver=solver)
-
-    return result
+        options = replace(options)
+    if scf_step.prev_C is not None and options.guess_vectors is None:
+        options.guess_vectors = scf_step.prev_C[:, :scf_step.n_occ]
+    operator = FockOperator(matrix=scf_step.fock, X=scf_step.X)
+    return solve_operator(operator, options, solver=solver)
 
 
 def _scf_diagonalize(
@@ -1254,7 +1251,7 @@ def _scf_diagonalize(
     """
     step = SCFStep(fock=F, X=X, n_occ=n_occ)
     if prev_C_orth is not None:
-        step.prev_C = prev_C_orth
+        step.prev_C = X @ prev_C_orth
     opts = SolverOptions(n_roots=F.shape[0], tol=1e-10, max_iter=100)
     result = solve_scf_step(step, opts, solver=solver)
     return result.eigenvectors, result.eigenvalues

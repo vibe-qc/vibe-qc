@@ -67,9 +67,7 @@ constexpr double kCovalentRadiusScale = 4.0 / 3.0;
 // limits with steepness kcn. We sum f over all neighbour pairs and
 // then pass through the soft-cap clip[].
 //
-// We do not differentiate here — the analytic dCN/dR contributions to
-// dq/dR for the dispersion gradient are a separate routine (not yet
-// landed; see header scope note).
+// The matching derivative is contracted in eeq_response_gradient below.
 
 inline double erf_count(double r, double r0, double kcn) {
     // The counting function in Eq. 4, evaluated for one neighbour pair.
@@ -274,6 +272,85 @@ EEQResult eeq_atomic_charges(const Molecule& mol,
     result.charges = x.head(n);
     result.chemical_potential = x(n);
     return result;
+}
+
+Eigen::MatrixXd eeq_response_gradient(
+    const Molecule& mol,
+    const Eigen::VectorXd& dE_dcn,
+    const Eigen::VectorXd& dE_dq,
+    double total_charge,
+    const EEQOptions& opts) {
+    const auto& atoms = mol.atoms();
+    const Eigen::Index n = static_cast<Eigen::Index>(atoms.size());
+    if (dE_dcn.size() != n || dE_dq.size() != n ||
+        !dE_dcn.allFinite() || !dE_dq.allFinite() ||
+        !std::isfinite(total_charge)) {
+        throw std::invalid_argument(
+            "eeq_response_gradient: expected finite atom-sized sensitivities "
+            "and total charge");
+    }
+    Eigen::MatrixXd gradient = Eigen::MatrixXd::Zero(n, 3);
+    if (n == 0) return gradient;
+
+    // Caldeweyher et al., JCP 150, 154122 (2019), EEQ charge response.
+    // Use the exact forward model above, including its CN regularization.
+    const auto result = eeq_atomic_charges(mol, total_charge, opts);
+    const Eigen::VectorXd cn = eeq_coordination_numbers(mol, opts);
+    Eigen::MatrixXd matrix(n + 1, n + 1);
+    build_coulomb_matrix(mol, matrix);
+    Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n + 1);
+    rhs.head(n) = dE_dq;
+    Eigen::LDLT<Eigen::MatrixXd> factor(matrix);
+    if (factor.info() != Eigen::Success) {
+        throw std::runtime_error("eeq_response_gradient: adjoint factorization failed");
+    }
+    const Eigen::VectorXd adjoint = factor.solve(rhs);
+    if (factor.info() != Eigen::Success || !adjoint.allFinite()) {
+        throw std::runtime_error("eeq_response_gradient: adjoint solve failed");
+    }
+
+    Eigen::VectorXd cn_sensitivity(n);
+    const double cap = std::log1p(std::exp(opts.cn_max));
+    for (Eigen::Index i = 0; i < n; ++i) {
+        // b_i = -chi_i + k_i CN_i / sqrt(CN_i + eps).
+        const double db_dcn = eeq_cn_scaling(atoms[i].Z)
+            * (0.5 * cn(i) + kCnRegEps)
+            / std::pow(cn(i) + kCnRegEps, 1.5);
+        // clip'(raw) = 1 - exp(clip(raw) - log(1+exp(cnmax))).
+        const double clip_derivative = -std::expm1(cn(i) - cap);
+        cn_sensitivity(i) = (dE_dcn(i) + adjoint(i) * db_dcn)
+                          * clip_derivative;
+    }
+    const double inv_sqrt_pi = 1.0 / std::sqrt(std::acos(-1.0));
+    for (Eigen::Index i = 0; i < n; ++i) {
+        for (Eigen::Index j = 0; j < i; ++j) {
+            Eigen::Vector3d delta;
+            for (int k = 0; k < 3; ++k) delta(k) = atoms[i].xyz[k] - atoms[j].xyz[k];
+            const double distance = delta.norm();
+            const double gi = eeq_gaussian_width(atoms[i].Z);
+            const double gj = eeq_gaussian_width(atoms[j].Z);
+            const double kappa = 1.0 / std::sqrt(gi * gi + gj * gj);
+            const double kr = kappa * distance;
+            const double dmatrix_dr = 2.0 * kappa * inv_sqrt_pi
+                * std::exp(-kr * kr) / distance
+                - std::erf(kr) / (distance * distance);
+            double derivative = -(adjoint(i) * result.charges(j)
+                                + adjoint(j) * result.charges(i)) * dmatrix_dr;
+            const double distance2 = delta.squaredNorm();
+            if (distance2 <= opts.cn_cutoff * opts.cn_cutoff && distance2 >= 1.0e-20) {
+                const double r0 = kCovalentRadiusScale
+                    * (eeq_covalent_radius(atoms[i].Z) + eeq_covalent_radius(atoms[j].Z));
+                const double arg = opts.cn_exp * (distance - r0) / r0;
+                const double dcount_dr = -opts.cn_exp * inv_sqrt_pi
+                    * std::exp(-arg * arg) / r0;
+                derivative += (cn_sensitivity(i) + cn_sensitivity(j)) * dcount_dr;
+            }
+            const Eigen::Vector3d pair_gradient = derivative * delta / distance;
+            gradient.row(i) += pair_gradient.transpose();
+            gradient.row(j) -= pair_gradient.transpose();
+        }
+    }
+    return gradient;
 }
 
 }  // namespace vibeqc

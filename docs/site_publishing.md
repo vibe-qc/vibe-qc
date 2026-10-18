@@ -1,6 +1,6 @@
 # Website sources and shared appearance
 
-The Astro marketing site lives in `website/`; the manual lives in `docs/`.
+The Astro technical site lives in `website/`; the manual lives in `docs/`.
 Build and review them locally using their contributor instructions. Publication
 accounts, SSH configuration, host keys and deployment runbooks are maintained
 in a private operations repository. The supported GitLab jobs retain their
@@ -10,12 +10,32 @@ The core manual follows qualified releases. Website publication follows its
 existing protected-main gate. Companion products publish independently. See
 [release process](release_process.md) for the contributor-facing contract.
 
+## Technical site scope
+
+The root site is the technical home for vibe-qc, vibe-sketch, vibe-view and
+vibe-queue. It provides product overviews, a documentation directory, workflow
+guides, installation routes and a searchable method catalog. The separate
+vibyverse.com site owns the broader marketing presentation.
+
+vibe-sketch has a public manual at `/vibe-sketch/docs/`, a testing-version
+overview and authorized-checkout setup instructions. It remains proprietary;
+public documentation does not imply public source or a qualified release.
+Product licenses and release numbers must stay explicit. QVF is a separate file-format
+contract, not an additional application. The queued workflow is sketch, submit,
+calculate, then analyze; a direct local calculation can skip submission.
+
+Root publication must preserve independently owned documentation, updates,
+preview and companion subtrees, including `/vibe-sketch/`. Verify root and
+`/preview/` builds locally and preserve the
+server's routing and contact handler. A website update does not publish an
+unqualified core manual or companion release.
+
 ## Shared Furo CSS export
 
 The source of truth is **`docs/_static/custom.css` in vibe-qc**. It is a
 small Furo override file, currently providing codename image styling and
-leaving Furo's stock palette intact. The Astro marketing stylesheet is a
-separate surface; copying this file does not reproduce the marketing header.
+leaving Furo's stock palette intact. The Astro technical stylesheet is a
+separate surface; copying this file does not reproduce the technical header.
 
 Companions deliberately vendor this one file into their own
 `docs/_static/custom.css`. Each companion owns its copy and chooses when to
@@ -39,7 +59,7 @@ When adopting or updating the export:
    navigation, and a codename image. Commit the copy and receipt together,
    then publish through that product's release process.
 
-Core CSS changes must be noted in the CHANGELOG and contributor notes,
+Core CSS changes must be noted in a `changelog.d/` fragment and contributor notes,
 with the source revision and a short description of what companions should
 review. Companion owners compare that revision with their receipt; updates
 are deliberate release work, not automatic drift. A core release does not
@@ -64,8 +84,10 @@ AI-generated artwork. Keep generation provenance with the owning assets.
 Release owners approve a codename before promoting its artwork to the
 released gallery. Update that product's contact sheet at the same time.
 
-The six [upcoming vibe-qc images](codename_artwork.md), v0.17.0 through v1.0.0,
-remain candidate or provisional planning assets. They do not announce shipped
-releases. A future marketing family gallery may link the three product
+The five [upcoming vibe-qc images](codename_artwork.md) remain candidate or
+provisional planning assets, paired with roadmap milestones. Version numbers
+in their filenames record the original artwork brief; they do not assign
+release versions. Tew's Tern is already in the released v0.17 gallery. The
+remaining candidates do not announce shipped releases. A future family gallery may link the independently published product
 galleries, with explicit product labels; it should not merge their version
 sequences or duplicate their image collections.

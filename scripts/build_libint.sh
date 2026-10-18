@@ -116,14 +116,86 @@ elif section.count(new) != 1 or old in section:
 PY
 }
 
+# GenericGmEval copies the erfc/erfx functor for every primitive quartet.
+# Its vector is only scratch, but the copy allocates on every invocation.
+# Keep the functor layout and arithmetic; copied scratch starts empty and
+# ordinary integral orders use a local array. Larger orders retain a vector.
+# This header modification remains under Libint's LGPL-3.0-or-later terms.
+# Keep the patch in this recipe so its bytes participate in the native stamp.
+patch_erfc_scratch() {
+    python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+declaration = "struct erfx_coulomb_gm_eval\n    : private"
+try:
+    start = text.index(declaration)
+    end = text.index("}  // namespace os_core_ints", start)
+except ValueError:
+    raise SystemExit("libint erfc scratch patch: unexpected evaluator; review the upstream header")
+section = text[start:end]
+old = """  void operator()(Real* Gm, Real rho, Real T, int mmax, Real omega, Real lambda,
+                  Real sigma) {"""
+new = """  // GenericGmEval copies this functor for each call. Scratch values are not
+  // part of its mathematical state; start copies empty and use local storage.
+  // Retaining the existing vector member preserves the evaluator's layout.
+  erfx_coulomb_gm_eval(const erfx_coulomb_gm_eval& other)
+      : base_type(-1), fm_eval_(other.fm_eval_) {}
+
+  void operator()(Real* Gm, Real rho, Real T, int mmax, Real omega, Real lambda,
+                  Real sigma) {
+    std::array<Real, 32> local;
+    Real* scratch;
+    if (mmax < static_cast<int>(local.size())) {
+      scratch = local.data();
+    } else {
+      base_type::Fm_.resize(mmax + 1);
+      scratch = base_type::Fm_.data();
+    }"""
+marker = "erfx_coulomb_gm_eval(const erfx_coulomb_gm_eval& other)"
+if marker in section:
+    if (section.count(new) != 1 or "&base_type::Fm_[0]" in section
+            or "base_type::Fm_[m]" in section or "#include <array>" not in text):
+        raise SystemExit("libint erfc scratch patch: unexpected patched evaluator; review the upstream header")
+else:
+    if (section.count(old) != 1 or section.count("&base_type::Fm_[0]") != 2
+            or section.count("base_type::Fm_[m]") != 2
+            or text.count("#include <algorithm>") != 1):
+        raise SystemExit("libint erfc scratch patch: unexpected evaluator; review the upstream header")
+    section = section.replace(old, new)
+    section = section.replace("&base_type::Fm_[0]", "scratch")
+    section = section.replace("base_type::Fm_[m]", "scratch[m]")
+    text = text[:start] + section + text[end:]
+    if "#include <array>" not in text:
+        text = text.replace("#include <algorithm>", "#include <algorithm>\n#include <array>", 1)
+    path.write_text(text)
+PY
+}
+
 # Both markers must match. A legacy install with only an orbital marker
 # predates the independent auxiliary limits and must be rebuilt.
 REBUILD_FOR_MAX_AM=0
 INSTALLED_AM_SPEC="$(vibeqc_libint_installed_spec "$INSTALL_DIR/.vibeqc-max-am")"
 INSTALLED_FITTING_AM_SPEC="$(vibeqc_libint_installed_spec "$INSTALL_DIR/.vibeqc-fitting-max-am")"
 
+# Source-only staging must not inspect or mutate the installed runtime.
+# The cache gate is lifecycle-only; the actual recipe and max-AM salt stay exact.
+# vibeqc-recipe-hash: lifecycle-only-begin
+if [ "${VIBEQC_FETCH_ONLY:-0}" != "1" ]; then
+    if [ -d "$INSTALL_DIR" ]; then
+        if [ ! -f "$INSTALL_DIR/lib/cmake/libint2/libint2-config.cmake" ]; then
+            echo "libint artifact identity unavailable: cache lacks libint2-config.cmake" >&2
+            exit 3
+        fi
+        python3 "$SCRIPT_DIR/attest_native_image.py" libint "$INSTALL_DIR" || exit 3
+        echo "Libint cache markers describe recorded settings; runtime version, max-AM and source/build provenance are not attested."
+    fi
+# vibeqc-recipe-hash: lifecycle-only-end
 if [ -f "$INSTALL_DIR/lib/cmake/libint2/libint2-config.cmake" ]; then
     patch_boys_endpoint "$INSTALL_DIR/include/libint2/boys.h"
+    patch_erfc_scratch "$INSTALL_DIR/include/libint2/boys.h"
     if [ "$INSTALLED_AM_SPEC" = "$VIBEQC_LIBINT_AM_SPEC" ] \
        && [ "$INSTALLED_FITTING_AM_SPEC" = "$LIBINT_FITTING_AM_SPEC" ]; then
         echo "libint2 already installed at $INSTALL_DIR (orbital max_am $INSTALLED_AM_SPEC; fitting max_am $INSTALLED_FITTING_AM_SPEC)"
@@ -133,6 +205,10 @@ if [ -f "$INSTALL_DIR/lib/cmake/libint2/libint2-config.cmake" ]; then
     echo "but $VIBEQC_LIBINT_AM_SPEC/$LIBINT_FITTING_AM_SPEC was requested — rebuilding."
     REBUILD_FOR_MAX_AM=1
 fi
+
+# vibeqc-recipe-hash: lifecycle-only-begin
+fi
+# vibeqc-recipe-hash: lifecycle-only-end
 
 # --- Source ---------------------------------------------------------------
 if [ ! -d "$SRC_DIR/.git" ] && [ ! -f "$SRC_DIR/CMakeLists.txt" ]; then
@@ -144,6 +220,7 @@ else
 fi
 
 patch_boys_endpoint "$SRC_DIR/include/libint2/boys.h"
+patch_erfc_scratch "$SRC_DIR/include/libint2/boys.h"
 
 # Fetch-only mode for offline-HPC pre-staging (docs/cluster_setup.md): on
 # an internet-connected login node, stage the source here, then run the

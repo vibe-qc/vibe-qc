@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "pcs-3",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: pcS-3\nCanonical name in vibe-qc: pcs-3\nOriginating publication: Jensen, J. Chem. Theory Comput. 4, 719 (2008); DOI: 10.1021/ct800013z\nNote: same\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: pcS-3\nDescription: pcS-3\n       Role: orbital\n    Version: 0  (Data from the Original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -6131,7 +6131,33 @@
       ]
     }
   },
+  "basis_family": "jensen",
+  "references": [
+    {
+      "key": "jensen_pcs_2008",
+      "description": "F. Jensen, Journal of Chemical Theory and Computation 4, 719-727 (2008)",
+      "doi": "10.1021/ct800013z"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "pcS-3"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "a28a441e19d7946966fb72d9c273b1af2b3c66400d44952672fdb6557cf98c03",
+    "citations": [
+      {
+        "keys": [
+          "jensen_pcs_2008"
+        ]
+      }
+    ]
   }
 }

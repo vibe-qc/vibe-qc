@@ -134,7 +134,7 @@ def test_multi_k_at_gamma_mesh_matches_gamma_driver():
         omega=0.5,
     )
     assert r_multi.converged and r_gamma.converged
-    # Both drivers now force EWALD_3D (handover F4, 2026-06-01), so V_ne /
+    # Both drivers now force EWALD_3D (historical design record F4, 2026-06-01), so V_ne /
     # e_nuclear are gauge-consistent with the Hartree J and the v0.6.1 Madelung
     # correction is disabled on both paths (E_madelung_fix=0.0 for EWALD_3D).
     # They are therefore bit-equivalent at [1,1,1] — this was a ~0.7 mHa
@@ -385,7 +385,7 @@ def test_result_has_expected_per_k_shapes():
 def test_energy_decomposition_consistent():
     """E_total = e_electronic + e_nuclear for the EWALD_3D gauge.
 
-    The multi-k RKS Ewald driver now forces EWALD_3D (handover F4,
+    The multi-k RKS Ewald driver now forces EWALD_3D (historical design record F4,
     2026-06-01), so V_ne / e_nuclear are Ewald-gauge-consistent with the
     Hartree J and the v0.6.1 Madelung leak correction is disabled
     (``madelung_energy_correction_for_lat`` returns 0.0 for EWALD_3D).
@@ -470,17 +470,18 @@ def test_dispatcher_multi_k_ewald_routes_to_new_driver():
     assert isinstance(r, vq.PeriodicRKSMultiKEwaldResult)
 
 
-def test_dispatcher_gamma_mesh_still_routes_to_gamma_driver():
-    """[1,1,1] through the multi-k entry must keep delegating to the
-    cheaper Γ-only driver (PeriodicRKSEwaldResult, not the multi-k
-    result type)."""
+def test_dispatcher_gamma_mesh_routes_to_multi_k_driver():
+    """[1,1,1] through the multi-k entry lands on the multi-k driver too
+    (#23). It used to delegate to the Γ-only driver unless smearing or a
+    restart density was set, and the two build a hybrid's exact exchange
+    in different gauges (PBE0/STO-3G H2 in a 6-bohr cube: 18.9 mHa)."""
     sysp, basis = _h2_in_box()
     opts = _default_options("PBE")
     opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
     kmesh = vq.monkhorst_pack(sysp, [1, 1, 1])
     r = vq.run_rks_periodic_scf(sysp, basis, kmesh, opts, omega=0.5)
     assert r.converged
-    assert isinstance(r, vq.PeriodicRKSEwaldResult)
+    assert isinstance(r, vq.PeriodicRKSMultiKEwaldResult)
 
 
 def test_band_overlap_t0_mesh_converges_with_global_fill_and_mixer():

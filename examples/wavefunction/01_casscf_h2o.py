@@ -9,7 +9,11 @@ on the CASSCF reference.  Run with:
 from __future__ import annotations
 
 from vibeqc import Atom, Molecule
+from pathlib import Path
+
 from vibeqc.runner import run_job
+
+HERE = Path(__file__).resolve().parent
 import numpy as np
 
 # Water molecule in Bohr (equilibrium geometry)
@@ -30,6 +34,7 @@ print("\n1. CASCI(2,2) — CI in the HF active space")
 casci_22 = run_job(
     h2o,
     basis="sto-3g",
+    output=str(HERE / "output-01-casscf-h2o-casci-22"),
     method="casci",
     active_space=(2, 2),
     write_xyz_file=False,
@@ -44,6 +49,7 @@ print("\n2. CASSCF(2,2) — orbital-optimized (auto: Super-CI then NR)")
 casscf_22 = run_job(
     h2o,
     basis="sto-3g",
+    output=str(HERE / "output-01-casscf-h2o-casscf-22"),
     method="casscf",
     active_space=(2, 2),
     write_xyz_file=False,
@@ -64,6 +70,7 @@ print("\n3. NEVPT2(2,2) on CASSCF reference — dynamic correlation")
 nevpt2_22 = run_job(
     h2o,
     basis="sto-3g",
+    output=str(HERE / "output-01-casscf-h2o-nevpt2-22"),
     method="nevpt2",
     active_space=(2, 2),
     write_xyz_file=False,
@@ -79,6 +86,7 @@ print("\n4. CASCI(4,4) — 4 electrons in 4 active orbitals")
 casci_44 = run_job(
     h2o,
     basis="sto-3g",
+    output=str(HERE / "output-01-casscf-h2o-casci-44"),
     method="casci",
     active_space=(4, 4),
     write_xyz_file=False,
@@ -93,6 +101,7 @@ print("\n5. CASSCF(4,4)")
 casscf_44 = run_job(
     h2o,
     basis="sto-3g",
+    output=str(HERE / "output-01-casscf-h2o-casscf-44"),
     method="casscf",
     active_space=(4, 4),
     write_xyz_file=False,
@@ -107,6 +116,7 @@ print("\n6. CASPT2(4,4) on CASSCF reference (internally-contracted)")
 caspt2_44 = run_job(
     h2o,
     basis="sto-3g",
+    output=str(HERE / "output-01-casscf-h2o-caspt2-44"),
     method="caspt2",
     active_space=(4, 4),
     write_xyz_file=False,
@@ -116,8 +126,8 @@ caspt2_44 = run_job(
 )
 print(f"   E_CASPT2(4,4) = {caspt2_44.energy:.8f} Ha")
 
-# CASSCF incomplete analytic nuclear-gradient preview.
-print("\n8. CASSCF(4,4) analytic-gradient preview - not FD-tight")
+# CASSCF analytic nuclear gradient.
+print("\n8. CASSCF(4,4) analytic gradient")
 grad = casscf_44.gradient
 if grad is not None:
     print(f"   Gradient shape: {grad.shape}")
@@ -128,8 +138,9 @@ if grad is not None:
     print(f"   Forces (F = -dE/dR, Ha/bohr):")
     for i, row in enumerate(-grad):
         print(f"     atom {i}: {row[0]:10.6f} {row[1]:10.6f} {row[2]:10.6f}")
-    print("\n   The gradient captures ~87% of the full CP-MCSCF gradient.")
-    print("   Missing 13% = W^z (CI+orbital relaxation, Handy-Schaefer z-vector).")
+    print("\n   This is the complete derivative of the variational CASSCF")
+    print("   energy: no z-vector term exists at a stationary CASSCF, and")
+    print("   the finite-basis dependence is carried by the overlap term.")
 else:
     print("   (gradient not computed — SA-CASSCF or non-converged)")
 

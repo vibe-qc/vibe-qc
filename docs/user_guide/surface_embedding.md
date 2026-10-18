@@ -1,18 +1,18 @@
 # Green's-function surface embedding
 
-```{admonition} Feature status — experimental
+```{admonition} Status: experimental
 :class: warning
 
-Green's-function surface embedding is **experimental**. The analytic 1D
-foundation (semi-infinite tight-binding substrate) and the 3D Gaussian
-pipeline are validated and regression-tested, but the method has **not
-yet** been shown to reproduce a thick-slab [GDF](density_fitting.md)
-reference to tight tolerance (see the project's periodic-SCF discipline,
-CLAUDE.md §7). Treat absolute energies and densities as **qualitative**
-until that parity lands. Every embedded-surface run emits an
-``EmbeddedSurfaceExperimentalWarning``. The API lives under
-``vibeqc.periodic_embedding`` and is **not** exported from the top-level
-``vibeqc`` namespace.
+Green's-function surface embedding is an experimental route. It emits
+`EmbeddedSurfaceExperimentalWarning` on every embedded-surface run, and its
+API lives under `vibeqc.periodic_embedding`, not in the top-level `vibeqc`
+namespace. The analytic 1-D foundation (semi-infinite tight-binding
+substrate) and the 3-D Gaussian pipeline are validated and regression-tested,
+but the method has not yet been shown to reproduce a thick-slab
+[GDF](density_fitting.md) reference to tight tolerance, so absolute energies
+and densities are qualitative. Its numbers are research output, not validated
+results, and it is not part of the release gate. The label vocabulary is
+defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 ```
 
 To silence the per-run warning:
@@ -50,6 +50,101 @@ complex-energy contour integration, Ishida energy-linearization of
 
 For the conventional finite-supercell slab route (no embedding), see
 [Slabs and adsorbates](slabs_and_adsorbates.md).
+
+## Theory
+
+Write the one-electron problem of the whole semi-infinite system in the
+Gaussian basis with Hamiltonian $\mathbf H$ and overlap $\mathbf S$, and split
+the basis into region I (surface layers plus adsorbate) and the substrate
+$S$. The Green's function of region I at complex energy $z$ is obtained by
+eliminating the substrate exactly,
+
+$$
+\mathbf G_I(z) = \big[\,z\,\mathbf S_{II} - \mathbf H_{II} - \boldsymbol\Sigma_{\mathrm{emb}}(z)\,\big]^{-1},
+\qquad
+\boldsymbol\Sigma_{\mathrm{emb}}(z) = (\mathbf H_{IS} - z\,\mathbf S_{IS})\,
+\mathbf g_S(z)\,(\mathbf H_{SI} - z\,\mathbf S_{SI}),
+$$
+
+where $\mathbf g_S(z)$ is the surface Green's function of the substrate with
+region I removed. $\boldsymbol\Sigma_{\mathrm{emb}}$ is the embedding
+self-energy: energy dependent, non-Hermitian for $\operatorname{Im} z \ne 0$,
+and non-local, but supported only on the substrate orbitals that couple to
+region I. It is the LCAO form of Inglesfield's embedding potential
+({vibeqc-cite}`inglesfield_embedding_1981`), which replaces the
+semi-infinite substrate by a boundary term on the dividing surface so that the
+region-I wavefunction matches onto the exact bulk continuum instead of onto a
+truncated slab. In vibe-qc the potential is built per 2-D surface k-point by
+`build_surface_sigma` and recovered as $\boldsymbol\Sigma_{\mathrm{emb}} =
+z\,\mathbf 1 - \mathbf H_{00} - \mathbf g_{\mathrm{surf}}^{-1}$ in the
+principal-layer basis (`EmbeddingPotential`).
+
+The surface Green's function comes from the decimation of Lopez Sancho,
+Lopez Sancho and Rubio ({vibeqc-cite}`lopez_sancho_rubio_1985`,
+`sancho_rubio_surface_gf`). With the substrate cut into principal layers
+that couple only to their neighbours, on-site block $\mathbf H_{00}$ and
+inter-layer block $\mathbf H_{01}$, the recursion
+
+$$
+\boldsymbol\alpha_{i+1} = \boldsymbol\alpha_i\,(z - \boldsymbol\epsilon_i)^{-1}\boldsymbol\alpha_i,\quad
+\boldsymbol\beta_{i+1} = \boldsymbol\beta_i\,(z - \boldsymbol\epsilon_i)^{-1}\boldsymbol\beta_i,\quad
+\boldsymbol\epsilon_{i+1} = \boldsymbol\epsilon_i
++ \boldsymbol\alpha_i(z - \boldsymbol\epsilon_i)^{-1}\boldsymbol\beta_i
++ \boldsymbol\beta_i(z - \boldsymbol\epsilon_i)^{-1}\boldsymbol\alpha_i,\quad
+\boldsymbol\epsilon^{s}_{i+1} = \boldsymbol\epsilon^{s}_i
++ \boldsymbol\alpha_i(z - \boldsymbol\epsilon_i)^{-1}\boldsymbol\beta_i,
+$$
+
+started from $\boldsymbol\epsilon_0 = \boldsymbol\epsilon^s_0 = \mathbf
+H_{00}$, $\boldsymbol\alpha_0 = \mathbf H_{01}$ and $\boldsymbol\beta_0 =
+\mathbf H_{01}^\dagger$, doubles the effective stack depth at every step; when
+$\boldsymbol\alpha_i, \boldsymbol\beta_i \to 0$ the surface and bulk Green's
+functions are $\mathbf g_{\mathrm{surf}} = (z - \boldsymbol\epsilon^s)^{-1}$
+and $\mathbf g_{\mathrm{bulk}} = (z - \boldsymbol\epsilon)^{-1}$. A stack of
+$2^{20}$ layers is reached in twenty iterations, which is why a converged
+semi-infinite substrate costs no more than a few slab-sized inversions per
+energy.
+
+Because $\boldsymbol\Sigma_{\mathrm{emb}}$ depends on $z$, the region-I
+problem is not a single eigenvalue problem. Ishida's linearisation
+({vibeqc-cite}`ishida_embedding_2001`, `EmbeddingPotential.linearize`)
+expands it about a reference energy $z_0$ inside the occupied window,
+
+$$
+\boldsymbol\Sigma_{\mathrm{emb}}(z) \approx \boldsymbol\Sigma_{\mathrm{emb}}(z_0)
++ (z - z_0)\,\frac{\mathrm d\boldsymbol\Sigma_{\mathrm{emb}}}{\mathrm dz}\Big|_{z_0},
+$$
+
+so that the energy-dependent term folds into a modified Hamiltonian
+$\mathbf H_{II} + \boldsymbol\Sigma(z_0) - z_0\,\boldsymbol\Sigma'(z_0)$ and
+overlap $\mathbf S_{II} - \boldsymbol\Sigma'(z_0)$. The region-I density is
+then the contour integral of the Green's function up to the Fermi level,
+
+$$
+\mathbf D_I = -\frac{1}{\pi}\operatorname{Im}\int_{E_{\mathrm{bottom}}}^{E_F}
+\mathbf G_I(E + i0^{+})\,\mathrm dE ,
+$$
+
+evaluated on a semicircle in the upper half plane with Gauss-Legendre nodes
+(`EnergyContour`, `contour_n_nodes`), where the integrand is smooth; the
+adsorbate step (Layer B) perturbs the clean-surface $\mathbf G_0$ by a
+localised $\Delta\mathbf V$ through the Dyson equation $\mathbf G = \mathbf G_0
++ \mathbf G_0\,\Delta\mathbf V\,\mathbf G$ and takes the change in the
+integrated density of states and band energy from Lloyd's formula,
+$\Delta N(E) = -\tfrac{1}{\pi}\operatorname{Im}\ln\det[\mathbf 1 - \mathbf
+G_0(E)\Delta\mathbf V]$.
+
+The approximations that enter are the finite region I (its depth sets how
+far the surface perturbation is allowed to reach), the linearisation of
+$\boldsymbol\Sigma_{\mathrm{emb}}$ about $z_0$, the numerical contour, and, in
+the current code, an embedding potential built once from the substrate
+Hamiltonian and held fixed rather than rebuilt from the converged substrate
+density (`sigma_scf=True` uses a substrate-SCF mean field for it). The method
+helps exactly where a supercell slab fails: dilute adsorbates, with no
+slab-thickness quantum-size oscillation and no lateral image interaction. It
+fails, today, where absolute numbers are needed: the thick-slab GDF parity is
+pending, forces are finite differences of the embedded energy, and the
+open-shell route is UHF only.
 
 ## The runner
 
@@ -191,7 +286,7 @@ keyword (`scf_method=`, `scf_mixing=`, and so on) is forwarded to
 ```{note}
 The open-shell route here is **UHF** (J + K only). Spin-polarised
 *Kohn-Sham* embedded surfaces (UKS with a `Vxc` augmentation) are a
-roadmap item (see ``handovers/HANDOVER_GF_EMBEDDING.md``).
+roadmap item; see [the roadmap](../roadmap.md).
 ```
 
 ## Runnable example
@@ -217,10 +312,16 @@ through the open-shell case step by step.
 ## References
 
 - J. E. Inglesfield, *J. Phys. C* **14**, 3795 (1981),
-  [doi:10.1088/0022-3719/14/26/015](https://doi.org/10.1088/0022-3719/14/26/015).
+  [doi:10.1088/0022-3719/14/26/015](https://doi.org/10.1088/0022-3719/14/26/015),
+  {vibeqc-cite}`inglesfield_embedding_1981`: the embedding potential.
 - H. Ishida, *Phys. Rev. B* **63**, 165409 (2001),
-  [doi:10.1103/PhysRevB.63.165409](https://doi.org/10.1103/PhysRevB.63.165409).
+  [doi:10.1103/PhysRevB.63.165409](https://doi.org/10.1103/PhysRevB.63.165409),
+  {vibeqc-cite}`ishida_embedding_2001`: energy linearisation of the
+  embedding potential in an LCAO basis.
 - M. P. López Sancho, J. M. López Sancho and J. Rubio, *J. Phys. F*
   **15**, 851 (1985),
-  [doi:10.1088/0305-4608/15/4/009](https://doi.org/10.1088/0305-4608/15/4/009).
-- P. Lloyd, *Proc. Phys. Soc.* **90**, 207 (1967).
+  [doi:10.1088/0305-4608/15/4/009](https://doi.org/10.1088/0305-4608/15/4/009),
+  {vibeqc-cite}`lopez_sancho_rubio_1985`: the decimation that yields the
+  surface Green's function.
+- P. Lloyd, *Proc. Phys. Soc.* **90**, 207 (1967): Lloyd's formula for the
+  integrated density of states of a localised perturbation.

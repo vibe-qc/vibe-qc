@@ -3,7 +3,7 @@
 Every number here is synthetic. M2's own gate -- evaluating the objective at
 the shipped pob-TZVP-REV2 and reproducing the recorded GPAW-pob statistics
 (MD -24.6, MAD 35.4 kJ/mol over n=28) -- needs 28 periodic cohesive-energy
-runs and has NOT been run; see HANDOVER_BASISOPT.md § M2. What is pinned here
+runs and has NOT been run. What is pinned here
 is that the algebra is right and the guards fire, so that when the gate is
 run, a disagreement means the physics, not the arithmetic.
 """

@@ -108,8 +108,7 @@ optimises the orbitals; `"caspt2"` is the internally-contracted variant,
 validated against OpenMolcas `&CASPT2` to ≤2 µHa and **un-gated**, including
 the canonical eight-class single-state IPEA contraction. The
 strongly-contracted variant `caspt2(variant="sc")` stays gated behind
-`VIBEQC_EXPERIMENTAL_MULTIREF=1`. See
-[`handovers/HANDOVER_MULTIREF.md`](../../../handovers/HANDOVER_MULTIREF.md).
+`VIBEQC_EXPERIMENTAL_MULTIREF=1`.
 
 ## Example
 

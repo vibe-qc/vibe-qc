@@ -228,7 +228,7 @@ def compute_ic_caspt2_density_components(
     """Build the currently available IC-CASPT2 gradient density ingredients.
 
     The one-body correction stored in ``delta_d`` is the active-space
-    ``BDER + FG3.DG1`` block described in the CAS gradient handover.  The
+    ``BDER + FG3.DG1`` block described in the CAS gradient historical design record.  The
     two-body correction stores the active ``FG3.DG2`` block.  These tensors are
     intentionally returned as components for the future IC gradient framework;
     callers must not mix them into the SC-CASPT2 z-vector shortcut.

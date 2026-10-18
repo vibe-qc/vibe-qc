@@ -8,7 +8,8 @@ results land in a shared comparison table, you assert agreement
 (or investigate the disagreement).
 
 PySCF, Psi4, and CRYSTAL are handled differently. vibe-qc never
-imports them in-process (CLAUDE.md § 10); they are driven as
+imports them in-process (`AGENTS.md`, ground rule 5: vibe-qc computes its
+own results); they are driven as
 external programs via subprocess runners under
 [`examples/regression/core/`](https://github.com/vibe-qc/vibe-qc/tree/main/examples/regression/core/) and
 their output is parsed back. See § "PySCF" and § "Psi4" below for
@@ -64,7 +65,7 @@ the same venv as vibe-qc:
 
 ```{important}
 Although PySCF is importable in the same interpreter, vibe-qc
-does **not** import it in-process. Per CLAUDE.md § 10, other QC
+does **not** import it in-process. Per `AGENTS.md` ground rule 5, other QC
 programs are treated as external references and driven
 out-of-process. The previous in-process `PySCFCalculator` shim
 in `vibeqc.benchmark` was retired in v0.8.x.
@@ -177,7 +178,7 @@ QC package with strong emphasis on coupled-cluster methods.
 
 ```{important}
 Like PySCF, vibe-qc treats Psi4 as an external reference and never
-imports it in-process (CLAUDE.md § 10). The previous in-process
+imports it in-process (`AGENTS.md` ground rule 5). The previous in-process
 `make_psi4_calculator` helper in `vibeqc.benchmark` was retired in
 v0.8.x; the regression-suite runner now spawns Psi4 in a separate
 Python interpreter.
@@ -405,7 +406,8 @@ imported by `python/vibeqc/`.
 
 ### Why out-of-process
 
-Per [`CLAUDE.md`](../CLAUDE.md) § 10, vibe-qc never imports another
+Per [`AGENTS.md`](https://github.com/vibe-qc/vibe-qc/blob/main/AGENTS.md)
+ground rule 5, vibe-qc never imports another
 QC program at runtime. CRYSTAL14 is a *program*, not a library, so
 the runner spawns it as a subprocess via the
 [`vibe-queue`](https://github.com/vibe-qc/vibe-queue) dispatcher: input

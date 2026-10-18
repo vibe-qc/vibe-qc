@@ -21,7 +21,7 @@ $ .venv/bin/python examples/debug/scf_translation_invariance_check.py
 
 ## What was *not* the bug
 
-The summary the v0.6.2 handover hands to the next dev chat said the
+The summary the v0.6.2 historical design record hands to the next dev chat said the
 gauge mismatch lived in V_ne (electron-nuclear) — `compute_nuclear_lattice`
 (direct truncated libint, no G=0 omission) vs `build_j_ewald_3d` (FFT-Poisson,
 G=0 dropped). That hypothesis is **wrong**. Verified against the actual

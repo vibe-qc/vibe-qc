@@ -1,5 +1,9 @@
 """Kohn-Sham DFT single-point on H2O with the PBE functional.
 
+Basis 6-31G*, geometry from ../h2o.xyz. Success criterion: the SCF converges
+to E = -76.319203 Ha (vibe-qc 0.17.10 development build); another build or
+libxc version should agree to 1e-5 Ha, the residual being the DFT grid.
+
 Run:
     .venv/bin/python input-h2o-dft.py
 

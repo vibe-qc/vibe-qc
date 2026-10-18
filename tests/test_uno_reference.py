@@ -21,6 +21,48 @@ O2 = Molecule([Atom(8, [0.0, 0.0, 0.0]), Atom(8, [0.0, 0.0, 2.28])], multiplicit
 O2_ATOM = "O 0 0 0; O 0 0 2.28"
 
 
+def _assert_same_uhf_reference(mf, result, occupations):
+    from pyscf import mcscf
+
+    assert abs(mf.e_tot - result.energy) < 1e-8, (
+        "different UHF stationary point: "
+        f"PySCF={mf.e_tot:.14f}, reference={result.energy:.14f} Ha"
+    )
+    assert abs(mf.spin_square()[0] - result.s_squared) < 1e-6
+    noons, _ = mcscf.addons.make_natural_orbitals(mf)
+    assert np.max(np.abs(np.sort(occupations) - np.sort(noons))) < 1e-8
+
+
+def _stable_pyscf_reference(mf, max_restarts=5):
+    """Follow internal instabilities with bounded MOM-tracked UHF solves."""
+    from pyscf import scf
+
+    for restart in range(max_restarts + 1):
+        assert mf.converged, (
+            f"PySCF UHF root {restart} did not converge: E={mf.e_tot:.14f} Ha"
+        )
+        mo, _, stable, _ = mf.stability(
+            internal=True, external=False, return_status=True, verbose=0
+        )
+        if stable:
+            return mf
+        if restart == max_restarts:
+            break
+        # Track the occupied subspace of the stability-rotated determinant.
+        # Ordinary Aufbau reassigns occupations after the rotation and can
+        # return to the unstable first root (or oscillate at one thread).
+        dm0 = mf.make_rdm1(mo, mf.mo_occ)
+        mf = scf.addons.mom_occ(scf.UHF(mf.mol), mo, mf.mo_occ)
+        mf.conv_tol = 1e-12
+        mf.conv_tol_grad = 1e-10
+        mf.max_cycle = 200
+        mf.kernel(dm0=dm0)
+    pytest.fail(
+        f"PySCF UHF root remains internally unstable after {max_restarts} "
+        f"restarts: E={mf.e_tot:.14f} Ha"
+    )
+
+
 @pytest.fixture(scope="module")
 def o2_basis():
     return BasisSet(O2, "sto-3g")
@@ -29,7 +71,7 @@ def o2_basis():
 class TestUNOProvider:
     def test_orthonormal_and_occupations_vs_pyscf(self, o2_basis):
         pytest.importorskip("pyscf")
-        from pyscf import gto, mcscf, scf
+        from pyscf import gto, scf
         from vibeqc._vibeqc_core import UHFOptions, compute_overlap, run_uhf
 
         C = get_hf_orbital_provider(O2, o2_basis, method="uno")
@@ -50,25 +92,33 @@ class TestUNOProvider:
         mf = scf.UHF(pyscf_mol).run(
             conv_tol=1e-12, conv_tol_grad=1e-10, max_cycle=200, verbose=0
         )
-        # vibe-qc's default UHF follows internal instabilities.  PySCF's
-        # first O2/STO-3G root is an unstable stationary point, so rotate
-        # and reconverge it before comparing the two determinants' NOONs.
-        mo_internal, _, stable_internal, _ = mf.stability(
+        # Compare the determinants only after following internal instabilities.
+        mf = _stable_pyscf_reference(mf)
+        _assert_same_uhf_reference(mf, r, occ)
+
+    def test_unstable_first_root_is_rejected_as_a_different_determinant(self, o2_basis):
+        pytest.importorskip("pyscf")
+        from pyscf import gto, scf
+        from vibeqc._vibeqc_core import UHFOptions, compute_overlap, run_uhf
+
+        mf = scf.UHF(gto.M(
+            atom=O2_ATOM, unit="Bohr", basis="sto-3g", spin=2, verbose=0
+        )).run(conv_tol=1e-12, conv_tol_grad=1e-10, max_cycle=200, verbose=0)
+        _, _, stable, _ = mf.stability(
             internal=True, external=False, return_status=True, verbose=0
         )
-        if not stable_internal:
-            dm0 = mf.make_rdm1(mo_internal, mf.mo_occ)
-            mf = scf.UHF(pyscf_mol)
-            mf.conv_tol = 1e-12
-            mf.conv_tol_grad = 1e-10
-            mf.max_cycle = 200
-            mf.kernel(dm0=dm0)
-        _, _, stable_internal, _ = mf.stability(
-            internal=True, external=False, return_status=True, verbose=0
-        )
-        assert mf.converged and stable_internal
-        noons, _ = mcscf.addons.make_natural_orbitals(mf)
-        assert np.max(np.abs(np.sort(occ) - np.sort(noons))) < 1e-8
+        assert mf.converged and not stable, "control must use the unstable first root"
+        opts = UHFOptions()
+        opts.max_iter = 200
+        opts.conv_tol_energy = 1e-12
+        opts.conv_tol_grad = 1e-10
+        result = run_uhf(O2, o2_basis, opts)
+        C = get_hf_orbital_provider(O2, o2_basis, method="uno")
+        S = np.asarray(compute_overlap(o2_basis))
+        P = np.asarray(result.density_alpha) + np.asarray(result.density_beta)
+        occupations = np.diag(C.T @ S @ P @ S @ C)
+        with pytest.raises(AssertionError, match="different UHF stationary point"):
+            _assert_same_uhf_reference(mf, result, occupations)
 
     def test_uno_reference_improves_o2_casci_and_casscf_start(self, o2_basis):
         # The π* singly-occupied pair sits exactly in the CAS(2,2) window

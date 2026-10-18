@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "def2-svpd-c",
+  "description": "def2-SVPD C-Basis set for H, He, Li, Be, B, C, N, O, F, Ne, Na, Mg, Al, Si, P, S, Cl, Ar, K, Ca, Sc, Ti, V, Cr, Mn, Fe, Co, Ni, Cu, Zn, Ga, Ge, As, Se, Br, Kr, Rb, Sr, Y, Zr, Nb, Mo, Tc, Ru, Rh, Pd, Ag, Cd, In, Sn, Sb, Te, I, Xe, Cs, Ba, La, Hf, Ta, W, Re, Os, Ir, Pt, Au, Hg, Tl, Pb, Bi, Po, At and Rn in Gaussian-format",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -27313,7 +27313,46 @@
       ]
     }
   },
+  "basis_family": "ahlrichs",
+  "references": [
+    {
+      "key": "weigend_ahlrichs_def2_2005",
+      "description": "F. Weigend, R. Ahlrichs, Physical Chemistry Chemical Physics 7, 3297-3305 (2005)",
+      "doi": "10.1039/B508541A"
+    },
+    {
+      "key": "rappoport_furche_2010",
+      "description": "D. Rappoport, F. Furche, Journal of Chemical Physics 133, 134105 (2010)",
+      "doi": "10.1063/1.3484283"
+    },
+    {
+      "key": "hellweg_haettig_pp_rifit_2007",
+      "description": "A. Hellweg, C. Hättig, S. Höfener, W. Klopper, Theoretical Chemistry Accounts 117, 587-597 (2007)",
+      "doi": "10.1007/s00214-007-0250-5"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "def2-svpd-c",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "6928c5aafcbab814c923cad6eca619d9caab4c6e7e3649c5e6acf5048f3f02cd",
+    "citations": [
+      {
+        "keys": [
+          "weigend_ahlrichs_def2_2005",
+          "rappoport_furche_2010",
+          "hellweg_haettig_pp_rifit_2007"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

@@ -2465,8 +2465,8 @@ class GapwJBuilder:
         ``∂E_H/∂D``: it omitted the soft-basis projection of the smooth term
         and the D-dependent compensator response, pushing a partially-occupied
         core's tight 1s above the valence -- O collapsed to −35 Ha with an
-        empty core. See ``handovers/HANDOVER_GAPW_PRODUCTION.md`` § milestone 3
-        and ``examples/regression/gapw_parity/milestone3_analytic_fock.py``.)
+        empty core. See
+        ``examples/regression/gapw_parity/milestone3_analytic_fock.py``.)
 
         Since ``E_H`` is quadratic in D, the Fock is ``∫ (∂ρ/∂D_μν) V[ρ]`` of
         every density piece:
@@ -3010,7 +3010,7 @@ def run_periodic_rhf_gapw(
 
     ``one_centre="projector"`` (experimental) uses the fitted
     projector construction instead; single-atom cells only (off-centre
-    fit errors are variationally exploitable - see the handover) and
+    fit errors are variationally exploitable) and
     HF-only.
 
     DFT on the analytic mode supports SINGLE-ATOM cells, where the
@@ -3265,7 +3265,7 @@ def run_periodic_rhf_gapw(
             "fit-error directions variationally (H2O/STO-3G converges "
             "-3.67 Ha below the molecular reference even though the "
             "functional is accurate to +33 mHa at the physical "
-            "density; see HANDOVER_GAPW_PRODUCTION.md 2026-07-30). "
+            "density; measured 2026-07-30). "
             "Use one_centre='block' or jk_method='gdf'."
         )
 
@@ -3331,6 +3331,12 @@ def run_periodic_rhf_gapw(
     # Pre-build orthogonalizer.
     s_eigs, U = _eigh_safe(S)
     S_half_inv = U @ np.diag(1.0 / np.sqrt(s_eigs)) @ U.T
+    from .solvers._scf import FockDiagonalizer
+
+    diagonalise = FockDiagonalizer(
+        S_half_inv, S, None,
+        kind="ks" if functional is not None else "fock", n_required=n_occ,
+    )
 
     # Optional functional.
     if functional is not None:
@@ -3559,8 +3565,7 @@ def run_periodic_rhf_gapw(
             F = diis.extrapolate(F, err)
 
         # Solve F C = e S C.
-        e, C_orth = _eigh_safe(S_half_inv @ F @ S_half_inv)
-        C = S_half_inv @ C_orth
+        C, e = diagonalise(F)
 
         # Occupations / smearing.
         from .smearing import apply_smearing as _apply_smearing
@@ -3720,8 +3725,7 @@ def run_periodic_rhf_gapw(
             F_final = F_final + S @ V_AO_sigma_final @ S
         F_final = F_final + _V_xc_final
         F_final = 0.5 * (F_final + F_final.T)
-        e, C_orth = _eigh_safe(S_half_inv @ F_final @ S_half_inv)
-        C = S_half_inv @ C_orth
+        C, e = diagonalise(F_final)
         from .smearing import apply_smearing as _apply_smearing
 
         final_smearing = _apply_smearing(
@@ -4137,6 +4141,14 @@ def run_periodic_uhf_gapw(
     # Pre-build orthonormaliser.
     s_eigs, U = _eigh_safe(S)
     S_half_inv = U @ np.diag(1.0 / np.sqrt(s_eigs)) @ U.T
+    from .solvers._scf import FockDiagonalizer
+
+    diagonalise_alpha = FockDiagonalizer(
+        S_half_inv, S, None, kind="fock", spin="alpha", n_required=n_alpha_resolved,
+    )
+    diagonalise_beta = FockDiagonalizer(
+        S_half_inv, S, None, kind="fock", spin="beta", n_required=n_beta_resolved,
+    )
 
     # Density-mode guesses use the shared periodic adapter; explicit restart
     # densities retain precedence and HCORE keeps the route-local fallback.
@@ -4269,10 +4281,8 @@ def run_periodic_uhf_gapw(
             )
 
         # Solve F_s C_s = e_s S C_s.
-        e_a, C_orth_a = _eigh_safe(S_half_inv @ F_alpha @ S_half_inv)
-        C_alpha = S_half_inv @ C_orth_a
-        e_b, C_orth_b = _eigh_safe(S_half_inv @ F_beta @ S_half_inv)
-        C_beta = S_half_inv @ C_orth_b
+        C_alpha, e_a = diagonalise_alpha(F_alpha)
+        C_beta, e_b = diagonalise_beta(F_beta)
 
         if n_alpha_resolved > 0:
             D_alpha_new = (
@@ -4654,6 +4664,14 @@ def run_periodic_uks_gapw(
     # Pre-build orthonormaliser.
     s_eigs, U = _eigh_safe(S)
     S_half_inv = U @ np.diag(1.0 / np.sqrt(s_eigs)) @ U.T
+    from .solvers._scf import FockDiagonalizer
+
+    diagonalise_alpha = FockDiagonalizer(
+        S_half_inv, S, None, kind="ks", spin="alpha", n_required=n_alpha_resolved,
+    )
+    diagonalise_beta = FockDiagonalizer(
+        S_half_inv, S, None, kind="ks", spin="beta", n_required=n_beta_resolved,
+    )
 
     # Density-mode guesses use the shared periodic adapter; explicit restart
     # densities retain precedence and HCORE keeps the route-local fallback.
@@ -4919,10 +4937,8 @@ def run_periodic_uks_gapw(
             )
 
         # Solve F_s C_s = e_s S C_s.
-        e_a, C_orth_a = _eigh_safe(S_half_inv @ F_alpha @ S_half_inv)
-        C_alpha = S_half_inv @ C_orth_a
-        e_b, C_orth_b = _eigh_safe(S_half_inv @ F_beta @ S_half_inv)
-        C_beta = S_half_inv @ C_orth_b
+        C_alpha, e_a = diagonalise_alpha(F_alpha)
+        C_beta, e_b = diagonalise_beta(F_beta)
 
         if n_alpha_resolved > 0:
             D_alpha_new = (
@@ -5549,6 +5565,8 @@ def run_periodic_rks_gapw_multi_k(
                     for _ in range(n_k)
                 ]
 
+    from .solvers._scf import solve_dense_fock
+
     # Build the initial density from SAP or Hcore and accumulate rho. The
     # existing smearing/global-Aufbau code below owns the occupations.
     D_total = np.zeros((n_basis, n_basis), dtype=float)
@@ -5640,7 +5658,7 @@ def run_periodic_rks_gapw_multi_k(
         # correctly via ``_collocate_multik`` + per-k projection; porting
         # that here (including the augmentation's soft and compensator
         # pieces, which inherit the same fold) is the fix. Filed in
-        # HANDOVER_OPEN_BUGS_V015.md; until it lands, refuse rather than
+        # the original investigation; until it lands, refuse rather than
         # return a wrong number (CLAUDE.md section 7).
         _q_fold = float(
             collocate_density_on_grid(
@@ -5881,8 +5899,11 @@ def run_periodic_rks_gapw_multi_k(
         eps_per_k_new: list = []
         for ik in range(n_k):
             Fk = F_k_list[ik]
-            eps, C_orth = np.linalg.eigh(X_k[ik].conj().T @ Fk @ X_k[ik])
-            C = X_k[ik] @ C_orth
+            eig = solve_dense_fock(
+                Fk, X=X_k[ik], overlap=S_k[ik], kind="ks",
+                kpoint=kpoints[ik], generation=it,
+            )
+            eps, C = eig.eigenvalues, eig.eigenvectors
             new_C_k.append(C)
             new_e_k.append(eps)
             eps_per_k_new.append(np.asarray(np.real(eps), dtype=float))

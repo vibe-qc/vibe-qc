@@ -24,7 +24,7 @@ and which need care:
 * **Forces / gradients** -- the WSSC-weighted-integral derivatives are not yet
   available analytically; numerical (finite-difference) gradients are tractable
   on the energy and are the recommended route until the analytic path lands
-  (open item, see the handover).
+  (open item).
 
 Reference: Peintinger & Bredow, J. Comput. Chem. 35, 839 (2014); Resta,
 Phys. Rev. Lett. 80, 1800 (1998) (the periodic position operator).

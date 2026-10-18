@@ -88,13 +88,15 @@ The same workflow covers every wavefunction kind in the archive:
 
 - canonical restricted orbitals and distinct alpha/beta rows for an
   unrestricted calculation;
-- natural orbitals, identified primarily by occupation;
-- localized IBO/Boys orbitals, labelled by their atomic centres rather than
-  an orbital energy, since a localized set is not energy ordered.
+- natural orbitals ({vibeqc-cite}`lowdin_natural_orbitals_1955`),
+  identified primarily by occupation;
+- localized IBO/Boys orbitals ({vibeqc-cite}`knizia_ibo_2013`,
+  {vibeqc-cite}`foster_boys_1960`), labelled by their atomic centres rather
+  than an orbital energy, since a localized set is not energy ordered.
 
 When the archive declares electron-occupation semantics, the first table row
 is **Total density**; <kbd>D</kbd> is its shortcut. Natural transition orbitals
-declare transition weights instead, so the TUI omits that row and refuses
+({vibeqc-cite}`martin_nto_2003`) declare transition weights instead, so the TUI omits that row and refuses
 <kbd>D</kbd> honestly. An unmarked legacy natural section still renders every
 orbital, but the TUI does not guess a density from its value sum. An
 unrestricted wavefunction also
@@ -423,7 +425,8 @@ why an orbital's overall sign is arbitrary.
 
 A molecular orbital $\phi_i(\mathbf{r}) = \sum_\mu C_{\mu i}
 \chi_\mu(\mathbf{r})$ is a real-valued function of $\mathbf{r}$ in
-three-dimensional space (imaginary for k-space bands; see
+three-dimensional space (complex-valued for Bloch orbitals at general
+k-points; see
 [Band structure and density of states](band_structure.md) for those). What viewers call an
 "isosurface at value $c$" is the mathematical surface
 
@@ -432,7 +435,8 @@ $$
 $$
 
 rendered as a triangulated mesh. The **marching-cubes algorithm**
-(Lorensen-Cline 1987) converts the scalar field on a regular grid
+(Lorensen-Cline 1987: W. E. Lorensen and H. E. Cline, *ACM SIGGRAPH
+Comput. Graph.* **21**, 163 (1987), doi:10.1145/37401.37422) converts the scalar field on a regular grid
 into this mesh; every mainstream viewer (VMD, PyMOL, Avogadro,
 ParaView) uses it or a close variant.
 
@@ -447,7 +451,7 @@ Common rendering conventions:
   Tighten to 0.08 for a compact view of valence MOs; loosen to
   0.02 to see Rydberg-like tails.
 - **The *density* $\rho(\mathbf{r}) = \sum_i |\phi_i|^2$ is
-  always positive** and sign-ambiguous, an isosurface at
+  never negative** and has no sign ambiguity, an isosurface at
   $\rho = 0.01$ shows electron localisation without the
   phase-flip artefact.
 
@@ -500,8 +504,10 @@ instead: $\rho(\mathbf{r}_g) = \sum_{\mu\nu} P_{\mu\nu} \chi_\mu(\mathbf{r}_g)
 
 ### The Molden format
 
-A Molden file is a single plain-text file that carries the whole
-electronic structure rather than one sampled field. vibe-qc's writer
+A Molden file (the format of the Molden program: G. Schaftenaar and
+J. H. Noordik, *J. Comput.-Aided Mol. Des.* **14**, 123 (2000),
+doi:10.1023/A:1008193805436) is a single plain-text file that carries the
+whole electronic structure rather than one sampled field. vibe-qc's writer
 emits a ``[Molden Format]`` header followed by:
 
 - ``[Atoms]``: the geometry (in atomic units);

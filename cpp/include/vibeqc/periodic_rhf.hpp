@@ -1,19 +1,16 @@
-// Γ-only restricted Hartree-Fock for a periodic system, molecular-limit
-// regime.
+// Single-k (Gamma) restricted Hartree-Fock for a periodic system.
 //
-// Scope note. This driver solves a single-k (Γ) closed-shell SCF with the
-// real-space density taken as Γ-only — i.e., P_μν(g) is nonzero only for
-// g = 0. That's physically meaningful in the molecular-limit regime
-// (unit cell large enough that cross-cell density matrix elements are
-// numerically zero), where it must reproduce molecular RHF to machine
-// precision.
+// In 3D the real-space density is homogeneous, P(h) = P_Gamma, as required
+// by one-point Brillouin-zone quadrature. All one-electron and ECP terms
+// use physical pair/source support; the full three-image J/K sum uses a
+// permutation- and translation-closed finite product domain. This changes
+// the old independently truncated, home-cell-density approximation.
+// Cutoff and k-point convergence remain separate requirements; a finite
+// direct sum is not a quantitative bulk electrostatic limit.
+// The legacy lower-dimensional driver retains its existing formulation.
 //
-// Bulk calculations with genuinely metallic or covalent inter-cell
-// bonding need multi-k sampling of P(g) — that arrives in Phase 12c.
-//
-// Implementation reuses the existing DIIS machinery: at Γ the Fock /
-// overlap / density matrices are real nbf × nbf, so Pulay's FDS - SDF
-// error vector and the linear-combination extrapolation work unchanged.
+// At Gamma the matrices are real nbf x nbf, so Pulay's FDS - SDF error
+// and the existing SCF acceleration machinery apply unchanged.
 
 #pragma once
 

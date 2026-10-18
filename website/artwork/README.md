@@ -4,7 +4,8 @@ The source of truth is `website/scripts/generate-brand.py`. Its outlined SVG
 masters live in `website/public/logo/`; do not edit generated assets by hand.
 The established wave crossing a unit-cell frame remains the core mark.
 The viewer's lens and the queue's connected jobs share its frame and line weight.
-The queue's public wordmark reads **vq**; its repository remains vibe-queue.
+The queue wordmark reads **vibe-queue**; its command remains **vq**.
+The sketcher uses its double-ring motif within the site’s shared icon frame.
 
 ## Assets
 
@@ -13,17 +14,18 @@ The queue's public wordmark reads **vq**; its repository remains vibe-queue.
 | `*-wordmark-light` / `*-wordmark-dark` | SVG, 48-unit height, tight width | Light/dark backgrounds respectively |
 | `*-favicon` | SVG + 32 px PNG | Browser icon or compact product mark |
 | `vibe-qc-apple-touch-icon` | Opaque 180 px PNG | Apple home-screen icon |
-| `vibe-qc-social` | 1200 x 630 SVG + PNG | Three-product marketing homepage |
+| `vibe-qc-social` | 1200 x 630 SVG + PNG | Four-tool technical homepage |
 | `vibe-qc-product-social` | 1200 x 630 SVG + PNG | Core product page |
 | `vibe-view-social` | 1200 x 630 SVG + PNG | Viewer product page |
 | `vibe-queue-social` | 1200 x 630 SVG + PNG | Queue product page |
+| `vibe-sketch-social` | 1200 x 630 SVG + PNG | Sketcher testing-version page |
 
 Use PNGs in social metadata for broad preview-client support. The SVG masters
 have titles/descriptions, no scripts, no external resources and no live fonts.
 Artwork motifs are illustrative, not physical structure or workflow diagrams.
 
 Open [the preview gallery](preview.html) through a local HTTP server to review
-the light/dark wordmarks and all four social cards together.
+the light/dark wordmarks and all five social cards together.
 
 ## Rebuild
 
@@ -45,7 +47,7 @@ outlined documents are published. Typography uses weight 650 for wordmarks
 and 700 for headlines. Its license does not change the core code license.
 
 The raster export step also updates the core assets in `docs/_static/logo/`.
-The Sphinx social card uses the engine-specific artwork, while the marketing
+The Sphinx social card uses the engine-specific artwork, while the technical
 homepage uses the family card. The docs homepage displays a separate copy
 named `vibe-qc-family-social.svg`; the viewer and queue integration guides use
 their product SVGs, with PNGs for their social metadata. All of these copies

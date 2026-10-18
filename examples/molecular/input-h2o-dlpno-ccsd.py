@@ -1,4 +1,4 @@
-"""Water — DLPNO-CCSD (reduced-scaling local solver).
+"""Water / cc-pVDZ (aux cc-pVDZ-RI): DLPNO-CCSD, the reduced-scaling local solver.
 
 `method="dlpno-ccsd"` runs the per-pair local coupled-cluster solver
 (``vibeqc.dlpno.ccsd_local_solver``): amplitudes remain in pair-natural-

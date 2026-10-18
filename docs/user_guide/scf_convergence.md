@@ -8,10 +8,15 @@ BIPOLE, GDF) now implements the full accelerator family + dynamic
 damping (the rollout completed with the GDF M4 milestone); the only
 remaining gap is C++ multi-k KDIIS. See
 [SCF accelerators](#scf-accelerators-pick-one) below for the exact
-coverage matrix. For the `solver=` keyword itself (Davidson, LOBPCG,
-dense, and the experimental Jacobi-Davidson/GPLHR eigensolvers this
-page assumes), see the [solver framework](solver_framework.md). The
-user-facing selection knobs split into four groups:
+coverage matrix. For the `solver=` keyword itself (Davidson, LOBPCG
+and dense are production eigensolvers; Jacobi-Davidson and GPLHR are
+**experimental** and reachable only through the solver framework, not
+through `run_job(solver=...)`), see the
+[solver framework](solver_framework.md). Every accelerator and
+finalizer on this page is a production route; the label vocabulary is
+defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+The user-facing selection knobs split into four groups:
 
 * **Fock-build mode**, how the two-electron matrices are constructed
   each iteration (`opts.scf_mode`). Default is `SCFMode.AUTO`, which
@@ -20,10 +25,11 @@ user-facing selection knobs split into four groups:
 * **Initial guess**, where the SCF starts from
   (`opts.initial_guess`). Default is `InitialGuess.AUTO`, which
   routes through the unified [`GuessEngine`](initial_guess.md):
-  ordinary restricted closed-shell routes use PATOM; molecular unrestricted/
-  open-shell routes (including singlet UHF/UKS) and transition-metal systems
-  usually use SAD, and ordinary periodic routes
-  use SAD. Capability-limited cyclic routes use HCORE. Explicit selectors
+  ordinary restricted closed-shell molecules, open-shell d/f-block systems,
+  and isolated spin-polarized atoms usually use PATOM. Other molecular
+  unrestricted/open-shell routes (including singlet UHF/UKS), restricted
+  closed-shell d/f-block systems, and ordinary periodic routes use SAD.
+  Capability-limited cyclic routes use HCORE. Explicit selectors
   must be supported by the chosen route. The
   richer story (theory, math, when to use which, references) lives
   in [Initial guesses](initial_guess.md); the brief summary here is
@@ -78,6 +84,127 @@ periodic option structs; the periodic options additionally expose
 
 ---
 
+## Theory
+
+**The fixed point.** An SCF iteration maps a density matrix to a new
+one: build $F(D) = h + G[D]$, solve $F C = S C \varepsilon$, occupy the
+lowest orbitals, form $D = C_{\rm occ} C_{\rm occ}^{\mathsf T}$. The
+energy is stationary exactly when $F$ and $D$ commute in the overlap
+metric, $[F, D]_S \equiv F D S - S D F = 0$, so that commutator is both
+the convergence test (`conv_tol_grad`) and the error vector every
+accelerator works with. Plain repeated diagonalisation converges only
+when the map is contractive, which it often is not: a small gap lets
+occupied and virtual orbitals swap between iterations and the density
+oscillates. Every knob on this page either damps that map, extrapolates
+its history, or replaces it by a minimisation.
+
+**Damping and level shift.** Linear mixing,
+$D_{\rm used} = \alpha D_{\rm prev} + (1 - \alpha) D_{\rm new}$, shrinks
+the step; the Zerner-Hehenberger rule
+({vibeqc-cite}`zerner_hehenberger_damping_1979`) adapts $\alpha$ from
+the sign of the energy change. The Saunders-Hillier level shift
+({vibeqc-cite}`saunders_hillier_levelshift_1973`) instead modifies the
+operator that is diagonalised,
+
+$$
+F' = F + b\,\bigl(S - w\, S D S\bigr),
+$$
+
+which leaves the occupied eigenvalues where they are and raises every
+virtual by $b$: a larger gap makes the map contractive without moving
+its fixed point, because the added term vanishes on the occupied
+space. Both are inert at convergence and only change the path (with
+the caveat, measured further down this page, that the path decides
+which of several fixed points you reach).
+
+**DIIS.** Pulay's direct inversion in the iterative subspace
+({vibeqc-cite}`pulay_diis_1980`; {vibeqc-cite}`pulay_diis_1982`) stores
+the last $m$ Fock matrices $F_i$ and their error vectors
+$e_i = F_i D_i S - S D_i F_i$ (transformed to an orthonormal basis) and
+diagonalises the linear combination $\bar F = \sum_i c_i F_i$ whose
+extrapolated error $\sum_i c_i e_i$ has the smallest norm subject to
+$\sum_i c_i = 1$. The Lagrangian condition is a small bordered linear
+system,
+
+$$
+\begin{pmatrix} B & -\mathbf 1 \\ -\mathbf 1^{\mathsf T} & 0 \end{pmatrix}
+\begin{pmatrix} \mathbf c \\ \lambda \end{pmatrix}
+= \begin{pmatrix} \mathbf 0 \\ -1 \end{pmatrix},
+\qquad
+B_{ij} = \langle e_i | e_j \rangle ,
+$$
+
+solved every iteration. Near the solution the error is linear in the
+Fock matrix, so the extrapolation is quasi-Newton in effect and
+converges fast; far from it $B$ carries no information about the
+energy and DIIS can walk uphill, and once the history is full of
+near-identical iterates $B$ becomes singular (the stalled tail
+described under [Diagnosing non-convergence](#diagnosing-non-convergence)).
+KDIIS ({vibeqc-cite}`kollmar_kdiis_1997`) uses the orbital-rotation
+gradient $F^{\rm MO}_{ai}$ as the error vector; the restarted and
+adaptive-depth variants of Chupin and coworkers
+({vibeqc-cite}`chupin_adaptive_diis_2021`) manage the history depth
+from the conditioning of $B$.
+
+**Energy-DIIS and ADIIS.** To make the far-from-convergence regime
+safe, EDIIS ({vibeqc-cite}`kudin_ediis_2002`) minimises a quadratic
+model of the energy over the convex hull of the stored densities,
+
+$$
+E_{\rm EDIIS}(\mathbf c) = \sum_i c_i E_i
+  - \frac12 \sum_{ij} c_i c_j\, \mathrm{Tr}\bigl[(F_i - F_j)(D_i - D_j)\bigr],
+\qquad c_i \ge 0,\ \ \sum_i c_i = 1,
+$$
+
+which is exact for Hartree-Fock energies of the interpolated density up
+to the nonlinearity in $D$; ADIIS ({vibeqc-cite}`hu_yang_adiis_2010`)
+minimises the augmented Roothaan-Hall model expanded about the latest
+iterate, $E(D_n) + 2\sum_i c_i \mathrm{Tr}[(D_i - D_n) F_n] + \sum_{ij} c_i c_j \mathrm{Tr}[(D_i - D_n)(F_j - F_n)]$,
+on the same simplex. Both descend reliably but converge slowly at the
+end, so the production default hands over to plain DIIS once the
+commutator norm drops below a threshold.
+
+**Second-order methods.** Parameterise the orbitals by an
+anti-Hermitian rotation $\kappa$, $C(\kappa) = C e^{\kappa}$, and expand
+the energy to second order,
+$E(\kappa) = E_0 + \mathbf g^{\mathsf T}\kappa + \tfrac12 \kappa^{\mathsf T} \mathbf H \kappa$
+with the gradient $g_{ai} = 4 F_{ai}$ (RHF) and the orbital Hessian
+$\mathbf H$ built from Fock matrix elements and two-electron integrals
+of the type $(ai|bj)$. A Newton step solves $\mathbf H \kappa = -\mathbf g$
+by preconditioned conjugate gradients, where each Hessian-vector
+product is one Fock build of a trial density (plus an XC kernel
+contraction for Kohn-Sham), giving quadratic convergence near the
+solution. TRAH ({vibeqc-cite}`helmich_paris_trah_2021`) solves the
+augmented-Hessian eigenproblem
+$\bigl(\begin{smallmatrix} 0 & \mathbf g^{\mathsf T} \\ \mathbf g & \mathbf H \end{smallmatrix}\bigr)$
+with a level shift chosen so that the step stays inside a trust
+radius, which makes the method robust far from convergence. SOSCF
+({vibeqc-cite}`neese_soscf_2000`) keeps only an approximate diagonal
+Hessian, $H_{ai,ai} \approx 4(\varepsilon_a - \varepsilon_i)$, updated
+quasi-Newton style, so a step costs no Fock build; it is cheap and
+converges linearly, and it plateaus for pure DFT because the
+diagonal misses the XC kernel response.
+
+**Stability.** A converged SCF is a stationary point of $E(\kappa)$,
+not necessarily a minimum. The character is decided by the lowest
+eigenvalue of the same orbital Hessian (Seeger and Pople,
+{vibeqc-cite}`seeger_pople_stability_1977`): a negative eigenvalue means
+a rotation lowers the energy, and following it (for UHF/UKS) or
+reporting it (for RHF/RKS) is what the
+[stability analysis](#internal-stability-analysis-molecular-uhfuks-default-on)
+sections below describe. Convergence diagnostics cannot see this: the
+commutator is zero at a saddle as well.
+
+**Where it fails.** No accelerator repairs a wrong Hamiltonian: a
+periodic SCF that oscillates because of a gauge or Madelung error will
+still oscillate, and a metal with a sharp Fermi surface has a
+discontinuous map that only fractional occupations
+([Smearing](smearing.md)) or density-space mixing (the
+[periodic density mixers](#periodic-density-mixers) below) make
+continuous.
+
+---
+
 ## Initial guess
 
 The unified `GuessEngine` uses AUTO as the public default for molecular and
@@ -104,7 +231,9 @@ they do not silently turn into HCORE.
 | System and route | Usual AUTO construction |
 |---|---|
 | Ordinary restricted closed-shell molecular route | PATOM |
-| Molecular unrestricted/open-shell route (including singlet UHF/UKS) or transition-metal system | SAD |
+| Molecular open-shell route on a system containing a d- or f-block atom | PATOM |
+| Other molecular unrestricted/open-shell route (including singlet UHF/UKS), excluding isolated spin-polarized atoms | SAD |
+| Restricted closed-shell molecular route containing a d- or f-block atom | SAD |
 | Isolated spin-polarized atom | PATOM |
 | Ordinary periodic SCF route | SAD |
 | Cyclic route exposing only HCORE | HCORE |
@@ -115,6 +244,15 @@ opts.initial_guess = vq.InitialGuess.SAD     # explicit construction, if support
 opts.initial_guess = vq.InitialGuess.SAP     # explicit SAP, not AUTO's default
 opts.initial_guess = vq.InitialGuess.HCORE   # deterministic diagnostic start
 ```
+
+Molecular RHF HCORE and closed-shell molecular PATOM average occupations
+within a degenerate starting frontier whose total width is at most `1e-8`
+hartree, preserving electron count. AUTO inherits this rule when it selects
+the affected construction. It changes only the seed: gapped frontiers,
+compatible READ states, periodic/open-shell seed policies, and final SCF
+occupations keep their existing rules. It neither establishes the global
+ground state nor guarantees rotation invariance for every calculation. See
+[HCORE](initial_guess.md#hcore-core-hamiltonian-guess) for details.
 
 A READ source can preserve local antiferromagnetic order even when its total
 spin is zero. Do not equate equal spin counts with a restricted density.
@@ -364,6 +502,117 @@ initial guess".
 
 ---
 
+## Periodic density mixers
+
+Everything above extrapolates the **Fock matrix**. Periodic metals and
+small-gap cells can defeat that: on a sharp Fermi surface the
+occupations flip as bands cross $E_F$ from one cycle to the next, the
+SCF map is discontinuous, and Fock-DIIS plus linear damping settle
+into a limit cycle instead of converging. Plane-wave codes mix the
+**density** instead, over a history of density residuals, and
+`run_periodic_job` exposes the same machinery on its closed-shell GDF
+routes.
+
+### The mixers
+
+`density_mixer=` selects the update scheme for the per-k density
+matrices, flattened to one vector $x$ with the SCF as the map
+$x_{\rm out} = g(x_{\rm in})$ and residual $f = x_{\rm out} - x_{\rm in}$:
+
+| `density_mixer` | Update | Reference |
+|---|---|---|
+| `None` or `"diis"` (default) | the Fock-DIIS route of the rest of this page; no density mixing | |
+| `"anderson"` | Anderson (Pulay type-II) mixing: $x_{n+1} = \sum_i \theta_i x_i + \beta \sum_i \theta_i f_i$ with $\theta$ minimising $\lVert \sum_i \theta_i f_i \rVert$ over the last `density_mixer_depth` iterates subject to $\sum_i \theta_i = 1$; depth 1 is linear mixing $x_{n+1} = (1-\beta) x_{\rm in} + \beta x_{\rm out}$ | {vibeqc-cite}`anderson_mixing_1965` |
+| `"broyden"` | limited-memory Broyden (second method) quasi-Newton mixing: the same history drives a rank-updated approximation to the inverse Jacobian of $f$ | {vibeqc-cite}`broyden_1965`; density-mixing form {vibeqc-cite}`johnson_broyden_1988` |
+
+Two parameters shape either mixer: `density_mixer_depth` (history
+length $m$, default 8; larger captures more curvature at the cost of a
+larger and possibly ill-conditioned solve) and `density_mixer_beta`
+(the mixing parameter $\beta \in (0, 1]$, default 0.5; smaller is more
+conservative). While a density mixer is active the GDF driver disables
+Fock-DIIS and FMIXING, because two extrapolations of the same iterate
+would fight each other.
+
+### Kerker preconditioning
+
+Long-wavelength charge fluctuations ("charge sloshing") are the mode
+that diverges in a large metallic cell: a small change of the density
+at small wave vector $G$ produces a Hartree potential change
+proportional to $1/G^2$. Kerker's preconditioner
+({vibeqc-cite}`kerker_1981`) damps exactly those modes by filtering the
+residual in reciprocal space,
+
+$$
+\tilde f(\mathbf G) = K(\mathbf G)\, f(\mathbf G),
+\qquad
+K(\mathbf G) = \frac{|\mathbf G|^2}{|\mathbf G|^2 + k_0^2},
+$$
+
+with $k_0 = 2\pi/\ell$ the inverse screening length, near the
+Thomas-Fermi value of the equivalent electron gas; it is the standard
+first step of every plane-wave SCF
+({vibeqc-cite}`kresse_furthmuller_1996`). A Gaussian-basis SCF carries
+its density as a matrix, so `density_mixer_kerker=True` round-trips the
+cell-averaged density-matrix residual through a plane-wave collocation
+grid (sized by `kerker_cutoff_ha`, default 120 Ha), removes the
+long-wavelength part $(1 - K)\,\Delta\rho$ there, projects it back
+onto the AO basis in the $S \otimes S$ metric and subtracts a fraction
+`kerker_strength` (default 1.0) of it from the residual. Because the
+preconditioner acts on the *residual*, it vanishes at the fixed point
+and cannot move the converged energy; the collocation grid, the metric
+and the cell averaging change only the path. `kerker_k0` (default
+1.5 bohr⁻¹) sets $k_0$. On the small cells tested so far Kerker is
+convergence-neutral; it is provided as a correct opt-in for large
+metallic cells, not as a demonstrated speed-up on small ones.
+
+### Where it is wired, and what fails closed
+
+The knobs are honoured on the closed-shell multi-k GDF driver, which
+`run_periodic_job` reaches through `jk_method="gdf"` or the multi-k
+`jk_method="rijcosx"` route with `method="RHF"` or `"RKS"` and an
+**explicit** `kpoints=` mesh. A Gamma-only mixed run must pass
+`kpoints=(1, 1, 1)`: the default-Gamma GDF path has no mixer plumbing,
+and dropping the knob silently would be worse than asking for the
+one-point mesh. The lower-level Ewald-3D drivers
+`run_rks_periodic_scf` and `run_rks_periodic_multi_k_ewald3d` accept
+the same arguments directly. Everything else raises rather than
+changing the SCF update behind your back:
+
+* GPW / GAPW, BIPOLE, AICCM and every open-shell route raise
+  `NotImplementedError` on an active `density_mixer`.
+* `density_mixer=None` or `"diis"` combined with any non-default
+  `density_mixer_*` or `kerker_*` value raises `ValueError`.
+* `density_mixer_kerker=True` without `"anderson"` or `"broyden"`
+  raises `ValueError`; Kerker is a preconditioner, not a mixer.
+
+One automatic default exists: a compact 3D closed-shell RKS/GDF job
+with a SCAN-family functional and an explicit `kpoints=` mesh selects
+`density_mixer="anderson"` with $\beta = 0.35$ (the convergence-strategy
+block of the `.out` says so), unless you set `density_mixer=` yourself
+or pass `convergence="off"`.
+
+### Checking that the answer did not move
+
+The mixers and the Kerker filter change the path, not the answer, so
+the cheapest check on a new cell is that the mixed run lands on the
+Fock-DIIS energy. The call is the ordinary one with the mixer added:
+`run_periodic_job(system, basis, method="RKS", functional="lda",
+jk_method="gdf", kpoints=(1, 1, 2), density_mixer="anderson")`
+against the same call without `density_mixer=`, and
+`density_mixer="broyden", density_mixer_kerker=True` for the
+preconditioned variant. The regression test
+`tests/test_periodic_gdf_density_mixer.py` runs exactly that on LiH in
+its primitive fcc cell (STO-3G, LDA, a two-point mesh and a deliberately
+coarse `rsgdf_ke_cutoff=60.0`) and asserts that Anderson, Broyden plus
+Kerker and Fock-DIIS agree to 5e-7 Ha; a well-gapped insulator is used
+precisely because it has a single SCF solution, so
+accelerator-versus-accelerator energy equality is well posed. On a
+metal the comparison would need [smearing](smearing.md) first, and
+there the mixer is the thing that converges at all rather than a
+check.
+
+---
+
 ## Internal stability analysis (molecular UHF/UKS, default on)
 
 A converged SCF certifies only a *stationary point* of the energy; it
@@ -391,8 +640,26 @@ then re-checks -- up to `stability_max_retries` times. A restart that
 runs out of iterations while still descending is chained into a few
 fresh-DIIS restarts from its final densities before the driver gives
 up: a fresh accelerator history started closer to the minimum converges
-where one saturated history wanders. The `.out` records the verdict next to
-the convergence line:
+where one saturated history wanders.
+
+For molecular UHF, if neither sign's anchored or free SCF restart produces a
+lower converged state, recovery retries the downhill seeds with the existing
+TRAH trust-region solver. This handles saddle
+recapture such as FeCl3/cc-pVDZ (#273). Both signs are searched; only a lower,
+converged result is accepted, then its stability is checked again. The original
+energy/gradient tolerances, iteration budget and TRAH controls still apply.
+This fallback is part of stability recovery even when `trah_threshold` is zero
+for the initial SCF. Disabling `stability_check` or setting
+`stability_max_retries=0` disables corrective recovery; convergence alone does
+not guarantee a minimum. Deliberate ATOMSPIN/SPINLOCK states retain their
+existing analysis-only policy.
+`result.stability_trah_used` records whether recovery invoked TRAH, including
+failed attempts, so the output can cite the method even with an unchanged
+zero `trah_threshold`.
+The vacuum-padded RIJCOSX UHF wrapper uses the same driver and preserves
+this recovery flag in its periodic output citations.
+
+The `.out` records the verdict next to the convergence line:
 
 ```
   converged in 15 iterations; E = -149.1799299198 Ha
@@ -495,10 +762,14 @@ For user convenience, the ``solver`` keyword on ``run_job()`` and
 - ``solver="davidson"`` :  blocked Davidson with eigenvector recycling
 - ``solver="lobpcg"`` :  LOBPCG (fastest for large matrices, ~3-12x fewer
   iterations than Davidson)
-- ``solver="lanczos"`` :  Lanczos with full reorthogonalization
 
-This is equivalent to setting ``use_davidson=True`` manually on the options
-struct, but provides a cleaner API.
+These three are the values `run_job` accepts; any other string is
+rejected. The experimental Jacobi-Davidson (`jd`) and GPLHR
+eigensolvers are reachable only through the
+[solver framework](solver_framework.md) API and are not part of the
+release gate. Selecting `"davidson"` or `"lobpcg"` here is equivalent
+to setting ``use_davidson=True`` manually on the options struct, but
+provides a cleaner API.
 
 ### Tuning knobs
 
@@ -546,10 +817,27 @@ is rescaled. It prevents the numerical rank decision from changing merely
 because a converging residual makes every Gram element small.
 | `SCFAccelerator.EDIIS` | Energy-DIIS (Kudin/Scuseria/Cancès 2002). Minimises a quadratic energy functional on the convex hull of stored (F, D) pairs. | Diagnostic, pure EDIIS plateaus near convergence; prefer the hybrid below. |
 | `SCFAccelerator.ADIIS` | Augmented-Roothaan-Hall DIIS (Hu & Yang 2010). The energy-functional sibling of EDIIS, minimises the ARH energy model expanded about the most recent iterate, same positive-simplex QP. | Diagnostic / comparison, Garza/Scuseria 2012 found it near-identical to EDIIS at the HF level; like pure EDIIS it plateaus near convergence. |
-| `SCFAccelerator.EDIIS_DIIS` | **Default (molecular, v0.8.0).** Garza/Scuseria 2012 hybrid. Use EDIIS while `‖e‖_F > ediis_diis_switch_threshold` (default 0.1), then switch to plain DIIS for the asymptotic regime. | The recommended setting for transition-metal complexes, broken-symmetry singlets, and any case where plain DIIS plateaus or oscillates. Matches PySCF / ORCA defaults. |
+| `SCFAccelerator.EDIIS_DIIS` | **Default (molecular, v0.8.0).** Garza/Scuseria 2012 hybrid. Use EDIIS while the intensive commutator norm (RMS matrix element, `‖e‖_F / nbf`, and `max_σ ‖e_σ‖_F / (√2 · nbf)` for UHF) is above `ediis_diis_switch_threshold`, then switch to plain DIIS for the asymptotic regime. Default threshold 0.1; open-shell UHF (n_α ≠ n_β) uses `ediis_diis_switch_threshold_open_shell`, default **1e-3** (see below). | The recommended setting for transition-metal complexes, broken-symmetry singlets, and any case where plain DIIS plateaus or oscillates. Matches PySCF / ORCA defaults. |
 | `SCFAccelerator.ADIIS_DIIS` | ADIIS analogue of the EDIIS_DIIS hybrid: use ADIIS while `‖e‖_F > ediis_diis_switch_threshold`, then switch to plain DIIS for the asymptotic regime (same switch threshold field). | The ADIIS sibling of the production hybrid; use when you prefer the ARH energy model far from convergence over EDIIS's convex-hull functional. Garza/Scuseria 2012 found ADIIS≈EDIIS at the HF level. |
 | `SCFAccelerator.R_CDIIS` | Restarted commutator-DIIS (Chupin/Dupuy/Legendre/Séré 2021). Plain DIIS extrapolation, but the history depth grows until the stored error differences become nearly linearly dependent, then restarts. Restart aggressiveness is `diis_restart_tau` (τ ∈ (0,1); default 1e-4, smaller ⇒ deeper history). | When a fixed `diis_subspace_size` window is over- or under-sized for the problem; lets the depth self-tune and avoids the ill-conditioning of a saturated fixed window. |
 | `SCFAccelerator.AD_CDIIS` | Adaptive-depth commutator-DIIS (same paper). Plain DIIS extrapolation, but the window keeps only recent iterates whose residual is within `1/δ` of the current one, so the depth shrinks smoothly near convergence. Controlled by `diis_adaptive_delta` (δ > 0; default 1e-4). | The smoother sibling of R_CDIIS: no post-restart slowdown; the paper's numerics suggest continuously adapting the depth gives the fastest convergence. |
+
+**Open-shell UHF switch threshold (GitLab #377).** On the intensive RMS scale
+a threshold of 0.1 corresponds to `‖e‖_F > 0.1 · √2 · nbf` for UHF, 8.5 already
+at 60 basis functions, so no extrapolated iterate takes the EDIIS branch and
+the hybrid runs as plain DIIS. That left the CN radical (UHF/cc-pVTZ,
+r = 1.17 Å) wandering 40 mHa above its minimum for 1000 iterations. When
+n_α ≠ n_β, `UHFOptions` therefore compares with
+`ediis_diis_switch_threshold_open_shell` (default 1e-3), which keeps EDIIS on
+while `‖e‖_F` is above about 0.1 for a basis of about 70 functions and hands
+over to DIIS long before convergence. On the 15 main-group radicals measured
+for #377 (cc-pVDZ, cc-pVTZ) the converged energies moved by at most 3e-13 Ha,
+and some runs took one to four more iterations. Spin-balanced UHF
+(n_α = n_β) keeps `ediis_diis_switch_threshold` (0.1): there EDIIS's convex
+combination of spin-symmetric iterates stays spin-symmetric and moved the Cr2
+singlet stability witnesses (#138) onto a closed-shell state. Set
+`ediis_diis_switch_threshold_open_shell = 1e-1` to reproduce the previous
+open-shell trajectory. RHF, RKS and UKS are unchanged.
 
 EDIIS and ADIIS minimise a generally nonconvex quadratic exactly by visiting
 every non-empty face of the coefficient simplex, following Kudin et al.
@@ -561,7 +849,7 @@ solve and retain their existing history-depth range.
 
 ```python
 opts.scf_accelerator = vq.SCFAccelerator.EDIIS_DIIS    # production hybrid
-opts.ediis_diis_switch_threshold = 1e-1                # default, PySCF-style
+opts.ediis_diis_switch_threshold = 1e-1                # default (open-shell UHF: see below)
 opts.diis_subspace_size = 8                            # rolling-history cap
 
 # Adaptive-depth commutator-DIIS (Chupin et al. 2021):
@@ -726,6 +1014,13 @@ manifold. DIIS / KDIIS / EDIIS+DIIS / damping / level-shift / FMIXING
 are all skipped during the second-order phase (the second-order step
 is its own update mechanism).
 
+A second-order step rotates the current molecular orbitals, so it needs
+orbitals that belong to the current density. A starting density supplied
+without orbitals (READ, or an atomic guess such as SAD or PATOM) therefore
+always takes one ordinary diagonalisation step first, even when its
+gradient is already below the threshold. A converged READ seed stays
+converged.
+
 The C1c quadratic fallback is implemented by the molecular and periodic
 Ewald drivers. Experimental `aiccm2026dev-b` routes do not execute that
 update and therefore require `quadratic_fallback_iter=0`; a positive value
@@ -741,9 +1036,48 @@ quadratic_fallback (C1c)  >  Newton (D2c)  >  TRAH (D2e)  >  SOSCF (D2d)
 | Field | Algorithm | Hessian | Per-step cost | Convergence | When to use |
 |---|---|---|---|---|---|
 | `quadratic_fallback_iter > 0` | Single damped Newton step in MO space | Diagonal preconditioner only | One eigsolve, no Fock build | Linear | Cheap escape from DIIS oscillation; the C1c periodic-SCF fallback. |
-| `newton_threshold > 0` | **Newton (D2c).** Full orbital Hessian via preconditioned CG. | Full Hessian, exact application via CG matvecs through `JKBuilder` (+ `XCKernelBuilder` for KS) | Multiple Fock builds per step (one per CG iter, ~5-15 typical); KS adds one W^XC matvec per CG iter | Quadratic in ~3-5 outer iters | The recommended finalizer for the asymptotic regime. **RHF / UHF / RKS / UKS, across LDA + GGA + hybrid-GGA** (UKS-GGA via the Phase 17e polarised GGA `f_xc` kernel). Meta-GGA second-order SCF still raises, τ-dependent polarised `f_xc` is unplumbed. |
-| `trah_threshold > 0` | **TRAH (D2e Helmich-Paris 2022).** Same Hessian + CG as Newton, plus Powell-ρ adaptive trust radius. | Full Hessian, exact application | Same as Newton plus a ρ-driven trust-radius update each iter | Quadratic in the trust region; more robust than Newton when the initial trust is too large | Hard-convergence cases where Newton's fixed trust radius overshoots. Same coverage matrix as Newton. |
-| `soscf_threshold > 0` | **SOSCF (D2d Neese 2000).** Augmented-Hessian eigsolve with diagonal-dominant Hessian. | Diagonal Hessian + AH λ-shift; carries V_xc only through F^MO | Single small eigsolve, no Fock build | Linear (plateaus for pure DFT, see note) | Cheaper than Newton when Newton's matvec is too expensive. **All four flavours; works at tight 1e-9 Ha for HF / hybrid functionals, plateaus at ~1e-4 Ha for pure DFT** (V_xc[ρ+δρ]−V_xc[ρ] is sizable in pure DFT but absent from SOSCF's diagonal-only Hessian, that's literally the motivation for Newton/TRAH). |
+| `newton_threshold > 0` | **Newton (D2c).** Orbital-Hessian iteration via preconditioned CG. | Diagonal orbital-energy gaps plus response via `JKBuilder` (+ `XCKernelBuilder` for KS); omits off-diagonal occupied/virtual Fock blocks | Multiple Fock builds per step (one per CG iter, ~5-15 typical); KS adds one W^XC matvec per CG iter | Quadratic in ~3-5 outer iters | The recommended finalizer for the asymptotic regime. **RHF / UHF / RKS / UKS, across LDA + GGA + hybrid-GGA** (UKS-GGA via the Phase 17e polarised GGA `f_xc` kernel). Meta-GGA second-order SCF still raises, τ-dependent polarised `f_xc` is unplumbed. |
+| `trah_threshold > 0` | **TRAH (D2e, level-shifted PCG variant).** Shifted Hessian + CG, with Powell-ρ adaptive trust radius. | UHF/UKS: full occupied/virtual Fock blocks plus response. RHF/RKS: diagonal-gap approximation plus response | Same as Newton plus a ρ-driven trust-radius update each iter | Quadratic in the trust region; more robust than Newton when the initial trust is too large | Hard-convergence cases where Newton's fixed trust radius overshoots. Same coverage matrix as Newton. |
+| `soscf_threshold > 0` | **SOSCF (D2d Neese 2000).** Stateful L-BFGS orbital optimisation preconditioned by a diagonal orbital Hessian with an augmented-Hessian λ-shift (`lbfgs_history`, default 10). | Diagonal Hessian + AH λ-shift; the L-BFGS history is meant to capture the two-electron and V_xc coupling the diagonal model omits | One small eigsolve per step, no Fock build inside the step | Superlinear in principle, bounded by the quality of the history | Cheaper than Newton when Newton's matvec is too expensive. **All four flavours.** Earlier memoryless versions of this step plateaued near 1e-4 Ha for pure DFT because V_xc[ρ+δρ]−V_xc[ρ] is absent from a diagonal-only Hessian; the L-BFGS form is intended to remove that plateau, but the claim has not been re-measured on this page. |
+
+The reference TRAH-SCF algorithm is Helmich-Paris, *J. Chem. Phys.* **154**,
+164104 (2021), [doi:10.1063/5.0040798](https://doi.org/10.1063/5.0040798).
+It solves a scaled augmented-Hessian eigenproblem. The implementation here
+uses level-shifted preconditioned CG and a secular search for the shift;
+it does not reproduce the paper's inner eigensolver or all its guarantees.
+
+UKS TRAH rejects a step that raised the energy: the next step starts again
+from the previous point, with the trust radius cut below the length of the
+rejected step. The rejected trial still appears as one row of the SCF
+trace. RHF, RKS and UHF TRAH accept every step and only adjust the radius.
+
+For UHF and UKS, TRAH retains the full occupied and virtual Fock blocks
+after orbital rotations. Orbital-energy gaps serve only as a preconditioner;
+the Hessian action does not assume that those blocks remain diagonal.
+Changing the orbital representation within either subspace therefore
+preserves this Hessian action. A converged, unique trust-region solution
+should give the same physical step. For rotation spaces with at most
+`min(64, cg_max_iter)` variables, TRAH assembles the Hessian with one product
+per variable and solves the complete model, including the hard case where the
+gradient is orthogonal to the lowest-curvature eigenspace. This costs at most
+64 Hessian products and stores at most a 64 by 64 matrix. Hard-case minima
+need not have identical orbital steps: acceptance compares model values and
+the boundary norm, allowing either sign along the unstable mode.
+
+Larger spaces keep the matrix-free PCG/secular solver and incur no additional
+curvature-search products. That approximation can still miss a hidden negative
+mode (#424). The C++ step result separates `cg_converged` from
+`trust_region_converged`: the latter checks KKT conditions to the configured
+residual/radius and relative roundoff tolerances, not a universal relative
+objective-error bound. It is false when the complete curvature and
+trust-region conditions have not been certified. SCF drivers currently use the
+returned approximation without branching on this certificate. A false certificate
+therefore does not trigger retries, and an SCF convergence message does not
+establish orbital stability. `on_boundary` reflects the returned norm.
+Newton and RHF/RKS TRAH still use diagonal orbital-energy gaps in the
+Fock-block term, so that invariance is not guaranteed for those paths.
+This correction does not resolve the default UKS convergence failure in #55;
+the trust-radius controller and the default recovery path need separate validation.
 
 ```python
 # Recommended production stack: EDIIS+DIIS warm-up + Newton finalizer
@@ -758,7 +1092,7 @@ opts.newton_opts.trust_radius = 0.3
 # Example (H₂O / cc-pVDZ / PBE on compute-reference): DIIS = 18 iter, Newton = 11 iter,
 # ΔE = 4e-14 Ha. Same iter-count win on B3LYP and LDA.
 
-# Cheaper alternative: TRAH instead of Newton (same matvec; adaptive radius)
+# Alternative: TRAH instead of Newton (adaptive radius)
 opts.trah_threshold = 1.0
 opts.trah_opts.initial_trust_radius = 0.3
 opts.trah_opts.max_trust_radius = 0.7
@@ -1147,3 +1481,10 @@ Good scaling requires enough work per thread, tiny test systems
 start-up overhead dominates. Bigger molecules and periodic calculations
 with many lattice cells benefit much more (up to near-linear in the
 Fock build).
+
+## Optional OpenTrustRegion backend
+
+For real, integer-occupied molecular HF and supported KS calculations,
+`orbital_optimizer="opentrustregion"` explicitly selects the optional upstream
+trust-region orbital optimizer. See [OpenTrustRegion](opentrustregion.md) for
+installation, supported response kernels, stability semantics and diagnostics.

@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    "description": "Tutorial for vibe-qc's GAPW (Gaussian-augmented plane-wave) periodic route: how a per-atom radial augmentation makes the GPW FFT-Poisson Hartree build all-electron without pseudopotentials, the hard/soft density split, how to invoke it with jk_method='gapw', and its experimental status."
+    "description": "Tutorial for vibe-qc's GAPW (Gaussian-augmented plane-wave) periodic route: how a per-atom radial augmentation makes the GPW FFT-Poisson Hartree build all-electron without pseudopotentials, the hard/soft density split, how to invoke it with jk_method='gapw', and its experimental status (GPW itself is production within its envelope)."
     "og:title": "vibe-qc tutorial - the GAPW all-electron plane-wave route"
 ---
 
@@ -12,13 +12,19 @@ vibe-qc's plane-wave grid: it keeps the smooth [GPW](periodic_gpw.md)
 FFT-Poisson Hartree build but adds a per-atom radial augmentation around
 each nucleus, so no pseudopotential is needed.
 
-```{warning}
-**GAPW is experimental**, like [GPW](periodic_gpw.md). It emits a
-`GAPWExperimentalWarning` you must opt past, and its absolute energies are
-not yet validated for production. Use **GDF** or **BIPOLE** for production
-periodic SCF ([how to choose](periodic_methods_compared.md)); reach for
-GAPW to explore the all-electron plane-wave route or to validate vibe-qc's
-augmentation kernels.
+```{admonition} Status: experimental
+:class: warning
+
+GAPW (`jk_method="gapw"`) is an experimental route. The `.out` route line ends
+in "(experimental)", and `run_periodic_job` emits `GAPWExperimentalWarning`
+(the plane-wave grid and J-builder infrastructure warn once per grid build);
+the compact-crystal augmentation is not yet validated, which is why RHF/UHF GAPW
+requires the `gapw_molecular_limit=True` declaration and fails closed without it.
+Its numbers are research output, not validated results, and it is not part of the
+release gate. Its smooth-grid parent [GPW](periodic_gpw.md) is production within
+its shipped envelope; GDF and BIPOLE are the longer-validated periodic routes
+([how to choose](periodic_methods_compared.md)). The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 ```
 
 GAPW, **Gaussian-augmented plane-wave**, is [GPW](periodic_gpw.md) made
@@ -26,8 +32,10 @@ all-electron. GPW needs a smooth density and is built for pseudopotentials;
 GAPW keeps GPW's fast FFT-Poisson Hartree build for the smooth part and adds
 a small per-atom correction for the sharp core, so you get all-electron
 accuracy **without any pseudopotential files**, only atomic numbers. The
-construction is due to Lippert and Hutter (1999) and Krack and Parrinello
-(2000).
+construction is due to Lippert and Hutter (1999,
+{vibeqc-cite}`lippert_hutter_parrinello_gapw_1999`) and Krack and Parrinello
+(2000, {vibeqc-cite}`krack_parrinello_allelectron_2000`), building on GPW
+({vibeqc-cite}`lippert_hutter_gpw_1997`).
 
 ## The hard/soft split
 
@@ -53,7 +61,9 @@ $$
 
 The first term is exactly the GPW FFT-Poisson solve, reused verbatim. The
 per-atom corrections are cheap analytic radial Poisson solves integrated
-with Lebedev angular quadrature inside each sphere. The cusp is handled
+with Lebedev angular quadrature ({vibeqc-cite}`lebedev_laikov_1999`) on
+Mura-Knowles radial shells ({vibeqc-cite}`mura_knowles_radial_1996`) inside
+each sphere. The cusp is handled
 exactly on the atom's own grid, the smooth tail on the shared grid, and the
 augmentation radii are set automatically per element. The full machinery is
 in the [GPW / GAPW reference](../user_guide/gapw.md).
@@ -86,6 +96,14 @@ result = vq.run_periodic_job(
 print(result.energy, result.converged)
 ```
 
+On a vibe-qc 0.17.x development build (Apple M2) this converges to
+-2.35194424 Ha; the same He cell on plain GPW gives -2.80778396 Ha, so the
+augmentation shift printed by the next block is +0.4558 Ha. Both runs emit
+`GAPWExperimentalWarning`. The GPW number is the molecular RHF/STO-3G He
+energy (-2.80778396 Ha) to within 1e-8 Ha (rechecked on a vibe-qc 0.17.17
+development build), so in this basis the GAPW energy lies 0.456 Ha above
+the all-electron answer.
+
 ## Seeing the augmentation work
 
 The point of GAPW is the per-atom correction, so the instructive experiment
@@ -101,10 +119,17 @@ gapw = vq.run_periodic_job(system, basis, method="RHF", jk_method="gapw",
 print("augmentation shift:", gapw.energy - gpw.energy, "Ha")
 ```
 
-That shift is the all-electron correction the augmentation restores and the
-smooth grid alone misses. Both routes are experimental, so the meaningful
-quantity here is the *difference* the augmentation makes, not the absolute energies. For a validated absolute number, use
-[GDF and BIPOLE](periodic_methods_compared.md).
+For He/STO-3G this is a consistency check, not a demonstration of a
+correction: the STO-3G He density is smooth enough that plain GPW already
+reproduces the molecular all-electron energy, and the hard/soft split above
+only regroups the same density, so a correct augmentation should leave the
+energy essentially unchanged. The +0.456 Ha shift the current build prints is therefore an
+error of the experimental GAPW HF route, not physics the smooth grid misses,
+and it is one reason GAPW stays experimental. Read the shift as a defect
+indicator that should go to zero, not as a GAPW result. For a
+validated absolute number on a compact crystal, use
+[GDF or BIPOLE](periodic_methods_compared.md); GPW itself is production for the
+Gamma and multi-k pure-DFT envelope listed on [its page](periodic_gpw.md).
 
 `gapw_molecular_limit=True` is a physical-regime declaration, not a tuning
 knob. The fit-free GAPW HF augmentation used here omits dense-cell image terms,

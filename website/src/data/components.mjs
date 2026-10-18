@@ -49,7 +49,7 @@ function versionOf(relativePath) {
 }
 
 /**
- * The four installable components, in the order the docs present them
+ * The released core and companion components, in the order the docs present them
  * (`docs/toolset_lifecycle.md` "At a glance"): the chemistry engine first,
  * then the tools built around it.
  */
@@ -72,7 +72,7 @@ export const components = Object.freeze([
   Object.freeze({
     id: 'vq',
     name: 'vq',
-    distribution: 'vq',
+    distribution: 'vibe-queue',
     role: 'cross-machine job queue',
     version: null,
     releases: 'https://github.com/vibe-qc/vibe-queue/releases',

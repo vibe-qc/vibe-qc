@@ -245,10 +245,49 @@ def test_periodic_open_shell_guess_helper_uses_context(guess):
     S = _gamma(compute_overlap_lattice(basis, system, opts))
     assert Da.shape == (basis.nbasis, basis.nbasis)
     assert Db.shape == (basis.nbasis, basis.nbasis)
+    assert not np.iscomplexobj(Da)
+    assert not np.iscomplexobj(Db)
     assert np.max(np.abs(Da - Da.T)) < 1e-10
     assert np.max(np.abs(Db - Db.T)) < 1e-10
     assert float(np.trace(Da @ S)) == pytest.approx(1.0, abs=1e-8)
     assert float(np.trace(Db @ S)) == pytest.approx(0.0, abs=1e-10)
+
+
+@pytest.mark.parametrize("imaginary", [0.0, 1.0e-13, 0.2])
+def test_fock_guess_density_retains_real_or_complex_state(imaginary):
+    fock = np.array([[-1.0, 0.2 + imaginary * 1j],
+                     [0.2 - imaginary * 1j, 0.4]])
+    overlap = np.eye(2, dtype=complex)
+    closed = periodic_guess._density_from_fock(fock, overlap, 1)
+    alpha, beta = periodic_guess._densities_from_fock_open_shell(
+        fock, overlap, 1, 0,
+    )
+    expected_complex = imaginary != 0.0
+    assert np.iscomplexobj(closed) == expected_complex
+    assert np.iscomplexobj(alpha) == expected_complex
+    assert np.iscomplexobj(beta) == expected_complex
+    np.testing.assert_allclose(closed, 2 * alpha, atol=1e-15)
+    np.testing.assert_array_equal(beta, np.zeros((2, 2)))
+    np.testing.assert_allclose(alpha @ alpha, alpha, atol=1e-15)
+    np.testing.assert_allclose(fock @ alpha, alpha @ fock, atol=1e-15)
+    assert np.trace(alpha).real == pytest.approx(1.0, abs=1e-15)
+    if expected_complex:
+        assert np.max(np.abs(alpha.imag)) > imaginary / 2
+
+
+def test_fock_guess_preserves_complex_overlap():
+    fock = np.diag([-1.0, 0.4])
+    overlap = np.array([[1.0, 0.2j], [-0.2j, 1.0]])
+    alpha, beta = periodic_guess._densities_from_fock_open_shell(
+        fock, overlap, 1, 0,
+    )
+    assert np.iscomplexobj(alpha)
+    assert np.max(np.abs(alpha.imag)) > 1e-2
+    np.testing.assert_allclose(alpha @ overlap @ alpha, alpha, atol=1e-15)
+    np.testing.assert_allclose(fock @ alpha @ overlap,
+                               overlap @ alpha @ fock, atol=1e-15)
+    assert np.trace(alpha @ overlap).real == pytest.approx(1.0, abs=1e-15)
+    np.testing.assert_array_equal(beta, np.zeros((2, 2)))
 
 
 def test_periodic_open_shell_gamma_ewald_guesses_reach_same_basin_as_sad():
@@ -707,24 +746,35 @@ def test_gamma_ewald_patom_reaches_full_hf_in_field_builder(monkeypatch, method)
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
     opts = vq.PeriodicKSOptions() if method == "rks" else vq.PeriodicRHFOptions()
     opts.initial_guess = vq.InitialGuess.PATOM
-    opts.max_iter = 0
+    # The evaluated-state drivers require at least one physical SCF build.
+    opts.max_iter = 1
+    if method == "rks":
+        opts.functional = "pbe"
     opts.lattice_opts.cutoff_bohr = 12
     opts.lattice_opts.nuclear_cutoff_bohr = 12
     calls = []
-    original = module.build_jk_gamma_molecular_limit
+    exchange_module = (module if method == "rhf" else
+                       importlib.import_module("vibeqc.periodic_ks_fock"))
+    original = exchange_module.build_jk_gamma_molecular_limit
 
     def capture(basis_arg, system_arg, lattice_options, density, omega):
         calls.append((np.asarray(density).copy(), omega))
         return original(basis_arg, system_arg, lattice_options, density, omega)
 
-    monkeypatch.setattr(module, "build_jk_gamma_molecular_limit", capture)
+    monkeypatch.setattr(exchange_module, "build_jk_gamma_molecular_limit", capture)
     result = getattr(module, f"run_{method}_periodic_gamma_ewald3d")(
         system, basis, opts, progress=False)
-    assert len(calls) == 1  # The in-field builder, before any SCF iteration.
-    assert calls[0][1] == 0  # Full HF exchange even for a pure-DFT target.
+    # PATOM needs full HF exchange; the SCF and terminal physical builds
+    # need it only for RHF. Pure DFT must not retain seed exchange.
+    assert len(calls) == (3 if method == "rhf" else 1)
+    assert all(omega == 0 for _, omega in calls)
     assert np.trace(calls[0][0] @ result.overlap) == pytest.approx(4, abs=1e-10)
     assert np.trace(result.density @ result.overlap) == pytest.approx(4, abs=1e-10)
     assert np.linalg.norm(result.density - calls[0][0]) > 1e-3
+    if method == "rhf":
+        assert np.linalg.norm(calls[1][0] - calls[0][0]) > 1e-3
+        np.testing.assert_array_equal(result.density, calls[-1][0])
+    assert len(result.evaluated_build_history) == 1
     assert result.guess_selection.effective == vq.InitialGuess.PATOM
 
 
@@ -768,6 +818,10 @@ def test_pure_rks_patom_reaches_full_hf_builder(monkeypatch, route):
     hooks = {"ewald": "build_periodic_fock_ewald3d_k", "bipole": "build_bipole_restricted_fock", "gdf": "apply_exxdiv_ewald_to_K"}
     module = importlib.import_module("vibeqc." + modules[route])
     system, basis, mesh, opts = _patom_case()
+    if route == "bipole":
+        # Reach the PATOM builder on reliable overlap support. The old
+        # 7-bohr fixture fails the production fold guard before any Fock.
+        opts.lattice_opts.cutoff_bohr = 14
     seen = []
     original = getattr(module, hooks[route])
     def capture(*args, **kwargs):
@@ -813,13 +867,111 @@ def test_multik_gdf_patom_spin_seed_exchange_and_populations(monkeypatch, ks):
     _patom_populations(result, mesh, {"density_alpha": 2, "density_beta": 1})
 
 
+class _RecordingProgress:
+    """Transparent progress sink that records ``info`` lines.
+
+    ``resolve_progress`` returns any object with a callable ``iteration``
+    unchanged, so this survives the driver's normalisation.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.messages = []
+
+    def info(self, message, *args, **kwargs):
+        self.messages.append(str(message))
+        return self._inner.info(message, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def test_bulk_gdf_overrides_use_compcell_false_and_says_so():
+    """Every dim-3 GDF method discards an explicit ``use_compcell=False``.
+
+    It cannot do otherwise: ``use_compcell`` defaults to False, so the driver
+    cannot tell an explicit False from silence. But it must not be silent
+    about it, because the test above was written against the Ewald-3D J that
+    this promotion had already made unreachable, and spent a while asserting
+    a parity the route could not deliver.
+
+    ``gdf_method="mdf"`` used to be the exception: it kept the flag and ran
+    the Ewald-3D J, reproducing the Ewald route to 1.8e-14 here, so the
+    requested MDF fit was never built. Since 2026-09-29 it is promoted like
+    rsgdf and runs its own fit. The one-cycle, 7-bohr fixture is not
+    converged, so the size of either offset from Ewald is not a parity
+    statement; only the route is pinned.
+    """
+    from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
+    from vibeqc.periodic_rks_multi_k_ewald import run_rks_periodic_multi_k_ewald3d
+    from vibeqc.progress import resolve_progress
+
+    system, basis, mesh, opts = _patom_case()
+    ewald = run_rks_periodic_multi_k_ewald3d(system, basis, mesh, opts, omega=.5, auto_optimize_truncation=False, progress=False)
+
+    system, basis, mesh, opts = _patom_case()
+    plog = _RecordingProgress(resolve_progress(False))
+    rsgdf = run_krhf_periodic_gdf(system, basis, mesh, opts, functional="pbe", use_compcell=False, aux_basis="def2-svp-jk", rsgdf_ke_cutoff=40, progress=plog, rcut_strategy="flat")
+    assert [m for m in plog.messages if "use_compcell=False is not available" in m], (
+        "the dim-3 rsgdf route overrode use_compcell=False without saying so; "
+        f"log lines were {plog.messages!r}"
+    )
+    assert rsgdf.energy != pytest.approx(ewald.energy, abs=1e-6)
+
+    system, basis, mesh, opts = _patom_case()
+    plog = _RecordingProgress(resolve_progress(False))
+    mdf = run_krhf_periodic_gdf(system, basis, mesh, opts, functional="pbe", use_compcell=False, aux_basis="def2-svp-jk", rsgdf_ke_cutoff=40, progress=plog, gdf_method="mdf", rcut_strategy="flat")
+    assert [m for m in plog.messages if "gdf_method='mdf'" in m and "cached-Lpq" in m], (
+        "the dim-3 mdf route overrode use_compcell=False without saying so; "
+        f"log lines were {plog.messages!r}"
+    )
+    # Before 2026-09-29 this was the Ewald-3D J, equal to 1e-12.
+    assert mdf.energy != pytest.approx(ewald.energy, abs=1e-6)
+
+
 def test_patom_noncompcell_rks_matches_direct_ewald_first_cycle():
+    """One PATOM seed, one cycle, two Coulomb routes (#275).
+
+    The lattice cutoff is raised to 20 bohr here, away from the 7 bohr the
+    shared ``_patom_case`` uses. At 7 bohr neither route is converged: the
+    Ewald leg alone moves 3.49 mHa between cutoff 7 and 12, so the routes'
+    2.21 mHa "disagreement" there was mostly each one's own truncation
+    error, not a route difference. Both legs are stable to ~1e-15 between
+    20 and 30 bohr.
+
+    Converged, the two routes agree exactly where they must and differ by a
+    small, reproducible amount in the Coulomb term:
+
+        e_xc       identical to all digits
+        e_nuclear  identical to 1.7e-14
+        e_electronic / total   gdf - ewald = -4.738114e-05 Ha
+
+    So the XC grid, the functional and the nuclear lattice sum agree
+    exactly, and the whole residual lives in the Coulomb treatment (Ewald
+    versus the fitted GDF Coulomb). That residual is NOT auxiliary-basis
+    incompleteness in any way this fixture can show: ``rsgdf_ke_cutoff`` 40
+    to 320 leaves the GDF energy bit-identical, and the def2 JK-fitting sets
+    are all nbasis=36 on hydrogen, so they cannot separate the two
+    explanations here. Whether 4.7e-05 Ha is the expected fitting error or a
+    defect is an open question on #275, deliberately not settled by widening
+    a tolerance.
+
+    The previous revision asserted the totals equal to 2e-10 at the
+    unconverged 7 bohr cutoff. That pin was never achievable for two
+    independently truncated routes with different Coulomb treatments.
+    """
     from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
     from vibeqc.periodic_rks_multi_k_ewald import run_rks_periodic_multi_k_ewald3d
     system, basis, mesh, opts = _patom_case()
+    opts.lattice_opts.cutoff_bohr = 20
     ewald = run_rks_periodic_multi_k_ewald3d(system, basis, mesh, opts, omega=.5, auto_optimize_truncation=False, progress=False)
     gdf = run_krhf_periodic_gdf(system, basis, mesh, opts, functional="pbe", use_compcell=False, aux_basis="def2-svp-jk", rsgdf_ke_cutoff=40, progress=False)
-    assert gdf.energy == pytest.approx(ewald.energy, abs=2e-10)
+    # What one seed and one cycle must reproduce exactly across the routes.
+    assert gdf.e_xc == pytest.approx(ewald.e_xc, abs=1e-12)
+    assert gdf.e_nuclear == pytest.approx(ewald.e_nuclear, abs=1e-12)
+    # The Coulomb-treatment residual, pinned so a regression moves it.
+    assert gdf.energy == pytest.approx(ewald.energy, abs=1e-4)
+    assert gdf.energy - ewald.energy == pytest.approx(-4.738114e-05, abs=1e-9)
     _patom_populations(gdf, mesh, {"density": 2})
 
 
@@ -1342,7 +1494,7 @@ def test_direct_native_periodic_ecp_sad_and_hcore_share_energy_basin(method):
     method = method.removeprefix("dispatch_")
     from vibeqc.periodic_runner import _resolve_ecp_data
 
-    system = vq.PeriodicSystem(3, np.eye(3) * 20., [
+    system = vq.PeriodicSystem(3, np.eye(3) * 8., [
         vq.Atom(11, [0., 0., 0.]), vq.Atom(1, [0., 0., 3.5]),
     ])
     basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
@@ -1360,8 +1512,9 @@ def test_direct_native_periodic_ecp_sad_and_hcore_share_energy_basin(method):
         opts.initial_guess = guess
         opts.max_iter = 100
         opts.conv_tol_energy = 1e-10
-        opts.lattice_opts.cutoff_bohr = 5.
-        opts.lattice_opts.nuclear_cutoff_bohr = 5.
+        # Include neighbouring cells: a home-cell-only cutoff is not periodic.
+        opts.lattice_opts.cutoff_bohr = 10.
+        opts.lattice_opts.nuclear_cutoff_bohr = 10.
         if method == "krks":
             opts.functional = "lda"
         if method == "gamma_rhf":

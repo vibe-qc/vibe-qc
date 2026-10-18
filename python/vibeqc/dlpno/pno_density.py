@@ -121,7 +121,11 @@ def _normalise(name: str) -> str:
 def resolve_pno_norm(spec: str | None) -> str:
     """Resolve a public spelling to one of :data:`PNO_NORMS`.
 
-    ``None`` resolves to the project default, ``"legacy"``.
+    Warning: ``None`` selects the historical, pre-#65 ``"legacy"`` density
+    for compatibility with this low-level API. It does not select the
+    molecular default. Molecular MP2 and CCSD options default explicitly
+    to ``"mp2"``; retained periodic reference recipes request ``"legacy"``
+    explicitly. Pass a named convention when selecting a molecular recipe.
     """
 
     if spec is None:
@@ -154,9 +158,11 @@ def pair_density(
         Semicanonical LMP2 amplitudes of the pair, in its PAO domain.
     delta : float
         ``1.0`` for a diagonal pair ``i == j``, ``0.0`` otherwise.
-    norm : str, optional
+    norm : str or None, optional
         One of :data:`PNO_NORMS`; see the module docstring. Default
-        ``"legacy"``, vibe-qc's historical density.
+        ``"legacy"``, vibe-qc's historical density. ``None`` also selects
+        that compatibility convention, not the molecular options default
+        ``"mp2"``.
 
     Returns
     -------

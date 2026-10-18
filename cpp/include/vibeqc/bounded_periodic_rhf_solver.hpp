@@ -13,6 +13,7 @@
 #include <vector>
 
 namespace vibeqc {
+namespace detail { struct BoundedPeriodicSCFKernel; }
 inline constexpr std::uint32_t kBoundedPeriodicRHFSolverVersion = 1U;
 
 struct BoundedPeriodicRHFInput {
@@ -88,6 +89,26 @@ struct BoundedPeriodicRHFMemoryPlan {
     std::uint64_t work_units_per_evaluated_iteration = 0, maximum_work_units = 0;
 };
 
+// Numerical density envelope for the SAME canonical overlap preparation and
+// audited occupied eigenvectors as the bounded periodic solver. Uniform full k.
+// No physical-source or symmetry claim. Per-k bounds apply to the spin total.
+struct BoundedPeriodicDensityEnvelope {
+    BoundedPeriodicRHFMemoryPlan memory;
+    std::uint64_t n_alpha=0,n_beta=0;
+    double density_l1_limit=0.;
+    std::vector<double> per_k_l1;
+    // Bounds |(D_alpha+D_beta)(k,i,j)| / nk for every admitted occupied
+    // subspace, in row-major [k,n,n] order. Uniform full-mesh weights only.
+    std::vector<double> weighted_entry_bounds;
+};
+BoundedPeriodicRHFMemoryPlan plan_bounded_periodic_density_envelope(
+    std::uint64_t k,std::uint64_t n,std::uint64_t n_alpha,std::uint64_t n_beta,
+    const BoundedPeriodicRHFOptions&,std::uint64_t other_live_bytes=0);
+BoundedPeriodicDensityEnvelope bound_bounded_periodic_density_envelope(
+    std::uint64_t k,std::uint64_t n,std::uint64_t n_alpha,std::uint64_t n_beta,
+    const std::complex<double>* overlap,std::size_t overlap_elements,
+    const BoundedPeriodicRHFOptions&,const BoundedPeriodicRHFCaps&);
+
 enum class BoundedPeriodicRHFStatus : std::uint32_t {
     Converged = 0, IterationLimit = 1, WorkLimit = 2, FockCallLimit = 3,
     Cancelled = 4, NonInsulating = 5
@@ -142,6 +163,7 @@ public:
     const std::complex<double>* coefficients_data() const;
     const double* orbital_energies_data() const;
 private:
+    friend struct detail::BoundedPeriodicSCFKernel;
     BoundedPeriodicRHFResult() = default;
     void require_live() const;
     BoundedPeriodicRHFMemoryPlan memory_;

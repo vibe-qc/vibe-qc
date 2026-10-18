@@ -1,7 +1,10 @@
 # Direct SCF or in-core integrals?
 
 Molecular Hartree-Fock and Kohn-Sham calculations repeatedly build Coulomb
-and exchange matrices from electron-repulsion integrals (ERIs). There are two
+and exchange matrices from electron-repulsion integrals (ERIs). Both modes
+below are production routes (label vocabulary in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)), and
+the [Theory](#theory) section states what each one computes. There are two
 valid ways to supply those integrals:
 
 - **Conventional SCF** computes the full four-index AO ERI tensor once, keeps
@@ -24,6 +27,80 @@ one route is always faster.
 The best choice depends on the number and contraction pattern of the basis
 functions, the number of SCF iterations, the available RAM, the memory
 bandwidth and cache hierarchy, and the CPU.
+
+## Theory
+
+**What has to be contracted.** The two-electron part of the Fock matrix is
+built from the electron-repulsion integrals over the atomic orbitals,
+
+$$
+J_{\mu\nu} = \sum_{\lambda\sigma} D_{\lambda\sigma}\,(\mu\nu|\lambda\sigma),
+\qquad
+K_{\mu\nu} = \sum_{\lambda\sigma} D_{\lambda\sigma}\,(\mu\lambda|\nu\sigma),
+$$
+
+with $\mathbf D$ the density matrix and $(\mu\nu|\lambda\sigma)$ the ERIs. There
+are about $N_\mathrm{bf}^4/8$ symmetry-distinct integrals, and every SCF
+iteration needs all of them once. The two strategies differ only in when the
+integrals are computed. Conventional SCF evaluates them once and stores them
+(the dense $8N_\mathrm{bf}^4$ bytes of the next section); direct SCF
+({vibeqc-cite}`almlof_direct_scf_1982`) recomputes them in every iteration
+and never stores the tensor. Schematically, with $n_\mathrm{it}$ SCF
+iterations,
+
+$$
+T_\mathrm{conv} \approx t_\mathrm{ERI} + n_\mathrm{it}\,t_\mathrm{stream},
+\qquad
+T_\mathrm{direct} \approx n_\mathrm{it}\,t_\mathrm{ERI}^{\,\mathrm{screened}} ,
+$$
+
+where $t_\mathrm{ERI}$ is the time to evaluate all integrals, $t_\mathrm{stream}$
+the time to read the stored tensor once per iteration, and
+$t_\mathrm{ERI}^{\,\mathrm{screened}}$ the recomputation time after screening.
+Conventional SCF wins when the tensor fits in memory and streams quickly;
+direct SCF wins when memory is the limit or when screening removes most of the
+work. Neither changes the electronic-structure model.
+
+**Screening.** Direct SCF is practical because most integrals are negligible.
+The Cauchy-Schwarz inequality bounds every integral by two-index quantities
+that are cheap to precompute ({vibeqc-cite}`haser_ahlrichs_schwarz_1989`),
+
+$$
+\bigl|(\mu\nu|\lambda\sigma)\bigr| \le Q_{\mu\nu}\,Q_{\lambda\sigma},
+\qquad
+Q_{\mu\nu} = \sqrt{(\mu\nu|\mu\nu)} ,
+$$
+
+and a shell quartet is skipped when this bound, weighted by the largest density
+element it multiplies, falls below `schwarz_threshold` (default $10^{-10}$).
+The bound is loose in early iterations, so vibe-qc uses
+`schwarz_threshold_loose` ($10^{-7}$) until the gradient norm falls below
+`schwarz_threshold_tighten_at` ($10^{-3}$) and then tightens. The
+build is incremental: it contracts the *change* of the density,
+$\Delta\mathbf D = \mathbf D^{(n)} - \mathbf D^{(n-1)}$, into the previous
+two-electron matrix, so as the SCF converges $\Delta\mathbf D$ shrinks and
+progressively more quartets are skipped. For an extended molecule the number
+of significant shell pairs grows roughly linearly with size, so the number of
+surviving quartets grows nearer $N^2$ than $N^4$; for a compact molecule in a
+large basis screening removes little and direct SCF simply repeats the full
+integral work each iteration.
+
+**What the trade-off looks like on a small molecule.** Water in cc-pVTZ
+(58 basis functions) on a vibe-qc 0.17.10 development build, both modes from
+the same initial conditions:
+
+| Mode | SCF iterations | Wall time (shared machine) | Integral storage | Energy (Ha) |
+|---|---:|---:|---:|---:|
+| `CONVENTIONAL` | 10 | 3.5 s | 86.3 MB (ERI tensor) | -76.0560509966 |
+| `DIRECT` | 13 | 11.7 s | 0.25 MB (shell-pair scratch) | -76.0560509966 |
+
+The energies agree in every printed digit. Direct SCF is slower here, as it
+should be for a compact molecule whose tensor fits comfortably in memory, and
+it needs three more iterations because the loose early screening threshold
+delays convergence slightly. What it buys is a memory footprint that is
+independent of $N_\mathrm{bf}^4$, which is what the H2O2/cc-pVQZ case below
+depends on. Wall times on the shared machine are noisy; the iteration counts
+and storage are the reproducible part.
 
 ## Why the basis-function count matters
 

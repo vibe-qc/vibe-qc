@@ -8,8 +8,9 @@ hit the point of diminishing returns.
 
 ## A Dunning-family sweep on water
 
-The correlation-consistent series ``cc-pVXZ (X = D, T, Q)`` and its
-augmented variants systematically approach the HF and correlation
+The correlation-consistent series ``cc-pVXZ (X = D, T, Q)``
+({vibeqc-cite}`dunning_ccpvxz_1989`) and its augmented variants
+({vibeqc-cite}`kendall_dunning_harrison_1992`) systematically approach the HF and correlation
 complete-basis-set (CBS) limit. Run HF on water at each:
 
 ```python
@@ -49,12 +50,13 @@ cc-pvqz          115       -76.06394333      -7.892     15
 
 Reading across:
 
-- ``ΔE`` shrinks by roughly 1/3 with each level up, classic
-  asymptotic behavior of the correlation-consistent series. Extrapo-
-  lating to CBS by fitting an exponential in the cardinal number X
-  gives around ``-76.0676 Ha`` at HF limit.
-- ``cc-pVTZ`` captures 99.96% of the cc-pVQZ improvement for 1/2 the
-  basis functions, a reasonable default for production HF.
+- ``ΔE`` shrinks by roughly 1/4 with each level up (7.892 / 31.737),
+  classic asymptotic behavior of the correlation-consistent series.
+  Extrapolating to CBS by fitting an exponential in the cardinal
+  number X through the three cc-pVXZ points gives ``-76.0666 Ha`` at
+  the HF limit.
+- ``cc-pVTZ`` captures 99.3% of the STO-3G to cc-pVQZ improvement for
+  1/2 the basis functions, a reasonable default for production HF.
 - **Timing scales as ``O(N^4)``** in the basis-function count for HF,
   so doubling the basis multiplies the cost by ~16.
 
@@ -155,16 +157,18 @@ fig.savefig("h2o_basis_convergence.png", dpi=150)
 ```
 
 For a three-point ``cc-pVXZ`` extrapolation to the HF CBS limit, fit
-``E(X) = E_CBS + A * exp(-α X)`` with ``α ≈ 1.63`` (Halkier et al.
-1998).
+``E(X) = E_CBS + A * exp(-α X)`` with all three parameters free (here
+``α`` comes out at 1.39); the fixed ``α ≈ 1.63`` of A. Halkier,
+T. Helgaker, P. Jørgensen, W. Klopper and J. Olsen, *Chem. Phys.
+Lett.* **302**, 437 (1999) serves two-point extrapolations.
 
 ![H₂O HF basis-set convergence to CBS](../_static/plots/water-basis-convergence.png)
 
 The top panel shows the three cc-pVXZ data points (blue dots) and
 the fitted Helgaker exponential (grey dashed). The fit's CBS
 asymptote sits at $E_\mathrm{CBS} = -76.067$ Ha (red dotted line), 
-about 2.6 mHa below cc-pVQZ's $-76.064$ Ha. Each level recovers
-roughly $1/3$ of what its predecessor missed, so cc-pVQZ has already
+about 2.6 mHa below cc-pVQZ's $-76.064$ Ha. Each level is left with
+roughly $1/4$ of the gap its predecessor left, so cc-pVQZ has already
 captured ~99 % of the gap to CBS. The bottom panel makes the
 **rate** of convergence explicit: $|E - E_\mathrm{CBS}|$ falls
 along an essentially straight line on a semi-log axis, the
@@ -234,25 +238,32 @@ for atomic ground states and frozen the inner-shell mix.
 ### Two common hierarchies
 
 **Pople split-valence (6-31G\*, 6-311G\*\*).** Inner-shell contracted
-to one function, valence split into two (6-31G) or three (6-311G).
-Polarization functions (the `*` = `d`-type on heavy atoms; `**` = d
-+ p on hydrogen) give radial flexibility beyond the valence's
-$\ell$-range. Diffuse functions (`+` on heavy atoms; `++` with H)
-add small-exponent primitives for anions / Rydberg states / weak
+to one function, valence split into two (6-31G,
+{vibeqc-cite}`ditchfield_6_31g_1971`, and W. J. Hehre, R. Ditchfield and
+J. A. Pople, *J. Chem. Phys.* **56**, 2257 (1972), doi:10.1063/1.1677527)
+or three (6-311G, {vibeqc-cite}`krishnan_pople_6311g_1980`).
+Polarization functions ({vibeqc-cite}`hariharan_pople_1973`; the
+`*` = `d`-type on heavy atoms; `**` = d and p on hydrogen) give angular
+flexibility beyond the valence's $\ell$-range. Diffuse functions (`+` on heavy atoms; `++` with H;
+{vibeqc-cite}`frisch_pople_binkley_supplementary_1984`) add
+small-exponent primitives for anions / Rydberg states / weak
 bonds.
 
-**Correlation-consistent (cc-pVXZ).** Designed by Dunning to
-systematically recover correlation energy, with the X = D, T, Q, 5,
+**Correlation-consistent (cc-pVXZ).** Designed by Dunning
+({vibeqc-cite}`dunning_ccpvxz_1989`) to systematically recover
+correlation energy, with the X = D, T, Q, 5,
 6 cardinal number controlling both valence-flexibility and polarization
 depth *together*. The key property: the incremental basis-set-error
-contribution falls off geometrically with X, so two successive
+contribution falls off systematically with X (exponentially for the
+HF energy, as $X^{-3}$ for the correlation energy), so two successive
 cardinal numbers extrapolate reliably to the complete-basis-set
 (CBS) limit.
 
 ### Helgaker's CBS extrapolation
 
 The canonical extrapolation of the HF total energy uses the exponential
-Helgaker-Klopper-Koch form:
+form of Halkier, Helgaker, Jørgensen, Klopper and Olsen (1999, cited
+above):
 
 $$
 E_\text{HF}(X) = E_\text{HF}^\text{CBS} + A \, e^{-\alpha X},
@@ -260,7 +271,10 @@ $$
 
 with $\alpha \approx 1.63$ fixed across the Dunning cc-pVXZ series.
 Correlation energies converge more slowly (electron-electron cusps),
-and the standard fit is the inverse-cubic power law
+and the standard fit is the inverse-cubic power law (T. Helgaker,
+W. Klopper, H. Koch and J. Noga, *J. Chem. Phys.* **106**, 9639 (1997),
+doi:10.1063/1.473863; A. Halkier *et al.*, *Chem. Phys. Lett.* **286**,
+243 (1998), doi:10.1016/S0009-2614(98)00111-0)
 
 $$
 E_\text{corr}(X) = E_\text{corr}^\text{CBS} + B \, X^{-3}.
@@ -270,7 +284,8 @@ Three consecutive cc-pVXZ points are enough to fit either form.
 
 ### Polarization functions: what they add
 
-A minimal basis (STO-3G) has no angular-momentum flexibility beyond
+A minimal basis (STO-3G, {vibeqc-cite}`hehre_sto_ng_1969`) has no
+angular-momentum flexibility beyond
 what atomic ground states need. Adding a $d$-type shell to a heavy
 atom, or a $p$-type to hydrogen, lets the orbital "polarize" in
 response to the bonding environment. Without polarization, oxygen
@@ -286,8 +301,8 @@ In a crystal, diffuse basis functions on neighboring atoms overlap
 near neighbors at bonding distance rather than the 1-4 of a
 molecule. That pushes the overlap matrix toward singularity and
 the SCF into linear-dependency territory. Solid-state basis
-families like **pob-TZVP** (Peintinger-Vilela Oliveira-Bredow 2013)
-are redesigned from molecular bases with the smallest-exponent
+families like **pob-TZVP** (Peintinger-Vilela Oliveira-Bredow 2013,
+{vibeqc-cite}`peintinger_pob_tzvp_2013`) are redesigned from molecular bases with the smallest-exponent
 primitives either removed or replaced by less-diffuse alternatives.
 See [Periodic HF on a 1D H chain](periodic_hf.md) for the pob-\* motivation.
 
@@ -318,6 +333,10 @@ geometrically in the cardinality.
 - **Helgaker CBS extrapolation.** T. Helgaker, W. Klopper, H. Koch,
   and J. Noga, "Basis-set convergence of correlated calculations
   on water," *J. Chem. Phys.* **106**, 9639 (1997).
+- **Exponential HF extrapolation (α ≈ 1.63).** A. Halkier, T. Helgaker,
+  P. Jørgensen, W. Klopper, and J. Olsen, "Basis-set convergence of the
+  energy in molecular Hartree-Fock calculations," *Chem. Phys. Lett.*
+  **302**, 437 (1999).
 - **Inverse-cubic correlation extrapolation.** A. Halkier, T.
   Helgaker, P. Jørgensen, W. Klopper, H. Koch, J. Olsen, and A. K.
   Wilson, "Basis-set convergence in correlated calculations on Ne,

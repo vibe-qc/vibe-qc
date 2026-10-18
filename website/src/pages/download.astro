@@ -9,6 +9,7 @@ import {
   publicOciImage,
 } from '../data/distributions.mjs';
 
+const base = import.meta.env.BASE_URL;
 const oci = distributionMatrix.oci;
 const ociImages = oci.images.map((image) => ({
   ...image,
@@ -33,7 +34,7 @@ const pageStatusDetail = hasPublishedDownload
 >
   <Nav />
 
-  <main class="downloads">
+  <main id="main-content" class="downloads">
     <header class="download-hero">
       <div class="wrap">
         <span class="eyebrow">official distribution matrix</span>
@@ -59,6 +60,12 @@ const pageStatusDetail = hasPublishedDownload
         </div>
       </div>
     </header>
+
+    <section class="wrap distribution-section" aria-labelledby="source-first">
+      <div class="section-heading"><div><span class="section-kicker">Start with a tool</span><h2 id="source-first">Installation and release channels.</h2></div></div>
+      <p>For current source and companion releases, <a class="text-link" href={`${base}get-started`}>choose a tool and follow its installation guide ↗</a>. The candidate matrix below is retained for traceability and does not announce a qualified suite release.</p>
+      <p><a class="text-link" href={`${base}products/vibe-sketch/`}>vibe-sketch is a testing version ↗</a>, currently proprietary and available by arrangement. No public sketcher package is offered here.</p>
+    </section>
 
     <section class="wrap distribution-section" aria-labelledby="container-heading">
       <div class="section-heading">
@@ -284,8 +291,8 @@ const pageStatusDetail = hasPublishedDownload
         {repositories.map(repository => <article>
           <h3>{repository.name}</h3>
           <p>{repository.role}</p>
-          <p><a href={repository.github}>GitHub source</a></p>
-          <p><a href={`${repository.github}/tags`}>Source tags</a> · <a href={`${repository.github}/releases`}>Release packages</a></p>
+          <p><a href={repository.github || `${base}products/vibe-sketch/#install`}>{repository.github ? "GitHub source" : "Access & setup"}</a></p>
+          {repository.github && <p><a href={`${repository.github}/tags`}>Source tags</a> · <a href={`${repository.github}/releases`}>Release packages</a></p>}
         </article>)}
       </div>
       <p class="activation-lede">A source tag does not imply a wheel or desktop

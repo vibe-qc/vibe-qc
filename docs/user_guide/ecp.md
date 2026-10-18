@@ -23,6 +23,106 @@ The banner lists libecpint as a linked dependency:
 linked: libint 2.13.1 · libxc 7.0.0 · spglib 2.7.0 · libecpint 1.0.7
 ```
 
+ECP energies, analytic SCF gradients and finite-difference Hessians are
+production routes; the analytic Hessian kernels and the post-HF and
+multireference derivative routes do not accept ECPs and fail closed
+(details under [Gradients](#gradients-forces-geometry-optimization)).
+The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Theory
+
+**The valence-only Hamiltonian.** An effective core potential replaces
+the chemically inert core electrons of a heavy atom by a potential that
+acts on the remaining valence electrons. The valence Hamiltonian keeps
+the ordinary form with two changes: the nuclear charge becomes the
+effective charge $Z^{\rm eff}_A = Z_A - n_{{\rm core},A}$, and each
+ECP centre contributes a one-electron operator,
+
+$$
+H_v = \sum_i \Bigl[ -\tfrac12 \nabla_i^2 - \sum_A \frac{Z^{\rm eff}_A}{r_{iA}}
+  + \sum_A V^{\rm ECP}_A(i) \Bigr] + \sum_{i<j} \frac{1}{r_{ij}}.
+$$
+
+The potential is *semilocal*: a local part plus angular-momentum
+projectors about the ECP centre,
+
+$$
+V^{\rm ECP}(\mathbf r) = U_L(r) + \sum_{l=0}^{L-1} \sum_{m=-l}^{l}
+  |Y_{lm}\rangle\, \bigl[U_l(r) - U_L(r)\bigr]\, \langle Y_{lm}|,
+\qquad
+U_l(r) = \sum_k d_{lk}\, r^{\,n_{lk}-2}\, e^{-\zeta_{lk} r^2},
+$$
+
+where $L$ is one more than the highest angular momentum present in
+the core and each radial channel $U_l$ is a short expansion in
+Gaussians with fitted exponents $\zeta_{lk}$, powers $n_{lk}$ and
+coefficients $d_{lk}$ (the numbers in the `.ecp` sidecars and XML
+libraries). The $l$ dependence is essential: a valence $s$ electron
+must feel the Pauli repulsion of the core $1s$, $2s$, ... shells while
+a valence $d$ electron of a 3d metal feels none, and the projectors
+encode exactly that. The valence orbitals that come out are nodeless
+*pseudo-orbitals*, which is why an ECP is always paired with a
+purpose-built valence basis and why pairing it with an all-electron
+basis is a deliberate act (the manual `ECPCenter` recipe below).
+
+**Integrals.** The matrix elements
+$\langle \chi_\mu | V^{\rm ECP} | \chi_\nu \rangle$ split into a
+*type-1* integral over the local $U_L$ and *type-2* integrals over the
+projected channels, each a radial quadrature times angular integrals
+of products of real spherical harmonics on the two Gaussian centres.
+libecpint ({vibeqc-cite}`shaw_gilbert_libecpint`) evaluates both
+classes, and their first derivatives, which is what the analytic
+gradient consumes as $dV^{\rm ECP}/dR$.
+
+**Scalar relativity.** The value of an ECP for heavy elements is that
+relativity comes for free. The Stuttgart-Köln potentials are
+*energy-consistent*: fitted so that a valence-only atomic calculation
+reproduces the valence spectrum of an all-electron relativistic
+reference atom, quasirelativistic Wood-Boring for the sets of Andrae
+and coworkers ({vibeqc-cite}`andrae_ecp_1990`, the `MWB` family and
+the def2-ECP for the 4d and 5d rows) and multi-configuration
+Dirac-Hartree-Fock for the `MDF` libraries and the `cc-pVnZ-PP`
+potentials ({vibeqc-cite}`peterson_pp_2003`). The mass-velocity and
+Darwin contraction of the valence shell is thereby built into $U_l$
+and the molecular calculation stays non-relativistic in form. The
+Hay-Wadt LANL potentials ({vibeqc-cite}`hay_wadt_lanl_1985`) are
+*shape-consistent*, fitted to all-electron atomic orbitals that include
+scalar relativity (Cowan-Griffin) for the heavier elements. Spin-orbit
+coupling is *not* included: the spin-orbit potentials some libraries
+ship are not applied in vibe-qc.
+
+**Core size.** A *small-core* potential (10 electrons for the 3d row,
+28 for the 4d row, 60 for the 5d row) keeps the $(n-1)s(n-1)p$ semicore
+in the valence space, which is required whenever those shells relax or
+polarise, that is for transition metals and for every correlated
+calculation. A *large-core* potential (LANL2DZ on the main group) is
+cheaper and adequate for mean-field structures. The review of Dolg and
+Cao ({vibeqc-cite}`dolg_cao_pseudopotentials_2011`) is the standard
+account of these choices and of the frozen-core and core-polarisation
+errors they imply.
+
+**Electron counting.** The SCF fills $N_v = N - \sum_A n_{{\rm core},A}$
+valence electrons; every shipped core is even, so multiplicity and
+parity arithmetic are unchanged. A correlated method partitions its
+occupied space from that valence count: the frozen-core table subtracts
+the ECP core per atom, $\max(0, f_A - n_{{\rm core},A})/2$ orbitals are
+frozen, and the electrostatic properties use $Z^{\rm eff}$ so that
+dipoles stay origin-independent and Mulliken charges sum to the
+molecular charge. Those conventions are spelled out in the sections
+below.
+
+**Where it helps and where it fails.** ECPs make the 4d, 5d, lanthanide
+and actinide rows affordable and carry scalar relativity into
+otherwise non-relativistic calculations at no cost. They cannot
+describe anything that lives in the core: core-level spectroscopy,
+electric-field gradients, hyperfine and Mössbauer parameters, and
+core-valence correlation beyond what the semicore captures need an
+all-electron basis with a scalar-relativistic Hamiltonian (`x2c-*`,
+`sarc*` and the DKH sets on the basis page). Within vibe-qc the analytic
+Hessian kernels and the post-HF and multireference derivative routes do
+not yet accept ECPs (see below); energies do.
+
 ## What ships
 
 Six ECP libraries bundled inside libecpint, MIT-licensed (see
@@ -216,9 +316,15 @@ Things that follow from the convention:
   `loewdin_charges` / `hirshfeld_charges` on an ECP system passes
   `nuclear_charges=vibeqc.ecp_metadata.effective_nuclear_charges(mol,
   opts)`; the default is bare `Z`, correct only all-electron.
-  Hirshfeld partitions with all-electron free-atom weights even on
-  ECP systems, so its per-atom split there is approximate although
-  the charges now sum to the molecular charge.
+  `hirshfeld_charges` reads the ECP operator the SCF ran with from
+  its result and builds the promolecule from valence-only free atoms
+  (the same atomic calculation the SAD initial guess uses on an ECP
+  atom), so the reference density integrates to the same valence
+  count as the molecular density: 8 electrons for H2S/LANL2DZ. Earlier
+  versions confined an all-electron free atom to the valence basis,
+  which carried the replaced core's electrons (18 for that molecule)
+  and distorted the per-atom split although the charges still summed
+  to the molecular charge.
 
 ## Phase-14e auto-helper (`vq.auto_ecp_centers`)
 
@@ -636,17 +742,20 @@ blocks directly.
 
 ## Citations
 
-For published work using ECPs:
+For published work using ECPs (the `.bibtex` sidecar of a `run_job`
+call assembles the route's entries for you):
 
-* **libecpint software**: R. A. Shaw, J. G. Hill,
-  *J. Chem. Phys.* **147**, 074108 (2017); R. A. Shaw,
-  *J. Chem. Phys.* **159**, 014103 (2023).
-* **Stuttgart-Köln MDF family**: Andrae, Häußermann, Dolg,
-  Stoll, Preuß, *Theor. Chim. Acta* **77**, 123 (1990) and
+* **libecpint software**: {vibeqc-cite}`shaw_gilbert_libecpint`
+  (Shaw and Hill, *J. Chem. Phys.* **147**, 074108 (2017)) and
+  R. A. Shaw, *J. Chem. Phys.* **159**, 014103 (2023).
+* **Pseudopotential theory (review)**:
+  {vibeqc-cite}`dolg_cao_pseudopotentials_2011`.
+* **Stuttgart-Köln MDF family**: {vibeqc-cite}`andrae_ecp_1990` and
   per-element follow-ups in the libecpint repository
-  documentation.
-* **Hay-Wadt LANL family**: Hay, Wadt, *J. Chem. Phys.* **82**,
-  270 (1985); 299 (1985); 284 (1985).
+  documentation; the correlation-consistent `cc-pVnZ-PP` potentials:
+  {vibeqc-cite}`peterson_pp_2003`.
+* **Hay-Wadt LANL family**: {vibeqc-cite}`hay_wadt_lanl_1985`
+  (*J. Chem. Phys.* **82**, 270, 284 and 299 (1985)).
 
 The libecpint upstream project documents the per-element
 citations in

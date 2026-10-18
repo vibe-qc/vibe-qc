@@ -119,6 +119,19 @@ class SolventModel:
         orientation (#769). ``"lab"`` is the pre-#769 behaviour and the right
         choice for a linear solute. See
         :func:`vibeqc.solvation.fine_cavity.molecular_frame`.
+    gradient_symmetry_tol_bohr : float, default 1e-4
+        For ``cavity="fine"`` in the molecule-fixed frame, the tolerance
+        (bohr) within which :func:`~vibeqc.solvation.cpcm_gradient` recognizes
+        the solute's point-group operations and projects the gradient onto
+        their totally symmetric subspace. The frame's step-1 selections break a
+        symmetric solute's symmetry, which puts a cusp in the energy at the tie
+        and a force along the tie-breaking direction in the gradient: 1.9e-5
+        Ha/bohr for the conductor energy and 1.4e-3 for Direct COSMO-RS on
+        water, the latter above the optimizer's default threshold (#535).
+        ``0.0`` disables the projection and returns the raw gradient, which is
+        the derivative of one branch of the cusp. A solute with no symmetry at
+        this tolerance is unaffected, bit for bit. See
+        :mod:`vibeqc.solvation.point_group`.
     switching_sigma_bohr : float, default 0.5
         Scalmani-Frisch switching width (bohr).
     switching_drop_threshold : float, default 1e-8
@@ -178,6 +191,8 @@ class SolventModel:
     fine_frame: str = "molecular"
     max_macro_iter: int = 30
     tol_e_solv: float = 1e-6
+    # See the docstring: the symmetry tolerance of the fine cavity's gradient.
+    gradient_symmetry_tol_bohr: float = 1.0e-4
     q_diis: bool = False
     # When True, use DIIS extrapolation on the apparent surface charges
     # q between macro-iterations to accelerate CPCM convergence.  Adds
@@ -201,6 +216,14 @@ class SolventModel:
                 f"(got {self.fine_frame!r})."
             )
         self.fine_frame = frame
+        tol_sym = float(self.gradient_symmetry_tol_bohr)
+        if not math.isfinite(tol_sym) or tol_sym < 0.0:
+            raise ValueError(
+                "SolventModel.gradient_symmetry_tol_bohr must be a finite "
+                f"tolerance >= 0 in bohr (got {self.gradient_symmetry_tol_bohr!r}); "
+                "0.0 disables the symmetric projection of the gradient."
+            )
+        self.gradient_symmetry_tol_bohr = tol_sym
         variant = self.variant.strip().lower()
         if variant not in {"cpcm", "cosmo", "dcosmo-rs"}:
             raise ValueError(
@@ -260,6 +283,32 @@ class SolventModel:
 
 # Accepted user input types for ``solvent=``.
 SolventSpec = Union[None, str, float, int, Mapping[str, Any], SolventModel]
+
+
+def solvation_citation_key(solvent) -> str:
+    """The ``routes.solvation`` row for the solvation model that actually ran.
+
+    The registry fires exactly one solvation row per run, so the key has to
+    carry everything that changes the method, not only the screening variant.
+    The cavity does: a Lebedev run uses the Scalmani-Frisch switched
+    point-charge diagonal, while a COSMO FINE Cavity run uses none of that and
+    a Gaussian-charge kernel instead (York & Karplus 1999, eq. 56; diagonal from
+    Lange & Herbert 2010, eq. 3.7). Keying on the variant alone cited a
+    fine-cavity run as a Lebedev one: Scalmani-Frisch in, Klamt & Diedenhofen
+    2018 out.
+
+    Accepts anything :func:`resolve_solvent` does. Gas phase keeps the
+    historical ``"cpcm"`` key.
+    """
+    sm = resolve_solvent(solvent)
+    if sm is None or sm.is_gas_phase:
+        return "cpcm"
+    if sm.variant == "dcosmo-rs":
+        # Refused on any other cavity, and its row already carries the fine one.
+        return "dcosmo-rs"
+    if getattr(sm, "cavity", "lebedev") == "fine":
+        return f"{sm.variant}_fine"
+    return sm.variant
 
 
 def resolve_solvent(spec: SolventSpec) -> Optional[SolventModel]:
@@ -485,6 +534,10 @@ class SolventResult:
     # segment's sigma crosses +-sigma_hb, and a segment parked there sees a
     # different potential every cycle.
     direct_feedback: Optional[Any] = None
+    # The symmetry tolerance the run's model asked the gradient to project with
+    # (``SolventModel.gradient_symmetry_tol_bohr``); 0 for a result that did not
+    # come from a model, which projects nothing.
+    gradient_symmetry_tol_bohr: float = 0.0
     all_scf_traces: list[Any] = field(default_factory=list)
     # Aggregated per-iteration records across gas-phase + all inner
     # SCF phases, suitable for replay into PerfTracker (BUG 100).
@@ -1146,6 +1199,36 @@ def run_cpcm_scf(
     direct_rs = sm.variant == "dcosmo-rs"
     if direct_rs:
         from .cosmors.direct import direct_cosmors_feedback
+        from .cosmors.potential import _anderson_step
+
+        # Anderson acceleration of the feedback potential across
+        # macro-iterations (Anderson, J. ACM 12, 547 (1965); the same step the
+        # solvent solver uses). On a polar solute at a realistic protocol the
+        # feedback overshoots: acetate at BPW91 changes sign on every one of
+        # its last ten macro-iterations and needs 26 of them at def2-SVP and
+        # 60 at def2-TZVP, twice the default cap. Anderson brings those to 18
+        # and 15 and leaves monotone runs alone (water, ammonium and acetate
+        # at RHF/STO-3G: 9, 5, 9 either way). Fixed damping was rejected: at
+        # 0.7 it helps acetate but nearly doubles every monotone run (water
+        # 9 -> 16). The fixed point is unchanged -- energies agree to 1e-13 Ha.
+        _drs_xs: list[np.ndarray] = []
+        _drs_rs: list[np.ndarray] = []
+        _drs_seen: list[np.ndarray] = []  # the phi the Hamiltonian last used
+
+        def _accelerate_feedback(phi_new: np.ndarray) -> np.ndarray:
+            if not _drs_seen or _drs_seen[0].shape != phi_new.shape:
+                _drs_seen[:] = [phi_new]
+                return phi_new
+            used = _drs_seen[0]
+            _drs_xs.append(used)
+            _drs_rs.append(phi_new - used)
+            if len(_drs_rs) > 4:
+                _drs_xs.pop(0)
+                _drs_rs.pop(0)
+            nxt = _anderson_step(_drs_xs, _drs_rs, 1.0)
+            _drs_seen[:] = [nxt]
+            return nxt
+
     last_feedback = None
 
     def _as_cpcm(field: ReactionField) -> CPCMResult:
@@ -1240,11 +1323,15 @@ def run_cpcm_scf(
             last_feedback = direct_cosmors_feedback(
                 field.q, cavity.weights, sm.sigma_potential
             )
+            # The operator uses the accelerated potential. The reported
+            # feedback keeps eq. 19's phi and its energy, both evaluated at the
+            # conductor charges; the two potentials agree at convergence.
+            phi_used = _accelerate_feedback(
+                np.asarray(last_feedback.phi, dtype=np.float64)
+            )
             # eq. 7 again, on the correction potential. No screening factor:
             # see vibeqc.solvation.cosmors.direct.
-            q_drs = np.asarray(
-                _cavity_solve(-last_feedback.phi), dtype=np.float64
-            )
+            q_drs = np.asarray(_cavity_solve(-phi_used), dtype=np.float64)
             if not np.all(np.isfinite(q_drs)):
                 raise RuntimeError(
                     "run_cpcm_scf: the Direct COSMO-RS correction solve "
@@ -1420,10 +1507,10 @@ def run_cpcm_scf(
                 functional=_func,
                 uses_cpcm=True,
                 scf_guess=last_inner_result.guess_selection.effective.name,
-                # The run's own variant, never a fixed one: routes.solvation
-                # fires exactly one row per variant, and "dcosmo-rs" is the
-                # only row that cites the method a Direct COSMO-RS run used.
-                solvent_variant=sm.variant,
+                # The model that ran, variant *and* cavity: routes.solvation
+                # fires exactly one row, so a key without the cavity cites a
+                # fine-cavity run as a Lebedev one.
+                solvent_variant=solvation_citation_key(sm),
             )
         except Exception:
             # Best-effort -- never let citation writer failure tank a
@@ -1446,6 +1533,7 @@ def run_cpcm_scf(
         scf=verified_scf_result,
         energy=total_energy,
         direct_feedback=last_feedback,
+        gradient_symmetry_tol_bohr=float(sm.gradient_symmetry_tol_bohr),
         e_solv=last_cpcm.e_solv,
         e_gas=e_gas,
         epsilon=sm.epsilon,

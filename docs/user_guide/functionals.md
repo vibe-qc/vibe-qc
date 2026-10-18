@@ -16,6 +16,150 @@ differentiable provider interface and do not call libxc.
 > decision and the invocation. That family statement covers libxc-backed
 > functionals; external providers declare their own ROKS capability below.
 
+The libxc-backed functional families on this page are production routes
+for molecular and periodic energies. Two qualifications are labelled
+where they apply: analytic gradients for range-separated hybrids and
+VV10 are missing terms and the optimisers fall back to finite
+differences (GitLab #571), and the SKALA neural functional is an
+experimental route. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Theory
+
+**Kohn-Sham equations.** Density functional theory rests on the
+Hohenberg-Kohn theorems: the ground-state energy is a functional of the
+electron density alone. Kohn and Sham made it computable by
+introducing a fictitious system of non-interacting electrons with the
+same density $\rho(\mathbf r) = \sum_i^{\rm occ} |\psi_i(\mathbf r)|^2$,
+so that the large kinetic energy is evaluated exactly from orbitals and
+everything unknown is collected into the exchange-correlation
+functional $E_{xc}$:
+
+$$
+E[\rho] = -\frac12 \sum_i \langle \psi_i | \nabla^2 | \psi_i \rangle
+  + \int v_{\rm ext}(\mathbf r)\,\rho(\mathbf r)\, d\mathbf r
+  + \frac12 \iint \frac{\rho(\mathbf r)\rho(\mathbf r')}{|\mathbf r - \mathbf r'|}\, d\mathbf r\, d\mathbf r'
+  + E_{xc}[\rho_\alpha, \rho_\beta].
+$$
+
+Making $E$ stationary under orthonormality gives one-electron equations
+of Hartree-Fock form,
+$\bigl[-\tfrac12\nabla^2 + v_{\rm ext} + v_H + v_{xc}^\sigma\bigr]\psi_{i\sigma} = \varepsilon_{i\sigma}\psi_{i\sigma}$
+with $v_{xc}^\sigma = \delta E_{xc}/\delta\rho_\sigma$. In a Gaussian
+basis this is the Roothaan matrix problem $F C = S C \varepsilon$ with
+$F = h + J - a_x K^\sigma + V_{xc}^\sigma$, solved by the same SCF
+machinery as Hartree-Fock ([SCF convergence](scf_convergence.md)); the
+exact-exchange fraction $a_x$ is zero for a semilocal functional. libxc
+({vibeqc-cite}`libxc_2018`) supplies the energy density and its
+derivatives with respect to $\rho_\sigma$, the gradient invariants
+$\sigma_{\sigma\sigma'} = \nabla\rho_\sigma\cdot\nabla\rho_{\sigma'}$
+and the kinetic-energy density $\tau_\sigma$; vibe-qc assembles the
+matrix elements on the quadrature grid described below.
+
+**Jacob's ladder.** Functionals are organised by the ingredients they
+take from the density, and every rung is a different approximation to
+the same unknown functional:
+
+* *LDA*: $E_{xc} = \int \rho\, \epsilon_{xc}^{\rm unif}(\rho_\alpha, \rho_\beta)\, d\mathbf r$,
+  the energy per particle of the uniform electron gas at the local
+  density. Exchange is Slater's
+  $\epsilon_x = -\tfrac34 (3/\pi)^{1/3} \rho^{1/3}$
+  ({vibeqc-cite}`slater_x_1951`); correlation is the VWN fit to the
+  quantum Monte Carlo gas ({vibeqc-cite}`vwn_1980`). This is `lda` /
+  `svwn`.
+* *GGA*: the reduced gradient
+  $s = |\nabla\rho| / [2 (3\pi^2)^{1/3} \rho^{4/3}]$ enters through an
+  enhancement factor,
+  $E_x = \int \rho\, \epsilon_x^{\rm unif}(\rho)\, F_x(s)\, d\mathbf r$.
+  PBE ({vibeqc-cite}`pbe_1996`) uses
+  $F_x(s) = 1 + \kappa - \kappa / (1 + \mu s^2/\kappa)$ with
+  $\kappa = 0.804$ and $\mu = 0.2195$ fixed by exact constraints; B88
+  ({vibeqc-cite}`becke_b88_1988`) fits one parameter to atomic exchange
+  energies and pairs with LYP correlation
+  ({vibeqc-cite}`lee_yang_parr_1988`) in BLYP.
+* *meta-GGA*: adds the kinetic-energy density
+  $\tau_\sigma = \tfrac12 \sum_i |\nabla \psi_{i\sigma}|^2$, usually
+  through the iso-orbital indicator
+  $\alpha = (\tau - \tau_W)/\tau_{\rm unif}$ with the von Weizsäcker
+  bound $\tau_W = |\nabla\rho|^2 / 8\rho$, which distinguishes
+  one-orbital regions ($\alpha = 0$) from slowly varying density
+  ($\alpha \approx 1$). TPSS ({vibeqc-cite}`tao_tpss_2003`), SCAN
+  ({vibeqc-cite}`sun_scan_2015`) and the regularised r²SCAN
+  ({vibeqc-cite}`furness_r2scan_2020`) are the non-empirical members.
+* *Global hybrids*: the adiabatic connection
+  ({vibeqc-cite}`becke_1993`) motivates mixing a fixed fraction of
+  exact (Hartree-Fock) exchange,
+  $E_{xc} = a_x E_x^{\rm HF} + (1 - a_x) E_x^{\rm DFT} + E_c^{\rm DFT}$,
+  which partly cancels the self-interaction error of semilocal
+  exchange. B3LYP ({vibeqc-cite}`stephens_b3lyp_1994`) uses
+  $a_x = 0.20$ with three fitted mixing parameters; PBE0
+  ({vibeqc-cite}`adamo_barone_pbe0_1999`) uses $a_x = 1/4$ from
+  perturbation-theory arguments. Exact exchange enters the Kohn-Sham
+  matrix as $-a_x K$.
+* *Range-separated hybrids*: the Coulomb operator is split with the
+  error function,
+  $1/r_{12} = \mathrm{erfc}(\omega r_{12})/r_{12} + \mathrm{erf}(\omega r_{12})/r_{12}$,
+  and the exact-exchange fraction becomes distance dependent,
+  $a_x(r_{12}) = \alpha + \beta\, \mathrm{erf}(\omega r_{12})$. A
+  long-range-corrected functional such as ωB97X
+  ({vibeqc-cite}`chai_headgordon_wb97x_2008`) goes to 100 percent exact
+  exchange at long range, which fixes the asymptotic potential and
+  charge-transfer excitations; a screened hybrid such as HSE06 does the
+  opposite for solids. The exchange build needs a second,
+  erf-attenuated $K_{\rm erf}(\omega)$ matrix beside the ordinary one.
+* *Nonlocal correlation*: VV10
+  ({vibeqc-cite}`vydrov_vanvoorhis_vv10_2010`) adds dispersion as a
+  density-density kernel,
+  $E_c^{\rm nl} = \tfrac12 \iint \rho(\mathbf r)\, \Phi(\mathbf r, \mathbf r')\, \rho(\mathbf r')\, d\mathbf r\, d\mathbf r'$
+  with $\Phi = -\tfrac32 / [g\, g'\, (g + g')]$,
+  $g = \omega_0(\mathbf r)\, |\mathbf r - \mathbf r'|^2 + \kappa(\mathbf r)$,
+  where $\omega_0$ is a local plasma frequency built from $\rho$ and
+  $|\nabla\rho|$ and $\kappa$ a local damping; two constants $b$ and $C$
+  are fitted per functional. ωB97X-V
+  ({vibeqc-cite}`mardirossian_wb97xv_2014`) and ωB97M-V
+  ({vibeqc-cite}`mardirossian_wb97mv_2016`) combine it with
+  range-separated (meta-)GGA parts; vibe-qc evaluates the kernel
+  self-consistently on the SCF grid (`vibeqc.compute_vv10`).
+* *Double hybrids*: the fifth rung adds a scaled second-order
+  correlation energy built from the Kohn-Sham orbitals; because the SCF
+  step alone is not the method, they are `method=` keywords documented
+  on [MP2 and double hybrids](mp2_and_double_hybrids.md#theory).
+
+**Quadrature.** No exchange-correlation integral has a closed form, so
+$E_{xc}$ and $V_{xc}$ are evaluated on an atom-centred grid. Becke's
+fuzzy-cell partition ({vibeqc-cite}`becke_grid_1988`) writes a
+molecular integral as a sum of atomic ones,
+$\int f\, d\mathbf r = \sum_A \int p_A(\mathbf r) f(\mathbf r)\, d\mathbf r$
+with smooth weights $p_A$ that sum to one everywhere, and each atomic
+integral is a product of a radial rule (the Treutler-Ahlrichs M4
+mapping, {vibeqc-cite}`treutler_ahlrichs_1995`) and a Lebedev angular
+rule, so that
+
+$$
+E_{xc} \approx \sum_A \sum_{g \in A} w_g\, p_A(\mathbf r_g)\,
+  \rho(\mathbf r_g)\, \epsilon_{xc}(\mathbf r_g),
+\qquad
+V^{xc}_{\mu\nu} = \sum_g w_g \Bigl[ v_\rho\, \chi_\mu \chi_\nu
+  + 2 v_\sigma\, \nabla\rho \cdot \nabla(\chi_\mu \chi_\nu)
+  + \tfrac12 v_\tau\, \nabla\chi_\mu \cdot \nabla\chi_\nu \Bigr]_{\mathbf r_g}.
+$$
+
+The grid is part of the method definition: two codes with the same
+functional and different grids differ by the quadrature error, which is
+why the molecular presets below are named and why SCAN's sharp
+enhancement factor needs a finer grid than r²SCAN.
+
+**Where it helps and where it fails.** Semilocal and hybrid DFT is the
+workhorse for structures, thermochemistry and band structures at
+mean-field cost. Its systematic failures follow from the
+approximations above: the self-interaction (delocalisation) error
+underestimates band gaps, reaction barriers and charge-transfer
+energies, and hybrids only partly repair it; semilocal functionals
+have no long-range dispersion, so a D3(BJ), D4 or VV10 term is
+required for noncovalent interactions; a single Kohn-Sham determinant
+cannot describe static correlation, so bond breaking and many open-shell
+transition-metal states need a multireference method instead.
+
 ## Molecular integration grids
 
 The molecular mid-level entry points use `grid_level="orca-defgrid3"` when
@@ -45,6 +189,14 @@ energy-comparison preset, not an identical implementation of ORCA's grid.
 `fine` uses 99 radial shells and Lebedev order 35; `coarse` uses 50 and order
 23. `legacy` uses the unpruned 75 x 17 x 36 product grid with Becke partitioning.
 Compare results using the complete grid settings, not the preset name alone.
+
+For convergence studies, `opts.grid.lebedev_order` accepts every bundled
+rule: orders 5 to 53 and, since v0.17.16, 59, 65, 77 and 95 (1202, 1454,
+2030 and 3074 points per shell). Through `run_job` the four large rules need
+a build of main from 2026-10-14 or later; the memory estimate refused them
+before. The [grid-convergence tutorial](../tutorial/dft_grid_convergence.md)
+measures water with PBE and r2SCAN on the named levels and on explicit
+angular and radial series.
 
 `run_job(atomization=True)` passes the operative molecular grid to its atomic
 DFT references. Atomic-reference cache keys include every grid field, so
@@ -114,6 +266,7 @@ vibe-qc resolves these short names in `xc.cpp::resolve_alias()`
 | `lda` / `svwn` | LDA | 0 % | 1 + 7 | Slater exchange + VWN5 correlation. Fast sanity check. |
 | `pbe` | GGA | 0 % | 101 + 130 | Workhorse for solid state. |
 | `blyp` | GGA | 0 % | 106 + 131 | Classic molecular GGA. |
+| `bpw91` | GGA | 0 % | 106 + 134 | Becke 88 exchange with Perdew-Wang 91 correlation, the functional Klamt's 1998 COSMO-RS parameters were fitted at (see [Implicit solvation](solvation.md)). There is no `bp86` alias: codes differ on which local correlation fills its P86 slot (PZ81 or VWN). |
 | `b3lyp` (= `b3lyp5`) | hybrid | 20 % | 475 | de-facto for organics; VWN5 / ORCA convention, **see the flavor box above**. |
 | `b3lyp/g` (= `b3lypg`) | hybrid | 20 % | 402 | Gaussian-compatible B3LYP (VWN-RPA), what Gaussian / PySCF / Psi4 mean by the bare name. |
 | `pbe0` / `pbeh` | hybrid | 25 % | 406 | PBE + 25% Fock exchange. |
@@ -273,6 +426,18 @@ provider's defining citation.
 
 ## Microsoft SKALA-1.1 neural XC
 
+```{admonition} Status: experimental
+:class: warning
+
+SKALA-1.1 is an experimental route: self-consistent energies at a fixed geometry
+only. The molecular envelope (RKS, UKS, ROKS single points) is documented; every
+periodic route is experimental. The `.system` manifest records the external-XC
+backend and checkpoint provenance, and every derivative, optimisation, response or
+unsupported-route request fails closed rather than substituting libxc. Its numbers
+are research output, not validated results, and it is not part of the release gate.
+The label vocabulary is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 `skala-1.1` is Microsoft's differentiable, non-local neural
 exchange-correlation functional. vibe-qc supplies an independent full-grid
 adapter for the official CPU TorchScript checkpoint; it does not import the
@@ -338,11 +503,37 @@ D3(BJ) is the standard. D4 (Caldeweyher-Bannwarth-Grimme, 2019)
 ships alongside D3(BJ): use `dispersion="d4"` to opt in. There
 are two D4 backends, the optional `dftd4` package (production
 default, bit-exact to upstream) and an in-tree native MPL-2.0
-implementation (`compute_d4(mol, func, backend="native")`) that
-is parity-validated for **H-Ne** (correlated CPKS/PBE38 reference
-C6 within a few percent of dftd4); use the `dftd4` backend for
-elements outside that set. Both are documented in
+implementation (`compute_d4(mol, func, backend="native")`). Its frozen
+reference dataset covers **H, He, B, C, N, O, F, Ne, and Cu**. Light-element
+checks use independently computed correlated CPKS/PBE38 reference C6;
+Cu uses the separate protocol in the semiempirical manual. Use the
+`dftd4` backend for elements outside that set. Both are documented in
 [`molecules.md`](molecules.md) § Dispersion.
+
+For standalone native D4, `compute_d4(mol, func, backend="native",
+charge=Q, with_gradient=True)` returns the same energy as the scalar call
+and its complete analytic nuclear gradient. It includes BJ pair and ATM
+three-body geometry derivatives, coordination-dependent C6, and EEQ charge
+response at fixed `Q`. The adjoint EEQ solve differentiates the native
+coordination-number soft cap and charge constraint. The `charge` argument
+is honored by both native paths and defaults to zero; it is not inferred
+from the molecule's electron-count metadata. Consistent derivatives do
+not imply bit-exact agreement with the external
+D4 functional.
+
+Custom datasets selected with `ref_data_path` may include `n_gaussian`
+in each element's JSON record: one positive integer per reference, in the
+same order as `cns`. These counts specify the Gaussian sum for each
+reference in both the energy and analytic gradient. Store them explicitly
+when covalent reference CNs do not preserve the nominal environment groups.
+If omitted, the existing rounded-CN grouping remains in effect. The
+low-level pair functions' explicit `n_gaussian` argument overrides dataset
+counts for both atoms. The bundled dataset retains its existing grouping.
+
+An explicit `ref_data_path` takes precedence over `VIBEQC_D4_REFDATA`,
+which takes precedence over the bundled dataset. If a selected path does
+not name a file, native D4 raises `FileNotFoundError` instead of falling
+back to another dataset. File-reading and JSON errors also propagate.
 
 ## Meta-GGA functionals (TPSS / TPSSh, M06-L / M06-2X, SCAN / r²SCAN)
 
@@ -365,7 +556,10 @@ grid the H₂O/def2-SVP energy sits ~1 mHa off the fine-grid limit.
 **For SCAN, set a fine grid** (`opts.grid.n_radial = 120`,
 `opts.grid.lebedev_order = 41` or finer). **r²SCAN** (`r2scan`) is
 the re-regularized SCAN, same constraint satisfaction, a smooth
-enhancement factor, grid-stable to ~µHa on the default grid. It is
+enhancement factor and far less grid-sensitive: on water/def2-SVP the
+default grid is 8 µHa from the converged energy and `fine` 1.3 µHa, and the
+remaining error is radial (150 shells remove it; see the
+[grid tutorial](../tutorial/dft_grid_convergence.md)). It is
 the recommended default of the family; `r2scan0` (25 % HF) and
 `r2scanh` (10 % HF) are its global hybrids. **r²SCAN01** (`r2scan01`)
 re-regularizes r²SCAN with a larger η so the fourth-order term of

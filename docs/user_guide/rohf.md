@@ -71,6 +71,14 @@ vq.run_job(oh, basis="6-31g*", method="roks", functional="b3lyp",
            output="oh_roks")          # see examples/molecular/input-ch3-roks.py
 ```
 
+`run_job(density_fit=True)` and `cosx=True` reach `ROHFOptions` /
+`ROKSOptions` exactly as they reach the other four references: the JK
+auxiliary basis is resolved from the orbital basis (`def2-svp` gives
+`def2-svp-jk`, or pass `aux_basis=`), the memory estimate lists the
+three-index tensors, and the run cites RI-J or RIJCOSX in the `.references`
+and `.system` files. Before v0.17.7 the two flags were accepted and ignored
+for `method="rohf"` / `"roks"` (#361).
+
 ROKS supports **LDA, GGA, meta-GGA, global-hybrid, and
 range-separated-hybrid** functionals (B3LYP, PBE0, TPSS, r²SCAN,
 ωB97X, ωB97M-V, …). **Double hybrids** (B2PLYP, DSD-PBEP86, PWPB95)
@@ -89,6 +97,28 @@ restricted open-shell symmetry and prevents the larger-basis ROKS/PBE
 oscillation that an integer `2, 2, 2, 2, 1, 0, ...` assignment produces.
 
 ## Convergence
+
+Molecular ROHF/ROKS and Gamma GPW ROHF/ROKS use the shared Fock/KS solver
+contract. Dense remains the default; molecular `use_davidson` and
+`davidson_min_dim` retain their meanings. Davidson options are copied for
+each calculation, and warm subspaces are private to that calculation.
+The Roothaan loop needs all retained orbitals for occupations and reported
+energies, so a partial `davidson.n_eig` request is rejected. Use zero (the
+default) or the complete retained rank. Unsupported solver options fail
+explicitly, as described in [the solver guide](solver_framework.md).
+This shared Roothaan SCF driver requires real orbitals. An active Davidson
+request with `guess_vectors_cplx` is rejected before the first Roothaan SCF iteration;
+use `guess_vectors` for real warm starts. Complex Fock matrices are also
+rejected rather than projecting away their imaginary components. Inactive
+Davidson settings remain unused. The complex-capable projector helpers and
+periodic multi-k solvers retain their existing contracts.
+
+Overlap reduction retains the existing `linear_dep_threshold`. Both the
+Roothaan solve and Guest-Saunders block rotations respect the retained
+orbital count. Guest-Saunders energies remain closed/open/virtual ordered,
+with sorting only inside each block. Fractional shells keep their Roothaan
+orbitals and occupations. Level shifts remain part of SCF convergence and
+are removed by the existing canonicalization on exit.
 
 The Roothaan loop carries the same convergence controls as the rest of
 the tree: `damping` / `dynamic_damping`, the DIIS family via
@@ -230,6 +260,12 @@ ROHF/ROKS also drive:
   **molecular optimiser** (`vibeqc.molecular_optimize.optimize_molecule`).
 * **The ASE calculator**: `VibeQC(restricted_open=True)` runs ROHF with
   analytic forces; see [`ase_integration.md`](ase_integration.md).
+* **Excited states**: `run_job(method="rohf", tddft=True)` runs ROHF TDA/CIS
+  over the doubly-occupied to virtual space only (no excitations out of or
+  into the singly occupied orbitals); the `.out` block is labelled
+  `TDA-ROHF` and states that restriction. `tddft_type="casida"` on ROHF
+  and `tddft=True` on ROKS are not implemented and are refused before the
+  SCF rather than replaced by the closed-shell response (#361).
 
 ## Periodic ROHF
 
@@ -289,17 +325,114 @@ context.
 
 ## Theory
 
-ROHF uses **Roothaan's single effective Fock operator** (Roothaan,
-*Rev. Mod. Phys.* **32**, 179 (1960)). The MOs are partitioned into
-closed, open, and virtual blocks with integer occupations (2/1/0). A
-single effective Fock matrix is assembled from the per-spin Fα/Fβ via
-Coulson's coupling so that one diagonalisation yields a spin eigenfunction
-with ⟨S²⟩ = `S(S+1)` exactly. ROKS reuses the identical coupling but with
-Fα/Fβ carrying the spin-polarised KS exchange-correlation potential and,
-for degenerate frontier terms, uniform fractional occupations within the
-open block. Its energy uses E_xc[ρα, ρβ] in place of full exact exchange. The
-`roothaan_rohf_1960` citation fires automatically in any ROHF/ROKS run
-(including CAS jobs that use `cas_reference="rohf"`).
+**One set of spatial orbitals.** ROHF ({vibeqc-cite}`roothaan_rohf_1960`)
+keeps a single set of spatial orbitals and partitions them into
+*closed* (doubly occupied), *open* (singly occupied, all alpha in the
+high-spin case) and *virtual* blocks with occupations 2, 1 and 0. For a
+high-spin state with $n_o$ open-shell electrons the energy is
+
+$$
+E = 2\sum_k h_{kk} + \sum_{kl} \bigl(2 J_{kl} - K_{kl}\bigr)
+  + f \Bigl[ 2 \sum_m h_{mm} + f \sum_{mn} \bigl(2 a J_{mn} - b K_{mn}\bigr)
+  + 2 \sum_{km} \bigl(2 J_{km} - K_{km}\bigr) \Bigr],
+$$
+
+with $k, l$ closed and $m, n$ open orbitals and Roothaan's *coupling
+coefficients* $f$, $a$, $b$ characterising the open shell: the
+fractional occupation $f = 1/2$ and $a = 1$, $b = 2$ for a high-spin
+half-filled shell (other values describe other coupling cases). The
+same energy can be written with per-spin densities and Fock matrices
+$F^\alpha$ and $F^\beta$, and that is how vibe-qc builds it.
+
+**The effective Fock operator.** Making $E$ stationary under
+orbital rotations gives three conditions, one per pair of blocks:
+$F^\alpha_{ov} = 0$ between open and virtual (only an alpha electron can
+move there), $F^\beta_{co} = 0$ between closed and open (only a beta
+electron can), and $(F^\alpha + F^\beta)_{cv} = 0$ between closed and
+virtual. Roothaan's insight is that these can be assembled into *one*
+Hermitian matrix whose off-diagonal blocks are exactly those
+gradients, so that a single diagonalisation drives all three to zero:
+
+$$
+F^{\rm eff} =
+\begin{pmatrix}
+A_{cc} & F^\beta_{co} & F^c_{cv} \\
+F^\beta_{oc} & B_{oo} & F^\alpha_{ov} \\
+F^c_{vc} & F^\alpha_{vo} & C_{vv}
+\end{pmatrix},
+\qquad
+F^c = \tfrac12\,(F^\alpha + F^\beta).
+$$
+
+The diagonal blocks $A$, $B$, $C$ do not affect the converged energy
+or density, only the orbital eigenvalues, and every code fills them
+differently; vibe-qc iterates with Roothaan's choice and reports
+eigenvalues in the Guest-Saunders convention
+({vibeqc-cite}`guest_saunders_rohf_1974`) described
+[above](#orbital-eigenvalues-and-the-guest-saunders-convention). The
+loop is a Roothaan SCF like any other, so DIIS, damping and level
+shifts apply to $F^{\rm eff}$ unchanged.
+
+**Spin purity.** Because every doubly occupied orbital is the same
+spatial function for both spins, the ROHF determinant is an
+eigenfunction of $\hat S^2$ with $S = (n_\alpha - n_\beta)/2$:
+$\langle \hat S^2 \rangle = S(S+1)$ exactly. A UHF determinant with
+independent orbitals is not; its
+$\langle \hat S^2 \rangle = S(S+1) + n_\beta - \sum_{ij} |\langle i^\alpha | j^\beta \rangle|^2$
+exceeds the pure value by the spin contamination that the extra
+variational freedom buys. The price of purity is a slightly higher
+energy ($E_{\rm ROHF} \ge E_{\rm UHF}$ always) and a reference that
+cannot describe symmetry breaking or bond dissociation.
+
+**ROKS.** The Kohn-Sham counterpart reuses the identical coupling with
+$F^\sigma = h + J - a_x K^\sigma + V^\sigma_{xc}[\rho_\alpha, \rho_\beta]$,
+so the energy uses $E_{xc}[\rho_\alpha, \rho_\beta]$ in place of full
+exact exchange (plus the hybrid fraction $a_x$ of it). This is
+restricted open-shell Kohn-Sham for high-spin states, not the
+Filatov-Shaik ROKS for open-shell singlets. Two things differ from
+ROHF in practice: for a spatially degenerate frontier term the driver
+averages the open-shell occupation over the degenerate partners
+(uniform fractional occupations within the open block, the OH
+$^2\Pi$ example above) instead of forcing one component to be the
+SOMO, and the analytic XC-gradient term for the restricted open-shell
+density is not implemented yet, which is why ROKS optimisations run on
+finite-difference forces.
+
+**What is gated.** The Roothaan drivers are Python-side and share only
+the JK build with the C++ SCF, so several features of the four C++
+drivers are refused rather than approximated:
+
+* `solvent=` raises `NotImplementedError` for `method="rohf"` /
+  `"roks"` (no CPCM coupling of the restricted open-shell loop yet;
+  see [Implicit solvation](solvation.md#supported-methods)).
+* `run_job(hessian=True)` on ROKS raises: the Hessian finite-differences
+  the analytic gradient, and ROKS has none. ROHF Hessians and
+  frequencies work.
+* `tddft=True` on ROKS, and `tddft_type="casida"` on ROHF, are refused
+  before the SCF; only TDA on ROHF runs, and only over the
+  doubly-occupied to virtual space.
+* The internal stability analysis that the UHF/UKS and RHF/RKS drivers
+  run after convergence is not implemented for ROHF/ROKS, and the
+  second-order finalizers (`newton_threshold`, `trah_threshold`,
+  `soscf_threshold`) exist on `ROHFOptions` for API parity but do
+  nothing; convergence rests on the accelerator and the level shift.
+* RIJCOSX and ECP ROHF gradients fail closed; DF-ROHF gradients work.
+* The periodic GPW ROHF/ROKS routes are a maintained preview and do
+  not yet take gradients, restart densities or electronic smearing;
+  DFT+U is a periodic RKS/UKS feature and is not wired into the
+  restricted open-shell drivers.
+
+**Where it helps and where it fails.** ROHF is the right reference
+when the downstream method or property needs a spin eigenfunction:
+ROHF-MP2, ROHF-CCSD(T), a CAS starting guess, spin densities and
+hyperfine couplings. It is the wrong choice for bond breaking and
+antiferromagnetic coupling, where the physics *is* the symmetry
+breaking UHF allows, and its SCF is harder: high-spin transition
+metals need a held level shift and a check that the state reached is
+the intended one (see [Convergence](#convergence)).
+
+The `roothaan_rohf_1960` citation fires automatically in any ROHF/ROKS
+run (including CAS jobs that use `cas_reference="rohf"`).
 
 ## See also
 
@@ -312,3 +445,21 @@ open block. Its energy uses E_xc[ρα, ρβ] in place of full exact exchange. Th
 * [`non_hf_solvers.md`](non_hf_solvers.md): CAS / multireference methods
   (`cas_reference="rohf"`).
 * [`ccsd.md`](ccsd.md): coupled cluster, incl. `ccsd_reference="rohf"`.
+
+## Gamma Ewald ROHF orbital output
+
+`run_rohf_periodic_gamma_ewald3d` reports the unshifted Roothaan effective
+Fock energies. Finalization diagonalizes that Fock separately within the
+closed, open and virtual occupation spaces, preserving the determinant,
+both spin densities and the open-shell selection made using alpha energies.
+This is occupation-preserving canonicalization (Guest and Saunders,
+Mol. Phys. 28, 819, 1974, section 2, equation 8); it retains the Gamma
+driver's Roothaan energy convention.
+
+For a converged result the orbitals diagonalize the full effective Fock
+within SCF accuracy. If `converged` is false, the reported energies are
+occupation-block eigenvalues. The full `fock` still contains the residual
+couplings between different occupation spaces; those orbitals are not
+claimed to be eigenvectors of the full Fock. A zero-iteration call keeps
+`n_iter=0`, an empty trace and `converged=False`; its initial-Fock orbitals
+and occupations define the density used for the returned Fock and energy.

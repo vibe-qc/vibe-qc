@@ -51,14 +51,11 @@ public:
         int n_primitives = 6);
 
 private:
+    // (zeta, n, l) -> contracted Gaussian expansion of the STO with
+    // n_primitives in {3, 4, 6}; every row is keyed by principal quantum
+    // number n and angular momentum l (Stewart 1970, xtb slater.f90).
     static std::pair<std::vector<double>, std::vector<double>>
     sto_ng_expansion(double zeta, int n, int l, int n_primitives = 6);
-
-    struct StoNgTable {
-        std::vector<double> alphas;
-        std::vector<double> coeffs;
-    };
-    static const StoNgTable& sto6g_table(int l);
 };
 
 }  // namespace semiempirical

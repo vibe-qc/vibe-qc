@@ -14,6 +14,22 @@ than one good way to tame it. This page is the map: what the routes are,
 how to switch between them with a single keyword, and how to pick the
 right one.
 
+```{admonition} Route status at a glance
+:class: note
+
+The labels below follow [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+| Route (`jk_method=`) | Status |
+|---|---|
+| `"gdf"` | **production** for Gamma and multi-k RHF, RKS, UHF, UKS in 3-D (a 1-D wire is modelled as a 3-D cell with transverse vacuum; `dim=1` is refused) and the bounded closed-shell 2-D slab route; periodic ROHF on GDF is a **preview** |
+| `"bipole"` | **production** energies and finite-difference forces (Gamma and multi-k RHF, UHF, RKS, UKS, 3-D); analytic gradients are a **preview**; the quartet multipole far field is **gated** |
+| `"gpw"` | **production** within its shipped envelope (Gamma RHF, UHF, RKS, UKS; multi-k pure-DFT RKS, ROKS, UKS; Gamma analytic gradients; DFT+U; D3-BJ); GPW ROHF/ROKS are a **preview**; the `.out` route line carries an experimental tag and the grid infrastructure emits `GAPWExperimentalWarning` once per grid build while the GPW/GAPW family is completed |
+| `"gapw"` | **experimental** |
+| `"rijcosx"` | **experimental** |
+| `"auto"` on a `dim=2` slab (SLAB_EWALD_2D) | **production** for RHF, RKS and UKS |
+| `method="aiccm"` with any `variant` | **experimental** |
+```
+
 ```{seealso}
 This is the hands-on companion to the reference page
 [periodic-SCF methods](../user_guide/periodic_methods.md), which derives
@@ -46,7 +62,7 @@ res = vq.run_periodic_job(system, basis, method="RKS", functional="pbe",
 res = vq.run_periodic_job(system, basis, method="RKS", functional="pbe",
                           kpoints=[4, 4, 4], jk_method="bipole")
 
-# Plane-wave routes (run full SCF today; you opt in to a maturity warning):
+# Plane-wave routes: GPW is production within its envelope, GAPW is experimental.
 res = vq.run_periodic_job(system, basis, method="RKS", functional="pbe",
                           jk_method="gpw")    # or jk_method="gapw"
 
@@ -74,47 +90,60 @@ closed-shell HF and KS, at $\Gamma$ and at a full k-mesh, with open-shell
 UHF / UKS available too (Gamma and multi-k). It projects the AO pair
 density onto a charge-compensated auxiliary basis, which cancels the
 divergent monopole at the source and leaves a finite, fast Coulomb
-metric. Best all-round choice for ionic and covalent insulators. Deep
+metric ({vibeqc-cite}`sun_berkelbach_gdf_2017`). Best all-round choice for ionic and covalent insulators. Deep
 dive: [`density_fitting.md`](../user_guide/density_fitting.md).
 
 **BIPOLE, an Ewald J-split.** Splits $1/r$ into a short-range
 piece summed in real space and a long-range piece summed in reciprocal
-space, sharing a single Ewald parameter across the electron-nucleus,
-electron-electron, and nucleus-nucleus terms. This is the route for **open-shell** systems, **hybrid functionals
+space ({vibeqc-cite}`ewald_lattice_sum_1921`), sharing a single Ewald
+parameter across the electron-nucleus,
+electron-electron, and nucleus-nucleus terms, with the Gaussian-density
+electrostatics of {vibeqc-cite}`saunders_bipole_1992` and the CRYSTAL
+conventions of {vibeqc-cite}`dovesi_crystal14_2014`. This is the route for **open-shell** systems, **hybrid functionals
 at multiple k-points**, and **cross-validating against a CRYSTAL14 reference**. Production
 for 3D; the multi-k corrected-gauge exchange is an active frontier. Deep
 dive: [`bipole.md`](../user_guide/bipole.md).
 
-**GPW, Gaussian + plane-wave.** Carries the density on a uniform grid and
+**GPW, Gaussian + plane-wave** ({vibeqc-cite}`lippert_hutter_gpw_1997`).
+Carries the density on a uniform grid and
 solves the Poisson equation by FFT (an $\mathcal{O}(N_g\log N_g)$ Hartree
 build), pinning the $\mathbf{G}=0$ component to zero for a neutral cell.
-It runs a full SCF today: $\Gamma$-point RHF, RKS, UHF, and UKS plus
-multi-k RKS, with forces, the finite-difference Hessian, DFT+U, smearing,
-and D3(BJ) dispersion. It carries an all-electron density on the grid, so
-no pseudopotential files are involved. Opt in and it emits a maturity
-warning (`GAPWExperimentalWarning`). Deep dive:
+It is production within its shipped envelope: $\Gamma$-point RHF, RKS, UHF,
+and UKS plus multi-k pure-DFT RKS, ROKS and UKS, with Gamma analytic forces,
+the finite-difference Hessian, DFT+U, smearing, and D3(BJ) dispersion; GPW
+ROHF and ROKS are a maintained preview. It carries an all-electron density on
+the grid, so no pseudopotential files are involved. The `.out` route
+line still carries an experimental tag and the plane-wave grid infrastructure
+emits `GAPWExperimentalWarning` once per grid build while the GPW/GAPW family
+is completed; GDF and BIPOLE are the longer-validated routes. Deep dive:
 [`gapw.md`](../user_guide/gapw.md).
 
-**GAPW, Gaussian-augmented plane-wave.** GPW plus a per-atom radial
+**GAPW, Gaussian-augmented plane-wave**
+({vibeqc-cite}`lippert_hutter_parrinello_gapw_1999`,
+{vibeqc-cite}`krack_parrinello_allelectron_2000`). GPW plus a per-atom radial
 augmentation that sharpens all-electron accuracy by splitting the Hartree
-potential into a smooth grid part and a hard atomic correction. Same SCF
-coverage and same opt-in maturity warning as GPW. Deep dive:
-[`gapw.md`](../user_guide/gapw.md).
+potential into a smooth grid part and a hard atomic correction. Experimental:
+molecular-limit Gamma HF and block-construction DFT ship, compact-crystal
+augmentation validation is pending, and the library drivers emit
+`GAPWExperimentalWarning`. Deep dive: [`gapw.md`](../user_guide/gapw.md).
 
 **RIJCOSX, density-fitted J plus chain-of-spheres K.** Builds the Coulomb
 matrix by GDF density fitting and the exchange by a seminumerical
-chain-of-spheres (COSX) sum on a periodic Becke grid. It runs a full
+chain-of-spheres (COSX, {vibeqc-cite}`neese_rijcosx_2009`) sum on a
+periodic Becke grid. It runs a full
 $\Gamma$-point RHF SCF today and true multi-k RHF, RKS, UHF, and UKS on
 uniform time-reversal-symmetric meshes through the GDF/COSX backend. The
 dedicated $\Gamma$ route is at parity with GDF for vacuum-padded
 (molecular-limit) cells; its tight-cell exchange K is still being brought
 to GDF parity, so use GDF for production tight-cell hybrids meanwhile.
-Deep dive: [`density_fitting.md`](../user_guide/density_fitting.md).
+Periodic RIJCOSX is experimental. Deep dive:
+[`density_fitting.md`](../user_guide/density_fitting.md).
 
 ```{note}
-**The plane-wave routes are vibe-qc's own grid / projector-augmented
+**The plane-wave routes are vibe-qc's own grid / Gaussian-augmented
 implementation.** GPW and GAPW are computed entirely by vibe-qc's own
-kernels (GAPW is the all-electron, projector-augmented variant), and the ASE
+kernels (GAPW is the all-electron variant, a hard/soft Gaussian density
+partition rather than the projector-augmented-wave method), and the ASE
 Calculator and command-line interface mirror GPAW's so a GPAW user is at
 home. The separate external GPAW code is used only as an out-of-process
 parity reference; vibe-qc never imports it or calls it to compute an energy.
@@ -124,7 +153,8 @@ parity reference; vibe-qc never imports it or calls it to compute an energy.
 **Beyond the k-point routes: the cyclic cluster model (CCM).** vibe-qc's
 signature periodic approach is real-space rather than reciprocal-space: the
 [cyclic cluster model](cyclic_cluster_model.md) treats a crystal as a single
-finite cyclic cluster rather than sampling the Brillouin zone. It is
+finite cyclic cluster rather than sampling the Brillouin zone
+({vibeqc-cite}`bredow_geudtner_jug_ccm_2001`, {vibeqc-cite}`peintinger_ccm_2014`). It is
 available today at the semi-empirical (MSINDO) level; two distinct
 experimental ab-initio CCM approaches ship separately -
 [Γ-CCM / `aiccm2026dev-a`](../aiccm2026dev_a.md) (union-and-weight/
@@ -138,9 +168,11 @@ the [CCM reference](../user_guide/cyclic_cluster_model.md).
 
 ## How to choose
 
-All of these compute the *same* periodic Hamiltonian; at convergence they
-agree on the total energy. They differ in cost, in which methods they
-support, and in maturity. Pick by your situation:
+All of these target the *same* periodic Hamiltonian, but their total
+energies agree only once the finite Coulomb and exchange-divergence
+conventions are matched (see [Running a real comparison](#running-a-real-comparison),
+whose MgO GDF and BIPOLE pair differs by about 0.5 Ha). They differ in cost,
+in which methods they support, and in maturity. Pick by your situation:
 
 | Your situation | Route | Why |
 |---|---|---|
@@ -149,19 +181,19 @@ support, and in maturity. Pick by your situation:
 | Full-range hybrid at multiple k-points | **BIPOLE** or **RIJCOSX** | both carry exact-exchange K at $\mathbf{k}\neq 0$; RIJCOSX uses the composed COSX backend |
 | Cross-validating against CRYSTAL | **BIPOLE** | the shared-$\alpha$ Ewald J-split gives directly comparable energies |
 | Tight ionic crystal at $\Gamma$ | **GDF** | auxiliary fit avoids grid / Ewald overhead |
-| Plane-wave Hartree-J, large smooth-density cell | **GPW** | smooth-grid FFT-Poisson Hartree; $\Gamma$ RHF/RKS/UHF/UKS + multi-k RKS |
-| Plane-wave with all-electron augmentation | **GAPW** | per-atom augmentation, no pseudopotential files |
+| Plane-wave Hartree-J, large smooth-density cell | **GPW** | smooth-grid FFT-Poisson Hartree; $\Gamma$ RHF/RKS/UHF/UKS + multi-k pure-DFT RKS/ROKS/UKS (production within that envelope) |
+| Plane-wave with all-electron augmentation | **GAPW** | per-atom augmentation, no pseudopotential files (experimental) |
 | Seminumerical exchange at $\Gamma$ or uniform multi-k | **RIJCOSX** | GDF-J + chain-of-spheres COSX-K; use GDF for tight-cell $\Gamma$ hybrids |
 
 ```{important}
 The automatic default (**GDF** for closed-shell, **BIPOLE** for
 open-shell) already covers closed- and open-shell work, and both are
-mature production routes. **GPW**, **GAPW**, and **RIJCOSX** also run a
-full SCF today and are reached by an explicit `jk_method=`; they carry an
-opt-in maturity warning because their feature surface is still filling in
-(RIJCOSX has multi-k coverage, but its dedicated $\Gamma$ tight-cell
-exchange is not yet at GDF parity). For a $\Gamma$-point hybrid functional
-on a tight ionic crystal, stay on GDF or BIPOLE until that gap closes.
+the longer-validated production routes. **GPW** is production within its
+envelope and is reached by an explicit `jk_method="gpw"`; **GAPW** and
+**RIJCOSX** also run a full SCF today but are experimental (RIJCOSX has
+multi-k coverage, but its dedicated $\Gamma$ tight-cell exchange is not yet
+at GDF parity). For a $\Gamma$-point hybrid functional on a tight ionic
+crystal, stay on GDF or BIPOLE until that gap closes.
 ```
 
 ## Running a real comparison
@@ -194,7 +226,7 @@ against:
   iterations to `-271.21454466172247` Ha per primitive cell. The bundle is
   useful for inspecting route-specific inputs, logs, QVFs, and viewer output;
   do not read this pair as a GDF/BIPOLE parity assertion.
-- The runnable scripts under [`examples/periodic/`](https://github.com/vibe-qc/vibe-qc/tree/main/examples/periodic/) (LiH, MgO, NaCl, and more); change `jk_method` and re-run to see the routes agree.
+- The runnable scripts under [`examples/periodic/`](https://github.com/vibe-qc/vibe-qc/tree/main/examples/periodic/) (LiH, MgO, NaCl, and more); change `jk_method` and re-run to compare the routes.
 
 For the k-space machinery every periodic route shares (the Brillouin zone,
 Bloch phase, and why a k-mesh is needed at all), read

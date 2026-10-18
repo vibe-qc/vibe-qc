@@ -209,6 +209,9 @@ def test_legacy_pair_residual_pno_convergence_is_not_monotone():
                 tcut_mkn=0.0,
                 residual_domain="pair",
                 compute_triples=False,
+                # The historical witness predates the ORCA singles-PNO scale
+                # on the diagonal pairs (#190).
+                tcut_pno_diag_scale=1.0,
             ),
         )
         assert result.converged

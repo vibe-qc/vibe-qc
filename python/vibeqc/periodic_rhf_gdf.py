@@ -16,10 +16,11 @@ Algorithm selection
 -------------------
 
 * ``gdf_algorithm='bare'`` (default): direct image-summed 2c/3c ERIs
-  with modrho rescaling. Works for 1D/2D/3D molecular-limit cells.
-  For 3D cells where the GDF cutoff includes image cells, or when an
-  internal finite-torus caller requires the periodic Hamiltonian, the
-  driver falls back to EWALD_3D J + real-space K.
+  with modrho rescaling, for 2D cells and 3D molecular-limit cells whose
+  GDF cutoff holds only the home cell. A compact 3D call runs the bulk
+  GDF Hamiltonian instead (``run_krhf_periodic_gdf`` at ``(1, 1, 1)``,
+  #468). The private finite-torus seam retains its existing EWALD_3D
+  J + real-space K route.
 * ``gdf_algorithm='rsgdf'``: range-separated GDF (Ye & Berkelbach 2021,
   DOI 10.1063/5.0046617). Split 1/r = erfc(\u03c9r)/r + erf(\u03c9r)/r; SR
   in real space, LR in reciprocal space. Works for 1D/2D systems;
@@ -45,6 +46,9 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
+from .periodic.exchange_convention import BVK_EWALD, MOLECULAR_LIMIT
+from .fock_state import EnergyComponents, FockBuild, SourceProvenance
+from .solvers.operators import OperatorFrame, _snapshot
 from ._vibeqc_core import (
     apply_level_shift,
     BasisSet,
@@ -98,6 +102,7 @@ from .occupations import (
 from .smearing.apply import _global_aufbau_with_mu
 from .options_dump import dump_active_settings
 from .periodic_grid import build_periodic_becke_grid
+from .periodic_jk_method import _WIRE_VACUUM_BOX_HINT
 from .periodic_k_density import real_space_density_from_per_k_density
 from .periodic_rhf_ewald import (
     _canonical_orthogonalizer,
@@ -128,12 +133,14 @@ class PeriodicRHFGDFResult:
 
     The ``backend`` field indicates the actual J/K mechanism:
       - ``"native-gamma-gdf"`` -- true density fitting via Lpq
-        (1D/2D systems; 3D molecular-limit cells whose GDF cutoff
+        (2D systems; 3D molecular-limit cells whose GDF cutoff
         includes only the home cell).
+      - the k-mesh engine's backend (``"native-multi-k-gdf-..."`` or
+        ``"native-gamma-gdf-via-k-gdf"``) -- a public compact 3D call,
+        run as ``run_krhf_periodic_gdf`` at ``(1, 1, 1)`` (#468).
       - ``"ewald-jk-fallback"`` -- Ewald-3D J + real-space K
-        (3D systems with image cells in the GDF cutoff, or an internal
-        finite-torus request; see :mod:`vibeqc.pbc_gdf` for the
-        compensated-cell GDF path)."""
+        (an explicit private finite-torus request; see
+        :mod:`vibeqc.pbc_gdf` for the compensated-cell GDF path)."""
 
     energy: float
     e_electronic: float
@@ -173,6 +180,26 @@ class PeriodicRHFGDFResult:
     restart_kpoints: object = None
     restart_weights: object = None
 
+    # Every Gamma-only Ewald/GDF driver builds exchange with the
+    # molecular-limit kernel (home-cell density, image blocks zeroed); the
+    # runner's manifest records this instead of the exxdiv knob (GitLab #23).
+    exchange_q0: str = MOLECULAR_LIMIT
+    fock_build: FockBuild | None = None
+    next_density: np.ndarray | None = None
+    density_fixed_point_residual: float | None = None
+    evaluated_build_history: list[dict] = field(default_factory=list)
+
+    @property
+    def run_fields(self):
+        if self.fock_build is None:
+            return {}
+        return dict(self.fock_build.output_fields(),
+                    orbital_state_relation="density-defining-physical-rayleigh-quotients",
+                    scf_stop_reason="converged" if self.converged else "iteration_limit",
+                    density_fixed_point_residual=self.density_fixed_point_residual,
+                    scf_trace_energy="free_energy",
+                    evaluated_build_history=[dict(row) for row in self.evaluated_build_history])
+
 
 @dataclass
 class _PrivateSlabKRHFGDFResult:
@@ -198,6 +225,8 @@ class _PrivateSlabKRHFGDFResult:
     e_hf_exchange: float = 0.0
     aux_basis_name: str = ""
     n_aux: int = 0
+    #: ``(k_i, k_j)`` fit tensors the SCF built (``len(fits)``).
+    gdf_cderi_pairs: int = 0
     backend: str = "private-multik-slab-truncated-gdf"
 
     restart_basis: object = None
@@ -378,6 +407,165 @@ def _build_k_from_lpq(Lpq: np.ndarray, D: np.ndarray) -> np.ndarray:
     return 0.5 * (K + K.T)
 
 
+class _NativeGammaGDFRHFBuilder:
+    """Owned bare-fit RHF source for a home-cell-only Gamma calculation.
+
+    Freeze the fitted tensor once, not each SCF cycle. Neither mutable options
+    nor integral providers survive capture. This dense producer has no bounded
+    memory claim; native bounded MANTA sources retain their own contracts.
+    The total-density convention is F = H + J[D] - K[D]/2.
+    """
+    def __init__(self, factors, kinetic, nuclear, frame, e_nuclear, *,
+                 basis, auxiliary, system, lattice_options, nuclear_options,
+                 fit_threshold, apply_modrho):
+        import hashlib
+        from .bipole_domain import LATTICE_FIELDS, OptionSnapshot
+
+        def receipt(array):
+            a = np.ascontiguousarray(array)
+            return dict(shape=list(a.shape), dtype=a.dtype.str,
+                        sha256=hashlib.sha256(a.tobytes()).hexdigest())
+
+        def shells(b):
+            return [dict(atom_index=int(x.atom_index), l=int(x.l), pure=bool(x.pure),
+                         exponents=list(x.exponents), coefficients=list(x.coefficients),
+                         origin=list(x.origin)) for x in b.shells()]
+
+        self.factors = _snapshot(factors)
+        self.kinetic, self.nuclear = _snapshot(kinetic), _snapshot(nuclear)
+        self.hcore = _snapshot(.5 * (kinetic + nuclear + (kinetic + nuclear).T))
+        self.frame, self.e_nuclear = frame, float(e_nuclear)
+        self.source = SourceProvenance.capture("libint2+native-gamma-gdf",
+            schema="vibeqc.native-gamma-gdf-rhf-source.v1",
+            shells=shells(basis), auxiliary_shells=shells(auxiliary),
+            ordering="libint-standard-pure-m-ascending-cartesian-lx-ly-descending",
+            lattice=np.asarray(system.lattice).tolist(), dimensionality=int(system.dim),
+            nuclei=[dict(Z=int(a.Z), position=list(a.xyz)) for a in system.unit_cell_molecule().atoms],
+            lattice_options=OptionSnapshot.capture(lattice_options, LATTICE_FIELDS).values,
+            nuclear_options=OptionSnapshot.capture(nuclear_options, LATTICE_FIELDS).values,
+            algorithm="bare", apply_modrho=bool(apply_modrho),
+            fit_threshold=float(fit_threshold), fit=receipt(self.factors),
+            kinetic=receipt(self.kinetic), nuclear_attraction=receipt(self.nuclear),
+            nuclear_repulsion=self.e_nuclear,
+            hartree_kernel="fitted-coulomb", exchange_kernel="fitted-coulomb",
+            exchange_q0=MOLECULAR_LIMIT, integral_cells="home-cell-only",
+            symmetry_reduction="unreduced", mesh="full-gamma", weights=[1.0])
+        self.generation = 0
+
+    def __call__(self, density):
+        d = _snapshot(density)
+        if np.iscomplexobj(d):
+            raise NotImplementedError("Gamma GDF RHF requires a real total density")
+        j = _build_j_from_lpq(self.factors, d)
+        k = _build_k_from_lpq(self.factors, d)
+        f = self.hcore + j - .5 * k
+        f = .5 * (f + f.T)
+        components = (("kinetic", float(np.einsum("ij,ij->", d, self.kinetic))),
+                      ("nuclear_attraction", float(np.einsum("ij,ij->", d, self.nuclear))),
+                      ("coulomb", .5 * float(np.einsum("ij,ij->", d, j))),
+                      ("exchange", -.25 * float(np.einsum("ij,ij->", d, k))))
+        state = FockBuild.from_dense(
+            method="RHF", generation=self.generation, source=self.source,
+            energy=EnergyComponents(electronic=sum(v for _, v in components),
+                                    nuclear=self.e_nuclear, components=components),
+            densities=(d,), focks=(f,), frames=(self.frame,), spins=("restricted",),
+            kpoints=((0., 0., 0.),), weights=(1.,))
+        self.generation += 1
+        return state
+
+
+class _NativeGammaGDFRKSBuilder:
+    """Joint fitted HF and libxc evaluation at one real total density.
+
+    E = tr(D H) + tr(D J)/2 - alpha tr(D K)/4 + E_xc[D].
+    The XC energy is not tr(D V_xc)/2. See the KS variational formulation
+    in Lehtola et al., SoftwareX 7 (2018), sections 1-2, equations 2/4/7,
+    DOI 10.1016/j.softx.2017.11.002. Fitting retains the RHF source.
+    """
+    def __init__(self, hf_builder, basis, system, lattice_options, functional,
+                 grid, density_set, set_xc_density):
+        if functional.is_external:
+            raise NotImplementedError("Gamma GDF RKS evaluated states require a libxc functional")
+        self.hf_builder = hf_builder
+        self.basis, self.system, self.lattice_options = basis, system, lattice_options
+        self.functional, self.grid = functional, grid
+        self.density_set, self.set_xc_density = density_set, set_xc_density
+        self.kinetic, self.nuclear, self.hcore = (
+            hf_builder.kinetic, hf_builder.nuclear, hf_builder.hcore)
+        self.factors, self.frame = hf_builder.factors, hf_builder.frame
+        self.e_nuclear = hf_builder.e_nuclear
+        self.alpha = float(functional.hf_exchange_fraction)
+        self.xc_source = self._xc_source()
+        self.source = SourceProvenance.capture("libint2+native-gamma-gdf+libxc",
+            schema="vibeqc.native-gamma-gdf-rks-source.v1",
+            fitted_source=hf_builder.source.as_dict(), xc=self.xc_source.as_dict())
+        self.generation = 0
+
+    def _xc_source(self):
+        # Live native XC captures must still match the source at construction.
+        # Fitted HF arrays are already owned by the independent RHF builder.
+        import hashlib
+        from .bipole_domain import LATTICE_FIELDS, OptionSnapshot
+
+        def receipt(array):
+            a = np.ascontiguousarray(array)
+            return dict(shape=list(a.shape), dtype=a.dtype.str,
+                        sha256=hashlib.sha256(a.tobytes()).hexdigest())
+
+        func = self.functional
+        return SourceProvenance.capture("libxc",
+            shells=[dict(atom_index=int(x.atom_index), l=int(x.l), pure=bool(x.pure),
+                         exponents=list(x.exponents), coefficients=list(x.coefficients),
+                         origin=list(x.origin)) for x in self.basis.shells()],
+            lattice=np.asarray(self.system.lattice).tolist(), dimensionality=int(self.system.dim),
+            nuclei=[dict(Z=int(a.Z), position=list(a.xyz))
+                    for a in self.system.unit_cell_molecule().atoms],
+            lattice_options=OptionSnapshot.capture(self.lattice_options, LATTICE_FIELDS).values,
+            name=func.name, kind=func.kind.name, components=func.components,
+            spin=int(func.spin), hf_exchange_fraction=func.hf_exchange_fraction,
+            cam_alpha=func.cam_alpha, cam_beta=func.cam_beta, rsh_omega=func.rsh_omega,
+            grid_points=receipt(self.grid.points), grid_weights=receipt(self.grid.weights),
+            density_convention=("gamma-torus" if self.set_xc_density is _density_set_torus_gamma
+                                else "home-cell-only"),
+            cells=[list(cell.r_cart) for cell in self.density_set.cells])
+
+    def __call__(self, density, *, hf_seed=False):
+        if self._xc_source() != self.xc_source:
+            raise ValueError("Gamma GDF RKS numerical source changed; rebuild its provider and metric frame")
+        if hf_seed:
+            # PATOM is full HF regardless of the target functional and has
+            # its own generation/source and eigensolver recycle history.
+            return self.hf_builder(density)
+        d = _snapshot(density)
+        if np.iscomplexobj(d):
+            raise NotImplementedError("Gamma GDF RKS requires a real total density")
+        j = _build_j_from_lpq(self.factors, d)
+        k = _build_k_from_lpq(self.factors, d) if self.alpha != 0. else None
+        self.set_xc_density(self.density_set, d)
+        xc = build_xc_periodic(self.basis, self.system, self.grid, self.functional,
+                               self.density_set, self.lattice_options)
+        v_xc = np.real(bloch_sum(xc.V_xc, np.zeros(3)))
+        v_xc = .5 * (v_xc + v_xc.T)
+        f = self.hcore + j + v_xc
+        if k is not None:
+            f = f - .5 * self.alpha * k
+        f = .5 * (f + f.T)
+        components = (("kinetic", float(np.einsum("ij,ij->", d, self.kinetic))),
+                      ("nuclear_attraction", float(np.einsum("ij,ij->", d, self.nuclear))),
+                      ("coulomb", .5 * float(np.einsum("ij,ij->", d, j))),
+                      ("exchange", 0. if k is None else
+                       -.25 * self.alpha * float(np.einsum("ij,ij->", d, k))),
+                      ("xc", float(xc.e_xc)))
+        state = FockBuild.from_dense(
+            method="RKS", kind="ks", generation=self.generation, source=self.source,
+            energy=EnergyComponents(electronic=sum(v for _, v in components),
+                                    nuclear=self.e_nuclear, components=components),
+            densities=(d,), focks=(f,), frames=(self.frame,), spins=("restricted",),
+            kpoints=((0., 0., 0.),), weights=(1.,))
+        self.generation += 1
+        return state
+
+
 def _density_set_gamma(
     template: LatticeMatrixSet,
     D: np.ndarray,
@@ -394,7 +582,7 @@ def _density_set_gamma(
     density on the one-cell periodic grid drops every image
     contribution to ρ(r) and mis-evaluates E_xc/V_xc by ~0.3 Ha on
     tight ionic cells (the 2026-07-09 KRKS finding,
-    handovers/HANDOVER_AICCM_DIRECT_TORUS.md §4).
+    the original investigation).
     """
     if D.shape[0] != template.nbf:
         raise ValueError(
@@ -498,6 +686,204 @@ def _density_from_orbitals_and_occupations(
     return 0.5 * (D + D.T)
 
 
+def _warn_conducting_gamma_state(energies, n_occ, plog):
+    """Preserve the informational small-gap warning at an accepted stop."""
+    _CONDUCTING_GAP_THRESHOLD_HA = 1e-3
+    if n_occ > 0 and n_occ < energies.shape[0]:
+        homo = float(energies[n_occ - 1])
+        lumo = float(energies[n_occ])
+        gap = lumo - homo
+        if gap < _CONDUCTING_GAP_THRESHOLD_HA:
+            plog.info(
+                "POSSIBLY CONDUCTING STATE at convergence: "
+                f"HOMO-LUMO gap = {gap:.6f} Ha "
+                f"({gap * 27.2114:.3f} eV) "
+                f"below the {_CONDUCTING_GAP_THRESHOLD_HA:.0e} Ha threshold "
+                f"(HOMO={homo:.6f}, LUMO={lumo:.6f}). "
+                "For metals / small-gap systems consider Fermi smearing "
+                "(opts.smearing_temperature > 0) or denser k-mesh; "
+                "Γ-only RHF on a true metal can be ill-defined."
+            )
+
+
+class GammaExchangeRouteWarning(UserWarning):
+    """A Gamma GDF call on a 3-D cell changed or kept its exchange route (#468)."""
+
+
+_BULK_GAMMA_REROUTE_NOTICE = (
+    "run_rhf_periodic_gamma_gdf: compact dim=3 cell (image cells inside "
+    "cutoff_bohr), so this runs the bulk GDF Hamiltonian at Gamma (run_krhf_periodic_gdf at kmesh=(1, 1, 1)) with "
+    "exxdiv='ewald' exchange. In a Gamma calculation every cell holds the "
+    "same orbitals, so the exchange reaches into the periodic images and "
+    "needs the Ewald (Madelung) divergence correction. This driver's former "
+    "3-D path used molecular-limit exchange instead (only the images inside "
+    "cutoff_bohr, no correction). That is valid only while the density does "
+    "not reach its images, as for a molecule in a large box; on compact "
+    "crystals it was 2.6 to 3.1 Ha too low (MgO, Al2O3 / STO-3G, #468). The "
+    "result equals run_krhf_periodic_gdf at (1, 1, 1)."
+)
+
+_FORCED_MOLECULAR_LIMIT_NOTICE = (
+    "run_rhf_periodic_gamma_gdf: _force_ewald_jk keeps Ewald J with "
+    "molecular-limit exchange on this 3-D cell: only the images inside "
+    "cutoff_bohr, no exchange-divergence correction. That is the periodic "
+    "exchange only while the density does not reach its images; on a "
+    "compact cell the energy is unphysical, by Hartrees on MgO and Al2O3 "
+    "(#468)."
+)
+
+
+def _real_if_gamma(value: np.ndarray, *, columns: bool = False) -> np.ndarray:
+    """A Gamma array from the k-mesh engine, made real when it is real.
+
+    With ``columns=True`` each column (an MO) first gets the phase that
+    makes its largest component real, since the complex eigensolver
+    returns Gamma orbitals with an arbitrary phase. A column that stays
+    complex (a degenerate pair mixed by the solver) keeps the array complex.
+    """
+    value = np.asarray(value)
+    if not np.iscomplexobj(value) or not value.size:
+        return value
+    if columns and value.ndim == 2:
+        pivot = np.argmax(np.abs(value), axis=0)
+        lead = value[pivot, np.arange(value.shape[1])]
+        value = value * (np.abs(lead) / np.where(lead == 0, 1, lead))
+    if np.max(np.abs(value.imag)) <= 1e-10 * max(1.0, np.max(np.abs(value))):
+        return np.ascontiguousarray(value.real)
+    return value
+
+
+def _ks_options_for_functional(options, functional: Optional[str]):
+    """Carry ``PeriodicRHFOptions`` plus a functional over to KS options.
+
+    The k-mesh engine takes its XC grid from ``PeriodicKSOptions``. With
+    plain RHF options it falls back to a molecular Becke grid around the
+    home cell, which on a periodic density returned E_xc = -75.7 Ha for
+    H2/STO-3G PBE in a 6-bohr cube. The KS options default to the periodic
+    Becke grid. Every RHF field exists on the KS options and is copied.
+    """
+    func = functional or str(getattr(options, "functional", "") or "")
+    if not func or options is None or hasattr(options, "grid"):
+        return options, False
+    ks = PeriodicKSOptions()
+    for name in dir(options):
+        if name.startswith("_") or callable(getattr(options, name)):
+            continue
+        setattr(ks, name, getattr(options, name))
+    ks.functional = func
+    return ks, True
+
+
+def _run_bulk_gamma_via_k_gdf(
+    system: PeriodicSystem,
+    basis: BasisSet,
+    options,
+    *,
+    functional: Optional[str],
+    aux_basis: Optional[str],
+    aux_drop_eta: float,
+    linear_dep_threshold: float,
+    gdf_linear_dep_threshold: float,
+    apply_modrho: bool,
+    rsgdf_omega: float,
+    fock_mixing: Optional[float],
+    level_shift_warmup_cycles: Optional[int],
+    symmetry_stabilize: bool,
+    symmetry_reduce_fock: bool,
+    progress,
+    verbose: Optional[int],
+) -> PeriodicRHFGDFResult:
+    """Evaluate a bulk (dim == 3) cell on the GDF Hamiltonian at Gamma.
+
+    The 3-D branch of this driver used Ewald J with molecular-limit
+    exchange: the Gamma density summed over the AO-pair images inside the
+    integral cutoff, with no exchange-divergence correction. That is the
+    periodic exchange only when the density does not reach its images.
+    On compact crystals it was 2.6 to 3.1 Ha below the GDF reference
+    (MgO, Al2O3 / STO-3G, #468). A bulk Gamma calculation is the one-point
+    mesh of the GDF Hamiltonian with the ``exxdiv='ewald'`` correction,
+    so it runs ``run_krhf_periodic_gdf`` at ``(1, 1, 1)``, which selects
+    the exact-Gamma driver or the k-mesh loop (periodic_gdf_route.py).
+    The result keeps this driver's single-k shape.
+    """
+    import warnings
+
+    from .periodic_gdf_route import reject_gdf_fock_symmetry
+    from .periodic_k_gdf import run_krhf_periodic_gdf
+
+    options, converted = _ks_options_for_functional(options, functional)
+    notice = _BULK_GAMMA_REROUTE_NOTICE
+    if converted:
+        notice += (
+            " The functional came with PeriodicRHFOptions, so the run uses "
+            "PeriodicKSOptions with the same settings and the default "
+            "periodic Becke XC grid."
+        )
+    warnings.warn(notice, GammaExchangeRouteWarning, stacklevel=3)
+    plog = resolve_progress(progress, verbose=verbose)
+    plog.warn(notice)
+    reject_gdf_fock_symmetry(
+        dim=3,
+        symmetry_stabilize=symmetry_stabilize,
+        symmetry_reduce_fock=bool(symmetry_reduce_fock) or None,
+        where="run_rhf_periodic_gamma_gdf",
+    )
+    k = run_krhf_periodic_gdf(
+        system, basis, (1, 1, 1), options,
+        functional=functional,
+        aux_basis=aux_basis,
+        aux_drop_eta=aux_drop_eta,
+        linear_dep_threshold=linear_dep_threshold,
+        gdf_linear_dep_threshold=gdf_linear_dep_threshold,
+        apply_modrho=apply_modrho,
+        rsgdf_omega=rsgdf_omega,
+        fock_mixing=fock_mixing,
+        level_shift_warmup_cycles=level_shift_warmup_cycles,
+        progress=plog,
+        verbose=verbose,
+    )
+    occupations = list(getattr(k, "occupations", []) or [])
+    return PeriodicRHFGDFResult(
+        energy=float(k.energy),
+        e_electronic=float(k.e_electronic),
+        e_nuclear=float(k.e_nuclear),
+        n_iter=int(k.n_iter),
+        converged=bool(k.converged),
+        mo_energies=_real_if_gamma(k.mo_energies[0]),
+        mo_coeffs=_real_if_gamma(k.mo_coeffs[0], columns=True),
+        density=_real_if_gamma(k.density[0]),
+        fock=_real_if_gamma(k.fock[0]),
+        overlap=_real_if_gamma(k.overlap[0]),
+        scf_trace=list(k.scf_trace),
+        hcore=_real_if_gamma(k.hcore[0]),
+        aux_basis_name=str(getattr(k, "aux_basis_name", "") or ""),
+        n_aux=int(getattr(k, "n_aux", 0) or 0),
+        # The k-mesh result carries no separate fitted rank.
+        n_fit=int(getattr(k, "n_aux", 0) or 0),
+        linear_dep_threshold=float(linear_dep_threshold),
+        gdf_algorithm="k-gdf",
+        e_xc=float(getattr(k, "e_xc", 0.0)),
+        e_coulomb=float(getattr(k, "e_coulomb", 0.0)),
+        e_hf_exchange=float(getattr(k, "e_hf_exchange", 0.0)),
+        functional=str(getattr(k, "functional", "") or ""),
+        fock_mixing=float(getattr(k, "fock_mixing", 0.0)),
+        level_shift=float(getattr(k, "level_shift", 0.0)),
+        level_shift_warmup_cycles=int(getattr(k, "level_shift_warmup_cycles", 0)),
+        smearing_temperature=float(getattr(k, "smearing_temperature", 0.0)),
+        fermi_level=float(getattr(k, "fermi_level", 0.0)),
+        entropy=float(getattr(k, "entropy", 0.0)),
+        free_energy=float(getattr(k, "free_energy", 0.0)),
+        occupations=(_real_if_gamma(occupations[0]) if occupations else np.empty(0)),
+        backend=str(k.backend),
+        restart_basis=getattr(k, "restart_basis", None),
+        restart_lattice=getattr(k, "restart_lattice", None),
+        guess_selection=getattr(k, "guess_selection", None),
+        restart_kpoints=getattr(k, "restart_kpoints", None),
+        restart_weights=getattr(k, "restart_weights", None),
+        exchange_q0=str(getattr(k, "exchange_q0", None) or BVK_EWALD),
+    )
+
+
 def run_rhf_periodic_gamma_gdf(
     system: PeriodicSystem,
     basis: BasisSet,
@@ -532,10 +918,44 @@ def run_rhf_periodic_gamma_gdf(
     cell is known to represent a fully periodic torus.  Such callers must
     retain the Ewald-J/real-space-K Hamiltonian even when the numerical
     lattice cutoff happens to include only the home cell.
+
+    A ``dim == 1`` cell raises ``NotImplementedError``: the route has no
+    consistent 1-D Coulomb gauge, so its total energy depends on the
+    lattice-sum cutoff. Model a wire as a ``dim=3`` cell with transverse
+    vacuum instead.
+
+    A compact ``dim == 3`` cell, whose integral cutoff reaches image
+    cells, runs :func:`vibeqc.run_krhf_periodic_gdf` at
+    ``kmesh=(1, 1, 1)``: the GDF Hamiltonian with the ``exxdiv='ewald'``
+    exchange (#468). ``gdf_algorithm`` does not apply there, and
+    ``symmetry_stabilize`` / ``symmetry_reduce_fock=True`` raise. A 3-D
+    cell whose cutoff holds only the home cell keeps the molecular-limit
+    GDF route. Only the private ``_force_ewald_jk`` seam keeps the
+    Ewald-J, molecular-limit exchange on a compact cell.
     """
     from .pbc_gdf import _refuse_ecp_options
 
     _refuse_ecp_options(options, "run_rhf_periodic_gamma_gdf", system=system)
+    if (int(system.dim) == 3 and not _force_ewald_jk
+            and len(direct_lattice_cells(system, (
+                options if options is not None else PeriodicRHFOptions()
+            ).lattice_opts.cutoff_bohr)) > 1):
+        return _run_bulk_gamma_via_k_gdf(
+            system, basis, options,
+            functional=functional,
+            aux_basis=aux_basis,
+            aux_drop_eta=aux_drop_eta,
+            linear_dep_threshold=linear_dep_threshold,
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
+            apply_modrho=apply_modrho,
+            rsgdf_omega=rsgdf_omega,
+            fock_mixing=fock_mixing,
+            level_shift_warmup_cycles=level_shift_warmup_cycles,
+            symmetry_stabilize=symmetry_stabilize,
+            symmetry_reduce_fock=symmetry_reduce_fock,
+            progress=progress,
+            verbose=verbose,
+        )
     opts = options if options is not None else PeriodicRHFOptions()
     from .guess import select_initial_guess, periodic_fock_guess_k
     guess = select_initial_guess(
@@ -570,6 +990,22 @@ def run_rhf_periodic_gamma_gdf(
                 "private slab-truncated GDF requires "
                 "coulomb_method=SLAB_EWALD_2D for V_ne and E_nuclear"
             )
+    if int(system.dim) == 1:
+        # The dim=1 Gamma route paired bare 1-D V_ne / E_nn lattice sums with
+        # Lpq J/K over the same cell set. The bare nuclear sum diverges like
+        # (Z_cell^2 / a) ln R and nothing cancels it. H2 / sto-3g, a = 4
+        # bohr, R = cutoff_bohr = nuclear_cutoff_bohr = 10, 20, 40, 80, 160:
+        # E_nuclear = 2.29, 3.08, 3.73, 4.39, 5.08 Ha (ln 2 per doubling),
+        # and the total went from -2.74 to -5.63 Ha; the defaults gave
+        # -3.106 Ha against -1.117 Ha for molecular H2. It fails closed like
+        # the k-mesh route (_gauge_lat_opts_for_v_ne_and_e_nuc).
+        raise NotImplementedError(
+            "run_rhf_periodic_gamma_gdf: no consistent Coulomb gauge for a "
+            "dim = 1 cell. The bare 1-D V_ne / E_nn lattice sums diverge "
+            "logarithmically with the lattice-sum cutoff and the Gamma J/K "
+            "does not cancel them, so the total energy depends on "
+            "cutoff_bohr. " + _WIRE_VACUUM_BOX_HINT
+        )
     func = Functional(func_name, 1) if is_ks else None
     # This legacy Γ fallback builds the molecular-limit K full-range
     # only; screened hybrids must not silently run as full-range twins.
@@ -630,6 +1066,19 @@ def run_rhf_periodic_gamma_gdf(
         + " bohr"
     )
     n_int_cells = len(direct_lattice_cells(system, lat_opts.cutoff_bohr))
+    molecular_limit_gdf = int(system.dim) == 3 and n_int_cells == 1
+    use_ewald_jk = int(system.dim) == 3 and (
+        force_ewald_jk or not molecular_limit_gdf
+    )
+    # Migrate only this admitted fitted source; other producers keep their
+    # existing source, occupation and symmetry contracts until their own tests.
+    evaluated_gdf = (molecular_limit_gdf and not use_ewald_jk
+                     and (func is None or not func.is_external)
+                     and not use_private_slab_gdf and gdf_algorithm == "bare"
+                     and not symmetry_stabilize and not symmetry_reduce_fock
+                     and not (system.symmetry is not None and system.symmetry.operations))
+    if evaluated_gdf and max_iter < 1:
+        raise ValueError("run_rhf_periodic_gamma_gdf: max_iter must be >= 1")
     n_nuc_cells = len(direct_lattice_cells(system, lat_opts.nuclear_cutoff_bohr))
     plog.info(
         "lattice cells: "
@@ -683,22 +1132,24 @@ def run_rhf_periodic_gamma_gdf(
             # Feeding the home-cell-only set here evaluates the
             # molecular density on the periodic grid: exact in a vacuum
             # box, ~0.3 Ha wrong on tight ionic cells (the 2026-07-09
-            # KRKS finding, HANDOVER_AICCM_DIRECT_TORUS.md §4).
+            # KRKS finding, the original investigation).
             _set_xc_density = _density_set_torus_gamma
         else:
             # Molecular Becke grid (v0.8.x reproduction path) pairs with
             # the molecular-limit home-cell-only density.
             grid = build_grid(system.unit_cell_molecule(), grid_options)
 
-    molecular_limit_gdf = int(system.dim) == 3 and n_int_cells == 1
-    use_ewald_jk = int(system.dim) == 3 and (
-        force_ewald_jk or not molecular_limit_gdf
-    )
     if force_ewald_jk and molecular_limit_gdf:
         plog.info(
             "J/K routing: Ewald-3D forced for a finite periodic torus "
             "even though the lattice cutoff contains only the home cell"
         )
+    if force_ewald_jk:
+        import warnings
+
+        warnings.warn(_FORCED_MOLECULAR_LIMIT_NOTICE,
+                      GammaExchangeRouteWarning, stacklevel=2)
+        plog.warn(_FORCED_MOLECULAR_LIMIT_NOTICE)
 
     # ---- One-electron integrals at Γ ----------------------------------
     #
@@ -723,7 +1174,8 @@ def run_rhf_periodic_gamma_gdf(
         gauge_lat_opts = lat_opts
     else:
         # Lpq J/K path: 3D molecular-limit cell (GDF cutoff contains the
-        # home cell only) or any dim<3 vacuum-padded wire/slab. J and K
+        # home cell only) or a dim=2 cell outside the private slab route
+        # (dim=1 was refused above). J and K
         # come from the native Lpq tensor, which is summed over the GDF
         # integral cutoff `cutoff_bohr`. V_ne and e_nuc MUST sum nuclei
         # over the SAME cell set, or the long-range electron-nuclear
@@ -800,15 +1252,6 @@ def run_rhf_periodic_gamma_gdf(
             "run_rhf_periodic_gamma_gdf: canonical orthogonalisation "
             f"dropped too many directions (n_occ={n_occ}, n_kept={n_kept})"
         )
-
-    use_davidson = getattr(opts, "use_davidson", False)
-    dav_opts = getattr(opts, "davidson", None)
-    dav_dim = getattr(opts, "davidson_min_dim", 100)
-    use_dav = use_davidson and S.shape[0] >= dav_dim
-    if use_dav and dav_opts is None:
-        from vibeqc._vibeqc_core import DavidsonOptions
-
-        dav_opts = DavidsonOptions()
 
     # ---- Native GDF factor --------------------------------------------
     mol = system.unit_cell_molecule()
@@ -895,7 +1338,7 @@ def run_rhf_periodic_gamma_gdf(
     # built via the same full-range real-space path the working EWALD_3D
     # driver uses (`build_jk_gamma_molecular_limit` at omega=0).
     #
-    # The 2026-05-14 handover originally framed this molecular-limit
+    # The 2026-05-14 historical design record originally framed this molecular-limit
     # kernel as a builder bug ("misses g_l != g_s contributions"); the
     # 2026-05-15 cutoff-convergence sweep (retired forensic note in git
     # history) showed the
@@ -1004,26 +1447,39 @@ def run_rhf_periodic_gamma_gdf(
             K_out = _build_k_from_lpq(Lpq, D_in)
         return np.real(0.5 * (K_out + K_out.conj().T))
 
-    def diagonalise(F: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        Fp = X.T @ F @ X
-        Fp = 0.5 * (Fp + Fp.T)
-        if use_dav and dav_opts is not None:
-            from vibeqc._vibeqc_core import davidson_solve
+    from .solvers._scf import FockDiagonalizer
 
-            if dav_opts.n_eig == 0:
-                dav_opts.n_eig = Fp.shape[0]
-            if dav_opts.guess_vectors is not None:
-                pass  # already set from previous iteration
-            dres = davidson_solve(Fp, dav_opts)
-            if not dres.converged:
-                raise RuntimeError(
-                    f"Davidson did not converge after {dres.n_iter} iters"
-                )
-            eps, Cp = dres.eigenvalues, dres.eigenvectors
-            dav_opts.guess_vectors = Cp
-        else:
-            eps, Cp = np.linalg.eigh(Fp)
-        return X @ Cp, eps
+    D_set = compute_overlap_lattice(basis, system, lat_opts) if is_ks else None
+    build_fock = None
+    if evaluated_gdf:
+        import hashlib
+        # The actual AO metric plus the explicit shell receipt identify the
+        # frame. Fitting and integral source identity remain on the build.
+        shell_key = repr([(x.l, x.pure, list(x.exponents), list(x.coefficients),
+                           list(x.origin)) for x in basis.shells()])
+        frame = OperatorFrame(
+            n=basis.nbasis, basis_id=hashlib.sha256(shell_key.encode()).hexdigest(),
+            ordering="libint-standard-pure-m-ascending-cartesian-lx-ly-descending",
+            image_gauge="gamma-bloch-at-declared-shell-origins", overlap=S, X=X)
+        X, S = frame.X, frame.overlap
+        build_fock = _NativeGammaGDFRHFBuilder(
+            Lpq, T, V, frame, e_nuc, basis=basis, auxiliary=aux, system=system,
+            lattice_options=lat_opts, nuclear_options=gauge_lat_opts,
+            fit_threshold=gdf_linear_dep_threshold, apply_modrho=apply_modrho)
+        if is_ks:
+            build_fock = _NativeGammaGDFRKSBuilder(
+                build_fock, basis, system, lat_opts, func, grid, D_set, _set_xc_density)
+        # Drop the original tensor once its owned snapshot has been made.
+        Lpq = build_fock.factors
+        T, V, Hcore = build_fock.kinetic, build_fock.nuclear, build_fock.hcore
+    n_required = n_kept if evaluated_gdf and smearing_T > 0.0 else n_occ
+    diagonalise = FockDiagonalizer(
+        X, S, opts, kind="ks" if is_ks else "fock",
+        n_required=n_required, real_only=True,
+        **({"frame": frame} if evaluated_gdf else {}))
+    seed_diagonalise = (FockDiagonalizer(
+        X, S, opts, kind="one_electron", n_required=n_required, real_only=True)
+        if evaluated_gdf else diagonalise)
 
     def occupations_from_eps(
         eps: np.ndarray,
@@ -1056,21 +1512,27 @@ def run_rhf_periodic_gamma_gdf(
     if D_engine is not None:
         plog.info(f"initial guess: {guess.name} (density via GuessEngine)")
         D = D_engine
-        C0, eps0 = diagonalise(Hcore)
+        C0, eps0 = seed_diagonalise(Hcore)
     else:
         plog.info(f"initial guess: {guess.name} (Hcore-diagonalise)")
-        C0, eps0 = diagonalise(Hcore)
+        C0, eps0 = seed_diagonalise(Hcore)
         occ0, _, _ = occupations_from_eps(eps0)
         D = _density_from_orbitals_and_occupations(C0, occ0)
     if guess in (InitialGuess.SAP, InitialGuess.HUECKEL):
         guess_fock = periodic_fock_guess_k(
             system, basis, [np.zeros(3)], guess, lattice_opts=lat_opts,
         )[0].real
-        C0, eps0 = diagonalise(guess_fock)
+        C0, eps0 = seed_diagonalise(guess_fock)
         occ0, _, _ = occupations_from_eps(eps0)
         D = _density_from_orbitals_and_occupations(C0, occ0)
     elif guess == InitialGuess.PATOM:
-        C0, eps0 = diagonalise(Hcore + _build_j(D) - 0.5 * _build_k(D))
+        if build_fock is not None:
+            patom_diagonalise = FockDiagonalizer(
+                X, S, opts, kind="fock", n_required=n_required, real_only=True, frame=frame)
+            seed = build_fock(D, hf_seed=True) if is_ks else build_fock(D)
+            C0, eps0 = patom_diagonalise(seed.channels[0].operator)
+        else:
+            C0, eps0 = diagonalise(Hcore + _build_j(D) - 0.5 * _build_k(D))
         occ0, _, _ = occupations_from_eps(eps0)
         D = _density_from_orbitals_and_occupations(C0, occ0)
     D_prev = D.copy()
@@ -1118,8 +1580,6 @@ def run_rhf_periodic_gamma_gdf(
                 f"level shift: {level_shift:.3f} Ha applied at each diagonalization"
             )
 
-    D_set = compute_overlap_lattice(basis, system, lat_opts) if is_ks else None
-
     plog.banner(f"SCF ({label} Gamma, native GDF)")
     plog.info("  iter         energy (Ha)            dE          ||[F,DS]||   DIIS")
 
@@ -1140,9 +1600,9 @@ def run_rhf_periodic_gamma_gdf(
         mo_coeffs=np.empty((0, 0)),
         density=D.copy(),
         fock=np.empty((0, 0)),
-        overlap=S,
+        overlap=S.copy(),
         scf_trace=scf_trace,
-        hcore=Hcore,
+        hcore=Hcore.copy(),
         aux_basis_name=aux_name,
         n_aux=int(aux.nbasis),
         n_fit=int(Lpq.shape[0]),
@@ -1212,56 +1672,64 @@ def run_rhf_periodic_gamma_gdf(
             else damping * D_prev + (1.0 - damping) * D
         )
 
-        if symmetry_reduce_fock and system.symmetry is not None:
-            from .symmetry_fock_reduced import compute_jk_gamma_reduced as _jk_red
-
-            J, K = _jk_red(
-                basis,
-                system,
-                lat_opts_2e,
-                D_used,
-                system.symmetry.operations,
-            )
+        physical = build_fock(D_used) if build_fock is not None else None
+        if physical is not None:
+            F = physical.channels[0].operator.matrix
+            E_elec, E_total = physical.energy.electronic, physical.energy.total
+            components = dict(physical.energy.components)
+            E_coulomb, E_hf_K = components["coulomb"], components["exchange"]
+            E_xc = components.get("xc", 0.0)
         else:
-            J = _build_j(D_used)
-            K = _build_k(D_used) if alpha != 0.0 else None
-        if symmetry_stabilize and P_cache:
-            from .symmetry_scf import symmetrize_matrix as _sym
+            if symmetry_reduce_fock and system.symmetry is not None:
+                from .symmetry_fock_reduced import compute_jk_gamma_reduced as _jk_red
 
-            J = _sym(J, P_cache)
-            if K is not None:
-                K = _sym(K, P_cache)
-        F_HF_part = J - 0.5 * alpha * K if K is not None else J
+                J, K = _jk_red(
+                    basis,
+                    system,
+                    lat_opts_2e,
+                    D_used,
+                    system.symmetry.operations,
+                )
+            else:
+                J = _build_j(D_used)
+                K = _build_k(D_used) if alpha != 0.0 else None
+            if symmetry_stabilize and P_cache:
+                from .symmetry_scf import symmetrize_matrix as _sym
 
-        E_xc = 0.0
-        V_xc = 0.0
-        if is_ks:
-            _set_xc_density(D_set, D_used)
-            xc_contrib = build_xc_periodic(
-                basis,
-                system,
-                grid,
-                func,
-                D_set,
-                lat_opts,
+                J = _sym(J, P_cache)
+                if K is not None:
+                    K = _sym(K, P_cache)
+            F_HF_part = J - 0.5 * alpha * K if K is not None else J
+
+            E_xc = 0.0
+            V_xc = 0.0
+            if is_ks:
+                _set_xc_density(D_set, D_used)
+                xc_contrib = build_xc_periodic(
+                    basis,
+                    system,
+                    grid,
+                    func,
+                    D_set,
+                    lat_opts,
+                )
+                V_xc = np.real(bloch_sum(xc_contrib.V_xc, k_gamma))
+                V_xc = 0.5 * (V_xc + V_xc.T)
+                E_xc = float(xc_contrib.e_xc)
+
+            F = Hcore + F_HF_part + V_xc
+            F = 0.5 * (F + F.T)
+
+            E_core = float(np.einsum("ij,ij->", D_used, Hcore))
+            E_hf_trace = 0.5 * float(np.einsum("ij,ij->", D_used, F_HF_part))
+            E_elec = E_xc + E_core + E_hf_trace
+            E_total = E_elec + float(e_nuc)
+            E_coulomb = 0.5 * float(np.einsum("ij,ij->", D_used, J))
+            E_hf_K = (
+                -0.25 * alpha * float(np.einsum("ij,ij->", D_used, K))
+                if K is not None
+                else 0.0
             )
-            V_xc = np.real(bloch_sum(xc_contrib.V_xc, k_gamma))
-            V_xc = 0.5 * (V_xc + V_xc.T)
-            E_xc = float(xc_contrib.e_xc)
-
-        F = Hcore + F_HF_part + V_xc
-        F = 0.5 * (F + F.T)
-
-        E_core = float(np.einsum("ij,ij->", D_used, Hcore))
-        E_hf_trace = 0.5 * float(np.einsum("ij,ij->", D_used, F_HF_part))
-        E_elec = E_xc + E_core + E_hf_trace
-        E_total = E_elec + float(e_nuc)
-        E_coulomb = 0.5 * float(np.einsum("ij,ij->", D_used, J))
-        E_hf_K = (
-            -0.25 * alpha * float(np.einsum("ij,ij->", D_used, K))
-            if K is not None
-            else 0.0
-        )
         free_energy = E_total - smearing_T * entropy
 
         FDS = F @ D_used @ S
@@ -1284,6 +1752,10 @@ def run_rhf_periodic_gamma_gdf(
                 diis_subspace=(accel.subspace_size if accel is not None else 0),
             )
         )
+        if physical is not None:
+            result.evaluated_build_history.append(dict(
+                iteration=iter_idx, generation=physical.generation,
+                build_id=physical.identity, density_id=physical.density_id))
         plog.iteration(
             iter_idx,
             energy=float(free_energy),
@@ -1333,7 +1805,10 @@ def run_rhf_periodic_gamma_gdf(
                 F, S, D_used, active_level_shift, LevelShiftDensity.TOTAL)
         )
 
-        C_new, eps_new = diagonalise(F_diag)
+        solver_fock = (physical.solver_operator(
+            0, F_diag, modification="method-acceleration-mixing-level-shift")
+            if physical is not None else F_diag)
+        C_new, eps_new = diagonalise(solver_fock)
         occ, fermi_level, entropy = occupations_from_eps(eps_new)
         D_prev = D_used
         D = _density_from_orbitals_and_occupations(C_new, occ)
@@ -1358,6 +1833,48 @@ def run_rhf_periodic_gamma_gdf(
         result.entropy = float(entropy)
         result.free_energy = float(free_energy)
         result.occupations = np.asarray(occ, dtype=float)
+
+        if build_fock is not None and (converged or iter_idx == max_iter):
+            terminal = build_fock(D)
+            channel = terminal.channels[0]
+            C_next, eps_next = diagonalise(channel.operator)
+            occ_next, _, _ = occupations_from_eps(eps_next)
+            next_density = _density_from_orbitals_and_occupations(C_next, occ_next)
+            closure = float(np.max(abs(next_density - D)))
+            result.fock_build = terminal
+            result.next_density = _snapshot(next_density)
+            result.density_fixed_point_residual = closure
+            result.energy, result.e_electronic = terminal.energy.total, terminal.energy.electronic
+            components = dict(terminal.energy.components)
+            result.e_coulomb, result.e_hf_exchange = components["coulomb"], components["exchange"]
+            result.e_xc = components.get("xc", 0.0)
+            result.mo_coeffs = C_new
+            result.mo_energies = np.real(np.diag(C_new.T @ channel.operator.matrix @ C_new))
+            result.density, result.fock = channel.density.copy(), channel.operator.matrix.copy()
+            # Entropy/occupations belong to the orbitals defining this density.
+            # The next physical eigensolve is reported separately, including at T>0.
+            result.free_energy = float(result.energy - smearing_T * entropy)
+            terminal_converged = (converged
+                and abs(result.free_energy - free_energy) < float(opts.conv_tol_energy)
+                and terminal.commutator_norm < float(opts.conv_tol_grad)
+                and closure < float(opts.conv_tol_grad))
+            if terminal_converged or iter_idx == max_iter:
+                previous = scf_trace[-1]
+                scf_trace[-1] = SCFIteration(
+                    iter=previous.iter, energy=result.free_energy,
+                    delta_e=result.free_energy - previous.energy,
+                    grad_norm=terminal.commutator_norm, diis_subspace=previous.diis_subspace)
+                result.evaluated_build_history[-1] = dict(
+                    iteration=iter_idx, generation=terminal.generation,
+                    build_id=terminal.identity, density_id=terminal.density_id)
+                result.converged = terminal_converged
+                plog.converged(n_iter=iter_idx, energy=result.energy, converged=terminal_converged)
+                if terminal_converged:
+                    _warn_conducting_gamma_state(result.mo_energies, n_occ, plog)
+                    _check_energy_sanity(result, system, plog)
+                return result
+            # A provisional stop did not close on its evaluated density.
+            continue
 
         if converged:
             J_f = _build_j(D)
@@ -1403,33 +1920,7 @@ def run_rhf_periodic_gamma_gdf(
             result.occupations = np.asarray(occ_f, dtype=float)
             result.converged = True
 
-            # Diagnostic: HOMO-LUMO gap check at convergence.  Mirrors
-            # CRYSTAL14's `POSSIBLY CONDUCTING STATE - EFERMI(AU)`
-            # warning that fires when the gap between the highest
-            # occupied and lowest unoccupied MO is below threshold.
-            # For a closed-shell Γ-only calc on a true insulator the
-            # gap should be tens of mHa or larger; below ~1 mHa the
-            # system is effectively metallic at this k-point and
-            # SCF convergence may be fragile / sensitive to start
-            # guess.  This is purely informational -- we don't fail
-            # the SCF.  The 1e-3 Ha (~27 meV) threshold matches
-            # CRYSTAL14's default reporting cutoff.
-            _CONDUCTING_GAP_THRESHOLD_HA = 1e-3
-            if n_occ > 0 and n_occ < eps_f.shape[0]:
-                homo = float(eps_f[n_occ - 1])
-                lumo = float(eps_f[n_occ])
-                gap = lumo - homo
-                if gap < _CONDUCTING_GAP_THRESHOLD_HA:
-                    plog.info(
-                        "POSSIBLY CONDUCTING STATE at convergence: "
-                        f"HOMO-LUMO gap = {gap:.6f} Ha "
-                        f"({gap * 27.2114:.3f} eV) "
-                        f"below the {_CONDUCTING_GAP_THRESHOLD_HA:.0e} Ha threshold "
-                        f"(HOMO={homo:.6f}, LUMO={lumo:.6f}). "
-                        "For metals / small-gap systems consider Fermi smearing "
-                        "(opts.smearing_temperature > 0) or denser k-mesh; "
-                        "Γ-only RHF on a true metal can be ill-defined."
-                    )
+            _warn_conducting_gamma_state(eps_f, n_occ, plog)
 
             plog.converged(
                 n_iter=result.n_iter,
@@ -1949,6 +2440,7 @@ def _run_krhf_periodic_slab_gdf(
                 e_hf_exchange=e_hf_exchange,
                 aux_basis_name=aux_name,
                 n_aux=int(raw_aux.nbasis),
+                gdf_cderi_pairs=len(fits),
                 backend=(
                     "private-multik-slab-truncated-gdf-rks"
                     if is_ks
@@ -2035,6 +2527,7 @@ def _run_krhf_periodic_slab_gdf(
         e_hf_exchange=e_hf_exchange,
         aux_basis_name=aux_name,
         n_aux=int(raw_aux.nbasis),
+        gdf_cderi_pairs=len(fits),
         backend=(
             "private-multik-slab-truncated-gdf-rks"
             if is_ks

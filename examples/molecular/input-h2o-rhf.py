@@ -1,5 +1,9 @@
 """Closed-shell RHF single-point energy on H2O / 6-31G*.
 
+Success criterion: the SCF converges (9 iterations with the default initial
+guess) to E = -76.0036002 Ha; any build should agree to 1e-6 Ha, the iteration
+count may differ by one or two. (vibe-qc 0.17.10 development build.)
+
 Run:
     .venv/bin/python input-h2o-rhf.py
 

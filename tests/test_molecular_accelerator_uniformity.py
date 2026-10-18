@@ -98,3 +98,13 @@ def test_molecular_dynamic_damping_fields_are_settable(OptionsCls):
     assert o.dynamic_damping is True
     assert o.dynamic_damping_min == pytest.approx(0.1)
     assert o.dynamic_damping_max == pytest.approx(0.9)
+
+
+def test_uhf_open_shell_ediis_diis_switch_threshold_default():
+    """GitLab #377: open-shell UHF switches EDIIS -> DIIS at 1e-3 on the
+    intensive RMS metric; spin-balanced UHF keeps the shared 1e-1."""
+    o = UHFOptions()
+    assert o.ediis_diis_switch_threshold == pytest.approx(1e-1)
+    assert o.ediis_diis_switch_threshold_open_shell == pytest.approx(1e-3)
+    o.ediis_diis_switch_threshold_open_shell = 1e-1
+    assert UHFOptions(o).ediis_diis_switch_threshold_open_shell == pytest.approx(1e-1)

@@ -116,6 +116,17 @@ def run_ccm_ump2(ccm, uhf_result: "CCMUHFResult | None" = None, *, initial_guess
     guess_selection = _ccm_initial_guess(
         ccm, initial_guess, driver='run_ccm_ump2', reference=uhf_result,
     )
+    # A Bloch producer result (run_ccm_*_gdf) is transformed to the real
+    # supercell-Gamma reference of the same Hamiltonian (Theorem 1;
+    # periodic/ccm/bloch_reference.py). Real-Gamma references pass through.
+    from .bloch_reference import as_real_reference
+
+    uhf_result = as_real_reference(ccm, uhf_result)
+    if cderi is None and eri is None:
+        # One build per job (2026-09-24): see run_ccm_mp2.
+        from .neutral import carried_cderi
+
+        cderi = carried_cderi(uhf_result)
     if cderi is not None:
         if uhf_result is None:
             raise ValueError(

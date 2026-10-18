@@ -232,3 +232,35 @@ def test_padding_density_domain_does_not_expand_active_ao_workspace():
         ))
     np.testing.assert_allclose(energies[0], energies[1], atol=1e-12, rtol=0)
     np.testing.assert_allclose(gradients[0], gradients[1], atol=1e-12, rtol=0)
+
+
+def test_torus_extra_scratch_falls_back_without_changing_grid_batches():
+    """A large basis and tiny actual grid exercise admission without huge AO tables."""
+    from vibeqc import _vibeqc_core as core
+    import numpy as np
+
+    system = core.PeriodicSystem(3, 8. * np.eye(3), [
+        core.Atom(1, [0., 0., 0.]), core.Atom(1, [0., 0., 1.4]),
+    ])
+    small = core.BasisSet(system.unit_cell_molecule(), "def2-svp")
+    # Repeated real shells are sufficient for fixed-density quadrature; no
+    # overlap diagonalization or SCF is performed on this dependent basis.
+    basis = core.BasisSet(system.unit_cell_molecule(), small.shells() * 30,
+                         "repeated-xc-workspace", True)
+    opts = core.LatticeSumOptions()
+    opts.cutoff_bohr = 12.
+    cells = list(core.direct_lattice_cells(system, 24.))
+    p = core.make_lattice_matrix_set(basis.nbasis, cells,
+                                    [np.eye(basis.nbasis) * .001] * len(cells))
+    grid = core.Grid(np.array([[.2, .3, .4]]), np.ones(1))
+    km = core.monkhorst_pack(system, [1, 1, 1])
+    func = core.Functional("pbe")
+    result = core.build_xc_periodic_kpoints(basis, system, grid, func, p, km,
+                                           opts, ao_screening_tol=0.)
+    assert result.torus_density_compatible
+    assert not result.used_torus_grouping
+    old = core.build_xc_periodic(basis, system, grid, func, p, opts,
+                                 ao_screening_tol=0.)
+    assert result.e_xc == old.e_xc
+    np.testing.assert_allclose(result.V_xc[0], core.bloch_sum(old.V_xc, np.zeros(3)),
+                               atol=2e-12, rtol=2e-13)

@@ -53,7 +53,7 @@ from ._ccsd_cs import _blocks, cs_ccsd_pair_ladder, cs_ccsd_residual
 from .pao import (
     build_atom_basis_map,
     build_projection_matrix,
-    select_domain_atoms_mulliken,
+    orbital_domain_atom_mask,
     semicanonical_pao_basis,
 )
 from .pno_density import pair_density, resolve_pno_norm
@@ -87,6 +87,18 @@ try:
 except ImportError:  # pragma: no cover - depends on the compiled core
     _cpp_target_residual = None
     _HAVE_CPP_TARGET_RESIDUAL = False
+
+# Compiled PNO-space amplitude solver (vibeqc::dlpno_ccsd_pno_solve): the
+# whole iteration with every residual term contracted in the PNO space that
+# carries the contracted index (Riplinger and Neese 2013, Sec. II C). It has
+# no NumPy transcription; ``residual_domain="pno"`` needs a core that has it.
+try:
+    from .._vibeqc_core import dlpno_ccsd_pno_solve as _cpp_pno_solve
+
+    _HAVE_CPP_PNO_SOLVE = True
+except ImportError:  # pragma: no cover - depends on the compiled core
+    _cpp_pno_solve = None
+    _HAVE_CPP_PNO_SOLVE = False
 
 
 # Whether the compiled residual kernels accept `include_ladder` (#700). Cores
@@ -130,7 +142,44 @@ class LocalCCSDOptions:
     # setting is intentionally not used as the CCSD default. Zero remains the
     # explicit full-domain/no-truncation setting for exactness tests.
     tcut_pno: float = 3.33e-7
+    #: Factor on ``tcut_pno`` for the DIAGONAL pairs only, whose PNO space
+    #: also carries the singles. ORCA cuts its singles PNOs at
+    #: ``TCutPNOSingles = 0.03 * TCutPNO`` (printed as 9.99e-9 at NormalPNO
+    #: by ORCA 6.1.1); this solver keeps one space per diagonal pair, so the
+    #: default ``0.03`` gives the singles ORCA's threshold (and the diagonal
+    #: doubles a slightly larger space than ORCA's). The semicanonical PNO
+    #: correction cannot recover singles truncation, since singles do not
+    #: enter MP2: at ``1.0``, the convention of every result recorded before
+    #: this default, n-butane/cc-pVDZ NormalPNO CCSD sits 1.62 kcal/mol above
+    #: canonical against 1.08 at ``0.03`` (ORCA 6.1.1: 1.16). #65 note 20763
+    #: recorded this as one of three ORCA deviations.
+    tcut_pno_diag_scale: float = 0.03
     tcut_mkn: float = 1e-3  # 0 -> full PAO domains
+    #: How a localised orbital's PAO atom domain is chosen; a pair's domain
+    #: is the union of its two orbitals' domains.
+    #:
+    #: * ``"doi"`` (default): atoms with a projected atomic orbital whose differential
+    #:   overlap with the orbital exceeds ``tcut_do`` (Pinski, Riplinger,
+    #:   Valeev and Neese, J. Chem. Phys. 143, 034108 (2015), Eq. 4), the
+    #:   criterion ORCA uses for its PAO domains. A Mulliken population can be
+    #:   tiny next to real density: NH3's Boys lone pair has 1.7e-4 on each
+    #:   hydrogen, so at ``tcut_mkn=1e-3`` its diagonal pair builds PNOs from
+    #:   nitrogen PAOs alone and the NormalPNO CCSD energy is 0.34 kcal/mol
+    #:   above canonical, against 0.02 with the full domain (and 0.02 for
+    #:   ORCA 6.1.1, whose DOI domains keep the hydrogens).
+    #: * ``"mulliken"``: atoms carrying the orbital's Mulliken population
+    #:   above ``tcut_mkn`` (Riplinger and Neese 2013, Sec. II B 1), the
+    #:   convention of every result recorded before the DOI default.
+    #:
+    #: Only the local CCSD route reads this; ``tcut_mkn`` stays the published
+    #: coordinate for the other DLPNO routes. Under either criterion
+    #: ``tcut_mkn=0`` keeps every atom, the full-domain exactness setting;
+    #: under ``"doi"`` a positive ``tcut_mkn`` does not shape the domains.
+    domain_criterion: str = "doi"
+    #: Differential-overlap cut for ``domain_criterion="doi"`` (ORCA 6.1.1
+    #: NormalPNO ``TCutDO``; the Loose and Tight presets set 2e-2 and 5e-3).
+    #: 0 keeps every atom.
+    tcut_do: float = 1e-2
     # Pair screening threshold (Ha): pairs whose MP2 energy estimate in
     # the full virtual space is below this value are treated at the MP2
     # level (accumulated into e_corr directly) rather than iterated at
@@ -159,18 +208,30 @@ class LocalCCSDOptions:
     # toroidal_pair_distance_fn): the open-cluster Euclidean distance
     # overestimates wrap-around separations on a toroidal reference and
     # would silently under-couple pairs that are adjacent on the torus
-    # (handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md Stage 5c).
+    # (the original investigation Stage 5c).
     pair_distance_fn: object = None
     lindep: float = 1e-8
     #: Space in which the pair residual is contracted before being projected
     #: back into the pair's own PNO space.
     #:
+    #: * ``"pno"`` (default) contracts every term of the residual in the PNO
+    #:   space of the amplitude that carries the contracted index, the term-by-term
+    #:   algorithm of Riplinger and Neese, J. Chem. Phys. 138, 034106 (2013),
+    #:   Sec. II C, in the compiled ``dlpno_ccsd_pno_solve`` kernel. Free
+    #:   indices are projected into the target pair through the PNO overlaps
+    #:   (their Eq. 30); singles products are folded into the density-fitting
+    #:   factors over the full virtual space, so nothing is truncated before
+    #:   it is contracted. Exact against ``"extended"`` at the same coupling
+    #:   set and against canonical CCSD at full domains, at a per-iteration
+    #:   cost of O(n_pairs nL^2 n_aux n_pno^2) that does not grow with the
+    #:   extended-domain dimension. Compiled route only; ``use_cpp_kernel``,
+    #:   ``ladder_in_pno_space`` and ``ring_in_pno_space`` do not apply.
     #: * ``"pair"`` projects the coupled pairs' amplitudes into pair
     #:   ``ij``'s space *first* and contracts there. This is the historical
     #:   opt-in behaviour and it is wrong under truncation: it discards the
     #:   parts of those amplitudes lying outside ``ij``'s space that still
     #:   feed back into it through the integrals.
-    #: * ``"extended"`` (default) is the extended domain of Riplinger and Neese,
+    #: * ``"extended"`` is the extended domain of Riplinger and Neese,
     #:   J. Chem. Phys. 138, 034106 (2013), Sec. II B 1, "necessary in order to
     #:   create a sufficiently large buffer for the accurate calculation of the
     #:   pair-pair interaction terms". It is defined over **atoms**: the union
@@ -192,7 +253,7 @@ class LocalCCSDOptions:
     #:   stationarity condition of the subspace-constrained ansatz and what
     #:   ``run_dlpno_ccsd_pilot`` does. O(N^6): the correctness setting, not a
     #:   production one.
-    residual_domain: str = "extended"
+    residual_domain: str = "pno"
     #: Pair density whose eigenvalues are compared against ``tcut_pno``, i.e.
     #: what a PNO occupation number means. ``"mp2"`` (default) is Riplinger
     #: and Neese's Eq. 23, ORCA's ``PNONorm MP2Norm`` default, and is the
@@ -283,6 +344,23 @@ class LocalCCSDOptions:
     # this range are cluster work; the cap simply stops being the thing that
     # prevents them.
     max_nbf: int = 1500
+    #: Drop the density-fitting object's AO-basis tensors (``df.B`` and the
+    #: raw three-centre integrals) once the solver has transformed what it
+    #: needs. They are the largest arrays on a large molecule (two copies of
+    #: n_aux x nbf^2) and nothing in this route reads them afterwards; the
+    #: triples reuse the solver's MO factors. Off by default because it
+    #: mutates the caller's ``df``; ``run_job`` constructs a private one.
+    #: Ignored for ``compute_triples`` with ``triples_mode="exact"``, which
+    #: re-transforms from the AO tensor.
+    release_df_tensors: bool = False
+    #: Diagnostic only: on the ``"pno"`` and ``"pair"`` routes, also report
+    #: the dimension each pair's atom-based ``"extended"`` residual domain
+    #: would have, as ``LocalCCSDResult.avg_extended_domain``. Its ratio to
+    #: the virtual-space dimension is the virtual-side locality measure of
+    #: #190. It costs one overlap eigenvalue problem per distinct domain and
+    #: changes no energy. The ``"extended"`` and ``"full"`` routes always
+    #: report it.
+    report_extended_domain: bool = False
     # RI fitting basis for the correlation integrals. None -> the runner
     # auto-resolves it from the orbital basis (density_fitting.
     # default_aux_basis_for(basis, kind="ri")). Set explicitly (e.g.
@@ -326,6 +404,10 @@ class LocalCCSDOptions:
 
 @dataclass
 class LocalCCSDResult:
+    #: Adapter name and SHA-256 identity of the correlation source the
+    #: engine read (:mod:`vibeqc.dlpno.source`).
+    source_kind: str = ""
+    source_identity: str = ""
     e_hf: float = 0.0
     e_corr: float = 0.0
     e_t: float = 0.0  # 0 for CCSD (no triples); kept for proxy parity
@@ -341,6 +423,12 @@ class LocalCCSDResult:
     #: atom-based extended PAO-domain dimension for ``"extended"``, and the
     #: full virtual-space dimension for ``"full"``.
     avg_residual_domain: float = 0.0
+    #: Mean dimension of the pairs' atom-based extended domains (the PAOs on
+    #: the union of the orbital domains of every occupied in the pair's
+    #: coupling set), whether or not the residual was contracted there. Set
+    #: on the ``"extended"`` and ``"full"`` routes, and on the others when
+    #: ``LocalCCSDOptions.report_extended_domain`` is true; zero otherwise.
+    avg_extended_domain: float = 0.0
     #: Pair-density convention the PNO occupation numbers were cut against
     #: (:mod:`vibeqc.dlpno.pno_density`). ``tcut_pno`` only means what the
     #: published presets intend under ``"mp2"``, which is the default.
@@ -382,22 +470,57 @@ class LocalCCSDResult:
     #: True only when the requested triples contraction was actually entered.
     #: In particular, an all-screened CCSD pair space returns before triples.
     triples_executed: bool = False
+    #: ``residual_domain="pno"`` bookkeeping: density-fitting factor rows a
+    #: pair had to store for occupieds outside its own coupling set because
+    #: another target's contraction needed them, and the resident bytes of
+    #: the static per-pair factors. Zero on the other routes.
+    n_offlist_rows: int = 0
+    static_factor_bytes: int = 0
+    #: Wall-clock seconds the compiled route spent on its static factors and
+    #: on the amplitude iterations; zero on the other routes.
+    setup_seconds: float = 0.0
+    iteration_seconds: float = 0.0
 
 
-def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
-    """Reduced-scaling local DLPNO-CCSD on a closed-shell RHF reference."""
-    from vibeqc._vibeqc_core import compute_overlap
+def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None, *, source=None):
+    """Local DLPNO-CCSD in per-pair PNO spaces on a closed-shell RHF reference.
+
+    The engine reads the reference, the AO overlap and the three-centre
+    factors through a :class:`~vibeqc.dlpno.source.CorrelationSource`.
+    Pass one as ``source`` (the positional ``molecule``, ``basis``, ``rhf``
+    and ``df`` may then be ``None``); without it the molecular adapter
+    wraps the positional arguments, which leaves every molecular result
+    unchanged.
+    """
     from vibeqc.correlation_conventions import effective_electron_count
+
+    from .source import CorrelationSource, molecular_source
 
     if options is None:
         options = LocalCCSDOptions()
+    if source is None:
+        source = molecular_source(molecule, basis, rhf, df)
+    elif not isinstance(source, CorrelationSource):
+        raise TypeError(
+            "source must be a vibeqc.dlpno.source.CorrelationSource, got "
+            f"{type(source).__name__}"
+        )
+    molecule, basis = source.molecule, source.basis
+    rhf, df = source.reference, source.factors
 
     triples_mode = _validate_triples_mode(options.triples_mode)
     pno_norm = resolve_pno_norm(getattr(options, "pno_norm", "mp2"))
-    if options.residual_domain not in ("pair", "extended", "full"):
+    if options.residual_domain not in ("pair", "extended", "full", "pno"):
         raise ValueError(
             f"unknown residual_domain: {options.residual_domain!r} "
-            '(expected "pair", "extended" or "full")'
+            '(expected "pno", "pair", "extended" or "full")'
+        )
+    _pno_mode = options.residual_domain == "pno"
+    if _pno_mode and not _HAVE_CPP_PNO_SOLVE:
+        raise ValueError(
+            'residual_domain="pno" needs the compiled dlpno_ccsd_pno_solve '
+            "kernel, which this core predates; rebuild it or select "
+            'residual_domain="extended"'
         )
     _extended = options.residual_domain in ("extended", "full")
     _union_domain = options.residual_domain == "extended"
@@ -448,7 +571,7 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
     )
 
     F = np.asarray(rhf.fock).copy()
-    S = np.asarray(compute_overlap(basis)).copy()
+    S = np.asarray(source.overlap_matrix()).copy()
     C = np.asarray(rhf.mo_coeffs).copy()
     n_occ = effective_electron_count(molecule, rhf) // 2
     nbf = C.shape[0]
@@ -496,12 +619,19 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
     centroids = np.column_stack(
         [np.einsum("mi,mn,ni->i", C_loc, ax, C_loc, optimize=True) for ax in _r]
     )
-    if options.pair_distance_fn is not None:
+    # The option wins over the source's distance (a crystal adapter carries
+    # the minimum-image distance; a molecule carries none).
+    _pair_distance = (
+        options.pair_distance_fn
+        if options.pair_distance_fn is not None
+        else source.pair_distance_fn
+    )
+    if _pair_distance is not None:
         occ_dist = np.zeros((n_act, n_act))
         for _i in range(n_act):
             for _j in range(_i + 1, n_act):
                 occ_dist[_i, _j] = occ_dist[_j, _i] = float(
-                    options.pair_distance_fn(centroids[_i], centroids[_j])
+                    _pair_distance(centroids[_i], centroids[_j])
                 )
     else:
         occ_dist = np.linalg.norm(
@@ -525,28 +655,51 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
     B_ov = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_vir)))
     B_vv = np.ascontiguousarray(np.asarray(df.mo_transform(C_vir, C_vir)))
     B_oo = np.ascontiguousarray(np.asarray(df.mo_transform(C_loc, C_loc)))
+    # Occupied-half-transformed factor B^P_{i nu} over the localised active
+    # occupieds, built once. Each pair's PAO-basis factors are then one
+    # (naux, nbf) x (nbf, n_pao) product instead of a transform of the whole
+    # three-index tensor per pair, which is O(n_aux nbf^2 n_pao) each.
+    _B_ao = getattr(df, "B", None)
+    if _B_ao is not None and np.ndim(_B_ao) == 3:
+        B_half = np.einsum("mp,Pmn->Ppn", C_loc, np.asarray(_B_ao), optimize=True)
+    else:  # pragma: no cover - DF objects without an exposed AO tensor
+        B_half = np.asarray(df.mo_transform(C_loc, np.eye(nbf)))
 
     Q_vir = build_projection_matrix(C_occ_full, S)
     atom_first, _ = build_atom_basis_map(molecule, basis)
     natom = len(atom_first) - 1
+    _criterion = str(getattr(options, "domain_criterion", "doi")).strip().lower()
+    if float(options.tcut_mkn) <= 0.0:
+        # tcut_mkn=0 is the documented full-domain exactness setting; it keeps
+        # that meaning under either criterion, so every recipe that pins it
+        # (the parity ratchets, the periodic builders, the retained
+        # benchmarks) stays exact whatever the domain criterion.
+        _criterion = "mulliken"
+    # (n_act, natom) atom domain of every localised orbital; a pair's domain
+    # is the union of its two rows, which for "mulliken" is exactly the
+    # population test select_domain_atoms_mulliken applies to a pair.
+    orb_atom_mask = orbital_domain_atom_mask(
+        molecule,
+        basis,
+        C_loc,
+        S,
+        Q_vir,
+        atom_first,
+        criterion=_criterion,
+        tcut_mkn=float(options.tcut_mkn),
+        tcut_do=float(getattr(options, "tcut_do", 1e-2)),
+    )
 
     _orbital_domain_cache: dict[int, tuple[int, ...]] = {}
+    _pao_basis_cache: dict[tuple[int, ...], tuple[np.ndarray, np.ndarray]] = {}
 
     def orbital_domain(m):
-        """Atoms carrying localised orbital m's Mulliken population above
-        tcut_mkn (Riplinger and Neese 2013, Sec. II B 1); all atoms at the
-        explicit tcut_mkn=0 exactness setting. Cached per orbital."""
+        """Atom domain of localised orbital m under ``domain_criterion``;
+        all atoms at the explicit zero-threshold exactness setting. Cached
+        per orbital."""
         atoms = _orbital_domain_cache.get(m)
         if atoms is None:
-            if options.tcut_mkn > 0.0:
-                atoms = tuple(
-                    int(a)
-                    for a in select_domain_atoms_mulliken(
-                        C_loc, S, atom_first, m, m, options.tcut_mkn
-                    )
-                )
-            else:
-                atoms = tuple(range(natom))
+            atoms = tuple(int(a) for a in np.where(orb_atom_mask[m])[0])
             _orbital_domain_cache[m] = atoms
         return atoms
 
@@ -588,28 +741,54 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
     # depend on the extended atom set alone, so they are shared by every
     # group with that domain whatever its coupling set.
     domains: dict[tuple, dict] = {}
+    # Diagnostic (#190): the dimension of the "extended" domain on routes
+    # that do not build it. P^T S P for P = Q_vir[:, domain] is a block of
+    # Q_vir^T S Q_vir, so each distinct atom union costs one eigvalsh,
+    # counted against lindep exactly as semicanonical_pao_basis counts it.
+    _report_ext = bool(getattr(options, "report_extended_domain", False)) and (
+        not _extended
+    )
+    extended_domain_sizes: list[int] = []
+    _ext_rank_cache: dict[tuple[int, ...], int] = {}
+    if _report_ext:
+        _S_pao = Q_vir.T @ S @ Q_vir
+        _S_pao = 0.5 * (_S_pao + _S_pao.T)
+
+    def extended_domain_rank(L):
+        ext = tuple(sorted(set().union(*(orbital_domain(m) for m in L))))
+        n = _ext_rank_cache.get(ext)
+        if n is None:
+            idx = np.concatenate(
+                [np.arange(atom_first[a], atom_first[a + 1]) for a in ext]
+            )
+            ev = np.linalg.eigvalsh(_S_pao[np.ix_(idx, idx)])
+            n = int(np.count_nonzero(ev > options.lindep))
+            _ext_rank_cache[ext] = n
+        return n
+
     U_tail, eps_tail = {}, {}
     T2 = {}
     for i in range(n_act):
         for j in range(i, n_act):
             if (i, j) in screened_pairs:
                 continue
-            if options.tcut_mkn > 0.0:
-                atoms = select_domain_atoms_mulliken(
-                    C_loc, S, atom_first, i, j, options.tcut_mkn
-                )
-            else:
-                atoms = np.arange(natom, dtype=int)
+            atoms = np.where(orb_atom_mask[i] | orb_atom_mask[j])[0]
             mask = np.zeros(nbf, dtype=bool)
             for a in atoms:
                 mask[atom_first[a] : atom_first[a + 1]] = True
-            V_semi, eps_pao = semicanonical_pao_basis(
-                F, S, Q_vir, np.where(mask)[0], options.lindep
-            )
+            # Pairs sharing an atom domain share its semicanonical PAO basis.
+            _dom_key = tuple(int(a) for a in atoms)
+            _cached = _pao_basis_cache.get(_dom_key)
+            if _cached is None:
+                _cached = semicanonical_pao_basis(
+                    F, S, Q_vir, np.where(mask)[0], options.lindep
+                )
+                _pao_basis_cache[_dom_key] = _cached
+            V_semi, eps_pao = _cached
             if V_semi.shape[1] == 0:
                 continue
-            Bi = df.mo_transform(C_loc[:, [i]], V_semi)[:, 0, :]
-            Bj = df.mo_transform(C_loc[:, [j]], V_semi)[:, 0, :]
+            Bi = B_half[:, i, :] @ V_semi
+            Bj = Bi if i == j else B_half[:, j, :] @ V_semi
             K = Bi.T @ Bj
             T = K / (f_dd[i] + f_dd[j] - eps_pao[:, None] - eps_pao[None, :])
             delta = 1.0 if i == j else 0.0
@@ -617,9 +796,14 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
             occ, d_all = np.linalg.eigh(D)
             order = np.argsort(-occ)
             occ, d_all = occ[order], d_all[:, order]
+            _tcut_ij = options.tcut_pno * (
+                float(getattr(options, "tcut_pno_diag_scale", 0.03))
+                if i == j
+                else 1.0
+            )
             keep = (
-                occ > options.tcut_pno
-                if options.tcut_pno > 0.0
+                occ > _tcut_ij
+                if _tcut_ij > 0.0
                 else np.ones_like(occ, dtype=bool)
             )
             if not np.any(keep):
@@ -639,24 +823,35 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
                 V_discard = V_semi @ (d_discard @ uq)
                 U_tail[(i, j)] = C_vir.T @ S @ V_discard
                 eps_tail[(i, j)] = eq
-            B_ov_ij = np.einsum("Pmv,va->Pma", B_ov, Uij, optimize=True)
+            # Only the pair's own occupied rows are needed for its exchange
+            # block; the legacy "pair" route transforms every coupled row
+            # itself below.
+            Bi_pno = B_ov[:, i, :] @ Uij
+            Bj_pno = Bi_pno if i == j else B_ov[:, j, :] @ Uij
             # Restrict the occupied coupling space to this pair's local set L;
             # i, j re-index to local positions li, lj within it.
             L = coupled_occupieds(i, j)
+            if _report_ext:
+                extended_domain_sizes.append(extended_domain_rank(L))
             f_ov_ij = f_ov_full @ Uij
-            nL, npno, naux = len(L), Uij.shape[1], B_ov_ij.shape[0]
+            nL, npno, naux = len(L), Uij.shape[1], B_ov.shape[0]
             pd = dict(
                 f_oo=np.ascontiguousarray(f_oo[np.ix_(L, L)]),
                 f_vv=np.ascontiguousarray(Uij.T @ f_vv_full @ Uij),
                 f_ov=np.ascontiguousarray(f_ov_ij[L]),
-                K=B_ov_ij[:, i, :].T @ B_ov_ij[:, j, :],
+                K=Bi_pno.T @ Bj_pno,
                 f_ovi=f_ov_ij[i],
                 L=L,
                 li=int(np.searchsorted(L, i)),
                 lj=int(np.searchsorted(L, j)),
             )
-            if not _extended:
+            if _pno_mode:
+                # The compiled PNO-space solver builds its own factors from
+                # the global B-tensors; nothing else per pair is needed.
+                pass
+            elif not _extended:
                 # Legacy "pair" mode contracts in this pair's own PNO basis.
+                B_ov_ij = np.einsum("Pmv,va->Pma", B_ov, Uij, optimize=True)
                 B_vv_ij = np.einsum(
                     "Puv,ua,vb->Pab", B_vv, Uij, Uij, optimize=True
                 )
@@ -839,13 +1034,33 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
             )
     _any_ladder_in_pno = any(g["ladder_in_pno"] for g in groups.values())
 
+    # The occupied-half factor served only the pair loop above.
+    del B_half
+    # triples_mode="exact" re-transforms from the AO tensor in the canonical
+    # occupied basis, so the DF object must survive for it.
+    _exact_triples_needs_df = bool(options.compute_triples) and triples_mode == "exact"
+    if bool(getattr(options, "release_df_tensors", False)) and not _exact_triples_needs_df:
+        for _attr in ("B", "three_center"):
+            if hasattr(df, _attr):
+                try:
+                    setattr(df, _attr, None)
+                except AttributeError:  # pragma: no cover - read-only DF objects
+                    pass
+    _df_factors = (B_ov, B_oo, B_vv)
+
     result = LocalCCSDResult(e_hf=float(rhf.energy), n_frozen=nf)
+    result.source_kind = str(source.kind)
+    result.source_identity = str(source.identity)
     result.pno_norm = pno_norm
     result.avg_residual_domain = (
         float(np.mean(residual_domain_sizes))
         if residual_domain_sizes
         else float(np.mean([U[k].shape[1] for k in U])) if U else 0.0
     )
+    if _extended and residual_domain_sizes:
+        result.avg_extended_domain = float(np.mean(residual_domain_sizes))
+    elif extended_domain_sizes:
+        result.avg_extended_domain = float(np.mean(extended_domain_sizes))
     result.n_residual_domains = len(groups)
     result.n_ladder_pno_groups = sum(
         1 for g in groups.values() if g.get("ladder_in_pno")
@@ -1203,7 +1418,57 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
             yield i, j, P.T @ r1E, R2_pair
 
     e_prev = energy()
-    for iteration in range(options.max_iter):
+    if _pno_mode:
+        # Whole iteration in the compiled PNO-space solver. Pack the pair
+        # data in T2's insertion order and unpack the converged amplitudes
+        # into the same dicts the (T) and diagnostics below read.
+        _keys = list(T2.keys())
+        _naux = B_ov.shape[0]
+        _res = _cpp_pno_solve(
+            np.ascontiguousarray(B_ov.reshape(_naux, n_act * B_ov.shape[2])),
+            np.ascontiguousarray(B_oo.reshape(_naux, n_act * n_act)),
+            np.ascontiguousarray(B_vv.reshape(_naux, B_vv.shape[1] * B_vv.shape[2])),
+            np.ascontiguousarray(f_oo),
+            np.ascontiguousarray(f_ov_full),
+            np.ascontiguousarray(f_vv_full),
+            [int(k[0]) for k in _keys],
+            [int(k[1]) for k in _keys],
+            [np.asfortranarray(U[k]) for k in _keys],
+            [np.ascontiguousarray(eps_pno[k]) for k in _keys],
+            [np.asfortranarray(pdata[k]["K"]) for k in _keys],
+            [np.asfortranarray(T2[k]) for k in _keys],
+            [[int(m) for m in pdata[k]["L"]] for k in _keys],
+            max_iter=int(options.max_iter),
+            conv_tol_energy=float(options.conv_tol_energy),
+            conv_tol_residual=float(options.conv_tol_residual),
+            diis_size=int(options.diis_size),
+        )
+        for _idx, _k in enumerate(_keys):
+            T2[_k] = np.ascontiguousarray(np.asarray(_res["T2"][_idx]))
+        for _i in list(t1):
+            _v = np.asarray(_res["t1"][_i])
+            if _v.size:
+                t1[_i] = np.ascontiguousarray(_v).reshape(-1)
+        _e_prev_trace = e_prev
+        for _it, (_e, _r) in enumerate(
+            zip(_res["trace_e_corr"], _res["trace_r_norm"])
+        ):
+            result.trace.append(
+                {
+                    "iter": _it + 1,
+                    "e_corr": float(_e),
+                    "delta_e": float(_e) - _e_prev_trace,
+                    "r_norm": float(_r),
+                }
+            )
+            _e_prev_trace = float(_e)
+        result.converged = bool(_res["converged"])
+        result.n_iter = int(_res["n_iter"])
+        result.n_offlist_rows = int(_res.get("n_offlist_rows", 0))
+        result.static_factor_bytes = int(_res.get("static_factor_bytes", 0))
+        result.setup_seconds = float(_res.get("setup_seconds", 0.0))
+        result.iteration_seconds = float(_res.get("iteration_seconds", 0.0))
+    for iteration in range(0 if _pno_mode else options.max_iter):
         x_old = flatten()  # amplitudes at iteration start (post previous DIIS)
         new_T2, new_t1 = {}, {}
         if _extended:
@@ -1304,7 +1569,8 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
             break
         e_prev = e
     else:
-        result.n_iter = options.max_iter
+        if not _pno_mode:
+            result.n_iter = options.max_iter
 
     def pno_tail_estimate():
         if not result.converged or not estimate_pno_tail or not U_tail:
@@ -1414,6 +1680,7 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
                 occ_dist=occ_dist,
                 coupling_radius=R_couple,
                 stats=tno_stats,
+                df_factors=_df_factors,
             )
         else:
             from .triples_local import local_triples_correction
@@ -1433,6 +1700,7 @@ def run_local_dlpno_ccsd(molecule, basis, rhf, df, options=None):
                 occ_dist=occ_dist,
                 coupling_radius=R_couple,
                 stats=tno_stats,
+                df_factors=_df_factors,
             )
         from .triples_local import summarise_tno_domains
 

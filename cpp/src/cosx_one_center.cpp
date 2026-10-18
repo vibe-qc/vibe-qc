@@ -308,6 +308,13 @@ Eigen::MatrixXd OneCenterCorrection::apply(
             }
         }
 
+        // The seminumerical block is not symmetric (bra on the grid, ket
+        // analytic); symmetrise it as compute_cosx_k does for the full K
+        // (Neese 2009 §2.3). Unsymmetrised, the corrected post-SCF Fock
+        // failed the Hermitian-operator contract on every converged
+        // RIJCOSX run (#527).
+        K_cosx_atom = (0.5 * (K_cosx_atom + K_cosx_atom.transpose())).eval();
+
         // Correction for atom A.
         for (int i = 0; i < na; ++i)
             for (int j = 0; j < na; ++j)

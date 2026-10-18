@@ -2,7 +2,7 @@
 
 Pins the 2026-07-29 oracle results (see
 ``examples/regression/gapw_parity/oracle_projector_augmentation_wip2.py``
-and ``handovers/HANDOVER_GAPW_PRODUCTION.md``): the H2O fixed-density
+and the original investigation): the H2O fixed-density
 Hartree identity closes to tens of mHa where the production
 block-restricted augmentation is -4.2 Ha off, and the same
 construction covers single atoms. Energy-evaluator only - the

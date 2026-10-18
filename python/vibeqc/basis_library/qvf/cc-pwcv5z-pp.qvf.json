@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "cc-pwcv5z-pp",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-09-08.\nBSE name: cc-pwCV5Z-PP\nCanonical name in vibe-qc: cc-pwcv5z-pp\nNote: PP core-valence\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: cc-pwCV5Z-PP\nDescription: cc-pwCV5Z-PP\n       Role: orbital\n    Version: 0  (Data from the original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "Cu": {
@@ -40051,6 +40051,7 @@
       "ecp_id": "Rn"
     }
   },
+  "basis_family": "dunning",
   "ecps": {
     "Cu": {
       "element": "Cu",
@@ -44321,7 +44322,110 @@
       ]
     }
   },
+  "references": [
+    {
+      "key": "peterson_puzzarini_pp_2005",
+      "description": "K. A. Peterson, C. Puzzarini, Theoretical Chemistry Accounts 114, 283-296 (2005)",
+      "doi": "10.1007/s00214-005-0681-9"
+    },
+    {
+      "key": "peterson_pp_group13_15_2003",
+      "description": "K. A. Peterson, Journal of Chemical Physics 119, 11099-11112 (2003)",
+      "doi": "10.1063/1.1622923"
+    },
+    {
+      "key": "peterson_pp_2003",
+      "description": "K. A. Peterson, D. Figgen, E. Goll, H. Stoll, M. Dolg, Journal of Chemical Physics 119, 11113-11123 (2003)",
+      "doi": "10.1063/1.1622924"
+    },
+    {
+      "key": "peterson_pp_4d_2007",
+      "description": "K. A. Peterson, D. Figgen, M. Dolg, H. Stoll, Journal of Chemical Physics 126, 124101 (2007)",
+      "doi": "10.1063/1.2647019"
+    },
+    {
+      "key": "peterson_halogen_oxide_2006",
+      "description": "K. A. Peterson, B. C. Shepler, D. Figgen, H. Stoll, Journal of Physical Chemistry A 110, 13877-13883 (2006)",
+      "doi": "10.1021/jp065887l"
+    },
+    {
+      "key": "figgen_pp_5d_2009",
+      "description": "D. Figgen, K. A. Peterson, M. Dolg, H. Stoll, Journal of Chemical Physics 130, 164108 (2009)",
+      "doi": "10.1063/1.3119665"
+    },
+    {
+      "key": "figgen_group11_12_ecp_2005",
+      "description": "D. Figgen, G. Rauhut, M. Dolg, H. Stoll, Chemical Physics 311, 227-244 (2005)",
+      "doi": "10.1016/j.chemphys.2004.10.005"
+    },
+    {
+      "key": "metz_stoll_dolg_ecp_2000",
+      "description": "B. Metz, H. Stoll, M. Dolg, Journal of Chemical Physics 113, 2563-2569 (2000)",
+      "doi": "10.1063/1.1305880"
+    },
+    {
+      "key": "metz_tl_ecp_2000",
+      "description": "B. Metz, M. Schweizer, H. Stoll, M. Dolg, W. Liu, Theoretical Chemistry Accounts 104, 22-28 (2000)",
+      "doi": "10.1007/s002149900101"
+    },
+    {
+      "key": "peterson_yousaf_pwcv_pp_2010",
+      "description": "K. A. Peterson, K. E. Yousaf, Journal of Chemical Physics 133, 174116 (2010)",
+      "doi": "10.1063/1.3503659"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "cc-pwCV5Z-PP"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "e39e33765bc0c2d5d61e64b7666ebbbfe8c9b145b80c50c37f9402f10c75d999",
+    "citations": [
+      {
+        "keys": [
+          "peterson_puzzarini_pp_2005",
+          "peterson_pp_group13_15_2003",
+          "peterson_pp_4d_2007",
+          "peterson_halogen_oxide_2006",
+          "figgen_pp_5d_2009",
+          "figgen_group11_12_ecp_2005",
+          "metz_tl_ecp_2000",
+          "peterson_yousaf_pwcv_pp_2010"
+        ]
+      },
+      {
+        "keys": [
+          "peterson_pp_2003"
+        ],
+        "elements": [
+          "Te",
+          "I",
+          "Xe",
+          "Po",
+          "At",
+          "Rn"
+        ]
+      },
+      {
+        "keys": [
+          "metz_stoll_dolg_ecp_2000"
+        ],
+        "elements": [
+          "In",
+          "Sn",
+          "Sb",
+          "Tl",
+          "Pb",
+          "Bi"
+        ]
+      }
+    ]
   }
 }

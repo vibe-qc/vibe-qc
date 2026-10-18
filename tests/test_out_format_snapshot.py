@@ -58,8 +58,8 @@ _GOLDEN_DIR = Path(__file__).parent / "golden"
 _VOLATILE = [
     # banner: "... (branch @ 0a1b2c3, dirty) ..."  -> "... (<GIT>) ..."
     (re.compile(r"\([^()]*@ [0-9a-f]{7}[^()]*\)"), "(<GIT>)"),
-    (re.compile(r"Available on this machine: [\d.]+ GB"),
-     "Available on this machine: <MEM> GB"),
+    (re.compile(r"Available to this job: [\d.]+ GB"),
+     "Available to this job: <MEM> GB"),
     (re.compile(r"/[^\s]*?/(tmp|Users|home)/[^\s]*"), "<PATH>"),
     # thread counts track the machine / OMP_NUM_THREADS cap, and the digit
     # zeroing preserves width -- "Threads: 8" vs "Threads: 18" would differ.
@@ -75,6 +75,7 @@ _VOLATILE = [
     # state: digit-zeroing leaves its letters, which track the numbers, not
     # the format. Scrub the digest, keep the label.
     (re.compile(r"(state fingerprint:\s*)[0-9a-f]{16,}"), r"\1<FPR>"),
+    (re.compile(r"(Settings SHA256:\s*)[0-9a-f]{64}"), r"\1<HASH>"),
     # any wall-clock the writers emit
     (re.compile(r"\(\s*\d+\.\d+\s*ms\)"), "(<T>ms)"),
     (re.compile(r"\b\d+\.\d+\s*s\b"), "<T>s"),
@@ -82,9 +83,12 @@ _VOLATILE = [
     # Their elapsed time has no suffix; normalize only this complete row,
     # so concatenated following output cannot be hidden by the scrubber.
     (re.compile(r"^(\s*Wall time)\s+\d+\.\d{3}$"), r"\1 <T>"),
+    # "Post-SCF and output" is a wall time like the others: masking only its
+    # digits keeps their count, so a post-SCF phase crossing 10 s read as a
+    # format change ("00.000" vs " 0.000") and flaked the periodic goldens.
     (re.compile(
         r"(Job total|SCF total|SCF stability analysis"
-        r"|SCF avg\. per iteration)\b.*"), r"\1 <T>"),
+        r"|SCF avg\. per iteration|Post-SCF and output)\b.*"), r"\1 <T>"),
 ]
 
 # A signed decimal / scientific number. Zero the digits, keep the mantissa
@@ -207,9 +211,30 @@ def test_out_format_molecular_rhf(tmp_path):
     _compare_or_regen("mol_rhf", stem.with_suffix(".out").read_text())
 
 
-def test_out_format_molecular_rks_pbe(tmp_path):
+@pytest.fixture(params=[1, 2, 6], ids=lambda n: f"runtime{n}")
+def runtime_workers(request):
+    """Run a snapshot at a given runtime OpenMP worker count, then restore.
+
+    The golden must not encode the host's worker count (#298): the RKS
+    memory preflight charges one XC batch table per concurrent worker.
+    """
+    previous = vq.get_num_threads()
+    vq.set_num_threads(request.param)
+    try:
+        yield request.param
+    finally:
+        vq.set_num_threads(previous)
+
+
+def test_out_format_molecular_rks_pbe(tmp_path, runtime_workers):
+    # Produced and compared at one OpenMP worker (#298): the golden's
+    # "DFT grid + chi" row is the single-worker preflight estimate. The
+    # fixture restores the previous count after run_job pins it.
     stem = tmp_path / "mol_rks"
-    run_job(_h2o(), basis="sto-3g", method="rks", functional="pbe", output=stem)
+    run_job(
+        _h2o(), basis="sto-3g", method="rks", functional="pbe", output=stem,
+        num_threads=1,
+    )
     _compare_or_regen("mol_rks", stem.with_suffix(".out").read_text())
 
 
@@ -234,6 +259,17 @@ def test_out_format_double_hybrid(tmp_path):
     stem = tmp_path / "dh"
     vq.run_double_hybrid(_h2o(), "cc-pvdz", "b2plyp", output=stem)
     _compare_or_regen("double_hybrid", stem.with_suffix(".out").read_text())
+
+
+def test_out_format_double_hybrid_open_shell(tmp_path):
+    # Its own golden because the open-shell branch is a different pair of
+    # calculations, and the .out said so nowhere until #365: the SCF is a
+    # spin-pure ROKS and the correction a semicanonical RI-ROHF-MP2 doubles
+    # term, both reported under closed-shell labels. Freezing the open-shell
+    # file separately is what stops those labels drifting back.
+    stem = tmp_path / "dh_os"
+    vq.run_double_hybrid(_oh_doublet(), "cc-pvdz", "b2plyp", output=stem)
+    _compare_or_regen("double_hybrid_open_shell", stem.with_suffix(".out").read_text())
 
 
 def test_out_format_molecular_hessian(tmp_path):
@@ -380,6 +416,12 @@ def test_canonicalize_scrubs_state_fingerprint():
     b = canonicalize("  state fingerprint: " + "9f3e" * 16 + "\n")
     assert a == b
     assert "<FPR>" in a
+
+
+def test_canonicalize_scrubs_domain_fingerprint():
+    a = canonicalize("  Settings SHA256: " + "ab12" * 16 + "\n")
+    b = canonicalize("  Settings SHA256: " + "9f3e" * 16 + "\n")
+    assert a == b == "  Settings SHA256: <HASH>\n"
 
 
 def test_canonicalize_collapses_the_whole_banner_box():

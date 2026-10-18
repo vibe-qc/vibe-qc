@@ -40,10 +40,11 @@ from vibeqc import Atom, Molecule, run_job, system_info, write_system_manifest
 # ---------------------------------------------------------------------------
 
 EXPECTED_SHAPE: dict[str, set[str]] = {
-    "vibeqc":    {"version", "codename", "git_sha", "git_branch", "is_release"},
+    "vibeqc":    {"version", "codename", "git_sha", "git_branch", "is_release",
+                 "native_core_sha256", "native_core_bytes"},
     "host":      {"hostname", "os", "os_release", "os_pretty", "arch"},
     "cpu":       {"model", "physical_cores", "logical_cores", "omp_threads_used"},
-    "memory":    {"total_gb", "available_gb"},
+    "memory":    {"total_gb", "available_gb", "host_total_gb", "effective_available_gb"},
     "python":    {"version", "implementation", "executable"},
     "libraries": {"libint", "libxc", "spglib", "libecpint", "fftw3"},
     "validation": {
@@ -86,6 +87,19 @@ def test_system_manifest_prefers_full_immutable_git_sha(
         },
     )
     assert system_info_module.system_info()["vibeqc"]["git_sha"] == full_sha
+
+
+def test_system_manifest_distinguishes_host_and_job_memory(monkeypatch) -> None:
+    import vibeqc.memory as memory
+    import vibeqc.output.formats.system_info as system_info_module
+
+    monkeypatch.setattr(system_info_module, "_total_memory_bytes", lambda: 128 * 1024**3)
+    monkeypatch.setattr(memory, "available_memory_bytes", lambda: 4 * 1024**3)
+    info = system_info_module.system_info()["memory"]
+    assert info["host_total_gb"] == info["total_gb"] == 128.0
+    assert info["effective_available_gb"] == info["available_gb"] == 4.0
+    estimate = memory.MemoryEstimate(by_category={"workspace": 1024**3})
+    assert "Available to this job: 4.0 GB" in estimate.format(available=4 * 1024**3)
 
 
 def test_system_manifest_round_trips_through_tomllib(tmp_path: Path) -> None:

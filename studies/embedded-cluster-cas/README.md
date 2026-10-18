@@ -1,7 +1,7 @@
 # Embedded-cluster CASSCF/CASPT2 spike
 
 Research spike toward periodic multireference via embedded clusters
-(the OpenMolcas-parity path; see `handovers/HANDOVER_PERIODIC_MULTIREF.md`,
+(the OpenMolcas-parity path,
 milestones MR6-MR10). This is a research/validation study on `main`, not a
 supported embedded-cluster runtime feature; it uses the molecular CAS solvers
 unchanged and adds no core code.

@@ -129,16 +129,19 @@ def test_direct_gradient_routes_open_shell_ks(monkeypatch):
     control instead of the former fail-closed defect gate."""
     from types import SimpleNamespace
 
-    sentinel_options = object()
+    sentinel_options = SimpleNamespace(
+        lattice_opts=object(), grid=object(), becke_image_radius_bohr=10.0)
     calls = []
     direct = SimpleNamespace(
         converged=True,
+        xc_lattice_cutoff_bohr=31.4,
         energy=-4.0,
         exchange_q0="",
         exchange_q0_applicability="inactive",
     )
     control = SimpleNamespace(
         converged=True,
+        xc_lattice_cutoff_bohr=31.4,
         energy=-4.0,
         exchange_q0="",
         exchange_q0_applicability="inactive",
@@ -149,6 +152,9 @@ def test_direct_gradient_routes_open_shell_ks(monkeypatch):
         calls.append(("direct", functional, kwargs))
         assert functional == "pbe"
         assert kwargs["initial_guess"] == "AUTO"
+        assert kwargs["rcut_strategy"] == "flat"
+        assert kwargs["lat_opts"] is sentinel_options.lattice_opts
+        assert kwargs["grid_options"] is sentinel_options.grid
         return direct
 
     def fake_gdf(ccm, functional, **kwargs):
@@ -168,11 +174,19 @@ def test_direct_gradient_routes_open_shell_ks(monkeypatch):
         "vibeqc.periodic.ccm.ri.run_ccm_uks_gdf", fake_gdf
     )
     result = run_ccm_direct_gradient(
-        _lih_triplet_ccm(0.0), functional="pbe", options=sentinel_options
+        _lih_triplet_ccm(0.0), functional="pbe", options=sentinel_options, rcut_strategy="flat"
     )
     assert [call[0] for call in calls] == ["direct", "gdf"]
     assert np.array_equal(result.gradient, expected)
     assert result.parity_residual_ha_per_cell == 0.0
+
+
+    # Even coincident energies cannot attribute a gradient across XC domains.
+    control.xc_lattice_cutoff_bohr = 15.0
+    with pytest.raises(ValueError, match="XC image cutoff.*mismatched"):
+        run_ccm_direct_gradient(
+            _lih_triplet_ccm(0.0), functional="pbe", scf_result=direct,
+            options=sentinel_options, rcut_strategy="flat")
 
 
 @pytest.mark.slow

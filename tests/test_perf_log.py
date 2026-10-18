@@ -544,3 +544,98 @@ def test_perf_json_report_is_serialisable_for_empty_tracker() -> None:
     assert payload["phases"] == []
     assert payload["scf_iters"] == []
     assert payload["memory_snapshots"] == []
+
+
+# Native capture is optional execution metadata, independent of science.
+class _FakeNativeCapture:
+    def __init__(self):
+        self.frames = []
+        self.next_token = 0
+
+    def begin(self, enabled):
+        self.next_token += 1
+        self.frames.append([self.next_token, enabled, []])
+        return self.next_token
+
+    def take(self, token, finish=False):
+        assert self.frames[-1][0] == token
+        records = self.frames[-1][2]
+        self.frames[-1][2] = []
+        if finish:
+            self.frames.pop()
+        return {'records': records, 'dropped_calls': 0}
+
+    def emit(self, label):
+        if self.frames and self.frames[-1][1]:
+            self.frames[-1][2].append(dict(kernel=label, wall_seconds=.25,
+                completed=True, dimensions={'points': 12}, phases=[
+                    dict(name='reduce', measure='summed_worker_wall', seconds=.4, intervals=2)]))
+
+
+def _fake_native_capture(monkeypatch):
+    from vibeqc import _vibeqc_core as core
+    fake = _FakeNativeCapture()
+    monkeypatch.setattr(core, '_native_phase_profile_begin', fake.begin, raising=False)
+    monkeypatch.setattr(core, '_native_phase_profile_take', fake.take, raising=False)
+    return fake
+
+
+def test_native_phase_capture_is_opt_in_and_drained_once(monkeypatch, tmp_path):
+    fake = _fake_native_capture(monkeypatch)
+    with perf_log() as disabled:
+        fake.emit('off')
+    assert disabled.native_phases == [] and fake.next_token == 0
+    path = tmp_path/'native.json'
+    with perf_log(path, native=True) as tracker:
+        fake.emit('first')
+        snapshot = json.loads(perf_format.format_perf_json(tracker))
+        assert snapshot['native_phases'][0]['phases'][0]['measure'] == 'summed_worker_wall'
+        assert snapshot['phases'] == []  # never mixed into CPU/parallelism rows
+        fake.emit('second')
+    rows = json.loads(path.read_text())['native_phases']
+    assert [x['kernel'] for x in rows] == ['first', 'second']
+    assert fake.frames == []
+    text = perf_format.format_perf_report(tracker)
+    assert 'not additive' in text and 'summed_worker_wall' in text
+
+
+def test_native_phase_nested_disabled_context_and_exception_restore(monkeypatch):
+    fake = _fake_native_capture(monkeypatch)
+    with perf_log(native=True) as outer:
+        fake.emit('outer-before')
+        with perf_log() as disabled:
+            fake.emit('must-not-leak')
+        with pytest.raises(RuntimeError, match='calculation failed'):
+            with perf_log(native=True) as inner:
+                fake.emit('inner')
+                raise RuntimeError('calculation failed')
+        fake.emit('outer-after')
+    assert disabled.native_phases == []
+    assert [x['kernel'] for x in inner.native_phases] == ['inner']
+    assert [x['kernel'] for x in outer.native_phases] == ['outer-before', 'outer-after']
+    assert active_tracker() is None and fake.frames == []
+
+
+def test_native_phase_capture_refuses_async_task_interleaving(monkeypatch):
+    import asyncio
+    fake = _fake_native_capture(monkeypatch)
+    async def task():
+        with pytest.raises(ValueError, match='synchronous'):
+            with perf_log(native=True):
+                pass
+    asyncio.run(task())
+    assert fake.frames == [] and active_tracker() is None
+
+
+def test_native_phase_native_token_order_and_restoration():
+    from vibeqc import _vibeqc_core as core
+    outer = core._native_phase_profile_begin(True)
+    inner = core._native_phase_profile_begin(False)
+    try:
+        with pytest.raises(ValueError, match='innermost token'):
+            core._native_phase_profile_take(outer, False)
+    finally:
+        assert core._native_phase_profile_take(inner, True) == {'records': [], 'dropped_calls': 0}
+        assert core._native_phase_profile_take(outer, True) == {'records': [], 'dropped_calls': 0}
+    with pytest.raises(ValueError, match='owning thread'):
+        core._native_phase_profile_take(outer, False)

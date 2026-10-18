@@ -38,15 +38,19 @@ SRC_DIR="$LIBXC_DIR/src"
 BUILD_DIR="$LIBXC_DIR/build"
 INSTALL_DIR="$LIBXC_DIR/install"
 
+# Cache admission does not change the source pin or compilation options.
+# vibeqc-recipe-hash: lifecycle-only-begin
 # libxc may install its CMake config to lib/ or lib64/ depending on distro.
 for candidate in \
         "$INSTALL_DIR/lib/cmake/Libxc/LibxcConfig.cmake" \
         "$INSTALL_DIR/lib64/cmake/Libxc/LibxcConfig.cmake"; do
     if [ -f "$candidate" ]; then
-        echo "libxc $LIBXC_VERSION already installed at $INSTALL_DIR"
+        python3 "$SCRIPT_DIR/attest_native_image.py" libxc "$INSTALL_DIR" || exit 3
+        echo "libxc cache admitted at $INSTALL_DIR (recipe pin $LIBXC_VERSION; source/build provenance not attested)"
         exit 0
     fi
 done
+# vibeqc-recipe-hash: lifecycle-only-end
 
 if [ ! -f "$SRC_DIR/CMakeLists.txt" ]; then
     echo "Cloning libxc $LIBXC_VERSION..."
@@ -62,6 +66,13 @@ if [ "${VIBEQC_FETCH_ONLY:-0}" = "1" ]; then
     echo "VIBEQC_FETCH_ONLY=1 -- libxc source staged at $SRC_DIR; skipping build."
     exit 0
 fi
+
+# Optional observation changes no compilation semantics or cache recipe.
+# vibeqc-recipe-hash: lifecycle-only-begin
+# shellcheck source=_native_collector.sh
+. "$SCRIPT_DIR/_native_collector.sh"
+vibeqc_enable_native_collector libxc
+# vibeqc-recipe-hash: lifecycle-only-end
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"

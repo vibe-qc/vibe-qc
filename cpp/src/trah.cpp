@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "vibeqc/jk_builder.hpp"
 #include "vibeqc/quadratic_scf.hpp"   // expm_skew
@@ -10,6 +11,114 @@
 namespace vibeqc {
 
 namespace {
+
+// A complete curvature certificate is affordable only in a small rotation
+// space. Larger spaces retain the matrix-free PCG path and explicitly report
+// that their global trust-region optimum has not been certified.
+constexpr Eigen::Index small_trs_dimension_limit = 64;
+
+struct SmallTRSResult {
+    Eigen::VectorXd x;
+    double lambda = 0.0;
+    int matvecs = 0;
+    bool converged = false;
+    bool on_boundary = false;
+    double predicted_decrease = 0.0;
+};
+
+template <typename Action>
+SmallTRSResult small_trust_region(const Eigen::VectorXd& g, Action action,
+                                 const TRAHOptions& opts, double radius) {
+    SmallTRSResult out;
+    const Eigen::Index n = g.size();
+    out.x = Eigen::VectorXd::Zero(n);
+    if (n == 0) { out.converged = true; return out; }
+    Eigen::MatrixXd h(n, n);
+    for (Eigen::Index i = 0; i < n; ++i) {
+        h.col(i) = action(Eigen::VectorXd::Unit(n, i));
+        ++out.matvecs;
+    }
+    if (!h.allFinite()) return out;
+    // Roundoff symmetrisation, not a replacement for a symmetric action.
+    const double scale = h.norm();
+    const double roundoff = 64.0 * std::numeric_limits<double>::epsilon() * scale;
+    if ((h - h.transpose()).norm() > roundoff) return out;
+    h = (0.5 * (h + h.transpose())).eval();
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(h);
+    if (es.info() != Eigen::Success) return out;
+    const Eigen::VectorXd eigenvalues = es.eigenvalues();
+    const Eigen::VectorXd y = es.eigenvectors().transpose() * g;
+    const double pole = std::max(0.0, -eigenvalues(0));
+    Eigen::VectorXd p = Eigen::VectorXd::Zero(n);
+    double null_gradient2 = 0.0;
+    for (Eigen::Index i = 0; i < n; ++i) {
+        const double d = eigenvalues(i) + pole;
+        if (d <= roundoff) null_gradient2 += y(i) * y(i);
+        else p(i) = -y(i) / d;
+    }
+    // More and Sorensen, SIAM J. Sci. Stat. Comput. 4 (1983),
+    // Lemmas 2.1/2.3 and Eq. (3.3), doi:10.1137/0904038:
+    // at the hard-case pole, add a lowest-mode component to the
+    // pseudoinverse solution. Its sign is not unique when g is orthogonal.
+    const double residual_scale = std::max(g.norm(), scale * radius);
+    const double null_tol = 64.0 * std::numeric_limits<double>::epsilon()
+                            * residual_scale;
+    if (std::sqrt(null_gradient2) <= null_tol && p.norm() <= radius) {
+        out.lambda = pole;
+        if (pole > 0.0) {
+            p(0) = std::sqrt(std::max(0.0, radius * radius - p.squaredNorm()));
+            if (y(0) > 0.0) p(0) = -p(0);
+        }
+    } else {
+        double lo = pole;
+        double hi = pole + g.norm() / radius;
+        // From the spectral norm identity in More-Sorensen Eq. (2.4):
+        // the non-null part decreases above the pole. Filling the remaining
+        // norm with the lowest-mode gradient gives a tighter upper bracket
+        // in the nearly hard case, without changing the iteration budget.
+        const double remaining2 = radius * radius - p.squaredNorm();
+        if (null_gradient2 > 0.0 && remaining2 > 0.0) {
+            const double near_pole = std::max(
+                std::nextafter(pole, std::numeric_limits<double>::infinity()),
+                pole + std::sqrt(null_gradient2 / remaining2));
+            hi = std::min(hi, near_pole);
+        }
+        double lambda = hi;
+        for (int it = 0; it < opts.ms_max_iter; ++it) {
+            const Eigen::ArrayXd d = eigenvalues.array() + lambda;
+            p = (-y.array() / d).matrix();
+            const double norm = p.norm();
+            if (std::abs(norm - radius) <=
+                std::min(opts.ms_tol, opts.cg_tol) * radius) break;
+            if (norm > radius) lo = lambda;
+            else hi = lambda;
+            const double derivative = (p.array().square() / d).sum();
+            double next = lambda + (norm * norm / derivative) * (norm / radius - 1.0);
+            if (!std::isfinite(next) || next <= lo || next >= hi)
+                next = lo + 0.5 * (hi - lo);
+            lambda = next;
+        }
+        // Recompute at the reported shift, including a capped final iteration.
+        out.lambda = lambda;
+        p = (-y.array() / (eigenvalues.array() + lambda)).matrix();
+        // Keep every returned approximation feasible, even on exhaustion.
+        const double norm = p.norm();
+        if (norm > radius || (norm > 0.0 &&
+            std::abs(norm - radius) <= std::min(opts.ms_tol, opts.cg_tol) * radius))
+            p *= radius / norm;
+    }
+    out.x = es.eigenvectors() * p;
+    out.predicted_decrease = -g.dot(out.x) - 0.5 * out.x.dot(h * out.x);
+    const double norm = out.x.norm();
+    out.on_boundary = std::abs(norm - radius) <= opts.ms_tol * radius;
+    const double residual = (h * out.x + out.lambda * out.x + g).norm();
+    const double residual_tol = opts.cg_tol * g.norm() + null_tol;
+    out.converged = out.x.allFinite() && residual <= residual_tol
+        && norm <= radius * (1.0 + opts.ms_tol)
+        && eigenvalues(0) + out.lambda >= -roundoff
+        && (out.lambda == 0.0 || out.on_boundary);
+    return out;
+}
 
 // ===========================================================================
 // Closed-shell RHF / RKS orbital-Hessian matvec + preconditioned CG.
@@ -133,6 +242,8 @@ struct TRSResult {
     int cg_iter = 0;           // total inner CG iterations
     bool cg_converged = false;
     bool on_boundary = false;  // true ⇒ ‖κ‖ = Δ (boundary solution)
+    bool trust_region_converged = false;
+    double predicted_decrease = std::numeric_limits<double>::quiet_NaN();
 };
 
 TRSResult solve_trust_region_subproblem(
@@ -146,6 +257,30 @@ TRSResult solve_trust_region_subproblem(
     const XCKernelBuilder* xc_kernel,
     double alpha_hf) {
     TRSResult res;
+    if (g.size() <= small_trs_dimension_limit && g.size() <= opts.cg_max_iter) {
+        const auto dense = small_trust_region(
+            Eigen::Map<const Eigen::VectorXd>(g.data(), g.size()),
+            [&](const Eigen::VectorXd& v) -> Eigen::VectorXd {
+                const Eigen::MatrixXd k = Eigen::Map<const Eigen::MatrixXd>(
+                    v.data(), g.rows(), g.cols());
+                const Eigen::MatrixXd hv = orbital_hessian_action(
+                    k, C_occ, C_vir, eps_diff, jk, xc_kernel, alpha_hf, 0.0);
+                return Eigen::Map<const Eigen::VectorXd>(hv.data(), hv.size());
+            }, opts, trust_radius);
+        // A failed complete solve must not replace the useful PCG fallback
+        // with a zero step (for example after an asymmetric response product).
+        if (dense.converged) {
+            res.kappa = Eigen::Map<const Eigen::MatrixXd>(dense.x.data(), g.rows(), g.cols());
+            res.lambda = dense.lambda;
+            res.cg_iter = dense.matvecs;
+            res.cg_converged = dense.converged;
+            res.trust_region_converged = dense.converged;
+            res.on_boundary = dense.on_boundary;
+            res.predicted_decrease = dense.predicted_decrease;
+            return res;
+        }
+        res.cg_iter += dense.matvecs;
+    }
     const Eigen::MatrixXd b = -g;
     const double g_norm = g.norm();
 
@@ -158,7 +293,7 @@ TRSResult solve_trust_region_subproblem(
         res.kappa = cg0.x;
         res.lambda = 0.0;
         res.cg_converged = true;
-        res.on_boundary = false;
+        res.on_boundary = std::abs(cg0.x.norm() - trust_radius) <= opts.ms_tol * trust_radius;
         return res;
     }
 
@@ -190,6 +325,7 @@ TRSResult solve_trust_region_subproblem(
 
     Eigen::MatrixXd best_kappa;
     double best_lambda = lambda;
+    bool best_converged = false;
     for (int it = 0; it < opts.ms_max_iter; ++it) {
         CGResult cgp = preconditioned_cg(b, C_occ, C_vir, eps_diff, jk,
                                           opts.cg_max_iter, opts.cg_tol,
@@ -206,6 +342,7 @@ TRSResult solve_trust_region_subproblem(
         const double p_norm = cgp.x.norm();
         best_kappa = cgp.x;
         best_lambda = lambda;
+        best_converged = cgp.converged;
         if (std::abs(p_norm - trust_radius) <= opts.ms_tol * trust_radius) {
             break;   // secular equation satisfied ‖κ(λ)‖ ≈ Δ
         }
@@ -252,8 +389,9 @@ TRSResult solve_trust_region_subproblem(
     } else {
         res.kappa = best_kappa;
         res.lambda = best_lambda;
-        res.cg_converged = true;
+        res.cg_converged = best_converged;
     }
+    res.on_boundary = std::abs(res.kappa.norm() - trust_radius) <= opts.ms_tol * trust_radius;
     return res;
 }
 
@@ -277,6 +415,7 @@ TRAHStepResult trah_step(const Eigen::MatrixXd& F,
         out.C = C_prev;
         out.eps = (C_prev.transpose() * F * C_prev).diagonal();
         out.cg_converged = true;
+        out.trust_region_converged = true;
         return out;
     }
 
@@ -297,9 +436,8 @@ TRAHStepResult trah_step(const Eigen::MatrixXd& F,
     const Eigen::MatrixXd C_occ = C_prev.leftCols(n_occ);
     const Eigen::MatrixXd C_vir = C_prev.rightCols(n_vir);
 
-    // Solve the trust-region subproblem exactly: interior unconstrained
-    // Newton step when ‖A⁻¹g‖ ≤ Δ, else the level-shifted boundary step
-    // κ(λ) = −(A + λI)⁻¹g found by the More-Sorensen secular root-find.
+    // Solve the complete small model when affordable; otherwise retain the
+    // matrix-free interior Newton / shifted boundary approximation.
     const TRSResult trs = solve_trust_region_subproblem(
         g, C_occ, C_vir, eps_diff, jk, opts, trust_radius,
         xc_kernel, alpha_hf);
@@ -308,6 +446,7 @@ TRAHStepResult trah_step(const Eigen::MatrixXd& F,
     out.kappa_norm = kappa.norm();
     out.cg_iter = trs.cg_iter;
     out.cg_converged = trs.cg_converged;
+    out.trust_region_converged = trs.trust_region_converged;
     out.level_shift = trs.lambda;
     out.on_boundary = trs.on_boundary;
 
@@ -319,8 +458,9 @@ TRAHStepResult trah_step(const Eigen::MatrixXd& F,
     // (λ = 0 recovers the plain Newton −½ gᵀκ.) The driver uses this as
     // the denominator in Powell's ρ = actual / predicted next iteration.
     const double g_dot_kappa = (g.array() * kappa.array()).sum();
-    out.predicted_decrease =
-        -0.5 * g_dot_kappa + 0.5 * trs.lambda * out.kappa_norm * out.kappa_norm;
+    out.predicted_decrease = std::isfinite(trs.predicted_decrease)
+        ? trs.predicted_decrease
+        : -0.5 * g_dot_kappa + 0.5 * trs.lambda * out.kappa_norm * out.kappa_norm;
 
     // Build full antihermitian generator and rotate.
     Eigen::MatrixXd kappa_full = Eigen::MatrixXd::Zero(n_kept, n_kept);
@@ -336,11 +476,19 @@ TRAHStepResult trah_step(const Eigen::MatrixXd& F,
 // Open-shell UHF / UKS TRAH — coupled per-spin CG with the same
 // level-shifted trust-region subproblem solve as the closed-shell path.
 // Internals mirror cpp/src/newton.cpp's uhf_newton_step but expose the
-// predicted_decrease for Powell's ρ test and solve the trust-region
-// subproblem exactly (interior Newton or More-Sorensen boundary).
+// predicted_decrease for Powell's ρ test. Complete small-space solutions
+// are distinguished from the large-space matrix-free approximation.
 // ===========================================================================
 
 namespace {
+
+// The orbital Hessian uses F_vv kappa - kappa F_oo in a general MO
+// gauge (Helmich-Paris, J. Chem. Phys. 154, 164104 (2021)). Rotations
+// between SCF steps do not preserve semicanonical occupied/virtual
+// blocks. Orbital-energy gaps remain a preconditioner, not the action.
+struct UHFFockBlocks {
+    Eigen::MatrixXd oo_alpha, vv_alpha, oo_beta, vv_beta;
+};
 
 struct UHFKappa {
     Eigen::MatrixXd alpha;
@@ -362,18 +510,21 @@ UHFKappa uhf_orbital_hessian_action(
     const UHFKappa& kappa,
     const Eigen::MatrixXd& C_occ_alpha, const Eigen::MatrixXd& C_vir_alpha,
     const Eigen::MatrixXd& C_occ_beta,  const Eigen::MatrixXd& C_vir_beta,
-    const Eigen::MatrixXd& eps_diff_alpha,
-    const Eigen::MatrixXd& eps_diff_beta,
+    const UHFFockBlocks& fock,
     const JKBuilder& jk,
     const UHFXCKernelBuilder* xc_kernel,
     double alpha_hf,
     double shift)
 {
     UHFKappa out;
-    out.alpha = eps_diff_alpha.cwiseProduct(kappa.alpha);
-    out.beta  = eps_diff_beta .cwiseProduct(kappa.beta);
     const bool have_a = kappa.alpha.size() != 0;
     const bool have_b = kappa.beta.size() != 0;
+    if (have_a) {
+        out.alpha = fock.vv_alpha * kappa.alpha - kappa.alpha * fock.oo_alpha;
+    }
+    if (have_b) {
+        out.beta = fock.vv_beta * kappa.beta - kappa.beta * fock.oo_beta;
+    }
     Eigen::MatrixXd Da_pert, Db_pert;
     if (have_a) {
         Da_pert = build_perturbed_density(kappa.alpha, C_occ_alpha, C_vir_alpha);
@@ -428,6 +579,7 @@ UHFCGResult uhf_preconditioned_cg(
     const Eigen::MatrixXd& C_occ_beta,  const Eigen::MatrixXd& C_vir_beta,
     const Eigen::MatrixXd& eps_diff_alpha,
     const Eigen::MatrixXd& eps_diff_beta,
+    const UHFFockBlocks& fock,
     const JKBuilder& jk,
     int max_iter, double tol,
     const UHFXCKernelBuilder* xc_kernel,
@@ -459,8 +611,7 @@ UHFCGResult uhf_preconditioned_cg(
         const UHFKappa Ap = uhf_orbital_hessian_action(
             p, C_occ_alpha, C_vir_alpha,
             C_occ_beta,  C_vir_beta,
-            eps_diff_alpha, eps_diff_beta, jk,
-            xc_kernel, alpha_hf, shift);
+            fock, jk, xc_kernel, alpha_hf, shift);
         const double pAp = uhf_kappa_dot(p, Ap);
         if (pAp <= 0.0) {
             res.n_iter = k; res.converged = false; res.non_pd = true;
@@ -491,6 +642,8 @@ struct UHFTRSResult {
     int cg_iter = 0;
     bool cg_converged = false;
     bool on_boundary = false;
+    bool trust_region_converged = false;
+    double predicted_decrease = std::numeric_limits<double>::quiet_NaN();
 };
 
 UHFKappa uhf_scale(const UHFKappa& v, double s) {
@@ -507,19 +660,56 @@ UHFTRSResult uhf_solve_trust_region_subproblem(
     const Eigen::MatrixXd& C_occ_beta,  const Eigen::MatrixXd& C_vir_beta,
     const Eigen::MatrixXd& eps_diff_alpha,
     const Eigen::MatrixXd& eps_diff_beta,
+    const UHFFockBlocks& fock,
     const JKBuilder& jk,
     const TRAHOptions& opts,
     double trust_radius,
     const UHFXCKernelBuilder* xc_kernel,
     double alpha_hf) {
     UHFTRSResult res;
+    const Eigen::Index na = g.alpha.size(), nb = g.beta.size(), n = na + nb;
+    if (n <= small_trs_dimension_limit && n <= opts.cg_max_iter) {
+        Eigen::VectorXd flat(n);
+        if (na) flat.head(na) = Eigen::Map<const Eigen::VectorXd>(g.alpha.data(), na);
+        if (nb) flat.tail(nb) = Eigen::Map<const Eigen::VectorXd>(g.beta.data(), nb);
+        auto unpack = [&](const Eigen::VectorXd& v) {
+            UHFKappa k{Eigen::MatrixXd::Zero(g.alpha.rows(), g.alpha.cols()),
+                       Eigen::MatrixXd::Zero(g.beta.rows(), g.beta.cols())};
+            if (na) k.alpha = Eigen::Map<const Eigen::MatrixXd>(v.data(), g.alpha.rows(), g.alpha.cols());
+            if (nb) k.beta = Eigen::Map<const Eigen::MatrixXd>(v.data() + na, g.beta.rows(), g.beta.cols());
+            return k;
+        };
+        const auto dense = small_trust_region(flat,
+            [&](const Eigen::VectorXd& v) -> Eigen::VectorXd {
+                const UHFKappa hv = uhf_orbital_hessian_action(
+                    unpack(v), C_occ_alpha, C_vir_alpha, C_occ_beta, C_vir_beta,
+                    fock, jk, xc_kernel, alpha_hf, 0.0);
+                Eigen::VectorXd result(n);
+                if (na) result.head(na) = Eigen::Map<const Eigen::VectorXd>(hv.alpha.data(), na);
+                if (nb) result.tail(nb) = Eigen::Map<const Eigen::VectorXd>(hv.beta.data(), nb);
+                return result;
+            }, opts, trust_radius);
+        // A failed complete solve must not replace the useful PCG fallback
+        // with a zero step (for example after an asymmetric response product).
+        if (dense.converged) {
+            res.kappa = unpack(dense.x);
+            res.lambda = dense.lambda;
+            res.cg_iter = dense.matvecs;
+            res.cg_converged = dense.converged;
+            res.trust_region_converged = dense.converged;
+            res.on_boundary = dense.on_boundary;
+            res.predicted_decrease = dense.predicted_decrease;
+            return res;
+        }
+        res.cg_iter += dense.matvecs;
+    }
     const UHFKappa b = uhf_negate(g);
     const double g_norm = uhf_kappa_norm(g);
 
     auto run_cg = [&](const UHFKappa& rhs, double shift) {
         return uhf_preconditioned_cg(
             rhs, C_occ_alpha, C_vir_alpha, C_occ_beta, C_vir_beta,
-            eps_diff_alpha, eps_diff_beta, jk,
+            eps_diff_alpha, eps_diff_beta, fock, jk,
             opts.cg_max_iter, opts.cg_tol, xc_kernel, alpha_hf, shift);
     };
 
@@ -530,7 +720,7 @@ UHFTRSResult uhf_solve_trust_region_subproblem(
         res.kappa = cg0.x;
         res.lambda = 0.0;
         res.cg_converged = true;
-        res.on_boundary = false;
+        res.on_boundary = std::abs(uhf_kappa_norm(cg0.x) - trust_radius) <= opts.ms_tol * trust_radius;
         return res;
     }
 
@@ -556,6 +746,7 @@ UHFTRSResult uhf_solve_trust_region_subproblem(
     UHFKappa best_kappa;
     bool have_best = false;
     double best_lambda = lambda;
+    bool best_converged = false;
     for (int it = 0; it < opts.ms_max_iter; ++it) {
         UHFCGResult cgp = run_cg(b, lambda);
         res.cg_iter += cgp.n_iter;
@@ -570,6 +761,7 @@ UHFTRSResult uhf_solve_trust_region_subproblem(
         best_kappa = cgp.x;
         have_best = true;
         best_lambda = lambda;
+        best_converged = cgp.converged;
         if (std::abs(p_norm - trust_radius) <= opts.ms_tol * trust_radius) {
             break;
         }
@@ -605,8 +797,9 @@ UHFTRSResult uhf_solve_trust_region_subproblem(
     } else {
         res.kappa = best_kappa;
         res.lambda = best_lambda;
-        res.cg_converged = true;
+        res.cg_converged = best_converged;
     }
+    res.on_boundary = std::abs(uhf_kappa_norm(res.kappa) - trust_radius) <= opts.ms_tol * trust_radius;
     return res;
 }
 
@@ -684,22 +877,30 @@ UHFTRAHStepResult uhf_trah_step(const Eigen::MatrixXd& F_alpha,
     const Eigen::MatrixXd C_vir_b =
         (n_vir_b > 0) ? C_beta_prev.rightCols(n_vir_b) : Eigen::MatrixXd();
 
+    const UHFFockBlocks fock{
+        Fmo_a.topLeftCorner(n_alpha, n_alpha),
+        Fmo_a.bottomRightCorner(n_vir_a, n_vir_a),
+        Fmo_b.topLeftCorner(n_beta, n_beta),
+        Fmo_b.bottomRightCorner(n_vir_b, n_vir_b)};
+
     const UHFTRSResult trs = uhf_solve_trust_region_subproblem(
         g, C_occ_a, C_vir_a, C_occ_b, C_vir_b,
-        eps_diff_a, eps_diff_b, jk, opts, trust_radius,
+        eps_diff_a, eps_diff_b, fock, jk, opts, trust_radius,
         xc_kernel, alpha_hf);
 
     const UHFKappa& kappa = trs.kappa;
     out.kappa_norm = uhf_kappa_norm(kappa);
     out.cg_iter = trs.cg_iter;
     out.cg_converged = trs.cg_converged;
+    out.trust_region_converged = trs.trust_region_converged;
     out.level_shift = trs.lambda;
     out.on_boundary = trs.on_boundary;
 
     // Predicted ΔE = −½ gᵀκ + ½ λ‖κ‖²  (see closed-shell derivation).
     const double g_dot_kappa = uhf_kappa_dot(g, kappa);
-    out.predicted_decrease =
-        -0.5 * g_dot_kappa + 0.5 * trs.lambda * out.kappa_norm * out.kappa_norm;
+    out.predicted_decrease = std::isfinite(trs.predicted_decrease)
+        ? trs.predicted_decrease
+        : -0.5 * g_dot_kappa + 0.5 * trs.lambda * out.kappa_norm * out.kappa_norm;
 
     const Eigen::MatrixXd Ka_full = kappa_to_skew(kappa.alpha, n_kept_a, n_alpha);
     const Eigen::MatrixXd Kb_full = kappa_to_skew(kappa.beta,  n_kept_b, n_beta);

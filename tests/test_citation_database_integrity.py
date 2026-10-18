@@ -69,9 +69,12 @@ _DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$")
 # only defers the double-print that `test_no_two_entries_share_a_doi` guards.
 _KNOWN_DUPLICATE_DOIS: dict[str, frozenset[str]] = {}
 
-# Entries with `kind = "article"` that genuinely have no DOI. Keep empty if
-# possible: an article without a DOI cannot be Crossref-verified.
-_ARTICLES_WITHOUT_DOI: frozenset[str] = frozenset()
+# DOI-less articles require an exact independently checked primary record.
+# MathNet identifies the Russian original of the 1999 English translation;
+# it records no DOI. Checked 2026-10-09, https://www.mathnet.ru/eng/dan3035.
+_ARTICLES_WITHOUT_DOI = {
+    "lebedev_laikov_1999": "https://www.mathnet.ru/eng/dan3035",
+}
 
 
 def _database() -> dict:
@@ -138,7 +141,9 @@ def test_known_duplicate_dois_still_exist() -> None:
 def test_every_article_has_a_doi(key: str) -> None:
     entry = _entries()[key]
     if key in _ARTICLES_WITHOUT_DOI:
-        pytest.skip(f"{key} is a documented DOI-less article")
+        assert entry.get("url") == _ARTICLES_WITHOUT_DOI[key]
+        assert not entry.get("doi"), "Remove the DOI-less record when a verified DOI is available"
+        return
     assert entry.get("doi"), (
         f"[entries.{key}] has kind='article' but no DOI, so nothing can "
         f"check mechanically that the paper exists. This is how the KDIIS "

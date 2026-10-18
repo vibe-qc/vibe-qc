@@ -1,6 +1,6 @@
 """Periodic meta-GGA (r2SCAN) regression + parity tests.
 
-§4 of the periodic meta-GGA validation handover (completed; retired 2026-06-21, see git history):
+Periodic meta-GGA validation (completed; retired 2026-06-21):
 
   (a) PBE regression guard — periodic PBE energies must be unchanged.
   (b) r2SCAN sanity — periodic r2SCAN produces physically reasonable energies
@@ -142,7 +142,7 @@ def test_r2scan_h2_molecular_limit():
 def test_uks_r2scan_smoke(tmp_path):
     """UKS r2SCAN must converge and produce a spin-polarised result.
 
-    Open-shell meta-GGA smoke per §4(c) of the handover, on the supported
+    Open-shell meta-GGA smoke per §4(c) of the original investigation, on the supported
     GDF route.
 
     The original smoke drove a fixed-geometry FM Fe-bcc cell through the

@@ -92,13 +92,17 @@ class TempBasisLibrary:
 
         The default basis name uuids one per call so libint's BasisSet
         constructor never returns a cached parse from a previous
-        iteration.
+        iteration. The file is stored under the name ``BasisSet`` looks
+        up -- ``basis_name`` folded by
+        :func:`vibeqc.basis_registry.canonical_basis_name` -- and that
+        folded name is returned (#321).
         """
         if self.path is None:
             raise RuntimeError("TempBasisLibrary used outside its context")
         from ..basis_crystal import emit_g94  # local import: optional dep
+        from ..basis_registry import write_basis_file
+
         name = basis_name or f"opt-{uuid.uuid4().hex[:8]}"
-        target = self.path / "basis" / f"{name}.g94"
-        text = emit_g94(list(atoms.values()))
-        target.write_text(text)
-        return name
+        return write_basis_file(
+            self.path / "basis", name, emit_g94(list(atoms.values()))
+        )

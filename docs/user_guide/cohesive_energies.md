@@ -28,6 +28,9 @@ computes a number is configuration rather than structure:
 | Fallback, Gaussian | `Crystal23Engine` | `vibe_basis.engines.crystal23` |
 | Fallback, plane wave | `GpawEngine` | `vibe_basis.engines.gpaw` (declared, not built) |
 
+The Gaussian fallback is CRYSTAL23 (A. Erba et al., *J. Chem. Theory Comput.*
+**19**, 6891 (2023), doi:10.1021/acs.jctc.2c00958).
+
 **vibe-qc is the engine. The external ones are fallbacks and
 cross-checks.** They exist to unblock work whose vibe-qc capability has
 not landed, and to give an *independent* second opinion: agreement
@@ -79,7 +82,8 @@ Three of them will bite a first campaign if taken at face value:
   k-point unless you say otherwise. That is enough to check the wiring
   and far too coarse for a production number. Pass a converged mesh with
   `VibeQcEngine(kpoints=...)`.
-- **BIPOLE, not GDF.** GDF needs an auxiliary fitting basis, and a
+- **BIPOLE, not GDF.** GDF ({vibeqc-cite}`sun_berkelbach_gdf_2017`) needs
+  an auxiliary fitting basis, and a
   freshly emitted candidate basis has none registered. Borrowing another
   basis's JKFIT set would lay a fitting error on top of the
   basis-incompleteness signal the objective exists to measure, so the
@@ -100,7 +104,9 @@ phonon path and records a skipped stage.
 
 Three things to know before quoting a number from it.
 
-**It is a Gamma-only ZPE, which is an approximation for a solid.** It
+**It is a Gamma-only ZPE, which is an approximation for a solid.** The
+harmonic estimate is $E_{\rm ZPE} = \tfrac12\sum_i \hbar\omega_i$ over the
+Gamma normal modes ({vibeqc-cite}`wilson_decius_cross_1955`). It
 samples one q-point and therefore misses the dispersion of the acoustic
 branches away from Gamma entirely. It is the standard cheap estimate and
 it is the right size; it is not a converged thermodynamic quantity.
@@ -109,7 +115,10 @@ Phonon-dispersion ZPE (supercell or q-mesh) is not implemented.
 
 **The Hessian is built from total energies, not from forces.** On the
 GAPW route, `vibeqc.periodic_gapw_phonon` differences the analytic GAPW
-force, which is production there. On the BIPOLE route the analytic
+force ({vibeqc-cite}`lippert_hutter_parrinello_gapw_1999`). That route is a
+preview: it samples the Gamma point only and rests on GAPW forces, and GAPW itself is an experimental family (see
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)),
+so it is not a production ZPE. On the BIPOLE route the analytic
 gradient is a research-preview surface (see `vibeqc.bipole_optimize`) and
 the production force is *itself* a finite difference, so differencing it
 again would stack two FD layers. Central differences of the energy are
@@ -173,8 +182,8 @@ campaign is trying to resolve.
 Every free-atom deck in the pob cohesive-energy reference set uses
 CRYSTAL's `ATOMBSSE`, meaning the atom is computed **in the ghost basis
 of its own crystal** rather than bare. The published numbers are
-therefore counterpoise corrected, and a cohesive energy assembled from
-bare atoms is not the same quantity.
+therefore counterpoise corrected ({vibeqc-cite}`boys_bernardi_1970`), and a
+cohesive energy assembled from bare atoms is not the same quantity.
 
 ```python
 # doc-audit: skip

@@ -8,7 +8,7 @@ array.
 **Licensing**: The AIMP data files are part of OpenMolcas (LGPL 2.1)
 and are NOT bundled with vibe-qc (MPL 2.0).  Users provide the path to
 their local OpenMolcas installation; this module reads and parses them
-at runtime.  See ``HANDOVER_PERIODIC_MULTIREF.md`` § 8.
+at runtime.
 
 **Format**: Each AIMP entry is identified by a key like
 

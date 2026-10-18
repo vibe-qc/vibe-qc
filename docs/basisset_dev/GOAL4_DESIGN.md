@@ -389,7 +389,7 @@ class MultiSystemEnergy:
     parametrisation: BasisParametrisation
     systems: list[SystemSpec]      # (factory, kmesh, weight, scf_runner)
     library: TempBasisLibrary
-    transport: Transport            # Local | RemoteVqPlanetx
+    transport: Transport            # Local | RemoteVq
     n_calls: int = 0
 
     def __call__(self, x: np.ndarray) -> float:
@@ -397,7 +397,7 @@ class MultiSystemEnergy:
         basis_name = self.library.write_g94(atoms,
                                             basis_name=f"opt-{self.n_calls:06d}")
         # Fan out via the chosen transport. Local = sequential
-        # in-process SCF. RemoteVqPlanetx = vq submit + poll.
+        # in-process SCF. RemoteVq = vq submit + poll.
         results = self.transport.evaluate(basis_name, self.systems)
         self.n_calls += 1
         return sum(w * E for (E, w) in zip(results, self.weights))
@@ -405,7 +405,7 @@ class MultiSystemEnergy:
 
 `Transport` is the ABC that hides "where does each SCF run". Two
 concrete implementations: `LocalTransport` (sequential, for
-laptop-scale Stage 2 + smoke tests) and `RemoteVqPlanetxTransport`
+laptop-scale Stage 2 + smoke tests) and `RemoteVqTransport`
 (submits via vq, polls until done, fetches energies). This keeps
 the optimiser code fan-out-agnostic.
 

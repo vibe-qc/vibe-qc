@@ -82,6 +82,16 @@ def test_reverify_inconclusive_runner_stays_red_conservatively():
     assert recovered == []
 
 
+def test_reverify_stale_core_is_void_even_after_another_file_recovers():
+    candidates = [_rec("tests/test_a.py", "FAIL"), _rec("tests/test_b.py", "FAIL")]
+
+    def runner(rel):
+        return _rec(rel, "PASS" if rel.endswith("test_a.py") else "STALE_CORE")
+
+    with pytest.raises(ValueError, match="test_b.py.*STALE_CORE"):
+        gv.reverify_new_reds(candidates, runner)
+
+
 def test_reverify_partitions_mixed_batch():
     """Mixed batch: passers recover, repeaters stay red, each routed correctly."""
     cands = [
@@ -180,6 +190,24 @@ def test_main_reverify_requires_wt_and_py(tmp_path):
     with pytest.raises(SystemExit) as exc:
         gv.main([triage, base, "--reverify"])
     assert exc.value.code == 2
+
+
+def test_main_reverify_stale_core_refuses_both_red_and_green(
+    tmp_path, monkeypatch, capsys,
+):
+    triage, base = _write_inputs(
+        tmp_path, [_rec("tests/test_probe.py", "FAIL")],
+        {"known_reds": [], "known_slow": []},
+    )
+    monkeypatch.setattr(
+        gv, "_build_isolated_runner",
+        lambda args: (lambda rel: _rec(rel, "STALE_CORE", rc=97)),
+    )
+    assert gv.main([triage, base, "--reverify", "--wt", "/wt", "--py", "/py"]) == 2
+    captured = capsys.readouterr()
+    assert "GATE VERDICT" not in captured.out
+    assert "STALE_CORE" in captured.err
+    assert "cannot produce a verdict" in captured.err
 
 
 def test_main_rejects_t3_artifact_even_when_green(tmp_path):

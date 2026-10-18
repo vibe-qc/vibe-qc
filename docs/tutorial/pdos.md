@@ -3,8 +3,8 @@
 A total density of states tells you how many states occur near an energy. A
 projected density of states estimates which atoms and angular-momentum
 channels contribute to those states. In an LCAO code such as vibe-qc, the
-default projection is a Mulliken partition of every Bloch orbital over the AO
-basis.
+default projection is a Mulliken partition ({vibeqc-cite}`mulliken_1955`) of
+every Bloch orbital over the AO basis.
 
 This tutorial separates two workflows that should not be confused:
 
@@ -95,7 +95,7 @@ $$
 \mathbf{S}(\mathbf{k})\mathbf{C}_m(\mathbf{k})=\delta_{nm}.
 $$
 
-The Mulliken weight of AO $\mu$ in band $n$ is
+The Mulliken weight ({vibeqc-cite}`mulliken_1955`) of AO $\mu$ in band $n$ is
 
 $$
 p_{\mu n\mathbf{k}}=
@@ -128,7 +128,9 @@ is tautological. Validate the AO indices first, then compare against a separate
 unprojected DOS evaluated with the same operator, mesh, grid, and broadening.
 
 Individual Mulliken weights can be negative because overlap populations can
-be negative. This is not by itself an error. Interpret robust group sums and
+be negative (the crystal orbital overlap population of
+{vibeqc-cite}`hughbanks_hoffmann_coop_1983` resolves exactly these terms by
+energy). This is not by itself an error. Interpret robust group sums and
 trends, not one isolated AO coefficient.
 
 ## Choose projection groups
@@ -167,9 +169,10 @@ def project_selected_aos(fock_real, overlap_real, kmesh):
 Hard-coded AO indices are fragile when the basis changes. Record the basis and
 print the generated standard groups before creating a custom partition.
 
-Changing the groups does not change the underlying Mulliken rule. A Bader,
-IAO, or Wannier analysis is a different projection method and should not be
-described as a custom Mulliken grouping.
+Changing the groups does not change the underlying Mulliken rule. A Bader
+({vibeqc-cite}`bader_qtaim_1985`), IAO ({vibeqc-cite}`knizia_ibo_2013`), or
+Wannier ({vibeqc-cite}`marzari_wannier_1997`) analysis is a different
+projection method and should not be described as a custom Mulliken grouping.
 
 ## PDOS diagnostics in a QVF
 
