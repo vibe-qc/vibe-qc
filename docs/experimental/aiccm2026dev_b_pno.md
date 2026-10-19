@@ -1,5 +1,11 @@
 # χ-CCM PAO and PNO pipeline
 
+```{admonition} Status: experimental
+:class: warning
+
+The χ-CCM PAO/PNO pipeline (`projected_atomic_orbitals`, `build_pair_natural_orbitals`, `enumerate_pair_orbits`) and the χ-CCM SCF it builds on is an experimental route. Every χ-CCM SCF driver emits `vibeqc.AICCM2026DevBExperimentalWarning`, and the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant="chi")`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 Status: experimental and χ-CCM only. It does not import or modify the
 `aiccm2026dev-a` implementation.
 

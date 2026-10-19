@@ -97,7 +97,13 @@ ACCEPTANCE = {
                 "H2O fixture so far"
             ),
             "DIIS/Broyden mixer convergence still needs polar-molecule tuning",
-            "External xTB parity matrix not closed across molecules, ions, radicals, and periodic cells",
+            (
+                "External xTB parity: the closed-shell molecular matrix is "
+                "closed (49 systems, electronic + repulsion within 2e-5 Ha of "
+                "xtb 6.7.0, tests/test_gfn2_xtb_parity_matrix.py); radicals "
+                "run only through the gated unrestricted path and periodic "
+                "cells remain open"
+            ),
             "C2H4 / polar SCC convergence remains a tuning gate for non-simple mixers",
         ],
     },

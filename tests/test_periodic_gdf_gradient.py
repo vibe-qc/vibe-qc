@@ -142,6 +142,70 @@ def test_3c_gradient_kernel_newton3():
     assert np.allclose(total_force, 0.0, atol=1e-12)
 
 
+@pytest.mark.parametrize("first_l", [0, 1])
+def test_3c_gradient_preserves_translated_mixed_l_pair(first_l):
+    """Canonical ket ordering must preserve the admitted translated pair.
+
+    One shell pair admits a neighbouring image but excludes its opposite.
+    Reordering only the shell indices moves the image onto the wrong shell
+    for s/p pairs. The s/s case is a control for the unchanged ordering.
+    Fixed symmetric weights also differentiate the value tensor's explicit
+    AO-pair symmetrization.
+    """
+    from vibeqc._vibeqc_core import ShellInfo, compute_3c_eri_lattice
+
+    positions = np.array([[1.0, 1.0, 1.0], [1.4, 1.2, 3.6]])
+
+    def fixture(xyz):
+        system = vq.PeriodicSystem(
+            3, np.eye(3) * 6.0,
+            [vq.Atom(3, xyz[0].tolist()), vq.Atom(1, xyz[1].tolist())],
+        )
+        mol = system.unit_cell_molecule()
+        orbital = vq.BasisSet(mol, [
+            ShellInfo(0, first_l, True, [0.35], [1.0], xyz[0].tolist()),
+            ShellInfo(1, 0, True, [0.60], [1.0], xyz[1].tolist()),
+        ], "translated-pair", True)
+        auxiliary = vq.BasisSet(mol, [
+            ShellInfo(0, 0, True, [0.45], [1.0], xyz[0].tolist()),
+            ShellInfo(1, 0, True, [0.50], [1.0], xyz[1].tolist()),
+        ], "translated-pair-aux", True)
+        return system, orbital, auxiliary
+
+    system, orbital, auxiliary = fixture(positions)
+    opts = LatticeSumOptions()
+    opts.cutoff_bohr = 4.0
+    opts.nuclear_cutoff_bohr = 4.0
+    # No selected pair lies on the cutoff; both finite-difference sides
+    # retain the centre's pair list.
+    delta = positions[1] - positions[0]
+    assert np.linalg.norm(delta - [0.0, 0.0, 6.0]) < opts.cutoff_bohr
+    assert np.linalg.norm(delta + [0.0, 0.0, 6.0]) > opts.cutoff_bohr
+    n_orb = int(orbital.nbasis)
+    weight = np.zeros((2, n_orb, n_orb))
+    cross = np.arange(1, n_orb, dtype=float)
+    weight[:, :-1, -1] = np.array([1.0, -0.7])[:, None] * cross
+    weight[:, -1, :-1] = weight[:, :-1, -1]
+    analytic = np.asarray(compute_3c_eri_lattice_gradient_weighted(
+        orbital, auxiliary, system, opts,
+        np.ascontiguousarray(weight.reshape(2, -1)),
+    ))
+
+    step = 1e-4
+    finite_difference = np.zeros_like(analytic)
+    for atom in range(2):
+        for axis in range(3):
+            values = []
+            for sign in [1.0, -1.0]:
+                displaced = positions.copy()
+                displaced[atom, axis] += sign * step
+                s_d, o_d, a_d = fixture(displaced)
+                tensor = np.asarray(compute_3c_eri_lattice(o_d, a_d, s_d, opts))
+                values.append(float(np.sum(weight * tensor)))
+            finite_difference[atom, axis] = (values[0] - values[1]) / (2 * step)
+    np.testing.assert_allclose(analytic, finite_difference, atol=2e-7, rtol=0.0)
+
+
 # ---------------------------------------------------------------------------
 # Tests — DF J gradient at fixed D
 # ---------------------------------------------------------------------------
@@ -770,6 +834,7 @@ def test_public_gradient_route_rejects_grid_v_ne(monkeypatch):
         vq.run_pbc_gdf_rhf(
             system,
             basis,
+            gdf_method="compcell",
             apply_aft_correction=False,
             compute_gradient=True,
         )
@@ -1086,6 +1151,43 @@ def test_rks_gdf_gradient_vs_fd_lda_pbe_pbe0(monkeypatch):
             f"{functional}: analytic={grad[0, 2]:.8f} FD={fd:.8f} "
             f"diff={abs(grad[0, 2] - fd):.3e}"
         )
+
+
+@pytest.mark.parametrize("driver", ["rks", "uks"])
+def test_molecular_grid_ks_gradient_matches_fd_on_an_overlapping_cube(monkeypatch, driver):
+    """#439: KS through ``PeriodicRHFOptions`` evaluates XC on the molecular
+    grid with the home-cell density, so E_xc depends on D through
+    chi_0 D chi_0 and its potential is the home V_xc block. The SCF folded
+    the image blocks in as well and was stationary for another functional;
+    on this 6-bohr cube (images overlap, AFT on) the analytic gradient sat
+    4.383e-3 Ha/bohr from FD. Measured after: 2.8e-9 for RKS and UKS(M=1).
+    The 12-bohr gate above could not see it: there the image blocks are
+    4e-7.
+    """
+    from vibeqc.pbc_gdf import run_pbc_gdf_rks, run_pbc_gdf_uks
+
+    monkeypatch.setenv("VIBEQC_VNE_EWALD3D_KE", "8.0")
+    run_ks = run_pbc_gdf_rks if driver == "rks" else run_pbc_gdf_uks
+    delta = 1e-4
+
+    def run(dz, gradient=False):
+        atoms = [vq.Atom(1, [3.0, 3.0, 2.3 + dz]), vq.Atom(1, [3.3, 3.0, 3.7])]
+        system = vq.PeriodicSystem(3, np.eye(3) * 6.0, atoms, 0, 1)
+        basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+        options = vq.PeriodicRHFOptions()  # molecular grid, home-cell density
+        options.lattice_opts.cutoff_bohr = 12.0
+        options.lattice_opts.nuclear_cutoff_bohr = 12.0
+        options.conv_tol_energy = 1e-11
+        return run_ks(
+            system, basis, options, functional="pbe", gdf_method="compcell",
+            aux_basis="def2-svp-jk", compcell_eta=1.0, apply_aft_correction=True,
+            exxdiv="ewald", compute_gradient=gradient, progress=False,
+        )
+
+    grad = np.asarray(run(0.0, gradient=True).gradient)
+    fd = (run(+delta).energy - run(-delta).energy) / (2.0 * delta)
+    assert np.allclose(grad.sum(axis=0), 0.0, atol=1e-10)
+    assert grad[0, 2] == pytest.approx(fd, abs=1e-6)
 
 
 def test_rks_gradient_entry_rejects_rhf_result():
@@ -1832,7 +1934,7 @@ def test_rsgdf_gradient_rejects_unsupported_envelope():
 
     The tailed dense-core hold was lifted 2026-07-29 (the dense-core FD
     "inconsistency" was an e_nuc truncation artefact in the energy; see
-    the closed dense-core entry in HANDOVER_OPEN_BUGS_V015.md), and the
+    the closed dense-core entry in the original investigation), and the
     Schwarz-screened hold was lifted 2026-07-30 (the gradient cache
     mirrors the SCF's pair mask — screened FD gates below).
     """
@@ -2226,7 +2328,7 @@ def test_bloch_gweighted_gradient_kernel_k0_reduces_to_gamma(
 ):
     """The Bloch gweighted kernel at k = 0 reproduces the Gamma kernel.
 
-    HANDOVER_GDF_GRADIENT_DEFERRED.md § 4 rung 1 gate: at k_cart = 0
+    the original investigation rung 1 gate: at k_cart = 0
     the Bloch phase is exactly (1, 0), so the new kernel must agree
     with ``ao_pair_fourier_transform_gamma_gradient_gweighted``
     bit-for-bit on the same complex Q.  H2/STO-3G pins the s-s fast
@@ -2320,7 +2422,7 @@ def test_bloch_gweighted_gradient_kernel_vs_fd_nonzero_k(atomic_numbers):
 def test_multik_rsgdf_gradient_cache_bit_consistent_with_scf_fit(
     atomic_numbers,
 ):
-    """HANDOVER_GDF_GRADIENT_DEFERRED.md § 4 rung 2 gate: the multi-k
+    """the original investigation rung 2 gate: the multi-k
     rsgdf gradient cache mirrors the SCF's shared-q fit bit-for-bit.
 
     Builds the cache on the Γ-centered (2,1,1) mesh (the exact k points
@@ -2483,9 +2585,9 @@ def test_multik_screened_rsgdf_gradient_cache_bit_consistent_with_scf_fit(
 def _scf_multik_source_for(system, basis, kpts, ke, tail_ke, lat, thr):
     """Rebuild the production SR/LR source for independent gradient assembly.
 
-    The legacy raw-tensor derivative tests below intentionally keep their
-    old cache. Full-SCF finite differences must differentiate the source
-    that now produces the energy, including its physical auxiliary basis.
+    Fixed-density and full-SCF finite differences against production
+    energies use this source, including its physical auxiliary basis.
+    Only the separate legacy raw-tensor algebra tests keep the old cache.
     """
     from vibeqc.aux_basis import make_aux_basis_set
     from vibeqc.periodic_k_gdf import _build_range_separated_lpq_cache
@@ -2541,26 +2643,19 @@ def _multik_ej_from_cache(cache, D_k, weights):
     "atomic_numbers", [(1, 1), (3, 1)], ids=["h2_ss", "lih_general_l"]
 )
 def test_multik_j_gradient_fixed_density_vs_fd(atomic_numbers):
-    """HANDOVER_GDF_GRADIENT_DEFERRED.md § 4 rung 3a gate: the multi-k
-    KRHF DF-J fit-derivative (q=0 blocks) matches fixed-density FD.
+    """Production SR/LR KRHF J fit derivative matches fixed-density FD.
 
-    Converged D(k) from the production (2,1,1) rsgdf cderi route
-    (use_compcell=True), then FROZEN: the FD side rebuilds
-    system+basis+cache per displaced geometry and re-evaluates
-    E_J = 0.5 Re[t^T f(M0) t] with the frozen D — isolating the fit
-    derivative from the (later-rung) K/one-electron/W terms. Measured
-    |analytic - FD| at h=1e-4: H2 5.7e-10 (bond axis z) / 1.1e-12
-    (perpendicular x); LiH 1.2e-9 / 4.4e-12 — the Γ fixed-D J anchors
-    sit at the same 1e-9-class. Also pinned: t is real to ~6e-17
-    (k/-k pairing of Hermitian D on the Γ-centered mesh; the algebra
-    does NOT rely on it), and E_J(cache) reproduces the SCF's
-    e_coulomb (exactly the same objective; loose gate only because
-    e_coulomb is evaluated at the last pre-diagonalization density
-    while result.density is post-diagonalization). LiH covers
-    general-L aux/AO shells (its dense-core PARITY_HELD warning is an
-    ABSOLUTE-energy caveat, irrelevant to a fixed-density isolation
-    gate).
+    Freeze converged D(k) from the (2,1,1) production rsgdf route, then
+    rebuild its physical-auxiliary SR/LR source at each displaced geometry.
+    The SCF's Coulomb contraction evaluates E_J on that source, and the
+    production gradient dispatch differentiates the same fit. H2 covers
+    s shells; LiH covers general-L auxiliary and AO shells.
+
+    Keep the 1e-5 SCF energy check (the reported energy uses the final
+    pre-diagonalization density), the translation check and the 1e-7
+    fixed-density FD gate for bond-axis and perpendicular displacements.
     """
+    from vibeqc.aux_basis import _build_coulomb_from_diagonal_factors
     from vibeqc.periodic_gdf_gradient import (
         _compute_j_gradient_multik_rsgdf,
     )
@@ -2597,9 +2692,18 @@ def test_multik_j_gradient_fixed_density_vs_fd(atomic_numbers):
     weights = np.asarray(r.kpoint_weights, dtype=float)
     kpts = np.asarray(r.kpoints_cart, dtype=float)
 
-    cache = _multik_j_cache_for(system, basis, kpts, ke, None, lat, thr)
-    e_j0, t = _multik_ej_from_cache(cache, D_k, weights)
-    assert np.abs(t.imag).max() <= 1e-14
+    def energy(source):
+        J_k = _build_coulomb_from_diagonal_factors(
+            [source[(i, i)] for i in range(len(D_k))], D_k, weights,
+        )
+        e_j = 0.5 * sum(
+            weights[i] * np.trace(D_k[i] @ J_k[i]) for i in range(len(D_k))
+        )
+        assert abs(e_j.imag) <= 1e-14
+        return float(e_j.real)
+
+    cache = _scf_multik_source_for(system, basis, kpts, ke, None, lat, thr)
+    e_j0 = energy(cache)
     assert abs(e_j0 - float(r.e_coulomb)) < 1e-5
 
     grad = _compute_j_gradient_multik_rsgdf(
@@ -2615,8 +2719,8 @@ def test_multik_j_gradient_fixed_density_vs_fd(atomic_numbers):
         vals = {}
         for sign in (+1, -1):
             s_d, b_d = displaced(atom=a, axis=d, step=sign * h)
-            c_d = _multik_j_cache_for(s_d, b_d, kpts, ke, None, lat, thr)
-            vals[sign], _ = _multik_ej_from_cache(c_d, D_k, weights)
+            c_d = _scf_multik_source_for(s_d, b_d, kpts, ke, None, lat, thr)
+            vals[sign] = energy(c_d)
         fd = (vals[+1] - vals[-1]) / (2.0 * h)
         assert abs(grad[a, d] - fd) <= 1e-7, (
             f"atom {a} axis {d}: analytic={grad[a, d]:.12f} "
@@ -2683,7 +2787,7 @@ def test_multik_j_gradient_reduces_to_gamma_at_1k(atomic_numbers):
     "atomic_numbers", [(1, 1), (3, 1)], ids=["h2_ss", "lih_general_l"]
 )
 def test_multik_oneel_w_gradient_fixed_density_vs_fd(atomic_numbers):
-    """HANDOVER_GDF_GRADIENT_DEFERRED.md § 4 rung 3b gates: the multi-k
+    """the original investigation rung 3b gates: the multi-k
     kinetic, overlap-Lagrangian, split-Ewald V_ne, nuclear-repulsion,
     and exxdiv-shift gradient terms each match a fixed-density FD of
     EXACTLY the term the multi-k SCF energy uses (the e_nuc-gauge
@@ -3002,32 +3106,26 @@ def _multik_ek_from_cache(cache, D_k, weights):
     "atomic_numbers", [(1, 1), (3, 1)], ids=["h2_ss", "lih_general_l"]
 )
 def test_multik_k_gradient_fixed_density_vs_fd(atomic_numbers):
-    """HANDOVER_GDF_GRADIENT_DEFERRED.md § 4 rung 4 gate: the multi-k
-    KRHF DF-K fit-derivative over ALL q groups matches fixed-density
-    FD — including the (2,1,1) mesh's q != 0 BZ-boundary group, whose
-    complex Hermitian metric weight exercises the new complex-weight
-    2c Bloch kernel and the off-diagonal (k_i, k_j) 3c weights.
+    """Production SR/LR KRHF K fit derivative matches fixed-density FD.
 
-    Converged D(k) from the production (2,1,1) rsgdf route, then
-    FROZEN: the FD side rebuilds system+basis+cache per displaced
-    geometry and re-evaluates E_K = -0.25 S_i w_i Re Tr[D(k_i) K(k_i)]
-    with K from the SCF's own ``_build_k_from_lpq_cache`` on
-    cache-reconstructed per-pair Lpq — exactly the objective the
-    analytic weight algebra differentiates. Measured |analytic - FD|
-    at h=1e-4: H2 3.3e-10 (bond axis z) / 1.1e-12 (perpendicular x);
-    LiH 4.8e-10 / 2.2e-12 — the Γ fixed-D K anchors sit at the same
-    1e-9-class. Also pinned: E_K(cache) + the exxdiv shift reproduces
-    the SCF's e_hf_exchange (H2 bitwise 0.0 — the rung-2
-    bit-consistency at work; LiH 9.1e-8, loose gate only because the
-    SCF energy decomposition is evaluated at the last
-    pre-diagonalization density), and Newton's third law on the
-    fixed-D fit term (every phase depends on centre differences only
-    under rigid translation; measured <= 2.1e-14).
+    Freeze converged D(k) from the (2,1,1) production rsgdf route. At
+    each displaced geometry rebuild the physical-auxiliary SR/LR source
+    and evaluate E_K with the SCF's own ``_build_k_from_lpq_cache``.
+    The production gradient dispatch differentiates that same source,
+    including the nonzero BZ-boundary transfer and its off-diagonal pairs.
+    H2 covers s shells; LiH covers general-L auxiliary and AO shells.
+
+    Keep the 1e-5 SCF energy check including the exxdiv shift (the SCF
+    decomposition uses the final pre-diagonalization density), the
+    translation check and the 1e-7 fixed-density FD gate. The fit-only
+    derivative and FD exclude the separately differentiated exxdiv shift.
     """
+    from vibeqc.aux_basis import _canonical_reciprocal_transfer
     from vibeqc.periodic_gdf_gradient import (
         _compute_k_gradient_multik_rsgdf,
     )
     from vibeqc.periodic_k_gdf import (
+        _build_k_from_lpq_cache,
         _madelung_for_kmesh,
         run_krhf_periodic_gdf,
     )
@@ -3064,15 +3162,26 @@ def test_multik_k_gradient_fixed_density_vs_fd(atomic_numbers):
     weights = np.asarray(r.kpoint_weights, dtype=float)
     kpts = np.asarray(r.kpoints_cart, dtype=float)
 
-    cache = _multik_j_cache_for(system, basis, kpts, ke, None, lat, thr)
+    def energy(source):
+        K_k = _build_k_from_lpq_cache(source, D_k, weights, nbasis=basis.nbasis)
+        return -0.25 * sum(
+            float(weights[i]) * float(np.real(np.trace(D_k[i] @ K_k[i])))
+            for i in range(len(D_k))
+        )
+
+    cache = _scf_multik_source_for(system, basis, kpts, ke, None, lat, thr)
     # The K gate must exercise a q != 0 group (task contract): the
     # Γ-centered (2,1,1) mesh folds both ±b1/2 transfers into ONE
     # canonical BZ-boundary group with pairs (0,1) and (1,0).
-    q_norms = [float(np.linalg.norm(g.q)) for g in cache.groups.values()]
+    assert set(cache) == {(0, 0), (0, 1), (1, 0), (1, 1)}
+    q_norms = [
+        float(np.linalg.norm(_canonical_reciprocal_transfer(system, kpts[j] - kpts[i])))
+        for i, j in cache
+    ]
     assert any(n > 1e-12 for n in q_norms)
 
-    e_k0 = _multik_ek_from_cache(cache, D_k, weights)
-    # Unfactorized cache E_K + exxdiv shift == the SCF's shifted
+    e_k0 = energy(cache)
+    # Production source E_K + exxdiv shift == the SCF's shifted
     # exchange energy (alpha = 1 KRHF).
     xi = _madelung_for_kmesh(system, (2, 1, 1))
     e_shift = -0.25 * xi * sum(
@@ -3092,8 +3201,8 @@ def test_multik_k_gradient_fixed_density_vs_fd(atomic_numbers):
         vals = {}
         for sign in (+1, -1):
             s_d, b_d = displaced(atom=a, axis=d, step=sign * h)
-            c_d = _multik_j_cache_for(s_d, b_d, kpts, ke, None, lat, thr)
-            vals[sign] = _multik_ek_from_cache(c_d, D_k, weights)
+            c_d = _scf_multik_source_for(s_d, b_d, kpts, ke, None, lat, thr)
+            vals[sign] = energy(c_d)
         fd = (vals[+1] - vals[-1]) / (2.0 * h)
         assert abs(grad[a, d] - fd) <= 1e-7, (
             f"atom {a} axis {d}: analytic={grad[a, d]:.12f} "
@@ -3196,7 +3305,7 @@ def test_multik_k_gradient_reduces_to_gamma_at_1k(
 
 
 def test_multik_krhf_full_scf_gradient_vs_fd(monkeypatch):
-    """HANDOVER_GDF_GRADIENT_DEFERRED.md § 4 rung 4 — THE composition
+    """the original investigation rung 4 — THE composition
     gate: the assembled multi-k KRHF gradient
     (``_compute_krhf_gradient_multik`` = oneel/W/nn + DF-J + DF-K +
     exxdiv shift, all FD-gated per term) matches a central difference
@@ -3388,7 +3497,7 @@ def _multik_uhf_spin_data(r, n_alpha, n_beta):
 
 
 def test_multik_kuhf_full_scf_gradient_vs_fd(monkeypatch):
-    """HANDOVER_GDF_GRADIENT_DEFERRED.md § 4 rung 5 — open-shell
+    """the original investigation rung 5 — open-shell
     composition gate: the assembled multi-k KUHF gradient
     (``_compute_kuhf_gradient_multik`` = oneel/W/nn on the spin-summed
     density + DF-J on D_t + per-spin 2a-weighted DF-K + per-spin
@@ -3648,6 +3757,7 @@ def test_multik_krks_full_scf_gradient_vs_fd(monkeypatch):
     from vibeqc.periodic_gdf_gradient import (
         _compute_krks_gradient_multik,
     )
+    from vibeqc.periodic_xc_domain import xc_lattice_opts_at
 
     thr = 1e-9
     h = 2e-4
@@ -3672,7 +3782,9 @@ def test_multik_krks_full_scf_gradient_vs_fd(monkeypatch):
         grad = _compute_krks_gradient_multik(
             system, basis, D_k, W_k, S_k, weights, kpts, cache,
             functional=functional, xc_grid=grid, kmesh_bloch=kmesh_bloch,
-            xc_lat_opts=lat, madelung=xi,
+            # The SCF grew the XC image domain past ``lat`` (#465).
+            xc_lat_opts=xc_lattice_opts_at(basis, lat, r.xc_lattice_cutoff_bohr),
+            madelung=xi,
             oneel_lat_opts=oneel, gauge_lat_opts=gauge,
             xc_grid_options=opts.grid,
             xc_use_periodic_becke=bool(opts.use_periodic_becke),
@@ -3807,12 +3919,78 @@ def test_multik_kuks_m1_collapses_onto_krks(monkeypatch):
     assert np.abs(g_uks - g_rks).max() <= 1e-10
 
 
+def test_rsgdf_gradient_conditioning_uses_executed_batches(monkeypatch):
+    """The streamed derivative records its own spectrum, without a legacy fit."""
+    from types import SimpleNamespace
+    from vibeqc import aux_basis as ab
+    from vibeqc import periodic_gdf_gradient as gradient
+
+    system = SimpleNamespace(dim=3, unit_cell=[object()])
+    orbital = SimpleNamespace(nbasis=1)
+    auxiliary = SimpleNamespace(nbasis=3)
+    factors = np.zeros((1, 2, 1, 1))
+    cache = SimpleNamespace(
+        source_parameters=(.4, 8., 8., 20., 1e-9, 100, 100, 0.),
+        source_signature="conditioning-fixture", kpoints_cart=((0., 0., 0.),),
+        factors={(0, 0): factors[0]}, factor_frame="eigenmode",
+    )
+    current = [np.array([1e-12, 2e-9, 3.])]
+    builds = []
+
+    def source(*args, **kwargs):
+        builds.append(kwargs["retain_fit_state"])
+        return SimpleNamespace(
+            factors=factors, metric_eigenvalues=current[0],
+            fit_state=SimpleNamespace(keep=current[0] > 1e-9),
+        )
+
+    def legacy_unavailable(*args, **kwargs):
+        raise AssertionError("legacy reciprocal metric is not the SR/LR derivative source")
+
+    monkeypatch.setattr(ab, "_range_separated_gdf_source_signature", lambda *args: "conditioning-fixture")
+    monkeypatch.setattr(ab, "_canonical_reciprocal_transfer", lambda system, q: q)
+    monkeypatch.setattr(ab, "_build_lpq_range_separated_shared_q", source)
+    monkeypatch.setattr(gradient, "rsgdf_fit_response_conditioning", legacy_unavailable)
+    monkeypatch.setattr(gradient, "_compute_range_separated_jk_gradient",
+                        lambda *args, **kwargs: np.array([[1., 2., 3.]]))
+    diagnostics = {}
+    kwargs = dict(memory_byte_cap=1024**2, native_workspace_byte_cap=1024,
+                  coulomb_scale=0., exchange_scale=1.,
+                  conditioning_diagnostics=diagnostics)
+    actual = gradient._compute_range_separated_cache_gradient(
+        system, orbital, auxiliary, cache, [np.ones((1, 1))], [1.], **kwargs,
+    )
+    np.testing.assert_array_equal(actual, [[1., 2., 3.]])
+    assert diagnostics["source"] == "sr-lr"
+    assert diagnostics["metric_roundoff_indicator"] == pytest.approx(
+        np.finfo(float).eps * 3. / 2e-9, rel=1e-14, abs=0.,
+    )
+    # A later better-conditioned batch must not erase the worst observed one.
+    worst = diagnostics["metric_roundoff_indicator"]
+    current[0] = np.array([1e-12, 1e-4, 3.])
+    gradient._compute_range_separated_cache_gradient(
+        system, orbital, auxiliary, cache, [np.ones((1, 1))], [1.], **kwargs,
+    )
+    assert diagnostics["metric_roundoff_indicator"] == worst
+    assert builds == [True, True]
+    # The diagnostic is optional and never fabricates a finite value from
+    # an invalid or absent eigensystem.
+    gradient._record_range_separated_conditioning(None, object())
+    for values, keep in (([np.nan, 1., 2.], [False, True, True]),
+                         ([0., 1., 2.], [True, True, True]),
+                         ([0., 1., 2.], [False, False, False])):
+        with pytest.raises(ValueError, match="finite retained positive modes"):
+            gradient._record_range_separated_conditioning({}, SimpleNamespace(
+                metric_eigenvalues=values, fit_state=SimpleNamespace(keep=keep),
+            ))
+
+
 def test_rsgdf_gradient_conditioning_diagnostic(monkeypatch):
     """The fit-response conditioning estimate separates the dense-core
     class from vacuum anchors, and no gradient-accuracy warning fires.
 
     Validated formula (gamma-split discriminator, dense-core gradient
-    entry in HANDOVER_OPEN_BUGS_V015.md): eps * lam_max / lam_min_kept.
+    entry in the original investigation): eps * lam_max / lam_min_kept.
     MgO at the driver threshold sits ~3e-7; the H2 vacuum anchor sits
     ~1e-11. Since the 2026-07-29 e_nuc Ewald-gauge fix the analytic
     dense-core gradient matches full-SCF FD to < 5e-9 Ha/bohr, so the
@@ -3859,6 +4037,7 @@ def test_rsgdf_gradient_conditioning_diagnostic(monkeypatch):
             x for x in w if "dense-core fit class" in str(x.message)
         ]
     assert r_mgo.gradient_conditioning > 1e-8
+    assert r_mgo.gradient_conditioning_source == "sr-lr"
     assert not mgo_warns
 
     with _warnings.catch_warnings(record=True) as w:
@@ -3868,6 +4047,7 @@ def test_rsgdf_gradient_conditioning_diagnostic(monkeypatch):
             x for x in w if "dense-core fit class" in str(x.message)
         ]
     assert r_h2.gradient_conditioning < 1e-9
+    assert r_h2.gradient_conditioning_source == "sr-lr"
     assert not h2_warns
 
 
@@ -3894,7 +4074,7 @@ def test_gdf_e_nuc_is_converged_ewald(monkeypatch):
     lat_opts.nuclear_cutoff_bohr and on MgO at 18 bohr is unconverged
     by 2.1e-5 Ha WITH a spurious geometry dependence -- the source of
     the historical "dense-core gradient discrepancy" (RESOLVED entry,
-    HANDOVER_OPEN_BUGS_V015.md). The driver e_nuclear must equal
+    the original investigation). The driver e_nuclear must equal
     ewald_nuclear_repulsion(system) exactly (same function, no
     truncation), on both the Gamma and the multi-k route.
     """
@@ -3990,6 +4170,46 @@ def _multik_h2_211_system(dz=0.0, multiplicity=1):
     return s, b
 
 
+def _capture_multik_gradient_call(monkeypatch, name):
+    """Observe the real assembler without replacing its calculation."""
+    import vibeqc.periodic_gdf_gradient as gradient_module
+
+    original = getattr(gradient_module, name)
+    captured = []
+
+    def capture(*args, **kwargs):
+        captured.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(gradient_module, name, capture)
+    return original, captured
+
+
+def _assert_multik_lattice_provenance(actual, expected):
+    for name in (
+        "cutoff_bohr", "nuclear_cutoff_bohr", "pair_complete_1e",
+        "coulomb_method",
+    ):
+        assert getattr(actual, name) == getattr(expected, name), name
+
+
+def _assert_multik_gradient_provenance(captured, state, cache, oneel, gauge, xi):
+    assert len(captured) == 1
+    args, kwargs = captured[0]
+    # D, W, S, weights and k points must come from the returned SCF state.
+    assert len(args[2:-1]) == len(state)
+    for actual, expected in zip(args[2:-1], state):
+        np.testing.assert_array_equal(actual, expected)
+    actual_cache = args[-1]
+    assert actual_cache.source_signature == cache.source_signature
+    assert actual_cache.source_parameters == cache.source_parameters
+    np.testing.assert_array_equal(actual_cache.kpoints_cart, cache.kpoints_cart)
+    _assert_multik_lattice_provenance(kwargs["oneel_lat_opts"], oneel)
+    _assert_multik_lattice_provenance(kwargs["gauge_lat_opts"], gauge)
+    assert kwargs["madelung"] == xi
+    assert kwargs["alpha_hf"] == 1.0
+
+
 def test_multik_krhf_driver_gradient_wiring(monkeypatch):
     """Rung 6 public wiring: ``run_krhf_periodic_gdf(compute_gradient=
     True)`` populates ``result.gradient`` with the value the FD-gated
@@ -3997,8 +4217,8 @@ def test_multik_krhf_driver_gradient_wiring(monkeypatch):
     the OMP reduction-noise floor, ~1e-23).
 
     The driver's gradient block hands its own converged D(k)/C(k)/
-    eps(k), resolved lattice options, BvK xi, and a fresh
-    deterministic cache rebuild to ``_compute_krhf_gradient_multik``;
+    eps(k), resolved lattice options, BvK xi, and its retained
+    SCF source cache to ``_compute_krhf_gradient_multik``;
     recomputing here with the same inputs must agree to 1e-15 (any
     real drift means the wiring passes different provenance than the
     composition gate validated). The bond-axis value is pinned against
@@ -4006,7 +4226,9 @@ def test_multik_krhf_driver_gradient_wiring(monkeypatch):
     h=2e-4): g_z(atom 0) = -0.036128 Ha/bohr.
     """
     monkeypatch.setenv("VIBEQC_VNE_EWALD3D_KE", "8.0")
-    from vibeqc.periodic_gdf_gradient import _compute_krhf_gradient_multik
+    _compute_krhf_gradient_multik, captured = _capture_multik_gradient_call(
+        monkeypatch, "_compute_krhf_gradient_multik"
+    )
     from vibeqc.periodic_k_gdf import (
         _madelung_for_kmesh,
         _oneel_lattice_opts,
@@ -4048,9 +4270,14 @@ def test_multik_krhf_driver_gradient_wiring(monkeypatch):
     oneel = _oneel_lattice_opts(
         system, basis, lat, rcut_strategy="pyscf_auto", k_points_cart=kpts
     )
-    gauge = _gauge_lat_opts_for_v_ne_and_e_nuc(lat, system)
+    # The driver uses the resolved AO domain for V_ne as well as S/T.
+    # Starting from lat discards its cutoff and pair-complete domain.
+    gauge = _gauge_lat_opts_for_v_ne_and_e_nuc(oneel, system)
     xi = _madelung_for_kmesh(system, (2, 1, 1))
     cache = _scf_multik_source_for(system, basis, kpts, ke, None, lat, thr)
+    _assert_multik_gradient_provenance(
+        captured, (D_k, W_k, S_k, weights, kpts), cache, oneel, gauge, xi
+    )
     g_ref = _compute_krhf_gradient_multik(
         system, basis, D_k, W_k, S_k, weights, kpts, cache,
         alpha_hf=1.0, madelung=xi,
@@ -4071,7 +4298,9 @@ def test_multik_kuhf_driver_gradient_wiring(monkeypatch):
     run; bond-axis value pinned against the rung-5 FD gate
     (analytic - FD = 1.6e-8): g_z(atom 0) = +0.642252 Ha/bohr."""
     monkeypatch.setenv("VIBEQC_VNE_EWALD3D_KE", "8.0")
-    from vibeqc.periodic_gdf_gradient import _compute_kuhf_gradient_multik
+    _compute_kuhf_gradient_multik, captured = _capture_multik_gradient_call(
+        monkeypatch, "_compute_kuhf_gradient_multik"
+    )
     from vibeqc.periodic_k_gdf import (
         _madelung_for_kmesh,
         _oneel_lattice_opts,
@@ -4101,9 +4330,14 @@ def test_multik_kuhf_driver_gradient_wiring(monkeypatch):
     oneel = _oneel_lattice_opts(
         system, basis, lat, rcut_strategy="pyscf_auto", k_points_cart=kpts
     )
-    gauge = _gauge_lat_opts_for_v_ne_and_e_nuc(lat, system)
+    # The driver uses the resolved AO domain for V_ne as well as S/T.
+    # Starting from lat discards its cutoff and pair-complete domain.
+    gauge = _gauge_lat_opts_for_v_ne_and_e_nuc(oneel, system)
     xi = _madelung_for_kmesh(system, (2, 1, 1))
     cache = _scf_multik_source_for(system, basis, kpts, ke, None, lat, thr)
+    _assert_multik_gradient_provenance(
+        captured, (D_a, D_b, W_k, S_k, weights, kpts), cache, oneel, gauge, xi
+    )
     g_ref = _compute_kuhf_gradient_multik(
         system, basis, D_a, D_b, W_k, S_k, weights, kpts, cache,
         alpha_hf=1.0, madelung=xi,
@@ -4170,7 +4404,9 @@ def test_multik_krks_driver_gradient_wiring(monkeypatch):
         np.testing.assert_allclose(actual, expected, rtol=0, atol=2e-14)
     assert kwargs['functional'] == 'lda'
     assert kwargs['madelung'] == 0.
-    assert kwargs['xc_lat_opts'].cutoff_bohr == lat.cutoff_bohr
+    # The XC domain the SCF grew and recorded (#465), not the base cutoff.
+    assert kwargs['xc_lat_opts'].cutoff_bohr == r.xc_lattice_cutoff_bohr
+    assert r.xc_lattice_cutoff_bohr > lat.cutoff_bohr
     assert kwargs['oneel_lat_opts'].cutoff_bohr == oneel.cutoff_bohr
     assert kwargs['gauge_lat_opts'].nuclear_cutoff_bohr == gauge.nuclear_cutoff_bohr
     assert kwargs['xc_use_periodic_becke'] == bool(o.use_periodic_becke)
@@ -4185,8 +4421,8 @@ def test_multik_gradient_fail_closed_guards():
     """Rung 6 fail-closed envelope: every unsupported configuration
     raises ``NotImplementedError`` naming its reason BEFORE the SCF
     runs (cheap: no integrals are built). One case per named guard of
-    HANDOVER_GDF_GRADIENT_DEFERRED.md § 4 rung 6 plus the
-    driver-specific ones (use_compcell, cosx, Γ legacy fallback,
+    the original investigation rung 6 plus the
+    driver-specific ones (cosx, Γ legacy fallback,
     dim=2 slab)."""
     from vibeqc.kpoints import KPoints
     from vibeqc.periodic_k_gdf import (
@@ -4287,12 +4523,19 @@ def test_multik_gradient_fail_closed_guards():
             system, basis, (2, 1, 1), o, **{**common, "k_exchange": "cosx"}
         )
 
-    # Pure-DFT Ewald-3D J path (no cached-Lpq fit to differentiate).
-    with pytest.raises(NotImplementedError, match=r"use_compcell=True"):
-        run_krks_periodic_gdf(
-            system, basis, (2, 1, 1), None, functional="lda",
-            **{**common, "use_compcell": False},
-        )
+    # Every public closed-shell k-mesh run builds the fit. The approved
+    # #415 deletion removes the unreachable no-fit backstop, so this valid
+    # fitted objective needs no redundant use_compcell flag at admission.
+    _reject_unsupported_multik_gradient(
+        "run_krks_periodic_gdf",
+        dim=3,
+        gdf_method="rsgdf",
+        smearing_temperature=0.0,
+        k_exchange="gdf",
+        screened_omega=None,
+        functional_is_range_separated=False,
+        weights=np.array([0.5, 0.5]),
+    )
 
     # DFT+U energy term.
     with pytest.raises(NotImplementedError, match=r"DFT\+U"):
@@ -4304,11 +4547,6 @@ def test_multik_gradient_fail_closed_guards():
             },
         )
 
-    # Γ tuple mesh outside the pure fast path falls back to the legacy
-    # molecular-limit driver, which has no gradient.
-    with pytest.raises(NotImplementedError, match="legacy"):
-        run_krhf_periodic_gdf(system, basis, (1, 1, 1), o, **common)
-
     # dim=1 wire: the remaining dim != 3 case on this entry (dim=2
     # closed-shell slabs route to the dedicated slab gradient since
     # 2026-07-30, § 6 rung 5 — gated in tests/test_slab_2d_routing.py).
@@ -4319,6 +4557,14 @@ def test_multik_gradient_fail_closed_guards():
         ]
     )
     wire_basis = vq.BasisSet(wire.unit_cell_molecule(), "sto-3g")
+
+    # Γ tuple mesh outside the pure fast path falls back to the legacy
+    # molecular-limit driver, which has no gradient. Only dim < 3 reaches
+    # that driver now: a bulk Γ mesh runs the k-mesh loop at Nk=1 (the
+    # SR/LR source's own Γ limit), which carries the gradient.
+    with pytest.raises(NotImplementedError, match="legacy"):
+        run_krhf_periodic_gdf(wire, wire_basis, (1, 1, 1), o, **common)
+
     with pytest.raises(NotImplementedError, match="3D periodic"):
         run_krhf_periodic_gdf(
             wire, wire_basis, (2, 1, 1), o, **common
@@ -4371,11 +4617,10 @@ def test_multik_gradient_fail_closed_guards():
 # trajectory (stored == recomputed filling to ~1e-12; gates ~4e-10).
 
 
-def _stretched_h2_box(bond=3.0, dz=0.0):
+def _stretched_h2_box(bond=3.0, dz=0.0, box=12.0):
     """H2 stretched to ``bond`` bohr in the 12-bohr box: the sigma/
     sigma* gap (~0.48 Ha at 3.0 bohr) is a few k_B T at T = 0.1 Ha, so
     the Fermi-Dirac occupations are meaningfully fractional."""
-    box = 12.0
     c = box / 2.0
     s = vq.PeriodicSystem(3, np.eye(3) * box, [
         vq.Atom(1, [c, c, c - bond / 2.0 + dz]),
@@ -4387,7 +4632,11 @@ def _stretched_h2_box(bond=3.0, dz=0.0):
 
 def _run_gamma_uhf_smeared(gdf_method, dz=0.0, smearing_T=0.10,
                            compute_gradient=False):
-    system, basis = _stretched_h2_box(dz=dz)
+    # compcell keeps the auxiliary function in the home cell, which is
+    # exact only when its images do not reach the AO pairs: the 12-bohr box
+    # omits about 1e-7 per 3c element and the builder refuses it (#172).
+    system, basis = _stretched_h2_box(
+        dz=dz, box=16.0 if gdf_method == "compcell" else 12.0)
     o = vq.PeriodicRHFOptions()
     o.lattice_opts = _lat_opts()
     o.max_iter = 200
@@ -4419,7 +4668,8 @@ def test_gamma_uhf_smeared_free_energy_gradient_vs_fd(
     driver's free_energy (A = E - T.S) on stretched H2 at kBT = 0.1 Ha.
 
     Fractional occupations are genuinely active (per-spin f =
-    [0.918, 0.082] compcell / [0.926, 0.074] rsgdf — asserted), so
+    [0.918, 0.082] compcell, measured in the former 12-bohr box, /
+    [0.926, 0.074] rsgdf — asserted), so
     this pins the sqrt(f)-scaled orbital blocks: fractional W, the
     f_i.f_j-weighted exchange, and the fractional-D exxdiv D S D term.
     Measured |analytic - FD(A)| at h = 2e-4: 3.8e-10 (compcell) /
@@ -4765,3 +5015,310 @@ def test_sr_lr_fit_response_differentiates_actual_jk_assembly(threshold, scales,
             batch, pairs, density, weights,
             **dict(kwargs, linear_dep_thr=.5 if threshold < .5 else 1e-10),
         )
+
+
+@pytest.mark.parametrize("q", [(0., 0., 0.), (.12, -.08, .03)])
+@pytest.mark.parametrize("tail", [None, 3.])
+def test_weighted_bloch_3c_gradient_uses_physical_pair_support(monkeypatch, q, tail):
+    """Analytic s-Gaussian doubles isolate support from native integrals.
+
+    Boundary-straddling centers require off-origin cells and per-pair masks.
+    Differentiate both auxiliary phase and pair centers at nonzero Bloch k;
+    the fourth-order finite difference avoids cancellation/truncation error.
+    """
+    import itertools
+    from types import SimpleNamespace
+    from vibeqc import aux_basis, _aopair_ft, _vibeqc_core
+    from vibeqc.lattice_screening import ao_pair_support_mask as mask
+    class Basis:
+        nbasis = 2
+        def __init__(self, centers, exponents):
+            self.centers = np.array(centers, dtype=float)
+            self.exponents = np.array(exponents, dtype=float)
+        def shells(self):
+            return [SimpleNamespace(origin=r, l=0, pure=True) for r in self.centers]
+    CELLS = np.array([[-6., 0, 0], [0., 0, 0], [6., 0, 0]])
+    CUTOFF = 2.0
+    def pair_ft_and_gradient(basis, G, cells, k, cutoff=None):
+        nG = len(G)
+        value = np.zeros((2, 2, nG), complex)
+        derivative = np.zeros((2, 3, 2, 2, nG), complex)
+        for shift in cells:
+            allowed = np.ones((2, 2), bool) if cutoff is None else mask(basis, shift, cutoff)
+            phase = np.exp(1j * shift @ k)
+            for i, j in itertools.product(range(2), repeat=2):
+                if not allowed[i, j]:
+                    continue
+                a, b = basis.exponents[i], basis.exponents[j]
+                p, mu = a+b, a*b/(a+b)
+                A, B = basis.centers[i], basis.centers[j]+shift
+                P = (a*A+b*B)/p
+                v = phase * (np.pi/p)**1.5 * np.exp(-mu*np.dot(A-B, A-B)-np.sum(G*G, axis=1)/(4*p)-1j*(G@P))
+                value[i,j] += v
+                derivative[i,:,i,j] += ((-2*mu*(A-B))[:,None]-1j*(a/p)*G.T)*v
+                derivative[j,:,i,j] += ((2*mu*(A-B))[:,None]-1j*(b/p)*G.T)*v
+        return value, derivative
+    def pair_ft(basis, G, cells, k_cart, pair_cutoff_bohr=None):
+        return pair_ft_and_gradient(basis, G, cells, k_cart, pair_cutoff_bohr)[0]
+    def pair_gradient(basis, G, cells, k, Q, n_atoms):
+        grad = pair_ft_and_gradient(basis, G, cells, k)[1]
+        return np.real(np.einsum('mng,admng->ad', Q, grad.conj()))
+    def aux_ft(basis, G):
+        return np.array([(np.pi/a)**1.5*np.exp(-np.sum(G*G,axis=1)/(4*a)-1j*(G@r)) for a,r in zip(basis.exponents,basis.centers)])
+    def mesh(system, q, cutoff):
+        grid = np.array(list(itertools.product(range(-2,3), repeat=3)), dtype=float)*(2*np.pi/6)+q
+        return grid[np.linalg.norm(grid,axis=1) <= np.sqrt(2*cutoff)]
+    monkeypatch.setattr(_vibeqc_core, "direct_lattice_cells", lambda system, cutoff: [SimpleNamespace(r_cart=np.zeros(3))])
+    monkeypatch.setattr(aux_basis, "_classic_pair_cells", lambda system,basis,cutoff,policy: CELLS.copy())
+    monkeypatch.setattr(aux_basis, "_ao_scales_for_rsgdf", lambda basis: np.ones(basis.nbasis))
+    monkeypatch.setattr(aux_basis, "_basis_ao_atom_indices", lambda basis,system: np.arange(basis.nbasis))
+    monkeypatch.setattr(aux_basis, "_canonical_reciprocal_transfer", lambda system,q: np.asarray(q))
+    monkeypatch.setattr(aux_basis, "_rsgdf_shifted_dense_g_mesh", mesh)
+    monkeypatch.setattr(aux_basis, "_rsgdf_shifted_sphere_boundary_tolerance", lambda system,radius,q: 0.)
+    monkeypatch.setattr(aux_basis, "rsgdf_aux_fourier_transform", aux_ft)
+    monkeypatch.setattr(_aopair_ft, "ao_pair_fourier_transform_bloch", pair_ft)
+    monkeypatch.setattr(_aopair_ft, "ao_pair_fourier_transform_bloch_gradient_gweighted", pair_gradient)
+    centers=np.array([[0.,0.,0.],[5.4,0.15,-0.1]])
+    # Aux centers follow the same two atoms; all positions vary for FD, but cells
+    # and exact support masks remain locally fixed (distance to boundary >1bohr).
+    basis = Basis(centers,[0.7,1.1]); auxiliary = Basis(centers,[0.5,0.9])
+    system = SimpleNamespace(lattice=np.eye(3)*6,unit_cell=[None,None])
+    opts = SimpleNamespace(cutoff_bohr=CUTOFF)
+    rng=np.random.default_rng(404)
+    W=rng.normal(size=(2,2,2))+1j*rng.normal(size=(2,2,2))
+    k=np.array([0.18,-0.08,0.05])
+    def tensor_value(centers,q,ke,tail):
+        b=Basis(centers,[0.7,1.1]); a=Basis(centers,[0.5,0.9])
+        G=mesh(system,q,ke)
+        if tail is not None and tail>ke:
+            allG=mesh(system,q,tail)
+            G=np.vstack([G,allG[np.linalg.norm(allG,axis=1)>np.sqrt(2*ke)]])
+        g2=np.sum(G*G,axis=1); G=G[g2>1e-12]; g2=g2[g2>1e-12]
+        F=aux_ft(a,G); rho=pair_ft(b,G,CELLS,k,pair_cutoff_bohr=CUTOFF)
+        T=np.einsum('pg,mng,g->pmn',F.conj(),rho,4*np.pi/g2/216)
+        return float(np.real(np.sum(W*T)))
+    q=np.asarray(q)
+    kwargs=dict(ke_cutoff=1.,weight=W,k_ket=k,q_cart=q,lat_opts=opts,tail_ke_cutoff=tail,tail_chunk_g=7)
+    derivative=aux_basis._rsgdf_weighted_3c_tensor_gradient_bloch
+    physical=derivative(auxiliary,basis,system,support_policy="physical_pairs",**kwargs)
+    legacy=derivative(auxiliary,basis,system,support_policy="historical_index_ball",**kwargs)
+    np.testing.assert_array_equal(derivative(auxiliary,basis,system,**kwargs),legacy)
+    fd=np.zeros((2,3)); step=1e-3
+    for atom,axis in itertools.product(range(2),range(3)):
+        samples=[]
+        for offset in (-2,-1,1,2):
+            displaced=centers.copy(); displaced[atom,axis]+=offset*step
+            samples.append(tensor_value(displaced,q,1.,tail))
+        fd[atom,axis]=(samples[0]-8*samples[1]+8*samples[2]-samples[3])/(12*step)
+    np.testing.assert_allclose(physical,fd,atol=1e-8,rtol=0)
+    assert np.max(np.abs(legacy-fd))>1e-3
+    with pytest.raises(ValueError, match="support_policy"):
+        derivative(auxiliary,basis,system,support_policy="unknown",**kwargs)
+
+
+@pytest.mark.parametrize("frame", ["canonical", "eigenmode"])
+@pytest.mark.parametrize("reduced", [False, True])
+@pytest.mark.parametrize("support", ["physical_pairs", "historical_index_ball"])
+def test_classic_gradient_cache_checks_executed_source(monkeypatch, frame, reduced, support):
+    """Execute the real shared-q builder and checker with Fourier/native doubles."""
+    from types import SimpleNamespace
+    from vibeqc import aux_basis as aux, periodic_gdf_gradient as gradient
+    from vibeqc import periodic_k_gdf as driver, _aopair_ft, _vibeqc_core
+    system = SimpleNamespace(lattice=np.eye(3) * 6)
+    basis = auxiliary = SimpleNamespace(nbasis=2)
+    lat = SimpleNamespace(cutoff_bohr=2.)
+    kpts = np.array([[0., 0., 0.], [.13, 0., 0.]])
+    cells = np.array([[0., 0., 0.]])
+    # Deliberately non-norm-ordered reciprocal input models bounded ordering.
+    def mesh(system, q, cutoff, budget, cap):
+        base = np.array([[2., 0., 0.], [1., 0., 0.]])
+        points = (np.vstack([base, [3., 0., 0.]]) if cutoff > 2 else base) + q
+        return points[np.linalg.norm(points, axis=1) <= np.sqrt(2*cutoff)]
+    monkeypatch.setattr(aux, "_classic_reciprocal_mesh", mesh)
+    monkeypatch.setattr(aux, "_classic_pair_cells", lambda *args: cells)
+    monkeypatch.setattr(aux, "_classic_build_reservation", lambda *args: None if args[-2] is None else 1024)
+    monkeypatch.setattr(_vibeqc_core, "direct_lattice_cells", lambda *args: [SimpleNamespace(r_cart=cells[0])])
+    monkeypatch.setattr(aux, "_canonical_reciprocal_transfer", lambda system, q: np.asarray(q))
+    monkeypatch.setattr(aux, "_range_separated_gdf_source_signature", lambda system, *args: np.asarray(system.lattice).tolist())
+    monkeypatch.setattr(aux, "_ao_scales_for_rsgdf", lambda basis: np.ones(2))
+    monkeypatch.setattr(aux, "_rsgdf_fit_pair_keep_mask", lambda *args, **kwargs: None)
+    monkeypatch.setattr(aux, "_rsgdf_aux_ft_cache_budget_bytes", lambda: 0)
+    monkeypatch.setattr(aux, "_rsgdf_shifted_sphere_boundary_tolerance", lambda *args: 0.)
+    def aux_ft(basis, G):
+        x = G[:, 0]
+        return np.array([np.exp(-.1*x*x), (1+.3j*x)*np.exp(-.4*x*x)])
+    monkeypatch.setattr(aux, "rsgdf_aux_fourier_transform", aux_ft)
+    def pair_ft(basis, G, R, kets, pair_weights, **kwargs):
+        assert ("pair_cutoff_bohr" in kwargs) == (support == "physical_pairs")
+        x = G[:, 0]
+        raw = np.array([[np.cos(x), np.exp(.2j*x)], [np.exp(-.3j*x), np.sin(x)]])
+        return [raw * (1 + .1*k[0]) * pair_weights[:, :, None] for k in kets]
+    monkeypatch.setattr(_aopair_ft, "ao_pair_fourier_transform_bloch_multi", pair_ft)
+    cap = 1024**3 if support == "physical_pairs" else None
+    kwargs = dict(ke_cutoff=2., tail_ke_cutoff=5., lat_opts=lat,
+                  canonical_auxiliary_basis=frame == "canonical",
+                  support_policy=support if support == "physical_pairs" else None,
+                  memory_byte_cap=cap, reciprocal_candidate_cap=12345)
+    # Find an absolute threshold between the two actual q=0 metric modes.
+    initial = {}
+    aux.build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,kpts,np.zeros(3),
+                                          _q_metric_cache=initial,**kwargs)
+    values = initial[(0.,0.,0.)].eigvals
+    threshold = float(np.mean(values)) if reduced else 1e-9
+    q_metric, factors = {}, {}
+    for i, j in [(0,0),(0,1),(1,0),(1,1)]:
+        q = kpts[j]-kpts[i]
+        key = tuple(float(v) for v in np.round(q,14))
+        pairs = [(a,b) for a in range(2) for b in range(2)
+                 if tuple(np.round(kpts[b]-kpts[a],14)) == key]
+        if (i,j) in factors:
+            continue
+        built = aux.build_lpq_bloch_native_fft_shared_q(
+            system,basis,auxiliary,np.array([kpts[a] for a,b in pairs]),q,
+            linear_dep_thr=threshold,_q_metric_cache=q_metric,**kwargs)
+        factors.update(zip(pairs,built))
+    source = driver.RSGDFFitCache(
+        system,kpts,factors,q_metric,2.,5.,2.,threshold,0.,"synthetic",2,2,True,
+        frame,support,cap,12345)
+    log = SimpleNamespace(info=lambda *args: None)
+    def checked():
+        return driver._build_multik_gradient_cache_checked(
+            system,basis,auxiliary,kpts,rsgdf_ke_cutoff=2.,rsgdf_tail_ke_cutoff=5.,
+            lat_opts=lat,gdf_linear_dep_threshold=threshold,n_fit_scf=factors[(0,0)].shape[0],
+            entry="test",plog=log,source_cache=source)
+    cache=checked()
+    assert cache.support_policy == support
+    assert cache.groups[(0.,0.,0.)].n_fit == (1 if reduced else 2)
+    np.testing.assert_array_equal(cache.groups[(0.,0.,0.)].g_mesh[:,0],[2.,1.,3.])
+    for group in cache.groups.values():
+        assert group.kernel_weights.shape == (3,)
+        # Canonical factors keep n_aux rows even when the retained rank is one.
+        for pair,T in zip(group.pairs,group.T_list):
+            U=group.eigvecs[:,group.keep_mask]
+            compact=(U.conj().T @ T.reshape(2,-1))/np.sqrt(group.eigvals[group.keep_mask])[:,None]
+            expected=(U@compact if frame == "canonical" else compact).reshape(factors[pair].shape)
+            np.testing.assert_allclose(factors[pair],expected,atol=1e-14,rtol=0)
+    # Differentiate the admitted raw source and compare the maintained J/K
+    # response contractions with production factor contractions at +/-h.
+    rng = np.random.default_rng(404)
+    directions = {}
+    for key, group in cache.groups.items():
+        dm = rng.normal(size=(2,2)) + 1j*rng.normal(size=(2,2))
+        dm = dm + dm.conj().T
+        if np.linalg.norm(group.q) < 1e-12:
+            dm = dm.real
+        dt = [rng.normal(size=t.shape)+1j*rng.normal(size=t.shape) for t in group.T_list]
+        directions[key]=(dm,dt)
+    def metric_derivative(auxiliary, system, *, q_cart, weight, g_mesh, kernel_weights, tail_ke_cutoff, **kwargs):
+        key=tuple(np.round(q_cart,14)); group=cache.groups[key]
+        np.testing.assert_array_equal(g_mesh,group.g_mesh)
+        np.testing.assert_array_equal(kernel_weights,group.kernel_weights)
+        assert tail_ke_cutoff is None
+        value=np.sum(weight*directions[key][0]).real
+        return np.array([[value,0.,0.]])
+    def tensor_derivative(auxiliary, basis, system, *, q_cart, k_ket, weight, support_policy, g_mesh, kernel_weights, tail_ke_cutoff, **kwargs):
+        key=tuple(np.round(q_cart,14)); group=cache.groups[key]
+        assert support_policy == support
+        np.testing.assert_array_equal(g_mesh,group.g_mesh)
+        assert tail_ke_cutoff is None
+        position=next(p for p,(i,j) in enumerate(group.pairs) if np.allclose(kpts[i]+q_cart,k_ket,atol=1e-14,rtol=0))
+        value=np.sum(weight*directions[key][1][position]).real
+        return np.array([[value,0.,0.]])
+    monkeypatch.setattr(aux,"_rsgdf_weighted_2c_metric_gradient_bloch",metric_derivative)
+    monkeypatch.setattr(aux,"_rsgdf_weighted_3c_tensor_gradient_bloch",tensor_derivative)
+    system.unit_cell=[None]
+    density=[np.array([[1.,.1+.2j],[.1-.2j,.5]])]*2
+    weights=np.array([.5,.5])
+    analytic_j=gradient._compute_j_gradient_multik_rsgdf(system,basis,density,weights,cache)[0,0]
+    analytic_k=gradient._compute_k_gradient_multik_rsgdf(system,basis,density,weights,cache)[0,0]
+    def energies(step):
+        varied={}
+        for key,group in cache.groups.items():
+            dm,dt=directions[key]
+            vals,vectors=np.linalg.eigh(group.M+step*dm)
+            keep=vals>threshold
+            whiten=vectors[:,keep].conj().T/np.sqrt(vals[keep])[:,None]
+            for pair,t,delta in zip(group.pairs,group.T_list,dt):
+                varied[pair]=(whiten@(t+step*delta).reshape(2,-1)).reshape(-1,2,2)
+        J=aux._build_coulomb_from_diagonal_factors([varied[(i,i)] for i in range(2)],density,weights)
+        ej=.5*sum(w*np.trace(d@j).real for w,d,j in zip(weights,density,J))
+        ek=0.
+        for (i,j),factor in varied.items():
+            K=np.zeros((2,2),complex)
+            aux._accumulate_exchange_from_factors(K,factor,density[j],weights[j],1024**2)
+            ek-=.25*weights[i]*np.trace(density[i]@K).real
+        return np.array([ej,ek])
+    for h in (1e-6,5e-7):
+        fd=(energies(-2*h)-8*energies(-h)+8*energies(h)-energies(2*h))/(12*h)
+        np.testing.assert_allclose([analytic_j,analytic_k],fd,atol=1e-6,rtol=0)
+    refused_state = {}
+    with pytest.raises(MemoryError, match="retained response"):
+        aux.build_lpq_bloch_native_fft_shared_q(
+            system,basis,auxiliary,kpts,np.zeros(3),linear_dep_thr=threshold,
+            _q_metric_cache=q_metric,_fit_response_state=refused_state,
+            _fit_response_byte_cap=1,**kwargs)
+    assert refused_state == {}
+    old=factors[(0,0)]
+    factors[(0,0)]=3*old
+    with pytest.raises(RuntimeError,match="differs from executed SCF factors"):
+        checked()
+    factors[(0,0)]=old
+    source.tail_ke_cutoff=6.
+    with pytest.raises(ValueError,match="parameters differ"):
+        checked()
+    source.tail_ke_cutoff=5.
+    system.lattice=7*np.eye(3)
+    with pytest.raises(ValueError,match="different source"):
+        checked()
+    system.lattice=6*np.eye(3)
+    source.frame="unknown"
+    with pytest.raises(ValueError,match="unknown auxiliary frame"):
+        checked()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "driver,functional,box",
+    [("rks", "pbe", 6.0), ("uks", "pbe", 6.0),
+     ("rks", "lda", 6.0), ("rks", "pbe", 8.0)],
+)
+def test_molecular_grid_ks_gradient_matches_fd_on_overlapping_lih(
+    monkeypatch, driver, functional, box,
+):
+    """Heteronuclear image overlap exposes the grid response missed by H2.
+
+    The molecular-grid compcell route must differentiate its own converged
+    energy, with the same finite support and auxiliary fit at each geometry.
+    RKS/UKS, LDA/GGA and a larger box retain the original 1e-6 Ha/bohr gate.
+    """
+    from vibeqc.pbc_gdf import run_pbc_gdf_rks, run_pbc_gdf_uks
+
+    monkeypatch.setenv("VIBEQC_VNE_EWALD3D_KE", "8.0")
+    run_ks = run_pbc_gdf_rks if driver == "rks" else run_pbc_gdf_uks
+    delta = 1e-4
+
+    def run(displacement, gradient=False):
+        atoms = [vq.Atom(3, [3.0, 3.0, 1.5 + displacement]),
+                 vq.Atom(1, [3.3, 3.0, 4.5])]
+        system = vq.PeriodicSystem(3, np.eye(3) * box, atoms, 0, 1)
+        basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+        options = vq.PeriodicRHFOptions()
+        options.lattice_opts.cutoff_bohr = 12.0
+        options.lattice_opts.nuclear_cutoff_bohr = 12.0
+        options.conv_tol_energy = 1e-11
+        options.max_iter = 100
+        result = run_ks(
+            system, basis, options, functional=functional,
+            gdf_method="compcell", aux_basis="def2-svp-jk", compcell_eta=1.0,
+            apply_aft_correction=True, exxdiv="ewald",
+            compute_gradient=gradient, progress=False,
+        )
+        assert result.converged
+        assert np.isfinite(result.energy)
+        return result
+
+    center = run(0.0, gradient=True)
+    gradient = np.asarray(center.gradient)
+    assert gradient.shape == (2, 3) and np.all(np.isfinite(gradient))
+    fd = (run(+delta).energy - run(-delta).energy) / (2.0 * delta)
+    assert abs(gradient[0, 2] - fd) <= 1e-6

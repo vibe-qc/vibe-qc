@@ -98,6 +98,8 @@ def write_xyz(
     *,
     comment: str | None = None,
     energy_ha: float | None = None,
+    energy_method: str | None = None,
+    method: str | None = None,
 ) -> Path:
     """Write ``{stem}.xyz`` with the molecule's final geometry.
 
@@ -117,6 +119,12 @@ def write_xyz(
         Optional total energy in Hartree. When given, appended to the
         comment line as ``energy=<value>`` so ASE / Open Babel can
         recover the SCF result from the geometry file alone.
+    energy_method
+        Which method produced ``energy_ha``. See :func:`format_xyz`;
+        without it a correlated job's file names no method for an
+        energy that is its mean-field reference's (#360).
+    method
+        The job's method, when it differs from ``energy_method``.
 
     Returns
     -------
@@ -126,7 +134,13 @@ def write_xyz(
     target = stem_sibling(stem, ".xyz")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        format_xyz(molecule, comment=comment, energy_ha=energy_ha),
+        format_xyz(
+            molecule,
+            comment=comment,
+            energy_ha=energy_ha,
+            energy_method=energy_method,
+            method=method,
+        ),
         encoding="utf-8",
     )
     return target
@@ -137,22 +151,50 @@ def format_xyz(
     *,
     comment: str | None = None,
     energy_ha: float | None = None,
+    energy_method: str | None = None,
+    method: str | None = None,
 ) -> str:
     """Return the XYZ-formatted string for ``molecule``. Same content
     that :func:`write_xyz` writes; useful for embedding the geometry
     in a larger artefact.
+
+    ``energy=`` on an XYZ comment line is the conventional single-frame
+    energy tag, and ASE and Open Babel read it as *the* energy of that
+    structure.  ``energy_ha`` is whatever the caller had, which in
+    ``run_job`` is the **SCF** result's energy -- so a correlated job's
+    file carried its mean-field reference energy under a tag that named
+    no method, and was byte-identical to the reference job's (#360).
+
+    ``energy_method`` names the method that produced ``energy_ha`` and
+    is emitted as ``energy_method=<m>``.  ``method`` names the job and
+    is emitted as ``method=<m>``; pass it whenever it is known, so a
+    reader can compare the two rather than having to know that a bare
+    ``energy=`` means the reference.  Both are omitted when None, which
+    keeps the tag-free legacy shape available to other callers.
     """
     atoms = list(molecule.atoms)
     head_comment = comment if comment is not None else (
         "vibe-qc final geometry (bohr -> Å, CODATA 2018 a₀)"
     )
+    # key=value tags appended to the comment line, in the style ASE folds
+    # into Atoms.info and every other reader ignores. ``energy_method``
+    # names what ``energy`` is; ``method`` names the job, so a reader can
+    # compare the two instead of having to know that a correlated job's
+    # bare ``energy=`` is its mean-field reference's (#360).
+    tags: list[str] = []
     if energy_ha is not None:
+        tags.append(f"energy={float(energy_ha):.10f}")
+        if energy_method:
+            tags.append(f"energy_method={energy_method}")
+    if method:
+        tags.append(f"method={method}")
+    if tags:
         # Strip any trailing punctuation the caller might have left
-        # before appending the energy tag.
+        # before appending the tags.
         head_comment = head_comment.rstrip()
         if head_comment.endswith("."):
             head_comment = head_comment[:-1]
-        head_comment = f"{head_comment} energy={float(energy_ha):.10f}"
+        head_comment = " ".join([head_comment, *tags])
 
     # The comment line is user-controlled (run_job passes the output
     # basename / a caller string); neutralise bidi / zero-width / control

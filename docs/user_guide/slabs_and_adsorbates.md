@@ -10,6 +10,26 @@ the most common low-index facets of fcc, bcc, and hcp metals. For
 exotic facets or non-metals, build a `PeriodicSystem` directly from
 coordinates (see [crystal_lattices](crystal_lattices.md)).
 
+```{admonition} Route status on a dim=2 slab
+:class: note
+
+* **`SLAB_EWALD_2D`** (what `jk_method="auto"` selects): **production** for
+  RHF, RKS and UKS, Gamma and multi-k. `method="UHF"` is refused before SCF
+  (`NotImplementedError: SLAB_EWALD_2D open-shell HF (UHF) on slabs is a
+  follow-on; use RHF, RKS, or UKS.`); Fermi-Dirac smearing is not wired on
+  this gauge, and it has no analytic gradient.
+* **Slab GDF** (explicit `jk_method="gdf"`): a **bounded closed-shell**
+  route, RHF/RKS single points and fixed-cell atomic relaxation with
+  analytic gradients (`optimize=True`) on a full Gamma-centred `(n1, n2, 1)`
+  mesh. Open shell, smearing, custom or IBZ meshes, density restarts, DFT+U,
+  Hessians and variable-cell relaxation fail closed with the option named.
+* **BIPOLE, GPW, GAPW and RIJCOSX** are closed on `dim=2`: each raises
+  rather than returning an `a3`-dependent energy.
+
+The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 ## A slab needs no vacuum
 
 A Gaussian-basis code does not need a vacuum gap to describe a surface.
@@ -44,6 +64,59 @@ on `a3` *and* on the k-mesh.
 * Slab energies computed before this change are not comparable to the
   new ones. The new ones are `a3`-invariant.
 ```
+
+### Theory: the two-dimensional Ewald sum
+
+For charges $q_i$ at $\mathbf r_i$ in a cell that repeats over the in-plane
+lattice $\{\mathbf n\}$ of area $A = |\mathbf a_1\times\mathbf a_2|$, write the
+in-plane separation $\boldsymbol\rho_{ij}$, the normal separation $z_{ij} =
+(\mathbf r_i - \mathbf r_j)\cdot\hat{\mathbf n}$, and the two-dimensional
+reciprocal vectors $\mathbf g$ (in-plane, $\mathbf g\cdot\mathbf a_k \in
+2\pi\mathbb Z$). Splitting $1/r$ with the screening parameter $\alpha$ as in
+three dimensions, the energy per cell is the four-term sum of Parry
+({vibeqc-cite}`parry_2d_ewald_1975`) and de Leeuw and Perram
+({vibeqc-cite}`de_leeuw_perram_2d_ewald_1979`),
+
+$$
+E = E_{\mathrm{real}} + E_{\mathrm{recip}} + E_{g=0} + E_{\mathrm{self}},
+\qquad
+E_{\mathrm{real}} = \frac12\sum_{i,j}{\sum_{\mathbf n}}'\,
+q_i q_j\,\frac{\operatorname{erfc}(\alpha|\mathbf r_{ij}+\mathbf n|)}{|\mathbf r_{ij}+\mathbf n|},
+\qquad
+E_{\mathrm{self}} = -\frac{\alpha}{\sqrt\pi}\sum_i q_i^2,
+$$
+
+$$
+E_{\mathrm{recip}} = \frac{\pi}{2A}\sum_{\mathbf g\neq 0}\frac{1}{g}\sum_{i,j} q_i q_j
+\cos(\mathbf g\cdot\boldsymbol\rho_{ij})\Big[
+e^{g z_{ij}}\operatorname{erfc}\!\Big(\frac{g}{2\alpha}+\alpha z_{ij}\Big)
++ e^{-g z_{ij}}\operatorname{erfc}\!\Big(\frac{g}{2\alpha}-\alpha z_{ij}\Big)\Big],
+$$
+
+$$
+E_{g=0} = -\frac{\pi}{A}\sum_{i,j} q_i q_j\Big[
+z_{ij}\operatorname{erf}(\alpha z_{ij}) + \frac{e^{-\alpha^2 z_{ij}^2}}{\alpha\sqrt\pi}\Big].
+$$
+
+The real-space term is the same erfc kernel as the bulk sum with $\mathbf n$
+running over the in-plane lattice only. The reciprocal term is a sum over
+in-plane $\mathbf g$ in which the normal coordinate enters through the
+erfc factors, so, unlike the bulk case, it does not factorise into a
+structure factor and is evaluated pair by pair. The $\mathbf g = 0$ term has
+no three-dimensional analogue: it is the field of the neutral charged sheets
+seen along the normal, and it is what a "3-D cell with vacuum" replaces by a
+spurious inter-image dipole field. The total is independent of $\alpha$, which
+only balances real-space against reciprocal-space work, and it is defined only
+for a charge-neutral cell: a net-charged periodic plane has a divergent energy
+with no finite jellium regularisation, so `ewald_2d_point_charge_energy`
+raises on one. In the SCF the nuclear block, the electron-nuclear attraction
+and the slab Hartree $J$ share one `slab_ewald_alpha`, and the individually
+charged nuclear and electronic blocks are evaluated with a co-located
+neutralising sheet (`ewald_2d_point_charge_energy_with_background`) whose
+contributions cancel in the neutral total. The same expressions, with the
+Gaussian AO-pair densities in place of point charges, give the one- and
+two-electron matrix elements; see [Ewald summation](ewald.md) for the bulk
+formulas and the primitives.
 
 Build a slab straight from lattice vectors with `vq.slab_2d`, passing
 the atoms at their real `z` (bohr):
@@ -271,10 +344,11 @@ vq.run_periodic_job(
 ```
 
 ```{note}
-Passing an explicit **bulk** `jk_method` (`"gdf"`, `"bipole"`, `"gpw"`,
-`"gapw"`, `"rijcosx"`) to a `dim=2` slab now raises
-`NotImplementedError` rather than silently returning an `a3`-dependent
-energy. Use `"auto"` (or `"slab_ewald_2d"`). `method="UHF"` on a slab
+Passing an explicit **bulk** `jk_method` (`"bipole"`, `"gpw"`, `"gapw"`,
+`"rijcosx"`) to a `dim=2` slab raises `NotImplementedError` rather than
+silently returning an `a3`-dependent energy. Use `"auto"` (or
+`"slab_ewald_2d"`); an explicit `"gdf"` selects the bounded closed-shell
+slab-GDF route described at the top of this page. `method="UHF"` on a slab
 also raises for now; use `RHF`, `RKS`, or `UKS`.
 ```
 
@@ -319,20 +393,42 @@ every range-separated functional; see
 Analytic slab gradients do not cover screened hybrids (they fail
 closed; see below).
 
+## Exact exchange on a slab k mesh
+
+The direct `SLAB_EWALD_2D` route has no convergent full-range exact
+exchange on a k mesh. The corrected Ewald split that the 3-D drivers use
+is 3-D only, and the bare real-space image sum over a k-mesh density
+grows with the lattice cutoff: an H2/STO-3G slab on `(2, 2, 1)` went
+from -1.68 Ha at a 15-bohr cutoff to -2.87 Ha at 30 bohr, against
+-0.918 Ha from slab GDF (GitLab #485). So:
+
+* `jk_method="auto"` sends slab **RHF**, and slab **RKS** with a
+  full-range hybrid (PBE0, B3LYP), on a k mesh to the closed-shell slab
+  GDF route. At a single Gamma point, and for semilocal or screened
+  (HSE06) functionals, it keeps `SLAB_EWALD_2D`.
+* The direct drivers refuse that exchange on a slab k mesh
+  (`run_rhf_periodic_scf`, `run_rks_periodic_scf`,
+  `run_uks_periodic_multi_k_ewald3d`). Open-shell slab hybrids on a k
+  mesh have no route yet; a 2-D corrected exchange split is tracked in
+  GitLab #488.
+
 ## What's not here yet
 
 The following surface-catalysis features are tracked in
 [`docs/roadmap.md`](../roadmap.md) but not yet shipped:
 
-* **Slab analytic gradients.** The `SLAB_EWALD_2D` gauge ships energies
-  (RHF / RKS / UKS, Gamma and multi-k); its analytic gradient is still
-  being written, so geometry optimisation and forces on a `dim=2` slab
-  raise. As a stopgap, build the cell with `periodic_z=True` and
-  optimise the `dim=3`-with-vacuum system, accepting the `a3`-dependent
-  error that convention carries.
+* **Analytic gradients on the `SLAB_EWALD_2D` gauge.** That gauge ships
+  energies (RHF / RKS / UKS, Gamma and multi-k) but no analytic gradient, so
+  `optimize=True` on the AUTO slab route raises. Closed-shell slabs relax on
+  the explicit slab-GDF route (`run_periodic_job(jk_method="gdf",
+  optimize=True)`, analytic gradients since 2026-07-30); open-shell slabs
+  still need the `periodic_z=True` `dim=3` stopgap, accepting the
+  `a3`-dependent error that convention carries.
 * **Open-shell HF (`UHF`) on a slab.** Use `UKS` instead.
-* **Density-fitted (GDF) and grid (GPW) 2D Coulomb**, for large slabs
-  where the 2D-Ewald sum becomes the bottleneck.
+* **Grid (GPW / GAPW) 2D Coulomb, and open-shell or smeared slab GDF**, for
+  large slabs where the 2D-Ewald sum becomes the bottleneck; the slab-GDF
+  route today is the bounded closed-shell envelope described at the top of
+  this page.
 * Relaxed bond-length / angle scans on the surface.
 * Nudged elastic band (NEB / CI-NEB).
 * Periodic D4 (the molecular D4 path already exists; periodic

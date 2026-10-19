@@ -27,11 +27,12 @@ boundary. Moved here in vibe-basis 0.3.0 with the CRYSTAL23 retarget.
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from ..backends.crystal import (
     DEFAULT_CRYSTAL_VERSION,
@@ -46,6 +47,9 @@ from ..backends.crystal_atom import (
 from ..engine import EnergyEngine, EngineEnergy
 from ..transports.base import Transport, TransportError
 
+#: File name of the runner staged for ``invocation="stdin"``.
+_STDIN_RUNNER = "run_crystal.sh"
+
 
 @dataclass
 class Crystal23Engine(EnergyEngine):
@@ -58,7 +62,17 @@ class Crystal23Engine(EnergyEngine):
         ``VqTransport`` (submit to a vibe-queue daemon).
     crystal_wrapper
         Command or path for the CRYSTAL wrapper script on the target
-        host.
+        host -- or, with ``invocation="stdin"``, for the CRYSTAL binary
+        itself.
+    invocation
+        How the job starts CRYSTAL. ``"wrapper"`` (default, the historical
+        contract): ``crystal_wrapper`` is a host-side script that takes the
+        deck's file name, such as a ``run-crystal.sh``. ``"stdin"``:
+        ``crystal_wrapper`` is a CRYSTAL executable, which reads its input
+        on standard input and writes its output on standard output -- the
+        contract of the ``crystal`` / ``crystal23`` binaries CRYSTAL ships.
+        The engine then stages a two-line runner into the job's directory,
+        so no host needs a wrapper installed.
     cpus, wall_time_s, timeout_s
         Passed through to ``transport.run``.
     workdir_prefix
@@ -80,6 +94,7 @@ class Crystal23Engine(EnergyEngine):
 
     transport: Transport
     crystal_wrapper: str = "crystal"
+    invocation: Literal["wrapper", "stdin"] = "wrapper"
     cpus: int = 4
     wall_time_s: int = 7200
     timeout_s: float = 86_400.0
@@ -100,7 +115,29 @@ class Crystal23Engine(EnergyEngine):
     _observed_version: Optional[int] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.invocation not in ("wrapper", "stdin"):
+            raise ValueError(
+                f"invocation must be 'wrapper' or 'stdin', got {self.invocation!r}"
+            )
         self.name = f"crystal{self.expected_version}"
+
+    def _command(self, wd: Path, d12_name: str, name: str) -> list[str]:
+        """The argv the transport ships, staging a runner when needed.
+
+        A CRYSTAL binary takes no file argument: given ``crystal MgO.d12`` it
+        ignores the name and reads an empty standard input. Hosts that carry
+        only the binaries therefore need the redirection written down, and
+        writing it into the job's own directory keeps that off the hosts.
+        """
+        if self.invocation == "wrapper":
+            return [self.crystal_wrapper, d12_name]
+        runner = wd / _STDIN_RUNNER
+        runner.write_text(
+            "#!/bin/sh\n"
+            f"exec {shlex.quote(self.crystal_wrapper)} "
+            f"< {shlex.quote(d12_name)} > {shlex.quote(name + '.out')} 2>&1\n"
+        )
+        return ["sh", _STDIN_RUNNER]
 
     def version(self) -> Optional[str]:
         """Version observed on the last parsed output, or ``None``.
@@ -239,7 +276,7 @@ class Crystal23Engine(EnergyEngine):
         try:
             job = self.transport.run(
                 wd,
-                command=[self.crystal_wrapper, d12_name],
+                command=self._command(wd, d12_name, name),
                 dest=wd / "fetched",
                 cpus=self.cpus,
                 wall_time_s=self.wall_time_s,

@@ -41,38 +41,14 @@ author = "Michael F. Peintinger"
 copyright = f"{datetime.date.today().year}, {author}"
 
 
-# Pull version from the installed distribution if vibe-qc is pip-
-# installed in this Python; otherwise fall back to parsing
-# ``pyproject.toml`` from the source tree. The CI docs build runs in
-# a python:3.13-slim container with only Sphinx + extensions
-# installed (we don't build the full C++ stack just to render docs),
-# so importlib.metadata.version("vibe-qc") will fail and the
-# pyproject.toml fallback is what's actually used in production.
+# Bind the manual and its substitutions to the source being documented.
+# An older installed package must not relabel a current source build.
 def _read_release() -> str:
-    try:
-        from importlib.metadata import PackageNotFoundError
-        from importlib.metadata import version as _pkg_version
+    """Read the documented source version, independent of the build environment."""
+    import tomllib
 
-        try:
-            return _pkg_version("vibe-qc")
-        except PackageNotFoundError:
-            try:
-                # Pre-rename distribution name; kept for local builds
-                # that predate the 0.2 metadata change.
-                return _pkg_version("vibeqc")
-            except PackageNotFoundError:
-                pass
-    except ImportError:
-        pass
-    # Fall back to parsing pyproject.toml directly from the source
-    # tree (works in the CI container where vibe-qc isn't installed).
-    try:
-        import tomllib
-
-        with open(_REPO_ROOT / "pyproject.toml", "rb") as f:
-            return tomllib.load(f)["project"]["version"]
-    except Exception:
-        return "0.0.1"
+    with open(_REPO_ROOT / "pyproject.toml", "rb") as source:
+        return str(tomllib.load(source)["project"]["version"])
 
 
 release = _read_release()
@@ -530,6 +506,7 @@ def _on_missing_reference(app, env, node, contnode):
             "Molecule",
             "SolventModel",
             "HessianResult",
+            "GeomOptResult",
             "SpinDet",
             "Crystal",
             "Hamiltonian",
@@ -655,16 +632,37 @@ def _pinned_qvf_link(source: str, target: str) -> str | None:
     source_path = Path(source)
     if source_path.parent != _REPO_ROOT / "docs" / "qvf" / "_vendored":
         return None
-    targets = {
+    key = (source_path.name, target)
+    local = {
         ("GOVERNANCE.md", "conformance/README.md"): "/qvf/conformance",
         ("GOVERNANCE.md", "docs/integration_guide.md"): "/qvf/integration_guide",
         ("integration_guide.md", "../conformance/README.md"): "/qvf/conformance",
-        ("library_guide.md", "../cpp/include/qvf/qvf_c.h"): (
-            "https://github.com/vibe-qc/qvf/blob/"
-            "7660640ce609a1fd3ba03db4dd53df01b798e619/cpp/include/qvf/qvf_c.h"
-        ),
     }
-    return targets.get((source_path.name, target))
+    if key in local:
+        return local[key]
+    external = {
+        ("GOVERNANCE.md", "CHANGELOG.md"): "CHANGELOG.md",
+        ("GOVERNANCE.md", "docs/iana-media-type-registration.md"): "docs/iana-media-type-registration.md",
+        ("GOVERNANCE.md", "spec/legacy/qvf_manifest_v2.schema.json"): "spec/legacy/qvf_manifest_v2.schema.json",
+        ("integration_guide.md", "../spec/file-type/"): "spec/file-type/",
+        ("library_guide.md", "cli.md"): "docs/cli.md",
+        ("library_guide.md", "fortran.md"): "docs/fortran.md",
+        ("library_guide.md", "c_api.md"): "docs/c_api.md",
+        ("library_guide.md", "../cpp/include/qvf/qvf_c.h"): "cpp/include/qvf/qvf_c.h",
+        ("library_guide.md", "../js/README.md"): "js/README.md",
+    }
+    if key not in external:
+        return None
+    # Use the same release as the byte-identity guard, including public links.
+    import re
+
+    pin = re.search(r'^  QVF_TAG: "(v[0-9.]+)"$',
+                    (_REPO_ROOT / ".gitlab-ci.yml").read_text(), re.MULTILINE)
+    if pin is None:
+        raise ValueError("Missing QVF_TAG for pinned documentation links")
+    path = external[key]
+    view = "tree" if path.endswith("/") else "blob"
+    return f"https://github.com/vibe-qc/qvf/{view}/{pin.group(1)}/{path.rstrip('/')}"
 
 
 def _resolve_pinned_qvf_links(app, doctree):

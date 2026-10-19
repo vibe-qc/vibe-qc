@@ -563,109 +563,123 @@ def cis_gradient(
     GAMM = _build_2pdm(T_mat, P_gs, D_total, spin=spin)
 
     grad = np.zeros((natom, 3))
+    def pair_derivative(k, l, pole_azimuth=0.0):
+        """dE/d(r_l - r_k) of the K-L pair; ``pole_azimuth`` fixes the
+        azimuth of a pair exactly along z (#443)."""
+        rk, rl = C0[k], C0[l]
+        dvec = rl - rk
+        R = float(np.linalg.norm(dvec))
+        pd = _pd._pair_blocks_deriv(Z[k], Z[l], rk, rl, pole_azimuth)
+
+        # Chain rule d(R,th,phi)/d(r_l - r_k)
+        E = dvec / R
+        cost = E[2]
+        # In-plane sin(theta); the pole test is _d_trans_driver's.
+        sint = math.hypot(E[0], E[1])
+        if abs(cost) >= 1.0 - 1e-12:
+            sint = 0.0
+            cosphi, sinphi = math.cos(pole_azimuth), math.sin(pole_azimuth)
+            dphidx = dphidy = 0.0
+        else:
+            cosphi, sinphi = E[0] / sint, E[1] / sint
+            c1 = sint * sint * R
+            dphidx = -E[1] / c1
+            dphidy = E[0] / c1
+        edt1 = cost * cosphi
+        edt2 = cost * sinphi
+        edt3 = -sint
+        drdx, drdy, drdz = E[0], E[1], E[2]
+        dthx = edt1 / R
+        dthy = edt2 / R
+        dthz = edt3 / R
+
+        lo_k, hi_k = blocks_list[k]
+        lo_l, hi_l = blocks_list[l]
+        nk = hi_k - lo_k
+        nl = hi_l - lo_l
+        P_kk = PMAT[lo_k:hi_k, lo_k:hi_k]
+        P_ll = PMAT[lo_l:hi_l, lo_l:hi_l]
+
+        dx = dy = dz = 0.0
+
+        # K-atom 1-electron (diagonal + same-atom off-diagonal).
+        # Off-diagonal symmetrised as P[j,i]+P[i,j] (KLOOP PKK(J,I)+PKK(I,J))
+        # since the relaxed density need not be symmetric.
+        for i in range(nk):
+            dx += P_kk[i, i] * (
+                pd.HK1_DR[i, i] * drdx + pd.HK1_DT[i, i] * dthx + pd.HK1_DP[i, i] * dphidx
+            )
+            dy += P_kk[i, i] * (
+                pd.HK1_DR[i, i] * drdy + pd.HK1_DT[i, i] * dthy + pd.HK1_DP[i, i] * dphidy
+            )
+            dz += P_kk[i, i] * (pd.HK1_DR[i, i] * drdz + pd.HK1_DT[i, i] * dthz)
+            for j in range(i + 1, nk):
+                Pij = P_kk[j, i] + P_kk[i, j]
+                dx += Pij * (
+                    pd.HK1_DR[j, i] * drdx + pd.HK1_DT[j, i] * dthx + pd.HK1_DP[j, i] * dphidx
+                )
+                dy += Pij * (
+                    pd.HK1_DR[j, i] * drdy + pd.HK1_DT[j, i] * dthy + pd.HK1_DP[j, i] * dphidy
+                )
+                dz += Pij * (pd.HK1_DR[j, i] * drdz + pd.HK1_DT[j, i] * dthz)
+
+        # L-atom 1-electron
+        for i in range(nl):
+            dx += P_ll[i, i] * (
+                pd.HL1_DR[i, i] * drdx + pd.HL1_DT[i, i] * dthx + pd.HL1_DP[i, i] * dphidx
+            )
+            dy += P_ll[i, i] * (
+                pd.HL1_DR[i, i] * drdy + pd.HL1_DT[i, i] * dthy + pd.HL1_DP[i, i] * dphidy
+            )
+            dz += P_ll[i, i] * (pd.HL1_DR[i, i] * drdz + pd.HL1_DT[i, i] * dthz)
+            for j in range(i + 1, nl):
+                Pij = P_ll[j, i] + P_ll[i, j]
+                dx += Pij * (
+                    pd.HL1_DR[j, i] * drdx + pd.HL1_DT[j, i] * dthx + pd.HL1_DP[j, i] * dphidx
+                )
+                dy += Pij * (
+                    pd.HL1_DR[j, i] * drdy + pd.HL1_DT[j, i] * dthy + pd.HL1_DP[j, i] * dphidy
+                )
+                dz += Pij * (pd.HL1_DR[j, i] * drdz + pd.HL1_DT[j, i] * dthz)
+
+        # Pair block: KLOOP uses [L_j,K_i], LLOOP the transpose [K_i,L_j].
+        # Their sum (NOT 2x[L_j,K_i]) is required for the non-symmetric CIS
+        # 2PDM / relaxed density (kloop.f / lloop.f).
+        for i in range(nk):
+            for j in range(nl):
+                Psum = PMAT[lo_l + j, lo_k + i] + PMAT[lo_k + i, lo_l + j]
+                Gsum = GAMM[lo_l + j, lo_k + i] + GAMM[lo_k + i, lo_l + j]
+                F_gam = pd.d_gamma_local[i, j] * Gsum
+                F_R = Psum * pd.HKL2_DR[i, j]
+                dx += (F_gam + F_R) * drdx + Psum * (
+                    pd.HKL2_DT[i, j] * dthx + pd.HKL2_DP[i, j] * dphidx
+                )
+                dy += (F_gam + F_R) * drdy + Psum * (
+                    pd.HKL2_DT[i, j] * dthy + pd.HKL2_DP[i, j] * dphidy
+                )
+                dz += (F_gam + F_R) * drdz + Psum * (pd.HKL2_DT[i, j] * dthz)
+
+        # Nuclear repulsion (2x from KLOOP + LLOOP)
+        zke = float(eff_core_charge(Z[k]))
+        zle = float(eff_core_charge(Z[l]))
+        dnuc = 2.0 * 0.5 * zke * zle * (-1.0 / (R * R))
+        dx += dnuc * drdx
+        dy += dnuc * drdy
+        dz += dnuc * drdz
+        return np.array([dx, dy, dz])
+
+
     for k in range(natom):
         for l in range(k + 1, natom):
-            rk, rl = C0[k], C0[l]
-            dvec = rl - rk
+            dvec = C0[l] - C0[k]
             R = float(np.linalg.norm(dvec))
             if R < 1e-12:
                 continue
-
-            pd = _pd._pair_blocks_deriv(Z[k], Z[l], rk, rl)
-
-            # Chain rule d(R,th,phi)/d(r_l - r_k)
-            E = dvec / R
-            cost = E[2]
-            sint = math.sqrt(max(0.0, 1.0 - E[2] ** 2))
-            if sint < 1e-12:
-                cosphi, sinphi = 1.0, 0.0
-                dphidx = dphidy = 0.0
-            else:
-                cosphi, sinphi = E[0] / sint, E[1] / sint
-                c1 = sint * sint * R
-                dphidx = -E[1] / c1
-                dphidy = E[0] / c1
-            edt1 = cost * cosphi
-            edt2 = cost * sinphi
-            edt3 = -sint
-            drdx, drdy, drdz = E[0], E[1], E[2]
-            dthx = edt1 / R
-            dthy = edt2 / R
-            dthz = edt3 / R
-
-            lo_k, hi_k = blocks_list[k]
-            lo_l, hi_l = blocks_list[l]
-            nk = hi_k - lo_k
-            nl = hi_l - lo_l
-            P_kk = PMAT[lo_k:hi_k, lo_k:hi_k]
-            P_ll = PMAT[lo_l:hi_l, lo_l:hi_l]
-
-            dx = dy = dz = 0.0
-
-            # K-atom 1-electron (diagonal + same-atom off-diagonal).
-            # Off-diagonal symmetrised as P[j,i]+P[i,j] (KLOOP PKK(J,I)+PKK(I,J))
-            # since the relaxed density need not be symmetric.
-            for i in range(nk):
-                dx += P_kk[i, i] * (
-                    pd.HK1_DR[i, i] * drdx + pd.HK1_DT[i, i] * dthx + pd.HK1_DP[i, i] * dphidx
-                )
-                dy += P_kk[i, i] * (
-                    pd.HK1_DR[i, i] * drdy + pd.HK1_DT[i, i] * dthy + pd.HK1_DP[i, i] * dphidy
-                )
-                dz += P_kk[i, i] * (pd.HK1_DR[i, i] * drdz + pd.HK1_DT[i, i] * dthz)
-                for j in range(i + 1, nk):
-                    Pij = P_kk[j, i] + P_kk[i, j]
-                    dx += Pij * (
-                        pd.HK1_DR[j, i] * drdx + pd.HK1_DT[j, i] * dthx + pd.HK1_DP[j, i] * dphidx
-                    )
-                    dy += Pij * (
-                        pd.HK1_DR[j, i] * drdy + pd.HK1_DT[j, i] * dthy + pd.HK1_DP[j, i] * dphidy
-                    )
-                    dz += Pij * (pd.HK1_DR[j, i] * drdz + pd.HK1_DT[j, i] * dthz)
-
-            # L-atom 1-electron
-            for i in range(nl):
-                dx += P_ll[i, i] * (
-                    pd.HL1_DR[i, i] * drdx + pd.HL1_DT[i, i] * dthx + pd.HL1_DP[i, i] * dphidx
-                )
-                dy += P_ll[i, i] * (
-                    pd.HL1_DR[i, i] * drdy + pd.HL1_DT[i, i] * dthy + pd.HL1_DP[i, i] * dphidy
-                )
-                dz += P_ll[i, i] * (pd.HL1_DR[i, i] * drdz + pd.HL1_DT[i, i] * dthz)
-                for j in range(i + 1, nl):
-                    Pij = P_ll[j, i] + P_ll[i, j]
-                    dx += Pij * (
-                        pd.HL1_DR[j, i] * drdx + pd.HL1_DT[j, i] * dthx + pd.HL1_DP[j, i] * dphidx
-                    )
-                    dy += Pij * (
-                        pd.HL1_DR[j, i] * drdy + pd.HL1_DT[j, i] * dthy + pd.HL1_DP[j, i] * dphidy
-                    )
-                    dz += Pij * (pd.HL1_DR[j, i] * drdz + pd.HL1_DT[j, i] * dthz)
-
-            # Pair block: KLOOP uses [L_j,K_i], LLOOP the transpose [K_i,L_j].
-            # Their sum (NOT 2x[L_j,K_i]) is required for the non-symmetric CIS
-            # 2PDM / relaxed density (kloop.f / lloop.f).
-            for i in range(nk):
-                for j in range(nl):
-                    Psum = PMAT[lo_l + j, lo_k + i] + PMAT[lo_k + i, lo_l + j]
-                    Gsum = GAMM[lo_l + j, lo_k + i] + GAMM[lo_k + i, lo_l + j]
-                    F_gam = pd.d_gamma_local[i, j] * Gsum
-                    F_R = Psum * pd.HKL2_DR[i, j]
-                    dx += (F_gam + F_R) * drdx + Psum * (
-                        pd.HKL2_DT[i, j] * dthx + pd.HKL2_DP[i, j] * dphidx
-                    )
-                    dy += (F_gam + F_R) * drdy + Psum * (
-                        pd.HKL2_DT[i, j] * dthy + pd.HKL2_DP[i, j] * dphidy
-                    )
-                    dz += (F_gam + F_R) * drdz + Psum * (pd.HKL2_DT[i, j] * dthz)
-
-            # Nuclear repulsion (2x from KLOOP + LLOOP)
-            zke = float(eff_core_charge(Z[k]))
-            zle = float(eff_core_charge(Z[l]))
-            dnuc = 2.0 * 0.5 * zke * zle * (-1.0 / (R * R))
-            dx += dnuc * drdx
-            dy += dnuc * drdy
-            dz += dnuc * drdz
+            D = pair_derivative(k, l)
+            if abs(dvec[2]) >= (1.0 - 1e-12) * R:
+                # z pole: the tilt towards y is the derivative at phi = pi/2.
+                D[1] = pair_derivative(k, l, 0.5 * math.pi)[1]
+            dx, dy, dz = D
 
             # DEDXYZK convention: EDX(L) += DX, EDX(K) -= DX
             grad[l, 0] += dx

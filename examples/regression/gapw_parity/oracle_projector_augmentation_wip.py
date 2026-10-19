@@ -1,7 +1,5 @@
 """WORK-IN-PROGRESS oracle for the projector-based multipole-consistent
-GAPW augmentation (the fix for the H2O -8.9 Ha public-route bug; see
-HANDOVER_OPEN_BUGS_V015.md 2026-07-29 and HANDOVER_GAPW_PRODUCTION.md
-"NEXT MILESTONE").
+GAPW augmentation (the fix for the H2O -8.9 Ha public-route bug).
 
 Follows Krack & Parrinello, PCCP 2, 2105 (2000), doi:10.1039/b001167n,
 Eqs. 21-25 (projector one-centre expansion) and Eqs. 11-13 (multipole

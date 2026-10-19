@@ -57,7 +57,7 @@ The **wire-Madelung** exchange seam (``exxdiv="ewald"``, the low-D analogue of
 the direct route's ``ξ_N·S D S``) adds ``ξ_wire·S D S`` on top of the strict-zero
 mode. Its ``ξ_wire`` vanishes as ``L → ∞``, so no choice of ``ρ₀`` can restore the
 free-space ``S⊗S`` content that ``"strict"`` removed: the ``ρ₀`` question
-(``handovers/HANDOVER_D2_EXXDIV.md``) is not what stands between this route and a
+(the original investigation) is not what stands between this route and a
 correct absolute energy. ``"free"`` is.
 
 .. note::
@@ -164,7 +164,7 @@ def run_ccm_rhf_wire(ccm, *, initial_guess: object = "AUTO", axis=0, cderi=None,
         :func:`~vibeqc.periodic.ccm.lowd_four_center.ccm_wire_free_ss_weight`.
         Note ``ξ_wire → 0`` as ``L → ∞`` while the free-space ``S⊗S`` weight does
         not, so the ``ρ₀`` freedom in ``ξ_wire``
-        (``handovers/HANDOVER_D2_EXXDIV.md``) cannot repair ``"strict"``'s constant
+        (the original investigation) cannot repair ``"strict"``'s constant
         offset; that is what ``"free"`` is for.
     stream : bool, optional
         Integral-direct: never form the dense cderi ``B``, rebuilding the quadrature

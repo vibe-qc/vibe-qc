@@ -191,8 +191,7 @@ def _assert_bloch_overlap_psd(S_k, k_cart, cutoff_bohr: float) -> None:
     (:func:`vibeqc.lattice_screening.bloch_overlap_cutoff_bohr`), which is
     blocked on reconciling the GPW/GAPW stack's other real-space
     truncations. Tested in
-    ``tests/test_periodic_gpw_compact_multik.py``; see
-    ``handovers/HANDOVER_GPW_MULTIK_OVERLAP_PSD.md``.
+    ``tests/test_periodic_gpw_compact_multik.py``.
     """
     d = np.real(np.asarray(S_k).diagonal())
     if np.all(d > 0.0):
@@ -360,6 +359,34 @@ def _ao_values_on_grid(
     return chi
 
 
+def _ao_values_on_pw_grid(
+    basis, grid: PlaneWaveGrid, *, image_radius: int = _AO_IMAGE_RADIUS,
+) -> np.ndarray:
+    """Use separability only for the known axis-aligned tensor-product grid.
+
+    Skew lattices and custom coordinate generators retain the general path.
+    Both paths keep the same complete grid and home-first image ordering.
+    Every displaced basis still needs its own collocation, with no reuse of
+    geometry-dependent tables across finite differences.
+    """
+    L = np.asarray(grid.lattice_bohr, dtype=float)
+    if type(grid) is not PlaneWaveGrid or np.any(L != np.diag(np.diag(L))):
+        return _ao_values_on_grid(
+            basis, grid.cartesian_coords().reshape(-1, 3), L,
+            image_radius=image_radius,
+        )
+    axes = [np.arange(n, dtype=float) / n * L[a, a]
+            for a, n in enumerate(grid.shape)]
+    shifts = [np.zeros(3)]
+    if image_radius > 0:
+        for ix in range(-image_radius, image_radius + 1):
+            for iy in range(-image_radius, image_radius + 1):
+                for iz in range(-image_radius, image_radius + 1):
+                    if ix != 0 or iy != 0 or iz != 0:
+                        shifts.append(ix * L[:, 0] + iy * L[:, 1] + iz * L[:, 2])
+    return _core.evaluate_ao_tensor_grid(basis, *axes, np.asarray(shifts))
+
+
 @dataclass(frozen=True)
 class GpwCollocationCache:
     """Iteration-invariant grid machinery for the GPW/GAPW Hartree-J + XC
@@ -370,9 +397,9 @@ class GpwCollocationCache:
 
     * ``chi`` -- optional ``(n_grid, n_basis)`` periodic AO values
       ``chi_mu(r_g) = S_R chi_mu^mol(r_g - R)`` (see :func:`_ao_values_on_grid`).
-      Building it costs 27 image ``evaluate_ao`` calls over the whole grid --
-      profiled at 95-100 % of a single ``collocate``/``project`` (the
-      density contraction is ~1 % on top). It is iteration-invariant, so an
+      Axis-aligned grids use separable native collocation with the same image
+      list; other grids use the general molecular evaluator per image.
+      It is iteration-invariant, so an
       SCF that rebuilds it every iteration (the XC path did: r collocate,
       V_xc LDA + GGA projections, ~3-4x per iter) wastes all but the first.
     * ``recip`` -- ``(nx, ny, nz, 3)`` reciprocal-space G-mesh
@@ -410,16 +437,13 @@ def build_gpw_collocation_cache(
     """Build the iteration-invariant :class:`GpwCollocationCache` for
     ``(basis, grid)`` -- the AO-on-grid table chi and the G-mesh.
 
-    Runs the expensive front half (the 27-image ``evaluate_ao`` collocation)
+    Runs the expensive front half (the full periodic AO collocation)
     exactly once. Pass the result into :func:`collocate_density_on_grid`,
     :func:`project_potential_to_ao`, :class:`GpwJBuilder`, and the XC
     projectors via their ``cache=`` argument to reuse it across SCF
     iterations. Bit-identical to the uncached path.
     """
-    r_flat = grid.cartesian_coords().reshape(-1, 3)
-    chi = _ao_values_on_grid(
-        basis, r_flat, grid.lattice_bohr, image_radius=image_radius
-    )
+    chi = _ao_values_on_pw_grid(basis, grid, image_radius=image_radius)
     recip = grid.reciprocal_vectors()
     return GpwCollocationCache(chi=chi, recip=recip)
 
@@ -431,14 +455,12 @@ def _resolve_chi(
 ) -> np.ndarray:
     """Return the cached chi if a cache is supplied, else build it inline.
 
-    The inline branch is the exact computation every grid primitive used
-    before caching, so ``cache=None`` is bit-identical to the pre-cache
-    behaviour and one-shot callers are unaffected.
+    The inline branch uses the same grid-specific evaluator as cache creation,
+    so cached and uncached calls produce the same AO table.
     """
     if cache is not None and cache.chi is not None:
         return cache.chi
-    r_flat = grid.cartesian_coords().reshape(-1, 3)
-    return _ao_values_on_grid(basis, r_flat, grid.lattice_bohr)
+    return _ao_values_on_pw_grid(basis, grid)
 
 
 def _resolve_recip(
@@ -581,6 +603,48 @@ def project_potential_to_ao(
     return 0.5 * (M + M.T)
 
 
+def _project_potential_to_ao_pair_domain(
+    basis, potential, grid, cells, pair_cutoff_bohr,
+) -> np.ndarray:
+    """Project the FFT interpolant on the finite physical AO-pair domain.
+
+    With the pair-FT convention F[P](G) = integral P(r) exp(-iG.r) dr,
+    V_mn = sum_G (FFT[V](G)/N_grid) conj(F[P_mn](G)). This is the
+    reciprocal counterpart of the GPW projection, using exactly the
+    selected (mu_0, nu_R) terms rather than a Cartesian product of two
+    independently truncated AO image sums. The same calibrated pair FT
+    is used by the existing Ewald nuclear projection.
+    """
+    from ._aopair_ft import ao_pair_fourier_transform_bloch
+    from .aux_basis import _ao_scales_for_rsgdf
+
+    V = np.asarray(potential, dtype=float)
+    if V.shape != grid.shape:
+        raise ValueError(f"potential shape {V.shape} doesn't match grid {grid.shape}")
+    shifts = np.asarray([list(cell.r_cart) for cell in cells], dtype=float).reshape(-1, 3)
+    if not len(shifts):
+        raise ValueError("physical GAPW projection requires the nuclear AO-pair cells")
+    G = grid.reciprocal_vectors().reshape(-1, 3)
+    coefficients = np.fft.fftn(V).reshape(-1) / grid.n_points
+    scales = _ao_scales_for_rsgdf(basis)
+    pair_scales = np.outer(scales, scales)
+    # Bound the complex AO-pair panel to about 16 MiB, independent of grid.
+    chunk = max(1, (16 * 1024 * 1024) // (16 * max(1, basis.nbasis ** 2)))
+    matrix = np.zeros((basis.nbasis, basis.nbasis), dtype=complex)
+    for start in range(0, len(G), chunk):
+        stop = min(start + chunk, len(G))
+        pair_ft = ao_pair_fourier_transform_bloch(
+            basis, G[start:stop], shifts, np.zeros(3),
+            pair_cutoff_bohr=float(pair_cutoff_bohr),
+        )
+        matrix += np.einsum(
+            "g,mng,mn->mn", coefficients[start:stop], pair_ft.conj(),
+            pair_scales, optimize=True,
+        )
+    real = matrix.real
+    return 0.5 * (real + real.T)
+
+
 # ---------------------------------------------------------------------------
 # Bloch (compact multi-k) real-space density collocation + per-k projection
 # ---------------------------------------------------------------------------
@@ -611,6 +675,20 @@ def bloch_ao_on_grid(basis, grid_points, k_cart, lattice_translations):
     k = np.asarray(k_cart, dtype=float).reshape(3)
     Ts = np.ascontiguousarray(lattice_translations, dtype=float)
     return _core.evaluate_bloch_ao(basis, pts, k, Ts)
+
+
+def _bloch_ao_cache_on_grid(basis, grid_points, kpoints, lattice_translations):
+    """Fill an admitted all-k cache, sharing each real AO image panel.
+
+    The caller retains the existing total-cache byte limit. This works on
+    arbitrary Cartesian points, including skew-cell grids, and keeps no
+    basis/geometry cache outside this call.
+    """
+    return _core.evaluate_bloch_ao_multi_k(
+        basis, np.ascontiguousarray(grid_points, dtype=float),
+        np.ascontiguousarray(kpoints, dtype=float).reshape(-1, 3),
+        np.ascontiguousarray(lattice_translations, dtype=float),
+    )
 
 
 def collocate_bloch_density_on_grid(chi_k_list, density_matrices_k, weights, grid):
@@ -998,12 +1076,11 @@ class GpwJBuilder:
         """Return ``(n_grid, n_basis)`` AO values on the grid."""
         if self._chi_cache is not None:
             return self._chi_cache
-        r_flat = self.grid.cartesian_coords().reshape(-1, 3)
         # Periodic AO image sum (see _ao_values_on_grid): the cached chi
         # used for both the density collocation and the V->AO projection
         # in build_J must be periodic, or build_J leaks charge for atoms
         # near a cell face exactly as the standalone collocator did.
-        chi = _ao_values_on_grid(self.basis, r_flat, self.grid.lattice_bohr)
+        chi = _ao_values_on_pw_grid(self.basis, self.grid)
         if self._cache_ao:
             self._chi_cache = chi
         return chi
@@ -1642,14 +1719,15 @@ def _kinetic_lattice_gamma(basis, system) -> np.ndarray:
     return _gamma_one_e(T_lat)
 
 
-def _overlap_lattice_gamma(basis, system) -> np.ndarray:
+def _overlap_lattice_gamma(basis, system, *, lat_opts=None) -> np.ndarray:
     """Γ-point lattice overlap matrix.
 
     The overlap integrand decays exponentially with shell separation,
     same family as kinetic. Lifted to the lattice path at B3 for the
     same reason as :func:`_kinetic_lattice_gamma`.
     """
-    lat_opts = _core.LatticeSumOptions()
+    if lat_opts is None:
+        lat_opts = _core.LatticeSumOptions()
     S_lat = _core.compute_overlap_lattice(basis, system, lat_opts)
     return _gamma_one_e(S_lat)
 
@@ -1999,6 +2077,8 @@ def _build_v_ne(
     convention: str,
     smearing_alpha: Optional[float],
     grid: Optional[PlaneWaveGrid],
+    *,
+    lat_opts=None,
 ) -> np.ndarray:
     """Dispatch V_ne build by convention. Internal helper for the
     GPW entry points.
@@ -2031,6 +2111,7 @@ def _build_v_ne(
             alpha=smearing_alpha,
             grid=grid,
             quiet=True,
+            lat_opts=lat_opts,
         )
     raise ValueError(
         f"_build_v_ne: unknown convention {convention!r}; "
@@ -2185,14 +2266,8 @@ class GpwScfResult:
     smearing_entropy: float = 0.0
     fermi_level: float = 0.0
     occupations: tuple = ()
-    # The converged Fock actually diagonalized to produce
-    # ``mo_coeffs``/``mo_energies`` (post-DIIS extrapolation), and the
-    # Gamma lattice overlap it was diagonalized against. Carried so the
-    # runner adapter can surface the SCF's own operator instead of
-    # re-deriving an HF-shaped ``Hcore + J - K/2`` from scratch (wrong
-    # for KS/GAPW, and ~36% of a small GPW job's wall time). ``None``
-    # on producers that predate the field; the adapter falls back to
-    # the reconstruction in that case.
+    # Migrated RHF/libxc RKS carry the physical Fock at density; other producers
+    # retain their existing result convention. See fock_build/run_fields.
     fock: Optional[np.ndarray] = None
     overlap: Optional[np.ndarray] = None
 
@@ -2216,6 +2291,26 @@ class GpwScfResult:
 
     restart_kpoints: object = None
     restart_weights: object = None
+
+    fock_build: object = None
+    next_density: Optional[np.ndarray] = None
+    density_fixed_point_residual: Optional[float] = None
+    evaluated_build_history: tuple = ()
+
+    @property
+    def orbital_kind(self):
+        # The returned coefficients diagonalize the evaluated density.
+        return "natural" if self.fock_build is not None else "canonical"
+
+    @property
+    def run_fields(self):
+        if self.fock_build is None:
+            return {}
+        return dict(self.fock_build.output_fields(),
+                    orbital_state_relation="density-defining-physical-rayleigh-quotients",
+                    scf_stop_reason="converged" if self.converged else "iteration_limit",
+                    density_fixed_point_residual=self.density_fixed_point_residual,
+                    evaluated_build_history=[dict(row) for row in self.evaluated_build_history])
 
 
 def _compute_d3_correction(
@@ -2599,6 +2694,28 @@ def run_periodic_rhf_gpw(
     from .guess import normalize_density_guess
     D = normalize_density_guess(D, S, 2 * n_occ)
 
+    if functional is None or not requested_func.is_external:
+        if functional is not None:
+            reject_unscreened_range_separated(requested_func, where="run_periodic_rhf_gpw")
+        from .periodic_gpw_fock import _run_gpw_restricted_state
+        return _run_gpw_restricted_state(
+            basis=basis, system=system, gpw=gpw, lattice_options=lo,
+            kinetic=T, nuclear=V_ne, overlap=S, X=S_half_inv, e_nuclear=E_nn,
+            density=D, n_occ=n_occ,
+            functional=None if functional is None else requested_func,
+            collocation_cache=collocation_cache,
+            dft_plus_u_sites=dft_plus_u_sites,
+            patom=initial_guess == _core.InitialGuess.PATOM and not input_restart_supplied,
+            max_iter=max_iter, conv_tol_energy=conv_tol_energy,
+            conv_tol_density=conv_tol_density, damping=damping, use_diis=use_diis,
+            diis_subspace_size=diis_subspace_size, diis_start_iter=diis_start_iter,
+            use_davidson=use_davidson, davidson_min_dim=davidson_min_dim,
+            smearing_opts=smearing_opts, smearing_temperature=smearing_T,
+            nuclear_convention=v_ne_convention, smearing_alpha=smearing_alpha,
+            dispersion=dispersion, dispersion_functional=dispersion_functional,
+            plog=plog, guess_selection=periodic_result_selection(
+                system, requested_initial_guess, restarted=input_restart_supplied))
+
     if initial_guess == _core.InitialGuess.PATOM and not input_restart_supplied:
         J_seed = gpw.build_J(D)
         K_seed = np.asarray(_core.build_jk_gamma_molecular_limit(basis, system, lo, D).K)
@@ -2606,12 +2723,16 @@ def run_periodic_rhf_gpw(
         C_seed = S_half_inv @ C_seed
         D = 2 * C_seed[:, :n_occ] @ C_seed[:, :n_occ].T
 
-    use_dav = use_davidson and S.shape[0] >= davidson_min_dim
-    dav_opts = None
-    if use_dav:
-        from vibeqc._vibeqc_core import DavidsonOptions
+    from types import SimpleNamespace
+    from .solvers._scf import FockDiagonalizer
 
-        dav_opts = DavidsonOptions()
+    diagonalise = FockDiagonalizer(
+        S_half_inv, S,
+        SimpleNamespace(use_davidson=use_davidson,
+                        davidson_min_dim=davidson_min_dim,
+                        davidson=_core.DavidsonOptions()),
+        kind="ks" if functional is not None else "fock", n_required=n_occ,
+    )
 
     # Optional functional.
     if functional is not None:
@@ -2815,10 +2936,7 @@ def run_periodic_rhf_gpw(
             F = diis.extrapolate(F, err)
 
         # Solve F C = e S C.
-        e, C_orth = _eigh_safe(
-            S_half_inv @ F @ S_half_inv, use_dav=use_dav, dav_opts=dav_opts
-        )
-        C = S_half_inv @ C_orth
+        C, e = diagonalise(F)
 
         # v0.12 R1: build D from fractional occupations when smearing
         # is on. Γ-only single-k path -> weights = [1.0]. At T = 0 the
@@ -2960,12 +3078,7 @@ def run_periodic_rhf_gpw(
         _e_xc_final, V_xc_final = external_xc.build_gamma(D)
         F_final = F_final + V_xc_final
         F_final = 0.5 * (F_final + F_final.T)
-        e, C_orth = _eigh_safe(
-            S_half_inv @ F_final @ S_half_inv,
-            use_dav=use_dav,
-            dav_opts=dav_opts,
-        )
-        C = S_half_inv @ C_orth
+        C, e = diagonalise(F_final)
         final_smearing = _apply_smearing(
             [e],
             weights=[1.0],
@@ -3537,12 +3650,9 @@ def run_periodic_rks_gpw_multi_k(
         use_bloch_compact
         and compact_cache_bytes <= _COMPACT_BLOCH_AO_CACHE_BYTES
     ):
-        chi_k_list = [
-            bloch_ao_on_grid(
-                basis, grid_pts, kpoints[ik], lattice_translations
-            )
-            for ik in range(n_k)
-        ]
+        chi_k_list = _bloch_ao_cache_on_grid(
+            basis, grid_pts, kpoints, lattice_translations
+        )
 
     def _build_D_k(C_list, occ_list):
         """Per-k Hermitian AO density matrices D(k) = C f_k C^H (occupations
@@ -3612,6 +3722,8 @@ def run_periodic_rks_gpw_multi_k(
                     for _ in range(n_k)
                 ]
 
+    from .solvers._scf import solve_dense_fock
+
     # Build initial density from the selected guess Fock and accumulate rho.
     D_total = np.zeros((n_basis, n_basis), dtype=float)
     C_k: list = []
@@ -3636,16 +3748,26 @@ def run_periodic_rks_gpw_multi_k(
         D_total += weights[ik] * np.real(Dk)
     D_total = 0.5 * (D_total + D_total.T)
 
-    # v0.12 R1: initial smearing pass -- only matters when smearing_T > 0
-    # so the very first r already carries fractional occupations.
-    if smearing_T > 0.0:
-        sm_init = _apply_smearing(
-            eps_per_k_init,
-            weights=list(weights),
-            n_electrons_per_cell=float(n_elec),
-            n_occ_each=n_occ,
-            smearing=smearing_opts,
+    # v0.12 R1: initial occupation pass through the shared fill, so the very
+    # first r already carries the occupations the SCF iterations use:
+    # fractional at T > 0, and at T = 0 one Fermi level over the mesh
+    # (#176). A gapped seed is the per-k hard Aufbau and keeps the slice
+    # density above bit for bit.
+    sm_init = _apply_smearing(
+        eps_per_k_init,
+        weights=list(weights),
+        n_electrons_per_cell=float(n_elec),
+        n_occ_each=n_occ,
+        smearing=smearing_opts,
+    )
+    _seed_is_slice = smearing_T <= 0.0 and all(
+        np.array_equal(
+            np.asarray(o, dtype=float)[:n_occ], np.full(n_occ, 2.0)
         )
+        and not np.any(np.asarray(o, dtype=float)[n_occ:])
+        for o in sm_init.occupations_per_k
+    )
+    if not _seed_is_slice:
         occ_per_k_curr = [np.asarray(o, dtype=float) for o in sm_init.occupations_per_k]
         D_total = np.zeros((n_basis, n_basis), dtype=float)
         for ik in range(n_k):
@@ -3942,8 +4064,10 @@ def run_periodic_rks_gpw_multi_k(
             )
             for ik in range(n_k):
                 Fo = 0.5 * (Forth_use[ik] + Forth_use[ik].conj().T)
-                eps, C_orth = np.linalg.eigh(Fo)
-                C = X_k[ik] @ C_orth
+                eig = solve_dense_fock(
+                    Fo, kind="ks", kpoint=kpoints[ik], generation=it,
+                )
+                eps, C = eig.eigenvalues, X_k[ik] @ eig.eigenvectors
                 new_C_k.append(C)
                 new_e_k.append(eps)
                 eps_per_k_new.append(np.asarray(np.real(eps), dtype=float))
@@ -3963,8 +4087,11 @@ def run_periodic_rks_gpw_multi_k(
 
             for ik in range(n_k):
                 Fk = F_use_k[ik]
-                eps, C_orth = np.linalg.eigh(X_k[ik].conj().T @ Fk @ X_k[ik])
-                C = X_k[ik] @ C_orth
+                eig = solve_dense_fock(
+                    Fk, X=X_k[ik], overlap=S_k[ik], kind="ks",
+                    kpoint=kpoints[ik], generation=it,
+                )
+                eps, C = eig.eigenvalues, eig.eigenvectors
                 new_C_k.append(C)
                 new_e_k.append(eps)
                 eps_per_k_new.append(np.asarray(np.real(eps), dtype=float))
@@ -4197,11 +4324,12 @@ def run_periodic_rks_gpw_multi_k(
                 Fk = Fk + S_k[ik] @ V_AO_final @ S_k[ik]
             Fk = 0.5 * (Fk + Fk.conj().T)
             F_final_k.append(Fk)
-            eps, C_orth = np.linalg.eigh(
-                X_k[ik].conj().T @ Fk @ X_k[ik]
+            eig = solve_dense_fock(
+                Fk, X=X_k[ik], overlap=S_k[ik], kind="ks",
+                kpoint=kpoints[ik], generation=n_iter + 1,
             )
-            C_final_k.append(X_k[ik] @ C_orth)
-            e_final_k.append(np.asarray(np.real(eps), dtype=float))
+            C_final_k.append(eig.eigenvectors)
+            e_final_k.append(eig.eigenvalues)
 
         final_smearing = _apply_smearing(
             e_final_k,

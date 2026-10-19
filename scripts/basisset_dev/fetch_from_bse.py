@@ -9,11 +9,12 @@ Usage::
 
     .venv/bin/pip install basis-set-exchange
     .venv/bin/python scripts/basisset_dev/fetch_from_bse.py --priority high
-    ./scripts/setup_basis_library.sh        # promote custom/ → basis/
+    ./scripts/setup_basis_library.sh --target-dir python/vibeqc/basis_library
 
-The fetcher writes to ``python/vibeqc/basis_library/custom/`` so
-the existing setup pipeline picks them up unchanged. Each file
-gets a ``! vibeqc-fetched ...`` header naming the source and date.
+The fetcher writes a QVF-Basis record per basis into
+``python/vibeqc/basis_library/qvf/`` (``kind = bse`` with the catalogue
+version and date in its provenance) and re-renders ``basis/``; routing
+the citation keys in ``database.toml`` is still a hand step.
 
 What this fetcher does NOT do (by design):
 
@@ -42,7 +43,7 @@ from pathlib import Path
 PACKAGE_ROOT = (
     Path(__file__).resolve().parents[2] / "python" / "vibeqc" / "basis_library"
 )
-CUSTOM_DIR = PACKAGE_ROOT / "custom"
+QVF_DIR = PACKAGE_ROOT / "qvf"
 
 
 # (vibe-qc canonical name → BSE basis-set identifier, priority, comment)
@@ -190,43 +191,33 @@ TARGETS: list[tuple[str, str, str, str]] = [
 
 
 def fetch(canonical: str, bse_name: str, *, comment: str = "") -> Path:
-    """Fetch one basis from BSE and write it to ``custom/<canonical>.g94``."""
+    """Fetch one basis from BSE and save it as ``qvf/<canonical>.qvf.json``."""
     try:
-        from basis_set_exchange import api  # type: ignore[import-not-found]
+        from basis_set_exchange import api, version  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
             "fetch_from_bse needs basis-set-exchange installed; "
             "pip install basis-set-exchange"
         ) from exc
+    from vibeqc.basis_toolkit import Upstream, library
 
-    target = CUSTOM_DIR / f"{canonical}.g94"
-    qvf_target = CUSTOM_DIR.parent / "qvf" / f"{canonical}.qvf.json"
     text = api.get_basis(
         name=bse_name,
         elements=None,  # all elements BSE has for this basis
         fmt="gaussian94",
         header=True,  # include BSE's own provenance header
     )
-    today = datetime.date.today().isoformat()
-    vibeqc_header = (
-        f"! vibeqc-fetched from Basis Set Exchange on {today}.\n"
-        f"! BSE name: {bse_name}\n"
-        f"! Canonical name in vibe-qc: {canonical}\n"
-        f"! Note: {comment}\n"
-        f"!\n"
+    header = [line[1:].strip() for line in text.splitlines() if line.startswith("!")]
+    data = library.record_from_text(
+        canonical, text,
+        kind="bse",
+        upstream=[Upstream(name="basis-set-exchange", version=str(version()),
+                           url="https://www.basissetexchange.org", identifier=bse_name)],
+        retrieval_date=datetime.date.today().isoformat(),
+        description="\n".join(([comment] if comment else []) + header),
     )
-    target.write_text(vibeqc_header + text)
-
-    # Also write a QVF-Basis structured sidecar.
-    try:
-        from vibeqc.basis_toolkit import from_g94, save_qvf_json
-
-        data = from_g94(vibeqc_header + text, name=canonical)
-        qvf_target.parent.mkdir(exist_ok=True)
-        save_qvf_json(data, qvf_target)
-    except Exception:
-        pass  # QVF is a best-effort sidecar; don't fail the fetch
-
+    target = library.save_record(data, QVF_DIR / f"{canonical}{library.RECORD_SUFFIX}")
+    library.render_library(library.renderings_dir())
     return target
 
 
@@ -274,14 +265,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list:
         for c, b, pri, com in candidates:
-            present = "✅" if (CUSTOM_DIR / f"{c}.g94").exists() else "❌"
+            present = "✅" if (QVF_DIR / f"{c}.qvf.json").exists() else "❌"
             print(f"{present} {c:24s} ({pri:7s}) ← BSE:{b:24s}  {com}")
         return 0
 
     rc = 0
     fetched: list[str] = []
     for c, b, pri, com in candidates:
-        if (CUSTOM_DIR / f"{c}.g94").exists():
+        if (QVF_DIR / f"{c}.qvf.json").exists():
             print(f"= skip {c} (already shipped)")
             continue
         if args.dry_run:
@@ -297,9 +288,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if fetched and not args.dry_run:
         print()
-        print(f"fetched {len(fetched)} bases. Now run:")
-        print("    ./scripts/setup_basis_library.sh")
-        print("to promote custom/ → basis/, then run the load-test:")
+        print(f"fetched {len(fetched)} bases as records and re-rendered basis/. Now route")
+        print("their citation keys in python/vibeqc/output/citations/database.toml and run:")
+        print("    python scripts/render_basis_library.py --check")
         print(
             "    .venv/bin/python -m pytest tests/basisset_dev/test_basis_library_load.py"
         )

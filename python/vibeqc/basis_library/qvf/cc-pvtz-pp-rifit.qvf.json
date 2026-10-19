@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "cc-pvtz-pp-rifit",
+  "description": "Basis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\nOriginating publication: Hattig, Phys. Chem. Chem. Phys. 7, 59 (2005); DOI: 10.1039/b415208e\n  Basis set: cc-pVTZ-PP-RIFIT\nDescription: cc-pVTZ-PP-RIFIT\n       Role: rifit\n    Version: 0  (Data from the original Basis Set Exchange)",
+  "role": "fitting",
   "elements": {
     "Y": {
       "element": "Y",
@@ -8540,7 +8540,46 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "peterson_pp_2003",
+      "description": "K. A. Peterson, D. Figgen, E. Goll, H. Stoll, M. Dolg, Journal of Chemical Physics 119, 11113-11123 (2003)",
+      "doi": "10.1063/1.1622924"
+    },
+    {
+      "key": "hellweg_haettig_pp_rifit_2007",
+      "description": "A. Hellweg, C. Hättig, S. Höfener, W. Klopper, Theoretical Chemistry Accounts 117, 587-597 (2007)",
+      "doi": "10.1007/s00214-007-0250-5"
+    },
+    {
+      "key": "haettig_aux_5z_2005",
+      "description": "C. Hättig, Physical Chemistry Chemical Physics 7, 59-66 (2005)",
+      "doi": "10.1039/B415208E"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "cc-pvtz-pp-rifit"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "d5a49dc1f1e845374988890bee513ad667b0f84402b7843c53da9d679ad1a8d5",
+    "citations": [
+      {
+        "keys": [
+          "peterson_pp_2003",
+          "hellweg_haettig_pp_rifit_2007",
+          "haettig_aux_5z_2005"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

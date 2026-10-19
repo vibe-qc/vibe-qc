@@ -802,7 +802,7 @@ def test_ccsd_t_isolated_limit_matches_molecular_ccsd_t_fd():
     *molecular* ``run_ccsd(compute_triples=True)`` (C++ spin-adapted path, no
     shared code). THE decisive gate for the (T) semicanonical gap: the canonical
     (T) complex-step route had an h-independent ~2.5e-5 error here (off-diagonal
-    triples densities missing, HANDOVER_AICCM_GRADIENT.md 2026-07-17); the
+    triples densities missing, the original investigation 2026-07-17); the
     non-canonical functional (§1.10) must reach the molecular FD floor."""
     from vibeqc import CCSDOptions, run_ccsd
 

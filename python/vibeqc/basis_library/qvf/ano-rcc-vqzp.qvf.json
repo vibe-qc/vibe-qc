@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "ano-rcc-vqzp",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: ANO-RCC-VQZP\nCanonical name in vibe-qc: ano-rcc-vqzp\nOriginating publication: Roos, Lindh, Malmqvist, Veryazov, Widmark, J. Phys. Chem. A 108, 2851 (2004); DOI: 10.1021/jp0492133\nNote:\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: ANO-RCC-VQZP\nDescription: ANO-RCC-VQZP\n       Role: orbital\n    Version: 1  (Data from OpenMolCAS)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -176625,7 +176625,26 @@
       ]
     }
   },
+  "basis_family": "ano",
+  "references": [
+    {
+      "key": "doi:10.1021/jp0492133",
+      "description": "Roos, Lindh, Malmqvist, Veryazov, Widmark, J. Phys. Chem. A 108, 2851 (2004)",
+      "doi": "10.1021/jp0492133"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "ANO-RCC-VQZP"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "5a4e2b32dae431f5a0567ac58a28f1f27653b644e786d365ea5b8c725d06ff95"
   }
 }

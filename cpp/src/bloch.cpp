@@ -1,3 +1,4 @@
+#include "vibeqc/hermitian_operator.hpp"
 #include "vibeqc/bloch.hpp"
 
 #include "vibeqc/crystal.hpp"
@@ -143,20 +144,10 @@ BandDiag diagonalize_bloch(const ComplexMatrix& F_k,
     ComplexVector s_half_inv = s_eig.cwiseInverse().cwiseSqrt().cast<std::complex<double>>();
     ComplexMatrix X = U * s_half_inv.asDiagonal();
 
-    // F' = X† F X, then diagonalize.
-    ComplexMatrix F_prime = X.adjoint() * F_k * X;
-    // Symmetrize numerically to damp tiny non-Hermitian drift from the
-    // complex arithmetic (imaginary part of diagonal etc.).
-    F_prime = 0.5 * (F_prime + F_prime.adjoint().eval());
-
-    Eigen::SelfAdjointEigenSolver<ComplexMatrix> es_F(F_prime);
-    if (es_F.info() != Eigen::Success) {
-        throw std::runtime_error("diagonalize_bloch: F eigensolver failed");
-    }
-
+    auto result = solve_fock_matrix(F_k, X);
     BandDiag out;
-    out.energies = es_F.eigenvalues();
-    out.coefficients = X * es_F.eigenvectors();
+    out.energies = result.eigenvalues;
+    out.coefficients = X * result.eigenvectors;
     return out;
 }
 

@@ -1,5 +1,11 @@
 """RHF on glycine / def2-SVP with an explicit DIRECT Fock build.
 
+Success criterion: the run reports "DIRECT Fock build: 95 basis functions"
+and converges to E = -281.988369 Ha (vibe-qc 0.17.10 development build;
+agree to 1e-6 Ha). About two minutes with six threads on a loaded
+machine; the iteration count (42 here) depends on the initial guess and
+DIIS history.
+
 Glycine at def2-SVP has 95 basis functions, below the AUTO threshold of 140
 in this version. AUTO would therefore choose CONVENTIONAL and store the full
 tensor: 95⁴ x 8 bytes = 621.42 MiB, before other process memory. This example

@@ -50,7 +50,10 @@ def write_iupac_name(molecule) -> bool:
             )
             for atom in molecule.atoms
         ]
-        iupac = name_from_atoms(atoms, prefer_trivial=True)
+        iupac = name_from_atoms(
+            atoms, prefer_trivial=True, charge=getattr(molecule, "charge", 0),
+            multiplicity=getattr(molecule, "multiplicity", 1),
+        )
     except Exception:
         return False
     write(f"  IUPAC name: {iupac}\n")

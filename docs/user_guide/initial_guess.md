@@ -40,7 +40,7 @@ The nine available kinds:
 vq.InitialGuess.AUTO       # engine picks per system and route
 vq.InitialGuess.HCORE      # diagonalise the core Hamiltonian
 vq.InitialGuess.SAD        # superposition of atomic densities
-vq.InitialGuess.SAP        # superposition of atomic potentials (Lehtola 2020)
+vq.InitialGuess.SAP        # superposition of atomic potentials (Lehtola 2019)
 vq.InitialGuess.PATOM      # SAD + one in-field re-polarisation step
 vq.InitialGuess.HUECKEL    # parameter-free generalised Wolfsberg-Helmholz
 vq.InitialGuess.MINAO      # minimal-AO (ANO-RCC) reference projection
@@ -69,7 +69,9 @@ promise the fewest iterations or the global electronic ground state.
 | System and route | Usual AUTO construction |
 |---|---|
 | Ordinary restricted closed-shell molecular route | PATOM |
-| Molecular unrestricted/open-shell route (including singlet UHF/UKS) or transition-metal system | SAD |
+| Molecular open-shell route on a system containing a d- or f-block atom | PATOM |
+| Other molecular unrestricted/open-shell route (including singlet UHF/UKS), excluding isolated spin-polarized atoms | SAD |
+| Restricted closed-shell molecular route containing a d- or f-block atom | SAD |
 | Isolated spin-polarized atom | PATOM |
 | Ordinary periodic SCF route | SAD |
 | Cyclic route exposing only HCORE | HCORE |
@@ -113,12 +115,14 @@ and a complete fitted or numerical atomic reference. AUTO is accepted on every l
 | GAPW true multi-k | Pure RKS | A | Complete per-k payload | Via `run_periodic_job` |
 | Native GPW host | RHF Gamma | A | Prepared density | Via `run_periodic_job` |
 | Explicit / RI cyclic SCF and CCM correlation helpers | RHF, UHF, RKS, UKS | HCORE | Unsupported | Unsupported |
-| AICCM real-Gamma / four-center | Adapter-supported families | HCORE | Unsupported | Unsupported |
+| AICCM real-Gamma | RHF, RKS, UHF, UKS | HCORE | In-memory supercell density | Unsupported |
+| AICCM four-center | Adapter-supported families | HCORE | Unsupported | Unsupported |
 | AICCM neutral-Bloch / chi | Producer-supported families | Underlying GDF / BIPOLE contract | Producer payload guards apply | Unsupported |
 
 Standalone CCM SCF, MP2, CC, double-hybrid and direct gradient/optimization
 helpers accept the same selector and retain `guess_selection` on their results.
-Their existing cyclic loops construct HCORE; AUTO resolves to HCORE, while
+Except for the direct real-Gamma SCF producers described below, these
+cyclic loops construct HCORE; AUTO resolves to HCORE, while
 explicit atomic or restart requests fail before integrals. These loops do not
 expose an atomic-density or restart projection in their cyclic overlap metric.
 The CCM GDF wrappers retain the underlying GDF capability set. A supplied SCF
@@ -149,6 +153,16 @@ selector. It requires an applicable open-shell driver, one tag in {-1,0,1}
 per atom, and a physically compatible target population. AUTO may carry tags
 only if its effective construction is SAD; READ transport cannot carry them.
 
+## Supplied atomic bases
+
+All-electron SAD, its ATOMSPIN seed, PATOM and HUECKEL use the actual
+atom-local shells supplied in the working basis. Custom display names do not
+trigger a library lookup, and retaining a library name does not replace modified
+primitives or normalized coefficients. The atomic cache distinguishes shell
+ordering, pure/Cartesian representation, exponents and coefficients at equal
+element identity; identical atomic templates share work. MINAO continues to
+construct its separate minimal reference basis before projection.
+
 ## Effective core potentials
 
 On routes that apply ECPs, SAD and its ATOMSPIN seed, PATOM, and HUECKEL
@@ -164,8 +178,9 @@ retains 19 electrons with s/p/d populations 3/6/10. Equal elements with differen
 operators or basis shells have separate atomic states. Population normalization
 in the route's overlap metric follows this physical construction.
 
-This follows Van Lenthe et al. (2006), Procedure p. 927, including its
-one-center pseudopotential correction, and Andrae et al. (1990), Secs. 1-2,
+This follows Van Lenthe et al. (2006) ({vibeqc-cite}`vanlenthe_sad_2006`),
+Procedure p. 927, including its one-center pseudopotential correction, and
+Andrae et al. (1990) ({vibeqc-cite}`andrae_ecp_1990`), Secs. 1-2,
 for the valence Hamiltonian and 28/60-electron cores. Unknown closed-core
 configurations and bases unable to represent their valence angular channels
 fail explicitly. MINAO solves valence-only atomic HF in the ANO-RCC minimal
@@ -177,7 +192,8 @@ reference; periodic potentials sum the owned atoms and their lattice images.
 The radial charge integral is checked and normalized to atomic neutrality,
 so numerical integration cannot introduce a residual Coulomb tail. This is
 a numerical LDA-on-HF reference, following the construction described by
-[Lehtola, Visscher and Engel (2020)](https://arxiv.org/abs/2002.02587), rather
+[Lehtola, Visscher and Engel (2020)](https://arxiv.org/abs/2002.02587)
+({vibeqc-cite}`lehtola_visscher_engel_sap_2020`), rather
 than reusing the all-electron fits for a reduced nuclear charge. It is more
 expensive than the fitted all-electron SAP path and depends on the working
 atomic basis and the periodic image cutoff. HCORE and compatible READ remain available.
@@ -326,9 +342,10 @@ seed*, not by atomic Hund rules alone:
 * $n_\alpha \ne n_\beta$: **Hund-split atomic densities** -- each atom
   contributes its natural majority-alpha configuration
   ($f_i^\alpha$, $f_i^\beta$ from `spin_resolve_occupations`), so the
-  starting spin density is per-atom polarised. This is what lands
-  FeCl$_3$-class open shells in the right basin (BUG 88): a spherical
-  spin density there converges to an excited solution.
+  starting spin density is per-atom polarised. This improves open-shell
+  starts but does not guarantee the lowest SCF state. In particular, the
+  normalized FeCl$_3$/cc-pVDZ seed can reach an excited saddle whose
+  ordinary SCF restarts need the UHF stability recovery (#273).
 * The UKS packaging diagonalises $\mathbf{F}_{\rm SAD}$ once from the
   total density and keeps the first $n_\alpha$ and $n_\beta$ columns.
 
@@ -340,7 +357,8 @@ normalization, including when their total spin is zero.
 
 On molecular routes with internal stability analysis, the orbital Hessian can
 identify an unstable stationary solution and guide a local escape
-(Seeger-Pople 1977; Lehtola 2020, section 10). Stability and state selection
+(Seeger-Pople 1977, {vibeqc-cite}`seeger_pople_stability_1977`; Lehtola 2020,
+section 10, {vibeqc-cite}`lehtola_scf_overview_2020`). Stability and state selection
 remain different checks: a locally stable solution need not be the lowest
 of competing electronic states. Use `atomic_spins` for a deliberate starting
 pattern and inspect the converged state; the guess cannot guarantee it will
@@ -384,7 +402,7 @@ schedule) `opts.spinlock_value`:
 
 * `SpinlockMode.PATTERN_HOLD` keeps the seeded broken-symmetry occupied
   set in place by maximum-overlap selection (MOM, Gilbert/Besley/Gill
-  2008) instead of plain Aufbau for the first `spinlock_iterations`
+  2008, {vibeqc-cite}`gilbert_mom_2008`) instead of plain Aufbau for the first `spinlock_iterations`
   cycles, then releases. Pair it with `atomic_spins` to stop an
   antiferromagnetic seed from collapsing early.
 * `SpinlockMode.SPIN_SCHEDULE` runs a two-phase SCF: it converges at a
@@ -396,6 +414,15 @@ schedule) `opts.spinlock_value`:
 Direct native `run_uhf_scf_with_jk` and `run_uks_scf_with_jk` do not implement
 the two population phases and reject active SPIN_SCHEDULE. Use the molecular
 `run_uhf` / `run_uks` wrappers for that schedule.
+
+The vacuum-padded RIJCOSX UHF and UKS wrappers forward `atomic_spins` to both
+an SAD seed and the native driver, preserving analysis-only stability behavior
+for deliberately targeted states. They also forward `PATTERN_HOLD`, its
+iteration count, and its spin value. Active `SPIN_SCHEDULE` is rejected before
+integral or grid setup because these wrappers do not implement the two
+population phases; zero iterations leave the schedule disabled. Empty spin
+tags and `OFF` retain ordinary behavior. UKS retains the explicitly selected
+functional and integration grid at this boundary.
 
 ```python
 opts = UHFOptions()
@@ -440,9 +467,9 @@ spin pattern the way `atomic_spins` does:
 | `use_mom=True` (maximum overlap method) | periodic multi-k RHF / RKS | Holds the occupied set fixed by tracking maximum orbital overlap across iterations instead of refilling by energy (Gilbert, Besley and Gill 2008), so a chosen non-Aufbau occupation survives the SCF. On a k-mesh the zero-temperature fill then occupies exactly the tracked block at every k point instead of re-selecting the lowest states across the mesh; MOM is a zero-temperature contract and is refused together with finite smearing. | A way to *specify* a per-site spin pattern from scratch; it follows the orbitals you start from. |
 | `smearing_temperature = T` (Fermi-Dirac) | periodic RHF / RKS | Replaces hard Aufbau with fractional occupations near $E_F$, easing convergence of metals and near-degenerate states. | A lock; it smooths occupations rather than fixing a pattern. |
 
-The underlying methods are MOM (Gilbert, Besley, Gill 2008) and the
-Mermin finite-temperature functional (Mermin 1965); both are in the
-[references](#references).
+The underlying methods are MOM (Gilbert, Besley, Gill 2008,
+{vibeqc-cite}`gilbert_mom_2008`) and the Mermin finite-temperature
+functional (Mermin 1965, {vibeqc-cite}`mermin_finite_temperature_dft_1965`).
 
 ## The methods, with math
 
@@ -450,7 +477,8 @@ Mermin finite-temperature functional (Mermin 1965); both are in the
 
 The cheapest possible guess. Set the initial Fock to the
 **one-electron core Hamiltonian** and ignore electron-electron
-repulsion entirely:
+repulsion entirely (assessed against SAD, SAP and extended Hückel in
+{vibeqc-cite}`lehtola_sap_2019`):
 
 $$
 \mathbf{F}_{\rm HCORE} \;=\; \mathbf{T} + \mathbf{V}_{\rm ne}
@@ -460,6 +488,21 @@ where $\mathbf{T}$ is the kinetic-energy matrix and
 $\mathbf{V}_{\rm ne}$ is the nuclear-attraction matrix. Diagonalise
 once, build $\mathbf{D}$ from the occupied orbitals, hand off to
 the SCF loop.
+
+The molecular seed builders use equal fractional occupations when a
+degenerate eigenvalue block crosses the occupied frontier (total block width
+at most `1e-8` hartree): HCORE in RHF, RKS, UHF, ROHF and ROKS, closed- and
+open-shell PATOM, and SAP and HUECKEL, each spin channel on its own. The seed
+then depends on the whole degenerate subspace, rather than the arbitrary
+eigenvectors returned inside it, and carries the requested electron count. A
+gapped frontier keeps integer occupations. For the HCORE seed, a partial
+Davidson spectrum is completed if it could omit frontier partners; a request
+for fewer eigenvectors than the occupied space is rejected. Periodic seeds,
+the UKS HCORE seed and the UKS SAD in-field refinement are unchanged.
+
+This averaging applies only to the starting density. SCF retains its normal
+occupation and convergence rules, and compatible READ densities are preserved.
+It does not select a global ground state or replace a stability analysis.
 
 **Cost:** trivial, no extra integrals beyond those the driver
 needs anyway.
@@ -480,7 +523,8 @@ implementations).
 ### SAD, superposition of atomic densities
 
 Build the molecular density as a block-diagonal sum of converged
-atomic densities. For each unique element $A$ in the molecule, run a
+atomic densities ({vibeqc-cite}`vanlenthe_sad_2006`). For each unique
+element $A$ in the molecule, run a
 small **spherically-averaged atomic SCF** with fractional occupations:
 
 $$
@@ -532,19 +576,23 @@ The engine selects the packaging automatically based on whether a
 
 **Cost:** one atomic SCF per unique element (cached). For typical
 molecules this is microseconds; even on a heavy atom (e.g. Z=86 Rn)
-the atomic SCF is fast because it's spherically symmetric and a
-single S-shell expansion.
+the atomic SCF is fast because it's spherically averaged, so the
+atomic overlap and Fock matrices are block-diagonal in angular
+momentum.
 
 **Strength:** robust on every system class vibe-qc supports. SAD is
 the right default for ionic insulators, transition-metal complexes,
 and any system where the Hcore failure mode would bite.
 
-### SAP, superposition of atomic potentials (Lehtola 2020)
+### SAP, superposition of atomic potentials (Lehtola 2019)
 
-A Fock-mode method designed by Lehtola, Visscher, and Engel to give
+A Fock-mode method due to Lehtola that gives
 **shell-structure-correct** starting orbitals without SAD's atomic-
-SCF cost. Each atom $A$ contributes an **erf-screened Coulomb
-potential** fit to a numerically-exact atomic SCF:
+SCF cost. The guess was introduced and assessed in
+{vibeqc-cite}`lehtola_sap_2019`; the error-function fits used here are
+those of {vibeqc-cite}`lehtola_visscher_engel_sap_2020`. Each atom $A$
+contributes an **erf-screened Coulomb potential** fit to a
+numerically-exact atomic SCF:
 
 $$
 V_{\rm SAP}^{(A)}(r) \;=\; -\sum_{i} c_i^{(A)}\,\frac{\operatorname{erf}\!\left(\sqrt{\alpha_i^{(A)}}\,r\right)}{r}
@@ -571,6 +619,12 @@ $\operatorname{tr}(\mathbf{D}_\alpha\mathbf{S})=n_\alpha$ and
 $\operatorname{tr}(\mathbf{D}_\beta\mathbf{S})=n_\beta$ exactly; the guess
 does not manufacture or discard electrons when the spin populations differ.
 
+At Gamma, periodic SAP and HUECKEL guesses produce real densities when
+their Fock and overlap matrices are exactly real, including when Bloch
+assembly stores those matrices in complex arrays. This lets the guesses
+feed real-only SCF builders without discarding any nonzero imaginary
+component. Complex Fock or overlap matrices retain the complex construction.
+
 Note that $\mathbf{V}_{\rm SAP}$ *replaces* $\mathbf{V}_{\rm ne}$
 entirely, the screened potential already includes the bare nuclear
 attraction in its $r \to 0$ limit, and adding $\mathbf{V}_{\rm ne}$
@@ -596,8 +650,11 @@ heavy elements where the atomic SCF dominates.
 **Strength:** unlike HCore, the shell structure is correct, the
 first iteration sees orbitals that look like Hartree-Fock orbitals
 rather than artefacts of nuclear attraction alone. Iteration counts
-on light-atom molecules typically match SAD within ±1; on heavy
-atoms SAP wins by 30-50% per [Lehtola 2020] Tables I-II.
+on light-atom molecules typically match SAD within ±1. Lehtola 2019
+ranks guesses by the projection of the guess orbitals onto the
+converged occupied space rather than by iteration counts; in its
+Table 1, SAP has the highest mean projection of the ad hoc guesses,
+ahead of SAD and HCORE.
 
 **Limitations:**
 
@@ -621,8 +678,8 @@ atoms SAP wins by 30-50% per [Lehtola 2020] Tables I-II.
   three-dimensional Ewald entry points support all six SCF families at Gamma
   or on their full-mesh routes, and the native periodic RHF/RKS entry points
   support SAP as well. GDF ROHF supports the atomic density and Fock guesses.
-  AICCM real-Gamma/four-center supercell adapters accept AUTO or HCORE and
-  fail before SCF for other requests; the option-aware
+  AICCM real-Gamma accepts AUTO/HCORE or a prepared supercell READ density;
+  four-center accepts AUTO/HCORE only. Both refuse atomic guesses. The option-aware
   neutral-Bloch and chi variants retain their own route capability checks.
   One- and two-dimensional SAP are likewise not yet defined. AUTO still
   resolves to SAD on routes that support it; HCORE-only adapters resolve
@@ -688,10 +745,11 @@ distinction between an omitted keyword and an explicit `"SAD"`.
 | System | AUTO resolves to | Reason |
 |--------|------------------|--------|
 | Periodic, atomic-guess-capable routes | **SAD** | Preserves the established atomic-density start; no evidence-backed metal/oxide classification is currently available |
-| AICCM real-Gamma and four-center adapters | **HCORE** | These supercell SCF loops currently expose only their core-Hamiltonian construction; explicit SAD and other unsupported guesses fail |
+| AICCM real-Gamma and four-center adapters | **HCORE** | AUTO retains the core-Hamiltonian construction; real-Gamma additionally accepts explicit READ, while SAD and other atomic guesses fail |
 | Molecular, isolated open-shell atom | **PATOM** | One in-field re-polarisation step constructs a spin-resolved seed for the requested electron and spin populations; it does not certify an atomic term or the global minimum |
+| Molecular, open-shell route on a system containing a d- or f-block atom | **PATOM** | SAD superposes free-atom Hund densities, so an open-shell ligand arrives with its full free-atom moment even where the molecule binds it closed-shell; the in-field step quenches that against the molecular field before the SCF starts (see below) |
 | Molecular, other unrestricted/open-shell route (including singlet UHF/UKS) | **SAD** | Spin polarisation develops via per-spin Fock asymmetry |
-| Molecular, containing transition or f-block atoms (except the isolated open-shell case above) | **SAD** | SAP closed-shell averaging can land the wrong d-shell occupation; select `PATOM` where supported for a re-polarised SAD start |
+| Molecular, restricted closed-shell route containing transition or f-block atoms | **SAD** | SAP closed-shell averaging can land the wrong d-shell occupation; select `PATOM` where supported for a re-polarised SAD start |
 | Molecular, restricted closed-shell route, light atoms | **PATOM** | Preserves the established molecular default density and energy basins |
 
 The periodic choice is a conservative compatibility policy, not a claim that
@@ -699,7 +757,25 @@ SAD is universally optimal for solids. Van Lenthe et al. (2006) and Lehtola
 (2019, 2020) support the atomic density/potential constructions; their molecular
 comparisons do not establish a metal-versus-oxide selector for our periodic
 backends. No such classifier is encoded. An `atomic_spins` seed requires the
-resolved kind to be SAD; AUTO resolving to HCORE rejects the seed.
+resolved kind to be SAD; AUTO resolving to HCORE rejects the seed. Supplying
+`atomic_spins` therefore also holds AUTO on SAD for an open-shell d/f-block
+system, so a deliberate antiferromagnetic seed is never overridden by the
+in-field choice above.
+
+The open-shell d/f-block choice is a basin decision, measured on FeCl3
+(sextet, cc-pVDZ) against ORCA 6.1.1. From the bare Hund-split SAD seed the
+SCF converges to a symmetry-broken solution 90.05 mHa above the ground
+state, with one chloride left as a radical cation, and the stability
+analysis then certifies a negative internal Hessian eigenvalue. The cause is
+in the seed: each free Cl atom contributes one unpaired electron, while in
+FeCl3 it is a closed-shell chloride. The basin is sharp, so rescaling the
+ligand moments does not recover it: a seed moment above roughly 0.05 e per
+ligand still lands on the same solution. PATOM's per-spin in-field step
+resolves the ligand polarisation against the molecular field first and
+reaches the ground state in 23 iterations, internally stable and without a
+stability restart. Routes that do not implement PATOM fall back to the
+advertised SAD construction, and an explicit `initial_guess` is never
+rewritten.
 
 The hints (`is_open_shell`, `has_transition_metal`, `is_periodic`)
 are filled in automatically by each SCF wrapper:
@@ -736,7 +812,9 @@ spin.
 
 * **PATOM** takes the SAD density and applies one in-field mean-field
   re-polarisation step, letting the superposed free-atom densities
-  relax in the molecular field before the SCF proper. It is the
+  relax in the molecular field before the SCF proper. Its molecular step
+  averages a degenerate seed frontier, per spin for open shells, as described
+  under HCORE above. It is the
   density-mode upgrade of SAD for cases where SAD's spherical atoms are
   too rigid, notably transition-metal d-shell ordering. `run_uhf`
   forwards its `JKBuilder` to the engine only for PATOM, so no other
@@ -745,14 +823,15 @@ spin.
   multi-k builds the in-field Fock in real space and diagonalises it at each
   k-point. The Python Gamma/multi-k Ewald, GDF, and BIPOLE UHF/UKS drivers use
   their own periodic J/K builders for the open-shell per-spin in-field step.
-  (ORCA PAtom; builds on Van Lenthe SAD.)
+  (ORCA PAtom; builds on Van Lenthe SAD, {vibeqc-cite}`vanlenthe_sad_2006`.)
 * **HUECKEL** is a parameter-free generalised Wolfsberg-Helmholz
   (extended-Hückel) guess. The off-diagonal elements are
   $H_{\mu\nu} = \tfrac{1}{2} K\, S_{\mu\nu}\,(H_{\mu\mu} + H_{\nu\nu})$
   with $K = 1.75$, built over *computed* atomic-orbital energies rather
   than tabulated parameters, then diagonalised to a density. (Wolfsberg
-  and Helmholz 1952; Hoffmann 1963; the parameter-free variant of
-  Lehtola 2019.) For periodic closed-shell RHF/RKS the same GWH form is
+  and Helmholz 1952, {vibeqc-cite}`wolfsberg_helmholz_1952`; Hoffmann 1963,
+  {vibeqc-cite}`hoffmann_extended_huckel_1963`; the parameter-free variant of
+  Lehtola 2019, {vibeqc-cite}`lehtola_sap_2019`.) For periodic closed-shell RHF/RKS the same GWH form is
   built as a lattice Fock, $H_{\mu\nu}(\mathbf{g})$, from the lattice overlap
   $S_{\mu\nu}(\mathbf{g})$ and diagonalised at Gamma or each k-point. The
   closed-shell Python periodic drivers Gamma-fold that lattice Fock and
@@ -760,7 +839,9 @@ spin.
   `"hueckel"`.
 * **MINAO** builds free-atom reference densities in the ANO-RCC minimal
   contraction and projects them onto the target basis (Knizia 2013
-  minimal-AO concept; ANO-RCC reference data). For periodic systems the
+  minimal-AO concept, {vibeqc-cite}`knizia_ibo_2013`; ANO-RCC reference
+  data, {vibeqc-cite}`roos_ano_rcc_main_group_2004` and
+  {vibeqc-cite}`roos_ano_rcc_tm_2005`). For periodic systems the
   projection is lattice-summed, `P = S(Γ)^{-1} S_tm(Γ)` with the cross-basis
   overlap `S_tm(Γ) = Σ_g <χ(0)|χ_ref(g)>`; it is wired into the closed-shell
   Γ and multi-k RHF/RKS drivers and the closed-shell Python periodic density
@@ -853,6 +934,61 @@ The target driver then normalizes the complete density in its weighted
 Bloch overlap. This constructs finite isolated fragment references; it does
 not solve a periodic fragment SCF. Results record physical construction
 `FRAGMO` and density transport `READ`.
+
+The experimental AICCM real-Gamma and four-center adapters do not support
+FRAGMO. They refuse the selector before SCF, in a message that names the
+requested `FRAGMO` guess, whether or not `fragments=` was supplied: a route
+that cannot run FRAGMO at all never asks for a partition first. On a route
+that does implement FRAGMO, a missing or invalid partition still fails
+fragment validation, also before SCF.
+
+### Real-Gamma CCM prepared density
+
+The experimental real-Gamma RHF, RKS, UHF and UKS producers accept
+`initial_guess="READ", initial_density=D` (a total matrix for restricted SCF,
+an `(D_alpha, D_beta)` pair for unrestricted SCF). The matrix must already
+use the target supercell AO ordering and metric. It must be finite, real,
+symmetric and positive semidefinite, with the target electron count and
+physical spin occupations. It is consumed by the first J/K build unchanged;
+there is no population rescaling or unit-cell projection. AUTO without a
+payload still uses HCORE.
+
+Through `run_periodic_job(method="aiccm", variant="real-gamma", ...)`, use
+`initial_guess="READ", read_from=reference`. `reference` can be a direct CCM
+result, a real-Gamma runner result, or a result returned by
+`ccm_reference_from_bloch(ccm, bloch_result, build_cderi=False)`. The existing
+Bloch conversion guards and tolerances still apply; use the same cell, basis,
+AO ordering and torus. A prepared matrix/spin pair is also accepted. This
+route does not read files or project densities between geometries, and READ
+geometry optimization remains unsupported.
+
+The same producers and `run_periodic_job(method="aiccm",
+variant="real-gamma", ...)` also build an explicit `initial_guess="SAD"`
+(#519 RG-9): the superposition of atomic densities of the supercell's atoms,
+normalised in the torus overlap. Every cell's copy of an atom carries the
+same block, so the seed is translation invariant. It starts the loop like a
+READ density, but as a constructed guess it is checked only for its shape,
+reality and population, because a superposition of atomic densities is not
+idempotent. AUTO still resolves to HCORE on this variant; making SAD the
+default is a maintainer decision. The four-center variant keeps refusing
+SAD, and `atomic_spins` is refused on the real-gamma variant because its SAD
+split is spin symmetric.
+
+A chosen seed does not certify stability or select the lowest stationary
+point. The real-Gamma RHF driver can check the result instead:
+`run_ccm_rhf_direct(..., stability_check=True)` evaluates the lowest
+eigenvalues of the real orbital Hessian in the RHF to RHF (singlet) and RHF
+to UHF (triplet) sectors on the operator the loop ran on, and
+`follow_instability=True` also follows a translation-invariant singlet
+instability downhill and re-converges. The result carries `.stability`, the
+molecular verdict fields (`stability_checked`, `stability_eigenvalue`,
+`internal_instability`, ...) and the steps taken on `.instability_follow`.
+`vibeqc.periodic.ccm.stability.ccm_rhf_stability(result, ccm)` analyses a
+result afterwards. A stable verdict is local: it does not prove that no
+lower stationary point exists, so compare seeds (HCORE, SAD, a Bloch
+reference) on the matched Hamiltonian when the state matters. The runner's
+`.system` manifest records the frontier gap of the returned state as
+`frontier_gap_ha`.
 
 ### READ: restart from a prior calculation
 
@@ -1162,9 +1298,10 @@ Output on H₂O (typical):
 ```
 
 All three converge to the same energy to machine precision; iteration
-counts shift by ±1-2 depending on basis. SAP's advantage grows with
-atom heaviness, Lehtola's Tables I-II show 40-60% iteration-count
-reductions on Au / Ag / I-containing systems.
+counts shift by ±1-2 depending on basis. Lehtola 2019 compares
+guesses by their projection onto the converged orbitals, not by
+iteration counts; SAP has the highest mean projection of the ad hoc
+guesses in its Table 1.
 
 ### Open-shell radical (OH)
 
@@ -1369,7 +1506,7 @@ enum class InitialGuess {
     AUTO,      // default: engine picks per system
     HCORE,     // F = T + V_ne
     SAD,       // superposition of atomic densities
-    SAP,       // superposition of atomic potentials (Lehtola 2020)
+    SAP,       // superposition of atomic potentials (Lehtola 2019)
     PATOM,     // SAD + one in-field re-polarisation step
     HUECKEL,   // parameter-free generalised Wolfsberg-Helmholz
     MINAO,     // minimal-AO (ANO-RCC) reference projection

@@ -285,7 +285,7 @@ reached via `run_periodic_job` and is intentionally not a `run_ccm_scf` route.
 | level | HF | KS | open-shell | correlation |
 |---|---|---|---|---|
 | **Γ-CCM 4-center** | `run_ccm_rhf` / `run_ccm_rhf_scalable`; high-level `variant="four-center"` | `run_ccm_rks`; libxc plus pure full-grid external providers through both the low-level and high-level APIs | `run_ccm_uhf`, `run_ccm_uks`; high-level `variant="four-center"`; `run_ccm_uks` and the runner accept the same pure full-grid external providers | `run_ccm_mp2`, `run_ccm_ump2`, `run_ccm_ccsd` (+(T)) with `method="aiccm2026dev-a"` |
-| **neutral fitted-torus control (3c)** | `run_ccm_rhf_gdf`, `run_ccm_rhf_direct` (k-free, == GDF at `exxdiv="ewald"`), `run_ccm_rhf_ri_neutral` (strict-zero-mode) | `run_ccm_rks_gdf`, `run_ccm_rks_direct` (k-free; pure + global hybrids, periodic XC folded onto the torus - gated against `run_ccm_rks_gdf`, molecular RKS in the vacuum limit + external PySCF KRKS, see `test_ccm_rks_direct.py`), `run_ccm_uks_gdf` + `run_ccm_uks_direct` (open-shell KS: per-spin seam × `a_x`, spin-polarized periodic XC; collapses to `run_ccm_rks_direct` on closed shells; `test_ccm_uks_direct.py`); **EXPERIMENTAL**: both direct KS drivers additionally run screened HSE-class hybrids (erfc-attenuated fitted kernel + `σ₀·S·D·S` zero mode, exxdiv-independent, no seam; `test_ccm_rsh_direct.py`; full-range-arm RSH fails closed), and `run_ccm_double_hybrid_direct` composes closed-shell double hybrids (hybrid-KS SCF + SCS-MP2 on the KS orbitals, one shared `L`; `test_ccm_double_hybrid_direct.py`) | `run_ccm_uhf(cderi=L)` (strict-zero-mode), `run_ccm_uhf_gdf` (multi-k KUHF; per-unit-cell spin bookkeeping, see its warning), `run_ccm_uhf_direct` (k-free, BvK-ewald seam per spin, == `run_ccm_rhf_direct` on closed shells) | `run_ccm_ri_mp2` (one-call, closed or open shell), `run_ccm_ri_ccsd` (one-call, closed shell), `run_ccm_{mp2,ccsd,ump2}(cderi=L)`, and `run_ccm_uccsd` - density-fit from the neutral cderi `L`, **no dense n⁴ four-center**, reaches moderate 3-D. `reference="direct"` selects a complete folded/Ewald reference route, not a seam-only toggle. None is assigned Γ-CCM or χ-CCM identity. |
+| **neutral fitted-torus control (3c)** | `run_ccm_rhf_gdf`, `run_ccm_rhf_direct` (k-free, == GDF at `exxdiv="ewald"`), `run_ccm_rhf_ri_neutral` (strict-zero-mode) | `run_ccm_rks_gdf`, `run_ccm_rks_direct` (k-free; pure + global hybrids, periodic XC folded onto the torus - gated against `run_ccm_rks_gdf`, molecular RKS in the vacuum limit + external PySCF KRKS, see `test_ccm_rks_direct.py`), `run_ccm_uks_gdf` + `run_ccm_uks_direct` (open-shell KS: per-spin seam × `a_x`, spin-polarized periodic XC; collapses to `run_ccm_rks_direct` on closed shells; `test_ccm_uks_direct.py`); **EXPERIMENTAL**: both direct KS drivers additionally run screened HSE-class hybrids (erfc-attenuated fitted kernel + `σ₀·S·D·S` zero mode, exxdiv-independent, no seam; `test_ccm_rsh_direct.py`; full-range-arm RSH fails closed), and `run_ccm_double_hybrid_direct` composes closed-shell double hybrids (hybrid-KS SCF + SCS-MP2 on the KS orbitals, one shared `L`; `test_ccm_double_hybrid_direct.py`) | `run_ccm_uhf(cderi=L)` (strict-zero-mode), `run_ccm_uhf_gdf` (multi-k KUHF; per-unit-cell spin bookkeeping, see its warning), `run_ccm_uhf_direct` (k-free, BvK-ewald seam per spin, == `run_ccm_rhf_direct` on closed shells) | `run_ccm_ri_mp2` (one-call, closed or open shell), `run_ccm_ri_ccsd` (one-call, closed shell), `run_ccm_{mp2,ccsd,ump2}(cderi=L)`, and `run_ccm_uccsd` - density-fit from the neutral cderi `L`, **no dense n⁴ four-center**, reaches moderate 3-D. `reference="bloch"` (the default since 2026-09-25) runs the Bloch producer and folds it to real supercell-Γ orbitals (`ccm_reference_from_bloch`, Theorem 1; every correlated entry point also takes a `run_ccm_*_gdf` result directly), `reference="direct"` selects the complete folded/Ewald reference route (the independent validation producer), neither a seam-only toggle. None is assigned Γ-CCM or χ-CCM identity. |
 | **neutral-control RIJCOSX approximation (3c)** | `run_ccm_rhf_direct_rijcosx` (dim=3) | - | - | - |
 | **Γ-CCM WSSC RIJCOSX research route (3c)** | `run_ccm_rhf_rijcosx` (bare research operator; excluded from reportable Γ/χ comparisons) | - | - | - |
 | **neutral-control local correlation** | - | - | - | `ccm_dlpno_mp2`, `ccm_dlpno_ccsd` (union), `ccm_dlpno_ccsd_coupled` (per-pair-coupled CCSD(T)), open-shell `ccm_dlpno_ump2`, `ccm_dlpno_uccsd` - all on the neutral fitted-torus reference, with no Γ-CCM or χ-CCM identity assigned |
@@ -573,13 +573,33 @@ dlpno_mp2_pno = ccm_dlpno_mp2(ccm, scf_neutral, cderi=L, localize="pm", tcut_pno
 print(f"DLPNO-MP2  (tc=1e-6) Ecorr = {dlpno_mp2_pno.e_corr:.8f}")
 
 # Reduced-scaling per-pair-coupled DLPNO-CCSD(T): each pair its own PNO basis,
-# cross-pair PNO-overlap coupling, per-triple-TNO (T), local coupling_radius.
+# shared compiled PNO-space engine, per-triple-TNO (T), local coupling_radius.
 from vibeqc.periodic.ccm.dlpno_ccsd_coupled import ccm_dlpno_ccsd_coupled
 coupled = ccm_dlpno_ccsd_coupled(ccm, scf_neutral, cderi=L, localize="pm",
                                  tcut_pno=0.0, compute_triples=True)  # (T) via TNO
 print(f"coupled DLPNO-CCSD(T) Ecorr = {coupled.e_correlation:.8f}  "
       f"Δ vs can = {coupled.e_correlation - cc_can.e_correlation:+.2e}")
 ```
+
+The coupled entry point is an adapter to the molecular DLPNO engine through
+`CorrelationSource`; it has no separate CCSD iteration loop. The cyclic
+overlap, retained factors and minimum-image distance stay attached to the
+source. Its result exposes `source_kind`, `source_identity`, `same_source`,
+`exchange_q0`, and the underlying `cc_result`. Only retained factors or an
+identical explicit array certify `same_source`; the four-centre example
+above has no retained-factor receipt and therefore reports false.
+
+The historical API still uses Mulliken domains, the legacy pair density,
+all occupied pairs, no MP2 PNO-tail correction, and local (T0) by default.
+These settings are distinct from the production front door's NormalPNO
+preset. Pair interactions now use the shared term-by-term PNO residual
+([Riplinger and Neese 2013](https://doi.org/10.1063/1.4773581), Sec. II C,
+Eqs. (26)-(30)). Truncated energies change because the retired loop
+projected coupled amplitudes into the target pair too early. Full domains
+retain the canonical limit. `triples_mode="dense"` evaluates canonical (T)
+after diagonalising the active occupied and virtual Fock blocks; `"local"`
+retains the TNO (T0) approximation. Frozen orbitals are excluded from
+occupied localisation. The route remains experimental.
 
 ---
 
@@ -938,7 +958,112 @@ positive near-singularity.
   *unit-cell* fits folded onto the torus - MB-scale memory (the one-shot
   supercell FFT fit needs GBs and is kept as `cderi_build="supercell"` for
   validation) and exact GDF parity even on ultra-diffuse bases (LiH (2,1,1):
-  4e-14 vs the supercell fit's 1.35e-4 residual).
+  4e-14 vs the supercell fit's 1.35e-4 residual). Since 2026-09-24 the fold
+  builds each q-channel as ONE shared-q batch over all bra momenta (the
+  multi-k driver's own `build_lpq_bloch_native_fft_shared_q`, one ket-Bloch
+  pair-FT pass per channel instead of `N_c`), conjugates the exact
+  time-reversal partner inside self-paired channels, parallelises over
+  channels (`fold_threads`, workers pinned to one thread) and takes the
+  caller's `lat_opts` for the fit's cell list; the historical per-pair build
+  is `fit_batch="per-pair", time_reversal=False` and the identity is pinned
+  at 1e-10 in `tests/test_ccm_fold_shared_q.py`. Every direct-route result
+  carries the `L` it rode (`result.cderi`, `result.cderi_info`), and
+  `run_ccm_mp2` / `run_ccm_ccsd` / the DLPNO family reuse it when called
+  without `cderi=` -- one build per job. When the Bloch producer ran first
+  in the same process, `run_ccm_rhf_gdf(ccm, retain_fit_cache=True).fit_cache`
+  hands its per-pair fit to `run_ccm_rhf_direct(ccm, fit_cache=...)`, which
+  folds it instead of refitting (classic RSGDF multi-k path only).
+  **Block storage** (2026-09-29, `cderi_storage="block"` on
+  `run_ccm_rhf_direct` and `run_ccm_rks_direct`): the folded array is a
+  twisted block-circulant matrix in every auxiliary row, so only one block
+  row over the `N_c` torus offsets is independent, and that row is the
+  inverse mesh transform of the per-bra fits the fold builds. The block
+  storage keeps those fits per kept q-channel and never folds them
+  (`ccm_neutral_cderi_blocks`, `CCMBlockCderi`): `16 N_kept N_c n_aux n_mu^2`
+  bytes, `O(N_c^2)` against the dense array's `8 n_aux n_mu^2 N_c^3` (MgO
+  pob-DZVP-rev2 at N = 4: 5.9 GB against 333 GB). J and K are evaluated in
+  the mesh representation on the circulant projection of the torus density,
+  K through the occupied-rank factor per k with the exchange-q=0 seam per k
+  on the same projection; the hybrid fraction is applied by the KS loop as
+  before. The dense array stays the reference and the default; the identity
+  is pinned at 1e-10 Ha/cell for HF, PBE and PBE0 on LiH and MgO STO-3G
+  (2,2,2) and the H2 cube (3,3,3), together with the Theorem-1 identity
+  against `run_ccm_rhf_gdf` / `run_ccm_rks_gdf`, in
+  `tests/test_ccm_block_cderi.py`. `run_ccm_mp2` correlates a block
+  reference through the MO factor `CCMBlockCderi.mo_factor` (no dense
+  array); the DLPNO family and CCSD receive the array from `carried_cderi`
+  (`to_dense`). `ws_cutoff_bohr` adds the Wigner-Seitz partition of the
+  block rows (paper issue O25): offsets ordered by minimum-image distance
+  under the cluster lattice, rows beyond the cutoff omitted, the omitted
+  norm recorded in `cderi_info` (`ws_omitted_norm`, `ws_omitted_norm_rel`,
+  `ws_shells`); the default omits nothing. `exchange_form="pair"` is the
+  dense contraction verbatim with the stored partner fit, kept as the
+  reference switch for the default `"transpose"` form. The open-shell direct
+  producers (`run_ccm_uhf_direct`, `run_ccm_uks_direct`) take the same
+  storage: J on the total density, per-spin exchange through the block
+  object's factor of each spin density, identical to the dense fold at
+  1e-10 Ha/cell (`tests/test_ccm_block_cderi_open_shell.py`).
+  `cderi_storage="block-star"` (#519 RG-10) keeps only the fits the k-pair
+  star plan builds (`cderi_symmetry` implied) and stores each star member as
+  a recipe: the plan's operation and its two orbital maps. The plan's
+  auxiliary map is unitary and cancels in the exchange sum over the
+  auxiliary index, so a member's exchange is its representative's on the
+  rotated density, `Om_a K_rep(Om_b^T D conj(Om_b)) Om_a^H`, exact for any
+  density rather than only for symmetric ones. The `q = 0` channel stays
+  whole because the Coulomb build contracts it directly; `to_dense` and the
+  MP2 factor rebuild member fits on request, and the Wigner-Seitz partition
+  and the `"pair"` exchange form are refused. `cderi_info["star_storage"]`
+  records the accounting and a build-time check of each star channel's
+  first recipe (`tests/test_ccm_block_star.py`). `exchange_wedge=True` on
+  the direct drivers (#519 RG-11; block storage with the star plan) builds
+  the exchange on one bra per k-star and transports it,
+  `Kh(Rk) = Om Kh(k) Om^H` with `Om = P_ao diag(e^{i (Rk).S})`, the Bloch
+  transport of `periodic_k_symmetry`. It holds for a density with the
+  plan's symmetry, which every call measures first, building the full
+  exchange otherwise; `cderi_info["exchange_wedge"]` records both outcomes
+  (`tests/test_ccm_block_wedge.py`).
+  **Fit sources** (#519): the per-channel fits both storages are built
+  from come from a fit source (`fit_source=` on `ccm_neutral_cderi_fold` /
+  `ccm_neutral_cderi_blocks`, `vibeqc.periodic.ccm.fit_source`). The default
+  `ClassicRSGDFFitSource` is the multi-k GDF driver's classic RSGDF builder
+  (the historical fold, bit for bit); `DriverFitCacheSource` serves that
+  driver's retained fit (what `fit_cache=` selects); `MANTAFitSource` builds
+  the fits from MANTA's periodic GDF tiles on the domains of MANTA's fitted
+  RI HF. A MANTA-sourced torus is a different neutral source: its block J/K
+  equal MANTA's whole-mesh RI Fock on the same domains to rounding
+  (`tests/test_ccm_manta_fit_source.py`), its engine enters the
+  neutral-source identity, and its Bloch control is MANTA's RI method, not
+  `run_ccm_rhf_gdf`. The HF direct drivers also take `oneelectron=`, a
+  one-electron source used instead of the classic lattice fold;
+  `MANTAOneElectronSource` supplies MANTA's overlap, core Hamiltonian and
+  nuclear repulsion on the same finite source, and with both MANTA sources
+  the real-Gamma HF energy per cell equals MANTA's fitted RI HF
+  (`tests/test_ccm_manta_one_electron.py`). The KS direct drivers take
+  `oneelectron=` too, and `xc_source=`: `MANTAXCSource` evaluates MANTA's
+  semilocal XC quadrature on the XC image domain of MANTA's fitted KS at
+  the torus k-points, so with all three MANTA sources the real-Gamma
+  RKS/UKS energy per cell equals MANTA's fitted KS
+  (`tests/test_ccm_manta_xc_source.py`). A MANTA fitting metric that is
+  not positive definite on the chosen finite source is refused by MANTA;
+  the auxiliary image radius and the reciprocal cutoff are the controls.
+  `RangeSeparatedFitSource` (#519 RG-12) builds the multi-k driver's
+  default 3-D SR/LR fit for the fold, planned as the driver plans it; its
+  Bloch control is `run_ccm_rhf_gdf(ccm, fit_source="sr")`. It needs no
+  RSGDF tail, which makes core-heavy cells affordable: MgO pob-DZVP-rev2
+  (1,1,1) runs in about two minutes on it, where the tailed classic fit
+  ran for hours (`tests/test_ccm_range_separated_source.py`).
+  **State selection** (#519 RG-9): the direct drivers start from HCORE
+  (AUTO), a READ density (a Bloch solution enters as
+  `ccm_reference_from_bloch(...).density`) or an explicit
+  `initial_guess="SAD"` built on the supercell in the torus metric. Theorem 1
+  makes the two representations share their stationary points, not their
+  SCF paths, so a seed can land on a higher stationary point (#442).
+  `run_ccm_rhf_direct(..., stability_check=True)` reports the lowest
+  eigenvalues of the real orbital Hessian in the singlet and triplet sectors
+  (`vibeqc.periodic.ccm.stability`), and `follow_instability=True` follows a
+  translation-invariant singlet instability downhill and re-converges
+  (`tests/test_ccm_rhf_stability.py`). The HF loops report the canonical
+  orbitals of the returned Fock matrix, as the KS loops do.
   On **tight-core** cells the parity above needs the RSGDF high-`|G|` tail,
   and both routes now resolve it the same way (`tail_ke_cutoff`, defaulting
   through `ccm_neutral_tail_ke_cutoff`). Until 2026-08-27 only the multi-k
@@ -948,9 +1073,15 @@ positive near-singularity.
   MgO/STO-3G (GitLab issue #307; the tailed side is the accurate one, 0.3 mHa
   from the PySCF MDF reference). Both result types now record the tail they
   actually applied as `.rsgdf_tail_ke_cutoff`, so a route comparison can check
-  it the way it already checks `.exchange_q0`. At `N_c > 1` neither route
-  auto-tails: the multi-k loop holds that class for parity (issue #146), and
-  the direct route follows it rather than moving alone.
+  it the way it already checks `.exchange_q0`. Since 2026-09-30 the resolver
+  returns the unit cell's tail at `N_c > 1` too (maintainer decision), and the
+  neutral-Bloch producer passes it to the multi-k loop explicitly, so both
+  routes carry one fit resolution along the whole ladder and no dense-core
+  rung is parity-held. Before, neither route tailed at `N_c > 1` (the multi-k
+  loop holds that class, issue #146), which left those rungs −54 µHa (LiH),
+  −18 mHa (diamond) and −0.48 Ha/cell (MgO) from PySCF at pob-DZVP-rev2.
+  `run_periodic_job(method="aiccm")` accepts `rsgdf_tail_ke_cutoff` for both
+  neutral variants.
   The accelerated sibling `run_ccm_rhf_direct_rijcosx` swaps the exact
   RI-K for the periodic chain-of-spheres exchange (the validated M3b
   SR+LR `KPointCosxK` engine at Γ on the supercell) with the same seam -

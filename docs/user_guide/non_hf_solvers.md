@@ -20,6 +20,15 @@ The orbital source (HF, canonical orthogonalisation, localised
 orbitals, …) is a *separate concern* handled by the orbital-provider
 layer.
 
+**Status at a glance** (labels as defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)):
+FCI, selected CI and v2RDM are production as small-active-space references;
+CISD is production for small molecules; CASCI, CASSCF, IC-CASPT2, NEVPT2
+and MRCI are production; the strongly-contracted CASPT2 variant is gated
+behind `VIBEQC_EXPERIMENTAL_MULTIREF=1`; DMRG is experimental (a dense toy
+backend capped at 6 spatial orbitals); transcorrelated CI is a preview with
+research-grade correlators. Each section below repeats its label.
+
 ## Architecture
 
 ```
@@ -28,6 +37,7 @@ vibeqc.solvers
 ├── _hamiltonian.py     # AO → MO integral construction
 ├── _determinant.py     # Determinant / CSF data structures
 ├── _slater_condon.py   # Slater-Condon matrix-element rules
+├── _cisd.py            # Fixed-space CISD (and CIS via max_excitation=1)
 ├── _selected_ci.py     # CIPSI-style selected-CI solver
 ├── _dmrg.py            # Two-site DMRG / MPS solver
 ├── _v2rdm.py           # Exact small-active-space 1/2-RDM solver
@@ -71,7 +81,7 @@ mol = Molecule.from_xyz("h2.xyz")
 result = run_job(mol, basis="sto-3g", method="fci", output="output-h2-fci")
 ```
 
-`run_job(method=…)` accepts `"fci"`, `"selected_ci"`, `"dmrg"`,
+`run_job(method=…)` accepts `"fci"`, `"cisd"`, `"selected_ci"`, `"dmrg"`,
 `"v2rdm"`, and `"transcorrelated_ci"` alongside the mean-field
 `"rhf"` / `"uhf"` / `"rks"` / `"uks"`, plus the active-space
 multireference methods `"casci"`, `"casscf"` (orbital-optimized),
@@ -87,7 +97,7 @@ eight-class explicit contraction and match OpenMolcas within 2 µHa on the
 pinned single-state cases. IPEA is not yet supported with selected references,
 the matrix-free `engine="cases"`, or multi-state CASPT2. The solver-specific
 option objects are passed via the matching `run_job` kwargs
-(`selected_ci_options=`, `dmrg_options=`, `v2rdm_options=`,
+(`cisd_options=`, `selected_ci_options=`, `dmrg_options=`, `v2rdm_options=`,
 `transcorrelated_options=`, `casci_options=`, `caspt2_options=`,
 `casscf_options=`); `caspt2_options` selects the
 CASPT2 `variant` and the imaginary level shift / IPEA shift / frozen
@@ -132,10 +142,83 @@ operate on the abstract `Hamiltonian` interface.
 
 ## Method summaries
 
+### CISD (`_cisd.py`)
+
+**Status: production** for small molecules ({vibeqc-cite}`pople_cisd_1977`).
+
+Truncated, single-reference configuration interaction: the Hamiltonian is
+diagonalised exactly in the space spanned by the reference determinant plus
+all single and double substitutions out of it,
+
+$$
+|\Psi_{\mathrm{CISD}}\rangle = c_0|\Phi_0\rangle
+ + \sum_{ia} c_i^a |\Phi_i^a\rangle
+ + \sum_{i<j,\,a<b} c_{ij}^{ab} |\Phi_{ij}^{ab}\rangle ,
+\qquad
+E_{\mathrm{FCI}} \le E_{\mathrm{CISD}} \le E_{\mathrm{ref}} .
+$$
+
+The space is built by `generate_cisd_determinants` and the matrix by the
+same unrestricted Slater-Condon engine that CASCI and MRCI use, so the
+solver is reference-agnostic: HF, DFT or semiempirical MO integrals all
+feed it (MSINDO's `msindo_cisd` is this solver over INDO integrals). The
+energy is variational and, for two electrons, exact (no triples or
+quadruples exist), so on H2 it reproduces `casci`.
+
+Its well-known defect is the lack of **size extensivity**: with the
+quadruple substitutions missing, the correlation energy recovered per
+molecule shrinks as the system grows, and the CISD energy of two
+non-interacting molecules is not twice that of one. The Davidson correction
+({vibeqc-cite}`langhoff_davidson_1974`),
+$\Delta E_{\mathrm Q} \approx (1 - c_0^2)\,(E_{\mathrm{CISD}} - E_{\mathrm{ref}})$,
+estimates the missing quadruples from the reference weight; vibe-qc reports
+$c_0^2$ as `reference_weight` on the `CISDResult` so the estimate can be
+formed, and applies the correction itself only in `mrci` (the +Q energy
+there). For energies of larger molecules prefer the coupled-pair and
+coupled-cluster methods; CISD remains a clean benchmark and the natural
+entry point to multi-root excited states.
+
+`CISDOptions(max_excitation=2, nroots=1, max_det=20_000)` controls the
+`run_job` route: `max_excitation=1` collapses the space to reference plus
+singles (CIS), whose lowest root equals the reference energy by Brillouin's
+theorem and whose higher roots are the CIS excited states; `nroots > 1`
+keeps `result.energy` at root 0 and prints the root table; `max_det` guards
+the dense eigensolve. The standalone `vibeqc.solvers.cisd(...)` takes the
+same controls as keyword arguments.
+
+```python
+from vibeqc import Atom, Molecule, run_job
+from vibeqc.solvers import CISDOptions
+
+h2o = Molecule([Atom(8, [0.0, 0.0, 0.0]),
+                Atom(1, [0.0, 1.43, -0.98]),
+                Atom(1, [0.0, -1.43, -0.98])])   # bohr
+
+hf = run_job(h2o, basis="sto-3g", method="rhf")
+cisd = run_job(h2o, basis="sto-3g", method="cisd",
+               cisd_options=CISDOptions(nroots=1))
+cis = run_job(h2o, basis="sto-3g", method="cisd",
+              cisd_options=CISDOptions(max_excitation=1))
+fci = run_job(h2o, basis="sto-3g", method="fci")
+print(f"RHF  {hf.energy:.8f}")
+print(f"CIS  {cis.energy:.8f}")     # equals RHF (Brillouin)
+print(f"CISD {cisd.energy:.8f}")
+print(f"FCI  {fci.energy:.8f}")
+```
+
+On this build (vibe-qc 0.17.x development build on an Apple M-series CPU)
+the four lines read -74.94956615, -74.94956615, -74.99272431 and
+-74.99325706 Ha: CISD recovers 43.2 of the 43.7 mHa of STO-3G correlation
+energy, the remaining 0.5 mHa being the triples and quadruples, and the
+whole script runs in a few seconds.
+
 ### Selected CI (`_selected_ci.py`)
 
+**Status: production** as a small-active-space reference.
+
 Implements a CIPSI-style (Configuration Interaction using a
-Perturbative Selection made Iteratively) algorithm:
+Perturbative Selection made Iteratively,
+{vibeqc-cite}`huron_malrieu_cipsi_1973`) algorithm:
 
 1. Start from a reference determinant.
 2. Generate all singles and doubles from the current space.
@@ -328,24 +411,45 @@ in 7 s; CAS(10,40) (26.9M perturbers) in 19 s; semistochastic
 
 ### DMRG (`_dmrg.py`)
 
-Implements a two-site DMRG sweep with MPS wavefunction:
+```{admonition} Status: experimental
+:class: warning
 
-- MPO construction via complementary-operator approach.
-- Two-site variational optimisation (power iteration).
-- SVD truncation with discarded-weight reporting.
-- Bond-dimension schedule (e.g. [4, 8, 16, 32, 64]).
+DMRG is an experimental route; the source labels it "EXPERIMENTAL / TOY".
+It builds the dense full Fock-space Hamiltonian and is therefore capped at
+**6 spatial orbitals (12 spin orbitals)**; a larger request raises
+`ValueError` instead of returning a number. Its numbers are research output,
+not validated results, and it is not part of the release gate. The label
+vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
 
-**Limitations** (minimal implementation):
-- Python-level tensor contractions only, adequate for ≤ 12 orbitals
-  and bond dimension ≤ 128.  Production use requires C++/GPU.
-- No quantum-number symmetry blocking.
-- The MPO is built as a placeholder; the two-site solver uses
-  power iteration on the reduced wavefunction.
+The density-matrix renormalisation group represents the wavefunction as a
+matrix product state and optimises two neighbouring sites at a time while
+sweeping through an ordered chain of orbitals, truncating the bond
+dimension by the Schmidt spectrum. vibe-qc's module carries the two-site
+sweep machinery (MPS, bond-dimension schedule, SVD truncation with
+discarded-weight reporting) as a development scaffold, but the public
+`solve` path does something simpler and exact within the cap: it
+diagonalises the fixed-$(N, M_s)$ sector of the dense $2^{n}\times 2^{n}$
+spin-orbital Hamiltonian, so the returned energy is the requested-spin
+ground state of that space and coincides with FCI/CASCI on the same window.
+The cap follows from the dense matrix: $2^{14}$ rows would already be a
+2 GB matrix, which is why `norb > 12` spin orbitals is refused.
+
+**Limitations**:
+- At most 6 spatial orbitals (12 spin orbitals); no quantum-number
+  symmetry blocking; Python-level tensor contractions only.
+- The MPO of the sweep code is a placeholder and the sweep is not what the
+  public result comes from; a complementary-operator MPO for real DMRG is a
+  roadmap item.
 
 **Key options**: `bond_dim_schedule`, `n_sweeps`, `truncation_tol`,
-`orbital_order`.
+`orbital_order` (accepted; they steer the scaffold, not the exact
+sector solve that produces the reported energy).
 
 ### Variational 2-RDM (`_v2rdm.py`)
+
+**Status: production** as a small-active-space reference.
 
 Returns the exact small-active-space N-representable 1/2-RDM by
 diagonalising vibe-qc's own determinant Hamiltonian and contracting
@@ -363,6 +467,18 @@ small-space route converges in one deterministic diagonalisation.
 **Key option**: `constraints="p"` for the current production route.
 
 ### Transcorrelated Hamiltonian (`_transcorrelated.py`)
+
+```{admonition} Status: preview
+:class: note
+
+Transcorrelated CI is a maintained preview: the similarity transformation,
+the NO2B folding and the hand-off to the production selected-CI solver
+ship, but the correlator forms below are research-grade index-proximity
+damping models rather than a fitted real-space Jastrow factor, so the
+transformed energies are not a validated F12-class result. Three-body terms
+left unfolded (`no2b=False`) warn that most two-body solvers cannot consume
+them. See [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
 
 Applies a similarity transformation H̃ = e^{−τ} H e^{τ} with a
 correlator τ:
@@ -384,6 +500,25 @@ terms, discarded 3-body norm, and anti-Hermitian part magnitude.
 `report_diagnostics`.
 
 ### CASCI / CASSCF / NEVPT2 / CASPT2
+
+**Status: production** for CASCI, CASSCF
+({vibeqc-cite}`roos_taylor_siegbahn_casci_1980`), internally-contracted
+CASPT2 ({vibeqc-cite}`andersson_caspt2_1990`), strongly-contracted NEVPT2
+({vibeqc-cite}`angeli_nevpt2_2001`) and uncontracted MRCI
+({vibeqc-cite}`werner_knowles_mrci_1988`, with the Davidson +Q correction of
+{vibeqc-cite}`langhoff_davidson_1974`). One member of the family is gated:
+
+```{admonition} Status: gated
+:class: caution
+
+The strongly-contracted CASPT2 variant, `CASPT2Options(variant="sc")`, is
+recognised but fails closed: it raises `RuntimeError` ("... is gated: it is
+not sub-microhartree reproducible against OpenMolcas") unless the
+environment variable `VIBEQC_EXPERIMENTAL_MULTIREF=1` is set. Its
+one-perturber-per-external-pattern implementation is superseded by the
+internally-contracted default and has no external validation. See
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
 
 The active-space multireference methods are built on a common
 determinant-basis FCI engine:
@@ -482,7 +617,8 @@ determinant-basis FCI engine:
   the missing 12 % was a since-fixed defect in the energy-weighted
   density, the "correction" was a phantom term for a variational energy
   that produced spurious gradient components, and `compute_wz=True` is
-  now a no-op alias of the analytic gradient (GitLab #516).  The
+  now a no-op alias of the analytic gradient that emits a `FutureWarning`
+  (GitLab #516).  The
   Handy-Schaefer z-vector (Helgaker-Jorgensen-Olsen Sec. 12.5, Handy &
   Schaefer 1984) is used where it belongs: in the CASPT2 / NEVPT2
   relaxed gradients.  Validated in a three-way comparison:
@@ -706,6 +842,23 @@ result = run_job(h2o, basis="sto-3g", method="casscf", active_space=(4,4),
 forces = -result.gradient  # F = -dE/dR
 print(f"Force norm: {np.linalg.norm(forces):.4f} Ha/bohr")
 ```
+
+## Geometry optimisation on these surfaces
+
+`run_job(optimize=True)` walks the correlated surface of a `vibeqc.solvers`
+method only when the optimizer can evaluate it at every step. CASSCF has an
+analytic gradient and CASPT2 an analytic Lagrangian gradient in its
+documented envelope; `casci`, `selected_ci`, `dmrg`, `v2rdm` and
+`transcorrelated_ci` are optimised by central finite differences of the
+full energy on every backend. `fci`, `nevpt2`, `caspt2` and `mrci` are
+different: the ASE calculator has no correlated-surface route for these
+four, so with `optimizer_backend="ase"` (and with the `"auto"` default
+whenever ASE is installed) `run_job` raises `ValueError` rather than
+silently relaxing the mean-field reference and reporting it under the
+requested method (GitLab #357). Pass `optimizer_backend="native"` or
+`"brent"` to reach the finite-difference correlated surface, and expect
+`6 * n_atoms` correlated single points per gradient. The
+[native optimizer page](geometry_optimization.md) has the full table.
 
 ## Usage example
 

@@ -84,7 +84,8 @@ def test_run_job_with_functional_name_dispersion(tmp_path):
     assert "Dispersion correction (D3-BJ)" in out_text
     for field in ("s6", "s8", "a1", "a2", "E_disp", "E_SCF", "E_total"):
         assert field in out_text, field
-    assert re.search(r"^\s+SCF energy\s+-?\d+\.\d+", out_text, re.MULTILINE)
+    # #347 names the dispersion-free SCF row so it cannot be read as the total.
+    assert re.search(r"^\s+E_SCF \(excl\. dispersion\)\s+-?\d+\.\d+", out_text, re.MULTILINE)
     assert not re.search(r"^\s+Total energy\s+-?\d+\.\d+", out_text, re.MULTILINE)
     m_total = re.search(r"^\s+E_total\s+(-?\d+\.\d+) Ha$", out_text, re.MULTILINE)
     assert m_total is not None

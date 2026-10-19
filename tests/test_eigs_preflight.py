@@ -22,6 +22,8 @@ Key behaviours:
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 
@@ -151,16 +153,22 @@ def test_eigs_preflight_per_k_report_carries_full_info():
     assert sub.max_eigenvalue > 0
 
 
-def test_eigs_preflight_with_filtered_basis_passes_at_lih():
+def test_eigs_preflight_with_filtered_basis_passes_at_lih(monkeypatch, tmp_path):
     """With ``vq.make_basis(..., exp_to_discard=0.1)``, the LiH
     overlap is PSD — eigs_preflight clears at Γ."""
+    stock_root = os.environ["LIBINT_DATA_PATH"]
+    monkeypatch.setenv("VIBEQC_FILTERED_BASIS_DIR", str(tmp_path / "filtered-store"))
+    monkeypatch.setenv("LIBINT_DATA_PATH", stock_root)
     sysp, _, _ = _lih_conventional()
     basis_f = vq.make_basis(sysp.unit_cell_molecule(), "sto-3g",
                              exp_to_discard=0.1)
     rep = vq.eigs_preflight(sysp, basis_f)
     assert rep.severity in ("ok", "warn")   # was 'critical' unfiltered
     assert rep.is_safe_to_run_scf()
-    vq.clear_filtered_basis_cache()
+    # This store is private to the test; retire its consumers before purging.
+    del basis_f, rep
+    monkeypatch.setenv("LIBINT_DATA_PATH", stock_root)
+    assert vq.clear_filtered_basis_cache() == 1
 
 
 # ---------------------------------------------------------------------------

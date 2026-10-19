@@ -14,7 +14,7 @@ The factor is then exactly what needs to be undone in
 :func:`make_modrho_aux_basis` and :func:`make_compensating_basis` for the
 libint integrals to come out in libcint convention.
 
-Reference primitive normalization (calibrated 2026-05-16, prior handover):
+Reference primitive normalization (calibrated 2026-05-16, prior historical design record):
   N²(α, L) = C_L · α^{-(2L+3)/2}
   C_L: L=0 → (π/2)^(3/2) ≈ 1.9687
        L=1 → 0.4922  (calibration; ≈ (π/2)^(3/2) / 4)
@@ -37,7 +37,7 @@ from vibeqc.aux_basis import make_aux_basis_set
 
 # Calibrated per-(α, L) primitive normalization coefficients.
 # N²(α, L) = C_L · α^{-(2L+3)/2}. Reference:
-# handovers/HANDOVER_GDF_V0_11_2026_05_29.md
+# the original investigation
 # and the prompt's "single-primitive uncontracted shells" hint.
 _LIBINT_PRIM_NORM_C_L = {
     0: 1.9687,   # = (π/2)^(3/2)

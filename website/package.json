@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.1.0",
   "private": true,
-  "description": "Marketing / landing site for vibe-qc. Docs are built separately by Sphinx and served under /docs/.",
+  "description": "Technical website for vibe-qc. Docs are built separately by Sphinx and served under /docs/.",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",

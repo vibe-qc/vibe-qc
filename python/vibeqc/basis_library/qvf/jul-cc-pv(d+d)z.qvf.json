@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "jul-cc-pv(d+d)z",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: jul-cc-pV(D+d)Z\nCanonical name in vibe-qc: jul-cc-pv_d+d_z\nOriginating publication: Dunning, J. Chem. Phys. 90, 1007 (1989); tight-d: Dunning, Peterson, Wilson, J. Chem. Phys. 114, 9244 (2001); DOI: 10.1063/1.1367371\nNote:\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: jul-cc-pV(D+d)Z\nDescription: jul-cc-pV(D+d)Z basis of Papajak/Truhlar\n       Role: orbital\n    Version: 0  (Data from the Original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -4031,7 +4031,26 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "doi:10.1063/1.1367371",
+      "description": "Dunning, J. Chem. Phys. 90, 1007 (1989); tight-d: Dunning, Peterson, Wilson, J. Chem. Phys. 114, 9244 (2001)",
+      "doi": "10.1063/1.1367371"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "jul-cc-pV(D+d)Z"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "80ec2a66f5be941b50c71a5b76d431faa21ba94124bb56b80e583279261a4fc3"
   }
 }

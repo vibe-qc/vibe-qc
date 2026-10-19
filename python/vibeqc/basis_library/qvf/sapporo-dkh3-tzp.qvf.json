@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "sapporo-dkh3-tzp",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: Sapporo-DKH3-TZP\nCanonical name in vibe-qc: sapporo-dkh3-tzp\nOriginating publication: Noro, Sekiya, Koga, Theor. Chem. Acc. 131, 1124 (2012); DOI: 10.1007/s00214-012-1124-0\nNote: DKH3 alternative to dhf-TZVP\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: Sapporo-DKH3-TZP\nDescription: Sapporo-DKH3-TZP [deprecated]\n       Role: orbital\n    Version: 1  (Data from T. Noro)",
   "role": "orbital",
   "elements": {
     "K": {
@@ -13113,7 +13113,38 @@
       ]
     }
   },
+  "basis_family": "sapporo",
+  "references": [
+    {
+      "key": "noro_sapporo_2012",
+      "description": "T. Noro, M. Sekiya, T. Koga, Theoretical Chemistry Accounts 131, 1124 (2012)",
+      "doi": "10.1007/s00214-012-1124-z"
+    },
+    {
+      "key": "doi:10.1007/s00214-012-1124-0",
+      "description": "Noro, Sekiya, Koga, Theor. Chem. Acc. 131, 1124 (2012)",
+      "doi": "10.1007/s00214-012-1124-0"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "Sapporo-DKH3-TZP"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "8379b6178ecabf20e1bd8f2c8c94a83414a5d7df3f8169667d8f14c8c9e25162",
+    "citations": [
+      {
+        "keys": [
+          "noro_sapporo_2012"
+        ]
+      }
+    ]
   }
 }

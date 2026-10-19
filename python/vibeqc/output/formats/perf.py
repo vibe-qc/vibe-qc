@@ -41,10 +41,10 @@ the same tracker is written as a JSON object (schema
 
 v0.5.2 instruments the Python-driven periodic SCF
 pipeline (the EWALD_3D paths) and the high-level :func:`run_job`
-phases. C++ kernel-level scopes (``compute_eri``, ``build_coulomb``,
-``xc_eval``) are gated behind a compile-time ``#ifdef
-VIBEQC_PERFLOG`` and arrive in a v0.5.2.x patch -- release builds pay
-zero runtime cost when the feature is off.
+phases. Selected native periodic kernels expose optional internal phase attribution
+through ``perf_log(..., native=True)``. It is synchronous and thread-local;
+disabled native sections perform no clock reads. Worker elapsed sums are
+reported separately from elapsed call time, never as CPU time.
 
 Public surface
 --------------
@@ -214,6 +214,24 @@ class PerfTracker:
     memory_snapshots: list[dict[str, Any]] = field(default_factory=list)
     threads: int = 1
     t_start: float = field(default_factory=time.perf_counter)
+    native_phases: list[dict[str, Any]] = field(default_factory=list)
+    native_dropped_calls: int = 0
+    _native_token: Optional[int] = field(default=None, repr=False)
+
+    def snapshot_native(self, *, _finish: bool = False) -> None:
+        """Drain completed native calls; safe to render an intermediate report.
+
+        The native buffer holds 256 calls between snapshots. Loss is counted.
+        Abrupt process termination cannot run context cleanup, so checkpoint
+        the report after completed calls when profiling a bounded calculation.
+        """
+        if self._native_token is not None:
+            from ..._vibeqc_core import _native_phase_profile_take
+            batch = _native_phase_profile_take(self._native_token, _finish)
+            self.native_phases.extend(batch["records"])
+            self.native_dropped_calls += batch["dropped_calls"]
+            if _finish:
+                self._native_token = None
 
     def add_scope(self, name: str, wall_s: float, cpu_s: float) -> None:
         stat = self.phases.setdefault(name, _PhaseStat(name=name))
@@ -373,6 +391,7 @@ class PerfScope:
 @contextmanager
 def perf_log(
     path: Union[str, os.PathLike, None] = None,
+    *, native: bool = False,
 ) -> Iterator[PerfTracker]:
     """Activate a fresh :class:`PerfTracker` for the duration of the
     block; write the formatted report to ``path`` on exit.
@@ -405,11 +424,27 @@ def perf_log(
             target = Path(env)
 
     tracker = PerfTracker(threads=_detect_threads())
+    parent = _active.get()
+    if native or (parent is not None and parent._native_token is not None):
+        # Native scopes are tied to the calling OS thread, not asyncio tasks.
+        # Refuse task interleaving instead of attributing another task's work.
+        import asyncio
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+        if task is not None:
+            raise ValueError("native phase profiling requires a synchronous context")
+        from ..._vibeqc_core import _native_phase_profile_begin
+        tracker._native_token = _native_phase_profile_begin(bool(native))
     token = _active.set(tracker)
     try:
         yield tracker
     finally:
-        _active.reset(token)
+        try:
+            tracker.snapshot_native(_finish=True)
+        finally:
+            _active.reset(token)
         if target is not None:
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -593,6 +628,15 @@ def format_perf_report(tracker: PerfTracker) -> str:
             )
         lines.append("")
 
+    tracker.snapshot_native()
+    if tracker.native_phases or tracker.native_dropped_calls:
+        lines.append("Native phases (elapsed wall and summed worker wall are distinct; not additive)")
+        for call in tracker.native_phases:
+            lines.append(f"  {call['kernel']}: {call['wall_seconds']:.6f} s elapsed; completed={call['completed']}")
+            for phase in call["phases"]:
+                lines.append(f"    {phase['name']}: {phase['seconds']:.6f} s {phase['measure']}")
+        lines.append(f"  Dropped native calls: {tracker.native_dropped_calls}")
+        lines.append("")
     lines.append(_BAR)
     return "\n".join(lines) + "\n"
 
@@ -659,6 +703,7 @@ def format_perf_json(tracker: PerfTracker) -> str:
             ),
         })
 
+    tracker.snapshot_native()
     payload = {
         "schema": PERF_JSON_SCHEMA,
         "pid": os.getpid(),
@@ -678,6 +723,8 @@ def format_perf_json(tracker: PerfTracker) -> str:
         # that wants a column the text table never had should not have
         # to wait for this writer to learn about it.
         "scf_iters": [dict(row) for row in tracker.scf_iters],
+        "native_phases": tracker.native_phases,
+        "native_dropped_calls": tracker.native_dropped_calls,
     }
     # default=str keeps a stray non-serialisable value in an scf_iters
     # row from turning a finished calculation's perf artefact into a

@@ -43,6 +43,96 @@ def test_core_traces_both_branches_to_minima():
         assert all(np.diff(en) <= 1e-9)             # energy monotonically down
 
 
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_core_stalled_branch_is_not_converged(sign):
+    # A narrow, smooth double well: the first point is close to its minimum
+    # in distance but still has a large gradient. Every permitted trial step
+    # overshoots. Shrinking a step to the floor cannot certify stationarity.
+    minimum = 0.1 + 1e-7
+
+    def gf(x):
+        q = x[0, 0]
+        return 1e8 * (q * q - minimum**2)**2, np.array(
+            [[4e8 * q * (q * q - minimum**2), 0.0, 0.0]]
+        )
+
+    positions, energies, converged = _irc_branch(
+        np.zeros((1, 3)), gf, np.ones(1), np.array([[1.0, 0.0, 0.0]]),
+        sign, step_size=0.1, max_points=100, conv_tol_grad=1e-3,
+    )
+    energy, gradient = gf(positions[-1])
+    assert np.max(np.abs(gradient)) > 0.5
+    assert not converged
+    assert len(positions) == len(energies) == 1
+    assert energies[-1] == energy
+
+
+@pytest.mark.parametrize("max_points", [0, 1, 2])
+def test_core_checks_gradient_at_last_evaluated_point(max_points):
+    minimum = 0.1 * (max_points + 1)
+
+    def gf(x):
+        delta = x[0, 0] - minimum
+        return 0.5 * delta**2, np.array([[delta, 0.0, 0.0]])
+
+    positions, energies, converged = _irc_branch(
+        np.zeros((1, 3)), gf, np.ones(1), np.array([[1.0, 0.0, 0.0]]),
+        1.0, step_size=0.1, max_points=max_points, conv_tol_grad=1e-9,
+    )
+    assert np.max(np.abs(gf(positions[-1])[1])) < 1e-9
+    assert converged
+    assert len(positions) == len(energies) == max_points + 1
+
+
+@pytest.mark.parametrize("max_points", [0, 1])
+def test_core_exhausted_branch_retains_unconverged_endpoint(max_points):
+    def gf(x):
+        return -float(x[0, 0]), np.array([[-1.0, 0.0, 0.0]])
+
+    positions, energies, converged = _irc_branch(
+        np.zeros((1, 3)), gf, np.ones(1), np.array([[1.0, 0.0, 0.0]]),
+        1.0, step_size=0.1, max_points=max_points, conv_tol_grad=1e-3,
+    )
+    assert not converged
+    assert len(positions) == len(energies) == max_points + 1
+    assert energies[-1] == gf(positions[-1])[0]
+
+
+def test_run_irc_mace_does_not_certify_stalled_branches(monkeypatch):
+    import importlib
+
+    irc_module = importlib.import_module("vibeqc.irc")
+    minimum = np.sqrt(2.0) * 0.1 + 1e-7
+
+    def force_provider(x):
+        bond = x[1] - x[0]
+        distance = np.linalg.norm(bond)
+        q = distance - 2.0
+        energy = 1e8 * (q * q - minimum**2)**2
+        derivative = 4e8 * q * (q * q - minimum**2)
+        force = -derivative * bond / distance
+        return energy, np.array([-force, force])
+
+    monkeypatch.setattr(
+        irc_module, "_build_force_fn",
+        lambda *args, **kwargs: (force_provider, ""),
+    )
+    ts = vq.Molecule([vq.Atom(1, [0, 0, -1]), vq.Atom(1, [0, 0, 1])])
+    result = run_irc(
+        ts, method="mace", transition_mode=np.array([[0, 0, -1], [0, 0, 1]]),
+        step_size=0.1, max_points=100, conv_tol_grad=1e-3,
+    )
+    for branch in ("forward", "reverse"):
+        path = getattr(result, f"{branch}_path")
+        energies = getattr(result, f"{branch}_energies")
+        endpoint = np.array([list(atom.xyz) for atom in path[-1].atoms])
+        energy, force = force_provider(endpoint)
+        assert np.max(np.abs(force)) > 1.0  # More than 1000 times the tolerance.
+        assert not getattr(result, f"{branch}_converged")
+        assert len(path) == len(energies) == 1
+        assert energies[-1] == energy
+
+
 # ---------------------------------------------------------------------------
 # Molecular IRC: NH3 umbrella inversion
 # ---------------------------------------------------------------------------
@@ -175,6 +265,58 @@ def test_irc_write_citations(tmp_path):
 # ---------------------------------------------------------------------------
 # Error paths
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["step_size", "conv_tol_grad"])
+@pytest.mark.parametrize("value", [0, -0.1, np.inf, np.nan, True, "0.1", None])
+def test_run_irc_rejects_invalid_scalars_before_force_setup(monkeypatch, name, value):
+    import importlib
+
+    irc_module = importlib.import_module("vibeqc.irc")
+
+    def forbidden_force_builder(*args, **kwargs):
+        pytest.fail("invalid controls must fail before force-provider setup")
+
+    monkeypatch.setattr(irc_module, "_build_force_fn", forbidden_force_builder)
+    with pytest.raises(ValueError, match=name):
+        run_irc(
+            _h2_cation(), method="mace", transition_mode=np.ones((2, 3)),
+            **{name: value},
+        )
+
+
+@pytest.mark.parametrize("value", [-1, 1.5, np.inf, np.nan, True, "1", None])
+def test_run_irc_rejects_invalid_budget_before_force_setup(monkeypatch, value):
+    import importlib
+
+    irc_module = importlib.import_module("vibeqc.irc")
+
+    def forbidden_force_builder(*args, **kwargs):
+        pytest.fail("invalid budget must fail before force-provider setup")
+
+    monkeypatch.setattr(irc_module, "_build_force_fn", forbidden_force_builder)
+    with pytest.raises(ValueError, match="max_points"):
+        run_irc(
+            _h2_cation(), method="mace", transition_mode=np.ones((2, 3)),
+            max_points=value,
+        )
+
+
+@pytest.mark.parametrize(
+    "overrides", [{"step_size": np.nan}, {"conv_tol_grad": np.inf}, {"max_points": -1}]
+)
+def test_core_rejects_invalid_controls_before_evaluation(overrides):
+    def forbidden_gradient(x):
+        pytest.fail("invalid controls must fail before evaluating a gradient")
+
+    controls = {"step_size": 0.1, "conv_tol_grad": 1e-3, "max_points": 100}
+    controls.update(overrides)
+    name = next(iter(overrides))
+    with pytest.raises(ValueError, match=name):
+        _irc_branch(
+            np.zeros((1, 3)), forbidden_gradient, np.ones(1),
+            np.array([[1.0, 0.0, 0.0]]), 1.0, **controls,
+        )
 
 
 def test_run_irc_basis_required_for_scf():

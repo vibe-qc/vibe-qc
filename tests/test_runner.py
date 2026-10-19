@@ -635,3 +635,170 @@ def test_run_job_tddft_nto_emits_qvf_sections(tmp_path: Path) -> None:
     nto_ids = [s["id"] for s in manifest["sections"] if "nto" in s.get("id", "")]
     assert "wf_nto_S1_hole" in nto_ids
     assert "wf_nto_S1_electron" in nto_ids
+
+
+@pytest.mark.parametrize(
+    "charge, multiplicity, method",
+    [(0, 1, "rhf"), (1, 2, "uhf")],
+    ids=["closed-shell", "unrestricted"],
+)
+def test_run_job_tddft_nto_writes_qvf_v030_carriers(
+    tmp_path: Path, charge: int, multiplicity: int, method: str
+) -> None:
+    """vibe-qc#544: an excited_states table, NTO pairs linked to it both
+    ways, weights lambda = sigma**2 summing to 1 (both spins together for
+    an unrestricted state, QVF spec Sec. 5.3) and none of the deprecated keys."""
+    import json
+    import zipfile
+
+    from vibeqc.output.formats.qvf import validate_qvf
+
+    ang = 1.8897259886
+    mol = Molecule(
+        [
+            Atom(8, [0.0, 0.0, 0.1173 * ang]),
+            Atom(1, [0.0, 0.7572 * ang, -0.4692 * ang]),
+            Atom(1, [0.0, -0.7572 * ang, -0.4692 * ang]),
+        ],
+        charge=charge,
+        multiplicity=multiplicity,
+    )
+    run_job(
+        mol,
+        basis="sto-3g",
+        method=method,
+        output=tmp_path / "h2o_nto",
+        output_qvf=True,
+        write_population_file=False,
+        tddft=True,
+        tddft_n_states=3,
+        nto=True,
+        citations=False,
+    )
+    qvf = tmp_path / "h2o_nto.qvf"
+    report = validate_qvf(qvf)
+    assert report["valid"], report["errors"]
+    with zipfile.ZipFile(qvf) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        by_id = {s["id"]: s for s in manifest["sections"]}
+        states = json.loads(zf.read(
+            by_id["excited_states"]["members"]["states"]["path"]
+        ))["states"]
+        metas = {
+            sid: json.loads(zf.read(sec["members"]["mo_metadata"]["path"]))
+            for sid, sec in by_id.items()
+            if sec["kind"] == "wavefunction.gto"
+        }
+    assert [st["index"] for st in states] == [1, 2, 3]
+    for st in states:
+        hole = metas[st["nto_ref"]]
+        particle = metas[st["nto_ref"].replace("_hole", "_electron")]
+        for meta, role in ((hole, "hole"), (particle, "particle")):
+            assert meta["orbital_kind"] == "nto"
+            assert meta["nto_role"] == role
+            assert meta["state_ref"] == "excited_states"
+            assert meta["state_index"] == st["index"]
+        if method == "uhf":
+            assert hole["spin"] == "unrestricted"
+            weights = hole["alpha"]["occupations"] + hole["beta"]["occupations"]
+            for ch in ("alpha", "beta"):
+                assert hole[ch]["occupations"] == particle[ch]["occupations"]
+                assert hole[ch]["occupations"] == sorted(
+                    hole[ch]["occupations"], reverse=True
+                )
+        else:
+            assert "multiplicity" in st and st["multiplicity"] == 1
+            weights = hole["occupations"]
+            assert weights == particle["occupations"]
+        assert sum(weights) == pytest.approx(1.0, abs=1e-10)
+    for meta in metas.values():
+        assert "excitation_index" not in meta
+        assert "excitation_energy_ev" not in meta
+    try:
+        import qvf_reader
+    except ImportError:
+        return
+    official = qvf_reader.validate_qvf(str(qvf))
+    assert official["ok"], official
+    assert not [w for w in official["warnings"] if "deprecat" in w.lower()]
+
+
+def _qcschema_h2(driver: str = "energy") -> dict:
+    return {
+        "schema_name": "qcschema_input",
+        "schema_version": 1,
+        "molecule": {
+            "schema_name": "qcschema_molecule",
+            "schema_version": 2,
+            "symbols": ["H", "H"],
+            "geometry": [0.0, 0.0, 0.0, 0.0, 0.0, 1.4],
+            "molecular_charge": 0.0,
+            "molecular_multiplicity": 1.0,
+        },
+        "driver": driver,
+        "model": {"method": "HF", "basis": "sto-3g"},
+        "keywords": {},
+    }
+
+
+def test_qcschema_molecule_roundtrip_and_rejects_ghosts() -> None:
+    import vibeqc as vq
+
+    molecule_data = _qcschema_h2()["molecule"]
+    molecule = vq.molecule_from_qcschema(molecule_data)
+    restored = vq.molecule_to_qcschema(molecule)
+    assert restored["symbols"] == molecule_data["symbols"]
+    assert restored["geometry"] == molecule_data["geometry"]
+    assert restored["fix_com"] and restored["fix_orientation"]
+
+    with pytest.raises(ValueError, match="ghost atoms"):
+        vq.molecule_from_qcschema({**molecule_data, "real": [True, False]})
+    with pytest.raises(ValueError, match="unsupported QCSchema molecule fields"):
+        vq.molecule_from_qcschema({**molecule_data, "fragments": [[0], [1]]})
+
+
+def test_qcschema_energy_json_roundtrip(tmp_path: Path) -> None:
+    import vibeqc as vq
+
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "result.json"
+    vq.write_qcschema(input_path, _qcschema_h2())
+    result = vq.run_qcschema(input_path, output_path=output_path)
+    assert result["schema_name"] == "qcschema_output"
+    assert result["success"] is True
+    assert result["driver"] == "energy"
+    assert result["return_result"] == pytest.approx(-1.11671432506257, abs=1e-8)
+    assert result["properties"]["return_energy"] == result["return_result"]
+    assert vq.read_qcschema(output_path) == result
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["input.json", "result.json"]
+
+
+def test_qcschema_hf_derivative_shapes() -> None:
+    import vibeqc as vq
+
+    gradient = vq.run_qcschema(_qcschema_h2("gradient"))["return_result"]
+    hessian = vq.run_qcschema(_qcschema_h2("hessian"))["return_result"]
+    assert len(gradient) == 6
+    assert gradient[2] == pytest.approx(-gradient[5], abs=1e-9)
+    assert len(hessian) == 36
+    assert np.isfinite(hessian).all()
+
+
+def test_qcschema_mp2_reports_correlated_total() -> None:
+    import vibeqc as vq
+
+    data = _qcschema_h2()
+    data["model"]["method"] = "MP2"
+    result = vq.run_qcschema(data)
+    assert result["return_result"] == pytest.approx(-1.129872, abs=1e-6)
+    assert result["properties"]["return_energy"] == result["return_result"]
+    assert result["properties"]["scf_total_energy"] > result["return_result"]
+
+
+def test_qcschema_rejects_unhandled_job_options() -> None:
+    import vibeqc as vq
+
+    data = _qcschema_h2()
+    data["keywords"] = {"scf_type": "df"}
+    with pytest.raises(ValueError, match="keywords"):
+        vq.run_qcschema(data)

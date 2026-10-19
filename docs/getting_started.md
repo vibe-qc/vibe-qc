@@ -57,9 +57,9 @@ cd vibe-qc
 ```
 
 The example above selects development `main`. The flag-free installer targets
-`release`, the stable core snapshot advanced from a tag on `main`. Use
-`--dev` for ongoing development. Each companion has its own releases; a core
-tag does not update the viewer or queue. Check the selected host for the
+`release` when that branch exists on the selected origin, or its newest stable
+`vX.Y.Z` tag otherwise. Use `--dev` for ongoing development. Each companion
+has its own releases; a core tag does not update the viewer or queue. Check the selected host for the
 release ref you want; public snapshots can lag GitLab.
 
 The first native build normally takes 15 to 40 minutes. Later runs reuse the
@@ -227,6 +227,7 @@ exact error or numerical symptom when a check fails.
 |---|---|
 | Learn what the first script does | [Molecular Hartree-Fock](tutorial/molecular_hf.md) |
 | Choose a method, basis, and resource budget | [Planning a calculation](tutorial/planning_a_calculation.md) |
+| See every method with its theory and status label | [Methods: theory and status](methods.md) |
 | Browse runnable inputs by task | [Examples](https://github.com/vibe-qc/vibe-qc/tree/main/examples) |
 | Understand every output file | [Output files](user_guide/output_files.md) |
 | Explore a QVF visually | [QVF and vibe-view](visualization.md) |

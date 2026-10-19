@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "6-311g**-rifit",
+  "description": "Basis Set Exchange\nVersion 0.12\nOriginating publication: Weigend, Phys. Chem. Chem. Phys. 8, 1057 (2006); DOI: 10.1039/b515623h\nhttps://www.basissetexchange.org\n  Basis set: 6-311G**-RIFIT\nDescription: RI-MP2 auxiliary basis for 6-311G** basis\n       Role: rifit\n    Version: 1  (Data from supporting information)",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -3911,7 +3911,52 @@
       ]
     }
   },
+  "basis_family": "pople",
+  "references": [
+    {
+      "key": "krishnan_pople_6311g_1980",
+      "description": "R. Krishnan, J. S. Binkley, R. Seeger, J. A. Pople, Journal of Chemical Physics 72, 650-654 (1980)",
+      "doi": "10.1063/1.438955"
+    },
+    {
+      "key": "mclean_chandler_6311g_1980",
+      "description": "A. D. McLean, G. S. Chandler, Journal of Chemical Physics 72, 5639-5648 (1980)",
+      "doi": "10.1063/1.438980"
+    },
+    {
+      "key": "hariharan_pople_1973",
+      "description": "P. C. Hariharan, J. A. Pople, Theoretica Chimica Acta 28, 213-222 (1973)",
+      "doi": "10.1007/BF00533485"
+    },
+    {
+      "key": "weigend_jfit_2006",
+      "description": "F. Weigend, Physical Chemistry Chemical Physics 8, 1057-1065 (2006)",
+      "doi": "10.1039/B515623H"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "6-311g**-rifit"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "a9f082445b499b2bae86c381c8c03fe5465fa484888c583ef9a0ab15369a7ca5",
+    "citations": [
+      {
+        "keys": [
+          "krishnan_pople_6311g_1980",
+          "mclean_chandler_6311g_1980",
+          "hariharan_pople_1973",
+          "weigend_jfit_2006"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

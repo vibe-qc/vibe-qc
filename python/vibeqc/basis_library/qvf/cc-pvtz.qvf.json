@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "cc-pvtz",
+  "description": " cc-pVTZ  EMSL  Basis Set Exchange Library   12/2/14 6:39 AM\nElements                             References\nH     : T.H. Dunning, Jr. J. Chem. Phys. 90, 1007 (1989).\nHe    : D.E. Woon and T.H. Dunning, Jr. J. Chem. Phys. 100, 2975 (1994).\nLi - Ne: T.H. Dunning, Jr. J. Chem. Phys. 90, 1007 (1989).\nNa - Mg: D.E. Woon and T.H. Dunning, Jr.  (to be published)\nAl - Ar: D.E. Woon and T.H. Dunning, Jr.  J. Chem. Phys. 98, 1358 (1993).\nCa     : J. Koput and K.A. Peterson, J. Phys. Chem. A, 106, 9595 (2002).\nSc - Zn: N.B. Balabanov and K.A. Peterson, J. Chem. Phys, 123, 064107 (2005)\nGa - Kr: A.K. Wilson, D.E. Woon, K.A. Peterson, T.H. Dunning, Jr., J. Chem. Phys., 110, 7667 (1999)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -18960,7 +18960,34 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "dunning_ccpvxz_1989",
+      "description": "T. H. Dunning, Journal of Chemical Physics 90, 1007-1023 (1989)",
+      "doi": "10.1063/1.456153"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "cc-pvtz",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "154347d661519cf045ddab5609255080d0590548d9ae1063eeac7c02d1a28b68",
+    "citations": [
+      {
+        "keys": [
+          "dunning_ccpvxz_1989"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

@@ -1,6 +1,12 @@
+# HISTORICAL DIAGNOSTIC, NO LONGER RUNNABLE.
+# This script imports vibeqc._aopair_ft.per_ao_libint_norm_factor,
+# which no longer exists in vibeqc (the PySCF-backed GDF spike it
+# probed was retired). It is retained unchanged as a record of the
+# diagnostic; see examples/debug/README.md, "Historical, no longer
+# runnable".
 """M1 diagnostic — lattice 3c ERI tensor + MgO remeasurement.
 
-2026-05-26: From handovers/HANDOVER_GDF_V0_11_2026_05_29.md, open items for M1:
+2026-05-26: From the original investigation, open items for M1:
 
 1. Compare vibe-qc lattice-summed 3c (molecular → periodic) diff on LiH primitive.
    If molecular 3c matches PySCF bit-exact (verified), then any lattice-error
@@ -218,6 +224,7 @@ def item4_mgo_remeasure():
                     apply_aft_correction=apply_aft,
                     aft_ft_convention=ft_conv,
                     progress=False,
+                    gdf_method="compcell",
                 )
                 dt = time.perf_counter() - t0
                 print(f"    E_total = {r.energy:+.6f} Ha")

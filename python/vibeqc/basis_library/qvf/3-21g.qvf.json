@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "3-21g",
+  "description": " 3-21G  EMSL  Basis Set Exchange Library   2/02/15 12:21\nElements                             References\n H - Ne: J.S. Binkley, J.A. Pople, W.J. Hehre, J. Am. Chem. Soc 102 939 (1980)\nNa - Ar: M.S. Gordon, J.S. Binkley, J.A. Pople, W.J. Pietro and W.J. Hehre,\n         J. Am. Chem. Soc. 104, 2797 (1983).\n K - Ca: K.D. Dobbs, W.J. Hehre, J. Comput. Chem. 7, 359 (1986).\nGa - Kr: K.D. Dobbs, W.J. Hehre, J. Comput. Chem. 7, 359 (1986).\nSc - Zn: K.D. Dobbs, W.J. Hehre, J. Comput. Chem. 8, 861 (1987).\n Y - Cd: K.D. Dobbs, W.J. Hehre, J. Comput. Chem. 8, 880 (1987).\nCs     : A 3-21G quality set derived from the Huzinage MIDI basis sets.\n         E.D. Glendening and D. Feller, J. Phys. Chem. 99, 3060 (1995)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -105,12 +105,12 @@
               "coefficient": -0.263127
             },
             {
-              "exponent": 0.540205,
-              "coefficient": 0.161546
-            },
-            {
               "exponent": 0.102255,
               "coefficient": 1.14339
+            },
+            {
+              "exponent": 0.540205,
+              "coefficient": 0.161546
             },
             {
               "exponent": 0.102255,
@@ -172,12 +172,12 @@
               "coefficient": -0.421064
             },
             {
-              "exponent": 1.29548,
-              "coefficient": 0.205132
-            },
-            {
               "exponent": 0.268881,
               "coefficient": 1.22407
+            },
+            {
+              "exponent": 1.29548,
+              "coefficient": 0.205132
             },
             {
               "exponent": 0.268881,
@@ -239,12 +239,12 @@
               "coefficient": -0.368662
             },
             {
-              "exponent": 2.28187,
-              "coefficient": 0.231152
-            },
-            {
               "exponent": 0.465248,
               "coefficient": 1.19944
+            },
+            {
+              "exponent": 2.28187,
+              "coefficient": 0.231152
             },
             {
               "exponent": 0.465248,
@@ -306,12 +306,12 @@
               "coefficient": -0.395897
             },
             {
-              "exponent": 3.66498,
-              "coefficient": 0.23646
-            },
-            {
               "exponent": 0.770545,
               "coefficient": 1.21584
+            },
+            {
+              "exponent": 3.66498,
+              "coefficient": 0.23646
             },
             {
               "exponent": 0.770545,
@@ -373,12 +373,12 @@
               "coefficient": -0.413301
             },
             {
-              "exponent": 5.42522,
-              "coefficient": 0.237972
-            },
-            {
               "exponent": 1.14915,
               "coefficient": 1.22442
+            },
+            {
+              "exponent": 5.42522,
+              "coefficient": 0.237972
             },
             {
               "exponent": 1.14915,
@@ -440,12 +440,12 @@
               "coefficient": -0.404453
             },
             {
-              "exponent": 7.40294,
-              "coefficient": 0.244586
-            },
-            {
               "exponent": 1.5762,
               "coefficient": 1.22156
+            },
+            {
+              "exponent": 7.40294,
+              "coefficient": 0.244586
             },
             {
               "exponent": 1.5762,
@@ -507,12 +507,12 @@
               "coefficient": -0.407327
             },
             {
-              "exponent": 9.77759,
-              "coefficient": 0.24668
-            },
-            {
               "exponent": 2.08617,
               "coefficient": 1.22314
+            },
+            {
+              "exponent": 9.77759,
+              "coefficient": 0.24668
             },
             {
               "exponent": 2.08617,
@@ -574,12 +574,12 @@
               "coefficient": -0.409922
             },
             {
-              "exponent": 12.483,
-              "coefficient": 0.24746
-            },
-            {
               "exponent": 2.66451,
               "coefficient": 1.22431
+            },
+            {
+              "exponent": 12.483,
+              "coefficient": 0.24746
             },
             {
               "exponent": 2.66451,
@@ -641,20 +641,20 @@
               "coefficient": -0.111937
             },
             {
+              "exponent": 3.79398,
+              "coefficient": 0.254654
+            },
+            {
+              "exponent": 0.906441,
+              "coefficient": 0.844417
+            },
+            {
               "exponent": 17.5407,
               "coefficient": 0.128233
             },
             {
               "exponent": 3.79398,
-              "coefficient": 0.254654
-            },
-            {
-              "exponent": 3.79398,
               "coefficient": 0.471533
-            },
-            {
-              "exponent": 0.906441,
-              "coefficient": 0.844417
             },
             {
               "exponent": 0.906441,
@@ -674,12 +674,12 @@
               "coefficient": -0.21966
             },
             {
-              "exponent": 0.501824,
-              "coefficient": 0.0090665
-            },
-            {
               "exponent": 0.0609458,
               "coefficient": 1.08912
+            },
+            {
+              "exponent": 0.501824,
+              "coefficient": 0.0090665
             },
             {
               "exponent": 0.0609458,
@@ -741,20 +741,20 @@
               "coefficient": -0.110246
             },
             {
+              "exponent": 5.19953,
+              "coefficient": 0.184119
+            },
+            {
+              "exponent": 1.31508,
+              "coefficient": 0.896399
+            },
+            {
               "exponent": 23.3727,
               "coefficient": 0.121014
             },
             {
               "exponent": 5.19953,
-              "coefficient": 0.184119
-            },
-            {
-              "exponent": 5.19953,
               "coefficient": 0.46281
-            },
-            {
-              "exponent": 1.31508,
-              "coefficient": 0.896399
             },
             {
               "exponent": 1.31508,
@@ -774,12 +774,12 @@
               "coefficient": -0.361101
             },
             {
-              "exponent": 0.611349,
-              "coefficient": 0.0242633
-            },
-            {
               "exponent": 0.141841,
               "coefficient": 1.21505
+            },
+            {
+              "exponent": 0.611349,
+              "coefficient": 0.0242633
             },
             {
               "exponent": 0.141841,
@@ -841,20 +841,20 @@
               "coefficient": -0.107902
             },
             {
+              "exponent": 6.63314,
+              "coefficient": 0.146245
+            },
+            {
+              "exponent": 1.72675,
+              "coefficient": 0.92373
+            },
+            {
               "exponent": 29.4796,
               "coefficient": 0.117574
             },
             {
               "exponent": 6.63314,
-              "coefficient": 0.146245
-            },
-            {
-              "exponent": 6.63314,
               "coefficient": 0.461174
-            },
-            {
-              "exponent": 1.72675,
-              "coefficient": 0.92373
             },
             {
               "exponent": 1.72675,
@@ -874,12 +874,12 @@
               "coefficient": -0.320327
             },
             {
-              "exponent": 0.94616,
-              "coefficient": 0.0519383
-            },
-            {
               "exponent": 0.202506,
               "coefficient": 1.18412
+            },
+            {
+              "exponent": 0.94616,
+              "coefficient": 0.0519383
             },
             {
               "exponent": 0.202506,
@@ -941,20 +941,20 @@
               "coefficient": -0.104511
             },
             {
+              "exponent": 8.31729,
+              "coefficient": 0.10741
+            },
+            {
+              "exponent": 2.21645,
+              "coefficient": 0.951446
+            },
+            {
               "exponent": 36.6716,
               "coefficient": 0.113355
             },
             {
               "exponent": 8.31729,
-              "coefficient": 0.10741
-            },
-            {
-              "exponent": 8.31729,
               "coefficient": 0.457578
-            },
-            {
-              "exponent": 2.21645,
-              "coefficient": 0.951446
             },
             {
               "exponent": 2.21645,
@@ -974,12 +974,12 @@
               "coefficient": -0.376108
             },
             {
-              "exponent": 1.07913,
-              "coefficient": 0.067103
-            },
-            {
               "exponent": 0.302422,
               "coefficient": 1.25165
+            },
+            {
+              "exponent": 1.07913,
+              "coefficient": 0.067103
             },
             {
               "exponent": 0.302422,
@@ -1041,20 +1041,20 @@
               "coefficient": -0.10213
             },
             {
+              "exponent": 10.1019,
+              "coefficient": 0.081592
+            },
+            {
+              "exponent": 2.73997,
+              "coefficient": 0.969788
+            },
+            {
               "exponent": 44.2866,
               "coefficient": 0.110851
             },
             {
               "exponent": 10.1019,
-              "coefficient": 0.081592
-            },
-            {
-              "exponent": 10.1019,
               "coefficient": 0.456495
-            },
-            {
-              "exponent": 2.73997,
-              "coefficient": 0.969788
             },
             {
               "exponent": 2.73997,
@@ -1074,12 +1074,12 @@
               "coefficient": -0.371495
             },
             {
-              "exponent": 1.21865,
-              "coefficient": 0.091582
-            },
-            {
               "exponent": 0.395546,
               "coefficient": 1.27099
+            },
+            {
+              "exponent": 1.21865,
+              "coefficient": 0.091582
             },
             {
               "exponent": 0.395546,
@@ -1141,20 +1141,20 @@
               "coefficient": -0.10031
             },
             {
+              "exponent": 11.9629,
+              "coefficient": 0.065088
+            },
+            {
+              "exponent": 3.28911,
+              "coefficient": 0.981455
+            },
+            {
               "exponent": 52.2236,
               "coefficient": 0.109646
             },
             {
               "exponent": 11.9629,
-              "coefficient": 0.065088
-            },
-            {
-              "exponent": 11.9629,
               "coefficient": 0.457649
-            },
-            {
-              "exponent": 3.28911,
-              "coefficient": 0.981455
             },
             {
               "exponent": 3.28911,
@@ -1174,12 +1174,12 @@
               "coefficient": -0.286089
             },
             {
-              "exponent": 1.22384,
-              "coefficient": 0.164777
-            },
-            {
               "exponent": 0.457303,
               "coefficient": 1.22806
+            },
+            {
+              "exponent": 1.22384,
+              "coefficient": 0.164777
             },
             {
               "exponent": 0.457303,
@@ -1241,20 +1241,20 @@
               "coefficient": -0.0987639
             },
             {
+              "exponent": 13.9765,
+              "coefficient": 0.0511338
+            },
+            {
+              "exponent": 3.8871,
+              "coefficient": 0.991337
+            },
+            {
               "exponent": 60.8014,
               "coefficient": 0.108598
             },
             {
               "exponent": 13.9765,
-              "coefficient": 0.0511338
-            },
-            {
-              "exponent": 13.9765,
               "coefficient": 0.458682
-            },
-            {
-              "exponent": 3.8871,
-              "coefficient": 0.991337
             },
             {
               "exponent": 3.8871,
@@ -1274,12 +1274,12 @@
               "coefficient": -0.222401
             },
             {
-              "exponent": 1.35299,
-              "coefficient": 0.219216
-            },
-            {
               "exponent": 0.526955,
               "coefficient": 1.18252
+            },
+            {
+              "exponent": 1.35299,
+              "coefficient": 0.219216
             },
             {
               "exponent": 0.526955,
@@ -1341,20 +1341,20 @@
               "coefficient": -0.0974661
             },
             {
+              "exponent": 16.1473,
+              "coefficient": 0.0390569
+            },
+            {
+              "exponent": 4.53492,
+              "coefficient": 0.999916
+            },
+            {
               "exponent": 70.0453,
               "coefficient": 0.107619
             },
             {
               "exponent": 16.1473,
-              "coefficient": 0.0390569
-            },
-            {
-              "exponent": 16.1473,
               "coefficient": 0.459576
-            },
-            {
-              "exponent": 4.53492,
-              "coefficient": 0.999916
             },
             {
               "exponent": 4.53492,
@@ -1374,12 +1374,12 @@
               "coefficient": -0.176866
             },
             {
-              "exponent": 1.54209,
-              "coefficient": 0.255687
-            },
-            {
               "exponent": 0.607267,
               "coefficient": 1.1469
+            },
+            {
+              "exponent": 1.54209,
+              "coefficient": 0.255687
             },
             {
               "exponent": 0.607267,
@@ -1441,20 +1441,20 @@
               "coefficient": -0.1093429
             },
             {
+              "exponent": 15.43894,
+              "coefficient": 0.113064
+            },
+            {
+              "exponent": 4.474551,
+              "coefficient": 0.9462575
+            },
+            {
               "exponent": 71.5572,
               "coefficient": 0.1339654
             },
             {
               "exponent": 15.43894,
-              "coefficient": 0.113064
-            },
-            {
-              "exponent": 15.43894,
               "coefficient": 0.5302673
-            },
-            {
-              "exponent": 4.474551,
-              "coefficient": 0.9462575
             },
             {
               "exponent": 4.474551,
@@ -1474,20 +1474,20 @@
               "coefficient": -0.269973
             },
             {
+              "exponent": 1.188621,
+              "coefficient": 0.3646323
+            },
+            {
+              "exponent": 0.375674,
+              "coefficient": 0.8107533
+            },
+            {
               "exponent": 4.121275,
               "coefficient": 0.01994922
             },
             {
               "exponent": 1.188621,
-              "coefficient": 0.3646323
-            },
-            {
-              "exponent": 1.188621,
               "coefficient": 0.4340213
-            },
-            {
-              "exponent": 0.375674,
-              "coefficient": 0.8107533
             },
             {
               "exponent": 0.375674,
@@ -1507,12 +1507,12 @@
               "coefficient": -0.268825
             },
             {
-              "exponent": 0.244577,
-              "coefficient": 0.0003081035
-            },
-            {
               "exponent": 0.038972,
               "coefficient": 1.128983
+            },
+            {
+              "exponent": 0.244577,
+              "coefficient": 0.0003081035
             },
             {
               "exponent": 0.038972,
@@ -1574,20 +1574,20 @@
               "coefficient": -0.109303
             },
             {
+              "exponent": 17.33075,
+              "coefficient": 0.1089
+            },
+            {
+              "exponent": 5.083624,
+              "coefficient": 0.949277
+            },
+            {
               "exponent": 80.39744,
               "coefficient": 0.135433
             },
             {
               "exponent": 17.33075,
-              "coefficient": 0.1089
-            },
-            {
-              "exponent": 17.33075,
               "coefficient": 0.537222
-            },
-            {
-              "exponent": 5.083624,
-              "coefficient": 0.949277
             },
             {
               "exponent": 5.083624,
@@ -1607,20 +1607,20 @@
               "coefficient": -0.281607
             },
             {
+              "exponent": 1.462558,
+              "coefficient": 0.341051
+            },
+            {
+              "exponent": 0.479223,
+              "coefficient": 0.838104
+            },
+            {
               "exponent": 4.782229,
               "coefficient": 0.019009
             },
             {
               "exponent": 1.462558,
-              "coefficient": 0.341051
-            },
-            {
-              "exponent": 1.462558,
               "coefficient": 0.436038
-            },
-            {
-              "exponent": 0.479223,
-              "coefficient": 0.838104
             },
             {
               "exponent": 0.479223,
@@ -1640,12 +1640,12 @@
               "coefficient": -0.269705
             },
             {
-              "exponent": 0.439682,
-              "coefficient": 0.000308
-            },
-            {
               "exponent": 0.05913,
               "coefficient": 1.113293
+            },
+            {
+              "exponent": 0.439682,
+              "coefficient": 0.000308
             },
             {
               "exponent": 0.05913,
@@ -1707,20 +1707,20 @@
               "coefficient": -0.109384
             },
             {
+              "exponent": 19.3851,
+              "coefficient": 0.10507
+            },
+            {
+              "exponent": 5.731423,
+              "coefficient": 0.952205
+            },
+            {
               "exponent": 89.7645,
               "coefficient": 0.136328
             },
             {
               "exponent": 19.3851,
-              "coefficient": 0.10507
-            },
-            {
-              "exponent": 19.3851,
               "coefficient": 0.54186
-            },
-            {
-              "exponent": 5.731423,
-              "coefficient": 0.952205
             },
             {
               "exponent": 5.731423,
@@ -1740,20 +1740,20 @@
               "coefficient": -0.285211
             },
             {
+              "exponent": 1.743742,
+              "coefficient": 0.324155
+            },
+            {
+              "exponent": 0.566227,
+              "coefficient": 0.856592
+            },
+            {
               "exponent": 5.491938,
               "coefficient": 0.017614
             },
             {
               "exponent": 1.743742,
-              "coefficient": 0.324155
-            },
-            {
-              "exponent": 1.743742,
               "coefficient": 0.433645
-            },
-            {
-              "exponent": 0.566227,
-              "coefficient": 0.856592
             },
             {
               "exponent": 0.566227,
@@ -1773,12 +1773,12 @@
               "coefficient": -0.262678
             },
             {
-              "exponent": 0.516802,
-              "coefficient": 0.000327
-            },
-            {
               "exponent": 0.067214,
               "coefficient": 1.108079
+            },
+            {
+              "exponent": 0.516802,
+              "coefficient": 0.000327
             },
             {
               "exponent": 0.067214,
@@ -1868,20 +1868,20 @@
               "coefficient": -0.109472
             },
             {
+              "exponent": 21.54671,
+              "coefficient": 0.101943
+            },
+            {
+              "exponent": 6.413965,
+              "coefficient": 0.954622
+            },
+            {
               "exponent": 99.57387,
               "coefficient": 0.137297
             },
             {
               "exponent": 21.54671,
-              "coefficient": 0.101943
-            },
-            {
-              "exponent": 21.54671,
               "coefficient": 0.545875
-            },
-            {
-              "exponent": 6.413965,
-              "coefficient": 0.954622
             },
             {
               "exponent": 6.413965,
@@ -1901,20 +1901,20 @@
               "coefficient": -0.286137
             },
             {
+              "exponent": 1.996108,
+              "coefficient": 0.321828
+            },
+            {
+              "exponent": 0.64649,
+              "coefficient": 0.859551
+            },
+            {
               "exponent": 6.238279,
               "coefficient": 0.019237
             },
             {
               "exponent": 1.996108,
-              "coefficient": 0.321828
-            },
-            {
-              "exponent": 1.996108,
               "coefficient": 0.440442
-            },
-            {
-              "exponent": 0.64649,
-              "coefficient": 0.859551
             },
             {
               "exponent": 0.64649,
@@ -1934,12 +1934,12 @@
               "coefficient": -0.24245
             },
             {
-              "exponent": 0.573285,
-              "coefficient": 0.000292
-            },
-            {
               "exponent": 0.073119,
               "coefficient": 1.100075
+            },
+            {
+              "exponent": 0.573285,
+              "coefficient": 0.000292
             },
             {
               "exponent": 0.073119,
@@ -2029,20 +2029,20 @@
               "coefficient": -0.109836
             },
             {
+              "exponent": 23.76921,
+              "coefficient": 0.100707
+            },
+            {
+              "exponent": 7.122961,
+              "coefficient": 0.955633
+            },
+            {
               "exponent": 109.7938,
               "coefficient": 0.138421
             },
             {
               "exponent": 23.76921,
-              "coefficient": 0.100707
-            },
-            {
-              "exponent": 23.76921,
               "coefficient": 0.550489
-            },
-            {
-              "exponent": 7.122961,
-              "coefficient": 0.955633
             },
             {
               "exponent": 7.122961,
@@ -2062,20 +2062,20 @@
               "coefficient": -0.288459
             },
             {
+              "exponent": 2.219839,
+              "coefficient": 0.336436
+            },
+            {
+              "exponent": 0.719803,
+              "coefficient": 0.84819
+            },
+            {
               "exponent": 6.981204,
               "coefficient": 0.021821
             },
             {
               "exponent": 2.219839,
-              "coefficient": 0.336436
-            },
-            {
-              "exponent": 2.219839,
               "coefficient": 0.456762
-            },
-            {
-              "exponent": 0.719803,
-              "coefficient": 0.84819
             },
             {
               "exponent": 0.719803,
@@ -2095,12 +2095,12 @@
               "coefficient": -0.23649
             },
             {
-              "exponent": 0.631262,
-              "coefficient": 0.00019
-            },
-            {
               "exponent": 0.080062,
               "coefficient": 1.097721
+            },
+            {
+              "exponent": 0.631262,
+              "coefficient": 0.00019
             },
             {
               "exponent": 0.080062,
@@ -2190,20 +2190,20 @@
               "coefficient": -0.117779
             },
             {
+              "exponent": 26.03727,
+              "coefficient": 0.101431
+            },
+            {
+              "exponent": 7.844172,
+              "coefficient": 0.957198
+            },
+            {
               "exponent": 120.2806,
               "coefficient": 0.139878
             },
             {
               "exponent": 26.03727,
-              "coefficient": 0.101431
-            },
-            {
-              "exponent": 26.03727,
               "coefficient": 0.555983
-            },
-            {
-              "exponent": 7.844172,
-              "coefficient": 0.957198
             },
             {
               "exponent": 7.844172,
@@ -2223,20 +2223,20 @@
               "coefficient": -0.288857
             },
             {
+              "exponent": 2.497196,
+              "coefficient": 0.335115
+            },
+            {
+              "exponent": 0.805142,
+              "coefficient": 0.850248
+            },
+            {
               "exponent": 7.793276,
               "coefficient": 0.022185
             },
             {
               "exponent": 2.497196,
-              "coefficient": 0.335115
-            },
-            {
-              "exponent": 2.497196,
               "coefficient": 0.461625
-            },
-            {
-              "exponent": 0.805142,
-              "coefficient": 0.850248
             },
             {
               "exponent": 0.805142,
@@ -2256,12 +2256,12 @@
               "coefficient": -0.232251
             },
             {
-              "exponent": 0.703921,
-              "coefficient": 0.00018
-            },
-            {
               "exponent": 0.086162,
               "coefficient": 1.093671
+            },
+            {
+              "exponent": 0.703921,
+              "coefficient": 0.00018
             },
             {
               "exponent": 0.086162,
@@ -2351,20 +2351,20 @@
               "coefficient": -0.110296
             },
             {
+              "exponent": 28.56915,
+              "coefficient": 0.09819
+            },
+            {
+              "exponent": 8.660501,
+              "coefficient": 0.957659
+            },
+            {
               "exponent": 131.7673,
               "coefficient": 0.140454
             },
             {
               "exponent": 28.56915,
-              "coefficient": 0.09819
-            },
-            {
-              "exponent": 28.56915,
               "coefficient": 0.557802
-            },
-            {
-              "exponent": 8.660501,
-              "coefficient": 0.957659
             },
             {
               "exponent": 8.660501,
@@ -2384,20 +2384,20 @@
               "coefficient": -0.291714
             },
             {
+              "exponent": 2.768178,
+              "coefficient": 0.343963
+            },
+            {
+              "exponent": 0.887288,
+              "coefficient": 0.845198
+            },
+            {
               "exponent": 8.569081,
               "coefficient": 0.024224
             },
             {
               "exponent": 2.768178,
-              "coefficient": 0.343963
-            },
-            {
-              "exponent": 2.768178,
               "coefficient": 0.46866
-            },
-            {
-              "exponent": 0.887288,
-              "coefficient": 0.845198
             },
             {
               "exponent": 0.887288,
@@ -2417,12 +2417,12 @@
               "coefficient": -0.230004
             },
             {
-              "exponent": 0.767443,
-              "coefficient": 0.000308
-            },
-            {
               "exponent": 0.092025,
               "coefficient": 1.09145
+            },
+            {
+              "exponent": 0.767443,
+              "coefficient": 0.000308
             },
             {
               "exponent": 0.092025,
@@ -2512,20 +2512,20 @@
               "coefficient": -0.110552
             },
             {
+              "exponent": 31.16858,
+              "coefficient": 0.096847
+            },
+            {
+              "exponent": 9.483612,
+              "coefficient": 0.958797
+            },
+            {
               "exponent": 143.4652,
               "coefficient": 0.141101
             },
             {
               "exponent": 31.16858,
-              "coefficient": 0.096847
-            },
-            {
-              "exponent": 31.16858,
               "coefficient": 0.560387
-            },
-            {
-              "exponent": 9.483612,
-              "coefficient": 0.958797
             },
             {
               "exponent": 9.483612,
@@ -2545,20 +2545,20 @@
               "coefficient": -0.292056
             },
             {
+              "exponent": 3.100373,
+              "coefficient": 0.337524
+            },
+            {
+              "exponent": 0.986493,
+              "coefficient": 0.851942
+            },
+            {
               "exponent": 9.464565,
               "coefficient": 0.023762
             },
             {
               "exponent": 3.100373,
-              "coefficient": 0.337524
-            },
-            {
-              "exponent": 3.100373,
               "coefficient": 0.468911
-            },
-            {
-              "exponent": 0.986493,
-              "coefficient": 0.851942
             },
             {
               "exponent": 0.986493,
@@ -2578,12 +2578,12 @@
               "coefficient": -0.227944
             },
             {
-              "exponent": 0.853412,
-              "coefficient": -0.000426
-            },
-            {
               "exponent": 0.098812,
               "coefficient": 1.088287
+            },
+            {
+              "exponent": 0.853412,
+              "coefficient": -0.000426
             },
             {
               "exponent": 0.098812,
@@ -2673,20 +2673,20 @@
               "coefficient": -0.110987
             },
             {
+              "exponent": 33.81561,
+              "coefficient": 0.096767
+            },
+            {
+              "exponent": 10.33323,
+              "coefficient": 0.958992
+            },
+            {
               "exponent": 155.4382,
               "coefficient": 0.142064
             },
             {
               "exponent": 33.81561,
-              "coefficient": 0.096767
-            },
-            {
-              "exponent": 33.81561,
               "coefficient": 0.563444
-            },
-            {
-              "exponent": 10.33323,
-              "coefficient": 0.958992
             },
             {
               "exponent": 10.33323,
@@ -2706,20 +2706,20 @@
               "coefficient": -0.292262
             },
             {
+              "exponent": 3.382714,
+              "coefficient": 0.343251
+            },
+            {
+              "exponent": 1.076954,
+              "coefficient": 0.846963
+            },
+            {
               "exponent": 10.38152,
               "coefficient": 0.026313
             },
             {
               "exponent": 3.382714,
-              "coefficient": 0.343251
-            },
-            {
-              "exponent": 3.382714,
               "coefficient": 0.476917
-            },
-            {
-              "exponent": 1.076954,
-              "coefficient": 0.846963
             },
             {
               "exponent": 1.076954,
@@ -2739,12 +2739,12 @@
               "coefficient": -0.21746
             },
             {
-              "exponent": 0.909015,
-              "coefficient": 0.000228
-            },
-            {
               "exponent": 0.105041,
               "coefficient": 1.084998
+            },
+            {
+              "exponent": 0.909015,
+              "coefficient": 0.000228
             },
             {
               "exponent": 0.105041,
@@ -2834,20 +2834,20 @@
               "coefficient": -0.111115
             },
             {
+              "exponent": 36.65633,
+              "coefficient": 0.095324
+            },
+            {
+              "exponent": 11.23212,
+              "coefficient": 0.960161
+            },
+            {
               "exponent": 168.2896,
               "coefficient": 0.14249
             },
             {
               "exponent": 36.65633,
-              "coefficient": 0.095324
-            },
-            {
-              "exponent": 36.65633,
               "coefficient": 0.565547
-            },
-            {
-              "exponent": 11.23212,
-              "coefficient": 0.960161
             },
             {
               "exponent": 11.23212,
@@ -2867,20 +2867,20 @@
               "coefficient": -0.29206
             },
             {
+              "exponent": 3.738846,
+              "coefficient": 0.337541
+            },
+            {
+              "exponent": 1.182463,
+              "coefficient": 0.852533
+            },
+            {
               "exponent": 11.35877,
               "coefficient": 0.026138
             },
             {
               "exponent": 3.738846,
-              "coefficient": 0.337541
-            },
-            {
-              "exponent": 3.738846,
               "coefficient": 0.476598
-            },
-            {
-              "exponent": 1.182463,
-              "coefficient": 0.852533
             },
             {
               "exponent": 1.182463,
@@ -2900,12 +2900,12 @@
               "coefficient": -0.213687
             },
             {
-              "exponent": 0.988904,
-              "coefficient": 0.000294
-            },
-            {
               "exponent": 0.111025,
               "coefficient": 1.081933
+            },
+            {
+              "exponent": 0.988904,
+              "coefficient": 0.000294
             },
             {
               "exponent": 0.111025,
@@ -2995,20 +2995,20 @@
               "coefficient": -0.11132
             },
             {
+              "exponent": 39.57431,
+              "coefficient": 0.094487
+            },
+            {
+              "exponent": 12.16246,
+              "coefficient": 0.960879
+            },
+            {
               "exponent": 181.496,
               "coefficient": 0.143084
             },
             {
               "exponent": 39.57431,
-              "coefficient": 0.094487
-            },
-            {
-              "exponent": 39.57431,
               "coefficient": 0.567756
-            },
-            {
-              "exponent": 12.16246,
-              "coefficient": 0.960879
             },
             {
               "exponent": 12.16246,
@@ -3028,20 +3028,20 @@
               "coefficient": -0.292223
             },
             {
+              "exponent": 4.049651,
+              "coefficient": 0.342991
+            },
+            {
+              "exponent": 1.279225,
+              "coefficient": 0.847946
+            },
+            {
               "exponent": 12.35111,
               "coefficient": 0.027727
             },
             {
               "exponent": 4.049651,
-              "coefficient": 0.342991
-            },
-            {
-              "exponent": 4.049651,
               "coefficient": 0.483524
-            },
-            {
-              "exponent": 1.279225,
-              "coefficient": 0.847946
             },
             {
               "exponent": 1.279225,
@@ -3061,12 +3061,12 @@
               "coefficient": -0.206508
             },
             {
-              "exponent": 1.049804,
-              "coefficient": 0.000139
-            },
-            {
               "exponent": 0.116933,
               "coefficient": 1.079273
+            },
+            {
+              "exponent": 1.049804,
+              "coefficient": 0.000139
             },
             {
               "exponent": 0.116933,
@@ -3156,20 +3156,20 @@
               "coefficient": -0.111628
             },
             {
+              "exponent": 42.56889,
+              "coefficient": 0.094336
+            },
+            {
+              "exponent": 13.12143,
+              "coefficient": 0.9611
+            },
+            {
               "exponent": 195.0042,
               "coefficient": 0.143806
             },
             {
               "exponent": 42.56889,
-              "coefficient": 0.094336
-            },
-            {
-              "exponent": 42.56889,
               "coefficient": 0.570002
-            },
-            {
-              "exponent": 13.12143,
-              "coefficient": 0.9611
             },
             {
               "exponent": 13.12143,
@@ -3189,20 +3189,20 @@
               "coefficient": -0.291781
             },
             {
+              "exponent": 4.399906,
+              "coefficient": 0.342614
+            },
+            {
+              "exponent": 1.385148,
+              "coefficient": 0.848284
+            },
+            {
               "exponent": 13.40231,
               "coefficient": 0.028705
             },
             {
               "exponent": 4.399906,
-              "coefficient": 0.342614
-            },
-            {
-              "exponent": 4.399906,
               "coefficient": 0.486252
-            },
-            {
-              "exponent": 1.385148,
-              "coefficient": 0.848284
             },
             {
               "exponent": 1.385148,
@@ -3222,12 +3222,12 @@
               "coefficient": -0.202371
             },
             {
-              "exponent": 1.121558,
-              "coefficient": 0.000344
-            },
-            {
               "exponent": 0.122944,
               "coefficient": 1.077035
+            },
+            {
+              "exponent": 1.121558,
+              "coefficient": 0.000344
             },
             {
               "exponent": 0.122944,
@@ -3317,20 +3317,20 @@
               "coefficient": -0.111516
             },
             {
+              "exponent": 45.69171,
+              "coefficient": 0.092696
+            },
+            {
+              "exponent": 14.13297,
+              "coefficient": 0.962287
+            },
+            {
               "exponent": 209.5834,
               "coefficient": 0.144266
             },
             {
               "exponent": 45.69171,
-              "coefficient": 0.092696
-            },
-            {
-              "exponent": 45.69171,
               "coefficient": 0.573178
-            },
-            {
-              "exponent": 14.13297,
-              "coefficient": 0.962287
             },
             {
               "exponent": 14.13297,
@@ -3350,20 +3350,20 @@
               "coefficient": 0.291029
             },
             {
+              "exponent": 4.860842,
+              "coefficient": -0.323188
+            },
+            {
+              "exponent": 1.549111,
+              "coefficient": -0.864391
+            },
+            {
               "exponent": 14.59954,
               "coefficient": 0.026562
             },
             {
               "exponent": 4.860842,
-              "coefficient": -0.323188
-            },
-            {
-              "exponent": 4.860842,
               "coefficient": 0.483314
-            },
-            {
-              "exponent": 1.549111,
-              "coefficient": -0.864391
             },
             {
               "exponent": 1.549111,
@@ -3383,12 +3383,12 @@
               "coefficient": -0.285131
             },
             {
-              "exponent": 1.267943,
-              "coefficient": 0.030183
-            },
-            {
               "exponent": 0.188399,
               "coefficient": 1.128022
+            },
+            {
+              "exponent": 1.267943,
+              "coefficient": 0.030183
             },
             {
               "exponent": 0.188399,
@@ -3470,20 +3470,20 @@
               "coefficient": -0.111515
             },
             {
+              "exponent": 48.95543,
+              "coefficient": 0.0912
+            },
+            {
+              "exponent": 15.1837,
+              "coefficient": 0.963449
+            },
+            {
               "exponent": 224.436,
               "coefficient": 0.14464
             },
             {
               "exponent": 48.95543,
-              "coefficient": 0.0912
-            },
-            {
-              "exponent": 48.95543,
               "coefficient": 0.57538
-            },
-            {
-              "exponent": 15.1837,
-              "coefficient": 0.963449
             },
             {
               "exponent": 15.1837,
@@ -3503,20 +3503,20 @@
               "coefficient": -0.289565
             },
             {
+              "exponent": 5.441437,
+              "coefficient": 0.293883
+            },
+            {
+              "exponent": 1.742603,
+              "coefficient": 0.889199
+            },
+            {
               "exponent": 15.91257,
               "coefficient": 0.022973
             },
             {
               "exponent": 5.441437,
-              "coefficient": 0.293883
-            },
-            {
-              "exponent": 5.441437,
               "coefficient": 0.473245
-            },
-            {
-              "exponent": 1.742603,
-              "coefficient": 0.889199
             },
             {
               "exponent": 1.742603,
@@ -3536,12 +3536,12 @@
               "coefficient": -0.396734
             },
             {
-              "exponent": 1.466538,
-              "coefficient": 0.027893
-            },
-            {
               "exponent": 0.263093,
               "coefficient": 1.19067
+            },
+            {
+              "exponent": 1.466538,
+              "coefficient": 0.027893
             },
             {
               "exponent": 0.263093,
@@ -3623,20 +3623,20 @@
               "coefficient": -0.112838
             },
             {
+              "exponent": 54.25662,
+              "coefficient": 0.087227
+            },
+            {
+              "exponent": 16.32803,
+              "coefficient": 0.968188
+            },
+            {
               "exponent": 237.7783,
               "coefficient": 0.14968
             },
             {
               "exponent": 54.25662,
-              "coefficient": 0.087227
-            },
-            {
-              "exponent": 54.25662,
               "coefficient": 0.562322
-            },
-            {
-              "exponent": 16.32803,
-              "coefficient": 0.968188
             },
             {
               "exponent": 16.32803,
@@ -3656,20 +3656,20 @@
               "coefficient": -0.291454
             },
             {
+              "exponent": 5.805144,
+              "coefficient": 0.296962
+            },
+            {
+              "exponent": 1.902084,
+              "coefficient": 0.886579
+            },
+            {
               "exponent": 17.10185,
               "coefficient": 0.025686
             },
             {
               "exponent": 5.805144,
-              "coefficient": 0.296962
-            },
-            {
-              "exponent": 5.805144,
               "coefficient": 0.483397
-            },
-            {
-              "exponent": 1.902084,
-              "coefficient": 0.886579
             },
             {
               "exponent": 1.902084,
@@ -3689,12 +3689,12 @@
               "coefficient": -0.505761
             },
             {
-              "exponent": 1.675404,
-              "coefficient": 0.025282
-            },
-            {
               "exponent": 0.341656,
               "coefficient": 1.251764
+            },
+            {
+              "exponent": 1.675404,
+              "coefficient": 0.025282
             },
             {
               "exponent": 0.341656,
@@ -3776,20 +3776,20 @@
               "coefficient": -0.111908
             },
             {
+              "exponent": 55.57654,
+              "coefficient": 0.090999
+            },
+            {
+              "exponent": 17.35661,
+              "coefficient": 0.963668
+            },
+            {
               "exponent": 255.0164,
               "coefficient": 0.146149
             },
             {
               "exponent": 55.57654,
-              "coefficient": 0.090999
-            },
-            {
-              "exponent": 55.57654,
               "coefficient": 0.581371
-            },
-            {
-              "exponent": 17.35661,
-              "coefficient": 0.963668
             },
             {
               "exponent": 17.35661,
@@ -3809,20 +3809,20 @@
               "coefficient": -0.291793
             },
             {
+              "exponent": 6.328759,
+              "coefficient": 0.284621
+            },
+            {
+              "exponent": 2.096758,
+              "coefficient": 0.897305
+            },
+            {
               "exponent": 18.44568,
               "coefficient": 0.024421
             },
             {
               "exponent": 6.328759,
-              "coefficient": 0.284621
-            },
-            {
-              "exponent": 6.328759,
               "coefficient": 0.483365
-            },
-            {
-              "exponent": 2.096758,
-              "coefficient": 0.897305
             },
             {
               "exponent": 2.096758,
@@ -3842,12 +3842,12 @@
               "coefficient": -0.567764
             },
             {
-              "exponent": 1.872633,
-              "coefficient": 0.028255
-            },
-            {
               "exponent": 0.417474,
               "coefficient": 1.294127
+            },
+            {
+              "exponent": 1.872633,
+              "coefficient": 0.028255
             },
             {
               "exponent": 0.417474,
@@ -3929,20 +3929,20 @@
               "coefficient": -0.112149
             },
             {
+              "exponent": 58.25357,
+              "coefficient": 0.093145
+            },
+            {
+              "exponent": 18.46933,
+              "coefficient": 0.961679
+            },
+            {
               "exponent": 270.6015,
               "coefficient": 0.147751
             },
             {
               "exponent": 58.25357,
-              "coefficient": 0.093145
-            },
-            {
-              "exponent": 58.25357,
               "coefficient": 0.601056
-            },
-            {
-              "exponent": 18.46933,
-              "coefficient": 0.961679
             },
             {
               "exponent": 18.46933,
@@ -3962,20 +3962,20 @@
               "coefficient": -0.29387
             },
             {
+              "exponent": 6.821752,
+              "coefficient": 0.280266
+            },
+            {
+              "exponent": 2.291629,
+              "coefficient": 0.902036
+            },
+            {
               "exponent": 19.76142,
               "coefficient": 0.025007
             },
             {
               "exponent": 6.821752,
-              "coefficient": 0.280266
-            },
-            {
-              "exponent": 6.821752,
               "coefficient": 0.48661
-            },
-            {
-              "exponent": 2.291629,
-              "coefficient": 0.902036
             },
             {
               "exponent": 2.291629,
@@ -3995,12 +3995,12 @@
               "coefficient": -0.651803
             },
             {
-              "exponent": 2.131206,
-              "coefficient": 0.028708
-            },
-            {
               "exponent": 0.499354,
               "coefficient": 1.336012
+            },
+            {
+              "exponent": 2.131206,
+              "coefficient": 0.028708
             },
             {
               "exponent": 0.499354,
@@ -4082,20 +4082,20 @@
               "coefficient": -0.112061
             },
             {
+              "exponent": 62.62009,
+              "coefficient": 0.090139
+            },
+            {
+              "exponent": 19.69174,
+              "coefficient": 0.96433
+            },
+            {
               "exponent": 287.6446,
               "coefficient": 0.147528
             },
             {
               "exponent": 62.62009,
-              "coefficient": 0.090139
-            },
-            {
-              "exponent": 62.62009,
               "coefficient": 0.586892
-            },
-            {
-              "exponent": 19.69174,
-              "coefficient": 0.96433
             },
             {
               "exponent": 19.69174,
@@ -4115,20 +4115,20 @@
               "coefficient": -0.295817
             },
             {
+              "exponent": 7.303286,
+              "coefficient": 0.279217
+            },
+            {
+              "exponent": 2.48885,
+              "coefficient": 0.90373
+            },
+            {
               "exponent": 21.12321,
               "coefficient": 0.02607
             },
             {
               "exponent": 7.303286,
-              "coefficient": 0.279217
-            },
-            {
-              "exponent": 7.303286,
               "coefficient": 0.49225
-            },
-            {
-              "exponent": 2.48885,
-              "coefficient": 0.90373
             },
             {
               "exponent": 2.48885,
@@ -4148,12 +4148,12 @@
               "coefficient": -0.720245
             },
             {
-              "exponent": 2.361374,
-              "coefficient": 0.028775
-            },
-            {
               "exponent": 0.586016,
               "coefficient": 1.376846
+            },
+            {
+              "exponent": 2.361374,
+              "coefficient": 0.028775
             },
             {
               "exponent": 0.586016,
@@ -4235,20 +4235,20 @@
               "coefficient": -0.11233
             },
             {
+              "exponent": 66.26058,
+              "coefficient": 0.090751
+            },
+            {
+              "exponent": 20.91945,
+              "coefficient": 0.963941
+            },
+            {
               "exponent": 304.1283,
               "coefficient": 0.148441
             },
             {
               "exponent": 66.26058,
-              "coefficient": 0.090751
-            },
-            {
-              "exponent": 66.26058,
               "coefficient": 0.589125
-            },
-            {
-              "exponent": 20.91945,
-              "coefficient": 0.963941
             },
             {
               "exponent": 20.91945,
@@ -4268,20 +4268,20 @@
               "coefficient": -0.300485
             },
             {
+              "exponent": 7.877468,
+              "coefficient": 0.278357
+            },
+            {
+              "exponent": 2.705271,
+              "coefficient": 0.90761
+            },
+            {
               "exponent": 22.46533,
               "coefficient": 0.024454
             },
             {
               "exponent": 7.877468,
-              "coefficient": 0.278357
-            },
-            {
-              "exponent": 7.877468,
               "coefficient": 0.494454
-            },
-            {
-              "exponent": 2.705271,
-              "coefficient": 0.90761
             },
             {
               "exponent": 2.705271,
@@ -4301,20 +4301,20 @@
               "coefficient": -0.331162
             },
             {
+              "exponent": 0.723056,
+              "coefficient": 0.509699
+            },
+            {
+              "exponent": 0.259838,
+              "coefficient": 0.698246
+            },
+            {
               "exponent": 2.692116,
               "coefficient": 0.011901
             },
             {
               "exponent": 0.723056,
-              "coefficient": 0.509699
-            },
-            {
-              "exponent": 0.723056,
               "coefficient": 0.495173
-            },
-            {
-              "exponent": 0.259838,
-              "coefficient": 0.698246
             },
             {
               "exponent": 0.259838,
@@ -4334,12 +4334,12 @@
               "coefficient": -0.271193
             },
             {
-              "exponent": 0.189714,
-              "coefficient": 0.000308
-            },
-            {
               "exponent": 0.033997,
               "coefficient": 1.14155
+            },
+            {
+              "exponent": 0.189714,
+              "coefficient": 0.000308
             },
             {
               "exponent": 0.033997,
@@ -4421,20 +4421,20 @@
               "coefficient": -0.112235
             },
             {
+              "exponent": 70.09046,
+              "coefficient": 0.089544
+            },
+            {
+              "exponent": 22.17641,
+              "coefficient": 0.964813
+            },
+            {
               "exponent": 322.1246,
               "coefficient": 0.148837
             },
             {
               "exponent": 70.09046,
-              "coefficient": 0.089544
-            },
-            {
-              "exponent": 70.09046,
               "coefficient": 0.591947
-            },
-            {
-              "exponent": 22.17641,
-              "coefficient": 0.964813
             },
             {
               "exponent": 22.17641,
@@ -4454,20 +4454,20 @@
               "coefficient": -0.302472
             },
             {
+              "exponent": 8.475114,
+              "coefficient": 0.270084
+            },
+            {
+              "exponent": 2.942934,
+              "coefficient": 0.91592
+            },
+            {
               "exponent": 23.92763,
               "coefficient": 0.024837
             },
             {
               "exponent": 8.475114,
-              "coefficient": 0.270084
-            },
-            {
-              "exponent": 8.475114,
               "coefficient": 0.493478
-            },
-            {
-              "exponent": 2.942934,
-              "coefficient": 0.91592
             },
             {
               "exponent": 2.942934,
@@ -4487,20 +4487,20 @@
               "coefficient": -0.351985
             },
             {
+              "exponent": 0.852356,
+              "coefficient": 0.497255
+            },
+            {
+              "exponent": 0.321537,
+              "coefficient": 0.72386
+            },
+            {
               "exponent": 2.940966,
               "coefficient": 0.009723
             },
             {
               "exponent": 0.852356,
-              "coefficient": 0.497255
-            },
-            {
-              "exponent": 0.852356,
               "coefficient": 0.498322
-            },
-            {
-              "exponent": 0.321537,
-              "coefficient": 0.72386
             },
             {
               "exponent": 0.321537,
@@ -4520,12 +4520,12 @@
               "coefficient": -0.285147
             },
             {
-              "exponent": 0.348042,
-              "coefficient": 0.000308
-            },
-            {
               "exponent": 0.048177,
               "coefficient": 1.120939
+            },
+            {
+              "exponent": 0.348042,
+              "coefficient": 0.000308
             },
             {
               "exponent": 0.048177,
@@ -4607,20 +4607,20 @@
               "coefficient": -0.1119
             },
             {
+              "exponent": 74.20986,
+              "coefficient": 0.086805
+            },
+            {
+              "exponent": 23.51352,
+              "coefficient": 0.966785
+            },
+            {
               "exponent": 341.854,
               "coefficient": 0.148572
             },
             {
               "exponent": 74.20986,
-              "coefficient": 0.086805
-            },
-            {
-              "exponent": 74.20986,
               "coefficient": 0.594307
-            },
-            {
-              "exponent": 23.51352,
-              "coefficient": 0.966785
             },
             {
               "exponent": 23.51352,
@@ -4640,20 +4640,20 @@
               "coefficient": -1.477873
             },
             {
+              "exponent": 16.45405,
+              "coefficient": 1.347259
+            },
+            {
+              "exponent": 3.4845,
+              "coefficient": 1.006231
+            },
+            {
               "exponent": 18.8626,
               "coefficient": -0.704141
             },
             {
               "exponent": 16.45405,
-              "coefficient": 1.347259
-            },
-            {
-              "exponent": 16.45405,
               "coefficient": 1.057862
-            },
-            {
-              "exponent": 3.4845,
-              "coefficient": 1.006231
             },
             {
               "exponent": 3.4845,
@@ -4673,20 +4673,20 @@
               "coefficient": -0.369958
             },
             {
+              "exponent": 1.050705,
+              "coefficient": 0.430864
+            },
+            {
+              "exponent": 0.392592,
+              "coefficient": 0.802087
+            },
+            {
               "exponent": 3.221733,
               "coefficient": 0.002494
             },
             {
               "exponent": 1.050705,
-              "coefficient": 0.430864
-            },
-            {
-              "exponent": 1.050705,
               "coefficient": 0.453762
-            },
-            {
-              "exponent": 0.392592,
-              "coefficient": 0.802087
             },
             {
               "exponent": 0.392592,
@@ -4706,12 +4706,12 @@
               "coefficient": -0.346458
             },
             {
-              "exponent": 0.432764,
-              "coefficient": -0.001337
-            },
-            {
               "exponent": 0.057012,
               "coefficient": 1.132777
+            },
+            {
+              "exponent": 0.432764,
+              "coefficient": -0.001337
             },
             {
               "exponent": 0.057012,
@@ -4821,20 +4821,20 @@
               "coefficient": -0.111907
             },
             {
+              "exponent": 78.30495,
+              "coefficient": 0.08584
+            },
+            {
+              "exponent": 24.84523,
+              "coefficient": 0.967513
+            },
+            {
               "exponent": 361.0212,
               "coefficient": 0.148762
             },
             {
               "exponent": 78.30495,
-              "coefficient": 0.08584
-            },
-            {
-              "exponent": 78.30495,
               "coefficient": 0.596569
-            },
-            {
-              "exponent": 24.84523,
-              "coefficient": 0.967513
             },
             {
               "exponent": 24.84523,
@@ -4854,20 +4854,20 @@
               "coefficient": -1.544349
             },
             {
+              "exponent": 17.57415,
+              "coefficient": 1.409596
+            },
+            {
+              "exponent": 3.742985,
+              "coefficient": 1.009349
+            },
+            {
               "exponent": 20.00628,
               "coefficient": -0.756848
             },
             {
               "exponent": 17.57415,
-              "coefficient": 1.409596
-            },
-            {
-              "exponent": 17.57415,
               "coefficient": 1.11209
-            },
-            {
-              "exponent": 3.742985,
-              "coefficient": 1.009349
             },
             {
               "exponent": 3.742985,
@@ -4887,20 +4887,20 @@
               "coefficient": -0.379387
             },
             {
+              "exponent": 1.178992,
+              "coefficient": 0.423285
+            },
+            {
+              "exponent": 0.444697,
+              "coefficient": 0.814068
+            },
+            {
               "exponent": 3.554788,
               "coefficient": 0.002599
             },
             {
               "exponent": 1.178992,
-              "coefficient": 0.423285
-            },
-            {
-              "exponent": 1.178992,
               "coefficient": 0.459976
-            },
-            {
-              "exponent": 0.444697,
-              "coefficient": 0.814068
             },
             {
               "exponent": 0.444697,
@@ -4920,12 +4920,12 @@
               "coefficient": -0.329512
             },
             {
-              "exponent": 0.505049,
-              "coefficient": -0.001249
-            },
-            {
               "exponent": 0.062116,
               "coefficient": 1.120709
+            },
+            {
+              "exponent": 0.505049,
+              "coefficient": -0.001249
             },
             {
               "exponent": 0.062116,
@@ -5035,20 +5035,20 @@
               "coefficient": -0.112106
             },
             {
+              "exponent": 82.33589,
+              "coefficient": 0.086503
+            },
+            {
+              "exponent": 26.22248,
+              "coefficient": 0.967057
+            },
+            {
               "exponent": 379.4729,
               "coefficient": 0.149667
             },
             {
               "exponent": 82.33589,
-              "coefficient": 0.086503
-            },
-            {
-              "exponent": 82.33589,
               "coefficient": 0.598718
-            },
-            {
-              "exponent": 26.22248,
-              "coefficient": 0.967057
             },
             {
               "exponent": 26.22248,
@@ -5068,20 +5068,20 @@
               "coefficient": -1.555131
             },
             {
+              "exponent": 18.58978,
+              "coefficient": 1.417939
+            },
+            {
+              "exponent": 4.009981,
+              "coefficient": 1.01062
+            },
+            {
               "exponent": 21.16294,
               "coefficient": -0.755462
             },
             {
               "exponent": 18.58978,
-              "coefficient": 1.417939
-            },
-            {
-              "exponent": 18.58978,
               "coefficient": 1.113966
-            },
-            {
-              "exponent": 4.009981,
-              "coefficient": 1.01062
             },
             {
               "exponent": 4.009981,
@@ -5101,20 +5101,20 @@
               "coefficient": -0.389104
             },
             {
+              "exponent": 1.303325,
+              "coefficient": 0.43497
+            },
+            {
+              "exponent": 0.493431,
+              "coefficient": 0.81159
+            },
+            {
               "exponent": 3.836375,
               "coefficient": 0.00329
             },
             {
               "exponent": 1.303325,
-              "coefficient": 0.43497
-            },
-            {
-              "exponent": 1.303325,
               "coefficient": 0.471645
-            },
-            {
-              "exponent": 0.493431,
-              "coefficient": 0.81159
             },
             {
               "exponent": 0.493431,
@@ -5134,12 +5134,12 @@
               "coefficient": -0.315609
             },
             {
-              "exponent": 0.572373,
-              "coefficient": -0.001133
-            },
-            {
               "exponent": 0.068203,
               "coefficient": 1.114047
+            },
+            {
+              "exponent": 0.572373,
+              "coefficient": -0.001133
             },
             {
               "exponent": 0.068203,
@@ -5249,20 +5249,20 @@
               "coefficient": -0.112144
             },
             {
+              "exponent": 86.59356,
+              "coefficient": 0.086011
+            },
+            {
+              "exponent": 27.63904,
+              "coefficient": 0.967433
+            },
+            {
               "exponent": 399.3139,
               "coefficient": 0.150066
             },
             {
               "exponent": 86.59356,
-              "coefficient": 0.086011
-            },
-            {
-              "exponent": 86.59356,
               "coefficient": 0.600769
-            },
-            {
-              "exponent": 27.63904,
-              "coefficient": 0.967433
             },
             {
               "exponent": 27.63904,
@@ -5282,20 +5282,20 @@
               "coefficient": -1.422306
             },
             {
+              "exponent": 19.49171,
+              "coefficient": 1.284185
+            },
+            {
+              "exponent": 4.27818,
+              "coefficient": 1.010866
+            },
+            {
               "exponent": 22.50292,
               "coefficient": -0.668066
             },
             {
               "exponent": 19.49171,
-              "coefficient": 1.284185
-            },
-            {
-              "exponent": 19.49171,
               "coefficient": 1.030346
-            },
-            {
-              "exponent": 4.27818,
-              "coefficient": 1.010866
             },
             {
               "exponent": 4.27818,
@@ -5315,20 +5315,20 @@
               "coefficient": -0.396423
             },
             {
+              "exponent": 1.435305,
+              "coefficient": 0.437079
+            },
+            {
+              "exponent": 0.543782,
+              "coefficient": 0.814846
+            },
+            {
               "exponent": 4.163021,
               "coefficient": 0.002963
             },
             {
               "exponent": 1.435305,
-              "coefficient": 0.437079
-            },
-            {
-              "exponent": 1.435305,
               "coefficient": 0.479147
-            },
-            {
-              "exponent": 0.543782,
-              "coefficient": 0.814846
             },
             {
               "exponent": 0.543782,
@@ -5348,12 +5348,12 @@
               "coefficient": -0.303362
             },
             {
-              "exponent": 0.631801,
-              "coefficient": -0.001079
-            },
-            {
               "exponent": 0.073258,
               "coefficient": 1.108413
+            },
+            {
+              "exponent": 0.631801,
+              "coefficient": -0.001079
             },
             {
               "exponent": 0.073258,
@@ -5463,20 +5463,20 @@
               "coefficient": -0.112403
             },
             {
+              "exponent": 91.25078,
+              "coefficient": 0.085318
+            },
+            {
+              "exponent": 29.11212,
+              "coefficient": 0.968177
+            },
+            {
               "exponent": 418.8175,
               "coefficient": 0.150072
             },
             {
               "exponent": 91.25078,
-              "coefficient": 0.085318
-            },
-            {
-              "exponent": 91.25078,
               "coefficient": 0.600057
-            },
-            {
-              "exponent": 29.11212,
-              "coefficient": 0.968177
             },
             {
               "exponent": 29.11212,
@@ -5496,20 +5496,20 @@
               "coefficient": -1.380446
             },
             {
+              "exponent": 23.2677,
+              "coefficient": 1.1979
+            },
+            {
+              "exponent": 4.707083,
+              "coefficient": 1.052649
+            },
+            {
               "exponent": 25.91064,
               "coefficient": -1.655271
             },
             {
               "exponent": 23.2677,
-              "coefficient": 1.1979
-            },
-            {
-              "exponent": 23.2677,
               "coefficient": 1.98602
-            },
-            {
-              "exponent": 4.707083,
-              "coefficient": 1.052649
             },
             {
               "exponent": 4.707083,
@@ -5529,20 +5529,20 @@
               "coefficient": -0.404114
             },
             {
+              "exponent": 1.595639,
+              "coefficient": 0.439838
+            },
+            {
+              "exponent": 0.59556,
+              "coefficient": 0.821936
+            },
+            {
               "exponent": 4.441138,
               "coefficient": 0.012291
             },
             {
               "exponent": 1.595639,
-              "coefficient": 0.439838
-            },
-            {
-              "exponent": 1.595639,
               "coefficient": 0.463207
-            },
-            {
-              "exponent": 0.59556,
-              "coefficient": 0.821936
             },
             {
               "exponent": 0.59556,
@@ -5562,12 +5562,12 @@
               "coefficient": -0.270003
             },
             {
-              "exponent": 0.673881,
-              "coefficient": -0.00092
-            },
-            {
               "exponent": 0.077241,
               "coefficient": 1.09915
+            },
+            {
+              "exponent": 0.673881,
+              "coefficient": -0.00092
             },
             {
               "exponent": 0.077241,
@@ -5677,20 +5677,20 @@
               "coefficient": -0.112391
             },
             {
+              "exponent": 95.76273,
+              "coefficient": 0.084694
+            },
+            {
+              "exponent": 30.60566,
+              "coefficient": 0.968638
+            },
+            {
               "exponent": 439.8665,
               "coefficient": 0.150379
             },
             {
               "exponent": 95.76273,
-              "coefficient": 0.084694
-            },
-            {
-              "exponent": 95.76273,
               "coefficient": 0.601929
-            },
-            {
-              "exponent": 30.60566,
-              "coefficient": 0.968638
             },
             {
               "exponent": 30.60566,
@@ -5710,20 +5710,20 @@
               "coefficient": -1.395553
             },
             {
+              "exponent": 24.51082,
+              "coefficient": 1.210852
+            },
+            {
+              "exponent": 5.008946,
+              "coefficient": 1.054045
+            },
+            {
               "exponent": 27.27737,
               "coefficient": -1.668618
             },
             {
               "exponent": 24.51082,
-              "coefficient": 1.210852
-            },
-            {
-              "exponent": 24.51082,
               "coefficient": 2.00279
-            },
-            {
-              "exponent": 5.008946,
-              "coefficient": 1.054045
             },
             {
               "exponent": 5.008946,
@@ -5743,20 +5743,20 @@
               "coefficient": -0.410363
             },
             {
+              "exponent": 1.734531,
+              "coefficient": 0.448003
+            },
+            {
+              "exponent": 0.646636,
+              "coefficient": 0.819808
+            },
+            {
               "exponent": 4.765812,
               "coefficient": 0.011274
             },
             {
               "exponent": 1.734531,
-              "coefficient": 0.448003
-            },
-            {
-              "exponent": 1.734531,
               "coefficient": 0.472703
-            },
-            {
-              "exponent": 0.646636,
-              "coefficient": 0.819808
             },
             {
               "exponent": 0.646636,
@@ -5776,12 +5776,12 @@
               "coefficient": -0.263966
             },
             {
-              "exponent": 0.740662,
-              "coefficient": -0.000762
-            },
-            {
               "exponent": 0.082171,
               "coefficient": 1.094857
+            },
+            {
+              "exponent": 0.740662,
+              "coefficient": -0.000762
             },
             {
               "exponent": 0.082171,
@@ -5891,20 +5891,20 @@
               "coefficient": -0.112446
             },
             {
+              "exponent": 100.3289,
+              "coefficient": 0.084381
+            },
+            {
+              "exponent": 32.13971,
+              "coefficient": 0.968902
+            },
+            {
               "exponent": 460.7593,
               "coefficient": 0.150858
             },
             {
               "exponent": 100.3289,
-              "coefficient": 0.084381
-            },
-            {
-              "exponent": 100.3289,
               "coefficient": 0.603514
-            },
-            {
-              "exponent": 32.13971,
-              "coefficient": 0.968902
             },
             {
               "exponent": 32.13971,
@@ -5924,20 +5924,20 @@
               "coefficient": -1.404091
             },
             {
+              "exponent": 25.91768,
+              "coefficient": 1.216169
+            },
+            {
+              "exponent": 5.32064,
+              "coefficient": 1.056555
+            },
+            {
               "exponent": 28.79329,
               "coefficient": -1.712218
             },
             {
               "exponent": 25.91768,
-              "coefficient": 1.216169
-            },
-            {
-              "exponent": 25.91768,
               "coefficient": 2.047603
-            },
-            {
-              "exponent": 5.32064,
-              "coefficient": 1.056555
             },
             {
               "exponent": 5.32064,
@@ -5957,20 +5957,20 @@
               "coefficient": -0.412647
             },
             {
+              "exponent": 1.875414,
+              "coefficient": 0.451885
+            },
+            {
+              "exponent": 0.699558,
+              "coefficient": 0.818899
+            },
+            {
               "exponent": 5.109748,
               "coefficient": 0.009374
             },
             {
               "exponent": 1.875414,
-              "coefficient": 0.451885
-            },
-            {
-              "exponent": 1.875414,
               "coefficient": 0.481554
-            },
-            {
-              "exponent": 0.699558,
-              "coefficient": 0.818899
             },
             {
               "exponent": 0.699558,
@@ -5990,12 +5990,12 @@
               "coefficient": -0.255348
             },
             {
-              "exponent": 0.800571,
-              "coefficient": -0.000776
-            },
-            {
               "exponent": 0.087321,
               "coefficient": 1.091308
+            },
+            {
+              "exponent": 0.800571,
+              "coefficient": -0.000776
             },
             {
               "exponent": 0.087321,
@@ -6105,20 +6105,20 @@
               "coefficient": -0.112679
             },
             {
+              "exponent": 105.059,
+              "coefficient": 0.084612
+            },
+            {
+              "exponent": 33.68145,
+              "coefficient": 0.968787
+            },
+            {
               "exponent": 482.4783,
               "coefficient": 0.151079
             },
             {
               "exponent": 105.059,
-              "coefficient": 0.084612
-            },
-            {
-              "exponent": 105.059,
               "coefficient": 0.605092
-            },
-            {
-              "exponent": 33.68145,
-              "coefficient": 0.968787
             },
             {
               "exponent": 33.68145,
@@ -6138,20 +6138,20 @@
               "coefficient": -1.418547
             },
             {
+              "exponent": 27.16642,
+              "coefficient": 1.229444
+            },
+            {
+              "exponent": 5.635934,
+              "coefficient": 1.057083
+            },
+            {
               "exponent": 30.18654,
               "coefficient": -1.709817
             },
             {
               "exponent": 27.16642,
-              "coefficient": 1.229444
-            },
-            {
-              "exponent": 27.16642,
               "coefficient": 2.049308
-            },
-            {
-              "exponent": 5.635934,
-              "coefficient": 1.057083
             },
             {
               "exponent": 5.635934,
@@ -6171,20 +6171,20 @@
               "coefficient": -0.417261
             },
             {
+              "exponent": 1.997604,
+              "coefficient": 0.470588
+            },
+            {
+              "exponent": 0.74393,
+              "coefficient": 0.804636
+            },
+            {
               "exponent": 5.475374,
               "coefficient": 0.011584
             },
             {
               "exponent": 1.997604,
-              "coefficient": 0.470588
-            },
-            {
-              "exponent": 1.997604,
               "coefficient": 0.497455
-            },
-            {
-              "exponent": 0.74393,
-              "coefficient": 0.804636
             },
             {
               "exponent": 0.74393,
@@ -6204,12 +6204,12 @@
               "coefficient": -0.278432
             },
             {
-              "exponent": 0.890163,
-              "coefficient": -0.001272
-            },
-            {
               "exponent": 0.092821,
               "coefficient": 1.093028
+            },
+            {
+              "exponent": 0.890163,
+              "coefficient": -0.001272
             },
             {
               "exponent": 0.092821,
@@ -6319,20 +6319,20 @@
               "coefficient": -0.112658
             },
             {
+              "exponent": 109.8718,
+              "coefficient": 0.084028
+            },
+            {
+              "exponent": 35.29513,
+              "coefficient": 0.969234
+            },
+            {
               "exponent": 504.6162,
               "coefficient": 0.15148
             },
             {
               "exponent": 109.8718,
-              "coefficient": 0.084028
-            },
-            {
-              "exponent": 109.8718,
               "coefficient": 0.606514
-            },
-            {
-              "exponent": 35.29513,
-              "coefficient": 0.969234
             },
             {
               "exponent": 35.29513,
@@ -6352,20 +6352,20 @@
               "coefficient": -1.422028
             },
             {
+              "exponent": 28.34397,
+              "coefficient": 1.234098
+            },
+            {
+              "exponent": 5.945127,
+              "coefficient": 1.055683
+            },
+            {
               "exponent": 31.56877,
               "coefficient": -1.673366
             },
             {
               "exponent": 28.34397,
-              "coefficient": 1.234098
-            },
-            {
-              "exponent": 28.34397,
               "coefficient": 2.018976
-            },
-            {
-              "exponent": 5.945127,
-              "coefficient": 1.055683
             },
             {
               "exponent": 5.945127,
@@ -6385,20 +6385,20 @@
               "coefficient": -0.419617
             },
             {
+              "exponent": 2.127256,
+              "coefficient": 0.48435
+            },
+            {
+              "exponent": 0.793551,
+              "coefficient": 0.795203
+            },
+            {
               "exponent": 5.800256,
               "coefficient": 0.014304
             },
             {
               "exponent": 2.127256,
-              "coefficient": 0.48435
-            },
-            {
-              "exponent": 2.127256,
               "coefficient": 0.507194
-            },
-            {
-              "exponent": 0.793551,
-              "coefficient": 0.795203
             },
             {
               "exponent": 0.793551,
@@ -6418,12 +6418,12 @@
               "coefficient": -0.2523
             },
             {
-              "exponent": 0.928544,
-              "coefficient": -0.001481
-            },
-            {
               "exponent": 0.097255,
               "coefficient": 1.087392
+            },
+            {
+              "exponent": 0.928544,
+              "coefficient": -0.001481
             },
             {
               "exponent": 0.097255,
@@ -6533,20 +6533,20 @@
               "coefficient": -0.112592
             },
             {
+              "exponent": 114.8329,
+              "coefficient": 0.08327
+            },
+            {
+              "exponent": 36.95829,
+              "coefficient": 0.969798
+            },
+            {
               "exponent": 527.6004,
               "coefficient": 0.151805
             },
             {
               "exponent": 114.8329,
-              "coefficient": 0.08327
-            },
-            {
-              "exponent": 114.8329,
               "coefficient": 0.60776
-            },
-            {
-              "exponent": 36.95829,
-              "coefficient": 0.969798
             },
             {
               "exponent": 36.95829,
@@ -6566,20 +6566,20 @@
               "coefficient": -1.406471
             },
             {
+              "exponent": 29.54543,
+              "coefficient": 1.218156
+            },
+            {
+              "exponent": 6.278508,
+              "coefficient": 1.05552
+            },
+            {
               "exponent": 33.01548,
               "coefficient": -1.609024
             },
             {
               "exponent": 29.54543,
-              "coefficient": 1.218156
-            },
-            {
-              "exponent": 29.54543,
               "coefficient": 1.959568
-            },
-            {
-              "exponent": 6.278508,
-              "coefficient": 1.05552
             },
             {
               "exponent": 6.278508,
@@ -6599,20 +6599,20 @@
               "coefficient": -0.422921
             },
             {
+              "exponent": 2.259746,
+              "coefficient": 0.498771
+            },
+            {
+              "exponent": 0.841426,
+              "coefficient": 0.785076
+            },
+            {
               "exponent": 6.150596,
               "coefficient": 0.014482
             },
             {
               "exponent": 2.259746,
-              "coefficient": 0.498771
-            },
-            {
-              "exponent": 2.259746,
               "coefficient": 0.518661
-            },
-            {
-              "exponent": 0.841426,
-              "coefficient": 0.785076
             },
             {
               "exponent": 0.841426,
@@ -6632,12 +6632,12 @@
               "coefficient": -0.221555
             },
             {
-              "exponent": 0.949069,
-              "coefficient": -0.00154
-            },
-            {
               "exponent": 0.101488,
               "coefficient": 1.080944
+            },
+            {
+              "exponent": 0.949069,
+              "coefficient": -0.00154
             },
             {
               "exponent": 0.101488,
@@ -6747,20 +6747,20 @@
               "coefficient": -0.112709
             },
             {
+              "exponent": 119.7744,
+              "coefficient": 0.083444
+            },
+            {
+              "exponent": 38.66927,
+              "coefficient": 0.969688
+            },
+            {
               "exponent": 550.4423,
               "coefficient": 0.15237
             },
             {
               "exponent": 119.7744,
-              "coefficient": 0.083444
-            },
-            {
-              "exponent": 119.7744,
               "coefficient": 0.609651
-            },
-            {
-              "exponent": 38.66927,
-              "coefficient": 0.969688
             },
             {
               "exponent": 38.66927,
@@ -6780,20 +6780,20 @@
               "coefficient": -0.275895
             },
             {
+              "exponent": 22.49642,
+              "coefficient": 0.059773
+            },
+            {
+              "exponent": 6.697117,
+              "coefficient": 1.082148
+            },
+            {
               "exponent": 47.02931,
               "coefficient": -0.140848
             },
             {
               "exponent": 22.49642,
-              "coefficient": 0.059773
-            },
-            {
-              "exponent": 22.49642,
               "coefficient": 0.529087
-            },
-            {
-              "exponent": 6.697117,
-              "coefficient": 1.082148
             },
             {
               "exponent": 6.697117,
@@ -6813,20 +6813,20 @@
               "coefficient": -0.428483
             },
             {
+              "exponent": 2.502158,
+              "coefficient": 0.463364
+            },
+            {
+              "exponent": 0.942025,
+              "coefficient": 0.821968
+            },
+            {
               "exponent": 6.57236,
               "coefficient": 0.010913
             },
             {
               "exponent": 2.502158,
-              "coefficient": 0.463364
-            },
-            {
-              "exponent": 2.502158,
               "coefficient": 0.503676
-            },
-            {
-              "exponent": 0.942025,
-              "coefficient": 0.821968
             },
             {
               "exponent": 0.942025,
@@ -6846,12 +6846,12 @@
               "coefficient": -0.436417
             },
             {
-              "exponent": 1.001221,
-              "coefficient": 0.023163
-            },
-            {
               "exponent": 0.16597,
               "coefficient": 1.189893
+            },
+            {
+              "exponent": 1.001221,
+              "coefficient": 0.023163
             },
             {
               "exponent": 0.16597,
@@ -6953,20 +6953,20 @@
               "coefficient": -0.112746
             },
             {
+              "exponent": 124.9537,
+              "coefficient": 0.082863
+            },
+            {
+              "exponent": 40.39576,
+              "coefficient": 0.970151
+            },
+            {
               "exponent": 574.2875,
               "coefficient": 0.15258
             },
             {
               "exponent": 124.9537,
-              "coefficient": 0.082863
-            },
-            {
-              "exponent": 124.9537,
               "coefficient": 0.611011
-            },
-            {
-              "exponent": 40.39576,
-              "coefficient": 0.970151
             },
             {
               "exponent": 40.39576,
@@ -6986,20 +6986,20 @@
               "coefficient": -0.282453
             },
             {
+              "exponent": 23.83588,
+              "coefficient": 0.066056
+            },
+            {
+              "exponent": 7.048296,
+              "coefficient": 1.081987
+            },
+            {
               "exponent": 48.80662,
               "coefficient": -0.150963
             },
             {
               "exponent": 23.83588,
-              "coefficient": 0.066056
-            },
-            {
-              "exponent": 23.83588,
               "coefficient": 0.539968
-            },
-            {
-              "exponent": 7.048296,
-              "coefficient": 1.081987
             },
             {
               "exponent": 7.048296,
@@ -7019,20 +7019,20 @@
               "coefficient": -0.434036
             },
             {
+              "exponent": 2.69304,
+              "coefficient": 0.461029
+            },
+            {
+              "exponent": 1.025958,
+              "coefficient": 0.828558
+            },
+            {
               "exponent": 6.973378,
               "coefficient": 0.011951
             },
             {
               "exponent": 2.69304,
-              "coefficient": 0.461029
-            },
-            {
-              "exponent": 2.69304,
               "coefficient": 0.506719
-            },
-            {
-              "exponent": 1.025958,
-              "coefficient": 0.828558
             },
             {
               "exponent": 1.025958,
@@ -7052,12 +7052,12 @@
               "coefficient": -0.525208
             },
             {
-              "exponent": 1.131463,
-              "coefficient": 0.021071
-            },
-            {
               "exponent": 0.203409,
               "coefficient": 1.229226
+            },
+            {
+              "exponent": 1.131463,
+              "coefficient": 0.021071
             },
             {
               "exponent": 0.203409,
@@ -7159,20 +7159,20 @@
               "coefficient": -0.11272
             },
             {
+              "exponent": 130.0385,
+              "coefficient": 0.082644
+            },
+            {
+              "exponent": 42.13286,
+              "coefficient": 0.970258
+            },
+            {
               "exponent": 598.889,
               "coefficient": 0.153067
             },
             {
               "exponent": 130.0385,
-              "coefficient": 0.082644
-            },
-            {
-              "exponent": 130.0385,
               "coefficient": 0.613597
-            },
-            {
-              "exponent": 42.13286,
-              "coefficient": 0.970258
             },
             {
               "exponent": 42.13286,
@@ -7192,20 +7192,20 @@
               "coefficient": -0.277043
             },
             {
+              "exponent": 24.43595,
+              "coefficient": 0.057503
+            },
+            {
+              "exponent": 7.420931,
+              "coefficient": 1.084703
+            },
+            {
               "exponent": 51.51333,
               "coefficient": -0.13787
             },
             {
               "exponent": 24.43595,
-              "coefficient": 0.057503
-            },
-            {
-              "exponent": 24.43595,
               "coefficient": 0.536355
-            },
-            {
-              "exponent": 7.420931,
-              "coefficient": 1.084703
             },
             {
               "exponent": 7.420931,
@@ -7225,20 +7225,20 @@
               "coefficient": -0.440381
             },
             {
+              "exponent": 2.844053,
+              "coefficient": 0.473734
+            },
+            {
+              "exponent": 1.105855,
+              "coefficient": 0.822135
+            },
+            {
               "exponent": 7.314235,
               "coefficient": 0.015305
             },
             {
               "exponent": 2.844053,
-              "coefficient": 0.473734
-            },
-            {
-              "exponent": 2.844053,
               "coefficient": 0.516083
-            },
-            {
-              "exponent": 1.105855,
-              "coefficient": 0.822135
             },
             {
               "exponent": 1.105855,
@@ -7258,12 +7258,12 @@
               "coefficient": -0.601695
             },
             {
-              "exponent": 1.278637,
-              "coefficient": 0.022253
-            },
-            {
               "exponent": 0.241232,
               "coefficient": 1.258692
+            },
+            {
+              "exponent": 1.278637,
+              "coefficient": 0.022253
             },
             {
               "exponent": 0.241232,
@@ -7365,20 +7365,20 @@
               "coefficient": -0.11282
             },
             {
+              "exponent": 135.36,
+              "coefficient": 0.082252
+            },
+            {
+              "exponent": 44.00048,
+              "coefficient": 0.970601
+            },
+            {
               "exponent": 623.2631,
               "coefficient": 0.153419
             },
             {
               "exponent": 135.36,
-              "coefficient": 0.082252
-            },
-            {
-              "exponent": 135.36,
               "coefficient": 0.6149
-            },
-            {
-              "exponent": 44.00048,
-              "coefficient": 0.970601
             },
             {
               "exponent": 44.00048,
@@ -7398,20 +7398,20 @@
               "coefficient": -0.274412
             },
             {
+              "exponent": 25.82039,
+              "coefficient": 0.05183
+            },
+            {
+              "exponent": 7.809583,
+              "coefficient": 1.087622
+            },
+            {
               "exponent": 54.19078,
               "coefficient": -0.143331
             },
             {
               "exponent": 25.82039,
-              "coefficient": 0.05183
-            },
-            {
-              "exponent": 25.82039,
               "coefficient": 0.539188
-            },
-            {
-              "exponent": 7.809583,
-              "coefficient": 1.087622
             },
             {
               "exponent": 7.809583,
@@ -7431,20 +7431,20 @@
               "coefficient": -0.446731
             },
             {
+              "exponent": 3.043932,
+              "coefficient": 0.46947
+            },
+            {
+              "exponent": 1.199253,
+              "coefficient": 0.829811
+            },
+            {
               "exponent": 7.764217,
               "coefficient": 0.012746
             },
             {
               "exponent": 3.043932,
-              "coefficient": 0.46947
-            },
-            {
-              "exponent": 3.043932,
               "coefficient": 0.522123
-            },
-            {
-              "exponent": 1.199253,
-              "coefficient": 0.829811
             },
             {
               "exponent": 1.199253,
@@ -7464,12 +7464,12 @@
               "coefficient": -0.59047
             },
             {
-              "exponent": 1.340364,
-              "coefficient": 0.025588
-            },
-            {
               "exponent": 0.278088,
               "coefficient": 1.281968
+            },
+            {
+              "exponent": 1.340364,
+              "coefficient": 0.025588
             },
             {
               "exponent": 0.278088,
@@ -7571,20 +7571,20 @@
               "coefficient": -0.112851
             },
             {
+              "exponent": 140.3064,
+              "coefficient": 0.083228
+            },
+            {
+              "exponent": 45.6988,
+              "coefficient": 0.969752
+            },
+            {
               "exponent": 648.1887,
               "coefficient": 0.154114
             },
             {
               "exponent": 140.3064,
-              "coefficient": 0.083228
-            },
-            {
-              "exponent": 140.3064,
               "coefficient": 0.619462
-            },
-            {
-              "exponent": 45.6988,
-              "coefficient": 0.969752
             },
             {
               "exponent": 45.6988,
@@ -7604,20 +7604,20 @@
               "coefficient": -0.273697
             },
             {
+              "exponent": 27.48875,
+              "coefficient": 0.0465
+            },
+            {
+              "exponent": 8.209096,
+              "coefficient": 1.091576
+            },
+            {
               "exponent": 56.69469,
               "coefficient": -0.152322
             },
             {
               "exponent": 27.48875,
-              "coefficient": 0.0465
-            },
-            {
-              "exponent": 27.48875,
               "coefficient": 0.543769
-            },
-            {
-              "exponent": 8.209096,
-              "coefficient": 1.091576
             },
             {
               "exponent": 8.209096,
@@ -7637,20 +7637,20 @@
               "coefficient": -0.450828
             },
             {
+              "exponent": 3.244596,
+              "coefficient": 0.463209
+            },
+            {
+              "exponent": 1.300489,
+              "coefficient": 0.838636
+            },
+            {
               "exponent": 8.191679,
               "coefficient": 0.01187
             },
             {
               "exponent": 3.244596,
-              "coefficient": 0.463209
-            },
-            {
-              "exponent": 3.244596,
               "coefficient": 0.526525
-            },
-            {
-              "exponent": 1.300489,
-              "coefficient": 0.838636
             },
             {
               "exponent": 1.300489,
@@ -7670,12 +7670,12 @@
               "coefficient": -0.665852
             },
             {
-              "exponent": 1.45138,
-              "coefficient": 0.027541
-            },
-            {
               "exponent": 0.328103,
               "coefficient": 1.328584
+            },
+            {
+              "exponent": 1.45138,
+              "coefficient": 0.027541
             },
             {
               "exponent": 0.328103,
@@ -7777,20 +7777,20 @@
               "coefficient": -0.112913
             },
             {
+              "exponent": 145.8491,
+              "coefficient": 0.082905
+            },
+            {
+              "exponent": 47.57708,
+              "coefficient": 0.970029
+            },
+            {
               "exponent": 673.6611,
               "coefficient": 0.154427
             },
             {
               "exponent": 145.8491,
-              "coefficient": 0.082905
-            },
-            {
-              "exponent": 145.8491,
               "coefficient": 0.620617
-            },
-            {
-              "exponent": 47.57708,
-              "coefficient": 0.970029
             },
             {
               "exponent": 47.57708,
@@ -7810,20 +7810,20 @@
               "coefficient": -0.273977
             },
             {
+              "exponent": 28.61159,
+              "coefficient": 0.04553
+            },
+            {
+              "exponent": 8.596596,
+              "coefficient": 1.092528
+            },
+            {
               "exponent": 59.16752,
               "coefficient": -0.151857
             },
             {
               "exponent": 28.61159,
-              "coefficient": 0.04553
-            },
-            {
-              "exponent": 28.61159,
               "coefficient": 0.547151
-            },
-            {
-              "exponent": 8.596596,
-              "coefficient": 1.092528
             },
             {
               "exponent": 8.596596,
@@ -7843,20 +7843,20 @@
               "coefficient": -0.455841
             },
             {
+              "exponent": 3.462818,
+              "coefficient": 0.461736
+            },
+            {
+              "exponent": 1.40104,
+              "coefficient": 0.844288
+            },
+            {
               "exponent": 8.638676,
               "coefficient": 0.009585
             },
             {
               "exponent": 3.462818,
-              "coefficient": 0.461736
-            },
-            {
-              "exponent": 3.462818,
               "coefficient": 0.529819
-            },
-            {
-              "exponent": 1.40104,
-              "coefficient": 0.844288
             },
             {
               "exponent": 1.40104,
@@ -7876,12 +7876,12 @@
               "coefficient": -0.727772
             },
             {
-              "exponent": 1.578474,
-              "coefficient": 0.028072
-            },
-            {
               "exponent": 0.375081,
               "coefficient": 1.362797
+            },
+            {
+              "exponent": 1.578474,
+              "coefficient": 0.028072
             },
             {
               "exponent": 0.375081,
@@ -8218,7 +8218,34 @@
       ]
     }
   },
+  "basis_family": "pople",
+  "references": [
+    {
+      "key": "binkley_pople_321g_1980",
+      "description": "J. S. Binkley, J. A. Pople, W. J. Hehre, Journal of the American Chemical Society 102, 939-947 (1980)",
+      "doi": "10.1021/ja00523a008"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "3-21g",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "cb681a47bd33c86d6eb7a274d7489ef5a1e7c28d1cda54a7f235490d44c4d4ee",
+    "citations": [
+      {
+        "keys": [
+          "binkley_pople_321g_1980"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

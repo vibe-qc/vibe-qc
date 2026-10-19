@@ -114,7 +114,7 @@ private:
 // GDF factorization, computed once in Python) instead of the molecular
 // DensityFitting.  The COSX K sums exchange over the truncated image-
 // cell list (M3a single-lattice-sum model; Γ-folded GDF exchange
-// parity is still open — handovers/HANDOVER_RIJCOSX_M3A.md).  No exxdiv='ewald'
+// parity is still open).  No exxdiv='ewald'
 // Madelung shift is applied — the COSX K is entirely real-space
 // (direct-truncated lattice sum) and the GDF J from Lpq already
 // handles the G=0 gauge through the compcell/RSGDF construction.
@@ -138,7 +138,7 @@ public:
           // sums). On tight cells this adds the home-bra → image-ket
           // exchange class on top of the home-cell-only M3 kernel
           // (H-chain anchor, D = I: ||K|| 1.74 → 3.94; Γ-folded GDF
-          // parity needs more — handovers/HANDOVER_RIJCOSX_M3A.md).
+          // parity needs more).
           image_cells_(direct_lattice_cells(system, opts.cutoff_bohr)),
           cosx_grid_(build_periodic_cosx_grid(system, cosx_grid_opts)),
           cosx_q_(build_cosx_q(basis, cosx_grid_)),

@@ -1080,8 +1080,10 @@ writers never regress to `print()`.
   - the dev-chat memo (citation-DB ownership, the new CLIs).
 - [`docs/release_process.md`](release_process.md), release cadence,
   documentation cadence (CLAUDE.md § 5).
-- [`CLAUDE.md` § 4](CLAUDE.md), basissetdev branch policy.
-- [`CLAUDE.md` § 10](CLAUDE.md), external-codes / library-only
-  policy; citation routing must respect the library/program line.
-- [`AGENTS.md`](AGENTS.md), dev-chat manifest where the
+- [`CLAUDE.md` § 4](https://github.com/vibe-qc/vibe-qc/blob/main/CLAUDE.md), basissetdev branch policy
+  (historical monorepo rule; retired, see `AGENTS.md`).
+- [`CLAUDE.md` § 10](https://github.com/vibe-qc/vibe-qc/blob/main/CLAUDE.md), external-codes / library-only
+  policy; citation routing must respect the library/program line (today
+  ground rule 5 of `AGENTS.md`).
+- [`AGENTS.md`](https://github.com/vibe-qc/vibe-qc/blob/main/AGENTS.md), dev-chat manifest where the
   citation-DB ownership clause lands.

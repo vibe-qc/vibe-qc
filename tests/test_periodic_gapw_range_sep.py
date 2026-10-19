@@ -182,3 +182,61 @@ def test_rsgapw_imports():
 
     assert callable(run_periodic_rhf_rsgapw)
     assert callable(run_periodic_rks_rsgapw)
+
+
+@pytest.mark.parametrize("method", ["rhf", "rks"])
+@pytest.mark.parametrize("scalar", ["real", "real_complex_dtype", "roundoff", "complex"])
+def test_rsgapw_initial_density_scalar_admission(monkeypatch, method, scalar):
+    """Public restart admission must precede integrals and preserve real input."""
+    from types import SimpleNamespace
+    import warnings
+    from vibeqc import periodic_gapw_range_sep as driver
+
+    density = np.array([[1., .2], [.2, 1.]])
+    if scalar != "real":
+        density = density.astype(complex)
+        if scalar in {"roundoff", "complex"}:
+            phase = 1e-12 if scalar == "roundoff" else .4
+            density[0, 1] += phase * 1j
+            density[1, 0] -= phase * 1j
+    original = density.copy()
+    events = []
+    captured = []
+    class DensityReached(Exception):
+        pass
+    class Builder:
+        def __init__(self, *args, **kwargs):
+            events.append("builder")
+        def build_J(self, value):
+            captured.append(value.copy())
+            raise DensityReached
+    def kinetic(*args):
+        events.append("integrals")
+        return np.diag([-1., 1.])
+    monkeypatch.setattr(driver, "RsGapwJBuilder", Builder)
+    monkeypatch.setattr(driver, "_kinetic_lattice_gamma", kinetic)
+    monkeypatch.setattr(driver, "_overlap_lattice_gamma", lambda *a: np.eye(2))
+    monkeypatch.setattr(driver, "_build_v_ne", lambda *a: np.zeros((2, 2)))
+    monkeypatch.setattr(driver._core, "ewald_nuclear_repulsion", lambda *a: 0.)
+    monkeypatch.setattr(driver._core, "Functional", lambda *a: None)
+    system = SimpleNamespace(dim=3, unit_cell=[SimpleNamespace(Z=2)])
+    basis = SimpleNamespace(nbasis=2)
+    kwargs = dict(omega=.3, grid=object(), initial_density=density,
+                  quiet=True, max_iter=1, use_diis=False)
+    if method == "rks":
+        kwargs["functional"] = "hse06"
+    run = getattr(driver, "run_periodic_" + method + "_rsgapw")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        if scalar == "complex":
+            with pytest.raises(ValueError, match="density must be real"):
+                run(system, basis, **kwargs)
+            assert events == []
+        else:
+            with pytest.raises(DensityReached):
+                run(system, basis, **kwargs)
+            assert events == ["integrals", "builder"]
+            np.testing.assert_array_equal(captured[0], density.real)
+            assert not np.iscomplexobj(captured[0])
+        assert not caught  # No lossy-cast warning is used as admission.
+    np.testing.assert_array_equal(density, original)

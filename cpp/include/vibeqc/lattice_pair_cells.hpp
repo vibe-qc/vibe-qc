@@ -34,9 +34,9 @@
 //     grows ~2.7x and a family of consumers that pair it index-for-index
 //     with the plain ball has to move with it. A prototype was built and
 //     measured (invariance 7.1e-15; Si/def2-SVP becomes positive definite
-//     at the shipped cutoff). See handovers/HANDOVER_OPEN_BUGS_V015.md for
-//     the measurements, the consumer inventory, and which sums must NOT
-//     get this treatment.
+//     at the shipped cutoff). These prototype measurements do not establish
+//     validity for every consumer; consumer-specific qualification is required
+//     before extending pair completion to other sums.
 //
 // A single-atom cell has zero intra-cell offset, so the |g| ball IS the
 // correct ball there; every vacuum-box fixture is structurally blind to
@@ -158,7 +158,34 @@ public:
     }
 
     PairNuclearImageSet select(const Eigen::Vector3d& center,
-                              const std::vector<double>* weights = nullptr) const {
+                              const std::vector<double>* weights = nullptr,
+                              std::vector<std::array<int, 4>>* labels = nullptr,
+                              std::size_t max_labels = std::numeric_limits<std::size_t>::max(),
+                              bool labels_only = false) const {
+        return select_impl(center, cutoff_, reach_, weights, labels, max_labels, labels_only);
+    }
+
+    // The images within ``radius`` of ``center``, for a per-product source
+    // radius no larger than the selector's cutoff. The result is the subset
+    // of ``select(center)`` within that radius, in the same order.
+    PairNuclearImageSet select_within(const Eigen::Vector3d& center, double radius,
+                                      const std::vector<double>* weights = nullptr) const {
+        if (!std::isfinite(radius) || radius < 0.0 || radius > cutoff_)
+            throw std::invalid_argument("Per-product nuclear source radius must lie in [0, cutoff]");
+        if (radius == cutoff_) return select(center, weights);
+        std::array<double, 3> reach;
+        for (int axis = 0; axis < 3; ++axis) reach[axis] = radius * inverse_.row(axis).norm();
+        return select_impl(center, radius, reach, weights, nullptr,
+                           std::numeric_limits<std::size_t>::max(), false);
+    }
+
+    double cutoff() const { return cutoff_; }
+private:
+    PairNuclearImageSet select_impl(const Eigen::Vector3d& center, double cutoff,
+                                    const std::array<double, 3>& reach,
+                                    const std::vector<double>* weights,
+                                    std::vector<std::array<int, 4>>* labels,
+                                    std::size_t max_labels, bool labels_only) const {
         if (!center.allFinite()) throw std::invalid_argument("Nonfinite AO-product center");
         PairNuclearImageSet result;
         for (std::size_t atom = 0; atom < system_.unit_cell.size(); ++atom) {
@@ -170,9 +197,9 @@ public:
             const Eigen::Vector3d fractional = inverse_ * (center - origin);
             std::array<int, 3> lower{0, 0, 0}, upper{0, 0, 0};
             for (int axis = 0; axis < system_.dim; ++axis) {
-                const double slack = 1e-10 * (1.0 + std::abs(fractional[axis]) + reach_[axis]);
-                const double lo = std::floor(fractional[axis] - reach_[axis] - slack);
-                const double hi = std::ceil(fractional[axis] + reach_[axis] + slack);
+                const double slack = 1e-10 * (1.0 + std::abs(fractional[axis]) + reach[axis]);
+                const double lo = std::floor(fractional[axis] - reach[axis] - slack);
+                const double hi = std::ceil(fractional[axis] + reach[axis] + slack);
                 if (!std::isfinite(lo) || !std::isfinite(hi) ||
                     lo <= static_cast<double>(std::numeric_limits<int>::min()) ||
                     hi >= static_cast<double>(std::numeric_limits<int>::max()))
@@ -184,15 +211,21 @@ public:
             for (int j = lower[1]; j <= upper[1]; ++j)
             for (int k = lower[2]; k <= upper[2]; ++k) {
                 const Eigen::Vector3d position = origin + system_.lattice * Eigen::Vector3d(i, j, k);
-                const double radius = cutoff_ + 1e-12 * (1.0 + cutoff_);
+                const double radius = cutoff + 1e-12 * (1.0 + cutoff);
                 if ((position - center).squaredNorm() > radius * radius) continue;
-                result.charges.emplace_back(charge, std::array<double, 3>{position[0], position[1], position[2]});
-                result.atoms.push_back(static_cast<long>(atom));
+                if (labels) {
+                    if (labels->size() >= max_labels)
+                        throw std::length_error("Nuclear support record exceeds bounded term budget");
+                    labels->push_back({static_cast<int>(atom), i, j, k});
+                }
+                if (!labels_only) {
+                    result.charges.emplace_back(charge, std::array<double, 3>{position[0], position[1], position[2]});
+                    result.atoms.push_back(static_cast<long>(atom));
+                }
             }
         }
         return result;
     }
-private:
     const PeriodicSystem& system_;
     double cutoff_;
     Eigen::Matrix3d inverse_;

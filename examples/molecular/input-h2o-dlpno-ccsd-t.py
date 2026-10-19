@@ -1,4 +1,4 @@
-"""Water — DLPNO-CCSD(T): local solver + DLPNO-(T1).
+"""Water / cc-pVDZ: DLPNO-CCSD(T), local solver + DLPNO-(T1).
 
 `method="dlpno-ccsd(t)"` runs the reduced-scaling local DLPNO-CCSD solver
 (pair-PNO amplitudes with residuals contracted in the atom-based extended PAO

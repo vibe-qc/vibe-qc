@@ -2,7 +2,7 @@
 
 The **ORCA axis** of the HF/DFT cross-code parity matrix, plus the
 **ORCA-vs-vibe-qc wall-clock speed benchmark**. Both deliverables came from
-the retired ORCA-parity handover (2026-06-13; recover via git history).
+the retired ORCA-parity historical design record (2026-06-13; recover via git history).
 
 `tests/test_parity_hf_dft.py` already certifies vibe-qc's
 per-intermediate energy decomposition against **PySCF**. This package
@@ -76,12 +76,12 @@ compute-host-d is a shared family machine and the `vq` daemon is in a
 `--max-jobs 1` phase — ORCA cells are submitted serial (`--cpus 1`).
 Be sparing with `--run`.
 
-## What ORCA actually exposes — and where the handover was wrong
+## What ORCA actually exposes — and where the original investigation was wrong
 
-Three things the original ORCA-parity handover (rev 2; retired) got wrong
+Three things the original ORCA-parity historical design record (rev 2; retired) got wrong
 about ORCA 6.1.1; the code is built around what ORCA *actually* does.
 
-1. **No Coulomb / exchange split.** The handover's parser table
+1. **No Coulomb / exchange split.** the original investigation's parser table
    expected `Coulomb Energy :` and `Exchange Energy :` lines. ORCA's
    standard `TOTAL SCF ENERGY` block prints neither — just a combined
    `Two Electron Energy :`. So the Fock-build comparison uses a single

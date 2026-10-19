@@ -9,7 +9,7 @@ Run:
 
 Compare against:
     - CRYSTAL14  SHRINK 8 8:  E_total ≈ -271.218 Ha (reference)
-    - GDF (EWALD_3D):        see input-mgo-rocksalt-rhf.py
+    - GDF, conventional cell at Γ: see input-mgo-rocksalt-rhf.py
     - BIPOLE RKS:            input-bipole-mgo-rks-pbe.py
 """
 

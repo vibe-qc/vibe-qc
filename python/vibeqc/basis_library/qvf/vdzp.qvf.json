@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "vdzp",
+  "description": "Basis set: Grimme vDZP\nBundled with vibe-qc v0.9.0 (composite 3c stack)\nOriginating publication: Müller, Hansen, Grimme, J. Chem. Phys. 158, 014103 (2023); DOI: 10.1063/5.0133026 [ωB97X-3c parent basis; carries Stuttgart small-core ECPs for heavier elements]\nFetched from: Basis Set Exchange v0.12 (https://www.basissetexchange.org)\nBundled date: 2026-05-18\nLicense: numerical parameter data from a published\n  scientific paper; redistribution is standard practice\n  (see python/vibeqc/data_library/README.md § License).\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: Grimme vDZP\nDescription: Small basis set used in wB97X-3c method\n       Role: orbital\n    Version: 1  (Data from supporting information; re-added d-type\n                   ECP on F with vanishingly small coefficient to\n                   ensure basis is correctly parsed in all programs)\n\nECP sidecar:\nBasis set: Grimme vDZP ECPs\nBundled with vibe-qc v0.9.0 (composite 3c stack)\nOriginating publication: Müller, Hansen, Grimme, J. Chem. Phys. 158, 014103 (2023); DOI: 10.1063/5.0133026 [ωB97X-3c parent basis; carries Stuttgart small-core ECPs for heavier elements]\nFetched from: Basis Set Exchange v0.12 (https://www.basissetexchange.org)\nBundled date: 2026-05-18\nLicense: numerical parameter data from a published\n  scientific paper; redistribution is standard practice\n  (see python/vibeqc/data_library/README.md § License).",
   "role": "orbital",
   "elements": {
     "H": {
@@ -11261,6 +11261,7 @@
       "ecp_id": "Rn"
     }
   },
+  "basis_family": "grimme",
   "ecps": {
     "B": {
       "element": "B",
@@ -17487,7 +17488,32 @@
       ]
     }
   },
+  "references": [
+    {
+      "key": "mueller_wb97x3c_2023",
+      "description": "M. Müller, A. Hansen, S. Grimme, Journal of Chemical Physics 158, 014103 (2023)",
+      "doi": "10.1063/5.0133026"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "vdzp"
+      }
+    ],
+    "retrieval_date": "2026-05-18",
+    "content_sha256": "db78dfdfc9f20990453aca416bce14771da9808b38f7b7a7ecbc543c603d51db",
+    "citations": [
+      {
+        "keys": [
+          "mueller_wb97x3c_2023"
+        ]
+      }
+    ]
   }
 }

@@ -31,6 +31,7 @@ import pytest
 from vibeqc import (
     Atom,
     BasisSet,
+    InitialGuess,
     Molecule,
     ROHFOptions,
     UHFOptions,
@@ -206,22 +207,40 @@ def test_uhf_stability_budget_exhaustion_is_no_verdict():
 
 
 # ---------------------------------------------------------------------------
-# BUG 88 — FeCl3 UHF/cc-pVDZ root-selection failure (FIXED 2026-08-08)
+# BUG 88 — FeCl3 UHF/cc-pVDZ root-selection failure (FIXED 2026-08-08;
+# guess policy corrected 2026-09-16, issue #273)
 #
 # The old proportional-spin-split SAD guess landed FeCl3 UHF/cc-pVDZ on an
-# excited SCF saddle 105.87 mHa above the ground state.  The Hund-split
-# SAD guess (per-atom occ_alpha / occ_beta, Hund's rule) places the SCF
-# in the correct basin from iteration 1, matching ORCA to 2.5e-9 Ha.
-# These tests pin (a) the old behaviour is gone and (b) the new behaviour
-# is internally stable without corrective restarts.
+# excited SCF saddle 105.87 mHa above the ground state.  BUG 88 replaced it
+# with the per-atom Hund split (occ_alpha / occ_beta, Hund's first rule).
+#
+# The Hund seed alone is not sufficient here, and #273 measured why: it
+# superposes free-ATOM densities, so each Cl arrives carrying a full
+# free-atom moment of one unpaired electron, although in FeCl3 it is a
+# closed-shell chloride.  That spurious ligand polarisation survives into
+# the SCF and traps a symmetry-broken solution 90.05 mHa above the ground
+# state (one Cl left as a radical cation, S^2 = 8.776737), which converges
+# and then certifies a NEGATIVE internal Hessian eigenvalue.  The basin is
+# sharp: a ligand seed moment above roughly 0.05 e still lands there, so
+# rescaling the ligand moments does not recover it.
+#
+# AUTO therefore resolves a molecular open-shell d/f-block system to PATOM
+# — the same Hund seed followed by a per-spin in-field re-polarisation,
+# which quenches the ligand moments against the molecular field before the
+# SCF starts.  That reaches the ground state in 23 iterations, internally
+# stable, matching ORCA to 2.4e-9 Ha.  These tests pin (a) the old
+# behaviour is gone and (b) the new behaviour is internally stable without
+# corrective restarts.
 # ---------------------------------------------------------------------------
 
 # FeCl3 UHF/cc-pVDZ reference energies:
 #   ORCA 6.1.1:                     -2641.1344915755 Ha  (S^2 = 8.767533)
-#   vibe-qc Hund-split SAD (fixed): -2641.1344915780 Ha  (S^2 = 8.767533)
+#   vibe-qc AUTO -> PATOM (fixed):  -2641.1344915780 Ha  (S^2 = 8.767533)
+#   vibe-qc bare Hund SAD (#273):   -2641.0444381518 Ha  (+90.05 mHa)
 #   vibe-qc old proportional (bug): -2641.0286223698 Ha  (+105.87 mHa)
-FECL3_CCPVDZ_UHF_GROUND = -2641.1344915780   # new Hund-split guess result
+FECL3_CCPVDZ_UHF_GROUND = -2641.1344915780   # AUTO -> PATOM result
 FECL3_CCPVDZ_UHF_EXCITED = -2641.0286223698   # old proportional-split (BUG 88)
+FECL3_CCPVDZ_UHF_BARE_SAD = -2641.0444381518  # bare Hund-split SAD (#273)
 
 
 def _fecl3_sextet():
@@ -241,11 +260,14 @@ def _fecl3_sextet():
 @pytest.mark.slow
 @pytest.mark.timeout(600)
 def test_bug88_fecl3_uhf_ccpvdz_reaches_ground_state():
-    """BUG 88 / issue #398: FeCl3 reaches and certifies its ground state.
+    """BUG 88 / issue #398 / #273: FeCl3 reaches and certifies its ground state.
 
-    The Hund-split SAD guess places the SCF in the correct basin from the
-    start.  The post-SCF Davidson solve must also reach its sign-certifying
-    residual with the bounded default budget, without a stability restart.
+    The default guess places the SCF in the correct basin from the start:
+    AUTO resolves an open-shell d/f-block system to PATOM, whose in-field
+    re-polarisation of the Hund seed removes the spurious ligand moment that
+    bare SAD carries over from the free Cl atoms.  The post-SCF Davidson
+    solve must also reach its sign-certifying residual with the bounded
+    default budget, without a stability restart.
     """
     mol = _fecl3_sextet()
     opts = UHFOptions()
@@ -256,6 +278,7 @@ def test_bug88_fecl3_uhf_ccpvdz_reaches_ground_state():
     assert res.stability_analysis_converged
     # Internally stable from the start — no restarts needed.
     assert res.n_stability_restarts == 0
+    assert not res.stability_trah_used
     assert not res.internal_instability
     assert res.stability_eigenvalue >= -opts.stability_tol
     # Energy matches ORCA 6.1.1 to machine precision.
@@ -273,7 +296,7 @@ def test_bug88_fecl3_uhf_ccpvdz_reaches_ground_state():
 def test_bug88_fecl3_uhf_ccpvdz_stability_off_same_result():
     """BUG 88 (FIXED): with stability_check=False, FeCl3 UHF/cc-pVDZ
     reaches the same ground state — the guess quality, not the stability
-    escape, now determines the basin."""
+    escape, determines the basin (#273)."""
     mol = _fecl3_sextet()
     opts = UHFOptions()
     opts.max_iter = 300
@@ -289,6 +312,58 @@ def test_bug88_fecl3_uhf_ccpvdz_stability_off_same_result():
     )
     orca_ref = -2641.1344915755
     assert abs(res.energy - orca_ref) < 1e-6
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+def test_fecl3_uhf_ccpvdz_recovers_sad_saddle():
+    """Issue #273: stability recovery escapes the normalized-SAD saddle.
+
+    Ordinary anchored/free SCF restarts return to the saddle; the trust-region
+    fallback must reach the original ORCA pin and certify the final state.
+    """
+    mol = _fecl3_sextet()
+    opts = UHFOptions()
+    opts.max_iter = 300
+    opts.initial_guess = InitialGuess.SAD
+    # Preserve the #273 reproducer independently of the newer #377 default.
+    opts.ediis_diis_switch_threshold_open_shell = 0.1
+    res = run_uhf(mol, "cc-pvdz", opts)
+    assert res.converged
+    assert res.stability_checked
+    assert res.stability_analysis_converged
+    assert res.n_stability_restarts >= 1
+    assert res.stability_trah_used
+    assert not res.internal_instability
+    assert res.stability_eigenvalue >= -opts.stability_tol
+    # Energy matches ORCA 6.1.1 to machine precision.
+    orca_ref = -2641.1344915755
+    assert abs(res.energy - orca_ref) < 1e-6, (
+        f"delta from ORCA = {(res.energy - orca_ref)*1000:.3f} mHa"
+    )
+    # S^2 should match ORCA's 8.767533 (BUG 77).
+    assert res.s_squared == pytest.approx(8.767533, abs=1e-3)
+    assert res.s_squared_ideal == pytest.approx(8.75, abs=1e-4)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+def test_fecl3_uhf_ccpvdz_stability_off_retains_sad_saddle():
+    """Opting out preserves the original stationary point, without recovery."""
+    mol = _fecl3_sextet()
+    opts = UHFOptions()
+    opts.max_iter = 300
+    opts.initial_guess = InitialGuess.SAD
+    # Preserve the #273 reproducer independently of the newer #377 default.
+    opts.ediis_diis_switch_threshold_open_shell = 0.1
+    opts.stability_check = False
+    res = run_uhf(mol, "cc-pvdz", opts)
+    assert res.converged
+    assert not res.stability_checked
+    assert res.n_stability_restarts == 0
+    assert not res.stability_trah_used
+    assert res.energy == pytest.approx(FECL3_CCPVDZ_UHF_BARE_SAD, abs=1e-6)
+    assert res.energy - FECL3_CCPVDZ_UHF_GROUND > 0.09
 
 
 # ---------------------------------------------------------------------------
@@ -476,4 +551,72 @@ def test_no_verdict_run_warns_that_stability_is_unverified(tmp_path, monkeypatch
         "a no-verdict stability analysis produced no warning in the .out"
     )
     # It must not claim instability either -- there is no verdict.
+    assert "SCF INTERNAL INSTABILITY" not in out
+
+
+# ---------------------------------------------------------------------------
+# #342: the stability solve carries a wall budget and reports why it stopped.
+#
+# Pre-fix the only bound was the matvec cap (60 or 80 J + 2K builds, minutes
+# to hours each at def2-QZVPP), the reason for stopping was discarded, and
+# the campaign spent 86-93 % of its SCF wall in solves that said nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_stability_wall_budget_ends_the_solve_within_one_matvec_and_says_why():
+    opts = UHFOptions()
+    opts.max_iter = 200
+    opts.stability_wall_budget_s = 1e-6   # spent after the first matvec
+    res = run_uhf(_oh_doublet(), "def2-svp", opts)
+
+    assert res.converged
+    assert res.stability_checked
+    assert not res.stability_analysis_converged
+    assert not res.internal_instability          # no verdict is not a verdict
+    assert res.stability_stop_reason == 2        # StabilityStop::wall_budget
+    assert 1 <= res.stability_n_matvec <= 2
+    assert res.stability_wall_budget_s == pytest.approx(1e-6)
+
+
+def test_stability_wall_budget_defaults_to_a_fraction_of_the_scf_wall():
+    """Maintainer decision D1 (2026-09-29): max(600 s, 3.0 x SCF loop wall)."""
+    opts = UHFOptions()
+    assert opts.stability_wall_budget_s == 0.0
+    assert opts.stability_wall_fraction == 3.0
+    assert opts.stability_wall_floor_s == 600.0
+    opts.max_iter = 200
+    res = run_uhf(_oh_doublet(), "sto-3g", opts)
+
+    scf_loop_wall = sum(float(it.wall_s) for it in res.scf_trace)
+    assert res.stability_wall_budget_s == pytest.approx(max(600.0, 3.0 * scf_loop_wall))
+    assert res.stability_analysis_converged
+    assert res.stability_stop_reason == 0        # StabilityStop::converged
+    assert res.stability_n_matvec >= 1
+
+
+def test_explicit_stability_budget_wins_over_the_automatic_one():
+    opts = UHFOptions()
+    opts.max_iter = 200
+    opts.stability_wall_budget_s = 3600.0
+    res = run_uhf(_oh_doublet(), "sto-3g", opts)
+    assert res.stability_wall_budget_s == pytest.approx(3600.0)
+    assert res.stability_analysis_converged
+
+
+def test_no_verdict_out_line_names_the_stop_reason(tmp_path, monkeypatch):
+    import vibeqc as vq
+
+    monkeypatch.chdir(tmp_path)
+    opts = UHFOptions()
+    opts.max_iter = 200
+    opts.stability_davidson_max_iter = 0
+    vq.run_job(
+        _oh_doublet(), basis="sto-3g", method="uhf",
+        uhf_options=opts, output="whynot", output_qvf=False,
+        record_hostname=False,
+    )
+    out = (tmp_path / "whynot.out").read_text()
+    assert "internal stability: NO VERDICT" in out
+    assert "did not run (matvec cap 0)" in out
+    assert "STABILITY UNVERIFIED" in out
     assert "SCF INTERNAL INSTABILITY" not in out

@@ -1,14 +1,21 @@
 #include "vibeqc/periodic_xc.hpp"
 
 #include "vibeqc/ao_eval.hpp"
+#include "vibeqc/bloch.hpp"
+#include "vibeqc/periodic_bloch.hpp"
+#include "vibeqc/ao_eval_subset.hpp"
+#include "vibeqc/schwarz.hpp"
 #include "vibeqc/thread_pool.hpp"
+#include "vibeqc/detail/native_phase_timing.hpp"
 
 #include <libint2/atom.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <map>
+#include <numeric>
 #include <stdexcept>
 #include <vector>
 
@@ -268,6 +275,258 @@ void evaluate_active_shifted_ao(const BasisSet& basis,
     }
 }
 
+
+// ---- AO-reach screening of lattice images (vibe-qc#268, #299, #53) -------
+//
+// The value kernels used to evaluate every AO of every active image cell at
+// every point of a grid batch and to contract every bra-ket cell pair with
+// dense nbf x nbf density blocks, so their cost grew with (cells within
+// cutoff_bohr)^2 x nbf^2 however far each shell actually reaches. The image
+// DOMAIN (active_density_cells, the bra radius, cutoff_bohr) is unchanged
+// here; the screen only drops shells of an image whose Gaussian extent
+// cannot reach the batch: shell s of image cell c is kept iff
+//   dist(O_s + R_c, box(batch points)) < r_cut[s],
+// with r_cut from compute_shell_radial_cutoffs at the screening tolerance
+// (an AO amplitude bound, as in the molecular COSX builders). An image with
+// no kept shell drops out of the batch, and so do its bra-ket pairs. A
+// tolerance <= 0 disables the screen: every shell is kept, every column and
+// contraction is the dense one, and the result is bitwise the dense kernel.
+struct ImageShellScreen {
+    bool enabled = false;
+    std::vector<Eigen::Vector3d> centre;   // home-cell shell centres
+    std::vector<double> cut2;              // squared radial cutoffs
+    std::vector<int> bf0;                  // first basis function of shell
+    std::vector<int> nbf;                  // functions in shell
+    // Primitive data for the amplitude bound (shell_amplitude_bound).
+    std::vector<std::vector<double>> alpha;
+    std::vector<std::vector<double>> abs_coeff;
+    std::vector<int> l;
+    double pair_tol = 0.0;                 // bound on a pair's |rho| term
+};
+
+// Upper bound on |chi| and |grad chi| of any function of shell s at distance
+// >= d from its centre: sum_p |c_p| r^l exp(-a_p r^2) is bounded by its value
+// at max(d, r_peak) per primitive; the Cartesian monomial is <= r^l, a
+// spherical combination of them is bounded by the number of Cartesians
+// times 2, and the gradient adds at most a factor (2 a_p r + l / r).
+double shell_amplitude_bound(const ImageShellScreen& scr, std::size_t s,
+                             double d) {
+    const int l = scr.l[s];
+    double b = 0.0;
+    for (std::size_t p = 0; p < scr.alpha[s].size(); ++p) {
+        const double a = scr.alpha[s][p];
+        const double r_peak = l > 0 ? std::sqrt((l + 1) / (2.0 * a)) : 0.0;
+        const double r = std::max(d, r_peak);
+        const double val = std::pow(r, l) * std::exp(-a * r * r);
+        const double grad = 2.0 * a * r + (r > 0.0 ? l / r : 0.0) + 1.0;
+        b += scr.abs_coeff[s][p] * val * grad;
+    }
+    const double n_cart = 0.5 * (l + 1) * (l + 2);
+    return b * 2.0 * n_cart;
+}
+
+ImageShellScreen make_image_shell_screen(const BasisSet& basis, double tol) {
+    ImageShellScreen scr;
+    const auto& shells = basis.libint();
+    const auto shell2bf = shells.shell2bf();
+    scr.enabled = std::isfinite(tol) && tol > 0.0;
+    std::vector<double> cut;
+    if (scr.enabled) cut = compute_shell_radial_cutoffs(shells, tol);
+    const std::size_t n = shells.size();
+    scr.centre.resize(n);
+    scr.cut2.resize(n);
+    scr.bf0.resize(n);
+    scr.nbf.resize(n);
+    for (std::size_t s = 0; s < n; ++s) {
+        scr.centre[s] = Eigen::Vector3d(shells[s].O[0], shells[s].O[1],
+                                        shells[s].O[2]);
+        scr.cut2[s] = scr.enabled
+            ? cut[s] * cut[s] : std::numeric_limits<double>::infinity();
+        scr.bf0[s] = static_cast<int>(shell2bf[s]);
+        scr.nbf[s] = static_cast<int>(shells[s].size());
+        const auto& contr = shells[s].contr[0];
+        scr.l.push_back(contr.l);
+        scr.alpha.emplace_back(shells[s].alpha.begin(), shells[s].alpha.end());
+        std::vector<double> c;
+        for (double x : contr.coeff) c.push_back(std::abs(x));
+        scr.abs_coeff.push_back(std::move(c));
+    }
+    // A pair is dropped when its bound on |rho| (and |grad rho|) at every
+    // batch point is below tol: the scale of one AO at its cutoff amplitude
+    // against an O(1) partner, the term the shell screen already drops.
+    scr.pair_tol = scr.enabled ? tol : 0.0;
+    return scr;
+}
+
+// AO table of one lattice image restricted to its live shells in one batch.
+struct ScreenedImageAO {
+    std::vector<int> shells;   // live shells, increasing
+    std::vector<int> bfs;      // their basis functions (home numbering)
+    bool full = false;         // every shell live: bfs == 0..nbf-1
+    double bound = 0.0;        // sum over live functions of |chi| bounds
+    Eigen::MatrixXd chi;                   // (nb, bfs.size())
+    std::array<Eigen::MatrixXd, 3> dchi;   // gradients, same shape
+    bool live() const { return !bfs.empty(); }
+};
+
+// Shells of the image at R that reach the box [lo, hi].
+void select_live_shells(const ImageShellScreen& scr, const Eigen::Vector3d& R,
+                        const Eigen::Vector3d& lo, const Eigen::Vector3d& hi,
+                        ScreenedImageAO& img) {
+    img.shells.clear();
+    img.bfs.clear();
+    img.bound = 0.0;
+    const std::size_t n = scr.centre.size();
+    for (std::size_t s = 0; s < n; ++s) {
+        if (scr.enabled) {
+            const Eigen::Vector3d X = scr.centre[s] + R;
+            double d2 = 0.0;
+            for (int k = 0; k < 3; ++k) {
+                const double d = std::max({0.0, lo[k] - X[k], X[k] - hi[k]});
+                d2 += d * d;
+            }
+            if (!(d2 < scr.cut2[s])) continue;
+            img.bound += scr.nbf[s] * shell_amplitude_bound(scr, s, std::sqrt(d2));
+        }
+        img.shells.push_back(static_cast<int>(s));
+        for (int f = 0; f < scr.nbf[s]; ++f) img.bfs.push_back(scr.bf0[s] + f);
+    }
+    img.full = img.shells.size() == n;
+}
+
+void batch_box(const Eigen::MatrixX3d& pts, Eigen::Vector3d& lo,
+               Eigen::Vector3d& hi) {
+    if (pts.rows() == 0) {
+        lo.setZero();
+        hi.setZero();
+        return;
+    }
+    lo = pts.colwise().minCoeff().transpose();
+    hi = pts.colwise().maxCoeff().transpose();
+}
+
+// Screened counterpart of evaluate_active_shifted_ao: fills tab[c] for the
+// active cells whose image reaches the batch; other entries stay empty.
+void evaluate_screened_shifted_ao(const BasisSet& basis,
+                                  const ImageShellScreen& scr,
+                                  const Eigen::MatrixX3d& points,
+                                  const std::vector<LatticeCell>& cells,
+                                  const std::vector<int>& active,
+                                  bool need_grad,
+                                  std::vector<ScreenedImageAO>& tab) {
+    Eigen::Vector3d lo, hi;
+    batch_box(points, lo, hi);
+    #pragma omp parallel for schedule(dynamic)
+    for (std::size_t ai = 0; ai < active.size(); ++ai) {
+        const int c = active[ai];
+        const Eigen::Vector3d& R = cells[c].r_cart;
+        ScreenedImageAO& img = tab[c];
+        select_live_shells(scr, R, lo, hi, img);
+        if (!img.live()) continue;
+        if (R.isZero()) {
+            evaluate_ao_shell_subset(basis, points, img.shells, img.chi,
+                                     need_grad ? &img.dchi : nullptr);
+            continue;
+        }
+        Eigen::MatrixX3d pts = points;
+        pts.rowwise() -= R.transpose();
+        evaluate_ao_shell_subset(basis, pts, img.shells, img.chi,
+                                 need_grad ? &img.dchi : nullptr);
+    }
+}
+
+// P(g) restricted to the live functions of a bra/ket image pair. Returns the
+// block itself when both images are complete (no copy, dense arithmetic).
+const Eigen::MatrixXd& pair_density_block(const Eigen::MatrixXd& P,
+                                          const ScreenedImageAO& A,
+                                          const ScreenedImageAO& S,
+                                          Eigen::MatrixXd& buffer) {
+    if (A.full && S.full) return P;
+    buffer = P(A.bfs, S.bfs);
+    return buffer;
+}
+
+// Pairs whose bra and ket images both reach the batch and whose term can
+// exceed the pair tolerance, in pair order (so the static partition over
+// them is reproducible, #81). For the density, |chi_a P(g) chi_s| <=
+// B_a max|P(g)| B_s. The potential V(g) = dE/dP(g) does not scale with P(g)
+// (a vanishing P(g), e.g. a home-cell density, still has a V(g) block), so
+// its pairs are screened on B_a B_s alone: pass p_max = nullptr.
+std::vector<int> live_pair_indices(const std::vector<BraKetPair>& pairs,
+                                   const std::vector<ScreenedImageAO>& tab,
+                                   const ImageShellScreen& scr,
+                                   const std::vector<double>* p_max) {
+    std::vector<int> live;
+    live.reserve(pairs.size());
+    for (std::size_t k = 0; k < pairs.size(); ++k) {
+        const ScreenedImageAO& a = tab[pairs[k].a];
+        const ScreenedImageAO& s = tab[pairs[k].s];
+        if (!a.live() || !s.live()) continue;
+        if (scr.enabled) {
+            const double scale = p_max ? (*p_max)[pairs[k].gp] : 1.0;
+            if (a.bound * s.bound * scale < scr.pair_tol) continue;
+        }
+        live.push_back(static_cast<int>(k));
+    }
+    return live;
+}
+
+std::vector<double> block_abs_max(const LatticeMatrixSet& P,
+                                  const LatticeMatrixSet* Q = nullptr) {
+    std::vector<double> m(P.blocks.size(), 0.0);
+    for (std::size_t c = 0; c < P.blocks.size(); ++c) {
+        if (P.blocks[c].size()) m[c] = P.blocks[c].cwiseAbs().maxCoeff();
+        if (Q && Q->blocks[c].size()) {
+            m[c] = std::max(m[c], Q->blocks[c].cwiseAbs().maxCoeff());
+        }
+    }
+    return m;
+}
+
+// Edge (bohr) of the cubic bins that order the screened points.
+constexpr double kScreenedXcBinBohr = 2.0;
+
+// Points carrying a nonzero quadrature weight, in spatially compact order.
+// The libxc value kernels are pointwise, so a zero-weight point contributes
+// to neither E_xc nor V_xc, and the order of the points only reassociates
+// the sums. The atom-major grid lists whole radial shells (spheres up to
+// ~15 bohr), so contiguous batches of it have boxes as large as the image
+// domain and the screen could drop nothing; sorting the points by cubic bin
+// makes each batch a compact region. Only used with the screen enabled; the
+// disabled path keeps every point in grid order so that it stays bitwise the
+// dense kernel.
+void nonzero_weight_points(const Grid& grid, Eigen::MatrixX3d& points,
+                           Eigen::VectorXd& weights) {
+    const Eigen::Index n = grid.points.rows();
+    struct Key { std::array<long long, 3> bin; Eigen::Index index; };
+    std::vector<Key> keys;
+    keys.reserve(static_cast<std::size_t>(n));
+    for (Eigen::Index i = 0; i < n; ++i) {
+        if (grid.weights[i] == 0.0) continue;
+        Key k;
+        for (int c = 0; c < 3; ++c) {
+            k.bin[c] = static_cast<long long>(
+                std::floor(grid.points(i, c) / kScreenedXcBinBohr));
+        }
+        k.index = i;
+        keys.push_back(k);
+    }
+    std::stable_sort(keys.begin(), keys.end(),
+                     [](const Key& a, const Key& b) { return a.bin < b.bin; });
+    const auto m = static_cast<Eigen::Index>(keys.size());
+    points.resize(m, 3);
+    weights.resize(m);
+    for (Eigen::Index j = 0; j < m; ++j) {
+        const Eigen::Index i = keys[static_cast<std::size_t>(j)].index;
+        points.row(j) = grid.points.row(i);
+        weights[j] = grid.weights[i];
+    }
+}
+
+// Upper bound on points per batch when screening: smaller batches give
+// tighter boxes (the grid is atom-major, radial shell by radial shell).
+constexpr Eigen::Index kScreenedXcBatch = 512;
+
 struct ExternalPeriodicFields {
     Eigen::VectorXd rho;
     Eigen::MatrixX3d grad;
@@ -319,12 +578,14 @@ ExternalPeriodicFields build_external_periodic_fields_batch(
         const auto& da = dchi_h[pr.a];
         const auto& ds = dchi_h[pr.s];
         for (int c = 0; c < 3; ++c) {
+            // The gradient and kinetic density share this matrix product.
+            const Eigen::MatrixXd gradient_density = da[c] * P;
             grad_t[c][tid].array() +=
                 (chi_aP.array() * ds[c].array()).rowwise().sum();
             grad_t[c][tid].array() +=
-                ((da[c] * P).array() * chi_s.array()).rowwise().sum();
+                (gradient_density.array() * chi_s.array()).rowwise().sum();
             tau_t[tid].array() +=
-                ((da[c] * P).array() * ds[c].array()).rowwise().sum();
+                (gradient_density.array() * ds[c].array()).rowwise().sum();
         }
     }
     for (int t = 0; t < n_threads; ++t) {
@@ -376,6 +637,373 @@ void project_external_periodic_batch(
     }
 }
 
+// Finite-torus regrouping is used only by the direct-k wrappers below. The
+// ordinary V(g) API never exposes its compressed projection intermediates.
+struct XCTorusContext {
+    bool compatible = false;
+    bool used = false;
+    std::vector<std::array<int, 3>> residue;
+    std::vector<double> sign;
+    std::map<std::array<int, 3>, int> cell_pos;
+    // Complete torus density (opt-in, #519 RG-1): every pair of live images
+    // through the density of its torus residue, not only the retained pair
+    // graph. Requires an unshifted mesh (all signs +1) and a density block
+    // for every residue; `rep` is the first cell of each residue.
+    bool complete = false;
+    bool unit_signs = true;
+    std::array<int, 3> mesh{1, 1, 1};
+    std::map<std::array<int, 3>, int> rep;
+};
+
+XCTorusContext xc_torus_context(const PeriodicSystem& system,
+                                const BlochKMesh& mesh,
+                                const LatticeMatrixSet& p,
+                                const LatticeMatrixSet* beta = nullptr) {
+    XCTorusContext ctx;
+    if (mesh.kpoints.empty())
+        throw std::invalid_argument("periodic k-point XC requires k-points");
+    for (const auto& k : mesh.kpoints)
+        if (!k.allFinite())
+            throw std::invalid_argument("periodic k-point XC requires finite k-points");
+    // Ad hoc lists, reduced meshes and unusual weightings retain the pair path.
+    std::size_t nk = 1;
+    for (int d = 0; d < 3; ++d) {
+        if (mesh.mesh[d] <= 0 || mesh.is_shift[d] < 0 || mesh.is_shift[d] > 1)
+            return ctx;
+        if (d >= system.dim && (mesh.mesh[d] != 1 || mesh.is_shift[d] != 0))
+            return ctx;
+        if (nk > mesh.kpoints.size() / static_cast<std::size_t>(mesh.mesh[d]))
+            return ctx;
+        nk *= static_cast<std::size_t>(mesh.mesh[d]);
+    }
+    if (nk != mesh.kpoints.size() || mesh.weights.size() != nk) return ctx;
+    if (!mesh.ir_mapping.empty()) {
+        if (mesh.ir_mapping.size() != nk) return ctx;
+        for (std::size_t k = 0; k < nk; ++k)
+            if (mesh.ir_mapping[k] != static_cast<int>(k)) return ctx;
+    }
+    const auto expected = monkhorst_pack(system, mesh.mesh, mesh.is_shift, false);
+    for (std::size_t k = 0; k < nk; ++k) {
+        if (!std::isfinite(mesh.weights[k]) ||
+            std::abs(mesh.weights[k] - 1.0 / nk) > 1e-14 ||
+            (mesh.kpoints[k] - expected.kpoints[k]).norm() > 1e-12)
+            return ctx;
+    }
+    if (p.nbf <= 0 || p.cells.size() != p.blocks.size() || p.cells.empty())
+        return ctx;
+    if (beta && (beta->nbf != p.nbf || beta->cells.size() != p.cells.size() ||
+                 beta->blocks.size() != p.blocks.size())) return ctx;
+    const auto density_scale = [](const LatticeMatrixSet& density) {
+        double scale = 0.0;
+        for (const auto& block : density.blocks) {
+            if (block.rows() != density.nbf || block.cols() != density.nbf || !block.allFinite())
+                return -1.0;
+            scale = std::max(scale, block.cwiseAbs().maxCoeff());
+        }
+        return scale;
+    };
+    const double scale_alpha = density_scale(p);
+    const double scale_beta = beta ? density_scale(*beta) : 0.0;
+    if (scale_alpha < 0.0 || scale_beta < 0.0) return ctx;
+    std::map<std::array<int, 3>, std::size_t> representatives;
+    for (std::size_t i = 0; i < p.cells.size(); ++i) {
+        const auto& cell = p.cells[i];
+        const auto& block = p.blocks[i];
+        if (block.rows() != p.nbf || block.cols() != p.nbf || !block.allFinite())
+            return ctx;
+        if (!cell.r_cart.allFinite() ||
+            (cell.r_cart - system.lattice * cell.index.cast<double>()).norm() > 1e-12)
+            return ctx;
+        std::array<int, 3> residue, index;
+        int parity = 0;
+        for (int d = 0; d < 3; ++d) {
+            index[d] = cell.index[d];
+            // Floor division, including negative lattice indices.
+            residue[d] = index[d] % mesh.mesh[d];
+            if (residue[d] < 0) residue[d] += mesh.mesh[d];
+            const auto quotient = (static_cast<long long>(index[d]) - residue[d]) / mesh.mesh[d];
+            parity ^= static_cast<int>((quotient % 2 + 2) % 2) * mesh.is_shift[d];
+        }
+        if (!ctx.cell_pos.emplace(index, static_cast<int>(i)).second) return ctx;
+        ctx.residue.push_back(residue);
+        ctx.sign.push_back(parity ? -1.0 : 1.0);
+        if (parity) ctx.unit_signs = false;
+        if (beta && (beta->cells[i].index != cell.index ||
+                     (beta->cells[i].r_cart - cell.r_cart).norm() > 1e-12 ||
+                     beta->blocks[i].rows() != p.nbf || beta->blocks[i].cols() != p.nbf ||
+                     !beta->blocks[i].allFinite())) return ctx;
+        const auto [it, inserted] = representatives.emplace(residue, i);
+        if (inserted) continue;
+        const auto ref = it->second;
+        const double factor = ctx.sign[i] * ctx.sign[ref];
+        const auto agrees = [factor](const Eigen::MatrixXd& a, const Eigen::MatrixXd& b,
+                                      double scale) {
+            // Fourier phases can span several periods. Admit only roundoff
+            // relative to this spin's density scale, including near-zero
+            // residue blocks; a tiny spin channel gets no unit-sized floor.
+            return (a - factor * b).cwiseAbs().maxCoeff() <=
+                256.0 * std::numeric_limits<double>::epsilon() * scale;
+        };
+        if (!agrees(block, p.blocks[ref], scale_alpha) ||
+            (beta && !agrees(beta->blocks[i], beta->blocks[ref], scale_beta))) return ctx;
+    }
+    for (const auto& entry : representatives)
+        ctx.rep.emplace(entry.first, static_cast<int>(entry.second));
+    for (int d = 0; d < 3; ++d) {
+        ctx.mesh[d] = mesh.mesh[d];
+        if (mesh.is_shift[d] != 0) ctx.unit_signs = false;
+    }
+    ctx.compatible = true;
+    return ctx;
+}
+
+struct XCTorusRectangle {
+    std::vector<int> bra, ket;
+    int gp;
+    double sign;
+};
+using XCTorusPlan = std::vector<XCTorusRectangle>;
+
+// The complete torus plan (opt-in, #519 RG-1): one rectangle per pair of torus
+// residues over all images that reach the batch, so the density is
+// sum_{a,s} chi_a^T P(res(s) - res(a)) chi_s over every pair of live images.
+// It is the domain-converged density: on a domain that closes the density
+// (the #465 bound) it differs from the retained pair graph by the pairs
+// beyond the domain only, 7e-12 Ha in E_xc on LiH/STO-3G (1,1,1) and 3e-10 Ha
+// on an H2/STO-3G (2,1,1) cube. Its AO sums cost (images x residues) instead
+// of (images x pair-ball size). Returns {} (the caller's regular plan) when a
+// residue has no density block or a sign is -1.
+XCTorusPlan xc_torus_complete_plan(const XCTorusContext& ctx,
+                                   const std::vector<ScreenedImageAO>& tab) {
+    if (!ctx.unit_signs) return {};
+    std::map<std::array<int, 3>, std::vector<int>> by_residue;
+    for (std::size_t c = 0; c < tab.size(); ++c)
+        if (tab[c].live()) by_residue[ctx.residue[c]].push_back(static_cast<int>(c));
+    XCTorusPlan plan;
+    for (const auto& bra : by_residue)
+        for (const auto& ket : by_residue) {
+            std::array<int, 3> d;
+            for (int k = 0; k < 3; ++k)
+                d[k] = ((ket.first[k] - bra.first[k]) % ctx.mesh[k] + ctx.mesh[k]) % ctx.mesh[k];
+            const auto found = ctx.rep.find(d);
+            if (found == ctx.rep.end()) return {};
+            XCTorusRectangle r;
+            r.bra = bra.second;
+            r.ket = ket.second;
+            r.gp = found->second;
+            r.sign = 1.0;
+            plan.push_back(std::move(r));
+        }
+    return plan;
+}
+
+// A disjoint cover of the RETAINED pair graph, partitioned by both residues.
+// No complement, new pair, larger image domain or altered screen is involved.
+XCTorusPlan xc_torus_plan(XCTorusContext* ctx,
+                          const std::vector<BraKetPair>& pairs,
+                          const std::vector<int>& live,
+                          const std::vector<ScreenedImageAO>* tab,
+                          int nbf) {
+    if (ctx && ctx->complete && tab) {
+        auto complete = xc_torus_complete_plan(*ctx, *tab);
+        if (!complete.empty()) {
+            ctx->used = true;
+            return complete;
+        }
+    }
+    if (!ctx || live.empty()) return {};
+    using Key = std::pair<std::array<int, 3>, std::array<int, 3>>;
+    std::map<Key, std::vector<int>> blocks;
+    long double pair_work = 0.0;
+    for (int i : live) {
+        const auto& p = pairs[i];
+        blocks[{ctx->residue[p.a], ctx->residue[p.s]}].push_back(i);
+        pair_work += tab ? (*tab)[p.a].bfs.size() * (*tab)[p.s].bfs.size()
+                         : static_cast<long double>(nbf) * nbf;
+    }
+    XCTorusPlan plan;
+    for (const auto& entry : blocks) {
+        auto cover = [&](bool transpose) {
+            std::map<int, std::vector<int>> neighbors;
+            for (int i : entry.second) {
+                const auto& p = pairs[i];
+                neighbors[transpose ? p.s : p.a].push_back(transpose ? p.a : p.s);
+            }
+            std::map<std::vector<int>, std::vector<int>> equal_rows;
+            for (auto& row : neighbors) {
+                std::sort(row.second.begin(), row.second.end());
+                equal_rows[row.second].push_back(row.first);
+            }
+            XCTorusPlan result;
+            for (const auto& row : equal_rows) {
+                XCTorusRectangle r;
+                r.bra = transpose ? row.first : row.second;
+                r.ket = transpose ? row.second : row.first;
+                // Every rectangle edge exists. Find its representative pair
+                // without constructing a dense image-by-image lookup table.
+                const int a = r.bra.front(), s = r.ket.front();
+                const auto found = std::find_if(entry.second.begin(), entry.second.end(),
+                    [&](int i) { return pairs[i].a == a && pairs[i].s == s; });
+                r.gp = pairs[*found].gp;
+                r.sign = ctx->sign[a] * ctx->sign[s];
+                result.push_back(std::move(r));
+            }
+            return result;
+        };
+        auto rows = cover(false), columns = cover(true);
+        auto& best = rows.size() <= columns.size() ? rows : columns;
+        for (auto& rectangle : best) plan.push_back(std::move(rectangle));
+    }
+    // Full-basis rectangle sums can lose to sparse tiny pairs. Include their
+    // additions in a conservative work estimate before choosing the path.
+    long double grouped_work = static_cast<long double>(plan.size()) * nbf * nbf;
+    for (const auto& r : plan) grouped_work +=
+        static_cast<long double>(r.bra.size() + r.ket.size()) * nbf;
+    if (grouped_work * 1.25L >= pair_work) return {};
+    ctx->used = true;
+    return plan;
+}
+
+struct XCTorusAOView {
+    const Eigen::MatrixXd& chi;
+    const std::array<Eigen::MatrixXd, 3>& grad;
+    const std::vector<int>* bfs; // null means the complete basis
+};
+struct XCTorusAO {
+    Eigen::MatrixXd chi;
+    std::array<Eigen::MatrixXd, 3> grad;
+};
+template<class View>
+XCTorusAO xc_torus_sum(const std::vector<int>& cells, const XCTorusContext& ctx,
+                       View view, Eigen::Index points, int nbf, bool gradient) {
+    XCTorusAO out;
+    out.chi = Eigen::MatrixXd::Zero(points, nbf);
+    if (gradient) for (auto& g : out.grad) g = Eigen::MatrixXd::Zero(points, nbf);
+    for (int c : cells) {
+        const auto ao = view(c);
+        if (!ao.bfs) {
+            out.chi += ctx.sign[c] * ao.chi;
+            if (gradient) for (int d = 0; d < 3; ++d) out.grad[d] += ctx.sign[c] * ao.grad[d];
+        } else {
+            for (std::size_t j = 0; j < ao.bfs->size(); ++j) {
+                const int bf = (*ao.bfs)[j];
+                out.chi.col(bf) += ctx.sign[c] * ao.chi.col(j);
+                if (gradient) for (int d = 0; d < 3; ++d)
+                    out.grad[d].col(bf) += ctx.sign[c] * ao.grad[d].col(j);
+            }
+        }
+    }
+    return out;
+}
+
+template<class View>
+ExternalPeriodicFields xc_torus_fields(const LatticeMatrixSet& p,
+    const XCTorusPlan& plan, const XCTorusContext& ctx, View view,
+    Eigen::Index points, bool gradient, bool kinetic) {
+    const int nt = omp_max_threads();
+    std::vector<ExternalPeriodicFields> local(nt);
+    for (auto& f : local) {
+        f.rho = Eigen::VectorXd::Zero(points);
+        if (gradient) f.grad = Eigen::MatrixX3d::Zero(points, 3);
+        if (kinetic) f.tau = Eigen::VectorXd::Zero(points);
+    }
+    #pragma omp parallel for schedule(static)
+    for (std::size_t j = 0; j < plan.size(); ++j) {
+        auto& f = local[omp_thread_index()];
+        const auto& r = plan[j];
+        const auto a = xc_torus_sum(r.bra, ctx, view, points, p.nbf, gradient);
+        // Identical ordered image lists give identical signed AO sums.
+        const bool same_images = r.bra == r.ket;
+        // Avoid GCC 12's aggregate-temporary noexcept ICE in this template.
+        XCTorusAO separate_s;
+        if (!same_images)
+            separate_s = xc_torus_sum(r.ket, ctx, view, points, p.nbf, gradient);
+        const auto& s = same_images ? a : separate_s;
+        const Eigen::MatrixXd density = r.sign * p.blocks[r.gp];
+        const Eigen::MatrixXd ap = a.chi * density;
+        f.rho.array() += (ap.array() * s.chi.array()).rowwise().sum();
+        if (gradient) for (int d = 0; d < 3; ++d) {
+            const Eigen::MatrixXd dp = a.grad[d] * density;
+            f.grad.col(d).array() += (ap.array() * s.grad[d].array()).rowwise().sum();
+            f.grad.col(d).array() += (dp.array() * s.chi.array()).rowwise().sum();
+            if (kinetic) f.tau.array() += 0.5 * (dp.array() * s.grad[d].array()).rowwise().sum();
+        }
+    }
+    for (int t = 1; t < nt; ++t) {
+        local[0].rho += local[t].rho;
+        if (gradient) local[0].grad += local[t].grad;
+        if (kinetic) local[0].tau += local[t].tau;
+    }
+    return std::move(local[0]);
+}
+
+template<class View>
+void xc_torus_project(const XCTorusPlan& plan, const XCTorusContext& ctx,
+    View view, const Eigen::VectorXd& qr, const Eigen::MatrixX3d& qg,
+    const Eigen::VectorXd& qt, std::vector<Eigen::MatrixXd>& blocks) {
+    const int nbf = static_cast<int>(blocks.front().rows());
+    const bool gradient = qg.rows() != 0, kinetic = qt.size() != 0;
+    std::map<int, std::vector<int>> grouped;
+    for (std::size_t j = 0; j < plan.size(); ++j) grouped[plan[j].gp].push_back(static_cast<int>(j));
+    std::vector<std::pair<int, std::vector<int>>> outputs(grouped.begin(), grouped.end());
+    #pragma omp parallel for schedule(static)
+    for (std::size_t i = 0; i < outputs.size(); ++i) {
+        Eigen::MatrixXd value = Eigen::MatrixXd::Zero(nbf, nbf);
+        for (int j : outputs[i].second) {
+            const auto& r = plan[j];
+            const auto a = xc_torus_sum(r.bra, ctx, view, qr.size(), nbf, gradient);
+            const bool same_images = r.bra == r.ket;
+            // Keep the same GCC 12 workaround as the density contraction.
+            XCTorusAO separate_s;
+            if (!same_images)
+                separate_s = xc_torus_sum(r.ket, ctx, view, qr.size(), nbf, gradient);
+            const auto& s = same_images ? a : separate_s;
+            Eigen::MatrixXd v = a.chi.transpose() * qr.asDiagonal() * s.chi;
+            if (gradient) {
+                Eigen::MatrixXd da = a.grad[0].array().colwise() * qg.col(0).array();
+                Eigen::MatrixXd ds = s.grad[0].array().colwise() * qg.col(0).array();
+                for (int d = 1; d < 3; ++d) {
+                    da.array() += a.grad[d].array().colwise() * qg.col(d).array();
+                    ds.array() += s.grad[d].array().colwise() * qg.col(d).array();
+                }
+                v.noalias() += da.transpose() * s.chi;
+                v.noalias() += a.chi.transpose() * ds;
+                if (kinetic) for (int d = 0; d < 3; ++d)
+                    v.noalias() += a.grad[d].transpose() * qt.asDiagonal() * s.grad[d];
+            }
+            value += r.sign * v;
+        }
+        // These are compressed projection intermediates. Only their Bloch
+        // sums on the verified mesh are returned by the direct-k wrappers.
+        blocks[outputs[i].first] += value;
+    }
+}
+
+std::size_t xc_value_batch_size(int nbf, std::size_t active, bool gradient,
+                                bool uks, XCTorusContext*& ctx, bool screened = false) {
+    const auto threads = static_cast<std::size_t>(omp_max_threads());
+    auto batch = periodic_xc_value_batch_size(nbf, active, gradient, uks, threads);
+    if (screened) batch = std::min(batch, static_cast<std::size_t>(kScreenedXcBatch));
+    if (!ctx) return batch;
+    // Preserve the original batch boxes: changing them changes which shells
+    // and pairs pass screening. If signed sums do not fit alongside the old
+    // batch, use its original contractions instead of shrinking that batch.
+    constexpr std::size_t extra_images_per_worker = 16;
+    const auto scratch_images = extra_images_per_worker * threads;
+    if (active > std::numeric_limits<std::size_t>::max() - scratch_images) {
+        ctx = nullptr;
+        return batch;
+    }
+    try {
+        const auto admitted = periodic_xc_value_batch_size(
+            nbf, active + scratch_images, gradient, uks, threads);
+        if (admitted < batch) ctx = nullptr;
+    } catch (const std::runtime_error&) {
+        ctx = nullptr;
+    }
+    return batch;
+}
+
 }  // namespace
 
 std::array<std::size_t, 2> periodic_xc_domain_counts(
@@ -391,13 +1019,89 @@ std::array<std::size_t, 2> periodic_xc_domain_counts(
     return {active.size(), bras.size()};
 }
 
-PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
+PeriodicXCScreeningStats periodic_xc_screening_stats(
+    const BasisSet& basis,
+    const PeriodicSystem& system,
+    const Grid& grid,
+    const LatticeMatrixSet& P_real_space,
+    const LatticeSumOptions& opts,
+    PeriodicXCDensityDomain density_domain,
+    double ao_screening_tol,
+    bool open_shell,
+    bool need_grad) {
+    const int nbf = static_cast<int>(basis.nbasis());
+    if (P_real_space.nbf != nbf) {
+        throw std::runtime_error(
+            "periodic_xc_screening_stats: density nbf mismatch");
+    }
+    // Same image domain and pair list as the value kernels.
+    const auto cell_pos = build_cell_index_map(P_real_space.cells);
+    const std::vector<int> active =
+        active_density_cells(P_real_space.cells, system, opts.cutoff_bohr);
+    const double bra_radius = opts.becke_image_radius_bohr > 0.0
+        ? std::min(opts.becke_image_radius_bohr, opts.cutoff_bohr)
+        : opts.cutoff_bohr;
+    const bool use_periodic_bras = use_periodic_density_bras(
+        density_domain, density_has_cross_cell_blocks(P_real_space, 1e-12));
+    const std::vector<int> bra_cells = use_periodic_bras
+        ? active_density_cells(P_real_space.cells, system, bra_radius)
+        : home_only_bra(P_real_space.cells, active);
+    const std::vector<BraKetPair> pairs = build_braket_pairs(
+        P_real_space.cells, bra_cells, active, cell_pos,
+        density_domain == PeriodicXCDensityDomain::PERIODIC_LATTICE);
+
+    const ImageShellScreen screen =
+        make_image_shell_screen(basis, ao_screening_tol);
+    Eigen::MatrixX3d q_points;
+    Eigen::VectorXd q_weights;
+    if (screen.enabled) nonzero_weight_points(grid, q_points, q_weights);
+    const Eigen::MatrixX3d& grid_pts = screen.enabled ? q_points : grid.points;
+    const Eigen::Index n_q = grid_pts.rows();
+    Eigen::Index batch = static_cast<Eigen::Index>(
+        periodic_xc_value_batch_size(nbf, active.size(), need_grad,
+                                     open_shell, omp_max_threads()));
+    if (screen.enabled) batch = std::min(batch, kScreenedXcBatch);
+
+    PeriodicXCScreeningStats st;
+    st.n_points = static_cast<std::size_t>(grid.points.rows());
+    st.n_points_evaluated = static_cast<std::size_t>(n_q);
+    const std::size_t n_shells = screen.centre.size();
+    std::vector<ScreenedImageAO> tab(P_real_space.cells.size());
+    for (Eigen::Index g0 = 0; g0 < n_q; g0 += batch) {
+        const Eigen::Index nb = std::min(batch, n_q - g0);
+        Eigen::Vector3d lo, hi;
+        batch_box(grid_pts.middleRows(g0, nb), lo, hi);
+        for (auto& img : tab) {
+            img.shells.clear();
+            img.bfs.clear();
+        }
+        for (int c : active) {
+            select_live_shells(screen, P_real_space.cells[c].r_cart, lo, hi,
+                               tab[c]);
+            st.image_shells_live += tab[c].shells.size();
+        }
+        st.image_shells_dense += active.size() * n_shells;
+        st.pairs_dense += pairs.size();
+        // The potential's pair list is the superset (no P(g) factor).
+        st.pairs_live += live_pair_indices(pairs, tab, screen, nullptr).size();
+        ++st.n_batches;
+    }
+    return st;
+}
+
+static PeriodicXCContribution build_xc_periodic_impl(const BasisSet& basis,
                                          const PeriodicSystem& system,
                                          const Grid& grid,
                                          const Functional& func,
                                          const LatticeMatrixSet& P_real_space,
                                          const LatticeSumOptions& opts,
-                                         PeriodicXCDensityDomain density_domain) {
+                                         PeriodicXCDensityDomain density_domain,
+                                         double ao_screening_tol, XCTorusContext* torus) {
+    detail::NativePhaseCall<6> profile("periodic_xc.closed_shell",
+        {"setup", "ao_collocation", "density_and_pair_plan", "functional",
+         "potential_projection", "external_provider_route"},
+        {{"nbasis", basis.nbasis()}, {"points", static_cast<std::uint64_t>(grid.points.rows())},
+         {"cells", P_real_space.cells.size()}});
     const int nbf = static_cast<int>(basis.nbasis());
     if (P_real_space.nbf != nbf) {
         throw std::runtime_error("build_xc_periodic: density nbf mismatch");
@@ -471,7 +1175,9 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
     out.V_xc.nbf = nbf;
     out.V_xc.cells = P_real_space.cells;
     out.V_xc.blocks.assign(n_cells, Eigen::MatrixXd::Zero(nbf, nbf));
+    out.periodic_density_bras = use_periodic_bras;
     double e_xc = 0.0;
+    double n_grid = 0.0;
 
     // Output cell gp -> the bra/ket pairs that map to it (batch-independent).
     std::vector<std::vector<int>> pairs_by_gp(n_cells);
@@ -479,6 +1185,7 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
         pairs_by_gp[pairs[k].gp].push_back(static_cast<int>(k));
     }
 
+    profile.elapsed.finish(0);
     if (func.is_external()) {
         if (grid.atomic_weights.size() != n_pts
             || static_cast<Eigen::Index>(grid.atom_of_point.size()) != n_pts
@@ -507,8 +1214,13 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
         input.tau_beta.resize(n_pts);
 
         const Eigen::Index kExternalXcGridBatch = static_cast<Eigen::Index>(
-            periodic_xc_value_batch_size(nbf, active.size(), true,
-                                         false, omp_max_threads()));
+            xc_value_batch_size(nbf, active.size(), true, false, torus));
+        std::vector<int> all_pairs;
+        if (torus) {
+            all_pairs.resize(pairs.size());
+            std::iota(all_pairs.begin(), all_pairs.end(), 0);
+        }
+        const auto external_plan = xc_torus_plan(torus, pairs, all_pairs, nullptr, nbf);
         for (Eigen::Index g0 = 0; g0 < n_pts;
              g0 += kExternalXcGridBatch) {
             const Eigen::Index nb = std::min<Eigen::Index>(
@@ -519,9 +1231,14 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
             evaluate_active_shifted_ao(
                 basis, pts_b, P_real_space.cells, active,
                 /*need_grad=*/true, chi_h, dchi_h);
+            const auto view = [&](int i) -> XCTorusAOView {
+                return {chi_h[i], dchi_h[i], nullptr};
+            };
             const ExternalPeriodicFields fields =
-                build_external_periodic_fields_batch(
-                    P_real_space, pairs, chi_h, dchi_h, nb);
+                external_plan.empty() ? build_external_periodic_fields_batch(
+                    P_real_space, pairs, chi_h, dchi_h, nb)
+                : xc_torus_fields(P_real_space, external_plan, *torus, view, nb, true, true);
+            n_grid += grid.weights.segment(g0, nb).dot(fields.rho);
             input.rho_alpha.segment(g0, nb) = 0.5 * fields.rho;
             input.rho_beta.segment(g0, nb) = 0.5 * fields.rho;
             input.grad_alpha.middleRows(g0, nb) = 0.5 * fields.grad;
@@ -550,12 +1267,23 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
             evaluate_active_shifted_ao(
                 basis, pts_b, P_real_space.cells, active,
                 /*need_grad=*/true, chi_h, dchi_h);
+            const auto view = [&](int i) -> XCTorusAOView {
+                return {chi_h[i], dchi_h[i], nullptr};
+            };
+            if (!external_plan.empty()) {
+                xc_torus_project(external_plan, *torus, view,
+                    q_rho.segment(g0, nb), q_grad.middleRows(g0, nb),
+                    0.5 * q_tau.segment(g0, nb), out.V_xc.blocks);
+            } else {
             project_external_periodic_batch(
                 pairs, pairs_by_gp, chi_h, dchi_h,
                 q_rho.segment(g0, nb), q_grad.middleRows(g0, nb),
                 q_tau.segment(g0, nb), out.V_xc.blocks);
+            }
         }
+        profile.elapsed.finish(5);
         out.e_xc = ev.energy;
+        out.n_electrons_grid = n_grid;
         return out;
     }
 
@@ -569,19 +1297,45 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
     // memory drops to O(n_active * batch * nbf). Per-batch math is identical
     // to the whole-grid path (libxc is pointwise; e_xc and V_xc are sums over
     // grid points), so the result matches to floating-point reassociation.
-    const Eigen::Index kXcGridBatch = static_cast<Eigen::Index>(
-            periodic_xc_value_batch_size(nbf, active.size(), need_grad,
-                                         false, omp_max_threads()));
-    for (Eigen::Index g0 = 0; g0 < n_pts; g0 += kXcGridBatch) {
-        const Eigen::Index nb = std::min(kXcGridBatch, n_pts - g0);
-        const Eigen::MatrixX3d pts_b = grid.points.middleRows(g0, nb);
-        const Eigen::VectorXd w_b = grid.weights.segment(g0, nb);
+    //
+    // AO-reach screening (see ImageShellScreen): with the screen enabled the
+    // batches run over the nonzero-weight points only, each image carries
+    // only the shells that reach the batch box, and pairs with an image that
+    // reaches nothing are skipped. Disabled (tol <= 0), every point, shell
+    // and pair is kept and the arithmetic is the dense kernel's.
+    const ImageShellScreen screen =
+        make_image_shell_screen(basis, ao_screening_tol);
+    Eigen::MatrixX3d q_points;
+    Eigen::VectorXd q_weights;
+    if (screen.enabled) nonzero_weight_points(grid, q_points, q_weights);
+    const Eigen::MatrixX3d& grid_pts = screen.enabled ? q_points : grid.points;
+    const Eigen::VectorXd& grid_w = screen.enabled ? q_weights : grid.weights;
+    const Eigen::Index n_q = grid_pts.rows();
+    Eigen::Index kXcGridBatch = static_cast<Eigen::Index>(
+            xc_value_batch_size(nbf, active.size(), need_grad, false, torus, screen.enabled));
+    if (screen.enabled) kXcGridBatch = std::min(kXcGridBatch, kScreenedXcBatch);
+    const std::vector<double> p_max = block_abs_max(P_real_space);
+    profile.elapsed.finish(0);
+    for (Eigen::Index g0 = 0; g0 < n_q; g0 += kXcGridBatch) {
+        const Eigen::Index nb = std::min(kXcGridBatch, n_q - g0);
+        const Eigen::MatrixX3d pts_b = grid_pts.middleRows(g0, nb);
+        const Eigen::VectorXd w_b = grid_w.segment(g0, nb);
 
-        // Shifted AO values (and gradients) for the active cells, batch points.
-        std::vector<Eigen::MatrixXd> chi_h(n_cells);
-        std::vector<std::array<Eigen::MatrixXd, 3>> dchi_h(n_cells);
-        evaluate_active_shifted_ao(basis, pts_b, P_real_space.cells, active,
-                                   need_grad, chi_h, dchi_h);
+        // Shifted AO values (and gradients) of the live shells of the active
+        // images at the batch points, and the pairs that survive the screen.
+        std::vector<ScreenedImageAO> tab(n_cells);
+        evaluate_screened_shifted_ao(basis, screen, pts_b, P_real_space.cells,
+                                     active, need_grad, tab);
+        profile.elapsed.finish(1);
+        const std::vector<int> live =
+            live_pair_indices(pairs, tab, screen, &p_max);
+        const std::vector<int> live_v =
+            live_pair_indices(pairs, tab, screen, nullptr);
+        const auto density_plan = xc_torus_plan(torus, pairs, live, &tab, nbf);
+        const auto potential_plan = xc_torus_plan(torus, pairs, live_v, &tab, nbf);
+        const auto view = [&](int i) -> XCTorusAOView {
+            return {tab[i].chi, tab[i].dchi, tab[i].full ? nullptr : &tab[i].bfs};
+        };
 
         Eigen::VectorXd rho = Eigen::VectorXd::Zero(nb);
         Eigen::VectorXd gx, gy, gz, tau;
@@ -596,7 +1350,13 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
 
         // Accumulate ρ / ∇ρ / τ over all active bra–ket pairs. Each thread
         // owns private accumulators; a final reduction sums them (no races).
-        {
+        if (!density_plan.empty()) {
+            const auto f = xc_torus_fields(P_real_space, density_plan, *torus,
+                                           view, nb, need_grad, is_mgga);
+            rho = f.rho;
+            if (need_grad) { gx = f.grad.col(0); gy = f.grad.col(1); gz = f.grad.col(2); }
+            if (is_mgga) tau = f.tau;
+        } else {
             const int n_threads = omp_max_threads();
             std::vector<Eigen::VectorXd> rho_t(
                 n_threads, Eigen::VectorXd::Zero(nb));
@@ -618,43 +1378,46 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
             // pair costs one chi_a * P product, so a static partition loses no
             // balance and the result is reproducible for a fixed thread count.
             #pragma omp parallel for schedule(static)
-            for (std::size_t k = 0; k < pairs.size(); ++k) {
+            for (std::size_t kk = 0; kk < live.size(); ++kk) {
                 const int tid = omp_thread_index();
-                const BraKetPair& pr = pairs[k];
-                const Eigen::MatrixXd& chi_a = chi_h[pr.a];   // bra χ(r − R_a)
-                const Eigen::MatrixXd& chi_s = chi_h[pr.s];   // ket χ(r − R_s)
-                const Eigen::MatrixXd& P = P_real_space.blocks[pr.gp];
-                const Eigen::MatrixXd chi_aP = chi_a * P;     // (nb, nbf)
+                const BraKetPair& pr = pairs[live[kk]];
+                const ScreenedImageAO& img_a = tab[pr.a];
+                const ScreenedImageAO& img_s = tab[pr.s];
+                const Eigen::MatrixXd& chi_a = img_a.chi;     // bra χ(r − R_a)
+                const Eigen::MatrixXd& chi_s = img_s.chi;     // ket χ(r − R_s)
+                Eigen::MatrixXd P_buffer;
+                const Eigen::MatrixXd& P = pair_density_block(
+                    P_real_space.blocks[pr.gp], img_a, img_s, P_buffer);
+                const Eigen::MatrixXd chi_aP = chi_a * P;     // (nb, n_live_s)
                 // ρ(r) += Σ_{μν} χ_a(r)_μ P(s−a)_{μν} χ_s(r)_ν
                 rho_t[tid].array() +=
                     (chi_aP.array() * chi_s.array()).rowwise().sum();
 
                 if (need_grad) {
                     // ∂ρ/∂α = Σ_{μν} P_{μν}[∂χ_a,μ χ_s,ν + χ_a,μ ∂χ_s,ν]
-                    const std::array<Eigen::MatrixXd, 3>& da = dchi_h[pr.a];
-                    const std::array<Eigen::MatrixXd, 3>& ds = dchi_h[pr.s];
+                    const std::array<Eigen::MatrixXd, 3>& da = img_a.dchi;
+                    const std::array<Eigen::MatrixXd, 3>& ds = img_s.dchi;
                     gx_t[tid].array() +=
                         (chi_aP.array() * ds[0].array()).rowwise().sum();
                     gy_t[tid].array() +=
                         (chi_aP.array() * ds[1].array()).rowwise().sum();
                     gz_t[tid].array() +=
                         (chi_aP.array() * ds[2].array()).rowwise().sum();
-                    gx_t[tid].array() +=
-                        ((da[0] * P).array() * chi_s.array()).rowwise().sum();
-                    gy_t[tid].array() +=
-                        ((da[1] * P).array() * chi_s.array()).rowwise().sum();
-                    gz_t[tid].array() +=
-                        ((da[2] * P).array() * chi_s.array()).rowwise().sum();
-                }
-
-                if (is_mgga) {
-                    // τ(r) += ½ Σ_d Σ_{μν} P_{μν} ∂_dχ_a,μ ∂_dχ_s,ν; ×½ after.
-                    const std::array<Eigen::MatrixXd, 3>& da = dchi_h[pr.a];
-                    const std::array<Eigen::MatrixXd, 3>& ds = dchi_h[pr.s];
+                    // Reuse each bra-gradient product for tau as well.
+                    // Keep only one product alive per worker and preserve
+                    // each field's pair/direction accumulation order.
+                    const std::array<Eigen::VectorXd*, 3> gradients = {
+                        &gx_t[tid], &gy_t[tid], &gz_t[tid]};
                     for (int d = 0; d < 3; ++d) {
-                        tau_t[tid].array() +=
-                            ((da[d] * P).array() * ds[d].array())
+                        const Eigen::MatrixXd gradient_density = da[d] * P;
+                        gradients[d]->array() +=
+                            (gradient_density.array() * chi_s.array())
                                 .rowwise().sum();
+                        if (is_mgga) {
+                            tau_t[tid].array() +=
+                                (gradient_density.array() * ds[d].array())
+                                    .rowwise().sum();
+                        }
                     }
                 }
             }
@@ -672,9 +1435,11 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
                 }
             }
         }
-        if (is_mgga) {
+        if (is_mgga && density_plan.empty()) {
             tau *= 0.5;   // match rks.cpp:124
         }
+
+        n_grid += w_b.dot(rho);   // before the clamp: the density as summed
 
         // Numerical hygiene: tiny negative densities from roundoff break libxc.
         for (Eigen::Index i = 0; i < nb; ++i) {
@@ -694,6 +1459,7 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
         // helper). No-op where the physical bound already holds.
         if (is_mgga) enforce_von_weizsaecker_floor(tau, rho, sigma);
 
+        profile.elapsed.finish(2);
         Eigen::VectorXd exc, v_rho, v_sigma, v_tau;
         if (is_mgga) {
             func.eval_unpolarised_mgga(rho, sigma, tau,
@@ -702,6 +1468,7 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
             func.eval_unpolarised(rho, sigma, exc, v_rho, v_sigma);
         }
 
+        profile.elapsed.finish(3);
         // E_xc per unit cell (accumulated across batches).
         e_xc += w_b.dot(exc);
 
@@ -723,48 +1490,74 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
             w_vtau = 0.5 * w_b.array() * v_tau.array();
         }
 
+        if (!potential_plan.empty()) {
+            Eigen::MatrixX3d qg;
+            if (need_grad) { qg.resize(nb, 3); qg << w2vs_gx, w2vs_gy, w2vs_gz; }
+            xc_torus_project(potential_plan, *torus, view, w_vrho, qg,
+                             w_vtau, out.V_xc.blocks);
+            profile.elapsed.finish(4);
+            continue;
+        }
+
+        std::vector<std::vector<int>> live_by_gp(n_cells);
+        for (int k : live_v) live_by_gp[pairs[k].gp].push_back(k);
+
         #pragma omp parallel for schedule(dynamic)
         for (std::size_t gp = 0; gp < n_cells; ++gp) {
-            if (pairs_by_gp[gp].empty()) continue;
+            if (live_by_gp[gp].empty()) continue;
             Eigen::MatrixXd Vg = Eigen::MatrixXd::Zero(nbf, nbf);
-            for (int k : pairs_by_gp[gp]) {
+            for (int k : live_by_gp[gp]) {
                 const BraKetPair& pr = pairs[k];
-                const Eigen::MatrixXd& chi_a = chi_h[pr.a];
-                const Eigen::MatrixXd& chi_s = chi_h[pr.s];
+                const ScreenedImageAO& img_a = tab[pr.a];
+                const ScreenedImageAO& img_s = tab[pr.s];
+                const Eigen::MatrixXd& chi_a = img_a.chi;
+                const Eigen::MatrixXd& chi_s = img_s.chi;
+                // Complete images accumulate straight into Vg (the dense
+                // arithmetic); screened ones into their live sub-block.
+                const bool full = img_a.full && img_s.full;
+                Eigen::MatrixXd sub;
+                if (!full) {
+                    sub.setZero(static_cast<Eigen::Index>(img_a.bfs.size()),
+                                static_cast<Eigen::Index>(img_s.bfs.size()));
+                }
+                Eigen::MatrixXd& Vt = full ? Vg : sub;
                 // LDA piece: χ_aᵀ · diag(w·v_ρ) · χ_s
-                Vg.noalias() += chi_a.transpose() * w_vrho.asDiagonal() * chi_s;
+                Vt.noalias() += chi_a.transpose() * w_vrho.asDiagonal() * chi_s;
 
                 if (need_grad) {
-                    const std::array<Eigen::MatrixXd, 3>& da = dchi_h[pr.a];
-                    const std::array<Eigen::MatrixXd, 3>& ds = dchi_h[pr.s];
+                    const std::array<Eigen::MatrixXd, 3>& da = img_a.dchi;
+                    const std::array<Eigen::MatrixXd, 3>& ds = img_s.dchi;
                     // Term 1: (∇ρ · ∇χ_a) χ_s
                     Eigen::MatrixXd A =
                         da[0].array().colwise() * w2vs_gx.array();
                     A.array() += da[1].array().colwise() * w2vs_gy.array();
                     A.array() += da[2].array().colwise() * w2vs_gz.array();
-                    Vg.noalias() += A.transpose() * chi_s;
+                    Vt.noalias() += A.transpose() * chi_s;
                     // Term 2: χ_a (∇ρ · ∇χ_s)
                     Eigen::MatrixXd B =
                         ds[0].array().colwise() * w2vs_gx.array();
                     B.array() += ds[1].array().colwise() * w2vs_gy.array();
                     B.array() += ds[2].array().colwise() * w2vs_gz.array();
-                    Vg.noalias() += chi_a.transpose() * B;
+                    Vt.noalias() += chi_a.transpose() * B;
                 }
 
                 if (is_mgga) {
-                    const std::array<Eigen::MatrixXd, 3>& da = dchi_h[pr.a];
-                    const std::array<Eigen::MatrixXd, 3>& ds = dchi_h[pr.s];
+                    const std::array<Eigen::MatrixXd, 3>& da = img_a.dchi;
+                    const std::array<Eigen::MatrixXd, 3>& ds = img_s.dchi;
                     for (int d = 0; d < 3; ++d) {
-                        Vg.noalias() +=
+                        Vt.noalias() +=
                             da[d].transpose() * w_vtau.asDiagonal() * ds[d];
                     }
                 }
+                if (!full) Vg(img_a.bfs, img_s.bfs) += sub;
             }
             out.V_xc.blocks[gp].noalias() += Vg;   // accumulate across batches
         }
+        profile.elapsed.finish(4);
     }
 
     out.e_xc = e_xc;
+    out.n_electrons_grid = n_grid;
     return out;
 }
 
@@ -1430,7 +2223,7 @@ static Eigen::MatrixXd xc_lattice_gradient_batch_uks(
 // uks.cpp; the only difference is the per-cell AO contraction loop, which
 // matches build_xc_periodic exactly.
 // ---------------------------------------------------------------------------
-PeriodicUKSXCContribution build_xc_periodic_uks(
+static PeriodicUKSXCContribution build_xc_periodic_uks_impl(
     const BasisSet& basis,
     const PeriodicSystem& system,
     const Grid& grid,
@@ -1438,7 +2231,8 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
     const LatticeMatrixSet& P_alpha,
     const LatticeMatrixSet& P_beta,
     const LatticeSumOptions& opts,
-    PeriodicXCDensityDomain density_domain) {
+    PeriodicXCDensityDomain density_domain,
+    double ao_screening_tol, XCTorusContext* torus) {
     const int nbf = static_cast<int>(basis.nbasis());
     if (P_alpha.nbf != nbf || P_beta.nbf != nbf) {
         throw std::runtime_error("build_xc_periodic_uks: density nbf mismatch");
@@ -1492,7 +2286,9 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
     out.V_beta.nbf = nbf;
     out.V_beta.cells = P_alpha.cells;
     out.V_beta.blocks.assign(n_cells, Eigen::MatrixXd::Zero(nbf, nbf));
+    out.periodic_density_bras = has_xc;
     double e_xc = 0.0;
+    double n_grid = 0.0;
 
     // Output cell gp -> the bra/ket pairs that map to it (batch-independent).
     std::vector<std::vector<int>> pairs_by_gp(n_cells);
@@ -1528,8 +2324,13 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
         input.tau_beta.resize(n_pts);
 
         const Eigen::Index kExternalXcGridBatch = static_cast<Eigen::Index>(
-            periodic_xc_value_batch_size(nbf, active.size(), true,
-                                         true, omp_max_threads()));
+            xc_value_batch_size(nbf, active.size(), true, true, torus));
+        std::vector<int> all_pairs;
+        if (torus) {
+            all_pairs.resize(pairs.size());
+            std::iota(all_pairs.begin(), all_pairs.end(), 0);
+        }
+        const auto external_plan = xc_torus_plan(torus, pairs, all_pairs, nullptr, nbf);
         for (Eigen::Index g0 = 0; g0 < n_pts;
              g0 += kExternalXcGridBatch) {
             const Eigen::Index nb = std::min<Eigen::Index>(
@@ -1540,12 +2341,18 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
             evaluate_active_shifted_ao(
                 basis, pts_b, P_alpha.cells, active,
                 /*need_grad=*/true, chi_h, dchi_h);
+            const auto view = [&](int i) -> XCTorusAOView {
+                return {chi_h[i], dchi_h[i], nullptr};
+            };
             const ExternalPeriodicFields fa =
-                build_external_periodic_fields_batch(
-                    P_alpha, pairs, chi_h, dchi_h, nb);
+                external_plan.empty() ? build_external_periodic_fields_batch(
+                    P_alpha, pairs, chi_h, dchi_h, nb)
+                : xc_torus_fields(P_alpha, external_plan, *torus, view, nb, true, true);
             const ExternalPeriodicFields fb =
-                build_external_periodic_fields_batch(
-                    P_beta, pairs, chi_h, dchi_h, nb);
+                external_plan.empty() ? build_external_periodic_fields_batch(
+                    P_beta, pairs, chi_h, dchi_h, nb)
+                : xc_torus_fields(P_beta, external_plan, *torus, view, nb, true, true);
+            n_grid += grid.weights.segment(g0, nb).dot(fa.rho + fb.rho);
             input.rho_alpha.segment(g0, nb) = fa.rho;
             input.rho_beta.segment(g0, nb) = fb.rho;
             input.grad_alpha.middleRows(g0, nb) = fa.grad;
@@ -1570,6 +2377,17 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
             evaluate_active_shifted_ao(
                 basis, pts_b, P_alpha.cells, active,
                 /*need_grad=*/true, chi_h, dchi_h);
+            const auto view = [&](int i) -> XCTorusAOView {
+                return {chi_h[i], dchi_h[i], nullptr};
+            };
+            if (!external_plan.empty()) {
+                xc_torus_project(external_plan, *torus, view,
+                    ev.v_rho_alpha.segment(g0, nb), ev.v_grad_alpha.middleRows(g0, nb),
+                    0.5 * ev.v_tau_alpha.segment(g0, nb), out.V_alpha.blocks);
+                xc_torus_project(external_plan, *torus, view,
+                    ev.v_rho_beta.segment(g0, nb), ev.v_grad_beta.middleRows(g0, nb),
+                    0.5 * ev.v_tau_beta.segment(g0, nb), out.V_beta.blocks);
+            } else {
             project_external_periodic_batch(
                 pairs, pairs_by_gp, chi_h, dchi_h,
                 ev.v_rho_alpha.segment(g0, nb),
@@ -1580,8 +2398,10 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
                 ev.v_rho_beta.segment(g0, nb),
                 ev.v_grad_beta.middleRows(g0, nb),
                 ev.v_tau_beta.segment(g0, nb), out.V_beta.blocks);
+            }
         }
         out.e_xc = ev.energy;
+        out.n_electrons_grid = n_grid;
         return out;
     }
 
@@ -1592,18 +2412,36 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
     // memory becomes O(n_active * batch * nbf), independent of grid size.
     // Per-batch math is identical to the whole-grid path, so energies match
     // to floating-point reassociation.
-    const Eigen::Index kXcGridBatch = static_cast<Eigen::Index>(
-            periodic_xc_value_batch_size(nbf, active.size(), need_grad,
-                                         true, omp_max_threads()));
-    for (Eigen::Index g0 = 0; g0 < n_pts; g0 += kXcGridBatch) {
-        const Eigen::Index nb = std::min(kXcGridBatch, n_pts - g0);
-        const Eigen::MatrixX3d pts_b = grid.points.middleRows(g0, nb);
-        const Eigen::VectorXd w_b = grid.weights.segment(g0, nb);
+    // AO-reach screening as in build_xc_periodic (ImageShellScreen).
+    const ImageShellScreen screen =
+        make_image_shell_screen(basis, ao_screening_tol);
+    Eigen::MatrixX3d q_points;
+    Eigen::VectorXd q_weights;
+    if (screen.enabled) nonzero_weight_points(grid, q_points, q_weights);
+    const Eigen::MatrixX3d& grid_pts = screen.enabled ? q_points : grid.points;
+    const Eigen::VectorXd& grid_w = screen.enabled ? q_weights : grid.weights;
+    const Eigen::Index n_q = grid_pts.rows();
+    Eigen::Index kXcGridBatch = static_cast<Eigen::Index>(
+            xc_value_batch_size(nbf, active.size(), need_grad, true, torus, screen.enabled));
+    if (screen.enabled) kXcGridBatch = std::min(kXcGridBatch, kScreenedXcBatch);
+    const std::vector<double> p_max = block_abs_max(P_alpha, &P_beta);
+    for (Eigen::Index g0 = 0; g0 < n_q; g0 += kXcGridBatch) {
+        const Eigen::Index nb = std::min(kXcGridBatch, n_q - g0);
+        const Eigen::MatrixX3d pts_b = grid_pts.middleRows(g0, nb);
+        const Eigen::VectorXd w_b = grid_w.segment(g0, nb);
 
-        std::vector<Eigen::MatrixXd> chi_h(n_cells);
-        std::vector<std::array<Eigen::MatrixXd, 3>> dchi_h(n_cells);
-        evaluate_active_shifted_ao(basis, pts_b, P_alpha.cells, active,
-                                   need_grad, chi_h, dchi_h);
+        std::vector<ScreenedImageAO> tab(n_cells);
+        evaluate_screened_shifted_ao(basis, screen, pts_b, P_alpha.cells,
+                                     active, need_grad, tab);
+        const std::vector<int> live =
+            live_pair_indices(pairs, tab, screen, &p_max);
+        const std::vector<int> live_v =
+            live_pair_indices(pairs, tab, screen, nullptr);
+        const auto density_plan = xc_torus_plan(torus, pairs, live, &tab, nbf);
+        const auto potential_plan = xc_torus_plan(torus, pairs, live_v, &tab, nbf);
+        const auto view = [&](int i) -> XCTorusAOView {
+            return {tab[i].chi, tab[i].dchi, tab[i].full ? nullptr : &tab[i].bfs};
+        };
 
         // Per-spin densities and gradients (batch).
         Eigen::VectorXd rho_a = Eigen::VectorXd::Zero(nb);
@@ -1622,7 +2460,18 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
             tau_b = Eigen::VectorXd::Zero(nb);
         }
 
-        {
+        if (!density_plan.empty()) {
+            const auto a = xc_torus_fields(P_alpha, density_plan, *torus,
+                                           view, nb, need_grad, is_mgga);
+            const auto b = xc_torus_fields(P_beta, density_plan, *torus,
+                                           view, nb, need_grad, is_mgga);
+            rho_a = a.rho; rho_b = b.rho;
+            if (need_grad) {
+                gax = a.grad.col(0); gay = a.grad.col(1); gaz = a.grad.col(2);
+                gbx = b.grad.col(0); gby = b.grad.col(1); gbz = b.grad.col(2);
+            }
+            if (is_mgga) { tau_a = a.tau; tau_b = b.tau; }
+        } else {
             const int n_threads = omp_max_threads();
             std::vector<Eigen::VectorXd> rho_a_t(n_threads,
                 Eigen::VectorXd::Zero(nb));
@@ -1651,21 +2500,28 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
             // pair costs one chi_a * P product, so a static partition loses no
             // balance and the result is reproducible for a fixed thread count.
             #pragma omp parallel for schedule(static)
-            for (std::size_t k = 0; k < pairs.size(); ++k) {
+            for (std::size_t kk = 0; kk < live.size(); ++kk) {
                 const int tid = omp_thread_index();
-                const BraKetPair& pr = pairs[k];
-                const Eigen::MatrixXd& chi_a = chi_h[pr.a];   // bra χ(r − R_a)
-                const Eigen::MatrixXd& chi_s = chi_h[pr.s];   // ket χ(r − R_s)
-                const Eigen::MatrixXd chi_Pa = chi_a * P_alpha.blocks[pr.gp];
-                const Eigen::MatrixXd chi_Pb = chi_a * P_beta.blocks[pr.gp];
+                const BraKetPair& pr = pairs[live[kk]];
+                const ScreenedImageAO& img_a = tab[pr.a];
+                const ScreenedImageAO& img_s = tab[pr.s];
+                const Eigen::MatrixXd& chi_a = img_a.chi;     // bra χ(r − R_a)
+                const Eigen::MatrixXd& chi_s = img_s.chi;     // ket χ(r − R_s)
+                Eigen::MatrixXd PA_buffer, PB_buffer;
+                const Eigen::MatrixXd& PA = pair_density_block(
+                    P_alpha.blocks[pr.gp], img_a, img_s, PA_buffer);
+                const Eigen::MatrixXd& PB = pair_density_block(
+                    P_beta.blocks[pr.gp], img_a, img_s, PB_buffer);
+                const Eigen::MatrixXd chi_Pa = chi_a * PA;
+                const Eigen::MatrixXd chi_Pb = chi_a * PB;
                 rho_a_t[tid].array() +=
                     (chi_Pa.array() * chi_s.array()).rowwise().sum();
                 rho_b_t[tid].array() +=
                     (chi_Pb.array() * chi_s.array()).rowwise().sum();
 
                 if (need_grad) {
-                    const std::array<Eigen::MatrixXd, 3>& da = dchi_h[pr.a];
-                    const std::array<Eigen::MatrixXd, 3>& ds = dchi_h[pr.s];
+                    const std::array<Eigen::MatrixXd, 3>& da = img_a.dchi;
+                    const std::array<Eigen::MatrixXd, 3>& ds = img_s.dchi;
                     // ket-gradient term  χ_a P_σ ⊙ ∂χ_s
                     gax_t[tid].array() +=
                         (chi_Pa.array() * ds[0].array()).rowwise().sum();
@@ -1679,38 +2535,35 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
                         (chi_Pb.array() * ds[1].array()).rowwise().sum();
                     gbz_t[tid].array() +=
                         (chi_Pb.array() * ds[2].array()).rowwise().sum();
-                    // bra-gradient term  (∂χ_a P_σ) ⊙ χ_s
-                    gax_t[tid].array() +=
-                        ((da[0] * P_alpha.blocks[pr.gp]).array()
-                         * chi_s.array()).rowwise().sum();
-                    gay_t[tid].array() +=
-                        ((da[1] * P_alpha.blocks[pr.gp]).array()
-                         * chi_s.array()).rowwise().sum();
-                    gaz_t[tid].array() +=
-                        ((da[2] * P_alpha.blocks[pr.gp]).array()
-                         * chi_s.array()).rowwise().sum();
-                    gbx_t[tid].array() +=
-                        ((da[0] * P_beta.blocks[pr.gp]).array()
-                         * chi_s.array()).rowwise().sum();
-                    gby_t[tid].array() +=
-                        ((da[1] * P_beta.blocks[pr.gp]).array()
-                         * chi_s.array()).rowwise().sum();
-                    gbz_t[tid].array() +=
-                        ((da[2] * P_beta.blocks[pr.gp]).array()
-                         * chi_s.array()).rowwise().sum();
-                }
-
-                if (is_mgga) {
-                    // τ_σ += ½ Σ_d (∂_dχ_a · P_σ(s−a) · ∂_dχ_s); ×½ after.
-                    const std::array<Eigen::MatrixXd, 3>& da = dchi_h[pr.a];
-                    const std::array<Eigen::MatrixXd, 3>& ds = dchi_h[pr.s];
+                    // Reuse the bra-gradient product for the same spin's
+                    // kinetic density without retaining extra image tables.
+                    const std::array<Eigen::VectorXd*, 3> gradients_a = {
+                        &gax_t[tid], &gay_t[tid], &gaz_t[tid]};
+                    const std::array<Eigen::VectorXd*, 3> gradients_b = {
+                        &gbx_t[tid], &gby_t[tid], &gbz_t[tid]};
                     for (int d = 0; d < 3; ++d) {
-                        tau_a_t[tid].array() +=
-                            ((da[d] * P_alpha.blocks[pr.gp]).array()
-                             * ds[d].array()).rowwise().sum();
-                        tau_b_t[tid].array() +=
-                            ((da[d] * P_beta.blocks[pr.gp]).array()
-                             * ds[d].array()).rowwise().sum();
+                        {
+                            const Eigen::MatrixXd gradient_density = da[d] * PA;
+                            gradients_a[d]->array() +=
+                                (gradient_density.array() * chi_s.array())
+                                    .rowwise().sum();
+                            if (is_mgga) {
+                                tau_a_t[tid].array() +=
+                                    (gradient_density.array() * ds[d].array())
+                                        .rowwise().sum();
+                            }
+                        }
+                        {
+                            const Eigen::MatrixXd gradient_density = da[d] * PB;
+                            gradients_b[d]->array() +=
+                                (gradient_density.array() * chi_s.array())
+                                    .rowwise().sum();
+                            if (is_mgga) {
+                                tau_b_t[tid].array() +=
+                                    (gradient_density.array() * ds[d].array())
+                                        .rowwise().sum();
+                            }
+                        }
                     }
                 }
             }
@@ -1728,10 +2581,12 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
                 }
             }
         }
-        if (is_mgga) {
+        if (is_mgga && density_plan.empty()) {
             tau_a *= 0.5;   // match uks.cpp:149-150
             tau_b *= 0.5;
         }
+
+        n_grid += w_b.dot(rho_a + rho_b);   // before the clamp
 
         // Roundoff hygiene.
         for (Eigen::Index i = 0; i < nb; ++i) {
@@ -1812,22 +2667,50 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
             w_vtb = 0.5 * w_b.array() * v_tau_b.array();
         }
 
+        if (!potential_plan.empty()) {
+            Eigen::MatrixX3d qa, qb;
+            if (need_grad) {
+                qa.resize(nb, 3); qa << w_fa_x, w_fa_y, w_fa_z;
+                qb.resize(nb, 3); qb << w_fb_x, w_fb_y, w_fb_z;
+            }
+            xc_torus_project(potential_plan, *torus, view, w_vra, qa, w_vta, out.V_alpha.blocks);
+            xc_torus_project(potential_plan, *torus, view, w_vrb, qb, w_vtb, out.V_beta.blocks);
+            continue;
+        }
+
+        std::vector<std::vector<int>> live_by_gp(n_cells);
+        for (int k : live_v) live_by_gp[pairs[k].gp].push_back(k);
+
         #pragma omp parallel for schedule(dynamic)
         for (std::size_t gp = 0; gp < n_cells; ++gp) {
-            if (pairs_by_gp[gp].empty()) continue;
-            Eigen::MatrixXd Va = Eigen::MatrixXd::Zero(nbf, nbf);
-            Eigen::MatrixXd Vb = Eigen::MatrixXd::Zero(nbf, nbf);
-            for (int k : pairs_by_gp[gp]) {
+            if (live_by_gp[gp].empty()) continue;
+            Eigen::MatrixXd Va_g = Eigen::MatrixXd::Zero(nbf, nbf);
+            Eigen::MatrixXd Vb_g = Eigen::MatrixXd::Zero(nbf, nbf);
+            for (int k : live_by_gp[gp]) {
                 const BraKetPair& pr = pairs[k];
-                const Eigen::MatrixXd& chi_a = chi_h[pr.a];
-                const Eigen::MatrixXd& chi_s = chi_h[pr.s];
+                const ScreenedImageAO& img_a = tab[pr.a];
+                const ScreenedImageAO& img_s = tab[pr.s];
+                const Eigen::MatrixXd& chi_a = img_a.chi;
+                const Eigen::MatrixXd& chi_s = img_s.chi;
+                // Complete images accumulate straight into the cell blocks
+                // (the dense arithmetic); screened ones into live sub-blocks.
+                const bool full = img_a.full && img_s.full;
+                Eigen::MatrixXd sub_a, sub_b;
+                if (!full) {
+                    const auto na = static_cast<Eigen::Index>(img_a.bfs.size());
+                    const auto ns = static_cast<Eigen::Index>(img_s.bfs.size());
+                    sub_a.setZero(na, ns);
+                    sub_b.setZero(na, ns);
+                }
+                Eigen::MatrixXd& Va = full ? Va_g : sub_a;
+                Eigen::MatrixXd& Vb = full ? Vb_g : sub_b;
                 // LDA pieces.
                 Va.noalias() += chi_a.transpose() * w_vra.asDiagonal() * chi_s;
                 Vb.noalias() += chi_a.transpose() * w_vrb.asDiagonal() * chi_s;
 
                 if (need_grad) {
-                    const std::array<Eigen::MatrixXd, 3>& da = dchi_h[pr.a];
-                    const std::array<Eigen::MatrixXd, 3>& ds = dchi_h[pr.s];
+                    const std::array<Eigen::MatrixXd, 3>& da = img_a.dchi;
+                    const std::array<Eigen::MatrixXd, 3>& ds = img_s.dchi;
                     // V_σ(g) += [w·f_σ · ∇χ_a]^T χ_s + χ_a^T [w·f_σ · ∇χ_s]
                     Eigen::MatrixXd Aa = da[0].array().colwise() * w_fa_x.array();
                     Aa.array() += da[1].array().colwise() * w_fa_y.array();
@@ -1849,8 +2732,8 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
                 }
 
                 if (is_mgga) {
-                    const std::array<Eigen::MatrixXd, 3>& da = dchi_h[pr.a];
-                    const std::array<Eigen::MatrixXd, 3>& ds = dchi_h[pr.s];
+                    const std::array<Eigen::MatrixXd, 3>& da = img_a.dchi;
+                    const std::array<Eigen::MatrixXd, 3>& ds = img_s.dchi;
                     for (int d = 0; d < 3; ++d) {
                         Va.noalias() +=
                             da[d].transpose() * w_vta.asDiagonal() * ds[d];
@@ -1858,13 +2741,18 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
                             da[d].transpose() * w_vtb.asDiagonal() * ds[d];
                     }
                 }
+                if (!full) {
+                    Va_g(img_a.bfs, img_s.bfs) += sub_a;
+                    Vb_g(img_a.bfs, img_s.bfs) += sub_b;
+                }
             }
-            out.V_alpha.blocks[gp].noalias() += Va;
-            out.V_beta.blocks[gp].noalias() += Vb;
+            out.V_alpha.blocks[gp].noalias() += Va_g;
+            out.V_beta.blocks[gp].noalias() += Vb_g;
         }
     }
 
     out.e_xc = e_xc;
+    out.n_electrons_grid = n_grid;
     return out;
 }
 
@@ -1954,6 +2842,68 @@ Eigen::MatrixXd xc_lattice_gradient_contribution_uks(
             basis, system, batch, func, alpha, beta, opts, density_domain);
     }
     return gradient;
+}
+
+PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
+    const PeriodicSystem& system, const Grid& grid, const Functional& func,
+    const LatticeMatrixSet& p, const LatticeSumOptions& opts,
+    PeriodicXCDensityDomain domain, double tol) {
+    return build_xc_periodic_impl(basis, system, grid, func, p, opts, domain, tol, nullptr);
+}
+
+PeriodicUKSXCContribution build_xc_periodic_uks(const BasisSet& basis,
+    const PeriodicSystem& system, const Grid& grid, const Functional& func,
+    const LatticeMatrixSet& a, const LatticeMatrixSet& b, const LatticeSumOptions& opts,
+    PeriodicXCDensityDomain domain, double tol) {
+    return build_xc_periodic_uks_impl(basis, system, grid, func, a, b, opts, domain, tol, nullptr);
+}
+
+static std::vector<Eigen::MatrixXcd> fold_xc_projection(
+    const LatticeMatrixSet& projection, const BlochKMesh& mesh) {
+    std::vector<Eigen::Vector3d> origins;
+    origins.reserve(projection.cells.size());
+    for (const auto& cell : projection.cells) origins.push_back(cell.r_cart);
+    return bloch_sum_multi_k(projection.blocks, origins, mesh.kpoints);
+}
+
+PeriodicKXCContribution build_xc_periodic_kpoints(const BasisSet& basis,
+    const PeriodicSystem& system, const Grid& grid, const Functional& func,
+    const LatticeMatrixSet& p, const BlochKMesh& mesh, const LatticeSumOptions& opts,
+    PeriodicXCDensityDomain domain, double tol, bool torus_complete) {
+    auto ctx = xc_torus_context(system, mesh, p);
+    ctx.complete = torus_complete;
+    // The internal projection may combine many physical V(g) blocks into a
+    // representative image. Only the per-k matrices escape this wrapper.
+    auto value = build_xc_periodic_impl(basis, system, grid, func, p, opts, domain, tol,
+                                        ctx.compatible ? &ctx : nullptr);
+    PeriodicKXCContribution out;
+    out.V_xc = fold_xc_projection(value.V_xc, mesh);
+    out.e_xc = value.e_xc;
+    out.n_electrons_grid = value.n_electrons_grid;
+    out.periodic_density_bras = value.periodic_density_bras;
+    out.torus_density_compatible = ctx.compatible;
+    out.used_torus_grouping = ctx.used;
+    return out;
+}
+
+PeriodicKUKSXCContribution build_xc_periodic_uks_kpoints(const BasisSet& basis,
+    const PeriodicSystem& system, const Grid& grid, const Functional& func,
+    const LatticeMatrixSet& a, const LatticeMatrixSet& b, const BlochKMesh& mesh,
+    const LatticeSumOptions& opts, PeriodicXCDensityDomain domain, double tol,
+    bool torus_complete) {
+    auto ctx = xc_torus_context(system, mesh, a, &b);
+    ctx.complete = torus_complete;
+    auto value = build_xc_periodic_uks_impl(basis, system, grid, func, a, b, opts, domain, tol,
+                                            ctx.compatible ? &ctx : nullptr);
+    PeriodicKUKSXCContribution out;
+    out.V_alpha = fold_xc_projection(value.V_alpha, mesh);
+    out.V_beta = fold_xc_projection(value.V_beta, mesh);
+    out.e_xc = value.e_xc;
+    out.n_electrons_grid = value.n_electrons_grid;
+    out.periodic_density_bras = value.periodic_density_bras;
+    out.torus_density_compatible = ctx.compatible;
+    out.used_torus_grouping = ctx.used;
+    return out;
 }
 
 }  // namespace vibeqc

@@ -75,8 +75,29 @@ def os_ref():
 # --------------------------------------------------------------------------- #
 # The no-truncation gate: DLPNO-UMP2(no trunc) == canonical CCM UMP2 (neutral).
 # --------------------------------------------------------------------------- #
-def test_no_truncation_closed_shell(cs_ref):
+def test_no_truncation_closed_shell(cs_ref, monkeypatch):
+    from vibeqc.dlpno import ump2 as module
+
+    solve = module.solve_dense_fock
+    seen = set()
+
+    def checked_solve(matrix, **kwargs):
+        result = solve(matrix, **kwargs)
+        metadata = result.operator_metadata
+        assert metadata.kind == "fock" and metadata.spin in {"alpha", "beta"}
+        assert metadata.basis_id.startswith("ccm-active-")
+        assert result.residual_frame == "orthogonal"
+        assert result.selection_verified
+        assert max(result.residuals) < 1e-11
+        seen.add((metadata.basis_id, metadata.spin))
+        return result
+
+    monkeypatch.setattr(module, "solve_dense_fock", checked_solve)
     d = ccm_dlpno_ump2(cs_ref.ccm, cs_ref.uhf, cderi=cs_ref.L, tcut_pno=0.0)
+    for pair_type in ("same", "opposite"):
+        for spin in ("alpha", "beta"):
+            assert any(name.startswith(f"ccm-active-{pair_type}-pair-")
+                       and channel == spin for name, channel in seen)
     assert d.e_corr == pytest.approx(cs_ref.canon.e_correlation, abs=1e-10)
     assert d.e_aa == pytest.approx(cs_ref.canon.e_aa, abs=1e-10)
     assert d.e_bb == pytest.approx(cs_ref.canon.e_bb, abs=1e-10)

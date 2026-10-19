@@ -575,6 +575,122 @@ def apply_smearing(
     )
 
 
+def spin_channel_occupations(
+    eps_per_k: Sequence[np.ndarray],
+    *,
+    weights: Sequence[float],
+    n_electrons: float,
+    smearing: Union[SmearingOptions, float, None] = None,
+    fixed_occupied_subspace: bool = False,
+) -> SmearingResult:
+    """Occupations of ONE spin channel (full occupancy 1) over a k-mesh.
+
+    The per-spin half of :func:`apply_smearing_open_shell`, for drivers that
+    occupy their two channels at different points of an SCF cycle. Every
+    open-shell periodic driver goes through here, so there is one T = 0
+    convention for them all rather than one private copy per driver
+    (GitLab #176):
+
+    * ``T = 0`` on a k-mesh is ONE particle constraint per spin over the
+      whole mesh, ``sum_k w_k sum_i n_ki = n_electrons`` with a single
+      chemical potential mu_s (Weinert and Davenport, Phys. Rev. B 45,
+      13709 (1992), Eqs. (3) and (8)) -- the same global fill
+      :func:`apply_smearing` takes for a closed shell. Filling the lowest
+      ``n_electrons`` bands at every k independently occupies a state above
+      mu_s at one k while leaving one below it empty at another.
+    * ``T = 0`` with a single spectrum keeps the historical hard Aufbau,
+      exactly as the closed-shell path does.
+    * ``fixed_occupied_subspace=True`` is the maximum overlap method: the
+      caller has permuted the selected states to the front of every
+      ``eps(k)``, and the fill is positional (GitLab #725). Zero temperature
+      only.
+    * ``T > 0`` dispatches the selected smearing flavour with
+      ``spin_degeneracy = 1``.
+
+    ``n_electrons`` must be an integer at ``T = 0`` unless the fill is global
+    (a fractional spin population needs a shared Fermi group, which only the
+    global fill can express).
+    """
+    if smearing is None:
+        smearing = SmearingOptions()
+    elif not isinstance(smearing, SmearingOptions):
+        smearing = SmearingOptions.from_legacy_kwarg(float(smearing))
+    n_sigma = float(n_electrons)
+
+    if fixed_occupied_subspace:
+        if smearing.enabled:
+            raise ValueError(
+                "spin_channel_occupations: fixed_occupied_subspace (maximum "
+                "overlap method) is a zero-temperature contract; a smeared "
+                "Fermi function has no sharp occupied subspace to hold. "
+                "Disable use_mom or set smearing_temperature = 0."
+            )
+        occ, mu = _fixed_subspace_fill_with_midgap_mu(
+            eps_per_k, int(round(n_sigma)), occ_value=1.0
+        )
+        return SmearingResult(
+            occupations_per_k=occ,
+            mu=mu,
+            entropy=0.0,
+            free_energy_correction=0.0,
+            smearing=smearing,
+        )
+
+    if not smearing.enabled:
+        if len(eps_per_k) > 1:
+            occ, mu = _global_aufbau_with_mu(
+                eps_per_k, weights, n_sigma, occ_value=1.0
+            )
+        else:
+            occ, mu = _aufbau_with_midgap_mu(
+                eps_per_k, int(round(n_sigma)), occ_value=1.0
+            )
+        cut = unresolved_frontier_cut(eps_per_k, occ, max_occupation=1.0)
+        return SmearingResult(
+            occupations_per_k=occ,
+            mu=mu,
+            entropy=0.0,
+            free_energy_correction=0.0,
+            smearing=smearing,
+            frontier_cut_unresolved=cut is not None,
+            frontier_gap=float("nan") if cut is None else cut,
+        )
+
+    if smearing.flavor == "fermi-dirac":
+        occ, mu, entropy = fermi_dirac_occupations_per_k(
+            eps_per_k, weights, n_sigma, float(smearing.temperature),
+            spin_degeneracy=1.0,
+        )
+    elif smearing.flavor == "mermin":
+        occ, mu, entropy = mermin_occupations_per_k(
+            eps_per_k, weights, n_sigma, float(smearing.temperature),
+            spin_degeneracy=1.0,
+        )
+    elif smearing.flavor == "methfessel-paxton":
+        occ, mu, entropy = methfessel_paxton_occupations_per_k(
+            eps_per_k, weights, n_sigma, float(smearing.temperature),
+            spin_degeneracy=1.0,
+            mp_order=int(smearing.mp_order),
+        )
+    elif smearing.flavor == "marzari-vanderbilt":
+        occ, mu, entropy = marzari_vanderbilt_occupations_per_k(
+            eps_per_k, weights, n_sigma, float(smearing.temperature),
+            spin_degeneracy=1.0,
+        )
+    else:
+        raise NotImplementedError(
+            f"spin_channel_occupations: flavor={smearing.flavor!r} is not "
+            "implemented."
+        )
+    return SmearingResult(
+        occupations_per_k=occ,
+        mu=mu,
+        entropy=float(entropy),
+        free_energy_correction=-float(smearing.temperature) * float(entropy),
+        smearing=smearing,
+    )
+
+
 def apply_smearing_open_shell(
     eps_alpha_per_k: Sequence[np.ndarray],
     eps_beta_per_k: Sequence[np.ndarray],
@@ -583,12 +699,12 @@ def apply_smearing_open_shell(
     n_alpha: float,
     n_beta: float,
     smearing: Union[SmearingOptions, float, None] = None,
+    fixed_occupied_subspace: bool = False,
 ) -> Tuple[SmearingResult, SmearingResult]:
     """Per-spin occupations with SEPARATE chemical potentials mu_a, mu_b.
 
     The open-shell (UHF/UKS) sibling of :func:`apply_smearing`. Each spin
-    channel runs the identical mu-bisection machinery with
-    ``spin_degeneracy = 1`` (occupations in ``[0, 1]``) and its own
+    channel runs :func:`spin_channel_occupations` with its own
     particle-count constraint ``sum_k w_k sum_i n^s_i(k) = n_s`` -- the
     standard spin-polarized convention (CP2K / VASP / Quantum Espresso).
     mu_a and mu_b relax independently, so ferro/antiferro stationary points
@@ -600,76 +716,28 @@ def apply_smearing_open_shell(
     ``entropy`` / ``free_energy_correction`` values to form Mermin's free
     energy ``A = E - T(S_a + S_b)``.
 
-    At ``T = 0`` (smearing disabled) each channel is per-spin hard Aufbau
-    + midgap mu_s -- bit-identical to the legacy per-k Aufbau the open-shell
-    drivers used, so disabling smearing stays behavior-neutral.
+    At ``T = 0`` on a k-mesh each channel takes the global fill with one
+    mu_s over the whole mesh, as the closed-shell path does (GitLab #176);
+    until then this branch was a per-spin per-k Aufbau that computed mu_s and
+    did not use it. A gapped mesh is unchanged: when the count lands on a
+    group boundary the global fill returns the same ``{0, 1}`` arrays and the
+    same midgap mu_s. A single spectrum keeps the historical hard Aufbau.
     """
-    if smearing is None:
-        smearing = SmearingOptions()
-    elif not isinstance(smearing, SmearingOptions):
-        smearing = SmearingOptions.from_legacy_kwarg(float(smearing))
-
-    def _one_channel(eps_per_k: Sequence[np.ndarray], n_sigma: float) -> SmearingResult:
-        if not smearing.enabled:
-            occ, mu = _aufbau_with_midgap_mu(
-                eps_per_k, int(round(float(n_sigma))), occ_value=1.0
-            )
-            return SmearingResult(
-                occupations_per_k=occ,
-                mu=mu,
-                entropy=0.0,
-                free_energy_correction=0.0,
-                smearing=smearing,
-            )
-        if smearing.flavor == "fermi-dirac":
-            occ, mu, entropy = fermi_dirac_occupations_per_k(
-                eps_per_k,
-                weights,
-                float(n_sigma),
-                float(smearing.temperature),
-                spin_degeneracy=1.0,
-            )
-        elif smearing.flavor == "mermin":
-            occ, mu, entropy = mermin_occupations_per_k(
-                eps_per_k,
-                weights,
-                float(n_sigma),
-                float(smearing.temperature),
-                spin_degeneracy=1.0,
-            )
-        elif smearing.flavor == "methfessel-paxton":
-            occ, mu, entropy = methfessel_paxton_occupations_per_k(
-                eps_per_k,
-                weights,
-                float(n_sigma),
-                float(smearing.temperature),
-                spin_degeneracy=1.0,
-                mp_order=int(smearing.mp_order),
-            )
-        elif smearing.flavor == "marzari-vanderbilt":
-            occ, mu, entropy = marzari_vanderbilt_occupations_per_k(
-                eps_per_k,
-                weights,
-                float(n_sigma),
-                float(smearing.temperature),
-                spin_degeneracy=1.0,
-            )
-        else:
-            raise NotImplementedError(
-                f"apply_smearing_open_shell: flavor={smearing.flavor!r} "
-                "is not implemented."
-            )
-        return SmearingResult(
-            occupations_per_k=occ,
-            mu=mu,
-            entropy=float(entropy),
-            free_energy_correction=-float(smearing.temperature) * float(entropy),
-            smearing=smearing,
-        )
-
     return (
-        _one_channel(eps_alpha_per_k, n_alpha),
-        _one_channel(eps_beta_per_k, n_beta),
+        spin_channel_occupations(
+            eps_alpha_per_k,
+            weights=weights,
+            n_electrons=n_alpha,
+            smearing=smearing,
+            fixed_occupied_subspace=fixed_occupied_subspace,
+        ),
+        spin_channel_occupations(
+            eps_beta_per_k,
+            weights=weights,
+            n_electrons=n_beta,
+            smearing=smearing,
+            fixed_occupied_subspace=fixed_occupied_subspace,
+        ),
     )
 
 

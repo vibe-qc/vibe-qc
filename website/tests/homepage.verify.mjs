@@ -1,64 +1,47 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { link } from './base.mjs';
-
+import { base, link } from './base.mjs';
+import { products } from '../src/data/products.mjs';
 const homeHtml = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
 
-test('the homepage describes the gated distribution without exposing artifacts', () => {
+test('the technical homepage exposes four tools and the documentation routes', () => {
+  assert.equal(products.length, 4);
+  for (const p of products) assert.ok(homeHtml.includes(`href="${base}products/${p.id}/"`));
+  for (const page of ['documentation/', 'workflows/', 'methods/', 'get-started', 'download', 'sponsor']) {
+    assert.ok(homeHtml.includes(`href="${link(page)}"`), page);
+  }
+  assert.match(homeHtml, /href="https:\/\/vibyverse.com"/);
+  assert.match(homeHtml, /Illustrative schematic/);
+  assert.doesNotMatch(homeHtml, /machine precision|THREE INDEPENDENT|three products/i);
+});
+
+test('distribution remains a preview and unqualified artifacts are not linked', () => {
   assert.match(homeHtml, /Distribution preview/);
-  assert.match(homeHtml, /0 of 4 qualified/);
-  assert.match(homeHtml, /Qualification pending/);
-  assert.match(homeHtml, /Candidates gated/);
-  assert.doesNotMatch(homeHtml, /vibe-qc-suite:&lt;version&gt;/);
-  assert.doesNotMatch(homeHtml, /standalone\.(?:dmg|deb)/);
-});
-
-test('the homepage distinguishes both container and desktop platforms', () => {
-  assert.match(homeHtml, /Architecture-qualified Linux images/);
-  assert.match(homeHtml, /linux\/amd64/);
-  assert.match(homeHtml, /linux\/arm64\/v8/);
-  assert.match(homeHtml, /vibe-view for desktop/);
-  assert.match(homeHtml, /pre-split candidates are historical records/);
-  assert.match(homeHtml, /Apple Silicon · ARM64/);
-  assert.match(homeHtml, /Ubuntu 22\.04/);
-});
-
-test('distribution calls to action converge on the canonical download page', () => {
-  assert.match(
-    homeHtml,
-    new RegExp(`href="${link('download')}"[^>]*>\\s*Distribution preview`),
-  );
-  assert.match(homeHtml, /Review container gates/);
-  assert.match(homeHtml, /Review desktop candidates/);
   assert.doesNotMatch(homeHtml, /href="[^"]*(?:vibe-qc-suite|standalone\.(?:dmg|deb))/);
 });
 
-test('the homepage previews every sponsor tier and permanent supporter roll', () => {
-  for (const tier of ['Platinum', 'Gold', 'Silver']) {
-    assert.match(homeHtml, new RegExp(`>${tier}<`));
-  }
-  for (const amount of [250, 100, 25]) {
-    assert.match(homeHtml, new RegExp(`>\\$${amount}<`));
-  }
-  assert.match(homeHtml, /permanent opt-in roll/i);
-  assert.match(homeHtml, new RegExp(`href="${link('sponsor')}"`));
-  assert.match(homeHtml, /href="https:\/\/ko-fi\.com\/mpeintinger"/);
-  assert.doesNotMatch(homeHtml, /href="https:\/\/github\.com\/sponsors\/mpeintinger"/);
+test('queued work is sketched, submitted, calculated and analyzed in that order', async () => {
+  const figure = homeHtml.match(/<div class="figure-steps">([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(figure);
+  const targets = [...figure.matchAll(/href="[^"]*\/products\/([^/]+)\//g)].map(match => match[1]);
+  assert.deepEqual(targets, ['vibe-sketch', 'vibe-queue', 'vibe-qc', 'vibe-view']);
+  const workflow = await readFile(new URL('../dist/workflows/index.html', import.meta.url), 'utf8');
+  const sections = [...workflow.matchAll(/class="workflow-row" id="([^"]+)"/g)].map(match => match[1]);
+  assert.deepEqual(sections, ['prepare', 'schedule', 'calculate', 'explore']);
+  assert.match(workflow, /For a direct local run, skip submission/);
 });
 
-test('the component band distinguishes local versions from companion releases', async () => {
+test('source versions and companion releases remain independent', async () => {
   const { components } = await import('../src/data/components.mjs');
-  assert.match(homeHtml, /Engine and companion projects/i);
-  const renderedVersions = [...homeHtml.matchAll(/<span class="cmp-version"[^>]*>([^<]+)<\/span>/g)].map(match => match[1]);
-  for (const component of components) {
-    if (component.version !== null) {
-      assert.ok(renderedVersions.includes(component.version));
-    } else {
-      assert.ok(homeHtml.includes(`href="${component.releases}"`));
-    }
-    assert.match(homeHtml, new RegExp(component.role));
+  for (const c of components) {
+    if (c.version !== null) assert.ok(homeHtml.includes(`>${c.version}</span>`));
+    else assert.ok(homeHtml.includes(`href="${c.releases}"`));
+    assert.ok(homeHtml.includes(c.role));
   }
-  // The independence claim is the reason the list exists; keep it visible.
-  assert.match(homeHtml, /own version line/i);
+  assert.match(homeHtml, /own version line/);
+  assert.match(homeHtml, /not a new release announcement/);
+  assert.match(homeHtml, /vibe-sketch/);
+  assert.match(homeHtml, /Testing version/);
+  assert.match(homeHtml, /proprietary/);
 });

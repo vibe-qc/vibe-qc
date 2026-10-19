@@ -234,10 +234,14 @@ def _cmd_coop(args: argparse.Namespace) -> int:
         print(f"vibeqc coop: no such file: {path}", file=sys.stderr)
         return 2
 
+    from vibeqc.output.formats.qvf import qvf_read_version
+
     try:
         with zipfile.ZipFile(path, "r") as zf:
             manifest = json.loads(zf.read("manifest.json"))
-    except (zipfile.BadZipFile, json.JSONDecodeError, KeyError) as exc:
+        # QVF spec Sec. 3.1: the withdrawn version 2 reads as 1.
+        qvf_read_version(manifest, source=path)
+    except (zipfile.BadZipFile, json.JSONDecodeError, KeyError, ValueError) as exc:
         print(f"vibeqc coop: cannot read QVF manifest: {exc}", file=sys.stderr)
         return 2
 
@@ -399,10 +403,14 @@ def _cmd_mayer(args: argparse.Namespace) -> int:
         print(f"vibeqc mayer: no such file: {path}", file=sys.stderr)
         return 2
 
+    from vibeqc.output.formats.qvf import qvf_read_version
+
     try:
         with zipfile.ZipFile(path, "r") as zf:
             manifest = json.loads(zf.read("manifest.json"))
-    except (zipfile.BadZipFile, json.JSONDecodeError, KeyError) as exc:
+        # QVF spec Sec. 3.1: the withdrawn version 2 reads as 1.
+        qvf_read_version(manifest, source=path)
+    except (zipfile.BadZipFile, json.JSONDecodeError, KeyError, ValueError) as exc:
         print(f"vibeqc mayer: cannot read QVF manifest: {exc}", file=sys.stderr)
         return 2
 
@@ -483,16 +491,22 @@ def _cmd_dos(args: argparse.Namespace) -> int:
     n_occ = max(n_elec // 2, 0)
 
     if data["kind"] == "gpw_multi_k_scf":
+        from vibeqc.periodic_gapw_postscf import (
+            _zero_temperature_mesh_occupations,
+        )
+
         eigs_k = np.asarray(data["mo_energies_k"], dtype=float)
         kweights = np.asarray(data["kweights"], dtype=float)
+        # One Fermi level over the mesh (#176): a per-k fill of the lowest
+        # n_occ bands weights the wrong states wherever the bands overlap.
+        occ_k = _zero_temperature_mesh_occupations(
+            [eigs_k[ik] for ik in range(eigs_k.shape[0])], kweights, 2 * n_occ
+        )
         flat_eps = []
         flat_w = []
         for ik in range(eigs_k.shape[0]):
-            eps_k = eigs_k[ik]
-            w = np.zeros_like(eps_k)
-            w[:n_occ] = 2.0 * float(kweights[ik])
-            flat_eps.append(eps_k)
-            flat_w.append(w)
+            flat_eps.append(eigs_k[ik])
+            flat_w.append(np.asarray(occ_k[ik]) * float(kweights[ik]))
         eps_all = np.concatenate(flat_eps)
         w_all = np.concatenate(flat_w)
     else:
@@ -1023,58 +1037,99 @@ def _cmd_nto(args: argparse.Namespace) -> int:
     import json
     import zipfile
 
+    from vibeqc.output.formats.qvf import qvf_read_version
+
     with zipfile.ZipFile(args.path, "r") as zf:
         manifest = json.loads(zf.read("manifest.json"))
-    nto_secs = [s for s in manifest.get("sections", []) if "nto" in s.get("id", "")]
-    if not nto_secs:
+    try:
+        # QVF spec Sec. 3.1: the withdrawn version 2 reads as 1.
+        qvf_read_version(manifest, source=args.path)
+    except ValueError as exc:
+        print(f"vibeqc nto: {exc}", file=sys.stderr)
+        return 2
+    rows = _nto_rows(args.path, manifest.get("sections", []))
+    if not rows:
         print("No NTO sections found in this QVF.")
         return 1
 
     if args.json:
-        with zipfile.ZipFile(args.path, "r") as zf:
-            result = []
-            for s in nto_secs:
-                sid = s["id"]
+        print(json.dumps(rows, indent=2))
+        return 0
+
+    print(f"NTO sections in {args.path}:")
+    for row in rows:
+        occs = row["nto_weights"]
+        e_ev = row["excitation_energy_ev"]
+        weight_info = ""
+        if occs:
+            top = occs[:5]
+            weight_info = f" NTO weights: {[f'{w:.4f}' for w in top]}"
+        spin_info = f" {row['spin']}" if row["spin"] else ""
+        e_info = f" E={e_ev:.4f} eV" if e_ev else ""
+        print(f"  {row['id']:<35s}{spin_info}{e_info}{weight_info}")
+    return 0
+
+
+def _nto_rows(path: str, sections: list) -> list:
+    """One row per NTO section and spin: the QVF v0.3.0 carriers
+    (``orbital_kind: "nto"``, ``nto_role``, ``state_ref`` / ``state_index``
+    into ``excited_states``) first, else the section id and the deprecated
+    ``excitation_energy_ev`` of older archives."""
+    import json
+    import zipfile
+
+    rows = []
+    with zipfile.ZipFile(path, "r") as zf:
+        energies = {}
+        for s in sections:
+            if s.get("kind") != "excited_states":
+                continue
+            payload = json.loads(zf.read(s["members"]["states"]["path"]))
+            for st in payload.get("states", []):
+                e = st.get("excitation_energy") or {}
+                value = e.get("value")
+                if value is not None and str(e.get("units", "ev")).lower() in (
+                    "hartree", "eh",
+                ):
+                    value = float(value) * 27.211386245988
+                energies[(s["id"], st.get("index"))] = value
+        for s in sections:
+            if s.get("kind", "wavefunction.gto") != "wavefunction.gto":
+                continue
+            sid = s.get("id", "")
+            mm = json.loads(zf.read(s["members"]["mo_metadata"]["path"]))
+            if mm.get("orbital_kind") == "nto":
+                state_idx = mm.get("state_index")
+                role = mm.get("nto_role")
+                e_ev = energies.get((mm.get("state_ref"), state_idx))
+                spin = ""
+            elif "nto" in sid:
                 parts = sid.split("_")
                 state_idx = parts[2].lstrip("S") if len(parts) > 2 else "?"
                 role = parts[-1]
+                e_ev = mm.get("excitation_energy_ev")
                 spin = ""
                 if len(parts) >= 5 and parts[-2] not in ("hole", "electron"):
                     spin = parts[-2]
-                # Read mo_metadata for weights
-                mm_path = s["members"]["mo_metadata"]["path"]
-                mm = json.loads(zf.read(mm_path))
-                e_ev = mm.get("excitation_energy_ev")
-                occs = mm.get("occupations", [])
-                result.append(
+            else:
+                continue
+            if mm.get("spin") == "unrestricted":
+                channels = [(sp, mm.get(sp) or {}) for sp in ("alpha", "beta")]
+            else:
+                channels = [(spin, mm)]
+            for ch_spin, ch in channels:
+                rows.append(
                     {
                         "id": sid,
                         "state_index": state_idx,
                         "role": role,
-                        "spin": spin,
+                        "spin": ch_spin,
                         "excitation_energy_ev": e_ev,
-                        "nto_weights": occs,
-                        "n_mo": mm.get("n_mo"),
+                        "nto_weights": ch.get("occupations", []),
+                        "n_mo": ch.get("n_mo"),
                     }
                 )
-        print(json.dumps(result, indent=2))
-        return 0
-
-    print(f"NTO sections in {args.path}:")
-    with zipfile.ZipFile(args.path, "r") as zf:
-        for s in nto_secs:
-            sid = s["id"]
-            mm_path = s["members"]["mo_metadata"]["path"]
-            mm = json.loads(zf.read(mm_path))
-            occs = mm.get("occupations", [])
-            e_ev = mm.get("excitation_energy_ev")
-            weight_info = ""
-            if occs:
-                top = occs[:5]
-                weight_info = f" NTO weights: {[f'{w:.4f}' for w in top]}"
-            e_info = f" E={e_ev:.4f} eV" if e_ev else ""
-            print(f"  {sid:<35s}{e_info}{weight_info}")
-    return 0
+    return rows
 
 
 # ---------------------------------------------------------------------------

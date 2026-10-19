@@ -39,8 +39,10 @@ set(PYBIND11_FINDPYTHON ON)
 # of libxc / spglib does THIS system have?" failure mode and means every
 # checkout produces an identical native ABI. CMake's list(PREPEND) rule
 # guarantees the third_party install wins over any system find_package
-# result. Missing third_party/<dep>/install/ silently falls back to system
-# discovery, so users who want to point at their own builds still can.
+# result, and cpp/CMakeLists.txt puts its include directories ahead of
+# every other dependency's. Missing third_party/<dep>/install/ silently
+# falls back to system discovery, so users who want to point at their own
+# builds still can.
 #
 # CI / release builds that need the vendored-ABI guarantee can flip the
 # fallback into a hard error by setting VIBEQC_REQUIRE_VENDORED (either
@@ -77,6 +79,10 @@ if(VIBEQC_REQUIRE_VENDORED AND _vibeqc_missing_vendored)
         "fallback for a one-off build, unset VIBEQC_REQUIRE_VENDORED.")
 endif()
 
+# A vendored libecpint must carry the patch scripts/build_libecpint.sh applies.
+include(cpp/cmake/RequireCurrentLibecpintPatch.cmake)
+vibeqc_require_current_libecpint_patch()
+
 # Auto-detect Homebrew prefix on macOS so find_package() picks up Eigen3 and
 # libomp without the user needing to set CMAKE_PREFIX_PATH.
 if(APPLE)
@@ -96,4 +102,5 @@ endif()
 # -----------------------------------------------------------------------------
 # Core C++ module
 # -----------------------------------------------------------------------------
+include(cpp/cmake/OpenTrustRegion.cmake)
 add_subdirectory(cpp)

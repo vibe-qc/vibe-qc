@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "cc-pv7z",
+  "description": "Basis Set Exchange\nVersion v0.10\nhttps://www.basissetexchange.org\n  Basis set: aug-cc-pV7Z\nDescription: aug-cc-pV7Z\n       Role: orbital\n    Version: 0  (Data from the original Basis Set Exchange)\nElements                        References\nB - Ne: D. Feller and K. A. Petreson, J. Chem. Phys. 110, 8384 (1999)\nB - Ne: D. Feller, K. A. Peterson, W. A. de Jong, and D. A. Dixon,\n      J. Chem. Phys. 118, 3510 (2003).",
   "role": "orbital",
   "elements": {
     "B": {
@@ -3707,7 +3707,40 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "feller_peterson_1999",
+      "description": "D. Feller, K. A. Peterson, Journal of Chemical Physics 110, 8384-8396 (1999)",
+      "doi": "10.1063/1.478747"
+    },
+    {
+      "key": "feller_peterson_dejong_dixon_2003",
+      "description": "D. Feller, K. A. Peterson, W. A. de Jong, D. A. Dixon, Journal of Chemical Physics 118, 3510-3522 (2003)",
+      "doi": "10.1063/1.1532314"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "cc-pv7z",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "99865bdc0eeb7bf16502882742c8512c8844417d1e81f3d5eca3c3f1e0fca716",
+    "citations": [
+      {
+        "keys": [
+          "feller_peterson_1999",
+          "feller_peterson_dejong_dixon_2003"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

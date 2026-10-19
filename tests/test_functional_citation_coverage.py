@@ -70,6 +70,8 @@ _REQUIRED_COMPONENTS: dict[str, tuple[str, ...]] = {
     # regression guard for the defect this file was written for.
     "b2plyp": ("becke_b88_1988", "lee_yang_parr_1988", "moller_plesset_1934"),
     "blyp": ("becke_b88_1988", "lee_yang_parr_1988"),
+    # BPW91 = B88 exchange + PW91 correlation (xc.cpp alias "bpw91").
+    "bpw91": ("becke_b88_1988", "perdew_pw91_1992"),
     # r2SCAN-3c pairs D4 (not D3) with the refitted gCP.
     "r2scan-3c": ("caldeweyher_d4_2019", "kruse_grimme_gcp_2012"),
     # The D3(BJ)-based 3c methods carry both D3 papers plus gCP.

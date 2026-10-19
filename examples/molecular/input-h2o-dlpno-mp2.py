@@ -1,4 +1,5 @@
-"""Water — DLPNO-MP2 (Pinski 2015): local MP2 with PNO compression.
+"""Water / cc-pVDZ (aux cc-pVDZ-RI): DLPNO-MP2 (Pinski 2015), local MP2 with
+PNO compression.
 
 DLPNO-MP2 localises the occupied orbitals (Foster-Boys), gives every
 occupied pair a compact pair-natural-orbital virtual space, and solves

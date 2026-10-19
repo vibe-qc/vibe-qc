@@ -1,6 +1,6 @@
 """B1.5 `cluster_carve` prototype: carve a finite cluster from a periodic
 cell. The geometry foundation for the `embed_cluster` driver (MR8) and
-the embedded-cluster CASSCF/CASPT2 path (handovers/HANDOVER_PERIODIC_MULTIREF.md).
+the embedded-cluster CASSCF/CASPT2 path (the original investigation).
 
 Prototype in studies/ (research-first). Productionizing into
 python/vibeqc/ as `vq.cluster_carve` (public export + tests + docs +

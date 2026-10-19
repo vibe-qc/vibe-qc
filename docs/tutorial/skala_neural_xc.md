@@ -9,19 +9,37 @@ myst:
 
 # Microsoft SKALA-1.1 neural XC: a reproducible molecular calculation
 
-Microsoft SKALA-1.1 is a learned exchange-correlation functional evaluated
-from the complete numerical integration grid. In this tutorial you will run a
+Microsoft SKALA-1.1 ({vibeqc-cite}`luise_skala_2025`) is a learned
+exchange-correlation functional evaluated from the complete numerical
+integration grid. In this tutorial you will run a
 small fixed-geometry molecular calculation, add the checkpoint-recommended
 D3(BJ) correction, and preserve enough provenance to repeat the calculation.
 The [SKALA user guide](../user_guide/skala.md) is the complete reference for
 the model protocol, aliases, grid contract, cache, and route matrix.
 
-```{important}
-This worked calculation covers fixed-geometry molecular RKS. Molecular UKS
-and ROKS single points are also available. Gradients, geometry optimization,
-Hessians, response properties, and Newton/TRAH paths are unsupported and fail
-closed. Periodic SKALA is experimental and is not used for the numerical
-workflow on this page.
+```{admonition} Status: experimental
+:class: warning
+
+SKALA-1.1 is an experimental route throughout: self-consistent energies at a
+fixed geometry only. This worked calculation covers fixed-geometry molecular
+RKS; molecular UKS and ROKS single points are also available, and every
+periodic route is experimental and is not used for the numerical workflow on
+this page. The code signals the status by failing closed on every gradient,
+geometry-optimization, Hessian, response-property and Newton/TRAH request
+instead of substituting a libxc functional, and the `.system` manifest
+records the external-XC backend, checkpoint revision and SHA-256 digest. Its
+numbers are research output, not validated results, and it is not part of the
+release gate. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
+```{note}
+The SCF calls below need the optional `[skala]` extra (PyTorch) on a
+compatible Linux CPU environment. The interpreter used to check this
+documentation pass has no PyTorch, so the SCF outputs are left as `...` and
+only the parts that never import PyTorch were run: the provenance printout
+and the dry-run output plan below reproduce exactly as shown on a vibe-qc
+0.17.10 development build.
 ```
 
 ## Install and preflight
@@ -61,14 +79,17 @@ for paths and integrity behavior.
 A conventional LDA, GGA, or meta-GGA evaluates an energy density point by
 point. SKALA consumes the spin densities, their Cartesian gradients,
 kinetic-energy densities, coordinates, weights, and atom packing for the
-complete grid. Its neural inference is therefore nonlocal over that grid.
+complete grid. Its neural inference is therefore nonlocal over that grid:
+the model multiplies the local-density exchange energy density by a learned
+enhancement factor whose non-local layer couples each grid point to a coarse
+point of its atom ({vibeqc-cite}`luise_skala_2025`).
 
 The quadrature enters the model features and is therefore part of a
 reproducible inference protocol, not merely a transparent accuracy knob.
 Microsoft's implementation permits configurable grids, and the training data
 used more than one grid construction. vibe-qc deliberately pins its accepted
-profile to PySCF 2.14 level 3, matching Microsoft's default PySCF inference
-and benchmark protocol. Do not set a different `grid_level` or edit individual
+profile to PySCF 2.14 level 3 ({vibeqc-cite}`sun_pyscf_2020`), matching
+Microsoft's default PySCF inference and benchmark protocol. Do not set a different `grid_level` or edit individual
 radial and angular controls for a vibe-qc SKALA run.
 
 ## Run the molecular single point
@@ -133,7 +154,8 @@ Never replace the model file while keeping an old provenance record.
 ## Add the recommended D3(BJ) correction
 
 The TorchScript artifact provides XC energy and potential only. Its metadata
-records the `b3lyp5` D3(BJ) parameters as the expected molecular dispersion
+records the `b3lyp5` D3(BJ) parameters ({vibeqc-cite}`grimme_d3_2010`,
+{vibeqc-cite}`grimme_d3bj_2011`) as the expected molecular dispersion
 setting, but vibe-qc does not add them silently. Request the correction
 explicitly:
 
@@ -250,9 +272,11 @@ The full support and failure matrix is maintained in the
 ## References
 
 The functional is described by
-[Luise et al., 2025](https://doi.org/10.48550/arXiv.2506.14665). The
+[Luise et al., 2025](https://doi.org/10.48550/arXiv.2506.14665)
+({vibeqc-cite}`luise_skala_2025`). The
 independent molecular implementation analysis is
-[Pöschel et al., 2026](https://doi.org/10.48550/arXiv.2608.19033).
+[Pöschel et al., 2026](https://doi.org/10.48550/arXiv.2608.19033)
+({vibeqc-cite}`poschel_skala_cp2k_2026`).
 vibe-qc's central citation database emits both references automatically for a
 SKALA job, together with the grid references required by the calculation.
 

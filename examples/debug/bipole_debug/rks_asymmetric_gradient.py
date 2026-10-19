@@ -1,6 +1,6 @@
 """RKS Γ gradient on asymmetric cell — quantifies the remaining error.
 
-The handover says the KS Bloch-CPHF relaxation is missing, giving
+The KS Bloch-CPHF relaxation is missing, giving
 ~0.5-1 Ha/bohr error on asymmetric crystals. Let's measure.
 """
 

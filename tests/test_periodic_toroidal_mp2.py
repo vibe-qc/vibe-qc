@@ -581,7 +581,8 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         mp2.tcut_pairs,
         mp2.tcut_pairs_weak,
         mp2.pno_norm,
-    ) == (0, 1e-8, 1e-7, 1e-3, 1e-6, 1e-4, "legacy")
+        mp2.domain_criterion,
+    ) == (0, 1e-8, 1e-7, 1e-3, 1e-6, 1e-4, "legacy", "mulliken")
 
     cc = _pre_sweep_toroidal_dlpno_cc_options()
     assert (
@@ -592,6 +593,7 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         cc.residual_domain,
         cc.pno_norm,
         cc.pno_correction,
+        cc.tcut_pno_diag_scale,
     ) == (
         0,
         1e-7,
@@ -600,6 +602,7 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         "pair",
         "legacy",
         False,
+        1.0,
     )
 
 
@@ -871,6 +874,9 @@ def test_toroidal_dlpno_mp2_torus_screening_beats_euclidean():
         tcut_mkn=1e-3,
         tcut_pairs=1e-6,
         tcut_pairs_weak=1e-4,
+        # tcut_mkn=1e-3 here means Mulliken domains (#190 made DOI the
+        # molecular default).
+        domain_criterion="mulliken",
     )
 
     r_exact = toroidal_dlpno_mp2(
@@ -994,3 +1000,159 @@ def test_toroidal_dlpno_ccsd_coupling_uses_torus_distance():
         "wrap-around neighbour was not recovered"
     )
     assert r_torus.pair_classification is not None
+
+
+@pytest.mark.parametrize("custom_distance,fail", [(False, False), (True, False), (False, True)])
+def test_toroidal_mp2_interleaved_sources_keep_overlap_and_options_local(
+    monkeypatch, custom_distance, fail,
+):
+    from dataclasses import asdict
+    from types import SimpleNamespace
+
+    import vibeqc._vibeqc_core as core
+    import vibeqc.dlpno.mp2 as solver
+    import vibeqc.periodic_df as periodic_df
+    import vibeqc.periodic_rhf_gdf as rhf_gdf
+    import vibeqc.periodic_toroidal_mp2 as toroidal
+    from vibeqc.dlpno.source import LpqFactors
+
+    system = _h2_chain_cell()
+    other_basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    compute_overlap = core.compute_overlap
+    molecular_overlap = np.asarray(compute_overlap(other_basis))
+    overlaps = [np.diag([1., 1.1, 1.2, 1.3]), np.diag([1.4, 1.5, 1.6, 1.7])]
+    refs = [SimpleNamespace(
+        energy=-2., converged=True, overlap=S,
+        fock=np.diag([-1., -.9, .5, .6]),
+        mo_coeffs=np.diag(1 / np.sqrt(S.diagonal())), exchange_q0="molecular-limit",
+    ) for S in overlaps]
+    queued_refs = iter(refs)
+    factors = LpqFactors(np.ones((1, 4, 4)))
+    factors.n_fit = 1
+    factors.nbf = 4
+    monkeypatch.setattr(rhf_gdf, "run_rhf_periodic_gamma_gdf", lambda *a, **k: next(queued_refs))
+    monkeypatch.setattr(periodic_df, "build_periodic_gamma_df", lambda *a, **k: factors)
+    distance = (lambda a, b: float(np.linalg.norm(a-b))) if custom_distance else None
+    options = solver.DLPNOMP2Options(n_frozen=1, pair_distance_fn=distance)
+    before = asdict(options)
+    seen = []
+
+    class SolverFailure(Exception):
+        pass
+
+    def solve(mol, basis, reference, df, options, *, source=None):
+        index = len(seen)
+        seen.append(source)
+        assert core.compute_overlap is compute_overlap
+        np.testing.assert_array_equal(core.compute_overlap(other_basis), molecular_overlap)
+        np.testing.assert_array_equal(source.overlap_matrix(), overlaps[index])
+        assert source.reference is refs[index]
+        assert source.reference_kind == "rhf"
+        assert not source.conventions.same_source
+        assert source.conventions.exchange_q0 == "molecular-limit"
+        assert source.conventions.kmesh == (1, 1, 2)
+        assert source.pair_distance_fn(np.zeros(3), np.array([0., 0., 11.])) == pytest.approx(1.)
+        assert options.pair_distance_fn is distance
+        assert options.n_frozen == 1
+        if index == 0:
+            toroidal.toroidal_dlpno_mp2(system, "sto-3g", (1, 1, 2), dlpno_options=options)
+            np.testing.assert_array_equal(source.overlap_matrix(), overlaps[0])
+            if fail:
+                raise SolverFailure
+        return SimpleNamespace(e_corr=-.02, source_kind=source.kind,
+                               source_identity=source.identity)
+
+    monkeypatch.setattr(solver, "run_dlpno_mp2", solve)
+    if fail:
+        with pytest.raises(SolverFailure):
+            toroidal.toroidal_dlpno_mp2(system, "sto-3g", (1, 1, 2), dlpno_options=options)
+    else:
+        result = toroidal.toroidal_dlpno_mp2(system, "sto-3g", (1, 1, 2), dlpno_options=options)
+        assert result.source_kind == result.dlpno_result.source_kind == "toroidal-compcell"
+        assert result.source_identity == seen[0].identity
+        assert not result.same_source
+        assert result.exchange_q0 == "molecular-limit"
+        assert result.e_corr_per_cell == pytest.approx(-.01)
+        assert result.e_total == pytest.approx(-2.02)
+    assert len(seen) == 2
+    assert seen[0].identity != seen[1].identity
+    assert asdict(options) == before
+    assert core.compute_overlap is compute_overlap
+    for ref, S in zip(refs, overlaps):
+        np.testing.assert_array_equal(ref.overlap, S)
+
+
+@pytest.mark.parametrize("with_triples,custom_distance,fail", [
+    (False, False, False), (False, True, False),
+    (True, False, False), (True, True, False), (True, True, True),
+])
+def test_toroidal_cc_keeps_overlap_and_options_local(
+    monkeypatch, with_triples, custom_distance, fail,
+):
+    """An interleaved molecular calculation must keep its own AO metric."""
+    from types import SimpleNamespace
+
+    import vibeqc._vibeqc_core as core
+    import vibeqc.dlpno.ccsd_local_solver as solver
+    import vibeqc.periodic_df as periodic_df
+    import vibeqc.periodic_rhf_gdf as rhf_gdf
+    import vibeqc.periodic_toroidal_mp2 as toroidal
+    from vibeqc.dlpno.source import LpqFactors
+
+    system = _h2_chain_cell()
+    other_basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    compute_overlap = core.compute_overlap
+    molecular_overlap = np.asarray(compute_overlap(other_basis))
+    S = np.diag([1.0, 1.1, 1.2, 1.3])
+    hf = SimpleNamespace(
+        energy=-2.0, converged=True, overlap=S, fock=np.diag([-1., -.9, .5, .6]),
+        mo_coeffs=np.diag(1 / np.sqrt(S.diagonal())), exchange_q0="molecular-limit",
+    )
+    factors = LpqFactors(np.ones((1, 4, 4)))
+    factors.n_fit = 1
+    factors.nbf = 4
+    monkeypatch.setattr(rhf_gdf, "run_rhf_periodic_gamma_gdf", lambda *a, **k: hf)
+    monkeypatch.setattr(periodic_df, "build_periodic_gamma_df", lambda *a, **k: factors)
+    distance = (lambda a, b: float(np.linalg.norm(a-b))) if custom_distance else None
+    options = solver.LocalCCSDOptions(
+        compute_triples=not with_triples, pair_distance_fn=distance,
+    )
+
+    class SolverFailure(Exception):
+        pass
+
+    def solve(mol, basis, reference, df, options, *, source=None):
+        assert options.compute_triples == with_triples
+        assert core.compute_overlap is compute_overlap
+        np.testing.assert_array_equal(core.compute_overlap(other_basis), molecular_overlap)
+        np.testing.assert_array_equal(source.overlap_matrix(), S)
+        assert source.reference is hf
+        assert not source.conventions.same_source
+        assert source.conventions.exchange_q0 == "molecular-limit"
+        assert source.conventions.kmesh == (1, 1, 2)
+        assert source.pair_distance_fn(np.zeros(3), np.array([0., 0., 11.])) == pytest.approx(1.)
+        assert options.pair_distance_fn is distance
+        if fail:
+            raise SolverFailure
+        return SimpleNamespace(
+            e_corr=-.02, e_t=-.001 if options.compute_triples else 0.,
+            source_kind=source.kind, source_identity=source.identity,
+        )
+
+    monkeypatch.setattr(solver, "run_local_dlpno_ccsd", solve)
+    driver = toroidal.toroidal_dlpno_ccsd_t if with_triples else toroidal.toroidal_dlpno_ccsd
+    if fail:
+        with pytest.raises(SolverFailure):
+            driver(system, "sto-3g", (1, 1, 2), cc_options=options)
+    else:
+        result = driver(system, "sto-3g", (1, 1, 2), cc_options=options)
+        assert result.source_kind == result.cc_result.source_kind == "toroidal-compcell"
+        assert result.source_identity == result.cc_result.source_identity
+        assert len(result.source_identity) == 64
+        assert not result.same_source
+        assert result.exchange_q0 == "molecular-limit"
+        assert result.e_t == (-.001 if with_triples else None)
+        assert result.e_total == pytest.approx(-2.02 - (.001 if with_triples else 0))
+    assert options.compute_triples == (not with_triples)
+    assert options.pair_distance_fn is distance
+    assert core.compute_overlap is compute_overlap

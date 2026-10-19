@@ -531,14 +531,22 @@ inline void deltah_deriv(int zk, int zl, double R,
 // d_trans_driver — T, TDT, TDP from d_trans.f                                //
 // ========================================================================= //
 
+// On the z pole the azimuth is undefined: pole_azimuth chooses it, 0 being the
+// d_trans.f convention (TDT = tilt towards x) and pi/2 the tilt towards y. T
+// does not depend on it for the axially symmetric local integrals. Off the pole
+// sin(theta) comes from the in-plane components, accurate where 1 - cos^2
+// cancels. Twin of msindo_pair_deriv._d_trans_driver.
 inline void d_trans_driver(const std::array<double,3>& E,
-                           double T[9][9], double TDT[9][9], double TDP[9][9]) {
+                           double T[9][9], double TDT[9][9], double TDP[9][9],
+                           double pole_azimuth = 0.0) {
     double cost = E[2];
     double sint, cosp, sinp;
     const double tol = 1e-12;
-    if (std::abs(cost) >= 1.0 - tol) { sint = 0; cosp = 1; sinp = 0; }
+    if (std::abs(cost) >= 1.0 - tol) {
+        sint = 0; cosp = std::cos(pole_azimuth); sinp = std::sin(pole_azimuth);
+    }
     else if (std::abs(cost) <= tol) { sint = 1; cosp = E[0]; sinp = E[1]; }
-    else { sint = std::sqrt(1.0 - cost*cost); cosp = E[0]/sint; sinp = E[1]/sint; }
+    else { sint = std::hypot(E[0], E[1]); cosp = E[0]/sint; sinp = E[1]/sint; }
 
     double sqrt3 = std::sqrt(3.0);
     double cos2t = cost*cost - sint*sint;
@@ -632,7 +640,8 @@ inline void rotate_derivatives_to_global(
 inline PairBlocksDeriv pair_blocks_deriv(int zk, int zl,
                                           const std::array<double,3>& rk,
                                           const std::array<double,3>& rl,
-                                          const MsindoParameterSet& p) {
+                                          const MsindoParameterSet& p,
+                                          double pole_azimuth = 0.0) {
     PairBlocksDeriv result;
     std::array<double,3> d = {rl[0]-rk[0], rl[1]-rk[1], rl[2]-rk[2]};
     double R = std::sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
@@ -744,7 +753,7 @@ inline PairBlocksDeriv pair_blocks_deriv(int zk, int zl,
 
     // --- Phase 3: rotate to global ---
     double T[9][9], TDT[9][9], TDP[9][9];
-    d_trans_driver(result.E, T, TDT, TDP);
+    d_trans_driver(result.E, T, TDT, TDP, pole_azimuth);
     rotate_derivatives_to_global(HK1l, HL1l, core,
                                   result.dHK1_local, result.dHL1_local, result.dHKL2_local,
                                   T, TDT, TDP,
@@ -818,76 +827,96 @@ inline std::vector<std::array<double,3>> msindo_gradient_analytic_core(
 
     std::vector<std::array<double,3>> grad(natom, {0,0,0});
 
+    // dE/d(r_l - r_k) of the K-L pair. On the z pole the azimuth is
+    // pole_azimuth, so the theta derivative is the tilt towards it (#443).
+    const auto pair_derivative = [&](int k, int l, double pole_azimuth)
+        -> Eigen::Vector3d {
+        std::array<double,3> rk = {C[k].x(), C[k].y(), C[k].z()};
+        std::array<double,3> rl = {C[l].x(), C[l].y(), C[l].z()};
+        double dx = rl[0]-rk[0], dy = rl[1]-rk[1], dz = rl[2]-rk[2];
+        double R = std::sqrt(dx*dx+dy*dy+dz*dz);
+        if (R < 1e-12) return Eigen::Vector3d::Zero();
+        double Ex = dx/R, Ey = dy/R, Ez = dz/R;
+
+        PairBlocksDeriv pd = pair_blocks_deriv(Z[k], Z[l], rk, rl, p, pole_azimuth);
+
+        // Chain rule factors
+        // sin(theta) from the in-plane components (1 - cos^2 cancels next to
+        // the pole); the pole test is d_trans_driver's.
+        double cost = Ez, sint = std::hypot(Ex, Ey);
+        double cosphi=1, sinphi=0, dphidx=0, dphidy=0, dphidz=0;
+        if (std::abs(cost) >= 1.0 - 1e-12) {
+            sint = 0.0;
+            cosphi = std::cos(pole_azimuth); sinphi = std::sin(pole_azimuth);
+        } else {
+            cosphi = Ex/sint; sinphi = Ey/sint;
+            double c1 = sint*sint*R;
+            dphidx = -Ey/c1; dphidy = Ex/c1;
+        }
+        double edt1 = cost*cosphi, edt2 = cost*sinphi, edt3 = -sint;
+        double drdx=Ex, drdy=Ey, drdz=Ez;
+        double dthx=edt1/R, dthy=edt2/R, dthz=edt3/R;
+
+        int nk = blocks[k][1]-blocks[k][0], nl = blocks[l][1]-blocks[l][0];
+        auto P_kk = P.block(blocks[k][0],blocks[k][0],nk,nk);
+        auto P_ll = P.block(blocks[l][0],blocks[l][0],nl,nl);
+        auto P_kl = P.block(blocks[k][0],blocks[l][0],nk,nl);
+
+        double gx=0, gy=0, gz=0;
+        // K-diag + off-diag
+        for (int i=0;i<nk;++i){
+            gx += P_kk(i,i)*(pd.HK1_DR(i,i)*drdx+pd.HK1_DT(i,i)*dthx+pd.HK1_DP(i,i)*dphidx);
+            gy += P_kk(i,i)*(pd.HK1_DR(i,i)*drdy+pd.HK1_DT(i,i)*dthy+pd.HK1_DP(i,i)*dphidy);
+            gz += P_kk(i,i)*(pd.HK1_DR(i,i)*drdz+pd.HK1_DT(i,i)*dthz+pd.HK1_DP(i,i)*dphidz);
+            for (int j=i+1;j<nk;++j){
+                double Pij2 = 2*P_kk(j,i);
+                gx+=Pij2*(pd.HK1_DR(j,i)*drdx+pd.HK1_DT(j,i)*dthx+pd.HK1_DP(j,i)*dphidx);
+                gy+=Pij2*(pd.HK1_DR(j,i)*drdy+pd.HK1_DT(j,i)*dthy+pd.HK1_DP(j,i)*dphidy);
+                gz+=Pij2*(pd.HK1_DR(j,i)*drdz+pd.HK1_DT(j,i)*dthz+pd.HK1_DP(j,i)*dphidz);
+            }
+        }
+        for (int i=0;i<nl;++i){
+            gx += P_ll(i,i)*(pd.HL1_DR(i,i)*drdx+pd.HL1_DT(i,i)*dthx+pd.HL1_DP(i,i)*dphidx);
+            gy += P_ll(i,i)*(pd.HL1_DR(i,i)*drdy+pd.HL1_DT(i,i)*dthy+pd.HL1_DP(i,i)*dphidy);
+            gz += P_ll(i,i)*(pd.HL1_DR(i,i)*drdz+pd.HL1_DT(i,i)*dthz+pd.HL1_DP(i,i)*dphidz);
+            for (int j=i+1;j<nl;++j){
+                double Pij2 = 2*P_ll(j,i);
+                gx+=Pij2*(pd.HL1_DR(j,i)*drdx+pd.HL1_DT(j,i)*dthx+pd.HL1_DP(j,i)*dphidx);
+                gy+=Pij2*(pd.HL1_DR(j,i)*drdy+pd.HL1_DT(j,i)*dthy+pd.HL1_DP(j,i)*dphidy);
+                gz+=Pij2*(pd.HL1_DR(j,i)*drdz+pd.HL1_DT(j,i)*dthz+pd.HL1_DP(j,i)*dphidz);
+            }
+        }
+        // Pair block + gamma (2× from DEDXYZK + DEDXYZL)
+        for (int i=0;i<nk;++i){
+            double Pii = P_kk(i,i);
+            for (int j=0;j<nl;++j){
+                double Pjj = P_ll(j,j), Pij = P_kl(i,j);
+                double Fg = 0.5*pd.d_gamma_local(i,j)*(Pii*Pjj-0.5*Pij*Pij);
+                double Fr = Pij*pd.HKL2_DR(i,j);
+                gx += 2.0*(Fg+Fr)*drdx + 2.0*Pij*pd.HKL2_DT(i,j)*dthx + 2.0*Pij*pd.HKL2_DP(i,j)*dphidx;
+                gy += 2.0*(Fg+Fr)*drdy + 2.0*Pij*pd.HKL2_DT(i,j)*dthy + 2.0*Pij*pd.HKL2_DP(i,j)*dphidy;
+                gz += 2.0*(Fg+Fr)*drdz + 2.0*Pij*pd.HKL2_DT(i,j)*dthz + 2.0*Pij*pd.HKL2_DP(i,j)*dphidz;
+            }
+        }
+        // Nuclear (2× from both routines)
+        double czk = p.get(p.LS,Z[k])+p.get(p.MP,Z[k])+p.get(p.ND,Z[k]);
+        double czl = p.get(p.LS,Z[l])+p.get(p.MP,Z[l])+p.get(p.ND,Z[l]);
+        double dnuc = 2.0*0.5*czk*czl*(-1.0/(R*R));
+        gx += dnuc*drdx; gy += dnuc*drdy; gz += dnuc*drdz;
+        return Eigen::Vector3d(gx, gy, gz);
+    };
+
     for (int k = 0; k < natom; ++k) {
         for (int l = k + 1; l < natom; ++l) {
-            std::array<double,3> rk = {C[k].x(), C[k].y(), C[k].z()};
-            std::array<double,3> rl = {C[l].x(), C[l].y(), C[l].z()};
-            double dx = rl[0]-rk[0], dy = rl[1]-rk[1], dz = rl[2]-rk[2];
-            double R = std::sqrt(dx*dx+dy*dy+dz*dz);
+            Eigen::Vector3d rkl = C[l] - C[k];
+            double R = rkl.norm();
             if (R < 1e-12) continue;
-            double Ex = dx/R, Ey = dy/R, Ez = dz/R;
-
-            PairBlocksDeriv pd = pair_blocks_deriv(Z[k], Z[l], rk, rl, p);
-
-            // Chain rule factors
-            double cost = Ez, sint = std::sqrt(std::max(0.0, 1.0-cost*cost));
-            double cosphi=1, sinphi=0, dphidx=0, dphidy=0, dphidz=0;
-            if (sint > 1e-12) {
-                cosphi = Ex/sint; sinphi = Ey/sint;
-                double c1 = sint*sint*R;
-                dphidx = -Ey/c1; dphidy = Ex/c1;
-            }
-            double edt1 = cost*cosphi, edt2 = cost*sinphi, edt3 = -sint;
-            double drdx=Ex, drdy=Ey, drdz=Ez;
-            double dthx=edt1/R, dthy=edt2/R, dthz=edt3/R;
-
-            int nk = blocks[k][1]-blocks[k][0], nl = blocks[l][1]-blocks[l][0];
-            auto P_kk = P.block(blocks[k][0],blocks[k][0],nk,nk);
-            auto P_ll = P.block(blocks[l][0],blocks[l][0],nl,nl);
-            auto P_kl = P.block(blocks[k][0],blocks[l][0],nk,nl);
-
-            double gx=0, gy=0, gz=0;
-            // K-diag + off-diag
-            for (int i=0;i<nk;++i){
-                gx += P_kk(i,i)*(pd.HK1_DR(i,i)*drdx+pd.HK1_DT(i,i)*dthx+pd.HK1_DP(i,i)*dphidx);
-                gy += P_kk(i,i)*(pd.HK1_DR(i,i)*drdy+pd.HK1_DT(i,i)*dthy+pd.HK1_DP(i,i)*dphidy);
-                gz += P_kk(i,i)*(pd.HK1_DR(i,i)*drdz+pd.HK1_DT(i,i)*dthz+pd.HK1_DP(i,i)*dphidz);
-                for (int j=i+1;j<nk;++j){
-                    double Pij2 = 2*P_kk(j,i);
-                    gx+=Pij2*(pd.HK1_DR(j,i)*drdx+pd.HK1_DT(j,i)*dthx+pd.HK1_DP(j,i)*dphidx);
-                    gy+=Pij2*(pd.HK1_DR(j,i)*drdy+pd.HK1_DT(j,i)*dthy+pd.HK1_DP(j,i)*dphidy);
-                    gz+=Pij2*(pd.HK1_DR(j,i)*drdz+pd.HK1_DT(j,i)*dthz+pd.HK1_DP(j,i)*dphidz);
-                }
-            }
-            for (int i=0;i<nl;++i){
-                gx += P_ll(i,i)*(pd.HL1_DR(i,i)*drdx+pd.HL1_DT(i,i)*dthx+pd.HL1_DP(i,i)*dphidx);
-                gy += P_ll(i,i)*(pd.HL1_DR(i,i)*drdy+pd.HL1_DT(i,i)*dthy+pd.HL1_DP(i,i)*dphidy);
-                gz += P_ll(i,i)*(pd.HL1_DR(i,i)*drdz+pd.HL1_DT(i,i)*dthz+pd.HL1_DP(i,i)*dphidz);
-                for (int j=i+1;j<nl;++j){
-                    double Pij2 = 2*P_ll(j,i);
-                    gx+=Pij2*(pd.HL1_DR(j,i)*drdx+pd.HL1_DT(j,i)*dthx+pd.HL1_DP(j,i)*dphidx);
-                    gy+=Pij2*(pd.HL1_DR(j,i)*drdy+pd.HL1_DT(j,i)*dthy+pd.HL1_DP(j,i)*dphidy);
-                    gz+=Pij2*(pd.HL1_DR(j,i)*drdz+pd.HL1_DT(j,i)*dthz+pd.HL1_DP(j,i)*dphidz);
-                }
-            }
-            // Pair block + gamma (2× from DEDXYZK + DEDXYZL)
-            for (int i=0;i<nk;++i){
-                double Pii = P_kk(i,i);
-                for (int j=0;j<nl;++j){
-                    double Pjj = P_ll(j,j), Pij = P_kl(i,j);
-                    double Fg = 0.5*pd.d_gamma_local(i,j)*(Pii*Pjj-0.5*Pij*Pij);
-                    double Fr = Pij*pd.HKL2_DR(i,j);
-                    gx += 2.0*(Fg+Fr)*drdx + 2.0*Pij*pd.HKL2_DT(i,j)*dthx + 2.0*Pij*pd.HKL2_DP(i,j)*dphidx;
-                    gy += 2.0*(Fg+Fr)*drdy + 2.0*Pij*pd.HKL2_DT(i,j)*dthy + 2.0*Pij*pd.HKL2_DP(i,j)*dphidy;
-                    gz += 2.0*(Fg+Fr)*drdz + 2.0*Pij*pd.HKL2_DT(i,j)*dthz + 2.0*Pij*pd.HKL2_DP(i,j)*dphidz;
-                }
-            }
-            // Nuclear (2× from both routines)
-            double czk = p.get(p.LS,Z[k])+p.get(p.MP,Z[k])+p.get(p.ND,Z[k]);
-            double czl = p.get(p.LS,Z[l])+p.get(p.MP,Z[l])+p.get(p.ND,Z[l]);
-            double dnuc = 2.0*0.5*czk*czl*(-1.0/(R*R));
-            gx += dnuc*drdx; gy += dnuc*drdy; gz += dnuc*drdz;
-
+            Eigen::Vector3d g = pair_derivative(k, l, 0.0);
+            // On the z pole the d_trans.f convention (phi = 0) gives only the
+            // tilt towards x; the tilt towards y is the derivative at pi/2.
+            if (std::abs(rkl.z()) >= (1.0 - 1e-12) * R)
+                g.y() = pair_derivative(k, l, 0.5 * M_PI).y();
+            double gx = g.x(), gy = g.y(), gz = g.z();
             grad[l][0] += gx; grad[l][1] += gy; grad[l][2] += gz;
             grad[k][0] -= gx; grad[k][1] -= gy; grad[k][2] -= gz;
         }

@@ -2,7 +2,7 @@
 
 This module pins the deviation of the experimental GAPW route
 (:func:`run_periodic_rhf_gapw`) from vibe-qc's own analytic all-electron
-periodic reference (:func:`run_rhf_periodic_gamma_gdf`, GDF) on CORE-BEARING
+periodic reference (:func:`run_pbc_gdf_rhf`, GDF with exxdiv="ewald") on CORE-BEARING
 systems, where the Gaussian augmentation is supposed to recover the
 all-electron accuracy that the soft FFT grid alone cannot resolve.
 
@@ -17,12 +17,16 @@ reproducible with
 ``examples/regression/gapw_parity/run_gapw_external_parity.py``; historical
 GPW-AUDIT labels are kept in comments for continuity.
 
-Published/reference context (CLAUDE.md §8) — He/STO-3G/12-bohr/Γ:
+Historical reference context (CLAUDE.md §8) — He/STO-3G/12-bohr/Γ:
   * PySCF.pbc.RHF.density_fit() (GDF, out-of-process) = -2.81044787 Ha.
-  * vibe-qc run_rhf_periodic_gamma_gdf                = -2.80778396 Ha.
-  The 2.66 mHa offset is the periodic-HF exchange-divergence (exxdiv /
-  Madelung) convention; it is immaterial to the Ha-scale GAPW gap measured
-  here and vanishes for DFT / matched conventions.
+  * retired compact run_rhf_periodic_gamma_gdf bridge = -2.80778396 Ha.
+  These are retained observations, not targets for the current producer.
+  QC468 replaces the rejected legacy reference with supported periodic GDF
+  using its standard exxdiv="ewald" convention. GAPW's molecular-limit
+  exchange is a different approximation; no equality of Hamiltonians or
+  attribution of their difference to exxdiv alone is assumed. The existing
+  improvement/error bounds remain the acceptance criteria and must be
+  measured against this supported reference, without retuning them.
 
 The aspherical-core H2O finding was resolved by making the already-validated
 fit-free analytic-ERI Hartree construction the HF default. The legacy block
@@ -81,13 +85,19 @@ def _gpw_energy(system, basis) -> float:
 
 
 def _gdf_energy(system, basis) -> float:
-    """Analytic all-electron GDF reference (same gauge as GAPW; CI-safe)."""
+    """Supported periodic all-electron reference, with explicit exxdiv.
+
+    Comparison with GAPW tests the retained error bounds; it does not
+    assert identical exchange Hamiltonians or a pre-measured new energy.
+    """
     opts = vq.PeriodicRHFOptions()
     opts.max_iter = 60
     opts.conv_tol_energy = 1e-9
-    return float(
-        vq.run_rhf_periodic_gamma_gdf(system, basis, opts, progress=False).energy
+    result = vq.run_pbc_gdf_rhf(
+        system, basis, opts, exxdiv="ewald", progress=False,
     )
+    assert result.converged, "all-electron periodic GDF reference did not converge"
+    return float(result.energy)
 
 
 @pytest.mark.parametrize("open_shell", [False, True])

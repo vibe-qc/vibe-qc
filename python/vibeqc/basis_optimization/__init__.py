@@ -7,8 +7,7 @@ branch and its BSE-fetched basis sets, and names neither this package
 nor the co-located ``vibe-basis/`` driver. (Stating this because the
 stale "on the basissetdev branch" wording here was read, on 2026-07-28,
 as meaning basis optimisation is outside the release/deploy pipeline
-for that reason. It is outside it, but for an unrelated one -- see
-``handovers/HANDOVER_VIBE_BASIS_DEPLOYMENT.md``.)
+for that reason; the branch rule does not govern this package.)
 
 Reproduces the historical pob optimisation recipe (Peintinger 2013,
 Vilela Oliveira 2019): single-point energies driven by an outer
@@ -41,8 +40,14 @@ Module layout
   papers handled by raising the lower exponent threshold) and
   ``condition_number_penalty`` (the smooth g.ln κ(S) term of the
   CRYSTAL OPTBASIS / VandeVondele objective).
-* :mod:`vibeqc.basis_optimization.drivers` -- scipy and iminuit
-  driver shims with a common :class:`OptResult` return type.
+* :mod:`vibeqc.basis_optimization.drivers` -- driver shims with a
+  common :class:`OptResult` return type: ``optimize_scipy`` (L-BFGS-B),
+  ``optimize_minuit`` (Minuit2 MIGRAD + HESSE), ``optimize_bobyqa``
+  (Py-BOBYQA, model-based derivative-free, the default when the
+  objective has no analytic gradient), ``optimize_dfols`` (DFO-LS, the
+  least-squares sibling for residual objectives) and ``optimize_cmaes``
+  (CMA-ES, the population-based global pre-pass). The last three are
+  optional backends behind the ``[basisopt-drivers]`` extra.
 * :mod:`vibeqc.basis_optimization.bdiis` -- ``optimize_bdiis``, a
   robust BDIIS / GDIIS driver (DIIS extrapolation + BFGS curvature +
   trust-region backtracking) returning the same :class:`OptResult`.
@@ -52,10 +57,20 @@ Module layout
   (``condition_number_penalty_gradient``, ``ld_penalty_gradient``),
   built on the closed-form same-center overlap derivative dS/da, so a
   BDIIS ``grad=`` need not finite-difference the (stiff) penalty.
+* :mod:`vibeqc.basis_optimization.export` -- save an optimised basis as
+  a ``vibe-basis`` record in the user basis store (``save_optimised_basis``)
+  or as a shareable ``.qvf.json`` (``write_optimised_basis``), with its
+  provenance: optimiser, run, objective, and the citations of the
+  optimiser and of the starting basis. The recipe results wrap it as
+  ``res.save_to_store(name)``.
 * :mod:`vibeqc.basis_optimization.recipes` -- composed pipelines.
   Stage 1 (``recipes.single_atom``) is the architecture smoke
   test: optimise one parameter on a single-atom RHF and verify
   the optimiser lands at the expected minimum.
+  ``recipes.global_then_polish`` chains a CMA-ES pre-pass with a
+  BDIIS polish for a poor starting basis. Stage 2
+  (``recipes.one_compound``) refits one exponent on a crystal through
+  the periodic runner, in process.
 
 Stages
 ------
@@ -84,6 +99,10 @@ References
   [BDIIS].
 * VandeVondele, Hutter, J. Chem. Phys. 127, 114105 (2007)
   [condition-number penalty].
+* Cartis, Fiala, Marteau, Roberts, ACM Trans. Math. Softw. 45, 32 (2019)
+  [Py-BOBYQA, DFO-LS]; Powell, DAMTP 2009/NA06 (2009) [BOBYQA].
+* Hansen, Ostermeier, Evol. Comput. 9, 159 (2001); Hansen,
+  arXiv:1604.00772 (2016) [CMA-ES].
 * iminuit: https://iminuit.readthedocs.io
 """
 
@@ -94,12 +113,23 @@ from .parametrise import (
 )
 from .objective import (
     Objective,
+    ResidualObjective,
     MockEnergy,
+    MockResiduals,
+    PeriodicSinglePointEnergy,
 )
 from .drivers import (
     OptResult,
     optimize_scipy,
     optimize_minuit,
+    optimize_bobyqa,
+    optimize_dfols,
+    optimize_cmaes,
+    cmaes_default_sigma,
+    DFO_CITATION_KEYS,
+    CMAES_CITATION_KEYS,
+    dfo_method_citations,
+    cmaes_method_citations,
 )
 from .bdiis import (
     optimize_bdiis,
@@ -128,6 +158,11 @@ from .energy_gradient import (
     energy_weighted_density,
     VibeqcIntegralProvider,
 )
+from .export import (
+    optimised_basis_record,
+    save_optimised_basis,
+    write_optimised_basis,
+)
 from .periodic_energy_gradient import (
     periodic_energy_gradient_fd,
     periodic_electronic_energy,
@@ -147,10 +182,21 @@ __all__ = [
     "FreeSpec",
     "Transform",
     "Objective",
+    "ResidualObjective",
     "MockEnergy",
+    "MockResiduals",
+    "PeriodicSinglePointEnergy",
     "OptResult",
     "optimize_scipy",
     "optimize_minuit",
+    "optimize_bobyqa",
+    "optimize_dfols",
+    "optimize_cmaes",
+    "cmaes_default_sigma",
+    "DFO_CITATION_KEYS",
+    "CMAES_CITATION_KEYS",
+    "dfo_method_citations",
+    "cmaes_method_citations",
     "optimize_bdiis",
     "method_citations",
     "BDIIS_CITATION_KEYS",
@@ -170,6 +216,9 @@ __all__ = [
     "electronic_energy",
     "energy_weighted_density",
     "VibeqcIntegralProvider",
+    "optimised_basis_record",
+    "save_optimised_basis",
+    "write_optimised_basis",
     "periodic_energy_gradient_fd",
     "periodic_electronic_energy",
     "energy_weighted_density_k",

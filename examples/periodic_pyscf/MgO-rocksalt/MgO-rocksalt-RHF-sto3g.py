@@ -4,7 +4,7 @@ Same geometry and basis as
 ``../../periodic/MgO-rocksalt-RHF-sto3g/MgO-rocksalt-RHF-sto3g.py``.
 
 Run::
-    .venv/bin/python examples/periodic_pyscf/MgO-rocksalt-RHF-sto3g/MgO-rocksalt-RHF-sto3g.py
+    .venv/bin/python examples/periodic_pyscf/MgO-rocksalt/MgO-rocksalt-RHF-sto3g.py
 
 Produces:
     {stem}.out  — full PySCF log + final energy

@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import test from 'node:test';
 
 const asset = name => new URL(`../public/logo/${name}`, import.meta.url);
-for (const kind of ['vibe-qc', 'vibe-view', 'vibe-queue']) {
+for (const kind of ['vibe-qc', 'vibe-view', 'vibe-queue', 'vibe-sketch']) {
   test(`${kind} wordmarks and icons are self-contained, renderable SVGs`, async () => {
     for (const suffix of ['wordmark-light', 'wordmark-dark', 'favicon']) {
       const svg = await readFile(asset(`${kind}-${suffix}.svg`), 'utf8');
@@ -33,7 +33,7 @@ test('the component reserves each wordmark its real intrinsic width', async () =
   const declared = Object.fromEntries(
     [...component.matchAll(/'([a-z-]+)':\s*(\d+)/g)].map(([, k, v]) => [k, Number(v)]),
   );
-  assert.deepEqual(Object.keys(declared).sort(), ['vibe-qc', 'vibe-queue', 'vibe-view']);
+  assert.deepEqual(Object.keys(declared).sort(), ['vibe-qc', 'vibe-queue', 'vibe-sketch', 'vibe-view']);
   for (const [kind, width] of Object.entries(declared)) {
     for (const theme of ['light', 'dark']) {
       const svg = await readFile(asset(`${kind}-wordmark-${theme}.svg`), 'utf8');
@@ -43,7 +43,7 @@ test('the component reserves each wordmark its real intrinsic width', async () =
   }
 });
 
-for (const name of ['vibe-qc-social', 'vibe-qc-product-social', 'vibe-view-social', 'vibe-queue-social']) {
+for (const name of ['vibe-qc-social', 'vibe-qc-product-social', 'vibe-view-social', 'vibe-queue-social', 'vibe-sketch-social']) {
   test(`${name} has an outlined SVG and a 1200x630 PNG`, async () => {
     const svg = await readFile(asset(`${name}.svg`), 'utf8');
     assert.doesNotMatch(svg, /<text\b|<script\b|<image\b|<foreignObject\b|(?:href|src)\s*=/i);
