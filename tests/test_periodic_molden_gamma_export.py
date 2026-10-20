@@ -505,7 +505,9 @@ def test_multik_gdf_exports_a_real_gamma_block(tmp_path):
         kpoints=(2, 1, 1),
         aux_basis="def2-svp-jk",
         gdf_method="rsgdf",
-        rsgdf_ke_cutoff=200.0,
+        # No rsgdf_ke_cutoff: the SR/LR planner's error-bounded cutoff
+        # (~19 Ha here). An explicit 200 Ha is used exactly (GitLab IID 206)
+        # and costs ~34x the reciprocal vectors without bearing on export.
         max_iter=60,
         conv_tol_energy=1e-9,
         output=str(tmp_path / "gdf"),
@@ -523,7 +525,7 @@ def test_multik_gdf_exports_a_real_gamma_block(tmp_path):
     assert not [ln for ln in text.splitlines() if ln.rstrip().endswith("j")]
 
 
-def test_shifted_mesh_refuses_an_explicit_molden_request():
+def test_shifted_mesh_refuses_an_explicit_molden_request(tmp_path):
     """No Γ in the mesh means no exportable orbital set, and it says so."""
     system, basis = _ne_cubic()
     shifted = vq.monkhorst_pack(system, [2, 2, 2], [1, 1, 1], False)
@@ -538,6 +540,7 @@ def test_shifted_mesh_refuses_an_explicit_molden_request():
             kpoints=shifted,
             write_molden_file=True,
             progress=False,
+            output=tmp_path / "refused",
         )
 
 
@@ -574,9 +577,8 @@ def test_degenerate_blocks_realify_to_s_orthonormal_orbitals(jk, tmp_path):
     if jk == "bipole":
         kwargs.update(bipole_cutoff_bohr=12.0, bipole_nuclear_cutoff_bohr=12.0)
     else:
-        kwargs.update(
-            aux_basis="def2-svp-jk", gdf_method="rsgdf", rsgdf_ke_cutoff=200.0
-        )
+        # Planner cutoff, as in test_multik_gdf_exports_a_real_gamma_block.
+        kwargs.update(aux_basis="def2-svp-jk", gdf_method="rsgdf")
     result = vq.run_periodic_job(**kwargs)
 
     proxy = _gamma_orbital_proxy(result)

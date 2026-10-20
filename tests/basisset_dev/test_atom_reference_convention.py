@@ -5,7 +5,7 @@ is half the answer, and it is only comparable to an external reference
 computed under the **same** convention. The plane-wave work measured the
 cost of getting this wrong: spin-restricting the bromine reference alone
 moved KBr's atomization energy by **37 kJ/mol**
-(``handovers/HANDOVER_GPAW_PW_REFERENCE.md``, GPAW-PWREF-002), against a
+(the original investigation, GPAW-PWREF-002), against a
 gate that has to hold to 1 kJ/mol.
 
 Two things are pinned here.

@@ -352,3 +352,81 @@ def test_tiny_binding_requires_exact_complex_contiguous_arrays(role):
 def test_unset_controls_fail_before_numerical_work(field):
     with pytest.raises(ValueError):
         _run(_case(), options=_options(**{field: 0}))
+
+
+
+def _density_envelope_caps(s,na,nb,o,other=0):
+    p=core._plan_bounded_periodic_density_envelope(len(s),s.shape[1],na,nb,o,other)
+    c=core._BoundedPeriodicRHFCaps()
+    c.maximum_owned_numerical_bytes=p.peak_owned_numerical_bytes
+    c.maximum_total_numerical_bytes=p.total_numerical_bytes
+    c.maximum_work_units=p.maximum_work_units;c.other_live_numerical_bytes=other
+    return c,p
+
+
+@pytest.mark.parametrize('populations',[(0,0),(1,0),(2,1),(2,2)])
+@pytest.mark.parametrize('rank',[3,4])
+def test_density_envelope_covers_independent_complex_occupied_subspaces(populations,rank):
+    s=_case(k=2,n=4)['s'];o=_options();rng=np.random.default_rng(320)
+    if rank==3:
+        e,u=np.linalg.eigh(s);e[:,0]=0;s=np.ascontiguousarray((u*e[:,None,:])@u.conj().swapaxes(-1,-2))
+    caps,p=_density_envelope_caps(s,*populations,o)
+    result=core._bound_bounded_periodic_density_envelope(s,*populations,o,caps)
+    assert result.memory.retained_rank==rank
+    assert result.memory.maximum_work_units==p.maximum_work_units
+    assert result.density_l1_limit>=np.mean(result.per_k_l1)
+    assert result.per_k_l1.flags.owndata and not result.per_k_l1.flags.writeable
+    entries=result.weighted_entry_bounds
+    assert entries.shape==s.shape and entries.flags.owndata and not entries.flags.writeable
+    assert result.memory.output_numerical_bytes==8*(len(s)+s.size)
+    x=_orthogonalizers({'s':s},o)
+    for _ in range(24):
+        density=np.zeros_like(s)
+        for point in range(len(s)):
+            for occupied in populations:
+                q=np.linalg.qr(rng.normal(size=(rank,rank))+1j*rng.normal(size=(rank,rank)))[0]
+                c=x[point]@q[:,:occupied];density[point]+=c@c.conj().T
+        norms=np.sum(abs(density),axis=(1,2))
+        assert np.all(norms<=result.per_k_l1+3e-11)
+        assert norms.mean()<=result.density_l1_limit+3e-11
+        assert np.all(abs(density)/len(s)<=entries+3e-11)
+    if populations==(0,0):assert result.density_l1_limit==0.
+    phase=np.exp(1j*np.arange(4));moved=np.ascontiguousarray(s*phase[None,:,None]*phase.conj()[None,None,:])
+    gauge=core._bound_bounded_periodic_density_envelope(moved,*populations,o,caps)
+    np.testing.assert_allclose(gauge.per_k_l1,result.per_k_l1,rtol=2e-11,atol=1e-12)
+    np.testing.assert_allclose(gauge.weighted_entry_bounds,entries,rtol=2e-11,atol=1e-12)
+    scaled=core._bound_bounded_periodic_density_envelope(4*s,*populations,o,caps)
+    np.testing.assert_allclose(scaled.per_k_l1,result.per_k_l1/4,rtol=2e-11,atol=1e-12)
+    np.testing.assert_allclose(scaled.weighted_entry_bounds,entries/4,rtol=2e-11,atol=1e-12)
+
+
+@pytest.mark.parametrize('na,nb',[(1,0),(2,1),(3,3)])
+def test_density_envelope_identity_overlap_known_occupation_limit(na,nb):
+    s=np.eye(4,dtype=complex)[None].copy();o=_options();caps,_=_density_envelope_caps(s,na,nb,o)
+    result=core._bound_bounded_periodic_density_envelope(s,na,nb,o,caps)
+    # n*Tr(D) is the exact occupation-dependent bound for S=I.
+    expected=4*(na+nb)
+    assert expected<=result.density_l1_limit<=expected*(1+1e-9)
+
+
+@pytest.mark.parametrize('field',['maximum_owned_numerical_bytes','maximum_total_numerical_bytes','maximum_work_units'])
+def test_density_envelope_caps_precede_input_values(field):
+    s=_case()['s'];o=_options();caps,p=_density_envelope_caps(s,1,1,o,other=12345)
+    assert p.total_numerical_bytes==12345+p.peak_owned_numerical_bytes+s.nbytes
+    result=core._bound_bounded_periodic_density_envelope(s,1,1,o,caps)
+    assert result.density_l1_limit>0
+    setattr(caps,field,getattr(caps,field)-1);s[:]=np.nan
+    with pytest.raises((ValueError,RuntimeError),match='cap'):
+        core._bound_bounded_periodic_density_envelope(s,1,1,o,caps)
+
+
+@pytest.mark.parametrize('kind',['negative','inconsistent-rank','insufficient-rank','nonhermitian'])
+def test_density_envelope_preserves_overlap_admission(kind):
+    s=np.repeat(np.eye(3,dtype=complex)[None],2,axis=0);o=_options()
+    if kind=='negative':s[0,0,0]=-1.
+    if kind=='inconsistent-rank':s[0,0,0]=0.
+    if kind=='insufficient-rank':s[:,:2,:2]=0.
+    if kind=='nonhermitian':s[0,0,1]=.1j
+    caps,_=_density_envelope_caps(s,1,1,o)
+    with pytest.raises((ValueError,RuntimeError)):
+        core._bound_bounded_periodic_density_envelope(s,1,1,o,caps)

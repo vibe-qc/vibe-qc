@@ -1,10 +1,7 @@
 ---
 import { products } from '../data/products.mjs';
 const base = import.meta.env.BASE_URL;
-const DOCS = '/docs';
-const REPO = 'https://github.com/vibe-qc/vibe-qc';
 ---
-
 <footer>
   <div class="wrap">
     <div class="foot-grid">
@@ -13,39 +10,27 @@ const REPO = 'https://github.com/vibe-qc/vibe-qc';
           <img class="wm-light" src={`${base}logo/vibe-qc-wordmark-light.svg`} alt="vibe-qc" width="217" height="48" />
           <img class="wm-dark" src={`${base}logo/vibe-qc-wordmark-dark.svg`} alt="vibe-qc" width="217" height="48" />
         </a>
-        <p>Calculate with vibe-qc, explore with vibe-view, and schedule with vibe-queue. Independent products for a shared scientific workflow.</p>
-        <div class="built">vibe-qc engine built on <b>libint</b> · <b>libxc</b> · <b>spglib</b> · <b>libecpint</b> · <b>Eigen</b></div>
+        <p>Scientific software for structures, calculations and results. The technical home of the vibe toolset.</p>
+        <a class="text-link" href="https://vibyverse.com">Discover the wider Vibyverse ↗</a>
       </div>
-      <div>
-        <h5>Docs</h5>
-        <ul>
-          {products.map(product => <li><a href={product.docs}>{product.name} docs{product.docsPending ? ' (soon)' : ''}</a></li>)}
-          <li><a href={`${DOCS}/citing.html`}>Citing vibe-qc</a></li>
-        </ul>
-      </div>
-      <div>
-        <h5>Products</h5>
-        <ul>
-          {products.map(product => <li><a href={`${base}products/${product.id}/`}>{product.name}</a></li>)}
-          <li><a href={`${DOCS}/changelog.html`}>Changelog</a></li>
-        </ul>
-      </div>
-      <div>
-        <h5>Project</h5>
-        <ul>
-          <li><a href={REPO}>GitHub source</a></li>
-          <li><a href="https://github.com/vibe-qc/vibe-qc">GitHub mirror</a></li>
-          <li><a href={`${base}download`}>Downloads</a></li>
-          <li><a href={`${base}sponsor`}>Sponsor</a></li>
-          <li><a href={`${base}contact`}>Contact</a></li>
-          <li><a href={`${DOCS}/license.html`}>License</a></li>
-          <li><a href={`${DOCS}/roadmap.html`}>Roadmap</a></li>
-        </ul>
-      </div>
+      <div><h5>Tools</h5><ul>{products.map(p => <li><a href={`${base}products/${p.id}/`}>{p.name}</a></li>)}<li><a href="https://github.com/vibe-qc/qvf">QVF format ↗</a></li></ul></div>
+      <div><h5>Learn & build</h5><ul>
+        <li><a href={`${base}documentation/`}>Documentation</a></li>
+        <li><a href={`${base}workflows/`}>Workflows</a></li>
+        <li><a href={`${base}methods/`}>Methods & status</a></li>
+        <li><a href="/docs/validation.html">Validation</a></li>
+        <li><a href="/docs/citing.html">Citations</a></li>
+        <li><a href="/docs/changelog.html">Core changelog</a></li>
+      </ul></div>
+      <div><h5>Project</h5><ul>
+        <li><a href="https://github.com/vibe-qc/vibe-qc">Core source ↗</a></li>
+        <li><a href={`${base}download`}>Downloads</a></li>
+        <li><a href={`${base}sponsor`}>Support the work</a></li>
+        <li><a href={`${base}contact`}>Contact & access</a></li>
+        <li><a href="/docs/license.html">Core license</a></li>
+        <li><a href="/docs/roadmap.html">Roadmap</a></li>
+      </ul></div>
     </div>
-    <div class="foot-bottom">
-      <span>© 2026 vibe-qc · Michael F. Peintinger</span>
-      <span class="lic">MPL-2.0 licensed</span>
-    </div>
+    <div class="foot-bottom"><span>© {new Date().getFullYear()} vibe-qc · Michael F. Peintinger</span><span class="lic">Software: MPL-2.0 · QVF: Apache-2.0</span></div>
   </div>
 </footer>

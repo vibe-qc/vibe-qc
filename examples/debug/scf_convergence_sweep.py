@@ -139,7 +139,7 @@ def run_one(label: str, system: vq.PeriodicSystem, basis: vq.BasisSet,
     t0 = time.perf_counter()
     try:
         with vq.crash_dump_context(out_stem):
-            with vq.perf_log(out_stem.with_suffix(".perf")):
+            with vq.perf_log(out_stem.parent / f"{out_stem.name}.perf"):
                 result = vq.run_rks_periodic_scf(
                     system, basis,
                     vq.KPoints.gamma(system),

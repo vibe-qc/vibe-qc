@@ -57,6 +57,27 @@ void bind_bounded_periodic_rhf_solver(py::module_& m) {
     BRHF_DIAGNOSTIC(minimum_retained_overlap_eigenvalue); BRHF_DIAGNOSTIC(maximum_overlap_eigen_relative_residual);
     BRHF_DIAGNOSTIC(maximum_orthogonalizer_metric_error);
 #undef BRHF_DIAGNOSTIC
+    py::class_<BoundedPeriodicDensityEnvelope>(m,"_BoundedPeriodicDensityEnvelope")
+        .def_readonly("memory",&BoundedPeriodicDensityEnvelope::memory)
+        .def_readonly("n_alpha",&BoundedPeriodicDensityEnvelope::n_alpha)
+        .def_readonly("n_beta",&BoundedPeriodicDensityEnvelope::n_beta)
+        .def_readonly("density_l1_limit",&BoundedPeriodicDensityEnvelope::density_l1_limit)
+        .def_property_readonly("weighted_entry_bounds",[](const BoundedPeriodicDensityEnvelope& r) {
+            py::array_t<double> a({py::ssize_t(r.memory.n_kpoints),py::ssize_t(r.memory.n_basis),py::ssize_t(r.memory.n_basis)});
+            std::memcpy(a.mutable_data(),r.weighted_entry_bounds.data(),8*r.weighted_entry_bounds.size());
+            a.attr("flags").attr("writeable")=false;return a;
+        })
+        .def_property_readonly("per_k_l1",[](const BoundedPeriodicDensityEnvelope& r) {
+            py::array_t<double> a(r.per_k_l1.size());std::memcpy(a.mutable_data(),r.per_k_l1.data(),8*r.per_k_l1.size());
+            a.attr("flags").attr("writeable")=false;return a;
+        });
+    m.def("_plan_bounded_periodic_density_envelope",&plan_bounded_periodic_density_envelope,
+        py::arg("kpoints"),py::arg("n_basis"),py::arg("n_alpha"),py::arg("n_beta"),py::arg("options"),py::arg("other_live_bytes")=0);
+    m.def("_bound_bounded_periodic_density_envelope",[](const py::array& s,std::uint64_t na,std::uint64_t nb,const Options& o,const Caps& caps) {
+        if(s.ndim()!=3 || s.shape(1)!=s.shape(2) || !s.dtype().is(py::dtype::of<Z>()) || !(s.flags()&py::array::c_style))
+            throw py::value_error("density envelope overlap requires contiguous complex128 (k,n,n)");
+        return bound_bounded_periodic_density_envelope(s.shape(0),s.shape(1),na,nb,static_cast<const Z*>(s.data()),s.size(),o,caps);
+    },py::arg("overlap").noconvert(),py::arg("n_alpha"),py::arg("n_beta"),py::arg("options"),py::arg("caps"));
     py::enum_<Status>(m,"_BoundedPeriodicRHFStatus")
         .value("CONVERGED",Status::Converged).value("ITERATION_LIMIT",Status::IterationLimit)
         .value("WORK_LIMIT",Status::WorkLimit).value("FOCK_CALL_LIMIT",Status::FockCallLimit)

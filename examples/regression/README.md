@@ -231,6 +231,7 @@ examples/regression/
 │   └── catalog.py                        # MethodSpec dict
 ├── expected/                             # one .json per (system, basis, method)
 │   └── <system_id>__<basis>__<method_id>.json
+├── parity_periodic_dlpno_vs_pyscf.py     # DLPNO-CCSD(T) on crystals vs PySCF KRCCSD(T)
 ├── parity_matrix_orca/                   # standalone ORCA diagnostics/fixtures
 ├── crystal_parity/ bipole_parity/ gapw_parity/
 │                                           # standalone bug-hunt diagnostics

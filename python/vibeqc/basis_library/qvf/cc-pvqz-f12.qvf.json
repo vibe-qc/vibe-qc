@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "cc-pvqz-f12",
+  "description": " cc-pVQZ-F12  EMSL  Basis Set Exchange Library   7/17/15 4:17 PM\nElements                             References\nH He B C N O F Ne Al Si P S Cl Ar: K.A. Peterson, T.B. Adler, and H.-J. Werner, Systematically convergent basis sets for explicitly correlated wavefunctions: The atoms H, He, B?Ne, and Al?Ar, Journal of Chemical Physics 128, 084102 (2008).\nLi Be Na Mg: J. Grant Hill and Kirk A. Peterson, Correlation consistent basis sets for explicitly correlated wavefunctions: valence and core-valence basis sets for Li, Be, Na, and Mg, Physical Chemistry Chemical Physics 12, 10460 (2010).",
   "role": "orbital",
   "elements": {
     "H": {
@@ -7607,7 +7607,34 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "peterson_adler_werner_f12_2008",
+      "description": "K. A. Peterson, T. B. Adler, H. J. Werner, Journal of Chemical Physics 128, 084102 (2008)",
+      "doi": "10.1063/1.2831537"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "cc-pvqz-f12",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "c57ef39faeadd0714bb2e5d336315f6e748ef317542664b0755afc30eb5f121a",
+    "citations": [
+      {
+        "keys": [
+          "peterson_adler_werner_f12_2008"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

@@ -1,5 +1,9 @@
 """RHF with explicit conventional (in-core ERI tensor) Fock build on H2O / 6-31G*.
 
+Success criterion: E = -76.0036002 Ha in 9 iterations (vibe-qc 0.17.10
+development build), identical to the AUTO run of input-h2o-rhf.py to
+1e-8 Ha; the Fock-build mode changes the memory profile, not the answer.
+
 CONVENTIONAL mode materialises the full 4-index ERI tensor once and reuses
 it across SCF iterations. On this 18-basis-function example the tensor is
 18⁴ x 8 bytes = 0.801 MiB, so retaining it is inexpensive.

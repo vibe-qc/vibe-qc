@@ -26,6 +26,8 @@ Design principles
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
@@ -40,9 +42,18 @@ __all__ = [
     "ECPEntry",
     "Reference",
     "Provenance",
+    "ProvenanceKind",
+    "Upstream",
+    "CitationRoute",
     "BasisSetData",
     "LossReport",
+    "SCHEMA_VERSION",
 ]
+
+#: The QVF-Basis schema version this model writes. 1.1.0 widened
+#: ``provenance`` (kind, upstream identity, content hash, per-range citation
+#: routes); every 1.0.0 record still validates and loads.
+SCHEMA_VERSION = "1.1.0"
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +178,9 @@ class ECPTerm:
 
     coefficient: float
     exponent: float
-    power: int  # power of r (typically 0, 1, or 2)
+    # Gaussian input includes the Jacobian: libecpint subtracts two from n.
+    # https://libecpint.readthedocs.io/en/latest/usage.html#important-note-about-ecp-definitions
+    power: int  # Gaussian n=0..4 in coefficient * r^(n-2) * exp(-exponent * r^2)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -272,18 +285,120 @@ class Reference:
         )
 
 
+class ProvenanceKind(str, Enum):
+    """What class of record this is (#295 decision 2: one store, one
+    namespace, provenance says what a record is; nothing downstream
+    branches on it).
+
+    * ``VENDOR``: bundled by the vibe-qc maintainers from an upstream
+      distribution, such as libint's basis bundle or a publishing group's
+      archive, possibly completed with reviewed element blocks from the
+      Basis Set Exchange.
+    * ``BSE``: a whole record rendered from the Basis Set Exchange
+      catalogue, bundled or fetched on demand.
+    * ``HAND_WRITTEN``: supplied by a user through the import tool.
+    * ``VIBE_BASIS``: produced by the vibe-basis optimiser.
+    """
+
+    VENDOR = "vendor"
+    BSE = "bse"
+    HAND_WRITTEN = "hand-written"
+    VIBE_BASIS = "vibe-basis"
+
+
+@dataclass
+class Upstream:
+    """One upstream source a record draws on.
+
+    ``name`` is the distribution or archive (``"libint"``,
+    ``"basis-set-exchange"``, ``"Bredow group basis-set archive"``),
+    ``version`` its version or catalogue release, ``url`` where it was
+    obtained, ``identifier`` the record's name in that source, and
+    ``detail`` which part of this record came from it (``"H-Kr"``).
+    """
+
+    name: str
+    version: Optional[str] = None
+    url: Optional[str] = None
+    identifier: Optional[str] = None
+    detail: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        d: Dict[str, Any] = {"name": self.name}
+        for key in ("version", "url", "identifier", "detail"):
+            value = getattr(self, key)
+            if value:
+                d[key] = value
+        return d
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "Upstream":
+        return cls(
+            name=str(d["name"]),
+            version=d.get("version"),
+            url=d.get("url"),
+            identifier=d.get("identifier"),
+            detail=d.get("detail"),
+        )
+
+
+@dataclass
+class CitationRoute:
+    """Which publications cover which elements of the record.
+
+    ``keys`` are citation keys in ``vibeqc.output.citations`` (its
+    ``database.toml`` entries). ``elements`` lists the symbols the route
+    covers; ``None`` means every element of the record. pob-TZVP-rev2 needs
+    four routes because its 78 records come from four papers (#288).
+    """
+
+    keys: List[str]
+    elements: Optional[List[str]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        d: Dict[str, Any] = {"keys": list(self.keys)}
+        if self.elements is not None:
+            d["elements"] = list(self.elements)
+        return d
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "CitationRoute":
+        elements = d.get("elements")
+        return cls(
+            keys=[str(k) for k in d.get("keys", [])],
+            elements=[str(e) for e in elements] if elements is not None else None,
+        )
+
+
 @dataclass
 class Provenance:
-    """How this basis set was obtained and any upstream source identity."""
+    """How this basis set was obtained and any upstream source identity.
+
+    ``origin`` is the 1.0.0 field (which importer produced the record);
+    ``kind`` and the rest arrived with schema 1.1.0 (#407).
+    ``content_sha256`` is :meth:`BasisSetData.content_sha256`, the digest
+    of the numerical content alone, so renaming or re-describing a record
+    does not change its identity and a cache can be addressed by it.
+    """
 
     origin: Literal["bse", "manual", "crystal", "file", "generated"] = "bse"
-    retrieval_date: Optional[str] = None  # ISO 8601
+    retrieval_date: Optional[str] = None  # ISO 8601 date
     source_doi: Optional[str] = None
     source_version: Optional[str] = None
     source_checksum: Optional[str] = None  # sha256 of the source file
+    kind: Optional[ProvenanceKind] = None
+    upstream: List[Upstream] = field(default_factory=list)
+    content_sha256: Optional[str] = None
+    citations: List[CitationRoute] = field(default_factory=list)
+    run_id: Optional[str] = None  # vibe-basis run identity
+    notes: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {"origin": self.origin}
+        if self.kind is not None:
+            d["kind"] = ProvenanceKind(self.kind).value
+        if self.upstream:
+            d["upstream"] = [u.to_dict() for u in self.upstream]
         if self.retrieval_date:
             d["retrieval_date"] = self.retrieval_date
         if self.source_doi:
@@ -292,16 +407,31 @@ class Provenance:
             d["source_version"] = self.source_version
         if self.source_checksum:
             d["source_checksum"] = self.source_checksum
+        if self.content_sha256:
+            d["content_sha256"] = self.content_sha256
+        if self.citations:
+            d["citations"] = [c.to_dict() for c in self.citations]
+        if self.run_id:
+            d["run_id"] = self.run_id
+        if self.notes:
+            d["notes"] = self.notes
         return d
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Provenance":
+        kind = d.get("kind")
         return cls(
             origin=d.get("origin", "bse"),
             retrieval_date=d.get("retrieval_date"),
             source_doi=d.get("source_doi"),
             source_version=d.get("source_version"),
             source_checksum=d.get("source_checksum"),
+            kind=ProvenanceKind(kind) if kind is not None else None,
+            upstream=[Upstream.from_dict(u) for u in d.get("upstream", [])],
+            content_sha256=d.get("content_sha256"),
+            citations=[CitationRoute.from_dict(c) for c in d.get("citations", [])],
+            run_id=d.get("run_id"),
+            notes=d.get("notes"),
         )
 
 
@@ -354,6 +484,33 @@ class BasisSetData:
         from ._element_data import ATOMIC_NUMBER
 
         return sorted(self.elements.keys(), key=lambda s: ATOMIC_NUMBER.get(s, 999))
+
+    def content_dict(self) -> Dict[str, Any]:
+        """The numerical content alone: elements and ECPs, nothing else.
+
+        Keys are sorted on serialisation, so two records with the same
+        shells and potentials hash alike whatever their name, description,
+        references or provenance say.
+        """
+        d: Dict[str, Any] = {
+            "elements": {k: v.to_dict() for k, v in self.elements.items()},
+        }
+        if self.ecps:
+            d["ecps"] = {k: v.to_dict() for k, v in self.ecps.items()}
+        return d
+
+    def content_sha256(self) -> str:
+        """SHA-256 of :meth:`content_dict` in canonical JSON.
+
+        This is the identity the content-addressed store (#408) and the
+        provenance block (#407) carry. Floats serialise with ``repr``, so the
+        digest changes exactly when a double changes.
+        """
+        payload = json.dumps(
+            self.content_dict(), sort_keys=True, separators=(",", ":"),
+            ensure_ascii=True, allow_nan=False,
+        )
+        return hashlib.sha256(payload.encode("ascii")).hexdigest()
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {

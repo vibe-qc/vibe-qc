@@ -1,12 +1,18 @@
 # Design: self-consistent long-range gamma for GFN2-xTB-SECCM
 
-**Status (issue #444):** non-molecular 3-D `ewald_gamma=True` fails closed
+**Status (former-tracker issue 444):** non-molecular 3-D `ewald_gamma=True` fails closed
 at the native route boundary, before supercell matrix assembly. Exact
 zero-image molecular delegation and the 1-D/2-D paths are unchanged.
 The internal 3-D shell-gamma seam remains available for diagnostic tests,
 not production energies. Finite WS truncation does not cure the
 thermodynamic-limit defect. No replacement GFN2 hardness mapping or
 finite-distance energy change is introduced here.
+
+The SECCM gamma code, tests and changelog call this defect `#444`. That
+number belongs to the issue tracker used before the repository split and
+was not carried over. The current tracker's #444 is an unrelated
+SCC-DFTB-SECCM fixture issue, so this note is the live description of the
+defect.
 
 ## Literature and the long-range/short-range partition
 

@@ -1623,6 +1623,14 @@ def _label_set(images):
     return {tuple(int(x) for x in row.ravel()) for row in images}
 
 
+def _quartet_audit(source, target, permutation=(0, 1, 2, 3), shifts=None, budget=None):
+    from vibeqc._bipole_physical_support import audit_quartet_support
+    from vibeqc.symmetry_shared import Budget
+    return audit_quartet_support(source, target, permutation=permutation,
+        site_shifts=np.zeros((4, 3), np.int64) if shifts is None else shifts,
+        budget=Budget(8 << 20, 10**10) if budget is None else budget)
+
+
 def _physical_centers(b, quartet):
     shells = b.basis.shells()
     return np.array([shells[i].origin for i in quartet])
@@ -1674,6 +1682,9 @@ def test_physical_quartet_domains_obey_all_eight_eri_permutations(permutation):
         absolute = np.vstack([np.zeros(3, np.int64), row])[list(permutation)]
         mapped.append(absolute[1:] - absolute[0])
     assert _label_set(target.images) == _label_set(mapped)
+    audit = _quartet_audit(source.images, target.images, permutation)
+    assert audit.matches and audit.first_mismatch is None
+    assert not audit.physical_hamiltonian_certified and not audit.symmetry_certified
 
 
 def test_physical_quartet_domains_reanchor_large_site_translations_without_torus_wrapping():
@@ -1686,6 +1697,99 @@ def test_physical_quartet_domains_reanchor_large_site_translations_without_torus
     assert _label_set(target.images) == _label_set(mapped)
     assert np.max(np.abs(target.images)) > 3000
     assert source.memory.support_identity_sha256 != target.memory.support_identity_sha256
+    assert _quartet_audit(source.images, target.images, shifts=shifts).matches
+
+
+@pytest.mark.parametrize("permutation", [(0,1,2,3), (1,0,2,3), (0,1,3,2), (1,0,3,2),
+                                          (2,3,0,1), (3,2,0,1), (2,3,1,0), (3,2,1,0)])
+def test_quartet_audit_combines_permutation_and_site_reanchoring(permutation):
+    lattice = np.diag([3., 4., 5.])
+    centers = np.array([[0., 0., 0.], [.5, -.25, .75], [-.25, .5, 0.], [.25, .25, .5]])
+    shifts = np.array([[7, -3, 2], [-2, 3, 0], [0, 2, -1], [4, -1, 3]], np.int64)
+    source = _physical_support(lattice, centers, pair_radius=3.5, midpoint_radius=3.25)
+    target = _physical_support(lattice, (centers + shifts @ lattice.T)[list(permutation)],
+                               pair_radius=3.5, midpoint_radius=3.25)
+    # Independent geometric enumeration supplies the target, rather than
+    # constructing it with the same integer action as the audited function.
+    assert len(source.images) > 1
+    assert _quartet_audit(source.images, target.images, permutation, shifts).matches
+    repeated_source = np.repeat(source.images, 2, axis=0)
+    repeated_target = np.repeat(target.images, 2, axis=0)
+    assert _quartet_audit(repeated_source, repeated_target, permutation, shifts).matches
+    assert not _quartet_audit(repeated_source, repeated_target[:-1], permutation, shifts).matches
+
+
+def test_quartet_audit_preserves_multiplicity_instead_of_set_membership():
+    a = np.zeros((3, 3), np.int64)
+    b = np.ones((3, 3), np.int64)
+    source, target = np.array([a, a, b]), np.array([a, b, b])
+    assert _label_set(source) == _label_set(target)
+    audit = _quartet_audit(source, target)
+    assert not audit.matches and audit.first_mismatch == (0,) * 9
+    assert (audit.source_multiplicity, audit.target_multiplicity) == (2, 1)
+    assert _quartet_audit(source, np.array([b, a, a])).matches
+    empty = np.empty((0, 3, 3), np.int64)
+    assert _quartet_audit(empty, empty).matches
+    assert not _quartet_audit(empty, source).matches
+    assert not _quartet_audit(source, empty).matches
+
+
+def test_quartet_audit_does_not_wrap_int64_arithmetic_or_finite_cells():
+    source = np.zeros((1, 3, 3), np.int64)
+    source[0, 0, 0] = np.iinfo(np.int64).min
+    shifts = np.zeros((4, 3), np.int64)
+    shifts[1, 0] = 1
+    wrapped = source.copy()
+    wrapped[0, 0, 0] = np.iinfo(np.int64).max
+    audit = _quartet_audit(source, wrapped, shifts=shifts)
+    assert not audit.matches
+    assert audit.first_mismatch[0] == -(2**63) - 1
+    assert (audit.source_multiplicity, audit.target_multiplicity) == (1, 0)
+    zero = np.zeros((1, 3, 3), np.int64)
+    shifts[1, 0] = 2
+    assert not _quartet_audit(zero, zero, shifts=shifts).matches
+    shifts[:] = np.iinfo(np.int64).min
+    assert _quartet_audit(source, source, shifts=shifts).matches
+
+
+def test_quartet_audit_receipt_binds_inputs_and_action_not_budget():
+    from vibeqc.symmetry_shared import Budget
+    source = np.zeros((2, 3, 3), np.int64)
+    source[1] = 1
+    result = _quartet_audit(source, source)
+    exact = Budget(result.inventoried_bytes, result.work_units)
+    assert _quartet_audit(source, source, budget=exact) == result
+    for caps in (Budget(exact.maximum_bytes - 1, exact.maximum_work),
+                 Budget(exact.maximum_bytes, exact.maximum_work - 1)):
+        # Resource refusal precedes scanning a deliberately invalid mapping.
+        with pytest.raises((MemoryError, ValueError), match="budget"):
+            _quartet_audit(source, source, permutation=(0, 2, 1, 3), budget=caps)
+    for other in (_quartet_audit(source, source[::-1].copy()),
+                  _quartet_audit(source[::-1].copy(), source),
+                  _quartet_audit(source, source, permutation=(1, 0, 2, 3)),
+                  _quartet_audit(source, source, shifts=np.ones((4, 3), np.int64))):
+        assert other.action_identity_sha256 != result.action_identity_sha256
+    source[:] = 0
+    assert _quartet_audit(source, source).action_identity_sha256 != result.action_identity_sha256
+
+
+@pytest.mark.parametrize("change", ["float", "shape", "strided", "permutation_bool",
+    "permutation_float", "permutation_crossing", "permutation_duplicate", "shifts_float", "shifts_shape"])
+def test_quartet_audit_rejects_invalid_declarations(change):
+    source = np.zeros((2, 3, 3), np.int64)
+    target = source.copy()
+    permutation, shifts = (0, 1, 2, 3), np.zeros((4, 3), np.int64)
+    if change == "float": source = source.astype(float)
+    if change == "shape": source = source[:, :2]
+    if change == "strided": source = source[::-1]
+    if change == "permutation_bool": permutation = (False, 1, 2, 3)
+    if change == "permutation_float": permutation = (0., 1, 2, 3)
+    if change == "permutation_crossing": permutation = (0, 2, 1, 3)
+    if change == "permutation_duplicate": permutation = (0, 1, 2, 2)
+    if change == "shifts_float": shifts = shifts.astype(float)
+    if change == "shifts_shape": shifts = shifts[:3]
+    with pytest.raises((TypeError, ValueError)):
+        _quartet_audit(source, target, permutation, shifts)
 
 
 def test_physical_quartet_exact_boundary_does_not_use_a_hidden_slack():

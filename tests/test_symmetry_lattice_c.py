@@ -195,6 +195,53 @@ def test_roundtrip_works_on_primitive_mg_too():
 # Sub-block shapes
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("into", [False, True])
+@pytest.mark.parametrize("angle", [0., .37])
+@pytest.mark.parametrize("basis_name", ["sto-3g", "6-31g*"])
+def test_reconstruction_batches_match_scalar_rotations_and_preserve_holes(
+    into, angle, basis_name,
+):
+    from vibeqc.symmetry_ao import atom_permutation_under_op, build_ao_permutation_matrix
+    from vibeqc.symmetry_lattice import lattice_to_cartesian_rotation
+
+    c, s = np.cos(angle), np.sin(angle)
+    lattice = 3. * np.array([[c, -s, 0.], [s, c, 0.], [0., 0., 1.]])
+    system = vq.PeriodicSystem(3, lattice, [vq.Atom(6, [0., 0., 0.])])
+    vq.attach_symmetry(system)
+    basis = vq.BasisSet(system.unit_cell_molecule(), basis_name)
+    operations = system.symmetry.operations
+    support = list(vq.direct_lattice_cells(system, 3.1))
+    orbits = vq.identify_atom_pair_orbits(support, operations, system, require_closed=True)
+    # A reordered, wider target also contains holes outside the orbit space.
+    cells = list(reversed(vq.direct_lattice_cells(system, 5.)))
+    slots = {tuple(cell.index): i for i, cell in enumerate(cells)}
+    rng = np.random.default_rng(704)
+    reps = [rng.standard_normal((basis.nbasis, basis.nbasis)) for _ in orbits.orbits]
+    saved_reps = [r.copy() for r in reps]
+    target = [rng.standard_normal((basis.nbasis, basis.nbasis)) for _ in cells] if into else None
+    identities = [id(b) for b in target] if into else []
+    expected = [b.copy() for b in target] if into else [np.zeros_like(reps[0]) for _ in cells]
+    covered = set()
+    for rep, orbit in zip(reps, orbits.orbits):
+        for (_, _, h), op_index in zip(orbit.members, orbit.ops):
+            op = operations[op_index]
+            rotation = lattice_to_cartesian_rotation(op.rotation, lattice)
+            permutation = atom_permutation_under_op(system, rotation, lattice @ op.translation)
+            action = build_ao_permutation_matrix(basis, rotation, permutation)
+            expected[slots[h]] = action @ rep @ action.T
+            covered.add(slots[h])
+    assert len(covered) < len(cells)
+    actual = vq.reconstruct_lattice_matrix_set_c(
+        reps, orbits, basis, system, operations, cells=cells, into_blocks=target,
+    )
+    if into:
+        assert actual is target and [id(b) for b in actual] == identities
+    np.testing.assert_allclose(actual, expected, atol=3e-14, rtol=0.)
+    np.testing.assert_array_equal(reps, saved_reps)
+    for i in set(range(len(cells))) - covered:
+        np.testing.assert_array_equal(actual[i], expected[i])
+
+
 def test_rep_subblock_shape_matches_atom_ao_counts():
     """The representative sub-block of an (a_rep, b_rep) orbit has
     shape (n_AOs_on_a_rep, n_AOs_on_b_rep)."""

@@ -8,13 +8,15 @@ mirrors `run_rhf_periodic_scf` from [Periodic HF on a 1D H chain](periodic_hf.md
 ```python
 import numpy as np
 from vibeqc import (
-    Atom, BasisSet, KPoints, PeriodicSystem, PeriodicKSOptions,
-    run_rks_periodic_scf,
+    Atom, BasisSet, CoulombMethod, KPoints, PeriodicSystem,
+    PeriodicKSOptions, run_rks_periodic_scf,
 )
 
+# The chain runs along x; it is a dim=3 cell with 30 bohr of transverse
+# vacuum, because no route has a consistent 1-D Coulomb gauge for dim=1.
 unit_cell = [Atom(1, [0, 0, 0]), Atom(1, [0, 0, 1.4])]
 sysp = PeriodicSystem(
-    dim=1,
+    dim=3,
     lattice=np.diag([4.0, 30.0, 30.0]),
     unit_cell=unit_cell,
 )
@@ -26,9 +28,9 @@ opts.functional = "PBE"
 opts.lattice_opts.cutoff_bohr = 12.0
 opts.lattice_opts.nuclear_cutoff_bohr = 40.0
 opts.conv_tol_energy = 1e-10
-# Default: opts.lattice_opts.coulomb_method = CoulombMethod.DIRECT_TRUNCATED.
-# Flip to CoulombMethod.EWALD_3D for any tight 3D bulk — see "Coulomb
-# method" below.
+# The default CoulombMethod.DIRECT_TRUNCATED is only a molecular-limit
+# diagnostic; EWALD_3D is the converged choice here (see "Coulomb method").
+opts.lattice_opts.coulomb_method = CoulombMethod.EWALD_3D
 
 result = run_rks_periodic_scf(sysp, basis, kpoints, opts)
 
@@ -46,12 +48,12 @@ entry point.
 
 ## Functional support
 
-All 500+ libxc functionals work in principle. Today's validation
-covers:
+All 500+ libxc functionals ({vibeqc-cite}`libxc_2018`) work in
+principle. Today's validation covers:
 
-* **LDA** (Slater + VWN5)
-* **PBE**, pure GGA
-* **BLYP**, pure GGA
+* **LDA** (Slater + VWN5; {vibeqc-cite}`slater_x_1951`, {vibeqc-cite}`vwn_1980`)
+* **PBE**, pure GGA ({vibeqc-cite}`pbe_1996`)
+* **BLYP**, pure GGA ({vibeqc-cite}`becke_b88_1988`, {vibeqc-cite}`lee_yang_parr_1988`)
 
 Hybrid functionals (B3LYP, PBE0, …) work in the code path, the
 `exchange_scale` parameter on `build_fock_2e_real_space` routes the
@@ -67,8 +69,12 @@ dispatcher:
 
 - ``CoulombMethod.DIRECT_TRUNCATED`` (default), routes to
   ``run_rks_periodic`` (the original KS C++ driver, conditionally
-  convergent in 3D). Fine for 1D / 2D and for 3D molecular-limit
-  cells with lattice $\gtrsim 15$ bohr.
+  convergent in 3D). Use it only as a diagnostic for vacuum-padded
+  3D molecular-limit cells with lattice $\gtrsim 15$ bohr. On a
+  ``dim=1`` cell its energy depends on the lattice-sum cutoff (for a
+  ``dim=1`` version of the H₂ chain above with STO-3G it moved by
+  0.45 Ha between cutoffs of 12 and 20 bohr on a vibe-qc 0.17.17
+  development build), and 2D slabs use ``SLAB_EWALD_2D``.
 - ``CoulombMethod.EWALD_3D``, full Gaussian-charge Ewald,
   unconditionally convergent. Shipped end-to-end:
   - Γ-only via ``run_rks_periodic_gamma_scf`` (Phase 15c-1)
@@ -139,7 +145,8 @@ lattice sum via the Bloch transform of
 [Periodic HF on a 1D H chain](periodic_hf.md). The core ideas for both machines, 
 the Bloch summation, the Monkhorst-Pack k-integration, the
 direct-truncation caveat for the 3D Coulomb sum, are identical to
-periodic HF and documented there.
+periodic HF and documented there ({vibeqc-cite}`pisani_crystal_1988`,
+{vibeqc-cite}`monkhorst_pack_1976`).
 
 What's new in periodic KS-DFT is the **exchange-correlation
 contribution**. The density at a point is now Bloch-summed:
@@ -154,18 +161,22 @@ occupied bands at each. The numerical integration of
 $V^\text{xc}_{\mu\nu}(\mathbf{T})$ on the DFT grid then needs to
 account for periodic images of the basis functions. vibe-qc builds the
 grid from the *unit-cell* atomic centers; the plain molecular Becke
-partition is accurate for well-separated periodic cells (the
+partition ({vibeqc-cite}`becke_grid_1988`) is accurate for well-separated periodic cells (the
 molecular-limit regime) but produces small partition-boundary
-artefacts for tight cells. The **periodic Becke partition** is the fix,
+artefacts for tight cells. The **periodic Becke partition** (Towler, Zupan and Causà 1996, see
+References) is the fix,
 and has been the default (`use_periodic_becke=True`) since v0.9.x, see
 [Tight-cell DFT with the periodic Becke partition](tight_cell_dft.md).
 
 ### Hybrid DFT in periodic systems
 
-Hybrid functionals (B3LYP, PBE0, …) mix a fraction $\alpha$ of HF
+Hybrid functionals (B3LYP, {vibeqc-cite}`becke_1993`,
+{vibeqc-cite}`stephens_b3lyp_1994`; PBE0, {vibeqc-cite}`adamo_barone_pbe0_1999`;
+…) mix a fraction $\alpha$ of HF
 exchange into the XC energy. In a periodic system this translates
 to an $\mathcal{O}(N_\text{bf}^4)$ lattice sum of the exchange-type
-two-electron integrals
+two-electron integrals, whose truncation in a Gaussian crystalline-orbital
+code is analysed in {vibeqc-cite}`causa_exchange_truncation_1988`,
 
 $$
 K_{\mu\nu}(\mathbf{T}) = \sum_{\lambda\sigma, \mathbf{T}', \mathbf{T}''}
@@ -190,7 +201,7 @@ from [Basis-set convergence](basis_convergence.md):
    singularity. vibe-qc's canonical-orthogonalisation path handles
    mild cases; stronger contamination needs a redesigned basis.
 2. **Solid-state basis families.** pob-TZVP (Peintinger-Vilela
-   Oliveira-Bredow 2013) is the standard starting point, it's a
+   Oliveira-Bredow 2013, {vibeqc-cite}`peintinger_pob_tzvp_2013`) is the standard starting point, it's a
    systematic re-derivation of TZVP with the smallest-exponent
    primitives either removed or replaced, and ships with vibe-qc.
 

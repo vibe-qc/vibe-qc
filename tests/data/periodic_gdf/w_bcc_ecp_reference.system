@@ -1,0 +1,37 @@
+[program]
+"name" = "PySCF"
+"version" = "2.14.0"
+
+[validation]
+"role" = "independent external reference"
+"execution_boundary" = "separate external process"
+"native_parity" = "not established by the reference artifact"
+
+[artifacts]
+"w_bcc_ecp_reference.json" = "520b1537115e47594834536c6148f8f471fcad8dbc8aecc7e09bd088cc4f0303"
+
+[[runs]]
+label = "gamma"
+method = "KRKS"
+functional = "pbe,pbe"
+fit = "RSGDF (omega=0.4)"
+mesh = [1, 1, 1]
+gamma_centred = true
+converged = true
+energy_hartree = -135.21491246495432
+free_energy_hartree = -135.21491516014126
+smearing_kt_hartree = 0.005
+script_sha256 = "2a154e158112b691bc446cf023fdd533a38de4b46cbe9a2559813bd62e447547"
+
+[[runs]]
+label = "mp222"
+method = "KRKS"
+functional = "pbe,pbe"
+fit = "RSGDF (omega=0.4)"
+mesh = [2, 2, 2]
+gamma_centred = true
+converged = true
+energy_hartree = -135.07155347507012
+free_energy_hartree = -135.07169125102922
+smearing_kt_hartree = 0.005
+script_sha256 = "2a154e158112b691bc446cf023fdd533a38de4b46cbe9a2559813bd62e447547"

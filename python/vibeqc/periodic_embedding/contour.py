@@ -29,8 +29,8 @@ its endpoints, which the interior Gauss-Legendre nodes avoid.
 
 Finite temperature (Matsubara poles of the Fermi function handled
 explicitly, or a Gauss-Legendre arc plus a few Matsubara residues) is a
-documented extension -- see ``handovers/HANDOVER_GF_EMBEDDING.md`` open design
-question 2.
+documented extension (open design question 2).
+
 
 The node count needed for sub-meV convergence of the band energy is the
 practical knob (open design question 2); :class:`EnergyContour` exposes

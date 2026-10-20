@@ -478,35 +478,43 @@ def _transition_dipole_from_amplitudes(
     mo_coeff: np.ndarray,
     dipole_ao,  # DipoleIntegrals with .x, .y, .z attributes
 ) -> np.ndarray:
-    """Compute the transition dipole moment from the excitation vector.
+    """Transition dipole of a spin-adapted singlet from its spatial amplitudes.
 
-    For a single-determinant ground state, the transition density between
-    the ground state |0> and excited state |I> in the MO basis is:
+    ``X`` holds the spatial amplitudes of the singlet
+    |I> = sum_ia X_ia (a+_{a alpha} a_{i alpha} + a+_{a beta} a_{i beta}) |0> / sqrt(2),
+    normalised to sum_ia X_ia^2 = 1 (TDA), or X+Y with (X+Y).(X-Y) = 1 (RPA).
+    Each spin contributes X_ia mu_ia / sqrt(2), so
 
-        T_{pq} = S_{ia} X_{ia}^{I} (d_{pi} d_{qa} + d_{pa} d_{qi})
+        <0|mu|I> = sqrt(2) sum_ia X_ia mu_ia,   mu_ia = C_i^T mu_AO C_a.
 
-    where the off-diagonal blocks are the excitation amplitudes. In the
-    AO basis:
-
-        P_{muν}^{0I} = S_{ia} X_{ia}^{I} (C_{mui} C_{νa} + C_{mua} C_{νi})
-                    = C_occ . X . C_virt^T + C_virt . X^T . C_occ^T
-
-    The transition dipole moment is tr(P^{0I} . mu) in each cartesian
-    direction.
+    The spin factor is sqrt(2), not 2: tr(P mu) of the spatial transition
+    density C_occ X C_virt^T + C_virt X^T C_occ^T, used here before #545,
+    doubled every oscillator strength.
     """
     C_occ = mo_coeff[:, :n_occ]  # (n_basis, n_occ)
     C_virt = mo_coeff[:, n_occ:]  # (n_basis, n_virt)
-
-    # Reshape the (n_occ * n_virt,) vector to (n_occ, n_virt)
-    X_ia = X.reshape(n_occ, n_virt)
-
-    # AO transition density
-    P_ao = C_occ @ X_ia @ C_virt.T + C_virt @ X_ia.T @ C_occ.T
+    X_ia = np.asarray(X).reshape(n_occ, n_virt)
 
     mu = np.zeros(3)
     for d, comp in enumerate([dipole_ao.x, dipole_ao.y, dipole_ao.z]):
-        mu[d] = np.trace(P_ao @ np.asarray(comp))
+        mu_ia = C_occ.T @ np.asarray(comp) @ C_virt
+        mu[d] = np.sqrt(2.0) * float(np.sum(X_ia * mu_ia))
     return mu
+
+
+def _casida_x_plus_y(A_minus_B_sqrt, Z, omega_vals) -> np.ndarray:
+    """X+Y = (A-B)^{1/2} Z / sqrt(w) per root, on (X+Y).(X-Y) = 1 (#545).
+
+    ``Z`` holds the orthonormal eigenvectors of
+    (A-B)^{1/2} (A+B) (A-B)^{1/2} and ``omega_vals`` their excitation energies.
+    """
+    w = np.sqrt(np.maximum(np.asarray(omega_vals, dtype=float), 1e-14))
+    return (A_minus_B_sqrt @ Z) / w[None, :]
+
+
+def _unit(vector: np.ndarray) -> np.ndarray:
+    norm = float(np.linalg.norm(vector))
+    return vector / norm if norm > 0 else vector
 
 
 # ---------------------------------------------------------------------------
@@ -721,23 +729,16 @@ def _solve_tda_iterative(
 
     Returns ``(eigenvalues, eigenvectors, max_residual)``.
 
-    The residual is recomputed here from ``sigma`` rather than read off the
-    solver.  Per GitLab #503 the shared Davidson does not signal convergence
-    for a partial spectrum -- it returns ``converged=False`` and runs its full
-    iteration budget even when the roots are accurate to 1e-13 -- so its flag
-    carries no information either way.  ``n_requested`` extra operator
-    applications buy a number we can actually act on.
+    The strict operator boundary independently recomputes residuals from
+    ``sigma`` and requires both the residual tolerance and backend convergence.
+    Failure raises rather than returning plausible unconverged excitation roots.
     """
-    from .solvers.eigensolver import (
-        EigenProblem,
-        SolverOptions,
-        solve_eigenproblem,
-    )
+    from .solvers.eigensolver import SolverOptions
+    from .solvers.operators import HermitianOperator, OperatorMetadata, solve_operator
 
-    problem = EigenProblem(
-        matvec=sigma,
-        n=n_pair,
-        diagonal=diagonal,
+    problem = HermitianOperator(
+        matvec=sigma, matmat=sigma, n=n_pair, diagonal=diagonal,
+        metadata=OperatorMetadata(kind="response", basis_id="tda-excitations"),
     )
     options = SolverOptions(
         n_roots=n_requested,
@@ -749,7 +750,7 @@ def _solve_tda_iterative(
     # also keeps #503's wrong-root mode out of reach.
     options.guess_vectors = _tda_guess_vectors(diagonal, 2 * n_requested)
 
-    result = solve_eigenproblem(problem, options, solver="davidson")
+    result = solve_operator(problem, options, solver="davidson")
 
     evals = np.asarray(result.eigenvalues, dtype=float)
     evecs = np.asarray(result.eigenvectors, dtype=float)
@@ -757,14 +758,8 @@ def _solve_tda_iterative(
     evals = evals[order]
     evecs = evecs[:, order]
 
-    # Independent residual check: ||A x - w x|| per root.
-    residual = 0.0
-    sig = sigma(evecs)
-    for k in range(evals.shape[0]):
-        residual = max(
-            residual,
-            float(np.linalg.norm(sig[:, k] - evals[k] * evecs[:, k])),
-        )
+    # Independently measured by solve_operator, not estimated from iterations.
+    residual = float(np.max(result.residuals))
     return evals, evecs, residual
 
 
@@ -991,8 +986,7 @@ def run_tddft_tda(
         eigenvals, eigenvecs, residual = _solve_tda_iterative(
             sigma, diagonal, n_pair, n_requested
         )
-        # The solver's own convergence flag is not usable for a partial
-        # spectrum (#503), so act on the residual measured here instead.
+        # Retain the public diagnostic guard for alternative response adapters.
         if residual > 1e-4:
             warnings.warn(
                 f"TDA iterative solve returned a maximum root residual of "
@@ -1178,11 +1172,9 @@ def run_tddft_casida(
     eig_amb, U_amb = np.linalg.eigh(A_minus_B)
     # Clamp negative eigenvalues to zero (shouldn't happen for stable SCF)
     eig_amb = np.maximum(eig_amb, 0.0)
-    sqrt_amb_inv = np.diag(1.0 / np.sqrt(np.maximum(eig_amb, 1e-14)))
     sqrt_amb = np.diag(np.sqrt(eig_amb))
 
     A_minus_B_sqrt = U_amb @ sqrt_amb @ U_amb.T
-    A_minus_B_sqrt_inv = U_amb @ sqrt_amb_inv @ U_amb.T
 
     # Effective Hamiltonian
     M = A_minus_B_sqrt @ A_plus_B @ A_minus_B_sqrt
@@ -1199,10 +1191,12 @@ def run_tddft_casida(
     omega_vals = omega_vals[idx_sort[:n_requested]]
     Z = Z[:, idx_sort[:n_requested]]
 
-    # Recover excitation vectors: X + Y = (A-B)^{-1/2} Z . √w
-    #                          X - Y = (A-B)^{1/2} Z / √w
-    X_plus_Y_all = A_minus_B_sqrt_inv @ Z
-    X_minus_Y_all = A_minus_B_sqrt @ Z
+    # Recover the excitation vectors. (A+B)(X+Y) = w (X-Y) and
+    # (A-B)(X-Y) = w (X+Y), so X+Y is an eigenvector of (A-B)(A+B):
+    #   X + Y = (A-B)^{1/2} Z / sqrt(w),   X - Y = (A-B)^{-1/2} Z sqrt(w),
+    # which puts every state on (X+Y).(X-Y) = Z.Z = 1. Before #545 the two
+    # were swapped and X+Y was rescaled to unit length.
+    X_plus_Y_all = _casida_x_plus_y(A_minus_B_sqrt, Z, omega_vals)
 
     # Transition dipoles
     dipole_ao = compute_dipole(basis)
@@ -1218,14 +1212,11 @@ def run_tddft_casida(
     for k in range(n_requested):
         omega = float(omega_vals[k])
         XpY = X_plus_Y_all[:, k]
-        # Normalise: |X+Y|^2 - |X-Y|^2 = 1 (excitation norm)
-        # Use X+Y for transition properties
-        norm_factor = np.sqrt(max(np.dot(XpY, XpY), 1e-14))
-        if norm_factor > 0:
-            XpY = XpY / norm_factor
-
+        # The length-gauge dipole needs X+Y on (X+Y).(X-Y) = 1; the stored
+        # vector and its leading amplitudes stay unit-normalised.
         td = _transition_dipole_from_amplitudes(XpY, n_occ, n_virt, mo_coeff, dipole_ao)
         f_osc = oscillator_strength(omega, td)
+        XpY = _unit(XpY)
         dom = _dominant_amplitudes(XpY, n_occ, n_virt)
 
         ev = omega * 27.211386245988
@@ -1256,6 +1247,23 @@ def run_tddft_casida(
 # ---------------------------------------------------------------------------
 # UHF / UKS TDDFT
 # ---------------------------------------------------------------------------
+
+
+def _spin_response_eri_blocks(eri, coefficients, n_occ):
+    """Allow a spin channel with no occupied-virtual pairs."""
+    n_vir = coefficients.shape[1] - n_occ
+    if n_occ == 0 or n_vir == 0:
+        return (np.zeros((n_occ, n_vir, n_occ, n_vir)),
+                np.zeros((n_occ, n_occ, n_vir, n_vir)))
+    return eri_ao_to_mo_blocks(eri, coefficients, n_occ)
+
+
+def _spin_response_eri_cross(eri, coeffs_a, coeffs_b, n_occ_a, n_occ_b):
+    shape = (n_occ_a, coeffs_a.shape[1] - n_occ_a,
+             n_occ_b, coeffs_b.shape[1] - n_occ_b)
+    if 0 in shape:
+        return np.zeros(shape)
+    return eri_ao_to_mo_cross(eri, coeffs_a, coeffs_b, n_occ_a, n_occ_b)
 
 
 def _build_uhf_tda_matrix(
@@ -1305,15 +1313,15 @@ def _build_uhf_tda_matrix(
     off_b = n_pair_a
 
     # Transform ERIs (C++ kernel for ovov + oovv in one call)
-    eri_aaaa, eri_aaaa_oovv = eri_ao_to_mo_blocks(
+    eri_aaaa, eri_aaaa_oovv = _spin_response_eri_blocks(
         np.asarray(eri_ao, dtype=float), mo_coeffs_a, n_occ_a
     )
-    eri_bbbb, eri_bbbb_oovv = eri_ao_to_mo_blocks(
+    eri_bbbb, eri_bbbb_oovv = _spin_response_eri_blocks(
         np.asarray(eri_ao, dtype=float), mo_coeffs_b, n_occ_b
     )
 
     # Cross-spin: (i_a a_a | j_b b_b) via C++ kernel
-    eri_cross = eri_ao_to_mo_cross(
+    eri_cross = _spin_response_eri_cross(
         np.asarray(eri_ao, dtype=float),
         np.asarray(mo_coeffs_a, dtype=float),
         np.asarray(mo_coeffs_b, dtype=float),
@@ -1381,13 +1389,13 @@ def _build_uhf_casida_matrices(
     B = np.zeros_like(A)
     off_b = n_pair_a
 
-    eri_aaaa, _ = eri_ao_to_mo_blocks(
+    eri_aaaa, _ = _spin_response_eri_blocks(
         np.asarray(eri_ao, dtype=float), mo_coeffs_a, n_occ_a
     )
-    eri_bbbb, _ = eri_ao_to_mo_blocks(
+    eri_bbbb, _ = _spin_response_eri_blocks(
         np.asarray(eri_ao, dtype=float), mo_coeffs_b, n_occ_b
     )
-    eri_cross = eri_ao_to_mo_cross(
+    eri_cross = _spin_response_eri_cross(
         np.asarray(eri_ao, dtype=float),
         np.asarray(mo_coeffs_a, dtype=float),
         np.asarray(mo_coeffs_b, dtype=float),
@@ -1522,23 +1530,27 @@ def _uhf_transition_dipole(
     mo_coeffs_b: np.ndarray,
     dipole_ao,
 ) -> np.ndarray:
-    """Transition dipole moment for a UHF excitation vector."""
+    """Transition dipole of a UHF excitation vector (alpha block, then beta).
+
+    With |I> = sum_{ia,sigma} X^sigma_ia a+_{a sigma} a_{i sigma} |0>, normalised
+    to sum X^2 = 1 (TDA) or (X+Y).(X-Y) = 1 (RPA),
+
+        <0|mu|I> = sum_sigma sum_ia X^sigma_ia mu^sigma_ia.
+
+    Before #545 each spin block entered through the symmetrised transition
+    density C_occ X C_virt^T + C_virt X^T C_occ^T, which counts every
+    amplitude twice and made every oscillator strength four times too large.
+    """
     n_pair_a = n_occ_a * n_virt_a
-    X_a = X[:n_pair_a].reshape(n_occ_a, n_virt_a)
-    X_b = X[n_pair_a:].reshape(n_occ_b, n_virt_b)
-
-    C_occ_a = mo_coeffs_a[:, :n_occ_a]
-    C_virt_a = mo_coeffs_a[:, n_occ_a:]
-    C_occ_b = mo_coeffs_b[:, :n_occ_b]
-    C_virt_b = mo_coeffs_b[:, n_occ_b:]
-
-    P_a = C_occ_a @ X_a @ C_virt_a.T + C_virt_a @ X_a.T @ C_occ_a.T
-    P_b = C_occ_b @ X_b @ C_virt_b.T + C_virt_b @ X_b.T @ C_occ_b.T
-    P_ao = P_a + P_b
+    X_a = np.asarray(X[:n_pair_a]).reshape(n_occ_a, n_virt_a)
+    X_b = np.asarray(X[n_pair_a:]).reshape(n_occ_b, n_virt_b)
 
     mu = np.zeros(3)
     for d, comp in enumerate([dipole_ao.x, dipole_ao.y, dipole_ao.z]):
-        mu[d] = np.trace(P_ao @ np.asarray(comp))
+        comp = np.asarray(comp)
+        mu_a = mo_coeffs_a[:, :n_occ_a].T @ comp @ mo_coeffs_a[:, n_occ_a:]
+        mu_b = mo_coeffs_b[:, :n_occ_b].T @ comp @ mo_coeffs_b[:, n_occ_b:]
+        mu[d] = float(np.sum(X_a * mu_a) + np.sum(X_b * mu_b))
     return mu
 
 
@@ -1758,10 +1770,8 @@ def run_tddft_casida_uhf(
     A_plus_B = A + B
     eig_amb, U_amb = np.linalg.eigh(A_minus_B)
     eig_amb = np.maximum(eig_amb, 0.0)
-    sqrt_amb_inv = np.diag(1.0 / np.sqrt(np.maximum(eig_amb, 1e-14)))
     sqrt_amb = np.diag(np.sqrt(eig_amb))
     A_minus_B_sqrt = U_amb @ sqrt_amb @ U_amb.T
-    A_minus_B_sqrt_inv = U_amb @ sqrt_amb_inv @ U_amb.T
 
     M = A_minus_B_sqrt @ A_plus_B @ A_minus_B_sqrt
     M = 0.5 * (M + M.T)
@@ -1771,7 +1781,8 @@ def run_tddft_casida_uhf(
     n_requested = min(n_states, n_total)
     omega_vals = omega_vals[idx_sort[:n_requested]]
     Z = Z[:, idx_sort[:n_requested]]
-    X_plus_Y_all = A_minus_B_sqrt_inv @ Z
+    # X+Y on (X+Y).(X-Y) = 1; see run_tddft_casida (#545).
+    X_plus_Y_all = _casida_x_plus_y(A_minus_B_sqrt, Z, omega_vals)
 
     dipole_ao = compute_dipole(basis)
     result = TDDFTResult(
@@ -1784,9 +1795,6 @@ def run_tddft_casida_uhf(
     for k in range(n_requested):
         omega = float(omega_vals[k])
         XpY = X_plus_Y_all[:, k]
-        norm = np.linalg.norm(XpY)
-        if norm > 0:
-            XpY = XpY / norm
         td = _uhf_transition_dipole(
             XpY,
             n_occ_a,
@@ -1807,7 +1815,7 @@ def run_tddft_casida_uhf(
                 oscillator_strength=f_osc,
                 transition_dipole=td,
                 dominant_amplitudes=[],
-                excitation_vector=XpY.copy(),
+                excitation_vector=_unit(XpY).copy(),
             )
         )
 
@@ -1892,10 +1900,17 @@ def run_tddft_tda_periodic(
 class NTOResult:
     """Natural Transition Orbital analysis for a single excited state.
 
+    The NTO weights are :attr:`weights`, lambda_k = sigma_k**2: the
+    eigenvalues of T T^T for the amplitude matrix T (Martin, J. Chem. Phys.
+    118, 4775 (2003), eqs. 4-9), which sum to 1 for a unit-normalized
+    excitation vector. For an unrestricted state the weights of both spins
+    together sum to 1.
+
     Attributes
     ----------
     hole_weights : np.ndarray
-        Singular values (weights) of the hole NTOs, sorted descending.
+        Singular values sigma_k of T for the hole NTOs, sorted descending:
+        the square roots of the weights.
     particle_weights : np.ndarray
         Singular values of the particle NTOs (same as hole_weights for
         a full SVD; equal by construction).
@@ -1906,7 +1921,8 @@ class NTOResult:
         Particle NTO coefficients in the AO basis,
         shape ``(n_basis, n_virt)``.
     dominant_pair : tuple
-        ``(weight, hole_idx, particle_idx)`` for the dominant NTO pair.
+        ``(singular_value, hole_idx, particle_idx)`` for the dominant NTO
+        pair. Square the first value to obtain the pair weight.
     """
 
     hole_weights: np.ndarray
@@ -1914,6 +1930,11 @@ class NTOResult:
     hole_orbitals_ao: np.ndarray
     particle_orbitals_ao: np.ndarray
     dominant_pair: Tuple[float, int, int]
+
+    @property
+    def weights(self) -> np.ndarray:
+        """NTO pair weights lambda_k = sigma_k**2, sorted descending."""
+        return np.asarray(self.hole_weights, dtype=float) ** 2
 
 
 def compute_nto(
@@ -2090,7 +2111,7 @@ def run_tddft_tda_rohf(
         raise ValueError("No doubly-occ → virtual excitations available for ROHF TDA")
 
     # Compact MO space: skip singly-occupied orbitals.
-    # douc: [0, n_docc), virt: [n_docc+n_socc, n_basis)
+    # docc: [0, n_docc), virt: [n_docc+n_socc, n_basis)
     _idx = list(range(n_docc)) + list(range(n_docc + n_socc, n_basis))
     _mo_e = np.asarray(mo_energies)[_idx]
     _mo_c = np.asarray(mo_coeff)[:, _idx]
@@ -2100,12 +2121,21 @@ def run_tddft_tda_rohf(
     # ROHF CIS: same A-matrix as RHF for doubly-occ → virt.
     c_x = 1.0
 
+    # The C++ kernel sizes the virtual space from the AO dimension
+    # (n_virt = n_basis - n_occ), so it must see the full square
+    # coefficient matrix: handing it the compact (n_basis, n_docc+n_virt)
+    # slice made it read n_socc phantom columns and the reshape below
+    # failed (#361). Transform with every orbital after the doubly
+    # occupied block as "virtual", then drop the SOMO columns.
     eri_ao = compute_eri(basis)
     eri_mo_ovov, eri_mo_oovv = eri_ao_to_mo_blocks(
         np.asarray(eri_ao, dtype=float),
-        _mo_c,
+        np.asarray(mo_coeff, dtype=float),
         _n_occ,
     )
+    del eri_ao
+    eri_mo_ovov = np.ascontiguousarray(eri_mo_ovov[:, n_socc:, :, n_socc:])
+    eri_mo_oovv = np.ascontiguousarray(eri_mo_oovv[:, :, n_socc:, n_socc:])
 
     A = _build_tda_matrix(
         _mo_e,
@@ -2126,18 +2156,9 @@ def run_tddft_tda_rohf(
         if norm > 0:
             eigenvecs[:, k] /= norm
 
-    # Transition dipoles use the compact MO coefficient subset
+    # Transition dipoles: AO dipole integrals contracted with the compact
+    # (docc, virt) transition density.
     dipole_ao = compute_dipole(basis)
-    _dip_c = np.asarray(
-        [
-            np.asarray(dipole_ao.x)[:, _idx][_idx, :],
-            np.asarray(dipole_ao.y)[:, _idx][_idx, :],
-            np.asarray(dipole_ao.z)[:, _idx][_idx, :],
-        ]
-    )
-    _mo_c_occ = _mo_c[:, :_n_occ]
-    _mo_c_virt = _mo_c[:, _n_occ:]
-
     result = TDDFTResult(
         n_states=n_requested,
         n_occ=n_docc,
@@ -2149,15 +2170,13 @@ def run_tddft_tda_rohf(
     for k in range(n_requested):
         omega = float(abs(eigenvals[k]))
         X = eigenvecs[:, k]
-        # Transition density matrix in compact MO basis
-        X_ia = X.reshape(_n_occ, _n_virt)
-        P_ao = _mo_c_occ @ X_ia @ _mo_c_virt.T
-        td = np.array(
-            [
-                float(np.sum(P_ao * np.asarray(dipole_ao.x))),
-                float(np.sum(P_ao * np.asarray(dipole_ao.y))),
-                float(np.sum(P_ao * np.asarray(dipole_ao.z))),
-            ]
+        # Same singlet-coupled transition dipole as the closed-shell TDA
+        # (the A matrix above is the closed-shell singlet form), evaluated
+        # on the compact (docc, virt) coefficient block. The old hand-rolled
+        # contraction dropped the spin factor, so ROHF on a singlet did not
+        # reproduce RHF oscillator strengths (#361).
+        td = _transition_dipole_from_amplitudes(
+            X, _n_occ, _n_virt, _mo_c, dipole_ao
         )
         f_osc = oscillator_strength(omega, td)
         dom = _dominant_amplitudes(X, _n_occ, _n_virt)

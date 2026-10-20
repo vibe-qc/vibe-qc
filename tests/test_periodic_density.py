@@ -26,6 +26,7 @@ Contracts exercised:
 
 from __future__ import annotations
 
+import itertools
 import subprocess
 import sys
 from typing import List
@@ -1427,10 +1428,83 @@ def test_odd_electron_density_grid_uses_valid_shifted_basis_multiplicity():
     assert np.isfinite(rho).all()
 
 
-def test_multik_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
+@pytest.mark.parametrize("defect", ["shape", "nonfinite", "nonhermitian", "time_reversal", "mesh", "charge"])
+def test_bvk_artifact_rejects_invalid_producer_overlap_or_mesh(defect, monkeypatch):
+    from types import SimpleNamespace
+    import vibeqc.periodic_density as density_module
+    from vibeqc.periodic_runner import _exact_periodic_density_grid_artifact
+
+    system, basis = _h2_in_box(10.)
+    mesh = core.monkhorst_pack(system, [3, 1, 1], use_symmetry=False)
+    cells = core.direct_lattice_cells(system, 10.001)
+    density = core.real_space_density_from_kpoints_fractional(
+        [np.eye(2, dtype=complex) for _ in mesh.kpoints],
+        [np.ones(2) for _ in mesh.kpoints], mesh, cells,
+    )
+    result = SimpleNamespace(
+        density=density, kpoints_cart=np.asarray(mesh.kpoints),
+        kpoint_weights=np.asarray(mesh.weights),
+        overlap=np.asarray([np.eye(2, dtype=complex) for _ in mesh.kpoints]),
+    )
+    message = "aligned finite Bloch overlaps"
+    if defect == "shape":
+        result.overlap = result.overlap[:1]
+    elif defect == "nonfinite":
+        result.overlap[0, 0, 0] = np.nan
+    elif defect == "nonhermitian":
+        result.overlap[0, 0, 1] = .1
+        message = "not Hermitian"
+    elif defect == "time_reversal":
+        index = next(i for i, k in enumerate(mesh.kpoints) if np.linalg.norm(k) > 1e-8)
+        result.overlap[index, 0, 1] = result.overlap[index, 1, 0] = .1
+        message = "violate time reversal"
+    elif defect == "mesh":
+        result.density_lattice_mesh = (2, 1, 1)
+        message = "mesh contradicts"
+    elif defect == "charge":
+        result.overlap *= 1.1
+        message = "expected 2.0000000000"
+
+    def unexpected_grid(*args, **kwargs):
+        pytest.fail("invalid producer metadata reached grid evaluation")
+
+    monkeypatch.setattr(density_module, "evaluate_weighted_k_density_on_grid", unexpected_grid)
+    with pytest.raises(ValueError, match=message):
+        _exact_periodic_density_grid_artifact(
+            basis, system, result, lattice_bohr=np.asarray(system.lattice),
+            grid_shape=(20, 20, 20), spacing_bohr=.5, gamma_only=False,
+            expected_electrons=2., bvk_mesh=(3, 1, 1),
+        )
+
+
+def _occupied_bloch_orbital_density_at_points(result, basis, system, points):
+    """Independent orbital-amplitude check for the converged RHF fixtures."""
+    from itertools import product
+
+    points = np.asarray(points, dtype=float)
+    lattice = np.asarray(system.lattice)
+    n_occ = int(system.n_electrons()) // 2
+    rho = np.zeros(len(points))
+    for k, weight, coefficients in zip(
+        result.kpoints_cart, result.kpoint_weights, result.mo_coeffs,
+    ):
+        orbitals = np.zeros((len(points), n_occ), dtype=complex)
+        for index in product(range(-2, 3), repeat=3):
+            translation = lattice @ np.asarray(index)
+            orbitals += (
+                np.exp(1j * np.dot(k, translation))
+                * (np.asarray(core.evaluate_ao(basis, points - translation))
+                   @ np.asarray(coefficients)[:, :n_occ])
+            )
+        rho += 2. * float(weight) * np.sum(np.abs(orbitals)**2, axis=1)
+    return rho
+
+
+@pytest.mark.parametrize("historical_domain", [False, True], ids=["physical-default", "historical"])
+def test_multik_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path, historical_domain):
     """The public QVF path keeps BIPOLE cells beyond its old template.
 
-    This small true-multi-k result deliberately has six nonzero ``|g| = 2``
+    This small true-multi-k result has at least six nonzero ``|g| = 2``
     density blocks outside the former fixed 18-bohr output template.  The
     historical path warned that the template omitted those converged cells
     and then wrote a QVF without density.  The production runner must now
@@ -1475,6 +1549,7 @@ def test_multik_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
             bipole_nuclear_cutoff_bohr=10.0,
             convergence="off",
             progress=False,
+            **({"bipole_historical_domain": True} if historical_domain else {}),
         )
 
     assert result.converged
@@ -1490,7 +1565,7 @@ def test_multik_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
         for cell in old_template.cells
     }
     source_only = set(returned_by_key).difference(old_template_keys)
-    assert source_only == {
+    original_extra_cells = {
         (-2, 0, 0),
         (0, -2, 0),
         (0, 0, -2),
@@ -1498,6 +1573,12 @@ def test_multik_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
         (0, 2, 0),
         (2, 0, 0),
     }
+    if historical_domain:
+        assert source_only == original_extra_cells
+    else:
+        # Physical pair support pads a wider cell inventory. Preserve the
+        # historical omission witness without freezing its obsolete domain.
+        assert original_extra_cells < source_only
     assert all(np.any(returned_by_key[key] != 0.0) for key in source_only)
 
     qvf_path = output.with_suffix(".qvf")
@@ -1518,8 +1599,17 @@ def test_multik_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
 
     assert rho.shape == (20, 20, 20)
     assert np.isfinite(rho).all()
-    assert rho[8, 10, 10] == pytest.approx(0.24241441, abs=2.0e-6)
-    assert rho[10, 10, 10] == pytest.approx(0.25587752, abs=2.0e-6)
+    np.testing.assert_allclose(
+        [rho[8, 10, 10], rho[10, 10, 10]],
+        _occupied_bloch_orbital_density_at_points(
+            result, basis, sysp, [[4., 5., 5.], [5., 5., 5.]],
+        ),
+        rtol=0., atol=2.0e-6,
+    )
+    if historical_domain:
+        # These pins belong to the historical finite SCF operator.
+        assert rho[8, 10, 10] == pytest.approx(0.24241441, abs=2.0e-6)
+        assert rho[10, 10, 10] == pytest.approx(0.25587752, abs=2.0e-6)
     voxel_vectors = np.asarray(grid["voxel_vectors"], dtype=float)
     np.testing.assert_allclose(
         voxel_vectors * np.asarray(rho.shape, dtype=float)[:, None],
@@ -1540,7 +1630,8 @@ def test_multik_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
     assert "template omits converged lattice cells" not in diagnostics
 
 
-def test_gamma_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
+@pytest.mark.parametrize("historical_domain", [False, True], ids=["physical-default", "historical"])
+def test_gamma_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path, historical_domain):
     """Gamma BIPOLE exports its full returned lattice density as QVF."""
     import json
     import warnings
@@ -1581,6 +1672,7 @@ def test_gamma_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
             bipole_nuclear_cutoff_bohr=10.0,
             convergence="off",
             progress=False,
+            **({"bipole_historical_domain": True} if historical_domain else {}),
         )
 
     assert result.converged
@@ -1596,7 +1688,7 @@ def test_gamma_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
         for cell in old_template.cells
     }
     source_only = set(returned_by_key).difference(old_template_keys)
-    assert source_only == {
+    original_extra_cells = {
         (-2, 0, 0),
         (0, -2, 0),
         (0, 0, -2),
@@ -1604,6 +1696,10 @@ def test_gamma_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
         (0, 2, 0),
         (2, 0, 0),
     }
+    if historical_domain:
+        assert source_only == original_extra_cells
+    else:
+        assert original_extra_cells < source_only
     assert all(np.any(returned_by_key[key] != 0.0) for key in source_only)
 
     with zipfile.ZipFile(output.with_suffix(".qvf")) as archive:
@@ -1621,6 +1717,13 @@ def test_gamma_bipole_qvf_uses_returned_lattice_density_end_to_end(tmp_path):
         grid = json.loads(archive.read(section["members"]["grid"]["path"]))
 
     voxel_vectors = np.asarray(grid["voxel_vectors"], dtype=float)
+    np.testing.assert_allclose(
+        [rho[8, 10, 10], rho[10, 10, 10]],
+        _occupied_bloch_orbital_density_at_points(
+            result, basis, sysp, [[4., 5., 5.], [5., 5., 5.]],
+        ),
+        rtol=0., atol=2.0e-6,
+    )
     np.testing.assert_allclose(
         voxel_vectors * np.asarray(rho.shape, dtype=float)[:, None],
         lattice.T,
@@ -1899,7 +2002,13 @@ def _converged_lattice_density(system, basis):
     opts = vq.PeriodicRHFOptions()
     opts.max_iter = 80
     opts.conv_tol_energy = 1e-9
-    res = vq.run_rhf_periodic_gamma_gdf(system, basis, opts, progress=False)
+    # A supported exact-Gamma producer supplies the AO matrix. This test
+    # deliberately embeds that matrix in a SINGLE home-cell block below:
+    # it tests grid integration of that lattice set, not physical N_elec.
+    res = vq.run_pbc_gdf_rhf(
+        system, basis, opts, exxdiv="ewald", progress=False,
+    )
+    assert res.converged, "density reference SCF did not converge"
 
     class _Proxy:
         pass
@@ -1929,10 +2038,11 @@ def test_grid_density_converges_to_the_electron_count(compact):
     The reference is deliberately the lattice set's own trace, NOT the
     physical electron count: those coincide only once the lattice set is
     converged, so a Gamma-only run with a truncated set legitimately
-    falls short (the compact fixture below references 2.7407, not 4).
-    Comparing the grid integral against N_elec would flag that
-    truncation as a second defect. The vacuum-padded case pins the
-    regime where the two DO coincide (exactly 2.0000).
+    can fall short (the historical compact legacy fixture referenced
+    2.7407, not 4). The reference is recomputed from the current supported
+    exact-Gamma producer; that historical value is not a target.
+    Comparing the grid integral against N_elec would flag truncation as
+    a second defect. The vacuum-padded case exercises the dilute limit.
 
     Note both fixtures carry a SINGLE non-zero g block (1 of 135 cells),
     which is the regime multi-k GAPW writes in -- single-g gives no
@@ -1987,4 +2097,146 @@ def test_grid_density_converges_to_the_electron_count(compact):
     assert integrals[1] == pytest.approx(n_exact, abs=5e-3), (
         f"grid density integrates to {integrals[1]:.4f}, but the density "
         f"matrix carries sum_g tr(D(g) S(g)) = {n_exact:.4f}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Partner-shift batching (perf-oriented, must preserve numerics)
+# ---------------------------------------------------------------------------
+#
+# ``evaluate_periodic_density_on_grid`` sums over lattice translations R and
+# density cells g, and both AO factors are the SAME plain table at two lattice
+# shifts, R and R + R_g.  Evaluating them per (R, g) pair asks the native AO
+# evaluator for |R| x |live| tables when only |{R} u {R + g}| distinct ones
+# exist.  On the H2/STO-3G 30^3 artifact grid that is 40095 ``evaluate_ao``
+# calls for 2127 distinct tables over the runner's image radii 1..3, and the
+# density-grid artifact cost 79x the SCF that produced it.
+#
+# The two tests below pin both halves of the fix: the grouping must not move a
+# single density value, and the native call count must stay at the number of
+# distinct shifts rather than the number of (R, g) pairs.
+
+def _compact_h2_multicell_density():
+    """A compact cell whose overlap lattice has many live blocks.
+
+    The absolute density is not physical -- an overlap lattice is used as a
+    cheap finite matrix-set witness, exactly as the skew-grid test above does.
+    What matters here is that many cells are live, so the (R, g) pair count
+    and the distinct-shift count differ by a large factor.
+    """
+    box = 6.0
+    sysp = vq.PeriodicSystem(
+        3, np.eye(3) * box,
+        [vq.Atom(1, [box / 2, box / 2, box / 2 - 0.7]),
+         vq.Atom(1, [box / 2, box / 2, box / 2 + 0.7])],
+    )
+    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
+    d_set = vq.compute_overlap_lattice(basis, sysp, vq.LatticeSumOptions())
+    return sysp, basis, d_set
+
+
+def _naive_image_double_loop(basis, sysp, d_set, grid_shape, radius):
+    """The straightforward (R, g) double loop, written out independently.
+
+    One plain AO table per translation and one per translated cell, contracted
+    term by term.  This is the definition the batched evaluator has to match.
+    """
+    from vibeqc.ewald_j import evaluate_ao_periodic
+    from vibeqc.periodic_density import _shifted_basis, _uniform_grid_points
+
+    lat = np.asarray(sysp.lattice, dtype=float)
+    points, _ = _uniform_grid_points(lat, grid_shape, np.zeros(3))
+    rho = np.zeros(points.shape[0], dtype=float)
+    for ix, iy, iz in itertools.product(range(-radius, radius + 1), repeat=3):
+        R = ix * lat[:, 0] + iy * lat[:, 1] + iz * lat[:, 2]
+        chi_ref = evaluate_ao_periodic(
+            _shifted_basis(basis, sysp, R), sysp, points, image_radius=0,
+        )
+        for cell, block in zip(d_set.cells, d_set.blocks):
+            Dg = np.ascontiguousarray(np.asarray(block), dtype=float)
+            if not np.any(Dg != 0.0):
+                continue
+            shift = R + np.asarray(cell.r_cart, dtype=float)
+            chi_g = evaluate_ao_periodic(
+                _shifted_basis(basis, sysp, shift), sysp, points,
+                image_radius=0,
+            )
+            rho += np.einsum("gi,ij,gj->g", chi_ref, Dg, chi_g, optimize=True)
+    return rho.reshape(grid_shape)
+
+
+def test_partner_shift_batching_matches_the_naive_image_double_loop():
+    """Regrouping the image sum must not move a single density value.
+
+    The batched evaluator sums the inner R contributions for one partner
+    shift inside a single gemm, so the floating-point association differs from
+    the term-by-term loop.  The artifact contract is that the written grid is
+    unchanged to 1e-12.
+    """
+    sysp, basis, d_set = _compact_h2_multicell_density()
+    shape = (4, 4, 4)
+
+    rho = vq.evaluate_periodic_density_on_grid(
+        basis, sysp, d_set, grid_shape=shape, ao_image_radius=1,
+    )[0]
+    reference = _naive_image_double_loop(basis, sysp, d_set, shape, 1)
+
+    assert rho.shape == reference.shape
+    deviation = float(np.max(np.abs(rho - reference)))
+    assert deviation < 1e-12, (
+        f"batched periodic density deviates from the term-by-term image "
+        f"double loop by {deviation:.3e}, above the 1e-12 artifact contract"
+    )
+
+
+def test_density_grid_evaluates_each_lattice_shift_once():
+    """Each distinct AO shift costs one native evaluation, not |R| x |live|.
+
+    Without this the density-grid artifact re-evaluates the same shifted AO
+    table once per (R, g) pair; that is the whole cost of the artifact on
+    every periodic route that writes a density grid or QVF volume data.
+    """
+    from vibeqc import periodic_density as pdmod
+
+    sysp, basis, d_set = _compact_h2_multicell_density()
+    shape = (4, 4, 4)
+    radius = 1
+
+    live = [
+        tuple(int(value) for value in cell.index)
+        for cell, block in zip(d_set.cells, d_set.blocks)
+        if np.any(np.asarray(block) != 0.0)
+    ]
+    cube = list(itertools.product(range(-radius, radius + 1), repeat=3))
+    pairs = len(cube) * len(live)
+    distinct = len(
+        {tuple(np.add(r, g)) for r in cube for g in live}
+        | {tuple(r) for r in cube}
+    )
+    # Guard the guard: a cell where the two counts agree would prove nothing.
+    assert pairs > 4 * distinct, (pairs, distinct)
+
+    calls = 0
+    original = pdmod.evaluate_ao_periodic
+
+    def counting(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    pdmod.evaluate_ao_periodic = counting
+    try:
+        vq.evaluate_periodic_density_on_grid(
+            basis, sysp, d_set, grid_shape=shape, ao_image_radius=radius,
+        )
+    finally:
+        pdmod.evaluate_ao_periodic = original
+
+    # 4^3 points fit in one work block, so every distinct shift is evaluated
+    # exactly once.  A larger grid splits into blocks and multiplies this by
+    # the block count, which is why the assertion is an upper bound on the
+    # per-block ideal rather than an equality on the raw total.
+    assert calls == distinct, (
+        f"periodic density grid made {calls} native AO evaluations for "
+        f"{distinct} distinct lattice shifts ({pairs} (R, g) pairs)"
     )

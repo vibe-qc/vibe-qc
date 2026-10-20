@@ -1,5 +1,11 @@
 # χ-CCM / aiccm2026dev-b: an independent finite-torus derivation
 
+```{admonition} Status: experimental
+:class: warning
+
+This is a design record for an experimental line. χ-CCM (`run_periodic_job(method="aiccm", variant="chi")`) is an experimental route. Every χ-CCM SCF driver emits `vibeqc.AICCM2026DevBExperimentalWarning`, and the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant="chi")`. Its numbers are research output, not validated results, and it is not part of the release gate. Passages below that predate ruling R1 (2026-08-21, recorded as D124) call Γ-CCM the union-and-weight construction; read them as naming the `four-center` variant, the 2014 lineage kept in the `aiccm2026dev-a` development line, since Γ-CCM proper is the neutral finite-torus construction with the `real-gamma` and `neutral-bloch` producers. The label vocabulary is defined in [Methods: theory and status](methods.md#how-to-read-the-status-labels).
+```
+
 ## Status and scope
 
 The D128 occupied-action diagnostic now contracts the D127 torus AO action
@@ -31,13 +37,18 @@ development line: the finite-translation-group character approach to the
 variational finite-BvK-torus CCM. It is an
 experimental, independently derived restricted and unrestricted Hartree--Fock
 and Kohn--Sham method with finite-torus MP2 and coupled-cluster extensions.
-Its sibling is Γ-CCM, selected as `aiccm2026dev-a`, which uses the
-union-and-weight/Wigner--Seitz integral-weighting construction. χ-CCM coexists
+Its sibling development line is `aiccm2026dev-a`: Γ-CCM, the neutral
+finite-torus construction (variants `real-gamma` and `neutral-bloch`); its
+`four-center` variant is the 2014 union-and-weight/Wigner-Seitz lineage kept
+in the same line. χ-CCM coexists
 with the earlier CCM
 implementation and is selected with
 
-[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM uses
-    the union-and-weight/Wigner--Seitz integral-weighting construction; χ-CCM
+[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM is
+    the neutral finite-torus construction with two producers, `variant="real-gamma"`
+    and `variant="neutral-bloch"` (ruling R1, 2026-08-21); the `four-center` variant
+    is the 2014 union-and-weight/Wigner-Seitz lineage, a different construction
+    kept in the same `aiccm2026dev-a` development line. χ-CCM
     uses the finite-translation-group character construction. They are compared
     at a declared common exchange-q=0 convention, currently
     `exchange_q0="bvk-ewald"` for the production χ-CCM path. Their distinction
@@ -792,7 +803,8 @@ size, per-rank task counts, task count, strategy, cell-order fingerprint,
 complete-internal-sum contract, and complete-block allgather mode.
 
 The execution task is named `chi-direct-output-cell` deliberately. A radial
-direct-ERI output task is not a Γ-CCM union-and-weight WSC and is not, without
+direct-ERI output task is not a four-centre union-and-weight WSC of the Γ-CCM
+line and is not, without
 an additional group-level mapping, one χ translation residue. D114 performs
 no representative/residue partition and assigns no physical Wigner weight.
 Any future residue-level scheduler must aggregate tied Wigner--Seitz
@@ -869,7 +881,8 @@ This is an implementation-parity receipt, not absolute-energy validation or a
 claim that replicated XC and reciprocal work scales.
 
 The D114/D116 work unit remains a radial direct-ERI AO output block. It is
-neither a Γ-CCM union-and-weight WSC nor a χ finite-group residue.
+neither a four-centre union-and-weight WSC of the Γ-CCM line nor a χ
+finite-group residue.
 
 ### Finite-group residue diagnostic parallelism
 
@@ -997,8 +1010,10 @@ cross-bind those identities to provenance and the nested attestation. A fresh
 v2 row may clear this shared-Ewald component only; D93, D98, and D103 remain
 independent.
 
-Since `6ce142339`, the shared GDF layer rejects compact dense-core MDF systems
-in the MgO/STO-3G class, and that failure propagates through the B selector.
+From `6ce142339` until 2026-09-29 the shared GDF layer rejected compact
+dense-core MDF systems in the MgO/STO-3G class, and that failure propagated
+through the B selector. The shared layer admits them since the Gaussian
+three-centre block sums its auxiliary images (GitLab #172), and B inherits that.
 The separately validated vacuum-padded MDF envelope is unchanged, but D93
 continues to mark every fitted B row `not-qualified`. Commit `ad96a2f63` also
 gives the fitted B routes a bounded shared-q auxiliary Fourier-transform cache.
@@ -1033,7 +1048,7 @@ producer currently emits no D104 v2 evidence, so the optional control remains
 unavailable.
 The dedicated D101 `run_case_cmp_b.py` producer is instead the high-level
 χ-CCM RI route-control diagnostic assigned to this line. Neither producer
-realizes the union-and-weight/Wigner--Seitz Γ-CCM construction, so their
+realizes the four-centre union-and-weight/Wigner-Seitz lineage, so their
 labels and common lower-level ancestry cannot establish a Γ-CCM/χ-CCM
 approach result.
 
@@ -1316,8 +1331,8 @@ while any nonconserving transfer vanishes by character orthogonality. This is
 exactly the normalization in the momentum-space MP2 integral. The real and
 character representations therefore describe the same χ-defined fitted finite
 Hamiltonian at the recorded Coulomb and exchange q=0 convention. This internal
-Fourier equivalence does not assert equality with the union-and-weight Γ-CCM
-approach.
+Fourier equivalence does not assert equality with the neutral Γ-CCM
+construction or the four-centre union-and-weight lineage.
 
 The D111 storage reduction does not remove the \(N_c^2\) momentum-pair cache
 or the full logical MO factors, and the correlated solvers still evaluate all
@@ -2431,8 +2446,10 @@ qualification remains separate. D92 and D94 continue to require an explicit
 positive eta because their caller-supplied densities, BvK self-potential,
 basis, and overlap support are not SCF-bound. D98 changes no Hamiltonian and
 adds no screened-exchange derivative or total-gradient route.
-It also proves no cross-approach identity: Γ-CCM remains the
-union-and-weight/Wigner--Seitz integral-weighting construction, χ-CCM remains
+It also proves no cross-approach identity: Γ-CCM remains the neutral
+finite-torus construction (variants `real-gamma` and `neutral-bloch`), the
+`four-center` variant remains the 2014 union-and-weight/Wigner-Seitz lineage
+kept in the same line, χ-CCM remains
 the finite-translation-group character construction, and a common declared
 exchange-q=0 convention does not identify them.
 
@@ -2823,7 +2840,7 @@ The reportable Γ/χ approach map is empty. The A RI and RIJCOSX harness routes
 call the same multi-k GDF SCF drivers as B, so agreement between those routes
 tests their shared implementation and cannot isolate an approach change. B
 `rhf-ri` versus A `aiccm-hf-direct` is a neutral-torus representation control,
-not evidence for the union-and-weight Γ-CCM approach. The direct solver
+not evidence about the four-centre union-and-weight lineage. The direct solver
 assembles and minimizes a real Γ-supercell problem, but its folded cderi and
 one-electron matrices intentionally reuse the common per-q RSGDF fits and
 lattice-sum primitives. The control therefore checks Γ-supercell versus
@@ -2927,15 +2944,15 @@ insufficient.
 A real-Γ supercell producer screens one absolute supercell overlap, whereas
 χ-CCM performs normalized canonical orthogonalization independently at each
 character. This retained-space distinction is an evaluation-control fact; it
-does not bind the real-Γ producer to the union-and-weight Γ-CCM construction.
+does not bind the real-Γ producer to the four-centre union-and-weight lineage.
 Equal threshold numbers do not prove equal retained spaces. For the current
 control route, acceptance requires full/no-drop at every B character together
 with the finite-Fourier overlap residual, so every character retains all
 primitive-cell AO directions. If a future comparison permits projected
 spaces, it must compare Fourier-related retained-space projectors rather than
 rank counts alone. No Γ/χ approach delta can be emitted until these conditions
-are specified and tested and a route actually realizing the union-and-weight
-Γ-CCM construction is paired with χ-CCM. Equality between the distinct
+are specified and tested and a route actually realizing the four-centre
+union-and-weight lineage is paired with χ-CCM. Equality between the distinct
 Γ-CCM and χ-CCM approaches for a
 specified operator and route remains evidence to establish under the declared
 common exchange-q=0 convention.

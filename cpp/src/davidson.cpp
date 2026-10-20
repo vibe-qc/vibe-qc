@@ -41,6 +41,45 @@ inline int workable_max_subspace(int requested, int n_eig, int n) {
     return std::min(n, std::max(requested, restart_dim + n_eig + 1));
 }
 
+// GitLab #287: when ``n`` itself is below the workable floor the clamp
+// above cannot honour it.  A collapse then keeps every column it has and
+// leaves no room for a single correction block, so the expansion branch
+// is unreachable and the sweep spins to max_iter returning
+// ``converged=false`` with nothing to tell the caller why.  Every
+// auto-budget stall in the #123 verification sweep (145 of 5496
+// configurations) satisfies ``n < 2 * n_eig + 6`` and none above it does.
+// Such a partial-spectrum problem is at most ``2 * n_eig + 5``
+// dimensional, so it is solved densely and exactly instead.  A
+// full-spectrum request (``n_eig == n``) keeps the iterative path, which
+// converges in one sweep and is what the SCF drivers use.
+inline bool below_restart_floor(int n_eig, int n) {
+    if (n_eig >= n) return false;
+    const int restart_dim = n_eig + std::min(5, n - n_eig);
+    return n < restart_dim + n_eig + 1;
+}
+
+template <typename Scalar, typename Result>
+static Result dense_partial_spectrum(
+    const Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>& A_raw,
+    int n_eig) {
+    using Mat = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>;
+    const Mat A = 0.5 * (A_raw + A_raw.adjoint().eval());
+    Eigen::SelfAdjointEigenSolver<Mat> es(A);
+    if (es.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "davidson_kernel: dense fallback below the restart floor "
+            "(GitLab #287) failed to diagonalise");
+    }
+    Result result;
+    result.eigenvalues  = es.eigenvalues().head(n_eig);
+    result.eigenvectors = es.eigenvectors().leftCols(n_eig);
+    result.n_iter       = 0;
+    result.subspace_dim = static_cast<int>(A.rows());
+    result.n_converged  = n_eig;
+    result.converged    = true;
+    return result;
+}
+
 // ---- Real-symmetric block-Davidson kernel (explicit A) ------------------
 
 // Block-Davidson driver shared by the explicit and matrix-free entry points.
@@ -67,10 +106,9 @@ static DavidsonResult davidson_kernel_impl(int n,
     if (n == 0) {
         throw std::invalid_argument("davidson_kernel: A is 0×0");
     }
-    if (diag.size() != n) {
+    if (n <= 0 || diag.size() != n || !diag.allFinite()) {
         throw std::invalid_argument(
-            "davidson_kernel: diagonal length " + std::to_string(diag.size())
-            + " does not match dimension " + std::to_string(n));
+            "davidson_kernel: positive dimension and finite diagonal of matching length required");
     }
     const int n_eig = (opts.n_eig > 0) ? opts.n_eig
                      : std::min(n, 10);  // sensible default
@@ -95,6 +133,12 @@ static DavidsonResult davidson_kernel_impl(int n,
         throw std::invalid_argument(
             "davidson_kernel: n_guess (" + std::to_string(n_guess)
             + ") < n_eig (" + std::to_string(n_eig) + ")");
+    }
+    if (below_restart_floor(n_eig, n)) {
+        // GitLab #287: too small to iterate; ``n`` operator applications
+        // assemble the tiny matrix (the explicit path pays one product).
+        return dense_partial_spectrum<double, DavidsonResult>(
+            apply(Eigen::MatrixXd::Identity(n, n)), n_eig);
     }
 
     // ``diag`` is supplied by the caller (see DavidsonApply above).
@@ -444,7 +488,7 @@ static DavidsonResult davidson_kernel_impl(int n,
     }
 }
 
-// ---- Complex Hermitian block-Davidson kernel (explicit A) ----------------
+// ---- Complex Hermitian block-Davidson kernel -----------------------------
 
 DavidsonResult davidson_kernel(const Eigen::MatrixXd& A,
                                const DavidsonOptions& opts) {
@@ -460,13 +504,21 @@ DavidsonResult davidson_kernel(const Eigen::MatrixXd& A,
         opts);
 }
 
-DavidsonResultComplex davidson_kernel_hermitian(
-    const Eigen::MatrixXcd& A,
+using HermitianDavidsonApply =
+    std::function<Eigen::MatrixXcd(const Eigen::Ref<const Eigen::MatrixXcd>&)>;
+
+DavidsonResultComplex davidson_kernel_hermitian_impl(
+    int n,
+    const Eigen::VectorXd& diag,
+    const HermitianDavidsonApply& apply,
     const DavidsonOptions& opts) {
-    const int n = static_cast<int>(A.rows());
-    if (n == 0) {
+    if (n <= 0) {
         throw std::invalid_argument(
-            "davidson_kernel_hermitian: A is 0×0");
+            "davidson_kernel_hermitian: dimension must be positive");
+    }
+    if (diag.size() != n || !diag.allFinite()) {
+        throw std::invalid_argument(
+            "davidson_kernel_hermitian: diagonal must be finite with length n_basis");
     }
 
     const int n_eig = (opts.n_eig > 0) ? opts.n_eig
@@ -495,9 +547,12 @@ DavidsonResultComplex davidson_kernel_hermitian(
             "davidson_kernel_hermitian: n_guess (" + std::to_string(n_guess)
             + ") < n_eig (" + std::to_string(n_eig) + ")");
     }
-
-    // Diagonal of A (real, since A is Hermitian).
-    const Eigen::VectorXd diag = A.diagonal().real();
+    if (below_restart_floor(n_eig, n)) {
+        // GitLab #287: see the real kernel.
+        return dense_partial_spectrum<std::complex<double>,
+                                      DavidsonResultComplex>(
+            apply(Eigen::MatrixXcd::Identity(n, n)), n_eig);
+    }
 
     // Initial guess: use caller-provided vectors when available,
     // otherwise seed from the smallest diagonal entries of A.
@@ -546,7 +601,7 @@ DavidsonResultComplex davidson_kernel_hermitian(
     int n_iter = 0;
     int m_sub = static_cast<int>(V.cols());
     // Block AV computation.
-    AV = A * V.leftCols(m_sub);
+    AV = apply(V.leftCols(m_sub));
 
     for (int outer = 0; outer < opts.max_iter; ++outer) {
         n_iter = outer + 1;
@@ -665,7 +720,7 @@ DavidsonResultComplex davidson_kernel_hermitian(
                     if (vn2 > 1e-14) V.col(j) /= vn2;
                 }
             }
-            AV.leftCols(m_sub) = A * V.leftCols(m_sub);
+            AV.leftCols(m_sub) = apply(V.leftCols(m_sub));
         } else if (n_corr > 0) {
             const int old_m = m_sub;
             m_sub += n_corr;
@@ -674,7 +729,7 @@ DavidsonResultComplex davidson_kernel_hermitian(
             V.middleCols(old_m, n_corr) = corrections.leftCols(n_corr);
             // Block mat-mat multiply for all new cols.
             AV.middleCols(old_m, n_corr) =
-                A * V.middleCols(old_m, n_corr);
+                apply(V.middleCols(old_m, n_corr));
         } else {
             // Stalled.
             DavidsonResultComplex result;
@@ -753,17 +808,41 @@ DavidsonResult davidson_solve_matvec(
         -> Eigen::MatrixXd {
         Eigen::MatrixXd out(n, V.cols());
         for (Eigen::Index c = 0; c < V.cols(); ++c) {
-            out.col(c) = matvec(V.col(c));
+            const Eigen::VectorXd column = matvec(V.col(c));
+            if (column.size() != n || !column.allFinite())
+                throw std::invalid_argument("Davidson callback returned invalid vector");
+            out.col(c) = column;
         }
         return out;
     };
     return davidson_kernel_impl(n, diag, apply, opts);
 }
 
+DavidsonResult davidson_solve_matmat(
+    int n_basis,
+    const std::function<Eigen::MatrixXd(const Eigen::MatrixXd&)>& matmat,
+    const Eigen::VectorXd& diag,
+    const DavidsonOptions& opts) {
+    auto apply = [&matmat, n_basis](const Eigen::Ref<const Eigen::MatrixXd>& v)
+        -> Eigen::MatrixXd {
+        Eigen::MatrixXd out = matmat(v);
+        if (out.rows() != n_basis || out.cols() != v.cols() || !out.allFinite())
+            throw std::invalid_argument("Davidson callback returned invalid block");
+        return out;
+    };
+    return davidson_kernel_impl(n_basis, diag, apply, opts);
+}
+
 DavidsonResultComplex davidson_solve_hermitian(
     const Eigen::MatrixXcd& A_H,
     const DavidsonOptions& opts) {
-    return davidson_kernel_hermitian(A_H, opts);
+    if (A_H.rows() != A_H.cols())
+        throw std::invalid_argument("Hermitian Davidson matrix must be square");
+    return davidson_kernel_hermitian_impl(
+        static_cast<int>(A_H.rows()), A_H.diagonal().real(),
+        [&A_H](const Eigen::Ref<const Eigen::MatrixXcd>& v) -> Eigen::MatrixXcd {
+            return A_H * v;
+        }, opts);
 }
 
 DavidsonResultComplex davidson_solve_hermitian_matvec(
@@ -771,16 +850,33 @@ DavidsonResultComplex davidson_solve_hermitian_matvec(
     const std::function<Eigen::VectorXcd(const Eigen::VectorXcd&)>& matvec,
     const Eigen::VectorXd& diag,
     const DavidsonOptions& opts) {
-    const int n = n_basis;
-    Eigen::MatrixXcd A(n, n);
-    using cplx = std::complex<double>;
-    for (int i = 0; i < n; ++i) {
-        A.col(i) = matvec(
-            Eigen::VectorXcd::Unit(n, i).template cast<cplx>());
-    }
-    A = 0.5 * (A + A.adjoint().eval());
-    (void)diag;  // reserved for matrix-free preconditioner in a future kernel
-    return davidson_kernel_hermitian(A, opts);
+    auto apply = [&matvec, n_basis](const Eigen::Ref<const Eigen::MatrixXcd>& v)
+        -> Eigen::MatrixXcd {
+        Eigen::MatrixXcd out(n_basis, v.cols());
+        for (Eigen::Index c = 0; c < v.cols(); ++c) {
+            const Eigen::VectorXcd column = matvec(v.col(c));
+            if (column.size() != n_basis || !column.allFinite())
+                throw std::invalid_argument("Hermitian Davidson callback returned invalid vector");
+            out.col(c) = column;
+        }
+        return out;
+    };
+    return davidson_kernel_hermitian_impl(n_basis, diag, apply, opts);
+}
+
+DavidsonResultComplex davidson_solve_hermitian_matmat(
+    int n_basis,
+    const std::function<Eigen::MatrixXcd(const Eigen::MatrixXcd&)>& matmat,
+    const Eigen::VectorXd& diag,
+    const DavidsonOptions& opts) {
+    auto apply = [&matmat, n_basis](const Eigen::Ref<const Eigen::MatrixXcd>& v)
+        -> Eigen::MatrixXcd {
+        Eigen::MatrixXcd out = matmat(v);
+        if (out.rows() != n_basis || out.cols() != v.cols() || !out.allFinite())
+            throw std::invalid_argument("Hermitian Davidson callback returned invalid block");
+        return out;
+    };
+    return davidson_kernel_hermitian_impl(n_basis, diag, apply, opts);
 }
 
 std::string davidson_summary(const DavidsonResult& res) {

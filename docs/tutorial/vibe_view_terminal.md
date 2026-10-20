@@ -226,10 +226,12 @@ the status line tells you to lower it with <kbd>i</kbd>.
 
 The evaluator covers s, p, d, and f basis shells (`l <= 3`). It warns in the
 status line if a selected orbital has significant g-or-higher weight, because
-that surface is incomplete. Periodic archives expose real Gamma-point fields
-from central-cell AOs; image-AO tails are not included. The
-[QVF wavefunction contract](../design_qvf_format.md) records the precise
-limits.
+that surface is incomplete. Explicit Gamma-point orbitals in fully periodic
+3D cells include neighboring atomic-orbital tails and retain complex
+coefficients. Nonzero k-points and partially periodic Bloch evaluation are
+unsupported. Older archives without k-point metadata retain central-cell
+sampling. See the current
+[orbital evaluation limits](https://vibe-qc.com/vibe-view/docs/browser.html#orbital-evaluation-limits).
 
 ## 5. Charts
 

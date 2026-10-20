@@ -1,0 +1,804 @@
+{
+  "scf": {
+    "conv_tol": 1e-10,
+    "conv_tol_grad": 1e-07,
+    "max_iter": 300
+  },
+  "pyscf_conv_tol": 1e-11,
+  "pyscf_precision": 1e-10,
+  "systems": {
+    "c-diamond": {
+      "basis": "sto-3g",
+      "pyscf": {
+        "pyscf_version": "2.14.0",
+        "nao": 10,
+        "rows": [
+          {
+            "mesh": [
+              1,
+              1,
+              1
+            ],
+            "madelung": 0.6801806909880811,
+            "rsgdf": {
+              "energy": -74.00248186742829,
+              "converged": true,
+              "wall_s": 26.207380125008058,
+              "naux": 150,
+              "omega": 0.3
+            },
+            "gdf": {
+              "energy": -74.00248002753705,
+              "converged": true,
+              "wall_s": 6.241652166994754,
+              "naux": 150
+            }
+          },
+          {
+            "mesh": [
+              2,
+              2,
+              2
+            ],
+            "madelung": 0.3400903454940406,
+            "rsgdf": {
+              "energy": -74.81480275703899,
+              "converged": true,
+              "wall_s": 28.651217749982607,
+              "naux": 150,
+              "omega": 0.3
+            },
+            "gdf": {
+              "energy": -74.81478004785384,
+              "converged": true,
+              "wall_s": 20.495739457954187,
+              "naux": 150
+            }
+          },
+          {
+            "mesh": [
+              3,
+              3,
+              3
+            ],
+            "madelung": 0.226726896996026,
+            "rsgdf": {
+              "energy": -74.87817908100158,
+              "converged": true,
+              "wall_s": 35.34503162500914,
+              "naux": 150,
+              "omega": 0.3
+            },
+            "gdf": {
+              "energy": -74.87816431839809,
+              "converged": true,
+              "wall_s": 23.40975912497379,
+              "naux": 150
+            }
+          },
+          {
+            "mesh": [
+              4,
+              4,
+              4
+            ],
+            "madelung": 0.17004517274701988,
+            "rsgdf": {
+              "energy": -74.88218123281901,
+              "converged": true,
+              "wall_s": 56.42303045798326,
+              "naux": 150,
+              "omega": 0.3
+            },
+            "gdf": {
+              "energy": -74.88216796892897,
+              "converged": true,
+              "wall_s": 73.8651284169755,
+              "naux": 150
+            }
+          },
+          {
+            "mesh": [
+              5,
+              5,
+              5
+            ],
+            "madelung": 0.13603613819761806,
+            "rsgdf": {
+              "energy": -74.88082461431961,
+              "converged": true,
+              "wall_s": 107.38749629200902,
+              "naux": 150,
+              "omega": 0.3
+            }
+          },
+          {
+            "mesh": [
+              6,
+              6,
+              6
+            ],
+            "madelung": 0.11336344849801608,
+            "rsgdf": {
+              "energy": -74.8795814922448,
+              "converged": true,
+              "wall_s": 335.0426701250253,
+              "naux": 150,
+              "omega": 0.3
+            }
+          }
+        ],
+        "aux_basis": "def2-svp-jk"
+      },
+      "vibeqc": [
+        {
+          "mesh": [
+            1,
+            1,
+            1
+          ],
+          "n_cells": 1,
+          "madelung": 0.680180690988081,
+          "sr": {
+            "energy_per_cell": -74.00247767847074,
+            "converged": true,
+            "stability_eigenvalue": -0.10730701869546608,
+            "internal_instability": true,
+            "fit_source": "sr",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "ec344fe213e46b2ca5412dfb25c0d3601198a579b917e6fd1ec72b9d9104e54b",
+            "wall_s": 53.44193454203196
+          },
+          "classic": {
+            "energy_per_cell": -74.00226510734304,
+            "converged": true,
+            "stability_eigenvalue": -0.10736587021769191,
+            "internal_instability": true,
+            "fit_source": "classic",
+            "tail_ke_cutoff": 787.785207,
+            "neutral_source_identity": "c4df402fbd3618d92be248107cacd390955a8dd6ba95a309030a90b914664567",
+            "wall_s": 16.101703124993946
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "822f1694525a"
+          }
+        },
+        {
+          "mesh": [
+            2,
+            2,
+            2
+          ],
+          "n_cells": 8,
+          "madelung": 0.34009034549404077,
+          "sr": {
+            "energy_per_cell": -74.81479108394879,
+            "converged": true,
+            "stability_eigenvalue": 0.1257558235427514,
+            "internal_instability": false,
+            "fit_source": "sr",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "56eb4dea8c7f940ee79c482a233e915ff511415e7d0f09adb460265b7b2efd75",
+            "wall_s": 1374.4227685409714
+          },
+          "classic": {
+            "energy_per_cell": -74.8146501223894,
+            "converged": true,
+            "stability_eigenvalue": 0.12575426903337056,
+            "internal_instability": false,
+            "fit_source": "classic",
+            "tail_ke_cutoff": 787.785207,
+            "neutral_source_identity": "3cfab97772464698a950dd075ba92ad49aa80e01191b6332a2ec7d60eddf6d2f",
+            "wall_s": 235.06757666700287
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "822f1694525a"
+          }
+        },
+        {
+          "mesh": [
+            3,
+            3,
+            3
+          ],
+          "n_cells": 27,
+          "storage": "dense",
+          "madelung": 0.2267268969960277,
+          "classic": {
+            "energy_per_cell": -74.87803248655935,
+            "converged": true,
+            "stability_eigenvalue": 0.19233786636832176,
+            "internal_instability": false,
+            "fit_source": "classic",
+            "tail_ke_cutoff": 787.785207,
+            "neutral_source_identity": "35f951299f3e4b445c71c7176770c2a500376c29b4f03098813492aa640abf67",
+            "wall_s": 493.93920079100644
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "5df0e7722464"
+          }
+        }
+      ]
+    },
+    "lih-rocksalt": {
+      "basis": "sto-3g",
+      "pyscf": {
+        "pyscf_version": "2.14.0",
+        "nao": 6,
+        "rows": [
+          {
+            "mesh": [
+              1,
+              1,
+              1
+            ],
+            "madelung": 0.5940755447488948,
+            "rsgdf": {
+              "energy": -8.335184313242353,
+              "converged": true,
+              "wall_s": 48.064485875016544,
+              "naux": 69,
+              "omega": 0.3
+            },
+            "gdf": {
+              "energy": -8.335183216884653,
+              "converged": true,
+              "wall_s": 6.68516512500355,
+              "naux": 69
+            }
+          },
+          {
+            "mesh": [
+              2,
+              2,
+              2
+            ],
+            "madelung": 0.29703777237444723,
+            "rsgdf": {
+              "energy": -7.922017094391768,
+              "converged": true,
+              "wall_s": 50.03141975001199,
+              "naux": 69,
+              "omega": 0.3
+            },
+            "gdf": {
+              "energy": -7.922003260034433,
+              "converged": true,
+              "wall_s": 13.780535458005033,
+              "naux": 69
+            }
+          },
+          {
+            "mesh": [
+              3,
+              3,
+              3
+            ],
+            "madelung": 0.19802518158296567,
+            "rsgdf": {
+              "energy": -7.94840740556619,
+              "converged": true,
+              "wall_s": 43.20446358399931,
+              "naux": 69,
+              "omega": 0.3
+            },
+            "gdf": {
+              "energy": -7.948398953145352,
+              "converged": true,
+              "wall_s": 19.68539941695053,
+              "naux": 69
+            }
+          },
+          {
+            "mesh": [
+              4,
+              4,
+              4
+            ],
+            "madelung": 0.1485188861872222,
+            "rsgdf": {
+              "energy": -7.940530184076179,
+              "converged": true,
+              "wall_s": 74.12670445803087,
+              "naux": 69,
+              "omega": 0.3
+            },
+            "gdf": {
+              "energy": -7.94052056250195,
+              "converged": true,
+              "wall_s": 39.14151241700165,
+              "naux": 69
+            }
+          },
+          {
+            "mesh": [
+              5,
+              5,
+              5
+            ],
+            "madelung": 0.11881510894977938,
+            "rsgdf": {
+              "energy": -7.93995608932739,
+              "converged": true,
+              "wall_s": 153.46034637500998,
+              "naux": 69,
+              "omega": 0.3
+            }
+          },
+          {
+            "mesh": [
+              6,
+              6,
+              6
+            ],
+            "madelung": 0.09901259079148275,
+            "rsgdf": {
+              "energy": -7.939156060282974,
+              "converged": true,
+              "wall_s": 417.0563286670367,
+              "naux": 69,
+              "omega": 0.3
+            }
+          }
+        ],
+        "aux_basis": "def2-svp-jk"
+      },
+      "vibeqc": [
+        {
+          "mesh": [
+            1,
+            1,
+            1
+          ],
+          "n_cells": 1,
+          "madelung": 0.5940755447488947,
+          "sr": {
+            "energy_per_cell": -8.335185805413378,
+            "converged": true,
+            "stability_eigenvalue": 0.595242740578163,
+            "internal_instability": false,
+            "fit_source": "sr",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "b3bf9d43bd26a07632c02d6f499381cd8bddf7699d8c63555896859d5f1edf0d",
+            "wall_s": 120.21474429196678
+          },
+          "classic": {
+            "energy_per_cell": -8.335043760646627,
+            "converged": true,
+            "stability_eigenvalue": 0.5944811947530223,
+            "internal_instability": false,
+            "fit_source": "classic",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "bc2838ae800a0748e574eb73a6225cebf90c3d6c25fec536f50f9dfaa663c044",
+            "wall_s": 16.737169999978505
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "822f1694525a"
+          }
+        },
+        {
+          "mesh": [
+            2,
+            2,
+            2
+          ],
+          "n_cells": 8,
+          "madelung": 0.29703777237444723,
+          "sr": {
+            "energy_per_cell": -7.922035120839837,
+            "converged": true,
+            "stability_eigenvalue": 0.08816441006959451,
+            "internal_instability": false,
+            "fit_source": "sr",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "67f0e394b6d18fc125e313136bc2c7e3cb2fb99090bb4d8dc1dca55dee8c697d",
+            "wall_s": 2815.223533625016
+          },
+          "classic": {
+            "energy_per_cell": -7.921949451866073,
+            "converged": true,
+            "stability_eigenvalue": 0.08842130453895006,
+            "internal_instability": false,
+            "fit_source": "classic",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "2bb266200d6aec0673813a96c4e89dde5da30dfd76be8f49b3fa3e176b029da6",
+            "wall_s": 25.433017666975502
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "822f1694525a"
+          }
+        },
+        {
+          "mesh": [
+            3,
+            3,
+            3
+          ],
+          "n_cells": 27,
+          "storage": "dense",
+          "madelung": 0.19802518158296556,
+          "classic": {
+            "energy_per_cell": -7.948549819234746,
+            "converged": true,
+            "stability_eigenvalue": 0.2651681104344048,
+            "internal_instability": false,
+            "fit_source": "classic",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "dab0463835b3dd86e50c112ce6d8692eda731039ec9a8f3ba3ea0b3730a44462",
+            "wall_s": 54.34308529202826
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "5df0e7722464"
+          }
+        }
+      ]
+    },
+    "mgo": {
+      "basis": "sto-3g",
+      "pyscf": {
+        "pyscf_version": "2.14.0",
+        "nao": 14,
+        "rows": [
+          {
+            "mesh": [
+              1,
+              1,
+              1
+            ],
+            "madelung": 0.5743993147871874,
+            "rsgdf": {
+              "energy": -271.0483657540614,
+              "converged": true,
+              "wall_s": 15.21013712498825,
+              "naux": 189,
+              "omega": 0.3
+            }
+          },
+          {
+            "mesh": [
+              2,
+              2,
+              2
+            ],
+            "madelung": 0.2871996573935933,
+            "rsgdf": {
+              "energy": -271.2099978065448,
+              "converged": true,
+              "wall_s": 17.08277304196963,
+              "naux": 189,
+              "omega": 0.3
+            }
+          },
+          {
+            "mesh": [
+              3,
+              3,
+              3
+            ],
+            "madelung": 0.19146643826239557,
+            "rsgdf": {
+              "energy": -271.2229412711668,
+              "converged": true,
+              "wall_s": 25.389530000044033,
+              "naux": 189,
+              "omega": 0.3
+            }
+          },
+          {
+            "mesh": [
+              4,
+              4,
+              4
+            ],
+            "madelung": 0.14359982869679852,
+            "rsgdf": {
+              "energy": -271.21926454594967,
+              "converged": true,
+              "wall_s": 53.72709929198027,
+              "naux": 189,
+              "omega": 0.3
+            }
+          },
+          {
+            "mesh": [
+              5,
+              5,
+              5
+            ],
+            "madelung": 0.11487986295744045,
+            "rsgdf": {
+              "energy": -271.2172873075925,
+              "converged": true,
+              "wall_s": 128.9221077080001,
+              "naux": 189,
+              "omega": 0.3
+            }
+          }
+        ],
+        "aux_basis": "def2-svp-jk"
+      },
+      "vibeqc": [
+        {
+          "mesh": [
+            1,
+            1,
+            1
+          ],
+          "n_cells": 1,
+          "madelung": 0.5743993147871878,
+          "sr": {
+            "energy_per_cell": -271.04835881911697,
+            "converged": true,
+            "stability_eigenvalue": -0.11724693527621977,
+            "internal_instability": true,
+            "fit_source": "sr",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "fc4afd0e365d4b24afb6eb2518debd461007fdcf6a9a0461733d70294ab16c6a",
+            "wall_s": 67.51208716700785
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "822f1694525a"
+          }
+        },
+        {
+          "mesh": [
+            2,
+            2,
+            2
+          ],
+          "n_cells": 8,
+          "madelung": 0.2871996573935938,
+          "sr": {
+            "energy_per_cell": -271.2099946884912,
+            "converged": true,
+            "stability_eigenvalue": 0.18050150793314534,
+            "internal_instability": false,
+            "fit_source": "sr",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "59734c623b0a1aa2f086dfff4358360cc85b7c15e8b0bb28cd1b5100a7f2947a",
+            "wall_s": 2379.6676428750507
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "822f1694525a"
+          }
+        }
+      ]
+    },
+    "be-fcc": {
+      "basis": "sto-3g",
+      "pyscf": {
+        "pyscf_version": "2.14.0",
+        "nao": 5,
+        "rows": [
+          {
+            "mesh": [
+              1,
+              1,
+              1
+            ],
+            "madelung": 0.7581889139857767,
+            "rsgdf": {
+              "energy": -15.203108898113847,
+              "converged": true,
+              "wall_s": 23.293825000000652,
+              "naux": 51,
+              "omega": 0.32421875
+            },
+            "gdf": {
+              "energy": -15.203107702036782,
+              "converged": true,
+              "wall_s": 2.3542075410368852,
+              "naux": 51
+            }
+          },
+          {
+            "mesh": [
+              2,
+              1,
+              1
+            ],
+            "madelung": 0.523589981689891,
+            "rsgdf": {
+              "energy": -14.85599909699536,
+              "converged": true,
+              "wall_s": 19.951958083023783,
+              "naux": 51,
+              "omega": 0.339453125
+            },
+            "gdf": {
+              "energy": -14.855990344287129,
+              "converged": true,
+              "wall_s": 2.6230139170074835,
+              "naux": 51
+            }
+          },
+          {
+            "mesh": [
+              2,
+              2,
+              2
+            ],
+            "madelung": 0.37909445699288813,
+            "rsgdf": {
+              "energy": -14.377630215512477,
+              "converged": true,
+              "wall_s": 22.379756207985338,
+              "naux": 51,
+              "omega": 0.32421875
+            },
+            "gdf": {
+              "energy": -14.377605662440564,
+              "converged": true,
+              "wall_s": 7.6949052910204045,
+              "naux": 51
+            }
+          }
+        ],
+        "aux_basis": "def2-svp-jk"
+      },
+      "vibeqc": [
+        {
+          "mesh": [
+            1,
+            1,
+            1
+          ],
+          "n_cells": 1,
+          "storage": "dense",
+          "madelung": 0.7581889139857761,
+          "sr": {
+            "energy_per_cell": -15.203108898188322,
+            "converged": true,
+            "stability_eigenvalue": 1.0459842380359732,
+            "internal_instability": false,
+            "fit_source": "sr",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "cbdb0cbb7f857275c30c3f33c4a8a941d9bde635584bf83b8ac1268cf280ef23",
+            "wall_s": 54.76773283298826
+          },
+          "classic": {
+            "energy_per_cell": -15.203068636377761,
+            "converged": true,
+            "stability_eigenvalue": 1.0460112945915498,
+            "internal_instability": false,
+            "fit_source": "classic",
+            "tail_ke_cutoff": 331.846581,
+            "neutral_source_identity": "186212e3108de4934121ae49e22604f6ba0af8db943c67406b578ff99526eeaa",
+            "wall_s": 4.447013541997876
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "5df0e7722464"
+          }
+        },
+        {
+          "mesh": [
+            2,
+            1,
+            1
+          ],
+          "n_cells": 2,
+          "storage": "dense",
+          "madelung": 0.5235899816898915,
+          "sr": {
+            "energy_per_cell": -14.855996792342495,
+            "converged": true,
+            "stability_eigenvalue": 0.13734814885556507,
+            "internal_instability": false,
+            "fit_source": "sr",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "0ba49bce25e25ff436586e899d82d2f5585253d535a4426d1e6d6d3b2c35d017",
+            "wall_s": 125.202918666997
+          },
+          "classic": {
+            "energy_per_cell": -14.855957880778803,
+            "converged": true,
+            "stability_eigenvalue": 0.13736461042569711,
+            "internal_instability": false,
+            "fit_source": "classic",
+            "tail_ke_cutoff": 331.846581,
+            "neutral_source_identity": "88bcc8e5f1590b8845cd3a2ecef7f34b8a783bfee428843a2995ec8ef510f5dd",
+            "wall_s": 6.047931665962096
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "5df0e7722464"
+          }
+        },
+        {
+          "mesh": [
+            2,
+            2,
+            2
+          ],
+          "n_cells": 8,
+          "storage": "dense",
+          "madelung": 0.3790944569928878,
+          "sr": {
+            "energy_per_cell": -14.377627165031928,
+            "converged": true,
+            "stability_eigenvalue": -0.25397930304568794,
+            "internal_instability": true,
+            "fit_source": "sr",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "e14a084e7c49c1451e6e09f120ca339b529add439ef37c0f0e8431e5724fb870",
+            "wall_s": 901.2373014999903
+          },
+          "classic": {
+            "energy_per_cell": -14.377570040345788,
+            "converged": true,
+            "stability_eigenvalue": -0.25400753532825365,
+            "internal_instability": true,
+            "fit_source": "classic",
+            "tail_ke_cutoff": 331.846581,
+            "neutral_source_identity": "dafe6a773adb3bf9a5414c7eabffbac4436a79b41e1d4d8cf1bb4248fe4313f9",
+            "wall_s": 14.89209837501403
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "5df0e7722464"
+          }
+        }
+      ]
+    },
+    "mgo/pob-dzvp-rev2": {
+      "basis": "pob-dzvp-rev2",
+      "pyscf": {
+        "pyscf_version": "2.14.0",
+        "nao": 29,
+        "rows": [
+          {
+            "mesh": [
+              1,
+              1,
+              1
+            ],
+            "madelung": 0.5743993147871874,
+            "rsgdf": {
+              "energy": -274.39053579755176,
+              "converged": true,
+              "wall_s": 19.262478290998843,
+              "naux": 189,
+              "omega": 0.3
+            }
+          }
+        ],
+        "aux_basis": "def2-svp-jk"
+      },
+      "vibeqc": [
+        {
+          "mesh": [
+            1,
+            1,
+            1
+          ],
+          "n_cells": 1,
+          "storage": "dense",
+          "madelung": 0.5743993147871878,
+          "sr": {
+            "energy_per_cell": -274.390535136983,
+            "converged": true,
+            "stability_eigenvalue": -0.0035785140711709815,
+            "internal_instability": true,
+            "fit_source": "sr",
+            "tail_ke_cutoff": null,
+            "neutral_source_identity": "f707a1e9066fa81576adc1d597a3c40c3ea60bf304266f4db990ee0c794f08b2",
+            "wall_s": 83.41449979197932
+          },
+          "runtime": {
+            "vibeqc_version": "0.17.18",
+            "source_commit": "5df0e7722464"
+          }
+        }
+      ]
+    }
+  }
+}

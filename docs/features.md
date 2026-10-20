@@ -18,9 +18,9 @@ AUTO alone establishes the global ground state.
 | Method | Driver | Open-shell | Gradient | Hessian (FD) | Hessian (analytic) | MP2 | Validated vs PySCF |
 |---|---|:-:|:-:|:-:|:-:|:-:|:-:|
 | RHF | `run_rhf` | - | ✓ | ✓ (`compute_hessian_fd`) | ✓ (`compute_hessian_rhf_analytic`) | ✓ (`run_mp2`) | ✓ machine precision |
-| UHF | `run_uhf` | ✓ | ✓ | ✓ | (roadmap 17c) | ✓ (`run_ump2`) | ✓ machine precision |
-| RKS | `run_rks` | - | ✓ | ✓ | (roadmap 17e) | - | ✓ grid-accuracy |
-| UKS | `run_uks` | ✓ | ✓ | ✓ | (roadmap 17f) | - | ✓ grid-accuracy |
+| UHF | `run_uhf` | ✓ | ✓ | ✓ | ✓ (`compute_hessian_uhf_analytic`) | ✓ (`run_ump2`) | ✓ machine precision |
+| RKS | `run_rks` | - | ✓ | ✓ | ✓ (`compute_hessian_rks_analytic`) | - | ✓ grid-accuracy |
+| UKS | `run_uks` | ✓ | ✓ | ✓ | ✓ (`compute_hessian_uks_analytic`) | - | ✓ grid-accuracy |
 | ROHF | `run_rohf` | ✓ (spin-pure) | ✓ analytic | ✓ (freqs) | (roadmap) | ✓ (`run_rohf_mp2`, semicanonical) | PySCF-parity tests¹ |
 | ROKS | `run_roks` | ✓ (spin-pure) | ✓ (FD, opt) | (roadmap M5b) | (roadmap M5b) | - | PySCF-parity tests¹ |
 
@@ -74,38 +74,13 @@ through `run_job(method=…)` and as a standalone
 [`user_guide/non_hf_solvers.md`](user_guide/non_hf_solvers.md)
 and the [`non_hf_solvers` tutorial](tutorial/non_hf_solvers.md).
 
-## Post-HF correlation methods
-
-Correlated wavefunction methods that build on a Hartree-Fock
-reference. All reachable through `run_job(method=…)`.
-
-| Method | `run_job(method=…)` | Reference | Notes |
-|--------|---------------------|-----------|-------|
-| CISD | `"cisd"` or `method="ci", citype="cisd"` | HF orbitals | Fixed-space variational singles+doubles CI via `vibeqc.cisd`; `CISDOptions` controls roots and determinant-space guards. |
-| CC2 | `"cc2"` or `method="ci", citype="cc2"` | RHF | Ground-state second-order approximate coupled cluster. The singles projection is complete and the doubles equation retains the T1-transformed Hamiltonian plus `[F,T2]`; DF and exact-integral routes are supported. Closed-shell energies only; no perturbative triples. Validated against a spin-orbital oracle and ORCA AUTOCI-CC2. |
-| CCSD | `"ccsd"` | RHF / UHF / ROHF | Canonical dense CCSD, density-fitted by default or on exact four-index integrals (`CCSDOptions(density_fit=False)`, conventional cross-code parity route); closed-shell and open-shell (UCCSD on a UHF reference, ROHF-reference via the spin-orbital kernel), auto-dispatched from the SCF reference. Also `run_ccsd` with `CCSDOptions`. |
-| CC3 | `"cc3"` or `method="ci", citype="cc3"` | RHF | Ground-state iterative CC3 with converged singles/doubles and approximate connected triples regenerated at every iteration. Exact MO integrals and frozen cores are supported. Energy-only and benchmark-scale because the dense determinant representation grows combinatorially. Validated against out-of-process ORCA 6.1 UHF AUTOCI-CC3 on closed-shell references. |
-| CCSDT | `"ccsdt"` or `method="ci", citype="ccsdt"` | RHF / ROHF | Full iterative singles, doubles, and triples from the exact determinant-space similarity projection. Exact MO integrals, frozen cores, and common-orbital open shells are supported. Energy-only and benchmark-scale because the dense determinant representation grows combinatorially. |
-| CCSD(T) | `"ccsd(t)"` | RHF / UHF / ROHF | Dense small-molecule accuracy reference. Closed-shell DF triples support requested-memory fast/blocked/direct/disk execution; open-shell triples support fast/direct but retain the dense spin-orbital integral floor. The dense CC iteration and the FNO setup remain production-size memory gates. Validated vs PySCF (uHa; conventional route to a few nHa) with ORCA 6.1 cross-checks. |
-| A-CCSD(T) | `method="ccsd", triples="A-CCSD(T)"` | RHF | Closed-shell asymmetric/Lambda triples correction on CCSD amplitudes. This separate implementation remains dense and rejects bounded triples modes. The effective method and citation route are `a-ccsd(t)`, with Kucharski-Bartlett 1998 and Crawford-Stanton 1998 references surfaced in output. |
-| QCISD / QCISD(T) | `"qcisd"`, `"qcisd(t)"` (also via `citype=`) | RHF | Closed-shell quadratic CI singles+doubles via exact monomial selection from the canonical CCSD residual. QCISD(T) uses the original Pople-Head-Gordon-Raghavachari `E[T] + 2*E_ST` triples convention on QCISD amplitudes. Pinned vs the in-repo spin-orbital oracle and out-of-process ORCA 6.1 RI-QCISD(T). |
-| CCD / LCCD / LCCSD / CEPA(0..3) | `"ccd"`, `"lccd"`, `"lccsd"`, `"cepa(0)"`..`"cepa(3)"` (also via `citype=`) | RHF | Coupled-pair variants of the closed-shell DF-CCSD kernel (`CCSDOptions` field `cc_variant`): CCD freezes singles; LCCD/LCCSD linearize the amplitude equations (exact polynomial-stencil linearization of the canonical residual); CEPA(1..3) add Meyer's pair-specific EPV shifts. CEPA validated to sub-uHa vs out-of-process ORCA 6.1 RI-CEPA/n (canonical orbitals). No (T); closed-shell only. |
-| DLPNO-CCSD | `"dlpno-ccsd"` | RHF / UHF | Domain-based local pair natural orbital CCSD. Closed-shell: reduced-scaling local solver (pair classification, PAO domains, per-pair PNO solver). Open-shell (multiplicity > 1) auto-routes to the local spin-orbital DLPNO-UCCSD solver; it applies the shared Liakos threshold triple but does not claim Saitow's single-spatial-orbital SOMO-pair scaling. The O(N⁶), `max_nbf`-capped pilot remains opt-in. |
-| DLPNO-CCSD(T) | `"dlpno-ccsd(t)"` | RHF / UHF | Closed-shell: local solver plus local DLPNO-(T) (per-triple TNO domains), full-domain == canonical CCSD(T). Retained accuracy benchmarks use explicitly pinned pre-#140/#448 all-electron recipes; they are not evidence for the current published-core/NormalPNO default. Open-shell auto-routes to the reduced-scaling UHF-reference spin-orbital DLPNO-UCCSD(T) solver; the dense O(N⁶), `max_nbf`-capped pilot is selected only by explicitly passing `DLPNOUCCSDPilotOptions`. |
-| DLPNO-MP2 | `"dlpno-mp2"` | RHF / UHF | Domain-based local pair natural orbital MP2 (Pinski 2015); the open-shell DLPNO-UMP2 extension retains independent UHF alpha/beta orbital and PNO spaces. Boys-localised occupieds, per-pair PNO virtual space; the zero-threshold all-electron limit reproduces canonical RI-MP2 to <= 1 uHa. Historical recovery data use explicitly pinned pre-#140/#448 cutoffs and are not claims about the current named default. |
-| IC-CASPT2 | `"caspt2"` | CASSCF/CASCI | Internally-contracted CASPT2, un-gated at v0.12.0. Large-basis direct active-CI path. |
-| CASCI + CASSCF | `"casci"` / `"casscf"` | - | Multi-root CASCI (`casci_options=CASCIOptions(nroots=N)`) with state-averaged CASSCF (`casscf_options=CASSCFOptions(nroots=N)`); orbital-optimised. The CASSCF **analytic nuclear gradient** is FD-tight (~1e-7, default `compute_wz=False` path), validated in v0.15.0. State-averaged + open-shell CASSCF gradients fall back to FD. CASPT2/NEVPT2 gradients experimental (full-energy FD). |
-| TDDFT (Casida + TDA) | `run_tddft_tda` / `run_tddft_casida` / `run_job(tddft=True)` | RHF/RKS/UHF/UKS | Vertical excitation energies, oscillator strengths, transition dipoles, dominant orbital transitions. Runner integration: `run_job(tddft=True, nto=True, tddft_type="tda"|"casida")` computes excitation energies (→ `.out` table), Natural Transition Orbitals (→ QVF + molden), FD excited-state gradients (`tddft_gradient=True`; the closed-shell RHF + CIS (TDA) surface only, labelled as such in the `.out`; RKS/TDDFT, Casida and open-shell runs are refused before the calculation, #570), and UV/Vis spectrum (`tddft_spectrum=True`). UHF NTOs via `compute_nto_uhf()`. C++ `eri_ao_to_mo_blocks` kernel replaces Python einsum. `vibeqc tddft` and `vibeqc tddft-opt` CLI. Periodic `run_periodic_job(tddft=True)` at Γ-point. Adiabatic LDA/GGA XC kernel; global hybrids carry their exact-exchange admixture. Range-separated hybrids refused. |
-| CIS / TDA | `run_tddft_tda` (TDA limit) | HF / MSINDO | Configuration-interaction singles; Tamm-Dancoff approximation. Finite-difference excited-state gradients (state-tracked). |
-| Green's function (GF2 / OVGF) | `"ovgf"` | HF / MSINDO | Quasiparticle IPs and EAs (result `.ovgf`); renormalised GF2 with full third-order self-energy + geometric screening auto-printed for small systems. Open-shell (UHF) propagator supported. MSINDO reference: `vibeqc.semiempirical.methods.msindo.msindo_ovgf` (`renormalize=True` for renormalised GF2). |
-
 | Method | `run_job(method=…)` | Solver entry point | Notes |
 |--------|---------------------|--------------------|-------|
 | Full CI | `"fci"` | (dense `eigh` on the full determinant Hamiltonian) | Exact within the (active) orbital space; reference for the approximate solvers. Small active spaces only. |
 | Selected CI (CIPSI) | `"selected_ci"` | `solve_selected_ci` | Iterative perturbative selection; `target_size`, `pt2_threshold`, optional PT2 correction. Spin-unrestricted determinant basis by default (#107, 2026-09-03); `spin_restricted=True` selects the closed-shell seniority-zero (DOCI) basis, coupled through the pair-move integral ⟨ii\|aa⟩ (#639), which cannot represent open-shell configurations. |
-| DMRG | `"dmrg"` | `solve_dmrg` | Two-site sweep, MPS wavefunction, bond-dimension schedule. Minimal Python implementation, ≤12 orbitals. |
+| DMRG | `"dmrg"` | `solve_dmrg` | **Experimental** (the source calls it a toy). Two-site sweep, MPS wavefunction, bond-dimension schedule. Minimal Python implementation; refuses more than 6 spatial orbitals (12 spin orbitals). |
 | Variational 2-RDM | `"v2rdm"` | `solve_v2rdm` | Exact small-active-space N-representable 1/2-RDM from the in-tree determinant Hamiltonian; Q/G SDP feedback remains unimplemented. |
-| Transcorrelated CI | `"transcorrelated_ci"` | `build_transcorrelated_hamiltonian` + `solve_selected_ci` | Similarity-transformed Hamiltonian (Gaussian / Jastrow correlator) fed to selected CI; same determinant-basis default as selected CI (#107). |
+| Transcorrelated CI | `"transcorrelated_ci"` | `build_transcorrelated_hamiltonian` + `solve_selected_ci` | **Preview.** Similarity-transformed Hamiltonian (Gaussian / Jastrow correlator, research grade) fed to selected CI; same determinant-basis default as selected CI (#107). |
 
 * **Active-space truncation**: pass `active_space=(n_orbitals,
   n_electrons)` to `run_job` to restrict any solver to a
@@ -132,6 +107,34 @@ reference. All reachable through `run_job(method=…)`.
   analytic gradients are roadmap.
 * **Parity**, He / OH FCI parity tests and DMRG-vs-FCI
   cross-checks ship in `tests/test_solvers_*`.
+
+
+## Post-HF correlation methods
+
+Correlated wavefunction methods that build on a Hartree-Fock
+reference. All reachable through `run_job(method=…)`.
+
+| Method | `run_job(method=…)` | Reference | Notes |
+|--------|---------------------|-----------|-------|
+| CISD | `"cisd"` or `method="ci", citype="cisd"` | HF orbitals | Fixed-space variational singles+doubles CI via `vibeqc.cisd`; `CISDOptions` controls roots and determinant-space guards. |
+| CC2 | `"cc2"` or `method="ci", citype="cc2"` | RHF | Ground-state second-order approximate coupled cluster. The singles projection is complete and the doubles equation retains the T1-transformed Hamiltonian plus `[F,T2]`; DF and exact-integral routes are supported. Closed-shell energies only; no perturbative triples. Validated against a spin-orbital oracle and ORCA AUTOCI-CC2. |
+| CCSD | `"ccsd"` | RHF / UHF / ROHF | Canonical dense CCSD, density-fitted by default or on exact four-index integrals (`CCSDOptions(density_fit=False)`, conventional cross-code parity route); closed-shell and open-shell (UCCSD on a UHF reference, ROHF-reference via the spin-orbital kernel), auto-dispatched from the SCF reference. Also `run_ccsd` with `CCSDOptions`. |
+| CC3 | `"cc3"` or `method="ci", citype="cc3"` | RHF | Ground-state iterative CC3 with converged singles/doubles and approximate connected triples regenerated at every iteration. Exact MO integrals and frozen cores are supported. Energy-only and benchmark-scale because the dense determinant representation grows combinatorially. Validated against out-of-process ORCA 6.1 UHF AUTOCI-CC3 on closed-shell references. |
+| CCSDT | `"ccsdt"` or `method="ci", citype="ccsdt"` | RHF / ROHF | Full iterative singles, doubles, and triples from the exact determinant-space similarity projection. Exact MO integrals, frozen cores, and common-orbital open shells are supported. Energy-only and benchmark-scale because the dense determinant representation grows combinatorially. |
+| CCSD(T) | `"ccsd(t)"` | RHF / UHF / ROHF | Dense small-molecule accuracy reference. Closed-shell DF triples support requested-memory fast/blocked/direct/disk execution; open-shell triples support fast/direct but retain the dense spin-orbital integral floor. The dense CC iteration and the FNO setup remain production-size memory gates. Validated vs PySCF (uHa; conventional route to a few nHa) with ORCA 6.1 cross-checks. |
+| A-CCSD(T) | `method="ccsd", triples="A-CCSD(T)"` | RHF | Closed-shell asymmetric/Lambda triples correction on CCSD amplitudes. This separate implementation remains dense and rejects bounded triples modes. The effective method and citation route are `a-ccsd(t)`, with Kucharski-Bartlett 1998 and Crawford-Stanton 1998 references surfaced in output. |
+| QCISD / QCISD(T) | `"qcisd"`, `"qcisd(t)"` (also via `citype=`) | RHF | Closed-shell quadratic CI singles+doubles via exact monomial selection from the canonical CCSD residual. QCISD(T) uses the original Pople-Head-Gordon-Raghavachari `E[T] + 2*E_ST` triples convention on QCISD amplitudes. Pinned vs the in-repo spin-orbital oracle and out-of-process ORCA 6.1 RI-QCISD(T). |
+| CCD / LCCD / LCCSD / CEPA(0..3) | `"ccd"`, `"lccd"`, `"lccsd"`, `"cepa(0)"`..`"cepa(3)"` (also via `citype=`) | RHF | Coupled-pair variants of the closed-shell DF-CCSD kernel (`CCSDOptions` field `cc_variant`): CCD freezes singles; LCCD/LCCSD linearize the amplitude equations (exact polynomial-stencil linearization of the canonical residual); CEPA(1..3) add Meyer's pair-specific EPV shifts. CEPA validated to sub-uHa vs out-of-process ORCA 6.1 RI-CEPA/n (canonical orbitals). No (T); closed-shell only. |
+| DLPNO-CCSD | `"dlpno-ccsd"` | RHF / UHF | Domain-based local pair natural orbital CCSD. Closed-shell: reduced-scaling local solver (pair classification, PAO domains, per-pair PNO solver) whose amplitude equations are solved in the compiled PNO-space kernel (every residual term contracted in the PNO space that carries the contracted index, Riplinger-Neese 2013 Sec. II C; exact against the extended-domain oracle and canonical CCSD at full domains). Open-shell (multiplicity > 1) auto-routes to the local spin-orbital DLPNO-UCCSD solver, whose amplitude equations are solved in a compiled spin-orbital PNO-space kernel (spin-pure PNOs, exact against canonical UCCSD at full domains); it applies the shared Liakos threshold triple but does not claim Saitow's single-spatial-orbital SOMO-pair scaling. The O(N⁶), `max_nbf`-capped pilot remains opt-in. |
+| DLPNO-CCSD(T) | `"dlpno-ccsd(t)"` | RHF / UHF | Closed-shell: local solver plus local DLPNO-(T) (per-triple TNO domains), full-domain == canonical CCSD(T). Retained accuracy benchmarks use explicitly pinned pre-#140/#448 all-electron recipes; they are not evidence for the current published-core/NormalPNO default. Open-shell auto-routes to the reduced-scaling UHF-reference spin-orbital DLPNO-UCCSD(T) solver; the dense O(N⁶), `max_nbf`-capped pilot is selected only by explicitly passing `DLPNOUCCSDPilotOptions`. |
+| DLPNO-MP2 | `"dlpno-mp2"` | RHF / UHF | Domain-based local pair natural orbital MP2 (Pinski 2015); the open-shell DLPNO-UMP2 extension retains independent UHF alpha/beta orbital and PNO spaces. Boys-localised occupieds, per-pair PNO virtual space; the zero-threshold all-electron limit reproduces canonical RI-MP2 to <= 1 uHa. Historical recovery data use explicitly pinned pre-#140/#448 cutoffs and are not claims about the current named default. |
+| IC-CASPT2 | `"caspt2"` | CASSCF/CASCI | Internally-contracted CASPT2, un-gated at v0.12.0. Large-basis direct active-CI path. |
+| CASCI + CASSCF | `"casci"` / `"casscf"` | - | Multi-root CASCI (`casci_options=CASCIOptions(nroots=N)`) with state-averaged CASSCF (`casscf_options=CASSCFOptions(nroots=N)`); orbital-optimised. The CASSCF **analytic nuclear gradient** is FD-tight (~1e-7, default `compute_wz=False` path), validated in v0.15.0. State-averaged + open-shell CASSCF gradients fall back to FD. CASPT2/NEVPT2 gradients experimental (full-energy FD). |
+| TDDFT (Casida + TDA) | `run_tddft_tda` / `run_tddft_casida` / `run_job(tddft=True)` | RHF/RKS/UHF/UKS; ROHF (TDA only, doubly-occupied to virtual space, labelled `TDA-ROHF`; Casida on ROHF and any ROKS response are refused before the SCF, #361) | Vertical excitation energies, oscillator strengths, transition dipoles, dominant orbital transitions. Runner integration: `run_job(tddft=True, nto=True, tddft_type="tda"|"casida")` computes excitation energies (→ `.out` table), Natural Transition Orbitals (→ QVF + molden), FD excited-state gradients (`tddft_gradient=True`; the closed-shell RHF + CIS (TDA) surface only, labelled as such in the `.out`; RKS/TDDFT, Casida and open-shell runs are refused before the calculation, #570), and UV/Vis spectrum (`tddft_spectrum=True`). UHF NTOs via `compute_nto_uhf()`. C++ `eri_ao_to_mo_blocks` kernel replaces Python einsum. `vibeqc tddft` and `vibeqc tddft-opt` CLI. Periodic `run_periodic_job(tddft=True)` at Γ-point. Adiabatic LDA/GGA XC kernel; global hybrids carry their exact-exchange admixture. Range-separated hybrids refused. |
+| CIS / TDA | `run_tddft_tda` (TDA limit) | HF / MSINDO | Configuration-interaction singles; Tamm-Dancoff approximation. Finite-difference excited-state gradients (state-tracked). |
+| MRCI | `"mrci"` | CASCI / CASSCF | Uncontracted MR-CISD with the Davidson +Q size-extensivity estimate (`mrci+q` citation route). Energies; optimisation is finite-difference only through `optimizer_backend="native"` (#357). |
+| BCCD / BCCD(T) | `"bccd"`, `"bccd(t)"` | RHF | Brueckner coupled cluster: orbitals rotated until the singles amplitudes vanish (Handy 1989), with the (T) correction on the Brueckner reference. Closed shell only. Also `run_bccd`. |
+| Green's function (GF2 / OVGF) | `"ovgf"` | HF / MSINDO | Quasiparticle IPs and EAs (result `.ovgf`); renormalised GF2 with full third-order self-energy + geometric screening auto-printed for small systems. Open-shell (UHF) propagator supported. MSINDO reference: `vibeqc.semiempirical.methods.msindo.msindo_ovgf` (`renormalize=True` for renormalised GF2). |
 
 ## Density fitting + RIJCOSX (v0.8.0)
 
@@ -164,11 +167,24 @@ see [`user_guide/density_fitting.md`](user_guide/density_fitting.md).
   `cpp/include/vibeqc/cosx.hpp`).
 * `default_aux_basis_for(orbital_basis_name, kind="jk"/"ri")`
   helper picks aux basis automatically.
+* **Experimental second engine (v0.17.16).** `run_job` and
+  `run_periodic_job` accept `integral_engine=IntegralEngineOptions(...)`,
+  `coulomb=CoulombBuildOptions(...)` and `exchange=ExchangeBuildOptions(...)`
+  (from `vibeqc.manta`): libint or MANTA integrals, exact, RI, BUPO or
+  RI-BUPO Coulomb and exact or RI exchange, chosen independently, with an
+  explicit resource budget and the executed provider recorded in the
+  `.out`, the manifest and the QVF. MANTA's exact build reproduces libint to
+  1e-10 Ha on water/cc-pVDZ. These selectors cannot be combined with the
+  `density_fit`/`aux_basis`/`cosx` keywords above. See
+  [`user_guide/integral_engines.md`](user_guide/integral_engines.md).
 
 ## Periodic SCF (native GDF / GPW / BIPOLE / Γ-CCM / χ-CCM)
 
-Γ-CCM and χ-CCM[^xccm-convention] are distinct union-and-weight and
-finite-translation-group character approaches.
+Γ-CCM and χ-CCM[^xccm-convention] are distinct constructions: Γ-CCM is the
+neutral finite-torus construction (producers `real-gamma` and
+`neutral-bloch`), while the `four-center` variant is the 2014
+union-and-weight lineage kept in the same development line, and χ-CCM is the
+finite-translation-group character construction.
 
 The front door is `run_periodic_job(method="aiccm", variant=...)`, where
 `variant` names the formulation and is **mandatory**; the method name does
@@ -177,24 +193,38 @@ not imply one. The four variants are `"real-gamma"`, `"neutral-bloch"`,
 ruling R1 makes Γ-CCM the *neutral* construction with two admissible
 producers (`real-gamma` and `neutral-bloch`), so the bare word is ambiguous
 and fails closed naming both. The SCF reference is inferred from the
-functional and the cell's multiplicity unless `scf_reference=` selects a
-restricted open-shell one. The legacy `jk_method="aiccm2026dev-a"` /
+functional and the cell's multiplicity unless `scf_reference=` names one:
+`"rhf"` or `"uhf"` for Hartree-Fock (for example a closed-shell UHF), or a
+restricted open-shell `"rohf"` / `"roks"`. The legacy `jk_method="aiccm2026dev-a"` /
 `"aiccm2026dev-b"` spellings still resolve, each with a `DeprecationWarning`
 naming the `variant` form. The whole line stays experimental.
 
-[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM construction approaches:
-    union-and-weight/Wigner-Seitz integral weighting and finite-translation-group
-    characters, respectively. A declared common exchange-q=0 convention is a
-    comparison constraint, not an identification of the constructions. Their
-    distinction is not a choice of Coulomb kernels, and equality for a specified
-    operator and route must be established rather than inferred from the labels.
+[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM constructions. Under
+    ruling R1, Γ-CCM is the neutral finite-torus construction with two
+    admissible producers (`real-gamma`, `neutral-bloch`); the `four-center`
+    variant is the 2014 union-and-weight/Wigner-Seitz integral-weighting
+    lineage, a different construction kept in the same development line; χ-CCM
+    uses finite-translation-group characters. A declared common exchange-q=0
+    convention is a comparison constraint, not an identification of the
+    constructions, and equality for a specified operator and route must be
+    established rather than inferred from the labels.
+
+`KPoints.recommend(classifier="pre-scf", basis=...)` runs a three-cycle Gamma
+GDF SCF, on a compact 3D cell the bulk GDF Hamiltonian (#468), and classifies from the
+HOMO-LUMO gap of that unconverged result. When no gap can be read, the
+recommendation warns and takes the SAFE metallic mesh/smearing default. This is not a measured metallic
+state. Supply a known `band_gap`, `is_metal`, or a qualified converged
+`scf_result` for electronic classification.
 
 | Method | Driver | k-point support | Notes |
 |--------|--------|-----------------|-------|
-| RHF, Γ-only GDF | `run_rhf_periodic_gamma_gdf` | Γ, dim=1/3 (slab raises) | native vibe-qc J/K via Gaussian density fitting; no in-process PySCF |
-| RKS / hybrids, Γ-only GDF | `run_rhf_periodic_gamma_gdf(functional=…)` | Γ, dim=1/3 (slab raises) | native libxc `V_xc`; hybrid exact exchange uses the functional's HF fraction |
-| KRHF multi-k GDF | `run_krhf_periodic_gdf` | Γ + multi-k, dim=1/2/3 | native k-dependent GDF. On `dim=2`, an explicit full Gamma-centered `(n1,n2,1)` mesh selects the signed slab-truncated metric and rigorous 2D one-electron gauge; custom/IBZ meshes, smearing, restarts, and open shell stay closed. Closed-shell slab analytic gradients ship. Also reachable via `run_periodic_job(jk_method="gdf", kpoints=...)` |
-| KRKS multi-k GDF | `run_krks_periodic_gdf` | Γ + multi-k, dim=1/2/3 | native multi-k RKS / full-range hybrid path. The bounded `dim=2` route has the same restrictions as KRHF and rejects range-separated functionals; closed-shell slab analytic gradients ship; PySCF / CRYSTAL are out-of-process references only |
+| RHF, Γ-only GDF | `run_rhf_periodic_gamma_gdf` | Γ, dim=2/3 (a dim=1 wire raises) | native vibe-qc J/K via Gaussian density fitting; no in-process PySCF. A compact `dim=3` cell (image cells inside `cutoff_bohr`) runs `run_krhf_periodic_gdf` at `(1,1,1)` with `exxdiv='ewald'` exchange and says so in a `GammaExchangeRouteWarning` (#468) |
+| RKS / hybrids, Γ-only GDF | `run_rhf_periodic_gamma_gdf(functional=…)` | Γ, dim=2/3 (a dim=1 wire raises) | native libxc `V_xc`; hybrid exact exchange uses the functional's HF fraction. On a compact `dim=3` cell it runs the k-mesh GDF engine at `(1,1,1)` on `PeriodicKSOptions` (#468) |
+| KRHF multi-k GDF | `run_krhf_periodic_gdf` | Γ + multi-k, dim=2/3 (a dim=1 k mesh raises) | native k-dependent GDF. A `dim=1` wire with a k mesh raises `NotImplementedError` (no consistent 1-D Coulomb gauge); run it as a `dim=3` cell with transverse vacuum. On `dim=2`, an explicit full Gamma-centered `(n1,n2,1)` mesh selects the signed slab-truncated metric and rigorous 2D one-electron gauge; custom/IBZ meshes, smearing, restarts, and open shell stay closed. Closed-shell slab analytic gradients ship. Also reachable via `run_periodic_job(jk_method="gdf", kpoints=...)` |
+| KRKS multi-k GDF | `run_krks_periodic_gdf` | Γ + multi-k, dim=2/3 (a dim=1 k mesh raises) | native multi-k RKS / full-range hybrid path; `dim=1` with a k mesh raises as for KRHF. The bounded `dim=2` route has the same restrictions as KRHF and rejects range-separated functionals; closed-shell slab analytic gradients ship; PySCF / CRYSTAL are out-of-process references only |
+| DLPNO-CCSD(T) on crystals | `run_periodic_job(method="dlpno-ccsd(t)")` or `"dlpno-ccsd"`; library `vibeqc.periodic_dlpno.run_periodic_dlpno_ccsd` | Γ or a Gamma-centred mesh folded to the real BvK supercell, dim=3 | **Preview.** RHF (singlet) or UHF (open shell) reference on the k-mesh GDF engine with its classic RSGDF fit retained as the correlation factors, Pipek-Mezey occupied orbitals, minimum-image pair distances; energies in total and per cell. Full-domain limit equals PySCF KRCCSD(T) to the fit tolerance. Refuses BIPOLE/GPW, functionals, `symmetry_reduce_k`, smearing, `dim < 3`, `optimize`/`hessian`. See [`user_guide/periodic_local_correlation.md`](user_guide/periodic_local_correlation.md) |
+| Symmetry-reduced exact exchange | `run_periodic_job(..., symmetry="attach", symmetry_reduce_k=True)` (driver `ibz_native=True`) | multi-k GDF, dim=3, RHF/UHF/RKS/UKS with exact exchange | **Preview.** Exchange built at the irreducible-wedge representatives and transported over each star (every operation, glides and screws included, on the SR/LR fit); diagonalisation and energy on the full mesh, so energies equal the unreduced ones to roundoff. Per-star occupation fill and a little-group state gate; refuses pure functionals, Gamma-only meshes, `bz_integration="gilat"`. See [`tutorial/symmetry_reduced_k_mesh.md`](tutorial/symmetry_reduced_k_mesh.md) |
+| MANTA periodic HF / KS (finite domains) | `run_periodic_job(integral_engine=IntegralEngineOptions(backend="manta"), coulomb=..., exchange=..., periodic_integrals=...)` | Γ + full regular meshes, neutral all-electron dim=3 | **Experimental.** RHF/UHF/RKS/UKS with exact or RI J/K, pure, global-hybrid and range-separated LDA/GGA, BvK Ewald exchange correction, periodic BUPO for HF; every domain explicit, no automatic accuracy profile. See [`user_guide/integral_engines.md`](user_guide/integral_engines.md) |
 | RIJCOSX periodic SCF | `run_periodic_job(jk_method="rijcosx")` | Gamma RHF; vacuum-padded Gamma RKS/UHF/UKS; true multi-k RHF/RKS/UHF/UKS | RI-J from the native GDF loop plus periodic COSX exchange (`k_exchange="cosx"`) on true multi-k meshes (weighted full-BZ quadratures supported); one-cell tight-cell RKS/UHF/UKS fail closed rather than relabeling a GDF-only route |
 | χ-CCM SCF / post-HF | `run_aiccm2026dev_b_rhf/rks/uhf/uks`, restricted and unrestricted MP2/CCSD(T)/PNO APIs; `run_periodic_job(jk_method="aiccm2026dev-b")` | real-space cyclic lattice extension, 3D absolute energies only | finite-character (Γ-centred character-mesh) CCM with four-centre, RI, and RIJCOSX restricted/unrestricted SCF plus 3D finite-torus correlation; every 1D/2D B backend fails closed pending a shared wire/slab Coulomb convention; local CC remains an O(N^6) correctness pilot, not production reduced scaling |
 | χ-CCM RI-MP2 | `run_aiccm2026dev_b_mp2` | finite cyclic mesh, 3D | momentum-conserving canonical RI-MP2 on the χ-CCM RI-RHF reference; external KMP2 parity; experimental |
@@ -205,15 +235,17 @@ naming the `variant` form. The whole line stays experimental.
 | A-namespace neutral fitted-torus controls (library) | `run_ccm_rhf_gdf`, `run_ccm_rhf_direct`, `run_ccm_ri_mp2`, `run_ccm_ri_ccsd`, `run_ccm_uccsd`, `ccm_dlpno_*` | separately declared finite-torus control operator | The same drivers the two neutral variants use, reachable directly for control work. These APIs are in `vibeqc.periodic.ccm` for historical reasons; a bare call is not by itself a Γ-CCM or χ-CCM construction result; experimental (emit `AICCM2026DevAExperimentalWarning`) |
 | Cell-resolved DF integral blocks | `compute_2c_eri_lattice_blocks`, `compute_3c_eri_lattice_blocks`, `bloch_sum_*_eri_blocks`, `build_lpq_bloch_native` | dim=1/2/3 | native translation-resolved 2c/3c storage and Bloch/Lpq assembly for k-dependent GDF; Γ tensors are recovered by summing blocks |
 | 2D slab SCF (SLAB_EWALD_2D) | `run_periodic_job(jk_method="auto")` on a `dim=2` system; `vibeqc.slab_2d(a1, a2, atoms)` to build one | Γ + multi-k, dim=2 only | Rigorous vacuum-free 2D Ewald (Parry 1975; de Leeuw and Perram 1979) for RHF / RKS / UKS. No vacuum gap: the third lattice column is synthesized bookkeeping and the total energy is invariant to it; `E_nuclear` is k-mesh independent. AUTO selects it for every `dim=2` system. Explicit `jk_method="gdf"` is a bounded closed-shell RHF/RKS alternative with a signed slab-truncated fit and analytic gradients; BIPOLE / GPW / GAPW / RIJCOSX remain closed. Fermi-Dirac smearing and slab-GDF open shell are not shipped yet. |
+| Green's-function surface embedding | `vibeqc.periodic_embedding.run_embedded_surface`, `EmbeddedSurfaceCalculator` | semi-infinite surfaces, 3D Gaussian foundation | **Experimental** (`EmbeddedSurfaceExperimentalWarning`); thick-slab GDF parity pending, so absolute energies and densities are qualitative; see [surface embedding](user_guide/surface_embedding.md) |
 | BIPOLE RHF / UHF / RKS / UKS | `run_pbc_bipole_rhf`, `..._uhf`, `..._rks`, `..._uks` | Γ + multi-k, 3D through `run_periodic_job` | Production exact Ewald-J energy and finite-difference atomic-force route for closed- and open-shell periodic SCF. Fixed-cell atomic relaxation ships; variable-cell work fails closed. Analytic gradients remain a gated preview. The quartet multipole far-field prototypes are driver-unreachable: all four drivers default to `False`, and explicit `True` raises before setup |
 | GPW RHF / ROHF / ROKS / UHF / RKS / UKS (v0.12.0) | `run_periodic_job(jk_method="gpw")` | Gamma supports all six methods; multi-k pure-DFT RKS/ROKS/UKS supports LDA/GGA/meta-GGA in molecular-limit and compact Bloch regimes through the public runner or the matching `run_periodic_*_gpw_multi_k` API; multi-k UHF/ROHF and hybrids remain gated | Production Gaussian Plane Waves route (serial), unified `run_periodic_job` user surface; ROHF and ROKS are maintained preview with one restricted orbital set and integer 2/1/0 occupations; GAPW all-electron augmentation; DFT+U for Gamma RHF/RKS/UHF/UKS plus multi-k RKS; D3-BJ dispersion; Gamma-point analytic gradient; FD Hessian; smearing. The MPI z-slab grid overlay (`GpwJBuilder(mpi_aware=True)`) is experimental: its multi-rank Hartree-J build was broken through v0.12.0, fixed post-release, pending validation on a real multi-rank run |
 | RHF / RKS / UHF / UKS Ewald-3D (legacy) | `run_*_periodic_*_ewald3d` | Γ + multi-k | native debug path; not the CRYSTAL-parity target |
-| Multi-k UHF / UKS via GDF | `run_kuhf_periodic_gdf`, `run_kuks_periodic_gdf`; public runner | Γ + multi-k, dim=1/3 | Public GDF open-shell route. Slab open shell remains fail-closed. |
+| Multi-k UHF / UKS via GDF | `run_kuhf_periodic_gdf`, `run_kuks_periodic_gdf`; public runner | Γ + multi-k, dim=3 | Public GDF open-shell route. `dim=1` has no open-shell route (the Gamma drivers accept only `dim=3`; a k mesh raises), and slab open shell remains fail-closed. |
 | ROHF periodic, Ewald-3D | `run_rohf_periodic_gamma_ewald3d`, `run_rohf_periodic_multi_k_ewald3d` | Γ + multi-k, dim=3 | Standalone HF drivers with the shared Roothaan coupling and integer 2/1/0 occupations; not wired through `run_periodic_job` |
-| ROHF periodic, native GDF | `run_periodic_job(method="ROHF", jk_method="gdf")`, `run_krohf_periodic_gdf` | Γ (a `(1,1,1)` mesh) + full multi-k, dim=3 | Public and standalone density-fitted ROHF on the per-(k_i,k_j) cderi cache: same J / per-spin K / `exxdiv='ewald'` machinery as the PySCF-pinned KRHF/KUHF drivers, with the Roothaan coupling as the only new step. Exchange contracts against the occupied MO blocks. Multiplicity 1 reproduces `run_krhf_periodic_gdf` exactly; Li/STO-3G Γ is +2.86e-5 Ha from PySCF KROHF/GDF, collapsing to +2.2e-7 Ha with the rsgdf mesh. ROKS, smearing, 2D slabs, gradients, optimization, restarts, COSX and `ibz_native` remain fail closed |
+| ROHF periodic, native GDF | `run_periodic_job(method="ROHF", jk_method="gdf")`, `run_krohf_periodic_gdf` | Γ (a `(1,1,1)` mesh) + full multi-k, dim=3 | Public and standalone density-fitted ROHF on the per-(k_i,k_j) cderi cache: same J / per-spin K / `exxdiv='ewald'` machinery as the PySCF-pinned KRHF/KUHF drivers, with the Roothaan coupling as the only new step. Exchange contracts against the occupied MO blocks. Multiplicity 1 reproduces `run_krhf_periodic_gdf` exactly; Li/STO-3G Γ is +8.4e-10 Ha from PySCF KROHF/GDF on the range-separated SR/LR fit. ROKS, smearing, 2D slabs, gradients, optimization, restarts, COSX and `ibz_native` remain fail closed |
 | ROHF / ROKS periodic, GPW | `run_periodic_job(method="ROHF", jk_method="gpw")`, `run_periodic_job(method="ROKS", functional=..., jk_method="gpw")`, `run_periodic_rohf_gpw`, `run_periodic_roks_gpw`, `run_periodic_roks_gpw_multi_k` | ROHF: Gamma only; ROKS: Gamma plus full multi-k pure-DFT meshes; dim=3 | Maintained-preview restricted-open-shell route: GPW Hartree J, per-spin exact K where required, spin-polarised XC for ROKS, the Ewald one-electron/nuclear gauge, and complex-safe Roothaan coupling. Unsupported dimensions, gradients, GAPW, multi-k hybrids, range-separated ROKS, and electronic smearing fail closed; `smearing_alpha` is nuclear smoothing |
 | Atomic gradients (periodic) | route-specific FD forces; `compute_gradient_periodic_*` previews | Γ + multi-k by route | BIPOLE production forces use finite differences of the executed energy; analytic coverage is route- and envelope-specific and remains preview where documented |
-| Periodic force-virial diagnostic | `compute_stress_tensor` | Γ + multi-k | Diagnostic only; not the periodic stress. BIPOLE/GDF variable-cell optimization fails closed |
+| Periodic stress tensor | `compute_stress_gpw`, `compute_stress_gapw`; semiempirical routes through `vibeqc.semiempirical.periodic` | GPW / GAPW Γ, dim=3; semiempirical Γ + full-k | **Finite difference, not analytic.** Both GPW/GAPW entry points central-difference the fixed-density energy over strain, rebuilding the basis on each strained cell, so Hellmann-Feynman and Pulay contributions arrive together and the density is not relaxed per strain; `compute_stress_gapw` requires `one_centre="block"`. Semiempirical stress is one native batched FD pass, except Γ-point GFN2-xTB, whose native stress is analytic and FD-validated on all nine components. There is no analytic GPW/GAPW/GDF/BIPOLE stress, so `run_periodic_job(optimize_cell=True)` fails closed on all four; variable-cell relaxation is reachable only on the full-k semiempirical routes. Periodic ECP stress is unimplemented (#34) |
+| Periodic force-virial diagnostic | `compute_stress_tensor` | Γ + multi-k | Diagnostic only; not the periodic stress. For the stress itself and for which routes accept `optimize_cell`, see the row above |
 
 Reference benchmark: **ΔE = -6.8e-12 Ha** for MgO/sto-3g/Γ
 RHF vs out-of-process PySCF.pbc.GDF. Multi-k KRHF / KRKS GDF is now
@@ -240,7 +272,7 @@ is basis-free and skips vibrational analysis with a note in the `.out`.
 | MSINDO | `"msindo"`; SECCM via `"seccm"` / `"ccm"` + `ccm_options` | INDO H-Xe (Z 1-54); NDDO H, Li-F, Na-Cl closed shell | INDO energy RHF/UHF and closed-shell analytic gradient. NDDO closed-shell energy and analytic gradient for H, Li-F, Na-Cl, including source-parity SPDD terms for Al through Cl. No Hessian | No Bloch Gamma and no full-k route (both fail closed). SECCM cyclic cluster 1-D/2-D/3-D, closed shell; native C++ for H-Kr, deterministic Python reference for Rb-Xe | INDO molecular UHF within validated fixtures; NDDO molecular and SECCM closed-shell only | **Production within scope.** Independent MSINDO INDO/NDDO implementation. Native C++ production routes cover supported molecular energies and INDO closed-shell analytic gradients; closed-shell NDDO gradients use a mixed native-energy/Python-analytic route. CCM energy/gradients use C++ for H-Kr and the deterministic Python reference for Rb-Xe; a selected native calculation does not fall back after failure. Python also remains for reference/orchestration paths including excited-state/root-tracking workflows |
 | DFTB0 / UDFTB0 | `"dftb0"` | 91 in-house parameter records | Energy and analytic gradient, both native; no Hessian | Bloch Gamma energy + analytic gradient (native, 15-bohr image domain). Full-k Bloch energy/bands experimental; gradient and stress by one native batched FD pass; Monkhorst-Pack mesh of three positive integers, default 1x1x1. DFTB0-SECCM 1-D/2-D/3-D with analytic fixed-topology gradients | UDFTB0 molecular and Gamma; full-k and SECCM closed-shell only | **Screening / preoptimization; not production-validated.** In-house parameters, no DFT-fitted repulsives, no DFTB+ (mio-1-1) parity. Full-k derivatives gated pending analytic derivatives and DFTB+ parity. SECCM is gated experimental and scoped to the explicit repulsive-pair table (H, C, N, O, F, P, S, Cl). Absolute energies are not claimable while the repulsive is an A/R¹² placeholder (issue #306) |
 | SCC-DFTB / USCC-DFTB | `"scc_dftb"` | 91 in-house parameter records | Energy and analytic gradient, both native; no Hessian | Bloch Gamma energy native, gradient by central differences of the converged energy. Full-k Bloch SCC energy/bands experimental with optional Fermi occupations; gradient and stress by one native batched FD pass; Monkhorst-Pack mesh of three positive integers, default 1x1x1. SCC-DFTB-SECCM 1-D/2-D/3-D with analytic fixed-topology gradients; charged cells only through the opt-in Madelung/Ewald embedding | USCC molecular and Gamma; full-k and SECCM closed-shell only | **Screening / preoptimization; not production-validated.** In-house parameters, no DFTB+ parity. Analytic SCC derivatives reject nonconverged results. Full-k derivatives and SECCM remain gated experimental |
-| GFN2-xTB | `"gfn2_xtb"` | H-Rn (Z 1-86), fetched on demand | Energy, analytic gradient, scoped post-SCF native D4; no Hessian | Bloch Gamma energy native; the native gradient and all-nine stress match gapped finite differences. Full-k route fails closed. GFN2-SECCM 1-D/2-D/3-D, energy only, with optional Madelung embedding; Ewald-gamma supports 1-D/2-D and rejects non-molecular 3-D (#444) | None: the route is closed-shell only at every boundary | **Gated experimental.** Molecular H0, shell SCC, third-order, AES, analytic gradients, scoped post-SCF native D4, and FD-validated Gamma-periodic derivatives are implemented. Faithful periodic AES electrostatics and external `xtb` parity remain production gates. Native D4 covers H, He, B, C, N, O, F, Ne and returns zero with `GFN2D4UnsupportedWarning` elsewhere |
+| GFN2-xTB | `"gfn2_xtb"` | H-Rn (Z 1-86), fetched on demand | Energy, shell and faithful AES SCC gradients (of the Mermin free energy when smeared); scoped post-SCF native D4; no Hessian | Bloch Gamma energy native; the native gradient and all-nine stress match gapped finite differences. Full-k route fails closed. GFN2-SECCM 1-D/2-D/3-D, energy only, with optional Madelung embedding; Ewald-gamma supports 1-D/2-D and rejects non-molecular 3-D (#444) | None: the route is closed-shell only at every boundary | **Gated experimental.** Molecular H0, shell SCC, third-order, AES, molecular gradients including atom-resolved analytic faithful AES, scoped post-SCF native D4, and FD-validated Gamma-periodic derivatives are implemented. Faithful periodic AES electrostatics and external `xtb` parity remain production gates. Native D4 covers H, He, B, C, N, O, F, Ne, Cu and returns zero with `GFN2D4UnsupportedWarning` elsewhere |
 | PM6 / UPM6 | `"pm6"` | 75 chemical-element records from the bundled MOPAC cache | Energy native NDDO; gradient by native batched FD (no analytic gradient); no Hessian | Bloch Gamma energy native, gradient and stress by one native batched FD pass (mixed-native, experimental). Full-k route fails closed. PM6-SECCM 1-D/2-D/3-D energy with FD fixed-topology gradients; s/p AO channels only, so elements whose PM6 record needs d orbitals fail closed | UPM6 molecular only; periodic Gamma and SECCM closed-shell only | **Experimental: molecular development route.** Exact MOPAC heat-of-formation convention parity is open, and spherical Klopman-Ohno gamma/core-core fallbacks apply where the bundled MOPAC diatomic data is incomplete. Periodic PM6 is experimental |
 | PM6-SECCM CCM Madelung embedding | opt-in `madelung=True` on `vibeqc.semiempirical.seccm.run_pm6_seccm` | as PM6 | not applicable (SECCM boundary only) | 1-D and 2-D only; three cyclic dimensions fail closed because the WS-folded remainder has no thermodynamic limit. Without the embedding a nontrivial cyclic topology needs an explicit `allow_truncated_electrostatics=True` acknowledgement | closed shell only | **Experimental, opt-in, acknowledgement-gated (issue #217).** The MSINDO CCM operator: the classical point-charge field enters the Fock diagonal and the potential is the full Ewald lattice sum minus the WS-internal bare 1/r, WS-weighted with the self image excluded. Unembedded cyclic runs are an algorithm-mechanics probe, not a solid-state prediction: the WS-truncated monopole sum reproduces the exact rocksalt Madelung constant only to -43%..+38% |
 | OM2 / OM3 | `"om2"`, `"om3"` | 5 published (H, C, N, O, F) | Energy native NDDO; gradient by native batched FD; no Hessian | Bloch Gamma and full-k routes both fail closed: the retired prototype was not the published ORT/ECP/penetration Hamiltonian. OM2/OM3-SECCM 1-D/2-D/3-D energy only, no gradient; cyclic-image execution requires an explicit truncated-electrostatics acknowledgement; published eq-13 three-center image weighting is the default, eq-10 available for comparison | Molecular only; periodic and SECCM closed-shell or gated | **Retirement target** (maintainer target matrix, 2026-09-02: no molecular, Bloch or CCM target; fail closed, deprecate, remove from the public portfolio). Still executable today as a validated molecular development/prescreening surface; bond minima remain about 0.1-0.3 Å from published references and external implementation parity is open. Nothing has been removed yet, so no release has dropped it |
@@ -252,8 +284,8 @@ Sources for the statuses above include the `ACCEPTANCE`-managed families in
 [`semiempirical_acceptance_matrix.py`](semiempirical_acceptance_matrix.py), the queryable
 `vibeqc.semiempirical.semiempirical_route_status(route)` registry, the
 boundary gates in `vibeqc.semiempirical.routes.SemiempiricalRoutePlan`,
-and `handovers/HANDOVER_SEMIEMPIRICAL_ROADMAP.md` (§ "2026-09-02
-maintainer-approved target matrix" and § "Paper-safe status"). The
+and the maintainer's 2026-09-02 target matrix, which is kept in the private
+operations documentation (handovers are not stored in this repository). The
 per-route user-guide table is at
 [`user_guide/semiempirical.md`](user_guide/semiempirical.md) § Method
 status.
@@ -284,8 +316,9 @@ the molecular SCF wrappers; the XML libraries above serve explicit
 a basis is answered by `vibeqc.basis_registry.ecp_requirements`, never by
 the basis name. MP2, CC, DLPNO, the double hybrids, ROHF/ROKS and the
 determinant solvers consume an ECP reference through its valence count
-and an ECP-aware frozen core; CASCI/CASSCF/MRCI/NEVPT2/CASPT2 and OVGF
-still refuse one. See [`user_guide/ecp.md`](user_guide/ecp.md).
+and an ECP-aware frozen core; CASCI/CASSCF/MRCI/NEVPT2/CASPT2
+still refuse one, while OVGF runs on an ECP reference (HI/def2-SVP gives a
+valence IP of 10.09 eV) without a dedicated validation. See [`user_guide/ecp.md`](user_guide/ecp.md).
 
 Analytic nuclear gradients are ECP-aware on all four molecular
 drivers when the exact XML-library or inline-primitive ECP provenance is
@@ -294,8 +327,12 @@ automatically. The gradient applies Z_eff nuclear pieces plus dV_ECP/dR via
 libecpint first derivatives, with analytic-vs-FD agreement pinned to
 <= 1e-5 Ha/bohr. Gas-phase molecular ECP geometry optimization and
 finite-difference Hessians preserve the same operator while centers follow
-their atoms. Analytic ECP Hessians, CPCM forces and Hessians, and top-level
+their atoms. Analytic ECP Hessians, CPCM forces, and top-level
 ECP NEB currently fail closed rather than differentiating the wrong energy.
+Note that `run_job(hessian=True)` builds a gas-phase, dispersion-free Hessian
+even when `solvent=` or `dispersion=` is set, and says nothing about it in
+the `.out`, so the frequencies and the thermochemistry rows do not include
+those terms.
 See
 [`user_guide/ecp.md`](user_guide/ecp.md) § Gradients.
 
@@ -319,6 +356,12 @@ iters).
 | Fermi-Dirac smearing | `*_options.smearing_temperature`; `run_periodic_job(smearing_temperature="auto"|"metal"|...)`; `vq.SmearingOptions`, `vq.apply_smearing()`, `vq.resolve_smearing_temperature()` | periodic multi-k Ewald RHF/RKS + multi-k GDF KRHF (Γ-only Ewald RHF/RKS inherits via dispatch) + BIPOLE RKS/UHF/UKS (Γ and multi-k); BIPOLE RHF intentionally rejects smearing, while remaining non-BIPOLE open-shell runner routes, Γ-only GDF smearing and C++-direct Ewald Γ remain queued (Methfessel-Paxton and Marzari-Vanderbilt smearing ship at v0.14.0), see [`docs/user_guide/smearing.md`](user_guide/smearing.md) and [`docs/design_smearing.md`](design_smearing.md) | Phase C1b; accepts Hartree/K/eV/Ry, named presets, conservative auto guess; result reports occupations, entropy, free energy, and Fermi level. Shared `vibeqc.smearing` package consolidates the utility (v0.10.x M0/M1 refactor) |
 | **Periodic density mixers** (Anderson / Broyden / Kerker, v0.14) | `run_periodic_job(..., density_mixer=...)`; `run_rks_periodic_scf(...)` / `run_rks_periodic_multi_k_ewald3d(...)` | closed-shell explicit-kpoint GDF dispatch + lower-level multi-k RKS Ewald | Kerker preconditions the density residual without moving the SCF fixed point; unsupported BIPOLE, GPW/GAPW, open-shell, and implicit-Gamma routes fail closed |
 | `auto_optimize_truncation` | `PeriodicRHFOptions(auto_optimize_truncation=True)` | periodic | default on; jointly optimises lattice cutoffs + Schwarz screening |
+| **R-CDIIS / AD-CDIIS** (Chupin 2021) | `*_options.scf_accelerator=SCFAccelerator.R_CDIIS` / `AD_CDIIS`, `diis_restart_tau`, `diis_adaptive_delta` | molecular | restarted and adaptive-depth conjugate DIIS; see [adaptive DIIS](tutorial/adaptive_diis.md) |
+| **OpenTrustRegion** orbital optimiser | `run_job(orbital_optimizer="opentrustregion", opentrustregion_options=...)` | molecular RHF/UHF/RKS/UKS | external trust-region second-order optimiser, build-gated (`-DVIBEQC_ENABLE_OPENTRUSTREGION=ON`); refuses smearing, solvent and TDDFT; see [OpenTrustRegion](user_guide/opentrustregion.md) |
+| **Stability analysis** | `*_options.stability_check` and the `stability_*` fields | molecular RHF/UHF/RKS/UKS | Seeger-Pople internal and external stability of the converged determinant; see [SCF convergence](user_guide/scf_convergence.md) |
+| **Eigensolver framework** | `run_job(solver="dense" \| "davidson" \| "lobpcg")`; `vibeqc.solvers.eigensolver` | molecular (LOBPCG falls back to Davidson on the molecular route) + periodic | Davidson and LOBPCG production; Jacobi-Davidson and GPLHR **experimental**; see [solver framework](user_guide/solver_framework.md) |
+| **Gilat-Raubenheimer BZ integration** | `run_periodic_job(bz_integration="gilat")` | closed-shell multi-k GDF/RIJCOSX and BIPOLE RKS/UHF/UKS; fails closed on GPW/GAPW | linear-interpolation Fermi-surface integration as an alternative to smearing; see [metallic BZ integration](user_guide/metallic_bz_integration.md) |
+| **SAP initial guess** | `initial_guess="sap"` (also HCORE, SAD, PATOM, HUECKEL, MINAO, READ, FRAGMO) | molecular + periodic by route | superposition of atomic potentials (Lehtola 2019); capability-checked per route; see [initial guesses](user_guide/initial_guess.md) |
 
 ## XC functionals (v0.8.0 expanded)
 
@@ -341,6 +384,7 @@ aliases the resolver knows:
 | `wb97m-v` (v0.14) | range-sep meta-GGA + VV10 | 100 % LR | 531 |
 | `r2scan01` (v0.14) | meta-GGA | 0 % | 642 + 645 |
 | `revdsd-pbep86` (v0.14) | double hybrid (D4) | 69 % | 101 + 132 |
+| `b2plyp`, `dsd-pbep86`, `pwpb95`, `revdsd-pbep86` as `run_job(method=…)` | double hybrids | per recipe | a double hybrid is a `method=`, not a `functional=`: the runner refuses `method="rks", functional="b2plyp"` because that would run only the SCF half; open shells run ROKS plus RI-ROHF-MP2 |
 | `skala-1.1` (introduced v0.15.158; periodic expansion v0.15.160; **experimental**) | neural XC (Microsoft SKALA-1.1, MIT-licensed checkpoint fetched on first use) | 0 % | external provider, not libxc; needs the `[skala]` extra (PyTorch); energies only, fixed geometry; molecular RKS / UKS / ROKS plus selected periodic AO-grid routes (GDF, multi-k RIJCOSX, 3D BIPOLE, GPW/GAPW, and AICCM real-Gamma, literal-WSSC, and four-centre chi routes); forces, Hessians, TDDFT and response paths fail closed; see [`user_guide/skala.md`](user_guide/skala.md) |
 
 Plus everything libxc accepts directly + custom weighted-sum
@@ -426,21 +470,33 @@ pause/resume, multi-venv `--branch` routing. See
 | Property | API | Methods | Notes |
 |----------|-----|---------|-------|
 | Mulliken charges | `mulliken_charges` | RHF / UHF / RKS / UKS | atomic populations |
+| **IAO charges and IBOs** | `run_job(iao_analysis=True, localize="ibo")`; `vibeqc.iao.iao_charges`, `build_iaos`, `analyse_ibo` | RHF / UHF / RKS / UKS | intrinsic atomic orbitals (Knizia 2013), basis-set-stable charges and spin populations, intrinsic bond orbitals with three bonding criteria; see [IAO analysis](user_guide/iao_population.md) |
 | Löwdin charges | `loewdin_charges` | all | symmetric-orth populations |
+| Hirshfeld charges | `hirshfeld_charges` -> `HirshfeldResult` | all | Classical Hirshfeld (1977) real-space partition against free-atom reference densities, so far less basis-sensitive than the two above. Iterative Hirshfeld is not implemented |
 | Mayer bond orders | `mayer_bond_orders` | all | per-pair indices |
 | Dipole moment | `dipole_moment` | all | with optional origin |
 | Natural orbitals | `natural_orbitals` | all | for post-SCF analysis |
 | Static polarizability α | `dipole_polarizability_rhf` | RHF (closed-shell) | via CPHF, Phase 17b-1; UHF/KS roadmap |
 | Vibrational frequencies (FD) | `compute_hessian_fd` + `HessianResult.frequencies_cm1` | all | FD on analytic gradient; trans/rot projection |
-| Vibrational frequencies (analytic) | `compute_hessian_rhf_analytic` | RHF | CPHF + libint deriv_order=2; Phase 17b-3 |
+| Vibrational frequencies (analytic) | `compute_hessian_rhf_analytic`, `compute_hessian_uhf_analytic`, `compute_hessian_rks_analytic`, `compute_hessian_uks_analytic` | RHF / UHF / RKS / UKS | CPHF/CPKS + libint deriv_order=2, with FD-on-Fock `h1ao`; same `HessianResult` shape as `compute_hessian_fd`, so frequencies, IR intensities and thermochemistry consume either unchanged. The RHF Hessian is validated against PySCF; the RKS/UKS Hessians use the LDA exchange-correlation kernel only for the response, so GGA and hybrid functionals differ from finite differences by up to about 12 cm⁻¹ (PBE 3.4e-3, PBE0 5.0e-3 Ha/bohr² on water) and LDA agrees to 1e-5 |
+| Γ-point phonons (periodic) | `vibeqc.PhononCalculator`, `compute_dynamical_matrix_fd`, `phonon_eigenvalues`, `phonon_dos` | GAPW periodic SCF | **Γ only** (k = [1,1,1]); multi-k phonons are not wired. Finite displacement on the *analytic* GAPW atomic force, not on the energy. The q-path helper returns a `gamma_flat` surface: the cached Γ frequencies repeated at each q, not a force-constant Fourier interpolation |
 | IR intensities | `ir_intensities` | all | dipole derivatives along normal modes |
 | Thermochemistry (ZPE / U / H / S / G / Cv) | `compute_thermochemistry` | all | rigid-rotor + harmonic-oscillator + ideal-gas |
+| **Relaxed coordinate scans** | `relaxed_scan`, `relaxed_scan_2d` | HF / DFT / semiempirical | one or two constrained internal coordinates with the rest relaxed; see [relaxed scans](user_guide/relaxed_scan.md) |
+| **Nudged elastic band** | `run_neb` (ASE `NEB` on `VibeQC` calculators also works) | RHF / UHF / ROHF / RKS / UKS / ROKS / MACE / semiempirical / SECCM | climbing-image NEB with warm starts; periodic ROHF/ROKS gated; see [NEB](user_guide/neb.md) |
+| **Dimer and eigenvector-following transition-state search** | `run_dimer`; `run_job(geom_target="transition_state", geom_opt="dimer" \| "ef" \| "prfo")` | molecular mean field / MACE | minimum-mode following without a Hessian (dimer) or with Bofill-updated approximate Hessians (EF, P-RFO); periodic ROHF/ROKS, ECP and +U gated |
+| **Molecular dynamics** | `vibeqc.md.run_md`, `run_nve`, `run_nvt` (Berendsen, Nosé-Hoover); the top-level `vibeqc.run_md` family is the GAPW periodic helper | any surface with forces | velocity Verlet; see [molecular dynamics](user_guide/molecular_dynamics.md) |
+| **Well-tempered metadynamics** | `vibeqc.metadynamics.run_metadynamics` with `DistanceCV` / `AngleCV` | any surface with forces | Laio-Parrinello bias on the MD driver, well-tempered variant |
+| **Minimum-energy conical intersection** | `vibeqc.conical.optimize_conical_intersection`, `make_cis_meci_fn`; `vibeqc meci` CLI | HF-CIS (finite-difference gradients) / MSINDO CIS | Levine-Coe-Martínez penalty function; needs only two state energies and gradients |
+| **Cohesive energies** | the energy-engine abstraction in [cohesive energies](user_guide/cohesive_energies.md) | periodic + molecular references | cohesive energy per formula unit against free-atom references at the same level |
+| Intrinsic reaction coordinate | `run_irc` | RHF / UHF / ROHF / RKS / UKS / ROKS / MACE | **Molecular only**; periodic IRC is a follow-up and fails closed. Mass-weighted damped steepest descent (Ishida-Morokuma-Komornicki 1977), not the Gonzalez-Schlegel constrained integrator. ROKS needs an explicit `transition_mode` until an analytic ROKS gradient exists for the FD Hessian |
 | **D3(BJ) dispersion** | `compute_d3bj` | all | Grimme D3 with Becke-Johnson damping |
 | **D4 dispersion** (v0.8.0) | `compute_d4` | all | Caldeweyher-Bannwarth-Grimme 2019 |
-| Cube file output | `write_cube` | all | density / orbital / spin density |
+| Cube file output | `write_cube_density`, `write_cube_mo`, `write_cube_mos`; periodic `write_cube_density_periodic`, `write_cube_mo_periodic` | all | Density, single orbital, or a multi-volume MO stack. Write only: vibe-qc has no cube reader |
 | Molden file export | `write_molden` | RHF / UHF / RKS / UKS | verified by PySCF round-trip |
 | Periodic band structure | `band_structure` | periodic SCF | k-path sampling |
 | Periodic density of states | `density_of_states` | periodic SCF | Gaussian broadening on a sampled mesh |
+| Equation-of-state fit | `vibeqc.eos.fit_birch_murnaghan`, `.birch_murnaghan_energy` | any energy-vs-volume scan | **Third-order Birch-Murnaghan only** (`BM3_MODEL`); no Vinet, Murnaghan or Rose-Vinet form. Fits an energy/volume series the caller supplies; it runs no scan of its own. Quality gates (`min_energy_span_hartree`, `max_rmse_to_span`) refuse a nearly flat curve rather than report an interior stationary point as a physical minimum, returning `ill_conditioned_fit` |
 | Atomisation energy | `run_job(..., atomization=True)` (`vibeqc.atomization.atomization_energy`) | HF / DFT | per-element free-atom references at the same level, cached; main-group H-Kr. MSINDO reports its binding energy by default. |
 | Green's function IP / EA | `run_job(method="ovgf")` → `result.ovgf`; MSINDO: `msindo_ovgf` | HF / MSINDO | quasiparticle ionisation potentials and electron affinities (`.ip_homo_ev` / `.ea_lumo_ev` on the MSINDO result) |
 | MPI substrate (v0.12.0) | `mpi4py` optional extra; `vibeqc.mpi` helpers | experimental GPW z-slab overlay plus low-level collectives | install with `[mpi]` extra. Production distributed HF / DFT / MP2 drivers are not wired yet; see [MPI Parallelization](design_mpi_parallelization.md). The GPW z-slab grid overlay is experimental (multi-rank Hartree-J build broken through v0.12.0, fixed post-release; pending real multi-rank validation) |
@@ -451,7 +507,7 @@ pause/resume, multi-venv `--branch` routing. See
 | **Wiberg bond indices + delocalization index** | `vibeqc.bond_analysis.wiberg_bond_orders` / `.delocalization_index` / `.bond_order_summary` | all | Löwdin-basis Wiberg 1968 index; AO-approximated DI; auto-emitted in `.population.{txt,json}` |
 | **NPA charges** | `vibeqc.nbo.npa_charges` / `.nbo_charges` | not implemented | Raises `NotImplementedError` until occupancy-weighted Natural Atomic Orbitals are implemented. Population sidecars retain an empty `npa` field and report `unavailable.npa`; no NPA calculation is attempted. |
 | **Provisional NBO search** | `vibeqc.nbo.nbo_search` / `.donor_acceptor_analysis` | exploratory Python API | Simplified orbital classification and E(2) donor-acceptor analysis; not a complete NAO/NBO implementation. See the [bond analysis guide](user_guide/bond_analysis.md). |
-| **Energy decomposition analysis** | `vibeqc.eda.eda_lmo` / `.eda_morokuma` | HF / DFT | LMO-EDA (Su-Li 2009) + Morokuma 1971 two-fragment decomposition |
+| **Energy decomposition analysis** | `vibeqc.eda.eda_lmo` / `.eda_morokuma` | closed-shell RHF | LMO-EDA (Su-Li 2009) and Kitaura-Morokuma two-fragment decomposition of the interaction energy into electrostatic, exchange, Pauli repulsion and polarisation + charge transfer, fragments in the dimer basis through ghost atoms; refuses Kohn-Sham, ECP and open-shell inputs. See the [bond analysis guide](user_guide/bond_analysis.md#energy-decomposition-analysis-eda) |
 | **Orbital entanglement** | `vibeqc.entanglement.entanglement_from_density` / `.single_orbital_entropy` / `.mutual_information` | all | single-orbital entropy, mutual information, entanglement bond orders, correlation clusters |
 
 ## Solvation (CPCM / COSMO v0.9.0, COSMO-RS v0.15.158)
@@ -462,7 +518,8 @@ See [`user_guide/solvation.md`](user_guide/solvation.md).
 |------------|-----|---------|--------|-------|
 | CPCM / COSMO implicit solvation | `run_job(..., solvent=...)` via `vibeqc.solvation.run_cpcm_scf` | RHF / UHF / RKS / UKS; MSINDO through its own COSMO driver | production | macro-iteration on a union-of-spheres cavity; presets in `vibeqc.solvation.presets` (`SOLVENT_PRESETS`) or a custom `SolventModel`; `epsilon=inf` is the exact conductor limit (#548) |
 | Solvent analytic gradient / geometry optimisation in solvent | `vibeqc.solvation.cpcm_gradient` (finite-difference check: `vibeqc.solvation.cpcm_gradient_fd`) | RHF / UHF / RKS / UKS | production | the screening factor is carried from the run's own variant (#546, #548, #549) |
-| COSMO-RS / COSMOSPACE thermodynamics | `vibeqc.solvation.cosmors` on a `vibeqc.solvation.surface.ConductorSurface` | any method that can produce a conductor surface | **experimental** (v0.15.158) | sigma profiles and potentials, chemical potentials, activity and partition coefficients, solvation free energies (Klamt 1995; Klamt, Jonas, Bürger, Lohrenz 1998; `klamt1998` set); the shipped cavity differs from the one the 1998 constants were fitted on, FreeSolv validation pending (#558) |
+| COSMO-RS / COSMOSPACE thermodynamics | `run_job(..., cosmors=CosmoRSOptions(solvent="water"))` or `CosmoRSOptions(sigma_potential=...)`; `vibeqc.solvation.cosmors` on a `vibeqc.solvation.surface.ConductorSurface` | rhf / uhf / rks / uks solutes as ideal conductors on the COSMO FINE cavity | **experimental** (v0.15.158; job route v0.17.14) | sigma profiles and potentials, chemical potentials, activity and partition coefficients, solvation free energies (Klamt 1995; Klamt, Jonas, Bürger, Lohrenz 1998; `klamt1998` set); solvents by name from a library of gas-phase BPW91/def2-SVP geometries, computed at the solute's protocol and cached per user; ring atoms perceived on request (`n_ring_atoms="auto"`); the shipped cavity differs from the one the 1998 constants were fitted on, validated on pure-liquid vapour pressures only, FreeSolv validation pending |
+| Direct COSMO-RS | `SolventModel(variant="dcosmo-rs", sigma_potential=...)` | RHF / UHF / RKS / UKS | **experimental** | the solvent's sigma potential fed back into the SCF (Sinnecker et al. 2006) on the COSMO FINE cavity at `epsilon=inf`; analytic nuclear gradient and geometry optimization with a smoothed hydrogen-bond term (`Parameterization.hb_smoothing > 0`), refused with the published corner |
 | Solvent with correlated, CAS, semiempirical (except MSINDO) or MLIP methods | `solvent=` | mp2 / cc / dlpno / cas / gfn2_xtb / pm6 / mace, … | **gated** (refuses with `ValueError`) | no validated post-SCF-in-solvent composition yet; ROHF / ROKS raise `NotImplementedError` |
 
 ## Input / output
@@ -470,6 +527,7 @@ See [`user_guide/solvation.md`](user_guide/solvation.md).
 | Capability | API | Notes |
 |------------|-----|-------|
 | High-level "run-a-job" driver | `run_job` / `run_periodic_job` | dispatches to right SCF driver, writes .out + .molden, runs BFGS if asked |
+| QCSchema interchange | `run_qcschema`, `read_qcschema`, `write_qcschema`, `molecule_from_qcschema`, `molecule_to_qcschema` | MolSSI QCSchema molecular input and atomic-result JSON; see [QCSchema](qcschema.md) |
 | MPI substrate (v0.12.0) | `pip install -e '.[mpi]'` | optional `mpi4py` extra; low-level collectives plus experimental GPW grid overlay. Production MPI strategy is tracked in [MPI Parallelization](design_mpi_parallelization.md) |
 | Formatted SCF log | `format_scf_trace`, `log_scf_trace` | banner, iteration trace, energy components, orbital table, HOMO-LUMO gap |
 | Molden export | `write_molden` | verified by PySCF round-trip |
@@ -477,20 +535,20 @@ See [`user_guide/solvation.md`](user_guide/solvation.md).
 | Geometry trajectory | `run_job(..., optimize=True)` | ASE .traj file |
 | XYZ / Extended-XYZ load | `Molecule.from_xyz` / `from_xyz` | molecular XYZ by default; `periodic=True` reads Extended-XYZ `Lattice` / `pbc` into `PeriodicSystem`; `symmetrise=True` returns `SymmetriseResult` |
 | POSCAR load / save | `read_poscar`, `write_poscar` | VASP 5 format |
-| CIF load / save | `read_cif`, `Crystal.from_cif`, `write_cif` | cell parameters + atom-site loops; symmetry operations expand asymmetric-unit sites |
-| Cube load / save | `read_cube`, `write_cube` | volumetric data |
+| CIF load / save | `read_cif`, `Crystal.from_cif`; writing goes through `vibeqc.output` (`vibeqc.output.formats.cif.write_cif`, reached by the `geometry` output role) | cell parameters + atom-site loops; symmetry operations expand asymmetric-unit sites |
+| Cube save | `write_cube_density`, `write_cube_mo`, `write_cube_mos` (periodic siblings with a `_periodic` suffix) | volumetric data, write only; there is no cube reader |
 | BXSF (band structure) | `write_bxsf` | XCrySDen 3D Fermi-surface format |
 
 ## Basis sets
 
 * **255 bundled Gaussian `.g94` basis files** in the runtime
-  `basis/` library: 90 libint-inherited standard files plus 165
-  vibe-qc custom / BSE-derived overlay files, with matching
-  QVF-Basis sidecars for every set.
-* **Custom and BSE-derived sets** in
-  `python/vibeqc/basis_library/custom/`: pob-TZVP,
-  pob-DZVP-rev2, pob-TZVP-rev2 (Bredow-group periodic-tuned),
-  plus the BSE-sourced and release-paper reproduction bases.
+  library: 255 QVF-Basis records under `basis_library/qvf/`, the source
+  of truth, rendered into the `.g94` / `.ecp` text libint and libecpint
+  read; 93 vendor records (libint's bundle and the pob sets) and 162 Basis
+  Set Exchange records, each with provenance and citation routes.
+* **vibe-qc's own sets**: pob-TZVP, pob-DZVP-rev2, pob-TZVP-rev2
+  (Bredow-group periodic-tuned), plus the release-paper reproduction
+  basis `6-311+g3df2p`.
 * **CRYSTAL-format parser**, imports arbitrary CRYSTAL
   per-element basis files; converts to libint-compatible
   `.g94`. CRYSTAL `INPUT` ECP-block parsing is available for
@@ -501,6 +559,17 @@ See [`user_guide/solvation.md`](user_guide/solvation.md).
   exponents and coefficients against a molecular energy via the
   analytic-gradient BDIIS recipe (`optimize_molecular_basis`); see
   [`user_guide/basis_optimization.md`](user_guide/basis_optimization.md).
+* **On-demand Basis Set Exchange rendering** (v0.17.1),
+  `vibeqc.basis_fetch.fetch_basis_from_bse` renders a BSE record the
+  bundled library does not carry into a per-user cache as `.g94` plus an
+  `.ecp` sidecar, with a provenance file beside it. Opt-in only:
+  `run_job(fetch_from_bse=True)` or `$VIBEQC_FETCH_BSE`, and **molecular
+  `run_job` only**, `run_periodic_job` is not wired to it. Needs the
+  optional `[bse]` extra (the catalogue ships as package data, so a lookup
+  is a local read and works offline; what you get is pinned by the package
+  version, recorded in every provenance file). A bundled name is a no-op,
+  and a bundled basis merely missing one of the molecule's elements stays a
+  coverage refusal rather than being patched from BSE.
 * **Basis inventory and attribution** documented in
   [`docs/license.md`](license.md#3a-bundled-basis-sets), including
   the libint-inherited files, the Bredow-group pob-\* bases, and
@@ -540,8 +609,8 @@ See [`user_guide/solvation.md`](user_guide/solvation.md).
 | CPHF + polarizability vs PySCF FD | 11 | 1e-5 a.u. |
 | Periodic machinery (invariants, molecular limit, Bloch folding) | 76 | machine precision |
 | Periodic SCF convergence aids | 27 | per-test scoped |
-| **Periodic native GDF/FFTDF parity** | planned | compare parsed out-of-process CRYSTAL and PySCF outputs |
-| **Multi-k KRHF/KRKS native parity** | planned | no in-process PySCF backend |
+| **Periodic native GDF parity** (Γ and multi-k, v0.11.0) | LiH FCC, MgO | µHa vs out-of-process PySCF (MgO/STO-3G Γ RHF: ΔE = -6.8e-12 Ha); CRYSTAL comparisons out of process |
+| **Multi-k KRHF/KRKS native parity** (v0.11.0) | LiH FCC | µHa vs out-of-process PySCF; no in-process PySCF backend |
 | **JKBuilder + RIJCOSX vs ORCA 6.1.1** (v0.8.0) | curated | RIJCOSX SCF energy max \|Δ\| = 0.26 mHa on glycine def2-TZVP (energy only; gradient parity tracked separately, see § Density fitting + RIJCOSX) |
 | **vqfetch acceptance harness** (v0.8.0) | 5 structures + 8 molecules | round-trip end-to-end |
 | Crystal / POSCAR / basis parsing | 18 | - |
@@ -560,17 +629,25 @@ output stacks; runs in ~3-4 minutes on an M-class MacBook
 
 ## Known issues
 
-See the warning admonition on [`docs/index.md`](index.md) for
-the live open-bugs list. Highlights:
+See [troubleshooting](troubleshooting.md) and the
+[issue tracker](https://github.com/vibe-qc/vibe-qc/issues) for the live
+open-bugs list. Highlights:
 
 * DFTB0 and SECCM-DFTB0 absolute energies are not chemistry while the
-  repulsive term is an A/R¹² placeholder (issue #306, open); the
+  repulsive term is an A/R¹² placeholder (issue #306 on the archived
+  monorepo tracker, which is where the code comments cite it); the
   semiempirical matrix above therefore labels DFTB0 and SCC-DFTB
   screening/preoptimization rather than production. Fixed-geometry
   differences stay valid, absolute energies and EOS fits do not.
-  Periodic GFN2-xTB analytic gradient and stress are not derivatives of
-  the periodic energy (issue #338, open), so the periodic analytic
-  stress is gated off.
+* Periodic Γ-point GFN2-xTB derivatives *are* derivatives of the periodic
+  energy. Since v0.16.0 the native gradient and all nine stress components
+  match gapped central differences, and no analytic stress is gated off;
+  `TestPeriodicStressGFN2` pins all nine components at `atol=2e-5`. Issue
+  #141 stays open for the independent wrong-answer check that a fix to a
+  wrong number needs, not for further implementation. What is still open for
+  the route is faithful periodic AES electrostatics, external `xtb` parity
+  and multi-k, which is why the matrix above keeps periodic GFN2
+  experimental.
 * Periodic GDF parity, Γ-only and multi-k µHa parity vs PySCF on LiH
   FCC shipped at v0.11.0 (*Sun's Stingray*). Mixed Density Fitting (MDF)
   shipped at v0.13.0, closing the all-electron GDF accuracy floor

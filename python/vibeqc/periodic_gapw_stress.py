@@ -1,20 +1,38 @@
-"""Analytic stress tensor for the GAPW / GPW periodic SCF path.
+"""Finite-difference stress tensor for the GAPW / GPW periodic SCF path.
 
 The stress tensor s_ab is the derivative of the total energy with
 respect to lattice strain e_ab:
 
     s_ab = (1/V) . dE / de_ab
 
-Following the Nielsen & Martin formalism (Phys. Rev. B 32, 3780 (1985)),
-we decompose into:
+Nothing here is an analytic derivative. Both
+:func:`compute_stress_gpw` and :func:`compute_stress_gapw` take that
+derivative numerically, by central differences of the energy over
+strain. There is no analytic GPW/GAPW stress in vibe-qc, and a route
+that needs a certified analytic stress (variable-cell optimization)
+still fails closed.
 
-1. **Hellmann-Feynman stress** -- finite-difference on the total energy
-   with respect to cell deformations at fixed atomic positions (in
-   fractional coordinates) and fixed density.
+What the finite difference covers
+---------------------------------
 
-2. **Pulay stress** -- from the basis-set dependence on the cell vectors
-   (the dchi/dh terms where h is the cell dimension). This is the
-   cell-response analogue of the Pulay force correction.
+In the Nielsen & Martin decomposition (Phys. Rev. B 32, 3780 (1985))
+the strain derivative splits into a Hellmann-Feynman piece and a Pulay
+piece from the basis-set dependence on the cell vectors (the dchi/dh
+terms, the cell-response analogue of the Pulay force correction). Both
+arrive together in the difference rather than as separate terms: each
+strained cell rebuilds the basis on its own lattice, so the basis-set
+response is inside the energies being differenced. There is no
+explicit dS/dh term and no energy-weighted density W in this module.
+Nielsen-Martin is cited as the formalism the difference realizes, not
+as an analytic implementation of it.
+
+What the finite difference does not cover
+-----------------------------------------
+
+The density is held fixed at the converged reference density; the SCF
+is not re-solved at each strain. The result is therefore the
+fixed-density strain derivative, which equals the full derivative only
+to the extent the density response is negligible over ``eps``.
 
 For GPW / GAPW, the same gauge-consistency argument applies as for the
 gradient: all Ewald / FFT-Poisson pieces must be deformed together to
@@ -23,11 +41,11 @@ preserve the gauge cancellation.
 Implementation
 --------------
 
-The Hellmann-Feynman piece is computed via central-difference on the
-full GAPW energy at fixed fractional coordinates and fixed density,
-applying a small strain d to each independent component of the lattice
-matrix. The Pulay stress uses the energy-weighted density W and the
-cell-response of the overlap matrix (dS/dh).
+For each independent component of the symmetric strain tensor, apply a
+small strain d of each sign to the lattice, hold the atoms at fixed
+fractional coordinates, rebuild the basis on the strained cell, and
+evaluate the full GPW or GAPW energy at the fixed reference density.
+:func:`_stress_fd` documents the component-wise difference formulas.
 
 Returns
 -------

@@ -10,22 +10,26 @@ Systems:
   - Au fcc (Z=79, 4-atom conventional cell, ecp60mdf)
   - W bcc  (Z=74, 2-atom conventional cell, ecp60mdf)
 
-Validation procedure (to be run after this code compiles):
-  1. Compute each system with vibe-qc at PBE/pob-TZVP-REV2 + ECP.
-  2. Run the same system with PySCF.pbc at PBE/pob-TZVP-REV2 + ECP
-     (using the subprocess-runner pattern at examples/regression/core/runner_pyscf.py).
+Validation procedure:
+  1. Compute the system with vibe-qc at PBE/pob-TZVP-REV2 + ECP **on the GDF
+     route** — ``run_krks_periodic_gdf``, which is where the periodic ECP
+     operator landed (vibeqc#88) and the route vibe-qc#31 is about.
+  2. Run the same system with PySCF.pbc out of process
+     (``examples/regression/periodic_ecp_metal_reference.py``, CLAUDE.md §10).
   3. Check |E_vibe - E_pyscf| / n_atoms ≤ 1e-3 Ha.
   4. Pin the PySCF value as the inline reference.
 
-The reference values below are PLACEHOLDERS — they MUST be updated once the
-PySCF cross-validation is complete.  Replace each ``_PYSCF_REF_*`` constant
-with the PySCF total energy and flip the corresponding ``@pytest.mark.skip``
-to activate the parity check.
+W bcc is pinned. Ag fcc and Au fcc are not: see the skip reasons below.
+The archived reference and the full statement of which convention was
+matched to what live in ``tests/data/periodic_gdf/w_bcc_ecp_reference.json``
+and that directory's README.
 """
 
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -109,24 +113,63 @@ def _build_w_bcc() -> vq.PeriodicSystem:
 
 
 # =========================================================================
-# PySCF reference energies (PLACEHOLDERS — fill in after cross-validation)
+# PySCF reference energies
 #
-#   E_vibe   → total energy from vibe-qc PBE/pob-TZVP-REV2 + ECP
+#   E_vibe   → total energy from vibe-qc PBE/pob-TZVP-REV2 + ECP, GDF route
 #   E_pyscf  → total energy from PySCF.pbc PBE/pob-TZVP-REV2 + ECP
 #   ΔE/atom  → |E_vibe - E_pyscf| / n_atoms_cell
 #
 # The target is ΔE/atom ≤ 1e-3 Ha (1 mHa).
+#
+# Both sides must be the *same* physical calculation, and three of the
+# conventions involved differ by default between the two codes:
+#
+#   * sampling — the multi-k GDF drivers resolve a tuple ``kmesh`` with a
+#     zero shift, i.e. Γ-centred, which is PySCF ``make_kpts``'s convention.
+#     ``KPoints.monkhorst_pack``'s classical default half-shifts every even
+#     axis instead; kpoints.py records the two being ~44 mHa apart at
+#     (2,2,2), so ``_run_pbe_ecp`` passes the mesh as a plain tuple and the
+#     test asserts the resulting k-points against the archived list.
+#   * the ECP operator — PySCF's own ``def2-*`` library records for these
+#     elements are a *different* published Stuttgart/Cologne parameter set
+#     from the ones pob-TZVP-rev2 carries, so the reference is generated
+#     from this repository's own ``.ecp`` sidecar.
+#   * the energy — vibe-qc's ``result.energy`` is the plain SCF total energy
+#     with ``result.free_energy = E - T·S`` kept separately, and PySCF's
+#     ``e_tot``/``e_free`` split the same way. The pin is ``e_tot``.
+#
+# tests/data/periodic_gdf/README.md states the rest (fit, thresholds,
+# quadrature) and how to regenerate.
 # =========================================================================
 
-# Placeholder — fill in after PySCF cross-validation.
-# PySCF energy for Ag fcc, PBE/pob-TZVP-REV2, ECP (ecp28mdf), 4-atom cell.
-_PYSCF_REF_AG_FCC = None  # TODO: run runner_pyscf.py and pin the value here
+_ECP_REFERENCE_DIR = Path(__file__).parent / "data/periodic_gdf"
 
-# PySCF energy for Au fcc, PBE/pob-TZVP-REV2, ECP (ecp60mdf), 4-atom cell.
+
+def _w_bcc_reference(label: str) -> dict:
+    """One archived PySCF.pbc W-bcc run, by sampling label."""
+    record = json.loads((_ECP_REFERENCE_DIR / "w_bcc_ecp_reference.json").read_text())
+    for run in record["runs"]:
+        if run["label"] == label:
+            assert run["converged"], f"archived {label} run did not converge"
+            return run
+    raise KeyError(f"no {label!r} run in w_bcc_ecp_reference.json")
+
+
+# Ag fcc and Au fcc are 4-atom cells: 140 AOs and ~1800 def2-tzvp-jk
+# auxiliary functions against W bcc's 70 and 454. The RSGDF fit alone took
+# 14 minutes and 1.08 GB for W bcc at 2×2×2 on the development machine, and
+# it grows roughly as naux²·nao², so these two are two to three orders of
+# magnitude more expensive. They are left unpinned rather than guessed;
+# examples/regression/periodic_ecp_metal_reference.py already builds both
+# (`--system ag-fcc` / `--system au-fcc`) for whoever has the machine time.
+_PYSCF_REF_AG_FCC = None
 _PYSCF_REF_AU_FCC = None
 
-# PySCF energy for W bcc, PBE/pob-TZVP-REV2, ECP (ecp60mdf), 2-atom cell.
-_PYSCF_REF_W_BCC = None
+# PySCF 2.14.0, W bcc, PBE/pob-TZVP-REV2 + ECP (60-electron core, Z_eff=14),
+# 2-atom conventional cell, Γ, Fermi kT = 0.005 Ha, RSGDF ω = 0.4.
+# Archived with its full provenance in
+# tests/data/periodic_gdf/w_bcc_ecp_reference.{json,system}.
+_PYSCF_REF_W_BCC = -135.21491246495432
 
 
 # =========================================================================
@@ -137,15 +180,24 @@ _PYSCF_REF_W_BCC = None
 def _run_pbe_ecp(system, kmesh=(2, 2, 2)):
     """Run PBE / pob-TZVP-REV2 on a periodic system with ECP auto-attach.
 
-    Uses a small k-mesh for speed — the ECP path is independent of
-    k-point density, so a 2×2×2 mesh is sufficient to exercise the
-    full lattice-summed V_ECP code path.
+    Dispatches to ``run_krks_periodic_gdf`` — the k-point GDF driver that
+    consumes the inline ECP primitives (vibeqc#88), and the route
+    vibe-qc#31 asks for a cross-code pin on. ``vq.run_rks_periodic``, which
+    this helper used to call, is the DIRECT_TRUNCATED multi-k driver; it
+    honours the ECP fields too, so it was not wrong, but a reference pinned
+    against it would have left the GDF route exactly as unchecked as before.
+
+    ``kmesh`` is handed over as a **plain tuple** on purpose. The multi-k GDF
+    drivers resolve a tuple through ``_mp_native(system, mesh, [0, 0, 0],
+    False)`` — a zero shift, i.e. the Γ-centred sampling PySCF's
+    ``cell.make_kpts`` produces by default. Building a
+    ``KPoints.monkhorst_pack`` object instead would take the *classical* MP
+    convention, half-shifting every even axis onto a different set of
+    k-points; kpoints.py measures the two ~44 mHa apart on MgO/STO-3G at
+    (2,2,2), which is three orders of magnitude outside this file's target.
     """
     basis = vq.BasisSet(system.unit_cell_molecule(), "pob-tzvp-rev2")
 
-    from vibeqc.kpoints import KPoints
-
-    kp = KPoints.monkhorst_pack(system, kmesh)
     opts = vq.PeriodicKSOptions()
     opts.functional = "pbe"
     opts.max_iter = 120
@@ -153,32 +205,33 @@ def _run_pbe_ecp(system, kmesh=(2, 2, 2)):
     opts.smearing_temperature = 0.005  # metals need smearing
     opts.use_diis = True
 
-    # Attach ECP data from pob-TZVP-REV2 inline CRYSTAL ECP blocks.
-    from vibeqc.basis_crystal import (
-        build_periodic_ecp_data,
-        fetch_bredow_basis_sets,
-    )
+    # Attach ECP data from pob-TZVP-REV2 inline CRYSTAL ECP blocks. The
+    # bundled records are what run_periodic_job resolves first; reading them
+    # keeps the test offline and out of the package tree (#393).
+    from vibeqc.basis_crystal import build_periodic_ecp_data
+    from vibeqc.periodic_runner import _bundled_pob_source_atoms
 
-    _, atoms_dict = fetch_bredow_basis_sets(
-        names=["pob-tzvp-rev2"], verbose=False, return_atoms=True
+    atom_list = _bundled_pob_source_atoms("pob-tzvp-rev2")
+    assert atom_list, "pob-tzvp-rev2 resolved no atoms; the ECP would be dropped"
+    ecp_blocks, ecp_centers, eff_z, total_ncore = build_periodic_ecp_data(
+        system, atom_list
     )
-    atom_list = atoms_dict.get("pob-tzvp-rev2", [])
-    if atom_list:
-        ecp_blocks, ecp_centers, eff_z, total_ncore = build_periodic_ecp_data(
-            system, atom_list
-        )
-        if ecp_blocks:
-            opts.ecp_primitive_blocks = ecp_blocks
-            opts.ecp_home_centers = ecp_centers
-            opts.ecp_effective_charges = eff_z
-            opts.ecp_total_ncore = total_ncore
+    assert ecp_blocks, "no ECP blocks resolved; this would run all-electron"
+    opts.ecp_primitive_blocks = ecp_blocks
+    opts.ecp_home_centers = ecp_centers
+    opts.ecp_effective_charges = eff_z
+    opts.ecp_total_ncore = total_ncore
 
-    result = vq.run_rks_periodic(system, basis, kp.to_bloch_kmesh(), opts)
+    from vibeqc.periodic_k_gdf import run_krks_periodic_gdf
+
+    result = run_krks_periodic_gdf(
+        system, basis, tuple(int(n) for n in kmesh), opts, functional="pbe"
+    )
 
     # Sanity: total energy should be strongly negative for all three metals.
     # For Ag fcc (4 atoms), E_total ~ -585 Ha at PBE/ECP (approx).
     # For Au fcc (4 atoms), E_total ~ -540 Ha at PBE/ECP (approx).
-    # For W bcc (2 atoms), E_total ~ -120 Ha at PBE/ECP (approx).
+    # For W bcc (2 atoms), E_total ~ -135 Ha at PBE/ECP (PySCF.pbc, pinned).
     assert result.energy < -10, (
         f"Implausible total energy {result.energy:.6f} Ha — "
         "ECP wiring may be broken (double-counting core electrons?)"
@@ -455,7 +508,11 @@ def test_pob_tzvp_rev2_ecp_atoms_fail_closed_when_fetch_unavailable(monkeypatch)
 
 
 @pytest.mark.slow
-@pytest.mark.skip(reason="needs PySCF reference value (see _PYSCF_REF_AG_FCC)")
+@pytest.mark.skip(
+    reason="no PySCF.pbc reference generated yet (see _PYSCF_REF_AG_FCC): the "
+    "4-atom cell's RSGDF fit is orders of magnitude beyond W bcc's. Generate "
+    "with examples/regression/periodic_ecp_metal_reference.py --system ag-fcc"
+)
 def test_periodic_ecp_ag_fcc_pbe():
     """Ag fcc PBE/pob-TZVP-REV2 ECP: parity with PySCF.pbc ≤ 1 mHa/atom.
 
@@ -478,7 +535,11 @@ def test_periodic_ecp_ag_fcc_pbe():
 
 
 @pytest.mark.slow
-@pytest.mark.skip(reason="needs PySCF reference value (see _PYSCF_REF_AU_FCC)")
+@pytest.mark.skip(
+    reason="no PySCF.pbc reference generated yet (see _PYSCF_REF_AU_FCC): the "
+    "4-atom cell's RSGDF fit is orders of magnitude beyond W bcc's. Generate "
+    "with examples/regression/periodic_ecp_metal_reference.py --system au-fcc"
+)
 def test_periodic_ecp_au_fcc_pbe():
     """Au fcc PBE/pob-TZVP-REV2 ECP: parity with PySCF.pbc ≤ 1 mHa/atom.
 
@@ -498,8 +559,169 @@ def test_periodic_ecp_au_fcc_pbe():
     )
 
 
+def _resolve_pob_ecp(system, elements=None):
+    """Resolve pob-TZVP-REV2 ECP primitive blocks/centres for ``system``.
+
+    Mirrors the resolution ``_run_pbe_ecp`` performs before attaching ECP
+    data to ``PeriodicKSOptions``, exposed standalone so a test can call
+    ``compute_ecp_lattice_from_primitives`` directly without running an SCF.
+    """
+    from vibeqc.basis_crystal import build_periodic_ecp_data
+    from vibeqc.periodic_runner import _bundled_pob_source_atoms
+
+    atom_list = _bundled_pob_source_atoms("pob-tzvp-rev2")
+    assert atom_list, "pob-tzvp-rev2 resolved no atoms; the ECP would be dropped"
+    if elements is not None:
+        atom_list = [atom for atom in atom_list if int(atom.Z) in elements]
+    ecp_blocks, ecp_centers, eff_z, total_ncore = build_periodic_ecp_data(
+        system, atom_list
+    )
+    assert ecp_blocks, "no ECP blocks resolved; this would run all-electron"
+    return ecp_blocks, ecp_centers
+
+
+@pytest.mark.parametrize("Z", [72, 73, 74], ids=["Hf", "Ta", "W"])
+def test_periodic_ecp_n4_radial_power_is_deterministic(Z):
+    """compute_ecp_lattice_from_primitives is bit-identical across repeats.
+
+    Hf, Ta and W are the only pob-TZVP-REV2 records carrying an ECP
+    primitive with Gaussian radial power n=4 (CRYSTAL NKL=2; every other
+    record only ever uses n=2). libecpint stores u.n = n - 2, and its
+    generated type2(triples, nbase, ...) reads values[N + u.n + l2] from a
+    scratch buffer sized nbase + 2, with nbase fixed at code-generation time
+    from angular momentum alone. u.n = 2 read past that buffer: a silent
+    heap over-read on the analytic branch, not the quadrature fallback that
+    prints "Quadrature failed". Ten single-threaded calls on this cell gave
+    nine distinct matrices with |max| between 6e+148 and 1e+150 Ha
+    (vibe-qc #358).
+
+    build_libecpint.sh's nbase patch sizes the buffer from the triples and
+    u.n, so this asserts the previously flaky quantity is exactly
+    reproducible. The W bcc lattice is reused for Hf and Ta: only the
+    element (and therefore its ECP primitives) varies, and the geometry is a
+    fixed probe, not a physical Hf or Ta structure. Determinism is not
+    correctness; the molecular dimer test below checks the values.
+    """
+    core = vq._vibeqc_core
+    system = _build_w_bcc()
+    system.unit_cell = [vq.Atom(Z, atom.xyz) for atom in system.unit_cell]
+    basis = vq.BasisSet(system.unit_cell_molecule(), "pob-tzvp-rev2")
+    ecp_blocks, ecp_centers = _resolve_pob_ecp(system, elements={Z})
+
+    options = vq.LatticeSumOptions()
+    options.cutoff_bohr = options.nuclear_cutoff_bohr = 8.0
+
+    previous_threads = vq.get_num_threads()
+    vq.set_num_threads(1)
+    try:
+        results = [
+            core.compute_ecp_lattice_from_primitives(
+                basis, system, options, ecp_centers, ecp_blocks
+            )
+            for _ in range(5)
+        ]
+    finally:
+        vq.set_num_threads(previous_threads)
+
+    first_blocks = [np.asarray(block) for block in results[0].blocks]
+    assert len(results[0].cells) >= 2, "probe cutoff resolved too few image cells"
+    max_abs = max(np.max(np.abs(block)) for block in first_blocks)
+    # A physical ECP matrix element on this cell is O(1e2) Ha (Ag/Au/Rb/W
+    # controls measured for #358); the corrupted operator overflowed to
+    # 1e148-1e150. 1e6 comfortably separates "sane" from "corrupt" without
+    # pinning the exact physical magnitude here.
+    assert max_abs < 1e6, f"|V_ECP| max = {max_abs:.6e} Ha is not a sane operator"
+    for repeat, result in enumerate(results[1:], start=2):
+        for cell_index, (expected, block) in enumerate(zip(first_blocks, result.blocks)):
+            np.testing.assert_array_equal(
+                np.asarray(block), expected,
+                err_msg=f"Z={Z}: call {repeat} cell {cell_index} differs from call 1",
+            )
+
+
+@pytest.mark.parametrize(
+    "Z, symbol", [(72, "Hf"), (73, "Ta"), (74, "W"), (47, "Ag")],
+    ids=["Hf2", "Ta2", "W2", "Ag2-control"],
+)
+def test_pob_ecp_dimer_matches_pyscf_ecpscalar(Z, symbol):
+    """The n=4 ECP operator agrees with PySCF's ECPscalar on a dimer.
+
+    vibe-qc #358 in its molecular form: compute_ecp_matrix_from_primitives
+    on W2 at the bcc nearest-neighbour distance returned 20 distinct
+    matrices in 20 single-threaded calls with |max| ~ 3.6e+194 Ha once the
+    lattice route was already stable, because the first nbase patch
+    budgeted N + u.n and missed the + l2 term of the generated switch.
+
+    The two sides share only the pob-TZVP-rev2 orbital basis. vibe-qc takes
+    the ECP from the CRYSTAL source through crystal_ecp_to_libecpint_arrays,
+    as build_periodic_ecp_data does; PySCF takes the bundled Gaussian
+    sidecar through the reference generator's converter and evaluates it
+    with its own libcint ECP code. The generalized eigenvalues of (V, S)
+    are compared, which does not depend on AO order or normalisation. Both
+    builds agreed to 4e-12 Ha when this was written; Ag (n=2 only) is the
+    control that the comparison itself is sound.
+    """
+    import importlib.util
+
+    import scipy.linalg
+
+    pyscf = pytest.importorskip("pyscf")
+    from pyscf.gto.basis import parse_gaussian
+
+    from vibeqc.basis_crystal import crystal_ecp_to_libecpint_arrays
+    from vibeqc.periodic_runner import _bundled_pob_source_atoms
+
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "periodic_ecp_metal_reference",
+        root / "examples/regression/periodic_ecp_metal_reference.py",
+    )
+    reference = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reference)
+
+    d = 5.222234  # W bcc nearest-neighbour distance, bohr
+    mol = vq.Molecule([vq.Atom(Z, [0.0, 0.0, 0.0]), vq.Atom(Z, [0.0, 0.0, d])])
+    basis = vq.BasisSet(mol, "pob-tzvp-rev2")
+    record = next(
+        atom for atom in _bundled_pob_source_atoms("pob-tzvp-rev2") if int(atom.Z) == Z
+    )
+    arrays = crystal_ecp_to_libecpint_arrays(record.ecp)
+    assert (4 in arrays.ns) == (Z != 47), "the n=4 records are Hf, Ta and W"
+    blocks = []
+    for _ in range(2):
+        block = vq._vibeqc_core.ECPPrimitiveBlock()
+        block.n_primitive = arrays.n_primitives
+        block.exponents = list(arrays.exponents)
+        block.coefficients = list(arrays.coefficients)
+        block.ams = list(arrays.ams)
+        block.ns = list(arrays.ns)
+        blocks.append(block)
+    V = np.asarray(
+        vq.compute_ecp_matrix_from_primitives(basis, [0.0, 0.0, 0.0, 0.0, 0.0, d], blocks)
+    )
+    S = np.asarray(vq.compute_overlap(basis))
+
+    library = root / "python/vibeqc/basis_library/basis"
+    ref_mol = pyscf.gto.M(
+        atom=[(symbol, (0.0, 0.0, 0.0)), (symbol, (0.0, 0.0, d))],
+        basis={symbol: parse_gaussian.load(
+            str(library / "pob-tzvp-rev2.g94"), symbol, optimize=False)},
+        ecp={symbol: pyscf.gto.basis.parse_ecp(
+            reference._sidecar_nwchem(library / "pob-tzvp-rev2.ecp", symbol))},
+        unit="Bohr", verbose=0,
+    )
+    assert ref_mol.nao == basis.nbasis
+    expected = scipy.linalg.eigh(
+        ref_mol.intor("ECPscalar"), ref_mol.intor("int1e_ovlp"), eigvals_only=True
+    )
+    actual = scipy.linalg.eigh(V, S, eigvals_only=True)
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1e-8)
+
+
 @pytest.mark.slow
-@pytest.mark.skip(reason="needs PySCF reference value (see _PYSCF_REF_W_BCC)")
+@pytest.mark.periodic
+@pytest.mark.gdf
+@pytest.mark.external_reference
 def test_periodic_ecp_w_bcc_pbe():
     """W bcc PBE/pob-TZVP-REV2 ECP: parity with PySCF.pbc ≤ 1 mHa/atom.
 
@@ -507,14 +729,42 @@ def test_periodic_ecp_w_bcc_pbe():
     14 valence electrons per atom.  2-atom conventional cell → 28 valence
     electrons (14 occupied).
 
-    Reference: runner_pyscf.py PBE/pob-TZVP-REV2 + ECP.
+    The cross-code pin vibe-qc#31 asks for: the first periodic **ECP**
+    energy this project holds against an independent program. Everything the
+    other periodic-ECP tests prove is self-consistent with vibe-qc's own
+    conventions, so an error shared between the energy expression and the
+    test would survive them.
+
+    Γ, not the helper's default 2×2×2. One k-point is enough to exercise the
+    full lattice-summed V_ECP operator — the ECP is a one-electron operator
+    built on the real-space image list, and the image list does not depend on
+    the k-mesh — and it removes the sampling convention from the comparison
+    entirely, since Γ is Γ under either Monkhorst-Pack shift. The archived
+    reference also carries the 2×2×2 Γ-centred run for anyone who wants the
+    multi-k comparison as well.
+
+    Reference: examples/regression/periodic_ecp_metal_reference.py, archived
+    at tests/data/periodic_gdf/w_bcc_ecp_reference.{json,system}.
     """
+    reference = _w_bcc_reference("gamma")
+    assert reference["energy"] == _PYSCF_REF_W_BCC, (
+        "the pinned constant and the archived reference disagree; "
+        "one of them was edited without the other"
+    )
+    # The reference's own frame, re-asserted here so a regenerated artefact
+    # cannot silently change what is being compared.
+    assert reference["n_atoms"] == 2 and reference["n_electrons"] == 28
+    assert reference["sigma"] == 0.005
+    assert reference["kpoints_fractional"] == [[0.0, 0.0, 0.0]]
+
     system = _build_w_bcc()
-    result = _run_pbe_ecp(system)
-    assert abs(result.energy - _PYSCF_REF_W_BCC) / 2 < 1e-3, (
+    result = _run_pbe_ecp(system, kmesh=(1, 1, 1))
+
+    deviation = abs(result.energy - _PYSCF_REF_W_BCC) / 2
+    assert deviation < 1e-3, (
         f"W bcc ECP energy {result.energy:.8f} Ha deviates from PySCF "
         f"{_PYSCF_REF_W_BCC:.8f} by "
-        f"{abs(result.energy - _PYSCF_REF_W_BCC) / 2:.6f} Ha/atom "
+        f"{deviation:.6f} Ha/atom "
         f"(limit 1e-3 Ha/atom)"
     )
 
@@ -541,11 +791,13 @@ def test_run_periodic_job_refuses_ecp_active_cell_on_routes_that_drop_the_ecp(tm
             jk_method="bipole", smearing_temperature=0.005,
             output=tmp_path / "ag_refused", max_iter=2,
         )
+    # RIJCOSX applies the ECP since #35 (Gamma drivers and the k-GDF COSX
+    # backend); the external-XC GPW adapter still drops it and is refused.
     with pytest.raises(NotImplementedError, match=r"does not apply a periodic ECP"):
         run_periodic_job(
             system, basis, method="RKS", functional="pbe", kpoints=[1, 1, 1],
-            jk_method="rijcosx", smearing_temperature=0.005,
-            output=tmp_path / "ag_refused_rijcosx", max_iter=2,
+            jk_method="gpw", smearing_temperature=0.005,
+            output=tmp_path / "ag_refused_gpw", max_iter=2,
         )
 
 
@@ -751,6 +1003,147 @@ def test_legacy_property_rebuild_stays_disabled_for_ecp_cells():
     )
 
 
+def test_an_ecp_cell_never_reaches_the_bare_z_property_rebuild(tmp_path):
+    """The generic QVF band-property rebuild assembles a bare-Z operator, so an
+    ECP cell has no DOS from it on any route.
+
+    vibe-qc#32 reads as if ECP cells ship a QVF without DOS/PDOS/COOP/COHP
+    because this gate returns ``False``. Until #35 that state was
+    unreachable: ``_periodic_route_applies_ecp`` admitted an ECP cell on the
+    GDF route only, where the accepted-state adapter serves the payload and
+    the gate is never consulted. Since #35 the Gamma RIJCOSX drivers apply
+    the ECP too, so ``run_periodic_job`` does reach the ``resolved_jk !=
+    GDF`` property branch with ``ecp_active=True``. The decision pinned here:
+    the gate withholds the bare-Z rebuild with the ECP reason, and the run
+    records the omission in its ``.system`` manifest instead of writing a
+    COHP of an operator the SCF never solved.
+    """
+    import tomllib
+
+    from vibeqc.periodic_runner import (
+        PeriodicJKMethod,
+        _periodic_route_applies_ecp,
+        _qvf_periodic_property_payload_skip_reason,
+        _qvf_periodic_property_payload_supported,
+        run_periodic_job,
+    )
+
+    system = _build_nacl_rocksalt()
+    methods = ("RHF", "RKS", "UHF", "UKS", "ROHF", "ROKS")
+    reachable_with_ecp = {
+        (jk, method)
+        for jk in PeriodicJKMethod
+        for method in methods
+        if _periodic_route_applies_ecp(jk, method, system)
+    }
+    assert reachable_with_ecp == {
+        (PeriodicJKMethod.GDF, m) for m in ("RHF", "RKS", "UHF", "UKS", "ROHF")
+    } | {
+        (PeriodicJKMethod.RIJCOSX, m) for m in ("RHF", "RKS", "UHF", "UKS")
+    }, (
+        "a route newly applies a periodic ECP; decide what the bare-Z "
+        "property rebuild must do there before admitting it"
+    )
+    for jk, _method in reachable_with_ecp:
+        # The gate never admits the bare-Z rebuild on an ECP cell, and names
+        # the operator mismatch for the manifest.
+        assert not _qvf_periodic_property_payload_supported(jk, ecp_active=True)
+        assert "V_ECP" in (
+            _qvf_periodic_property_payload_skip_reason(jk, ecp_active=True) or ""
+        )
+
+    # ...and a Gamma RIJCOSX run on an ECP cell records the omission.
+    box, basis, _data = _lanl2dz_molecule_in_box((11, 17), 2.36)
+    stem = tmp_path / "rijcosx_ecp_no_property_payload"
+    result = run_periodic_job(
+        box, basis, method="RKS", functional="pbe", kpoints=[1, 1, 1],
+        jk_method="rijcosx", aux_basis="def2-svp-jk", output=stem,
+        output_qvf=True, citations=False, progress=False,
+    )
+    assert result.converged
+    assert -15.5 < float(result.energy) < -14.5  # valence-only scale
+    run = tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))["run"]
+    assert run["property_hamiltonian"].startswith("omitted ("), run["property_hamiltonian"]
+    assert "V_ECP" in run["property_hamiltonian"], run["property_hamiltonian"]
+
+
+def test_an_omitted_qvf_property_payload_records_why(tmp_path):
+    """A gated-off property payload must say so, not vanish silently.
+
+    ``property_hamiltonian`` reaches the ``.system`` manifest only from the
+    GDF success branch, so a run whose payload was withheld by
+    ``_qvf_periodic_property_payload_supported`` wrote nothing at all: two
+    runs of the same cell, one with DOS in its QVF and one without, and no
+    field anywhere naming the difference. That silence is the part of
+    vibe-qc#32 that is real: a reduced artifact must be stated, not silent.
+
+    BIPOLE is used as the representative gated route; the ECP branch of the
+    same gate is unreachable (see above).
+    """
+    import tomllib
+
+    from vibeqc.periodic_runner import (
+        PeriodicJKMethod,
+        _qvf_periodic_property_payload_skip_reason,
+        _qvf_periodic_property_payload_supported,
+        run_periodic_job,
+    )
+
+    # The reason is available to callers, and agrees with the boolean gate.
+    assert _qvf_periodic_property_payload_skip_reason(PeriodicJKMethod.GDF) is None
+    for jk, needle in (
+        (PeriodicJKMethod.BIPOLE, "BIPOLE"),
+        (PeriodicJKMethod.AICCM2026DEV_B, "AICCM2026DEV-B"),
+    ):
+        reason = _qvf_periodic_property_payload_skip_reason(jk)
+        assert reason and needle in reason, (jk, reason)
+        assert not _qvf_periodic_property_payload_supported(jk)
+    assert "external" in (
+        _qvf_periodic_property_payload_skip_reason(
+            PeriodicJKMethod.GDF, uses_external_xc=True
+        )
+        or ""
+    )
+    assert "ECP" in (
+        _qvf_periodic_property_payload_skip_reason(
+            PeriodicJKMethod.GDF, ecp_active=True
+        )
+        or ""
+    )
+
+    # ...and a real run that hits the gate records the reason it hit.
+    box = 12.0
+    c = box / 2
+    system = vq.PeriodicSystem(
+        3,
+        np.eye(3) * box,
+        [vq.Atom(1, [c, c, c - 0.7]), vq.Atom(1, [c, c, c + 0.7])],
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    stem = tmp_path / "bipole_no_property_payload"
+    result = run_periodic_job(
+        system,
+        basis,
+        method="RHF",
+        jk_method="bipole",
+        bipole_cutoff_bohr=15.0,
+        bipole_nuclear_cutoff_bohr=15.0,
+        output=stem,
+        output_qvf=True,
+        citations=False,
+        progress=False,
+    )
+    assert result.converged
+    run = tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))["run"]
+    assert "property_hamiltonian" in run, (
+        "the omitted DOS/PDOS/COOP/COHP payload left no trace in the manifest"
+    )
+    assert run["property_hamiltonian"].startswith("omitted ("), run[
+        "property_hamiltonian"
+    ]
+    assert "BIPOLE" in run["property_hamiltonian"]
+
+
 def _build_nacl_rocksalt():
     a = 5.64 * 1.8897261246257702
     lattice = np.array([[0.0, a / 2, a / 2], [a / 2, 0.0, a / 2], [a / 2, a / 2, 0.0]])
@@ -840,6 +1233,103 @@ def test_sidecar_ecp_basis_runs_on_the_periodic_gdf_route(
         fock = np.asarray(getattr(result, 'fock'+suffix)[0])
         expected.append(-np.sum(density.T[ab] * fock[ab]).real * _HARTREE_TO_EV)
     np.testing.assert_allclose(integrated, expected, atol=1e-10, rtol=0)
+
+
+def test_ecp_payload_one_electron_term_is_not_the_bare_z_build(tmp_path):
+    """vibe-qc#32 closure criterion (b), the half not already pinned above.
+
+    The producer case pins that an ECP cell's QVF carries
+    dos.total/projected/coop/cohp and that ``dos/cohp_integrated.bin`` is the
+    contraction of the *accepted* ECP density and Fock. This pins the other
+    half: that the accepted one-electron frame is nowhere near the bare-Z one
+    the legacy rebuild would have used, so the payload could not have come
+    from a bare-Z build and cannot be confused with one.
+
+    Both frames are built on the same Ewald-3D lattice options, so the
+    difference measured is the physics (Z_eff plus the lattice-summed V_ECP
+    against bare Z), not a cutoff artifact. Reported as the ICOHP error the
+    legacy rebuild would have made: the 2e part of F is common to both
+    frames, so ``F_bare = F_accepted + (V_bare - V_eff)`` and the induced
+    ICOHP shift is the Na-Cl block contraction of that difference.
+    """
+    import json
+    import zipfile
+
+    from vibeqc._vibeqc_core import CoulombMethod, LatticeSumOptions, bloch_sum
+    from vibeqc.bands import _HARTREE_TO_EV, _shell_to_atom
+    from vibeqc.periodic_k_gdf import _ecp_lattice_blocks, _periodic_ecp_context
+    from vibeqc.periodic_rhf_gdf import _gauge_lat_opts_for_v_ne_and_e_nuc
+    from vibeqc.periodic_runner import _resolve_ecp_data, run_periodic_job
+    from vibeqc.periodic_v_ne import compute_nuclear_lattice_dispatch
+
+    system = _build_nacl_rocksalt()
+    system = vq.PeriodicSystem(3, np.asarray(system.lattice), [
+        system.unit_cell[0],
+        vq.Atom(17, list(np.asarray(system.unit_cell[1].xyz)
+                        - np.asarray(system.lattice)[:, 0])),
+    ], 0, 1)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+
+    stem = tmp_path / "nacl_lanl_frames"
+    result = run_periodic_job(
+        system, basis, method="RHF", kpoints=[1, 1, 1], jk_method="gdf",
+        aux_basis="def2-svp-jk", output=stem, max_iter=80, progress=False,
+        output_qvf=True, coop_cohp=True,
+    )
+    assert result.converged
+
+    with zipfile.ZipFile(stem.with_suffix(".qvf")) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        sections = {s["kind"] for s in manifest["sections"]}
+        assert {"dos.total", "dos.projected", "dos.coop", "dos.cohp"} <= sections
+        icohp = np.frombuffer(
+            archive.read("dos/cohp_integrated.bin"), dtype="<f8"
+        )
+    # Provenance says the payload was projected, not rebuilt.
+    import tomllib
+
+    run_fields = tomllib.loads(
+        stem.with_suffix(".system").read_text("utf-8")
+    )["run"]
+    assert run_fields["property_hamiltonian"] == "accepted-scf"
+
+    blocks, centers, eff_z, ncore = _resolve_ecp_data(system, basis)
+    ecp_ctx = _periodic_ecp_context(
+        SimpleNamespace(
+            ecp_primitive_blocks=blocks, ecp_home_centers=centers,
+            ecp_effective_charges=eff_z, ecp_total_ncore=ncore,
+        ),
+        system, "test",
+    )
+    system_v = ecp_ctx[4]
+    lat_opts = LatticeSumOptions()
+    lat_opts.coulomb_method = CoulombMethod.EWALD_3D
+    gauge = _gauge_lat_opts_for_v_ne_and_e_nuc(lat_opts, system)
+    gamma = np.zeros(3)
+    v_eff = np.asarray(bloch_sum(
+        compute_nuclear_lattice_dispatch(basis, system_v, gauge), gamma
+    )) + np.asarray(bloch_sum(
+        _ecp_lattice_blocks(basis, system, lat_opts, ecp_ctx), gamma
+    ))
+    v_bare = np.asarray(bloch_sum(
+        compute_nuclear_lattice_dispatch(basis, system, gauge), gamma
+    ))
+    delta = v_bare - v_eff
+    assert np.abs(delta).max() > 1.0, (
+        "bare-Z and ECP one-electron frames agree; the ECP operator is not "
+        "reaching the Hamiltonian at all"
+    )
+
+    ao_atoms = _shell_to_atom(basis)
+    ab = np.ix_(np.flatnonzero(ao_atoms == 0), np.flatnonzero(ao_atoms == 1))
+    density = np.asarray(result.density[0])
+    icohp_shift = -np.sum(density.T[ab] * delta[ab]).real * _HARTREE_TO_EV
+    assert abs(icohp_shift) > 1.0, (
+        f"a bare-Z property rebuild would shift the reported Na-Cl ICOHP by "
+        f"{icohp_shift:.3f} eV against the accepted {icohp[0]:.3f} eV; that "
+        "is too small to distinguish the two builds, so this test no longer "
+        "pins what it claims"
+    )
 
 
 def test_sidecar_ecp_cell_uhf_singlet_matches_rhf(tmp_path):
@@ -940,7 +1430,9 @@ def test_direct_all_electron_charge_metadata_preserves_guess_and_energy(route, g
     """Charge-only POB records must behave like absent ECP metadata at SCF."""
     import importlib
 
-    system = vq.PeriodicSystem(3, np.eye(3) * 20., [
+    # Native drivers require interacting image cells, as in the restart fixture.
+    box_bohr, cutoff_bohr = (6., 8.) if route.startswith("native_") else (20., 5.)
+    system = vq.PeriodicSystem(3, np.eye(3) * box_bohr, [
         vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [0., 0., 1.4]),
     ])
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
@@ -969,8 +1461,8 @@ def test_direct_all_electron_charge_metadata_preserves_guess_and_energy(route, g
         opts.ecp_effective_charges = charges
         opts.max_iter = 60
         opts.conv_tol_energy = 1e-10
-        opts.lattice_opts.cutoff_bohr = 5.
-        opts.lattice_opts.nuclear_cutoff_bohr = 5.
+        opts.lattice_opts.cutoff_bohr = cutoff_bohr
+        opts.lattice_opts.nuclear_cutoff_bohr = cutoff_bohr
         if route == "native_rks":
             opts.functional = "lda"
         args = (system, basis, opts) if route == "native_gamma" else (system, basis, mesh, opts)
@@ -1084,12 +1576,27 @@ def _all_electron_gdf_call(route, charges, *, with_basis):
     return driver, args, kwargs, opts
 
 
+_ECP_APPLYING_GDF_ROUTES = (
+    "rohf_gdf", "rijcosx_rhf", "rijcosx_uhf", "rijcosx_rks", "rijcosx_uks",
+)
+
+
 @pytest.mark.parametrize("route", _ALL_ELECTRON_GDF_ROUTES)
 @pytest.mark.parametrize("charges", [[0., 1.], [1.], [1., float("nan")], [1.000000001, 1.]])
 def test_all_electron_gdf_routes_reject_orphan_charges_before_setup(route, charges):
+    """A reduced charge without its operator never reaches an integral.
+
+    The Gamma fast paths and the slab driver refuse every ECP field; the
+    routes that apply the operator since #35 (ROHF on GDF, Gamma RIJCOSX)
+    run the orphan record through the k-point GDF drivers' validators, which
+    name the missing ``ecp_primitive_blocks``."""
     driver, args, kwargs, _ = _all_electron_gdf_call(route, charges, with_basis=False)
-    with pytest.raises(NotImplementedError, match="does not apply a periodic ECP"):
-        driver(*args, **kwargs)
+    if route in _ECP_APPLYING_GDF_ROUTES:
+        with pytest.raises(ValueError, match="non-empty ecp_primitive_blocks"):
+            driver(*args, **kwargs)
+    else:
+        with pytest.raises(NotImplementedError, match="does not apply a periodic ECP"):
+            driver(*args, **kwargs)
 
 
 @pytest.mark.parametrize("route", [r for r in _ALL_ELECTRON_GDF_ROUTES if r != "slab_gdf"])
@@ -1125,10 +1632,13 @@ def test_private_slab_gdf_physical_charges_reach_integral_setup(monkeypatch):
 
 @pytest.mark.parametrize("method", ["rhf", "uhf", "rks", "uks"])
 def test_gamma_rijcosx_rejects_ecp_core_before_setup(method):
+    """A core count without an operator is refused before any integral: the
+    Gamma RIJCOSX drivers share ``_periodic_ecp_context`` with the k-point
+    GDF drivers since #35, and that context names the missing blocks."""
     driver, args, kwargs, opts = _all_electron_gdf_call(
         f"rijcosx_{method}", [1., 1.], with_basis=False)
     opts.ecp_total_ncore = 2
-    with pytest.raises(NotImplementedError, match="does not apply a periodic ECP"):
+    with pytest.raises(ValueError, match="without ecp_primitive_blocks"):
         driver(*args, **kwargs)
 
 
@@ -1369,3 +1879,617 @@ def test_periodic_ecp_gdf_force_differentiates_the_accepted_valence_energy():
         finite_differences.append((run(step).energy - run(-step).energy) / (2*step))
     extrapolated = (4*finite_differences[1] - finite_differences[0])/3
     assert derivative[1, 2] == pytest.approx(extrapolated, abs=2e-6)
+
+
+@pytest.mark.parametrize("z", [14, *range(24, 36)])
+def test_pob_dzvp_restored_all_electron_sources_resolve_offline(monkeypatch, z):
+    from types import SimpleNamespace
+    from vibeqc import periodic_runner as runner
+    def unexpected(*args, **kwargs):
+        raise AssertionError("bundled element must resolve offline")
+    _patch_bredow_fetcher(monkeypatch, unexpected)
+    system = SimpleNamespace(unit_cell=[SimpleNamespace(Z=z, xyz=[0, 0, 0])])
+    assert runner._resolve_ecp_data(system, SimpleNamespace(name="pob-dzvp-rev2")) == ([], [], [float(z)], 0)
+
+
+@pytest.mark.parametrize("z,has_ecp,should_pass", [(14, False, True), (47, False, False), (47, True, False)])
+def test_pob_fetched_record_semantics(monkeypatch, z, has_ecp, should_pass):
+    from types import SimpleNamespace
+    from vibeqc import periodic_runner as runner
+    record = SimpleNamespace(Z=z, has_ecp=has_ecp, ecp=None)
+    monkeypatch.setattr(runner, "_bundled_pob_source_atoms", lambda name: [])
+    _patch_bredow_fetcher(monkeypatch, lambda **kw: ({}, {"pob-dzvp-rev2": [record]}))
+    system = SimpleNamespace(unit_cell=[SimpleNamespace(Z=z, xyz=[0, 0, 0])])
+    basis = SimpleNamespace(name="pob-dzvp-rev2")
+    if should_pass:
+        assert runner._resolve_ecp_data(system, basis) == ([], [], [14.0], 0)
+    else:
+        with pytest.raises(RuntimeError, match="ECP-bearing record"):
+            runner._resolve_ecp_data(system, basis)
+
+
+def test_pob_incomplete_bundled_ecp_is_not_all_electron(monkeypatch):
+    from types import SimpleNamespace
+    from vibeqc import periodic_runner as runner
+    atom = SimpleNamespace(Z=47, has_ecp=True, ecp=None)
+    monkeypatch.setattr(runner, "_bundled_pob_source_atoms", lambda name: [atom])
+    system = SimpleNamespace(unit_cell=[SimpleNamespace(Z=47, xyz=[0, 0, 0])])
+    with pytest.raises(RuntimeError, match="ECP-bearing record"):
+        runner._resolve_ecp_data(system, SimpleNamespace(name="pob-dzvp-rev2"))
+
+
+def test_native_gamma_physical_operator_is_hermitian_and_reciprocal():
+    """Finite Gamma domain, heterogeneous AOs, raw matrices; no SCF shortcut.
+
+    Run on a containing native runtime. This checks operator consistency,
+    not absolute bulk energy accuracy or the NaH SCF convergence criterion.
+    """
+    core = vq._vibeqc_core
+    system = vq.PeriodicSystem(3, np.eye(3) * 8., [
+        vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [0., 0., 3.5]),
+    ])
+    basis = core.BasisSet(system.unit_cell_molecule(), [
+        core.ShellInfo(0, 0, True, [0.7], [1.0], [0., 0., 0.]),
+        core.ShellInfo(1, 0, True, [0.1], [1.0], [0., 0., 3.5]),
+    ], "gamma-operator-contract", coefficients_pre_normalized=True)
+    options = vq.LatticeSumOptions()
+    options.cutoff_bohr = options.nuclear_cutoff_bohr = 10.
+    assert not options.pair_complete_1e
+    density = np.array([[0.8, 0.2], [0.2, 0.5]])
+    direction = np.array([[0.3, -0.1], [-0.1, -0.4]])
+    jd = core.build_jk_gamma_physical(basis, system, options, density)
+    ja = core.build_jk_gamma_physical(basis, system, options, direction)
+    assert not options.pair_complete_1e  # resolver never mutates its caller
+    for name in ("J", "K"):
+        md, ma = np.asarray(getattr(jd, name)), np.asarray(getattr(ja, name))
+        np.testing.assert_allclose(md, md.T, atol=1e-10, rtol=0)
+        np.testing.assert_allclose(ma, ma.T, atol=1e-10, rtol=0)
+        assert abs(np.sum(density * ma) - np.sum(direction * md)) < 1e-10
+
+    options.pair_complete_1e = True
+    fold = lambda result: np.sum(np.asarray(result.blocks), axis=0)
+    kinetic = fold(core.compute_kinetic_lattice(basis, system, options))
+    nuclear = fold(core.compute_nuclear_lattice_with_charges(
+        basis, system, options, [1., 1.]))
+    ecp = fold(core.compute_ecp_lattice_from_primitives(
+        basis, system, options, [[0., 0., 0.]], [_gaussian_projector_block(nonlocal_channel=True)],
+        physical_pair_support=True))
+    for matrix in (kinetic, nuclear, ecp):
+        np.testing.assert_allclose(matrix, matrix.T, atol=1e-10, rtol=0)
+    h = kinetic + nuclear + ecp
+    f = h + np.asarray(jd.J) - .5 * np.asarray(jd.K)
+    derivative = np.sum(direction * f)
+    # E(d) is quadratic in d, so this central difference is exact at any
+    # step and a smaller step cannot help. It measures only the ~2e-12 Ha
+    # roundoff of the ~510 Ha finite-sum energy divided by 2*step: 1.07e-8
+    # at step 1e-4, on the tolerance, and about 1e-10 at 1e-2, with or
+    # without Schwarz screening.
+    step = 1e-2
+    energies = []
+    for d in (density + step * direction, density - step * direction):
+        jk = core.build_jk_gamma_physical(basis, system, options, d)
+        energies.append(np.sum(d * h) + .5 * np.sum(d * (np.asarray(jk.J) - .5 * np.asarray(jk.K))))
+    assert abs((energies[0] - energies[1]) / (2 * step) - derivative) < 1e-8
+
+
+# ---------------------------------------------------------------------------
+# #35: periodic ECPs on ROHF/GDF, Gamma RIJCOSX and the open-shell Ewald drivers
+# ---------------------------------------------------------------------------
+#
+# Before #35 run_periodic_job applied a periodic ECP on one route (the k-point
+# GDF drivers, RHF/RKS/UHF/UKS) and refused an ECP-bearing cell everywhere
+# else. The routes below now build the same three pieces: the Z_eff nuclear
+# frame for V_ne and the ionic energy, the lattice-summed V_ECP in Hcore, and
+# the valence fill with the ECP context threaded into the atomic seeds. The
+# fixtures are LANL2DZ cells (ECPs on Na, Mg, Al, Cl; the basis ships no
+# fitting set, so aux_basis is explicit).
+
+
+def _lanl2dz_molecule_in_box(z_pair, bond_ang, *, box_bohr=20.0, multiplicity=1):
+    """A diatomic with LANL2DZ ECPs on both atoms, centred in a cubic box.
+
+    Returns ``(system, basis, ecp_data)`` where ``ecp_data`` is the payload
+    the runner resolves from the basis' ``.ecp`` sidecar."""
+    from vibeqc.periodic_runner import _resolve_ecp_data
+
+    half = 0.5 * box_bohr
+    d = bond_ang * ANG
+    atoms = [
+        vq.Atom(z_pair[0], [half, half, half - d / 2]),
+        vq.Atom(z_pair[1], [half, half, half + d / 2]),
+    ]
+    system = vq.PeriodicSystem(3, np.eye(3) * box_bohr, atoms, 0, multiplicity)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+    return system, basis, _resolve_ecp_data(system, basis)
+
+
+def _periodic_options_with_ecp(data, *, is_ks=False, max_iter=150):
+    from vibeqc.periodic_runner import _attach_periodic_ecp_data
+
+    opts = vq.PeriodicKSOptions() if is_ks else vq.PeriodicRHFOptions()
+    _attach_periodic_ecp_data(opts, data)
+    opts.max_iter = max_iter
+    return opts
+
+
+def _molecular_options_with_ecp(cls, data, *, cosx=False, functional=None):
+    """Molecular SCF options carrying the same inline ECP: the oracle."""
+    opts = cls()
+    opts.ecp_primitive_blocks = list(data[0])
+    opts.ecp_primitive_centers = [list(c) for c in data[1]]
+    opts.ecp_effective_charges = list(data[2])
+    opts.ecp_total_ncore = int(data[3])
+    if cosx:
+        opts.density_fit = True
+        opts.aux_basis = "def2-svp-jk"
+        opts.cosx = True
+    if functional:
+        opts.functional = functional
+    return opts
+
+
+def _electron_trace(density, overlap):
+    return float(np.trace(np.asarray(density) @ np.asarray(overlap)).real)
+
+
+def _build_mg_fcc():
+    """One Mg atom per fcc cell (a = 4.51 Angstrom): a tight 3D cell whose
+    only atom carries the LANL2DZ ECP (10 core electrons, 2 valence)."""
+    a = 4.51 * ANG
+    lat = np.array([[0.0, a / 2, a / 2], [a / 2, 0.0, a / 2], [a / 2, a / 2, 0.0]])
+    return vq.PeriodicSystem(3, lat, [vq.Atom(12, [0.0, 0.0, 0.0])], 0, 1)
+
+
+def _build_al_fcc_doublet():
+    """One Al atom per fcc cell (a = 4.05 Angstrom), 3 valence electrons under
+    the LANL2DZ ECP, multiplicity 2."""
+    a = 4.05 * ANG
+    lat = np.array([[0.0, a / 2, a / 2], [a / 2, 0.0, a / 2], [a / 2, a / 2, 0.0]])
+    return vq.PeriodicSystem(3, lat, [vq.Atom(13, [0.0, 0.0, 0.0])], 0, 2)
+
+
+def _gamma_fold(lattice):
+    from vibeqc.periodic_gradient import _fold_gamma_real
+
+    return _fold_gamma_real(lattice)
+
+
+def test_periodic_route_predicate_admits_the_ecp_routes_of_35():
+    """The runner's ECP admission: GDF (RHF/RKS/UHF/UKS/ROHF) and RIJCOSX
+    (RHF/RKS/UHF/UKS) on 3D cells; nothing on a slab, nothing on the routes
+    that still drop the operator."""
+    from vibeqc.periodic_jk_method import PeriodicJKMethod
+    from vibeqc.periodic_runner import _periodic_route_applies_ecp
+
+    bulk = _build_mg_fcc()
+    slab = vq.PeriodicSystem(2, np.eye(3) * 10.0, [vq.Atom(12, [0.0, 0.0, 0.0])], 0, 1)
+    for method in ("RHF", "RKS", "UHF", "UKS", "ROHF"):
+        assert _periodic_route_applies_ecp(PeriodicJKMethod.GDF, method, bulk)
+        assert not _periodic_route_applies_ecp(PeriodicJKMethod.GDF, method, slab)
+    for method in ("RHF", "RKS", "UHF", "UKS"):
+        assert _periodic_route_applies_ecp(PeriodicJKMethod.RIJCOSX, method, bulk)
+        assert not _periodic_route_applies_ecp(PeriodicJKMethod.RIJCOSX, method, slab)
+    assert not _periodic_route_applies_ecp(PeriodicJKMethod.RIJCOSX, "ROHF", bulk)
+    assert not _periodic_route_applies_ecp(PeriodicJKMethod.GDF, "ROKS", bulk)
+    for jk in (
+        PeriodicJKMethod.BIPOLE, PeriodicJKMethod.GPW, PeriodicJKMethod.GAPW,
+        PeriodicJKMethod.SLAB_EWALD_2D,
+    ):
+        assert not _periodic_route_applies_ecp(jk, "RHF", bulk)
+
+
+def test_ecp_context_refuses_a_slab_cell_and_the_ewald_slab_driver_follows():
+    """Slabs keep an explicit refusal: the shared context names the 3D
+    restriction, and the UKS multi-k Ewald driver (the slab UKS route)
+    raises it before any integral."""
+    from vibeqc.periodic_k_gdf import _periodic_ecp_context
+    from vibeqc.periodic_uks_multi_k_ewald import run_uks_periodic_multi_k_ewald3d
+
+    system, basis, data = _lanl2dz_molecule_in_box((11, 17), 2.36)
+    slab = vq.PeriodicSystem(2, np.asarray(system.lattice), list(system.unit_cell), 0, 1)
+    opts = _periodic_options_with_ecp(data, is_ks=True)
+    opts.functional = "pbe"
+    with pytest.raises(NotImplementedError, match="3D cells only"):
+        _periodic_ecp_context(opts, slab, "test")
+    opts.lattice_opts.coulomb_method = vq.CoulombMethod.SLAB_EWALD_2D
+    with pytest.raises(NotImplementedError, match="3D cells only"):
+        run_uks_periodic_multi_k_ewald3d(
+            slab, basis, vq.monkhorst_pack(slab, [1, 1, 1]), opts, progress=False, verbose=0,
+        )
+
+
+def test_run_periodic_job_dispatches_ecp_cells_to_rijcosx_and_krohf(monkeypatch, tmp_path):
+    """The runner attaches the resolved sidecar ECP and dispatches to the
+    Gamma RIJCOSX drivers and to ROHF/GDF instead of refusing (#35). Pinned
+    by interception, so no SCF runs."""
+    import vibeqc.periodic_rijcosx as rij
+    import vibeqc.periodic_runner as pr
+    from vibeqc.periodic_runner import run_periodic_job
+
+    class _DriverReached(Exception):
+        pass
+
+    def _payload(opts):
+        return (
+            list(opts.ecp_effective_charges), int(opts.ecp_total_ncore),
+            len(opts.ecp_primitive_blocks),
+        )
+
+    def _rijcosx(system, basis, opts, *args, **kwargs):
+        raise _DriverReached(*_payload(opts))
+
+    def _krohf(system, basis, kmesh, opts, *args, **kwargs):
+        raise _DriverReached(*_payload(opts))
+
+    for name in (
+        "run_periodic_rijcosx_rhf", "run_periodic_rijcosx_rks",
+        "run_periodic_rijcosx_uhf", "run_periodic_rijcosx_uks",
+    ):
+        monkeypatch.setattr(rij, name, _rijcosx)
+    monkeypatch.setattr(pr, "run_krohf_periodic_gdf", _krohf)
+
+    system = _build_nacl_rocksalt()
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+    cases = [
+        ("RHF", None, "rijcosx"), ("RKS", "pbe", "rijcosx"),
+        ("UHF", None, "rijcosx"), ("UKS", "pbe", "rijcosx"),
+        ("ROHF", None, "gdf"),
+    ]
+    for method, functional, jk in cases:
+        kwargs = {
+            "method": method, "kpoints": [1, 1, 1], "jk_method": jk,
+            "aux_basis": "def2-svp-jk", "output": tmp_path / f"dispatch_{method}_{jk}",
+            "progress": False,
+        }
+        if functional:
+            kwargs["functional"] = functional
+        with pytest.raises(_DriverReached) as info:
+            run_periodic_job(system, basis, **kwargs)
+        charges, ncore, n_blocks = info.value.args
+        assert charges == pytest.approx([1.0, 7.0]), (method, jk)
+        assert ncore == 20 and n_blocks == 2, (method, jk)
+
+
+@pytest.mark.parametrize(
+    "method, functional", [("RHF", None), ("UHF", None), ("RKS", "pbe"), ("UKS", "pbe")],
+)
+def test_gamma_rijcosx_vacuum_envelope_applies_the_sidecar_ecp(method, functional):
+    """An NaCl molecule in a 20-bohr box on the vacuum-padded Gamma RIJCOSX
+    drivers with its LANL2DZ ECP (#35). The ionic energy is the Z_eff pair
+    energy 1 x 7 / d (home-cell nuclei only), the density holds the 8 valence
+    electrons, and the energy reproduces the molecular ECP calculation: to
+    roundoff for RKS/UKS (same DF J, same home-cell COSX K, same grid;
+    measured 0.0 and 5e-13 Ha), and to the route's exchange-quadrature floor
+    for RHF/UHF (-4.6e-4 Ha against exact molecular RHF; the all-electron
+    NaCl/def2-SVP control on the same path sits -1.1e-3 Ha from its exact
+    oracle, so the offset is the COSX grid, not the ECP)."""
+    from vibeqc import periodic_rijcosx as rij
+
+    system, basis, data = _lanl2dz_molecule_in_box((11, 17), 2.36)
+    d = 2.36 * ANG
+    mol = system.unit_cell_molecule()
+    assert data[2] == pytest.approx([1.0, 7.0]) and data[3] == 20
+    driver = getattr(rij, f"run_periodic_rijcosx_{method.lower()}")
+    kwargs = {"aux_basis": "def2-svp-jk", "progress": False}
+    if functional:
+        kwargs["functional"] = functional
+    result = driver(system, basis, _periodic_options_with_ecp(data), **kwargs)
+    assert result.converged
+    assert float(result.e_nuclear) == pytest.approx(1.0 * 7.0 / d, abs=1e-9)
+    if method in ("RHF", "RKS"):
+        assert _electron_trace(result.density, result.overlap) == pytest.approx(8.0, abs=1e-8)
+    else:
+        assert _electron_trace(result.density_alpha, result.overlap) == pytest.approx(4.0, abs=1e-8)
+        assert _electron_trace(result.density_beta, result.overlap) == pytest.approx(4.0, abs=1e-8)
+    if functional:
+        oracle = vq.run_rks(
+            mol, basis,
+            _molecular_options_with_ecp(vq.RKSOptions, data, cosx=True, functional=functional),
+        )
+        assert float(result.energy) == pytest.approx(float(oracle.energy), abs=1e-7)
+    else:
+        exact = vq.run_rhf(mol, basis, _molecular_options_with_ecp(vq.RHFOptions, data))
+        assert abs(float(result.energy) - float(exact.energy)) < 3e-3
+        # Valence-only scale: all-electron NaCl sits near -620 Ha.
+        assert -15.5 < float(result.energy) < -14.5
+
+
+def test_gamma_rijcosx_vacuum_doublet_splits_the_valence_count():
+    """MgCl (Mg 2 + Cl 7 valence electrons under their ECPs, multiplicity 2)
+    in a 20-bohr box: the open-shell Gamma RIJCOSX drivers fill 5 alpha and
+    4 beta electrons, not 15 and 14, and reproduce the molecular ECP oracle
+    (UKS/PBE to roundoff, measured 3e-13 Ha; UHF to -2.1e-4 Ha against the
+    exact molecular UHF, with the molecular <S^2> of 0.7513)."""
+    from vibeqc import periodic_rijcosx as rij
+
+    system, basis, data = _lanl2dz_molecule_in_box((12, 17), 2.20, multiplicity=2)
+    d = 2.20 * ANG
+    mol = system.unit_cell_molecule()
+    assert data[2] == pytest.approx([2.0, 7.0]) and data[3] == 20
+
+    uhf = rij.run_periodic_rijcosx_uhf(
+        system, basis, _periodic_options_with_ecp(data), aux_basis="def2-svp-jk", progress=False,
+    )
+    assert uhf.converged
+    assert float(uhf.e_nuclear) == pytest.approx(2.0 * 7.0 / d, abs=1e-9)
+    assert _electron_trace(uhf.density_alpha, uhf.overlap) == pytest.approx(5.0, abs=1e-8)
+    assert _electron_trace(uhf.density_beta, uhf.overlap) == pytest.approx(4.0, abs=1e-8)
+    exact = vq.run_uhf(mol, basis, _molecular_options_with_ecp(vq.UHFOptions, data))
+    assert abs(float(uhf.energy) - float(exact.energy)) < 2e-3
+    assert float(uhf.s_squared) == pytest.approx(float(exact.s_squared), abs=1e-3)
+
+    uks = rij.run_periodic_rijcosx_uks(
+        system, basis, _periodic_options_with_ecp(data), functional="pbe",
+        aux_basis="def2-svp-jk", progress=False,
+    )
+    assert uks.converged
+    oracle = vq.run_uks(
+        mol, basis, _molecular_options_with_ecp(vq.UKSOptions, data, cosx=True, functional="pbe"),
+    )
+    assert float(uks.energy) == pytest.approx(float(oracle.energy), abs=1e-7)
+    assert _electron_trace(uks.density_alpha, uks.overlap) == pytest.approx(5.0, abs=1e-8)
+
+
+def _build_nacl_chain(pad_bohr=16.0, bond_ang=2.36):
+    """Na and Cl alternating along z (period 2d), transverse vacuum ``pad_bohr``
+    beyond the default 15-bohr exchange cutoff: the one image direction the
+    tight-cell Gamma RIJCOSX path still admits after #555."""
+    d = bond_ang * ANG
+    half = 0.5 * pad_bohr
+    lattice = np.diag([pad_bohr, pad_bohr, 2.0 * d])
+    atoms = [vq.Atom(11, [half, half, 0.0]), vq.Atom(17, [half, half, d])]
+    return vq.PeriodicSystem(3, lattice, atoms, 0, 1)
+
+
+def test_gamma_rijcosx_tight_cell_hands_the_valence_hamiltonian_to_the_scf(monkeypatch):
+    """The tight-cell Gamma RIJCOSX path (GDF J + periodic COSX K) with an ECP
+    (#35), on an NaCl chain / LANL2DZ whose exchange images span one lattice
+    direction: the Hcore handed to the native SCF is T + V_ne(Z_eff) + V_ECP,
+    the Gamma fold over the route's own cell list (symmetric to roundoff),
+    the ionic energy is the Z_eff per-cell sum in the route's Ewald gauge,
+    the fill is the 8 valence electrons and the SAD seed is a valence
+    density. Pinned at the SCF boundary. A dense cell (Mg fcc) is refused by
+    the #555 image-rank guard before any integral, with or without the ECP."""
+    from vibeqc import periodic_rijcosx as rij
+    from vibeqc._vibeqc_core import compute_kinetic_lattice
+    from vibeqc.pbc_gdf import _gauge_lat_opts_ewald_3d
+    from vibeqc.periodic_k_gdf import _ecp_lattice_blocks, _periodic_ecp_context
+    from vibeqc.periodic_runner import _resolve_ecp_data
+    from vibeqc.periodic_v_ne import compute_nuclear_lattice_dispatch
+
+    system = _build_nacl_chain()
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+    data = _resolve_ecp_data(system, basis)
+    assert data[2] == pytest.approx([1.0, 7.0]) and data[3] == 20
+    opts = _periodic_options_with_ecp(data)
+    opts.initial_guess = vq.InitialGuess.SAD
+    assert rij._exchange_image_rank(system, opts.lattice_opts) == 1
+
+    class _Boundary(Exception):
+        pass
+
+    seen = {}
+
+    def _capture(basis_, n_electrons, S, Hcore, E_nuc, jk, rhf_opts, initial_density, **kwargs):
+        seen.update(
+            n=int(n_electrons), S=np.asarray(S), H=np.asarray(Hcore), e_nuc=float(E_nuc),
+            ncore=int(rhf_opts.ecp_total_ncore), blocks=len(rhf_opts.ecp_primitive_blocks),
+            density=np.asarray(initial_density),
+        )
+        raise _Boundary
+
+    monkeypatch.setattr(rij, "run_rhf_scf_with_jk", _capture)
+    with pytest.raises(_Boundary):
+        rij.run_periodic_rijcosx_rhf(
+            system, basis, opts, aux_basis="def2-svp-jk", tight_cell=True, progress=False,
+        )
+
+    ctx = _periodic_ecp_context(opts, system, "test")
+    gauge = _gauge_lat_opts_ewald_3d(opts.lattice_opts, system)
+    T = _gamma_fold(compute_kinetic_lattice(basis, system, opts.lattice_opts))
+    V = _gamma_fold(compute_nuclear_lattice_dispatch(basis, ctx[4], gauge))
+    V_ecp = _gamma_fold(_ecp_lattice_blocks(basis, system, gauge, ctx))
+    # The origin-ball projector images leave a small antisymmetric part in
+    # the raw fold (1.9e-7 here); the route keeps the symmetric part, as the
+    # k-point GDF drivers do by Hermitizing Hcore(k).
+    assert np.abs(V_ecp).max() > 0.1 and np.abs(V_ecp - V_ecp.T).max() < 1e-5
+    np.testing.assert_allclose(
+        seen["H"], T + V + 0.5 * (V_ecp + V_ecp.T), atol=1e-10, rtol=0.0)
+    # What is left of the asymmetry is V_ne's own origin-ball nuclear image
+    # domain (#547), 2.9e-8 on this chain with or without the ECP.
+    assert np.abs(seen["H"] - seen["H"].T).max() < 1e-6
+    assert seen["e_nuc"] == pytest.approx(
+        float(vq.nuclear_repulsion_per_cell(ctx[4], gauge)), abs=1e-10)
+    assert seen["n"] == 8 and seen["ncore"] == 20 and seen["blocks"] == 2
+    assert _electron_trace(seen["density"], seen["S"]) == pytest.approx(8.0, abs=1e-8)
+    # The bare-Z frame the route used before #35 is a different operator.
+    V_bare = _gamma_fold(compute_nuclear_lattice_dispatch(basis, system, gauge))
+    assert np.abs(V - V_bare).max() > 1.0
+
+    # Dense cell: the #555 guard refuses the tight path first, ECP or not.
+    mg = _build_mg_fcc()
+    mg_basis = vq.BasisSet(mg.unit_cell_molecule(), "lanl2dz")
+    mg_opts = _periodic_options_with_ecp(_resolve_ecp_data(mg, mg_basis))
+    with pytest.raises(NotImplementedError, match="span 3 lattice directions"):
+        rij.run_periodic_rijcosx_rhf(mg, mg_basis, mg_opts, aux_basis="def2-svp-jk", progress=False)
+
+
+def test_krohf_gdf_builds_the_valence_frame_with_the_ecp(monkeypatch):
+    """ROHF on GDF reaches its fit with V_ne on the Z_eff frame and the
+    lattice V_ECP beside S and T (#35). Pinned at the cderi seam, so neither
+    the fit nor the SCF runs (the SR/LR fit on this diffuse basis takes
+    minutes; the converged collapse gate is the slow test below)."""
+    import vibeqc.periodic_k_gdf as kgdf
+    import vibeqc.periodic_rohf_gdf as rohf
+    import vibeqc.periodic_v_ne as v_ne
+    from vibeqc.periodic_runner import _resolve_ecp_data
+
+    system = _build_mg_fcc()
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+    data = _resolve_ecp_data(system, basis)
+    opts = _periodic_options_with_ecp(data)
+
+    seen = {"v_ne": [], "ecp_calls": 0}
+    real_dispatch = v_ne.compute_nuclear_lattice_dispatch
+    real_blocks = kgdf._ecp_lattice_blocks
+
+    def _spy_v_ne(basis_, system_, lat_opts):
+        seen["v_ne"].append(([int(a.Z) for a in system_.unit_cell], lat_opts))
+        return real_dispatch(basis_, system_, lat_opts)
+
+    def _spy_blocks(*args, **kwargs):
+        seen["ecp_calls"] += 1
+        return real_blocks(*args, **kwargs)
+
+    class _Seam(Exception):
+        pass
+
+    def _cache(*args, **kwargs):
+        seen["oneel"] = kwargs.get("oneel_lattices")
+        raise _Seam
+
+    monkeypatch.setattr(v_ne, "compute_nuclear_lattice_dispatch", _spy_v_ne)
+    monkeypatch.setattr(kgdf, "_ecp_lattice_blocks", _spy_blocks)
+    monkeypatch.setattr(rohf, "_build_scf_range_separated_lpq_cache", _cache)
+    with pytest.raises(_Seam):
+        rohf.run_krohf_periodic_gdf(
+            system, basis, (1, 1, 1), opts, aux_basis="def2-svp-jk", progress=False, verbose=0,
+        )
+
+    assert [frame for frame, _ in seen["v_ne"]] == [[2]]  # the Z_eff frame, once
+    assert seen["ecp_calls"] == 1
+    S_lat, T_lat, V_lat, V_ecp_lat = seen["oneel"]
+    assert V_ecp_lat is not None
+    V_ecp = _gamma_fold(V_ecp_lat)
+    assert np.abs(V_ecp).max() > 0.1 and np.abs(V_ecp - V_ecp.T).max() < 1e-10
+    # V_ne is linear in the one nuclear charge: the Z_eff frame is 2/12 of the bare one.
+    _, lat_opts = seen["v_ne"][0]
+    V_bare = _gamma_fold(real_dispatch(basis, system, lat_opts))
+    np.testing.assert_allclose(_gamma_fold(V_lat), (2.0 / 12.0) * V_bare, atol=1e-10, rtol=0.0)
+
+
+@pytest.mark.slow
+def test_krohf_gdf_with_the_ecp_collapses_to_krhf_on_a_closed_shell():
+    """Mg fcc / LANL2DZ at Gamma: ROHF on GDF with multiplicity 1 reproduces
+    the closed-shell k-point GDF energy on the ECP cell (measured 0.0 Ha),
+    both on the Z_eff Ewald ionic energy with 2 valence electrons. About
+    2.5 minutes per arm: the SR/LR fit on this diffuse basis dominates."""
+    from vibeqc.periodic_k_gdf import _periodic_ecp_context, run_krhf_periodic_gdf
+    from vibeqc.periodic_rohf_gdf import run_krohf_periodic_gdf
+    from vibeqc.periodic_runner import _resolve_ecp_data
+
+    system = _build_mg_fcc()
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+    data = _resolve_ecp_data(system, basis)
+    e_nuc = float(vq.ewald_nuclear_repulsion(
+        _periodic_ecp_context(_periodic_options_with_ecp(data), system, "test")[4]))
+    assert abs(e_nuc - float(vq.ewald_nuclear_repulsion(system))) > 30.0
+    common = {"aux_basis": "def2-svp-jk", "progress": False, "verbose": 0}
+    rhf = run_krhf_periodic_gdf(system, basis, (1, 1, 1), _periodic_options_with_ecp(data), **common)
+    rohf = run_krohf_periodic_gdf(system, basis, (1, 1, 1), _periodic_options_with_ecp(data), **common)
+    assert rhf.converged and rohf.converged
+    assert float(rhf.e_nuclear) == pytest.approx(e_nuc, abs=1e-8)
+    assert float(rohf.e_nuclear) == pytest.approx(e_nuc, abs=1e-8)
+    assert float(rohf.energy) == pytest.approx(float(rhf.energy), abs=1e-8)
+    assert _electron_trace(rhf.density[0], rhf.overlap[0]) == pytest.approx(2.0, abs=1e-8)
+    assert _electron_trace(rohf.density_alpha[0], rohf.overlap[0]) == pytest.approx(1.0, abs=1e-8)
+    assert _electron_trace(rohf.density_beta[0], rohf.overlap[0]) == pytest.approx(1.0, abs=1e-8)
+    assert -1.5 < float(rhf.energy) < -1.0  # 2 valence electrons, not 12
+
+
+@pytest.mark.slow
+def test_krohf_gdf_with_the_ecp_sits_above_kuhf_on_a_doublet():
+    """Al fcc / LANL2DZ, multiplicity 2, at Gamma: ROHF on GDF splits 2 alpha
+    and 1 beta valence electrons under the ECP, is spin-pure by construction
+    and sits above the k-point UHF energy by the usual spin-restriction cost
+    (measured +4.2e-7 Ha on a UHF with <S^2> = 0.75000006). About 2 minutes
+    per arm."""
+    from vibeqc.periodic_k_gdf import _periodic_ecp_context, run_kuhf_periodic_gdf
+    from vibeqc.periodic_rohf_gdf import run_krohf_periodic_gdf
+    from vibeqc.periodic_runner import _resolve_ecp_data
+
+    system = _build_al_fcc_doublet()
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+    data = _resolve_ecp_data(system, basis)
+    assert data[2] == pytest.approx([3.0]) and data[3] == 10
+    e_nuc = float(vq.ewald_nuclear_repulsion(
+        _periodic_ecp_context(_periodic_options_with_ecp(data), system, "test")[4]))
+    common = {"aux_basis": "def2-svp-jk", "progress": False, "verbose": 0}
+    uhf = run_kuhf_periodic_gdf(system, basis, (1, 1, 1), _periodic_options_with_ecp(data), **common)
+    rohf = run_krohf_periodic_gdf(system, basis, (1, 1, 1), _periodic_options_with_ecp(data), **common)
+    assert uhf.converged and rohf.converged
+    for result in (uhf, rohf):
+        assert float(result.e_nuclear) == pytest.approx(e_nuc, abs=1e-8)
+        assert _electron_trace(result.density_alpha[0], result.overlap[0]) == pytest.approx(2.0, abs=1e-8)
+        assert _electron_trace(result.density_beta[0], result.overlap[0]) == pytest.approx(1.0, abs=1e-8)
+    assert float(rohf.s_squared) == pytest.approx(0.75, abs=1e-10)
+    assert float(uhf.s_squared) == pytest.approx(0.75, abs=1e-5)
+    gap = float(rohf.energy) - float(uhf.energy)
+    assert -1e-10 <= gap < 1e-5, gap
+
+
+# The open-shell multi-k Ewald drivers at a single Gamma point carry the
+# Ewald-3D Hartree on a real-space grid with home-cell exchange; on a
+# valence-only (ECP) Cl2 box that gauge sits about 1e-2 Ha from the exact
+# molecular energy (measured 2026-10-19: UHF -9.7e-3 Ha). An all-electron
+# Cl2/STO-3G box on the same drivers is 6.7 Ha off, the grid not resolving
+# the Z = 17 cores, so the all-electron run is no control here; the operator
+# pins below (Z_eff frame, V_ECP, ionic energy, valence counts) are exact.
+_EWALD_BOX_LIMIT_TOL = 2e-2
+
+
+@pytest.mark.parametrize("method", ["UHF", "UKS"])
+def test_open_shell_multi_k_ewald_drivers_apply_the_ecp(monkeypatch, method):
+    """Cl2 (7 + 7 valence electrons under LANL2DZ ECPs) in a 20-bohr box on
+    the open-shell multi-k Ewald drivers at the (1,1,1) mesh (#35): V_ne is
+    built on the Z_eff frame, the lattice V_ECP is built once, the ionic
+    energy is the Z_eff per-cell Ewald sum in the driver's forced EWALD_3D
+    gauge, and each spin holds 7 valence electrons. The energy sits within
+    the drivers' own single-Gamma gauge offset of the exact molecular ECP
+    energy (see ``_EWALD_BOX_LIMIT_TOL``); the frame pins are exact."""
+    import vibeqc.periodic_k_gdf as kgdf
+    import vibeqc.periodic_v_ne as v_ne
+    from vibeqc.pbc_gdf import _gauge_lat_opts_ewald_3d
+    from vibeqc.periodic_k_gdf import _periodic_ecp_context
+    from vibeqc.periodic_uhf_multi_k_ewald import run_uhf_periodic_multi_k_ewald3d
+    from vibeqc.periodic_uks_multi_k_ewald import run_uks_periodic_multi_k_ewald3d
+
+    system, basis, data = _lanl2dz_molecule_in_box((17, 17), 1.99)
+    mol = system.unit_cell_molecule()
+    assert data[2] == pytest.approx([7.0, 7.0]) and data[3] == 20
+    is_ks = method == "UKS"
+    opts = _periodic_options_with_ecp(data, is_ks=is_ks)
+    if is_ks:
+        opts.functional = "pbe"
+
+    seen = {"v_ne": [], "ecp_calls": 0}
+    real_dispatch = v_ne.compute_nuclear_lattice_dispatch
+    real_blocks = kgdf._ecp_lattice_blocks
+
+    def _spy_v_ne(basis_, system_, lat_opts):
+        seen["v_ne"].append([int(a.Z) for a in system_.unit_cell])
+        return real_dispatch(basis_, system_, lat_opts)
+
+    def _spy_blocks(*args, **kwargs):
+        seen["ecp_calls"] += 1
+        return real_blocks(*args, **kwargs)
+
+    monkeypatch.setattr(v_ne, "compute_nuclear_lattice_dispatch", _spy_v_ne)
+    monkeypatch.setattr(kgdf, "_ecp_lattice_blocks", _spy_blocks)
+    driver = run_uks_periodic_multi_k_ewald3d if is_ks else run_uhf_periodic_multi_k_ewald3d
+    result = driver(system, basis, vq.monkhorst_pack(system, [1, 1, 1]), opts, progress=False, verbose=0)
+    assert result.converged
+    assert seen["v_ne"] == [[7, 7]] and seen["ecp_calls"] == 1
+
+    ctx = _periodic_ecp_context(opts, system, "test")
+    gauge = _gauge_lat_opts_ewald_3d(opts.lattice_opts, system)
+    assert float(result.e_nuclear) == pytest.approx(
+        float(vq.nuclear_repulsion_per_cell(ctx[4], gauge)), abs=1e-8)
+    assert _electron_trace(result.density_alpha_k[0], result.overlap[0]) == pytest.approx(7.0, abs=1e-8)
+    assert _electron_trace(result.density_beta_k[0], result.overlap[0]) == pytest.approx(7.0, abs=1e-8)
+    if is_ks:
+        exact = vq.run_uks(mol, basis, _molecular_options_with_ecp(vq.UKSOptions, data, functional="pbe"))
+    else:
+        exact = vq.run_uhf(mol, basis, _molecular_options_with_ecp(vq.UHFOptions, data))
+    assert abs(float(result.energy) - float(exact.energy)) < _EWALD_BOX_LIMIT_TOL
+    assert -30.0 < float(result.energy) < -29.0  # 14 valence electrons, not 34

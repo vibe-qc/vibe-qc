@@ -1,5 +1,5 @@
 """Restricted open-shell Kohn--Sham (ROKS) single-point on the methyl
-radical CH3 (doublet) with the PBE functional.
+radical CH3 (doublet) with the PBE functional at 6-31G*.
 
 Run:
     .venv/bin/python input-ch3-roks.py

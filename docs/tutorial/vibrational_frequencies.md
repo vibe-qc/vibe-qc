@@ -1,5 +1,16 @@
 # Vibrational frequencies
 
+The [vibrational analysis user guide](../user_guide/vibrational_analysis.md)
+is the reference for this page: options, output, thermochemistry and every
+gate. One distinction to have in mind throughout: `run_job(hessian=True)`
+builds the Hessian by finite differences of the analytic gradient, and that
+is the route behind the frequency block of an ordinary job, while the
+analytic coupled-perturbed Hessians used in the first example below are
+library functions (`vibeqc.compute_hessian_{rhf,uhf,rks,uks}_analytic`), not
+something `run_job` calls. Both are production routes on the mean-field
+references (label vocabulary in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)).
+
 vibe-qc has two paths to a Hessian, both wired through the
 ``VibeQC`` ASE calculator:
 
@@ -18,7 +29,8 @@ vibe-qc has two paths to a Hessian, both wired through the
    right kernel based on the chosen method.
 
 2. **Finite-difference Hessian** for any method that produces
-   forces. ASE's ``ase.vibrations.Vibrations`` displaces each atom
+   forces. ASE's ({vibeqc-cite}`ase_2017`)
+   ``ase.vibrations.Vibrations`` displaces each atom
    in each Cartesian direction (~6N analytic-gradient calls) and
    builds the numerical Hessian. Slower than the analytic kernel
    but always available, useful as a sanity check, for methods
@@ -29,7 +41,8 @@ Both paths give the same products:
 
 - normal-mode frequencies (in cm⁻¹)
 - zero-point vibrational energy
-- IR intensities (analytic path: Wilson-Decius-Cross from the
+- IR intensities (analytic path: Wilson-Decius-Cross,
+  {vibeqc-cite}`wilson_decius_cross_1955`, from the
   dipole-derivative tensor; FD path: from finite-difference dipole
   derivatives)
 - per-mode atomic-displacement vectors (for animation / vibrational
@@ -58,65 +71,74 @@ Three steps:
 
 ## Example: water (analytic CPHF Hessian, RHF / 6-31G\*)
 
-The script below tightens the SCF, optimizes water to a stationary
-point, then calls `compute_hessian_rhf_analytic` to get frequencies,
-IR intensities, and the zero-point energy in one pass:
+The script below optimizes water to a stationary point, then calls
+`compute_hessian_rhf_analytic` for the frequencies and the zero-point energy,
+and a finite-difference Hessian with dipole derivatives for the IR
+intensities (the analytic Hessian result does not carry dipole derivatives):
 
 ```python
 import numpy as np
 import vibeqc as vq
 
-# 1. Build the molecule + basis
-mol = vq.Molecule.from_xyz("""\
-3
-H2O equilibrium guess
-O    0.000000   0.000000   0.000000
-H    0.000000   0.755200   0.586300
-H    0.000000  -0.755200   0.586300
-""")
-basis = vq.BasisSet(mol, "6-31g*")
+ANG = 1.8897259886                       # Å to bohr
 
-# 2. Tight SCF + tight optimization first — analytic 2nd derivatives
+# 1. Build the molecule
+mol = vq.Molecule([
+    vq.Atom(8, [0.0,  0.0,           0.0]),
+    vq.Atom(1, [0.0,  0.7552 * ANG,  0.5863 * ANG]),
+    vq.Atom(1, [0.0, -0.7552 * ANG,  0.5863 * ANG]),
+])
+
+# 2. Tight SCF + tight optimization first: second derivatives
 #    only make sense at a stationary point.
 opts = vq.RHFOptions()
 opts.conv_tol_grad = 1e-9
-result = vq.run_rhf(mol, basis, opts)
-mol_eq = vq.run_job(
-    mol, basis="6-31g*", method="rhf",
-    optimize=True, optimize_fmax_au=1e-4,
-).mol
+mol_eq = vq.optimize_molecule(
+    mol, "6-31g*", method="rhf", rhf_options=opts, conv_tol_grad=1e-5,
+).system
 
-# 3. Analytic Hessian + frequencies + IR intensities + ZPE
+# 3. Analytic CPHF Hessian, frequencies, zero-point energy
 basis = vq.BasisSet(mol_eq, "6-31g*")
 result = vq.run_rhf(mol_eq, basis, opts)
 hess = vq.compute_hessian_rhf_analytic(
     mol_eq, basis, result, basis_name="6-31g*",
 )
+freqs = np.real(np.asarray(hess.frequencies_cm1))
+zpe_kcal = 0.5 * freqs[freqs > 50].sum() / 219474.6313632 * 627.5095
 
-# 4. Inspect — frequencies are complex for imaginary modes.
-freqs = np.asarray(hess.frequencies_cm1)
-print(f"Frequencies (cm⁻¹):  {np.round(np.real(freqs), 1)}")
-print(f"IR intensities (km/mol):  {np.round(hess.ir_intensities_km_per_mol, 2)}")
-print(f"Zero-point energy:    {hess.zpe_ha * 627.5095:.3f} kcal/mol")
+# 4. IR intensities need dipole derivatives: a finite-difference Hessian
+#    (18 displaced gradients for water) with the flag switched on.
+fd = vq.compute_hessian_fd(
+    mol_eq, "6-31g*", "RHF",
+    hessian_options=vq.HessianFDOptions(include_dipole_derivatives=True),
+)
+ir = vq.ir_intensities(fd)
+
+print(f"Frequencies (cm⁻¹):  {np.round(freqs, 1)}")
+print(f"IR intensities (km/mol):  {np.round(ir, 2)}")
+print(f"Zero-point energy:    {zpe_kcal:.3f} kcal/mol")
 ```
 
-Typical output (HF/6-31G\*, optimized to fmax = 1e-4 Ha/bohr):
+Output on a vibe-qc 0.17.10 development build (HF/6-31G\*, optimized to a
+gradient tolerance of 1e-5 Ha/bohr; the whole script takes about ten seconds
+on an idle machine):
 
 ```
-Frequencies (cm⁻¹):  [   0.    0.    0.    0.    0.    0. 1825.4 4056.5 4174.6]
-IR intensities (km/mol):  [0. 0. 0. 0. 0. 0. 81.31 12.04 21.13]
-Zero-point energy:    13.89 kcal/mol
+Frequencies (cm⁻¹):  [   0.     0.     0.     0.     0.     0.  1826.3 4056.  4174.1]
+IR intensities (km/mol):  [  0.     0.     0.     0.     0.     0.   110.07  18.29  59.73]
+Zero-point energy:    14.377 kcal/mol
 ```
 
 The six zeros are translations + rotations (analytic Hessians
 project them out cleanly, no numerical noise floor). The three
-real modes are the bend (~1825 cm⁻¹), symmetric stretch (~4057
-cm⁻¹), and antisymmetric stretch (~4175 cm⁻¹). Cross-validated
-against ORCA at the same level of theory to **0.5 cm⁻¹**, 
+real modes are the bend (~1826 cm⁻¹), symmetric stretch (~4056
+cm⁻¹), and antisymmetric stretch (~4174 cm⁻¹). The frequencies were
+cross-validated against ORCA at the same level of theory to **0.5 cm⁻¹**
+in an earlier release, 
 see [Cross-validating against ORCA, Psi4, and PySCF](cross_validation.md).
 
 ```{tip}
-For a vibe-qc–native end-to-end script that writes ``.molden`` +
+For a vibe-qc-native end-to-end script that writes ``.molden`` +
 ORCA-compatible ``.hess`` files and prints the frequency table,
 see [`examples/molecular/input-h2o-vibrations.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/molecular/input-h2o-vibrations.py).
 The .hess file feeds directly into MolTUI, ChemCraft, Avogadro,
@@ -202,8 +224,9 @@ The three real internal modes match the chemistry: a bend near
 2000 cm⁻¹ and two stretches near 4000 cm⁻¹. HF/STO-3G
 **over-estimates** by 15-35%, the usual scaling factor for this
 level of theory is ~0.89. Multiplying the printed frequencies by 0.89
-gives 1930, 3684, 3907 cm⁻¹, within 2% of the experimental water
-frequencies (1595, 3657, 3756 cm⁻¹). Bigger basis + DFT gets you
+gives 1930, 3684, 3907 cm⁻¹: the two stretches land within 1 to 4 % of
+the experimental water frequencies (3657, 3756 cm⁻¹), while the bend
+stays 21 % above its 1595 cm⁻¹. Bigger basis + DFT gets you
 closer without the scaling factor.
 
 ```{figure} ../_static/plots/water-vibrational-frequencies.png
@@ -215,8 +238,8 @@ H₂O harmonic frequencies. **Blue:** raw HF/STO-3G harmonics. **Green:**
 the same numbers multiplied by the Pople 0.89 scaling factor, which
 absorbs both the HF over-estimation and the typical anharmonic
 softening. **Red:** gas-phase experimental fundamentals
-(NIST WebBook). The two O–H stretches scale to within ~3% of
-experiment. The bend remains 20% high — STO-3G is too small a basis
+(NIST WebBook). The two O-H stretches scale to within ~3% of
+experiment. The bend remains 20% high, since STO-3G is too small a basis
 to capture the bend angular dependence; cc-pVDZ closes most of the
 gap, B3LYP/6-31G\*\* (with scaling factor 0.96) closes essentially all
 of it. Regenerated by `[`examples/plots/water-vibrational-frequencies.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/plots/water-vibrational-frequencies.py)`.
@@ -244,10 +267,10 @@ print(f"ZPE = {zpe * 96.485:.3f} kJ/mol")
 The three real vibrational modes of H₂O, bend, antisymmetric
 stretch, symmetric stretch, animated side-by-side, each
 oscillating along its eigenvector at the analytic-CPHF Hessian
-frequencies (HF/STO-3G overshoots experiment by ~10-15 %, the
+frequencies (HF/STO-3G overshoots experiment by ~15-35 %, the
 expected basis-set + method effect):
 
-![H₂O / RHF / STO-3G, three normal modes oscillating side-by-side: a bend at ~2170 cm⁻¹, antisymmetric stretch at ~4140 cm⁻¹, symmetric stretch at ~4390 cm⁻¹.](../_static/plots/water-normal-mode-animation.gif)
+![H₂O / RHF / STO-3G, three normal modes oscillating side-by-side: a bend at ~2170 cm⁻¹, symmetric stretch at ~4140 cm⁻¹, antisymmetric stretch at ~4390 cm⁻¹.](../_static/plots/water-normal-mode-animation.gif)
 
 The GIF is regenerated by
 [`examples/plots/water-normal-mode-animation.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/plots/water-normal-mode-animation.py)
@@ -271,7 +294,7 @@ built-in helper does the same job in two lines:
 
 ```python
 vib.write_mode(n=8, kT=None, nimages=30)
-# -> water_vib.8.traj — open with `ase gui water_vib.8.traj`
+# -> water_vib.8.traj, open with `ase gui water_vib.8.traj`
 ```
 
 You can also render each displaced geometry to XYZ and feed it into
@@ -279,6 +302,57 @@ your favourite orbital viewer (Jmol, Avogadro, VMD, MolTUI) for
 publication-quality output. See [Viewing geometries, orbitals, and vibrations with MolTUI](moltui_terminal_viewer.md)
 for the MolTUI workflow that displays vibrations inline in the
 terminal.
+
+## Which surface the frequencies describe
+
+`run_job(hessian=True)` builds the Hessian by finite-differencing an
+analytic **mean-field** gradient, and it accepts only RHF, UHF, ROHF,
+RKS and UKS. A correlated request does not change that. `run_job`
+resolves `method="mp2"` down to the RHF reference its SCF actually
+runs, then differentiates RHF, so the frequencies, the normal modes and
+the RRHO thermochemistry all describe the RHF surface even though the
+job's reported energy is MP2. The same holds for `ccsd`, `ccsd(t)`,
+the DLPNO routes, the coupled-pair and QCI variants, and `ovgf`.
+
+That is a legitimate and common workflow (a correlated single point with
+mean-field frequencies), so vibe-qc computes it rather than refusing.
+It names it, in three places:
+
+* the `.out` frequency block opens with a `Surface:` line, and when the
+  surface is not the requested method's it says so outright:
+
+  ```text
+    ## Vibrational Frequencies
+    --------------------------
+    Surface: RHF/sto-3g  (NOT MP2)
+    This job's energy is MP2, but the Hessian finite-differences
+    the analytic RHF gradient. The frequencies, normal modes and
+    thermochemistry below describe the RHF reference surface;
+    no MP2 second derivatives were computed.
+  ```
+
+* the thermochemistry rows name the electronic energy they add the
+  thermal corrections to, `E(RHF) + ZPE` rather than a bare
+  `E(elec) + ZPE`. In an MP2 job that number is the RHF energy, not the
+  MP2 total, so if you want the correlated enthalpy you add the printed
+  thermal correction to `E(MP2 total)` yourself;
+
+* the `.system` manifest gains a `[hessian]` section and the `.qvf`
+  archive's `vibrations/metadata.json` gains a `surface` key, both
+  carrying `surface_is_requested_method` so a consumer can gate on it
+  without reading prose.
+
+A method that resolves to no mean-field reference at all (CASSCF, CISD,
+CASPT2, NEVPT2, FCI, selected CI, DMRG) has no finite-difference Hessian
+through `run_job`. Those jobs report their energy and then say the
+frequency block was skipped, naming the surface. For CASSCF there is a
+Python-API route,
+`vibeqc.hessian_casscf.compute_hessian_casscf(mol, basis, active_space)`,
+which finite-differences the analytic CASSCF gradient. It is not wired
+into `run_job`: its result carries unprojected modes (no translation and
+rotation projection) and no dipole derivatives, so the frequency table,
+the RRHO thermochemistry and the QVF vibrations section cannot consume
+it as it stands.
 
 ## Caveats
 
@@ -290,11 +364,11 @@ terminal.
 - **FD displacement step matters** (FD path only). ASE's default
   0.01 Å is usually fine. If a mode looks noisy, reduce it
   (``Vibrations(..., delta=0.005)``) and re-run.
-- **Periodic Hessians are still finite-difference.** Phase 21
-  (periodic phonons) lands periodic-system Hessians via finite
-  differences on top of analytic gradients. Phase G1 (periodic
-  gradients, v0.6) shipped end-to-end (G1a-G1e); periodic phonons
-  remain queued for a later v0.6.x or v0.7.
+- **Periodic Hessians are not phonons.** `run_periodic_job(hessian=True)`
+  computes the finite-difference Hessian of the isolated unit-cell molecule,
+  not a phonon calculation of the crystal; see the
+  [vibrational analysis guide](../user_guide/vibrational_analysis.md) for
+  the periodic and preview Gamma-point GAPW phonon routes.
 
 ## Theory
 
@@ -324,7 +398,8 @@ $$
 \tilde{\mathbf{H}}_{AB}^{ij} = \mathbf{H}_{AB}^{ij} \, / \, \sqrt{M_A \, M_B}
 $$
 
-gives a $3N \times 3N$ eigenvalue problem whose eigenvalues
+gives a $3N \times 3N$ eigenvalue problem
+({vibeqc-cite}`wilson_decius_cross_1955`) whose eigenvalues
 $\lambda_k = \omega_k^2$ are the squared **normal-mode frequencies**
 and whose eigenvectors are the mode displacements. Out of the $3N$
 modes, 6 (or 5 for linear molecules) have $\omega = 0$: three
@@ -339,7 +414,7 @@ At a true minimum there are none. At a first-order saddle point
 ### Where the Hessian comes from in practice
 
 Analytic second derivatives require solving a **coupled-perturbed**
-equation (CPHF for HF, CPKS for DFT), effectively one linear-
+equation (CPHF for HF, CPKS for DFT; {vibeqc-cite}`pople_derivatives_1979`), effectively one linear-
 response solve per perturbation, plus the underlying SCF, and
 vibe-qc ships them for RHF / UHF / RKS / UKS in Phase 17a-e. The
 CPHF/CPKS equations read
@@ -355,8 +430,8 @@ exchange + XC kernel pieces), and $B^{(R)}$ contains the skeleton
 2nd-derivative integrals. vibe-qc solves these iteratively (Pulay
 DIIS) and assembles the final 2nd-derivative tensor.
 
-For methods without an analytic implementation today (hybrid-GGA
-UKS), or as a sanity check, vibe-qc falls back to **numerical
+For methods without an analytic implementation today (meta-GGA
+functionals, MP2), or as a sanity check, vibe-qc falls back to **numerical
 differentiation** of the analytic gradient:
 
 $$
@@ -386,7 +461,10 @@ The community absorbs both into a single empirical **scaling factor**:
 multiply every $\omega$ by a constant (0.89 for HF/6-31G\*, 0.96 for
 B3LYP/6-31G\*\*, …) before comparing to IR band maxima. Tabulated
 values for many method/basis pairs live in the NIST CCCBDB; Wong's
-1996 paper is the standard reference.
+1996 paper ({vibeqc-cite}`wong_scaling_1996`) is the standard
+reference, updated for many functionals by J. P. Merrick, D. Moran and
+L. Radom, *J. Phys. Chem. A* **111**, 11683 (2007),
+doi:10.1021/jp073974n.
 
 ### IR intensities
 
@@ -400,14 +478,18 @@ $$
 where $q_k$ is the normal-mode coordinate. Computing this needs
 **dipole-moment derivatives**, the "double-harmonic" part because
 we differentiate both the potential (→ $\omega$) and the dipole
-(→ $I$). vibe-qc ships analytic dipole-derivative tensors (Phase
-17a-2) alongside the analytic Hessian, so IR intensities come out
-of every analytic-Hessian call directly:
+(→ $I$). vibe-qc computes dipole derivatives by finite differences alongside the
+finite-difference Hessian (`HessianFDOptions(include_dipole_derivatives=True)`);
+the analytic Hessian result of the example above does not carry them, so the
+IR intensities come from the finite-difference route:
 
 ```python
-hess = vq.compute_hessian_rhf_analytic(mol, basis, result, basis_name="6-31g*")
-print(hess.ir_intensities_km_per_mol)
-# [ 0., 0., 0., 0., 0., 0., 81.31, 12.04, 21.13]
+fd = vq.compute_hessian_fd(
+    mol_eq, "6-31g*", "RHF",
+    hessian_options=vq.HessianFDOptions(include_dipole_derivatives=True),
+)
+print(vq.ir_intensities(fd))
+# [  0.  0.  0.  0.  0.  0. 110.07  18.29  59.73]
 ```
 
 The first six entries are translations + rotations (zero by
@@ -417,12 +499,12 @@ intensities in km/mol, the unit IR spectroscopists actually use.
 ## Resources
 
 **Analytic CPHF Hessian** (default): ~250 MB peak RAM, ~5 s on one
-core (Apple M2 baseline) for H₂O / 6-31G\*, one linear-response
-solve dominated by the orbital-Hessian application, independent of
-atom count beyond the per-atom SCF cost. Cost scales as
-$\mathcal{O}(N_\text{bf}^4)$ per CPHF iteration, ~$\mathcal{O}(N_\text{bf}^4 N_\text{at})$ overall.
+core (Apple M2 baseline) for H₂O / 6-31G\*, a linear-response solve
+for the $3N_\text{at}$ nuclear perturbations dominated by the
+orbital-Hessian application. Cost scales as
+$\mathcal{O}(N_\text{bf}^4)$ per CPHF iteration and perturbation, ~$\mathcal{O}(N_\text{bf}^4 N_\text{at})$ overall.
 
-**Finite-difference fallback** (e.g. hybrid-UKS): ~250 MB peak
+**Finite-difference fallback** (e.g. meta-GGAs): ~250 MB peak
 RAM, ~30 s on one core for H₂O / 6-31G\*: 6N = 18 displaced SCFs
 + one analytic-gradient pass per displacement. Cost scales
 linearly in atom count via the 6N displacements; quartic in basis

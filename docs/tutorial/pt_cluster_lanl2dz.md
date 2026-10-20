@@ -3,7 +3,12 @@
 This tutorial exercises vibe-qc's libecpint integration on a
 Pt atom and a Pt₂ dimer. Pt is element 78, well past the
 all-electron-basis horizon, so an effective core potential
-(ECP) is mandatory.
+(ECP) is mandatory. ECP energies and analytic SCF gradients are a
+**production** route for RHF, UHF, RKS and UKS (label vocabulary in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)),
+and the [Theory](#theory) section below states what an ECP replaces and
+what it costs. Numbers on this page are from a vibe-qc 0.17.10 development
+build on an Apple M-series laptop.
 
 **You will**:
 
@@ -13,48 +18,75 @@ all-electron-basis horizon, so an effective core potential
   helper.
 - Compare singlet vs triplet states.
 
-## Background, why ECPs at all
+## Theory
 
-Heavy elements have a lot of electrons. A faithful all-electron
-calculation of platinum (Z = 78) with a triple-zeta basis would
-need ~60 basis functions per atom, and the core orbitals, the
-1s through 4d shells, contribute almost nothing to chemistry
-because they sit deep in the nuclear well and rarely change
-between molecular environments. They do, however, **demand
-relativistic treatment**: scalar relativity moves the 1s
-eigenvalue of Pt by hundreds of Hartrees and indirectly shifts
-the valence by a chemically-relevant ~0.1-1 Ha.
+**What an ECP replaces.** Heavy elements have many electrons, and the core
+orbitals (for platinum the 1s through 4f shells) contribute almost nothing to
+bonding. They do, however, demand relativistic treatment: scalar relativity
+lowers the Pt 1s eigenvalue by hundreds of hartrees and indirectly shifts the
+valence shells by a chemically relevant amount. An **effective core
+potential** removes $n_\text{core}$ electrons from the problem and folds their
+repulsion, the Pauli exclusion from the core and the relativistic effects into
+an operator acting on the remaining valence electrons. The valence
+Hamiltonian is
 
-An **effective core potential** replaces the core electrons and
-the nuclear attraction with a small set of fitted radial
-operators (Gaussian projectors typically), parametrised so the
-valence eigenvalues + densities of the all-electron atomic
-reference (with scalar relativity included) match. The valence
-basis is then small, the SCF is small, and the relativistic
-treatment is baked into the ECP for free. The most common
-families:
+$$
+\hat H_v = \sum_i \Bigl[ -\tfrac12\nabla_i^2 - \frac{Z - n_\text{core}}{r_i}
+  + \hat U_\text{ECP}(i) \Bigr] + \sum_{i<j}\frac{1}{r_{ij}},
+$$
 
-* **Hay-Wadt LANL2DZ** (Hay & Wadt 1985), pseudopotentials
-  derived from non-relativistic reference + Cowan-Griffin
-  scalar relativity. Cheap, robust, suitable for routine
-  d-block work. The matching orbital basis is also called
-  `LANL2DZ`.
-* **Stuttgart-Köln MDF / MWB family** (Dolg, Stoll, Cao et al.)
-  - Multi-electron DF / WB fits to all-electron reference with
-  Dirac-Coulomb scalar relativity. More accurate than LANL2DZ
-  for spectroscopy / thermochemistry; pairs with the Dolg /
-  Karlsruhe def2-* and dhf-* orbital basis families. Five
-  vibe-qc-bundled libraries cover the periodic table:
-  `ecp10mdf` (rows 4+), `ecp28mdf` (rows 5+), `ecp46mdf`
+with the electron-nucleus attraction reduced to the effective charge
+$Z - n_\text{core}$ (for Pt, 78 - 60 = 18 valence electrons) and
+$\hat U_\text{ECP}$ a one-electron operator on each ECP centre.
+
+**The semilocal operator.** The ECP is *semilocal*: a local radial function
+plus angular-momentum projectors about the centre,
+
+$$
+\hat U_\text{ECP} = U_L(r) + \sum_{l=0}^{L-1}\sum_{m=-l}^{l} |lm\rangle\,\bigl[U_l(r) - U_L(r)\bigr]\,\langle lm| ,
+\qquad
+U_l(r) = \sum_k d_{lk}\, r^{\,n_{lk}-2}\, e^{-\zeta_{lk} r^2},
+$$
+
+where $|lm\rangle$ are spherical harmonics about the centre, $L$ is one more
+than the highest angular momentum in the core, and the expansion
+coefficients $d_{lk}$, powers $n_{lk}$ and exponents $\zeta_{lk}$ are tabulated
+by the ECP family. The parameters are fitted so that the valence
+eigenvalues and orbital shapes outside the core radius match an all-electron
+relativistic atomic reference; scalar relativity therefore enters through
+the fit, at no extra cost in the SCF. The valence basis is small, the SCF
+is small, and libecpint evaluates the semilocal integrals (Shaw and Hill
+2017, in the references). The two families vibe-qc ships:
+
+* **Hay-Wadt LANL2DZ** (Hay and Wadt 1985; {vibeqc-cite}`hay_wadt_lanl_1985`),
+  pseudopotentials fitted to all-electron atomic calculations that include the
+  mass-velocity and Darwin (Cowan-Griffin) scalar relativistic terms. Cheap,
+  robust, suitable for routine d-block work. The matching orbital basis is
+  also called `LANL2DZ`, and is double-zeta.
+* **Stuttgart-Köln MDF / MWB family** (Dolg, Stoll, Cao et al.), fitted to
+  all-electron Dirac-Coulomb-based reference data. More accurate than LANL2DZ
+  for spectroscopy and thermochemistry; pairs with the Karlsruhe def2-* and
+  dhf-* orbital basis families. Five vibe-qc-bundled libraries cover the
+  periodic table: `ecp10mdf` (rows 4+), `ecp28mdf` (rows 5+), `ecp46mdf`
   (post-Cd), `ecp60mdf` (f-block), `ecp78mdf` (actinides).
 
-vibe-qc wires both families through libecpint (Shaw & Hill 2017).
-Current installs ship six XML ECP libraries (`lanl2dz` plus the five
-Stuttgart-Köln MDF libraries) and 44 bundled `.ecp` basis sidecars for
-automatic ECP selection.
+**Where it helps and where it fails.** An ECP makes heavy-element chemistry
+reachable at the cost of a valence basis, and it captures the scalar
+relativistic contraction and expansion of the valence shells. It does not
+contain spin-orbit coupling (a scalar-relativistic method), it freezes the
+core (no core polarisation or core-valence correlation unless the semicore
+shells are kept in the valence space, which is the difference between the
+small-core `ecp60mdf` and the large-core choices), and the pseudo-orbitals are
+nodeless in the core region, so properties that probe the nucleus (hyperfine
+couplings, contact densities) are not reliable. The result is only as good as
+the valence basis and the pairing of basis and ECP; LANL2DZ is a
+qualitative-to-semiquantitative choice.
 
-For the full library / orbital-basis pairing table see
-[`user_guide/ecp.md`](../user_guide/ecp.md).
+vibe-qc wires both families through libecpint. Current installs ship six XML
+ECP libraries (`lanl2dz` plus the five Stuttgart-Köln MDF libraries) and 44
+bundled `.ecp` basis sidecars, which attach the right ECP automatically when
+you name the orbital basis. For the full library / orbital-basis pairing table
+see [`user_guide/ecp.md`](../user_guide/ecp.md).
 
 ## Pt atom, manual `ECPCenter` recipe
 
@@ -63,10 +95,8 @@ Always-available; ships on `main`.
 ```python
 import vibeqc as vq
 
-# Pt ground state is 5D0 (multiplicity = 5 in the textbook
-# Russell-Saunders sense), but for SCF the simplest convergent
-# guess on a closed-shell-friendly grid is the triplet. Spin
-# state lives on the Molecule, not on the SCF options.
+# The Pt ground state is 5d9 6s1, a 3D3 triplet, so multiplicity = 3.
+# Spin state lives on the Molecule, not on the SCF options.
 mol = vq.Molecule(
     [vq.Atom(78, [0.0, 0.0, 0.0])],
     multiplicity=3,
@@ -86,16 +116,20 @@ result = vq.run_uhf(mol, basis, opts)
 print(f"Pt UHF energy: {result.energy:.6f} Ha")
 print(f"  iterations:  {result.n_iter}")
 print(f"  <S^2>:       {result.s_squared:.4f}")
-# Pt UHF energy: -118.227... Ha
-#   iterations:  ~125  (near-degeneracy makes this slow to converge)
-#   <S^2>:       ~2.0  (triplet)
+# Pt UHF energy: -118.226798 Ha
+#   iterations:  29
+#   <S^2>:       2.0006  (triplet)
 ```
 
-If you forget the ECP wiring, the SCF will refuse to start
-with `"canonical orth dropped too many basis directions"`, 
-the symptom of trying to fit valence orbitals to a nucleus
-that still expects core electrons. Add `ecp_centers` +
-`ecp_library` and the SCF goes through.
+On this build the wiring above is redundant for a bundled basis: a plain
+`vq.run_uhf(mol, basis, vq.UHFOptions())` with the `lanl2dz` basis attaches
+the ECP from the basis's `.ecp` sidecar and gives the same
+`-118.226798` Ha, as does `run_job(mol, basis="lanl2dz", method="uhf")`.
+The explicit `ECPCenter` recipe stays useful when you want to override the
+pairing (for instance a Stuttgart-Köln potential with `ecp_library="ecp60mdf"`).
+The SCF trace shows the near-degenerate d/s manifold at work: the energy is
+converged to 1e-11 Ha by iteration 9, while the commutator norm needs
+29 iterations to reach the default gradient tolerance.
 
 ## Pt2 dimer: the auto-helper recipe
 
@@ -167,11 +201,27 @@ print(f"D (S->T):   {1000 * (e_triplet - e_singlet):+.2f} mHa")
 print(f"            {(e_triplet - e_singlet) * 27.2114:.4f} eV")
 ```
 
-At 10 bohr the two Pt atoms are non-interacting; both states
-are degenerate to within SCF convergence noise. At shorter
-separation (try `xyz=[0.0, 0.0, ±2.5]`, typical Pt-Pt bond
-length ~2.7 Å = 5.1 bohr), the singlet wins, Pt₂ has a
-formal triple-bond singlet ground state.
+A run gave
+
+```text
+Pt2 singlet UHF: -236.430980 Ha  (47 iterations)
+Pt2 triplet UHF: -236.442456 Ha  (33 iterations)
+D (S->T):        -11.48 mHa
+```
+
+At 10 bohr the two Pt atoms hardly interact, so the singlet and triplet SCF
+energies would agree if both runs described two independent atoms in the same
+state. They do not: two isolated triplet atoms would give
+2 x (-118.226798) = -236.453596 Ha, which lies 22.6 mHa below the singlet
+result and 11.1 mHa below the triplet result. The dimer SCFs have converged to
+different, higher d/s occupation patterns (the UHF singlet here is not a
+broken-symmetry combination of two triplet atoms), so the sign and size of
+`D (S->T)` at this separation reflect which stationary point each run found,
+not a spin-coupling energy. Compare final energies with the two-atom sum and
+check the orbital occupations before reading a singlet-triplet gap from
+transition-metal UHF. At shorter separation (try `xyz=[0.0, 0.0, ±2.5]`,
+typical Pt-Pt bond length ~2.7 Å = 5.1 bohr) the states become genuinely
+different, but the same caution applies.
 
 ## What this tells you
 
@@ -179,11 +229,10 @@ formal triple-bond singlet ground state.
   the LANL2DZ ECP, a single Pt atom in an all-electron basis
   would need ~60+ basis functions per Pt for the core +
   valence; with `lanl2dz` + ECP it's 22.
-- **Convergence is slow** for d-block metals because the
-  density of states near the Fermi level is high. ~125
-  iterations for the single Pt atom is normal; the molecular
-  Pt₂ converges faster because the bonding gaps the orbitals.
-  If your Pt SCF stalls, try
+- **Convergence needs more iterations** for d-block metals because the
+  density of states near the Fermi level is high: 29 iterations for the
+  single Pt atom and 33 to 47 for the Pt₂ dimers here, against about 10 for
+  a light closed-shell molecule. If your Pt SCF stalls, try
   [EDIIS+DIIS hybrid extrapolation](../user_guide/scf_convergence.md).
 - **The auto-helper saves the boilerplate.**
   `auto_ecp_centers(mol, basis_name)` is a one-liner replacement
@@ -211,34 +260,35 @@ table.
 
 ## What the `.out` reports
 
-The `.out` carries an ECP block right after the basis-set summary:
+A `run_job(mol, basis="lanl2dz", method="uhf")` on the Pt atom writes an
+`.out` whose header, SCF trace and stability check look like this on the
+current build (the file has no dedicated ECP block; the potential is visible
+through the citations and the energy):
 
 ```text
-ECP library:        lanl2dz
-ECP centres:        1
-  Z=78 at (0.000000, 0.000000, 0.000000) bohr — 60 core electrons removed
-ECP integrals:      computed via libecpint v1.0.7
-
-Basis summary:
-  Z=78 (Pt) — lanl2dz orbital basis, 22 functions
-                                (5s, 5p, 6s, 6p, 5d valence shells)
-Total electrons: 18 (78 nuclear, 60 in ECP core)
+  Job: UHF  basis=lanl2dz
+  Atoms (bohr)
+     1  Z= 78       0.00000000      0.00000000      0.00000000
+  charge=0  multiplicity=3  n_electrons=78
+  ...
+  initial_guess = AUTO -> PATOM
+  converged in 29 iterations; E = -118.2267984711 Ha
+  <S^2> = 2.000608  (ideal 2.0000, delta = +0.0006)
+  internal stability: stable (lowest Hessian eigenvalue 2.318e-07)
+  ...
+  Atomic charges
+  #  elem  Mulliken    Löwdin  Hirshfeld
+  1   Z78  0.000000  0.000000   0.000000
 ```
 
-After SCF + properties:
-
-```text
-Mulliken populations (valence only — ECP core not in the AO basis)
-  atom    Z     N_valence    charge
-  Pt      78    18.000000    -0.000  ← neutral atom by construction
-```
-
-The `N_valence` matches the molecule's nominal valence electron
-count (18 for Pt, 5s² 5p⁶ 6s¹ 5d⁹ in the all-electron ground
-state, all promoted into the LANL2DZ valence). The Mulliken
-charge is computed on the valence AO basis only, *core
-electrons are removed from the basis*, so there is no
-contribution to the population analysis from them.
+The `n_electrons=78` in the header is the nuclear-charge count of the atom;
+the reduced-Z valence treatment is carried by the ECP, not by that line. The
+`.references` and `.bibtex` files include Hay and Wadt 1985 for the
+LANL2DZ potential and the libecpint integral paper (Shaw and Hill 2017), and
+the `.system` manifest records the libecpint version. The Mulliken, Löwdin
+and Hirshfeld charges are computed on the valence AO basis, so the core
+electrons removed by the ECP contribute nothing to the population analysis;
+a neutral Pt atom gives zero charge by construction.
 
 ## References
 

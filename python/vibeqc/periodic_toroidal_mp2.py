@@ -1,7 +1,7 @@
 """Toroidal (Born-von Kármán) megacell periodic Γ RI-MP2 -- Stages 5a, 5b, 5c.
 
 The toroidal megacell route (maintainer decision 2026-06-17;
-``handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md`` Sec. 6) uses a **periodic** supercell
+the original investigation) uses a **periodic** supercell
 with exact translational symmetry. By the BvK theorem, a Γ-point calculation
 on an N-cell supercell is equivalent to an N-point k-mesh calculation on the
 unit cell when both calculations use the same finite Hamiltonian, Coulomb /
@@ -30,7 +30,8 @@ Scope / boundary
 ----------------
 - Γ-point only (toroidal = Γ on the supercell). Multi-k generalization is Task 3.
 - Native vibe-qc Γ driver (``run_rhf_periodic_gamma_gdf``) with its periodic
-  Ewald-J / real-space-K branch forced for every toroidal supercell.
+  Ewald-J / real-space-K branch forced for every toroidal supercell, on a
+  lattice ball widened to reach the AO pairs across the periodic seam.
 - Periodic-HF ``exxdiv='ewald'`` orbital energies used as-is; bare finite-N
   energy is size-dependent and is extrapolated in N. Exact finite-N character-
   mesh equivalence requires a matched Hamiltonian; the matched AICCM-B route
@@ -474,6 +475,70 @@ def build_toroidal_supercell(system, nrep: Sequence[int]):
     )
 
 
+def _copy_native_options(source):
+    """A same-typed copy of a pybind options object.
+
+    pybind value objects cannot be copied with :mod:`copy`; nested value
+    fields such as ``lattice_opts`` are copied by value on assignment.
+    """
+    options = type(source)()
+    for name in dir(source):
+        if not name.startswith("_"):
+            value = getattr(source, name)
+            if not callable(value):
+                setattr(options, name, value)
+    return options
+
+
+def _seam_covering_rhf_options(super_system, basis, options):
+    """``options`` with a lattice ball that reaches the AO pairs across the seam.
+
+    The Gamma SCF builds S, T, V_ne, the Ewald-J pair transform and the
+    molecular-limit K on ``direct_lattice_cells(system, cutoff_bohr)``, a ball
+    of translations around the origin. A supercell's atoms span the whole
+    cell, so two AOs a few bohr apart across the periodic seam are joined only
+    by a translation as long as the period. On the (1, 1, 3) H2-chain test
+    supercell (an 18-bohr period), atoms 0 and 5 are 4.6 bohr apart through
+    g = 18 bohr, outside the shipped 15-bohr ball. Without that translation
+    S(Gamma) was 0.056 off PySCF's ``pbc_intor`` and the SCF orbitals were
+    not orthogonal under the true overlap (|C_occ^T S C_vir| = 0.026).
+
+    The returned options use the smallest ball that holds every translation
+    some AO pair needs within ``cutoff_bohr``: the largest |g| over the
+    pair-complete term set {(mu, nu, g) : |O_mu - O_nu - g| <= cutoff}
+    (``lattice_pair_cells.hpp``). That is 18, 24, 30 and 36 bohr for 3, 4, 5
+    and 6 cells of the test chain. A plain ball of that radius also holds
+    terms whose pairs are farther apart than the cutoff, as the shipped ball
+    does within its own radius. The caller's options come back unchanged
+    when the shipped ball already covers the term set, as for 1 and 2 cells
+    of the chain.
+
+    This is a driver-side stand-in for the pair-complete enumeration of #44,
+    which ``pair_complete_1e`` does not yet give this driver: under it the
+    Gamma K takes a replicated density and lands far off (-1.2829 Ha/cell
+    for 2 cells of the chain). Remove it when the Gamma SCF builders
+    enumerate the pair-complete set themselves.
+    """
+    from ._vibeqc_core import pair_complete_lattice_cells
+    from .lattice_screening import ao_pair_support_mask
+
+    cutoff = float(options.lattice_opts.cutoff_bohr)
+    reach = 0.0
+    for cell in pair_complete_lattice_cells(basis, super_system, cutoff):
+        shift = np.asarray(cell.r_cart, dtype=float)
+        if ao_pair_support_mask(basis, shift, cutoff).any():
+            reach = max(reach, float(np.linalg.norm(shift)))
+    if reach <= cutoff:
+        return options
+    covered = _copy_native_options(options)
+    lattice_opts = _copy_native_options(options.lattice_opts)
+    # direct_lattice_cells admits |g|^2 <= cutoff^2 exactly; the margin keeps
+    # the translation that set ``reach`` inside the ball.
+    lattice_opts.cutoff_bohr = reach * (1.0 + 1e-12)
+    covered.lattice_opts = lattice_opts
+    return covered
+
+
 def _canonical_mp2_corr_from_M(
     M: np.ndarray,
     eps_occ: np.ndarray,
@@ -583,7 +648,12 @@ def toroidal_mp2_gamma(
         RI auxiliary basis for density fitting.  Auto-selected if omitted
         (the DF-RI auxiliary for *correlation*, distinct from the JK aux).
     rhf_options
-        Optional ``PeriodicRHFOptions`` override for the supercell HF.
+        Optional ``PeriodicRHFOptions`` override for the supercell HF. When
+        the supercell is longer than its lattice ball, the HF runs on a copy
+        whose ``cutoff_bohr`` is raised just enough to reach every AO pair
+        within the requested cutoff, the pairs across the periodic seam
+        included (:func:`_seam_covering_rhf_options`); the caller's object
+        is not modified.
 
     Returns
     -------
@@ -614,7 +684,11 @@ def toroidal_mp2_gamma(
     aux = make_aux_basis_set(mol, aux_name=aux_name)
 
     # 3. Periodic Γ GDF HF on the supercell.
-    opts = rhf_options if rhf_options is not None else _PeriodicRHFOptions()
+    opts = _seam_covering_rhf_options(
+        super_system,
+        basis,
+        rhf_options if rhf_options is not None else _PeriodicRHFOptions(),
+    )
     hf_res = run_rhf_periodic_gamma_gdf(
         super_system,
         basis,
@@ -851,7 +925,11 @@ def toroidal_mp2_gamma_pairs(
     _aux = make_aux_basis_set(mol, aux_name=aux_name)
 
     # 3. Periodic Γ GDF HF.
-    opts = rhf_options if rhf_options is not None else _PeriodicRHFOptions()
+    opts = _seam_covering_rhf_options(
+        super_system,
+        basis,
+        rhf_options if rhf_options is not None else _PeriodicRHFOptions(),
+    )
     hf_res = run_rhf_periodic_gamma_gdf(
         super_system,
         basis,
@@ -1290,6 +1368,10 @@ def _pre_sweep_toroidal_dlpno_mp2_options():
         # occupation-number cut that only means what the density it was
         # applied to means -- so the density is pinned with the thresholds.
         pno_norm="legacy",
+        # The DOI domain default (#190) postdates this convention; its
+        # tcut_mkn=1e-3 domains are Mulliken domains, so the criterion is
+        # pinned with them.
+        domain_criterion="mulliken",
     )
 
 
@@ -1311,6 +1393,9 @@ def _pre_sweep_toroidal_dlpno_cc_options():
         # ... and predates the semicanonical MP2 PNO correction the
         # molecular CCSD route now applies, so that stays off too.
         pno_correction=False,
+        # ... and predates the ORCA singles-PNO scale on the diagonal pairs
+        # (#190), so the diagonal pairs keep the plain tcut_pno.
+        tcut_pno_diag_scale=1.0,
     )
 
 
@@ -1361,6 +1446,10 @@ class ToroidalDLPNOResult:
     e_total: float
     dlpno_result: object = None  # DLPNOMP2Result
     pair_classification: object = None  # ToroidalPairClassification
+    source_kind: str = ""
+    source_identity: str = ""
+    same_source: bool = False
+    exchange_q0: str = "unspecified"
 
 
 def toroidal_dlpno_mp2(
@@ -1401,6 +1490,7 @@ def toroidal_dlpno_mp2(
     from ._vibeqc_core import PeriodicRHFOptions as _PeriodicRHFOptions
     from .aux_basis import default_aux_for, make_aux_basis_set
     from .dlpno.mp2 import run_dlpno_mp2
+    from .dlpno.source import SourceConventions, _real_torus_source
     from .periodic_df import build_periodic_gamma_df
     from .periodic_rhf_gdf import run_rhf_periodic_gamma_gdf
 
@@ -1417,7 +1507,11 @@ def toroidal_dlpno_mp2(
     aux = make_aux_basis_set(mol, aux_name=aux_name)
 
     # 3. Periodic Γ GDF HF -- the toroidal reference.
-    opts = rhf_options if rhf_options is not None else _PeriodicRHFOptions()
+    opts = _seam_covering_rhf_options(
+        super_system,
+        basis,
+        rhf_options if rhf_options is not None else _PeriodicRHFOptions(),
+    )
     hf_res = run_rhf_periodic_gamma_gdf(
         super_system,
         basis,
@@ -1435,38 +1529,27 @@ def toroidal_dlpno_mp2(
     pdf = build_periodic_gamma_df(super_system, basis, aux_basis=aux_name)
     df = _PeriodicDFAdapter(pdf, aux)
 
-    # 5. Run molecular DLPNO-MP2 with periodic reference.
-    #    The DLPNO code internally calls compute_overlap(basis), which returns
-    #    the molecular (home-cell-only) overlap.  The periodic MOs are
-    #    S_periodic-orthonormal, not S_molecular-orthonormal (they differ by
-    #    image-cell AO overlaps).  We patch the overlap to use the periodic
-    #    S(Γ) from the HF result so that all projections and orthogonalizations
-    #    in the DLPNO code are consistent with the periodic MO basis.
-    from contextlib import contextmanager
-
-    import vibeqc._vibeqc_core as _core
-
-    _S_periodic = np.asarray(hf_res.overlap, dtype=float)
-    _orig_compute_overlap = _core.compute_overlap
-
-    @contextmanager
-    def _patched_overlap():
-        def _patched(basis_arg):
-            return _S_periodic
-
-        _core.compute_overlap = _patched
-        try:
-            yield
-        finally:
-            _core.compute_overlap = _orig_compute_overlap
+    # 5. The periodic AO metric belongs to this calculation's source. The
+    # correlation fit is rebuilt separately from the Ewald-JK SCF reference,
+    # so it must not claim the retained same-source contract of chi.
+    source = _real_torus_source(
+        super_system, basis, hf_res, df,
+        kind="toroidal-compcell",
+        conventions=SourceConventions(
+            exchange_q0=str(getattr(hf_res, "exchange_q0", None) or "unspecified"),
+            kmesh=nrep_tup, bloch_normalisation="real-bvk-supercell",
+            same_source=False,
+        ),
+        factor_tensor=pdf.three_center, factor_representation="full-auxiliary",
+        aux_basis_name=aux_name,
+        provenance={"reference_backend": str(getattr(hf_res, "backend", "") or "")},
+    )
 
     # 6. Consume the toroidal pair classification: the driver's distant-pair
     #    dipole screen must use the toroidal minimum-image distance, not the
     #    open-cluster Euclidean centroid distance (which overestimates
     #    wrap-around separations and would falsely screen adjacent-on-torus
     #    pairs). A caller-supplied pair_distance_fn wins.
-    import dataclasses as _dataclasses
-
     # Preserve the finite-torus validation convention: its existing causal
     # pair-screening and per-cell energy anchors use the pre-#448 thresholds
     # and are all-electron evidence, separate from the molecular #140/#448
@@ -1476,15 +1559,9 @@ def toroidal_dlpno_mp2(
         if dlpno_options is not None
         else _pre_sweep_toroidal_dlpno_mp2_options()
     )
-    if getattr(dlpno_opts, "pair_distance_fn", None) is None:
-        dlpno_opts = _dataclasses.replace(
-            dlpno_opts,
-            pair_distance_fn=toroidal_pair_distance_fn(system, nrep_tup),
-        )
     classification = classify_toroidal_pairs(system, nrep_tup)
 
-    with _patched_overlap():
-        dlpno_res = run_dlpno_mp2(mol, basis, hf_res, df, options=dlpno_opts)
+    dlpno_res = run_dlpno_mp2(None, None, None, None, options=dlpno_opts, source=source)
 
     n_elec = super_system.n_electrons()
     n_occ = n_elec // 2
@@ -1506,6 +1583,10 @@ def toroidal_dlpno_mp2(
         e_total=float(hf_res.energy) + float(dlpno_res.e_corr),
         dlpno_result=dlpno_res,
         pair_classification=classification,
+        source_kind=source.kind,
+        source_identity=source.identity,
+        same_source=source.conventions.same_source,
+        exchange_q0=source.conventions.exchange_q0,
     )
 
 
@@ -1534,6 +1615,10 @@ class ToroidalDLPNOCCSDResult:
     e_total: float
     cc_result: object = None
     pair_classification: object = None  # ToroidalPairClassification
+    source_kind: str = ""
+    source_identity: str = ""
+    same_source: bool = False
+    exchange_q0: str = "unspecified"
 
 
 def _run_toroidal_dlpno_cc(
@@ -1547,14 +1632,13 @@ def _run_toroidal_dlpno_cc(
     with_triples: bool = False,
 ):
     """Shared setup for DLPNO-CCSD/(T) on the toroidal megacell."""
-    from contextlib import contextmanager
-
-    import vibeqc._vibeqc_core as _core
+    from dataclasses import replace
 
     from . import BasisSet
     from ._vibeqc_core import PeriodicRHFOptions as _PeriodicRHFOptions
-    from .aux_basis import default_aux_for, make_aux_basis_set
+    from .aux_basis import default_aux_for
     from .dlpno.ccsd_local_solver import run_local_dlpno_ccsd
+    from .dlpno.source import SourceConventions, _real_torus_source
     from .periodic_df import build_periodic_gamma_df
     from .periodic_rhf_gdf import run_rhf_periodic_gamma_gdf
 
@@ -1565,9 +1649,12 @@ def _run_toroidal_dlpno_cc(
     mol = super_system.unit_cell_molecule()
     basis = BasisSet(mol, basis_name)
     aux_name = aux_basis or default_aux_for(basis_name)
-    aux = make_aux_basis_set(mol, aux_name=aux_name)
 
-    opts = rhf_options if rhf_options is not None else _PeriodicRHFOptions()
+    opts = _seam_covering_rhf_options(
+        super_system,
+        basis,
+        rhf_options if rhf_options is not None else _PeriodicRHFOptions(),
+    )
     hf_res = run_rhf_periodic_gamma_gdf(
         super_system,
         basis,
@@ -1581,24 +1668,26 @@ def _run_toroidal_dlpno_cc(
         )
 
     pdf = build_periodic_gamma_df(super_system, basis, aux_basis=aux_name)
-    df = _PeriodicDFAdapter(pdf, aux)
-
-    _S_periodic = np.asarray(hf_res.overlap, dtype=float)
-    _orig = _core.compute_overlap
-
-    @contextmanager
-    def _patch():
-        _core.compute_overlap = lambda _: _S_periodic
-        try:
-            yield
-        finally:
-            _core.compute_overlap = _orig
+    source = _real_torus_source(
+        super_system, basis, hf_res, pdf,
+        kind="toroidal-compcell",
+        conventions=SourceConventions(
+            exchange_q0=str(getattr(hf_res, "exchange_q0", None) or "unspecified"),
+            kmesh=nrep_tup, bloch_normalisation="real-bvk-supercell",
+            # The Stage 4 compensated-cell correlation fit is rebuilt
+            # separately from the Ewald-JK reference.
+            same_source=False,
+        ),
+        factor_tensor=pdf.three_center, factor_representation="full-auxiliary",
+        aux_basis_name=aux_name,
+        provenance={"reference_backend": str(getattr(hf_res, "backend", "") or "")},
+    )
 
     # Consume the toroidal pair classification: the CC solver's
     # coupling-radius occupied sets must use the toroidal minimum-image
     # distance (open-cluster Euclidean distances under-couple wrap-around
-    # pairs). A caller-supplied pair_distance_fn wins.
-    import dataclasses as _dataclasses
+    # pairs). The source carries this distance; the engine gives a
+    # caller-supplied pair_distance_fn precedence.
 
     # As above, the toroidal correctness ratchet retains its pre-#448
     # thresholds and remains explicitly all-electron until its own convention
@@ -1608,17 +1697,10 @@ def _run_toroidal_dlpno_cc(
         if cc_options is not None
         else _pre_sweep_toroidal_dlpno_cc_options()
     )
-    if getattr(cc_opts, "pair_distance_fn", None) is None:
-        cc_opts = _dataclasses.replace(
-            cc_opts,
-            pair_distance_fn=toroidal_pair_distance_fn(system, nrep_tup),
-        )
-    if with_triples:
-        cc_opts.compute_triples = True
+    cc_opts = replace(cc_opts, compute_triples=with_triples)
     classification = classify_toroidal_pairs(system, nrep_tup)
 
-    with _patch():
-        cc_res = run_local_dlpno_ccsd(mol, basis, hf_res, df, cc_opts)
+    cc_res = run_local_dlpno_ccsd(None, None, None, None, cc_opts, source=source)
 
     n_elec = super_system.n_electrons()
     n_occ = n_elec // 2
@@ -1643,6 +1725,10 @@ def _run_toroidal_dlpno_cc(
         e_total=float(hf_res.energy) + float(cc_res.e_corr) + (e_t or 0.0),
         cc_result=cc_res,
         pair_classification=classification,
+        source_kind=source.kind,
+        source_identity=source.identity,
+        same_source=source.conventions.same_source,
+        exchange_q0=source.conventions.exchange_q0,
     )
 
 

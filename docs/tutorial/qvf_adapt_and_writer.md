@@ -23,11 +23,11 @@ distribution you can vendor into any code, including a proprietary one.
 Clone the [QVF repository](https://github.com/vibe-qc/qvf) independently.
 It owns the specification, JSON Schema, registry, Python and C++ reference
 implementations, validator, and worked examples. The following commands use
-the pinned `v0.1.0-docs.1` reference snapshot; it is not installed into vibe-qc.
+the pinned `v0.4.0` release; it is not installed into vibe-qc.
 ```
 
 ```sh
-git clone --branch v0.1.0-docs.1 https://github.com/vibe-qc/qvf.git
+git clone --branch v0.4.0 https://github.com/vibe-qc/qvf.git
 cd qvf
 ```
 

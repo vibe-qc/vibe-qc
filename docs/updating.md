@@ -30,13 +30,10 @@ All four split projects also have [GitHub mirrors](installation.md#repositories-
 Check `git remote -v` before updating: the installer selects refs from that
 checkout's origin. Public snapshots have separate commit history and can lag
 GitLab. Use a fresh clone when changing hosts instead of merging unrelated
-histories; check that the desired tag exists on that host. The tagged examples
-here use GitLab. A core update does not update companion clones.
-
-The repository published the `v0.16.0` tag and the `release` branch on
-2026-09-08, so the release-specific examples below work; `--dev` follows
-`main`. They still apply only to refs actually published in the selected
-repository -- historical monorepo tags are not among them.
+histories; check that the desired tag exists on that host. A core update
+does not update companion clones. The examples below use refs from the
+selected origin; historical monorepo tags are not automatically present in
+a split repository or public snapshot.
 
 ## The easy button
 
@@ -91,6 +88,8 @@ below.
 ./scripts/update.sh --dev --recreate-venv      # atomic venv replacement with rollback
 ./scripts/update.sh --dev --recreate-venv --python python3.13  # intentionally change Python
 ./scripts/update.sh --dev --with-openblas      # add or retain vendored OpenBLAS
+./scripts/update.sh --dev --with-opentrustregion # fetch/build the optional orbital optimizer
+./scripts/update.sh --dev --without-opentrustregion # explicitly disable it
 ./scripts/update.sh --dev --clean              # native sources/builds + venv + build cache
 ./scripts/update.sh --dev --dry-run            # preview: branch / drift / venv state, no changes
 ./scripts/update.sh --dev --extras dev         # developer profile; install the separate viewer explicitly
@@ -98,12 +97,18 @@ below.
 ./scripts/update.sh --dev --rebuild-native-deps    # combine flags
 ```
 
+OpenTrustRegion selection is retained across ordinary updates, `--clean`,
+and `reinstall.sh`. Use the explicit flags above to change it. Enabled
+builds fetch the pinned numerical library and verify the loaded native
+capability before reporting success. See the
+[installation prerequisites](installation.md#optional-opentrustregion-orbital-optimizer).
+
 `--release` / `--dev` are named shortcuts; `--branch NAME` accepts
 any branch or tag (`--ref NAME` is kept as the older spelling).
 The branch-selection flags are mutually exclusive, pick one. The
-default targets `release`; use it only after that branch is published in
-the new repository. **`--dev`** switches to `main` for previewing
-in-flight features before they ship.
+default and `--release` select origin's `release` branch if present, or its
+newest stable `vX.Y.Z` tag otherwise. An explicit `--branch release` does not
+use that fallback. **`--dev`** selects development `main`.
 
 `--recreate-venv` is the targeted fix for a broken venv: stale
 `pip` shebang after copying a venv across trees, hybrid
@@ -154,16 +159,24 @@ sets a memory-safe default for `CMAKE_BUILD_PARALLEL_LEVEL`. The
 first line of output on a fresh build will look like:
 
 ```
-==> CMAKE_BUILD_PARALLEL_LEVEL=8 (nproc=32, mem=128721MB; cap@8 / 15GB-per-worker)
+==> CMAKE_BUILD_PARALLEL_LEVEL=6 for update.sh (nproc=32, MemTotal=128721MB, MemAvailable=97000MB, cgroup_headroom=none, usable=97000MB from MemAvailable; 15000MB-per-worker, cap@8)
 ```
 
-The cap is `min(nproc, max(2, mem_mb // 15000), 8)`, which keeps
-`ninja` from firing more cc1plus workers than the host has RAM
-for. Each cc1plus on vibe-qc's template-heavy translation units
-(libint integrals, `periodic_*.cpp`, `gradient.cpp`) peaks at
-8-10 GB resident; the formula budgets 15 GB/worker with a hard
-ceiling of 8, above 8, `ninja` serializes on link/IO contention
-and extra parallelism just thrashes the page cache. The
+The level is `min(nproc, max(1, usable_mb // budget_mb), 8)`. `usable`
+is the memory the build can actually get: `MemAvailable`, further
+bounded by the headroom of every enclosing cgroup (`memory.max` minus
+the working set on cgroup v2, `hierarchical_memory_limit` on v1).
+It is not `MemTotal`: a host whose GPU driver or other jobs hold much
+of its RAM was sized for memory it did not have and OOM-killed (#411).
+The per-worker budget is the measured peak of the phase's heaviest
+translation units: 5000 MB while `build_libint.sh` compiles libint's
+library (its unity files peak below 2 GiB with GCC, 4 GiB with clang),
+15000 MB for everything else (the core's `guess.cpp`/`df.cpp` peak at
+7-8 GiB with GCC 16). The level is recomputed each time a phase
+starts (each `build_*.sh`, and just before the core's `pip` build), so
+a long update follows the memory free at that moment. Below one
+budget of usable memory the build runs serially and says so; above 8
+workers `ninja` serializes on link/IO contention anyway. The
 `nice -n 19 ionice -c 3` prefix keeps the foreground shell
 responsive during long builds.
 
@@ -182,6 +195,9 @@ CMAKE_BUILD_PARALLEL_LEVEL=12 ./scripts/update.sh --dev
 
 VIBEQC_BUILD_NICED=1 ./scripts/update.sh --dev
 # → skip the nice/ionice re-exec (full CPU + IO priority)
+
+VIBEQC_BUILD_MEM_PER_JOB_MB=8000 ./scripts/update.sh --dev
+# → per-worker memory budget for every phase (MB)
 
 VIBEQC_BUILD_ENV_QUIET=1 ./scripts/update.sh --dev
 # → silence the cap-announcement banner
@@ -203,7 +219,11 @@ The managed updater also holds cross-platform checkout and environment locks,
 checks ownership and build provenance, targets only drifted dependencies,
 verifies the installed extension, and rolls back a replaced environment on
 failure. The commands below are only a diagnostic outline for understanding an
-update; they are not a safe drop-in equivalent for normal maintenance:
+update on an origin that publishes a `release` branch; they are not a safe
+drop-in equivalent for normal maintenance. If the origin publishes only
+version tags, use the managed updater to select its newest stable tag, or
+request a specific published tag with `--branch vX.Y.Z`. A selected tag
+leaves a detached HEAD and is not pulled as a branch:
 
 ```sh
 # 1. Refuse if working tree is dirty (silently stashing user work
@@ -211,7 +231,7 @@ update; they are not a safe drop-in equivalent for normal maintenance:
 git diff --quiet && git diff --cached --quiet || \
     { echo "uncommitted changes -- commit or stash"; exit 1; }
 
-# 2. Fetch and check out the target ref (release branch by default)
+# 2. Branch-only example: this origin must publish a release branch
 git fetch origin --tags
 git checkout release
 git pull --ff-only origin release        # only on branches; tags don't pull

@@ -1,4 +1,4 @@
-"""Periodic H₂ in a vacuum box — DFT+U quick demo.
+"""Periodic H₂ in a vacuum box: DFT+U quick demo at RKS-LDA / cc-pVDZ.
 
 Closed-shell RKS / LDA / cc-pVDZ on H₂ in a 50 bohr cubic box,
 Γ-only kmesh. Demonstrates the +U surface lighting up in a

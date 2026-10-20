@@ -71,7 +71,7 @@ GPAW agrees with CRYSTAL/pob to ~3 kJ/mol; both sit ~25 kJ/mol below VASP.
 to pob basis-set incompleteness is not reproduced by an independent PW/PAW code
 (GPAW) — pointing at the atomic-reference / PAW-setup convention in VASP rather
 than the Gaussian basis. Under active verification (PBE cross-check + more
-systems). See `handovers/HANDOVER_GPAW_PW_REFERENCE.md`.
+systems).
 
 ## Free-atom recipe
 

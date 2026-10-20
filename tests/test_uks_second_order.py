@@ -195,3 +195,44 @@ def test_uks_mgga_newton_raises_pointer(oh_radical):
     o.newton_threshold = 1.0
     with pytest.raises(RuntimeError, match="meta-GGA"):
         run_uks(mol, basis, o)
+
+
+# ---------------------------------------------------------------------------
+# #499: TRAH rejects a step that raises the energy.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("functional", ["B3LYP", "PBE0"])
+def test_uks_trah_rejects_uphill_step_on_flat_pi_mode(functional):
+    """OH 2Pi on 6-31G with the default grid: the beta pi pair is split
+    only by the grid, so near the minimum the orbital Hessian has a mode
+    with almost no curvature. TRAH used to accept its boundary step along
+    that mode (+1e-5 Ha), after which the step that undid it re-expanded
+    the radius: a period-2 cycle that never converged (B3LYP stuck at
+    g 4.0e-3, PBE0 at 9.5e-8 Ha/bohr after 100 iterations). Rejecting an
+    uphill step converges within 15 iterations to the DIIS minimum.
+    """
+    mol = Molecule(
+        [Atom(8, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.833])],
+        multiplicity=2,
+    )
+    basis = BasisSet(mol, "6-31g")
+
+    def options():
+        o = UKSOptions()
+        o.functional = functional
+        o.conv_tol_energy = 1e-11
+        o.conv_tol_grad = 1e-7
+        o.max_iter = 40
+        return o
+
+    r_diis = run_uks(mol, basis, options())
+    assert r_diis.converged
+
+    o = options()
+    o.trah_threshold = 0.05
+    r_trah = run_uks(mol, basis, o)
+    assert r_trah.converged, [
+        (row.energy, row.grad_norm) for row in r_trah.scf_trace[-4:]
+    ]
+    # TRAH may settle slightly lower along the grid-split pi mode.
+    assert r_trah.energy == pytest.approx(r_diis.energy, abs=1e-7)

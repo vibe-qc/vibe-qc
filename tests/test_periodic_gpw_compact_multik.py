@@ -108,6 +108,32 @@ def test_skewed_compact_crystal_classified_compact():
     assert _multik_gpw_is_molecular_limit(sysp) is False
 
 
+def test_compact_bloch_cache_preserves_density_and_projection():
+    """All-k reuse keeps skew-grid density and local-potential contractions."""
+    sysp = _skewed_compact_system()
+    basis = vq.BasisSet(vq.Molecule(list(sysp.unit_cell), 0, 1), "sto-3g")
+    from vibeqc.periodic_gapw_grid import PlaneWaveGrid
+
+    grid = PlaneWaveGrid(np.asarray(sysp.lattice), 9, 7, 5)
+    points = grid.cartesian_coords().reshape(-1, 3)
+    shifts = np.array([[0., 0., 0.], [0.7, -0.2, 0.1], [-0.4, 0.1, -0.2]])
+    kpoints = np.array([[0., 0., 0.], [0.2, -0.3, 0.1]])
+    tables = gpw_j._bloch_ao_cache_on_grid(basis, points, kpoints, shifts)
+    reference = [gpw_j.bloch_ao_on_grid(basis, points, k, shifts) for k in kpoints]
+    densities = [np.array([[0.6, 0.1j], [-0.1j, 0.4]]), np.array([[0.3, -0.2j], [0.2j, 0.7]])]
+    weights = [0.3, 0.7]
+    rho = gpw_j.collocate_bloch_density_on_grid(tables, densities, weights, grid)
+    expected = gpw_j.collocate_bloch_density_on_grid(reference, densities, weights, grid)
+    np.testing.assert_allclose(rho, expected, rtol=2e-14, atol=2e-15)
+    potential = np.cos(points[:, 0]).reshape(grid.shape)
+    for actual, expected in zip(tables, reference):
+        np.testing.assert_allclose(
+            gpw_j.project_potential_to_bloch_ao(actual, potential, grid),
+            gpw_j.project_potential_to_bloch_ao(expected, potential, grid),
+            rtol=2e-14, atol=2e-15,
+        )
+
+
 def test_compact_multik_pbe_batches_bloch_ao_grid(monkeypatch):
     """The compact route must never materialise the full grid x AO table.
 
@@ -740,7 +766,7 @@ def test_indefinite_bloch_overlap_guard_is_available_and_correct():
 # ---------------------------------------------------------------------------
 # The -18 Ha: what the GPW energy functional itself converges to.
 #
-# HANDOVER_GPW_MULTIK_OVERLAP_PSD.md left the production switch unlanded
+# the original investigation left the production switch unlanded
 # because converging the Bloch-overlap lattice sum moved LiF/def2-SVP/
 # (2,2,2)/PBE from -107.25 Ha to -125.43 Ha "and nobody can explain it".
 # Its stated untested hypothesis was that all-electron GPW at 150-300 Ha
@@ -762,7 +788,7 @@ def test_indefinite_bloch_overlap_guard_is_available_and_correct():
 # The functional converges to about -107.3852 Ha -- the physical scale --
 # and the whole plane-wave discretisation error at the campaign's 150 Ha is
 # 0.50 Ha, not 18 Ha. So the 18 Ha is NOT the grid, the correct GPW target
-# for this cell is -107.385 (the handover was working from "about -107.6",
+# for this cell is -107.385 (the original investigation was working from "about -107.6",
 # taken from a run that used the broken metric), and the queued cluster
 # ladder is unnecessary.
 #
@@ -790,7 +816,7 @@ def test_fixed_density_gpw_functional_converges_to_physical_scale():
         )
 
     # Converged by 300 -> 600 Ha: the remaining drift is <= 50 mHa, two
-    # orders below the 18 Ha the handover needed explaining.
+    # orders below the 18 Ha the original investigation needed explaining.
     assert abs(e[600.0] - e[300.0]) < 0.05, (
         f"GPW functional not converged in the cutoff: 300 Ha "
         f"{e[300.0]:.6f} vs 600 Ha {e[600.0]:.6f}"

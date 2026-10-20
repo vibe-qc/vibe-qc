@@ -359,10 +359,11 @@ def test_bipole_one_cycle_component_uses_returned_real_space_density(monkeypatch
         progress=False,
     )
 
-    lat_opts = LatticeSumOptions()
-    lat_opts.cutoff_bohr = 6.0
-    lat_opts.nuclear_cutoff_bohr = 6.0
-    lat_opts.coulomb_method = CoulombMethod.DIRECT_TRUNCATED
+    # Reconstruct the operator the driver actually executed. A plain
+    # lattice-index ball differs from the physical AO-pair support (#504).
+    assert result.resolved_domain.policy == "physical_pairs"
+    lat_opts = result.resolved_domain.lattice_1e.restore(LatticeSumOptions)
+    assert lat_opts.pair_complete_1e
     S_lat = compute_overlap_lattice(basis, system, lat_opts)
     T_lat = compute_kinetic_lattice(basis, system, lat_opts)
     D_sad = initial_density_closed_shell(
@@ -577,7 +578,7 @@ def test_bipole_h2_12bohr_gamma_energy_regression():
 def test_bipole_h2_12bohr_gamma_legacy_gauge_energy_and_spheropole():
     """The legacy Γ gauge (locality projection + full-Coulomb direct K +
     EXT EL-SPHEROPOLE in the total) stays reachable via
-    ``use_exchange_ewald_split=False``. M5's padded SR domain
+    ``use_exchange_ewald_split=False, historical_domain=True``. M5's padded SR domain
     applies to this erfc J build too; the analytic-gradient preview requests
     the historical domain explicitly when it exercises this gauge.
 
@@ -592,6 +593,7 @@ def test_bipole_h2_12bohr_gamma_legacy_gauge_energy_and_spheropole():
         opts,
         ewald_precision=1e-6,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         progress=False,
     )
 
@@ -752,10 +754,13 @@ def test_bipole_corrected_split_one_electron_atom_matches_split_invariant():
     assert r.energy == pytest.approx(_H_ATOM_30_SPLIT_INVARIANT, abs=2e-8)
 
 
-def test_bipole_explicit_crystal_alpha_is_still_short_at_the_fixed_cutoff():
-    """The pre-fix configuration, requested explicitly, must still miss the
-    image exchange beyond 12 bohr; otherwise the fixture no longer
-    discriminates the defect."""
+@pytest.mark.parametrize("historical_domain", [False, True])
+def test_bipole_explicit_crystal_alpha_domain_control(historical_domain):
+    """The historical support still misses the exchange tail at small alpha.
+
+    Physical support now resolves that tail even with the explicit alpha;
+    select the historical domain explicitly to retain the negative control.
+    """
     sysp, basis = _h2_30bohr_box()
     km = monkhorst_pack(sysp, [1, 1, 1])
     r = run_pbc_bipole_rhf(
@@ -766,11 +771,17 @@ def test_bipole_explicit_crystal_alpha_is_still_short_at_the_fixed_cutoff():
         ewald_omega=2.8 / 30.0,
         use_ewald_j_split=True,
         use_exchange_ewald_split=True,
+        historical_domain=historical_domain,
         progress=False,
     )
     assert r.converged
     assert r.ewald_alpha_bohr_inv == pytest.approx(2.8 / 30.0)
-    assert r.energy - _H2_30_SPLIT_INVARIANT > 1e-5, r.energy
+    expected_policy = "historical_index_ball" if historical_domain else "physical_pairs"
+    assert r.resolved_domain.policy == expected_policy
+    if historical_domain:
+        assert r.energy - _H2_30_SPLIT_INVARIANT > 1e-5, r.energy
+    else:
+        assert r.energy == pytest.approx(_H2_30_SPLIT_INVARIANT, abs=2e-8)
 
 
 def test_bipole_legacy_gauge_keeps_crystal_alpha_on_a_large_box():
@@ -785,6 +796,7 @@ def test_bipole_legacy_gauge_keeps_crystal_alpha_on_a_large_box():
         _box_options_674(),
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         progress=False,
     )
     assert r.converged

@@ -24,9 +24,11 @@ Pulls from two upstream sources:
       (Psi4 master branch, snapshot commit X), and
     * carry the standard vibe-qc license note (CLAUDE.md § 1 + § 8).
 
-Output goes to ``python/vibeqc/basis_library/custom/`` so it ships
+Each basis becomes a QVF-Basis record under ``python/vibeqc/basis_library/qvf/``
+(kind ``bse``, with the source and citation in its provenance), and ``basis/``
+is re-rendered, so it ships
 inside the wheel. ``scripts/setup_basis_library.sh`` then mirrors
-``custom/`` → ``basis/`` for libint runtime discovery.
+with every other record for libint runtime discovery.
 
 Run once when bundling a new 3c basis; the resulting .g94 files are
 committed to the repo. Users never re-fetch.
@@ -286,20 +288,12 @@ def main() -> int:
             print(f"      cite: {cite[:80]}{'...' if len(cite) > 80 else ''}")
         return 0
 
-    repo_root = Path(__file__).resolve().parent.parent
-    out_dir = repo_root / "python" / "vibeqc" / "basis_library" / "custom"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # ECP sidecars live next to their orbital file in basis_library/custom/:
-    # that is the directory scripts/setup_basis_library.sh copies into the
-    # runtime basis/ tree, and the sidecar lookup reads only basis/. The
-    # earlier ecp_library/custom/ target was read by nothing, which is how
-    # def2-mSVP shipped valence-only beyond Kr with its ECP sitting unused.
-    ecp_dir = out_dir
-    ecp_dir.mkdir(parents=True, exist_ok=True)
+    from vibeqc.basis_toolkit import Upstream, library
+
+    out_dir = library.records_dir()
 
     print(f"BSE library version: {bse.version()}")
-    print(f"Basis output dir:    {out_dir}")
-    print(f"ECP output dir:      {ecp_dir}")
+    print(f"Record output dir:   {out_dir}")
     print()
 
     n_written = 0
@@ -311,37 +305,24 @@ def main() -> int:
         (n_basis_elements, n_ecp_elements) summary."""
         nonlocal n_written, n_skipped
         orbital_text, ecp_text = _strip_embedded_ecps(body)
-        header = _vibeqc_header(
+        description = _vibeqc_header(
             basis_label=basis_label, citation=cite, source=source,
+        ).replace("! ", "").replace("!", "").strip()
+        record = library.record_from_text(
+            dst, orbital_text, ecp_text if ecp_text.strip() else None,
+            kind="bse", description=description,
+            upstream=[Upstream(name=source.split(" (")[0], identifier=basis_label,
+                               url=source[source.find("(") + 1:].rstrip(")") or None)],
         )
-        # --- Orbital basis ---
-        orbital_path = out_dir / f"{dst}.g94"
-        new_orbital = header + orbital_text
-        if orbital_path.exists() and orbital_path.read_text() == new_orbital:
+        record_path = library.record_path(dst)
+        if record_path.is_file() and library.load_record(dst).content_sha256() == record.content_sha256():
             n_skipped += 1
-            orb_msg = f"= (unchanged)"
+            orb_msg = "= (unchanged)"
         else:
-            orbital_path.write_text(new_orbital)
+            library.save_record(record, record_path)
             n_written += 1
             orb_msg = "+"
-        n_basis = len(re.findall(r"^[A-Z][a-z]?\s+0\s*$",
-                                 orbital_text, flags=re.MULTILINE))
-        # --- ECPs, if present ---
-        n_ecp = 0
-        if ecp_text.strip():
-            ecp_header = _vibeqc_header(
-                basis_label=f"{basis_label} ECPs",
-                citation=cite,
-                source=source,
-            )
-            ecp_path = ecp_dir / f"{dst}.ecp"
-            new_ecp = ecp_header + ecp_text
-            if not (ecp_path.exists() and ecp_path.read_text() == new_ecp):
-                ecp_path.write_text(new_ecp)
-            n_ecp = len(_ECP_HEADER_RE.findall(ecp_text)) \
-                + len(re.findall(r"^\s*[A-Z][a-z]?-ECP", ecp_text,
-                                 flags=re.MULTILINE))
-        return n_basis, n_ecp, orb_msg
+        return len(record.elements), len(record.ecps or {}), orb_msg
 
     # -- BSE targets ---------------------------------------------------------
     for src, dst, cite in BSE_TARGETS:
@@ -382,13 +363,10 @@ def main() -> int:
         print(f"  {msg} Psi4 {dst:<18s} -> {dst}.g94 {suffix}")
 
     print()
-    print(f"Wrote {n_written} new/updated, kept {n_skipped} unchanged.")
-    print()
-    print("To make these visible to libint at runtime:")
-    print("  cp python/vibeqc/basis_library/custom/*.g94 \\")
-    print("     python/vibeqc/basis_library/basis/")
-    print("(or run scripts/setup_basis_library.sh if libint is "
-          "vendored under third_party/.)")
+    print(f"Wrote {n_written} new/updated records, kept {n_skipped} unchanged.")
+    library.render_library(library.renderings_dir())
+    print("Re-rendered basis/; route the citation keys in database.toml and run")
+    print("  python scripts/render_basis_library.py --check")
     return 0
 
 

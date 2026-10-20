@@ -120,3 +120,22 @@ class OptimizerState:
     n_energy_evals: int = 0
     x_prev: Optional[np.ndarray] = None
     energy_prev: Optional[float] = None
+
+
+class GeomOptFailedError(RuntimeError):
+    """A geometry optimization ended without delivering what was asked for.
+
+    ``run_job`` raises a subclass, after writing the last geometry and a
+    ``.out`` verdict, when an optimizer stops before its convergence criteria
+    are met. The attached :class:`GeomOptResult` carries the last geometry, its
+    energy and gradient, the trajectory, and the optimizer's own ``message``.
+    """
+
+    def __init__(self, result: "GeomOptResult", message: str) -> None:
+        self.result = result
+        self.system = result.system
+        super().__init__(message)
+
+
+class GeomOptNotConvergedError(GeomOptFailedError):
+    """The optimizer stopped before its convergence criteria were met."""

@@ -13,10 +13,10 @@ such gaps, each one element, each its own publication:
 That is why they are absent rather than an oversight upstream, and it is why
 each needs its own citation route rather than inheriting the parent set's.
 
-Method, following ``merge_def2_heavy_blocks.py``: libint's element data is
-copied **verbatim** under a provenance header, then the Basis Set Exchange
-blocks for the missing elements are appended. No existing element's numbers
-move, which ``tests/test_basis_integrity.py`` pins.
+Method, following ``merge_def2_heavy_blocks.py``: the bundled record's
+element data is kept **unchanged**, the Basis Set Exchange blocks for the
+missing elements are appended, and the record's provenance gains the BSE
+upstream. No existing element's numbers move.
 
 Usage::
 
@@ -24,7 +24,7 @@ Usage::
     python scripts/basisset_dev/merge_bse_element_blocks.py
     ./scripts/setup_basis_library.sh --target-dir python/vibeqc/basis_library
 
-Idempotent: rerunning rewrites the same custom/ files from libint + BSE.
+Idempotent: an element the record already carries is not fetched again.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 LIBRARY = REPO / "python" / "vibeqc" / "basis_library"
-CUSTOM = LIBRARY / "custom"
+QVF = LIBRARY / "qvf"
 
 # (vibe-qc stem, BSE name, {Z: symbol}, one-line reference for the header)
 TARGETS = [
@@ -64,9 +64,6 @@ TARGETS = [
     ),
 ]
 
-# Bases whose source file is vibe-qc's own custom/ rather than libint's.
-CUSTOM_SOURCED = {"pob-dzvp-rev2"}
-
 
 # pob-DZVP-rev2 is completed from BSE because its copy was *verified* against
 # our Bredow-archive-derived file first: all 19 shared elements agree as shell
@@ -86,27 +83,6 @@ CUSTOM_SOURCED = {"pob-dzvp-rev2"}
 # come from the Bredow archive (Laun 2018), which sources/ does not yet hold.
 
 
-def _libint_basis_dir() -> Path:
-    root = REPO / "third_party" / "libint" / "install" / "share" / "libint"
-    for candidate in sorted(root.glob("*/basis")):
-        return candidate
-    raise SystemExit(
-        f"libint basis directory not found under {root}; "
-        "run ./scripts/build_libint.sh first"
-    )
-
-
-def _strip_generated_header(text: str) -> str:
-    """Drop a leading run of ``!`` comment lines and blank lines.
-
-    Keeps re-runs idempotent: without it, merging a file this script already
-    wrote would prepend a second provenance header on top of the first.
-    """
-    lines = text.splitlines(keepends=True)
-    i = 0
-    while i < len(lines) and (not lines[i].strip() or lines[i].lstrip().startswith("!")):
-        i += 1
-    return "".join(lines[i:])
 
 
 def main() -> int:
@@ -118,50 +94,38 @@ def main() -> int:
             "    pip install 'vibe-qc[bse]'"
         ) from None
 
-    libint_dir = _libint_basis_dir()
+    from vibeqc.basis_toolkit import Upstream, from_g94, library
+
     catalogue = str(version())
     today = _dt.date.today().isoformat()
-    CUSTOM.mkdir(parents=True, exist_ok=True)
 
     for stem, bse_name, elements, reference in TARGETS:
-        source = (CUSTOM / f"{stem}.g94") if stem in CUSTOM_SOURCED else (
-            libint_dir / f"{stem}.g94"
-        )
-        if not source.is_file():
-            print(f"  !! {stem}: {source} missing, skipped")
+        record = library.load_record(stem)
+        wanted = {elements[z] for z in elements} - set(record.elements)
+        if not wanted:
+            print(f"  = {stem}: already carries {', '.join(elements.values())}")
             continue
-
-        libint_text = source.read_text(errors="replace")
-        if stem in CUSTOM_SOURCED:
-            # Re-merging our own output would stack provenance headers.
-            libint_text = _strip_generated_header(libint_text)
         added = api.get_basis(
-            name=bse_name, elements=sorted(elements), fmt="gaussian94",
-            header=False,
+            name=bse_name, elements=sorted(z for z in elements if elements[z] in wanted),
+            fmt="gaussian94", header=False,
         )
-        symbols = ", ".join(elements[z] for z in sorted(elements))
-        header = (
-            "! ----------------------------------------------------------\n"
-            f"! Basis set: {stem}\n"
-            f"! {stem}: the previous bundled file's element data unchanged,\n"
-            f"! followed\n"
-            f"! by the {symbols} block(s) from the Basis Set Exchange. libint\n"
-            "! omits these because they were added to the set by a later and\n"
-            "! separate publication, not because the data is in doubt:\n"
-            f"!   {symbols}: {reference}\n"
-            f"! Fetched from the basis-set-exchange distribution, catalogue\n"
-            f"!   version {catalogue}, on {today}. No network access involved.\n"
-            "! License: numerical parameter data from published scientific\n"
-            "!   papers; see docs/license.md section 3a.\n"
-            "! ----------------------------------------------------------\n"
+        blocks = from_g94(added, name=stem)
+        for sym, element in blocks.elements.items():
+            record.elements[sym] = element
+        symbols = ", ".join(sorted(wanted))
+        record.description = (record.description + "\n\n" if record.description else "") + (
+            f"{symbols} added from the Basis Set Exchange (catalogue {catalogue}, {today}): "
+            f"libint omits these because a later, separate publication added them: {reference}"
         )
-        target = CUSTOM / f"{stem}.g94"
-        target.write_text(header + libint_text + added)
-        origin = "custom/" if stem in CUSTOM_SOURCED else "libint"
-        print(f"  + {stem}: {origin} + {symbols} -> {target.relative_to(REPO)}")
+        record.provenance.upstream.append(Upstream(
+            name="basis-set-exchange", version=catalogue, url="https://www.basissetexchange.org",
+            identifier=bse_name, detail=f"{symbols} block(s)"))
+        library.save_record(record, library.record_path(stem))
+        print(f"  + {stem}: + {symbols} -> qvf/{stem}{library.RECORD_SUFFIX} "
+              f"(route the publication's key in database.toml)")
 
-    print("\nNow promote:")
-    print("  ./scripts/setup_basis_library.sh --target-dir python/vibeqc/basis_library")
+    library.render_library(library.renderings_dir())
+    print("\nRe-rendered basis/. Check with: python scripts/render_basis_library.py --check")
     return 0
 
 

@@ -17,11 +17,11 @@ SITE = Path(__file__).resolve().parents[1]
 OUT = SITE / 'public/logo'
 OUT.mkdir(parents=True, exist_ok=True)
 PAPER, INK, LIGHT, MUTED = '#08120F', '#0F172A', '#ECF3F1', '#9DB1AB'
-COLORS = {'vibe-qc': ('#0F766E', '#2DB9A8'), 'vibe-view': ('#7151B8', '#BAA4FA'), 'vibe-queue': ('#A55325', '#F1AD80')}
+COLORS = {'vibe-qc': ('#0F766E', '#2DB9A8'), 'vibe-view': ('#7151B8', '#BAA4FA'), 'vibe-queue': ('#A55325', '#F1AD80'), 'vibe-sketch': ('#1F8071', '#79D1BD')}
 # The product name, which is what a wordmark shows. `vq` stays the shell
-# command, Python distribution and import package (see the vibe-queue
+# command and Python import package (see the vibe-queue
 # independence note in src/data/products.mjs); it is not the product name.
-NAMES = {'vibe-qc': 'vibe-qc', 'vibe-view': 'vibe-view', 'vibe-queue': 'vibe-queue'}
+NAMES = {'vibe-qc': 'vibe-qc', 'vibe-view': 'vibe-view', 'vibe-queue': 'vibe-queue', 'vibe-sketch': 'vibe-sketch'}
 
 @lru_cache(None)
 def font(weight):
@@ -49,6 +49,8 @@ def symbol(kind='vibe-qc', color='#0F766E', background=None):
     frame = f'<rect x="2" y="2" width="44" height="44" rx="11" fill="{background or "none"}" stroke="{color}" stroke-width="2.5"/>'
     if kind == 'vibe-qc':
         drawing = '<path d="M11 24C15 10 20 10 24 24S33 38 37 24"/><circle cx="11" cy="24" r="2.8"/><circle cx="37" cy="24" r="2.8"/>'
+    elif kind == 'vibe-sketch':
+        drawing = '<path d="M24 9L37 16.5V31.5L24 39L11 31.5V16.5Z M24 16L31 20V28L24 32L17 28V20Z"/>'
     elif kind == 'vibe-view':
         drawing = '<path d="M8 24Q24 5 40 24Q24 43 8 24Z"/><circle cx="24" cy="24" r="6"/>'
     else:
@@ -74,7 +76,8 @@ def tile(kind, x, y, scale=1):
     return f'<g transform="translate({x},{y}) scale({scale})"><rect width="112" height="112" rx="25" fill="#10251F" stroke="{color}" stroke-opacity=".4"/>'+f'<g transform="translate(26,24) scale(1.25)">{symbol(kind,color)}</g></g>'
 
 def family_diagram():
-    return '''<g fill="none" stroke="#31584D" stroke-width="2"><path d="M901 248C960 248 1005 258 1018 319"/><path d="M1018 375C1018 425 917 451 887 404"/><path d="M843 353C825 310 815 261 854 241"/></g>'''+tile('vibe-qc',824,156)+tile('vibe-view',982,296)+tile('vibe-queue',794,355)
+    return '<path d="M875 225H1040V388H875Z" fill="none" stroke="#31584D" stroke-width="2"/>'+tile('vibe-sketch',818,167,.85)+tile('vibe-queue',982,167,.85)+tile('vibe-qc',818,330,.85)+tile('vibe-view',982,330,.85)
+
 
 def lattice_diagram():
     # A projected unit-cell network; a visual motif, not a physical structure.
@@ -102,9 +105,10 @@ def queue_diagram():
     return '<path d="M830 210H790V296H878M1080 296H1125V382H1050" fill="none" stroke="#F1AD80" stroke-opacity=".6" stroke-width="2"/>'+''.join(result)
 
 cards={
- 'vibe-qc-social': ('family','THREE INDEPENDENT PRODUCTS',('Calculate. Explore.','Keep work moving.'),'One scientific workflow. Separate tools.',family_diagram),
+ 'vibe-qc-social': ('family','SCIENTIFIC SOFTWARE & DOCUMENTATION',('From structure','to understanding.'),'Sketch. Submit. Calculate. Analyze.',family_diagram),
  'vibe-qc-product-social': ('vibe-qc','CALCULATE',('Quantum chemistry.','Molecules to solids.'),'Molecular + periodic · Python + C++17',lattice_diagram),
  'vibe-view-social': ('vibe-view','EXPLORE',('See the structure.','Understand the result.'),'Browser · desktop · terminal · headless',viewer_diagram),
+ 'vibe-sketch-social': ('vibe-sketch','SKETCH / TESTING VERSION',('Structures. Reactions.','Calculation inputs.'),'Browser · Python · CLI · REST · MCP',lattice_diagram),
  'vibe-queue-social': ('vibe-queue','SCHEDULE',('Queue the work.','Keep the results.'),'Local machines · remote hosts · cluster schedulers',queue_diagram),
 }
 for filename,(kind,eyebrow,lines,caption,diagram) in cards.items():
@@ -123,12 +127,12 @@ for filename,(kind,eyebrow,lines,caption,diagram) in cards.items():
     body+=diagram()
     body+='<path d="M64 482H1136" stroke="#29473E"/>'
     if kind=='family':
-        for (name,label),x,color in zip((('vibe-qc','Calculate'),('vibe-view','Explore'),('vibe-queue','Schedule')),(64,432,800),('#2DB9A8','#BAA4FA','#F1AD80')):
-            body+=f'<circle cx="{x+5}" cy="530" r="4" fill="{color}"/>'+text(name,x+24,541,26,LIGHT,650)+text(label,x+24,580,17,MUTED,450)
+        for (name,label),x,color in zip((('vibe-sketch','Sketch'),('vibe-queue','Submit'),('vibe-qc','Calculate'),('vibe-view','Analyze')),(64,342,620,898),('#79D1BD','#F1AD80','#2DB9A8','#BAA4FA')):
+            body+=f'<circle cx="{x+5}" cy="530" r="4" fill="{color}"/>'+text(name,x+24,541,23,LIGHT,650)+text(label,x+24,580,17,MUTED,450)
     else:
         body+=text('Independent by design.',64,548,24,LIGHT,550)
         body+=text('Part of the vibe scientific toolset',64,582,17,MUTED,450)
         body+=text('/products/'+key+'/',845,562,17,accent,500,0,290)
     title='vibe scientific toolset' if kind=='family' else NAMES[key]
     (OUT/f'{filename}.svg').write_text(svg(body,1200,630,title,' '.join(lines)+' '+caption))
-print('Generated six wordmarks, three SVG icons and four social cards.')
+print('Generated four product identities and five social cards.')

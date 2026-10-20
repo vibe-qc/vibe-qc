@@ -123,7 +123,7 @@ ANG2BOHR = 1.0 / 0.529177210903
 #   "levshift"       → Hcore guess, iter-decreasing LEVSHIFT
 #                      [5,4,3,2,1,0.5,0].
 #   "sad"            → SAD guess (periodic; lifts iter 1 to ~-6.83
-#                      per handover), LEVSHIFT off.
+#                      per historical design record), LEVSHIFT off.
 #   "sad_levshift"   → SAD guess + iter-decreasing LEVSHIFT — the
 #                      combination most likely to converge to the
 #                      physical basin.

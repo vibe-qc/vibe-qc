@@ -2,10 +2,16 @@
 myst:
   html_meta:
     "description": "Basis sets and auxiliary basis sets for Γ-CCM and χ-CCM: which orbital basis for which purpose, which auxiliary basis each backend needs, and the CLI flags to set them."
-    "og:title": "vibe-qc — basis sets for AICCM (Γ-CCM and χ-CCM)"
+    "og:title": "vibe-qc - basis sets for AICCM (Γ-CCM and χ-CCM)"
 ---
 
 # Basis sets for AICCM
+
+```{admonition} Status: experimental
+:class: warning
+
+Every AICCM route these basis choices feed (`run_periodic_job(method="aiccm", variant=...)` and the study harness routes) is an experimental route. Every Γ-line SCF driver emits `vibeqc.AICCM2026DevAExperimentalWarning` and every χ-CCM driver emits `vibeqc.AICCM2026DevBExperimentalWarning`; the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant=...)`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
 
 Both CCM lines select their orbital and auxiliary bases through the same
 vibe-qc basis-set machinery, but which basis you need depends on the
@@ -19,7 +25,7 @@ bases (`pob-tzvp-rev2`, `pob-dzvp-rev2`).
 
 | basis | purpose | Δ vs CRYSTAL |
 |---|---|---|
-| `sto-3g` | **Cross-check.** Cheap, well-conditioned, works for every element H–Kr. The default for the AICCM-2026 benchmark so that Γ-CCM, χ-CCM, bipole, and GDF all run on the same basis. | large (minimal basis), not for production |
+| `sto-3g` | **Cross-check.** Cheap, well-conditioned, works for every element H to Kr. The default for the AICCM-2026 benchmark so that Γ-CCM, χ-CCM, bipole, and GDF all run on the same basis. | large (minimal basis), not for production |
 | `pob-tzvp-rev2` | **Production comparison.** The solid-state triple-zeta basis used in the CRYSTAL23 `.d12` library. Run the periodic references (`bipole`/`gdf`) at this basis to compare against CRYSTAL23 directly. | ~mHa/atom for insulators |
 | `pob-dzvp-rev2` | Lighter solid-state double-zeta; faster SCF convergence than TZVP. | larger than TZVP, smaller than STO-3G |
 | `6-31g*` | Molecular basis; usable for 1-D chains and vacuum-padded slabs. | N/A for bulk |
@@ -66,30 +72,30 @@ The four-center backends need no auxiliary basis.
 | route | auxiliary basis | how it is chosen |
 |---|---|---|
 | `aiccm-hf`, `aiccm-ks` | none | four-center, direct |
-| `aiccm-ri`, `aiccm-ks-ri` | **implicit** (GDF auto-builds the auxiliary from the orbital basis) | no user control — the GDF driver constructs the JK-fit basis |
+| `aiccm-ri`, `aiccm-ks-ri` | **implicit** (GDF auto-builds the auxiliary from the orbital basis) | no user control: the GDF driver constructs the JK-fit basis |
 | `aiccm-rijcosx` | implicit (RI-J uses GDF; COSX-K uses a grid, no auxiliary) | same as above |
 | `ccm_neutral_cderi` | you supply the plane-wave cutoff `ke_cutoff` (Ha) | `ccm_neutral_cderi(ccm, ke_cutoff=200.0)` |
 
 The GDF container auto-selects the auxiliary basis for each element.
-For the neutral cderi the PW cutoff controls accuracy — the default
-120 Ha is converged for STO-3G; for pob-TZVP use 200–300 Ha.
+For the neutral cderi the PW cutoff controls accuracy: the default
+120 Ha is converged for STO-3G; for pob-TZVP use 200 to 300 Ha.
 
 ### χ-CCM
 
 | backend | auxiliary basis | flag |
 |---|---|---|
-| `four_center` | none | — |
+| `four_center` | none | none |
 | `ri` | `def2-svp-jk` (default) or any JK-fit basis | `--aux-basis def2-svp-jk` |
 | `rijcosx` | same RI-J auxiliary + COSX grid | `--aux-basis def2-svp-jk` |
 
 ```bash
-# χ-CCM — explicitly set the auxiliary basis
+# χ-CCM: explicitly set the auxiliary basis
 python run_case_b.py mgo rhf-ri --aux-basis def2-svp-jk
 python run_case_b.py mgo rhf-ri --aux-basis def2-tzvp-jk
 ```
 
 The χ-CCM fleet runner (`make_jobs_b.py`) hardcodes `--aux-basis
-def2-svp-jk` on every emitted command — the fastest JK-fit basis that
+def2-svp-jk` on every emitted command, the fastest JK-fit basis that
 still gives ∼sub-mHa accuracy.
 
 In the Python API:
@@ -126,20 +132,20 @@ compiled basis.
 **pob-* and linear dependence.** The pob-* bases are designed to avoid
 linear dependence in crystals (they omit the most diffuse functions).
 They are the recommended choice for solid-state work. Molecular bases
-(cc-pV*Z, 6-31G*) can become linearly dependent in tight crystals —
+(cc-pV*Z, 6-31G*) can become linearly dependent in tight crystals;
 vibe-qc's linear-dependence removal will catch this, but the removed
 functions reduce variational freedom.
 
 **Basis-set superposition error (BSSE).** STO-3G has large BSSE; do not
 use it for binding energies or adsorption energies. The TZVP bases
-reduce BSSE to chemically acceptable levels (~1–2 kcal/mol).
+reduce BSSE to chemically acceptable levels (~1 to 2 kcal/mol).
 
 ## See also
 
 - [Γ-CCM reference](../aiccm2026dev_a.md)
 - [χ-CCM user guide](../user_guide/aiccm2026dev_b.md)
-- [Basis sets](../user_guide/basis_sets.md) — the general vibe-qc basis
+- [Basis sets](../user_guide/basis_sets.md): the general vibe-qc basis
   set guide
-- [pob-TZVP tutorial](../tutorial/pob_tzvp.md) — using solid-state bases
-- [Basis convergence tutorial](../tutorial/basis_convergence.md) —
+- [pob-TZVP tutorial](../tutorial/pob_tzvp.md): using solid-state bases
+- [Basis convergence tutorial](../tutorial/basis_convergence.md):
   general basis-set convergence workflow

@@ -17,6 +17,14 @@ from typing import TypeVar
 
 _PUBLISHED_FIELDS = ("tcut_pairs", "tcut_pno", "tcut_mkn")
 _DERIVED_MP2_FIELDS = ("tcut_pairs_weak", "tcut_pno_weak")
+# Domain companion: the differential-overlap cut of the PAO domains
+# (``tcut_do`` on the local CCSD and DLPNO-MP2 options), read only under
+# ``domain_criterion="doi"``. The name predates the MP2 port.
+_DERIVED_CCSD_FIELDS = ("tcut_do",)
+_DERIVED_FIELDS = _DERIVED_MP2_FIELDS + _DERIVED_CCSD_FIELDS
+# ORCA 6.1.1's TCutDO for the three named presets, read from its own output
+# (``! DLPNO-CCSD(T) LoosePNO|NormalPNO|TightPNO`` prints 2e-2, 1e-2, 5e-3).
+_PUBLISHED_TCUT_DO = {"LoosePNO": 2e-2, "NormalPNO": 1e-2, "TightPNO": 5e-3}
 
 
 @dataclass(frozen=True)
@@ -30,8 +38,12 @@ class DLPNOThresholds:
     strong-pair value. That equal energy boundary makes the weak tier
     structurally inactive for named presets because screening happens first;
     a custom ``tcut_pairs_weak > tcut_pairs`` interval activates it.
-    ``tcut_c``, ``tcut_do``, and ``tcut_ext`` are not part of the published
-    three-coordinate presets and are not applied to solver option objects.
+    ``tcut_do`` is the PAO-domain companion: the differential-overlap cut of
+    the PAO domains, carried with ORCA 6.1.1's value for each named preset
+    and applied to ``LocalCCSDOptions``, ``LocalUCCSDOptions`` and
+    ``DLPNOMP2Options``. ``tcut_c`` and ``tcut_ext`` are
+    not part of the published presets and are not applied to solver option
+    objects.
     """
 
     tcut_c: float = 1e-3
@@ -90,6 +102,16 @@ class DLPNOThresholds:
                     f"{self.name} must carry vibe-qc's derived weak-pair "
                     "companions"
                 )
+            if not isclose(
+                float(self.tcut_do),
+                _PUBLISHED_TCUT_DO[self.name],
+                rel_tol=1e-15,
+                abs_tol=0.0,
+            ):
+                raise ValueError(
+                    f"{self.name} must carry ORCA 6.1.1's TCutDO companion "
+                    f"({_PUBLISHED_TCUT_DO[self.name]:g})"
+                )
 
 
 # A preset carrying a published name must carry the published numbers.
@@ -108,6 +130,7 @@ DLPNO_TIGHT = DLPNOThresholds(
     tcut_pairs=1e-5,
     tcut_pairs_weak=1e-5,
     tcut_mkn=1e-4,
+    tcut_do=5e-3,
     name="TightPNO",
 )
 DLPNO_LOOSE = DLPNOThresholds(
@@ -115,6 +138,7 @@ DLPNO_LOOSE = DLPNOThresholds(
     tcut_pno_weak=1e-5,
     tcut_pairs=1e-3,
     tcut_pairs_weak=1e-3,
+    tcut_do=2e-2,
     name="LoosePNO",
 )
 
@@ -214,9 +238,12 @@ def _route_capabilities(options: object) -> tuple[tuple[str, ...], tuple[str, ..
 
     inactive: tuple[str, ...] = ()
     if isinstance(options, DLPNOMP2Options):
-        implemented = _PUBLISHED_FIELDS + _DERIVED_MP2_FIELDS
+        implemented = _PUBLISHED_FIELDS + _DERIVED_MP2_FIELDS + _DERIVED_CCSD_FIELDS
         if float(options.tcut_pairs_weak) <= float(options.tcut_pairs):
             inactive = _DERIVED_MP2_FIELDS
+        criterion = str(getattr(options, "domain_criterion", "doi"))
+        if criterion.strip().lower() != "doi":
+            inactive = inactive + _DERIVED_CCSD_FIELDS
     elif isinstance(options, DLPNOUMP2Options):
         implemented = ("tcut_pairs", "tcut_pno")
         if options.localise == "none":
@@ -226,9 +253,15 @@ def _route_capabilities(options: object) -> tuple[tuple[str, ...], tuple[str, ..
     elif isinstance(options, DLPNOUCCSDPilotOptions):
         implemented = ("tcut_pno",)
     elif isinstance(options, LocalCCSDOptions):
-        implemented = _PUBLISHED_FIELDS
+        implemented = _PUBLISHED_FIELDS + _DERIVED_CCSD_FIELDS
+        criterion = str(getattr(options, "domain_criterion", "doi"))
+        if criterion.strip().lower() != "doi":
+            inactive = _DERIVED_CCSD_FIELDS
     elif isinstance(options, LocalUCCSDOptions):
-        implemented = _PUBLISHED_FIELDS
+        implemented = _PUBLISHED_FIELDS + _DERIVED_CCSD_FIELDS
+        criterion = str(getattr(options, "domain_criterion", "doi"))
+        if criterion.strip().lower() != "doi":
+            inactive = _DERIVED_CCSD_FIELDS
     else:
         names = (
             "DLPNOMP2Options, DLPNOUMP2Options, DLPNOCCSDPilotOptions, "
@@ -304,7 +337,7 @@ def apply_dlpno_thresholds(
     thresholds = resolve_dlpno_thresholds(preset)
     implemented, inactive = _route_capabilities(options)
     for field_name in implemented:
-        if field_name in inactive and field_name not in _DERIVED_MP2_FIELDS:
+        if field_name in inactive and field_name not in _DERIVED_FIELDS:
             continue
         value = float(getattr(thresholds, field_name))
         setattr(options, field_name, value)
@@ -461,7 +494,7 @@ def options_from_dlpno_thresholds(
     explicit_thresholds = {
         name: value
         for name, value in overrides.items()
-        if name in _PUBLISHED_FIELDS + _DERIVED_MP2_FIELDS
+        if name in _PUBLISHED_FIELDS + _DERIVED_FIELDS
     }
     options = options_type(**overrides)
     provenance = apply_dlpno_thresholds(options, preset)

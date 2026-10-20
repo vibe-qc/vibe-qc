@@ -1,9 +1,13 @@
 # Verifying an RI-MP2 auxiliary basis
 
-When you reach for RI-MP2 in production, you trade O(N⁵) canonical
-AO→MO work for an O(N⁴) auxiliary-basis fit, and you inherit the
-fit's residual on top of the basis-set-incompleteness error you'd
-have had anyway. For most workflows the per-zeta RIfit family
+When you reach for RI-MP2 in production (a production route, label
+vocabulary in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)),
+you replace the four-index AO integrals by three-index integrals over an
+auxiliary basis. Both the canonical and the RI method scale formally as
+O(N⁵), but the fitted integrals cut the prefactor and the storage by an order
+of magnitude, and you inherit the fit's residual on top of the
+basis-set-incompleteness error you'd have had anyway. For most workflows the per-zeta RIfit family
 (`cc-pvNz-ri`, `def2-Nzv-rifit`) is tight enough that the fit
 residual stays well below ~µHa per atom. But when you move to a new
 system class, switch zeta, or accidentally pair an orbital basis
@@ -19,20 +23,50 @@ on water with two aux choices. It complements the
 where you'd actually consume this diagnostic in anger, the post-SCF
 MP2 step in a B2PLYP run inherits the same RI fit error).
 
-## The structural fingerprint of a Coulomb-metric Dunlap fit
+## Theory
 
-RI-MP2 builds the four-index ERI from the Coulomb-metric fit
+**The Coulomb-metric fit.** MP2 needs only the integrals $(ia|jb)$ over the
+pair densities $\rho_{ia}(\mathbf r) = \phi_i(\mathbf r)\phi_a(\mathbf r)$ of an
+occupied and a virtual orbital. RI-MP2 ({vibeqc-cite}`feyereisen_rimp2_1993`)
+expands each pair density in an auxiliary basis $\{\chi_P\}$,
+$\tilde\rho_{ia} = \sum_P d^{ia}_P \chi_P$, with coefficients that minimise the
+Coulomb self-repulsion of the residual $\delta_{ia} = \rho_{ia} - \tilde\rho_{ia}$.
+That gives the familiar three-index form
 
-$$(ia|jb)_{\mathrm{RI}} = \sum_{PQ} (ia|P)\, [V^{-1}]_{PQ}\, (Q|jb),
-\quad V_{PQ} = (P|Q).$$
+$$
+(ia|jb)_{\mathrm{RI}} = \sum_{PQ} (ia|P)\, [V^{-1}]_{PQ}\, (Q|jb),
+\quad V_{PQ} = (P|Q),
+\qquad
+(ia|jb) = (ia|jb)_{\mathrm{RI}} + (\delta_{ia}|\delta_{jb}) ,
+$$
 
-The fit residual has a **definite sign pattern** in the Grimme
-decomposition: $E_{\mathrm{os}} = \sum (ia|jb)^2 / \Delta$ is
-over-estimated (less negative than canonical), and $E_{\mathrm{ss}} =
-\sum [(ia|jb)^2 - (ia|jb)(ib|ja)] / \Delta$ is under-estimated (more
-negative than canonical). The two errors partially cancel in the
-unscaled $E_{\mathrm{corr}} = E_{\mathrm{os}} + E_{\mathrm{ss}}$ but
-survive SCS / SOS scaling, because SCS weights the OS bucket
+where the second identity is exact for the Coulomb metric: the residual is
+Coulomb-orthogonal to the fit space, so the cross terms vanish and the error
+of every integral is a Gram matrix of residuals, positive semidefinite as a
+matrix over $(ia),(jb)$. The fit error is therefore second order in the size of
+the residual, which is why a moderately sized per-zeta auxiliary family
+({vibeqc-cite}`weigend_ccpvxz_rifit_2002`: `cc-pVXZ-RI`, `def2-XZVP-RIFIT`)
+is enough for microhartree-per-atom accuracy, and why the residual shrinks
+when the auxiliary basis grows. The MP2 energy in the Grimme decomposition is
+
+$$
+E_{\mathrm{os}} = -\sum_{ijab}\frac{(ia|jb)^2}{\varepsilon_a+\varepsilon_b-\varepsilon_i-\varepsilon_j},
+\qquad
+E_{\mathrm{ss}} = -\sum_{ijab}\frac{(ia|jb)\,[(ia|jb)-(ib|ja)]}{\varepsilon_a+\varepsilon_b-\varepsilon_i-\varepsilon_j},
+$$
+
+with $\varepsilon$ the orbital energies, and the scaled variants use
+$c_\mathrm{os}E_\mathrm{os} + c_\mathrm{ss}E_\mathrm{ss}$. The diagnostic in this
+tutorial is the difference of each bucket against the canonical value,
+$\Delta E_x = E_x^{\mathrm{RI}} - E_x^{\mathrm{canonical}}$, computed by running
+the canonical AO to MO transformation alongside the RI build.
+
+**The structural fingerprint.** The residual has a **definite sign pattern**
+in the Grimme decomposition: $E_{\mathrm{os}}$ is over-estimated (less
+negative than canonical), and $E_{\mathrm{ss}}$ is under-estimated (more
+negative than canonical). The two errors partially cancel in the unscaled
+$E_{\mathrm{corr}} = E_{\mathrm{os}} + E_{\mathrm{ss}}$ but survive SCS / SOS
+scaling, because SCS weights the OS bucket
 (`c_os = 6/5`) more than three times as heavily as the SS bucket
 (`c_ss = 1/3`).
 
@@ -40,6 +74,16 @@ A wrong-direction signature in the diagnostic (`ΔE_os < 0`,
 `ΔE_ss > 0`, or both with the same sign) almost certainly indicates
 a numerical bug in the fit pipeline, not a fit-basis issue. The
 diagnostic is exactly the right tool to catch that quickly.
+
+**Where it helps and where it fails.** RI-MP2 is the right default for
+anything beyond the smallest systems, and the residual is a property of the
+orbital-basis and auxiliary-basis pairing, not of the molecule, so one
+check per (basis family, element set) is enough. It fails, silently, when
+the auxiliary basis does not match the orbital family or lacks coverage for
+an element (the wrong number is then a plausible-looking energy, not a
+crash), and it inherits every limitation of MP2 itself (near-degenerate and
+stretched systems). The diagnostic detects the first kind of failure; it
+cannot detect the second.
 
 ## Running the diagnostic
 
@@ -67,6 +111,7 @@ opts.density_fit = True
 opts.aux_basis = "cc-pvtz-ri"
 opts.c_os = 6.0 / 5.0          # SCS-MP2 (Grimme 2003)
 opts.c_ss = 1.0 / 3.0
+opts.n_frozen_core = 0          # all electrons; the default freezes the O 1s core
 opts.report_ri_residual = True  # ← opt-in flag
 
 mp2 = vq.run_mp2(mol, basis, hf, opts)
@@ -85,8 +130,12 @@ E_os = -0.20613056 Ha   ΔE_os = +5.20e-05
 E_ss = -0.06591474 Ha   ΔE_ss = -2.43e-05
 ```
 
-`ΔE_os > 0` and `ΔE_ss < 0`, the expected Coulomb-metric Dunlap
-fingerprint. With `c_os = 6/5` and `c_ss = 1/3`:
+These are all-electron numbers from a vibe-qc 0.17.10 development build
+(each MP2 call takes about 3 s). With the default frozen core (drop the
+`n_frozen_core` line) the energies become `E_os = -0.19535593` and
+`E_ss = -0.06281455` Ha and the residuals `+5.08e-05` and `-2.38e-05` Ha,
+essentially unchanged. `ΔE_os > 0` and `ΔE_ss < 0` is the expected
+Coulomb-metric Dunlap fingerprint. With `c_os = 6/5` and `c_ss = 1/3`:
 
 $$
 \Delta E_{\mathrm{SCS}} \approx 1.2 \cdot (+5.20 \times 10^{-5})

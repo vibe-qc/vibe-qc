@@ -1,72 +1,75 @@
 # Basis-set library roadmap
 
-**Branch:** `basissetdev`. **Source review:** [REVIEW_BASIS_SETS_2026-05-08.md](REVIEW_BASIS_SETS_2026-05-08.md).
+**Reconciled against current development: 2026-10-19.** The original
+[2026-05-08 review](REVIEW_BASIS_SETS_2026-05-08.md) is historical. The
+pre-split `basissetdev` branch is not a pending integration dependency.
 
-This document translates the 2026-05-08 review into a concrete
-roadmap for the `python/vibeqc/basis_library/` bundle. Each row
-below is one canonical basis-set name and gives:
+This roadmap tracks library coverage, not the separately versioned optimizer
+in [vibe-basis](https://github.com/vibe-qc/vibe-qc/blob/main/vibe-basis/ROADMAP.md). A bundled numerical record, an
+implemented Hamiltonian and scientific acceptance are three different facts.
 
-* **Status** as of audit on `0ac5fb9`:
-  * ✅ **shipped**, present under `basis/`
-  * 🟡 **partial**, present but with gaps (e.g. only some elements)
-  * ❌ **missing**, not bundled yet
-  * 🚫 **blocked**, bundling depends on a feature that has not landed
-* **Priority** matching the review's tiered recommendation
-* **Source** the canonical place to fetch the numbers from
-* **Blockers** any vibe-qc capability gap that must close first
+## GitLab milestone and weekly reconciliation
 
-## Status snapshot
+The development project's **Milestones** page tracks this work as
+**QC basis-library authoritative store** (project milestone ID 8).
+The existing umbrella #295 and its focused store/provenance/cache/import issues
+remain the implementation and acceptance records. Missing library families are
+separate additions, not an unlimited release-completion requirement.
 
-* **142 basis-set files** were bundled at the original audit on `0ac5fb9`;
-  **255 `.g94` files** are bundled today (2026-09-08) -- pcseg, dhf, vDZP
-  and the 16 cc-pVnZ-PP orbital sets have since shipped (see the priorities
-  list and table below); this snapshot paragraph itself was not kept current
-  as those landed.
-* **45 review-recommended bases missing** as listed below (this count
-  has not been recomputed against current shipped status).
-* Three pob bases are byte-clean against the upstream Bredow-group
-  source after the Goal-1 audit (commit `f059b37`).
-* The x2c and pob-aux blocks remain the largest outright gaps; pcseg,
-  dhf, and vDZP are no longer gaps (shipped).
+Review library coverage and tracker acceptance weekly against actual QVF
+records, generated renderings, resolver/import source and accepted checks.
+Use the [main roadmap's weekly review policy](../roadmap.md#gitlab-milestone-tracking-and-weekly-review):
+implementation, qualification, release readiness and tagged delivery are
+different states. Advance QC's feature target when the selected criteria pass;
+the library has no invented independent version line. The optimizer's separate
+release milestones stay in [vibe-basis](https://github.com/vibe-qc/vibe-qc/blob/main/vibe-basis/ROADMAP.md).
 
-## Top-of-stack priorities (Q3 2026) -- items 1-4 shipped, verified against `python/vibeqc/basis_library/basis/`
+## Current implementation and priorities
 
-1. ✅ **pcseg-n family** (pcseg-{0..4} and pcseg-s-{0..2} shipped; `aug-pcseg-n` not separately checked here).
-2. ✅ **Pople diffuse variants** (6-31+G(d,p), 6-31++G(d,p), 6-311+G(d,p), 6-311+G(2d,p) all shipped; 6-311+G(2df,p) still missing).
-3. ✅ **vDZP** shipped (`vdzp.g94`/`.ecp`).
-4. ✅ **3c modified bases** (def2-mSVP, def2-mTZVP, def2-mTZVPP) shipped.
-5. **Relativistic def2 family** (x2c-{S,TZ,QZ}VPall, dhf-XVPP,
-   def2-TZVP-DKH) remains blocked on a relativistic Hamiltonian
-   implementation (X2C / DKH2 / ZORA), out of scope for
-   `basissetdev`; flag as a feature request for the molecular
-   chat. (Note: plain dhf-{SVP,TZVP,QZVP} basis *data* has shipped --
-   see the table below -- this item is specifically about the
-   relativistic Hamiltonian needed to use them meaningfully.)
-6. **pob auxiliary basis (pob-*-jk)**. Hand-tuned aux for periodic
-   density fitting. Already in Goal 5 of the basissetdev plan;
-   AutoAux owned by the DF dev chat, see
-   `feedback_aux_basis_routing.md` (a private dev-memory note).
+- QVF JSON records in `python/vibeqc/basis_library/qvf/` are authoritative;
+  `.g94` and `.ecp` files are generated renderings. The
+  [library guide](https://github.com/vibe-qc/vibe-qc/blob/main/python/vibeqc/basis_library/README.md) documents
+  conversion, provenance, citation routing and rendering checks.
+- Molecular on-demand BSE lookup ships through the optional `[bse]` extra
+  and `run_job(fetch_from_bse=True)`. It reads the installed BSE catalogue;
+  it is not a missing HTTP downloader. Periodic `run_periodic_job` does not
+  expose that keyword.
+- ECP integration, the pc/pcseg families, diffuse Pople variants, modified
+  3c bases, vDZP, LANL and the listed PP orbital families exist. They are
+  not waiting on libecpint or on a new branch merge.
+- The named user basis store, provenance records and resolver are implemented.
+  Remaining tracker acceptance must be distinguished from missing source.
+  Do not edit rendered files as the primary data or add a second store.
+- Remaining work is targeted missing coverage, per-element provenance/parity,
+  relativistic Hamiltonians for the all-electron relativistic families, and
+  auxiliary-basis research. Automatic Stoychev-style AutoAux remains a
+  proposal; a citation entry or a registry-selected fitting basis is not its
+  implementation.
 
 ## Cross-cutting prerequisites
 
-Several review recommendations are blocked on infrastructure that
-the molecular / periodic dev chats own:
-
-| Prerequisite | Blocks | Owner chat |
+| Prerequisite | Current state | Remaining limitation |
 |---|---|---|
-| **ECP integral support (libecpint)** | LANL2DZ, vDZP, dhf-{S,TZ,QZ}VPP, x2c-{S,TZ,QZ}VPall, pob-rev2 fifth-period | molecular DF / SCF chat |
-| **Relativistic Hamiltonian (X2C / DKH2 / ZORA)** | x2c-XVPall, dhf-XVPP, def2-TZVP-DKH meaningful use | molecular relativity chat (not yet spawned) |
-| **CP2K-style GPW / mixed Gaussian-PW basis** | MOLOPT family | periodic chat (deferred) |
-| **PAW / ONCV pseudopotential infrastructure** | PseudoDojo, SSSP, VASP-PAW | periodic chat (deferred, vibe-qc is Gaussian) |
-| **NMR shielding / J-coupling kernels** | pcS-n, pcJ-n meaningful use | properties chat (not yet spawned) |
-| **AutoAux (Stoychev) implementation** | "auto-fit aux for any orbital basis" | density-fitting chat |
+| ECP integrals | Implemented through libecpint; basis/ECP records are loaded together | Per-element accuracy and route coverage, not initial integration |
+| Scalar-relativistic X2C / DKH2 / ZORA | Future method work | Meaningful use of the corresponding all-electron recontracted sets |
+| GPW/GAPW | Gaussian plus auxiliary plane-wave routes exist; GAPW remains experimental | MOLOPT/GTH pairing and route qualification are separate from merely adding a basis file |
+| Pure-PW / PAW / ONCV / NAO | Not the current Gaussian library architecture | No implied commitment to import incompatible library families |
+| NMR shielding / J coupling | Future property work | A bundled pcS/pcJ basis does not implement the observable |
+| AutoAux and bespoke pob JK fits | Research / missing generation workflow | Published fit data, generation algorithm and numerical qualification |
+
+The table below preserves the review's priority recommendations. ✅ means a
+matching bundled orbital record is present, not full element coverage or a
+validated method; ❌ means no matching bundled record was found; 🚫 identifies
+a missing method or research prerequisite. Optional BSE catalogue availability
+is separate from bundled coverage. Historical counts of "45 missing" are
+removed because aliases and later additions made them unreliable.
 
 ## The big table
 
 Everything the review recommends, organised by family. "BSE name"
-is the canonical Basis Set Exchange identifier; the fetch script
-([`scripts/basisset_dev/fetch_from_bse.py`](../../scripts/basisset_dev/fetch_from_bse.py),
-to be added) takes that as input.
+is the catalogue identifier, not necessarily the bundled file stem. Use the
+current BSE loader or basis conversion tools rather than the old proposed
+fetch script.
 
 ### Pople family
 
@@ -112,21 +115,21 @@ to be added) takes that as input.
 | Name | BSE id | Status | Priority | Notes |
 |------|--------|--------|----------|-------|
 | **x2c-SVPall** | `x2c-SVPall` | 🚫 | high | Pollak-Weigend 2017. Blocked on X2C / DKH. |
-| **x2c-TZVPall** | `x2c-TZVPall` | 🚫 | high | Same. |
+| **x2c-TZVPall** | `x2c-TZVPall` | ✅ | high | Same. |
 | **x2c-QZVPall** | `x2c-QZVPall` | 🚫 | high | Franzke 2020. |
-| **x2c-TZVPall-s** | `x2c-TZVPall-s` | 🚫 | medium | NMR-tuned. |
+| **x2c-TZVPall-s** | `x2c-TZVPall-s` | ✅ | medium | NMR-tuned. |
 | **dhf-SVP** | `dhf-SVP` | ✅ | medium | Dirac-Hartree-Fock-derived def2-equivalent; `dhf-svp.g94`/`.ecp` shipped. |
 | **dhf-TZVP** | `dhf-TZVP` | ✅ | medium | `dhf-tzvp.g94`/`.ecp` shipped. |
 | **dhf-QZVP** | `dhf-QZVP` | ✅ | low | `dhf-qzvp.g94`/`.ecp` shipped. |
 | **def2-TZVP-DKH** | `def2-TZVP-DKH` | 🚫 | medium | DKH-recontracted. |
 
-### Karlsruhe def2, modified for 3c (blocked on gCP + D3/D4)
+### Karlsruhe def2, modified for 3c (bundled)
 
 | Name | BSE id | Status | Priority | Notes |
 |------|--------|--------|----------|-------|
-| **def2-mSVP** | `def2-mSVP` | 🚫 | high | PBEh-3c, B3LYP-3c carrier. |
-| **def2-mTZVP** | `def2-mTZVP` | 🚫 | high | B97-3c carrier. |
-| **def2-mTZVPP** | `def2-mTZVPP` | 🚫 | high | r²SCAN-3c carrier. |
+| **def2-mSVP** | `def2-mSVP` | ✅ | high | PBEh-3c, B3LYP-3c carrier. |
+| **def2-mTZVP** | `def2-mTZVP` | ✅ | high | B97-3c carrier. |
+| **def2-mTZVPP** | `def2-mTZVPP` | ✅ | high | r²SCAN-3c carrier. |
 
 ### Dunning correlation-consistent
 
@@ -142,14 +145,14 @@ to be added) takes that as input.
 | aug-cc-pVTZ | `aug-cc-pVTZ` | ✅ | high | Anions, response. |
 | aug-cc-pVQZ | `aug-cc-pVQZ` | ✅ | medium | |
 | aug-cc-pV5Z | `aug-cc-pV5Z` | ✅ | medium | |
-| **cc-pV(D+d)Z** | `cc-pV(D+d)Z` | ❌ | medium | "tight d" for hypervalent S/P. |
-| **cc-pV(T+d)Z** | `cc-pV(T+d)Z` | ❌ | medium | |
-| **cc-pV(Q+d)Z** | `cc-pV(Q+d)Z` | ❌ | medium | |
-| **aug-cc-pV(T+d)Z** | `aug-cc-pV(T+d)Z` | ❌ | medium | |
-| **cc-pCVDZ** | `cc-pCVDZ` | ❌ | medium | Core-valence. |
-| **cc-pCVTZ** | `cc-pCVTZ` | ❌ | medium | Core-valence. |
-| **cc-pCVQZ** | `cc-pCVQZ` | ❌ | medium | Core-valence. |
-| **aug-cc-pCVTZ** | `aug-cc-pCVTZ` | ❌ | medium | Core-valence. |
+| **cc-pV(D+d)Z** | `cc-pV(D+d)Z` | ✅ | medium | "tight d" for hypervalent S/P. |
+| **cc-pV(T+d)Z** | `cc-pV(T+d)Z` | ✅ | medium | |
+| **cc-pV(Q+d)Z** | `cc-pV(Q+d)Z` | ✅ | medium | |
+| **aug-cc-pV(T+d)Z** | `aug-cc-pV(T+d)Z` | ✅ | medium | |
+| **cc-pCVDZ** | `cc-pCVDZ` | ✅ | medium | Core-valence. |
+| **cc-pCVTZ** | `cc-pCVTZ` | ✅ | medium | Core-valence. |
+| **cc-pCVQZ** | `cc-pCVQZ` | ✅ | medium | Core-valence. |
+| **aug-cc-pCVTZ** | `aug-cc-pCVTZ` | ✅ | medium | Core-valence. |
 | cc-pwCVTZ | `cc-pwCVTZ` | ✅ | low | Weighted core-valence. |
 | cc-pVTZ-F12 | `cc-pVTZ-F12` | ✅ | medium | Explicit-correlation. |
 | cc-pVQZ-F12 | `cc-pVQZ-F12` | ✅ | medium | |
@@ -191,22 +194,22 @@ No JK fit is published for the family at all.
 
 | Name | BSE id | Status | Priority | Notes |
 |------|--------|--------|----------|-------|
-| **pc-0** | `pc-0` | ❌ | medium | Unpol DZ. |
-| **pc-1** | `pc-1` | ❌ | medium | DZ-pol. |
-| **pc-2** | `pc-2` | ❌ | medium | TZ-pol. |
-| **pc-3** | `pc-3` | ❌ | low | QZ-pol. |
-| **pc-4** | `pc-4` | ❌ | low | 5Z-pol. |
-| **pcseg-0** | `pcseg-0` | ❌ | high | Segmented contraction. |
-| **pcseg-1** | `pcseg-1` | ❌ | **highest** | DFT-optimal DZ. |
-| **pcseg-2** | `pcseg-2` | ❌ | **highest** | DFT-optimal TZ, best on diet-GMTKN55 (Pitman 2024). |
-| **pcseg-3** | `pcseg-3` | ❌ | medium | |
-| **pcseg-4** | `pcseg-4` | ❌ | low | |
-| **aug-pcseg-1** | `aug-pcseg-1` | ❌ | high | |
-| **aug-pcseg-2** | `aug-pcseg-2` | ❌ | high | TDDFT, anions. |
-| **pcS-0…3** | `pcS-{0,1,2,3}` | 🚫 | medium | NMR shielding (blocked on NMR kernel). |
+| **pc-0** | `pc-0` | ✅ | medium | Unpol DZ. |
+| **pc-1** | `pc-1` | ✅ | medium | DZ-pol. |
+| **pc-2** | `pc-2` | ✅ | medium | TZ-pol. |
+| **pc-3** | `pc-3` | ✅ | low | QZ-pol. |
+| **pc-4** | `pc-4` | ✅ | low | 5Z-pol. |
+| **pcseg-0** | `pcseg-0` | ✅ | high | Segmented contraction. |
+| **pcseg-1** | `pcseg-1` | ✅ | **highest** | DFT-optimal DZ. |
+| **pcseg-2** | `pcseg-2` | ✅ | **highest** | DFT-optimal TZ, best on diet-GMTKN55 (Pitman 2024). |
+| **pcseg-3** | `pcseg-3` | ✅ | medium | |
+| **pcseg-4** | `pcseg-4` | ✅ | low | |
+| **aug-pcseg-1** | `aug-pcseg-1` | ✅ | high | |
+| **aug-pcseg-2** | `aug-pcseg-2` | ✅ | high | TDDFT, anions. |
+| **pcS-0…3** | `pcS-{0,1,2,3}` | ✅ | medium | pcs-0 through pcs-3 data bundled; NMR shielding kernel remains open. |
 | **pcJ-0…3** | `pcJ-{0,1,2,3}` | 🚫 | medium | NMR J-coupling. |
 
-### vDZP (Grimme 2023, blocked on libecpint)
+### vDZP (Grimme 2023, bundled)
 
 | Name | BSE id | Status | Priority | Notes |
 |------|--------|--------|----------|-------|
@@ -218,19 +221,19 @@ No JK fit is published for the family at all.
 |------|--------|--------|----------|-------|
 | ANO-RCC (full) | `ANO-RCC` | ✅ | high | Generally contracted. |
 | ANO-RCC-MB | `ANO-RCC-MB` | ✅ | low | Minimal. |
-| **ANO-RCC-VDZP** | `ANO-RCC-VDZP` | ❌ | medium | Specific contraction. |
-| **ANO-RCC-VTZP** | `ANO-RCC-VTZP` | ❌ | high | Multireference TM standard. |
-| **ANO-RCC-VQZP** | `ANO-RCC-VQZP` | ❌ | medium | |
-| **ANO-R0** | `ANO-R0` | ❌ | medium | Zobel-Widmark-Veryazov 2020. |
-| **ANO-R1** | `ANO-R1` | ❌ | medium | |
-| **ANO-R2** | `ANO-R2` | ❌ | medium | |
-| **ANO-R3** | `ANO-R3` | ❌ | low | |
+| **ANO-RCC-VDZP** | `ANO-RCC-VDZP` | ✅ | medium | Specific contraction. |
+| **ANO-RCC-VTZP** | `ANO-RCC-VTZP` | ✅ | high | Multireference TM standard. |
+| **ANO-RCC-VQZP** | `ANO-RCC-VQZP` | ✅ | medium | |
+| **ANO-R0** | `ANO-R0` | ✅ | medium | Zobel-Widmark-Veryazov 2020. |
+| **ANO-R1** | `ANO-R1` | ✅ | medium | |
+| **ANO-R2** | `ANO-R2` | ✅ | medium | |
+| **ANO-R3** | `ANO-R3` | ✅ | low | |
 
 ### LANL ECP (deprecated by review, ship for compatibility)
 
 | Name | BSE id | Status | Priority | Notes |
 |------|--------|--------|----------|-------|
-| **LANL2DZ** | `LANL2DZ` | 🚫 | low | UI label: "deprecated, use def2-TZVP + def2-ECP". Blocked on libecpint. |
+| **LANL2DZ** | `LANL2DZ` | ✅ | low | UI label: "deprecated, use def2-TZVP + def2-ECP". ECP integration is available. |
 
 ### Periodic Gaussian
 
@@ -242,21 +245,21 @@ No JK fit is published for the family at all.
 | **pob-DZVP** (original) | Bredow archive | ❌ | medium | Predecessor of rev2; for reproducibility. |
 | **pob-DZVPP** | Bredow archive | ❌ | medium | Polar augmentation. |
 | **pob-TZVPP** | Bredow archive | ❌ | medium | Polar augmentation. |
-| **pob-TZVP-rev2 (Rb-I, fifth period)** | Bredow tarball | 🚫 | high | Blocked on libecpint (5th period uses ECPs). |
+| **pob-TZVP-rev2 (Rb-I, fifth period)** | Bredow tarball | ✅ | high | ECP-backed fifth-period records are present; precision/parity remains per element. |
 | **pob-TZVP-jk** | (to design) | 🚫 | high | Goal 5 of basissetdev. |
-| **MOLOPT-SZV** | CP2K source | 🚫 | medium | Blocked on GPW infrastructure. |
+| **MOLOPT-SZV** | CP2K source | 🚫 | medium | Pairing and route qualification remain; GPW infrastructure exists. |
 | **MOLOPT-DZVP** | CP2K source | 🚫 | medium | |
 | **MOLOPT-TZVP** | CP2K source | 🚫 | medium | |
 | **MOLOPT-TZV2P** | CP2K source | 🚫 | medium | |
 | **dcm-TZVP** | Daga/Civalleri/Maschio 2020 | ❌ | low | System-specific (diamond, graphene, carbyne). |
 
-### Property-specific (blocked on property kernels)
+### Property-specific (data and property implementation are separate)
 
 | Name | BSE id | Status | Priority | Blocks |
 |------|--------|--------|----------|---------|
 | **EPR-II** | `EPR-II` | 🚫 | medium | EPR g-tensor / hyperfine kernel |
 | **EPR-III** | `EPR-III` | 🚫 | medium | Same |
-| **Sadlej-pVTZ** | `Sadlej pVTZ` | ❌ | medium | Polarizability, kernel exists |
+| **Sadlej-pVTZ** | `Sadlej pVTZ` | ✅ | medium | Polarizability, kernel exists |
 | **LPolX (Maroulis)** | (BSE varied) | ❌ | low | Same |
 | **ccX-DK** | `ccX-DK` | ❌ | low | Core-level X-ray |
 
@@ -279,61 +282,30 @@ captures them under "deferred to a future periodic-PW chat":
 * **FHI-aims tier-1/2 NAO** would require a numerical-orbital
   integral path entirely separate from libint.
 
-## Inventory dashboard
+## Inventory and maintenance
 
-A live summary belongs in [`python/vibeqc/basis_library/README.md`](https://github.com/vibe-qc/vibe-qc/blob/main/python/vibeqc/basis_library/README.md).
-The current README inventory predates this roadmap; updating it
-to flag missing-and-prioritised items is part of the next
-`basissetdev` deliverable. The dashboard format I propose:
+The [library README](https://github.com/vibe-qc/vibe-qc/blob/main/python/vibeqc/basis_library/README.md), registry
+and QVF records define the live inventory. Check both element coverage and
+ECP pairing before using a family. Adding a record does not close a numerical
+acceptance issue, and a pending acceptance issue does not make existing data
+absent.
 
-```
-def2-TZVP        ✅  shipped
-pcseg-2          ❌  missing — high priority — fetch from BSE
-ma-def2-TZVP     ❌  missing — high priority — fetch from BSE
-x2c-TZVPall      🚫  blocked on relativistic Hamiltonian
-vDZP             🚫  blocked on libecpint integration
-```
-
-so users can see at a glance what they cannot use and why.
-
-## Tooling: BSE fetcher
-
-Most of the missing all-electron bases are one HTTP call away
-from completion. Sketch (to land in
-[`scripts/basisset_dev/fetch_from_bse.py`](../../scripts/basisset_dev/fetch_from_bse.py)):
-
-```python
-from basis_set_exchange import api
-text = api.get_basis(name="pcseg-2", elements=None,
-                     fmt="gaussian94", header=True)
-Path(f"python/vibeqc/basis_library/custom/{name}.g94").write_text(text)
-```
-
-`pip install basis-set-exchange` ships a curated copy of the
-BSE database; the call is offline-friendly. The fetcher will:
-
-1. Read the "missing" list from this roadmap (parse the table).
-2. Pull each via BSE.
-3. Drop into `custom/` per the existing convention.
-4. Run `scripts/setup_basis_library.sh` to copy `custom/` →
-   `basis/`.
-5. Add a regression-test that verifies every name resolves
-   under `LIBINT_DATA_PATH` and is parseable by libint.
-
-## Action items (ordered)
-
-1. **Land BSE fetcher** + **commit pcseg-{0,1,2,3,4}** and **6-31++G(d,p)** + **6-31+G(d,p)** + **6-311+G(d,p)** + **ma-def2-{TZVP,SVP}** + **aug-pcseg-{1,2}**. Pure-Python additions; no infrastructure blockers.
-2. **Update `basis_library/README.md`** with the dashboard view.
-3. **File ECP-integral feature request** with the molecular DF / SCF chat (libecpint integration unlocks LANL2DZ + vDZP + dhf-XVP + x2c-XVPall + 5th-period pob).
-4. **File relativistic-Hamiltonian feature request** with a future molecular-relativity chat (X2C / DKH2 / ZORA, unlocks the x2c / dhf families' meaningful use).
-5. **3c composite methods** as a downstream goal once `vDZP` and `def2-m{S,TZ,TZP}VP` are in place AND gCP + D3/D4 are wired through the molecular runner.
-6. **Goal 5 of basissetdev**: bespoke pob-*-jk auxiliary basis (separate paper; not blocked on the missing all-electron bases above).
+1. Select a genuinely missing record or coverage gap, checking the bundle and
+   optional BSE catalogue first.
+2. Convert/import into the existing QVF record system; preserve upstream
+   identity, numerical content hash and per-element citations.
+3. Render through `scripts/render_basis_library.py` or the supported setup
+   script and check record/rendering parity. Keep ECP blocks with the correct
+   orbital family and refuse uncovered elements.
+4. Validate the affected numerical use before making new accuracy claims.
+5. Keep auxiliary-basis design and production optimized-basis campaigns in
+   their own milestones; they do not hold unrelated library additions.
 
 ## Cross-references
 
 * [PLAN.md](PLAN.md), top-level basissetdev plan; this roadmap
   is rolled in as a new long-term goal slot.
-* [REQUIREMENTS-PERIODIC.md](REQUIREMENTS-PERIODIC.md), handover
+* [REQUIREMENTS-PERIODIC.md](REQUIREMENTS-PERIODIC.md), historical design record
   to the periodic chat; the periodic-Gaussian items above
   partly depend on R1-R5 there.
 * [GOAL4_DESIGN.md](GOAL4_DESIGN.md), basis-optimisation engine

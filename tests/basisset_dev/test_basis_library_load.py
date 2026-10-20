@@ -57,19 +57,28 @@ BASIS_DIR = PKG_PARENT / "vibeqc" / "basis_library" / "basis"
 if str(PKG_PARENT) not in sys.path:
     sys.path.insert(0, str(PKG_PARENT))
 
-# Drop any prior shim from sister tests (e.g. test_basis_opt_stage1_arch).
-for _mod_name in list(sys.modules):
-    if _mod_name == "vibeqc" or _mod_name.startswith("vibeqc."):
-        # Keep vibeqc._vibeqc_core* registered: the single-phase-init C
-        # extension never re-runs PyInit on re-import, so deleting those
-        # entries would strip the pybind11 def_submodule registrations
-        # (...semiempirical.{nddo,xtb,indo}) for the rest of the pytest
-        # process and break every later dotted import of them.
-        if _mod_name == "vibeqc._vibeqc_core" or _mod_name.startswith(
-            "vibeqc._vibeqc_core."
-        ):
-            continue
-        del sys.modules[_mod_name]
+# Drop a prior namespace shim from a sister test (test_basis_opt_stage1_arch
+# and friends install one only when the real vibeqc cannot be imported), and
+# nothing else. Purging a *real* vibeqc here, as this block used to do
+# unconditionally, left every module imported before collection holding the
+# old classes while later imports built second copies: run after
+# tests/test_basis_store.py, run_job then refused its own plan with
+# "'plan' must be an OutputPlan, got OutputPlan". A shim is a bare
+# ModuleType with no __file__; the real package always has one.
+_prior_vibeqc = sys.modules.get("vibeqc")
+if _prior_vibeqc is not None and getattr(_prior_vibeqc, "__file__", None) is None:
+    for _mod_name in list(sys.modules):
+        if _mod_name == "vibeqc" or _mod_name.startswith("vibeqc."):
+            # Keep vibeqc._vibeqc_core* registered: the single-phase-init C
+            # extension never re-runs PyInit on re-import, so deleting those
+            # entries would strip the pybind11 def_submodule registrations
+            # (...semiempirical.{nddo,xtb,indo}) for the rest of the pytest
+            # process and break every later dotted import of them.
+            if _mod_name == "vibeqc._vibeqc_core" or _mod_name.startswith(
+                "vibeqc._vibeqc_core."
+            ):
+                continue
+            del sys.modules[_mod_name]
 
 # Guard against the 2026-05-09 overnight crash: the full 366-case
 # parametrised SCF takes ~8 minutes wall and does ~130 atomic
@@ -119,13 +128,11 @@ AUX_SUFFIX_RE = re.compile(
     r"|^augmentation-",
 )
 
-# Detection of ECP-bearing files: the splitter
-# (scripts/basisset_dev/split_ecp_g94.py) leaves a sister `.ecp`
-# file alongside any .g94 it had to strip ECP blocks out of. After
-# the split, the .g94 itself is orbital-only and libint loads it
-# fine — but the SCF still cannot run correctly without inline-ECP
-# auto-population (Phase 14e), so test_single_atom_scf still xfails
-# on these.
+# Detection of ECP-bearing files: the renderer writes a record's
+# potentials to a sister `.ecp` file, so the .g94 itself is orbital-only
+# and libint loads it fine. The SCF still needs the inline-ECP
+# auto-population to use the right valence count, so
+# test_single_atom_scf xfails on these.
 
 
 def has_ecp_sidecar(g94: Path) -> bool:
@@ -234,7 +241,7 @@ def _xfail_if_unsupported(g94: Path, *, scf_path: bool) -> None:
         pytest.xfail("SAP atomic-density helper (SCF guess fixture, not an orbital basis)")
     if scf_path and has_ecp_sidecar(g94):
         pytest.xfail(
-            "ECP-bearing basis: load works (orbital-only g94 after split), "
+            "ECP-bearing basis: load works (orbital-only g94 rendering), "
             "but SCF needs Phase 14e (auto-populate ecp_centers from inline "
             "ECP definitions in the sidecar) to use the correct valence "
             "electron count"

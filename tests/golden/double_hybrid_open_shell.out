@@ -1,0 +1,32 @@
+<BANNER>
+
+Double-hybrid DFT dispatcher
+  Functional:        b2plyp
+  Basis:             cc-pvdz
+  Charge:            0
+  Multiplicity:      0
+  MP2 frozen core:   0 (explicit all-electron model component)
+  Construction:      spin-pure ROKS SCF + semicanonical RI-ROHF-MP2, doubles only (c_os=0.00, c_ss=0.00)
+
+  Energy components (Ha)
+  ---------------------------------------------------
+  ROKS reference                       -00.0000000000
+  RI-ROHF-MP2 doubles                    0.0000000000
+  Total energy                         -00.0000000000
+  ---------------------------------------------------
+
+SCF status
+  Converged:         True
+  Iterations:        00
+
+Sidecars
+  log          dh_os.out
+  orbitals     dh_os.molden
+  geometry     dh_os.xyz
+  citations    dh_os.bibtex
+  citations    dh_os.references
+  population   dh_os.population.txt
+  population   dh_os.population.json
+  qvf          dh_os.qvf
+
+<REFERENCES>

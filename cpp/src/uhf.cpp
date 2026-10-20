@@ -1,4 +1,6 @@
+#include "vibeqc/hermitian_operator.hpp"
 #include "vibeqc/uhf.hpp"
+#include "vibeqc/orbital_scf.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <algorithm>
@@ -7,6 +9,7 @@
 #include <ctime>
 #include <memory>
 #include <stdexcept>
+#include <vector>
 
 #include "vibeqc/diis.hpp"
 #include "vibeqc/diagnostics.hpp"
@@ -30,6 +33,7 @@
 #include "vibeqc/soscf.hpp"
 #include "vibeqc/trah.hpp"
 #include "vibeqc/davidson.hpp"
+#include "vibeqc/degenerate_frontier.hpp"
 
 namespace vibeqc {
 
@@ -65,6 +69,10 @@ double compute_s_squared(
 UHFResult run_uhf(const Molecule& mol,
                   const BasisSet& basis,
                   const UHFOptions& opts) {
+    validate_orbital_optimizer(opts);
+    if (opts.orbital_optimizer == "opentrustregion"
+        && (opts.spinlock_mode != SpinlockMode::OFF || !opts.atomic_spins.empty()))
+        throw std::invalid_argument("OpenTrustRegion does not support spin schedules, MOM holds or targeted atomic spin states; select native");
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), &mol);
     validate_scf_max_iter(opts.max_iter, "run_uhf");
@@ -297,6 +305,7 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
                            const Eigen::MatrixXd* mom_anchor_alpha = nullptr,
                            const Eigen::MatrixXd* mom_anchor_beta = nullptr,
                            int mom_anchor_iters = 0) {
+    validate_orbital_optimizer(opts);
     validate_scf_max_iter(opts.max_iter, "run_uhf_scf_with_jk");
     if (n_alpha < 0 || n_beta < 0) {
         throw std::invalid_argument(
@@ -316,6 +325,27 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
         throw std::invalid_argument(
             "run_uhf_scf_with_jk: init_alpha and init_beta must both be "
             "supplied or both be empty");
+    }
+
+    // Loewdin metric and AO->atom map for the degenerate-frontier tie-break
+    // (#210). Both are built once per SCF; the tie-break itself runs only on
+    // an iteration whose frontier gap is below tolerance, which for an
+    // ordinary molecule is never.
+    const Eigen::MatrixXd s_sqrt_ao = symmetric_sqrt(S);
+    std::vector<int> ao_atom_index;
+    {
+        ao_atom_index.reserve(basis.nbasis());
+        const auto shell_list = basis.shells();
+        for (std::size_t shell = 0; shell < shell_list.size(); ++shell) {
+            const int atom = basis.shell_atom_index(shell);
+            const int l = shell_list[shell].l;
+            const std::size_t n_functions = shell_list[shell].pure
+                ? static_cast<std::size_t>(2 * l + 1)
+                : static_cast<std::size_t>((l + 1) * (l + 2) / 2);
+            for (std::size_t f = 0; f < n_functions; ++f) {
+                ao_atom_index.push_back(atom);
+            }
+        }
     }
 
     // Canonical orthogonalization; see rhf.cpp for the shared notes.
@@ -341,31 +371,21 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
     DavidsonOptions dav_opts = opts.davidson;
     if (use_davidson_here) {
         if (dav_opts.n_eig == 0) dav_opts.n_eig = orth.n_kept;
+        if (dav_opts.n_eig < std::max(n_alpha, n_beta)) {
+            throw std::invalid_argument(
+                "UHF: Davidson n_eig must include the occupied space");
+        }
     }
     Eigen::MatrixXd dav_guess_ortho;  // for eigenvector recycling
 
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> fock_solver;
     auto diagonalize = [&](const Eigen::MatrixXd& F)
         -> std::pair<Eigen::MatrixXd, Eigen::VectorXd> {
-        const Eigen::MatrixXd Fp = X.transpose() * F * X;
-        if (use_davidson_here) {
-            if (dav_guess_ortho.size() != 0) {
-                dav_opts.guess_vectors = dav_guess_ortho;
-            }
-            DavidsonResult dres = davidson_solve(Fp, dav_opts);
-            if (!dres.converged) {
-                throw std::runtime_error(
-                    "UHF: Davidson diagonalization did not converge after "
-                    + std::to_string(dres.n_iter) + " iterations");
-            }
-            dav_guess_ortho = dres.eigenvectors;
-            return {X * dres.eigenvectors, dres.eigenvalues};
-        }
-        fock_solver.compute(Fp);
-        if (fock_solver.info() != Eigen::Success) {
-            throw std::runtime_error("UHF: Fock diagonalization failed");
-        }
-        return {X * fock_solver.eigenvectors(), fock_solver.eigenvalues()};
+        if (use_davidson_here && dav_guess_ortho.size() != 0)
+            dav_opts.guess_vectors = dav_guess_ortho;
+        auto result = solve_fock_matrix(F, X,
+            use_davidson_here ? &dav_opts : nullptr, OperatorKind::Fock);
+        if (use_davidson_here) dav_guess_ortho = result.eigenvectors;
+        return {X * result.eigenvectors, result.eigenvalues};
     };
 
     // ---- Initial densities. Hcore-diag (no init given) or external.
@@ -383,8 +403,27 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
         D_alpha = init_alpha;
         D_beta  = init_beta;
     } else {
-        D_alpha = build_density_from_occ(C_alpha, n_alpha);
-        D_beta  = build_density_from_occ(C_beta,  n_beta);
+        // Hcore seed with a degenerate frontier averaged per spin (#336), as
+        // in rhf.cpp: complete a partial Davidson seed spectrum only when it
+        // could end inside either spin's frontier.
+        const int n_max = std::max(n_alpha, n_beta);
+        if (n_max > 0 && C0.cols() < orth.n_kept
+            && (C0.cols() <= n_max
+                || eps0[eps0.size() - 1] - eps0[n_max - 1]
+                    <= kDegenerateFrontierTol)) {
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> seed_solver(
+                X.transpose() * Hcore * X);
+            if (seed_solver.info() != Eigen::Success) {
+                throw std::runtime_error("UHF: Hcore seed diagonalization failed");
+            }
+            dav_guess_ortho = seed_solver.eigenvectors();
+            const Eigen::MatrixXd C_seed = X * seed_solver.eigenvectors();
+            D_alpha = ensemble_seed_density(C_seed, seed_solver.eigenvalues(), n_alpha, 1.0);
+            D_beta  = ensemble_seed_density(C_seed, seed_solver.eigenvalues(), n_beta, 1.0);
+        } else {
+            D_alpha = ensemble_seed_density(C_alpha, eps0, n_alpha, 1.0);
+            D_beta  = ensemble_seed_density(C_beta,  eps0, n_beta, 1.0);
+        }
     }
     Eigen::MatrixXd D_alpha_prev = D_alpha;
     Eigen::MatrixXd D_beta_prev  = D_beta;
@@ -396,6 +435,10 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
     Eigen::MatrixXd C_beta_prev_mo  = C_beta;
     Eigen::VectorXd eps_alpha_prev_mo = eps0;
     Eigen::VectorXd eps_beta_prev_mo  = eps0;
+    // A supplied seed density has no orbitals of its own: the frame above
+    // is Hcore's, so second-order steps wait for one diagonalisation (#426,
+    // see rhf.cpp).
+    bool seed_frame_stale = init_alpha.size() != 0;
 
     UHFResult result;
     result.restart_basis = basis;
@@ -404,13 +447,19 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
     result.mo_coeffs_alpha = C_alpha;
     result.mo_coeffs_beta  = C_beta;
 
+    if (opts.orbital_optimizer == "opentrustregion") {
+        if (opts.spinlock_mode != SpinlockMode::OFF || !opts.atomic_spins.empty())
+            throw std::invalid_argument("OpenTrustRegion does not support targeted spin states or spinlock; select native");
+        const auto run = run_orbital_scf(opts, X, S, Hcore, E_nuc, jk,
+            D_alpha, D_beta, n_alpha, n_beta, false, 1.0);
+        assign_orbital_unrestricted(result, run, E_nuc, S, n_alpha, n_beta);
+        return result;
+    }
+
     // ORCA NOITER compatibility: evaluate the initial spin densities once,
     // without taking an SCF update or recording an iteration.
     if (opts.max_iter == 0) {
-        const Eigen::MatrixXd D_total = D_alpha + D_beta;
-        const Eigen::MatrixXd J = jk.build_J_slot(D_total, 0);
-        const Eigen::MatrixXd K_alpha = jk.build_K_slot(D_alpha, 0);
-        const Eigen::MatrixXd K_beta = jk.build_K_slot(D_beta, 1);
+        const auto [J, K_alpha, K_beta] = jk.build_jk_uhf(D_alpha, D_beta);
         Eigen::MatrixXd F_alpha = Hcore + J - K_alpha;
         Eigen::MatrixXd F_beta = Hcore + J - K_beta;
         const double E_elec = 0.5 * (
@@ -504,6 +553,11 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
     // (BUG87-A truthful-timers fix): each trace row is charged
     // with the wall time since the previous row was recorded.
     auto t_iter_prev = std::chrono::steady_clock::now();
+    // EDIIS/ADIIS -> DIIS switch (GitLab #377): open shells use the
+    // open-shell threshold; spin-balanced UHF keeps the historical one.
+    const double ediis_switch_threshold = (n_alpha != n_beta)
+        ? opts.ediis_diis_switch_threshold_open_shell
+        : opts.ediis_diis_switch_threshold;
     for (int iter = 1; iter <= opts.max_iter; ++iter) {
         const bool validating_first_full_build =
             full_fock_validation_pending;
@@ -554,15 +608,9 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
         const Eigen::MatrixXd Da_used = damp_or_pass(D_alpha, D_alpha_prev);
         const Eigen::MatrixXd Db_used = damp_or_pass(D_beta,  D_beta_prev);
 
-        // Common Coulomb from the total density; per-spin exchange.
-        // Slot 0 = J(D_total), 0 = K(D_α), 1 = K(D_β) so the
-        // incremental-Fock ΔD cache (DirectJKBuilder) doesn't collide
-        // across spins. Falls back to the stateless path on non-
-        // Direct builders + when ``incremental_fock = false``.
-        const Eigen::MatrixXd D_total = Da_used + Db_used;
-        const Eigen::MatrixXd J = jk.build_J_slot(D_total, 0);
-        const Eigen::MatrixXd K_alpha = jk.build_K_slot(Da_used, 0);
-        const Eigen::MatrixXd K_beta  = jk.build_K_slot(Db_used, 1);
+        // Providers may fuse the three channels. The default joint build
+        // keeps J slot 0 and independent alpha/beta K slots 0/1.
+        const auto [J, K_alpha, K_beta] = jk.build_jk_uhf(Da_used, Db_used);
 
         Eigen::MatrixXd F_alpha = Hcore + J - K_alpha;
         Eigen::MatrixXd F_beta  = Hcore + J - K_beta;
@@ -654,7 +702,8 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
         const bool in_newton_phase =
             opts.newton_threshold > 0.0
             && grad_norm < opts.newton_threshold
-            && !in_quadratic_phase;
+            && !in_quadratic_phase
+            && !seed_frame_stale;
 
         // D2e TRAH (open-shell). Same per-spin coupled CG as Newton
         // but with the adaptive trust radius driven by Powell's ρ
@@ -663,7 +712,8 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
             opts.trah_threshold > 0.0
             && grad_norm < opts.trah_threshold
             && !in_quadratic_phase
-            && !in_newton_phase;
+            && !in_newton_phase
+            && !seed_frame_stale;
 
         // D2d Neese SOSCF activation, open-shell. Mutually exclusive
         // with Newton + TRAH.
@@ -672,7 +722,8 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
             && grad_norm < opts.soscf_threshold
             && !in_quadratic_phase
             && !in_newton_phase
-            && !in_trah_phase;
+            && !in_trah_phase
+            && !seed_frame_stale;
 
         // SCF accelerator (per-spin DIIS / coupled-spin EDIIS / hybrid).
         // Skipped during quadratic, Newton, TRAH, or SOSCF phases, and
@@ -735,7 +786,7 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
                             grad_norm,
                             static_cast<Eigen::Index>(F_alpha.rows()),
                             2);
-                    if (switch_metric > opts.ediis_diis_switch_threshold) {
+                    if (switch_metric > ediis_switch_threshold) {
                         Fa_ext = std::move(e.first);
                         Fb_ext = std::move(e.second);
                         accelerator_step_this_iter = 3;
@@ -772,7 +823,7 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
                             grad_norm,
                             static_cast<Eigen::Index>(F_alpha.rows()),
                             2);
-                    if (switch_metric > opts.ediis_diis_switch_threshold) {
+                    if (switch_metric > ediis_switch_threshold) {
                         Fa_ext = std::move(a.first);
                         Fb_ext = std::move(a.second);
                         accelerator_step_this_iter = 4;
@@ -1138,13 +1189,25 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
         C_beta_prev_mo    = Cb_new;
         eps_alpha_prev_mo = eps_a_new;
         eps_beta_prev_mo  = eps_b_new;
+        seed_frame_stale = false;
 
         D_alpha_prev = Da_used;
         D_beta_prev  = Db_used;
         C_alpha = Ca_new;
         C_beta  = Cb_new;
-        D_alpha = build_density_from_occ(C_alpha, n_alpha);
-        D_beta  = build_density_from_occ(C_beta,  n_beta);
+        // #210: an exactly degenerate frontier makes `leftCols` a coin flip
+        // on the eigensolver's basis. Resolve it deterministically; a no-op
+        // whenever the frontier is gapped, which is virtually always.
+        {
+            const Eigen::MatrixXd Ca_occ = occupied_block_deterministic(
+                C_alpha, eps_a_new, n_alpha, s_sqrt_ao, ao_atom_index);
+            const Eigen::MatrixXd Cb_occ = occupied_block_deterministic(
+                C_beta, eps_b_new, n_beta, s_sqrt_ao, ao_atom_index);
+            D_alpha = n_alpha > 0 ? Eigen::MatrixXd(Ca_occ * Ca_occ.transpose())
+                                  : Eigen::MatrixXd(Eigen::MatrixXd::Zero(C_alpha.rows(), C_alpha.rows()));
+            D_beta = n_beta > 0 ? Eigen::MatrixXd(Cb_occ * Cb_occ.transpose())
+                                : Eigen::MatrixXd(Eigen::MatrixXd::Zero(C_beta.rows(), C_beta.rows()));
+        }
 
         result.mo_energies_alpha = eps_a_new;
         result.mo_energies_beta  = eps_b_new;
@@ -1175,9 +1238,7 @@ UHFResult run_uhf_scf_once(const BasisSet& basis,
             // correction upgrades only the returned Fock / MOs (see the
             // matching note in rhf.cpp; no-op for non-COSX builders).
             const Eigen::MatrixXd D_total_f = D_alpha + D_beta;
-            const Eigen::MatrixXd J_f = jk.build_J_slot(D_total_f, 0);
-            Eigen::MatrixXd Ka_f = jk.build_K_slot(D_alpha, 0);
-            Eigen::MatrixXd Kb_f = jk.build_K_slot(D_beta, 1);
+            auto [J_f, Ka_f, Kb_f] = jk.build_jk_uhf(D_alpha, D_beta);
             // +U-free trace: V_U must not leak into the energy trace;
             // the Dudarev energy is added separately below.
             //   E_elec = tr(D_tot Hcore) + (1/2) tr(D_tot J)
@@ -1355,6 +1416,7 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
         basis, n_alpha, n_beta, S, Hcore, E_nuc, jk, opts,
         constructed.alpha, constructed.beta);
     result.guess_selection = constructed.selection;
+    if (opts.orbital_optimizer == "opentrustregion") return result;
 
     // ---- Internal stability analysis + corrective restart ----------------
     //
@@ -1397,7 +1459,9 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
     // PerfScope's time.process_time().
     const auto t_stability_wall0 = std::chrono::steady_clock::now();
     const std::clock_t t_stability_cpu0 = std::clock();
+    bool used_trah_recovery = false;
     const auto charge_stability_phase = [&](UHFResult& charged) {
+        charged.stability_trah_used = used_trah_recovery;
         charged.stability_wall_s = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - t_stability_wall0).count();
         charged.stability_cpu_s =
@@ -1406,6 +1470,16 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
     };
     UHFStabilityOptions sopts;
     sopts.max_iter = opts.stability_davidson_max_iter;
+    {
+        // #342: bound the solve by wall time as well as by matvecs.
+        double scf_loop_wall_s = 0.0;
+        for (const auto& it : result.scf_trace) {
+            scf_loop_wall_s += it.wall_s;
+        }
+        sopts.wall_budget_s = stability_wall_budget_for(
+            opts.stability_wall_budget_s, opts.stability_wall_fraction,
+            opts.stability_wall_floor_s, scf_loop_wall_s);
+    }
     // A residual looser than the instability threshold cannot certify the
     // sign of the reported eigenvalue. Keep one decimal guard digit while
     // avoiding needless over-solving for unusually loose user thresholds.
@@ -1428,6 +1502,9 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
             n_alpha, n_beta, jk, sopts);
         result.stability_checked = true;
         result.stability_analysis_converged = stab.converged;
+        result.stability_stop_reason = static_cast<int>(stab.stop_reason);
+        result.stability_n_matvec = stab.n_matvec;
+        result.stability_wall_budget_s = sopts.wall_budget_s;
         result.stability_eigenvalue = stab.lowest_eigenvalue;
         result.internal_instability =
             stab.converged
@@ -1443,6 +1520,9 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
             n_alpha, n_beta, jk, sopts);
         result.stability_checked = true;
         result.stability_analysis_converged = stab.converged;
+        result.stability_stop_reason = static_cast<int>(stab.stop_reason);
+        result.stability_n_matvec = stab.n_matvec;
+        result.stability_wall_budget_s = sopts.wall_budget_s;
         result.stability_eigenvalue = stab.lowest_eigenvalue;
         result.internal_instability =
             stab.converged
@@ -1507,7 +1587,23 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
         // systems (ferrocene m=3/def2-SVP).
         constexpr int kAnchorHoldIters = 15;
         constexpr int kMaxRestartChains = 5;
-        auto reconverge = [&](const EscapeSeed& seed, int anchor_iters) {
+        auto reconverge = [&](const EscapeSeed& seed, int anchor_iters,
+                              bool trust_region = false) {
+            UHFOptions escape_opts = opts;
+            if (trust_region) {
+                used_trah_recovery = true;
+                // A downhill rotation can still lie in the attraction basin
+                // of the original SCF saddle (#273, FeCl3). TRAH's shifted
+                // Hessian treats negative curvature instead of iterating
+                // back to that stationary point: Helmich-Paris, J. Chem.
+                // Phys. 154, 164104 (2021), doi:10.1063/5.0040798. Use it only
+                // after anchored/free reconvergence has failed for both signs;
+                // retain the user's iteration budget, convergence gates and
+                // TRAH controls.
+                escape_opts.quadratic_fallback_iter = 0;
+                escape_opts.newton_threshold = 0.0;
+                escape_opts.trah_threshold = std::max(1.0, opts.trah_threshold);
+            }
             const Eigen::MatrixXd Da =
                 seed.C_alpha_occ * seed.C_alpha_occ.transpose();
             const Eigen::MatrixXd Db =
@@ -1517,7 +1613,7 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
             const Eigen::MatrixXd* anchor_beta =
                 anchor_iters > 0 ? &seed.C_beta_occ : nullptr;
             UHFResult candidate = run_uhf_scf_once(
-                basis, n_alpha, n_beta, S, Hcore, E_nuc, jk, opts,
+                basis, n_alpha, n_beta, S, Hcore, E_nuc, jk, escape_opts,
                 Da, Db, anchor_alpha, anchor_beta, anchor_iters);
 
             // If the first drive runs out of iterations while remaining in
@@ -1532,7 +1628,7 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
                     break;
                 }
                 candidate = run_uhf_scf_once(
-                    basis, n_alpha, n_beta, S, Hcore, E_nuc, jk, opts,
+                    basis, n_alpha, n_beta, S, Hcore, E_nuc, jk, escape_opts,
                     candidate.density_alpha, candidate.density_beta);
             }
             return candidate;
@@ -1540,11 +1636,25 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
 
         bool found_reconverged_descent = false;
         UHFResult retried;
+        std::vector<EscapeSeed> downhill_seeds;
+        auto accept_descent = [&](UHFResult candidate) {
+            if (!candidate.converged
+                || !(candidate.energy < result.energy - 1e-10)) {
+                return false;
+            }
+            if (!found_reconverged_descent
+                || candidate.energy < retried.energy) {
+                found_reconverged_descent = true;
+                retried = std::move(candidate);
+            }
+            return true;
+        };
         for (const double sign : {-1.0, 1.0}) {
             const EscapeSeed seed = line_search(sign);
             if (!seed.found) {
                 continue;
             }
+            downhill_seeds.push_back(seed);
             // Fixed-reference MOM protects sparse hole patterns (measured on
             // ferrocene), but it can over-constrain a collective instability
             // such as Cr2 and prevent its downhill density from settling.
@@ -1552,16 +1662,14 @@ UHFResult run_uhf_scf_with_jk(const BasisSet& basis,
             // release the occupations immediately and retry from the same
             // variationally downhill density with a fresh accelerator.
             for (const int anchor_iters : {kAnchorHoldIters, 0}) {
-                UHFResult candidate = reconverge(seed, anchor_iters);
-                if (candidate.converged
-                    && candidate.energy < result.energy - 1e-10) {
-                    if (!found_reconverged_descent
-                        || candidate.energy < retried.energy) {
-                        found_reconverged_descent = true;
-                        retried = std::move(candidate);
-                    }
+                if (accept_descent(reconverge(seed, anchor_iters))) {
                     break;
                 }
+            }
+        }
+        if (!found_reconverged_descent) {
+            for (const auto& seed : downhill_seeds) {
+                accept_descent(reconverge(seed, 0, true));
             }
         }
         if (!found_reconverged_descent) {

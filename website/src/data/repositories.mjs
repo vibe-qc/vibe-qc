@@ -8,10 +8,12 @@ export const repositories = Object.freeze([
   { id: 'vibe-view', name: 'vibe-view',
     role: 'The independent viewer. Install and run it from its own checkout and environment.' },
   { id: 'vibe-queue', name: 'vibe-queue (vq)',
-    role: 'The independent scheduler. Its command and Python import package remain vq.' },
+    role: 'The independent scheduler. Its command and Python import remain vq; its distribution is vibe-queue.' },
+  { id: 'vibe-sketch', name: 'vibe-sketch', private: true,
+    role: 'The structure and reaction sketcher. Testing version; MPL-2.0, with access arranged through the maintainer.' },
   { id: 'qvf', name: 'QVF',
-    role: 'The format specification, schema, corpus and optional reference toolkit. No runtime dependency for the engine or viewer.' },
+    role: 'The format specification, schema, corpus and optional reference toolkit. The engine and basic viewer implement the format independently; strict viewer validation and sketch document exchange use optional toolkit integrations.' },
 ].map(repository => Object.freeze({
   ...repository,
-  github: `https://github.com/vibe-qc/${repository.id}`,
+  github: repository.private ? null : `https://github.com/vibe-qc/${repository.id}`,
 })));

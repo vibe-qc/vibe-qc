@@ -4,7 +4,10 @@
 // algorithm derivation.
 
 #include "vibeqc/aopair_ft.hpp"
+#include "vibeqc/lattice_pair_cells.hpp"
+#include "vibeqc/detail/native_phase_timing.hpp"
 #include "aopair_ft_internal.hpp"
+#include "aopair_radial_cache.hpp"
 #include "vibeqc/cart_to_sph_data.hpp"
 
 #include <algorithm>
@@ -30,7 +33,7 @@ constexpr double kPi = 3.14159265358979323846;
 
 // Per-shell index → first AO offset (for s-only every shell = 1 AO).
 // Kept as a helper so the same scaffolding extends naturally to the
-// general-L kernel (Item 1b in the integrals-chat handover).
+// general-L kernel.
 std::vector<std::size_t> shell_to_bf_offsets_ss(
         const std::vector<ShellInfo>& shells)
 {
@@ -467,6 +470,37 @@ std::vector<std::size_t> shell_to_bf_offsets_pure(
     return off;
 }
 
+// An exactly zero primitive contributes nothing if the remaining arithmetic
+// stays finite. Keep the original path for extreme inputs: 0 * inf must not
+// silently become zero. This is an overflow guard, not an amplitude screen.
+bool zero_ft_prefactor_can_skip(
+    double gamma, double Px, double Py, double Pz, double max_G_norm,
+    int l_sum, const std::vector<double>& Ex, const std::vector<double>& Ey,
+    const std::vector<double>& Ez)
+{
+    constexpr double limit = std::numeric_limits<double>::max() / 16.0;
+    if (!(gamma > 0.0) || !std::isfinite(gamma) ||
+        !std::isfinite(1.0 / gamma) || !std::isfinite(max_G_norm))
+        return false;
+    const double phase_bound = (std::abs(Px) + std::abs(Py) + std::abs(Pz))
+                               * max_G_norm;
+    if (!(phase_bound <= limit)) return false;
+    double bound = 1.0;
+    for (const auto* coefficients : {&Ex, &Ey, &Ez}) {
+        double largest = 0.0;
+        for (double value : *coefficients) {
+            if (!std::isfinite(value)) return false;
+            largest = std::max(largest, std::abs(value));
+        }
+        // Include the intermediate products even if a later factor is zero.
+        bound *= std::max(1.0, largest);
+    }
+    // Each axis table extends through l_sum. The factor of 16 above leaves
+    // room for complex multiply/add intermediates and rounding in this bound.
+    bound *= std::pow(std::max(1.0, max_G_norm), 3 * l_sum);
+    return bound <= limit;
+}
+
 double shell_pair_cell_ft_bound(
     const ShellInfo& shM,
     const ShellInfo& shN,
@@ -526,6 +560,12 @@ bool cell_list_is_inversion_symmetric(
 {
     constexpr double tol = 1.0e-9;
     const Eigen::Index n_g = R_g_list.rows();
+    // A single shifted cell has no inversion partner. Even a sub-tolerance
+    // displacement changes ordered AO pairs; only the exact home cell may
+    // use the Gamma shell-pair mirror in a per-cell transform.
+    if (n_g == 1) {
+        return R_g_list.row(0).isZero(0.0);
+    }
     for (Eigen::Index g = 0; g < n_g; ++g) {
         bool found = false;
         for (Eigen::Index h = 0; h < n_g; ++h) {
@@ -593,8 +633,12 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& R_g_list,
     const Eigen::Vector3d& k_cart,
-    double screen_tol)
+    double screen_tol,
+    double pair_cutoff_bohr)
 {
+    if (!std::isfinite(pair_cutoff_bohr) ||
+        (pair_cutoff_bohr < 0.0 && pair_cutoff_bohr != -1.0))
+        throw std::invalid_argument("pair_cutoff_bohr must be nonnegative or -1 (historical)");
     const std::vector<ShellInfo> shells = basis.shells();
     const auto bf_offsets = shell_to_bf_offsets_pure(shells);
 
@@ -646,8 +690,9 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
     // (k_bra != Gamma, k_ket = Gamma) exchange pair while the mesh is
     // shifted by q = -k_bra): mirroring there corrupted the multi-k
     // exchange by 2.0e-2 Ha/cell on LiH/sto-3g (2,1,1) (2026-07-10,
-    // handovers/HANDOVER_AICCM_DIRECT_TORUS.md Finding 2 addendum).
+    // the original investigation Finding 2 addendum).
     const bool gamma_pair_symmetric =
+        pair_cutoff_bohr < 0.0 &&
         k_cart.squaredNorm() <= 1.0e-28
         && cell_list_is_inversion_symmetric(R_g_list)
         && eval_frequencies_are_lattice_reciprocal(G_vectors, R_g_list);
@@ -765,6 +810,11 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
                 const double Rx = R_g_list(static_cast<Eigen::Index>(g), 0);
                 const double Ry = R_g_list(static_cast<Eigen::Index>(g), 1);
                 const double Rz = R_g_list(static_cast<Eigen::Index>(g), 2);
+                if (pair_cutoff_bohr >= 0.0 && !pair_in_range(
+                        basis.libint()[static_cast<std::size_t>(sM)],
+                        basis.libint()[static_cast<std::size_t>(sN)],
+                        Eigen::Vector3d(Rx, Ry, Rz), pair_cutoff_bohr))
+                    continue;
                 const double Bx = Bx0 + Rx;
                 const double By = By0 + Ry;
                 const double Bz = Bz0 + Rz;
@@ -813,6 +863,11 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
                         md_e_coefficients_1d(lM, lN, gamma, PAx, PBx, Ex);
                         md_e_coefficients_1d(lM, lN, gamma, PAy, PBy, Ey);
                         md_e_coefficients_1d(lM, lN, gamma, PAz, PBz, Ez);
+
+                        if (radial_prefactor == 0.0 && zero_ft_prefactor_can_skip(
+                                gamma, Px, Py, Pz, max_G_norm, lM + lN,
+                                Ex, Ey, Ez))
+                            continue;
 
                         // E layout: row-major ((lM+1) * (lN+1)) * (lM+lN+1).
                         const std::size_t e_dim_t =
@@ -984,8 +1039,14 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& R_g_list,
     const Eigen::Ref<const Eigen::VectorXcd>& reciprocal_weights,
-    double screen_tol)
+    double screen_tol,
+    std::size_t radial_cache_bytes)
 {
+    detail::NativePhaseCall<5> profile("aopair_ft.weighted_per_cell",
+        {"setup_and_dispatch", "primitive_geometry_and_hermite", "reciprocal_prefactor",
+         "weighted_hermite_reduction", "spherical_projection"},
+        {{"nbasis", basis.nbasis()}, {"G_vectors", static_cast<std::uint64_t>(G_vectors.rows())},
+         {"cells", static_cast<std::uint64_t>(R_g_list.rows())}});
     // Per-cell reciprocal-weight-contracted AO-pair FT:
     //
     //   out[g][m,n] = Re( sum_G w(G) . conj( FT_mn(G; R_g) ) )
@@ -1035,6 +1096,7 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
             "ao_pair_fourier_transform_weighted_per_cell: "
             "reciprocal_weights must have shape (n_G,)");
     }
+    const bool finite_weights = reciprocal_weights.allFinite();
 
     std::vector<double> G2(n_G);
     double min_G2 = std::numeric_limits<double>::infinity();
@@ -1048,6 +1110,13 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
         max_G2 = std::max(max_G2, G2[k]);
     }
     const double max_G_norm = std::sqrt(max_G2);
+
+    aopair_ft_detail::RadialGaussianCache radial_cache(G2, radial_cache_bytes);
+    for (const auto& bra : shells)
+        for (const auto& ket : shells)
+            for (const double alpha : bra.exponents)
+                for (const double beta : ket.exponents)
+                    radial_cache.admit(alpha + beta);
 
     int max_l = 0;
     for (const auto& shell : shells) {
@@ -1075,8 +1144,10 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
     const std::ptrdiff_t n_tasks =
         static_cast<std::ptrdiff_t>(n_shells * n_shells * n_g);
 
+    profile.elapsed.finish(0);
 #pragma omp parallel
     {
+        detail::NativePhaseSections<5> phases(profile.enabled());
         std::vector<double> Ex, Ey, Ez;
         std::vector<std::complex<double>> prefactor_per_G(n_G);
         // (-iGx)^t (-iGy)^u hoisted out of the v loop. The old per-cell
@@ -1085,6 +1156,11 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
         // multiply saved per (v, G).
         std::vector<std::complex<double>> gxy_scratch(n_G);
         std::vector<double> cart_acc;
+        // Fixed angular scratch, independent of the reciprocal mesh: at most
+        // (13^3 + 13^2) * (sizeof(double) + 1) bytes per worker through L=6.
+        const std::size_t max_moments = n_powers * n_powers * (n_powers + 1);
+        std::vector<double> hermite_moments(max_moments);
+        std::vector<unsigned char> hermite_moment_ready(max_moments);
 
 #pragma omp for schedule(dynamic)
         for (std::ptrdiff_t task = 0; task < n_tasks; ++task) {
@@ -1142,12 +1218,15 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
             const std::size_t e_dim_t =
                 static_cast<std::size_t>(t_max_axis + 1);
             const std::size_t e_dim_lb = static_cast<std::size_t>(lN + 1);
+            const std::size_t moment_plane = e_dim_t * e_dim_t;
+            const std::size_t moment_cube = moment_plane * e_dim_t;
             const auto e_idx = [&](int i, int j, int t) {
                 return (static_cast<std::size_t>(i) * e_dim_lb
                         + static_cast<std::size_t>(j)) * e_dim_t
                        + static_cast<std::size_t>(t);
             };
 
+            phases.finish(0);
             for (std::size_t ip = 0; ip < shM.exponents.size(); ++ip) {
                 const double alpha = shM.exponents[ip];
                 const double c_a = shM.coefficients[ip];
@@ -1167,10 +1246,17 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
                     md_e_coefficients_1d(lM, lN, gamma, Py - Ay, Py - By, Ey);
                     md_e_coefficients_1d(lM, lN, gamma, Pz - Az, Pz - Bz, Ez);
 
+                    phases.finish(1);
+                    if (radial_prefactor == 0.0 && finite_weights &&
+                        zero_ft_prefactor_can_skip(
+                            gamma, Px, Py, Pz, max_G_norm, lM + lN, Ex, Ey, Ez))
+                        continue;
+
                     // w(G) . conj(radial . exp(-iG.P)) folded once per
                     // primitive pair; the remaining conj(pow) factor is
                     // applied inside the (t,u,v) reduction below.
                     const double quarter_inv_gamma = 0.25 * inv_gamma;
+                    const double* radial_values = radial_cache.find(gamma);
                     for (std::size_t k = 0; k < n_G; ++k) {
                         const double gx =
                             G_vectors(static_cast<Eigen::Index>(k), 0);
@@ -1179,7 +1265,8 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
                         const double gz =
                             G_vectors(static_cast<Eigen::Index>(k), 2);
                         const double radial =
-                            std::exp(-G2[k] * quarter_inv_gamma);
+                            radial_values ? radial_values[k]
+                                          : std::exp(-G2[k] * quarter_inv_gamma);
                         const double gp = gx * Px + gy * Py + gz * Pz;
                         // conj(exp(-iG.P)) = exp(+iG.P)
                         const std::complex<double> conj_phase(
@@ -1189,6 +1276,20 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
                             * (radial_prefactor * radial) * conj_phase;
                     }
 
+                    phases.finish(2);
+                    // For one primitive pair and translated cell, the weighted
+                    // reciprocal Hermite moment depends on (t,u,v), not on the
+                    // Cartesian AO pair. Reuse the identical reduction before
+                    // applying each pair's E coefficients (McMurchie-Davidson,
+                    // J. Comput. Phys. 26, 218 (1978), Sec. 2; Sun et al.,
+                    // J. Chem. Phys. 147, 164119 (2017), Appendix B).
+                    // Reset for every primitive: phases, weights and damping
+                    // must never leak across pairs, cells or Fourier calls.
+                    // Keep a separate v=0 plane for the original folded-z
+                    // expression, preserving both arithmetic paths exactly.
+                    std::fill(hermite_moment_ready.begin(),
+                              hermite_moment_ready.begin() + moment_cube + moment_plane,
+                              0);
                     for (std::size_t a = 0; a < n_cart_M; ++a) {
                         const int ixA = cart_M[a].i;
                         const int jyA = cart_M[a].j;
@@ -1215,16 +1316,7 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
                                                 * n_G];
                                     const double etu = et * eu;
                                     const int Vmax = kzA + kzB;
-                                    // Caching (gx*gy) only pays when the v
-                                    // loop reuses it; at Vmax == 0 the
-                                    // single pass would write and re-read
-                                    // n_G complex for nothing.
-                                    if (Vmax > 0) {
-                                        for (std::size_t k = 0; k < n_G; ++k) {
-                                            gxy_scratch[k] =
-                                                gx_t[k] * gy_u[k];
-                                        }
-                                    }
+                                    bool gxy_ready = false;
                                     for (int v = 0; v <= Vmax; ++v) {
                                         const double ev =
                                             Ez[e_idx(kzA, kzB, v)];
@@ -1238,41 +1330,57 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
                                         // imaginary part we discard.
                                         // Re() commutes out to here because
                                         // every outer factor is real.
-                                        double s = 0.0;
-                                        if (Vmax == 0) {
-                                            // (-iGz)^0 == 1 exactly: fold it
-                                            // out rather than multiply by it.
-                                            for (std::size_t k = 0; k < n_G;
-                                                 ++k) {
-                                                const std::complex<double> pw =
-                                                    gx_t[k] * gy_u[k];
-                                                const std::complex<double>& wq =
-                                                    prefactor_per_G[k];
-                                                s += wq.real() * pw.real()
-                                                     + wq.imag() * pw.imag();
+                                        const std::size_t tu =
+                                            static_cast<std::size_t>(t) * e_dim_t
+                                            + static_cast<std::size_t>(u);
+                                        const std::size_t moment_index = Vmax == 0
+                                            ? moment_cube + tu
+                                            : tu * e_dim_t + static_cast<std::size_t>(v);
+                                        if (!hermite_moment_ready[moment_index]) {
+                                            double s = 0.0;
+                                            if (Vmax == 0) {
+                                                // (-iGz)^0 == 1 exactly: fold it
+                                                // out rather than multiply by it.
+                                                for (std::size_t k = 0; k < n_G;
+                                                     ++k) {
+                                                    const std::complex<double> pw =
+                                                        gx_t[k] * gy_u[k];
+                                                    const std::complex<double>& wq =
+                                                        prefactor_per_G[k];
+                                                    s += wq.real() * pw.real()
+                                                         + wq.imag() * pw.imag();
+                                                }
+                                            } else {
+                                                if (!gxy_ready) {
+                                                    for (std::size_t k = 0; k < n_G; ++k)
+                                                        gxy_scratch[k] = gx_t[k] * gy_u[k];
+                                                    gxy_ready = true;
+                                                }
+                                                const std::complex<double>* gz_v =
+                                                    &Gz_pow[
+                                                        static_cast<std::size_t>(v)
+                                                        * n_G];
+                                                for (std::size_t k = 0; k < n_G;
+                                                     ++k) {
+                                                    const std::complex<double> pw =
+                                                        gxy_scratch[k] * gz_v[k];
+                                                    const std::complex<double>& wq =
+                                                        prefactor_per_G[k];
+                                                    s += wq.real() * pw.real()
+                                                         + wq.imag() * pw.imag();
+                                                }
                                             }
-                                        } else {
-                                            const std::complex<double>* gz_v =
-                                                &Gz_pow[
-                                                    static_cast<std::size_t>(v)
-                                                    * n_G];
-                                            for (std::size_t k = 0; k < n_G;
-                                                 ++k) {
-                                                const std::complex<double> pw =
-                                                    gxy_scratch[k] * gz_v[k];
-                                                const std::complex<double>& wq =
-                                                    prefactor_per_G[k];
-                                                s += wq.real() * pw.real()
-                                                     + wq.imag() * pw.imag();
-                                            }
+                                            hermite_moments[moment_index] = s;
+                                            hermite_moment_ready[moment_index] = 1;
                                         }
-                                        acc += etuv * s;
+                                        acc += etuv * hermite_moments[moment_index];
                                     }
                                 }
                             }
                             cart_acc[a * n_cart_N + b] += acc;
                         }
                     }
+                    phases.finish(3);
                 }  // iq
             }  // ip
 
@@ -1296,7 +1404,9 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
                     out_cell[(bfM + m) * n_orb + (bfN + n)] = value;
                 }
             }
+            phases.finish(4);
         }
+        profile.add_worker(phases);
     }
 
     return out;
@@ -1311,8 +1421,12 @@ std::vector<AOPairFTTensor> ao_pair_fourier_transform_bloch_multi(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& k_carts,
     double screen_tol,
-    const std::vector<double>& pair_weights)
+    const std::vector<double>& pair_weights,
+    double pair_cutoff_bohr)
 {
+    if (!std::isfinite(pair_cutoff_bohr) ||
+        (pair_cutoff_bohr < 0.0 && pair_cutoff_bohr != -1.0))
+        throw std::invalid_argument("pair_cutoff_bohr must be nonnegative or -1 (historical)");
     // Multi-k batched variant of ao_pair_fourier_transform_bloch: the
     // per-cell Cartesian McMurchie-Davidson pair-FT work (the dominant
     // transcendental cost — Eq. cderi pair density of Sun, Berkelbach,
@@ -1391,6 +1505,7 @@ std::vector<AOPairFTTensor> ao_pair_fourier_transform_bloch_multi(
     // The mirror shortcut needs every ket momentum at Gamma (see the
     // three-condition note in the single-k kernel above).
     const bool gamma_pair_symmetric =
+        pair_cutoff_bohr < 0.0 &&
         all_k_zero
         && cell_list_is_inversion_symmetric(R_g_list)
         && eval_frequencies_are_lattice_reciprocal(G_vectors, R_g_list);
@@ -1508,6 +1623,11 @@ std::vector<AOPairFTTensor> ao_pair_fourier_transform_bloch_multi(
                 const double Rx = R_g_list(static_cast<Eigen::Index>(g), 0);
                 const double Ry = R_g_list(static_cast<Eigen::Index>(g), 1);
                 const double Rz = R_g_list(static_cast<Eigen::Index>(g), 2);
+                if (pair_cutoff_bohr >= 0.0 && !pair_in_range(
+                        basis.libint()[static_cast<std::size_t>(sM)],
+                        basis.libint()[static_cast<std::size_t>(sN)],
+                        Eigen::Vector3d(Rx, Ry, Rz), pair_cutoff_bohr))
+                    continue;
                 const double Bx = Bx0 + Rx;
                 const double By = By0 + Ry;
                 const double Bz = Bz0 + Rz;
@@ -2553,7 +2673,7 @@ ao_pair_fourier_transform_bloch_gradient_gweighted(
     std::size_t n_atoms)
 {
     // Bloch generalization of ao_pair_fourier_transform_gamma_gradient_
-    // gweighted above (HANDOVER_GDF_GRADIENT_DEFERRED.md § 4, rung 1).
+    // gweighted above.
     // The kernels must stay in lockstep: the ONLY difference is the
     // per-cell ket phase exp(+i k.R_g) multiplied onto the per-cell FT
     // factor (ft / prefactor_per_G) before the shared conj-reduction.
@@ -3587,6 +3707,152 @@ AOPairFourierPanel ao_pair_gaussian_fourier_panel(
                 output.data[static_cast<std::size_t>(row) * vectors.count + begin + v] = {
                     real == 0.0 ? 0.0 : real, imag == 0.0 ? 0.0 : imag};
             }
+            begin += count;
+        }
+    }
+    return output;
+}
+
+namespace {
+struct PairPanelAccumulator {
+    double real = 0.0, imag = 0.0, real_correction = 0.0, imag_correction = 0.0;
+};
+using PairPanelBatchSums = std::array<
+    std::array<PairPanelAccumulator, kPairPanelVectorTile>, ao_pair_fourier_k_tile>;
+using PairPanelBatchPhases = std::array<std::complex<double>, ao_pair_fourier_k_tile>;
+} // namespace
+
+std::uint64_t ao_pair_fourier_batch_numeric_workspace_bytes() noexcept {
+    // Conservatively include the nested scalar admission call's workspace
+    // as well as the batch frame; no compiler stack-slot reuse is assumed.
+    return 2 * ao_pair_fourier_fixed_numeric_workspace_bytes()
+        + sizeof(PairPanelBatchSums) + sizeof(PairPanelBatchPhases);
+}
+
+AOPairFourierBatch ao_pair_gaussian_fourier_batch(
+    const BasisSet& basis, const PeriodicSystem& system,
+    AuxiliaryFourierVectorView vectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& ket_kpoints,
+    std::uint64_t pair_begin, std::uint64_t pair_count,
+    double image_cutoff_bohr, std::uint64_t maximum_image_candidates,
+    std::uint64_t output_byte_cap) {
+    if (ket_kpoints.cols() != 3 || ket_kpoints.rows() == 0
+        || ket_kpoints.rows() > static_cast<Eigen::Index>(ao_pair_fourier_k_tile)
+        || !ket_kpoints.allFinite())
+        throw std::invalid_argument("AO-pair Fourier batch requires one to eight finite ket kpoints");
+    const auto nk = static_cast<std::size_t>(ket_kpoints.rows());
+    const auto n = static_cast<std::uint64_t>(basis.nbasis());
+    const auto pairs = pair_panel_product(n, n);
+    if (pair_begin > pairs || pair_count > pairs - pair_begin)
+        throw std::invalid_argument("AO-pair Fourier interval exceeds basis pair product");
+    const auto elements = pair_panel_product(nk, pair_panel_product(pair_count, vectors.count));
+    const auto bytes = pair_panel_product(elements, sizeof(std::complex<double>));
+    if (output_byte_cap == 0 || bytes > output_byte_cap
+        || elements > std::vector<std::complex<double>>().max_size()
+        || pair_count > std::numeric_limits<std::size_t>::max())
+        throw std::length_error("AO-pair Fourier batch output exceeds byte or address cap");
+    // Reuse all scalar geometry, basis and vector admission. Empty pairs
+    // allocate no output and perform no image/primitive Fourier work.
+    AOPairFourierBatch output;
+    static_cast<AOPairFourierPanel&>(output) = ao_pair_gaussian_fourier_panel(
+        basis, system, vectors, ket_kpoints.row(0).transpose(), pair_begin, 0,
+        image_cutoff_bohr, maximum_image_candidates, output_byte_cap);
+    output.n_pairs = static_cast<std::size_t>(pair_count);
+    output.n_kpoints = nk;
+    output.output_bytes = bytes;
+    output.fixed_numeric_workspace_bytes = ao_pair_fourier_batch_numeric_workspace_bytes();
+    const PairPanelLongMatrix inverse = system.lattice.cast<long double>().inverse();
+    const double cutoff_squared = image_cutoff_bohr * image_cutoff_bohr;
+    for (std::uint64_t row = 0; row < pair_count; ++row) {
+        const auto bra = pair_panel_ao(basis, (pair_begin + row) / n);
+        const auto ket = pair_panel_ao(basis, (pair_begin + row) % n);
+        const auto box = pair_panel_image_box(bra, ket, inverse, image_cutoff_bohr);
+        if (box.candidates > maximum_image_candidates - output.image_candidate_count)
+            throw std::length_error("AO-pair Fourier image candidates exceed source cap");
+        output.image_candidate_count += box.candidates;
+        output.retained_pair_image_count += pair_panel_walk_images(
+            bra, ket, system.lattice, box, cutoff_squared,
+            [](const Eigen::Vector3d&, const Eigen::Vector3d&, double) {});
+    }
+    output.data.resize(static_cast<std::size_t>(elements));
+    const std::array<const double*, 3> lanes = {vectors.x, vectors.y, vectors.z};
+    const std::array<std::ptrdiff_t, 3> strides = {
+        vectors.x_stride, vectors.y_stride, vectors.z_stride};
+    PairPanelNumericWorkspace workspace;
+    PairPanelVectorWorkspace tile;
+    PairPanelBatchSums sums;
+    PairPanelBatchPhases phases;
+    for (std::uint64_t row = 0; row < pair_count; ++row) {
+        const auto bra = pair_panel_ao(basis, (pair_begin + row) / n);
+        const auto ket = pair_panel_ao(basis, (pair_begin + row) % n);
+        const int la = bra.contraction->l, lb = ket.contraction->l;
+        const double scale_a = la == 0 ? 1.0 : std::sqrt(4.0 * kPi / (2 * la + 1));
+        const double scale_b = lb == 0 ? 1.0 : std::sqrt(4.0 * kPi / (2 * lb + 1));
+        const auto box = pair_panel_image_box(bra, ket, inverse, image_cutoff_bohr);
+        for (std::size_t begin = 0; begin < vectors.count;) {
+            const auto count = std::min(kPairPanelVectorTile, vectors.count - begin);
+            for (std::size_t v = 0; v < count; ++v) {
+                auto& state = tile[v];
+                for (std::size_t d = 0; d < 3; ++d) {
+                    state.p[d] = lanes[d][static_cast<std::ptrdiff_t>(begin + v) * strides[d]];
+                    auto* powers = state.powers.data() + d * kPairPanelPowerExtent;
+                    powers[0] = {1.0, 0.0};
+                    for (int t = 1; t <= la + lb; ++t)
+                        powers[t] = powers[t-1] * std::complex<double>(0.0, -state.p[d]);
+                }
+                state.p2 = pair_panel_norm2(state.p[0], state.p[1], state.p[2]);
+                for (std::size_t k = 0; k < nk; ++k) sums[k][v] = {};
+            }
+            pair_panel_walk_images(bra, ket, system.lattice, box, cutoff_squared,
+                [&](const Eigen::Vector3d& translation, const Eigen::Vector3d& separation,
+                    double separation2) {
+                    for (std::size_t k = 0; k < nk; ++k) {
+                        const Eigen::Vector3d k_cart = ket_kpoints.row(k).transpose();
+                        const double kr = k_cart.dot(translation);
+                        pair_panel_require_finite(kr);
+                        phases[k] = {std::cos(kr), std::sin(kr)};
+                    }
+                    pair_panel_prepare_primitives(bra, ket, separation, workspace,
+                        [&](std::size_t ia, std::size_t ib, double gamma,
+                            double alpha_fraction, double beta, const Eigen::Vector3d& center) {
+                            for (std::size_t v = 0; v < count; ++v) {
+                                const auto& state = tile[v];
+                                const double argument = state.p.dot(center);
+                                pair_panel_require_finite(argument);
+                                const double radial = bra.contraction->coeff[ia]
+                                    * ket.contraction->coeff[ib] * std::pow(kPi / gamma, 1.5)
+                                    * std::exp(-alpha_fraction * beta * separation2
+                                               - state.p2 * (0.25 / gamma));
+                                pair_panel_require_finite(radial);
+                                const std::complex<double> wave(std::cos(argument), -std::sin(argument));
+                                const auto polynomial = pair_panel_polynomial(
+                                    bra, ket, workspace, state.powers.data());
+                                // Ye and Berkelbach, JCP 154, 131104 (2021),
+                                // doi:10.1063/5.0046617 Eq. 11: only this phase
+                                // depends on ket k. Keep scalar multiplication
+                                // order and each compensated image/primitive sum.
+                                for (std::size_t k = 0; k < nk; ++k) {
+                                    const auto value = (scale_a * scale_b * radial)
+                                        * phases[k] * wave * polynomial;
+                                    pair_panel_require_finite(value.real());
+                                    pair_panel_require_finite(value.imag());
+                                    auto& acc = sums[k][v];
+                                    pair_panel_add(value.real(), acc.real, acc.real_correction);
+                                    pair_panel_add(value.imag(), acc.imag, acc.imag_correction);
+                                }
+                            }
+                        });
+                });
+            for (std::size_t k = 0; k < nk; ++k)
+                for (std::size_t v = 0; v < count; ++v) {
+                    const auto& acc = sums[k][v];
+                    const double real = acc.real + acc.real_correction;
+                    const double imag = acc.imag + acc.imag_correction;
+                    pair_panel_require_finite(real);
+                    pair_panel_require_finite(imag);
+                    output.data[(k * pair_count + row) * vectors.count + begin + v] = {
+                        real == 0.0 ? 0.0 : real, imag == 0.0 ? 0.0 : imag};
+                }
             begin += count;
         }
     }

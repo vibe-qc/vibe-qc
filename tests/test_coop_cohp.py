@@ -23,7 +23,7 @@ _SCHEMA_PATH = (
     / "vibeqc"
     / "output"
     / "formats"
-    / "qvf_manifest_v2.schema.json"
+    / "qvf_manifest.schema.json"
 )
 with open(_SCHEMA_PATH, encoding="utf-8") as _f:
     _SCHEMA = json.load(_f)
@@ -747,17 +747,27 @@ def test_periodic_mayer_h2():
     system, basis = _h2_chain_1d()
     from vibeqc._vibeqc_core import (
         LatticeSumOptions,
+        bloch_sum,
         compute_kinetic_lattice,
         compute_nuclear_lattice,
         compute_overlap_lattice,
         monkhorst_pack,
     )
 
+    # Pair-complete one-electron sums (#547): the default V_ne takes the
+    # nuclear images from a ball around the origin cell, so V(0,-g) differs
+    # from V(0,g)^T (4.8e-5 here) and V(k) is not Hermitian; since #472
+    # diagonalize_bloch refuses such an operator. Whether that default flips
+    # is #44's decision.
     opts = LatticeSumOptions()
+    opts.pair_complete_1e = True
     S = compute_overlap_lattice(basis, system, opts)
     T = compute_kinetic_lattice(basis, system, opts)
     V = compute_nuclear_lattice(basis, system, opts)
     km = monkhorst_pack(system, [8, 1, 1])
+    for k in km.kpoints:
+        H = np.asarray(bloch_sum(T, np.asarray(k))) + np.asarray(bloch_sum(V, np.asarray(k)))
+        assert np.abs(H - H.conj().T).max() < 1e-12
 
     M = vq.periodic_mayer_bond_orders(
         [T, V],

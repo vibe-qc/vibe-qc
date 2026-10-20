@@ -1096,7 +1096,7 @@ def caspt2(
     governed by that constant factor (a C++ inner kernel is the next step,
     roadmap 25i M27c).
 
-    See ``handovers/HANDOVER_MULTIREF.md``.
+
     """
     norb = h1e_mo.shape[0]
     n_act = norb - n_core - n_virt

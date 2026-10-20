@@ -104,8 +104,9 @@ def compute_overlap_diagnostics(
     tmp = Path(tempfile.mkdtemp(prefix="vbld_"))
     basis_dir = tmp / "basis"
     basis_dir.mkdir()
-    name = f"ldcheck_{uuid.uuid4().hex[:8]}"
-    (basis_dir / f"{name}.g94").write_text(g94)
+    from vibeqc.basis_registry import write_basis_file
+
+    name = write_basis_file(basis_dir, f"ldcheck_{uuid.uuid4().hex[:8]}", g94)
 
     # Override LIBINT_DATA_PATH so vibe-qc finds our basis.
     import os

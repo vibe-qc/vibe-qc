@@ -746,3 +746,144 @@ def test_public_exports_present():
     assert vq.monopole_compensator_for_charge is (
         monopole_compensator_for_charge
     )
+
+
+# Source-contract controls: analytic Gaussian AOs and explicit native doubles.
+# These do not replace native matrix/alpha-cancellation/SCF acceptance.
+@pytest.mark.parametrize("shift", [0.0, -6.0, 12.0])
+def test_gapw_physical_projector_matches_off_origin_cosine(monkeypatch, shift):
+    from types import SimpleNamespace
+    from vibeqc import _aopair_ft
+    from vibeqc.lattice_screening import ao_pair_support_mask
+    from vibeqc.periodic_gapw_j import _project_potential_to_ao_pair_domain
+
+    origins = np.array([[0.7 + shift, 0.8, 1.1], [2.1, 1.3, 1.7]])
+    exponents = [0.7, 1.1]
+    shells = [SimpleNamespace(l=0, pure=True, origin=origin,
+                              exponents=[a], coefficients=[(2 * a / np.pi) ** 0.75])
+              for origin, a in zip(origins, exponents)]
+    basis = SimpleNamespace(nbasis=2, shells=lambda: shells)
+    grid = PlaneWaveGrid(np.eye(3) * 6.0, 8, 2, 2)
+    candidates = [SimpleNamespace(r_cart=[6.0 * i, 0.0, 0.0]) for i in range(-3, 4)]
+    cutoff = 4.0
+    cells = [c for c in candidates if ao_pair_support_mask(basis, c.r_cart, cutoff).any()]
+    k = 2 * np.pi / 6.0
+    phase, amplitude, constant = 0.63, 0.8, 0.37
+    potential = constant + amplitude * np.cos(k * grid.cartesian_coords()[..., 0] + phase)
+    # Execute the maintained s-shell Fourier implementation and physical mask;
+    # only the basis representation is a lightweight analytic fixture.
+    monkeypatch.setattr(_aopair_ft, "_aopair_ft_backend", lambda: "python")
+    actual = _project_potential_to_ao_pair_domain(basis, potential, grid, cells, cutoff)
+    expected = np.zeros((2, 2))
+    wrong_phase = np.zeros((2, 2))
+    for cell in cells:
+        mask = ao_pair_support_mask(basis, cell.r_cart, cutoff)
+        for i, left in enumerate(shells):
+            for j, right in enumerate(shells):
+                if not mask[i, j]:
+                    continue
+                A = np.asarray(left.origin)
+                B = np.asarray(right.origin) + cell.r_cart
+                a, b = exponents[i], exponents[j]
+                p = a + b
+                center = (a * A + b * B) / p
+                overlap = ((2 * a / np.pi) ** 0.75 * (2 * b / np.pi) ** 0.75
+                           * (np.pi / p) ** 1.5 * np.exp(-a * b / p * np.sum((A - B) ** 2)))
+                damping = np.exp(-k * k / (4 * p))
+                expected[i, j] += overlap * (constant + amplitude * damping * np.cos(k * center[0] + phase))
+                wrong_phase[i, j] += overlap * (constant + amplitude * damping * np.cos(k * center[0] - phase))
+    np.testing.assert_allclose(actual, expected, atol=2e-13, rtol=0)
+    assert np.max(np.abs(expected - wrong_phase)) > 0.1
+    assert np.max(np.abs(expected * grid.n_points - actual)) > 1.0
+
+
+@pytest.mark.parametrize("physical", [False, True])
+@pytest.mark.parametrize("entry", ["public", "dispatcher"])
+def test_gapw_full_split_preserves_options_and_couples_alpha_overlap(monkeypatch, physical, entry):
+    from types import SimpleNamespace
+    from vibeqc import periodic_gapw_j as gpw
+    from vibeqc import periodic_gapw_smearing as smear
+
+    opts = SimpleNamespace(pair_complete_1e=physical, cutoff_bohr=7.25,
+                           nuclear_cutoff_bohr=11.5, integral_threshold=3e-13)
+    before = dict(vars(opts))
+    system = SimpleNamespace(unit_cell=[SimpleNamespace(Z=1, xyz=[0.2, 0.4, 0.6])])
+    basis = SimpleNamespace(nbasis=2)
+    grid = PlaneWaveGrid(np.eye(3) * 6.0, 4, 4, 4)
+    cells = [SimpleNamespace(r_cart=[0.0, 0.0, 0.0]), SimpleNamespace(r_cart=[6.0, 0.0, 0.0])]
+    short = np.array([[-2.0, 0.1], [0.1, -1.0]])
+    overlap = np.array([[1.0, 0.2], [0.2, 1.0]])
+    long = np.array([[-0.3, 0.02], [0.02, -0.4]])
+    seen = {}
+
+    def erfc(b, s, alpha, options):
+        seen["short_opts"] = options
+        return SimpleNamespace(cells=cells, matrix=short)
+
+    def metric(b, s, options):
+        seen["overlap_opts"] = options
+        return SimpleNamespace(cells=cells, matrix=overlap if options is opts else 3 * overlap)
+
+    def projected(b, charges, g, **kwargs):
+        seen["projection"] = kwargs
+        same_domain = kwargs.get("pair_cells") is cells and kwargs.get("pair_cutoff_bohr") == opts.cutoff_bohr
+        return long if not physical or same_domain else 2 * long
+
+    defaults = SimpleNamespace(pair_complete_1e=False, cutoff_bohr=20.0,
+                               nuclear_cutoff_bohr=20.0, integral_threshold=1e-12)
+    monkeypatch.setattr(smear._core, "LatticeSumOptions", lambda: defaults)
+    monkeypatch.setattr(smear._core, "compute_nuclear_erfc_lattice", erfc)
+    monkeypatch.setattr(smear._core, "compute_overlap_lattice", metric)
+    monkeypatch.setattr(smear._core, "bloch_sum", lambda lattice, k: lattice.matrix)
+    monkeypatch.setattr(smear, "smeared_v_ne_long_matrix", projected)
+    if entry == "public":
+        value = smear.smeared_v_ne_full_gamma(basis, system, alpha=0.8, grid=grid,
+                                            lat_opts=opts, quiet=True)
+    else:
+        value = gpw._build_v_ne(basis, system, "smeared_erfc", 0.8, grid, lat_opts=opts)
+    support = {"short_options": vars(seen["short_opts"]),
+               "overlap_options": vars(seen["overlap_opts"]),
+               "long_uses_sr_cells": seen["projection"].get("pair_cells") is cells,
+               "long_pair_cutoff": seen["projection"].get("pair_cutoff_bohr")}
+    assert seen["short_opts"] is opts and seen["overlap_opts"] is opts, support
+    expected = short + long + np.pi / (0.8 ** 2 * grid.cell_volume_bohr3) * overlap
+    np.testing.assert_allclose(value, expected, atol=1e-14, rtol=0)
+    assert seen["short_opts"] is opts and seen["overlap_opts"] is opts
+    assert vars(opts) == before
+    if physical:
+        assert seen["projection"]["pair_cells"] is cells
+        assert seen["projection"]["pair_cutoff_bohr"] == opts.cutoff_bohr
+    else:
+        assert "pair_cells" not in seen["projection"]
+
+
+def test_gapw_physical_nuclear_collocation_wraps_without_mutating_charges(monkeypatch):
+    from types import SimpleNamespace
+    from vibeqc import periodic_gapw_j as gpw
+    from vibeqc import periodic_gapw_smearing as smear
+
+    grid = PlaneWaveGrid(np.eye(3) * 6.0, 8, 4, 4)
+    cells = [SimpleNamespace(r_cart=[0.0, 0.0, 0.0])]
+    recorded = []
+    monkeypatch.setattr(smear._core, "solve_poisson_coulomb", lambda rho, lattice: rho)
+
+    def capture(basis, potential, g, selected, cutoff):
+        recorded.append(potential.copy())
+        assert selected is cells and cutoff == 4.0
+        return np.zeros((1, 1))
+
+    monkeypatch.setattr(gpw, "_project_potential_to_ao_pair_domain", capture)
+    charges = []
+    for translation in [0.0, -6.0, 18.0]:
+        bundle = SmearedNuclearCharges(np.array([[0.7 + translation, 1.2, 0.9]]),
+                                      np.array([1.0]), np.array([0.8]))
+        before = bundle.positions.copy()
+        smear.smeared_v_ne_long_matrix(None, bundle, grid, quiet=True,
+                                      pair_cells=cells, pair_cutoff_bohr=4.0)
+        np.testing.assert_array_equal(bundle.positions, before)
+        charges.append(bundle)
+    np.testing.assert_allclose(recorded[0], recorded[1], atol=2e-15, rtol=0)
+    np.testing.assert_allclose(recorded[0], recorded[2], atol=2e-15, rtol=0)
+    # The old unwrapped finite-image path is deliberately not called repaired.
+    old = [smear.smeared_nuclear_density_on_grid(c, grid) for c in charges]
+    assert np.max(np.abs(old[0] - old[2])) > 0.01

@@ -12,6 +12,20 @@ it shows how to invoke each new functional and what it is for. For the
 older, conventional range-separated hybrid ωB97X (which carries no VV10
 term), start with [Range-separated hybrids: ωB97X](range_separated_wb97x.md).
 
+```{admonition} Status: preview
+:class: note
+
+VV10 and the -V range-separated hybrids are production for molecular RKS and
+UKS energies, but their analytic nuclear gradients are incomplete: the
+gradient kernel omits the long-range exact-exchange term and the VV10
+nonlocal term (GitLab #571), so `compute_gradient_rks` and
+`compute_gradient_uks` refuse them unless you pass
+`allow_incomplete=True`, and `run_job(optimize=True)` falls back to finite
+differences of the energy. Periodic use is not available. r2SCAN01 has an
+analytic gradient and is not affected. See
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 Every snippet below uses water at a fixed geometry so you can paste and
 run them directly:
 
@@ -43,6 +57,7 @@ opts = vq.RKSOptions()
 opts.functional = "vv10"          # rPW86 exchange + PBE correlation + the VV10 nonlocal term
 result = vq.run_rks(mol, basis, opts)
 print(f"E(VV10) = {result.energy:.6f} Ha")
+# E(VV10) = -76.504441 Ha
 ```
 
 The nonlocal potential is folded into the SCF exchange-correlation
@@ -77,6 +92,7 @@ opts = vq.RKSOptions()
 opts.functional = "wb97m-v"       # range-separated meta-GGA + VV10 in one functional
 result = vq.run_rks(mol, basis, opts)
 print(f"E(ωB97M-V) = {result.energy:.6f} Ha")
+# E(ωB97M-V) = -76.383379 Ha    (ωB97X-V gives -76.385779 Ha)
 ```
 
 vibe-qc reproduces PySCF's `dft.RKS(xc="wb97m-v", nlc="VV10")` to within
@@ -122,7 +138,8 @@ result = vq.run_rks(mol, basis_svp, opts)
 print(f"E(r2SCAN01) = {result.energy:.6f} Ha")
 ```
 
-For this water geometry in def2-SVP, vibe-qc returns **E = -76.3151 Ha**,
+For this water geometry in def2-SVP, vibe-qc returns **E = -76.3151 Ha**
+(-76.315067 in a run on a vibe-qc 0.17.10 development build),
 matching PySCF's `MGGA_X/C_R2SCAN01` to 3.9 µHa (the asserted reference
 in `tests/test_xc.py`). Unlike the range-separated hybrids above,
 r2SCAN01 has **analytic molecular gradients** (the Pulay force includes
@@ -146,6 +163,7 @@ result = vq.run_revdsd_pbep86(mol, basis)
 print(f"E(hybrid SCF step)   = {result.rks.energy:.6f} Ha")
 print(f"E(MP2 correction)    = {result.mp2.e_correlation:.6f} Ha")   # 0.5922*E_os + 0.0636*E_ss
 print(f"E(revDSD-PBEP86)     = {result.e_total:.6f} Ha")
+# E(revDSD-PBEP86)     = -76.271466 Ha
 ```
 
 The SCF base is 0.69 HF + 0.31 PBE exchange + 0.4210 P86 correlation; the
@@ -166,6 +184,71 @@ that the older revDSD-PBEP86-**D3BJ** uses a *different* coefficient fit
 and is not reachable through this alias, the `revdsd-pbep86` name is the
 D4-native parametrization.
 ```
+
+## Theory
+
+**Range separation, restated.** The -V hybrids build on the erf-split exchange
+of the previous tutorial: a fraction $\alpha$ of exact exchange at short
+range that rises to $\alpha+\beta$ at long range, with a semilocal
+(meta-)GGA for the rest ({vibeqc-cite}`mardirossian_wb97xv_2014`,
+{vibeqc-cite}`mardirossian_wb97mv_2016`). For ωB97X-V the split is
+$\alpha = 0.167$, $\beta = 0.833$ and for ωB97M-V $\alpha = 0.15$,
+$\beta = 0.85$, both with $\omega = 0.3\ \text{bohr}^{-1}$: as in ωB97X the
+long-range limit is 100 percent exact exchange, which puts the
+$-1/r$ tail in the exchange potential. What these functionals add is a
+nonlocal correlation term.
+
+**The VV10 nonlocal kernel.** Semilocal correlation cannot describe the
+long-range dispersion that arises from correlated charge fluctuations on
+distant fragments. VV10 ({vibeqc-cite}`vydrov_vanvoorhis_vv10_2010`) adds it
+as a double integral over the electron density,
+
+$$
+E_c^\text{nl} = \int \rho(\mathbf r)\Bigl[\beta
+  + \tfrac12\!\int \rho(\mathbf r')\,\Phi(\mathbf r, \mathbf r')\,d\mathbf r'\Bigr] d\mathbf r ,
+\qquad
+\Phi = -\frac{3}{2}\,\frac{1}{g\,g'\,(g + g')},
+\quad
+g = \omega_0(\mathbf r)\,R^2 + \kappa(\mathbf r),
+$$
+
+with $R = |\mathbf r - \mathbf r'|$, $g'$ the same expression at $\mathbf r'$, and
+
+$$
+\omega_0 = \sqrt{\omega_g^2 + \tfrac13\omega_p^2},
+\quad
+\omega_g^2 = C\,\Bigl|\frac{\nabla\rho}{\rho}\Bigr|^4,
+\quad
+\omega_p^2 = 4\pi\rho,
+\quad
+\kappa = b\,\frac{3\pi}{2}\Bigl(\frac{\rho}{9\pi}\Bigr)^{1/6},
+\quad
+\beta = \frac{1}{32}\Bigl(\frac{3}{b^2}\Bigr)^{3/4}.
+$$
+
+Here $\rho$ is the electron density, $\omega_p$ the local plasma frequency,
+and the constant $\beta$ makes $E_c^\text{nl}$ vanish for the uniform
+electron gas, so the nonlocal term is a pure correction. The two empirical
+parameters do distinct jobs: $C$ enters $\omega_g$ and so sets the size of the
+asymptotic $C_6$ dispersion coefficient, while $b$ controls $\kappa$ and thus
+the short-range damping, that is, how the dispersion switches off where the
+densities overlap. The standalone `vv10` functional (rPW86 exchange plus PBE
+correlation plus VV10) uses $b = 5.9$, $C = 0.0093$; the -V functionals use
+the pair $b = 6.0$, $C = 0.01$ chosen by their authors (`Functional.vv10_b`,
+`vv10_C`).
+
+**Why ωB97X-V and ωB97M-V need it.** The empirical coefficients of the
+semilocal exchange and correlation and the exact-exchange fractions of these
+functionals were optimised on a large training set *together with* the VV10 term
+already present. The semilocal part therefore does not describe
+noncovalent interactions on its own, and running it without VV10 evaluates a
+different, unbalanced functional. Cost is the price: the double integral runs
+over pairs of grid points, $O(N_\text{grid}^2)$, which is why vibe-qc
+evaluates it on a coarser grid (`GridOptions.vv10_grid_factor`, default 3.0)
+than the semilocal part. The nonlocal potential is included self-consistently,
+not added afterwards. Two limits remain, both stated in the status note above:
+no complete analytic gradient, and no density-fitted exchange for the
+erf-attenuated part.
 
 ## What ships, and what is still queued
 

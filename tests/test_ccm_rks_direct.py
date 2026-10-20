@@ -60,6 +60,7 @@ import vibeqc as vq
 from vibeqc import Atom, PeriodicSystem
 from vibeqc.periodic.ccm import CCMSystem
 from vibeqc.periodic.ccm.direct import (
+    _builtin_xc_image_domain,
     _external_xc_grid_options,
     _real_gamma_rks_xc_builder,
     _real_gamma_uks_xc_builder,
@@ -312,6 +313,28 @@ def test_real_gamma_external_grid_capability_and_image_radius_contract():
     assert lattice.becke_image_radius_bohr == pytest.approx(1.0)
     with pytest.raises(ValueError, match="must be at least"):
         _xc_lattice_options(lattice, 7.5)
+
+
+def test_real_gamma_builtin_xc_reach_matches_the_bloch_bound():
+    """#405: the real-Gamma XC density reaches the bound the multi-k KS
+    drivers grow to (#465), not the caller's 15-bohr cutoff. On rocksalt
+    LiH/STO-3G that bound is 31.4 bohr; with the real-Gamma side left at 15
+    bohr, Bloch minus real-Gamma was -3.075 mHa/cell for PBE at (1,1,1)."""
+    from vibeqc import BasisSet, LatticeSumOptions
+    from vibeqc._vibeqc_core import direct_lattice_cells
+    from vibeqc.periodic_xc_domain import xc_image_cutoff_bound
+
+    unit = _lih_ccm().unit_system
+    ubasis = BasisSet(unit.unit_cell_molecule(), "sto-3g")
+    base = _xc_lattice_options(LatticeSumOptions(), 10.0)
+    assert base.cutoff_bohr == pytest.approx(15.0)
+    grown, cells = _builtin_xc_image_domain(unit, ubasis, base)
+    bound = xc_image_cutoff_bound(unit, ubasis)
+    assert bound > 30.0
+    assert grown.cutoff_bohr == pytest.approx(bound)
+    assert grown.becke_image_radius_bohr == pytest.approx(bound)
+    assert len(cells) == len(direct_lattice_cells(unit, bound))
+    assert base.cutoff_bohr == pytest.approx(15.0)  # caller's object untouched
 
 
 def test_real_gamma_xc_cell_support_is_difference_closed():

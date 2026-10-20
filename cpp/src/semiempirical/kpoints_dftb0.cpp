@@ -65,7 +65,7 @@ DFTB0LatticeBlocks build_h0_s_per_cell(
                 if (S_g(mu, nu) == 0.0) continue;
                 if (!is_zero || a_mu != a_nu) {
                     double h_avg = 0.5 * (hbar[a_mu] + hbar[a_nu]);
-                    H_g(mu, nu) = 0.5 * kappa * S_g(mu, nu) * h_avg;
+                    H_g(mu, nu) = kappa * S_g(mu, nu) * h_avg;
                 }
             }
         }
@@ -314,7 +314,9 @@ KPointDFTB0Result run_dftb0_kpoints_impl(
     // (issue #426; convention documented on KPointBandEdges).
     store_kpoint_band_edges(
         result,
-        compute_kpoint_band_edges(result.eps_per_k, result.occupations_per_k));
+        compute_kpoint_band_edges(
+            result.eps_per_k, result.occupations_per_k, 1.0e-8,
+            kmesh.weights));
     return result;
 }
 

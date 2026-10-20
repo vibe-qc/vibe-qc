@@ -21,6 +21,7 @@ not here.
 from __future__ import annotations
 
 import runpy
+import sys
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,9 +41,66 @@ from vibeqc.periodic_k_gdf import (
     run_krhf_periodic_gdf,
     run_krks_periodic_gdf,
 )
-from vibeqc.pbc_gdf import _auto_rsgdf_tail_ke_cutoff
 
 ANGSTROM_TO_BOHR = 1.8897261339213
+
+
+def test_krhf_gdf_rejects_rhf_options_with_xc_before_setup(monkeypatch):
+    from vibeqc import periodic_fit_source
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("incompatible XC options reached numerical setup")
+
+    monkeypatch.setattr(periodic_fit_source, "resolve_fit_source", forbidden)
+    with pytest.raises(TypeError, match="PeriodicKSOptions"):
+        run_krhf_periodic_gdf(
+            SimpleNamespace(dim=3), None, (1, 1, 1), vq.PeriodicRHFOptions(),
+            functional="pbe", progress=False,
+        )
+
+
+@pytest.mark.parametrize("option_kind,functional", [
+    ("rhf", None), ("ks", "pbe"), ("ks", None),
+    ("default", "pbe"), ("default", None),
+])
+def test_krhf_gdf_xc_option_guard_preserves_valid_requests(
+    monkeypatch, option_kind, functional,
+):
+    from vibeqc import periodic_fit_source
+
+    class SetupReached(Exception):
+        pass
+
+    def stop(*args, **kwargs):
+        raise SetupReached
+
+    monkeypatch.setattr(periodic_fit_source, "resolve_fit_source", stop)
+    options = {"rhf": vq.PeriodicRHFOptions, "ks": vq.PeriodicKSOptions,
+               "default": lambda: None}[option_kind]()
+    if option_kind == "ks":
+        options.functional = "pbe"
+    with pytest.raises(SetupReached):
+        run_krhf_periodic_gdf(
+            SimpleNamespace(dim=3), None, (1, 1, 1), options,
+            functional=functional, progress=False,
+        )
+
+
+def test_krhf_gdf_xc_option_guard_preserves_fitted_xc_admission():
+    class FittedXCReached(Exception):
+        pass
+
+    def require_functional(name):
+        assert name == "pbe"
+        raise FittedXCReached
+
+    with pytest.raises(FittedXCReached):
+        run_krhf_periodic_gdf(
+            None, None, options=vq.PeriodicRHFOptions(), functional="pbe",
+            fitted_support=object(),
+            _chi_xc=SimpleNamespace(require_functional=require_functional),
+            progress=False,
+        )
 
 
 def test_multik_pyscf_debug_example_matches_current_driver_signature(
@@ -421,9 +479,13 @@ def test_gram_factors_of_a_zero_density_are_empty():
     {"fock_mixing": 0.2}, {"level_shift": 0.2},
     {"smearing_temperature": 0.01},
 ])
-def test_gamma_legacy_fallback_refuses_dense_core_before_driver(
+def test_gamma_knobs_on_dense_core_compcell_mdf_never_reach_the_legacy_driver(
     monkeypatch, gdf_method, controls,
 ):
+    """A Gamma knob on compcell/MDF runs the k-mesh engine at Nk=1 now, not
+    the legacy driver (#400). On this dense-core cell both reach their Bloch
+    pair builder (stubbed here; the image sum of #172 costs minutes on MgO,
+    and MDF's dense-core gate was lifted with it)."""
     h = 7.958 / 2.0
     system = vq.PeriodicSystem(
         3, np.array([[0, h, h], [h, 0, h], [h, h, 0]]),
@@ -437,8 +499,16 @@ def test_gamma_legacy_fallback_refuses_dense_core_before_driver(
     def forbidden(*args, **kwargs):
         pytest.fail("dense-core legacy SCF must not start")
 
+    class ReachedPairBuilder(Exception):
+        pass
+
+    def pair_builder(*args, **kwargs):
+        raise ReachedPairBuilder
+
     monkeypatch.setattr(kgdf, "run_rhf_periodic_gamma_gdf", forbidden)
-    with pytest.raises(NotImplementedError, match="legacy Gamma GDF fallback"):
+    monkeypatch.setattr(kgdf, "build_lpq_bloch_compcell", pair_builder)
+    monkeypatch.setattr(kgdf, "build_lpq_bloch_mdf", pair_builder)
+    with pytest.raises(ReachedPairBuilder):
         run_krhf_periodic_gdf(system, basis, (1, 1, 1), opts,
                              gdf_method=gdf_method, progress=False)
 
@@ -459,16 +529,124 @@ def test_gamma_kmesh_info_rejects_222():
     assert _gamma_kmesh_info(system, (2, 2, 2)) is None
 
 
-def test_krhf_gdf_gamma_via_tuple_matches_pbc_gdf_rhf():
-    """``run_krhf_periodic_gdf(kmesh=(1,1,1))`` HF delegates to the
-    PySCF-µHa-validated ``run_pbc_gdf_rhf`` (exxdiv='ewald'), so the Nk=1
-    limit carries the same exxdiv='ewald' convention as the (2,1,1)+ multi-k
-    path — NOT the legacy molecular-limit gamma driver.
+@pytest.mark.parametrize("consumer", ["counts", "gamma", "points", "rohf"])
+@pytest.mark.parametrize("mesh", [
+    (1.9, 1, 1), (2.0, 1, 1), (True, 1, 1), (np.bool_(True), 1, 1),
+    ("2", 1, 1), "211", b"211", (2+0j, 1, 1), ((2,), 1, 1),
+    np.array([2., 1., 1.]), np.array([True, True, True]),
+])
+def test_integer_mesh_counts_gdf_consumers_reject_before_native(
+    consumer, mesh, monkeypatch,
+):
+    from vibeqc.periodic_rohf_gdf import _mesh_tuple_for_system as rohf_counts
 
-    Post-2026-06-15 delegation contract (previously this delegated to
-    ``run_rhf_periodic_gamma_gdf`` / the molecular limit). Reconciles the
-    default-vs-explicit and (1,1,1)-vs-(2,1,1) ~5.8 mHa Γ-GDF discrepancy:
-    the Γ fast-path is now the Nk=1 case of the multi-k exxdiv='ewald' path.
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid GDF mesh reached native grid construction")
+
+    monkeypatch.setattr(kgdf, "_mp_native", forbidden)
+    consumers = {"counts": kgdf._mesh_tuple_for_system,
+                 "gamma": kgdf._gamma_kmesh_info,
+                 "points": kgdf._kmesh_to_kpoints_weights,
+                 "rohf": rohf_counts}
+    with pytest.raises(ValueError, match="must contain integers"):
+        consumers[consumer](SimpleNamespace(dim=3), mesh)
+
+
+@pytest.mark.parametrize("dim", [1, 2, 3])
+@pytest.mark.parametrize("full", [False, True])
+def test_integer_mesh_counts_gdf_preserve_padding_and_pinning(dim, full):
+    system = vq.PeriodicSystem(dim, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+    mesh = np.array([2]*dim + ([7]*(3-dim) if full else []), dtype=np.uint32)
+    expected = (2,)*dim + (1,)*(3-dim)
+    assert kgdf._mesh_tuple_for_system(system, mesh) == expected
+    points, weights = kgdf._kmesh_to_kpoints_weights(system, mesh)
+    assert len(points) == len(weights) == 2**dim
+    assert weights == pytest.approx(np.full(2**dim, 1/2**dim))
+
+
+@pytest.mark.parametrize("kind", ["python", "native", "unstructured", "invalid"])
+def test_integer_mesh_counts_gdf_preserve_typed_metadata(kind):
+    from dataclasses import replace
+    system = vq.PeriodicSystem(3, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+    mesh = vq.KPoints.gamma_centred(system, (2, 1, 1))
+    if kind == "native":
+        mesh = mesh.to_bloch_kmesh()
+    elif kind == "unstructured":
+        mesh = replace(mesh, mesh=None)
+        with pytest.raises(ValueError, match="structured k-mesh"):
+            kgdf._mesh_tuple_for_system(system, mesh)
+        return
+    elif kind == "invalid":
+        mesh = replace(mesh, mesh=(2.9, 1, 1))
+        with pytest.raises(ValueError, match="must contain integers"):
+            kgdf._mesh_tuple_for_system(system, mesh)
+        return
+    assert kgdf._mesh_tuple_for_system(system, mesh) == (2, 1, 1)
+
+
+@pytest.mark.parametrize("consumer", ["slab", "ibz_expand", "ibz_native"])
+@pytest.mark.parametrize("mesh", [
+    (1.9, 1, 1), (2.0, 1, 1), (True, 1, 1), (np.bool_(True), 1, 1),
+    ("2", 1, 1), (2+0j, 1, 1), ((2,), 1, 1),
+    np.array([2., 1., 1.]), np.array([True, True, True]),
+])
+def test_integer_mesh_counts_gdf_slab_and_ibz_refuse_coercion(consumer, mesh, monkeypatch):
+    from vibeqc import _vibeqc_core as core
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid count reached IBZ native grid construction")
+
+    monkeypatch.setattr(kgdf, "_mp_native", forbidden)
+    monkeypatch.setattr(core, "monkhorst_pack", forbidden)
+    system = SimpleNamespace(dim=3, symmetry=SimpleNamespace(operations=[]))
+    metadata = SimpleNamespace(mesh=mesh, ir_mapping=[0], kpoints=[[0., 0., 0.]])
+    with pytest.raises(ValueError, match="must contain integers"):
+        if consumer == "slab":
+            _call_slab_count_preflight(mesh)
+        elif consumer == "ibz_expand":
+            kgdf._expand_ibz_kmesh_to_full_bz(system, metadata)
+        else:
+            kgdf._resolve_ibz_native_state(
+                system, None, metadata, None, None, exchange_producer="sr")
+
+
+def _call_slab_count_preflight(mesh):
+    import inspect
+    # Supply every required keyword, but stop at the existing auxiliary
+    # culling guard immediately after count validation. No SCF setup runs.
+    kwargs = {name: None for name, arg in inspect.signature(
+        kgdf._run_closed_shell_slab_gdf).parameters.items()
+        if arg.kind == inspect.Parameter.KEYWORD_ONLY
+        and arg.default is inspect.Parameter.empty}
+    kwargs["aux_drop_eta"] = 1.0
+    return kgdf._run_closed_shell_slab_gdf(None, None, mesh, None, **kwargs)
+
+
+@pytest.mark.parametrize("mesh", [(2, 3), (2, 3, 1), np.array([2, 3], dtype=np.uint32)])
+def test_integer_mesh_counts_gdf_slab_accepts_integer_active_or_full(mesh):
+    with pytest.raises(NotImplementedError, match="auxiliary primitive culling"):
+        _call_slab_count_preflight(mesh)
+
+
+@pytest.mark.parametrize("mesh", [(0, 1), (-1, 1), (1,), (1, 1, 1, 1), (2, 2, 2)])
+def test_integer_mesh_counts_gdf_slab_preserves_range_and_inactive_guards(mesh):
+    with pytest.raises(ValueError, match="slab GDF requires"):
+        _call_slab_count_preflight(mesh)
+
+
+def test_krhf_gdf_gamma_via_tuple_matches_pbc_gdf_rhf():
+    """``run_krhf_periodic_gdf(kmesh=(1,1,1))`` HF on the default dim=3
+    SR/LR fit is the Nk=1 mesh of the multi-k engine and evaluates the
+    same Hamiltonian as the exact-Gamma ``run_pbc_gdf_rhf``
+    (exxdiv='ewald'). So the Nk=1 limit carries the same exxdiv='ewald'
+    convention as the (2,1,1)+ multi-k path, NOT the legacy
+    molecular-limit gamma driver.
+
+    From 2026-06-15 until the SR/LR promotion (f6815d9) this Γ mesh
+    delegated to ``run_pbc_gdf_rhf``. Since then the general engine owns
+    the Γ limit of the SR/LR route, as the ``run_krhf_periodic_gdf``
+    docstring says, and the two engines must still agree. Reconciles the
+    default-vs-explicit and (1,1,1)-vs-(2,1,1) ~5.8 mHa Γ-GDF discrepancy.
     """
     system, basis = _h2_cubic_box()
     opts = _rhf_opts()
@@ -478,26 +656,212 @@ def test_krhf_gdf_gamma_via_tuple_matches_pbc_gdf_rhf():
     )
     assert r_via_k.converged
     assert r_pbc.converged
-    # The Γ HF fast-path literally calls run_pbc_gdf_rhf — bit-identical.
+    # The k-mesh engine ran at Nk=1; it did not hand the mesh on.
+    assert str(r_via_k.backend) == "native-multi-k-gdf-gdf-rhf"
+    # Two engines, one Hamiltonian.
     assert abs(r_via_k.energy - r_pbc.energy) < 1e-10, (
         f"Γ-routed KRHF energy {r_via_k.energy} differs from "
         f"run_pbc_gdf_rhf {r_pbc.energy} by {abs(r_via_k.energy - r_pbc.energy)}"
     )
-    # ... and is decisively NOT the legacy molecular-limit gamma driver
-    # (the ~5.8 mHa finite-size Madelung shift this reconciliation fixes).
-    r_legacy = vq.run_rhf_periodic_gamma_gdf(system, basis, opts)
-    assert abs(r_via_k.energy - r_legacy.energy) > 4e-3
+    # #468: the public Gamma driver no longer runs its legacy molecular-
+    # limit bridge on a 3D cell (formerly ~5.8 mHa off here); it runs this
+    # same engine at (1, 1, 1) and says so.
+    from vibeqc.periodic_rhf_gdf import GammaExchangeRouteWarning
+
+    with pytest.warns(GammaExchangeRouteWarning):
+        r_public = vq.run_rhf_periodic_gamma_gdf(system, basis, opts)
+    assert r_public.energy == pytest.approx(r_via_k.energy, abs=1e-10)
 
 
-def test_krhf_gdf_gamma_via_blochkmesh_also_delegates():
+def test_krhf_gdf_gamma_via_blochkmesh_matches_tuple():
+    """A Γ-only ``BlochKMesh`` takes the route a ``(1, 1, 1)`` tuple takes.
+
+    This used to pin a ``gamma`` backend tag, i.e. delegation to the
+    exact-Gamma driver. On the default dim=3 SR/LR fit neither spelling
+    delegates since f6815d9; what must hold is that the two spellings of
+    one mesh select one engine and one Hamiltonian.
+    """
     system, basis = _h2_cubic_box()
     opts = _rhf_opts()
     bm = vq.monkhorst_pack(system, [1, 1, 1])
     r = run_krhf_periodic_gdf(system, basis, bm, opts)
-    assert r.converged
+    r_tuple = run_krhf_periodic_gdf(system, basis, (1, 1, 1), opts)
+    assert r.converged and r_tuple.converged
     assert len(r.density) == 1
-    # Backend tag should indicate Γ-bridge dispatch.
-    assert "gamma" in str(r.backend)
+    assert str(r.backend) == str(r_tuple.backend) == "native-multi-k-gdf-gdf-rhf"
+    assert r.energy == pytest.approx(r_tuple.energy, abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("kmesh", "functional", "n_pairs"),
+    [((1, 1, 1), None, 1), ((2, 1, 1), None, 4), ((2, 1, 1), "pbe", 2)],
+    ids=["gamma-nk1-hf", "multik-hf", "multik-pure-dft"],
+)
+def test_result_counts_the_fit_pairs_the_scf_contracted(
+    monkeypatch, kmesh, functional, n_pairs
+):
+    """``gdf_cderi_pairs`` is read off the fit the driver built.
+
+    A consumer that needs to know whether the SCF built a density fit, or
+    how many ``(k_i, k_j)`` tensors it held, reads this field; the CCM
+    neutral-Bloch control once re-derived it from a copy of the
+    ``use_compcell`` promotion rules, and the copy reported no fit for pure
+    DFT on a 3-D k-mesh although the bulk SR/LR promotion builds its ``n_k``
+    diagonal pairs. Exact exchange needs all ``n_k**2`` pairs; a Γ mesh on
+    the SR/LR source runs the k-mesh loop at Nk=1 and fits its one pair.
+    The spy counts what the SR/LR source (the 3-D default here) returned.
+    """
+    system, basis = _h2_cubic_box()
+    built = []
+    real_builder = kgdf._build_scf_range_separated_lpq_cache
+
+    def _spy(*args, **kwargs):
+        cache = real_builder(*args, **kwargs)
+        built.append(len(cache))
+        return cache
+
+    monkeypatch.setattr(kgdf, "_build_scf_range_separated_lpq_cache", _spy)
+    if functional is None:
+        r = run_krhf_periodic_gdf(system, basis, kmesh, _rhf_opts())
+    else:
+        opts = vq.PeriodicKSOptions()
+        opts.use_diis = True
+        opts.max_iter = 30
+        opts.conv_tol_energy = 1e-8
+        opts.lattice_opts.cutoff_bohr = 14.0
+        opts.lattice_opts.nuclear_cutoff_bohr = 16.0
+        r = run_krks_periodic_gdf(
+            system, basis, kmesh, opts, functional=functional
+        )
+
+    assert r.converged
+    assert built == [n_pairs]
+    assert r.gdf_cderi_pairs == n_pairs
+
+
+def test_gamma_delegate_result_counts_its_single_fit():
+    """The Γ delegate fits one Γ tensor, and the adapter says so.
+
+    Off the SR/LR source a Γ mesh on a 3-D cell is handed to the exact-Γ
+    compensated-cell driver, and the k-mesh result is adapted from the one
+    that driver returns. (A chain's Γ mesh used to reach the legacy Γ driver,
+    which now refuses dim=1; tests/test_periodic_lowd_guards.py pins that.)
+    """
+    system, basis = _h2_cubic_box()
+    kwargs = {"gdf_method": "compcell"}
+    r = run_krhf_periodic_gdf(system, basis, (1, 1, 1), _rhf_opts(), **kwargs)
+
+    assert r.converged
+    assert r.backend == "native-gamma-gdf-via-k-gdf"
+    assert r.gdf_cderi_pairs == 1
+
+
+class _StopAtFitBuild(Exception):
+    """Raised by the fit-build spy once it has read the driver's flag."""
+
+
+def _spy_gradient_envelope_and_fit_build(monkeypatch):
+    """Record gradient admission and the driver's unconditional fit promotion.
+
+    The envelope spy records the method and the real envelope's verdict
+    without raising, so the driver runs on to the fit build. The aux-basis
+    spy reads the driver's own ``use_compcell`` and stops before cderi or SCF
+    work. The removed private fit toggle must not be handed to the envelope.
+    """
+    seen = {"envelope": [], "verdict": [], "fit": []}
+    real_envelope = kgdf._reject_unsupported_multik_gradient
+
+    def envelope(entry, **kwargs):
+        assert "use_compcell_effective" not in kwargs
+        seen["envelope"].append(kwargs["gdf_method"])
+        try:
+            real_envelope(entry, **kwargs)
+            seen["verdict"].append(None)
+        except NotImplementedError as exc:
+            seen["verdict"].append(str(exc))
+
+    def aux_basis(*args, **kwargs):
+        caller = sys._getframe(1)
+        assert caller.f_code.co_name == "run_krhf_periodic_gdf"
+        seen["fit"].append(bool(caller.f_locals["use_compcell"]))
+        raise _StopAtFitBuild
+
+    monkeypatch.setattr(kgdf, "_reject_unsupported_multik_gradient", envelope)
+    monkeypatch.setattr(kgdf, "make_aux_basis_set", aux_basis)
+    return seen
+
+
+def _envelope_probe_opts(functional):
+    if functional is None:
+        return _rhf_opts()
+    opts = vq.PeriodicKSOptions()
+    opts.lattice_opts.cutoff_bohr = 14.0
+    opts.lattice_opts.nuclear_cutoff_bohr = 16.0
+    return opts
+
+
+@pytest.mark.parametrize("use_compcell", [False, True], ids=["default", "explicit"])
+@pytest.mark.parametrize("gdf_method", ["rsgdf", "compcell", "mdf"])
+@pytest.mark.parametrize("functional", [None, "pbe", "pbe0"], ids=["hf", "pbe", "pbe0"])
+def test_multik_gradient_envelope_and_fit_promotion(
+    monkeypatch, functional, gdf_method, use_compcell
+):
+    """All k-mesh runs build a fit; only supported fits admit gradients.
+
+    The obsolete no-fit gradient backstop was removed by maintainer decision
+    #415. Preserve both the real method refusal and every public promotion
+    across this input grid without passing a redundant private flag.
+    """
+    system, basis = _h2_cubic_box()
+    seen = _spy_gradient_envelope_and_fit_build(monkeypatch)
+    with pytest.raises(_StopAtFitBuild):
+        run_krhf_periodic_gdf(
+            system,
+            basis,
+            (2, 1, 1),
+            _envelope_probe_opts(functional),
+            functional=functional,
+            gdf_method=gdf_method,
+            use_compcell=use_compcell,
+            compute_gradient=True,
+            progress=False,
+        )
+
+    assert seen["fit"] == [True]
+    assert seen["envelope"] == [gdf_method]
+    if gdf_method == "rsgdf":
+        assert seen["verdict"] == [None]
+    else:
+        assert "gdf_method='rsgdf' only" in seen["verdict"][0]
+
+
+def test_gradient_envelope_refuses_dim1_before_fit_build(monkeypatch):
+    """The live dimension guard refuses a wire before the fit build.
+
+    The spy retains that verdict, then lets the driver's independent Coulomb
+    gauge guard stop the run. No obsolete no-fit flag participates.
+    """
+    system = vq.PeriodicSystem(
+        1,
+        np.diag([6.0, 15.0, 15.0]),
+        [vq.Atom(1, [0.0, 7.5, 7.5]), vq.Atom(1, [1.4, 7.5, 7.5])],
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    seen = _spy_gradient_envelope_and_fit_build(monkeypatch)
+    with pytest.raises(NotImplementedError, match="no consistent Coulomb gauge"):
+        run_krhf_periodic_gdf(
+            system,
+            basis,
+            (3, 1, 1),
+            _envelope_probe_opts("pbe"),
+            functional="pbe",
+            compute_gradient=True,
+            progress=False,
+        )
+
+    assert seen["envelope"] == ["rsgdf"]
+    assert "3D periodic systems only" in seen["verdict"][0]
+    assert seen["fit"] == []
 
 
 # =====================================================================
@@ -603,7 +967,7 @@ def test_krhf_gdf_multik_scf_descends_into_convergence():
     aid problem (CLAUDE.md § 7).
 
     Symptom regression for the 2026-07-09 finding (qc-input-library
-    01706, HANDOVER_GDF_FIT_SCREENING.md): on tight cells with
+    01706, the original investigation): on tight cells with
     non-negligible inter-cell AO-pair overlap the SCF energy rose into
     convergence — +3.8 mHa above the minimum visited on exactly this
     c-diamond/sto-3g (2,1,1) fixture — because the Γ pair-FT mirror
@@ -856,8 +1220,17 @@ def test_krhf_gdf_multik_triclinic_converges():
 # =====================================================================
 
 
+@pytest.mark.parametrize("kmesh", [(1, 1, 1), (2, 1, 1)], ids=["gamma", "k211"])
 @pytest.mark.parametrize("functional", ["pbe", "b3lyp"])
-def test_krks_gdf_gamma_routes_to_native_gamma_driver(functional):
+def test_krks_gdf_returns_the_krks_result_class(functional, kmesh):
+    """``run_krks_periodic_gdf`` returns the class it is annotated with.
+
+    Only the exact-Gamma adapter used to build a ``PeriodicKRKSGDFResult``;
+    the k-mesh loop returned ``PeriodicKRHFGDFResult`` for KS runs too.
+    Since f6815d9 a dim=3 Γ mesh on the SR/LR fit runs that loop at Nk=1
+    rather than delegating, so the Γ KS result lost its class. Pin the
+    class, and the engine that produced it, on Γ and on a true k-mesh.
+    """
     system, basis = _h2_cubic_box()
     opts = vq.PeriodicKSOptions()
     opts.functional = functional
@@ -869,13 +1242,22 @@ def test_krks_gdf_gamma_routes_to_native_gamma_driver(functional):
     r = run_krks_periodic_gdf(
         system,
         basis,
-        (1, 1, 1),
+        kmesh,
         opts,
         functional=functional,
+        progress=False,
     )
     assert isinstance(r, PeriodicKRKSGDFResult)
+    assert str(r.backend) == "native-multi-k-gdf-gdf-rks"
     assert r.converged
     assert r.functional and r.functional.lower() == functional.lower()
+
+
+def test_krhf_gdf_hf_result_is_not_the_krks_class():
+    """The KS class switch must not leak onto plain HF runs."""
+    system, basis = _h2_cubic_box()
+    r = run_krhf_periodic_gdf(system, basis, (2, 1, 1), _rhf_opts())
+    assert type(r) is PeriodicKRHFGDFResult
 
 
 def test_krks_gdf_gamma_default_diis_aliases_have_identical_results():
@@ -982,15 +1364,16 @@ def test_multik_rks_xc_uses_real_space_density_blocks(monkeypatch):
 # use_compcell=True branch; the use_compcell=False Ewald-3D-K builder omits
 # it, so HF/hybrid multi-k on that path is wrong by the Madelung shift
 # (catastrophic +17 Ha on sparse meshes). The driver routes HF/hybrid to
-# use_compcell=True + exxdiv='ewald' (the PySCF-µHa path); pure DFT stays on
-# the cheaper, correct Ewald-3D path. [Maintainer decision 2026-06-04.]
+# use_compcell=True + exxdiv='ewald' (the PySCF-µHa path). [Maintainer
+# decision 2026-06-04.] Pure DFT no longer keeps the Ewald-3D J either: on
+# the default dim=3 rsgdf route the SR/LR fit promotes it too (#284).
 # =====================================================================
 def test_multik_exxdiv_validation_on_use_compcell_false():
     """On the use_compcell=False path, HF/hybrid is auto-routed to
     the exxdiv-corrected compcell path (commit 500711b6). The inline
     exxdiv kwarg was removed; the driver validates internally. A pure
-    DFT functional on use_compcell=False stays on the Ewald-3D path
-    (correct, no exchange divergence to correct). Both converge."""
+    DFT functional on use_compcell=False is promoted to the fitted
+    SR/LR Hartree of the default dim=3 rsgdf route. Both converge."""
     system, basis = _h2_cubic_box()
     opts = _rhf_opts(max_iter=30)
 
@@ -1006,7 +1389,7 @@ def test_multik_exxdiv_validation_on_use_compcell_false():
     )
     assert r.converged
 
-    # Pure DFT on use_compcell=False → stays on Ewald-3D path (no exchange).
+    # Pure DFT on use_compcell=False → promoted to the fitted SR/LR J.
     r_dft = run_krks_periodic_gdf(
         system,
         basis,
@@ -1019,116 +1402,69 @@ def test_multik_exxdiv_validation_on_use_compcell_false():
     assert r_dft.converged
 
 
-def test_large_multik_gdf_branches_skip_dense_ewald_j_cache(monkeypatch):
-    """Neither fitted HF nor an oversized pure-DFT branch builds the cache.
+#: The EWALD_3D J/K entry points the k-GDF driver's former
+#: ``use_compcell=False`` branch called: the dense AO-pair-FT J cache, the
+#: bounded J stream from D(k), and the real-space Fock builder. The branch
+#: was unreachable and was removed (#415); the builders stay in
+#: ``vibeqc.periodic_fock_multi_k`` for the Ewald-3D drivers.
+_MULTIK_EWALD_3D_J_ENTRY_POINTS = (
+    "make_ewald_3d_lattice_j_cache",
+    "build_periodic_j_ewald3d_k_from_k_density",
+    "build_periodic_fock_ewald3d_k",
+)
 
-    The cached-Lpq HF/hybrid branch never consumes it. Pure DFT needs the
-    same exact Ewald J, but must contract it in bounded reciprocal/cell
-    batches: the release-paper P15 and P10 shapes would otherwise retain
-    one 38.9 GiB and 297 GiB complex cache, respectively, before SCF.
+
+def test_multik_gdf_driver_has_no_ewald_3d_j():
+    """The k-GDF driver imports no EWALD_3D J builder (#415).
+
+    Every closed-shell k-mesh run is promoted to the cached fit: the SR/LR
+    source on dim=3 rsgdf, the exxdiv rule for HF/hybrids, and the
+    explicit-gdf_method rule for pure DFT on mdf/compcell. That left the
+    ``use_compcell=False`` EWALD_3D J/K branch unreachable, so it was
+    deleted. Importing one of these names here again is the first step of
+    reopening it.
     """
+    present = [n for n in _MULTIK_EWALD_3D_J_ENTRY_POINTS if hasattr(kgdf, n)]
+    assert not present, present
+
+
+@pytest.mark.parametrize("functional", [None, "pbe"])
+def test_multik_gdf_hartree_is_the_fitted_one(monkeypatch, functional):
+    """Every closed-shell multi-k GDF run contracts J from the cached fit.
+
+    HF/hybrids promote ``use_compcell=False`` for the exxdiv shift, and
+    pure DFT on the default dim=3 rsgdf route for the SR/LR fit (#284).
+    Either way the SCF builds the SR/LR fit exactly once and iterates on
+    it. This replaces three tests that pinned the pure-DFT Ewald-J cache,
+    its bounded stream and the grid-backend dispatch inside this driver:
+    the SR/LR promotion had made that branch unreachable (the cache and
+    stream tests were red on main, the grid test passed without reaching
+    the code it named), and #415 removed it. The builders keep their own
+    coverage in tests/test_ewald_j_cache.py and in the Ewald-3D drivers.
+    """
+    fit_calls: list[int] = []
+    real_fit = kgdf._build_scf_range_separated_lpq_cache
+
+    def counting_fit(*args, **kwargs):
+        fit_calls.append(1)
+        return real_fit(*args, **kwargs)
+
+    monkeypatch.setattr(
+        kgdf, "_build_scf_range_separated_lpq_cache", counting_fit
+    )
     system, basis = _h2_cubic_box()
-    calls: list[int] = []
-    stream_calls: list[int] = []
-    real_make = kgdf.make_ewald_3d_lattice_j_cache
-    real_stream = kgdf.build_periodic_j_ewald3d_k_from_k_density
-
-    def counting_make(*args, **kwargs):
-        calls.append(1)
-        return real_make(*args, **kwargs)
-
-    def counting_stream(*args, **kwargs):
-        stream_calls.append(1)
-        return real_stream(*args, **kwargs)
-
-    monkeypatch.setattr(kgdf, "make_ewald_3d_lattice_j_cache", counting_make)
-    monkeypatch.setattr(
-        kgdf,
-        "build_periodic_j_ewald3d_k_from_k_density",
-        counting_stream,
-    )
-
-    # HF auto-routes to the cached-Lpq GDF branch: cache must not build.
-    r = run_krhf_periodic_gdf(system, basis, (2, 1, 1), _rhf_opts())
-    assert r.converged
-    assert not calls, "GDF branch built the unused EWALD_3D J cache"
-
-    # Use the cheap H2 fixture while forcing the P15/P10 planning outcome:
-    # the projected full cache exceeds the shared FT batch target.
-    monkeypatch.setattr(
-        kgdf,
-        "_ewald_3d_lattice_j_cache_fits_memory_target",
-        lambda *args, **kwargs: False,
-    )
-    r_dft = run_krks_periodic_gdf(
-        system,
-        basis,
-        (2, 1, 1),
-        _rhf_opts(),
-        functional="pbe",
-        progress=False,
-    )
-    assert r_dft.converged
-    assert not calls, "pure-DFT GDF built the dense EWALD_3D J cache"
-    assert stream_calls
-
-
-def test_small_multik_pure_dft_reuses_bounded_ewald_j_cache(monkeypatch):
-    """A cache inside the batch target stays hoisted out of the SCF loop."""
-    system, basis = _h2_cubic_box()
-    cache_calls: list[int] = []
-    real_make = kgdf.make_ewald_3d_lattice_j_cache
-
-    def counting_make(*args, **kwargs):
-        cache_calls.append(1)
-        return real_make(*args, **kwargs)
-
-    def unexpected_stream(*args, **kwargs):
-        raise AssertionError("small exact-J cache was recomputed per iteration")
-
-    monkeypatch.setattr(kgdf, "make_ewald_3d_lattice_j_cache", counting_make)
-    monkeypatch.setattr(
-        kgdf,
-        "build_periodic_j_ewald3d_k_from_k_density",
-        unexpected_stream,
-    )
-    result = run_krks_periodic_gdf(
-        system,
-        basis,
-        (2, 1, 1),
-        _rhf_opts(),
-        functional="pbe",
-        progress=False,
-    )
-    assert result.converged
-    assert cache_calls == [1]
-
-
-def test_multik_gdf_grid_backend_keeps_diagnostic_density_route(monkeypatch):
-    """The diagnostic grid backend must not enter the analytic-FT stream."""
-    monkeypatch.setenv("VIBEQC_J_EWALD3D_BACKEND", "grid")
-    system, basis = _h2_cubic_box()
-
-    def unexpected_stream(*args, **kwargs):
-        raise AssertionError("grid backend entered analytic-FT J streaming")
-
-    monkeypatch.setattr(
-        kgdf,
-        "build_periodic_j_ewald3d_k_from_k_density",
-        unexpected_stream,
-    )
-    result = run_krks_periodic_gdf(
-        system,
-        basis,
-        (2, 1, 1),
-        _rhf_opts(),
-        functional="pbe",
-        # The historical grid backend is diagnostic and not a production
-        # energy route; this test pins dispatch only.
-        check_energy_sanity=False,
-        progress=False,
-    )
+    kwargs = dict(use_compcell=False, progress=False)
+    if functional is None:
+        result = run_krhf_periodic_gdf(
+            system, basis, (2, 1, 1), _rhf_opts(max_iter=2), **kwargs
+        )
+    else:
+        result = run_krks_periodic_gdf(
+            system, basis, (2, 1, 1), _rhf_opts(max_iter=2),
+            functional=functional, **kwargs,
+        )
     assert result.n_iter > 0
+    assert fit_calls == [1], "the SCF did not build the SR/LR fit once"
 
 
 @pytest.mark.slow
@@ -1331,57 +1667,96 @@ def test_ibz_reduced_kmesh_dft_matches_full_mesh():
     assert r_ibz.energy == pytest.approx(r_full.energy, abs=1e-10)
 
 
-def test_multik_dense_core_parity_hold_warns(monkeypatch):
-    """Dense-core cells on the multi-k GDF route must WARN about the
+class _FitBuildSentinel(Exception):
+    pass
+
+
+def _sentinel_fit_builders(monkeypatch, *names):
+    """Replace the named fit builders; return the names in call order."""
+    reached = []
+
+    def _boom(name):
+        def _raise(*a, **k):
+            reached.append(name)
+            raise _FitBuildSentinel(name)
+
+        return _raise
+
+    for name in names:
+        monkeypatch.setattr(kgdf, name, _boom(name))
+    return reached
+
+
+def test_multik_dense_core_parity_hold_warns_on_the_classic_fit(monkeypatch):
+    """Dense-core cells on the classic multi-k fit must WARN about the
     absolute-energy parity hold (P01 class) instead of silently returning
     the un-tailed value.
 
     Production-k-sampling audit (2026-07-17): MgO/STO-3G multi-k at the
-    untailed default is -0.503 Ha ((1,1,2)) / -0.505 Ha ((2,2,2)) vs live
-    PySCF on identical meshes, while rsgdf_tail_ke_cutoff = 1.1*10*zeta_max
-    closes (1,1,2) to +0.16 mHa. The Γ driver has warned + tagged since the
-    P01 audit; this pins the multi-k mirror. A sentinel replaces the cderi
-    builder so no SCF runs; the warning must fire before the build.
+    untailed default of the time is -0.503 Ha ((1,1,2)) / -0.505 Ha
+    ((2,2,2)) vs live PySCF on identical meshes, while
+    rsgdf_tail_ke_cutoff = 1.1*10*zeta_max closes (1,1,2) to +0.16 mHa.
+    Re-measured 2026-09-29 on fit_source='classic' at (1,1,2):
+    -271.6134118 Ha vs PySCF 2.14 GDF -271.1102721 (-503.1 mHa). Since
+    f6815d9 the classic fit is reached only through an explicit
+    fit_source='classic'; the default SR/LR fit is not held (next test).
+    Sentinels replace the fit builders so no SCF runs; the warning must
+    fire before the build.
     """
-
-    class _Sentinel(Exception):
-        pass
-
-    def _boom(*a, **k):
-        raise _Sentinel()
-
-    # Sentinel BOTH cderi build entry points: the hook path still calls
-    # the per-pair builder, while the default rsgdf route now goes
+    # The hook path calls the per-pair builder; the classic route goes
     # through the shared-q batched cache build.
-    monkeypatch.setattr(kgdf, "build_lpq_bloch_native_fft", _boom)
-    monkeypatch.setattr(kgdf, "_build_rsgdf_lpq_cache_shared_q", _boom)
-
-    h = 3.979
-    lat = np.array([[0.0, h, h], [h, 0.0, h], [h, h, 0.0]])
-    system = vq.PeriodicSystem(
-        3, lat, [vq.Atom(12, [0, 0, 0]), vq.Atom(8, [h, h, h])]
+    reached = _sentinel_fit_builders(
+        monkeypatch, "build_lpq_bloch_native_fft", "_build_rsgdf_lpq_cache_shared_q"
     )
-    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    system, basis = _mgo_dense_core_system()
 
     with pytest.warns(UserWarning, match="parity-held"):
-        with pytest.raises(_Sentinel):
+        with pytest.raises(_FitBuildSentinel):
             run_krhf_periodic_gdf(
-                system, basis, kmesh=(1, 1, 2), progress=False
+                system, basis, kmesh=(1, 1, 2), fit_source="classic",
+                progress=False,
             )
+    assert reached == ["_build_rsgdf_lpq_cache_shared_q"]
 
     # A parity-sized tail lifts the hold: no warning (sentinel still fires).
-    import warnings as _warnings
-
-    with _warnings.catch_warnings():
-        _warnings.simplefilter("error", UserWarning)
-        with pytest.raises(_Sentinel):
+    reached.clear()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        with pytest.raises(_FitBuildSentinel):
             run_krhf_periodic_gdf(
                 system,
                 basis,
                 kmesh=(1, 1, 2),
+                fit_source="classic",
                 rsgdf_tail_ke_cutoff=3300.0,
                 progress=False,
             )
+    assert reached == ["_build_rsgdf_lpq_cache_shared_q"]
+
+
+def test_multik_dense_core_default_sr_fit_is_not_parity_held(monkeypatch):
+    """The default dim=3 SR/LR fit carries no parity hold on the P01 cell.
+
+    The hold marks the classic fit's missing high-|G| tail. The SR/LR fit
+    has no tail to miss (``rsgdf_tail_ke_cutoff`` is obsolete there), and
+    on this MgO/STO-3G cell it lands on PySCF 2.14 GDF: +2.9 uHa at Gamma
+    and +3.2 uHa at (1,1,2) (2026-09-29), not the -0.5 Ha of the
+    P01 class. f6815d9 skipped the hold on this route; the test that pinned
+    the warning on the default route predated it.
+    """
+    reached = _sentinel_fit_builders(
+        monkeypatch, "_build_scf_range_separated_lpq_cache"
+    )
+    system, basis = _mgo_dense_core_system()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(_FitBuildSentinel):
+            run_krhf_periodic_gdf(
+                system, basis, kmesh=(1, 1, 2), progress=False
+            )
+    assert reached == ["_build_scf_range_separated_lpq_cache"]
+    assert not [w for w in caught if "parity-held" in str(w.message)]
 
 
 def _mgo_dense_core_system():
@@ -1395,192 +1770,115 @@ def _mgo_dense_core_system():
     return system, basis
 
 
+class _FitSentinel(Exception):
+    """A fit builder was reached; ``args[0]`` names it, ``args[1]`` its kwargs."""
+
+
+def _sentinel_multik_fit(monkeypatch):
+    """Stop the k-GDF driver at whichever fit it builds.
+
+    The SR/LR source, the classic shared-q source and the classic per-pair
+    builder raise :class:`_FitSentinel` naming themselves, so no SCF runs.
+    """
+
+    def fit(name):
+        def boom(*args, **kwargs):
+            raise _FitSentinel(name, kwargs)
+
+        return boom
+
+    for name in (
+        "_build_scf_range_separated_lpq_cache",
+        "_build_rsgdf_lpq_cache_shared_q",
+        "build_lpq_bloch_native_fft",
+    ):
+        monkeypatch.setattr(kgdf, name, fit(name))
+
+
 def test_multik_pure_ks_consumes_rsgdf_tail_ke_cutoff(monkeypatch):
     """IID 146: multi-k PURE-DFT KRKS on dim=3 accepted
     ``rsgdf_tail_ke_cutoff``, echoed it in the .out, and silently ignored
-    it -- the default EWALD_3D real-space J builds no cderi, so the knob
-    had nothing to act on. Measured: MgO/STO-3G (2,2,2) KRKS-LDA tailed
-    (3291.6) vs untailed BYTE-IDENTICAL at -271.531535367637 (15 it,
-    both runs), while the same knob on the same cell moves multi-k KRHF
-    by +0.505030889141 Ha (which rides the cached-Lpq GDF J via the
-    alpha > 0 promotion).
+    it -- the EWALD_3D real-space J it then ran builds no cderi, so the
+    knob had nothing to act on. Measured: MgO/STO-3G (2,2,2) KRKS-LDA
+    tailed (3291.6) vs untailed BYTE-IDENTICAL at -271.531535367637 (15
+    it, both runs), while the same knob on the same cell moves multi-k
+    KRHF by +0.505030889141 Ha.
 
-    Post-fix contract, pinned without running an SCF (sentinels on both
-    J machineries):
+    Neither source that can meet the knob ignores it silently now (pinned
+    without an SCF):
 
-    * tailed run -> reaches the rsgdf cderi build CARRYING the caller's
-      tail (route consumption, not option echo);
-    * untailed run -> keeps the EWALD_3D routing (defaults unchanged).
+    * the default SR/LR source (``fit_source='auto'`` on dim=3 rsgdf)
+      has no reciprocal tail, so it retires the knob with a
+      ``DeprecationWarning`` and builds its fit without one;
+    * the classic source (``fit_source='classic'``) builds its fit
+      carrying the caller's tail.
+
+    Until 2026-09-29 this test still asserted the pre-SR contract: the
+    tailed default reached the classic shared-q build, and the untailed
+    default carried an IID 518 auto-sized tail. The SR/LR promotion
+    (#284) retired both, so it was red on main: nothing stopped the SR/LR
+    build, and the MgO SCF ran instead of raising. The route does not
+    depend on the cell, so it is pinned on the cheap sparse H2 box.
     """
+    _sentinel_multik_fit(monkeypatch)
+    system, basis = _h2_cubic_box()
 
-    class _LpqSentinel(Exception):
-        pass
+    with pytest.warns(DeprecationWarning, match="obsolete for the SR/LR fit"):
+        with pytest.raises(_FitSentinel) as sr:
+            run_krks_periodic_gdf(
+                system, basis, (1, 1, 2), functional="lda",
+                rsgdf_tail_ke_cutoff=3300.0, progress=False,
+            )
+    assert sr.value.args[0] == "_build_scf_range_separated_lpq_cache"
 
-    class _EwaldSentinel(Exception):
-        pass
-
-    captured = {}
-
-    def _lpq_boom(*a, **k):
-        captured.update(k)
-        raise _LpqSentinel()
-
-    def _ewald_boom(*a, **k):
-        raise _EwaldSentinel()
-
-    # Both cderi entry points (hook path + default shared-q batch), and
-    # both EWALD_3D J entry points (cached + streaming).
-    monkeypatch.setattr(kgdf, "_build_rsgdf_lpq_cache_shared_q", _lpq_boom)
-    monkeypatch.setattr(kgdf, "build_lpq_bloch_native_fft", _lpq_boom)
-    monkeypatch.setattr(kgdf, "make_ewald_3d_lattice_j_cache", _ewald_boom)
-    monkeypatch.setattr(
-        kgdf, "build_periodic_j_ewald3d_k_from_k_density", _ewald_boom
-    )
-
-    system, basis = _mgo_dense_core_system()
-
-    # Tailed: must reach the rsgdf cderi build with the caller's tail
-    # (pre-fix: _EwaldSentinel -- the knob was never consumed).
-    with pytest.raises(_LpqSentinel):
+    with pytest.raises(_FitSentinel) as classic:
         run_krks_periodic_gdf(
-            system,
-            basis,
-            (1, 1, 2),
-            functional="lda",
-            rsgdf_tail_ke_cutoff=3300.0,
+            system, basis, (1, 1, 2), functional="lda",
+            fit_source="classic", rsgdf_tail_ke_cutoff=3300.0,
             progress=False,
         )
-    assert captured.get("tail_ke_cutoff") == 3300.0
-
-    # Untailed control. NOTE (IID 518): this control originally asserted
-    # that an untailed run on THIS (dense-core) cell keeps the EWALD_3D
-    # routing. That is no longer the contract and was pinning the IID 518
-    # defect: on the dense-core class an untailed run now auto-sizes the
-    # tail exactly as the Γ/CCM routes do. The "defaults unchanged" half
-    # of the control moved to the SPARSE cell, where the classifier does
-    # not fire -- see test_multik_pure_ks_sparse_cell_keeps_ewald3d, which
-    # is the same route with the feature off.
-    captured.clear()
-    with pytest.raises(_LpqSentinel):
-        run_krks_periodic_gdf(
-            system, basis, (1, 1, 2), functional="lda", progress=False
-        )
-    assert captured.get("tail_ke_cutoff") == pytest.approx(
-        _auto_rsgdf_tail_ke_cutoff(system, "rsgdf", basis, None)
-    )
+    name, kwargs = classic.value.args
+    assert name == "_build_rsgdf_lpq_cache_shared_q"
+    assert kwargs.get("tail_ke_cutoff") == 3300.0
 
 
-def test_multik_pure_ks_auto_tails_dense_core(monkeypatch):
-    """IID 518: multi-k pure-DFT (alpha == 0, dim=3) never resolved the
-    production auto-tail that the Γ and CCM routes have always applied --
-    ``pbc_gdf._auto_rsgdf_tail_ke_cutoff`` was called nowhere in this
-    module. Left untailed, the dense-core class rides the EWALD_3D J
-    whose unresolved tight-core AO products put MgO/STO-3G (2,2,2)
-    KRKS-LDA at -271.5315355 Ha against PySCF -270.4990191 and CRYSTAL 23
-    -- two independent references that agree with each other to 0.65 mHa
-    -- a -1032.5 mHa error.
+@pytest.mark.parametrize("cell", ["dense_core_mgo", "sparse_h2"])
+def test_multik_pure_ks_default_builds_the_untailed_sr_fit(monkeypatch, cell):
+    """The untailed default pure-DFT dim=3 multi-k route builds the SR/LR
+    fit on dense-core and sparse cells alike.
 
-    Pinned here without running an SCF: the untailed caller must now
-    reach the rsgdf cderi build carrying the AUTO-SIZED tail (the same
-    1.1 x _RSGDF_PARITY_TAIL_RATIO x zeta_max = 3291.6114 Ha the Γ route
-    resolves on this cell), and the dense-core parity-hold warning must
-    no longer fire, because the tail lifts the hold.
+    IID 518 once had this route resolve an auto-sized rsgdf tail on the
+    dense-core class: left on the EWALD_3D J, MgO/STO-3G (2,2,2)
+    KRKS-LDA sat 1032.5 mHa below PySCF and CRYSTAL 23. A sparse H2 cell,
+    where the classifier resolves no tail, was the negative control that
+    kept the EWALD_3D J. The SR/LR source (#284) replaced both routes: it
+    never uses an exponent-scaled reciprocal tail, so there is none to
+    resolve, and the dense-core parity-hold classifier does not run on
+    it. This replaces ``test_multik_pure_ks_auto_tails_dense_core`` and
+    ``test_multik_pure_ks_sparse_cell_keeps_ewald3d``, both red on main.
     """
+    _sentinel_multik_fit(monkeypatch)
+    if cell == "dense_core_mgo":
+        system, basis = _mgo_dense_core_system()
+    else:
+        system, basis = _h2_cubic_box()
 
-    class _LpqSentinel(Exception):
-        pass
-
-    class _EwaldSentinel(Exception):
-        pass
-
-    captured = {}
-
-    def _lpq_boom(*a, **k):
-        captured.update(k)
-        raise _LpqSentinel()
-
-    def _ewald_boom(*a, **k):
-        raise _EwaldSentinel()
-
-    monkeypatch.setattr(kgdf, "_build_rsgdf_lpq_cache_shared_q", _lpq_boom)
-    monkeypatch.setattr(kgdf, "build_lpq_bloch_native_fft", _lpq_boom)
-    monkeypatch.setattr(kgdf, "make_ewald_3d_lattice_j_cache", _ewald_boom)
-    monkeypatch.setattr(
-        kgdf, "build_periodic_j_ewald3d_k_from_k_density", _ewald_boom
-    )
-
-    system, basis = _mgo_dense_core_system()
-    expected_tail = _auto_rsgdf_tail_ke_cutoff(system, "rsgdf", basis, None)
-    # The resolver must actually fire on this cell, or the assertions
-    # below would pass vacuously against a None tail.
-    assert expected_tail is not None
-    assert expected_tail == pytest.approx(3291.6114, abs=1e-3)
-
-    # Pre-fix this raised _EwaldSentinel: the untailed default kept the
-    # EWALD_3D real-space J and no tail was ever resolved.
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        with pytest.raises(_LpqSentinel):
+        with pytest.raises(_FitSentinel) as reached:
             run_krks_periodic_gdf(
                 system, basis, (1, 1, 2), functional="lda", progress=False
             )
-    assert captured.get("tail_ke_cutoff") == pytest.approx(expected_tail)
-    # The auto-sized tail lifts the dense-core hold, so the +PARITY_HELD
-    # warning must not fire on a plain default run any more.
+    assert reached.value.args[0] == "_build_scf_range_separated_lpq_cache"
     assert not [w for w in caught if "parity-held" in str(w.message)]
-
-
-def test_multik_pure_ks_sparse_cell_keeps_ewald3d(monkeypatch):
-    """IID 518 negative control -- the SAME route with the feature off.
-
-    The auto-tail is gated on the dense-core classifier, which is
-    basis/cell-driven. A sparse vacuum-padded H2 cell (zeta_max = 3.43,
-    so 10 x zeta_max = 34 Ha, far under the 200 Ha base mesh) does not
-    trigger it, and must keep the EWALD_3D routing bit-identically: no
-    tail is resolved and no cderi is built. This is what stops the fix
-    from silently re-routing every pure-DFT multi-k run.
-    """
-
-    class _LpqSentinel(Exception):
-        pass
-
-    class _EwaldSentinel(Exception):
-        pass
-
-    captured = {}
-
-    def _lpq_boom(*a, **k):
-        captured.update(k)
-        raise _LpqSentinel()
-
-    def _ewald_boom(*a, **k):
-        raise _EwaldSentinel()
-
-    monkeypatch.setattr(kgdf, "_build_rsgdf_lpq_cache_shared_q", _lpq_boom)
-    monkeypatch.setattr(kgdf, "build_lpq_bloch_native_fft", _lpq_boom)
-    monkeypatch.setattr(kgdf, "make_ewald_3d_lattice_j_cache", _ewald_boom)
-    monkeypatch.setattr(
-        kgdf, "build_periodic_j_ewald3d_k_from_k_density", _ewald_boom
-    )
-
-    system, basis = _h2_cubic_box()
-    # The feature is genuinely OFF on this cell: exactly no tail, not a
-    # small one.
-    assert _auto_rsgdf_tail_ke_cutoff(system, "rsgdf", basis, None) is None
-
-    with pytest.raises(_EwaldSentinel):
-        run_krks_periodic_gdf(
-            system, basis, (1, 1, 2), functional="lda", progress=False
-        )
-    assert not captured
+    assert not [w for w in caught if "rsgdf_tail_ke_cutoff" in str(w.message)]
 
 
 def test_multik_tail_with_non_rsgdf_gdf_method_fails_closed():
     """The high-|G| tail completion exists only on the rsgdf cderi
     builders; any other multi-k gdf_method silently ignored it (the same
     L67 silent-no-op family as IID 146). Fail closed like
-    run_kuhf_periodic_gdf does. Vacuum-padded H2 avoids the dense-core
-    mdf rejection so the tail guard itself is exercised."""
+    run_kuhf_periodic_gdf does."""
     system, basis = _h2_cubic_box()
     with pytest.raises(NotImplementedError, match="rsgdf"):
         run_krhf_periodic_gdf(
@@ -1591,6 +1889,75 @@ def test_multik_tail_with_non_rsgdf_gdf_method_fails_closed():
             rsgdf_tail_ke_cutoff=100.0,
             progress=False,
         )
+
+
+class _InfoRecorder:
+    """Progress sink that keeps the driver's ``info`` lines."""
+
+    def __init__(self):
+        from vibeqc.progress import resolve_progress
+
+        self._inner = resolve_progress(False)
+        self.messages = []
+
+    def info(self, message, *args, **kwargs):
+        self.messages.append(str(message))
+        return self._inner.info(message, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@pytest.mark.parametrize("driver", ["krks", "kuks"])
+@pytest.mark.parametrize(
+    ("gdf_method", "builder"),
+    [("mdf", "build_lpq_bloch_mdf"), ("compcell", "build_lpq_bloch_compcell")],
+)
+def test_multik_pure_ks_honours_explicit_gdf_method(
+    monkeypatch, driver, gdf_method, builder
+):
+    """A pure-DFT dim=3 multi-k job with an explicit non-default
+    ``gdf_method`` must build the fit it asked for. The closed-shell
+    driver kept the default ``use_compcell=False`` on the EWALD_3D J,
+    which builds no cderi, so ``gdf_method='mdf'`` / ``'compcell'`` was
+    accepted and silently ignored (the L67 family of IID 146). Found
+    while lifting the MDF dense-core gate (#172): MgO/def2-SVP RKS-PBE
+    (4,4,4) on mdf never reached the MDF builder.
+
+    Pinned without an SCF: the requested builder raises a sentinel. (The
+    EWALD_3D J this used to fall back to was removed with #415.) The
+    open-shell driver always builds the cached fit; its rows guard that it
+    stays so.
+    """
+
+    class _LpqSentinel(Exception):
+        pass
+
+    def _lpq_boom(*a, **k):
+        raise _LpqSentinel()
+
+    monkeypatch.setattr(kgdf, builder, _lpq_boom)
+    run = (
+        run_krks_periodic_gdf
+        if driver == "krks"
+        else kgdf.run_kuks_periodic_gdf
+    )
+    system, basis = _h2_cubic_box(6.0)
+    plog = _InfoRecorder()
+    with pytest.raises(_LpqSentinel):
+        run(
+            system,
+            basis,
+            (2, 1, 1),
+            functional="pbe",
+            gdf_method=gdf_method,
+            progress=plog,
+        )
+    if driver == "krks":
+        assert any(
+            f"gdf_method={gdf_method!r}" in m and "cached-Lpq" in m
+            for m in plog.messages
+        ), f"promotion not logged; info lines were {plog.messages!r}"
 
 
 # IID 146 anchors, MgO primitive FCC / STO-3G, kmesh (2,2,2), LDA
@@ -1880,21 +2247,6 @@ def test_ibz_native_refuses_without_exact_exchange():
         )
 
 
-def test_ibz_native_warns_on_an_unconverged_cell_list():
-    """The transport is only as accurate as the cell list; below ~20 bohr
-    it is no longer negligible against truncation, and the flag says so
-    instead of quietly degrading the answer."""
-    system, basis = _ibz_native_system()
-    vq.attach_symmetry(system, symprec=1e-6)
-    with pytest.warns(UserWarning, match="transport"):
-        run_krhf_periodic_gdf(
-            system, basis, kmesh=(2, 2, 2),
-            options=_ibz_native_opts(cutoff=14.0),
-            aux_basis="def2-svp-jk", rsgdf_ke_cutoff=40.0,
-            ibz_native=True, progress=False,
-        )
-
-
 # --- IBZ-native on the open-shell driver -------------------------------
 
 
@@ -2029,6 +2381,7 @@ def test_ibz_native_symmetry_gate_calibrates_against_the_overlap():
         (2, 2, 2),
         np.full(len(list(kfull.kpoints)), 1.0 / len(list(kfull.kpoints))),
         None,
+        exchange_producer="sr",
     )
 
     from vibeqc._vibeqc_core import (
@@ -2061,23 +2414,18 @@ def test_ibz_native_symmetry_gate_calibrates_against_the_overlap():
         )
 
 
-def test_ibz_native_refuses_non_symmorphic_groups_by_name():
-    """A glide/screw cell must be refused up front, blaming the right thing.
+def test_ibz_native_admits_non_symmorphic_groups(monkeypatch):
+    """A glide/screw cell passes the wedge gate on the SR/LR source (#452).
 
-    The wedge transport applies a per-atom lattice-shift Bloch phase, which
-    represents a point operation plus a LATTICE translation. A
-    non-symmorphic operation carries a fractional translation tau (glide or
-    screw) contributing a further exp(-i k.tau) that this implementation
-    does not build, so the transported density would be wrong rather than
-    merely imprecise.
-
-    Before this guard the mismatch surfaced several SCF iterations later as
-    a large transport residual, and the symmetry gate reported a
-    "variational symmetry break" -- blaming the user's density for an
-    incompleteness in our own transport and sending them hunting for a
-    broken-symmetry solution that does not exist. Measured on Si diamond
-    (Fd-3m, No. 227): 24 of 48 operations carry a fractional translation and
-    the residual was 5.8e-01 against an 8.5e-05 floor.
+    The wedge transport applies a per-atom lattice-shift Bloch phase
+    ``exp(i k.L_a)`` with the image shift defined by
+    ``x_perm[a] = R x_a + tau + L_a``, so a fractional translation ``tau``
+    is carried by ``L_a`` and no further ``exp(-i k.tau)`` exists in this
+    AO-centred Bloch convention. Si diamond (Fd-3m, No. 227) therefore
+    resolves a wedge whose star map uses glide-type operations, and the
+    driver reaches the exchange build instead of refusing the group by
+    name (the refusal this test used to pin). The numerical proof lives in
+    ``tests/test_periodic_k_gdf_ibz_nonsymmorphic.py``.
     """
     bohr = 0.529177210903
     a_si = 5.431 / bohr
@@ -2090,31 +2438,45 @@ def test_ibz_native_refuses_non_symmorphic_groups_by_name():
          vq.Atom(14, list(lat @ np.array([0.25, 0.25, 0.25])))],
     )
     vq.attach_symmetry(system)
-    # Precondition: this really is the non-symmorphic case.
-    n_frac = sum(
-        1
-        for op in system.symmetry.operations
-        if np.linalg.norm(
+
+    def _has_tau(op):
+        return np.linalg.norm(
             (np.asarray(op.translation, dtype=float) + 0.5) % 1.0 - 0.5
         ) > 1e-8
-    )
-    assert n_frac > 0, "Si diamond must expose fractional translations"
 
+    # Precondition: this really is the non-symmorphic case.
+    assert sum(_has_tau(op) for op in system.symmetry.operations) == 24
+
+    from vibeqc.periodic_k_gdf import _resolve_ibz_native_state
+    from vibeqc._vibeqc_core import monkhorst_pack as _mp
+    kmesh_full = _mp(system, [2, 2, 2], [0, 0, 0], False)
+    kpts = np.array([np.asarray(k, dtype=float) for k in kmesh_full.kpoints])
+    rows, star_map, _ = _resolve_ibz_native_state(
+        system, kpts, (2, 2, 2), np.full(len(kpts), 1.0 / len(kpts)), None,
+        exchange_producer="sr",
+    )
+    assert len(rows) == 3 and len(star_map.operations) == 48
+    assert any(_has_tau(star_map.operations[o]) for _, o, _ in star_map.entries)
+
+    # The driver no longer refuses the group: it reaches the SR/LR cderi
+    # build, where a sentinel stops this test before any integral.
+    class _BuildReached(Exception):
+        pass
+
+    def intercept(*args, **kwargs):
+        raise _BuildReached
+
+    for name in ("_build_rsgdf_lpq_cache_shared_q",
+                 "_build_scf_range_separated_lpq_cache"):
+        monkeypatch.setattr(kgdf, name, intercept)
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
     opts = vq.PeriodicRHFOptions()
     opts.max_iter = 3
-    with pytest.raises(NotImplementedError) as excinfo:
+    with pytest.raises(_BuildReached):
         run_krhf_periodic_gdf(
             system, basis, kmesh=(2, 2, 2), options=opts,
             aux_basis="def2-svp-jk", ibz_native=True, progress=False,
         )
-    msg = str(excinfo.value)
-    assert "non-symmorphic" in msg
-    assert "Fd-3m" in msg, f"the refusal must name the group; got: {msg}"
-    assert "NOT a problem" in msg and "density" in msg, (
-        "the refusal must say this is an ibz_native limitation rather than "
-        f"a symmetry break in the user's calculation; got: {msg}"
-    )
 
 
 def test_ibz_native_rows_stay_in_wedge_order():
@@ -2152,7 +2514,7 @@ def test_ibz_native_rows_stay_in_wedge_order():
         )
         weights = np.full(len(kpts), 1.0 / len(kpts))
         rows, star_map, _kf = kgdf._resolve_ibz_native_state(
-            system, kpts, mesh, weights, None
+            system, kpts, mesh, weights, None, exchange_producer="sr"
         )
         # Every representative, in the wedge's own order.
         expected = []
@@ -2175,7 +2537,7 @@ def test_ibz_native_rows_stay_in_wedge_order():
     kpts = np.asarray([np.asarray(k, dtype=float) for k in kfull.kpoints])
     rows, _sm, _kf = kgdf._resolve_ibz_native_state(
         system, kpts, (4, 4, 4),
-        np.full(len(kpts), 1.0 / len(kpts)), None,
+        np.full(len(kpts), 1.0 / len(kpts)), None, exchange_producer="sr",
     )
     assert rows != sorted(rows), (
         "the (4,4,4) wedge order is monotonic here, so this test can no "
@@ -2309,7 +2671,7 @@ def test_symmetry_reduce_k_refuses_optimization(tmp_path):
         )
 
 
-def test_symmetry_reduce_k_preflight_charges_the_wedge():
+def test_symmetry_reduce_k_preflight_charges_the_wedge(monkeypatch):
     """The guard and the printed [memory] estimate must both reflect
     n_IBZ x n_k. Charging n_k^2 aborts a reduced run that fits -- the
     reason the reduction could not be demonstrated from the entry point."""
@@ -2317,6 +2679,44 @@ def test_symmetry_reduce_k_preflight_charges_the_wedge():
         PeriodicJKMethod,
         _periodic_gdf_estimate,
     )
+    from types import SimpleNamespace
+
+    import scipy.linalg.lapack as lapack
+    import vibeqc.aux_basis as auxiliary
+    import vibeqc.periodic_k_gdf as gdf
+    from vibeqc import _vibeqc_core as core
+    from tests.periodic_memory_contract import (
+        controlled_wedge_gdf_inventory, headline, wedge_cache_bytes,
+    )
+
+    # Declare planner/native inputs, retaining the real category arithmetic.
+    # This makes exact bytes portable without estimating from reported totals.
+    monkeypatch.setenv("VIBEQC_MEMORY_HEADROOM", "1.5")
+    monkeypatch.setenv("VIBEQC_VNE_EWALD3D_FT_CHUNK_MIB", "256")
+    monkeypatch.setattr(core, "get_num_threads", lambda: 2)
+    monkeypatch.setattr(core, "gdf_short_range_workspace_bytes", lambda *args: 80 * 1024**2)
+    monkeypatch.setattr(
+        lapack, "get_lapack_funcs",
+        lambda *args, **kwargs: (
+            SimpleNamespace(int_dtype=SimpleNamespace(itemsize=4)),
+            lambda *args, **kwargs: (32.0, 0, 64, 0),
+        ),
+    )
+    monkeypatch.setattr(
+        auxiliary, "_plan_range_separated_gdf_cutoffs",
+        lambda *args, **kwargs: SimpleNamespace(ke_cutoff=2.0),
+    )
+    oneel_calls = []
+
+    def controlled_oneel_admission(*args, **kwargs):
+        oneel_calls.append(True)
+        return SimpleNamespace(
+            cutoff_bohr=4.0, nuclear_cutoff_bohr=3.0, pair_complete_1e=False,
+        )
+
+    # The preflight uses the unscreened admission domain, not the later
+    # screened lattice domain. Keep this fixture on the actual sizing path.
+    monkeypatch.setattr(gdf, "_oneel_admission_opts", controlled_oneel_admission)
 
     system = _nacl_primitive()
     vq.attach_symmetry(system, symprec=1e-4)
@@ -2330,25 +2730,50 @@ def test_symmetry_reduce_k_preflight_charges_the_wedge():
     )
     full = _periodic_gdf_estimate(system, basis, **common)
     reduced = _periodic_gdf_estimate(system, basis, n_ibz_kpoints=8, **common)
+    assert len(oneel_calls) == 2, "controlled one-electron admission was bypassed"
     key = "GDF Lpq factor cache"
+    assert basis.nbasis == 33
+    assert auxiliary.make_aux_basis_set(
+        system.unit_cell_molecule(), aux_name="def2-svp-jk",
+    ).nbasis == 240
+    assert full.estimate.by_category[key] == wedge_cache_bytes(
+        33, 240, 64, exchange=True,
+    )
+    assert reduced.estimate.by_category[key] == wedge_cache_bytes(
+        33, 240, 64, exchange=True, bras=8,
+    )
+    assert "GDF dense AO-pair FT bundle" not in full.estimate.by_category
+    assert "GDF dense AO-pair FT bundle" not in reduced.estimate.by_category
     assert full.n_ibz_kpoints is None and reduced.n_ibz_kpoints == 8
     # The exchange wedge also retains the 56 other Hartree diagonals.
     assert full.estimate.by_category[key] / reduced.estimate.by_category[
         key
     ] == pytest.approx(64**2 / (8 * 64 + 56))
-    # Terms that do not reduce must not move.
-    assert (
-        reduced.estimate.by_category["GDF dense AO-pair FT bundle"]
-        == full.estimate.by_category["GDF dense AO-pair FT bundle"]
-    )
+    # Charge every 3D allocation independently: equality alone would miss a
+    # common omission. Only the exchange factor cache depends on the wedge.
+    a = 5.64 * 1.8897261254578281
+    for result, bras in ((full, None), (reduced, 8)):
+        expected = controlled_wedge_gdf_inventory(33, 240, a, bras=bras)
+        categories = result.estimate.by_category
+        for category, byte_count in expected.items():
+            assert category in categories, f"missing {category}"
+            assert categories[category] == byte_count, f"allocation {category}"
+        assert set(categories) == set(expected), "category inventory"
+        assert result.estimate.total_bytes == headline(expected), "headline headroom"
     # A pure functional has no n_k^2 exchange term, so the wedge is ignored
     # rather than under-charging a diagonal-only cache.
     pure = dict(common, method_upper="RKS", functional="pbe")
-    assert _periodic_gdf_estimate(
-        system, basis, n_ibz_kpoints=8, **pure
-    ).estimate.by_category[key] == _periodic_gdf_estimate(
-        system, basis, **pure
-    ).estimate.by_category[key]
+    pure_full = _periodic_gdf_estimate(system, basis, **pure)
+    pure_reduced = _periodic_gdf_estimate(system, basis, n_ibz_kpoints=8, **pure)
+    assert len(oneel_calls) == 4, "pure-functional admission was bypassed"
+    # This arm checks the diagonal cache and J-only workspace, not its XC sum.
+    for result in (pure_full, pure_reduced):
+        assert result.n_ibz_kpoints is None
+        assert result.estimate.by_category[key] == wedge_cache_bytes(
+            33, 240, 64, exchange=False,
+        ), "pure diagonal cache"
+        assert result.estimate.by_category["GDF contraction workspace"] == 1024**2
+    assert pure_full.estimate.by_category[key] == pure_reduced.estimate.by_category[key]
 
 
 @pytest.mark.slow
@@ -2580,3 +3005,56 @@ def test_k_parallel_exchange_workspace_is_shared(monkeypatch):
     assert teams == [nk]
     assert calls and all(minimum <= budget for budget, minimum in calls)
     assert max(budget for budget, _ in calls) * teams[0] <= cap
+
+
+@pytest.mark.parametrize("method", ["rhf", "rks"])
+@pytest.mark.parametrize("fit", ["compcell", "mdf"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_gamma_delegate_preserves_fit_controls(monkeypatch, method, fit, explicit):
+    """Capture actual public delegation before the target performs any work."""
+    import inspect
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from vibeqc import guess, pbc_gdf, periodic_k_gdf as driver
+
+    options = vq.PeriodicRHFOptions() if method == "rhf" else vq.PeriodicKSOptions()
+    options.initial_guess = vq.InitialGuess.HCORE
+    if method == "rks":
+        options.functional = "pbe"
+    system = SimpleNamespace(dim=3, multiplicity=1, n_electrons=lambda: 2,
+                             unit_cell=[SimpleNamespace(Z=2)], unit_cell_molecule=lambda: None)
+    basis = SimpleNamespace(nbasis=2)
+    monkeypatch.setattr(driver, "_gdf_density_return_finalizer", lambda *a: lambda result: result)
+    monkeypatch.setattr(driver, "_options_or_default", lambda opts, **k: opts)
+    monkeypatch.setattr(driver, "_coerce_periodic_driver_guess", lambda *a, **k: vq.InitialGuess.HCORE)
+    monkeypatch.setattr(driver, "periodic_guess_capabilities", lambda *a, **k: ())
+    monkeypatch.setattr(guess, "guess_ecp_context", lambda *a, **k: None)
+    monkeypatch.setattr(guess, "validate_guess_ecp", lambda *a, **k: None)
+    monkeypatch.setattr(driver, "_periodic_ecp_context", lambda *a: None)
+    monkeypatch.setattr(driver, "Functional", lambda *a: SimpleNamespace(is_external=False))
+    monkeypatch.setattr(driver, "_gamma_kmesh_info", lambda *a: SimpleNamespace())
+    monkeypatch.setattr(driver, "_gamma_restart_options", lambda *a: nullcontext())
+    monkeypatch.setattr(driver, "resolve_progress", lambda *a, **k: SimpleNamespace(info=lambda *a: None))
+    controls = dict(compcell_eta=.7, apply_aft_correction=False,
+                    aft_ft_convention="libcint", aft_precision=1e-7,
+                    rcut_strategy="flat", rcut_precision=1e-6)
+    signature = inspect.signature(pbc_gdf.run_pbc_gdf_rhf)
+    captured = {}
+    class Delegated(RuntimeError):
+        pass
+    def capture(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        captured.update(bound.arguments)
+        raise Delegated
+    monkeypatch.setattr(pbc_gdf, "run_pbc_gdf_rhf", capture)
+    run = getattr(driver, f"run_k{method}_periodic_gdf")
+    with pytest.raises(Delegated):
+        run(system, basis, (1, 1, 1), options, gdf_method=fit,
+            **(controls if explicit else {}))
+    for name, value in controls.items():
+        assert captured[name] == (value if explicit else signature.parameters[name].default)
+    assert captured["gdf_method"] == fit
+    assert captured["functional"] == ("pbe" if method == "rks" else None)
+    assert captured["options"] is options
+    assert captured["exxdiv"] == "ewald"

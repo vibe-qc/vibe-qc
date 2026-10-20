@@ -127,9 +127,9 @@ struct GridOptions {
     // ---- Angular grid selector ----
     //
     // ``Lebedev`` uses a Lebedev-Laikov rule of order ``lebedev_order``
-    // — 5/7/11/15/17/23/27/29/31/35/41/47/53 map to
-    // 14/26/50/86/110/194/266/302/350/434/590/770/974 points per radial
-    // shell. Bundled tables live in ``cpp/src/lebedev_data.cpp``
+    // — 5/7/11/15/17/23/27/29/31/35/41/47/53/59/65/77/95 map to
+    // 14/26/50/86/110/194/266/302/350/434/590/770/974/1202/1454/2030/3074
+    // points per radial shell. Bundled tables live in ``cpp/src/lebedev_data.cpp``
     // (Lebedev 1976; Laikov & Lebedev 1999). Order 29 (302 pts) is the
     // PySCF level-3 default for first-row atoms; order 35 (434 pts) for
     // heavier elements; order 41 for level-5 "tight".
@@ -262,6 +262,8 @@ inline constexpr int kMolecularXcGridMaxWorkers = 64;
 inline constexpr int kMolecularXcKernelMaxWorkers = 16;
 
 Grid build_grid(const Molecule& mol, const GridOptions& opts = {});
+// Shared coarse VV10 quadrature; call only for a finite positive factor.
+Grid build_vv10_grid(const Molecule& mol, const GridOptions& opts);
 
 // Exact number of raw atom-grid points owned by each atom, in molecule order,
 // without constructing coordinates, Becke partitions, or AO tables. This is

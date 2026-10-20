@@ -11,7 +11,89 @@ small-basis cost.
 This chapter documents the v0.9.0 composite surface: the seven
 registered recipes, their current availability status, the
 `vq.compute_gcp` standalone API, and the contribution pathway for
-extending coverage to new bases / elements.
+extending coverage to new bases / elements. All seven recipes are
+production routes for molecular energies and gradients (the
+[recipe catalogue](#recipe-catalogue) marks each `RUNNABLE`); the label
+vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Theory
+
+A composite method is a fixed sum of four terms evaluated on one
+geometry,
+
+$$
+E_{\rm 3c} = E_{\rm SCF}[\text{functional}, \text{basis}]
+  + E_{\rm disp} + E_{\rm gCP} + E_{\rm SRB},
+$$
+
+in which the small basis buys speed and the three corrections repair
+the errors that a small basis and a semilocal functional are known to
+make. The dispersion term is D3(BJ) or D4 with damping parameters fitted
+for that functional-basis pair (and, for PBEh-3c and HSE-3c, the
+three-body Axilrod-Teller-Muto term; see the note below), exactly as
+documented for the standalone corrections on the
+[molecules](molecules.md) page. The other two terms are specific to the
+3c family.
+
+**Geometric counterpoise (gCP).** A small basis over-binds every
+intermolecular and intramolecular contact through basis-set
+superposition error: each fragment borrows the partner's functions to
+lower its own energy. Kruse and Grimme ({vibeqc-cite}`kruse_grimme_gcp_2012`)
+replaced the counterpoise correction, which needs one ghost-basis
+calculation per fragment and is undefined inside a molecule, by a
+pairwise atomic model of the same quantity,
+
+$$
+E_{\rm gCP} = \sigma \sum_a \sum_{b \neq a}
+  \frac{ e^{-\alpha R_{ab}^{\beta}}\; e_a^{\rm MIS} }
+       { \sqrt{ N_b^{\rm virt}\, S_{ab} } }.
+$$
+
+$e_a^{\rm MIS}$ is the *missing* energy of atom $a$ in the target basis
+(the atomic energy in that basis minus the near-complete-basis value,
+always negative), so the correction is largest for the atoms the basis
+describes worst; $N_b^{\rm virt}$ is the number of virtual functions the
+partner atom can lend; $S_{ab}$ is a 1s-Slater overlap between the two
+atoms that switches the borrowing off as they separate; and
+$(\sigma, \alpha, \beta)$, together with an exponent $\eta$ on the
+overlap, are fitted once per (method, basis) pair against counterpoise
+energies. $E_{\rm gCP}$ is always positive: it removes over-binding,
+and its gradient is analytic (`compute_gcp(..., with_gradient=True)`).
+It corrects the energy, not the wavefunction; the basis stays small and
+the orbitals stay uncorrected.
+
+**Short-range bond correction (SRB).** A minimal or small split-valence
+basis also gets covalent bond lengths systematically wrong, because
+the electron density between two nuclei is under-described. HF-3c and
+B97-3c add a pairwise, purely geometric term that pulls bonds in,
+
+$$
+E_{\rm SRB} = -q\, \sum_{A<B} (Z_A Z_B)^{p}\, \exp\!\bigl(-\gamma_{AB}\, R_{AB}\bigr),
+$$
+
+with $p = 3/2$ and $\gamma_{AB} = 0.7\, (r^{0}_{AB})^{0.75}$ for HF-3c
+(elements H to Ar only) and $p = 1/2$ and
+$\gamma_{AB} = 10 / r^{0}_{AB}$ for B97-3c (all elements), where
+$r^{0}_{AB}$ is the D3 cutoff radius of the pair and $q$ is a fitted
+prefactor (0.03 and 0.08). The two forms are genuinely different and
+vibe-qc carries both from the reference `gcp` code; before v0.10.4 a
+single form was used for both recipes and over-bound HF-3c water by a
+factor of two. The SRB term is binding, short-ranged (it is negligible
+beyond a bond length) and has no effect on noncovalent energetics.
+
+**Where it helps and where it fails.** A 3c recipe gives the geometry
+and interaction-energy quality of its parent functional in a
+triple-zeta basis at a fraction of the cost, which is what makes
+r²SCAN-3c a good default for molecular optimisations and conformer
+searches. Its terms are fitted as a package: change the basis, drop a
+correction, or swap the dispersion model and the recipe no longer
+holds, which is why `run_job(method="hf-3c")` supplies its own basis
+(an explicit `basis=` overrides it and is then a different, unfitted
+method) and why the constants are selected per (method, basis) rather
+than per basis alone. Absolute energies carry the small-basis error and
+are not comparable with a triple-zeta calculation; only differences
+are.
 
 ## Quick start
 

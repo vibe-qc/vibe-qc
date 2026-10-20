@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "sto-3g",
+  "description": "Basis set: sto-3g\nsto-3g: libint's own file, element data unchanged, followed\nby the Xe block(s) from the Basis Set Exchange. libint\nomits these because they were added to the set by a later and\nseparate publication, not because the data is in doubt:\n  Xe: W. J. Pietro, E. S. Blurock, R. F. Hout, W. J. Hehre, Inorg. Chem. 20, 3650 (1981); DOI: 10.1021/ic50225a013\nFetched from the basis-set-exchange distribution, catalogue\n  version 0.12, on 2026-09-10. No network access involved.\nLicense: numerical parameter data from published scientific\n  papers; see docs/license.md section 3a.\n STO-3G  EMSL  Basis Set Exchange Library   12/2/14 1:44 PM\nElements                             References\n H - Ne: W.J. Hehre, R.F. Stewart and J.A. Pople, J. Chem. Phys. 2657 (1969).\nNa - Ar: W.J. Hehre, R. Ditchfield, R.F. Stewart, J.A. Pople,\n         J. Chem. Phys.  2769 (1970).\nK,Ca - : W.J. Pietro, B.A. Levy, W.J. Hehre and R.F. Stewart,\nGa - Kr: J. Am. Chem. Soc. 19, 2225 (1980).\nSc - Zn: W.J. Pietro and W.J. Hehre, J. Comp. Chem. 4, 241 (1983) + Gaussian.\n Y - Cd: W.J. Pietro and W.J. Hehre, J. Comp. Chem. 4, 241 (1983). + Gaussian",
   "role": "orbital",
   "elements": {
     "H": {
@@ -7305,7 +7305,46 @@
       ]
     }
   },
+  "basis_family": "sto",
+  "references": [
+    {
+      "key": "hehre_sto_ng_1969",
+      "description": "W. J. Hehre, R. F. Stewart, J. A. Pople, Journal of Chemical Physics 51, 2657-2664 (1969)",
+      "doi": "10.1063/1.1672392"
+    },
+    {
+      "key": "pietro_sto3g_heavy_1981",
+      "description": "W. J. Pietro, E. S. Blurock, R. F. Hout, W. J. Hehre, D. J. DeFrees, J. J. P. Stewart, Inorganic Chemistry 20, 3650-3654 (1981)",
+      "doi": "10.1021/ic50225a013"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "sto-3g",
+        "detail": "libint's element blocks, unchanged"
+      },
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "sto-3g",
+        "detail": "element blocks libint omits, merged as reviewed imports"
+      }
+    ],
+    "retrieval_date": "2026-09-10",
+    "content_sha256": "b928ad87c4bb8eb21a55f4c24d74db380118002e396eb40b4d81aa82b0c8dc69",
+    "citations": [
+      {
+        "keys": [
+          "hehre_sto_ng_1969",
+          "pietro_sto3g_heavy_1981"
+        ]
+      }
+    ]
   }
 }

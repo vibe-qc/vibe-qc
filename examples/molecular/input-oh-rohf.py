@@ -1,4 +1,4 @@
-"""Restricted open-shell HF (ROHF) single-point on the OH radical (doublet).
+"""Restricted open-shell HF (ROHF) single-point on the OH radical (doublet) at 6-31G*.
 
 Run:
     .venv/bin/python input-oh-rohf.py

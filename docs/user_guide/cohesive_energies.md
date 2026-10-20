@@ -28,6 +28,9 @@ computes a number is configuration rather than structure:
 | Fallback, Gaussian | `Crystal23Engine` | `vibe_basis.engines.crystal23` |
 | Fallback, plane wave | `GpawEngine` | `vibe_basis.engines.gpaw` (declared, not built) |
 
+The Gaussian fallback is CRYSTAL23 (A. Erba et al., *J. Chem. Theory Comput.*
+**19**, 6891 (2023), doi:10.1021/acs.jctc.2c00958).
+
 **vibe-qc is the engine. The external ones are fallbacks and
 cross-checks.** They exist to unblock work whose vibe-qc capability has
 not landed, and to give an *independent* second opinion: agreement
@@ -79,7 +82,8 @@ Three of them will bite a first campaign if taken at face value:
   k-point unless you say otherwise. That is enough to check the wiring
   and far too coarse for a production number. Pass a converged mesh with
   `VibeQcEngine(kpoints=...)`.
-- **BIPOLE, not GDF.** GDF needs an auxiliary fitting basis, and a
+- **BIPOLE, not GDF.** GDF ({vibeqc-cite}`sun_berkelbach_gdf_2017`) needs
+  an auxiliary fitting basis, and a
   freshly emitted candidate basis has none registered. Borrowing another
   basis's JKFIT set would lay a fitting error on top of the
   basis-incompleteness signal the objective exists to measure, so the
@@ -100,7 +104,9 @@ phonon path and records a skipped stage.
 
 Three things to know before quoting a number from it.
 
-**It is a Gamma-only ZPE, which is an approximation for a solid.** It
+**It is a Gamma-only ZPE, which is an approximation for a solid.** The
+harmonic estimate is $E_{\rm ZPE} = \tfrac12\sum_i \hbar\omega_i$ over the
+Gamma normal modes ({vibeqc-cite}`wilson_decius_cross_1955`). It
 samples one q-point and therefore misses the dispersion of the acoustic
 branches away from Gamma entirely. It is the standard cheap estimate and
 it is the right size; it is not a converged thermodynamic quantity.
@@ -109,7 +115,10 @@ Phonon-dispersion ZPE (supercell or q-mesh) is not implemented.
 
 **The Hessian is built from total energies, not from forces.** On the
 GAPW route, `vibeqc.periodic_gapw_phonon` differences the analytic GAPW
-force, which is production there. On the BIPOLE route the analytic
+force ({vibeqc-cite}`lippert_hutter_parrinello_gapw_1999`). That route is a
+preview: it samples the Gamma point only and rests on GAPW forces, and GAPW itself is an experimental family (see
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)),
+so it is not a production ZPE. On the BIPOLE route the analytic
 gradient is a research-preview surface (see `vibeqc.bipole_optimize`) and
 the production force is *itself* a finite difference, so differencing it
 again would stack two FD layers. Central differences of the energy are
@@ -173,8 +182,8 @@ campaign is trying to resolve.
 Every free-atom deck in the pob cohesive-energy reference set uses
 CRYSTAL's `ATOMBSSE`, meaning the atom is computed **in the ghost basis
 of its own crystal** rather than bare. The published numbers are
-therefore counterpoise corrected, and a cohesive energy assembled from
-bare atoms is not the same quantity.
+therefore counterpoise corrected ({vibeqc-cite}`boys_bernardi_1970`), and a
+cohesive energy assembled from bare atoms is not the same quantity.
 
 ```python
 # doc-audit: skip
@@ -191,9 +200,8 @@ compare against a corrected reference.
 Two consequences:
 
 - **It is off by default**, and `CohesiveResult.counterpoise_applied`
-  records which you got. An engine that cannot do it (currently
-  `VibeQcEngine`) produces a recorded skipped stage rather than quietly
-  falling back to bare atoms.
+  records which you got. An engine that cannot do it produces a recorded
+  skipped stage rather than quietly falling back to bare atoms.
 - **Counterpoise atoms are not shared across systems.** A bare oxygen is
   the same calculation for MgO and CaO, so the cache computes it once. A
   counterpoise oxygen is computed in *its own host's* ghost basis, so
@@ -202,10 +210,41 @@ Two consequences:
   affordable, so use it for reference comparison rather than for every
   point of an optimisation.
 
-`nstar` and `rmax` control how far the ghost shell extends. The
-reference set uses per-system converged values (LiF `30 / 10.0`, MgO
-`10 / 5.0`), so treat `Crystal23Engine`'s defaults as a starting point
-to converge rather than a setting to trust.
+Both engines build the cluster the way the CRYSTAL23 manual defines
+`ATOMBSSE IAT NSTAR RMAX`. The real atom is the first atom of the element
+in the cell. It keeps the basis functions of every neighbour that lies in
+the first `NSTAR` stars **and** closer than `RMAX` angstrom. A star is a set
+of neighbours related by the site symmetry of the atom, so two stars can
+share a distance. In rocksalt the six neighbours at $(a/2)(3,0,0)$ and the
+24 at $(a/2)(2,2,1)$ are equally far away but count as two stars.
+
+`VibeQcEngine` computes the cluster as a molecule. The real atom keeps its
+nuclear charge and electrons, and every neighbour becomes a ghost centre
+with $Z = 0$ that carries its element's basis functions. The engine first
+computes the bare atom and starts the cluster SCF from its density, so
+both land in the same electronic state. The ghost basis contains the bare
+one, so the cluster energy cannot be higher in the same state. A cluster
+energy above the bare one is returned as the failure
+`counterpoise_above_bare` rather than as a negative superposition error.
+The record in `EngineEnergy.detail` carries the cluster, the bare energy
+and their difference:
+
+```python
+# doc-audit: skip
+engine = VibeQcEngine(kpoints=(4, 4, 4), bsse_nstar=10, bsse_rmax=5.0)
+atom = engine.atom_energy(basis_text, 8, method="pbe", host=structure)
+atom.detail["cluster"]["n_ghost"]    # 56 neighbours around O in MgO
+atom.detail["bsse_hartree"]          # bare minus counterpoise, >= 0
+```
+
+`bsse_nstar` and `bsse_rmax` on `VibeQcEngine`, like `Crystal23Engine`'s
+fields of the same names, control how far the ghost shell extends. Both
+engines default to `30 / 10.0`. The reference set uses per-system
+converged values (LiF `30 / 10.0`, MgO `10 / 5.0`), so treat the defaults
+as a starting point to converge rather than a setting to trust. The cost
+is set by the cluster: about 56 neighbours for MgO at `10 / 5.0`, but 484
+for LiF at `30 / 10.0`, each carrying its full basis in one molecular SCF.
+The method is that of {vibeqc-cite}`vilela_oliveira_pob_rev2_2019`.
 
 ### Failures are returned, not raised
 

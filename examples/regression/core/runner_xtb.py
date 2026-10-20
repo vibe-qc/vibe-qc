@@ -4,12 +4,14 @@ Invokes the ``xtb`` binary (Grimme group, https://github.com/grimme-lab/xtb)
 as a subprocess, parses its output, and returns a :class:`CodeRow`.  Follows
 the same out-of-process pattern as ``runner_pyscf.py`` (CLAUDE.md §10).
 
-``xtb`` must be on ``$PATH``.  On Linux install via conda-forge::
+``xtb`` must be on ``$PATH`` or named by ``VIBEQC_XTB_BINARY``.  On Linux
+install via conda-forge::
 
     conda install -c conda-forge xtb
 
-On macOS, xTB has no pre-built binary — use a Linux CI runner or a
-conda environment on a Linux workstation.
+On macOS there is no pre-built binary; building xtb from the upstream source
+(meson + ninja, a few minutes) gives a working oracle, and the pinned values
+below were regenerated with such a build.
 
 Usage as a standalone reference-energy oracle::
 
@@ -53,17 +55,20 @@ _REFERENCE_ENERGIES_GFN2 = {
     "O": -3.900936,  # ³P, unrestricted (triplet)
     "F": -5.499780,  # ²P, unrestricted (doublet)
     "Ne": -0.0,  # noble — no valence
-    # Molecules (ångström geometry) — REGENERATION NEEDED on a Linux host.
-    # Current values are STALE: they were generated with xtb reading the
-    # old bohr-labeled XYZ as ångström, i.e. at ~1.89× the intended distances.
-    # The H2 value is repinned from the ASCENT external-parity task below.
-    "H2": -0.982017,  # R=0.740848 Å (=1.4 bohr), live xtb GFN2 2026-08-05
-                       # (vibe-qc gap: +14.6 mEh, pre-dispersion electronic model)
-    "H2O": -5.070374,  # Live xtb GFN2 2026-08-05 at _water() geometry (OH=0.958 Å)
-    "CH4": -4.182964,  # STALE — was C-H=1.155 Å; correct ref for C-H=0.611 Å needed
-    "NH3": -3.288569,  # STALE — was N-H≈1.91 Å; correct ref for N-H≈1.01 Å needed
-    "CO2": -7.788907,  # STALE — was C-O=2.196 Å; correct ref for C-O=1.162 Å needed
-    "C2H4": -5.585929,  # STALE — was C=C=2.5 Å; correct ref for C=C=1.323 Å needed
+    # Molecules (ångström geometry). Regenerated 2026-10-11 with a live
+    # xtb 6.7.0 (edcfbbe) GFN2 run at --acc 1.0 on the _GEOMETRIES_XYZ below;
+    # the totals at --acc 0.0001 agree to the printed 1e-12 Eh. H2 and H2O
+    # reproduce the earlier 2026-08-05 live values exactly. The pre-2026-10-11
+    # CH4/NH3/CO2/C2H4 entries had been generated with xtb reading the old
+    # bohr-labeled XYZ as ångström (~1.89x the intended distances) and were
+    # marked STALE; tests/data/gfn2_xtb_parity_xtb670.json carries the same
+    # runs channel by channel, together with 43 further systems.
+    "H2": -0.982017,  # R=0.740848 Å (=1.4 bohr)
+    "H2O": -5.070374,  # _water() geometry (OH=0.958 Å)
+    "CH4": -4.173665,  # C-H = 1.058 Å (tetrahedral, 0.611041 Å per axis)
+    "NH3": -4.426085,  # N-H = 1.015 Å
+    "CO2": -10.307025,  # C-O = 1.162073 Å
+    "C2H4": -6.270881,  # C=C = 1.322943 Å, C-H = 1.076 Å
     # NOTE: the heavy single atoms added to _GEOMETRIES_XYZ below (Ge…Lu) are
     # deliberately absent here — xtb has no macOS binary and is not installed in
     # this dev environment, so their reference energies must be generated on a
@@ -261,6 +266,30 @@ def _run_xtb(
         return _run_in(Path(tmp))
 
 
+# Energy channels of the GFN2 summary block, as xtb prints them::
+#
+#     :: SCC energy                -5.105290151795 Eh    ::
+#     :: -> isotropic ES            0.031401556404 Eh    ::
+#     :: -> anisotropic ES          0.000596026439 Eh    ::
+#     :: -> anisotropic XC         -0.000834581477 Eh    ::
+#     :: -> dispersion             -0.000141212916 Eh    ::
+#     :: repulsion energy           0.034916588635 Eh    ::
+#
+# "SCC energy" is the whole electronic energy including the self-consistent
+# D4 term, so total = scc_energy + repulsion, and the H0 band plus third-order
+# remainder is scc_energy - isotropic_es - anisotropic_es - anisotropic_xc -
+# dispersion. The keys below name the parsed-result entries.
+_XTB_ENERGY_CHANNELS = (
+    ("total energy", "energy"),
+    ("SCC energy", "scc_energy"),
+    ("-> isotropic ES", "isotropic_es"),
+    ("-> anisotropic ES", "anisotropic_es"),
+    ("-> anisotropic XC", "anisotropic_xc"),
+    ("-> dispersion", "dispersion"),
+    ("repulsion energy", "repulsion"),
+)
+
+
 def _parse_xtb_output(stdout: str, stderr: str) -> dict:
     """Parse xTB's text output into a result dict."""
     out: dict = {"converged": False}
@@ -269,28 +298,44 @@ def _parse_xtb_output(stdout: str, stderr: str) -> dict:
         line_stripped = line.strip()
 
         # Total energy line: "   * total energy  :   -5.070488964533 Eh"
+        # (the summary-block form ":: total energy  -5.07 Eh  ::" ends in a
+        # colon pair, so the last field may be empty; the channel loop below
+        # reads that form).
         if "total energy" in line_stripped.lower() and ":" in line_stripped:
             parts = line_stripped.split(":")
-            if len(parts) >= 2:
-                token = parts[-1].strip().split()[0]
+            tokens = parts[-1].strip().split() if len(parts) >= 2 else []
+            if tokens:
                 try:
-                    out["energy"] = float(token)
+                    out["energy"] = float(tokens[0])
                 except ValueError:
                     pass
+
+        # Per-channel energies of the summary block (see _XTB_ENERGY_CHANNELS).
+        # The lines are "::  <label>  <value> Eh  ::"; the value is the first
+        # token after the label.
+        for label, key in _XTB_ENERGY_CHANNELS:
+            if line_stripped.startswith("::") and label in line_stripped:
+                tail = line_stripped.split(label, 1)[1].split()
+                if tail:
+                    try:
+                        out[key] = float(tail[0])
+                    except ValueError:
+                        pass
+                break
 
         # Gradient norm
         if "gradient norm" in line_stripped.lower() and ":" in line_stripped:
             parts = line_stripped.split(":")
-            if len(parts) >= 2:
-                token = parts[-1].strip().split()[0]
+            tokens = parts[-1].strip().split() if len(parts) >= 2 else []
+            if tokens:
                 try:
-                    out["gradient_norm"] = float(token)
+                    out["gradient_norm"] = float(tokens[0])
                 except ValueError:
                     pass
 
-        # HOMO/LUMO gap
-        if "HOMO-LUMO gap" in line_stripped and "/" in line_stripped:
-            # "   -> HOMO-LUMO gap   8.234 / eV"
+        # HOMO/LUMO gap: "   -> HOMO-LUMO gap   8.234 / eV" (older xtb) or
+        # ":: HOMO-LUMO gap   14.626862358737 eV    ::" (xtb 6.7 summary).
+        if "HOMO-LUMO gap" in line_stripped:
             parts = line_stripped.split()
             for i, w in enumerate(parts):
                 if w == "gap" and i + 1 < len(parts):
@@ -299,8 +344,12 @@ def _parse_xtb_output(stdout: str, stderr: str) -> dict:
                     except ValueError:
                         pass
 
-        # SCF convergence
-        if "converged" in line_stripped.lower() and "scf" in line_stripped.lower():
+        # SCF convergence: "SCF converged in 3 cycles" (older xtb) or
+        # "*** convergence criteria satisfied after 10 iterations ***" (6.7).
+        lowered = line_stripped.lower()
+        if ("converged" in lowered and "scf" in lowered) or (
+            "convergence criteria satisfied" in lowered
+        ):
             out["converged"] = True
             # Try to extract iteration count
             for w in line_stripped.split():
