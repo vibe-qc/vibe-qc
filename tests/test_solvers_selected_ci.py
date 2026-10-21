@@ -131,10 +131,16 @@ def test_default_ladder_is_energy_monotone_and_reaches_the_casci_oracle():
 
 # N2/cc-pVDZ CAS(6e,6o) seniority-zero (DOCI) energy over all C(6,3) = 20
 # closed-shell determinants, computed from the exact in-repo oracle
-# (build_hamiltonian_matrix_unrestricted over ((occ), (occ)) SpinDets) at
-# main f15db2d79, HF orbitals, OMP_NUM_THREADS=2; 36.7 mHa above the CASCI
-# value -109.0217750033 Ha because every omitted configuration is open-shell.
-N2_CAS66_DOCI_E = -108.9850687702
+# (build_hamiltonian_matrix_unrestricted over ((occ), (occ)) SpinDets) on
+# the provider's canonical-frame HF orbitals (#322): 22.5 mHa above this
+# deck's CASCI value -109.0219049828 Ha because every omitted configuration
+# is open-shell. Re-measured 2026-09-30: the previous literal
+# (-108.9850687702, main f15db2d79) was the seniority-zero energy in the
+# eigensolver's arbitrary frame inside the degenerate 1pi_u/1pi_g pairs,
+# which differs by up to 16 mHa between hosts; the frame is now fixed by
+# get_hf_orbital_provider (tests/test_orbital_frame.py), and CASCI, which
+# is frame-invariant, is unchanged.
+N2_CAS66_DOCI_E = -108.9994509922
 N2_CAS66_DOCI_NDET = 20
 
 
@@ -149,7 +155,7 @@ def test_spin_restricted_ladder_reports_exhaustion_not_convergence():
     them reaches the DOCI energy and stops on ``target_size``; a budget the
     pool cannot fill is reported ``space_exhausted`` and NOT converged: the
     closed subspace cannot certify the open-shell configurations it omits
-    (36.7 mHa here against CASCI).
+    (22.5 mHa here against CASCI, in the canonical orbital frame).
 
     Before #639 the pair-move coupling was scored with the Brillouin formula
     and the ladder froze at ndet=6 and -108.9594672752 Ha at every budget.
@@ -467,17 +473,23 @@ def test_spin_restricted_run_warns_that_the_cas_limit_is_unreachable(
     stops at the seniority-zero (DOCI) energy, not the CAS energy.
 
     Measured on N2/cc-pVDZ CAS(6e,6o), this deck: the restricted ladder
-    fills its 20-determinant seniority-zero space at E = -108.9850687702 Ha
-    (pre-#639 it froze at ndet=6, -108.9594672752 Ha), while the default
-    reaches ndet=96 and E = -109.0217750033 Ha, the CASCI oracle.  With the
-    default ``conv_tol_energy=1e-6`` the last admissions move the energy by
-    2.5e-7 Ha, so the run stops on the ``energy`` criterion and is
-    ``converged=True`` -- honestly: the energy converged within the space it
-    was asked to search.  The warning must still fire, because 20 < 400
-    determinants were spent, and it must say that the limit reached is the
-    DOCI energy, not the CAS energy.  (The exhausted-pool variant, which
-    forces ``conv_tol_energy=0`` and is reported ``converged=False`` with
-    ``stop_reason="space_exhausted"``, is pinned at the solver level in
+    climbs its 20-determinant seniority-zero space toward the DOCI energy
+    -108.9994363827 Ha (pre-#639 it froze at ndet=6, -108.9594672752 Ha),
+    while the default reaches ndet=96 and E = -109.0217750033 Ha, the CASCI
+    oracle.  With the default ``conv_tol_energy=1e-6`` the last admissions
+    move the energy by less than that, so the run stops on the ``energy``
+    criterion and is ``converged=True`` -- honestly: the energy converged
+    within the space it was asked to search.  Which admission trips the
+    criterion depends on the orbital frame: in the eigensolver's arbitrary
+    pi frame it was the 20th determinant (2.5e-7 Ha), in the canonical
+    frame fixed since #322 the 19th, so the run energy is the DOCI energy
+    to ``conv_tol_energy``, never below it, and the count the warning
+    names is the run's own.  The warning must still fire, because fewer
+    than 400 determinants were spent, and it must say that the limit
+    reached is the DOCI energy, not the CAS energy.  (The exhausted-pool
+    variant, which forces ``conv_tol_energy=0`` and is reported
+    ``converged=False`` with ``stop_reason="space_exhausted"``, is pinned at
+    the solver level in
     ``test_spin_restricted_ladder_reports_exhaustion_not_convergence``.)
     """
     from vibeqc import run_job
@@ -500,23 +512,35 @@ def test_spin_restricted_run_warns_that_the_cas_limit_is_unreachable(
     out = (tmp_path / "restricted.out").read_text()
 
     # Behaviour first: the closed-shell ladder converged on energy at its
-    # DOCI limit, 36.7 mHa above the CAS energy it cannot represent.
+    # DOCI limit, 22.3 mHa above the CAS energy it cannot represent.
     assert r.converged is True
     assert r.stop_reason == "energy"
     assert "Converged:         True" in out
     assert "Stop reason:       energy" in out
-    # ... then the warning that explains why that is not the CAS energy.
-    assert "spin-restricted selected-CI stopped on 20 determinants" in out
+    # ... then the warning that explains why that is not the CAS energy. It
+    # names the run's own count: at most the 20 seniority-zero determinants,
+    # fewer when the energy criterion trips before the last admission.
+    n_spent = len(r.ci_labels)
+    assert n_spent <= 20
+    assert f"spin-restricted selected-CI stopped on {n_spent} determinants" in out
     # The seniority-zero space of CAS(6e,6o) is C(6,3) = 20 determinants --
     # the number the user needs in order to see that the run spanned the
     # whole closed-shell subspace, not 20 of the 400-determinant CAS.
     assert "20 closed-shell (seniority-zero) determinants" in out
     assert "seniority-zero (DOCI) energy" in out
+    # ... which is defined only on a stated orbital frame (#322).
+    assert "canonical frame" in out
     assert "spin_restricted=False" in out
     # ... and the energy it stopped at is this deck's DOCI energy: the exact
     # seniority-zero oracle (the unrestricted builder over every closed-shell
     # determinant written as ((occ), (occ))) for the same 2.074 bohr geometry
-    # and CAS(6e,6o); -108.991293194112 Ha, measured bit-identical.
+    # and CAS(6e,6o) on the provider's canonical-frame orbitals. The oracle
+    # checks the solver against the Hamiltonian it was given; the literal
+    # below checks the frame. Re-measured 2026-09-30 (#322): the previous
+    # literal, -108.991293194112 Ha, was one host's arbitrary frame inside
+    # the degenerate pi pairs (this host gave -108.9896767157, a second
+    # fleet host -108.9831813897); the canonical frame is a function of the
+    # deck.
     from vibeqc.solvers import (
         build_hamiltonian_matrix_unrestricted,
         build_hamiltonian_mo,
@@ -530,8 +554,11 @@ def test_spin_restricted_run_warns_that_the_cas_limit_is_unreachable(
     assert len(cs) == 20
     H_doci = build_hamiltonian_matrix_unrestricted([(d, d) for d in cs], H.h1e, H.h2e)
     e_doci = float(np.linalg.eigvalsh(H_doci)[0]) + H.nuclear_repulsion
-    assert r.energy == pytest.approx(e_doci, abs=1e-9)
-    assert e_doci == pytest.approx(-108.991293194112, abs=1e-8)
+    # The run stopped on its energy criterion, so it sits within that
+    # tolerance above the exact seniority-zero limit -- and, being a
+    # variational energy over a subset of that space, never below it.
+    assert e_doci - 1e-10 <= r.energy <= e_doci + SelectedCIOptions().conv_tol_energy
+    assert e_doci == pytest.approx(-108.9994363827, abs=1e-8)
 
 
 def test_default_run_does_not_warn_and_reaches_casci(tmp_path, monkeypatch):

@@ -11,7 +11,11 @@ from vibeqc._vibeqc_core import semiempirical as _se
 
 _CHAIN_LENGTH = 4.1
 _CUTOFF = 60.0
-_MESH_SIZES = (4, 8, 12)
+# #478 (the Wolfsberg-Helmholz hopping without the duplicated 1/2) widened
+# this chain's bands, so the exponential k-convergence sets in on denser
+# meshes: on (4, 8, 12) the 8/4 error ratio was 0.036 at T=0 and 0.41 at
+# T=0.05. The gates below are unchanged; the sequence moved (#561).
+_MESH_SIZES = (8, 16, 24)
 
 
 def _hli_chain() -> PeriodicSystem:
@@ -67,26 +71,21 @@ def _mesh_value(parameters, method: str, mesh_size: int, temperature: float) -> 
 
 @pytest.mark.parametrize(
     ("method", "temperature", "dense_limit"),
-    # Independent 24-point values for the fixed chain above, all taken at a
-    # fixed 60-bohr lattice cutoff.  The 48-point values agree with them to
-    # better than 2e-15 Ha, so they are converged in the k-mesh, which is the
-    # only axis this test measures.
+    # Independent 96-point values for the fixed chain above, all taken at a
+    # fixed 60-bohr lattice cutoff, re-measured after #478 (#561).  The
+    # 48-point values agree with them to better than 2e-15 Ha, so they are
+    # converged in the k-mesh, which is the only axis this test measures.
     #
-    # They are deliberately NOT infinite-cutoff limits.  The two DFTB0 rows do
-    # happen to be cutoff-saturated (unchanged to 1e-16 from 60 out to 2560
-    # bohr), but SCC-DFTB still carries 35.4 microhartree (T=0) and 9.4
-    # microhartree (T=0.05) of cutoff error against its leading-1/R^2 limit.
-    # The cutoff-free SCC-DFTB T=0 value is -0.107889099350429 Ha and lives in
-    # tests/test_ccm_semiempirical.py, which is where a supercell-convergence
-    # test needs it.  Conflating the two is what issue #312 was filed about.
+    # They are deliberately NOT infinite-cutoff limits: SCC-DFTB still carries
+    # lattice-cutoff error against its leading-1/R^2 limit, and a cutoff-free
+    # value belongs with the supercell-convergence tests in
+    # tests/test_ccm_semiempirical.py.  Conflating the two is what issue #312
+    # was filed about.
     [
-        ("dftb0", 0.0, -0.129238654463388),
-        # Re-pinned 2026-09-07 (D1/#425): the periodic SCC-DFTB gamma is the
-        # Ewald-split Elstner form, so the dense limit moved. Measured on a
-        # 48-point mesh, where the 12-point error is already 1.5e-09.
-        ("scc_dftb", 0.0, -0.107171439016323),
-        ("dftb0", 0.05, -0.201731944060102),
-        ("scc_dftb", 0.05, -0.197570260683130),
+        ("dftb0", 0.0, -0.0971296477811251),
+        ("scc_dftb", 0.0, -0.08824376448128257),
+        ("dftb0", 0.05, -0.12201502592535109),
+        ("scc_dftb", 0.05, -0.11557743948151629),
     ],
 )
 def test_even_kmesh_sequence_converges_to_dense_limit(
@@ -105,9 +104,7 @@ def test_even_kmesh_sequence_converges_to_dense_limit(
 
     assert errors[1] < 0.01 * errors[0]
     assert errors[2] < 0.02 * errors[1]
-    # Absolute backstop behind the relative gates above.  Moving the fixture
-    # from a 12-bohr to a 60-bohr cutoff (issue #312) raised the two T=0
-    # residuals to 1.76e-9 and 1.67e-9 Ha, which left the historical 2.0e-9
-    # bound only ~1.1x headroom; 2.5e-9 restores ~1.4x.  The T=0.05 rows sit
-    # near 1e-14 and are unaffected.
+    # Absolute backstop behind the relative gates above (2.5e-9 since issue
+    # #312).  Measured on the 24-point mesh after #478: 1.5e-13 and 1.2e-12 Ha
+    # at T=0, 6.0e-10 and 1.1e-9 Ha at T=0.05.
     assert errors[2] < 2.5e-9

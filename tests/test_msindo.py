@@ -747,7 +747,7 @@ def test_tetrazine_recovers_diis_cycle_via_strict_wicht_seed():
     blocks, nsto = msindo._atom_blocks(Z)
     H, G = msindo._build_core_and_gamma(Z, coords_bohr, blocks, nsto)
     nocc = sum(msindo.eff_core_charge(z) for z in Z) // 2
-    _P, _F, _e, _eps, cold_converged, cold_iter = msindo._scf_rhf(
+    _P, _F, cold_e, _eps, cold_converged, cold_iter = msindo._scf_rhf(
         H, G, blocks, Z, nocc, max_iter=200, conv_tol=1e-9
     )
 
@@ -755,9 +755,20 @@ def test_tetrazine_recovers_diis_cycle_via_strict_wicht_seed():
     final_fock = msindo._build_fock(H, G, result.density, blocks, Z)
     commutator = final_fock @ result.density - result.density @ final_fock
 
-    assert not cold_converged
-    assert cold_iter == 200
+    # Whether this pure-numpy cold Hcore/DIIS trajectory settles within 200
+    # cycles depends on the LAPACK behind numpy.linalg.eigh, not on the
+    # frame: with OpenBLAS (numpy 1.26) it cycles to the cap, with Apple
+    # Accelerate (numpy >= 2.0 on macOS) it converges in 100 cycles, and
+    # 1-ulp coordinate nudges or atom reorderings flip the outcome on either.
+    # What holds on every LAPACK is that a converged cold trajectory reaches
+    # the same stationary root as the recovery.
+    if cold_converged:
+        assert cold_e == pytest.approx(result.electronic_energy, abs=1e-9)
+    else:
+        assert cold_iter == 200
     assert result.converged
+    # The native primary exhausts its 200-cycle cap on this frame: 270 is
+    # that cap plus the 60 WICHT and 10 strict-DIIS cycles of the recovery.
     assert result.n_iter == 270
     assert result.total_energy == pytest.approx(-50.737177619704, abs=1e-10)
     assert np.trace(result.density) == pytest.approx(30.0)
@@ -2037,7 +2048,7 @@ def test_msindo_cis_odd_electron_raises():
 # MSINDO CISD via vibe-qc's GENERIC CI solver (vibeqc.solvers.cisd).           #
 # The reference MSINDO CISD (rhfcisd.f) is a selecting driver with empirical   #
 # scalings — deliberately NOT reproduced; these tests validate the CI          #
-# mechanics against vibe-qc's own FCI / CIS instead (HANDOVER §5).             #
+# mechanics against vibe-qc's own FCI / CIS instead (historical design record §5).             #
 # --------------------------------------------------------------------------- #
 
 _H2O = ([8, 1, 1], [[0, 0, 0], [0, 0.757, 0.587], [0, -0.757, 0.587]])
@@ -2225,3 +2236,32 @@ def test_run_job_msindo_surfaces_binding_energy(tmp_path):
     assert "## Atomization / binding energy" in out
     assert "Binding energy (E" in out
     assert "kcal/mol" in out
+
+
+@pytest.mark.parametrize("backend", ["native", "python"])
+def test_msindo_gradient_pole_pair_matches_fd(backend, monkeypatch):
+    """Issue #443: a pair exactly along z whose environment has no mirror
+    plane through it. The d_trans.f azimuth convention (phi = 0) dropped the
+    tilt towards y, a 3.3e-3 Ha/bohr error in the y forces."""
+    import numpy as np
+
+    from vibeqc.semiempirical.methods import msindo_gradient_analytic as mg
+
+    if backend == "python":
+        monkeypatch.setattr(mg, "_cpp_gradient_kernel", lambda: None)
+    Z = [6, 1, 1, 1, 1]
+    xyz = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.09], [1.03, 0.10, -0.36],
+                    [-0.43, 0.93, -0.33], [-0.55, -0.87, -0.40]])
+    g = np.asarray(mg.msindo_gradient_analytic(Z, xyz.tolist()))
+    h = 1e-4
+    fd = np.zeros_like(g)
+    for i in range(len(Z)):
+        for c in range(3):
+            xp, xm = xyz.copy(), xyz.copy()
+            xp[i, c] += h
+            xm[i, c] -= h
+            fd[i, c] = (msindo.run_msindo(Z, xp.tolist()).total_energy
+                        - msindo.run_msindo(Z, xm.tolist()).total_energy) / (
+                2 * h * msindo.ANGSTROM_TO_BOHR)
+    np.testing.assert_allclose(g, fd, rtol=0, atol=1e-6)
+

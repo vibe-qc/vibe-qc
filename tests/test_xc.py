@@ -29,6 +29,34 @@ def test_pbe_is_pure_gga():
     assert f.hf_exchange_fraction == pytest.approx(0.0)
 
 
+@pytest.mark.parametrize("name", ["pbe", "pbe0", "r2scan"])
+@pytest.mark.parametrize("empty_alpha", [False, True])
+def test_empty_spin_potential_is_stable_under_density_roundoff(name, empty_alpha):
+    """Do not amplify AO-summation roundoff through 1 +/- zeta cancellation.
+
+    Keep the actual zero density and Libxc's existing regularization. This
+    checks conditioning, not a new definition of the polarized endpoint.
+    """
+    rho = np.array([.001, .01, .1, 1., 3.])
+    zero = np.zeros_like(rho)
+    sigma = .04 * rho ** (8. / 3.)
+    tau = .5 * rho ** (5. / 3.)
+    functional = Functional(name, spin=2)
+
+    def evaluate(occupied):
+        densities = (zero, occupied) if empty_alpha else (occupied, zero)
+        sigmas = (zero, zero, sigma) if empty_alpha else (sigma, zero, zero)
+        if name == "r2scan":
+            taus = (zero, tau) if empty_alpha else (tau, zero)
+            return functional.eval_polarised_mgga(*densities, *sigmas, *taus)
+        return functional.eval_polarised(*densities, *sigmas)
+
+    baseline = evaluate(rho)
+    for sign in (-1, 1):
+        for before, after in zip(baseline, evaluate(rho * (1 + sign * 1e-14))):
+            np.testing.assert_allclose(after, before, atol=2e-11, rtol=2e-12)
+
+
 def test_blyp_is_pure_gga():
     f = Functional("BLYP")
     assert f.kind == XCKind.GGA

@@ -6,10 +6,13 @@ vibe-view consumer (vibe-view/src/vibeview/qvf.py).
 
 from __future__ import annotations
 
+import ast
 import json
 import sys
 import zipfile
+from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -23,6 +26,7 @@ from vibeqc.output.formats.qvf import (
     _primitive_norm,
     _sha256_hex,
     qvf_bloch_wf_data,
+    qvf_excited_states_data,
     qvf_natural_wf_data,
     qvf_wf_data,
     scf_history_from_result,
@@ -1222,6 +1226,82 @@ class TestTerminalRunStatus:
             assert prov["run_status"] == "converged"
             assert prov["scf_converged"] is True
 
+    @pytest.mark.parametrize("reported", [None, True, False])
+    def test_noniterative_result_has_no_scf_verdict(self, tmp_path, reported):
+        from types import SimpleNamespace
+        from vibeqc.output.formats.qvf import terminal_run_status
+
+        result = SimpleNamespace(energy=-0.5, n_iter=0)
+        if reported is not None:
+            # A wrapper's generic calculation-success flag is not an SCF.
+            result.converged = reported
+        path = write_qvf(
+            tmp_path / "noniterative", _plan(tmp_path),
+            molecule=_stub_molecule(), result=result, method="dftb0",
+            scf_applicable=False, run_status=terminal_run_status(result),
+            record_hostname=False,
+        )
+        with zipfile.ZipFile(path) as archive:
+            provenance = _read_manifest(archive)["provenance"]
+        assert provenance["scf_applicable"] is False
+        assert "scf_converged" not in provenance
+        assert "n_scf_iterations" not in provenance
+        assert provenance["run_status"] == (
+            "failed" if reported is False else "converged"
+        )
+
+    @pytest.mark.parametrize("reported", [None, True, False])
+    def test_iterative_convergence_requires_an_actual_report(self, tmp_path, reported):
+        from types import SimpleNamespace
+        from vibeqc.output.formats.qvf import terminal_run_status
+
+        result = SimpleNamespace(energy=-0.5)
+        if reported is not None:
+            result.converged = reported
+        path = write_qvf(
+            tmp_path / "iterative", _plan(tmp_path),
+            molecule=_stub_molecule(), result=result, method="scc_dftb",
+            scf_applicable=True, run_status=terminal_run_status(result),
+            record_hostname=False,
+        )
+        with zipfile.ZipFile(path) as archive:
+            provenance = _read_manifest(archive)["provenance"]
+        assert provenance["scf_applicable"] is True
+        if reported is None:
+            assert "scf_converged" not in provenance
+        else:
+            assert provenance["scf_converged"] is reported
+
+    def test_unreported_convergence_does_not_infer_scf_applicability(self):
+        from types import SimpleNamespace
+        from vibeqc.output.formats.qvf import _build_provenance
+
+        provenance = _build_provenance({
+            "result": SimpleNamespace(energy=-0.5), "record_hostname": False,
+        })
+        assert "scf_converged" not in provenance
+        assert "scf_applicable" not in provenance
+
+    def test_periodic_route_supplies_scf_applicability(self):
+        """Pin the live output call's route metadata without running chemistry."""
+        import ast
+        import vibeqc
+
+        source = Path(vibeqc.__file__).parent / "periodic_runner.py"
+        calls = [node for node in ast.walk(ast.parse(source.read_text()))
+                 if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute)
+                 and node.func.attr == "dispatch_role"
+                 and any(key.arg == "method" and isinstance(key.value, ast.Name)
+                         and key.value.id == "method_key" for key in node.keywords)]
+        assert len(calls) == 1
+        applicability = next(key.value for key in calls[0].keywords
+                             if key.arg == "scf_applicable")
+        expression = compile(ast.Expression(applicability), "route-metadata", "eval")
+        assert eval(expression, {"method_key": "dftb0"}) is False
+        assert eval(expression, {"method_key": "scc_dftb"}) is True
+        assert eval(expression, {"method_key": "gfn2_xtb"}) is True
+
     def test_periodic_stamps_from_the_archived_result(self):
         """`run_status` must describe the same result the archive does.
 
@@ -1421,6 +1501,168 @@ class TestRunRecordSection:
         assert assemble_run_record(plan) is None
 
 
+@lru_cache
+def _automatic_job_spec_expression(filename, method_variable):
+    """Exercise the complete runner expression without running any chemistry."""
+    import vibeqc
+
+    source = Path(vibeqc.__file__).parent / filename
+    expressions = []
+    for call in ast.walk(ast.parse(source.read_text())):
+        if not isinstance(call, ast.Call):
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+        method = keywords.get("method")
+        if (
+            isinstance(method, ast.Name)
+            and method.id == method_variable
+            and "job_spec" in keywords
+        ):
+            expressions.append(keywords["job_spec"])
+    assert len(expressions) == 1
+    return compile(ast.Expression(expressions[0]), str(source), "eval")
+
+
+@pytest.fixture(params=["bundled_schema", "official_reader"])
+def job_spec_archive_validator(request):
+    """Use QVF's contract, not the producer's lighter internal validator.
+
+    The official-reader cases run when the pinned QVF source's ``python/``
+    directory is on PYTHONPATH (or qvf-writer is installed). They require
+    schema validation to be active, never a silent schema-free pass.
+    """
+    if request.param == "official_reader":
+        reader = pytest.importorskip("qvf_reader")
+        assert reader._load_schema_validator() is not None
+        assert reader._load_payload_validator("JobSpecPayload") is not None
+
+        def validate(path):
+            report = reader.validate_qvf(str(path))
+            assert report["ok"], report
+
+        return validate
+
+    import jsonschema
+    from vibeqc.output.formats.qvf import _load_canonical_schema
+
+    schema = _load_canonical_schema(1)
+    manifest_validator = jsonschema.Draft202012Validator(schema)
+    payload_validator = jsonschema.Draft202012Validator({
+        "$schema": schema["$schema"],
+        "$ref": "#/$defs/JobSpecPayload",
+        "$defs": schema["$defs"],
+    })
+
+    def validate(path):
+        with zipfile.ZipFile(path) as archive:
+            manifest = _read_manifest(archive)
+            manifest_validator.validate(manifest)
+            payload_validator.validate(json.loads(archive.read("job_spec/spec.json")))
+
+    return validate
+
+
+class TestAutomaticJobSpec:
+    """Regression for #489: actual runner expressions through the QVF writer."""
+
+    @staticmethod
+    def _check(tmp_path, spec, expected, validator):
+        path = write_qvf(
+            tmp_path / "automatic", _plan(tmp_path),
+            molecule=_stub_molecule(), job_spec=spec, record_hostname=False,
+        )
+        # Run the validator first so a baseline failure identifies the schema
+        # violation in the emitted archive, not just a different Python dict.
+        validator(path)
+        with zipfile.ZipFile(path) as archive:
+            assert json.loads(archive.read("job_spec/spec.json")) == expected
+
+    @pytest.mark.parametrize("method", [
+        "msindo", "pm6", "om2", "om3", "gfn2-xtb", "dftb0",
+        "scc-dftb", "mace",
+    ])
+    @pytest.mark.parametrize("basis", ["", "sto-3g"])
+    def test_basis_free_molecular(
+        self, tmp_path, job_spec_archive_validator, method, basis
+    ):
+        from vibeqc.output.formats.mlip_record import mlip_job_options
+        from vibeqc.output.formats.semiempirical_record import semiempirical_record_fields
+        from vibeqc.qvf_job import job_spec_method_fields
+
+        identity = None if method == "mace" else "reference-set"
+        spec = eval(_automatic_job_spec_expression("runner.py", "resolved_method"), {
+            # The runner passes an empty placeholder, or the ignored basis a
+            # caller gave; either way the method takes no basis set.
+            "resolved_method": method, "basis": basis, "functional": None,
+            "symmetry_reduction": None,
+            "_parameter_identity": identity, "_parameter_sha256": "a" * 64,
+            "_placeholder_pairs": None,
+            "semiempirical_record_fields": semiempirical_record_fields,
+            "mlip_job_options": mlip_job_options,
+            "job_spec_method_fields": job_spec_method_fields,
+            "result": SimpleNamespace(
+                model_info=SimpleNamespace(key="small"), device="cpu", dtype="float32",
+            ),
+        })
+        # QVF spec Sec. 5.9: null, "the method takes none" -- never "".
+        expected = {"job_type": "molecular", "method": method,
+                    "basis": None, "functional": None}
+        if identity is not None:
+            expected["options"] = {
+                "parameter_identity": identity, "parameter_sha256": "a" * 64,
+            }
+        else:
+            expected["options"] = {"mlip_options": {
+                "model": "small", "device": "cpu", "dtype": "float32",
+            }}
+        self._check(tmp_path, spec, expected, job_spec_archive_validator)
+
+    @pytest.mark.parametrize("method", [
+        "msindo", "pm6", "om2", "om3", "gfn2-xtb", "dftb0",
+        "scc-dftb", "dftb3", "seccm",
+    ])
+    def test_basis_free_periodic(self, tmp_path, job_spec_archive_validator, method):
+        fields = {"route_maturity": "experimental", "route_status": "experimental"}
+        spec = eval(_automatic_job_spec_expression("periodic_runner.py", "method_key"), {
+            # The route's "<basis-free>" display label is not a basis set.
+            "method_key": method, "basis_label": "<basis-free>", "_record_fields": fields,
+            "parameter_identity": None, "parameter_sha256": None,
+        })
+        # QVF spec Sec. 5.9: a semiempirical route takes no basis set and no
+        # functional, written null.
+        expected = {"job_type": "periodic", "method": method,
+                    "basis": None, "functional": None, "options": fields}
+        self._check(tmp_path, spec, expected, job_spec_archive_validator)
+
+    @pytest.mark.parametrize("functional", [None, "", "pbe0"])
+    @pytest.mark.parametrize("periodic", [False, True])
+    def test_gaussian_methods(self, tmp_path, job_spec_archive_validator, functional, periodic):
+        from vibeqc.qvf_job import job_spec_method_fields
+
+        method = "rks" if functional else "rhf"
+        expected = {"job_type": "periodic" if periodic else "molecular",
+                    "method": method, "basis": "sto-3g"}
+        # QVF spec Sec. 5.9: Hartree-Fock takes no functional, written null.
+        expected["functional"] = functional if functional else None
+        if periodic:
+            expression = _automatic_job_spec_expression("periodic_runner.py", "method_upper")
+            bindings = {"method_upper": method, "basis": SimpleNamespace(name="sto-3g"),
+                        "resolved_jk": SimpleNamespace(value="direct"),
+                        "system": SimpleNamespace(charge=0, multiplicity=1)}
+            expected.update(jk_method="direct", charge=0, multiplicity=1)
+        else:
+            expression = _automatic_job_spec_expression("runner.py", "resolved_method")
+            bindings = {"resolved_method": method, "basis": "sto-3g",
+                        "symmetry_reduction": None,
+                        "_parameter_identity": None, "_placeholder_pairs": None,
+                        "semiempirical_record_fields": lambda **_: {}}
+        spec = eval(expression, {
+            **bindings, "functional": functional,
+            "job_spec_method_fields": job_spec_method_fields,
+        })
+        self._check(tmp_path, spec, expected, job_spec_archive_validator)
+
+
 class TestJobSpecSection:
     def test_pending_container_round_trip(self, tmp_path):
         mol = _stub_molecule()
@@ -1515,6 +1757,17 @@ class TestJobSpecSection:
 
 
 class TestProvenance:
+    def test_legacy_result_does_not_invent_audit_run_fields(self, tmp_path):
+        path = write_qvf(
+            tmp_path / "legacy", _plan(tmp_path),
+            molecule=_stub_molecule(), result=_stub_result(),
+            record_hostname=False,
+        )
+        with zipfile.ZipFile(path) as archive:
+            provenance = _read_manifest(archive)["provenance"]
+        assert "run_fields" not in provenance
+        assert "seccm_stability_analysis_converged" not in provenance
+
     def test_provenance_in_manifest(self, tmp_path):
         mol = _stub_molecule()
         plan = _plan(tmp_path)
@@ -3156,6 +3409,60 @@ class TestGridUnits:
 # ---------------------------------------------------------------------------
 
 
+class TestPDOSChannelMetadata:
+    @pytest.mark.parametrize("basis_name,max_l", [
+        ("sto-3g", 1), ("cc-pv5z", 5), ("cc-pv6z", 6),
+    ])
+    def test_native_basis_channels_reach_qvf(self, tmp_path, basis_name, max_l):
+        """Only basis metadata and synthetic samples; no DOS/SCF calculation."""
+        import vibeqc as vq
+        from vibeqc.bands import _ao_group_channels, ao_groups_per_atom_l
+
+        system = vq.PeriodicSystem(
+            3, np.eye(3) * 12.0, [vq.Atom(6, [0.0, 0.0, 0.0])],
+        )
+        basis = vq.BasisSet(system.unit_cell_molecule(), basis_name)
+        groups = ao_groups_per_atom_l(system, basis)
+        channels = _ao_group_channels(system, basis, groups)
+        assert max(int(shell.l) for shell in basis.shells()) == max_l
+        assert [channel["l"] for channel in channels.values()] == list(range(max_l + 1))
+        if max_l == 6:
+            assert channels["C1-l6"] == {
+                "atom_index": 0, "symbol": "C", "l": 6, "label": "C1-l6",
+            }
+        path = write_qvf(
+            tmp_path / "pdos", _plan(tmp_path, basis=basis_name),
+            system=system, method="rhf", basis=basis_name,
+            record_hostname=False, run_status="pending",
+            pdos_data={
+                "energies": np.array([-1.0, 1.0]),
+                "projections": np.zeros((len(channels), 2)),
+                "energies_units": "eV", "n_spin": 1,
+                "channels": list(channels.values()),
+            },
+        )
+        with zipfile.ZipFile(path) as zf:
+            section = next(s for s in _read_manifest(zf)["sections"]
+                           if s["kind"] == "dos.projected")
+        assert section["channels"] == list(channels.values())
+        assert validate_qvf(path)["valid"]
+
+    def test_metadata_does_not_parse_labels_or_limit_l(self):
+        from vibeqc.bands import _ao_group_channels
+
+        system = SimpleNamespace(unit_cell=[SimpleNamespace(Z=1), SimpleNamespace(Z=6)])
+        basis = SimpleNamespace(shells=lambda: [
+            SimpleNamespace(l=0, atom_index=0),
+            SimpleNamespace(l=9, atom_index=1),
+        ])
+        assert _ao_group_channels(system, basis, {"display label": [1, 2]}) == {
+            "display label": {"atom_index": 1, "symbol": "C", "l": 9,
+                              "label": "display label"},
+        }
+        with pytest.raises(ValueError, match="mixes atoms or angular momenta"):
+            _ao_group_channels(system, basis, {"mixed": [0, 1]})
+
+
 class TestDOSCoexistence:
     def _dos_inputs(self):
         energies = np.linspace(-25.0, 15.0, 128)
@@ -3691,6 +3998,81 @@ class TestWavefunctionLocalized:
                     assert meta["orbital_kind"] == "localized"
 
 
+    @staticmethod
+    def _localized_payload(**extra_meta):
+        return {
+            "basis": [{"center": 0, "l": 0, "exponents": [0.5], "coefficients": [1.0]}],
+            "mo_metadata": {
+                "spin": "restricted",
+                "orbital_kind": "localized",
+                "energies": [0.0],
+                "occupations": [2.0],
+                "localization_method": "ibo",
+                "localization_reference_basis": "minao",
+                **extra_meta,
+            },
+            "mo_coefficients": np.array([[1.0]]),
+        }
+
+    @pytest.mark.parametrize("carrier", ["payload", "legacy_mo_metadata"])
+    def test_iao_charges_ride_atom_properties_not_mo_metadata(
+        self, tmp_path, carrier
+    ):
+        """QVF v0.3.0 deprecates mo_metadata ``iao_charges``: the charges go
+        to the ``iao_charge`` member of atom_properties, whether they arrive
+        beside the payload (qvf_localized_wf_data) or in a legacy
+        mo_metadata key, and ``localization_reference_basis`` stays."""
+        charges = [-0.6, 0.3, 0.3]
+        if carrier == "payload":
+            wf_loc = {**self._localized_payload(), "iao_charges": charges}
+        else:
+            wf_loc = self._localized_payload(iao_charges=charges)
+        path = write_qvf(
+            tmp_path / "wf_loc_iao",
+            _plan(tmp_path),
+            molecule=_stub_molecule(),
+            method="rhf",
+            basis="sto-3g",
+            wf_localized_data=[("wf_localized_ibo", wf_loc)],
+        )
+        report = validate_qvf(path)
+        assert report["valid"], report["errors"]
+        with zipfile.ZipFile(path) as zf:
+            manifest = _read_manifest(zf)
+            by_id = {s["id"]: s for s in manifest["sections"]}
+            meta = json.loads(zf.read(
+                by_id["wf_localized_ibo"]["members"]["mo_metadata"]["path"]
+            ))
+            member = by_id["props0"]["members"]["iao_charge"]
+            stored = np.frombuffer(zf.read(member["path"]), dtype="<f8")
+        assert "iao_charges" not in meta
+        assert meta["localization_reference_basis"] == "minao"
+        np.testing.assert_allclose(stored, charges)
+        # The caller's payload is not mutated.
+        assert "iao_charges" in (
+            wf_loc if carrier == "payload" else wf_loc["mo_metadata"]
+        )
+
+    def test_explicit_iao_charges_win(self, tmp_path):
+        wf_loc = {**self._localized_payload(), "iao_charges": [9.0, 9.0, 9.0]}
+        path = write_qvf(
+            tmp_path / "wf_loc_iao_explicit",
+            _plan(tmp_path),
+            molecule=_stub_molecule(),
+            method="rhf",
+            basis="sto-3g",
+            wf_localized_data=wf_loc,
+            iao_charges=[-0.6, 0.3, 0.3],
+        )
+        with zipfile.ZipFile(path) as zf:
+            manifest = _read_manifest(zf)
+            member = next(
+                s for s in manifest["sections"] if s["id"] == "props0"
+            )["members"]["iao_charge"]
+            stored = np.frombuffer(zf.read(member["path"]), dtype="<f8")
+        np.testing.assert_allclose(stored, [-0.6, 0.3, 0.3])
+
+
 # ---------------------------------------------------------------------------
 # M31 — NTO (Natural Transition Orbitals) writer dispatch
 # ---------------------------------------------------------------------------
@@ -3750,10 +4132,27 @@ class TestNTOSections:
             assert ids == {"wf_nto_S1_hole", "wf_nto_S1_electron"}
             for sec in wf_sections:
                 meta = json.loads(zf.read(sec["members"]["mo_metadata"]["path"]))
-                assert meta["orbital_kind"] == "natural"
+                assert meta["orbital_kind"] == "nto"
                 assert meta["occupation_semantics"] == "transition_weight"
-                assert meta["excitation_energy_ev"] == pytest.approx(4.5)
-                assert meta["excitation_index"] == 1
+                assert meta["nto_role"] == (
+                    "hole" if sec["id"].endswith("_hole") else "particle"
+                )
+                assert meta["state_ref"] == "excited_states"
+                assert meta["state_index"] == 1
+                assert meta["energies"] == [0.0]
+                assert "excitation_energy_ev" not in meta
+                assert "excitation_index" not in meta
+            # The legacy excitation energy becomes the state's canonical one.
+            (es,) = [s for s in manifest["sections"] if s["kind"] == "excited_states"]
+            states = json.loads(zf.read(es["members"]["states"]["path"]))
+        assert states["states"] == [{
+            "index": 1,
+            "excitation_energy": {"value": 4.5, "units": "ev"},
+            "nto_ref": "wf_nto_S1_hole",
+        }]
+        assert states["meta"]["n_states"] == 1
+        # The caller's records are not changed.
+        assert wf_hole["mo_metadata"]["energies"] == [-0.5]
 
     def test_nto_multi_state(self, tmp_path):
         """nto_data with two states emits four wavefunction.gto sections."""
@@ -3810,6 +4209,128 @@ class TestNTOSections:
                 "wf_nto_S2_hole",
                 "wf_nto_S2_electron",
             }
+
+    def test_nto_unrestricted_state_is_one_pair(self, tmp_path):
+        """Per-spin records of an unrestricted state become one hole and one
+        particle section with alpha and beta sets (QVF spec Sec. 5.3)."""
+        basis = [{"center": 0, "l": 0, "exponents": [0.5], "coefficients": [1.0]},
+                 {"center": 1, "l": 0, "exponents": [0.5], "coefficients": [1.0]}]
+
+        def _half(weights, val):
+            n = len(weights)
+            return {
+                "basis": basis,
+                "mo_metadata": {"spin": "restricted", "orbital_kind": "nto",
+                                "n_mo": n, "energies": [0.0] * n,
+                                "occupations": list(weights)},
+                "mo_coefficients": np.full((n, 2), val),
+            }
+
+        wa, wb = [0.6, 0.1], [0.3]
+        path = write_qvf(
+            tmp_path / "nto_uhf_qvf",
+            _plan(tmp_path),
+            molecule=_stub_molecule(),
+            method="uhf",
+            basis="sto-3g",
+            excited_states_data={"states": [{
+                "index": 1, "excitation_energy": {"value": 3.0, "units": "ev"},
+            }]},
+            nto_data=[
+                {"hole": _half(wa, 0.1), "electron": _half(wa, 0.2),
+                 "state_index": 1, "spin": "alpha"},
+                {"hole": _half(wb, 0.3), "electron": _half(wb, 0.4),
+                 "state_index": 1, "spin": "beta"},
+            ],
+        )
+        report = validate_qvf(path)
+        assert report["valid"], report["errors"]
+        with zipfile.ZipFile(path) as zf:
+            manifest = _read_manifest(zf)
+            by_id = {s["id"]: s for s in manifest["sections"]}
+            assert {i for i in by_id if i.startswith("wf_nto")} == {
+                "wf_nto_S1_hole", "wf_nto_S1_electron",
+            }
+            hole = by_id["wf_nto_S1_hole"]
+            meta = json.loads(zf.read(hole["members"]["mo_metadata"]["path"]))
+            assert set(hole["members"]) >= {
+                "mo_coefficients_alpha", "mo_coefficients_beta",
+            }
+            assert "mo_coefficients" not in hole["members"]
+        assert meta["spin"] == "unrestricted"
+        assert meta["orbital_kind"] == "nto"
+        assert meta["nto_role"] == "hole"
+        assert meta["alpha"] == {"n_mo": 2, "energies": [0.0, 0.0],
+                                 "occupations": wa}
+        assert meta["beta"] == {"n_mo": 1, "energies": [0.0], "occupations": wb}
+        assert sum(wa) + sum(wb) == pytest.approx(1.0)
+        assert "occupations" not in meta
+
+    def test_excited_states_from_tddft_result(self, tmp_path):
+        """The state table, the NTO links both ways and the UV-Vis
+        states_ref, against the pinned QVF reader when it is importable."""
+        td = SimpleNamespace(
+            method="TDA",
+            states=[
+                SimpleNamespace(index=1, excitation_energy_ev=9.6338,
+                                oscillator_strength=0.0375,
+                                transition_dipole=np.array([0.0, 0.0, 0.3985])),
+                SimpleNamespace(index=2, excitation_energy_ev=11.457,
+                                oscillator_strength=0.0,
+                                transition_dipole=np.zeros(3)),
+            ],
+        )
+        payload = qvf_excited_states_data(
+            td, functional=None, multiplicity=1, reference_state="S0"
+        )
+        assert payload["meta"] == {
+            "method": "cis", "tda": True, "n_states": 2,
+            "units": {"excitation_energy": "ev",
+                      "oscillator_strength": "dimensionless"},
+            "reference_state": "S0",
+        }
+        basis = [{"center": 0, "l": 0, "exponents": [0.5], "coefficients": [1.0]}]
+        half = {"basis": basis,
+                "mo_metadata": {"spin": "restricted", "energies": [0.0],
+                                "occupations": [1.0]},
+                "mo_coefficients": np.array([[1.0]])}
+        path = write_qvf(
+            tmp_path / "es_qvf",
+            _plan(tmp_path),
+            molecule=_stub_molecule(),
+            result=_stub_result(),
+            method="rhf",
+            basis="sto-3g",
+            excited_states_data=payload,
+            nto_data=[{"hole": half, "electron": half, "state_index": 1}],
+            uvvis_data={"energies_ev": [9.6338, 11.457],
+                        "intensities": [0.0375, 0.0], "method": "TDA"},
+        )
+        report = validate_qvf(path)
+        assert report["valid"], report["errors"]
+        with zipfile.ZipFile(path) as zf:
+            manifest = _read_manifest(zf)
+            by_id = {s["id"]: s for s in manifest["sections"]}
+            es = by_id["excited_states"]
+            states = json.loads(zf.read(es["members"]["states"]["path"]))
+            uvvis = json.loads(zf.read(
+                by_id["uvvis_spec"]["members"]["spectrum"]["path"]
+            ))
+        assert es["kind"] == "excited_states"
+        assert es["structure_ref"] == "structure"
+        s1, s2 = states["states"]
+        assert s1["nto_ref"] == "wf_nto_S1_hole" and "nto_ref" not in s2
+        assert s1["excitation_energy"] == {"value": 9.6338, "units": "ev"}
+        assert s1["multiplicity"] == 1
+        assert s1["transition_dipole"] == [0.0, 0.0, 0.3985]
+        assert uvvis["states_ref"] == "excited_states"
+        try:
+            import qvf_reader
+        except ImportError:
+            return
+        official = qvf_reader.validate_qvf(str(path))
+        assert official["ok"], official
+        assert not [w for w in official["warnings"] if "deprecat" in w.lower()]
 
     def test_nto_with_canonical_coexists(self, tmp_path):
         """Canonical wf + NTO sections coexist without path collisions."""
@@ -4132,3 +4653,227 @@ class TestWavefunctionUnrestricted:
             beta_raw = zf.read(members["mo_coefficients_beta"]["path"])
             beta_coeff = np.frombuffer(beta_raw, dtype=np.float64)
             assert beta_coeff.size == 4
+
+
+class TestNoniterativeMolecularOutput:
+    """Exercise the runner's actual dispatch expressions without chemistry."""
+
+    @staticmethod
+    def _runner():
+        import vibeqc
+        return ast.parse((Path(vibeqc.__file__).parent / "runner.py").read_text())
+
+    @pytest.mark.parametrize("method", ["dftb0", "mace", "scc_dftb", "rhf"])
+    def test_actual_molecular_qvf_dispatch(self, tmp_path, monkeypatch, method):
+        from collections import defaultdict
+        from vibeqc.output.formats.qvf import terminal_run_status
+        from vibeqc.output.writer import OutputWriter
+        from vibeqc.output import manifest
+        monkeypatch.setattr(manifest, "system_info", lambda **kwargs: {})
+        from vibeqc.qvf_job import job_spec_method_fields
+        from vibeqc.output.formats.semiempirical_record import semiempirical_record_fields
+
+        calls = [node for node in ast.walk(self._runner())
+                 if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute)
+                 and node.func.attr == "dispatch_role"
+                 and node.args and isinstance(node.args[0], ast.Constant)
+                 and node.args[0].value == "qvf"
+                 and any(k.arg == "method" and isinstance(k.value, ast.Name)
+                         and k.value.id == "resolved_method" for k in node.keywords)]
+        assert len(calls) == 1
+        result = SimpleNamespace(energy=-0.5, n_iter=1, converged=True)
+        plan = _plan(tmp_path, output=tmp_path / method, method=method,
+                     basis="sto-3g" if method == "rhf" else "",
+                     output_qvf=True)
+        context = defaultdict(lambda: None, {
+            "__builtins__": __builtins__, "resolved_method": method,
+            "_MLIP_METHODS": frozenset({"mace"}), "molecule": _stub_molecule(),
+            "result": result, "record_hostname": False,
+            "basis": "sto-3g" if method == "rhf" else None,
+            "_output_writer": OutputWriter(plan, record_hostname=False),
+            "terminal_run_status": terminal_run_status,
+            "job_spec_method_fields": job_spec_method_fields,
+            "semiempirical_record_fields": semiempirical_record_fields,
+            "mlip_job_options": lambda result: {},
+        })
+        path = eval(compile(ast.Expression(calls[0]), "molecular-dispatch", "eval"), context)[0]
+        with zipfile.ZipFile(path) as archive:
+            prov = _read_manifest(archive)["provenance"]
+        assert prov["run_status"] == "converged"
+        assert prov["scf_energy"]["value"] == -0.5
+        if method in {"dftb0", "mace"}:
+            assert prov["scf_applicable"] is False
+            assert "scf_converged" not in prov
+            assert "n_scf_iterations" not in prov
+        else:
+            assert prov["scf_applicable"] is True
+            assert prov["scf_converged"] is True
+            assert prov["n_scf_iterations"] == 1
+        assert validate_qvf(path)["valid"]
+
+    @pytest.mark.parametrize("method", ["dftb0", "mace", "scc_dftb"])
+    def test_actual_history_route(self, method):
+        assignments = [node for node in ast.walk(self._runner())
+                       if isinstance(node, ast.Assign)
+                       and any(isinstance(t, ast.Name) and t.id == "_qvf_scf_history"
+                               for t in node.targets)]
+        assert len(assignments) == 1
+        rows = [{"iter": 1, "energy_eh": -0.5}]
+        actual = eval(compile(ast.Expression(assignments[0].value), "history-route", "eval"), {
+            "resolved_method": method, "_MLIP_METHODS": {"mace"}, "result": object(),
+            "_scf_history_from_result": lambda result: rows,
+        })
+        assert actual == (rows if method == "scc_dftb" else None)
+
+    @pytest.mark.parametrize("method", ["dftb0", "mace"])
+    def test_noniterative_route_never_builds_scf_verdict(self, method):
+        branches = [node for node in ast.walk(self._runner()) if isinstance(node, ast.If)
+                    and isinstance(node.test, ast.Compare)
+                    and isinstance(node.test.left, ast.Name)
+                    and node.test.left.id == "resolved_method"
+                    and any(isinstance(x, ast.Name) and x.id == "_MLIP_METHODS"
+                            for x in node.test.comparators)
+                    and any(isinstance(x, ast.Name) and x.id == "verdict_from_result"
+                            for x in ast.walk(node))]
+        assert len(branches) == 1
+        def refuse(*args, **kwargs):
+            raise AssertionError("Noniterative route attempted an SCF verdict")
+        messages = []
+        exec(compile(ast.Module(body=branches, type_ignores=[]), "verdict-route", "exec"), {
+            "resolved_method": method, "_MLIP_METHODS": {"mace"},
+            "result": SimpleNamespace(energy=-0.5), "plog": SimpleNamespace(info=messages.append),
+            "render_energy_labeled": lambda value, **kwargs: str(value),
+            "verdict_from_result": refuse,
+        })
+        assert len(messages) == 1 and "no SCF" in messages[0]
+
+    def test_noniterative_text_preserves_properties(self, monkeypatch):
+        from vibeqc.output.formats import scf_log
+        result = SimpleNamespace(energy=-0.5, converged=True, n_iter=1,
+                                 scf_trace=[_stub_trace_step(1, -0.5, 0.0)])
+        text = scf_log.format_scf_trace(result, include_banner=False,
+                                        scf_applicable=False)
+        assert "no SCF" in text and "-0.5000000000" in text
+        assert "converged" not in text and "iterations" not in text
+        # Retain actual property dispatch, independently of iteration telemetry.
+        monkeypatch.setattr(scf_log, "_PROPERTIES_AVAILABLE", True)
+        monkeypatch.setattr(scf_log, "_format_orbital_sections", lambda *a, **k: "")
+        monkeypatch.setattr(scf_log, "_format_properties_block", lambda *a, **k: "retained-properties")
+        properties = scf_log.format_scf_trace(
+            result, molecule=object(), basis=object(), include_banner=False,
+            scf_applicable=False,
+        )
+        assert "retained-properties" in properties
+        iterative = scf_log.format_scf_trace(result, include_banner=False)
+        assert "converged in 1 iterations" in iterative
+
+    @pytest.mark.parametrize("method", ["dftb0", "mace", "rhf"])
+    def test_reaction_path_applicability(self, tmp_path, method):
+        from vibeqc.output.formats.qvf import write_reaction_path_qvf
+        path = write_reaction_path_qvf(
+            tmp_path / method, frames=[_stub_molecule(), _stub_molecule()],
+            energies=[-0.5, -0.4], waypoints=[{"frame_index": 0, "label": "Start", "kind": "reactant"}], method=method,
+            basis="sto-3g" if method == "rhf" else "",
+        )
+        with zipfile.ZipFile(path) as archive:
+            prov = _read_manifest(archive)["provenance"]
+        if method in {"dftb0", "mace"}:
+            assert prov["scf_applicable"] is False
+            assert "scf_converged" not in prov
+            assert "n_scf_iterations" not in prov
+        assert validate_qvf(path)["valid"]
+
+
+class TestTransitionDensityOutput:
+    """A canonical scalar transition-density producer, not a registry reservation."""
+
+    @staticmethod
+    def _record(**changes):
+        record = {"data": np.arange(24, dtype=float).reshape(2, 3, 4) - 11.5,
+                  "origin": [-1.0, 2.0, 0.5], "span": np.diag([0.2, 0.3, 0.4])}
+        record.update(changes)
+        return record
+
+    @staticmethod
+    def _states():
+        return {"states": [{"index": 2,
+                            "excitation_energy": {"value": 3.5, "units": "ev"}}]}
+
+    @pytest.mark.parametrize("dtype", ["float32", "float64"])
+    @pytest.mark.parametrize("linked", [False, True])
+    def test_transition_density_round_trip(self, tmp_path, dtype, linked):
+        record = self._record()
+        if linked:
+            record.update(excited_states_ref="excited_states", state_index=2)
+        path = write_qvf(tmp_path / "transition", _plan(tmp_path),
+                         molecule=_stub_molecule(), volume_dtype=dtype,
+                         transition_density_data={"S/2": record, "S?2": record},
+                         excited_states_data=self._states() if linked else None)
+        assert validate_qvf(path)["valid"]
+        with zipfile.ZipFile(path) as zf:
+            manifest = _read_manifest(zf)
+            sections = [s for s in manifest["sections"]
+                        if s["kind"] == "volume.transition_density"]
+            assert len(sections) == 2
+            assert len(zf.namelist()) == len(set(zf.namelist()))
+            for section in sections:
+                member = section["members"]["data"]
+                raw = zf.read(member["path"])
+                assert member["sha256"] == _sha256_hex(raw)
+                actual = np.frombuffer(raw, dtype=np.dtype(dtype).newbyteorder("<"))
+                np.testing.assert_array_equal(actual.reshape(2, 3, 4), record["data"])
+                grid = json.loads(zf.read(section["members"]["grid"]["path"]))
+                assert grid["origin"] == record["origin"]
+                assert grid["voxel_vectors"] == record["span"].tolist()
+                assert grid["units"] == {"origin": "bohr", "voxel_vectors": "bohr"}
+                if linked:
+                    assert section["excited_states_ref"] == "excited_states"
+                    assert section["state_index"] == 2
+                else:
+                    assert "excited_states_ref" not in section and "state_index" not in section
+
+    def test_transition_density_bytes(self, tmp_path):
+        from vibeqc.output.formats.qvf import qvf_bytes
+        import io
+        payload = qvf_bytes(_plan(tmp_path), molecule=_stub_molecule(),
+                            transition_density_data={"S2": self._record()})
+        with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+            assert any(s["kind"] == "volume.transition_density"
+                       for s in _read_manifest(zf)["sections"])
+
+    @pytest.mark.parametrize("change", [
+        {"state_index": 2},
+        {"excited_states_ref": "missing"},
+        {"excited_states_ref": "excited_states", "state_index": 3},
+        {"excited_states_ref": "excited_states", "state_index": 0},
+        {"excited_states_ref": "excited_states", "state_index": True},
+        {"excited_states_ref": "excited_states", "state_index": 2.0},
+        {"excited_states_ref": None},
+        {"data": np.ones((2, 3))},
+        {"data": np.ones((0, 2, 3))},
+        {"data": np.full((2, 3, 4), 1j)},
+        {"data": np.full((2, 3, 4), np.nan)},
+        {"origin": [0, 0]},
+        {"span": np.full((3, 3), np.inf)},
+    ])
+    def test_transition_density_refuses_invalid_input(self, tmp_path, change):
+        path = tmp_path / "invalid.qvf"
+        with pytest.raises(ValueError):
+            write_qvf(path.with_suffix(""), _plan(tmp_path), molecule=_stub_molecule(),
+                      transition_density_data={"S2": self._record(**change)},
+                      excited_states_data=self._states())
+        assert not path.exists()
+
+    def test_transition_density_refuses_missing_table(self, tmp_path):
+        with pytest.raises(ValueError, match="emitted table"):
+            write_qvf(tmp_path / "missing", _plan(tmp_path), molecule=_stub_molecule(),
+                      transition_density_data={"S2": self._record(
+                          excited_states_ref="excited_states", state_index=2)})
+
+    def test_transition_density_obeys_voxel_bound(self, tmp_path, monkeypatch):
+        import vibeqc.output.formats.qvf as qvf
+        monkeypatch.setattr(qvf, "_MAX_VOXELS", 23)
+        with pytest.raises(ValueError, match="voxel limit"):
+            write_qvf(tmp_path / "too_large", _plan(tmp_path), molecule=_stub_molecule(),
+                      transition_density_data={"S2": self._record()})

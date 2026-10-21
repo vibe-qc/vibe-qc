@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from examples.regression.core.spec import (
+from vibeqc_spec import (
     AtomCart,
     ExperimentalReference,
     MoleculeSpec,

@@ -29,6 +29,7 @@
 #include <xc.h>
 
 #include "vibeqc/build_config.hpp"
+#include "vibeqc/detail/native_phase_timing.hpp"
 #include "vibeqc/molecule.hpp"
 #include "vibeqc/basis.hpp"
 #include "vibeqc/solvation_cpcm.hpp"
@@ -41,6 +42,8 @@
 #include "vibeqc/correlation_conventions.hpp"
 #include "vibeqc/casscf_gradient.hpp"
 #include "vibeqc/ccsd_triples.hpp"
+#include "vibeqc/dlpno_ccsd.hpp"
+#include "vibeqc/dlpno_uccsd.hpp"
 #include "vibeqc/dlpno_mp2.hpp"
 #include "vibeqc/nevpt2_ops.hpp"
 #include "vibeqc/pt2_transform.hpp"
@@ -74,6 +77,7 @@
 #include "vibeqc/semiempirical/methods/nddo/pm6_fock.hpp"
 #include "vibeqc/semiempirical/methods/nddo/omx_parameters.hpp"
 #include "vibeqc/semiempirical/methods/nddo/omx_fock.hpp"
+#include "vibeqc/semiempirical/methods/nddo/omx_gaussian_pair.hpp"
 #include "vibeqc/semiempirical/methods/nddo/periodic_pm6.hpp"
 #include "vibeqc/semiempirical/methods/nddo/periodic_omx.hpp"
 #include "vibeqc/semiempirical/methods/nddo/periodic_fd_batch.hpp"
@@ -152,6 +156,7 @@
 #include "vibeqc/scf_convergence.hpp"
 #include "vibeqc/uhf.hpp"
 #include "vibeqc/uks.hpp"
+#include "vibeqc/uks_recovery_diagnostic.hpp"
 #include "vibeqc/ump2.hpp"
 #include "vibeqc/xc.hpp"
 #include "vibeqc/xc_kernel.hpp"
@@ -273,6 +278,8 @@ void diag_trampoline(const char* tag, int level, const char* msg) {
 #include "periodic_gaussian_nuclear_bindings.cpp"
 #include "periodic_gaussian_fock_bindings.cpp"
 #include "bounded_periodic_rhf_solver_bindings.cpp"
+#include "bounded_periodic_uhf_solver_bindings.cpp"
+#include "bounded_periodic_functional_solver_bindings.cpp"
 #include "periodic_gaussian_rhf_bindings.cpp"
 #include "periodic_gaussian_local_orbital_factors_bindings.cpp"
 #include "periodic_gaussian_density_gram_bindings.cpp"
@@ -287,6 +294,7 @@ void diag_trampoline(const char* tag, int level, const char* msg) {
 #include "periodic_gaussian_pair_space_bindings.cpp"
 #include "periodic_gaussian_gram_pair_pnos_bindings.cpp"
 #include "bounded_restricted_pair_mp2_solver_bindings.cpp"
+#include "translation_mp2_bindings.cpp"
 #include "bounded_restricted_pair_ccsd_amplitudes_bindings.cpp"
 #include "bounded_restricted_ccsd_energy_bindings.cpp"
 #include "bounded_restricted_pair_ccsd_solver_bindings.cpp"
@@ -359,6 +367,15 @@ public:
             MatrixPair,
             vibeqc::JKBuilder,
             build_K_pair,
+            D_alpha, D_beta);
+    }
+
+    SpinJK build_jk_uhf(const Eigen::MatrixXd& D_alpha,
+                        const Eigen::MatrixXd& D_beta) const override {
+        PYBIND11_OVERRIDE(
+            SpinJK,
+            vibeqc::JKBuilder,
+            build_jk_uhf,
             D_alpha, D_beta);
     }
 
@@ -882,12 +899,49 @@ ValidatedSECCMTopology seccm_validated_topology_from_records(
 
 }  // namespace
 
+void bind_product_auxiliary(py::module_& m);
+void bind_opentrustregion(py::module_& m);
+void bind_manta(py::module_& m);
+void bind_symmetry_quartets(py::module_& m);
+void bind_symmetry_ri(py::module_& m);
+
 PYBIND11_MODULE(_vibeqc_core, m) {
+    m.def("_native_phase_profile_begin", &vibeqc::detail::begin_native_phase_profile);
+    m.def("_native_phase_profile_take", [](std::uint64_t token, bool finish) {
+        const auto batch = vibeqc::detail::take_native_phase_profile(token, finish);
+        py::list records;
+        for (const auto& record : batch.records) {
+            py::dict item, dimensions;
+            item["kernel"] = record.kernel;
+            item["wall_seconds"] = record.wall_seconds;
+            item["completed"] = record.completed;
+            for (const auto& d : record.dimensions) dimensions[py::str(d.first)] = d.second;
+            item["dimensions"] = dimensions;
+            py::list phases;
+            for (const auto& phase : record.phases) {
+                py::dict p;
+                p["name"] = phase.name;
+                p["measure"] = phase.measure;
+                p["seconds"] = phase.seconds;
+                p["intervals"] = phase.intervals;
+                phases.append(p);
+            }
+            item["phases"] = phases;
+            records.append(item);
+        }
+        py::dict result;
+        result["records"] = records;
+        result["dropped_calls"] = batch.dropped_calls;
+        return result;
+    }, py::arg("token"), py::arg("finish") = false);
     m.doc() = "vibeqc native core (C++ backend)";
+    bind_opentrustregion(m);
     bind_aiccm2026dev_b_kernels(m);
     bind_periodic_correlation_resource(m);
     bind_periodic_mean_field_state(m);
     bind_symmetry_shared(m);
+    bind_symmetry_quartets(m);
+    bind_symmetry_ri(m);
     bind_periodic_ao_bloch_transport(m);
     bind_periodic_orbital_sewing(m);
     bind_bipole_ewald_gram(m);
@@ -932,6 +986,8 @@ PYBIND11_MODULE(_vibeqc_core, m) {
     bind_periodic_gaussian_nuclear(m);
     bind_periodic_gaussian_fock(m);
     bind_bounded_periodic_rhf_solver(m);
+    bind_bounded_periodic_uhf_solver(m);
+    bind_bounded_periodic_functional_solver(m);
     bind_periodic_gaussian_rhf(m);
     bind_periodic_gaussian_local_orbital_factors(m);
     bind_periodic_gaussian_density_gram(m);
@@ -946,6 +1002,7 @@ PYBIND11_MODULE(_vibeqc_core, m) {
     bind_periodic_gaussian_pair_space(m);
     bind_periodic_gaussian_gram_pair_pnos(m);
     bind_bounded_restricted_pair_mp2_solver(m);
+    bind_translation_mp2(m);
     bind_bounded_restricted_pair_ccsd_amplitudes(m);
     bind_bounded_restricted_ccsd_energy(m);
     bind_bounded_restricted_pair_ccsd_solver(m);
@@ -1114,8 +1171,11 @@ PYBIND11_MODULE(_vibeqc_core, m) {
           &vibeqc::compute_ecp_lattice_from_primitives,
           py::arg("basis"), py::arg("system"), py::arg("options"),
           py::arg("home_ecp_centers"), py::arg("home_primitives"),
+          py::arg("physical_pair_support") = false,
           py::call_guard<py::gil_scoped_release>(),
-          "Lattice-summed V_ECP(g) from inline primitives (Phase 14g).");
+          "Scalar short-range V_ECP(g), excluding Coulomb attraction. "
+          "physical_pair_support=True uses 3D physical AO pairs and "
+          "midpoint-centered projector images; default preserves historical support.");
 
     m.def("ecp_lattice_gradient_contribution_from_primitives",
           &vibeqc::ecp_lattice_gradient_contribution_from_primitives,
@@ -1135,6 +1195,27 @@ PYBIND11_MODULE(_vibeqc_core, m) {
           "ecp46mdf, ecp60mdf, ecp78mdf, lanl2dz). Output is in "
           "spherical (real-solid-harmonic) basis. share_dir defaults "
           "to the vendored third_party/libecpint/install/share/libecpint.");
+
+    m.def("_ecp_quadrature_report", []() {
+              const auto report = vibeqc::last_ecp_quadrature_report();
+              py::dict out;
+              out["builder"] = report.builder;
+              out["failures"] = report.failures;
+              out["max_change"] = report.max_change;
+              out["value_at_max"] = report.value_at_max;
+              out["failures_by_center"] = report.failures_by_center;
+              out["bessel_lmax_exceeded"] = report.bessel_lmax_exceeded;
+              out["candidates"] = report.candidates;
+              out["skipped"] = report.skipped;
+              out["total_failures"] = report.total_failures();
+              return out;
+          },
+          "libecpint radial-quadrature report of the most recent ECP "
+          "operator build in this process (vibe-qc #392): failures[site][l] "
+          "for sites integrate_small / type 1 / type 2 after the big-grid "
+          "retry, the largest final refinement change and |I| there, "
+          "failures per ECP centre, and for lattice builds the screened "
+          "(shell pair, image, centre) evaluations (#382).");
 
     m.def("get_num_threads",
           &vibeqc::omp_max_threads,
@@ -1172,7 +1253,18 @@ PYBIND11_MODULE(_vibeqc_core, m) {
                    std::to_string(a.xyz[0]) + ", " +
                    std::to_string(a.xyz[1]) + ", " +
                    std::to_string(a.xyz[2]) + "])";
-        });
+        })
+        // Pickling (#564): process pools (joblib, multiprocessing) send
+        // atoms, molecules and periodic systems to their workers.
+        .def(py::pickle(
+            [](const vibeqc::Atom& a) { return py::make_tuple(a.Z, a.xyz); },
+            [](const py::tuple& state) {
+                if (state.size() != 2) {
+                    throw std::runtime_error("Atom: invalid pickle state");
+                }
+                return vibeqc::Atom{state[0].cast<int>(),
+                                    state[1].cast<std::array<double, 3>>()};
+            }));
 
     // ----- Molecule ------------------------------------------------------
     py::class_<vibeqc::Molecule>(m, "Molecule")
@@ -1185,7 +1277,19 @@ PYBIND11_MODULE(_vibeqc_core, m) {
         .def_property_readonly("multiplicity", &vibeqc::Molecule::multiplicity)
         .def("n_electrons", &vibeqc::Molecule::n_electrons)
         .def("nuclear_repulsion", &vibeqc::Molecule::nuclear_repulsion,
-             "Point-charge nuclear repulsion energy in Hartree.");
+             "Point-charge nuclear repulsion energy in Hartree.")
+        .def(py::pickle(
+            [](const vibeqc::Molecule& mol) {
+                return py::make_tuple(mol.atoms(), mol.charge(), mol.multiplicity());
+            },
+            [](const py::tuple& state) {
+                if (state.size() != 3) {
+                    throw std::runtime_error("Molecule: invalid pickle state");
+                }
+                return vibeqc::Molecule(
+                    state[0].cast<std::vector<vibeqc::Atom>>(),
+                    state[1].cast<int>(), state[2].cast<int>());
+            }));
 
     m.def(
         "_published_frozen_core_orbitals_for_atomic_number",
@@ -1251,6 +1355,15 @@ PYBIND11_MODULE(_vibeqc_core, m) {
                  + (s.pure ? ", pure" : ", cart") + ")";
         });
 
+    // One basis-name resolver for C++ and Python (#30):
+    // vibeqc.basis_registry.canonical_basis_name delegates here.
+    m.def("basis_lookup_key", &vibeqc::basis_lookup_key, py::arg("name"),
+          "Normalisation key shared by every spelling of a basis name: "
+          "lowercase alphanumerics plus '+'.");
+    m.def("basis_data_name", &vibeqc::basis_data_name, py::arg("name"),
+          "The file stem BasisSet loads for a spelling (alias-resolved on "
+          "basis_lookup_key, else the trimmed lowercase name).");
+
     py::class_<vibeqc::BasisSet>(m, "BasisSet")
         .def(py::init<const vibeqc::Molecule&, const std::string&, bool>(),
              py::arg("molecule"),
@@ -1297,6 +1410,8 @@ PYBIND11_MODULE(_vibeqc_core, m) {
              "pair, in libint's native shell order. Use this to export "
              "the basis to external formats (molden, NWChem, ...). "
              "Method, not property — returns a freshly-built list.");
+
+    bind_product_auxiliary(m);
 
     m.def("prune_tight_primitives", &vibeqc::prune_tight_primitives,
           py::arg("basis"), py::arg("molecule"), py::arg("cutoff"),
@@ -1957,8 +2072,8 @@ m.def("compute_cosx_k",
       "cells R (home cell included), F_ν(r_g) = Σ_R Σ_σ "
       "A_{νσ}(r_g − R)·(D·χ(r_g))_σ — the home-bra → image-ket "
       "exchange class for tight cells (single-lattice-sum model; "
-      "Γ-folded GDF exchange parity needs more — see "
-      "handovers/HANDOVER_RIJCOSX_M3A.md). A home-only list keeps the "
+      "Γ-folded GDF exchange parity needs more). "
+      "A home-only list keeps the "
       "single-pass kernel; when image summation is active "
       "``grid_batches`` is ignored (unbatched path).");
 
@@ -2032,8 +2147,8 @@ m.def("compute_cosx_k",
           "symmetrised, Q-corrected K. Agrees with the direct-ERI "
           "reference to COSX grid-quadrature accuracy and reduces to "
           "the molecular ``compute_cosx_k`` for a home-only cell "
-          "list. Building block for multi-k periodic COSX "
-          "(handovers/HANDOVER_RIJCOSX_M3A.md § 'M3b direction'); D must be "
+          "list. This is a building block for multi-k periodic COSX; "
+          "D must be "
           "symmetric (per-spin densities fine), generalised response "
           "densities are an M3b follow-up.");
 
@@ -2429,7 +2544,7 @@ m.def("compute_cosx_k",
     // wrapper at python/vibeqc/_aopair_ft.py dispatches to this kernel
     // when the basis is s-only and falls back to the pure-Python
     // McMurchie-Davidson path for higher L (until the general-L kernel
-    // lands — Item 1b in the integrals-chat handover). Output is
+    // lands). Output is
     // complex128 with shape (n_orb, n_orb, n_G).
     m.def("ao_pair_fourier_transform_bloch_ss",
           [](const vibeqc::BasisSet& basis,
@@ -2505,7 +2620,7 @@ m.def("compute_cosx_k",
                                        py::array::forcecast>& R_g_list,
              const py::array_t<double, py::array::c_style |
                                        py::array::forcecast>& k_cart,
-             double screen_tol) {
+             double screen_tol, double pair_cutoff_bohr) {
               if (G_vectors.ndim() != 2 || G_vectors.shape(1) != 3) {
                   throw std::invalid_argument(
                       "G_vectors must have shape (n_G, 3)");
@@ -2534,7 +2649,7 @@ m.def("compute_cosx_k",
               {
                   py::gil_scoped_release unlock_gil;
                   T = vibeqc::ao_pair_fourier_transform_bloch(
-                      basis, G_map, R_map, k_vec, screen_tol);
+                      basis, G_map, R_map, k_vec, screen_tol, pair_cutoff_bohr);
               }
               const auto no = static_cast<py::ssize_t>(T.n_orb);
               const auto nG = static_cast<py::ssize_t>(T.n_G);
@@ -2554,6 +2669,7 @@ m.def("compute_cosx_k",
           py::arg("basis"), py::arg("G_vectors"),
           py::arg("R_g_list"), py::arg("k_cart"),
           py::arg("screen_tol") = 0.0,
+          py::arg("pair_cutoff_bohr") = -1.0,
           "Bloch-summed AO-pair FT — general L via McMurchie-Davidson "
           "Hermite chain + Cartesian-to-spherical transform. Supports "
           "any pure-spherical basis up to L = 6 — the extent of the "
@@ -2571,7 +2687,7 @@ m.def("compute_cosx_k",
              const py::array_t<std::complex<double>,
                                py::array::c_style |
                                py::array::forcecast>& reciprocal_weights,
-             double screen_tol) {
+             double screen_tol, std::size_t radial_cache_bytes) {
               if (G_vectors.ndim() != 2 || G_vectors.shape(1) != 3) {
                   throw std::invalid_argument(
                       "G_vectors must have shape (n_G, 3)");
@@ -2601,7 +2717,7 @@ m.def("compute_cosx_k",
               {
                   py::gil_scoped_release unlock_gil;
                   data = vibeqc::ao_pair_fourier_transform_weighted_per_cell(
-                      basis, G_map, R_map, W_map, screen_tol);
+                      basis, G_map, R_map, W_map, screen_tol, radial_cache_bytes);
               }
               const auto no =
                   static_cast<py::ssize_t>(basis.nbasis());
@@ -2621,11 +2737,13 @@ m.def("compute_cosx_k",
           py::arg("basis"), py::arg("G_vectors"),
           py::arg("R_g_list"), py::arg("reciprocal_weights"),
           py::arg("screen_tol") = 0.0,
+          py::arg("radial_cache_bytes") = 64 * 1024 * 1024,
           "Per-cell reciprocal-weight-contracted AO-pair FT: "
           "out[g,m,n] = Re(sum_G w(G) conj(FT_mn(G; R_g))). Returns a "
           "(n_g, n_orb, n_orb) real array. Never materialises the dense "
           "(n_orb, n_orb, n_G) tensor and parallelises over the whole "
-          "flattened (shell-pair, cell) task space.");
+          "flattened (shell-pair, cell) task space. radial_cache_bytes bounds "
+          "optional call-local Gaussian damping reuse (zero disables it).");
 
     m.def("ao_pair_fourier_transform_bloch_multi_cxx",
           [](const vibeqc::BasisSet& basis,
@@ -2639,7 +2757,8 @@ m.def("compute_cosx_k",
              const std::optional<py::array_t<double,
                                              py::array::c_style |
                                              py::array::forcecast>>&
-                 pair_weights) {
+                 pair_weights,
+             double pair_cutoff_bohr) {
               if (G_vectors.ndim() != 2 || G_vectors.shape(1) != 3) {
                   throw std::invalid_argument(
                       "G_vectors must have shape (n_G, 3)");
@@ -2682,7 +2801,7 @@ m.def("compute_cosx_k",
               {
                   py::gil_scoped_release unlock_gil;
                   tensors = vibeqc::ao_pair_fourier_transform_bloch_multi(
-                      basis, G_map, R_map, k_map, screen_tol, weights);
+                      basis, G_map, R_map, k_map, screen_tol, weights, pair_cutoff_bohr);
               }
               using cplx = std::complex<double>;
               py::list result;
@@ -2707,6 +2826,7 @@ m.def("compute_cosx_k",
           py::arg("R_g_list"), py::arg("k_carts"),
           py::arg("screen_tol") = 0.0,
           py::arg("pair_weights") = py::none(),
+          py::arg("pair_cutoff_bohr") = -1.0,
           "Multi-k batched Bloch-summed AO-pair FT: one k-independent "
           "per-cell McMurchie-Davidson pass shared across every row of "
           "k_carts, folded per k with its Bloch phase. Returns a list "
@@ -2897,7 +3017,7 @@ m.def("compute_cosx_k",
           py::arg("R_g_list"), py::arg("k_cart"),
           py::arg("pair_weights_g"), py::arg("n_atoms"),
           "Bloch-phased G-resolved-weighted AO-pair FT centre gradient "
-          "(HANDOVER_GDF_GRADIENT_DEFERRED.md section 4, rung 1). Computes "
+          "computes "
           "d/dR_A Re sum_G sum_mn Q_mn(G) "
           "conj(sum_R exp(+i k.R) FT_mn(G;R)); k_cart = 0 reduces to the "
           "Gamma kernel bit-for-bit. Returns (n_atoms, 3).");
@@ -3465,6 +3585,8 @@ m.def("compute_cosx_k",
           "Van Lenthe et al., J. Comput. Chem. 27, 926 (2006).");
 
     py::class_<vibeqc::RHFOptions>(m, "RHFOptions")
+        .def_readwrite("orbital_optimizer", &vibeqc::RHFOptions::orbital_optimizer)
+        .def_readwrite("opentrustregion", &vibeqc::RHFOptions::opentrustregion)
         .def(py::init<>())
         .def(py::init<const vibeqc::RHFOptions&>(), py::arg("other"),
              "Value copy. Used by routes (CPCM solvation, SAD retries) that "
@@ -3823,7 +3945,20 @@ m.def("compute_cosx_k",
         .def_readwrite("stability_davidson_max_iter",
                        &vibeqc::RHFOptions::stability_davidson_max_iter,
                        "Davidson matvec cap for the stability solve. "
-                       "Default 60.");
+                       "Default 60.")
+        .def_readwrite("stability_wall_budget_s",
+                       &vibeqc::RHFOptions::stability_wall_budget_s,
+                       "Wall-clock budget (s) for each stability solve; "
+                       "0 = automatic: max(stability_wall_floor_s, "
+                       "stability_wall_fraction * SCF loop wall) (#342).")
+        .def_readwrite("stability_wall_fraction",
+                       &vibeqc::RHFOptions::stability_wall_fraction,
+                       "Automatic stability wall budget as a multiple of "
+                       "the SCF loop wall. Default 3.0.")
+        .def_readwrite("stability_wall_floor_s",
+                       &vibeqc::RHFOptions::stability_wall_floor_s,
+                       "Floor (s) of the automatic stability wall budget. "
+                       "Default 600.");
 
     py::class_<vibeqc::NewtonOptions>(m, "NewtonOptions",
           "Knobs for the Newton Newton step (Phase D2c). See "
@@ -3991,6 +4126,17 @@ m.def("compute_cosx_k",
           py::arg("A_H"), py::arg("options"),
           "Solve A x = lambda x for the lowest eigenvalues of a complex "
           "Hermitian matrix using the blocked Davidson algorithm.");
+
+    m.def("davidson_solve_matmat", &vibeqc::davidson_solve_matmat,
+          py::arg("n_basis"), py::arg("matmat"), py::arg("diag"),
+          py::arg("options"),
+          "Real Davidson with a block operator callback and supplied diagonal.");
+
+    m.def("davidson_solve_hermitian_matmat",
+          &vibeqc::davidson_solve_hermitian_matmat,
+          py::arg("n_basis"), py::arg("matmat"), py::arg("diag"),
+          py::arg("options"),
+          "Hermitian Davidson with a block operator callback and supplied diagonal.");
 
     m.def("davidson_solve_hermitian_matvec",
           &vibeqc::davidson_solve_hermitian_matvec,
@@ -4218,6 +4364,8 @@ m.def("compute_cosx_k",
         "Private regression hook for the molecular SCF oscillation detector.");
 
     py::class_<vibeqc::RHFResult>(m, "RHFResult")
+        .def_readonly("engine_provenance", &vibeqc::RHFResult::engine_provenance)
+        .def_readonly("opentrustregion", &vibeqc::RHFResult::opentrustregion)
         .def_readonly("restart_basis", &vibeqc::RHFResult::restart_basis)
         .def_readwrite("guess_selection", &vibeqc::RHFResult::guess_selection)
         .def_readonly("energy", &vibeqc::RHFResult::energy,
@@ -4275,6 +4423,18 @@ m.def("compute_cosx_k",
                       &vibeqc::RHFResult::stability_analysis_converged,
                       "True when the stability Davidson solve converged "
                       "(stability_eigenvalue is then trustworthy).")
+        .def_readonly("stability_stop_reason",
+                      &vibeqc::RHFResult::stability_stop_reason,
+                      "Why the stability solve ended: 0 converged, 1 matvec "
+                      "budget, 2 wall budget, 3 not run, 4 trivial, 5 stagnated "
+                      "(#342).")
+        .def_readonly("stability_n_matvec",
+                      &vibeqc::RHFResult::stability_n_matvec,
+                      "Hessian-vector products the last stability solve spent.")
+        .def_readonly("stability_wall_budget_s",
+                      &vibeqc::RHFResult::stability_wall_budget_s,
+                      "Wall budget (s) that applied to the stability solve; "
+                      "0 = unbounded.")
         .def_readonly("stability_eigenvalue",
                       &vibeqc::RHFResult::stability_eigenvalue,
                       "Lowest orbital-rotation Hessian eigenvalue at the "
@@ -5123,6 +5283,14 @@ m.def("compute_cosx_k",
           "Evaluate χ_μ(r_g) for every basis function and every grid point. "
           "Returns an (n_points, n_basis) matrix.");
 
+    m.def("evaluate_ao_tensor_grid", &vibeqc::evaluate_ao_tensor_grid,
+          py::arg("basis"), py::arg("x"), py::arg("y"), py::arg("z"),
+          py::arg("lattice_translations"),
+          py::call_guard<py::gil_scoped_release>(),
+          "AO image sum on the Cartesian product x × y × z (z fastest). "
+          "Returns (len(x)*len(y)*len(z), n_basis); no image screening. "
+          "Axes and translations are Cartesian coordinates in bohr.");
+
     m.def("evaluate_bloch_ao", &vibeqc::evaluate_bloch_ao,
           py::arg("basis"), py::arg("points"), py::arg("k_cart"),
           py::arg("lattice_translations"),
@@ -5136,6 +5304,14 @@ m.def("compute_cosx_k",
           "a column of the multi-k SCF coefficient matrix C(k) recovers the "
           "Bloch crystalline orbital ψ_{n,k}(r); use the Python wrapper "
           "``vibeqc.evaluate_bloch_orbital`` for that one-liner.");
+
+    m.def("evaluate_bloch_ao_multi_k", &vibeqc::evaluate_bloch_ao_multi_k,
+          py::arg("basis"), py::arg("points"), py::arg("k_cart"),
+          py::arg("lattice_translations"),
+          py::call_guard<py::gil_scoped_release>(),
+          "Bloch AO tables for rows of k_cart, sharing real AO image panels. "
+          "Returns a list of complex (n_points, n_basis) matrices. "
+          "Points may be arbitrary; the caller must bound the total output.");
 
     // ----- XC functional (libxc wrapper) ----------------------------------
     py::enum_<vibeqc::XCKind>(m, "XCKind")
@@ -5155,6 +5331,12 @@ m.def("compute_cosx_k",
              "PySCF, and Psi4 mean by the bare name.")
         .def_property_readonly("name", &vibeqc::Functional::name)
         .def_property_readonly("kind", &vibeqc::Functional::kind)
+        .def_property_readonly("components", &vibeqc::Functional::components)
+        .def_property_readonly("exchange_components", &vibeqc::Functional::exchange_components,
+             "Executed (kernel, coefficient, omega) terms, including every component range.")
+        .def_property_readonly("component_capabilities", &vibeqc::Functional::component_capabilities,
+             "Executed Libxc component kind, energy/derivative, dimension and Laplacian capabilities.")
+        .def_property_readonly("spin", &vibeqc::Functional::spin)
         .def_property_readonly("is_external",
                                &vibeqc::Functional::is_external,
                                "True for a registered full-grid XC backend "
@@ -5783,6 +5965,8 @@ m.def("compute_cosx_k",
 
     // ----- UHF -----------------------------------------------------------
     py::class_<vibeqc::UHFOptions>(m, "UHFOptions")
+        .def_readwrite("orbital_optimizer", &vibeqc::UHFOptions::orbital_optimizer)
+        .def_readwrite("opentrustregion", &vibeqc::UHFOptions::opentrustregion)
         .def(py::init<>())
         .def(py::init<const vibeqc::UHFOptions&>(), py::arg("other"),
              "Value copy. Used by alternate-guess retries so ECP, SCF, and "
@@ -5823,7 +6007,18 @@ m.def("compute_cosx_k",
         .def_readwrite("ediis_diis_switch_threshold",
                        &vibeqc::UHFOptions::ediis_diis_switch_threshold,
                        "See RHFOptions.ediis_diis_switch_threshold. "
-                       "Default 1e-1.")
+                       "Used when n_alpha == n_beta. Default 1e-1.")
+        .def_readwrite("ediis_diis_switch_threshold_open_shell",
+                       &vibeqc::UHFOptions::ediis_diis_switch_threshold_open_shell,
+                       "EDIIS_DIIS / ADIIS_DIIS switch threshold used "
+                       "instead of ediis_diis_switch_threshold when "
+                       "n_alpha != n_beta. Compared with the RMS "
+                       "commutator norm max_s ||F_s D_s S - S D_s F_s||_F "
+                       "/ (sqrt(2) nbf). Default 1e-3 (GitLab #377): at "
+                       "1e-1 the EDIIS branch is unreachable on molecular "
+                       "UHF and the hybrid runs as plain DIIS, which fails "
+                       "on the CN radical. Set 1e-1 for the previous "
+                       "open-shell trajectory.")
         .def_readwrite("diis_restart_tau",
                        &vibeqc::UHFOptions::diis_restart_tau,
                        "R_CDIIS restart parameter τ. See "
@@ -6066,7 +6261,20 @@ m.def("compute_cosx_k",
         .def_readwrite("stability_davidson_max_iter",
                        &vibeqc::UHFOptions::stability_davidson_max_iter,
                        "Matvec cap for each stability Davidson solve "
-                       "(one J + two K builds per matvec). Default 60.")
+                       "(one J + two K builds per matvec). Default 80.")
+        .def_readwrite("stability_wall_budget_s",
+                       &vibeqc::UHFOptions::stability_wall_budget_s,
+                       "Wall-clock budget (s) for each stability solve; "
+                       "0 = automatic: max(stability_wall_floor_s, "
+                       "stability_wall_fraction * SCF loop wall) (#342).")
+        .def_readwrite("stability_wall_fraction",
+                       &vibeqc::UHFOptions::stability_wall_fraction,
+                       "Automatic stability wall budget as a multiple of "
+                       "the SCF loop wall. Default 3.0.")
+        .def_readwrite("stability_wall_floor_s",
+                       &vibeqc::UHFOptions::stability_wall_floor_s,
+                       "Floor (s) of the automatic stability wall budget. "
+                       "Default 600.")
         .def_readwrite("multi_guess_seeds",
                        &vibeqc::UHFOptions::multi_guess_seeds,
                        "Additional PRNG seeds for multi-start convergence "
@@ -6075,6 +6283,8 @@ m.def("compute_cosx_k",
                        "Empty (default) = single SCF.");
 
     py::class_<vibeqc::UHFResult>(m, "UHFResult")
+        .def_readonly("engine_provenance", &vibeqc::UHFResult::engine_provenance)
+        .def_readonly("opentrustregion", &vibeqc::UHFResult::opentrustregion)
         .def_readonly("restart_basis", &vibeqc::UHFResult::restart_basis)
         .def_readwrite("guess_selection", &vibeqc::UHFResult::guess_selection)
         .def_readonly("energy", &vibeqc::UHFResult::energy,
@@ -6144,6 +6354,18 @@ m.def("compute_cosx_k",
                       &vibeqc::UHFResult::stability_analysis_converged,
                       "True when the stability Davidson solve converged "
                       "(stability_eigenvalue is then trustworthy).")
+        .def_readonly("stability_stop_reason",
+                      &vibeqc::UHFResult::stability_stop_reason,
+                      "Why the stability solve ended: 0 converged, 1 matvec "
+                      "budget, 2 wall budget, 3 not run, 4 trivial, 5 stagnated "
+                      "(#342).")
+        .def_readonly("stability_n_matvec",
+                      &vibeqc::UHFResult::stability_n_matvec,
+                      "Hessian-vector products the last stability solve spent.")
+        .def_readonly("stability_wall_budget_s",
+                      &vibeqc::UHFResult::stability_wall_budget_s,
+                      "Wall budget (s) that applied to the stability solve; "
+                      "0 = unbounded.")
         .def_readonly("stability_eigenvalue",
                       &vibeqc::UHFResult::stability_eigenvalue,
                       "Lowest internal orbital-rotation Hessian "
@@ -6153,6 +6375,10 @@ m.def("compute_cosx_k",
                       &vibeqc::UHFResult::n_stability_restarts,
                       "Rotate-and-reconverge escapes taken to reach the "
                       "returned solution.")
+        .def_readonly("stability_trah_used",
+                      &vibeqc::UHFResult::stability_trah_used,
+                      "True when stability recovery invoked the TRAH "
+                      "fallback, even if no lower converged state was found.")
         .def_readonly("internal_instability",
                       &vibeqc::UHFResult::internal_instability,
                       "True when the returned solution is internally "
@@ -6177,6 +6403,8 @@ m.def("compute_cosx_k",
 
     // ----- RKS (closed-shell DFT) ----------------------------------------
     py::class_<vibeqc::RKSOptions>(m, "RKSOptions")
+        .def_readwrite("orbital_optimizer", &vibeqc::RKSOptions::orbital_optimizer)
+        .def_readwrite("opentrustregion", &vibeqc::RKSOptions::opentrustregion)
         .def(py::init<>())
         .def(py::init<const vibeqc::RKSOptions&>(), py::arg("other"),
              "Value copy. Used by routes (CPCM solvation, SAD retries) that "
@@ -6452,9 +6680,24 @@ m.def("compute_cosx_k",
         .def_readwrite("stability_davidson_max_iter",
                        &vibeqc::RKSOptions::stability_davidson_max_iter,
                        "Davidson matvec cap for the stability solve. "
-                       "Default 60.");
+                       "Default 60.")
+        .def_readwrite("stability_wall_budget_s",
+                       &vibeqc::RKSOptions::stability_wall_budget_s,
+                       "Wall-clock budget (s) for each stability solve; "
+                       "0 = automatic: max(stability_wall_floor_s, "
+                       "stability_wall_fraction * SCF loop wall) (#342).")
+        .def_readwrite("stability_wall_fraction",
+                       &vibeqc::RKSOptions::stability_wall_fraction,
+                       "Automatic stability wall budget as a multiple of "
+                       "the SCF loop wall. Default 3.0.")
+        .def_readwrite("stability_wall_floor_s",
+                       &vibeqc::RKSOptions::stability_wall_floor_s,
+                       "Floor (s) of the automatic stability wall budget. "
+                       "Default 600.");
 
     py::class_<vibeqc::RKSResult>(m, "RKSResult")
+        .def_readonly("opentrustregion", &vibeqc::RKSResult::opentrustregion)
+        .def_readonly("engine_provenance", &vibeqc::RKSResult::engine_provenance)
         .def_readonly("restart_basis", &vibeqc::RKSResult::restart_basis)
         .def_readwrite("guess_selection", &vibeqc::RKSResult::guess_selection)
         .def_readonly("energy", &vibeqc::RKSResult::energy)
@@ -6512,6 +6755,18 @@ m.def("compute_cosx_k",
                       &vibeqc::RKSResult::stability_analysis_converged,
                       "True when the stability Davidson solve converged "
                       "(stability_eigenvalue is then trustworthy).")
+        .def_readonly("stability_stop_reason",
+                      &vibeqc::RKSResult::stability_stop_reason,
+                      "Why the stability solve ended: 0 converged, 1 matvec "
+                      "budget, 2 wall budget, 3 not run, 4 trivial, 5 stagnated "
+                      "(#342).")
+        .def_readonly("stability_n_matvec",
+                      &vibeqc::RKSResult::stability_n_matvec,
+                      "Hessian-vector products the last stability solve spent.")
+        .def_readonly("stability_wall_budget_s",
+                      &vibeqc::RKSResult::stability_wall_budget_s,
+                      "Wall budget (s) that applied to the stability solve; "
+                      "0 = unbounded.")
         .def_readonly("stability_eigenvalue",
                       &vibeqc::RKSResult::stability_eigenvalue,
                       "Lowest orbital-rotation Hessian eigenvalue at the "
@@ -6603,6 +6858,8 @@ m.def("compute_cosx_k",
 
     // ----- UKS (open-shell DFT) ------------------------------------------
     py::class_<vibeqc::UKSOptions>(m, "UKSOptions")
+        .def_readwrite("orbital_optimizer", &vibeqc::UKSOptions::orbital_optimizer)
+        .def_readwrite("opentrustregion", &vibeqc::UKSOptions::opentrustregion)
         .def(py::init<>())
         .def(py::init<const vibeqc::UKSOptions&>(), py::arg("other"),
              "Value-copy an existing UKSOptions object, including internal "
@@ -6883,12 +7140,27 @@ m.def("compute_cosx_k",
                        &vibeqc::UKSOptions::stability_davidson_max_iter,
                        "Davidson matvec cap for the stability solve. "
                        "Default 60.")
+        .def_readwrite("stability_wall_budget_s",
+                       &vibeqc::UKSOptions::stability_wall_budget_s,
+                       "Wall-clock budget (s) for each stability solve; "
+                       "0 = automatic: max(stability_wall_floor_s, "
+                       "stability_wall_fraction * SCF loop wall) (#342).")
+        .def_readwrite("stability_wall_fraction",
+                       &vibeqc::UKSOptions::stability_wall_fraction,
+                       "Automatic stability wall budget as a multiple of "
+                       "the SCF loop wall. Default 3.0.")
+        .def_readwrite("stability_wall_floor_s",
+                       &vibeqc::UKSOptions::stability_wall_floor_s,
+                       "Floor (s) of the automatic stability wall budget. "
+                       "Default 600.")
         .def_readwrite("multi_guess_seeds",
                        &vibeqc::UKSOptions::multi_guess_seeds,
                        "Additional PRNG seeds for multi-start convergence "
                        "(BUG 88). See UHFOptions.multi_guess_seeds.");
 
     py::class_<vibeqc::UKSResult>(m, "UKSResult")
+        .def_readonly("opentrustregion", &vibeqc::UKSResult::opentrustregion)
+        .def_readonly("engine_provenance", &vibeqc::UKSResult::engine_provenance)
         .def_readonly("restart_basis", &vibeqc::UKSResult::restart_basis)
         .def_readwrite("guess_selection", &vibeqc::UKSResult::guess_selection)
         .def_readonly("energy",       &vibeqc::UKSResult::energy)
@@ -6961,6 +7233,18 @@ m.def("compute_cosx_k",
         .def_readonly("stability_analysis_converged",
                        &vibeqc::UKSResult::stability_analysis_converged,
                        "True when the stability Davidson solve converged.")
+        .def_readonly("stability_stop_reason",
+                       &vibeqc::UKSResult::stability_stop_reason,
+                       "Why the stability solve ended: 0 converged, 1 matvec "
+                       "budget, 2 wall budget, 3 not run, 4 trivial, 5 stagnated "
+                       "(#342).")
+        .def_readonly("stability_n_matvec",
+                       &vibeqc::UKSResult::stability_n_matvec,
+                       "Hessian-vector products the last stability solve spent.")
+        .def_readonly("stability_wall_budget_s",
+                       &vibeqc::UKSResult::stability_wall_budget_s,
+                       "Wall budget (s) that applied to the stability solve; "
+                       "0 = unbounded.")
         .def_readonly("stability_eigenvalue",
                        &vibeqc::UKSResult::stability_eigenvalue,
                        "Lowest internal orbital-rotation Hessian "
@@ -6992,6 +7276,54 @@ m.def("compute_cosx_k",
                    + ", converged=" + (r.converged ? "True" : "False")
                    + ", <S^2>=" + std::to_string(r.s_squared) + ")";
         });
+
+    m.def("_diagnose_uks_recovery", [](const vibeqc::Molecule& mol,
+        const vibeqc::BasisSet& basis, const vibeqc::UKSOptions& opts,
+        int event_iteration, int steps) {
+        vibeqc::detail::UKSRecoveryDiagnostic r;
+        { py::gil_scoped_release release;
+          r = vibeqc::detail::diagnose_uks_recovery(mol, basis, opts, event_iteration, steps); }
+        auto frame = [](const vibeqc::detail::UKSRecoveryFrame& f) {
+            py::dict d; d["iteration"] = f.iteration; d["phase"] = f.phase;
+            d["values"] = py::cast(f.values); d["matrices"] = py::cast(f.matrices);
+            return d;
+        };
+        auto frames = [&](const std::vector<vibeqc::detail::UKSRecoveryFrame>& rows) {
+            py::list result; for (const auto& row : rows) result.append(frame(row));
+            return result;
+        };
+        py::dict d; d["diagnostic_only"] = true;
+        d["event_iteration"] = r.event_iteration; d["steps"] = r.steps;
+        d["n_alpha"] = r.n_alpha; d["n_beta"] = r.n_beta;
+        d["nuclear_energy"] = r.nuclear_energy;
+        d["requested_options"] = py::cast(r.requested_options);
+        d["effective_options"] = py::cast(r.effective_options);
+        d["overlap"] = py::cast(r.overlap); d["hcore"] = py::cast(r.hcore);
+        d["grid_points"] = py::cast(r.grid_points); d["grid_weights"] = py::cast(r.grid_weights);
+        d["checkpoint"] = frame(r.checkpoint); d["prefix"] = frames(r.prefix);
+        py::list branches; for (const auto& branch : r.branches) branches.append(frames(branch));
+        d["branches"] = branches;
+        py::list certifications;
+        for (const auto& row : r.certifications) certifications.append(frames(row));
+        d["certifications"] = certifications;
+        d["prefix_certifications"] = frames(r.prefix_certifications);
+        d["branch_results"] = frames(r.branch_results);
+        d["branch_termination"] = py::cast(r.branch_termination);
+        d["branch_errors"] = py::cast(r.branch_errors);
+        d["branch_factors"] = py::make_tuple(py::make_tuple(false, false),
+            py::make_tuple(false, true), py::make_tuple(true, false), py::make_tuple(true, true));
+        d["factor_order"] = "orbital_replacement,accelerator_history_reset";
+        d["frozen_schedule"] = "No later orbital restart or new auto-shift activation; "
+            "existing shift, damping rules, absolute iteration, and target options preserved.";
+        d["checkpoint_storage"] = "Full continuation state copied in memory; "
+            "active DIIS history exported; other histories required inactive/empty.";
+        d["diis_focks"] = py::cast(r.diis_focks); d["diis_errors"] = py::cast(r.diis_errors);
+        d["initial_branch_density_alpha"] = py::cast(r.initial_branch_density_alpha);
+        d["initial_branch_density_beta"] = py::cast(r.initial_branch_density_beta);
+        return d;
+    }, py::arg("molecule"), py::arg("basis"), py::arg("options"),
+       py::arg("event_iteration") = 42, py::arg("steps") = 12,
+       "Private checkpoint replay; returns diagnostic records, never a certified SCF result.");
 
     m.def("run_uks", &vibeqc::run_uks,
           py::arg("molecule"), py::arg("basis"),
@@ -8219,6 +8551,311 @@ m.def("compute_cosx_k",
         "omitted term elsewhere (issue #700).");
 
     m.def(
+        "dlpno_ccsd_pno_solve",
+        // Eigen::Ref maps a C-contiguous float64 array without copying it;
+        // an incompatible array is converted once, as before.
+        [](Eigen::Ref<const RowMatD> b_ov, Eigen::Ref<const RowMatD> b_oo,
+           Eigen::Ref<const RowMatD> b_vv,
+           const Eigen::MatrixXd& f_oo, const Eigen::MatrixXd& f_ov,
+           const Eigen::MatrixXd& f_vv,
+           const std::vector<int>& pair_i, const std::vector<int>& pair_j,
+           const std::vector<Eigen::MatrixXd>& U,
+           const std::vector<Eigen::VectorXd>& eps,
+           const std::vector<Eigen::MatrixXd>& K,
+           const std::vector<Eigen::MatrixXd>& T2,
+           const std::vector<std::vector<int>>& L,
+           int max_iter, double conv_tol_energy, double conv_tol_residual,
+           int diis_size) -> py::dict {
+            const std::size_t n = pair_i.size();
+            if (pair_j.size() != n || U.size() != n || eps.size() != n
+                || K.size() != n || T2.size() != n || L.size() != n) {
+                throw std::invalid_argument(
+                    "dlpno_ccsd_pno_solve: per-pair lists must have one entry "
+                    "per pair");
+            }
+            std::vector<vibeqc::DLPNOPairInput> pairs(n);
+            for (std::size_t p = 0; p < n; ++p) {
+                pairs[p].i = pair_i[p];
+                pairs[p].j = pair_j[p];
+                pairs[p].U = U[p];
+                pairs[p].eps = eps[p];
+                pairs[p].K = K[p];
+                pairs[p].T2 = T2[p];
+                pairs[p].L = L[p];
+            }
+            vibeqc::DLPNOCCSDPNOOptions opts;
+            opts.max_iter = max_iter;
+            opts.conv_tol_energy = conv_tol_energy;
+            opts.conv_tol_residual = conv_tol_residual;
+            opts.diis_size = diis_size;
+            vibeqc::DLPNOCCSDPNOResult res;
+            {
+                py::gil_scoped_release release;
+                res = vibeqc::dlpno_ccsd_pno_solve(
+                    b_ov, b_oo, b_vv, f_oo, f_ov, f_vv, std::move(pairs), opts);
+            }
+            py::dict out;
+            out["T2"] = res.T2;
+            out["t1"] = res.t1;
+            out["e_corr"] = res.e_corr;
+            out["n_iter"] = res.n_iter;
+            out["converged"] = res.converged;
+            out["trace_e_corr"] = res.trace_e_corr;
+            out["trace_r_norm"] = res.trace_r_norm;
+            out["n_offlist_rows"] = res.n_offlist_rows;
+            out["static_factor_bytes"] = res.static_factor_bytes;
+            out["setup_seconds"] = res.setup_seconds;
+            out["iteration_seconds"] = res.iteration_seconds;
+            return out;
+        },
+        py::arg("b_ov"), py::arg("b_oo"), py::arg("b_vv"), py::arg("f_oo"),
+        py::arg("f_ov"), py::arg("f_vv"), py::arg("pair_i"), py::arg("pair_j"),
+        py::arg("U"), py::arg("eps"), py::arg("K"), py::arg("T2"), py::arg("L"),
+        py::arg("max_iter") = 100, py::arg("conv_tol_energy") = 1e-9,
+        py::arg("conv_tol_residual") = 1e-7, py::arg("diis_size") = 6,
+        "Closed-shell DLPNO-CCSD amplitude equations solved with every "
+        "residual term contracted in PNO spaces (Riplinger and Neese 2013, "
+        "Sec. II C). b_ov, b_oo, b_vv are the global row-major DF factors over "
+        "the localised active occupieds and canonical virtuals; each pair "
+        "brings its PNO coefficients U (n_vir x n_pno), semicanonical energies, "
+        "exchange block K and initial doubles, plus its occupied coupling set "
+        "L. Returns a dict with the converged T2 (per pair), t1 (per occupied, "
+        "in the diagonal pair's PNO space), e_corr of the iterated pairs, "
+        "n_iter, converged, the per-iteration trace, and factor bookkeeping.");
+
+    {
+        auto make_upairs = [](const std::vector<int>& pair_i,
+                              const std::vector<int>& pair_j,
+                              const std::vector<Eigen::MatrixXd>& U,
+                              const std::vector<Eigen::VectorXd>& eps,
+                              const std::vector<Eigen::MatrixXd>& K,
+                              const std::vector<Eigen::MatrixXd>& T2,
+                              const std::vector<std::vector<int>>& L) {
+            const std::size_t n = pair_i.size();
+            if (pair_j.size() != n || U.size() != n || eps.size() != n
+                || K.size() != n || T2.size() != n || L.size() != n) {
+                throw std::invalid_argument(
+                    "dlpno_uccsd_pno_solve: per-pair lists must have one "
+                    "entry per pair");
+            }
+            std::vector<vibeqc::DLPNOUPairInput> pairs(n);
+            for (std::size_t p = 0; p < n; ++p) {
+                pairs[p].i = pair_i[p];
+                pairs[p].j = pair_j[p];
+                pairs[p].U = U[p];
+                pairs[p].eps = eps[p];
+                pairs[p].K = K[p];
+                pairs[p].T2 = T2[p];
+                pairs[p].L = L[p];
+            }
+            return pairs;
+        };
+        auto make_singles = [](const std::vector<std::vector<int>>& singles_L,
+                               const std::vector<Eigen::MatrixXd>& singles_U,
+                               const std::vector<Eigen::VectorXd>& singles_eps) {
+            const std::size_t n = singles_L.size();
+            if (singles_U.size() != n || singles_eps.size() != n) {
+                throw std::invalid_argument(
+                    "dlpno_uccsd_pno_solve: per-occupied singles lists must "
+                    "have one entry per occupied");
+            }
+            std::vector<vibeqc::DLPNOUSinglesInput> singles(n);
+            for (std::size_t i = 0; i < n; ++i) {
+                singles[i].L = singles_L[i];
+                singles[i].U = singles_U[i];
+                singles[i].eps = singles_eps[i];
+            }
+            return singles;
+        };
+        m.def(
+            "dlpno_uccsd_pno_solve",
+            [make_upairs, make_singles](
+                Eigen::Ref<const RowMatD> b_ov_a, Eigen::Ref<const RowMatD> b_ov_b,
+                Eigen::Ref<const RowMatD> b_oo_a, Eigen::Ref<const RowMatD> b_oo_b,
+                Eigen::Ref<const RowMatD> b_vv_a, Eigen::Ref<const RowMatD> b_vv_b,
+                const Eigen::MatrixXd& f_oo, const Eigen::MatrixXd& f_ov,
+                const Eigen::MatrixXd& f_vv_a, const Eigen::MatrixXd& f_vv_b,
+                const std::vector<int>& pair_i, const std::vector<int>& pair_j,
+                const std::vector<Eigen::MatrixXd>& U,
+                const std::vector<Eigen::VectorXd>& eps,
+                const std::vector<Eigen::MatrixXd>& K,
+                const std::vector<Eigen::MatrixXd>& T2,
+                const std::vector<std::vector<int>>& L,
+                const std::vector<std::vector<int>>& singles_L,
+                const std::vector<Eigen::MatrixXd>& singles_U,
+                const std::vector<Eigen::VectorXd>& singles_eps,
+                int max_iter, double conv_tol_energy, double conv_tol_residual,
+                int diis_size) -> py::dict {
+                auto pairs = make_upairs(pair_i, pair_j, U, eps, K, T2, L);
+                auto singles = make_singles(singles_L, singles_U, singles_eps);
+                vibeqc::DLPNOUCCSDPNOOptions opts;
+                opts.max_iter = max_iter;
+                opts.conv_tol_energy = conv_tol_energy;
+                opts.conv_tol_residual = conv_tol_residual;
+                opts.diis_size = diis_size;
+                vibeqc::DLPNOUCCSDPNOResult res;
+                {
+                    py::gil_scoped_release release;
+                    res = vibeqc::dlpno_uccsd_pno_solve(
+                        b_ov_a, b_ov_b, b_oo_a, b_oo_b, b_vv_a, b_vv_b, f_oo,
+                        f_ov, f_vv_a, f_vv_b, std::move(pairs),
+                        std::move(singles), opts);
+                }
+                py::dict out;
+                out["T2"] = res.T2;
+                out["T1"] = res.T1;
+                out["e_corr"] = res.e_corr;
+                out["n_iter"] = res.n_iter;
+                out["converged"] = res.converged;
+                out["trace_e_corr"] = res.trace_e_corr;
+                out["trace_r_norm"] = res.trace_r_norm;
+                out["n_offlist_rows"] = res.n_offlist_rows;
+                out["static_factor_bytes"] = res.static_factor_bytes;
+                out["setup_seconds"] = res.setup_seconds;
+                out["iteration_seconds"] = res.iteration_seconds;
+                return out;
+            },
+            py::arg("b_ov_a"), py::arg("b_ov_b"), py::arg("b_oo_a"),
+            py::arg("b_oo_b"), py::arg("b_vv_a"), py::arg("b_vv_b"),
+            py::arg("f_oo"), py::arg("f_ov"), py::arg("f_vv_a"),
+            py::arg("f_vv_b"), py::arg("pair_i"), py::arg("pair_j"),
+            py::arg("U"), py::arg("eps"), py::arg("K"), py::arg("T2"),
+            py::arg("L"), py::arg("singles_L"), py::arg("singles_U"),
+            py::arg("singles_eps"), py::arg("max_iter") = 100,
+            py::arg("conv_tol_energy") = 1e-9,
+            py::arg("conv_tol_residual") = 1e-7, py::arg("diis_size") = 6,
+            "Open-shell (UHF-based) DLPNO-CCSD amplitude equations with every "
+            "spin-orbital residual term contracted in PNO spaces (Riplinger "
+            "and Neese 2013, Sec. II C). The DF factors are passed per spin as "
+            "row-major (n_aux, ...) arrays over the localised active occupieds "
+            "and canonical virtuals of that spin; spin orbitals are ordered "
+            "alpha first. Each spin-orbital pair i < j brings PNO coefficients "
+            "U over the combined spin-virtual basis, semicanonical energies, "
+            "the antisymmetrised <ij||ab> block, initial doubles and its "
+            "occupied coupling set; each occupied brings its singles coupling "
+            "set and an optional singles basis (empty: full canonical space). "
+            "Returns a dict with the converged T2 per pair, T1 (n_occ, n_vir), "
+            "e_corr of the iterated pairs, n_iter, converged, the trace, and "
+            "factor bookkeeping.");
+        m.def(
+            "dlpno_uccsd_pno_residuals",
+            [make_upairs, make_singles](
+                Eigen::Ref<const RowMatD> b_ov_a, Eigen::Ref<const RowMatD> b_ov_b,
+                Eigen::Ref<const RowMatD> b_oo_a, Eigen::Ref<const RowMatD> b_oo_b,
+                Eigen::Ref<const RowMatD> b_vv_a, Eigen::Ref<const RowMatD> b_vv_b,
+                const Eigen::MatrixXd& f_oo, const Eigen::MatrixXd& f_ov,
+                const Eigen::MatrixXd& f_vv_a, const Eigen::MatrixXd& f_vv_b,
+                const std::vector<int>& pair_i, const std::vector<int>& pair_j,
+                const std::vector<Eigen::MatrixXd>& U,
+                const std::vector<Eigen::VectorXd>& eps,
+                const std::vector<Eigen::MatrixXd>& K,
+                const std::vector<Eigen::MatrixXd>& T2,
+                const std::vector<std::vector<int>>& L,
+                const std::vector<std::vector<int>>& singles_L,
+                const Eigen::MatrixXd& T1) -> py::tuple {
+                auto pairs = make_upairs(pair_i, pair_j, U, eps, K, T2, L);
+                std::vector<Eigen::MatrixXd> sU(singles_L.size());
+                std::vector<Eigen::VectorXd> sE(singles_L.size());
+                auto singles = make_singles(singles_L, sU, sE);
+                std::vector<Eigen::MatrixXd> R2;
+                Eigen::MatrixXd R1;
+                {
+                    py::gil_scoped_release release;
+                    vibeqc::dlpno_uccsd_pno_residuals(
+                        b_ov_a, b_ov_b, b_oo_a, b_oo_b, b_vv_a, b_vv_b, f_oo,
+                        f_ov, f_vv_a, f_vv_b, std::move(pairs),
+                        std::move(singles), T1, R2, R1);
+                }
+                return py::make_tuple(R2, R1);
+            },
+            py::arg("b_ov_a"), py::arg("b_ov_b"), py::arg("b_oo_a"),
+            py::arg("b_oo_b"), py::arg("b_vv_a"), py::arg("b_vv_b"),
+            py::arg("f_oo"), py::arg("f_ov"), py::arg("f_vv_a"),
+            py::arg("f_vv_b"), py::arg("pair_i"), py::arg("pair_j"),
+            py::arg("U"), py::arg("eps"), py::arg("K"), py::arg("T2"),
+            py::arg("L"), py::arg("singles_L"), py::arg("T1"),
+            "One evaluation of the open-shell PNO-space residuals for the "
+            "given amplitudes (testing): returns (R2 per pair in its PNO "
+            "space, R1 (n_occ, n_vir) in the canonical spin-virtual basis).");
+        m.def(
+            "dlpno_uccsd_local_triples",
+            [](Eigen::Ref<const RowMatD> b_ov_a, Eigen::Ref<const RowMatD> b_ov_b,
+               Eigen::Ref<const RowMatD> b_oo_a, Eigen::Ref<const RowMatD> b_oo_b,
+               Eigen::Ref<const RowMatD> b_vv_a, Eigen::Ref<const RowMatD> b_vv_b,
+               const Eigen::VectorXd& eps_o, const Eigen::MatrixXd& f_vv_a,
+               const Eigen::MatrixXd& f_vv_b, const std::vector<int>& pair_i,
+               const std::vector<int>& pair_j,
+               const std::vector<Eigen::MatrixXd>& U,
+               const std::vector<Eigen::MatrixXd>& T2,
+               const Eigen::MatrixXd& T1,
+               const std::vector<std::vector<int>>& triples, double tcut_tno,
+               double lindep) -> py::dict {
+                vibeqc::DLPNOUTriplesResult res;
+                {
+                    py::gil_scoped_release release;
+                    res = vibeqc::dlpno_uccsd_local_triples(
+                        b_ov_a, b_ov_b, b_oo_a, b_oo_b, b_vv_a, b_vv_b, eps_o,
+                        f_vv_a, f_vv_b, pair_i, pair_j, U, T2, T1, triples,
+                        tcut_tno, lindep);
+                }
+                py::dict out;
+                out["e_t"] = res.e_t;
+                out["n_tno"] = res.n_tno;
+                out["e_triple"] = res.e_triple;
+                out["seconds"] = res.seconds;
+                return out;
+            },
+            py::arg("b_ov_a"), py::arg("b_ov_b"), py::arg("b_oo_a"),
+            py::arg("b_oo_b"), py::arg("b_vv_a"), py::arg("b_vv_b"),
+            py::arg("eps_o"), py::arg("f_vv_a"), py::arg("f_vv_b"),
+            py::arg("pair_i"), py::arg("pair_j"), py::arg("U"), py::arg("T2"),
+            py::arg("T1"), py::arg("triples"), py::arg("tcut_tno") = 0.0,
+            py::arg("lindep") = 1e-8,
+            "Local semicanonical (T0) correction on converged open-shell PNO "
+            "amplitudes, spin-orbital. Per triple i < j < k: the TNO space is "
+            "the orthonormalised union of its three pair spaces (optionally "
+            "truncated at tcut_tno by the projected pair densities), only the "
+            "pairs containing one of the triple's occupieds are projected, and "
+            "only the triple's DF blocks are formed. Returns a dict with e_t, "
+            "the TNO count and energy per triple, and wall seconds.");
+    }
+
+    m.def(
+        "dlpno_ccsd_local_triples",
+        [](Eigen::Ref<const RowMatD> b_ov, Eigen::Ref<const RowMatD> b_oo,
+           Eigen::Ref<const RowMatD> b_vv, const Eigen::VectorXd& eps_o,
+           const Eigen::MatrixXd& f_vv, const std::vector<int>& pair_i,
+           const std::vector<int>& pair_j, const std::vector<Eigen::MatrixXd>& U,
+           const std::vector<Eigen::MatrixXd>& T2, const Eigen::MatrixXd& T1,
+           const std::vector<std::vector<int>>& keys, double tcut_tno,
+           double lindep) -> py::dict {
+            vibeqc::DLPNOTriplesResult res;
+            {
+                py::gil_scoped_release release;
+                res = vibeqc::dlpno_ccsd_local_triples(
+                    b_ov, b_oo, b_vv, eps_o, f_vv, pair_i, pair_j, U, T2, T1,
+                    keys, tcut_tno, lindep);
+            }
+            py::dict out;
+            out["e_t"] = res.e_t;
+            out["n_tno"] = res.n_tno;
+            out["e_key"] = res.e_key;
+            out["seconds"] = res.seconds;
+            return out;
+        },
+        py::arg("b_ov"), py::arg("b_oo"), py::arg("b_vv"), py::arg("eps_o"),
+        py::arg("f_vv"), py::arg("pair_i"), py::arg("pair_j"), py::arg("U"),
+        py::arg("T2"), py::arg("T1"), py::arg("keys"),
+        py::arg("tcut_tno") = 0.0, py::arg("lindep") = 1e-9,
+        "Local semicanonical closed-shell (T0) on converged PNO amplitudes. "
+        "Per occupied key (one to three sorted occupieds) the TNO space is "
+        "the orthonormalised union of its kept pairs' PNO spaces (truncated "
+        "at tcut_tno by the projected pair densities when positive), only "
+        "the pairs containing one of the key's occupieds are projected, and "
+        "only the key's DF blocks are formed. Returns a dict with e_t, the "
+        "TNO count and energy per key, and wall seconds.");
+
+    m.def(
         "dlpno_target_pair_residual",
         [](const Eigen::MatrixXd& t1, const Eigen::MatrixXd& t2_flat,
            const RowMatD& b_ov, const RowMatD& b_oo, const RowMatD& b_vv,
@@ -8509,7 +9146,34 @@ m.def("compute_cosx_k",
             return std::string{"PeriodicSystem(dim="}
                    + std::to_string(s.dim) + ", n_atoms="
                    + std::to_string(s.unit_cell.size()) + ")";
-        });
+        })
+        .def(py::pickle(
+            [](const vibeqc::PeriodicSystem& s) {
+                // An attached spglib analysis records the symprec it was
+                // found with; re-deriving it on unpickling could differ,
+                // and dropping it would change symmetry-reduced routes.
+                if (s.symmetry.has_value()) {
+                    throw py::type_error(
+                        "PeriodicSystem with attached symmetry cannot be "
+                        "pickled; pickle the system before attach_symmetry "
+                        "and attach it again in the receiving process");
+                }
+                return py::make_tuple(s.dim, s.lattice, s.unit_cell,
+                                      s.charge, s.multiplicity);
+            },
+            [](const py::tuple& state) {
+                if (state.size() != 5) {
+                    throw std::runtime_error(
+                        "PeriodicSystem: invalid pickle state");
+                }
+                vibeqc::PeriodicSystem s;
+                s.dim = state[0].cast<int>();
+                s.lattice = state[1].cast<Eigen::Matrix3d>();
+                s.unit_cell = state[2].cast<std::vector<vibeqc::Atom>>();
+                s.charge = state[3].cast<int>();
+                s.multiplicity = state[4].cast<int>();
+                return s;
+            }));
 
     m.def("attach_symmetry", &vibeqc::attach_symmetry,
           py::arg("system"), py::arg("symprec") = 1.0e-5,
@@ -8593,6 +9257,18 @@ m.def("compute_cosx_k",
                        "Generate erfc cell-pair candidates before traversal. "
                        "Default True; False retains exhaustive enumeration "
                        "with identical screening for validation.")
+        .def_readwrite("gamma_only_0",
+                       &vibeqc::LatticeSumOptions::gamma_only_0,
+                       "#133: declare that the molecular limit is intended -- "
+                       "one unit cell, no periodic image coupling, g = 0 only. "
+                       "Same contract as the semiempirical "
+                       "PeriodicDFTB0Options.gamma_only_0 (#316). Default "
+                       "False, and a periodic driver whose |g| <= cutoff_bohr "
+                       "ball then holds nothing but the home cell raises "
+                       "instead of reporting a free-boundary cluster as "
+                       "periodic. Declares intent, not an approximation: it "
+                       "changes no sum, so a box whose cutoff genuinely "
+                       "isolates g = 0 computes the same numbers either way.")
         .def_readwrite("pair_complete_1e",
                        &vibeqc::LatticeSumOptions::pair_complete_1e,
                        "#429 stage 2: enumerate the one-electron lattice "
@@ -8626,6 +9302,20 @@ m.def("compute_cosx_k",
                       "the returned list does NOT propagate to C++. "
                       "Use ``set_block(i, M)`` to mutate the underlying "
                       "C++ vector in place.")
+        .def("get_blocks",
+             [](const vibeqc::LatticeMatrixSet& s,
+                const std::vector<py::ssize_t>& indices) {
+                 std::vector<Eigen::MatrixXd> selected;
+                 selected.reserve(indices.size());
+                 for (const auto i : indices) {
+                     if (i < 0 || static_cast<std::size_t>(i) >= s.blocks.size())
+                         throw py::index_error("LatticeMatrixSet.get_blocks: index out of range");
+                     selected.push_back(s.blocks[static_cast<std::size_t>(i)]);
+                 }
+                 return selected;
+             }, py::arg("indices"),
+             "Return fresh copies of selected blocks in index order, retaining duplicates. "
+             "Negative and out-of-range indices raise IndexError.")
         .def("set_block",
              [](vibeqc::LatticeMatrixSet& s, int i,
                 const Eigen::MatrixXd& M) {
@@ -8651,6 +9341,25 @@ m.def("compute_cosx_k",
         .def("__len__", [](const vibeqc::LatticeMatrixSet& s) {
             return s.size();
         });
+
+    // Export integer keys in one call, without allocating a Python cell and
+    // NumPy index array for every native cell. These are fresh snapshots;
+    // their order and duplicates match the input exactly.
+    const auto lattice_cell_keys = [](const std::vector<vibeqc::LatticeCell>& cells) {
+        py::list keys(cells.size());
+        for (std::size_t i = 0; i < cells.size(); ++i) {
+            const auto& index = cells[i].index;
+            keys[i] = py::make_tuple(index[0], index[1], index[2]);
+        }
+        return keys;
+    };
+    m.def("lattice_cell_keys",
+          [lattice_cell_keys](const vibeqc::LatticeMatrixSet& set) {
+              return lattice_cell_keys(set.cells);
+          }, py::arg("lattice_set"),
+          "Return ordered integer cell keys without exporting matrix blocks.");
+    m.def("lattice_cell_keys", lattice_cell_keys, py::arg("cells"),
+          "Return ordered integer keys from a cell sequence, retaining duplicates.");
 
     m.def(
         "make_lattice_matrix_set",
@@ -8694,6 +9403,11 @@ m.def("compute_cosx_k",
           py::call_guard<py::gil_scoped_release>(),
           "Union of pair-centered lattice neighborhoods enclosing the physical "
           "ERI product support. Align operators by cell key, not list prefix.");
+
+    m.def("physical_nuclear_source_indices", &vibeqc::physical_nuclear_source_indices,
+          py::arg("system"), py::arg("midpoints"), py::arg("cutoff_bohr"),
+          py::call_guard<py::gil_scoped_release>(),
+          "Exact atom/image labels from the shared AO-midpoint nuclear selector.");
 
     m.def("compute_overlap_lattice", &vibeqc::compute_overlap_lattice,
           py::arg("basis"), py::arg("system"), py::arg("options"),
@@ -8746,11 +9460,15 @@ m.def("compute_cosx_k",
           &vibeqc::compute_nuclear_erfc_lattice,
           py::arg("basis"), py::arg("system"),
           py::arg("omega"), py::arg("options"),
+          py::arg("source_tol") = 0.0,
           py::call_guard<py::gil_scoped_release>(),
           "Short-range (erfc-screened) component of the nuclear-attraction "
           "lattice sum. Ewald building block: exponentially convergent real-"
           "space sum for any ω > 0. Combine with the reciprocal-space long-"
-          "range part (Phase 12e-c) for the full 3D Ewald treatment of V(g).");
+          "range part (Phase 12e-c) for the full 3D Ewald treatment of V(g). "
+          "source_tol > 0 (pair_complete_1e, 3-D) bounds the attraction of "
+          "the nuclear images each AO product drops, per matrix element, by "
+          "source_tol Hartree; 0 keeps every image within nuclear_cutoff_bohr.");
 
     // ----- Lattice multipole moments (BIPOLE Phase 1) ---------------------
     py::class_<vibeqc::LatticeMultipoleSet>(m, "LatticeMultipoleSet")
@@ -9221,6 +9939,12 @@ m.def("compute_cosx_k",
              &vibeqc::JKBuilder::build_K_pair,
              py::arg("density_alpha"), py::arg("density_beta"),
              "Build independent alpha/beta exchange matrices together.")
+        .def("build_jk_uhf",
+             &vibeqc::JKBuilder::build_jk_uhf,
+             py::arg("density_alpha"), py::arg("density_beta"),
+             "Return J(D_alpha+D_beta), K(D_alpha), K(D_beta). The default "
+             "preserves incremental slots J=0, K-alpha=0, K-beta=1; providers "
+             "may share integral work across the independent spin channels.")
         .def_property_readonly(
              "last_k_pair_workers_used",
              &vibeqc::JKBuilder::last_k_pair_workers_used,
@@ -9395,8 +10119,8 @@ m.def("compute_cosx_k",
           "summed over the truncated image-cell list "
           "(direct_lattice_cells at options.cutoff_bohr) — the M3a "
           "single-lattice-sum kernel (home-bra → image-ket exchange "
-          "class; Γ-folded GDF exchange parity is still open, see "
-          "handovers/HANDOVER_RIJCOSX_M3A.md). No exxdiv='ewald' Madelung "
+          "class; Γ-folded GDF exchange parity is still open). "
+          "No exxdiv='ewald' Madelung "
           "K-shift (unnecessary — COSX-K is a real-space direct-"
           "truncated sum).");
 
@@ -9451,15 +10175,28 @@ m.def("compute_cosx_k",
         .def_readonly("J", &vibeqc::JKMatrices::J)
         .def_readonly("K", &vibeqc::JKMatrices::K);
 
+    m.def("build_jk_gamma_physical",
+          &vibeqc::build_jk_gamma_physical,
+          py::arg("basis"), py::arg("system"), py::arg("options"),
+          py::arg("density"), py::arg("omega") = 0.0,
+          py::call_guard<py::gil_scoped_release>(),
+          "Finite physical Gamma J/K with the same density on every lattice "
+          "displacement. Resolves pair support without mutating options; "
+          "returns the raw sums without matrix symmetrization.");
+
     m.def("build_jk_gamma_molecular_limit",
           &vibeqc::build_jk_gamma_molecular_limit,
           py::arg("basis"), py::arg("system"), py::arg("options"),
           py::arg("density"), py::arg("omega") = 0.0,
+          py::kw_only(), py::arg("adjoint_symmetric") = false,
           py::call_guard<py::gil_scoped_release>(),
           "Direct-SCF J and K matrices at \u0393 for a \u0393-only molecular-limit "
           "density. Set ``omega > 0`` to use the erfc-screened Coulomb "
           "kernel (short-range Ewald split); default ``omega=0`` uses "
-          "the full 1/r_12 kernel.");
+          "the full 1/r_12 kernel. Without ``options.pair_complete_1e`` the "
+          "maps are not self-adjoint in cells whose images overlap; "
+          "``adjoint_symmetric=True`` returns (J + J^+)/2 and (K + K^+)/2, "
+          "the same energy with a Fock that is its derivative (#534).");
 
     m.def("build_jk_gamma_molecular_limit_explicit",
           &vibeqc::build_jk_gamma_molecular_limit_explicit,
@@ -9576,6 +10313,18 @@ m.def("compute_cosx_k",
           "Ewald-summed Madelung energy for an arbitrary 3D lattice of "
           "point charges. Handles non-neutral cells via the jellium "
           "(uniform compensating background) convention.");
+
+    py::class_<vibeqc::EwaldEnergySupport>(m, "EwaldEnergySupport")
+        .def_readonly("energy", &vibeqc::EwaldEnergySupport::energy)
+        .def_readonly("alpha", &vibeqc::EwaldEnergySupport::alpha)
+        .def_readonly("real_cutoff_bohr", &vibeqc::EwaldEnergySupport::real_cutoff_bohr)
+        .def_readonly("reciprocal_cutoff_bohr_inv", &vibeqc::EwaldEnergySupport::reciprocal_cutoff_bohr_inv)
+        .def_readonly("real_pair_displacements", &vibeqc::EwaldEnergySupport::real_pair_displacements)
+        .def_readonly("reciprocal_vectors", &vibeqc::EwaldEnergySupport::reciprocal_vectors);
+    m.def("ewald_nuclear_repulsion_with_support",
+          &vibeqc::ewald_nuclear_repulsion_with_support,
+          py::arg("system"), py::arg("options"),
+          py::call_guard<py::gil_scoped_release>());
 
     m.def("ewald_nuclear_repulsion",
           &vibeqc::ewald_nuclear_repulsion,
@@ -9952,8 +10701,9 @@ m.def("compute_cosx_k",
           py::arg("system"), py::arg("basis"),
           py::arg("options") = vibeqc::PeriodicRHFOptions{},
           py::call_guard<py::gil_scoped_release>(),
-          "Γ-only closed-shell RHF for a periodic system (molecular-limit "
-          "regime).");
+          "Gamma closed-shell RHF. In 3D uses homogeneous lattice density "
+          "and finite physical pair/source support; lower dimensions retain "
+          "the legacy molecular-limit formulation.");
 
     // ----- Multi-k periodic RHF (Phase 12c) ------------------------------
     m.def("build_fock_2e_real_space", &vibeqc::build_fock_2e_real_space,
@@ -9988,6 +10738,7 @@ m.def("compute_cosx_k",
                       &vibeqc::JKLatticeMatrixSets::charge_screening_available)
         .def_readonly("product_screening_available",
                       &vibeqc::JKLatticeMatrixSets::product_screening_available)
+        .def_readonly("integral_evaluations", &vibeqc::JKLatticeMatrixSets::integral_evaluations)
         .def_readonly("J", &vibeqc::JKLatticeMatrixSets::J)
         .def_readonly("K", &vibeqc::JKLatticeMatrixSets::K)
         .def_readonly(
@@ -10010,6 +10761,34 @@ m.def("compute_cosx_k",
           "General multi-k two-electron component build returning "
           "separate real-space J(g) and full K(g) blocks. K has no "
           "-1/2 prefactor; callers form J - 1/2*exchange_scale*K.");
+
+    py::class_<vibeqc::PeriodicJKTraceResult>(m, "PeriodicJKTraceResult")
+        .def_readonly("matrices", &vibeqc::PeriodicJKTraceResult::matrices)
+        .def_property_readonly("identities", [](const vibeqc::PeriodicJKTraceResult& result) {
+            py::array_t<std::uint64_t> array({static_cast<py::ssize_t>(result.records.size()), py::ssize_t{14}});
+            auto out = array.mutable_unchecked<2>();
+            for (py::ssize_t i = 0; i < out.shape(0); ++i)
+                for (py::ssize_t j = 0; j < 14; ++j) out(i,j) = result.records[i].identities[j];
+            return array;
+        })
+        .def_property_readonly("values", [](const vibeqc::PeriodicJKTraceResult& result) {
+            py::array_t<double> array({static_cast<py::ssize_t>(result.records.size()), py::ssize_t{5}});
+            auto out = array.mutable_unchecked<2>();
+            for (py::ssize_t i = 0; i < out.shape(0); ++i)
+                for (py::ssize_t j = 0; j < 5; ++j) out(i,j) = result.records[i].values[j];
+            return array;
+        });
+    m.def("trace_jk_2e_real_space", &vibeqc::trace_jk_2e_real_space,
+          py::arg("basis"), py::arg("system"), py::arg("options"), py::arg("density"),
+          py::arg("max_records"), py::arg("omega") = 0.0,
+          py::call_guard<py::gil_scoped_release>(),
+          "Bounded ordinary shell-pair J/K observation. Returns unchanged matrices, "
+          "uint64 identities [g,lambda,sigma,density_cell,s1,s2,s3,s4,mu,nu,rho,tau,channel,sequence] "
+          "and float64 values [integral,density,rounded_product,sum_before,sum_after]. "
+          "Channel 0 is J, 1 is K; null integrals use UINT64_MAX AO indices. "
+          "Cells index matrices.J.cells; density_cell indexes the supplied density. "
+          "The native record cap is limited to 128 MiB; each array property creates a copy. "
+          "Unsupported traversal, fallback or cap exhaustion raises without a partial trace.");
 
     m.def("build_jk_2e_real_space_explicit",
           &vibeqc::build_jk_2e_real_space_explicit,
@@ -10042,6 +10821,13 @@ m.def("compute_cosx_k",
           "array (build the (s1_home, s2_cell) output shell pair iff non-zero). "
           "Internal lattice sum stays full, so each emitted sub-block is exact.");
 
+    py::class_<vibeqc::PeriodicJKWorkspace>(m, "PeriodicJKWorkspace")
+        .def(py::init<>())
+        .def_property_readonly("preparation_count", &vibeqc::PeriodicJKWorkspace::preparation_count)
+        .def_property_readonly("geometry_preparation_count",
+            &vibeqc::PeriodicJKWorkspace::geometry_preparation_count);
+
+    m.attr("periodic_jk_coulomb_selection") = true;
     m.def("build_jk_2e_real_space_domains",
           &vibeqc::build_jk_2e_real_space_domains,
           py::arg("basis"), py::arg("system"), py::arg("options"),
@@ -10050,6 +10836,8 @@ m.def("compute_cosx_k",
           py::arg("output_shell_masks") =
               std::vector<std::vector<uint8_t>>{},
           py::arg("omega") = 0.0, py::arg("compute_exchange") = true,
+          py::arg("workspace") = nullptr,
+          py::arg("compute_coulomb") = true,
           py::call_guard<py::gil_scoped_release>(),
           "Pair-resolved truncation (M1): full truncation-domain control "
           "over the direct J/K build. ``cells`` is the internal (c_g, c_lam, "
@@ -10062,7 +10850,22 @@ m.def("compute_cosx_k",
           "lookups follow the density's own cell list. Each emitted "
           "(sub-)block is the exact sum over ``cells``. "
           "``compute_exchange=False`` skips the K contraction (J-only; K "
-          "blocks return zero).");
+          "blocks return zero). ``compute_coulomb=False`` skips the J "
+          "contraction (K-only; J blocks return zero).");
+
+    m.def("build_jk_2e_real_space_domains_pair",
+          &vibeqc::build_jk_2e_real_space_domains_pair,
+          py::arg("basis"), py::arg("system"), py::arg("options"),
+          py::arg("first_density"), py::arg("second_density"), py::arg("cells"),
+          py::arg("output_indices") = std::vector<int>{},
+          py::arg("output_shell_masks") = std::vector<std::vector<uint8_t>>{},
+          py::arg("omega") = 0.0, py::arg("compute_exchange") = true,
+          py::arg("workspace") = nullptr, py::arg("compute_coulomb") = true,
+          py::call_guard<py::gil_scoped_release>(),
+          "Build two J/K operators with shared integral evaluations and independent "
+          "density screening. Densities must have identical ordered cell templates "
+          "and finite nbf-by-nbf blocks. Returns two independent results; their "
+          "work counters describe the same shared invocation and must not be summed.");
 
     // ---- Dormant BIPOLE quartet-classifier prototype --------------------
     py::class_<vibeqc::BipolarQuartetEntry>(m, "BipolarQuartetEntry",
@@ -10584,6 +11387,14 @@ m.def("compute_cosx_k",
           "per k-point, typically in [0, 2] for closed-shell RHF. Used by "
           "Fermi-Dirac-smearing-driven SCF (Phase C1b).");
 
+    m.def("real_space_density_from_density_matrices",
+          &vibeqc::real_space_density_from_density_matrices,
+          py::arg("D_per_k"), py::arg("kmesh"), py::arg("cells"),
+          py::call_guard<py::gil_scoped_release>(),
+          "Fold Hermitian parts of per-k AO density matrices directly into "
+          "real lattice blocks without diagonalizing them. Preserves the "
+          "fractional-orbital fold's k order and real projection.");
+
     py::class_<vibeqc::PeriodicSCFOptions>(m, "PeriodicSCFOptions")
         .def(py::init<>())
         .def_readwrite("max_iter",
@@ -10697,7 +11508,33 @@ m.def("compute_cosx_k",
     // ----- Multi-k periodic KS-DFT (Phase 12d) ---------------------------
     py::class_<vibeqc::PeriodicXCContribution>(m, "PeriodicXCContribution")
         .def_readonly("V_xc", &vibeqc::PeriodicXCContribution::V_xc)
-        .def_readonly("e_xc", &vibeqc::PeriodicXCContribution::e_xc);
+        .def_readonly("e_xc", &vibeqc::PeriodicXCContribution::e_xc)
+        .def_readonly("n_electrons_grid",
+                      &vibeqc::PeriodicXCContribution::n_electrons_grid,
+                      "Grid integral of the evaluated density, sum_g w_g "
+                      "rho(r_g), before the negative-density clamp. For a "
+                      "periodic density this is the electron count per cell.")
+        .def_readonly("periodic_density_bras",
+                      &vibeqc::PeriodicXCContribution::periodic_density_bras,
+                      "True when the bra AO ranged over lattice images "
+                      "(periodic crystal density), false for the home-cell "
+                      "molecular-limit density.");
+
+    m.attr("PERIODIC_XC_AO_SCREENING_TOL") =
+        vibeqc::kPeriodicXCAOScreeningTol;
+
+    py::class_<vibeqc::PeriodicXCScreeningStats>(m, "PeriodicXCScreeningStats")
+        .def_readonly("n_points", &vibeqc::PeriodicXCScreeningStats::n_points)
+        .def_readonly("n_points_evaluated",
+                      &vibeqc::PeriodicXCScreeningStats::n_points_evaluated)
+        .def_readonly("n_batches", &vibeqc::PeriodicXCScreeningStats::n_batches)
+        .def_readonly("image_shells_dense",
+                      &vibeqc::PeriodicXCScreeningStats::image_shells_dense)
+        .def_readonly("image_shells_live",
+                      &vibeqc::PeriodicXCScreeningStats::image_shells_live)
+        .def_readonly("pairs_dense", &vibeqc::PeriodicXCScreeningStats::pairs_dense)
+        .def_readonly("pairs_live", &vibeqc::PeriodicXCScreeningStats::pairs_live);
+
 
     py::enum_<vibeqc::PeriodicXCDensityDomain>(m,
                                                 "PeriodicXCDensityDomain")
@@ -10706,6 +11543,43 @@ m.def("compute_cosx_k",
                vibeqc::PeriodicXCDensityDomain::MOLECULAR_HOME)
         .value("PERIODIC_LATTICE",
                vibeqc::PeriodicXCDensityDomain::PERIODIC_LATTICE);
+
+    py::class_<vibeqc::PeriodicKXCContribution>(m, "PeriodicKXCContribution")
+        .def_readonly("V_xc", &vibeqc::PeriodicKXCContribution::V_xc)
+        .def_readonly("e_xc", &vibeqc::PeriodicKXCContribution::e_xc)
+        .def_readonly("n_electrons_grid", &vibeqc::PeriodicKXCContribution::n_electrons_grid)
+        .def_readonly("periodic_density_bras", &vibeqc::PeriodicKXCContribution::periodic_density_bras)
+        .def_readonly("torus_density_compatible", &vibeqc::PeriodicKXCContribution::torus_density_compatible)
+        .def_readonly("used_torus_grouping", &vibeqc::PeriodicKXCContribution::used_torus_grouping);
+
+    py::class_<vibeqc::PeriodicKUKSXCContribution>(m, "PeriodicKUKSXCContribution")
+        .def_readonly("V_alpha", &vibeqc::PeriodicKUKSXCContribution::V_alpha)
+        .def_readonly("V_beta", &vibeqc::PeriodicKUKSXCContribution::V_beta)
+        .def_readonly("e_xc", &vibeqc::PeriodicKUKSXCContribution::e_xc)
+        .def_readonly("n_electrons_grid", &vibeqc::PeriodicKUKSXCContribution::n_electrons_grid)
+        .def_readonly("periodic_density_bras", &vibeqc::PeriodicKUKSXCContribution::periodic_density_bras)
+        .def_readonly("torus_density_compatible", &vibeqc::PeriodicKUKSXCContribution::torus_density_compatible)
+        .def_readonly("used_torus_grouping", &vibeqc::PeriodicKUKSXCContribution::used_torus_grouping);
+
+    m.def("build_xc_periodic_kpoints", &vibeqc::build_xc_periodic_kpoints,
+          py::arg("basis"), py::arg("system"), py::arg("grid"), py::arg("functional"),
+          py::arg("density"), py::arg("kmesh"), py::arg("options"),
+          py::arg("density_domain") = vibeqc::PeriodicXCDensityDomain::AUTO,
+          py::arg("ao_screening_tol") = vibeqc::kPeriodicXCAOScreeningTol,
+          py::arg("torus_complete") = false,
+          py::call_guard<py::gil_scoped_release>(),
+          "Periodic XC potentials directly in supplied k-point order, with "
+          "verified finite-torus grouping or the original pair fallback.");
+
+    m.def("build_xc_periodic_uks_kpoints", &vibeqc::build_xc_periodic_uks_kpoints,
+          py::arg("basis"), py::arg("system"), py::arg("grid"), py::arg("functional"),
+          py::arg("density_alpha"), py::arg("density_beta"), py::arg("kmesh"), py::arg("options"),
+          py::arg("density_domain") = vibeqc::PeriodicXCDensityDomain::AUTO,
+          py::arg("ao_screening_tol") = vibeqc::kPeriodicXCAOScreeningTol,
+          py::arg("torus_complete") = false,
+          py::call_guard<py::gil_scoped_release>(),
+          "Periodic XC potentials directly in supplied k-point order, with "
+          "verified finite-torus grouping or the original pair fallback.");
 
     m.def("periodic_xc_domain_counts", &vibeqc::periodic_xc_domain_counts,
           py::arg("system"), py::arg("cells"), py::arg("options"),
@@ -10718,13 +11592,28 @@ m.def("compute_cosx_k",
           py::arg("n_basis"), py::arg("n_cells"), py::arg("need_hess"),
           py::arg("open_shell"), py::arg("n_threads"));
 
+    m.def("periodic_xc_screening_stats", &vibeqc::periodic_xc_screening_stats,
+          py::arg("basis"), py::arg("system"), py::arg("grid"),
+          py::arg("density"), py::arg("options"),
+          py::arg("density_domain") = vibeqc::PeriodicXCDensityDomain::AUTO,
+          py::arg("ao_screening_tol") = vibeqc::kPeriodicXCAOScreeningTol,
+          py::arg("open_shell") = false, py::arg("need_grad") = true,
+          py::call_guard<py::gil_scoped_release>(),
+          "Work counts of the periodic XC AO-reach screen (batches, "
+          "evaluated image shells and bra-ket pairs against the dense "
+          "totals) without evaluating AOs or the functional.");
+
     m.def("build_xc_periodic", &vibeqc::build_xc_periodic,
           py::arg("basis"), py::arg("system"), py::arg("grid"),
           py::arg("functional"), py::arg("density"), py::arg("options"),
           py::arg("density_domain") =
               vibeqc::PeriodicXCDensityDomain::AUTO,
+          py::arg("ao_screening_tol") = vibeqc::kPeriodicXCAOScreeningTol,
           py::call_guard<py::gil_scoped_release>(),
-          "Periodic XC Fock contribution V_xc(g) and E_xc per unit cell.");
+          "Periodic XC Fock contribution V_xc(g) and E_xc per unit cell. "
+          "ao_screening_tol drops lattice-image shells whose AO amplitude "
+          "cannot exceed it in a grid batch; <= 0 evaluates every image "
+          "shell (the dense reference).");
 
     m.def("xc_lattice_gradient_contribution",
           &vibeqc::xc_lattice_gradient_contribution,
@@ -10759,7 +11648,13 @@ m.def("compute_cosx_k",
                       "V_xc^β(g) as a LatticeMatrixSet — per-cell β-spin "
                       "XC potential matrices.")
         .def_readonly("e_xc", &vibeqc::PeriodicUKSXCContribution::e_xc,
-                      "Total E_xc per unit cell (Hartree).");
+                      "Total E_xc per unit cell (Hartree).")
+        .def_readonly("n_electrons_grid",
+                      &vibeqc::PeriodicUKSXCContribution::n_electrons_grid,
+                      "Grid integral of rho_alpha + rho_beta (see "
+                      "PeriodicXCContribution.n_electrons_grid).")
+        .def_readonly("periodic_density_bras",
+                      &vibeqc::PeriodicUKSXCContribution::periodic_density_bras);
 
     m.def("build_xc_periodic_uks", &vibeqc::build_xc_periodic_uks,
           py::arg("basis"), py::arg("system"), py::arg("grid"),
@@ -10767,6 +11662,7 @@ m.def("compute_cosx_k",
           py::arg("density_beta"), py::arg("options"),
           py::arg("density_domain") =
               vibeqc::PeriodicXCDensityDomain::AUTO,
+          py::arg("ao_screening_tol") = vibeqc::kPeriodicXCAOScreeningTol,
           py::call_guard<py::gil_scoped_release>(),
           "Open-shell (UKS) periodic XC: takes per-spin LatticeMatrixSet "
           "densities P_α(g), P_β(g) and returns per-spin V_xc matrices + "
@@ -11166,6 +12062,15 @@ m.def("compute_cosx_k",
           "kcn = 7.5, bare Pyykko covalent radii). Different from "
           "vibeqc.d3_coordination_numbers, which uses the D3 "
           "counting function + 4/3-scaled radii.");
+
+    m.def("eeq_response_gradient", &vibeqc::eeq_response_gradient,
+          py::arg("molecule"), py::arg("dE_dcn"), py::arg("dE_dq"),
+          py::arg("total_charge") = 0.0,
+          py::arg("options") = vibeqc::EEQOptions{},
+          py::call_guard<py::gil_scoped_release>(),
+          "Contract dE/dCN and dE/dq with the native EEQ nuclear response "
+          "at fixed total charge. Returns an (n_atoms, 3) gradient; excludes "
+          "explicit coordinate dependence of E.");
 
     // ---- Reciprocal-space periodic Poisson (Phase 12e-c-3a) -----------
     //
@@ -12227,6 +13132,10 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
             &vibeqc::semiempirical::seccm::GFN2SECCMResult::
                 requested_include_aes)
         .def_readonly(
+            "requested_aes_faithful",
+            &vibeqc::semiempirical::seccm::GFN2SECCMResult::
+                requested_aes_faithful)
+        .def_readonly(
             "requested_ewald_gamma_molecular_onsite",
             &vibeqc::semiempirical::seccm::GFN2SECCMResult::
                 requested_ewald_gamma_molecular_onsite)
@@ -12520,7 +13429,8 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
            bool aes_faithful,
            double aes_damping,
            vibeqc::semiempirical::SCCMixer scc_mixer,
-           const Eigen::Ref<const Eigen::VectorXd>& initial_shell_charges) {
+           const Eigen::Ref<const Eigen::VectorXd>& initial_shell_charges,
+           bool electronic_temperature_explicit) {
             if (initial_shell_charges.size() != 0) {
                 if (!initial_shell_charges.allFinite()) {
                     throw std::invalid_argument(
@@ -12570,6 +13480,8 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
             options.conv_tol_charge = conv_tol_charge;
             options.charge_mixing = charge_mixing;
             options.electronic_temperature = electronic_temperature;
+            options.electronic_temperature_explicit =
+                electronic_temperature_explicit;
             options.madelung = madelung;
             options.madelung_s_weighted = madelung_s_weighted;
             options.madelung_no_self = madelung_no_self;
@@ -12621,10 +13533,11 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
         py::arg("ewald_gamma_k0_global") = false,
         py::arg("gamma_form") =
             vibeqc::semiempirical::ShellGammaForm::KlopmanOhno,
-        py::arg("aes_faithful") = false,
+        py::arg("aes_faithful") = true,
         py::arg("aes_damping") = 0.5,
         py::arg("scc_mixer") = vibeqc::semiempirical::SCCMixer::Simple,
         py::arg("initial_shell_charges") = Eigen::VectorXd(),
+        py::arg("electronic_temperature_explicit") = false,
         "Internal WS-weighted GFN2-SECCM frozen-record adapter.");
 
 
@@ -12906,6 +13819,9 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
                       &vibeqc::semiempirical::SCCDFTBResult::mo_coeffs)
         .def_readonly("density",
                       &vibeqc::semiempirical::SCCDFTBResult::density)
+        .def_readonly("occupations",
+                      &vibeqc::semiempirical::SCCDFTBResult::occupations,
+                      "Per-MO occupations in [0, 2] that built density.")
         .def_readonly("overlap",
                       &vibeqc::semiempirical::SCCDFTBResult::overlap)
         .def_readonly("hamiltonian",
@@ -13783,11 +14699,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
         .value("ML", vibeqc::semiempirical::MethodFamily::ML)
         .value("LEGACY", vibeqc::semiempirical::MethodFamily::LEGACY);
 
-    py::enum_<vibeqc::semiempirical::PeriodicTier>(m_semi, "PeriodicTier")
-        .value("NATIVE", vibeqc::semiempirical::PeriodicTier::Native)
-        .value("GENERALIZED", vibeqc::semiempirical::PeriodicTier::Generalized)
-        .value("EXPERIMENTAL", vibeqc::semiempirical::PeriodicTier::Experimental);
-
     py::class_<vibeqc::semiempirical::SemiempiricalMethodConfig>(
         m_semi, "SemiempiricalMethodConfig")
         .def(py::init<>())
@@ -13797,7 +14708,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
         .def_readwrite("description", &vibeqc::semiempirical::SemiempiricalMethodConfig::description)
         .def_readwrite("supports_open_shell", &vibeqc::semiempirical::SemiempiricalMethodConfig::supports_open_shell)
         .def_readwrite("supports_periodic", &vibeqc::semiempirical::SemiempiricalMethodConfig::supports_periodic)
-        .def_readwrite("periodic_tier", &vibeqc::semiempirical::SemiempiricalMethodConfig::periodic_tier)
         .def_readwrite("gradient_quality", &vibeqc::semiempirical::SemiempiricalMethodConfig::gradient_quality)
         .def_readwrite("supports_stress", &vibeqc::semiempirical::SemiempiricalMethodConfig::supports_stress)
         .def_readwrite("supports_kpoints", &vibeqc::semiempirical::SemiempiricalMethodConfig::supports_kpoints)
@@ -13854,7 +14764,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 p.config.description = "Non-self-consistent tight-binding";
                 p.config.supports_open_shell = true;
                 p.config.supports_periodic = true;
-                p.config.periodic_tier = vibeqc::semiempirical::PeriodicTier::Native;
                 p.config.gradient_quality = vibeqc::semiempirical::GradientQuality::Exact;
                 p.config.supports_stress = true;
                 p.config.supports_kpoints = true;
@@ -13872,7 +14781,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 p.config.supports_open_shell = true;
                 p.config.supports_periodic = true;
                 p.config.gradient_quality = vibeqc::semiempirical::GradientQuality::FiniteDifference;
-                p.config.periodic_tier = vibeqc::semiempirical::PeriodicTier::Experimental;
                 p.config.supports_stress = true;
                 p.config.parameter_version = "pm6-2007";
                 reg.register_method(p);
@@ -13890,8 +14798,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 p.config.supports_open_shell = true;
                 p.config.gradient_quality =
                     vibeqc::semiempirical::GradientQuality::FiniteDifference;
-                p.config.periodic_tier =
-                    vibeqc::semiempirical::PeriodicTier::Experimental;
                 p.config.supported_elements = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36};
                 p.config.parameter_version = "msindo-2025";
                 reg.register_method(p);
@@ -13941,7 +14847,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 p.config.description = "Extended tight-binding (Grimme 2019)";
                 p.config.supports_open_shell = true;
                 p.config.supports_periodic = true;
-                p.config.periodic_tier = vibeqc::semiempirical::PeriodicTier::Generalized;
                 p.config.gradient_quality = vibeqc::semiempirical::GradientQuality::Exact;
                 p.config.supports_stress = true;
                 p.config.supports_kpoints = true;
@@ -13958,7 +14863,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 p.config.description = "Self-consistent-charge tight-binding";
                 p.config.supports_open_shell = true;
                 p.config.supports_periodic = true;
-                p.config.periodic_tier = vibeqc::semiempirical::PeriodicTier::Native;
                 p.config.gradient_quality = vibeqc::semiempirical::GradientQuality::Exact;
                 p.config.supports_stress = true;
                 p.config.supports_kpoints = true;
@@ -14085,10 +14989,46 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
              &vibeqc::semiempirical::xtb::GFN2ParameterSet::parameter_identity);
 
     // --- GFN2-xTB driver ---
+    using GFN2D4Data = vibeqc::semiempirical::xtb::GFN2D4Data;
+    py::class_<GFN2D4Data, std::shared_ptr<GFN2D4Data>>(m_xtb, "_GFN2D4Data")
+        .def(py::init([](const py::object& operands) {
+            return std::make_shared<GFN2D4Data>(
+                operands.attr("atom_numbers").cast<Eigen::VectorXi>(),
+                operands.attr("positions_bohr").cast<Eigen::MatrixXd>(),
+                operands.attr("reference_atoms").cast<Eigen::VectorXi>(),
+                operands.attr("reference_charges_shifted").cast<Eigen::VectorXd>(),
+                operands.attr("effective_charges").cast<Eigen::VectorXd>(),
+                operands.attr("hardness").cast<Eigen::VectorXd>(),
+                operands.attr("cn_weights").cast<Eigen::VectorXd>(),
+                operands.attr("kernel").cast<Eigen::MatrixXd>(),
+                operands.attr("neutral_atm_energy").cast<double>(),
+                operands.attr("cn_weight_derivatives").cast<Eigen::VectorXd>(),
+                operands.attr("cn_jacobian").cast<Eigen::MatrixXd>(),
+                operands.attr("radial_kernel").cast<Eigen::MatrixXd>(),
+                operands.attr("neutral_atm_gradient").cast<Eigen::MatrixXd>());
+        }))
+        .def_property_readonly("sha256", &GFN2D4Data::sha256)
+        .def("evaluate", [](const GFN2D4Data& self, const Eigen::VectorXd& charges) {
+            const auto result = self.evaluate(charges, true);
+            return py::make_tuple(result.energy, result.potential, result.gradient);
+        });
+
     py::class_<vibeqc::semiempirical::xtb::GFN2Result>(
         m_xtb, "GFN2Result",
         "Result of a GFN2-xTB calculation.")
         .def(py::init<>())
+        .def_property_readonly(
+            "aes_functional",
+            [](const vibeqc::semiempirical::xtb::GFN2Result& result) {
+                using AES = vibeqc::semiempirical::xtb::GFN2AESFunctional;
+                switch (result.aes_functional) {
+                    case AES::Shell: return "shell";
+                    case AES::Faithful: return "faithful";
+                    default: return "unknown";
+                }
+            },
+            "Executed molecular AES functional: shell, faithful, or unknown. "
+            "Gradients dispatch to the executed functional; unknown identities fail closed.")
         .def_readonly("energy", &vibeqc::semiempirical::xtb::GFN2Result::energy)
         .def_readonly("free_energy",
                       &vibeqc::semiempirical::xtb::GFN2Result::free_energy)
@@ -14103,12 +15043,28 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         .def_readonly("e_band0", &vibeqc::semiempirical::xtb::GFN2Result::e_band0)
         .def_readonly("e_aes", &vibeqc::semiempirical::xtb::GFN2Result::e_aes)
         .def_readonly("e_3rd", &vibeqc::semiempirical::xtb::GFN2Result::e_3rd)
+        .def_readonly("e_dispersion", &vibeqc::semiempirical::xtb::GFN2Result::e_dispersion)
+        .def_property_readonly("dispersion_sha256",
+            [](const vibeqc::semiempirical::xtb::GFN2Result& result) {
+                return result.dispersion ? result.dispersion->sha256() : std::string{};
+            })
         .def_readonly("vmp_rms", &vibeqc::semiempirical::xtb::GFN2Result::vmp_rms)
         .def_readonly("shell_dip_rms", &vibeqc::semiempirical::xtb::GFN2Result::shell_dip_rms)
         .def_readonly("charges", &vibeqc::semiempirical::xtb::GFN2Result::charges)
         .def_readonly("mo_energies", &vibeqc::semiempirical::xtb::GFN2Result::mo_energies)
+        .def_readonly(
+            "occupations",
+            &vibeqc::semiempirical::xtb::GFN2Result::occupations,
+            "Last evaluated total MO occupations (alpha + beta). Retained on "
+            "SCC exhaustion; converged must be checked before using gradients.")
+        .def_readonly("occupations_alpha",
+                      &vibeqc::semiempirical::xtb::GFN2Result::occupations_alpha)
+        .def_readonly("occupations_beta",
+                      &vibeqc::semiempirical::xtb::GFN2Result::occupations_beta)
         .def_readonly("n_basis", &vibeqc::semiempirical::xtb::GFN2Result::n_basis)
         .def_readonly("n_occ", &vibeqc::semiempirical::xtb::GFN2Result::n_occ)
+        .def_readonly("n_alpha", &vibeqc::semiempirical::xtb::GFN2Result::n_alpha)
+        .def_readonly("n_beta", &vibeqc::semiempirical::xtb::GFN2Result::n_beta)
         .def_readonly("converged", &vibeqc::semiempirical::xtb::GFN2Result::converged)
         .def_readonly("n_iter", &vibeqc::semiempirical::xtb::GFN2Result::n_iter)
         .def_readonly(
@@ -14183,16 +15139,22 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         "run_gfn2_xtb",
         [](const vibeqc::Molecule& mol,
            const vibeqc::semiempirical::xtb::GFN2ParameterSet& params,
-           const vibeqc::semiempirical::xtb::XTBSccOptions& options) {
+           const vibeqc::semiempirical::xtb::XTBSccOptions& options,
+           std::shared_ptr<GFN2D4Data> dispersion) {
+            // Copy while the GIL is held, before the helper releases it.
+            // Caller mutations must not change AES/ensemble/solver settings
+            // midway through the invocation or its stabilization retries.
+            const auto invocation_options = options;
             return run_with_identified_parameter_snapshot(
                 params,
                 [&](const auto& snapshot) {
                     return vibeqc::semiempirical::xtb::run_gfn2_xtb(
-                        mol, snapshot, options);
+                        mol, snapshot, invocation_options, dispersion);
                 });
         },
         py::arg("mol"), py::arg("params"),
         py::arg("opts") = vibeqc::semiempirical::xtb::XTBSccOptions{},
+        py::arg("_dispersion") = nullptr,
         "Run GFN2-xTB SCC energy calculation.");
 
         // GFN2 gradient
@@ -14201,6 +15163,7 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         [](const vibeqc::Molecule& mol,
            const vibeqc::semiempirical::xtb::GFN2Result& result,
            const vibeqc::semiempirical::xtb::GFN2ParameterSet& params) {
+            vibeqc::semiempirical::require_gfn2_gradient_aes_support(result);
             return run_with_matching_parameter_snapshot(
                 params, result, "GFN2-xTB gradient",
                 [&](const auto& snapshot) {
@@ -14209,7 +15172,11 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                 });
         },
         py::arg("mol"), py::arg("result"), py::arg("params"),
-        "GFN2-xTB analytic gradient (fixed-charge approximation).");
+        "Molecular GFN2-xTB analytic gradient of the executed AES functional "
+        "and optional immutable SCC D4 operands. Unknown AES raises ValueError. This is the "
+        "derivative of GFN2Result.energy at T = 0 and of the Mermin free "
+        "energy GFN2Result.free_energy = E - T*S when the result was smeared "
+        "(the occupations it carries fix the ensemble; vibe-qc#343).");
 
         // Multi-k GFN2-xTB
     py::class_<vibeqc::semiempirical::xtb::KPointGFN2Result>(
@@ -14606,7 +15573,13 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         .def_readonly("stability_checked", &vibeqc::semiempirical::indo::MsindoResult::stability_checked)
         .def_readonly("stability_analysis_converged", &vibeqc::semiempirical::indo::MsindoResult::stability_analysis_converged)
         .def_readonly("stability_eigenvalue", &vibeqc::semiempirical::indo::MsindoResult::stability_eigenvalue)
-        .def_readonly("n_stability_restarts", &vibeqc::semiempirical::indo::MsindoResult::n_stability_restarts);
+        .def_readonly("n_stability_restarts", &vibeqc::semiempirical::indo::MsindoResult::n_stability_restarts)
+        .def_readonly("frontier_seed_orbitals", &vibeqc::semiempirical::indo::MsindoResult::frontier_seed_orbitals)
+        .def_readonly("frontier_seed_expansions", &vibeqc::semiempirical::indo::MsindoResult::frontier_seed_expansions)
+        .def_readonly("frontier_seed_evaluations", &vibeqc::semiempirical::indo::MsindoResult::frontier_seed_evaluations)
+        .def_readonly("frontier_seed_completed", &vibeqc::semiempirical::indo::MsindoResult::frontier_seed_completed)
+        .def_readonly("orbital_optimization_used", &vibeqc::semiempirical::indo::MsindoResult::orbital_optimization_used)
+        .def_readonly("internal_instability", &vibeqc::semiempirical::indo::MsindoResult::internal_instability);
 
     // Backward-compatible run_msindo (embedded H-F, no params arg).
     m_indo.def("run_msindo",
@@ -14854,7 +15827,7 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                py::arg("translations_angstrom"), py::arg("params"),
                py::arg("madelung") = false,
                py::arg("max_iter") = 200, py::arg("conv_tol") = 1e-9,
-               py::arg("charge") = 0,
+               py::arg("charge") = 0, py::arg("lowest_stable") = false,
                py::call_guard<py::gil_scoped_release>(),
                "Run periodic MSINDO SCF in the Cyclic Cluster Model (CCM). "
                "coords_angstrom / translations_angstrom are lists of [x,y,z] in Angstrom. "
@@ -14868,6 +15841,7 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                py::arg("atoms") = std::vector<int>{},
                py::arg("max_iter") = 200, py::arg("conv_tol") = 1e-10,
                py::arg("step") = 1e-3, py::arg("charge") = 0,
+               py::arg("lowest_stable") = false,
                py::call_guard<py::gil_scoped_release>(),
                "Finite-difference CCM nuclear gradient (Ha/bohr). "
                "Holds Wigner-Seitz topology fixed at the reference geometry.");
@@ -14878,10 +15852,23 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
                py::arg("translations_angstrom"), py::arg("params"),
                py::arg("madelung") = false, py::arg("charge") = 0,
                py::arg("max_iter") = 200, py::arg("conv_tol") = 1e-10,
+               py::arg("lowest_stable") = false,
                py::call_guard<py::gil_scoped_release>(),
                "Analytic CCM nuclear gradient (Ha/bohr), closed-shell RHF. "
                "WS topology fixed at the reference geometry; direct-assembly "
                "Madelung gradient (1-D / 2-D Parry-Heyes / 3-D Ewald).");
+
+    m_indo.def("ccm_strain_derivative_analytic",
+               &vibeqc::semiempirical::indo::ccm_strain_derivative_analytic,
+               py::arg("atomic_numbers"), py::arg("coords_angstrom"),
+               py::arg("translations_angstrom"), py::arg("params"),
+               py::arg("madelung") = false, py::arg("charge") = 0,
+               py::arg("max_iter") = 200, py::arg("conv_tol") = 1e-10,
+               py::arg("lowest_stable") = false,
+               py::call_guard<py::gil_scoped_release>(),
+               "Analytic CCM strain derivative dE/deps (Ha), 3x3 rows; atoms and "
+               "lattice deformed together, WS topology frozen at the reference. "
+               "Empty when the SCF does not converge.");
 
     // --- Analytic molecular gradient (Phase 4) ---
     m_indo.def("gradient_analytic",
@@ -14912,9 +15899,10 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
     m_indo.def("pair_blocks_deriv",
                &vibeqc::semiempirical::indo::pair_blocks_deriv,
                py::arg("zk"), py::arg("zl"), py::arg("rk"), py::arg("rl"),
-               py::arg("params"),
+               py::arg("params"), py::arg("pole_azimuth") = 0.0,
                py::call_guard<py::gil_scoped_release>(),
-               "Compute per-pair integral derivatives.");
+               "Compute per-pair integral derivatives. pole_azimuth fixes the "
+               "azimuth of a pair exactly along z (0 = d_trans.f convention).");
 
     py::class_<vibeqc::semiempirical::nddo::NDDOElementData>(
         m_nddo, "NDDOElementData")
@@ -15111,6 +16099,8 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         .def_readonly("energy", &vibeqc::semiempirical::nddo::PM6Result::energy)
         .def_readonly("e_electronic", &vibeqc::semiempirical::nddo::PM6Result::e_electronic)
         .def_readonly("e_core", &vibeqc::semiempirical::nddo::PM6Result::e_core)
+        .def_readonly("mo_energies", &vibeqc::semiempirical::nddo::PM6Result::mo_energies)
+        .def_readonly("mo_coeffs", &vibeqc::semiempirical::nddo::PM6Result::mo_coeffs)
         .def_readonly("density", &vibeqc::semiempirical::nddo::PM6Result::density)
         .def_readonly("n_basis", &vibeqc::semiempirical::nddo::PM6Result::n_basis)
         .def_readonly("n_occ", &vibeqc::semiempirical::nddo::PM6Result::n_occ)
@@ -15308,6 +16298,49 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         py::arg("max_iter") = 100,
         py::arg("conv_tol") = 1e-7,
         "Run unrestricted PM6 SCF energy calculation.");
+
+    // Private explicit Gaussian pair operands; not a production OMx driver.
+    using OMxGaussianContraction = vibeqc::semiempirical::nddo::OMxGaussianContraction;
+    using OMxGaussianPair = vibeqc::semiempirical::nddo::OMxGaussianPair;
+    using OMxLegacyPairOperands = vibeqc::semiempirical::nddo::OMxLegacyPairOperands;
+    py::class_<OMxGaussianContraction>(m_nddo, "_OMxGaussianContraction")
+        .def(py::init<>())
+        .def_readwrite("exponents", &OMxGaussianContraction::exponents)
+        .def_readwrite("s_coefficients", &OMxGaussianContraction::s_coefficients)
+        .def_readwrite("p_coefficients", &OMxGaussianContraction::p_coefficients)
+        .def_readwrite("zeta", &OMxGaussianContraction::zeta);
+    py::class_<OMxGaussianPair>(m_nddo, "_OMxGaussianPair")
+        .def_readonly("overlap", &OMxGaussianPair::overlap)
+        .def_readonly("eri_unscaled", &OMxGaussianPair::eri_unscaled)
+        .def_readonly("eri_scaled", &OMxGaussianPair::eri_scaled)
+        .def_readonly("attraction_a_unscaled", &OMxGaussianPair::attraction_a_unscaled)
+        .def_readonly("attraction_b_unscaled", &OMxGaussianPair::attraction_b_unscaled)
+        .def_readonly("attraction_a_scaled", &OMxGaussianPair::attraction_a_scaled)
+        .def_readonly("attraction_b_scaled", &OMxGaussianPair::attraction_b_scaled)
+        .def_readonly("raw_norms_a", &OMxGaussianPair::raw_norms_a)
+        .def_readonly("raw_norms_b", &OMxGaussianPair::raw_norms_b)
+        .def_readonly("f_ko", &OMxGaussianPair::f_ko)
+        .def_readonly("core_energy", &OMxGaussianPair::core_energy)
+        .def("coulomb_a", &OMxGaussianPair::coulomb_a, py::arg("density_b"))
+        .def("coulomb_b", &OMxGaussianPair::coulomb_b, py::arg("density_a"));
+    m_nddo.def("_evaluate_omx_gaussian_pair",
+        &vibeqc::semiempirical::nddo::evaluate_omx_gaussian_pair,
+        py::arg("a"), py::arg("b"), py::arg("origin_a"), py::arg("origin_b"),
+        py::arg("gamma_ss"), py::arg("core_charge_a"), py::arg("core_charge_b"),
+        "Internal normalized Cartesian s/p Gaussian operands (bohr, Hartree).");
+    py::class_<OMxLegacyPairOperands>(m_nddo, "_OMxLegacyPairOperands")
+        .def_readonly("overlap", &OMxLegacyPairOperands::overlap)
+        .def_readonly("fock_delta", &OMxLegacyPairOperands::fock_delta);
+    m_nddo.def("_evaluate_omx_legacy_pair_operands",
+        [](const vibeqc::Molecule& mol,
+           const vibeqc::semiempirical::nddo::OMxParameterSet& params,
+           const Eigen::MatrixXd& density) {
+            return run_with_parameter_snapshot(params, [&](const auto& snapshot) {
+                return vibeqc::semiempirical::nddo::evaluate_omx_legacy_pair_operands(
+                    mol, snapshot, density);
+            });
+        }, py::arg("mol"), py::arg("params"), py::arg("density"),
+        "Internal unchanged-route overlap and F(P)-F(0); no SCF is run.");
 
     // --- OMx driver ---
     m_nddo.def(
@@ -16024,4 +17057,5 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
           py::arg("x_old"), py::arg("x_new"),
           "RMS atomic displacement between two geometries.");
 
+    bind_manta(m);
 }

@@ -51,6 +51,13 @@ public:
     double hubbard_u(int Z) const;
     int valence_electrons(int Z) const;
     double gamma_onsite(int Z) const;
+    // Principal quantum number of element Z's valence shell of angular
+    // momentum l, from the period: s and p take the period, d the period
+    // minus one (3d in period 4), f the period minus two (4f for the
+    // lanthanides, 5f for the actinides). Selects the STO-NG row
+    // (Stewart 1970 keys on n); the tabulated rows end at n = 6 for s/p,
+    // 5 for d and f, so period-7 shells have no expansion.
+    int shell_principal_quantum_number(int Z, int l) const;
 
     // ---- Repulsive pair access (production: spline-capable) ----
     void set_repulsive_pair(int Z1, int Z2, const RepulsivePairV2& rp);

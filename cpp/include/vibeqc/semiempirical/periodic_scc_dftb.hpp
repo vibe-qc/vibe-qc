@@ -35,7 +35,7 @@ struct PeriodicSCCOptions {
     // defaulting to it").  Elstner's remainder decays exponentially, so the
     // Ewald-split lattice sum converges absolutely and the route has a
     // thermodynamic limit; the in-house Klopman-Ohno remainder falls off as
-    // R^-3 and does not (#425).  The molecular default stays Klopman-Ohno
+    // R^-3 and does not (former-tracker issue 425).  The molecular default stays Klopman-Ohno
     // until the measured repin table lands, per the same staging.
     ShellGammaForm gamma_form = ShellGammaForm::Elstner;
     int max_iter = 100;
@@ -79,7 +79,7 @@ struct PeriodicSCCDFTBResult : ParameterIdentifiedResult {
 };
 
 // Ewald-split lattice-summed SCC-DFTB gamma; see the definition for why
-// both halves of Elstner Eq. 17/18 are required (#425).
+// both halves of Elstner Eq. 17/18 are required (former-tracker issue 425).
 Eigen::MatrixXd build_periodic_dftb_gamma_matrix(
     const PeriodicSystem& system,
     const SemiempiricalParameters& params,

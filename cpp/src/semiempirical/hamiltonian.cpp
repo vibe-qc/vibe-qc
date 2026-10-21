@@ -97,9 +97,12 @@ Eigen::MatrixXd SemiempiricalHamiltonianBuilder::build_hamiltonian_zero(
             } else {
                 double h_mu = params.average_on_site(Z_mu);
                 double h_nu = params.average_on_site(Z_nu);
+                // Wolfsberg and Helmholz, J. Chem. Phys. 20, 837 (1952),
+                // p. 838, DOI 10.1063/1.1700580: average exactly once.
+                // Retain this model's atom-averaged on-site energies.
                 double h_avg = 0.5 * (h_mu + h_nu);
                 double s_val = S(mu, nu);
-                H0(mu, nu) = 0.5 * kappa * s_val * h_avg;
+                H0(mu, nu) = kappa * s_val * h_avg;
             }
         }
     }
@@ -199,7 +202,7 @@ Eigen::VectorXd SemiempiricalHamiltonianBuilder::mulliken_charges(
 //     Eqs. 17/18: gamma = 1/R - S(tau_A, tau_B, R) with tau = 16/5 U.  This
 //     is the form the published method uses and the one D1 adopts; its
 //     remainder decays exponentially, which is what gives the periodic
-//     lattice sum a thermodynamic limit (#425).
+//     lattice sum a thermodynamic limit (former-tracker issue 425).
 //
 // The on-site block is U in both forms: it is a method parameter, not a
 // lattice-sum question, and Elstner's equal-tau limit 5 tau/16 is exactly U.

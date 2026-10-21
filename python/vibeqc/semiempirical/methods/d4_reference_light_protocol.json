@@ -1,0 +1,65 @@
+{
+  "functional": "pbe38",
+  "basis": "aug-cc-pvtz",
+  "grid_level": "orca-defgrid3",
+  "frequency_grid": {
+    "points": 23,
+    "omega_scale": 0.5,
+    "algorithm": "Gauss-Legendre quadrature with rational frequency transform"
+  },
+  "catalogue": "vibeqc.dispersion_d4_reference_systems.all_reference_systems; per-element records sorted stably by nominal_cn",
+  "closed_shell": {
+    "references": 22,
+    "method": "RKS and coupled CPKS",
+    "energy_tolerance": 1e-10,
+    "gradient_tolerance": 1e-06
+  },
+  "CH": {
+    "label": "C/CH-doublet",
+    "charge": 0,
+    "multiplicity": 2,
+    "bond_angstrom": 1.1199,
+    "geometry_source": "https://webbook.nist.gov/cgi/cbook.cgi?ID=C3315375&Mask=1000",
+    "method": "UKS and coupled spin-resolved response",
+    "energy_tolerance": 1e-12,
+    "gradient_tolerance": 1e-10,
+    "scf_energy_hartree": -38.44293892594064,
+    "reference_eeq_charges": [
+      -0.17153964540806155,
+      0.17153964540806133
+    ],
+    "molecular_alpha_iw_bohr3": [
+      15.32285041295295,
+      14.591898460955269,
+      14.506212858852953,
+      14.336210160230316,
+      14.02891312176377,
+      13.557387062015387,
+      12.894123873215628,
+      12.014208343887388,
+      10.899880045638005,
+      9.557226224672283,
+      8.037776966988089,
+      6.442772752503122,
+      4.900054957426488,
+      3.524413737087581,
+      2.3874343374897258,
+      1.512495857618994,
+      0.8862479521426421,
+      0.47214279620245186,
+      0.22235094888642118,
+      0.08815166816787212,
+      0.026541560208538432,
+      0.004545638419247578,
+      0.00016418938857094769
+    ],
+    "response_checks": "Integral Aufbau occupations; positive-definite A+B and A-B response matrices."
+  },
+  "partitioning": "Caldeweyher et al., JCP 150, 154122 (2019), Eq.5; subtract each partner charge-scaled canonical atomic spectrum and divide by the number of equivalent target atoms.",
+  "charge_model": "Native EEQ for reference charges and partner scaling.",
+  "coordination_numbers": "Nominal catalogue CNs; explicit per-reference Gaussian counts follow nominal-environment multiplicities.",
+  "copper": "Neutral Cu and CuH atomic reference records retained from d4_reference_copper_protocol.json; Cu cross coefficients recomputed with the updated light-element spectra.",
+  "source": "Independent vibe-qc RKS/UKS and coupled response. No external polarizability table or external charge values included.",
+  "scope": "Improved native post-SCF D4-style model. Self-consistent GFN2 dispersion, upstream reference coverage and full heavier-element acceptance remain incomplete.",
+  "dataset_sha256": "41a729822a5d86c63a4b343fdfd0e0e1d2712e15aa8d141ea860b8c8d0d20694"
+}

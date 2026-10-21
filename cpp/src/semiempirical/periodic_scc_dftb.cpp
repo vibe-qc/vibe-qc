@@ -94,7 +94,7 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> build_h0_s0_gamma(
 
                 if (!is_zero || a_mu != a_nu) {
                     double h_avg = 0.5 * (hbar[a_mu] + hbar[a_nu]);
-                    H_g(mu, nu) = 0.5 * kappa * S_g(mu, nu) * h_avg;
+                    H_g(mu, nu) = kappa * S_g(mu, nu) * h_avg;
                 }
             }
         }
@@ -139,7 +139,7 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> build_h0_s0_gamma(
 // dimensions: charge neutrality should cancel it, but a *pair-distance*
 // cutoff gives different pairs different image counts, so each pair keeps a
 // different divergent constant and the cancellation is incomplete.  Issue
-// #425 measured the result oscillating over ~10 Ha between cutoffs.
+// Former-tracker issue 425 measured the result oscillating over ~10 Ha between cutoffs.
 //
 // Both halves of Eq. 17/18 are needed to fix it, and the maintainer's D1
 // note is explicit that the functional form alone is not enough: swapping

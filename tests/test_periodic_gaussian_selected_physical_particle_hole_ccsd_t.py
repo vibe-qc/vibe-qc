@@ -305,7 +305,10 @@ def test_distinct_original_pair_geometry_and_frozen_core_survive_the_one_call(ac
     if actual.kind == "frozen":
         assert r.pair_ccsd.memory.occupied_count == actual.nk
         assert r.pair_ccsd.memory.common_virtual_dimension == 2*actual.nk
-        assert r.diagnostics.hf_energy_per_cell == actual.b.unfrozen_hf.state.reference_energy_per_cell
+        # _frozen_bundle runs HF twice; only the masked solve is passed in.
+        # The diagnostic must carry that exact input value, even when the
+        # separate all-correlated solve differs by one rounding unit (#305).
+        assert r.diagnostics.hf_energy_per_cell == actual.b.hf.state.reference_energy_per_cell
 
 
 @pytest.mark.parametrize("stop,expected", [("pair_mp2", (True, False, False, False)),

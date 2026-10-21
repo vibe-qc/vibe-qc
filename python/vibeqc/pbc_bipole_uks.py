@@ -15,6 +15,8 @@ damping). The historical ODA hook fails closed.
 
 from __future__ import annotations
 
+from .bipole_domain import DEFAULT_BIPOLE_SR_IMAGE_PRECISION
+
 from .guess import periodic_guess_capabilities
 
 from .guess import periodic_result_selection
@@ -44,12 +46,14 @@ from ._vibeqc_core import (
     SCFIteration,
     bloch_sum,
     build_grid,
-    build_xc_periodic_uks,
+    build_xc_periodic_uks_kpoints,
     direct_lattice_cells,
     ewald_nuclear_repulsion,
     nuclear_repulsion_per_cell,
     real_space_density_from_kpoints_fractional,
 )
+from .bipole_domain import resolve_bipole_xc_density_reach
+from .periodic_xc_diagnostics import check_xc_grid_electron_count
 from .bipole_ext_el_pole import compute_ext_el_spheropole
 from .guess import (
     _coerce_periodic_driver_guess,
@@ -60,7 +64,13 @@ from .level_shift_schedule import LevelShiftSchedule
 from .mom import select_occupied_by_max_overlap as _mom_select
 from .oda import compute_oda_lambda as _compute_oda_lambda
 from .oda import oda_mix_densities as _oda_mix
+from .smearing import (
+    occupations_are_per_k_integer_aufbau as _occupations_are_per_k_integer_aufbau,
+)
 from .pbc_bipole_common import (
+    bipole_electron_count,
+    bipole_hf_acceptance,
+    bipole_unshifted_orbitals,
     bipole_confirmation_phase,
     bipole_final_density_phase,
     unrestricted_occupations_per_spin,
@@ -69,6 +79,7 @@ from .pbc_bipole_common import (
     PBCBipoleEnergyComponents,
     _bloch_sum_blocks,
     _bloch_sum_blocks_multi_k,
+    bvk_torus_covered,
     _combine_density_sets,
     _compute_nuclear_lattice_ewald_reciprocal_ft,
     _copy_lattice_with_blocks,  # noqa: F401  (compat re-export, see tests/test_pbc_bipole_common.py)
@@ -82,6 +93,8 @@ from .pbc_bipole_common import (
     bvk_torus_density_matrices,
     build_bipole_one_electron_lattice,
     prepare_bipole_lattice_options,
+    resolve_bipole_lattice_options,
+    reject_bipole_physical_legacy_gauge,
     raise_bipole_ewald_real_cutoff,
     resolve_bipole_ewald_alpha,
     reject_bipole_ecp_options,
@@ -92,6 +105,7 @@ from .pbc_bipole_common import (
     reject_bipole_unsupported_ks_functional,
     unrestricted_bipole_commutator_norm,
     bipole_terminal_check,
+    require_full_density_jk,
     refresh_bipole_terminal_trace,
     resolve_fock_mixing,
     resolve_auto_fock_mixing,
@@ -171,6 +185,9 @@ class PBCBipoleUKSResult:
     sr_image_extent_bohr: Optional[float] = None
     # True when the Fock build used the group-invariant pair-resolved domain.
     pair_resolved_fock_domain: bool = False
+    physical_fock_symmetry_reduced_builds: int = 0
+    physical_fock_symmetry_full_builds: int = 0
+    physical_fock_symmetry_residual_builds: int = 0
     # Dudarev DFT+U contribution per unit cell (Hartree). 0 unless the
     # caller passed ``dft_plus_u=[HubbardSite(...)]``. Sum of per-spin
     # contributions for the open-shell UKS path.
@@ -188,7 +205,7 @@ class PBCBipoleUKSResult:
     # Smearing diagnostics (zero when smearing_temperature == 0).
     smearing_temperature: float = 0.0
     fermi_level: float = 0.0
-    entropy: float = 0.0
+    entropy: float = 0.0  # Entropy of the committed densities used by energy.
     free_energy: float = 0.0
     occupations_alpha: List[np.ndarray] = field(default_factory=list)
     occupations_beta: List[np.ndarray] = field(default_factory=list)
@@ -226,6 +243,17 @@ class PBCBipoleUKSResult:
     restart_weights: object = None
     # Ewald accuracy used by the SCF; gradients must retain its finite sums.
     ewald_precision: float = 1e-8
+    resolved_domain: object = None
+    executed_support: object = None
+    chi_scf_acceptance: object = None
+    chi_xc_metadata: object = None
+    accepted_density_k: object = None
+    # Same terminal quadrature as e_xc, without density renormalization.
+    xc_grid_electrons: Optional[float] = None
+    xc_grid_electron_error: Optional[float] = None
+    xc_periodic_density_bras: bool = False
+
+    e_hf_exchange_components: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -248,12 +276,18 @@ class _PBCBipoleUKSFockBuild:
     e_exchange_finite_size: Optional[float] = None
     # XC energy of the SAME grid quadrature whose per-spin V_xc entered
     # f_alpha/beta_k_list (None for the HF-like PATOM seed build).
-    # Consuming this instead of re-running build_xc_periodic_uks keeps
+    # Consuming this instead of re-running build_xc_periodic_uks_kpoints keeps
     # the iteration's V_xc and e_xc from one build.
     e_xc: Optional[float] = None
+    # Raw quadrature only: assembled Fock matrices may later receive +U.
+    xc_result: object = None
+    n_electrons_grid: Optional[float] = None
+    periodic_density_bras: bool = False
     screened_exchange_execution: Optional[
         BipoleScreenedExchangeExecution
     ] = None
+
+    e_hf_exchange_components: dict[str, float] = field(default_factory=dict)
 
 
 def run_pbc_bipole_uks(
@@ -262,6 +296,7 @@ def run_pbc_bipole_uks(
     kmesh: BlochKMesh,
     options=None,
     *,
+    historical_domain: bool = False,
     functional: Optional[str] = None,
     linear_dep_threshold: float = 1e-7,
     fock_mixing: Optional[float] = None,
@@ -281,7 +316,7 @@ def run_pbc_bipole_uks(
     multipole_l_max: int = 2,
     use_fock_symmetry: Optional[bool] = None,
     use_fock_symmetry_reduce: Optional[bool] = None,
-    sr_image_precision: Optional[float] = 1e-6,
+    sr_image_precision: Optional[float] = DEFAULT_BIPOLE_SR_IMAGE_PRECISION,
     sr_image_extent_bohr: Optional[float] = None,
     exact_zone_bohr: Optional[float] = None,
     progress: Union[bool, ProgressLogger, None] = None,
@@ -291,11 +326,17 @@ def run_pbc_bipole_uks(
     init_beta: Optional[Sequence[np.ndarray]] = None,
     initial_density_k: Optional[Sequence] = None,
     dft_plus_u: Optional[List["HubbardSite"]] = None,
+    _support_recorder=None,
+    _chi_xc=None,
     xc_density_domain: PeriodicXCDensityDomain = (
         PeriodicXCDensityDomain.AUTO
     ),
 ) -> PBCBipoleUKSResult:
     """Multi-k open-shell UKS via the CRYSTAL-gauge BIPOLE scaffold.
+
+    Physical pair support is the default. ``historical_domain=True`` selects
+    the historical index ball for reproduction. This keyword overrides
+    ``options.lattice_opts.pair_complete_1e`` without mutating caller options.
 
     ``fock_mixing`` overrides ``options.fock_mixing`` when supplied and is
     forwarded through both phases of a spin schedule without rewriting the
@@ -414,7 +455,10 @@ def run_pbc_bipole_uks(
                 basis,
                 kmesh,
                 o,
+                historical_domain=historical_domain,
                 functional=functional,
+                _support_recorder=_support_recorder,
+                _chi_xc=_chi_xc,
                 linear_dep_threshold=linear_dep_threshold,
                 fock_mixing=requested_fock_mixing,
                 canonical_orth_normalize_diag_first=canonical_orth_normalize_diag_first,
@@ -473,6 +517,8 @@ def run_pbc_bipole_uks(
     use_fractional_density = (smearing_T > 0.0) or use_gilat
 
     func = Functional(opts.functional, 2)  # spin-polarised
+    if _chi_xc is not None:
+        _chi_xc.require_functional(func)
     reject_bipole_unsupported_ks_functional(
         func,
         driver="run_pbc_bipole_uks",
@@ -507,9 +553,15 @@ def run_pbc_bipole_uks(
     # CAM exchange assembly (see run_pbc_bipole_rks): alpha_hf is the
     # FULL-RANGE arm only; screened hybrids (hse06, c_full = 0) get
     # their erfc short-range K inside build_bipole_unrestricted_fock
-    # (no seam, no far-field); LR-heavy RSH fails closed here.
-    exx = resolve_periodic_exchange(func, where="run_pbc_bipole_uks")
+    # (no seam, no far-field). The chi callback supplies its own validated
+    # assembly; ordinary periodic routes retain their LR-heavy RSH refusal.
+    exx = (
+        _chi_xc.exchange_assembly if _chi_xc is not None
+        else resolve_periodic_exchange(func, where="run_pbc_bipole_uks")
+    )
     alpha_hf = float(exx.c_full)
+    if _chi_xc is not None and uses_external_xc:
+        raise NotImplementedError("chi XC callback requires a native functional")
 
     # CRYSTAL-style auto-FMIXING: fires only for DFT without DIIS.
     # Validated on the closed-shell twin (RKS Gap-B run matrix,
@@ -522,7 +574,9 @@ def run_pbc_bipole_uks(
         where="run_pbc_bipole_uks",
     )
 
-    lat_opts: LatticeSumOptions = opts.lattice_opts
+    lat_opts: LatticeSumOptions = resolve_bipole_lattice_options(
+        opts.lattice_opts, historical_domain=historical_domain,
+    )
     plog = resolve_progress(progress, verbose=verbose)
     (
         use_ewald_j_split,
@@ -546,7 +600,8 @@ def run_pbc_bipole_uks(
     if exx.is_screened:
         plog.info(
             f"  functional = {opts.functional}, screened exchange "
-            f"K = {exx.c_sr:g}*K_erfc(omega={exx.omega_screen:g} bohr^-1)"
+            f"K = {exx.c_full:g}*K_full + "
+            f"{exx.c_sr:g}*K_erfc(omega={exx.omega_screen:g} bohr^-1)"
         )
     else:
         plog.info(
@@ -651,6 +706,15 @@ def run_pbc_bipole_uks(
                 )
         else:
             _bvk_mesh = _mesh_attr
+    if _bvk_mesh is None and n_k > 1:
+        # Non-split multi-k routes (lower-dimensional cells, the legacy
+        # gauge) carry the same BvK-periodic real-space density, so every
+        # per-k consumer folds it on the torus too whenever the mesh
+        # carries its Monkhorst-Pack dimensions. An ad-hoc k list has no
+        # torus and keeps the unprojected Bloch sum.
+        _mesh_attr = tuple(int(x) for x in getattr(kmesh, "mesh", (1, 1, 1)))
+        if int(np.prod(_mesh_attr)) == n_k:
+            _bvk_mesh = _mesh_attr
 
     if uses_external_xc:
         validate_bipole_kmesh(
@@ -675,6 +739,11 @@ def run_pbc_bipole_uks(
 
     _ff_enable: Optional[bool] = False
 
+    reject_bipole_physical_legacy_gauge(
+        physical_pairs=lat_opts_2e.pair_complete_1e, dimension=system.dim,
+        use_ewald_j_split=use_ewald_j_split,
+        exchange_split_active=exchange_split_active, driver="run_pbc_bipole_uks",
+    )
     warn_bipole_legacy_multik_gauge(system, exchange_split_active, n_k, plog)
     warn_bipole_charged_cell(system, plog)
     _xi_madelung = 0.0
@@ -690,26 +759,18 @@ def run_pbc_bipole_uks(
             _xi_madelung = probe_charge_madelung(system)
     overlap_fold_drift: Optional[float] = None
     needs_pair_difference_xc = (
-        xc_density_domain == PeriodicXCDensityDomain.PERIODIC_LATTICE
+        _chi_xc is None
+        and xc_density_domain == PeriodicXCDensityDomain.PERIODIC_LATTICE
     )
-    if needs_pair_difference_xc or getattr(opts, "use_periodic_becke", False):
-        _xc_image_radius = float(
-            getattr(opts, "becke_image_radius_bohr", 10.0)
-        )
-        # AUTO selects the density representation, not a separate grid reach.
-        # Keep its finite AO bra images on the configured Becke partition.
+    # AUTO can select periodic bras once cross-cell density appears. Reserve
+    # their exact differences without forcing AUTO away from molecular density.
+    needs_xc_difference_support = (
+        _chi_xc is None
+        and xc_density_domain != PeriodicXCDensityDomain.MOLECULAR_HOME
+    )
+    if _chi_xc is None:
+        _xc_image_radius = resolve_bipole_xc_density_reach(lat_opts_2e)
         lat_opts_2e.becke_image_radius_bohr = _xc_image_radius
-    if needs_pair_difference_xc:
-        if _xc_image_radius <= 0.0:
-            raise ValueError(
-                "run_pbc_bipole_uks: explicit periodic-lattice XC needs "
-                "becke_image_radius_bohr > 0"
-            )
-        if float(lat_opts_2e.cutoff_bohr) < _xc_image_radius:
-            raise ValueError(
-                "run_pbc_bipole_uks: XC cutoff_bohr must be at least "
-                "becke_image_radius_bohr"
-            )
     if exchange_split_active:
         plog.info(
             "  Gauge: corrected (full Bloch density, no spheropole"
@@ -727,41 +788,16 @@ def run_pbc_bipole_uks(
     omega_used = None
     ewald_cell_volume = None
     ewald_k_max: Optional[float] = None
-    if system.dim == 3:
-        from .bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
+    from .pbc_bipole_common import resolve_bipole_ewald_state
 
-        V_cell = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-        ewald_cell_volume = V_cell
-        # #674: the K_SR erfc arm of the corrected exchange split is cut at
-        # the Fock output cells (|g| <= lat_opts_2e.cutoff_bohr), so on that
-        # route CRYSTAL's volume-only alpha is bounded below by
-        # sqrt(-ln tol) / cutoff_bohr; the reciprocal envelope of J_LR / K_LR
-        # follows the alpha in use (K_max / alpha stays CRYSTAL's 8.51).
-        omega_used = resolve_bipole_ewald_alpha(
-            V_cell,
-            ewald_omega,
-            lat_opts_2e,
-            float(ewald_precision),
-            erfc_exchange_arm_active=(exchange_split_active and exx.c_full != 0.0),
+    ewald_options_1e, omega_used, ewald_cell_volume, ewald_k_max = (
+        resolve_bipole_ewald_state(
+            system, lat_opts_1e, lat_opts_2e, ewald_omega=ewald_omega,
+            ewald_precision=ewald_precision,
+            erfc_exchange_arm_active=exchange_split_active and exx.c_full != 0.0,
             plog=plog,
         )
-        ewald_k_max = bipole_ewald_reciprocal_cutoff(V_cell, omega_used)
-        # #478: the pinned alpha = 2.8/V^(1/3) makes erfc(alpha.R) at the
-        # nearest image an L-INDEPENDENT 7.5e-5, so the 1e nuclear/Ewald
-        # real-space sum must be sized from alpha, not from the AO cutoff.
-        raise_bipole_ewald_real_cutoff(
-            system,
-            lat_opts_1e,
-            omega_used,
-            float(ewald_precision),
-            plog,
-        )
-        ewald_options_1e = _crystal_ewald_options(
-            lat_opts_1e,
-            alpha_bohr_inv=omega_used,
-            tolerance=float(ewald_precision),
-            recip_cutoff_bohr_inv=ewald_k_max,
-        )
+    )
 
     # Match the restricted driver: one padded ket-image ball converges the
     # Ewald J and screened-exchange erfc kernels, so the smaller omega owns
@@ -770,6 +806,13 @@ def run_pbc_bipole_uks(
         min(float(omega_used), float(exx.omega_screen))
         if exx.is_screened and omega_used is not None
         else omega_used
+    )
+    from .pbc_bipole_common import ewald_erfc_lattice_options
+
+    _v_ne_erfc_options = (
+        ewald_erfc_lattice_options(
+            lat_opts_1e, omega_used, ewald_precision, basis=basis, system=system,
+        ) if ewald_options_1e is not None and v_ne_grid_options is None else None
     )
     _sr_image_extent = resolve_bipole_sr_image_extent(
         basis,
@@ -784,16 +827,29 @@ def run_pbc_bipole_uks(
     )
 
     # DFT grid
-    if getattr(opts, "use_periodic_becke", False):
-        grid = build_periodic_becke_grid(
-            system,
-            grid_options=opts.grid,
-            image_radius_bohr=float(getattr(opts, "becke_image_radius_bohr", 10.0)),
-        )
-    else:
-        grid = build_grid(system.unit_cell_molecule(), opts.grid)
+    grid = None
+    if _chi_xc is None:
+        if getattr(opts, "use_periodic_becke", False):
+            grid = build_periodic_becke_grid(
+                system,
+                grid_options=opts.grid,
+                image_radius_bohr=float(getattr(opts, "becke_image_radius_bohr", 10.0)),
+            )
+        else:
+            grid = build_grid(system.unit_cell_molecule(), opts.grid)
 
     # One-electron integrals
+
+    if (_support_recorder is not None or _chi_xc is not None) and (
+        int(system.dim) != 3 or v_ne_grid_options is not None
+        or not use_ewald_j_split or not exchange_split_active
+    ):
+        raise NotImplementedError("chi support requires analytic 3D Ewald J")
+    _nuclear_support = None
+    if _support_recorder is not None:
+        _support_recorder.preflight(system=system, basis=basis,
+            lattice=lat_opts_1e, nuclear=_v_ne_erfc_options)
+
     with plog.stage(
         "integrals_lattice", detail=f"S/T/V at cutoff {lat_opts.cutoff_bohr:.2f} bohr"
     ):
@@ -808,6 +864,7 @@ def run_pbc_bipole_uks(
             v_ne_grid_options,
             plog,
             sym_log_style="rich",
+            resolved_erfc_options=_v_ne_erfc_options,
         )
     cells = list(S_lat.cells)
 
@@ -831,10 +888,14 @@ def run_pbc_bipole_uks(
         plog,
         per_spin=True,
         exchange_split_active=exchange_split_active,
-        # Structural symmetry alone does not prove that an unrestricted
-        # electronic state is symmetry-covariant.  Keep AUTO off for UKS;
-        # explicit reduction remains an opt-in after the guard above.
-        auto_reduce_safe=False,
+        physical_interaction_extent=_sr_image_extent,
+        # Physical reduction checks each spin density and preserves any
+        # asymmetric remainder. Keep state-selective controls and historical
+        # projection outside AUTO admission.
+        auto_reduce_safe=(
+            lat_opts_2e.pair_complete_1e and _sr_image_extent is not None
+            and not _broken_state_symmetry_controls
+        ),
     )
     _pair_mode = _fock_sym_map is not None and getattr(
         _fock_sym_map, "pair_resolved", False
@@ -870,7 +931,7 @@ def run_pbc_bipole_uks(
         plog=plog,
     )
 
-    if exchange_split_active or needs_pair_difference_xc or lat_opts_2e.pair_complete_1e:
+    if exchange_split_active or needs_xc_difference_support or lat_opts_2e.pair_complete_1e:
         if _pair_mode:
             # M3: pair-resolved density support (see run_pbc_bipole_rhf).
             cells_density = list(_fock_sym_map.density_domain.cells)
@@ -879,7 +940,7 @@ def run_pbc_bipole_uks(
                 _sr_density_cells(basis, system, lat_opts_2e, _sr_image_extent)
             )
 
-        if needs_pair_difference_xc:
+        if needs_xc_difference_support:
             from .periodic_external_xc import (
                 periodic_xc_difference_closed_cells,
             )
@@ -906,7 +967,7 @@ def run_pbc_bipole_uks(
             detail = (
                 "pair-resolved Fock support plus atom-pair-complete XC "
                 "differences"
-                if needs_pair_difference_xc
+                if needs_xc_difference_support
                 else "pair-resolved support at 2x cutoff; SR-masked privately"
             )
             plog.info(
@@ -950,11 +1011,15 @@ def run_pbc_bipole_uks(
         X_k_list.append(X_k)
 
     # Nuclear repulsion
-    e_nuc = (
-        float(ewald_nuclear_repulsion(system, ewald_options_1e))
-        if ewald_options_1e is not None
-        else float(nuclear_repulsion_per_cell(system, lat_opts_1e))
-    )
+    if ewald_options_1e is not None:
+        if _support_recorder is None:
+            e_nuc = float(ewald_nuclear_repulsion(system, ewald_options_1e))
+        else:
+            from ._vibeqc_core import ewald_nuclear_repulsion_with_support
+            _nuclear_support = ewald_nuclear_repulsion_with_support(system, ewald_options_1e)
+            e_nuc = float(_nuclear_support.energy)
+    else:
+        e_nuc = float(nuclear_repulsion_per_cell(system, lat_opts_1e))
 
     # Initial guess
     guess = _initial_guess
@@ -992,10 +1057,10 @@ def run_pbc_bipole_uks(
         C_beta_per_k.append(C_b.astype(complex))
         eps_beta_per_k.append(eps_b)
 
-    def _spin_density(C_per_k_local, n_occ_each):
+    def _spin_density(C_per_k_local, occupations):
         return unrestricted_spin_density(
             C_per_k_local,
-            n_occ_each,
+            occupations,
             n_k=n_k,
             kmesh=kmesh,
             cells_density=cells_density,
@@ -1007,10 +1072,9 @@ def run_pbc_bipole_uks(
     D_alpha_real = _spin_density(C_alpha_per_k, n_alpha)
     D_beta_real = _spin_density(C_beta_per_k, n_beta)
 
-    # --- Smearing occupation helpers (open-shell: per-spin mu) ---
-    from .smearing.fermi_dirac import fermi_dirac_occupations_per_k as _fd_per_k
-
-    def _occupations_per_spin(eps_spin_per_k, n_spin):
+    # --- Occupation helpers (open-shell: one chemical potential per spin
+    # over the whole mesh, also at T = 0; #176) ---
+    def _occupations_per_spin(eps_spin_per_k, n_spin, *, mom=False):
         return unrestricted_occupations_per_spin(
             eps_spin_per_k,
             n_spin,
@@ -1019,7 +1083,35 @@ def run_pbc_bipole_uks(
             system=system,
             kmesh=kmesh,
             bz_integration=bz_integration,
+            fixed_occupied_subspace=mom,
         )
+
+    def _needs_occupation_density(occ_a, occ_b):
+        """Whether these occupations need the occupation-weighted D(k).
+
+        The ``C[:, :n]`` slice is exact only for the per-k integer Aufbau
+        pattern. The zero-temperature fill is one chemical potential per spin
+        over the whole mesh (#176), so a band-overlap mesh occupies a
+        different number of bands at different k; those occupations are built
+        from themselves (#509). The legacy Ewald-J gauge reconstructs its
+        long-range density from a fixed occupied slice and cannot represent
+        them, so it refuses here rather than converge a different state.
+        """
+        if use_fractional_density:
+            return True
+        if _occupations_are_per_k_integer_aufbau(
+            occ_a, n_alpha, occ_value=1.0
+        ) and _occupations_are_per_k_integer_aufbau(
+            occ_b, n_beta, occ_value=1.0
+        ):
+            return False
+        reject_bipole_fractional_legacy_gauge(
+            use_ewald_j_split=bool(use_ewald_j_split),
+            exchange_split_active=exchange_split_active,
+            fractional_occupations=True,  # runtime band-overlap fill (#176)
+            driver="run_pbc_bipole_uks",
+        )
+        return True
 
     occ_alpha_per_k, mu_alpha, entropy_alpha = _occupations_per_spin(
         eps_alpha_per_k, n_alpha
@@ -1029,7 +1121,7 @@ def run_pbc_bipole_uks(
     )
     entropy = entropy_alpha + entropy_beta
 
-    if use_fractional_density:
+    if _needs_occupation_density(occ_alpha_per_k, occ_beta_per_k):
         D_alpha_real = real_space_density_from_kpoints_fractional(
             C_alpha_per_k, occ_alpha_per_k, kmesh, cells_density
         )
@@ -1059,9 +1151,11 @@ def run_pbc_bipole_uks(
         )
         _read_alpha = periodic_restart_lattice_density(
             alpha_k, S_k_list, weights, n_alpha, kmesh, D_alpha_real.cells,
+            retained_k_system=system if _chi_xc is not None else None,
         )
         _read_beta = periodic_restart_lattice_density(
             beta_k, S_k_list, weights, n_beta, kmesh, D_beta_real.cells,
+            retained_k_system=system if _chi_xc is not None else None,
         )
         init_alpha, init_beta = _read_alpha.blocks, _read_beta.blocks
     if (init_alpha is not None) != (init_beta is not None):
@@ -1087,9 +1181,10 @@ def run_pbc_bipole_uks(
         for g_idx, (ba, bb) in enumerate(zip(blocks_a, blocks_b)):
             D_alpha_real.set_block(g_idx, real_lattice_restart_block(ba, basis.nbasis))
             D_beta_real.set_block(g_idx, real_lattice_restart_block(bb, basis.nbasis))
-        D_alpha_real, D_beta_real = normalize_periodic_lattice_spin_restart(
-            D_alpha_real, D_beta_real, S_k_list, weights, n_alpha, n_beta, kmesh,
-        )
+        if _chi_xc is None or initial_density_k is None:
+            D_alpha_real, D_beta_real = normalize_periodic_lattice_spin_restart(
+                D_alpha_real, D_beta_real, S_k_list, weights, n_alpha, n_beta, kmesh,
+            )
         initial_density_is_local = True
         density_from_c_per_k = False
     elif fock_guess_per_k:
@@ -1266,6 +1361,21 @@ def run_pbc_bipole_uks(
             density, n_k=n_k, k_points=k_points, bvk_mesh=_bvk_mesh
         )
 
+    def _per_k_density_list(density) -> List[np.ndarray]:
+        """Per-k density for every consumer, split or not (#503).
+
+        The stored real-space density is BvK-periodic on a list wider
+        than the torus, so an unprojected Bloch sum over the list
+        overcounts by about n_cells / N_k (see run_pbc_bipole_rhf).
+        Fold on the torus whenever the list covers it; an ad-hoc k list and
+        a list smaller than the torus keep the unprojected sum, as before.
+        """
+        if n_k == 1 or (
+            _bvk_mesh is not None and bvk_torus_covered(density, _bvk_mesh)
+        ):
+            return _split_k_density_list(density)
+        return _bloch_sum_blocks_multi_k(density.blocks, density.cells, k_points)
+
     # Incremental/differential J_SR(+K_SR) accumulators (opt-in; see
     # run_pbc_bipole_rhf). Hybrids build per-spin J_SR+K_SR (two
     # accumulators on D_a/D_b); pure functionals build J_SR on the total
@@ -1351,7 +1461,23 @@ def run_pbc_bipole_uks(
     # Bundle the per-run invariants the inline UKS Fock build captured.
     # Placed after multipole and symmetry resolution, before the PATOM
     # in-field step and SCF loop first call the wrapper.
+    from .bipole_domain import capture_bipole_domain
+
+    _resolved_domain = capture_bipole_domain(
+        lattice_1e=lat_opts_1e, lattice_2e=lat_opts_2e,
+        requested_lattice=opts.lattice_opts,
+        ewald_options=ewald_options_1e, alpha=omega_used,
+        reciprocal_cutoff=ewald_k_max, ewald_precision=ewald_precision,
+        sr_image_extent=_sr_image_extent, use_ewald_j_split=use_ewald_j_split,
+        exchange_ewald_split=exchange_split_active,
+        exchange_exxdiv=exchange_exxdiv, exact_zone=_exact_zone,
+        ks_options=opts,
+        v_ne_grid_options=v_ne_grid_options,
+        xc_density_domain=xc_density_domain,
+        nuclear_erfc_options=_v_ne_erfc_options,
+    )
     _fock_ctx = BipoleFockContext(
+        resolved_domain=_resolved_domain,
         basis=basis,
         system=system,
         lat_opts_2e=lat_opts_2e,
@@ -1397,6 +1523,8 @@ def run_pbc_bipole_uks(
         coeffs_beta_for_rho,
         use_incremental=True,
         patom_hf_like=False,
+        xc_density_k=None,
+        reused_xc=None,
         reseed_incremental=False,
     ):
         fb = build_bipole_unrestricted_fock(
@@ -1414,6 +1542,8 @@ def run_pbc_bipole_uks(
             reseed_incremental=reseed_incremental,
             alpha_hf=alpha_hf,
             exchange_assembly=exx,
+            _chi_exchange=_chi_xc is not None,
+            _chi_density_k=xc_density_k if _chi_xc is not None else None,
             patom_hf_like=patom_hf_like,
             use_reduced_j_only=True,
         )
@@ -1422,19 +1552,28 @@ def run_pbc_bipole_uks(
         # E_xc. PATOM is an HF-like in-field seed, independent of the
         # target functional, so skip XC for that one pre-SCF Fock build.
         xc_result = None
-        if not patom_hf_like:
-            D_xc_alpha = _density_set_gamma_or_lattice(S_lat, D_alpha)
-            D_xc_beta = _density_set_gamma_or_lattice(S_lat, D_beta)
-            xc_result = build_xc_periodic_uks(
-                basis,
-                system,
-                grid,
-                func,
-                D_xc_alpha,
-                D_xc_beta,
-                lat_opts_2e,
-                xc_density_domain,
-            )
+        chi_e_xc = None
+        chi_v_alpha = chi_v_beta = None
+        if not patom_hf_like and _chi_xc is not None:
+            if xc_density_k is None:
+                raise RuntimeError("chi XC requires the actual per-k spin densities")
+            chi_e_xc, chi_v_alpha, chi_v_beta = _chi_xc.unrestricted(*xc_density_k)
+        elif not patom_hf_like:
+            xc_result = reused_xc
+            if xc_result is None:
+                D_xc_alpha = _density_set_gamma_or_lattice(S_lat, D_alpha)
+                D_xc_beta = _density_set_gamma_or_lattice(S_lat, D_beta)
+                xc_result = build_xc_periodic_uks_kpoints(
+                    basis,
+                    system,
+                    grid,
+                    func,
+                    D_xc_alpha,
+                    D_xc_beta,
+                    kmesh,
+                    lat_opts_2e,
+                    xc_density_domain,
+                )
 
         # Per-k Fock: F_s(k) = F^2e_s(k) + V_xc,s(k) + Hcore(k) −
         # K_corr,s(k), hermitised after V_xc so a non-Hermitian Bloch
@@ -1447,16 +1586,20 @@ def run_pbc_bipole_uks(
         F_b_2e_all = _bloch_sum_blocks_multi_k(
             fb.f2e_beta_real.blocks, fb.f2e_beta_real.cells, k_points
         )
+        xc_alpha_per_k = None if xc_result is None else xc_result.V_alpha
+        xc_beta_per_k = None if xc_result is None else xc_result.V_beta
         for k_idx, k in enumerate(k_points):
-            k_arr = np.asarray(k, dtype=float)
             F_a_2e = F_a_2e_all[k_idx]
             F_b_2e = F_b_2e_all[k_idx]
-            if xc_result is None:
+            if chi_v_alpha is not None:
+                Vxc_a_k = np.asarray(chi_v_alpha[k_idx])
+                Vxc_b_k = np.asarray(chi_v_beta[k_idx])
+            elif xc_result is None:
                 Vxc_a_k = 0.0
                 Vxc_b_k = 0.0
             else:
-                Vxc_a_k = np.asarray(bloch_sum(xc_result.V_alpha, k_arr))
-                Vxc_b_k = np.asarray(bloch_sum(xc_result.V_beta, k_arr))
+                Vxc_a_k = np.asarray(xc_alpha_per_k[k_idx])
+                Vxc_b_k = np.asarray(xc_beta_per_k[k_idx])
             F_a = F_a_2e + Vxc_a_k + np.asarray(Hcore_k_list[k_idx], dtype=complex)
             F_b = F_b_2e + Vxc_b_k + np.asarray(Hcore_k_list[k_idx], dtype=complex)
             if fb.k_corr_alpha_per_k is not None:
@@ -1475,10 +1618,17 @@ def run_pbc_bipole_uks(
             e_j_short_range=fb.e_j_short_range,
             e_j_long_range=fb.e_j_long_range,
             e_exchange=fb.e_exchange,
+            e_hf_exchange_components=dict(getattr(fb, "e_hf_exchange_components", {})),
             e_j_multipole=fb.e_j_multipole,
             e_2e_k_correction=fb.e_2e_k_correction,
             e_exchange_finite_size=fb.e_exchange_finite_size,
-            e_xc=(None if xc_result is None else float(xc_result.e_xc)),
+            e_xc=(float(chi_e_xc) if chi_e_xc is not None else
+                  None if xc_result is None else float(xc_result.e_xc)),
+            xc_result=xc_result,
+            n_electrons_grid=(None if xc_result is None else
+                              float(xc_result.n_electrons_grid)),
+            periodic_density_bras=(False if xc_result is None else
+                                   bool(xc_result.periodic_density_bras)),
             screened_exchange_execution=fb.screened_exchange_execution,
         )
 
@@ -1531,8 +1681,8 @@ def run_pbc_bipole_uks(
                     D_beta_real, D_beta_real.blocks[0].shape[0], n_k
                 )
         else:
-            D_alpha_real = _spin_density(C_alpha_per_k, n_alpha)
-            D_beta_real = _spin_density(C_beta_per_k, n_beta)
+            D_alpha_real = _spin_density(C_alpha_per_k, occ_alpha_per_k)
+            D_beta_real = _spin_density(C_beta_per_k, occ_beta_per_k)
         # Every first-cycle consumer must see the refined PATOM density,
         # including +U and acceleration on a repeated BvK cell list.
         _constructed_alpha_k = [
@@ -1587,16 +1737,9 @@ def run_pbc_bipole_uks(
 
         if density_alpha_k is not None:
             Pa_k_all, Pb_k_all = density_alpha_k, density_beta_k
-        elif exchange_split_active:
-            Pa_k_all = _split_k_density_list(density_alpha)
-            Pb_k_all = _split_k_density_list(density_beta)
         else:
-            Pa_k_all = _bloch_sum_blocks_multi_k(
-                density_alpha.blocks, density_alpha.cells, k_points
-            )
-            Pb_k_all = _bloch_sum_blocks_multi_k(
-                density_beta.blocks, density_beta.cells, k_points
-            )
+            Pa_k_all = _per_k_density_list(density_alpha)
+            Pb_k_all = _per_k_density_list(density_beta)
         P_alpha_k_for_u = [
             0.5 * (P_k + P_k.conj().T) for P_k in Pa_k_all
         ]
@@ -1661,10 +1804,103 @@ def run_pbc_bipole_uks(
     F_beta_k_list = [np.zeros_like(H) for H in Hcore_k_list]
     converged = False
     iter_idx = 0
+
+    def _canonical_physical_orbitals(f_alpha, f_beta):
+        """Canonical candidates using this method's spin and occupation rules."""
+        C_alpha_per_k = []
+        eps_alpha_per_k = []
+        C_beta_per_k = []
+        eps_beta_per_k = []
+        for F_a, F_b, X_k in zip(
+            f_alpha,
+            f_beta,
+            X_k_list,
+        ):
+            C_a, eps_a = _diag_in_orth_basis(F_a, X_k)
+            C_b, eps_b = _diag_in_orth_basis(F_b, X_k)
+            C_alpha_per_k.append(np.asarray(C_a, dtype=complex))
+            eps_alpha_per_k.append(np.asarray(eps_a, dtype=float))
+            C_beta_per_k.append(np.asarray(C_b, dtype=complex))
+            eps_beta_per_k.append(np.asarray(eps_b, dtype=float))
+        _mom_final = use_mom or (
+            _spinlock_pattern_hold and 1 < iter_idx <= _spinlock_iters
+        )
+        if _mom_final and C_prev_occ_alpha_per_k is not None:
+            for idx in range(n_k):
+                for spin, (C_k, eps_k, n_occ_spin, C_prev_occ_k) in enumerate(
+                    [
+                        (
+                            C_alpha_per_k[idx],
+                            eps_alpha_per_k[idx],
+                            n_alpha,
+                            C_prev_occ_alpha_per_k[idx],
+                        ),
+                        (
+                            C_beta_per_k[idx],
+                            eps_beta_per_k[idx],
+                            n_beta,
+                            C_prev_occ_beta_per_k[idx],
+                        ),
+                    ]
+                ):
+                    if n_occ_spin == 0:
+                        continue
+                    sel = _mom_select(
+                        C_k,
+                        S_k_list[idx],
+                        C_prev_occ_k,
+                        n_occ_spin,
+                        eps_new=eps_k,
+                    )
+                    virt_mask = np.ones(C_k.shape[1], dtype=bool)
+                    virt_mask[sel] = False
+                    virt_sel = np.where(virt_mask)[0]
+                    virt_sel = virt_sel[np.argsort(np.real(eps_k[virt_sel]))]
+                    order = np.concatenate([sel, virt_sel])
+                    if spin == 0:
+                        C_alpha_per_k[idx] = C_k[:, order]
+                        eps_alpha_per_k[idx] = eps_k[order]
+                    else:
+                        C_beta_per_k[idx] = C_k[:, order]
+                        eps_beta_per_k[idx] = eps_k[order]
+        _mom_final_held = bool(_mom_final and C_prev_occ_alpha_per_k is not None)
+        occ_alpha_per_k, mu_alpha, orbital_entropy_alpha = _occupations_per_spin(
+            eps_alpha_per_k, n_alpha, mom=_mom_final_held
+        )
+        occ_beta_per_k, mu_beta, orbital_entropy_beta = _occupations_per_spin(
+            eps_beta_per_k, n_beta, mom=_mom_final_held
+        )
+        # Canonical F[D] occupations are one density update ahead on capped
+        # returns. The thermodynamic objective and both exact checks must retain
+        # the entropy of the committed spin densities, not this band refill (#383).
+        orbital_entropy = orbital_entropy_alpha + orbital_entropy_beta
+        return (C_alpha_per_k, C_beta_per_k, eps_alpha_per_k, eps_beta_per_k,
+                occ_alpha_per_k, occ_beta_per_k, mu_alpha, mu_beta, orbital_entropy)
+
+    _confirm_orbitals = None
     #: Exact rebuild from the convergence confirmation (IID 514); reused by
     #: the post-loop finalisation so healthy rows pay nothing extra.
     _confirm_fb: Optional[_PBCBipoleUKSFockBuild] = None
     _confirm_e_dft_plus_u: Optional[float] = None
+    # One-shot quadrature reuse after a refused exact confirmation.
+    _pending_xc = None
+
+    # Keep both spin Bloch densities, including complex entries, through
+    # damping and ODA rather than re-Bloch-summing a finite real lattice.
+    _chi_density = _chi_previous = None
+    if _chi_xc is not None:
+        if initial_density_k is not None:
+            _chi_density = np.asarray((alpha_k, beta_k))
+        elif _constructed_alpha_k is not None:
+            _chi_density = np.asarray((_constructed_alpha_k, _constructed_beta_k))
+        elif density_from_c_per_k:
+            _chi_density = np.asarray([
+                [(c * o) @ c.conj().T for c, o in zip(coeffs, occupations)]
+                for coeffs, occupations in ((C_alpha_per_k, occ_alpha_per_k),
+                                             (C_beta_per_k, occ_beta_per_k))])
+        else:
+            _chi_density = np.asarray((_split_k_density_list(D_alpha_real),
+                                       _split_k_density_list(D_beta_real)))
 
     for iter_idx in range(1, int(opts.max_iter) + 1):
         if damper is not None:
@@ -1690,14 +1926,28 @@ def run_pbc_bipole_uks(
             D_beta_used = D_beta_real
 
         d_used_is_damped = iter_idx > 1 and damping > 0.0 and not diis_active
+        _chi_used = _chi_density
+        if _chi_xc is not None and d_used_is_damped:
+            _chi_used = (1.0 - damping) * _chi_density + damping * _chi_previous
         d_used_from_coeffs = (
             density_from_c_per_k
             and not (initial_density_is_local and iter_idx == 1)
             and not d_used_is_damped
         )
+        # Damping mutates lattice sets in place: reject it explicitly,
+        # in addition to checking the committed density object(s).
+        # Consume once; never carry a result across another trial density.
+        reused_xc = None
+        if not d_used_is_damped and _pending_xc is not None and (
+                D_alpha_used is _pending_xc[0]
+                and D_beta_used is _pending_xc[1]):
+            reused_xc = _pending_xc[-1]
+        _pending_xc = None
         fock_build = _build_fock_for_density(
             D_alpha_used,
             D_beta_used,
+            reused_xc=reused_xc,
+            xc_density_k=_chi_used,
             coeffs_alpha_for_rho=(C_alpha_per_k if d_used_from_coeffs else None),
             coeffs_beta_for_rho=(C_beta_per_k if d_used_from_coeffs else None),
         )
@@ -1722,7 +1972,7 @@ def run_pbc_bipole_uks(
         # XC energy: from the SAME quadrature that produced this
         # iteration's per-spin V_xc (inside _build_fock_for_density on
         # D_alpha_used/D_beta_used) -- the loop used to run a second,
-        # redundant build_xc_periodic_uks here every iteration just to
+        # redundant build_xc_periodic_uks_kpoints here every iteration just to
         # extract e_xc.
         assert fock_build.e_xc is not None
         e_xc = float(fock_build.e_xc)
@@ -1764,14 +2014,12 @@ def run_pbc_bipole_uks(
             and (D_k_split_guess_a is None or D_k_split_guess_b is None)
             and _constructed_alpha_k is None
         ):
-            D_k_guess_fold_a = _bloch_sum_blocks_multi_k(
-                D_alpha_used.blocks, D_alpha_used.cells, k_points
-            )
-            D_k_guess_fold_b = _bloch_sum_blocks_multi_k(
-                D_beta_used.blocks, D_beta_used.cells, k_points
-            )
+            D_k_guess_fold_a = _per_k_density_list(D_alpha_used)
+            D_k_guess_fold_b = _per_k_density_list(D_beta_used)
         for idx in range(n_k):
-            if initial_density_is_local and iter_idx == 1:
+            if _chi_xc is not None:
+                D_a_k, D_b_k = _chi_used[0, idx], _chi_used[1, idx]
+            elif initial_density_is_local and iter_idx == 1:
                 if _constructed_alpha_k is not None:
                     D_a_k = _constructed_alpha_k[idx]
                     D_b_k = _constructed_beta_k[idx]
@@ -1788,7 +2036,9 @@ def run_pbc_bipole_uks(
             else:
                 C_a = C_alpha_per_k[idx]
                 C_b = C_beta_per_k[idx]
-                if not use_fractional_density:
+                if not _needs_occupation_density(
+                    occ_alpha_per_k, occ_beta_per_k
+                ):
                     C_a_occ = C_a[:, :n_alpha] if n_alpha > 0 else C_a[:, :0]
                     C_b_occ = C_b[:, :n_beta] if n_beta > 0 else C_b[:, :0]
                     D_a_k = C_a_occ @ C_a_occ.conj().T
@@ -1891,7 +2141,9 @@ def run_pbc_bipole_uks(
         # recorded) while the PATTERN_HOLD window is active; see the
         # hold_active note at the loop head.
         if accel is not None and not hold_active:
-            if constructed_alpha_k is not None:
+            if _chi_xc is not None:
+                density_alpha_k_list, density_beta_k_list = _chi_used
+            elif constructed_alpha_k is not None:
                 density_alpha_k_list = constructed_alpha_k
                 density_beta_k_list = constructed_beta_k
             elif exchange_split_active:
@@ -1902,16 +2154,8 @@ def run_pbc_bipole_uks(
                 density_alpha_k_list = _split_k_density_list(D_alpha_used)
                 density_beta_k_list = _split_k_density_list(D_beta_used)
             else:
-                density_alpha_k_list = _bloch_sum_blocks_multi_k(
-                    D_alpha_used.blocks,
-                    D_alpha_used.cells,
-                    k_points,
-                )
-                density_beta_k_list = _bloch_sum_blocks_multi_k(
-                    D_beta_used.blocks,
-                    D_beta_used.cells,
-                    k_points,
-                )
+                density_alpha_k_list = _per_k_density_list(D_alpha_used)
+                density_beta_k_list = _per_k_density_list(D_beta_used)
             F_a_ex, F_b_ex = accel.extrapolate_uhf(
                 F_alpha_k_list,
                 F_beta_k_list,
@@ -2049,11 +2293,14 @@ def run_pbc_bipole_uks(
         C_beta_per_k = new_C_beta
         eps_beta_per_k = new_eps_beta
 
+        _mom_held = bool(
+            _mom_this_iter and C_prev_occ_alpha_per_k is not None
+        )
         occ_alpha_per_k, mu_alpha, entropy_alpha = _occupations_per_spin(
-            eps_alpha_per_k, n_alpha
+            eps_alpha_per_k, n_alpha, mom=_mom_held
         )
         occ_beta_per_k, mu_beta, entropy_beta = _occupations_per_spin(
-            eps_beta_per_k, n_beta
+            eps_beta_per_k, n_beta, mom=_mom_held
         )
         entropy = entropy_alpha + entropy_beta
 
@@ -2072,13 +2319,23 @@ def run_pbc_bipole_uks(
                     D_beta_new, D_beta_new.blocks[0].shape[0], n_k
                 )
         else:
-            D_alpha_new = _spin_density(C_alpha_per_k, n_alpha)
-            D_beta_new = _spin_density(C_beta_per_k, n_beta)
+            D_alpha_new = _spin_density(C_alpha_per_k, occ_alpha_per_k)
+            D_beta_new = _spin_density(C_beta_per_k, occ_beta_per_k)
 
         # Require both newly diagonalised spin densities to be the same fixed
         # point as D_used before accepting convergence. This includes the
         # occupation-only motion that a finite-temperature/Gilat commutator
         # cannot see.
+        _chi_new = None
+        if _chi_xc is not None:
+            _chi_new = np.asarray([
+                [(c * o) @ c.conj().T for c, o in zip(coeffs, occupations)]
+                for coeffs, occupations in ((C_alpha_per_k, occ_alpha_per_k),
+                                             (C_beta_per_k, occ_beta_per_k))])
+
+        if converged and _chi_xc is not None:
+            converged = float(np.max(np.abs(_chi_new - _chi_used))) < float(opts.conv_tol_grad)
+
         if converged:
             density_fixed_point_residual = max(
                 (
@@ -2098,6 +2355,7 @@ def run_pbc_bipole_uks(
             fock_naive = _build_fock_for_density(
                 D_alpha_new,
                 D_beta_new,
+                xc_density_k=_chi_new,
                 coeffs_alpha_for_rho=C_alpha_per_k,
                 coeffs_beta_for_rho=C_beta_per_k,
                 use_incremental=False,  # off the per-iter ΔD chain
@@ -2127,6 +2385,11 @@ def run_pbc_bipole_uks(
             D_alpha_real = D_alpha_new
             D_beta_real = D_beta_new
             density_from_c_per_k = True
+
+        if _chi_xc is not None:
+            _chi_previous = _chi_density if use_oda else _chi_used
+            _chi_density = ((1.0 - oda_step.lam) * _chi_used + oda_step.lam * _chi_new
+                            if use_oda else _chi_new)
 
         # Snapshot for next iter MOM (use_mom: every cycle; PATTERN_HOLD: while
         # inside the hold window).
@@ -2164,6 +2427,7 @@ def run_pbc_bipole_uks(
                 _confirm_fb = _build_fock_for_density(
                     D_alpha_real,
                     D_beta_real,
+                    xc_density_k=_chi_density,
                     coeffs_alpha_for_rho=(
                         C_alpha_per_k if density_from_c_per_k else None
                     ),
@@ -2188,18 +2452,12 @@ def run_pbc_bipole_uks(
                 _confirm_fb.f_alpha_k_list,
                 _confirm_fb.f_beta_k_list,
                 (
-                    _split_k_density_list(D_alpha_real)
-                    if exchange_split_active
-                    else _bloch_sum_blocks_multi_k(
-                        D_alpha_real.blocks, D_alpha_real.cells, k_points
-                    )
+                    _chi_density[0] if _chi_xc is not None else
+                    _per_k_density_list(D_alpha_real)
                 ),
                 (
-                    _split_k_density_list(D_beta_real)
-                    if exchange_split_active
-                    else _bloch_sum_blocks_multi_k(
-                        D_beta_real.blocks, D_beta_real.cells, k_points
-                    )
+                    _chi_density[1] if _chi_xc is not None else
+                    _per_k_density_list(D_beta_real)
                 ),
                 S_k_list,
                 weights,
@@ -2225,11 +2483,45 @@ def run_pbc_bipole_uks(
                 conv_tol_energy=float(opts.conv_tol_energy),
                 conv_tol_grad=float(opts.conv_tol_grad),
             )
+            if not _confirm_ok:
+                require_full_density_jk(
+                    plog, incremental_jk_alpha, incremental_jk_beta, incremental_jk_total,
+                )
             converged = _confirm_ok and abs(dE) < float(opts.conv_tol_energy)
+            if converged and _chi_xc is None:
+                # A small exact commutator need not imply density closure.
+                # Preserve evaluated spin densities and their thermodynamics.
+                _confirm_orbitals = _canonical_physical_orbitals(
+                    _confirm_fb.f_alpha_k_list, _confirm_fb.f_beta_k_list,
+                )
+                (_confirm_ca, _confirm_cb, _, _, _confirm_oa, _confirm_ob,
+                 _, _, _) = _confirm_orbitals
+                _needs_occupation_density(_confirm_oa, _confirm_ob)
+                _confirm_da = _spin_density(_confirm_ca, _confirm_oa)
+                _confirm_db = _spin_density(_confirm_cb, _confirm_ob)
+                _confirm_density_residual = max(
+                    (float(np.max(np.abs(np.asarray(new) - np.asarray(old))))
+                     for new_set, old_set in ((_confirm_da, D_alpha_real),
+                                             (_confirm_db, D_beta_real))
+                     for new, old in zip(new_set.blocks, old_set.blocks)),
+                    default=0.0,
+                )
+                converged = _confirm_density_residual < float(opts.conv_tol_grad)
+                if not converged:
+                    plog.info(
+                        "  exact-operator density closure failed: "
+                        f"{_confirm_density_residual:.3e} >= {float(opts.conv_tol_grad):.3e}"
+                    )
             # At the iteration cap this is already the exact final-density
             # operator, even if confirmation failed. Preserve it for reuse.
             if not converged and iter_idx < int(opts.max_iter):
+                # Preserve provider callback semantics and the separate chi
+                # density path. Native XC depends only on the fixed grid,
+                # functional, domain and this committed density.
+                if not uses_external_xc and _confirm_fb.xc_result is not None:
+                    _pending_xc = (D_alpha_real, D_beta_real, _confirm_fb.xc_result)
                 _confirm_fb = None
+                _confirm_orbitals = None
                 _confirm_e_dft_plus_u = None
         if converged:
             break
@@ -2258,6 +2550,7 @@ def run_pbc_bipole_uks(
             else _build_fock_for_density(
                 D_alpha_real,
                 D_beta_real,
+                xc_density_k=_chi_density,
                 coeffs_alpha_for_rho=(
                     C_alpha_per_k if density_from_c_per_k else None
                 ),
@@ -2280,73 +2573,27 @@ def run_pbc_bipole_uks(
             F_beta_k_list,
         )
 
-    # Canonicalize each final physical spin Fock at the authoritative
-    # returned densities, then refill occupations.  The SCF-loop eigenpairs
-    # may describe a preceding or accelerated operator on iteration-limit
-    # exits.
-    C_alpha_per_k = []
-    eps_alpha_per_k = []
-    C_beta_per_k = []
-    eps_beta_per_k = []
-    for F_a, F_b, X_k in zip(
-        F_alpha_k_list,
-        F_beta_k_list,
-        X_k_list,
-    ):
-        C_a, eps_a = _diag_in_orth_basis(F_a, X_k)
-        C_b, eps_b = _diag_in_orth_basis(F_b, X_k)
-        C_alpha_per_k.append(np.asarray(C_a, dtype=complex))
-        eps_alpha_per_k.append(np.asarray(eps_a, dtype=float))
-        C_beta_per_k.append(np.asarray(C_b, dtype=complex))
-        eps_beta_per_k.append(np.asarray(eps_b, dtype=float))
-    _mom_final = use_mom or (
-        _spinlock_pattern_hold and 1 < iter_idx <= _spinlock_iters
-    )
-    if _mom_final and C_prev_occ_alpha_per_k is not None:
-        for idx in range(n_k):
-            for spin, (C_k, eps_k, n_occ_spin, C_prev_occ_k) in enumerate(
-                [
-                    (
-                        C_alpha_per_k[idx],
-                        eps_alpha_per_k[idx],
-                        n_alpha,
-                        C_prev_occ_alpha_per_k[idx],
-                    ),
-                    (
-                        C_beta_per_k[idx],
-                        eps_beta_per_k[idx],
-                        n_beta,
-                        C_prev_occ_beta_per_k[idx],
-                    ),
-                ]
-            ):
-                if n_occ_spin == 0:
-                    continue
-                sel = _mom_select(
-                    C_k,
-                    S_k_list[idx],
-                    C_prev_occ_k,
-                    n_occ_spin,
-                    eps_new=eps_k,
-                )
-                virt_mask = np.ones(C_k.shape[1], dtype=bool)
-                virt_mask[sel] = False
-                virt_sel = np.where(virt_mask)[0]
-                virt_sel = virt_sel[np.argsort(np.real(eps_k[virt_sel]))]
-                order = np.concatenate([sel, virt_sel])
-                if spin == 0:
-                    C_alpha_per_k[idx] = C_k[:, order]
-                    eps_alpha_per_k[idx] = eps_k[order]
-                else:
-                    C_beta_per_k[idx] = C_k[:, order]
-                    eps_beta_per_k[idx] = eps_k[order]
-    occ_alpha_per_k, mu_alpha, entropy_alpha = _occupations_per_spin(
-        eps_alpha_per_k, n_alpha
-    )
-    occ_beta_per_k, mu_beta, entropy_beta = _occupations_per_spin(
-        eps_beta_per_k, n_beta
-    )
-    entropy = entropy_alpha + entropy_beta
+    orbital_entropy = entropy
+    if _chi_xc is not None:
+        C_alpha_per_k, eps_alpha_per_k = bipole_unshifted_orbitals(
+            F_alpha_k_list, C_alpha_per_k, occ_alpha_per_k)
+        C_beta_per_k, eps_beta_per_k = bipole_unshifted_orbitals(
+            F_beta_k_list, C_beta_per_k, occ_beta_per_k)
+    else:
+        # Canonicalize each final physical spin Fock at the authoritative
+        # returned densities, then refill band occupations. The SCF-loop eigenpairs
+        # may describe a preceding or accelerated operator on iteration-limit
+        # exits.
+        if _confirm_orbitals is not None:
+            (C_alpha_per_k, C_beta_per_k, eps_alpha_per_k, eps_beta_per_k,
+             occ_alpha_per_k, occ_beta_per_k, mu_alpha, mu_beta,
+             orbital_entropy) = _confirm_orbitals
+        else:
+            (C_alpha_per_k, C_beta_per_k, eps_alpha_per_k, eps_beta_per_k,
+             occ_alpha_per_k, occ_beta_per_k, mu_alpha, mu_beta,
+             orbital_entropy) = _canonical_physical_orbitals(
+                F_alpha_k_list, F_beta_k_list,
+            )
 
     screened_exchange_execution = _fb.screened_exchange_execution
     # The exact final-density Fock already carries this quadrature energy.
@@ -2412,7 +2659,7 @@ def run_pbc_bipole_uks(
             (eps_alpha_per_k, occ_alpha_per_k, n_alpha, 1.0),
             (eps_beta_per_k, occ_beta_per_k, n_beta, 1.0),
         ],
-        entropy,
+        orbital_entropy,
         "run_pbc_bipole_uks",
     )
     if basin_warning is not None:
@@ -2427,18 +2674,12 @@ def run_pbc_bipole_uks(
         F_alpha_k_list,
         F_beta_k_list,
         (
-            _split_k_density_list(D_alpha_real)
-            if exchange_split_active
-            else _bloch_sum_blocks_multi_k(
-                D_alpha_real.blocks, D_alpha_real.cells, k_points
-            )
+            _chi_density[0] if _chi_xc is not None else
+            _per_k_density_list(D_alpha_real)
         ),
         (
-            _split_k_density_list(D_beta_real)
-            if exchange_split_active
-            else _bloch_sum_blocks_multi_k(
-                D_beta_real.blocks, D_beta_real.cells, k_points
-            )
+            _chi_density[1] if _chi_xc is not None else
+            _per_k_density_list(D_beta_real)
         ),
         S_k_list,
         weights,
@@ -2467,13 +2708,57 @@ def run_pbc_bipole_uks(
     )
     if converged:
         converged = _terminal_ok
+    acceptance = None
+    if _chi_xc is not None:
+        final_counts = [bipole_electron_count(d, S_k_list, weights) for d in _chi_density]
+        acceptance = bipole_hf_acceptance(
+            converged=converged, iterations=iter_idx, max_iter=int(opts.max_iter),
+            energy_residual=max(abs(float(dE)), abs(free_energy_final - _loop_objective)),
+            density_residual=float(np.max(np.abs(_chi_density - _chi_used))),
+            orbital_residual=final_grad_norm,
+            electron_count_errors=[a - b for a, b in zip(final_counts, (n_alpha, n_beta))],
+            conv_tol_energy=float(opts.conv_tol_energy), conv_tol_grad=float(opts.conv_tol_grad))
+        converged = acceptance["stationary"]
+
     plog.converged(
         n_iter=iter_idx,
         energy=free_energy_final,
         converged=converged,
     )
 
+    _executed_support = None
+    if _support_recorder is not None:
+        _executed_support = _support_recorder(
+            system=system, basis=basis, domain=_resolved_domain,
+            one_electron={"S": S_lat, "T": T_lat, "V_ne": V_lat},
+            density=D_tot, fock=_fb.f2e_alpha_real, j_cache=j_lr_cache,
+            x_cache=x_lr_cache, nuclear_support=_nuclear_support,
+            kpoints=k_points, weights=weights, v_ne_cache=v_ne_lr_cache,
+            spin_density={"alpha": D_alpha_real, "beta": D_beta_real},
+            spin_fock={"alpha": _fb.f2e_alpha_real, "beta": _fb.f2e_beta_real},
+        )
+
+    # _fb is the exact rebuild at the authoritative returned density, also
+    # on an iteration-capped return. Trial/PATOM callbacks never set this count.
+    _xc_diagnostics = (None if _fb.n_electrons_grid is None else {
+        "n_electrons_grid": _fb.n_electrons_grid,
+        "periodic_density_bras": _fb.periodic_density_bras,
+    })
+    _xc_grid_error = check_xc_grid_electron_count(
+        _xc_diagnostics, n_elec,
+        context=("run_pbc_bipole_uks (Becke partition radius="
+                 f"{float(opts.becke_image_radius_bohr):g} bohr)"),
+        lattice_options=lat_opts_2e,
+    )
+
     return PBCBipoleUKSResult(
+        xc_grid_electrons=_fb.n_electrons_grid,
+        xc_grid_electron_error=_xc_grid_error,
+        xc_periodic_density_bras=_fb.periodic_density_bras,
+        chi_scf_acceptance=acceptance,
+        executed_support=_executed_support,
+        chi_xc_metadata=(dict(_chi_xc.metadata) if _chi_xc is not None else None),
+        accepted_density_k=(np.asarray(_chi_density).copy() if _chi_xc is not None else None),
                restart_mesh=tuple(kmesh.mesh),
                restart_kpoints=np.asarray(kmesh.kpoints).copy(), restart_weights=np.asarray(kmesh.weights).copy(),
                guess_selection=periodic_result_selection(system, opts.initial_guess, restarted=init_alpha is not None or init_beta is not None or initial_density_k is not None),
@@ -2485,6 +2770,7 @@ def run_pbc_bipole_uks(
         e_xc=final_e_xc,
         e_coulomb=final_e_2e - final_e_exchange,
         e_hf_exchange=final_e_exchange,
+        e_hf_exchange_components=dict(_fb.e_hf_exchange_components),
         n_iter=iter_idx,
         converged=converged,
         s_squared=float(s2),
@@ -2502,8 +2788,21 @@ def run_pbc_bipole_uks(
         scf_trace=scf_trace,
         ewald_alpha_bohr_inv=omega_used,
         ewald_precision=float(ewald_precision),
+        resolved_domain=_resolved_domain,
         sr_image_extent_bohr=_sr_image_extent,
-        pair_resolved_fock_domain=bool(_fock_sym_map is not None),
+        physical_fock_symmetry_reduced_builds=getattr(
+            getattr(_fock_sym_map, "physical_plan", None), "reduced_builds", 0,
+        ),
+        physical_fock_symmetry_full_builds=getattr(
+            getattr(_fock_sym_map, "physical_plan", None), "full_builds", 0,
+        ),
+        physical_fock_symmetry_residual_builds=getattr(
+            getattr(_fock_sym_map, "physical_plan", None), "residual_builds", 0,
+        ),
+        pair_resolved_fock_domain=bool(
+            _fock_sym_map is not None
+            and getattr(_fock_sym_map, "physical_plan", None) is None
+        ),
         e_dft_plus_u=float(e_dft_plus_u),
         energy_components=energy_components,
         exchange_ewald_split=bool(exchange_split_active),

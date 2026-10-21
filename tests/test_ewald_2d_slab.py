@@ -1,7 +1,6 @@
 """Rigorous 2D (slab) Ewald summation — Parry / de Leeuw–Perram–Smith.
 
-This is the M1 foundation for ``CoulombMethod.SLAB_EWALD_2D`` (see
-``handovers/HANDOVER_SLAB_EWALD_2D.md``): the point-charge Madelung energy of a
+This is the M1 foundation for ``CoulombMethod.SLAB_EWALD_2D``: the point-charge Madelung energy of a
 charge distribution periodic in the plane (lattice columns 0,1) and finite
 along the normal. The self-consistent electronic coupling that un-gates the
 SCF dispatch is a later milestone; this file validates the energy primitive

@@ -11,7 +11,7 @@ through the Bloch phase ``exp(+i k.R)`` -- so the batch must agree with
 per-pair single builds to floating-point rounding while running the
 dominant pair-FT pass once per unique q instead of once per pair
 (``n_k^2 -> n_k`` on a regular full mesh; the open perf item in
-``handovers/HANDOVER_OPEN_BUGS_V015.md``, production-k-sampling
+the original investigation, production-k-sampling
 follow-ups).
 """
 
@@ -263,6 +263,47 @@ def test_range_separated_cutoff_plan_converges_all_raw_source_terms(q):
     assert tighter.pair_cutoff > plan.pair_cutoff
     assert tighter.auxiliary_cutoff > plan.auxiliary_cutoff
     assert tighter.ke_cutoff > plan.ke_cutoff
+
+
+@pytest.mark.parametrize("kernel,omega_screen", [("coulomb", 0.), ("erfc", .4), ("erf", .4)])
+@pytest.mark.parametrize("q", [np.zeros(3), np.array([.13, -.09, .07])])
+def test_range_separated_k_tiles_preserve_scalar_sources_and_budget_fallback(kernel, omega_screen, q):
+    """Cross the eight-k tile and reciprocal panel boundaries on signed p shells."""
+    from vibeqc import _vibeqc_core as core
+
+    system, _, auxiliary = _range_separated_fit_fixture()
+    system = vq.PeriodicSystem(3,
+        np.array([[5., .3, .2], [0., 5.2, .4], [0., 0., 5.4]]),
+        [vq.Atom(1, [.2, .3, .4]), vq.Atom(1, [1.6, .3, .4])])
+    molecule = system.unit_cell_molecule()
+    basis = core.BasisSet(molecule, [
+        core.ShellInfo(0, 1, True, [.7, 1.8], [.8, -.21], [.2, .3, .4]),
+        core.ShellInfo(1, 0, True, [.6, 2.1], [1., 0.], [1.6, .3, .4]),
+    ], "ket-tiles", coefficients_pre_normalized=False)
+    ket = np.array([[.13*k, .017*(k % 3), -.037*k] for k in range(9)])
+    vectors = np.array([[.13*g-.31, .07*(g % 4)-.2, -.11*(g % 7)+.09]
+                        for g in range(129)])
+    vectors[0] = 0.
+
+    def build(kpoints, budget):
+        return core.compute_gdf_range_separated_integrals(
+            basis, auxiliary, system, q, kpoints, vectors,
+            .5, 3., 3., 2**22, budget, 10**6, 0., True, kernel, omega_screen,
+        )
+
+    combined = build(ket, 2**20)
+    if kernel == "erf":
+        # This pure reciprocal source needs no separate Libint engine pool.
+        # The budget fits scalar Fourier workspace, but not a batch frame.
+        constrained = build(ket, 80000)
+        np.testing.assert_array_equal(combined[0], constrained[0])
+        np.testing.assert_array_equal(combined[1], constrained[1])
+        assert combined[2] == constrained[2]
+    for k in range(len(ket)):
+        scalar = build(ket[k:k+1], 2**20)
+        np.testing.assert_array_equal(combined[0], scalar[0])
+        np.testing.assert_array_equal(combined[1][k:k+1], scalar[1])
+        assert combined[2] == scalar[2]
 
 
 def test_range_separated_cutoff_mesh_does_not_follow_steepest_exponent():
@@ -1544,8 +1585,8 @@ def test_aux_ft_cache_budget_handles_a_bad_env_value(monkeypatch):
 # the fit screen). Those were single-threaded passes over the largest
 # array in the cderi build, and they anti-scaled against the threads the
 # kernel itself uses -- 0.537 s at one thread against 0.671 s at sixteen
-# (measured 2026-08-05; see handovers/HANDOVER_GDF_OUTSTANDING.md, which
-# also records that the profile's larger 4.428 s figure is the whole of
+# (measured 2026-08-05; the profile's larger 4.428 s figure is the whole of
+#
 # `_accumulate_chunk`'s own time, NOT these passes). The kernel now
 # applies the weight as it stores, so neither pass exists.
 #
@@ -1840,9 +1881,12 @@ def test_production_gamma_and_general_spin_paths_share_sr_lr_source(monkeypatch)
     options.lattice_opts.nuclear_cutoff_bohr = 18.0
     energies = []
     for omega in (.45, .7):
+        # No rsgdf_ke_cutoff: each omega runs at the planner's cutoff for
+        # rsgdf_g_precision (21.28 / 51.55 Ha), which is what the former 20 Ha
+        # floor executed. An explicit value is now used exactly (GitLab IID 206).
         controls = dict(options=options, gdf_method='rsgdf', aux_basis='test',
                         rsgdf_omega=omega, rsgdf_g_precision=1e-10,
-                        rsgdf_ke_cutoff=20.0, progress=False)
+                        progress=False)
         gamma = gamma_module.run_pbc_gdf_rhf(system, basis, **controls)
         restricted = k_module.run_krhf_periodic_gdf(system, basis, **controls)
         unrestricted = k_module.run_kuhf_periodic_gdf(system, basis, **controls)

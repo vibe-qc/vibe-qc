@@ -2,9 +2,10 @@
 
 Pulls the def2 / Weigend JKfit + JFIT + RIFIT family used by vibe-qc
 for density fitting, in libint-compatible Gaussian94 (.g94) format.
-Output goes to ``python/vibeqc/basis_library/custom/`` so it ships
+Each fitting set becomes a QVF-Basis record under
+``python/vibeqc/basis_library/qvf/`` and ``basis/`` is re-rendered, so it ships
 inside the wheel; ``scripts/setup_basis_library.sh`` then merges
-custom/ → basis/.
+the record store; see python/vibeqc/basis_library/README.md.
 
 Run once when adding a new basis to the project; the resulting .g94
 files are committed to the repo so end users get them via a plain
@@ -133,17 +134,17 @@ def main() -> int:
             print(f"  {src:<28s} -> {dst}.g94")
         return 0
 
-    repo_root = Path(__file__).resolve().parent.parent
-    out_dir = repo_root / "python" / "vibeqc" / "basis_library" / "custom"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    from vibeqc.basis_toolkit import Upstream, library
+
+    out_dir = library.records_dir()
 
     print(f"BSE library version: {bse.version()}")
-    print(f"Output directory:    {out_dir}")
+    print(f"Record directory:    {out_dir}")
 
     n_written = 0
     n_skipped = 0
     for src, dst in TARGETS:
-        out_path = out_dir / f"{dst}.g94"
+        out_path = library.record_path(dst)
         if args.dry_run:
             print(f"  [dry-run] {src} -> {out_path.name}")
             continue
@@ -152,25 +153,24 @@ def main() -> int:
         except KeyError as exc:
             print(f"  ! {src}: not in BSE ({exc})", file=sys.stderr)
             continue
-        if out_path.exists():
-            existing = out_path.read_text()
-            if existing == data:
-                print(f"  = {src} -> {out_path.name} (unchanged)")
-                n_skipped += 1
-                continue
-        out_path.write_text(data)
+        header = [line[1:].strip() for line in data.splitlines() if line.startswith("!")]
+        record = library.record_from_text(
+            dst, data, kind="bse", role="fitting", description="\n".join(header),
+            upstream=[Upstream(name="basis-set-exchange", version=str(bse.version()),
+                               url="https://www.basissetexchange.org", identifier=src)],
+        )
+        if out_path.is_file() and library.load_record(dst).content_sha256() == record.content_sha256():
+            print(f"  = {src} -> {out_path.name} (unchanged)")
+            n_skipped += 1
+            continue
+        library.save_record(record, out_path)
         n_written += 1
-        n_lines = data.count("\n")
-        print(f"  + {src} -> {out_path.name} ({n_lines} lines)")
+        print(f"  + {src} -> {out_path.name} ({len(record.elements)} elements)")
 
-    print(f"\nWrote {n_written} new/updated, kept {n_skipped} unchanged.")
-    print(
-        "\nTo make these visible to libint at runtime:\n"
-        "  cp python/vibeqc/basis_library/custom/*.g94 \\\n"
-        "     python/vibeqc/basis_library/basis/\n"
-        "(or run scripts/setup_basis_library.sh if libint is "
-        "vendored under third_party/.)"
-    )
+    if n_written:
+        library.render_library(library.renderings_dir())
+    print(f"\nWrote {n_written} new/updated records, kept {n_skipped} unchanged.")
+    print("Route the citation keys in database.toml, then run:\n  python scripts/render_basis_library.py --check")
     return 0
 
 

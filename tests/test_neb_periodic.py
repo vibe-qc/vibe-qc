@@ -53,7 +53,7 @@ def test_periodic_neb_keeps_production_padding_default() -> None:
     import inspect
 
     param = inspect.signature(run_neb).parameters["sr_image_precision"]
-    assert param.default == pytest.approx(1e-6)
+    assert param.default == pytest.approx(1e-8)
 
 
 def test_periodic_fd_rejects_nonconverged_displaced_scf(monkeypatch):

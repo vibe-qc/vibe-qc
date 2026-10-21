@@ -19,7 +19,7 @@
       Fock + density + 1e   0.00 GB
       DIIS history          0.00 GB
       MO workspace          0.00 GB
-  Available on this machine: 88.2 GB. Proceeding.
+  Available to this job: 88.2 GB. Proceeding.
 
   iter     energy (Ha)            dE          ||[F,DS]||   DIIS
   -------------------------------------------------------------

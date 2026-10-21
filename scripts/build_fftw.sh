@@ -39,14 +39,18 @@ SRC_DIR="$FFTW_DIR/src"
 BUILD_DIR="$FFTW_DIR/build"
 INSTALL_DIR="$FFTW_DIR/install"
 
+# Cache admission changes neither the source pin nor compilation options.
+# vibeqc-recipe-hash: lifecycle-only-begin
 for candidate in \
         "$INSTALL_DIR/lib/cmake/fftw3/FFTW3Config.cmake" \
         "$INSTALL_DIR/lib64/cmake/fftw3/FFTW3Config.cmake"; do
     if [ -f "$candidate" ]; then
-        echo "FFTW $FFTW_VERSION already installed at $INSTALL_DIR"
+        python3 "$SCRIPT_DIR/attest_fftw_image.py" "$INSTALL_DIR" || exit 3
+        echo "FFTW cache admitted at $INSTALL_DIR (recipe pin $FFTW_VERSION; source/build provenance not attested)"
         exit 0
     fi
 done
+# vibeqc-recipe-hash: lifecycle-only-end
 
 if [ ! -f "$SRC_DIR/CMakeLists.txt" ]; then
     echo "Downloading FFTW $FFTW_VERSION..."
@@ -66,6 +70,13 @@ if [ "${VIBEQC_FETCH_ONLY:-0}" = "1" ]; then
     echo "VIBEQC_FETCH_ONLY=1 -- FFTW source staged at $SRC_DIR; skipping build."
     exit 0
 fi
+
+# Optional observation changes no compilation semantics or cache recipe.
+# vibeqc-recipe-hash: lifecycle-only-begin
+# shellcheck source=_native_collector.sh
+. "$SCRIPT_DIR/_native_collector.sh"
+vibeqc_enable_native_collector fftw
+# vibeqc-recipe-hash: lifecycle-only-end
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"

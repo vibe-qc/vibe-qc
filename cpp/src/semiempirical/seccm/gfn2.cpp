@@ -80,7 +80,7 @@ struct GFN2Supercell {
 };
 
 // ---------------------------------------------------------------------------
-// Shared-kernel SECCM shell gamma (issue #444)
+// Shared-kernel SECCM shell gamma (former-tracker issue 444)
 // ---------------------------------------------------------------------------
 //
 // The Wigner-Seitz image inventory is already a directed image-record set
@@ -90,7 +90,7 @@ struct GFN2Supercell {
 // cutoff.  Routing SECCM through it replaces three hand-rolled Ewald
 // implementations (3-D, 2-D Parry/Heyes, 1-D wire) with the one that is
 // pinned against the Madelung constants of rocksalt, the square lattice and
-// the alternating chain, and -- the point of #444 -- makes
+// the alternating chain, and -- the point of former-tracker issue 444 -- makes
 // ShellGammaForm::Elstner available here.  The Klopman-Ohno remainder
 // summed over the WS shell is finite but has no thermodynamic limit
 // (-eta^2/2R^3 with pair-dependent amplitude); the Elstner remainder decays
@@ -296,7 +296,7 @@ GFN2Supercell assemble_gfn2_supercell(
     // (same-atom block is the molecular one; every other atom contributes
     // through its WS records at the record distances), or the Ewald-split
     // shell kernel when ewald_gamma is on. The 3-D KO remainder has no
-    // thermodynamic limit (#444): production entry rejects that route,
+    // thermodynamic limit (former-tracker issue 444): production entry rejects that route,
     // while the internal kernel remains available for diagnostics.
     const int n_shells = static_cast<int>(shell_info.size());
     super.gamma_shell = Eigen::MatrixXd::Zero(n_shells, n_shells);
@@ -489,10 +489,11 @@ struct GFN2ChargeMapOutput {
 // depends on self-consistently, packed as one vector so a charge mixer acts
 // on all of them together (issue #409).
 //
-// On the shipped ad-hoc AES path that is the shell charge fluctuations
-// alone -- its multipole potential is rebuilt from each new density and is
-// not an independent iterate -- so the state is [dq] and every existing
-// trajectory is unchanged.  On the faithful path the atom-resolved CAMM
+// On the ad-hoc AES path (aes_faithful = false) that is the shell charge
+// fluctuations alone -- its multipole potential is rebuilt from each new
+// density and is not an independent iterate -- so the state is [dq] and its
+// pre-#140 trajectories are unchanged.  On the faithful path (the default
+// since #140) the atom-resolved CAMM
 // enter the Fock through the AES potentials, exactly as they do in xtb, so
 // the state is [dq; mu; theta].  Mixing charges while merely damping the
 // moments is what made xtb trajectory parity structurally unreachable: the
@@ -901,6 +902,27 @@ Eigen::VectorXd seccm_residual_trace_vector(
     return trace;
 }
 
+// Budget-independent stabilisation checkpoint, the #244 pattern of the
+// periodic Gamma driver (and the #3 advisory checkpoint of the molecular
+// driver): the primary attempt keeps its whole budget while it is still
+// contracting, and is handed to the ladder only when the best residual of
+// the last window no longer beats the best of the window before. The old
+// rule capped the primary at 500 iterations whenever max_iter >= 2500, so
+// raising the budget by one changed the trajectory and every default run
+// (max_iter = 3600) abandoned a converging solve at 500.
+constexpr int kStabilityCheckpoint = 500;
+constexpr int kProgressWindow = 25;
+
+bool seccm_still_contracting(const std::vector<double>& trace) {
+    const int n = static_cast<int>(trace.size());
+    if (n < 2 * kProgressWindow) return false;
+    const auto end = trace.end();
+    const double recent = *std::min_element(end - kProgressWindow, end);
+    const double prior = *std::min_element(
+        end - 2 * kProgressWindow, end - kProgressWindow);
+    return recent < prior;
+}
+
 void stamp_supercell_attempt(
     GFN2SECCMResult& result,
     int allocated_max_iter,
@@ -928,7 +950,11 @@ void stamp_supercell_attempt(
     attempt.scc_mixer = scc_mixer;
     attempt.restart_supplied = restart_supplied;
     attempt.exit_reason = exit_reason;
-    attempt.scc_converged = exit_reason != "iteration_limit";
+    // Both budget exhaustion and a stalled stabilization checkpoint (#294)
+    // end an attempt that never reached the residual tolerance; every other
+    // reason describes a fixed point the gates then judged.
+    attempt.scc_converged = exit_reason != "iteration_limit"
+        && exit_reason != "stalled_checkpoint";
     attempt.physical_basin = result.physical_basin;
     attempt.max_change_trace = result.scc_max_change_trace;
     result.attempts = {std::move(attempt)};
@@ -968,8 +994,10 @@ GFN2SECCMResult run_supercell_scc(
     SCCMixer scc_mixer,
     double charge_mixing,
     int max_iter,
+    bool advisory_checkpoint,
     double electronic_temperature,
     const Eigen::VectorXd& initial_shell_charges) {
+    bool stalled_at_checkpoint = false;
     const Molecule& mol = *ctx.mol;
     const auto& atoms = mol.atoms();
 
@@ -1076,8 +1104,28 @@ GFN2SECCMResult run_supercell_scc(
         } else {
             state_new.set_dq(dq_new);
         }
-        const double max_change =
+        double max_change =
             (state_new.x - state.x).cwiseAbs().maxCoeff();
+        if (ctx.include_aes && !joint_state) {
+            // The legacy shell AES also depends on the previous density's
+            // multipoles. Charges alone can be stationary while that part
+            // of the Hamiltonian still changes (#417).
+            const auto density_moments = xtb::compute_shell_multipole_moments(
+                D, basis, mol, ctx.mp_int, ctx.ao_shell,
+                ctx.n0_shell, ctx.n_shells);
+            for (auto component : {
+                     &xtb::GFN2ShellMoments::ox, &xtb::GFN2ShellMoments::oy,
+                     &xtb::GFN2ShellMoments::oz, &xtb::GFN2ShellMoments::txx,
+                     &xtb::GFN2ShellMoments::txy, &xtb::GFN2ShellMoments::txz,
+                     &xtb::GFN2ShellMoments::tyy, &xtb::GFN2ShellMoments::tyz,
+                     &xtb::GFN2ShellMoments::tzz}) {
+                const Eigen::VectorXd& current = density_moments.*component;
+                const double change = have_moments
+                    ? (current - moments.*component).cwiseAbs().maxCoeff()
+                    : current.cwiseAbs().maxCoeff();
+                max_change = std::max(max_change, change);
+            }
+        }
         max_change_trace.push_back(max_change);
 
         if (max_change < ctx.conv_tol) {
@@ -1210,6 +1258,12 @@ GFN2SECCMResult run_supercell_scc(
             return result;
         }
 
+        if (advisory_checkpoint && iter % kStabilityCheckpoint == 0
+                && !seccm_still_contracting(max_change_trace)) {
+            stalled_at_checkpoint = true;
+            break;
+        }
+
         // Not converged: advance the charges and refresh the shell
         // moments for the next iteration's AES potential (skipped when
         // the AES channel is disabled by the validation knob). The
@@ -1253,7 +1307,8 @@ GFN2SECCMResult run_supercell_scc(
     // analyzed from Python. With max_iter = 1 the loop built H_scc from
     // the neutral start, so hamiltonian is the supercell H0 exactly and
     // shell_charges is the raw first response f(0) = pop(H0) - n0.
-    result.n_iter = max_iter;
+    // Count executed iterations: a checkpoint stop ends the attempt early.
+    result.n_iter = static_cast<int>(max_change_trace.size());
     result.smearing_temperature = electronic_temperature;
     result.converged = false;
     result.overlap = ctx.super.overlap;
@@ -1280,7 +1335,7 @@ GFN2SECCMResult run_supercell_scc(
         scc_mixer,
         initial_shell_charges.size() != 0,
         max_change_trace,
-        "iteration_limit");
+        stalled_at_checkpoint ? "stalled_checkpoint" : "iteration_limit");
     return result;
 }
 
@@ -1375,6 +1430,7 @@ GFN2SECCMResult run_gfn2_seccm(
         result.requested_madelung_no_self = opts.madelung_no_self;
         result.requested_ewald_gamma = opts.ewald_gamma;
         result.requested_include_aes = opts.include_aes;
+        result.requested_aes_faithful = opts.aes_faithful;
         result.requested_ewald_gamma_molecular_onsite =
             opts.ewald_gamma_molecular_onsite;
         result.requested_max_iter = opts.max_iter;
@@ -1403,6 +1459,11 @@ GFN2SECCMResult run_gfn2_seccm(
         driver_options.conv_tol_charge = opts.conv_tol_charge;
         driver_options.charge_mixing = opts.charge_mixing;
         driver_options.electronic_temperature = opts.electronic_temperature;
+        // An explicit request stays explicit on the molecular ladder too
+        // (vibe-qc#3): the one-replica torus and the molecule must answer
+        // the same question.
+        driver_options.electronic_temperature_explicit =
+            opts.electronic_temperature_explicit;
         driver_options.scc_mixer = opts.scc_mixer;
         // The faithful AES is a model choice, not a boundary choice, so the
         // delegated molecular solve must make the same one; otherwise the
@@ -1559,7 +1620,7 @@ GFN2SECCMResult run_gfn2_seccm(
     // remainder decays as -eta^2/2R^3 with pair-dependent amplitude, whose
     // charge-weighted 3-D sum need not cancel under neutrality.  That is a
     // property of the kernel, not of the boundary, so the refusal is scoped
-    // to the kernel (#444).  The Elstner form's remainder is the
+    // to the kernel (former-tracker issue 444).  The Elstner form's remainder is the
     // exponentially decaying -S(tau_a, tau_b, R), whose image sum converges
     // absolutely in three dimensions as it does in one and two, so the
     // route is available with it.  Do not repair the Klopman-Ohno route by
@@ -1570,7 +1631,7 @@ GFN2SECCMResult run_gfn2_seccm(
             "GFN2-SECCM 3-D ewald_gamma is unavailable with the Klopman-Ohno "
             "shell gamma on non-molecular cyclic topologies: its WS-folded "
             "remainder has no thermodynamic limit. Pass gamma_form=Elstner "
-            "for a kernel that does (#444).");
+            "for a kernel that does (former-tracker issue 444).");
     }
 
     // ---- Multi-replica WS-weighted supercell engine ----
@@ -1682,23 +1743,10 @@ GFN2SECCMResult run_gfn2_seccm(
     ctx.positions = detail::seccm_atom_coords(mol);
     ctx.topology_for_records = &topology;
     if (ctx.madelung) {
-        const int dim = static_cast<int>(topology.translations.size());
-        ctx.ews = indo::_ewald_ws_cells(topology);
-        if (dim == 1) {
-            ctx.madkonst = detail::wire_madkonst_1d(
-                ctx.ews, topology.translations[0], n_atoms);
-        } else if (dim == 2) {
-            ctx.madkonst = indo::_madkonst_2d(
-                ctx.ews, topology.translations, n_atoms);
-        } else if (dim == 3) {
-            ctx.madkonst = indo::_madkonst_3d(
-                ctx.ews, topology.translations, n_atoms);
-        }
-        if (!ctx.madkonst.allFinite()) {
-            throw std::runtime_error(
-                "GFN2-SECCM Madelung-constant matrix produced non-finite "
-                "values");
-        }
+        auto madelung_state = detail::build_seccm_madelung_state(
+            topology, n_atoms, "GFN2-SECCM");
+        ctx.ews = std::move(madelung_state.ews);
+        ctx.madkonst = std::move(madelung_state.madkonst);
     }
 
     if (ctx.include_aes) {
@@ -1708,18 +1756,58 @@ GFN2SECCMResult run_gfn2_seccm(
     // max_iter is the total public SCC budget (molecular driver contract).
     // The stabilization ladder mirrors run_gfn2_xtb: one slow T=0 restart
     // and one mild finite-T restart, plus a high-T retry for post-Ar
-    // elements, all bounded by the remaining budget.
+    // elements. A stalled primary attempt is handed to the ladder from a
+    // budget-independent 500-iteration checkpoint (see
+    // seccm_still_contracting, #294); a contracting one runs on until the
+    // ladder's reserve, below.
     const int total_max_iter = std::max(0, opts.max_iter);
     const bool use_stabilization =
         ctx.has_gam3 && total_max_iter >= 2500;
-    const int primary_max_iter =
-        use_stabilization ? std::min(500, total_max_iter) : total_max_iter;
+    struct Retry {
+        double charge_mixing;
+        int max_iter;
+        double electronic_temperature;
+    };
+    std::vector<Retry> retries;
+    if (use_stabilization) {
+        retries = {
+            {0.01, 2000, 0.0},
+            {0.05, 500, 0.005},
+        };
+        if (has_extended_period_element(mol)) {
+            retries.push_back({0.05, 600, 0.05});
+        }
+    }
+    // vibe-qc#306, mirrored from the molecular driver (#294 follow-up, the
+    // maintainer's option A): the ladder is not optional rescue capacity,
+    // so its budget must never be spendable by the primary attempt. The
+    // primary's allowance is what the DEFAULT budget leaves after the rungs
+    // (3600 - 2500 = 1100 for a light-element cell, 3600 - 3100 = 500, the
+    // pre-#294 cap, with a post-Ar element), and never less than what the
+    // requested budget leaves. Measured on the polar HF chain at
+    // charge_mixing 0.004, whose primary converges only after 4471
+    // iterations: with the whole budget it failed at 2500, 3600 and every
+    // budget in between as one iteration_limit attempt, although rung 1
+    // (0.01, T = 0) converges it from neutral in 1784 and rung 2 (0.05,
+    // 0.005 Ha) in 351. The iteration count therefore differs across the
+    // stabilisation threshold (2499 runs the whole budget, 2500 hands over
+    // at the reserve ceiling), exactly as on the molecular driver since
+    // #306; the energy does not.
+    int ladder_reserve = 0;
+    for (const auto& retry : retries) ladder_reserve += retry.max_iter;
+    constexpr int kDefaultMaxIter = 3600;  // GFN2SECCMOptions::max_iter default
+    const int primary_max_iter = use_stabilization
+        ? std::max(
+              std::min(kDefaultMaxIter - ladder_reserve, total_max_iter),
+              total_max_iter - ladder_reserve)
+        : total_max_iter;
     GFN2SECCMResult result = run_supercell_scc(
         ctx,
         basis,
         opts.scc_mixer,
         opts.charge_mixing,
         primary_max_iter,
+        use_stabilization,
         opts.electronic_temperature,
         opts.initial_shell_charges);
     // The ladder also reacts to a converged-but-unphysical fixed point:
@@ -1730,37 +1818,60 @@ GFN2SECCMResult run_gfn2_seccm(
     const bool primary_accepted =
         result.converged && result.physical_basin;
     if (!primary_accepted && use_stabilization) {
-        struct Retry {
-            double charge_mixing;
-            int max_iter;
-            double electronic_temperature;
-        };
-        std::vector<Retry> retries = {
-            {0.01, 2000, 0.0},
-            {0.05, 500, 0.005},
-        };
-        if (has_extended_period_element(mol)) {
-            retries.push_back({0.05, 600, 0.05});
-        }
         for (const auto& retry : retries) {
             const int remaining_iters = total_max_iter - result.n_iter;
             if (remaining_iters <= 0) break;
+            // vibe-qc#306: skip a rung that cannot have its whole budget
+            // rather than truncating it. A truncated rung cannot converge
+            // but still consumes the budget of the rung behind it, which is
+            // how the only rung that converges a system gets starved.
+            if (remaining_iters < retry.max_iter) continue;
             // Automatic recovery deliberately starts from the neutral charge
             // state. A caller-supplied restart is primary-attempt input, not a
             // persistent mutation of the reusable supercell context.
+            // vibe-qc#3 / #294: never override an EXPLICITLY requested
+            // electronic temperature. The rung's mixing and budget still
+            // apply (solver settings); a caller who asked for exact Aufbau
+            // must not be handed a smeared free energy because the primary
+            // attempt stalled. Absent an explicit request the finite-T
+            // rescue is unchanged and the executed temperature is reported.
+            const double rung_temperature =
+                opts.electronic_temperature_explicit
+                    ? opts.electronic_temperature
+                    : retry.electronic_temperature;
             GFN2SECCMResult retry_result = run_supercell_scc(
                 ctx,
                 basis,
                 SCCMixer::Simple,
                 retry.charge_mixing,
-                std::min(retry.max_iter, remaining_iters),
-                retry.electronic_temperature,
+                retry.max_iter,
+                false,
+                rung_temperature,
                 Eigen::VectorXd());
             prepend_attempt_history(retry_result, result);
             if (retry_result.converged && retry_result.physical_basin) {
                 stamp_requested_options(retry_result);
                 return retry_result;
             }
+            result = std::move(retry_result);
+        }
+        // #379: the faithful AES map of a stretched H chain can orbit
+        // under both simple mixing and DIIS even at an explicit T=0.
+        // Spend only capacity left by the established ladder on a neutral
+        // Eyert restart. Do not shorten successful rungs, enlarge the public
+        // budget, or change the requested temperature to obtain convergence.
+        const int remaining_iters = total_max_iter - result.n_iter;
+        if (remaining_iters > 0) {
+            GFN2SECCMResult retry_result = run_supercell_scc(
+                ctx,
+                basis,
+                SCCMixer::BroydenEyert,
+                0.4,
+                std::min(500, remaining_iters),
+                false,
+                opts.electronic_temperature,
+                Eigen::VectorXd());
+            prepend_attempt_history(retry_result, result);
             result = std::move(retry_result);
         }
     }

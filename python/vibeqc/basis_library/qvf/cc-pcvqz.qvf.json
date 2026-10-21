@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "cc-pcvqz",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: cc-pCVQZ\nCanonical name in vibe-qc: cc-pcvqz\nOriginating publication: Woon, Dunning, J. Chem. Phys. 103, 4572 (1995); DOI: 10.1063/1.470645\nNote:\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: cc-pCVQZ\nDescription: QZ3P    Quadruple Zeta + Polarization + Tight Core\n       Role: orbital\n    Version: 0  (Data from the original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "Li": {
@@ -9098,7 +9098,26 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "doi:10.1063/1.470645",
+      "description": "Woon, Dunning, J. Chem. Phys. 103, 4572 (1995)",
+      "doi": "10.1063/1.470645"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "cc-pCVQZ"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "badc2006c5448336160dd98e081278665baf4af0b68296f14bc229f053658fed"
   }
 }

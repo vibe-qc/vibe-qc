@@ -8,13 +8,15 @@ DFT side.
       conventional ``[1,1,1]``-mesh call).
 
   CoulombMethod.EWALD_3D ->
-      Γ-only: :func:`vibeqc.run_rks_periodic_gamma_ewald3d`
-      (Phase 15c-1 -- composed Ewald J + libxc V_xc on the periodic
-      Becke grid). Multi-k:
+      ``run_rks_periodic_gamma_scf``:
+      :func:`vibeqc.run_rks_periodic_gamma_ewald3d` (Phase 15c-1 --
+      composed Ewald J + libxc V_xc on the periodic Becke grid,
+      molecular-limit exact exchange). ``run_rks_periodic_scf``, every
+      mesh including [1,1,1]:
       :func:`vibeqc.run_rks_periodic_multi_k_ewald3d` (Phase 15c-2 --
       same building blocks at every k, k-weighted DIIS, Fermi-Dirac
-      smearing, optional level shift). UKS multi-k Ewald lands in
-      Phase 15c-3.
+      smearing, optional level shift, corrected-split exact exchange).
+      UKS multi-k Ewald lands in Phase 15c-3.
 
   CoulombMethod.SLAB_EWALD_2D ->
       Gamma-only RKS slab Ewald via
@@ -41,6 +43,7 @@ from ._vibeqc_core import (
     BasisSet,
     BlochKMesh,
     CoulombMethod,
+    Functional,
     PeriodicKSOptions,
     PeriodicSystem,
     monkhorst_pack,
@@ -52,6 +55,7 @@ from .periodic_rks_ewald import (
     run_rks_periodic_gamma_ewald3d,
 )
 from .periodic_rks_multi_k_ewald import run_rks_periodic_multi_k_ewald3d
+from .periodic_screened_exchange import resolve_periodic_exchange
 from .progress import ProgressLogger, resolve_progress
 
 __all__ = [
@@ -159,9 +163,11 @@ def run_rks_periodic_scf(
     Routes on ``options.lattice_opts.coulomb_method``:
 
       - ``DIRECT_TRUNCATED`` -> :func:`vibeqc.run_rks_periodic`.
-      - ``EWALD_3D`` -> :func:`vibeqc.run_rks_periodic_gamma_ewald3d`
-        for a [1,1,1] mesh, otherwise
-        :func:`vibeqc.run_rks_periodic_multi_k_ewald3d`.
+      - ``EWALD_3D`` -> :func:`vibeqc.run_rks_periodic_multi_k_ewald3d`
+        at every mesh, [1,1,1] included, so hybrid exact exchange takes
+        the corrected Ewald split whatever the other options are (#23).
+        :func:`run_rks_periodic_gamma_scf` is the Gamma-only
+        molecular-limit route.
 
     The ``omega``, ``grid_shape``, ``origin``, ``spacing_bohr``,
     ``linear_dep_threshold`` keywords are forwarded to the EWALD_3D
@@ -205,19 +211,13 @@ def run_rks_periodic_scf(
     # Density-space mixers are wired only on the multi-k EWALD_3D driver. Rather
     # than silently ignore a requested mixer on a route that can't honour it
     # (a Sec.7-class lie), fail closed with the supported route named.
-    _multi_k_ewald = (
-        method == CoulombMethod.EWALD_3D
-        and not (len(bm.kpoints) == 1 and np.allclose(bm.kpoints[0], 0.0)
-                 and smearing_T == 0.0 and initial_density_k is None)
-    )
+    _multi_k_ewald = method == CoulombMethod.EWALD_3D
     if (density_mixer is not None or density_mixer_kerker) and not _multi_k_ewald:
         requested = density_mixer if density_mixer is not None else "kerker"
         raise NotImplementedError(
             f"run_rks_periodic_scf: density_mixer/kerker ({requested!r}) is wired "
-            "only on the multi-k EWALD_3D driver "
-            "(coulomb_method=EWALD_3D with a >1 k-point or smeared mesh). The "
-            f"current route is {method.name if hasattr(method, 'name') else method}"
-            f"{' (Γ-only EWALD_3D)' if method == CoulombMethod.EWALD_3D else ''}; "
+            "only on the multi-k EWALD_3D driver (coulomb_method=EWALD_3D). The "
+            f"current route is {method.name if hasattr(method, 'name') else method}; "
             "use a multi-k Ewald run, or DIIS/EDIIS/ADIIS via scf_accelerator."
         )
 
@@ -245,25 +245,14 @@ def run_rks_periodic_scf(
         return result
 
     if method == CoulombMethod.EWALD_3D:
-        # Γ-only KS Ewald (15c-1) for [1,1,1] meshes; full multi-k
-        # driver (15c-2) for everything else. Both share the same
-        # building blocks (composed Ewald J + libxc V_xc + optional
-        # hybrid HF exchange); the multi-k path adds Bloch-summed
-        # per-k Fock matrices, k-weighted DIIS and Fermi-Dirac
-        # smearing.
-        n_kpts = len(bm.kpoints)
-        if n_kpts == 1 and np.allclose(bm.kpoints[0], 0.0) and smearing_T == 0.0 and initial_density_k is None:
-            return run_rks_periodic_gamma_ewald3d(
-                system,
-                basis,
-                _copy_ks_options(options),
-                omega=omega,
-                grid_shape=grid_shape,
-                origin=origin,
-                spacing_bohr=spacing_bohr,
-                linear_dep_threshold=linear_dep_threshold,
-                progress=plog,
-            )
+        # Every mesh, [1,1,1] included, takes the multi-k driver (15c-2),
+        # as run_rhf_periodic_scf does. Until #23 a Gamma mesh took the
+        # Gamma-only driver (15c-1) unless smearing or a restart density
+        # was set. The two agree for pure functionals (to 1e-14 Ha on H2)
+        # but not for hybrids, whose exchange is the molecular-limit kernel
+        # on the Gamma driver and the corrected split here (PBE0/STO-3G H2
+        # in a 6-bohr cube: 18.9 mHa), so an unrelated option switched the
+        # Hamiltonian. run_rks_periodic_gamma_scf keeps the Gamma driver.
         return run_rks_periodic_multi_k_ewald3d(
             system,
             basis,
@@ -390,6 +379,24 @@ def run_rks_periodic_gamma_scf(
 
     if method == CoulombMethod.EWALD_3D:
         if smearing_T > 0.0:
+            # The multi-k driver, the only one that smears, builds exact
+            # exchange with the corrected split; the Gamma driver below
+            # uses the molecular-limit kernel. Borrowing it for a hybrid
+            # would let smearing change the Hamiltonian (GitLab #23).
+            if resolve_periodic_exchange(
+                Functional(options.functional, 1),
+                where="run_rks_periodic_gamma_scf",
+            ).needs_exchange:
+                raise NotImplementedError(
+                    "run_rks_periodic_gamma_scf: Fermi-Dirac smearing with "
+                    f"the hybrid functional {options.functional!r} is not "
+                    "available on the Gamma-only route. Its exact exchange "
+                    "uses the molecular-limit kernel, and the smearing "
+                    "backend would silently switch it to the corrected "
+                    "Ewald split. For a smeared hybrid, call "
+                    "run_rks_periodic_scf with a [1,1,1] mesh, which uses "
+                    "the corrected split whether smearing is on or off."
+                )
             plog.info("backend: multi-k Gamma EWALD_3D (honours Fermi-Dirac smearing)")
             kmesh = monkhorst_pack(system, [1, 1, 1])
             return run_rks_periodic_multi_k_ewald3d(

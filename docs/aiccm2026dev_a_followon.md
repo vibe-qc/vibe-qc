@@ -1,12 +1,20 @@
 # AICCM `aiccm2026dev-a` follow-on - derivation document
 
-> **D89 construction-boundary notice (2026-07-15).** Γ-CCM
-> (`aiccm2026dev-a`) is the union-and-weight/Wigner-Seitz integral-weighting
-> construction; χ-CCM (`aiccm2026dev-b`) is the distinct
+```{admonition} Status: experimental
+:class: warning
+
+Everything on the `aiccm2026dev-a` line described here (the neutral Γ-CCM producers `real-gamma` and `neutral-bloch`, the four-centre lineage, and the localization, DLPNO and symmetry follow-ons) is an experimental route. Every `run_ccm_*` SCF driver emits `vibeqc.AICCM2026DevAExperimentalWarning`, and the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant=...)`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](methods.md#how-to-read-the-status-labels).
+```
+
+> **D89 construction-boundary notice (2026-07-15, naming updated per ruling
+> R1, 2026-08-21).** Γ-CCM (`aiccm2026dev-a`) is the neutral finite-torus
+> construction (variants `real-gamma` and `neutral-bloch`); the `four-center`
+> variant is the 2014 union-and-weight/Wigner-Seitz lineage kept in the same
+> development line; χ-CCM (`aiccm2026dev-b`) is the distinct
 > finite-translation-group character construction. Neutral GDF/Bloch and
 > real-Gamma routes are same-Hamiltonian representation controls only after a
-> block-circulant finite Hamiltonian has been specified. They are not Γ-CCM
-> production routes and do not prove Γ-CCM equals χ-CCM. In the historical text
+> block-circulant finite Hamiltonian has been specified. They are not
+> production-status routes and do not prove Γ-CCM equals χ-CCM. In the historical text
 > below, `CCM == SCM-Γ` and Fourier/Wannier statements apply only within the
 > explicitly chosen Hamiltonian and occupied space. The geometry, localization,
 > symmetry, and local-correlation measurements remain route-specific validation
@@ -22,8 +30,7 @@
 Math + validation record for the three follow-on features on the
 `aiccm2026dev-a` cyclic-cluster line: **(1) localization**, **(2) DLPNO natural
 orbitals**, **(3) space-group symmetry**. Each sits behind its own option and
-does not change existing behavior. Decisions + open-questions log:
-[Archived `handovers/HANDOVER_AICCM_FOLLOWON.md`](https://vibe-qc.com/docs/).
+does not change existing behavior.
 
 Every numerical claim here is grounded in a real run (test file named per
 section). SI/atomic units (bohr, hartree).

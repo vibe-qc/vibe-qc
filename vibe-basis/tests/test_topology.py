@@ -3,7 +3,7 @@
 Every evaluator here is synthetic. M3's own gate -- scanning the d shell of Mg
 in MgO and of Si in SiC from pob-TZVP-REV2, and rediscovering the shipped pob
 topology when the objective is total energy -- needs an engine and a full L2
-relaxation per candidate, and has NOT been run; see HANDOVER_BASISOPT.md M3.
+relaxation per candidate, and has NOT been run.
 What is pinned here is that the moves are the ones the roadmap specifies, that
 the search obeys its own stopping rule, and that a topology is never mutated
 under a caller. The rediscovery property is exercised in the one form that

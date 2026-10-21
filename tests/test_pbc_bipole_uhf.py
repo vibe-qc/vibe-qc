@@ -224,6 +224,7 @@ def test_closed_shell_bipole_uhf_multik_matches_rhf():
         kmesh,
         opts,
         use_exchange_ewald_split=False,  # closed-shell UHF==RHF is gauge-independent; legacy avoids the [2,2,2] torus-cutoff requirement
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -233,6 +234,7 @@ def test_closed_shell_bipole_uhf_multik_matches_rhf():
         kmesh,
         opts,
         use_exchange_ewald_split=False,  # closed-shell UHF==RHF is gauge-independent; legacy avoids the [2,2,2] torus-cutoff requirement
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )

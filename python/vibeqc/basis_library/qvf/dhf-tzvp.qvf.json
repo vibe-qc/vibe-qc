@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "dhf-tzvp",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: dhf-TZVP\nCanonical name in vibe-qc: dhf-tzvp\nOriginating publication: Weigend, Baldes, J. Chem. Phys. 133, 174102 (2010); DOI: 10.1063/1.3494280\nNote: same\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: dhf-TZVP\nDescription: dhf-TZVP\n       Role: orbital\n    Version: 0  (Data from the original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "Rb": {
@@ -7939,6 +7939,7 @@
       "ecp_id": "Rn"
     }
   },
+  "basis_family": "ahlrichs",
   "ecps": {
     "Rb": {
       "element": "Rb",
@@ -11801,7 +11802,138 @@
       ]
     }
   },
+  "references": [
+    {
+      "key": "weigend_baldes_dhf_2010",
+      "description": "F. Weigend, A. Baldes, Journal of Chemical Physics 133, 174102 (2010)",
+      "doi": "10.1063/1.3495681"
+    },
+    {
+      "key": "andrae_ecp_1990",
+      "description": "D. Andrae, U. Häußermann, M. Dolg, H. Stoll, H. Preuß, Theoretica Chimica Acta 77, 123-141 (1990)",
+      "doi": "10.1007/BF01114537"
+    },
+    {
+      "key": "metz_stoll_dolg_ecp_2000",
+      "description": "B. Metz, H. Stoll, M. Dolg, Journal of Chemical Physics 113, 2563-2569 (2000)",
+      "doi": "10.1063/1.1305880"
+    },
+    {
+      "key": "peterson_pp_2003",
+      "description": "K. A. Peterson, D. Figgen, E. Goll, H. Stoll, M. Dolg, Journal of Chemical Physics 119, 11113-11123 (2003)",
+      "doi": "10.1063/1.1622924"
+    },
+    {
+      "key": "leininger_nicklass_ecp_1996",
+      "description": "T. Leininger, A. Nicklass, W. Küchle, H. Stoll, M. Dolg, A. Bergner, Chemical Physics Letters 255, 274-280 (1996)",
+      "doi": "10.1016/0009-2614(96)00382-X"
+    },
+    {
+      "key": "kaupp_schleyer_stoll_preuss_ecp_1991",
+      "description": "M. Kaupp, P. v. R. Schleyer, H. Stoll, H. Preuss, Journal of Chemical Physics 94, 1360-1366 (1991)",
+      "doi": "10.1063/1.459993"
+    },
+    {
+      "key": "dolg_stoll_savin_preuss_lanthanide_ecp_1989",
+      "description": "M. Dolg, H. Stoll, A. Savin, H. Preuss, Theoretica Chimica Acta 75, 173-194 (1989)",
+      "doi": "10.1007/BF00528565"
+    },
+    {
+      "key": "doi:10.1063/1.3494280",
+      "description": "Weigend, Baldes, J. Chem. Phys. 133, 174102 (2010)",
+      "doi": "10.1063/1.3494280"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "dhf-TZVP"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "9b603cf792f114923ae85fab131d49fe93feb13a106ec66fcd1e396cd03a71e7",
+    "citations": [
+      {
+        "keys": [
+          "weigend_baldes_dhf_2010",
+          "dolg_stoll_savin_preuss_lanthanide_ecp_1989"
+        ]
+      },
+      {
+        "keys": [
+          "andrae_ecp_1990"
+        ],
+        "elements": [
+          "Y",
+          "Zr",
+          "Nb",
+          "Mo",
+          "Tc",
+          "Ru",
+          "Rh",
+          "Pd",
+          "Ag",
+          "Cd",
+          "Hf",
+          "Ta",
+          "W",
+          "Re",
+          "Os",
+          "Ir",
+          "Pt",
+          "Au",
+          "Hg"
+        ]
+      },
+      {
+        "keys": [
+          "metz_stoll_dolg_ecp_2000"
+        ],
+        "elements": [
+          "In",
+          "Sn",
+          "Sb",
+          "Tl",
+          "Pb",
+          "Bi"
+        ]
+      },
+      {
+        "keys": [
+          "peterson_pp_2003"
+        ],
+        "elements": [
+          "Te",
+          "I",
+          "Xe",
+          "Po",
+          "At",
+          "Rn"
+        ]
+      },
+      {
+        "keys": [
+          "leininger_nicklass_ecp_1996"
+        ],
+        "elements": [
+          "Rb",
+          "Cs"
+        ]
+      },
+      {
+        "keys": [
+          "kaupp_schleyer_stoll_preuss_ecp_1991"
+        ],
+        "elements": [
+          "Sr",
+          "Ba"
+        ]
+      }
+    ]
   }
 }

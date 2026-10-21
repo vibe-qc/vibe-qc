@@ -34,7 +34,10 @@ where
       0=S, 1=SP, 2=P, 3=D, 4=F, 5=G.
 * ``NG``    -- number of primitive Gaussians.
 * ``CHE``   -- formal occupancy (electrons) assigned to this shell.
-* ``SCAL``  -- scale factor applied to the exponents (1.0 = as-written).
+* ``SCAL``  -- scale factor s on the exponents: CRYSTAL uses
+      ``exponent * s**2`` (the Pople zeta-scaling convention), and for
+      this general-basis type both 1.0 and 0.0 mean as-written. See
+      :func:`crystal_exponent_factor`.
 
 Followed by ``NG`` lines of ``exponent coefficient`` (or ``exponent
 s_coef p_coef`` for SP shells).
@@ -43,6 +46,8 @@ s_coef p_coef`` for SP shells).
 from __future__ import annotations
 
 import io
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, urljoin, urlsplit
 import re
 import tarfile
 import urllib.request
@@ -51,108 +56,59 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Iterator, Optional, Sequence
 
+from .basis_toolkit._element_data import SYMBOL as _SYMBOL_BY_Z
+
 # CRYSTAL LAT-code -> angular momentum label understood by libint's .g94 loader.
 # Libint's BasisSet parser treats "SP" as a general-contraction s+p pair.
 _LAT_TO_SHELL = {0: "S", 1: "SP", 2: "P", 3: "D", 4: "F", 5: "G"}
 
-# Element symbols, 1-based index so _ELEMENT_SYMBOLS[Z] returns the symbol.
-# Light-element subset -- extend as needed; pob-TZVP only requires through Br.
-_ELEMENT_SYMBOLS = [
-    "",
-    "H",
-    "He",
-    "Li",
-    "Be",
-    "B",
-    "C",
-    "N",
-    "O",
-    "F",
-    "Ne",
-    "Na",
-    "Mg",
-    "Al",
-    "Si",
-    "P",
-    "S",
-    "Cl",
-    "Ar",
-    "K",
-    "Ca",
-    "Sc",
-    "Ti",
-    "V",
-    "Cr",
-    "Mn",
-    "Fe",
-    "Co",
-    "Ni",
-    "Cu",
-    "Zn",
-    "Ga",
-    "Ge",
-    "As",
-    "Se",
-    "Br",
-    "Kr",
-    "Rb",
-    "Sr",
-    "Y",
-    "Zr",
-    "Nb",
-    "Mo",
-    "Tc",
-    "Ru",
-    "Rh",
-    "Pd",
-    "Ag",
-    "Cd",
-    "In",
-    "Sn",
-    "Sb",
-    "Te",
-    "I",
-    "Xe",
-    "Cs",
-    "Ba",
-    "La",
-    "Ce",
-    "Pr",
-    "Nd",
-    "Pm",
-    "Sm",
-    "Eu",
-    "Gd",
-    "Tb",
-    "Dy",
-    "Ho",
-    "Er",
-    "Tm",
-    "Yb",
-    "Lu",
-    "Hf",
-    "Ta",
-    "W",
-    "Re",
-    "Os",
-    "Ir",
-    "Pt",
-    "Au",
-    "Hg",
-    "Tl",
-    "Pb",
-    "Bi",
-    "Po",
-]
+# Element symbols, 1-based index so _ELEMENT_SYMBOLS[Z] returns the symbol;
+# the table itself is ``basis_toolkit._element_data`` (H through Og).
+_ELEMENT_SYMBOLS = [""] + [_SYMBOL_BY_Z[z] for z in range(1, max(_SYMBOL_BY_Z) + 1)]
+
+
+def crystal_exponent_factor(scal: float) -> float:
+    """Factor CRYSTAL multiplies a shell's exponents by for ``SCAL``.
+
+    CRYSTAL scales a general (``ITYB=0``) shell's exponents by ``SCAL**2``,
+    the Pople convention in which ``SCAL`` is the Slater zeta and
+    ``alpha(zeta) = zeta**2 * alpha(1)`` (Hehre, Stewart & Pople,
+    J. Chem. Phys. 51, 2657 (1969)). Both 1.0 and 0.0 leave the exponents
+    as written; 0.0 selects the standard Pople factor only for the built-in
+    ``ITYB=1`` STO-nG sets (CRYSTAL23 manual, section 2.2.1, note 2).
+
+    The manual (section 2.2.1, p. 25) calls ``SCAL`` only a "scale factor",
+    so the square was settled by calculation: CRYSTAL23 1.0.1 RHF on H2 with
+    a shell written as (a, SCAL s) gives the same energy, to every printed
+    digit, as (a*s**2, SCAL 1) and as (a*s**2, SCAL 0), and prints the
+    exponents a*s**2 in its basis-set table; (a*s, SCAL 1) is 0.8 mEh away.
+    ``tests/test_basis_crystal.py`` pins those energies.
+
+    ``vibe_basis.io.export`` carries a copy of this rule, because vibe-basis
+    does not import vibe-qc; keep the two in step.
+    """
+    scal = float(scal)
+    if scal in (0.0, 1.0):
+        return 1.0
+    return scal * scal
 
 
 @dataclass
 class CrystalShell:
-    """One contracted Gaussian shell in CRYSTAL format."""
+    """One contracted Gaussian shell in CRYSTAL format.
+
+    The shell's effective exponents are ``exponents`` times
+    :func:`crystal_exponent_factor` of ``scale_factor``, exactly as CRYSTAL
+    reads an ``ITYB LAT NG CHE SCAL`` shell. The parser applies that factor
+    on the way in and returns ``scale_factor=1.0``, so a parsed shell's
+    ``exponents`` are already effective. A shell built by hand may carry
+    unscaled exponents and a ``SCAL``; every emitter applies the factor
+    (:func:`scaled_exponents`).
+    """
 
     shell_type: str  # "S", "SP", "P", "D", "F", "G"
     occupancy: float  # CHE
-    scale_factor: float  # SCAL (exponents multiplied by this)
+    scale_factor: float  # SCAL still to apply; 1.0 (or 0.0) = as written
     exponents: list[float] = field(default_factory=list)
     coefficients: list[float] = field(default_factory=list)
     # For SP shells only: the p-side coefficients. Length matches exponents;
@@ -162,6 +118,12 @@ class CrystalShell:
     @property
     def n_primitives(self) -> int:
         return len(self.exponents)
+
+
+def scaled_exponents(shell: CrystalShell) -> list[float]:
+    """The shell's effective exponents, with its ``SCAL`` applied."""
+    factor = crystal_exponent_factor(shell.scale_factor)
+    return [e * factor for e in shell.exponents]
 
 
 @dataclass
@@ -406,32 +368,21 @@ def parse_crystal_atom_basis(text: str, source: str = "<string>") -> CrystalAtom
                 f"Known: {_LAT_TO_SHELL}."
             )
 
+        # The exponents are stored with SCAL already applied, so the shell
+        # carries scale_factor 1.0 and no consumer can apply it twice.
         shell = CrystalShell(
             shell_type=shell_type,
             occupancy=che,
-            scale_factor=scal,
+            scale_factor=1.0,
         )
+        factor = crystal_exponent_factor(scal)
         for _ in range(ng):
-            expn = float(nxt())
-            # Apply the CRYSTAL exponent-scale convention.
-            #
-            # CRYSTAL23 User's Manual, "Basis set input" (p. 25) and its
-            # note 2: SCAL is meaningful only for the *standard* Pople
-            # STO-nG / n-21G sets (ITYB=1), where SCAL=0. selects the
-            # standard Pople scale factor. For a general user basis
-            # (ITYB=0 -- the only kind we parse, enforced above) the
-            # exponents are already scaled, and CRYSTAL's own GAUSS98
-            # exporter writes SCAL=1. for exactly that reason (manual,
-            # GAUSS98 note 5). So **both 1.0 and 0.0 mean "unscaled"**
-            # here; only a genuine scale factor rescales.
-            #
-            # Treating 0.0 as a literal factor multiplies every exponent
-            # by zero, which the positive-exponent guard below then
-            # reports as a mis-parsed shell header. That is how this was
-            # found: `emit_crystal` writes SCAL 0.0, so emit -> parse was
-            # not a round trip.
-            if scal not in (0.0, 1.0):
-                expn = expn * (scal**2)
+            # CRYSTAL's SCAL rule (exponent * SCAL**2; 0.0 and 1.0 mean as
+            # written) is documented, with its evidence, on
+            # crystal_exponent_factor. Treating 0.0 as a literal factor
+            # would zero every exponent; emit_crystal writes SCAL 0.0, so
+            # emit -> parse would not be a round trip.
+            expn = float(nxt()) * factor
             # A Gaussian primitive exponent must be strictly positive. A zero
             # or negative exponent is physically meaningless and is the
             # tell-tale of a mis-parsed shell header silently shifting the
@@ -761,7 +712,7 @@ def emit_ecp_sidecar(
 ) -> str:
     """Write the ECP blocks of CRYSTAL atom records as a ``.ecp`` sidecar.
 
-    The layout is the one ``scripts/basisset_dev/split_ecp_g94.py`` leaves
+    The layout is the one ``vibeqc.basis_toolkit.exporter_g94`` renders
     next to every ECP-bearing orbital file and
     :func:`vibeqc.ecp_metadata.parse_inline_ecp_sidecar` reads back::
 
@@ -859,9 +810,29 @@ def build_periodic_ecp_data(
     return (ecp_primitive_blocks, ecp_home_centers, effective_charges, total_ncore)
 
 
+def _g94_number(x: float) -> str:
+    """Shortest round-trip text of a double, right-aligned in a g94 column.
+
+    The same ``repr`` the bundled-library renderer
+    (:mod:`vibeqc.basis_toolkit.exporter_g94`) writes, so parsing the text
+    back yields the identical double. The previous fixed ten-decimal format
+    dropped digits a CRYSTAL source publishes (pob-TZVP's 11-decimal
+    contraction coefficients) and made a basis optimiser score a rounded copy
+    of the basis it held.
+    """
+    return f"{repr(float(x)):>22s}"
+
+
 def emit_g94(atoms: Sequence[CrystalAtomBasis], header_comment: str = "") -> str:
     """Convert a list of per-element basis specs into a single .g94
-    (Gaussian / NWChem format) string that libint can load."""
+    (Gaussian / NWChem format) string that libint can load.
+
+    Every exponent and coefficient is written with shortest round-trip
+    precision (:func:`_g94_number`), so the file carries exactly the doubles
+    of ``atoms``. Each shell's CRYSTAL ``SCAL`` is applied to its exponents
+    (:func:`scaled_exponents`); a parsed shell has ``scale_factor`` 1.0, so
+    its exponents pass through unchanged.
+    """
     lines: list[str] = []
     if header_comment:
         for ln in header_comment.splitlines():
@@ -877,15 +848,19 @@ def emit_g94(atoms: Sequence[CrystalAtomBasis], header_comment: str = "") -> str
         lines.append(f"{atom.element_symbol:<2s}    0")
         for shell in atom.shells:
             # NWChem format uses a leading keyword + NG + 1.00 (unused).
+            # The CRYSTAL SCAL is applied to the exponents, so the .g94
+            # scale field stays 1.00.
             lines.append(f"{shell.shell_type:<2s}  {shell.n_primitives:2d}   1.00")
-            for i, exp in enumerate(shell.exponents):
+            for i, exp in enumerate(scaled_exponents(shell)):
                 if shell.shell_type == "SP":
                     lines.append(
-                        f"  {exp:18.10f}  {shell.coefficients[i]:18.10f}"
-                        f"  {shell.coefficients_p[i]:18.10f}"
+                        f"  {_g94_number(exp)}  {_g94_number(shell.coefficients[i])}"
+                        f"  {_g94_number(shell.coefficients_p[i])}"
                     )
                 else:
-                    lines.append(f"  {exp:18.10f}  {shell.coefficients[i]:18.10f}")
+                    lines.append(
+                        f"  {_g94_number(exp)}  {_g94_number(shell.coefficients[i])}"
+                    )
     lines.append("****")
     lines.append("")
     return "\n".join(lines)
@@ -968,10 +943,13 @@ def emit_crystal(atoms: Sequence[CrystalAtomBasis]) -> str:
                 )
             npg = shell.n_primitives
             occ = _occ(shell)
+            # The exponents are written with the shell's SCAL applied, so
+            # the emitted SCAL is 0.0 (as written for ITYB=0).
             scale = 0.0
+            exponents = scaled_exponents(shell)
             lines.append(f"0 {lat} {npg:3d}  {occ:.1f} {scale:.1f}")
             for i in range(npg):
-                exp = shell.exponents[i]
+                exp = exponents[i]
                 if shell.shell_type == "SP":
                     c_s = shell.coefficients[i]
                     c_p = shell.coefficients_p[i]
@@ -1025,10 +1003,14 @@ _BREDOW_AE_TO_ECP_KEYS: dict[str, list[str]] = {
         "pob-tzvp-rev2-cs-po",
         "pob-tzv-rev2-la-lu",
     ],
+    # pob-TZVP has no lanthanides; its papers stop at I. The rev2 La-Lu
+    # archive belongs to pob-TZVP-rev2 alone (#289).
     "pob-tzvp": [
         "pob-tzvp-rb-i",
-        "pob-tzv-rev2-la-lu",
     ],
+    # The archive is the 2018 pob-DZVP fifth period (Laun, Vilela Oliveira,
+    # Bredow); there is no rev2 fifth-period DZVP paper, so it is the set
+    # pob-DZVP-rev2 grows with (maintainer decision 2026-10-13, #292, #289).
     "pob-dzvp-rev2": [
         "pob-dzvp-rb-i",
     ],
@@ -1041,13 +1023,22 @@ _BREDOW_CITATIONS = {
         "(2013). DOI: 10.1002/jcc.23153; Rb-I: Laun, Vilela Oliveira, Bredow. "
         "J. Comput. Chem. 39, 1285-1290 (2018). DOI: 10.1002/jcc.25195"
     ),
+    # Five papers, one per range of the records (#288).
     "pob-tzvp-rev2": (
-        "Vilela Oliveira, Laun, Peintinger, Bredow. J. Comput. Chem. 40, "
-        "2364-2376 (2019). DOI: 10.1002/jcc.26013"
+        "Peintinger, Vilela Oliveira, Bredow. J. Comput. Chem. 34, 451-459 "
+        "(2013). DOI: 10.1002/jcc.23153; H-Br: Vilela Oliveira, Laun, "
+        "Peintinger, Bredow. J. Comput. Chem. 40, 2364-2376 (2019). "
+        "DOI: 10.1002/jcc.26013; Rb-I: Laun, Bredow. J. Comput. Chem. 43, "
+        "839-846 (2022). DOI: 10.1002/jcc.26839; Cs-Ba, Hf-Po: Laun, "
+        "Bredow. J. Comput. Chem. 42, 1064-1072 (2021). "
+        "DOI: 10.1002/jcc.26521; La-Lu: Seidler, Laun, Bredow. "
+        "J. Comput. Chem. 44, 1418-1425 (2023). DOI: 10.1002/jcc.27097"
     ),
     "pob-dzvp-rev2": (
         "Vilela Oliveira, Laun, Peintinger, Bredow. J. Comput. Chem. 40, "
-        "2364-2376 (2019). DOI: 10.1002/jcc.26013"
+        "2364-2376 (2019). DOI: 10.1002/jcc.26013; Rb-I: Laun, Vilela "
+        "Oliveira, Bredow. J. Comput. Chem. 39, 1285-1290 (2018). "
+        "DOI: 10.1002/jcc.25195"
     ),
 }
 
@@ -1136,45 +1127,71 @@ def _iter_plone_listing_members(
     ``base_url`` is the listing URL -- used to resolve relative links and
     to de-duplicate cross-references.
     """
-    html = data.decode("utf-8", errors="replace")
-    seen: set[str] = set()
-    for match in _ELEMENT_LINK_RE.finditer(html):
-        url = match.group("url")
-        name = match.group("name")
-        # Normalize: ``06_c`` -> ``06_C`` so the parser's filename regex picks it up.
-        parts = name.split("_", 1)
-        if len(parts) == 2:
-            name = f"{parts[0]}_{parts[1].capitalize()}"
-        # Stay on the same Bredow basis listing -- reject stray nav links.
-        if "/bredow/" not in url:
-            continue
-        if url in seen:
-            continue
-        seen.add(url)
+    class Links(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.links = []
+            self.href = None
+            self.label = []
 
-        sub_html = _download(url)
-        sub_text = sub_html.decode("utf-8", errors="replace")
-        # The Plone layout wraps the per-element page in several <p>
-        # blocks; the first typically contains just the element header
-        # ("<strong>06_C</strong><br />"), the next contains the actual
-        # basis. Iterate and pick the first body that looks like CRYSTAL
-        # input (starts with ZZ NSHELL and has numeric data).
-        body = ""
-        for m in _PLONE_FILE_BLOCK_RE.finditer(sub_text):
-            candidate = _unescape_plone_body(m.group("body"))
-            if not candidate:
+        def handle_starttag(self, tag, attrs):
+            if tag == "a":
+                self.href = dict(attrs).get("href")
+                self.label = []
+
+        def handle_data(self, text):
+            if self.href is not None:
+                self.label.append(text)
+
+        def handle_endtag(self, tag):
+            if tag == "a" and self.href is not None:
+                self.links.append((self.href, "".join(self.label).strip()))
+                self.href = None
+
+    root = urlsplit(base_url)
+    root_path = root.path.rstrip("/")
+    pending = [(base_url, data)]
+    seen_pages = {base_url}
+    seen_elements = set()
+    for page_url, page_data in pending:
+        links = Links()
+        links.feed(page_data.decode("utf-8", errors="replace"))
+        for href, label in links.links:
+            url = urljoin(page_url, href)
+            target = urlsplit(url)
+            if (target.scheme, target.netloc) != (root.scheme, root.netloc):
                 continue
-            first_line = candidate.splitlines()[0].split()
-            if (
-                len(first_line) >= 2
-                and first_line[0].isdigit()
-                and first_line[1].isdigit()
-            ):
-                body = candidate
-                break
-        if not body:
-            continue
-        yield name, body.encode("utf-8")
+            # Plone paginates the element listing. Follow only that listing,
+            # not navigation or a similarly named neighbouring basis family.
+            if target.path.rstrip("/") == root_path:
+                if "b_start:int" in parse_qs(target.query) and url not in seen_pages:
+                    seen_pages.add(url)
+                    pending.append((url, _download(url)))
+                continue
+            if not target.path.startswith(root_path + "/"):
+                continue
+            # The displayed name is authoritative: Si's Plone object is named
+            # copy9_of_04_be, so inferring the element from the URL loses it.
+            name_match = re.fullmatch(r"(\d{1,3})_([A-Za-z]{1,2})", label)
+            if name_match is None or url in seen_elements:
+                continue
+            seen_elements.add(url)
+            name = f"{int(name_match[1]):02d}_{name_match[2].capitalize()}"
+            sub_text = _download(url).decode("utf-8", errors="replace")
+            body = ""
+            for match in _PLONE_FILE_BLOCK_RE.finditer(sub_text):
+                candidate = _unescape_plone_body(match.group("body"))
+                first_line = candidate.splitlines()[0].split() if candidate else []
+                if (len(first_line) >= 2 and first_line[0].isdigit()
+                        and first_line[1].isdigit()):
+                    body = candidate
+                    break
+            if not body:
+                raise ValueError(f"Bredow source {name} contains no CRYSTAL record")
+            atom = parse_crystal_atom_basis(body, source=url)
+            if atom.Z != int(name_match[1]):
+                raise ValueError(f"Bredow source {name} contains element Z={atom.Z}")
+            yield name, body.encode("utf-8")
 
 
 _FILENAME_RE = re.compile(r"^\s*(?:.*/)?(\d{2,3})_([A-Z][a-z]?)\s*$")
@@ -1187,15 +1204,21 @@ def fetch_bredow_basis_sets(
     verbose: bool = True,
     return_atoms: bool = False,
 ) -> dict[str, Path] | tuple[dict[str, Path], dict[str, list[CrystalAtomBasis]]]:
-    """Download the Bredow group all-electron basis sets and convert them
-    to .g94 files loadable by libint.
+    """Download the Bredow group all-electron basis sets, parse them, and
+    optionally convert them to .g94 files loadable by libint.
 
     Parameters
     ----------
     dest_dir
-        Target directory for the .g94 output files. Defaults to
-        ``basis_library/basis/`` inside the vibe-qc source tree (the path
-        already on ``LIBINT_DATA_PATH`` in editable installs).
+        Directory for the .g94 output files. There is no default
+        destination: with ``dest_dir=None`` nothing is written and the call
+        only parses, which is useful only with ``return_atoms=True`` (a
+        call that would do neither raises ``ValueError``). The default used
+        to be a directory inside the installed package, so any
+        caller that only wanted the records -- the runtime ECP fallback, the
+        ECP tests -- rewrote a tracked file of whatever tree it ran in
+        (#393). A maintainer refreshing the committed copy passes that
+        directory explicitly.
     names
         Subset of basis-set keys to fetch (from ``_BREDOW_ARCHIVES``).
         ``None`` fetches all supported light-element archives.
@@ -1204,19 +1227,19 @@ def fetch_bredow_basis_sets(
 
     Returns
     -------
-    dict mapping basis name -> path of the generated .g94 file.
+    dict mapping basis name -> path of the generated .g94 file (empty when
+    ``dest_dir`` is ``None``); with ``return_atoms=True``, a tuple of that
+    dict and the parsed records per basis name.
     """
-    if dest_dir is None:
-        # Default target: python/vibeqc/basis_library/custom/ — this is the
-        # committed-to-repo staging area inside the Python package.
-        # scripts/setup_basis_library.sh copies custom/*.g94 on top of
-        # libint's stock bases to populate build/basis_library/basis/,
-        # which is what LIBINT_DATA_PATH points at.
-        # Writing here keeps the generated files under version control.
-        here = Path(__file__).resolve().parent
-        dest_dir = here / "basis_library" / "custom"
-    dest = Path(dest_dir)
-    dest.mkdir(parents=True, exist_ok=True)
+    if dest_dir is None and not return_atoms:
+        raise ValueError(
+            "fetch_bredow_basis_sets: pass dest_dir to write .g94 files, or "
+            "return_atoms=True to only parse; there is no default destination "
+            "(it is never the installed package tree)"
+        )
+    dest = Path(dest_dir) if dest_dir is not None else None
+    if dest is not None:
+        dest.mkdir(parents=True, exist_ok=True)
 
     keys = list(names) if names is not None else list(_BREDOW_ARCHIVES)
     results: dict[str, Path] = {}
@@ -1309,6 +1332,8 @@ def fetch_bredow_basis_sets(
         ordered = [atoms_by_z[z] for z in sorted(atoms_by_z)]
         if return_atoms:
             parsed_atoms[key] = ordered
+        if dest is None:
+            continue
         citation = _BREDOW_CITATIONS.get(key, "")
         header = (
             f"vibeqc-generated from Bredow-group archive '{key}'.\n"
@@ -1340,7 +1365,7 @@ def _main(argv: list[str]) -> int:
         print(
             "usage:\n"
             "  python -m vibeqc.basis_crystal fetch "
-            "[--dest DIR] [name ...]\n"
+            "--dest DIR [name ...]\n"
             "       Download Bredow-group basis sets and convert to "
             ".g94 for libint.\n"
             "  python -m vibeqc.basis_crystal convert IN.crystal OUT.g94\n"
@@ -1352,9 +1377,16 @@ def _main(argv: list[str]) -> int:
     cmd, rest = argv[0], argv[1:]
     if cmd == "fetch":
         dest = None
-        if rest and rest[0] == "--dest":
+        if len(rest) >= 2 and rest[0] == "--dest":
             dest = rest[1]
             rest = rest[2:]
+        if dest is None:
+            print(
+                "fetch needs --dest DIR: there is no default output directory "
+                "(to refresh the committed copy, pass "
+                "python/vibeqc/basis_library/custom)"
+            )
+            return 2
         fetch_bredow_basis_sets(dest_dir=dest, names=rest if rest else None)
         return 0
     if cmd == "convert":

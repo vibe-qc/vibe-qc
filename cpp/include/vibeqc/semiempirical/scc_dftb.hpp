@@ -42,7 +42,7 @@ struct SCCOptions {
     // point molecular and periodic cut over together to Elstner so that one
     // method name means one gamma.  Periodic routes already default to
     // Elstner, which is what gives their lattice sum a thermodynamic limit
-    // (#425).
+    // (former-tracker issue 425).
     ShellGammaForm gamma_form = ShellGammaForm::KlopmanOhno;
 };
 
@@ -57,7 +57,11 @@ struct SCCDFTBResult : ParameterIdentifiedResult {
     double e_scc = 0.0;             // ½ Σ_{AB} γ_{AB} Δq_A Δq_B (≥ 0)
     Eigen::VectorXd mo_energies;    // MO energies (Hartree), ascending
     Eigen::MatrixXd mo_coeffs;      // MO coefficients, columns = MOs
-    Eigen::MatrixXd density;        // D = 2 C_occ C_occ^T
+    Eigen::MatrixXd density;        // D = C diag(occupations) C^T
+    // Per-MO occupations f_i in [0, 2] that built D: 2/0 Aufbau at T = 0,
+    // Fermi-Dirac at electronic_temperature > 0. The analytic gradient's
+    // energy-weighted density must use the same f_i (#563).
+    Eigen::VectorXd occupations;
     Eigen::MatrixXd overlap;        // overlap matrix S
     Eigen::MatrixXd hamiltonian;    // converged H^{SCC} matrix
     Eigen::VectorXd charges;        // Mulliken charge fluctuations Δq_A (n_atoms)

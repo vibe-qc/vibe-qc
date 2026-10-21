@@ -42,7 +42,7 @@ from vibeqc.semiempirical.methods.gfn2_params import load_gfn2_params
 
 
 _CHAIN_LENGTH = 4.1
-_CUTOFF = 12.0
+_CUTOFF = 32.0
 _SI_CUTOFF = 40.0
 _SI_REPEATS = 3
 
@@ -65,6 +65,14 @@ def _hli_chain(charge: int = 0) -> PeriodicSystem:
 
 
 def _diamond_si() -> PeriodicSystem:
+    """Diamond Si with two electrons removed: the metallic Si fixture.
+
+    Neutral diamond Si is gapped under DFTB0 since #478 (6.3 eV, the p
+    triplet at Gamma fully occupied); it was metallic only under the old
+    Wolfsberg-Helmholz hopping with the duplicated 1/2. A charge of +2 leaves
+    four electrons for the threefold valence-band top, so the Fermi level sits
+    inside a symmetry-degenerate manifold (#561).
+    """
     a = 5.43 * ANGSTROM_TO_BOHR
     primitive_lattice = np.array(
         [
@@ -77,7 +85,7 @@ def _diamond_si() -> PeriodicSystem:
         3,
         primitive_lattice,
         [Atom(14, np.zeros(3)), Atom(14, np.full(3, a / 4.0))],
-        0,
+        2,
         1,
     )
 
@@ -215,14 +223,17 @@ def test_dftb0_gapped_chain_reports_positive_indirect_gap(parameters):
     assert float(result.valence_band_max) == vbm
     assert float(result.conduction_band_min) == cbm
     assert float(result.indirect_gap) == pytest.approx(cbm - vbm, abs=1.0e-15)
-    # The known HLi/DFTB0 3x1x1 gap, measured on this fixture at the #426
-    # fix (~2.08 eV): a robustly positive insulator value.
-    assert float(result.indirect_gap) == pytest.approx(0.076425987187, abs=1.0e-9)
+    # The known HLi/DFTB0 3x1x1 gap: a robustly positive insulator value.
+    # Re-pinned for the wider Stewart STO-6G DFTB basis (#373), then for the
+    # Wolfsberg-Helmholz hopping without the duplicated 1/2 (#478; 3.0 eV,
+    # #561).
+    assert float(result.indirect_gap) == pytest.approx(0.11003413640492819, abs=1.0e-9)
 
 
 def test_dftb0_metallic_si_measures_nonpositive_gap(parameters):
     """The #317 diamond-Si 3x3x3 family: a fractional global-Aufbau Fermi
-    group must measure an explicit <= 0 indirect gap, never an absent one."""
+    group must measure an explicit <= 0 indirect gap, never an absent one.
+    (Charged +2 since #561, see ``_diamond_si``.)"""
     system = _diamond_si()
     kmesh = monkhorst_pack(system, (_SI_REPEATS, _SI_REPEATS, _SI_REPEATS))
     result = _se.run_dftb0_kpoints(system, parameters, kmesh, _SI_CUTOFF)
@@ -231,7 +242,7 @@ def test_dftb0_metallic_si_measures_nonpositive_gap(parameters):
         [np.asarray(occupation) for occupation in result.occupations_per_k]
     )
     fractional = (occupations > _OCC_TOL) & (occupations < 2.0 - _OCC_TOL)
-    assert np.count_nonzero(fractional) == 8  # the shared 0.5 Fermi group
+    assert np.count_nonzero(fractional) == 12  # the shared 2/3 Fermi group
 
     _assert_edges_match_rederivation(result)
 
@@ -270,10 +281,10 @@ def test_degenerate_fermi_edge_gap_matches_pooled_aufbau(parameters):
     edge -- the case the 2026-08-27 sec8-r4 judge measured as defective in
     the pre-#426 wave records (finding F1).
 
-    Diamond-Si 3x3x3's global Fermi level is pinned inside a manifold of 8
-    states sharing occupation 0.5. The physically correct gap there is
-    exactly 0, and the manifold is degenerate to machine precision. Three
-    quantities are distinguished:
+    Diamond-Si 3x3x3 (charge +2, ``_diamond_si``) has its global Fermi level
+    pinned inside a manifold of 12 states sharing occupation 2/3. The
+    physically correct gap there is exactly 0, and the manifold is degenerate
+    to machine precision. Three quantities are distinguished:
 
     * ``indirect_gap`` (shipped): the occupation convention -- every
       manifold member is both valence and conduction, so the value is the
@@ -284,9 +295,8 @@ def test_degenerate_fermi_edge_gap_matches_pooled_aufbau(parameters):
       rungs compare like with like.
     * occupancy partition (the pre-#426 payload formula): steps over the
       whole partially filled manifold and returns a strictly positive
-      number -- here ~5.7e-5 Ha, inside the judge's measured 8.06e-5 Ha
-      median / 1.98e-2 Ha maximum error band. Shipped only under its own
-      name, ``gap_above_fermi_manifold``, never as ``gap``.
+      number (7.0e-2 Ha on this fixture). Shipped only under its own name,
+      ``gap_above_fermi_manifold``, never as ``gap``.
     """
     system = _diamond_si()
     kmesh = monkhorst_pack(system, (_SI_REPEATS, _SI_REPEATS, _SI_REPEATS))
@@ -296,7 +306,7 @@ def test_degenerate_fermi_edge_gap_matches_pooled_aufbau(parameters):
         [np.asarray(occupation) for occupation in result.occupations_per_k]
     )
     fractional = (occupations > _OCC_TOL) & (occupations < 2.0 - _OCC_TOL)
-    assert np.count_nonzero(fractional) == 8, "expected the shared Fermi group"
+    assert np.count_nonzero(fractional) == 12, "expected the shared Fermi group"
 
     # The manifold is degenerate to machine precision (judge: <= 8.7e-15 Ha
     # across 1,668 rows), so "the gap is exactly 0" is not a borderline call.
@@ -358,7 +368,9 @@ def test_integer_filled_row_has_no_convention_regression_surface(parameters):
 
 def test_dftb0_bandpath_band_overlap_measures_negative_gap(parameters):
     """Independent per-point filling on a band-overlapping metal: the
-    occupation-derived indirect gap is the (negative) HOMO/LUMO overlap."""
+    occupation-derived indirect gap is the (negative) HOMO/LUMO overlap.
+    With charge +2 each point fills three bands, and the third band's top at
+    Gamma lies above the fourth band's bottom elsewhere (-0.18 Ha)."""
     system = _diamond_si()
     kpath = monkhorst_pack(
         system, (_SI_REPEATS, _SI_REPEATS, _SI_REPEATS)
@@ -367,7 +379,7 @@ def test_dftb0_bandpath_band_overlap_measures_negative_gap(parameters):
 
     for occupation in result.occupations_per_k:
         np.testing.assert_array_equal(
-            occupation, [2.0, 2.0, 2.0, 2.0, 0.0, 0.0, 0.0, 0.0]
+            occupation, [2.0, 2.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         )
 
     _assert_edges_match_rederivation(result)
@@ -402,15 +414,39 @@ def test_dftb0_smeared_edges_match_python_rederivation(parameters):
 
 def test_dftb0_zero_weight_kpoints_participate_in_edges(parameters):
     """Zero-weight points are populated from the same global step function
-    and are part of the measured spectrum (band-structure spelling)."""
+    and are part of the measured spectrum (band-structure spelling).
+
+    #176: the step function sits at the mu the WEIGHTED point fixes (midgap
+    of k1 alone), and the zero-weight k0 has its valence band above that mu,
+    so k0 is filled with no electrons although the chain is an insulator.
+    Read state by state, that made the empty k0 valence state a conduction
+    state and measured a 0.109-Ha "gap". The occupied count differs between
+    the points, so the edges are the band pair at the Fermi filling instead,
+    and they are exactly the edges of the full, equally weighted mesh.
+    """
     system = _hli_chain()
     points = monkhorst_pack(system, (3, 1, 1)).kpoints
     kmesh = bloch_kmesh_from_lists(points, [0.0, 1.0, 0.0])
     result = _se.run_dftb0_kpoints(system, parameters, kmesh, _CUTOFF)
+    full = _se.run_dftb0_kpoints(
+        system, parameters, monkhorst_pack(system, (3, 1, 1)), _CUTOFF
+    )
 
-    derived = _assert_edges_match_rederivation(result)
+    counts = [
+        int(np.count_nonzero(np.asarray(o) > _OCC_TOL))
+        for o in result.occupations_per_k
+    ]
+    assert len(set(counts)) > 1  # the zero-weight k0 is filled empty
     assert len(list(result.valence_max_per_k)) == 3
-    assert not math.isnan(derived["valence_max_per_k"][0])
+    assert not math.isnan(float(result.valence_max_per_k[0]))
+    for name in ("valence_band_max", "conduction_band_min", "indirect_gap"):
+        assert float(getattr(result, name)) == pytest.approx(
+            float(getattr(full, name)), abs=1.0e-12
+        ), name
+    assert result.is_metallic is False
+    # The pre-#176 state-class reading of this record, for the record.
+    derived = _derive_edges(result.eps_per_k, result.occupations_per_k)
+    assert derived["indirect_gap"] > float(result.indirect_gap) + 0.05
 
 
 def test_dftb0_filled_argon_has_no_conduction_edge(parameters):
@@ -459,7 +495,7 @@ def test_scc_dftb_gapped_chain_edges_consistent(parameters):
     assert result.converged
     _assert_edges_match_rederivation(result)
     # The threshold was calibrated on the Klopman-Ohno surface.  Since D1
-    # (#425) the periodic gamma is the Ewald-split Elstner form, under which
+    # (former-tracker issue 425) the periodic gamma is the Ewald-split Elstner form, under which
     # this chain is more ionic and its gap is 0.0478 Ha rather than >0.1.
     # The subject of the test is that a gapped chain reports consistent
     # edges, so the assertion keeps a clearly positive gap -- an order of

@@ -18,8 +18,8 @@ Strategy
    - identify the principal chain / ring
    - number substituents
    - assemble the name per Blue Book P-1–P-7
-5. For complex cases, fall back to optional external backends (RDKit,
-   PubChem, CACTUS).
+5. For complex cases, fall back to the optional external REST backends
+   (CACTUS, PubChem).
 
 Returns NamedResult with name, source, and confidence rather than bare
 strings — enabling callers to decide whether to trust or display the
@@ -40,7 +40,10 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Optional
 
-from .molecular_graph import (
+from vibeqc_naming._identity import catalog_locants, match_catalog, validate_state
+from vibeqc_naming._stereo import has_stereodescriptors, stereo_name
+
+from vibeqc_naming.molecular_graph import (
     ATOMIC_NUMBER_TO_SYMBOL,
     MolecularGraph,
     build_graph,
@@ -291,13 +294,14 @@ def name_molecule_detailed(
     prefer_trivial :
         Use trivial/retained names when available.
     with_external :
-        If True, try external backends (RDKit, PubChem, CACTUS)
+        If True, try the external REST backends (CACTUS, PubChem)
         after the built-in engine.
 
     Returns
     -------
     NamedResult with name, source, and confidence.
     """
+    validate_state(getattr(molecule, "charge", 0), getattr(molecule, "multiplicity", 1))
     graph = from_molecule(molecule)
     return _name_from_graph(
         graph,
@@ -307,10 +311,11 @@ def name_molecule_detailed(
 
 
 def name_from_atoms(
-    atoms: list[tuple[int, float, float, float]], *, prefer_trivial: bool = True
+    atoms: list[tuple[int, float, float, float]], *, prefer_trivial: bool = True,
+    charge: int = 0, multiplicity: int = 1
 ) -> str:
     """Return the IUPAC name for atoms given as (Z, x, y, z) in A."""
-    result = name_from_atoms_detailed(atoms, prefer_trivial=prefer_trivial)
+    result = name_from_atoms_detailed(atoms, prefer_trivial=prefer_trivial, charge=charge, multiplicity=multiplicity)
     return result.name
 
 
@@ -319,6 +324,8 @@ def name_from_atoms_detailed(
     *,
     prefer_trivial: bool = True,
     with_external: bool = False,
+    charge: int = 0,
+    multiplicity: int = 1,
 ) -> NamedResult:
     """Return the IUPAC name for atoms with provenance.
 
@@ -329,12 +336,17 @@ def name_from_atoms_detailed(
     prefer_trivial :
         Use trivial/retained names when available.
     with_external :
-        Try external backends after built-in.
+        Try external backends after built-in, except for unsupported organic
+        connectivity (formula lookup cannot establish structural identity).
+    charge, multiplicity :
+        Actual electronic state. Only neutral singlets are supported; other
+        states raise ValueError. Coordinates alone do not encode these fields.
 
     Returns
     -------
     NamedResult.
     """
+    validate_state(charge, multiplicity)
     graph = _build_atoms_graph(atoms)
     return _name_from_graph(
         graph,
@@ -343,12 +355,15 @@ def name_from_atoms_detailed(
     )
 
 
-def name_from_graph(graph: MolecularGraph, *, prefer_trivial: bool = True) -> str:
+def name_from_graph(
+    graph: MolecularGraph, *, prefer_trivial: bool = True,
+    charge: int = 0, multiplicity: int = 1,
+) -> str:
     """Return the IUPAC name for a :class:`MolecularGraph`.
 
     This is the main naming dispatch.
     """
-    result = name_from_graph_detailed(graph, prefer_trivial=prefer_trivial)
+    result = name_from_graph_detailed(graph, prefer_trivial=prefer_trivial, charge=charge, multiplicity=multiplicity)
     return result.name
 
 
@@ -357,8 +372,11 @@ def name_from_graph_detailed(
     *,
     prefer_trivial: bool = True,
     with_external: bool = False,
+    charge: int = 0,
+    multiplicity: int = 1,
 ) -> NamedResult:
     """Return the IUPAC name for a :class:`MolecularGraph` with provenance."""
+    validate_state(charge, multiplicity)
     return _name_from_graph(
         graph,
         prefer_trivial=prefer_trivial,
@@ -459,6 +477,23 @@ def _name_from_graph(
 ) -> NamedResult:
     """Full naming pipeline for a MolecularGraph."""
     formula = graph.formula
+    if sum(atom.z for atom in graph.atoms) % 2:
+        raise ValueError("molecular naming does not represent odd-electron species")
+    if not graph.is_organic and has_stereodescriptors(graph):
+        raise ValueError("stereodescriptors are supported only on catalog organic names")
+    if graph.is_organic:
+        match = match_catalog(graph)
+        if match is None:
+            raise ValueError(f"unsupported molecular connectivity for {formula}; no verified name available")
+        name, heavy, mapping = match
+        trivial = prefer_trivial and name in _TRIVIAL_NAMES.values()
+        return NamedResult(
+            name=stereo_name(graph, name, heavy, mapping, catalog_locants(name)),
+            source=NamingSource.TRIVIAL_IUPAC if trivial else NamingSource.ORGANIC_SYSTEMATIC,
+            confidence=Confidence.HIGH,
+            formula=formula,
+            is_trivial=trivial,
+        )
 
     # ── 1. Trivial name lookup ────────────────────────────────────────────
     if prefer_trivial:
@@ -493,30 +528,6 @@ def _name_from_graph(
             )
 
     # ── 3. Organic systematic naming (Blue Book P-1–P-7) ──────────────────
-    if graph.is_organic:
-        organic_result = _organic_name(graph)
-        if organic_result:
-            conf = (
-                Confidence.HIGH
-                if isinstance(organic_result, str)
-                else organic_result.confidence
-            )
-            source = NamingSource.ORGANIC_SYSTEMATIC
-            if isinstance(conf, float):
-                conf = (
-                    Confidence.HIGH
-                    if conf >= 0.7
-                    else (Confidence.MEDIUM if conf >= 0.4 else Confidence.LOW)
-                )
-            return NamedResult(
-                name=organic_result.name
-                if isinstance(organic_result, OrganicResult)
-                else organic_result,
-                source=source,
-                confidence=conf if isinstance(conf, Confidence) else conf,
-                formula=formula,
-                is_trivial=False,
-            )
 
     # ── 4. Inorganic compositional naming (Red Book IR-4, IR-5) ───────────
     inorg_name = _inorganic_name(graph)
@@ -1114,7 +1125,7 @@ def _organic_name(graph: MolecularGraph) -> Optional[str]:
 
 def _build_atoms_graph(atoms: list[tuple[int, float, float, float]]) -> MolecularGraph:
     """Build graph from (Z, x, y, z) in Angstrom."""
-    from .molecular_graph import from_atoms_list
+    from vibeqc_naming.molecular_graph import from_atoms_list
 
     return from_atoms_list(atoms)
 

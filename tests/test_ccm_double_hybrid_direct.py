@@ -7,7 +7,7 @@ orbitals, both on ONE neutral cderi ``L`` (the BvK-ewald direct-reference
 composition of ``run_ccm_ri_mp2(reference="direct")``, with KS orbitals).
 
 This does NOT touch the ``run_ccm_ri_mp2`` default (``reference="neutral"``)
-— that flip is the pending maintainer decision of ``HANDOVER_D2_EXXDIV.md``.
+— that flip remains a pending maintainer decision.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def test_double_hybrid_direct_seam_moves_scf_not_density():
     global hybrid: the ``exxdiv=None`` control's SCF sits above ewald by
     a_x·ξ_N·N_e/2 per supercell with the same converged density, while the
     PT2 halves differ only through the KS eigenvalue denominators (the
-    exxdiv-on-denominators mechanism of HANDOVER_D2_EXXDIV.md § Part 2)."""
+    exxdiv-on-denominators mechanism)."""
     ccm = _h2_cubic_ccm((2, 1, 1))
     r_ew = run_ccm_double_hybrid_direct(ccm, "b2plyp", exxdiv="ewald")
     r_no = run_ccm_double_hybrid_direct(ccm, "b2plyp", exxdiv=None)

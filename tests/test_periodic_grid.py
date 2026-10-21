@@ -183,13 +183,18 @@ def test_point_partition_is_invariant_to_skew_lattice_reparametrization():
     np.testing.assert_allclose(skew.weights, original.weights, rtol=0, atol=3e-12)
 
 
-def test_point_partition_matches_independent_periodic_image_normalization():
+@pytest.mark.parametrize("lebedev_order", [None, 59, 65, 77, 95])
+def test_point_partition_matches_independent_periodic_image_normalization(lebedev_order):
     from itertools import product
 
     lattice = np.array([[6., .3, .1], [.4, 8., .2], [.1, .2, 9.]])
     origins = np.array([[.1, .2, .3], [1.4, .3, .1]])
     system = vq.PeriodicSystem(3, lattice, [vq.Atom(1, p) for p in origins])
     opts = _small_grid_options()
+    if lebedev_order is not None:
+        opts.angular = "lebedev"
+        opts.lebedev_order = lebedev_order
+        opts.n_radial = 4
     radius = 10.
     grid = vq.build_periodic_becke_grid(system, grid_options=opts, image_radius_bohr=radius)
     # Oversized, independent image enumeration followed by the physical
@@ -544,6 +549,9 @@ def test_run_rks_periodic_periodic_becke_loose_box_equals_molecular():
         o.grid.n_phi = 12
         o.use_periodic_becke = periodic_becke
         o.becke_image_radius_bohr = 8.0
+        # 30-bohr loose cell at cutoff 12: only g = 0, the molecular
+        # limit this test compares against; declared for #133 (#430).
+        o.lattice_opts.gamma_only_0 = True
         return o
 
     r_mol = vq.run_rks_periodic(sysp, basis, km, _opts(False))

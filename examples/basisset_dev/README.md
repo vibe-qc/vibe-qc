@@ -1,4 +1,4 @@
-# `examples/basisset_dev/` — pob-paper test set as runnable inputs
+# `examples/basisset_dev/`: pob-paper test set as runnable inputs
 
 Self-contained vibe-qc input files for every compound in the
 calibration set behind pob-TZVP / pob-TZVP-rev2 / pob-DZVP-rev2.
@@ -6,7 +6,7 @@ Every file in `inputs/` bakes in the lattice vectors and fractional
 coordinates from the published experimental reference; nothing is
 fetched at runtime.
 
-The full target set is ≈75 compounds across PT2013 + VO2019 — see
+The full target set is ≈75 compounds across PT2013 + VO2019; see
 [`docs/basisset_dev/REQUIREMENTS-PERIODIC.md`](../../docs/basisset_dev/REQUIREMENTS-PERIODIC.md).
 **Phases 1 + 2 + 3 ship 39 cubic compounds**: the 13 cubic
 ionic compounds (PT2013 T4), 24 cubic semiconductors / carbides
@@ -16,12 +16,12 @@ ionic compounds (PT2013 T4), 24 cubic semiconductors / carbides
 antiferromagnetic; R3's blocker (a broken-symmetry initial guess)
 shipped 2026-06-14/16 as ATOMSPIN, so those inputs' Γ-only RHF
 placeholder runs are ready to be updated to a physical AFM UKS run
-(see each docstring) — the remaining gate for a production-size
+(see each docstring); the remaining gate for a production-size
 result is R2 (multi-k), not R3.
 
 ## Why this is here
 
-The pob papers don't ship reproducible inputs — they ship lattice
+The pob papers don't ship reproducible inputs; they ship lattice
 constants in a paper table and assume the reader has CRYSTAL +
 ICSD + a structure-database lookup. Re-running the calibration set
 twelve years later required reconstructing each crystal structure
@@ -32,30 +32,43 @@ work-once; every future run just opens the `.py` and reads.
 
 ```
 examples/basisset_dev/
-├── README.md          ← this file
-├── check_basisopt_install.py  ← preflight: can this env run the
-│                                external-program path? (run first)
-├── _structures.py     ← single source of truth: 39 entries with both
-│                        full-cell + CRYSTAL14 asymm-unit views
-├── _generator.py      ← emits two siblings per compound: .py + .d12
+├── README.md                  <- this file
+├── check_basisopt_install.py  <- preflight: can this env run the
+│                                 external-program path? (run first)
+├── _generator.py              <- emits two siblings per compound: .py + .d12,
+│                                 reading the structure database from
+│                                 vibe_basis.io.structures (STRUCTURES)
+├── cohesive_pipeline_demo.py  <- vibe_basis CohesivePipeline end to end on a
+│                                 scripted engine, no SCF program required
+├── converge_bsse_shell.py     <- converge the ATOMBSSE ghost shell per system
+├── gamma_phonon_gate.py       <- Gaussian-route Gamma phonons against GAPW
+├── bsse_sweep/                <- self-contained ATOMBSSE sweep payload for a vq
+│                                 host: build_payload.py assembles it, run_sweep.py
+│                                 converges the ghost shell there, merge_results.py
+│                                 merges the returned JSON tables
 └── inputs/
-    ├── lih_pob-tzvp_rhf.py     ← vibe-qc input
-    ├── lih_pob-tzvp_rhf.d12    ← CRYSTAL14 parity sidecar (same compound)
+    ├── lih_pob-tzvp_rhf.py     <- vibe-qc input
+    ├── lih_pob-tzvp_rhf.d12    <- CRYSTAL14 parity sidecar (same compound)
     ├── nacl_pob-tzvp_rhf.py
     ├── nacl_pob-tzvp_rhf.d12
-    └── … (39 .py + 33 .d12 in Phases 1+2+3)
+    └── ... (39 .py + 33 .d12 in Phases 1+2+3)
 ```
+
+The structure database used to live here as `_structures.py`; it moved
+into the `vibe-basis` subpackage as `vibe_basis.io.structures`, which is
+where `_generator.py` imports `STRUCTURES`, `Structure` and
+`StructureAtom` from.
 
 Run `check_basisopt_install.py` first. `_generator.py` and the CRYSTAL
 parity path both need `vibe-basis` importable, which a plain
-`pip install -e .` does **not** give you — install vibe-qc's `basisopt`
+`pip install -e .` does **not** give you; install vibe-qc's `basisopt`
 extra (`uv pip install -e '.[basisopt]'`, or under pip
 `pip install -e . && pip install -e vibe-basis/`). The preflight reports
 what this environment can actually run and exits nonzero when the
 external-program path is unusable, so it works as a guard at the top of
 a campaign script.
 
-The two underscore-prefixed files are tooling, not inputs to run.
+`_generator.py` is tooling, not an input to run.
 Everything in `inputs/` is callable as a top-level Python script
 (`.py`) or as a CRYSTAL14 input deck (`.d12`). The 6 AFM
 compounds (MnO, FeO, CoO, NiO, α-MnS, α-MnSe) skip the `.d12`
@@ -69,8 +82,8 @@ The `vq` command comes from that repository; `vibe-basis/` remains in this
 core checkout. Wrapper paths below refer to the queue checkout on the
 execution host. Each compound has **two** runnable inputs:
 
-* `<compound>_pob-tzvp_rhf.py` — vibe-qc Γ-only RHF input.
-* `<compound>_pob-tzvp_rhf.d12` — CRYSTAL14 parity input (same
+* `<compound>_pob-tzvp_rhf.py`: vibe-qc Γ-only RHF input.
+* `<compound>_pob-tzvp_rhf.d12`: CRYSTAL14 parity input (same
   basis, same compound, in CRYSTAL's space-group form).
 
 ### Single vibe-qc run
@@ -107,12 +120,11 @@ The 2013 paper printed total energies in SI Table 2 (HF) and
 Table 1 (PW1PW). Diffing vibe-qc against those numbers tests
 "do we match the published reference." Diffing vibe-qc against
 **our own CRYSTAL14 run on the same input** tests "do we match
-CRYSTAL on this exact geometry / basis / k-mesh / ITOL setup"
-— this catches silent drift in vibe-qc's `PeriodicSystem`
+CRYSTAL on this exact geometry / basis / k-mesh / ITOL setup", which catches silent drift in vibe-qc's `PeriodicSystem`
 construction or basis-file rounding **before** it shows up as
 a Table-2 mismatch.
 
-Per CLAUDE.md § 10, CRYSTAL is an **external code** — we
+Per CLAUDE.md § 10, CRYSTAL is an **external code**; we
 generate the `.d12`, `vq submit` ships it, CRYSTAL runs out
 of process. No imports inside vibe-qc.
 
@@ -128,7 +140,7 @@ done
 The daemon currently runs `--max-jobs 1`, so the 13 jobs queue
 serially. Each is small (≤12-atom unit cell, ≤44 basis functions).
 Wall time per job: a few minutes to a few tens of minutes
-depending on R1–R5 progress.
+depending on R1 to R5 progress.
 
 ## How to run on the laptop (only for one-off smoke tests)
 
@@ -137,11 +149,11 @@ depending on R1–R5 progress.
 ```
 
 For a tight set (LiH, MgO, NaCl) running locally is fine. **Do not
-batch-run all 13 on the laptop** — the cumulative load is what
+batch-run all 13 on the laptop**; the cumulative load is what
 crashed the host on 2026-05-09. Either go through `vq` or run one
 input at a time and watch RAM.
 
-## Phase 1 inventory — cubic ionics (PT2013 T4)
+## Phase 1 inventory: cubic ionics (PT2013 T4)
 
 | Compound | Type | Lattice (Å) | Cell atoms | Source | PT2013 SI Table 2 (HF) |
 |----------|------|-------------|------------|--------|------------------------|
@@ -159,7 +171,7 @@ input at a time and watch RAM.
 | CaF₂ | fluorite | 5.463 | 12 | Yang 1987 | −875.945 290 |
 | K₂O  | antifluorite | 6.436 | 12 | Straumanis 1939 | −1273.185 420 |
 
-## Phase 2 inventory — cubic semiconductors + TM compounds (PT2013 T8 + T10)
+## Phase 2 inventory: cubic semiconductors + TM compounds (PT2013 T8 + T10)
 
 Diamond / zincblende / rocksalt-MX / antifluorite. The 6 AFM
 compounds at the bottom emit a ``BLOCKED ON: REQUIREMENTS-PERIODIC R3``
@@ -194,7 +206,7 @@ broken-symmetry guess (R3) to land.
 | α-MnS (alabandite) | rocksalt | 5.220 | 8 | **BLOCKED on R3** (AFM-II) |
 | α-MnSe | rocksalt | 5.460 | 8 | **BLOCKED on R3** (AFM-II) |
 
-## Phase 3 inventory — non-rocksalt cubic oxide / nitride
+## Phase 3 inventory: non-rocksalt cubic oxide / nitride
 
 Two cubic compounds where the parent structure is NOT rocksalt /
 zincblende / diamond: cuprite (Pn-3m, sg 224) and anti-ReO₃
@@ -220,32 +232,33 @@ differing by a basis-truncation error from the published value.
 ## What's NOT here yet (and why)
 
 * **Hexagonal / tetragonal compounds** (PT2013 T5/T9/T11; VO2019
-  T3/T7/T10) — blocked on R1 (non-orthorhombic Ewald).
-* **Cubic semiconductors / TM oxides** (PT2013 T8/T10) — runnable
+  T3/T7/T10): blocked on R1 (non-orthorhombic Ewald).
+* **Cubic semiconductors / TM oxides** (PT2013 T8/T10): runnable
   with current vibe-qc; will land in Phase 2 of this generator.
 * **Antiferromagnetic transition-metal oxides** (MnO, NiO, FeO,
-  CoO, Cr₂O₃) — blocked on R3 (broken-symmetry initial guess).
-* **PW1PW reference comparison** (PT2013 SI Table 1) — blocked
+  CoO, Cr₂O₃): blocked on R3 (broken-symmetry initial guess).
+* **PW1PW reference comparison** (PT2013 SI Table 1): blocked
   on R4 (PW1PW alias).
-* **Lattice optimisation** — blocked on R5; for now the inputs
+* **Lattice optimisation**: blocked on R5; for now the inputs
   fix the lattice at the experimental value.
-* **X23 molecular crystals** (VO2019 Table 14) — blocked on R11
+* **X23 molecular crystals** (VO2019 Table 14): blocked on R11
   (D3 dispersion in periodic).
 
-The structure database (`_structures.py`) will grow to cover all
-≈75 compounds in lockstep with R1-R5 landing. Re-run
+The structure database (`vibe_basis.io.structures`) will grow to cover
+all ≈75 compounds in lockstep with R1-R5 landing. Re-run
 `_generator.py` after each database update.
 
 ## Regenerating
 
-Edit `_structures.py` (add entries, fix typos, update lattice
-constants if a better experimental reference appears), then:
+Edit `vibe-basis/src/vibe_basis/io/structures.py` (add entries, fix typos,
+update lattice constants if a better experimental reference appears),
+then:
 
 ```sh
 .venv/bin/python examples/basisset_dev/_generator.py
 ```
 
-The generator is idempotent — running it twice produces the same
+The generator is idempotent; running it twice produces the same
 files (modulo trailing newlines). Commit both the database edit
 and the regenerated `inputs/` in the same change so they don't
 drift.

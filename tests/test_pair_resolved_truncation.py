@@ -1,6 +1,6 @@
 """M2 (pair-resolved truncation): domain, orbit closure, builds, enforcement.
 
-The SYM3b root cause (HANDOVER_BIPOLE_PRODUCTION.md Sec. 0a 2026-07-12):
+The SYM3b root cause (the original investigation 2026-07-12):
 the radial cell list is closed under the bare point-group action, but
 the symmetry machinery acts on atom-pair triples
 ``(a, b, h) -> (perm[a], perm[b], R.h + s_a - s_b)`` whose per-atom
@@ -158,6 +158,50 @@ def test_he_domain_equals_radial_ball():
     radial_keys = {_key(c) for c in direct_lattice_cells(system, 6.0)}
     assert {_key(c) for c in dom.cells} == radial_keys
     assert all(pairs == frozenset({(0, 0)}) for pairs in dom.pairs_by_cell)
+
+
+@pytest.mark.parametrize("missing_image", [False, True])
+def test_boundary_union_closure_reaches_fixed_point(monkeypatch, missing_image):
+    """A generator needs several sweeps; rounded-out images still join.
+
+    A missing candidate remains an error, not permission to widen the domain.
+    The physical Fock route separately refuses ambiguous cutoff boundaries.
+    """
+    from types import SimpleNamespace
+    from vibeqc import pair_resolved_truncation as truncation
+
+    system = vq.PeriodicSystem(
+        3, np.eye(3), [vq.Atom(2, [0., 0., 0.])],
+    )
+    attach_symmetry(system)
+    identity = np.eye(3, dtype=int)
+    quarter_turn = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    ops = [op for op in system.symmetry.operations
+           if np.array_equal(op.rotation, identity)
+           or np.array_equal(op.rotation, quarter_turn)]
+    assert len(ops) == 2
+    # Only +x initially qualifies at the boundary. Preserve the candidate
+    # labels but model one-ulp distance differences between orbit members.
+    candidates = []
+    for cell in direct_lattice_cells(system, 1. + 1e-9):
+        key = _key(cell)
+        if missing_image and key == (-1, 0, 0):
+            continue
+        xyz = np.asarray(cell.r_cart).copy()
+        if key != (1, 0, 0):
+            xyz *= np.nextafter(1., np.inf)
+        candidates.append(SimpleNamespace(index=np.array(key), r_cart=xyz))
+    monkeypatch.setattr(truncation, "direct_lattice_cells", lambda *args: candidates)
+    seed = pair_resolved_domain(system, 1.)
+    assert set(seed.cell_keys()) == {(0, 0, 0), (1, 0, 0)}
+    if missing_image:
+        with pytest.raises(RuntimeError, match="outside the candidate ball"):
+            pair_resolved_domain(system, 1., operations=ops)
+    else:
+        closed = pair_resolved_domain(system, 1., operations=ops)
+        expected = {(0, 0, 0), (1, 0, 0), (0, 1, 0), (-1, 0, 0), (0, -1, 0)}
+        assert closed.cell_keys() == [_key(c) for c in candidates if _key(c) in expected]
+        assert domain_triples(closed) == {(0, 0, key) for key in expected}
 
 
 def _mgo_build_fixture(cutoff: float = 6.0):
@@ -382,6 +426,9 @@ def test_pair_mode_end_to_end_enforce_equals_reduce():
     closed-shell cell. The 12-bohr image domain is the smallest measured
     fixture cutoff below the legacy-gauge fold-refusal threshold. This is an
     algorithm-parity check, not a production-energy witness."""
+    # The physical pair default (#316) refuses the legacy SYM3b projector;
+    # this test pins the historical composition, so it replays it explicitly
+    # (#503).
     from vibeqc._vibeqc_core import PeriodicRHFOptions, monkhorst_pack
 
     system, _a = _mgo()
@@ -405,6 +452,7 @@ def test_pair_mode_end_to_end_enforce_equals_reduce():
             use_fock_symmetry_reduce=False,
             use_exchange_ewald_split=False,
             sr_image_precision=None,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -414,6 +462,7 @@ def test_pair_mode_end_to_end_enforce_equals_reduce():
             use_fock_symmetry_reduce=True,
             use_exchange_ewald_split=False,
             sr_image_precision=None,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -426,6 +475,7 @@ def test_pair_mode_end_to_end_enforce_equals_reduce():
             use_fock_symmetry_reduce=True,
             use_exchange_ewald_split=False,
             sr_image_precision=None,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -438,6 +488,9 @@ def test_pair_mode_pure_rks_exact_j_runs():
     for He-at-origin, keeping this cheap); the key-based enforcement
     must accept the density-template blocks (the pre-M2 positional
     association scrambled exactly this combination)."""
+    # The physical pair default (#316) refuses the legacy SYM3b projector;
+    # this test pins the historical composition, so it replays it explicitly
+    # (#503).
     from vibeqc._vibeqc_core import PeriodicKSOptions, monkhorst_pack
     from vibeqc.pbc_bipole_rks import run_pbc_bipole_rks
 
@@ -458,6 +511,7 @@ def test_pair_mode_pure_rks_exact_j_runs():
             system, basis, kmesh, opts,
             use_fock_symmetry=True,
             use_fock_symmetry_reduce=False,
+            historical_domain=True,
             progress=False,
         ).energy
     )
@@ -472,6 +526,7 @@ def test_pair_mode_pure_rks_exact_j_runs():
             kmesh,
             opts,
             use_fock_symmetry_reduce=False,
+            historical_domain=True,
             progress=False,
         ).energy
     )

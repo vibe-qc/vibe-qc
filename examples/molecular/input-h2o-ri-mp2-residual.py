@@ -1,4 +1,5 @@
-"""Water — RI-MP2 fit-residual diagnostic across two aux bases.
+"""Water / cc-pVTZ: RI-MP2 fit-residual diagnostic across two aux bases
+(cc-pVTZ-RI and cc-pVQZ-RI).
 
 Demonstrates ``MP2Options.report_ri_residual``: an opt-in flag that
 also computes the canonical (ia|jb) tensor and reports the per-bucket

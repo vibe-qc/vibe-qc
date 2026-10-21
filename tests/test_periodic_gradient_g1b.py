@@ -37,7 +37,7 @@ ANGSTROM_TO_BOHR = 1.8897261339213
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _h2o_periodic_box(box_ang: float = 20.0):
+def _h2o_periodic_box(box_ang: float = 20.0, *, molecular_limit: bool = False):
     big_box = box_ang * ANGSTROM_TO_BOHR
     atoms = [
         vq.Atom(8, [0.0, 0.0, 0.0]),
@@ -51,6 +51,9 @@ def _h2o_periodic_box(box_ang: float = 20.0):
     opts.conv_tol_energy = 1e-12
     opts.lattice_opts.cutoff_bohr = 25.0
     opts.lattice_opts.nuclear_cutoff_bohr = 25.0
+    # A 20-Angstrom box at cutoff 25 bohr holds only g = 0: the
+    # molecular-limit tests declare it, or the #133 guard refuses (#430).
+    opts.lattice_opts.gamma_only_0 = molecular_limit
     kmesh = vq.monkhorst_pack(sys, [1, 1, 1])
     return sys, basis, opts, kmesh, atoms
 
@@ -68,7 +71,7 @@ def test_compute_gradient_periodic_rks_gamma_exposed():
 # ---------------------------------------------------------------------------
 
 def test_h2o_lda_molecular_limit_matches_molecular():
-    sys, basis, opts, kmesh, atoms = _h2o_periodic_box()
+    sys, basis, opts, kmesh, atoms = _h2o_periodic_box(molecular_limit=True)
     result = vq.run_rks_periodic(sys, basis, kmesh, opts)
     g_p = vq.compute_gradient_periodic_rks_gamma(
         sys, basis, result, lattice_opts=opts.lattice_opts)
@@ -93,7 +96,7 @@ def test_h2o_lda_molecular_limit_matches_molecular():
 #     removes the α_HF-scaled exchange-G=0 self-image gauge for hybrids.
 # ---------------------------------------------------------------------------
 
-def _periodic_vs_molecular_rks(atoms, functional, box_ang=20.0):
+def _periodic_vs_molecular_rks(atoms, functional, box_ang=20.0, *, molecular_limit=False):
     big = box_ang * ANGSTROM_TO_BOHR
     sys = vq.PeriodicSystem(3, np.diag([big, big, big]), atoms)
     basis = vq.BasisSet(sys.unit_cell_molecule(), "sto-3g")
@@ -102,6 +105,7 @@ def _periodic_vs_molecular_rks(atoms, functional, box_ang=20.0):
     opts.conv_tol_energy = 1e-12
     opts.lattice_opts.cutoff_bohr = 25.0
     opts.lattice_opts.nuclear_cutoff_bohr = 25.0
+    opts.lattice_opts.gamma_only_0 = molecular_limit  # see _h2o_periodic_box
     kmesh = vq.monkhorst_pack(sys, [1, 1, 1])
     result = vq.run_rks_periodic(sys, basis, kmesh, opts)
     g_p = np.asarray(vq.compute_gradient_periodic_rks_gamma(
@@ -125,7 +129,7 @@ def test_h2o_pbe_molecular_limit_matches_molecular():
         [vq.Atom(8, [0.0, 0.0, 0.0]),
          vq.Atom(1, [0.0, 0.85 * ANGSTROM_TO_BOHR, 0.6 * ANGSTROM_TO_BOHR]),
          vq.Atom(1, [0.0, -0.85 * ANGSTROM_TO_BOHR, 0.6 * ANGSTROM_TO_BOHR])],
-        "pbe")
+        "pbe", molecular_limit=True)
     np.testing.assert_allclose(g_p, g_m, atol=1e-6,
         err_msg="periodic RKS PBE molecular-limit gradient diverges from "
                 "molecular analytic (GGA σ XC Pulay)")
@@ -143,7 +147,7 @@ def test_h2o_blyp_molecular_limit_matches_molecular():
         [vq.Atom(8, [0.0, 0.0, 0.0]),
          vq.Atom(1, [0.0, 0.85 * ANGSTROM_TO_BOHR, 0.6 * ANGSTROM_TO_BOHR]),
          vq.Atom(1, [0.0, -0.85 * ANGSTROM_TO_BOHR, 0.6 * ANGSTROM_TO_BOHR])],
-        "blyp")
+        "blyp", molecular_limit=True)
     np.testing.assert_allclose(g_p, g_m, atol=1e-6,
         err_msg="periodic RKS BLYP molecular-limit gradient diverges from "
                 "molecular analytic (B88/LYP σ-Pulay v_σ clamp regression)")
@@ -157,7 +161,7 @@ def test_h2_b3lyp_molecular_limit_matches_molecular():
     g_p, g_m = _periodic_vs_molecular_rks(
         [vq.Atom(1, [0.0, 0.0, 0.0]),
          vq.Atom(1, [0.0, 0.0, 1.0 * ANGSTROM_TO_BOHR])],
-        "b3lyp")
+        "b3lyp", molecular_limit=True)
     np.testing.assert_allclose(g_p, g_m, atol=1e-6,
         err_msg="periodic RKS B3LYP molecular-limit gradient diverges from "
                 "molecular analytic (exchange-G=0 gauge / hybrid)")
@@ -223,7 +227,7 @@ def test_h_chain_1d_b3lyp_true_periodic_fails_closed():
 # ---------------------------------------------------------------------------
 
 def test_unconverged_rejected():
-    sys, basis, opts, kmesh, _ = _h2o_periodic_box()
+    sys, basis, opts, kmesh, _ = _h2o_periodic_box(molecular_limit=True)
     opts.max_iter = 1
     opts.conv_tol_energy = 1e-30
     result = vq.run_rks_periodic(sys, basis, kmesh, opts)

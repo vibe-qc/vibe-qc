@@ -48,6 +48,7 @@ from .density_fitting import default_aux_basis_for
 from .density_fitting import (
     guard_aux_coverage_for_options as _guard_aux_coverage,
 )
+from .solvers._scf import solve_dense_fock
 
 # FNO option attributes carried on the Python CCSDOptions wrapper only (the
 # C++ kernel never sees them: FNO truncation is orchestrated in Python, then
@@ -836,11 +837,14 @@ def _semicanonicalize_brueckner_blocks(C, F, n_frozen, n_occ):
     U = np.eye(n_mo)
     f_mo = C.T @ F @ C
     if n_occ - n_frozen > 1:
-        _, Uoo = np.linalg.eigh(f_mo[n_frozen:n_occ, n_frozen:n_occ])
-        U[n_frozen:n_occ, n_frozen:n_occ] = Uoo
+        U[n_frozen:n_occ, n_frozen:n_occ] = solve_dense_fock(
+            f_mo[n_frozen:n_occ, n_frozen:n_occ],
+            basis_id="brueckner-mo-active-occupied",
+        ).eigenvectors
     if n_mo - n_occ > 1:
-        _, Uvv = np.linalg.eigh(f_mo[n_occ:, n_occ:])
-        U[n_occ:, n_occ:] = Uvv
+        U[n_occ:, n_occ:] = solve_dense_fock(
+            f_mo[n_occ:, n_occ:], basis_id="brueckner-mo-virtual",
+        ).eigenvectors
     return C @ U
 
 
@@ -1255,7 +1259,7 @@ def run_rohf_mp2(
 
     O(n⁵-n⁶) dense over the full MO space -- the same "reference, not
     production" tier as :func:`run_rohf_ccsd`; a C++ ROHF-MP2 is a later
-    milestone (handovers/HANDOVER_ROHF.md M6b-MP2).
+    milestone (the original investigation M6b-MP2).
 
     Parameters
     ----------
@@ -1515,7 +1519,11 @@ def run_fno_ccsd(molecule, basis, rhf_result, options=None):
     # because the occupied block is untouched and the RHF reference is
     # canonical).
     f_vv = C_vir.T @ F @ C_vir
-    eps_semi, W = np.linalg.eigh(Uk.T @ f_vv @ Uk)
+    semi = solve_dense_fock(
+        Uk.T @ f_vv @ Uk, basis_id="fno-retained-virtual",
+    )
+    eps_semi, W = semi.eigenvalues, semi.eigenvectors
+    del semi
     C_vir_fno = C_vir @ (Uk @ W)
 
     # delta-MP2: recover the MP2 correlation lost to truncation.

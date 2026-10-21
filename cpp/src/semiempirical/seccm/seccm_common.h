@@ -459,7 +459,7 @@ inline std::pair<Eigen::MatrixXd, Eigen::MatrixXd> assemble_weighted_dftb_h0(
                     * (params.average_on_site(atoms[central].Z)
                        + params.average_on_site(atoms[origin].Z));
                 hamiltonian(mu, nu) +=
-                    image.weight * 0.5 * params.kappa() * s * average;
+                    image.weight * params.kappa() * s * average;
             }
         }
     }
@@ -562,7 +562,7 @@ inline std::vector<GammaSite> dftb_gamma_sites(
 // remainder is what the Wigner-Seitz inventory truncates.
 //
 // Whether that truncation has a thermodynamic limit is a property of
-// `form`, not of the boundary (#211, #425): the Klopman-Ohno remainder
+// `form`, not of the boundary (former-tracker issues 211 and 425): the Klopman-Ohno remainder
 // falls off as R^-3 with a pair-dependent amplitude, the Elstner remainder
 // exponentially.
 inline Eigen::MatrixXd ewald_dftb_gamma(

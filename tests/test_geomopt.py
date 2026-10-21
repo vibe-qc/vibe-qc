@@ -1284,9 +1284,13 @@ def _low_dimensional_bipole_message(dim):
         "jk_method='bipole' requires a 3-D periodic system (dim=3); got "
         f"dim={dim}. The exact Ewald-J route uses a 3-D "
         "Ewald/Madelung lattice sum that is not a low-dimensional Coulomb "
-        "model. For a 1-D wire use jk_method='auto' or 'gdf'; for a 2-D "
-        "surface use jk_method='auto'/'slab_ewald_2d', or explicit GDF "
-        "for its supported closed-shell slab envelope."
+        "model. For a 2-D surface use jk_method='auto'/'slab_ewald_2d', "
+        "or explicit GDF for its supported closed-shell slab envelope. "
+        "A 1-D wire has no public route. Model the wire as a dim=3 cell "
+        "with vacuum on the two transverse axes, for example "
+        "PeriodicSystem(dim=3, lattice=np.diag([a, 15.0, 15.0]), "
+        "unit_cell=...) with kpoints=(nk, 1, 1), and converge the energy "
+        "per cell with respect to that vacuum."
     )
 
 

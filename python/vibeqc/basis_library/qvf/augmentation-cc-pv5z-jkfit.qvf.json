@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "augmentation-cc-pv5z-jkfit",
+  "description": "origin: https://raw.githubusercontent.com/psi4/psi4/master/psi4/share/psi4/basis/aug-cc-pvtz-jkfit.gbs\nretrieved on July 10, 2019\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n                      AUG-CC-PV5Z-JKFIT\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n from MOLPRO weigend_jkfit_aug.libmol files 16 February 2010\n according to note in above libmol files, augmented jkfit basis sets were\n    generated from CC-PVXZ-JKFIT (see reference thereat) by \"adding one\n    even tempered diffuse function to each primitive set. This was done\n    by building e1**2/e2 where e1 was the most-diffuse exponent already\n    present and e2 the next most diffuse one if both existed, or e1/2.5\n    if only one exponent existed beforehand. I.e., the jkfiting sets\n    here are not actually optimized for the indicated basis sets.\"\n for H B C N O F Ne Al Si P S Cl Ar Ga Ge As Se Br Kr\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\nmerged from cc-pv5z-jkfit.gbs and molpro-diffuse-aug-cc-pv5z-jkfit.gbs at Wed, 02:17 Aug 25, 2010",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -1804,7 +1804,40 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "kendall_dunning_harrison_1992",
+      "description": "R. A. Kendall, T. H. Dunning, R. J. Harrison, Journal of Chemical Physics 96, 6796-6806 (1992)",
+      "doi": "10.1063/1.462569"
+    },
+    {
+      "key": "weigend_jkfit_2002",
+      "description": "F. Weigend, Physical Chemistry Chemical Physics 4, 4285-4291 (2002)",
+      "doi": "10.1039/B204199P"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "augmentation-cc-pv5z-jkfit",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "fc64581d6f4e53394a4acd0aa7e97ba29986ff669e466f798a96ef3cef27084f",
+    "citations": [
+      {
+        "keys": [
+          "kendall_dunning_harrison_1992",
+          "weigend_jkfit_2002"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

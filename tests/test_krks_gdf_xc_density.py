@@ -10,7 +10,7 @@ v0.8.x convention. On the default *periodic* Becke grid it drops every
 image contribution to rho(r): exact in a vacuum box (which is why the
 vacuum gates never saw it), ~0.3 Ha wrong on tight ionic cells.
 
-Measured symptom (handovers/HANDOVER_AICCM_DIRECT_TORUS.md Finding §4, the
+Measured symptom (the original investigation Finding §4, the
 CHANGELOG [Unreleased] "Found: production KRKS ..." entry): rocksalt
 LiH/STO-3G fcc a=7.72 bohr, (1,1,1), pure PBE --
 

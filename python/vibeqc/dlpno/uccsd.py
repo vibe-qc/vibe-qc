@@ -29,8 +29,7 @@ DLPNO variational-subspace ansatz.
 This is an O(N⁶) full-space-contraction *pilot*, capped at ``max_nbf`` basis
 functions -- the correctness oracle the reduced-scaling per-pair engine will
 be validated against, exactly as the closed-shell ``run_dlpno_ccsd_pilot``
-relates to the local solver. Remaining production gates live in
-``handovers/HANDOVER_GATED_ITEMS.md``.
+relates to the local solver. Remaining production gates are outside this pilot.
 
 Diagonal spin-orbital pairs (P, P) vanish by the Pauli antisymmetry
 ``<PP||AB> = 0``, so there is no diagonal-pair PNO set; the singles use the
@@ -136,6 +135,8 @@ class DLPNOUCCSDPilotResult:
     pno_per_pair: dict = field(default_factory=dict)
     trace: list = field(default_factory=list)
     triples_executed: bool = False
+    source_kind: str = ""
+    source_identity: str = ""
 
 
 def _boys_localise(C_act, basis):
@@ -157,19 +158,32 @@ def run_dlpno_uccsd_pilot(
     uhf,
     df,
     options: DLPNOUCCSDPilotOptions | None = None,
+    *,
+    source=None,
 ) -> DLPNOUCCSDPilotResult:
     """Run the subspace-projected open-shell DLPNO-UCCSD(T) pilot.
 
     Parameters mirror :func:`vibeqc.dlpno.ump2.run_dlpno_ump2`: a converged
     UHF reference (``mo_coeffs_alpha/beta``, ``mo_energies_alpha/beta``,
     ``fock_alpha/beta``, ``energy``) and a python ``DensityFitting`` with a
-    real RI fitting basis.
+    real RI fitting basis. A keyword-only ``source`` supplies a
+    :class:`~vibeqc.dlpno.source.CorrelationSource` instead of those
+    positional inputs, including the AO overlap used for triples rotations.
     """
-    from vibeqc._vibeqc_core import compute_overlap
     from vibeqc.correlation_conventions import effective_electron_count
+    from .source import CorrelationSource, molecular_source
 
     if options is None:
         options = DLPNOUCCSDPilotOptions()
+    if source is None:
+        source = molecular_source(molecule, basis, uhf, df)
+    elif not isinstance(source, CorrelationSource):
+        raise TypeError(
+            "source must be a vibeqc.dlpno.source.CorrelationSource, got "
+            f"{type(source).__name__}"
+        )
+    molecule, basis = source.molecule, source.basis
+    uhf, df = source.reference, source.factors
     if options.localise not in ("none", "boys", "external"):
         raise ValueError(f"unknown localise option: {options.localise!r}")
 
@@ -177,7 +191,7 @@ def run_dlpno_uccsd_pilot(
     Cb = np.asarray(uhf.mo_coeffs_beta)
     Fa = np.asarray(uhf.fock_alpha)
     Fb = np.asarray(uhf.fock_beta)
-    S_ao = np.asarray(compute_overlap(basis))
+    S_ao = np.asarray(source.overlap_matrix())
     nbf = Ca.shape[0]
     if nbf > options.max_nbf:
         raise ValueError(
@@ -288,7 +302,8 @@ def run_dlpno_uccsd_pilot(
     t1_full = np.zeros((no, nv))  # singles in the full spin-orbital virtual space
 
     result = DLPNOUCCSDPilotResult(
-        e_hf=float(uhf.energy), n_frozen=nf, localise=options.localise
+        e_hf=float(uhf.energy), n_frozen=nf, localise=options.localise,
+        source_kind=str(source.kind), source_identity=str(source.identity),
     )
     result.n_pairs = len(pair_keys)
     result.pno_per_pair = {k: U[k].shape[1] for k in pair_keys}

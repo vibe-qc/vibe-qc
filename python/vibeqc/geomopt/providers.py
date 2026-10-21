@@ -475,9 +475,9 @@ class MolecularSCFProvider:
                 dispersion_params=self._dispersion_params,
             )
             if self._dispersion_params is not None:
-                from ..dispersion import compute_d3bj
+                from ..dispersion import compute_dispersion
 
-                disp = compute_d3bj(molecule, self._dispersion_params)
+                disp = compute_dispersion(molecule, self._dispersion_params)
                 e += float(disp.energy)
         else:
             # Wavefunction path (gated-out casscf / caspt2 / nevpt2,

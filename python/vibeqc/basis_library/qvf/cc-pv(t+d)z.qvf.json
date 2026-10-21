@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "cc-pv(t+d)z",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: cc-pV(T+d)Z\nCanonical name in vibe-qc: cc-pv_t+d_z\nOriginating publication: Dunning, J. Chem. Phys. 90, 1007 (1989); tight-d: Dunning, Peterson, Wilson, J. Chem. Phys. 114, 9244 (2001); DOI: 10.1063/1.1367371\nNote:\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: cc-pV(T+d)Z\nDescription: cc-pV(T+d)Z\n       Role: orbital\n    Version: 1  (Data from ccRepo/Grant Hill)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -20564,7 +20564,44 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "dunning_ccpvxz_1989",
+      "description": "T. H. Dunning, Journal of Chemical Physics 90, 1007-1023 (1989)",
+      "doi": "10.1063/1.456153"
+    },
+    {
+      "key": "dunning_tightd_2001",
+      "description": "T. H. Dunning, K. A. Peterson, A. K. Wilson, Journal of Chemical Physics 114, 9244-9253 (2001)",
+      "doi": "10.1063/1.1367373"
+    },
+    {
+      "key": "doi:10.1063/1.1367371",
+      "description": "Dunning, J. Chem. Phys. 90, 1007 (1989); tight-d: Dunning, Peterson, Wilson, J. Chem. Phys. 114, 9244 (2001)",
+      "doi": "10.1063/1.1367371"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "cc-pV(T+d)Z"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "6a98c628b323861101386af577d240e06d52be07feed000c4f81dab7a3458c8a",
+    "citations": [
+      {
+        "keys": [
+          "dunning_ccpvxz_1989",
+          "dunning_tightd_2001"
+        ]
+      }
+    ]
   }
 }

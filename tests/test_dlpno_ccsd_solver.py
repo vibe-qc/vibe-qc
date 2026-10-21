@@ -52,6 +52,8 @@ LocalCCSDOptions = partial(
     tcut_mkn=0.0,
     tcut_pairs=1e-4,
     residual_domain="pair",
+    # Predates the ORCA singles-PNO scale on the diagonal pairs (#190).
+    tcut_pno_diag_scale=1.0,
 )
 
 H2_ATOMS = [(1, [0.0, 0.0, 0.0]), (1, [0.0, 0.0, 1.4])]
@@ -479,8 +481,13 @@ class TestTNODomainDiagnostics:
         be far more aggressive than it looks. On an H10 chain at 1.8 bohr
         spacing (16.2 bohr long, strongly coupled occupieds) a
         ``coupling_radius`` of 5 bohr drops 16 of the 25 distinct triple keys
-        and takes 90% of the triples energy with them. The energy alone does
-        not say so; the counts do.
+        of the local (T0) and takes about three quarters of its triples energy
+        with them. The energy alone does not say so; the counts do.
+
+        The rotated-occupied (T1) keys are canonical orbitals, to which a
+        distance between localised orbitals does not apply, so the same radius
+        screens none of them (it used to, and lost 18% of the C6H14/cc-pVDZ
+        (T) at the default 12 bohr).
         """
         mol = Molecule(
             [Atom(1, [0.0, 0.0, i * 1.8]) for i in range(10)],
@@ -500,15 +507,21 @@ class TestTNODomainDiagnostics:
             tcut_pairs=0.0,
             tcut_tno=0.0,
             compute_triples=True,
-            triples_mode="t1",
             localise="boys",
         )
-        full = run_local_dlpno_ccsd(
-            mol, basis, rhf, df, LocalCCSDOptions(coupling_radius=0.0, **common)
-        )
-        screened = run_local_dlpno_ccsd(
-            mol, basis, rhf, df, LocalCCSDOptions(coupling_radius=5.0, **common)
-        )
+
+        def run(radius, mode):
+            return run_local_dlpno_ccsd(
+                mol,
+                basis,
+                rhf,
+                df,
+                LocalCCSDOptions(
+                    coupling_radius=radius, triples_mode=mode, **common
+                ),
+            )
+
+        full, screened = run(0.0, "local"), run(5.0, "local")
         assert full.converged and screened.converged
 
         assert full.n_triple_keys == 25
@@ -521,7 +534,13 @@ class TestTNODomainDiagnostics:
             == full.n_triple_keys
         )
         # And the loss is severe enough that reporting it matters.
-        assert abs(screened.e_t) < 0.2 * abs(full.e_t)
+        assert abs(screened.e_t) < 0.3 * abs(full.e_t)
+
+        t1_full, t1_radius = run(0.0, "t1"), run(5.0, "t1")
+        assert t1_radius.n_triple_keys == 25
+        assert t1_radius.n_triple_keys_screened == 0
+        # Only the CCSD coupling sets differ between the two.
+        assert t1_radius.e_t == pytest.approx(t1_full.e_t, rel=0.02)
 
 
 class TestTruncatedSubspaceOracle:
@@ -535,8 +554,10 @@ class TestTruncatedSubspaceOracle:
     validate.
 
     The historical pair-domain contraction disagrees under truncation and is
-    retained below as a strict negative control. The current default uses the
-    atom-based extended domain and has its own operative preset ratchet.
+    retained below as a strict negative control. The current default contracts
+    every residual term in PNO spaces (``residual_domain="pno"``, #190), which
+    reproduces the atom-based extended domain, and has its own operative
+    preset ratchet.
     """
 
     @staticmethod
@@ -573,13 +594,19 @@ class TestTruncatedSubspaceOracle:
         return local.e_corr, pilot.e_corr
 
     @pytest.mark.slow
-    def test_current_default_is_extended_and_tightens_toward_oracle(self):
-        """#98: the public paper-domain presets improve in tightening order."""
+    def test_current_default_is_pno_and_tightens_toward_oracle(self):
+        """#98, #190: the public presets improve in tightening order.
+
+        The presets inherit the shipped ``residual_domain="pno"`` default, so
+        this ratchets the compiled PNO-space route itself: NormalPNO matches
+        the pilot oracle, and the error against the full-domain reference
+        shrinks from loose through normal to tight.
+        """
         mol, basis, rhf, df, _ = _setup(H2O_ATOMS, "def2-svp")
 
         default = _LocalCCSDOptions()
         normal = options_from_dlpno_thresholds(_LocalCCSDOptions, "normal")
-        assert default.residual_domain == "extended"
+        assert default.residual_domain == "pno"
         for field in ("tcut_pairs", "tcut_pno", "tcut_mkn"):
             assert getattr(default, field) == getattr(normal, field)
 
@@ -804,7 +831,10 @@ def _setup_ccpvdz(atoms):
     return mol, basis, rhf, df
 
 
-def _preset_ladder(mol, basis, rhf, df, pno_norm="mp2", pno_correction=True):
+def _preset_ladder(
+    mol, basis, rhf, df, pno_norm="mp2", pno_correction=True,
+    domain_criterion="mulliken", tcut_pno_diag_scale=1.0,
+):
     """Full-domain reference plus the three published presets (default
     residual domain, default frozen core). Returns (full, {preset: result}).
 
@@ -818,6 +848,11 @@ def _preset_ladder(mol, basis, rhf, df, pno_norm="mp2", pno_correction=True):
     iterated pairs, which this route did not apply when they were recorded.
     It is identically zero at ``tcut_pno=0``, so the full-domain reference is
     unaffected either way -- only the preset rungs move.
+
+    `domain_criterion` and `tcut_pno_diag_scale` are explicit for the same
+    reason again: the retained values were measured with Mulliken PAO domains
+    and the plain tcut_pno on the diagonal pairs, before those defaults moved
+    (#190).
     """
     full = run_local_dlpno_ccsd(
         mol,
@@ -846,6 +881,12 @@ def _preset_ladder(mol, basis, rhf, df, pno_norm="mp2", pno_correction=True):
             options_from_dlpno_thresholds(
                 _LocalCCSDOptions, preset, compute_triples=False,
                 pno_norm=pno_norm, pno_correction=pno_correction,
+                domain_criterion=domain_criterion,
+                tcut_pno_diag_scale=tcut_pno_diag_scale,
+                # The extended-domain route these ladders were measured on
+                # and whose grouping the callers assert; the shipped "pno"
+                # default reproduces it (TestPNOSpaceRoute).
+                residual_domain="extended",
             ),
         )
         assert r.converged
@@ -886,7 +927,8 @@ class TestExtendedDomainGrouping:
             rhf,
             df,
             options_from_dlpno_thresholds(
-                _LocalCCSDOptions, "normal", compute_triples=False
+                _LocalCCSDOptions, "normal", compute_triples=False,
+                residual_domain="extended",
             ),
         )
         assert r.converged
@@ -905,7 +947,10 @@ class TestExtendedDomainGrouping:
         if not _HAVE_CPP_RESIDUAL:
             pytest.skip("core built without dlpno_pair_residual")
         mol, basis, rhf, df, _ = _setup(H2O_ATOMS, "def2-svp")
-        opts = dict(tcut_pno=1e-6, tcut_pairs=0.0, compute_triples=False)
+        opts = dict(
+            tcut_pno=1e-6, tcut_pairs=0.0, compute_triples=False,
+            residual_domain="extended",
+        )
         cpp = run_local_dlpno_ccsd(
             mol, basis, rhf, df, _LocalCCSDOptions(use_cpp_kernel=True, **opts)
         )
@@ -1543,3 +1588,514 @@ class TestPairSpaceRing:
                                  use_cpp_kernel=False, ring_in_pno_space=True),
             )
 
+
+
+# ---------------------------------------------------------------------------
+# GitLab #222: the semicanonical MP2 correction for the PNO truncation of the
+# ITERATED pairs, the second of the two corrections Riplinger and Neese
+# (J. Chem. Phys. 138, 034106 (2013), Sec. II C) prescribe. The local CCSD
+# route applied only the first, for the pairs dropped by screening.
+#
+# Everything that mentioned `pno_correction` before this class pins it OFF:
+# the retained #98 ladder references and the M16 and periodic pre-sweep
+# builders all predate the correction and hold their old convention on
+# purpose. That is correct for them, but it left the new behaviour locked in
+# by nothing -- every one of those pins would still pass if the correction
+# were silently dropped from `e_corr` again. These are the positive tests.
+# ---------------------------------------------------------------------------
+
+
+def _full_domain_pno_correction_oracle(mol, basis, rhf, df, tcut_pno):
+    """Independent full-domain MP2 difference for the all-electron Boys recipe.
+
+    Riplinger and Neese, JCP 138, 034106 (2013), Sec. II C 2-3,
+    printed p. 034106-7: subtract the recanonicalized PNO-MP2 energy from
+    the semicanonical MP2 energy. Eq. 23 defines the retained PNO space.
+
+    Full domains span the canonical virtual space, so this oracle needs no
+    production PAO, pair-density or pair-energy helper. It shares only the
+    RHF reference, Boys occupied gauge and DF Hamiltonian with the solver.
+    The energy uses explicit spin determinants, 1/4 sum_IJAB |<IJ||AB>|^2
+    / denominator, over *ordered* occupied pairs. There is no copied
+    off-diagonal spatial-pair multiplier to hide the regression in #333.
+    """
+    from itertools import product
+
+    from vibeqc import compute_dipole
+    from vibeqc.localise import foster_boys_localise
+
+    nocc = mol.n_electrons() // 2
+    coeff = np.asarray(rhf.mo_coeffs)
+    fock = np.asarray(rhf.fock)
+    dip = compute_dipole(basis)
+    dipoles = np.stack([np.asarray(dip.x), np.asarray(dip.y), np.asarray(dip.z)], axis=2)
+    occupied = foster_boys_localise(coeff[:, :nocc], dipoles, max_iter=200)
+    virtual = coeff[:, nocc:]
+    fv = virtual.T @ fock @ virtual
+    eps, rotation = np.linalg.eigh(0.5 * (fv + fv.T))
+    factors = np.asarray(df.mo_transform(occupied, virtual @ rotation))
+    fii = np.diag(occupied.T @ fock @ occupied)
+
+    def spin_energy(exchange, denominator):
+        energy = 0.0
+        for si, sj, sa, sb in product(range(2), repeat=4):
+            direct = exchange if si == sa and sj == sb else 0.0
+            crossed = exchange.T if si == sb and sj == sa else 0.0
+            antisymmetrized = direct - crossed
+            energy += 0.25 * float(np.sum(antisymmetrized**2 / denominator))
+        return energy
+
+    correction = 0.0
+    ranks = {}
+    for i, j in product(range(nocc), repeat=2):
+        exchange = factors[:, i, :].T @ factors[:, j, :]
+        denominator = fii[i] + fii[j] - eps[:, None] - eps[None, :]
+        amplitudes = exchange / denominator
+        # Eq. 23, expanded into symmetric and antisymmetric amplitudes.
+        # This differs algebraically from production's T-tilde construction.
+        sym = 0.5 * (amplitudes + amplitudes.T)
+        anti = 0.5 * (amplitudes - amplitudes.T)
+        density = (4.0 * sym @ sym + 12.0 * anti.T @ anti) / (1 + (i == j))
+        occupations, pnos = np.linalg.eigh(0.5 * (density + density.T))
+        keep = occupations > tcut_pno if tcut_pno > 0 else np.ones(len(eps), bool)
+        if not np.any(keep):
+            keep[-1] = True
+        pnos = pnos[:, keep]
+        projected_fock = pnos.T @ np.diag(eps) @ pnos
+        retained_eps, rotation = np.linalg.eigh(0.5 * (projected_fock + projected_fock.T))
+        pnos = pnos @ rotation
+        retained_exchange = pnos.T @ exchange @ pnos
+        retained_denominator = fii[i] + fii[j] - retained_eps[:, None] - retained_eps[None, :]
+        correction += spin_energy(exchange, denominator) - spin_energy(
+            retained_exchange, retained_denominator
+        )
+        if i <= j:
+            ranks[i, j] = len(retained_eps)
+    return correction, ranks
+
+
+class TestPnoTruncationCorrection:
+    """The correction is exact where it must be, and helps where it should."""
+
+    def test_identically_zero_without_pno_truncation(self):
+        """At ``tcut_pno=0`` there is no PNO truncation to correct.
+
+        This is the issue's stated tolerance, and it is what keeps the
+        full-domain exactness ratchets from moving: the correction must not
+        perturb a calculation that has nothing to correct.
+        """
+        mol, b, rhf, df, _ = _setup(H2O_ATOMS, "sto-3g")
+        on = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(localise="boys", pno_correction=True, **FULL),
+        )
+        off = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(localise="boys", pno_correction=False, **FULL),
+        )
+        assert on.converged and off.converged
+        assert on.e_pno_correction == pytest.approx(0.0, abs=1e-12)
+        assert on.e_corr == pytest.approx(off.e_corr, abs=1e-12)
+        expected, ranks = _full_domain_pno_correction_oracle(mol, b, rhf, df, 0.0)
+        assert expected == pytest.approx(0.0, abs=1e-12)
+        assert on.pno_per_pair == ranks
+
+    def test_it_is_actually_added_to_the_correlation_energy(self):
+        """`e_corr` must carry the correction, not merely report it.
+
+        The regression this guards is a silent drop: every pre-existing pin
+        sets ``pno_correction=False``, so none of them would notice
+        ``e_pno_correction`` being computed, disclosed, and then left out of
+        the energy.
+        """
+        mol, b, rhf, df, _ = _setup(H2O_ATOMS, "sto-3g")
+        common = dict(
+            localise="boys", tcut_pno=1e-4, tcut_mkn=0.0,
+            tcut_pairs=0.0, coupling_radius=0.0, residual_domain="full",
+        )
+        on = run_local_dlpno_ccsd(
+            mol, b, rhf, df, LocalCCSDOptions(pno_correction=True, **common)
+        )
+        off = run_local_dlpno_ccsd(
+            mol, b, rhf, df, LocalCCSDOptions(pno_correction=False, **common)
+        )
+        assert on.converged and off.converged
+        assert on.e_pno_correction != 0.0, (
+            "tcut_pno=1e-4 truncates PNOs, so the correction must be nonzero"
+        )
+        assert off.e_pno_correction == pytest.approx(0.0, abs=1e-14)
+        expected, ranks = _full_domain_pno_correction_oracle(mol, b, rhf, df, 1e-4)
+        assert on.pno_norm == "mp2"
+        assert on.pno_per_pair == ranks
+        # An absolute arithmetic tolerance, not an empirical CCSD recovery
+        # band. Both a missing off-diagonal weight and uniform halving fail.
+        assert on.e_pno_correction == pytest.approx(expected, rel=0, abs=1e-12)
+        # The whole of the correction, and nothing else, separates the two.
+        assert on.e_corr - off.e_corr == pytest.approx(
+            on.e_pno_correction, abs=1e-12
+        )
+        for result in (on, off):
+            assert result.n_screened == 0
+            assert result.e_t == 0.0
+            assert result.e_total == pytest.approx(
+                result.e_hf + result.e_corr + result.e_t, abs=1e-12
+            )
+
+    def test_it_reduces_the_isolated_pno_truncation_error(self):
+        """The correction must move the answer toward the untruncated one.
+
+        Domain and pair list are held fixed so the only error left is PNO
+        truncation, which is what the correction addresses. Verified
+        independently on the issue's own NH3/cc-pVDZ witness at 91.5% and
+        34.2% recovery; this is the same measurement made cheap enough to
+        keep in the suite.
+        """
+        mol, b, rhf, df, _ = _setup(H2O_ATOMS, "sto-3g")
+        common = dict(
+            localise="boys", tcut_mkn=0.0, tcut_pairs=0.0,
+            coupling_radius=0.0, residual_domain="full",
+        )
+        oracle = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(tcut_pno=0.0, pno_correction=False, **common),
+        )
+        on = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(tcut_pno=1e-4, pno_correction=True, **common),
+        )
+        off = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(tcut_pno=1e-4, pno_correction=False, **common),
+        )
+        assert oracle.converged and on.converged and off.converged
+        err_off = abs(off.e_corr - oracle.e_corr)
+        err_on = abs(on.e_corr - oracle.e_corr)
+        assert err_off > 0.0, "tcut_pno=1e-4 must truncate something to correct"
+        assert err_on < err_off, (
+            f"the correction made the PNO truncation error worse: "
+            f"{err_off:.4e} -> {err_on:.4e}"
+        )
+
+
+class TestPNOSpaceRoute:
+    """``residual_domain="pno"``: the compiled term-by-term PNO-space solver.
+
+    Every residual term is contracted in the PNO space that carries the
+    contracted index (Riplinger and Neese 2013, Sec. II C), so the route is
+    exact with respect to the occupied coupling set: it must reproduce the
+    extended-domain oracle at any PNO truncation and canonical CCSD at full
+    domains. These are the parity ratchets that let it replace the
+    extended-domain contraction whose cost grows with the domain dimension
+    (#66, #190).
+    """
+
+    @staticmethod
+    def _have_route():
+        from vibeqc.dlpno.ccsd_local_solver import _HAVE_CPP_PNO_SOLVE
+
+        return _HAVE_CPP_PNO_SOLVE
+
+    def test_refuses_when_the_core_predates_the_kernel(self, monkeypatch):
+        from vibeqc.dlpno import ccsd_local_solver as solver_mod
+
+        monkeypatch.setattr(solver_mod, "_HAVE_CPP_PNO_SOLVE", False)
+        mol, b, rhf, df, _ = _setup(H2_ATOMS, "sto-3g")
+        with pytest.raises(ValueError, match="dlpno_ccsd_pno_solve"):
+            run_local_dlpno_ccsd(
+                mol, b, rhf, df, _LocalCCSDOptions(residual_domain="pno")
+            )
+
+    @pytest.mark.parametrize(
+        "atoms,basis", [(H2_ATOMS, "sto-3g"), (H2O_ATOMS, "sto-3g")]
+    )
+    def test_full_domain_equals_canonical_ccsd(self, atoms, basis):
+        if not self._have_route():
+            pytest.skip("core built without dlpno_ccsd_pno_solve")
+        mol, b, rhf, df, e_ref = _setup(atoms, basis)
+        r = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(localise="boys", residual_domain="pno", **FULL),
+        )
+        assert r.converged
+        assert abs(r.e_corr - e_ref) < 1e-8
+
+    def test_matches_extended_oracle_under_pno_truncation(self):
+        """Same coupling set, truncated PNOs: the two contractions agree."""
+        if not self._have_route():
+            pytest.skip("core built without dlpno_ccsd_pno_solve")
+        mol, b, rhf, df, _ = _setup(H2O_ATOMS, "def2-svp")
+        common = dict(tcut_pno=1e-6, tcut_pairs=0.0, compute_triples=False)
+        ext = run_local_dlpno_ccsd(
+            mol, b, rhf, df, _LocalCCSDOptions(residual_domain="extended", **common)
+        )
+        pno = run_local_dlpno_ccsd(
+            mol, b, rhf, df, _LocalCCSDOptions(residual_domain="pno", **common)
+        )
+        assert ext.converged and pno.converged
+        assert pno.n_pairs == ext.n_pairs
+        assert pno.n_residual_domains == 0
+        assert abs(pno.e_corr - ext.e_corr) < 5e-9
+
+    def test_matches_extended_oracle_with_screening_and_finite_radius(self):
+        """Two waters 10 A apart under the NormalPNO-style locality settings:
+        pair screening, atom domains and a finite coupling radius. Some factor
+        rows lie outside a pair's own coupling set and are built on demand,
+        so the agreement with the oracle is the test of that bookkeeping."""
+        if not self._have_route():
+            pytest.skip("core built without dlpno_ccsd_pno_solve")
+        shift = 10.0 * ANGSTROM_TO_BOHR
+        atoms = list(H2O_ATOMS) + [
+            (z, [x + shift, y, zc]) for z, (x, y, zc) in H2O_ATOMS
+        ]
+        mol, b, rhf, df, _ = _setup(atoms, "def2-svp")
+        common = dict(
+            tcut_pno=1e-6,
+            tcut_mkn=1e-3,
+            tcut_pairs=1e-4,
+            coupling_radius=12.0,
+            compute_triples=False,
+        )
+        ext = run_local_dlpno_ccsd(
+            mol, b, rhf, df, _LocalCCSDOptions(residual_domain="extended", **common)
+        )
+        pno = run_local_dlpno_ccsd(
+            mol, b, rhf, df, _LocalCCSDOptions(residual_domain="pno", **common)
+        )
+        assert ext.converged and pno.converged
+        assert pno.n_screened == ext.n_screened > 0
+        assert pno.n_pairs == ext.n_pairs
+        assert abs(pno.e_corr - ext.e_corr) < 1e-8
+        assert abs(pno.t1_norm - ext.t1_norm) < 1e-7
+
+    def test_reports_the_extended_domain_it_does_not_build(self):
+        """``report_extended_domain`` gives the PNO route the dimension the
+        extended route contracts in, the virtual-side locality measure of
+        #190, and leaves the energy alone. Two waters 10 A apart with a 12
+        bohr radius: a pair on one water couples only to that water's
+        orbitals, so its extended domain is a proper subset."""
+        if not self._have_route():
+            pytest.skip("core built without dlpno_ccsd_pno_solve")
+        shift = 10.0 * ANGSTROM_TO_BOHR
+        atoms = list(H2O_ATOMS) + [
+            (z, [x + shift, y, zc]) for z, (x, y, zc) in H2O_ATOMS
+        ]
+        mol, b, rhf, df, _ = _setup(atoms, "def2-svp")
+        common = dict(
+            tcut_pno=1e-6,
+            tcut_mkn=1e-3,
+            tcut_pairs=1e-4,
+            coupling_radius=12.0,
+            compute_triples=False,
+            max_iter=2,
+        )
+        ext = run_local_dlpno_ccsd(
+            mol, b, rhf, df, _LocalCCSDOptions(residual_domain="extended", **common)
+        )
+        pno = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            _LocalCCSDOptions(
+                residual_domain="pno", report_extended_domain=True, **common
+            ),
+        )
+        plain = run_local_dlpno_ccsd(
+            mol, b, rhf, df, _LocalCCSDOptions(residual_domain="pno", **common)
+        )
+        n_vir = b.nbasis - mol.n_electrons() // 2
+        assert ext.avg_extended_domain == ext.avg_residual_domain
+        assert pno.avg_extended_domain == pytest.approx(
+            ext.avg_residual_domain, abs=1e-12
+        )
+        assert 0.0 < pno.avg_extended_domain < n_vir
+        assert plain.avg_extended_domain == 0.0
+        assert pno.e_corr == plain.e_corr
+
+    def test_normalpno_default_recipe_agrees_with_the_oracle(self):
+        """The published default (chemical core, NormalPNO, 12 bohr radius)."""
+        if not self._have_route():
+            pytest.skip("core built without dlpno_ccsd_pno_solve")
+        mol, b, rhf, df, _ = _setup(H2O_ATOMS, "def2-svp")
+        ext = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            options_from_dlpno_thresholds(
+                _LocalCCSDOptions, "normal", compute_triples=False
+            ),
+        )
+        pno = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            options_from_dlpno_thresholds(
+                _LocalCCSDOptions, "normal", compute_triples=False,
+                residual_domain="pno",
+            ),
+        )
+        assert ext.converged and pno.converged
+        assert abs(pno.e_corr - ext.e_corr) < 5e-9
+        assert pno.e_pno_correction == pytest.approx(ext.e_pno_correction)
+
+    def test_s22_01_monomer_normalpno_agrees_with_the_oracle(self):
+        """The #98 witness system at the published default: the route that
+        ships must give the extended-domain oracle's number."""
+        if not self._have_route():
+            pytest.skip("core built without dlpno_ccsd_pno_solve")
+        mol, basis, rhf, df = _setup_ccpvdz(S22_01_A)
+        ext = run_local_dlpno_ccsd(
+            mol, basis, rhf, df,
+            options_from_dlpno_thresholds(
+                _LocalCCSDOptions, "normal", compute_triples=False,
+                residual_domain="extended",
+            ),
+        )
+        pno = run_local_dlpno_ccsd(
+            mol, basis, rhf, df,
+            options_from_dlpno_thresholds(
+                _LocalCCSDOptions, "normal", compute_triples=False,
+                residual_domain="pno",
+            ),
+        )
+        assert ext.converged and pno.converged
+        assert pno.n_pairs == ext.n_pairs
+        assert abs(pno.e_corr - ext.e_corr) < 5e-9
+
+
+NH3_ANGSTROM = [
+    (7, [0.0, 0.0, 0.116]),
+    (1, [0.0, 0.939, -0.271]),
+    (1, [0.813, -0.469, -0.271]),
+    (1, [-0.813, -0.469, -0.271]),
+]
+
+
+class TestDOIDomains:
+    """PAO domains from differential overlap (Pinski et al. 2015), the
+    criterion ORCA uses, instead of Mulliken populations.
+
+    NH3's Foster-Boys lone pair carries 1.7e-4 Mulliken population on each
+    hydrogen, below ``tcut_mkn=1e-3``, so under the Mulliken criterion its
+    diagonal pair builds PNOs from nitrogen PAOs alone and the NormalPNO CCSD
+    correlation energy sits 0.34 kcal/mol above canonical (ORCA 6.1.1:
+    0.02). The lone pair's density does overlap the hydrogen PAOs, and the
+    DOI criterion keeps them.
+    """
+
+    @staticmethod
+    def _nh3():
+        return _setup_ccpvdz(
+            [(z, [c * ANGSTROM_TO_BOHR for c in p]) for z, p in NH3_ANGSTROM]
+        )
+
+    def test_lone_pair_domain_keeps_the_hydrogens(self):
+        from vibeqc import compute_dipole
+        from vibeqc._vibeqc_core import compute_overlap
+        from vibeqc.dlpno.pao import (
+            build_atom_basis_map,
+            build_projection_matrix,
+            orbital_domain_atom_mask,
+        )
+        from vibeqc.localise import foster_boys_localise
+
+        mol, basis, rhf, _ = self._nh3()
+        C = np.asarray(rhf.mo_coeffs)
+        S = np.asarray(compute_overlap(basis))
+        nbf = C.shape[0]
+        dip = compute_dipole(basis)
+        D = np.stack([np.asarray(dip.x), np.asarray(dip.y), np.asarray(dip.z)], axis=2)
+        C_loc = foster_boys_localise(C[:, 1:5], D, max_iter=200)
+        Q = build_projection_matrix(C[:, :5], S)
+        af, _ = build_atom_basis_map(mol, basis)
+        mull = orbital_domain_atom_mask(
+            mol, basis, C_loc, S, Q, af, criterion="mulliken", tcut_mkn=1e-3
+        )
+        doi = orbital_domain_atom_mask(
+            mol, basis, C_loc, S, Q, af, criterion="doi", tcut_do=1e-2
+        )
+        # The lone pair is the orbital with (almost) all its population on N.
+        CS = C_loc.T @ S
+        pop_n = np.einsum("im,mi->i", CS[:, af[0]:af[1]], C_loc[af[0]:af[1], :])
+        lp = int(np.argmax(pop_n))
+        assert mull[lp].tolist() == [True, False, False, False]
+        assert doi[lp].all()
+        assert doi.sum() >= mull.sum()
+        assert orbital_domain_atom_mask(
+            mol, basis, C_loc, S, Q, af, criterion="doi", tcut_do=0.0
+        ).all()
+        with pytest.raises(ValueError, match="domain criterion"):
+            orbital_domain_atom_mask(mol, basis, C_loc, S, Q, af, criterion="dox")
+
+    def test_nh3_normalpno_domain_error_is_removed(self):
+        mol, basis, rhf, df = self._nh3()
+
+        def run(**kw):
+            r = run_local_dlpno_ccsd(
+                mol, basis, rhf, df,
+                options_from_dlpno_thresholds(
+                    _LocalCCSDOptions, "normal", compute_triples=False, **kw
+                ),
+            )
+            assert r.converged
+            return r.e_corr
+
+        full = run(tcut_mkn=0.0)          # full domains, same PNO/pair cuts
+        doi = run(domain_criterion="doi")
+        mull = run(domain_criterion="mulliken")
+        assert abs(doi - full) < 1e-9     # every NH3 domain is the whole molecule
+        assert mull - full > 4e-4         # the lone pair lost its H PAOs
+
+    def test_tcut_mkn_zero_keeps_full_domains_under_doi(self):
+        """The exactness setting every retained recipe pins."""
+        mol, b, rhf, df, e_ref = _setup(H2O_ATOMS, "sto-3g")
+        r = run_local_dlpno_ccsd(
+            mol, b, rhf, df,
+            LocalCCSDOptions(localise="boys", domain_criterion="doi", tcut_do=0.5, **FULL),
+        )
+        assert r.converged
+        assert abs(r.e_corr - e_ref) < 1.0 * MICRO_HA
+
+    def test_presets_carry_orcas_tcut_do_and_disclose_it_only_under_doi(self):
+        from vibeqc.dlpno.thresholds import describe_dlpno_thresholds
+
+        for preset, tcut_do in (("loose", 2e-2), ("normal", 1e-2), ("tight", 5e-3)):
+            doi = options_from_dlpno_thresholds(_LocalCCSDOptions, preset)
+            assert doi.domain_criterion == "doi"
+            assert doi.tcut_do == pytest.approx(tcut_do)
+            prov = describe_dlpno_thresholds(doi)
+            assert dict(prov.applied)["tcut_do"] == pytest.approx(tcut_do)
+            assert prov.inactive == ()
+            mull = options_from_dlpno_thresholds(
+                _LocalCCSDOptions, preset, domain_criterion="mulliken"
+            )
+            prov = describe_dlpno_thresholds(mull)
+            assert "tcut_do" not in dict(prov.applied)
+            assert prov.inactive == ("tcut_do",)
+
+
+class TestSinglesPNOScale:
+    """``tcut_pno_diag_scale``: the diagonal pairs, which carry the singles,
+    are cut at ORCA's ``TCutPNOSingles = 0.03 * TCutPNO``. The semicanonical
+    PNO correction cannot recover a singles truncation (singles do not enter
+    MP2), so without it NormalPNO CCSD on n-butane/cc-pVDZ sits 1.62
+    kcal/mol above canonical against ORCA 6.1.1's 1.16 (1.08 with it)."""
+
+    def test_only_diagonal_pairs_grow_and_the_energy_moves_toward_the_limit(self):
+        co = [(6, [0.0, 0.0, 0.0]), (8, [0.0, 0.0, 1.128 * ANGSTROM_TO_BOHR])]
+        mol, basis, rhf, df = _setup_ccpvdz(co)
+
+        def run(**kw):
+            r = run_local_dlpno_ccsd(
+                mol, basis, rhf, df,
+                options_from_dlpno_thresholds(
+                    _LocalCCSDOptions, "normal", compute_triples=False, **kw
+                ),
+            )
+            assert r.converged
+            return r
+
+        plain = run(tcut_pno_diag_scale=1.0)
+        scaled = run()                       # the 0.03 default
+        limit = run(tcut_pno=0.0)            # same domains and pair list
+        assert _LocalCCSDOptions().tcut_pno_diag_scale == pytest.approx(0.03)
+        for (i, j), n in scaled.pno_per_pair.items():
+            if i != j:
+                assert n == plain.pno_per_pair[(i, j)]
+            else:
+                assert n >= plain.pno_per_pair[(i, j)]
+        assert sum(scaled.pno_per_pair.values()) > sum(plain.pno_per_pair.values())
+        assert abs(scaled.e_corr - limit.e_corr) < abs(plain.e_corr - limit.e_corr)

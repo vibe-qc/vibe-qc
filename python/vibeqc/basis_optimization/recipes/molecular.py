@@ -86,6 +86,60 @@ class MolecularOptResult:
     def _x_opt_phys(self):
         return self._opt_phys or [float("nan")] * len(self.labels)
 
+    # ---- hand-off to the basis store ----------------------------------------
+
+    def objective_summary(self) -> dict:
+        """JSON-ready description of what this run optimised, for provenance."""
+        return {
+            "recipe": "optimize_molecular_basis",
+            "reference": self.method,
+            "free_parameters": {
+                lab: float(v) for lab, v in zip(self.labels, self._x_opt_phys())
+            },
+            "starting_objective_hartree": float(self.starting_objective),
+            "optimal_objective_hartree": float(self.optimal_objective),
+            "converged": bool(self.converged),
+            "evaluations": int(self.n_evaluations),
+        }
+
+    def to_basis_record(self, name: str, *, starting_basis: Optional[str] = None,
+                        run_id: Optional[str] = None, description: str = "",
+                        citation_keys=()):
+        """The optimised basis as a ``vibe-basis`` QVF-Basis record.
+
+        See :func:`vibeqc.basis_optimization.export.optimised_basis_record`;
+        the record cites this run's optimiser (``citations``) and the
+        ``starting_basis`` routes for the optimised elements.
+        """
+        from ..export import optimised_basis_record
+
+        return optimised_basis_record(
+            self.optimized_atoms, name=name, starting_basis=starting_basis,
+            method_citations=self.citations, citation_keys=citation_keys,
+            run_id=run_id, description=description,
+            objective=self.objective_summary(),
+        )
+
+    def save_to_store(self, name: str, *, starting_basis: Optional[str] = None,
+                      run_id: Optional[str] = None, description: str = "",
+                      citation_keys=(), root=None, replace: bool = False,
+                      activate: bool = True):
+        """Import the optimised basis into the user basis store as ``name``.
+
+        Afterwards ``vq.BasisSet(mol, name)`` resolves it, and a run that
+        uses it cites the optimiser and the starting basis. See
+        :func:`vibeqc.basis_optimization.export.save_optimised_basis`.
+        """
+        from ..export import save_optimised_basis
+
+        return save_optimised_basis(
+            self.optimized_atoms, name=name, starting_basis=starting_basis,
+            method_citations=self.citations, citation_keys=citation_keys,
+            run_id=run_id, description=description,
+            objective=self.objective_summary(), root=root, replace=replace,
+            activate=activate,
+        )
+
 
 def _method_label(functional: Optional[str], open_shell: bool) -> str:
     if functional is None:

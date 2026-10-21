@@ -257,10 +257,17 @@ def test_gamma_gdf_rhf_accepts_all_3d_crystal_families(
     assert np.isfinite(result.energy)
 
 
+# A dim=1 cell is refused whatever its embedding metric (no consistent 1-D
+# Coulomb gauge), so only the slab case runs here.
+_ACCEPTED_LOW_DIMENSIONAL_GDF_CASES = [
+    case for case in LOW_DIMENSIONAL_GDF_CASES if case[1] == 2
+]
+
+
 @pytest.mark.parametrize(
     "name,dim,lattice",
-    LOW_DIMENSIONAL_GDF_CASES,
-    ids=[name for name, *_ in LOW_DIMENSIONAL_GDF_CASES],
+    _ACCEPTED_LOW_DIMENSIONAL_GDF_CASES,
+    ids=[name for name, *_ in _ACCEPTED_LOW_DIMENSIONAL_GDF_CASES],
 )
 def test_gamma_gdf_rhf_accepts_low_dimensional_nonorthogonal_lattices(
     name: str,
@@ -291,6 +298,25 @@ def test_gamma_gdf_rhf_accepts_low_dimensional_nonorthogonal_lattices(
     assert result.converged
     assert result.backend == "native-gamma-gdf"
     assert np.isfinite(result.energy)
+
+
+def test_gamma_gdf_rhf_refuses_a_nonorthogonal_wire():
+    """An oblique dim=1 embedding cell is refused like an orthogonal one."""
+    name, dim, lattice = LOW_DIMENSIONAL_GDF_CASES[0]
+    assert (name, dim) == ("1d-oblique", 1)
+    system, basis = _h2_system_for_lattice(dim, lattice)
+
+    with pytest.raises(
+        NotImplementedError,
+        match="no consistent Coulomb gauge for a dim = 1 cell",
+    ):
+        vq.run_rhf_periodic_gamma_gdf(
+            system,
+            basis,
+            vq.PeriodicRHFOptions(),
+            aux_basis="def2-svp-jk",
+            progress=False,
+        )
 
 
 @pytest.mark.parametrize(

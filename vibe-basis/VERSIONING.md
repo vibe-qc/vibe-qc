@@ -90,8 +90,7 @@ lane — by design, because it is a client that submits *to* the fleet
 rather than a payload that runs on it. Since v0.2.0 it is installable
 into the vibe-qc venvs via vibe-qc's `[basisopt]` extra, which is what
 makes its version verifiable on a host (`importlib.metadata`) rather
-than merely present as source. The full reasoning is in
-[`handovers/HANDOVER_VIBE_BASIS_DEPLOYMENT.md`](../handovers/HANDOVER_VIBE_BASIS_DEPLOYMENT.md).
+than merely present as source.
 
 ## History
 

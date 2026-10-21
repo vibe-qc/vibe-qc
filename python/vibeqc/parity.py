@@ -12,7 +12,7 @@ discrepancy to integrals (E_nuc, E_1e), the Fock build (E_coulomb,
 E_exchange), or the XC quadrature (E_xc).
 
 This is the vibe-qc *side* of the v0.13.5 HF/DFT certification matrix
-(see ``handovers/HANDOVER_CROSS_CODE_PARITY.md``). It is deliberately
+and is deliberately
 self-contained -- it imports nothing from PySCF / ORCA / any other
 quantum-chemistry program (CLAUDE.md Sec. 10). The reference side runs
 out-of-process; the comparison lives in ``tests/test_parity_hf_dft.py``.

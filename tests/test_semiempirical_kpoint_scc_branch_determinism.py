@@ -62,7 +62,13 @@ _WAVE_FLIP_CASES = (
     (5, 4.6, 48),
     (5, 7.0, 48),
 )
-_CUTOFF = 12.0
+_WAVE_CUTOFF = 12.0
+# Pair cutoff per element. The wave ran everything at 12 bohr. Since the
+# #373 Slater fits, Ga's overlaps reach past 12 bohr: the truncated S(k) of
+# the three Ga cases is indefinite there (smallest eigenvalues -0.24 to
+# -0.35), and positive definite from 30 bohr (#565). The glide argument
+# above does not depend on the cutoff, only on symmetric image sets.
+_CUTOFF = {5: _WAVE_CUTOFF, 31: 30.0}
 
 
 def _homonuclear_chain(z: int, a: float) -> PeriodicSystem:
@@ -91,7 +97,7 @@ def _run_case(z: int, a: float, mesh: int, conv_tol_charge: float):
         default_parameters(),
         kmesh,
         scc_options,
-        _CUTOFF,
+        _CUTOFF[z],
         occupation_options,
     )
 
@@ -136,7 +142,7 @@ def test_flagship_case_is_process_deterministic():
         "occ = _se.KPointOccupationOptions()\n"
         "occ.smearing_temperature = 0.0\n"
         "res = _se.run_scc_dftb_kpoints(system, default_parameters(), kmesh,"
-        f" opts, {_CUTOFF!r}, occ)\n"
+        f" opts, {_CUTOFF[z]!r}, occ)\n"
         "print(res.converged, res.n_iter, repr(res.energy),"
         " [repr(float(c)) for c in res.charges])\n"
     )
@@ -151,3 +157,16 @@ def test_flagship_case_is_process_deterministic():
         )
         outcomes.add(proc.stdout)
     assert len(outcomes) == 1, outcomes
+
+
+@pytest.mark.parametrize(("z", "a", "mesh"), [c for c in _WAVE_FLIP_CASES if c[0] == 31])
+def test_wave_cutoff_is_refused_for_ga_with_its_remedy(z, a, mesh):
+    """The wave's 12-bohr Ga input truncates S(k) below positive definite;
+    the driver says so and names the cutoff instead of failing deep in the
+    Bloch eigensolver (#565)."""
+    system = _homonuclear_chain(z, a)
+    with pytest.raises(RuntimeError, match=r"run_scc_dftb_kpoints: the Bloch overlap S\(k\).*raise cutoff_bohr"):
+        _se.run_scc_dftb_kpoints(
+            system, default_parameters(), monkhorst_pack(system, (mesh, 1, 1)),
+            _se.SCCOptions(), _WAVE_CUTOFF, _se.KPointOccupationOptions(),
+        )

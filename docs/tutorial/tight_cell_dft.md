@@ -10,8 +10,9 @@ E_\mathrm{xc}[\rho] = \int \rho(\mathbf{r}) \, \varepsilon_\mathrm{xc}
 $$
 
 The grid points $\{\mathbf{r}_g\}$ are atom-centered Lebedev-Becke
-shells; the weights $\{w_g\}$ partition unity around each atom via
-**Becke's 1988 fuzzy-cell scheme**. For molecules this is rock-solid.
+shells ({vibeqc-cite}`lebedev_laikov_1999`); the weights $\{w_g\}$
+partition unity around each atom via
+**Becke's 1988 fuzzy-cell scheme** ({vibeqc-cite}`becke_grid_1988`). For molecules this is rock-solid.
 For a periodic system with a *tight* unit cell (lattice parameter
 $\sim$ 5 bohr), Becke's molecular partition silently fails: image
 atoms in neighboring cells sit within the partition reach of grid
@@ -21,7 +22,10 @@ over-counted contribution from a region that, periodically, should
 have been split with the image atom.
 
 vibe-qc's **periodic Becke partition** (Phase 12f) extends the
-Becke denominator to include image atoms within a chosen radius. The
+Becke denominator to include image atoms within a chosen radius, the
+crystalline extension of the fuzzy-cell scheme described by M. D. Towler,
+A. Zupan and M. Causà, *Comput. Phys. Commun.* **98**, 181 (1996),
+doi:[10.1016/0010-4655(96)00078-1](https://doi.org/10.1016/0010-4655(96)00078-1). The
 home/image partition reduces to the molecular partition at large cell
 sizes (the molecular-limit test) and recovers the correct cell-volume
 integration weight at tight cells. This tutorial walks through the
@@ -142,7 +146,8 @@ substitutes in.
 
 ### Becke's fuzzy-cell partition
 
-For a molecule with atoms $\{A\}$, Becke (1988) defines a
+For a molecule with atoms $\{A\}$, Becke (1988,
+{vibeqc-cite}`becke_grid_1988`) defines a
 *partition function* $P_A(\mathbf{r})$ by
 
 $$
@@ -160,7 +165,9 @@ polynomial that goes from $1$ (well inside atom A's Voronoi cell)
 to $0$ (well inside atom B's). By construction $\sum_A P_A(\mathbf{r})
 = 1$ for any $\mathbf{r}$ where any $p_A > 0$.
 
-Each atom contributes a Lebedev-Becke radial-times-angular grid; the
+Each atom contributes a Lebedev-Becke radial-times-angular grid
+(Treutler-Ahlrichs radial shells, {vibeqc-cite}`treutler_ahlrichs_1995`;
+Lebedev-Laikov angular shells, {vibeqc-cite}`lebedev_laikov_1999`); the
 final weights are
 
 $$
@@ -206,9 +213,10 @@ within $R_{\max}$ of any home atom), the extended sum collapses to
 the home-cell-only sum and $P^\mathrm{periodic} \equiv
 P^\mathrm{molecular}$. The flag is therefore *safe* to leave on for
 all calculations, it only changes the answer when image atoms are
-actually close enough to matter. (PySCF.pbc and CRYSTAL both ship
-this construction by default; vibe-qc keeps it opt-in for
-backwards compatibility while users migrate.)
+actually close enough to matter. (CRYSTAL, and PySCF.pbc on its
+density-fitted routes, ship this construction by default, and vibe-qc
+has done so since v0.9.x; set ``use_periodic_becke=False`` only to
+reproduce v0.8.x numbers.)
 
 ## Resources
 
@@ -256,14 +264,16 @@ backwards compatibility while users migrate.)
   default radial grid follows.
 - **Pisani, C.; Dovesi, R.; Roetti, C.** *Hartree-Fock Ab Initio
   Treatment of Crystalline Systems*. Lecture Notes in Chemistry
-  vol. 48, Springer (1988). The CRYSTAL integration scheme, a
-  related but pre-Becke approach to the crystalline-cell-partition
-  problem.
-- **Sun, Q.; Berkelbach, T. C.; McClain, J. D.; Chan, G. K.-L.**
-  "Gaussian and plane-wave mixed density fitting for periodic
-  systems," *J. Chem. Phys.* **147**, 164119 (2017). [Ref: verify]
-  PySCF.pbc's reference for the periodic Becke partition vibe-qc's
-  Phase 12f mirrors.
+  vol. 48, Springer (1988). The Hartree-Fock LCAO formalism behind
+  CRYSTAL, with analytic integrals; it predates CRYSTAL's numerical
+  DFT grids, whose periodic partition is the Towler, Zupan and Causà
+  scheme below.
+- **Towler, M. D.; Zupan, A.; Causà, M.** "Density functional theory
+  in periodic systems using local Gaussian basis sets," *Comput. Phys.
+  Commun.* **98**, 181 (1996),
+  doi:[10.1016/0010-4655(96)00078-1](https://doi.org/10.1016/0010-4655(96)00078-1).
+  The crystalline extension of the Becke fuzzy-cell partition that
+  vibe-qc's Phase 12f follows.
 
 ## Next
 

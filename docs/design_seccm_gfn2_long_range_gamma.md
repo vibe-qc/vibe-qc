@@ -1,12 +1,18 @@
 # Design: self-consistent long-range gamma for GFN2-xTB-SECCM
 
-**Status (issue #444):** non-molecular 3-D `ewald_gamma=True` fails closed
+**Status (former-tracker issue 444):** non-molecular 3-D `ewald_gamma=True` fails closed
 at the native route boundary, before supercell matrix assembly. Exact
 zero-image molecular delegation and the 1-D/2-D paths are unchanged.
 The internal 3-D shell-gamma seam remains available for diagnostic tests,
 not production energies. Finite WS truncation does not cure the
 thermodynamic-limit defect. No replacement GFN2 hardness mapping or
 finite-distance energy change is introduced here.
+
+The SECCM gamma code, tests and changelog call this defect `#444`. That
+number belongs to the issue tracker used before the repository split and
+was not carried over. The current tracker's #444 is an unrelated
+SCC-DFTB-SECCM fixture issue, so this note is the live description of the
+defect.
 
 ## Literature and the long-range/short-range partition
 
@@ -75,7 +81,7 @@ scales as `integral R^(d-4) dR` and converges. This dimensional argument
 does not certify every other GFN2 channel or solve an SCC instability.
 The shipped 1-D wire and 2-D Parry/Heyes paths, including the exact pairwise
 2-D K=0 term, remain unchanged. The separate SCC-DFTB contracts tracked by
-#211/#425 are not modified by this GFN2 containment.
+former-tracker issues 211 and 425 are not modified by this GFN2 containment.
 
 An exponential remainder such as the density-derived SCC-DFTB gamma in
 [Elstner et al. (1998), equations 17-18](https://doi.org/10.1103/PhysRevB.58.7260)
@@ -128,7 +134,7 @@ create a bypass: it selects the cyclic engine even for zero-image records.
 
 The internal kernel still pins finite-cluster bookkeeping, the eta-to-zero
 point-Coulomb anchor, and skew-cell enumeration. Those tests do not authorize
-production 3-D use. Named #130 Cu recipes now assert the explicit rejection;
+production 3-D use. Named former-tracker issue 130 Cu recipes now assert the explicit rejection;
 their old energy, size and state assertions remain historical evidence,
 not reachable production expectations. Earlier MgO/corundum bulk convergence
 and lattice claims likewise do not establish thermodynamic validity.

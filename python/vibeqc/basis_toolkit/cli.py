@@ -21,6 +21,19 @@ Usage::
 
     # Inspect a basis set (summary)
     python -m vibeqc.basis_toolkit.cli inspect sto-3g.qvf.json
+
+    # Render the bundled library's records into libint's .g94 / .ecp text,
+    # or check that the committed rendering is in step with the records
+    python -m vibeqc.basis_toolkit.cli render --target build/basis_library/basis
+    python -m vibeqc.basis_toolkit.cli check
+
+    # Put your own basis set into the user store, where BasisSet(mol, name)
+    # resolves it like a bundled one; list, resolve and remove store records
+    vibe-qc-basis import my-basis.g94 --kind hand-written --cite some_key
+    vibe-qc-basis import run-42/mgo-opt.g94        # vibe-basis export: sidecar supplies kind and run id
+    vibe-qc-basis list
+    vibe-qc-basis resolve my-basis def2-svp
+    vibe-qc-basis remove my-basis
 """
 
 from __future__ import annotations
@@ -152,9 +165,21 @@ def cmd_convert(args: argparse.Namespace) -> int:
         return 1
 
     data = _load_input(input_path)
+    if args.ecp:
+        from .importer_g94 import from_g94_file
+
+        sidecar = from_g94_file(args.ecp, name=data.name, role="ecp")
+        merged = dict(data.ecps or {})
+        merged.update(sidecar.ecps or {})
+        data.ecps = merged or None
+        for sym, element in data.elements.items():
+            element.ecp_id = sym if sym in merged else None
+    _apply_provenance_flags(data, args)
 
     output_path = Path(args.output)
     fmt = args.format
+    if fmt is None and output_path.name.lower().endswith(".qvf.json"):
+        fmt = "qvf_json"
 
     if fmt is None:
         # Auto-detect from output extension
@@ -212,6 +237,38 @@ def cmd_convert(args: argparse.Namespace) -> int:
         if args.verbose:
             print(loss.summary())
     return 0
+
+
+def _apply_provenance_flags(data, args: argparse.Namespace) -> None:
+    """Fill name, description and the 1.1.0 provenance from ``convert`` flags."""
+    from .model import SCHEMA_VERSION, CitationRoute, Provenance, ProvenanceKind, Upstream
+
+    if getattr(args, "name", None):
+        data.name = args.name
+    if getattr(args, "description", None) is not None:
+        data.description = args.description
+    kind = getattr(args, "kind", None)
+    upstream = getattr(args, "upstream", None) or []
+    cites = getattr(args, "cite", None) or []
+    date = getattr(args, "retrieval_date", None)
+    run_id = getattr(args, "run_id", None)
+    if not (kind or upstream or cites or date or run_id):
+        return
+    prov = data.provenance or Provenance(origin="file")
+    if kind:
+        prov.kind = ProvenanceKind(kind)
+    for spec in upstream:
+        name, _, version = spec.partition("@")
+        prov.upstream.append(Upstream(name=name, version=version or None))
+    if cites:
+        prov.citations.append(CitationRoute(keys=list(cites)))
+    if date:
+        prov.retrieval_date = date
+    if run_id:
+        prov.run_id = run_id
+    data.schema_version = SCHEMA_VERSION
+    prov.content_sha256 = data.content_sha256()
+    data.provenance = prov
 
 
 def cmd_loss(args: argparse.Namespace) -> int:
@@ -314,14 +371,152 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         p = data.provenance
         print(f"\nProvenance:")
         print(f"  Origin:   {p.origin}")
+        if p.kind is not None:
+            print(f"  Kind:     {p.kind.value}")
+        for up in p.upstream:
+            detail = f" ({up.detail})" if up.detail else ""
+            version = f" {up.version}" if up.version else ""
+            print(f"  Upstream: {up.name}{version}{detail}")
         if p.source_version:
             print(f"  Version:  {p.source_version}")
         if p.source_doi:
             print(f"  DOI:      {p.source_doi}")
         if p.retrieval_date:
             print(f"  Date:     {p.retrieval_date}")
+        if p.content_sha256:
+            print(f"  Content:  sha256 {p.content_sha256}")
+        for route in p.citations:
+            cover = ", ".join(route.elements) if route.elements is not None else "all elements"
+            print(f"  Cites:    {', '.join(route.keys)}  [{cover}]")
+        if p.run_id:
+            print(f"  Run:      {p.run_id}")
 
     return 0
+
+
+def cmd_render(args: argparse.Namespace) -> int:
+    """Render every bundled record into a ``basis/`` directory."""
+    from . import library
+
+    target = Path(args.target) if args.target else library.renderings_dir()
+    report = library.render_library(target)
+    print(
+        f"Rendered {len(library.stems())} records into {target}: "
+        f"{len(report.written)} written, {len(report.unchanged)} unchanged, "
+        f"{len(report.removed)} stale file(s) removed."
+    )
+    return 0
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    """Compare a rendering with the records; exit 1 on any difference."""
+    from . import library
+
+    target = Path(args.target) if args.target else library.renderings_dir()
+    problems = library.check_library(target)
+    for name, why in problems.items():
+        print(f"{name}: {why}")
+    if problems:
+        print(
+            f"FAIL  {len(problems)} rendering(s) out of step with the records; "
+            "re-render with: vibe-qc-basis render",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"OK  {len(library.stems())} records, renderings in {target} match")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    """Import a basis into the user store (#410)."""
+    from .. import basis_store
+    from .model import Upstream
+
+    upstream = []
+    for spec in args.upstream or []:
+        name, _, version = spec.partition("@")
+        upstream.append(Upstream(name=name, version=version or None))
+    try:
+        stored = basis_store.import_record(
+            args.source, name=args.name, kind=args.kind,
+            replace_bundled=args.replace_bundled, replace=args.replace,
+            description=args.description, upstream=upstream,
+            citation_keys=args.cite or (), run_id=args.run_id, notes=args.notes,
+            root=args.store,
+        )
+    except (basis_store.BasisStoreError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"Imported {stored.name!r} ({stored.kind}) into {stored.path.parent.parent}")
+    print(f"  content sha256 {stored.content_sha256}")
+    print(f"  rendering      {stored.g94_path}" + (f", {stored.ecp_path}" if stored.ecp_path else ""))
+    if stored.replaces_bundled:
+        print("  replaces the bundled record of the same name for this user")
+    print("BasisSet(mol, %r) resolves it in every new vibe-qc process." % stored.name)
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    """List the user store's records."""
+    from .. import basis_store
+
+    records = basis_store.list_records(args.store)
+    root = basis_store.user_store_root(args.store)
+    if not records:
+        print(f"No records in the user store {root}")
+        return 0
+    print(f"User store {root}: {len(records)} record(s)")
+    for record in records:
+        flag = "  (replaces bundled)" if record.replaces_bundled else ""
+        run = f"  run {record.extra.get('run_id')}" if record.extra.get("run_id") else ""
+        print(f"  {record.name:<28s} {record.kind:<13s} {record.content_sha256[:16]}  {record.recorded_at[:10]}{flag}{run}")
+    return 0
+
+
+def cmd_remove(args: argparse.Namespace) -> int:
+    from .. import basis_store
+
+    if basis_store.remove_record(args.name, root=args.store):
+        print(f"Removed {args.name!r} from the user store")
+        return 0
+    print(f"{args.name!r} is not in the user store", file=sys.stderr)
+    return 1
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    """Say which layer answers each name, without fetching."""
+    import os
+
+    from .. import basis_store
+    from ..basis_registry import basis_file_path
+    from ..basis_toolkit import library
+
+    store = {r.name: r for r in basis_store.list_records(args.store)}
+    status = 0
+    for name in args.names:
+        stem = name.strip().lower()
+        if stem in store and (store[stem].replaces_bundled or stem not in library.stems()):
+            where = f"user store ({store[stem].kind}, sha256 {store[stem].content_sha256[:16]})"
+        elif stem in library.stems():
+            where = "bundled library"
+        elif basis_file_path(name) is not None:
+            where = f"LIBINT_DATA_PATH {os.environ.get('LIBINT_DATA_PATH', '')}"
+        else:
+            hit = None
+            try:
+                hit = basis_store.cache_get(name)
+            except basis_store.BasisStoreIntegrityError as exc:
+                where = f"fetch cache, FAILS verification: {exc}"
+                status = 1
+            else:
+                where = (
+                    f"fetch cache ({hit.extra.get('bse_name', '?')} from BSE {hit.extra.get('bse_version', '?')})"
+                    if hit is not None else "unresolved (not bundled, not in the store or cache)"
+                )
+                if hit is None:
+                    status = 1
+        print(f"{name:<28s} -> {where}")
+    return status
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -356,6 +551,23 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_conv.add_argument(
         "-v", "--verbose", action="store_true", help="Show loss report details"
     )
+    p_conv.add_argument("--ecp", help="Gaussian94 .ecp sidecar to merge into the record")
+    p_conv.add_argument("--name", help="Record name (the identifier users pass to BasisSet)")
+    p_conv.add_argument("--description", help="Free-text description stored in the record")
+    p_conv.add_argument(
+        "--kind", choices=["vendor", "bse", "hand-written", "vibe-basis"],
+        help="provenance.kind of the record",
+    )
+    p_conv.add_argument(
+        "--upstream", action="append", metavar="NAME[@VERSION]",
+        help="An upstream source, e.g. 'basis-set-exchange@0.12' (repeatable)",
+    )
+    p_conv.add_argument(
+        "--cite", action="append", metavar="KEY",
+        help="Citation key in vibeqc's database.toml routed over every element (repeatable)",
+    )
+    p_conv.add_argument("--retrieval-date", dest="retrieval_date", help="ISO date the data was obtained")
+    p_conv.add_argument("--run-id", dest="run_id", help="vibe-basis run identity")
     p_conv.set_defaults(func=cmd_convert)
 
     # --- loss ---
@@ -376,6 +588,56 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     p_insp.add_argument("input", help="Input basis-set file")
     p_insp.set_defaults(func=cmd_inspect)
+
+    # --- render / check ---
+    p_render = sub.add_parser(
+        "render", help="Render the bundled records into libint's .g94 / .ecp files"
+    )
+    p_render.add_argument(
+        "--target", help="basis/ directory to write (default: the committed rendering)"
+    )
+    p_render.set_defaults(func=cmd_render)
+
+    p_check = sub.add_parser(
+        "check", help="Verify a rendering is byte for byte what the records render to"
+    )
+    p_check.add_argument(
+        "--target", help="basis/ directory to compare (default: the committed rendering)"
+    )
+    p_check.set_defaults(func=cmd_check)
+
+    # --- the user store ---
+    p_imp = sub.add_parser(
+        "import", help="Put a basis set into the user store so BasisSet resolves it by name"
+    )
+    p_imp.add_argument("source", help=".qvf.json, .g94 (with an .ecp beside it), BSE .json, CRYSTAL file or directory")
+    p_imp.add_argument("--name", help="Record name (default: the source's name)")
+    p_imp.add_argument("--kind", choices=["hand-written", "vibe-basis"],
+                       help="What the record is (a provenance sidecar may supply it)")
+    p_imp.add_argument("--replace-bundled", action="store_true", dest="replace_bundled",
+                       help="Let this record win over a bundled set of the same name")
+    p_imp.add_argument("--replace", action="store_true", help="Overwrite a store record of the same name")
+    p_imp.add_argument("--description")
+    p_imp.add_argument("--upstream", action="append", metavar="NAME[@VERSION]")
+    p_imp.add_argument("--cite", action="append", metavar="KEY", help="database.toml citation key (repeatable)")
+    p_imp.add_argument("--run-id", dest="run_id", help="vibe-basis run identity")
+    p_imp.add_argument("--notes")
+    p_imp.add_argument("--store", help="Store root (default: $VIBEQC_BASIS_STORE or the XDG data dir)")
+    p_imp.set_defaults(func=cmd_import)
+
+    p_list = sub.add_parser("list", help="List the user store's records")
+    p_list.add_argument("--store")
+    p_list.set_defaults(func=cmd_list)
+
+    p_rm = sub.add_parser("remove", help="Remove a record from the user store")
+    p_rm.add_argument("name")
+    p_rm.add_argument("--store")
+    p_rm.set_defaults(func=cmd_remove)
+
+    p_res = sub.add_parser("resolve", help="Say which layer answers each basis name")
+    p_res.add_argument("names", nargs="+")
+    p_res.add_argument("--store")
+    p_res.set_defaults(func=cmd_resolve)
 
     args = parser.parse_args(argv)
     return args.func(args)

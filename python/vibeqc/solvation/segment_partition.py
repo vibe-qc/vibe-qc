@@ -101,11 +101,19 @@ def _becke_switch_and_derivative(mu: np.ndarray, k: int):
     than differentiated symbolically, so the value and the derivative cannot
     disagree about which iterate they are at.
     """
-    m = np.asarray(mu, dtype=np.float64)
+    m = np.array(mu, dtype=np.float64)
     dp = np.ones_like(m)
+    m2 = np.empty_like(m)
     for _ in range(int(k)):
-        dp = dp * 1.5 * (1.0 - m * m)
-        m = 1.5 * m - 0.5 * m * m * m
+        # In place: this runs on (chunk, n_centres, n_centres) tensors inside
+        # the VJP and was its single largest cost through temporaries.
+        np.multiply(m, m, out=m2)          # m^2
+        dp *= 1.5
+        dp *= 1.0 - m2                      # dp *= p'(m)
+        m2 *= m                             # m^3
+        m2 *= 0.5
+        m *= 1.5
+        m -= m2                             # m = 1.5 m - 0.5 m^3
     return 0.5 * (1.0 - m), -0.5 * dp
 
 

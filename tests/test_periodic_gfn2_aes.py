@@ -204,7 +204,7 @@ def test_mgo_energy_is_invariant_under_lattice_relabelling(params, gamma_form):
     # The Klopman-Ohno map at T = 0.001 converges into the over-polarised
     # shell-transfer basin the physical-basin gate rejects; at 0.005 it
     # reaches the physical state in 37 iterations (the form is not the
-    # periodic default, see #444).
+    # periodic default, see former-tracker issue 444).
     temperature = 0.001 if gamma_form == _se.ShellGammaForm.Elstner else 0.005
     opts = _tight(gamma_form, temperature=temperature)
     results = [
@@ -355,7 +355,7 @@ def test_hbn_gradient_and_in_plane_stress_match_finite_differences(params):
 
 @requires_gfn2
 def test_elstner_gamma_converges_in_the_cutoff_and_klopman_ohno_does_not(params):
-    """The periodic instance of #444 on the isotropic kernel itself.
+    """The periodic instance of former-tracker issue 444 on the isotropic kernel itself.
 
     The driver sums the Elstner remainder over its own decay range, so the
     assembled gamma is already converged at the default overlap cutoff; the

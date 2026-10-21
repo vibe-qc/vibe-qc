@@ -1,43 +1,34 @@
 // Phase D2e — TRAH (Trust-Region Augmented Hessian) SCF step.
 //
-// Distinct from D2c Newton (full Hessian + simple ‖κ‖_F cap) and D2d
-// Neese SOSCF (diagonal-dominant Hessian + AH eigenvalue λ-shift) by
-// the combination it ships:
-//   * Full orbital Hessian (same matvec as Newton — preconditioned CG
-//     against JKBuilder-driven Hessian-vector products).
-//   * **Adaptive trust radius** updated each step from Powell's ρ
-//     test, ρ = (actual ΔE) / (model-predicted ΔE).
-//   * λ-shift on the trust-region cap when the Newton step is
-//     rejected, so the next step is automatically more conservative.
+// This implementation targets the orbital trust-region model
+//   minimise m(kappa) = g^T kappa + 1/2 kappa^T A kappa,
+//   subject to ||kappa|| <= Delta,
+// using a bounded small-space spectral solve, or shifted preconditioned CG
+// and a More-Sorensen secular search for larger spaces.
+// The reference below instead solves a scaled augmented-Hessian eigenproblem;
+// this implementation does not reproduce that inner eigensolver or all of its
+// guarantees. UHF/UKS retain the occupied/virtual Fock blocks in A; restricted
+// TRAH still uses the diagonal-gap approximation for that term. Both include
+// JKBuilder (and, when supplied, XC-kernel) response products.
 //
-// The "augmented Hessian" framing of Helmich-Paris 2022 lets the AH
-// eigenvalue carry the shift automatically — the lowest eigenvalue of
-// the (g; A) augmented matrix is the optimal λ for the given step
-// budget. This implementation uses the equivalent level-shifted PCG
-// variant: it solves the trust-region subproblem
-//   minimise  m(κ) = gᵀκ + ½ κᵀ A κ   subject to  ‖κ‖ ≤ Δ
-// exactly. If the unconstrained Newton step κ₀ = −A⁻¹g lies inside the
-// radius it is taken directly (interior solution). Otherwise the
-// boundary solution κ(λ) = −(A + λI)⁻¹g is found by a More-Sorensen
-// secular root-find: λ ≥ 0 is the unique level shift for which
-// ‖κ(λ)‖ = Δ. Each secular iteration is two shifted PCG solves (the
-// step and its derivative); the secular function is near-linear so 2-4
-// iterations suffice. The level shift λ is exactly the negated lowest
-// eigenvalue of the scaled augmented Hessian — the two formulations
-// are equivalent; the PCG variant reuses the Newton matvec and the
-// ε_a−ε_i preconditioner directly.
+// Rotation spaces of at most min(64, cg_max_iter) variables use a complete
+// Hessian assembled from that many products and a spectral trust-region solve,
+// including the hard-case nullspace completion. Larger spaces retain shifted
+// PCG and the secular search. Their trust_region_converged certificate is
+// false: gradient Krylov convergence alone cannot exclude hidden curvature.
+// on_boundary is determined from the returned step's actual norm.
+// A hard-case minimizer need not be unique.
 //
-// Non-positive-definite Hessians (saddle points / broken-symmetry
-// regimes) are handled in the same loop: when a shifted PCG solve
-// detects negative curvature the shift is escalated until A + λI is
-// positive-definite, so λ is automatically pushed above −λ_min(A).
-// This is the Helmich-Paris 2022 robustness property that the earlier
-// "scaled-and-clipped Newton step" stub lacked.
+// The caller adapts the radius using the ratio of actual to model-predicted
+// decrease. That outer-controller validation is separate from the Hessian
+// action and inner-solve regressions.
 //
 // Reference:
 //   * B. Helmich-Paris, "A trust-region augmented Hessian implementation
 //     for restricted and unrestricted Hartree-Fock and Kohn-Sham
-//     methods", J. Chem. Phys. 156, 204104 (2022).
+//     methods", J. Chem. Phys. 154, 164104 (2021), doi:10.1063/5.0040798.
+//   * J. J. More and D. C. Sorensen, "Computing a trust region step",
+//     SIAM J. Sci. Stat. Comput. 4, 553-572 (1983), doi:10.1137/0904038.
 //
 // Activation policy mirrors Newton / SOSCF: the SCF driver swaps
 // "diagonalize F" for ``trah_step`` once
@@ -61,7 +52,8 @@ class XCKernelBuilder;
 class UHFXCKernelBuilder;
 
 struct TRAHOptions {
-    // CG cap on the inner Newton matvec — same default as NewtonOptions.
+    // CG cap on the inner Newton matvec. Also caps the number of Hessian
+    // products in a complete small-space solve (hard ceiling 64 variables).
     int cg_max_iter = 50;
     // CG residual tolerance.
     double cg_tol = 1e-4;
@@ -90,6 +82,10 @@ struct TRAHStepResult {
     Eigen::VectorXd eps;   // (n_kept,)     refreshed MO energies
     int cg_iter = 0;
     bool cg_converged = false;
+    // Trust-region KKT certificate to configured and relative roundoff
+    // tolerances, including global curvature. False
+    // for the large-space matrix-free approximation; not a retry request.
+    bool trust_region_converged = false;
     double kappa_norm = 0.0;          // ‖κ‖_F of the accepted step
     double trust_radius_used = 0.0;   // radius applied this step
     double level_shift = 0.0;         // λ from the More-Sorensen root-find
@@ -155,6 +151,10 @@ struct UHFTRAHStepResult {
     Eigen::VectorXd eps_beta;
     int cg_iter = 0;
     bool cg_converged = false;
+    // Trust-region KKT certificate to configured and relative roundoff
+    // tolerances, including global curvature. False
+    // for the large-space matrix-free approximation; not a retry request.
+    bool trust_region_converged = false;
     double kappa_norm = 0.0;          // ‖(κ_α, κ_β)‖_F of the accepted step
     double trust_radius_used = 0.0;
     double level_shift = 0.0;         // λ from the More-Sorensen root-find

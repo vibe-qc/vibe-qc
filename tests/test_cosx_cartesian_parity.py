@@ -121,7 +121,7 @@ def test_cosx_k_matches_exact_eri_exchange(pure):
     (analytic half only), 8.6e-2 (grid half only), or 4.5e-2 (both halves
     -- the pre-fix state) -- all orders of magnitude outside this bound,
     while the spherical control stays at 4.1e-8 in every state (measured
-    2026-08-06, handovers/HANDOVER_AO_CONVENTION.md).
+    2026-08-06, the original investigation).
     """
     mol, basis = _h2_with_d_shell(pure)
     n_bf = basis.nbasis

@@ -39,14 +39,16 @@ headroom factor (rendered by ``MemoryEstimate.format``):
         Fock + density   409.6 MB
         AO evaluation    307.2 MB
         DIIS history     102.4 MB
-    Available on this machine: 119.8 GB. Proceeding.
+    Available to this job: 119.8 GB. Proceeding.
 """
 
 from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from math import comb
 from numbers import Integral
@@ -427,6 +429,37 @@ _DLPNO_COMPOSITION_BOUND_DETAIL = (
 _DLPNO_NATIVE_WORKER_BYTES = 16 * 1024**2
 
 
+# An explicit OpenMP worker count for one molecular estimate (#298). ``None``
+# means "the runtime's count", which is what the runner uses so that the .out
+# preflight describes the threads the job actually runs with. A caller that
+# pins an estimate (a test, a planner sizing another host) states the count
+# instead, so the result does not depend on the machine it is computed on.
+_EXPLICIT_WORKERS: ContextVar[Optional[int]] = ContextVar(
+    "vibeqc_memory_explicit_workers", default=None
+)
+
+
+@contextmanager
+def _explicit_workers(n_threads: Optional[int]) -> Iterator[None]:
+    """Make :func:`_omp_max_threads` return ``n_threads`` inside the block."""
+    if n_threads is None:
+        yield
+        return
+    if (
+        isinstance(n_threads, bool)
+        or not isinstance(n_threads, Integral)
+        or int(n_threads) < 1
+    ):
+        raise ValueError(
+            f"n_threads must be a positive integer or None, got {n_threads!r}"
+        )
+    token = _EXPLICIT_WORKERS.set(int(n_threads))
+    try:
+        yield
+    finally:
+        _EXPLICIT_WORKERS.reset(token)
+
+
 def _omp_max_threads() -> int:
     """Return the OpenMP worker count the next native region will use.
 
@@ -435,7 +468,12 @@ def _omp_max_threads() -> int:
     ``run_job(num_threads=...)``.  Do not impose an estimator-only many-core
     cap: the native triples planner has none, so doing so would undercount
     aggregate worker scratch on hosts with more than 128 OpenMP workers.
+    An explicit count set through ``estimate_memory(..., n_threads=N)``
+    takes precedence over the runtime.
     """
+    explicit = _EXPLICIT_WORKERS.get()
+    if explicit is not None:
+        return explicit
     try:
         from ._vibeqc_core import get_num_threads
 
@@ -613,7 +651,7 @@ class MemoryEstimate:
             lines.append(f"{status}.")
         else:
             avail_gb = available / _GB
-            lines.append(f"Available on this machine: {avail_gb:.1f} GB. {status}.")
+            lines.append(f"Available to this job: {avail_gb:.1f} GB. {status}.")
         return "\n".join(lines)
 
     def __str__(self) -> str:
@@ -1228,20 +1266,27 @@ _LEBEDEV_ORDER_POINTS = {
     41: 590,
     47: 770,
     53: 974,
+    59: 1202,
+    65: 1454,
+    77: 2030,
+    95: 3074,
 }
 
 # Exact order/point pairs in the molecular grid's native dispatch table
 # (``kLebedevTiers`` in cpp/src/lebedev_data.cpp). ``build_grid`` matches
 # ``lebedev_order`` against that table exactly and throws on a miss, so this
-# tuple has to list precisely those 13 orders: a narrower guard would make
+# tuple has to list precisely those 17 orders: a narrower guard would make
 # the estimator reject grids the native builder accepts. Orders 5 and 7 feed
 # the sparse regions of ORCA-style grids, and 15/27/31 back the PySCF
-# level-3 profile's 86/266/350-point tiers. Keep it ascending so the
+# level-3 profile's 86/266/350-point tiers, and 59/65/77/95 are the
+# convergence-study rules beyond order 53. Keep it ascending so the
 # nearest-tier search below breaks ties toward the lower tier, matching
 # ``lebedev_tier_for_points``. The remaining orders in
 # ``_LEBEDEV_ORDER_POINTS`` are reachable only through the SciPy-backed
 # periodic GAPW grids, which do not go through this table.
-_MOLECULAR_LEBEDEV_ORDERS = (5, 7, 11, 15, 17, 23, 27, 29, 31, 35, 41, 47, 53)
+_MOLECULAR_LEBEDEV_ORDERS = (
+    5, 7, 11, 15, 17, 23, 27, 29, 31, 35, 41, 47, 53, 59, 65, 77, 95,
+)
 _MOLECULAR_LEBEDEV_POINT_TIERS = tuple(
     _LEBEDEV_ORDER_POINTS[order] for order in _MOLECULAR_LEBEDEV_ORDERS
 )
@@ -1430,8 +1475,8 @@ def check_periodic_gdf_memory(
         f"InsufficientMemoryError: the {route_label} GDF route holds its "
         f"density-fitting data dense in RAM for {int(n_kpoints)} k-point(s) "
         "(per-k-pair Lpq factors and/or the dense AO-pair FT bundle of the "
-        "rsgdf fit; streaming / Schwarz-screened chunking is opt-in, see "
-        "handovers/HANDOVER_GDF_FIT_SCREENING.md and the periodic_k_gdf "
+        "rsgdf fit; streaming / Schwarz-screened chunking is opt-in, see the "
+        "periodic_k_gdf "
         "module docstring). To fit the calculation: use a coarser "
         "Monkhorst-Pack mesh or the Gamma-only GDF path; on an "
         "exact-exchange run in a symmorphic space group, request the "
@@ -2294,6 +2339,8 @@ def _dft_xc_requires_dense_ao_tables(options) -> bool:
     scf_options = _scf_estimator_options(options)
     if scf_options is None:
         return False
+    if _option_value(scf_options, "orbital_optimizer", "native") == "opentrustregion":
+        return True
     if type(scf_options).__name__ == "ROKSOptions":
         return True
     for threshold in ("newton_threshold", "trah_threshold"):
@@ -4645,10 +4692,15 @@ def _dlpno_active_counts(
     residual_domain = str(
         getattr(method_options, "residual_domain", "extended") or "extended"
     ).strip().lower()
-    if tcut_pno < _DLPNO_PROFILED_PNO_CUTOFF or residual_domain != "pair":
+    if tcut_pno < _DLPNO_PROFILED_PNO_CUTOFF or residual_domain not in (
+        "pair",
+        "pno",
+    ):
         # Below the tightest profiled cutoff, or when residuals expand beyond
         # the pair PNO basis, no measured truncation bound exists.  Charge the
         # full virtual dimension rather than extrapolating the S22 heuristic.
+        # The compiled PNO-space route ("pno") never leaves the pair PNO
+        # spaces, so it keeps the pair-basis bound like "pair".
         avg_pno = n_vir
     avg_pao = min(n_basis, max(avg_pno * 2, (2 * n_vir + 2) // 3))
     return n_occ, n_vir, avg_pao, avg_pno, frozen
@@ -4688,8 +4740,8 @@ def _dlpno_strong_pair_count(
     use_cpp_kernel = bool(getattr(method_options, "use_cpp_kernel", True))
     if (
         tcut_pairs < _DLPNO_PROFILED_PAIR_CUTOFF
-        or residual_domain != "pair"
-        or not use_cpp_kernel
+        or residual_domain not in ("pair", "pno")
+        or (residual_domain == "pair" and not use_cpp_kernel)
     ):
         return full_pairs
     return min(full_pairs, _DLPNO_STRONG_PAIRS_PER_OCC * n_occ)
@@ -5323,12 +5375,19 @@ def _dlpno_ccsd_estimate(
     )
     est.by_category["DLPNO pair lists"] = n_pairs * 1024
 
+    residual_domain_early = str(
+        getattr(method_options, "residual_domain", "extended") or "extended"
+    ).strip().lower()
+    compute_triples_early = triples or bool(
+        getattr(method_options, "compute_triples", False)
+    )
     # ``DensityFitting.mo_transform`` creates a temporary
     # (n_aux,n_basis,n_right) tensor while its output is formed.  Earlier
     # outputs remain live across the sequential calls.  The unrestricted
-    # solver additionally retains all six spin-specific outputs after packing
-    # them into the three combined spin-orbital blocks, so those are part of
-    # its steady-state solver footprint rather than transient scratch.
+    # solver retains all six spin-specific outputs; the "union" residual
+    # route, and the triples on either route, additionally pack them into the
+    # three combined spin-orbital blocks (the compiled "pno" CCSD reads the
+    # spin blocks directly and builds the combined ones only for triples).
     if open_shell:
         n_elec = molecule.n_electrons()
         multiplicity = int(molecule.multiplicity)
@@ -5356,9 +5415,11 @@ def _dlpno_ccsd_estimate(
                 retained_spin_factors + scratch + output,
             )
             retained_spin_factors += output
-        combined_factors = n_aux * (
-            n_occ * n_occ + n_occ * n_vir + n_vir * n_vir
-        ) * 8
+        combined_factors = (
+            n_aux * (n_occ * n_occ + n_occ * n_vir + n_vir * n_vir) * 8
+            if residual_domain_early != "pno" or compute_triples_early
+            else 0
+        )
         global_factors = retained_spin_factors + combined_factors
         df_transform_peak = max(df_transform_peak, global_factors)
     else:
@@ -5380,12 +5441,22 @@ def _dlpno_ccsd_estimate(
     est.by_category["DLPNO global MO DF factors"] = global_factors
     est.by_category["DLPNO MO DF transformation peak"] = df_transform_peak
 
-    # pdata retains B_ov_L, B_oo_L, and B_vv_L for every strong pair.  The
-    # lower-order term covers U_ij, the pair amplitudes, K/Fock blocks, and
-    # conservative peer copies made while each dictionary entry is built.
-    pair_df_state = n_strong_pairs * n_aux * (
-        n_occ * avg_pno + n_occ * n_occ + avg_pno * avg_pno
-    ) * 8
+    if residual_domain_early == "pno":
+        # The compiled PNO-space solvers (closed and open shell) hold, per
+        # strong pair, its (ab|P) factor in the pair PNO basis and one (ma|P)
+        # factor row per coupled occupied; every occupied is charged as
+        # coupled (the compact-molecule bound, exact when the coupling radius
+        # spans the molecule). Open shell counts spin orbitals.
+        pair_df_state = n_strong_pairs * n_aux * (
+            avg_pno * avg_pno + n_occ * avg_pno
+        ) * 8
+    else:
+        # pdata retains B_ov_L, B_oo_L, and B_vv_L for every strong pair.  The
+        # lower-order term covers U_ij, the pair amplitudes, K/Fock blocks, and
+        # conservative peer copies made while each dictionary entry is built.
+        pair_df_state = n_strong_pairs * n_aux * (
+            n_occ * avg_pno + n_occ * n_occ + avg_pno * avg_pno
+        ) * 8
     pair_amplitudes = n_strong_pairs * 4 * avg_pno * avg_pno * 8
     pair_maps = n_strong_pairs * (
         n_vir * avg_pno
@@ -5425,15 +5496,76 @@ def _dlpno_ccsd_estimate(
         getattr(method_options, "residual_domain", "extended") or "extended"
     ).strip().lower()
     use_cpp_kernel = bool(getattr(method_options, "use_cpp_kernel", True))
-    if open_shell:
-        # LocalUCCSDOptions carries neither residual_domain nor
-        # use_cpp_kernel, and the open-shell local solver is untouched by
-        # #689: it still calls dlpno_uccsd_pair_residual once per occupied
-        # and once per pair with persistent per-pair blocks, so it keeps the
+    if open_shell and residual_domain != "pno":
+        # The open-shell "union" route calls dlpno_uccsd_pair_residual once
+        # per residual group with persistent per-pair blocks, so it keeps the
         # conservative per-pair inventory.
         pair_residual *= n_strong_pairs
         residual_detail = (
             "persistent per-pair integral blocks on non-targeted route"
+        )
+    elif residual_domain == "pno" and open_shell:
+        # Compiled open-shell route (dlpno_uccsd_pno_solve), counted in spin
+        # orbitals: per iteration the singles-folded factors u_i
+        # (n_aux, n_vir_s) and w_i (n_aux, n_occ) plus the batched 3-external
+        # singles stack (n_aux, n_vir_s) per occupied, two half-contracted
+        # amplitude objects (n_aux, n_pno) per strong pair, the static and
+        # dynamic mixed Coulomb blocks of both ring orientations
+        # (n_pno, n_pno) per (pair, coupled occupied), one (n_vir^2, 64)
+        # chunk of their build, and per-thread target workspaces of order
+        # n_occ^2 n_pno^2. The static per-pair factors are charged under the
+        # auxiliary pair workspace above.
+        per_iteration_factors = n_occ * n_aux * (2 * n_vir + n_occ) * 8
+        half_contracted = 2 * n_strong_pairs * n_aux * avg_pno * 8
+        mixed_blocks = 4 * n_strong_pairs * n_occ * avg_pno * avg_pno * 8
+        jw_chunk = (64 * n_vir * n_vir + 64 * n_aux) * 8
+        thread_workspace = runtime_threads * (
+            n_occ * n_occ * avg_pno * avg_pno
+            + 6 * n_aux * avg_pno
+            + 4 * n_aux * n_occ
+            + n_occ * n_aux * avg_pno
+        ) * 8
+        pair_residual = (
+            per_iteration_factors
+            + half_contracted
+            + mixed_blocks
+            + jw_chunk
+            + thread_workspace
+        )
+        residual_detail = (
+            "compiled open-shell PNO-space contraction: per-iteration "
+            "singles-folded factors, half-contracted amplitudes and mixed "
+            "projections, plus one target workspace per OpenMP thread"
+        )
+    elif residual_domain == "pno":
+        # Compiled PNO-space route (dlpno_ccsd_pno_solve): per iteration it
+        # rebuilds the singles-folded factors u_i (n_aux, n_vir) and
+        # w_i (n_aux, n_occ) for every active occupied, four half-contracted
+        # amplitude objects (n_aux, n_pno) per strong pair, the mixed Coulomb
+        # projections (n_pno, n_pno) per (pair, coupled occupied), one
+        # (n_vir^2, 128) chunk of the Jw build, and per-thread target
+        # workspaces of order n_occ^2 n_pno^2. The static per-pair factors are
+        # charged under the auxiliary pair workspace above.
+        per_iteration_factors = n_occ * n_aux * (n_vir + n_occ) * 8
+        half_contracted = 4 * n_strong_pairs * n_aux * avg_pno * 8
+        mixed_blocks = 8 * n_strong_pairs * n_occ * avg_pno * avg_pno * 8
+        jw_chunk = (128 * n_vir * n_vir + 128 * n_aux) * 8
+        thread_workspace = runtime_threads * (
+            n_occ * n_occ * avg_pno * avg_pno
+            + 6 * n_aux * avg_pno
+            + 4 * n_aux * n_occ
+        ) * 8
+        pair_residual = (
+            per_iteration_factors
+            + half_contracted
+            + mixed_blocks
+            + jw_chunk
+            + thread_workspace
+        )
+        residual_detail = (
+            "compiled PNO-space contraction: per-iteration singles-folded "
+            "factors, half-contracted amplitudes and mixed projections, plus "
+            "one target workspace per OpenMP thread"
         )
     elif residual_domain == "pair":
         residual_is_streamed = use_cpp_kernel
@@ -5506,67 +5638,133 @@ def _dlpno_ccsd_estimate(
     triples_threads = runtime_threads
     triples_tile = 0
     if compute_triples:
-        n_triples = max(1, n_occ * (n_occ + 1) * (n_occ + 2) // 6)
-        triples_tile = _dlpno_triples_virtual_tile(n_vir)
+        cs_triples_mode = str(
+            getattr(method_options, "triples_mode", "t1") or "t1"
+        ).strip().lower()
+        open_triples_mode = str(
+            getattr(method_options, "triples_mode", "t0") or "t0"
+        ).strip().lower()
+        if open_shell and residual_domain == "pno" and open_triples_mode == "t0":
+            # Compiled open-shell (T0) (dlpno_uccsd_local_triples): per OpenMP
+            # worker one triple's TNO space (at most the union of its three
+            # pair spaces), its (ab|P) stack and the contracted copy, a 32-P
+            # chunk of the half transform, the W/Wd/work cubes, and the
+            # projected (p, m) amplitudes. No combined spin-orbital factors or
+            # dense amplitude inventories are formed.
+            n_triples = max(1, n_occ * (n_occ - 1) * (n_occ - 2) // 6)
+            n_tno = max(3, min(n_vir, 3 * avg_pno))
+            per_worker = (
+                2 * n_tno * n_tno * n_aux
+                + 32 * n_vir * n_tno
+                + 4 * n_tno**3
+                + n_tno * n_tno * n_occ
+                + n_vir * 3 * avg_pno
+            ) * 8
+            triples_buffers = triples_threads * per_worker
+            triples_work = n_triples * 2 * 8
+            triples_rows = n_occ * n_vir * 8
+            est.by_category["DLPNO triples T_ijk^abc workspace"] = triples_buffers
+            est.by_category["DLPNO triples occupied work list"] = triples_work
+            est.by_category["DLPNO triples retained amplitudes/DF factors"] = (
+                triples_rows
+            )
+            est.category_details["DLPNO triples T_ijk^abc workspace"] = (
+                f"compiled local (T0): one TNO space of <= {n_tno} per worker, "
+                f"threads={triples_threads}"
+            )
+            triples_peak = triples_buffers + triples_work + triples_rows
+        elif not open_shell and cs_triples_mode == "local":
+            # Compiled closed-shell local (T0) (dlpno_ccsd_local_triples): per
+            # OpenMP worker one key's TNO space (charged at three pair spaces,
+            # the off-diagonal pairs of a three-occupied key; its diagonal
+            # pairs overlap them), its (ab|P) stack and the contracted copy, a 32-P
+            # chunk of the half transform, the six X images plus W, V and
+            # work cubes, and the projected (x, l) amplitudes. No dense
+            # amplitude inventories or integral blocks are formed.
+            n_keys = max(1, n_occ * (n_occ + 1) * (n_occ + 2) // 6)
+            n_tno = max(3, min(n_vir, 3 * avg_pno))
+            per_worker = (
+                2 * n_tno * n_tno * n_aux
+                + 32 * n_vir * n_tno
+                + 9 * n_tno**3
+                + n_tno * n_tno * n_occ
+                + n_vir * 6 * avg_pno
+            ) * 8
+            triples_buffers = triples_threads * per_worker
+            triples_work = n_keys * 2 * 8
+            triples_rows = n_occ * n_vir * 8
+            est.by_category["DLPNO triples T_ijk^abc workspace"] = triples_buffers
+            est.by_category["DLPNO triples occupied work list"] = triples_work
+            est.by_category["DLPNO triples retained amplitudes/DF factors"] = (
+                triples_rows
+            )
+            est.category_details["DLPNO triples T_ijk^abc workspace"] = (
+                f"compiled local (T0): one TNO space of <= {n_tno} per worker, "
+                f"threads={triples_threads}"
+            )
+            triples_peak = triples_buffers + triples_work + triples_rows
+        else:
+            n_triples = max(1, n_occ * (n_occ + 1) * (n_occ + 2) // 6)
+            triples_tile = _dlpno_triples_virtual_tile(n_vir)
 
-        # The native contraction keeps only W/Wd for one occupied triple per
-        # OpenMP worker.  Large virtual spaces tile the leading virtual index.
-        triples_buffers = (
-            2 * triples_threads * triples_tile * n_vir * n_vir * 8
-        )
-        triples_work = n_triples * 3 * 8
-        est.by_category["DLPNO triples T_ijk^abc workspace"] = triples_buffers
-        est.by_category["DLPNO triples occupied work list"] = triples_work
+            # The native contraction keeps only W/Wd for one occupied triple per
+            # OpenMP worker.  Large virtual spaces tile the leading virtual index.
+            triples_buffers = (
+                2 * triples_threads * triples_tile * n_vir * n_vir * 8
+            )
+            triples_work = n_triples * 3 * 8
+            est.by_category["DLPNO triples T_ijk^abc workspace"] = triples_buffers
+            est.by_category["DLPNO triples occupied work list"] = triples_work
 
-        # The default (T1), tcut_tno=0 compact-molecule route expands local
-        # amplitudes once, rotates them once, then calls the native spatial
-        # contraction.  These retained arrays and the C++ argument copies are
-        # peers of the streamed worker buffers, not one copy per triple.
-        triples_python_amplitudes = (
-            2 * n_occ * n_occ * n_vir * n_vir
-            + 2 * n_occ * n_vir
-        ) * 8
-        triples_factors = n_aux * (
-            n_occ * n_vir + n_occ * n_occ + n_vir * n_vir
-        ) * 8
-        triples_call_copies = (
-            n_occ * n_occ * n_vir * n_vir
-            + n_occ * n_vir
-            + n_aux
-            * (n_occ * n_vir + n_occ * n_occ + n_vir * n_vir)
-            + n_occ
-            + n_vir
-        ) * 8
-        triples_integral_blocks = (
-            2 * n_occ * n_occ * n_vir * n_vir
-            + n_occ**4
-            + n_occ**3 * n_vir
-            + n_occ * n_vir**3
-        ) * 8
-        vvvv_bytes = n_vir**4 * 8
-        if vvvv_bytes <= _CCSD_VVVV_INCORE_BUDGET_BYTES:
-            triples_integral_blocks += vvvv_bytes
-        est.by_category["DLPNO triples retained amplitudes/DF factors"] = (
-            triples_python_amplitudes + triples_factors
-        )
-        est.by_category["DLPNO triples native argument copies"] = (
-            triples_call_copies
-        )
-        est.by_category["DLPNO triples integral blocks"] = (
-            triples_integral_blocks
-        )
-        est.category_details["DLPNO triples T_ijk^abc workspace"] = (
-            f"two streamed buffers per worker; virtual tile="
-            f"{triples_tile}/{n_vir}, threads={triples_threads}"
-        )
-        triples_peak = (
-            triples_buffers
-            + triples_work
-            + triples_python_amplitudes
-            + triples_factors
-            + triples_call_copies
-            + triples_integral_blocks
-        )
+            # The default (T1), tcut_tno=0 compact-molecule route expands local
+            # amplitudes once, rotates them once, then calls the native spatial
+            # contraction.  These retained arrays and the C++ argument copies are
+            # peers of the streamed worker buffers, not one copy per triple.
+            triples_python_amplitudes = (
+                2 * n_occ * n_occ * n_vir * n_vir
+                + 2 * n_occ * n_vir
+            ) * 8
+            triples_factors = n_aux * (
+                n_occ * n_vir + n_occ * n_occ + n_vir * n_vir
+            ) * 8
+            triples_call_copies = (
+                n_occ * n_occ * n_vir * n_vir
+                + n_occ * n_vir
+                + n_aux
+                * (n_occ * n_vir + n_occ * n_occ + n_vir * n_vir)
+                + n_occ
+                + n_vir
+            ) * 8
+            triples_integral_blocks = (
+                2 * n_occ * n_occ * n_vir * n_vir
+                + n_occ**4
+                + n_occ**3 * n_vir
+                + n_occ * n_vir**3
+            ) * 8
+            vvvv_bytes = n_vir**4 * 8
+            if vvvv_bytes <= _CCSD_VVVV_INCORE_BUDGET_BYTES:
+                triples_integral_blocks += vvvv_bytes
+            est.by_category["DLPNO triples retained amplitudes/DF factors"] = (
+                triples_python_amplitudes + triples_factors
+            )
+            est.by_category["DLPNO triples native argument copies"] = (
+                triples_call_copies
+            )
+            est.by_category["DLPNO triples integral blocks"] = (
+                triples_integral_blocks
+            )
+            est.category_details["DLPNO triples T_ijk^abc workspace"] = (
+                f"two streamed buffers per worker; virtual tile="
+                f"{triples_tile}/{n_vir}, threads={triples_threads}"
+            )
+            triples_peak = (
+                triples_buffers
+                + triples_work
+                + triples_python_amplitudes
+                + triples_factors
+                + triples_call_copies
+                + triples_integral_blocks
+            )
 
     reference_result = _reference_result_bytes(est)
     runtime_floor = int(
@@ -6263,6 +6461,7 @@ def estimate_memory(
     *,
     method: str,
     options=None,
+    n_threads: Optional[int] = None,
 ) -> MemoryEstimate:
     """Peak memory estimate for ``method``.
 
@@ -6280,10 +6479,18 @@ def estimate_memory(
         The matching ``*Options`` struct, or ``None`` for defaults.
         DIIS history size and DFT grid dimensions are read from it
         when available.
+    n_threads
+        OpenMP worker count to size per-worker scratch for (XC batch
+        tables, DF transform and triples workers, native worker stacks).
+        ``None`` (default) uses the current runtime count, as
+        :func:`vibeqc.get_num_threads` reports it. Pass a count to get an
+        estimate that does not depend on the host, for example to size a
+        job for another machine or to pin an expected value.
     """
     key = method.lower()
     if key not in _ESTIMATORS:
         raise ValueError(
             f"estimate_memory: unknown method {method!r}. Known: {sorted(_ESTIMATORS)}"
         )
-    return _ESTIMATORS[key](molecule, basis, options)
+    with _explicit_workers(n_threads):
+        return _ESTIMATORS[key](molecule, basis, options)

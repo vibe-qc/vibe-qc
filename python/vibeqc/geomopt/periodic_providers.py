@@ -39,6 +39,7 @@ from ..pbc_bipole_common import BIPOLE_TRIAL_PENALTY_HA, BipoleFoldUnreliableErr
 from ..pbc_bipole_rks import run_pbc_bipole_rks
 from ..pbc_bipole_uhf import run_pbc_bipole_uhf
 from ..pbc_bipole_uks import run_pbc_bipole_uks
+from ..periodic_jk_method import _WIRE_VACUUM_BOX_HINT
 from ..progress import resolve_progress
 from .coordinates import CoordinateRepresentation
 from .providers import EnergyGradientProvider, HessianProvider
@@ -274,9 +275,9 @@ class PeriodicSCFProvider:
                 "jk_method='bipole' requires a 3-D periodic system (dim=3); got "
                 f"dim={int(system.dim)}. The exact Ewald-J route uses a 3-D "
                 "Ewald/Madelung lattice sum that is not a low-dimensional Coulomb "
-                "model. For a 1-D wire use jk_method='auto' or 'gdf'; for a 2-D "
-                "surface use jk_method='auto'/'slab_ewald_2d', or explicit GDF "
-                "for its supported closed-shell slab envelope."
+                "model. For a 2-D surface use jk_method='auto'/'slab_ewald_2d', "
+                "or explicit GDF for its supported closed-shell slab envelope. "
+                "A 1-D wire has no public route. " + _WIRE_VACUUM_BOX_HINT
             )
         if self._reference_system is None:
             self._reference_system = system

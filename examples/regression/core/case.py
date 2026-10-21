@@ -122,7 +122,7 @@ class CaseRecord:
     # references or when the molecule isn't in the CCCBDB canonical
     # set.
     experimental_reference: Optional["object"] = None
-    """When set, an :class:`examples.regression.core.spec.ExperimentalReference`
+    """When set, a :class:`vibeqc_spec.ExperimentalReference`
     pulled from NIST CCCBDB. Stored as ``object`` here to avoid a
     forward-import (the schema is defined in ``.spec`` and CaseRecord
     is consumed by ``.spec`` callers — keep the reverse direction

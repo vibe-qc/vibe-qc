@@ -1,6 +1,6 @@
 """Validation of the Green's-function embedding numerical backbone on the
 analytic 1D semi-infinite tight-binding substrate (open design question 4
-of the adsorbate-embedding feature; see ``handovers/HANDOVER_GF_EMBEDDING.md``).
+of the adsorbate-embedding feature).
 
 The 1D semi-infinite chain has closed forms for the surface Green
 function, the surface LDOS (a Wigner semicircle), the surface-site

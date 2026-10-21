@@ -47,10 +47,10 @@ _Handy's Heron_, _Shavitt's Salamander_.)
 
 | Deferred item | Target | Why |
 |---|---|---|
-| **Periodic GDF** (compcell + multi-k + AFT) | **v0.10.0** | Not converging, LiH primitive FCC +22 Ha, MgO 8-atom ~+1500 Ha off PySCF. Deferred v0.8.0 → v0.9.0 → v0.10.0. See [`HANDOVER_GDF_V0_11_2026_05_29.md`](https://vibe-qc.com/docs/). |
+| **Periodic GDF** (compcell + multi-k + AFT) | **v0.10.0** | Not converging, LiH primitive FCC +22 Ha, MgO 8-atom ~+1500 Ha off PySCF. Deferred v0.8.0 → v0.9.0 → v0.10.0. |
 | **ωB97X-D** (RSH milestone B) | v0.9.x | Blocked on a dispersion reference, ωB97X-D's D2/CHG dispersion has no out-of-process oracle (PySCF lists `wb97x-d` UNSUPPORTED_DISP; dftd3/dftd4 do D3/D4 only). CLAUDE.md § 8 forbids shipping a hand-transcribed table with no reference. |
 | Native D4 dispersion | v0.10.0 | Design / milestone-plan phase only |
-| Solvation analytic gradients | v0.9.1 | Energy-only CPCM/COSMO may be assessed for v0.9.0 inclusion; the analytic-gradient work is explicitly v0.9.1 per its handover |
+| Solvation analytic gradients | v0.9.1 | Energy-only CPCM/COSMO may be assessed for v0.9.0 inclusion; the analytic-gradient work is explicitly v0.9.1 per its historical design record |
 | Coupled cluster (canonical CCSD(T)) | v0.14.0 | Just started, roadmap commit `9601697` places canonical CCSD(T) at v0.14.0. **Gates nothing before then.** |
 
 The periodic surface v0.9.0 actually ships is the **Ewald-3D stack at

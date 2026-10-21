@@ -206,15 +206,15 @@ PM6SECCMResult run_pm6_seccm(
     // 1-D uses the converged background-corrected wire Ewald rather than
     // MSINDO's frozen truncated +-2-shell sum; 2-D uses Parry/Heyes. 3-D
     // fails closed: the WS-folded remainder it would leave has no
-    // thermodynamic limit (issues #211, #425, #444), so an embedded 3-D
+    // thermodynamic limit (former-tracker issues 211, 425 and 444), so an embedded 3-D
     // number would drift with cluster size rather than converge.
     const int dim = static_cast<int>(topology.translations.size());
     const bool trivial_records = detail::is_trivial_molecular_records(topology);
     if (opts.madelung && dim == 3) {
         throw std::invalid_argument(
             "PM6-SECCM 3-D Madelung embedding is not implemented: the "
-            "WS-folded remainder has no thermodynamic limit (issues #211, "
-            "#425, #444); 1-D and 2-D embedding are available");
+            "WS-folded remainder has no thermodynamic limit (former-tracker issues 211, "
+            "425 and 444); 1-D and 2-D embedding are available");
     }
     if (!opts.madelung && !trivial_records
         && !opts.allow_truncated_electrostatics) {
@@ -231,18 +231,11 @@ PM6SECCMResult run_pm6_seccm(
     std::vector<std::vector<indo::WSNeighbor>> ews;
     Eigen::MatrixXd madkonst;
     if (opts.madelung) {
-        ews = indo::_ewald_ws_cells(topology);
-        if (dim == 1) {
-            madkonst =
-                detail::wire_madkonst_1d(ews, topology.translations[0], n_atoms);
-        } else {
-            madkonst = indo::_madkonst_2d(ews, topology.translations, n_atoms);
-        }
-        if (!madkonst.allFinite()) {
-            throw std::runtime_error(
-                "PM6-SECCM Madelung-constant matrix produced non-finite "
-                "values");
-        }
+        // 3-D is refused above; the shared builder covers 1-D and 2-D here.
+        auto madelung_state = detail::build_seccm_madelung_state(
+            topology, n_atoms, "PM6-SECCM");
+        ews = std::move(madelung_state.ews);
+        madkonst = std::move(madelung_state.madkonst);
     }
     // Net atomic charges q_I = Z_core(I) - population(I), the MSINDO
     // EWALDCHARGES convention.

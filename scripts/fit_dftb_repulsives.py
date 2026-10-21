@@ -143,13 +143,18 @@ def compute_dft_energy(Z1, Z2, R):
 
     e = np.zeros(len(R))
     for i, r in enumerate(R):
+        # Neutral diatomic: a doublet (spin=1) when the total electron count is
+        # odd, so the odd-valence pairs (C-H, N-H, O-H, ...) can be built at all.
+        spin = 1 if (Z1 + Z2) % 2 else 0
         mol = gto.M(
             atom=[[Z1, (0, 0, 0)], [Z2, (0, 0, float(r))]],
             basis="def2-tzvp",
             unit="Bohr",
+            spin=spin,
             verbose=0,
         )
-        mf = dft.RKS(mol)
+        na, nb = mol.nelec
+        mf = dft.RKS(mol) if na == nb else dft.UKS(mol)
         mf.xc = "PBE"
         e[i] = mf.kernel()
     return e

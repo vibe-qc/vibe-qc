@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "aug-cc-pcvdz",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: aug-cc-pCVDZ\nCanonical name in vibe-qc: aug-cc-pcvdz\nOriginating publication: Woon, Dunning, J. Chem. Phys. 103, 4572 (1995); DOI: 10.1063/1.470645\nNote:\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: aug-cc-pCVDZ\nDescription: DZP Double Zeta + Polarization + Tight Core + Diffuse\n       Role: orbital\n    Version: 0  (Data from the original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "Li": {
@@ -4597,7 +4597,26 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "doi:10.1063/1.470645",
+      "description": "Woon, Dunning, J. Chem. Phys. 103, 4572 (1995)",
+      "doi": "10.1063/1.470645"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "aug-cc-pCVDZ"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "c6b60ca43c62db36a265564cd073796e50afaa98feba2a4c8676e08875325ea9"
   }
 }

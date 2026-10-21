@@ -1,4 +1,6 @@
+#include "vibeqc/hermitian_operator.hpp"
 #include "vibeqc/periodic_scf.hpp"
+#include "vibeqc/periodic_k_state.hpp"
 
 #include "vibeqc/diis.hpp"
 #include "vibeqc/diagnostics.hpp"
@@ -132,23 +134,9 @@ struct KDiag {
 
 KDiag diag_k(const ComplexMatrix& F_k, const ComplexMatrix& X_k,
              const DavidsonOptions* dav_opts = nullptr) {
-    ComplexMatrix F_prime = X_k.adjoint() * F_k * X_k;
-    // Symmetrize the tiny numerical drift.
-    F_prime = 0.5 * (F_prime + F_prime.adjoint().eval());
-    if (dav_opts != nullptr && dav_opts->n_eig > 0) {
-        DavidsonResultComplex dres =
-            davidson_solve_hermitian(F_prime, *dav_opts);
-        if (!dres.converged) {
-            throw std::runtime_error(
-                "run_rhf_periodic: Davidson diagonalisation failed at k");
-        }
-        return KDiag{dres.eigenvalues, X_k * dres.eigenvectors};
-    }
-    Eigen::SelfAdjointEigenSolver<ComplexMatrix> solver(F_prime);
-    if (solver.info() != Eigen::Success) {
-        throw std::runtime_error("run_rhf_periodic: F(k) diagonalisation failed");
-    }
-    return KDiag{solver.eigenvalues(), X_k * solver.eigenvectors()};
+    auto result = solve_fock_matrix(F_k, X_k,
+        dav_opts && dav_opts->n_eig > 0 ? dav_opts : nullptr);
+    return KDiag{result.eigenvalues, X_k * result.eigenvectors};
 }
 
 double capture_idempotency_limit(double scf_gradient_tolerance,
@@ -187,6 +175,70 @@ ComplexMatrix capture_spin_summed_density(
 
 }  // namespace
 
+namespace {
+
+// Inverse of the Bloch convention in Sun et al. (2017), Eq. (3),
+// doi:10.1063/1.4998644. Keep supplied k order and the historical real
+// projection; this is not an IBZ expansion or a change of density domain.
+LatticeMatrixSet fold_density_components(
+    int nbf, const std::vector<Eigen::MatrixXd>& Pk_re,
+    const std::vector<Eigen::MatrixXd>& Pk_im,
+    const BlochKMesh& kmesh, const std::vector<LatticeCell>& cells) {
+    const std::size_t n_k = kmesh.kpoints.size();
+    LatticeMatrixSet P_set;
+    P_set.nbf = nbf;
+    P_set.cells = cells;
+    P_set.blocks.assign(cells.size(), Eigen::MatrixXd::Zero(nbf, nbf));
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::size_t c = 0; c < cells.size(); ++c) {
+        for (std::size_t ik = 0; ik < n_k; ++ik) {
+            const double w = kmesh.weights[ik];
+            const double phase = kmesh.kpoints[ik].dot(cells[c].r_cart);
+            const std::complex<double> z(std::cos(phase), -std::sin(phase));
+            P_set.blocks[c] +=
+                w * (z.real() * Pk_re[ik] - z.imag() * Pk_im[ik]);
+        }
+    }
+    return P_set;
+}
+
+}  // namespace
+
+LatticeMatrixSet real_space_density_from_density_matrices(
+    const std::vector<ComplexMatrix>& D_per_k,
+    const BlochKMesh& kmesh,
+    const std::vector<LatticeCell>& cells) {
+    if (D_per_k.empty() || D_per_k.size() != kmesh.kpoints.size() ||
+        kmesh.weights.size() != kmesh.kpoints.size()) {
+        throw std::runtime_error(
+            "real_space_density_from_density_matrices: nonempty matching k inputs required");
+    }
+    const int nbf = static_cast<int>(D_per_k.front().rows());
+    for (const auto& D : D_per_k) {
+        if (nbf == 0 || D.rows() != nbf || D.cols() != nbf || !D.allFinite()) {
+            throw std::runtime_error(
+                "real_space_density_from_density_matrices: finite square densities "
+                "with matching AO dimensions required");
+        }
+    }
+    std::vector<Eigen::MatrixXd> Pk_re(D_per_k.size()), Pk_im(D_per_k.size());
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (std::size_t ik = 0; ik < D_per_k.size(); ++ik) {
+        // Mixed/extrapolated densities can be indefinite. Preserve their
+        // Hermitian part directly, without an occupation clipping or an
+        // eigensolve followed by a cubic orbital reconstruction.
+        const ComplexMatrix D = 0.5 * (D_per_k[ik] + D_per_k[ik].adjoint());
+        Pk_re[ik] = D.real();
+        Pk_im[ik] = D.imag();
+    }
+    return fold_density_components(nbf, Pk_re, Pk_im, kmesh, cells);
+}
+
 LatticeMatrixSet real_space_density_from_kpoints_fractional(
     const std::vector<ComplexMatrix>& C_per_k,
     const std::vector<Eigen::VectorXd>& occ_per_k,
@@ -201,11 +253,6 @@ LatticeMatrixSet real_space_density_from_kpoints_fractional(
     }
     const int nbf = C_per_k.empty() ? 0
                                     : static_cast<int>(C_per_k[0].rows());
-
-    LatticeMatrixSet P_set;
-    P_set.nbf = nbf;
-    P_set.cells = cells;
-    P_set.blocks.assign(cells.size(), Eigen::MatrixXd::Zero(nbf, nbf));
 
     // P(k) = C · diag(occ) · C†  with each occ_i ∈ [0, 2] for closed-
     // shell RHF (or [0, 1] for spin-orbital). Reduces to the integer-
@@ -240,19 +287,7 @@ LatticeMatrixSet real_space_density_from_kpoints_fractional(
         Pk_im[ik] = P_k.imag();
     }
 
-#ifdef _OPENMP
-    #pragma omp parallel for schedule(static)
-#endif
-    for (std::size_t c = 0; c < cells.size(); ++c) {
-        for (std::size_t ik = 0; ik < n_k; ++ik) {
-            const double w = kmesh.weights[ik];
-            const double phase = kmesh.kpoints[ik].dot(cells[c].r_cart);
-            const std::complex<double> z(std::cos(phase), -std::sin(phase));
-            P_set.blocks[c] +=
-                w * (z.real() * Pk_re[ik] - z.imag() * Pk_im[ik]);
-        }
-    }
-    return P_set;
+    return fold_density_components(nbf, Pk_re, Pk_im, kmesh, cells);
 }
 
 LatticeMatrixSet real_space_density_from_kpoints(
@@ -336,15 +371,19 @@ namespace {
 LatticeMatrixSet fock_initial_density_multik(
     const LatticeMatrixSet& F_guess, const std::vector<LatticeCell>& cells,
     const BlochKMesh& kmesh, const std::vector<ComplexMatrix>& X_k,
-    int nocc) {
+    int nocc, std::vector<ComplexMatrix>* density_k = nullptr) {
     const std::size_t nk = kmesh.kpoints.size();
     std::vector<ComplexMatrix> C_k(nk);
     std::vector<int> n_occ_per_k(nk, nocc);
     for (std::size_t ik = 0; ik < nk; ++ik) {
         ComplexMatrix Fk = bloch_sum_fast(F_guess, kmesh.kpoints[ik]);
+        // Preserve the established one-shot guess construction (SAP is an
+        // approximate atomic potential). This is never the physical SCF
+        // operator used for energy, convergence or the subsequent solve.
         Fk = 0.5 * (Fk + Fk.adjoint().eval());
         C_k[ik] = diag_k(Fk, X_k[ik]).C;
     }
+    if (density_k) *density_k = detail::occupied_k_densities(C_k, nocc);
     return real_space_density_from_kpoints(C_k, n_occ_per_k, kmesh, cells);
 }
 
@@ -363,6 +402,16 @@ LatticeMatrixSet local_density_from_home_block(
     return P_set;
 }
 
+// A k-independent atomic seed is still a Bloch density, not a home-only
+// lattice density. The legacy lower-dimensional callers keep their old seed.
+LatticeMatrixSet atomic_density_multik(
+    const Eigen::MatrixXd& density, const std::vector<LatticeCell>& cells,
+    const BlochKMesh& mesh, std::vector<ComplexMatrix>* density_k) {
+    if (!density_k) return local_density_from_home_block(density, cells);
+    density_k->assign(mesh.kpoints.size(), density.cast<std::complex<double>>());
+    return real_space_density_from_density_matrices(*density_k, mesh, cells);
+}
+
 // Periodic SAP initial density (multi-k): F_SAP(k) = T(k) + V_SAP(k),
 // diagonalised at each k and folded to a real-space density. The periodic
 // analogue of the molecular SAP guess (V_SAP, the lattice-summed SAP potential
@@ -373,7 +422,8 @@ LatticeMatrixSet sap_initial_density_multik(
     const BasisSet& basis, const PeriodicSystem& system,
     const LatticeMatrixSet& T_set, const std::vector<LatticeCell>& cells,
     const BlochKMesh& kmesh, const std::vector<ComplexMatrix>& X_k,
-    int nocc, const LatticeSumOptions& lattice_opts, const GuessECPContext& ecp) {
+    int nocc, const LatticeSumOptions& lattice_opts, const GuessECPContext& ecp,
+    std::vector<ComplexMatrix>* density_k = nullptr) {
     const Grid grid = build_grid(system.unit_cell_molecule());
     const auto Vsap = on_eri_cells(ecp.active()
         ? compute_vsap_ecp_lattice(basis, system, lattice_opts, ecp)
@@ -385,7 +435,7 @@ LatticeMatrixSet sap_initial_density_multik(
     for (std::size_t c = 0; c < Vsap.blocks.size(); ++c) {
         Fsap.blocks[c] += Vsap.blocks[c];
     }
-    return fock_initial_density_multik(Fsap, cells, kmesh, X_k, nocc);
+    return fock_initial_density_multik(Fsap, cells, kmesh, X_k, nocc, density_k);
 }
 
 // Periodic PATOM initial density (multi-k): start from the local SAD density
@@ -397,11 +447,12 @@ LatticeMatrixSet patom_initial_density_multik(
     const LatticeMatrixSet& Hcore_set, const std::vector<LatticeCell>& cells,
     const BlochKMesh& kmesh, const std::vector<ComplexMatrix>& X_k,
     int nocc, const LatticeSumOptions& lattice_opts,
-    const Eigen::MatrixXd& S_effective, const GuessECPContext& ecp) {
+    const Eigen::MatrixXd& S_effective, const GuessECPContext& ecp,
+    std::vector<ComplexMatrix>* density_k = nullptr) {
     const Eigen::MatrixXd D_sad = normalize_guess_density(
         sad_density(system.unit_cell_molecule(), basis, ecp), S_effective, 2.0 * nocc);
     LatticeMatrixSet P_sad =
-        local_density_from_home_block(D_sad, cells);
+        atomic_density_multik(D_sad, cells, kmesh, density_k);
     LatticeMatrixSet F_patom = build_fock_2e_real_space(
         basis, system, lattice_opts, P_sad, /*exchange_scale=*/1.0);
     // The zero-extended Hcore shares the in-field exchange ordering.
@@ -413,7 +464,7 @@ LatticeMatrixSet patom_initial_density_multik(
     for (std::size_t c = 0; c < F_patom.blocks.size(); ++c) {
         F_wide.blocks[c] += F_patom.blocks[c];
     }
-    return fock_initial_density_multik(F_wide, cells, kmesh, X_k, nocc);
+    return fock_initial_density_multik(F_wide, cells, kmesh, X_k, nocc, density_k);
 }
 
 }  // namespace
@@ -443,7 +494,7 @@ LatticeMatrixSet read_initial_density_multik(
     const std::vector<ComplexMatrix>& densities,
     const std::vector<ComplexMatrix>& overlaps, const BlochKMesh& mesh,
     const PeriodicSystem& system, const std::vector<LatticeCell>& cells,
-    int electrons) {
+    int electrons, std::vector<ComplexMatrix>* density_k = nullptr) {
     if (densities.size() != overlaps.size() || densities.empty())
         throw std::invalid_argument("READ: supply one density per target k point");
     const auto nbf = overlaps.front().rows();
@@ -474,6 +525,11 @@ LatticeMatrixSet read_initial_density_multik(
     if (!std::isfinite(population) || (electrons > 0 && population <= 0))
         throw std::invalid_argument("READ: positive electrons require positive weighted population");
     const double scale = electrons == 0 ? 0 : electrons / population;
+    if (density_k) {
+        density_k->clear();
+        for (const auto& d : densities)
+            density_k->push_back(0.5 * (d + d.adjoint()).eval() * scale);
+    }
     LatticeMatrixSet result;
     result.nbf = nbf;
     result.cells = cells;
@@ -496,6 +552,9 @@ PeriodicRHFResult run_rhf_periodic_impl(
     const PeriodicSCFOptions& opts,
     PeriodicRHFStateCaptureRequest* capture_request) {
     validate_guess_kmesh(kmesh);
+    const bool physical_3d = system.dim == 3;
+    auto lattice_opts = opts.lattice_opts;
+    if (physical_3d) lattice_opts.pair_complete_1e = true;
     std::vector<InitialGuess> guess_capabilities{
         InitialGuess::HCORE, InitialGuess::SAD, InitialGuess::PATOM,
         InitialGuess::HUECKEL, InitialGuess::MINAO, InitialGuess::READ};
@@ -528,6 +587,19 @@ PeriodicRHFResult run_rhf_periodic_impl(
     validate_fraction_01("run_rhf_periodic: fock_mixing",
                          opts.fock_mixing);
     const int nocc = n_elec_valence / 2;
+
+    // Image selection is a translation ball, |g| <= cutoff_bohr, so a cell
+    // wider than the cutoff leaves only g = 0: every lattice sum below
+    // collapses to its molecular form, F(k) = F(0) at every k, and the driver
+    // reports a converged free-boundary cluster as a periodic result (#133).
+    // Refuse unless the caller declared the molecular limit. cutoff_bohr, not
+    // nuclear_cutoff_bohr: it is the smaller of the two by default and governs
+    // the AO sums, so it collapses first and this is the stricter test.
+    if (!lattice_opts.gamma_only_0) {
+        require_nonzero_lattice_image(
+            direct_lattice_cells(system, lattice_opts.cutoff_bohr),
+            lattice_opts.cutoff_bohr, "run_rhf_periodic");
+    }
 
     // The correlation-capture entry point has a stricter, allocation-free
     // preflight than ordinary SCF. It cannot be mistaken for full resource
@@ -588,8 +660,8 @@ PeriodicRHFResult run_rhf_periodic_impl(
     }
 
     // ---- One-electron lattice-summed integrals ---------------------------
-    const auto S_set = on_eri_cells(compute_overlap_lattice(basis, system, opts.lattice_opts),
-                                    basis, system, opts.lattice_opts);
+    const auto S_set = on_eri_cells(compute_overlap_lattice(basis, system, lattice_opts),
+                                    basis, system, lattice_opts);
     const bool use_davidson_here =
         opts.use_davidson && S_set.nbf >= opts.davidson_min_dim;
     DavidsonOptions dav_opts = opts.davidson;
@@ -598,18 +670,18 @@ PeriodicRHFResult run_rhf_periodic_impl(
     }
     const DavidsonOptions* dav_ptr =
         use_davidson_here ? &dav_opts : nullptr;
-    const auto T_set = on_eri_cells(compute_kinetic_lattice(basis, system, opts.lattice_opts),
-                                    basis, system, opts.lattice_opts);
+    const auto T_set = on_eri_cells(compute_kinetic_lattice(basis, system, lattice_opts),
+                                    basis, system, lattice_opts);
     LatticeMatrixSet V_set;
     LatticeMatrixSet V_ecp_set;
     if (_has_ecp) {
         V_set = on_eri_cells(compute_nuclear_lattice_with_charges(
-            basis, system, opts.lattice_opts, opts.ecp_effective_charges), basis, system, opts.lattice_opts);
+            basis, system, lattice_opts, opts.ecp_effective_charges), basis, system, lattice_opts);
         V_ecp_set = on_eri_cells(compute_ecp_lattice_from_primitives(
-            basis, system, opts.lattice_opts,
-            opts.ecp_home_centers, opts.ecp_primitive_blocks), basis, system, opts.lattice_opts);
+            basis, system, lattice_opts,
+            opts.ecp_home_centers, opts.ecp_primitive_blocks, physical_3d), basis, system, lattice_opts);
     } else {
-        V_set = on_eri_cells(compute_nuclear_lattice(basis, system, opts.lattice_opts), basis, system, opts.lattice_opts);
+        V_set = on_eri_cells(compute_nuclear_lattice(basis, system, lattice_opts), basis, system, lattice_opts);
     }
 
     // Real-space Hcore(g) = T(g) + V(g) (+ V_ecp(g) when ECP).
@@ -631,12 +703,14 @@ PeriodicRHFResult run_rhf_periodic_impl(
     Eigen::MatrixXd S_effective = Eigen::MatrixXd::Zero(S_set.nbf, S_set.nbf);
     for (std::size_t ik = 0; ik < nk; ++ik) {
         S_k[ik] = bloch_sum_fast(S_set, kmesh.kpoints[ik]);
-        // Hermitian-ise against tiny imaginary drift in the diagonal.
-        S_k[ik] = 0.5 * (S_k[ik] + S_k[ik].adjoint().eval());
+        // Validate the physical raw overlap; legacy domains keep their projection.
+        if (physical_3d) detail::require_hermitian_k_operator(S_k[ik]);
+        else S_k[ik] = 0.5 * (S_k[ik] + S_k[ik].adjoint().eval());
         S_effective += kmesh.weights[ik] * S_k[ik].real();
         X_k[ik] = s_inverse_sqrt_complex(S_k[ik]);
         H_k[ik] = bloch_sum_fast(Hcore_set, kmesh.kpoints[ik]);
-        H_k[ik] = 0.5 * (H_k[ik] + H_k[ik].adjoint().eval());
+        if (physical_3d) detail::require_hermitian_k_operator(H_k[ik]);
+        else H_k[ik] = 0.5 * (H_k[ik] + H_k[ik].adjoint().eval());
     }
 
     // ---- Initial guess: Hcore at each k -> diagonalize -> density --------
@@ -646,48 +720,49 @@ PeriodicRHFResult run_rhf_periodic_impl(
         const auto dk = diag_k(H_k[ik], X_k[ik], dav_ptr);
         C_k[ik] = dk.C;
     }
+    std::vector<ComplexMatrix> D_k;
+    if (physical_3d) D_k = detail::occupied_k_densities(C_k, nocc);
+    auto* initial_density_k = physical_3d ? &D_k : nullptr;
     LatticeMatrixSet P_set =
         real_space_density_from_kpoints(C_k, n_occ_per_k, kmesh, S_set.cells);
 
     // Optionally replace with a density-mode initial guess via the
-    // engine. For periodic, density lives at g=0 (other cells zero);
-    // Bloch-summing the g=0 block recovers a sensible D(k) for the
-    // first Fock build. Fock-mode periodic guesses (SAP, HUECKEL) are
+    // engine. In 3D, inverse-fold the actual D(k) on every physical
+    // density image. Fock-mode periodic guesses (SAP, HUECKEL) are
     // handled by the branches below because the generic molecular engine
     // has no lattice-Fock output channel.
     if (effective_guess == InitialGuess::READ) {
         P_set = read_initial_density_multik(opts.read_density_k, S_k, kmesh,
-                                          system, S_set.cells, 2 * nocc);
+                                          system, S_set.cells, 2 * nocc, initial_density_k);
     } else if (effective_guess == InitialGuess::SAP) {
         // Periodic SAP Fock-mode guess, wired through the multi-k path:
         // F_SAP(k) = T(k) + V_SAP(k), diagonalised at each k.
         P_set = sap_initial_density_multik(
             basis, system, T_set, S_set.cells, kmesh, X_k, nocc,
-            opts.lattice_opts, guess_ecp);
+            lattice_opts, guess_ecp, initial_density_k);
     } else if (effective_guess == InitialGuess::HUECKEL) {
         // Periodic HUECKEL Fock-mode guess:
         // F_GWH(g) from S(g) and atomic AO energies, diagonalised at each k.
         const auto F_huckel = compute_huckel_fock_lattice(
             system.unit_cell_molecule(), basis, S_set, guess_ecp);
         P_set = fock_initial_density_multik(
-            F_huckel, S_set.cells, kmesh, X_k, nocc);
+            F_huckel, S_set.cells, kmesh, X_k, nocc, initial_density_k);
     } else if (effective_guess == InitialGuess::MINAO) {
         // Periodic MINAO density-mode guess: project the ANO-RCC reference
         // density onto the working basis with the lattice-summed Γ overlaps,
-        // place it on the g=0 cell (Bloch-summing recovers a k-independent
-        // D(k) for the first Fock build), exactly like SAD.
+        // then inverse-fold the k-independent seed, exactly like SAD.
         Eigen::MatrixXd S_gamma = Eigen::MatrixXd::Zero(S_set.nbf, S_set.nbf);
         for (const auto& b : S_set.blocks) S_gamma += b;
         const Eigen::MatrixXd D_minao = compute_minao_density_periodic(
             system.unit_cell_molecule(), basis, system, S_gamma,
-            2 * nocc, opts.lattice_opts, guess_ecp);
-        P_set = local_density_from_home_block(
+            2 * nocc, lattice_opts, guess_ecp);
+        P_set = atomic_density_multik(
             normalize_guess_density(D_minao, S_effective, 2.0 * nocc),
-            S_set.cells);
+            S_set.cells, kmesh, initial_density_k);
     } else if (effective_guess == InitialGuess::PATOM) {
         P_set = patom_initial_density_multik(
             basis, system, Hcore_set, S_set.cells, kmesh, X_k, nocc,
-            opts.lattice_opts, S_effective, guess_ecp);
+            lattice_opts, S_effective, guess_ecp, initial_density_k);
     } else {
         const auto g = GuessEngine::build_closed_shell(
             system.unit_cell_molecule(), basis, nocc,
@@ -695,9 +770,7 @@ PeriodicRHFResult run_rhf_periodic_impl(
             /*S=*/&S_effective, /*Hcore=*/nullptr, /*jk=*/nullptr,
             SystemHints{/*is_periodic=*/true}, 1e-7, guess_ecp);
         if (g.D.size() != 0) {
-            for (auto& b : P_set.blocks) b.setZero();
-            // g=0 is always the first cell by direct_lattice_cells' ordering.
-            P_set.blocks[0] = g.D;
+            P_set = atomic_density_multik(g.D, S_set.cells, kmesh, initial_density_k);
         }
     }
 
@@ -708,9 +781,16 @@ PeriodicRHFResult run_rhf_periodic_impl(
 
     // ---- Nuclear repulsion -----------------------------------------------
     double e_nuc;
-    if (_has_ecp && !opts.ecp_effective_charges.empty()) {
+    if (physical_3d) {
+        auto ionic_system = system;
+        if (guess_ecp.active())
+            for (std::size_t a = 0; a < ionic_system.unit_cell.size(); ++a)
+                ionic_system.unit_cell[a].Z = static_cast<int>(
+                    std::round(guess_ecp.effective_charges[a]));
+        e_nuc = nuclear_repulsion_per_cell(ionic_system, lattice_opts);
+    } else if (_has_ecp && !opts.ecp_effective_charges.empty()) {
         const auto rep_cells = direct_lattice_cells(
-            system, opts.lattice_opts.nuclear_cutoff_bohr);
+            system, lattice_opts.nuclear_cutoff_bohr);
         double enuc = 0.0;
         const auto& atoms = system.unit_cell;
         for (const auto& rc : rep_cells) {
@@ -733,10 +813,10 @@ PeriodicRHFResult run_rhf_periodic_impl(
         }
         e_nuc = 0.5 * enuc;
     } else {
-        e_nuc = nuclear_repulsion_per_cell(system, opts.lattice_opts);
+        e_nuc = nuclear_repulsion_per_cell(system, lattice_opts);
     }
 
-    // ---- DIIS / EDIIS / EDIIS+DIIS operate on Γ-folded real matrices ----
+    // ---- Accelerators retain physical lattice operators in 3D -----------
     // KDIIS multi-k path needs a per-k MO basis to project the orbital-
     // rotation gradient; deferred. Selecting KDIIS here raises a clear
     // error so users aren't silently downgraded.
@@ -763,6 +843,7 @@ PeriodicRHFResult run_rhf_periodic_impl(
     result.overlap = S_gamma;
 
     LatticeMatrixSet P_prev = P_set;
+    auto D_prev_k = D_k;
     LatticeMatrixSet F_prev_mixed;
     bool have_prev_fock = false;
     double E_prev = 0.0;
@@ -780,17 +861,21 @@ PeriodicRHFResult run_rhf_periodic_impl(
         // updated at the bottom of each iteration from the energy
         // decrease (Zerner-Hehenberger 1979).
         LatticeMatrixSet P_used = P_set;
+        auto D_used_k = D_k;
         if (iter > 1 && current_damping > 0.0 && !diis_active) {
             for (std::size_t c = 0; c < P_set.blocks.size(); ++c) {
                 P_used.blocks[c] =
                     current_damping * P_prev.blocks[c]
                     + (1.0 - current_damping) * P_set.blocks[c];
             }
+            for (std::size_t k = 0; k < D_used_k.size(); ++k)
+                D_used_k[k] = current_damping * D_prev_k[k]
+                    + (1.0 - current_damping) * D_k[k];
         }
 
         // F^{2e}(g) = J(g) − ½ K(g) via the general real-space build.
         const auto F2e_set =
-            build_fock_2e_real_space(basis, system, opts.lattice_opts, P_used);
+            build_fock_2e_real_space(basis, system, lattice_opts, P_used);
 
         // Both operators share the declared output ordering. Hcore is
         // zero beyond its physical one-electron pair support.
@@ -816,7 +901,7 @@ PeriodicRHFResult run_rhf_periodic_impl(
         }
         const double E_total = E_elec + e_nuc;
 
-        // Γ-folded matrices for DIIS + convergence test.
+        // Γ output and legacy error; physical 3D uses the actual k state.
         Eigen::MatrixXd F_gamma = Eigen::MatrixXd::Zero(S_set.nbf, S_set.nbf);
         Eigen::MatrixXd P_used_gamma = F_gamma;
         for (std::size_t c = 0; c < F_set.blocks.size(); ++c) {
@@ -825,7 +910,16 @@ PeriodicRHFResult run_rhf_periodic_impl(
         }
         const Eigen::MatrixXd error =
             F_gamma * P_used_gamma * S_gamma - S_gamma * P_used_gamma * F_gamma;
-        const double grad_norm = error.norm();
+        std::vector<Eigen::MatrixXd> k_errors;
+        if (physical_3d) {
+            std::vector<ComplexMatrix> physical_fock_k(nk);
+            for (std::size_t k = 0; k < nk; ++k)
+                physical_fock_k[k] = bloch_sum_fast(F_set, kmesh.kpoints[k]);
+            k_errors = detail::weighted_k_commutators(
+                physical_fock_k, D_used_k, S_k, kmesh.weights);
+        }
+        const double grad_norm = physical_3d
+            ? detail::block_norm(k_errors) : error.norm();
         const double dE = E_total - E_prev;
 
         VIBEQC_DIAG("periodic-rhf", vibeqc::DiagLevel::VERBOSE,
@@ -865,14 +959,10 @@ PeriodicRHFResult run_rhf_periodic_impl(
                     capture_matrix_hermiticity_residual(raw_fock_k);
                 capture_fock_hermiticity_max = std::max(
                     capture_fock_hermiticity_max, fock_hermiticity);
-                // The direct finite cell-domain contraction need not be
-                // exactly self-adjoint before its established Bloch-space
-                // projection: transposing the g block shifts the internal
-                // lambda/sigma domain from C to C+g.  Do not silently accept
-                // a material boundary defect, however.  The raw residual
-                // must first fit the fixed state-contract matrix tolerance.
-                // Fixed-point diagnostics then use the Hermitian operator
-                // that the ordinary SCF path actually diagonalizes.
+                // Preserve the capture gate as well as the ordinary raw
+                // operator check. Physical 3D capture retains exactly the
+                // same operator used in the residual and eigensolution;
+                // only the legacy domain keeps its existing projection.
                 if (!capture_matrix_is_hermitian(
                         raw_fock_k, fock_hermiticity)) {
                     throw std::runtime_error(
@@ -884,8 +974,8 @@ PeriodicRHFResult run_rhf_periodic_impl(
                         "lattice domains or use a translation-covariant "
                         "periodic Hamiltonian");
                 }
-                const ComplexMatrix physical_fock_k = 0.5 * (
-                    raw_fock_k + raw_fock_k.adjoint().eval());
+                const ComplexMatrix physical_fock_k = physical_3d ? raw_fock_k
+                    : (0.5 * (raw_fock_k + raw_fock_k.adjoint().eval())).eval();
                 const ComplexMatrix physical_density_k =
                     capture_spin_summed_density(C_k[ik], nocc);
                 const double density_hermiticity =
@@ -1035,8 +1125,8 @@ PeriodicRHFResult run_rhf_periodic_impl(
                         "exceeded the finite-domain Hermiticity gate during "
                         "final capture");
                 }
-                ComplexMatrix physical_fock_k = 0.5 * (
-                    raw_fock_k + raw_fock_k.adjoint().eval());
+                ComplexMatrix physical_fock_k = physical_3d ? raw_fock_k
+                    : (0.5 * (raw_fock_k + raw_fock_k.adjoint().eval())).eval();
                 auto diagonal = diag_k(physical_fock_k, X_k[ik], nullptr);
                 X_k[ik].resize(0, 0);
 
@@ -1113,22 +1203,28 @@ PeriodicRHFResult run_rhf_periodic_impl(
             // over the real-space cell list, which is exactly the
             // periodic energy bilinear form
             //   E_elec = ½ Σ_g (P(g) ⊙ [H(g) + F(g)]).sum().
-            // DIIS still extrapolates on the Γ-folded Fock against the
-            // Γ-folded commutator error; promoting it would need a
-            // per-cell commutator error metric (Phase 12c+ tune-up).
+            // In 3D, DIIS uses the k-weighted raw commutators and applies
+            // one coefficient vector to all physical lattice Fock blocks.
+            // This retains each Bloch component and its adjoint partner.
             Eigen::MatrixXd F_ext_gamma;
             std::vector<Eigen::MatrixXd> F_ext_blocks;
             bool have_ext_per_cell = false;
             bool have_ext_gamma = false;
+            const auto extrapolate_diis = [&] {
+                if (physical_3d)
+                    F_ext_blocks = diis.extrapolate_blocks(F_set.blocks, k_errors);
+                else F_ext_gamma = diis.extrapolate(F_gamma, error);
+            };
             switch (opts.scf_accelerator) {
                 // R_CDIIS / AD_CDIIS share the DIIS extrapolation; the
                 // adaptive depth policy is baked into ``diis`` (make_diis).
                 case SCFAccelerator::DIIS:
                 case SCFAccelerator::R_CDIIS:
                 case SCFAccelerator::AD_CDIIS: {
-                    F_ext_gamma = diis.extrapolate(F_gamma, error);
+                    extrapolate_diis();
                     diis_subspace = static_cast<int>(diis.subspace_size());
-                    have_ext_gamma = true;
+                    have_ext_per_cell = physical_3d;
+                    have_ext_gamma = !physical_3d;
                     break;
                 }
                 case SCFAccelerator::KDIIS: {
@@ -1147,11 +1243,9 @@ PeriodicRHFResult run_rhf_periodic_impl(
                 case SCFAccelerator::EDIIS_DIIS: {
                     // Keep both histories warm so the asymptotic switch
                     // is smooth. EDIIS regime: per-cell extrap. DIIS
-                    // regime: Γ-folded extrap (asymptotic — the
-                    // commutator-error correction is tiny by then, so
-                    // the residual Γ-fold approximation is bounded by
-                    // the convergence threshold).
-                    F_ext_gamma = diis.extrapolate(F_gamma, error);
+                    // regime: common block coefficients from actual k errors.
+                    // Lower-dimensional drivers retain their legacy Γ path.
+                    extrapolate_diis();
                     auto F_e_blocks = ediis.extrapolate(
                         F_set.blocks, P_used.blocks, E_total);
                     diis_subspace = static_cast<int>(diis.subspace_size());
@@ -1167,7 +1261,8 @@ PeriodicRHFResult run_rhf_periodic_impl(
                         // it so the anti-replay guard keys on consumed
                         // returns only.
                         ediis.discard_last_extrapolation();
-                        have_ext_gamma = true;
+                        have_ext_per_cell = physical_3d;
+                        have_ext_gamma = !physical_3d;
                     }
                     break;
                 }
@@ -1180,9 +1275,9 @@ PeriodicRHFResult run_rhf_periodic_impl(
                 }
                 case SCFAccelerator::ADIIS_DIIS: {
                     // ADIIS analogue of EDIIS_DIIS: ADIIS (per-cell) far
-                    // from convergence, DIIS (Γ-folded) in the asymptotic
+                    // from convergence, DIIS in the asymptotic
                     // regime. See the EDIIS_DIIS case above.
-                    F_ext_gamma = diis.extrapolate(F_gamma, error);
+                    extrapolate_diis();
                     auto F_a_blocks = adiis.extrapolate(
                         F_set.blocks, P_used.blocks);
                     diis_subspace = static_cast<int>(diis.subspace_size());
@@ -1192,7 +1287,8 @@ PeriodicRHFResult run_rhf_periodic_impl(
                         have_ext_per_cell = true;
                     } else {
                         adiis.discard_last_extrapolation();
-                        have_ext_gamma = true;
+                        have_ext_per_cell = physical_3d;
+                        have_ext_gamma = !physical_3d;
                     }
                     break;
                 }
@@ -1255,12 +1351,12 @@ PeriodicRHFResult run_rhf_periodic_impl(
         // Diagonalize F(k) at every k to get new MOs, build P_new(g).
         for (std::size_t ik = 0; ik < nk; ++ik) {
             ComplexMatrix F_k = bloch_sum_fast(F_set, kmesh.kpoints[ik]);
-            F_k = 0.5 * (F_k + F_k.adjoint().eval());
+            if (!physical_3d) F_k = 0.5 * (F_k + F_k.adjoint().eval());
             // Guarded so the P(k) Bloch sum itself is skipped, not merely the
             // shift arithmetic, on any cycle whose resolved shift is 0.
             if (b_shift != 0.0) {
-                const ComplexMatrix P_k =
-                    bloch_sum_fast(P_used, kmesh.kpoints[ik]);
+                const ComplexMatrix P_k = physical_3d ? D_used_k[ik]
+                    : bloch_sum_fast(P_used, kmesh.kpoints[ik]);
                 F_k = apply_level_shift_k(F_k, S_k[ik], P_k, b_shift,
                                           LevelShiftDensity::TOTAL);
             }
@@ -1276,6 +1372,8 @@ PeriodicRHFResult run_rhf_periodic_impl(
             }
         }
         P_prev = P_used;
+        D_prev_k = D_used_k;
+        if (physical_3d) D_k = detail::occupied_k_densities(C_k, nocc);
         P_set = real_space_density_from_kpoints(
             C_k, n_occ_per_k, kmesh, S_set.cells);
 
@@ -1342,6 +1440,9 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
                                   const BlochKMesh& kmesh,
                                   const PeriodicKSOptions& opts) {
     validate_guess_kmesh(kmesh);
+    const bool physical_3d = system.dim == 3;
+    auto lattice_opts = opts.lattice_opts;
+    if (physical_3d) lattice_opts.pair_complete_1e = true;
     std::vector<InitialGuess> guess_capabilities{
         InitialGuess::HCORE, InitialGuess::SAD, InitialGuess::PATOM,
         InitialGuess::HUECKEL, InitialGuess::MINAO, InitialGuess::READ};
@@ -1381,12 +1482,21 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
                          opts.fock_mixing);
     const int nocc = n_elec_valence_rks / 2;
 
+    // See run_rhf_periodic above: a cell wider than cutoff_bohr leaves the
+    // translation ball holding only g = 0, and this driver would return a
+    // converged cluster labelled periodic (#133).
+    if (!lattice_opts.gamma_only_0) {
+        require_nonzero_lattice_image(
+            direct_lattice_cells(system, lattice_opts.cutoff_bohr),
+            lattice_opts.cutoff_bohr, "run_rks_periodic");
+    }
+
     Functional func(opts.functional, /*spin=*/1);
     const double exchange_scale = func.hf_exchange_fraction();
 
     // ---- One-electron lattice integrals ---------------------------------
-    const auto S_set = on_eri_cells(compute_overlap_lattice(basis, system, opts.lattice_opts),
-                                    basis, system, opts.lattice_opts);
+    const auto S_set = on_eri_cells(compute_overlap_lattice(basis, system, lattice_opts),
+                                    basis, system, lattice_opts);
     const bool use_davidson_here_rks =
         opts.use_davidson && S_set.nbf >= opts.davidson_min_dim;
     DavidsonOptions dav_opts_rks = opts.davidson;
@@ -1395,18 +1505,18 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
     }
     const DavidsonOptions* dav_ptr_rks =
         use_davidson_here_rks ? &dav_opts_rks : nullptr;
-    const auto T_set = on_eri_cells(compute_kinetic_lattice(basis, system, opts.lattice_opts),
-                                    basis, system, opts.lattice_opts);
+    const auto T_set = on_eri_cells(compute_kinetic_lattice(basis, system, lattice_opts),
+                                    basis, system, lattice_opts);
     LatticeMatrixSet V_set;
     LatticeMatrixSet V_ecp_set;
     if (_rks_has_ecp) {
         V_set = on_eri_cells(compute_nuclear_lattice_with_charges(
-            basis, system, opts.lattice_opts, opts.ecp_effective_charges), basis, system, opts.lattice_opts);
+            basis, system, lattice_opts, opts.ecp_effective_charges), basis, system, lattice_opts);
         V_ecp_set = on_eri_cells(compute_ecp_lattice_from_primitives(
-            basis, system, opts.lattice_opts,
-            opts.ecp_home_centers, opts.ecp_primitive_blocks), basis, system, opts.lattice_opts);
+            basis, system, lattice_opts,
+            opts.ecp_home_centers, opts.ecp_primitive_blocks, physical_3d), basis, system, lattice_opts);
     } else {
-        V_set = on_eri_cells(compute_nuclear_lattice(basis, system, opts.lattice_opts), basis, system, opts.lattice_opts);
+        V_set = on_eri_cells(compute_nuclear_lattice(basis, system, lattice_opts), basis, system, lattice_opts);
     }
     LatticeMatrixSet Hcore_set;
     Hcore_set.nbf = S_set.nbf;
@@ -1431,11 +1541,13 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
     Eigen::MatrixXd S_effective = Eigen::MatrixXd::Zero(S_set.nbf, S_set.nbf);
     for (std::size_t ik = 0; ik < nk; ++ik) {
         S_k[ik] = bloch_sum_fast(S_set, kmesh.kpoints[ik]);
-        S_k[ik] = 0.5 * (S_k[ik] + S_k[ik].adjoint().eval());
+        if (physical_3d) detail::require_hermitian_k_operator(S_k[ik]);
+        else S_k[ik] = 0.5 * (S_k[ik] + S_k[ik].adjoint().eval());
         S_effective += kmesh.weights[ik] * S_k[ik].real();
         X_k[ik] = s_inverse_sqrt_complex(S_k[ik]);
         H_k[ik] = bloch_sum_fast(Hcore_set, kmesh.kpoints[ik]);
-        H_k[ik] = 0.5 * (H_k[ik] + H_k[ik].adjoint().eval());
+        if (physical_3d) detail::require_hermitian_k_operator(H_k[ik]);
+        else H_k[ik] = 0.5 * (H_k[ik] + H_k[ik].adjoint().eval());
     }
 
     // ---- Initial guess ---------------------------------------------------
@@ -1445,42 +1557,44 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
         const auto dk = diag_k(H_k[ik], X_k[ik], dav_ptr_rks);
         C_k[ik] = dk.C;
     }
+    std::vector<ComplexMatrix> D_k;
+    if (physical_3d) D_k = detail::occupied_k_densities(C_k, nocc);
+    auto* initial_density_k = physical_3d ? &D_k : nullptr;
     LatticeMatrixSet P_set =
         real_space_density_from_kpoints(C_k, n_occ_per_k, kmesh, S_set.cells);
 
     if (effective_guess == InitialGuess::READ) {
         P_set = read_initial_density_multik(opts.read_density_k, S_k, kmesh,
-                                          system, S_set.cells, 2 * nocc);
+                                          system, S_set.cells, 2 * nocc, initial_density_k);
     } else if (effective_guess == InitialGuess::SAP) {
         // Periodic SAP Fock-mode guess, wired through the multi-k RKS path:
         // F_SAP(k) = T(k) + V_SAP(k), diagonalised at each k.
         P_set = sap_initial_density_multik(
             basis, system, T_set, S_set.cells, kmesh, X_k, nocc,
-            opts.lattice_opts, guess_ecp);
+            lattice_opts, guess_ecp, initial_density_k);
     } else if (effective_guess == InitialGuess::HUECKEL) {
         // Periodic HUECKEL Fock-mode guess:
         // F_GWH(g) from S(g) and atomic AO energies, diagonalised at each k.
         const auto F_huckel = compute_huckel_fock_lattice(
             system.unit_cell_molecule(), basis, S_set, guess_ecp);
         P_set = fock_initial_density_multik(
-            F_huckel, S_set.cells, kmesh, X_k, nocc);
+            F_huckel, S_set.cells, kmesh, X_k, nocc, initial_density_k);
     } else if (effective_guess == InitialGuess::MINAO) {
         // Periodic MINAO density-mode guess: project the ANO-RCC reference
         // density onto the working basis with the lattice-summed Γ overlaps,
-        // place it on the g=0 cell (Bloch-summing recovers a k-independent
-        // D(k) for the first Fock build), exactly like SAD.
+        // then inverse-fold the k-independent seed, exactly like SAD.
         Eigen::MatrixXd S_gamma = Eigen::MatrixXd::Zero(S_set.nbf, S_set.nbf);
         for (const auto& b : S_set.blocks) S_gamma += b;
         const Eigen::MatrixXd D_minao = compute_minao_density_periodic(
             system.unit_cell_molecule(), basis, system, S_gamma,
-            2 * nocc, opts.lattice_opts, guess_ecp);
-        P_set = local_density_from_home_block(
+            2 * nocc, lattice_opts, guess_ecp);
+        P_set = atomic_density_multik(
             normalize_guess_density(D_minao, S_effective, 2.0 * nocc),
-            S_set.cells);
+            S_set.cells, kmesh, initial_density_k);
     } else if (effective_guess == InitialGuess::PATOM) {
         P_set = patom_initial_density_multik(
             basis, system, Hcore_set, S_set.cells, kmesh, X_k, nocc,
-            opts.lattice_opts, S_effective, guess_ecp);
+            lattice_opts, S_effective, guess_ecp, initial_density_k);
     } else {
         const auto g = GuessEngine::build_closed_shell(
             system.unit_cell_molecule(), basis, nocc,
@@ -1488,15 +1602,21 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
             /*S=*/&S_effective, /*Hcore=*/nullptr, /*jk=*/nullptr,
             SystemHints{/*is_periodic=*/true}, 1e-7, guess_ecp);
         if (g.D.size() != 0) {
-            for (auto& b : P_set.blocks) b.setZero();
-            P_set.blocks[0] = g.D;
+            P_set = atomic_density_multik(g.D, S_set.cells, kmesh, initial_density_k);
         }
     }
 
     double e_nuc;
-    if (_rks_has_ecp && !opts.ecp_effective_charges.empty()) {
+    if (physical_3d) {
+        auto ionic_system = system;
+        if (guess_ecp.active())
+            for (std::size_t a = 0; a < ionic_system.unit_cell.size(); ++a)
+                ionic_system.unit_cell[a].Z = static_cast<int>(
+                    std::round(guess_ecp.effective_charges[a]));
+        e_nuc = nuclear_repulsion_per_cell(ionic_system, lattice_opts);
+    } else if (_rks_has_ecp && !opts.ecp_effective_charges.empty()) {
         const auto rep_cells = direct_lattice_cells(
-            system, opts.lattice_opts.nuclear_cutoff_bohr);
+            system, lattice_opts.nuclear_cutoff_bohr);
         double enuc = 0.0;
         const auto& atoms = system.unit_cell;
         for (const auto& rc : rep_cells) {
@@ -1519,7 +1639,7 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
         }
         e_nuc = 0.5 * enuc;
     } else {
-        e_nuc = nuclear_repulsion_per_cell(system, opts.lattice_opts);
+        e_nuc = nuclear_repulsion_per_cell(system, lattice_opts);
     }
 
     // Γ-folded overlap for DIIS / gradient measure.
@@ -1546,6 +1666,7 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
     EDIIS ediis(opts.diis_subspace_size);
     ADIIS adiis(opts.diis_subspace_size);
     LatticeMatrixSet P_prev = P_set;
+    auto D_prev_k = D_k;
     LatticeMatrixSet F_prev_mixed;
     bool have_prev_fock = false;
     double E_prev = 0.0;
@@ -1557,20 +1678,26 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
             opts.use_diis && iter >= opts.diis_start_iter;
 
         LatticeMatrixSet P_used = P_set;
+        auto D_used_k = D_k;
         if (iter > 1 && current_damping > 0.0 && !diis_active) {
             for (std::size_t c = 0; c < P_set.blocks.size(); ++c) {
                 P_used.blocks[c] =
                     current_damping * P_prev.blocks[c]
                     + (1.0 - current_damping) * P_set.blocks[c];
             }
+            for (std::size_t k = 0; k < D_used_k.size(); ++k)
+                D_used_k[k] = current_damping * D_prev_k[k]
+                    + (1.0 - current_damping) * D_k[k];
         }
 
         // Two-electron contributions.
         // exchange_scale = 0 for pure DFT skips the K lattice sum entirely.
         const auto F_HFpart_set = build_fock_2e_real_space(
-            basis, system, opts.lattice_opts, P_used, exchange_scale);
+            basis, system, lattice_opts, P_used, exchange_scale);
         const auto xc_contrib = build_xc_periodic(
-            basis, system, grid, func, P_used, opts.lattice_opts);
+            basis, system, grid, func, P_used, lattice_opts,
+            physical_3d ? PeriodicXCDensityDomain::PERIODIC_LATTICE
+                        : PeriodicXCDensityDomain::AUTO);
 
         // F(g) = Hcore(g) + F^{HF-part}(g) + V_xc(g)
         LatticeMatrixSet F_set;
@@ -1624,9 +1751,9 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
         if (!opts.dft_plus_u_sites.empty()) {
             std::vector<Eigen::MatrixXcd> P_k_for_U(nk);
             for (std::size_t ik = 0; ik < nk; ++ik) {
-                P_k_for_U[ik] =
-                    bloch_sum_fast(P_used, kmesh.kpoints[ik]);
-                P_k_for_U[ik] = 0.5 * (P_k_for_U[ik]
+                P_k_for_U[ik] = physical_3d ? D_used_k[ik]
+                    : bloch_sum_fast(P_used, kmesh.kpoints[ik]);
+                if (!physical_3d) P_k_for_U[ik] = 0.5 * (P_k_for_U[ik]
                                         + P_k_for_U[ik].adjoint().eval());
             }
             const auto vu_mk = compute_dft_plus_u_multi_k_closed_shell(
@@ -1663,7 +1790,7 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
 
         const double E_total = E_elec + e_nuc + e_dft_plus_u;
 
-        // Γ-folded matrices for convergence test & DIIS.
+        // Γ output and legacy error; physical 3D uses the actual k state.
         Eigen::MatrixXd F_gamma = Eigen::MatrixXd::Zero(S_set.nbf, S_set.nbf);
         Eigen::MatrixXd P_gamma = F_gamma;
         for (std::size_t c = 0; c < F_set.blocks.size(); ++c) {
@@ -1672,7 +1799,16 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
         }
         const Eigen::MatrixXd error =
             F_gamma * P_gamma * S_gamma - S_gamma * P_gamma * F_gamma;
-        const double grad_norm = error.norm();
+        std::vector<Eigen::MatrixXd> k_errors;
+        if (physical_3d) {
+            std::vector<ComplexMatrix> physical_fock_k(nk);
+            for (std::size_t k = 0; k < nk; ++k)
+                physical_fock_k[k] = bloch_sum_fast(F_set, kmesh.kpoints[k]);
+            k_errors = detail::weighted_k_commutators(
+                physical_fock_k, D_used_k, S_k, kmesh.weights);
+        }
+        const double grad_norm = physical_3d
+            ? detail::block_norm(k_errors) : error.norm();
         const double dE = E_total - E_prev;
 
         VIBEQC_DIAG("periodic-rks", vibeqc::DiagLevel::VERBOSE,
@@ -1698,15 +1834,21 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
             std::vector<Eigen::MatrixXd> F_ext_blocks;
             bool have_ext_per_cell = false;
             bool have_ext_gamma = false;
+            const auto extrapolate_diis = [&] {
+                if (physical_3d)
+                    F_ext_blocks = diis.extrapolate_blocks(F_set.blocks, k_errors);
+                else F_ext_gamma = diis.extrapolate(F_gamma, error);
+            };
             switch (opts.scf_accelerator) {
                 // R_CDIIS / AD_CDIIS share the DIIS extrapolation; the
                 // adaptive depth policy is baked into ``diis`` (make_diis).
                 case SCFAccelerator::DIIS:
                 case SCFAccelerator::R_CDIIS:
                 case SCFAccelerator::AD_CDIIS: {
-                    F_ext_gamma = diis.extrapolate(F_gamma, error);
+                    extrapolate_diis();
                     diis_subspace = static_cast<int>(diis.subspace_size());
-                    have_ext_gamma = true;
+                    have_ext_per_cell = physical_3d;
+                    have_ext_gamma = !physical_3d;
                     break;
                 }
                 case SCFAccelerator::KDIIS: {
@@ -1723,7 +1865,7 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
                     break;
                 }
                 case SCFAccelerator::EDIIS_DIIS: {
-                    F_ext_gamma = diis.extrapolate(F_gamma, error);
+                    extrapolate_diis();
                     auto F_e_blocks = ediis.extrapolate(
                         F_set.blocks, P_used.blocks, E_total);
                     diis_subspace = static_cast<int>(diis.subspace_size());
@@ -1739,7 +1881,8 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
                         // it so the anti-replay guard keys on consumed
                         // returns only.
                         ediis.discard_last_extrapolation();
-                        have_ext_gamma = true;
+                        have_ext_per_cell = physical_3d;
+                        have_ext_gamma = !physical_3d;
                     }
                     break;
                 }
@@ -1752,9 +1895,9 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
                 }
                 case SCFAccelerator::ADIIS_DIIS: {
                     // ADIIS analogue of EDIIS_DIIS: ADIIS (per-cell) far
-                    // from convergence, DIIS (Γ-folded) in the asymptotic
+                    // from convergence, DIIS in the asymptotic
                     // regime. See the EDIIS_DIIS case above.
-                    F_ext_gamma = diis.extrapolate(F_gamma, error);
+                    extrapolate_diis();
                     auto F_a_blocks = adiis.extrapolate(
                         F_set.blocks, P_used.blocks);
                     diis_subspace = static_cast<int>(diis.subspace_size());
@@ -1764,7 +1907,8 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
                         have_ext_per_cell = true;
                     } else {
                         adiis.discard_last_extrapolation();
-                        have_ext_gamma = true;
+                        have_ext_per_cell = physical_3d;
+                        have_ext_gamma = !physical_3d;
                     }
                     break;
                 }
@@ -1812,10 +1956,10 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
 
         for (std::size_t ik = 0; ik < nk; ++ik) {
             ComplexMatrix F_k = bloch_sum_fast(F_set, kmesh.kpoints[ik]);
-            F_k = 0.5 * (F_k + F_k.adjoint().eval());
+            if (!physical_3d) F_k = 0.5 * (F_k + F_k.adjoint().eval());
             if (b_shift != 0.0) {
-                const ComplexMatrix P_k =
-                    bloch_sum_fast(P_used, kmesh.kpoints[ik]);
+                const ComplexMatrix P_k = physical_3d ? D_used_k[ik]
+                    : bloch_sum_fast(P_used, kmesh.kpoints[ik]);
                 F_k = apply_level_shift_k(F_k, S_k[ik], P_k, b_shift,
                                           LevelShiftDensity::TOTAL);
             }
@@ -1828,6 +1972,8 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
             }
         }
         P_prev = P_used;
+        D_prev_k = D_used_k;
+        if (physical_3d) D_k = detail::occupied_k_densities(C_k, nocc);
         P_set = real_space_density_from_kpoints(
             C_k, n_occ_per_k, kmesh, S_set.cells);
 
@@ -1840,7 +1986,7 @@ PeriodicKSResult run_rks_periodic(const PeriodicSystem& system,
             // exchange_scale=0 path on demand. For the trace report we
             // accept a small overhead once per iteration.
             const auto J_only_set = build_fock_2e_real_space(
-                basis, system, opts.lattice_opts, P_used, 0.0);
+                basis, system, lattice_opts, P_used, 0.0);
             // The two-electron sets ride the plain |g| ball, a prefix of
             // the density's (pair-complete under pair_complete_1e, #429)
             // list, and are zero beyond their own support: trace them

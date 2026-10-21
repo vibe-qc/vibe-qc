@@ -335,6 +335,7 @@ SCCDFTBResult run_scc_dftb(const Molecule& mol,
             result.mo_energies = std::move(eps);
             result.mo_coeffs = std::move(C);
             result.density = std::move(D);
+            result.occupations = occupation.occupations_per_k.front();
             result.overlap = S;
             result.hamiltonian = H;
             result.charges = dq_new;
@@ -368,6 +369,8 @@ SCCDFTBResult run_scc_dftb(const Molecule& mol,
     result.mo_energies = eps;
     result.mo_coeffs = C;
     result.density = std::move(D);
+    result.occupations = Eigen::VectorXd::Zero(n_basis);
+    result.occupations.head(n_occ).setConstant(2.0);
     result.overlap = S;
     result.hamiltonian = H;
     result.charges = dq;

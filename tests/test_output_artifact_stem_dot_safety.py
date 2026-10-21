@@ -244,6 +244,18 @@ def test_two_scale_points_do_not_overwrite_each_other(tmp_path: Path) -> None:
         "python/vibeqc/runner.py",
         "python/vibeqc/periodic_runner.py",
         "python/vibeqc/output/plan.py",
+        # Example sweeps whose case labels carry dots (damping_0.3,
+        # 01_spacing_0.4): substitution collapsed their .perf logs.
+        "examples/ase_compare/cross_code_regression/compare_pbc_easy_systems.py",
+        "examples/ase_compare/cross_code_regression/compare_pbc_molecular_limit.py",
+        "examples/debug/lih_iter_trace.py",
+        "examples/debug/scf_convergence_sweep.py",
+        "examples/debug/scf_easy_periodic.py",
+        "examples/debug/scf_molecular_limit_check.py",
+        "examples/debug/scf_perf_scaling.py",
+        "examples/debug/scf_sad_vs_hcore.py",
+        "examples/debug/scf_size_bisection.py",
+        "examples/debug/scf_vs_pyscf.py",
     ],
 )
 def test_no_job_stem_is_suffixed_by_substitution(relative: str) -> None:

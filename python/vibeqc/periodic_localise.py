@@ -2,7 +2,7 @@
 
 Localise the occupied Bloch orbitals of a converged Γ-point periodic SCF into
 spatially compact, Wannier-like orbitals
-([`handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md`], Stage 2).
+(Stage 2).
 
 Two localisation criteria are available, both reusing the molecular localiser
 (:mod:`vibeqc.localise`):
@@ -207,8 +207,8 @@ def localise_periodic_gamma(
             f"localise_periodic_gamma: method={method!r} is not supported. "
             f"Choose one of {_SUPPORTED_METHODS}. The Resta periodic position "
             "operator (for crystals whose occupied orbitals wrap the cell "
-            "boundary) and the multi-k U(k) localisation are later 2b work -- "
-            "see handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md Stage 2b."
+            "boundary) and the multi-k U(k) localisation remain future "
+            "stage 2b work."
         )
 
     if n_occ is None:

@@ -10,6 +10,7 @@ Python file.
 | [`input-ch2o-water-single-point.py`](input-ch2o-water-single-point.py) | Single-point hydration energy of formaldehyde — gas vs CPCM water; reports `E_solv = ½ q·V` and `ΔG_solv` totals. |
 | [`input-ch2o-water-opt.py`](input-ch2o-water-opt.py) | Geometry optimisation in gas and water via the ASE calculator + analytic CPCM gradient. Reports the solvent-induced C=O bond elongation (~+0.7 pm). |
 | [`input-ch2o-dielectric-scan.py`](input-ch2o-dielectric-scan.py) | Sweeps every preset solvent (n-hexane → water) and plots the conductor-screening `(ε − 1)/ε` saturation curve. |
+| [`input-methanol-cosmors.py`](input-methanol-cosmors.py) | COSMO-RS solvation free energy of methanol in water, the solvent by name (`CosmoRSOptions(solvent="water")`), computed once at the solute's protocol and cached per user. |
 
 Run any of them from the repo root:
 

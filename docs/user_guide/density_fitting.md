@@ -1,9 +1,9 @@
 ---
 myst:
   html_meta:
-    "description": "Density fitting (RIJ / RIJK / RIJCOSX) in vibe-qc, JKBuilder polymorphic dispatch, recommended aux bases, validated to 0.13 mHa vs ORCA on glycine def2-TZVP."
+    "description": "Density fitting (RIJ / RIJK / RIJCOSX) in vibe-qc: the Coulomb-metric RI theory, three-index tensors and error bounds, chain-of-spheres exchange, JKBuilder polymorphic dispatch, recommended aux bases, RIJCOSX energy validated to 0.26 mHa vs ORCA on glycine def2-TZVP."
     "og:title": "vibe-qc, density fitting (RIJK + RIJCOSX)"
-    "og:description": "JKBuilder polymorphic Fock build (FourIndex / DF / COSX). Recommended aux-basis table per orbital basis. Known DF gradient bug above 50 BFs (def2-TZVP class) flagged loudly."
+    "og:description": "JKBuilder polymorphic Fock build (FourIndex / DF / COSX). Coulomb-metric RI theory and chain-of-spheres exchange. Recommended aux-basis table per orbital basis and the element-coverage guard."
 ---
 
 # Density fitting (RIJ / RIJK / RIJCOSX)
@@ -32,6 +32,124 @@ building `Hcore`/`E_nuc`/`S` from lattice-summed integrals and a
 then calls the same `vq.run_rhf_scf_with_jk(...)` C++ entry point the
 molecular `run_rhf` wraps: DIIS, damping, level-shift, and the
 quadratic fallback all come along unchanged.
+
+All three kernels are production routes for molecular SCF. The status
+vocabulary used across the manual is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Theory
+
+**The resolution of the identity.** Every two-electron integral in
+Hartree-Fock and hybrid DFT is a Coulomb interaction between two orbital
+product densities, $\rho_{\mu\nu}(\mathbf r) = \chi_\mu(\mathbf r)\chi_\nu(\mathbf r)$,
+and there are $O(N^2)$ such products for $N$ basis functions, hence
+$O(N^4)$ integrals. Density fitting expands each product in an
+auxiliary basis $\{P(\mathbf r)\}$ of size $M \approx 3N$:
+
+$$
+\rho_{\mu\nu}(\mathbf r) \approx \tilde\rho_{\mu\nu}(\mathbf r)
+  = \sum_P C^P_{\mu\nu}\, P(\mathbf r).
+$$
+
+Whitten ({vibeqc-cite}`whitten_1973`) and Dunlap
+({vibeqc-cite}`dunlap_1979`) showed that the right way to choose the
+coefficients is to minimise the Coulomb self-repulsion of the fitting
+error, $(\rho - \tilde\rho\,|\,\rho - \tilde\rho)$, which gives
+$C^P_{\mu\nu} = \sum_Q (\mu\nu|Q)\,[V^{-1}]_{QP}$ with the Coulomb metric
+$V_{PQ} = (P|Q) = \iint P(\mathbf r_1)\, r_{12}^{-1}\, Q(\mathbf r_2)$. Substituting
+turns the four-index tensor into a product of three-index tensors,
+
+$$
+(\mu\nu|\lambda\sigma) \approx \sum_{PQ} (\mu\nu|P)\,[V^{-1}]_{PQ}\,(Q|\lambda\sigma)
+  = \sum_P B^P_{\mu\nu} B^P_{\lambda\sigma},
+\qquad
+B^P_{\mu\nu} = \sum_Q (\mu\nu|Q)\,[V^{-1/2}]_{QP},
+$$
+
+and it is the $N^2 M$ tensor $B$ that `DFJKBuilder` precomputes and
+holds in memory (the `O(N^2 M)` column of the table above). This is the
+"RI" of RI-J, RI-K and RI-MP2; the same $B$ feeds the correlation
+methods with a smaller `-ri` auxiliary basis.
+
+**Error bounds.** Because the Coulomb metric is positive definite, the
+fit is variational in the Coulomb energy: for a density $\rho$ the
+fitted self-repulsion obeys $(\tilde\rho|\tilde\rho) \le (\rho|\rho)$ and
+the error in the Coulomb energy is second order in the fitting error,
+$E_J[\rho] - E_J[\tilde\rho] = \tfrac12 (\rho-\tilde\rho\,|\,\rho-\tilde\rho) \ge 0$.
+RI-J energies therefore lie slightly above the exact ones and converge
+quadratically with the quality of the auxiliary basis; with the
+Eichkorn-Ahlrichs fitting sets the error is a few tens of µHa per atom
+in the total energy and far less in energy differences
+({vibeqc-cite}`eichkorn_rij_1995`, {vibeqc-cite}`eichkorn_rij_1997`).
+Exchange contracts $B$ over the "wrong" index pair,
+$K_{\mu\nu} = \sum_P \sum_i B^P_{\mu i} B^P_{\nu i}$ with
+$B^P_{\mu i} = \sum_\lambda B^P_{\mu\lambda} C_{\lambda i}$, so the same
+argument does not bound its error; that is why the JK fitting bases of
+Weigend ({vibeqc-cite}`weigend_jkfit_2002`) are larger than the
+Coulomb-only ones and why `kind="jk"` and `kind="ri"` are different
+tables below. Fitting is exact in the limit of a complete auxiliary
+basis, and the coverage guard on this page exists because an auxiliary
+basis with *no* functions on an atom is the one case where the fit is
+silently and grossly wrong rather than slightly biased.
+
+**Cost.** With $B$ in hand, the Coulomb matrix costs $O(N^2 M)$ per
+iteration, $J_{\mu\nu} = \sum_P B^P_{\mu\nu} \sum_{\lambda\sigma} B^P_{\lambda\sigma} D_{\lambda\sigma}$,
+and exchange $O(N^2 M\, n_{\rm occ})$ through the half-transformed
+$B^P_{\mu i}$. RI-K is therefore still formally quartic, and its
+three-index intermediates are what fills memory first on large hybrid
+DFT jobs.
+
+**Chain-of-spheres exchange (COSX).** Neese and coworkers
+({vibeqc-cite}`neese_rijcosx_2009`) replaced the fitted exchange by a
+*seminumerical* one: one of the two electron coordinates is integrated
+on a molecular quadrature grid $\{\mathbf r_g, w_g\}$, the other
+analytically,
+
+$$
+K_{\mu\nu} \approx \sum_g w_g\, \chi_\mu(\mathbf r_g)
+  \sum_\lambda A_{\nu\lambda}(\mathbf r_g)\, F_{\lambda g},
+\qquad
+A_{\nu\lambda}(\mathbf r_g) = \int \frac{\chi_\nu(\mathbf r')\chi_\lambda(\mathbf r')}{|\mathbf r' - \mathbf r_g|}\, d\mathbf r',
+\qquad
+F_{\lambda g} = \sum_\sigma D_{\lambda\sigma}\chi_\sigma(\mathbf r_g).
+$$
+
+$A$ is an ordinary nuclear-attraction integral with a unit charge at the
+grid point, so the Coulomb singularity is handled analytically and the
+grid only has to resolve the smooth orbital products. The "chain of
+spheres" is the screening: around each grid point only the basis
+functions whose value is non-negligible there (a sphere per shell)
+enter, and only density-coupled shell pairs survive, so the work per
+grid point stops growing with the molecule and the build scales as
+$O(N^2 M_{\rm grid})$ formally and close to linearly in practice. The
+overlap-fitted variant of Izsák and Neese
+({vibeqc-cite}`izsak_neese_cosx_2011`) replaces the grid values
+$X_{\mu g} = \chi_\mu(\mathbf r_g)$ by $\tilde X = S Q^{-1} X$, where
+$Q_{\mu\nu} = \sum_g w_g \chi_\mu(\mathbf r_g)\chi_\nu(\mathbf r_g)$ is the
+numerical overlap, so that the quadrature reproduces the analytic
+overlap exactly; that is `CosxVariant.FITTED`, the robust default here.
+The pruned multi-tier grids that vibe-qc uses for the SCF progression
+are the 2021 AngularGrid family of Helmich-Paris, de Souza, Neese and
+Izsák ({vibeqc-cite}`helmich_paris_cosx_2021`).
+
+**Why RIJCOSX scales better than RIJK.** RI-J is cheap and accurate,
+so both routes keep it. The difference is exchange: RI-K needs the
+$N^2 M$ tensor and an $O(N^2 M n_{\rm occ})$ contraction every
+iteration, while COSX needs only AO values on a grid and a screened
+$O(N^2 M_{\rm grid})$ loop with a small prefactor. For hybrid DFT above
+roughly a thousand basis functions the exchange build is the wall-clock
+bottleneck, and COSX is where the order-of-magnitude savings come from
+(the cellulose-hexamer comparison below).
+
+**Where it fails.** RI errors are systematic, not random: they cancel
+in energy differences on the same auxiliary basis and reappear when two
+codes use different fitting sets. COSX adds grid noise: the SCF
+commutator floor sits between 1e-6 and 1e-7, so a run that demands
+`conv_tol_grad` below that has to fall back to a denser grid, and the
+COSX gradient neglects the grid-motion and weight-derivative terms
+(the gradient validation numbers below quote that band explicitly).
+Neither route pays off on small molecules, where the four-index build
+is already fast and exact.
 
 ## Quick start
 
@@ -62,27 +180,32 @@ result = run_rhf(mol, basis="def2-svp", options=opts)
 ### RIJCOSX (RI-J for Coulomb + COSX for exchange)
 
 ```python
-opts = RHFOptions(
+from vibeqc import run_job
+
+result = run_job(
+    mol,
+    basis="def2-svp",
+    method="rhf",
     density_fit=True,
     aux_basis="def2-svp-jk",
-    cosx=True,                    # turns DF path into RIJCOSX
-    # cosx_grid defaults to default_cosx_grid_options()
+    cosx=True,                    # turns the DF path into RIJCOSX
+    output="rijcosx_rhf",
 )
-result = run_rhf(mol, basis="def2-svp", options=opts)
 # JKBuilder = COSXJKBuilder
 ```
 
-For hybrid DFT replace `run_rhf` with `run_rks`:
+For hybrid DFT switch to `method="rks"` with a functional:
 
 ```python
-from vibeqc import run_rks
-result = run_rks(mol, basis="def2-tzvp", functional="b3lyp",
-                 options=RHFOptions(density_fit=True,
-                                    aux_basis="def2-tzvp-jk",
-                                    cosx=True))
+result = run_job(mol, basis="def2-tzvp", method="rks", functional="b3lyp",
+                 density_fit=True, aux_basis="def2-tzvp-jk", cosx=True,
+                 output="rijcosx_b3lyp")
 ```
 
-The same flags work for `run_uhf` / `run_uks` (open-shell).
+The same keywords work with `method="uhf"` and `method="uks"` (open shell). The
+option objects (`RHFOptions` and friends) carry the same fields as attributes,
+set on a default-constructed object (`opts = RHFOptions(); opts.density_fit =
+True`); they are not accepted as constructor keywords.
 
 ## Auto-picking an aux basis
 
@@ -96,6 +219,15 @@ orbital = "def2-tzvp"
 aux = default_aux_basis_for(orbital, kind="jk")
 # → "def2-tzvp-jk"
 ```
+
+`run_job(density_fit=True)` calls this for you when `aux_basis` is empty,
+and since v0.17.7 so do every route that reaches the bare SCF drivers from
+that request: the geometry optimiser (`optimize=True`), the `VibeQC` ASE
+calculator given an options struct with `density_fit=True`, and
+`compute_hessian_fd`. Before that only the single point resolved the aux and
+an optimisation failed with "density_fit=true requires aux_basis" (#362). An
+orbital basis with no registered default (`sto-3g`, Pople bases, `pob-*`)
+still raises that explicit error; pass `aux_basis=` there.
 
 Recommended aux bases per orbital basis (the helper's table):
 
@@ -298,8 +430,10 @@ on which the reported exchange energy is built.
 
 **Reach across methods.** RIJCOSX accelerates the mean-field exchange
 build, so it applies to **RHF, UHF, RKS, UKS** (C++ drivers, with the
-multi-stage progression) and to **ROHF** (`ROHFOptions(cosx=True,
-cosx_grid_level=...)`, single-grid). Every post-HF method that builds on a
+multi-stage progression) and to **ROHF and ROKS** (`ROHFOptions(cosx=True,
+cosx_grid_level=...)` / `ROKSOptions`, single-grid; `run_job(cosx=True)`
+sets them for `method="rohf"` / `"roks"` as it does for the C++ drivers,
+#361). Every post-HF method that builds on a
 mean-field reference (**MP2, RI-MP2, DLPNO-MP2, CCSD, CCSD(T), DLPNO-CC,
 TDDFT**) inherits RIJCOSX automatically through its reference SCF: set
 `cosx=True` on the reference's options (`rhf_options` / `uhf_options` /
@@ -330,17 +464,30 @@ optimisation should set `cosx_grid_level` to match the SCF.
 
 ### Validation: glycine / def2-TZVP
 
-| Method | Energy (Ha) | Δ vs ORCA 6.1.1 RIJCOSX |
-|--------|-------------|---------------------------|
-| RHF, 4-index | −282.823485 | 0.00 mHa (reference) |
-| RHF, RIJK (def2-tzvp-jk) | −282.823484 | 0.001 mHa |
-| RHF, RIJCOSX | −282.823611 | **0.13 mHa** |
-| Analytic gradient max\|Δ\| (RIJCOSX) | - | **0.13 mHa/bohr** |
+The authoritative numbers are kept in [Features](../features.md); this
+table repeats them.
 
-Hits the standard "sub-mHa accuracy" target Neese 2009 cited.
-For larger systems (e.g. cellulose hexamer / def2-TZVP), the
-COSX path becomes ~10× faster than 4-index for hybrid DFT
-SCF + analytic gradient combined.
+| Quantity | Result |
+|----------|--------|
+| RHF, 4-index versus RIJK (def2-tzvp-jk) | 0.001 mHa (the RI-J/K fitting error) |
+| RIJCOSX SCF **energy** versus ORCA 6.1.1 RIJCOSX | **0.26 mHa** |
+| RIJCOSX analytic gradient versus finite differences of the RIJCOSX energy | agrees up to the neglected grid-motion band: ~2e-4 Ha/bohr on H2O/def2-TZVP, ~3e-3 worst case on OH/def2-SVP (`tests/test_rijcosx_gradient_fd.py`) |
+| RIJCOSX analytic gradient versus ORCA 6.1.1 EnGrad | \|grad\| 0.08696 versus 0.08703 Ha/bohr; componentwise RMS 3.3e-3, max 1.1e-2 Ha/bohr |
+
+An earlier revision of this table claimed 0.13 mHa for the energy and
+"0.13 mHa/bohr" for the gradient on the strength of the energy
+comparison alone; the gradient claim was unproven and, before
+2026-07-29, wrong. The present gradient residual against ORCA is the
+documented fitted-Fock response term plus the neglected grid-motion and
+weight derivatives (see the `compute_cosx_k_gradient_contribution`
+notes in `cpp/include/vibeqc/cosx.hpp`); the gradient is consistent
+with vibe-qc's own RIJCOSX energy surface to the band quoted above,
+which is what a geometry optimisation needs.
+
+The energy agreement is within the "sub-mHa" target Neese 2009 set for
+COSX. For larger systems (e.g. cellulose hexamer / def2-TZVP), the COSX
+path becomes ~10× faster than 4-index for hybrid DFT SCF + analytic
+gradient combined.
 
 
 ### One-centre exact-exchange correction (v0.8.0)
@@ -408,9 +555,7 @@ contributing landings, in chronological order:
   wall over the pre-batch baseline.
 
 The full per-commit measurement table + references lives in
-`CHANGELOG.md` under `[Unreleased]` for v0.8.0. Further perf
-work (custom Boys-table integral kernel replacing libint) was
-recorded in [Archived `handovers/HANDOVER_PERF_OPT.md`](https://vibe-qc.com/docs/).
+`CHANGELOG.md` under `[Unreleased]` for v0.8.0.
 
 ## DF analytic gradient status
 
@@ -474,12 +619,12 @@ Decision tree:
 
 ```python
 # Python-side flags on RHFOptions / UHFOptions / RKSOptions / UKSOptions:
-RHFOptions(
-    density_fit=True,            # → DFJKBuilder
-    aux_basis="def2-tzvp-jk",
-    cosx=True,                   # → COSXJKBuilder (paired with density_fit)
-    cosx_grid=default_cosx_grid_options(),
-)
+opts = RHFOptions()              # likewise UHFOptions / RKSOptions / UKSOptions
+opts.density_fit = True          # → DFJKBuilder
+opts.aux_basis = "def2-tzvp-jk"
+opts.cosx = True                 # → COSXJKBuilder (paired with density_fit)
+opts.cosx_grid_level = -1        # GridX tier; -1 auto-selects by basis
+# opts.cosx_grid is the GridOptions used when cosx_grid_level is 0
 ```
 
 ```cpp
@@ -510,18 +655,20 @@ contraction).
 
 ## Citations
 
-Cite for any published RIJ / RIJK / RIJCOSX work:
+Cite for any published RIJ / RIJK / RIJCOSX work (the `.bibtex`
+sidecar of a `run_job` call assembles the route's entries for you):
 
-* **RI / DF in Hartree-Fock**: Whitten, *J. Chem. Phys.* **58**,
-  4496 (1973); Dunlap, *J. Chem. Phys.* **71**, 3396 (1979);
-  Eichkorn, Treutler, Öhm, Häser, Ahlrichs, *Chem. Phys. Lett.*
-  **240**, 283 (1995).
-* **JK auxiliary bases (def2 family)**: Weigend,
+* **RI / DF in Hartree-Fock**: {vibeqc-cite}`whitten_1973`;
+  {vibeqc-cite}`dunlap_1979`; {vibeqc-cite}`eichkorn_rij_1995`;
+  {vibeqc-cite}`eichkorn_rij_1997`.
+* **RI-JK exchange fitting and the JK auxiliary bases**:
+  {vibeqc-cite}`weigend_jkfit_2002`; the def2 JK sets are Weigend,
   *Phys. Chem. Chem. Phys.* **8**, 1057 (2006).
 * **RI auxiliary bases (def2 family)**: Hellweg, Hättig,
   Höfener, Klopper, *Theor. Chem. Acc.* **117**, 587 (2007).
-* **COSX**: Neese, Wennmohs, Hansen, Becker, *Chem. Phys.*
-  **356**, 98 (2009).
+* **COSX**: {vibeqc-cite}`neese_rijcosx_2009`; overlap-fitted COSX:
+  {vibeqc-cite}`izsak_neese_cosx_2011`; the GridX tiers:
+  {vibeqc-cite}`helmich_paris_cosx_2021`.
 * **COSX-K analytic gradient**: Bykov, Petrenko, Izsák,
   Kossmann, Becker, Valeev, Neese, *Mol. Phys.* **113**, 1961
   (2015).
@@ -541,3 +688,41 @@ Plus your basis-set + functional citations per the rest of
 * [`scf_convergence.md`](scf_convergence.md), DIIS / EDIIS+DIIS
   / level-shift / quadratic-fallback that the JKBuilder
   dispatch lands inside.
+
+
+## Evaluated states from the native Gamma RHF/RKS API
+
+`run_rhf_periodic_gamma_gdf` returns `result.fock_build` for bare-fit RHF/RKS in
+3D molecular-limit cells whose integral cutoff contains only the home cell,
+with no active symmetry operations, stabilization or Fock reduction.
+The builder owns the fitted tensor and one-electron matrices. Its receipt
+records the actual auxiliary shells, fitting threshold, modrho setting and
+resolved integral/nuclear options. Existing libint fitting is unchanged.
+
+RKS adds the joint libxc energy and potential for the evaluated density. Its
+receipt records the actual functional, grid points/weights, lattice options,
+AO shells and XC density convention. Changes to live XC inputs require a new
+builder; completed states own their values. The XC energy remains an explicit
+component and is never inferred from half a density-potential trace. PATOM
+uses a separate full-HF build and eigensolver history, including for pure DFT.
+Pure functionals omit the fitted exchange contraction during KS builds;
+global hybrids retain the functional's exchange fraction.
+
+The returned orbitals and occupations define `result.density`, including when
+SCF reaches its iteration limit. The physical Fock and energy are evaluated
+on that density. Orbital energies are its physical Rayleigh quotients;
+`next_density` records the further unaccelerated orbital/occupation update.
+Convergence checks this density closure as well as energy and stationarity.
+Legacy arrays remain writable, separate from the immutable build.
+
+At finite temperature, entropy belongs to the returned occupations and
+`free_energy = energy - smearing_temperature * entropy`. The SCF trace records
+free energy; the FockBuild and QVF energy record the physical internal energy.
+Dense and Davidson solves both request the complete retained spectrum for
+Fermi occupations. Positive `max_iter` is required on this migrated route.
+
+This state migration does not change fitting accuracy or admit additional
+methods. External XC providers, RSGDF, private slab and torus routes, symmetry-projected sources
+and multi-k GDF retain their existing behavior and do not yet provide this
+FockBuild result. Native bounded MANTA sources and BIPOLE domains remain
+separately qualified.

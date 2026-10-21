@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-from examples.regression.core.spec import (
+from vibeqc_spec import (
     AtomCart,
     AtomFrac,
     MoleculeSpec,
@@ -109,7 +109,7 @@ Do not edit by hand -- re-run the fetcher to regenerate.
 """
 from __future__ import annotations
 
-from examples.regression.core.spec import (
+from vibeqc_spec import (
     AtomFrac,
     PeriodicSpec,
     Provenance,
@@ -160,7 +160,7 @@ Do not edit by hand -- re-run the fetcher to regenerate.
 """
 from __future__ import annotations
 
-from examples.regression.core.spec import (
+from vibeqc_spec import (
     AtomCart,
     MoleculeSpec,
     Provenance,
